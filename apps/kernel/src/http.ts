@@ -38,6 +38,7 @@ import {
   zHrBankFileQuery,
   zHrDeclarationDocument,
   type MisaGoodsCode,
+  type HouseholdCnkd,
   type HouseholdS1a,
   type StockCard,
   type StockReportRow,
@@ -86,6 +87,7 @@ import {
   buildStatementsHtkkXml,
   buildFixedAssetsWorkbook,
   buildStockWorkbook,
+  buildCnkdWorkbook,
   buildS1aWorkbook,
   buildMisaWorkbook,
   buildVat01Xml,
@@ -3413,6 +3415,40 @@ export function createHttpApp(deps: HttpDeps) {
           headers: {
             'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'so-s1a-hkd', period, ORG_SLUG], 'xlsx'),
+            'cache-control': 'private, no-store',
+          },
+        });
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    // The 01/CNKD quarterly return worksheet of a household business (#2518), ?legalEntityId=<household>&year=2026&quarter=3 and, for a household with several trades, &split=goods:1000000,services:600000.
+    // The query checks the year and quarter, the roles, the profile and the split, and refuses (422) while a row behind the figures is still unconfirmed or revenue is unassigned (forExport), so the
+    // file only ever holds whole, confirmed figures. The audit row is recorded before the file is sent. A worksheet: Ludy files nothing.
+    app.get('/api/export/household-cnkd.xlsx', async (c) => {
+      try {
+        const user = c.get('user');
+        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgId = await resolveOrg(runtime, user, orgSlug);
+        const actor = actorOf(user);
+        const legalEntityId = c.req.query('legalEntityId') ?? '';
+        const year = Number(c.req.query('year') ?? '');
+        const quarter = Number(c.req.query('quarter') ?? '');
+        const split = (c.req.query('split') ?? '')
+          .split(',')
+          .filter((part) => part !== '')
+          .map((part) => {
+            const [trade = '', revenue = ''] = part.split(':');
+            return { trade, revenue };
+          });
+        const sheetData = await runtime.query<HouseholdCnkd>('finance.household.cnkd', { legalEntityId, year, quarter, ...(split.length > 0 ? { split } : {}), forExport: true }, { actor, orgId });
+        const bytes = await buildCnkdWorkbook(sheetData, config.BRAND_NAME);
+        await runtime.execute('finance.household.export', { legalEntityId, book: '01/CNKD', period: `${year}-Q${quarter}`, rows: sheetData.lines.length }, { actor, orgId });
+        return new Response(body(bytes), {
+          headers: {
+            'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'to-khai-01-cnkd', `${year}-Q${quarter}`, ORG_SLUG], 'xlsx'),
             'cache-control': 'private, no-store',
           },
         });

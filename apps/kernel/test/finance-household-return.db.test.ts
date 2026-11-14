@@ -61,7 +61,6 @@ suite('the 01/CNKD return worksheet of a household business (#2518)', () => {
       { legalEntityId: o.household, effectiveFrom: '2026-01-01', taxGroup: 1, pitMethod: null, trades: ['goods'], einvoiceRegistered: false, representativeName: 'Nguyễn Văn A', ...over },
       user,
     );
-  const profileAt = (o: Org, date: string, user = o.owner) => query<HouseholdProfileView>(o, 'finance.household.profile_get', { legalEntityId: o.household, date }, user);
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -146,7 +145,7 @@ suite('the 01/CNKD return worksheet of a household business (#2518)', () => {
       await a.query('BEGIN');
       const id = randomUUID();
       const net = 10000 - tax;
-      let order = randomUUID();
+      let order: string = randomUUID();
       if (reversalOf) order = (await a.query<{ order_id: string }>('SELECT order_id FROM crove_finance.channel_settlement_line WHERE org_id = $1 AND settlement_id = $2', [o.orgId, reversalOf])).rows[0]?.order_id as string;
       else await a.query('INSERT INTO crove_finance.channel_order (org_id, id, legal_entity_id, platform, order_no) VALUES ($1, $2, $3, $4, $5)', [o.orgId, order, o.household, platform, `ST${randomUUID().slice(0, 12)}`]);
       await a.query('INSERT INTO crove_finance.channel_settlement (org_id, id, legal_entity_id, platform, period_start, period_end, report_net, reversal_of) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [o.orgId, id, o.household, platform, start, end, reversalOf ? -net : net, reversalOf]);

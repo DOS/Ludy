@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The books of a household business (#2517, plan docs/plan/stock-and-marketplaces.md section 8.5), for a legal entity of kind household: its profile (tax group, PIT method, trades, e-invoice
-// registration, the representative's name) as dated rows, the books Circular 152 asks of its method, and S1a-HKD, the sales listing, read from the ledger and downloaded as Excel. A household is
+// registration, the representative's name) as dated rows, the books Circular 152 asks of its method, S1a-HKD, the sales listing, read from the ledger and downloaded as Excel, and for a household
+// that pays by a percentage of revenue the quarterly worksheet 01/CNKD (#2518): revenue by trade, VAT and PIT, the tax the platforms already withheld. A worksheet, never filed by Ludy. A household is
 // never asked for an account or a book: the profile decides which books it sees. The law behind a book is data still waiting for the accountant (#2520) and the screen says so. Owners and admins
 // change the profile; every role reads the books.
 import { useMutation, useQuery } from '@tanstack/react-query';
@@ -121,6 +122,147 @@ function S1aBook({ entityId }: { entityId: string }) {
         </DataTable>
       )}
       {book.data && book.data.rows.length === 0 && <p className="mt-2 text-sm text-muted-foreground">{t('noRows')}</p>}
+    </Card>
+  );
+}
+
+const MONEY_INPUT = /^\d{1,16}(\.\d{1,4})?$/;
+
+// The quarterly worksheet 01/CNKD (#2518): a household with one trade has all revenue on it; with several it types the split, which the screen keeps for the ask only and the server never stores.
+// The figures are a draft while a row behind them is unconfirmed (the Excel stays off), and totals wait for every dong of revenue to have a trade.
+function CnkdReturn({ entityId, trades }: { entityId: string; trades: readonly string[] }) {
+  const t = useTranslations('household');
+  const f = useFormat();
+  const today = vietnamToday();
+  const [year, setYear] = useState(today.slice(0, 4));
+  const [quarter, setQuarter] = useState<1 | 2 | 3 | 4>((Math.floor((Number(today.slice(5, 7)) - 1) / 3) + 1) as 1 | 2 | 3 | 4);
+  const [split, setSplit] = useState<Record<string, string>>({});
+  const valid = /^20\d{2}$/.test(year) && Number(year) >= 2026;
+  const parts = trades.length > 1 ? trades.filter((x) => MONEY_INPUT.test((split[x] ?? '').trim())).map((x) => ({ trade: x, revenue: (split[x] ?? '').trim() })) : [];
+  const sheet = useQuery({
+    ...orpc.household.cnkd.queryOptions({ input: { legalEntityId: entityId, year: Number(year), quarter, ...(parts.length > 0 ? { split: parts as Array<{ trade: (typeof HOUSEHOLD_TRADES)[number]; revenue: string }> } : {}) } }),
+    enabled: valid,
+    retry: false,
+  });
+  const download = useMutation({
+    mutationFn: async () => {
+      const query = new URLSearchParams({ legalEntityId: entityId, year, quarter: String(quarter) });
+      if (parts.length > 0) query.set('split', parts.map((x) => `${x.trade}:${x.revenue}`).join(','));
+      const response = await apiFetch(`/api/export/household-cnkd.xlsx?${query.toString()}`);
+      const url = URL.createObjectURL(await response.blob());
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = t('cnkdFile', { period: `${year}-Q${quarter}`, org: getCurrentOrg() ?? 'org' });
+      a.click();
+      URL.revokeObjectURL(url);
+    },
+  });
+  const data = sheet.data;
+  return (
+    <Card className="mb-6 block p-4" data-testid="household-cnkd">
+      <h2 className="text-sm font-semibold text-foreground">{t('cnkdTitle')}</h2>
+      <p className="mb-3 text-sm text-muted-foreground">{t('cnkdHint')}</p>
+      <div className="mb-3 flex flex-wrap items-end gap-3">
+        <div className="space-y-1">
+          <Label htmlFor="cnkd-year">{t('kinds.year')}</Label>
+          <Input id="cnkd-year" className="w-24" inputMode="numeric" maxLength={4} value={year} onChange={(e) => setYear(e.target.value)} />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="cnkd-quarter">{t('kinds.quarter')}</Label>
+          <NativeSelect id="cnkd-quarter" value={String(quarter)} onChange={(e) => setQuarter(Number(e.target.value) as 1 | 2 | 3 | 4)}>
+            {['1', '2', '3', '4'].map((q) => (
+              <NativeSelectOption key={q} value={q}>{`Q${q}`}</NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </div>
+        <Button variant="outline" loading={download.isPending} disabled={!data || data.commentary || data.totals === null} onClick={() => download.mutate()} data-testid="household-cnkd-download">
+          {t('download')}
+        </Button>
+      </div>
+      {trades.length > 1 && (
+        <fieldset className="mb-3" data-testid="household-cnkd-split">
+          <legend className="mb-1 text-xs text-subtle-foreground">{t('splitTitle')}</legend>
+          <p className="mb-2 text-xs text-muted-foreground">{t('splitHint')}</p>
+          <div className="flex flex-wrap gap-3">
+            {trades.map((x) => (
+              <div key={x} className="space-y-1">
+                <Label htmlFor={`cnkd-split-${x}`}>{t(`tradeNames.${x as (typeof HOUSEHOLD_TRADES)[number]}`)}</Label>
+                <Input id={`cnkd-split-${x}`} className="w-40" inputMode="decimal" value={split[x] ?? ''} onChange={(e) => setSplit({ ...split, [x]: e.target.value })} />
+              </div>
+            ))}
+          </div>
+        </fieldset>
+      )}
+      {sheet.isLoading && valid && <CardSkeleton />}
+      {sheet.error && <ErrorText>{errorMessage(sheet.error)}</ErrorText>}
+      {download.error && <ErrorText>{errorMessage(download.error)}</ErrorText>}
+      {data && (
+        <>
+          <Alert className="mb-3" data-testid="household-cnkd-notice">
+            <AlertDescription>{t('cnkdNotice')}</AlertDescription>
+          </Alert>
+          {data.commentary && (
+            <Alert className="mb-3" data-testid="household-cnkd-draft">
+              <AlertDescription>
+                {t('cnkdDraft')}
+                <ul className="mt-1 list-disc pl-5">
+                  {data.unconfirmed.map((u) => (
+                    <li key={`${u.kind}-${u.key}`}>{u.kind === 'form' ? t('cnkdUnconfirmedForm', { key: u.key, date: f.date(u.effectiveFrom) }) : t('cnkdUnconfirmedRate', { trade: t(`tradeNames.${u.key as (typeof HOUSEHOLD_TRADES)[number]}`), date: f.date(u.effectiveFrom) })}</li>
+                  ))}
+                </ul>
+              </AlertDescription>
+            </Alert>
+          )}
+          <p className="mb-2 text-sm text-muted-foreground">{t('cnkdPeriod', { from: f.date(data.period.from), to: f.date(data.period.to), revenue: f.money(data.revenue) })}</p>
+          <DataTable numeric={[1, 2, 3, 4, 5]} head={[t('cnkdColumns.trade'), t('cnkdColumns.revenue'), t('cnkdColumns.vatPercent'), t('cnkdColumns.vat'), t('cnkdColumns.pitPercent'), t('cnkdColumns.pit')]}>
+            {data.lines.map((l) => (
+              <TableRow key={l.trade}>
+                <TableCell className="px-4 py-3 text-foreground">{t(`tradeNames.${l.trade}`)}</TableCell>
+                <TableCell className="px-4 py-3 text-right tabular-nums">{f.money(l.revenue)}</TableCell>
+                <TableCell className="px-4 py-3 text-right tabular-nums">{l.vatPercent}</TableCell>
+                <TableCell className="px-4 py-3 text-right tabular-nums">{f.money(l.vat)}</TableCell>
+                <TableCell className="px-4 py-3 text-right tabular-nums">{l.pitPercent}</TableCell>
+                <TableCell className="px-4 py-3 text-right tabular-nums">{f.money(l.pit)}</TableCell>
+              </TableRow>
+            ))}
+          </DataTable>
+          {data.totals === null ? (
+            <Alert className="mt-3" data-testid="household-cnkd-unassigned">
+              <AlertDescription>{t('cnkdUnassigned', { amount: f.money(data.unassigned) })}</AlertDescription>
+            </Alert>
+          ) : (
+            <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm" data-testid="household-cnkd-totals">
+              <dt className="text-subtle-foreground">{t('cnkdTotalTax')}</dt>
+              <dd className="tabular-nums" data-testid="household-cnkd-tax">
+                {f.money(data.totals.tax)}
+              </dd>
+              <dt className="text-subtle-foreground">{t('cnkdWithheld')}</dt>
+              <dd className="tabular-nums" data-testid="household-cnkd-withheld">
+                {f.money(data.withheld.total)}
+              </dd>
+              <dt className="font-medium text-foreground">{t('cnkdDue')}</dt>
+              <dd className="font-medium tabular-nums" data-testid="household-cnkd-due">
+                {f.money(data.due ?? '0')}
+              </dd>
+              {data.overpaid && data.overpaid !== '0' && (
+                <>
+                  <dt className="text-subtle-foreground">{t('cnkdOverpaid')}</dt>
+                  <dd className="tabular-nums">{f.money(data.overpaid)}</dd>
+                </>
+              )}
+            </dl>
+          )}
+          <p className="mt-3 text-xs text-muted-foreground">{t('cnkdWithheldHint')}</p>
+          {data.withheld.settlements.length > 0 && (
+            <ul className="mt-1 list-disc pl-5 text-sm">
+              {data.withheld.settlements.map((w) => (
+                <li key={w.id}>{t('cnkdWithheldLine', { platform: w.platform, from: f.date(w.periodStart), to: f.date(w.periodEnd), amount: f.money(w.taxWithheld) })}</li>
+              ))}
+            </ul>
+          )}
+          <p className="mt-3 text-xs text-muted-foreground">{t('cnkdExemptNote')}</p>
+        </>
+      )}
     </Card>
   );
 }
@@ -296,6 +438,8 @@ export function HouseholdPage() {
   const canEdit = org.data?.role === 'owner' || org.data?.role === 'admin';
   const view = useQuery({ ...orpc.household.profile.queryOptions({ input: { legalEntityId: entity?.id ?? '' } }), enabled: entity !== null });
   const hasS1a = view.data?.books.some((b) => b.book === 'S1a') ?? false;
+  // The quarterly worksheet is for the percentage method alone today (the income method and group 1 have no quarterly worksheet here).
+  const cnkdTrades = view.data?.profile?.pitMethod === 'percentage' ? view.data.profile.trades : null;
   return (
     <>
       <PageHeader title={t('title')} subtitle={t('subtitle')} />
@@ -321,6 +465,7 @@ export function HouseholdPage() {
           )}
           <ProfileCard key={entity.id} entityId={entity.id} canEdit={canEdit} />
           {hasS1a && <S1aBook key={entity.id} entityId={entity.id} />}
+          {cnkdTrades && <CnkdReturn key={entity.id} entityId={entity.id} trades={cnkdTrades} />}
         </>
       )}
     </>

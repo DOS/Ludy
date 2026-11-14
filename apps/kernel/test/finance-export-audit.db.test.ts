@@ -66,6 +66,7 @@ suite('finance exports: no audit row, no download (#365)', () => {
   let slug = '';
   let orgId = '';
   let household = '';
+  let percentageHousehold = '';
   const owner = { subject: randomUUID(), email: 'owner@export-audit.test', session: randomUUID() };
 
   const token = () =>
@@ -124,6 +125,12 @@ suite('finance exports: no audit row, no download (#365)', () => {
       const owner = (await admin.query<{ user_id: string }>("SELECT user_id FROM crove_kernel.tenant_member WHERE org_id = $1 AND role = 'owner'", [orgId])).rows[0]?.user_id;
       await admin.query("INSERT INTO crove_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, 'Hộ kinh doanh Xuất file', 'household', $3)", [orgId, household, owner]);
       await admin.query("INSERT INTO crove_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group) VALUES ($1, $2, '2026-01-01', 1)", [orgId, household]);
+      // The 01/CNKD worksheet (#2518) needs a household on the percentage method, and its Excel needs rows the accountant confirmed: later dated rows from 2026-10-01, so Q4 is exportable and Q3 is not.
+      percentageHousehold = randomUUID();
+      await admin.query("INSERT INTO crove_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, 'Hộ kinh doanh Tờ khai', 'household', $3)", [orgId, percentageHousehold, owner]);
+      await admin.query("INSERT INTO crove_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, pit_method) VALUES ($1, $2, '2026-01-01', 2, 'percentage')", [orgId, percentageHousehold]);
+      await admin.query("INSERT INTO crove_finance.household_return_form_version (form, version, effective_from, name, pit_methods, source, status) VALUES ('01/CNKD', '2026.2', DATE '2026-10-01', 'Tờ khai 01/CNKD', ARRAY['percentage'], 'test', 'confirmed') ON CONFLICT DO NOTHING");
+      await admin.query("INSERT INTO crove_finance.household_trade_rate (trade, effective_from, vat_percent, pit_percent, source, status) VALUES ('goods', DATE '2026-10-01', 1, 0.5, 'test', 'confirmed') ON CONFLICT DO NOTHING");
     } finally {
       await admin.end();
     }
@@ -176,6 +183,26 @@ suite('finance exports: no audit row, no download (#365)', () => {
     expect(response.headers.get('content-type')).not.toBe(XLSX);
     expect(response.headers.get('content-disposition')).toBeNull();
     expect(await response.json()).toMatchObject({ code: 'INTERNAL' });
+  });
+
+  it('answers an error, not a file, for the 01/CNKD worksheet when the audit row cannot be written', async () => {
+    reached.length = 0;
+    const response = await app.request(`/api/export/household-cnkd.xlsx?legalEntityId=${percentageHousehold}&year=2026&quarter=4`, { headers: { authorization: `Bearer ${await token()}`, 'x-crove-org': slug } });
+    expect(reached).toEqual(['finance.household.export']);
+    expect(response.status).toBe(500);
+    expect(response.headers.get('content-type')).not.toBe(XLSX);
+    expect(response.headers.get('content-disposition')).toBeNull();
+    expect(await response.json()).toMatchObject({ code: 'INTERNAL' });
+  });
+
+  it('refuses the 01/CNKD worksheet while a row behind it is unconfirmed, before any file or audit row', async () => {
+    reached.length = 0;
+    const response = await app.request(`/api/export/household-cnkd.xlsx?legalEntityId=${percentageHousehold}&year=2026&quarter=3`, { headers: { authorization: `Bearer ${await token()}`, 'x-crove-org': slug } });
+    expect(reached).toEqual([]);
+    expect(response.status).toBe(422);
+    expect(response.headers.get('content-type')).not.toBe(XLSX);
+    expect(response.headers.get('content-disposition')).toBeNull();
+    expect(await response.json()).toMatchObject({ code: 'HOUSEHOLD_RULES_UNCONFIRMED' });
   });
 
   it('never records a failed export as done', async () => {

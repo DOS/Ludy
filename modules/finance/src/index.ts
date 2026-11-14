@@ -134,7 +134,7 @@ export { buildStatementsHtkkXml, type StatementsFiling } from './statements-htkk
 export * from './domain/statements-htkk-xml.ts';
 export { buildFixedAssetsWorkbook } from './fixed-assets-export.ts';
 export { buildStockWorkbook } from './stock-export.ts';
-export { buildS1aWorkbook } from './household-export.ts';
+export { buildCnkdWorkbook, buildS1aWorkbook } from './household-export.ts';
 export {
   MISA_SME_BANK_CREDIT,
   MISA_SME_BANK_DEBIT,
