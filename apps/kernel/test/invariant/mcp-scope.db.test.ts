@@ -35,13 +35,16 @@ const REACHABLE = ['kernel.mcp.about:ludy.read', 'kernel.mcp.parties:ludy.read',
 // The two Social reads (#3227, plan section 3.8: `ludy_social_posts_list` and `ludy_social_review_queue`), optional here so they can land after this list accepts them, in their own PR: a name outside
 // REACHABLE, SIGNALS and this list still fails. Their privacy review is the comment at the top of modules/social/src/mcp.ts; neither is sensitive, and the checks below apply to them as to every query.
 const SOCIAL = ['social.mcp.posts:ludy.read', 'social.mcp.review_queue:ludy.read'];
-// The cross-app signals (Vy V4 and V5, #2967 and #2969) may join the set, each one when its line has reviewed what it returns: the three kernel rules and the six line reads they
+// The cross-app signals (Vy V4 and V5, #2967 and #2969) may join the set, each one when its line has reviewed what it returns: the kernel rules and the line reads they
 // call (a query run inside a query keeps the caller's identity, so a rule over MCP needs every read it calls to declare the scope as well). They are optional here so each can land
 // on its own; a name outside this list still fails, and so does a missing name of REACHABLE.
 const SIGNALS = [
   'kernel.signals.deal_without_invoice:ludy.read',
   'kernel.signals.receivable_with_open_deal:ludy.read',
   'kernel.signals.supplier_bank_changed:ludy.read',
+  // The fourth rule (#3124): a customer conversation unanswered past its reply window on an open deal. Its conversation read declares no scope on purpose: conversations are not in the reach of a
+  // grant, so over MCP the read refuses and the rule reports `not_available`, never an empty "all clear".
+  'kernel.signals.conversation_unanswered:ludy.read',
   'finance.signals.sales:ludy.read',
   'finance.signals.overdue_receivables:ludy.read',
   'finance.signals.supplier_bank_changes:ludy.read',
@@ -52,12 +55,16 @@ const SIGNALS = [
   'kernel.mcp.signals:ludy.read',
 ];
 
+// The one command an MCP grant may run (#3227, step 3, owner decision 2026-11-14: one new write scope and exactly one command, "create a draft post for a person to review"). Optional here so
+// the runtime and the command can land after this test accepts them: until then no command carries `mcp`. Any other command that carries it, or this one with another scope, fails.
+const WRITES = ['social.mcp.draft_create:ludy.social.draft'];
 const commands = [...kernelCommands, ...financeCommands, ...meetingsCommands, ...socialCommands, ...adsCommands, ...crmCommands, ...hrCommands, ...notesCommands];
 const queries = [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries, ...meetingsQueries, ...socialQueries, ...adsQueries, ...crmQueries, ...hrQueries, ...notesQueries];
 
 describe('which definitions an MCP grant can reach (#2975)', () => {
-  it('has no command that carries `mcp`', () => {
-    expect(commands.filter((c) => (c as { mcp?: unknown }).mcp !== undefined).map((c) => c.name)).toEqual([]);
+  it('has no command that carries `mcp` but the ones WRITES names, each with its scope', () => {
+    const carrying = commands.filter((c) => (c as { mcp?: unknown }).mcp !== undefined).map((c) => `${c.name}:${(c as { mcp: { scope: string } }).mcp.scope}`);
+    expect(carrying.filter((n) => !WRITES.includes(n))).toEqual([]);
   });
 
   it('pins the queries that carry `mcp`, and none is sensitive, streamed, role-less or open to member mode or an extension token', () => {
