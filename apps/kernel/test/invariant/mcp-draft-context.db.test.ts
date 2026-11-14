@@ -126,14 +126,16 @@ suite('the write context of the MCP draft command (#3227)', () => {
 
   it('gives the entry to the API login alone, with a pinned search path, and lets only it name the kind of the seal', async () => {
     await admin(async (c) => {
-      const logins = (await c.query(`SELECT rolname FROM pg_roles WHERE rolname LIKE 'crove\\_%' AND NOT rolsuper`)).rows as Array<{ rolname: string }>;
+      // Every role that is not a superuser or a built-in one: the `crove_` logins, and any other a platform adds (`authenticated`, `anon`, `service_role`).
+      const logins = (await c.query(`SELECT rolname FROM pg_roles WHERE rolname !~ '^pg_' AND NOT rolsuper`)).rows as Array<{ rolname: string }>;
+      expect(logins.map((r) => r.rolname)).toContain('crove_app');
       for (const { rolname } of logins) {
         const ok = (await c.query(`SELECT has_function_privilege($1, '${ENTRY}', 'EXECUTE') AS ok`, [rolname])).rows[0].ok as boolean;
         expect(ok, `${rolname} execute the draft entry`).toBe(rolname === 'crove_app');
       }
       expect((await c.query(`SELECT has_function_privilege('public', '${ENTRY}', 'EXECUTE') AS ok`)).rows[0].ok).toBe(false);
       const cfg = (await c.query(`SELECT proconfig FROM pg_proc WHERE oid = '${ENTRY}'::regprocedure`)).rows[0].proconfig as string[] | null;
-      expect(JSON.stringify(cfg)).toContain('search_path=pg_catalog, pg_temp');
+      expect(cfg).toEqual(['search_path=pg_catalog, pg_temp']);
       const { rows } = await c.query(
         `SELECT p.oid::regprocedure::text AS n FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace
          WHERE s.nspname NOT IN ('pg_catalog', 'information_schema') AND p.prokind IN ('f', 'p') AND pg_get_functiondef(p.oid) ~ '''mcp_company_draft'''
@@ -152,6 +154,12 @@ suite('the write context of the MCP draft command (#3227)', () => {
       const got = (await c.query(`SELECT crove_kernel.enter_mcp_company_draft_context($1::uuid, $2::uuid) AS got`, [orgId, live])).rows[0].got as { role: string; grantor: string; maxRisk: string; tainted: boolean };
       expect(got).toEqual({ role: 'owner', grantor: users.owner, maxRisk: 'R1', tainted: true });
       expect((await c.query(`SELECT crove_kernel.ctx_user_id() AS u, crove_kernel.ctx_actor_type() AS t`)).rows[0]).toEqual({ u: null, t: 'agent' });
+      // The whole seal, key by key: a key added, dropped or changed is a change to what a draft grant may do.
+      const sealed = JSON.parse((await c.query(`SELECT current_setting('crove.ctx') AS ctx`)).rows[0].ctx as string) as Record<string, unknown>;
+      expect(sealed).toEqual({
+        v: 1, org: orgId, actor: 'agent', user: null, role: 'owner', agent: live, run: null, position: null, module: 'social', max_risk: 'R1', tainted: true, le_scope: ['*'], flags: [],
+        kind: 'mcp_company_draft', grantor: users.owner,
+      });
       await c.query('ROLLBACK');
       // The same grant in a read-only transaction: a write context has no use there.
       await c.query('BEGIN READ ONLY');
