@@ -8,6 +8,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
+import { meetingHookBody } from '@crove/kernel-contract';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import { Runtime } from '@crove/kernel-runtime';
 import { meetingsCommands, meetingsQueries } from '@crove/mod-meetings';
@@ -283,6 +284,38 @@ suite("a member's minutes webhook (A6, #3164)", () => {
     // A settled delivery holds no body, and a queued one must hold one.
     expect(await sqlAdmin(`UPDATE crove_meetings.hook_delivery SET status = 'sent' WHERE org_id = $1 AND hook_id = $2 AND status = 'queued' AND body IS NOT NULL`, [orgId, hookId]).then(() => null, (e: { code?: string }) => e.code ?? 'ERR')).toBe('23514');
     await sqlAdmin(`DELETE FROM crove_meetings.hook_delivery WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId]);
+  });
+
+  it('accepts exactly what the builder makes: the CHECK takes every shape the builder produces', async () => {
+    const meetingId = await seedPublishable('recorder', 'Họp thử builder');
+    const hookId = (await sqlAdmin<{ id: string }>(`SELECT id FROM crove_meetings.member_hook WHERE org_id = $1 AND user_id = $2`, [orgId, users.recorder])).rows[0]?.id as string;
+    const at = '2026-11-14T03:00:00.000Z';
+    const data = { meeting_id: meetingId, published_at: at, started_at: '2026-11-10T03:00:00.000Z', length_seconds: 1800 };
+    const shapes: Array<{ name: string; type: 'ping' | 'meeting.result_published'; data: Record<string, unknown> }> = [
+      { name: 'ping', type: 'ping', data: {} },
+      { name: 'the always-sent fields', type: 'meeting.result_published', data },
+      { name: 'no length', type: 'meeting.result_published', data: { ...data, length_seconds: null } },
+      { name: 'a zero and a day-long length', type: 'meeting.result_published', data: { ...data, length_seconds: 86400 } },
+      { name: 'the title only', type: 'meeting.result_published', data: { ...data, title: 'a'.repeat(300) } },
+      { name: 'the longest summary', type: 'meeting.result_published', data: { ...data, summary: 'a'.repeat(8000) } },
+      { name: 'the most decisions', type: 'meeting.result_published', data: { ...data, decisions: Array.from({ length: 50 }, () => 'a'.repeat(1000)) } },
+      {
+        name: 'the most action items, owner and due or neither',
+        type: 'meeting.result_published',
+        data: { ...data, action_items: Array.from({ length: 100 }, (_, i) => ({ text: 'a'.repeat(300), owner: i % 2 ? 'b'.repeat(200) : null, due: i % 2 ? '2026-11-20' : null })) },
+      },
+      { name: 'every field', type: 'meeting.result_published', data: { ...data, title: 'Họp', summary: 'Tóm tắt', decisions: ['Chốt'], action_items: [{ text: 'Việc', owner: 'Lan', due: '2026-11-20' }] } },
+    ];
+    for (const shape of shapes) {
+      const id = randomUUID();
+      const text = meetingHookBody({ id, type: shape.type, created_at: at, org: orgId, data: shape.data });
+      const refused = await sqlAdmin(`INSERT INTO crove_meetings.hook_delivery (org_id, id, hook_id, meeting_id, type, body) VALUES ($1, $2, $3, $4, $5, $6::jsonb)`, [orgId, id, hookId, shape.type === 'ping' ? null : meetingId, shape.type, text]).then(
+        () => null,
+        (e: { code?: string; message?: string }) => `${e.code}: ${e.message}`,
+      );
+      expect(refused, `the CHECK takes what the builder made for ${shape.name}`).toBeNull();
+    }
+    await sqlAdmin(`DELETE FROM crove_meetings.hook_delivery WHERE org_id = $1 AND hook_id = $2`, [orgId, hookId]);
   });
 
   it('drops a queued event, and wipes its body, when the hook is turned off, the owner turns the feature off, or the text of its meeting changes', async () => {
