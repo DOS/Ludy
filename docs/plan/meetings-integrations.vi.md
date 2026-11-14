@@ -1,6 +1,6 @@
 # Kế hoạch tích hợp cho Ludy Meetings: tóm tắt cho chủ sở hữu
 
-> Tóm tắt tiếng Việt của [meetings-integrations.md](meetings-integrations.md) (ngày 2026-11-14), dựa trên quyết định của JOY cùng ngày: duyệt cả bốn nhóm mà báo cáo nghiên cứu ([meetings-research.vi.md](meetings-research.vi.md)) đề xuất. Chưa có dòng mã nào được viết; kế hoạch chỉ tạo ra các việc cần xây (issue).
+> Tóm tắt tiếng Việt của [meetings-integrations.md](meetings-integrations.md) (ngày 2026-11-14), dựa trên quyết định của JOY cùng ngày: duyệt cả bốn nhóm (A đến D) mà báo cáo nghiên cứu ([meetings-research.vi.md](meetings-research.vi.md)) đề xuất. Chưa có dòng mã nào được viết; kế hoạch chỉ tạo ra các việc cần xây (issue).
 >
 > **Lưu ý quan trọng:** khi nghiên cứu, không mở được trang nào của Google, Zoom, Microsoft, Slack, Zalo, Chrome hay Edge. Mọi thông tin lấy từ phần tóm tắt trong kết quả tìm kiếm, **mọi mức giá chưa được kiểm chứng**. Vì vậy mỗi việc cần xây bắt đầu bằng bước đọc lại đúng trang chính thức và ghi kết quả lên issue. Các điểm về luật Việt Nam cần luật sư xác nhận.
 
@@ -58,9 +58,21 @@ Việc cần người thật (JOY): **C-OA1** (Google: phân loại quyền, quy
 - **D2:** thử trên Edge, tạo gói cài cho Edge, bổ sung quy trình và các điều kiện của Edge Add-ons vào tài liệu cho cửa hàng.
 - Việc cần người thật (JOY): **D-OA1** tài khoản nhà phát triển Microsoft Partner Center cho Edge Add-ons, đăng bài và nộp duyệt (như việc #2584 đã làm cho Chrome).
 
+## Nhóm E: dịch bản chép lời và bản tóm tắt (giai đoạn M3, P2)
+
+JOY thêm nhóm này ngày 2026-11-14 ("Tính năng dịch transcript và summary nữa chứ nhỉ"). Không cần tài khoản ngoài, chỉ tốn ngân sách AI công ty đã có.
+
+- **Người dùng thấy gì.** Cuộc họp bằng tiếng Anh của một nhóm người Việt (hoặc ngược lại) là trường hợp thường gặp. Trên bản tóm tắt và bản chép lời có nút "Dịch sang English" (hoặc "Dịch sang tiếng Việt"). Bản dịch hiện **ngay cạnh bản gốc**, gắn nhãn "Bản dịch máy", không bao giờ thay bản gốc. Bản chép lời dài được dịch ở nền, từng phần một ("Đã dịch 12/20 phần"). Ai đọc được cuộc họp thì dịch được phần mình đọc; người ghi họp dịch được cả bản nháp chưa chia sẻ.
+- **Việc E1 (tóm tắt), E2 (bản chép lời), E3 (tiếng Trung, Nhật, Hàn, để sau).** E1 và E2 ở giai đoạn M3, P2; E3 ở Icebox (P3) tới khi khách thí điểm hỏi tới.
+- **AI làm gì.** Vy của chính người bấm dịch. Mỗi lần bấm là một lần gọi AI tính vào ngân sách (khoá riêng `meetings.translate`, để dịch không làm đứt việc chép lời hay tóm tắt). Hiện ước tính chi phí trước khi bấm; từng phần của bản chép lời phải qua bước kiểm tra ngân sách trước khi gọi, hết ngân sách thì dừng, giữ phần đã dịch, tiếp tục được sau. Tắt AI thì nút vẫn còn và nói rõ lý do.
+- **Mã kiểm tra bản dịch.** Con số có trong bản dịch mà không có trong bản gốc thì dòng đó bị từ chối (hiện lại bản gốc); con số bị mất hoặc một tên riêng lạ thì hiện dấu cảnh báo "Số liệu có thể khác bản gốc". Bản dịch **không bao giờ là nguồn của việc gì khác**: không tạo việc cần làm, không đi vào thư theo dõi, không đăng lên Slack hay Zalo, không vào webhook, không được tìm kiếm, không được xuất.
+- **Lưu thế nào (đã quyết trong kế hoạch):** lưu, và **riêng tư cho từng người**. Nếu chỉ dịch tức thời thì mỗi lần mở lại và mỗi người dự đều tốn thêm ngân sách. Mỗi bản dịch là một dòng dữ liệu phái sinh chỉ người đã bấm đọc được (chủ hoặc quản trị không phải người đọc cuộc họp thì không đọc được), gắn dấu "dịch từ bản nào" để biết bản gốc đã đổi ("Bản dịch cũ, dịch lại"), bị xoá cùng cuộc họp, khi bỏ chia sẻ, khi bản nháp hết hạn, theo thời hạn lưu văn bản, và **bị xoá hẳn (không chỉ che)** khi xử lý yêu cầu xoá dữ liệu cá nhân. Việc chia sẻ một bản dịch cho mọi người dự để chỉ tốn một lần là bước sau, có cú bấm của người ghi họp.
+- **Gặp các phần khác.** Ghi chú trực tiếp: chưa dịch trong bản đầu (xem đã ghi xong mới dịch được). Thư theo dõi: vẫn gửi bản gốc; thư đã dịch là bước sau, người ghi đọc và duyệt. Hỏi đáp xuyên cuộc họp (A3): trả lời theo ngôn ngữ của câu hỏi, dẫn về dòng gốc, nên không cần kho dịch.
+- **Việc cần người thật.** Một người song ngữ đọc khoảng 20 câu dịch và bản tóm tắt dịch của các cuộc họp mẫu rồi ghi nhận xét lên issue (không chặn việc hợp nhất, chặn việc gọi là xong). Chưa ai đo chất lượng dịch Việt-Anh cho lời nói trong họp, nên không giả định tốt.
+
 ## Chưa làm (đã nói rõ)
 
-Ứng dụng máy tính; ứng dụng di động gốc; bot vào cuộc họp (không tự vào họp, không tự gửi tóm tắt cho mọi người được mời); Zoom RTMS và chép lời trực tiếp của Teams (chỉ theo dõi: giá RTMS và ai trả, tài liệu kỹ thuật của mục lộ trình RM570651, Google tắt Media API ngày 15/1/2027). Ba đề xuất khác trong báo cáo chưa được JOY duyệt nên chưa lên kế hoạch: ghi kết quả họp vào giao dịch và liên hệ trong CRM, công bố cấu trúc dữ liệu MCP của cuộc họp, và ứng dụng Slack riêng của Ludy.
+Dịch ghi chú trực tiếp, thư theo dõi đã dịch, chia sẻ bản dịch cho mọi người dự, biên bản đã dịch và các ngôn ngữ ngoài Việt-Anh (E3) cũng để sau. Ứng dụng máy tính; ứng dụng di động gốc; bot vào cuộc họp (không tự vào họp, không tự gửi tóm tắt cho mọi người được mời); Zoom RTMS và chép lời trực tiếp của Teams (chỉ theo dõi: giá RTMS và ai trả, tài liệu kỹ thuật của mục lộ trình RM570651, Google tắt Media API ngày 15/1/2027). Ba đề xuất khác trong báo cáo chưa được JOY duyệt nên chưa lên kế hoạch: ghi kết quả họp vào giao dịch và liên hệ trong CRM, công bố cấu trúc dữ liệu MCP của cuộc họp, và ứng dụng Slack riêng của Ludy.
 
 ## Thứ tự làm
 
@@ -69,13 +81,14 @@ Việc cần người thật (JOY): **C-OA1** (Google: phân loại quyền, quy
 3. B1 rồi B2; B4 và B5 làm lúc nào cũng được sau khi có cơ chế webhook của A6; B3 sau B1 và B-OA2.
 4. Nhóm C chờ mốc GA gate và chờ ứng dụng nền tảng đầu tiên; thứ tự theo nền tảng khách thí điểm dùng (báo cáo gợi ý Google, Zoom, Microsoft).
 
-## Bốn câu PO sẽ hỏi JOY một lần
+## Năm câu PO sẽ hỏi JOY một lần
 
 1. "Cần xác nhận trước khi ghi" (A2) có đúng là cài đặt làm chặt cách xác nhận như mô tả, hay JOY muốn điều gì mạnh hơn?
 2. Webhook của từng thành viên (A6) có chấp nhận được thay cho webhook của cả công ty không?
 3. Lịch Outlook (B3) có giữ ở P2 không, khi phạm vi sản phẩm xếp nó vào mức ít doanh nghiệp nhỏ dùng?
 4. ZNS (B6) nằm ở Icebox tới khi JOY quyết định chi tiền, đúng không?
+5. Bản dịch (nhóm E) riêng tư cho từng người đã bấm, ở bản đầu, thay vì một bản chung cho mọi người đọc; cách này tốn một lần dịch cho mỗi người nhưng không bao giờ để Vy của người này ghi chữ cho người khác đọc.
 
-Số issue: A1 #3159, A2 #3160, A3 #3161, A4 #3162, A5 #3163, A6 #3164; B1 #3165, B2 #3166, B3 #3167, B4 #3168, B5 #3169, B6 #3170, B-OA1 #3171, B-OA2 #3172; C1 #3173, C2 #3174, C3 #3175, C4 #3176, C-OA1 #3177, C-OA2 #3178, C-OA3 #3179; D1 #3180, D2 #3181, D-OA1 #3182. Chưa việc nào được nhận làm.
+Số issue: A1 #3159, A2 #3160, A3 #3161, A4 #3162, A5 #3163, A6 #3164; B1 #3165, B2 #3166, B3 #3167, B4 #3168, B5 #3169, B6 #3170, B-OA1 #3171, B-OA2 #3172; C1 #3173, C2 #3174, C3 #3175, C4 #3176, C-OA1 #3177, C-OA2 #3178, C-OA3 #3179; D1 #3180, D2 #3181, D-OA1 #3182; E1 #3184, E2 #3185, E3 #3186. Chưa việc nào được nhận làm.
 
 Danh sách đầy đủ các việc (A1 đến D-OA1, kèm tiêu chí nghiệm thu, tệp liên quan, mốc và độ ưu tiên) nằm ở [mục 11 của bản tiếng Anh](meetings-integrations.md#11-build-steps).

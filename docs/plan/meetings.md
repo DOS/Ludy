@@ -237,7 +237,7 @@ Step ids M1 to M11 and L1 to L5 name the steps of this plan, not the milestones 
 
 Each issue's acceptance says what Vy does on that screen, that the core works with AI off, and that a person approves every task.
 
-**Integrations (owner decision 2026-11-14):** the notice and consent kit, ask across meetings, minutes templates, enhance my notes and the approved-minutes webhook (group A), calendar and output channels (B), import from Google Meet, Zoom and Teams (C) and the extension on Edge (D) are planned in [meetings-integrations.md](meetings-integrations.md) (steps A1 to D-OA1, section 11 there). They are separate from the steps above and need no change to them.
+**Integrations (owner decision 2026-11-14):** the notice and consent kit, ask across meetings, minutes templates, enhance my notes and the approved-minutes webhook (group A), calendar and output channels (B), import from Google Meet, Zoom and Teams (C) and the extension on Edge (D) and translation of the transcript and the summary (E) are planned in [meetings-integrations.md](meetings-integrations.md) (steps A1 to E3, section 11 there). They are separate from the steps above and need no change to them.
 
 ### Follow-up email (L3, #2590)
 
@@ -270,7 +270,7 @@ No Meetings sub-session is running and no Meetings PR is open.
 
 **Icebox follow-ups:** #3125 (the live preview on the 30-day draft expiry), #3126 (assemble the live pieces when the final upload never arrives).
 
-**Integrations plan (2026-11-14):** [meetings-integrations.md](meetings-integrations.md) holds the build steps A1 to D-OA1 and their issues (research: [meetings-research.md](meetings-research.md)); none is claimed.
+**Integrations plan (2026-11-14):** [meetings-integrations.md](meetings-integrations.md) holds the build steps A1 to E3 and their issues (research: [meetings-research.md](meetings-research.md)); none is claimed.
 
 **To resume:** a new Meetings PO session reads this section and the issues above, then picks the first item a person has unblocked.
 
