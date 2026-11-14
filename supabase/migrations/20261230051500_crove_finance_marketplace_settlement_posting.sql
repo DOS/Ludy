@@ -6,7 +6,7 @@
 --                                              proposal posts once" a fact of the database, not only of the command. Such a voucher is no year closing, no close of a month of stock, no count
 --                                              and no pay run posting, and it names the proposal that approved it. The settlement is in the same schema, but the column carries no foreign key,
 --                                              like the voucher's other sources: the posting is the entry's own record and never blocks the settlement's purge.
--- The trigger and the ledger effect of the new command are in 20261228011600, its approval policy in 20261228011700 (the kernel's own migration: a finance migration touches no crove_kernel object).
+-- The trigger and the ledger effect of the new command are in 20261230051600, its approval policy in 20261230051700 (the kernel's own migration: a finance migration touches no crove_kernel object).
 SET LOCAL lock_timeout = '2s';
 
 ALTER TABLE crove_finance.journal_voucher ADD COLUMN IF NOT EXISTS settlement_id uuid;
