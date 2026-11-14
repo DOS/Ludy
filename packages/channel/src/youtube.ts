@@ -49,6 +49,7 @@ import { commentResult, editResult, removeResult } from './comment.ts';
 import { platformLink, RECENT_PAGES_MAX, RECENT_POSTS_MAX, recentSince } from './recent.ts';
 import { holdsLink } from './text.ts';
 import { allowlistedFetch, ConnectorError, type AuthorizeInput, type ExchangeInput, type Fetch, type OAuthConnector } from './oauth.ts';
+import { YouTubeConversations } from './youtube-conversation.ts';
 
 export const YOUTUBE_HOSTS = ['oauth2.googleapis.com', 'www.googleapis.com'] as const;
 export const YOUTUBE_SCOPES = ['https://www.googleapis.com/auth/youtube.upload', 'https://www.googleapis.com/auth/youtube.readonly'] as const;
@@ -367,10 +368,21 @@ export class YouTubePublisher implements Publisher {
   readonly publishSafety: RetrySafety = 'reconcile_only';
   // The PUT of up to 100 MB has 300 seconds of its own; the job waits a little longer, so the adapter sees its own abort.
   readonly callTimeoutMs = 420_000;
+  // The comments on the channel's own videos, in the conversation core (#3134).
+  readonly conversations: YouTubeConversations;
   private readonly client: GoogleClient;
 
   constructor(app: GoogleAppConfig, fetchImpl?: Fetch) {
     this.client = new GoogleClient(app, fetchImpl);
+    this.conversations = new YouTubeConversations({
+      call: async (method, url, token, options) => {
+        const answer = await this.client.call(method, url, token, options);
+        return { body: answer.body as never };
+      },
+      refusal: (error) => (error instanceof YouTubeError ? { status: error.status, reason: error.reason } : null),
+      token: (secret) => youtubeSecretOf(secret)?.accessToken ?? null,
+      quotaResetAt: () => youtubeQuotaResetAt(),
+    });
   }
 
   async publish(input: PublishInput): Promise<PublishResult> {
