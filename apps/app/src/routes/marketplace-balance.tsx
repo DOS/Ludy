@@ -2,7 +2,7 @@
 // The "Sàn" screen (#2516 slice D, plan docs/plan/stock-and-marketplaces.md section 8.4, "The payout"): where each platform's money stands in the books. Per platform of the chosen entity:
 // the sales posted to 131, what the platform has paid out, what it still owes (the difference) and the fees it kept whose invoice has not come (1388). Read only, from the ledger by the
 // platform's party; facts only and nothing to press. A platform appears once its first settlement is posted; until then the screen says so. Above the table the finance coworker's one line (slice E):
-// the facts read by code (stored settlements waiting to be posted, what the platforms owe, fees awaiting an invoice) always, and one checked sentence when a model is on. A draft the person acts on: it
+// the facts read by code (stored settlements waiting to be posted, posted settlements whose payout is not recorded, what the platforms owe, fees awaiting an invoice) always, and one checked sentence when a model is on. A draft the person acts on: it
 // posts nothing, and with AI off, busy, out of budget or refused the facts stand alone.
 import { useQuery } from '@tanstack/react-query';
 import { useLocale, useTranslations } from 'use-intl';
@@ -10,6 +10,7 @@ import type { MarketplaceFacts } from '@crove/kernel-contract';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
+import { MarketplaceActions } from '../components/marketplace-actions.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
 
@@ -19,7 +20,7 @@ const NUM = 'px-4 py-3 text-right tabular-nums';
 // is display only. With AI off, busy, out of budget or refused, the facts stand alone (the state is named in a few words).
 // Zero as the coworker is told it: whole dong, so less than half a dong is nothing (the same rule as packages/agent marketplace-line.ts).
 const ZERO = /^-?0*(\.[0-4]\d*)?$/;
-const sameFacts = (a: MarketplaceFacts, b: MarketplaceFacts) => a.settlementsToPost === b.settlementsToPost && a.awaitingPayout === b.awaitingPayout && a.feesAwaitingInvoice === b.feesAwaitingInvoice;
+const sameFacts = (a: MarketplaceFacts, b: MarketplaceFacts) => a.settlementsToPost === b.settlementsToPost && a.payoutsToMatch === b.payoutsToMatch && a.awaitingPayout === b.awaitingPayout && a.feesAwaitingInvoice === b.feesAwaitingInvoice;
 function CoworkerLine({ legalEntityId, ready }: { legalEntityId: string | undefined; ready: boolean }) {
   const t = useTranslations('marketplaceBalance');
   const f = useFormat();
@@ -43,6 +44,8 @@ function CoworkerLine({ legalEntityId, ready }: { legalEntityId: string | undefi
   }
   const parts: string[] = [];
   if (facts.data.settlementsToPost > 0) parts.push(t('lineSettlements', { count: String(facts.data.settlementsToPost) }));
+  // Counted by code beside the others; the coworker's sentence is not told it (the checks that keep the sentence to the facts bind three numbers).
+  if (facts.data.payoutsToMatch > 0) parts.push(t('linePayouts', { count: String(facts.data.payoutsToMatch) }));
   if (!ZERO.test(facts.data.awaitingPayout)) parts.push(t('lineAwaiting', { amount: f.money(facts.data.awaitingPayout) }));
   if (!ZERO.test(facts.data.feesAwaitingInvoice)) parts.push(t('lineFees', { amount: f.money(facts.data.feesAwaitingInvoice) }));
   // The sentence belongs to the facts it was written from: after the facts change (a settlement posted), an older answer is not shown beside the new figures.
@@ -78,6 +81,7 @@ export function MarketplaceBalancePage() {
     <>
       <PageHeader title={t('title')} subtitle={t('subtitle')} />
       <CoworkerLine legalEntityId={entity.legalEntityId} ready={entity.ready} />
+      <MarketplaceActions legalEntityId={entity.legalEntityId} ready={entity.ready} />
       {balance.isPending ? (
         <TableSkeleton columns={5} />
       ) : balance.error ? (
