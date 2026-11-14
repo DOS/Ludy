@@ -89,6 +89,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_vy_result',
   'crove_meetings.live_line',
   'crove_meetings.meeting_link',
+  'crove_meetings.translation',
   'crove_notes.link',
   'crove_notes.note',
 ]);
@@ -165,6 +166,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_meetings.meeting_result', () => 'false'], // As above (summaries and decisions, ADR-0047).
   ['crove_meetings.meeting_video', () => 'false'], // As above.
   ['crove_meetings.transcript_segment', () => 'false'], // As above (transcript segments, ADR-0047).
+  ['crove_meetings.translation', () => 'false'], // A machine translation, read by the member who asked for it, a user (meetings integrations E1, #3184).
   // Catalog 'read': the notes its member could read, own private and shared (the factory's private notes are the first owner's, not the member's, so only the shared ones).
   [
     'crove_notes.link',
@@ -245,6 +247,8 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_meetings.meeting_video', 'false'],
   // Meeting transcript segments (ADR-0047 point 2): worker system context reads and writes nothing.
   ['crove_meetings.transcript_segment', 'false'],
+  // A machine translation of a summary (meetings integrations E1, #3184): the asker's alone; worker system context reads and writes nothing.
+  ['crove_meetings.translation', 'false'],
   // A link reads through its parent: the system context sees the links of shared notes (the factory's parent).
   [
     'crove_notes.link',
@@ -2461,6 +2465,28 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           speaker_label: 'Người nói 1',
           text: 'Xin chào',
           stage: 'draft',
+        },
+      };
+    },
+  },
+  // #3184 (meetings integrations E1): the machine translation of a meeting's summary, private to the member who asked (the org's owner, who is the recorder of the factory's
+  // meeting); read, written and deleted by that member alone, so the system context reads none.
+  'crove_meetings.translation': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          meeting_id: meeting.id,
+          member_user_id: o.owner,
+          kind: 'summary',
+          target_language: 'en',
+          source_stage: 'draft',
+          source_hash: 'a'.repeat(64),
+          body: '[{"text":"RLS matrix translation","state":"ok","warnings":[]}]',
+          tainted: 'true',
         },
       };
     },
