@@ -74,6 +74,8 @@ export const AI_FEATURES = {
   'meetings.summary': 'meetings',
   // The member's Vy translating a meeting summary between Vietnamese and English (meetings integrations E1, #3184): one call over the summary, its decisions and item titles, the member waiting for it. A key of its own, so a translation never cuts off a transcription, a summary or live notes (#3029).
   'meetings.translate': 'meetings',
+  // The member's Vy answering one question across the meetings the member reads (meetings integrations A3, #3161): one call over at most 40 transcript lines the member's own search found, the member waiting for it. A key of its own, so a question never cuts off a transcription, a summary, a translation or live notes (#3029). Nothing of the answer is stored.
+  'meetings.ask': 'meetings',
 } as const satisfies Record<string, string>;
 export type AiFeature = keyof typeof AI_FEATURES;
 export const AI_FEATURE_KEYS = Object.keys(AI_FEATURES) as AiFeature[];

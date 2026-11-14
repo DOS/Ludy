@@ -19,4 +19,7 @@ export const MEMBER_VY_FEATURE_TABLE = {
   // The member's Vy translating the summary of a meeting between Vietnamese and English in the foreground (meetings integrations E1, #3184): one model call, the member waiting for it. Its own key, so it
   // never cuts off a transcription, a summary or live notes (#3029); any reader of the meeting may ask, for what they read.
   'meetings.translate': { module: 'meetings', expiryMinutes: 30 },
+  // The member's Vy answering one question across the meetings the member reads, a citation to a transcript line on every sentence (meetings integrations A3, #3161): one model call over at most 40 lines the
+  // member's own search found, the member waiting for it. Its own key, so it never cuts off a transcription, a summary, a translation or live notes (#3029); the run's result row holds counts only.
+  'meetings.ask': { module: 'meetings', expiryMinutes: 30 },
 } as const;

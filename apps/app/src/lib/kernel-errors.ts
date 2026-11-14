@@ -362,6 +362,9 @@ export const KERNEL_ERROR_CODES = [
   'TRANSLATE_RUNNING',
   'TRANSLATION_DONE',
   'TRANSLATION_TOO_LARGE',
+  // The member's Vy answering across meetings (Meetings A3, #3161).
+  'ASK_OFF',
+  'ASK_BUSY',
   'TRANSLATION_NOT_FOUND',
   'TRANSLATION_NOTHING',
   'TRANSLATION_RESULT_INVALID',
