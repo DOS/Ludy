@@ -72,6 +72,8 @@ export const meetingsManifest = defineModule({
         ['org_id', 'id', 'meeting_id', 'start_seconds', 'end_seconds', 'stage', 'corrected', 'tainted', 'source_run_id', 'created_at', 'updated_at'],
         { speaker_label: 'pii', text: 'pii', search: 'pii' },
       ),
+      // The machine translation of a meeting's summary (meetings integrations E1, #3184): private to the member who asked, tainted. The body (the translated text) is personal data.
+      translation: columns(['org_id', 'id', 'meeting_id', 'member_user_id', 'kind', 'target_language', 'source_stage', 'source_hash', 'tainted', 'source_run_id', 'created_at'], { body: 'pii' }),
     },
   },
   permissions: [],

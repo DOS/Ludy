@@ -39,6 +39,9 @@ export const MEMBER_VY_FEATURES = {
   // The running notes of a live-notes meeting (#3110): one model call over the new preview lines and the previous notes, the recorder's pane waiting for it. A run of its own,
   // because a member's Vy has one live run per feature and a window (meetings.live_notes) may be running.
   'meetings.live_summary': { module: 'meetings', expiryMinutes: 30 },
+  // The member's Vy translating the summary of a meeting in the foreground (meetings integrations E1, #3184): one model call, the member waiting for it, any reader for what they read; its own key, so it
+  // never cuts off a transcription, a summary or live notes (#3029).
+  'meetings.translate': { module: 'meetings', expiryMinutes: 30 },
 } as const;
 export type MemberVyFeature = keyof typeof MEMBER_VY_FEATURES;
 const FEATURE_KEYS = Object.keys(MEMBER_VY_FEATURES) as [MemberVyFeature, ...MemberVyFeature[]];

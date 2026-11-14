@@ -10,6 +10,8 @@ import { transcribeRunCommands, transcribeRunQueries } from './transcribe-run.ts
 import { resultCommands, resultQueries } from './results.ts';
 import { summaryCommands } from './summary.ts';
 import { summaryRunCommands, summaryRunQueries } from './summary-run.ts';
+import { translateCommands } from './translate.ts';
+import { translateRunCommands, translateRunQueries } from './translate-run.ts';
 import { linkCommands, linkQueries } from './links.ts';
 import { liveNotesCommands } from './live-notes.ts';
 import { liveRunCommands, liveRunQueries } from './live-run.ts';
@@ -981,6 +983,8 @@ export const meetingsCommands = [
   ...resultCommands,
   ...summaryCommands,
   ...summaryRunCommands,
+  ...translateCommands,
+  ...translateRunCommands,
   ...linkCommands,
   ...followupCommands,
   ...liveCommands,
@@ -1002,6 +1006,7 @@ export const meetingsQueries = [
   ...transcribeRunQueries,
   ...resultQueries,
   ...summaryRunQueries,
+  ...translateRunQueries,
   ...linkQueries,
   ...followupQueries,
   ...liveRunQueries,

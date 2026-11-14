@@ -16,4 +16,7 @@ export const MEMBER_VY_FEATURE_TABLE = {
   // The running notes of a live-notes meeting (#3110): one model call over the new preview lines and the previous notes, the recorder's pane waiting for it. A run of its own,
   // because a member's Vy has one live run per feature and a window (meetings.live_notes) may be running.
   'meetings.live_summary': { module: 'meetings', expiryMinutes: 30 },
+  // The member's Vy translating the summary of a meeting between Vietnamese and English in the foreground (meetings integrations E1, #3184): one model call, the member waiting for it. Its own key, so it
+  // never cuts off a transcription, a summary or live notes (#3029); any reader of the meeting may ask, for what they read.
+  'meetings.translate': { module: 'meetings', expiryMinutes: 30 },
 } as const;

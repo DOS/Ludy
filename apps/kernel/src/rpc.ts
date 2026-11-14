@@ -55,7 +55,7 @@ import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
 import { crmFollowupAi, draftCrmFollowup } from './crm-followup-ai.ts';
 import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
-import { runLiveNotes, runMeetingSummary, type ModelPort } from './member-vy-ports.ts';
+import { runLiveNotes, runMeetingSummary, runMeetingTranslation, translationStatusOf, type ModelPort } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems } from './stock-ai.ts';
 import { MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
@@ -331,6 +331,8 @@ export function createRpcHandler(
   conversationReader?: ConversationReader,
   // The recorder's Vy summarizing a meeting (#2580, M6 part B2): the deployment's model behind the member-Vy model port, or unset.
   summaryModel: ModelPort | null = null,
+  // The deployment's AI prices (AI_PRICE_*), for the cost a translation shows before the click.
+  aiPrice?: { inputPerMTok: string; outputPerMTok: string },
 ) {
   const os = implement(contract).$context<RpcContext>();
   // Vy's brief on Home has its own rate limit and one-at-a-time lock, so opening Home never makes a reply or post draft wait.
@@ -338,6 +340,8 @@ export function createRpcHandler(
   // Its model calls have a budget of their own (a few a minute for each member and for the org, one at a time for a member), apart from the reply drafts'.
   // A summary is a long call a member waits for: one at a time for a member, a few a minute.
   const summaries = new DraftBudget({ perUserPerMinute: 4, perOrgPerMinute: 20 });
+  // A translation is a shorter call than a summary and any reader may ask: its own budget, apart from the summaries'.
+  const translations = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
   const suggestionBudget = () => new DraftBudget({ perUserPerMinute: 12, perOrgPerMinute: 60 });
   const conversationAi: ConversationAi = { reader: conversationReader ?? null, intentBudget: suggestionBudget(), contactBudget: suggestionBudget(), cache: new IntentCache() };
   // The sales coworker's guess at the company a person works at (#2438) has a budget of its own, and the same reader and model.
@@ -961,6 +965,16 @@ export function createRpcHandler(
         summarize: os.meetings.results.summarize.handler(({ context, input }) =>
           inOrg(context, (orgId, actor) => runMeetingSummary({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
         ),
+      },
+      // The machine translation of the summary the member reads (meetings integrations E1, #3184): the member's own Vy, the answer theirs alone; see member-vy-ports.ts.
+      translation: {
+        status: os.meetings.translation.status.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => translationStatusOf({ runtime, price: aiPrice }, orgId, actor, input.meetingId, input.stage)),
+        ),
+        translate: os.meetings.translation.translate.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => runMeetingTranslation({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: translations, price: aiPrice }, orgId, actor, input.meetingId, input.stage)),
+        ),
+        get: os.meetings.translation.get.handler(meetingsQuery('meetings.translation.get')),
       },
       actionItems: {
         create: os.meetings.actionItems.create.handler(meetingsCommand('meetings.action_item.create')),

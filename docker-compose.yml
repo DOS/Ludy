@@ -143,7 +143,7 @@ services:
       AI_MODEL: ${AI_MODEL:-}
       # Speech to text for meeting notes (#2578): off unless MEETINGS_TRANSCRIBE=on with a provider; the meetings module works without it.
       MEETINGS_TRANSCRIBE: ${MEETINGS_TRANSCRIBE:-off}
-      # The recorder's Vy summarizing a meeting (#2580): off unless MEETINGS_SUMMARY=on; the meetings module works without it.
+      # The recorder's Vy summarizing a meeting (#2580), and any reader's Vy translating the summary they read (#3184): off unless MEETINGS_SUMMARY=on; the meetings module works without it.
       MEETINGS_SUMMARY: ${MEETINGS_SUMMARY:-off}
       # Meeting videos streamed at once by this process, over all members (3 each, or this many if it is lower); a request over it is told to retry (#2965).
       MEETINGS_VIDEO_STREAMS_MAX: ${MEETINGS_VIDEO_STREAMS_MAX:-64}

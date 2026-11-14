@@ -5,5 +5,6 @@
 export * from '../private-text.ts';
 export * from './features.ts';
 export * from './meeting-summary.ts';
+export * from './meeting-translation.ts';
 export * from './ports.ts';
 export * from './run-feature.ts';
