@@ -880,6 +880,14 @@ suite('meeting notes readers and permissions on PostgreSQL (#2575, ADR-0047)', (
     for (const fn of rows) {
       expect(fn.proconfig, `${fn.proname} must pin search_path to pg_catalog, pg_temp`).toContain('search_path=pg_catalog, pg_temp');
       expect(fn.hasPublicExec, `${fn.proname} must not grant EXECUTE to PUBLIC`).toBe(false);
+      // The door through which a member's own translation run reads the transcript lines that member reads (#3185, meetings E2, ADR-0049 stage B): the one definer of this schema that returns
+      // meeting text, accepted by its name and by its exact result (the id and the text of each line, and the meeting's language flag; no speaker, no time), and held to the two checks
+      // above like every other. It answers only inside a member's own run context (worker login, the run's own meeting, the member reading that stage); that is pinned by its own
+      // database test. A second function, or this one with another result, still fails below.
+      if (fn.proname === 'transcript_for_member_vy') {
+        expect(fn.rettype, `${fn.proname}: the door's result is exactly the line's id and text and a language flag`).toBe('TABLE(segment_id uuid, line_text text, is_english boolean)');
+        continue;
+      }
       const val = validateDefinerReturnType(fn.rettype);
       expect(val.ok, `${fn.proname}: ${val.reason}`).toBe(true);
     }
