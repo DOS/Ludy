@@ -2,7 +2,7 @@
 
 Decision: [ADR-0051](../adr/0051-vys-brain-is-a-dos-claw-agent-ludy-is-the-gate.md) decision 4. Tracking: issue #3024. The endpoint it complements: [the MCP endpoint](mcp-endpoint.md).
 
-What it is: an owner or admin gives one connected AI app (Settings, "Connected AI apps") an https address. Ludy then sends one signed `POST` there when something new needs attention, or on a daily or weekly schedule. The message only wakes the app up: it carries ids, dates and amounts, never a name, a note or a message. The app then reads what it needs through the [MCP endpoint](mcp-endpoint.md), with its own access, which reads (and, only if an owner allowed it on the consent page, writes Social post drafts that a person reviews). Ludy runs without it and sends nothing until an address is saved.
+What it is: an owner or admin gives one connected AI app (Settings, "Connected AI apps") an https address. Ludy then sends one signed `POST` there when something new needs attention, or on a daily or weekly schedule. The message only wakes the app up: it carries ids, dates and amounts, never a name, a note or a message. The app then reads what it needs through the [MCP endpoint](mcp-endpoint.md), with its own access, which reads (and, only if an owner or admin allowed it on the consent page, writes Social post drafts that a person reviews). Ludy runs without it and sends nothing until an address is saved.
 
 ## A member's own connected app
 
