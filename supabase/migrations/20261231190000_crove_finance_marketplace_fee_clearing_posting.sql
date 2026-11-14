@@ -7,7 +7,7 @@
 --                                                the command, under the platform's lock (the database cannot see the sum). The column carries no foreign key, like the voucher's other
 --                                                sources: the clearing is the entry's own record and never blocks the purge of what it names. Such a voucher is no settlement posting, no
 --                                                payout, no year closing, no close of a month of stock, no count and no pay run posting, and it names the proposal that approved it.
--- The trigger and the ledger effect of the new command are in 20261231190000, its approval policy in 20261231200000 (the kernel's own migration).
+-- The trigger and the ledger effect of the new command are in 20261231200000, its approval policy in 20261231210000 (the kernel's own migration).
 SET LOCAL lock_timeout = '2s';
 
 ALTER TABLE crove_finance.journal_voucher ADD COLUMN IF NOT EXISTS fee_document_id uuid;

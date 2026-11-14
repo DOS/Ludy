@@ -8,7 +8,7 @@
 //   that the period of the entry is open and the accounts usable, then returns the proposal. It writes nothing.
 // - finance.marketplace_fee_clearing.record (R3): runs only through kernel.proposal.approve. It builds the entry again, in the approver's context under the platform's lock, and refuses a stored
 //   proposal that differs from it. Then, in the same transaction, it records the voucher with the document on it and posts its entry. The database checks at commit that the proposal has such a voucher
-//   (crove_finance.ledger_effect_recorded, 20261231190000).
+//   (crove_finance.ledger_effect_recorded, 20261231200000).
 // An invoice may be cleared more than once, as the fees wait and payouts arrive: the sum of its standing clearings never exceeds its credit to 331, and a reversed clearing frees its amount. It works in
 // either order of arrival: the clearing is asked for once the payout (1388 up) and the invoice (331 up) both stand. No model call is made: everything here is deterministic over posted facts.
 import { sql } from 'kysely';
