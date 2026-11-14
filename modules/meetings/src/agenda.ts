@@ -184,6 +184,8 @@ export const agendaLink = defineCommand({
     const userId = userOf(ctx.actor);
     const row = await agendaOf(ctx.trx, ctx.orgId, userId).where('a.id', '=', input.agendaId).executeTakeFirst();
     if (!row) throw new DomainError('AGENDA_NOT_FOUND', 404, 'That calendar event is not in your calendar any more');
+    // An event linked to another meeting is not taken over silently (a stale address or a second tab): the member removes the old link first.
+    if (input.meetingId !== null && row.meeting_id !== null && row.meeting_id !== input.meetingId) throw new DomainError('AGENDA_EVENT_LINKED', 409, 'This calendar event is already linked to another meeting');
     if (input.meetingId !== null) {
       const meeting = await ctx.trx.selectFrom('crove_meetings.meeting').select('recorder_user_id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).executeTakeFirst();
       if (!meeting || meeting.recorder_user_id !== userId) throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');

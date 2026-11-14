@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { LIVE_CONNECTION_PER_MINUTE, LIVE_ORG_PER_MINUTE, createOrg, kernelCommands, kernelQueries, upsertIdentity, writeBackEventId, writeBackHash, type SealedCalendarCredential, type WriteBackAction } from '@crove/kernel';
-import { GOOGLE_CALENDAR_EVENTS_SCOPE, calendarBinding, isVietnamHoliday, weekdayOf, zonedDate, zonedInstant } from '@crove/kernel-contract';
+import { GOOGLE_CALENDAR_EVENTS_READ_SCOPE, GOOGLE_CALENDAR_EVENTS_SCOPE, calendarBinding, isVietnamHoliday, weekdayOf, zonedDate, zonedInstant } from '@crove/kernel-contract';
 import { CredentialVault, Runtime, parseVaultKey } from '@crove/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -552,6 +552,30 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     await admin((cl) => cl.query('UPDATE crove_kernel.calendar_connection SET scopes = $3 WHERE org_id = $1 AND id = $2', [o.orgId, on.connectionId, ['https://www.googleapis.com/auth/calendar.freebusy', GOOGLE_CALENDAR_EVENTS_SCOPE]]));
     await o.exec(o.member, 'kernel.calendar.write_back.set', { connectionId: on.connectionId, enabled: false });
     expect(await o.sysQuery<string[]>('kernel.calendar.writeback_connections', {})).toEqual([]);
+  });
+
+  it('the read of the member\'s meetings (B1, #3165): off by default, on only with the scope, kept by a reconnect only while the grant still carries the scope', async () => {
+    const o = await org();
+    const FREEBUSY = 'https://www.googleapis.com/auth/calendar.freebusy';
+    const state = async (id: string) => (await admin((cl) => cl.query<{ read_events: boolean }>('SELECT read_events FROM crove_kernel.calendar_connection WHERE org_id = $1 AND id = $2', [o.orgId, id]))).rows[0]?.read_events;
+    const first = await connect(o, o.member, undefined, undefined, [FREEBUSY]);
+    expect(await state(first.connectionId)).toBe(false);
+    // Without the scope the switch cannot go on, with its own code (not the write-back one).
+    await expect(o.exec(o.member, 'kernel.calendar.read_events.set', { connectionId: first.connectionId, enabled: true })).rejects.toMatchObject({ code: 'CALENDAR_READ_SCOPE_MISSING' });
+    // Connect again with the scope: still off (the member ticks it), then on.
+    const again = await connect(o, o.member, first.account, undefined, [FREEBUSY, GOOGLE_CALENDAR_EVENTS_READ_SCOPE]);
+    expect(again.connectionId).toBe(first.connectionId);
+    expect(await state(first.connectionId)).toBe(false);
+    await o.exec(o.member, 'kernel.calendar.read_events.set', { connectionId: first.connectionId, enabled: true });
+    expect(await state(first.connectionId)).toBe(true);
+    // A reconnect that keeps the scope keeps the switch; one that loses it turns the switch off.
+    await connect(o, o.member, first.account, undefined, [FREEBUSY, GOOGLE_CALENDAR_EVENTS_READ_SCOPE]);
+    expect(await state(first.connectionId)).toBe(true);
+    await connect(o, o.member, first.account, undefined, [FREEBUSY]);
+    expect(await state(first.connectionId)).toBe(false);
+    // Not another member's connection.
+    await connect(o, o.member, first.account, undefined, [FREEBUSY, GOOGLE_CALENDAR_EVENTS_READ_SCOPE]);
+    await expect(o.exec(o.owner, 'kernel.calendar.read_events.set', { connectionId: first.connectionId, enabled: true })).rejects.toBeTruthy();
   });
 
   it('counts failed attempts per piece of work: a booking that changed starts again after six failures, and so does a delete after a write', async () => {

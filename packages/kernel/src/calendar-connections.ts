@@ -785,7 +785,7 @@ export const calendarReadEventsSet = defineCommand({
     if (!row || row.user_id !== userId) throw new DomainError('CALENDAR_NOT_FOUND', 404, 'Không tìm thấy lịch đã kết nối này');
     if (input.enabled) {
       if (row.status !== 'active') throw new DomainError('CALENDAR_NOT_ACTIVE', 409, 'Lịch này không còn hoạt động, hãy kết nối lại');
-      if (!row.scopes.includes(GOOGLE_CALENDAR_EVENTS_READ_SCOPE)) throw new DomainError('CALENDAR_SCOPE_MISSING', 409, 'Hãy kết nối lại lịch này và cho phép Ludy đọc tên và giờ cuộc họp trong lịch');
+      if (!row.scopes.includes(GOOGLE_CALENDAR_EVENTS_READ_SCOPE)) throw new DomainError('CALENDAR_READ_SCOPE_MISSING', 409, 'Hãy kết nối lại lịch này và cho phép Ludy đọc tên và giờ cuộc họp trong lịch');
     }
     await ctx.trx.updateTable('crove_kernel.calendar_connection').set({ read_events: input.enabled }).where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).execute();
     ctx.audit({ connection_id: input.connectionId, provider: row.provider, read_events: input.enabled });

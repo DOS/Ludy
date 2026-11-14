@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Google Calendar free/busy against recorded answers (shapes from Google's Calendar API and OAuth docs); no live call.
 import { describe, expect, it } from 'vitest';
-import { ConnectorError, GOOGLE_CALENDAR_EVENTS_READ_SCOPE, GOOGLE_CALENDAR_EVENTS_SCOPE, GOOGLE_CALENDAR_FREEBUSY_SCOPE, GoogleCalendarAdapter, agendaEventOf, googleCalendarSecretOf, joinUrlOf, type Fetch } from '../src/index.ts';
+import { ConnectorError, GOOGLE_CALENDAR_EVENTS_READ_SCOPE, GOOGLE_CALENDAR_EVENTS_SCOPE, GOOGLE_CALENDAR_FREEBUSY_SCOPE, GoogleCalendarAdapter, agendaEventOf, googleCalendarSecretOf, joinUrlOf, titleOf, type Fetch } from '../src/index.ts';
 
 const APP = { clientId: '123456789-testclientid0001.apps.googleusercontent.com', clientSecret: 'test-google-secret-not-real' };
 const SECRET = JSON.stringify({ accessToken: 'ya29.token-1', refreshToken: '1//refresh-1' });
@@ -202,6 +202,19 @@ describe('GoogleCalendarAdapter', () => {
 });
 
 describe('GoogleCalendarAdapter, the member\'s own meetings (B1, #3165)', () => {
+  it('makes a title the database can hold: no NUL, no lone surrogate, no pair cut in half at 200', () => {
+    expect(titleOf('Họp\u0000 giao ban')).toBe('Họp giao ban');
+    expect(titleOf('a\uD83Db')).toBe('a\uFFFDb');
+    expect(titleOf('\uDE00')).toBe('\uFFFD');
+    // An emoji (two units) that would straddle the cut is dropped whole.
+    const edge = `${'x'.repeat(199)}😀`;
+    expect(titleOf(edge)).toBe('x'.repeat(199));
+    expect(titleOf(`${'x'.repeat(198)}😀`)).toBe(`${'x'.repeat(198)}😀`);
+    expect(JSON.parse(JSON.stringify(titleOf(edge)))).toBe('x'.repeat(199));
+    expect(titleOf(42)).toBe('');
+    expect(titleOf('Họp với khách A')).toBe('Họp với khách A');
+  });
+
   const EVENTS = 'GET www.googleapis.com/calendar/v3/calendars/primary/events';
   const FROM = new Date('2026-11-13T00:00:00Z');
   const TO = new Date('2026-11-21T00:00:00Z');

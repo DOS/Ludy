@@ -100,6 +100,12 @@ function ConnectionRow({
   );
 }
 
+// Connecting again grants exactly what is asked, so the plain button asks for the capabilities the member's Google connection already has (it must not drop write-back or the read of meetings).
+function keepOf(rows: readonly CalendarConnectionView[]): { writeBack?: boolean; readEvents?: boolean } {
+  const google = rows.find((c) => c.provider === 'google');
+  return { ...(google?.canWriteBack ? { writeBack: true } : {}), ...(google?.canReadEvents ? { readEvents: true } : {}) };
+}
+
 export function ExternalCalendars({ canEdit }: { canEdit: boolean }) {
   const t = useTranslations('workingHours');
   const providers = useQuery(orpc.calendar.providers.queryOptions());
@@ -141,7 +147,7 @@ export function ExternalCalendars({ canEdit }: { canEdit: boolean }) {
       {canEdit && offered.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-2">
           {offered.map((p) => (
-            <Button key={p} loading={start.isPending && start.variables?.provider === p} type="button" variant="outline" size="sm" disabled={start.isPending} onClick={() => start.mutate({ provider: p })}>
+            <Button key={p} loading={start.isPending && start.variables?.provider === p} type="button" variant="outline" size="sm" disabled={start.isPending} onClick={() => start.mutate({ provider: p, ...keepOf(rows) })}>
               {t('externalConnect', { provider: t(`externalProviders.${p}`) })}
             </Button>
           ))}

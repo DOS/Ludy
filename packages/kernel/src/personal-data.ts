@@ -328,7 +328,7 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_meetings.calendar_agenda.title': {
     kind: 'free_text',
     handling: 'erase',
-    reason: "The title of an event of a member's own calendar, which may name or describe a person: a cache of the next 7 days and the last day, read by that member alone, deleted at once when they switch the read off or disconnect the calendar, a day after the event ended at the next sync, with the meeting it is linked to and with the org",
+    reason: "The title of an event of a member's own calendar, which may name or describe a person: a cache of the next 7 days and the last day, read by that member alone, deleted at once when they switch the read off or disconnect the calendar, a day after the event ended at the next sync (a row the member linked to a meeting stays until that meeting goes), and with the org",
   },
   'crove_meetings.transcript_segment.speaker_label': {
     kind: 'free_text',

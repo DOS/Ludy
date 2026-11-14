@@ -182,6 +182,17 @@ const EVENTS_PAGE = 250;
 const EVENTS_FIELDS = 'nextPageToken,items(id,status,summary,start,end,hangoutLink,conferenceData(entryPoints(entryPointType,uri)),attendees(self,responseStatus,optional))';
 
 // One event of the answer as B1 keeps it, or null: an all-day event (it has no time to match a recording to), a cancelled one, one the member declined, or one without a usable id or time.
+// A title the database can hold: no NUL (JSON text with one is refused), no lone surrogate (it makes the whole JSON text invalid), cut at 200 units without splitting a pair. A title that would break
+// the replace would stop the member's whole cache refreshing, so it is made safe here rather than refused there.
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+export function titleOf(summary: unknown): string {
+  if (typeof summary !== 'string') return '';
+  const clean = summary.replaceAll('\u0000', '').replace(LONE_SURROGATE, '\uFFFD');
+  const cut = clean.slice(0, 200);
+  const last = cut.charCodeAt(cut.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
+}
+
 export function agendaEventOf(event: Record<string, unknown>): CalendarAgendaEvent | null {
   if (typeof event.id !== 'string' || event.id === '' || event.id.length > 1024 || event.status === 'cancelled') return null;
   const start = event.start as { dateTime?: unknown; timeZone?: unknown } | undefined;
@@ -197,7 +208,7 @@ export function agendaEventOf(event: Record<string, unknown>): CalendarAgendaEve
   const zone = typeof start.timeZone === 'string' && start.timeZone !== '' && start.timeZone.length <= 64 ? start.timeZone : 'UTC';
   return {
     id: event.id,
-    title: (typeof event.summary === 'string' ? event.summary : '').slice(0, 200),
+    title: titleOf(event.summary),
     startsAt: new Date(startMs).toISOString(),
     endsAt: new Date(endMs).toISOString(),
     timeZone: zone,

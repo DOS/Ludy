@@ -143,7 +143,7 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
 
   it("turns on only for the member's own active connection whose grant carries the events-read scope; a refusal leaves it as it was", async () => {
     const withoutScope = await connection('lan', ['https://www.googleapis.com/auth/calendar.freebusy']);
-    expect(await refuses(on('lan', withoutScope))).toBe('CALENDAR_SCOPE_MISSING');
+    expect(await refuses(on('lan', withoutScope))).toBe('CALENDAR_READ_SCOPE_MISSING');
     const mine = await connection('lan');
     // Another member (an admin included) cannot switch it: it is not found for them.
     for (const who of ['nam', 'admin', 'owner']) expect(await refuses(on(who, mine)), who).toBe('CALENDAR_NOT_FOUND');
@@ -304,6 +304,10 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
     expect(await refuses(exec('nam', 'meetings.agenda.link', { agendaId: x, meetingId: lanMeeting }))).toBe('MEETING_NOT_FOUND');
     expect(await exec('nam', 'meetings.agenda.link', { agendaId: x, meetingId: m })).toEqual({ agendaId: x, meetingId: m });
     expect(await refuses(exec('nam', 'meetings.agenda.link', { agendaId: y, meetingId: m }))).toBe('AGENDA_MEETING_LINKED');
+    // An event linked to a meeting is not taken over by another one; the old link goes first.
+    const m2 = await meeting('nam', 30);
+    expect(await refuses(exec('nam', 'meetings.agenda.link', { agendaId: x, meetingId: m2 }))).toBe('AGENDA_EVENT_LINKED');
+    expect((await cached(c)).find((r) => r.external_id === 'x')?.meeting_id).toBe(m);
     expect(await exec('nam', 'meetings.agenda.link', { agendaId: x, meetingId: null })).toEqual({ agendaId: x, meetingId: null });
     expect(await exec('nam', 'meetings.agenda.link', { agendaId: y, meetingId: m })).toMatchObject({ meetingId: m });
     // The row goes with the meeting.
