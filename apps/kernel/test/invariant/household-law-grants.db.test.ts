@@ -52,6 +52,14 @@ suite('household law and profile grants on PostgreSQL (#2517)', () => {
     await root.end();
   });
 
+  // A positive control: the same login reads what it may, so the refusals below cannot pass only because the role lost every grant. The law tables are seeded; the profile is
+  // tenant data, so a login with no org context sees none of it (RLS) but is not refused.
+  it.each(TABLES)('lets the tenant role read %s', async (table) => {
+    const { rowCount } = await client.query(`SELECT 1 FROM crove_finance.${table}`);
+    if (table === 'household_profile') expect(rowCount).toBe(0);
+    else expect(rowCount).toBeGreaterThan(0);
+  });
+
   it.each(TABLES)('refuses the tenant role an UPDATE of %s', async (table, column) => {
     await expect(client.query(`UPDATE crove_finance.${table} SET ${column} = ${column}`)).rejects.toMatchObject({ code: '42501' });
   });
