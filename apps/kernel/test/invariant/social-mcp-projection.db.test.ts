@@ -21,7 +21,6 @@ const suite = ADMIN ? describe : describe.skip;
 
 const POST_KEYS = ['actorOrigin', 'channels', 'createdAt', 'id', 'linkUrl', 'origin', 'plannedAt', 'revision', 'status', 'tainted', 'text', 'textTruncated', 'timeZone', 'title', 'updatedAt'];
 const CHANNEL_KEYS = ['at', 'channelName', 'connectionId', 'errorCode', 'linkUrl', 'provider', 'publishedAt', 'publishedUrl', 'status', 'submittedAt', 'takenDown', 'text', 'textTruncated', 'title', 'variantId'];
-// A character a person cannot see or that breaks the line, but a model reads: none may reach the client.
 const HOUR = 3_600_000;
 
 interface Channel {
@@ -191,12 +190,15 @@ suite('the privacy pins of the Social MCP reads (#3227)', () => {
   it('returns a post and a channel with exactly the named keys', async () => {
     const got = await posts({ limit: 50 });
     expect(got.posts.length).toBeGreaterThan(0);
+    // A channel case that cannot pass vacuously: posts with channels are in the fixture and are checked below.
+    expect(got.posts.flatMap((p) => p.channels).length).toBeGreaterThan(0);
     for (const p of got.posts) {
       expect(Object.keys(p).sort()).toEqual(POST_KEYS);
       for (const c of p.channels) expect(Object.keys(c).sort()).toEqual(CHANNEL_KEYS);
     }
     const waiting = await queue({ limit: 50 });
     expect(waiting.inReview.length + waiting.aiDrafts.length).toBeGreaterThan(0);
+    expect([...waiting.inReview, ...waiting.aiDrafts].flatMap((p) => p.channels).length).toBeGreaterThan(0);
     for (const p of [...waiting.inReview, ...waiting.aiDrafts]) {
       expect(Object.keys(p).sort()).toEqual(POST_KEYS);
       for (const c of p.channels) expect(Object.keys(c).sort()).toEqual(CHANNEL_KEYS);
