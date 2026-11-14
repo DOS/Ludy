@@ -40,6 +40,8 @@ test.describe('screen titles, skip link and focus on navigation (#2115)', () => 
   test.beforeEach(async ({ page }) => {
     await signInNewUser(page, newEmail('screen-titles'));
     slug = await createOrg(page, 'Công ty Tiêu đề');
+    // A new org opens on the overview (#3225); the uploads are on the Inbox.
+    await page.goto(page.url().replace(/\/overview$/, '/inbox'));
     await page.locator('input[type=file]').setInputFiles(INVOICE);
     await expect(page.getByRole('link', { name: SELLER })).toBeVisible({ timeout: 90_000 });
     proposal = new URL((await page.getByRole('link', { name: SELLER }).getAttribute('href')) ?? '', page.url()).pathname;

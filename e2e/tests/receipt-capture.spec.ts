@@ -59,6 +59,8 @@ test('photograph receipts on a phone: the camera opens, each photo is its own fi
     await page.goto('/');
     await signUp(page, newEmail('capture'));
     const created = await createOrg(page, 'Công ty chụp hóa đơn');
+    // A new org opens on the overview (#3225); the uploads are on the Inbox.
+    await page.goto(page.url().replace(/\/overview$/, '/inbox'));
     await expect(page.getByRole('heading', { name: 'Chứng từ chờ duyệt' })).toBeVisible();
     return created;
   });

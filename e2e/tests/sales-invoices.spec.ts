@@ -12,7 +12,7 @@ test('reads the test series, drafts a sales invoice with the amounts computed by
   const nav = page.getByRole('navigation');
 
   await test.step('the screen starts with no series and no draft', async () => {
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Hóa đơn bán ra' }).click();
     await expect(page.getByRole('heading', { name: 'Hóa đơn bán ra' })).toBeVisible();
     await expect(page.getByTestId('invoice-no-series')).toContainText('Chưa có ký hiệu hóa đơn');

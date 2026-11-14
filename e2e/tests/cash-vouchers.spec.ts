@@ -15,7 +15,7 @@ test('enter a bank debit note, approve it and find it numbered in the books', as
   const slug = await createOrg(page, 'Công ty Thu Chi');
 
   await test.step('enter the voucher on the cash and bank screen', async () => {
-    await page.getByRole('navigation').getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
     await page.getByRole('navigation').getByRole('link', { name: 'Thu chi' }).click();
     await expect(page.getByRole('heading', { name: 'Thu chi' })).toBeVisible();
     await expect(page.getByText('Chưa có chứng từ thu chi nào được ghi sổ.')).toBeVisible();
@@ -48,7 +48,7 @@ test('enter a bank debit note, approve it and find it numbered in the books', as
   });
 
   await test.step('the voucher is numbered BN00001, posted, and in the journal', async () => {
-    await page.getByRole('navigation').getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
     await page.getByRole('navigation').getByRole('link', { name: 'Thu chi' }).click();
     const row = page.getByRole('row').filter({ hasText: 'BN00001' });
     await expect(row).toContainText('Giấy báo Nợ');
@@ -60,7 +60,7 @@ test('enter a bank debit note, approve it and find it numbered in the books', as
   });
 
   await test.step('the MISA exports download from the cash and bank screen: the bank note only in the báo Nợ file', async () => {
-    await page.getByRole('navigation').getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
     await page.getByRole('navigation').getByRole('link', { name: 'Thu chi' }).click();
     // The báo Nợ (voucher BN00001) is a row of its own file (header and one row); the other three files hold no voucher.
     for (const [button, file, sheet, rows] of [

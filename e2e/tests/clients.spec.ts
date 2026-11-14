@@ -12,6 +12,8 @@ test('an accountant sees every company on one screen and opens one with a click'
   await page.goto('/');
   await signInNewUser(page, newEmail('clients'));
   const first = await createOrg(page, 'Công ty An Bình');
+  // A new org opens on the overview (#3225); the uploads are on the Inbox.
+  await page.goto(page.url().replace(/\/overview$/, '/inbox'));
 
   await test.step('the first company files quarterly and has an invoice waiting', async () => {
     await page.locator('input[type=file]').setInputFiles(INVOICE);
@@ -43,7 +45,7 @@ test('an accountant sees every company on one screen and opens one with a click'
 
   await test.step('one click opens a company, and the sidebar leads back', async () => {
     await page.getByRole('link', { name: 'Công ty Bình Minh' }).click();
-    await expect(page).toHaveURL(new RegExp(`/o/${second}/inbox$`));
+    await expect(page).toHaveURL(new RegExp(`/o/${second}/overview$`));
     await page.getByRole('complementary').getByRole('link', { name: 'Tất cả doanh nghiệp' }).click();
     await expect(page).toHaveURL(/\/clients$/);
     await page.getByRole('row').filter({ hasText: 'Công ty An Bình' }).getByRole('link', { name: '1', exact: true }).click();

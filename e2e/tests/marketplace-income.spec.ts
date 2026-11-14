@@ -28,6 +28,8 @@ test('an income report waits as a card, is confirmed by a person; one naming unk
   await page.goto('/');
   await signUp(page, newEmail('marketplace-income'));
   await createOrg(page, 'Công ty bán trên sàn');
+  // A new org opens on the overview (#3225); the uploads are on the Inbox.
+  await page.goto(page.url().replace(/\/overview$/, '/inbox'));
   await expect(page.getByRole('heading', { name: 'Chứng từ chờ duyệt' })).toBeVisible();
   const upload = (name: string, buffer: Uint8Array) => page.locator('input[type=file]').setInputFiles({ name, mimeType: XLSX, buffer: Buffer.from(buffer) });
   const noBuyer = async () => {

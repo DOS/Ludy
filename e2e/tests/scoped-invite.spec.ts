@@ -51,7 +51,7 @@ test('an owner invites an outside accountant for one legal entity', async ({ pag
   await signUp(memberPage, member);
   await memberPage.goto(link);
   await memberPage.getByRole('button', { name: 'Chấp nhận lời mời' }).click();
-  await expect(memberPage).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
+  await expect(memberPage).toHaveURL(new RegExp(`/o/${slug}/overview$`));
   await memberContext.close();
 
   // The owner sees the new member holding the outside accountant role for that entity.

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// "Connected AI apps" in Settings (ADR-0051 decision 2, issue #2975): for owners and admins, the MCP clients that were given read access to this org, each with
+// "AI connections" in Ludy AI (was in Settings before #3225) (ADR-0051 decision 2, issue #2975): for owners and admins, the MCP clients that were given read access to this org, each with
 // a one-click disconnect and, per client, an optional signed wake-up webhook (OrgMcpWake). A member sees only their own connections; an owner also holds the org's
 // switch for member-bound connections (off by default). The kernel lists and revokes with kernel.mcp.grant.list and revoke and never returns a token; a disconnected client is refused on its next
 // request (its tokens stop at once) and the revoke writes an audit row. The name a client shows is the one it gave itself. No AI takes part on this screen.
