@@ -1059,8 +1059,11 @@ export const MEETING_LANGUAGES = ['vi', 'en'] as const;
 export type MeetingLanguage = (typeof MEETING_LANGUAGES)[number];
 export const MEETING_STATUSES = ['ready', 'processing', 'completed', 'error'] as const;
 export type MeetingStatus = (typeof MEETING_STATUSES)[number];
-export const MEETING_CONSENT_METHODS = ['told_at_start', 'in_invite', 'in_writing'] as const;
+export const MEETING_CONSENT_METHODS = ['told_at_start', 'in_invite', 'in_writing', 'in_call_chat'] as const;
 export type MeetingConsentMethod = (typeof MEETING_CONSENT_METHODS)[number];
+// Why a recording stopped without the recorder's own click (A1, #3159): a code, never text.
+export const MEETING_RECORDING_STOP_REASONS = ['tab_closed', 'mic_lost', 'permission_lost', 'storage_full', 'left_screen', 'unknown'] as const;
+export type MeetingRecordingStopReason = (typeof MEETING_RECORDING_STOP_REASONS)[number];
 
 export type MeetingsMeetingTable = Refine<
   G.MeetingsMeetingTable,
@@ -1069,6 +1072,7 @@ export type MeetingsMeetingTable = Refine<
     language: Generated<MeetingLanguage>;
     status: Generated<MeetingStatus>;
     consent_method: MeetingConsentMethod;
+    recording_stop_reason: ColumnType<MeetingRecordingStopReason | null, MeetingRecordingStopReason | null | undefined, MeetingRecordingStopReason | null>;
   }
 >;
 

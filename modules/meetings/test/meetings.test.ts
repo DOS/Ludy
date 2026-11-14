@@ -115,6 +115,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.meeting.list',
       'meetings.meeting.get',
       'meetings.meeting.extension_status',
+      'meetings.meeting.recording_now',
       'meetings.meeting.audio_read',
       'meetings.meeting.video_read',
       'meetings.meeting.media_meta',

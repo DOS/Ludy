@@ -9,6 +9,8 @@ export interface Upload {
   kind: string | null;
   fileType: string | null;
   bytes: number;
+  // The code the extension said the recording stopped by itself with (A1, #3159), or null.
+  stopReason: string | null;
 }
 
 export interface FakeLudy {
@@ -67,6 +69,7 @@ export async function startFakeLudy(): Promise<FakeLudy> {
           kind: url.searchParams.get('kind'),
           fileType: req.headers['content-type'] ?? null,
           bytes: body.length,
+          stopReason: url.searchParams.get('stopReason'),
         });
         return json({ fileId: 'f1' });
       }

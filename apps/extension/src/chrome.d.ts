@@ -50,6 +50,7 @@ declare namespace chrome {
   }
   namespace action {
     function setBadgeText(details: { text: string }): Promise<void>;
+    function getBadgeText(details: object): Promise<string>;
     function setBadgeBackgroundColor(details: { color: string }): Promise<void>;
     function setTitle(details: { title: string }): Promise<void>;
   }
