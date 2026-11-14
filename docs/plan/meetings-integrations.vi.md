@@ -76,4 +76,6 @@ Việc cần người thật (JOY): **C-OA1** (Google: phân loại quyền, quy
 3. Lịch Outlook (B3) có giữ ở P2 không, khi phạm vi sản phẩm xếp nó vào mức ít doanh nghiệp nhỏ dùng?
 4. ZNS (B6) nằm ở Icebox tới khi JOY quyết định chi tiền, đúng không?
 
+Số issue: A1 #3159, A2 #3160, A3 #3161, A4 #3162, A5 #3163, A6 #3164; B1 #3165, B2 #3166, B3 #3167, B4 #3168, B5 #3169, B6 #3170, B-OA1 #3171, B-OA2 #3172; C1 #3173, C2 #3174, C3 #3175, C4 #3176, C-OA1 #3177, C-OA2 #3178, C-OA3 #3179; D1 #3180, D2 #3181, D-OA1 #3182. Chưa việc nào được nhận làm.
+
 Danh sách đầy đủ các việc (A1 đến D-OA1, kèm tiêu chí nghiệm thu, tệp liên quan, mốc và độ ưu tiên) nằm ở [mục 11 của bản tiếng Anh](meetings-integrations.md#11-build-steps).
