@@ -304,6 +304,38 @@ test('a recording whose tab ends by itself uploads what it has with the reason c
   expect(fake.uploads[0]).toMatchObject({ kind: 'audio', stopReason: 'tab_closed' });
 });
 
+// A2 (#3160): a strict org refuses a consent method that is not written; the capture reports it as its own failure, opens no recording
+// and leaves nothing on the device, and a written method works.
+test('a strict org refuses "said at the start" and accepts a written method', async () => {
+  fake.created.length = 0;
+  fake.strict = true;
+  const page = await context.newPage();
+  await page.goto(`chrome-extension://${extensionId}/offscreen.html`);
+  const outcome = await page.evaluate(
+    async ([base, address]) => {
+      const run = (await import(`${base}capture-run.js`)) as typeof import('../src/capture-run.ts');
+      const deps = run.browserDeps();
+      deps.getTabStream = async () => {
+        const context = new AudioContext();
+        const out = context.createMediaStreamDestination();
+        context.createOscillator().connect(out);
+        return new MediaStream(out.stream.getAudioTracks());
+      };
+      const params = { address, token: 'crx_test', orgId: 'org1', uploads: 'direct', title: 'Họp nghiêm', consentMethod: 'told_at_start', consentAgreed: true, keepVideo: false, liveNotes: false, streamId: 'fake' } as const;
+      const refused = await run.startCapture(params, deps);
+      const written = await run.startCapture({ ...params, consentMethod: 'in_call_chat' }, deps);
+      if (written.ok) await written.running.stop();
+      return { refused: refused.ok ? 'started' : refused.reason, written: written.ok };
+    },
+    [`chrome-extension://${extensionId}/`, fake.origin] as const,
+  );
+  await page.close();
+  fake.strict = false;
+  expect(outcome).toEqual({ refused: 'consentPolicy', written: true });
+  expect(fake.created).toHaveLength(1);
+  expect(fake.created[0]).toMatchObject({ consentMethod: 'in_call_chat' });
+});
+
 test('a stop the member asks for carries no reason code', async () => {
   fake.uploads.length = 0;
   expect(await record(false)).toMatchObject({ ok: true, uploaded: true });

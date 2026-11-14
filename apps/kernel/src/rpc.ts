@@ -953,6 +953,10 @@ export function createRpcHandler(
         get: os.meetings.settings.get.handler(meetingsQuery('meetings.settings.get')),
         set: os.meetings.settings.set.handler(meetingsCommand('meetings.settings.set')),
       },
+      consentPolicy: {
+        get: os.meetings.consentPolicy.get.handler(meetingsQuery('meetings.consent_policy.get')),
+        set: os.meetings.consentPolicy.set.handler(meetingsCommand('meetings.consent_policy.set')),
+      },
       search: os.meetings.search.handler(meetingsQuery('meetings.search')),
       transcript: {
         get: os.meetings.transcript.get.handler(meetingsQuery('meetings.transcript.get')),

@@ -342,6 +342,8 @@ import {
   zLiveStopped,
   zLiveTick,
   zLiveTicked,
+  zMeetingConsentPolicy,
+  zMeetingConsentPolicyGet,
   zMeetingExtensionStatus,
   zMeetingRecordingNow,
   zMeetingRecordingNowInput,
@@ -916,6 +918,11 @@ export const contract = {
     settings: {
       get: oc.input(zMeetingSettingsGet).output(zMeetingSettings),
       set: oc.input(zMeetingSettingsSet).output(zMeetingSettings),
+    },
+    // "Cần xác nhận trước khi ghi" (A2, #3160): standard or strict; every member reads it, an owner or admin changes it.
+    consentPolicy: {
+      get: oc.input(zMeetingConsentPolicyGet).output(zMeetingConsentPolicy),
+      set: oc.input(zMeetingConsentPolicy).output(zMeetingConsentPolicy),
     },
     // Search across the transcript lines the caller reads (L2, #2589): plain folded text search, no model call.
     search: oc.input(zMeetingSearchInput).output(zMeetingSearchResult),

@@ -167,7 +167,7 @@ suite('meetings module database integration tests (#2576)', () => {
     return { status: response.status, body };
   }
 
-  async function join(name: string, role: 'member' | 'viewer') {
+  async function join(name: string, role: 'member' | 'viewer' | 'admin') {
     await token(name);
     const email = accounts.get(name)?.email;
     const invited = await rpc('org/invite', 'owner', { email, role }, slug, true);
@@ -1401,5 +1401,57 @@ suite('meetings module database integration tests (#2576)', () => {
     });
     expect(video.status).toBe(200);
     expect((await rpc('meetings/recordingNow', 'recorder', {})).body.recording).toBeNull();
+  });
+
+  // Meetings A2 (#3160): the org setting "consent required before recording".
+  const createWith = (who: string, consentMethod: string, title: string) => rpc('meetings/create', who, { title, consentMethod });
+  const meetingCount = async () => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_meetings.meeting')).rows[0]?.n));
+
+  it('24. A2: the consent policy is standard by default, every member reads it, only an owner or admin changes it, and the audit holds codes only', async () => {
+    expect((await rpc('meetings/consentPolicy/get', 'recorder', {})).body).toEqual({ policy: 'standard' });
+    expect((await rpc('meetings/consentPolicy/get', 'viewer', {})).status).toBe(403);
+    // A member and a viewer cannot change it.
+    expect((await rpc('meetings/consentPolicy/set', 'recorder', { policy: 'strict' })).status).toBe(403);
+    expect((await rpc('meetings/consentPolicy/set', 'viewer', { policy: 'strict' })).status).toBe(403);
+    expect((await rpc('meetings/consentPolicy/get', 'owner', {})).body.policy).toBe('standard');
+    // An unknown value is refused.
+    expect((await rpc('meetings/consentPolicy/set', 'owner', { policy: 'lax' })).status).toBe(400);
+    // The owner sets it, and sets it back.
+    expect((await rpc('meetings/consentPolicy/set', 'owner', { policy: 'strict' })).body).toEqual({ policy: 'strict' });
+    expect((await rpc('meetings/consentPolicy/get', 'recorder', {})).body.policy).toBe('strict');
+    expect((await rpc('meetings/consentPolicy/set', 'owner', { policy: 'standard' })).status).toBe(200);
+    const audits = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'meetings.consent_policy.set' AND outcome = 'ok' ORDER BY occurred_at`)).rows.map((r) => r.detail));
+    expect(audits).toEqual([expect.objectContaining({ policy: 'strict', previous: 'standard' }), expect.objectContaining({ policy: 'standard', previous: 'strict' })]);
+    // Codes only: exactly these keys, nothing free-form beside them.
+    for (const detail of audits) expect(Object.keys(detail).filter((k) => !['extensionToken', 'requestId'].includes(k)).sort()).toEqual(['policy', 'previous']);
+    // An admin may change it too, and a member may not.
+    await join('adminUser', 'admin');
+    expect((await rpc('meetings/consentPolicy/set', 'adminUser', { policy: 'strict' })).body).toEqual({ policy: 'strict' });
+    expect((await rpc('meetings/consentPolicy/set', 'recorder', { policy: 'standard' })).status).toBe(403);
+    expect((await rpc('meetings/consentPolicy/set', 'adminUser', { policy: 'standard' })).status).toBe(200);
+  });
+
+  it('25. A2: a strict org refuses a meeting whose consent method is not written, creates nothing, and a change applies only to meetings created afterwards', async () => {
+    // Made under standard: stays valid when the org turns strict.
+    const early = await createWith('recorder', 'told_at_start', 'Created before strict');
+    expect(early.status).toBe(200);
+    expect((await rpc('meetings/consentPolicy/set', 'owner', { policy: 'strict' })).status).toBe(200);
+    try {
+      const before = await meetingCount();
+      const refused = await createWith('recorder', 'told_at_start', 'Said at the start');
+      expect(refused.status).toBe(422);
+      expect(refused.body.code).toBe('CONSENT_METHOD_NOT_ALLOWED');
+      expect(await meetingCount()).toBe(before);
+      // The written methods are accepted.
+      for (const method of ['in_invite', 'in_writing', 'in_call_chat']) expect((await createWith('recorder', method, `Written ${method}`)).status).toBe(200);
+      // The recorder screen, the extension and the upload form all create their meeting through this one command, so the owner meets the same rule.
+      expect((await createWith('owner', 'told_at_start', 'Owner said it')).status).toBe(422);
+      // The meeting made before the change still takes its audio.
+      expect((await uploadRaw(String(early.body.meetingId), '?kind=audio')).status).toBe(200);
+    } finally {
+      expect((await rpc('meetings/consentPolicy/set', 'owner', { policy: 'standard' })).status).toBe(200);
+    }
+    // Back to standard: every method again.
+    expect((await createWith('recorder', 'told_at_start', 'Said at the start again')).status).toBe(200);
   });
 });

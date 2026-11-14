@@ -1711,6 +1711,24 @@ export const en = {
       left_screen: 'The recording screen was left.',
       unknown: 'The browser or the device stopped recording.',
     },
+    // "Consent required before recording" (A2, #3160).
+    consentPolicy: {
+      title: 'Consent required before recording',
+      hint: 'Choose how Ludy counts that participants were told the meeting is recorded. A change applies only to meetings created afterwards; meetings already created stay as they are.',
+      label: 'Accepted ways of telling people',
+      choice: {
+        standard: 'Standard',
+        strict: 'Strict: written notice only',
+      },
+      explain: {
+        standard: 'Every way of telling people is accepted, including saying it at the start of the meeting.',
+        strict: 'The recorder must pick a written way: pasting the notice in the call chat, stating it in the invitation, or notifying in writing. "Said at the start" alone is refused, for a recording in the app, with the extension, or an uploaded file.',
+      },
+      save: 'Save',
+      saved: 'Consent policy saved.',
+      adminOnly: 'Only an owner or an admin can change this.',
+      strictNote: 'Your organization accepts only a written notice, so "said at the start" is not offered.',
+    },
     // The header chip while this member records, in the app or with the extension (A1, #3159).
     chip: {
       recording: 'Recording {time}',
@@ -9344,6 +9362,7 @@ export const en = {
       AUDIO_NOT_FOUND: 'This meeting has no audio recording.',
       INVALID_PURPOSE: 'This file cannot be uploaded for the purpose chosen.',
       MEDIA_RETENTION_PASSED: 'The period this meeting was to be kept has ended, so no new audio or video is accepted.',
+      CONSENT_METHOD_NOT_ALLOWED: 'This organization accepts only a written notice: choose pasting the notice in the call chat, stating it in the invitation or notifying in writing.',
       MEETING_SETTINGS_INVALID: 'A kept video cannot be kept longer than the audio.',
       FILE_TOO_LARGE: 'The uploaded meeting file exceeds the maximum allowed size (300 MB for audio, 2 GB for video).',
       TODO_NOT_FOUND: 'This to-do was not found.',
@@ -11050,6 +11069,10 @@ export const en = {
       },
       media_key: {
         reseal: 'Reseal a meeting media key after a key rotation',
+      },
+      consent_policy: {
+        get: 'Read the consent policy of meetings',
+        set: 'Change the consent policy of meetings',
       },
       retention: {
         shred: 'Shred meeting audio or video, or delete a meeting, at its retention date',

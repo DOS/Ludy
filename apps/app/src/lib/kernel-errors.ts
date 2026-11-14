@@ -352,6 +352,8 @@ export const KERNEL_ERROR_CODES = [
   // Retention (#2579).
   'MEDIA_RETENTION_PASSED',
   'MEETING_SETTINGS_INVALID',
+  // A strict org accepts only a written consent method (A2, #3160).
+  'CONSENT_METHOD_NOT_ALLOWED',
   // A member's own to-dos (#1673).
   'TODO_NOT_FOUND',
   'TODO_IN_TRASH',

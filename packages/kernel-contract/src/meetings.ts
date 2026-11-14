@@ -275,6 +275,17 @@ export type MeetingSettingsSet = z.infer<typeof zMeetingSettingsSet>;
 
 export const zMeetingSettingsGet = z.strictObject({});
 
+// The org setting "Cần xác nhận trước khi ghi" (Meetings A2, #3160): `standard` accepts any consent method (today); `strict` accepts only a written
+// one (WRITTEN_CONSENT_METHODS), so "said at the start" alone is refused when a meeting is created. A change applies to meetings created afterwards.
+export const MEETING_CONSENT_POLICIES = ['standard', 'strict'] as const;
+export type MeetingConsentPolicy = (typeof MEETING_CONSENT_POLICIES)[number];
+export const zMeetingConsentPolicyValue = z.enum(MEETING_CONSENT_POLICIES);
+export const WRITTEN_CONSENT_METHODS: readonly ConsentMethod[] = ['in_invite', 'in_writing', 'in_call_chat'];
+export const consentMethodAllowed = (policy: MeetingConsentPolicy, method: ConsentMethod): boolean => policy === 'standard' || WRITTEN_CONSENT_METHODS.includes(method);
+export const zMeetingConsentPolicyGet = z.strictObject({});
+export const zMeetingConsentPolicy = z.strictObject({ policy: zMeetingConsentPolicyValue });
+export type MeetingConsentPolicyState = z.infer<typeof zMeetingConsentPolicy>;
+
 // System commands of the nightly retention and the shred replay (worker only).
 export const zMeetingRetentionShred = z.strictObject({
   meetingId: zId,
