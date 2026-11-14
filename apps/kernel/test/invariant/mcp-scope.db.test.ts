@@ -52,12 +52,16 @@ const SIGNALS = [
   'kernel.mcp.signals:ludy.read',
 ];
 
+// The one command an MCP grant may run (#3227, step 3, owner decision 2026-11-14: one new write scope and exactly one command, "create a draft post for a person to review"). Optional here so
+// the runtime and the command can land after this test accepts them: until then no command carries `mcp`. Any other command that carries it, or this one with another scope, fails.
+const WRITES = ['social.mcp.draft_create:ludy.social.draft'];
 const commands = [...kernelCommands, ...financeCommands, ...meetingsCommands, ...socialCommands, ...adsCommands, ...crmCommands, ...hrCommands, ...notesCommands];
 const queries = [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries, ...meetingsQueries, ...socialQueries, ...adsQueries, ...crmQueries, ...hrQueries, ...notesQueries];
 
 describe('which definitions an MCP grant can reach (#2975)', () => {
-  it('has no command that carries `mcp`', () => {
-    expect(commands.filter((c) => (c as { mcp?: unknown }).mcp !== undefined).map((c) => c.name)).toEqual([]);
+  it('has no command that carries `mcp` but the ones WRITES names, each with its scope', () => {
+    const carrying = commands.filter((c) => (c as { mcp?: unknown }).mcp !== undefined).map((c) => `${c.name}:${(c as { mcp: { scope: string } }).mcp.scope}`);
+    expect(carrying.filter((n) => !WRITES.includes(n))).toEqual([]);
   });
 
   it('pins the queries that carry `mcp`, and none is sensitive, streamed, role-less or open to member mode or an extension token', () => {
