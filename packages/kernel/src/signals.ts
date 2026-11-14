@@ -309,6 +309,10 @@ export function conversationUnansweredQuery(options: { now?: () => Date } = {}) 
     access: ALL,
     // Declared to an AI app like the other rules (ADR-0051, #2975): it only joins two reads and returns message keys, ids and hours. For a grant it answers nothing and ludy_signals names it unchecked.
     mcp: { scope: 'ludy.read' },
-    handler: async (ctx): Promise<TodayItem[]> => (await checkConversationUnanswered(ctx, options.now)).items,
+    handler: async (ctx): Promise<TodayItem[]> => {
+      // A grant's context reads no conversation, so there is nothing to answer: refuse, never an empty list that could read as "all clear".
+      if (ctx.actor.type === 'user' && ctx.actor.mcp !== undefined) throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
+      return (await checkConversationUnanswered(ctx, options.now)).items;
+    },
   });
 }

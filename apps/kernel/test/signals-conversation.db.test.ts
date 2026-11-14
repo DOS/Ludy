@@ -137,7 +137,7 @@ suite('the unanswered conversation rule on Home, end to end (#3124)', () => {
     await o.thread(hiddenOnly, [['in', 40]], { hidden: true }); // the only message was hidden by the org
     await o.thread(null, [['in', 40]]); // a thread with no contact set joins nothing
     await o.thread(removedOnly, [['in', 40]], { removed: true }); // the customer removed their only message
-    await o.thread(lateArrival, [['in', 40, 10]]); // written 40 h ago by the platform's clock but only stored 10 h ago: the later time counts
+    await o.thread(lateArrival, [['in', 40, 10]]); // written 40 h ago by the sender's clock but only stored 10 h ago: the storing time counts
     await o.thread(answeredStaleStatus, [['in', 30], ['out', 26]], { status: 'new' }); // the status says new but an answer follows the message: nothing waits
     expect(noContact).toBeTruthy();
     expect(fired(await o.home(o.owner))).toEqual([late]);
@@ -166,20 +166,18 @@ suite('the unanswered conversation rule on Home, end to end (#3124)', () => {
     expect(items.filter((i) => i.id.startsWith(RULE)).map((i) => i.id.slice(RULE.length))).toEqual([partyB, partyA]);
   });
 
-  it('restarts the wait when the customer comes back to a handled thread after a silence longer than the window (a resolve is not an answer)', async () => {
+  it('counts from the time Ludy stored a message, so a skewed sender clock neither hides nor inflates a wait', async () => {
     const o = await org();
-    const [handled, silent, chatty] = [await o.party('A'), await o.party('B'), await o.party('C')];
-    for (const p of [handled, silent, chatty]) await o.openDeal(p);
-    // Answered by phone 72 h ago and resolved with no reply in the inbox; the customer wrote again 1 h ago (the thread reopened as new): the wait is 1 hour, so nothing fires.
-    await o.thread(handled, [['in', 72], ['in', 1]]);
-    // The same, but the customer's return is 30 h old: the wait counts from the return, not from the handled message.
-    await o.thread(silent, [['in', 72], ['in', 30]]);
-    // Messages less than a window apart are one wait, counted from the first.
-    await o.thread(chatty, [['in', 40], ['in', 20], ['in', 5]]);
+    const [future, ancient] = [await o.party('A'), await o.party('B')];
+    await o.openDeal(future);
+    await o.openDeal(ancient);
+    // A mail dated 10 hours in the future (a wrong Date header) that arrived 30 hours ago: the wait is 30 hours, not hidden.
+    await o.thread(future, [['in', -10, 30]]);
+    // A mail dated 200 hours ago that arrived 5 hours ago: the wait is 5 hours, so nothing fires.
+    await o.thread(ancient, [['in', 200, 5]]);
     const items = await o.home(o.owner);
-    expect(fired(items).sort()).toEqual([silent, chatty].sort());
-    expect(items.find((i) => i.id === `${RULE}${silent}`)?.title.params).toEqual({ hours: 30 });
-    expect(items.find((i) => i.id === `${RULE}${chatty}`)?.title.params).toEqual({ hours: 40 });
+    expect(fired(items)).toEqual([future]);
+    expect(items.find((i) => i.id === `${RULE}${future}`)?.title.params).toEqual({ hours: 30 });
   });
 
   it('shows a member only the threads they may read: a private message without the permission and a channel they are limited away from give them no flag', async () => {

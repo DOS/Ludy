@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { CONVERSATION_REPLY_WINDOW_HOURS, CONVERSATION_UNANSWERED_SIGNALS_READ, CRM_OPEN_DEALS_SIGNALS_READ, SIGNAL_PARTIAL_VIEW_CODE, sortTodayItems, zConversationUnansweredSignal, zTodayItems } from '@crove/kernel-contract';
 import { DomainError, type Lookup, type QueryContext } from '@crove/kernel-runtime';
-import { CONVERSATION_UNANSWERED_READ, SIGNAL_ITEMS_MAX, conversationUnansweredQuery } from '@crove/kernel';
+import { CONVERSATION_UNANSWERED_READ, SIGNAL_ITEMS_MAX, checkConversationUnanswered, conversationUnansweredQuery } from '@crove/kernel';
 
 const NOW = new Date('2026-11-20T10:00:00Z');
 const HOUR = 3_600_000;
@@ -100,8 +100,11 @@ describe('the unanswered conversation on an open deal rule (Vy C4, rule 4)', () 
     const asked: string[] = [];
     const reads = { [CRM_OPEN_DEALS_SIGNALS_READ]: [openDeal()], [CONVERSATION_UNANSWERED_SIGNALS_READ]: [waiting()] };
     const grant: Actor = { type: 'user', userId: randomUUID(), aal: 'aal1', mcp: { grantId: randomUUID(), clientId: 'c', clientName: 'C', scopes: ['ludy.read'], kind: 'company' } };
-    expect(await run(reads, { actor: grant, asked })).toEqual([]);
+    // The rule query refuses a grant (never an empty answer that could read as "all clear"); the check itself says unavailable, so ludy_signals names the rule unchecked.
+    await expect(run(reads, { actor: grant, asked })).rejects.toBeInstanceOf(DomainError);
     expect(asked).toEqual([]);
+    const check = await checkConversationUnanswered(contextOf(reads, [], asked, {}, grant), () => NOW);
+    expect(check).toEqual({ items: [], status: 'unavailable' });
   });
 
   it('lets no text cross: a thread row with a field outside the contract voids the whole read, and the rule carries only ids, keys and hours', async () => {

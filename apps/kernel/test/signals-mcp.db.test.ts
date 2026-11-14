@@ -19,7 +19,9 @@ const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const TODAY = vietnamToday();
-const RULES = ['kernel.signals.deal_without_invoice', 'kernel.signals.receivable_with_open_deal', 'kernel.signals.supplier_bank_changed', 'kernel.signals.conversation_unanswered'] as const;
+const RULES = ['kernel.signals.deal_without_invoice', 'kernel.signals.receivable_with_open_deal', 'kernel.signals.supplier_bank_changed'] as const;
+// The fourth rule (#3124) reads conversations, which a grant's context cannot: the rule query refuses a grant, and kernel.mcp.signals names it not_available.
+const CONVERSATION_RULE = 'kernel.signals.conversation_unanswered';
 const READS = ['crm.signals.won_deals', 'crm.signals.open_deals', 'finance.signals.sales', 'finance.signals.overdue_receivables'] as const;
 
 suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
@@ -206,6 +208,14 @@ suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
       { rule: 'supplier_bank_changed', reason: 'not_available' },
       { rule: 'conversation_unanswered', reason: 'not_available' },
     ]);
+  });
+
+  it('refuses the conversation rule to a grant instead of answering an empty list that could read as "all clear"', async () => {
+    for (const kind of ['company', 'member'] as const) {
+      const actor = mcp(users.owner, await grant(users.owner, { kind }), kind);
+      await expect(run(actor, CONVERSATION_RULE), kind).rejects.toBeInstanceOf(DomainError);
+    }
+    expect(await run(browser(users.owner), CONVERSATION_RULE)).toEqual([]);
   });
 
   it('does not let a grant run Home itself or anything the rules do not name', async () => {
