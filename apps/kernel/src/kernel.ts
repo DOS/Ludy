@@ -10,6 +10,8 @@ import { summaryModelPort, type ModelPort } from './member-vy-ports.ts';
 import { AdsCampaignWriter, ConversationWriter, InboxReader, InvoiceExtractor, SchedulingReader, SocialWriter, TodayWriter, type InvoiceReader } from '@crove/agent';
 import {
   BlueskyPublisher,
+  TELEGRAM_HOOK_KEY_INFO,
+  TelegramConversations,
   TelegramPublisher,
   DiscordPublisher,
   MastodonPublisher,
@@ -46,7 +48,10 @@ import {
   ZaloOaConnector,
   ZaloOaPublisher,
   ZaloOaRefresher,
+  Graph,
+  WhatsAppConversations,
   CHANNEL_OPTIONS_CALL_TIMEOUT_MS,
+  type ConversationAdapter,
   type OAuthConnector,
   type Publisher,
   type Refresher,
@@ -335,6 +340,15 @@ const xApp = (config: Pick<Config, 'CHANNEL_X_CLIENT_ID' | 'CHANNEL_X_CLIENT_SEC
 const pinterestApp = (config: Pick<Config, 'CHANNEL_PINTEREST_APP_ID' | 'CHANNEL_PINTEREST_APP_SECRET'>) =>
   config.CHANNEL_PINTEREST_APP_ID && config.CHANNEL_PINTEREST_APP_SECRET ? { appId: config.CHANNEL_PINTEREST_APP_ID, appSecret: config.CHANNEL_PINTEREST_APP_SECRET } : null;
 const zaloApp = (config: Pick<Config, 'CHANNEL_ZALO_APP_ID' | 'CHANNEL_ZALO_APP_SECRET'>) => (config.CHANNEL_ZALO_APP_ID && config.CHANNEL_ZALO_APP_SECRET ? { appId: config.CHANNEL_ZALO_APP_ID, appSecret: config.CHANNEL_ZALO_APP_SECRET } : null);
+// The Meta app of the WhatsApp product (#3131): its secret proves the Graph calls and checks the webhook. Unset: WhatsApp is not offered. The connect form is
+// offered only with the verify token too (the webhook route needs both), so a number is never connected where no customer's message could arrive.
+type WhatsAppConfig = Partial<Pick<Config, 'CHANNEL_WHATSAPP_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION'>>;
+export const whatsappApp = (config: WhatsAppConfig) => (config.CHANNEL_WHATSAPP_APP_SECRET ? { appSecret: config.CHANNEL_WHATSAPP_APP_SECRET, graphVersion: config.CHANNEL_META_GRAPH_VERSION } : null);
+// The conversation adapters of channels that never publish (so have no Publisher), by provider id: the worker sends their replies and fetches their images.
+export function channelConversationAdapters(config: WhatsAppConfig): Record<string, ConversationAdapter> {
+  const whatsapp = whatsappApp(config);
+  return whatsapp ? { whatsapp: new WhatsAppConversations(new Graph(whatsapp.appSecret, whatsapp.graphVersion)) } : {};
+}
 
 // The outside calendar providers this deployment has an OAuth app for (#2123), by OAuth provider id; one without
 // credentials is not offered, and with none the connect buttons are hidden.
@@ -493,7 +507,7 @@ export function channelPublishers(config: ChannelConfig): Record<string, Publish
   if (config.CHANNEL_SANDBOX === 'true') publishers.sandbox = new SandboxPublisher();
   // An account on its own PDS (#792) is called through the egress guard; images go up to 1 MB each.
   if (config.CHANNEL_BLUESKY === 'true') publishers.bluesky = new BlueskyPublisher(undefined, egressFetch({ timeoutMs: 30_000, maxBytes: 2_000_000, overLimit: 'fail' }));
-  if (config.CHANNEL_TELEGRAM === 'true') publishers.telegram = new TelegramPublisher();
+  if (config.CHANNEL_TELEGRAM === 'true') publishers.telegram = new TelegramPublisher(undefined, new TelegramConversations());
   if (config.CHANNEL_DISCORD === 'true') publishers.discord = new DiscordPublisher();
   // An instance is the tenant's to name: its calls go through the egress guard, never a plain fetch.
   if (config.CHANNEL_MASTODON === 'true') publishers.mastodon = new MastodonPublisher(egressFetch({ timeoutMs: 300_000, maxBytes: 2_000_000, overLimit: 'fail' }));
@@ -692,14 +706,18 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           // Zalo OA's webhook for customers' messages (conversation core, #2304): with the Zalo app and its OA secret key configured.
           ...(config.CHANNEL_ZALO_APP_ID && config.CHANNEL_ZALO_OA_SECRET_KEY ? { zaloWebhook: { appId: config.CHANNEL_ZALO_APP_ID, oaSecretKey: config.CHANNEL_ZALO_OA_SECRET_KEY, oaSecretKeyPrevious: config.CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS } } : {}),
           // Meta Page webhook for Page comments (conversation core CV2, #2307): with the Meta app and its webhook verify token configured.
+          // Telegram bot chats (#3132): the route exists where Telegram is on and the credential key can derive the webhook secret.
+          ...(config.CHANNEL_TELEGRAM === 'true' && resolved.broker.deriveKeys ? { telegramWebhook: { keys: () => (resolved.broker.deriveKeys?.(TELEGRAM_HOOK_KEY_INFO) ?? []).map((k) => k.key) } } : {}),
           // The same route takes the Threads app's reply notices (#3133), signed with the Threads app's secret: a deployment with only the Threads app has an empty
           // Pages secret, which verifies nothing.
           ...((conversationSecrets || threadsWebhookSecret) && config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN ? { facebookWebhook: { appSecret: conversationSecrets?.primary ?? '', ...(conversationSecrets?.instagram ? { instagramAppSecret: conversationSecrets.instagram } : {}), ...(threadsWebhookSecret ? { threadsAppSecret: threadsWebhookSecret } : {}), appSecretPrevious: config.CHANNEL_META_APP_SECRET_PREVIOUS, verifyToken: config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN } } : {}),
+          // WhatsApp Business webhook for customers' messages (conversation core, #3131): with the WhatsApp app secret and its verify token configured.
+          ...(config.CHANNEL_WHATSAPP_APP_SECRET && config.CHANNEL_WHATSAPP_VERIFY_TOKEN ? { whatsappWebhook: { appSecret: config.CHANNEL_WHATSAPP_APP_SECRET, appSecretPrevious: config.CHANNEL_WHATSAPP_APP_SECRET_PREVIOUS, verifyToken: config.CHANNEL_WHATSAPP_VERIFY_TOKEN } } : {}),
           // The bank feed adapters that take signed notices (ADR-0039): the route exists only for these.
           bankFeedWebhooks: Object.fromEntries(
             Object.entries(bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET })).filter(([, p]) => p.verifyWebhook),
           ),
-          channels: { broker: resolved.broker, sandbox: config.CHANNEL_SANDBOX === 'true', bankFeedSandbox: config.BANK_FEED_SANDBOX === 'true', einvoiceProviders: einvoiceProvidersOf(config), marketplaceProviders: marketplaceProvidersOf(config), adsPlatforms: adPlatformsOf(config), adsWriteAppShared: metaWriteAppShared(config), bluesky: config.CHANNEL_BLUESKY === 'true', telegram: config.CHANNEL_TELEGRAM === 'true', mastodon: config.CHANNEL_MASTODON === 'true', discord: config.CHANNEL_DISCORD === 'true', wordpress: config.CHANNEL_WORDPRESS === 'true', connectors: channelConnectors(config), calendars: calendarAdapters(config), publicUrl: appUrl(config), ...(config.MEDIA_PEXELS_API_KEY ? { stockPhotos: createPexels({ apiKey: config.MEDIA_PEXELS_API_KEY, store }) } : {}), mediaUrls: createMediaUrls({ store }), ...(vapid ? { push: { publicKey: vapid.publicKey } } : {}) },
+          channels: { broker: resolved.broker, sandbox: config.CHANNEL_SANDBOX === 'true', bankFeedSandbox: config.BANK_FEED_SANDBOX === 'true', einvoiceProviders: einvoiceProvidersOf(config), marketplaceProviders: marketplaceProvidersOf(config), adsPlatforms: adPlatformsOf(config), adsWriteAppShared: metaWriteAppShared(config), bluesky: config.CHANNEL_BLUESKY === 'true', telegram: config.CHANNEL_TELEGRAM === 'true', mastodon: config.CHANNEL_MASTODON === 'true', discord: config.CHANNEL_DISCORD === 'true', wordpress: config.CHANNEL_WORDPRESS === 'true', ...(whatsappApp(config) && config.CHANNEL_WHATSAPP_VERIFY_TOKEN ? { whatsapp: whatsappApp(config) } : {}), connectors: channelConnectors(config), calendars: calendarAdapters(config), publicUrl: appUrl(config), ...(config.MEDIA_PEXELS_API_KEY ? { stockPhotos: createPexels({ apiKey: config.MEDIA_PEXELS_API_KEY, store }) } : {}), mediaUrls: createMediaUrls({ store }), ...(vapid ? { push: { publicKey: vapid.publicKey } } : {}) },
           ...(stream ? { stream } : {}),
           // An API process of its own waits in /readyz for its workers' build (#1952); the single "all" process is its
           // own worker, so it has none to wait for.
@@ -750,7 +768,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             exportSealer: exportSealer(config),
             exportRetentionDays: config.EXPORT_RETENTION_DAYS,
             evidenceLockDays: config.EVIDENCE_LOCK_DAYS,
-            channels: { broker: resolved.broker, einvoiceProviders: einvoiceProvidersOf(config), marketplaceProviders: marketplaceProvidersOf(config), conversationHistory: config.CHANNEL_ZALO_HISTORY === 'true', facebookHistory: config.CHANNEL_FACEBOOK_HISTORY === 'true', threadsHistory: config.CHANNEL_THREADS_HISTORY === 'true', conversationMediaHosts: zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS), publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), adPlatforms: adPlatformsOf(config), adRevokers: adRevokersOf(config), adWriters: adWritersOf(config), adPausers: adPausersOf(config), adActivators: adActivatorsOf(config) },
+            channels: { broker: resolved.broker, einvoiceProviders: einvoiceProvidersOf(config), marketplaceProviders: marketplaceProvidersOf(config), conversationHistory: config.CHANNEL_ZALO_HISTORY === 'true', facebookHistory: config.CHANNEL_FACEBOOK_HISTORY === 'true', threadsHistory: config.CHANNEL_THREADS_HISTORY === 'true', youtubeHistory: config.CHANNEL_YOUTUBE_HISTORY === 'true', conversationMediaHosts: zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS), conversationMediaHostsBy: { whatsapp: zaloMediaHostsOf(config.CHANNEL_WHATSAPP_MEDIA_HOSTS) }, conversationAdapters: channelConversationAdapters(config), publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), adPlatforms: adPlatformsOf(config), adRevokers: adRevokersOf(config), adWriters: adWritersOf(config), adPausers: adPausersOf(config), adActivators: adActivatorsOf(config) },
             publicUrl: config.PUBLIC_URL,
             appUrl: appUrl(config),
             brand: config.BRAND_NAME,

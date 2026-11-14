@@ -1869,6 +1869,19 @@ export interface KernelChannelConnectionTable {
   gap_from: ColumnType<Date | null, Date | string | null, Date | string | null>;
   gap_to: ColumnType<Date | null, Date | string | null, Date | string | null>;
   history_requested_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  chat_hook: string | null;
+  chat_hook_next: string | null;
+  chat_state: Generated<string>;
+  chat_error: string | null;
+  chat_bot_id: string | null;
+  chat_changed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  comments_enabled: Generated<boolean>;
+  quota_reset_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  quota_poll_units: Generated<number>;
+  quota_reply_units: Generated<number>;
+  quota_blocked_until: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  history_next_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  history_idle_polls: Generated<number>;
 }
 
 /** crove_kernel.conversation_attachment */
@@ -1891,6 +1904,7 @@ export interface KernelConversationAttachmentTable {
   fetch_attempts: Generated<number>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   stored_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  source_ref: string | null;
 }
 
 /** crove_kernel.conversation_composing */
@@ -2819,6 +2833,7 @@ export interface MeetingsMeetingTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   extension_token_id: ColumnType<string | null, string | null, NotGranted>;
   live_notes: ColumnType<boolean, boolean | undefined, NotGranted>;
+  recording_stop_reason: string | null;
 }
 
 /** crove_meetings.meeting_video */

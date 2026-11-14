@@ -27,6 +27,8 @@ import {
   LIVE_CHUNK_MAX_BYTES,
   LIVE_CHUNK_MAX_COUNT,
   LIVE_CHUNK_MAX_SECONDS,
+  RECORDING_STOP_REASONS,
+  type RecordingStopReason,
   zExtensionAuthorize,
   XLSX_CONTENT_TYPE,
   accountParents,
@@ -140,9 +142,11 @@ import { streamedBody } from './owner-run-export.ts';
 import { MAX_EMAIL_BYTES, acceptInboundEmail, secretMatches } from './inbound.ts';
 import { MAX_MAIL_WEBHOOK_BYTES, acceptMailWebhook } from './mail-events.ts';
 import { MAX_BANK_FEED_WEBHOOK_BYTES, acceptBankFeedWebhook } from './bank-feed-webhook.ts';
-import { FACEBOOK_MAX_NOTICE_BYTES, ZALO_MAX_NOTICE_BYTES } from '@crove/channel';
+import { FACEBOOK_MAX_NOTICE_BYTES, TELEGRAM_MAX_NOTICE_BYTES, WHATSAPP_MAX_NOTICE_BYTES, ZALO_MAX_NOTICE_BYTES } from '@crove/channel';
 import { ZALO_SIGNATURE_HEADER, ZALO_WEBHOOK_PATH, ZaloReplayCache, acceptZaloWebhook, type ZaloWebhookConfig } from './zalo-webhook.ts';
+import { TELEGRAM_SECRET_HEADER, TELEGRAM_WEBHOOK_PATH, TELEGRAM_UNAUTHORIZED, TelegramReplayCache, acceptTelegramWebhook, telegramWebhookAuthorized, type TelegramWebhookConfig } from './telegram-webhook.ts';
 import { FACEBOOK_SIGNATURE_HEADER, FACEBOOK_WEBHOOK_PATH, FacebookReplayCache, acceptFacebookWebhook, verifyFacebookWebhookChallenge, type FacebookWebhookConfig } from './facebook-webhook.ts';
+import { WHATSAPP_SIGNATURE_HEADER, WHATSAPP_WEBHOOK_PATH, WhatsAppReplayCache, acceptWhatsAppWebhook, verifyWhatsAppWebhookChallenge, type WhatsAppWebhookConfig } from './whatsapp-webhook.ts';
 import { ADS_DELETION_PATH, MAX_ADS_DELETION_BYTES } from './ads-deletion.ts';
 import { acceptMetaDeletion, metaDeletionStatus, renderMetaDeletionStatus } from './meta-deletion.ts';
 import type { BankFeedProvider } from '@crove/bank-feed';
@@ -239,12 +243,26 @@ export interface HttpDeps {
   zaloWebhookLimit?: RateLimiter;
   // The events that route has parked lately (replay guard); unset: its own, one per process.
   zaloReplays?: ZaloReplayCache;
+  // Telegram's webhook for the conversation core (#3132): the keys the per-connection secret is derived from. Unset: the route does not exist.
+  telegramWebhook?: TelegramWebhookConfig;
+  // Refused requests per minute per client address for that route.
+  telegramWebhookLimit?: RateLimiter;
+  // Verified updates per minute per hook (a flood on a public bot).
+  telegramHookLimit?: RateLimiter;
+  // The messages that route has parked lately (replay guard); unset: its own, one per process.
+  telegramReplays?: TelegramReplayCache;
   // Meta Page webhook for the conversation core (CV2, #2307): the app secret and verify token that guard it. Unset: the route does not exist.
   facebookWebhook?: FacebookWebhookConfig;
   // Refused requests per minute per client address for that route.
   facebookWebhookLimit?: RateLimiter;
   // The comment events that route has parked lately (replay guard); unset: its own, one per process.
   facebookReplays?: FacebookReplayCache;
+  // WhatsApp Business webhook for the conversation core (#3131): the app secret and verify token of the WhatsApp product's Meta app. Unset: the route does not exist.
+  whatsappWebhook?: WhatsAppWebhookConfig;
+  // Refused requests per minute per client address for that route.
+  whatsappWebhookLimit?: RateLimiter;
+  // The events that route has parked lately (replay guard); unset: its own, one per process.
+  whatsappReplays?: WhatsAppReplayCache;
   // Meta's data deletion callback for the Ads connection (plan section 9, #2219): the app secret that signs the request. Unset
   // (no Meta ads app configured): the route does not exist. With ads installed only.
   adsDeletion?: { appSecret: string };
@@ -477,6 +495,10 @@ const BANK_FEED_WEBHOOKS_PER_MINUTE = 120;
 // Refused requests (a bad signature, a body that is no notice) one address may send a minute; verified notices are not counted.
 const ZALO_WEBHOOKS_PER_MINUTE = 120;
 const FACEBOOK_WEBHOOKS_PER_MINUTE = 120;
+const WHATSAPP_WEBHOOKS_PER_MINUTE = 120;
+const TELEGRAM_WEBHOOKS_PER_MINUTE = 120;
+// Verified updates one hook takes a minute: ten a second, far above what a shop's customers write, so only a flood hits it.
+const TELEGRAM_VERIFIED_PER_HOOK_PER_MINUTE = 600;
 // Meta posts one request per person who removes the app: a few a minute is plenty, and a status page is read by one person.
 const ADS_DELETION_PER_MINUTE = 60;
 // Quote PDFs one member may take a minute (#2695).
@@ -684,7 +706,7 @@ export function createHttpApp(deps: HttpDeps) {
       bankFeeds: { sandbox: Boolean(deps.channels?.bankFeedSandbox) },
       // Ad platforms (ADR-0040): which this deployment offers; none leaves the Ads screen with nothing to connect.
       ads: { sandbox: Object.hasOwn(deps.channels?.adsPlatforms ?? {}, 'sandbox_ads') },
-      channels: { sandbox: Boolean(deps.channels?.sandbox), bluesky: Boolean(deps.channels?.bluesky), telegram: Boolean(deps.channels?.telegram), mastodon: Boolean(deps.channels?.mastodon), discord: Boolean(deps.channels?.discord), wordpress: Boolean(deps.channels?.wordpress), oauth: deps.channels && deps.channels.broker.id !== 'none' ? Object.keys(deps.channels.connectors ?? {}).sort() : [] },
+      channels: { sandbox: Boolean(deps.channels?.sandbox), bluesky: Boolean(deps.channels?.bluesky), telegram: Boolean(deps.channels?.telegram), mastodon: Boolean(deps.channels?.mastodon), discord: Boolean(deps.channels?.discord), wordpress: Boolean(deps.channels?.wordpress), ...(deps.channels?.whatsapp ? { whatsapp: true } : {}), oauth: deps.channels && deps.channels.broker.id !== 'none' ? Object.keys(deps.channels.connectors ?? {}).sort() : [] },
     }),
   );
 
@@ -886,6 +908,52 @@ export function createHttpApp(deps: HttpDeps) {
     });
   }
 
+  // Telegram's webhook of customers' private-chat messages (#3132): the secret derived from the hook in the path is checked first of all, before the
+  // body is read or the database asked, so an unauthenticated request costs one HMAC; the body is then capped before it is read, and a verified
+  // message is only parked for the worker (the org comes from the stored connection). Every refusal is the same 401. The per-address limit is charged
+  // to refused requests only, as Zalo's is, so a flood of forged ones cannot cost a real update. A verified flood (anyone may write to a public bot)
+  // is held to a rate per hook, so one bot cannot fill the backlog every org shares (429, which Telegram retries later); what is left is bounded by
+  // the provider's backlog cap (conversation_inbound_enqueue).
+  const telegramWebhook = deps.telegramWebhook;
+  if (telegramWebhook) {
+    const telegramLimit = deps.telegramWebhookLimit ?? new RateLimiter({ perMinute: TELEGRAM_WEBHOOKS_PER_MINUTE });
+    const telegramHookLimit = deps.telegramHookLimit ?? new RateLimiter({ perMinute: TELEGRAM_VERIFIED_PER_HOOK_PER_MINUTE });
+    const telegramReplays = deps.telegramReplays ?? new TelegramReplayCache();
+    const limited = (c: Context, limiter: RateLimiter, key: string): Response | null => {
+      const decision = limiter.take(key);
+      if (decision.allowed) return null;
+      warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+      c.header('retry-after', String(decision.retryAfterSeconds));
+      return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+    };
+    app.post(
+      TELEGRAM_WEBHOOK_PATH,
+      async (c, next) => {
+        const hook = c.req.param('hook');
+        if (!telegramWebhookAuthorized(telegramWebhook, { hook, secret: c.req.header(TELEGRAM_SECRET_HEADER) })) {
+          return limited(c, telegramLimit, clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS))) ?? c.json({ code: TELEGRAM_UNAUTHORIZED.code }, TELEGRAM_UNAUTHORIZED.status);
+        }
+        const over = limited(c, telegramHookLimit, hook);
+        if (over) return over;
+        await next();
+      },
+      bodyLimit({ maxSize: TELEGRAM_MAX_NOTICE_BYTES }),
+      async (c) => {
+        try {
+          const outcome = await acceptTelegramWebhook(runtime, telegramWebhook, { hook: c.req.param('hook'), secret: c.req.header(TELEGRAM_SECRET_HEADER), body: async () => new Uint8Array(await c.req.arrayBuffer()) }, telegramReplays);
+          if (outcome.status === 200) return c.json({ ok: true }, 200);
+          if (outcome.status === 401 || outcome.status === 400) {
+            const refused = limited(c, telegramLimit, clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+            if (refused) return refused;
+          }
+          return c.json({ code: outcome.code }, outcome.status);
+        } catch (error) {
+          return problem(c, error);
+        }
+      },
+    );
+  }
+
   const facebookWebhook = deps.facebookWebhook;
   if (facebookWebhook) {
     const facebookLimit = deps.facebookWebhookLimit ?? new RateLimiter({ perMinute: FACEBOOK_WEBHOOKS_PER_MINUTE });
@@ -914,6 +982,47 @@ export function createHttpApp(deps: HttpDeps) {
         if (outcome.status === 200) return c.json({ ok: true }, 200);
         if (outcome.status === 401 || outcome.status === 400) {
           const limited = chargeRefusal(c);
+          if (limited) return limited;
+        }
+        return c.json({ code: outcome.code }, outcome.status);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+  }
+
+  // WhatsApp Business (Cloud API) webhook of customers' messages (conversation core, #3131): the same shape as Meta's Page webhook above. GET answers the
+  // verify-token handshake in constant time; POST checks X-Hub-Signature-256 over the raw bytes before anything else, caps the body before reading it, charges
+  // the per-address limit only to REFUSED requests (a verified notice is never refused for rate), and only parks the signed body for the worker, which finds the
+  // org from the stored connection by the phone number id. The route names no org, writes no tenant row and logs nothing of the body.
+  const whatsappWebhook = deps.whatsappWebhook;
+  if (whatsappWebhook) {
+    const whatsappLimit = deps.whatsappWebhookLimit ?? new RateLimiter({ perMinute: WHATSAPP_WEBHOOKS_PER_MINUTE });
+    const whatsappReplays = deps.whatsappReplays ?? new WhatsAppReplayCache();
+    const chargeWhatsAppRefusal = (c: Context): Response | null => {
+      const decision = whatsappLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+      if (decision.allowed) return null;
+      warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+      c.header('retry-after', String(decision.retryAfterSeconds));
+      return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+    };
+    app.get(WHATSAPP_WEBHOOK_PATH, (c) => {
+      const outcome = verifyWhatsAppWebhookChallenge(whatsappWebhook, {
+        mode: c.req.query('hub.mode'),
+        verifyToken: c.req.query('hub.verify_token'),
+        challenge: c.req.query('hub.challenge'),
+      });
+      if (outcome.status === 200) return c.text(outcome.challenge, 200);
+      const limited = chargeWhatsAppRefusal(c);
+      if (limited) return limited;
+      return c.json({ code: outcome.code }, outcome.status);
+    });
+    app.post(WHATSAPP_WEBHOOK_PATH, bodyLimit({ maxSize: WHATSAPP_MAX_NOTICE_BYTES }), async (c) => {
+      try {
+        const outcome = await acceptWhatsAppWebhook(runtime, whatsappWebhook, { signature: c.req.header(WHATSAPP_SIGNATURE_HEADER), body: new Uint8Array(await c.req.arrayBuffer()) }, whatsappReplays);
+        if (outcome.status === 200) return c.json({ ok: true }, 200);
+        if (outcome.status === 401 || outcome.status === 400) {
+          const limited = chargeWhatsAppRefusal(c);
           if (limited) return limited;
         }
         return c.json({ code: outcome.code }, outcome.status);
@@ -2487,6 +2596,14 @@ export function createHttpApp(deps: HttpDeps) {
         // The plaintext as it arrives, sealed piece by piece below (#2780): never held whole, and its declared length is checked.
         let source: AsyncIterable<Uint8Array>;
         let declaredLength: number;
+        // Why the recording stopped without the recorder's click, when the client says so (A1, #3159): a code from a fixed list in the
+        // JSON body, the form or the query, whichever carries the file. Anything else is refused; absent means the recorder stopped it.
+        let stopReason: RecordingStopReason | undefined;
+        const readStopReason = (value: unknown): RecordingStopReason | undefined => {
+          if (value === undefined || value === null || value === '') return undefined;
+          if (typeof value === 'string' && (RECORDING_STOP_REASONS as readonly string[]).includes(value)) return value as RecordingStopReason;
+          throw new DomainError('BAD_REQUEST', 400, 'stopReason is not a known code');
+        };
 
         const verifyRecorderAndKind = async (mediaKind: 'audio' | 'video') => {
           const meeting = await meetingFacts(user, orgId, meetingId);
@@ -2525,11 +2642,13 @@ export function createHttpApp(deps: HttpDeps) {
             uploadId?: unknown;
             kind?: unknown;
             lengthSeconds?: unknown;
+            stopReason?: unknown;
           } | null;
           if (!body || typeof body.uploadId !== 'string' || (body.kind !== 'audio' && body.kind !== 'video')) {
             throw new DomainError('BAD_REQUEST', 400, 'uploadId and kind (audio|video) required');
           }
           kind = body.kind;
+          stopReason = readStopReason(body.stopReason);
           if (kind === 'video') {
             // The staged bytes are read whole into memory: one video transfer per process (a multipart one took its slot in the gate).
             releaseJsonVideo = videoTransfers.tryAcquire(user.userId);
@@ -2580,6 +2699,7 @@ export function createHttpApp(deps: HttpDeps) {
             throw new DomainError('BAD_REQUEST', 400, 'kind must be audio or video');
           }
           kind = kindVal;
+          stopReason = readStopReason(formData.get('stopReason'));
           const kindHint = c.req.query('kind');
           if (kindHint !== undefined && kindHint !== kind) throw new DomainError('BAD_REQUEST', 400, 'kind does not match the declared kind');
           await verifyRecorderAndKind(kind);
@@ -2609,6 +2729,7 @@ export function createHttpApp(deps: HttpDeps) {
           const kindVal = c.req.query('kind');
           if (kindVal !== 'audio' && kindVal !== 'video') throw new DomainError('BAD_REQUEST', 400, 'kind must be audio or video');
           kind = kindVal;
+          stopReason = readStopReason(c.req.query('stopReason'));
           await verifyRecorderAndKind(kind);
           const lengthVal = c.req.query('lengthSeconds');
           if (lengthVal !== undefined) {
@@ -2674,6 +2795,7 @@ export function createHttpApp(deps: HttpDeps) {
               sha256,
               contentType: sniffedContentType,
               lengthSeconds: measuredSeconds,
+              ...(stopReason !== undefined ? { stopReason } : {}),
             },
             { actor: actorOf(user), orgId },
           );

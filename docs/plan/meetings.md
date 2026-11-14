@@ -237,6 +237,8 @@ Step ids M1 to M11 and L1 to L5 name the steps of this plan, not the milestones 
 
 Each issue's acceptance says what Vy does on that screen, that the core works with AI off, and that a person approves every task.
 
+**Integrations (owner decision 2026-11-14):** the notice and consent kit, ask across meetings, minutes templates, enhance my notes and the approved-minutes webhook (group A), calendar and output channels (B), import from Google Meet, Zoom and Teams (C) and the extension on Edge (D) and translation of the transcript and the summary (E) are planned in [meetings-integrations.md](meetings-integrations.md) (steps A1 to E3, section 11 there). They are separate from the steps above and need no change to them.
+
 ### Follow-up email (L3, #2590)
 
 The recorder of a meeting with a shared summary clicks "Soạn thư cảm ơn". The dialog is the meetings module's own (the Email module has no compose screen yet): it hands off to Email compose once that screen exists (docs/plan/email.md E4 and E7), and until then `meetings.followup.send` queues the mail through the kernel mail queue (`source = meetings.followup`, `source_id` the meeting).
@@ -267,6 +269,8 @@ No Meetings sub-session is running and no Meetings PR is open.
 | L4b (#2592) | The owner | ADR-0052 questions 2, 3, 4, 6, 7 and 8 (a meeting bot); stays in the Icebox until answered |
 
 **Follow-ups (owner moved both to M3 P2 on 2026-11-14):** #3125 (the live preview on the 30-day draft expiry, built), #3126 (assemble the live pieces when the final upload never arrives; built as the recorder's own click, ADR-0052 "As built (L4a-3)"; the late complete upload replacing a joined recording is the Icebox follow-up #3187).
+
+**Integrations plan (2026-11-14):** [meetings-integrations.md](meetings-integrations.md) holds the build steps A1 to E3 and their issues (research: [meetings-research.md](meetings-research.md)); none is claimed.
 
 **To resume:** a new Meetings PO session reads this section and the issues above, then picks the first item a person has unblocked.
 

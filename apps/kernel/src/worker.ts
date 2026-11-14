@@ -8,7 +8,7 @@ import { vietnamToday } from '@crove/kernel-contract';
 import { DomainError, inboundKey, type AgentProgram, type BlobStore, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
 import { KERNEL_NOTIFYING_EVENTS, PROPOSAL_NUDGE_SWEEP_MS, TODAY_MAIL_SWEEP_MS, runAgentWake, sweepProposalNudges, sweepTodayMail, type UsageLimits } from '@crove/kernel';
 import { aiDocumentFailure, type AdsCampaignWriter, type ConversationWriter, type InvoiceReader } from '@crove/agent';
-import type { CalendarAdapter, Publisher, Refresher } from '@crove/channel';
+import type { CalendarAdapter, ConversationAdapter, Publisher, Refresher } from '@crove/channel';
 import { postMessage, type WebhookTarget } from './alert.ts';
 import { REFRESH_SWEEP_MS, refreshChannels } from './channel-refresh.ts';
 import { RESEAL_SWEEP_MS, resealCredentials, unopenableKeysLog } from './credential-reseal.ts';
@@ -69,7 +69,7 @@ import { runAdsPause, type AdsPauseJob } from './ads-pause.ts';
 import { runAdsRevoke } from './ads-revoke.ts';
 import { ADS_DUE_PAGE, adsDue, pruneAdsRuns, runAdsSync, type AdsSyncJob } from './ads-sync.ts';
 import { failUnaskable, runAdsCampaignDraft, sweepAdsCampaignRequests, type AdsCampaignDraftJob } from './ads-worker.ts';
-import { failUndraftable, requestDueConversationDrafts, sweepConversationComposing, sweepConversationDrafts, runConversationDraft, type ConversationDraftJob, dueConversationAttachments, dueConversationSync, failUnsendable, requestConversationAttachments, requestConversationSync, purgeExpiredConversations, runConversationAttachment, runConversationDeletions, runConversationIntake, runConversationJob, runConversationSync, sweepConversationBlobs, sweepStaleReplies, type ConversationAttachmentJob, type ConversationJob, type ConversationSyncJob } from './conversations-worker.ts';
+import { failUndraftable, requestDueConversationDrafts, sweepConversationComposing, sweepConversationDrafts, runConversationDraft, type ConversationDraftJob, dueConversationAttachments, dueConversationSync, failChatHook, failUnsendable, requestConversationAttachments, requestConversationSync, purgeExpiredConversations, runConversationAttachment, runConversationDeletions, runConversationIntake, runConversationJob, runConversationSync, runTelegramChatHook, sweepConversationBlobs, sweepStaleReplies, type ConversationAttachmentJob, type ConversationChatJob, type ConversationJob, type ConversationSyncJob } from './conversations-worker.ts';
 import { runLiveCheck } from './calendar-live.ts';
 import { CALENDAR_SYNC_SWEEP_MS, runCalendarWriteBack, syncCalendars, type CalendarWriteBackJob } from './calendar-sync.ts';
 import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhook.ts';
@@ -421,8 +421,14 @@ export interface WorkerDeps {
     facebookHistory?: boolean;
     // Read the replies under a Threads profile's recent posts (CHANNEL_THREADS_HISTORY, #3133).
     threadsHistory?: boolean;
+    // Poll the comments of a YouTube channel that opted in (CHANNEL_YOUTUBE_HISTORY, #3134).
+    youtubeHistory?: boolean;
     // The media hosts a customer's image may be fetched from, by provider (CHANNEL_ZALO_MEDIA_HOSTS): unset, the provider's own list.
     conversationMediaHosts?: readonly string[];
+    // The deployment's own media hosts of a provider whose list is its own (CHANNEL_WHATSAPP_MEDIA_HOSTS, #3131); an empty list is the provider's built-in one.
+    conversationMediaHostsBy?: Readonly<Record<string, readonly string[]>>;
+    // The conversation adapters of channels that never publish (WhatsApp, #3131), by provider id; a publisher's own `conversations` adapter is used first.
+    conversationAdapters?: Readonly<Record<string, ConversationAdapter>>;
     publishers: Readonly<Record<string, Publisher>>;
     refreshers?: Readonly<Record<string, Refresher>>;
     bankFeeds?: Readonly<Record<string, BankFeedProvider>>;
@@ -1435,15 +1441,29 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   const conversationPublishers = deps.channels?.publishers;
   const conversationBroker = deps.channels?.broker;
   if (conversationPublishers && conversationBroker) {
-    await boss.work<ConversationJob | ConversationSyncJob | ConversationAttachmentJob>(QUEUES.conversationsReply, { batchSize: 1 }, async ([job]) => {
+    await boss.work<ConversationJob | ConversationSyncJob | ConversationAttachmentJob | ConversationChatJob>(QUEUES.conversationsReply, { batchSize: 1 }, async ([job]) => {
       if (!job) return;
+      // Telegram bot chats switched on or off (#3132): the webhook is set or deleted with the bot token only this worker opens; ids only in the job. The
+      // webhook's address is the API's own origin (PUBLIC_URL, where webhooks are answered), not the web app's.
+      if (job.data.action === 'chat') {
+        const outcome = await runTelegramChatHook({ runtime: deps.runtime, broker: conversationBroker, adapter: (provider: string) => (Object.hasOwn(conversationPublishers, provider) ? conversationPublishers[provider]?.conversations : undefined), baseUrl: deps.publicUrl ?? '' }, job.data);
+        console.log(`[conversations] chat ${job.data.on ? 'enable' : 'disable'} ${job.data.connectionId}: ${outcome}`);
+        return;
+      }
       // A customer's image (CV5c): fetched through the egress guard from the platform's media hosts; the log names the image by id only.
+      const adapterOf = (provider: string): ConversationAdapter | undefined =>
+        (Object.hasOwn(conversationPublishers, provider) ? conversationPublishers[provider]?.conversations : undefined) ??
+        (deps.channels?.conversationAdapters && Object.hasOwn(deps.channels.conversationAdapters, provider) ? deps.channels.conversationAdapters[provider] : undefined);
       if (job.data.action === 'attachment') {
-        const outcome = await runConversationAttachment({ runtime: deps.runtime, store: deps.store, hosts: deps.channels?.conversationMediaHosts }, job.data);
+        // An image given by a reference (WhatsApp's media id, #3131) is turned into bytes by the provider's adapter with the connection's credential, inside this job.
+        const outcome = await runConversationAttachment(
+          { runtime: deps.runtime, store: deps.store, hosts: deps.channels?.conversationMediaHosts, providerHosts: deps.channels?.conversationMediaHostsBy, broker: conversationBroker, adapter: adapterOf },
+          job.data,
+        );
         console.log(`[conversations] attachment ${job.data.attachmentId}: ${outcome}`);
         return;
       }
-      const sendDeps = { runtime: deps.runtime, broker: conversationBroker, adapter: (provider: string) => (Object.hasOwn(conversationPublishers, provider) ? conversationPublishers[provider]?.conversations : undefined) };
+      const sendDeps = { runtime: deps.runtime, broker: conversationBroker, adapter: adapterOf };
       // A history read or a name lookup (CV5b) shares the queue of a reply: ids only in the job, and only the action and ids in the log.
       if (job.data.action === 'history' || job.data.action === 'profile') {
         const outcome = await runConversationSync(sendDeps, job.data);
@@ -2453,6 +2473,16 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                 const attachmentJob: ConversationAttachmentJob = { orgId: row.org_id, connectionId: String(row.payload.connectionId), action: 'attachment', attachmentId: String(row.payload.attachmentId) };
                 await boss.send(QUEUES.conversationsReply, attachmentJob, { singletonKey: jobKey(row.org_id, QUEUES.conversationsReply, `attachment:${attachmentJob.attachmentId}:${row.event_id}`), retryLimit: 2, retryDelay: 60, retryBackoff: true });
               }
+              // Telegram bot chats switched on or off (#3132): the job sets or deletes the webhook; ids only (never the hook), and no retry: a failure is
+              // recorded for the screen and a person turns it on again. With no channel here the attempt is recorded as failed at once.
+              if (row.type === 'kernel.channel.chat_queued') {
+                const chatJob: ConversationChatJob = { orgId: row.org_id, connectionId: String(row.payload.connectionId), action: 'chat', on: row.payload.action !== 'disable' };
+                if (deps.channels?.publishers && deps.channels.broker) {
+                  await boss.send(QUEUES.conversationsReply, chatJob, { singletonKey: jobKey(row.org_id, QUEUES.conversationsReply, `chat:${chatJob.on ? 'on' : 'off'}:${row.event_id}`), retryLimit: 0 });
+                } else {
+                  await failChatHook(deps.runtime, chatJob);
+                }
+              }
               // Vy's draft of a reply (CV8): ids only in the job; with no model here the draft is settled as none at once.
               if (row.type === 'kernel.conversation.draft_queued') {
                 const draftJob: ConversationDraftJob = { orgId: row.org_id, draftId: String(row.payload.draftId), conversationId: String(row.payload.conversationId) };
@@ -2718,6 +2748,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                 return Boolean(deps.channels?.facebookHistory ?? deps.channels?.conversationHistory);
               }
               if (id === 'threads') return Boolean(deps.channels?.threadsHistory ?? deps.channels?.conversationHistory);
+              if (id === 'youtube') return Boolean(deps.channels?.youtubeHistory ?? deps.channels?.conversationHistory);
               return Boolean(deps.channels?.conversationHistory);
             })
             .map(([id]) => id);

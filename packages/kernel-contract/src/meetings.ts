@@ -2,8 +2,21 @@
 import { z } from 'zod';
 import { zId } from './schemas.ts';
 
-export const CONSENT_METHODS = ['told_at_start', 'in_invite', 'in_writing'] as const;
+// `in_call_chat`: the recorder pasted the recording notice in the call's chat (Meetings A1, #3159).
+export const CONSENT_METHODS = ['told_at_start', 'in_invite', 'in_writing', 'in_call_chat'] as const;
 export type ConsentMethod = (typeof CONSENT_METHODS)[number];
+
+// Why a recording stopped without the recorder's own click (Meetings A1, #3159): a code, never text. The screens turn it into
+// plain words ("Tab họp đã đóng", "Micro bị mất"...). Same set as the CHECK on crove_meetings.meeting.recording_stop_reason.
+export const RECORDING_STOP_REASONS = ['tab_closed', 'mic_lost', 'permission_lost', 'storage_full', 'left_screen', 'unknown'] as const;
+export type RecordingStopReason = (typeof RECORDING_STOP_REASONS)[number];
+export const zRecordingStopReason = z.enum(RECORDING_STOP_REASONS);
+
+// The versions of the recording notice text a meeting may store as `consent_notice_version` (A1, #3159). The text itself
+// lives in one place, packages/meeting-recorder/src/notice.ts, and carries the current version; a client sends the version
+// it showed, the server accepts only a known one. A new wording adds a version here and keeps the old ones.
+export const CONSENT_NOTICE_VERSION = '2026-11-v1';
+export const KNOWN_CONSENT_NOTICE_VERSIONS: readonly string[] = [CONSENT_NOTICE_VERSION];
 
 export const MEETING_VISIBILITIES = ['attendees', 'org'] as const;
 export type MeetingVisibility = (typeof MEETING_VISIBILITIES)[number];
@@ -37,6 +50,16 @@ export const zMeetingExtensionStatus = z.strictObject({
 });
 export type MeetingExtensionStatus = z.infer<typeof zMeetingExtensionStatus>;
 
+// The recording indicator (Meetings A1, #3159): the calling member's own meeting, made by the extension, that is still waiting for its
+// first audio, so the app header can show "Đang ghi 12:31" while the extension records. Derived from the meeting row: no heartbeat, no
+// new route for the extension. `null` when there is none. The window is in RECORDING_NOW_WINDOW_HOURS.
+export const RECORDING_NOW_WINDOW_HOURS = 4;
+export const zMeetingRecordingNowInput = z.strictObject({});
+export const zMeetingRecordingNow = z.strictObject({
+  recording: z.strictObject({ meetingId: zId, startedAt: z.string() }).nullable(),
+});
+export type MeetingRecordingNow = z.infer<typeof zMeetingRecordingNow>;
+
 export const zMeetingSummary = z.strictObject({
   id: zId,
   title: z.string(),
@@ -66,6 +89,8 @@ export const zMeetingDetail = zMeetingSummary.extend({
   consentConfirmedBy: zId,
   consentConfirmedAt: z.string(),
   consentNoticeVersion: z.string(),
+  // Set when the recording stopped without the recorder's click; the stop time is `endedAt` (A1, #3159).
+  recordingStopReason: zRecordingStopReason.nullable(),
   readers: z.array(zId),
   videoRetentionDate: z.string().nullable(),
   isRecorder: z.boolean(),
@@ -86,6 +111,8 @@ export const zMeetingCreate = z.strictObject({
   // "Ghi chú trực tiếp" (ADR-0052 L4a): off by default, opted in per meeting at the consent step, fixed once the meeting exists.
   liveNotes: z.boolean().default(false),
   consentMethod: zConsentMethod,
+  // The version of the notice text the client showed (and the recorder may have copied); absent means the current one.
+  consentNoticeVersion: z.string().max(20).refine((v) => KNOWN_CONSENT_NOTICE_VERSIONS.includes(v), 'Unknown notice version').optional(),
   readerUserIds: z.array(zId).optional(),
   lengthSeconds: z.number().int().nonnegative().optional(),
 });
@@ -175,6 +202,8 @@ export const zMeetingMediaRecord = zMeetingRef.extend({
   contentType: z.string().min(1).max(64),
   // Measured by crove-media at upload (#2985), never the client's value: the upload route is the only caller.
   lengthSeconds: z.number().int().positive(),
+  // The recording stopped without the recorder's click (A1, #3159): a code the upload route validated; absent for a recording the recorder stopped.
+  stopReason: zRecordingStopReason.optional(),
 });
 export type MeetingMediaRecord = z.infer<typeof zMeetingMediaRecord>;
 

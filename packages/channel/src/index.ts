@@ -16,12 +16,15 @@ export * from './meta-conversation.ts';
 export * from './instagram.ts';
 export * from './zalo.ts';
 export * from './zalo-conversation.ts';
+export * from './whatsapp-conversation.ts';
 export * from './bluesky.ts';
 export * from './threads.ts';
 export * from './threads-conversation.ts';
+export * from './youtube-conversation.ts';
 export * from './linkedin.ts';
 export * from './google-business.ts';
 export * from './telegram.ts';
+export * from './telegram-conversation.ts';
 export * from './mastodon.ts';
 export * from './youtube.ts';
 export * from './tiktok.ts';
@@ -58,6 +61,9 @@ export const CHANNEL_PROVIDERS = [
   'wordpress',
   // LinkedIn Company Pages (#1077), with the LinkedIn app once it has the Community Management API.
   'linkedin_page',
+  // WhatsApp Business, Cloud API (#3131): a messaging channel of the conversation core only. It never publishes; it is listed so a connection has a provider
+  // id, a publish queue exists for every provider (the job tests count them), and nothing else needs to know a provider that is not one of these.
+  'whatsapp',
 ] as const;
 export type ChannelProviderId = (typeof CHANNEL_PROVIDERS)[number];
 

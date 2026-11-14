@@ -13,6 +13,7 @@ import {
   type MeetingSummary,
   type MeetingVisibility,
 } from '@crove/kernel-contract';
+import { RECORDING_NOTICE } from '@crove/meeting-recorder';
 import { Badge } from '@crove/ui/components/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
 import { Button, buttonVariants } from '@crove/ui/components/button';
@@ -24,6 +25,7 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { MeetingSearch } from '../components/meeting-search.tsx';
 import { NotesSubnav } from '../components/notes-subnav.tsx';
+import { RecordingNotice } from '../components/recording-notice.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient, uploadMeetingMedia } from '../lib/api.ts';
 import { toast } from '../lib/toast.ts';
@@ -205,6 +207,7 @@ export function MeetingsPage() {
           visibility,
           keepVideo,
           consentMethod,
+          consentNoticeVersion: RECORDING_NOTICE.version,
         });
         createdIdRef.current = made.meetingId;
         setMeetingCreated(true);
@@ -417,9 +420,7 @@ export function MeetingsPage() {
               <p className="text-xs text-muted-foreground">
                 {t('form.consentNotice')}
               </p>
-              <div className="rounded bg-muted/60 p-2 text-xs italic text-foreground">
-                {t('form.consentSpokenSentence')}
-              </div>
+              <RecordingNotice meetingLanguage={language} />
 
               <div className="space-y-1">
                 <Label htmlFor="consent-method" className="text-xs">
@@ -436,6 +437,7 @@ export function MeetingsPage() {
                   <NativeSelectOption value="told_at_start">{t('form.toldAtStart')}</NativeSelectOption>
                   <NativeSelectOption value="in_invite">{t('form.inInvite')}</NativeSelectOption>
                   <NativeSelectOption value="in_writing">{t('form.inWriting')}</NativeSelectOption>
+                  <NativeSelectOption value="in_call_chat">{t('form.inCallChat')}</NativeSelectOption>
                 </NativeSelect>
               </div>
 

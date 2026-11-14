@@ -15,7 +15,10 @@ import {
   ConversationNoticeError,
   parseFacebookNotices,
   parseInstagramNotices,
+  TELEGRAM_HOOK_KEY_INFO,
   parseSandboxNotice,
+  parseWhatsAppNotices,
+  parseTelegramChatNotice,
   parseThreadsNotices,
   parseZaloNotice,
   type ConversationAdapter,
@@ -25,9 +28,9 @@ import { sql } from 'kysely';
 import type { Db } from '@crove/db';
 import { BlobConflictError, DomainError, putFile, sha256Hex, type BlobStore, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
 import { AiBudgetExhaustedError, withAiScope, type AiMeter, type ConversationWriter, type ReplyDraftResult } from '@crove/agent';
-import type { AttachmentSource, DraftSource, HideWork, HistoryWork, ProfileWork, ReplyWork, UsageLimits } from '@crove/kernel';
+import type { AttachmentSource, DraftSource, HideWork, HistoryWork, ProfileWork, ReplyWork, TelegramChatWork, UsageLimits } from '@crove/kernel';
 import type { DraftBudget } from './ai-draft-limit.ts';
-import { fetchConversationImage, mediaHostsOf, type FetchConversationImageOptions } from './conversation-media.ts';
+import { fetchConversationImage, fetchConversationMedia, mediaHostsOf, type FetchConversationImageOptions } from './conversation-media.ts';
 import { opsAlert } from './ops-alert.ts';
 
 const SYSTEM = { type: 'system' as const, component: 'conversations' };
@@ -48,9 +51,17 @@ export const NOTICE_PARSERS: Readonly<Record<string, NoticeParser>> = {
   instagram: parseInstagramNotices,
   // Zalo OA (#2304): its signature was checked by the route before the body was parked.
   zalo_oa: parseZaloNotice,
+  // WhatsApp Business (#3131): X-Hub-Signature-256 was checked by the route before the body was parked.
+  whatsapp: parseWhatsAppNotices,
+  // Telegram bot chats (#3132): the hook and its secret were checked by the route before the update was parked; the notice's account id is the hook.
+  telegram_chat: parseTelegramChatNotice,
   // Threads replies (#3133): X-Hub-Signature-256 was checked with the Threads app's secret by the route before the body was parked.
   threads: parseThreadsNotices,
 };
+
+// The intake providers whose notice names a connection's hook rather than a platform account (the hook is an opaque capability, never an org):
+// the worker finds the connection by the hook.
+const HOOK_PROVIDERS: ReadonlySet<string> = new Set(['telegram_chat']);
 
 export interface ClaimedNotice {
   seq: string;
@@ -74,8 +85,9 @@ const finishNotice = async (workerDb: Db, seq: string): Promise<void> => {
 };
 
 async function connectionsFor(workerDb: Db, provider: string, accountId: string): Promise<Array<{ orgId: string; connectionId: string }>> {
-  const { rows } = await sql<{ org_id: string; connection_id: string }>`
-    SELECT org_id, connection_id FROM crove_kernel.conversation_connections_for(${provider}, ${accountId})`.execute(workerDb);
+  const { rows } = HOOK_PROVIDERS.has(provider)
+    ? await sql<{ org_id: string; connection_id: string }>`SELECT org_id, connection_id FROM crove_kernel.conversation_chat_hook_connections(${accountId})`.execute(workerDb)
+    : await sql<{ org_id: string; connection_id: string }>`SELECT org_id, connection_id FROM crove_kernel.conversation_connections_for(${provider}, ${accountId})`.execute(workerDb);
   return rows.map((r) => ({ orgId: r.org_id, connectionId: r.connection_id }));
 }
 
@@ -180,6 +192,85 @@ export async function failUnsendable(runtime: Runtime, job: ConversationJob): Pr
   if (work.action === 'call' && work.callKey) await runtime.execute('kernel.conversation.reply_record', { messageId: job.messageId, callKey: work.callKey, result }, options);
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// Telegram bot chats on and off (#3132). The webhook is set (or deleted) by a job on this queue, ids only in its data: the worker alone opens
+// the bot token. The hook that makes the webhook's address, and the secret derived from it, are built here from the stored hook and the
+// deployment's key, used for the one call and never logged, stored or returned.
+// ---------------------------------------------------------------------------------------------------------------------
+
+// `on`: the webhook is to be set (true) or deleted (false). One action value, so the job is a member of the queue's union that a check narrows away.
+export type ConversationChatJob = { orgId: string; connectionId: string; action: 'chat'; on: boolean };
+
+export interface ChatHookDeps {
+  runtime: Runtime;
+  broker: CredentialBroker;
+  // The provider's adapter (Telegram's), which makes the platform call.
+  adapter: (provider: string) => ConversationAdapter | undefined;
+  // The API's public origin (PUBLIC_URL, where webhooks are answered): the webhook is `<baseUrl>/api/channels/telegram/webhook/<hook>`. Telegram only takes https.
+  baseUrl: string;
+}
+
+// Sets or deletes the connection's webhook and records the outcome. The returned text is for the log: a state or a code, nothing a platform
+// said and nothing of the hook. The adapter builds the address and the secret from the hook and the deployment's key and never returns them.
+// If the hook that was wanted changed while the call was made (a reconnect gave a new one), the answer is not applied and the job looks again, a few
+// times at most, so Telegram ends up pointing at the hook the database holds.
+export async function runTelegramChatHook(deps: ChatHookDeps, job: ConversationChatJob): Promise<string> {
+  const options = { actor: SYSTEM, orgId: job.orgId };
+  const action = job.on ? ('enable' as const) : ('disable' as const);
+  let usedHookFp: string | undefined;
+  let last = 'none';
+  for (let round = 0; round < 3; round++) {
+    const work = await deps.runtime.query<TelegramChatWork>('kernel.channel.telegram_chat_work', { connectionId: job.connectionId, action, ...(usedHookFp ? { usedHookFp } : {}) }, options);
+    if (work.action !== 'call' || (job.on && !work.hook)) return last;
+    const record = (outcome: 'done' | 'failed', extra: { botId?: string; code?: string } = {}) =>
+      deps.runtime.execute<{ applied: boolean; hookChanged: boolean }>('kernel.channel.telegram_chat_record', { connectionId: job.connectionId, action, outcome, ...(work.hookFp ? { hookFp: work.hookFp } : {}), ...extra }, options);
+    const failed = async (code: string): Promise<{ text: string; again: boolean }> => {
+      const recorded = await record('failed', { code });
+      return { text: `failed:${code}`, again: recorded.hookChanged };
+    };
+    const adapter = deps.adapter('telegram');
+    let outcome: { text: string; again: boolean };
+    if (!adapter?.chatHook) {
+      outcome = await failed('NO_ADAPTER');
+    } else {
+      let opened: Opened | null = null;
+      try {
+        opened = await open(deps, job);
+      } catch {
+        opened = null;
+      }
+      if (!opened) {
+        outcome = await failed('CREDENTIAL_ERROR');
+      } else if (opened.kind === 'refused') {
+        outcome = await failed(opened.code);
+      } else {
+        let answer;
+        try {
+          answer = await adapter.chatHook({ secret: opened.secret, on: job.on, hook: work.hook ?? '', baseUrl: deps.baseUrl, key: deps.broker.deriveKeys?.(TELEGRAM_HOOK_KEY_INFO)[0]?.key ?? null, takenBotIds: work.takenBotIds ?? [] });
+        } catch {
+          answer = { kind: 'failed' as const, retry: true, code: 'ADAPTER_ERROR' };
+        }
+        if (answer.kind === 'failed') {
+          outcome = await failed(answer.code);
+        } else {
+          const recorded = await record('done', job.on && answer.botId ? { botId: answer.botId } : {});
+          outcome = { text: job.on ? 'on' : 'off', again: recorded.hookChanged };
+        }
+      }
+    }
+    last = outcome.text;
+    if (!outcome.again) return last;
+    usedHookFp = work.hookFp;
+  }
+  return `${last}:busy`;
+}
+
+// A chat switch queued where this worker has no channel to make the call through: the attempt is recorded as failed, so the screen says so and
+// nothing stays enabling with no job.
+export async function failChatHook(runtime: Runtime, job: ConversationChatJob): Promise<void> {
+  await runtime.execute('kernel.channel.telegram_chat_record', { connectionId: job.connectionId, action: job.on ? 'enable' : 'disable', outcome: 'failed', code: 'CHANNEL_NOT_CONFIGURED' }, { actor: SYSTEM, orgId: job.orgId });
+}
+
 // The jobs that read from a platform beyond the webhook (CV5b, #2329), on the same queue as a reply: ids only, never a name or a message.
 export type ConversationSyncJob = { orgId: string; connectionId: string; action: 'history' } | { orgId: string; connectionId: string; action: 'profile'; identityId: string };
 
@@ -226,14 +317,54 @@ export async function runConversationSync(deps: SendDeps, job: ConversationSyncJ
     answer = { kind: 'failed', retry: true, code: 'ADAPTER_ERROR' };
   }
   if (answer.kind === 'failed') {
+    // A provider that meters its API (YouTube, #3134) has its spent units and its next poll recorded, and is never read again by the job's own retry:
+    // asking again at once would spend more of a quota that is the failure. Its poll comes back by its own interval (the kernel sets it).
+    if (work.provider === 'youtube') {
+      await deps.runtime.execute(
+        'kernel.conversation.history_record',
+        {
+          connectionId: job.connectionId,
+          complete: false,
+          gapFrom: null,
+          gapTo: null,
+          quota: { units: Math.min(answer.units ?? 0, 1000), outcome: answer.retry ? 'retry' : 'final', newMessages: 0, blockedUntil: answer.quotaUntil ? answer.quotaUntil.toISOString() : null },
+        },
+        options,
+      );
+      return 'failed';
+    }
     // Asked again by the job's retry, then by the next pass after an hour; a refusal that will not change waits for the reconnect.
     if (answer.retry) throw new Error('history read failed');
     return 'failed';
   }
-  for (let i = 0; i < answer.events.length; i += INGEST_CHUNK) {
-    await deps.runtime.execute('kernel.conversation.ingest', { connectionId: job.connectionId, events: answer.events.slice(i, i + INGEST_CHUNK) }, options);
+  let stored = 0;
+  try {
+    for (let i = 0; i < answer.events.length; i += INGEST_CHUNK) {
+      const ingested = await deps.runtime.execute<{ stored: number }>('kernel.conversation.ingest', { connectionId: job.connectionId, events: answer.events.slice(i, i + INGEST_CHUNK) }, options);
+      stored += ingested.stored;
+    }
+  } catch (error) {
+    if (work.provider !== 'youtube') throw error;
+    // The platform was asked and its units are spent whatever happens after: they are counted, and the poll comes back by its own interval, never by the
+    // job's retry (which would ask Google again, uncounted, while the store is failing).
+    await deps.runtime.execute(
+      'kernel.conversation.history_record',
+      { connectionId: job.connectionId, complete: false, gapFrom: null, gapTo: null, quota: { units: Math.min(answer.units ?? 0, 1000), outcome: 'retry', newMessages: 0, blockedUntil: null } },
+      options,
+    );
+    return 'failed';
   }
-  await deps.runtime.execute('kernel.conversation.history_record', { connectionId: job.connectionId, complete: answer.complete, gapFrom: answer.complete ? null : work.since, gapTo: answer.complete ? null : answer.oldest }, options);
+  await deps.runtime.execute(
+    'kernel.conversation.history_record',
+    {
+      connectionId: job.connectionId,
+      complete: answer.complete,
+      gapFrom: answer.complete ? null : work.since,
+      gapTo: answer.complete ? null : answer.oldest,
+      ...(work.provider === 'youtube' ? { quota: { units: Math.min(answer.units ?? 0, 1000), outcome: 'ok' as const, newMessages: stored, blockedUntil: null } } : {}),
+    },
+    options,
+  );
   return answer.complete ? 'complete' : 'gap';
 }
 
@@ -271,6 +402,12 @@ export interface AttachmentDeps {
   store: BlobStore;
   // The deployment's own list of media hosts (CHANNEL_ZALO_MEDIA_HOSTS); unset, each provider's own.
   hosts?: readonly string[] | undefined;
+  // The deployment's own list of another provider's media hosts (CHANNEL_WHATSAPP_MEDIA_HOSTS, #3131); an empty list is the provider's own.
+  providerHosts?: Readonly<Record<string, readonly string[]>> | undefined;
+  // For an image given by a reference (#3131): the credential broker that opens the connection's token inside this job, and the provider's adapter that turns the
+  // reference into bytes with it. Without them such an image is dropped (nothing can fetch it).
+  broker?: CredentialBroker | undefined;
+  adapter?: ((provider: string) => ConversationAdapter | undefined) | undefined;
   // Tests only: the egress guard's resolver, address check and port.
   egress?: FetchConversationImageOptions['egress'];
 }
@@ -286,7 +423,25 @@ export async function runConversationAttachment(deps: AttachmentDeps, job: Conve
     await deps.runtime.execute('kernel.conversation.attachment_record', { outcome: 'failed', attachmentId: job.attachmentId, retry, code }, options);
     return retry ? 'retry' : 'dropped';
   };
-  const got = await fetchConversationImage(source.sourceUrl, { hosts: mediaHostsOf(source.provider, deps.hosts), ...(deps.egress ? { egress: deps.egress } : {}) });
+  const hosts = mediaHostsOf(source.provider, deps.hosts, deps.providerHosts);
+  let got: Awaited<ReturnType<typeof fetchConversationImage>>;
+  if (source.sourceUrl !== null) {
+    got = await fetchConversationImage(source.sourceUrl, { hosts, ...(deps.egress ? { egress: deps.egress } : {}) });
+  } else if (source.mediaRef !== null) {
+    // The reference is turned into bytes by the adapter with the connection's sealed token, opened here and nowhere else; nothing of it is logged or put in a job.
+    const adapter = deps.adapter?.(source.provider);
+    if (!adapter?.media || !deps.broker) return failed(false, 'NO_MEDIA_ADAPTER');
+    let opened: Opened;
+    try {
+      opened = await open({ runtime: deps.runtime, broker: deps.broker }, job);
+    } catch {
+      return failed(true, 'CREDENTIAL_ERROR');
+    }
+    if (opened.kind === 'refused') return failed(false, opened.code);
+    got = await fetchConversationMedia(adapter, { externalAccountId: opened.externalAccountId, secret: opened.secret, mediaRef: source.mediaRef, hosts, ...(deps.egress ? { egress: deps.egress } : {}) });
+  } else {
+    return 'none';
+  }
   if (got.kind === 'failed') return failed(got.retry, got.code);
   const sha256 = sha256Hex(got.bytes);
   let generation: string;
@@ -385,7 +540,7 @@ type Opened = { kind: 'ok'; externalAccountId: string; secret: string } | { kind
 
 // The credential of a connection, opened here and nowhere else. kernel.channel.credential refuses once the member who connected
 // the account may no longer use it or the connection is not active.
-async function open(deps: SendDeps, job: { orgId: string; connectionId: string }): Promise<Opened> {
+async function open(deps: Pick<SendDeps, 'runtime' | 'broker'>, job: { orgId: string; connectionId: string }): Promise<Opened> {
   const options = { actor: SYSTEM, orgId: job.orgId };
   let sealed: SealedChannelCredential;
   try {
