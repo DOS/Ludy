@@ -88,4 +88,5 @@ export const TEXT_RETENTION_DAYS = 365;
 export const VIDEO_RETENTION_DAYS = 7;
 export const AUDIO_MAX_BYTES = 300 * 1024 * 1024;
 export const VIDEO_MAX_BYTES = 2 * 1024 * 1024 * 1024;
-export const CONSENT_NOTICE_VERSION = '2026-11-v1';
+// The version of the notice text lives in the contract (a client sends the version it showed); the current one is the default.
+export { CONSENT_NOTICE_VERSION } from '@crove/kernel-contract';

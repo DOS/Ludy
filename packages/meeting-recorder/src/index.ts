@@ -289,3 +289,4 @@ export async function prepareCapture<S extends CaptureStream, R extends CaptureR
 
 // Live notes (ADR-0052 L4a): the sender, the audio-only live recorder wrapper and the stop order.
 export * from './live.ts';
+export * from './notice.ts';

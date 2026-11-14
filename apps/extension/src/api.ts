@@ -43,6 +43,8 @@ export interface MeetingCreate {
   title: string;
   keepVideo: boolean;
   consentMethod: ConsentMethod;
+  // The version of the recording notice text this popup showed; the server stores it on the meeting (A1, #3159).
+  consentNoticeVersion?: string;
   // Live notes (ADR-0052 L4a): the server defaults to off.
   liveNotes: boolean;
 }

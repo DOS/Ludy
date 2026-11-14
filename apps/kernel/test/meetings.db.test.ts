@@ -1312,4 +1312,80 @@ suite('meetings module database integration tests (#2576)', () => {
     const keyId = await admin(async (c) => (await c.query<{ key_id: string }>('SELECT key_id FROM crove_meetings.media_key WHERE meeting_id = $1', [meetingId])).rows[0]?.key_id);
     expect(keyId).toBe('k1-meetings-test');
   });
+
+  // Meetings A1 (#3159): the recording notice, the new consent method, the stop reason and the recording indicator's query.
+  const OGG = Buffer.concat([Buffer.from([0x4f, 0x67, 0x67, 0x53, 0x00, 0x02]), Buffer.from('a1 notice upload '.repeat(40))]);
+  const uploadRaw = async (meetingId: string, query: string, who = 'recorder') =>
+    app.request(`/api/meetings/${meetingId}/media${query}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${await token(who)}`, 'x-crove-org': slug, 'content-type': 'audio/ogg', 'content-length': String(OGG.length) },
+      body: new Uint8Array(OGG),
+    });
+
+  it('21. A1: pasting the notice in the call chat is a consent method; the version shown is stored, an unknown one is refused, the audit holds codes only', async () => {
+    const made = await rpc('meetings/create', 'recorder', { title: 'Notice pasted', consentMethod: 'in_call_chat', consentNoticeVersion: '2026-11-v1' });
+    expect(made.status).toBe(200);
+    const row = await admin(async (c) => (await c.query<{ consent_method: string; consent_notice_version: string }>('SELECT consent_method, consent_notice_version FROM crove_meetings.meeting WHERE id = $1', [String(made.body.meetingId)])).rows[0]);
+    expect(row).toEqual({ consent_method: 'in_call_chat', consent_notice_version: '2026-11-v1' });
+    // The version is the current one when the client says none.
+    const plain = await rpc('meetings/create', 'recorder', { title: 'No version', consentMethod: 'told_at_start' });
+    const plainRow = await admin(async (c) => (await c.query<{ consent_notice_version: string }>('SELECT consent_notice_version FROM crove_meetings.meeting WHERE id = $1', [String(plain.body.meetingId)])).rows[0]);
+    expect(plainRow?.consent_notice_version).toBe('2026-11-v1');
+    // A version the server does not know, and a method it does not know, are refused and create nothing.
+    const before = await admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_meetings.meeting')).rows[0]?.n));
+    expect((await rpc('meetings/create', 'recorder', { title: 'Bad version', consentMethod: 'in_call_chat', consentNoticeVersion: '1999-01-v9' })).status).toBe(400);
+    expect((await rpc('meetings/create', 'recorder', { title: 'Bad method', consentMethod: 'in_the_hallway' })).status).toBe(400);
+    expect(await admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_meetings.meeting')).rows[0]?.n))).toBe(before);
+    // The audit row names the method and the version, and holds none of the notice's words or the title.
+    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'meetings.meeting.create' AND detail->>'meetingId' = $1`, [String(made.body.meetingId)])).rows[0]?.detail);
+    expect(audit).toMatchObject({ consentMethod: 'in_call_chat', consentNoticeVersion: '2026-11-v1' });
+    expect(JSON.stringify(audit)).not.toMatch(/ghi âm|recorded|Notice pasted/);
+    // The meeting says so when read back, and audio is still refused for a meeting whose consent was not recorded (the column is NOT NULL).
+    const got = await rpc('meetings/get', 'recorder', { meetingId: String(made.body.meetingId) });
+    expect(got.body).toMatchObject({ consentMethod: 'in_call_chat', consentNoticeVersion: '2026-11-v1', recordingStopReason: null });
+  });
+
+  it('22. A1: a recording that stopped by itself keeps its reason code and stop time on the meeting, once; an unknown code is refused', async () => {
+    const made = await rpc('meetings/create', 'recorder', { title: 'Stopped by itself', consentMethod: 'in_call_chat' });
+    const meetingId = String(made.body.meetingId);
+    const objects = store.storage.size;
+    expect((await uploadRaw(meetingId, '?kind=audio&stopReason=whatever')).status).toBe(400);
+    expect(store.storage.size).toBe(objects);
+    expect((await uploadRaw(meetingId, '?kind=audio&stopReason=tab_closed')).status).toBe(200);
+    const got = await rpc('meetings/get', 'recorder', { meetingId });
+    expect(got.body.recordingStopReason).toBe('tab_closed');
+    expect(typeof got.body.endedAt).toBe('string');
+    expect(new Date(String(got.body.endedAt)).getTime()).toBeGreaterThanOrEqual(new Date(String(got.body.startedAt)).getTime());
+    expect(new Date(String(got.body.endedAt)).getTime()).toBeLessThanOrEqual(Date.now() + 1000);
+    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'meetings.media.record' AND detail->>'meetingId' = $1`, [meetingId])).rows[0]?.detail);
+    expect(audit).toMatchObject({ stopReason: 'tab_closed' });
+    // A recording the recorder stopped has no reason and no stop time of its own.
+    const clean = await rpc('meetings/create', 'recorder', { title: 'Stopped by a click', consentMethod: 'told_at_start' });
+    expect((await uploadRaw(String(clean.body.meetingId), '?kind=audio')).status).toBe(200);
+    const cleanGot = await rpc('meetings/get', 'recorder', { meetingId: String(clean.body.meetingId) });
+    expect(cleanGot.body.recordingStopReason).toBeNull();
+    expect(cleanGot.body.endedAt).toBeNull();
+  });
+
+  it('23. A1: recording_now shows the caller\'s own extension meeting that is still waiting for audio, and nothing once it has audio or stopped', async () => {
+    const made = await rpc('meetings/create', 'recorder', { title: 'Recording now', consentMethod: 'in_call_chat' });
+    const meetingId = String(made.body.meetingId);
+    // Made in the app (no extension token): the app knows its own recording, the server does not claim it.
+    expect((await rpc('meetings/recordingNow', 'recorder', {})).body.recording).toBeNull();
+    // Made by an extension token (stamped as the extension scope does).
+    await admin(async (c) => void (await c.query('UPDATE crove_meetings.meeting SET extension_token_id = $1 WHERE id = $2', [randomUUID(), meetingId])));
+    const now = await rpc('meetings/recordingNow', 'recorder', {});
+    expect(now.status).toBe(200);
+    expect(now.body.recording).toMatchObject({ meetingId, title: 'Recording now' });
+    // Another member sees nothing of it.
+    expect((await rpc('meetings/recordingNow', 'attendee', {})).body.recording).toBeNull();
+    // Older than the window: not a recording any more.
+    await admin(async (c) => void (await c.query(`UPDATE crove_meetings.meeting SET started_at = now() - interval '5 hours' WHERE id = $1`, [meetingId])));
+    expect((await rpc('meetings/recordingNow', 'recorder', {})).body.recording).toBeNull();
+    await admin(async (c) => void (await c.query(`UPDATE crove_meetings.meeting SET started_at = now() - interval '1 minute' WHERE id = $1`, [meetingId])));
+    expect((await rpc('meetings/recordingNow', 'recorder', {})).body.recording).toMatchObject({ meetingId });
+    // Once its audio arrives (and the stop is recorded) the chip has nothing to show.
+    expect((await uploadRaw(meetingId, '?kind=audio&stopReason=mic_lost')).status).toBe(200);
+    expect((await rpc('meetings/recordingNow', 'recorder', {})).body.recording).toBeNull();
+  });
 });

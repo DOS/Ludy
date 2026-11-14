@@ -10,6 +10,7 @@ import {
   createBrowserLiveRecorder,
   createIndexedDbChunkStore,
   prepareCapture,
+  RECORDING_NOTICE,
   startLiveCapture,
   uploadAfterLive,
   type ChunkStore,
@@ -92,7 +93,7 @@ export async function startCapture(params: CaptureParams, deps: CaptureDeps = br
       // A video track exists only when the plan asked the tab for one.
       return new MediaStream([...mix.stream.getAudioTracks(), ...(plan.kind === 'video' ? tab.getVideoTracks() : [])]);
     },
-    createMeeting: async () => (await client.createMeeting({ title: params.title, keepVideo: params.keepVideo, consentMethod: params.consentMethod, liveNotes: params.liveNotes })).meetingId,
+    createMeeting: async () => (await client.createMeeting({ title: params.title, keepVideo: params.keepVideo, consentMethod: params.consentMethod, consentNoticeVersion: RECORDING_NOTICE.version, liveNotes: params.liveNotes })).meetingId,
     makeRecorder: (stream) => new MediaRecorder(stream, plan.mimeType ? { mimeType: plan.mimeType } : undefined),
     async begin(meetingId, recorder) {
       return beginRecording(deps.store, {

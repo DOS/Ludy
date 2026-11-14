@@ -17,6 +17,7 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { useMe } from '../components/conversation-inbox.tsx';
 import { NotesSubnav } from '../components/notes-subnav.tsx';
+import { RecordingNotice } from '../components/recording-notice.tsx';
 import { ErrorText, PageHeader } from '../components/ui.tsx';
 import { errorMessage, orpc, queryClient, sendLiveChunk, uploadMeetingMedia } from '../lib/api.ts';
 import {
@@ -28,6 +29,7 @@ import {
   createIndexedDbChunkStore,
   formatClock,
   pickRecorderMime,
+  RECORDING_NOTICE,
   startBlocker,
   startLiveCapture,
   uploadAfterLive,
@@ -37,6 +39,7 @@ import {
   type RecordingMeta,
   type RecordingWriter,
 } from '@crove/meeting-recorder';
+import { setLocalRecording } from '../lib/recording-indicator.ts';
 import { toast } from '../lib/toast.ts';
 
 // A recording whose meta was touched this recently is still being written, by another tab.
@@ -134,6 +137,19 @@ export function MeetingRecordPage() {
     return () => clearInterval(beat);
   }, [phase]);
 
+  // The header chip "Đang ghi 12:31" (A1, #3159): published while this screen records or is paused, withdrawn the moment it stops
+  // or the screen is left (leaving stops the devices, see below).
+  useEffect(() => {
+    const l = live.current;
+    if ((phase !== 'recording' && phase !== 'paused') || !l) {
+      setLocalRecording(null);
+      return;
+    }
+    setLocalRecording({ meetingId: l.writer.meta().meetingId, title: title.trim(), paused: phase === 'paused', elapsedMs: () => clock.current.elapsedMs(Date.now()) });
+    return () => setLocalRecording(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
+
   // The browser drops the wake lock when the tab is hidden: take it again when the tab is back.
   useEffect(() => {
     const again = () => {
@@ -202,7 +218,7 @@ export function MeetingRecordPage() {
         }),
       createMeeting: async () => {
         // The meeting row stores who confirmed the notice and how; the server refuses media for a meeting without it.
-        createdMeetingId.current ??= (await orpc.meetings.create.call({ title: title.trim(), language, visibility, keepVideo: withVideo, consentMethod: consentMethod as ConsentMethod, liveNotes })).meetingId;
+        createdMeetingId.current ??= (await orpc.meetings.create.call({ title: title.trim(), language, visibility, keepVideo: withVideo, consentMethod: consentMethod as ConsentMethod, consentNoticeVersion: RECORDING_NOTICE.version, liveNotes })).meetingId;
         const meetingId = createdMeetingId.current;
         if (linkedMeetingId.current !== meetingId) {
           linkedMeetingId.current = meetingId;
@@ -475,7 +491,7 @@ export function MeetingRecordPage() {
             <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-4">
               <div className="text-sm font-semibold">{t('form.consentSectionTitle')}</div>
               <p className="text-xs text-muted-foreground">{t('form.consentNotice')}</p>
-              <div className="rounded bg-muted/60 p-2 text-xs italic">{t('form.consentSpokenSentence')}</div>
+              <RecordingNotice meetingLanguage={language} />
               <div className="space-y-1">
                 <Label htmlFor="record-consent-method" className="text-xs">{t('form.consentMethod')}</Label>
                 <NativeSelect id="record-consent-method" value={consentMethod} onChange={(e) => setConsentMethod(e.target.value as ConsentMethod)} required>
@@ -483,6 +499,7 @@ export function MeetingRecordPage() {
                   <NativeSelectOption value="told_at_start">{t('form.toldAtStart')}</NativeSelectOption>
                   <NativeSelectOption value="in_invite">{t('form.inInvite')}</NativeSelectOption>
                   <NativeSelectOption value="in_writing">{t('form.inWriting')}</NativeSelectOption>
+                  <NativeSelectOption value="in_call_chat">{t('form.inCallChat')}</NativeSelectOption>
                 </NativeSelect>
               </div>
               <div className="flex items-start gap-2 pt-1">

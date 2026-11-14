@@ -6,6 +6,7 @@ import { NavIcon } from '@crove/ui/components/nav-icon';
 import { NavDrawer, ShellNav } from '../components/app-nav.tsx';
 import { CommandPalette, type PaletteEntry } from '../components/command-palette.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
+import { RecordingChip } from '../components/recording-chip.tsx';
 import { Toaster } from '../components/toaster.tsx';
 import { Logo, OrgLeftNotice } from '../components/ui.tsx';
 import { LOCALE_NAMES, LOCALES } from '../i18n/locale.ts';
@@ -304,6 +305,7 @@ export function OrgLayout() {
           <OrgLeftNotice />
           {me.isSuccess && !org ? <p className="text-sm text-destructive">{t('notMember')}</p> : <Outlet />}
         </main>
+        <RecordingChip />
         <Toaster />
         <CommandPalette
           entries={paletteEntries}
