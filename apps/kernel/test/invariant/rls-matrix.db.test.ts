@@ -91,6 +91,9 @@ const PENDING_TABLES = new Set<string>([
   'crove_meetings.meeting_link',
   'crove_notes.link',
   'crove_notes.note',
+  'crove_projects.project',
+  'crove_projects.project_member',
+  'crove_projects.project_task',
 ]);
 // Tables whose rows belong to one member (ADR-0037, notes plan §3.6 and step N1): unlike saved_view and notification,
 // the system context reads only what the value's predicate selects (over alias t, operators schema-qualified so a
@@ -560,6 +563,14 @@ const notesLinkRow = (o: { id: string; owner: string; party: string }, noteId: s
   target_id: o.party,
   party_id: o.party,
   created_by: o.owner,
+});
+// Projects on kernel tasks (ADR-0048, docs/plan/projects.md section 4.1, #2586): an active project owned by the org's owner.
+const projectsProjectRow = (o: { id: string; owner: string }) => ({
+  org_id: o.id,
+  id: randomUUID(),
+  name: `RLS matrix project ${tag()}`,
+  owner_user_id: o.owner,
+  status: 'active',
 });
 const journalEntry = (org: string, id: string): Row => ({
   table: 'crove_finance.journal_entry',
@@ -2504,6 +2515,32 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // Private by nature: the system context reads none.
   'crove_notes.todo': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), owner_user_id: o.owner, title: 'RLS matrix to-do', time_zone: 'Asia/Ho_Chi_Minh', sort_key: 'a0' } }),
+  },
+  // Projects and task board (ADR-0048, docs/plan/projects.md section 4.1 and 6, #2586): org-visible under apply_tenant_rls.
+  'crove_projects.project': {
+    make: (o) => ({ row: projectsProjectRow(o) }),
+  },
+  'crove_projects.project_member': {
+    make: (o) => {
+      const project = projectsProjectRow(o);
+      return {
+        setup: [{ table: 'crove_projects.project', values: project }],
+        row: { org_id: o.id, id: randomUUID(), project_id: project.id, user_id: o.owner },
+      };
+    },
+  },
+  'crove_projects.project_task': {
+    make: (o) => {
+      const project = projectsProjectRow(o);
+      const task = { org_id: o.id, id: randomUUID(), title: 'RLS matrix task', source: 'human', created_by_type: 'user' };
+      return {
+        setup: [
+          { table: 'crove_projects.project', values: project },
+          { table: 'crove_kernel.task', values: task },
+        ],
+        row: { org_id: o.id, id: randomUUID(), project_id: project.id, task_id: task.id },
+      };
+    },
   },
   // A channel's daily count of followers (#645), recorded by the worker: one per channel and day.
   'crove_social.account_snapshot': {

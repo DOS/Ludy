@@ -624,6 +624,11 @@ export const contract = {
     connectTelegram: oc
       .input(z.object({ botToken: z.string().trim().min(1).max(100), channel: z.string().trim().min(1).max(100) }))
       .output(z.object({ connectionId: zId, reconnected: z.boolean() })),
+    // Turns the bot's private chats on or off for a Telegram connection (#3132): on points the bot's webhook at this deployment, off takes it
+    // away. The call to Telegram is a job's; the answer is the state the connection is in now (enabling or disabling until the job is done).
+    setTelegramChats: oc
+      .input(z.object({ connectionId: zId, on: z.boolean() }))
+      .output(z.object({ chatState: z.enum(['off', 'enabling', 'on', 'disabling']) })),
     // A Discord channel (#832): the URL of a webhook a server admin made in the channel's settings. The server checks the
     // webhook with Discord, then seals its token; the format is checked by the server, in words.
     connectDiscord: oc
