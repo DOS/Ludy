@@ -141,8 +141,9 @@ import { streamedBody } from './owner-run-export.ts';
 import { MAX_EMAIL_BYTES, acceptInboundEmail, secretMatches } from './inbound.ts';
 import { MAX_MAIL_WEBHOOK_BYTES, acceptMailWebhook } from './mail-events.ts';
 import { MAX_BANK_FEED_WEBHOOK_BYTES, acceptBankFeedWebhook } from './bank-feed-webhook.ts';
-import { FACEBOOK_MAX_NOTICE_BYTES, ZALO_MAX_NOTICE_BYTES } from '@crove/channel';
+import { FACEBOOK_MAX_NOTICE_BYTES, TELEGRAM_MAX_NOTICE_BYTES, ZALO_MAX_NOTICE_BYTES } from '@crove/channel';
 import { ZALO_SIGNATURE_HEADER, ZALO_WEBHOOK_PATH, ZaloReplayCache, acceptZaloWebhook, type ZaloWebhookConfig } from './zalo-webhook.ts';
+import { TELEGRAM_SECRET_HEADER, TELEGRAM_WEBHOOK_PATH, TELEGRAM_UNAUTHORIZED, TelegramReplayCache, acceptTelegramWebhook, telegramWebhookAuthorized, type TelegramWebhookConfig } from './telegram-webhook.ts';
 import { FACEBOOK_SIGNATURE_HEADER, FACEBOOK_WEBHOOK_PATH, FacebookReplayCache, acceptFacebookWebhook, verifyFacebookWebhookChallenge, type FacebookWebhookConfig } from './facebook-webhook.ts';
 import { ADS_DELETION_PATH, MAX_ADS_DELETION_BYTES } from './ads-deletion.ts';
 import { acceptMetaDeletion, metaDeletionStatus, renderMetaDeletionStatus } from './meta-deletion.ts';
@@ -240,6 +241,14 @@ export interface HttpDeps {
   zaloWebhookLimit?: RateLimiter;
   // The events that route has parked lately (replay guard); unset: its own, one per process.
   zaloReplays?: ZaloReplayCache;
+  // Telegram's webhook for the conversation core (#3132): the keys the per-connection secret is derived from. Unset: the route does not exist.
+  telegramWebhook?: TelegramWebhookConfig;
+  // Refused requests per minute per client address for that route.
+  telegramWebhookLimit?: RateLimiter;
+  // Verified updates per minute per hook (a flood on a public bot).
+  telegramHookLimit?: RateLimiter;
+  // The messages that route has parked lately (replay guard); unset: its own, one per process.
+  telegramReplays?: TelegramReplayCache;
   // Meta Page webhook for the conversation core (CV2, #2307): the app secret and verify token that guard it. Unset: the route does not exist.
   facebookWebhook?: FacebookWebhookConfig;
   // Refused requests per minute per client address for that route.
@@ -478,6 +487,9 @@ const BANK_FEED_WEBHOOKS_PER_MINUTE = 120;
 // Refused requests (a bad signature, a body that is no notice) one address may send a minute; verified notices are not counted.
 const ZALO_WEBHOOKS_PER_MINUTE = 120;
 const FACEBOOK_WEBHOOKS_PER_MINUTE = 120;
+const TELEGRAM_WEBHOOKS_PER_MINUTE = 120;
+// Verified updates one hook takes a minute: ten a second, far above what a shop's customers write, so only a flood hits it.
+const TELEGRAM_VERIFIED_PER_HOOK_PER_MINUTE = 600;
 // Meta posts one request per person who removes the app: a few a minute is plenty, and a status page is read by one person.
 const ADS_DELETION_PER_MINUTE = 60;
 // Quote PDFs one member may take a minute (#2695).
@@ -885,6 +897,52 @@ export function createHttpApp(deps: HttpDeps) {
         return problem(c, error);
       }
     });
+  }
+
+  // Telegram's webhook of customers' private-chat messages (#3132): the secret derived from the hook in the path is checked first of all, before the
+  // body is read or the database asked, so an unauthenticated request costs one HMAC; the body is then capped before it is read, and a verified
+  // message is only parked for the worker (the org comes from the stored connection). Every refusal is the same 401. The per-address limit is charged
+  // to refused requests only, as Zalo's is, so a flood of forged ones cannot cost a real update. A verified flood (anyone may write to a public bot)
+  // is held to a rate per hook, so one bot cannot fill the backlog every org shares (429, which Telegram retries later); what is left is bounded by
+  // the provider's backlog cap (conversation_inbound_enqueue).
+  const telegramWebhook = deps.telegramWebhook;
+  if (telegramWebhook) {
+    const telegramLimit = deps.telegramWebhookLimit ?? new RateLimiter({ perMinute: TELEGRAM_WEBHOOKS_PER_MINUTE });
+    const telegramHookLimit = deps.telegramHookLimit ?? new RateLimiter({ perMinute: TELEGRAM_VERIFIED_PER_HOOK_PER_MINUTE });
+    const telegramReplays = deps.telegramReplays ?? new TelegramReplayCache();
+    const limited = (c: Context, limiter: RateLimiter, key: string): Response | null => {
+      const decision = limiter.take(key);
+      if (decision.allowed) return null;
+      warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+      c.header('retry-after', String(decision.retryAfterSeconds));
+      return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+    };
+    app.post(
+      TELEGRAM_WEBHOOK_PATH,
+      async (c, next) => {
+        const hook = c.req.param('hook');
+        if (!telegramWebhookAuthorized(telegramWebhook, { hook, secret: c.req.header(TELEGRAM_SECRET_HEADER) })) {
+          return limited(c, telegramLimit, clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS))) ?? c.json({ code: TELEGRAM_UNAUTHORIZED.code }, TELEGRAM_UNAUTHORIZED.status);
+        }
+        const over = limited(c, telegramHookLimit, hook);
+        if (over) return over;
+        await next();
+      },
+      bodyLimit({ maxSize: TELEGRAM_MAX_NOTICE_BYTES }),
+      async (c) => {
+        try {
+          const outcome = await acceptTelegramWebhook(runtime, telegramWebhook, { hook: c.req.param('hook'), secret: c.req.header(TELEGRAM_SECRET_HEADER), body: async () => new Uint8Array(await c.req.arrayBuffer()) }, telegramReplays);
+          if (outcome.status === 200) return c.json({ ok: true }, 200);
+          if (outcome.status === 401 || outcome.status === 400) {
+            const refused = limited(c, telegramLimit, clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+            if (refused) return refused;
+          }
+          return c.json({ code: outcome.code }, outcome.status);
+        } catch (error) {
+          return problem(c, error);
+        }
+      },
+    );
   }
 
   const facebookWebhook = deps.facebookWebhook;

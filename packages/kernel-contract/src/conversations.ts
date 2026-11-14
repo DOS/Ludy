@@ -74,6 +74,9 @@ export const CONVERSATION_PROVIDER_RULES: Readonly<Record<string, ConversationPr
   // Zalo OA (#2304): private chats only (no comment API found); 2000 characters a message and a 48-hour free window from the customer's
   // last message [S, U until the live check settles them].
   zalo_oa: { kinds: ['direct'], replyMax: 2000, canHide: false, windowHours: 48 },
+  // Telegram bot chats (#3132, plan section 4.2): private chats only (a group is out of v1), up to 4096 characters (TELEGRAM_TEXT_MAX of
+  // @crove/channel) and no reply window: a bot may answer a user who wrote to it at any time. A blocked bot is refused as `permission`.
+  telegram: { kinds: ['direct'], replyMax: 4096, canHide: false, windowHours: null },
   // An email reply is as long as any other reply the core takes (CONVERSATION_REPLY_MAX), so the input, the box and the channel agree.
   email: { kinds: ['email'], replyMax: CONVERSATION_REPLY_MAX, canHide: false, windowHours: null },
 };
