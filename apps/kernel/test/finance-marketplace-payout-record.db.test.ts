@@ -212,13 +212,13 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     // A proposal that cannot exist through the preparer, written by hand, is refused at approval for the same reason.
     const done = await post(o, settlement);
     const pending = await ask(o, settlement, line);
-    await rt.execute('finance.journal.reverse', { entryId: done.journalEntryId, reason: 'đảo để sửa' }, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() }).catch(() => undefined);
-    const reversed = (await rows<{ n: string }>('SELECT count(*)::text AS n FROM crove_finance.journal_entry WHERE org_id = $1 AND reverses_entry_id = $2', [o.orgId, done.journalEntryId]))[0]?.n === '1';
-    if (reversed) {
-      await expect(approve(o, pending.proposalId)).rejects.toMatchObject({ code: 'MARKETPLACE_PAYOUT_SETTLEMENT_NOT_POSTED', status: 409 });
-      await expect(ask(o, settlement, line)).rejects.toMatchObject({ code: 'MARKETPLACE_PAYOUT_SETTLEMENT_NOT_POSTED', status: 409 });
-      expect(await payoutsOf(o, settlement)).toHaveLength(0);
-    }
+    // The accountant reverses the settlement's posting through the proposal path (finance.journal.reverse), and the reversal must exist before anything is asserted.
+    const asked = await rt.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.journal.reverse', input: { entryId: done.journalEntryId, entryDate: '2026-10-16', reason: 'Đảo để sửa' } }, { actor: asUser(o.admin), orgId: o.orgId, idempotencyKey: randomUUID() });
+    await approve(o, asked.proposalId);
+    expect(await rows('SELECT 1 FROM crove_finance.journal_entry WHERE org_id = $1 AND reverses_entry_id = $2', [o.orgId, done.journalEntryId])).toHaveLength(1);
+    await expect(approve(o, pending.proposalId)).rejects.toMatchObject({ code: 'MARKETPLACE_PAYOUT_SETTLEMENT_NOT_POSTED', status: 409 });
+    await expect(ask(o, settlement, line)).rejects.toMatchObject({ code: 'MARKETPLACE_PAYOUT_SETTLEMENT_NOT_POSTED', status: 409 });
+    expect(await payoutsOf(o, settlement)).toHaveLength(0);
     // A settlement that is not found is not found, and a bank line that is not found is refused.
     await expect(ask(o, randomUUID(), line)).rejects.toMatchObject({ code: 'MARKETPLACE_SETTLEMENT_NOT_FOUND', status: 404 });
     await expect(ask(o, settlement, randomUUID())).rejects.toMatchObject({ code: 'BANK_LINE_NOT_FOUND' });
@@ -270,7 +270,9 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     const { o, settlement, line } = await posted();
     const voucher = await rt.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.voucher.record', input: { type: 'bank_credit', date: '2026-10-20', cashAccount: '1121', description: 'thu tiền sàn', lines: [{ account: '711', amount: RECEIVED }], bankLineId: line } }, { actor: asUser(o.admin), orgId: o.orgId, idempotencyKey: randomUUID() });
     await expect(ask(o, settlement, line)).rejects.toMatchObject({ code: 'MARKETPLACE_PAYOUT_BANK_LINE', status: 409 });
-    await approve(o, voucher.proposalId).catch(() => undefined);
+    // The bank voucher is approved and posted, so the line is matched, not only proposed.
+    await approve(o, voucher.proposalId);
+    expect(await rows('SELECT 1 FROM crove_finance.cash_voucher WHERE org_id = $1 AND bank_line_id = $2', [o.orgId, line])).toHaveLength(1);
     await expect(ask(o, settlement, line)).rejects.toMatchObject({ code: 'MARKETPLACE_PAYOUT_BANK_LINE', status: 409 });
   });
 
