@@ -41,6 +41,7 @@ import { RETENTION_CRON, RETENTION_TZ, expireExports, runRetention, sweepInbound
 import { runMarketplaceRetention } from './marketplace-retention.ts';
 import { runMeetingsTranscribe, type MeetingsTranscribeDeps, type MeetingsTranscribeJob } from './meetings-transcribe.ts';
 import { runMeetingsLiveNotes, type MeetingsLiveNotesDeps, type MeetingsLiveNotesJob } from './meetings-live-notes.ts';
+import type { MeetingsTranslateJob } from './meetings-translate-job.ts';
 import { createShredRefSync, replayShreds, runMeetingsRetention, sweepMeetingMedia } from './meetings-retention.ts';
 import { CRM_DEAL_STALE_CRON, CRM_IMPORT_EXPIRE_CRON, raiseCrmNextSteps, sweepCrmImports } from './crm-worker.ts';
 import { MEMBER_VY_SWEEP_CRON, MEMBER_VY_SWEEP_EXPIRE_SECONDS, MEMBER_VY_SWEEP_TZ, sweepMemberVyFormerMembers, sweepMemberVyResults } from './member-vy-worker.ts';
@@ -482,6 +483,8 @@ export interface WorkerDeps {
   aiPrice?: { inputPerMTok: string; outputPerMTok: string; audioPerMinute?: string; defaultMonthlyBudget?: string | null };
   // Transcription of a meeting as the recorder's own Vy (#2578, M4b): the provider's endpoint. Unset: no job is queued or worked (the module works with it off).
   meetingsTranscribe?: { provider: MeetingsTranscribeDeps['provider']; measurer: MeetingsTranscribeDeps['measurer'] };
+  // The member's Vy translating a transcript (#3185): the run, built by the kernel from the deployment's model; unset when there is no model (the start command refuses then).
+  meetingsTranslate?: { run: (job: MeetingsTranslateJob) => Promise<unknown> };
   // Back-pressure (#894): above this outbox lag the agent, bulk mail, archive and retention queues stop fetching
   // (default DEFAULT_OUTBOX_LAG_PAUSE_SECONDS).
   outboxLagPauseSeconds?: number;
@@ -1145,6 +1148,14 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     const liveDeps: MeetingsLiveNotesDeps = { ...transcribeDeps };
     await boss.work<MeetingsLiveNotesJob>(QUEUES.meetingsLiveNotes, { batchSize: 1 }, async ([job]) => {
       if (job) await runMeetingsLiveNotes(liveDeps, job.data);
+    });
+  }
+
+  // Meetings translation (#3185, E2): one job per run the member started, a batch of lines, never retried by the queue (a retry would send the text again).
+  if (deps.runtime.installed('meetings') && deps.meetingsTranslate) {
+    const translate = deps.meetingsTranslate;
+    await boss.work<MeetingsTranslateJob>(QUEUES.meetingsTranslate, { batchSize: 1 }, async ([job]) => {
+      if (job) await translate.run(job.data);
     });
   }
 
@@ -2362,6 +2373,19 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               if (deps.runtime.installed('meetings') && deps.meetingsTranscribe && deps.channels?.broker && row.type === 'meetings.transcript.requested') {
                 const transcribeJob: MeetingsTranscribeJob = { orgId: row.org_id, meetingId: String(row.payload.meetingId), runId: String(row.payload.runId), agentId: String(row.payload.agentId) };
                 await boss.send(QUEUES.meetingsTranscribe, transcribeJob, { singletonKey: jobKey(row.org_id, QUEUES.meetingsTranscribe, transcribeJob.runId), retryLimit: 0, expireInSeconds: 4 * 3600 });
+              }
+              // A member asked for a batch of their transcript to be translated (#3185): ids only in the job (the lines are read through the member-Vy door).
+              if (deps.runtime.installed('meetings') && deps.meetingsTranslate && row.type === 'meetings.translate_run.requested') {
+                const translateJob: MeetingsTranslateJob = {
+                  orgId: row.org_id,
+                  meetingId: String(row.payload.meetingId),
+                  runId: String(row.payload.runId),
+                  agentId: String(row.payload.agentId),
+                  memberUserId: String(row.payload.memberUserId),
+                  stage: row.payload.stage === 'draft' ? 'draft' : 'published',
+                  lineIds: Array.isArray(row.payload.lineIds) ? row.payload.lineIds.map(String) : [],
+                };
+                await boss.send(QUEUES.meetingsTranslate, translateJob, { singletonKey: jobKey(row.org_id, QUEUES.meetingsTranslate, translateJob.runId), retryLimit: 0, expireInSeconds: 1800 });
               }
               // A window of the live notes the recorder's tick asked for (#3110): ids and the window's bounds only.
               if (deps.runtime.installed('meetings') && deps.meetingsTranscribe && deps.channels?.broker && row.type === 'meetings.live_notes.requested') {

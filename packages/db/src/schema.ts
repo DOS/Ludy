@@ -1094,7 +1094,7 @@ export type MeetingsActionItemTable = Refine<
 >;
 
 // The machine translation of a meeting's summary (meetings integrations E1, #3184): what kind of text it translates, in which language, and which stage of the summary it was made from.
-export const TRANSLATION_KINDS = ['summary'] as const;
+export const TRANSLATION_KINDS = ['summary', 'transcript'] as const;
 export type TranslationKind = (typeof TRANSLATION_KINDS)[number];
 export type MeetingsTranslationTable = Refine<
   G.MeetingsTranslationTable,

@@ -381,6 +381,12 @@ import {
   zDraftReviewed,
   zSummarized,
   zTranslated,
+  zTranscriptTranslateStarted,
+  zTranscriptTranslateStopped,
+  zTranscriptTranslationStatus,
+  zTranscriptTranslationView,
+  zTranslationCopied,
+  zTranslationCopy,
   zTranslationRef,
   zTranslationStatus,
   zTranslations,
@@ -951,6 +957,14 @@ export const contract = {
       status: oc.input(zTranslationRef).output(zTranslationStatus),
       translate: oc.input(zTranslationRef).output(zTranslated),
       get: oc.input(zMeetingRef).output(zTranslations),
+      // The same for the transcript (E2, #3185): a background run of the member's Vy over chunks of the lines they read. `transcriptStart` takes the next batch of lines with no current
+      // translation, `transcriptStop` ends the member's own run, `transcriptStatus` is the button and the progress, `transcriptCopy` keeps a finished run's parts (the member's own copy)
+      // and `transcriptGet` is the member's parts beside the lines.
+      transcriptStatus: oc.input(zMeetingRef).output(zTranscriptTranslationStatus),
+      transcriptStart: oc.input(zMeetingRef).output(zTranscriptTranslateStarted),
+      transcriptStop: oc.input(zMeetingRef).output(zTranscriptTranslateStopped),
+      transcriptCopy: oc.input(zTranslationCopy).output(zTranslationCopied),
+      transcriptGet: oc.input(zMeetingRef).output(zTranscriptTranslationView),
     },
     actionItems: {
       create: oc.input(zActionItemCreate).output(zActionItemCreated),

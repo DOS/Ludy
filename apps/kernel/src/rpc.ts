@@ -55,7 +55,7 @@ import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
 import { crmFollowupAi, draftCrmFollowup } from './crm-followup-ai.ts';
 import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
-import { runLiveNotes, runMeetingSummary, runMeetingTranslation, translationStatusOf, type ModelPort } from './member-vy-ports.ts';
+import { runLiveNotes, runMeetingSummary, runMeetingTranslation, transcriptTranslationStatusOf, translationStatusOf, type ModelPort } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems } from './stock-ai.ts';
 import { MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
@@ -988,6 +988,20 @@ export function createRpcHandler(
           inMeetings(context, (orgId, actor) => runMeetingTranslation({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: translations, price: aiPrice }, orgId, actor, input.meetingId, input.stage)),
         ),
         get: os.meetings.translation.get.handler(meetingsQuery('meetings.translation.get')),
+        // The transcript (E2, #3185): a background run of the member's Vy over chunks of the lines they read; the worker's side is runMeetingsTranslate in member-vy-ports.ts.
+        transcriptStatus: os.meetings.translation.transcriptStatus.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => transcriptTranslationStatusOf({ runtime, price: aiPrice, hasModel: summaryModel !== null }, orgId, actor, input.meetingId)),
+        ),
+        // With no model in the deployment nothing is started (the button says why): the run would have no model to call.
+        transcriptStart: os.meetings.translation.transcriptStart.handler(({ context, input }) =>
+          inMeetings(context, async (orgId, actor) => {
+            if (summaryModel === null) throw new DomainError('TRANSLATE_OFF', 422, 'Translation by Vy is not turned on here');
+            return runtime.execute('meetings.translation.transcript_start', input, { actor, orgId });
+          }),
+        ),
+        transcriptStop: os.meetings.translation.transcriptStop.handler(meetingsCommand('meetings.translation.transcript_stop')),
+        transcriptCopy: os.meetings.translation.transcriptCopy.handler(meetingsCommand('meetings.translation.copy_result')),
+        transcriptGet: os.meetings.translation.transcriptGet.handler(meetingsQuery('meetings.translation.transcript_get')),
       },
       actionItems: {
         create: os.meetings.actionItems.create.handler(meetingsCommand('meetings.action_item.create')),

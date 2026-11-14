@@ -340,6 +340,10 @@ export const KERNEL_ERROR_CODES = [
   'SUMMARY_RESULT_NOT_READY',
   // The member's Vy translating the summary they read (meetings integrations E1, #3184).
   'TRANSLATE_OFF',
+  // The same for the transcript (E2, #3185).
+  'TRANSLATE_RUNNING',
+  'TRANSLATION_DONE',
+  'TRANSLATION_TOO_LARGE',
   'TRANSLATION_NOT_FOUND',
   'TRANSLATION_NOTHING',
   'TRANSLATION_RESULT_INVALID',

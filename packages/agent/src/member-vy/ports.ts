@@ -43,6 +43,8 @@ export interface ModelPrompt {
   system: string;
   user: string;
   feature?: ModelFeature | undefined;
+  // What the call is expected to use, known before it is made (a translation chunk: its size): the meter may admit the call on its projected cost (#2863 item 8, #3185).
+  expected?: { inputTokens: number; outputTokens: number } | undefined;
 }
 export interface ModelAnswer {
   text: string;
