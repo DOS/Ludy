@@ -110,6 +110,13 @@ describe('meetings commands and queries construction', () => {
       'meetings.live.notes_start',
       'meetings.live.tick',
       'meetings.live.notes_copy',
+      'meetings.hook.set',
+      'meetings.hook.rotate_secret',
+      'meetings.hook.clear',
+      'meetings.hook.test',
+      'meetings.hooks.switch.set',
+      'meetings.hook.queued',
+      'meetings.hook.record',
     ]);
 
     expect(meetingMediaRecord.name).toBe('meetings.media.record');
@@ -149,6 +156,9 @@ describe('meetings commands and queries construction', () => {
       'meetings.live.status',
       'meetings.live.notes_input',
       'meetings.live.assemble_plan',
+      'meetings.hook.get',
+      'meetings.hook.delivery',
+      'meetings.hook.target',
     ]);
 
     expect(meetingList.name).toBe('meetings.meeting.list');

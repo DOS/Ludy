@@ -11384,6 +11384,22 @@ export const en = {
       },
     },
     meetings: {
+      hook: {
+        clear: 'Remove your address for minutes',
+        delivery: 'Read a minutes event waiting to be sent',
+        get: 'Read your address for minutes',
+        queued: 'Note that a minutes event was handed to the queue',
+        record: 'Record what happened to a minutes event',
+        rotate_secret: 'Make a new secret for your address for minutes',
+        set: 'Set your address for minutes',
+        target: 'Read the address a minutes event goes to',
+        test: 'Send a test message to your address for minutes',
+      },
+      hooks: {
+        switch: {
+          set: 'Allow or stop members sending minutes to their own address',
+        },
+      },
       live: {
         assemble_plan: "Read the recorder's own live pieces to join them into the recording",
         assemble_record: 'Record the recording joined from the live pieces and delete the pieces',

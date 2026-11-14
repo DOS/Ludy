@@ -21,10 +21,11 @@ const zResultData = z.strictObject({
   action_items: z.array(zActionItem).max(100).optional(),
 });
 
-const head = { id: zId, created_at: zInstant, org: zId };
+// Every schema declares its keys in the order the receiver reads them (the order the invariant pins: top id, type, created_at, org, data; result data meeting_id, published_at, started_at,
+// length_seconds, title, summary, decisions, action_items; item text, owner, due), so what parse returns is already in that order and the bytes that are signed never depend on the input's.
 const zEvent = z.discriminatedUnion('type', [
-  z.strictObject({ ...head, type: z.literal('meeting.result_published'), data: zResultData }),
-  z.strictObject({ ...head, type: z.literal('ping'), data: z.strictObject({}) }),
+  z.strictObject({ id: zId, type: z.literal('meeting.result_published'), created_at: zInstant, org: zId, data: zResultData }),
+  z.strictObject({ id: zId, type: z.literal('ping'), created_at: zInstant, org: zId, data: z.strictObject({}) }),
 ]);
 
 export type MeetingHookEvent = z.infer<typeof zEvent>;
@@ -32,6 +33,7 @@ export type MeetingHookEvent = z.infer<typeof zEvent>;
 // The event as a plain object, in the order the receiver reads it, or a throw naming the first thing that does not fit.
 export function meetingHookEvent(input: unknown): MeetingHookEvent {
   const parsed = zEvent.parse(input);
+  // Rebuilt key by key in the pinned order, so the output order never depends on the schema library's.
   return { id: parsed.id, type: parsed.type, created_at: parsed.created_at, org: parsed.org, data: parsed.data } as MeetingHookEvent;
 }
 

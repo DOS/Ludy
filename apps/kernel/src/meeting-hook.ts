@@ -7,9 +7,8 @@
 // - The body is what meetingHookBody accepts: checked once more as it is sent, by the same strict builder that stored it. It is wiped the moment the delivery settles (the database does it).
 // - No model is called anywhere on this path: what leaves is what the person approved when they published.
 // - A failure never touches the meeting or its minutes: it changes this delivery and the hook's counters, nothing else. A hook that no longer stands drops the delivery.
-import { meetingHookBody } from '@crove/kernel-contract';
+import { meetingHookBody, type MeetingHookDeliveryRow, type MeetingHookTargetRow } from '@crove/kernel-contract';
 import { DomainError, type Runtime } from '@crove/kernel-runtime';
-import type { MeetingHookDeliveryRow, MeetingHookTargetRow } from '@crove/mod-meetings';
 import { postSigned, type WakeDeps, type WakeJob, type WakeResult } from './mcp-wake.ts';
 import { MEETING_HOOK_PROVIDER } from './meeting-hook-setup.ts';
 

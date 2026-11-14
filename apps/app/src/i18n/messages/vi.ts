@@ -11381,6 +11381,22 @@ export const vi = {
       },
     },
     meetings: {
+      hook: {
+        clear: 'Gỡ địa chỉ nhận biên bản của bạn',
+        delivery: 'Đọc một sự kiện biên bản đang chờ gửi',
+        get: 'Xem địa chỉ nhận biên bản của bạn',
+        queued: 'Ghi nhận một sự kiện biên bản đã chuyển vào hàng đợi',
+        record: 'Ghi lại kết quả gửi một sự kiện biên bản',
+        rotate_secret: 'Tạo bí mật mới cho địa chỉ nhận biên bản của bạn',
+        set: 'Cài địa chỉ nhận biên bản của bạn',
+        target: 'Đọc địa chỉ mà một sự kiện biên bản được gửi tới',
+        test: 'Gửi tin thử tới địa chỉ nhận biên bản của bạn',
+      },
+      hooks: {
+        switch: {
+          set: 'Cho phép hoặc dừng việc thành viên gửi biên bản tới địa chỉ riêng',
+        },
+      },
       live: {
         assemble_plan: 'Đọc các đoạn trực tiếp của người ghi để ghép thành bản ghi',
         assemble_record: 'Ghi nhận bản ghi ghép từ các đoạn trực tiếp và xóa các đoạn',

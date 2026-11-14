@@ -66,3 +66,20 @@ export const zMeetingHookEventRef = z.strictObject({ id: z.uuid() });
 // 'expired': waited too long with no attempt made, so it fails without counting against the receiver.
 export const zMeetingHookRecord = z.strictObject({ id: z.uuid(), outcome: z.enum(['sent', 'retry', 'failed', 'dropped', 'expired']), code: z.number().int().min(100).max(599).optional() });
 export const zMeetingHookTargetRef = z.strictObject({ hookId: z.uuid() });
+
+// What the delivery job reads (worker only): the stored delivery, and the address and sealed secrets a hook's delivery goes to. Types of the contract, so the kernel's job names no module file.
+export interface MeetingHookDeliveryRow {
+  id: string;
+  hookId: string;
+  type: 'meeting.result_published' | 'ping';
+  body: Record<string, unknown> | null;
+  status: 'queued' | 'sent' | 'failed' | 'dropped';
+  attempts: number;
+}
+export interface MeetingHookTargetRow {
+  // The member the secrets are sealed for (the binding of the credential broker).
+  userId: string;
+  url: string;
+  sealed: { keyId: string; envelope: string };
+  previous: { keyId: string; envelope: string } | null;
+}

@@ -5,9 +5,8 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { meetingHookBody, meetingHookEvent } from '@crove/kernel-contract';
+import { meetingHookBody, meetingHookEvent, type MeetingHookDeliveryRow, type MeetingHookTargetRow } from '@crove/kernel-contract';
 import { CredentialVault, parseVaultKey, type Runtime } from '@crove/kernel-runtime';
-import type { MeetingHookDeliveryRow, MeetingHookTargetRow } from '@crove/mod-meetings';
 import { WAKE_RETRY_LIMIT, wakeSignature } from '../src/mcp-wake.ts';
 import { runMeetingHookDelivery } from '../src/meeting-hook.ts';
 import { MEETING_HOOK_PROVIDER, makeHookSecret } from '../src/meeting-hook-setup.ts';
@@ -38,6 +37,28 @@ describe('the body builder', () => {
     expect(meetingHookEvent(RESULT)).toEqual(RESULT);
     expect(Object.keys(meetingHookEvent(RESULT))).toEqual(['id', 'type', 'created_at', 'org', 'data']);
     expect(meetingHookBody(PING)).toBe(`{"id":"${ID}","type":"ping","created_at":"2026-11-14T03:00:00.000Z","org":"${ORG}","data":{}}`);
+  });
+
+  it('writes every level in the pinned key order whatever order the input has', () => {
+    const scrambled = {
+      data: {
+        action_items: [{ due: '2026-11-20', owner: 'Lan', text: 'Gửi báo giá' }],
+        decisions: ['Tăng ngân sách'],
+        summary: 'Chốt kế hoạch.',
+        title: 'Họp giao ban',
+        length_seconds: 1800,
+        started_at: '2026-11-10T03:00:00.000Z',
+        published_at: '2026-11-14T03:00:00.000Z',
+        meeting_id: MEETING,
+      },
+      org: ORG,
+      created_at: '2026-11-14T03:00:00.000Z',
+      type: 'meeting.result_published',
+      id: ID,
+    };
+    expect(meetingHookBody(scrambled)).toBe(
+      `{"id":"${ID}","type":"meeting.result_published","created_at":"2026-11-14T03:00:00.000Z","org":"${ORG}","data":{"meeting_id":"${MEETING}","published_at":"2026-11-14T03:00:00.000Z","started_at":"2026-11-10T03:00:00.000Z","length_seconds":1800,"title":"Họp giao ban","summary":"Chốt kế hoạch.","decisions":["Tăng ngân sách"],"action_items":[{"text":"Gửi báo giá","owner":"Lan","due":"2026-11-20"}]}}`,
+    );
   });
 
   it('refuses a transcript, audio, video, an attendee contact, or any key it does not know, at any level', () => {

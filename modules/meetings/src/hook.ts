@@ -21,8 +21,7 @@ import {
   zMeetingHooksSwitch,
   zMeetingHookTargetRef,
   type MeetingHookField,
-  type MeetingHookView,
-} from '@crove/kernel-contract';
+  type MeetingHookView, type MeetingHookDeliveryRow, type MeetingHookTargetRow } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, hasFreshMfa, type CommandContext } from '@crove/kernel-runtime';
 import { ROLES } from './transcript.ts';
 
@@ -308,22 +307,6 @@ export const meetingHookRecord = defineCommand({
 });
 
 // What the delivery job reads: the delivery by its event id (its body is what the receiver gets), and the address and sealed secrets of the hook while it stands.
-export interface MeetingHookDeliveryRow {
-  id: string;
-  hookId: string;
-  type: 'meeting.result_published' | 'ping';
-  body: Record<string, unknown> | null;
-  status: 'queued' | 'sent' | 'failed' | 'dropped';
-  attempts: number;
-}
-export interface MeetingHookTargetRow {
-  // The member the secrets are sealed for (the binding of the credential broker).
-  userId: string;
-  url: string;
-  sealed: { keyId: string; envelope: string };
-  previous: { keyId: string; envelope: string } | null;
-}
-
 export const meetingHookDelivery = defineQuery({
   name: 'meetings.hook.delivery',
   input: zMeetingHookEventRef,
