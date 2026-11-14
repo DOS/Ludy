@@ -307,7 +307,8 @@ export const zPostCreate = z.strictObject({
   ideaId: zId.optional(),
 });
 
-async function createPost(ctx: CommandContext, input: z.infer<typeof zPostCreate>) {
+// `actorOrigin` is who made the call: the app ('ui', every person's own create) or an MCP grant ('mcp', the one MCP draft command of mcp.ts, which passes origin 'ai').
+export async function createPost(ctx: CommandContext, input: z.infer<typeof zPostCreate>, actorOrigin: 'ui' | 'mcp' = 'ui') {
   const userId = requireUser(ctx);
   distinctConnections(input.channels);
   const media = await resolveMedia(ctx, input.media ?? []);
@@ -318,10 +319,10 @@ async function createPost(ctx: CommandContext, input: z.infer<typeof zPostCreate
       body: input.body,
       title: input.title ?? null,
       link_url: input.linkUrl ?? null,
-      // The surface sets actor_origin once API and MCP clients exist; today every write comes from the app.
+      // A person's own create comes from the app; the MCP draft command says 'mcp' (the database refuses an MCP post that is not AI and tainted).
       origin: input.origin ?? 'human',
       tainted: input.origin === 'ai' || input.aiAssisted === true,
-      actor_origin: 'ui',
+      actor_origin: actorOrigin,
       author_user_id: userId,
       ...(input.timeZone ? { time_zone: input.timeZone } : {}),
       scheduled_at: input.scheduledAt ?? null,
@@ -331,7 +332,9 @@ async function createPost(ctx: CommandContext, input: z.infer<typeof zPostCreate
   await writePostMedia(ctx, inserted.id, media);
   const post: PostRow = { ...inserted, media };
   const variants = await insertVariants(ctx, post, input.channels, 0);
-  await ctx.emit('social.post.created', { post_id: post.id });
+  // A draft made over MCP emits no event: the grant's sealed context has no run to stamp one with, the database lets it write no outbox row, and nothing listens for the event yet (the person's own
+  // submit emits its own). The audit row of the command is the trail.
+  if (actorOrigin === 'ui') await ctx.emit('social.post.created', { post_id: post.id });
   return { post, variants, media };
 }
 
@@ -349,6 +352,27 @@ export const postCreate = defineCommand({
       await ctx.trx.updateTable('crove_social.post').set({ tainted: true }).where('org_id', '=', ctx.orgId).where('id', '=', post.id).execute();
     }
     ctx.audit({ post_id: post.id, variants: variants.length, media: media.length, origin: input.origin ?? 'human', ...(input.ideaId ? { idea_id: input.ideaId } : {}) });
+    return { postId: post.id, revision: post.revision, variants };
+  },
+});
+
+// The one command an MCP grant may run (#3227, plan section 3.8, owner decision 2026-11-14): a draft post for a person to review, made by an AI app. The input is the person's own create
+// without what only the server may set (the AI mark, the idea, media), so the limits are the same ones: the text 100,000 characters, the title 500, 20 channels, one variant per channel, a live
+// channel of the org. The post is `origin = ai`, `actor_origin = mcp` and tainted whatever the client sends (it cannot send them), lands as a draft exactly where the AI's drafts land, and
+// needs a person to send it to review and approve every channel before it can go out: this command submits, approves, schedules, publishes and deletes nothing. It runs in the grant's
+// sealed write context, where the database lets it insert the draft and its channels and nothing else. The endpoint takes the drafts budget (#386) before it runs, as for a person.
+export const zMcpDraftCreate = zPostCreate.omit({ origin: true, aiAssisted: true, ideaId: true, media: true });
+export const mcpDraftCreate = defineCommand({
+  name: 'social.mcp.draft_create',
+  input: zMcpDraftCreate,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: ['owner', 'admin'],
+  mcp: { scope: 'ludy.social.draft' },
+  handler: async (ctx, input) => {
+    if (ctx.actor.type !== 'user' || !ctx.actor.mcp) throw new DomainError('FORBIDDEN', 403, 'Chỉ khách MCP mới dùng được lệnh này');
+    const { post, variants } = await createPost(ctx, { ...input, origin: 'ai' }, 'mcp');
+    ctx.audit({ post_id: post.id, variants: variants.length, origin: 'ai', actor_origin: 'mcp' });
     return { postId: post.id, revision: post.revision, variants };
   },
 });
@@ -1977,6 +2001,7 @@ export const queueOpenSlots = defineQuery({
 
 export const socialCommands = [
   postCreate,
+  mcpDraftCreate,
   postImport,
   postAddChannels,
   postUpdate,
