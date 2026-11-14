@@ -255,16 +255,16 @@ suite('Telegram Business connection read back on PostgreSQL (#3224)', () => {
       for (let i = 0; i < BUSINESS_LOOKUP_PER_PASS + 3; i++) expect((await post(business(`Ngập ${round}.${i}`, { chat: 3100 + round * 20 + i, messageId: 1, connectionId: `Flood-${round}-${i}_x=` }))).status).toBe(200);
       await intake(lookup);
     };
-    // One pass: the notices over the pass's share are ignored, not asked.
-    await flood(0);
-    expect(t.calls).toHaveLength(BUSINESS_LOOKUP_PER_PASS);
-    await flood(1);
-    expect(t.calls).toHaveLength(Math.min(2 * BUSINESS_LOOKUP_PER_PASS, BUSINESS_LOOKUP_PER_CONNECTION));
-    // The connection's share of the window is spent: new ids are not asked until it passes.
-    await flood(2);
-    expect(t.calls).toHaveLength(BUSINESS_LOOKUP_PER_CONNECTION);
+    // Each pass asks only its share; the notices over it are ignored, not asked. The connection's share of the window caps the sum.
+    let asked = 0;
+    for (let round = 0; round < 4; round++) {
+      await flood(round);
+      asked = Math.min(asked + BUSINESS_LOOKUP_PER_PASS, BUSINESS_LOOKUP_PER_CONNECTION);
+      expect(t.calls).toHaveLength(asked);
+    }
+    expect(asked).toBe(BUSINESS_LOOKUP_PER_CONNECTION);
     clock += BUSINESS_LOOKUP_WINDOW_MS + 1;
-    await flood(3);
+    await flood(4);
     expect(t.calls).toHaveLength(BUSINESS_LOOKUP_PER_CONNECTION + BUSINESS_LOOKUP_PER_PASS);
   });
 

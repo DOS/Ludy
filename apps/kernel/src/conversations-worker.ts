@@ -114,9 +114,9 @@ export interface IntakeDeps {
 // How long an id that was looked up is not looked up again, and how many lookups one connection gets in that time.
 export const BUSINESS_LOOKUP_WINDOW_MS = 10 * 60_000;
 export const BUSINESS_LOOKUP_PER_CONNECTION = 10;
-// The most lookups one intake pass makes: each can wait on Telegram's deadline, and a pass must end well inside its notices' lease. A notice past this is
+// The most lookups one intake pass makes: each can wait on the Bot API client's 15-second deadline, so a pass that finds Telegram hanging waits 45 seconds at most, well inside its notices' lease of 120. A notice past this is
 // taken as an unknown connection (ignored); the next message of that id looks it up.
-export const BUSINESS_LOOKUP_PER_PASS = 5;
+export const BUSINESS_LOOKUP_PER_PASS = 3;
 const BUSINESS_LOOKUP_TRACKED = 2000;
 
 export interface BusinessLookup {
