@@ -450,12 +450,37 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       expect((await c.query<{ ok: boolean }>(`SELECT has_function_privilege('public', '${entry}', 'EXECUTE') AS ok`)).rows[0]?.ok).toBe(false);
       const row = (await c.query<{ proconfig: string[] | null; secdef: boolean; def: string }>(`SELECT proconfig, prosecdef AS secdef, pg_get_functiondef(oid) AS def FROM pg_proc WHERE oid = '${entry}'::regprocedure`)).rows[0];
       expect(row?.secdef).toBe(true);
-      expect(JSON.stringify(row?.proconfig)).toContain("search_path=pg_catalog, pg_temp");
+      // The whole setting, as one element: `pg_catalog, pg_temp, public` is another element and fails.
+      expect(row?.proconfig, "the draft entry's settings").toEqual(["search_path=pg_catalog, pg_temp"]);
       // The shape it seals, read from its own text: an agent-shaped context with no user, at R1, tainted, of its own kind, naming the grant and the grantor.
       for (const part of [/'actor',\s*'agent'/, /'user',\s*NULL/, /'max_risk',\s*'R1'/, /'tainted',\s*true/, /'kind',\s*'mcp_company_draft'/, /'grantor',\s*v_user/]) {
         expect(row?.def, String(part)).toMatch(part);
       }
       expect(row?.def).not.toMatch(/'max_risk',\s*'R[23]'/);
+    });
+    // The text checks above are supplementary: a later expression in the same function could override a key, so what it seals is read back from a live entry of a real company grant.
+    const grantId = randomUUID();
+    await admin((c) =>
+      c.query(
+        `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
+         VALUES ($1, $2, $3, $4, 'Pin client', 'client.example.com', ARRAY['ludy.read', 'ludy.social.draft'], $5, now(), now() + interval '30 days', $3)`,
+        [orgId, grantId, users.owner, `pin-client-${grantId}`, `pin-oauth-${grantId}`],
+      ),
+    );
+    const sealed = await inContext(
+      appUrl,
+      (c) => c.query("SELECT crove_kernel.enter_mcp_company_draft_context($1::uuid, $2::uuid)", [orgId, grantId]),
+      sealOf,
+    );
+    expect(sealed, "the sealed context of the draft entry").toMatchObject({
+      actor: "agent",
+      user: null,
+      max_risk: "R1",
+      tainted: true,
+      kind: "mcp_company_draft",
+      grantor: users.owner,
+      org: orgId,
+      agent: grantId,
     });
   });
 
