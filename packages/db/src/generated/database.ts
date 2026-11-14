@@ -1875,6 +1875,7 @@ export interface KernelChannelConnectionTable {
   chat_error: string | null;
   chat_bot_id: string | null;
   chat_changed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  chat_business: ColumnType<unknown, string | undefined, string>;
 }
 
 /** crove_kernel.conversation_attachment */

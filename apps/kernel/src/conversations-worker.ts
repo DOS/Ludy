@@ -127,7 +127,8 @@ export async function runConversationIntake(deps: IntakeDeps): Promise<{ stored:
       log(`dropped notice ${notice.seq} (${notice.provider}): unreadable, ${notice.body.byteLength} bytes`);
       continue;
     }
-    const nonEmpty = parsedList.filter((p) => p.events.length > 0);
+    // A notice that tells the connection's own state (Telegram Business: a business account connected or disconnected, #3191) counts as well as one with events.
+    const nonEmpty = parsedList.filter((p) => p.events.length > 0 || p.businessState);
     // A notice with no event (Zalo's follow or seen, or a Facebook Page status/like event): nothing to store.
     if (nonEmpty.length === 0) {
       await finishNotice(deps.workerDb, notice.seq);
@@ -141,7 +142,16 @@ export async function runConversationIntake(deps: IntakeDeps): Promise<{ stored:
       if (targets.length === 0) log(`notice ${notice.seq} (${notice.provider}) names no active connection: dropped after storing nothing`);
       for (const target of targets) {
         try {
-          const done = await deps.runtime.execute<{ stored: number }>('kernel.conversation.ingest', { connectionId: target.connectionId, events: parsed.events }, { actor: SYSTEM, orgId: target.orgId });
+          if (parsed.businessState) {
+            const { id, userId, name, username, canReply, enabled } = parsed.businessState;
+            await deps.runtime.execute('kernel.channel.telegram_business_record', { connectionId: target.connectionId, account: { id, userId, name: name ?? null, username: username ?? null, canReply, enabled } }, { actor: SYSTEM, orgId: target.orgId });
+          }
+          if (parsed.events.length === 0) continue;
+          const done = await deps.runtime.execute<{ stored: number }>(
+            'kernel.conversation.ingest',
+            { connectionId: target.connectionId, events: parsed.events, ...(parsed.businessConnectionId ? { businessConnectionId: parsed.businessConnectionId } : {}) },
+            { actor: SYSTEM, orgId: target.orgId },
+          );
           out.stored += done.stored;
         } catch (error) {
           // The notice's own fault is logged by its code only; a transient one leaves the notice to its lease.

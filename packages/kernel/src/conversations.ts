@@ -106,6 +106,7 @@ import { z } from 'zod';
 import { zId, zTodayItems, type TodayItem } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, conversationKey, defineCommand, defineQuery, newConversationBlobId, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { parseBusinessAccounts } from './channels.ts';
 import { createMailMessage } from './mail.ts';
 import { notifyMembers, ownersAndAdmins } from './notifications.ts';
 
@@ -242,11 +243,11 @@ export const conversationIngest = defineCommand({
   target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
   handler: async (ctx, input): Promise<ConversationIngested> => {
     requireSystem(ctx);
-    return ingestEvents(ctx, input.connectionId, input.events);
+    return ingestEvents(ctx, input.connectionId, input.events, input.businessConnectionId);
   },
 });
 
-async function ingestEvents(ctx: CommandContext, connectionId: string, inputEvents: readonly ConversationEvent[]): Promise<ConversationIngested> {
+async function ingestEvents(ctx: CommandContext, connectionId: string, inputEvents: readonly ConversationEvent[], businessConnectionId?: string): Promise<ConversationIngested> {
   const out: ConversationIngested = { stored: 0, duplicates: 0, ignored: 0 };
   const reserved: MailImageSlot[] = [];
   const connection = await connectionOf(ctx, connectionId);
@@ -265,14 +266,28 @@ async function ingestEvents(ctx: CommandContext, connectionId: string, inputEven
       return out;
     }
   }
+  // Telegram Business (#3191): the events came through a business connection, which counts only while this connection's stored state lists it as
+  // enabled and allowed by a person of the org (any Premium user can connect a bot that has Business Mode on). An unknown, disabled or not yet allowed
+  // one stores nothing, and a chat of the business account with itself (the contact is the account's own user) is nobody's customer.
+  let ownerUserId: string | null = null;
+  if (businessConnectionId !== undefined) {
+    const stored = connection.provider === 'telegram' ? await ctx.trx.selectFrom('crove_kernel.channel_connection').select('chat_business').where('org_id', '=', ctx.orgId).where('id', '=', connectionId).executeTakeFirst() : undefined;
+    const account = parseBusinessAccounts(stored?.chat_business).find((a) => a.id === businessConnectionId && a.enabled && a.approved);
+    if (!account) {
+      out.ignored = inputEvents.length;
+      ctx.audit({ connection_id: connectionId, ...out });
+      return out;
+    }
+    ownerUserId = account.userId;
+  }
   // Oldest first, so a thread's messages take their seq in the order the platform dated them within one notice.
   const events = inputEvents.map((event, i) => ({ event, i })).sort((a, b) => Date.parse(a.event.at) - Date.parse(b.event.at) || a.i - b.i);
   for (const { event } of events) {
-    if (!rules.kinds.includes(event.kind)) {
+    if (!rules.kinds.includes(event.kind) || (ownerUserId !== null && event.contact.id === ownerUserId)) {
       out.ignored++;
       continue;
     }
-    const result = await ingestEvent(ctx, connectionId, connection.provider, rules.windowHours, event, reserved);
+    const result = await ingestEvent(ctx, connectionId, connection.provider, event.replyWindowHours ?? rules.windowHours, event, reserved);
     out[result]++;
   }
   // The audit row holds counts only: the reserved keys are the worker's to write and are never recorded.

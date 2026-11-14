@@ -13,11 +13,14 @@ const SETTLE_EVERY_MS = 2000;
 const SETTLE_TIMES = 30;
 
 type ChatState = 'off' | 'enabling' | 'on' | 'disabling';
+// A Telegram Business account the bot is connected to (#3191): its name and @username, whether the connection is on, whether the bot may send, and whether
+// an owner or admin allowed it (any Premium user can connect a bot that has Business Mode on); `ref` names it to the server when allowing or stopping it.
+type BusinessAccount = { ref: string; name: string | null; username: string | null; enabled: boolean; canReply: boolean; approved: boolean };
 
 // Whether a Telegram connection also answers customers' private chats (#3132): off, being turned on or off by the server, or on. The server
 // sets the bot's webhook in a job, so the screen asks again until the state settles, and offers the switch again when it stood too long. A failed
 // attempt shows its code in words. `active`: the connection still works; one whose token was refused can only be turned off.
-export function TelegramChats({ channel, canEdit, active = true, now = Date.now() }: { channel: { id: string; chatState: ChatState; chatError: string | null; chatChangedAt?: string | null }; canEdit: boolean; active?: boolean; now?: number }) {
+export function TelegramChats({ channel, canEdit, active = true, now = Date.now() }: { channel: { id: string; chatState: ChatState; chatError: string | null; chatChangedAt?: string | null; chatBusiness?: BusinessAccount[] }; canEdit: boolean; active?: boolean; now?: number }) {
   const t = useTranslations('social');
   const switching = channel.chatState === 'enabling' || channel.chatState === 'disabling';
   const stuck = switching && channel.chatChangedAt != null && now - Date.parse(channel.chatChangedAt) > TELEGRAM_CHATS_STUCK_MS;
@@ -72,6 +75,55 @@ export function TelegramChats({ channel, canEdit, active = true, now = Date.now(
         </Button>
       )}
       {setChats.error && <ErrorText>{errorMessage(setChats.error)}</ErrorText>}
+      {channel.chatState === 'on' && <TelegramBusiness connectionId={channel.id} accounts={channel.chatBusiness ?? []} canEdit={canEdit} />}
+    </div>
+  );
+}
+
+// Telegram Business (#3191): an owner with Telegram Premium connects the bot to their own account in Telegram, and the bot then answers that account's
+// customer chats. Nothing is turned on here but the choice of accounts: the screen says what to do in Telegram, in the order that works, lists the
+// accounts Telegram told Ludy about, and an owner or admin allows the ones that are theirs. Telegram lets any Premium user connect a bot that has
+// Business Mode on, so an account is not taken in until a person allows it, and stopping it ends its messages at once.
+function TelegramBusiness({ connectionId, accounts, canEdit }: { connectionId: string; accounts: BusinessAccount[]; canEdit: boolean }) {
+  const t = useTranslations('social');
+  const allow = useMutation({
+    mutationFn: (v: { ref: string; allow: boolean }) => client.channels.setTelegramBusiness({ connectionId, ref: v.ref, allow: v.allow }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: orpc.channels.list.key() });
+    },
+  });
+  const status = (a: BusinessAccount): string =>
+    !a.enabled ? t('telegramBusinessOff') : !a.approved ? t('telegramBusinessPending') : a.canReply ? t('telegramBusinessOn') : t('telegramBusinessReadOnly');
+  const who = (a: BusinessAccount): string => {
+    const name = a.name ?? (a.username ? '' : t('telegramBusinessUnnamed'));
+    return [name, a.username ? `@${a.username}` : ''].filter((part) => part !== '').join(' ');
+  };
+  return (
+    <div className="mt-2 space-y-1" data-testid="telegram-business">
+      <p className="text-xs font-medium text-foreground">{t('telegramBusinessTitle')}</p>
+      {accounts.length === 0 ? (
+        <p className="text-xs text-subtle-foreground">{t('telegramBusinessHint')}</p>
+      ) : (
+        <>
+          <ul className="space-y-1 text-xs text-subtle-foreground">
+            {accounts.map((a) => (
+              <li key={a.ref} data-testid="telegram-business-account" className="flex flex-wrap items-center gap-2">
+                <span>
+                  {who(a)}: {status(a)}
+                </span>
+                {canEdit && a.enabled && (
+                  <Button variant="outline" size="sm" loading={allow.isPending && allow.variables?.ref === a.ref} onClick={() => allow.mutate({ ref: a.ref, allow: !a.approved })}>
+                    {a.approved ? t('telegramBusinessStop') : t('telegramBusinessAllow')}
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
+          {accounts.some((a) => a.enabled && !a.approved) && <p className="text-xs text-warning">{t('telegramBusinessPendingNote')}</p>}
+          <p className="text-xs text-subtle-foreground">{t('telegramBusinessWindow')}</p>
+        </>
+      )}
+      {allow.error && <ErrorText>{errorMessage(allow.error)}</ErrorText>}
     </div>
   );
 }

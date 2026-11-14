@@ -27,6 +27,21 @@ export interface InboundConversationEvent {
   // The images the message carries, by the platform's address (CV5c, #2357): personal data the worker fetches once and the core clears, so it
   // is never logged, never put in a job and never kept past the fetch (six days at the most).
   attachments?: Array<{ kind: 'image'; url: string }> | undefined;
+  // How long the platform lets this thread be answered after the customer's last message, when that differs from the provider's own rule
+  // (Telegram Business: 24 hours for a business chat, none for a bot chat; #3191). Whole hours, 1 to 720.
+  replyWindowHours?: number | undefined;
+}
+
+// A change in a business account's connection to a bot (Telegram Business, #3191), as the platform told it. The id is the platform's
+// business connection id and `userId` the account's own user; `canReply` is the bot's right to send and `enabled` whether the connection is active.
+export interface ConversationBusinessState {
+  id: string;
+  userId: string;
+  name?: string | undefined;
+  // The account's @username (unique on Telegram), so an owner can tell their own account from a stranger who wears the same name.
+  username?: string | undefined;
+  canReply: boolean;
+  enabled: boolean;
 }
 
 // A verified notice: the platform's own account id (a Page, an Instagram account, an OA), from which the worker finds the
@@ -37,6 +52,10 @@ export interface ConversationNotice {
   // The sandbox only: the one connection its notice is for. Its account id is a key a member chose, so two orgs may pick the
   // same one, and a demo comment must reach only the connection it was made on. A platform's notice never has it.
   connectionId?: string | undefined;
+  // Telegram Business (#3191): the business connection the events came through, so the core stores them only while its stored state lists that
+  // connection as enabled; and a change of that state, which the worker records through the connection's own command, never by itself.
+  businessConnectionId?: string | undefined;
+  businessState?: ConversationBusinessState | undefined;
 }
 
 export class ConversationNoticeError extends Error {

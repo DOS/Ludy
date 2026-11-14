@@ -13,6 +13,7 @@ import {
   parseTelegramChatNotice,
   setTelegramWebhook,
   telegramBotId,
+  telegramBusinessState,
   telegramChatEvents,
   telegramHookSecret,
   telegramHookSecretOk,
@@ -85,7 +86,8 @@ const message = (over: Record<string, unknown> = {}, from: Record<string, unknow
 describe('the events of an update', () => {
   it('reads a private message: the thread is the chat, the customer is the sender, the name is first and last name', () => {
     expect(telegramChatEvents(message())).toEqual([
-      { kind: 'direct', threadId: '111', messageId: '5', direction: 'in', contact: { id: '111', name: 'An Nguyễn' }, text: 'Shop còn hàng không?', at: new Date(DATE * 1000).toISOString() },
+      // A message id is unique inside one chat only [O], so the stored id names the chat.
+      { kind: 'direct', threadId: '111', messageId: '111:5', direction: 'in', contact: { id: '111', name: 'An Nguyễn' }, text: 'Shop còn hàng không?', at: new Date(DATE * 1000).toISOString() },
     ]);
   });
 
@@ -194,7 +196,7 @@ describe('a reply through sendMessage', () => {
   it('sends plain text to the chat once, with no parse mode and never a paid broadcast, and names the message by its id', async () => {
     const { calls, fetchImpl } = bot([ok({ message_id: 42 })]);
     const adapter = new TelegramConversations({ fetch: fetchImpl });
-    expect(await adapter.reply(reply())).toEqual({ kind: 'accepted', externalId: '42' });
+    expect(await adapter.reply(reply())).toEqual({ kind: 'accepted', externalId: '111:42' });
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({ method: 'sendMessage', token: TOKEN, json: { chat_id: '111', text: 'Dạ còn ạ, anh chị cần size nào?' } });
     expect(Object.keys(calls[0]?.json ?? {}).sort()).toEqual(['chat_id', 'text']);
@@ -285,7 +287,7 @@ describe('turning the webhook on and off', () => {
     const input = { secret: SECRET, on: true, hook, baseUrl: 'https://ludy.example.com/', key: KEY, takenBotIds: ['999'] };
     const on = await adapter.chatHook(input);
     expect(on).toEqual({ kind: 'done', botId: '123456789' });
-    expect(calls[0]).toMatchObject({ method: 'setWebhook', token: TOKEN, json: { url: `https://ludy.example.com/api/channels/telegram/webhook/${hook}`, secret_token: telegramHookSecret(KEY, hook), allowed_updates: ['message'] } });
+    expect(calls[0]).toMatchObject({ method: 'setWebhook', token: TOKEN, json: { url: `https://ludy.example.com/api/channels/telegram/webhook/${hook}`, secret_token: telegramHookSecret(KEY, hook), allowed_updates: [...TELEGRAM_CHAT_UPDATES] } });
     expect(JSON.stringify(on)).not.toMatch(new RegExp(`${hook}|${telegramHookSecret(KEY, hook)}`));
     const off = await adapter.chatHook({ ...input, on: false });
     expect(off).toEqual({ kind: 'done', botId: '123456789' });
@@ -306,5 +308,164 @@ describe('turning the webhook on and off', () => {
   it('is built from random ids: two hooks never collide in a thousand draws', () => {
     const ids = new Set(Array.from({ length: 1000 }, () => newTelegramHookId()));
     expect(ids.size).toBe(1000);
+  });
+});
+
+// Telegram Business mode (#3191): the shapes are the official page's (BusinessConnection, Message.business_connection_id, BusinessMessagesDeleted [O]); which
+// side wrote a message is [live].
+const CONN = 'AbC_dEf-123=';
+const OWNER = 900;
+const businessMessage = (over: Record<string, unknown> = {}, from: Record<string, unknown> = {}, field = 'business_message') => ({
+  update_id: 7,
+  [field]: {
+    message_id: 8,
+    business_connection_id: CONN,
+    from: { id: 111, is_bot: false, first_name: 'An', last_name: 'Nguyễn', ...from },
+    chat: { id: 111, first_name: 'An', last_name: 'Nguyễn', type: 'private' },
+    date: DATE,
+    text: 'Cho mình hỏi giá áo này',
+    ...over,
+  },
+});
+const AT = new Date(DATE * 1000).toISOString();
+
+describe('the events of a business update', () => {
+  it('reads a customer message of a business chat: its own thread beside the bot chat of the same id, a message id that names the chat, and a 24-hour window', () => {
+    expect(telegramChatEvents(businessMessage())).toEqual([
+      { kind: 'direct', threadId: `b:111:${CONN}`, messageId: `b:111:${CONN}:8`, direction: 'in', contact: { id: '111', name: 'An Nguyễn' }, text: 'Cho mình hỏi giá áo này', at: AT, replyWindowHours: 24 },
+    ]);
+    // The same chat id and message id in a bot chat is another thread and another message.
+    const bot = telegramChatEvents(message({ message_id: 8 }))[0];
+    expect(bot?.threadId).toBe('111');
+    expect(bot?.messageId).toBe('111:8');
+  });
+
+  it('reads the account\'s own message as an outgoing one in the customer\'s thread, named by the chat\'s other party, with no reply window', () => {
+    const own = businessMessage({ text: 'Dạ còn ạ' }, { id: OWNER, first_name: 'Chủ shop' });
+    expect(telegramChatEvents(own)).toEqual([
+      { kind: 'direct', threadId: `b:111:${CONN}`, messageId: `b:111:${CONN}:8`, direction: 'out', contact: { id: '111', name: 'An Nguyễn' }, text: 'Dạ còn ạ', at: AT },
+    ]);
+    // The bot's own reply sent for the account is the same: an echo of a message already stored, by its id.
+    expect(telegramChatEvents(businessMessage({ text: 'Dạ còn ạ' }, { id: 4242, is_bot: true, first_name: 'Quán Phở bot' }))[0]).toMatchObject({ direction: 'out', messageId: `b:111:${CONN}:8` });
+    // An attachment the account sent is named as sent, not as the customer's.
+    expect(telegramChatEvents(businessMessage({ text: undefined, photo: [{ file_id: 'x' }] }, { id: OWNER }))[0]?.text).toBe('[Đã gửi ảnh]');
+    expect(telegramChatEvents(businessMessage({ text: undefined, photo: [{ file_id: 'x' }] }))[0]?.text).toBe('[Khách gửi ảnh]');
+  });
+
+  it('reads an edit of a customer message as an edit, and ignores an edit of the account\'s own message', () => {
+    expect(telegramChatEvents(businessMessage({ text: 'Giá áo này bao nhiêu' }, {}, 'edited_business_message'))).toEqual([
+      { kind: 'direct', threadId: `b:111:${CONN}`, messageId: `b:111:${CONN}:8`, direction: 'in', contact: { id: '111', name: 'An Nguyễn' }, text: 'Giá áo này bao nhiêu', at: AT, edited: true, replyWindowHours: 24 },
+    ]);
+    expect(telegramChatEvents(businessMessage({}, { id: OWNER }, 'edited_business_message'))).toEqual([]);
+  });
+
+  it('reads deleted messages as removals, one for each id, dated so that an erased customer is not brought back', () => {
+    const update = { update_id: 9, deleted_business_messages: { business_connection_id: CONN, chat: { id: 111, type: 'private', first_name: 'An' }, message_ids: [8, 9] } };
+    expect(telegramChatEvents(update)).toEqual([
+      { kind: 'direct', threadId: `b:111:${CONN}`, messageId: `b:111:${CONN}:8`, direction: 'in', contact: { id: '111' }, text: '', at: '2020-01-01T00:00:00.000Z', removed: true },
+      { kind: 'direct', threadId: `b:111:${CONN}`, messageId: `b:111:${CONN}:9`, direction: 'in', contact: { id: '111' }, text: '', at: '2020-01-01T00:00:00.000Z', removed: true },
+    ]);
+  });
+
+  it('gives nothing for a business message with no or a bad business connection id, a group, a bot customer, a service message or a bad deletion', () => {
+    expect(telegramChatEvents(businessMessage({ business_connection_id: undefined }))).toEqual([]);
+    expect(telegramChatEvents(businessMessage({ business_connection_id: 'has space' }))).toEqual([]);
+    expect(telegramChatEvents(businessMessage({ business_connection_id: 'x'.repeat(101) }))).toEqual([]);
+    expect(telegramChatEvents(businessMessage({ chat: { id: -100123, type: 'supergroup' } }))).toEqual([]);
+    expect(telegramChatEvents(businessMessage({}, { is_bot: true }))).toEqual([]);
+    expect(telegramChatEvents(businessMessage({ text: undefined, new_chat_members: [] }))).toEqual([]);
+    expect(telegramChatEvents(businessMessage({ date: 3600 }))).toEqual([]);
+    const gone = (over: Record<string, unknown>) => ({ update_id: 9, deleted_business_messages: { business_connection_id: CONN, chat: { id: 111, type: 'private' }, message_ids: [8], ...over } });
+    expect(telegramChatEvents(gone({ business_connection_id: undefined }))).toEqual([]);
+    expect(telegramChatEvents(gone({ chat: { id: -1, type: 'group' } }))).toEqual([]);
+    expect(telegramChatEvents(gone({ message_ids: 'x' }))).toEqual([]);
+    expect(telegramChatEvents(gone({ message_ids: [] }))).toEqual([]);
+    // At most 100 ids of one deletion are read.
+    expect(telegramChatEvents(gone({ message_ids: Array.from({ length: 150 }, (_, i) => i + 1) }))).toHaveLength(100);
+  });
+});
+
+describe('the state of a business connection', () => {
+  const connection = (over: Record<string, unknown> = {}) => ({
+    update_id: 11,
+    business_connection: { id: CONN, user: { id: OWNER, first_name: 'Lan', last_name: 'Trần' }, user_chat_id: OWNER, date: DATE, rights: { can_reply: true }, is_enabled: true, ...over },
+  });
+
+  it('reads a connection: the account, whether it is on and whether the bot may reply', () => {
+    expect(telegramBusinessState(connection())).toEqual({ id: CONN, userId: String(OWNER), name: 'Lan Trần', canReply: true, enabled: true });
+    expect(telegramBusinessState(connection({ rights: {}, is_enabled: false }))).toEqual({ id: CONN, userId: String(OWNER), name: 'Lan Trần', canReply: false, enabled: false });
+    // No `is_enabled` means off, never on; no rights means the bot may not reply.
+    expect(telegramBusinessState(connection({ is_enabled: undefined, rights: undefined }))).toMatchObject({ enabled: false, canReply: false });
+  });
+
+  it('is nothing for an update that is no whole connection', () => {
+    expect(telegramBusinessState(connection({ id: undefined }))).toBeNull();
+    expect(telegramBusinessState(connection({ id: 'has space' }))).toBeNull();
+    expect(telegramBusinessState(connection({ user: undefined }))).toBeNull();
+    expect(telegramBusinessState(connection({ user: { id: 'x' } }))).toBeNull();
+    expect(telegramBusinessState(message())).toBeNull();
+    expect(telegramBusinessState(null)).toBeNull();
+    expect(telegramChatEvents(connection())).toEqual([]);
+  });
+
+  it('is carried by the notice beside the business connection of the events, and a bot chat\'s message carries neither', () => {
+    const hook = newTelegramHookId();
+    const parse = (update: unknown) => parseTelegramChatNotice(wrapTelegramChatNotice(hook, Buffer.from(JSON.stringify(update), 'utf8')));
+    expect(parse(connection())).toEqual({ accountId: hook, events: [], businessState: { id: CONN, userId: String(OWNER), name: 'Lan Trần', canReply: true, enabled: true } });
+    const business = parse(businessMessage());
+    expect(business.businessConnectionId).toBe(CONN);
+    expect(business.events).toHaveLength(1);
+    expect(business).not.toHaveProperty('businessState');
+    expect(parse({ update_id: 3, deleted_business_messages: { business_connection_id: CONN, chat: { id: 111, type: 'private' }, message_ids: [1] } }).businessConnectionId).toBe(CONN);
+    expect(parse(message())).toEqual({ accountId: hook, events: expect.any(Array) });
+    expect(parse(message())).not.toHaveProperty('businessConnectionId');
+  });
+});
+
+describe('a reply in a business chat', () => {
+  const thread = `b:111:${CONN}`;
+
+  it('sends with the business connection id to the customer\'s chat, and names the message as the thread and its id', async () => {
+    const { calls, fetchImpl } = bot([ok({ message_id: 77 })]);
+    const adapter = new TelegramConversations({ fetch: fetchImpl });
+    expect(await adapter.reply(reply({ threadId: thread }))).toEqual({ kind: 'accepted', externalId: `${thread}:77` });
+    expect(calls[0]).toMatchObject({ method: 'sendMessage', token: TOKEN, json: { chat_id: '111', business_connection_id: CONN, text: 'Dạ còn ạ, anh chị cần size nào?' } });
+    expect(Object.keys(calls[0]?.json ?? {}).sort()).toEqual(['business_connection_id', 'chat_id', 'text']);
+    expect(JSON.stringify(calls[0]?.json)).not.toMatch(/allow_paid_broadcast|parse_mode/);
+  });
+
+  it('makes the echo of the reply the same message id as the one stored from the call', async () => {
+    const { fetchImpl } = bot([ok({ message_id: 8 })]);
+    const adapter = new TelegramConversations({ fetch: fetchImpl });
+    const sent = await adapter.reply(reply({ threadId: thread }));
+    const echo = telegramChatEvents(businessMessage({ text: 'Dạ còn ạ, anh chị cần size nào?' }, { id: 4242, is_bot: true }))[0];
+    expect(sent).toMatchObject({ kind: 'accepted', externalId: echo?.messageId });
+  });
+
+  it('keeps a business chat and a bot chat of the same id apart in the pacing, and refuses a thread it cannot read', async () => {
+    const { calls, fetchImpl } = bot([ok({ message_id: 1 }), ok({ message_id: 2 })]);
+    const slept: number[] = [];
+    const adapter = new TelegramConversations({ fetch: fetchImpl, now: () => 1_000_000, sleep: async (ms) => void slept.push(ms) });
+    await adapter.reply(reply({ threadId: thread }));
+    await adapter.reply(reply({ threadId: '111' }));
+    expect(slept).toEqual([]);
+    expect(calls[1]?.json).not.toHaveProperty('business_connection_id');
+    for (const bad of ['b:abc:x', 'b:111:', 'b:111:has space', `b:111:${'x'.repeat(101)}`, 'c:111:x']) {
+      expect(await adapter.reply(reply({ threadId: bad }))).toMatchObject({ kind: 'rejected', error: 'bad_request', code: 'TELEGRAM_BAD_CHAT' });
+    }
+    expect(calls).toHaveLength(2);
+  });
+
+  it('maps a refused business connection to permission', async () => {
+    const { fetchImpl } = bot([fail(400, 'Bad Request: BUSINESS_CONNECTION_INVALID'), fail(403, 'Forbidden: bot was blocked by the user')]);
+    const adapter = new TelegramConversations({ fetch: fetchImpl, sleep: async () => undefined });
+    expect(await adapter.reply(reply({ threadId: thread }))).toEqual({ kind: 'rejected', error: 'permission', code: 'TELEGRAM_BUSINESS_REFUSED' });
+    expect(await adapter.reply(reply({ threadId: `b:112:${CONN}` }))).toMatchObject({ kind: 'rejected', error: 'permission', code: 'TELEGRAM_BOT_BLOCKED' });
+  });
+});
+
+describe('what the webhook asks Telegram for', () => {
+  it('lists the bot chat update and the four of Business mode, so none is left to the previous setting', () => {
+    expect([...TELEGRAM_CHAT_UPDATES]).toEqual(['message', 'business_connection', 'business_message', 'edited_business_message', 'deleted_business_messages']);
   });
 });

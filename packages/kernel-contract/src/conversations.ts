@@ -129,6 +129,9 @@ export const zConversationEvent = z.strictObject({
   hiddenOnly: z.boolean().optional(),
   // The images the customer's message carries (CV5c, #2357); each is fetched later by the worker and shown beside the message's text.
   attachments: z.array(zConversationEventImage).max(CONVERSATION_ATTACHMENTS_MAX).optional(),
+  // How long the platform lets this thread be answered after the customer's last message, when that differs from the provider's rule (Telegram
+  // Business, #3191: 24 hours for a business chat). Whole hours; it only ever narrows what a person may send, never widens what the platform allows.
+  replyWindowHours: z.number().int().min(1).max(720).optional(),
   // Email only (#2439): the subject line, and the Message-IDs the mail names in In-Reply-To and References, which decide the thread.
   subject: z.string().trim().min(1).max(EMAIL_SUBJECT_MAX).refine(noNul, 'NUL character').optional(),
   refs: z.array(zThreadId).max(EMAIL_REFS_MAX).optional(),
@@ -146,6 +149,9 @@ export type ConversationEvent = z.infer<typeof zConversationEvent>;
 export const zConversationIngest = z.strictObject({
   connectionId: zId,
   events: z.array(zConversationEvent).min(1).max(CONVERSATION_EVENTS_MAX),
+  // Telegram Business (#3191): the business connection the events came through. They are stored only while the connection's own state lists it as
+  // enabled (an unknown or disabled one stores nothing and counts as ignored), and never when the contact is the business account's own user.
+  businessConnectionId: z.string().min(1).max(100).refine(noNul, 'NUL character').optional(),
 });
 export type ConversationIngestInput = z.infer<typeof zConversationIngest>;
 // What the mail worker hands the core for one customer mail (#2439): the org is the worker's (found from the stored address), the events are

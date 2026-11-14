@@ -10,7 +10,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { TELEGRAM_HOOK_KEY_INFO, TELEGRAM_MAX_NOTICE_BYTES, TelegramPublisher, telegramHookSecret, TelegramConversations, type Fetch } from '@crove/channel';
+import { TELEGRAM_CHAT_UPDATES, TELEGRAM_HOOK_KEY_INFO, TELEGRAM_MAX_NOTICE_BYTES, TelegramPublisher, telegramHookSecret, TelegramConversations, type Fetch } from '@crove/channel';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { EXPORT_TABLES, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
@@ -217,7 +217,7 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     expect(outcome).not.toContain(before?.chat_hook_next as string);
     hookA = before?.chat_hook_next as string;
     // One setWebhook with this bot's token, the hook in the path, the derived secret as secret_token, and only private messages asked for.
-    expect(t.calls).toEqual([{ method: 'setWebhook', token: TOKEN_A, json: { url: `${APP_URL}${BASE}/${hookA}`, secret_token: secretOf(hookA), allowed_updates: ['message'] } }]);
+    expect(t.calls).toEqual([{ method: 'setWebhook', token: TOKEN_A, json: { url: `${APP_URL}${BASE}/${hookA}`, secret_token: secretOf(hookA), allowed_updates: [...TELEGRAM_CHAT_UPDATES] } }]);
     // The hook being set is the live one now, and the connection remembers its bot.
     expect(await rows('SELECT chat_state, chat_error, chat_bot_id, chat_hook, chat_hook_next FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [a.orgId, a.connectionId])).toEqual([{ chat_state: 'on', chat_error: null, chat_bot_id: '111111111', chat_hook: hookA, chat_hook_next: null }]);
     // The same job again finds the connection already on and calls nothing.
@@ -461,7 +461,7 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     const job = { orgId: a.orgId, messageId, connectionId: a.connectionId, action: 'reply' as const };
     expect(await runConversationJob(deps, job)).toBe('accepted');
     expect(t.calls).toEqual([{ method: 'sendMessage', token: TOKEN_A, json: { chat_id: '1201', text: 'Dạ shop còn hàng ạ' } }]);
-    expect(await rows('SELECT send_state, external_message_id FROM crove_kernel.conversation_message WHERE org_id = $1 AND id = $2', [a.orgId, messageId])).toEqual([{ send_state: 'sent', external_message_id: '5551' }]);
+    expect(await rows('SELECT send_state, external_message_id FROM crove_kernel.conversation_message WHERE org_id = $1 AND id = $2', [a.orgId, messageId])).toEqual([{ send_state: 'sent', external_message_id: '1201:5551' }]);
     // The same job again calls nothing: a reply is sent exactly once.
     expect(await runConversationJob(deps, job)).toBe('settled');
     expect(t.calls).toHaveLength(1);
@@ -578,7 +578,7 @@ suite('the Telegram bot chats webhook on PostgreSQL (#3132)', () => {
     const t = telegram();
     expect(await runTelegramChatHook(hookDeps(t.fetchImpl), { orgId: b.orgId, connectionId: b.connectionId, action: 'chat', on: true })).toBe('on');
     const next = mid?.chat_hook_next as string;
-    expect(t.calls).toEqual([{ method: 'setWebhook', token: TOKEN_B, json: { url: `${APP_URL}${BASE}/${next}`, secret_token: secretOf(next), allowed_updates: ['message'] } }]);
+    expect(t.calls).toEqual([{ method: 'setWebhook', token: TOKEN_B, json: { url: `${APP_URL}${BASE}/${next}`, secret_token: secretOf(next), allowed_updates: [...TELEGRAM_CHAT_UPDATES] } }]);
     expect(await rows('SELECT chat_state, chat_hook, chat_hook_next FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [b.orgId, b.connectionId])).toEqual([{ chat_state: 'on', chat_hook: next, chat_hook_next: null }]);
     // The secret of the old hook opens nothing on the new one, and an update still arriving on the old hook finds no connection.
     expect((await post(app, next, update('x'), signed(old))).status).toBe(401);
