@@ -169,6 +169,16 @@ suite('the recorder\'s Vy summary route (#2580, M6 part B2)', () => {
     expect(got.draft?.decisions).toEqual(['Giữ giá cũ']);
   });
 
+  it('stores a bare dash, not a copy of a decision, when a run on a template filled no section', async () => {
+    const meetingId = await seedMeeting('recorder');
+    await exec('recorder', 'meetings.minutes.set_template', { meetingId, summaryTemplate: 'customer' });
+    const only = JSON.stringify({ sections: [], decisions: ['Giữ giá cũ'], items: [] });
+    const out = await runMeetingSummary(deps({ model: model(only) }), orgId, asUser('recorder'), meetingId);
+    await exec('recorder', 'meetings.summary.copy_result', { meetingId, runId: out.runId });
+    const got = await runtime.query<{ draft: { summary: string; decisions: string[] } | null }>('meetings.result.get', { meetingId }, { actor: asUser('recorder'), orgId });
+    expect(got.draft).toMatchObject({ summary: '-', decisions: ['Giữ giá cũ'] });
+  });
+
   it('refuses to copy a result into a meeting whose template changed since the run, and a general run keeps its plain summary', async () => {
     const meetingId = await seedMeeting('recorder');
     const out = await runMeetingSummary(deps(), orgId, asUser('recorder'), meetingId);

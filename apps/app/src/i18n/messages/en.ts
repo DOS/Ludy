@@ -1891,6 +1891,7 @@ export const en = {
       hint: 'Each type has its own sections for the minutes. Vy writes under the sections of the type you pick; without Vy you type into each section.',
       saved: 'Meeting type changed.',
       reflow: 'The saved text does not follow this type\'s sections, so it was put in the first section. Split it between the right sections.',
+      tooLong: 'A section is longer than 1200 characters. Shorten it or move part of it to another section before saving.',
       names: {
         general: 'General summary',
         briefing: 'Team briefing',

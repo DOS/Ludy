@@ -1889,6 +1889,7 @@ export const vi = {
       hint: 'Mỗi loại có các mục riêng cho biên bản. Vy viết theo các mục của loại đã chọn; không có Vy thì bạn tự gõ vào từng mục.',
       saved: 'Đã đổi loại cuộc họp.',
       reflow: 'Nội dung đã lưu không theo các mục của loại này, nên được đặt vào mục đầu tiên. Hãy chia lại cho đúng mục.',
+      tooLong: 'Có mục dài quá 1200 ký tự. Hãy rút gọn hoặc chia sang mục khác trước khi lưu.',
       names: {
         general: 'Tóm tắt chung',
         briefing: 'Họp giao ban',

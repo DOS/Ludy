@@ -14,6 +14,7 @@ export const SUMMARY_LIMITS = {
   decisionChars: 500,
   decisions: 50,
   // A4 (#3162): the sections a template asks for. A section's text is cut at the cap so the sections together stay inside summaryChars as one text.
+  // Equals SECTION_TEXT_MAX of the contract (this package cannot import it): the module's schema refuses a longer section.
   sectionChars: 1200,
   sections: 8,
   titleChars: 300,
@@ -185,6 +186,9 @@ export function checkSummary(raw: string, segments: readonly SummarySegment[], t
     }
     sections.sort((a, b) => template.sections.findIndex((d) => d.key === a.key) - template.sections.findIndex((d) => d.key === b.key));
   }
+
+  // A template asked for sections: an answer that gave none in the list shape (a summary only, or an object) lost that text, which the count says.
+  if (useSections && !Array.isArray(parsed.sections) && (typeof parsed.summary === 'string' || isRecord(parsed.sections))) dropped += 1;
 
   const sentences: string[] = [];
   if (!useSections && typeof parsed.summary === 'string') {

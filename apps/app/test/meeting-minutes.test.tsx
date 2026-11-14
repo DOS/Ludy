@@ -89,6 +89,12 @@ describe('the facts of the page', () => {
     expect(both.actions).toEqual([]);
   });
 
+  it('shows no content block for the bare dash a decisions-only run stores on a template, and keeps its decisions as conclusions', () => {
+    const model = buildMinutes(meeting, results({ published: result('published', '-') }), nameOf);
+    expect(model.sections).toEqual([]);
+    expect(model.conclusions).toEqual(['Giữ giá cũ']);
+  });
+
   it('shows text that is not in the template\'s form whole, as it was shared, and the general summary as one block', () => {
     const old = buildMinutes({ ...meeting, summaryTemplate: 'customer' }, results({ published: result('published', sectionsToText('briefing', [{ key: 'plan', text: 'Kế hoạch cũ' }])) }), nameOf);
     expect(old.sections).toHaveLength(1);

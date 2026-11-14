@@ -171,6 +171,13 @@ describe('MeetingResults with a minutes template', () => {
     expect(reader).not.toContain('Kết quả công việc kỳ trước');
   });
 
+  it('stops the recorder from saving a section longer than 1200 characters, as text reflowed from a long free summary can be, and says why', () => {
+    const long = 'a'.repeat(1300);
+    const html = render({ meetingId: 'm1', isRecorder: true, draft: view('draft', long), published: null, items: [] }, false, 'customer');
+    expect(html).toContain(en.meetings.templates.tooLong);
+    expect(/<button[^>]*>(?:(?!<\/button>).)*Save draft<\/button>/.exec(html)?.[0]).toMatch(/\sdisabled(=|\s|>)/);
+  });
+
   it('puts text that is not in the template\'s form into the first section and says so, and shows a shared one whole', () => {
     const recorder = render({ meetingId: 'm1', isRecorder: true, draft: view('draft', 'Một đoạn viết trước khi đổi loại'), published: null, items: [] }, false, 'customer');
     expect(recorder).toContain('Một đoạn viết trước khi đổi loại');

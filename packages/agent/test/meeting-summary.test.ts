@@ -214,6 +214,15 @@ describe('checkSummary with a template', () => {
     expect(() => checkSummary(body({ sections: [{ key: 'plan', text: 'Giá 999 triệu.' }], decisions: [], items: [] }), SEGMENTS, BRIEFING)).toThrow(SummaryError);
   });
 
+  it('counts an answer that gave a summary or an object instead of the list of sections', () => {
+    const summaryOnly = checkSummary(body({ summary: 'Họp báo giá.', decisions: ['Giữ giá cũ'], items: [] }), SEGMENTS, BRIEFING);
+    expect(summaryOnly.sections).toEqual([]);
+    expect(summaryOnly.summary).toBe('');
+    expect(summaryOnly.dropped).toBe(1);
+    const asObject = checkSummary(body({ sections: { plan: 'Họp lại.' }, decisions: ['Giữ giá cũ'], items: [] }), SEGMENTS, BRIEFING);
+    expect(asObject.dropped).toBe(1);
+  });
+
   it('asks the model for the sections with their keys and hints, and leaves the general instruction alone', async () => {
     const fake = fakeModel(body({ sections: [{ key: 'plan', text: 'Họp lại lúc 9 giờ sáng thứ hai.' }], decisions: [], items: [] }));
     const out = await summarizeMeeting({ segments: SEGMENTS, language: 'vi', template: BRIEFING }, bindPorts(A, fake.ports));

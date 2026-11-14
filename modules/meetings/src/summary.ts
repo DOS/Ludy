@@ -172,7 +172,8 @@ export const summaryCopyResult = defineCommand({
         .values({
           org_id: ctx.orgId,
           meeting_id: input.meetingId,
-          summary: summaryText === '' ? body.decisions[0] ?? '-' : summaryText,
+          // On a template the decisions have their own place on the page, so a run with no section stores a bare dash, never a copy of a decision.
+          summary: summaryText === '' ? (defs.length > 0 ? '-' : body.decisions[0] ?? '-') : summaryText,
           decisions: sql`${JSON.stringify(body.decisions)}::jsonb`,
           feature: FEATURE,
           stage: 'draft',

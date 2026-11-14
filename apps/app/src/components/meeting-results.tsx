@@ -73,6 +73,8 @@ function SummaryEditor({ meetingId, summary, decisions, template }: { meetingId:
   const [lines, setLines] = useState(decisions.join('\n'));
   const decisionList = lines.split('\n').map((l) => l.trim()).filter(Boolean);
   const sections = defs.map((d) => ({ key: d.key, text: (values[d.key] ?? '').trim() })).filter((x) => x.text !== '');
+  // A section holds at most 1200 characters; text reflowed into the first one can be longer, and the recorder splits it before saving.
+  const tooLong = defs.some((d) => (values[d.key] ?? '').length > 1200);
   const save = useMutation({
     mutationFn: () =>
       orpc.meetings.results.saveSummary.call(defs.length === 0 ? { meetingId, summary: text.trim(), decisions: decisionList } : { meetingId, sections, decisions: decisionList }),
@@ -85,6 +87,7 @@ function SummaryEditor({ meetingId, summary, decisions, template }: { meetingId:
       ) : (
         <div className="space-y-2" data-testid="section-editor">
           {reflowed && <p className="text-xs text-muted-foreground">{tm('templates.reflow')}</p>}
+          {tooLong && <ErrorText>{tm('templates.tooLong')}</ErrorText>}
           {defs.map((d) => (
             <div key={d.key} className="space-y-1">
               <label htmlFor={`section-${d.key}`} className="text-xs font-medium">
@@ -97,7 +100,7 @@ function SummaryEditor({ meetingId, summary, decisions, template }: { meetingId:
       )}
       <Textarea aria-label={t('decisions')} placeholder={t('decisionsHint')} value={lines} rows={3} onChange={(e) => setLines(e.target.value)} />
       {save.error && <ErrorText>{errorMessage(save.error)}</ErrorText>}
-      <Button size="sm" loading={save.isPending} disabled={defs.length === 0 ? text.trim() === '' : sections.length === 0} onClick={() => save.mutate()}>
+      <Button size="sm" loading={save.isPending} disabled={defs.length === 0 ? text.trim() === '' : sections.length === 0 || tooLong} onClick={() => save.mutate()}>
         {t('saveDraft')}
       </Button>
     </div>

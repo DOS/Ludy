@@ -65,7 +65,7 @@ export function buildMinutes(meeting: MinutesMeeting, results: MeetingResults, n
   if (published) {
     const parsed = textToSections(meeting.summaryTemplate, published.summary);
     // Text not in the template's form (the template changed since it was shared) is shown whole, as it was shared.
-    sections = parsed ? parsed.filter((s) => s.text !== '').map((s) => ({ key: s.key, text: s.text })) : [{ key: null, text: published.summary }];
+    sections = parsed ? parsed.filter((s) => s.text !== '').map((s) => ({ key: s.key, text: s.text })) : published.summary.trim() === '-' ? [] : [{ key: null, text: published.summary }];
   }
   const items = published || results.items.some((i) => i.stage === 'published') ? results.items.filter((i) => i.stage === 'published') : [];
   const owner = (i: ActionItemView): string | null => (i.whoUserId ? nameOf(i.whoUserId) : null);
