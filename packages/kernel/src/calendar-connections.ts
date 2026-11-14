@@ -14,7 +14,7 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
-import { CALENDAR_LINK_MAX_ATTEMPTS, CALENDAR_PROVIDERS, GOOGLE_CALENDAR_EVENTS_SCOPE, zCalendarOAuthProvider, zId, type CalendarConnectionView } from '@crove/kernel-contract';
+import { CALENDAR_LINK_MAX_ATTEMPTS, CALENDAR_PROVIDERS, GOOGLE_CALENDAR_EVENTS_READ_SCOPE, GOOGLE_CALENDAR_EVENTS_SCOPE, zCalendarOAuthProvider, zId, type CalendarConnectionView } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
 
@@ -132,7 +132,7 @@ export const calendarConnect = defineCommand({
     const values = { display_name: input.displayName, scopes: input.scopes, expires_at: input.expiresAt, status: 'active' as const, status_reason: null, updated_at: ctx.now };
     const existing = await ctx.trx
       .selectFrom('crove_kernel.calendar_connection')
-      .select('id')
+      .select(['id', 'read_events'])
       .where('org_id', '=', ctx.orgId)
       .where('user_id', '=', userId)
       .where('provider', '=', input.provider)
@@ -141,7 +141,9 @@ export const calendarConnect = defineCommand({
       .executeTakeFirst();
     let id: string;
     if (existing) {
-      await ctx.trx.updateTable('crove_kernel.calendar_connection').set(values).where('org_id', '=', ctx.orgId).where('id', '=', existing.id).execute();
+      // The read of the member's meetings stays on only if the new grant still carries its scope (a grant is exactly what was asked for this time: connecting again for
+      // write-back alone drops it), so the switch never reads on without the grant.
+      await ctx.trx.updateTable('crove_kernel.calendar_connection').set({ ...values, read_events: existing.read_events && input.scopes.includes(GOOGLE_CALENDAR_EVENTS_READ_SCOPE) }).where('org_id', '=', ctx.orgId).where('id', '=', existing.id).execute();
       id = existing.id;
     } else {
       const row = await ctx.trx
@@ -643,7 +645,7 @@ export const calendarConnectionState = defineQuery({
   handler: async (ctx, input) => {
     const row = await ctx.trx
       .selectFrom('crove_kernel.calendar_connection')
-      .select(['status', 'provider', 'expires_at', 'updated_at', 'write_back', 'scopes'])
+      .select(['status', 'provider', 'expires_at', 'updated_at', 'write_back', 'read_events', 'scopes'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
       .executeTakeFirst();
@@ -655,6 +657,8 @@ export const calendarConnectionState = defineQuery({
       updatedAt: row.updated_at.toISOString(),
       // Bookings are written to this calendar: the member turned it on and the grant carries the events scope.
       writeBack: row.write_back && row.scopes.includes(GOOGLE_CALENDAR_EVENTS_SCOPE),
+      // The member's meetings are read through this connection (B1): the member turned it on and the grant carries the events-read scope.
+      readEvents: row.read_events && row.scopes.includes(GOOGLE_CALENDAR_EVENTS_READ_SCOPE),
     };
   },
 });
@@ -668,7 +672,7 @@ export const calendarConnections = defineQuery({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới xem được lịch đã kết nối');
     const rows = await ctx.trx
       .selectFrom('crove_kernel.calendar_connection')
-      .select(['id', 'provider', 'display_name', 'status', 'status_reason', 'last_synced_at', 'write_back', 'scopes', 'connected_at'])
+      .select(['id', 'provider', 'display_name', 'status', 'status_reason', 'last_synced_at', 'write_back', 'read_events', 'scopes', 'connected_at'])
       .where('org_id', '=', ctx.orgId)
       .where('user_id', '=', ctx.actor.userId)
       // One on its way out (the worker has yet to revoke its grant) is already gone for the member.
@@ -684,6 +688,8 @@ export const calendarConnections = defineQuery({
       lastSyncedAt: r.last_synced_at ? r.last_synced_at.toISOString() : null,
       writeBack: r.write_back,
       canWriteBack: r.scopes.includes(GOOGLE_CALENDAR_EVENTS_SCOPE),
+      readEvents: r.read_events && r.scopes.includes(GOOGLE_CALENDAR_EVENTS_READ_SCOPE),
+      canReadEvents: r.scopes.includes(GOOGLE_CALENDAR_EVENTS_READ_SCOPE),
       connectedAt: r.connected_at.toISOString(),
     }));
   },
@@ -754,6 +760,36 @@ export const calendarWriteBackSet = defineCommand({
     await ctx.trx.updateTable('crove_kernel.calendar_connection').set({ write_back: input.enabled }).where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).execute();
     ctx.audit({ connection_id: input.connectionId, provider: row.provider, write_back: input.enabled });
     return { connectionId: input.connectionId, writeBack: input.enabled };
+  },
+});
+
+// The member's switch for reading the names and times of their own meetings (Meetings B1, #3165). Turning it on needs an active connection whose grant carries the events-read scope: the
+// member connects again, asking for it (a refusal on Google's consent screen leaves the connection as it was). Turning it off is always allowed. The cache this reads into belongs to the
+// meetings module, whose command (`meetings.agenda.set_read_events`) calls this one and deletes the member's cached rows in the same transaction when the switch goes off.
+export const calendarReadEventsSet = defineCommand({
+  name: 'kernel.calendar.read_events.set',
+  input: z.strictObject({ connectionId: zId, enabled: z.boolean() }),
+  risk: 'R2',
+  sideEffect: 'internal',
+  access: EDITORS,
+  target: (input) => ({ type: 'kernel.calendar_connection', id: input.connectionId }),
+  handler: async (ctx, input) => {
+    const userId = requireUser(ctx);
+    const row = await ctx.trx
+      .selectFrom('crove_kernel.calendar_connection')
+      .select(['user_id', 'status', 'scopes', 'provider'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row || row.user_id !== userId) throw new DomainError('CALENDAR_NOT_FOUND', 404, 'Không tìm thấy lịch đã kết nối này');
+    if (input.enabled) {
+      if (row.status !== 'active') throw new DomainError('CALENDAR_NOT_ACTIVE', 409, 'Lịch này không còn hoạt động, hãy kết nối lại');
+      if (!row.scopes.includes(GOOGLE_CALENDAR_EVENTS_READ_SCOPE)) throw new DomainError('CALENDAR_READ_SCOPE_MISSING', 409, 'Hãy kết nối lại lịch này và cho phép Ludy đọc tên và giờ cuộc họp trong lịch');
+    }
+    await ctx.trx.updateTable('crove_kernel.calendar_connection').set({ read_events: input.enabled }).where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).execute();
+    ctx.audit({ connection_id: input.connectionId, provider: row.provider, read_events: input.enabled });
+    return { connectionId: input.connectionId, readEvents: input.enabled };
   },
 });
 
@@ -992,5 +1028,5 @@ export const calendarWriteBackConnections = defineQuery({
     return rows.map((r) => r.id);
   },
 });
-export const calendarConnectionCommands = [calendarOAuthBegin, calendarOAuthConsume, calendarConnect, calendarDisconnect, calendarFinishDisconnect, calendarWriteBackSet, calendarLinkRecord, calendarMarkFailed, calendarRefresh, calendarBusyReplace, calendarBusyAdd, calendarLiveTake];
+export const calendarConnectionCommands = [calendarOAuthBegin, calendarOAuthConsume, calendarConnect, calendarDisconnect, calendarFinishDisconnect, calendarWriteBackSet, calendarReadEventsSet, calendarLinkRecord, calendarMarkFailed, calendarRefresh, calendarBusyReplace, calendarBusyAdd, calendarLiveTake];
 export const calendarConnectionQueries = [calendarCredential, calendarConnectionState, calendarConnections, calendarWriteBackPlan, calendarWriteBackConnections, calendarConnectionsOf];

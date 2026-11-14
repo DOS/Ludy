@@ -351,6 +351,9 @@ export const CALENDAR_SYNC_DAYS = 366;
 // next to free/busy when the member opts in), and how many failed sweeps in a row stop a link retrying until its booking changes.
 export const GOOGLE_CALENDAR_EVENTS_SCOPE = 'https://www.googleapis.com/auth/calendar.events.owned';
 export const CALENDAR_LINK_MAX_ATTEMPTS = 6;
+// Reading the member's own meetings (Meetings B1, #3165): the Google scope that lets a connection read the events of the calendars the member owns. The connect dialog asks for it next to free/busy
+// only when the member turns "Cho Ludy đọc tên và giờ cuộc họp trong lịch" on (the same value as the channel package's GOOGLE_CALENDAR_EVENTS_READ_SCOPE, pinned by a test).
+export const GOOGLE_CALENDAR_EVENTS_READ_SCOPE = 'https://www.googleapis.com/auth/calendar.events.owned.readonly';
 
 export const zCalendarConnectionView = z.strictObject({
   id: zId,
@@ -362,6 +365,9 @@ export const zCalendarConnectionView = z.strictObject({
   writeBack: z.boolean(),
   // The grant carries the events scope, so write-back may be turned on; false: the member connects again, asking for it.
   canWriteBack: z.boolean(),
+  // B1: the member's switch for reading their meetings' names and times, and whether the grant carries the events-read scope (false: the member connects again, asking for it).
+  readEvents: z.boolean(),
+  canReadEvents: z.boolean(),
   connectedAt: zInstant,
 });
 export type CalendarConnectionView = z.infer<typeof zCalendarConnectionView>;

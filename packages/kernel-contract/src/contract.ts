@@ -403,6 +403,7 @@ import {
   zSummaryCopy,
 } from './meetings.ts';
 import { zAskAnswer, zAskEmpty, zAskInput, zAskStatus } from './meeting-ask.ts';
+import { zAgendaLink, zAgendaLinked, zAgendaList, zAgendaListInput, zAgendaReadEventsSet, zAgendaSetReadEvents, zAgendaSuggestInput, zAgendaSuggestion } from './meeting-agenda.ts';
 import { zFollowupDraft, zFollowupSendCall, zFollowupSent, zFollowupWording, zFollowupWordingAsk } from './meeting-followup.ts';
 import { zExtensionOrgToken, zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked, zExtensionTokenRevokedMember } from './extension.ts';
 import { zMcpGrantRevoke, zMcpGrantRevoked, zMcpGrantView, zMcpMemberGrantsSet, zMcpMemberGrantsView, zMcpWakeCleared, zMcpWakeTested, zMcpWakeGetInput, zMcpWakeGrantRef, zMcpWakeSet, zMcpWakeView, zMcpWakeWithSecret } from './mcp.ts';
@@ -561,7 +562,7 @@ export const contract = {
     providers: oc.output(z.array(zCalendarOAuthProvider)),
     connections: oc.output(z.array(zCalendarConnectionView)),
     connectStart: oc
-      .input(z.strictObject({ provider: zCalendarOAuthProvider, writeBack: z.boolean().optional() }))
+      .input(z.strictObject({ provider: zCalendarOAuthProvider, writeBack: z.boolean().optional(), readEvents: z.boolean().optional() }))
       .output(z.strictObject({ authorizeUrl: z.url({ protocol: /^https$/ }), state: zOAuthState, expiresAt: z.iso.datetime({ offset: true }) })),
     connectFinish: oc
       .input(z.strictObject({ provider: zCalendarOAuthProvider, state: zOAuthState, code: z.string().min(1).max(2048) }))
@@ -955,6 +956,14 @@ export const contract = {
     ask: {
       status: oc.input(zAskEmpty).output(zAskStatus),
       ask: oc.input(zAskInput).output(zAskAnswer),
+    },
+    // A member's own Google Calendar meetings, read to suggest "record this meeting" (B1, #3165): no model; code matches by time and a person confirms. `list` is today's meetings, `suggest` the event
+    // a recording overlaps, `setReadEvents` the member's switch (the cache is deleted when it goes off), `link` the click that attaches a recorded meeting to its event.
+    agenda: {
+      list: oc.input(zAgendaListInput).output(zAgendaList),
+      suggest: oc.input(zAgendaSuggestInput).output(zAgendaSuggestion),
+      setReadEvents: oc.input(zAgendaSetReadEvents).output(zAgendaReadEventsSet),
+      link: oc.input(zAgendaLink).output(zAgendaLinked),
     },
     // The transcript (#2578): the recorder's draft, read, replaced by a transcription run and corrected by hand.
     transcript: {

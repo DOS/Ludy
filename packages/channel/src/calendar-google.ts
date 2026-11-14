@@ -14,6 +14,10 @@ export const GOOGLE_CALENDAR_HOSTS = ['oauth2.googleapis.com', 'www.googleapis.c
 export const GOOGLE_CALENDAR_FREEBUSY_SCOPE = 'https://www.googleapis.com/auth/calendar.freebusy';
 // Write-back (#2124): insert, change and delete events. Asked for only when the member opts in; the grant says what it carries.
 export const GOOGLE_CALENDAR_EVENTS_SCOPE = 'https://www.googleapis.com/auth/calendar.events.owned';
+// Reading the member's own meetings (Meetings B1, #3165): the events of the calendars the member owns, read only. Asked for only when the member turns "Cho Ludy đọc tên và giờ cuộc họp
+// trong lịch" on; the grant says what it carries, and the connection reads busy times alone until then. The name and the category of this scope (sensitive, not restricted) are to be
+// confirmed on the Cloud Console consent screen when it is added to the production client (docs/runbooks/calendar-oauth.md).
+export const GOOGLE_CALENDAR_EVENTS_READ_SCOPE = 'https://www.googleapis.com/auth/calendar.events.owned.readonly';
 const AUTH_SCOPES = ['openid', 'email', GOOGLE_CALENDAR_FREEBUSY_SCOPE] as const;
 
 export interface GoogleCalendarAppConfig {
@@ -58,7 +62,23 @@ export interface CalendarEventWrite {
 export interface CalendarAuthorizeInput extends AuthorizeInput {
   // Also ask for the permission to write events (a member who turns write-back on).
   writeBack?: boolean;
+  // Also ask for the permission to read the member's own events (a member who turns the meetings read on, B1).
+  readEvents?: boolean;
 }
+
+// One event of the member's own calendar, as much as B1 keeps: what a person needs to recognize the meeting and nothing about who else is in it. `invitees` is a count; no address, description
+// or attachment is ever asked for. `joinUrl` is a Meet, Zoom or Teams address or null.
+export interface CalendarAgendaEvent {
+  id: string;
+  title: string;
+  startsAt: string;
+  endsAt: string;
+  timeZone: string;
+  joinUrl: string | null;
+  invitees: number;
+}
+// scope: the grant lacks the events-read permission (the member untick it, or connected before it existed).
+export type CalendarEventsResult = { events: CalendarAgendaEvent[] } | { refused: string } | { scope: true } | { failed: string };
 export type CalendarRefreshResult = { secret: string; expiresAt: Date | null } | { refused: string } | { failed: string };
 
 // What one outside calendar provider offers the kernel: the connect dialog, a renewed token, and busy times.
@@ -77,6 +97,8 @@ export interface CalendarAdapter {
   // longer knows counts as revoked. failed: the provider did not answer well; the worker tries again later.
   // revoked=false names why nothing was revoked (the secret holds no token).
   revoke(secret: string): Promise<{ revoked: true } | { revoked: false; reason: string } | { failed: string }>;
+  // The member's own events from `from` to `to` (B1): timed events only, no cancelled one, none the member declined. At most 300; a longer list is cut and says so by its length.
+  events(secret: string, from: Date, to: Date, timeoutMs?: number): Promise<CalendarEventsResult>;
   // Write-back: make the booking's event exist as given (insert, or change it when it is there), and take it away. Both
   // idempotent by the event's id; a conference asked for is made once, by a request named after the event's id.
   writeEvent(secret: string, event: CalendarEventWrite): Promise<CalendarWriteResult>;
@@ -138,6 +160,63 @@ function meetOf(event: Record<string, unknown>): { url: string | null; pending: 
   return { url, pending: url === null && data?.createRequest?.status?.statusCode === 'pending' };
 }
 
+// A join address B1 keeps: https, and a Meet, Zoom or Teams host. Anything else (a plain link in a location, a tracking redirect) is not kept.
+const JOIN_HOSTS = ['meet.google.com', 'zoom.us', 'teams.microsoft.com', 'teams.live.com'];
+export function joinUrlOf(candidate: unknown): string | null {
+  if (typeof candidate !== 'string' || candidate.length > 500) return null;
+  let url: URL;
+  try {
+    url = new URL(candidate);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:' || url.username !== '' || url.password !== '') return null;
+  const host = url.hostname.toLowerCase();
+  return JOIN_HOSTS.some((h) => host === h || host.endsWith(`.${h}`)) ? url.toString() : null;
+}
+
+// The most events one read returns and the pieces it is asked in.
+const EVENTS_MAX = 300;
+const EVENTS_PAGE = 250;
+// The fields asked for: no attendee address (only the flags of each attendee, counted), no description, no attachment, no location.
+const EVENTS_FIELDS = 'nextPageToken,items(id,status,summary,start,end,hangoutLink,conferenceData(entryPoints(entryPointType,uri)),attendees(self,responseStatus,optional))';
+
+// One event of the answer as B1 keeps it, or null: an all-day event (it has no time to match a recording to), a cancelled one, one the member declined, or one without a usable id or time.
+// A title the database can hold: no NUL (JSON text with one is refused), no lone surrogate (it makes the whole JSON text invalid), cut at 200 units without splitting a pair. A title that would break
+// the replace would stop the member's whole cache refreshing, so it is made safe here rather than refused there.
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+export function titleOf(summary: unknown): string {
+  if (typeof summary !== 'string') return '';
+  const clean = summary.replaceAll('\u0000', '').replace(LONE_SURROGATE, '\uFFFD');
+  const cut = clean.slice(0, 200);
+  const last = cut.charCodeAt(cut.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
+}
+
+export function agendaEventOf(event: Record<string, unknown>): CalendarAgendaEvent | null {
+  if (typeof event.id !== 'string' || event.id === '' || event.id.length > 1024 || event.status === 'cancelled') return null;
+  const start = event.start as { dateTime?: unknown; timeZone?: unknown } | undefined;
+  const end = event.end as { dateTime?: unknown } | undefined;
+  if (typeof start?.dateTime !== 'string' || typeof end?.dateTime !== 'string') return null;
+  const startMs = Date.parse(start.dateTime);
+  const endMs = Date.parse(end.dateTime);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs || endMs - startMs > 31 * 86_400_000) return null;
+  const attendees = Array.isArray(event.attendees) ? (event.attendees as Array<{ self?: unknown; responseStatus?: unknown }>) : [];
+  if (attendees.some((a) => a?.self === true && a.responseStatus === 'declined')) return null;
+  const data = event.conferenceData as { entryPoints?: Array<{ entryPointType?: unknown; uri?: unknown }> } | undefined;
+  const joinUrl = [event.hangoutLink, ...(data?.entryPoints ?? []).filter((p) => p?.entryPointType === 'video').map((p) => p.uri)].map(joinUrlOf).find((u) => u !== null) ?? null;
+  const zone = typeof start.timeZone === 'string' && start.timeZone !== '' && start.timeZone.length <= 64 ? start.timeZone : 'UTC';
+  return {
+    id: event.id,
+    title: titleOf(event.summary),
+    startsAt: new Date(startMs).toISOString(),
+    endsAt: new Date(endMs).toISOString(),
+    timeZone: zone,
+    joinUrl,
+    invitees: Math.min(attendees.length, 1000),
+  };
+}
+
 export class GoogleCalendarAdapter implements CalendarAdapter {
   readonly provider = 'google' as const;
   readonly oauthProvider = 'google_calendar' as const;
@@ -159,7 +238,7 @@ export class GoogleCalendarAdapter implements CalendarAdapter {
     url.searchParams.set('client_id', this.app.clientId);
     url.searchParams.set('redirect_uri', input.redirectUri);
     url.searchParams.set('response_type', 'code');
-    url.searchParams.set('scope', [...AUTH_SCOPES, ...(input.writeBack ? [GOOGLE_CALENDAR_EVENTS_SCOPE] : [])].join(' '));
+    url.searchParams.set('scope', [...AUTH_SCOPES, ...(input.writeBack ? [GOOGLE_CALENDAR_EVENTS_SCOPE] : []), ...(input.readEvents ? [GOOGLE_CALENDAR_EVENTS_READ_SCOPE] : [])].join(' '));
     url.searchParams.set('state', input.state);
     // Offline access with consent each time, so Google returns a refresh token even for an account connected before.
     url.searchParams.set('access_type', 'offline');
@@ -224,6 +303,45 @@ export class GoogleCalendarAdapter implements CalendarAdapter {
       if (error instanceof GoogleCalendarError && error.reason === 'invalid_grant') return { refused: 'invalid_grant' };
       return { failed: error instanceof GoogleCalendarError ? (error.reason ?? String(error.status)) : 'NETWORK' };
     }
+  }
+
+  // The member's own primary calendar from `from` to `to`, recurring events unfolded and sorted by start. One request per 250 events, two at most; the list is cut at 300.
+  async events(secret: string, from: Date, to: Date, timeoutMs?: number): Promise<CalendarEventsResult> {
+    const s = googleCalendarSecretOf(secret);
+    if (!s) return { refused: 'NO_ACCESS_TOKEN' };
+    const events: CalendarAgendaEvent[] = [];
+    const seen = new Set<string>();
+    let pageToken: string | null = null;
+    for (let page = 0; page < 2; page += 1) {
+      const url = new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events');
+      url.searchParams.set('timeMin', from.toISOString());
+      url.searchParams.set('timeMax', to.toISOString());
+      url.searchParams.set('singleEvents', 'true');
+      url.searchParams.set('orderBy', 'startTime');
+      url.searchParams.set('showDeleted', 'false');
+      url.searchParams.set('maxResults', String(EVENTS_PAGE));
+      url.searchParams.set('fields', EVENTS_FIELDS);
+      if (pageToken) url.searchParams.set('pageToken', pageToken);
+      let body: Record<string, unknown>;
+      try {
+        body = await this.call('GET', url.toString(), s.accessToken, undefined, timeoutMs);
+      } catch (error) {
+        if (!(error instanceof GoogleCalendarError)) return { failed: 'NETWORK' };
+        if (error.status === 401) return { refused: 'invalid_token' };
+        if (error.status === 403 && (error.reason === 'insufficientPermissions' || error.reason === 'forbidden' || error.reason === 'PERMISSION_DENIED')) return { scope: true };
+        return { failed: error.reason ?? String(error.status) };
+      }
+      for (const item of Array.isArray(body.items) ? (body.items as Array<Record<string, unknown>>) : []) {
+        const event = item !== null && typeof item === 'object' ? agendaEventOf(item) : null;
+        if (event && !seen.has(event.id)) {
+          seen.add(event.id);
+          events.push(event);
+        }
+      }
+      pageToken = typeof body.nextPageToken === 'string' && body.nextPageToken !== '' ? body.nextPageToken : null;
+      if (!pageToken || events.length >= EVENTS_MAX) break;
+    }
+    return { events: events.slice(0, EVENTS_MAX) };
   }
 
   // The answer of a write that did not succeed, as the result the worker acts on.

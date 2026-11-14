@@ -574,10 +574,12 @@ const meetingsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'meeti
 const meetingRecordRoute = createRoute({ getParentRoute: () => orgRoute, path: 'meetings/record',
   component: MeetingRecordPage,
   // A booking opens this screen prefilled and linked (L1, #2587): its title, its contact and its calendar event. All optional; the ids are checked by the server on save.
-  validateSearch: (search: Record<string, unknown>): { title?: string; partyId?: string; calendarEventId?: string } => ({
+  // The member's own calendar list opens it with the title and the cached event (B1, #3165); the server checks the event is theirs.
+  validateSearch: (search: Record<string, unknown>): { title?: string; partyId?: string; calendarEventId?: string; agendaId?: string } => ({
     ...(typeof search.title === 'string' ? { title: search.title.slice(0, 200) } : {}),
     ...(typeof search.partyId === 'string' ? { partyId: search.partyId } : {}),
     ...(typeof search.calendarEventId === 'string' ? { calendarEventId: search.calendarEventId } : {}),
+    ...(typeof search.agendaId === 'string' ? { agendaId: search.agendaId } : {}),
   }),
 });
 const meetingDetailRoute = createRoute({
