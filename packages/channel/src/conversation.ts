@@ -24,9 +24,13 @@ export interface InboundConversationEvent {
   hidden?: boolean | undefined;
   // A hide or unhide notice that carried no comment text: updates an existing comment when found, and never creates a blank one when not.
   hiddenOnly?: boolean | undefined;
-  // The images the message carries, by the platform's address (CV5c, #2357): personal data the worker fetches once and the core clears, so it
-  // is never logged, never put in a job and never kept past the fetch (six days at the most).
-  attachments?: Array<{ kind: 'image'; url: string }> | undefined;
+  // The images the message carries (CV5c, #2357): by the platform's address, or, where the bytes need the connection's token (WhatsApp's media id,
+  // #3131), by a provider-scoped reference that is not a URL and holds no token (exactly one of `url` and `mediaRef`). Either is personal data the worker
+  // uses once and the core clears, so it is never logged, never put in a job and never kept past the fetch (six days at the most).
+  attachments?: Array<{ kind: 'image'; url: string } | { kind: 'image'; mediaRef: string }> | undefined;
+  // The platform says a message the org sent did not reach the customer (WhatsApp's status `failed`, #3131): the stored outbound message with this id is
+  // marked failed with this short code. Carries no text and never creates a message.
+  deliveryFailed?: { code: string } | undefined;
   // How long the platform lets this thread be answered after the customer's last message, when that differs from the provider's own rule
   // (Telegram Business: 24 hours for a business chat, none for a bot chat; #3191). Whole hours, 1 to 720.
   replyWindowHours?: number | undefined;
@@ -129,8 +133,10 @@ export interface ConversationHistoryInput {
 export type ConversationHistoryResult =
   // `complete`: every chat read reached back to `since` (or its beginning), so no gap is left; `oldest` is the date of the oldest
   // message that was read (null when none).
-  | { kind: 'ok'; events: InboundConversationEvent[]; complete: boolean; oldest: string | null }
-  | { kind: 'failed'; retry: boolean; code?: string };
+  // `units`: the platform's quota units the pass spent, for a provider that meters its API (YouTube, #3134); the kernel counts them against the day's budget.
+  | { kind: 'ok'; events: InboundConversationEvent[]; complete: boolean; oldest: string | null; units?: number }
+  // `quotaUntil`: the platform refused for its quota, which resets at that time; nothing is asked before it.
+  | { kind: 'failed'; retry: boolean; code?: string; units?: number; quotaUntil?: Date };
 
 // Turning a provider's chats on or off at the platform (Telegram bot chats, #3132): the webhook is pointed at the deployment or taken away. The
 // adapter builds the webhook's address and secret from the connection's hook, the deployment's public address and the key the broker derives for
@@ -150,6 +156,26 @@ export type ConversationChatHookResult =
   | { kind: 'done'; botId: string | null }
   | { kind: 'failed'; retry: boolean; code: string };
 
+// The bytes of an image the platform gave only by a reference (`mediaRef`, #3131), read with the connection's sealed credential inside the fetch job.
+export interface ConversationMediaInput {
+  externalAccountId: string;
+  secret: string;
+  // The reference the notice carried: a provider-scoped id, never a URL and never a token.
+  mediaRef: string;
+  // The fetch the bytes call goes through: the kernel's egress guard (public addresses, the connection pinned to the checked address, the platform's media
+  // hosts only, https only, no redirect followed, a byte cap). An adapter sends its token only through it, and only to a host of its own list.
+  fetch: (input: string, init?: RequestInit) => Promise<Response>;
+  // The most bytes the guard lets through; the adapter refuses a declared size above it before the call.
+  maxBytes: number;
+  // The hosts the platform's media may be fetched from (a suffix of a host name, matched on a label boundary): the adapter refuses an address outside them
+  // before it sends its token anywhere, and the guard checks the same list on its side.
+  hosts: readonly string[];
+}
+export type ConversationMediaResult =
+  | { kind: 'ok'; bytes: Uint8Array }
+  // retry: asking again may succeed (a timeout, the platform's error, a rate limit); else the image is dropped for good. `code` is a short code, never a platform's words.
+  | { kind: 'failed'; retry: boolean; code: string };
+
 // What a provider can do with a conversation. Hide is idempotent on the platforms that have it, so it may be repeated.
 export interface ConversationAdapter {
   readonly provider: string;
@@ -157,6 +183,8 @@ export interface ConversationAdapter {
   hide?(input: ConversationHideInput): Promise<ConversationHideResult>;
   profile?(input: ConversationProfileInput): Promise<ConversationProfileResult>;
   history?(input: ConversationHistoryInput): Promise<ConversationHistoryResult>;
+  // An image the platform gave by a reference (#3131): the adapter turns it into bytes with the credential; the caller checks the bytes (type, size) itself.
+  media?(input: ConversationMediaInput): Promise<ConversationMediaResult>;
   chatHook?(input: ConversationChatHookInput): Promise<ConversationChatHookResult>;
 }
 

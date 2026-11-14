@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
-import { CONVERSATION_FACEBOOK_DIRECT_MAX, CONVERSATION_INSTAGRAM_COMMENT_MAX, CONVERSATION_INSTAGRAM_DIRECT_MAX, CONVERSATION_NOTE_MAX, CONVERSATION_RETENTION_MONTHS, CONVERSATION_REPLY_MAX, CONVERSATION_THREADS_REPLY_MAX, conversationRules, type ConversationAttachmentView, type ConversationDetail, type ConversationIntent, type ConversationKind, type ConversationMessage, type ConversationStatus, type ConversationSummary } from '@crove/kernel-contract';
+import { CONVERSATION_FACEBOOK_DIRECT_MAX, CONVERSATION_INSTAGRAM_COMMENT_MAX, CONVERSATION_INSTAGRAM_DIRECT_MAX, CONVERSATION_NOTE_MAX, CONVERSATION_RETENTION_MONTHS, CONVERSATION_REPLY_MAX, CONVERSATION_THREADS_REPLY_MAX, CONVERSATION_WHATSAPP_REPLY_MAX, conversationCanResendUnknown, conversationRules, type ConversationAttachmentView, type ConversationDetail, type ConversationIntent, type ConversationKind, type ConversationMessage, type ConversationStatus, type ConversationSummary } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { NativeSelect } from '@crove/ui/components/native-select';
@@ -50,7 +50,7 @@ function UnverifiedMark() {
   );
 }
 
-const SEND_ERRORS = ['ZALO_TOKEN', 'ZALO_NO_TOKEN', 'ZALO_QUOTA', 'ZALO_RATE_LIMIT', 'ZALO_NOT_FOLLOWER', 'ZALO_BLOCKED', 'ZALO_OA_ACCESS', 'ZALO_BAD_PARAM', 'ZALO_TEXT_LENGTH', 'ZALO_DIRECT_ONLY', 'ZALO_UNREACHABLE', 'ZALO_5XX', 'ZALO_NO_MESSAGE_ID', 'ZALO_BAD_ANSWER', 'FB_WINDOW_CLOSED', 'FB_PRIVATE_REPLIED', 'FB_RECIPIENT_UNAVAILABLE', 'FB_NOT_FOUND', 'FB_TEXT_LENGTH', 'FB_NO_MESSAGE_ID', 'IG_TEXT_LENGTH', 'IG_COMMENT_LENGTH', 'TELEGRAM_BOT_BLOCKED', 'TELEGRAM_USER_GONE', 'TELEGRAM_CHAT_NOT_FOUND', 'TELEGRAM_TOKEN_REFUSED', 'TELEGRAM_BUSINESS_REFUSED', 'BUSINESS_ACCOUNT_STOPPED', 'BUSINESS_ACCOUNT_READ_ONLY', 'THREADS_REPLY_CAP', 'THREADS_TEXT_LENGTH', 'NO_TOKEN', 'BAD_REPLY_ID', 'LATE_PUBLISH', 'CONTAINER_NOT_READY', 'NO_POST_ID', 'CONTAINER_PUBLISHED', 'NO_PAGE_TOKEN', 'BAD_PAGE_ID', 'BAD_IG_ID', 'BAD_COMMENT_ID', 'BAD_RECIPIENT_ID', 'CHANNEL_NOT_ACTIVE', 'CHANNEL_OWNER_LEFT', 'CREDENTIAL_ERROR', 'WORKER_LOST', 'SUPPRESSED', 'BOUNCED', 'COMPLAINED', 'MAIL_OFF', 'NO_ADDRESS', 'TEMPLATE_DATA', 'TEMPLATE_UNKNOWN', 'SEND_TIMEOUT', 'SEND_FAILED', 'OUTCOME_UNKNOWN'] as const;
+const SEND_ERRORS = ['ZALO_TOKEN', 'ZALO_NO_TOKEN', 'ZALO_QUOTA', 'ZALO_RATE_LIMIT', 'ZALO_NOT_FOLLOWER', 'ZALO_BLOCKED', 'ZALO_OA_ACCESS', 'ZALO_BAD_PARAM', 'ZALO_TEXT_LENGTH', 'ZALO_DIRECT_ONLY', 'ZALO_UNREACHABLE', 'ZALO_5XX', 'ZALO_NO_MESSAGE_ID', 'ZALO_BAD_ANSWER', 'FB_WINDOW_CLOSED', 'FB_PRIVATE_REPLIED', 'FB_RECIPIENT_UNAVAILABLE', 'FB_NOT_FOUND', 'FB_TEXT_LENGTH', 'FB_NO_MESSAGE_ID', 'WA_WINDOW_CLOSED', 'WA_131047', 'WA_TEXT_LENGTH', 'WA_UNDELIVERABLE', 'WA_131026', 'WA_RECIPIENT_NOT_ALLOWED', 'WA_131030', 'WA_NOT_DIRECT', 'WA_BAD_RECIPIENT', 'WA_NO_MESSAGE_ID', 'WA_FAILED', 'NO_WHATSAPP_TOKEN', 'BAD_PHONE_NUMBER_ID', 'WA_130429', 'WA_131048', 'WA_131056', 'WA_133016', 'WA_131005', 'WA_131031', 'WA_131037', 'WA_133010', 'IG_TEXT_LENGTH', 'IG_COMMENT_LENGTH', 'TELEGRAM_BOT_BLOCKED', 'TELEGRAM_USER_GONE', 'TELEGRAM_CHAT_NOT_FOUND', 'TELEGRAM_TOKEN_REFUSED', 'TELEGRAM_BUSINESS_REFUSED', 'BUSINESS_ACCOUNT_STOPPED', 'BUSINESS_ACCOUNT_READ_ONLY', 'THREADS_REPLY_CAP', 'THREADS_TEXT_LENGTH', 'YOUTUBE_QUOTA', 'YOUTUBE_RATE_LIMIT', 'YOUTUBE_TEXT_LENGTH', 'YOUTUBE_COMMENT_GONE', 'YOUTUBE_COMMENTS_OFF', 'YOUTUBE_RECONNECT', 'YOUTUBE_FORBIDDEN', 'YOUTUBE_TOKEN', 'YOUTUBE_BAD_REQUEST', 'NO_TOKEN', 'BAD_REPLY_ID', 'LATE_PUBLISH', 'CONTAINER_NOT_READY', 'NO_POST_ID', 'CONTAINER_PUBLISHED', 'NO_PAGE_TOKEN', 'BAD_PAGE_ID', 'BAD_IG_ID', 'BAD_COMMENT_ID', 'BAD_RECIPIENT_ID', 'CHANNEL_NOT_ACTIVE', 'CHANNEL_OWNER_LEFT', 'CREDENTIAL_ERROR', 'WORKER_LOST', 'SUPPRESSED', 'BOUNCED', 'COMPLAINED', 'MAIL_OFF', 'NO_ADDRESS', 'TEMPLATE_DATA', 'TEMPLATE_UNKNOWN', 'SEND_TIMEOUT', 'SEND_FAILED', 'OUTCOME_UNKNOWN'] as const;
 const isKnownSendError = (code: string): code is (typeof SEND_ERRORS)[number] => (SEND_ERRORS as readonly string[]).includes(code);
 
 const refresh = () => void queryClient.invalidateQueries({ queryKey: orpc.conversations.key() });
@@ -524,7 +524,7 @@ function MessageImage({ attachment }: { attachment: ConversationAttachmentView }
   );
 }
 
-function MessageRow({ message: m, detail, members, userId, canWrite, isAdmin, contact, onOpenConversation }: { message: ConversationMessage; detail: ConversationDetail; members: readonly Member[]; userId: string | null; canWrite: boolean; isAdmin: boolean; contact: string; onOpenConversation?: ((id: string) => void) | undefined }) {
+export function MessageRow({ message: m, detail, members, userId, canWrite, isAdmin, contact, onOpenConversation }: { message: ConversationMessage; detail: ConversationDetail; members: readonly Member[]; userId: string | null; canWrite: boolean; isAdmin: boolean; contact: string; onOpenConversation?: ((id: string) => void) | undefined }) {
   const t = useTranslations('conversations');
   const f = useFormat();
   const mine = m.direction === 'out';
@@ -584,7 +584,8 @@ function MessageRow({ message: m, detail, members, userId, canWrite, isAdmin, co
           )}
           {canWrite && (m.sendState === 'failed' || m.sendState === 'unknown') && (
             <>
-              {!(detail.conversation.kind === 'email' && m.sendState === 'unknown') && (
+              {/* An unclear send that nothing can be read back for (an email, WhatsApp) is never sent again by a button: a person looks and marks it sent. */}
+              {!(m.sendState === 'unknown' && !conversationCanResendUnknown(detail.conversation.channel.provider, detail.conversation.kind)) && (
                 <Button type="button" size="sm" variant="outline" loading={settle.isPending} onClick={() => settle.mutate('retry')}>
                   {m.sendState === 'unknown' ? t('sendAgainUnknown') : t('sendAgain')}
                 </Button>
@@ -668,7 +669,7 @@ function MessageRow({ message: m, detail, members, userId, canWrite, isAdmin, co
   );
 }
 
-function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail; seen: number; onMoved: (seq: number) => void }) {
+export function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail; seen: number; onMoved: (seq: number) => void }) {
   const t = useTranslations('conversations');
   const [text, setText] = useState('');
   const [movedNote, setMovedNote] = useState(false);
@@ -688,11 +689,13 @@ function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail; seen:
         : CONVERSATION_INSTAGRAM_COMMENT_MAX
       : detail.conversation.channel.provider === 'threads'
         ? CONVERSATION_THREADS_REPLY_MAX
-        : detail.conversation.channel.provider === 'facebook_page' && kind === 'direct'
-          ? CONVERSATION_FACEBOOK_DIRECT_MAX
-          : detail.conversation.channel.provider === 'telegram'
-            ? (conversationRules('telegram')?.replyMax ?? CONVERSATION_REPLY_MAX)
-            : CONVERSATION_REPLY_MAX;
+        : detail.conversation.channel.provider === 'whatsapp'
+          ? CONVERSATION_WHATSAPP_REPLY_MAX
+          : detail.conversation.channel.provider === 'facebook_page' && kind === 'direct'
+            ? CONVERSATION_FACEBOOK_DIRECT_MAX
+            : detail.conversation.channel.provider === 'telegram'
+              ? (conversationRules('telegram')?.replyMax ?? CONVERSATION_REPLY_MAX)
+              : CONVERSATION_REPLY_MAX;
   const [insertTooLong, setInsertTooLong] = useState(false);
   // The listener below reads what is in the box now without being set up again at every keystroke.
   const textNow = useRef(text);
@@ -735,7 +738,8 @@ function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail; seen:
     },
   });
   const reason = detail.reply.reason;
-  if (!detail.reply.allowed) return <p className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">{t(`replyBlocked.${reason ?? 'not_supported'}`)}</p>;
+  // Past WhatsApp's 24 hours there is no Send button, and the reason says why (Ludy sends no paid template).
+  if (!detail.reply.allowed) return <p className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">{t(reason === 'window_closed' && detail.conversation.channel.provider === 'whatsapp' ? 'replyBlocked.window_closed_whatsapp' : `replyBlocked.${reason ?? 'not_supported'}`)}</p>;
   const submit = (e: FormEvent) => {
     e.preventDefault();
     if (text.trim()) send.mutate();

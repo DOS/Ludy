@@ -30,14 +30,15 @@ export const kernelManifest = defineModule({
       channel_access: columns(['org_id', 'id', 'user_id', 'channel_connection_id', 'created_by', 'created_at']),
       // chat_hook (#3132) is the capability half of a Telegram webhook's address: sensitive, so an export never carries it. chat_business (#3191) holds
       // the business accounts the bot is connected to (each account's Telegram user id and name): personal data of the org's own people.
-      channel_connection: columns(['org_id', 'id', 'provider', 'scopes', 'status', 'status_reason', 'connected_by', 'expires_at', 'connected_at', 'updated_at', 'history_synced_at', 'gap_from', 'gap_to', 'history_requested_at', 'chat_state', 'chat_error', 'chat_bot_id', 'chat_changed_at'], { external_account_id: 'pii', display_name: 'pii', granted_by_hash: 'sensitive', chat_hook: 'sensitive', chat_hook_next: 'sensitive', chat_business: 'pii' }),
+      channel_connection: columns(['org_id', 'id', 'provider', 'scopes', 'status', 'status_reason', 'connected_by', 'expires_at', 'connected_at', 'updated_at', 'history_synced_at', 'gap_from', 'gap_to', 'history_requested_at', 'chat_state', 'chat_error', 'chat_bot_id', 'chat_changed_at', 'comments_enabled', 'quota_reset_at', 'quota_poll_units', 'quota_reply_units', 'quota_blocked_until', 'history_next_at', 'history_idle_polls'], { external_account_id: 'pii', display_name: 'pii', granted_by_hash: 'sensitive', chat_hook: 'sensitive', chat_hook_next: 'sensitive', chat_business: 'pii' }),
       context_key: columns(['id', 'created_at'], { k_ipad: 'sensitive', k_opad: 'sensitive' }),
       context_token_key: columns(['slot', 'installed_at'], { k_ipad: 'sensitive', k_opad: 'sensitive' }),
       conversation: columns(['org_id', 'id', 'channel_connection_id', 'kind', 'parent_conversation_id', 'identity_id', 'party_id', 'sender_unverified', 'status', 'assignee_user_id', 'last_seq', 'last_inbound_at', 'last_message_at', 'reply_window_until', 'opened_at', 'resolved_at', 'resolved_by', 'intent', 'intent_set_by', 'intent_set_at', 'created_at', 'updated_at'], { external_thread_id: 'pii', external_post_id: 'pii', subject: 'pii' }),
-      // A customer's image of a message (#2357): its platform address is personal data (cleared when the bytes are stored), the rest is metadata.
+      // A customer's image of a message (#2357): its platform address, or the reference its adapter turns into bytes with the connection's token (#3131), is personal
+      // data (cleared when the bytes are stored), the rest is metadata.
       conversation_attachment: columns(
         ['org_id', 'id', 'message_id', 'channel_connection_id', 'kind', 'state', 'storage_key', 'generation', 'sha256', 'content_type', 'size_bytes', 'width', 'height', 'requested_at', 'fetch_attempts', 'created_at', 'stored_at'],
-        { source_url: 'pii' },
+        { source_url: 'pii', source_ref: 'pii' },
       ),
       // The "you are replying" marker (CV3, #2306): who is typing and until when; ids and times only.
       conversation_composing: columns(['org_id', 'id', 'conversation_id', 'channel_connection_id', 'kind', 'user_id', 'expires_at', 'updated_at']),
