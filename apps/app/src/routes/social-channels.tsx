@@ -24,6 +24,7 @@ import { BannedWordsCard } from '../components/social-banned-words.tsx';
 import { ReviewChecklistCard } from '../components/social-review-checklist.tsx';
 import { ChannelAccessCard, useChannelScope } from '../components/social-channel-access.tsx';
 import { ChannelSetsCard } from '../components/social-channel-sets.tsx';
+import { TelegramChats } from '../components/social-telegram-chats.tsx';
 import { SignatureEditor } from '../components/social-signature.tsx';
 import { QueueCopy, QueueSuggestButton } from '../components/social-queue-tools.tsx';
 import { queueRoom, slotsToAdd } from '../lib/social-queue-slots.ts';
@@ -646,6 +647,7 @@ export function SocialChannelsPage() {
                         </Button>
                       ) : null
                     )}
+                    {c.provider === 'telegram' && (c.status === 'active' || c.chatState !== 'off') && c.status !== 'revoked' && <TelegramChats channel={c} canEdit={isAdmin} active={c.status === 'active'} />}
                     {c.provider === 'threads' && c.status === 'active' && (
                       c.scopes.includes('threads_read_replies') ? (
                         <p className="mt-1 text-xs text-subtle-foreground">{t('threadsCommentsEnabled')}</p>

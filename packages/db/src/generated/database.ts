@@ -1869,6 +1869,12 @@ export interface KernelChannelConnectionTable {
   gap_from: ColumnType<Date | null, Date | string | null, Date | string | null>;
   gap_to: ColumnType<Date | null, Date | string | null, Date | string | null>;
   history_requested_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  chat_hook: string | null;
+  chat_hook_next: string | null;
+  chat_state: Generated<string>;
+  chat_error: string | null;
+  chat_bot_id: string | null;
+  chat_changed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 /** crove_kernel.conversation_attachment */
