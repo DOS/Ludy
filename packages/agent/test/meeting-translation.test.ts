@@ -34,11 +34,11 @@ describe('digit runs and contacts', () => {
     expect(checkSegment(seg('Họp ngày 14/11/2026'), 'Meeting on 14.11.2026')).toMatchObject({ state: 'ok' });
     expect(checkSegment(seg('Từ 2024 đến 2025'), 'From 2024-2025')).toMatchObject({ state: 'ok' });
     // A full-width at sign is read as the plain one.
-    expect([...contactsIn('ceo＠evil.com')]).toEqual(['ceo@evil.com']);
+    expect([...contactsIn('ceo＠evil.example')]).toEqual(['ceo@evil.example']);
   });
 
   it('finds a link, an address and a phone number as normalized contacts', () => {
-    expect([...contactsIn('xem https://Example.com/a, hoặc mail Ban@Congty.vn.')].sort()).toEqual(['ban@congty.vn', 'https://example.com/a']);
+    expect([...contactsIn('xem https://Example.com/a, hoặc mail Ban@Congty.example.')].sort()).toEqual(['ban@congty.example', 'https://example.com/a']);
     expect([...contactsIn('gọi 0912 345 678 nhé')]).toEqual(['tel:0912345678']);
     expect([...contactsIn('hẹn 14/11 lúc 9 giờ')]).toEqual([]);
   });
@@ -70,7 +70,7 @@ describe('checkSegment', () => {
     expect(checkSegment(seg('Gửi báo giá'), 'Send the quote to ceo@evil.example').codes).toEqual(['CONTACT_ADDED']);
     expect(checkSegment(seg('Gửi báo giá'), 'Send the quote www.evil.example').codes).toEqual(['CONTACT_ADDED']);
     expect(checkSegment(seg('Gửi báo giá'), 'Send the quote, call 0912 345 678').codes).toEqual(['INVENTED_NUMBER']);
-    expect(checkSegment(seg('Gửi cho ban@congty.vn'), 'Send it to ban@congty.vn')).toMatchObject({ state: 'ok' });
+    expect(checkSegment(seg('Gửi cho ban@congty.example'), 'Send it to ban@congty.example')).toMatchObject({ state: 'ok' });
   });
 
   it('refuses nothing back, an empty text, one over its length and the original unchanged', () => {
