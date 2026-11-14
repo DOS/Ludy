@@ -20,6 +20,7 @@ import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { kernelCommands, kernelQueries } from '@crove/kernel';
 import { crmQueries } from '@crove/mod-crm';
 import { financeQueries } from '@crove/mod-finance';
+import { socialCommands, socialQueries } from '@crove/mod-social';
 import { BlobNotFoundError, Runtime, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
@@ -124,25 +125,25 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
   }
 
   // The authorization request up to the consent page: the provider's redirect and its interaction cookie.
-  async function authorize(clientId: string, redirect: string, verifier: string) {
+  async function authorize(clientId: string, redirect: string, verifier: string, scope = 'ludy.read') {
     const url = new URL(`${base}/oauth/authorize`);
-    url.search = new URLSearchParams({ client_id: clientId, response_type: 'code', redirect_uri: redirect, scope: 'ludy.read', resource, code_challenge: challengeOf(verifier), code_challenge_method: 'S256', state: 'st-1' }).toString();
+    url.search = new URLSearchParams({ client_id: clientId, response_type: 'code', redirect_uri: redirect, scope, resource, code_challenge: challengeOf(verifier), code_challenge_method: 'S256', state: 'st-1' }).toString();
     const response = await fetch(url, { redirect: 'manual' });
     return { status: response.status, location: response.headers.get('location') ?? '', cookie: cookiesOf(response) };
   }
 
   // The whole consent: authorize, the page's details call, the approve call, the resumed authorization, the code.
-  async function consent(owner: string, orgOf: string = orgId, decision: 'approve' | 'deny' = 'approve', kind?: 'company' | 'member') {
+  async function consent(owner: string, orgOf: string = orgId, decision: 'approve' | 'deny' = 'approve', kind?: 'company' | 'member', opts: { scope?: string; draft?: boolean } = {}) {
     const reg = await register();
     expect(reg.status, JSON.stringify(reg.body)).toBe(201);
     const clientId = String(reg.body.client_id);
     const verifier = randomBytes(32).toString('base64url');
-    const started = await authorize(clientId, reg.redirect, verifier);
+    const started = await authorize(clientId, reg.redirect, verifier, opts.scope);
     expect(started.status).toBe(303);
     const uid = new URL(started.location, base).pathname.split('/').pop() as string;
     const headers = { ...(await asBrowser(owner, null)), cookie: started.cookie };
     const detailsResponse = await fetch(`${base}/oauth/interaction/${uid}/details`, { headers });
-    const approved = await fetch(`${base}/oauth/interaction/${uid}/consent`, { method: 'POST', headers, body: JSON.stringify(decision === 'approve' ? { decision, orgId: orgOf, ...(kind ? { kind } : {}) } : { decision }) });
+    const approved = await fetch(`${base}/oauth/interaction/${uid}/consent`, { method: 'POST', headers, body: JSON.stringify(decision === 'approve' ? { decision, orgId: orgOf, ...(kind ? { kind } : {}), ...(opts.draft !== undefined ? { draft: opts.draft } : {}) } : { decision }) });
     const answer = (await approved.json()) as { redirectTo?: string; message?: string; code?: string };
     return { clientId, verifier, redirect: reg.redirect, uid, started, details: { status: detailsResponse.status, body: (await detailsResponse.json()) as Record<string, unknown> }, consentStatus: approved.status, redirectTo: answer.redirectTo ?? '', cookie: started.cookie + '; ' + cookiesOf(approved) };
   }
@@ -227,8 +228,8 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     };
     const config = loadConfig(bootEnv);
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' }).register({
-      commands: [...kernelCommands],
-      queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries, ...crmQueries],
+      commands: [...kernelCommands, ...socialCommands],
+      queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries, ...crmQueries, ...socialQueries],
     });
     sharedDb = db;
     sharedRuntime = runtime;
@@ -253,7 +254,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
 
   it('publishes its metadata: the resource, the issuer, S256 only, registration, revocation', async () => {
     const protectedResource = (await (await fetch(`${base}/.well-known/oauth-protected-resource/mcp`)).json()) as Record<string, unknown>;
-    expect(protectedResource).toMatchObject({ resource, authorization_servers: [base], scopes_supported: ['ludy.read'] });
+    expect(protectedResource).toMatchObject({ resource, authorization_servers: [base], scopes_supported: ['ludy.read', 'ludy.social.draft'] });
     for (const path of ['/.well-known/oauth-authorization-server', '/.well-known/openid-configuration']) {
       const meta = (await (await fetch(`${base}${path}`)).json()) as Record<string, any>;
       expect(meta.issuer).toBe(base);
@@ -817,5 +818,93 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     const c = await connect();
     const results = await Promise.all([refreshWith(c.clientId, c.refresh), refreshWith(c.clientId, c.refresh)]);
     expect(results.filter((r) => r.status === 200).length).toBeLessThanOrEqual(1);
+  });
+
+  // The one MCP write (#3227): the choice on the consent page, the token, the tool list and the draft it makes, end to end.
+  const DRAFT = 'ludy.social.draft';
+  const claimsOf = (access: string) => JSON.parse(Buffer.from(access.split('.')[1] as string, 'base64url').toString()) as { scope: string };
+  async function draftGrant(opts: { scope?: string; draft?: boolean; kind?: 'company' | 'member'; owner?: string } = {}) {
+    const c = await consent(opts.owner ?? 'owner', orgId, 'approve', opts.kind, { scope: opts.scope ?? `ludy.read ${DRAFT}`, ...(opts.draft !== undefined ? { draft: opts.draft } : {}) });
+    return c;
+  }
+  async function tokenOf(c: Awaited<ReturnType<typeof consent>>) {
+    expect(c.consentStatus).toBe(200);
+    const { code } = await codeOf(c);
+    expect(code).not.toBe('');
+    const t = await tokens(c, code);
+    expect(t.status).toBe(200);
+    return String(t.body.access_token);
+  }
+  const toolNames = async (access: string) => ((((await mcpModern(access, 'tools/list')).body?.result?.tools ?? []) as Array<{ name: string }>)).map((t) => t.name);
+
+  it('lets an owner tick the draft scope: the page offers it, the token and the grant hold it, the write tool is listed, and a draft is an AI post made over MCP', async () => {
+    const c = await draftGrant({ draft: true });
+    expect(c.details.body).toMatchObject({ scopes: ['ludy.read', DRAFT] });
+    const access = await tokenOf(c);
+    expect(claimsOf(access).scope.split(' ').sort()).toEqual(['ludy.read', DRAFT]);
+    const row = await admin((client) => client.query(`SELECT scopes, kind FROM crove_kernel.agent_grant WHERE client_id = $1`, [c.clientId]));
+    expect(row.rows[0]).toEqual({ scopes: ['ludy.read', DRAFT], kind: 'company' });
+    const list = ((await mcpModern(access, 'tools/list')).body?.result?.tools ?? []) as Array<{ name: string; annotations: Record<string, boolean> }>;
+    const tool = list.find((t) => t.name === 'ludy_social_draft_create');
+    expect(tool?.annotations).toEqual({ readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false });
+    const connectionId = randomUUID();
+    await admin((client) => client.query(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) SELECT $1, $2, 'sandbox', 'acct-mcp-draft', 'Kênh thử', user_id FROM crove_kernel.tenant_member WHERE org_id = $1 AND role = 'owner' LIMIT 1`, [orgId, connectionId]));
+    const made = await mcpModern(access, 'tools/call', { name: 'ludy_social_draft_create', arguments: { body: 'Bài do ứng dụng AI soạn', channels: [{ connectionId }] } }, 'ludy_social_draft_create');
+    expect(made.status).toBe(200);
+    const result = made.body?.result?.structuredContent as { postId: string; status: string; variants: Array<Record<string, string>> };
+    expect(result).toMatchObject({ status: 'draft', revision: 1 });
+    expect(Object.keys(result.variants[0] as object).sort()).toEqual(['connectionId', 'variantId']);
+    const post = await admin((client) => client.query(`SELECT origin, actor_origin, tainted, status FROM crove_social.post WHERE id = $1`, [result.postId]));
+    expect(post.rows[0]).toEqual({ origin: 'ai', actor_origin: 'mcp', tainted: true, status: 'draft' });
+    // The call is audited by tool as the grant's, and the read tools still work for the same grant.
+    const audit = await admin((client) => client.query(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'kernel.mcp.call' AND detail ->> 'tool' = 'ludy_social_draft_create' ORDER BY id DESC LIMIT 1`));
+    expect(audit.rows[0].detail).toMatchObject({ mcpCall: true, result: 'ok', mcpClientName: 'Test MCP client' });
+    const seen = await mcpModern(access, 'tools/call', { name: 'ludy_social_posts_list', arguments: {} }, 'ludy_social_posts_list');
+    const seenPosts = (seen.body?.result?.structuredContent ?? { posts: [] }) as { posts: Array<{ id: string }> };
+    expect(seenPosts.posts.map((p) => p.id)).toContain(result.postId);
+    // A bad argument names the field, and a field outside the schema (a channel's own settings, media or link) is refused before anything runs.
+    const bad = await mcpModern(access, 'tools/call', { name: 'ludy_social_draft_create', arguments: { body: 'x', channels: [{ connectionId, settings: { removeAt: '2030-01-01T00:00:00Z' } }] } }, 'ludy_social_draft_create');
+    expect(bad.body?.error?.message).toMatch(/Invalid arguments/);
+  });
+
+  it('keeps the draft scope off unless the person ticks it: the same request with the box left clear gets a code, a read-only token and no write tool', async () => {
+    for (const draft of [false, undefined]) {
+      const c = await draftGrant(draft === undefined ? {} : { draft });
+      const access = await tokenOf(c);
+      expect(claimsOf(access).scope).toBe('ludy.read');
+      expect((await admin((client) => client.query(`SELECT scopes FROM crove_kernel.agent_grant WHERE client_id = $1`, [c.clientId]))).rows[0].scopes).toEqual(['ludy.read']);
+      expect(await toolNames(access)).not.toContain('ludy_social_draft_create');
+      const refused = await mcpModern(access, 'tools/call', { name: 'ludy_social_draft_create', arguments: { body: 'x', channels: [{ connectionId: randomUUID() }] } }, 'ludy_social_draft_create');
+      expect(refused.body?.error?.message).toBe('Unknown tool');
+    }
+  });
+
+  it('refuses the draft scope a client did not ask for and one asked for a member grant, and offers a read-only client nothing', async () => {
+    const readOnly = await consent('owner', orgId, 'approve', undefined, { draft: true });
+    expect(readOnly.details.body).toMatchObject({ scopes: ['ludy.read'] });
+    expect(readOnly.consentStatus).toBe(422);
+    const asMember = await draftGrant({ draft: true, kind: 'member' });
+    expect(asMember.consentStatus).toBe(422);
+    // Nothing half made is left: no grant of those clients.
+    for (const c of [readOnly, asMember]) {
+      expect((await admin((client) => client.query(`SELECT count(*)::int AS n FROM crove_kernel.agent_grant WHERE client_id = $1`, [c.clientId]))).rows[0].n).toBe(0);
+    }
+  });
+
+  it('answers a draft over the drafts budget with the seconds to wait, before the command runs', async () => {
+    const access = await tokenOf(await draftGrant({ draft: true }));
+    const connectionId = randomUUID();
+    await admin((client) => client.query(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) SELECT $1, $2, 'sandbox', 'acct-mcp-budget', 'Kênh hạn mức', user_id FROM crove_kernel.tenant_member WHERE org_id = $1 AND role = 'owner' LIMIT 1`, [orgId, connectionId]));
+    const call = () => mcpModern(access, 'tools/call', { name: 'ludy_social_draft_create', arguments: { body: 'Bản nháp', channels: [{ connectionId }] } }, 'ludy_social_draft_create');
+    const before = Number((await admin((client) => client.query(`SELECT count(*) AS n FROM crove_social.post WHERE org_id = $1`, [orgId]))).rows[0].n);
+    const answers: string[] = [];
+    for (let i = 0; i < 8; i += 1) answers.push((await call()).body?.error?.message ?? 'ok');
+    // A person's own budget is six a minute for a member of an org (the draft of the first test of this group is one of them, unless a minute has passed); the rest wait.
+    const made = answers.filter((a) => a === 'ok').length;
+    expect(made).toBeGreaterThanOrEqual(5);
+    expect(made).toBeLessThanOrEqual(6);
+    expect(answers.filter((a) => /^Too many drafts just now; try again in \d+ seconds$/.test(a)).length).toBe(8 - made);
+    const after = Number((await admin((client) => client.query(`SELECT count(*) AS n FROM crove_social.post WHERE org_id = $1`, [orgId]))).rows[0].n);
+    expect(after - before).toBe(made);
   });
 });

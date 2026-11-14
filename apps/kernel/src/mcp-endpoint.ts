@@ -2,7 +2,7 @@
 // The MCP endpoint and the authorization server's routes on the HTTP edge (ADR-0051 decision 2, ADR-0032, issue #2975).
 //
 //   POST /mcp                                    the stateless MCP endpoint (mcp-protocol.ts); GET and DELETE answer 405
-//   /.well-known/oauth-protected-resource/mcp    RFC 9728: the resource, the issuer, the one scope
+//   /.well-known/oauth-protected-resource/mcp    RFC 9728: the resource, the issuer, the scopes
 //   /.well-known/oauth-authorization-server      RFC 8414, and /.well-known/openid-configuration: the provider's own metadata
 //   /oauth/*                                     the provider: authorize, token, register, revoke, jwks (public by protocol)
 //   GET  /oauth/interaction/:uid/details         what the consent page shows (the signed-in user's own request)
@@ -22,13 +22,14 @@ import { z } from 'zod';
 import { DomainError, toDomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { zMcpPartiesInput, myOrgs } from '@crove/kernel';
 import { zMcpInvoicesInput } from '@crove/mod-finance';
-import { zMcpPostsInput, zMcpReviewQueueInput } from '@crove/mod-social';
+import { zMcpDraftCreate, zMcpPostsInput, zMcpReviewQueueInput } from '@crove/mod-social';
+import { DraftBudget } from './ai-draft-limit.ts';
 import type { AuthUser } from './auth.ts';
 import { actorOf } from './auth.ts';
 import type { Config } from './config.ts';
 import { logEvent, runWithLogContext } from './log.ts';
 import { handleMcp, RPC_INTERNAL, type McpHeaders, type ToolDescriptor } from './mcp-protocol.ts';
-import { ACCESS_TOKEN_SECONDS, MCP_SCOPE, type OauthServer } from './oauth-server.ts';
+import { ACCESS_TOKEN_SECONDS, MCP_DRAFT_SCOPE, MCP_SCOPE, type OauthServer } from './oauth-server.ts';
 import { RateLimiter } from './rate-limit.ts';
 
 const MAX_MCP_BODY_BYTES = 64 * 1024;
@@ -43,6 +44,8 @@ export interface McpDeps {
   clientKey: (c: Context) => string;
   serverVersion: string;
   now?: () => number;
+  // The drafts budget (#386) the one write tool takes before its command runs, as a person's own draft does; one per process unless a test passes its own.
+  draftBudget?: DraftBudget;
 }
 
 interface NodeBindings {
@@ -195,6 +198,7 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
   const mcpAddressLimiter = new RateLimiter({ perMinute: 300, ...(deps.now ? { now: deps.now } : {}) });
   const refusalAuditLimiter = new RateLimiter({ perMinute: 6, ...(deps.now ? { now: deps.now } : {}) });
   const inFlight = new Map<string, number>();
+  const draftBudget = deps.draftBudget ?? new DraftBudget(deps.now ? { now: deps.now } : {});
 
   const tooMany = tooManyRequests;
 
@@ -203,7 +207,7 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
     return c.json({
       resource: oauth.resource,
       authorization_servers: [oauth.issuer],
-      scopes_supported: [MCP_SCOPE],
+      scopes_supported: [MCP_SCOPE, MCP_DRAFT_SCOPE],
       bearer_methods_supported: ['header'],
       resource_name: 'Ludy',
     });
@@ -233,7 +237,8 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
           redirectHost: redirect.host,
           selfDeclared: true,
         },
-        scopes: [MCP_SCOPE],
+        // What the client asked for, of what this server offers: the read scope always, the draft scope only when the client asked for it (the page offers it as a choice, off by default).
+        scopes: askedScopes(interaction.params.scope),
         expiresInDays: 89,
         orgs: orgs.map((o) => ({ orgId: o.orgId, slug: o.slug, name: o.name, role: o.role, memberGrants: memberGrants.get(o.orgId) === true })),
       });
@@ -249,7 +254,7 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
     return new Map(rows.map((r) => [r.org_id, r.enabled]));
   }
 
-  const zConsent = z.strictObject({ decision: z.enum(['approve', 'deny']), orgId: z.uuid().optional(), kind: z.enum(['company', 'member']).default('company') });
+  const zConsent = z.strictObject({ decision: z.enum(['approve', 'deny']), orgId: z.uuid().optional(), kind: z.enum(['company', 'member']).default('company'), draft: z.boolean().default(false) });
   app.post('/oauth/interaction/:uid/consent', bodyLimit({ maxSize: MAX_CONSENT_BODY_BYTES }), async (c) => {
     noStore(c);
     try {
@@ -277,13 +282,24 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
       const client = await oauth.provider.Client.find(clientId);
       if (!client) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy ứng dụng cần kết nối');
       // The authorization grant first (the provider's own record), then ours: if ours fails the provider's is destroyed, so nothing is left half made.
-      const grant = new oauth.provider.Grant({ accountId: user.userId, clientId });
-      grant.addResourceScope(oauth.resource, MCP_SCOPE);
-      // A client that also asked for `openid` gets it (the consent is for the resource either way), and the scope this grant is for is also a scope of the provider,
-      // so its authorization does not loop back to the consent page (op_scopes_missing).
+      // The draft scope (#3227) is a choice the person makes here, off by default: it is held only when the client asked for it and the person ticked it, and only by a company grant (an owner's or
+      // admin's, for the company), so a member grant never carries a write. The database refuses the rest again (a CHECK and the grant definer).
       const asked = new Set(String(interaction.params.scope ?? '').split(' '));
-      const oidcScopes = ['openid', MCP_SCOPE].filter((scope) => asked.has(scope));
+      const draftAsked = asked.has(MCP_DRAFT_SCOPE);
+      if (parsed.data.draft && (!draftAsked || parsed.data.kind !== 'company')) {
+        throw new DomainError('INVALID', 422, 'Ứng dụng này không xin quyền soạn bản nháp, hoặc quyền này chỉ cấp được cho tổ chức, không cấp được cho riêng bạn');
+      }
+      const scopes = parsed.data.draft ? [MCP_SCOPE, MCP_DRAFT_SCOPE] : [MCP_SCOPE];
+      const grant = new oauth.provider.Grant({ accountId: user.userId, clientId });
+      grant.addResourceScope(oauth.resource, scopes.join(' '));
+      // A client that also asked for `openid` gets it (the consent is for the resource either way), and each scope this grant is for is also a scope of the provider,
+      // so its authorization does not loop back to the consent page (op_scopes_missing). A draft scope the client asked for and the person left off is rejected, not missing.
+      const oidcScopes = ['openid', ...scopes].filter((scope) => asked.has(scope));
       if (oidcScopes.length > 0) grant.addOIDCScope(oidcScopes.join(' '));
+      if (draftAsked && !parsed.data.draft) {
+        grant.rejectOIDCScope(MCP_DRAFT_SCOPE);
+        grant.rejectResourceScope(oauth.resource, MCP_DRAFT_SCOPE);
+      }
       const oauthGrantId = await grant.save();
       try {
         await runtime.execute(
@@ -292,8 +308,8 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
             clientId,
             clientName: typeof client.clientName === 'string' && client.clientName.trim() !== '' ? client.clientName.trim().slice(0, 120) : clientId.slice(0, 120),
             clientHost: new URL(String(interaction.params.redirect_uri ?? '')).host,
-            // The one scope a person can be asked for today; the private scope of a member grant ships dark (no query declares it, no screen offers it).
-            scopes: [MCP_SCOPE],
+            // The read scope, and the draft scope when the person ticked it; the private scope of a member grant ships dark (no query declares it, no screen offers it).
+            scopes,
             oauthGrantId,
             kind: parsed.data.kind,
           },
@@ -392,7 +408,7 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
         aal: 'aal1',
         mcp: { grantId: claims.grantId, clientId: claims.clientId, clientName: grant.clientName, scopes: grant.scopes, kind: grant.kind },
       };
-      const tools = toolsFor(runtime, actor, grant.orgId);
+      const tools = toolsFor(runtime, actor, grant.orgId, draftBudget);
       const reply = await handleMcp({
         body,
         headers,
@@ -401,9 +417,11 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
         callTool: async (tool, args) => {
           let value: Record<string, unknown>;
           try {
-            // The grant's daily row budget, read before the query runs.
-            const left = await chargeRows(0);
-            if (left <= 0) throw new DomainError('RATE_LIMITED', 429, 'Daily row budget used up');
+            // The grant's daily row budget, read before a read runs (the one write tool reads no rows, and has the drafts budget of its own).
+            if (tool.annotations.readOnlyHint) {
+              const left = await chargeRows(0);
+              if (left <= 0) throw new DomainError('RATE_LIMITED', 429, 'Daily row budget used up');
+            }
             value = await tool.read(args);
             await chargeRows(tool.rows(value));
           } catch (error) {
@@ -416,7 +434,11 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
         },
         describeError: (error) => {
           if (error instanceof DomainError && error.status === 401) return { code: RPC_INTERNAL, message: 'The grant is no longer valid' };
-          if (error instanceof DomainError && error.status === 429) return { code: RPC_INTERNAL, message: 'The daily limit of rows this connection may read is used up; it starts again at midnight UTC' };
+          if (error instanceof DomainError && error.status === 429) {
+            const wait = (error.details as { retryAfterSeconds?: unknown } | undefined)?.retryAfterSeconds;
+            if (typeof wait === 'number') return { code: RPC_INTERNAL, message: `Too many drafts just now; try again in ${Math.max(1, Math.ceil(wait))} seconds` };
+            return { code: RPC_INTERNAL, message: 'The daily limit of rows this connection may read is used up; it starts again at midnight UTC' };
+          }
           if (error instanceof DomainError && error.status < 500) return { code: RPC_INTERNAL, message: error.status === 403 ? 'Not allowed for this connection' : 'The request could not be completed' };
           logEvent('error', 'mcp tool failed', { grantId: claims.grantId, requestId, error: toDomainError(error).code });
           return { code: RPC_INTERNAL, message: 'Internal error' };
@@ -446,6 +468,11 @@ const schemaOf = (schema: z.ZodType): Record<string, unknown> => {
   const { $schema: _dialect, ...rest } = z.toJSONSchema(schema, { io: 'input' }) as Record<string, unknown>;
   return rest;
 };
+// The scopes of this server a client named in its authorization request: the read scope always, the draft scope when it asked for it.
+function askedScopes(raw: unknown): string[] {
+  const asked = new Set(String(raw ?? '').split(' '));
+  return asked.has(MCP_DRAFT_SCOPE) ? [MCP_SCOPE, MCP_DRAFT_SCOPE] : [MCP_SCOPE];
+}
 // The rows of a list in an answer; anything that is not a list counts as none.
 const rowCount = (list: unknown): number => (Array.isArray(list) ? list.length : 0);
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
@@ -497,7 +524,9 @@ const SOCIAL_POST_SCHEMA = {
 
 // The tools: `ludy_about` (kernel.mcp.about) and, from slice 1b, `ludy_parties_list` (kernel.mcp.parties) and `ludy_invoices_list` (finance.mcp.invoices), from step S4 `ludy_signals` (kernel.mcp.signals), and from #3227 `ludy_social_posts_list` and `ludy_social_review_queue` (social.mcp.posts, social.mcp.review_queue). A tool is a
 // descriptor over one query; the endpoint never builds SQL and runs nothing that is not on this list. Each query's own comment is the privacy review of its output.
-function toolsFor(runtime: Runtime, actor: UserActor, orgId: string): ToolDescriptor[] {
+function toolsFor(runtime: Runtime, actor: UserActor, orgId: string, draftBudget: DraftBudget): ToolDescriptor[] {
+  // The one write tool is listed, and runnable, only for a company grant that holds the draft scope; the runtime and the database check the same again, so this list is a courtesy, not the control.
+  const mayDraft = actor.mcp?.kind !== 'member' && actor.mcp?.scopes.includes(MCP_DRAFT_SCOPE) === true;
   return [
     {
       name: 'ludy_about',
@@ -680,5 +709,44 @@ function toolsFor(runtime: Runtime, actor: UserActor, orgId: string): ToolDescri
       read: async (args) => await runtime.query<Record<string, unknown>>('social.mcp.review_queue', args, { actor, orgId }),
       rows: (value) => rowCount(value.inReview) + rowCount(value.aiDrafts),
     },
+    ...(mayDraft ? [draftTool(runtime, actor, orgId, draftBudget)] : []),
   ];
+}
+
+// The one write an AI app has (#3227, plan section 3.8, owner decision 2026-11-14): a draft Social post that waits, marked as an AI's and not trusted, for a person to send to review and approve in
+// Ludy. It runs the command `social.mcp.draft_create` as the grant, in the grant's sealed write context. The drafts budget (#386) is taken first, as for a person's own draft, keyed on the grant's
+// consenting user, so a client that loops is answered 429 with the seconds to wait before anything runs. No idempotency key is passed: a second call is a second draft, which the description says.
+function draftTool(runtime: Runtime, actor: UserActor, orgId: string, draftBudget: DraftBudget): ToolDescriptor {
+  return {
+    name: 'ludy_social_draft_create',
+    title: 'Create a Social draft for review',
+    description:
+      'Creates ONE draft Social post in the organization, for a person to review: the text, optionally a title, a link, a time zone and a proposed time (only a suggestion: nothing is scheduled), and 1 to 20 channels (connectionId, from ludy_social_posts_list; each channel may have its own text and title). The draft is marked as written by an AI app and as not trusted. It stays a draft: nobody is notified, and a person must send it to review and approve every channel in Ludy before anything is published. This tool cannot approve, schedule, publish, edit or delete anything, upload media, or connect a channel. Every successful call makes a new draft, so do not repeat one that succeeded. A few drafts a minute at most; over that the answer says how long to wait.',
+    inputSchema: schemaOf(zMcpDraftCreate),
+    argsSchema: zMcpDraftCreate,
+    outputSchema: {
+      type: 'object',
+      properties: {
+        postId: { type: 'string' },
+        revision: { type: 'integer' },
+        status: { enum: ['draft'] },
+        variants: { type: 'array', items: { type: 'object', properties: { variantId: { type: 'string' }, connectionId: { type: 'string' } }, required: ['variantId', 'connectionId'] } },
+      },
+      required: ['postId', 'revision', 'status', 'variants'],
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    read: async (args) => {
+      const ticket = draftBudget.take(orgId, actor.userId);
+      if (!ticket.allowed) throw new DomainError('RATE_LIMITED', 429, 'Quá nhiều bản nháp trong một lúc, hãy thử lại sau', { retryAfterSeconds: ticket.retryAfterSeconds });
+      try {
+        const made = await runtime.execute<{ postId: string; revision: number; variants: Array<{ variantId: string; connectionId: string }> }>('social.mcp.draft_create', args, { actor, orgId });
+        // Only what a client needs to find the draft again: the ids, never the stored rows.
+        return { postId: made.postId, revision: made.revision, status: 'draft', variants: made.variants.map((v) => ({ variantId: v.variantId, connectionId: v.connectionId })) };
+      } finally {
+        ticket.release();
+      }
+    },
+    // A draft reads no business data, so the daily row budget is not charged.
+    rows: () => 0,
+  };
 }

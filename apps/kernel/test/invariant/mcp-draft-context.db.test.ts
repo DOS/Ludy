@@ -203,6 +203,11 @@ suite('the write context of the MCP draft command (#3227)', () => {
         c.query(`INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
                  VALUES ($1, $2, $3, 'cx', 'X', 'x.example.com', ARRAY['ludy.write'], 'oauth-x', now(), now() + interval '30 days', $3)`, [orgId, randomUUID(), users.owner]),
       ).rejects.toThrow(/agent_grant_scopes_ck/);
+      // A draft-only grant is not allowed: the draft scope always comes with the read scope (the read context is the only door a grant with no draft scope passes, and this one must not pass it alone).
+      await expect(
+        c.query(`INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
+                 VALUES ($1, $2, $3, 'cd', 'D', 'd.example.com', ARRAY['ludy.social.draft'], 'oauth-d', now(), now() + interval '30 days', $3)`, [orgId, randomUUID(), users.owner]),
+      ).rejects.toThrow(/agent_grant_scopes_ck/);
       for (const [origin, tainted] of [
         ['human', true],
         ['ai', false],

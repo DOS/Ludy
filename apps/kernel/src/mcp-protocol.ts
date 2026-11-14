@@ -38,11 +38,14 @@ export interface ToolDescriptor {
   description: string;
   inputSchema: Record<string, unknown>;
   outputSchema: Record<string, unknown>;
-  // The MCP annotations mirror the risk tier of the query behind the tool: every tool of this step reads only.
-  annotations: { readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: false };
+  // The MCP annotations mirror the risk tier of what the tool runs: a read, or the one write (a Social draft for a person to review: not read only, never destructive, and a second call
+  // makes a second draft, so not idempotent).
+  annotations:
+    | { readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: false }
+    | { readOnlyHint: false; destructiveHint: false; idempotentHint: false; openWorldHint: false };
   // What the tool accepts, checked here before anything runs: strict (an unknown key is refused), so a client cannot smuggle a field a query does not declare.
   argsSchema: z.ZodType<Record<string, unknown>>;
-  // The kernel query it runs and what it answers; the endpoint runs it as the grant, never as the person's own click.
+  // The kernel query (or, for the one write tool, the command) it runs and what it answers; the endpoint runs it as the grant, never as the person's own click.
   read: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
   // How many rows of business data an answer carries, charged against the grant's daily row budget. Zero for a tool that reads none.
   rows: (value: Record<string, unknown>) => number;
@@ -117,7 +120,7 @@ export async function handleMcp(input: HandleInput): Promise<McpReply> {
         protocolVersion: version,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: SERVER_NAME, version: input.serverVersion },
-        instructions: 'Ludy, the business OS for small companies. This connection reads only: it has no tool that changes anything.',
+        instructions: 'Ludy, the business OS for small companies. Most tools here only read. A tool that writes says so in its description: it makes a draft that a person reviews in Ludy, and approves, schedules, publishes or deletes nothing.',
       }),
     };
   }
@@ -160,13 +163,13 @@ export async function handleMcp(input: HandleInput): Promise<McpReply> {
           supportedVersions: [...SUPPORTED_VERSIONS],
           capabilities: { tools: {} },
           _meta: { 'io.modelcontextprotocol/serverInfo': { name: SERVER_NAME, version: input.serverVersion } },
-          instructions: 'Ludy, the business OS for small companies. This connection reads only: it has no tool that changes anything.',
+          instructions: 'Ludy, the business OS for small companies. Most tools here only read. A tool that writes says so in its description: it makes a draft that a person reviews in Ludy, and approves, schedules, publishes or deletes nothing.',
           ttlMs: 3_600_000,
           cacheScope: 'public',
         }),
       };
     case 'tools/list':
-      // The same list for every connection of a grant: it never varies per connection. Cached for a minute.
+      // The list of a grant: the tools its scopes allow, the same for every connection of that grant, so a tool the grant may not run is not listed. Cached for a minute.
       return { kind: 'json', status: 200, body: rpcResult(id, { ...(modern ? { resultType: 'complete', ttlMs: 60_000, cacheScope: 'private' } : {}), tools: toolList(input.tools) }) };
     case 'tools/call': {
       const name = typeof request.params?.name === 'string' ? request.params.name : null;
