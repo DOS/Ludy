@@ -7,3 +7,11 @@ body,
 #root {
   height: 100%;
 }
+
+/* The printable minutes of a meeting (Meetings A4, #3162): A4 with office margins. The page is outside the org's frame, so only the sheet and no toolbar reach the paper. */
+@media print {
+  @page {
+    size: A4;
+    margin: 18mm 15mm;
+  }
+}

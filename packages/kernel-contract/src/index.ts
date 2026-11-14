@@ -112,6 +112,7 @@ export * from './hr-bank-template.ts';
 export * from './notes.ts';
 export * from './extension.ts';
 export * from './mcp.ts';
+export * from './meeting-templates.ts';
 export * from './meetings.ts';
 export * from './meeting-followup.ts';
 export * from './ads.ts';

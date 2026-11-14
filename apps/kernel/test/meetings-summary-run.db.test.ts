@@ -135,6 +135,51 @@ suite('the recorder\'s Vy summary route (#2580, M6 part B2)', () => {
     expect(everything).not.toContain('Giữ giá cũ');
   });
 
+  // Minutes templates (A4, #3162): the same run fills the sections of the template the recorder picked; code writes the headings and the checks are the summary's.
+  it('fills the sections of the picked template in the same run, with the summary\'s checks, and copies them into the draft as one text under their headings', async () => {
+    const meetingId = await seedMeeting('recorder');
+    await exec('recorder', 'meetings.minutes.set_template', { meetingId, summaryTemplate: 'briefing' });
+    const prompts: string[] = [];
+    const sectionAnswer = JSON.stringify({
+      sections: [
+        { key: 'plan', text: 'Hà sẽ gửi báo giá trước thứ sáu. Tổng 999 triệu.' },
+        { key: 'progress', text: 'Khách A hẹn gặp lúc 9 giờ.' },
+        { key: 'unknown', text: 'Không có trong mẫu.' },
+      ],
+      decisions: ['Giữ giá cũ'],
+      items: [{ title: 'Gửi báo giá', who: 'Hà', when: 'thứ sáu', seconds: 15 }],
+    });
+    const spy: ModelPort = {
+      generate: async (_who, prompt) => {
+        prompts.push(prompt.system);
+        return { text: sectionAnswer, usage: { inputTokens: 100, outputTokens: 30 } };
+      },
+    };
+    const out = await runMeetingSummary(deps({ model: spy }), orgId, asUser('recorder'), meetingId);
+    expect(out).toMatchObject({ state: 'ready', errorCode: null });
+    // The model was asked for the template's sections by key, with their hints; the headings are not its to write.
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain('key "progress" (Kết quả công việc kỳ trước)');
+    expect(prompts[0]).toContain('"sections"');
+    await exec('recorder', 'meetings.summary.copy_result', { meetingId, runId: out.runId });
+    const got = await runtime.query<{ draft: { summary: string; tainted: boolean; decisions: string[] } | null }>('meetings.result.get', { meetingId }, { actor: asUser('recorder'), orgId });
+    // The foreign figure removed a sentence, the key the template lacks was dropped, the order is the template's, and the text is still the model's (tainted).
+    expect(got.draft?.summary).toBe('Kết quả công việc kỳ trước\nKhách A hẹn gặp lúc 9 giờ.\n\nKế hoạch kỳ tới\nHà sẽ gửi báo giá trước thứ sáu.');
+    expect(got.draft?.tainted).toBe(true);
+    expect(got.draft?.decisions).toEqual(['Giữ giá cũ']);
+  });
+
+  it('refuses to copy a result into a meeting whose template changed since the run, and a general run keeps its plain summary', async () => {
+    const meetingId = await seedMeeting('recorder');
+    const out = await runMeetingSummary(deps(), orgId, asUser('recorder'), meetingId);
+    await exec('recorder', 'meetings.minutes.set_template', { meetingId, summaryTemplate: 'supplier' });
+    expect(await refuses(exec('recorder', 'meetings.summary.copy_result', { meetingId, runId: out.runId }))).toBe('SUMMARY_TEMPLATE_CHANGED');
+    await exec('recorder', 'meetings.minutes.set_template', { meetingId, summaryTemplate: 'general' });
+    await exec('recorder', 'meetings.summary.copy_result', { meetingId, runId: out.runId });
+    const got = await runtime.query<{ draft: { summary: string } | null }>('meetings.result.get', { meetingId }, { actor: asUser('recorder'), orgId });
+    expect(got.draft?.summary).toBe(`${SECRET_ANSWER}.`);
+  });
+
   it('refuses a member without vy.use, a member who is not the recorder, another org and a switch that is off, before any model call and without a run', async () => {
     // A recorder whose vy.use was taken away by an owner: refused by run.start, after the recorder check and before any read of the transcript.
     const viewerMeeting = await seedMeeting('nouse');

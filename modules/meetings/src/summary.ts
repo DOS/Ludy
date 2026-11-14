@@ -5,7 +5,7 @@
 // what each item says about who and when: the "who" is matched to an attendee only when exactly one attendee answers to that name, the "when" is parsed
 // against the meeting's own date, and a link, email address or phone number in a title is flagged. Nothing is shared by this; the recorder's publish does that.
 import { sql } from 'kysely';
-import { zSummaryCopy, zSummaryCopied, zSummaryResult, ITEMS_PER_MEETING_MAX } from '@crove/kernel-contract';
+import { zSummaryCopy, zSummaryCopied, zSummaryResult, ITEMS_PER_MEETING_MAX, sectionsToText, templateSections } from '@crove/kernel-contract';
 import { DomainError, defineCommand } from '@crove/kernel-runtime';
 import { itemFlags } from './results.ts';
 import { dayAfter, vnDay } from './retention.ts';
@@ -130,8 +130,13 @@ export const summaryCopyResult = defineCommand({
       throw new DomainError('SUMMARY_RESULT_INVALID', 422, 'The summary result cannot be read');
     }
     // The meeting's day and who may be named: the recorder and the attendees, by the names the org knows them by (member_profiles answers for members only).
-    const row = await ctx.trx.selectFrom('crove_meetings.meeting').select(['started_at']).where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).executeTakeFirstOrThrow();
+    const row = await ctx.trx.selectFrom('crove_meetings.meeting').select(['started_at', 'summary_template']).where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).executeTakeFirstOrThrow();
     const meetingDay = vnDay(row.started_at ?? new Date());
+    // A4 (#3162): a run was asked for one template; if the recorder picked another since, its sections would not fit the headings they now type under, so it is not copied.
+    if (body.template !== row.summary_template) throw new DomainError('SUMMARY_TEMPLATE_CHANGED', 409, 'The minutes template changed since Vy wrote this; ask Vy again');
+    // On a template the sections become the one summary text, by code (the headings are code's, the text is the model's, already checked); on the general template the summary is as it was.
+    const defs = templateSections(body.template);
+    const summaryText = defs.length === 0 ? body.summary : sectionsToText(body.template, body.sections.filter((x) => defs.some((d) => d.key === x.key)));
     const readers = await ctx.trx.selectFrom('crove_meetings.meeting_reader').select('user_id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).execute();
     const ids = [userId, ...readers.map((r) => r.user_id)];
     const { rows: profiles } = await sql<{ user_id: string; email: string; display_name: string | null }>`SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${ids}::uuid[])`.execute(ctx.trx);
@@ -151,7 +156,7 @@ export const summaryCopyResult = defineCommand({
     // still there is not replaced: they share it or save over it first.
     await ctx.trx.deleteFrom('crove_meetings.meeting_result').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').where('tainted', '=', true).execute();
     const mine = await ctx.trx.selectFrom('crove_meetings.meeting_result').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').executeTakeFirst();
-    if (mine && (body.summary !== '' || body.decisions.length > 0)) throw new DomainError('DRAFT_SUMMARY_EXISTS', 409, 'You already have a summary draft; share it or save over it before copying Vy\'s');
+    if (mine && (summaryText !== '' || body.decisions.length > 0)) throw new DomainError('DRAFT_SUMMARY_EXISTS', 409, 'You already have a summary draft; share it or save over it before copying Vy\'s');
     await ctx.trx
       .deleteFrom('crove_meetings.action_item')
       .where('org_id', '=', ctx.orgId)
@@ -160,14 +165,14 @@ export const summaryCopyResult = defineCommand({
       .where('status', '=', 'suggested')
       .where('tainted', '=', true)
       .execute();
-    if (body.summary !== '' || body.decisions.length > 0) {
+    if (summaryText !== '' || body.decisions.length > 0) {
       // A second click at the same moment waits on the first's row and then meets the one draft a meeting may hold: the same answer as a draft that is there.
       await ctx.trx
         .insertInto('crove_meetings.meeting_result')
         .values({
           org_id: ctx.orgId,
           meeting_id: input.meetingId,
-          summary: body.summary === '' ? body.decisions[0] ?? '-' : body.summary,
+          summary: summaryText === '' ? body.decisions[0] ?? '-' : summaryText,
           decisions: sql`${JSON.stringify(body.decisions)}::jsonb`,
           feature: FEATURE,
           stage: 'draft',

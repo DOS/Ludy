@@ -54,6 +54,7 @@ import {
   type MeetingExtensionStatus,
   type RecordingStopReason,
   type MeetingLanguage,
+  type MeetingSummaryTemplate,
   type MeetingOwnerList,
   type MeetingOwnerListItem,
   type MeetingStatus,
@@ -132,6 +133,7 @@ interface MeetingRow {
   length_seconds: number | null;
   keep_video: boolean;
   live_notes: boolean;
+  summary_template: MeetingSummaryTemplate;
   consent_method: ConsentMethod;
   consent_confirmed_by: string;
   consent_confirmed_at: Date | string;
@@ -156,6 +158,7 @@ function toSummary(r: MeetingRow, readersCount: number, hasAudio: boolean, hasVi
     lengthSeconds: r.length_seconds,
     keepVideo: r.keep_video,
     liveNotes: r.live_notes,
+    summaryTemplate: r.summary_template,
     audioRetentionDate: dayText(r.audio_retention_date),
     textRetentionDate: r.text_retention_date === null ? null : dayText(r.text_retention_date),
     hasAudio,
@@ -197,6 +200,7 @@ export const meetingCreate = defineCommand({
         length_seconds: input.lengthSeconds ?? null,
         keep_video: input.keepVideo,
         live_notes: input.liveNotes,
+        summary_template: input.summaryTemplate,
         consent_method: input.consentMethod,
         consent_confirmed_by: userId,
         consent_confirmed_at: startedAt,
@@ -242,6 +246,7 @@ export const meetingCreate = defineCommand({
       consentMethod: input.consentMethod,
       consentNoticeVersion: input.consentNoticeVersion ?? CONSENT_NOTICE_VERSION,
       liveNotes: input.liveNotes,
+      summaryTemplate: input.summaryTemplate,
     });
 
     return { meetingId };
