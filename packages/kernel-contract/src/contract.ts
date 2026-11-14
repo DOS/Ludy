@@ -398,6 +398,15 @@ import {
   zSummaryCopied,
   zSummaryCopy,
 } from './meetings.ts';
+import {
+  zMeetingHookCleared,
+  zMeetingHookNone,
+  zMeetingHookSet,
+  zMeetingHookState,
+  zMeetingHookTested,
+  zMeetingHookWithSecret,
+  zMeetingHooksSwitch,
+} from './meeting-hook.ts';
 import { zFollowupDraft, zFollowupSendCall, zFollowupSent, zFollowupWording, zFollowupWordingAsk } from './meeting-followup.ts';
 import { zExtensionOrgToken, zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked, zExtensionTokenRevokedMember } from './extension.ts';
 import { zMcpGrantRevoke, zMcpGrantRevoked, zMcpGrantView, zMcpMemberGrantsSet, zMcpMemberGrantsView, zMcpWakeCleared, zMcpWakeTested, zMcpWakeGetInput, zMcpWakeGrantRef, zMcpWakeSet, zMcpWakeView, zMcpWakeWithSecret } from './mcp.ts';
@@ -942,6 +951,16 @@ export const contract = {
     consentPolicy: {
       get: oc.input(zMeetingConsentPolicyGet).output(zMeetingConsentPolicy),
       set: oc.input(zMeetingConsentPolicy).output(zMeetingConsentPolicy),
+    },
+    // A member's own webhook for the minutes they publish (A6, #3164): the card reads `get`, `set` makes or changes it (the secret comes back once, when it is made), `rotateSecret`, `clear` and
+    // `test` (a `ping` with no meeting data). The owner's `switch` (off by default) gates all of it; nothing is sent while it is off.
+    hook: {
+      get: oc.input(zMeetingHookNone).output(zMeetingHookState),
+      set: oc.input(zMeetingHookSet).output(zMeetingHookWithSecret),
+      rotateSecret: oc.input(zMeetingHookNone).output(zMeetingHookWithSecret),
+      clear: oc.input(zMeetingHookNone).output(zMeetingHookCleared),
+      test: oc.input(zMeetingHookNone).output(zMeetingHookTested),
+      switch: oc.input(zMeetingHooksSwitch).output(zMeetingHooksSwitch),
     },
     // Search across the transcript lines the caller reads (L2, #2589): plain folded text search, no model call.
     search: oc.input(zMeetingSearchInput).output(zMeetingSearchResult),

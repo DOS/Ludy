@@ -74,6 +74,9 @@ export const QUEUES = {
   // Created by the wake-up delivery migration (20261224000000): one delivery of an MCP grant's wake-up webhook, and the sweep that hands deliveries over (ADR-0051 decision 4, #3024).
   mcpWake: 'kernel-mcp-wake',
   mcpWakeSweep: 'kernel-mcp-wake-sweep',
+  // Created by the member minutes webhook migration (20261231120000): one delivery of a member's minutes webhook, and the sweep that hands deliveries over (meetings integrations A6, #3164).
+  meetingHook: 'kernel-meeting-hook',
+  meetingHookSweep: 'kernel-meeting-hook-sweep',
   // Created by the meetings transcription migration (20261202000000): one run of the recorder's Vy transcribing a meeting (#2578, M4b).
   meetingsTranscribe: 'meetings-transcribe',
   meetingsLiveNotes: 'meetings-live-notes',
@@ -183,6 +186,9 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   // The one request to the receiver URL an org set, through the egress guard (egressFetch, https only): the delivery's only reach. The sweep reads and writes the database and hands jobs over, nothing else.
   [QUEUES.mcpWake]: ['tenant_url'],
   [QUEUES.mcpWakeSweep]: 'none',
+  // The same, for a member's minutes webhook: the one request to the address the member set (through the signing helper of mcp-wake.ts, the egress guard), and a sweep that reaches nothing.
+  [QUEUES.meetingHook]: ['tenant_url'],
+  [QUEUES.meetingHookSweep]: 'none',
   // The speech to text endpoint (packages/agent transcribeChunks), the only place the recorder's audio leaves the deployment.
   [QUEUES.meetingsTranscribe]: ['provider:ai'],
   [QUEUES.meetingsLiveNotes]: ['provider:ai'],
@@ -235,7 +241,7 @@ export function queueEgress(queue: string): JobEgress {
 // The pg-boss policy of each queue that is not 'standard'. kernel-agent-wake is 'stately' with the singleton key
 // <org>:<queue>:<agent> (job-keys.ts): at most one queued and one active job per agent, so wake-ups coalesce and an
 // agent runs once at a time (ADR-0029 section 5; the database also allows one running ai_run per agent).
-const QUEUE_POLICIES: Partial<Record<QueueName, 'stately'>> = { [QUEUES.agentWake]: 'stately', [QUEUES.adsSync]: 'stately', [QUEUES.mcpWake]: 'stately' };
+const QUEUE_POLICIES: Partial<Record<QueueName, 'stately'>> = { [QUEUES.agentWake]: 'stately', [QUEUES.adsSync]: 'stately', [QUEUES.mcpWake]: 'stately', [QUEUES.meetingHook]: 'stately' };
 
 // The dead letter queue's own options, as 20261103150000_crove_jobs_dead_letter.sql created it: a few retries, in case
 // the database or the command is briefly unavailable.

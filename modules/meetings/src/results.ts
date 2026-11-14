@@ -34,6 +34,7 @@ import {
   type MeetingResults,
 } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { enqueueMinutesHook } from './hook.ts';
 import { vnDayStart } from './retention.ts';
 import { ROLES, openMeeting, userOf } from './transcript.ts';
 
@@ -276,9 +277,17 @@ export const resultPublish = defineCommand({
     const draft = await ctx.trx.selectFrom('crove_meetings.meeting_result').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').forUpdate().executeTakeFirst();
     // The draft replaces the summary published before it (one published summary a meeting).
     let results = 0;
+    let published: { summary: string; decisions: unknown } | null = null;
     if (draft) {
       await ctx.trx.deleteFrom('crove_meetings.meeting_result').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'published').execute();
-      await ctx.trx.updateTable('crove_meetings.meeting_result').set({ stage: 'published', updated_at: sql<Date>`pg_catalog.now()` }).where('org_id', '=', ctx.orgId).where('id', '=', draft.id).execute();
+      published =
+        (await ctx.trx
+          .updateTable('crove_meetings.meeting_result')
+          .set({ stage: 'published', updated_at: sql<Date>`pg_catalog.now()` })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', draft.id)
+          .returning(['summary', 'decisions'])
+          .executeTakeFirst()) ?? null;
       results = 1;
     }
     const items = await ctx.trx
@@ -288,9 +297,17 @@ export const resultPublish = defineCommand({
       .where('meeting_id', '=', input.meetingId)
       .where('stage', '=', 'draft')
       .where('status', '=', 'suggested')
-      .returning('id')
+      .returning(['id', 'title', 'who_drafted', 'when_parsed'])
       .execute();
     if (results === 0 && items.length === 0) throw new DomainError('NOTHING_TO_PUBLISH', 409, 'There is no draft to share');
+    // The recorder's own webhook (A6, #3164): when they have one that stands, the event for this publish is stored in this same transaction, and nowhere else. No model, no other reader.
+    await enqueueMinutesHook(ctx, {
+      meetingId: input.meetingId,
+      resultId: draft?.id ?? null,
+      summary: published && published.summary.length > 0 ? published.summary : null,
+      decisions: published && Array.isArray(published.decisions) ? published.decisions.filter((d): d is string => typeof d === 'string') : null,
+      items: items.slice(0, 100).map((i) => ({ title: i.title, whoDrafted: i.who_drafted, whenParsed: i.when_parsed })),
+    });
     ctx.audit({ meetingId: input.meetingId, results, items: items.length });
     return { meetingId: input.meetingId, results, items: items.length };
   },

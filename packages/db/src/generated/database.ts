@@ -2753,6 +2753,7 @@ export interface KernelTenantTable {
   meeting_text_retention_days: Generated<number>;
   mcp_member_grants: Generated<boolean>;
   meeting_consent_policy: Generated<string>;
+  meeting_hooks: Generated<boolean>;
 }
 
 /** crove_kernel.today_mail */

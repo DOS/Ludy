@@ -5,8 +5,9 @@ import { CALENDAR_OAUTH_PROVIDERS, MARKETPLACE_PLATFORM_KEYS, COWORKER_ROSTER as
 import { sandboxBankFeed } from '@crove/bank-feed';
 import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad-platform';
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@crove/einvoice';
-import type { McpWakeView, QuoteLinkCreated } from '@crove/kernel-contract';
+import type { McpWakeView, MeetingHookView, QuoteLinkCreated } from '@crove/kernel-contract';
 import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wake-setup.ts';
+import { makeHookSecret } from './meeting-hook-setup.ts';
 import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, PaymentReminderDraft, TodayList } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
@@ -973,6 +974,45 @@ export function createRpcHandler(
         cancel: os.meetings.transcript.cancel.handler(meetingsCommand('meetings.transcript.cancel')),
         status: os.meetings.transcript.status.handler(meetingsQuery('meetings.transcript.status')),
         copyResult: os.meetings.transcript.copyResult.handler(meetingsCommand('meetings.transcript.copy_result')),
+      },
+      // A member's own webhook for the minutes they publish (A6, #3164): the secret is made and sealed here, and only the person who asked sees it, once.
+      hook: {
+        get: os.meetings.hook.get.handler(({ context }) =>
+          inOrg(context, async (orgId, actor) => {
+            const state = await runtime.query<{ switchOn: boolean; hook: MeetingHookView | null }>('meetings.hook.get', {}, { actor, orgId });
+            return { ...state, sealing: Boolean(channels?.broker) && channels?.broker.id !== 'none' };
+          }),
+        ),
+        set: os.meetings.hook.set.handler(({ context, input }) =>
+          inOrg(context, async (orgId, actor) => {
+            const broker = channels?.broker;
+            if (!broker || broker.id === 'none') throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
+            if (actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới cài được địa chỉ nhận biên bản');
+            // The command checks again; looking the name up first keeps a member from learning how the deployment resolves names for an address that is refused anyway.
+            await assertWakeHostPublic(input.url, channels?.wakeResolve);
+            const made = makeHookSecret(broker, orgId, actor.userId);
+            const done = await runtime.execute<{ created: boolean }>('meetings.hook.set', { ...input, credential: made.credential }, { actor, orgId });
+            const state = await runtime.query<{ switchOn: boolean; hook: MeetingHookView | null }>('meetings.hook.get', {}, { actor, orgId });
+            if (!state.hook) throw new DomainError('MEETING_HOOK_NOT_FOUND', 404, 'Bạn chưa có địa chỉ nhận biên bản');
+            // The secret goes back only when this call made the webhook; a change to an existing one leaves its secret alone and the one made here is dropped.
+            return { ...state.hook, secret: done.created ? made.secret : null };
+          }),
+        ),
+        rotateSecret: os.meetings.hook.rotateSecret.handler(({ context }) =>
+          inOrg(context, async (orgId, actor) => {
+            const broker = channels?.broker;
+            if (!broker || broker.id === 'none') throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
+            if (actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới đổi được khóa bí mật');
+            const made = makeHookSecret(broker, orgId, actor.userId);
+            await runtime.execute('meetings.hook.rotate_secret', { credential: made.credential }, { actor, orgId });
+            const state = await runtime.query<{ switchOn: boolean; hook: MeetingHookView | null }>('meetings.hook.get', {}, { actor, orgId });
+            if (!state.hook) throw new DomainError('MEETING_HOOK_NOT_FOUND', 404, 'Bạn chưa có địa chỉ nhận biên bản');
+            return { ...state.hook, secret: made.secret };
+          }),
+        ),
+        clear: os.meetings.hook.clear.handler(meetingsCommand('meetings.hook.clear')),
+        test: os.meetings.hook.test.handler(meetingsCommand('meetings.hook.test')),
+        switch: os.meetings.hook.switch.handler(meetingsCommand('meetings.hooks.switch.set')),
       },
       results: {
         get: os.meetings.results.get.handler(meetingsQuery('meetings.result.get')),

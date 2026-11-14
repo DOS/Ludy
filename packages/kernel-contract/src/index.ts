@@ -116,6 +116,8 @@ export * from './mcp.ts';
 export * from './meeting-templates.ts';
 export * from './meetings.ts';
 export * from './meeting-followup.ts';
+export * from './meeting-hook.ts';
+export * from './meeting-hook-body.ts';
 export * from './ads.ts';
 export * from './ads-campaign.ts';
 export * from './manifest.ts';
