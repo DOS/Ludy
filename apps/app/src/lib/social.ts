@@ -84,8 +84,13 @@ export const PROVIDER_NAMES: Record<Provider, string> = {
   linkedin_page: 'LinkedIn Page',
 };
 
+// The messaging-only channels of the Inbox: they never publish, so they are not a Social Provider, but a screen that lists connections names them.
+const MESSAGING_PROVIDER_NAMES: Readonly<Record<string, string>> = { whatsapp: 'WhatsApp' };
+// A connection of one of these has no queue, voice, signature, review policy or banned words to set: the Channels screen shows its name, state and disconnect only.
+export const isMessagingOnly = (provider: string): boolean => Object.hasOwn(MESSAGING_PROVIDER_NAMES, provider);
+
 export function providerName(provider: string): string {
-  return isProvider(provider) ? PROVIDER_NAMES[provider] : provider;
+  return isProvider(provider) ? PROVIDER_NAMES[provider] : (MESSAGING_PROVIDER_NAMES[provider] ?? provider);
 }
 
 // The platforms the channels screen lists to connect, in the order Crove adds them (Social plan §6). A platform the

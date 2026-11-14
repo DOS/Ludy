@@ -9,7 +9,7 @@ import type { McpWakeView, QuoteLinkCreated } from '@crove/kernel-contract';
 import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wake-setup.ts';
 import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, PaymentReminderDraft, TodayList } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
-import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWordPress, discordLogin, mastodonLogin, telegramLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
+import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
 import {
   ALT_TEXT_IMAGE_MAX_BYTES,
   ALT_TEXT_IMAGE_TYPES,
@@ -230,13 +230,23 @@ function telegramFailure(code: string | undefined): DomainError | null {
   if (code === 'TELEGRAM_BOT_CANNOT_POST') return new DomainError('TELEGRAM_BOT_CANNOT_POST', 422, 'Bot chưa được đăng bài trong kênh; hãy đặt bot làm quản trị viên có quyền đăng bài');
   return null;
 }
+// Why a WhatsApp number did not connect, in words for the connect form.
+function whatsappFailure(code: string | undefined): DomainError | null {
+  if (code === 'WHATSAPP_TOKEN_INVALID') return new DomainError('WHATSAPP_TOKEN_INVALID', 422, 'Đây không phải mã truy cập WhatsApp; hãy chép mã của người dùng hệ thống (system user) trong Meta Business');
+  if (code === 'WHATSAPP_PHONE_ID_INVALID') return new DomainError('WHATSAPP_PHONE_ID_INVALID', 422, 'Mã số điện thoại (Phone number ID) chỉ gồm chữ số, lấy ở WhatsApp > API Setup trong ứng dụng Meta');
+  if (code === 'WHATSAPP_WABA_ID_INVALID') return new DomainError('WHATSAPP_WABA_ID_INVALID', 422, 'Mã tài khoản WhatsApp Business (WABA ID) chỉ gồm chữ số, lấy ở WhatsApp > API Setup trong ứng dụng Meta');
+  if (code === 'WHATSAPP_TOKEN_REFUSED') return new DomainError('WHATSAPP_TOKEN_REFUSED', 422, 'WhatsApp không chấp nhận mã truy cập này; có thể mã đã bị thu hồi hoặc hết hạn');
+  if (code === 'WHATSAPP_PERMISSION') return new DomainError('WHATSAPP_PERMISSION', 422, 'Mã truy cập này chưa có quyền với số điện thoại; hãy cấp quyền whatsapp_business_messaging cho người dùng hệ thống');
+  if (code === 'WHATSAPP_PHONE_NOT_FOUND') return new DomainError('WHATSAPP_PHONE_NOT_FOUND', 422, 'WhatsApp không thấy mã số điện thoại này với mã truy cập đã nhập; hãy kiểm tra lại cả hai');
+  return null;
+}
 // Why a Discord channel did not connect, in words for the connect form.
 function discordFailure(code: string | undefined): DomainError | null {
   if (code === 'DISCORD_WEBHOOK_INVALID') return new DomainError('DISCORD_WEBHOOK_INVALID', 422, 'Hãy dán địa chỉ webhook của kênh Discord, dạng https://discord.com/api/webhooks/...');
   if (code === 'DISCORD_WEBHOOK_REFUSED') return new DomainError('DISCORD_WEBHOOK_REFUSED', 422, 'Discord không nhận webhook này, có thể nó đã bị xóa; hãy tạo webhook mới');
   return null;
 }
-const PROVIDER_LABELS: Record<string, string> = { sandbox: 'test channel', facebook_page: 'Facebook Page', instagram: 'Instagram', zalo_oa: 'Zalo Official Account (article)', tiktok: 'TikTok', youtube: 'YouTube', threads: 'Threads', linkedin: 'LinkedIn', x: 'X', bluesky: 'Bluesky', google_business: 'Google Business Profile', telegram: 'Telegram', mastodon: 'Mastodon', pinterest: 'Pinterest', discord: 'Discord', wordpress: 'WordPress (blog post)', linkedin_page: 'LinkedIn Page' };
+const PROVIDER_LABELS: Record<string, string> = { sandbox: 'test channel', facebook_page: 'Facebook Page', instagram: 'Instagram', zalo_oa: 'Zalo Official Account (article)', tiktok: 'TikTok', youtube: 'YouTube', threads: 'Threads', linkedin: 'LinkedIn', x: 'X', bluesky: 'Bluesky', google_business: 'Google Business Profile', telegram: 'Telegram', mastodon: 'Mastodon', pinterest: 'Pinterest', discord: 'Discord', wordpress: 'WordPress (blog post)', linkedin_page: 'LinkedIn Page', whatsapp: 'WhatsApp' };
 
 export interface RpcChannels {
   // Seals tokens before kernel.channel.connect stores them; never opens one in the API.
@@ -266,6 +276,8 @@ export interface RpcChannels {
   discord?: boolean;
   // WordPress sites may connect with an application password (CHANNEL_WORDPRESS).
   wordpress?: boolean;
+  // WhatsApp numbers may connect by hand with a system user token (CHANNEL_WHATSAPP_APP_SECRET, #3131): the Meta app's secret, which proves the one call that checks the token.
+  whatsapp?: { appSecret: string; graphVersion?: string | undefined } | null;
   // Providers connected through an OAuth dialog that this deployment configured (Social plan S6), by provider id.
   connectors?: Readonly<Partial<Record<string, OAuthConnector>>>;
   // Outside calendars members connect (#2123) through an OAuth dialog this deployment configured, by OAuth provider id.
@@ -1879,6 +1891,41 @@ export function createRpcHandler(
             }
           })();
           const account = await connectTelegram(login).catch((error: unknown) => {
+            throw failure(error);
+          });
+          const sealed = channels.broker.seal(account.secret, { orgId, provider: account.provider, externalAccountId: account.externalAccountId });
+          const command: ChannelConnectInput = {
+            provider: account.provider,
+            externalAccountId: account.externalAccountId,
+            displayName: account.displayName,
+            scopes: account.scopes,
+            expiresAt: null,
+            credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
+          };
+          return runtime.execute<{ connectionId: string; reconnected: boolean }>('kernel.channel.connect', command, { actor: actorOf(context.user), orgId });
+        }),
+      ),
+      // A WhatsApp number (#3131): the system user token is checked once against the phone number (the call is made with the token in a header, never in a URL),
+      // then sealed with the phone number id and dropped; it never reaches a log, an audit row or an answer. The connection is the number, so a customer's
+      // notice finds the org by the phone number id it names.
+      connectWhatsApp: os.channels.connectWhatsApp.handler(({ context, input }) =>
+        guard(async () => {
+          const { orgId, role } = await resolveMembership(runtime, context.user, context.orgSlug);
+          if (role !== 'owner' && role !== 'admin') throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu hoặc quản trị viên mới kết nối được kênh');
+          if (!channels?.whatsapp) throw new DomainError('CHANNEL_PROVIDER_DISABLED', 404, 'Kênh này chưa được bật trên máy chủ');
+          if (channels.broker.id === 'none') throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
+          const failure = (error: unknown): DomainError => {
+            const known = error instanceof ConnectorError ? whatsappFailure(error.code) : null;
+            return known ?? new DomainError('OAUTH_PROVIDER_FAILED', 503, 'Nền tảng không phản hồi đúng, hãy thử lại sau');
+          };
+          const login = (() => {
+            try {
+              return whatsappLogin(input);
+            } catch (error) {
+              throw failure(error);
+            }
+          })();
+          const account = await connectWhatsApp(login, channels.whatsapp).catch((error: unknown) => {
             throw failure(error);
           });
           const sealed = channels.broker.seal(account.secret, { orgId, provider: account.provider, externalAccountId: account.externalAccountId });

@@ -1904,6 +1904,7 @@ export interface KernelConversationAttachmentTable {
   fetch_attempts: Generated<number>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   stored_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  source_ref: string | null;
 }
 
 /** crove_kernel.conversation_composing */
