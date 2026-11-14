@@ -2,6 +2,8 @@
 
 Research notes behind the Meetings integrations plan, asked by the owner on 2026-11-14. Vietnamese report for the owner: [meetings-research.vi.md](meetings-research.vi.md).
 
+The plan that came out of this research, with its build issues, is [meetings-integrations.md](meetings-integrations.md) (the owner approved groups A to D on 2026-11-14).
+
 **Caveat:** this session could not open any vendor page (the network allowlist blocked them); every finding comes from search-result summaries of the cited pages, and every price is unverified. Each build issue re-checks its facts on the vendor page first.
 
 
