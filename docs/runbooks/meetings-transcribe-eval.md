@@ -27,7 +27,7 @@ This measures the recorder's Vy transcription. Vy itself is not changed by it, a
 
 | Input | Who | Issue |
 |---|---|---|
-| Recordings of real meetings, with the consent of the people in them | owner | #2585 |
+| Recordings of real meetings, with the consent of the people in them, or of the six scripted meetings in [meetings-eval-scripts](meetings-eval-scripts/README.md) read by consenting people | owner | #2585 |
 | For each, the reference transcript a person checked | owner | #2585 |
 | The provider's key, base URL and model | owner, coordinator (a production step, never in chat or the repository) | #2972 |
 | A private machine with Node 26, pnpm and ffmpeg (the pilot server or the owner's computer) | owner | |
@@ -42,6 +42,8 @@ The recordings and references never go into the repository, a pull request, an i
 4. The reference is plain text. To score the speakers, start each speaker's turn with their name in square brackets: `[Lan] Xin chào cả nhà [Minh] Chào chị Lan`. The label stays for the words that follow until the next one. A reference with no brackets is scored for words only.
 
 The eval refuses to start when a recording has no reference or a reference has no recording, and names the files, so a set never measures less than it claims.
+
+**The scripted set (#2585).** The first set is made by people reading six invented Vietnamese meetings, so no real meeting is recorded. The scripts are committed in [meetings-eval-scripts](meetings-eval-scripts/README.md), with how to get each reader's consent, how to record, and the commands that make each reference `.txt` from its script. The recordings, the references made for them and the consents stay outside the repository, and a consent never sits in the eval folder as a `.txt`.
 
 ## 2. Run it
 
