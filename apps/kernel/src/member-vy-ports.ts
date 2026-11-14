@@ -3,13 +3,11 @@
 // service, so memory is the member's own rows of crove_kernel.member_vy_memory, read and written only through the member's own commands, in the
 // member's own user context. Asking about anyone else is refused before a command is run, and the database would refuse it anyway (the
 // restrictive policy shows a member their own rows only). Knowledge has no declared queries yet: a feature that asks gets no passages.
-import { AiBudgetExhaustedError, SUMMARY_TIMEOUT_MS, SummaryModelError, TranslationModelError, aiCost, generateMeetingSummaryText, generateMeetingTranslationText, withAiScope, type AiCall, type AiConfig, type AiMeter, type AiUsage } from '@crove/agent';
-import { SummaryError, TranslationError, bindPorts, noKnowledge, planTranscriptChunks, privateText, revealPrivateText, summarizeMeeting, translateSummary, translateTranscriptChunk, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type Ports } from '@crove/agent/member-vy';
-import { zTranscriptTranslationResult, type LiveNotesDone, type LiveNotesInput, type Summarized, type Transcript, type TranscriptTranslationStatus, type Translated, type TranslationSource, type TranslationStatus } from '@crove/kernel-contract';
-import { DomainError, memberVyRuntime, type MemberVyRuntime, type Runtime, type SystemActor, type UserActor } from '@crove/kernel-runtime';
+import { AiBudgetExhaustedError, SUMMARY_TIMEOUT_MS, SummaryModelError, TranslationModelError, aiCost, generateMeetingSummaryText, generateMeetingTranslationText, withAiScope, type AiConfig, type AiMeter } from '@crove/agent';
+import { SummaryError, TranslationError, bindPorts, noKnowledge, privateText, revealPrivateText, summarizeMeeting, translateSummary, translateTranscriptChunk, planTranscriptChunks, chunkExpectedUsage, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type Ports } from '@crove/agent/member-vy';
+import { zTranscriptTranslationResult, type LiveNotesDone, type LiveNotesInput, type Summarized, type Transcript, type TranscriptSource, type TranscriptStarted, type TranscriptTranslated, type TranscriptTranslationStatus, type Translated, type TranslationSource, type TranslationStatus } from '@crove/kernel-contract';
+import { DomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import type { DraftBudget } from './ai-draft-limit.ts';
-import { failureCode } from './meetings-transcribe.ts';
-import type { MeetingsTranslateJob } from './meetings-translate-job.ts';
 
 // The only file of the API that imports the member-Vy entry of the agent package (member-vy-import-allowlist.test.ts): the rest of the kernel gets what it needs from here.
 export type { ModelPort } from '@crove/agent/member-vy';
@@ -253,26 +251,6 @@ export async function translationStatusOf(deps: Pick<MeetingTranslationDeps, 'ru
   return status.enabled ? { ...status, estimate: translationEstimate(bytes, deps.price) } : status;
 }
 
-// The button and the progress of the transcript translation: the module's status plus the cost expected for the lines still to translate (their size, priced; one call a chunk, each with the
-// fixed instruction around it). The text itself is not read here. With no model in the deployment the button says why (the same as the module's own switch being off).
-export async function transcriptTranslationStatusOf(
-  deps: Pick<MeetingTranslationDeps, 'runtime' | 'price'> & { hasModel: boolean },
-  orgId: string,
-  actor: UserActor,
-  meetingId: string,
-): Promise<TranscriptTranslationStatus> {
-  const { bytes, ...status } = await deps.runtime.query<TranscriptTranslationStatus & { bytes: number }>('meetings.translation.transcript_status', { meetingId }, { actor, orgId });
-  if (!deps.hasModel && status.enabled) return { ...status, enabled: false, reason: 'off', estimate: null };
-  if (!status.enabled || status.remaining === 0) return status;
-  const calls = status.chunksTotal - status.chunksDone;
-  const estimate = translationEstimate(bytes, deps.price);
-  // translationEstimate counts one instruction for the whole text; each chunk is a call of its own, so the fixed part is paid once a call.
-  const inputTokens = estimate.inputTokens + 300 * Math.max(0, calls - 1);
-  const outputTokens = estimate.outputTokens + 50 * Math.max(0, calls - 1);
-  const priced = deps.price !== undefined && (Number(deps.price.inputPerMTok) > 0 || Number(deps.price.outputPerMTok) > 0);
-  return { ...status, estimate: { calls, inputTokens, outputTokens, cost: priced ? aiCost([{ inputTokens, outputTokens }], deps.price) : null } };
-}
-
 export async function runMeetingTranslation(deps: MeetingTranslationDeps, orgId: string, actor: UserActor, meetingId: string, stage: 'draft' | 'published'): Promise<Translated> {
   const as = { actor, orgId };
   const timeoutMs = deps.timeoutMs ?? SUMMARY_TIMEOUT_MS;
@@ -344,134 +322,126 @@ export async function runMeetingTranslation(deps: MeetingTranslationDeps, orgId:
   }
 }
 
-
-// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
-// The member's Vy translating the transcript, the worker's side (meetings integrations E2, #3185, ADR-0049 stage B). One job per run the member started, a batch of lines:
-//   1. the run is the member's member-scoped agent context (memberVyRuntime): each call below enters it afresh, so the member being active, vy.use, the org, module and agent kill
-//      switches, the global `ai` switch, a spent hard-stop budget and the run being live are re-checked at every step (a member removed mid-run ends it at the next call);
-//   2. kernel.member_vy.meeting_audio.open, in its text mode, answers the lines of the stage the member reads (the database function behind it is the gate), and it is called again
-//      before EACH chunk, so a meeting deleted or a member who stopped reading it ends the run before the next chunk is sent;
-//   3. each chunk goes to the model behind the meter, whose admit enters the member's context again with the call's projected cost: a chunk that would reach a hard-stop budget is
-//      refused before the call, and the run keeps the chunks it finished; the answer is checked line by line in code (packages/agent member-vy/meeting-translation.ts);
-//   4. kernel.member_vy.result.store writes the checked parts as the run's own result, the only thing a member-scoped context writes; 5. kernel.member_vy.run.finish closes the run.
-// The job writes no meeting table: the member's own copy (meetings.translation.copy_result) keeps the parts in their private row. A failed run stores a fixed code, never a message, and
-// logs carry ids and codes. A job is never retried by the queue: another try would send the text again; the member starts it again if they want to.
-export interface MeetingsTranslateDeps {
-  runtime: Runtime;
-  // The deployment's model behind the member-Vy model port (the same as the summary's).
-  model: ModelPort;
-  // The deployment's prices (AI_PRICE_*), for the projected cost of a chunk.
-  price: { inputPerMTok: string; outputPerMTok: string };
-  timeoutMs?: number;
+// The button and the progress of the transcript translation (E2, #3185): the module's status plus the cost expected for the lines still to translate (their size, priced; one call a
+// chunk, each with the fixed instruction around it). The text itself is not read here. With no model in the deployment the button says why (as when the module's own switch is off).
+export async function transcriptTranslationStatusOf(
+  deps: Pick<MeetingTranslationDeps, 'runtime' | 'price'> & { hasModel: boolean },
+  orgId: string,
+  actor: UserActor,
+  meetingId: string,
+): Promise<TranscriptTranslationStatus> {
+  const { bytes, ...status } = await deps.runtime.query<TranscriptTranslationStatus & { bytes: number }>('meetings.translation.transcript_status', { meetingId }, { actor, orgId });
+  if (!deps.hasModel && status.enabled) return { ...status, enabled: false, reason: 'off', estimate: null };
+  if (!status.enabled || status.remaining === 0) return status;
+  const calls = Math.max(1, status.chunksTotal - status.chunksDone);
+  // The same figure a chunk is admitted on before its call, for as many chunks as are left (each is a call of its own, with the fixed instruction around it).
+  const perChunk = chunkExpectedUsage(Math.ceil(bytes / calls));
+  const inputTokens = perChunk.inputTokens * calls;
+  const outputTokens = perChunk.outputTokens * calls;
+  const priced = deps.price !== undefined && (Number(deps.price.inputPerMTok) > 0 || Number(deps.price.outputPerMTok) > 0);
+  return { ...status, estimate: { calls, inputTokens, outputTokens, cost: priced ? aiCost([{ inputTokens, outputTokens }], deps.price) : null } };
 }
 
-const TRANSLATE_SYSTEM: SystemActor = { type: 'system', component: 'meetings.translate' };
-// One result row holds at most this many characters (member_vy_result.body, a database check): a run that has more keeps what fits and the next run goes on.
-const TRANSLATE_RESULT_MAX = 100_000;
+// The member's Vy translating the next batch of the transcript they read, in the member's own request (E2, #3185, ADR-0049 stage A: the same interactive shape as the summary, a few
+// chunks at a time, and the page asks again while it is open):
+//   1. meetings.translation.transcript_start, as the member: the deployment's switch, a transcript they read with lines left, one run at a time; then the kernel's run.start (vy.use, the
+//      kill switches, the budget) makes the member's Vy and this run. Nothing is read or sent before it succeeds;
+//   2. meetings.translation.transcript_source: the text of the batch's lines in the member's own context (a sensitive read, audited), so only what the member reads;
+//   3. each chunk to the model, outside any transaction, through the member's own meter under meetings.translate, which admits it on its projected cost before the call (a chunk that would
+//      reach a hard-stop budget is refused and the chunks finished before it are kept); the answer is checked line by line in code (packages/agent member-vy/meeting-translation.ts);
+//   4. the checked parts stored with kernel.member_vy.result.store in the member's own session, then meetings.translation.copy_result, the member's own command, merges them into their
+//      private row (tainted, named after the run), held to the lines and their text as they are now.
+// Neither the text nor the answer is ever logged: a failure is named by a fixed code. A translation creates no task, mail, post, webhook, search hit or export.
+export interface TranscriptTranslationDeps extends MeetingTranslationDeps {
+  // After this many milliseconds on the first chunk the second is left for the next request, so one request stays well inside any deadline in front of it.
+  slowFirstChunkMs?: number;
+}
 
-// The meter of one run: admission enters the member's context again (it refuses on a switch or a spent budget, and on the projected cost of the chunk about to be sent); the record is the
-// system's row for the run's agent (ids, the feature, tokens and the cost; never text).
-class TranslateMeter implements AiMeter {
-  private readonly deps: MeetingsTranslateDeps;
-  private readonly vy: MemberVyRuntime;
-  private readonly job: MeetingsTranslateJob;
+const SLOW_FIRST_CHUNK_MS = 40_000;
 
-  constructor(deps: MeetingsTranslateDeps, vy: MemberVyRuntime, job: MeetingsTranslateJob) {
-    this.deps = deps;
-    this.vy = vy;
-    this.job = job;
+export async function runTranscriptTranslation(deps: TranscriptTranslationDeps, orgId: string, actor: UserActor, meetingId: string): Promise<TranscriptTranslated> {
+  const as = { actor, orgId };
+  const timeoutMs = deps.timeoutMs ?? SUMMARY_TIMEOUT_MS;
+  const model = deps.model;
+  const meter = deps.meter(actor);
+  if (!model || !meter) throw new DomainError('TRANSLATE_OFF', 422, 'Translation by Vy is not turned on here');
+  // A member who cannot translate this (the switch is off, no transcript they read) is refused with the precise answer before a ticket is taken (so a member cannot use up the org's few
+  // requests a minute by asking about meetings they do not read).
+  const allowed = await deps.runtime.query<TranscriptTranslationStatus & { bytes: number }>('meetings.translation.transcript_status', { meetingId }, as);
+  if (!allowed.enabled) {
+    if (allowed.reason === 'nothing') throw new DomainError('TRANSLATION_NOTHING', 422, 'There is no transcript to translate');
+    throw new DomainError('TRANSLATE_OFF', 422, 'Translation by Vy is not turned on here');
   }
-
-  async admit(call: AiCall): Promise<void> {
-    const projected = call.expected ? aiCost([call.expected], this.deps.price) : '0';
+  const ticket = deps.budget.take(orgId, actor.userId);
+  if (!ticket.allowed) throw new DomainError('SUMMARY_BUSY', 429, 'Vy is busy; try again in a few minutes', { retryAfterSeconds: ticket.retryAfterSeconds });
+  try {
+    // 1. The checks come first. A refusal here has made no run.
+    const started = await deps.runtime.execute<TranscriptStarted>('meetings.translation.transcript_start', { meetingId }, as);
+    const runId = started.runId;
+    const fail = async (errorCode: string): Promise<TranscriptTranslated> => {
+      try {
+        await deps.runtime.execute('kernel.member_vy.result.store', { runId, outcome: { status: 'failed', errorCode } }, as);
+      } catch (storeError: unknown) {
+        // The run stays open until it expires; the caller still gets the failure, and only the codes are logged.
+        console.error(`[meetings-translate-transcript] failed result not stored: ${codeOf(storeError)}`);
+      }
+      console.error(`[meetings-translate-transcript] run failed: ${errorCode}`);
+      return { meetingId, runId, state: 'failed', errorCode, translated: 0, remaining: started.remaining };
+    };
+    const parts: Array<{ k: string; h: string; t: string; s: 'ok' | 'warn' | 'refused'; c: Array<'MISSING' | 'EMPTY' | 'TOO_LONG' | 'UNCHANGED' | 'INVENTED_NUMBER' | 'CONTACT_ADDED' | 'NUMBER_DROPPED' | 'NAME_ADDED'> }> = [];
     try {
-      await this.vy.query('kernel.member_vy.run.check', /^0+(?:\.0+)?$/.test(projected) ? {} : { projectedCost: projected });
+      // 2. The text the member reads, in their own context.
+      const source = await deps.runtime.query<TranscriptSource>('meetings.translation.transcript_source', { meetingId, lineIds: started.lineIds }, as);
+      if (source.lines.length === 0) return await fail('TRANSLATION_STALE');
+      // 3. Each chunk behind the meter, in the scope of this run; a refused or failed chunk after the first keeps the ones finished.
+      const ports: Ports = { model, memory: nothingToRemember, knowledge: noKnowledge };
+      const bound = bindPorts({ orgId, memberUserId: actor.userId }, ports);
+      const slowMs = deps.slowFirstChunkMs ?? SLOW_FIRST_CHUNK_MS;
+      for (const [index, lines] of planTranscriptChunks(source.lines).entries()) {
+        const began = Date.now();
+        try {
+          const done = await withDeadline(
+            withAiScope({ orgId, memberRunId: runId, meter }, () => translateTranscriptChunk({ lines, from: started.from, to: started.to }, bound)),
+            timeoutMs,
+          );
+          parts.push(...done.parts);
+        } catch (error: unknown) {
+          if (parts.length === 0) throw error;
+          console.log(`[meetings-translate-transcript] stopped after ${parts.length} lines: ${codeOf(error)}`);
+          break;
+        }
+        if (index === 0 && Date.now() - began > slowMs) break;
+      }
     } catch (error: unknown) {
-      if (error instanceof DomainError && error.code === 'BUDGET_EXHAUSTED') throw new AiBudgetExhaustedError('module', null);
+      // Any failure before a part exists is named by a fixed code and stored as the run's failed result (a refusal of a read included: the run must not stay open).
+      return await fail(error instanceof SummaryModelError ? 'TRANSLATE_TIMEOUT' : codeOf(error));
+    }
+    // 4. Stored in the member's own Vy result, bound to this run. The kernel re-checks the switches and the budget here and may keep the text out: its answer is the state.
+    const body = JSON.stringify({ v: 1, kind: 'transcript', from: started.from, to: started.to, stage: started.stage, parts });
+    zTranscriptTranslationResult.parse(JSON.parse(body));
+    let stored: { stored: boolean; status: 'ready' | 'failed' };
+    try {
+      stored = await deps.runtime.execute<{ stored: boolean; status: 'ready' | 'failed' }>('kernel.member_vy.result.store', { runId, outcome: { status: 'ready', body } }, as);
+    } catch (error: unknown) {
+      // The member stopped the run while the model worked: the batch is lost, nothing else.
+      if (error instanceof DomainError && error.code === 'VY_RUN_NOT_LIVE') return { meetingId, runId, state: 'failed', errorCode: 'RUN_CANCELLED', translated: 0, remaining: started.remaining };
+      return await fail(codeOf(error));
+    }
+    if (stored.status === 'failed') {
+      console.error('[meetings-translate-transcript] run failed: AI_STOPPED');
+      return { meetingId, runId, state: 'failed', errorCode: 'AI_STOPPED', translated: 0, remaining: started.remaining };
+    }
+    // The member's own copy into their private row: held to the lines as they are now, tainted. A line corrected meanwhile is a stale part, said in fixed words.
+    let kept = 0;
+    try {
+      kept = (await deps.runtime.execute<{ segments: number }>('meetings.translation.copy_result', { meetingId, runId }, as)).segments;
+    } catch (error: unknown) {
+      if (error instanceof DomainError && error.code === 'TRANSLATION_STALE') return { meetingId, runId, state: 'failed', errorCode: 'TRANSLATION_STALE', translated: 0, remaining: started.remaining };
       throw error;
     }
+    const after = await deps.runtime.query<TranscriptTranslationStatus & { bytes: number }>('meetings.translation.transcript_status', { meetingId }, as);
+    return { meetingId, runId, state: 'ready', errorCode: null, translated: kept, remaining: after.remaining };
+  } finally {
+    ticket.release();
   }
-
-  async record(call: AiCall, usage: AiUsage): Promise<void> {
-    await this.deps.runtime.execute(
-      'kernel.ai.usage.record',
-      { feature: call.feature, module: call.module, agentId: this.job.agentId, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, cost: aiCost([usage], this.deps.price) },
-      { actor: TRANSLATE_SYSTEM, orgId: this.job.orgId },
-    );
-  }
-}
-
-// The fixed word a failure is stored under: a word of the kernel's list (the database checks the same one), never the error's text. The list has no word of its own for a translation, so a
-// failure of the model or of its answer takes the nearest existing word and the screen of a translation reads it as a translation's (a new word is a change of the database's list).
-function translateFailureCode(error: unknown): ReturnType<typeof failureCode> {
-  if (error instanceof TranslationModelError) return error.kind === 'timeout' ? 'TRANSCRIBE_TIMEOUT' : 'TRANSCRIBE_FAILED';
-  if (error instanceof TranslationError) return 'TRANSCRIBE_INVALID_RESPONSE';
-  return failureCode(error);
-}
-
-interface TextLines {
-  language: string;
-  lines: Array<{ id: string; text: string }>;
-}
-
-// One run, start to end. Returns the state it left the run in; never throws for a failed run (the failure is stored), only for a lost database.
-export async function runMeetingsTranslate(deps: MeetingsTranslateDeps, job: MeetingsTranslateJob): Promise<'succeeded' | 'failed'> {
-  const vy = memberVyRuntime(deps.runtime, job.orgId, { agentId: job.agentId, runId: job.runId });
-  const timeoutMs = deps.timeoutMs ?? SUMMARY_TIMEOUT_MS;
-  let code: string | null = null;
-  try {
-    const open = () => vy.execute<TextLines>('kernel.member_vy.meeting_audio.open', { meetingId: job.meetingId, text: { stage: job.stage } });
-    const first = await open();
-    const from: 'vi' | 'en' = first.language === 'en' ? 'en' : 'vi';
-    const to: 'vi' | 'en' = from === 'vi' ? 'en' : 'vi';
-    // The lines this run was asked for, in the order of the transcript, cut into chunks by the rule the estimate before the click uses.
-    const wanted = new Set(job.lineIds);
-    const chunks = planTranscriptChunks(first.lines.filter((l) => wanted.has(l.id)));
-    if (chunks.length === 0) throw new DomainError('TRANSCRIPT_EMPTY', 422, 'There is nothing left to translate');
-    const scope = { orgId: job.orgId, agentId: job.agentId, memberRunId: job.runId, meter: new TranslateMeter(deps, vy, job) };
-    const ports: Ports = { model: deps.model, memory: nothingToRemember, knowledge: noKnowledge };
-    const bound = bindPorts({ orgId: job.orgId, memberUserId: job.memberUserId }, ports);
-    const parts: Array<{ k: string; h: string; t: string; s: 'ok' | 'warn' | 'refused'; c: Array<'MISSING' | 'EMPTY' | 'TOO_LONG' | 'UNCHANGED' | 'INVENTED_NUMBER' | 'CONTACT_ADDED' | 'NUMBER_DROPPED' | 'NAME_ADDED'> }> = [];
-    for (const [index, chunk] of chunks.entries()) {
-      // The door again for every chunk: the whole gate is re-checked, and the text is the text as it is now (a line corrected meanwhile is translated as corrected, or gone).
-      const fresh = index === 0 ? first : await open();
-      const byId = new Map(fresh.lines.map((l) => [l.id, l.text]));
-      const lines = chunk.flatMap((l) => (byId.has(l.id) ? [{ id: l.id, text: byId.get(l.id) as string }] : []));
-      if (lines.length === 0) continue;
-      try {
-        const done = await withDeadline(
-          withAiScope(scope, () => translateTranscriptChunk({ lines, from, to }, bound)),
-          timeoutMs,
-        );
-        parts.push(...done.parts);
-      } catch (error: unknown) {
-        // A refused chunk (a hard-stop budget the next call would reach) or a failed one stops the run; the chunks finished before it are kept, and with none there is nothing to keep.
-        if (parts.length === 0) throw error;
-        console.log(`[meetings-translate] org ${job.orgId.slice(0, 8)} run ${job.runId.slice(0, 8)} stopped after ${parts.length} lines: ${translateFailureCode(error)}`);
-        break;
-      }
-    }
-    // What fits one result row: the parts in order up to its limit; the rest is for the next run (the parts kept are never asked for twice).
-    let body = '';
-    while (parts.length > 0) {
-      body = JSON.stringify({ v: 1, kind: 'transcript', from, to, stage: job.stage, parts });
-      if (body.length <= TRANSLATE_RESULT_MAX) break;
-      parts.pop();
-    }
-    if (parts.length === 0) throw new DomainError('TRANSCRIPT_TOO_LONG', 422, 'A part is longer than a result holds');
-    // What is stored is exactly what the member's copy accepts: a result that would fail the copy fails the run here, with a fixed code.
-    zTranscriptTranslationResult.parse(JSON.parse(body));
-    const stored = await vy.execute<{ stored: boolean; status: 'ready' | 'failed' }>('kernel.member_vy.result.store', { runId: job.runId, outcome: { status: 'ready', body } });
-    // A kill switch or a spent budget that appeared since the last admit makes the store keep a failed result, not the text: the run is failed too.
-    if (!stored.stored) code = 'AI_STOPPED';
-  } catch (error: unknown) {
-    code = translateFailureCode(error);
-    // Best effort: when the context itself is refused (the member left, a switch is on) there is nothing to write and the finish below fails the result.
-    await vy.execute('kernel.member_vy.result.store', { runId: job.runId, outcome: { status: 'failed', errorCode: code } }).catch(() => undefined);
-  }
-  await deps.runtime.execute('kernel.member_vy.run.finish', { runId: job.runId, errorCode: code }, { actor: TRANSLATE_SYSTEM, orgId: job.orgId }).catch((error: unknown) => {
-    console.error(`[meetings-translate] org ${job.orgId.slice(0, 8)} could not close run ${job.runId.slice(0, 8)}`, error instanceof DomainError ? error.code : error instanceof Error ? error.name : 'error');
-  });
-  console.log(`[meetings-translate] org ${job.orgId.slice(0, 8)} run ${job.runId.slice(0, 8)} ${code === null ? 'succeeded' : `failed ${code}`}`);
-  return code === null ? 'succeeded' : 'failed';
 }

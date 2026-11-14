@@ -43,7 +43,6 @@ const STATUS: TranscriptTranslationStatus = {
   state: 'none',
   runId: null,
   errorCode: null,
-  needsCopy: false,
   estimate: { calls: 20, inputTokens: 26000, outputTokens: 21000, cost: '0.0123' },
 };
 const METER = { aiOn: true, state: 'ok', percent: 10, scope: null, resetAt: '2026-12-01T00:00:00Z' };

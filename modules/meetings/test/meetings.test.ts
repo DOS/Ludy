@@ -136,6 +136,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.translation.status',
       'meetings.translation.get',
       'meetings.translation.transcript_status',
+      'meetings.translation.transcript_source',
       'meetings.translation.transcript_get',
       'meetings.link.list',
       'meetings.link.by_target',

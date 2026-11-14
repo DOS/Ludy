@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The machine translation of a meeting's transcript on its page (meetings integrations E2, #3185, plan section 7a). Any reader can ask for a translation of the lines they read, and the
-// recorder for their own draft: "Dịch sang ..." starts a background run of the member's own Vy over chunks of the lines. One run takes a batch of chunks and keeps what it finished, so while
-// this page is open it starts the next batch as each one ends, until the transcript is translated, a chunk is refused for the budget ("Chờ ngân sách AI"), the member stops it or a run
+// recorder for their own draft: "Dịch sang ..." asks the member's own Vy, in the member's own request, to translate the next batch of chunks of the lines and keep what it finished. While
+// this page is open it asks again as each batch ends, until the transcript is translated, a chunk is refused for the budget ("Chờ ngân sách AI"), the member stops it or a request
 // fails; with the page closed the next click goes on from the parts already kept. The translation sits under each original line as "Bản dịch máy", never in its place, only the member who
 // asked reads it, and it is never the source of a task, mail, post, webhook, search hit or export.
 import { useMutation, useQuery } from '@tanstack/react-query';
@@ -16,8 +16,7 @@ import { translateBlocked } from './meeting-translation.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 
 type Part = TranscriptTranslationView['parts'][number];
-const POLL_MS = 4000;
-const KNOWN_CODES = ['AI_BUDGET_EXHAUSTED', 'AI_STOPPED', 'TRANSCRIBE_TIMEOUT', 'TRANSCRIBE_FAILED', 'TRANSCRIBE_INVALID_RESPONSE', 'TRANSCRIPT_EMPTY', 'TRANSCRIPT_TOO_LONG', 'RUN_ENDED', 'RUN_CANCELLED', 'TRANSLATE_RUNNING', 'TRANSLATION_DONE', 'TRANSLATION_STALE'] as const;
+const KNOWN_CODES = ['AI_BUDGET_EXHAUSTED', 'AI_STOPPED', 'TRANSLATE_TIMEOUT', 'TRANSLATE_FAILED', 'TRANSLATE_UNPARSABLE', 'TRANSLATE_EMPTY', 'TRANSLATE_TOO_LONG', 'TRANSLATION_TOO_LARGE', 'RUN_ENDED', 'RUN_CANCELLED', 'TRANSLATE_RUNNING', 'TRANSLATION_DONE', 'TRANSLATION_STALE'] as const;
 type KnownCode = (typeof KNOWN_CODES)[number];
 const knownCode = (code: unknown): KnownCode | 'default' => ((KNOWN_CODES as readonly string[]).includes(code as string) ? (code as KnownCode) : 'default');
 
@@ -57,21 +56,16 @@ export function TranslatedLine({ part, to }: { part: Part; to: string }) {
 export function TranscriptTranslationPanel({ meetingId }: { meetingId: string }) {
   const t = useTranslations('meetings.transcript.translation');
   const f = useFormat();
-  const status = useQuery({
-    ...orpc.meetings.translation.transcriptStatus.queryOptions({ input: { meetingId } }),
-    refetchOnWindowFocus: false,
-    refetchInterval: (q) => (q.state.data?.state === 'running' ? POLL_MS : false),
-  });
+  const status = useQuery({ ...orpc.meetings.translation.transcriptStatus.queryOptions({ input: { meetingId } }), refetchOnWindowFocus: false });
   const meter = useQuery({ ...orpc.ai.meter.queryOptions({ input: { module: 'meetings' } }), staleTime: 15_000 });
   // On while this page goes on from one batch to the next; off at the end, at a failure, at a refusal and at the member's stop.
   const [auto, setAuto] = useState(false);
-  const askedRuns = useRef(new Set<string>());
   const lastRemaining = useRef<number | null>(null);
-  const start = useMutation({
-    mutationFn: () => orpc.meetings.translation.transcriptStart.call({ meetingId }),
-    // The mutation stays pending until the status is read again, so the effect below never sees the status of the run that just ended.
+  const translate = useMutation({
+    mutationFn: () => orpc.meetings.translation.transcriptTranslate.call({ meetingId }),
+    // The mutation stays pending until the status is read again, so the screen never shows the state before the batch that just ended.
     onSuccess: refresh,
-    // A second start that races the first (a double click, another tab) is refused because a run is live: the loop goes on with the run that is.
+    // A second request that races the first (a double click, another tab) is refused because a run is live: the loop goes on with the run that is.
     onError: (error) => {
       if ((error as { code?: unknown } | null)?.code !== 'TRANSLATE_RUNNING') setAuto(false);
     },
@@ -83,41 +77,30 @@ export function TranscriptTranslationPanel({ meetingId }: { meetingId: string })
       return refresh();
     },
   });
-  const copy = useMutation({
-    mutationFn: (runId: string) => orpc.meetings.translation.transcriptCopy.call({ meetingId, runId }),
-    onSuccess: refresh,
-    onError: () => setAuto(false),
-  });
   const data = status.data;
-  // A finished run's parts are kept by the member's own copy, once for each run.
+  const last = translate.data;
+  // The next batch, while the one before it kept parts and lines are left. A batch that kept nothing more ends the loop, so a model that keeps skipping lines costs one request, not many.
   useEffect(() => {
-    if (data?.needsCopy && data.runId && !askedRuns.current.has(data.runId)) {
-      askedRuns.current.add(data.runId);
-      copy.mutate(data.runId);
-    }
-  }, [data?.needsCopy, data?.runId, copy]);
-  // The next batch, while a batch ended with parts kept and lines are left. A batch that kept nothing more ends the loop, so a model that keeps skipping lines costs one run, not many.
-  useEffect(() => {
-    if (!auto || !data || start.isPending || copy.isPending || stop.isPending) return;
-    if (data.state === 'running' || data.needsCopy) return;
-    if (data.state === 'failed' || data.remaining === 0 || (lastRemaining.current !== null && data.remaining >= lastRemaining.current)) {
+    if (!auto || translate.isPending || stop.isPending || !last) return;
+    if (last.state === 'failed' || last.remaining === 0 || (lastRemaining.current !== null && last.remaining >= lastRemaining.current)) {
       setAuto(false);
       return;
     }
-    lastRemaining.current = data.remaining;
-    start.mutate();
-  }, [auto, data, start, copy.isPending, stop.isPending]);
+    lastRemaining.current = last.remaining;
+    translate.mutate();
+  }, [auto, translate, stop.isPending, last]);
   // Nothing to show before the server has answered; a deployment without Meetings has no status data, so no panel at all.
   if (!data) return null;
   const blocked = translateBlocked(data, meter.data);
-  const running = data.state === 'running';
+  const running = translate.isPending || auto || data.state === 'running';
   const label = data.to === 'en' ? t('toEnglish') : t('toVietnamese');
   const begun = data.translated > 0 || data.stale > 0;
   const finished = begun && data.remaining === 0;
   const cost = data.estimate?.cost ?? null;
   const calls = data.estimate?.calls ?? 0;
-  const failure = data.state === 'failed' ? knownCode(data.errorCode) : null;
-  const error = start.error ?? copy.error ?? stop.error;
+  const failureCode = last?.state === 'failed' ? last.errorCode : data.state === 'failed' ? data.errorCode : null;
+  const failure = failureCode !== null && !running ? knownCode(failureCode) : null;
+  const error = translate.error ?? stop.error;
   const errorCode = (error as { code?: unknown } | null)?.code;
   return (
     <div className="space-y-2 rounded-lg border p-3" data-testid="transcript-translation" data-stage={data.stage ?? undefined}>
@@ -133,7 +116,15 @@ export function TranscriptTranslationPanel({ meetingId }: { meetingId: string })
             {t('running')}
           </p>
           <p className="text-xs text-muted-foreground">{t('stopHint')}</p>
-          <Button size="sm" variant="outline" loading={stop.isPending} onClick={() => stop.mutate()}>
+          <Button
+            size="sm"
+            variant="outline"
+            loading={stop.isPending}
+            onClick={() => {
+              setAuto(false);
+              stop.mutate();
+            }}
+          >
             {t('stop')}
           </Button>
         </div>
@@ -146,14 +137,14 @@ export function TranscriptTranslationPanel({ meetingId }: { meetingId: string })
           <Button
             size="sm"
             variant={begun ? 'outline' : 'default'}
-            loading={start.isPending}
-            disabled={blocked !== null || start.isPending || copy.isPending}
+            loading={translate.isPending}
+            disabled={blocked !== null || translate.isPending}
             onClick={() => {
               stop.reset();
-              copy.reset();
+              translate.reset();
               lastRemaining.current = data.remaining;
               setAuto(true);
-              start.mutate();
+              translate.mutate();
             }}
           >
             {begun ? t('continue') : label}
@@ -168,8 +159,8 @@ export function TranscriptTranslationPanel({ meetingId }: { meetingId: string })
           )}
         </div>
       )}
-      {failure && !running && <ErrorText>{`${t('failed')} ${t(`codes.${failure}`)}`}</ErrorText>}
-      {error && !running && <ErrorText>{(knownCode(errorCode) !== 'default' ? t(`codes.${knownCode(errorCode) as KnownCode}`) : errorMessage(error))}</ErrorText>}
+      {failure && <ErrorText>{`${t('failed')} ${t(`codes.${failure}`)}`}</ErrorText>}
+      {error && !running && <ErrorText>{knownCode(errorCode) !== 'default' ? t(`codes.${knownCode(errorCode) as KnownCode}`) : errorMessage(error)}</ErrorText>}
       <p className="text-xs text-muted-foreground">{t('private')}</p>
     </div>
   );

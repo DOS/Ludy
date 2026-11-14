@@ -10,7 +10,9 @@ import {
   TRANSCRIPT_TRANSLATE_CHUNK_BYTES,
   zMeetingRef,
   zTranscriptParts,
-  zTranscriptTranslateStarted,
+  zTranscriptSource,
+  zTranscriptSourceRef,
+  zTranscriptStarted,
   zTranscriptTranslateStopped,
   zTranscriptTranslationStatus,
   zTranscriptTranslationView,
@@ -21,6 +23,7 @@ import {
   zTranslations,
   type MeetingLanguage,
   type TranscriptPart,
+  type TranscriptSource,
   type TranscriptTranslationStatus,
   type TranscriptTranslationView,
   type TranslationSegment,
@@ -37,7 +40,7 @@ type Stage = 'draft' | 'published';
 
 // One start or stop of a member's translation at a time: a transaction-level advisory lock per (org, member), as the transcription's (#3033). Without it two starts (two tabs) both pass the
 // "a run is live" check before either commits, and the second supersedes the first run. Released at commit or rollback.
-async function lockTranslation(trx: Trx, orgId: string, userId: string): Promise<void> {
+export async function lockTranslation(trx: Trx, orgId: string, userId: string): Promise<void> {
   await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`meetings.translate:${orgId}:${userId}`}, 0))`.execute(trx);
 }
 
@@ -206,9 +209,14 @@ export const translationGet = defineQuery({
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 // The transcript (meetings integrations E2, #3185): a background run of the member's Vy over chunks of the lines the member reads
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------
-// A run takes the next batch of lines that have no current translation (at most TRANSCRIPT_TRANSLATE_CHUNKS_PER_RUN chunks), so what an earlier run kept is never paid for twice and a
-// run that stops (a refused chunk, a stop, a lost job) loses nothing but the batch in flight. The run reads the text through the door the kernel gives it (it reads no table); the
-// member's own copy command (translate.ts) keeps its parts in the member's row. Nothing here reads a private result row: the state of a run is the kernel's own (run.latest).
+// A request takes the next batch of lines that have no current translation (at most TRANSCRIPT_TRANSLATE_CHUNKS_PER_RUN whole chunks), so what an earlier request kept is never paid
+// for twice and a request that stops (a refused chunk, a stop, a failure) loses nothing but the batch in flight. The member's own request reads the text through the source query
+// below (in the member's own context, so only what the member reads), and the member's own copy command (translate.ts) keeps its parts in the member's row. Nothing here reads a private
+// result row: the state of a run is the kernel's own (run.latest).
+
+// The most the member's transcript row may hold, in UTF-8 bytes of its JSON (the table allows 400000 bytes of jsonb: a margin is left for jsonb's own overhead). A transcript past it is
+// refused whole before any money is spent on it, never kept cut.
+export const TRANSCRIPT_ROW_BYTES_MAX = 300_000;
 
 /** The hash of a line's text a stored part names it by (the first 16 hex digits of its sha256): a corrected line has another one and its part then reads as stale. The run computes the same. */
 export function lineHash(text: string): string {
@@ -235,9 +243,6 @@ function chunkLines<T extends { text: string }>(lines: readonly T[]): T[][] {
   if (current.length > 0) chunks.push(current);
   return chunks;
 }
-// The most lines one run's event carries (ids only, never text).
-const BATCH_LINES_MAX = 400;
-
 export interface TranscriptLine {
   id: string;
   text: string;
@@ -323,7 +328,7 @@ export const transcriptTranslationStatus = defineQuery({
     await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     if (!meeting) throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
     const from = meeting.language as MeetingLanguage;
-    const empty = { meetingId: input.meetingId, stage: null, from, to: otherLanguage(from), lines: 0, translated: 0, stale: 0, remaining: 0, chunksTotal: 0, chunksDone: 0, state: 'none' as const, runId: null, errorCode: null, needsCopy: false, estimate: null };
+    const empty = { meetingId: input.meetingId, stage: null, from, to: otherLanguage(from), lines: 0, translated: 0, stale: 0, remaining: 0, chunksTotal: 0, chunksDone: 0, state: 'none' as const, runId: null, errorCode: null, estimate: null };
     const read = await readTranscriptLines(ctx.trx, ctx.orgId, input.meetingId);
     const off = !isSummaryEnabled();
     if (!read) return { ...zTranscriptTranslationStatus.parse({ ...empty, enabled: false, reason: off ? 'off' : 'nothing' }), bytes: 0 };
@@ -332,16 +337,6 @@ export const transcriptTranslationStatus = defineQuery({
     const chunksLeft = chunkLines(state.remaining).length;
     const latest = await ctx.query<{ runId: string; state: 'running' | 'ready' | 'failed'; errorCode: string | null } | null>('kernel.member_vy.run.latest', { feature: TRANSLATE_FEATURE, subjectType: 'meeting', subjectId: input.meetingId });
     const run = latest.status === 'ok' ? latest.value : null;
-    // A finished run whose parts are not kept yet (the page asks for the copy once). A summary translation of this meeting is a run of the same feature: its row names it, so it is not asked for again.
-    const summaryRuns = await ctx.trx
-      .selectFrom('crove_meetings.translation')
-      .select('source_run_id')
-      .where('org_id', '=', ctx.orgId)
-      .where('meeting_id', '=', input.meetingId)
-      .where('member_user_id', '=', userId)
-      .where('kind', '=', 'summary')
-      .execute();
-    const copied = run !== null && (run.runId === state.kept.runId || summaryRuns.some((r) => r.source_run_id === run.runId));
     const bytes = state.remaining.reduce((n, l) => n + lineWeight(l.text), 0);
     return {
       ...zTranscriptTranslationStatus.parse({
@@ -360,7 +355,6 @@ export const transcriptTranslationStatus = defineQuery({
         state: run?.state ?? 'none',
         runId: run?.runId ?? null,
         errorCode: run?.errorCode ?? null,
-        needsCopy: run !== null && run.state === 'ready' && !copied,
         estimate: null,
       }),
       bytes,
@@ -396,15 +390,15 @@ export const transcriptTranslationGet = defineQuery({
   },
 });
 
-// Starts the member's own Vy run over the next batch of lines they read that still need a translation: any member who reads the stage (the recorder for their draft), with the switch on.
-// The kernel's run.start checks vy.use, the org, module and agent kill switches, the global ai switch and the budget, makes the member's Vy and this run and binds its subject to this
-// meeting; the event carries ids only (the meeting, the run, the agent, the stage and the ids of the lines), and the worker reads the text through the door. A member has one translation
-// run at a time (the summary's included): a live one refuses this start. The click is the person's approval of the spend (R2, as the transcription's start).
+// Starts a request of the member's own Vy over the next batch of lines they read that still need a translation: any member who reads the stage (the recorder for their draft), with the
+// switch on. The kernel's run.start checks vy.use, the org, module and agent kill switches, the global ai switch and the budget, makes the member's Vy and this run and binds its subject to
+// this meeting; nothing is read or sent here. The route that calls the model (apps/kernel) reads the text with the source query after it, so a refusal here makes no read and no call.
+// A member has one translation run at a time (the summary's included): a live one refuses this start.
 export const transcriptTranslateStart = defineCommand({
   name: 'meetings.translation.transcript_start',
   input: zMeetingRef,
-  risk: 'R2',
-  sideEffect: 'external',
+  risk: 'R1',
+  sideEffect: 'internal',
   access: ROLES,
   target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
   handler: async (ctx, input) => {
@@ -417,27 +411,33 @@ export const transcriptTranslateStart = defineCommand({
     if (!read) throw new DomainError('TRANSLATION_NOTHING', 422, 'There is no transcript to translate');
     const state = await transcriptState(ctx, userId, input.meetingId, read);
     if (state.remaining.length === 0) throw new DomainError('TRANSLATION_DONE', 409, 'The transcript is already translated');
-    // The next batch: the first chunks of what is left, whole (the run cuts the lines it is given by the same rule, so it sends exactly these chunks and no chunk is split between two runs),
-    // at most the chunks one run takes and never more lines than the event carries.
-    const batch: TranscriptLine[] = [];
-    for (const chunk of chunkLines(state.remaining).slice(0, TRANSCRIPT_TRANSLATE_CHUNKS_PER_RUN)) {
-      if (batch.length > 0 && batch.length + chunk.length > BATCH_LINES_MAX) break;
-      batch.push(...chunk);
-    }
+    // A row that is nearly full cannot take the next batch: refused before it is paid for, not after (the copy checks the same limit).
+    if (utf8.encode(JSON.stringify(state.kept.parts)).length > TRANSCRIPT_ROW_BYTES_MAX - 60_000) throw new DomainError('TRANSLATION_TOO_LARGE', 422, 'The translation is larger than a row holds');
+    // The next batch: the first chunks of what is left, whole (the request cuts the lines it is given by the same rule, so it sends exactly these chunks and no chunk is split between two
+    // requests), at most the chunks one request takes.
+    const batch: TranscriptLine[] = chunkLines(state.remaining).slice(0, TRANSCRIPT_TRANSLATE_CHUNKS_PER_RUN).flat();
     await lockTranslation(ctx.trx, ctx.orgId, userId);
     const live = await ctx.query<{ live: boolean }>('kernel.member_vy.run.live', { feature: TRANSLATE_FEATURE });
     if (live.status !== 'ok' || live.value.live) throw new DomainError('TRANSLATE_RUNNING', 409, 'A translation of yours is still running; wait for it to finish or stop it');
     const started = await ctx.run<{ runId: string }>('kernel.member_vy.run.start', { feature: TRANSLATE_FEATURE, subjectType: 'meeting', subjectId: input.meetingId });
-    const agent = await ctx.trx
-      .selectFrom('crove_kernel.agent')
-      .select('id')
-      .where('org_id', '=', ctx.orgId)
-      .where('kind', '=', 'member_vy')
-      .where('member_user_id', '=', userId)
-      .executeTakeFirstOrThrow();
-    await ctx.emit('meetings.translate_run.requested', { meetingId: input.meetingId, runId: started.runId, agentId: agent.id, memberUserId: userId, stage: read.stage, lineIds: batch.map((l) => l.id) });
     ctx.audit({ meetingId: input.meetingId, runId: started.runId, stage: read.stage, lines: batch.length });
-    return zTranscriptTranslateStarted.parse({ meetingId: input.meetingId, runId: started.runId, lines: batch.length });
+    return zTranscriptStarted.parse({ meetingId: input.meetingId, runId: started.runId, stage: read.stage, from: read.from, to: read.to, remaining: state.remaining.length, lineIds: batch.map((l) => l.id) });
+  },
+});
+
+// The text of the lines a request translates, as the caller reads them now (RLS shows a member the lines they read and no others, so a forged id of a line they do not read is simply
+// not there). A sensitive read, so each one leaves an audit row naming the meeting (as the summary's source query does).
+export const transcriptTranslationSource = defineQuery({
+  name: 'meetings.translation.transcript_source',
+  input: zTranscriptSourceRef,
+  access: ROLES,
+  sensitive: true,
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx, input): Promise<TranscriptSource> => {
+    userOf(ctx.actor);
+    const read = await readTranscriptLines(ctx.trx, ctx.orgId, input.meetingId);
+    const wanted = new Set(input.lineIds);
+    return zTranscriptSource.parse({ meetingId: input.meetingId, lines: (read?.lines ?? []).filter((l) => wanted.has(l.id)) });
   },
 });
 
@@ -463,4 +463,4 @@ export const transcriptTranslateStop = defineCommand({
 });
 
 export const translateRunCommands = [translateStart, transcriptTranslateStart, transcriptTranslateStop];
-export const translateRunQueries = [translationSource, translationStatus, translationGet, transcriptTranslationStatus, transcriptTranslationGet];
+export const translateRunQueries = [translationSource, translationStatus, translationGet, transcriptTranslationStatus, transcriptTranslationSource, transcriptTranslationGet];

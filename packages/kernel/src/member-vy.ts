@@ -521,11 +521,17 @@ async function ownAgent(ctx: Pick<QueryContext, 'trx' | 'orgId'>, userId: string
   return row?.id ?? null;
 }
 
+// At most 1e9, six decimals (the cap the Platform PO asked for); anything else is refused by the input check.
+const PROJECTED_COST = z.string().regex(/^(?:\d{1,9}(?:\.\d{1,6})?|1000000000(?:\.0{1,6})?)$/);
+const ZERO_COST = /^0+(?:\.0+)?$/;
+
 export type MemberVyMeterCheck = { allowed: true } | { allowed: false; scope: 'org' | 'module' | 'agent'; retryAt: string };
 
 export const memberVyMeterCheck = defineQuery({
   name: 'kernel.member_vy.meter.check',
-  input: z.object({ feature: z.enum(FEATURE_KEYS) }),
+  // A call that knows its cost (a transcript translation chunk, #3185) also sends that `projectedCost`, and the check refuses it before the call is made when it would REACH a
+  // hard-stop budget: the rule of run.check below (spent + projected >= the limit), here for the member's own request. A missing or zero projection is the check as it was.
+  input: z.object({ feature: z.enum(FEATURE_KEYS), projectedCost: PROJECTED_COST.optional() }),
   access: MEMBER_ROLES,
   handler: async (ctx: QueryContext, input): Promise<MemberVyMeterCheck> => {
     const userId = requireUser(ctx);
@@ -544,11 +550,13 @@ export const memberVyMeterCheck = defineQuery({
              crove_kernel.global_kill_switch_on('ai') AS global`.execute(ctx.trx);
     if (switches[0]?.scope) return { allowed: false, scope: switches[0].scope, retryAt };
     if (switches[0]?.global) return { allowed: false, scope: 'org', retryAt };
+    // The sum is decimal arithmetic in the database (numeric), never a JS number; no projection counts as zero (the entry's own rule: spent >= limit).
+    const projected = input.projectedCost === undefined || ZERO_COST.test(input.projectedCost) ? '0' : input.projectedCost;
     const { rows } = await sql<{ scope: 'org' | 'module' | 'agent' | null }>`
       SELECT (SELECT b.scope FROM crove_kernel.budget_policy b
               WHERE b.org_id = ${ctx.orgId}::uuid AND b.hard_stop
                 AND (b.scope = 'org' OR (b.scope = 'module' AND b.target = ${module}) OR (b.scope = 'agent' AND b.target = ${agentId}::text))
-                AND crove_kernel.ai_budget_spent(b.org_id, b.scope, b.target) >= b.monthly_limit
+                AND crove_kernel.ai_budget_spent(b.org_id, b.scope, b.target) + ${projected}::numeric >= b.monthly_limit
               ORDER BY CASE b.scope WHEN 'agent' THEN 0 WHEN 'module' THEN 1 ELSE 2 END LIMIT 1) AS scope`.execute(ctx.trx);
     return rows[0]?.scope ? { allowed: false, scope: rows[0].scope, retryAt } : { allowed: true };
   },
@@ -645,9 +653,6 @@ export const memberVyRunFinish = defineCommand({
 // run's result (its own entry) would be refused, so the paid text would be thrown away. Only hard stops count, as in ai_budget_exhausted; a soft budget never refuses. The module
 // and the agent are the run's own, from the sealed context and never from the input, so a call cannot name another target to dodge a budget. A missing or zero projection is the
 // entry's check alone. The sum is decimal arithmetic in the database (numeric), never a JS number. A refusal is the entry's own code, BUDGET_EXHAUSTED, naming the scope as meter.check does.
-// At most 1e9, six decimals (the cap the Platform PO asked for); anything else is refused by the input check.
-const PROJECTED_COST = z.string().regex(/^(?:\d{1,9}(?:\.\d{1,6})?|1000000000(?:\.0{1,6})?)$/);
-const ZERO_COST = /^0+(?:\.0+)?$/;
 
 export const memberVyRunCheck = defineQuery({
   name: 'kernel.member_vy.run.check',
@@ -725,24 +730,6 @@ async function openLivePieces(ctx: CommandContext, meetingId: string, afterSeq: 
   };
 }
 
-// The transcript lines of one stage that the run's member reads, for the member's own translation run (meetings integrations E2, #3185): the same door as the audio, the run's feature
-// decides which gate answers. The database function crove_meetings.transcript_for_member_vy is the gate (this run's own context, the meeting its result row names for the feature
-// meetings.translate, the member active and reading that stage, the meeting inside its text period); it answers the id and the text of each line (no speaker, no time), in the
-// order of the transcript, and the audit rows hold ids and a count, never a word.
-async function openTranscriptLines(ctx: CommandContext, meetingId: string, stage: 'draft' | 'published') {
-  type Row = { segment_id: string; line_text: string; is_english: boolean };
-  let rows: Row[];
-  try {
-    rows = (await sql<Row>`SELECT * FROM crove_meetings.transcript_for_member_vy(${ctx.orgId}::uuid, ${meetingId}::uuid, ${stage}::text)`.execute(ctx.trx)).rows;
-  } catch (error: unknown) {
-    const code = /MEETINGS_(RUN_REQUIRED|NOT_READER|WORKER_ONLY)/.exec(error instanceof Error ? error.message : '')?.[0];
-    if (code) throw new DomainError('FORBIDDEN', 403, 'Lượt chạy này không đọc được bản ghi của cuộc họp này');
-    throw error;
-  }
-  ctx.audit({ runId: ctx.memberVy?.runId, subjectId: meetingId, count: rows.length });
-  return { language: rows[0]?.is_english ? 'en' : 'vi', lines: rows.map((r) => ({ id: r.segment_id, text: r.line_text })) };
-}
-
 // The recorder's own recording, for the recorder's own transcription run (ADR-0049 decision 8, #2578): the file ids, the order, the offsets and lengths and the
 // wrapped key of ONE meeting's audio, never plaintext (the worker fetches and decrypts). The database function crove_meetings.audio_for_member_vy is the gate:
 // it answers only in this run's own context, for the meeting the run's result row names, when the run's member is that meeting's recorder and is active. The
@@ -753,12 +740,7 @@ export const memberVyMeetingAudioOpen = defineCommand({
   // `live` asks for the pieces of a recording that is going on (ADR-0052 L4a, #3110) instead of the finished audio: the same door, so the audit allowlist and the list of
   // member-mode commands stay as they were. `afterSeq` is the piece the preview has reached and `limit` the window; the run's feature decides which gate answers (the
   // database function of each refuses the other's runs), so a transcription run can never read a live piece nor a live run the finished audio.
-  // `text` asks for the transcript lines a translation run reads (E2, #3185) instead of audio: the same door again.
-  input: z.object({
-    meetingId: zId,
-    live: z.object({ afterSeq: z.number().int().min(-1).max(100_000), limit: z.number().int().min(1).max(100) }).optional(),
-    text: z.object({ stage: z.enum(['draft', 'published']) }).optional(),
-  }),
+  input: z.object({ meetingId: zId, live: z.object({ afterSeq: z.number().int().min(-1).max(100_000), limit: z.number().int().min(1).max(100) }).optional() }),
   risk: 'R1',
   sideEffect: 'internal',
   access: ['owner', 'admin', 'member'],
@@ -767,7 +749,6 @@ export const memberVyMeetingAudioOpen = defineCommand({
   handler: async (ctx, input) => {
     if (!ctx.memberVy) throw new DomainError('FORBIDDEN', 403, 'Chỉ lượt chạy nền của Vy mới đọc được bản ghi này', { rule: 'member_vy_context' });
     if (input.live) return openLivePieces(ctx, input.meetingId, input.live.afterSeq, input.live.limit);
-    if (input.text) return openTranscriptLines(ctx, input.meetingId, input.text.stage);
     type Row = { segment_order: number; start_offset_seconds: number; length_seconds: number; file_id: string; is_english: boolean; key_id: string; wrapped_key: Buffer };
     let rows: Row[];
     try {

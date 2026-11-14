@@ -333,10 +333,14 @@ export function lineHash(text: string): string {
   return createHash('sha256').update(text).digest('hex').slice(0, 16);
 }
 
-/** What a chunk is expected to use before the call: the numbered JSON over a rough 2.5 bytes per token plus the fixed instruction, and an answer about as long. An estimate, not a promise. */
+/**
+ * What a chunk is expected to use before the call: the numbered JSON over a rough 2.5 bytes per token plus the fixed instruction, and an answer that may be half as long again (a
+ * translation into Vietnamese weighs more than its English original), so the admission on projected cost leans to refusing a chunk early rather than to paying for one whose result the
+ * budget would then refuse to keep. An estimate, not a promise: the meter records what the provider reports.
+ */
 export function chunkExpectedUsage(bytes: number): { inputTokens: number; outputTokens: number } {
   const tokens = Math.ceil(bytes / 2.5);
-  return { inputTokens: tokens + 300, outputTokens: tokens + 50 };
+  return { inputTokens: tokens + 300, outputTokens: Math.ceil(tokens * 1.5) + 50 };
 }
 
 export interface TranscriptChunkInput {

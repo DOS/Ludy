@@ -8,13 +8,17 @@ import { sql } from 'kysely';
 import { createHash } from 'node:crypto';
 import { zTranscriptTranslationResult, zTranslationCopy, zTranslationCopied, zTranslationResult, type TranscriptPart } from '@crove/kernel-contract';
 import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
-import { TRANSLATE_FEATURE, keptParts, lineHash, readTranscriptLines, readTranslationSource } from './translate-run.ts';
+import { TRANSCRIPT_ROW_BYTES_MAX, TRANSLATE_FEATURE, keptParts, lineHash, lockTranslation, readTranscriptLines, readTranslationSource } from './translate-run.ts';
 import { isSummaryEnabled } from './summary-run.ts';
 import { ROLES, openMeeting, userOf } from './transcript.ts';
 
 const notFound = () => new DomainError('TRANSLATION_RESULT_NOT_FOUND', 404, 'No translation result for this meeting');
-// The most the member's transcript row may hold (the table allows 400000 bytes of jsonb): a transcript past it is refused whole, never kept cut.
-const TRANSCRIPT_ROW_CHARS_MAX = 350_000;
+
+// A part is kept only when its line still exists with the text the part translated (a yes or no, never the text).
+function isCurrentPart(lineById: ReadonlyMap<string, { text: string }>, part: TranscriptPart): boolean {
+  const line = lineById.get(part.k);
+  return line !== undefined && lineHash(line.text) === part.h;
+}
 
 // The copy of a finished transcript run (E2, #3185) into the member's own transcript row, held to the lines the member reads NOW: a part is kept only when its line still exists and has
 // the text the part translated (the hash), so a line corrected or replaced while the model worked is never kept as if it were of the text on screen. The parts earlier runs kept stay
@@ -33,11 +37,10 @@ async function copyTranscript(ctx: CommandContext, input: { meetingId: string; r
   });
   if (!read || read.stage !== body.stage || read.from !== body.from || read.to !== body.to) throw stale();
   const lineById = new Map(read.lines.map((l) => [l.id, l]));
-  const fresh = body.parts.filter((p) => {
-    const line = lineById.get(p.k);
-    return line !== undefined && lineHash(line.text) === p.h;
-  });
+  const fresh = body.parts.filter((p) => isCurrentPart(lineById, p));
   if (fresh.length === 0) throw stale();
+  // One copy for the member at a time (two tabs asking for the same run would both read the row and both write it).
+  await lockTranslation(ctx.trx, ctx.orgId, userId);
   const kept = await keptParts(ctx.trx, ctx.orgId, userId, input.meetingId, body.stage, body.to);
   const merged = new Map<string, TranscriptPart>();
   for (const part of kept.parts) if (lineById.has(part.k)) merged.set(part.k, part);
@@ -48,7 +51,7 @@ async function copyTranscript(ctx: CommandContext, input: { meetingId: string; r
     return part ? [part] : [];
   });
   const json = JSON.stringify(ordered);
-  if (json.length > TRANSCRIPT_ROW_CHARS_MAX) throw new DomainError('TRANSLATION_TOO_LARGE', 422, 'The translation is larger than a row holds');
+  if (Buffer.byteLength(json, 'utf8') > TRANSCRIPT_ROW_BYTES_MAX) throw new DomainError('TRANSLATION_TOO_LARGE', 422, 'The translation is larger than a row holds');
   await ctx.trx
     .deleteFrom('crove_meetings.translation')
     .where('org_id', '=', ctx.orgId)

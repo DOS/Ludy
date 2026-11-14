@@ -855,18 +855,19 @@ export const zTranslationView = z.strictObject({
 export const zTranslations = z.strictObject({ meetingId: zId, translations: z.array(zTranslationView).max(TRANSLATION_STAGES.length) });
 export type Translations = z.infer<typeof zTranslations>;
 
-// The machine translation of a meeting's transcript (meetings integrations E2, #3185, plan section 7a). The member's own Vy translates the lines the member reads in a background
-// run over bounded chunks (stage B of ADR-0049); each run takes the next batch of lines that still have no current translation, so a run that stops (a refused chunk, a stop, a lost
-// job) keeps what earlier runs finished and the next click goes on from there. The parts live in the same private row as the summary's (kind 'transcript'), one row for the member,
-// meeting, stage and language, each part named by the line it translated and the hash of that line's text (a corrected line makes its part stale).
-// A chunk is about this many UTF-8 bytes of numbered JSON (a one-hour Vietnamese transcript is about twenty of them); a run takes at most this many chunks.
+// The machine translation of a meeting's transcript (meetings integrations E2, #3185, plan section 7a). The member's own Vy translates the lines the member reads, a few chunks at a time, in
+// the member's own request (ADR-0049 stage A, like the summary); each request takes the next batch of lines that still have no current translation, so a request that stops (a refused
+// chunk, a stop, a failure) keeps what earlier ones finished and the next click goes on from there. The page asks again while it is open. The parts live in the same private row as
+// the summary's (kind 'transcript'), one row for the member, meeting, stage and language, each part named by the line it translated and the hash of that line's text (a corrected line
+// makes its part stale).
+// A chunk is about this many UTF-8 bytes of numbered JSON (a one-hour Vietnamese transcript is about twenty of them); a request takes at most this many chunks.
 export const TRANSCRIPT_TRANSLATE_CHUNK_BYTES = 4500;
-export const TRANSCRIPT_TRANSLATE_CHUNKS_PER_RUN = 4;
-// More lines than this is not a transcript the door reads (the database function says the same).
+export const TRANSCRIPT_TRANSLATE_CHUNKS_PER_RUN = 2;
+// More lines than this is not a transcript this translates.
 export const TRANSCRIPT_TRANSLATE_LINES_MAX = 5000;
 const zPartHash = z.string().regex(/^[0-9a-f]{16}$/);
 // One translated part as the run stores it in its result row and the copy keeps it in the member's row: k the line's id, h the hash of its text, t the translation ('' when refused),
-// s what code found and c the fixed words for it (compact on purpose: a result row holds at most 100000 characters).
+// s what code found and c the fixed words for it (compact on purpose: the row keeps a part for every line of a long transcript).
 export const zTranscriptPart = z.strictObject({
   k: zId,
   h: zPartHash,
@@ -884,19 +885,10 @@ export const zTranscriptTranslationResult = z.strictObject({
   parts: z.array(zTranscriptPart).min(1).max(TRANSCRIPT_TRANSLATE_LINES_MAX),
 });
 export type TranscriptTranslationResult = z.infer<typeof zTranscriptTranslationResult>;
-// What the row holds: the parts of every run kept so far.
+// What the row holds: the parts of every request kept so far.
 export const zTranscriptParts = z.array(zTranscriptPart).max(TRANSCRIPT_TRANSLATE_LINES_MAX);
-// The lines of a transcript stage that a run translates, with their text: what the door answers and what the kernel hands the worker (never the screen).
-export const zTranscriptLines = z.strictObject({
-  meetingId: zId,
-  stage: zTranslationStage,
-  from: zMeetingLanguage,
-  to: zMeetingLanguage,
-  lines: z.array(z.strictObject({ id: zId, text: z.string() })).max(TRANSCRIPT_TRANSLATE_LINES_MAX),
-});
-export type TranscriptLines = z.infer<typeof zTranscriptLines>;
 // The state of the member's transcript translation, for the button and the progress line ("Đã dịch 12/20 phần"): a part is one chunk-sized share of the transcript, so the figures
-// are of parts, not of lines. `state` is the member's latest run of this meeting (none, running, ready or failed with a fixed word); `needsCopy` says a finished run has not been kept yet.
+// are of parts, not of lines. `state` is the member's latest run of this meeting (none, running, ready or failed with a fixed word).
 export const zTranscriptTranslationStatus = z.strictObject({
   meetingId: zId,
   stage: zTranslationStage.nullable(),
@@ -909,18 +901,42 @@ export const zTranscriptTranslationStatus = z.strictObject({
   translated: z.number().int().min(0),
   stale: z.number().int().min(0),
   remaining: z.number().int().min(0),
-  // Chunks, as the run will send them: those of the whole transcript and those still to send.
+  // Chunks, as the run will send them: those of the whole transcript and those already done.
   chunksTotal: z.number().int().min(0),
   chunksDone: z.number().int().min(0),
   state: z.enum(['none', 'running', 'ready', 'failed']),
   runId: zId.nullable(),
   errorCode: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/).nullable(),
-  needsCopy: z.boolean(),
   // The cost expected for the lines still to translate, before the click; null when the deployment has no price set.
   estimate: z.strictObject({ calls: z.number().int().min(0), inputTokens: z.number().int().min(0), outputTokens: z.number().int().min(0), cost: z.string().regex(/^\d+(?:\.\d+)?$/).nullable() }).nullable(),
 });
 export type TranscriptTranslationStatus = z.infer<typeof zTranscriptTranslationStatus>;
-export const zTranscriptTranslateStarted = z.strictObject({ meetingId: zId, runId: zId, lines: z.number().int().min(1) });
+// The route the page calls: takes the next batch, translates it, stores the answer and keeps it for the member; says how it went in fixed words. `translated` is the lines kept by this
+// request, `remaining` those still to translate after it.
+export const zTranscriptTranslated = z.strictObject({
+  meetingId: zId,
+  runId: zId.nullable(),
+  state: z.enum(['ready', 'failed']),
+  errorCode: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/).nullable(),
+  translated: z.number().int().min(0),
+  remaining: z.number().int().min(0),
+});
+export type TranscriptTranslated = z.infer<typeof zTranscriptTranslated>;
+// What the module's start gives a request: the member's run and the ids of the next batch of lines (whole chunks), and what is left; the text comes from the source query below.
+export const zTranscriptStarted = z.strictObject({
+  meetingId: zId,
+  runId: zId,
+  stage: zTranslationStage,
+  from: zMeetingLanguage,
+  to: zMeetingLanguage,
+  remaining: z.number().int().min(1),
+  lineIds: z.array(zId).min(1).max(TRANSCRIPT_TRANSLATE_LINES_MAX),
+});
+export type TranscriptStarted = z.infer<typeof zTranscriptStarted>;
+export const zTranscriptSourceRef = z.strictObject({ meetingId: zId, lineIds: z.array(zId).min(1).max(TRANSCRIPT_TRANSLATE_LINES_MAX) });
+// The text of those lines as the caller reads them now, in the order of the transcript (a line that was removed is not there).
+export const zTranscriptSource = z.strictObject({ meetingId: zId, lines: z.array(z.strictObject({ id: zId, text: z.string() })).max(TRANSCRIPT_TRANSLATE_LINES_MAX) });
+export type TranscriptSource = z.infer<typeof zTranscriptSource>;
 export const zTranscriptTranslateStopped = z.strictObject({ meetingId: zId, stopped: z.boolean() });
 // The member's own translated parts of the transcript they read, one per line, with whether the line changed since (stale: "Bản dịch cũ, dịch lại").
 export const zTranscriptTranslationView = z.strictObject({

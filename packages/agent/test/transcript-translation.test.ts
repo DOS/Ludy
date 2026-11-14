@@ -54,7 +54,7 @@ describe('the hash and the expected cost of a chunk', () => {
   });
 
   it('expects tokens from the size of the chunk (a rough 2.5 bytes a token) plus the fixed instruction, and an answer about as long', () => {
-    expect(chunkExpectedUsage(2500)).toEqual({ inputTokens: 1300, outputTokens: 1050 });
+    expect(chunkExpectedUsage(2500)).toEqual({ inputTokens: 1300, outputTokens: 1550 });
     expect(chunkExpectedUsage(0).inputTokens).toBeGreaterThan(0);
   });
 });
