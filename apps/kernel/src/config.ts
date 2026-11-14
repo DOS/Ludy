@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { EXTRACT_TIMING } from '@crove/extract-contract';
 import { zExtensionId } from '@crove/kernel-contract';
 import type { UsageLimits } from '@crove/kernel';
+import { parseAllowedEmails } from './auth-access.ts';
 import { SIGNUP_POLICIES, parseAllowedDomains } from './auth-signup-policy.ts';
 import { WEBHOOK_ENV } from './alert.ts';
 import { parseAllowedOrigins } from './cors.ts';
@@ -216,6 +217,18 @@ const schema = z.object({
   // records, and confirms every R3 command live with Supabase Auth; off checks only Crove's own records and never
   // calls Auth (local URLs only). Unset: db when AUTH_UPSTREAM_URL is set (bundled Supabase Auth), jwt otherwise.
   AUTH_SESSION_CHECK: z.enum(['db', 'jwt', 'off']).optional(),
+  // Who may use this deployment (issue #2704, auth-access.ts): exact addresses and `@domain` entries, comma or space
+  // separated. Unset: every holder of a valid token. Set it when AUTH_ISSUER and AUTH_JWKS_URL name an identity provider
+  // that serves other people too; a token for any other address is refused with 403 ACCOUNT_NOT_ALLOWED.
+  AUTH_ALLOWED_EMAILS: optional.transform((value, ctx): readonly string[] => {
+    if (value === undefined) return [];
+    const { entries, invalid } = parseAllowedEmails(value);
+    if (invalid.length > 0) {
+      ctx.addIssue({ code: 'custom', message: `not an email address or @domain: ${invalid.join(', ')}` });
+      return z.NEVER;
+    }
+    return entries;
+  }),
   // Policy P11: R3 needs MFA in the last 5 minutes. off is accepted on local URLs only.
   AUTH_STEP_UP: z.enum(['required', 'off']).default('required'),
   // Mirrors GOTRUE_MAILER_AUTOCONFIRM so the kernel can refuse unsafe public deployments.

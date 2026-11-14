@@ -188,6 +188,55 @@ describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
     expect(worker.OAUTH_JWKS).toBeUndefined();
   });
 
+  // #2704: an identity provider of the deployment's own, through the env file alone. Unset, every line is the bundled Supabase Auth.
+  it('signs in at the bundled Supabase Auth unless the env file names another provider, which then reaches api, worker and prober', () => {
+    const files = ['docker-compose.yml', 'compose.pilot.yml'];
+    const bundled = config(files, {}, ['prober']);
+    for (const name of ['api', 'worker']) {
+      const env = bundled[name]?.environment;
+      expect(env?.['AUTH_ISSUER'], name).toBe('crove-auth');
+      expect(env?.['AUTH_SESSION_CHECK'], name).toBe('db');
+      expect(env?.['AUTH_UPSTREAM_URL'], name).toBe('http://auth:9999');
+      expect(env?.['AUTH_JWKS_URL'], name).toBe('');
+      expect(env?.['AUTH_ALLOWED_EMAILS'], name).toBe('');
+    }
+    expect(bundled['prober']?.environment?.['PROBER_AUTH_URL']).toBe('http://api:8080/auth/v1');
+    const idp = 'https://idp.example.test/auth/v1';
+    const remote = config(files, {
+      AUTH_ISSUER: idp,
+      AUTH_JWKS_URL: `${idp}/.well-known/jwks.json`,
+      PUBLIC_AUTH_URL: idp,
+      PUBLIC_AUTH_ANON_KEY: 'placeholder-publishable-key',
+      AUTH_SESSION_CHECK: 'jwt',
+      AUTH_UPSTREAM_URL: '',
+      AUTH_ALLOWED_EMAILS: 'owner@example.test',
+      PUBLIC_URL: 'https://books.example.com',
+    }, ['prober']);
+    for (const name of ['api', 'worker']) {
+      const env = remote[name]?.environment;
+      expect(env?.['AUTH_ISSUER'], name).toBe(idp);
+      expect(env?.['AUTH_SESSION_CHECK'], name).toBe('jwt');
+      expect(env?.['AUTH_UPSTREAM_URL'], name).toBe('');
+      expect(env?.['PUBLIC_AUTH_URL'], name).toBe(idp);
+      expect(env?.['AUTH_ALLOWED_EMAILS'], name).toBe('owner@example.test');
+    }
+    expect(remote['prober']?.environment?.['PROBER_AUTH_URL']).toBe(idp);
+    // The kernel boots on exactly that environment, in jwt mode, with no bundled proxy.
+    const strings = Object.fromEntries(Object.entries(remote['api']?.environment ?? {}).filter((e): e is [string, string] => typeof e[1] === 'string'));
+    const random = () => randomBytes(32).toString('base64');
+    const loaded = loadConfig({
+      ...strings,
+      AUTH_JWT_SECRET: random(),
+      AUTH_AUTOCONFIRM: 'false',
+      CROVE_CONTEXT_TOKEN_KEY: random(),
+      DATABASE_URL: `postgres://crove_app:${randomBytes(18).toString('hex')}@db:5432/postgres`,
+      EXPORT_ENCRYPTION_KEY: random(),
+    });
+    expect(loaded.AUTH_SESSION_CHECK).toBe('jwt');
+    expect(loaded.AUTH_UPSTREAM_URL).toBeUndefined();
+    expect(loaded.AUTH_ALLOWED_EMAILS).toEqual(['owner@example.test']);
+  });
+
   it('runs the finance module by default for api, worker and prober, and follows CROVE_MODULES', () => {
     const files = ['docker-compose.yml', 'compose.pilot.yml'];
     for (const [env, expected] of [
