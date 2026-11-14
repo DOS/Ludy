@@ -128,6 +128,115 @@ Object.assign(HOSTILE, {
   'null': null,
 });
 
+// The test-side oracle: the EXACT key set at every level, and the shape of every value (the way mcp-wake.test.ts does with `bodyProblems`). A builder is not trusted to be strict
+// about the right things: its output, for any input at all, must pass this, so a builder that whitelists one more key (images, an excerpt, people with a mail, speakers in an item)
+// fails here whatever else it refuses. The lists below are the contract; changing one is a new two-step.
+const TOP_KEYS = ['id', 'type', 'created_at', 'org', 'data'];
+const TYPES = ['meeting.result_published', 'ping'];
+const DATA_KEYS = ['meeting_id', 'published_at', 'started_at', 'length_seconds', 'title', 'summary', 'decisions', 'action_items'];
+const DATA_REQUIRED = ['meeting_id', 'published_at', 'started_at', 'length_seconds'];
+const ITEM_FIELDS = ['text', 'owner', 'due'];
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+const textOk = (v: unknown, min: number, max: number) => typeof v === 'string' && v.length >= min && v.length <= max;
+
+function bodyProblems(body: unknown): string[] {
+  if (!isObject(body)) return ['not an object'];
+  const out: string[] = [];
+  for (const k of Object.keys(body)) if (!TOP_KEYS.includes(k)) out.push(`unknown key ${k}`);
+  for (const k of TOP_KEYS) if (!(k in body)) out.push(`missing key ${k}`);
+  if (typeof body.id !== 'string' || !UUID.test(body.id)) out.push('id');
+  if (typeof body.type !== 'string' || !TYPES.includes(body.type)) out.push('type');
+  if (typeof body.created_at !== 'string' || !INSTANT.test(body.created_at)) out.push('created_at');
+  if (typeof body.org !== 'string' || !UUID.test(body.org)) out.push('org');
+  const data = body.data;
+  if (!isObject(data)) return [...out, 'data'];
+  if (body.type === 'ping') {
+    for (const k of Object.keys(data)) out.push(`ping data key ${k}`);
+    return out;
+  }
+  for (const k of Object.keys(data)) if (!DATA_KEYS.includes(k)) out.push(`unknown data key ${k}`);
+  for (const k of DATA_REQUIRED) if (!(k in data)) out.push(`missing data key ${k}`);
+  if (typeof data.meeting_id !== 'string' || !UUID.test(data.meeting_id)) out.push('meeting_id');
+  if (typeof data.published_at !== 'string' || !INSTANT.test(data.published_at)) out.push('published_at');
+  if (typeof data.started_at !== 'string' || !INSTANT.test(data.started_at)) out.push('started_at');
+  const length = data.length_seconds;
+  if (length !== null && !(typeof length === 'number' && Number.isInteger(length) && length >= 0 && length <= 86400)) out.push('length_seconds');
+  if ('title' in data && !textOk(data.title, 1, 300)) out.push('title');
+  if ('summary' in data && !textOk(data.summary, 1, 8000)) out.push('summary');
+  if ('decisions' in data) {
+    const d = data.decisions;
+    if (!Array.isArray(d) || d.length > 50 || d.some((x) => !textOk(x, 1, 1000))) out.push('decisions');
+  }
+  if ('action_items' in data) {
+    const items = data.action_items;
+    if (!Array.isArray(items) || items.length > 100) out.push('action_items');
+    else {
+      items.forEach((item, i) => {
+        if (!isObject(item)) return void out.push(`item ${i}`);
+        for (const k of Object.keys(item)) if (!ITEM_FIELDS.includes(k)) out.push(`item ${i}: unknown key ${k}`);
+        for (const k of ITEM_FIELDS) if (!(k in item)) out.push(`item ${i}: missing key ${k}`);
+        if (!textOk(item.text, 1, 300)) out.push(`item ${i}: text`);
+        if (item.owner !== null && !textOk(item.owner, 0, 200)) out.push(`item ${i}: owner`);
+        if (item.due !== null && !(typeof item.due === 'string' && DATE.test(item.due))) out.push(`item ${i}: due`);
+      });
+    }
+  }
+  return out;
+}
+
+// What a builder is tried with besides the cases above: keys a body could carry an image, an attachment, a file, an excerpt of the transcript or a person's contact under, at every level,
+// each with a canary value. Whatever the builder does with them, no canary may come out of it and what comes out must pass the oracle.
+const CANARY = 'CANARY-7f3a91c2';
+const EXTRA_KEYS = [
+  'images', 'image', 'image_url', 'attachments', 'attachment', 'files', 'file', 'file_name', 'filename', 'media', 'media_key', 'media_url', 'screenshots', 'thumbnail', 'avatar',
+  'excerpt', 'quote', 'quotes', 'highlights', 'snippet', 'speakers', 'speaker', 'people', 'participants', 'mentions', 'owner_email', 'mail', 'emails', 'links', 'url', 'html', 'markdown', 'raw', 'extra', 'meta', 'metadata',
+];
+const EXTRA: Record<string, unknown> = {};
+for (const key of EXTRA_KEYS) {
+  EXTRA[`${key} at the top`] = { ...head, [key]: CANARY, data: result };
+  EXTRA[`${key} in data`] = { ...head, data: { ...result, [key]: CANARY } };
+  EXTRA[`${key} in an action item`] = { ...head, data: { ...result, action_items: [{ text: 'Việc', owner: null, due: null, [key]: CANARY }] } };
+  EXTRA[`${key} in the ping data`] = { id: ID, type: 'ping', created_at: AT, org: ORG, data: { [key]: CANARY } };
+}
+Object.assign(EXTRA, {
+  'people with a mail in data': { ...head, data: { ...result, people: [{ name: CANARY, mail: 'someone@example.com' }] } },
+  'an image as a base64 value in data': { ...head, data: { ...result, images: [`data:image/png;base64,${CANARY}`] } },
+  'speakers in an action item': { ...head, data: { ...result, action_items: [{ text: 'Việc', owner: null, due: null, speakers: [CANARY] }] } },
+  'a transcript excerpt as an extra field': { ...head, data: { ...result, excerpt: `${CANARY} lời nói trong cuộc họp` } },
+});
+
+// Runs a builder against every input and returns what is wrong with it; empty when it is the builder the invariant wants. A throw is a refusal and always fine for a hostile input;
+// an output must pass the oracle, and for the extra-key inputs must carry no canary.
+function builderProblems(build: (input: unknown) => string): string[] {
+  const out: string[] = [];
+  for (const [name, input] of Object.entries(VALID)) {
+    let text = '';
+    try {
+      text = build(input);
+    } catch {
+      out.push(`${name} is refused`);
+      continue;
+    }
+    if (bodyProblems(JSON.parse(text)).length > 0) out.push(`${name} fails the oracle`);
+    if (JSON.stringify(JSON.parse(text)) !== JSON.stringify(input)) out.push(`${name} is not sent as given`);
+  }
+  for (const [name, input] of [...Object.entries(HOSTILE), ...Object.entries(EXTRA)]) {
+    let text: string;
+    try {
+      text = build(input);
+    } catch {
+      continue;
+    }
+    const problems = bodyProblems(JSON.parse(text));
+    if (problems.length > 0) out.push(`${name} gets through as a body that fails the oracle (${problems.join(', ')})`);
+    if (text.includes(CANARY)) out.push(`${name} carries the canary`);
+  }
+  return out;
+}
+
 describe('a minutes-webhook body', () => {
   it('is built only by the strict builder: it accepts the pinned shapes and refuses everything else', async () => {
     if (!existsSync(join(ROOT, BUILDER))) return;
@@ -140,6 +249,34 @@ describe('a minutes-webhook body', () => {
       expect(JSON.parse(text), `${name} is sent as it was given`).toEqual(input);
     }
     for (const [name, input] of Object.entries(HOSTILE)) expect(() => builder.meetingHookBody?.(input), `${name} is refused`).toThrow();
+    // The exact key set: whatever the builder does with any input, its output passes the oracle's exact lists, and no extra key (an image, an attachment, a file, an excerpt, a person's
+    // contact) comes out with its canary. A builder that whitelists one more key fails here even though it refuses every key named above.
+    expect(builderProblems((input) => builder.meetingHookBody?.(input) ?? ''), 'the builder is held to the oracle').toEqual([]);
+  });
+
+  it('the oracle bites: a builder that lets one more key through, at any level, is found; the strict one is not', () => {
+    // A leaky builder: accepts and returns anything.
+    expect(builderProblems((input) => JSON.stringify(input)).length, 'an open builder').toBeGreaterThan(0);
+    // A builder that is strict except for one key it also lets through, wherever it appears (the oracle's problems for that key alone are ignored).
+    const allowing = (key: string) => (input: unknown): string => {
+      const others = bodyProblems(input).filter((p) => !new RegExp(`(unknown|ping data|item \\d+: unknown) (data )?key ${key}$`).test(p));
+      if (others.length > 0) throw new Error('refused');
+      return JSON.stringify(input);
+    };
+    for (const key of ['images', 'speakers', 'people', 'excerpt', 'attachments', 'mail']) expect(builderProblems(allowing(key)).length, `a builder that also allows ${key}`).toBeGreaterThan(0);
+    // A strict builder (the oracle itself) is accepted: it refuses every input with a problem and sends the rest as given.
+    const strict = (input: unknown): string => {
+      if (bodyProblems(input).length > 0) throw new Error('refused');
+      return JSON.stringify(input);
+    };
+    expect(builderProblems(strict)).toEqual([]);
+    // The oracle itself: each exact list refuses one more key and accepts the pinned bodies.
+    for (const body of Object.values(VALID)) expect(bodyProblems(body)).toEqual([]);
+    expect(bodyProblems({ ...head, images: [], data: result })).not.toEqual([]);
+    expect(bodyProblems({ ...head, data: { ...result, people: [] } })).not.toEqual([]);
+    expect(bodyProblems({ ...head, data: { ...result, action_items: [{ text: 'a', owner: null, due: null, speakers: [] }] } })).not.toEqual([]);
+    expect(bodyProblems({ id: ID, type: 'ping', created_at: AT, org: ORG, data: { images: [] } })).not.toEqual([]);
+    expect(bodyProblems({ ...head, type: 'meeting.transcript_ready', data: result })).not.toEqual([]);
   });
 
   it('is closed by construction: a strict object at every level, nothing open to extra keys', () => {
@@ -159,25 +296,29 @@ describe('a minutes-webhook body', () => {
 const TABLES = ['member_hook', 'hook_delivery'];
 const NEVER_A_COLUMN = /transcript|audio|video|attendee|segment|translation|recording|caption|email|phone|contact|participant/i;
 
-// The columns a migration gives one of the tables: the lines of its CREATE TABLE, every ADD COLUMN and every RENAME COLUMN.
-function columnsOf(table: string): { column: string; file: string }[] {
-  const found: { column: string; file: string }[] = [];
-  const create = new RegExp(`CREATE TABLE(?: IF NOT EXISTS)? crove_meetings\\.${table}\\s*\\(([\\s\\S]*?)\\n\\s*\\)\\s*;`, 'gi');
-  const alter = new RegExp(`ALTER TABLE(?: ONLY)?(?: IF EXISTS)? crove_meetings\\.${table}\\b([\\s\\S]*?);`, 'gi');
-  for (const file of MIGRATIONS) {
-    const sql = read(file).replace(/--.*$/gm, '');
-    for (const match of sql.matchAll(create)) {
-      for (const line of (match[1] ?? '').split('\n')) {
-        const column = /^\s*([a-z_][a-z0-9_]*)\s+[a-z]/i.exec(line)?.[1];
-        if (column && !/^(constraint|primary|unique|check|foreign|exclude)$/i.test(column)) found.push({ column, file });
-      }
-    }
-    for (const match of sql.matchAll(alter)) {
-      for (const clause of (match[1] ?? '').matchAll(/ADD COLUMN(?: IF NOT EXISTS)?\s+([a-z_][a-z0-9_]*)/gi)) if (clause[1]) found.push({ column: clause[1], file });
-      for (const clause of (match[1] ?? '').matchAll(/RENAME COLUMN\s+[a-z_][a-z0-9_]*\s+TO\s+([a-z_][a-z0-9_]*)/gi)) if (clause[1]) found.push({ column: clause[1], file });
+// The columns a piece of SQL gives one of the tables: the lines of its CREATE TABLE, every ADD [COLUMN] and every RENAME [COLUMN] of an ALTER TABLE in any of its spellings (IF EXISTS and ONLY in
+// either order, the word COLUMN left out, several clauses in one statement).
+const NOT_A_COLUMN = /^(constraint|primary|unique|check|foreign|exclude|column|if)$/i;
+function columnsIn(sql: string, table: string): string[] {
+  const found: string[] = [];
+  const text = sql.replace(/--.*$/gm, '');
+  const create = new RegExp(`CREATE TABLE(?:\\s+IF NOT EXISTS)?\\s+crove_meetings\\.${table}\\s*\\(([\\s\\S]*?)\\n\\s*\\)\\s*;`, 'gi');
+  const alter = new RegExp(`ALTER TABLE(?:\\s+(?:IF EXISTS|ONLY))*\\s+crove_meetings\\.${table}\\b([\\s\\S]*?);`, 'gi');
+  for (const match of text.matchAll(create)) {
+    for (const line of (match[1] ?? '').split('\n')) {
+      const column = /^\s*([a-z_][a-z0-9_]*)\s+[a-z]/i.exec(line)?.[1];
+      if (column && !NOT_A_COLUMN.test(column)) found.push(column);
     }
   }
+  for (const match of text.matchAll(alter)) {
+    const clauses = match[1] ?? '';
+    for (const clause of clauses.matchAll(/\bADD\s+(?:COLUMN\s+)?(?:IF NOT EXISTS\s+)?([a-z_][a-z0-9_]*)/gi)) if (clause[1] && !NOT_A_COLUMN.test(clause[1])) found.push(clause[1]);
+    for (const clause of clauses.matchAll(/\bRENAME\s+(?:COLUMN\s+)?(?!TO\b)[a-z_][a-z0-9_]*\s+TO\s+([a-z_][a-z0-9_]*)/gi)) if (clause[1]) found.push(clause[1]);
+  }
   return found;
+}
+function columnsOf(table: string): { column: string; file: string }[] {
+  return MIGRATIONS.flatMap((file) => columnsIn(read(file), table).map((column) => ({ column, file })));
 }
 
 describe('the minutes webhook tables', () => {
@@ -198,6 +339,26 @@ describe('the minutes webhook tables', () => {
     expect(sql, 'crove_meetings.hook_delivery carries a CHECK on the body').toMatch(/CHECK\s*\(\s*(crove_meetings\.)?[a-z_]*body_ok\(/i);
   });
 
+  it('the column scan reads every spelling of a planted column', () => {
+    const t = 'hook_delivery';
+    const cases: Array<[string, string[]]> = [
+      ['CREATE TABLE IF NOT EXISTS crove_meetings.hook_delivery (\n  org_id uuid NOT NULL,\n  transcript_text text,\n  PRIMARY KEY (org_id, id)\n);', ['org_id', 'transcript_text']],
+      ['ALTER TABLE crove_meetings.hook_delivery ADD COLUMN audio_key text;', ['audio_key']],
+      ['ALTER TABLE crove_meetings.hook_delivery ADD audio_key text;', ['audio_key']],
+      ['ALTER TABLE crove_meetings.hook_delivery ADD COLUMN IF NOT EXISTS audio_key text;', ['audio_key']],
+      ['ALTER TABLE IF EXISTS ONLY crove_meetings.hook_delivery ADD attendee_email text;', ['attendee_email']],
+      ['ALTER TABLE ONLY IF EXISTS crove_meetings.hook_delivery ADD attendee_email text;', ['attendee_email']],
+      ['ALTER TABLE IF EXISTS crove_meetings.hook_delivery ADD COLUMN a int, ADD b int, ADD COLUMN IF NOT EXISTS c int;', ['a', 'b', 'c']],
+      ['ALTER TABLE crove_meetings.hook_delivery RENAME status TO video_state;', ['video_state']],
+      ['ALTER TABLE crove_meetings.hook_delivery RENAME COLUMN status TO video_state;', ['video_state']],
+      ['ALTER TABLE crove_meetings.hook_delivery ADD CONSTRAINT x CHECK (true);', []],
+      ['ALTER TABLE crove_meetings.hook_delivery ADD PRIMARY KEY (org_id, id);', []],
+      ['ALTER TABLE crove_meetings.hook_delivery RENAME TO other;', []],
+      ['ALTER TABLE crove_meetings.member_hook ADD COLUMN audio_key text;', []],
+    ];
+    for (const [sql, want] of cases) expect(columnsIn(sql, t), sql).toEqual(want);
+  });
+
   it('the filter itself bites (a planted column is found)', () => {
     for (const name of ['transcript_text', 'audio_key', 'video_file_id', 'attendee_email', 'attendees', 'contact_phone']) expect(NEVER_A_COLUMN.test(name), name).toBe(true);
     for (const name of ['id', 'org_id', 'user_id', 'hook_id', 'meeting_id', 'body', 'url', 'secret_sealed', 'status', 'fields']) expect(NEVER_A_COLUMN.test(name), name).toBe(false);
@@ -208,8 +369,9 @@ describe('the minutes webhook tables', () => {
 // The files and the send path.
 // ---------------------------------------------------------------------------------------------------------------------------------------------
 
-// The feature exists once any source or migration names one of its marks (the builder's own file names meetingHookBody, so it counts).
-const MARKS = ['member_hook', 'hook_delivery', 'kernel-meeting-hook', 'meetingHookBody'];
+// The feature exists once any source or migration names one of its marks, with the schema in front of a table so an unrelated table of the same name elsewhere is not taken for it (the
+// builder's own file names meetingHookBody, so it counts).
+const MARKS = ['crove_meetings.member_hook', 'crove_meetings.hook_delivery', 'kernel-meeting-hook', 'meetingHookBody'];
 const featureFiles = [...new Set([...MARKS.flatMap((m) => naming(SOURCES, m)), ...MARKS.flatMap((m) => naming(MIGRATIONS, m))])].sort();
 const hookQueues: Array<[string, string]> = Object.entries(QUEUES).filter(([, name]) => /meeting-hook/.test(name));
 const RUNNERS = KERNEL_SRC.filter((f) => /(^|\/)meeting-hook[^/]*\.ts$/.test(f));
