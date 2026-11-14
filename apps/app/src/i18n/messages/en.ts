@@ -9258,6 +9258,7 @@ export const en = {
       STEP_UP_REQUIRED: 'This needs two-factor authentication (MFA) in the last 5 minutes.',
       NOT_A_MEMBER: 'You are not a member of this organization.',
       USER_DISABLED: 'Your account is disabled.',
+      ACCOUNT_NOT_ALLOWED: 'This account is not allowed to use this deployment. Ask its owner to add your email address.',
       AUTH_UNAVAILABLE: 'Could not check your session with the sign-in server. Try again later.',
       AUTH_NOT_READY: 'Sign-in is not ready on this server yet.',
       ORG_REQUIRED: 'Choose an organization, then try again.',

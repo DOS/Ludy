@@ -9255,6 +9255,7 @@ export const vi = {
       STEP_UP_REQUIRED: 'Cần xác thực hai lớp (MFA) trong 5 phút gần nhất để thực hiện việc này',
       NOT_A_MEMBER: 'Bạn không thuộc tổ chức này',
       USER_DISABLED: 'Tài khoản của bạn đã bị khóa',
+      ACCOUNT_NOT_ALLOWED: 'Tài khoản này chưa được phép dùng hệ thống này. Hãy nhờ chủ hệ thống thêm địa chỉ email của bạn',
       AUTH_UNAVAILABLE: 'Chưa kiểm tra được phiên đăng nhập với máy chủ xác thực, hãy thử lại sau',
       AUTH_NOT_READY: 'Hệ thống đăng nhập chưa sẵn sàng',
       ORG_REQUIRED: 'Hãy chọn một tổ chức rồi thử lại',

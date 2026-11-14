@@ -119,10 +119,19 @@ services:
     restart: unless-stopped
     environment:
       AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-local-only-jwt-secret-change-me-0123456789}
-      AUTH_ISSUER: crove-auth
       AUTH_AUTOCONFIRM: ${AUTH_AUTOCONFIRM:-true}
-      # Revocation: read Supabase Auth's sessions in the shared database (needs the auth-grants step).
-      AUTH_SESSION_CHECK: db
+      # The identity provider (ADR-0027, ADR-0028). Unset, all of these are the bundled Supabase Auth below: sessions are checked
+      # against its tables in the shared database (needs the auth-grants step). To sign people in at a Supabase-compatible provider of
+      # your own instead (docs/self-host/README.md, "Your own identity provider"): AUTH_ISSUER and AUTH_JWKS_URL name it,
+      # PUBLIC_AUTH_URL and PUBLIC_AUTH_ANON_KEY are where and how the app signs in, AUTH_SESSION_CHECK=jwt, AUTH_UPSTREAM_URL set
+      # to empty (no bundled proxy), and AUTH_ALLOWED_EMAILS says who may use this deployment.
+      AUTH_ISSUER: ${AUTH_ISSUER:-crove-auth}
+      # Empty: db with the bundled Supabase Auth (AUTH_UPSTREAM_URL), jwt without it; the kernel derives it.
+      AUTH_SESSION_CHECK: ${AUTH_SESSION_CHECK:-}
+      AUTH_JWKS_URL: ${AUTH_JWKS_URL:-}
+      PUBLIC_AUTH_URL: ${PUBLIC_AUTH_URL:-}
+      PUBLIC_AUTH_ANON_KEY: ${PUBLIC_AUTH_ANON_KEY:-}
+      AUTH_ALLOWED_EMAILS: ${AUTH_ALLOWED_EMAILS:-}
       # R3 (approve, membership changes) needs MFA in the last 5 minutes; the app asks for a code, or to enable
       # two-factor first. off is accepted on localhost only.
       AUTH_STEP_UP: ${AUTH_STEP_UP:-required}
@@ -135,7 +144,8 @@ services:
       # Both empty (self-host): the app is served from PUBLIC_URL and no CORS header is sent.
       APP_URL: ${APP_URL:-}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
-      AUTH_UPSTREAM_URL: http://auth:9999
+      # `-` not `:-`: unset is the bundled Supabase Auth, set (even to empty) is what the file says.
+      AUTH_UPSTREAM_URL: ${AUTH_UPSTREAM_URL-http://auth:9999}
       # Modules to run (ADR-0031); empty runs every module.
       CROVE_MODULES: ${CROVE_MODULES:-}
       AI_BASE_URL: ${AI_BASE_URL:-}
@@ -478,7 +488,7 @@ services:
       # Supabase Auth through the kernel's /auth/v1 proxy, inside the Compose network (#1994). Auth hosted elsewhere:
       # set PROBER_AUTH_URL to its /auth/v1 URL (and PUBLIC_AUTH_ANON_KEY for hosted Supabase). PROBER_AUTH_MISSES=0
       # turns the check off.
-      PROBER_AUTH_URL: ${PROBER_AUTH_URL:-http://crove:8080/auth/v1}
+      PROBER_AUTH_URL: ${PROBER_AUTH_URL:-${PUBLIC_AUTH_URL:-http://crove:8080/auth/v1}}
       PUBLIC_AUTH_ANON_KEY: ${PUBLIC_AUTH_ANON_KEY:-}
       PROBER_AUTH_MISSES: ${PROBER_AUTH_MISSES:-2}
       PROBER_AUTH_TIMEOUT_SECONDS: ${PROBER_AUTH_TIMEOUT_SECONDS:-10}

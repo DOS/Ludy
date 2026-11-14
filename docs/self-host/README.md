@@ -125,6 +125,31 @@ defaults), and every account can use your AI budget. Choose one:
 Whoever creates an organization owns it, and owners invite the others from Settings, Members.
 [pilot-readiness.md](../runbooks/pilot-readiness.md), section 5, has the details and the limits on refused sign-ups.
 
+### Your own identity provider
+
+Ludy signs people in at Supabase Auth, and the compose stack bundles one. If your company already runs a Supabase Auth
+project (or a compatible provider that issues ES256 or RS256 access tokens, publishes a JWKS and serves the Supabase Auth
+sign-in API), you can sign people in there instead (ADR-0027, ADR-0028). Set, in `.env`:
+
+| Setting | Value |
+|---|---|
+| `AUTH_ISSUER` | the `iss` its access tokens carry |
+| `AUTH_JWKS_URL` | its public key set |
+| `PUBLIC_AUTH_URL`, `PUBLIC_AUTH_ANON_KEY` | the Auth URL the app signs in at (ending `/auth/v1`) and its publishable key |
+| `AUTH_SESSION_CHECK` | `jwt` |
+| `AUTH_UPSTREAM_URL` | empty (`AUTH_UPSTREAM_URL=`): no bundled proxy. Unset means the bundled Supabase Auth |
+| `AUTH_ALLOWED_EMAILS` | who may use this deployment: exact addresses and `@domain` entries. Without it every account of that provider can sign in here and create orgs |
+| `AUTH_SIGNUP_POLICY` | leave unset: sign-up is the provider's to restrict |
+
+An upgrade note: compose now reads `AUTH_ISSUER`, `AUTH_SESSION_CHECK`, `AUTH_JWKS_URL`, `PUBLIC_AUTH_URL`, `PUBLIC_AUTH_ANON_KEY` and `AUTH_UPSTREAM_URL` from `.env` (before, it fixed the bundled Supabase Auth and ignored them), so a stray line of those in an existing `.env` now takes effect.
+
+The provider must require email confirmation: Ludy identifies members by the `email` of the token. A token whose
+`user_metadata.email_verified` is `false` is refused when `AUTH_ALLOWED_EMAILS` is set. A web app served from another
+origin also needs `VITE_AUTH_URL` at build time (`apps/app/vite-csp.ts`), so its policy lets the browser reach that
+address. A person who signs in at the provider is a new account here, with no organization: an owner invites their
+address from Settings, Members. The bundled `auth` service keeps running but is not used; switching back is undoing the
+lines above. Sign-outs outside Ludy take effect when the access token expires (ADR-0028, section 3).
+
 ## 7. Files and the AI endpoint
 
 **Files.** `STORAGE=local` (the default) keeps uploaded documents in the `files` Docker volume: nothing to set up,
