@@ -36,7 +36,7 @@ const CONSUMER_FILES = ['modules/meetings/src/live-notes.ts', 'modules/meetings/
 // Consumer files and barrel importers whose feature PR has not landed yet (the two-step rule of AGENTS.md: this file, which runs from the base
 // branch, accepts the new file before it exists). A pending path is exempt ONLY while it is absent: the moment the file exists every check below
 // applies to it in full, so the ratchet is unchanged by it. Empty: add an entry only in an invariant-only PR that precedes the change. One path per line, sorted.
-const PENDING_FILES = new Set<string>(['modules/meetings/src/translate.ts']);
+const PENDING_FILES = new Set<string>([]);
 const pending = (path: string): boolean => PENDING_FILES.has(path) && !existsSync(join(ROOT, path));
 const READER_FILES = [...Object.keys(KERNEL_FILES), ...CONSUMER_FILES];
 // The files that import a reader file whose helpers could carry the private rows out (the kernel's internals and the db package import their own files freely).

@@ -696,6 +696,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           ...(resolved.scheduler ? { bookingReader: resolved.scheduler } : {}),
           ...(resolved.inboxReader ? { conversationReader: resolved.inboxReader } : {}),
           ...(resolved.summaryModel ? { summaryModel: resolved.summaryModel } : {}),
+          aiPrice: { inputPerMTok: config.AI_PRICE_INPUT_PER_MTOK, outputPerMTok: config.AI_PRICE_OUTPUT_PER_MTOK },
           ...(config.TAX_CODE_LOOKUP_URL ? { taxLookup: createTaxCodeLookup(config.TAX_CODE_LOOKUP_URL) } : {}),
           ...(config.TAX_PORTAL_SYNC === 'true' ? { portalSync: createPortalSync({ runtime, store, broker: resolved.broker, stepMs: config.TAX_PORTAL_STEP_SECONDS * 1000, client: createTaxPortalClient(config.TAX_PORTAL_URL ? { baseUrl: config.TAX_PORTAL_URL } : {}) }) } : {}),
           mailer: resolved.mail,

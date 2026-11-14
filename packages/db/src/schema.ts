@@ -1040,8 +1040,11 @@ export const MEETING_LANGUAGES = ['vi', 'en'] as const;
 export type MeetingLanguage = (typeof MEETING_LANGUAGES)[number];
 export const MEETING_STATUSES = ['ready', 'processing', 'completed', 'error'] as const;
 export type MeetingStatus = (typeof MEETING_STATUSES)[number];
-export const MEETING_CONSENT_METHODS = ['told_at_start', 'in_invite', 'in_writing'] as const;
+export const MEETING_CONSENT_METHODS = ['told_at_start', 'in_invite', 'in_writing', 'in_call_chat'] as const;
 export type MeetingConsentMethod = (typeof MEETING_CONSENT_METHODS)[number];
+// Why a recording stopped without the recorder's own click (A1, #3159): a code, never text.
+export const MEETING_RECORDING_STOP_REASONS = ['tab_closed', 'mic_lost', 'permission_lost', 'storage_full', 'left_screen', 'unknown'] as const;
+export type MeetingRecordingStopReason = (typeof MEETING_RECORDING_STOP_REASONS)[number];
 
 export type MeetingsMeetingTable = Refine<
   G.MeetingsMeetingTable,
@@ -1050,6 +1053,7 @@ export type MeetingsMeetingTable = Refine<
     language: Generated<MeetingLanguage>;
     status: Generated<MeetingStatus>;
     consent_method: MeetingConsentMethod;
+    recording_stop_reason: ColumnType<MeetingRecordingStopReason | null, MeetingRecordingStopReason | null | undefined, MeetingRecordingStopReason | null>;
   }
 >;
 
@@ -1089,6 +1093,18 @@ export type MeetingsActionItemTable = Refine<
   }
 >;
 
+// The machine translation of a meeting's summary (meetings integrations E1, #3184): what kind of text it translates, in which language, and which stage of the summary it was made from.
+export const TRANSLATION_KINDS = ['summary'] as const;
+export type TranslationKind = (typeof TRANSLATION_KINDS)[number];
+export type MeetingsTranslationTable = Refine<
+  G.MeetingsTranslationTable,
+  {
+    kind: TranslationKind;
+    target_language: MeetingLanguage;
+    source_stage: MeetingResultStage;
+  }
+>;
+
 type Refined = Tables<{
   'crove_ads.ad_account': AdsAdAccountTable;
   'crove_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
@@ -1120,6 +1136,7 @@ type Refined = Tables<{
   'crove_meetings.meeting': MeetingsMeetingTable;
   'crove_meetings.meeting_result': MeetingsMeetingResultTable;
   'crove_meetings.transcript_segment': MeetingsTranscriptSegmentTable;
+  'crove_meetings.translation': MeetingsTranslationTable;
   'crove_notes.link': NotesLinkTable;
   'crove_notes.note': NotesNoteTable;
   'crove_notes.todo': NotesTodoTable;

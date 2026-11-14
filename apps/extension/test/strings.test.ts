@@ -25,7 +25,7 @@ describe('popup strings', () => {
 
   it('the consent step has its method choices and the confirmation in both languages', () => {
     for (const strings of [ENGLISH, VIETNAMESE]) {
-      expect(Object.keys(strings.consentMethods).sort()).toEqual(['in_invite', 'in_writing', 'told_at_start']);
+      expect(Object.keys(strings.consentMethods).sort()).toEqual(['in_call_chat', 'in_invite', 'in_writing', 'told_at_start']);
       expect(strings.consentConfirm.length).toBeGreaterThan(20);
       expect(strings.blockers.consentAgreed.length).toBeGreaterThan(0);
     }
