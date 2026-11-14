@@ -93,7 +93,7 @@ async function buildClearing(ctx: QueryContext, maps: Maps, documentId: string, 
   const entry = await ctx.trx
     .selectFrom('crove_finance.journal_entry as e')
     .leftJoin('crove_finance.journal_entry as r', (join) => join.onRef('r.org_id', '=', 'e.org_id').onRef('r.reverses_entry_id', '=', 'e.id'))
-    .select(['e.id', 'r.id as reversal'])
+    .select(['e.id', 'e.entry_date', 'r.id as reversal'])
     .where('e.org_id', '=', ctx.orgId)
     .where('e.source_type', '=', PURCHASE_SOURCE)
     .where('e.source_id', '=', doc.id)
@@ -123,8 +123,8 @@ async function buildClearing(ctx: QueryContext, maps: Maps, documentId: string, 
     .where(sql<boolean>`NOT ${reversedSource('j', JOURNAL_VOUCHER_SOURCE)}`)
     .executeTakeFirstOrThrow()).total;
   const waiting = await balanceOf(ctx, doc.legal_entity_id, link.id, MARKETPLACE_POSTING_MAPS.tt133?.feeAwaitingInvoice.code ?? '1388');
-  // The entry is dated the later of the invoice and the last posting on the platform's 1388, so it never precedes either.
-  const invoiceDate = String(doc.invoice_date).slice(0, 10);
+  // The entry is dated the later of the invoice's own posting (its entry date, which may follow the invoice date) and the last posting on the platform's 1388, so it never precedes either.
+  const invoiceDate = String(entry.entry_date).slice(0, 10);
   const date = waiting.lastDate && waiting.lastDate > invoiceDate ? waiting.lastDate : invoiceDate;
   const regime = (await booksOn(ctx, doc.legal_entity_id, date)).regime;
   const map = requireConfirmedMarketplaceMap(regime, maps);

@@ -36,13 +36,15 @@ export interface FeeClearingProposal {
 const nothing = (reason: string, extra: Record<string, unknown> = {}) => new DomainError('MARKETPLACE_FEE_NOTHING_TO_CLEAR', 409, 'Chưa có phí nào của sàn đang chờ hóa đơn, hoặc hóa đơn này đã cấn trừ hết phần của mình', { reason, ...extra });
 
 const DECIMAL = /^\d+(\.\d{1,4})?$/;
+// The platform's 1388 balance may be negative (a payout reversed after a clearing took more than is left): that is nothing waiting, not an invalid amount.
+const SIGNED = /^-?\d+(\.\d{1,4})?$/;
 
 // The gated proposal: the map of the regime must be confirmed, the amounts decimals, there must be something to clear, and the entry must pass the journal voucher's own shape checks. The party may
 // still be null here (the caller reads it from the platform's link), so that one problem is not raised for it.
 export function feeClearingProposal(input: FeeClearingInput, maps?: Readonly<Record<string, MarketplacePostingMap>>): FeeClearingProposal {
   const map = requireConfirmedMarketplaceMap(input.regime, maps);
-  for (const v of [input.invoiceTotal, input.alreadyCleared, input.waiting]) {
-    if (typeof v !== 'string' || !DECIMAL.test(v)) throw new DomainError('MARKETPLACE_FEE_DOCUMENT', 422, 'Số tiền của hóa đơn phí không hợp lệ', { amount: String(v) });
+  for (const [v, pattern] of [[input.invoiceTotal, DECIMAL], [input.alreadyCleared, DECIMAL], [input.waiting, SIGNED]] as const) {
+    if (typeof v !== 'string' || !pattern.test(v)) throw new DomainError('MARKETPLACE_FEE_DOCUMENT', 422, 'Số tiền của hóa đơn phí không hợp lệ', { amount: String(v) });
   }
   const remaining = money(input.invoiceTotal).minus(money(input.alreadyCleared));
   // The invoice has cleared its share (or more, which the command's cap makes impossible: refused all the same).

@@ -38,7 +38,7 @@ describe('the entry of a fee clearing', () => {
     expect(err(() => feeClearingProposal(input({ alreadyCleared: '31000' }), confirmed()))).toMatchObject({ reason: 'INVOICE_CLEARED' });
     expect(err(() => feeClearingProposal(input({ waiting: '0' }), confirmed()))).toMatchObject({ code: 'MARKETPLACE_FEE_NOTHING_TO_CLEAR', reason: 'NOTHING_WAITING' });
     // A negative balance on 1388 (more cleared than put there) is nothing waiting either.
-    expect(err(() => feeClearingProposal(input({ waiting: '-5' }), confirmed()))).toMatchObject({ code: 'MARKETPLACE_FEE_DOCUMENT' });
+    expect(err(() => feeClearingProposal(input({ waiting: '-5' }), confirmed()))).toMatchObject({ code: 'MARKETPLACE_FEE_NOTHING_TO_CLEAR', reason: 'NOTHING_WAITING' });
   });
   it('refuses amounts that are not decimals', () => {
     expect(err(() => feeClearingProposal(input({ invoiceTotal: '1e5' }), confirmed()))).toMatchObject({ code: 'MARKETPLACE_FEE_DOCUMENT', status: 422 });
