@@ -288,7 +288,9 @@ suite('the conversation core: who reads what, the channel limit, the intake age 
     const { app } = await prepare(url, moveDb);
     const pool = createPool({ connectionString: app, max: 2 });
     pools.push(pool);
-    const old = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands], queries: [...kernelQueries({ inboundDomain: null })] });
+    // This database is older than #1822 step 2, which only a context token can enter: its runtime has no key and enters through
+    // enter_context, which that version still grants to crove_app.
+    const old = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS, contextTokenKey: null }).register({ commands: [...kernelCommands], queries: [...kernelQueries({ inboundDomain: null })] });
     const owner = await upsertIdentity(createDb(pool), { issuer: 'test', subject: randomUUID(), email: `owner-${randomUUID().slice(0, 8)}@move.test`, name: null });
     const member = await upsertIdentity(createDb(pool), { issuer: 'test', subject: randomUUID(), email: `member-${randomUUID().slice(0, 8)}@move.test`, name: null });
     const { orgId } = await createOrg(old, asUser(owner), 'Org cũ');
