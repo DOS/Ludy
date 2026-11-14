@@ -2,9 +2,7 @@
 -- Crove meetings B1 (issue #3165, plan docs/plan/meetings-integrations.md section 5.1): a member's own Google Calendar meetings, read to suggest "record this meeting". Idempotent; applied
 -- files stay untouched.
 --
--- crove_kernel.calendar_connection.read_events
---                              The member's switch "Cho Ludy đọc tên và giờ cuộc họp trong lịch", off by default. The connection reads busy times only until it is on AND Google's grant carries the
---                              events-read scope (the kernel's connection_state answers both together). The member's own UPDATE grant gains this column.
+-- (The member's switch crove_kernel.calendar_connection.read_events is added by the crove_kernel migration just before this one.)
 -- crove_meetings.calendar_agenda
 --                              A per-member cache of the events of the member's own primary calendar from 1 day back to 7 days ahead: title, start, end, time zone, a join address (https only) and
 --                              the number of invitees. No column holds an invitee address, a description or an attachment. Only the member reads it (an owner, an admin, another member, an agent
@@ -15,9 +13,6 @@
 --                              COUNT, never text. The system context cannot select the table, so a definer is the only way to delete what the sweep no longer finds; it writes nothing for a
 --                              connection whose switch is off or that is not active, and a row linked to a meeting is kept (updated, never dropped) until its meeting goes.
 SET LOCAL lock_timeout = '2s';
-
-ALTER TABLE crove_kernel.calendar_connection ADD COLUMN IF NOT EXISTS read_events boolean NOT NULL DEFAULT false;
-GRANT UPDATE (read_events) ON crove_kernel.calendar_connection TO crove_tenant;
 
 CREATE TABLE IF NOT EXISTS crove_meetings.calendar_agenda (
   org_id uuid NOT NULL REFERENCES crove_kernel.tenant (org_id) ON DELETE CASCADE,
