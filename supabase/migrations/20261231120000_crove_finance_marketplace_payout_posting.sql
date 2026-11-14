@@ -7,7 +7,7 @@
 -- Both are set together, and such a voucher is no settlement posting, no year closing, no close of a month of stock, no count and no pay run posting, and it names the proposal that approved
 -- it. The two unique indexes make "approving the proposal posts once" and "a line settles at most one payout" facts of the database, not only of the command. Neither column carries a foreign
 -- key, like the voucher's other sources: the posting is the entry's own record and never blocks the purge of what it names.
--- The trigger and the ledger effect of the new command are in 20261231120000, its approval policy in 20261231130000 (the kernel's own migration).
+-- The trigger and the ledger effect of the new command are in 20261231130000, its approval policy in 20261231140000 (the kernel's own migration).
 SET LOCAL lock_timeout = '2s';
 
 ALTER TABLE crove_finance.journal_voucher ADD COLUMN IF NOT EXISTS payout_settlement_id uuid;
