@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 
 describe('a translation is never a source: the migrations (E1, #3184)', () => {
-  it('no migration but the three that make the table, purge it and give it the transcript kind names it, so no search definer, mail query or export reads it', () => {
+  it('no migration but the ones that make the table, purge it and give it the transcript kind names it, so no search definer, mail query or export reads it', () => {
     const naming = readdirSync(MIGRATIONS)
       .filter((name) => name.endsWith('.sql') && /crove_meetings\.translation\b/.test(readFileSync(join(MIGRATIONS, name), 'utf8')))
       .map((name) => name.replace(/^\d+_/, ''));
