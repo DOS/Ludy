@@ -2593,6 +2593,11 @@ export function createRpcHandler(
         set: os.paymentReminders.customer.set.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.customer_collection.set', input, { actor, orgId }))),
       },
     },
+    household: {
+      profile: os.household.profile.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.profile_get', input, { actor, orgId }))),
+      profileSet: os.household.profileSet.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.household.profile_set', input, { actor, orgId }))),
+      rules: os.household.rules.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.rules', input ?? {}, { actor, orgId }))),
+    },
     einvoice: {
       status: os.einvoice.status.handler(async () => ({ sandbox: Boolean(einvoiceProviderOf('sandbox')) })),
       // What the connect form may offer: the providers this deployment enabled, never a credential or a host.

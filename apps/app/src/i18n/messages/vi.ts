@@ -9370,6 +9370,11 @@ export const vi = {
       HR_ADJUST_NOT_PAID: 'Nhân viên này không có dòng lương trong tháng được sửa',
       HR_ADJUST_NO_TERMS: 'Dòng lương được sửa không có hợp đồng nên không biết bộ phận hạch toán; không lập được dòng điều chỉnh',
       HR_ADJUST_FUNDS: 'Số bảo hiểm chia theo từng quỹ phải bằng tổng bảo hiểm đã nhập (phần người lao động và phần doanh nghiệp), mỗi quỹ chỉ nhập một lần',
+      HOUSEHOLD_NOT_HOUSEHOLD: 'Chỉ pháp nhân là hộ kinh doanh mới có hồ sơ hộ kinh doanh',
+      HOUSEHOLD_PROFILE_METHOD: 'Nhóm thuế và phương pháp tính thuế thu nhập cá nhân không khớp nhau: nhóm 1 không có phương pháp, nhóm 2 theo tỷ lệ trên doanh thu hoặc theo thu nhập, nhóm 3 theo thu nhập',
+      HOUSEHOLD_PROFILE_DATE: 'Ngày hiệu lực không hợp lệ',
+      HOUSEHOLD_PROFILE_ORDER: 'Hồ sơ mới phải có hiệu lực sau hồ sơ gần nhất; một thay đổi là một dòng mới từ ngày đó',
+      HOUSEHOLD_PROFILE_LOCKED: 'Kỳ này đã khóa sổ; hồ sơ mới phải có hiệu lực sau kỳ đã khóa',
       NOTE_NOT_FOUND: 'Không tìm thấy ghi chú này',
       NOTE_AUTHOR_ONLY: 'Chỉ người viết ghi chú mới làm được việc này; với ghi chú dùng chung, chủ sở hữu và quản trị viên được ghim, lưu trữ hoặc xóa',
       NOTE_IN_TRASH: 'Ghi chú đang ở thùng rác; hãy khôi phục trước',
@@ -10337,6 +10342,11 @@ export const vi = {
       },
       bank_party_rules: {
         list: 'Xem các quy tắc khớp dòng sao kê',
+      },
+      household: {
+        profile_get: 'Xem hồ sơ hộ kinh doanh của một pháp nhân và các sổ phải lập',
+        profile_set: 'Đặt hồ sơ hộ kinh doanh của một pháp nhân từ một ngày',
+        rules: 'Xem các quy tắc thuế hộ kinh doanh có hiệu lực vào một ngày',
       },
       collection_setting: {
         get: 'Xem cài đặt nhắc thu nợ của tổ chức',
