@@ -270,7 +270,7 @@ export function checkEnv(env: Env): CheckResult[] {
     else if (inboundPrevious === value(env, 'INBOUND_SECRET')) secrets.push('INBOUND_SECRET_PREVIOUS is the same as INBOUND_SECRET');
   }
   // Optional secrets: only a shipped sample value is wrong.
-  for (const name of ['INBOUND_SECRET', 'S3_SECRET_ACCESS_KEY', 'SMTP_PASS', 'AI_API_KEY', 'TRANSCRIBE_API_KEY', 'CREDENTIAL_KEY', 'CREDENTIAL_KEY_PREVIOUS', 'CHANNEL_META_APP_SECRET', 'CHANNEL_META_APP_SECRET_PREVIOUS', 'CHANNEL_INSTAGRAM_APP_SECRET', 'CHANNEL_META_WEBHOOK_VERIFY_TOKEN', 'CHANNEL_ZALO_APP_SECRET', 'CHANNEL_ZALO_OA_SECRET_KEY', 'CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS', 'CHANNEL_THREADS_APP_SECRET', 'CHANNEL_LINKEDIN_CLIENT_SECRET', 'CHANNEL_LINKEDIN_PAGE_CLIENT_SECRET', 'CHANNEL_GOOGLE_CLIENT_SECRET', 'CHANNEL_TIKTOK_CLIENT_SECRET', 'CHANNEL_X_CLIENT_SECRET', 'CHANNEL_PINTEREST_APP_SECRET', 'MEDIA_PEXELS_API_KEY', 'VAPID_PRIVATE_KEY']) {
+  for (const name of ['INBOUND_SECRET', 'S3_SECRET_ACCESS_KEY', 'SMTP_PASS', 'AI_API_KEY', 'TRANSCRIBE_API_KEY', 'CREDENTIAL_KEY', 'CREDENTIAL_KEY_PREVIOUS', 'CHANNEL_META_APP_SECRET', 'CHANNEL_META_APP_SECRET_PREVIOUS', 'CHANNEL_INSTAGRAM_APP_SECRET', 'CHANNEL_META_WEBHOOK_VERIFY_TOKEN', 'CHANNEL_ZALO_APP_SECRET', 'CHANNEL_ZALO_OA_SECRET_KEY', 'CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS', 'CHANNEL_WHATSAPP_APP_SECRET', 'CHANNEL_WHATSAPP_APP_SECRET_PREVIOUS', 'CHANNEL_WHATSAPP_VERIFY_TOKEN', 'CHANNEL_THREADS_APP_SECRET', 'CHANNEL_LINKEDIN_CLIENT_SECRET', 'CHANNEL_LINKEDIN_PAGE_CLIENT_SECRET', 'CHANNEL_GOOGLE_CLIENT_SECRET', 'CHANNEL_TIKTOK_CLIENT_SECRET', 'CHANNEL_X_CLIENT_SECRET', 'CHANNEL_PINTEREST_APP_SECRET', 'MEDIA_PEXELS_API_KEY', 'VAPID_PRIVATE_KEY']) {
     if (name === 'INBOUND_SECRET' && value(env, 'INBOUND_DOMAIN')) continue;
     const secret = value(env, name);
     if (secret && (KNOWN_DEFAULTS.has(secret) || /change-?me/i.test(secret))) secrets.push(`${name} still has a sample value`);
@@ -490,6 +490,17 @@ export function checkEnv(env: Env): CheckResult[] {
             status: 'manual' as const,
             message:
               'CHANNEL_META_APP_SECRET_PREVIOUS is set, so Page webhook notices signed with the old secret are still accepted: remove it and restart once the rotation is done; never put a leaked secret there (docs/runbooks/facebook-conversations-live-check.md)',
+          },
+        ]
+      : []),
+    // A rotation of the WhatsApp app secret left half done: the previous secret is still accepted for webhook signatures (#3131).
+    ...(value(env, 'CHANNEL_WHATSAPP_APP_SECRET_PREVIOUS')
+      ? [
+          {
+            item: 'WhatsApp app secret rotation',
+            status: 'manual' as const,
+            message:
+              'CHANNEL_WHATSAPP_APP_SECRET_PREVIOUS is set, so WhatsApp notices signed with the old secret are still accepted: remove it and restart once the rotation is done; never put a leaked secret there (docs/runbooks/whatsapp-conversations-live-check.md)',
           },
         ]
       : []),
