@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // What an MCP grant can reach once it is past the HTTP edge (ADR-0051 decision 2, ADR-0032, issue #2975), through the runtime every command and query runs on:
-// - no command can carry `mcp`, and a grant runs no command at all, whatever the command declares;
+// - only the commands WRITES names carry `mcp` (one: the Social draft command of #3227, owner decision 2026-11-14), each pinned to its scope and to the narrow shape the sealed write context runs
+//   (R1, internal, owners and admins, no permission, extension, agent or member-mode declaration), and a grant runs no other command, whatever the command declares;
 // - a grant reaches a query only if that query declares the scope (`mcp`), the set of queries that do is pinned here (a new one is a change to this protected
 //   file), and none of them is sensitive, open to member mode or an extension token, or holds data private to one member (member-bound grants are a later step);
 // - the grant's standing is read in the transaction of every call, with no session check configured: a revoked or expired grant, a consenting user who is no
@@ -60,12 +61,28 @@ const SIGNALS = [
   'kernel.mcp.signals:ludy.read',
 ];
 
+// The one command an MCP grant may run (#3227, step 3, owner decision 2026-11-14: one new write scope and exactly one command, "create a draft post for a person to review"). Optional here so
+// the runtime and the command can land after this test accepts them: until then no command carries `mcp`. Any other command that carries it, or this one with another scope, fails.
+const WRITES = ['social.mcp.draft_create:ludy.social.draft'];
 const commands = [...kernelCommands, ...financeCommands, ...meetingsCommands, ...socialCommands, ...adsCommands, ...crmCommands, ...hrCommands, ...notesCommands];
 const queries = [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries, ...meetingsQueries, ...socialQueries, ...adsQueries, ...crmQueries, ...hrQueries, ...notesQueries];
 
 describe('which definitions an MCP grant can reach (#2975)', () => {
-  it('has no command that carries `mcp`', () => {
-    expect(commands.filter((c) => (c as { mcp?: unknown }).mcp !== undefined).map((c) => c.name)).toEqual([]);
+  it('has no command that carries `mcp` but the ones WRITES names, each with its scope and, when it exists, the narrow shape of the write context', () => {
+    const carrying = commands.filter((c) => (c as { mcp?: unknown }).mcp !== undefined);
+    expect(carrying.map((c) => `${c.name}:${(c as { mcp: { scope: string } }).mcp.scope}`).filter((n) => !WRITES.includes(n))).toEqual([]);
+    // A command that carries `mcp` is pinned here whatever the runtime accepts: a weaker command cannot pass because the runtime allowed it.
+    for (const c of carrying) {
+      expect([c.risk, c.sideEffect, c.access], c.name).toEqual(['R1', 'internal', ['owner', 'admin']]);
+      expect((c as { mcp: { scope: string } }).mcp, c.name).toEqual({ scope: 'ludy.social.draft' });
+      expect(c.permission, c.name).toBeUndefined();
+      expect(c.extension, c.name).toBeUndefined();
+      expect(c.agent, c.name).toBeUndefined();
+      expect(c.memberVy, c.name).toBeUndefined();
+      expect(c.bootstrap, c.name).toBeUndefined();
+      expect(c.sealedInput, c.name).toBeUndefined();
+      expect((c as { sensitive?: unknown }).sensitive, c.name).toBeUndefined();
+    }
   });
 
   it('pins the queries that carry `mcp`, and none is sensitive, streamed, role-less or open to member mode or an extension token', () => {
