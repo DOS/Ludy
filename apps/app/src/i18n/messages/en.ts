@@ -9626,6 +9626,9 @@ export const en = {
       MARKETPLACE_PAYOUT_BANK_LINE: 'This bank line cannot be used for the payout (it must be money in, equal to the settlement net, in the same legal entity and not tied to another voucher)',
       MARKETPLACE_PAYOUT_POSTED: 'The payout of this settlement has already been posted',
       MARKETPLACE_PAYOUT_MISMATCH: 'The posting proposal does not match the stored settlement or bank line; ask for it again',
+      MARKETPLACE_FEE_DOCUMENT: 'This invoice cannot clear the fees of a platform (it must be a posted purchase invoice of a platform that has a party, in dong, and still standing)',
+      MARKETPLACE_FEE_NOTHING_TO_CLEAR: 'No platform fees are waiting for an invoice, or this invoice has already cleared its share',
+      MARKETPLACE_FEE_MISMATCH: 'The clearing proposal does not match the stored invoice or the waiting fees; ask for it again',
       HR_PAYMENT_NEGATIVE: 'This amount is negative after the month\'s adjustments (money to give back), so it cannot be recorded here; the accountant settles it separately',
       HR_PAYMENT_NOT_POSTED: 'This pay run has not been posted yet; post it before recording the pay or a remittance',
       HR_PAYMENT_POSTING_REVERSED: 'The posting of this pay run was reversed, so the pay and the remittances cannot be recorded against it',
@@ -10736,6 +10739,10 @@ export const en = {
       marketplace_payout: {
         prepare: "Check a platform's payout and its bank line before proposing its posting",
         record: "Post a platform's payout (money received, fees, tax withheld) as one journal entry",
+      },
+      marketplace_fee_clearing: {
+        prepare: "Check a platform's fee invoice and the fees waiting for it before proposing the clearing",
+        record: "Clear a platform's fees waiting for an invoice (Dr 331, Cr 1388) as one journal entry",
       },
       einvoice: {
         draft_from_order: 'Make a sales invoice draft from a sales order',

@@ -9623,6 +9623,9 @@ export const vi = {
       MARKETPLACE_PAYOUT_BANK_LINE: 'Dòng sao kê này không dùng được cho khoản sàn trả (phải là tiền vào, đúng bằng số tiền ròng của kỳ đối soát, cùng pháp nhân và chưa gắn với chứng từ nào)',
       MARKETPLACE_PAYOUT_POSTED: 'Khoản sàn trả của kỳ đối soát này đã được ghi sổ',
       MARKETPLACE_PAYOUT_MISMATCH: 'Đề xuất ghi sổ không khớp kỳ đối soát hoặc dòng sao kê đã lưu; hãy lập lại đề xuất',
+      MARKETPLACE_FEE_DOCUMENT: 'Hóa đơn này không dùng để cấn trừ phí của sàn được (phải là hóa đơn mua đã ghi sổ của một sàn đã có đối tượng, bằng đồng, còn hiệu lực)',
+      MARKETPLACE_FEE_NOTHING_TO_CLEAR: 'Chưa có phí nào của sàn đang chờ hóa đơn, hoặc hóa đơn này đã cấn trừ hết phần của mình',
+      MARKETPLACE_FEE_MISMATCH: 'Đề xuất cấn trừ không khớp hóa đơn hoặc số phí đang chờ đã lưu; hãy lập lại đề xuất',
       HR_PAYMENT_NEGATIVE: 'Khoản này âm sau các điều chỉnh của tháng (phải hoàn lại) nên chưa ghi chi được ở đây; kế toán xử lý riêng',
       HR_PAYMENT_NOT_POSTED: 'Bảng lương này chưa được hạch toán; hãy hạch toán trước khi ghi chi lương hay nộp các khoản',
       HR_PAYMENT_POSTING_REVERSED: 'Bút toán hạch toán của bảng lương này đã bị đảo nên chưa chi lương hay nộp các khoản được',
@@ -10733,6 +10736,10 @@ export const vi = {
       marketplace_payout: {
         prepare: 'Kiểm tra khoản sàn trả và dòng sao kê trước khi đề xuất ghi sổ',
         record: 'Ghi sổ khoản sàn trả (tiền nhận, phí, thuế sàn giữ lại) thành một bút toán',
+      },
+      marketplace_fee_clearing: {
+        prepare: 'Kiểm tra hóa đơn phí của sàn và số phí đang chờ trước khi đề xuất cấn trừ',
+        record: 'Cấn trừ phí của sàn đang chờ hóa đơn (Nợ 331, Có 1388) thành một bút toán',
       },
       einvoice: {
         draft_from_order: 'Lập bản nháp hóa đơn bán ra từ đơn bán hàng',
