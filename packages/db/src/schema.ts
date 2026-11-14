@@ -1089,6 +1089,17 @@ export type MeetingsActionItemTable = Refine<
   }
 >;
 
+// Projects that group kernel tasks (#2591, ADR-0048).
+export const PROJECT_STATUSES = ['active', 'on_hold', 'done', 'archived'] as const;
+export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
+
+export type ProjectsProjectTable = Refine<
+  G.ProjectsProjectTable,
+  {
+    status: Generated<ProjectStatus>;
+  }
+>;
+
 type Refined = Tables<{
   'crove_ads.ad_account': AdsAdAccountTable;
   'crove_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
@@ -1123,6 +1134,7 @@ type Refined = Tables<{
   'crove_notes.link': NotesLinkTable;
   'crove_notes.note': NotesNoteTable;
   'crove_notes.todo': NotesTodoTable;
+  'crove_projects.project': ProjectsProjectTable;
   'crove_kernel.calendar_connection': CalendarConnectionTable;
   'crove_kernel.calendar_event': CalendarEventTable;
   'crove_kernel.calendar_event_link': CalendarEventLinkTable;

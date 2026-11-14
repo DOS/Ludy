@@ -202,6 +202,12 @@ export const MEETINGS_SCREENS = {
   nav: [],
 } as const satisfies ModuleScreens;
 
+// Projects and a task board on kernel tasks (issue #2591, ADR-0048, projects plan P2): in the Home app beside Tasks, Notes and My work.
+export const PROJECTS_SCREENS = {
+  routes: [{ path: 'projects' }, { path: 'projects/$id' }],
+  nav: [{ app: 'home', group: 'work', path: 'projects', label: 'projects' }],
+} as const satisfies ModuleScreens;
+
 export const MODULE_SCREENS = {
   kernel: KERNEL_SCREENS,
   finance: FINANCE_SCREENS,
@@ -211,4 +217,5 @@ export const MODULE_SCREENS = {
   crm: CRM_SCREENS,
   notes: NOTES_SCREENS,
   meetings: MEETINGS_SCREENS,
+  projects: PROJECTS_SCREENS,
 } as const;

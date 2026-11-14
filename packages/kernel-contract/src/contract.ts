@@ -382,6 +382,23 @@ import {
   zSummaryCopy,
 } from './meetings.ts';
 import { zFollowupDraft, zFollowupSendCall, zFollowupSent, zFollowupWording, zFollowupWordingAsk } from './meeting-followup.ts';
+import {
+  zProjectArchive,
+  zProjectBoard,
+  zProjectBoardInput,
+  zProjectCandidateTask,
+  zProjectCreate,
+  zProjectDetail,
+  zProjectListInput,
+  zProjectListResult,
+  zProjectMemberMutate,
+  zProjectSetOwner,
+  zProjectSetStatus,
+  zProjectStatus,
+  zProjectTaskCreate,
+  zProjectTaskMutate,
+  zProjectUpdate,
+} from './projects.ts';
 import { zExtensionOrgToken, zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked, zExtensionTokenRevokedMember } from './extension.ts';
 import { zMcpGrantRevoke, zMcpGrantRevoked, zMcpGrantView, zMcpMemberGrantsSet, zMcpMemberGrantsView, zMcpWakeCleared, zMcpWakeTested, zMcpWakeGetInput, zMcpWakeGrantRef, zMcpWakeSet, zMcpWakeView, zMcpWakeWithSecret } from './mcp.ts';
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
@@ -2454,6 +2471,23 @@ export const contract = {
       .output(z.object({ taskId: zId })),
     comment: oc.input(z.object({ id: zId, body: z.string().trim().min(1).max(10000), idempotencyKey: zId })).output(z.object({ commentId: zId })),
     setStatus: oc.input(z.object({ id: zId, status: zTaskStatus, idempotencyKey: zId })).output(z.object({ taskId: zId, status: zTaskStatus })),
+  },
+  // Projects and a task board on kernel tasks (#2591, ADR-0048). Off-switchable via CROVE_MODULES.
+  projects: {
+    list: oc.input(zProjectListInput).output(zProjectListResult),
+    get: oc.input(z.strictObject({ id: zId })).output(zProjectDetail),
+    board: oc.input(zProjectBoardInput).output(zProjectBoard),
+    unassignedTasks: oc.input(z.strictObject({})).output(z.array(zProjectCandidateTask)),
+    create: oc.input(zProjectCreate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId })),
+    update: oc.input(zProjectUpdate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId })),
+    setStatus: oc.input(zProjectSetStatus.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, status: zProjectStatus })),
+    archive: oc.input(zProjectArchive.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, status: z.literal('archived') })),
+    setOwner: oc.input(zProjectSetOwner.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, ownerUserId: zId })),
+    addMember: oc.input(zProjectMemberMutate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, userId: zId, added: z.boolean() })),
+    removeMember: oc.input(zProjectMemberMutate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, userId: zId, removed: z.boolean() })),
+    addTask: oc.input(zProjectTaskMutate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, taskId: zId, added: z.boolean() })),
+    removeTask: oc.input(zProjectTaskMutate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, taskId: zId, removed: z.boolean() })),
+    createTask: oc.input(zProjectTaskCreate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, taskId: zId })),
   },
 };
 

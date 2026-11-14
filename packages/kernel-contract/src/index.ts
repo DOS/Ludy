@@ -114,6 +114,7 @@ export * from './extension.ts';
 export * from './mcp.ts';
 export * from './meetings.ts';
 export * from './meeting-followup.ts';
+export * from './projects.ts';
 export * from './ads.ts';
 export * from './ads-campaign.ts';
 export * from './manifest.ts';

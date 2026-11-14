@@ -3,8 +3,8 @@
 
 import type { ColumnType, Generated } from 'kysely';
 
-/** Every table of crove_kernel, crove_finance, crove_social, crove_crm, crove_notes, crove_ads, crove_hr, crove_meetings that crove_tenant may read. */
-export type Database = CroveAdsSchema & CroveCrmSchema & CroveFinanceSchema & CroveHrSchema & CroveKernelSchema & CroveMeetingsSchema & CroveNotesSchema & CroveSocialSchema;
+/** Every table of crove_kernel, crove_finance, crove_social, crove_crm, crove_notes, crove_ads, crove_hr, crove_meetings, crove_projects that crove_tenant may read. */
+export type Database = CroveAdsSchema & CroveCrmSchema & CroveFinanceSchema & CroveHrSchema & CroveKernelSchema & CroveMeetingsSchema & CroveNotesSchema & CroveProjectsSchema & CroveSocialSchema;
 
 /**
  * The insert or update type of a column crove_tenant may not insert or update: no value but undefined, which
@@ -196,6 +196,12 @@ export interface CroveNotesSchema {
   'crove_notes.link': NotesLinkTable;
   'crove_notes.note': NotesNoteTable;
   'crove_notes.todo': NotesTodoTable;
+}
+
+export interface CroveProjectsSchema {
+  'crove_projects.project': ProjectsProjectTable;
+  'crove_projects.project_member': ProjectsProjectMemberTable;
+  'crove_projects.project_task': ProjectsProjectTaskTable;
 }
 
 export interface CroveSocialSchema {
@@ -2912,6 +2918,38 @@ export interface NotesTodoTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   done_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   deleted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+}
+
+/** crove_projects.project_member */
+export interface ProjectsProjectMemberTable {
+  org_id: string;
+  id: Generated<string>;
+  project_id: string;
+  user_id: string;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_projects.project */
+export interface ProjectsProjectTable {
+  org_id: string;
+  id: Generated<string>;
+  name: string;
+  description: string | null;
+  owner_user_id: string | null;
+  status: Generated<string>;
+  created_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_projects.project_task */
+export interface ProjectsProjectTaskTable {
+  org_id: string;
+  id: Generated<string>;
+  project_id: string;
+  task_id: string;
+  added_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_social.account_snapshot */
