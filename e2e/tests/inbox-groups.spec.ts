@@ -49,7 +49,7 @@ test('a vendor group of clean invoices is approved in one action, and a rule sho
     usedStep = first.step;
     await page.getByLabel('Mã xác thực').fill(first.code);
     await page.getByRole('button', { name: 'Xác nhận' }).click();
-    await expect(page).toHaveURL(new RegExp(`/o/${created}/overview$`));
+    await expect(page).toHaveURL(new RegExp(`/o/${created}/inbox$`));
     return created;
   });
 

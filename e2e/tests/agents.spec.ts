@@ -35,7 +35,7 @@ test('the budget form locks while it waits for a second factor, then saves the b
   await signUp(page, newEmail('budget'));
   await createOrg(page, 'Công ty Ngân sách');
   await page.getByRole('navigation').getByRole('link', { name: 'Ludy AI', exact: true }).click();
-  await page.getByRole('navigation').getByRole('link', { name: 'Đội ngũ AI' }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Ngân sách AI' }).click();
   await expect(page.getByRole('heading', { name: 'Ngân sách AI hằng tháng' })).toBeVisible();
 
   const limit = page.getByLabel('Hạn mức mỗi tháng');

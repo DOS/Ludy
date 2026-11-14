@@ -74,7 +74,7 @@ test('lists an overdue customer, drafts the reminder, sends it on a click with t
     const secret = (await page.getByLabel('Khóa thiết lập').textContent())?.trim() ?? '';
     await page.getByLabel('Mã xác thực').fill((await nextTotp(secret)).code);
     await page.getByRole('button', { name: 'Xác nhận' }).click();
-    await expect(page).toHaveURL(new RegExp(`/o/${slug}/overview$`));
+    await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
   });
 
   await test.step('the customer has no email yet: the reminder cannot be sent', async () => {

@@ -75,7 +75,7 @@ test('post an invoice of a locked month in the first open month, keeping its inv
     const secret = (await page.getByLabel('Khóa thiết lập').textContent())?.trim() ?? '';
     await page.getByLabel('Mã xác thực').fill((await nextTotp(secret)).code);
     await page.getByRole('button', { name: 'Xác nhận' }).click();
-    await expect(page).toHaveURL(new RegExp(`/o/${slug}/overview$`));
+    await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
     await page.getByRole('tab', { name: 'Đã ghi sổ' }).click();
     await page.getByRole('link', { name: SELLER }).click();
     await expect(page.getByTestId('late-posted')).toHaveText(

@@ -48,7 +48,7 @@ test('an approver teaches a line rule, Settings lists and removes rules, and the
     const secret = (await page.getByLabel('Khóa thiết lập').textContent())?.trim() ?? '';
     await page.getByLabel('Mã xác thực').fill((await nextTotp(secret)).code);
     await page.getByRole('button', { name: 'Xác nhận' }).click();
-    await expect(page).toHaveURL(new RegExp(`/o/${slug}/overview$`));
+    await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
     await expect(page.getByRole('status').filter({ hasText: `Đã duyệt và ghi sổ ${SELLER}` })).toBeVisible();
   });
 

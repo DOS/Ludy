@@ -36,7 +36,7 @@ test('with AI off the coworker says so, the line is assigned by hand, and nothin
     const secret = (await page.getByLabel('Khóa thiết lập').textContent())?.trim() ?? '';
     await page.getByLabel('Mã xác thực').fill((await nextTotp(secret)).code);
     await page.getByRole('button', { name: 'Xác nhận' }).click();
-    await expect(page).toHaveURL(new RegExp(`/o/${slug}/overview$`));
+    await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
   });
 
   await test.step('on the stock screen the line waits; nothing is running low, so there is no such section', async () => {

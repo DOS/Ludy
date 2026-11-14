@@ -26,6 +26,12 @@ describe('apps of the shell (#1528, #3225)', () => {
     for (const path of ['bookings', 'deals', 'contacts', 'contacts/import', 'reports', 'ads', 'ads/campaigns', 'social/notifications']) expect(appOfPath(`/o/acme/${path}`), path).toBe('engage');
   });
 
+  it('reads a path without regard to case, as the router does', () => {
+    expect(appOfPath('/o/acme/JOURNAL')).toBe('finance');
+    expect(appOfPath('/o/acme/Social/New')).toBe('engage');
+    expect(tabGroupOfPath('/o/acme/PAYMENT-REMINDERS')?.menu).toBe('customers');
+  });
+
   it('puts the overview, the bell, the org own screens and paths outside an org in no app', () => {
     for (const path of ['/o/acme/overview', '/o/acme/notifications', '/o/acme/settings', '/o/acme/audit', '/o/acme', '/clients', '/']) {
       expect(appOfPath(path), path).toBeNull();

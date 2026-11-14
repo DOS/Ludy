@@ -116,7 +116,7 @@ export const TAB_GROUPS: readonly TabGroup[] = [
 export function tabGroupOfPath(pathname: string): TabGroup | null {
   const [, o, , ...rest] = pathname.split('/');
   if (o !== 'o') return null;
-  const screen = rest.join('/').replace(/\/$/, '');
+  const screen = rest.join('/').replace(/\/$/, '').toLowerCase();
   return TAB_GROUPS.find((group) => group.tabs.some((tab) => tab.path === screen)) ?? null;
 }
 
@@ -160,8 +160,10 @@ const INNER_SCREENS: ReadonlyMap<string, AppId> = new Map(
 // The app a path (/o/<slug>/<screen>/...) belongs to, so a deep link opens with its app selected; null for the org's
 // own screens (the chart, Settings, the audit log) and for paths outside an org.
 export function appOfPath(pathname: string): AppId | null {
-  const [, o, , screen] = pathname.split('/');
-  if (o !== 'o' || !screen) return null;
+  const [, o, , rawScreen] = pathname.split('/');
+  if (o !== 'o' || !rawScreen) return null;
+  // The router matches without regard to case, so the shell does too.
+  const screen = rawScreen.toLowerCase();
   for (const app of APPS) {
     for (const group of app.groups) {
       if (group.items.some((entry) => entry.to.split('/')[3] === screen)) return app.id;

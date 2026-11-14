@@ -378,7 +378,7 @@ export const vi = {
   notifications: {
     todayMail: {
       title: 'Tóm tắt hằng ngày qua email',
-      hint: 'Mỗi sáng, một thư ngắn cho biết hôm nay có bao nhiêu việc cần bạn kèm liên kết về Trang chủ. Thư chỉ có số lượng và liên kết, không có số tiền hay nội dung.',
+      hint: 'Mỗi sáng, một thư ngắn cho biết hôm nay có bao nhiêu việc cần bạn kèm liên kết về Tổng quan. Thư chỉ có số lượng và liên kết, không có số tiền hay nội dung.',
       label: 'Gửi cho tôi tóm tắt hằng ngày qua email',
       noMail: 'Máy chủ này chưa gửi được email, nên chưa có thư nào được gửi cho đến khi người cài đặt bật thư.',
       turnOffAsked: 'Bạn đã chọn tắt thư tóm tắt hằng ngày.',
@@ -6285,7 +6285,7 @@ export const vi = {
       finance_payroll_prepare: 'Gợi ý những gì có thể đổi khi mở kỳ lương mới',
       finance_payroll_flag: 'Viết một câu cho mỗi điểm bất thường của bảng lương',
       finance_payroll_explain: 'Giải thích một phiếu lương từ các khoản đã lưu',
-      today_brief: 'Bản tin hằng ngày của Vy trên Trang chủ',
+      today_brief: 'Bản tin hằng ngày của Vy trên Tổng quan',
       ads_campaign_draft: 'Soạn nội dung chiến dịch quảng cáo',
       finance_overview_explain: 'Viết một câu giải thích tổng quan Kế toán',
       finance_bank_match_explain: 'Giải thích vì sao một giao dịch ngân hàng có thể là khoản trả lương',

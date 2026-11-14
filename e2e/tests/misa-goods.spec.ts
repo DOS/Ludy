@@ -61,7 +61,7 @@ test('set the MISA codes of a stock account, book a stock line, and export it in
     const secret = (await page.getByLabel('Khóa thiết lập').textContent())?.trim() ?? '';
     await page.getByLabel('Mã xác thực').fill((await nextTotp(secret)).code);
     await page.getByRole('button', { name: 'Xác nhận' }).click();
-    await expect(page).toHaveURL(new RegExp(`/o/${slug}/overview$`));
+    await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
   });
 
   await test.step('the goods file holds the stock line with the codes; the services file the other lines', async () => {

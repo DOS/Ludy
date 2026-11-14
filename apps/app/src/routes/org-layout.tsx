@@ -13,7 +13,7 @@ import { Logo, OrgLeftNotice } from '../components/ui.tsx';
 import { LOCALE_NAMES, LOCALES } from '../i18n/locale.ts';
 import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
 import { orpc } from '../lib/api.ts';
-import { ALL_NAV, appOfPath, installedApps, type AppId } from '../lib/apps.ts';
+import { ALL_NAV, appOfPath, installedApps, type AppId, type NavItem } from '../lib/apps.ts';
 import { getConfig } from '../lib/auth.ts';
 import { installedItems } from '../lib/modules.ts';
 import { shellBadges } from '../lib/overview.ts';
@@ -78,8 +78,17 @@ export function OrgLayout() {
   const roleHere = me.data?.orgs.find((o) => o.slug === slug)?.role;
   // HR holds the people payroll is run for: owners and admins only (the queries and the database refuse everyone else too), so nobody else is offered its app or its palette entry.
   const managerHere = roleHere === 'owner' || roleHere === 'admin';
-  const NAV = useMemo(() => (managerHere ? allNav : allNav.filter((n) => n.module !== 'hr')), [allNav, managerHere]);
-  const apps = useMemo(() => (managerHere ? allApps : allApps.filter((a) => a.id !== 'hr')), [allApps, managerHere]);
+  // Items left out of the menu and the palette for a viewer who cannot use them (#3225): the AI budgets are for owners and admins, and the AI connections
+  // exist only where this system runs MCP. Their screens still answer anyone who types the address.
+  const hidden = (item: NavItem) => (item.module === 'hr' && !managerHere) || (item.label === 'aiUsage' && !managerHere) || (item.label === 'aiConnections' && !getConfig().mcpEnabled);
+  const NAV = useMemo(() => allNav.filter((n) => !hidden(n)), [allNav, managerHere]); // oxlint-disable-line react-hooks/exhaustive-deps
+  const apps = useMemo(
+    () =>
+      allApps
+        .filter((a) => managerHere || a.id !== 'hr')
+        .map((a) => ({ ...a, groups: a.groups.map((g) => ({ ...g, items: g.items.filter((i) => !hidden(i)) })).filter((g) => g.items.length > 0) })),
+    [allApps, managerHere], // oxlint-disable-line react-hooks/exhaustive-deps
+  );
   const failedJobs = useQuery({
     ...orpc.inbox.raised.queryOptions({ input: {} }),
     enabled: roleHere === 'owner' || roleHere === 'admin',

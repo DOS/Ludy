@@ -5,7 +5,7 @@ import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { NavIcon, type NavIconName } from '@crove/ui/components/nav-icon';
 import { LocaleSwitcher } from '../i18n/provider.tsx';
-import { ADMIN_ITEMS, BELL_ITEM, TOP_ITEMS, isHeadedGroup, tabGroupOfPath, type AppId, type InstalledApp, type NavItem, type NavLabel } from '../lib/apps.ts';
+import { ADMIN_ITEMS, BELL_ITEM, TAB_GROUPS, TOP_ITEMS, isHeadedGroup, tabGroupOfPath, type AppId, type InstalledApp, type NavItem, type NavLabel } from '../lib/apps.ts';
 import { signOut } from '../lib/session-actions.ts';
 import { StatusLink } from './status-link.tsx';
 import { SupportLink } from './support-link.tsx';
@@ -52,7 +52,9 @@ export function ShellNav({ slug, apps, app, inApp, badges, orgs, email, onOpenPa
   const navigate = useNavigate();
   const orgSelectId = useId();
   const current = apps.find((a) => a.id === app) ?? apps[0];
-  const hasBadge = (items: readonly NavItem[]) => items.some((item) => Boolean(badges[item.label]));
+  // A count on a tab of an item (the social updates under Bài đăng) shows as a dot on the item and on its app, so it is seen before the item is opened.
+  const tabHasBadge = (item: NavItem) => TAB_GROUPS.some((group) => item.to === `/o/$slug/${group.menu}` && group.tabs.some((tab) => tab.label !== item.label && Boolean(badges[tab.label])));
+  const hasBadge = (items: readonly NavItem[]) => items.some((item) => Boolean(badges[item.label]) || tabHasBadge(item));
   // A screen that is a tab of a menu item (#3225) keeps that item marked current.
   const { pathname } = useLocation();
   const tabMenu = tabGroupOfPath(pathname)?.menu;
@@ -182,7 +184,11 @@ export function ShellNav({ slug, apps, app, inApp, badges, orgs, email, onOpenPa
                         >
                           <NavIcon name={menuIcon(item.label)} />
                           <span className="min-w-0 flex-1 truncate">{t(IN_MENU_LABEL[item.label] ?? item.label)}</span>
-                          {badge ? <span className="rounded-full bg-primary px-1.5 text-xs text-primary-foreground tabular-nums">{badge}</span> : null}
+                          {badge ? (
+                            <span className="rounded-full bg-primary px-1.5 text-xs text-primary-foreground tabular-nums">{badge}</span>
+                          ) : tabHasBadge(item) ? (
+                            <span className="size-2 rounded-full bg-primary" aria-hidden="true" />
+                          ) : null}
                         </Link>
                       </li>
                     );
