@@ -10931,6 +10931,7 @@ export const en = {
         refresh: "Refresh a channel's credential",
         reseal: "Re-encrypt a channel's credential",
         telegram_business_allow: 'Allow or stop the chats of a Telegram Business account',
+        telegram_business_known: 'Check whether a Telegram Business account is already recorded',
         telegram_business_record: 'Record a Telegram Business account connected to the bot',
         telegram_chat_record: 'Record the result of turning Telegram chats on or off',
         telegram_chat_set: "Turn receiving customers' Telegram messages on or off",
