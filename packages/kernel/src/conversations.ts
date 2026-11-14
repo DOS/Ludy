@@ -90,7 +90,9 @@ import {
   CONVERSATION_CONTACT_MATCHES_MAX,
   CONVERSATION_INTENT_CHARS,
   CONVERSATION_INTENT_MESSAGES,
+  phoneKey,
   phoneKeysIn,
+  conversationCanResendUnknown,
   type Availability,
   type ConversationIntent,
   CONVERSATION_ATTACHMENTS_MAX,
@@ -308,10 +310,18 @@ async function ingestEvents(ctx: CommandContext, connectionId: string, inputEven
       return out;
     }
   }
+  // A WhatsApp number can change hands (one org disconnects it, another connects it) while notices of the first are still waiting: a notice names no org
+  // and may wait up to seven days. An event dated before this connection began is the earlier holder's customer's, never ours. A reconnect of a live
+  // connection keeps its row and its date; a number connected again after a disconnect is a new row, so its date is the start of this holder.
+  let notBefore: number | null = null;
+  if (connection.provider === 'whatsapp') {
+    const since = await ctx.trx.selectFrom('crove_kernel.channel_connection').select('connected_at').where('org_id', '=', ctx.orgId).where('id', '=', connectionId).executeTakeFirst();
+    notBefore = since ? new Date(since.connected_at).getTime() : null;
+  }
   // Oldest first, so a thread's messages take their seq in the order the platform dated them within one notice.
   const events = inputEvents.map((event, i) => ({ event, i })).sort((a, b) => Date.parse(a.event.at) - Date.parse(b.event.at) || a.i - b.i);
   for (const { event } of events) {
-    if (!rules.kinds.includes(event.kind)) {
+    if (!rules.kinds.includes(event.kind) || (notBefore !== null && Date.parse(event.at) < notBefore)) {
       out.ignored++;
       continue;
     }
@@ -398,8 +408,10 @@ async function staleDrafts(ctx: CommandContext, conversationId: string | readonl
     .execute();
 }
 
-// The pending rows of a message's images (CV5c, #2357), each with a blob key of its own reserved now.
-async function addAttachments(ctx: CommandContext, messageId: string, connectionId: string, kind: ConversationKind, images: ReadonlyArray<{ url: string }>): Promise<void> {
+// The pending rows of a message's images (CV5c, #2357), each with a blob key of its own reserved now. An image is named by the platform's address
+// (`source_url`) or, where its bytes need the connection's token, by a provider-scoped reference (`source_ref`, #3131): one of the two, both personal data
+// in the same life (cleared when the bytes are stored, deleted at six days).
+async function addAttachments(ctx: CommandContext, messageId: string, connectionId: string, kind: ConversationKind, images: ReadonlyArray<{ url: string } | { mediaRef: string }>): Promise<void> {
   await ctx.trx
     .insertInto('crove_kernel.conversation_attachment')
     .values(
@@ -408,7 +420,8 @@ async function addAttachments(ctx: CommandContext, messageId: string, connection
         message_id: messageId,
         channel_connection_id: connectionId,
         kind,
-        source_url: a.url,
+        source_url: 'url' in a ? a.url : null,
+        source_ref: 'mediaRef' in a ? a.mediaRef : null,
         storage_key: conversationKey(ctx.orgId, newConversationBlobId()),
         created_at: ctx.now,
       })),
@@ -486,6 +499,32 @@ async function reserveMailImages(ctx: CommandContext, messageId: string, connect
   return rows.map((r) => ({ attachmentId: r.id, storageKey: r.storage_key }));
 }
 
+// A status `failed` for a message the org sent through this connection: a `sent` message becomes `failed` with the platform's code, so the person sees it did not
+// arrive and may send it again (inside the window). Nothing else changes: a message already failed, one still being sent or left unclear (it holds no platform id
+// of the attempt in flight: a retry and a person's "marked sent" clear the id of the attempt before, in reply_settle), and one the platform never named to us
+// (written outside Ludy) are left alone, so a late or repeated status of an earlier attempt can neither undo a settled answer nor turn an unclear send back into
+// one a button may send again.
+async function applyDeliveryFailed(ctx: CommandContext, connectionId: string, event: ConversationEvent): Promise<'stored' | 'duplicates' | 'ignored'> {
+  const message = await ctx.trx
+    .selectFrom('crove_kernel.conversation_message')
+    .select(['id', 'direction', 'author_kind', 'send_state'])
+    .where('org_id', '=', ctx.orgId)
+    .where('channel_connection_id', '=', connectionId)
+    .where('external_message_id', '=', event.messageId)
+    .forUpdate()
+    .executeTakeFirst();
+  if (!message || message.direction !== 'out' || message.author_kind !== 'member') return 'ignored';
+  if (message.send_state === 'failed') return 'duplicates';
+  if (message.send_state !== 'sent') return 'ignored';
+  await ctx.trx
+    .updateTable('crove_kernel.conversation_message')
+    .set({ send_state: 'failed', send_error_code: event.deliveryFailed?.code ?? 'FAILED' })
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', message.id)
+    .execute();
+  return 'stored';
+}
+
 async function ingestEvent(
   ctx: CommandContext,
   connectionId: string,
@@ -494,6 +533,9 @@ async function ingestEvent(
   original: ConversationEvent,
   reserved: MailImageSlot[],
 ): Promise<'stored' | 'duplicates' | 'ignored'> {
+  // The platform says a message of ours did not reach the customer (WhatsApp's status `failed`, #3131): it only marks the stored outbound message with that
+  // platform id, and never makes a message, a thread or an identity.
+  if (original.deliveryFailed) return original.direction === 'out' ? applyDeliveryFailed(ctx, connectionId, original) : 'ignored';
   let event: ConversationEvent =
     original.kind === 'email'
       ? { ...original, threadId: await emailThreadId(ctx, connectionId, original) }
@@ -559,6 +601,7 @@ async function ingestEvent(
         .where('message_id', '=', existing.id)
         .where('state', '=', 'pending')
         .where('source_url', 'is', null)
+        .where('source_ref', 'is', null)
         .orderBy('created_at')
         .orderBy('id')
         .limit(CONVERSATION_ATTACHMENTS_MAX)
@@ -1740,7 +1783,14 @@ export const conversationReplySettle = defineCommand({
       throw new DomainError('MESSAGE_NOT_SETTLEABLE', 409, 'Tin nhắn này không cần xử lý thêm');
     }
     if (input.action === 'mark_sent') {
-      await ctx.trx.updateTable('crove_kernel.conversation_message').set({ send_state: 'sent', send_error_code: null }).where('org_id', '=', ctx.orgId).where('id', '=', message.id).execute();
+      // A person looked on the platform and settled it: the platform's id of an attempt it reported failed is no longer this message's, so a repeated status of
+      // that attempt (Meta delivers at least once) cannot flip the answer back. Not for an email, whose id is its Message-ID.
+      await ctx.trx
+        .updateTable('crove_kernel.conversation_message')
+        .set({ send_state: 'sent', send_error_code: null, ...(message.kind === 'email' ? {} : { external_message_id: null }) })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', message.id)
+        .execute();
       await ctx.trx
         .updateTable('crove_kernel.external_call')
         .set({ state: 'succeeded', finished_at: ctx.now, updated_at: ctx.now })
@@ -1756,6 +1806,10 @@ export const conversationReplySettle = defineCommand({
       throw new DomainError('EMAIL_SEND_UNKNOWN', 409, 'Thư này có thể đã đi. Hãy kiểm tra rồi đánh dấu là đã gửi');
     }
     const connection = await connectionOf(ctx, message.channel_connection_id);
+    // The same for a channel with no history to read back (WhatsApp, #3131): nothing can say whether the unclear send arrived, so a button never sends it again.
+    if (message.send_state === 'unknown' && connection && !conversationCanResendUnknown(connection.provider, message.kind)) {
+      throw new DomainError('SEND_UNKNOWN_NO_RESEND', 409, 'Tin nhắn này có thể đã đến khách. Hãy kiểm tra trên kênh rồi đánh dấu là đã gửi, không gửi lại bằng nút');
+    }
     if (!connection || connection.status !== 'active') throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kênh này không còn hoạt động, hãy kết nối lại');
     const thread = await ctx.trx.selectFrom('crove_kernel.conversation').select(['reply_window_until', 'last_seq']).where('org_id', '=', ctx.orgId).where('id', '=', message.conversation_id).executeTakeFirst();
     // The same rule as a new reply: a newer message means the customer's words changed what is worth saying, so an earlier reply is not
@@ -1765,7 +1819,8 @@ export const conversationReplySettle = defineCommand({
     if (connection.provider === 'youtube') await refuseWhileYoutubeQuotaSpent(ctx, ctx.now, connection.id);
     await ctx.trx
       .updateTable('crove_kernel.conversation_message')
-      .set({ send_state: 'queued', send_attempt: message.send_attempt + 1, send_error_code: null })
+      // A new attempt has no platform id yet: the earlier attempt's id would let its late status mark this one (and a failed attempt keeps none a status could use).
+      .set({ send_state: 'queued', send_attempt: message.send_attempt + 1, send_error_code: null, ...(message.kind === 'email' ? {} : { external_message_id: null }) })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', message.id)
       .execute();
@@ -2148,10 +2203,12 @@ export const conversationContactCandidates = defineQuery({
   input: zConversationContactMatches,
   access: WRITERS,
   handler: async (ctx, input): Promise<ContactCandidates> => {
-    const { rows } = await sql<{ party_id: string | null; identity_name: string | null; address: string | null }>`
-      SELECT c.party_id, i.display_name AS identity_name, CASE WHEN c.kind = 'email' AND NOT c.sender_unverified THEN i.external_user_id END AS address
+    const { rows } = await sql<{ party_id: string | null; identity_name: string | null; address: string | null; wa_id: string | null }>`
+      SELECT c.party_id, i.display_name AS identity_name, CASE WHEN c.kind = 'email' AND NOT c.sender_unverified THEN i.external_user_id END AS address,
+             CASE WHEN ch.provider = 'whatsapp' THEN i.external_user_id END AS wa_id
       FROM crove_kernel.conversation c
       LEFT JOIN crove_kernel.conversation_identity i ON i.org_id = c.org_id AND i.id = c.identity_id
+      LEFT JOIN crove_kernel.channel_connection ch ON ch.org_id = c.org_id AND ch.id = c.channel_connection_id
       WHERE c.org_id = ${ctx.orgId}::uuid AND c.id = ${input.conversationId}::uuid`.execute(ctx.trx);
     const thread = rows[0];
     if (!thread) throw notFound();
@@ -2174,6 +2231,10 @@ export const conversationContactCandidates = defineQuery({
       WHERE m.org_id = ${ctx.orgId}::uuid AND m.conversation_id = ${input.conversationId}::uuid AND m.direction = 'in' AND m.platform_removed_at IS NULL
       ORDER BY m.seq DESC LIMIT 20`.execute(ctx.trx);
     const keys: string[] = [];
+    // A WhatsApp customer's id is their phone number in digits (`wa_id`, #3131): the first, deterministic key, with no model and no number to find in the text.
+    // An id that is not a phone number (Meta may give another identifier) gives none.
+    const waKey = thread.wa_id !== null && /^\d{7,15}$/.test(thread.wa_id) ? phoneKey(thread.wa_id) : null;
+    if (waKey !== null) keys.push(waKey);
     for (const { body } of written.rows) for (const key of phoneKeysIn(body)) if (!keys.includes(key) && keys.length < 3) keys.push(key);
     const phone =
       keys.length === 0
@@ -2857,8 +2918,10 @@ export const conversationAttachmentRequest = defineCommand({
 
 export interface AttachmentSource {
   provider: string;
-  // The platform's address of the image: personal data, read here for the one fetch and put nowhere.
-  sourceUrl: string;
+  // Where the image is: the platform's address, or (#3131) the provider-scoped reference its adapter turns into bytes with the connection's credential. Exactly
+  // one is set. Personal data, read here for the one fetch and put nowhere.
+  sourceUrl: string | null;
+  mediaRef: string | null;
   storageKey: string;
 }
 
@@ -2871,14 +2934,14 @@ export const conversationAttachmentSource = defineQuery({
   handler: async (ctx, input): Promise<AttachmentSource | null> => {
     const row = await ctx.trx
       .selectFrom('crove_kernel.conversation_attachment')
-      .select(['channel_connection_id', 'state', 'source_url', 'storage_key'])
+      .select(['channel_connection_id', 'state', 'source_url', 'source_ref', 'storage_key'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.attachmentId)
       .executeTakeFirst();
-    if (!row || row.state !== 'pending' || !row.source_url) return null;
+    if (!row || row.state !== 'pending' || (!row.source_url && !row.source_ref)) return null;
     const connection = await connectionOf(ctx, row.channel_connection_id);
     if (!connection || connection.status !== 'active') return null;
-    return { provider: connection.provider, sourceUrl: row.source_url, storageKey: row.storage_key };
+    return { provider: connection.provider, sourceUrl: row.source_url, mediaRef: row.source_url ? null : row.source_ref, storageKey: row.storage_key };
   },
 });
 
@@ -2909,6 +2972,7 @@ export const conversationAttachmentRecord = defineCommand({
         .set({
           state: 'stored',
           source_url: null,
+          source_ref: null,
           generation: input.generation,
           sha256: input.sha256,
           content_type: input.contentType,
