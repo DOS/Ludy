@@ -493,6 +493,15 @@ export const STOCK_ITEM_KINDS = ['goods'] as const;
 export type StockItemKind = (typeof STOCK_ITEM_KINDS)[number];
 export const STOCK_TRADES = ['goods', 'services', 'catering', 'other'] as const;
 export type StockTrade = (typeof STOCK_TRADES)[number];
+// The household business kind (#2517): the fixed sets its CHECK constraints keep.
+export const HOUSEHOLD_PIT_METHODS = ['percentage', 'income'] as const;
+export const HOUSEHOLD_RULE_STATUSES = ['commentary', 'confirmed'] as const;
+export const HOUSEHOLD_EXPENSE_GROUPS = ['materials_goods', 'wages_insurance', 'depreciation', 'outside_services', 'interest', 'other'] as const;
+export const HOUSEHOLD_BOOKS = ['S1a', 'S2a', 'S2b', 'S2c', 'S2d', 'S2e', 'S3a'] as const;
+export type HouseholdPitMethod = (typeof HOUSEHOLD_PIT_METHODS)[number];
+export type HouseholdRuleStatus = (typeof HOUSEHOLD_RULE_STATUSES)[number];
+export type HouseholdExpenseGroup = (typeof HOUSEHOLD_EXPENSE_GROUPS)[number];
+export type HouseholdBook = (typeof HOUSEHOLD_BOOKS)[number];
 export const STOCK_MOVE_SOURCES = ['document_line', 'manual', 'reversal', 'order_line', 'count', 'crm_order_line'] as const;
 export type StockMoveSource = (typeof STOCK_MOVE_SOURCES)[number];
 export type StockItemTable = Refine<
@@ -501,6 +510,16 @@ export type StockItemTable = Refine<
   'legal_entity_id'
 >;
 export type StockAliasTable = Refine<G.FinanceStockAliasTable, { legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
+// The household business kind (#2517): the profile of an entity of kind household, and the law as dated rows (global, read-only for every org).
+export type HouseholdProfileTable = Refine<
+  G.FinanceHouseholdProfileTable,
+  { pit_method: HouseholdPitMethod | null; trades: StockTrade[]; legal_entity_id: LegalEntityColumn },
+  'legal_entity_id'
+>;
+export type HouseholdThresholdTable = Refine<G.FinanceHouseholdThresholdTable, { status: HouseholdRuleStatus }>;
+export type HouseholdTradeRateTable = Refine<G.FinanceHouseholdTradeRateTable, { trade: StockTrade; status: HouseholdRuleStatus }>;
+export type HouseholdExpenseGroupMapTable = Refine<G.FinanceHouseholdExpenseGroupMapTable, { expense_group: HouseholdExpenseGroup; status: HouseholdRuleStatus }>;
+export type HouseholdFormVersionTable = Refine<G.FinanceHouseholdFormVersionTable, { book: HouseholdBook; pit_methods: Array<'none' | HouseholdPitMethod>; status: HouseholdRuleStatus }>;
 // Marketplace orders (#2515, ADR-0045 point 5): the platform, how far a line has got, and which move of an order line a stock move is (a shipment out, a return in).
 export const CHANNEL_PLATFORMS = ['shopee', 'tiktok_shop', 'lazada'] as const;
 export type ChannelPlatform = (typeof CHANNEL_PLATFORMS)[number];
@@ -1204,6 +1223,11 @@ type Refined = Tables<{
   'crove_finance.channel_settlement': ChannelSettlementTable;
   'crove_finance.channel_settlement_line': ChannelSettlementLineTable;
   'crove_finance.stock_alias': StockAliasTable;
+  'crove_finance.household_profile': HouseholdProfileTable;
+  'crove_finance.household_threshold': HouseholdThresholdTable;
+  'crove_finance.household_trade_rate': HouseholdTradeRateTable;
+  'crove_finance.household_expense_group_map': HouseholdExpenseGroupMapTable;
+  'crove_finance.household_form_version': HouseholdFormVersionTable;
   'crove_finance.stock_move': StockMoveTable;
   'crove_finance.stock_period': StockPeriodTable;
   'crove_finance.stock_period_item': StockPeriodItemTable;
