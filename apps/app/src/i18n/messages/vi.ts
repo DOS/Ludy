@@ -1804,6 +1804,20 @@ export const vi = {
       otherStopped: 'Ghi chú trực tiếp đã dừng.',
       code: 'Mã: {code}',
       recordingContinues: 'Việc ghi âm vẫn tiếp tục.',
+      assemble: {
+        title: 'Bản ghi chưa được tải lên',
+        offer: 'Bản ghi đầy đủ của cuộc họp này chưa được tải lên. Bạn có thể ghép bản ghi từ {pieces} đoạn đã gửi trong lúc họp.',
+        button: 'Ghép bản ghi từ các đoạn trực tiếp',
+        gaps: 'Thiếu {count} đoạn (số {list}): chỗ đó trong bản ghi sẽ bị đứt quãng.',
+        lateUpload: 'Nếu bản ghi đầy đủ đến muộn sau khi bạn ghép, bản ghép được giữ và bản đến muộn bị từ chối.',
+        done: 'Đã ghép {pieces} đoạn thành bản ghi dài {length}. Bạn có thể nghe lại và ghi lời như thường lệ.',
+        doneGaps: 'Thiếu {count} đoạn (số {list}), nên bản ghi bị đứt quãng ở đó.',
+        reasons: {
+          still_recording: 'Bản ghi đầy đủ vẫn có thể đến. Bạn ghép được các đoạn sau khi cuộc ghi quá thời hạn tối đa (4 giờ 15 phút).',
+          first_piece_missing: 'Không ghép được: thiếu đoạn đầu, đoạn giữ phần đầu của tệp, nên các đoạn sau không đọc được.',
+          expired: 'Không ghép được: thời hạn giữ âm thanh của cuộc họp này đã hết.',
+        },
+      },
     },
     followup: {
       open: 'Soạn thư cảm ơn',
@@ -9247,6 +9261,12 @@ export const vi = {
       SUMMARY_RESULT_NOT_FOUND: 'Cuộc họp này chưa có kết quả tóm tắt.',
       SUMMARY_RESULT_NOT_READY: 'Vy chưa tóm tắt xong.',
       MEDIA_RETENTION_PASSED: 'Thời hạn lưu của cuộc họp này đã hết nên không nhận thêm âm thanh hay video.',
+      LIVE_NO_PIECES: 'Cuộc họp này không có đoạn trực tiếp nào để ghép.',
+      LIVE_STILL_OPEN: 'Bản ghi đầy đủ vẫn có thể đến. Bạn ghép được các đoạn sau khi quá thời hạn tối đa của một cuộc ghi (4 giờ 15 phút).',
+      LIVE_FIRST_PIECE_MISSING: 'Thiếu đoạn đầu, đoạn giữ phần đầu của tệp, nên không ghép được các đoạn sau.',
+      LIVE_PIECES_CHANGED: 'Các đoạn đã thay đổi trong lúc ghép. Hãy thử lại.',
+      LIVE_PIECE_UNREADABLE: 'Không đọc được một đoạn từ kho lưu trữ nên chưa ghép được. Hãy báo người quản trị hệ thống.',
+      MEDIA_ALREADY_RECORDED: 'Cuộc họp này đã có bản ghi rồi; bản ghi đến trước được giữ và bản đến sau bị từ chối.',
       MEETING_SETTINGS_INVALID: 'Video không thể được lưu lâu hơn âm thanh.',
       INVALID_READER: 'Người xem phải là chủ sở hữu, quản trị viên hoặc thành viên đang hoạt động của tổ chức.',
       INVALID_MEDIA_CONTAINER: 'Tệp này không phải định dạng âm thanh hoặc video được hỗ trợ.',
@@ -10928,6 +10948,8 @@ export const vi = {
     },
     meetings: {
       live: {
+        assemble_plan: 'Đọc các đoạn trực tiếp của người ghi để ghép thành bản ghi',
+        assemble_record: 'Ghi nhận bản ghi ghép từ các đoạn trực tiếp và xóa các đoạn',
         chunk: 'Nhận một đoạn âm thanh của cuộc họp đang ghi (ghi chú trực tiếp)',
         notes_copy: 'Chép ghi chú trực tiếp Vy vừa làm vào bản nháp của bạn',
         notes_input: 'Đọc các dòng nháp mới và ghi chú trước đó để làm ghi chú trực tiếp',

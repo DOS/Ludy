@@ -14,6 +14,8 @@ import { linkCommands, linkQueries } from './links.ts';
 import { liveNotesCommands } from './live-notes.ts';
 import { liveRunCommands, liveRunQueries } from './live-run.ts';
 import { liveCommands } from './live.ts';
+import { liveAssembleCommands, liveAssembleQueries } from './live-assemble.ts';
+import { recordSealedMedia } from './media-record.ts';
 import { dropFollowupPayloads } from './followup-erase.ts';
 import { followupCommands, followupQueries } from './followup.ts';
 import {
@@ -70,20 +72,7 @@ function userOf(actor: CommandContext['actor'] | QueryContext['actor']): string 
   return actor.userId;
 }
 
-const MEDIA_EXTENSIONS: Record<string, string> = {
-  'audio/webm': 'webm',
-  'video/webm': 'webm',
-  'audio/mp4': 'm4a',
-  'video/mp4': 'mp4',
-  'audio/ogg': 'ogg',
-  'audio/wav': 'wav',
-  'audio/mpeg': 'mp3',
-};
-
-/** File extension for a sniffed container (detectMediaContainer), so the stored name matches the bytes (#2703). */
-export function mediaExtension(contentType: string, kind: 'audio' | 'video'): string {
-  return MEDIA_EXTENSIONS[contentType] ?? (kind === 'audio' ? 'bin' : 'mp4');
-}
+export { mediaExtension } from './media-record.ts';
 
 export function detectMediaContainer(bytes: Uint8Array, kind: 'audio' | 'video'): string | null {
   if (bytes.length < 12) return null;
@@ -289,69 +278,7 @@ export const meetingMediaRecord = defineCommand({
       throw new DomainError('INVALID_STORAGE_KEY', 400, 'Storage key must match org and sha256');
     }
 
-    // The recording is complete, whatever its kind (a video holds the same audio): the live pieces (ADR-0052 L4a) are not kept beside it. The meeting's live lock
-    // is taken first, so a piece being recorded at this moment either commits before this and is deleted here, or waits and finds the recording ended. Their keys go
-    // first, so they are unreadable from this commit, and their file rows are left for the worker's orphan sweep. A meeting with no live pieces has nothing to delete.
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`meetings.live:${ctx.orgId}:${input.meetingId}`}, 0))`.execute(ctx.trx);
-    const { rows: discarded } = await sql<{ n: number }>`SELECT crove_meetings.live_chunk_discard(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS n`.execute(ctx.trx);
-    const liveChunksDiscarded = Number(discarded[0]?.n ?? 0);
-    const wrappedKey = Buffer.from(input.wrappedKeyHex, 'hex');
-    await sql`SELECT crove_meetings.media_key_seal(
-      ${ctx.orgId}::uuid,
-      ${input.meetingId}::uuid,
-      ${input.keyId}::text,
-      ${input.kind}::text,
-      ${wrappedKey}::bytea
-    )`.execute(ctx.trx);
-
-    const fileId = randomUUID();
-    const filename = `meeting-${input.meetingId}.${mediaExtension(input.contentType, input.kind)}`;
-    await ctx.trx
-      .insertInto('crove_kernel.file')
-      .values({
-        org_id: ctx.orgId,
-        id: fileId,
-        filename,
-        content_type: input.contentType,
-        size_bytes: String(input.sizeBytes),
-        sha256: input.sha256,
-        storage_key: input.storageKey,
-        generation: input.generation ?? null,
-        source: input.kind === 'audio' ? 'meeting_audio' : 'meeting_video',
-        created_by: userId,
-      })
-      .execute();
-
-    if (input.kind === 'audio') {
-      await ctx.trx
-        .insertInto('crove_meetings.audio_segment')
-        .values({
-          org_id: ctx.orgId,
-          id: randomUUID(),
-          meeting_id: input.meetingId,
-          file_id: fileId,
-          segment_order: 0,
-          start_offset_seconds: 0,
-          length_seconds: input.lengthSeconds,
-        })
-        .execute();
-    } else {
-      // The org's video period from the recording, never past the meeting's own audio date.
-      const videoDay = retentionDates(ctx.now, await readRetentionSettings(ctx.trx, ctx.orgId)).video;
-      const videoRetentionDate = videoDay < meeting.audio_retention_day ? videoDay : meeting.audio_retention_day;
-      await ctx.trx
-        .insertInto('crove_meetings.meeting_video')
-        .values({
-          org_id: ctx.orgId,
-          id: randomUUID(),
-          meeting_id: input.meetingId,
-          file_id: fileId,
-          length_seconds: input.lengthSeconds,
-          video_retention_date: videoRetentionDate,
-        })
-        .execute();
-    }
-
+    const { fileId, liveChunksDiscarded } = await recordSealedMedia(ctx, { userId, meetingId: input.meetingId, audioRetentionDay: meeting.audio_retention_day, input });
     ctx.audit({ meetingId: input.meetingId, kind: input.kind, fileId, ...(liveChunksDiscarded > 0 ? { liveChunksDiscarded } : {}) });
     return { fileId };
   },
@@ -984,6 +911,7 @@ export const meetingsCommands = [
   ...linkCommands,
   ...followupCommands,
   ...liveCommands,
+  ...liveAssembleCommands,
   ...liveRunCommands,
   ...liveNotesCommands,
 ];
@@ -1005,4 +933,5 @@ export const meetingsQueries = [
   ...linkQueries,
   ...followupQueries,
   ...liveRunQueries,
+  ...liveAssembleQueries,
 ];

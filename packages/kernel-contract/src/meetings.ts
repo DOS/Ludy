@@ -209,6 +209,71 @@ export const zMeetingLiveChunkRecorded = z.strictObject({
 });
 export type MeetingLiveChunkRecorded = z.infer<typeof zMeetingLiveChunkRecorded>;
 
+// The recorder's click "Ghép bản ghi từ các đoạn trực tiếp" when the final recording never arrived (ADR-0052 L4a, issue #3126). Once the window of the live pieces has
+// passed with pieces and no final audio, the pieces are joined, in order, into one recording under a fresh audio key. Why a piece may not be assembled yet or at all:
+//   none                 it can be assembled now
+//   no_pieces            the meeting kept no live piece
+//   still_recording      the window (LIVE_CHUNK_WINDOW_SECONDS) has not passed: the final recording may still come
+//   audio_recorded       the final audio or video is recorded (the pieces were discarded with it)
+//   first_piece_missing  piece 0 carries the container header; without it the later pieces cannot be read
+//   expired              the meeting's audio period has ended (the pieces are shredded)
+export const LIVE_ASSEMBLE_REASONS = ['no_pieces', 'still_recording', 'audio_recorded', 'first_piece_missing', 'expired'] as const;
+export type LiveAssembleReason = (typeof LIVE_ASSEMBLE_REASONS)[number];
+export const zLiveAssembleState = z.strictObject({
+  // The pane offers the click only when this is true.
+  available: z.boolean(),
+  reason: z.enum(LIVE_ASSEMBLE_REASONS).nullable(),
+  // How many pieces the meeting holds, and the numbers missing between 0 and the last one (a gap is reported, never fatal).
+  pieces: z.number().int().min(0),
+  missing: z.array(z.number().int().min(0)).max(LIVE_CHUNK_MAX_COUNT),
+});
+export type LiveAssembleState = z.infer<typeof zLiveAssembleState>;
+
+// What the route records after it joined and sealed the pieces. The wrapped key and the storage address are ciphertext metadata; the length is crove-media's. pieces and
+// lastSeq say which set the route joined, so a set that changed meanwhile is refused instead of recorded.
+export const zMeetingLiveAssemble = zMeetingRef.extend({
+  keyId: z.string().min(1).max(64),
+  wrappedKeyHex: z.string().regex(/^[0-9a-fA-F]{120}$/),
+  storageKey: z.string().min(1).max(255),
+  generation: z.string().nullable().optional(),
+  sizeBytes: z.number().int().positive(),
+  sha256: z.string().regex(/^[0-9a-fA-F]{64}$/),
+  contentType: z.string().min(1).max(64),
+  lengthSeconds: z.number().int().positive(),
+  pieces: z.number().int().min(1).max(LIVE_CHUNK_MAX_COUNT),
+  lastSeq: z.number().int().min(0).max(LIVE_CHUNK_MAX_COUNT - 1),
+});
+export type MeetingLiveAssemble = z.infer<typeof zMeetingLiveAssemble>;
+
+// What the plan query answers to the recorder's own route: the pieces in order with their files and wrapped keys (never plaintext), the numbers missing, and the last piece's number.
+export interface LiveAssemblePlanPiece {
+  seq: number;
+  lengthSeconds: number;
+  fileId: string;
+  storageKey: string;
+  generation: string | null;
+  sizeBytes: number;
+  sha256: string;
+  contentType: string;
+  keyId: string;
+  wrappedKey: Buffer;
+}
+export interface LiveAssemblePlan {
+  meetingId: string;
+  pieces: LiveAssemblePlanPiece[];
+  missing: number[];
+  lastSeq: number;
+}
+
+export const zMeetingLiveAssembled = z.strictObject({
+  meetingId: zId,
+  fileId: zId,
+  pieces: z.number().int().min(1),
+  missing: z.array(z.number().int().min(0)).max(LIVE_CHUNK_MAX_COUNT),
+  lengthSeconds: z.number().int().positive(),
+});
+export type MeetingLiveAssembled = z.infer<typeof zMeetingLiveAssembled>;
+
 // The worker's reseal of one media key after a credential key rotation (system actor only).
 export const zMeetingMediaKeyReseal = z.strictObject({
   id: z.string().uuid(),
@@ -597,6 +662,8 @@ export const zLiveStatus = z.strictObject({
   errorCode: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/).nullable(),
   lines: z.array(zLiveLine),
   notesUpdatedAt: z.string().nullable(),
+  // Whether the recorder may join the pieces into the recording because the final upload never arrived (#3126); only the recorder sees it.
+  assemble: zLiveAssembleState,
 });
 export type LiveStatus = z.infer<typeof zLiveStatus>;
 

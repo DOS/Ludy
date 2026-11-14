@@ -351,6 +351,13 @@ export const KERNEL_ERROR_CODES = [
   'INVALID_PURPOSE',
   // Retention (#2579).
   'MEDIA_RETENTION_PASSED',
+  // Joining the live pieces into the recording (#3126).
+  'LIVE_NO_PIECES',
+  'LIVE_STILL_OPEN',
+  'LIVE_FIRST_PIECE_MISSING',
+  'LIVE_PIECES_CHANGED',
+  'LIVE_PIECE_UNREADABLE',
+  'MEDIA_ALREADY_RECORDED',
   'MEETING_SETTINGS_INVALID',
   // A member's own to-dos (#1673).
   'TODO_NOT_FOUND',
