@@ -13,6 +13,7 @@ import { AVAILABLE_MODULES, SAMPLE_DB_PASSWORDS } from './config.ts';
 import { parseAllowedOrigins } from './cors.ts';
 import { parseExportKey } from './export-seal.ts';
 import { loadProberConfig } from './prober.ts';
+import { parseAllowedEmails } from './auth-access.ts';
 
 export const PILOT_EXIT = { ok: 0, failed: 1, error: 2 } as const;
 
@@ -328,7 +329,8 @@ export function checkEnv(env: Env): CheckResult[] {
   // A provider of the deployment's own (no bundled Supabase Auth, #2704): sign-up there is not Crove's to close; what Crove can
   // limit is who may use this deployment, AUTH_ALLOWED_EMAILS.
   const ownProvider = value(env, 'AUTH_UPSTREAM_URL') === undefined && value(env, 'PUBLIC_AUTH_URL') !== undefined;
-  const allowed = value(env, 'AUTH_ALLOWED_EMAILS') !== undefined;
+  // An empty parse (`, ,`) lists nobody, which the kernel reads as no limit.
+  const allowed = parseAllowedEmails(value(env, 'AUTH_ALLOWED_EMAILS') ?? '').entries.length > 0;
   add(
     'Sign-up limited',
     [

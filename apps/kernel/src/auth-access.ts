@@ -9,8 +9,10 @@
 // AUTH_ALLOWED_EMAILS closes it from this side. A comma or space separated list of exact addresses
 // (`owner@example.com`) and of domains written with a leading `@` (`@example.com`, exact domain, no subdomains). Unset:
 // no restriction, as before. Set: a token whose `email` matches no entry is refused with 403 ACCOUNT_NOT_ALLOWED on
-// every request, before any database work, so no user account is created for it; taking an entry out of the list
-// takes effect on the next request. The check reads the email of the verified token, so it is only as strong as the
+// every request that carries an access token, before any database work, so no user account is created for it; taking
+// an entry out of the list takes effect on that person's next such request. It does not end what they were already
+// given: a Ludy extension token, an MCP grant (neither carries an email) and an open /api/stream connection. Taking
+// someone away also means disabling the account or removing them from the org (docs/runbooks/pilot-sign-in-with-dos-id.md). The check reads the email of the verified token, so it is only as strong as the
 // provider's promise that it issues tokens for confirmed addresses (the provider must require email confirmation);
 // a token that says its email is not verified (`user_metadata.email_verified` is false) is refused too.
 import { DomainError } from '@crove/kernel-runtime';

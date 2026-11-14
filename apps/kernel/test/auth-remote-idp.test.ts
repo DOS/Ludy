@@ -83,6 +83,15 @@ describe('tokens of a remote identity provider (JWKS)', () => {
   });
 });
 
+describe('the session check default (compose passes AUTH_SESSION_CHECK empty)', () => {
+  it('is jwt without a bundled Supabase Auth and db with one, whatever an empty line says', () => {
+    const { AUTH_SESSION_CHECK: _unused, ...rest } = BASE_ENV;
+    expect(loadConfig({ ...rest, AUTH_SESSION_CHECK: '', AUTH_UPSTREAM_URL: '' }).AUTH_SESSION_CHECK).toBe('jwt');
+    expect(loadConfig({ ...rest, AUTH_SESSION_CHECK: '', AUTH_UPSTREAM_URL: 'http://auth:9999' }).AUTH_SESSION_CHECK).toBe('db');
+    expect(() => loadConfig({ ...rest, AUTH_SESSION_CHECK: 'nonsense' })).toThrow(/AUTH_SESSION_CHECK/);
+  });
+});
+
 describe('AUTH_ALLOWED_EMAILS', () => {
   it('parses addresses and @domains, lower-cases, de-duplicates and names the invalid entries', () => {
     expect(parseAllowedEmails('Owner@Example.test, @example.org  owner@example.test')).toEqual({ entries: ['owner@example.test', '@example.org'], invalid: [] });

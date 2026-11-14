@@ -195,7 +195,7 @@ describe.skipIf(!hasCompose)('compose.pilot.yml', { timeout: 60_000 }, () => {
     for (const name of ['api', 'worker']) {
       const env = bundled[name]?.environment;
       expect(env?.['AUTH_ISSUER'], name).toBe('crove-auth');
-      expect(env?.['AUTH_SESSION_CHECK'], name).toBe('db');
+      expect(env?.['AUTH_SESSION_CHECK'], name).toBe('');
       expect(env?.['AUTH_UPSTREAM_URL'], name).toBe('http://auth:9999');
       expect(env?.['AUTH_JWKS_URL'], name).toBe('');
       expect(env?.['AUTH_ALLOWED_EMAILS'], name).toBe('');

@@ -216,7 +216,8 @@ const schema = z.object({
   // (Crove Cloud, or any remote Supabase Auth) trusts the verified token until its exp, plus Crove's own session
   // records, and confirms every R3 command live with Supabase Auth; off checks only Crove's own records and never
   // calls Auth (local URLs only). Unset: db when AUTH_UPSTREAM_URL is set (bundled Supabase Auth), jwt otherwise.
-  AUTH_SESSION_CHECK: z.enum(['db', 'jwt', 'off']).optional(),
+  // Empty counts as unset (compose passes the line through empty), so the derived default below applies.
+  AUTH_SESSION_CHECK: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.enum(['db', 'jwt', 'off']).optional()),
   // Who may use this deployment (issue #2704, auth-access.ts): exact addresses and `@domain` entries, comma or space
   // separated. Unset: every holder of a valid token. Set it when AUTH_ISSUER and AUTH_JWKS_URL name an identity provider
   // that serves other people too; a token for any other address is refused with 403 ACCOUNT_NOT_ALLOWED.

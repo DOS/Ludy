@@ -126,7 +126,8 @@ services:
       # PUBLIC_AUTH_URL and PUBLIC_AUTH_ANON_KEY are where and how the app signs in, AUTH_SESSION_CHECK=jwt, AUTH_UPSTREAM_URL set
       # to empty (no bundled proxy), and AUTH_ALLOWED_EMAILS says who may use this deployment.
       AUTH_ISSUER: ${AUTH_ISSUER:-crove-auth}
-      AUTH_SESSION_CHECK: ${AUTH_SESSION_CHECK:-db}
+      # Empty: db with the bundled Supabase Auth (AUTH_UPSTREAM_URL), jwt without it; the kernel derives it.
+      AUTH_SESSION_CHECK: ${AUTH_SESSION_CHECK:-}
       AUTH_JWKS_URL: ${AUTH_JWKS_URL:-}
       PUBLIC_AUTH_URL: ${PUBLIC_AUTH_URL:-}
       PUBLIC_AUTH_ANON_KEY: ${PUBLIC_AUTH_ANON_KEY:-}

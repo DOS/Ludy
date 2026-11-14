@@ -256,6 +256,8 @@ describe('pilot-check settings', () => {
     const own = { ...READY, AUTH_DISABLE_SIGNUP: undefined, AUTH_UPSTREAM_URL: '', PUBLIC_AUTH_URL: 'https://idp.example.test/auth/v1' };
     expect(failing({ ...own, AUTH_ALLOWED_EMAILS: 'owner@example.test' })).toEqual([]);
     expect(failing(own).some((p) => p.startsWith('Sign-up limited'))).toBe(true);
+    // A list that parses to nobody limits nothing.
+    expect(failing({ ...own, AUTH_ALLOWED_EMAILS: ', ,' }).some((p) => p.startsWith('Sign-up limited'))).toBe(true);
     // With the bundled Supabase Auth the list does not close its sign-up: the old rule stands.
     expect(failing({ ...READY, AUTH_DISABLE_SIGNUP: undefined, AUTH_ALLOWED_EMAILS: 'owner@example.test' }).some((p) => p.startsWith('Sign-up limited'))).toBe(true);
   });
