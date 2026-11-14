@@ -20,6 +20,7 @@ test('with AI off the coworker says so, the line is assigned by hand, and nothin
   const nav = page.getByRole('navigation');
 
   await test.step('post an invoice whose first line is on 156, so it is a goods line that matches no item', async () => {
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ }).click();
     await page.locator('input[type=file]').setInputFiles(INVOICE);
     await expect(page.getByRole('link', { name: SELLER })).toBeVisible({ timeout: 60_000 });
@@ -71,7 +72,7 @@ test('with AI off the coworker says so, the line is assigned by hand, and nothin
   });
 
   await test.step('Home has no running-low item either', async () => {
-    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tổng quan', exact: true }).click();
     await expect(page.getByText('sắp hết, nên đặt thêm')).toHaveCount(0);
   });
 });
@@ -158,7 +159,7 @@ test('an item that sells faster than it lasts shows as running low, with the sup
   });
 
   await test.step('Home counts the item for the people who can act', async () => {
-    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tổng quan', exact: true }).click();
     await expect(page.getByText('1 mặt hàng sắp hết, nên đặt thêm')).toBeVisible();
   });
 });
