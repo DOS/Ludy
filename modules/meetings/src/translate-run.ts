@@ -7,7 +7,6 @@ import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
 import {
   zMeetingRef,
-  zTranslateStart,
   zTranslateStarted,
   zTranslationRef,
   zTranslationSource,
@@ -121,7 +120,7 @@ export const translationStatus = defineQuery({
 // this run, and binds the run's subject to this meeting; nothing is read or sent here. The route that calls the model (apps/kernel) runs this first and reads the text after.
 export const translateStart = defineCommand({
   name: 'meetings.translate.start',
-  input: zTranslateStart,
+  input: zTranslationRef,
   risk: 'R1',
   sideEffect: 'internal',
   access: ROLES,

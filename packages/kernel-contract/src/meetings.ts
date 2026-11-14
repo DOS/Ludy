@@ -713,7 +713,6 @@ export const zTranslationSource = z.strictObject({
   segments: z.array(z.strictObject({ key: zTranslationKey, text: z.string() })).min(1).max(TRANSLATION_SEGMENTS_MAX),
 });
 export type TranslationSource = z.infer<typeof zTranslationSource>;
-export const zTranslateStart = zTranslationRef;
 export const zTranslateStarted = z.strictObject({ meetingId: zId, runId: zId });
 export const zTranslationCopy = z.strictObject({ meetingId: zId, runId: zId });
 export const zTranslationCopied = z.strictObject({
