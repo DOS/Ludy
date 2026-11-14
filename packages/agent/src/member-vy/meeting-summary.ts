@@ -60,7 +60,7 @@ export interface MeetingSummaryBody {
   dropped: number;
 }
 
-export type SummaryErrorCode = 'SUMMARY_UNPARSABLE' | 'SUMMARY_EMPTY' | 'SUMMARY_TOO_LONG' | 'SUMMARY_NO_TRANSCRIPT';
+export type SummaryErrorCode = 'SUMMARY_UNPARSABLE' | 'SUMMARY_EMPTY' | 'SUMMARY_TOO_LONG' | 'SUMMARY_NO_TRANSCRIPT' | 'NOTES_TOO_LONG';
 export class SummaryError extends Error {
   code: SummaryErrorCode;
   constructor(code: SummaryErrorCode) {
@@ -283,5 +283,168 @@ export async function summarizeMeeting(input: MeetingSummaryInput, ports: BoundP
     ports,
   );
   const parsed = checkSummary(revealPrivateText(out.text), input.segments, template);
+  return { body: privateText(JSON.stringify(parsed)), parsed, usage: out.usage };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// "Viết lại đầy đủ" (Meetings A5, #3163): the recorder's Vy expands the recorder's own rough notes with the transcript, into the sections of the meeting's template (or one block on the
+// general summary). Same family as the summary (the same feature key, meter and budget line, the same private result). The model never writes the recorder's lines: it names a note
+// line by its number and CODE puts the original text in, so an own line is verbatim by construction; a line the model leaves out is appended where it belongs, never dropped. A line
+// Vy adds must point at a real second of the transcript, and a figure in it must appear in the transcript or in the notes, or the line is removed (and counted). Nothing here reads a
+// database or persists anything.
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+export const ENHANCE_LIMITS = {
+  // The most lines a note may have (more is refused, never cut: the recorder must not believe every line was merged), the most lines Vy may add, and the longest of them.
+  noteLines: 300,
+  addedLines: 100,
+  addedChars: 300,
+  // The whole text of the expansion, own lines included, as one summary text (8000 characters is the database's limit, headings need room).
+  totalChars: 7400,
+} as const;
+
+export interface EnhanceInput {
+  segments: readonly SummarySegment[];
+  language: 'vi' | 'en';
+  // The recorder's rough notes, as typed.
+  notes: string;
+  template?: SummaryTemplate;
+}
+export interface EnhancedLine {
+  own: boolean;
+  text: string;
+  // The second of the transcript an ADDED line rests on (always set for it); null for the recorder's own line.
+  seconds: number | null;
+}
+export interface EnhancedBody {
+  template: string;
+  // What the summary body holds, empty here, so the one stored shape serves both kinds of run.
+  sections: [];
+  summary: '';
+  decisions: [];
+  items: [];
+  dropped: number;
+  enhanced: { sections: Array<{ key: string | null; lines: EnhancedLine[] }> };
+}
+
+/** The recorder's lines: one per non-empty line of the notes, as typed (outer whitespace trimmed). */
+export function noteLines(notes: string): string[] {
+  return notes
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '');
+}
+
+/**
+ * The checks, in code: parse what the model answered and keep only what holds. Returns the sections in the template's order with the recorder's lines verbatim. An answer that is not an object
+ * throws SUMMARY_UNPARSABLE; one with no line of Vy's left throws SUMMARY_EMPTY (an expansion that adds nothing the transcript supports is not a result).
+ */
+export function checkEnhanced(raw: string, segments: readonly SummarySegment[], notes: readonly string[], template: SummaryTemplate = { code: 'general', sections: [] }): EnhancedBody {
+  const parsed = jsonObject(raw);
+  if (!isRecord(parsed)) throw new SummaryError('SUMMARY_UNPARSABLE');
+  // A figure is fine when the transcript or the recorder's own notes hold it.
+  const known = new Set([...segments.flatMap((s) => numbersIn(s.text)), ...notes.flatMap((n) => numbersIn(n))]);
+  const foreign = (text: string): boolean => numbersIn(text).some((n) => !known.has(n));
+  let dropped = 0;
+  const keys: Array<string | null> = template.sections.length === 0 ? [null] : template.sections.map((d) => d.key);
+  const groups = new Map<string | null, EnhancedLine[]>(keys.map((k) => [k, []]));
+  const used = new Set<number>();
+  // The recorder's own lines count first, so Vy's additions never push them out of the text's budget.
+  const ownTotal = notes.reduce((n, line) => n + line.length + 1, 0);
+  let addedTotal = 0;
+  let addedCount = 0;
+  if (Array.isArray(parsed.sections)) {
+    for (const entry of parsed.sections) {
+      if (!isRecord(entry) || !Array.isArray(entry.lines)) {
+        dropped += 1;
+        continue;
+      }
+      let key: string | null;
+      if (template.sections.length === 0) key = null;
+      else if (typeof entry.key === 'string' && keys.includes(entry.key)) key = entry.key;
+      else {
+        dropped += 1;
+        continue;
+      }
+      for (const line of entry.lines) {
+        if (!isRecord(line)) {
+          dropped += 1;
+          continue;
+        }
+        if (typeof line.note === 'number') {
+          const n = line.note;
+          // A note line is named by its number, once; another number or a repeat is not a line.
+          if (Number.isInteger(n) && n >= 1 && n <= notes.length && !used.has(n)) {
+            used.add(n);
+            (groups.get(key) as EnhancedLine[]).push({ own: true, text: notes[n - 1] as string, seconds: null });
+          } else dropped += 1;
+          continue;
+        }
+        const text = typeof line.text === 'string' ? oneLine(line.text, ENHANCE_LIMITS.addedChars) : '';
+        const seconds = line.seconds;
+        if (text === '') {
+          dropped += 1;
+          continue;
+        }
+        // Every line Vy adds rests on a real moment of the transcript, has no figure nobody said and no way to reach someone off the page.
+        const real = typeof seconds === 'number' && Number.isInteger(seconds) && segments.some((s) => seconds >= Math.floor(s.startSeconds) && seconds <= Math.ceil(s.endSeconds));
+        if (!real || foreign(text) || hasContact(text) || addedCount >= ENHANCE_LIMITS.addedLines || addedTotal + text.length + 1 > ENHANCE_LIMITS.totalChars - ownTotal) {
+          dropped += 1;
+          continue;
+        }
+        addedTotal += text.length + 1;
+        addedCount += 1;
+        (groups.get(key) as EnhancedLine[]).push({ own: false, text, seconds: seconds as number });
+      }
+    }
+  } else if (parsed.sections !== undefined) dropped += 1;
+  const added = [...groups.values()].reduce((n, lines) => n + lines.filter((l) => !l.own).length, 0);
+  if (added === 0) throw new SummaryError('SUMMARY_EMPTY');
+  // A note line the model did not name is never lost: it goes at the end of the last section that has lines (else the first), in the order it was written.
+  const missing = notes.flatMap((text, i) => (used.has(i + 1) ? [] : [{ own: true, text, seconds: null } satisfies EnhancedLine]));
+  if (missing.length > 0) {
+    const filled = keys.filter((k) => (groups.get(k) as EnhancedLine[]).length > 0);
+    (groups.get(filled.length > 0 ? (filled[filled.length - 1] as string | null) : (keys[0] as string | null)) as EnhancedLine[]).push(...missing);
+  }
+  const sections = keys.flatMap((k) => {
+    const lines = groups.get(k) as EnhancedLine[];
+    return lines.length > 0 ? [{ key: k, lines }] : [];
+  });
+  return { template: template.code, sections: [], summary: '', decisions: [], items: [], dropped, enhanced: { sections } };
+}
+
+const ENHANCE_INSTRUCTION = (language: 'vi' | 'en', template: SummaryTemplate): string =>
+  [
+    "You expand a person's rough meeting notes using the transcript of the same meeting.",
+    `Write in ${language === 'vi' ? 'Vietnamese' : 'English'}.`,
+    'Below the data you get NOTES (numbered lines the person typed) and the TRANSCRIPT.',
+    'Answer with one JSON object only, no other text: {"sections": [{"key": string, "lines": [{"note": number} or {"text": string, "seconds": number}]}]}.',
+    'Refer to a note line only by its number, {"note": 3}; never copy or reword it, and use every note line once, in the section where it belongs.',
+    'Add a line {"text": string, "seconds": number} only for something the transcript says that the notes do not: "text" is one short plain sentence and "seconds" is the second of the transcript line it comes from.',
+    template.sections.length === 0
+      ? 'There is one section: use the key "all".'
+      : ['The sections are these; use their keys exactly as given and leave out a section with nothing for it:', ...template.sections.map((d) => `- key "${d.key}" (${d.title}): ${d.hint}`)].join('\n'),
+    'Use only numbers, names and dates that appear in the transcript or the notes. Never write a link, an email address or a phone number. Add nothing the transcript does not say.',
+  ].join('\n');
+
+export interface EnhanceResult {
+  // The checked body as JSON text, private to the recorder like the transcript and the notes it came from.
+  body: PrivateText;
+  parsed: EnhancedBody;
+  usage: { inputTokens: number; outputTokens: number };
+}
+
+/** One run of the recorder's Vy over their rough notes and the transcript: the model is asked once, the checks above decide what is kept. */
+export async function enhanceNotes(input: EnhanceInput, ports: BoundPorts): Promise<EnhanceResult> {
+  const template: SummaryTemplate = input.template ?? { code: 'general', sections: [] };
+  const notes = noteLines(input.notes);
+  if (input.segments.length === 0) throw new SummaryError('SUMMARY_NO_TRANSCRIPT');
+  if (notes.length === 0) throw new SummaryError('SUMMARY_EMPTY');
+  // Refused before any call, never cut: a line that was left out would not be in the result.
+  if (notes.length > ENHANCE_LIMITS.noteLines) throw new SummaryError('NOTES_TOO_LONG');
+  const text = `NOTES:\n${notes.map((line, i) => `${i + 1}: ${oneLine(line, 6000)}`).join('\n')}\n\nTRANSCRIPT:\n${transcriptLines(input.segments)}`;
+  if (new TextEncoder().encode(text).length > SUMMARY_LIMITS.transcriptBytes) throw new SummaryError('SUMMARY_TOO_LONG');
+  const out = await runFeature({ instruction: ENHANCE_INSTRUCTION(input.language, template), subject: privateText(text), maxSubjectChars: SUMMARY_LIMITS.transcriptBytes }, ports);
+  const parsed = checkEnhanced(revealPrivateText(out.text), input.segments, notes, template);
   return { body: privateText(JSON.stringify(parsed)), parsed, usage: out.usage };
 }

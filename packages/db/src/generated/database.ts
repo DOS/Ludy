@@ -191,6 +191,7 @@ export interface CroveMeetingsSchema {
   'crove_meetings.live_line': MeetingsLiveLineTable;
   'crove_meetings.meeting': MeetingsMeetingTable;
   'crove_meetings.meeting_link': MeetingsMeetingLinkTable;
+  'crove_meetings.meeting_note': MeetingsMeetingNoteTable;
   'crove_meetings.meeting_reader': MeetingsMeetingReaderTable;
   'crove_meetings.meeting_result': MeetingsMeetingResultTable;
   'crove_meetings.meeting_video': MeetingsMeetingVideoTable;
@@ -2847,6 +2848,16 @@ export interface MeetingsMeetingLinkTable {
   calendar_event_id: ColumnType<string | null, string | null, NotGranted>;
   created_by: ColumnType<string, string, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_meetings.meeting_note */
+export interface MeetingsMeetingNoteTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  meeting_id: ColumnType<string, string, NotGranted>;
+  body: string;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_meetings.meeting_reader */

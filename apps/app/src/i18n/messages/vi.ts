@@ -1913,6 +1913,21 @@ export const vi = {
       reload: 'Mở lại bản nháp mới',
       queued: 'Đã xếp hàng gửi {count} thư.',
     },
+    // "Ghi chú của tôi" and "Viết lại đầy đủ" (Meetings A5, #3163).
+    notes: {
+      title: 'Ghi chú của tôi',
+      private: 'Chỉ bạn đọc được ghi chú này. Ghi chú được xóa cùng cuộc họp.',
+      placeholder: 'Gõ vài dòng ghi chú thô trong hoặc sau cuộc họp. Mỗi dòng một ý.',
+      save: 'Lưu ghi chú',
+      enhance: 'Viết lại đầy đủ',
+      enhanceHint: 'Vy giữ nguyên từng dòng của bạn và chỉ thêm những gì có trong bản ghi lời nói. Việc này tính vào ngân sách AI của bạn.',
+      saveFirst: 'Hãy lưu ghi chú trước khi nhờ Vy viết lại.',
+      ready: 'Vy đã xong. Dòng của bạn giữ nguyên; dòng Vy thêm có khung riêng và giờ trong bản ghi.',
+      added: 'Vy thêm từ bản ghi',
+      chipTitle: 'Giờ của dòng trong bản ghi lời nói',
+      dropped: '{count} dòng của Vy bị bỏ vì không có trong bản ghi hoặc có số liệu không ai nói.',
+      copyReplaces: 'Chép vào bản nháp sẽ thay phần Vy đã viết trước đó. Phần bạn tự gõ được giữ nguyên.',
+    },
     // Minutes templates and the biên bản page (Meetings A4, #3162).
     templates: {
       label: 'Loại cuộc họp',
@@ -2022,6 +2037,7 @@ export const vi = {
           SUMMARY_EMPTY: 'Không có gì đáng tin để viết từ bản ghi này.',
           SUMMARY_TOO_LONG: 'Bản ghi quá dài để tóm tắt một lần. Hãy tự viết bản tóm tắt.',
           SUMMARY_NO_TRANSCRIPT: 'Chưa có bản ghi lời nói để tóm tắt.',
+          NOTES_TOO_LONG: 'Ghi chú có quá nhiều dòng để viết lại một lần. Hãy gộp bớt dòng hoặc chia thành nhiều lần.',
           default: 'Có lỗi xảy ra. Hãy thử lại.',
         },
       },
@@ -5804,6 +5820,8 @@ export const vi = {
     meetingTextSummary: '{meetings, plural, other {# cuộc họp}} có nội dung bạn không đọc được, của {recorders, plural, other {# người ghi}}, có nhắc đến giá trị này',
     meetingTextSkipped: 'Tổ chức có quá nhiều nội dung họp để tìm trong một lần nên chưa tìm trong nội dung họp. Các kết quả khác vẫn đầy đủ. Hãy tìm lại sau hoặc liên hệ hỗ trợ.',
     meetingTextRecorder: '{name}: {meetings, plural, other {# cuộc họp}}, {lines, plural, other {# dòng ghi lời}}, {results, plural, other {# bản tóm tắt hoặc quyết định}}, {items, plural, other {# việc cần làm}}, {titles, plural, other {# tiêu đề}}',
+    erasedNotes: '{name}: {notes, plural, other {# ghi chú riêng}} đã được xóa giá trị này',
+    meetingTextNotes: ', {notes, plural, other {# ghi chú riêng}}',
     meetingTextHint: 'Chỉ những người được chia sẻ mới đọc được cuộc họp, nên ở đây chỉ hiện số lượng, không hiện nội dung hay tiêu đề. Người ghi có thể xóa cuộc họp, và chủ sở hữu có thể xóa mà không cần đọc.',
     formerMember: 'Thành viên cũ',
     privateOwnersOnly: 'Chỉ chủ sở hữu xem được số ghi chú riêng và việc riêng của thành viên có giá trị này. Mỗi lần tìm đều được ghi vào nhật ký hoạt động.',
@@ -9544,6 +9562,8 @@ export const vi = {
       SUMMARY_REQUIRED: 'Hãy viết ít nhất một mục trước khi lưu.',
       SUMMARY_TEMPLATE_CHANGED: 'Bạn đã đổi loại cuộc họp sau khi Vy viết. Hãy nhờ Vy tóm tắt lại.',
       TEMPLATE_MISMATCH: 'Nội dung không khớp với loại cuộc họp đang chọn. Hãy mở lại cuộc họp rồi thử lại.',
+      NOTES_EMPTY: 'Hãy gõ vài dòng ghi chú và lưu trước khi nhờ Vy viết lại.',
+      NOTES_TOO_LONG: 'Ghi chú quá dài. Hãy rút gọn.',
       TRANSLATE_OFF: 'Hệ thống này chưa bật tính năng Vy dịch.',
       TRANSLATION_NOT_FOUND: 'Không có bản tóm tắt nào bạn đọc được để dịch.',
       TRANSLATION_NOTHING: 'Chưa có gì để dịch.',
@@ -11337,6 +11357,11 @@ export const vi = {
       result: {
         get: 'Xem tóm tắt và việc cần làm của cuộc họp',
         publish: 'Chia sẻ tóm tắt và việc cần làm với người dự họp',
+      },
+      notes: {
+        get: 'Xem ghi chú riêng của người ghi về cuộc họp',
+        preview: 'Xem bản Vy viết lại từ ghi chú của người ghi',
+        save: 'Lưu ghi chú riêng của người ghi về cuộc họp',
       },
       minutes: {
         set_template: 'Chọn loại cuộc họp (mẫu biên bản)',

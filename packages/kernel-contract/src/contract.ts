@@ -377,6 +377,11 @@ import {
   zMeetingResultSave,
   zMeetingTemplateSet,
   zMeetingTemplateSetDone,
+  zNotes,
+  zNotesPreview,
+  zNotesPreviewInput,
+  zNotesSave,
+  zNotesSaved,
   zMeetingResultSaved,
   zMeetingResults,
   zResultPublish,
@@ -961,6 +966,12 @@ export const contract = {
       review: oc.input(zDraftReview).output(zDraftReviewed),
       summaryStatus: oc.input(zSummaryRef).output(zSummaryStatus),
       summarize: oc.input(zSummaryRef).output(zSummarized),
+      // "Ghi chú của tôi" (A5, #3163): the recorder's own rough notes, theirs alone; `enhance` is the recorder's Vy expanding them with the transcript (the same run family and budget
+      // as the summary), `enhancePreview` the finished expansion with their own lines and Vy's told apart, copied into the draft by `copySummary`.
+      notesGet: oc.input(zMeetingRef).output(zNotes),
+      notesSave: oc.input(zNotesSave).output(zNotesSaved),
+      enhance: oc.input(zSummaryRef).output(zSummarized),
+      enhancePreview: oc.input(zNotesPreviewInput).output(zNotesPreview),
     },
     // The machine translation of the summary (meetings integrations E1, #3184): the member's own Vy translates what they read; the result is theirs alone, beside the original.
     // `status` is the button (enabled or why not, the target language, the expected cost), `translate` is the click, `get` the member's own translations.

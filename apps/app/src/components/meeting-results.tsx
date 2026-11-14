@@ -250,7 +250,7 @@ function Item({ item, isRecorder }: { item: ActionItemView; isRecorder: boolean 
 }
 
 // A fixed code the kernel sent, in words; null for a code this screen does not know.
-function codeText(t: ReturnType<typeof useTranslations>, code: unknown): string | null {
+export function codeText(t: ReturnType<typeof useTranslations>, code: unknown): string | null {
   switch (code) {
     case 'AI_BUDGET_EXHAUSTED':
     case 'AI_STOPPED':
@@ -260,6 +260,7 @@ function codeText(t: ReturnType<typeof useTranslations>, code: unknown): string 
     case 'SUMMARY_EMPTY':
     case 'SUMMARY_TOO_LONG':
     case 'SUMMARY_NO_TRANSCRIPT':
+    case 'NOTES_TOO_LONG':
       return t(`vy.codes.${code}`);
     default:
       return null;
