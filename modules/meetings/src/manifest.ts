@@ -21,6 +21,11 @@ export const meetingsManifest = defineModule({
         'length_seconds',
         'created_at',
       ]),
+      // A member's own Google Calendar meetings, read to suggest "record this meeting" (B1, #3165): title, start, end, time zone, a join address and the number of invitees, never an invitee address, a description or an attachment. Read by the member alone.
+      calendar_agenda: columns(
+        ['org_id', 'id', 'connection_id', 'user_id', 'external_id', 'starts_at', 'ends_at', 'time_zone', 'invitee_count', 'meeting_id', 'updated_at'],
+        { title: 'pii', join_url: 'sensitive' },
+      ),
       // The pieces of about 15 seconds a recorder sends while a live-notes meeting runs (ADR-0052 L4a, #3109): order, the ciphertext's file row, size and the recorder's own length. No key, no text.
       live_chunk: columns(['org_id', 'id', 'meeting_id', 'seq', 'file_id', 'size_bytes', 'length_seconds', 'created_at']),
       // The live transcript preview of a meeting being recorded (ADR-0052 L4a, #3110): the recorder's alone, replaced by the batch transcript. Its text is personal data.
