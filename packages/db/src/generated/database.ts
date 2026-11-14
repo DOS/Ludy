@@ -190,6 +190,7 @@ export interface CroveMeetingsSchema {
   'crove_meetings.meeting_result': MeetingsMeetingResultTable;
   'crove_meetings.meeting_video': MeetingsMeetingVideoTable;
   'crove_meetings.transcript_segment': MeetingsTranscriptSegmentTable;
+  'crove_meetings.translation': MeetingsTranslationTable;
 }
 
 export interface CroveNotesSchema {
@@ -2863,6 +2864,22 @@ export interface MeetingsTranscriptSegmentTable {
   tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
   source_run_id: ColumnType<string | null, string | null, NotGranted>;
   search: ColumnType<string | null, never, NotGranted>;
+}
+
+/** crove_meetings.translation */
+export interface MeetingsTranslationTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  meeting_id: ColumnType<string, string, NotGranted>;
+  member_user_id: ColumnType<string, string, NotGranted>;
+  kind: ColumnType<string, string, NotGranted>;
+  target_language: ColumnType<string, string, NotGranted>;
+  source_stage: ColumnType<string, string, NotGranted>;
+  source_hash: ColumnType<string, string, NotGranted>;
+  body: ColumnType<unknown, string, NotGranted>;
+  tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
+  source_run_id: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
 /** crove_notes.link */

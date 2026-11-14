@@ -768,3 +768,89 @@ export const zMeetingLinkSuggested = z.strictObject({
   deals: z.array(z.strictObject({ dealId: zId, title: z.string(), partyId: zId, partyName: z.string() })).max(MEETING_LINK_SUGGEST_MAX),
 });
 export type MeetingLinkSuggested = z.infer<typeof zMeetingLinkSuggested>;
+
+// The machine translation of a meeting's summary (meetings integrations E1, #3184, plan section 7a). The member's own Vy translates the summary, its decisions and the titles
+// of its action items between Vietnamese and English in one call; the result is kept privately for the member who asked (its own table in the meetings schema), shown beside the original
+// as "Bản dịch máy", tainted, and never the source of a task, mail, post, webhook, search hit or export. `stage` is the summary the member read: the published one (any reader) or
+// their own draft (the recorder).
+export const TRANSLATION_STAGES = ['draft', 'published'] as const;
+export const TRANSLATION_STATES = ['ok', 'warn', 'refused'] as const;
+// A fixed word for what code found: a refusal (MISSING, EMPTY, TOO_LONG, UNCHANGED, INVENTED_NUMBER, CONTACT_ADDED) or a warning (NUMBER_DROPPED, NAME_ADDED).
+export const TRANSLATION_CODES = ['MISSING', 'EMPTY', 'TOO_LONG', 'UNCHANGED', 'INVENTED_NUMBER', 'CONTACT_ADDED', 'NUMBER_DROPPED', 'NAME_ADDED'] as const;
+export const TRANSLATION_SEGMENTS_MAX = 1 + RESULT_DECISIONS_MAX + ITEMS_PER_MEETING_MAX;
+export const TRANSLATION_SEGMENT_TEXT_MAX = 12_000;
+const zTranslationStage = z.enum(TRANSLATION_STAGES);
+// 'summary', 'decision:<index>' or 'item:<id>': what a segment translates.
+const zTranslationKey = z.string().regex(/^(?:summary|decision:\d{1,3}|item:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/);
+const zTranslationHash = z.string().regex(/^[0-9a-f]{64}$/);
+export const zTranslationSegment = z.strictObject({
+  key: zTranslationKey,
+  // '' for a refused segment: the original shows, with a fixed word.
+  text: z.string().max(TRANSLATION_SEGMENT_TEXT_MAX),
+  state: z.enum(TRANSLATION_STATES),
+  codes: z.array(z.enum(TRANSLATION_CODES)).max(TRANSLATION_CODES.length),
+});
+export type TranslationSegment = z.infer<typeof zTranslationSegment>;
+// What a translation run stores in its result row (the body the agent package's checks produced); the sink reads it back strictly, as it reads a summary result.
+export const zTranslationResult = z.strictObject({
+  v: z.literal(1),
+  from: zMeetingLanguage,
+  to: zMeetingLanguage,
+  stage: zTranslationStage,
+  hash: zTranslationHash,
+  segments: z.array(zTranslationSegment).min(1).max(TRANSLATION_SEGMENTS_MAX),
+});
+export type TranslationResult = z.infer<typeof zTranslationResult>;
+
+export const zTranslationRef = z.strictObject({ meetingId: zId, stage: zTranslationStage });
+// The text the caller reads and may translate: the original segments in the order the screen shows them, the language pair and the hash of the text (a changed original has another hash).
+export const zTranslationSource = z.strictObject({
+  meetingId: zId,
+  stage: zTranslationStage,
+  from: zMeetingLanguage,
+  to: zMeetingLanguage,
+  hash: zTranslationHash,
+  segments: z.array(z.strictObject({ key: zTranslationKey, text: z.string() })).min(1).max(TRANSLATION_SEGMENTS_MAX),
+});
+export type TranslationSource = z.infer<typeof zTranslationSource>;
+export const zTranslateStarted = z.strictObject({ meetingId: zId, runId: zId });
+export const zTranslationCopy = z.strictObject({ meetingId: zId, runId: zId });
+export const zTranslationCopied = z.strictObject({
+  meetingId: zId,
+  stage: zTranslationStage,
+  segments: z.number().int().min(1),
+  refused: z.number().int().min(0),
+  warned: z.number().int().min(0),
+});
+// The route the screen calls: starts the run, reads what the member reads, makes the one model call, stores the answer and keeps it for the member; says how it went in fixed words.
+export const zTranslated = z.strictObject({
+  meetingId: zId,
+  stage: zTranslationStage,
+  runId: zId.nullable(),
+  state: z.enum(['ready', 'failed']),
+  errorCode: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/).nullable(),
+});
+export type Translated = z.infer<typeof zTranslated>;
+// What the translate button of a stage shows: whether it can be pressed, why not, the target language and the cost expected before the click. `estimate` is null when the deployment
+// has no price set (no figure is better than a guess).
+export const zTranslationStatus = z.strictObject({
+  meetingId: zId,
+  stage: zTranslationStage,
+  enabled: z.boolean(),
+  reason: z.enum(['off', 'nothing']).nullable(),
+  from: zMeetingLanguage,
+  to: zMeetingLanguage,
+  estimate: z.strictObject({ inputTokens: z.number().int().min(0), outputTokens: z.number().int().min(0), cost: z.string().regex(/^\d+(?:\.\d+)?$/).nullable() }).nullable(),
+});
+export type TranslationStatus = z.infer<typeof zTranslationStatus>;
+// The caller's own translations of the meeting, one per stage they asked for, with whether the original changed since (stale: "Bản dịch cũ, dịch lại").
+export const zTranslationView = z.strictObject({
+  stage: zTranslationStage,
+  from: zMeetingLanguage,
+  to: zMeetingLanguage,
+  stale: z.boolean(),
+  createdAt: z.string(),
+  segments: z.array(zTranslationSegment),
+});
+export const zTranslations = z.strictObject({ meetingId: zId, translations: z.array(zTranslationView).max(TRANSLATION_STAGES.length) });
+export type Translations = z.infer<typeof zTranslations>;

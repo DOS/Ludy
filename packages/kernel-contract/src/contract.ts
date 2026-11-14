@@ -380,6 +380,10 @@ import {
   zDraftReview,
   zDraftReviewed,
   zSummarized,
+  zTranslated,
+  zTranslationRef,
+  zTranslationStatus,
+  zTranslations,
   zSummaryRef,
   zSummaryStatus,
   zSummaryCopied,
@@ -940,6 +944,13 @@ export const contract = {
       review: oc.input(zDraftReview).output(zDraftReviewed),
       summaryStatus: oc.input(zSummaryRef).output(zSummaryStatus),
       summarize: oc.input(zSummaryRef).output(zSummarized),
+    },
+    // The machine translation of the summary (meetings integrations E1, #3184): the member's own Vy translates what they read; the result is theirs alone, beside the original.
+    // `status` is the button (enabled or why not, the target language, the expected cost), `translate` is the click, `get` the member's own translations.
+    translation: {
+      status: oc.input(zTranslationRef).output(zTranslationStatus),
+      translate: oc.input(zTranslationRef).output(zTranslated),
+      get: oc.input(zMeetingRef).output(zTranslations),
     },
     actionItems: {
       create: oc.input(zActionItemCreate).output(zActionItemCreated),

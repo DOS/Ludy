@@ -15,6 +15,7 @@ import { Textarea } from '@crove/ui/components/textarea';
 import { DateInput } from './date-input.tsx';
 import { ErrorText } from './ui.tsx';
 import { MeetingFollowup } from './meeting-followup.tsx';
+import { MeetingTranslation } from './meeting-translation.tsx';
 import { clock } from './meeting-transcript.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 
@@ -267,6 +268,7 @@ export function MeetingResults({ meetingId, readers }: { meetingId: string; read
           <section className="space-y-1">
             {isRecorder && <h3 className="text-xs font-medium text-muted-foreground">{t('publishedTitle')}</h3>}
             <SummaryText summary={published.summary} decisions={published.decisions} />
+            <MeetingTranslation meetingId={meetingId} stage="published" original={{ summary: published.summary, decisions: published.decisions, items: items.filter((i) => i.stage === 'published') }} />
           </section>
         )}
         {isRecorder && (published || items.some((i) => i.stage === 'published')) && <MeetingFollowup meetingId={meetingId} />}
@@ -279,6 +281,7 @@ export function MeetingResults({ meetingId, readers }: { meetingId: string; read
             </h3>
             {hasDraft && <p className="text-xs text-muted-foreground">{t('draftExpiry')}</p>}
             <SummaryEditor key={draft?.id ?? 'new'} meetingId={meetingId} summary={draft?.summary ?? ''} decisions={draft?.decisions ?? []} />
+            {hasDraft && <MeetingTranslation meetingId={meetingId} stage="draft" original={{ summary: draft?.summary ?? '', decisions: draft?.decisions ?? [], items: items.filter((i) => i.stage === 'draft') }} />}
           </section>
         )}
         {items.length > 0 && (
