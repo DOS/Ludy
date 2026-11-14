@@ -5,14 +5,14 @@
 // The projection below is these tools' privacy review, by the finance tools' rule: an AI app the owner connected sees what the consenting owner or admin sees in Social,
 // the fields below and no others. Per post: its id, title, text (one plain line of at most MCP_TEXT_MAX characters, with `textTruncated`), link, status, who wrote it
 // (`origin`: a person or an AI; `actorOrigin`: the app, the API, MCP or an agent; `tainted`), its planned time and zone, revision and the day it was made and last changed.
-// Per channel of it: the variant's id, the channel connection's id, the provider, the channel's name, the variant's status, its own text, title and link if it has them (null
-// inherits the post's), the time it goes out, when it was published and its public link, whether it was taken down, and the error code of a failure. A channel in review also
+// Per channel of it: the variant's id, the channel connection's id, the provider, the channel's name, the variant's status, the text, title and link it goes out with, the time it goes out, when it was published and its public link, whether it was taken down, and the error code of a failure. A channel in review also
 // carries the time it went to review. Never returned: internal comments and mentions, assignees, labels, the author's id, approvals' comments and decider ids, the review
 // checklist, media files and their storage keys, channel tokens, settings and the platform's own ids, evergreen and recurrence rules, text variations, metrics, content hashes,
 // archived posts, and anything of a query that is `sensitive`. Every text value is one plain line (see plainLine): a post's text can come from a visitor's form, a forwarded
 // mail, a web page or a model, and it reaches the client as data, never as an instruction. The channel limits of #1081 apply to members only and a grant's person is an owner
 // or admin, so the scope below is always every channel; it is still asked, so the answer can never be wider than the screen's. Row-level security and the `org_id` filters keep
 // other orgs' rows out.
+import { sql } from 'kysely';
 import { z } from 'zod';
 import { plainLine, zId } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
@@ -45,12 +45,12 @@ export interface McpChannelRow {
   provider: string;
   channelName: string;
   status: string;
-  // The channel's own text, title and link; null inherits the post's.
-  text: string | null;
+  // What the channel goes out with: its own text, title and link, else the post's (a title or link may be none).
+  text: string;
   textTruncated: boolean;
   title: string | null;
   linkUrl: string | null;
-  // When it goes out, or when it went out once published: its queue slot, else its own time, else the post's planned time.
+  // When it goes out (a retry time, else its queue slot, else its own time, else the post's planned time), or when it went out once published.
   at: string | null;
   // When it went to review (a channel in review only).
   submittedAt: string | null;
@@ -86,7 +86,7 @@ export interface McpReviewQueue {
   inReview: McpPostRow[];
   inReviewTotal: number;
   inReviewTruncated: boolean;
-  // Drafts an AI wrote with no channel waiting in review (not yet sent, or sent back with changes requested), newest first.
+  // Drafts an AI wrote with a channel not yet sent to review and none waiting in review, newest first.
   aiDrafts: McpPostRow[];
   aiDraftsTotal: number;
   aiDraftsTruncated: boolean;
@@ -131,6 +131,8 @@ async function viewPosts(ctx: Pick<QueryContext, 'trx' | 'orgId'>, scope: Channe
       'v.provider',
       'v.position',
       'v.status',
+      'v.content_frozen',
+      'v.error_retry_at',
       'v.body',
       'v.title',
       'v.link_url',
@@ -159,9 +161,12 @@ async function viewPosts(ctx: Pick<QueryContext, 'trx' | 'orgId'>, scope: Channe
     if (!p) continue;
     const text = textOf(p.body ?? '');
     const channels = (byPost.get(id) ?? []).map((v): McpChannelRow => {
-      const own = v.body === null ? null : textOf(v.body);
-      // The time the `from` and `to` filter reads (post-filter.ts): when it was published once it has been, else its queue slot, else its own time, else the post's.
-      const at = v.status === 'published' || v.status === 'removed' ? v.published_at : (v.queue_slot_at ?? v.scheduled_at ?? p.scheduled_at);
+      // What the channel goes out with, as the screens show it: its own text, title and link, else the post's. A frozen channel (it went out before the post was edited) kept its
+      // own copy, where an empty title or link means none, not the post's.
+      const inherits = !v.content_frozen;
+      const own = textOf(v.body ?? (inherits ? (p.body ?? '') : ''));
+      // The time the Social lists show: when it was published once it has been, else a retry time after a rate limit, else its queue slot, else its own time, else the post's.
+      const at = v.status === 'published' || v.status === 'removed' ? v.published_at : (v.error_retry_at ?? v.queue_slot_at ?? v.scheduled_at ?? p.scheduled_at);
       const since = v.status === 'in_review' ? v.review_since : null;
       return {
         variantId: v.id,
@@ -169,10 +174,10 @@ async function viewPosts(ctx: Pick<QueryContext, 'trx' | 'orgId'>, scope: Channe
         provider: plainLine(v.provider, 40),
         channelName: plainLine(v.display_name, 200),
         status: v.status,
-        text: own === null || own.text === '' ? null : own.text,
-        textTruncated: own?.truncated ?? false,
-        title: optionalLine(v.title, 500),
-        linkUrl: optionalLine(v.link_url, 2048),
+        text: own.text,
+        textTruncated: own.truncated,
+        title: optionalLine(v.title ?? (inherits ? p.title : null), 500),
+        linkUrl: optionalLine(v.link_url ?? (inherits ? p.link_url : null), 2048),
         at: at ? at.toISOString() : null,
         submittedAt: since ? since.toISOString() : null,
         publishedAt: v.published_at ? v.published_at.toISOString() : null,
@@ -232,8 +237,8 @@ export const mcpPosts = defineQuery({
   },
 });
 
-// `ludy_social_review_queue`: what waits for a person. `inReview`: the posts with a channel in review, the one waiting longest first. `aiDrafts`: the drafts an AI wrote with no
-// channel waiting in review (a draft an MCP client creates lands here until a person submits it, then moves to `inReview`; one sent back with changes requested is here too).
+// `ludy_social_review_queue`: what waits for a person. `inReview`: the posts with a channel in review, the one waiting longest first. `aiDrafts`: the drafts an AI wrote with a
+// channel nobody has sent to review yet and none waiting in review (a draft an MCP client creates lands here until a person submits it, then moves to `inReview`).
 export const mcpReviewQueue = defineQuery({
   name: 'social.mcp.review_queue',
   input: zMcpReviewQueueInput,
@@ -257,7 +262,13 @@ export const mcpReviewQueue = defineQuery({
       .execute();
     const sorted = [...waiting].sort((a, b) => (a.since?.getTime() ?? 0) - (b.since?.getTime() ?? 0) || (a.id < b.id ? -1 : 1));
     const inReviewIds = sorted.slice(0, input.limit).map((r) => r.id);
-    const aiFilter = () => postFilterQuery(ctx, scope, { stage: 'drafts' }).where('p.origin', '=', 'ai');
+    // A draft with a channel nobody has sent to review yet (status draft) and none waiting in review: an approved, rejected or changes-requested channel alone does not count.
+    const aiFilter = () =>
+      postFilterQuery(ctx, scope, { stage: 'drafts' })
+        .where('p.origin', '=', 'ai')
+        .where(
+          sql<boolean>`EXISTS (SELECT 1 FROM crove_social.post_variant v WHERE v.org_id = p.org_id AND v.post_id = p.id AND v.status = 'draft' AND ${connectionInScope(scope, 'v.channel_connection_id')})`,
+        );
     const aiIds = await aiFilter()
       .orderBy('p.updated_at', 'desc')
       .orderBy('p.id', 'desc')

@@ -199,7 +199,7 @@ suite('the Social MCP reads (#3227)', () => {
     expect(human).toMatchObject({ text: 'Khuyến mãi tháng 12', title: 'Giảm giá cuối năm', linkUrl: 'https://example.com/sale', status: 'draft', origin: 'human', actorOrigin: 'ui', tainted: false, textTruncated: false });
     expect(human.plannedAt).not.toBeNull();
     expect(human.channels.map((c) => [c.connectionId, c.text, c.status, c.at !== null])).toEqual([
-      [conns.a1, null, 'draft', true],
+      [conns.a1, 'Khuyến mãi tháng 12', 'draft', true],
       [conns.a2, 'Bản riêng cho kênh thứ hai', 'draft', true],
     ]);
     expect(human.channels.map((c) => c.channelName)).toEqual(['Trang Facebook A', 'Kênh thứ hai']);
@@ -300,12 +300,13 @@ suite('the Social MCP reads (#3227)', () => {
       channels: [{ connectionId: c1, body: `${'Riêng '.repeat(500)}hết` }, { connectionId: c2 }, { connectionId: c3 }, { connectionId: c4 }],
     });
     const published = new Date(Date.now() - 5 * HOUR);
+    const retry = new Date(Date.now() + 2 * HOUR);
     await admin(async (c) => {
       const set = (conn: string, sql: string, args: unknown[] = []) => c.query(`UPDATE crove_social.post_variant SET ${sql} WHERE org_id = $1 AND post_id = $2 AND channel_connection_id = $3`, [orgC, mixed, conn, ...args]);
       await set(c1, 'queue_slot_at = $4, scheduled_at = $5', [slot, own]);
       await set(c2, "status = 'cancelled'");
       await set(c3, "status = 'removed', removed_at = now(), published_at = $4", [published]);
-      await set(c4, "status = 'failed', error_code = 'RATE_LIMITED'");
+      await set(c4, "status = 'failed', error_code = 'RATE_LIMITED', error_retry_at = $4", [retry]);
     });
     const only = await runtime.query<Posts>('social.mcp.posts', { limit: 50 }, await grantOf(orgC, users.ownerA));
     const post = only.posts.find((p) => p.id === mixed) as Post;
@@ -315,7 +316,24 @@ suite('the Social MCP reads (#3227)', () => {
     expect(first).toMatchObject({ textTruncated: true });
     expect([...(first.text as string)].length).toBeLessThanOrEqual(MCP_TEXT_MAX);
     expect(removed).toMatchObject({ status: 'removed', takenDown: true, at: published.toISOString() });
-    expect(failed).toMatchObject({ status: 'failed', errorCode: 'RATE_LIMITED', at: planned.toISOString() });
+    // A retry time after a rate limit comes before the planned time, as on the Social screens.
+    expect(failed).toMatchObject({ status: 'failed', errorCode: 'RATE_LIMITED', at: retry.toISOString() });
+    // A channel without a text, title or link of its own goes out with the post's.
+    expect(first).toMatchObject({ title: null });
+    const titled = await create(orgC, users.ownerA, { body: 'Bài có tiêu đề', title: 'Tiêu đề chung', linkUrl: 'https://example.com/chung', channels: [{ connectionId: c1 }, { connectionId: c2 }] });
+    // A channel that went out before the post was edited keeps its own copy: its empty title and link mean none, not the post's.
+    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'published', published_at = now(), content_frozen = true, body = 'Bản đã đăng' WHERE org_id = $1 AND post_id = $2 AND channel_connection_id = $3", [orgC, titled, c1]));
+    const withTitle = (await runtime.query<Posts>('social.mcp.posts', { limit: 50 }, await grantOf(orgC, users.ownerA))).posts.find((p) => p.id === titled) as Post;
+    expect(withTitle.channels.map((c) => [c.connectionId, c.text, c.title, c.linkUrl])).toEqual([
+      [c1, 'Bản đã đăng', null, null],
+      [c2, 'Bài có tiêu đề', 'Tiêu đề chung', 'https://example.com/chung'],
+    ]);
+    // An AI draft with every channel approved is no longer waiting to be sent: it is not in aiDrafts, and an unsent one is.
+    const approvedAi = await create(orgC, users.ownerA, { origin: 'ai', body: 'AI đã duyệt', channels: [{ connectionId: c3 }] });
+    const unsentAi = await create(orgC, users.ownerA, { origin: 'ai', body: 'AI chưa gửi', channels: [{ connectionId: c4 }] });
+    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'approved' WHERE org_id = $1 AND post_id = $2", [orgC, approvedAi]));
+    const waiting = await runtime.query<Queue>('social.mcp.review_queue', { limit: 50 }, await grantOf(orgC, users.ownerA));
+    expect(waiting.aiDrafts.map((p) => p.id)).toEqual([unsentAi]);
     // A window that holds the queue slot but not the channel's own time finds the post, and the channel shows the time the window matched.
     const window = await runtime.query<Posts>('social.mcp.posts', { from: new Date(slot.getTime() - HOUR).toISOString(), to: new Date(slot.getTime() + HOUR).toISOString() }, await grantOf(orgC, users.ownerA));
     expect(window.posts.map((p) => p.id)).toEqual([mixed]);
