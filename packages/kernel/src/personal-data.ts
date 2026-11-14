@@ -313,6 +313,15 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: "A machine translation of a meeting's summary, which may name or describe a person: read by the member who asked alone, deleted with the meeting (its recorder, an owner, the retention job or the org purge) and with the summary it translated, and dropped, not redacted, by an erasure that touches the meeting",
   },
+  // The recorder's own rough notes of a meeting (meetings integrations A5, issue #3163): typed by the recorder, read, written and deleted by the recorder alone (row security: an owner, an
+  // admin, an attendee, an agent and the system context read none). The finder lists the row for the recorder acting as the actor (crove_meetings.personal_row_ids, kind 5); an owner who
+  // is not the recorder gets neither a row nor a count of them, and the erasure does not edit them: it reports them kept, and a request is answered the way it is for the transcript of a
+  // meeting its owner cannot read, by deleting the meeting (the recorder, or an owner without reading it), which takes the notes with it.
+  'crove_meetings.meeting_note.body': {
+    kind: 'free_text',
+    handling: 'keep_record',
+    reason: "The recorder's own rough notes of a meeting, which may name or describe a person: read by the recorder alone and not edited by the erasure; deleted with the meeting (its recorder, an owner for a personal-data request, the retention job or the org purge)",
+  },
   'crove_meetings.transcript_segment.speaker_label': {
     kind: 'free_text',
     handling: 'erase',
@@ -497,7 +506,7 @@ async function meetingScan<T>(trx: QueryContext['trx'], run: () => Promise<T>): 
 }
 
 // The tables of crove_meetings.personal_row_ids's kind codes.
-const MEETING_ROW_TABLES: Record<number, string> = { 1: 'transcript_segment', 2: 'meeting_result', 3: 'action_item', 4: 'meeting' };
+const MEETING_ROW_TABLES: Record<number, string> = { 1: 'transcript_segment', 2: 'meeting_result', 3: 'action_item', 4: 'meeting', 5: 'meeting_note' };
 
 // Every row of the org that holds the value, column by column (the finder's answer), and, when privateCounts, per author
 // how many of their private notes and to-dos mention it (ADR-0037: counted, never shown, whoever runs the finder).

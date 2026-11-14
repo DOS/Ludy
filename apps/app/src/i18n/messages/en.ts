@@ -1903,6 +1903,21 @@ export const en = {
       reload: 'Reload the latest draft',
       queued: '{count} emails queued to send.',
     },
+    // "My notes" and "Write it out in full" (Meetings A5, #3163).
+    notes: {
+      title: 'My notes',
+      private: 'Only you can read these notes. They are deleted with the meeting.',
+      placeholder: 'Type a few rough notes during or after the meeting. One thought a line.',
+      save: 'Save notes',
+      enhance: 'Write it out in full',
+      enhanceHint: 'Vy keeps each of your lines as it is and adds only what the transcript says. This counts against your AI budget.',
+      saveFirst: 'Save your notes before asking Vy to write them out.',
+      ready: 'Vy is done. Your lines are unchanged; the lines Vy added have their own frame and the time in the transcript.',
+      added: 'Added by Vy from the transcript',
+      chipTitle: 'Time of the line in the transcript',
+      dropped: '{count} of Vy\'s lines were dropped because the transcript does not support them or they carry a figure nobody said.',
+      copyReplaces: 'Copying into the draft replaces what Vy wrote there before. What you typed yourself stays.',
+    },
     // Minutes templates and the minutes page (Meetings A4, #3162).
     templates: {
       label: 'Meeting type',
@@ -9534,6 +9549,8 @@ export const en = {
       SUMMARY_REQUIRED: 'Write at least one section before saving.',
       SUMMARY_TEMPLATE_CHANGED: 'You changed the meeting type after Vy wrote this. Ask Vy to summarize again.',
       TEMPLATE_MISMATCH: 'The text does not match the meeting type that is picked. Reload the meeting and try again.',
+      NOTES_EMPTY: 'Type and save a few notes before asking Vy to write them out.',
+      NOTES_TOO_LONG: 'The notes are too long. Shorten them.',
       TRANSLATE_OFF: 'Translation by Vy is not turned on on this system.',
       TRANSLATION_NOT_FOUND: 'There is no summary you can read to translate.',
       TRANSLATION_NOTHING: 'There is nothing to translate yet.',
@@ -11325,6 +11342,11 @@ export const en = {
       result: {
         get: 'Read the summary and the action items of a meeting',
         publish: 'Share the summary and the action items with the meeting\'s attendees',
+      },
+      notes: {
+        get: 'Read the recorder\'s own notes of a meeting',
+        preview: 'Read Vy\'s expansion of the recorder\'s notes',
+        save: 'Save the recorder\'s own notes of a meeting',
       },
       minutes: {
         set_template: 'Pick the meeting type (minutes template)',

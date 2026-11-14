@@ -1901,6 +1901,21 @@ export const vi = {
       reload: 'Mở lại bản nháp mới',
       queued: 'Đã xếp hàng gửi {count} thư.',
     },
+    // "Ghi chú của tôi" and "Viết lại đầy đủ" (Meetings A5, #3163).
+    notes: {
+      title: 'Ghi chú của tôi',
+      private: 'Chỉ bạn đọc được ghi chú này. Ghi chú được xóa cùng cuộc họp.',
+      placeholder: 'Gõ vài dòng ghi chú thô trong hoặc sau cuộc họp. Mỗi dòng một ý.',
+      save: 'Lưu ghi chú',
+      enhance: 'Viết lại đầy đủ',
+      enhanceHint: 'Vy giữ nguyên từng dòng của bạn và chỉ thêm những gì có trong bản ghi lời nói. Việc này tính vào ngân sách AI của bạn.',
+      saveFirst: 'Hãy lưu ghi chú trước khi nhờ Vy viết lại.',
+      ready: 'Vy đã xong. Dòng của bạn giữ nguyên; dòng Vy thêm có khung riêng và giờ trong bản ghi.',
+      added: 'Vy thêm từ bản ghi',
+      chipTitle: 'Giờ của dòng trong bản ghi lời nói',
+      dropped: '{count} dòng của Vy bị bỏ vì không có trong bản ghi hoặc có số liệu không ai nói.',
+      copyReplaces: 'Chép vào bản nháp sẽ thay phần Vy đã viết trước đó. Phần bạn tự gõ được giữ nguyên.',
+    },
     // Minutes templates and the biên bản page (Meetings A4, #3162).
     templates: {
       label: 'Loại cuộc họp',
@@ -9531,6 +9546,8 @@ export const vi = {
       SUMMARY_REQUIRED: 'Hãy viết ít nhất một mục trước khi lưu.',
       SUMMARY_TEMPLATE_CHANGED: 'Bạn đã đổi loại cuộc họp sau khi Vy viết. Hãy nhờ Vy tóm tắt lại.',
       TEMPLATE_MISMATCH: 'Nội dung không khớp với loại cuộc họp đang chọn. Hãy mở lại cuộc họp rồi thử lại.',
+      NOTES_EMPTY: 'Hãy gõ vài dòng ghi chú và lưu trước khi nhờ Vy viết lại.',
+      NOTES_TOO_LONG: 'Ghi chú quá dài. Hãy rút gọn.',
       TRANSLATE_OFF: 'Hệ thống này chưa bật tính năng Vy dịch.',
       TRANSLATION_NOT_FOUND: 'Không có bản tóm tắt nào bạn đọc được để dịch.',
       TRANSLATION_NOTHING: 'Chưa có gì để dịch.',
@@ -11322,6 +11339,11 @@ export const vi = {
       result: {
         get: 'Xem tóm tắt và việc cần làm của cuộc họp',
         publish: 'Chia sẻ tóm tắt và việc cần làm với người dự họp',
+      },
+      notes: {
+        get: 'Xem ghi chú riêng của người ghi về cuộc họp',
+        preview: 'Xem bản Vy viết lại từ ghi chú của người ghi',
+        save: 'Lưu ghi chú riêng của người ghi về cuộc họp',
       },
       minutes: {
         set_template: 'Chọn loại cuộc họp (mẫu biên bản)',

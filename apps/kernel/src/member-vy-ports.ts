@@ -4,7 +4,7 @@
 // member's own user context. Asking about anyone else is refused before a command is run, and the database would refuse it anyway (the
 // restrictive policy shows a member their own rows only). Knowledge has no declared queries yet: a feature that asks gets no passages.
 import { AiBudgetExhaustedError, SUMMARY_TIMEOUT_MS, SummaryModelError, TranslationModelError, aiCost, generateMeetingSummaryText, generateMeetingTranslationText, withAiScope, type AiConfig, type AiMeter } from '@crove/agent';
-import { SummaryError, TranslationError, bindPorts, noKnowledge, privateText, revealPrivateText, summarizeMeeting, translateSummary, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type Ports } from '@crove/agent/member-vy';
+import { SummaryError, TranslationError, bindPorts, noKnowledge, privateText, revealPrivateText, enhanceNotes, summarizeMeeting, translateSummary, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type Ports } from '@crove/agent/member-vy';
 import { templateSections, type LiveNotesDone, type LiveNotesInput, type MeetingSummaryTemplate, type Summarized, type Transcript, type Translated, type TranslationSource, type TranslationStatus } from '@crove/kernel-contract';
 import { DomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import type { DraftBudget } from './ai-draft-limit.ts';
@@ -83,7 +83,19 @@ function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
   return Promise.race([work, deadline]).finally(() => clearTimeout(timer));
 }
 
-export async function runMeetingSummary(deps: MeetingSummaryDeps, orgId: string, actor: UserActor, meetingId: string): Promise<Summarized> {
+export function runMeetingSummary(deps: MeetingSummaryDeps, orgId: string, actor: UserActor, meetingId: string): Promise<Summarized> {
+  return runRecorderVy(deps, orgId, actor, meetingId, 'summary');
+}
+
+// "Viết lại đầy đủ" (Meetings A5, #3163): the same run as the summary, in the same family, with the same feature key, meter, budget line, checks of the recorder and the switch, and private
+// result, over the recorder's own rough notes and the transcript. The notes are read as the recorder before anything is spent (none: NOTES_EMPTY); the answer's checks are the agent's
+// (the recorder's own lines verbatim, every added line on a real second of the transcript). The recorder then reads the result (meetings.notes.preview) and copies it into their draft
+// with meetings.summary.copy_result, as for a summary.
+export function runNotesEnhance(deps: MeetingSummaryDeps, orgId: string, actor: UserActor, meetingId: string): Promise<Summarized> {
+  return runRecorderVy(deps, orgId, actor, meetingId, 'notes');
+}
+
+async function runRecorderVy(deps: MeetingSummaryDeps, orgId: string, actor: UserActor, meetingId: string, kind: 'summary' | 'notes'): Promise<Summarized> {
   const as = { actor, orgId };
   const timeoutMs = deps.timeoutMs ?? SUMMARY_TIMEOUT_MS;
   const model = deps.model;
@@ -96,6 +108,12 @@ export async function runMeetingSummary(deps: MeetingSummaryDeps, orgId: string,
     // The refusal is the status's own answer: no command runs, so a refused member can never leave a run behind.
     if (allowed.reason === 'not_recorder') throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can ask Vy to summarize it');
     throw new DomainError('SUMMARY_OFF', 422, 'Summaries by Vy are not turned on here; type the summary by hand');
+  }
+  // The notes are the recorder's own, read as the recorder: an empty box is refused here, before a ticket is taken or a run made.
+  let notes = '';
+  if (kind === 'notes') {
+    notes = (await deps.runtime.query<{ body: string }>('meetings.notes.get', { meetingId }, as)).body;
+    if (notes.trim() === '') throw new DomainError('NOTES_EMPTY', 422, 'Write some notes first');
   }
   const ticket = deps.budget.take(orgId, actor.userId);
   if (!ticket.allowed) throw new DomainError('SUMMARY_BUSY', 429, 'Vy is busy; try again in a few minutes', { retryAfterSeconds: ticket.retryAfterSeconds });
@@ -123,8 +141,11 @@ export async function runMeetingSummary(deps: MeetingSummaryDeps, orgId: string,
       const segments = transcript.segments.map((s) => ({ startSeconds: s.startSeconds, endSeconds: s.endSeconds, speakerLabel: s.speakerLabel, text: s.text }));
       // 3. The one call, outside any transaction, in the scope of this run.
       const ports: Ports = { model, memory: nothingToRemember, knowledge: noKnowledge };
+      const bound = bindPorts({ orgId, memberUserId: actor.userId }, ports);
       const result = await withDeadline(
-        withAiScope({ orgId, memberRunId: runId, meter }, () => summarizeMeeting({ segments, language: meeting.language, template }, bindPorts({ orgId, memberUserId: actor.userId }, ports))),
+        withAiScope({ orgId, memberRunId: runId, meter }, () =>
+          kind === 'notes' ? enhanceNotes({ segments, language: meeting.language, template, notes }, bound) : summarizeMeeting({ segments, language: meeting.language, template }, bound),
+        ),
         timeoutMs,
       );
       body = revealPrivateText(result.body);

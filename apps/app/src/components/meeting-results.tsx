@@ -250,7 +250,7 @@ function Item({ item, isRecorder }: { item: ActionItemView; isRecorder: boolean 
 }
 
 // A fixed code the kernel sent, in words; null for a code this screen does not know.
-function codeText(t: ReturnType<typeof useTranslations>, code: unknown): string | null {
+export function codeText(t: ReturnType<typeof useTranslations>, code: unknown): string | null {
   switch (code) {
     case 'AI_BUDGET_EXHAUSTED':
     case 'AI_STOPPED':
