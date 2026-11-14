@@ -29,6 +29,8 @@ export const CONVERSATION_REPLY_MAX = 8_000;
 export const CONVERSATION_FACEBOOK_DIRECT_MAX = 2_000;
 export const CONVERSATION_INSTAGRAM_COMMENT_MAX = 2_200;
 export const CONVERSATION_INSTAGRAM_DIRECT_MAX = 1_000;
+// WhatsApp Business (Cloud API) text body limit [M until the live check, docs/runbooks/whatsapp-conversations-live-check.md].
+export const CONVERSATION_WHATSAPP_REPLY_MAX = 4_096;
 // Threads' own limit of 500 characters a post applies to a reply [U until the live check and the official page settle it] (#3133, plan section 4.4).
 export const CONVERSATION_THREADS_REPLY_MAX = 500;
 export const CONVERSATION_NOTE_MAX = 5_000;
@@ -74,6 +76,10 @@ export const CONVERSATION_PROVIDER_RULES: Readonly<Record<string, ConversationPr
   // Zalo OA (#2304): private chats only (no comment API found); 2000 characters a message and a 48-hour free window from the customer's
   // last message [S, U until the live check settles them].
   zalo_oa: { kinds: ['direct'], replyMax: 2000, canHide: false, windowHours: 48 },
+  // WhatsApp Business, Cloud API (#3131, plan docs/plan/conversations-channels.md section 4.1): private chats only, 4096 characters a message,
+  // and a free-form reply only inside 24 hours of the customer's last message [S, live]. Past the window the Send button is disabled with the
+  // reason: Ludy sends no template and no business-initiated message (a paid message the business did not mean to buy).
+  whatsapp: { kinds: ['direct'], replyMax: CONVERSATION_WHATSAPP_REPLY_MAX, canHide: false, windowHours: 24 },
   // Telegram bot chats (#3132, plan section 4.2): private chats only (a group is out of v1), up to 4096 characters (TELEGRAM_TEXT_MAX of
   // @crove/channel) and no reply window: a bot may answer a user who wrote to it at any time. A blocked bot is refused as `permission`.
   telegram: { kinds: ['direct'], replyMax: 4096, canHide: false, windowHours: null },
@@ -96,6 +102,10 @@ export const zConversationAddress = z.strictObject({ conversationAddress: z.stri
 export type ConversationAddressView = z.infer<typeof zConversationAddress>;
 export const conversationRules = (provider: string): ConversationProviderRules | null =>
   Object.hasOwn(CONVERSATION_PROVIDER_RULES, provider) ? (CONVERSATION_PROVIDER_RULES[provider] ?? null) : null;
+// The channels whose unclear send (`unknown`) a person may not send again with a button: no platform history can say whether it arrived, so a second send may
+// reach the customer twice (WhatsApp, #3131). The person looks on the platform and marks it sent. An email is the same by its own rule.
+const NO_RESEND_WHEN_UNKNOWN: readonly string[] = ['whatsapp'];
+export const conversationCanResendUnknown = (provider: string, kind: string): boolean => kind !== 'email' && !NO_RESEND_WHEN_UNKNOWN.includes(provider);
 
 // Text the database can store: PostgreSQL refuses a NUL character in text, which would fail a whole notice.
 const noNul = (value: string) => !value.includes('\u0000');
@@ -107,10 +117,21 @@ export const zConversationIntent = z.enum(CONVERSATION_INTENTS);
 
 // An image the platform says a customer's message carries, by the address it can be fetched from (personal data: kept only until fetched,
 // at most six days, and never in an audit row, an event, a log or a job). https only; the fetch itself is limited to the platform's media hosts.
-export const zConversationEventImage = z.strictObject({
+const zConversationEventImageUrl = z.strictObject({
   kind: z.literal('image'),
   url: z.string().min(1).max(2000).refine(noNul, 'NUL character').refine((value) => value.startsWith('https://'), 'https only'),
 });
+// An image whose bytes need the connection's token (WhatsApp's media id, Telegram's file_id; #3131, plan docs/plan/conversations-channels.md section 4.1): a
+// provider-scoped reference that is not a URL and holds no token. Exactly one of `url` and `mediaRef` (the union of two strict objects). The reference is
+// personal data like the address: it travels in the parked notice and the ingest event only until the pending row is made, lives in the row's `source_ref`
+// (class pii) until the bytes are stored, and the fetch job turns it into bytes with the sealed credential. Never in a job, an emitted event, an audit row or
+// a log, and no token-bearing address is ever stored.
+export const CONVERSATION_MEDIA_REF_PATTERN = /^[A-Za-z0-9._:=-]{1,300}$/;
+const zConversationEventImageRef = z.strictObject({
+  kind: z.literal('image'),
+  mediaRef: z.string().regex(CONVERSATION_MEDIA_REF_PATTERN),
+});
+export const zConversationEventImage = z.union([zConversationEventImageUrl, zConversationEventImageRef]);
 
 // One thing a notice told us, in the core's own words. `contact` is the customer of the thread (the commenter, or the
 // person writing to the page, also when the event is the page's own message seen as an echo); `direction` out is the
@@ -134,6 +155,9 @@ export const zConversationEvent = z.strictObject({
   hiddenOnly: z.boolean().optional(),
   // The images the customer's message carries (CV5c, #2357); each is fetched later by the worker and shown beside the message's text.
   attachments: z.array(zConversationEventImage).max(CONVERSATION_ATTACHMENTS_MAX).optional(),
+  // The platform says a message the org sent did not reach the customer (WhatsApp's status `failed`, #3131): the stored outbound message with this platform id
+  // becomes `failed` with this short code, which the screen words for a person. An outbound event only, with no text; it never creates a message or a thread.
+  deliveryFailed: z.strictObject({ code: z.string().regex(/^[A-Za-z0-9_.:-]{1,60}$/) }).optional(),
   // Email only (#2439): the subject line, and the Message-IDs the mail names in In-Reply-To and References, which decide the thread.
   subject: z.string().trim().min(1).max(EMAIL_SUBJECT_MAX).refine(noNul, 'NUL character').optional(),
   refs: z.array(zThreadId).max(EMAIL_REFS_MAX).optional(),
