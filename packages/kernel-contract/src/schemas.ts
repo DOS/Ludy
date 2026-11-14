@@ -469,6 +469,11 @@ export const zChannelConnection = z.object({
   connectedBy: zId,
   expiresAt: z.string().nullable(),
   connectedAt: z.string(),
+  // Whether the connection also answers customers' private chats (Telegram bot chats, #3132), and the code of the last attempt that failed.
+  chatState: z.enum(['off', 'enabling', 'on', 'disabling']),
+  chatError: z.string().nullable(),
+  // When the state last changed (a switch standing for minutes was lost), or null.
+  chatChangedAt: z.string().nullable(),
 });
 
 // Providers connected through an OAuth dialog (Social plan S6), and the attempt's state: 32 random bytes, base64url.
