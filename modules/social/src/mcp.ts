@@ -7,7 +7,7 @@
 // (`origin`: a person or an AI; `actorOrigin`: the app, the API, MCP or an agent; `tainted`), its planned time and zone, revision and the day it was made and last changed.
 // Per channel of it: the variant's id, the channel connection's id, the provider, the channel's name, the variant's status, the text, title and link it goes out with, the time it goes out, when it was published and its public link, whether it was taken down, and the error code of a failure. A channel in review also
 // carries the time it went to review. Never returned: internal comments and mentions, assignees, labels, the author's id, approvals' comments and decider ids, the review
-// checklist, media files and their storage keys, channel tokens, settings and the platform's own ids, evergreen and recurrence rules, text variations, metrics, content hashes,
+// checklist, media files and their storage keys, channel tokens, settings (but the channel's signature, which is part of the text it goes out with) and the platform's own ids, evergreen and recurrence rules, text variations, metrics, content hashes,
 // archived posts, and anything of a query that is `sensitive`. Every text value is one plain line (see plainLine): a post's text can come from a visitor's form, a forwarded
 // mail, a web page or a model, and it reaches the client as data, never as an instruction. The channel limits of #1081 apply to members only and a grant's person is an owner
 // or admin, so the scope below is always every channel; it is still asked, so the answer can never be wider than the screen's. Row-level security and the `org_id` filters keep
@@ -18,6 +18,7 @@ import { plainLine, zId } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
 import { channelScope, connectionInScope, postInScope, type ChannelScope } from './channel-access.ts';
+import { withSignature } from './domain/signature.ts';
 import { postFilterQuery } from './post-filter.ts';
 
 const GRANTORS: readonly MemberRole[] = ['owner', 'admin'];
@@ -143,6 +144,8 @@ async function viewPosts(ctx: Pick<QueryContext, 'trx' | 'orgId'>, scope: Channe
       'v.removed_at',
       'v.error_code',
       'c.display_name',
+      // Only the signature of the variant's settings (a text, false or absent), never the settings themselves.
+      sql<unknown>`v.settings -> 'signature'`.as('signature'),
     ])
     .where('v.org_id', '=', ctx.orgId)
     .where('v.post_id', 'in', ids as string[])
@@ -163,7 +166,8 @@ async function viewPosts(ctx: Pick<QueryContext, 'trx' | 'orgId'>, scope: Channe
       // What the channel goes out with, as the screens show it: its own text, title and link, else the post's. A frozen channel (it went out before the post was edited) kept its
       // own copy, where an empty title or link means none, not the post's.
       const inherits = !v.content_frozen;
-      const own = textOf(v.body ?? (inherits ? (p.body ?? '') : ''));
+      // The channel's signature ends its text as it ends what goes out (effectiveContent), before the text is made one plain line and cut.
+      const own = textOf(withSignature(v.body ?? (inherits ? (p.body ?? '') : ''), { signature: v.signature }));
       // The time the `from` and `to` filter reads (post-filter.ts), so a window that finds a post shows the time it matched: when it was published once it has been, else its queue slot, else its own
       // time, else the post's. A retry time after a rate limit is not part of it, as in the Social lists' own filter.
       const at = v.status === 'published' || v.status === 'removed' ? v.published_at : (v.queue_slot_at ?? v.scheduled_at ?? p.scheduled_at);

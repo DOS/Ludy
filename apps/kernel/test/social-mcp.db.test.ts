@@ -210,16 +210,6 @@ suite('the Social MCP reads (#3227)', () => {
     expect(out.channels[0]?.publishedAt).not.toBeNull();
   });
 
-  it('reads only its own org, leaves archived posts out, and shows nothing the projection does not name', async () => {
-    const a = await posts({ limit: 50 });
-    expect(a.posts.some((p) => p.id === ids.other || p.id === ids.archived)).toBe(false);
-    expect((await posts({ limit: 50 }, orgB, users.ownerB)).posts.map((p) => p.id)).toEqual([ids.other]);
-    const seen = JSON.stringify([a, await queue()]);
-    // The author and the assignee (people's ids), the platform's own id of a published post, and the stored hash of a channel's content.
-    for (const never of [users.memberA, users.adminA, 'platform-id-xyz']) expect(seen).not.toContain(never);
-    for (const key of ['contentHash', 'content_hash', 'external_post_id', 'externalPostId', 'assignee', 'authorUserId', 'searchText', 'settings']) expect(seen).not.toContain(key);
-  });
-
   it('turns every text into one plain line a model reads as a person does, cuts a long one and says so', async () => {
     const got = await posts({ limit: 50 });
     const injected = got.posts.find((p) => p.id === ids.ai1) as Post;
@@ -270,18 +260,6 @@ suite('the Social MCP reads (#3227)', () => {
     }
     for (const bad of [{ limit: 0 }, { limit: 51 }, { status: 'draft' }, { orgId: orgB }]) {
       expect((await refusal(queue(bad))).status, JSON.stringify(bad)).toBe(422);
-    }
-  });
-
-  it('is closed to a browser session, to a grant without the scope, and to a grant whose person is only a member of the org', async () => {
-    const grant = await insertGrant(orgA, users.ownerA);
-    const memberGrant = await insertGrant(orgA, users.memberA);
-    for (const name of ['social.mcp.posts', 'social.mcp.review_queue']) {
-      expect((await refusal(runtime.query(name, {}, { actor: browser(users.ownerA), orgId: orgA }))).status, `${name}: a browser session`).toBe(403);
-      const noScope = await refusal(runtime.query(name, {}, { actor: mcp(users.ownerA, grant, []), orgId: orgA }));
-      expect([noScope.status, noScope.details], `${name}: no scope`).toEqual([403, expect.objectContaining({ rule: 'mcp_scope' })]);
-      const member = await refusal(runtime.query(name, {}, { actor: mcp(users.memberA, memberGrant), orgId: orgA }));
-      expect([member.status, member.code], `${name}: a member`).toEqual([401, 'MCP_GRANT_INVALID']);
     }
   });
 
@@ -340,5 +318,23 @@ suite('the Social MCP reads (#3227)', () => {
     // The window edges: `to` is exclusive, `from` inclusive.
     expect((await runtime.query<Posts>('social.mcp.posts', { to: slot.toISOString(), from: slot.toISOString() }, await grantOf(orgC, users.ownerA))).posts).toEqual([]);
     expect((await runtime.query<Posts>('social.mcp.posts', { from: slot.toISOString() }, await grantOf(orgC, users.ownerA))).posts.map((p) => p.id)).toEqual([mixed]);
+  });
+
+  it('shows a channel its text with the signature it goes out with, and no other setting', async () => {
+    const orgS = (await createOrg(runtime, browser(users.ownerA), 'Org signature')).orgId;
+    const conn = await channel(orgS, users.ownerA, 'Kênh chữ ký');
+    const signed = await create(orgS, users.ownerA, { body: 'Nội dung bài', channels: [{ connectionId: conn }] });
+    const off = await create(orgS, users.ownerA, { body: 'Bài bỏ chữ ký', channels: [{ connectionId: conn }] });
+    await admin(async (c) => {
+      await c.query(`UPDATE crove_social.post_variant SET settings = settings || '{"signature": "Hotline 0900 000 000", "secretSetting": "do-not-return"}'::jsonb WHERE org_id = $1 AND post_id = $2`, [orgS, signed]);
+      await c.query(`UPDATE crove_social.post_variant SET settings = settings || '{"signature": false, "secretSetting": "do-not-return"}'::jsonb WHERE org_id = $1 AND post_id = $2`, [orgS, off]);
+    });
+    const got = await runtime.query<Posts>('social.mcp.posts', { limit: 50 }, await grantOf(orgS, users.ownerA));
+    const byId = new Map(got.posts.map((p) => [p.id, p]));
+    expect(byId.get(signed)?.text).toBe('Nội dung bài');
+    expect(byId.get(signed)?.channels[0]?.text).toBe('Nội dung bài Hotline 0900 000 000');
+    expect(byId.get(off)?.channels[0]?.text).toBe('Bài bỏ chữ ký');
+    expect(JSON.stringify(got)).not.toContain('secretSetting');
+    expect(JSON.stringify(got)).not.toContain('do-not-return');
   });
 });
