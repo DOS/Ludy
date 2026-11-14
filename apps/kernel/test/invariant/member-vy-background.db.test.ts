@@ -389,10 +389,11 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   // names (`enter_mcp_member_context`, `ctx_mcp_member_id`, `enter_mcp_company_context`); a fourth writer or reader still fails the exact sets below.
   const mcpMemberObjects = async () => {
     const found = await admin((c) =>
-      c.query<{ entry: boolean; helper: boolean; company: boolean; core: boolean }>(
+      c.query<{ entry: boolean; helper: boolean; company: boolean; core: boolean; draft: boolean }>(
         `SELECT to_regprocedure('crove_kernel.enter_mcp_member_context(uuid,uuid)') IS NOT NULL AS entry, to_regprocedure('crove_kernel.ctx_mcp_member_id()') IS NOT NULL AS helper,
                 to_regprocedure('crove_kernel.enter_mcp_company_context(uuid,uuid)') IS NOT NULL AS company,
-                to_regprocedure('crove_kernel.seal_mcp_company_context(uuid,uuid)') IS NOT NULL AS core`,
+                to_regprocedure('crove_kernel.seal_mcp_company_context(uuid,uuid)') IS NOT NULL AS core,
+                to_regprocedure('crove_kernel.enter_mcp_company_draft_context(uuid,uuid)') IS NOT NULL AS draft`,
       ),
     );
     const row = found.rows[0];
@@ -402,6 +403,8 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       entry: [
         ...(row?.entry ? ['crove_kernel.enter_mcp_member_context(uuid,uuid)'] : []),
         ...(row?.core ? ['crove_kernel.seal_mcp_company_context(uuid,uuid)'] : row?.company ? ['crove_kernel.enter_mcp_company_context(uuid,uuid)'] : []),
+        // The write context of the one MCP write command (#3227, step 3, owner decision 2026-11-14): one more writer of the seal, its own kind (`mcp_company_draft`), accepted once it exists.
+        ...(row?.draft ? ['crove_kernel.enter_mcp_company_draft_context(uuid,uuid)'] : []),
       ],
       helper: row?.helper ? ['crove_kernel.ctx_mcp_member_id()'] : [],
     };
