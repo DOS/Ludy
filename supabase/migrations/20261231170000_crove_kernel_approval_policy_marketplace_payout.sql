@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- Crove approval policy for the posting of a marketplace payout (issue #2516, ADR-0045 point 6): finance.marketplace_payout.record is an R3 ledger proposal command, a general journal
 -- voucher rebuilt from the stored settlement and its bank line: the roles that post approve (owner, admin) and a member holding finance.proposal.approve through an org-wide assignment, four-eyes with the
--- one-person path (P10), and a ledger effect required before the proposal moves to 'executed' (crove_finance.ledger_effect_recorded, 20261231130000). Kept equal to approval.ts (POLICIES,
+-- one-person path (P10), and a ledger effect required before the proposal moves to 'executed' (crove_finance.ledger_effect_recorded, 20261231160000). Kept equal to approval.ts (POLICIES,
 -- APPROVAL_POLICY_VERSION 13) by apps/kernel/test/invariant/proposal-approve-gate.db.test.ts.
 --
 -- crove_kernel.approval_command_policy  the policy table, with the new command in the ledger list: the body of 20261231071700 with the command added (the signature and OUT columns are unchanged).
