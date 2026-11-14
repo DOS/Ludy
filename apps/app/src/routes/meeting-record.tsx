@@ -17,6 +17,7 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { useMe } from '../components/conversation-inbox.tsx';
 import { NotesSubnav } from '../components/notes-subnav.tsx';
+import { useConsentPolicy } from '../components/consent-policy.tsx';
 import { RecordingNotice } from '../components/recording-notice.tsx';
 import { ErrorText, PageHeader } from '../components/ui.tsx';
 import { errorMessage, orpc, queryClient, sendLiveChunk, uploadMeetingMedia } from '../lib/api.ts';
@@ -81,6 +82,11 @@ export function MeetingRecordPage() {
   // Off at every visit and never remembered: ticked for one recording only.
   const [liveNotes, setLiveNotes] = useState(false);
   const [consentMethod, setConsentMethod] = useState<ConsentMethod | ''>('');
+  // A strict org accepts only a written method (A2, #3160): the unwritten one is not offered, and a choice made before the policy loaded is dropped.
+  const consentPolicy = useConsentPolicy();
+  useEffect(() => {
+    if (consentPolicy === 'strict' && consentMethod === 'told_at_start') setConsentMethod('');
+  }, [consentPolicy, consentMethod]);
   const [consentAgreed, setConsentAgreed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
@@ -507,11 +513,12 @@ export function MeetingRecordPage() {
                 <Label htmlFor="record-consent-method" className="text-xs">{t('form.consentMethod')}</Label>
                 <NativeSelect id="record-consent-method" value={consentMethod} onChange={(e) => setConsentMethod(e.target.value as ConsentMethod)} required>
                   <NativeSelectOption value="" disabled>{t('form.selectConsentMethod')}</NativeSelectOption>
-                  <NativeSelectOption value="told_at_start">{t('form.toldAtStart')}</NativeSelectOption>
+                  {consentPolicy === 'standard' && <NativeSelectOption value="told_at_start">{t('form.toldAtStart')}</NativeSelectOption>}
                   <NativeSelectOption value="in_invite">{t('form.inInvite')}</NativeSelectOption>
                   <NativeSelectOption value="in_writing">{t('form.inWriting')}</NativeSelectOption>
                   <NativeSelectOption value="in_call_chat">{t('form.inCallChat')}</NativeSelectOption>
                 </NativeSelect>
+                {consentPolicy === 'strict' && <p className="text-xs text-muted-foreground" data-testid="consent-strict-note">{t('consentPolicy.strictNote')}</p>}
               </div>
               <div className="flex items-start gap-2 pt-1">
                 <Checkbox id="record-consent-agreed" checked={consentAgreed} onCheckedChange={(c) => setConsentAgreed(Boolean(c))} />

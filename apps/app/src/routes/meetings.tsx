@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
-import { useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import {
   MEETING_AUDIO_RETENTION_CHOICES,
@@ -25,6 +25,7 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { MeetingSearch } from '../components/meeting-search.tsx';
 import { NotesSubnav } from '../components/notes-subnav.tsx';
+import { ConsentPolicyCard, useConsentPolicy } from '../components/consent-policy.tsx';
 import { RecordingNotice } from '../components/recording-notice.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient, uploadMeetingMedia } from '../lib/api.ts';
@@ -144,6 +145,11 @@ export function MeetingsPage() {
   const [visibility, setVisibility] = useState<MeetingVisibility>('attendees');
   const [keepVideo, setKeepVideo] = useState(false);
   const [consentMethod, setConsentMethod] = useState<ConsentMethod | ''>('');
+  // A strict org accepts only a written method (A2, #3160): the unwritten one is not offered, and a choice made before the policy loaded is dropped.
+  const consentPolicy = useConsentPolicy();
+  useEffect(() => {
+    if (consentPolicy === 'strict' && consentMethod === 'told_at_start') setConsentMethod('');
+  }, [consentPolicy, consentMethod]);
   const [consentAgreed, setConsentAgreed] = useState(false);
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [videoFile, setVideoFile] = useState<File | null>(null);
@@ -315,6 +321,7 @@ export function MeetingsPage() {
       )}
 
       <RetentionSettingsCard />
+      <ConsentPolicyCard />
 
       {/* New Meeting Modal with Mandatory Consent Gate */}
       <Dialog open={modalOpen} onOpenChange={(open) => {
@@ -434,11 +441,12 @@ export function MeetingsPage() {
                   disabled={meetingCreated}
                 >
                   <NativeSelectOption value="" disabled>{t('form.selectConsentMethod')}</NativeSelectOption>
-                  <NativeSelectOption value="told_at_start">{t('form.toldAtStart')}</NativeSelectOption>
+                  {consentPolicy === 'standard' && <NativeSelectOption value="told_at_start">{t('form.toldAtStart')}</NativeSelectOption>}
                   <NativeSelectOption value="in_invite">{t('form.inInvite')}</NativeSelectOption>
                   <NativeSelectOption value="in_writing">{t('form.inWriting')}</NativeSelectOption>
                   <NativeSelectOption value="in_call_chat">{t('form.inCallChat')}</NativeSelectOption>
                 </NativeSelect>
+                {consentPolicy === 'strict' && <p className="text-xs text-muted-foreground" data-testid="consent-strict-note">{t('consentPolicy.strictNote')}</p>}
               </div>
 
               <div className="flex items-start gap-2 pt-1">

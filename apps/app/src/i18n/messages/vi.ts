@@ -1709,6 +1709,24 @@ export const vi = {
       left_screen: 'Màn hình ghi âm đã bị rời đi.',
       unknown: 'Trình duyệt hoặc thiết bị đã dừng ghi.',
     },
+    // "Cần xác nhận trước khi ghi" (A2, #3160).
+    consentPolicy: {
+      title: 'Cần xác nhận trước khi ghi',
+      hint: 'Chọn cách Ludy tính việc đã báo cho người tham dự biết cuộc họp được ghi âm. Thay đổi chỉ áp dụng cho các cuộc họp tạo sau đó; cuộc họp đã tạo giữ nguyên.',
+      label: 'Cách thông báo được chấp nhận',
+      choice: {
+        standard: 'Tiêu chuẩn',
+        strict: 'Nghiêm ngặt: chỉ nhận thông báo bằng văn bản',
+      },
+      explain: {
+        standard: 'Nhận mọi cách thông báo, kể cả nói ở đầu cuộc họp.',
+        strict: 'Người ghi phải chọn một cách có văn bản: dán thông báo vào khung chat cuộc họp, ghi trong lời mời hoặc gửi thông báo bằng văn bản. "Nói ở đầu cuộc họp" một mình sẽ bị từ chối, cả khi ghi trong ứng dụng, bằng tiện ích hay khi tải tệp lên.',
+      },
+      save: 'Lưu',
+      saved: 'Đã lưu quy định xác nhận.',
+      adminOnly: 'Chỉ chủ sở hữu hoặc quản trị viên mới đổi được.',
+      strictNote: 'Tổ chức của bạn chỉ nhận thông báo bằng văn bản, nên không có lựa chọn "nói ở đầu cuộc họp".',
+    },
     // The header chip while this member records, in the app or with the extension (A1, #3159).
     chip: {
       recording: 'Đang ghi {time}',
@@ -9423,6 +9441,7 @@ export const vi = {
       TRANSLATION_RESULT_NOT_FOUND: 'Chưa có kết quả dịch cho cuộc họp này.',
       TRANSLATION_RESULT_NOT_READY: 'Vy chưa dịch xong.',
       MEDIA_RETENTION_PASSED: 'Thời hạn lưu của cuộc họp này đã hết nên không nhận thêm âm thanh hay video.',
+      CONSENT_METHOD_NOT_ALLOWED: 'Tổ chức này chỉ nhận thông báo bằng văn bản: hãy chọn dán thông báo vào khung chat, ghi trong lời mời hoặc thông báo bằng văn bản.',
       LIVE_ASSEMBLE_TIMEOUT: 'Ghép các đoạn mất quá lâu nên đã dừng, chưa có gì bị đổi. Hãy thử lại.',
       LIVE_NO_PIECES: 'Cuộc họp này không có đoạn trực tiếp nào để ghép.',
       LIVE_STILL_OPEN: 'Bản ghi đầy đủ vẫn có thể đến. Bạn ghép được các đoạn sau khi quá thời hạn tối đa của một cuộc ghi (4 giờ 15 phút).',
@@ -11161,6 +11180,10 @@ export const vi = {
       },
       media_key: {
         reseal: 'Niêm phong lại khóa phương tiện cuộc họp sau khi đổi khóa',
+      },
+      consent_policy: {
+        get: 'Xem quy định xác nhận trước khi ghi',
+        set: 'Đổi quy định xác nhận trước khi ghi',
       },
       retention: {
         shred: 'Tiêu hủy âm thanh hoặc video, hoặc xóa cuộc họp, khi hết hạn lưu',

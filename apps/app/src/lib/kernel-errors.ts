@@ -377,6 +377,8 @@ export const KERNEL_ERROR_CODES = [
   'LIVE_PIECE_UNREADABLE',
   'MEDIA_ALREADY_RECORDED',
   'MEETING_SETTINGS_INVALID',
+  // A strict org accepts only a written consent method (A2, #3160).
+  'CONSENT_METHOD_NOT_ALLOWED',
   // A member's own to-dos (#1673).
   'TODO_NOT_FOUND',
   'TODO_IN_TRASH',
