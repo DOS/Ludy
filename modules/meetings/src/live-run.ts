@@ -31,6 +31,7 @@ import {
   type LiveStatus,
 } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { assembleFacts, assembleState } from './live-assemble.ts';
 import { isSummaryEnabled } from './summary-run.ts';
 import { vnDay } from './retention.ts';
 import { ROLES, openMeeting, userOf } from './transcript.ts';
@@ -207,6 +208,7 @@ export const liveStatus = defineQuery({
       errorCode: null,
       lines: [],
       notesUpdatedAt: null,
+      assemble: { available: false, reason: 'no_pieces', pieces: 0, missing: [] },
     };
     // Only the recorder sees the preview: an attendee, an owner, an admin and every other member get the empty pane, as they do for a draft.
     if (meeting.recorder_user_id !== userId) return zLiveStatus.parse(empty);
@@ -235,6 +237,7 @@ export const liveStatus = defineQuery({
       errorCode: latest?.errorCode ?? null,
       lines: lines.map((l) => ({ id: l.id, seq: l.seq, startSeconds: l.start_seconds, endSeconds: l.end_seconds, text: l.text })),
       notesUpdatedAt: notes ? new Date(notes.updated_at).toISOString() : null,
+      assemble: assembleState(await assembleFacts(ctx, input.meetingId, new Date())),
     });
   },
 });

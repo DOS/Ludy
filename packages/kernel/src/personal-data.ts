@@ -305,6 +305,14 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: "A draft of what was said in a meeting being recorded, which may name or describe a person: read by its recorder alone, replaced by the transcript after the meeting and deleted with the meeting (its recorder, an owner, or the retention job)",
   },
+  // The machine translation of a meeting's summary (meetings integrations E1, issue #3184): a member's own Vy's translation of the summary, its decisions and its item titles, private to the
+  // member who asked. No finder, owner or admin reads it; it goes with the meeting, with the summary it translated, and an erasure that touches the meeting DROPS it (never redacts it:
+  // a name cannot be located reliably in another language), so a request is answered the way it is for the transcript.
+  'crove_meetings.translation.body': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: "A machine translation of a meeting's summary, which may name or describe a person: read by the member who asked alone, deleted with the meeting (its recorder, an owner, the retention job or the org purge) and with the summary it translated, and dropped, not redacted, by an erasure that touches the meeting",
+  },
   'crove_meetings.transcript_segment.speaker_label': {
     kind: 'free_text',
     handling: 'erase',
