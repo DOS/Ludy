@@ -193,7 +193,7 @@ describe('module screens against the router (#1652)', () => {
         [
           ['inbox', ['social/inbox']],
           ['crm', ['contacts', 'companies', 'deals', 'bookings']],
-          ['marketing', ['social', 'ads']],
+          ['marketing', ['social', 'social/notifications', 'ads']],
           ['reports', ['reports']],
         ],
       ],
@@ -206,7 +206,7 @@ describe('module screens against the router (#1652)', () => {
     expect(BELL_ITEM && [BELL_ITEM.to, BELL_ITEM.label]).toEqual(['/o/$slug/notifications', 'alerts']);
     expect(ADMIN_ITEMS.map((i) => [i.to, i.label])).toEqual([['/o/$slug/settings', 'settings']]);
     expect(ALL_NAV.map((i) => i.label)).toEqual([
-      'overview', 'myWork', 'tasks', 'notes', 'meetings', 'accountingOverview', 'documents', 'vouchers', 'bank', 'salesInvoices', 'customers', 'stock', 'vendors', 'journal', 'ledger', 'fixedAssets', 'tax', 'socialInbox', 'contacts', 'companies', 'deals', 'bookings', 'social', 'ads', 'reports', 'employees', 'payroll', 'declarations', 'agents', 'aiUsage', 'aiConnections', 'alerts', 'settings', 'inbox', 'documentsAll', 'household', 'marketplace', 'portalList', 'paymentReminders', 'bankTemplates', 'socialNotifications', 'adsCampaigns',
+      'overview', 'myWork', 'tasks', 'notes', 'meetings', 'accountingOverview', 'documents', 'vouchers', 'bank', 'salesInvoices', 'customers', 'stock', 'vendors', 'journal', 'ledger', 'fixedAssets', 'tax', 'socialInbox', 'contacts', 'companies', 'deals', 'bookings', 'social', 'socialNotifications', 'ads', 'reports', 'employees', 'payroll', 'declarations', 'agents', 'aiUsage', 'aiConnections', 'alerts', 'settings', 'inbox', 'documentsAll', 'household', 'marketplace', 'portalList', 'paymentReminders', 'bankTemplates', 'adsCampaigns',
     ]);
   });
 });
@@ -252,13 +252,13 @@ describe('a module turned off (ADR-0031 §3, #1652)', () => {
     expect(menu(['kernel', 'social', 'crm', 'ads'])).toEqual([
       ['inbox', ['socialInbox']],
       ['crm', SALES],
-      ['marketing', ['social', 'ads']],
+      ['marketing', ['social', 'socialNotifications', 'ads']],
       ['reports', ['reports']],
     ]);
     // Only crm: the CRM group and the reports item (its sales tab alone, tabs.test in reports.test.ts).
     expect(menu(['kernel', 'crm'])).toEqual([['crm', SALES], ['reports', ['reports']]]);
     // Only social: the inbox, the posts and the reports item.
-    expect(menu(['kernel', 'social'])).toEqual([['inbox', ['socialInbox']], ['marketing', ['social']], ['reports', ['reports']]]);
+    expect(menu(['kernel', 'social'])).toEqual([['inbox', ['socialInbox']], ['marketing', ['social', 'socialNotifications']], ['reports', ['reports']]]);
     // Only ads: Ads alone under Marketing.
     expect(menu(['kernel', 'ads'])).toEqual([['marketing', ['ads']], ['reports', ['reports']]]);
     // None of the three: no Engage app at all, whatever else runs, and the reports screen is not opened.

@@ -108,7 +108,6 @@ export const TAB_GROUPS: readonly TabGroup[] = [
   { menu: 'stock', tabs: [{ path: 'stock', label: 'stockLevels' }, { path: 'marketplace', label: 'marketplace' }] },
   { menu: 'vat', tabs: [{ path: 'vat', label: 'vat' }, { path: 'portal-invoices', label: 'portalList' }] },
   { menu: 'hr/payroll', tabs: [{ path: 'hr/payroll', label: 'payroll' }, { path: 'hr/bank-templates', label: 'bankTemplates' }] },
-  { menu: 'social', tabs: [{ path: 'social', label: 'socialPosts' }, { path: 'social/notifications', label: 'socialNotifications' }] },
   { menu: 'ads', tabs: [{ path: 'ads', label: 'adsFigures' }, { path: 'ads/campaigns', label: 'adsCampaigns' }] },
 ];
 

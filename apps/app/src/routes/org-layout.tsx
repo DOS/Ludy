@@ -254,8 +254,8 @@ export function OrgLayout() {
     ];
   }, [found.data, notesFound.data, financeOn, notesOn, typed, term, slug, tp, f, navigate]);
 
-  // The counts on the menu's items and on the tabs of one: the pending proposals on Chứng từ's first tab, the unread social updates on a tab of Engage's posts.
-  const tabBadges = { inbox: menuBadges.inbox, socialNotifications: unread };
+  // The count on a tab: the pending proposals on Chứng từ's first tab.
+  const tabBadges = { inbox: menuBadges.inbox };
 
   const shellNav = (onNavigate?: () => void) => (
     <ShellNav

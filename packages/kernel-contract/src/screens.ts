@@ -105,7 +105,7 @@ const SOCIAL_SCREENS = {
     { path: 'social/feeds' },
     { path: 'social/bio' },
     // The updates of the posts: the second tab of Bài đăng (#3225).
-    { path: 'social/notifications', find: 'socialNotifications' },
+    { path: 'social/notifications' },
     // The Inbox (CV3, #2306): comments and private messages together, in three panes. The path `inbox` is the kernel's documents Inbox, so Social's is
     // under `social/`. The comment inbox of CV1 (#2303) keeps its address and redirects here.
     { path: 'social/inbox' },
@@ -135,6 +135,7 @@ const SOCIAL_SCREENS = {
     { app: 'engage', group: 'inbox', path: 'social/inbox', label: 'socialInbox' },
     // The post updates are a tab of Bài đăng, not an item of their own.
     { app: 'engage', group: 'marketing', path: 'social', label: 'social' },
+    { app: 'engage', group: 'marketing', path: 'social/notifications', label: 'socialNotifications' },
     { app: 'engage', group: 'reports', path: 'reports', label: 'reports' },
   ],
 } as const satisfies ModuleScreens;
