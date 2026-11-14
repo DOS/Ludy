@@ -36,9 +36,6 @@ export const KERNEL_ERROR_CODES = [
   'MEETING_HOOKS_OFF',
   'MEETING_HOOK_NOT_FOUND',
   'MEETING_HOOK_TOO_SOON',
-  'MEETING_HOOK_INVALID',
-  'MEETING_HOOK_FORBIDDEN',
-  'MEETING_HOOKS_FORBIDDEN',
   'EXTENSION_TOO_MANY',
   // Refusals the kernel words differently per command; the kernel's Vietnamese message says which case it was.
   'FORBIDDEN',
