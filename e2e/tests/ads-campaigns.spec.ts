@@ -41,11 +41,12 @@ test('an owner starts a campaign from a post, sees the most it can spend, and wh
     postId = page.url().split('/').pop() ?? '';
   });
 
-  await test.step('Campaigns is an item of the Marketing group, and with no ad account it says to connect one first', async () => {
+  await test.step('Campaigns is a tab of Quảng cáo, an item of the Marketing group, and with no ad account it says to connect one first', async () => {
     await nav.getByRole('link', { name: 'Engage' }).click();
     const group = nav.getByRole('region', { name: 'Marketing' });
     await expect(group).toBeVisible();
-    await group.getByRole('link', { name: 'Chiến dịch', exact: true }).click();
+    await group.getByRole('link', { name: 'Quảng cáo', exact: true }).click();
+    await page.getByRole('link', { name: 'Chiến dịch', exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/ads/campaigns$`));
     await expect(page.getByRole('heading', { name: 'Chiến dịch', level: 1 })).toBeVisible();
     await expect(page.getByText('Hãy kết nối một tài khoản quảng cáo ở màn Quảng cáo trước.')).toBeVisible();

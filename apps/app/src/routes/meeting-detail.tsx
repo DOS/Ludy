@@ -12,6 +12,7 @@ import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { MeetingLinks } from '../components/meeting-links.tsx';
 import { MeetingResults, memberLabel } from '../components/meeting-results.tsx';
 import { MeetingLive } from '../components/meeting-live.tsx';
+import { MeetingNotes } from '../components/meeting-notes.tsx';
 import { MeetingTranscript } from '../components/meeting-transcript.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { RecordingStoppedNote } from '../components/recording-stopped.tsx';
@@ -325,6 +326,8 @@ export function MeetingDetailPage() {
       <MeetingLive meetingId={id} liveNotes={meeting.liveNotes} isRecorder={meeting.isRecorder} />
       {/* The transcript: the recorder's draft, or what was shared with the meeting */}
       <MeetingTranscript meetingId={id} {...(seg ? { focusSegmentId: seg } : {})} />
+      {/* The recorder's own rough notes (A5): theirs alone, so only the recorder gets the box */}
+      {meeting.isRecorder && <MeetingNotes meetingId={id} />}
       <MeetingResults
         meetingId={id}
         readers={meeting.readers}

@@ -18,6 +18,7 @@ export const KERNEL_ERROR_CODES = [
   'STEP_UP_REQUIRED',
   'NOT_A_MEMBER',
   'USER_DISABLED',
+  'ACCOUNT_NOT_ALLOWED',
   'AUTH_UNAVAILABLE',
   'AUTH_NOT_READY',
   'ORG_REQUIRED',
@@ -352,6 +353,9 @@ export const KERNEL_ERROR_CODES = [
   'SUMMARY_REQUIRED',
   'SUMMARY_TEMPLATE_CHANGED',
   'TEMPLATE_MISMATCH',
+  // The recorder's rough notes (Meetings A5, #3163).
+  'NOTES_EMPTY',
+  'NOTES_TOO_LONG',
   // The member's Vy translating the summary they read (meetings integrations E1, #3184).
   'TRANSLATE_OFF',
   'TRANSLATION_NOT_FOUND',

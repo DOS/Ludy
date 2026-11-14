@@ -56,7 +56,7 @@ test('an invited address signs up only from its accept link, and the invitee joi
   await memberPage.goto(await authLink(member, /confirm/i));
   await expect(memberPage).toHaveURL(/\/-\/invite$/);
   await memberPage.getByRole('button', { name: 'Chấp nhận lời mời' }).click();
-  await expect(memberPage).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
+  await expect(memberPage).toHaveURL(new RegExp(`/o/${slug}/overview$`));
 
   // The account is the invitee's: the attacker's password does not open it, the invitee's does.
   await signIn(attacker, member, 'attacker-password-0123');
@@ -64,6 +64,6 @@ test('an invited address signs up only from its accept link, and the invitee joi
   const again = await browser.newContext({ baseURL: origin });
   const againPage = await again.newPage();
   await signIn(againPage, member, 'member-password-0123');
-  await expect(againPage).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
+  await expect(againPage).toHaveURL(new RegExp(`/o/${slug}/overview$`));
   await Promise.all([attackerContext.close(), memberContext.close(), again.close()]);
 });

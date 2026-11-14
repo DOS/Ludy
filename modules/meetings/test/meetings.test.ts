@@ -37,7 +37,8 @@ describe('meetings manifest and constants', () => {
     expect(meetingsManifest.routes[2].path).toBe('meetings/$id');
     // The printable minutes, outside the org's frame (A4, #3162).
     expect(meetingsManifest.routes[3].path).toBe('print/meeting-minutes/$id');
-    expect(meetingsManifest.nav).toEqual([]);
+    // One menu item, in the Cộng tác app next to the team's tasks and notes (#3225).
+    expect(meetingsManifest.nav).toEqual([{ app: 'teamwork', group: 'work', path: 'meetings', label: 'meetings' }]);
   });
 
   it('exposes MEETING columns and sensitive media_key configuration', () => {
@@ -93,6 +94,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.result.publish',
       'meetings.action_item.accept',
       'meetings.action_item.accept_clean',
+      'meetings.notes.save',
       'meetings.summary.copy_result',
       'meetings.draft.review',
       'meetings.summary.start',
@@ -134,6 +136,8 @@ describe('meetings commands and queries construction', () => {
       'meetings.transcript.status',
       'meetings.result.get',
       'meetings.action_item.source',
+      'meetings.notes.get',
+      'meetings.notes.preview',
       'meetings.summary.status',
       'meetings.translation.source',
       'meetings.translation.status',

@@ -41,18 +41,19 @@ export const vi = {
     replay: 'Xem lại',
   },
   shell: {
-    label: 'Giao diện Ludy mẫu: AI Inbox, chi tiết hoá đơn và bảng lệnh',
+    label: 'Giao diện Ludy mẫu: Tài chính (Chứng từ chờ duyệt), chi tiết hoá đơn và bảng lệnh',
     org: 'Gạo Sạch Mekong',
     search: 'Tìm kiếm',
-    inbox: 'AI Inbox',
+    inbox: 'Chứng từ',
     groups: [
-      { label: 'Tài chính', items: ['Chứng từ', 'Sổ nhật ký', 'Sổ cái', 'Nhà cung cấp', 'VAT'] },
-      { label: 'Vận hành', items: ['Công việc', 'Agents', 'Engage'] },
+      { label: 'Bán hàng', items: ['Hóa đơn bán ra', 'Khách hàng', 'Hàng hóa'] },
+      { label: 'Mua hàng', items: ['Nhà cung cấp'] },
+      { label: 'Sổ sách & Thuế', items: ['Bút toán', 'Sổ sách', 'Tài sản', 'Thuế'] },
     ],
     user: { name: 'Chị Lan', role: 'Kế toán trưởng' },
     metaWait: '4 cần xem',
     metaDone: '3 cần xem, 1 đã duyệt',
-    tabs: ['Cần duyệt', 'Cảnh báo', 'Đã duyệt'],
+    tabs: ['Chờ duyệt', 'Cảnh báo', 'Đã duyệt'],
     rows: [
       { party: 'Công ty CP Bao Bì Phú Thịnh', sub: 'HĐ 00001284, 14/10/2026', amount: '32.832.000 ₫', account: 'TK 152', flag: '' },
       { party: 'EVN', sub: 'Hoá đơn điện tháng 9', amount: '1.946.780 ₫', account: 'TK 6422', flag: '' },
@@ -120,7 +121,7 @@ export const vi = {
   },
   keys: {
     items: [
-      { keys: ['J', 'K'], label: 'Di chuyển', body: 'Lên xuống giữa các dòng trong AI Inbox.' },
+      { keys: ['J', 'K'], label: 'Di chuyển', body: 'Lên xuống giữa các dòng trong Chứng từ chờ duyệt.' },
       { keys: ['A'], label: 'Duyệt', body: 'Hỏi mã hai lớp rồi ghi sổ.' },
       { keys: ['E'], label: 'Sửa tài khoản', body: 'Đổi tài khoản, Ludy nhớ cho nhà cung cấp đó.' },
       { keys: ['⌘', 'K'], label: 'Bảng lệnh', body: 'Mở sổ, xuất Excel, tìm chứng từ.' },
@@ -181,7 +182,7 @@ export const vi = {
       },
       {
         name: 'Đề xuất',
-        body: 'Bút toán theo TT133 được đưa vào AI Inbox, kèm lý do chọn tài khoản. Ludy nhớ tài khoản đã dùng cho từng nhà cung cấp.',
+        body: 'Bút toán theo TT133 vào thẻ Chờ duyệt của Chứng từ, kèm lý do chọn tài khoản. Ludy nhớ tài khoản đã dùng cho từng nhà cung cấp.',
         actor: `${N.finance}`,
         time: '14/10/2026 15:59',
         confirm: 'Đề xuất, chưa ghi sổ',
@@ -208,20 +209,49 @@ export const vi = {
       { key: 'done', title: 'Sổ sách xong', body: 'Sổ sách đúng chuẩn, xuất ra Excel cho kế toán của bạn.', who: 'Xong' },
     ],
     note: 'Sổ sách theo Thông tư 133, chế độ kế toán dành cho doanh nghiệp nhỏ và vừa.',
-    pageLink: 'Xem trang Ludy Kế toán',
+    pageLink: 'Xem trang Ludy Tài chính',
   },
   appCards: {
-    title: 'Mỗi việc một ứng dụng, chung một đội AI',
-    lead: 'Cần việc nào dùng ứng dụng đó. Tất cả dùng chung dữ liệu và chung nút duyệt của bạn.',
+    title: 'Năm ứng dụng trong cùng một nơi, chung một đội AI',
+    lead: 'Cần việc nào mở ứng dụng đó. Tất cả dùng chung dữ liệu và chung nút duyệt của bạn.',
     more: 'Xem chi tiết',
     agentLabel: 'Đồng nghiệp AI',
     items: [
-      { key: 'accounting', name: 'Ludy Kế toán', body: 'Chụp hoá đơn, Ludy đọc và soạn sẵn sổ sách. Bạn chỉ bấm duyệt.', agent: N.finance, page: 'accounting' },
-      { key: 'engage', name: 'Ludy Engage', body: 'Hộp thư khách hàng, bán hàng và bài đăng mạng xã hội, gom về một chỗ.', agent: `${N.sales}, ${N.marketing}`, page: 'engage' },
-      { key: 'notes', name: 'Ludy Notes', body: 'Ghi chú và danh sách việc cần làm, riêng của bạn hoặc chia sẻ với cả đội.', agent: '', page: 'notes' },
-      { key: 'bookings', name: 'Đặt lịch', body: 'Khách tự chọn giờ trên trang đặt lịch của bạn. Hết nhắn qua nhắn lại.', agent: '', page: '' },
-      { key: 'meetings', name: 'Cuộc họp', body: 'Lưu bản ghi cuộc họp để xem lại sau. AI chép lời và tóm tắt là tuỳ chọn.', agent: '', page: '' },
-      { key: 'vy', name: `${N.gm}, tổng quản AI`, body: `Điều phối cả đội, xuyên suốt mọi ứng dụng. ${N.gm} gợi ý, bạn quyết.`, agent: N.gm, page: '' },
+      {
+        key: 'teamwork',
+        name: 'Ludy Cộng tác',
+        body: `Việc của tôi, Việc nhóm, Ghi chú và Cuộc họp ở cùng một chỗ. Ghi chú riêng của bạn hay chia sẻ với đội; bản ghi cuộc họp có thể nhờ ${N.gm} chép lời và tóm tắt nháp khi bật AI.`,
+        agent: N.gm,
+        page: 'teamwork',
+      },
+      {
+        key: 'finance',
+        name: 'Ludy Tài chính',
+        body: 'Chứng từ chờ duyệt, phiếu thu chi, sao kê ngân hàng, Bán hàng, Mua hàng và Sổ sách & Thuế theo Thông tư 133. Bạn bấm duyệt bút toán mới vào sổ.',
+        agent: N.finance,
+        page: 'finance',
+      },
+      {
+        key: 'engage',
+        name: 'Ludy Engage',
+        body: 'Hộp thư khách hàng, CRM (người liên hệ, công ty, cơ hội, lịch hẹn), Marketing (bài đăng, quảng cáo) và Báo cáo trong một ứng dụng.',
+        agent: `${N.sales}, ${N.marketing}`,
+        page: 'engage',
+      },
+      {
+        key: 'hr',
+        name: 'Ludy Nhân sự',
+        body: `Hồ sơ nhân viên, mẫu file lương, bảng lương nháp và bảng kê khai báo. ${N.finance} rà biến động lương; việc duyệt kỳ lương chờ kế toán xác nhận quy tắc tính.`,
+        agent: N.finance,
+        page: '',
+      },
+      {
+        key: 'ai',
+        name: 'Ludy AI',
+        body: `Cài đặt cho đội ngũ AI, không phải một đồng nghiệp riêng: sơ đồ vị trí AI dưới sự điều phối của ${N.gm}, ngân sách tháng kèm nút dừng, và kết nối công cụ AI ngoài qua MCP.`,
+        agent: '',
+        page: '',
+      },
     ],
   },
   numbers: {
@@ -257,7 +287,7 @@ export const vi = {
       { id: 'lan', kind: 'person', name: 'Chị Lan', role: 'Kế toán trưởng', initials: 'L', avatar: '/avatars/lan.webp', chip: { tone: 'ok', label: 'Đã duyệt HĐ 1284' }, budget: null },
       { id: 'minh', kind: 'person', name: 'Anh Minh', role: 'Marketing', initials: 'M', avatar: '/avatars/minh.webp', chip: { tone: 'warn', label: '1 bài chờ duyệt' }, budget: null },
       { id: 'acc', kind: 'agent', name: `${N.finance}`, role: 'Báo cáo cho Chị Lan', initials: '', avatar: null, chip: null, budget: { used: '1.240.000', total: '2.000.000 ₫', pct: 62, risk: 'R1' } },
-      { id: 'tasks', kind: 'tasks', name: 'Công việc', role: '3 việc đang mở, 1 do agent nhận', initials: '', avatar: null, chip: null, budget: null },
+      { id: 'tasks', kind: 'tasks', name: 'Việc nhóm', role: '3 việc đang mở, 1 do agent nhận', initials: '', avatar: null, chip: null, budget: null },
       { id: 'social', kind: 'agent', name: `${N.marketing}`, role: 'Báo cáo cho Anh Minh', initials: '', avatar: null, chip: null, budget: { used: '310.000', total: '1.000.000 ₫', pct: 31, risk: 'R1' } },
     ],
     panels: {
@@ -298,8 +328,8 @@ export const vi = {
         ],
       },
       tasks: {
-        kicker: 'Công việc',
-        title: 'Công việc',
+        kicker: 'Việc nhóm',
+        title: 'Việc nhóm',
         sub: 'Việc cho người và cho agent, có hạn và người chịu trách nhiệm.',
         items: [
           { title: 'Đối chiếu công nợ Bao Bì Phú Thịnh', amount: '', sub: `Giao cho ${N.finance}, hạn 20/10/2026`, tone: 'accent', chip: `${N.finance} đang làm`, note: '' },
@@ -350,7 +380,7 @@ export const vi = {
     phone: {
       label: 'Ludy trên điện thoại, dữ liệu mẫu',
       time: '14:21',
-      app: 'AI Inbox',
+      app: 'Chứng từ chờ duyệt',
       org: 'Gạo Sạch Mekong',
       steps: ['Tải ảnh lên', 'Kiểm tra', 'Duyệt'],
       cardTitle: 'Bút toán đề xuất',
@@ -370,8 +400,8 @@ export const vi = {
     deptLabel: 'Phòng của',
     pageLink: 'Xem trang giới thiệu',
     finance: {
-      name: 'Ludy Kế toán',
-      body: 'AI Inbox cho hoá đơn mua và bán, sổ nhật ký chung, sổ cái, bản nháp báo cáo B01 và B02, phiếu thu chi, sao kê ngân hàng nhập từ Excel hoặc CSV, tài sản, tệp XML tờ khai GTGT, Excel theo mẫu nhập liệu MISA SME, sổ riêng cho từng pháp nhân và khoá sổ theo tháng.',
+      name: 'Ludy Tài chính',
+      body: 'Chứng từ chờ duyệt cho hoá đơn mua và bán, sổ nhật ký chung, sổ cái, bản nháp báo cáo B01 và B02, phiếu thu chi, sao kê ngân hàng nhập từ Excel hoặc CSV, tài sản, tệp XML tờ khai GTGT, Excel theo mẫu nhập liệu MISA SME, sổ riêng cho từng pháp nhân và khoá sổ theo tháng.',
       points: [
         'Hoá đơn bán ra: số bị hở trong dãy được chỉ ra trước khi nộp tờ khai',
         'Hoá đơn mua vào: gửi thư xin khách bổ sung hoá đơn còn thiếu',
@@ -384,7 +414,7 @@ export const vi = {
         { name: 'Chị Lan', initials: 'L', agent: false },
         { name: `${N.finance}`, initials: '', agent: true },
       ],
-      inboxTitle: 'AI Inbox',
+      inboxTitle: 'Chứng từ chờ duyệt',
       inboxSub: '1 đã ghi sổ, 3 đang chờ duyệt',
       inbox: [
         { title: 'HĐ 00001284, Bao Bì Phú Thịnh', amount: '32.832.000 ₫', account: 'TK 152, 1331', tone: 'ok', label: 'Đã ghi sổ' },
@@ -426,8 +456,8 @@ export const vi = {
       },
     },
     agents: {
-      name: 'Agents',
-      body: 'Thêm agent như thêm một vị trí: chọn người quản lý, ngân sách và giới hạn rủi ro.',
+      name: 'Ludy AI',
+      body: 'Thêm vị trí AI, chọn người quản lý, ngân sách tháng và giới hạn rủi ro trong cài đặt đội ngũ AI.',
       budgetLabel: 'Ngân sách tháng 10',
       running: 'Đang chạy',
       roster: [
@@ -436,8 +466,8 @@ export const vi = {
       ],
     },
     tasks: {
-      name: 'Công việc',
-      body: 'Một danh sách việc cho cả người và agent, có hạn và người nhận.',
+      name: 'Việc nhóm',
+      body: 'Một danh sách việc nhóm cho cả người và vị trí AI, có hạn và người nhận.',
       doneLabel: 'Đã xong',
       items: [
         { title: 'Đối chiếu công nợ Bao Bì Phú Thịnh', who: `${N.finance}`, initials: '', agent: true, due: '20/10/2026', done: false },
@@ -447,8 +477,8 @@ export const vi = {
       ],
     },
     notes: {
-      name: 'Ludy Notes',
-      body: 'Ghi chú về khách hàng, nhà cung cấp, chứng từ, bút toán và lịch hẹn, riêng của bạn hoặc dùng chung với các thành viên. Viết bằng Markdown, gắn thẻ, ghim, tìm không cần gõ dấu, cả trong Ctrl K. Việc của tôi là danh sách việc riêng có hạn, giờ nhắc và các bước; cần người khác làm thì giao cho một vị trí.',
+      name: 'Ludy Cộng tác',
+      body: 'Việc của tôi, Việc nhóm, Ghi chú và Cuộc họp ở cùng một chỗ. Ghi chú về khách hàng, nhà cung cấp, chứng từ, bút toán và lịch hẹn, riêng của bạn hoặc dùng chung với các thành viên; tìm không cần gõ dấu, cả trong Ctrl K.',
       points: [
         'Ghi chú riêng chỉ bạn đọc được, ghi chú dùng chung thì mọi thành viên của tổ chức, trừ người chỉ xem, cùng đọc',
         'Ghi chú viết từ màn hình của nhà cung cấp, khách hàng, chứng từ, bút toán hoặc lịch hẹn thì hiện ngay ở đó',
@@ -487,10 +517,10 @@ export const vi = {
     },
     social: {
       name: 'Ludy Engage',
-      body: 'Một ứng dụng cho hộp thư chung, khách hàng và bán hàng, lịch hẹn, bài đăng và quảng cáo, kèm báo cáo cho từng phần. Mỗi kênh đăng bài có các bước duyệt riêng, ảnh và video nằm trong thư viện chung.',
+      body: 'Một ứng dụng cho Hộp thư chung, CRM (người liên hệ, công ty, cơ hội, lịch hẹn), Marketing (bài đăng, quảng cáo) và Báo cáo cho từng phần. Mỗi kênh đăng bài có các bước duyệt riêng, ảnh và video nằm trong thư viện chung.',
       points: [
         'Hộp thư chung cho tin nhắn riêng của khách; kênh nối được hôm nay là Zalo OA (đã làm xong, chưa thử với một OA thật)',
-        'Danh sách liên hệ dùng chung với Ludy Kế toán, cơ hội bán hàng trên bảng theo giai đoạn và trang đặt lịch công khai',
+        'Danh sách liên hệ và công ty dùng chung với Ludy Tài chính, cơ hội bán hàng trên bảng theo giai đoạn và trang đặt lịch công khai',
         'Lên lịch bài cho Facebook, Instagram, Threads, TikTok, YouTube, LinkedIn, X, Zalo OA và nhiều kênh khác (đã làm xong, chưa thử với tài khoản thật); với các nền tảng lớn, người cài đặt khai báo ứng dụng của nền tảng đó trước',
         'Xem quảng cáo Facebook và Instagram (đã làm xong, chưa thử với tài khoản thật), và báo cáo cho từng phần',
       ],
@@ -510,7 +540,7 @@ export const vi = {
         { label: 'T5 22/10', today: false, post: null },
       ],
     },
-    // The booking pieces the Ludy Engage page and the sales coworker's suggestion draw (the Customers & Sales group).
+    // The booking pieces the Ludy Engage page and the sales coworker's suggestion draw (the CRM group).
     sales: {
       calendar: {
         title: 'Lịch ngoài của Chị Hoa',
@@ -591,15 +621,15 @@ export const vi = {
       },
       {
         q: 'Đồng nghiệp AI có tự ghi sổ không?',
-        a: `Không. Các đồng nghiệp AI của Ludy, như ${N.finance} trong kế toán, chỉ đề xuất. Quy tắc kiểm tra quyết định số liệu đúng hay sai, và bút toán chỉ được ghi sổ khi người có quyền duyệt bằng mã xác thực hai lớp.`,
+        a: `Không. Các đồng nghiệp AI của Ludy, như ${N.finance} trong Ludy Tài chính, chỉ đề xuất. Quy tắc kiểm tra quyết định số liệu đúng hay sai, và bút toán chỉ được ghi sổ khi người có quyền duyệt bằng mã xác thực hai lớp.`,
       },
       {
         q: 'Ludy đọc được những loại hoá đơn nào?',
         a: 'Hoá đơn điện tử XML theo Nghị định 254/2026 và Thông tư 91/2026 (cả hoá đơn lập theo Nghị định 123/2020 trước đó) được đọc chính xác mà không cần AI. PDF và ảnh chụp dùng một model tương thích OpenAI do bạn cấu hình, kể cả model chạy trên máy như Ollama hay vLLM.',
       },
       {
-        q: 'Khách hàng và bán hàng trong Ludy Engage, và Ludy Notes, làm được gì hôm nay?',
-        a: 'Nhóm Khách hàng & Bán hàng của Ludy Engage giữ danh sách liên hệ (cùng danh sách đối tác với Ludy Kế toán), các cơ hội bán hàng trên bảng theo giai đoạn và lịch hẹn: trang đặt lịch công khai, loại hẹn theo nhóm và nối Google Calendar khi người cài đặt đã cấu hình khoá Google. Công nợ phải thu của khách nằm ở Ludy Kế toán. Ludy Notes là ghi chú gắn với khách hàng, chứng từ hay lịch hẹn, và danh sách việc riêng của từng người.',
+        q: 'CRM trong Ludy Engage và Ludy Cộng tác làm được gì hôm nay?',
+        a: 'Nhóm CRM của Ludy Engage giữ người liên hệ và công ty (cùng danh sách đối tác với Ludy Tài chính), các cơ hội bán hàng trên bảng theo giai đoạn và lịch hẹn: trang đặt lịch công khai, loại hẹn theo nhóm và nối Google Calendar khi người cài đặt đã cấu hình khoá Google. Công nợ phải thu của khách nằm ở Ludy Tài chính. Ludy Cộng tác gom Việc của tôi, Việc nhóm, Ghi chú gắn với khách hàng, chứng từ hay lịch hẹn, và Cuộc họp để lưu bản ghi cuộc họp kèm chép lời, tóm tắt tuỳ chọn.',
       },
       {
         q: 'Dữ liệu của tôi nằm ở đâu?',
