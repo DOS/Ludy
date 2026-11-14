@@ -14,9 +14,12 @@ export const AGENDA_REPLACE_MAX = 300;
 export const AGENDA_NEXT_MAX = 5;
 export const AGENDA_NEXT_MINUTES = 30;
 
+// A title is cut at 200 characters (code points) in the cache, so the answer's check counts code points too: an emoji is two UTF-16 units and a title of a hundred of them is still a valid one.
+const zAgendaTitle = z.string().refine((title) => Array.from(title).length <= 200, 'title is at most 200 characters');
+
 export const zAgendaEvent = z.strictObject({
   id: zId,
-  title: z.string().max(200),
+  title: zAgendaTitle,
   startsAt: z.iso.datetime({ offset: true }),
   endsAt: z.iso.datetime({ offset: true }),
   timeZone: z.string().min(1).max(64),
@@ -38,7 +41,7 @@ export type AgendaList = z.infer<typeof zAgendaList>;
 // the member reads their calendar at all (the B1 switch is on and the grant carries the scope), so the popup can tell "nothing soon" from "not switched on".
 export const zAgendaNextInput = z.strictObject({});
 export const zAgendaNextEvent = z.strictObject({
-  title: z.string().max(200),
+  title: zAgendaTitle,
   startsAt: z.iso.datetime({ offset: true }),
   endsAt: z.iso.datetime({ offset: true }),
   joinHost: z.string().max(100).nullable(),

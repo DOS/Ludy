@@ -6,7 +6,8 @@
 --                              The CHECK that lists the scopes a token may hold takes `agenda` next to `meetings`. A token made before this holds `meetings` only and keeps working as it was; it cannot
 --                              be widened, so the member signs the extension in again to get the new scope.
 -- crove_kernel.issue_extension_auth_code(bytea, text, text, text[], text, text)
---                              The same body as 20261201030000 with the allowed scope list widened the same way. Nothing else in it changes, and its grants are kept (CREATE OR REPLACE).
+--                              The same body as 20261201030000 with the allowed scope list widened the same way, and the agenda scope only together with meetings (the token's exchange is a meetings command,
+--                              so a code for agenda alone could never become a token). Nothing else in it changes, and its grants are kept (CREATE OR REPLACE).
 SET LOCAL lock_timeout = '2s';
 
 DO $$
@@ -65,6 +66,7 @@ BEGIN
      OR p_code_challenge IS NULL OR p_code_challenge !~ '^[A-Za-z0-9_-]{43}$'
      OR p_scopes IS NULL OR pg_catalog.cardinality(p_scopes) NOT BETWEEN 1 AND 8
      OR NOT (p_scopes <@ ARRAY['meetings', 'agenda']::text[])
+     OR ('agenda' = ANY (p_scopes) AND NOT ('meetings' = ANY (p_scopes)))
      OR v_device IS NULL OR pg_catalog.char_length(v_device) NOT BETWEEN 1 AND 80
      OR p_extension_id IS NULL OR p_extension_id !~ '^[a-p]{32}$' THEN
     RAISE EXCEPTION 'EXTENSION_INVALID' USING ERRCODE = '22023';

@@ -40,6 +40,7 @@ let noticeLang: RecordingNoticeLanguage = T === ENGLISH ? 'en' : 'vi';
 let copyNote = '';
 // Shown under the "Sắp họp" cards after a title was filled in from one.
 let agendaNote = '';
+let agendaRead: { token: string; promise: Promise<AgendaNext | null> } | null = null;
 // Set when the org refused the method as not written (A2, #3160): the unwritten choice is then not offered for the rest of this popup.
 let strictOrg = false;
 
@@ -242,7 +243,9 @@ async function agendaView(state: State, me: Me, token: string): Promise<Node[]> 
     return [h('div', { class: 'agenda', id: 'agenda-ask' }, h('p', { class: 'note' }, T.agendaNote), h('button', { id: 'agenda-on', onclick: () => void signIn(state, true) }, T.agendaOn))];
   }
   if (me.features.agenda !== true) return [];
-  const next: AgendaNext | null = await createClient(state.address, token).agendaNext().catch(() => null);
+  // Read once for each token while this popup is open: a redraw (a language toggle, a copied notice, a filled title) does not ask the server again, and each read is an audit row there.
+  if (agendaRead?.token !== token) agendaRead = { token, promise: createClient(state.address, token).agendaNext().catch(() => null) };
+  const next: AgendaNext | null = await agendaRead.promise;
   if (!next) return [];
   if (!next.enabled) return [h('p', { class: 'note', id: 'agenda-off' }, T.agendaOff)];
   if (next.events.length === 0) return [];
@@ -260,6 +263,8 @@ async function agendaView(state: State, me: Me, token: string): Promise<Node[]> 
 // Puts the event's title in the recording form and nothing else: no consent is ticked, nothing starts.
 async function fillTitle(title: string): Promise<void> {
   draft.title = title.slice(0, 200);
+  // A new meeting is a new notice: the member confirms it again, whatever they ticked for an earlier one.
+  draft.consentAgreed = false;
   agendaNote = T.agendaFilled;
   await render();
   document.getElementById('title')?.focus();

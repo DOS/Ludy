@@ -54,7 +54,9 @@ export const SERVICE_NAMES = { meet: 'Google Meet', zoom: 'Zoom', teams: 'Micros
 export function agendaLine(template: string, untitled: string, event: AgendaEvent, locale?: string): string {
   const service = serviceOfHost(event.joinHost);
   const time = new Date(event.startsAt).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
-  return template.replace('{title}', event.title.trim() === '' ? untitled : event.title).replace('{time}', time).replace('{where}', service ? ` (${SERVICE_NAMES[service]})` : '');
+  // One pass with function replacers: a title is data, so a `$&`, a `$'` or a `{time}` in it is shown as written and never read as part of the template.
+  const values: Record<string, string> = { title: event.title.trim() === '' ? untitled : event.title, time, where: service ? ` (${SERVICE_NAMES[service]})` : '' };
+  return template.replace(/\{(title|time|where)\}/g, (_match, key: string) => values[key] ?? '');
 }
 
 // The scopes a sign-in asks for: the features' own, plus the agenda scope only when the member chose it.

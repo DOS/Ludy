@@ -27,7 +27,8 @@ export const zExtensionAuthorize = z.strictObject({
   extensionId: zExtensionId,
   codeChallenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
   codeChallengeMethod: z.literal('S256'),
-  scopes: z.array(zExtensionScope).min(1).max(EXTENSION_SCOPE_IDS.length),
+  // The agenda scope rides with the meetings scope (B2): the token's own exchange is a meetings command, and the card exists to start a recording.
+  scopes: z.array(zExtensionScope).min(1).max(EXTENSION_SCOPE_IDS.length).refine((scopes) => !scopes.includes('agenda') || scopes.includes('meetings'), 'agenda needs meetings'),
   deviceName: z.string().trim().min(1).max(80),
 });
 

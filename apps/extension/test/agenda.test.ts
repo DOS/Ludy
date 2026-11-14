@@ -55,6 +55,10 @@ describe('the card line', () => {
     expect(line).toContain('(Google Meet)');
     expect(line).not.toContain('http');
     expect(agendaLine(ENGLISH.agendaLine, ENGLISH.agendaUntitled, { ...event, title: ' ', joinHost: null }, 'en-US')).toMatch(/^Starting soon: \(no title\) /);
+    // A title is data: replacement patterns and placeholders in it are shown as written.
+    const odd = agendaLine('Soon: {title} {time}{where}', 'x', { ...event, title: "Q&A $& $' {time} {where} $$" }, 'en-US');
+    expect(odd.startsWith("Soon: Q&A $& $' {time} {where} $$ ")).toBe(true);
+    expect(odd.endsWith(' (Google Meet)')).toBe(true);
   });
 });
 

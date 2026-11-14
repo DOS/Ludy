@@ -135,6 +135,10 @@ export const agendaNext = defineQuery({
     const now = new Date();
     const rows = await agendaOf(ctx.trx, ctx.orgId, userId)
       .where('a.meeting_id', 'is', null)
+      // Not one the member already recorded: the extension cannot link an event, so a meeting this member started within the event's time (from 15 minutes before it) hides it from the card.
+      .where(
+        sql<boolean>`NOT EXISTS (SELECT 1 FROM crove_meetings.meeting m WHERE m.org_id = a.org_id AND m.recorder_user_id = ${userId}::uuid AND m.started_at >= a.starts_at - interval '15 minutes' AND m.started_at < a.ends_at)`,
+      )
       .where('a.ends_at', '>', now)
       .where('a.starts_at', '<=', new Date(now.getTime() + AGENDA_NEXT_MINUTES * 60_000))
       .orderBy('a.starts_at')

@@ -121,6 +121,8 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
   // Each test starts without the members' connections and caches: the list and the suggestion look at all of a member's own events.
   beforeEach(async () => {
     await sqlAdmin('DELETE FROM crove_kernel.calendar_connection WHERE org_id = $1', [orgId]);
+    // The card hides an event a meeting of the member covers, so meetings of earlier tests would hide this test's events.
+    await sqlAdmin('DELETE FROM crove_meetings.meeting WHERE org_id = $1', [orgId]);
   });
 
   afterAll(async () => {
@@ -366,6 +368,7 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
   // B2 (#3166): the extension's "Sắp họp" card reads the member's next events through a token that holds the `agenda` scope.
   describe('the next meetings for the extension (the agenda scope)', () => {
     const ext = (who: string, tokenId: string, scopes: readonly string[]) => ({ type: 'user' as const, userId: users[who] as string, aal: 'aal1' as const, mfaAt: null, extension: { tokenId, scopes } });
+    // Inserted directly: a sign-in always asks for meetings with agenda, so these single-scope rows exist to prove what each scope alone opens.
     async function token(who: string, scopes: string[]): Promise<string> {
       const id = randomUUID();
       await sqlAdmin(
@@ -393,7 +396,8 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
         event('recorded', 1),
       ]);
       const recordedRow = (await sqlAdmin<{ id: string }>("SELECT id FROM crove_meetings.calendar_agenda WHERE connection_id = $1 AND external_id = 'recorded'", [c])).rows[0]?.id as string;
-      await exec('lan', 'meetings.agenda.link', { agendaId: recordedRow, meetingId: await meeting('lan', 1) });
+      // Linked to a meeting that ran far from every event here, so only the link (not the recording's time) hides it.
+      await exec('lan', 'meetings.agenda.link', { agendaId: recordedRow, meetingId: await meeting('lan', 600) });
       const t = await token('lan', ['agenda']);
       const answer = await next('lan', t);
       expect(answer.enabled).toBe(true);
@@ -406,6 +410,29 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
       // Without the others in the way the Meet event shows its host and the title as the calendar wrote it.
       await sweep(c, [event('soon', 29, 30, { joinUrl: 'https://meet.google.com/abc-defg-hij', title: 'Họp giao ban' })]);
       expect((await next('lan', t)).events).toEqual([expect.objectContaining({ title: 'Họp giao ban', joinHost: 'meet.google.com' })]);
+    });
+
+    it('does not offer an event the member already recorded: a meeting they started within its time hides it from the card', async () => {
+      const c = await connection('lan');
+      await on('lan', c);
+      await sweep(c, [event('recorded', 2, 30), event('open', 26, 30), event('late', 28, 30)]);
+      const t = await token('lan', ['agenda']);
+      expect((await next('lan', t)).events.map((e) => e.title)).toEqual(['Họp recorded', 'Họp open', 'Họp late']);
+      // A meeting started right at the first event's time (the extension made it when the member clicked Start).
+      await meeting('lan', 2, 30);
+      expect((await next('lan', t)).events.map((e) => e.title)).toEqual(['Họp open', 'Họp late']);
+      // Another member's recording hides nothing of this member's.
+      await meeting('nam', 26, 30);
+      expect((await next('lan', t)).events.map((e) => e.title)).toEqual(['Họp open', 'Họp late']);
+    });
+
+    it('answers a title of a hundred emoji, which is under 200 characters but over 200 UTF-16 units', async () => {
+      const c = await connection('lan');
+      await on('lan', c);
+      const emoji = '😀'.repeat(100);
+      await sweep(c, [event('emoji', 5, 30, { title: emoji })]);
+      const answer = await next('lan', await token('lan', ['agenda']));
+      expect(answer.events.map((e) => e.title)).toEqual([emoji]);
     });
 
     it('says the read is not switched on, and reads nothing for another member', async () => {
@@ -461,7 +488,8 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
     it('lets the sign-in ask for the agenda scope (with or without meetings) and for no scope the database does not know', async () => {
       const issue = (scopes: string[]) =>
         exec('lan', 'kernel.extension.code.issue', { codeHash: createHash('sha256').update(randomBytes(32)).digest('hex'), codeChallenge: 'A'.repeat(43), scopes, deviceName: 'Test device', extensionId: 'a'.repeat(32) });
-      expect(await issue(['agenda'])).toMatchObject({ expiresInSeconds: 300 });
+      // The agenda scope rides with meetings: alone it is refused (its exchange is a meetings command).
+      expect(await refuses(issue(['agenda']))).toBe('VALIDATION');
       expect(await issue(['agenda', 'meetings'])).toMatchObject({ expiresInSeconds: 300 });
       expect(await refuses(issue(['nope']))).toBe('VALIDATION');
       // The database refuses an unknown scope even when the application's own check is bypassed.
