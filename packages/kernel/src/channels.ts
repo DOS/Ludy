@@ -121,7 +121,16 @@ export const channelConnect = defineCommand({
         .insertInto('crove_kernel.channel_connection')
         .values({ org_id: ctx.orgId, provider: input.provider, external_account_id: input.externalAccountId, ...values })
         .returning('id')
-        .executeTakeFirstOrThrow();
+        .executeTakeFirstOrThrow()
+        .catch((error: unknown) => {
+          // A WhatsApp number is connected by a pasted token, which proves no more than that its holder may call the number, so one org holds it at a time:
+          // a second org would otherwise receive every message the first org's customers send (the intake finds each connection of the account).
+          const pg = error as { code?: string; constraint?: string } | null;
+          if (pg?.code === '23505' && pg.constraint === 'channel_connection_whatsapp_account_uq') {
+            throw new DomainError('CHANNEL_ACCOUNT_TAKEN', 409, 'Số WhatsApp này đang được một tổ chức khác kết nối. Hãy ngắt kết nối ở đó trước khi kết nối lại ở đây');
+          }
+          throw error;
+        });
       id = row.id;
     }
     await sql`SELECT crove_kernel.credential_put(${id}::uuid, ${input.credential.keyId}, decode(${input.credential.envelope}, 'base64'))`
@@ -459,7 +468,7 @@ const iso = (d: Date | string | null) => (d === null ? null : new Date(d).toISOS
 // The org's connections, live ones first. Never a credential: the columns are listed, not selected with *.
 export const channelsList = defineQuery({
   name: 'kernel.channel.list',
-  input: z.object({ includeRevoked: z.boolean().optional(), includeEmail: z.boolean().optional() }),
+  input: z.object({ includeRevoked: z.boolean().optional(), includeEmail: z.boolean().optional(), includeMessaging: z.boolean().optional() }),
   access: ALL,
   handler: async (ctx: QueryContext, input): Promise<ChannelConnectionView[]> => {
     let q = ctx.trx
@@ -479,7 +488,10 @@ export const channelsList = defineQuery({
       .where('provider', 'not like', 'marketplace\\_%')
       // Nor the Inbox's email connection (#2439): it is made by the first customer mail and is not a place to publish. The screen that limits which
       // channels a member may read (includeEmail) lists it, since reading email is one of those channels.
-      .where('provider', input.includeEmail ? 'is not' : '<>', input.includeEmail ? null : 'email');
+      .where('provider', input.includeEmail ? 'is not' : '<>', input.includeEmail ? null : 'email')
+      // Nor a messaging-only channel's (WhatsApp, #3131), which never publishes: the composer and every Social picker would offer a channel nothing can post to.
+      // The Channels screen and the Inbox ask for it (includeMessaging), and a member's channel access list (includeEmail) has it with the rest.
+      .where('provider', input.includeEmail || input.includeMessaging ? 'is not' : '<>', input.includeEmail || input.includeMessaging ? null : 'whatsapp');
     if (!input.includeRevoked) q = q.where('status', '<>', 'revoked');
     const rows = await q.orderBy(sql`status = 'revoked'`).orderBy('connected_at', 'desc').limit(500).execute();
     return rows.map((r) => ({

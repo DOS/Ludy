@@ -64,7 +64,8 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
   const ti = useTranslations('conversations.inbox');
   const tn = useTranslations('conversations.intent');
   const status = search.status ?? 'new';
-  const channels = useQuery(orpc.channels.list.queryOptions({ input: {} }));
+  // The Inbox's own channel filter lists the messaging-only channels too (WhatsApp never publishes, so every other list leaves it out).
+  const channels = useQuery(orpc.channels.list.queryOptions({ input: { includeMessaging: true } }));
   const list = useConversationPages(inboxListInput(search));
   const counts = useQuery({ ...orpc.conversations.counts.queryOptions({ input: inboxCountsInput(search) }), refetchInterval: POLL_MS });
   const { canWrite } = useMe();
