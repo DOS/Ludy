@@ -133,6 +133,7 @@ export const liveAssemblePlan = defineQuery({
     const byFile = new Map(files.map((f) => [f.id, f]));
     const pieces: LiveAssemblePlanPiece[] = [];
     const missing = [...facts.missing];
+    const skipped: number[] = [];
     for (const piece of facts.pieces) {
       const file = byFile.get(piece.fileId);
       const { rows } = await sql<{ key_id: string; wrapped_key: Buffer }>`
@@ -142,6 +143,7 @@ export const liveAssemblePlan = defineQuery({
       if (!file || !key) {
         if (piece.seq === 0) throw refuseAssemble('first_piece_missing');
         missing.push(piece.seq);
+        skipped.push(piece.seq);
         continue;
       }
       pieces.push({
@@ -158,7 +160,7 @@ export const liveAssemblePlan = defineQuery({
       });
     }
     missing.sort((a, b) => a - b);
-    return { meetingId: input.meetingId, pieces, missing, lastSeq: facts.pieces.at(-1)?.seq ?? 0 };
+    return { meetingId: input.meetingId, pieces, missing, skipped, lastSeq: facts.pieces.at(-1)?.seq ?? 0 };
   },
 });
 
@@ -180,7 +182,8 @@ export const liveAssembleRecord = defineCommand({
     recorderOnly(ctx, facts);
     if (facts.reason) throw refuseAssemble(facts.reason);
     // The set the route joined is the set that is here now (no piece can arrive after the window, so a difference is a retry of another click or a delete).
-    if (facts.pieces.length < input.pieces || (facts.pieces.at(-1)?.seq ?? -1) !== input.lastSeq) {
+    const held = new Set(facts.pieces.map((p) => p.seq));
+    if (facts.pieces.length !== input.pieces + input.skipped.length || (facts.pieces.at(-1)?.seq ?? -1) !== input.lastSeq || input.skipped.some((seq) => !held.has(seq))) {
       throw new DomainError('LIVE_PIECES_CHANGED', 409, 'The live pieces changed while they were joined; try again');
     }
     if (input.storageKey !== fileKey(ctx.orgId, input.sha256)) throw new DomainError('INVALID_STORAGE_KEY', 400, 'Storage key must match org and sha256');
@@ -190,9 +193,11 @@ export const liveAssembleRecord = defineCommand({
       audioRetentionDay: facts.audioDay,
       input: { kind: 'audio', ...input },
     });
+    // The numbers no piece holds and the ones the route left out (their key or file is gone): the recording has a gap at each.
+    const missing = [...new Set([...facts.missing, ...input.skipped])].sort((a, b) => a - b);
     // Ids and numbers only: no key, no storage address, no audio. The numbers of the pieces that were missing say where the recording has a gap.
-    ctx.audit({ meetingId: input.meetingId, fileId, pieces: input.pieces, discarded: liveChunksDiscarded, missing: facts.missing.length, ...(facts.missing.length > 0 ? { missingSeqs: facts.missing.slice(0, 50) } : {}) });
-    return zMeetingLiveAssembled.parse({ meetingId: input.meetingId, fileId, pieces: input.pieces, missing: facts.missing, lengthSeconds: input.lengthSeconds });
+    ctx.audit({ meetingId: input.meetingId, fileId, pieces: input.pieces, discarded: liveChunksDiscarded, missing: missing.length, ...(missing.length > 0 ? { missingSeqs: missing.slice(0, 50) } : {}) });
+    return zMeetingLiveAssembled.parse({ meetingId: input.meetingId, fileId, pieces: input.pieces, missing, lengthSeconds: input.lengthSeconds });
   },
 });
 

@@ -136,11 +136,15 @@ describe('the recording that was not uploaded (#3126)', () => {
   });
 
   it('says why the pieces cannot be joined yet or at all, and shows nothing when there is nothing to join', () => {
-    expect(render(status({ assemble: assemble({ reason: 'still_recording', pieces: 4 }) }))).toContain('vẫn có thể đến');
+    // While the final recording may still arrive (during the meeting and until the longest recording time has passed) the box is not shown at all.
+    expect(render(status({ assemble: assemble({ reason: 'still_recording', pieces: 4 }) }))).not.toContain('live-assemble');
     expect(render(status({ assemble: assemble({ reason: 'first_piece_missing', pieces: 4, missing: [0] }) }))).toContain('thiếu đoạn đầu');
-    expect(render(status({ assemble: assemble({ reason: 'expired', pieces: 0 }) }))).toContain('thời hạn giữ âm thanh');
+    expect(render(status({ assemble: assemble({ reason: 'expired', pieces: 2 }) }))).toContain('thời hạn giữ âm thanh');
+    // An expired meeting that kept its recording has no pieces left: nothing to say.
+    expect(render(status({ assemble: assemble({ reason: 'expired', pieces: 0 }) }))).not.toContain('live-assemble');
     for (const reason of ['no_pieces', 'audio_recorded'] as const) expect(render(status({ assemble: assemble({ reason, pieces: 4 }) }))).not.toContain('live-assemble');
-    expect(assembleView(assemble({ reason: 'still_recording', pieces: 0 }))).toBe('none');
+    expect(assembleView(assemble({ reason: 'still_recording', pieces: 4 }))).toBe('none');
+    expect(assembleView(assemble({ reason: 'expired', pieces: 0 }))).toBe('none');
     expect(render(status({ assemble: assemble({ available: true, reason: null, pieces: 5 }) }), {}, 'en')).toContain('Join the recording from the live pieces');
   });
 

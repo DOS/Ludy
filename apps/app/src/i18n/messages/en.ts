@@ -1815,7 +1815,6 @@ export const en = {
         done: 'Joined {pieces} pieces into a recording of {length}. You can play it back and transcribe it as usual.',
         doneGaps: '{count} pieces were missing (numbers {list}), so the recording has a gap there.',
         reasons: {
-          still_recording: 'The full recording may still arrive. You can join the pieces after the longest recording time (4 hours 15 minutes) has passed.',
           first_piece_missing: 'Cannot be joined: the first piece, which holds the start of the file, is missing, so the later pieces cannot be read.',
           expired: 'Cannot be joined: the audio retention period of this meeting has ended.',
         },

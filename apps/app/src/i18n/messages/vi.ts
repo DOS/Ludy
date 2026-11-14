@@ -1813,7 +1813,6 @@ export const vi = {
         done: 'Đã ghép {pieces} đoạn thành bản ghi dài {length}. Bạn có thể nghe lại và ghi lời như thường lệ.',
         doneGaps: 'Thiếu {count} đoạn (số {list}), nên bản ghi bị đứt quãng ở đó.',
         reasons: {
-          still_recording: 'Bản ghi đầy đủ vẫn có thể đến. Bạn ghép được các đoạn sau khi cuộc ghi quá thời hạn tối đa (4 giờ 15 phút).',
           first_piece_missing: 'Không ghép được: thiếu đoạn đầu, đoạn giữ phần đầu của tệp, nên các đoạn sau không đọc được.',
           expired: 'Không ghép được: thời hạn giữ âm thanh của cuộc họp này đã hết.',
         },

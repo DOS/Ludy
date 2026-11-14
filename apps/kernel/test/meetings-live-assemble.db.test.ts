@@ -405,6 +405,20 @@ suite('meetings live pieces assembled on PostgreSQL (#3126)', () => {
     expect(await chunkCount(meetingId)).toBe(2);
   });
 
+  it('reports a piece whose key is gone as missing, joins the rest, and says so in the answer and the audit', async () => {
+    const meetingId = await liveMeeting();
+    await sendAll(meetingId, [0, 1, 2, 3], 'key');
+    await windowPassed(meetingId);
+    await rows("DELETE FROM crove_meetings.media_key WHERE meeting_id = $1 AND kind = 'live:2'", [meetingId]);
+    measured.length = 0;
+    const done = await click('recorder', meetingId);
+    expect(done.status).toBe(200);
+    expect(done.body).toMatchObject({ pieces: 3, missing: [2] });
+    expect(measured[0]!.equals(joined([0, 1, 3], 'key'))).toBe(true);
+    const audit = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.live.assemble_record' AND target_id = $2", [orgId, meetingId]);
+    expect(audit[0]!.detail).toMatchObject({ pieces: 3, discarded: 4, missing: 1, missingSeqs: [2] });
+  });
+
   it('refuses a record whose piece set is not the one that was joined, or whose address is not its hash, before writing anything', async () => {
     const meetingId = await liveMeeting();
     await sendAll(meetingId, [0, 1, 2]);
@@ -412,6 +426,9 @@ suite('meetings live pieces assembled on PostgreSQL (#3126)', () => {
     const record = (over: Record<string, unknown>) => appRuntime.execute('meetings.live.assemble_record', assembleInput(meetingId, over), { actor: userActor('recorder'), orgId });
     await refusedWith(() => record({ lastSeq: 5 }), 'LIVE_PIECES_CHANGED');
     await refusedWith(() => record({ pieces: 9 }), 'LIVE_PIECES_CHANGED');
+    // A set that holds more than the route joined is refused too (a stale plan), unless the rest is named as skipped.
+    await refusedWith(() => record({ pieces: 2 }), 'LIVE_PIECES_CHANGED');
+    await refusedWith(() => record({ pieces: 2, skipped: [7] }), 'LIVE_PIECES_CHANGED');
     await refusedWith(() => record({ storageKey: fileKey(orgId, 'a'.repeat(64)) }), 'INVALID_STORAGE_KEY');
     expect(await audioRows(meetingId)).toBe(0);
     expect(await audioKeys(meetingId)).toBe(0);

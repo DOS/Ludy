@@ -31,7 +31,7 @@ export interface LiveAssembleDeps {
   measurer: MediaMeasurer;
   // The most plaintext a meeting's audio holds (the plan's audio cap); the pieces' own total (LIVE_CHUNK_MAX_TOTAL_BYTES) also applies.
   maxBytes: number;
-  // The longest the join may take, reading, sealing and measuring together (default ASSEMBLE_DEADLINE_MS). A join past it is refused and nothing is kept.
+  // The longest the join may take to read and seal its pieces (default ASSEMBLE_DEADLINE_MS), checked between pieces; crove-media bounds its own measuring. A join past it is refused and nothing is kept.
   deadlineMs?: number;
   now?: () => number;
 }
@@ -63,6 +63,7 @@ async function* piecesInOrder(deps: LiveAssembleDeps, orgId: string, meetingId: 
       const plain = decryptBlobBuffer(Buffer.from(ciphertext), dataKey, binding);
       const bytes = new Uint8Array(plain);
       plain.fill(0);
+      // sealMedia's encryptor copies what it is pushed and its sniff reads at most 12 bytes (always inside piece 0), so wiping a piece once the generator resumes is safe.
       try {
         yield bytes;
       } finally {
@@ -121,6 +122,7 @@ export async function assembleLivePieces(deps: LiveAssembleDeps, input: { actor:
           lengthSeconds,
           pieces: plan.pieces.length,
           lastSeq: plan.lastSeq,
+          skipped: plan.skipped,
         },
         { actor, orgId },
       );

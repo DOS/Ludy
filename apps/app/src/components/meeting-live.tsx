@@ -52,11 +52,13 @@ export function createTickGate(): { run(call: () => Promise<unknown>): Promise<b
   };
 }
 
-// What the recording-not-uploaded box shows: nothing when there are no pieces or the recording exists; the offer when the pieces can be joined; the reason when they cannot yet.
-export type AssembleView = 'none' | 'offer' | 'still_recording' | 'first_piece_missing' | 'expired';
+// What the recording-not-uploaded box shows: nothing while the final recording may still arrive (during and after the meeting, until the longest recording time has passed),
+// nothing when there are no pieces or the recording exists (an expired meeting that kept its recording has no pieces left); the offer when the pieces can be joined; the reason
+// when they cannot: no first piece, or the audio period ended while pieces were still kept.
+export type AssembleView = 'none' | 'offer' | 'first_piece_missing' | 'expired';
 export function assembleView(state: LiveAssembleState): AssembleView {
   if (state.available) return 'offer';
-  if (state.reason === 'still_recording' || state.reason === 'first_piece_missing' || state.reason === 'expired') return state.pieces > 0 || state.reason === 'expired' ? state.reason : 'none';
+  if ((state.reason === 'first_piece_missing' || state.reason === 'expired') && state.pieces > 0) return state.reason;
   return 'none';
 }
 
@@ -176,7 +178,7 @@ function LivePane({ meetingId }: { meetingId: string }) {
                 </Button>
               </>
             ) : (
-              <p className="text-xs text-muted-foreground">{t(`assemble.reasons.${view as 'still_recording' | 'first_piece_missing' | 'expired'}`)}</p>
+              view !== 'none' && <p className="text-xs text-muted-foreground">{t(`assemble.reasons.${view}`)}</p>
             )}
           </div>
         )}
