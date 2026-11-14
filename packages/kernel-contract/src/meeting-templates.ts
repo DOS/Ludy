@@ -69,7 +69,7 @@ const ESCAPE = '· ';
 function escapeLines(text: string, titles: ReadonlySet<string>): string {
   return text
     .split('\n')
-    .map((line) => (titles.has(line.trim()) ? `${ESCAPE}${line.trim()}` : line.replace(/\s+$/u, '')))
+    .map((line) => (titles.has(line.trim()) ? `${ESCAPE}${line.trim()}` : line.trimEnd()))
     .join('\n')
     .trim();
 }

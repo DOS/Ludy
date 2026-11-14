@@ -148,7 +148,7 @@ export const meetingTemplateSet = defineCommand({
     await recorderMeeting(ctx, input.meetingId, 'pick its minutes template');
     await ctx.trx
       .updateTable('crove_meetings.meeting')
-      .set({ summary_template: input.summaryTemplate, updated_at: sql<Date>`pg_catalog.now()` })
+      .set({ summary_template: input.summaryTemplate, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
       .execute();

@@ -72,6 +72,16 @@ describe('sectionsToText and textToSections', () => {
     expect(textToSections('briefing', 'Lời mở đầu\nKế hoạch kỳ tới\nx')).toBeNull();
   });
 
+  it('stays fast on a long run of whitespace inside a line (no backtracking pattern runs on the text)', () => {
+    const hostile = `${'\t'.repeat(50_000)}x`;
+    const started = performance.now();
+    const text = sectionsToText('briefing', [{ key: 'progress', text: `${hostile}\n${hostile}   ` }]);
+    textToSections('briefing', text);
+    expect(performance.now() - started).toBeLessThan(500);
+    // The trailing spaces of a line are dropped, its leading whitespace is kept, as before.
+    expect(sectionsToText('briefing', [{ key: 'progress', text: 'a  \n  b\t' }])).toBe('Kết quả công việc kỳ trước\na\n  b');
+  });
+
   it('round-trips every section of every template', () => {
     for (const code of MEETING_SUMMARY_TEMPLATES) {
       const all = templateSections(code).map((d, i) => ({ key: d.key, text: `Nội dung ${i + 1}` }));
