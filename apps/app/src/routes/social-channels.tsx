@@ -24,6 +24,7 @@ import { BannedWordsCard } from '../components/social-banned-words.tsx';
 import { ReviewChecklistCard } from '../components/social-review-checklist.tsx';
 import { ChannelAccessCard, useChannelScope } from '../components/social-channel-access.tsx';
 import { ChannelSetsCard } from '../components/social-channel-sets.tsx';
+import { TelegramChats } from '../components/social-telegram-chats.tsx';
 import { SignatureEditor } from '../components/social-signature.tsx';
 import { QueueCopy, QueueSuggestButton } from '../components/social-queue-tools.tsx';
 import { queueRoom, slotsToAdd } from '../lib/social-queue-slots.ts';
@@ -33,6 +34,7 @@ import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { isAdOAuthProvider } from '../lib/ads.ts';
 import { getConfig } from '../lib/auth.ts';
 import { AutoDraftSetting, SavedRepliesManager } from '../components/conversation-drafts.tsx';
+import { YoutubeCommentsPanel } from '../components/youtube-comments-panel.tsx';
 import { rememberOAuthAttempt } from '../lib/oauth.ts';
 import { connectPlatforms, isMessagingOnly, minuteLabel, parseMinute, providerName } from '../lib/social.ts';
 import { shuffleRange } from '../lib/social-queue-order.ts';
@@ -665,6 +667,8 @@ export function SocialChannelsPage() {
                         </Button>
                       ) : null
                     )}
+                    {c.provider === 'telegram' && (c.status === 'active' || c.chatState !== 'off') && c.status !== 'revoked' && <TelegramChats channel={c} canEdit={isAdmin} active={c.status === 'active'} />}
+                    {c.provider === 'youtube' && c.status === 'active' && <YoutubeCommentsPanel connectionId={c.id} isAdmin={isAdmin} onReconnect={canReconnect(c) && !start.isPending ? () => start.mutate({ provider: 'youtube' }) : undefined} />}
                     {c.provider === 'threads' && c.status === 'active' && (
                       c.scopes.includes('threads_read_replies') ? (
                         <p className="mt-1 text-xs text-subtle-foreground">{t('threadsCommentsEnabled')}</p>

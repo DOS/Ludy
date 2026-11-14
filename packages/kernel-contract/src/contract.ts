@@ -237,6 +237,8 @@ import {
   zConversationSettle,
   zConversationAutoDraft,
   zConversationAutoDraftSet,
+  zYoutubeCommentsSet,
+  zYoutubeCommentsStatusList,
   zConversationDraftDiscard,
   zConversationDraftRequest,
   zConversationOther,
@@ -630,6 +632,11 @@ export const contract = {
     connectWhatsApp: oc
       .input(z.object({ accessToken: z.string().trim().min(1).max(700), phoneNumberId: z.string().trim().min(1).max(40), wabaId: z.string().trim().min(1).max(40) }))
       .output(z.object({ connectionId: zId, reconnected: z.boolean() })),
+    // Turns the bot's private chats on or off for a Telegram connection (#3132): on points the bot's webhook at this deployment, off takes it
+    // away. The call to Telegram is a job's; the answer is the state the connection is in now (enabling or disabling until the job is done).
+    setTelegramChats: oc
+      .input(z.object({ connectionId: zId, on: z.boolean() }))
+      .output(z.object({ chatState: z.enum(['off', 'enabling', 'on', 'disabling']) })),
     // A Discord channel (#832): the URL of a webhook a server admin made in the channel's settings. The server checks the
     // webhook with Discord, then seals its token; the format is checked by the server, in words.
     connectDiscord: oc
@@ -1836,6 +1843,9 @@ export const contract = {
     draftDiscard: oc.input(zConversationDraftDiscard).output(z.object({ discarded: z.boolean() })),
     autoDraft: oc.input(z.strictObject({})).output(zConversationAutoDraft),
     setAutoDraft: oc.input(zConversationAutoDraftSet).output(zConversationAutoDraft),
+    // YouTube comments (#3134): the connections' opt-in and the day's quota units, and the owner or admin's switch (reading comments spends the project's quota).
+    youtubeComments: oc.input(z.strictObject({})).output(zYoutubeCommentsStatusList),
+    setYoutubeComments: oc.input(zYoutubeCommentsSet).output(z.object({ enabled: z.boolean() })),
     // The org's saved replies: every member reads them; owners, admins and members write them.
     savedReplies: oc.input(zSavedReplyList).output(zSavedReplyListed),
     createSavedReply: oc.input(zSavedReplyInput).output(z.object({ id: zId })),

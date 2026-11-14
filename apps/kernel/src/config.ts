@@ -396,6 +396,9 @@ const schema = z.object({
   // Reconcile the replies under recent posts of connected Threads profiles that opted in to reading replies (#3133). Nothing is read for a
   // profile without the opt-in, so the default is on, as Facebook's.
   CHANNEL_THREADS_HISTORY: z.enum(['true', 'false']).default('true'),
+  // Poll the comments of connected YouTube channels whose owner opted in (#3134). Each connection has its own daily unit budget; the default is on,
+  // since nothing is read for a channel without the opt-in.
+  CHANNEL_YOUTUBE_HISTORY: z.enum(['true', 'false']).default('true'),
   CHANNEL_META_GRAPH_VERSION: z.string().regex(/^v\d{1,3}\.\d{1,2}$/).default('v24.0'),
   // WhatsApp Business, Cloud API (conversation core, #3131): the secret of the Meta app the WhatsApp product belongs to, which may be the Pages app's (set the same
   // value) or another app. Set, a business may connect its number by hand on the Channels screen (a system user token, the phone number id and the WABA id,

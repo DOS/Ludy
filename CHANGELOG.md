@@ -2,13 +2,18 @@
 
 What changed in each release that reaches the pilot. A release is a `v*` tag of `main`, deployed by `.github/workflows/deploy.yml`; how to cut one is in [docs/product-owner-config.md](docs/product-owner-config.md) ("Branches, environments and gates"). Pull request numbers link the detail.
 
-## Unreleased (on `main` after v0.3.2)
+## v0.3.2 (2026-11-14)
 
+Before the first deploy of this release: link the GHCR package `ghcr.io/dos/ludy-media` to the repository for the deploy token (one time), or the deploy stops at pull and changes nothing. JOY linked it on 2026-11-14.
+
+- **Telegram bot chats in Hộp thư** (#3132): an owner or admin turns on "receive customers' messages" on a Telegram connection; what customers write to the bot in a private chat appears in Hộp thư, Dy drafts a reply and a person presses Send (no auto-send), saved replies and `{tên}` work. The webhook is set with the bot token only the worker opens and is checked by a per-connection secret before anything is stored. Photos are a placeholder line for now, and Telegram Business mode follows; live check: [docs/runbooks/telegram-conversations-live-check.md](docs/runbooks/telegram-conversations-live-check.md).
+- **Meetings: live notes** (L4a, ADR-0052, off by default, ticked per meeting at the consent step as "Ghi chú trực tiếp"): while a meeting is recorded, the extension or the app sends the audio in pieces of about 15 seconds, each sealed under its own key and kept only until the final recording arrives (#3109, #3117, #3118); the recorder's own Vy turns them into a live transcript on the meeting page, about 30 to 45 seconds behind the speech (not yet measured), and refreshes running notes (summary, decisions, action items as "Đề xuất" drafts) every 5 minutes or on a click; only the recorder sees them, nothing becomes a task without the recorder's click, each piece is admitted on its cost against the AI budget, a spent budget or the kill switch stops the notes and never the recording, it runs only while the meeting page is open, and the live text is replaced by the batch transcript and deleted with the meeting (#3110, #3119, #3121, #3123).
 - **Bookings linked to deals** (#3103): a deal lists its upcoming and past bookings, "Đặt lịch" on a deal gives the client a booking link that carries the deal, and on the Lịch hẹn screen Dy suggests the guest's open deal by email or phone (no AI model) for a person to confirm; link and unlink are audited commands.
-
-## v0.3.2 (2026-11-13)
-
-Before the first deploy of this release: link the GHCR package `ghcr.io/dos/ludy-media` to the repository for the deploy token (one time), or the deploy stops at pull and changes nothing.
+- **CRM, Dy's help**: Dy drafts the follow-up for a quiet deal or an unanswered quote for a person to send (#3101, #3107), and writes a meeting brief before a booking linked to a deal (#3122).
+- **Hộp thư and Social**: Threads replies in Hộp thư (#3133, #3137); a contact name placeholder `{tên}` in saved replies (#3102, #3104).
+- **Meetings, live notes** (opt-in per meeting): audio pieces are sent while the meeting is recorded (#3118), and the recorder's Vy shows a live transcript preview and running notes (L4a-2, #3123).
+- **Accounting**: the marketplace connection kind in Tích hợp, the `MarketplaceProvider` port, an offline provider and polling into the staged path (#2519, #2838).
+- **Docs**: the runbook for pilot channels beyond Meta and Zalo (#3111); the plan for WhatsApp and the popular messaging channels in Hộp thư (#3128, #3130); the Meetings line status of 2026-11-13 (#3127).
 
 - **Landing page and README** (ludy.vn deploys from `main` already): below the hero, a five-step invoice story, app cards, a numbers band counted from the repository and a "your data stays yours" map, in plain words (#3018); the README gets the same pictures, the numbers with how each is counted, and an architecture diagram (#3014); social media covers for LinkedIn, Facebook, X, YouTube and link previews (#3094).
 - **Meetings**: link a meeting to a contact, a deal or a calendar event, linked meetings on deals and contacts, Vy's link suggestions read from the transcript without a model (L1, #3002 to #3005); a follow-up email after a meeting (L3, #3015, #3019); the length of a recording is measured by the media sandbox, never taken from the browser (#2987, #2992); the media sandbox image is built, published and pinned with each release (#2991); video playback hardening (#2982, #2983, #2986, #2993); a Vietnamese transcription accuracy eval (#2981).

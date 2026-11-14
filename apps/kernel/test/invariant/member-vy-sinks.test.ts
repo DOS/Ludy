@@ -32,11 +32,11 @@ const KERNEL_FILES: Record<string, string[]> = {
   'apps/kernel/src/member-vy-ports.ts': [],
   'apps/kernel/src/member-vy-worker.ts': [],
 };
-const CONSUMER_FILES = ['modules/meetings/src/live-notes.ts', 'modules/meetings/src/summary.ts', 'modules/meetings/src/transcribe.ts'];
+const CONSUMER_FILES = ['modules/meetings/src/live-notes.ts', 'modules/meetings/src/summary.ts', 'modules/meetings/src/transcribe.ts', 'modules/meetings/src/translate.ts'];
 // Consumer files and barrel importers whose feature PR has not landed yet (the two-step rule of AGENTS.md: this file, which runs from the base
 // branch, accepts the new file before it exists). A pending path is exempt ONLY while it is absent: the moment the file exists every check below
 // applies to it in full, so the ratchet is unchanged by it. Empty: add an entry only in an invariant-only PR that precedes the change. One path per line, sorted.
-const PENDING_FILES = new Set<string>([]);
+const PENDING_FILES = new Set<string>(['modules/meetings/src/translate.ts']);
 const pending = (path: string): boolean => PENDING_FILES.has(path) && !existsSync(join(ROOT, path));
 const READER_FILES = [...Object.keys(KERNEL_FILES), ...CONSUMER_FILES];
 // The files that import a reader file whose helpers could carry the private rows out (the kernel's internals and the db package import their own files freely).
@@ -46,6 +46,7 @@ const IMPORTERS: Record<string, string[]> = {
   'modules/meetings/src/live-notes.ts': ['modules/meetings/src/index.ts', 'modules/meetings/src/meetings.ts'],
   'modules/meetings/src/summary.ts': ['modules/meetings/src/index.ts', 'modules/meetings/src/live-notes.ts', 'modules/meetings/src/meetings.ts'],
   'modules/meetings/src/transcribe.ts': ['modules/meetings/src/index.ts', 'modules/meetings/src/meetings.ts'],
+  'modules/meetings/src/translate.ts': ['modules/meetings/src/index.ts', 'modules/meetings/src/meetings.ts'],
   'packages/db/src/schema.ts': ['packages/db/src/cells.ts', 'packages/db/src/index.ts'],
   'packages/db/src/generated/database.ts': ['packages/db/src/schema.ts'],
   'packages/kernel/src/manifest.ts': [

@@ -1753,6 +1753,14 @@ export function createRpcHandler(
           return runtime.execute('kernel.channel.disconnect', rest, { actor, orgId, idempotencyKey });
         }),
       ),
+      // Telegram bot chats on or off (#3132): the connection holds the bot token already; the webhook call is a job's.
+      setTelegramChats: os.channels.setTelegramChats.handler(({ context, input }) =>
+        inOrg(context, async (orgId, actor) => {
+          if (!channels?.telegram) throw new DomainError('CHANNEL_PROVIDER_DISABLED', 404, 'Kênh này chưa được bật trên máy chủ');
+          if (input.on && channels.broker.id === 'none') throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
+          return runtime.execute<{ chatState: 'off' | 'enabling' | 'on' | 'disabling' }>('kernel.channel.telegram_chat_set', input, { actor, orgId });
+        }),
+      ),
       // An app password is checked once by opening a session, then sealed with the account's DID and dropped; it never
       // reaches a log, an audit row or an answer.
       connectBluesky: os.channels.connectBluesky.handler(({ context, input }) =>
@@ -2443,6 +2451,8 @@ export function createRpcHandler(
       draftDiscard: os.conversations.draftDiscard.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.draft_discard', input, { actor, orgId }))),
       autoDraft: os.conversations.autoDraft.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.auto_draft', {}, { actor, orgId }))),
       setAutoDraft: os.conversations.setAutoDraft.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.auto_draft_set', input, { actor, orgId }))),
+      youtubeComments: os.conversations.youtubeComments.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.youtube_comments', {}, { actor, orgId }))),
+      setYoutubeComments: os.conversations.setYoutubeComments.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.youtube_comments_set', input, { actor, orgId }))),
       savedReplies: os.conversations.savedReplies.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.saved_reply_list', input, { actor, orgId }))),
       createSavedReply: os.conversations.createSavedReply.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.saved_reply_create', input, { actor, orgId }))),
       updateSavedReply: os.conversations.updateSavedReply.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.saved_reply_update', input, { actor, orgId }))),

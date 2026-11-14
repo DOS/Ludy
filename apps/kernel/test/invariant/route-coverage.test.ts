@@ -35,6 +35,8 @@ const PUBLIC: Record<string, string> = {
     "Meta's data deletion callback for the Ads connection (ads plan section 9, #2219), POST and GET: the POST is checked by Meta's signed_request (HMAC-SHA256 with the app secret, constant time, not expired) before anything else, has a body cap, is rate limited per address, stores no body, and only queues the keyed hash of the user id for the worker, which erases the ad accounts that user granted; the GET is the status page Meta shows the person, answered by the confirmation code (128 random bits) and showing no tenant data",
   '/api/channels/zalo/webhook':
     "Zalo OA's signed notice of a customer's message (conversation core, #2304, plan docs/plan/conversations.md section 6.1): checks X-ZEvent-Signature over the raw body before anything else and refuses a body over its size cap before reading it, names no org in its path or answer, writes no tenant row (it only parks the signed body for the worker, which finds the org from the stored connection), and answers 401 to a missing or wrong signature without saying why",
+  '/api/channels/telegram/webhook/:hook':
+    "Telegram's webhook of customers' private-chat messages (conversation core, #3132, plan docs/plan/conversations-channels.md section 4.2): the :hook in the path is the opaque id a connection holds and names a connection's hook, never an org; the route derives the secret of that hook from the deployment's key and compares X-Telegram-Bot-Api-Secret-Token in constant time before it reads the body or asks the database, refuses a body over its size cap before reading it, answers every refusal (a missing header, a hook of the wrong shape, an unknown hook, a wrong secret) with the same 401, names no org in its path or answer, writes no tenant row (it only parks the verified update for the worker, which finds the org from the stored connection by the hook), and charges its per-address limit to refused requests only",
   '/api/channels/facebook/webhook':
     "Meta's Page webhook for comments on connected Facebook Pages (conversation core CV2, #2307, plan docs/plan/conversations.md section 6.1): GET answers the hub.verify_token subscription challenge in constant time; POST checks X-Hub-Signature-256 (HMAC-SHA256 with the app secret, constant time) over the raw body before anything else and refuses a body over its size cap before reading it, names no org in its path or answer, writes no tenant row (it only parks the signed body for the worker, which finds the org from the stored connection), and answers 401 to a missing or wrong signature without saying why",
   '/api/channels/whatsapp/webhook':
@@ -110,6 +112,8 @@ function app(authenticate: HttpDeps['authenticate']) {
     adsDeletion: { appSecret: 'z'.repeat(32) },
     // The Zalo app and its OA secret key, so the webhook of customers' messages is registered and listed (conversation core, #2304).
     zaloWebhook: { appId: '4318000000000000001', oaSecretKey: 'k'.repeat(24) },
+    // The keys of Telegram's per-connection secret, so the bot chats webhook is registered and listed (conversation core, #3132).
+    telegramWebhook: { keys: () => [Buffer.alloc(32, 1)] },
     // The Meta app and its verify token, so the Page webhook is registered and listed (conversation core CV2, #2307).
     facebookWebhook: { appSecret: 's'.repeat(32), verifyToken: 'v'.repeat(24) },
     // The WhatsApp app's secret and verify token, so its webhook is registered and listed (conversation core, #3131).
