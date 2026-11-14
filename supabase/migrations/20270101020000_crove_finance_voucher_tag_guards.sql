@@ -129,7 +129,7 @@ END $$;
 
 -- Trigger functions only; nobody calls them directly.
 REVOKE ALL ON FUNCTION crove_finance.journal_voucher_tag_check(), crove_finance.check_payout_bank_line(), crove_finance.check_cash_voucher_bank_line()
-  FROM PUBLIC, crove_tenant, crove_definer_tenant;
+  FROM PUBLIC, crove_tenant, crove_definer_tenant, crove_app, crove_worker;
 
 -- Drift guard (as in 20261019270000 and 20261020130000): the checks that read other rows must run as a role that row security does not filter on the tables they read.
 DO $$
