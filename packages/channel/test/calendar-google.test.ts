@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Google Calendar free/busy against recorded answers (shapes from Google's Calendar API and OAuth docs); no live call.
 import { describe, expect, it } from 'vitest';
-import { ConnectorError, GOOGLE_CALENDAR_EVENTS_SCOPE, GOOGLE_CALENDAR_FREEBUSY_SCOPE, GoogleCalendarAdapter, googleCalendarSecretOf, type Fetch } from '../src/index.ts';
+import { ConnectorError, GOOGLE_CALENDAR_EVENTS_READ_SCOPE, GOOGLE_CALENDAR_EVENTS_SCOPE, GOOGLE_CALENDAR_FREEBUSY_SCOPE, GoogleCalendarAdapter, agendaEventOf, googleCalendarSecretOf, joinUrlOf, type Fetch } from '../src/index.ts';
 
 const APP = { clientId: '123456789-testclientid0001.apps.googleusercontent.com', clientSecret: 'test-google-secret-not-real' };
 const SECRET = JSON.stringify({ accessToken: 'ya29.token-1', refreshToken: '1//refresh-1' });
@@ -198,5 +198,114 @@ describe('GoogleCalendarAdapter', () => {
     const answer = await new GoogleCalendarAdapter(APP, hostile).busy(SECRET, new Date(0), new Date(1000));
     expect(called).toBe('https://www.googleapis.com/calendar/v3/freeBusy');
     expect(answer).toMatchObject({ failed: expect.any(String) });
+  });
+});
+
+describe('GoogleCalendarAdapter, the member\'s own meetings (B1, #3165)', () => {
+  const EVENTS = 'GET www.googleapis.com/calendar/v3/calendars/primary/events';
+  const FROM = new Date('2026-11-13T00:00:00Z');
+  const TO = new Date('2026-11-21T00:00:00Z');
+  const timed = (id: string, over: Record<string, unknown> = {}) => ({
+    id,
+    status: 'confirmed',
+    summary: `Họp ${id}`,
+    start: { dateTime: '2026-11-14T09:00:00+07:00', timeZone: 'Asia/Ho_Chi_Minh' },
+    end: { dateTime: '2026-11-14T10:00:00+07:00' },
+    ...over,
+  });
+
+  it('asks for the events-read scope next to free/busy only when the member turns the read on, and for neither the write scope nor anything else', () => {
+    const url = (input: object) => new URL(new GoogleCalendarAdapter(APP).authorizeUrl({ state: 'st', redirectUri: REDIRECT, codeChallenge: 'ch', ...input }));
+    expect(url({ readEvents: true }).searchParams.get('scope')?.split(' ')).toEqual(['openid', 'email', GOOGLE_CALENDAR_FREEBUSY_SCOPE, GOOGLE_CALENDAR_EVENTS_READ_SCOPE]);
+    expect(url({ readEvents: true, writeBack: true }).searchParams.get('scope')?.split(' ')).toEqual(['openid', 'email', GOOGLE_CALENDAR_FREEBUSY_SCOPE, GOOGLE_CALENDAR_EVENTS_SCOPE, GOOGLE_CALENDAR_EVENTS_READ_SCOPE]);
+    expect(url({}).searchParams.get('scope')?.split(' ')).not.toContain(GOOGLE_CALENDAR_EVENTS_READ_SCOPE);
+    expect(GOOGLE_CALENDAR_EVENTS_READ_SCOPE).toBe('https://www.googleapis.com/auth/calendar.events.owned.readonly');
+  });
+
+  it('reads the primary calendar in time order with the events unfolded, asking for no address, description, attachment or location', async () => {
+    const { fetchImpl, calls } = google({ [EVENTS]: [{ body: { items: [timed('a')] } }] });
+    const answer = await new GoogleCalendarAdapter(APP, fetchImpl).events(SECRET, FROM, TO);
+    expect(answer).toEqual({ events: [{ id: 'a', title: 'Họp a', startsAt: '2026-11-14T02:00:00.000Z', endsAt: '2026-11-14T03:00:00.000Z', timeZone: 'Asia/Ho_Chi_Minh', joinUrl: null, invitees: 0 }] });
+    expect(calls[0]?.auth).toBe('Bearer ya29.token-1');
+  });
+
+  it('sends a field mask that names no attendee address, description, attachment or location', async () => {
+    const seen: URL[] = [];
+    const fetchImpl: Fetch = async (input) => {
+      seen.push(new URL(input));
+      return new Response(JSON.stringify({ items: [] }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    await new GoogleCalendarAdapter(APP, fetchImpl).events(SECRET, FROM, TO);
+    const q = seen[0]?.searchParams;
+    expect(q?.get('singleEvents')).toBe('true');
+    expect(q?.get('orderBy')).toBe('startTime');
+    expect(q?.get('timeMin')).toBe(FROM.toISOString());
+    expect(q?.get('timeMax')).toBe(TO.toISOString());
+    const fields = q?.get('fields') ?? '';
+    for (const forbidden of ['email', 'displayName', 'description', 'attachments', 'location', 'organizer', 'creator', 'htmlLink']) expect(fields, forbidden).not.toContain(forbidden);
+    expect(fields).toContain('attendees(self,responseStatus,optional)');
+  });
+
+  it('keeps a timed event, counts its invitees and keeps a Meet, Zoom or Teams address only', async () => {
+    const meet = timed('m', { hangoutLink: 'https://meet.google.com/abc-defg-hij', attendees: [{ self: true, responseStatus: 'accepted' }, { responseStatus: 'needsAction' }, { optional: true }] });
+    const zoom = timed('z', { conferenceData: { entryPoints: [{ entryPointType: 'phone', uri: 'tel:+84123' }, { entryPointType: 'video', uri: 'https://us02web.zoom.us/j/123456789?pwd=abc' }] } });
+    const odd = timed('o', { hangoutLink: 'https://evil.example/meet.google.com', conferenceData: { entryPoints: [{ entryPointType: 'video', uri: 'http://zoom.us/j/1' }] } });
+    const { fetchImpl } = google({ [EVENTS]: [{ body: { items: [meet, zoom, odd] } }] });
+    const answer = await new GoogleCalendarAdapter(APP, fetchImpl).events(SECRET, FROM, TO);
+    expect('events' in answer && answer.events.map((e) => [e.id, e.joinUrl, e.invitees])).toEqual([
+      ['m', 'https://meet.google.com/abc-defg-hij', 3],
+      ['z', 'https://us02web.zoom.us/j/123456789?pwd=abc', 0],
+      ['o', null, 0],
+    ]);
+  });
+
+  it('leaves out an all-day event, a cancelled one, one the member declined, and one with no usable time or id', () => {
+    expect(agendaEventOf({ id: 'd', summary: 'Nghỉ lễ', start: { date: '2026-11-14' }, end: { date: '2026-11-15' } })).toBeNull();
+    expect(agendaEventOf(timed('c', { status: 'cancelled' }))).toBeNull();
+    expect(agendaEventOf(timed('x', { attendees: [{ self: true, responseStatus: 'declined' }] }))).toBeNull();
+    expect(agendaEventOf(timed('y', { attendees: [{ self: false, responseStatus: 'declined' }] }))).not.toBeNull();
+    expect(agendaEventOf(timed('', {}))).toBeNull();
+    expect(agendaEventOf({ ...timed('e'), end: { dateTime: '2026-11-14T08:00:00+07:00' } })).toBeNull();
+    expect(agendaEventOf({ ...timed('f'), start: { dateTime: 'not a time' } })).toBeNull();
+    expect(agendaEventOf({ ...timed('g'), end: { dateTime: '2026-12-31T10:00:00+07:00' } })).toBeNull();
+    expect(agendaEventOf(timed('h', { summary: 'x'.repeat(500) }))?.title).toHaveLength(200);
+    expect(agendaEventOf(timed('i', { summary: undefined }))?.title).toBe('');
+  });
+
+  it('reads two pages at most, drops a repeated id and cuts at 300', async () => {
+    const page = (ids: string[], next?: string) => ({ body: { items: ids.map((id) => timed(id)), ...(next ? { nextPageToken: next } : {}) } });
+    const ids = (from: number, n: number) => Array.from({ length: n }, (_, i) => `e${from + i}`);
+    const { fetchImpl, calls } = google({ [EVENTS]: [page(ids(0, 250), 'p2'), page([...ids(240, 60)], 'p3')] });
+    const answer = await new GoogleCalendarAdapter(APP, fetchImpl).events(SECRET, FROM, TO);
+    expect(calls).toHaveLength(2);
+    expect('events' in answer && answer.events.length).toBe(300);
+    expect('events' in answer && new Set(answer.events.map((e) => e.id)).size).toBe(300);
+  });
+
+  it('says a refused token, a missing permission and any other failure in fixed words', async () => {
+    const run = (route: { status?: number; body: unknown }) => new GoogleCalendarAdapter(APP, google({ [EVENTS]: [route] }).fetchImpl).events(SECRET, FROM, TO);
+    expect(await run({ status: 401, body: { error: { code: 401, message: 'Invalid Credentials', status: 'UNAUTHENTICATED' } } })).toEqual({ refused: 'invalid_token' });
+    expect(await run({ status: 403, body: { error: { code: 403, message: 'Insufficient Permission', errors: [{ reason: 'insufficientPermissions' }] } } })).toEqual({ scope: true });
+    expect(await run({ status: 429, body: { error: { code: 429, message: 'Rate Limit Exceeded', errors: [{ reason: 'rateLimitExceeded' }] } } })).toEqual({ failed: 'rateLimitExceeded' });
+    expect(await new GoogleCalendarAdapter(APP, async () => { throw new Error('socket hang up'); }).events(SECRET, FROM, TO)).toEqual({ failed: 'NETWORK' });
+    expect(await new GoogleCalendarAdapter(APP).events('not json', FROM, TO)).toEqual({ refused: 'NO_ACCESS_TOKEN' });
+  });
+
+  it('ignores a hostile answer: items that are not objects, odd types and a missing list', async () => {
+    const { fetchImpl } = google({ [EVENTS]: [{ body: { items: [null, 7, 'x', [], { id: 5 }, timed('ok')] } }] });
+    const answer = await new GoogleCalendarAdapter(APP, fetchImpl).events(SECRET, FROM, TO);
+    expect('events' in answer && answer.events.map((e) => e.id)).toEqual(['ok']);
+    expect(await new GoogleCalendarAdapter(APP, google({ [EVENTS]: [{ body: {} }] }).fetchImpl).events(SECRET, FROM, TO)).toEqual({ events: [] });
+  });
+
+  it('keeps a join address only for https on a known host, with no credentials in it', () => {
+    expect(joinUrlOf('https://meet.google.com/abc-defg-hij')).toBe('https://meet.google.com/abc-defg-hij');
+    expect(joinUrlOf('https://teams.microsoft.com/l/meetup-join/19%3a')).not.toBeNull();
+    expect(joinUrlOf('https://user:pass@zoom.us/j/1')).toBeNull();
+    expect(joinUrlOf('https://notzoom.us/j/1')).toBeNull();
+    expect(joinUrlOf('https://zoom.us.evil.example/j/1')).toBeNull();
+    expect(joinUrlOf('http://zoom.us/j/1')).toBeNull();
+    expect(joinUrlOf(`https://zoom.us/j/${'1'.repeat(600)}`)).toBeNull();
+    expect(joinUrlOf(undefined)).toBeNull();
   });
 });

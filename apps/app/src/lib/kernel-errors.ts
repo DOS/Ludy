@@ -306,6 +306,8 @@ export const KERNEL_ERROR_CODES = [
   'NOTE_LINK_TARGET_NOT_FOUND',
   // AI Meeting Notes (#2576).
   'MEETING_NOT_FOUND',
+  'AGENDA_NOT_FOUND',
+  'AGENDA_MEETING_LINKED',
   // Links of a meeting (L1, #2587).
   'MEETING_HAS_DEAL',
   'LINK_NOT_FOUND',

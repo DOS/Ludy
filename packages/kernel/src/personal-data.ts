@@ -322,6 +322,14 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: "The recorder's own rough notes of a meeting, which may name or describe a person: read by the recorder alone; the owner's erasure edits the value out of every recorder's notes and counts them per recorder; deleted with the meeting (its recorder, an owner for a personal-data request, the retention job or the org purge)",
   },
+  // The title of an event of a member's own Google Calendar (meetings B1, issue #3165): an 8-day cache (1 day back to 7 ahead) kept only while the member's switch "Cho Ludy đọc tên và giờ
+  // cuộc họp trong lịch" is on. Read by that member alone (row security: an owner, an admin, another member, an agent and the system context read none), so there is no finder and no
+  // erasure of a value inside it: a request is answered the way it is for the live preview, by the member turning the read off, which deletes it at once, or by disconnecting the calendar.
+  'crove_meetings.calendar_agenda.title': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: "The title of an event of a member's own calendar, which may name or describe a person: a cache of the next 7 days and the last day, read by that member alone, deleted at once when they switch the read off or disconnect the calendar, a day after the event ended at the next sync, with the meeting it is linked to and with the org",
+  },
   'crove_meetings.transcript_segment.speaker_label': {
     kind: 'free_text',
     handling: 'erase',

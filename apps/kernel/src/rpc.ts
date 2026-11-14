@@ -1,7 +1,7 @@
 // oRPC implementation of @crove/kernel-contract. Handlers only call the runtime (execute/query).
 import { implement, ORPCError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
-import { CALENDAR_OAUTH_PROVIDERS, MARKETPLACE_PLATFORM_KEYS, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@crove/kernel-contract';
+import { CALENDAR_OAUTH_PROVIDERS, GOOGLE_CALENDAR_EVENTS_READ_SCOPE, MARKETPLACE_PLATFORM_KEYS, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@crove/kernel-contract';
 import { sandboxBankFeed } from '@crove/bank-feed';
 import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad-platform';
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@crove/einvoice';
@@ -148,6 +148,16 @@ export interface StoredImage {
 
 // A member limited to some channels (#1081) may not have AI write for another one (#1099): refused before the paid model
 // call and before that channel's brand voice is read, as social.post.create would refuse the channel afterwards.
+// Deletes the member's cached meetings of a calendar connection (B1, #3165), as the member: row security lets them delete their own rows only. Best effort by design: a deployment without
+// the meetings module has no such command, and a failure leaves rows the list already hides (the connection is not active, or its switch is off) and a disconnect's cascade removes.
+async function clearAgenda(runtime: Runtime, as: { actor: UserActor; orgId: string }, connectionId: string): Promise<void> {
+  try {
+    await runtime.execute('meetings.agenda.clear', { connectionId }, as);
+  } catch (error: unknown) {
+    console.error(`[calendar] cached meetings of connection ${connectionId.slice(0, 8)} not cleared: ${error instanceof DomainError ? error.code : error instanceof Error ? error.name : 'error'}`);
+  }
+}
+
 async function refuseChannelsOutside(runtime: Runtime, actor: UserActor, orgId: string, connectionIds: readonly string[]): Promise<void> {
   if (connectionIds.length === 0) return;
   const mine = await runtime.query<{ limited: boolean; connectionIds: string[] }>('social.channel_access.mine', {}, { actor, orgId });
@@ -1012,6 +1022,13 @@ export function createRpcHandler(
         ask: os.meetings.ask.ask.handler(({ context, input }) =>
           inMeetings(context, (orgId, actor) => runMeetingAsk({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: asks, price: aiPrice }, orgId, actor, input.question)),
         ),
+      },
+      // A member's own Google Calendar meetings (B1, #3165): the member's own rows, no model; see modules/meetings/src/agenda.ts.
+      agenda: {
+        list: os.meetings.agenda.list.handler(meetingsQuery('meetings.agenda.list')),
+        suggest: os.meetings.agenda.suggest.handler(meetingsQuery('meetings.agenda.suggest')),
+        setReadEvents: os.meetings.agenda.setReadEvents.handler(meetingsCommand('meetings.agenda.set_read_events')),
+        link: os.meetings.agenda.link.handler(meetingsCommand('meetings.agenda.link')),
       },
       actionItems: {
         create: os.meetings.actionItems.create.handler(meetingsCommand('meetings.action_item.create')),
@@ -2189,7 +2206,7 @@ export function createRpcHandler(
             { provider: input.provider, stateHash: attempt.stateHash, codeVerifier: attempt.codeVerifier },
             { actor, orgId },
           );
-          const authorizeUrl = adapter.authorizeUrl({ state: attempt.state, redirectUri: calendarRedirectUri(input.provider), codeChallenge: attempt.codeChallenge, ...(input.writeBack ? { writeBack: true } : {}) });
+          const authorizeUrl = adapter.authorizeUrl({ state: attempt.state, redirectUri: calendarRedirectUri(input.provider), codeChallenge: attempt.codeChallenge, ...(input.writeBack ? { writeBack: true } : {}), ...(input.readEvents ? { readEvents: true } : {}) });
           return { authorizeUrl, state: attempt.state, expiresAt: begun.expiresAt };
         }),
       ),
@@ -2208,7 +2225,7 @@ export function createRpcHandler(
             throw connectorFailure(error);
           });
           const sealed = broker.seal(account.secret, calendarBinding(orgId, adapter.provider, account.externalAccount));
-          return runtime.execute<{ connectionId: string; reconnected: boolean }>(
+          const done = await runtime.execute<{ connectionId: string; reconnected: boolean }>(
             'kernel.calendar.connect',
             {
               provider: adapter.provider,
@@ -2219,11 +2236,22 @@ export function createRpcHandler(
               credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
             },
             { actor, orgId },
-          ).then((done) => ({ ...done, displayName: account.displayName }));
+          );
+          // A grant without the events-read scope (the member connected again for another permission, or refused it on Google's screen) turns the read of their meetings off in the connect
+          // command; the meetings it already cached are deleted now, best effort (a deployment without the meetings module has nothing to delete, and the list hides them meanwhile).
+          if (!account.scopes.includes(GOOGLE_CALENDAR_EVENTS_READ_SCOPE)) await clearAgenda(runtime, { actor, orgId }, done.connectionId);
+          return { ...done, displayName: account.displayName };
         }),
       ),
       setWriteBack: os.calendar.setWriteBack.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.calendar.write_back.set', input, { actor, orgId }))),
-      disconnect: os.calendar.disconnect.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.calendar.disconnect', input, { actor, orgId }))),
+      // The cached meetings of the connection go at once, not when the worker finishes the revoke (the list hides them meanwhile, as the connection is no longer active).
+      disconnect: os.calendar.disconnect.handler(({ context, input }) =>
+        inOrg(context, async (orgId, actor) => {
+          const done = await runtime.execute<{ connectionId: string; disconnected: true }>('kernel.calendar.disconnect', input, { actor, orgId });
+          await clearAgenda(runtime, { actor, orgId }, input.connectionId);
+          return done;
+        }),
+      ),
     },
     // Org-less: any signed-in user may look up a tax code before the org exists. Nothing is written, so no command.
     taxRegistry: {

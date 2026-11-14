@@ -160,6 +160,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_kernel.today_mail', () => 'false'], // Per member.
   ['crove_meetings.action_item', () => 'false'], // As above (action items, ADR-0047).
   ['crove_meetings.audio_segment', () => 'false'], // Meetings read through the recorder and the readers, who are users (ADR-0047).
+  ['crove_meetings.calendar_agenda', () => 'false'], // A member's own calendar meetings, read by that member, a user (meetings integrations B1, #3165).
   ['crove_meetings.live_chunk', () => 'false'], // The recorder's own live pieces, read by the recorder, a user (ADR-0052 L4a, #3109).
   ['crove_meetings.live_line', () => 'false'], // The live preview of a recording, read by the recorder, a user (ADR-0052 L4a, #3110).
   ['crove_meetings.meeting', () => 'false'], // As above.
@@ -235,6 +236,8 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_meetings.action_item', 'false'],
   // Meeting audio segments (ADR-0047 point 2): worker system context reads and writes nothing.
   ['crove_meetings.audio_segment', 'false'],
+  // A member's own calendar meetings (meetings integrations B1, #3165): the member's alone; worker system context reads and writes nothing (its one writer is a definer).
+  ['crove_meetings.calendar_agenda', 'false'],
   // Live pieces of a recording (ADR-0052 L4a, #3109): worker system context reads and writes nothing.
   ['crove_meetings.live_chunk', 'false'],
   // The live preview of a recording (ADR-0052 L4a, #3110): worker system context reads and writes nothing.
@@ -2339,6 +2342,29 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           segment_order: 0,
           start_offset_seconds: 0,
           length_seconds: 600,
+        },
+      };
+    },
+  },
+  // #3165 (meetings integrations B1): a member's own cached calendar meeting, written by one definer and read, linked and deleted by the member alone. Tenant roles may update only the link
+  // column (a column grant), so the update probes assign it to itself.
+  'crove_meetings.calendar_agenda': {
+    update: { set: 'meeting_id = meeting_id' },
+    make: (o) => {
+      const connection = calendarConnectionRow(o);
+      const start = new Date(Date.UTC(2030, 0, 1) + 3_600_000 * calendarHour++);
+      return {
+        setup: [{ table: 'crove_kernel.calendar_connection', values: connection }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          connection_id: connection.id,
+          user_id: o.owner,
+          external_id: `rlsmatrix${tag()}`,
+          title: 'RLS matrix meeting',
+          starts_at: start.toISOString(),
+          ends_at: new Date(start.getTime() + 1_800_000).toISOString(),
+          time_zone: 'Asia/Ho_Chi_Minh',
         },
       };
     },

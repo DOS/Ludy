@@ -389,6 +389,7 @@ suite('a Google Meet per booking on PostgreSQL (C7, #1375)', () => {
       writeEvent: async (_secret, event) => (writes.push({ id: event.externalId, conference: event.conference }), answer(event.conference)),
       removeEvent: async () => ({ ok: true }),
       revoke: async () => ({ revoked: true }),
+      events: async () => ({ events: [] }),
     });
     const job = (o: Org, adapter: CalendarAdapter) => runCalendarWriteBack({ runtime: worker, broker: vault, adapters: { google_calendar: adapter } }, { orgId: o.orgId });
 

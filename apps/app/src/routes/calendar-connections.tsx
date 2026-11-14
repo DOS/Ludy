@@ -8,20 +8,36 @@ import { useTranslations } from 'use-intl';
 import type { CalendarConnectionView, CalendarOAuthProvider } from '@crove/kernel-contract';
 import { Button } from '@crove/ui/components/button';
 import { Checkbox } from '@crove/ui/components/checkbox';
+import { meetingsInstalled } from '../components/linked-meetings.tsx';
 import { ErrorText } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, getCurrentOrg, orpc, queryClient } from '../lib/api.ts';
 import { rememberOAuthAttempt } from '../lib/oauth.ts';
 
 const refresh = () => queryClient.invalidateQueries({ queryKey: orpc.calendar.connections.key() });
+// The member's own meetings list (B1) follows the switch: it is shown or emptied as soon as the switch changes.
+const refreshAgenda = () => Promise.all([refresh(), queryClient.invalidateQueries({ queryKey: orpc.meetings.agenda.key() })]);
 
-function ConnectionRow({ connection, canEdit, onAllowWriteBack }: { connection: CalendarConnectionView; canEdit: boolean; onAllowWriteBack: () => void }) {
+function ConnectionRow({
+  connection,
+  canEdit,
+  onAllowWriteBack,
+  onAllowReadEvents,
+}: {
+  connection: CalendarConnectionView;
+  canEdit: boolean;
+  onAllowWriteBack: () => void;
+  onAllowReadEvents: () => void;
+}) {
   const t = useTranslations('workingHours');
   const f = useFormat();
   const disconnect = useMutation(orpc.calendar.disconnect.mutationOptions({ onSuccess: refresh }));
   const writeBack = useMutation(orpc.calendar.setWriteBack.mutationOptions({ onSuccess: refresh }));
+  const readEvents = useMutation(orpc.meetings.agenda.setReadEvents.mutationOptions({ onSuccess: refreshAgenda }));
   // Writing appointments is Google's for now, for a member who edits, on a connection that works.
   const offerWriteBack = canEdit && connection.provider === 'google' && connection.status === 'active';
+  // Reading the names and times of the member's own meetings (B1): offered with the meetings module, for the same connection. Off until the member ticks it, and only after Google's own consent.
+  const offerReadEvents = offerWriteBack && meetingsInstalled();
   const note =
     connection.status === 'expired'
       ? t('externalExpired')
@@ -61,6 +77,25 @@ function ConnectionRow({ connection, canEdit, onAllowWriteBack }: { connection: 
           </div>
         ))}
       {writeBack.error && <ErrorText>{errorMessage(writeBack.error)}</ErrorText>}
+      {offerReadEvents &&
+        (connection.canReadEvents ? (
+          <label className="mt-1 flex items-start gap-2 text-xs text-muted-foreground">
+            <Checkbox checked={connection.readEvents} disabled={readEvents.isPending} onCheckedChange={(on) => readEvents.mutate({ connectionId: connection.id, enabled: on === true })} data-testid="calendar-read-events" />
+            <span>
+              <span className="font-medium text-foreground">{t('externalReadEvents')}</span>
+              <span className="block">{t('externalReadEventsHint')}</span>
+            </span>
+          </label>
+        ) : (
+          <div className="mt-1 text-xs text-muted-foreground">
+            <p className="font-medium text-foreground">{t('externalReadEvents')}</p>
+            <p>{t('externalReadEventsHint')}</p>
+            <Button type="button" variant="outline" size="sm" className="mt-1" onClick={onAllowReadEvents} data-testid="calendar-allow-read-events">
+              {t('externalAllowReadEvents')}
+            </Button>
+          </div>
+        ))}
+      {readEvents.error && <ErrorText>{errorMessage(readEvents.error)}</ErrorText>}
     </li>
   );
 }
@@ -70,7 +105,9 @@ export function ExternalCalendars({ canEdit }: { canEdit: boolean }) {
   const providers = useQuery(orpc.calendar.providers.queryOptions());
   const connections = useQuery(orpc.calendar.connections.queryOptions());
   const start = useMutation({
-    mutationFn: (v: { provider: CalendarOAuthProvider; writeBack?: boolean }) => client.calendar.connectStart(v.writeBack ? { provider: v.provider, writeBack: true } : { provider: v.provider }),
+    // A connect again grants exactly the scopes asked that time, so asking for one capability keeps the other the connection already has.
+    mutationFn: (v: { provider: CalendarOAuthProvider; writeBack?: boolean; readEvents?: boolean }) =>
+      client.calendar.connectStart({ provider: v.provider, ...(v.writeBack ? { writeBack: true } : {}), ...(v.readEvents ? { readEvents: true } : {}) }),
     onSuccess: (attempt) => {
       // The org the screen is showing: the provider sends the browser back to one address for every org.
       const slug = getCurrentOrg();
@@ -91,7 +128,13 @@ export function ExternalCalendars({ canEdit }: { canEdit: boolean }) {
       ) : (
         <ul className="mt-2 divide-y">
           {rows.map((c) => (
-            <ConnectionRow key={c.id} connection={c} canEdit={canEdit} onAllowWriteBack={() => start.mutate({ provider: 'google_calendar', writeBack: true })} />
+            <ConnectionRow
+              key={c.id}
+              connection={c}
+              canEdit={canEdit}
+              onAllowWriteBack={() => start.mutate({ provider: 'google_calendar', writeBack: true, readEvents: c.canReadEvents })}
+              onAllowReadEvents={() => start.mutate({ provider: 'google_calendar', readEvents: true, writeBack: c.canWriteBack })}
+            />
           ))}
         </ul>
       )}

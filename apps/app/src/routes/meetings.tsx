@@ -25,6 +25,7 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { MeetingSearch } from '../components/meeting-search.tsx';
 import { MeetingAsk } from '../components/meeting-ask.tsx';
+import { TodayAgenda } from '../components/meeting-agenda.tsx';
 import { NotesSubnav } from '../components/notes-subnav.tsx';
 import { ConsentPolicyCard, useConsentPolicy } from '../components/consent-policy.tsx';
 import { RecordingNotice } from '../components/recording-notice.tsx';
@@ -262,6 +263,8 @@ export function MeetingsPage() {
         }
       />
       <NotesSubnav slug={slug} active="meetings" />
+
+      <TodayAgenda slug={slug} />
 
       <MeetingAsk slug={slug} />
 

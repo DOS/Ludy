@@ -187,6 +187,7 @@ export interface CroveKernelSchema {
 export interface CroveMeetingsSchema {
   'crove_meetings.action_item': MeetingsActionItemTable;
   'crove_meetings.audio_segment': MeetingsAudioSegmentTable;
+  'crove_meetings.calendar_agenda': MeetingsCalendarAgendaTable;
   'crove_meetings.live_chunk': MeetingsLiveChunkTable;
   'crove_meetings.live_line': MeetingsLiveLineTable;
   'crove_meetings.meeting': MeetingsMeetingTable;
@@ -1865,6 +1866,7 @@ export interface KernelCalendarConnectionTable {
   write_back: Generated<boolean>;
   connected_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  read_events: Generated<boolean>;
 }
 
 /** crove_kernel.calendar_event_link */
@@ -2810,6 +2812,23 @@ export interface MeetingsAudioSegmentTable {
   start_offset_seconds: ColumnType<number, number | undefined, NotGranted>;
   length_seconds: ColumnType<number, number, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_meetings.calendar_agenda */
+export interface MeetingsCalendarAgendaTable {
+  org_id: ColumnType<string, NotGranted, NotGranted>;
+  id: ColumnType<string, NotGranted, NotGranted>;
+  connection_id: ColumnType<string, NotGranted, NotGranted>;
+  user_id: ColumnType<string, NotGranted, NotGranted>;
+  external_id: ColumnType<string, NotGranted, NotGranted>;
+  title: ColumnType<string, NotGranted, NotGranted>;
+  starts_at: ColumnType<Date, NotGranted, NotGranted>;
+  ends_at: ColumnType<Date, NotGranted, NotGranted>;
+  time_zone: ColumnType<string, NotGranted, NotGranted>;
+  join_url: ColumnType<string | null, NotGranted, NotGranted>;
+  invitee_count: ColumnType<number, NotGranted, NotGranted>;
+  meeting_id: ColumnType<string | null, NotGranted, string | null>;
+  updated_at: ColumnType<Date, NotGranted, NotGranted>;
 }
 
 /** crove_meetings.live_chunk */
