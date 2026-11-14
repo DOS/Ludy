@@ -15,7 +15,7 @@ import { OrgMcpWake } from './org-mcp-wake.tsx';
 import { ErrorText, RowsSkeleton } from './ui.tsx';
 
 // Message keys cannot hold a dot, so a scope id has its own key.
-const SCOPE_KEY = { 'ludy.read': 'ludy_read', 'ludy.member.read': 'ludy_member_read' } as const;
+const SCOPE_KEY = { 'ludy.read': 'ludy_read', 'ludy.member.read': 'ludy_member_read', 'ludy.social.draft': 'ludy_social_draft' } as const;
 
 export interface GrantMember {
   userId: string;

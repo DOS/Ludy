@@ -6255,7 +6255,7 @@ export const vi = {
     memberSwitch: 'Cho thành viên tự kết nối ứng dụng AI của họ',
     memberSwitchHint: 'Mặc định tắt. Khi bật, thành viên hoặc người chỉ xem kết nối được một ứng dụng AI chỉ đọc những gì họ nhìn thấy ở đây. Tắt đi thì mọi kết nối như vậy của thành viên hoặc người chỉ xem dừng ở yêu cầu tiếp theo của ứng dụng; kết nối của bạn và của quản trị viên vẫn giữ.',
     none: 'Chưa có ứng dụng AI nào kết nối.',
-    scope: { ludy_read: 'Chỉ đọc', ludy_member_read: 'Đọc các mục riêng tư của bạn' },
+    scope: { ludy_read: 'Chỉ đọc', ludy_member_read: 'Đọc các mục riêng tư của bạn', ludy_social_draft: 'Soạn bản nháp bài Social' },
     givenBy: 'Do {name} cho phép',
     lastUsed: 'dùng gần nhất {at}',
     neverUsed: 'chưa dùng lần nào',
@@ -11747,6 +11747,7 @@ export const vi = {
         revoke_for_member: 'Thu hồi liên kết của thành viên đã mất quyền',
       },
       mcp: {
+        draft_create: 'Cho ứng dụng AI soạn bản nháp bài đăng Social chờ người duyệt',
         posts: 'Cho ứng dụng AI xem danh sách bài đăng Social',
         review_queue: 'Cho ứng dụng AI xem hàng chờ duyệt của Social',
       },
