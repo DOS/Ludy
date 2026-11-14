@@ -68,4 +68,14 @@ describe('a translation is never a source (E1, #3184)', () => {
     const importers = files.filter((f) => /from\s+['"][^'"]*\/translate(?:-run)?\.ts['"]/.test(f.text)).map((f) => f.path);
     expect(importers.sort()).toEqual(['modules/meetings/src/index.ts', 'modules/meetings/src/meetings.ts', 'modules/meetings/src/translate.ts']);
   });
+
+  // The database side: the follow-up mail's facts, the search across meetings and every definer that reads meeting text name the original rows only. The only migrations that
+  // name the table are the one that makes it (with the functions that delete from it) and the org purge's list; a later migration that names it is a visible change here.
+  it('no migration but the two that make the table and purge it names it, so no search definer, mail query or export reads it', () => {
+    const dir = join(ROOT, 'supabase/migrations');
+    const naming = readdirSync(dir)
+      .filter((name) => name.endsWith('.sql') && /crove_meetings\.translation\b/.test(readFileSync(join(dir, name), 'utf8')))
+      .map((name) => name.replace(/^\d+_/, ''));
+    expect(naming).toEqual(['crove_meetings_translation.sql', 'crove_kernel_org_purge_translation.sql']);
+  });
 });
