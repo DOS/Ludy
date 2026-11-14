@@ -6260,7 +6260,7 @@ export const en = {
     memberSwitch: 'Let members connect their own AI app',
     memberSwitchHint: 'Off by default. When on, a member or viewer can connect an AI app that reads only what they can see here. Turning it off ends every such connection of a member or viewer at the app’s next request; yours and the admins’ stay.',
     none: 'No AI app is connected.',
-    scope: { ludy_read: 'Read only', ludy_member_read: 'Reads your private items' },
+    scope: { ludy_read: 'Read only', ludy_member_read: 'Reads your private items', ludy_social_draft: 'Writes Social post drafts' },
     givenBy: 'Allowed by {name}',
     lastUsed: 'last used {at}',
     neverUsed: 'never used',
@@ -11734,6 +11734,7 @@ export const en = {
         revoke_for_member: 'Revoke the links of a member who lost access',
       },
       mcp: {
+        draft_create: 'Let an AI app write a Social post draft for a person to review',
         posts: 'Let an AI app list the Social posts',
         review_queue: 'Let an AI app read the Social review queue',
       },
