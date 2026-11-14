@@ -142,7 +142,7 @@ export const kernelManifest = defineModule({
   permissions: [
     { key: 'kernel.conversation.direct.read', risk: 'R1', defaultRoles: ['desk.agent'] },
     // "Làm việc với Vy" (ADR-0049 decision 10): the base roles owner, admin and member hold it by default; these are the preset roles that grant it.
-    { key: 'vy.use', risk: 'R1', defaultRoles: ['crm.sales', 'desk.agent', 'external_accountant', 'finance.accountant', 'finance.chief_accountant', 'hr.manager'] },
+    { key: 'vy.use', risk: 'R1', defaultRoles: ['crm.sales', 'desk.agent', 'external_accountant', 'finance.accountant', 'finance.chief_accountant', 'hr.manager', 'social.marketer'] },
   ],
   // Its entities (#1656), each with its table: every type its commands name as their audit target, the records the
   // kernel numbers, and the records other code names by type; apps/kernel/test/manifest.db.test.ts checks them.

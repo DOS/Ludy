@@ -24,6 +24,7 @@ export const ROLE_LABELS: Record<BuiltinRoleKey, string> = {
   'finance.chief_accountant': 'Kế toán trưởng',
   'finance.accountant': 'Kế toán viên',
   'finance.viewer': 'Người xem số liệu kế toán',
+  'social.marketer': 'Marketing',
   'crm.sales': 'Nhân viên kinh doanh',
   'desk.agent': 'Nhân viên chăm sóc khách hàng',
   'hr.manager': 'Quản lý nhân sự',
