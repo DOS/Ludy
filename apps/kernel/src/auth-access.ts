@@ -12,7 +12,7 @@
 // every request that carries an access token, before any database work, so no user account is created for it; taking
 // an entry out of the list takes effect on that person's next such request. It does not end what they were already
 // given: a Ludy extension token, an MCP grant (neither carries an email) and an open /api/stream connection. Taking
-// someone away also means disabling the account or removing them from the org (docs/runbooks/pilot-sign-in-with-dos-id.md). The check reads the email of the verified token, so it is only as strong as the
+// someone away also means disabling the account or removing them from the org (docs/runbooks/pilot-sign-in-remote-idp.md). The check reads the email of the verified token, so it is only as strong as the
 // provider's promise that it issues tokens for confirmed addresses (the provider must require email confirmation);
 // a token that says its email is not verified (`user_metadata.email_verified` is false) is refused too (a courtesy, not a
 // boundary: Supabase Auth lets the user write `user_metadata`, so only the provider's email confirmation is one).

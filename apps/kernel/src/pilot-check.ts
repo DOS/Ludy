@@ -330,7 +330,7 @@ export function checkEnv(env: Env): CheckResult[] {
   // limit is who may use this deployment, AUTH_ALLOWED_EMAILS.
   // The upstream line must be present and empty: an absent line is compose's default, the bundled Supabase Auth.
   const ownProvider = env['AUTH_UPSTREAM_URL'] !== undefined && env['AUTH_UPSTREAM_URL'].trim() === '' && value(env, 'PUBLIC_AUTH_URL') !== undefined;
-  // An empty parse (`, ,`) lists nobody, which the kernel reads as no limit.
+  // An empty parse (`, ,`) lists nobody: the kernel refuses it at boot, and this check does not count it as a limit.
   const allowed = parseAllowedEmails(value(env, 'AUTH_ALLOWED_EMAILS') ?? '').entries.length > 0;
   add(
     'Sign-up limited',
