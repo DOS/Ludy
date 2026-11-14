@@ -32,13 +32,16 @@ const suite = ADMIN ? describe : describe.skip;
 
 // Every query an MCP grant may run, with its scope. Adding one is a security change: read what it returns first, and keep member-private data out.
 const REACHABLE = ['kernel.mcp.about:ludy.read', 'kernel.mcp.parties:ludy.read', 'finance.mcp.invoices:ludy.read'];
-// The cross-app signals (Vy V4 and V5, #2967 and #2969) may join the set, each one when its line has reviewed what it returns: the three kernel rules and the six line reads they
+// The cross-app signals (Vy V4 and V5, #2967 and #2969) may join the set, each one when its line has reviewed what it returns: the kernel rules and the line reads they
 // call (a query run inside a query keeps the caller's identity, so a rule over MCP needs every read it calls to declare the scope as well). They are optional here so each can land
 // on its own; a name outside this list still fails, and so does a missing name of REACHABLE.
 const SIGNALS = [
   'kernel.signals.deal_without_invoice:ludy.read',
   'kernel.signals.receivable_with_open_deal:ludy.read',
   'kernel.signals.supplier_bank_changed:ludy.read',
+  // The fourth rule (#3124): a customer conversation unanswered past its reply window on an open deal. Its conversation read declares no scope on purpose: conversations are not in the reach of a
+  // grant, so over MCP the read refuses and the rule reports `not_available`, never an empty "all clear".
+  'kernel.signals.conversation_unanswered:ludy.read',
   'finance.signals.sales:ludy.read',
   'finance.signals.overdue_receivables:ludy.read',
   'finance.signals.supplier_bank_changes:ludy.read',
