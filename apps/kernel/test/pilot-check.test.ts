@@ -258,6 +258,9 @@ describe('pilot-check settings', () => {
     expect(failing(own).some((p) => p.startsWith('Sign-up limited'))).toBe(true);
     // A list that parses to nobody limits nothing.
     expect(failing({ ...own, AUTH_ALLOWED_EMAILS: ', ,' }).some((p) => p.startsWith('Sign-up limited'))).toBe(true);
+    // An absent AUTH_UPSTREAM_URL line is compose's default, the bundled Supabase Auth: a stray PUBLIC_AUTH_URL does not make it a provider of its own.
+    const { AUTH_UPSTREAM_URL: _absent, ...stray } = own;
+    expect(failing({ ...stray, AUTH_ALLOWED_EMAILS: 'owner@example.test' }).some((p) => p.startsWith('Sign-up limited'))).toBe(true);
     // With the bundled Supabase Auth the list does not close its sign-up: the old rule stands.
     expect(failing({ ...READY, AUTH_DISABLE_SIGNUP: undefined, AUTH_ALLOWED_EMAILS: 'owner@example.test' }).some((p) => p.startsWith('Sign-up limited'))).toBe(true);
   });

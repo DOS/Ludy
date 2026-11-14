@@ -102,6 +102,8 @@ describe('AUTH_ALLOWED_EMAILS', () => {
   it('fails the boot on an entry that is neither an address nor an @domain', () => {
     expect(() => loadConfig({ ...BASE_ENV, AUTH_ALLOWED_EMAILS: 'owner@example.test, example.org' })).toThrow(/AUTH_ALLOWED_EMAILS/);
     expect(loadConfig({ ...BASE_ENV, AUTH_ALLOWED_EMAILS: ' ' }).AUTH_ALLOWED_EMAILS).toEqual([]);
+    // Set but listing nobody does not mean "everyone": the boot stops.
+    for (const empty of [',', ', ,', ' , ']) expect(() => loadConfig({ ...BASE_ENV, AUTH_ALLOWED_EMAILS: empty }), empty).toThrow(/lists no address/);
     expect(loadConfig(BASE_ENV).AUTH_ALLOWED_EMAILS).toEqual([]);
   });
 

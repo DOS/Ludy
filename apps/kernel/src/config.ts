@@ -228,6 +228,11 @@ const schema = z.object({
       ctx.addIssue({ code: 'custom', message: `not an email address or @domain: ${invalid.join(', ')}` });
       return z.NEVER;
     }
+    // Set but listing nobody (`,` or an empty variable in a template) would read as no limit: fail closed instead.
+    if (entries.length === 0) {
+      ctx.addIssue({ code: 'custom', message: 'lists no address or @domain; unset it to allow every account' });
+      return z.NEVER;
+    }
     return entries;
   }),
   // Policy P11: R3 needs MFA in the last 5 minutes. off is accepted on local URLs only.

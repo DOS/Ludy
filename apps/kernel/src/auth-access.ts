@@ -14,7 +14,8 @@
 // given: a Ludy extension token, an MCP grant (neither carries an email) and an open /api/stream connection. Taking
 // someone away also means disabling the account or removing them from the org (docs/runbooks/pilot-sign-in-with-dos-id.md). The check reads the email of the verified token, so it is only as strong as the
 // provider's promise that it issues tokens for confirmed addresses (the provider must require email confirmation);
-// a token that says its email is not verified (`user_metadata.email_verified` is false) is refused too.
+// a token that says its email is not verified (`user_metadata.email_verified` is false) is refused too (a courtesy, not a
+// boundary: Supabase Auth lets the user write `user_metadata`, so only the provider's email confirmation is one).
 import { DomainError } from '@crove/kernel-runtime';
 
 const LOCAL_PART = /^[a-z0-9][a-z0-9._%+-]{0,63}$/;

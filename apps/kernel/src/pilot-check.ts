@@ -328,7 +328,8 @@ export function checkEnv(env: Env): CheckResult[] {
   const restricted = policy === 'invite_only' || (policy === 'allowlist' && domains !== undefined);
   // A provider of the deployment's own (no bundled Supabase Auth, #2704): sign-up there is not Crove's to close; what Crove can
   // limit is who may use this deployment, AUTH_ALLOWED_EMAILS.
-  const ownProvider = value(env, 'AUTH_UPSTREAM_URL') === undefined && value(env, 'PUBLIC_AUTH_URL') !== undefined;
+  // The upstream line must be present and empty: an absent line is compose's default, the bundled Supabase Auth.
+  const ownProvider = env['AUTH_UPSTREAM_URL'] !== undefined && env['AUTH_UPSTREAM_URL'].trim() === '' && value(env, 'PUBLIC_AUTH_URL') !== undefined;
   // An empty parse (`, ,`) lists nobody, which the kernel reads as no limit.
   const allowed = parseAllowedEmails(value(env, 'AUTH_ALLOWED_EMAILS') ?? '').entries.length > 0;
   add(

@@ -141,6 +141,8 @@ sign-in API), you can sign people in there instead (ADR-0027, ADR-0028). Set, in
 | `AUTH_ALLOWED_EMAILS` | who may use this deployment: exact addresses and `@domain` entries. Without it every account of that provider can sign in here and create orgs |
 | `AUTH_SIGNUP_POLICY` | leave unset: sign-up is the provider's to restrict |
 
+An upgrade note: compose now reads `AUTH_ISSUER`, `AUTH_SESSION_CHECK`, `AUTH_JWKS_URL`, `PUBLIC_AUTH_URL`, `PUBLIC_AUTH_ANON_KEY` and `AUTH_UPSTREAM_URL` from `.env` (before, it fixed the bundled Supabase Auth and ignored them), so a stray line of those in an existing `.env` now takes effect.
+
 The provider must require email confirmation: Ludy identifies members by the `email` of the token. A token whose
 `user_metadata.email_verified` is `false` is refused when `AUTH_ALLOWED_EMAILS` is set. A web app served from another
 origin also needs `VITE_AUTH_URL` at build time (`apps/app/vite-csp.ts`), so its policy lets the browser reach that
