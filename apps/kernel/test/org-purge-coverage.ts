@@ -53,6 +53,7 @@ export const KEPT: Readonly<Record<string, string>> = {
   'crove_finance.stock_period': 'the months of the stock book that were closed, and the voucher that posted their cost: part of the books (#2513)',
   'crove_finance.stock_period_item': 'what a closed month held of each item, the figures the cost of goods sold was posted from (#2513)',
   'crove_finance.legal_entity_books': "each entity's accounting regime, which the kept entries were booked under (#1403)",
+  'crove_finance.household_profile': "a household business's tax group and PIT method, and the representative who signs its books: the books of Circular 152 are views over the kept ledger through this profile, so it stays with the accounting records (#2517)",
 };
 
 export type PurgeCatalog = {

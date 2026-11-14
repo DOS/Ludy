@@ -397,6 +397,7 @@ import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoi
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
 import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsFlag, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsCapLowerCall, zAdsChangeRequest, zAdsFlagSettingCall, zAdsFlagSettings, zAdsProposalView, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView, zAdsWeeklyNote, zAdsWriteState } from './ads.ts';
 import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView, zAdsCampaignRequestAsked, zAdsCampaignRequestCall, zAdsCampaignRequestView, zAdsLaunchCancelCall, zAdsLaunchRetryCall, zAdsLaunchStopCall } from './ads-campaign.ts';
+import { zHouseholdProfileGet, zHouseholdProfileSet, zHouseholdProfileView, zHouseholdRules, zHouseholdRulesGet } from './household.ts';
 import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankPayrollExplainAsk, zBankPayrollExplanation, zBankPayrollMatch, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
@@ -1934,6 +1935,13 @@ export const contract = {
   // admins, members; R2, a mail): queues the reminder the person approved, its facts rebuilt from the books; STALE_REMINDER (409) when the
   // level or total moved since the draft, CUSTOMER_EMAIL_REQUIRED (409), ALREADY_REMINDED (409) for a second one of the level within three days
   // unless confirm is true, PAY_TO_NOT_FOUND (422).
+  // The household business kind (#2517, plan stock-and-marketplaces.md 8.5): the profile of a legal entity of kind household and the law as dated data. Every role reads;
+  // owners and admins set a new row from a date (R1, audited). A row of the law that is still `commentary` is marked so in the answer.
+  household: {
+    profile: oc.input(zHouseholdProfileGet).output(zHouseholdProfileView),
+    profileSet: oc.input(zHouseholdProfileSet).output(zHouseholdProfileView),
+    rules: oc.input(zHouseholdRulesGet.optional()).output(zHouseholdRules),
+  },
   paymentReminders: {
     list: oc.input(z.object({ legalEntityId: zId.optional() }).optional()).output(zPaymentReminderList),
     draft: oc.input(z.object({ partyId: zId, legalEntityId: zId.optional() })).output(zPaymentReminderDraft),
