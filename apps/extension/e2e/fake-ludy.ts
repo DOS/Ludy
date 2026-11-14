@@ -22,6 +22,8 @@ export interface FakeLudy {
   uploads: Upload[];
   features: { meetings: boolean };
   failUploads: boolean;
+  // A strict org (A2, #3160): a meeting whose consent method is not written is refused with 422 CONSENT_METHOD_NOT_ALLOWED.
+  strict: boolean;
   // When set, /api/extension/me answers 302 to this address (a misconfigured proxy).
   redirectMeTo: string | null;
   close(): Promise<void>;
@@ -35,7 +37,7 @@ const read = (req: IncomingMessage): Promise<Buffer> =>
   });
 
 export async function startFakeLudy(): Promise<FakeLudy> {
-  const fake: FakeLudy = { origin: '', requests: [], exchanges: [], created: [], uploads: [], features: { meetings: true }, failUploads: false, redirectMeTo: null, close: async () => undefined };
+  const fake: FakeLudy = { origin: '', requests: [], exchanges: [], created: [], uploads: [], features: { meetings: true }, failUploads: false, strict: false, redirectMeTo: null, close: async () => undefined };
   const server: Server = createServer((req, res) => {
     void (async () => {
       const path = new URL(req.url ?? '/', 'http://x').pathname;
@@ -56,7 +58,9 @@ export async function startFakeLudy(): Promise<FakeLudy> {
         return json({ tokenId: 't1', orgId: 'org1', scopes: ['meetings'], expiresAt: '2027-01-01T00:00:00.000Z', features: { meetings: fake.features.meetings } });
       }
       if (path === '/api/rpc/meetings/create') {
-        fake.created.push((JSON.parse(body.toString()) as { json: Record<string, unknown> }).json);
+        const input = (JSON.parse(body.toString()) as { json: Record<string, unknown> }).json;
+        if (fake.strict && input.consentMethod === 'told_at_start') return json({ code: 'CONSENT_METHOD_NOT_ALLOWED', message: 'written only' }, 422);
+        fake.created.push(input);
         return json({ json: { meetingId: '11111111-1111-4111-8111-111111111111' } });
       }
       const media = /^\/api\/meetings\/([0-9a-f-]{36})\/media$/.exec(path);

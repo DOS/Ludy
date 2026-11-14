@@ -279,6 +279,21 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     });
     expect(refused).toMatch(/MEETING_SETTINGS_FORBIDDEN/);
     expect((await rpc('meetings/settings/get', 'owner', {})).body.textRetentionDays).toBe(365);
+    // The consent policy has the same guard (A2, #3160): the system context cannot change it either.
+    const policyRefused = await withWorker(async (c) => {
+      await c.query('BEGIN');
+      try {
+        await c.query('SELECT crove_kernel.enter_system_context($1)', [orgId]);
+        await c.query("UPDATE crove_kernel.tenant SET meeting_consent_policy = 'strict' WHERE org_id = $1", [orgId]);
+        return 'changed';
+      } catch (error) {
+        return (error as Error).message;
+      } finally {
+        await c.query('ROLLBACK');
+      }
+    });
+    expect(policyRefused).toMatch(/MEETING_CONSENT_POLICY_FORBIDDEN/);
+    expect((await rpc('meetings/consentPolicy/get', 'owner', {})).body.policy).toBe('standard');
   });
 
   it('shreds the audio key at its date: the audio does not decrypt, its rows go, the sweep removes the object and the file row, the video and the text stay', async () => {

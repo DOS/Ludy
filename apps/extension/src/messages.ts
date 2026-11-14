@@ -47,7 +47,7 @@ export function parseTick(raw: unknown): Tick | null {
   return typeof elapsedMs === 'number' && Number.isFinite(elapsedMs) && elapsedMs >= 0 ? { type: 'tick', elapsedMs } : null;
 }
 
-export type StartFailure = 'invalid' | 'title' | 'consentMethod' | 'consentAgreed' | 'permission' | 'busy' | 'signedOut' | 'device' | 'store' | 'setup';
+export type StartFailure = 'invalid' | 'title' | 'consentMethod' | 'consentAgreed' | 'consentPolicy' | 'permission' | 'busy' | 'signedOut' | 'device' | 'store' | 'setup';
 export type StartReply = { ok: true; meetingId: string; startedAt: number; micMissing: boolean } | { ok: false; reason: StartFailure };
 export type StopReply = { ok: true; uploaded: boolean; meetingId: string; message?: string } | { ok: false; reason: 'idle' };
 

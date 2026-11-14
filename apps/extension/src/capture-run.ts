@@ -19,7 +19,7 @@ import {
   type RecordingMeta,
 } from '@crove/meeting-recorder';
 import { capturePlan } from './capture-plan.ts';
-import { createClient, type Client } from './api.ts';
+import { createClient, LudyError, type Client } from './api.ts';
 import { consentBlocker, type ConsentMethod } from './consent.ts';
 
 export interface CaptureParams {
@@ -54,7 +54,8 @@ export const browserDeps = (): CaptureDeps => ({
   now: () => Date.now(),
 });
 
-export type Failure = 'title' | 'consentMethod' | 'consentAgreed' | 'device' | 'store' | 'setup';
+// 'consentPolicy': the org is strict and refused the method (A2, #3160).
+export type Failure = 'title' | 'consentMethod' | 'consentAgreed' | 'consentPolicy' | 'device' | 'store' | 'setup';
 
 export interface Running {
   meetingId: string;
@@ -128,6 +129,7 @@ export async function startCapture(params: CaptureParams, deps: CaptureDeps = br
   });
   if (prepared.status !== 'ready') {
     for (const cleanup of cleanups) cleanup();
+    if (prepared.status === 'failed' && prepared.reason === 'setup' && prepared.error instanceof LudyError && prepared.error.code === 'CONSENT_METHOD_NOT_ALLOWED') return { ok: false, reason: 'consentPolicy' };
     return { ok: false, reason: prepared.status === 'aborted' ? 'setup' : prepared.reason };
   }
   const { recorder, writer, stream } = prepared;

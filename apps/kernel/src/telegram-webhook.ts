@@ -9,7 +9,7 @@
 // the table deletes it the moment it is stored. A verified update with no customer message in it (an edit, a group) is answered 200 and not parked,
 // so Telegram stops sending it and the queue holds messages only.
 import { sql } from 'kysely';
-import { TELEGRAM_HOOK_PATTERN, telegramChatEvents, telegramHookSecretOk, wrapTelegramChatNotice } from '@crove/channel';
+import { TELEGRAM_HOOK_PATTERN, telegramBusinessState, telegramChatEvents, telegramHookSecretOk, wrapTelegramChatNotice } from '@crove/channel';
 import { DomainError, type Runtime } from '@crove/kernel-runtime';
 
 export const TELEGRAM_WEBHOOK_PATH = '/api/channels/telegram/webhook/:hook';
@@ -94,10 +94,18 @@ export async function acceptTelegramWebhook(
   // Only the messages of the customer not yet seen and not too old are worth a place in the queue.
   const keys: string[] = [];
   for (const event of telegramChatEvents(update)) {
-    if (now - Date.parse(event.at) > TELEGRAM_NOTICE_MAX_AGE_MS) continue;
-    const key = `${request.hook}:${event.threadId}:${event.messageId}`;
+    // A removal carries no date of its own (it is dated at the earliest instant an event may have, so an erased customer is not brought back by it), and an
+    // edit carries the message's first date, not the edit's: the age of a message does not apply to either. The message id names its chat, so the key is the
+    // hook and the id.
+    if (!event.removed && !event.edited && now - Date.parse(event.at) > TELEGRAM_NOTICE_MAX_AGE_MS) continue;
+    // An edit repeats a message id on purpose (each edit is its own update), so it is told apart by the update's id.
+    const key = event.edited ? `${request.hook}:update:${(update as { update_id: number }).update_id}` : `${request.hook}:${event.removed ? 'removed:' : ''}${event.messageId}`;
     if (!replays?.has(key)) keys.push(key);
   }
+  // A `business_connection` update (a business account connected the bot, edited it or took it away, #3191) carries no message but is state the worker
+  // records: it is parked once per update id, so a redelivery is answered without being parked again.
+  const stateKey = telegramBusinessState(update) !== null ? `${request.hook}:update:${(update as { update_id: number }).update_id}` : null;
+  if (stateKey !== null && !replays?.has(stateKey)) keys.push(stateKey);
   if (keys.length === 0) return { status: 200, parked: false };
   try {
     await runtime.orgless(async (db) => {
