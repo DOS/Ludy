@@ -13,11 +13,11 @@ import { z } from 'zod';
 import { zTodayItem, type TodayItem } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineQuery } from '@crove/kernel-runtime';
-import { checkDealWithoutInvoice, checkReceivableWithOpenDeal, checkSupplierBankChanged, type RuleCheck } from './signals.ts';
+import { checkConversationUnanswered, checkDealWithoutInvoice, checkReceivableWithOpenDeal, checkSupplierBankChanged, type RuleCheck } from './signals.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 
-export const SIGNAL_RULE_KEYS = ['deal_without_invoice', 'receivable_with_open_deal', 'supplier_bank_changed'] as const;
+export const SIGNAL_RULE_KEYS = ['deal_without_invoice', 'receivable_with_open_deal', 'supplier_bank_changed', 'conversation_unanswered'] as const;
 export type SignalRuleKey = (typeof SIGNAL_RULE_KEYS)[number];
 export type SignalUncheckedReason = 'partial_view' | 'not_available';
 
@@ -39,6 +39,7 @@ export const mcpSignals = defineQuery({
       ['deal_without_invoice', () => checkDealWithoutInvoice(ctx)],
       ['receivable_with_open_deal', () => checkReceivableWithOpenDeal(ctx)],
       ['supplier_bank_changed', () => checkSupplierBankChanged(ctx)],
+      ['conversation_unanswered', () => checkConversationUnanswered(ctx)],
     ];
     const out: McpSignals = { items: [], checked: [], unchecked: [] };
     for (const [rule, run] of runs) {

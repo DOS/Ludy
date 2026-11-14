@@ -578,12 +578,12 @@ function toolsFor(runtime: Runtime, actor: UserActor, orgId: string): ToolDescri
               required: ['kind', 'app', 'id', 'title', 'href'],
             },
           },
-          checked: { type: 'array', items: { enum: ['deal_without_invoice', 'receivable_with_open_deal', 'supplier_bank_changed'] } },
+          checked: { type: 'array', items: { enum: ['deal_without_invoice', 'receivable_with_open_deal', 'supplier_bank_changed', 'conversation_unanswered'] } },
           unchecked: {
             type: 'array',
             items: {
               type: 'object',
-              properties: { rule: { enum: ['deal_without_invoice', 'receivable_with_open_deal', 'supplier_bank_changed'] }, reason: { enum: ['partial_view', 'not_available'] } },
+              properties: { rule: { enum: ['deal_without_invoice', 'receivable_with_open_deal', 'supplier_bank_changed', 'conversation_unanswered'] }, reason: { enum: ['partial_view', 'not_available'] } },
               required: ['rule', 'reason'],
             },
           },

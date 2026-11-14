@@ -10,6 +10,10 @@
 // supplier's bank account changed while a payment to that supplier is waiting (`kernel.signals.supplier_bank_changed`, severity `block`, which is never dropped
 // silently: see its comment).
 //
+// Rule 4 (#3124) adds the fourth: a customer conversation unanswered past its reply window (24 hours) whose contact has an open deal (`kernel.signals.conversation_unanswered`).
+// The inbox answers `kernel.conversation.signals_unanswered` (ids and a moment, no text) and the CRM's open deals are the other side. It is the one rule that cannot run for an AI app's grant
+// (conversations are outside a grant's reach), so there it is `not_available`, never an empty "all clear".
+//
 // Fail closed: with no answer from either side (its read is not registered yet, its module is off, it refuses the member's role, or its answer does
 // not match the contract) the rule shows nothing. A member who cannot read the invoices gets no item, never one claiming "no invoice" because it could
 // not look. Nothing is written, no model is called, and no text crosses: the item is a message key with a number of days, the deal's amount and a link.
@@ -17,6 +21,8 @@ import { z } from 'zod';
 import {
   CRM_OPEN_DEALS_SIGNALS_READ,
   CRM_WON_DEALS_SIGNALS_READ,
+  CONVERSATION_REPLY_WINDOW_HOURS,
+  CONVERSATION_UNANSWERED_SIGNALS_READ,
   FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ,
   FINANCE_SALES_SIGNALS_READ,
   FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ,
@@ -28,6 +34,7 @@ import {
   vietnamToday,
   zCrmOpenDealSignals,
   zCrmWonDealSignals,
+  zConversationUnansweredSignals,
   zFinanceOverdueReceivableSignals,
   zFinanceSalesSignals,
   zFinanceSupplierBankChangeSignals,
@@ -39,12 +46,14 @@ import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runti
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const DAY_MS = 86_400_000;
+const HOUR_MS = 3_600_000;
 // Items one read lists; the rest are one grouped item with their count (a read groups before it lists).
 export const SIGNAL_ITEMS_MAX = 20;
 
 export const DEAL_WITHOUT_INVOICE_READ = 'kernel.signals.deal_without_invoice';
 export const RECEIVABLE_WITH_OPEN_DEAL_READ = 'kernel.signals.receivable_with_open_deal';
 export const SUPPLIER_BANK_CHANGED_READ = 'kernel.signals.supplier_bank_changed';
+export const CONVERSATION_UNANSWERED_READ = 'kernel.signals.conversation_unanswered';
 
 // The start (Vietnam time) of the day a win turns 7 days old.
 const dueAt = (wonOn: string): string => `${new Date(Date.parse(`${wonOn}T00:00:00Z`) + WON_DEAL_NO_INVOICE_DAYS * DAY_MS).toISOString().slice(0, 10)}T00:00:00+07:00`;
@@ -252,5 +261,54 @@ export function supplierBankChangedQuery(options: { now?: () => Date; log?: Pick
     // An AI app the owner or an admin connected may run this rule (ADR-0051, #2975, step S3): it only joins the signals reads, each of which declares the scope too, and returns ids, days and amounts as message keys.
     mcp: { scope: 'ludy.read' },
     handler: async (ctx): Promise<TodayItem[]> => (await checkSupplierBankChanged(ctx, options)).items,
+  });
+}
+
+// Rule 4 (#3124): a customer conversation unanswered past its reply window, on an open deal. Engage's open deals give the parties; the inbox is asked about those parties only and
+// answers, for each, the thread that has waited longest and since when. One flag per contact (a contact with several open deals or threads is one item), `dueAt` the moment the wait
+// crossed the window so the longest wait comes first on Home, and a link to that thread in Hộp thư. The item carries a key and a number of hours: no message, no name, no channel.
+//
+// It never looks at the inbox for an AI app's grant (its context reads no conversation), and a thread the member may not read is not listed by the inbox read, so no item can come from
+// one. A line with no answer (not registered, off, refusing, outside its contract) gives no item and a status that says it could not check.
+export async function checkConversationUnanswered(ctx: QueryContext, now?: () => Date): Promise<RuleCheck> {
+  if (ctx.actor.type === 'user' && ctx.actor.mcp !== undefined) return { items: [], status: 'unavailable' };
+  const deals = await readSignals(ctx, CRM_OPEN_DEALS_SIGNALS_READ, zCrmOpenDealSignals);
+  if (deals.status !== 'ok') return { items: [], status: statusOf(deals) };
+  if (deals.rows.length === 0) return { items: [], status: 'ok' };
+  const partyIds = [...new Set(deals.rows.map((d) => d.partyId))];
+  const waiting = await readSignals(ctx, CONVERSATION_UNANSWERED_SIGNALS_READ, zConversationUnansweredSignals, { partyIds });
+  if (waiting.status !== 'ok') return { items: [], status: statusOf(waiting) };
+  const nowMs = (now?.() ?? new Date()).getTime();
+  const wanted = new Set(partyIds);
+  const due = waiting.rows
+    .filter((r) => wanted.has(r.partyId))
+    .map((r) => ({ ...r, sinceMs: Date.parse(r.since) }))
+    // Waited at least the whole window. A moment in the future (a clock a little ahead) never fires.
+    .filter((r) => nowMs - r.sinceMs >= CONVERSATION_REPLY_WINDOW_HOURS * HOUR_MS)
+    .sort((a, b) => a.sinceMs - b.sinceMs || (a.partyId < b.partyId ? -1 : 1));
+  const items: TodayItem[] = due.slice(0, SIGNAL_ITEMS_MAX).map((r) => ({
+    kind: 'flag',
+    app: 'conversations',
+    id: `signal:conversation-unanswered:${r.partyId}`,
+    title: { key: 'signals.conversationUnanswered', params: { hours: Math.floor((nowMs - r.sinceMs) / HOUR_MS) } },
+    severity: 'warn',
+    dueAt: new Date(r.sinceMs + CONVERSATION_REPLY_WINDOW_HOURS * HOUR_MS).toISOString(),
+    href: `/social/inbox?c=${r.conversationId}`,
+  }));
+  const rest = due.length - items.length;
+  if (rest > 0) {
+    items.push({ kind: 'flag', app: 'conversations', id: 'signal:conversation-unanswered:more', title: { key: 'signals.conversationUnansweredMore', params: { count: rest } }, count: rest, severity: 'warn', href: '/social/inbox?status=new' });
+  }
+  return { items, status: 'ok' };
+}
+
+export function conversationUnansweredQuery(options: { now?: () => Date } = {}) {
+  return defineQuery({
+    name: CONVERSATION_UNANSWERED_READ,
+    input: z.strictObject({}),
+    access: ALL,
+    // Declared to an AI app like the other rules (ADR-0051, #2975): it only joins two reads and returns message keys, ids and hours. For a grant it answers nothing and ludy_signals names it unchecked.
+    mcp: { scope: 'ludy.read' },
+    handler: async (ctx): Promise<TodayItem[]> => (await checkConversationUnanswered(ctx, options.now)).items,
   });
 }

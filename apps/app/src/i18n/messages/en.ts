@@ -193,6 +193,8 @@ export const en = {
         supplierBankChangedMore: '{count, plural, one {# more supplier} other {# more suppliers}} changed a bank account and have a payment waiting',
         supplierBankChangedUnchecked: '{count, plural, one {# supplier} other {# suppliers}} changed a bank account recently; their waiting payments could not be checked, look before paying',
         supplierBankChangedPartial: 'You can see only part of the supplier data, so bank account changes could not be fully checked: look at the waiting payments yourself before paying',
+        conversationUnanswered: 'This customer wrote {hours, plural, one {# hour} other {# hours}} ago and has had no answer, and still has an open deal',
+        conversationUnansweredMore: '{count, plural, one {# more customer has} other {# more customers have}} waited over 24 hours for an answer and still have an open deal',
       },
       crm: {
         noActivity: 'Reminder: this deal has had no update for {days, plural, one {# day} other {# days}}',
@@ -10944,6 +10946,7 @@ export const en = {
         composing: 'Mark that I am replying to a conversation',
         set_availability: 'Set myself available or away for new conversations',
         set_intent: 'Apply, change or clear the intent of a conversation',
+        signals_unanswered: 'Read which customers have waited for an answer, by id and since when (no message text)',
         intent_source: 'Read the customer’s words to suggest an intent',
         contact_candidates: 'Find contacts this customer may be',
         today: 'Read the conversations waiting for you today',
@@ -11232,6 +11235,7 @@ export const en = {
         deal_without_invoice: 'Read the won deals that have no sales invoice',
         receivable_with_open_deal: 'Read the customers with an overdue receivable and an open deal',
         supplier_bank_changed: 'Read the suppliers that changed a bank account while a payment is waiting',
+        conversation_unanswered: 'Read the customers who wrote over 24 hours ago, have had no answer and still have an open deal',
       },
       subject_key: {
         reseal: 'Wrap subject keys again under the current key after a key rotation',
