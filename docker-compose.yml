@@ -134,6 +134,10 @@ services:
       AUTH_ALLOWED_EMAILS: ${AUTH_ALLOWED_EMAILS:-}
       # Sign-in buttons besides email and password: provider ids the identity provider has enabled (google,github).
       AUTH_OAUTH_PROVIDERS: ${AUTH_OAUTH_PROVIDERS:-}
+      # The identity provider's hosted login page and the endpoint that redeems its one-time code (docs/contracts/hosted-login.md); both or neither.
+      AUTH_HOSTED_LOGIN_URL: ${AUTH_HOSTED_LOGIN_URL:-}
+      AUTH_HOSTED_LOGIN_TOKEN_URL: ${AUTH_HOSTED_LOGIN_TOKEN_URL:-}
+      AUTH_HOSTED_LOGIN_NAME: ${AUTH_HOSTED_LOGIN_NAME:-}
       # R3 (approve, membership changes) needs MFA in the last 5 minutes; the app asks for a code, or to enable
       # two-factor first. off is accepted on localhost only.
       AUTH_STEP_UP: ${AUTH_STEP_UP:-required}
