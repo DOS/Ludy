@@ -6106,7 +6106,7 @@ export const en = {
     allow: 'Allow “{client}” to read the data of {org}',
     approve: 'Allow',
     deny: 'Do not allow',
-    scope: { read: 'Read only: the app cannot write, edit, send a message or spend money. But it sees the details of your customers, suppliers and other contacts (including people who filled in a public booking form), including their names, emails, phone numbers, addresses and tax codes, and the details of your invoices (who it is with, the amounts, each line’s description, why one was voided). That information leaves Ludy and is kept and processed by that AI app’s provider under its own terms: allow only an app you trust.' },
+    scope: { read: 'Read only: the app cannot write, edit, send a message or spend money. But it sees the details of your customers, suppliers and other contacts (including people who filled in a public booking form), including their names, emails, phone numbers, addresses and tax codes, and the details of your invoices (who it is with, the amounts, each line’s description, why one was voided), and your organization’s Social posts (their text, titles and links, the channels’ names, each channel’s status and planned time, and what waits for review). That information leaves Ludy and is kept and processed by that AI app’s provider under its own terms: allow only an app you trust.' },
     limits: 'The app works with your rights in this organization and only reads. An owner or admin can cut it off at once in Settings.',
     actsAs: 'Not part of this permission: salaries, separately stored bank account data, and what is private to one person (personal notes, private results). Note: if someone typed an account number into an invoice line description or a void reason, the app can read it, because that is free text.',
     revokeHint: 'The permission lasts {days, number} days at most. You can disconnect it any time in Settings, under connected AI apps; the organization’s Stop AI switch cuts it at once too.',
@@ -11565,6 +11565,10 @@ export const en = {
       },
       links: {
         revoke_for_member: 'Revoke the links of a member who lost access',
+      },
+      mcp: {
+        posts: 'Let an AI app list the Social posts',
+        review_queue: 'Let an AI app read the Social review queue',
       },
       media: {
         archive: 'Archive a library file',
