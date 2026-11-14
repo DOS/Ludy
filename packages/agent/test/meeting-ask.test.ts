@@ -93,7 +93,7 @@ describe('checkSentence', () => {
 describe('hasBareLink', () => {
   it('finds a host with a common top-level domain, with or without a path, in brackets or after a comma, and not a word that only has a full stop in it', () => {
     for (const text of ['evil.com/pay', 'Xem evil.com', '(bit.ly/abc)', 'tại shop.example.vn/gio-hang,', 'Trang SHOP.COM.VN.']) expect(hasBareLink(text), text).toBe(true);
-    for (const text of ['mail ai@x.io', 'Tp.HCM', 'số 1.250.000', 'v1.2', 'xong.Tiếp theo', 'a.m. và p.m.', 'Hà Nội.', '14.11.2026', 'ví dụ: gia.đình']) expect(hasBareLink(text), text).toBe(false);
+    for (const text of ['mail an@congty.example', 'Tp.HCM', 'số 1.250.000', 'v1.2', 'xong.Tiếp theo', 'a.m. và p.m.', 'Hà Nội.', '14.11.2026', 'ví dụ: gia.đình']) expect(hasBareLink(text), text).toBe(false);
   });
 });
 
