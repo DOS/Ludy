@@ -111,6 +111,9 @@ function inboundRotateLimited(detail: string | undefined): DomainError {
 }
 
 // Maps database errors to domain errors without leaking whether other tenants' rows exist.
+// The rule the runtime names when an MCP grant is refused for a scope it does not hold (runtime.ts authorizeMcp says the same).
+const MCP_SCOPE_RULE = 'mcp_scope';
+
 export function toDomainError(error: unknown): DomainError {
   if (error instanceof DomainError) return error;
   const pg = error as PgLikeError;
@@ -157,7 +160,7 @@ export function toDomainError(error: unknown): DomainError {
       }
       // crove_kernel.enter_mcp_company_draft_context (#3227): the grant does not hold the write scope the command declares (the runtime checks it first, so this is the database agreeing).
       if (pg.message === 'MCP_GRANT_SCOPE') {
-        return new DomainError('FORBIDDEN', 403, 'Quyền kết nối MCP không được thực hiện việc này', { rule: 'mcp_scope' });
+        return new DomainError('FORBIDDEN', 403, 'Quyền kết nối MCP không được thực hiện việc này', { rule: MCP_SCOPE_RULE });
       }
       // A second enter_context in one transaction (plan §4.5 item 1): a bug in the caller, never a user's 403.
       if (pg.message?.includes('CONTEXT_REENTRY')) return new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
