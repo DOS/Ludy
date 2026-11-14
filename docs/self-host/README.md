@@ -139,6 +139,7 @@ sign-in API), you can sign people in there instead (ADR-0027, ADR-0028). Set, in
 | `AUTH_SESSION_CHECK` | `jwt` |
 | `AUTH_UPSTREAM_URL` | empty (`AUTH_UPSTREAM_URL=`): no bundled proxy. Unset means the bundled Supabase Auth |
 | `AUTH_ALLOWED_EMAILS` | who may use this deployment: exact addresses and `@domain` entries. Without it every account of that provider can sign in here and create orgs |
+| `AUTH_HOSTED_LOGIN_URL`, `AUTH_HOSTED_LOGIN_TOKEN_URL`, `AUTH_HOSTED_LOGIN_NAME` | optional: the provider's own sign-in page and the endpoint that redeems its one-time code (PKCE) for a Supabase Auth session, with the words of the button. Both addresses or neither; the provider implements [the contract](../contracts/hosted-login.md) |
 | `AUTH_OAUTH_PROVIDERS` | optional: the provider ids it has enabled (`google,github`); each shows a "Continue with ..." button. The app signs in with standard Supabase OAuth (PKCE), so the provider's redirect URLs must allow your app's address. Every listed provider must issue verified emails. Behind the bundled Supabase Auth this needs `AUTH_SIGNUP_POLICY=open`, which opens self-sign-up for every method (the boot refuses it otherwise) |
 | `AUTH_SIGNUP_POLICY` | leave unset: sign-up is the provider's to restrict |
 

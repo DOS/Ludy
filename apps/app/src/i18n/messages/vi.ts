@@ -450,6 +450,7 @@ export const vi = {
     haveAccount: 'Đã có tài khoản? Đăng nhập',
     or: 'hoặc',
     continueWith: 'Tiếp tục với {provider}',
+    continueHosted: 'Tiếp tục với nhà cung cấp đăng nhập của bạn',
     emailRequired: 'Hãy nhập email.',
     emailInvalid: 'Email chưa đúng định dạng, ví dụ ten@congty.vn.',
     passwordRequired: 'Hãy nhập mật khẩu.',
@@ -478,6 +479,7 @@ export const vi = {
       oauth_provider_not_supported: 'Máy chủ này chưa hỗ trợ cách đăng nhập này.',
       bad_oauth_callback: 'Chưa đăng nhập xong. Hãy thử lại.',
       bad_oauth_state: 'Chưa đăng nhập xong. Hãy thử lại.',
+      hosted_login_failed: 'Chưa đăng nhập xong. Hãy bắt đầu lại từ màn hình đăng nhập.',
     },
   },
   legal: {

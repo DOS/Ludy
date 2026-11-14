@@ -4,6 +4,7 @@ import { EXTRACT_TIMING } from '@crove/extract-contract';
 import { zExtensionId } from '@crove/kernel-contract';
 import type { UsageLimits } from '@crove/kernel';
 import { parseAllowedEmails } from './auth-access.ts';
+import { checkHostedLoginUrl, hostedLoginName } from './auth-hosted-login.ts';
 import { MAX_OAUTH_PROVIDERS, parseOauthProviders } from './auth-oauth-providers.ts';
 import { SIGNUP_POLICIES, parseAllowedDomains } from './auth-signup-policy.ts';
 import { WEBHOOK_ENV } from './alert.ts';
@@ -247,6 +248,12 @@ const schema = z.object({
     }
     return providers;
   }),
+  // The identity provider's hosted login page (issue #2704, auth-hosted-login.ts, docs/contracts/hosted-login.md): the page the
+  // app sends the browser to, the endpoint it redeems the returned one-time code at (PKCE) for a Supabase Auth session, and the
+  // words on the button. Both addresses or neither; public addresses, no secret.
+  AUTH_HOSTED_LOGIN_URL: optional,
+  AUTH_HOSTED_LOGIN_TOKEN_URL: optional,
+  AUTH_HOSTED_LOGIN_NAME: optional,
   // Policy P11: R3 needs MFA in the last 5 minutes. off is accepted on local URLs only.
   AUTH_STEP_UP: z.enum(['required', 'off']).default('required'),
   // Mirrors GOTRUE_MAILER_AUTOCONFIRM so the kernel can refuse unsafe public deployments.
@@ -755,6 +762,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (!config.AUTH_JWT_SECRET && !config.AUTH_JWKS_URL) {
     throw new Error('set AUTH_JWT_SECRET (self-hosted Supabase Auth) or AUTH_JWKS_URL (hosted Supabase Auth)');
   }
+  if (Boolean(config.AUTH_HOSTED_LOGIN_URL) !== Boolean(config.AUTH_HOSTED_LOGIN_TOKEN_URL)) {
+    throw new Error('set both AUTH_HOSTED_LOGIN_URL and AUTH_HOSTED_LOGIN_TOKEN_URL, or neither');
+  }
+  for (const [name, value] of [['AUTH_HOSTED_LOGIN_URL', config.AUTH_HOSTED_LOGIN_URL], ['AUTH_HOSTED_LOGIN_TOKEN_URL', config.AUTH_HOSTED_LOGIN_TOKEN_URL]] as const) {
+    const problem = value === undefined ? null : checkHostedLoginUrl(name, value);
+    if (problem) throw new Error(problem);
+  }
+  if (config.AUTH_HOSTED_LOGIN_NAME !== undefined && hostedLoginName(config.AUTH_HOSTED_LOGIN_NAME) === null) {
+    throw new Error('AUTH_HOSTED_LOGIN_NAME is at most 40 characters, with no control characters, < or >');
+  }
   if (config.AUTH_JWT_SECRET && config.AUTH_JWT_SECRET.length < 32) {
     throw new Error('AUTH_JWT_SECRET must be at least 32 characters');
   }
@@ -981,6 +998,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     }
   }
   if (!isLocalUrl(config.PUBLIC_URL)) {
+    // A hosted login on this machine would send every visitor to their own localhost.
+    for (const [name, value] of [['AUTH_HOSTED_LOGIN_URL', config.AUTH_HOSTED_LOGIN_URL], ['AUTH_HOSTED_LOGIN_TOKEN_URL', config.AUTH_HOSTED_LOGIN_TOKEN_URL]] as const) {
+      if (value !== undefined && isLocalUrl(value)) throw new Error(`${name} is a localhost address on a public PUBLIC_URL; use the provider's https address`);
+    }
     if (config.CROVE_CONTEXT_TOKEN_KEY !== undefined) {
       // Compared as bytes, so the unpadded or base64url spelling of the test key is the test key too.
       const bytes = Buffer.from(config.CROVE_CONTEXT_TOKEN_KEY.trim(), 'base64');
