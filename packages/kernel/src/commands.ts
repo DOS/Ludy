@@ -105,6 +105,8 @@ const PROPOSAL_COMMANDS = new Set([
   'finance.marketplace_settlement.record',
   // The posting of a platform's payout (#2516): posts the settlement's money received, fees and withheld tax as a general journal voucher that names the settlement and the bank line.
   'finance.marketplace_payout.record',
+  // The clearing of the fees on 1388 by the platform's fee invoice (#2516): a general journal voucher Dr 331 / Cr 1388 that names the purchase document it clears.
+  'finance.marketplace_fee_clearing.record',
   // Running ads (ADR-0043 point 1, #2294): the commands that open the way to spend, none of which posts to the ledger.
   'ads.write.enable',
   'ads.account.enable_write',
