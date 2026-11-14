@@ -524,11 +524,17 @@ async function ownAgent(ctx: Pick<QueryContext, 'trx' | 'orgId'>, userId: string
   return row?.id ?? null;
 }
 
+// At most 1e9, six decimals (the cap the Platform PO asked for); anything else is refused by the input check.
+const PROJECTED_COST = z.string().regex(/^(?:\d{1,9}(?:\.\d{1,6})?|1000000000(?:\.0{1,6})?)$/);
+const ZERO_COST = /^0+(?:\.0+)?$/;
+
 export type MemberVyMeterCheck = { allowed: true } | { allowed: false; scope: 'org' | 'module' | 'agent'; retryAt: string };
 
 export const memberVyMeterCheck = defineQuery({
   name: 'kernel.member_vy.meter.check',
-  input: z.object({ feature: z.enum(FEATURE_KEYS) }),
+  // A call that knows its cost (a transcript translation chunk, #3185) also sends that `projectedCost`, and the check refuses it before the call is made when it would REACH a
+  // hard-stop budget: the rule of run.check below (spent + projected >= the limit), here for the member's own request. A missing or zero projection is the check as it was.
+  input: z.object({ feature: z.enum(FEATURE_KEYS), projectedCost: PROJECTED_COST.optional() }),
   access: MEMBER_ROLES,
   handler: async (ctx: QueryContext, input): Promise<MemberVyMeterCheck> => {
     const userId = requireUser(ctx);
@@ -547,11 +553,13 @@ export const memberVyMeterCheck = defineQuery({
              crove_kernel.global_kill_switch_on('ai') AS global`.execute(ctx.trx);
     if (switches[0]?.scope) return { allowed: false, scope: switches[0].scope, retryAt };
     if (switches[0]?.global) return { allowed: false, scope: 'org', retryAt };
+    // The sum is decimal arithmetic in the database (numeric), never a JS number; no projection counts as zero (the entry's own rule: spent >= limit).
+    const projected = input.projectedCost === undefined || ZERO_COST.test(input.projectedCost) ? '0' : input.projectedCost;
     const { rows } = await sql<{ scope: 'org' | 'module' | 'agent' | null }>`
       SELECT (SELECT b.scope FROM crove_kernel.budget_policy b
               WHERE b.org_id = ${ctx.orgId}::uuid AND b.hard_stop
                 AND (b.scope = 'org' OR (b.scope = 'module' AND b.target = ${module}) OR (b.scope = 'agent' AND b.target = ${agentId}::text))
-                AND crove_kernel.ai_budget_spent(b.org_id, b.scope, b.target) >= b.monthly_limit
+                AND crove_kernel.ai_budget_spent(b.org_id, b.scope, b.target) + ${projected}::numeric >= b.monthly_limit
               ORDER BY CASE b.scope WHEN 'agent' THEN 0 WHEN 'module' THEN 1 ELSE 2 END LIMIT 1) AS scope`.execute(ctx.trx);
     return rows[0]?.scope ? { allowed: false, scope: rows[0].scope, retryAt } : { allowed: true };
   },
@@ -648,9 +656,6 @@ export const memberVyRunFinish = defineCommand({
 // run's result (its own entry) would be refused, so the paid text would be thrown away. Only hard stops count, as in ai_budget_exhausted; a soft budget never refuses. The module
 // and the agent are the run's own, from the sealed context and never from the input, so a call cannot name another target to dodge a budget. A missing or zero projection is the
 // entry's check alone. The sum is decimal arithmetic in the database (numeric), never a JS number. A refusal is the entry's own code, BUDGET_EXHAUSTED, naming the scope as meter.check does.
-// At most 1e9, six decimals (the cap the Platform PO asked for); anything else is refused by the input check.
-const PROJECTED_COST = z.string().regex(/^(?:\d{1,9}(?:\.\d{1,6})?|1000000000(?:\.0{1,6})?)$/);
-const ZERO_COST = /^0+(?:\.0+)?$/;
 
 export const memberVyRunCheck = defineQuery({
   name: 'kernel.member_vy.run.check',
