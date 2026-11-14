@@ -25,3 +25,25 @@ export type MarketplaceBalanceRow = z.infer<typeof zMarketplaceBalanceRow>;
 
 export const zMarketplaceBalance = z.object({ rows: z.array(zMarketplaceBalanceRow) });
 export type MarketplaceBalance = z.infer<typeof zMarketplaceBalance>;
+
+// The facts behind the finance coworker's one line on the Sàn screen (#2516 slice E), read by code from the books and nothing else: `settlementsToPost` is the stored settlements of the entity (or
+// of every entity the caller may see) that stand (not reversed, not a reversal) and have no posting voucher yet; `awaitingPayout` and `feesAwaitingInvoice` the sums of the balance rows (slice D)
+// of the platforms that owe (a platform whose balance is negative, overpaid or a payout reversed, is not waiting, and is not netted against another's debt). No platform name, order, buyer or bank
+// data is in it, so there is nothing in it for a model to follow.
+export const zMarketplaceFacts = z.strictObject({
+  settlementsToPost: z.number().int().min(0),
+  awaitingPayout: zMoney,
+  feesAwaitingInvoice: zMoney,
+});
+export type MarketplaceFacts = z.infer<typeof zMarketplaceFacts>;
+
+// The line the screen shows: the facts always (the core works with AI off), and the coworker's sentence when there is one. `ai` says why there is no sentence: `off` (no model), `busy` (too
+// frequent), `budget` (the AI budget is spent), `failed` (the call failed or its text was refused; the reason is logged as a code, never the words) or `none` (there is nothing to say).
+export const zMarketplaceLineAsk = z.strictObject({ legalEntityId: zId.optional(), lang: z.enum(['vi', 'en']).optional() });
+export type MarketplaceLineAsk = z.infer<typeof zMarketplaceLineAsk>;
+export const zMarketplaceLine = z.strictObject({
+  facts: zMarketplaceFacts,
+  ai: z.enum(['used', 'off', 'busy', 'budget', 'failed', 'none']),
+  text: z.string().nullable(),
+});
+export type MarketplaceLine = z.infer<typeof zMarketplaceLine>;

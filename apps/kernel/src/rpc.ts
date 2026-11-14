@@ -7,7 +7,7 @@ import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@crove/einvoice';
 import type { McpWakeView, QuoteLinkCreated } from '@crove/kernel-contract';
 import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wake-setup.ts';
-import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, PaymentReminderDraft, TodayList } from '@crove/kernel-contract';
+import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, PaymentReminderDraft, TodayList } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
 import {
@@ -59,6 +59,7 @@ import { runLiveNotes, runMeetingSummary, runMeetingTranslation, translationStat
 import { draftReorder, stockAi, suggestItems } from './stock-ai.ts';
 import { MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
+import { explainMarketplaceLine, marketplaceLineAi } from './finance-marketplace-line-ai.ts';
 import { explainPayrollMatch, payrollMatchAi } from './finance-payroll-match-ai.ts';
 import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { DraftBudget } from './ai-draft-limit.ts';
@@ -362,6 +363,7 @@ export function createRpcHandler(
   const financeOverviewAi = overviewAi(conversationReader?.overviewSentence ? { overviewSentence: conversationReader.overviewSentence.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's one line on why a bank line may be a payroll payment (#2532): the same reader and model, a budget of its own; told the kind, month, amount and date only.
   const financePayrollMatchAi = payrollMatchAi(conversationReader?.payrollMatchSentence ? { payrollMatchSentence: conversationReader.payrollMatchSentence.bind(conversationReader) } : null, suggestionBudget());
+  const financeMarketplaceLineAi = marketplaceLineAi(conversationReader?.marketplaceLineSentence ? { marketplaceLineSentence: conversationReader.marketplaceLineSentence.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker on payroll (#2534): the same reader and model, a budget of its own. It is told the pseudonymized sheet only (an alias per employee, fixed labels and amounts).
   const payrollAi: PayrollAi = {
     reader: conversationReader?.payrollPrepare && conversationReader.payrollFlag && conversationReader.payrollExplain
@@ -2823,6 +2825,15 @@ export function createRpcHandler(
       },
       staged: os.marketplace.staged.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.staged', {}, { actor, orgId }))),
       balance: os.marketplace.balance.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.balance', input ?? {}, { actor, orgId }))),
+      facts: os.marketplace.facts.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.facts', input ?? {}, { actor, orgId }))),
+      // The facts are read again here in the caller's own transaction, so what the model is told comes from the books, never from the caller; the sentence is a read and posts nothing.
+      line: os.marketplace.line.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { lang, legalEntityId } = input;
+          const facts = await runtime.query<MarketplaceFacts>('finance.marketplace.facts', legalEntityId === undefined ? {} : { legalEntityId }, { actor, orgId });
+          return explainMarketplaceLine(financeMarketplaceLineAi, orgId, actor.userId, facts, lang ?? 'vi');
+        }),
+      ),
       preview: os.marketplace.preview.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.preview', input, { actor, orgId }))),
       confirm: os.marketplace.confirm.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => {

@@ -15,6 +15,7 @@ export * from './inbox.ts';
 export * from './reminder.ts';
 export * from './followup.ts';
 export * from './overview.ts';
+export * from './marketplace-line.ts';
 export * from './payroll-match.ts';
 export * from './payroll-coworker.ts';
 export * from './meter.ts';

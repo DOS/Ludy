@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { chatModel, type AiConfig, type AiUsage } from './index.ts';
 import { metered } from './meter.ts';
 import { PayrollCoworker, type PayrollCallOptions, type PayrollFlagResult, type PayrollPrepareResult, type PayrollSheet, type PayslipExplainRequest, type PayslipExplainResult } from './payroll-coworker.ts';
+import { checkMarketplaceLineSentence, marketplaceLineInstructions, marketplaceLinePrompt, type MarketplaceLineFacts, type MarketplaceLineResult } from './marketplace-line.ts';
 import { checkPayrollMatchSentence, payrollMatchInstructions, payrollMatchPrompt, type PayrollMatchFacts, type PayrollMatchResult } from './payroll-match.ts';
 import { checkOverviewSentence, overviewInstructions, overviewPrompt, overviewQuiet, type OverviewFacts, type OverviewSentenceResult } from './overview.ts';
 import { checkCrmFollowupWords, crmFollowupInstructions, crmFollowupPrompt, type CrmFollowupWordsRequest, type CrmFollowupWordsResult } from './crm-followup.ts';
@@ -110,6 +111,10 @@ const zOverviewOut = z.object({
 const zPayrollMatchOut = z.object({
   sentence: z.string().describe('One plain sentence on why the bank line may be this payroll payment, citing only the facts given, each number and date written exactly as given'),
 });
+const zMarketplaceLineOut = z.object({
+  sentence: z.string().describe('One plain sentence on what is waiting on the marketplace screen, citing only the figures given, each number written exactly as given'),
+});
+export type MarketplaceLineGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMarketplaceLineOut> | null; usage?: AiUsage }>;
 export type PayrollMatchGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zPayrollMatchOut> | null; usage?: AiUsage }>;
 export type OverviewGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zOverviewOut> | null; usage?: AiUsage }>;
 export type CompanyRankGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zCompanyRankOut> | null; usage?: AiUsage }>;
@@ -212,6 +217,7 @@ export class InboxReader {
   private readonly generateMeetingBrief: MeetingBriefGenerator;
   private readonly generateOverview: OverviewGenerator;
   private readonly generatePayrollMatch: PayrollMatchGenerator;
+  private readonly generateMarketplaceLine: MarketplaceLineGenerator;
   private readonly generateStockMatch: StockMatchGenerator;
   private readonly generateReorder: ReorderGenerator;
   private readonly generateEInvoiceDraft: EInvoiceDraftGenerator;
@@ -219,7 +225,7 @@ export class InboxReader {
   private readonly payroll: PayrollCoworker;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
-  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; payrollMatch?: PayrollMatchGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
+  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; payrollMatch?: PayrollMatchGenerator; marketplaceLine?: MarketplaceLineGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
     this.payroll = new PayrollCoworker(config, generators.payroll);
     const timeoutMs = config.timeoutMs ?? 60_000;
     this.generateIntents =
@@ -283,6 +289,14 @@ export class InboxReader {
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('finance.overview_explain', () =>
           generateText({ model: chatModel(config), output: Output.object({ schema: zOverviewOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateMarketplaceLine =
+      generators.marketplaceLine ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('finance.marketplace_line', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zMarketplaceLineOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
@@ -433,6 +447,14 @@ export class InboxReader {
     const { output, usage } = await this.generateOverview({ system: overviewInstructions(facts.language), prompt: overviewPrompt(facts) });
     if (usage) onUsage?.(usage);
     return checkOverviewSentence(facts, output);
+  }
+
+  /** The finance coworker's one line on the Sàn screen (#2516 slice E), from four numbers code read from the books and nothing else, or why there is none: the text is refused when it states a
+   * number the facts do not hold, a link, says something was posted, approved or paid, or is empty, too long or more than one sentence (marketplace-line.ts). onUsage gets the tokens the call used. */
+  async marketplaceLineSentence(facts: MarketplaceLineFacts, onUsage?: (usage: AiUsage) => void): Promise<MarketplaceLineResult> {
+    const { output, usage } = await this.generateMarketplaceLine({ system: marketplaceLineInstructions(facts.language), prompt: marketplaceLinePrompt(facts) });
+    if (usage) onUsage?.(usage);
+    return checkMarketplaceLineSentence(facts, output);
   }
 
   /** The finance coworker's one line on why a bank statement line may be a payroll payment (#2532), from the kind, month, amount and date of the payment only, or why there is none: the text is
