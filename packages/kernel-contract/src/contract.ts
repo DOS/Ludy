@@ -191,7 +191,7 @@ import {
 } from './schemas.ts';
 import { zMarketplaceConnect, zMarketplaceConnection, zMarketplaceConnectionTested, zMarketplaceProviders } from './marketplace-connections.ts';
 import { zMarketplaceBalance, zMarketplaceBalanceInput, zMarketplaceFacts, zMarketplaceLine, zMarketplaceLineAsk } from './marketplace-balance.ts';
-import { zMarketplaceSettlementRequest, zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
+import { zMarketplacePayoutRequest, zMarketplaceSettlementRequest, zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
 import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggestInput, zStockSuggested, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
 import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoicePrevious, zEInvoicePreviousInput, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStatus, zEInvoiceSuggested, zEInvoiceSuggestInput } from './einvoice.ts';
 import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
@@ -1774,6 +1774,9 @@ export const contract = {
           // The posting of a stored marketplace settlement (#2516): the server builds one journal voucher from its lines; an owner or an admin approves. Refused until the accountant has confirmed
           // the account map. MARKETPLACE_POSTING_MAP_UNCONFIRMED, MARKETPLACE_SETTLEMENT_POSTED, PERIOD_LOCKED (409), MARKETPLACE_SETTLEMENT_NOT_POSTABLE (422), MARKETPLACE_SETTLEMENT_NOT_FOUND (404).
           z.object({ command: z.literal('finance.marketplace_settlement.record'), input: zMarketplaceSettlementRequest, idempotencyKey: zId }),
+          // The posting of a platform's payout (#2516): the server builds one journal voucher from the settlement's lines, and the bank line only has to match the net; an owner or an admin approves. Refused
+          // until the accountant has confirmed the account map, and while the settlement is not posted. MARKETPLACE_PAYOUT_SETTLEMENT_NOT_POSTED, MARKETPLACE_PAYOUT_BANK_LINE, MARKETPLACE_PAYOUT_POSTED (409).
+          z.object({ command: z.literal('finance.marketplace_payout.record'), input: zMarketplacePayoutRequest, idempotencyKey: zId }),
         ]),
       )
       .output(z.object({ proposalId: zId })),

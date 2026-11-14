@@ -9621,6 +9621,11 @@ export const en = {
       MARKETPLACE_SETTLEMENT_NOT_FOUND: 'This marketplace settlement was not found',
       MARKETPLACE_SETTLEMENT_POSTED: 'This marketplace settlement has already been posted',
       MARKETPLACE_SETTLEMENT_MISMATCH: 'The posting proposal does not match the stored settlement; ask for it again',
+      MARKETPLACE_PAYOUT_NOT_POSTABLE: 'This platform payout cannot be posted (the settlement has an unexplained other adjustment, an amount that is not a whole dong, or nothing to collect)',
+      MARKETPLACE_PAYOUT_SETTLEMENT_NOT_POSTED: 'Post the settlement first, then the payout',
+      MARKETPLACE_PAYOUT_BANK_LINE: 'This bank line cannot be used for the payout (it must be money in, equal to the settlement net, in the same legal entity and not tied to another voucher)',
+      MARKETPLACE_PAYOUT_POSTED: 'The payout of this settlement has already been posted',
+      MARKETPLACE_PAYOUT_MISMATCH: 'The posting proposal does not match the stored settlement or bank line; ask for it again',
       HR_PAYMENT_NEGATIVE: 'This amount is negative after the month\'s adjustments (money to give back), so it cannot be recorded here; the accountant settles it separately',
       HR_PAYMENT_NOT_POSTED: 'This pay run has not been posted yet; post it before recording the pay or a remittance',
       HR_PAYMENT_POSTING_REVERSED: 'The posting of this pay run was reversed, so the pay and the remittances cannot be recorded against it',
@@ -10727,6 +10732,10 @@ export const en = {
       marketplace_settlement: {
         prepare: "Check a marketplace platform's settlement before proposing its posting",
         record: "Post a marketplace platform's settlement as one journal entry",
+      },
+      marketplace_payout: {
+        prepare: "Check a platform's payout and its bank line before proposing its posting",
+        record: "Post a platform's payout (money received, fees, tax withheld) as one journal entry",
       },
       einvoice: {
         draft_from_order: 'Make a sales invoice draft from a sales order',
