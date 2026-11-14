@@ -5,7 +5,7 @@
 //   not start inside a locked period, so the books of a closed period keep the profile they were made under.
 // - finance.household.profile_get (every role): the profile in force on a date and the books it requires.
 // - finance.household.rules (every role): the thresholds, the percentages by trade, the expense groups and the forms in force on a date, each with its source and status.
-// No rate, threshold or group is a constant here: they are rows with an effective date (migration 20261230110000), a source and a status. A row is `commentary` until the accountant has checked
+// No rate, threshold or group is a constant here: they are rows with an effective date (migration 20261230120035), a source and a status. A row is `commentary` until the accountant has checked
 // it against the primary text (#2520); the answers say so (`commentary`), and nothing that files or computes a tax may rely on one yet. The audit rows hold ids, the group, the method, the dates
 // and the trades, never the representative's name.
 import { sql } from 'kysely';
