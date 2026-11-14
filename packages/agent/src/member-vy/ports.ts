@@ -38,7 +38,7 @@ export interface KnowledgePassage {
 // reached through metered(); a hosted provider may supply another. The prompt carries untrusted text between fixed delimiters, nothing else.
 // The meter key a model call counts under, when the feature is not the default one of the port (the meeting summary): a translation has a key of its own so it never cuts off a
 // summary, a transcription or live notes (#3029, #3184).
-export type ModelFeature = 'meetings.summary' | 'meetings.translate';
+export type ModelFeature = 'meetings.summary' | 'meetings.translate' | 'meetings.ask';
 export interface ModelPrompt {
   system: string;
   user: string;

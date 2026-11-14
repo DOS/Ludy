@@ -3,9 +3,9 @@
 // service, so memory is the member's own rows of crove_kernel.member_vy_memory, read and written only through the member's own commands, in the
 // member's own user context. Asking about anyone else is refused before a command is run, and the database would refuse it anyway (the
 // restrictive policy shows a member their own rows only). Knowledge has no declared queries yet: a feature that asks gets no passages.
-import { AiBudgetExhaustedError, SUMMARY_TIMEOUT_MS, SummaryModelError, TranslationModelError, aiCost, generateMeetingSummaryText, generateMeetingTranslationText, withAiScope, type AiConfig, type AiMeter } from '@crove/agent';
-import { SummaryError, TranslationError, bindPorts, noKnowledge, privateText, revealPrivateText, enhanceNotes, summarizeMeeting, translateSummary, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type Ports } from '@crove/agent/member-vy';
-import { templateSections, type LiveNotesDone, type LiveNotesInput, type MeetingSummaryTemplate, type Summarized, type Transcript, type Translated, type TranslationSource, type TranslationStatus } from '@crove/kernel-contract';
+import { AiBudgetExhaustedError, AskModelError, SUMMARY_TIMEOUT_MS, SummaryModelError, TranslationModelError, aiCost, generateMeetingAskText, generateMeetingSummaryText, generateMeetingTranslationText, withAiScope, type AiConfig, type AiMeter } from '@crove/agent';
+import { AskError, SummaryError, TranslationError, askAcrossMeetings, bindPorts, noKnowledge, privateText, revealPrivateText, enhanceNotes, summarizeMeeting, translateSummary, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type Ports } from '@crove/agent/member-vy';
+import { ASK_ESTIMATE, ASK_HITS_MAX, templateSections, type AskAnswer, type AskLines, type AskStatus, type LiveNotesDone, type LiveNotesInput, type MeetingSummaryTemplate, type Summarized, type Transcript, type Translated, type TranslationSource, type TranslationStatus } from '@crove/kernel-contract';
 import { DomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
@@ -60,7 +60,15 @@ export interface MeetingSummaryDeps {
 // The built-in model port for the summary: the deployment's OpenAI-compatible endpoint, through the member's own meter (the call is metered inside it).
 export function summaryModelPort(config: AiConfig, timeoutMs: number = SUMMARY_TIMEOUT_MS): ModelPort {
   // A prompt names its own meter key when it is not the summary's: a translation counts under meetings.translate (#3184) and so never cuts off a summary, a transcription or live notes.
-  return { generate: (_who, prompt) => (prompt.feature === 'meetings.translate' ? generateMeetingTranslationText(config, prompt, timeoutMs) : generateMeetingSummaryText(config, prompt, timeoutMs)) };
+  // A question about meetings counts under meetings.ask (#3161) for the same reason.
+  return {
+    generate: (_who, prompt) =>
+      prompt.feature === 'meetings.translate'
+        ? generateMeetingTranslationText(config, prompt, timeoutMs)
+        : prompt.feature === 'meetings.ask'
+          ? generateMeetingAskText(config, prompt, timeoutMs)
+          : generateMeetingSummaryText(config, prompt, timeoutMs),
+  };
 }
 
 const nothingToRemember: Ports['memory'] = { read: async () => [], write: async () => ({ id: 'none' }), forget: async () => undefined };
@@ -71,6 +79,8 @@ function codeOf(error: unknown): string {
   if (error instanceof SummaryModelError) return error.kind === 'timeout' ? 'SUMMARY_TIMEOUT' : 'SUMMARY_FAILED';
   if (error instanceof TranslationError) return error.code;
   if (error instanceof TranslationModelError) return error.kind === 'timeout' ? 'TRANSLATE_TIMEOUT' : 'TRANSLATE_FAILED';
+  if (error instanceof AskError) return error.code;
+  if (error instanceof AskModelError) return error.kind === 'timeout' ? 'ASK_TIMEOUT' : 'ASK_FAILED';
   return 'SUMMARY_FAILED';
 }
 
@@ -340,6 +350,117 @@ export async function runMeetingTranslation(deps: MeetingTranslationDeps, orgId:
       throw error;
     }
     return { meetingId, stage, runId, state: 'ready', errorCode: null };
+  } finally {
+    ticket.release();
+  }
+}
+
+
+// The member's Vy answering a question across the meetings they read (Meetings A3, #3161, ADR-0049 stage A). The member waits for it, so it is one short request, in the member's own session and context:
+//   1. meetings.ask.status, as the member: the deployment's switch, the right to work with Vy, a kill switch, a spent budget; a refusal here has made no run and spent nothing;
+//   2. meetings.ask.lines: the lines the member's own search finds (at most 40 from at most 8 meetings, row security on every one), a sensitive read whose audit row hashes the question. No line: the
+//      answer is "none" with no run and no model call, so a question about nothing costs nothing;
+//   3. meetings.ask.start, then the kernel's run.start (vy.use, the kill switches, the budget) makes the member's Vy and the run;
+//   4. the one model call, outside any transaction, through the member's own meter under meetings.ask (the scope carries the run), with a hard timeout. The model has no tools: the checks in code
+//      (packages/agent member-vy/meeting-ask.ts) decide per sentence what shows;
+//   5. the run's result row is stored with COUNTS ONLY (lines, sentences, sources, dropped), never the question or the answer, with kernel.member_vy.result.store in the member's own session.
+// The answer goes back to the browser and nowhere else: no result row holds it, no task, mail, post, webhook, search hit or export is made from it. Neither the question, the lines nor the answer is
+// ever logged: a failure is named by a fixed code.
+export interface MeetingAskDeps extends MeetingSummaryDeps {
+  // The deployment's prices (AI_PRICE_*), for the cost shown before the question; unset or zero prices show no figure.
+  price?: { inputPerMTok: string; outputPerMTok: string } | undefined;
+}
+
+// What one question is expected to use, before the click: a fixed figure (the lines are not read until the member asks). An estimate, not a promise.
+export function askEstimate(price: MeetingAskDeps['price']): NonNullable<AskStatus['estimate']> {
+  const priced = price !== undefined && (Number(price.inputPerMTok) > 0 || Number(price.outputPerMTok) > 0);
+  return { ...ASK_ESTIMATE, cost: priced ? aiCost([ASK_ESTIMATE], price) : null };
+}
+
+// The box: the module's status plus the expected cost; "off" when the deployment has no model or no meter for this member.
+export async function askStatusOf(deps: Pick<MeetingAskDeps, 'runtime' | 'price' | 'model' | 'meter'>, orgId: string, actor: UserActor): Promise<AskStatus> {
+  if (!deps.model || !deps.meter(actor)) return { enabled: false, reason: 'off', estimate: null };
+  const status = await deps.runtime.query<AskStatus>('meetings.ask.status', {}, { actor, orgId });
+  return status.enabled ? { ...status, estimate: askEstimate(deps.price) } : status;
+}
+
+export async function runMeetingAsk(deps: MeetingAskDeps, orgId: string, actor: UserActor, question: string): Promise<AskAnswer> {
+  const as = { actor, orgId };
+  const timeoutMs = deps.timeoutMs ?? SUMMARY_TIMEOUT_MS;
+  const model = deps.model;
+  const meter = deps.meter(actor);
+  if (!model || !meter) throw new DomainError('ASK_OFF', 422, 'Asking Vy about meetings is not turned on here');
+  // 1. The box's answer first, so a member who may not ask is refused with the precise reason, before a ticket is taken or a line is read.
+  const status = await deps.runtime.query<AskStatus>('meetings.ask.status', {}, as);
+  if (!status.enabled) {
+    if (status.reason === 'off') throw new DomainError('ASK_OFF', 422, 'Asking Vy about meetings is not turned on here');
+    if (status.reason === 'forbidden') throw new DomainError('VY_NOT_ALLOWED', 403, 'Bạn chưa được phép làm việc với Vy');
+    throw new DomainError('AI_BUDGET_EXHAUSTED', 422, 'Vy đang tạm dừng hoặc đã hết ngân sách tháng này; sổ sách và mọi việc không cần AI vẫn chạy bình thường');
+  }
+  const ticket = deps.budget.take(orgId, actor.userId);
+  if (!ticket.allowed) throw new DomainError('ASK_BUSY', 429, 'Vy is busy; try again in a few minutes', { retryAfterSeconds: ticket.retryAfterSeconds });
+  try {
+    // 2. The lines the member's own search finds.
+    const { lines } = await deps.runtime.query<AskLines>('meetings.ask.lines', { question }, as);
+    if (lines.length === 0) return { state: 'none', errorCode: null, sentences: [], sources: [], hits: [], dropped: 0 };
+    const hits = lines.slice(0, ASK_HITS_MAX);
+    // 3. The checks come first: the switch, vy.use, the kill switches and the budget. A refusal here has made no run.
+    const started = await deps.runtime.execute<{ runId: string }>('meetings.ask.start', {}, as);
+    const runId = started.runId;
+    const fail = async (errorCode: string): Promise<AskAnswer> => {
+      try {
+        await deps.runtime.execute('kernel.member_vy.result.store', { runId, outcome: { status: 'failed', errorCode } }, as);
+      } catch (storeError: unknown) {
+        // The run stays open until it expires; the caller still gets the failure, and only the codes are logged.
+        console.error(`[meetings-ask] failed result not stored: ${codeOf(storeError)}`);
+      }
+      console.error(`[meetings-ask] run failed: ${errorCode}`);
+      return { state: 'failed', errorCode, sentences: [], sources: [], hits, dropped: 0 };
+    };
+    // 4. The one call, outside any transaction, in the scope of this run.
+    let checked: Awaited<ReturnType<typeof askAcrossMeetings>>['answer'];
+    try {
+      const ports: Ports = { model, memory: nothingToRemember, knowledge: noKnowledge };
+      const input = { question, lines: lines.map((l) => ({ meetingTitle: l.meetingTitle, heldAt: l.heldAt, startSeconds: l.startSeconds, speakerLabel: l.speakerLabel, text: l.text })) };
+      const result = await withDeadline(
+        withAiScope({ orgId, memberRunId: runId, meter }, () => askAcrossMeetings(input, bindPorts({ orgId, memberUserId: actor.userId }, ports))),
+        timeoutMs,
+      );
+      checked = result.answer;
+    } catch (error: unknown) {
+      // Any failure before the answer is named by a fixed code and stored as the run's failed result: the run must not stay open.
+      return await fail(error instanceof SummaryModelError ? 'ASK_TIMEOUT' : codeOf(error));
+    }
+    // The sentences name the lines they cite by their place among the sources, in the order they are first cited.
+    const order: number[] = [];
+    const sentences = checked.sentences.map((s) => ({
+      text: s.text,
+      sources: s.cites.map((n) => {
+        let place = order.indexOf(n);
+        if (place < 0) {
+          order.push(n);
+          place = order.length - 1;
+        }
+        return place;
+      }),
+    }));
+    const sources = order.map((n) => lines[n - 1]).filter((l): l is AskLines['lines'][number] => l !== undefined);
+    // 5. Counts only: never the question, a line or a sentence.
+    const body = JSON.stringify({ v: 1, lines: lines.length, sentences: sentences.length, sources: sources.length, dropped: checked.dropped });
+    let stored: { stored: boolean; status: 'ready' | 'failed' };
+    try {
+      stored = await deps.runtime.execute<{ stored: boolean; status: 'ready' | 'failed' }>('kernel.member_vy.result.store', { runId, outcome: { status: 'ready', body } }, as);
+    } catch (error: unknown) {
+      if (error instanceof DomainError && error.code === 'VY_RUN_NOT_LIVE') throw error;
+      return await fail(codeOf(error));
+    }
+    // The kernel re-checked the switches and the budget at the store and may have stopped the run: its answer is the state, and nothing of the model's text is shown for a stopped run.
+    if (stored.status === 'failed') {
+      console.error('[meetings-ask] run failed: AI_STOPPED');
+      return { state: 'failed', errorCode: 'AI_STOPPED', sentences: [], sources: [], hits, dropped: 0 };
+    }
+    if (sentences.length === 0) return { state: 'none', errorCode: null, sentences: [], sources: [], hits, dropped: checked.dropped };
+    return { state: 'answered', errorCode: null, sentences, sources, hits: [], dropped: checked.dropped };
   } finally {
     ticket.release();
   }
