@@ -10908,6 +10908,7 @@ export const vi = {
         refresh: 'Làm mới thông tin đăng nhập của kênh',
         reseal: 'Mã hóa lại thông tin đăng nhập của kênh',
         telegram_business_allow: 'Cho phép hoặc ngừng nhận tin của một tài khoản Telegram Business',
+        telegram_business_known: 'Kiểm tra tài khoản Telegram Business đã được ghi nhận chưa',
         telegram_business_record: 'Ghi tài khoản Telegram Business đã nối với bot',
         telegram_chat_record: 'Ghi kết quả bật hoặc tắt tin nhắn Telegram',
         telegram_chat_set: 'Bật hoặc tắt nhận tin nhắn Telegram của khách',
