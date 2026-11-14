@@ -2019,8 +2019,9 @@ export class Runtime {
         memberVy: null,
       };
     }
-    if (mcpWrite !== undefined && actor.type === 'user' && actor.mcp && (actor.mcp.kind === 'member' || this.#mcpEntry === 'worker' || !actor.mcp.scopes.includes(mcpWrite))) {
-      // A write scope belongs to a company grant that holds it, on the API's own entry: a member-bound grant, the worker's wake entry and a grant without the scope never enter a write context.
+    if (mcpWrite !== undefined && actor.type === 'user' && actor.mcp && (actor.mcp.kind === 'member' || this.#mcpEntry === 'worker')) {
+      // A write scope belongs to a company grant on the API's own entry: a member-bound grant and the worker's wake entry never enter a write context. A company grant without the scope enters its read
+      // context below, where authorizeMcp refuses the command after entry, so the refusal is audited as the grant's, as any other refused command is.
       throw new DomainError('FORBIDDEN', 403, 'Quyền kết nối MCP không được thực hiện việc này', { rule: 'mcp_scope' });
     }
     if (actor.mcp?.kind === 'member') {
@@ -2037,7 +2038,7 @@ export class Runtime {
       }
       return { role, agent: null, memberVy: null };
     }
-    if (actor.mcp && mcpWrite !== undefined) {
+    if (actor.mcp && mcpWrite !== undefined && actor.mcp.scopes.includes(mcpWrite)) {
       // A company MCP grant that holds a write scope runs the command that declares it (ADR-0051 decision 2, #3227): the same sealed shape as the read context (agent-shaped, no user,
       // tainted), at R1 and of its own kind, so the database guard lets it write exactly what that scope names. The grantor named in the seal is the user the edge named, else a bug.
       const { rows } = await sql<{ entered: { role: string; grantor: string; maxRisk: string; tainted: boolean } }>`

@@ -361,7 +361,9 @@ export const postCreate = defineCommand({
 // channel of the org. The post is `origin = ai`, `actor_origin = mcp` and tainted whatever the client sends (it cannot send them), lands as a draft exactly where the AI's drafts land, and
 // needs a person to send it to review and approve every channel before it can go out: this command submits, approves, schedules, publishes and deletes nothing. It runs in the grant's
 // sealed write context, where the database lets it insert the draft and its channels and nothing else. The endpoint takes the drafts budget (#386) before it runs, as for a person.
-export const zMcpDraftCreate = zPostCreate.omit({ origin: true, aiAssisted: true, ideaId: true, media: true });
+// A channel of it is the channel and, at most, its own text and title: no media, no settings (the first comment, thread parts, auto-reply and removal time the publisher reads from them) and no link of its own.
+const zMcpDraftChannel = zChannel.pick({ connectionId: true, body: true, title: true });
+export const zMcpDraftCreate = zPostCreate.omit({ origin: true, aiAssisted: true, ideaId: true, media: true, channels: true }).extend({ channels: z.array(zMcpDraftChannel).min(1).max(MAX_CHANNELS_PER_POST) });
 export const mcpDraftCreate = defineCommand({
   name: 'social.mcp.draft_create',
   input: zMcpDraftCreate,

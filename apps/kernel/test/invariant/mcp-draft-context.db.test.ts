@@ -199,7 +199,6 @@ suite('the write context of the MCP draft command (#3227)', () => {
           [orgId, randomUUID(), users.owner],
         ),
       ).rejects.toThrow(/agent_grant_scopes_ck/);
-      await expect(c.query(`UPDATE crove_kernel.agent_grant SET scopes = ARRAY['ludy.read', 'ludy.write'] WHERE FALSE`)).resolves.toBeDefined();
       await expect(
         c.query(`INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
                  VALUES ($1, $2, $3, 'cx', 'X', 'x.example.com', ARRAY['ludy.write'], 'oauth-x', now(), now() + interval '30 days', $3)`, [orgId, randomUUID(), users.owner]),
@@ -237,7 +236,16 @@ suite('the write context of the MCP draft command (#3227)', () => {
         ['another author', await post('ai', 'mcp', true, 'draft', '', users.admin)],
         ['an assigned post', await post('ai', 'mcp', true, 'draft', `assignee_user_id='${users.admin}'`)],
         ['an archived post', await post('ai', 'mcp', true, 'draft', 'archived_at=now()')],
-        ['a repeating post', await post('ai', 'mcp', true, 'draft', 'evergreen_days=30')],
+        ['an evergreen post', await post('ai', 'mcp', true, 'draft', 'evergreen_days=30')],
+        ['a post due at a time', await post('ai', 'mcp', true, 'draft', 'due_at=now()')],
+        ['a repost', await post('ai', 'mcp', true, 'draft', `repost_of='${id}'`)],
+        ['a recurring post', await post('ai', 'mcp', true, 'draft', `recurrence='{"every":"week"}'::jsonb`)],
+        ['a copy of a recurring post', await post('ai', 'mcp', true, 'draft', `recurrence_source_id='${id}'`)],
+        ['a post archived by a person', await post('ai', 'mcp', true, 'draft', `archived_by='${users.owner}'`)],
+        ['a later revision', await post('ai', 'mcp', true, 'draft', 'revision=2')],
+        ['a post that already recurred', await post('ai', 'mcp', true, 'draft', 'recurrence_count=3')],
+        ['a post with a next recurrence', await post('ai', 'mcp', true, 'draft', 'recurrence_next_at=now()')],
+        ['a post with a last recurrence', await post('ai', 'mcp', true, 'draft', 'recurrence_last_at=now()')],
       ] as const) {
         expect(result, label).toMatch(/AGENT_FORBIDDEN|post_mcp_ai_tainted_ck/);
       }
@@ -251,6 +259,23 @@ suite('the write context of the MCP draft command (#3227)', () => {
         ['a timed channel', `INSERT INTO crove_social.post_variant (org_id, post_id, channel_connection_id, provider, position, scheduled_at, content_hash) VALUES ($1, $2, $3, 'sandbox', 1, now(), ${HASH})`, [orgId, id, conn2]],
         ['a published channel', `INSERT INTO crove_social.post_variant (org_id, post_id, channel_connection_id, provider, position, published_at, content_hash) VALUES ($1, $2, $3, 'sandbox', 1, now(), ${HASH})`, [orgId, id, conn2]],
         ['a channel of a person\'s post', `INSERT INTO crove_social.post_variant (org_id, post_id, channel_connection_id, provider, position, content_hash) VALUES ($1, $2, $3, 'sandbox', 1, ${HASH})`, [orgId, otherPost, conn2]],
+        ...(
+          [
+            ['revision', 'revision', '2'],
+            ['a queue slot', 'queue_slot_at', 'now()'],
+            ['a review time', 'review_since', 'now()'],
+            ['a platform id', 'external_post_id', "'p1'"],
+            ['a public link', 'external_url', "'https://example.com/p'"],
+            ['a takedown', 'removed_at', 'now()'],
+            ['an attempt count', 'attempt', '3'],
+            ['an error code', 'error_code', "'E'"],
+            ['an error message', 'error_message', "'m'"],
+            ['a retry time', 'error_retry_at', 'now()'],
+            ['a check time', 'next_check_at', 'now()'],
+            ['a paused connection', 'paused_connection_version', 'now()'],
+            ['a frozen text', 'content_frozen', 'true'],
+          ] as const
+        ).map(([label, column, value]) => [`a channel with ${label}`, `INSERT INTO crove_social.post_variant (org_id, post_id, channel_connection_id, provider, position, ${column}, content_hash) VALUES ($1, $2, $3, 'sandbox', 1, ${value}, ${HASH})`, [orgId, id, conn2]] as const),
       ] as const) {
         expect(await attempt(sql, [...args]), label).toMatch(FORBIDDEN);
       }
@@ -263,7 +288,7 @@ suite('the write context of the MCP draft command (#3227)', () => {
       for (const [label, sql] of [
         ['an approval', `INSERT INTO crove_social.post_approval (org_id, variant_id, revision, content_hash, decision, decided_by, actor_origin, snapshot) VALUES ('${orgId}', gen_random_uuid(), 1, 'h', 'approved', '${users.owner}', 'mcp', '{}')`],
         ['a task', `INSERT INTO crove_kernel.task (org_id, title) VALUES ('${orgId}', 't')`],
-        ['a pending event', `INSERT INTO crove_kernel.outbox_pending (org_id, event_id) VALUES ('${orgId}', gen_random_uuid())`],
+        ['a pending event (refused by the guard or by the login\'s missing privilege)', `INSERT INTO crove_kernel.outbox_pending (org_id, event_id) VALUES ('${orgId}', gen_random_uuid())`],
         ['an idempotency key', `INSERT INTO crove_kernel.idempotency_key (org_id, actor_key, key, command, request_sha256, response) VALUES ('${orgId}', 'user:${users.owner}', 'k', 'c', 'h', NULL)`],
         ['a member', `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ('${orgId}', '${users.other}', 'owner')`],
         ['a grant', `UPDATE crove_kernel.agent_grant SET scopes = ARRAY['ludy.read'] WHERE org_id = '${orgId}'`],

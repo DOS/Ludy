@@ -94,7 +94,7 @@ BEGIN
     RAISE EXCEPTION 'MCP_WRITE_READ_ONLY' USING ERRCODE = '25006';
   END IF;
   SELECT g.user_id, g.kind, g.scopes, g.revoked_at, g.expires_at INTO v_user, v_kind, v_scopes, v_revoked, v_expires
-  FROM crove_kernel.agent_grant g WHERE g.org_id = p_org_id AND g.id = p_grant_id;
+  FROM crove_kernel.agent_grant g WHERE g.org_id = p_org_id AND g.id = p_grant_id FOR SHARE OF g;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'MCP_GRANT_INVALID' USING ERRCODE = '28000';
   END IF;
@@ -169,12 +169,14 @@ BEGIN
            AND NEW.author_user_id = (v_ctx ->> 'grantor')::uuid
            AND NEW.status = 'draft' AND NEW.revision = 1 AND NEW.archived_at IS NULL AND NEW.archived_by IS NULL
            AND NEW.assignee_user_id IS NULL AND NEW.due_at IS NULL AND NEW.repost_of IS NULL AND NEW.evergreen_days IS NULL
-           AND NEW.recurrence IS NULL AND NEW.recurrence_source_id IS NULL THEN
+           AND NEW.recurrence IS NULL AND NEW.recurrence_source_id IS NULL AND NEW.recurrence_count = 0 AND NEW.recurrence_next_at IS NULL AND NEW.recurrence_last_at IS NULL THEN
           RETURN NEW;
         END IF;
       ELSIF TG_TABLE_SCHEMA = 'crove_social' AND TG_TABLE_NAME = 'post_variant' THEN
         IF NEW.status = 'draft' AND NEW.revision = 1 AND NEW.scheduled_at IS NULL AND NEW.queue_slot_at IS NULL AND NEW.review_since IS NULL
            AND NEW.published_at IS NULL AND NEW.external_post_id IS NULL AND NEW.external_url IS NULL AND NEW.removed_at IS NULL
+           AND NEW.attempt = 1 AND NEW.error_code IS NULL AND NEW.error_message IS NULL AND NEW.error_retry_at IS NULL AND NEW.next_check_at IS NULL
+           AND NEW.paused_connection_version IS NULL AND NEW.edit_state IS NULL AND NEW.content_frozen IS NOT TRUE
            AND EXISTS (SELECT 1 FROM crove_social.post p
                        WHERE p.org_id = NEW.org_id AND p.id = NEW.post_id AND p.origin = 'ai' AND p.actor_origin = 'mcp'
                          AND p.tainted IS TRUE AND p.author_user_id = (v_ctx ->> 'grantor')::uuid AND p.status = 'draft') THEN
@@ -306,7 +308,9 @@ END $$;
 -- A post made over MCP is an AI post and tainted, whatever wrote the row. NOT VALID then VALIDATE: every older row has another actor_origin.
 DO $$
 BEGIN
+  -- migration-lint: cross-module the CHECK belongs to the Social post table it constrains and ships with the one write that needs it (#3227, owner decision 2026-11-14).
   ALTER TABLE crove_social.post ADD CONSTRAINT post_mcp_ai_tainted_ck CHECK (actor_origin <> 'mcp' OR (origin = 'ai' AND tainted)) NOT VALID;
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
+-- migration-lint: cross-module the same CHECK, validated in this transaction.
 ALTER TABLE crove_social.post VALIDATE CONSTRAINT post_mcp_ai_tainted_ck;

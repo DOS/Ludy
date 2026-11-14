@@ -173,8 +173,13 @@ suite('the MCP draft command (#3227)', () => {
   });
 
   it('is closed to a grant without the scope, to a browser session and to a grant of another person who is only a member', async () => {
-    const readOnly = await refusal(draft({ body: 'x', channels: [{ connectionId: conns.a1 }] }, await grantActor(orgA, users.ownerA, ['ludy.read'])));
+    const readOnlyCtx = await grantActor(orgA, users.ownerA, ['ludy.read']);
+    const readOnly = await refusal(draft({ body: 'x', channels: [{ connectionId: conns.a1 }] }, readOnlyCtx));
     expect([readOnly.status, readOnly.details]).toEqual([403, expect.objectContaining({ rule: 'mcp_scope' })]);
+    // A client probing for write ability shows up in the org's audit log as the grant's refused call, like any other refused command.
+    const denied = await admin((c) => c.query(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'social.mcp.draft_create' AND outcome = 'denied' AND detail ->> 'mcpGrant' = $2`, [orgA, readOnlyCtx.actor.mcp?.grantId]));
+    expect(denied.rowCount).toBe(1);
+    expect(denied.rows[0].detail).toMatchObject({ mcpCall: true, mcpClient: 'client-1', mcpClientName: 'Test client' });
     expect((await refusal(draft({ body: 'x', channels: [{ connectionId: conns.a1 }] }, { actor: browser(users.ownerA), orgId: orgA }))).status).toBe(403);
     const memberGrant = await insertGrant(orgA, users.memberA);
     expect((await refusal(draft({ body: 'x', channels: [{ connectionId: conns.a1 }] }, { actor: mcp(users.memberA, memberGrant, ['ludy.read', 'ludy.social.draft']), orgId: orgA }))).status).toBe(401);
@@ -210,5 +215,38 @@ suite('the MCP draft command (#3227)', () => {
     const audited = await admin(async (c) => (await c.query("SELECT actor_type, actor_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'social.mcp.draft_create' AND outcome = 'ok' ORDER BY occurred_at DESC LIMIT 1", [orgA])).rows[0]);
     expect(audited).toMatchObject({ actor_type: 'user', actor_id: users.ownerA });
     expect(audited.detail).toMatchObject({ mcpCall: true, mcpGrant: ctx.actor.mcp?.grantId, post_id: made.postId, origin: 'ai', actor_origin: 'mcp' });
+  });
+
+  it('takes a channel as its connection, its own text and its own title and nothing else: no media, settings or link of its own', async () => {
+    const base = { body: 'Chỉ có chữ', channels: [{ connectionId: conns.a1 }] };
+    const extras: Array<Record<string, unknown>> = [
+      { settings: { removeAt: '2030-01-01T00:00:00Z', firstComment: 'bình luận' } },
+      { media: [{ fileId: randomUUID() }] },
+      { linkUrl: 'https://example.com/z' },
+    ];
+    for (const extra of extras) {
+      const bad = await refusal(draft({ ...base, channels: [{ connectionId: conns.a1, ...extra }] }));
+      expect([bad.status, bad.code], JSON.stringify(extra)).toEqual([422, expect.any(String)]);
+    }
+    const ok = await draft({ ...base, channels: [{ connectionId: conns.a1, body: 'Riêng', title: 'Tiêu đề riêng' }] });
+    const [v] = await variantRows(ok.postId);
+    expect(v).toMatchObject({ body: 'Riêng', title: 'Tiêu đề riêng', status: 'draft' });
+  });
+
+  it('is the one door to the scope: only an owner or admin can consent to it, as a company grant, and no member grant can hold it', async () => {
+    const approve = (userId: string, input: Record<string, unknown>) =>
+      runtime.execute<{ grantId: string }>('kernel.mcp.grant.approve', { clientId: `c-${randomUUID()}`, clientName: 'Client', clientHost: 'client.example.com', oauthGrantId: `g-${randomUUID()}`, ...input }, { actor: browser(userId), orgId: orgA });
+    const scopesOf = async (id: string) => (await admin((c) => c.query('SELECT scopes, kind FROM crove_kernel.agent_grant WHERE id = $1', [id]))).rows[0] as { scopes: string[]; kind: string };
+    for (const who of [users.ownerA, users.adminA]) {
+      const made = await approve(who, { scopes: ['ludy.read', 'ludy.social.draft'] });
+      expect(await scopesOf(made.grantId)).toEqual({ scopes: ['ludy.read', 'ludy.social.draft'], kind: 'company' });
+    }
+    // A read-only consent never gains the scope: it stays what it asked for.
+    expect((await scopesOf((await approve(users.ownerA, { scopes: ['ludy.read'] })).grantId)).scopes).toEqual(['ludy.read']);
+    // A plain member cannot make a company grant, and a member-bound grant cannot hold the scope or a company grant the member scope.
+    expect((await refusal(approve(users.memberA, { scopes: ['ludy.read', 'ludy.social.draft'] }))).status).toBe(403);
+    expect([403, 422]).toContain((await refusal(approve(users.memberA, { kind: 'member', scopes: ['ludy.member.read', 'ludy.social.draft'] }))).status);
+    expect([403, 422]).toContain((await refusal(approve(users.ownerA, { kind: 'member', scopes: ['ludy.social.draft'] }))).status);
+    expect((await refusal(approve(users.ownerA, { scopes: ['ludy.member.read'] }))).status).toBe(422);
   });
 });
