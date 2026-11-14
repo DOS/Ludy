@@ -106,9 +106,11 @@ export const householdCnkd = defineQuery({
         if (money(part.revenue).lt(0)) throw invalid('Doanh thu của một ngành nghề không được âm');
         given.set(part.trade, toMoney(money(part.revenue)));
       }
-      if (money(sum([...given.values()])).gt(money(revenue))) throw invalid('Tổng doanh thu đã chia theo ngành vượt doanh thu trên sổ cái');
     }
-    const unassigned = toMoney(money(revenue).minus(sum([...given.values()])));
+    // What can be split is the revenue when it is positive; a quarter of net returns has nothing to split and nothing unassigned.
+    const splittable = money(revenue).gt(0) ? money(revenue) : money(0);
+    if (trades.length > 1 && money(sum([...given.values()])).gt(splittable)) throw invalid('Tổng doanh thu đã chia theo ngành vượt doanh thu trên sổ cái');
+    const unassigned = toMoney(trades.length === 1 ? money(0) : splittable.minus(sum([...given.values()])));
 
     const lines: HouseholdCnkdLine[] = trades.map((trade) => {
       const rate = rates.get(trade)!;

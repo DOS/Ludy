@@ -110,6 +110,7 @@ describe('the 01/CNKD worksheet workbook', () => {
     expect(all).toContain('HỘ, CÁ NHÂN KINH DOANH: Hộ kinh doanh Nguyễn Văn A');
     expect(all).toContain('Mã số thuế: 001234567890');
     expect(all).toContain('BẢNG TÍNH TỜ KHAI TỜ KHAI THUẾ ĐỐI VỚI HỘ KINH DOANH (01/CNKD)');
+    expect(all).toContain('Phiên bản mẫu: 2026.2');
     expect(all).toContain('Kỳ tính thuế: quý 4 năm 2026 (từ 01/10/2026 đến 31/12/2026)');
     expect(all.some((t) => t.includes('Ludy không nộp tờ khai'))).toBe(true);
     expect(all).toContain('(Ký, họ tên)');

@@ -165,6 +165,17 @@ suite('the 01/CNKD worksheet download (#2518)', () => {
     expect((await audits()).slice(before)).toEqual([{ book: '01/CNKD', legalEntityId: several, period: '2026-Q4', rows: 2 }]);
   });
 
+  it('refuses a split whose amount is not a plain amount, even with a colon inside it', async () => {
+    const before = (await audits()).length;
+    for (const split of ['goods:1:2', 'goods:1.000.000', 'goods', 'services:600000,goods:abc']) {
+      const response = await download(`legalEntityId=${several}&year=2026&quarter=4&split=${encodeURIComponent(split)}`);
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(response.status).toBeLessThan(500);
+      expect(response.headers.get('content-type')).not.toBe(XLSX);
+    }
+    expect(await audits()).toHaveLength(before);
+  });
+
   it('answers no file and writes no audit row while a row behind the figures is still commentary', async () => {
     const before = (await audits()).length;
     const response = await download(`legalEntityId=${unconfirmed}&year=2026&quarter=3`);

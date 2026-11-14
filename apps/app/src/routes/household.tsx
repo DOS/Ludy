@@ -139,6 +139,7 @@ function CnkdReturn({ entityId, trades }: { entityId: string; trades: readonly s
   const [split, setSplit] = useState<Record<string, string>>({});
   const valid = /^20\d{2}$/.test(year) && Number(year) >= 2026;
   const parts = trades.length > 1 ? trades.filter((x) => MONEY_INPUT.test((split[x] ?? '').trim())).map((x) => ({ trade: x, revenue: (split[x] ?? '').trim() })) : [];
+  const badSplit = trades.length > 1 && trades.some((x) => (split[x] ?? '').trim() !== '' && !MONEY_INPUT.test((split[x] ?? '').trim()));
   const sheet = useQuery({
     ...orpc.household.cnkd.queryOptions({ input: { legalEntityId: entityId, year: Number(year), quarter, ...(parts.length > 0 ? { split: parts as Array<{ trade: (typeof HOUSEHOLD_TRADES)[number]; revenue: string }> } : {}) } }),
     enabled: valid,
@@ -183,6 +184,11 @@ function CnkdReturn({ entityId, trades }: { entityId: string; trades: readonly s
         <fieldset className="mb-3" data-testid="household-cnkd-split">
           <legend className="mb-1 text-xs text-subtle-foreground">{t('splitTitle')}</legend>
           <p className="mb-2 text-xs text-muted-foreground">{t('splitHint')}</p>
+          {badSplit && (
+            <p className="mb-2 text-xs text-destructive" role="alert" data-testid="household-cnkd-split-invalid">
+              {t('splitInvalid')}
+            </p>
+          )}
           <div className="flex flex-wrap gap-3">
             {trades.map((x) => (
               <div key={x} className="space-y-1">

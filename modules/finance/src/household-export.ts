@@ -96,6 +96,7 @@ export async function buildCnkdWorkbook(sheetData: HouseholdCnkd, brand = 'Ludy'
   line(`HỘ, CÁ NHÂN KINH DOANH: ${sheetData.household.name}`, true);
   line(`Mã số thuế: ${sheetData.household.taxCode ?? ''}`);
   line(`BẢNG TÍNH TỜ KHAI ${sheetData.form.name.toUpperCase()}`, true);
+  line(`Phiên bản mẫu: ${sheetData.form.version}`);
   line(`Kỳ tính thuế: quý ${sheetData.period.quarter} năm ${sheetData.period.year} (từ ${dateLabel(sheetData.period.from)} đến ${dateLabel(sheetData.period.to)})`);
   line('Đây là bảng tính để kê khai trên cổng thuế hoặc eTax Mobile. Ludy không nộp tờ khai và không gửi dữ liệu cho cơ quan thuế.');
   sheet.addRow([]);

@@ -3221,7 +3221,8 @@ export const vi = {
     cnkdWithheld: 'Thuế sàn đã khấu trừ',
     cnkdDue: 'Còn phải nộp',
     cnkdOverpaid: 'Thuế đã khấu trừ vượt số phải nộp',
-    cnkdWithheldHint: 'Thuế đã khấu trừ lấy từ các báo cáo thu nhập của sàn bạn đã xác nhận (kỳ kết thúc trong quý); chưa nằm trong sổ cái.',
+    cnkdWithheldHint: 'Thuế đã khấu trừ lấy từ các báo cáo thu nhập của sàn bạn đã xác nhận. Một báo cáo tính vào quý mà kỳ của nó kết thúc, dù bắt đầu sớm hơn; chưa nằm trong sổ cái.',
+    splitInvalid: 'Hãy nhập số tiền thuần như 1500000 hoặc 1500000.50, không dấu phân cách và không chữ; số tiền không hợp lệ sẽ bị bỏ qua.',
     cnkdWithheldLine: '{platform}, {from} - {to}: {amount}',
     cnkdExemptNote: 'Phần doanh thu được miễn thuế trong năm chưa được trừ ở đây: quy định này đang chờ kế toán.',
 

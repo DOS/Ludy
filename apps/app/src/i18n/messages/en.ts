@@ -3223,7 +3223,8 @@ export const en = {
     cnkdWithheld: 'Tax the platforms already withheld',
     cnkdDue: 'Left to pay',
     cnkdOverpaid: 'Withheld above the tax owed',
-    cnkdWithheldHint: 'The withheld tax comes from the platform income reports you confirmed (their period ends in the quarter); it is not in the ledger yet.',
+    cnkdWithheldHint: 'The withheld tax comes from the platform income reports you confirmed. A report counts in the quarter its period ends in, even if it starts earlier; it is not in the ledger yet.',
+    splitInvalid: 'Enter plain amounts such as 1500000 or 1500000.50, without separators or letters; an amount that is not valid is left out.',
     cnkdWithheldLine: '{platform}, {from} - {to}: {amount}',
     cnkdExemptNote: 'The revenue band exempt from tax in the year is not deducted here: that rule is waiting for the accountant.',
 

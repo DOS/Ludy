@@ -184,6 +184,11 @@ describe('the household books screen (#2517)', () => {
       expect(html).not.toContain('data-testid="household-cnkd-totals"');
     });
 
+    it('does not warn about the split before anything is typed', () => {
+      const html = page('owner', { profile: percentage(['goods', 'services']) });
+      expect(html).not.toContain('data-testid="household-cnkd-split-invalid"');
+    });
+
     it('shows no worksheet for group 1 or the income method, and every role reads it', () => {
       expect(page('owner')).not.toContain('data-testid="household-cnkd"');
       cache.current.clear();

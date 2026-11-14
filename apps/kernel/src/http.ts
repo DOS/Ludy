@@ -3439,8 +3439,9 @@ export function createHttpApp(deps: HttpDeps) {
           .split(',')
           .filter((part) => part !== '')
           .map((part) => {
-            const [trade = '', revenue = ''] = part.split(':');
-            return { trade, revenue };
+            // Everything after the first colon is the amount, so "goods:1:2" fails the amount check instead of being read as 1.
+            const at = part.indexOf(':');
+            return { trade: at < 0 ? part : part.slice(0, at), revenue: at < 0 ? '' : part.slice(at + 1) };
           });
         const sheetData = await runtime.query<HouseholdCnkd>('finance.household.cnkd', { legalEntityId, year, quarter, ...(split.length > 0 ? { split } : {}), forExport: true }, { actor, orgId });
         const bytes = await buildCnkdWorkbook(sheetData, config.BRAND_NAME);

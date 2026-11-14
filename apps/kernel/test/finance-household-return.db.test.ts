@@ -139,7 +139,7 @@ suite('the 01/CNKD return worksheet of a household business (#2518)', () => {
   }
   // A settlement of the household written by the database owner, with one line that withheld `tax`; `reversalOf` makes it the reversal of another one (it states the negative net and its line
   // repeats the original's, marked as an adjustment, as the guard demands).
-  async function settlement(o: Org, platform: string, start: string, end: string, tax: number, reversalOf: string | null = null): Promise<string> {
+  async function settlement(o: Org, platform: string, start: string, end: string, tax: number, reversalOf: string | null = null, entity = o.household): Promise<string> {
     return admin(async (a) => {
       // One transaction: the guard that a reversal mirrors its original is checked at commit, when the settlement and its line are both there.
       await a.query('BEGIN');
@@ -147,9 +147,9 @@ suite('the 01/CNKD return worksheet of a household business (#2518)', () => {
       const net = 10000 - tax;
       let order: string = randomUUID();
       if (reversalOf) order = (await a.query<{ order_id: string }>('SELECT order_id FROM crove_finance.channel_settlement_line WHERE org_id = $1 AND settlement_id = $2', [o.orgId, reversalOf])).rows[0]?.order_id as string;
-      else await a.query('INSERT INTO crove_finance.channel_order (org_id, id, legal_entity_id, platform, order_no) VALUES ($1, $2, $3, $4, $5)', [o.orgId, order, o.household, platform, `ST${randomUUID().slice(0, 12)}`]);
-      await a.query('INSERT INTO crove_finance.channel_settlement (org_id, id, legal_entity_id, platform, period_start, period_end, report_net, reversal_of) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [o.orgId, id, o.household, platform, start, end, reversalOf ? -net : net, reversalOf]);
-      await a.query('INSERT INTO crove_finance.channel_settlement_line (org_id, id, legal_entity_id, settlement_id, order_id, line_key, sales, tax_withheld, net, adjustment) VALUES ($1, $2, $3, $4, $5, $6, 10000, $7, $8, $9)', [o.orgId, randomUUID(), o.household, id, order, 'L1', tax, net, reversalOf !== null]);
+      else await a.query('INSERT INTO crove_finance.channel_order (org_id, id, legal_entity_id, platform, order_no) VALUES ($1, $2, $3, $4, $5)', [o.orgId, order, entity, platform, `ST${randomUUID().slice(0, 12)}`]);
+      await a.query('INSERT INTO crove_finance.channel_settlement (org_id, id, legal_entity_id, platform, period_start, period_end, report_net, reversal_of) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [o.orgId, id, entity, platform, start, end, reversalOf ? -net : net, reversalOf]);
+      await a.query('INSERT INTO crove_finance.channel_settlement_line (org_id, id, legal_entity_id, settlement_id, order_id, line_key, sales, tax_withheld, net, adjustment) VALUES ($1, $2, $3, $4, $5, $6, 10000, $7, $8, $9)', [o.orgId, randomUUID(), entity, id, order, 'L1', tax, net, reversalOf !== null]);
       await a.query('COMMIT');
       return id;
     });
@@ -321,5 +321,44 @@ suite('the 01/CNKD return worksheet of a household business (#2518)', () => {
     const w = await cnkd(o, 3);
     expect(w.period.from).toBe('2026-08-15');
     expect(w.revenue).toBe('200000');
+  });
+
+  it('counts the sub-accounts of 511, leaves another entity\'s settlements out, and gives a multi-trade quarter of net returns nothing to split', async () => {
+    const o = await org();
+    await percentage(o);
+    await entry(o.household, o.orgId, '2026-07-05', 'Bán dịch vụ', [['111', 250000, 0], ['5111', 0, 250000]]);
+    await entry(o.household, o.orgId, '2026-07-06', 'Bán hàng', [['111', 750000, 0], ['511', 0, 750000]]);
+    // A settlement of the org's other entity ends in the quarter too: it is not this household's tax.
+    await settlement(o, 'shopee', '2026-07-01', '2026-07-15', 9000, null, o.company);
+    await settlement(o, 'tiktok_shop', '2026-08-01', '2026-08-15', 1000);
+    const w = await cnkd(o, 3);
+    expect(w.revenue).toBe('1000000');
+    expect(w.withheld.total).toBe('1000');
+    expect(w.withheld.settlements.map((s) => s.platform)).toEqual(['tiktok_shop']);
+    const returns = await org();
+    await percentage(returns, { trades: ['goods', 'services'] });
+    await entry(returns.household, returns.orgId, '2026-07-05', 'Hoàn hàng quý trước', [['511', 50000, 0], ['111', 0, 50000]]);
+    const net = await cnkd(returns, 3);
+    expect(net.revenue).toBe('-50000');
+    expect(net.unassigned).toBe('0');
+    expect(net.totals).toEqual({ revenue: '0', vat: '0', pit: '0', tax: '0' });
+    // There is nothing to give a trade, so a positive split is still refused.
+    await expect(cnkd(returns, 3, { split: [{ trade: 'goods', revenue: '1' }] })).rejects.toMatchObject({ code: 'HOUSEHOLD_SPLIT_INVALID' });
+  });
+
+  it('uses the percentages in force on the last day of the quarter, and a retired form files no worksheet', async () => {
+    const o = await org();
+    await percentage(o);
+    await entry(o.household, o.orgId, '2027-01-10', 'Bán hàng', [['111', 1000000, 0], ['511', 0, 1000000]]);
+    await entry(o.household, o.orgId, '2027-03-10', 'Bán hàng', [['111', 1000000, 0], ['511', 0, 1000000]]);
+    // A rate that changes on 2027-02-01 applies to the whole of Q1 2027, whatever day a sale was on.
+    await admin((a) => a.query("INSERT INTO crove_finance.household_trade_rate (trade, effective_from, vat_percent, pit_percent, source, status) VALUES ('goods', DATE '2027-02-01', 2, 1, 'test', 'commentary') ON CONFLICT DO NOTHING"));
+    const q1 = await cnkd(o, 1, {}, o.household, o.owner, 2027);
+    expect(q1.lines[0]).toMatchObject({ vatPercent: '2', pitPercent: '1', vat: '40000', pit: '20000' });
+    expect(q1.unconfirmed).toContainEqual({ kind: 'rate', key: 'goods', effectiveFrom: '2027-02-01' });
+    // A later dated row with no method retires the form from its date; the quarters before it keep it.
+    await admin((a) => a.query("INSERT INTO crove_finance.household_return_form_version (form, version, effective_from, name, pit_methods, source, status) VALUES ('01/CNKD', '2027.1', DATE '2027-04-01', 'Tờ khai 01/CNKD', ARRAY[]::text[], 'test', 'commentary') ON CONFLICT DO NOTHING"));
+    await expect(cnkd(o, 2, {}, o.household, o.owner, 2027)).rejects.toMatchObject({ code: 'HOUSEHOLD_RETURN_NOT_REQUIRED' });
+    expect((await cnkd(o, 1, {}, o.household, o.owner, 2027)).form.version).toMatch(/^2026\.[12]$/);
   });
 });
