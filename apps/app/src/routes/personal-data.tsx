@@ -135,6 +135,11 @@ export function PersonalDataPage() {
               {t('erasedRow', { column: e.column, rows: e.rows })}
             </p>
           ))}
+          {(erase.data.meetingNotes ?? []).map((n) => (
+            <p key={n.recorderUserId} className="text-xs text-muted-foreground">
+              {t('erasedNotes', { name: nameOf(n.recorderUserId), notes: n.notes })}
+            </p>
+          ))}
           {erase.data.kept.length > 0 && <p className="pt-2 font-medium text-foreground">{t('kept')}</p>}
           {erase.data.kept.map((k) => (
             <p key={k.column} className="text-xs text-muted-foreground">
@@ -205,6 +210,7 @@ export function PersonalDataPage() {
               {meetingText.map((m) => (
                 <p key={m.recorderUserId} className="text-xs text-muted-foreground">
                   {t('meetingTextRecorder', { name: nameOf(m.recorderUserId), meetings: m.meetings, lines: m.lines, results: m.results, items: m.items, titles: m.titles })}
+                  {m.notes ? t('meetingTextNotes', { notes: m.notes }) : null}
                 </p>
               ))}
               <p className="pt-1 text-xs text-muted-foreground">{t('meetingTextHint')}</p>

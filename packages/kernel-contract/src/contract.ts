@@ -190,7 +190,7 @@ import {
   zSocialSavedViewSave,
 } from './schemas.ts';
 import { zMarketplaceConnect, zMarketplaceConnection, zMarketplaceConnectionTested, zMarketplaceProviders } from './marketplace-connections.ts';
-import { zMarketplaceBalance, zMarketplaceBalanceInput } from './marketplace-balance.ts';
+import { zMarketplaceBalance, zMarketplaceBalanceInput, zMarketplaceFacts, zMarketplaceLine, zMarketplaceLineAsk } from './marketplace-balance.ts';
 import { zMarketplacePayoutRequest, zMarketplaceSettlementRequest, zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
 import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggestInput, zStockSuggested, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
 import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoicePrevious, zEInvoicePreviousInput, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStatus, zEInvoiceSuggested, zEInvoiceSuggestInput } from './einvoice.ts';
@@ -377,6 +377,11 @@ import {
   zMeetingResultSave,
   zMeetingTemplateSet,
   zMeetingTemplateSetDone,
+  zNotes,
+  zNotesPreview,
+  zNotesPreviewInput,
+  zNotesSave,
+  zNotesSaved,
   zMeetingResultSaved,
   zMeetingResults,
   zResultPublish,
@@ -393,6 +398,7 @@ import {
   zSummaryCopied,
   zSummaryCopy,
 } from './meetings.ts';
+import { zAskAnswer, zAskEmpty, zAskInput, zAskStatus } from './meeting-ask.ts';
 import { zFollowupDraft, zFollowupSendCall, zFollowupSent, zFollowupWording, zFollowupWordingAsk } from './meeting-followup.ts';
 import { zExtensionOrgToken, zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked, zExtensionTokenRevokedMember } from './extension.ts';
 import { zMcpGrantRevoke, zMcpGrantRevoked, zMcpGrantView, zMcpMemberGrantsSet, zMcpMemberGrantsView, zMcpWakeCleared, zMcpWakeTested, zMcpWakeGetInput, zMcpWakeGrantRef, zMcpWakeSet, zMcpWakeView, zMcpWakeWithSecret } from './mcp.ts';
@@ -940,6 +946,12 @@ export const contract = {
     },
     // Search across the transcript lines the caller reads (L2, #2589): plain folded text search, no model call.
     search: oc.input(zMeetingSearchInput).output(zMeetingSearchResult),
+    // Ask across meetings (A3, #3161): the member's own Vy answers a question from the lines the member's own search finds, each sentence with a citation to a transcript line; nothing is stored or sent.
+    // `status` is the box (may Vy be asked now, the cost of one question), `ask` is the click.
+    ask: {
+      status: oc.input(zAskEmpty).output(zAskStatus),
+      ask: oc.input(zAskInput).output(zAskAnswer),
+    },
     // The transcript (#2578): the recorder's draft, read, replaced by a transcription run and corrected by hand.
     transcript: {
       get: oc.input(zMeetingRef).output(zTranscript),
@@ -961,6 +973,12 @@ export const contract = {
       review: oc.input(zDraftReview).output(zDraftReviewed),
       summaryStatus: oc.input(zSummaryRef).output(zSummaryStatus),
       summarize: oc.input(zSummaryRef).output(zSummarized),
+      // "Ghi chú của tôi" (A5, #3163): the recorder's own rough notes, theirs alone; `enhance` is the recorder's Vy expanding them with the transcript (the same run family and budget
+      // as the summary), `enhancePreview` the finished expansion with their own lines and Vy's told apart, copied into the draft by `copySummary`.
+      notesGet: oc.input(zMeetingRef).output(zNotes),
+      notesSave: oc.input(zNotesSave).output(zNotesSaved),
+      enhance: oc.input(zSummaryRef).output(zSummarized),
+      enhancePreview: oc.input(zNotesPreviewInput).output(zNotesPreview),
     },
     // The machine translation of the summary (meetings integrations E1, #3184): the member's own Vy translates what they read; the result is theirs alone, beside the original.
     // `status` is the button (enabled or why not, the target language, the expected cost), `translate` is the click, `get` the member's own translations.
@@ -2079,6 +2097,10 @@ export const contract = {
     // Where each platform's money stands in the books (#2516, the Sàn screen): sales posted to 131, paid out, the difference and the fees awaiting an invoice (1388), per entity and platform,
     // read from the ledger by the platform's party. Every role reads; facts only, no model call, no order or buyer data.
     balance: oc.input(zMarketplaceBalanceInput.optional()).output(zMarketplaceBalance),
+    // The facts the coworker's line is written from (#2516 slice E): stored settlements not yet posted, the platforms' balance and the fees awaiting an invoice. Every role reads; facts only.
+    facts: oc.input(zMarketplaceBalanceInput.optional()).output(zMarketplaceFacts),
+    // The finance coworker's one line on the Sàn screen: the facts always, and one checked sentence when a model is on, within the AI budget. Read only: it stores nothing and posts nothing.
+    line: oc.input(zMarketplaceLineAsk).output(zMarketplaceLine),
   },
   // Stock (#2512, ADR-0045): the items of goods, the names a source uses for them, the append-only moves and the goods lines of posted documents not yet assigned to an item.
   // Every role reads; owners, admins and members write. A move is never edited or removed: a correction is a reversing move.

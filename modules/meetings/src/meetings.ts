@@ -7,11 +7,13 @@ import { meetingSearch } from './search.ts';
 import { transcriptCorrect, transcriptDraftStore, transcriptGet } from './transcript.ts';
 import { transcribeCommandList } from './transcribe.ts';
 import { transcribeRunCommands, transcribeRunQueries } from './transcribe-run.ts';
+import { notesCommands, notesQueries } from './notes.ts';
 import { resultCommands, resultQueries } from './results.ts';
-import { summaryCommands } from './summary.ts';
+import { summaryCommands, summaryQueries } from './summary.ts';
 import { summaryRunCommands, summaryRunQueries } from './summary-run.ts';
 import { translateCommands } from './translate.ts';
 import { translateRunCommands, translateRunQueries } from './translate-run.ts';
+import { askRunCommands, askRunQueries } from './ask.ts';
 import { linkCommands, linkQueries } from './links.ts';
 import { liveNotesCommands } from './live-notes.ts';
 import { liveRunCommands, liveRunQueries } from './live-run.ts';
@@ -976,10 +978,12 @@ export const meetingsCommands = [
   ...transcribeRunCommands,
   ...transcribeCommandList,
   ...resultCommands,
+  ...notesCommands,
   ...summaryCommands,
   ...summaryRunCommands,
   ...translateCommands,
   ...translateRunCommands,
+  ...askRunCommands,
   ...linkCommands,
   ...followupCommands,
   ...liveCommands,
@@ -1003,8 +1007,11 @@ export const meetingsQueries = [
   meetingSearch,
   ...transcribeRunQueries,
   ...resultQueries,
+  ...notesQueries,
+  ...summaryQueries,
   ...summaryRunQueries,
   ...translateRunQueries,
+  ...askRunQueries,
   ...linkQueries,
   ...followupQueries,
   ...liveRunQueries,

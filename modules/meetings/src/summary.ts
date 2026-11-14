@@ -5,8 +5,8 @@
 // what each item says about who and when: the "who" is matched to an attendee only when exactly one attendee answers to that name, the "when" is parsed
 // against the meeting's own date, and a link, email address or phone number in a title is flagged. Nothing is shared by this; the recorder's publish does that.
 import { sql } from 'kysely';
-import { zSummaryCopy, zSummaryCopied, zSummaryResult, ITEMS_PER_MEETING_MAX, sectionsToText, templateSections } from '@crove/kernel-contract';
-import { DomainError, defineCommand } from '@crove/kernel-runtime';
+import { zSummaryCopy, zSummaryCopied, zSummaryResult, zNotesPreview, zNotesPreviewInput, ITEMS_PER_MEETING_MAX, sectionsToText, templateSections, type Enhanced, type MeetingSummaryTemplate, type NotesPreview, type SummaryResult } from '@crove/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { itemFlags } from './results.ts';
 import { dayAfter, vnDay } from './retention.ts';
 import { SUMMARY_FEATURE as FEATURE, isSummaryEnabled } from './summary-run.ts';
@@ -94,6 +94,41 @@ export function parseWhen(text: string, meetingDay: string): string | null {
   return day;
 }
 
+// The recorder's own finished summary run of this meeting, read in the recorder's own context (the row is sealed to its member) and read back strictly: the body is the model's, checked once
+// by the agent package, and is never trusted for its shape. A run of another meeting or feature, one past its expiry, one not finished or one with an unreadable body is refused with the
+// same fixed codes whoever asks (the copy and the preview of an expansion share it).
+async function readRunResult(ctx: CommandContext | QueryContext, meetingId: string, runId: string, now: Date): Promise<SummaryResult> {
+  const found = await ctx
+    .query<{ status: string; feature: string; subjectType: string; subjectId: string; body: string | null; expiresAt: string }>('kernel.member_vy.result.get', { runId })
+    .catch((error: unknown) => {
+      // The kernel's own refusal for a run that is not the caller's or does not exist.
+      if (error instanceof DomainError && error.code === 'RESULT_NOT_FOUND') throw new DomainError('SUMMARY_RESULT_NOT_FOUND', 404, 'No summary result for this meeting');
+      throw error;
+    });
+  if (found.status !== 'ok') throw new DomainError('SUMMARY_RESULT_NOT_FOUND', 404, 'No summary result for this meeting');
+  const result = found.value;
+  if (result.feature !== FEATURE || result.subjectType !== 'meeting' || result.subjectId !== meetingId) {
+    throw new DomainError('SUMMARY_RESULT_NOT_FOUND', 404, 'No summary result for this meeting');
+  }
+  // An answer past its expiry is gone for the member, as the kernel's own read treats it: it is not copied into a draft.
+  if (new Date(result.expiresAt).getTime() <= now.getTime()) throw new DomainError('SUMMARY_RESULT_NOT_FOUND', 404, 'No summary result for this meeting');
+  if (result.status !== 'ready' || result.body === null) throw new DomainError('SUMMARY_RESULT_NOT_READY', 409, 'The summary is not finished');
+  try {
+    return zSummaryResult.parse(JSON.parse(result.body));
+  } catch {
+    throw new DomainError('SUMMARY_RESULT_INVALID', 422, 'The summary result cannot be read');
+  }
+}
+
+// The text an expansion of the recorder's notes becomes in the draft: the lines of each section, own and added, one to a line, under the template's headings (the general summary has one block).
+// Built by code from the checked lines, so the recorder's own lines are in it exactly as they wrote them.
+export function enhancedText(template: MeetingSummaryTemplate, enhanced: Enhanced): string {
+  const defs = templateSections(template);
+  if (defs.length === 0) return enhanced.sections.flatMap((s) => s.lines.map((l) => l.text)).join('\n');
+  const entries = enhanced.sections.flatMap((s) => (s.key !== null && defs.some((d) => d.key === s.key) ? [{ key: s.key, text: s.lines.map((l) => l.text).join('\n') }] : []));
+  return sectionsToText(template, entries);
+}
+
 export const summaryCopyResult = defineCommand({
   name: 'meetings.summary.copy_result',
   input: zSummaryCopy,
@@ -106,29 +141,7 @@ export const summaryCopyResult = defineCommand({
     if (!isSummaryEnabled()) throw new DomainError('SUMMARY_OFF', 422, 'Summaries by Vy are not turned on here; type the summary by hand');
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can copy its summary');
-    // The recorder's own result, read in the recorder's own context (the row is sealed to its member). A run of another meeting or feature is not this one.
-    const found = await ctx
-      .query<{ status: string; feature: string; subjectType: string; subjectId: string; body: string | null; expiresAt: string }>('kernel.member_vy.result.get', { runId: input.runId })
-      .catch((error: unknown) => {
-        // The kernel's own refusal for a run that is not the caller's or does not exist.
-        if (error instanceof DomainError && error.code === 'RESULT_NOT_FOUND') throw new DomainError('SUMMARY_RESULT_NOT_FOUND', 404, 'No summary result for this meeting');
-        throw error;
-      });
-    if (found.status !== 'ok') throw new DomainError('SUMMARY_RESULT_NOT_FOUND', 404, 'No summary result for this meeting');
-    const result = found.value;
-    if (result.feature !== FEATURE || result.subjectType !== 'meeting' || result.subjectId !== input.meetingId) {
-      throw new DomainError('SUMMARY_RESULT_NOT_FOUND', 404, 'No summary result for this meeting');
-    }
-    // An answer past its expiry is gone for the member, as the kernel's own read treats it: it is not copied into a draft.
-    if (new Date(result.expiresAt).getTime() <= ctx.now.getTime()) throw new DomainError('SUMMARY_RESULT_NOT_FOUND', 404, 'No summary result for this meeting');
-    if (result.status !== 'ready' || result.body === null) throw new DomainError('SUMMARY_RESULT_NOT_READY', 409, 'The summary is not finished');
-    // The body is the model's, checked once by the agent package; it is read back strictly here and never trusted for its shape.
-    let body;
-    try {
-      body = zSummaryResult.parse(JSON.parse(result.body));
-    } catch {
-      throw new DomainError('SUMMARY_RESULT_INVALID', 422, 'The summary result cannot be read');
-    }
+    const body = await readRunResult(ctx, input.meetingId, input.runId, ctx.now);
     // The meeting's day and who may be named: the recorder and the attendees, by the names the org knows them by (member_profiles answers for members only).
     const row = await ctx.trx.selectFrom('crove_meetings.meeting').select(['started_at', 'summary_template']).where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).executeTakeFirstOrThrow();
     const meetingDay = vnDay(row.started_at ?? new Date());
@@ -136,7 +149,13 @@ export const summaryCopyResult = defineCommand({
     if (body.template !== row.summary_template) throw new DomainError('SUMMARY_TEMPLATE_CHANGED', 409, 'The minutes template changed since Vy wrote this; ask Vy again');
     // On a template the sections become the one summary text, by code (the headings are code's, the text is the model's, already checked); on the general template the summary is as it was.
     const defs = templateSections(body.template);
-    const summaryText = defs.length === 0 ? body.summary : sectionsToText(body.template, body.sections.filter((x) => defs.some((d) => d.key === x.key)));
+    // An expansion of the recorder's notes (A5, #3163) becomes the same one text, the recorder's own lines verbatim among Vy's, and brings no items or decisions of its own.
+    const summaryText = body.enhanced
+      ? enhancedText(body.template, body.enhanced)
+      : defs.length === 0
+        ? body.summary
+        : sectionsToText(body.template, body.sections.filter((x) => defs.some((d) => d.key === x.key)));
+    if (body.enhanced && (summaryText === '' || summaryText.length > 8000)) throw new DomainError('SUMMARY_RESULT_INVALID', 422, 'The summary result cannot be read');
     const readers = await ctx.trx.selectFrom('crove_meetings.meeting_reader').select('user_id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).execute();
     const ids = [userId, ...readers.map((r) => r.user_id)];
     const { rows: profiles } = await sql<{ user_id: string; email: string; display_name: string | null }>`SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${ids}::uuid[])`.execute(ctx.trx);
@@ -157,14 +176,17 @@ export const summaryCopyResult = defineCommand({
     await ctx.trx.deleteFrom('crove_meetings.meeting_result').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').where('tainted', '=', true).execute();
     const mine = await ctx.trx.selectFrom('crove_meetings.meeting_result').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').executeTakeFirst();
     if (mine && (summaryText !== '' || body.decisions.length > 0)) throw new DomainError('DRAFT_SUMMARY_EXISTS', 409, 'You already have a summary draft; share it or save over it before copying Vy\'s');
-    await ctx.trx
-      .deleteFrom('crove_meetings.action_item')
-      .where('org_id', '=', ctx.orgId)
-      .where('meeting_id', '=', input.meetingId)
-      .where('stage', '=', 'draft')
-      .where('status', '=', 'suggested')
-      .where('tainted', '=', true)
-      .execute();
+    // The items a summary run suggested are replaced by a new summary run; an expansion of the notes has none and leaves them.
+    if (!body.enhanced) {
+      await ctx.trx
+        .deleteFrom('crove_meetings.action_item')
+        .where('org_id', '=', ctx.orgId)
+        .where('meeting_id', '=', input.meetingId)
+        .where('stage', '=', 'draft')
+        .where('status', '=', 'suggested')
+        .where('tainted', '=', true)
+        .execute();
+    }
     if (summaryText !== '' || body.decisions.length > 0) {
       // A second click at the same moment waits on the first's row and then meets the one draft a meeting may hold: the same answer as a draft that is there.
       await ctx.trx
@@ -218,4 +240,23 @@ export const summaryCopyResult = defineCommand({
   },
 });
 
+// What the recorder reads of a finished expansion of their notes before they copy it into their draft: their own lines and Vy's told apart, with the transcript second under each line Vy
+// added. The recorder's own run result only (the same checks as the copy: another meeting's, another feature's, an expired or unfinished one is refused), and an audited sensitive read.
+export const notesPreview = defineQuery({
+  name: 'meetings.notes.preview',
+  input: zNotesPreviewInput,
+  access: ROLES,
+  sensitive: true,
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx, input): Promise<NotesPreview> => {
+    const userId = userOf(ctx.actor);
+    const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
+    if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can read this');
+    const body = await readRunResult(ctx, input.meetingId, input.runId, new Date());
+    if (!body.enhanced) throw new DomainError('SUMMARY_RESULT_NOT_FOUND', 404, 'No expansion of the notes for this meeting');
+    return zNotesPreview.parse({ meetingId: input.meetingId, runId: input.runId, template: body.template, enhanced: body.enhanced, dropped: body.dropped });
+  },
+});
+
 export const summaryCommands = [summaryCopyResult];
+export const summaryQueries = [notesPreview];

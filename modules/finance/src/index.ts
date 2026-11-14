@@ -42,6 +42,7 @@ import { einvoiceConnectionCommands, einvoiceConnectionQueries } from './einvoic
 import { marketplaceConnectionCommands, marketplaceConnectionQueries } from './marketplace-connections.ts';
 import { einvoiceCommands, einvoiceQueries } from './einvoice-drafts.ts';
 import { marketplaceBalanceQueries } from './marketplace-balance.ts';
+import { marketplaceFactsQueries } from './marketplace-facts.ts';
 import { marketplaceIncomeCommands, marketplaceIncomeQueries } from './marketplace-income.ts';
 import { marketplaceRetentionCommands, marketplaceRetentionQueries } from './marketplace-retention.ts';
 import { marketplaceCommands, marketplaceQueries } from './marketplace-orders.ts';
@@ -253,6 +254,7 @@ export const financeQueries = [
   ...marketplaceQueries,
   ...marketplaceIncomeQueries,
   ...marketplaceBalanceQueries,
+  ...marketplaceFactsQueries,
   ...marketplaceRetentionQueries,
   financeToday,
   searchQuery,
