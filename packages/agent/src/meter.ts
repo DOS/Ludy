@@ -56,6 +56,9 @@ export const AI_FEATURES = {
   // The finance coworker's one line on why a bank statement line may be a payroll payment (#2532): code decided by the amount, the model only words it from the kind, month, amount and date (no name, no
   // description, no account); a line that states a figure it was not given is refused, and a person asks for the payment and approves it.
   'finance.bank_match_explain': 'finance',
+  // The finance coworker's one line on the Sàn screen (#2516 slice E): code read the facts from the books (settlements waiting to be posted, what the platforms owe, fees awaiting an invoice), the model
+  // only words them from those four numbers; a line that states a figure it was not given, a link, or says something was posted, approved or paid is refused. A read, never a post.
+  'finance.marketplace_line': 'finance',
   // The sales coworker's guess at the company a contact works at (#2438): only ranks the companies whose name matches the address a contact writes from.
   'crm.company_rank': 'crm',
   // The sales coworker's proposal for the lines of a quote (#2698): from the deal, what the customer wrote and the earlier quotes to them; a price no source holds stays empty, and a person applies each line.
