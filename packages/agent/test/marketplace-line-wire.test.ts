@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The coworker's line on the Sàn screen on the real path (#2516 slice E): the request body that leaves for the model is captured behind chatModel (a fake fetch), through metered() and generateText.
-// The facts hold four numbers; a careless caller that adds a platform name, an order, a buyer or a bank account to the object changes nothing on the wire, and what comes back is display only.
+// The facts hold three numbers; a careless caller that adds a platform name, an order, a buyer or a bank account to the object changes nothing on the wire, and what comes back is display only.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { InboxReader, marketplaceLineFactsText, marketplaceLineInstructions, withAiScope, type AiMeter, type MarketplaceLineFacts } from '../src/index.ts';
 
 const PLANTED = ['Shopee Việt Nam', 'Lazada Test Shop', 'Nguyễn Thị Mua', 'ORDER-2611-0042', '0123456789012', 'VCB 1234 5678 9012', 'Công ty Cổ phần Thử Nghiệm'];
-const FACTS: MarketplaceLineFacts = { language: 'vi', settlementsToPost: 2, platforms: 1, awaitingPayout: '1600000', feesAwaitingInvoice: '120000' };
+const FACTS: MarketplaceLineFacts = { language: 'vi', settlementsToPost: 2, awaitingPayout: '1600000', feesAwaitingInvoice: '120000' };
 // A careless caller's object: the same facts plus fields a settlement or an order has.
 const tainted = { ...FACTS, platformName: PLANTED[0], shop: PLANTED[1], buyer: PLANTED[2], orderNo: PLANTED[3], account: PLANTED[4], bank: PLANTED[5], company: PLANTED[6] } as MarketplaceLineFacts;
 
@@ -15,7 +15,7 @@ const completion = (content: unknown) => ({ id: 'x', object: 'chat.completion', 
 afterEach(() => vi.unstubAllGlobals());
 
 describe('what leaves for the model for the Sàn line (the bytes of the HTTP request)', () => {
-  it('is the instructions and the four facts, with no planted platform, buyer, order, account or bank', async () => {
+  it('is the instructions and the three facts, with no planted platform, buyer, order, account or bank', async () => {
     const bodies: string[] = [];
     vi.stubGlobal(
       'fetch',

@@ -14,26 +14,32 @@ import { errorMessage, orpc } from '../lib/api.ts';
 
 const NUM = 'px-4 py-3 text-right tabular-nums';
 
-// The coworker's line. The facts come from the same answer as the sentence, so the line is never empty because the model is off; the sentence, when there is one, is display only.
+// The coworker's line. The facts are asked first and shown as soon as they arrive, so a slow or failing model never leaves the line blank; the sentence is asked second, only when something is waiting, and
+// is display only. With AI off, busy, out of budget or refused, the facts stand alone (the state is named in a few words).
+const ZERO = /^-?0+(\.0+)?$/;
 function CoworkerLine({ legalEntityId, ready }: { legalEntityId: string | undefined; ready: boolean }) {
   const t = useTranslations('marketplaceBalance');
   const f = useFormat();
   const lang = useLocale() === 'en' ? 'en' : 'vi';
-  const line = useQuery({ ...orpc.marketplace.line.queryOptions({ input: { ...(legalEntityId === undefined ? {} : { legalEntityId }), lang } }), enabled: ready, retry: false, staleTime: 60_000 });
-  if (!line.data) return null;
-  const { facts, ai, text } = line.data;
+  const scope = legalEntityId === undefined ? {} : { legalEntityId };
+  const facts = useQuery({ ...orpc.marketplace.facts.queryOptions({ input: scope }), enabled: ready, retry: false });
+  const waiting = facts.data ? facts.data.settlementsToPost > 0 || !ZERO.test(facts.data.awaitingPayout) || !ZERO.test(facts.data.feesAwaitingInvoice) : false;
+  // Not refetched on window focus: a model call costs, and the answer is kept on the server for a while by its facts.
+  const line = useQuery({ ...orpc.marketplace.line.queryOptions({ input: { ...scope, lang } }), enabled: ready && waiting, retry: false, staleTime: 5 * 60_000, refetchOnWindowFocus: false });
+  if (!facts.data) return null;
   const parts: string[] = [];
-  if (facts.settlementsToPost > 0) parts.push(t('lineSettlements', { count: String(facts.settlementsToPost) }));
-  if (!/^-?0+(\.0+)?$/.test(facts.awaitingPayout)) parts.push(t('lineAwaiting', { amount: f.money(facts.awaitingPayout) }));
-  if (!/^-?0+(\.0+)?$/.test(facts.feesAwaitingInvoice)) parts.push(t('lineFees', { amount: f.money(facts.feesAwaitingInvoice) }));
+  if (facts.data.settlementsToPost > 0) parts.push(t('lineSettlements', { count: String(facts.data.settlementsToPost) }));
+  if (!ZERO.test(facts.data.awaitingPayout)) parts.push(t('lineAwaiting', { amount: f.money(facts.data.awaitingPayout) }));
+  if (!ZERO.test(facts.data.feesAwaitingInvoice)) parts.push(t('lineFees', { amount: f.money(facts.data.feesAwaitingInvoice) }));
+  const ai = line.data?.ai;
   return (
     <section className="mb-4 rounded-md border border-border p-3 text-sm" data-testid="marketplace-line">
       <p className="text-foreground" data-testid="marketplace-line-facts">
         {parts.length > 0 ? parts.join(' - ') : t('lineNothing')}
       </p>
-      {ai === 'used' && text && (
+      {ai === 'used' && line.data?.text && (
         <p className="mt-1 text-muted-foreground" data-testid="marketplace-line-text">
-          {text}
+          {line.data.text}
         </p>
       )}
       {(ai === 'busy' || ai === 'budget' || ai === 'failed') && (

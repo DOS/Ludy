@@ -27,11 +27,11 @@ export const zMarketplaceBalance = z.object({ rows: z.array(zMarketplaceBalanceR
 export type MarketplaceBalance = z.infer<typeof zMarketplaceBalance>;
 
 // The facts behind the finance coworker's one line on the Sàn screen (#2516 slice E), read by code from the books and nothing else: `settlementsToPost` is the stored settlements of the entity (or
-// of every entity the caller may see) that stand (not reversed, not a reversal) and have no posting voucher yet; `platforms` the platforms with a party link; `awaitingPayout` and
-// `feesAwaitingInvoice` the sums of the balance rows (slice D). No platform name, order, buyer or bank data is in it, so there is nothing in it for a model to follow.
+// of every entity the caller may see) that stand (not reversed, not a reversal) and have no posting voucher yet; `awaitingPayout` and `feesAwaitingInvoice` the sums of the balance rows (slice D)
+// of the platforms that owe (a platform whose balance is negative, overpaid or a payout reversed, is not waiting, and is not netted against another's debt). No platform name, order, buyer or bank
+// data is in it, so there is nothing in it for a model to follow.
 export const zMarketplaceFacts = z.strictObject({
   settlementsToPost: z.number().int().min(0),
-  platforms: z.number().int().min(0),
   awaitingPayout: zMoney,
   feesAwaitingInvoice: zMoney,
 });

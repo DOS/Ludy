@@ -5,7 +5,7 @@
 import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MarketplaceBalance, MarketplaceLine } from '@crove/kernel-contract';
+import type { MarketplaceBalance, MarketplaceFacts, MarketplaceLine } from '@crove/kernel-contract';
 
 const cache = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient, calls: [] as string[] }));
 
@@ -31,9 +31,10 @@ const { setActiveLocale } = await import('../src/i18n/runtime.ts');
 
 const entity = '00000000-0000-4000-8000-0000000000e1';
 
-function render(answer: MarketplaceBalance | null, locale: 'vi' | 'en' = 'en', line: MarketplaceLine | null = null): string {
+function render(answer: MarketplaceBalance | null, locale: 'vi' | 'en' = 'en', line: MarketplaceLine | null = null, facts: MarketplaceFacts | null = line?.facts ?? null): string {
   setActiveLocale(locale);
   if (answer) cache.current.setQueryData(['marketplace', 'balance'], answer);
+  if (facts) cache.current.setQueryData(['marketplace', 'facts'], facts);
   if (line) cache.current.setQueryData(['marketplace', 'line'], line);
   return renderToStaticMarkup(
     <QueryClientProvider client={cache.current}>
@@ -82,7 +83,7 @@ describe('the Sàn screen (#2516)', () => {
   });
 
   describe('the coworker\'s line (#2516 slice E)', () => {
-    const FACTS = { settlementsToPost: 2, platforms: 1, awaitingPayout: '1600000', feesAwaitingInvoice: '120000' };
+    const FACTS = { settlementsToPost: 2, awaitingPayout: '1600000', feesAwaitingInvoice: '120000' };
     const line = (over: Partial<MarketplaceLine> = {}): MarketplaceLine => ({ facts: FACTS, ai: 'used', text: '2 stored settlements are waiting to be posted.', ...over });
 
     it('shows the facts and the sentence, even before any platform is posted', () => {
@@ -97,6 +98,18 @@ describe('the Sàn screen (#2516)', () => {
       expect(html).toContain('No platform has been posted yet');
       expect(html).not.toContain('<button');
       expect(cache.calls).toEqual([]);
+    });
+
+    it('shows the facts as soon as they arrive, before the sentence is back and when it never comes', () => {
+      // Only the facts are in the cache: the sentence is still being asked (or its call failed), and the line is not blank.
+      const html = render({ rows: [] }, 'en', null, FACTS);
+      expect(html).toContain('data-testid="marketplace-line"');
+      expect(html).toContain('Stored settlements waiting to be posted: 2');
+      expect(html).not.toContain('data-testid="marketplace-line-text"');
+      expect(html).not.toContain('data-testid="marketplace-line-ai-state"');
+      // Before the facts arrive nothing is invented.
+      cache.current.clear();
+      expect(render({ rows: [] }, 'en', null, null)).not.toContain('data-testid="marketplace-line"');
     });
 
     it('shows the facts alone with AI off, and leaves out a fact that is zero', () => {
@@ -118,7 +131,7 @@ describe('the Sàn screen (#2516)', () => {
     });
 
     it('says nothing is waiting when every fact is zero, and shows no sentence for it', () => {
-      const html = render({ rows: [] }, 'en', line({ facts: { settlementsToPost: 0, platforms: 0, awaitingPayout: '0', feesAwaitingInvoice: '0' }, ai: 'none', text: null }));
+      const html = render({ rows: [] }, 'en', line({ facts: { settlementsToPost: 0, awaitingPayout: '0', feesAwaitingInvoice: '0' }, ai: 'none', text: null }));
       expect(html).toContain('Nothing is waiting here.');
     });
 

@@ -133,7 +133,7 @@ suite('the Sàn line facts on PostgreSQL (#2516 slice E)', () => {
   });
 
   it('is all zeros while nothing is stored, posted or linked', async () => {
-    expect(await facts()).toEqual({ settlementsToPost: 0, platforms: 0, awaitingPayout: '0', feesAwaitingInvoice: '0' });
+    expect(await facts()).toEqual({ settlementsToPost: 0, awaitingPayout: '0', feesAwaitingInvoice: '0' });
   });
 
   it('counts the stored settlements that stand and are not posted, leaving out a posted one, a reversed one and its reversal', async () => {
@@ -153,20 +153,38 @@ suite('the Sàn line facts on PostgreSQL (#2516 slice E)', () => {
     expect((await facts(owner, orgA, { legalEntityId: randomUUID() })).settlementsToPost).toBe(0);
   });
 
-  it('sums what the platforms still owe and the fees awaiting an invoice from the balance rows, and counts the platforms', async () => {
+  it('sums what the platforms still owe and the fees awaiting an invoice from the balance rows', async () => {
     await admin((c) => c.query("INSERT INTO crove_finance.marketplace_party (org_id, platform, party_id) VALUES ($1, 'shopee', $2)", [orgA, shopee]));
     await post([['131', 1_000_000, 0, shopee], ['511', 0, 1_000_000, null]]);
     await post([['112', 880_000, 0, null], ['1388', 120_000, 0, shopee], ['131', 0, 1_000_000, shopee]]);
     await post([['131', 500_000, 0, shopee], ['511', 0, 500_000, null]]);
     const f = await facts();
-    expect(f.platforms).toBe(1);
     expect(f.awaitingPayout).toBe('500000');
     expect(f.feesAwaitingInvoice).toBe('120000');
   });
 
+  it('does not net a platform that was overpaid against one that owes, nor count a negative fee balance', async () => {
+    const tiktok = randomUUID();
+    await admin(async (c) => {
+      await c.query("INSERT INTO crove_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', 'TikTok Shop')", [orgA, tiktok]);
+      await c.query("INSERT INTO crove_finance.marketplace_party (org_id, platform, party_id) VALUES ($1, 'tiktok_shop', $2)", [orgA, tiktok]);
+    });
+    // TikTok was paid out 300000 more than it was owed, and 1388 was cleared by more than it held: both negative.
+    await post([['131', 100_000, 0, tiktok], ['511', 0, 100_000, null]]);
+    await post([['112', 400_000, 0, null], ['131', 0, 400_000, tiktok]]);
+    await post([['331', 50_000, 0, null], ['1388', 0, 50_000, tiktok]]);
+    const f = await facts();
+    // Shopee still owes 500000 and 120000 of its fees await an invoice; TikTok's negative balances are not waiting and do not reduce them.
+    expect(f.awaitingPayout).toBe('500000');
+    expect(f.feesAwaitingInvoice).toBe('120000');
+    // Alone, an overpaid platform is no news.
+    const only = await facts(owner, orgA, { legalEntityId: branch });
+    expect(only).toEqual({ settlementsToPost: 1, awaitingPayout: '0', feesAwaitingInvoice: '0' });
+  });
+
   it('is read by every role, never shows another org anything, and writes nothing', async () => {
     for (const who of [owner, member, viewer]) expect((await facts(who)).settlementsToPost).toBe(2);
-    expect(await facts(stranger, orgB)).toEqual({ settlementsToPost: 0, platforms: 0, awaitingPayout: '0', feesAwaitingInvoice: '0' });
+    expect(await facts(stranger, orgB)).toEqual({ settlementsToPost: 0, awaitingPayout: '0', feesAwaitingInvoice: '0' });
     const before = await admin(async (c) => (await c.query<{ n: string }>('SELECT (SELECT count(*) FROM crove_finance.journal_voucher) + (SELECT count(*) FROM crove_finance.journal_entry) AS n')).rows[0]?.n);
     await facts();
     expect(await admin(async (c) => (await c.query<{ n: string }>('SELECT (SELECT count(*) FROM crove_finance.journal_voucher) + (SELECT count(*) FROM crove_finance.journal_entry) AS n')).rows[0]?.n)).toBe(before);

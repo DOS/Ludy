@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The facts behind the finance coworker's one line on the Sàn screen (#2516 slice E, plan docs/plan/stock-and-marketplaces.md section 8.4), read by code from the books and the stored
-// settlements, never from a model: how many stored settlements still wait to be posted (slice A's `journal_voucher.settlement_id` is the posting link), how many platforms are linked, what the
-// platforms still owe (131) and the fees whose invoice has not come (1388), the last two being the sums of slice D's balance rows. Read only and the same scope as the balance: the row policies
+// settlements, never from a model: how many stored settlements still wait to be posted (slice A's `journal_voucher.settlement_id` is the posting link), what the
+// platforms still owe (131) and the fees whose invoice has not come (1388), the last two being the sums of slice D's balance rows over the platforms that owe (a negative balance, an overpaid platform or a reversed payout, is not waiting and is never netted against another platform's debt). Read only and the same scope as the balance: the row policies
 // keep it to the entities the caller may see. No platform name, order, buyer or bank data is in the answer.
 import { sql } from 'kysely';
 import { zMarketplaceBalanceInput, type MarketplaceFacts } from '@crove/kernel-contract';
@@ -27,9 +27,8 @@ export const marketplaceFacts = defineQuery({
         AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_voucher v WHERE v.org_id = s.org_id AND v.settlement_id = s.id)`.execute(ctx.trx);
     return {
       settlementsToPost: Number(rows[0]?.n ?? '0'),
-      platforms: balance.rows.length,
-      awaitingPayout: toMoney(sum(balance.rows.map((r) => money(r.awaitingPayout)))),
-      feesAwaitingInvoice: toMoney(sum(balance.rows.map((r) => money(r.feesAwaitingInvoice)))),
+      awaitingPayout: toMoney(sum(balance.rows.map((r) => money(r.awaitingPayout)).filter((v) => v.gt(0)))),
+      feesAwaitingInvoice: toMoney(sum(balance.rows.map((r) => money(r.feesAwaitingInvoice)).filter((v) => v.gt(0)))),
     };
   },
 });
