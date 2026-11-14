@@ -93,6 +93,13 @@ BEGIN
   IF pg_catalog.current_setting('transaction_read_only') = 'on' THEN
     RAISE EXCEPTION 'MCP_WRITE_READ_ONLY' USING ERRCODE = '25006';
   END IF;
+  -- Lock order: the member row, then the grant row, as a demotion takes them (the update of the member row, then the trigger's revoke of the grants), so a draft racing a demotion waits and
+  -- never deadlocks. The grant's user is read first without a lock, only to know which member row to lock; every value used below is read again under both locks.
+  SELECT g.user_id INTO v_user FROM crove_kernel.agent_grant g WHERE g.org_id = p_org_id AND g.id = p_grant_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'MCP_GRANT_INVALID' USING ERRCODE = '28000';
+  END IF;
+  PERFORM 1 FROM crove_kernel.tenant_member m WHERE m.org_id = p_org_id AND m.user_id = v_user FOR SHARE;
   SELECT g.user_id, g.kind, g.scopes, g.revoked_at, g.expires_at INTO v_user, v_kind, v_scopes, v_revoked, v_expires
   FROM crove_kernel.agent_grant g WHERE g.org_id = p_org_id AND g.id = p_grant_id FOR SHARE OF g;
   IF NOT FOUND THEN
@@ -101,7 +108,6 @@ BEGIN
   IF v_kind <> 'company' THEN
     RAISE EXCEPTION 'MCP_GRANT_NOT_COMPANY' USING ERRCODE = '42501';
   END IF;
-  PERFORM 1 FROM crove_kernel.tenant_member m WHERE m.org_id = p_org_id AND m.user_id = v_user FOR SHARE;
   IF NOT crove_kernel.mcp_grant_standing(p_grant_id, p_org_id, v_user) THEN
     IF v_revoked IS NOT NULL THEN
       RAISE EXCEPTION 'MCP_GRANT_REVOKED' USING ERRCODE = '42501';
@@ -169,7 +175,8 @@ BEGIN
            AND NEW.author_user_id = (v_ctx ->> 'grantor')::uuid
            AND NEW.status = 'draft' AND NEW.revision = 1 AND NEW.archived_at IS NULL AND NEW.archived_by IS NULL
            AND NEW.assignee_user_id IS NULL AND NEW.due_at IS NULL AND NEW.repost_of IS NULL AND NEW.evergreen_days IS NULL
-           AND NEW.recurrence IS NULL AND NEW.recurrence_source_id IS NULL AND NEW.recurrence_count = 0 AND NEW.recurrence_next_at IS NULL AND NEW.recurrence_last_at IS NULL THEN
+           AND NEW.recurrence IS NULL AND NEW.recurrence_source_id IS NULL AND NEW.recurrence_count = 0 AND NEW.recurrence_next_at IS NULL AND NEW.recurrence_last_at IS NULL
+           AND NEW.text_variations = '[]'::jsonb AND NEW.text_variation_next = 0 THEN
           RETURN NEW;
         END IF;
       ELSIF TG_TABLE_SCHEMA = 'crove_social' AND TG_TABLE_NAME = 'post_variant' THEN
@@ -177,6 +184,9 @@ BEGIN
            AND NEW.published_at IS NULL AND NEW.external_post_id IS NULL AND NEW.external_url IS NULL AND NEW.removed_at IS NULL
            AND NEW.attempt = 1 AND NEW.error_code IS NULL AND NEW.error_message IS NULL AND NEW.error_retry_at IS NULL AND NEW.next_check_at IS NULL
            AND NEW.paused_connection_version IS NULL AND NEW.edit_state IS NULL AND NEW.content_frozen IS NOT TRUE
+           AND NEW.remove_requested_at IS NULL AND NEW.edit_body IS NULL AND NEW.edit_requested_at IS NULL AND NEW.edit_requested_by IS NULL AND NEW.published_revision IS NULL
+           AND NEW.media IS NULL AND NEW.link_url IS NULL AND pg_catalog.jsonb_typeof(NEW.settings) = 'object' AND (NEW.settings - 'signature') = '{}'::jsonb
+           AND (NEW.settings -> 'signature' IS NULL OR pg_catalog.jsonb_typeof(NEW.settings -> 'signature') = 'string')
            AND EXISTS (SELECT 1 FROM crove_social.post p
                        WHERE p.org_id = NEW.org_id AND p.id = NEW.post_id AND p.origin = 'ai' AND p.actor_origin = 'mcp'
                          AND p.tainted IS TRUE AND p.author_user_id = (v_ctx ->> 'grantor')::uuid AND p.status = 'draft') THEN
@@ -305,7 +315,8 @@ BEGIN
 END $$;
 
 
--- A post made over MCP is an AI post and tainted, whatever wrote the row. NOT VALID then VALIDATE: every older row has another actor_origin.
+-- A post made over MCP is an AI post and tainted, whatever wrote the row. NOT VALID then VALIDATE: the add takes its lock only briefly and the scan of the existing rows runs under a lighter one; no
+-- existing row can fail it, as none has actor_origin 'mcp' yet.
 DO $$
 BEGIN
   -- migration-lint: cross-module the CHECK belongs to the Social post table it constrains and ships with the one write that needs it (#3227, owner decision 2026-11-14).

@@ -110,9 +110,10 @@ function inboundRotateLimited(detail: string | undefined): DomainError {
   );
 }
 
-// Maps database errors to domain errors without leaking whether other tenants' rows exist.
 // The rule the runtime names when an MCP grant is refused for a scope it does not hold (runtime.ts authorizeMcp says the same).
 const MCP_SCOPE_RULE = 'mcp_scope';
+
+// Maps database errors to domain errors without leaking whether other tenants' rows exist.
 
 export function toDomainError(error: unknown): DomainError {
   if (error instanceof DomainError) return error;

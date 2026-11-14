@@ -226,6 +226,10 @@ suite('the write context of the MCP draft command (#3227)', () => {
       const id = randomUUID();
       expect(await attempt(`INSERT INTO crove_social.post (org_id, id, body, origin, actor_origin, tainted, author_user_id) VALUES ($1, $2, 'x', 'ai', 'mcp', true, $3)`, [orgId, id, users.owner])).toBeNull();
       expect(await attempt(`INSERT INTO crove_social.post_variant (org_id, post_id, channel_connection_id, provider, position, content_hash) VALUES ($1, $2, $3, 'sandbox', 0, ${HASH})`, [orgId, id, conn])).toBeNull();
+      // A channel may carry the channel's signature in its settings (a channel with a default signature copies it in), and nothing else there.
+      const conn3 = randomUUID();
+      await admin((a) => a.query(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', 'acct-draft-ctx-3', 'Kênh 3', $3)`, [orgId, conn3, users.owner]));
+      expect(await attempt(`INSERT INTO crove_social.post_variant (org_id, post_id, channel_connection_id, provider, position, settings, content_hash) VALUES ($1, $2, $3, 'sandbox', 2, '{"signature":"Hotline 0900"}'::jsonb, ${HASH})`, [orgId, id, conn3])).toBeNull();
       // Not a person's, not approved, not planned, not assigned, not repeated, not archived, not another's author.
       for (const [label, result] of [
         ['a person\'s post', await post('human', 'ui', false, 'draft')],
@@ -246,6 +250,8 @@ suite('the write context of the MCP draft command (#3227)', () => {
         ['a post that already recurred', await post('ai', 'mcp', true, 'draft', 'recurrence_count=3')],
         ['a post with a next recurrence', await post('ai', 'mcp', true, 'draft', 'recurrence_next_at=now()')],
         ['a post with a last recurrence', await post('ai', 'mcp', true, 'draft', 'recurrence_last_at=now()')],
+        ['a post with text variations', await post('ai', 'mcp', true, 'draft', `text_variations='["v"]'::jsonb`)],
+        ['a post with a variation counter', await post('ai', 'mcp', true, 'draft', 'text_variation_next=2')],
       ] as const) {
         expect(result, label).toMatch(/AGENT_FORBIDDEN|post_mcp_ai_tainted_ck/);
       }
@@ -274,6 +280,16 @@ suite('the write context of the MCP draft command (#3227)', () => {
             ['a check time', 'next_check_at', 'now()'],
             ['a paused connection', 'paused_connection_version', 'now()'],
             ['a frozen text', 'content_frozen', 'true'],
+            ['a removal request', 'remove_requested_at', 'now()'],
+            ['an edit text', 'edit_body', "'e'"],
+            ['an edit request time', 'edit_requested_at', 'now()'],
+            ['an edit requester', 'edit_requested_by', `'${users.owner}'`],
+            ['a published revision', 'published_revision', '1'],
+            ['media of its own', 'media', "'[]'::jsonb"],
+            ['a link of its own', 'link_url', "'https://example.com/x'"],
+            ['settings with a first comment', 'settings', `'{"firstComment":"x"}'::jsonb`],
+            ['settings with a removal time', 'settings', `'{"signature":"s","removeAt":"2030-01-01T00:00:00Z"}'::jsonb`],
+            ['a signature that is not text', 'settings', `'{"signature":{"a":1}}'::jsonb`],
           ] as const
         ).map(([label, column, value]) => [`a channel with ${label}`, `INSERT INTO crove_social.post_variant (org_id, post_id, channel_connection_id, provider, position, ${column}, content_hash) VALUES ($1, $2, $3, 'sandbox', 1, ${value}, ${HASH})`, [orgId, id, conn2]] as const),
       ] as const) {
@@ -296,7 +312,7 @@ suite('the write context of the MCP draft command (#3227)', () => {
         expect(await attempt(sql), label).toMatch(FORBIDDEN);
       }
       // It emits no event: the emit definer needs a run it has not.
-      expect(await attempt(`SELECT crove_kernel.emit('social.post.created', '{}'::jsonb, NULL)`)).not.toBeNull();
+      expect(await attempt(`SELECT crove_kernel.emit('social.post.created', '{}'::jsonb, NULL)`)).toMatch(/outbox_event_actor|AGENT_FORBIDDEN|AGENT_LEASE_REQUIRED/);
       await c.query('SELECT 1');
     });
   });
@@ -310,6 +326,33 @@ suite('the write context of the MCP draft command (#3227)', () => {
       await expect(c.query(`INSERT INTO crove_social.post (org_id, body, origin, actor_origin, tainted, author_user_id) VALUES ($1, 'x', 'ai', 'mcp', true, $2)`, [orgId, users.owner])).rejects.toThrow(FORBIDDEN);
       await c.query('ROLLBACK');
     } finally {
+      await c.end();
+    }
+  });
+
+  it('does not deadlock when a draft enters while a demotion of its grantor commits: it waits, then is refused', async () => {
+    const g = await grant(orgId, users.admin);
+    const demote = new pg.Client({ connectionString: adminUrl });
+    await demote.connect();
+    const c = await asApp();
+    try {
+      await demote.query('BEGIN');
+      // The demotion holds the member row and, through its trigger, revokes the person's grants: the order the entry's locks follow.
+      await demote.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgId, users.admin]);
+      await c.query('BEGIN');
+      const entering = c.query(`SELECT crove_kernel.enter_mcp_company_draft_context($1::uuid, $2::uuid)`, [orgId, g]).then(
+        () => 'entered',
+        (error: Error) => error.message,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      await demote.query('COMMIT');
+      const outcome = await entering;
+      expect(outcome).not.toMatch(/deadlock/);
+      expect(outcome).toMatch(/MCP_GRANT_(REVOKED|INVALID)/);
+    } finally {
+      await demote.query('ROLLBACK').catch(() => {});
+      await demote.end();
+      await c.query('ROLLBACK').catch(() => {});
       await c.end();
     }
   });

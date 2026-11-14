@@ -249,4 +249,12 @@ suite('the MCP draft command (#3227)', () => {
     expect([403, 422]).toContain((await refusal(approve(users.ownerA, { kind: 'member', scopes: ['ludy.social.draft'] }))).status);
     expect((await refusal(approve(users.ownerA, { scopes: ['ludy.member.read'] }))).status).toBe(422);
   });
+
+  it('copies the channel\'s default signature into the draft\'s channel like any post, and the database lets that one setting in', async () => {
+    const conn = await channel(orgA, users.ownerA, 'Kênh có chữ ký');
+    await runtime.execute('social.channel.set_signature', { connectionId: conn, signature: 'Hotline 0900 000 000' }, { actor: browser(users.ownerA), orgId: orgA });
+    const made = await draft({ body: 'Bài có chữ ký', channels: [{ connectionId: conn }] });
+    const [v] = await variantRows(made.postId);
+    expect(v).toMatchObject({ status: 'draft', settings: { signature: 'Hotline 0900 000 000' } });
+  });
 });

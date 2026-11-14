@@ -714,8 +714,8 @@ function mcpDetail(mcp: McpGrant): Record<string, unknown> {
   return { mcpCall: true, mcpGrant: mcp.grantId, mcpClient: mcp.clientId, mcpClientName: mcp.clientName };
 }
 
-// A user actor made from an MCP grant reaches a query only when it declares a scope the grant holds. A command is closed to it whatever it
-// declares. Any other actor is not restricted here.
+// A user actor made from an MCP grant reaches a query or a command only when it declares a scope the grant holds (a command only a write scope, and
+// register() allows that on one narrow kind of command). Every other command is closed to it. Any other actor is not restricted here.
 function authorizeMcp(access: McpAccess | McpWriteAccess | undefined, actor: Actor): void {
   if (actor.type !== 'user' || !actor.mcp) return;
   if (!access || !actor.mcp.scopes.includes(access.scope)) {
