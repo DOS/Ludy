@@ -5,7 +5,7 @@
 // permissions again, and has the offscreen document capture the one tab the member clicked.
 import { consentBlocker, type ConsentMethod } from './consent.ts';
 import { loadState, activeAccount } from './state.ts';
-import { isOwnSender, parseStartRequest, parseTick, RECORDING_KEY, type CaptureStart, type RecordingState, type StartReply, type StartRequest, type StopReply } from './messages.ts';
+import { isOwnSender, LOST_KEY, parseLost, parseStartRequest, parseTick, RECORDING_KEY, type CaptureStart, type LostState, type RecordingState, type StartReply, type StartRequest, type StopReply } from './messages.ts';
 import { createClient } from './api.ts';
 import { formatClock } from '@crove/meeting-recorder';
 import { T } from './strings.ts';
@@ -22,6 +22,17 @@ async function setBadge(state: RecordingState | null, elapsedMs = 0): Promise<vo
   await chrome.action.setBadgeText({ text: state ? 'REC' : '' });
   if (state) await chrome.action.setBadgeBackgroundColor({ color: '#d92d20' });
   await chrome.action.setTitle({ title: state ? `${T.recordingTitle}: ${state.title} (${formatClock(elapsedMs)})` : 'Ludy' });
+}
+
+// The recording ended by itself (A1, #3159): the badge says "!" (not "REC", nothing is recording) until the member opens the popup, which
+// shows when and why. No new permission: the badge and the storage the extension already uses.
+async function markLost(lost: LostState): Promise<void> {
+  await chrome.storage.local.remove(RECORDING_KEY);
+  await chrome.storage.local.set({ [LOST_KEY]: lost });
+  await chrome.action.setBadgeText({ text: '!' });
+  await chrome.action.setBadgeBackgroundColor({ color: '#b54708' });
+  await chrome.action.setTitle({ title: `${T.lostTitle}: ${lost.title}` });
+  await chrome.offscreen.closeDocument().catch(() => undefined);
 }
 
 async function start(request: StartRequest): Promise<StartReply> {
@@ -55,6 +66,7 @@ async function start(request: StartRequest): Promise<StartReply> {
     await chrome.offscreen.closeDocument().catch(() => undefined);
     return reply;
   }
+  await chrome.storage.local.remove(LOST_KEY);
   const recording: RecordingState = { meetingId: reply.meetingId, title: request.title.trim(), startedAt: reply.startedAt, keepVideo: request.keepVideo, micMissing: reply.micMissing };
   await chrome.storage.local.set({ [RECORDING_KEY]: recording });
   await setBadge(recording);
@@ -80,6 +92,16 @@ chrome.runtime.onMessage.addListener((raw, sender, respond) => {
     void chrome.storage.local.get(RECORDING_KEY).then((stored) => {
       const state = stored[RECORDING_KEY] as RecordingState | undefined;
       if (state) void setBadge(state, tick.elapsedMs);
+    });
+    return undefined;
+  }
+  if (message.type === 'lost') {
+    const lost = parseLost(raw);
+    if (!lost) return undefined;
+    void chrome.storage.local.get(RECORDING_KEY).then((stored) => {
+      const state = stored[RECORDING_KEY] as RecordingState | undefined;
+      // Only the recording the worker knows is marked; a late message about another meeting is ignored.
+      if (state && state.meetingId === lost.meetingId) void markLost({ meetingId: lost.meetingId, title: state.title, reason: lost.reason, at: Date.now(), uploaded: lost.uploaded });
     });
     return undefined;
   }

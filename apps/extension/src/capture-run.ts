@@ -11,6 +11,8 @@ import {
   createIndexedDbChunkStore,
   prepareCapture,
   RECORDING_NOTICE,
+  stopReasonForUpload,
+  type RecordingStopReason,
   startLiveCapture,
   uploadAfterLive,
   type ChunkStore,
@@ -59,8 +61,12 @@ export interface Running {
   startedAt: number;
   micMissing: boolean;
   elapsedMs(): number;
-  // Stops, saves the last chunk on the device and uploads; the copy is deleted only after the upload succeeded.
-  stop(): Promise<{ uploaded: boolean; meetingId: string; message?: string }>;
+  // Stops, saves the last chunk on the device and uploads; the copy is deleted only after the upload succeeded. `stopReason`
+  // is given only for a stop the member did not ask for (A1, #3159): the server keeps the code on the meeting.
+  stop(stopReason?: RecordingStopReason): Promise<{ uploaded: boolean; meetingId: string; message?: string }>;
+  // Called once when the recording ends without the member's click: the meeting tab closed or its capture was taken away, the
+  // recorder failed, or the device refused a chunk. The caller then stops with the reason, which uploads what was saved.
+  onLost(listener: (reason: RecordingStopReason) => void): void;
 }
 
 export async function startCapture(params: CaptureParams, deps: CaptureDeps = browserDeps()): Promise<{ ok: true; running: Running } | { ok: false; reason: Failure }> {
@@ -71,10 +77,21 @@ export async function startCapture(params: CaptureParams, deps: CaptureDeps = br
   const clock = createClock();
   const cleanups: Array<() => void> = [];
   let micMissing = false;
+  // A1 (#3159): a recording that ends without the member's click is reported once, with a code.
+  let stopRequested = false;
+  let lost: RecordingStopReason | null = null;
+  const lostListeners: Array<(reason: RecordingStopReason) => void> = [];
+  const fireLost = (reason: RecordingStopReason) => {
+    if (stopRequested || lost !== null) return;
+    lost = reason;
+    for (const listener of lostListeners) listener(reason);
+  };
   const prepared = await prepareCapture<MediaStream & { getTracks(): MediaStreamTrack[] }, MediaRecorder>({
     openStore: async () => void (await deps.store.list(params.orgId)),
     async getStream() {
       const tab = await deps.getTabStream(plan.tabConstraints);
+      // The tab's own tracks end when the tab is closed or its capture is taken away; the mix below would keep recording silence.
+      for (const track of tab.getTracks()) track.addEventListener?.('ended', () => fireLost('tab_closed'));
       const mic = await deps.getMicStream();
       micMissing = mic === null;
       // The tab goes quiet for the member when captured; it is played again through the mix's context.
@@ -117,8 +134,19 @@ export async function startCapture(params: CaptureParams, deps: CaptureDeps = br
   const startedAt = deps.now();
   clock.start(startedAt);
   const meetingId = writer.meta().meetingId;
-  recorder.ondataavailable = (event) => void writer.addChunk(event.data, clock.elapsedMs(deps.now())).catch(() => undefined);
-  const stopped = new Promise<void>((resolve) => recorder.addEventListener('stop', () => resolve(), { once: true }));
+  recorder.ondataavailable = (event) => void writer.addChunk(event.data, clock.elapsedMs(deps.now())).catch(() => fireLost('storage_full'));
+  const stopped = new Promise<void>((resolve) =>
+    recorder.addEventListener(
+      'stop',
+      () => {
+        // A stop nobody asked for (the browser or the device ended it).
+        fireLost('unknown');
+        resolve();
+      },
+      { once: true },
+    ),
+  );
+  recorder.addEventListener('error', () => fireLost('unknown'));
   recorder.start(5000);
   // Live notes: never fails the recording; null when not ticked or when the live recorder cannot start.
   const live = startLiveCapture({
@@ -134,7 +162,14 @@ export async function startCapture(params: CaptureParams, deps: CaptureDeps = br
       startedAt,
       micMissing,
       elapsedMs: () => clock.elapsedMs(deps.now()),
-      async stop() {
+      onLost(listener) {
+        if (lost !== null) listener(lost);
+        else lostListeners.push(listener);
+      },
+      async stop(stopReason) {
+        stopRequested = true;
+        // How it ended is saved with the recording, so even a retry from the popup later carries the right code.
+        await writer.markStopped(stopReason ?? 'user');
         clock.pause(deps.now());
         // The live recorder stops first and its last piece is taken before the devices are released.
         await live?.halt();
@@ -152,6 +187,12 @@ export async function startCapture(params: CaptureParams, deps: CaptureDeps = br
   };
 }
 
+// The reason code goes with the upload only when the recording did not end by the member's click.
+const stopReasonOf = (meta: RecordingMeta): { stopReason?: RecordingStopReason } => {
+  const stopReason = stopReasonForUpload(meta);
+  return stopReason ? { stopReason } : {};
+};
+
 // The saved recording to the meeting; the device copy goes only after the server has it.
 export async function uploadSaved(deps: Pick<CaptureDeps, 'store'>, client: Client, uploads: 'presigned' | 'direct', meta: RecordingMeta): Promise<{ ok: true } | { ok: false; message: string }> {
   try {
@@ -160,7 +201,7 @@ export async function uploadSaved(deps: Pick<CaptureDeps, 'store'>, client: Clie
       await deps.store.remove(meta.id);
       return { ok: false, message: 'Không có âm thanh nào được lưu' };
     }
-    await client.uploadMedia({ meetingId: meta.meetingId, kind: meta.kind, file: recording.file, lengthSeconds: recording.lengthSeconds, uploads });
+    await client.uploadMedia({ meetingId: meta.meetingId, kind: meta.kind, file: recording.file, lengthSeconds: recording.lengthSeconds, uploads, ...stopReasonOf(meta) });
     await deps.store.remove(meta.id);
     return { ok: true };
   } catch (error) {

@@ -32,6 +32,7 @@ import {
   RECORDING_NOTICE,
   startBlocker,
   startLiveCapture,
+  stopReasonForUpload,
   uploadAfterLive,
   type ChunkStore,
   type LiveCapture,
@@ -175,6 +176,8 @@ export function MeetingRecordPage() {
     return () => {
       unmounted.current = true;
       window.removeEventListener('pagehide', flush);
+      // A1 (#3159): leaving the screen stops the recording; say so on the saved copy, so its later upload tells the meeting why.
+      void live.current?.writer.markStopped('left_screen');
       releaseDevices(live.current, true);
     };
   }, []);
@@ -262,6 +265,8 @@ export function MeetingRecordPage() {
       return;
     }
     const { stream, recorder, writer } = result;
+    // A device that goes away mid-recording (microphone unplugged, permission taken back) ends its tracks: say why it stopped.
+    for (const track of stream.getTracks()) track.addEventListener('ended', () => void writer.markStopped('mic_lost'));
     const l: Live = { stream, recorder, writer, pending: new Set(), wakeLock: result.wakeLock, failed: false, liveCapture: null };
     live.current = l;
     recorder.ondataavailable = (event) => {
@@ -269,6 +274,7 @@ export function MeetingRecordPage() {
         // The device refused a chunk (storage full): keep what is saved, stop, and say so.
         if (!l.failed) {
           l.failed = true;
+          void l.writer.markStopped('storage_full');
           setError(t('record.saveFailed'));
           if (l.recorder.state !== 'inactive') l.recorder.stop();
         }
@@ -325,6 +331,8 @@ export function MeetingRecordPage() {
     clock.current.pause(Date.now());
     setElapsed(clock.current.elapsedMs(Date.now()));
     setPhase('uploading');
+    // The recorder's own click: no stop reason goes with the upload (A1, #3159).
+    void l.writer.markStopped('user');
     // The live recorder stops first; its last piece is taken in onStopped before the devices are released.
     void l.liveCapture?.halt();
     l.recorder.stop();
@@ -334,9 +342,12 @@ export function MeetingRecordPage() {
   const onStopped = async (l: Live) => {
     await Promise.all(l.pending);
     await l.liveCapture?.halt();
+    // The recorder stopped and nobody clicked, left the screen or filled the device: the browser or the device ended it.
+    await l.writer.markStopped('unknown');
     const meta = l.writer.meta();
     releaseDevices(l, false);
     if (unmounted.current) return;
+    if (meta.stopped !== 'user') setError(t('record.stoppedEarly', { time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), reason: t(`stopReason.${meta.stopped ?? 'unknown'}`) }));
     // The live pieces are refused once the final recording is stored: they finish (or give up) first, then the upload.
     await uploadAfterLive(l.liveCapture, () => uploadAndClear(meta, l.failed));
   };
@@ -351,7 +362,7 @@ export function MeetingRecordPage() {
         setError(t('record.nothingSaved'));
         return false;
       }
-      await uploadMeetingMedia(meta.meetingId, meta.kind, recording.file, recording.lengthSeconds);
+      await uploadMeetingMedia(meta.meetingId, meta.kind, recording.file, recording.lengthSeconds, stopReasonForUpload(meta));
       // Uploaded: the device copy is cleared at once.
       await store.remove(meta.id);
       await queryClient.invalidateQueries({ queryKey: orpc.meetings.key() });

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The recording notice kit (Meetings A1, #3159): fixed text, a version, the meeting's language as the default.
 import { describe, expect, it } from 'vitest';
-import { noticeLanguageFor, noticeToCopy, otherNoticeLanguage, RECORDING_NOTICE } from '../src/index.ts';
+import { beginRecording, isRecordingStopReason, noticeLanguageFor, noticeToCopy, otherNoticeLanguage, RECORDING_NOTICE, stopReasonForUpload, type ChunkStore, type RecordingMeta } from '../src/index.ts';
 
 describe('recording notice kit', () => {
   it('has a Vietnamese and an English text, a version, and says it awaits the lawyer (#2585)', () => {
@@ -29,5 +29,34 @@ describe('recording notice kit', () => {
     for (const text of Object.values(RECORDING_NOTICE.text)) {
       expect(text).not.toMatch(/—|<|>/);
     }
+  });
+});
+
+describe('how a recording ended (A1, #3159)', () => {
+  const store = (): ChunkStore & { saved: RecordingMeta[] } => {
+    const saved: RecordingMeta[] = [];
+    return { saved, put: async (m) => void saved.push(m), append: async () => undefined, list: async () => [], chunks: async () => [], remove: async () => undefined };
+  };
+  const base = { id: 'r1', scope: 'org:user', meetingId: 'm1', title: 'Họp', kind: 'audio' as const, mimeType: 'audio/webm', startedAt: 1 };
+
+  it('sends no reason for a stop the recorder asked for, the code for one that ended by itself, and "unknown" for one nobody saw end', () => {
+    expect(stopReasonForUpload({ stopped: 'user' })).toBeUndefined();
+    expect(stopReasonForUpload({ stopped: 'tab_closed' })).toBe('tab_closed');
+    expect(stopReasonForUpload({})).toBe('unknown');
+  });
+
+  it('keeps the first word on how it ended and saves it with the recording', async () => {
+    const s = store();
+    const writer = await beginRecording(s, base);
+    await writer.markStopped('mic_lost');
+    await writer.markStopped('user');
+    expect(writer.meta().stopped).toBe('mic_lost');
+    expect(s.saved.at(-1)?.stopped).toBe('mic_lost');
+  });
+
+  it('knows its codes', () => {
+    expect(isRecordingStopReason('left_screen')).toBe(true);
+    expect(isRecordingStopReason('because')).toBe(false);
+    expect(isRecordingStopReason(undefined)).toBe(false);
   });
 });

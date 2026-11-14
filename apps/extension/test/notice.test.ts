@@ -2,8 +2,8 @@
 // The recording notice the popup shows is the version the server stores (Meetings A1, #3159): one text file, one version,
 // and the server refuses a version it does not know.
 import { describe, expect, it } from 'vitest';
-import { CONSENT_NOTICE_VERSION, KNOWN_CONSENT_NOTICE_VERSIONS, zMeetingCreate } from '@crove/kernel-contract';
-import { RECORDING_NOTICE, noticeToCopy } from '@crove/meeting-recorder';
+import { CONSENT_NOTICE_VERSION, KNOWN_CONSENT_NOTICE_VERSIONS, RECORDING_STOP_REASONS as CONTRACT_REASONS, zMeetingCreate } from '@crove/kernel-contract';
+import { RECORDING_NOTICE, RECORDING_STOP_REASONS, noticeToCopy } from '@crove/meeting-recorder';
 import { consentBlocker } from '../src/consent.ts';
 import { ENGLISH, VIETNAMESE } from '../src/strings.ts';
 
@@ -25,6 +25,11 @@ describe('recording notice in the popup', () => {
   it('pasting the notice in the call chat is a method, but the confirmation is still needed', () => {
     expect(consentBlocker({ title: 'Họp', consentMethod: 'in_call_chat', consentAgreed: true })).toBeNull();
     expect(consentBlocker({ title: 'Họp', consentMethod: 'in_call_chat', consentAgreed: false })).toBe('consentAgreed');
+  });
+
+  it('the stop reason codes of the recorder are the ones the server accepts, and each has words in both languages', () => {
+    expect([...RECORDING_STOP_REASONS]).toEqual([...CONTRACT_REASONS]);
+    for (const strings of [ENGLISH, VIETNAMESE]) expect(Object.keys(strings.lostReasons).sort()).toEqual([...CONTRACT_REASONS].sort());
   });
 
   it('both languages of the popup label the draft status and the copy button', () => {

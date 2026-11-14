@@ -3,6 +3,7 @@
 // read storage (the popup calls /api/extension/me and the upload retry with the token); the offscreen document cannot, so
 // the worker hands it the token of the one org and the address for the one recording. Every receiver checks who sent a
 // message and the shape of what it carries (`parseStartRequest`, `parseCaptureStart`) before acting on it.
+import { isRecordingStopReason, type RecordingStopReason } from '@crove/meeting-recorder';
 import { CONSENT_METHODS, type ConsentMethod } from './consent.ts';
 
 export interface StartRequest {
@@ -58,6 +59,39 @@ export interface RecordingState {
   micMissing: boolean;
 }
 export const RECORDING_KEY = 'ludy-extension-recording';
+
+// A recording that ended without the member's click (A1, #3159): what the popup shows as "Ghi âm đã dừng lúc ..." until the member
+// says they saw it or starts another. Codes and the meeting's own title, kept in the extension's storage only.
+export interface LostState {
+  meetingId: string;
+  title: string;
+  reason: RecordingStopReason;
+  at: number;
+  uploaded: boolean;
+}
+export const LOST_KEY = 'ludy-extension-recording-lost';
+
+// What the offscreen document tells the worker once the recording ended by itself and what was saved has been uploaded (or not).
+export interface Lost {
+  type: 'lost';
+  reason: RecordingStopReason;
+  meetingId: string;
+  uploaded: boolean;
+}
+
+export function parseLost(raw: unknown): Lost | null {
+  if (!isObject(raw) || raw.type !== 'lost') return null;
+  const { reason, meetingId, uploaded } = raw;
+  if (!isRecordingStopReason(reason) || typeof meetingId !== 'string' || meetingId === '' || typeof uploaded !== 'boolean') return null;
+  return { type: 'lost', reason, meetingId, uploaded };
+}
+
+export function readLost(raw: unknown): LostState | null {
+  if (!isObject(raw)) return null;
+  const { meetingId, title, reason, at, uploaded } = raw;
+  if (typeof meetingId !== 'string' || typeof title !== 'string' || !isRecordingStopReason(reason) || typeof at !== 'number' || !Number.isFinite(at) || typeof uploaded !== 'boolean') return null;
+  return { meetingId, title, reason, at, uploaded };
+}
 
 // Only this extension's own pages and worker may send it a message: an id that is not ours (another extension, a page
 // that reached the runtime) is refused. `chrome.runtime.id` is passed in so the check tests without a browser.

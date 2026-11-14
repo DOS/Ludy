@@ -1701,6 +1701,14 @@ export const vi = {
       submit: 'Tạo cuộc họp và mã hóa tệp',
       submitting: 'Đang tải lên và mã hóa…',
     },
+    stopReason: {
+      tab_closed: 'Tab họp đã đóng hoặc không còn cho ghi.',
+      mic_lost: 'Micro hoặc thiết bị ghi bị mất.',
+      permission_lost: 'Quyền ghi đã bị thu hồi.',
+      storage_full: 'Máy không còn chỗ để lưu bản ghi.',
+      left_screen: 'Màn hình ghi âm đã bị rời đi.',
+      unknown: 'Trình duyệt hoặc thiết bị đã dừng ghi.',
+    },
     // The header chip while this member records, in the app or with the extension (A1, #3159).
     chip: {
       recording: 'Đang ghi {time}',
@@ -1729,6 +1737,7 @@ export const vi = {
       saveFailed: 'Máy không còn chỗ để lưu bản ghi nên đã dừng. Phần đã ghi đang được tải lên.',
       nothingSaved: 'Chưa có đoạn nào được lưu nên không có gì để tải lên.',
       uploaded: 'Đã tải bản ghi lên và mã hóa.',
+      stoppedEarly: 'Ghi âm đã dừng lúc {time}. {reason} Phần đã ghi đang được tải lên.',
       uploadedPartial: 'Đã tải phần ghi được lên. Phần cuối cuộc họp bị thiếu vì máy hết chỗ lưu.',
       uploadFailed: 'Chưa tải được bản ghi lên; bản ghi vẫn nằm trên máy này và bạn có thể tải lại bên dưới.',
       recoverTitle: 'Bản ghi chưa tải lên',
@@ -1941,6 +1950,7 @@ export const vi = {
       recordedBy: 'Người ghi: {user} · Tạo lúc {date}',
       noMedia: 'Cuộc họp này chưa có bản ghi âm hoặc video.',
       notFound: 'Không tìm thấy cuộc họp.',
+      stoppedAt: 'Ghi âm đã dừng lúc {time}',
       consentMethodLabel: 'Hình thức',
       consentNoticeVersion: 'Phiên bản thông báo',
       consentConfirmedAt: 'Xác nhận lúc',

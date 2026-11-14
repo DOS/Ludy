@@ -3,6 +3,7 @@ import { RPCLink } from '@orpc/client/fetch';
 import type { ContractRouterClient } from '@orpc/contract';
 import { createTanstackQueryUtils } from '@orpc/tanstack-query';
 import { MutationCache, QueryCache, QueryClient } from '@tanstack/react-query';
+import type { RecordingStopReason } from '@crove/meeting-recorder';
 import { DIRECT_UPLOAD_MAX_BYTES, MAX_IMPORT_BYTES, MAX_MEETING_AUDIO_BYTES, MAX_MEETING_VIDEO_BYTES, MAX_SOCIAL_VIDEO_BYTES, MAX_UPLOAD_BYTES, type contract, type UploadPurpose } from '@crove/kernel-contract';
 import { activeLocale, translator } from '../i18n/runtime.ts';
 import { apiUrl, serverOrigin } from './api-base.ts';
@@ -190,6 +191,8 @@ export async function uploadMeetingMedia(
   kind: 'audio' | 'video',
   file: File,
   lengthSeconds?: number,
+  // The recording stopped without the recorder's click (A1, #3159): the server keeps the code on the meeting.
+  stopReason?: RecordingStopReason,
 ): Promise<{ fileId: string }> {
   const purpose = kind === 'audio' ? 'meeting_audio' : 'meeting_video';
   if (file.size > maxBytesFor(purpose)) throw tooLarge(file, purpose);
@@ -200,7 +203,7 @@ export async function uploadMeetingMedia(
       apiFetch(`/api/meetings/${meetingId}/media`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ uploadId, kind, ...(lengthSeconds !== undefined ? { lengthSeconds } : {}) }),
+        body: JSON.stringify({ uploadId, kind, ...(lengthSeconds !== undefined ? { lengthSeconds } : {}), ...(stopReason ? { stopReason } : {}) }),
       }),
     );
     return (await response.json()) as { fileId: string };
@@ -210,6 +213,7 @@ export async function uploadMeetingMedia(
   // there (a multipart form is parsed whole). The kind and the length go in the query, because the body is only the file.
   const query = new URLSearchParams({ kind });
   if (lengthSeconds !== undefined) query.set('lengthSeconds', String(lengthSeconds));
+  if (stopReason) query.set('stopReason', stopReason);
   const response = await retryWhileBusy(() =>
     apiFetch(`/api/meetings/${meetingId}/media?${query.toString()}`, {
       method: 'POST',

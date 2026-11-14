@@ -1703,6 +1703,14 @@ export const en = {
       submit: 'Create meeting and encrypt files',
       submitting: 'Uploading and encrypting…',
     },
+    stopReason: {
+      tab_closed: 'The meeting tab was closed or can no longer be recorded.',
+      mic_lost: 'The microphone or recording device was lost.',
+      permission_lost: 'The permission to record was taken away.',
+      storage_full: 'The device has no room left to save the recording.',
+      left_screen: 'The recording screen was left.',
+      unknown: 'The browser or the device stopped recording.',
+    },
     // The header chip while this member records, in the app or with the extension (A1, #3159).
     chip: {
       recording: 'Recording {time}',
@@ -1731,6 +1739,7 @@ export const en = {
       saveFailed: 'This device has no room left to save the recording, so it stopped. What was recorded is uploaded now.',
       nothingSaved: 'No part was saved, so there is nothing to upload.',
       uploaded: 'The recording is uploaded and encrypted.',
+      stoppedEarly: 'Recording stopped at {time}. {reason} What was recorded is being uploaded.',
       uploadedPartial: 'Uploaded what was recorded. The end of the meeting is missing because this device ran out of room.',
       uploadFailed: 'The recording could not be uploaded; it is still on this device and you can retry below.',
       recoverTitle: 'Recordings not uploaded yet',
@@ -1943,6 +1952,7 @@ export const en = {
       recordedBy: 'Recorded by {user} · Created {date}',
       noMedia: 'This meeting has no audio or video yet.',
       notFound: 'Meeting not found.',
+      stoppedAt: 'Recording stopped at {time}',
       consentMethodLabel: 'Method',
       consentNoticeVersion: 'Notice version',
       consentConfirmedAt: 'Confirmed at',

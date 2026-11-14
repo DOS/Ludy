@@ -14,6 +14,7 @@ import { MeetingResults, memberLabel } from '../components/meeting-results.tsx';
 import { MeetingLive } from '../components/meeting-live.tsx';
 import { MeetingTranscript } from '../components/meeting-transcript.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
+import { RecordingStoppedNote } from '../components/recording-stopped.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { apiFetch, errorMessage, fetchVideoTicket, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
@@ -261,6 +262,8 @@ export function MeetingDetailPage() {
           </div>
         }
       />
+      {/* A recording that ended without the recorder's click leaves a visible line (A1, #3159): when it stopped and why, in plain words. */}
+      <RecordingStoppedNote meeting={meeting} />
 
       {/* AI Off Status Card: gone once the meeting has a transcript */}
       {!hasTranscript && (
