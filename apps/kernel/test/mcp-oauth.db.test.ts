@@ -885,8 +885,12 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     expect(readOnly.consentStatus).toBe(422);
     const asMember = await draftGrant({ draft: true, kind: 'member' });
     expect(asMember.consentStatus).toBe(422);
+    // A client that asks for the draft scope alone is offered the read scope only, and cannot tick a draft grant that would hold no read scope.
+    const draftOnly = await draftGrant({ scope: DRAFT, draft: true });
+    expect(draftOnly.details.body).toMatchObject({ scopes: ['ludy.read'] });
+    expect(draftOnly.consentStatus).toBe(422);
     // Nothing half made is left: no grant of those clients.
-    for (const c of [readOnly, asMember]) {
+    for (const c of [readOnly, asMember, draftOnly]) {
       expect((await admin((client) => client.query(`SELECT count(*)::int AS n FROM crove_kernel.agent_grant WHERE client_id = $1`, [c.clientId]))).rows[0].n).toBe(0);
     }
   });

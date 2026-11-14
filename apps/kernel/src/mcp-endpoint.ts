@@ -471,10 +471,11 @@ const schemaOf = (schema: z.ZodType): Record<string, unknown> => {
   const { $schema: _dialect, ...rest } = z.toJSONSchema(schema, { io: 'input' }) as Record<string, unknown>;
   return rest;
 };
-// The scopes of this server a client named in its authorization request: the read scope always, the draft scope when it asked for it.
+// The scopes of this server a client named in its authorization request: the read scope always, the draft scope only when it asked for it together with the read scope (a grant that holds the
+// draft scope holds the read scope with it, so a client that asks for the draft scope alone is offered the read scope only, and its token is refused as it would be for any request without it).
 function askedScopes(raw: unknown): string[] {
   const asked = new Set(String(raw ?? '').split(' '));
-  return asked.has(MCP_DRAFT_SCOPE) ? [MCP_SCOPE, MCP_DRAFT_SCOPE] : [MCP_SCOPE];
+  return asked.has(MCP_DRAFT_SCOPE) && asked.has(MCP_SCOPE) ? [MCP_SCOPE, MCP_DRAFT_SCOPE] : [MCP_SCOPE];
 }
 // The rows of a list in an answer; anything that is not a list counts as none.
 const rowCount = (list: unknown): number => (Array.isArray(list) ? list.length : 0);
