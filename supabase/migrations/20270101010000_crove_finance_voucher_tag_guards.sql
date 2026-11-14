@@ -50,14 +50,17 @@ BEGIN
   END IF;
   PERFORM pg_catalog.pg_advisory_xact_lock(
     pg_catalog.hashtextextended('crove_finance.bank_line:' || NEW.org_id::text || ':' || NEW.payout_bank_line_id::text, 0));
-  -- A cash voucher of the line whose entry is not reversed (a cash voucher without an entry cannot be committed, so every other one seen here has one).
+  -- A cash voucher of the line unless every original entry of it is reversed (and one exists): a cash voucher whose entry is not stored yet (the same transaction) holds the line.
   IF EXISTS (
     SELECT 1
     FROM crove_finance.cash_voucher v
-    JOIN crove_finance.journal_entry e
-      ON e.org_id = v.org_id AND e.source_type = 'finance.cash_voucher' AND e.source_id = v.id AND e.reverses_entry_id IS NULL
     WHERE v.org_id = NEW.org_id AND v.bank_line_id = NEW.payout_bank_line_id
-      AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_entry r WHERE r.org_id = e.org_id AND r.reverses_entry_id = e.id)
+      AND NOT (
+        EXISTS (SELECT 1 FROM crove_finance.journal_entry e
+                WHERE e.org_id = v.org_id AND e.source_type = 'finance.cash_voucher' AND e.source_id = v.id AND e.reverses_entry_id IS NULL)
+        AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_entry e
+                WHERE e.org_id = v.org_id AND e.source_type = 'finance.cash_voucher' AND e.source_id = v.id AND e.reverses_entry_id IS NULL
+                  AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_entry r WHERE r.org_id = e.org_id AND r.reverses_entry_id = e.id)))
   ) THEN
     RAISE EXCEPTION 'bank line % is already settled by a cash voucher', NEW.payout_bank_line_id USING ERRCODE = '23505';
   END IF;
@@ -106,17 +109,18 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'bank line % is already settled by another cash voucher', NEW.bank_line_id USING ERRCODE = '23505';
   END IF;
-  -- A payout voucher of the line (#2516) that is not reversed: the platform's transfer is already recorded by it. A payout voucher whose entry is
-  -- not stored yet (the same transaction) counts as holding the line, as a pending one does.
+  -- A payout voucher of the line (#2516) unless every original entry of it is reversed (and one exists), as modules/finance reversedSource reads it: a payout voucher whose entry
+  -- is not stored yet (the same transaction) holds the line, as a pending one does.
   IF EXISTS (
     SELECT 1
     FROM crove_finance.journal_voucher j
     WHERE j.org_id = NEW.org_id AND j.payout_bank_line_id = NEW.bank_line_id
-      AND NOT EXISTS (
-        SELECT 1
-        FROM crove_finance.journal_entry e
-        JOIN crove_finance.journal_entry r ON r.org_id = e.org_id AND r.reverses_entry_id = e.id
-        WHERE e.org_id = j.org_id AND e.source_type = 'finance.journal_voucher' AND e.source_id = j.id AND e.reverses_entry_id IS NULL)
+      AND NOT (
+        EXISTS (SELECT 1 FROM crove_finance.journal_entry e
+                WHERE e.org_id = j.org_id AND e.source_type = 'finance.journal_voucher' AND e.source_id = j.id AND e.reverses_entry_id IS NULL)
+        AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_entry e
+                WHERE e.org_id = j.org_id AND e.source_type = 'finance.journal_voucher' AND e.source_id = j.id AND e.reverses_entry_id IS NULL
+                  AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_entry r WHERE r.org_id = e.org_id AND r.reverses_entry_id = e.id)))
   ) THEN
     RAISE EXCEPTION 'bank line % is already settled by a marketplace payout', NEW.bank_line_id USING ERRCODE = '23505';
   END IF;

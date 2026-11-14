@@ -224,6 +224,11 @@ suite('the journal voucher marketplace tags on PostgreSQL (#3214)', () => {
       await expect(asOwner(async (c) => (await payoutVoucher(c, line), cashVoucher(c, line)))).resolves.toMatchObject({ ok: false, code: '23505' });
     });
 
+    it('refuses a payout for a line a bank voucher of the same transaction holds before its entry is stored', async () => {
+      const line = await bankLine();
+      await expect(asOwner(async (c) => (await cashVoucher(c, line), payoutVoucher(c, line)))).resolves.toMatchObject({ ok: false, code: '23505' });
+    });
+
     it('leaves a line no payout holds to its bank voucher', async () => {
       const line = await bankLine();
       await expect(asOwner((c) => cashVoucher(c, line, { entry: true }))).resolves.toMatchObject({ ok: true });
