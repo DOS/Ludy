@@ -313,6 +313,15 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: "A machine translation of a meeting's summary, which may name or describe a person: read by the member who asked alone, deleted with the meeting (its recorder, an owner, the retention job or the org purge) and with the summary it translated, and dropped, not redacted, by an erasure that touches the meeting",
   },
+  // The recorder's own rough notes of a meeting (meetings integrations A5, issue #3163): typed by the recorder, read, written and deleted by the recorder alone (row security: an owner, an
+  // admin, an attendee, an agent and the system context read none). The finder lists the row for the recorder acting as owner (crove_meetings.personal_row_ids, kind 5) and counts the notes of
+  // other recorders per recorder (crove_meetings.personal_note_counts), never listing them. The org is the data controller: the owner's erasure redacts the value in the notes of every recorder
+  // (crove_meetings.personal_note_erase) and reports the count per recorder, as it deletes every member's translations of a touched meeting.
+  'crove_meetings.meeting_note.body': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: "The recorder's own rough notes of a meeting, which may name or describe a person: read by the recorder alone; the owner's erasure edits the value out of every recorder's notes and counts them per recorder; deleted with the meeting (its recorder, an owner for a personal-data request, the retention job or the org purge)",
+  },
   'crove_meetings.transcript_segment.speaker_label': {
     kind: 'free_text',
     handling: 'erase',
@@ -497,7 +506,7 @@ async function meetingScan<T>(trx: QueryContext['trx'], run: () => Promise<T>): 
 }
 
 // The tables of crove_meetings.personal_row_ids's kind codes.
-const MEETING_ROW_TABLES: Record<number, string> = { 1: 'transcript_segment', 2: 'meeting_result', 3: 'action_item', 4: 'meeting' };
+const MEETING_ROW_TABLES: Record<number, string> = { 1: 'transcript_segment', 2: 'meeting_result', 3: 'action_item', 4: 'meeting', 5: 'meeting_note' };
 
 // Every row of the org that holds the value, column by column (the finder's answer), and, when privateCounts, per author
 // how many of their private notes and to-dos mention it (ADR-0037: counted, never shown, whoever runs the finder).
@@ -563,6 +572,17 @@ async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: 
     );
     if (counts === null) meetingTextSkipped = true;
     meetingText = (counts ?? []).map((m) => ({ recorderUserId: m.recorder_user_id, meetings: Number(m.meetings), lines: Number(m.lines), results: Number(m.results), items: Number(m.items), titles: Number(m.titles) }));
+    // The recorders' own rough notes (A5, #3163) that the owner cannot read: counted per recorder like the rest, in their own field, and only where there are some.
+    const noteCounts = await meetingScan(
+      trx,
+      async () => (await sql<{ recorder_user_id: string; notes: string }>`SELECT recorder_user_id, notes FROM crove_meetings.personal_note_counts(${probe.kind}, ${probeValue(probe)})`.execute(trx)).rows,
+    );
+    if (noteCounts === null) meetingTextSkipped = true;
+    for (const n of noteCounts ?? []) {
+      const entry = meetingText.find((m) => m.recorderUserId === n.recorder_user_id);
+      if (entry) entry.notes = Number(n.notes);
+      else meetingText.push({ recorderUserId: n.recorder_user_id, meetings: 0, lines: 0, results: 0, items: 0, titles: 0, notes: Number(n.notes) });
+    }
   }
   return { kind: probe.kind === 'email' ? 'email' : 'digits', matches, privateItems, meetingText, meetingTextSkipped, truncated };
 }
@@ -648,6 +668,7 @@ const SHORT_NUMBER_MEETING_COLUMNS = new Set([
   'crove_meetings.action_item.title',
   'crove_meetings.action_item.who_drafted',
   'crove_meetings.action_item.when_drafted',
+  'crove_meetings.meeting_note.body',
 ]);
 export const ACTIVITY_SHORT_NUMBER_REASON =
   'A number of fewer than 10 digits may also be an amount or a voucher number in a timeline line or a task, so the erasure does not replace it there; check these rows and tell the person, or ask for a longer value';
@@ -966,6 +987,17 @@ export const personalDataErase = defineCommand({
                 FROM crove_meetings.personal_erase(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx)
           ).rows,
         );
+    // The recorders' rough notes (A5, #3163): the value is redacted in the notes of every recorder of the org (the org is the data controller and the owner's erasure is its authority, as it is for
+    // the machine translations), and the changed notes are counted per recorder. A short number is left (as above) and counted below.
+    const noteErase = shortNumber
+      ? []
+      : await meetingScan(ctx.trx, async () =>
+          (await sql<{ recorder_user_id: string; erased: string }>`SELECT recorder_user_id, erased FROM crove_meetings.personal_note_erase(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx)).rows.map((r) => ({
+            recorderUserId: r.recorder_user_id,
+            notes: Number(r.erased),
+          })),
+        );
+    add('crove_meetings.meeting_note.body', (noteErase ?? []).reduce((n, r) => n + r.notes, 0));
     // The rows the owner cannot read, counted for the answer (the finder below lists the ones they read): read only, by the same matcher, under the same timeout.
     const shortMeetingCounts = shortNumber
       ? await meetingScan(ctx.trx, async () =>
@@ -1130,9 +1162,13 @@ export const personalDataErase = defineCommand({
     // Meeting text the redaction could not reach (#2594): a meeting the owner cannot read that no notice covers at its text now, or the redaction itself stopped by the timeout.
     if (redaction === null || shortMeetingCounts === null) kept.set('crove_meetings', { column: 'crove_meetings', rows: 0, reason: MEETING_TEXT_SKIPPED_REASON });
     // A short number: the rows of meetings the owner cannot read are counted under the short-number reason (the ones they read are listed above by column, with the same reason).
-    const shortMeetingRows = (shortMeetingCounts ?? []).reduce((n, c) => n + Number(c.lines) + Number(c.results) + Number(c.items) + Number(c.titles), 0);
+    const shortNoteRows = shortNumber
+      ? ((await meetingScan(ctx.trx, async () => (await sql<{ notes: string }>`SELECT notes FROM crove_meetings.personal_note_counts(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx)).rows)) ?? []).reduce((n, c) => n + Number(c.notes), 0)
+      : 0;
+    const shortMeetingRows = (shortMeetingCounts ?? []).reduce((n, c) => n + Number(c.lines) + Number(c.results) + Number(c.items) + Number(c.titles), 0) + shortNoteRows;
     if (shortMeetingRows > 0) kept.set('crove_meetings.text.short', { column: 'crove_meetings.text', rows: shortMeetingRows, reason: MEETING_TEXT_SHORT_NUMBER_REASON });
     if (meetingsKept.rows > 0) kept.set('crove_meetings.text', { column: 'crove_meetings.text', rows: meetingsKept.rows, reason: UNTOLD_MEETING_REASON });
+    if (noteErase === null) kept.set('crove_meetings.meeting_note.skipped', { column: 'crove_meetings.meeting_note', rows: 0, reason: MEETING_TEXT_SKIPPED_REASON });
     // Follow-up mail copies (#3025): the ones of a meeting the owner cannot read stay, counted; and the copies that already reached their recipients cannot be taken back.
     if (followupSkipped) kept.set('crove_meetings.followup_mail.skipped', { column: 'crove_meetings.followup_mail', rows: 0, reason: FOLLOWUP_MAIL_SKIPPED_REASON });
     if (followupShort > 0) kept.set('crove_meetings.followup_mail.short', { column: 'crove_meetings.followup_mail', rows: followupShort, reason: FOLLOWUP_MAIL_SHORT_NUMBER_REASON });
@@ -1155,6 +1191,7 @@ export const personalDataErase = defineCommand({
     for (const k of kept.values()) keptRows.set(k.column, (keptRows.get(k.column) ?? 0) + k.rows);
     const result: PersonalDataErasure = {
       erased: [...erased].map(([column, rows]) => ({ column, rows })),
+      ...((noteErase ?? []).length > 0 ? { meetingNotes: noteErase ?? [] } : {}),
       kept: [...kept.values()].map((k) => ({ column: k.column, rows: k.rows, reason: k.reason })),
     };
     // Counts and ids only: the value and the text never reach the audit log.

@@ -13,6 +13,7 @@ import { AVAILABLE_MODULES, SAMPLE_DB_PASSWORDS } from './config.ts';
 import { parseAllowedOrigins } from './cors.ts';
 import { parseExportKey } from './export-seal.ts';
 import { loadProberConfig } from './prober.ts';
+import { parseAllowedEmails } from './auth-access.ts';
 
 export const PILOT_EXIT = { ok: 0, failed: 1, error: 2 } as const;
 
@@ -325,14 +326,24 @@ export function checkEnv(env: Env): CheckResult[] {
   const policy = value(env, 'AUTH_SIGNUP_POLICY');
   const domains = value(env, 'AUTH_SIGNUP_ALLOWED_DOMAINS');
   const restricted = policy === 'invite_only' || (policy === 'allowlist' && domains !== undefined);
+  // A provider of the deployment's own (no bundled Supabase Auth, #2704): sign-up there is not Crove's to close; what Crove can
+  // limit is who may use this deployment, AUTH_ALLOWED_EMAILS.
+  // The upstream line must be present and empty: an absent line is compose's default, the bundled Supabase Auth.
+  const ownProvider = env['AUTH_UPSTREAM_URL'] !== undefined && env['AUTH_UPSTREAM_URL'].trim() === '' && value(env, 'PUBLIC_AUTH_URL') !== undefined;
+  // An empty parse (`, ,`) lists nobody: the kernel refuses it at boot, and this check does not count it as a limit.
+  const allowed = parseAllowedEmails(value(env, 'AUTH_ALLOWED_EMAILS') ?? '').entries.length > 0;
   add(
     'Sign-up limited',
     [
-      signup === 'true' || restricted
+      signup === 'true' || restricted || (ownProvider && allowed)
         ? null
         : `AUTH_DISABLE_SIGNUP is ${signup ?? 'unset'} and AUTH_SIGNUP_POLICY is ${policy ?? 'unset'}${policy === 'allowlist' ? ' without AUTH_SIGNUP_ALLOWED_DOMAINS' : ''}: anyone who reaches PUBLIC_URL can create an account; set AUTH_SIGNUP_POLICY=invite_only, or AUTH_DISABLE_SIGNUP=true once the partner's accounts exist (docs/runbooks/pilot-readiness.md)`,
     ],
-    signup === 'true' ? 'AUTH_DISABLE_SIGNUP=true: Supabase Auth creates no new accounts' : `AUTH_SIGNUP_POLICY=${policy}: Crove forwards only sign-ups it admits`,
+    signup === 'true'
+      ? 'AUTH_DISABLE_SIGNUP=true: Supabase Auth creates no new accounts'
+      : ownProvider && allowed && !restricted
+        ? 'AUTH_ALLOWED_EMAILS: Crove refuses every address that is not listed'
+        : `AUTH_SIGNUP_POLICY=${policy}: Crove forwards only sign-ups it admits`,
   );
 
   // Alerts (M1-9, issue #309): the prober posts to a channel the owner reads, and it runs.
