@@ -7,6 +7,8 @@ import {
   ConversationNoticeError,
   TELEGRAM_CHAT_UPDATES,
   TELEGRAM_HOOK_PATTERN,
+  TELEGRAM_MEDIA_HOSTS,
+  TELEGRAM_PHOTO_MAX_BYTES,
   TelegramConversations,
   deleteTelegramWebhook,
   newTelegramHookId,
@@ -18,6 +20,7 @@ import {
   telegramHookSecret,
   telegramHookSecretOk,
   wrapTelegramChatNotice,
+  type ConversationMediaInput,
   type ConversationReplyInput,
   type Fetch,
 } from '../src/index.ts';
@@ -96,10 +99,12 @@ describe('the events of an update', () => {
     expect(telegramChatEvents(message({}, { first_name: ' ', last_name: undefined, username: undefined }))[0]?.contact).toEqual({ id: '111' });
   });
 
-  it('keeps a photo as a placeholder line with its caption, and never the file id', () => {
+  it('keeps a photo whose sizes cannot be read as a placeholder line with its caption, and never the file id in the text', () => {
+    // Sizes without their pixels read as no photo (a real size always has both), so the line is all that is kept.
     const update = message({ text: undefined, caption: 'Cái này', photo: [{ file_id: 'small', width: 90 }, { file_id: 'big', width: 800 }] });
     const [event] = telegramChatEvents(update);
     expect(event?.text).toBe('Cái này\n[Khách gửi ảnh]');
+    expect(event?.attachments).toBeUndefined();
     expect(JSON.stringify(event)).not.toContain('big');
   });
 
@@ -509,5 +514,193 @@ describe('a reply in a business chat', () => {
 describe('what the webhook asks Telegram for', () => {
   it('lists the bot chat update and the four of Business mode, so none is left to the previous setting', () => {
     expect([...TELEGRAM_CHAT_UPDATES]).toEqual(['message', 'business_connection', 'business_message', 'edited_business_message', 'deleted_business_messages']);
+  });
+});
+
+// Customers' photos as images (#3192): `Message.photo` is an array of PhotoSize (file_id, file_unique_id, width, height, file_size?) [O].
+const size = (file_id: string, width: number, height: number, extra: Record<string, unknown> = {}) => ({ file_id, file_unique_id: `u-${file_id}`, width, height, ...extra });
+const BIG_ID = 'AgACAgIAAxkBAAIBY2Vy_big-id_0123456789';
+const SMALL_ID = 'AgACAgIAAxkBAAIBY2Vy_small-id_0123456789';
+const photoMessage = (photo: unknown, over: Record<string, unknown> = {}) => message({ text: undefined, photo, ...over });
+
+describe('a customer\'s photo', () => {
+  it('is one image, named by the file id of the largest size, and says its caption alone (the placeholder when it has none)', () => {
+    // Telegram lists the sizes smallest first; the pick is by pixels, so an unordered list gives the same.
+    const sizes = [size(SMALL_ID, 90, 67, { file_size: 1200 }), size(BIG_ID, 1280, 960, { file_size: 180_000 }), size('mid-id', 320, 240)];
+    const [event] = telegramChatEvents(photoMessage(sizes, { caption: 'Cái này' }));
+    expect(event?.attachments).toEqual([{ kind: 'image', mediaRef: BIG_ID }]);
+    expect(event?.text).toBe('Cái này');
+    expect(telegramChatEvents(photoMessage(sizes))[0]?.text).toBe('[Khách gửi ảnh]');
+    expect(telegramChatEvents(photoMessage([...sizes].reverse()))[0]?.attachments).toEqual([{ kind: 'image', mediaRef: BIG_ID }]);
+  });
+
+  it('takes the largest size that fits the cap, and none when no size reads as a photo: the line alone is kept', () => {
+    const over = TELEGRAM_PHOTO_MAX_BYTES + 1;
+    expect(telegramChatEvents(photoMessage([size(SMALL_ID, 90, 67), size(BIG_ID, 4000, 3000, { file_size: over })]))[0]?.attachments).toEqual([{ kind: 'image', mediaRef: SMALL_ID }]);
+    for (const photo of [[], [size(BIG_ID, 4000, 3000, { file_size: over })], [size('has a space', 90, 67)], [size('x'.repeat(301), 90, 67)], [size(SMALL_ID, 0, 67)], [size(SMALL_ID, 90.5, 67)], [{ file_id: SMALL_ID }], ['x', null, 7], 'photo', { file_id: SMALL_ID }]) {
+      const [event] = telegramChatEvents(photoMessage(photo, { caption: 'Cái này' }));
+      expect(event?.attachments).toBeUndefined();
+      expect(event?.text).toBe('Cái này\n[Khách gửi ảnh]');
+    }
+    // The same cap as the core's, which this package does not import.
+    expect(TELEGRAM_PHOTO_MAX_BYTES).toBe(5 * 1024 * 1024);
+  });
+
+  it('reads at most twenty sizes and one image, and carries no address and no token', () => {
+    const many = Array.from({ length: 30 }, (_, i) => size(`id-${i}`, 10 + i, 10 + i));
+    const [event] = telegramChatEvents(photoMessage(many));
+    // Sizes past the twentieth are not looked at (the largest of the first twenty is the 20th).
+    expect(event?.attachments).toEqual([{ kind: 'image', mediaRef: 'id-19' }]);
+    expect(JSON.stringify(event)).not.toMatch(/api\.telegram\.org|https?:|123456789:/);
+  });
+
+  it('is an image in a business chat too, from the customer only, and an edit brings none', () => {
+    const sizes = [size(SMALL_ID, 90, 67), size(BIG_ID, 1280, 960)];
+    const [mine] = telegramChatEvents(businessMessage({ text: undefined, photo: sizes }));
+    expect(mine).toMatchObject({ threadId: `b:111:${CONN}`, direction: 'in', text: '[Khách gửi ảnh]', attachments: [{ kind: 'image', mediaRef: BIG_ID }] });
+    // The account's own photo (the owner sending one in Telegram) is a placeholder of what was sent and is never fetched.
+    const own = telegramChatEvents(businessMessage({ text: undefined, photo: sizes }, { id: OWNER }))[0];
+    expect(own).toMatchObject({ direction: 'out', text: '[Đã gửi ảnh]' });
+    expect(own?.attachments).toBeUndefined();
+    // An edit of a customer's message (a new caption) changes the words, said the way the first arrival said them (the caption alone beside an image, no
+    // placeholder line); the message keeps the images of its first arrival and the edit brings none.
+    const edited = telegramChatEvents(businessMessage({ text: undefined, caption: 'Giá mới', photo: sizes }, {}, 'edited_business_message'))[0];
+    expect(edited).toMatchObject({ edited: true, text: 'Giá mới' });
+    expect(edited?.attachments).toBeUndefined();
+    // The caption taken away leaves the placeholder, as a photo with no caption does on arrival.
+    expect(telegramChatEvents(businessMessage({ text: undefined, photo: sizes }, {}, 'edited_business_message'))[0]).toMatchObject({ edited: true, text: '[Khách gửi ảnh]' });
+    // An edit in a bot chat is not read at all (already so), photo or not.
+    expect(telegramChatEvents({ update_id: 9, edited_message: photoMessage(sizes).message })).toEqual([]);
+  });
+
+  it('is in the notice the route parks, beside the placeholder and with the hook as the account', () => {
+    const hook = newTelegramHookId();
+    const notice = parseTelegramChatNotice(wrapTelegramChatNotice(hook, Buffer.from(JSON.stringify(photoMessage([size(BIG_ID, 1280, 960)])))));
+    expect(notice.accountId).toBe(hook);
+    expect(notice.events[0]?.attachments).toEqual([{ kind: 'image', mediaRef: BIG_ID }]);
+  });
+});
+
+// The bytes of a photo by its file id: `getFile`, then the file's address, both through the guarded fetch the job hands over [O].
+const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
+type Hit = { method: string; url: string; headers: Record<string, string>; body: string | null };
+function fileServer(answers: Array<{ status?: number; body?: unknown; bytes?: Uint8Array } | Error>) {
+  const hits: Hit[] = [];
+  const fetchImpl: Fetch = async (input, init) => {
+    const headers: Record<string, string> = {};
+    new Headers(init?.headers).forEach((value, key) => {
+      headers[key] = value;
+    });
+    hits.push({ method: init?.method ?? 'GET', url: input, headers, body: typeof init?.body === 'string' ? init.body : null });
+    const answer = answers.shift() ?? { status: 500, body: { ok: false, error_code: 500, description: 'no answer' } };
+    if (answer instanceof Error) throw answer;
+    return answer.bytes !== undefined ? new Response(answer.bytes as Uint8Array<ArrayBuffer>, { status: answer.status ?? 200 }) : new Response(JSON.stringify(answer.body ?? {}), { status: answer.status ?? 200, headers: { 'content-type': 'application/json' } });
+  };
+  return { hits, fetchImpl };
+}
+const located = (file_path: unknown = 'photos/file_12.jpg', extra: Record<string, unknown> = {}) => ({ body: { ok: true, result: { file_id: BIG_ID, file_unique_id: 'u', file_path, ...extra } } });
+const mediaInput = (fetchImpl: Fetch, over: Partial<ConversationMediaInput> = {}): ConversationMediaInput => ({ externalAccountId: '-1001234567890', secret: SECRET, mediaRef: BIG_ID, fetch: fetchImpl, maxBytes: 5 * 1024 * 1024, hosts: TELEGRAM_MEDIA_HOSTS, ...over });
+
+describe('the bytes of a photo', () => {
+  it('asks getFile for the path, then fetches the file from the Bot API host with the token in the path only, and returns the bytes', async () => {
+    const { hits, fetchImpl } = fileServer([located(), { bytes: PNG }]);
+    expect(await new TelegramConversations().media(mediaInput(fetchImpl))).toEqual({ kind: 'ok', bytes: PNG });
+    expect(hits).toHaveLength(2);
+    expect(hits[0]).toMatchObject({ method: 'POST', url: `https://api.telegram.org/bot${TOKEN}/getFile` });
+    expect(JSON.parse(hits[0]?.body ?? '{}')).toEqual({ file_id: BIG_ID });
+    expect(hits[1]).toMatchObject({ method: 'GET', url: `https://api.telegram.org/file/bot${TOKEN}/photos/file_12.jpg` });
+    // The token goes in the two paths, never in a header or a body.
+    for (const hit of hits) {
+      expect(JSON.stringify(hit.headers)).not.toContain('AAHdqTcv');
+      expect(hit.body ?? '').not.toContain('AAHdqTcv');
+    }
+    // Only the Bot API's host is ever named.
+    expect(new Set(hits.map((h) => new URL(h.url).hostname))).toEqual(new Set(['api.telegram.org']));
+  });
+
+  it('is the Bot API host and no other: the list is exactly that, and a list that does not name it sends nothing', async () => {
+    expect([...TELEGRAM_MEDIA_HOSTS]).toEqual(['api.telegram.org']);
+    for (const hosts of [[], ['fbsbx.com'], ['telegram.org.evil.test'], ['evil-api.telegram.org']]) {
+      const { hits, fetchImpl } = fileServer([located(), { bytes: PNG }]);
+      expect(await new TelegramConversations().media(mediaInput(fetchImpl, { hosts }))).toEqual({ kind: 'failed', retry: false, code: 'TG_MEDIA_HOST' });
+      expect(hits).toHaveLength(0);
+    }
+  });
+
+  it('refuses before any call: no token, a reference that is no file id', async () => {
+    const { hits, fetchImpl } = fileServer([located(), { bytes: PNG }]);
+    const adapter = new TelegramConversations();
+    expect(await adapter.media(mediaInput(fetchImpl, { secret: '{"nothing":1}' }))).toEqual({ kind: 'failed', retry: false, code: 'NO_TELEGRAM_TOKEN' });
+    for (const mediaRef of ['', 'a b', 'a/b', '../x', 'a?x=1', 'x'.repeat(301)]) {
+      expect(await adapter.media(mediaInput(fetchImpl, { mediaRef }))).toEqual({ kind: 'failed', retry: false, code: 'BAD_MEDIA_REF' });
+    }
+    expect(hits).toHaveLength(0);
+  });
+
+  it('says why getFile failed in a code, and whether asking again may help', async () => {
+    const run = async (answer: Parameters<typeof fileServer>[0][number]) => new TelegramConversations().media(mediaInput(fileServer([answer]).fetchImpl));
+    // The bot's token was revoked, or the file id is unknown or past its life (a 400 "wrong file_id"): asking again will not change it.
+    expect(await run(fail(401, 'Unauthorized'))).toEqual({ kind: 'failed', retry: false, code: 'TELEGRAM_TOKEN_REFUSED' });
+    expect(await run(fail(404, 'Not Found'))).toEqual({ kind: 'failed', retry: false, code: 'TELEGRAM_TOKEN_REFUSED' });
+    expect(await run(fail(400, 'Bad Request: wrong file_id or the file is temporarily unavailable'))).toEqual({ kind: 'failed', retry: false, code: 'TG_MEDIA_GONE' });
+    // A busy Telegram or a dropped connection may answer next time.
+    expect(await run(fail(429, 'Too Many Requests', { parameters: { retry_after: 3 } }))).toEqual({ kind: 'failed', retry: true, code: 'TG_MEDIA_BUSY' });
+    expect(await run(fail(502, 'Bad Gateway'))).toEqual({ kind: 'failed', retry: true, code: 'TG_MEDIA_BUSY' });
+    expect(await run(new Error('socket hang up'))).toEqual({ kind: 'failed', retry: true, code: 'TG_MEDIA_ERROR' });
+    expect(await run(Object.assign(new Error('x'), { code: 'timeout' }))).toEqual({ kind: 'failed', retry: true, code: 'TG_MEDIA_ERROR' });
+    expect(await run(fail(403, 'Forbidden'))).toEqual({ kind: 'failed', retry: false, code: 'TG_MEDIA_403' });
+    // A file over what a bot may download is a size, not a missing file; a redirect on getFile is refused as an answer of its own; no result is no path.
+    expect(await run(fail(400, 'Bad Request: file is too big'))).toEqual({ kind: 'failed', retry: false, code: 'BAD_SIZE' });
+    expect(await run(fail(302, 'Found'))).toEqual({ kind: 'failed', retry: false, code: 'TG_MEDIA_302' });
+    expect(await run({ body: { ok: true, result: null } })).toEqual({ kind: 'failed', retry: false, code: 'TG_MEDIA_PATH' });
+  });
+
+  it('refuses a declared size over the cap before the file is asked for, and a path that is not plain segments', async () => {
+    const adapter = new TelegramConversations();
+    const over = fileServer([located('photos/file_1.jpg', { file_size: 5 * 1024 * 1024 + 1 }), { bytes: PNG }]);
+    expect(await adapter.media(mediaInput(over.fetchImpl))).toEqual({ kind: 'failed', retry: false, code: 'BAD_SIZE' });
+    expect(over.hits).toHaveLength(1);
+    // A file with no path field at all, as Telegram answers for one a bot may not download.
+    const none = fileServer([{ body: { ok: true, result: { file_id: BIG_ID, file_unique_id: 'u' } } }, { bytes: PNG }]);
+    expect(await adapter.media(mediaInput(none.fetchImpl))).toEqual({ kind: 'failed', retry: false, code: 'TG_MEDIA_PATH' });
+    expect(none.hits).toHaveLength(1);
+    // No path (a file Telegram will not serve to a bot), an absolute one (a self-hosted Bot API server answers with a local path), `..`, a query, a scheme.
+    for (const path of [null, '', 7, '/var/lib/telegram-bot-api/photos/file_1.jpg', '../file_1.jpg', 'photos/../../x', 'photos//file_1.jpg', 'photos/file_1.jpg?x=1', 'https://evil.test/x', 'photos/file 1.jpg', 'photos/file_1.jpg#a', '.hidden/x', `photos/${'a'.repeat(200)}`]) {
+      const one = fileServer([located(path), { bytes: PNG }]);
+      expect(await adapter.media(mediaInput(one.fetchImpl))).toEqual({ kind: 'failed', retry: false, code: 'TG_MEDIA_PATH' });
+      expect(one.hits).toHaveLength(1);
+    }
+  });
+
+  it('maps the answer of the file call to a code, and refuses an empty or oversized body', async () => {
+    const adapter = new TelegramConversations();
+    const run = async (answer: Parameters<typeof fileServer>[0][number]) => adapter.media(mediaInput(fileServer([located(), answer]).fetchImpl));
+    expect(await run({ status: 404, body: {} })).toEqual({ kind: 'failed', retry: false, code: 'HTTP_404' });
+    expect(await run({ status: 302, body: {} })).toEqual({ kind: 'failed', retry: false, code: 'HTTP_302' });
+    expect(await run({ status: 500, body: {} })).toEqual({ kind: 'failed', retry: true, code: 'HTTP_500' });
+    expect(await run({ status: 429, body: {} })).toEqual({ kind: 'failed', retry: true, code: 'HTTP_429' });
+    expect(await run({ bytes: new Uint8Array(0) })).toEqual({ kind: 'failed', retry: false, code: 'BAD_SIZE' });
+    expect(await run({ bytes: new Uint8Array(5 * 1024 * 1024 + 1) })).toEqual({ kind: 'failed', retry: false, code: 'BAD_SIZE' });
+    expect(await run(Object.assign(new Error('boom'), { code: 'dns' }))).toEqual({ kind: 'failed', retry: true, code: 'TG_MEDIA_FETCH' });
+    expect(await run(Object.assign(new Error('boom'), { code: 'blocked_address' }))).toEqual({ kind: 'failed', retry: false, code: 'TG_MEDIA_FETCH' });
+  });
+
+  it('never puts the token, the file id or the path in a failure, whatever the failure', async () => {
+    const adapter = new TelegramConversations();
+    const answers: Array<Parameters<typeof fileServer>[0]> = [
+      [fail(401, `Unauthorized ${TOKEN}`)],
+      [fail(400, `wrong file_id ${BIG_ID}`)],
+      [new Error(`connect failed for https://api.telegram.org/bot${TOKEN}/getFile`)],
+      [located(), new Error(`reset https://api.telegram.org/file/bot${TOKEN}/photos/file_12.jpg`)],
+      [located(), { status: 500, body: { description: TOKEN } }],
+      [located('photos/x y.jpg')],
+      [located(), { bytes: new Uint8Array(0) }],
+    ];
+    for (const set of answers) {
+      const result = await adapter.media(mediaInput(fileServer(set).fetchImpl));
+      expect(result.kind).toBe('failed');
+      const text = JSON.stringify(result);
+      for (const secret of [TOKEN, '123456789:', 'AAHdqTcv', BIG_ID, 'photos/file_12', 'api.telegram.org']) expect(text).not.toContain(secret);
+    }
   });
 });
