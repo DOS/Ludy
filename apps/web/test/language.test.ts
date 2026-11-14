@@ -74,7 +74,7 @@ describe('proxy', () => {
     expect(rewrittenTo('/', { 'accept-language': 'en-US,en;q=0.9' })).toBe('https://ludy.vn/en');
     expect(rewrittenTo('/ke-toan', { 'accept-language': 'en' })).toBe('https://ludy.vn/en/accounting');
     expect(rewrittenTo('/engage', { cookie: 'ludy-lang=en' })).toBe('https://ludy.vn/en/engage');
-    expect(rewrittenTo('/notes', { cookie: 'ludy-lang=en', 'accept-language': 'vi' })).toBe('https://ludy.vn/en/notes');
+    expect(rewrittenTo('/cong-tac', { cookie: 'ludy-lang=en', 'accept-language': 'vi' })).toBe('https://ludy.vn/en/teamwork');
     expect(rewrittenTo('/privacy', { 'accept-language': 'en-US' })).toBe('https://ludy.vn/en/privacy');
     expect(proxy(visit('/', { cookie: 'ludy-lang=en' })).headers.get('vary')).toMatch(/cookie/i);
   });
@@ -100,7 +100,7 @@ describe('proxy', () => {
   });
 
   it('redirects an old /en link for good to the public address and remembers English', () => {
-    for (const [from, to] of [['/en', '/'], ['/en/accounting', '/ke-toan'], ['/en/engage', '/engage'], ['/en/notes', '/notes']] as const) {
+    for (const [from, to] of [['/en', '/'], ['/en/accounting', '/ke-toan'], ['/en/engage', '/engage'], ['/en/teamwork', '/cong-tac']] as const) {
       const response = proxy(visit(from));
       expect(response.status, from).toBe(301);
       expect(new URL(response.headers.get('location')!).pathname, from).toBe(to);
@@ -108,18 +108,20 @@ describe('proxy', () => {
     }
   });
 
-  it('redirects the retired /crm for good to /engage, and so its old /en twin, keeping the query', () => {
-    const crm = proxy(visit('/crm?utm=x', { cookie: 'ludy-lang=en' }));
-    expect(crm.status).toBe(301);
-    expect(crm.headers.get('location')).toBe('https://ludy.vn/engage?utm=x');
-    expect(crm.headers.get('vary')).toMatch(/cookie/i);
-    expect(proxy(visit('/crm/')).headers.get('location')).toBe('https://ludy.vn/engage');
-    const twin = proxy(visit('/en/crm'));
-    expect(twin.status).toBe(301);
-    expect(new URL(twin.headers.get('location')!).pathname).toBe('/engage');
-    expect(twin.cookies.get('ludy-lang')?.value).toBe('en');
-    // The page it lands on is a page, not another redirect.
-    expect(proxy(visit('/engage', { cookie: 'ludy-lang=en' })).headers.get('location')).toBeNull();
+  it('redirects the retired /crm and /notes for good to /engage and /cong-tac, and so their old /en twins, keeping the query', () => {
+    for (const [retired, replacement] of [['/crm', '/engage'], ['/notes', '/cong-tac']] as const) {
+      const direct = proxy(visit(`${retired}?utm=x`, { cookie: 'ludy-lang=en' }));
+      expect(direct.status, retired).toBe(301);
+      expect(direct.headers.get('location'), retired).toBe(`https://ludy.vn${replacement}?utm=x`);
+      expect(direct.headers.get('vary'), retired).toMatch(/cookie/i);
+      expect(proxy(visit(`${retired}/`)).headers.get('location'), retired).toBe(`https://ludy.vn${replacement}`);
+      const twin = proxy(visit(`/en${retired}`));
+      expect(twin.status, `/en${retired}`).toBe(301);
+      expect(new URL(twin.headers.get('location')!).pathname, `/en${retired}`).toBe(replacement);
+      expect(twin.cookies.get('ludy-lang')?.value, `/en${retired}`).toBe('en');
+      // The page it lands on is a page, not another redirect.
+      expect(proxy(visit(replacement, { cookie: 'ludy-lang=en' })).headers.get('location'), replacement).toBeNull();
+    }
   });
 
   it('turns the toggle into a cookie and the same address without the parameter', () => {
@@ -159,7 +161,7 @@ describe('proxy matcher', () => {
   const matches = (path: string) => matcher.test(path);
 
   it('runs on pages and on the social preview routes', () => {
-    for (const path of ['/', '/ke-toan', '/engage', '/notes', '/en', '/en/accounting', '/opengraph-image-35znhg', '/en/engage/opengraph-image-1gjxt2']) expect(matches(path), path).toBe(true);
+    for (const path of ['/', '/cong-tac', '/ke-toan', '/engage', '/notes', '/en', '/en/accounting', '/en/teamwork', '/opengraph-image-35znhg', '/en/engage/opengraph-image-1gjxt2']) expect(matches(path), path).toBe(true);
   });
 
   it('skips Next.js internals and every file with an extension', () => {

@@ -634,10 +634,10 @@ The home page is `/`, in either language (6.5). The picks of 2026-10-19 (see the
 
 1. Header: logo, four links (Product, Open source, Pricing, Docs), "Đăng nhập", one primary CTA ("Tự cài đặt miễn phí"), theme and language toggles; a phone menu.
 2. Hero: one-sentence thesis, one supporting sentence, primary and secondary action, and the product working (the live org chart at full width, a live HTML rendering, not a screenshot with fake browser chrome).
-3. Product tour: an example Ludy screen (AI Inbox, invoice detail, command palette) with example data.
+3. Product tour: an example Ludy screen (Documents pending approval in Ludy Tài chính, invoice detail, command palette) with example data.
 4. How it works: the real sequence (receive, check, propose, approve), each step with a fragment of real UI.
 5. Agents (the org chart and the R0 to R3 approval matrix) and the owner's phone.
-6. Modules: varied layouts chosen by content, each with a real fragment of the app it names (Ludy Kế toán, Ludy Notes, Tasks, Agents, Ludy Engage). Not a grid of identical icon cards. The Ludy Kế toán, Ludy Engage and Ludy Notes cards link to their app pages (6.4).
+6. Apps: one card for each of the five apps of the regrouped shell in switcher order (Ludy Cộng tác, Ludy Tài chính, Ludy Engage, Ludy Nhân sự, Ludy AI; Ludy AI is the team's settings, not a coworker). The Ludy Cộng tác, Ludy Tài chính and Ludy Engage cards link to their app pages (6.4).
 7. Trust: AI proposes and people approve, the audit log, tenant isolation, open source with the `docker compose up` command (the `#tu-host` anchor).
 8. Pricing: only what is decided. No invented prices or discounts.
 9. FAQ (three to six questions), footer with the app pages, the license and the repository link.
@@ -661,17 +661,17 @@ The home page is `/`, in either language (6.5). The picks of 2026-10-19 (see the
 
 ### 6.4 App pages
 
-Each app that has users today has a page of its own on ludy.vn (the page of one product, the way 6.1 is the page of the suite): Ludy Kế toán, Ludy Engage and Ludy Notes ([#2280](https://github.com/DOS/Ludy/issues/2280), [#2281](https://github.com/DOS/Ludy/issues/2281), [#2282](https://github.com/DOS/Ludy/issues/2282), [#2440](https://github.com/DOS/Ludy/issues/2440)). The page of Ludy Engage presents the one app that holds the Inbox, Customers & Sales (the former Ludy CRM, whose page it replaces), Marketing and Reports; the other areas have none yet.
+Each app that has its own public page on ludy.vn (the page of one product, the way 6.1 is the page of the suite), in the switcher's order: Ludy Cộng tác, Ludy Tài chính and Ludy Engage ([#2280](https://github.com/DOS/Ludy/issues/2280), [#2281](https://github.com/DOS/Ludy/issues/2281), [#2282](https://github.com/DOS/Ludy/issues/2282), [#2440](https://github.com/DOS/Ludy/issues/2440), [#3235](https://github.com/DOS/Ludy/issues/3235)). Ludy Cộng tác brings together My work, Team tasks, Notes (the former Ludy Notes) and Meetings; Ludy Tài chính keeps its `/ke-toan` address; Ludy Engage presents the Inbox, CRM (the former Ludy CRM), Marketing and Reports; Ludy Nhân sự and Ludy AI have cards on the home page and no separate page yet.
 
 **Routes and the registry.** One public address per page, the same in both languages (6.5), with its own title, description, canonical and social preview image named with the app. The English copy is served at the same address; inside the app it is a route under `/en` that the proxy rewrites to and nobody links to:
 
 | App | Public address | English route (internal) |
 | :--- | :--- | :--- |
-| Ludy Kế toán | `/ke-toan` | `/en/accounting` |
+| Ludy Cộng tác | `/cong-tac` | `/en/teamwork` |
+| Ludy Tài chính | `/ke-toan` | `/en/accounting` |
 | Ludy Engage | `/engage` | `/en/engage` |
-| Ludy Notes | `/notes` | `/en/notes` |
 
-**A retired page.** Ludy CRM had a page at `/crm` until it folded into Ludy Engage (2026-11-03). `RETIRED_PAGES` in `site.ts` maps the old address to the page that replaced it (`/crm` to `/engage`); the proxy answers it, and the old `/en/crm` twin, with a permanent redirect (301) that keeps the query, so links and search results keep working. The sitemap lists only live pages.
+**Retired pages.** Ludy CRM had a page at `/crm` until it folded into Ludy Engage (2026-11-03), and Ludy Notes had a page at `/notes` until it became part of Ludy Cộng tác (2026-11-14). `RETIRED_PAGES` in `site.ts` maps each old address to the page that replaced it (`/crm` to `/engage`, `/notes` to `/cong-tac`); the proxy answers it, and the old `/en` twin, with a permanent redirect (301) that keeps the query, so links and search results keep working. The sitemap lists only live pages.
 
 `APP_PAGES` in `apps/web/src/content/site.ts` is the one registry (`{ path, enRoute, module }` per app, and `appPagePath(key)`). The sitemap, the footer links and the module cards of the home page all read it. A new app page is one entry there, its copy, its two routes and its visuals, and `apps/web/test/app-pages.test.ts` fails when an entry lacks a route, an image, copy in both languages, a sitemap entry, or a link from the home card.
 
@@ -685,7 +685,7 @@ Each app that has users today has a page of its own on ludy.vn (the page of one 
 
 ### 6.5 Language and addresses
 
-Both languages share one URL per page (`/`, `/ke-toan`, `/engage`, `/notes`); the address never carries a language ([#2360](https://github.com/DOS/Ludy/issues/2360), owner request 2026-11-02). The pages stay static, one tree per language, and `apps/web/src/proxy.ts` (the file Next.js 16 calls `proxy`, the former middleware) picks the tree for each request with the rules in `apps/web/src/lib/language.ts`:
+Both languages share one URL per page (`/`, `/cong-tac`, `/ke-toan`, `/engage`, `/privacy`); the address never carries a language ([#2360](https://github.com/DOS/Ludy/issues/2360), owner request 2026-11-02). The pages stay static, one tree per language, and `apps/web/src/proxy.ts` (the file Next.js 16 calls `proxy`, the former middleware) picks the tree for each request with the rules in `apps/web/src/lib/language.ts`:
 
 1. The cookie `ludy-lang` (`vi` or `en`, one year, `SameSite=Lax`, `Secure` on https, set only by the toggle and the old-link redirect) decides.
 2. Without it, the browser's `Accept-Language` decides: the first of `vi` or `en` in its order of preference, English when it names neither, and Vietnamese when there is no header at all, an empty one or `*` (crawlers are served Vietnamese).

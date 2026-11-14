@@ -61,7 +61,7 @@ export function Story({ dict }: { dict: Dictionary }) {
       </div>
       <p className="mt-8 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-subtle">
         <span>{story.note}</span>
-        <a href={appPagePath('accounting')} className="font-medium text-accent-ink underline-offset-4 hover:underline">
+        <a href={appPagePath('finance')} className="font-medium text-accent-ink underline-offset-4 hover:underline">
           {story.pageLink}
         </a>
       </p>

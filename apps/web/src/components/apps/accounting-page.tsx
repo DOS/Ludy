@@ -6,8 +6,8 @@ import { vi } from '../../content/vi';
 import { AccountingHero, BooksVisual, IntakeVisual, PostingVisual, TaxVisual } from './accounting-visuals';
 import { AppPage } from './app-page';
 
-// The Ludy Kế toán page in either language: the shared app page with this app's copy, its hero picture and one visual
-// per group of features. The group ids are those of the copy.
+// The Ludy Tài chính page (/ke-toan) in either language: the shared app page with this app's copy, its hero picture and
+// one visual per group of features. The group ids are those of the copy.
 export function AccountingPage({ lang }: { lang: 'vi' | 'en' }) {
   const dict = lang === 'vi' ? vi : en;
   const copy = lang === 'vi' ? accountingVi : accountingEn;

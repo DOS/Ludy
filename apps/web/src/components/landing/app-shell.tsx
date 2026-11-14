@@ -1,17 +1,22 @@
 'use client';
 
-import { BookOpen, Bot, Building2, Check, ChevronDown, FileText, Inbox, ListChecks, Lock, Megaphone, Percent, RotateCcw, Search, Sparkles, Table2, TriangleAlert } from 'lucide-react';
+import { BookOpen, Boxes, Check, ChevronDown, FileText, Inbox, Lock, Percent, RotateCcw, Search, Sparkles, Table2, TriangleAlert, Truck, Users } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Dictionary } from '../../content/vi';
 import { Chip, Kbd } from './ui';
 
 type Phase = 'wait' | 'open' | 'otp' | 'ok' | 'done';
 const OTP_DIGITS = ['4', '8', '2', '9', '1', '3'];
-const NAV_ICONS = [FileText, BookOpen, Table2, Building2, Percent, ListChecks, Bot, Megaphone];
+const GROUP_ICONS = [
+  [FileText, Users, Boxes],
+  [Truck],
+  [BookOpen, Table2, Boxes, Percent],
+];
 
-// The hero's product picture: the AI Inbox with the example invoice. Once it scrolls into view it plays the one
-// orchestrated moment of the page: the command palette approves the entry with a two-factor code and the row is
-// posted. Without JavaScript, or with reduced motion, it stays in the waiting state and the button shows the result.
+// The hero's product picture: Documents pending approval in Ludy Finance with the example invoice. Once it scrolls into
+// view it plays the one orchestrated moment of the page: the command palette approves the entry with a two-factor code
+// and the row is posted. Without JavaScript, or with reduced motion, it stays in the waiting state and the button shows
+// the result.
 export function AppShell({ dict }: { dict: Dictionary }) {
   const { shell, entry, tour } = dict;
   const [phase, setPhase] = useState<Phase>('wait');
@@ -119,7 +124,7 @@ export function AppShell({ dict }: { dict: Dictionary }) {
               <div key={group.label} className="mt-3">
                 <div className="px-2 pb-1 text-xs text-subtle">{group.label}</div>
                 {group.items.map((item, ii) => {
-                  const Icon = NAV_ICONS[gi * 5 + ii] ?? FileText;
+                  const Icon = GROUP_ICONS[gi]?.[ii] ?? FileText;
                   return (
                     <div key={item} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-muted">
                       <Icon className="size-3.5" />
