@@ -4,7 +4,7 @@
 # ffmpeg and small HTTP service only: no database client, no AI SDK, no credentials.
 # Bytes in, JSON out; only the worker calls it over an internal network.
 # docker-compose.yml runs it on an internal network with no egress, a read-only root file system,
-# /tmp tmpfs, no capabilities, 1 vCPU and 1 GiB.
+# /tmp and /data/scratch on tmpfs (a recording sits decrypted there while it is measured: memory only, #2989), no capabilities, 1 vCPU and 4 GiB.
 # Base images are pinned by digest (Node 26.11.1 here); see "Updating pinned images" in AGENTS.md.
 FROM node:26-slim@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0 AS build
 WORKDIR /app
@@ -37,6 +37,8 @@ WORKDIR /app
 COPY --from=build /app/package.json /app/package.json
 COPY --from=build /app/node_modules /app/node_modules
 COPY --from=build /app/apps/media /app/apps/media
+# apps/media re-exports the wire contract from this workspace package (a symlink in node_modules, so it must be here too).
+COPY --from=build /app/packages/media-contract /app/packages/media-contract
 
 # Marker (apps/media/src/main.ts, IMAGE_MARKER): in this image the environment allowlist always applies,
 # even when NODE_ENV is overridden. Owned by root, so the service user cannot remove it.

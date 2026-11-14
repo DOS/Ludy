@@ -12,6 +12,7 @@ import {
   HeadObjectCommand,
   ListObjectsV2Command,
   PutObjectCommand,
+  PutObjectTaggingCommand,
   PutObjectRetentionCommand,
   S3Client,
   UploadPartCommand,
@@ -40,6 +41,7 @@ import {
   versionOf,
   type BlobListing,
   type BlobRef,
+  type BlobDeleteOptions,
   type BlobStore,
   type DirectTransfers,
   type EvidenceHolds,
@@ -209,9 +211,21 @@ function httpStatus(error: unknown): number | undefined {
   return (error as { $metadata?: { httpStatusCode?: number } } | null)?.$metadata?.httpStatusCode;
 }
 
+// S3 answers a request for a key whose current version is a delete marker with 405 and this header.
+function isDeleteMarkerAnswer(error: unknown): boolean {
+  const response = (error as { $response?: { headers?: Record<string, string | undefined> } } | null)?.$response;
+  return httpStatus(error) === 405 && response?.headers?.['x-amz-delete-marker'] === 'true';
+}
+
 function errorName(error: unknown): string | undefined {
   return (error as { name?: string } | null)?.name;
 }
+
+// The tag a retention delete puts on an object version (#2789). The bucket's lifecycle rule `crove-retention-expired` (docs/runbooks/provision-pilot.md) filters on
+// this exact pair and expires the noncurrent version. Nothing a tenant sends can set it: a browser upload goes to staging/ through a presigned POST whose policy
+// allows no tagging field, and the copy to the content address replaces the tags (TaggingDirective REPLACE) instead of inheriting them.
+export const RETENTION_TAG_KEY = 'ludy-retention';
+export const RETENTION_TAG_VALUE = 'expired';
 
 // A missing object, not a missing bucket (which is a configuration error and must surface as such).
 function isMissingObject(error: unknown): boolean {
@@ -286,7 +300,7 @@ export interface S3BlobStoreOptions {
 // exact version, so a later version written under the same key (by anyone with bucket access) is never read.
 //
 // The bucket policy must grant s3:ListBucket on the bucket as well as s3:GetObject, s3:GetObjectVersion,
-// s3:PutObject and s3:DeleteObject on its objects. Without ListBucket, S3 answers a read of a missing key with 403
+// s3:PutObject and s3:DeleteObject on its objects, and s3:PutObjectTagging for retention deletes (#2789). Without ListBucket, S3 answers a read of a missing key with 403
 // instead of 404, so the store cannot tell a missing blob from a permission problem; get then raises
 // BlobStoreAccessError, not BlobNotFoundError. Evidence holds (issue #1009) also need s3:GetBucketObjectLockConfiguration
 // on the bucket and s3:GetObjectRetention and s3:PutObjectRetention on its objects.
@@ -451,6 +465,9 @@ export class S3BlobStore implements BlobStore {
               CopySource: `${this.bucket}/${staging}`,
               ContentType: contentType || 'application/octet-stream',
               MetadataDirective: 'REPLACE',
+              // No tags carried over from the staging object: the retention tag is set only by delete(). Sent only where tagging exists (S3 and compatible stores with versioning):
+              // R2 (versioning off) and GCS interoperability do not take the header, and they never get the tag either.
+              ...(this.flavor === 's3' && this.versioning !== 'off' ? { TaggingDirective: 'REPLACE' as const } : {}),
             }),
           );
           const landed = await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
@@ -599,8 +616,24 @@ export class S3BlobStore implements BlobStore {
     }
   }
 
-  async delete(key: string): Promise<void> {
+  async delete(key: string, options?: BlobDeleteOptions): Promise<void> {
     assertStorageKey(key);
+    // Retention delete (#2789): on a versioned S3 bucket the delete only adds a marker and the version stays. The tag goes on that version first (a tag belongs to a
+    // version and stays with it when it turns noncurrent), and the bucket's lifecycle rule on the tag expires it. The key and value are constants, never tenant data.
+    // No tag, no delete: any failure but a missing object (or a delete marker) stops here, and the retention job retries the file on its next run. A tag can stay on a version
+    // that is still current when the delete then fails: harmless, the rule only expires noncurrent versions. GCS and S3_VERSIONING=off delete without a tag on purpose (a stalled
+    // retention job would keep the original readable, which is worse); the runbook says what the operator does there.
+    if (options?.retention === 'expire' && this.flavor === 's3' && this.versioning !== 'off') {
+      try {
+        await this.client.send(
+          new PutObjectTaggingCommand({ Bucket: this.bucket, Key: key, Tagging: { TagSet: [{ Key: RETENTION_TAG_KEY, Value: RETENTION_TAG_VALUE }] } }),
+        );
+      } catch (error) {
+        // Nothing current to tag: absent, or already behind a delete marker (S3 answers 405 with x-amz-delete-marker: true), so what was there was tagged by the delete before it.
+        // A bare 405 is not that: a store that does not support tagging answers it for a live object, and deleting then would leave the version untagged for good.
+        if (!isMissingObject(error) && !isDeleteMarkerAnswer(error)) throw error;
+      }
+    }
     try {
       await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
     } catch (error) {

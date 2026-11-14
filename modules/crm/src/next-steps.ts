@@ -266,7 +266,7 @@ function mineSql(ctx: Pick<QueryContext, 'actor' | 'role'>) {
 }
 
 // One page of the list, the longest quiet first. The Home read (today.ts) takes the same rows through the same rule.
-export async function loadNextSteps(ctx: QueryContext, scope: 'mine' | 'all', cursor: { sinceOn: string; id: string } | null | undefined, limit: number): Promise<{ items: NextStep[]; next: { sinceOn: string; id: string } | null }> {
+export async function loadNextSteps(ctx: QueryContext, scope: 'mine' | 'all', cursor: { sinceOn: string; id: string } | null | undefined, limit: number, partyId?: string): Promise<{ items: NextStep[]; next: { sinceOn: string; id: string } | null }> {
   let q = ctx.trx
     .selectFrom('crove_crm.deal_next_step as n')
     .innerJoin('crove_crm.deal as d', (j) => j.onRef('d.org_id', '=', 'n.org_id').onRef('d.id', '=', 'n.deal_id'))
@@ -276,6 +276,7 @@ export async function loadNextSteps(ctx: QueryContext, scope: 'mine' | 'all', cu
     .where('n.org_id', '=', ctx.orgId)
     .where(shownSql);
   if (scope === 'mine') q = q.where(mineSql(ctx));
+  if (partyId) q = q.where('d.party_id', '=', partyId);
   if (cursor) q = q.where(sql<boolean>`(n.since_on, n.id) > (${cursor.sinceOn}::date, ${cursor.id}::uuid)`);
   const rows = await q.orderBy('n.since_on').orderBy('n.id').limit(limit + 1).execute();
   const items: NextStep[] = rows.slice(0, limit).map((r) => ({
@@ -311,7 +312,7 @@ export const nextStepList = defineQuery({
   input: zNextStepListQuery,
   access: ALL,
   handler: async (ctx, input): Promise<NextStepPage> => {
-    const page = await loadNextSteps(ctx, input.scope ?? 'mine', input.cursor, input.limit ?? NEXT_STEP_PAGE_SIZE);
+    const page = await loadNextSteps(ctx, input.scope ?? 'mine', input.cursor, input.limit ?? NEXT_STEP_PAGE_SIZE, input.partyId);
     return { ...page, counts: await countNextSteps(ctx) };
   },
 });

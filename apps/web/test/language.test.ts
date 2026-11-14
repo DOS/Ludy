@@ -6,7 +6,7 @@ import { NextRequest } from 'next/server';
 import { describe, expect, it } from 'vitest';
 import { config, proxy } from '../src/proxy';
 import { chooseLanguage, englishRoute, languageFromAcceptHeader, publicPathOfLegacy } from '../src/lib/language';
-import { APP_PAGES } from '../src/content/site';
+import { APP_PAGES, LEGAL_PAGES } from '../src/content/site';
 
 const visit = (path: string, headers: Record<string, string> = {}) => new NextRequest(`https://ludy.vn${path}`, { headers });
 const rewrittenTo = (path: string, headers?: Record<string, string>) => proxy(visit(path, headers)).headers.get('x-middleware-rewrite');
@@ -49,6 +49,10 @@ describe('addresses', () => {
       expect(englishRoute(page.path)).toBe(page.enRoute);
       expect(publicPathOfLegacy(page.enRoute)).toBe(page.path);
     }
+    for (const page of Object.values(LEGAL_PAGES)) {
+      expect(englishRoute(page.path)).toBe(page.enRoute);
+      expect(publicPathOfLegacy(page.enRoute)).toBe(page.path);
+    }
     expect(publicPathOfLegacy('/en')).toBe('/');
     expect(publicPathOfLegacy('/en/')).toBe('/');
     expect(publicPathOfLegacy('/ke-toan')).toBeNull();
@@ -71,7 +75,24 @@ describe('proxy', () => {
     expect(rewrittenTo('/ke-toan', { 'accept-language': 'en' })).toBe('https://ludy.vn/en/accounting');
     expect(rewrittenTo('/engage', { cookie: 'ludy-lang=en' })).toBe('https://ludy.vn/en/engage');
     expect(rewrittenTo('/notes', { cookie: 'ludy-lang=en', 'accept-language': 'vi' })).toBe('https://ludy.vn/en/notes');
+    expect(rewrittenTo('/privacy', { 'accept-language': 'en-US' })).toBe('https://ludy.vn/en/privacy');
     expect(proxy(visit('/', { cookie: 'ludy-lang=en' })).headers.get('vary')).toMatch(/cookie/i);
+  });
+
+  it('serves /privacy the same on ludy.vn and ludy.so: Vietnamese in place, English by rewrite, never a redirect away', () => {
+    for (const host of ['https://ludy.vn', 'https://ludy.so']) {
+      const vietnamese = proxy(new NextRequest(`${host}/privacy`));
+      expect(vietnamese.status, host).toBe(200);
+      expect(vietnamese.headers.get('x-middleware-rewrite'), host).toBeNull();
+      expect(vietnamese.headers.get('location'), host).toBeNull();
+      const english = proxy(new NextRequest(`${host}/privacy`, { headers: { 'accept-language': 'en' } }));
+      expect(english.headers.get('x-middleware-rewrite'), host).toBe(`${host}/en/privacy`);
+      expect(english.headers.get('location'), host).toBeNull();
+    }
+    // The old /en address goes to the public one, like any page.
+    const legacy = proxy(visit('/en/privacy'));
+    expect(legacy.status).toBe(301);
+    expect(new URL(legacy.headers.get('location')!).pathname).toBe('/privacy');
   });
 
   it('keeps Vietnamese for a cookie that says so, whatever the browser asks for', () => {

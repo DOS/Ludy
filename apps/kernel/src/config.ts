@@ -320,11 +320,36 @@ const schema = z.object({
   CREDENTIAL_KEY: optional,
   CREDENTIAL_KEY_FILE: optional,
   CREDENTIAL_KEY_PREVIOUS: optional,
+  // The MCP endpoint and its embedded OAuth 2.1 authorization server (ADR-0051 decision 2, ADR-0032, #2975). Off by default. On: OAUTH_JWKS is the
+  // private key set (a JSON Web Key Set with at least one ES256 key that has a `kid`) the access tokens are signed with, OAUTH_COOKIE_KEYS signs the
+  // authorization server's short-lived cookies (one or more secrets of 32 characters or more, comma separated, the first signs), and APP_URL, when set,
+  // is PUBLIC_URL's own origin (the consent page and the interaction cookie share the API's origin in this step). Nothing is generated at boot.
+  OAUTH_SERVER: z.enum(['on', 'off']).default('off'),
+  OAUTH_JWKS: optional,
+  OAUTH_COOKIE_KEYS: optional,
+  // Origins a browser-based MCP client may call from (comma separated, each an origin). Unset: none; a client that sends no Origin header (every
+  // desktop and server client) is not affected. A request with an Origin outside the list is refused with 403 (the MCP transport rule against DNS rebinding).
+  MCP_ALLOWED_ORIGINS: optional,
+  // Calls per minute one grant may make before the endpoint answers 429, and the cap of concurrent calls of one grant.
+  MCP_GRANT_PER_MINUTE: z.coerce.number().int().min(1).max(6000).default(60),
+  MCP_GRANT_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(4),
+  // Rows of business data one grant may read per UTC day (the sum of the rows its tool calls return). A call that starts under the budget may end over it by one answer.
+  MCP_GRANT_DAILY_ROWS: z.coerce.number().int().min(1).max(1_000_000).default(2000),
+  // Dynamic client registrations one address may make per minute, and all addresses together (RFC 7591 is public by protocol).
+  OAUTH_REGISTER_PER_MINUTE: z.coerce.number().int().min(1).max(10_000).default(10),
+  OAUTH_REGISTER_GLOBAL_PER_MINUTE: z.coerce.number().int().min(1).max(100_000).default(120),
   // The offline sandbox channel (Social plan §3.5): connect and publish without any platform account.
   CHANNEL_SANDBOX: z.enum(['true', 'false']).default('true'),
   // The offline sandbox e-invoice provider (ADR-0044, #2500, #2502): series and drafts are made, and invoices issued, without any provider account. Left out, it is on for a
   // local PUBLIC_URL and off for a public one; set to true on a public deployment that runs the finance module it is refused, since what it issues is read into a sale of the books.
-  EINVOICE_SANDBOX: z.enum(['true', 'false']).optional(),
+  EINVOICE_SANDBOX: optional.pipe(z.enum(['true', 'false']).optional()),
+  // The marketplace adapters this deployment offers (#2519), a comma-separated list of adapter ids; `sandbox` is the offline provider, which serves a few recorded orders for each platform
+  // without any seller account. Off unless asked for here (`docker compose up` asks for it), so a deployment shows no marketplace connection until it has an adapter. What an adapter
+  // reads is only staged, in the Inbox, for a member to confirm; nothing is written until they do.
+  MARKETPLACE_PROVIDERS: z
+    .string()
+    .default('')
+    .refine((value) => value.split(',').every((id) => id.trim() === '' || /^[a-z][a-z0-9_]{0,21}$/.test(id.trim())), 'a comma-separated list of adapter ids'),
   // The offline sandbox bank feed (ADR-0039, #2044): off unless asked for, so a deployment shows no bank feed until it
   // has one.
   BANK_FEED_SANDBOX: z.enum(['true', 'false']).default('false'),
@@ -332,9 +357,9 @@ const schema = z.object({
   // the sandbox takes no notices. At least 32 characters.
   BANK_FEED_SANDBOX_WEBHOOK_SECRET: optional,
   // The offline sandbox ad platform (ADR-0040, #2217): connect a test ad account and read made-up daily figures without any
-  // platform account. Off unless asked for here; `docker compose up` turns it on, as it does CHANNEL_SANDBOX. Its figures
+  // platform account. Left out, it is on for a local PUBLIC_URL and off for a public one (compose passes it through empty). Its figures
   // reach no books: the ads screen only shows them beside the ledger's total.
-  ADS_SANDBOX: z.enum(['true', 'false']).default('false'),
+  ADS_SANDBOX: optional.pipe(z.enum(['true', 'false']).optional()),
   // Whether the worker may create the objects of an approved campaign at Meta (#2296, W2-3: a campaign, an ad set, a creative and an ad, every one PAUSED; nothing
   // un-pauses). Off by default: with it off a launch on a Meta account stays queued, untouched. It is for the owner's own live check on a stack the owner runs;
   // a public deployment refuses it until the activation, the pause on switch-off (W2-4) and the live-check runbook (W2-5) are on main.
@@ -368,6 +393,9 @@ const schema = z.object({
   CHANNEL_META_WEBHOOK_VERIFY_TOKEN: optional,
   // Reconcile recent comments on connected Facebook Pages that granted pages_read_user_content (conversation core CV2, #2307).
   CHANNEL_FACEBOOK_HISTORY: z.enum(['true', 'false']).default('true'),
+  // Reconcile the replies under recent posts of connected Threads profiles that opted in to reading replies (#3133). Nothing is read for a
+  // profile without the opt-in, so the default is on, as Facebook's.
+  CHANNEL_THREADS_HISTORY: z.enum(['true', 'false']).default('true'),
   CHANNEL_META_GRAPH_VERSION: z.string().regex(/^v\d{1,3}\.\d{1,2}$/).default('v24.0'),
   // The Meta app for ad accounts, read only (ADR-0040, #2218): set both to offer "Connect a Meta ad account" on the Ads
   // screen; neither hides it. It may be the same app as the Pages one above (a classic app holds Facebook Login and the
@@ -484,6 +512,15 @@ const schema = z.object({
   // crove-extract, the parsing sandbox (plan §7.6, External-tenant gate T12), e.g. http://crove-extract:8090.
   // Required for the worker role: the worker never parses PDF, XML or MIME itself. The API role does not use it.
   EXTRACT_URL: optional.pipe(z.url({ protocol: /^https?$/ }).optional()),
+  // crove-media, the media sandbox (Meetings M3, #2985), e.g. http://crove-media:8095. The API measures the length of every meeting
+  // recording in it at upload and the worker re-measures an old one before it is transcribed. Unset: meeting uploads are refused
+  // (MEDIA_PROBE_UNAVAILABLE), because a recording whose length cannot be known would bypass the AI meter.
+  MEDIA_URL: optional.pipe(z.url({ protocol: /^https?$/ }).optional()),
+  // The most bytes crove-media accepts for one recording (its own MEDIA_MAX_INPUT_BYTES, which compose gives both with one value; #2989): a meeting upload over it is
+  // refused (413 FILE_TOO_LARGE) before it is read, and a staged grant is clamped to it, instead of after a full upload. Unset: the plan's limits only (300 MB audio, 2 GB video).
+  MEDIA_MAX_INPUT_BYTES: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.coerce.number().int().min(1024).max(2 * 1024 * 1024 * 1024).optional()),
+  // How long one call to crove-media may take, in ms: its own MEDIA_TIMEOUT_MS (default 300000) plus a margin. Unset: 315000. Raise both for a 2 GB video.
+  MEDIA_CALL_TIMEOUT_MS: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.coerce.number().int().min(1000).max(2_000_000).optional()),
   // Extract jobs the worker runs at once (#2119), each one reading a file and, for a PDF or a photo, calling the AI. Unset:
   // 4, or the sandbox's slots when it has fewer. EXTRACT_CONCURRENCY is the sandbox's own setting of that name (its
   // parser slots, 1 to 8, the sandbox's own default being 1); give the worker the same value, since it cannot ask: docker
@@ -503,9 +540,18 @@ const schema = z.object({
   // The recorder's Vy summarizing a meeting (#2580, M6): off unless MEETINGS_SUMMARY=on (it also needs the deployment's AI provider and Vy turned on for members).
   // The module works with it off: the recorder types a summary and items by hand, and no button asks Vy.
   MEETINGS_SUMMARY: z.enum(['on', 'off']).default('off'),
+  // How many meeting videos this process streams at once, over all members (#2965; each member may have 3, or this many if it is lower). A stream holds a slot until its body ends,
+  // so size it from the members who may watch together and the process's memory (a window is 4 MiB); a request over the limit is told to retry (429).
+  MEETINGS_VIDEO_STREAMS_MAX: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.coerce.number().int().min(1).max(4096).default(64)),
+  // https by default: the audio and the key travel to it. Plain http is accepted for localhost and 127.0.0.1, and for any host with TRANSCRIBE_ALLOW_INSECURE_HTTP=1
+  // (a speech-to-text container on the compose network is http://<service>:<port>); the check is in loadConfig below (#2863).
   TRANSCRIBE_BASE_URL: optional.pipe(z.url({ protocol: /^https?$/ }).optional()),
+  TRANSCRIBE_ALLOW_INSECURE_HTTP: optional.pipe(z.enum(['0', '1']).default('0')),
   TRANSCRIBE_API_KEY: optional,
   TRANSCRIBE_MODEL: optional,
+  // How a chunk is sent (#2972): `audio_transcriptions` posts the file to /audio/transcriptions (Whisper-class, the default); `chat_input_audio` posts it to
+  // /chat/completions as an input_audio part, for a provider that offers no transcription endpoint (Gemini's OpenAI-compatible one).
+  TRANSCRIBE_API_MODE: optional.pipe(z.enum(['audio_transcriptions', 'chat_input_audio']).default('audio_transcriptions')),
   AI_PRICE_AUDIO_PER_MIN: z.string().regex(/^\d{1,6}(\.\d{1,6})?$/).default('0'),
   // Outbound mail (invites, issue #129), the same SMTP settings the bundled Supabase Auth uses. Unset SMTP_HOST: mail
   // is off, and the inviter passes the link on. Port 465 is implicit TLS; with SMTP_USER and SMTP_PASS on any other
@@ -543,7 +589,7 @@ const schema = z.object({
   ),
   // The Ludy browser extension ids that may receive a sign-in code (#2740): the host of the extension's redirect address
   // (https://<id>.chromiumapp.org/), 32 letters a to p, separated by commas or spaces. Unset: the store's id
-  // (DEFAULT_EXTENSION_IDS, empty until the store listing exists, which refuses every extension). A self-hosted or development install lists its own unpacked extension's id here. The app and
+  // (DEFAULT_EXTENSION_IDS, the Chrome Web Store listing's id, #3010). A server that sets this uses only its own list, so a self-hosted or development install lists its own unpacked extension's id here. The app and
   // /api/extension/authorize both refuse any other. Browsers read the list from /api/config; it holds nothing secret.
   EXTENSION_IDS: optional.pipe(
     z
@@ -633,10 +679,11 @@ const schema = z.object({
 
 export type SessionCheckMode = 'db' | 'jwt' | 'off';
 
-export type Config = Omit<z.infer<typeof schema>, 'AUTH_ISSUER' | 'AUTH_SESSION_CHECK' | 'EINVOICE_SANDBOX'> & {
+export type Config = Omit<z.infer<typeof schema>, 'AUTH_ISSUER' | 'AUTH_SESSION_CHECK' | 'EINVOICE_SANDBOX' | 'ADS_SANDBOX'> & {
   AUTH_ISSUER: string;
   AUTH_SESSION_CHECK: SessionCheckMode;
   EINVOICE_SANDBOX: 'true' | 'false';
+  ADS_SANDBOX: 'true' | 'false';
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -654,6 +701,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     AUTH_ISSUER: raw.AUTH_ISSUER,
     AUTH_SESSION_CHECK: raw.AUTH_SESSION_CHECK ?? (raw.AUTH_UPSTREAM_URL ? 'db' : 'jwt'),
     EINVOICE_SANDBOX: raw.EINVOICE_SANDBOX ?? (isLocalUrl(raw.PUBLIC_URL) ? 'true' : 'false'),
+    // Same rule as EINVOICE_SANDBOX: compose passes it through empty, so a public URL never inherits a sandbox default.
+    ADS_SANDBOX: raw.ADS_SANDBOX ?? (isLocalUrl(raw.PUBLIC_URL) ? 'true' : 'false'),
   };
   if (!config.AUTH_JWT_SECRET && !config.AUTH_JWKS_URL) {
     throw new Error('set AUTH_JWT_SECRET (self-hosted Supabase Auth) or AUTH_JWKS_URL (hosted Supabase Auth)');
@@ -735,7 +784,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (config.CHANNEL_META_APP_SECRET_PREVIOUS === primary) throw new Error('CHANNEL_META_APP_SECRET_PREVIOUS is the same as CHANNEL_META_APP_SECRET: remove it');
   }
   if (config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN !== undefined) {
-    if (!config.CHANNEL_META_APP_ID && !config.CHANNEL_INSTAGRAM_APP_ID) throw new Error('CHANNEL_META_WEBHOOK_VERIFY_TOKEN needs CHANNEL_META_APP_ID and CHANNEL_META_APP_SECRET, or CHANNEL_INSTAGRAM_APP_ID and CHANNEL_INSTAGRAM_APP_SECRET');
+    if (!config.CHANNEL_META_APP_ID && !config.CHANNEL_INSTAGRAM_APP_ID && !config.CHANNEL_THREADS_APP_ID) throw new Error('CHANNEL_META_WEBHOOK_VERIFY_TOKEN needs CHANNEL_META_APP_ID and CHANNEL_META_APP_SECRET, CHANNEL_INSTAGRAM_APP_ID and CHANNEL_INSTAGRAM_APP_SECRET, or CHANNEL_THREADS_APP_ID and CHANNEL_THREADS_APP_SECRET');
     if (!/^\S{8,200}$/.test(config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN)) throw new Error('CHANNEL_META_WEBHOOK_VERIFY_TOKEN is the verify token for the Meta Page webhook: 8 to 200 characters, no spaces');
   }
   if (Boolean(config.CHANNEL_META_ADS_APP_ID) !== Boolean(config.CHANNEL_META_ADS_APP_SECRET)) {
@@ -782,6 +831,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (Boolean(config.CHANNEL_PINTEREST_APP_ID) !== Boolean(config.CHANNEL_PINTEREST_APP_SECRET)) throw new Error('set both CHANNEL_PINTEREST_APP_ID and CHANNEL_PINTEREST_APP_SECRET, or neither');
   if (config.CHANNEL_PINTEREST_APP_ID && !/^\d{4,32}$/.test(config.CHANNEL_PINTEREST_APP_ID)) throw new Error('CHANNEL_PINTEREST_APP_ID is the numeric id of the Pinterest app');
   if (config.CHANNEL_X_CLIENT_ID && !/^[A-Za-z0-9_-]{16,64}$/.test(config.CHANNEL_X_CLIENT_ID)) throw new Error('CHANNEL_X_CLIENT_ID is the OAuth 2.0 client id of the X app');
+  if (config.TRANSCRIBE_BASE_URL !== undefined) {
+    const url = new URL(config.TRANSCRIBE_BASE_URL);
+    if (url.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(url.hostname) && config.TRANSCRIBE_ALLOW_INSECURE_HTTP !== '1') {
+      throw new Error('TRANSCRIBE_BASE_URL must be https (http only for localhost or 127.0.0.1, or any host with TRANSCRIBE_ALLOW_INSECURE_HTTP=1 on a private network)');
+    }
+  }
   if (config.BANK_FEED_SANDBOX_WEBHOOK_SECRET !== undefined) {
     if (config.BANK_FEED_SANDBOX !== 'true') throw new Error('BANK_FEED_SANDBOX_WEBHOOK_SECRET is set without BANK_FEED_SANDBOX=true');
     if (config.BANK_FEED_SANDBOX_WEBHOOK_SECRET.length < 32) throw new Error('BANK_FEED_SANDBOX_WEBHOOK_SECRET must be at least 32 characters');
@@ -831,6 +886,30 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (config.CROVE_SHARED_DATABASE === 'true' && config.DB_RESET_ON_RELEASE === 'false') {
     throw new Error('CROVE_SHARED_DATABASE=true needs DB_RESET_ON_RELEASE=true: temporary objects are cleared after each checkout, which a transaction-mode pooler cannot do; use a direct or session-mode connection');
   }
+  if (config.OAUTH_SERVER === 'on') {
+    if (config.OAUTH_JWKS === undefined) throw new Error('OAUTH_SERVER=on needs OAUTH_JWKS, the private JSON Web Key Set (ES256) the access tokens are signed with');
+    let keys: unknown;
+    try {
+      keys = (JSON.parse(config.OAUTH_JWKS) as { keys?: unknown }).keys;
+    } catch {
+      throw new Error('OAUTH_JWKS is not valid JSON');
+    }
+    const usable = Array.isArray(keys) && keys.length > 0 && keys.every((k) => {
+      const key = k as { kty?: unknown; crv?: unknown; kid?: unknown; d?: unknown } | null;
+      return key !== null && typeof key === 'object' && key.kty === 'EC' && key.crv === 'P-256' && typeof key.kid === 'string' && key.kid.length > 0 && typeof key.d === 'string';
+    });
+    if (!usable) throw new Error('OAUTH_JWKS must be a JSON Web Key Set of ES256 private keys (kty EC, crv P-256, with kid and d)');
+    const cookieKeys = (config.OAUTH_COOKIE_KEYS ?? '').split(',').map((k) => k.trim()).filter((k) => k.length > 0);
+    if (cookieKeys.length === 0 || cookieKeys.some((k) => k.length < 32)) throw new Error('OAUTH_SERVER=on needs OAUTH_COOKIE_KEYS: one or more secrets of at least 32 characters, comma separated');
+    if (config.APP_URL !== undefined && new URL(config.APP_URL).origin !== new URL(config.PUBLIC_URL).origin) {
+      throw new Error('OAUTH_SERVER=on needs APP_URL to be PUBLIC_URL\'s own origin: the consent page and the interaction cookie share the API origin in this step');
+    }
+  }
+  if (config.MCP_ALLOWED_ORIGINS !== undefined) {
+    for (const origin of config.MCP_ALLOWED_ORIGINS.split(',').map((o) => o.trim())) {
+      if (!URL.canParse(origin) || new URL(origin).origin !== origin) throw new Error('MCP_ALLOWED_ORIGINS lists origins only (scheme, host, optional port), comma separated');
+    }
+  }
   if (!isLocalUrl(config.PUBLIC_URL)) {
     if (config.CROVE_CONTEXT_TOKEN_KEY !== undefined) {
       // Compared as bytes, so the unpadded or base64url spelling of the test key is the test key too.
@@ -867,6 +946,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // compose falls back to ADS_SANDBOX=true, so a public deployment that runs the ads module must set it to false.
     if (config.ADS_SANDBOX === 'true' && (config.CROVE_MODULES as readonly string[]).includes('ads')) {
       throw new Error('ADS_SANDBOX=true shows made-up ad spend next to the real books; it is for local development only: set ADS_SANDBOX=false');
+    }
+    // ADR-0045 point 7 (#2519): the offline marketplace provider serves made-up orders, which a member could confirm into the stock book; it stays on development deployments. docker
+    // compose falls back to MARKETPLACE_PROVIDERS=sandbox, so a public deployment that runs the finance module must set it to an empty list.
+    if (config.MARKETPLACE_PROVIDERS.split(',').some((id) => id.trim() === 'sandbox') && (config.CROVE_MODULES as readonly string[]).includes('finance')) {
+      throw new Error('MARKETPLACE_PROVIDERS=sandbox offers made-up marketplace orders to the stock book; it is for local development only: set MARKETPLACE_PROVIDERS to an empty list');
     }
     // ADR-0044 point 8 (#2502): the offline provider "issues" invoices that the intake reads into sales of the books, so it stays on development deployments. docker compose
     // falls back to EINVOICE_SANDBOX=true, so a public deployment that runs the finance module must set it to false.
@@ -1033,7 +1117,14 @@ export function assertExportKey(config: Pick<Config, 'PUBLIC_URL' | 'EXPORT_ENCR
 // set. The pilot layout keeps it out with `!reset` under `extends`, which needs compose 2.24 or newer, and a host file or
 // an `env_file` can put it back; the API is the process the internet reaches, and the worker's login enters the system
 // context of every org, so the kernel checks it itself and does not rely on how the container was composed.
-export function assertSplitRoles(config: Pick<Config, 'PUBLIC_URL' | 'CROVE_ALLOW_ALL_IN_ONE' | 'WORKER_DATABASE_URL'>, role: 'api' | 'worker' | 'all'): void {
+//
+// The same goes for the other logins that are not the API's (#2162): ADMIN_DATABASE_URL, the postgres login that only migrate and the operator's tools
+// hold, and a DATABASE_LISTEN_URL on the worker's login. A LISTEN url on the app login is the API's own (its SSE stream reads it), so only the
+// worker login in it is refused; the login is read from the URL's user name, and no message carries a value.
+export function assertSplitRoles(
+  config: Pick<Config, 'PUBLIC_URL' | 'CROVE_ALLOW_ALL_IN_ONE' | 'WORKER_DATABASE_URL' | 'ADMIN_DATABASE_URL' | 'DATABASE_LISTEN_URL'>,
+  role: 'api' | 'worker' | 'all',
+): void {
   if (role === 'all' && !isLocalUrl(config.PUBLIC_URL) && config.CROVE_ALLOW_ALL_IN_ONE !== 'true') {
     throw new Error(
       'the all role runs the API on the worker database login and every secret; on a public PUBLIC_URL run api and worker as separate processes ' +
@@ -1045,6 +1136,29 @@ export function assertSplitRoles(config: Pick<Config, 'PUBLIC_URL' | 'CROVE_ALLO
       'the api role must not hold WORKER_DATABASE_URL on a public PUBLIC_URL: that login enters the system context of every org, and only the worker needs it; ' +
         'remove it from the api container (docs/runbooks/deploy.md, "The pilot layout")',
     );
+  }
+  if (role === 'api' && !isLocalUrl(config.PUBLIC_URL)) {
+    if (config.ADMIN_DATABASE_URL !== undefined) {
+      throw new Error(
+        'the api role must not hold ADMIN_DATABASE_URL on a public PUBLIC_URL: that is the postgres login, and only migrate and the operator\'s tools need it; ' +
+          'remove it from the api container (docs/runbooks/deploy.md, "The pilot layout")',
+      );
+    }
+    if (config.DATABASE_LISTEN_URL !== undefined && databaseLogin(config.DATABASE_LISTEN_URL) === 'crove_worker') {
+      throw new Error(
+        'the api role must not hold a DATABASE_LISTEN_URL on the worker login on a public PUBLIC_URL: that login enters the system context of every org; ' +
+          'point it at the app login (docs/runbooks/deploy.md, "The pilot layout")',
+      );
+    }
+  }
+}
+
+// The user name of a database URL, or null when it does not parse.
+function databaseLogin(url: string): string | null {
+  try {
+    return decodeURIComponent(new URL(url).username);
+  } catch {
+    return null;
   }
 }
 

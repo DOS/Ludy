@@ -25,7 +25,12 @@ test.beforeAll(async () => {
     // The new headless mode loads extensions; CHROMIUM_PATH points at a browser installed elsewhere (a sandbox).
     channel: 'chromium',
     ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
-    args: [`--disable-extensions-except=${dist}`, `--load-extension=${dist}`, '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required'],
+    args: [`--disable-extensions-except=${dist}`, `--load-extension=${dist}`, '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required', '--lang=vi'],
+    // The browser's language drives the popup's language (#3008): Vietnamese here, so the texts below hold. Under Playwright it is the context's `locale` that a page's
+    // chrome.i18n.getUILanguage answers (the flag alone does not change it), so the locale decides what the tests see; a real browser's interface language is not tested here.
+    locale: 'vi-VN',
+    // The manifest's name and description are resolved from _locales by the browser's own interface language, which on Linux comes from LANGUAGE (not from --lang or the context locale).
+    env: { ...process.env, LANGUAGE: 'vi' },
   });
   const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
   extensionId = new URL(worker.url()).host;
@@ -59,6 +64,49 @@ test('the installed manifest asks for nothing beyond the list', async () => {
   expect([...(manifest.permissions ?? [])].sort()).toEqual(['identity', 'storage']);
   expect(manifest.host_permissions).toEqual(['https://app.ludy.vn/*']);
   expect([...(manifest.optional_permissions ?? [])].sort()).toEqual(['offscreen', 'tabCapture']);
+});
+
+test('the installed manifest names its icons, and the package holds them', async () => {
+  const manifest = await context.serviceWorkers()[0]!.evaluate(() => chrome.runtime.getManifest());
+  expect(Object.keys(manifest.icons ?? {}).sort()).toEqual(['128', '16', '32', '48']);
+  const page = await context.newPage();
+  await page.goto(`chrome-extension://${extensionId}/popup.html`);
+  for (const path of Object.values(manifest.icons ?? {})) {
+    expect(await page.evaluate(async (file) => (await fetch(chrome.runtime.getURL(file))).ok, path), path).toBe(true);
+  }
+  await page.close();
+});
+
+test('the popup is Vietnamese in a Vietnamese browser and English in an English one (#3008)', async () => {
+  const englishProfile = mkdtempSync(`${tmpdir()}/ludy-ext-en-`);
+  const english = await chromium.launchPersistentContext(englishProfile, {
+    channel: 'chromium',
+    ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
+    args: [`--disable-extensions-except=${dist}`, `--load-extension=${dist}`, '--lang=en-US'],
+    locale: 'en-US',
+    env: { ...process.env, LANGUAGE: 'en_US' },
+  });
+  try {
+    const worker = english.serviceWorkers()[0] ?? (await english.waitForEvent('serviceworker'));
+    // The localized manifest: the browser resolves the __MSG_ references from _locales, English here.
+    const englishManifest = await worker.evaluate(() => chrome.runtime.getManifest());
+    expect(englishManifest.name).toBe('Ludy');
+    expect(englishManifest.description).toBe("Record a browser meeting's tab audio and your microphone into Ludy, and upload it when you stop.");
+    const page = await english.newPage();
+    await page.goto(`chrome-extension://${new URL(worker.url()).host}/popup.html`);
+    await expect(page.getByText('Connect to Ludy')).toBeVisible();
+    await expect(page.getByText('Kết nối với Ludy')).toHaveCount(0);
+  } finally {
+    await english.close();
+    rmSync(englishProfile, { recursive: true, force: true });
+  }
+  const vietnameseManifest = await context.serviceWorkers()[0]!.evaluate(() => chrome.runtime.getManifest());
+  expect(vietnameseManifest.name).toBe('Ludy');
+  expect(vietnameseManifest.description).toBe('Ghi lại cuộc họp trên trình duyệt vào Ludy: ghi âm tab họp cùng micro, tải lên khi dừng.');
+  const vietnamese = await context.newPage();
+  await vietnamese.goto(`chrome-extension://${extensionId}/popup.html`);
+  await expect(vietnamese.getByText('Kết nối với Ludy')).toBeVisible();
+  await vietnamese.close();
 });
 
 test('with meetings off in the org the feature does not show, with it on it does', async () => {
@@ -156,7 +204,7 @@ async function record(keepVideo: boolean): Promise<{ ok: boolean; uploaded?: boo
         }
         return new MediaStream(tracks);
       };
-      const params = { address, token: 'crx_test', orgId: 'org1', uploads: 'direct', title: 'Họp thử', consentMethod: 'told_at_start', consentAgreed: true, keepVideo: video, streamId: 'fake' } as const;
+      const params = { address, token: 'crx_test', orgId: 'org1', uploads: 'direct', title: 'Họp thử', consentMethod: 'told_at_start', consentAgreed: true, keepVideo: video, liveNotes: false, streamId: 'fake' } as const;
       const started = await run.startCapture(params, deps);
       if (!started.ok) return { ok: false, left: 0 };
       await new Promise((resolve) => setTimeout(resolve, 3000));
@@ -174,7 +222,7 @@ test('video off: the meeting is created with its consent and only audio arrives'
   fake.uploads.length = 0;
   const result = await record(false);
   expect(result).toEqual({ ok: true, uploaded: true, left: 0 });
-  expect(fake.created).toEqual([{ title: 'Họp thử', language: 'vi', visibility: 'attendees', keepVideo: false, consentMethod: 'told_at_start' }]);
+  expect(fake.created).toEqual([{ title: 'Họp thử', language: 'vi', visibility: 'attendees', keepVideo: false, consentMethod: 'told_at_start', liveNotes: false }]);
   expect(fake.uploads).toHaveLength(1);
   expect(fake.uploads[0]).toMatchObject({ kind: 'audio', fileType: expect.stringMatching(/^audio\/webm/) });
   expect(fake.uploads[0]!.bytes).toBeGreaterThan(1000);
@@ -299,8 +347,8 @@ test('the worker refuses a start request whose flags are not booleans, and creat
   const replies = await page.evaluate(async () => {
     const base = { type: 'start', title: 'Họp', consentMethod: 'told_at_start', streamId: 'x' };
     return [
-      await chrome.runtime.sendMessage({ ...base, consentAgreed: 'true', keepVideo: false }),
-      await chrome.runtime.sendMessage({ ...base, consentAgreed: true, keepVideo: 'false' }),
+      await chrome.runtime.sendMessage({ ...base, consentAgreed: 'true', keepVideo: false, liveNotes: false }),
+      await chrome.runtime.sendMessage({ ...base, consentAgreed: true, keepVideo: 'false', liveNotes: false }),
     ];
   });
   await page.close();

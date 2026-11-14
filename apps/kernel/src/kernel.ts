@@ -10,6 +10,8 @@ import { summaryModelPort, type ModelPort } from './member-vy-ports.ts';
 import { AdsCampaignWriter, ConversationWriter, InboxReader, InvoiceExtractor, SchedulingReader, SocialWriter, TodayWriter, type InvoiceReader } from '@crove/agent';
 import {
   BlueskyPublisher,
+  TELEGRAM_HOOK_KEY_INFO,
+  TelegramConversations,
   TelegramPublisher,
   DiscordPublisher,
   MastodonPublisher,
@@ -76,12 +78,14 @@ import { crmAgentPrograms, crmCommands, crmManifest, crmQueries } from '@crove/m
 import { hrCommands, hrManifest, hrQueries } from '@crove/mod-hr';
 import { notesCommands, notesManifest, notesQueries } from '@crove/mod-notes';
 import { adsCommands, adsManifest, adsQueries } from '@crove/mod-ads';
-import { meetingsCommands, meetingsManifest, meetingsQueries, setSummaryEnabled, setTranscribeEnabled } from '@crove/mod-meetings';
+import { meetingsCommands, meetingsManifest, meetingsQueries, setSummaryEnabled, setTranscribeBroker, setTranscribeEnabled } from '@crove/mod-meetings';
 import { GoogleAdsConnector, MetaAdsConnector, MetaWriteConnector, adActivators, adLaunchWriters, adPausers, adPlatforms, adRevokers, type AdActivator, type AdPauser, type AdPlatform, type AdRevoker, type LaunchWriter } from '@crove/ad-platform';
 import { createSandboxEInvoiceProvider, type EInvoiceProvider } from '@crove/einvoice';
+import { createSandboxMarketplaceProvider, isMarketplaceAdapter, type MarketplaceProvider } from '@crove/mod-finance';
 import { createAuthenticator, type Authenticate } from './auth.ts';
 import { AVAILABLE_MODULES, appUrl, assertExportKey, assertSplitRoles, extractConcurrency, usageLimits, zaloMediaHostsOf, type Config, type ModuleId } from './config.ts';
 import { createCredentialBroker, noCredentialBroker } from './credentials.ts';
+import { mediaMeasurerFor } from './meetings-measure.ts';
 import { rebindExports as rebindOrgExports } from './export-rebind.ts';
 import { numberReseedCommand, runRestoreReport } from './restore-report.ts';
 import { exportSealer } from './export-seal.ts';
@@ -91,6 +95,7 @@ import { orgPurgeCommand, runOrgPurge } from './org-purge.ts';
 import { replayShreds, runMeetingsRetention, sweepMeetingMedia } from './meetings-retention.ts';
 import { runUserDisable } from './user-disable.ts';
 import { ConcurrencyLimiter, Semaphore } from './concurrency.ts';
+import { createOauthServer } from './oauth-server.ts';
 import { createHttpApp, type StreamDeps } from './http.ts';
 import { createLogProvider, createMailer, messageIdDomain, type MailProvider } from './mail.ts';
 import { MAIL_TEMPLATES } from './mail-templates.ts';
@@ -156,7 +161,7 @@ export interface KernelAdapters {
   // The Inbox's suggested intent and likely contacts (CV3, #2306) through the same endpoint; null: no suggestion, the inbox as it is.
   // The model behind the recorder's Vy summary of a meeting (#2580); the route is on only with MEETINGS_SUMMARY=on as well.
   summaryModel?: ModelPort | null;
-  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'overviewSentence' | 'payrollMatchSentence' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain'>>) | null;
+  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'followupWords' | 'overviewSentence' | 'payrollMatchSentence' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'crmFollowupWords' | 'meetingBrief' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain'>>) | null;
   storage: BlobStore;
   // Outbound mail (member invites, issue #129); the default logs that nothing was sent.
   mail?: MailProvider;
@@ -230,6 +235,8 @@ export function moduleDefinitions(config: Config): ModuleDefinitions {
   setInboundAuthservId(config.INBOUND_AUTHSERV_ID);
   // Whether the recorder may start a transcription here (#2578, M4b): MEETINGS_TRANSCRIBE=on with a provider.
   setTranscribeEnabled(transcribeEnabled(config));
+  // The worker takes a transcription job only with the credential key (a broker); without it the start is refused with its own code instead of queueing a job nobody works (#2863).
+  setTranscribeBroker(Boolean(config.CREDENTIAL_KEY ?? config.CREDENTIAL_KEY_FILE));
   setSummaryEnabled(summaryEnabled(config));
   const all: Record<ModuleId, () => ModuleDefinitions> = {
     kernel: () => ({
@@ -372,6 +379,17 @@ export function einvoiceProvidersOf(config: Pick<Config, 'EINVOICE_SANDBOX'>): R
   return config.EINVOICE_SANDBOX === 'true' ? { sandbox: createSandboxEInvoiceProvider().provider } : {};
 }
 
+// The marketplace providers this deployment offers, by adapter id (ADR-0045 point 7, #2519): the ones MARKETPLACE_PROVIDERS names. `sandbox` is the offline provider. A real adapter is
+// added here with its own entry when it is built; an id this build does not know is left out, so a typo offers nothing.
+export function marketplaceProvidersOf(config: Pick<Config, 'MARKETPLACE_PROVIDERS'>): Readonly<Record<string, MarketplaceProvider>> {
+  const out: Record<string, MarketplaceProvider> = {};
+  for (const raw of config.MARKETPLACE_PROVIDERS.split(',')) {
+    const id = raw.trim();
+    if (id === 'sandbox' && isMarketplaceAdapter(id)) out[id] = createSandboxMarketplaceProvider();
+  }
+  return out;
+}
+
 export function adPlatformsOf(
   config: Pick<Config, 'ADS_SANDBOX' | 'CHANNEL_META_ADS_APP_ID' | 'CHANNEL_META_ADS_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION'> &
     Partial<Pick<Config, 'CHANNEL_GOOGLE_ADS_CLIENT_ID' | 'CHANNEL_GOOGLE_ADS_CLIENT_SECRET'>>,
@@ -477,7 +495,7 @@ export function channelPublishers(config: ChannelConfig): Record<string, Publish
   if (config.CHANNEL_SANDBOX === 'true') publishers.sandbox = new SandboxPublisher();
   // An account on its own PDS (#792) is called through the egress guard; images go up to 1 MB each.
   if (config.CHANNEL_BLUESKY === 'true') publishers.bluesky = new BlueskyPublisher(undefined, egressFetch({ timeoutMs: 30_000, maxBytes: 2_000_000, overLimit: 'fail' }));
-  if (config.CHANNEL_TELEGRAM === 'true') publishers.telegram = new TelegramPublisher();
+  if (config.CHANNEL_TELEGRAM === 'true') publishers.telegram = new TelegramPublisher(undefined, new TelegramConversations());
   if (config.CHANNEL_DISCORD === 'true') publishers.discord = new DiscordPublisher();
   // An instance is the tenant's to name: its calls go through the egress guard, never a plain fetch.
   if (config.CHANNEL_MASTODON === 'true') publishers.mastodon = new MastodonPublisher(egressFetch({ timeoutMs: 300_000, maxBytes: 2_000_000, overLimit: 'fail' }));
@@ -554,7 +572,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
     billing: adapters.billing ?? selfHostBilling,
   };
 
-  function buildRuntime(connectionString: string, applicationName: string, max: number) {
+  function buildRuntime(connectionString: string, applicationName: string, max: number, mcpEntry?: 'worker') {
     const pool = createPool({ connectionString, applicationName, max, resetOnRelease: config.DB_RESET_ON_RELEASE === 'true', discardTemp: config.CROVE_SHARED_DATABASE === 'true' });
     const db = createDb(pool);
     // One database is the control plane and the only cell (Decision 14, plan §3.6).
@@ -569,6 +587,8 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
       // Every user request is checked against its session (ADR-0028); the identity port never resolves to "no check".
       sessions: resolved.identity.sessions,
       stepUp: config.AUTH_STEP_UP,
+      // The worker's own runtime enters a company grant's context through the worker's entry (signal wake-ups, S5); every other runtime uses the API's.
+      ...(mcpEntry ? { mcpEntry } : {}),
       refusalAudit: {
         perActor: config.REFUSAL_AUDIT_LIMIT_PER_ACTOR,
         perOrg: config.REFUSAL_AUDIT_LIMIT_PER_ORG,
@@ -645,12 +665,19 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
         }
         if (config.TAX_PORTAL_SYNC === 'true' && config.TAX_PORTAL_URL) console.warn(`[api] TAX_PORTAL_URL points the tax portal sync at ${new URL(config.TAX_PORTAL_URL).origin}, not the real portal`);
         const conversationSecrets = metaConversationSecrets(config);
+        const threadsWebhookSecret = config.CHANNEL_THREADS_APP_ID && config.CHANNEL_THREADS_APP_SECRET ? config.CHANNEL_THREADS_APP_SECRET : undefined;
+        // The MCP endpoint's authorization server (ADR-0051 decision 2, #2975), only when the deployment turned it on (OAUTH_SERVER=on, keys and cookie secrets checked at load).
+        const oauth = config.OAUTH_SERVER === 'on' ? await createOauthServer(config, (fn) => runtime.orgless(fn)) : null;
         const app = createHttpApp({
           config,
+          ...(oauth ? { oauth } : {}),
           runtime,
           store,
           authenticate,
           pool,
+          // The meetings media route seals and opens with the same broker as the worker's reseal pass. The 'none' broker
+          // is left out so the route keeps its own fallback (createCredentialBroker(config)).
+          ...(resolved.broker.id !== 'none' ? { broker: resolved.broker } : {}),
           aiEnabled: resolved.ai !== null,
           aiMeter: (actor) => memberMeter(runtime, actor, { price: { inputPerMTok: config.AI_PRICE_INPUT_PER_MTOK, outputPerMTok: config.AI_PRICE_OUTPUT_PER_MTOK } }),
           ...(resolved.writer ? { socialWriter: { ...socialDrafter(resolved.writer, config.AI_VISION === 'true' ? store : null), ...(resolved.today ? { brief: resolved.today.brief.bind(resolved.today) } : {}) } } : {}),
@@ -667,12 +694,16 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           // Zalo OA's webhook for customers' messages (conversation core, #2304): with the Zalo app and its OA secret key configured.
           ...(config.CHANNEL_ZALO_APP_ID && config.CHANNEL_ZALO_OA_SECRET_KEY ? { zaloWebhook: { appId: config.CHANNEL_ZALO_APP_ID, oaSecretKey: config.CHANNEL_ZALO_OA_SECRET_KEY, oaSecretKeyPrevious: config.CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS } } : {}),
           // Meta Page webhook for Page comments (conversation core CV2, #2307): with the Meta app and its webhook verify token configured.
-          ...(conversationSecrets && config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN ? { facebookWebhook: { appSecret: conversationSecrets.primary, ...(conversationSecrets.instagram ? { instagramAppSecret: conversationSecrets.instagram } : {}), appSecretPrevious: config.CHANNEL_META_APP_SECRET_PREVIOUS, verifyToken: config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN } } : {}),
+          // Telegram bot chats (#3132): the route exists where Telegram is on and the credential key can derive the webhook secret.
+          ...(config.CHANNEL_TELEGRAM === 'true' && resolved.broker.deriveKeys ? { telegramWebhook: { keys: () => (resolved.broker.deriveKeys?.(TELEGRAM_HOOK_KEY_INFO) ?? []).map((k) => k.key) } } : {}),
+          // The same route takes the Threads app's reply notices (#3133), signed with the Threads app's secret: a deployment with only the Threads app has an empty
+          // Pages secret, which verifies nothing.
+          ...((conversationSecrets || threadsWebhookSecret) && config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN ? { facebookWebhook: { appSecret: conversationSecrets?.primary ?? '', ...(conversationSecrets?.instagram ? { instagramAppSecret: conversationSecrets.instagram } : {}), ...(threadsWebhookSecret ? { threadsAppSecret: threadsWebhookSecret } : {}), appSecretPrevious: config.CHANNEL_META_APP_SECRET_PREVIOUS, verifyToken: config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN } } : {}),
           // The bank feed adapters that take signed notices (ADR-0039): the route exists only for these.
           bankFeedWebhooks: Object.fromEntries(
             Object.entries(bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET })).filter(([, p]) => p.verifyWebhook),
           ),
-          channels: { broker: resolved.broker, sandbox: config.CHANNEL_SANDBOX === 'true', bankFeedSandbox: config.BANK_FEED_SANDBOX === 'true', einvoiceProviders: einvoiceProvidersOf(config), adsPlatforms: adPlatformsOf(config), adsWriteAppShared: metaWriteAppShared(config), bluesky: config.CHANNEL_BLUESKY === 'true', telegram: config.CHANNEL_TELEGRAM === 'true', mastodon: config.CHANNEL_MASTODON === 'true', discord: config.CHANNEL_DISCORD === 'true', wordpress: config.CHANNEL_WORDPRESS === 'true', connectors: channelConnectors(config), calendars: calendarAdapters(config), publicUrl: appUrl(config), ...(config.MEDIA_PEXELS_API_KEY ? { stockPhotos: createPexels({ apiKey: config.MEDIA_PEXELS_API_KEY, store }) } : {}), mediaUrls: createMediaUrls({ store }), ...(vapid ? { push: { publicKey: vapid.publicKey } } : {}) },
+          channels: { broker: resolved.broker, sandbox: config.CHANNEL_SANDBOX === 'true', bankFeedSandbox: config.BANK_FEED_SANDBOX === 'true', einvoiceProviders: einvoiceProvidersOf(config), marketplaceProviders: marketplaceProvidersOf(config), adsPlatforms: adPlatformsOf(config), adsWriteAppShared: metaWriteAppShared(config), bluesky: config.CHANNEL_BLUESKY === 'true', telegram: config.CHANNEL_TELEGRAM === 'true', mastodon: config.CHANNEL_MASTODON === 'true', discord: config.CHANNEL_DISCORD === 'true', wordpress: config.CHANNEL_WORDPRESS === 'true', connectors: channelConnectors(config), calendars: calendarAdapters(config), publicUrl: appUrl(config), ...(config.MEDIA_PEXELS_API_KEY ? { stockPhotos: createPexels({ apiKey: config.MEDIA_PEXELS_API_KEY, store }) } : {}), mediaUrls: createMediaUrls({ store }), ...(vapid ? { push: { publicKey: vapid.publicKey } } : {}) },
           ...(stream ? { stream } : {}),
           // An API process of its own waits in /readyz for its workers' build (#1952); the single "all" process is its
           // own worker, so it has none to wait for.
@@ -696,7 +727,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
         // The instance the heartbeat names is in every system audit row this worker writes (#1951), cut to what fits in
         // the connections' application_name, so both name it alike.
         const instance = hostname().slice(0, 50);
-        const { pool, db, runtime } = buildRuntime(workerUrl, workerApplicationName(instance), config.WORKER_DATABASE_POOL_MAX);
+        const { pool, db, runtime } = buildRuntime(workerUrl, workerApplicationName(instance), config.WORKER_DATABASE_POOL_MAX, 'worker');
         stops.push(() => pool.end());
         await assertRlsEnforced(pool);
         await assertSystemContextAccess(pool, 'granted');
@@ -723,7 +754,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             exportSealer: exportSealer(config),
             exportRetentionDays: config.EXPORT_RETENTION_DAYS,
             evidenceLockDays: config.EVIDENCE_LOCK_DAYS,
-            channels: { broker: resolved.broker, einvoiceProviders: einvoiceProvidersOf(config), conversationHistory: config.CHANNEL_ZALO_HISTORY === 'true', facebookHistory: config.CHANNEL_FACEBOOK_HISTORY === 'true', conversationMediaHosts: zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS), publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), adPlatforms: adPlatformsOf(config), adRevokers: adRevokersOf(config), adWriters: adWritersOf(config), adPausers: adPausersOf(config), adActivators: adActivatorsOf(config) },
+            channels: { broker: resolved.broker, einvoiceProviders: einvoiceProvidersOf(config), marketplaceProviders: marketplaceProvidersOf(config), conversationHistory: config.CHANNEL_ZALO_HISTORY === 'true', facebookHistory: config.CHANNEL_FACEBOOK_HISTORY === 'true', threadsHistory: config.CHANNEL_THREADS_HISTORY === 'true', conversationMediaHosts: zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS), publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), adPlatforms: adPlatformsOf(config), adRevokers: adRevokersOf(config), adWriters: adWritersOf(config), adPausers: adPausersOf(config), adActivators: adActivatorsOf(config) },
             publicUrl: config.PUBLIC_URL,
             appUrl: appUrl(config),
             brand: config.BRAND_NAME,
@@ -733,7 +764,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             usageLimits: usageLimits(config),
             securityAlerts: alerts,
             aiPrice: { inputPerMTok: config.AI_PRICE_INPUT_PER_MTOK, outputPerMTok: config.AI_PRICE_OUTPUT_PER_MTOK, audioPerMinute: config.AI_PRICE_AUDIO_PER_MIN, defaultMonthlyBudget: config.AI_DEFAULT_MONTHLY_BUDGET ?? null },
-            ...(transcribeEnabled(config) ? { meetingsTranscribe: { provider: { baseURL: config.TRANSCRIBE_BASE_URL as string, apiKey: config.TRANSCRIBE_API_KEY ?? null, model: config.TRANSCRIBE_MODEL as string } } } : {}),
+            ...(transcribeEnabled(config) ? { meetingsTranscribe: { provider: { baseURL: config.TRANSCRIBE_BASE_URL as string, apiKey: config.TRANSCRIBE_API_KEY ?? null, model: config.TRANSCRIBE_MODEL as string, mode: config.TRANSCRIBE_API_MODE }, measurer: mediaMeasurerFor(config.MEDIA_URL, config.MEDIA_CALL_TIMEOUT_MS) } } : {}),
             outboxLagPauseSeconds: config.OUTBOX_LAG_PAUSE_SECONDS,
             ...(vapid ? { push: { sender: createPushSender(vapid), brand: config.BRAND_NAME } } : {}),
           }),

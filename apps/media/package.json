@@ -15,6 +15,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@crove/media-contract": "workspace:*",
     "@hono/node-server": "catalog:",
     "hono": "catalog:",
     "zod": "catalog:"

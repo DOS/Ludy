@@ -41,7 +41,7 @@ Every model call goes through the AI budget meter (#2382: `metered(...)` under `
 
 ### 4. AI coworkers
 
-AI is a coworker, never an "assistant". Vy is the general manager across every app. Each app has its own coworker, whose default name the org can change. The roster is in DESIGN.md section 1.1.
+AI is a coworker. Vy is the general manager across every app, and is both a coworker and an assistant (owner, 2026-11-10); the other coworkers are never called assistants. Each app has its own coworker, whose default name the org can change. The roster is in DESIGN.md section 1.1.
 
 ### 5. Proportionate security
 

@@ -21,6 +21,10 @@ export const meetingsManifest = defineModule({
         'length_seconds',
         'created_at',
       ]),
+      // The pieces of about 15 seconds a recorder sends while a live-notes meeting runs (ADR-0052 L4a, #3109): order, the ciphertext's file row, size and the recorder's own length. No key, no text.
+      live_chunk: columns(['org_id', 'id', 'meeting_id', 'seq', 'file_id', 'size_bytes', 'length_seconds', 'created_at']),
+      // The live transcript preview of a meeting being recorded (ADR-0052 L4a, #3110): the recorder's alone, replaced by the batch transcript. Its text is personal data.
+      live_line: columns(['org_id', 'id', 'meeting_id', 'seq', 'start_seconds', 'end_seconds', 'tainted', 'source_run_id', 'created_at'], { text: 'pii' }),
       media_key: columns(
         ['org_id', 'id', 'meeting_id', 'key_id', 'kind', 'created_at'],
         { wrapped_key: 'sensitive' },
@@ -37,6 +41,7 @@ export const meetingsManifest = defineModule({
           'ended_at',
           'length_seconds',
           'keep_video',
+          'live_notes',
           'extension_token_id',
           'consent_method',
           'consent_confirmed_by',
@@ -49,6 +54,8 @@ export const meetingsManifest = defineModule({
         ],
         { title: 'pii' },
       ),
+      // Links of a meeting to a party, a deal and a calendar event (L1, #2587): ids and a time, no text.
+      meeting_link: columns(['org_id', 'id', 'meeting_id', 'party_id', 'deal_id', 'calendar_event_id', 'created_by', 'created_at']),
       meeting_reader: columns(['org_id', 'id', 'meeting_id', 'user_id', 'created_at']),
       meeting_result: columns(['org_id', 'id', 'meeting_id', 'feature', 'stage', 'tainted', 'source_run_id', 'created_at', 'updated_at'], { summary: 'pii', decisions: 'pii' }),
       meeting_video: columns([
@@ -62,8 +69,8 @@ export const meetingsManifest = defineModule({
       ]),
       // The transcript (#2578): what was said, who it is attributed to, when. Text and speaker label are personal data.
       transcript_segment: columns(
-        ['org_id', 'id', 'meeting_id', 'start_seconds', 'end_seconds', 'stage', 'corrected', 'created_at', 'updated_at'],
-        { speaker_label: 'pii', text: 'pii' },
+        ['org_id', 'id', 'meeting_id', 'start_seconds', 'end_seconds', 'stage', 'corrected', 'tainted', 'source_run_id', 'created_at', 'updated_at'],
+        { speaker_label: 'pii', text: 'pii', search: 'pii' },
       ),
     },
   },

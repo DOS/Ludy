@@ -6,6 +6,7 @@ The shared Ludy browser extension (Manifest V3, Chrome and Edge). Decision: [ADR
 
 - **Shell:** setup for `app.ludy.vn` or a self-hosted address (asked as an optional host permission for that one origin), sign-in through the app's `/-/extension/connect` page with PKCE (`chrome.identity.launchWebAuthFlow`), an org picker (one token per org), features shown only when the org runs the module and the token holds the scope (`GET /api/extension/me`), and a permission request per feature, given back when turned off.
 - **Meetings feature:** consent step (name, how participants were told, a confirmation), "Ghi cả video" off by default, tab capture in an offscreen document mixed with the microphone, a REC badge and timer, chunks saved on the device (the app recorder's chunk store, `@crove/meeting-recorder`), uploaded to the meeting on stop. AI off still records: the transcript and summary come from the meeting pipeline, never from the extension.
+- **Languages and icons:** the popup is English for an English browser and Vietnamese for any other language (`src/strings.ts`, both sets in the package, chosen once from the browser's interface language, `chrome.i18n.getUILanguage()`). The manifest names the Ludy mark at 16, 32, 48 and 128 pixels (`icons/`, copied by `scripts/build.mjs`).
 - **Page capture:** `src/page-capture.ts` defines the generic "capture this page to one command, on a click" contract of plan section 5.6. No feature uses it.
 - **No dependency at runtime or in the package:** `chrome.*` is typed by hand (`src/chrome.d.ts`); `scripts/build.mjs` strips the TypeScript types with Node and copies one workspace package. No remote code.
 
@@ -26,10 +27,10 @@ Never `<all_urls>`, `tabs`, `cookies`, `history`, `activeTab`, content scripts o
 pnpm --filter @crove/extension build                       # dist/, the unpacked package
 pnpm --filter @crove/extension check:manifest              # dist/manifest.json against the fixed list
 pnpm --filter @crove/extension test:e2e                    # unpacked in Chromium, fake server, fake media
-node apps/extension/scripts/build.mjs --version 1.2.3      # a release build from a tag, e.g. extension-v1.2.3
+node apps/extension/scripts/build.mjs --version 1.2.3      # a release build by hand; CI does it for a tag ext-v1.2.3 (.github/workflows/extension-package.yml)
 ```
 
-A Ludy server signs in only the extension ids it lists: the store's id by default (not set until the store listing exists, so until then an unpacked build always needs its own), or the ids in its `EXTENSION_IDS` setting (#2740). An unpacked build has its own id (shown at `chrome://extensions`), so list it in `EXTENSION_IDS` on the server it connects to, or the sign-in window says the request is not valid.
+A Ludy server signs in only the extension ids it lists: the Chrome Web Store build's id by default (`DEFAULT_EXTENSION_IDS`, #3010), or only the ids in its `EXTENSION_IDS` setting when that is set (#2740), so a server that sets it lists the store id too if it wants the store build. An unpacked build has its own id (shown at `chrome://extensions`), so list it in `EXTENSION_IDS` on the server it connects to, or the sign-in window says the request is not valid.
 
 Load `dist/` through `chrome://extensions` (Developer mode, Load unpacked) or `edge://extensions`. Locally, `CHROMIUM_PATH=/path/to/chrome pnpm --filter @crove/extension test:e2e` uses a browser installed elsewhere.
 

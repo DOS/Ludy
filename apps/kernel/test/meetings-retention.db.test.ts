@@ -20,6 +20,7 @@ import { dayAfter, meetingsCommands, meetingsQueries, retentionDates } from '@cr
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp, type HttpDeps } from '../src/http.ts';
+import { fakeMediaMeasurer } from './fake-media.ts';
 import { SHRED_REF_ALERT_AFTER, createShredRefSync, replayShreds, runMeetingsRetention, shredRefKey, sweepMeetingMedia, syncShredRefs } from '../src/meetings-retention.ts';
 import { orgPurgeCommand, purgeOrg } from '../src/org-purge.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
@@ -191,7 +192,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     const registry = { commands: [...kernelCommands, ...financeCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries, ...meetingsQueries] };
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' }).register(registry);
     worker = new Runtime(workerDb, { manifests: TEST_MANIFESTS }).register(registry).register({ commands: [orgPurgeCommand({ store })] });
-    const deps: HttpDeps = { config, runtime, store, broker, authenticate: createAuthenticator(config, db), pool, aiEnabled: false };
+    const deps: HttpDeps = { config, runtime, store, broker, authenticate: createAuthenticator(config, db), pool, aiEnabled: false, mediaMeasurer: fakeMediaMeasurer() };
     app = createHttpApp(deps);
     const created = await rpc('org/create', 'owner', { name: `Retention Org ${randomUUID().slice(0, 6)}`, idempotencyKey: randomUUID() }, null);
     expect(created.status).toBe(200);
@@ -373,6 +374,48 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
       expect((await retention()).shredded.draft).toBe(0);
     });
 
+    // The live preview (#3125): the recorder's tainted lines of a recording whose final audio never arrived. A meeting that holds only preview lines is found by the due list.
+    const seedLines = (meetingId: string, age: number, text: string, org = orgId) =>
+      Promise.all(
+        [0, 1].map((seq) =>
+          rows(`INSERT INTO crove_meetings.live_line (org_id, meeting_id, seq, start_seconds, end_seconds, text, created_at) VALUES ($1, $2, $3, $4, $5, $6, ${DAYS(age)})`, [org, meetingId, seq, seq * 15, seq * 15 + 15, text]),
+        ),
+      );
+    const lines = (meetingId: string) => count('SELECT 1 FROM crove_meetings.live_line WHERE meeting_id = $1', [meetingId]);
+
+    it('deletes the live preview lines of a meeting past 30 days though it holds no other draft, and keeps lines at 29 days, another meeting and the meeting itself', async () => {
+      const old = await createMeeting('recorder', { title: 'Xem trước cũ' });
+      const young = await createMeeting('recorder', { title: 'Xem trước mới' });
+      const mixed = await createMeeting('recorder', { title: 'Xem trước và nháp' });
+      await seedLines(old, 31, 'DÒNG TRỰC TIẾP BÍ MẬT');
+      await seedLines(young, 29, 'dòng trực tiếp mới');
+      await seedLines(mixed, 31, 'dòng cũ');
+      // A draft summary of 29 days beside the old lines: only the lines are due, and only they go.
+      await rows(`INSERT INTO crove_meetings.meeting_result (org_id, meeting_id, summary, feature, stage, created_at) VALUES ($1, $2, 'tóm tắt mới', 'manual', 'draft', ${DAYS(29)})`, [orgId, mixed]);
+
+      const due = await sql<{ meeting_id: string }>`SELECT meeting_id FROM crove_meetings.meeting_drafts_due(1000::int)`.execute(workerDb);
+      expect(due.rows.map((r) => r.meeting_id)).toEqual(expect.arrayContaining([old, mixed]));
+      expect(due.rows.map((r) => r.meeting_id)).not.toContain(young);
+
+      const run = await retention();
+      expect(run.failed).toBe(0);
+      expect(run.shredded.draft).toBeGreaterThanOrEqual(2);
+      expect(await lines(old)).toBe(0);
+      expect(await lines(young)).toBe(2);
+      expect(await lines(mixed)).toBe(0);
+      expect(await left(mixed, 'draft')).toBe(1);
+      expect(await count('SELECT 1 FROM crove_meetings.meeting WHERE id = ANY($1)', [[old, young, mixed]])).toBe(3);
+      // The audit row counts the rows and holds no text.
+      const audit = await rows<{ detail: unknown }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.retention.shred' AND target_id = $2", [orgId, old]);
+      expect(audit).toHaveLength(1);
+      expect(JSON.stringify(audit)).toContain('"rows":2');
+      expect(JSON.stringify(audit)).not.toContain('BÍ MẬT');
+      // A second run finds nothing more for them.
+      const again = await sql<{ meeting_id: string }>`SELECT meeting_id FROM crove_meetings.meeting_drafts_due(1000::int)`.execute(workerDb);
+      expect(again.rows.map((r) => r.meeting_id)).not.toContain(old);
+      expect(again.rows.map((r) => r.meeting_id)).not.toContain(mixed);
+    });
+
     it('does not delete a draft the recorder published after the scan and before the purge', async () => {
       const meetingId = await createMeeting('recorder', { title: 'Chia sẻ đúng lúc' });
       await seedDrafts(meetingId, 40, 'sắp chia sẻ');
@@ -453,14 +496,19 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
       const theirs = await createMeeting('purgeOwner2', { title: 'Của họ' }, otherSlug);
       await seedDrafts(mine, 40, 'nháp của tôi');
       await seedDrafts(theirs, 40, 'nháp của họ', otherOrg);
+      await seedLines(mine, 40, 'dòng của tôi');
+      await seedLines(theirs, 40, 'dòng của họ', otherOrg);
       // This org's context with the other org's meeting id deletes nothing.
       const crossed = await worker.execute<{ applied: boolean }>('meetings.retention.shred', { meetingId: theirs, kind: 'draft' }, { actor: SYSTEM, orgId });
       expect(crossed.applied).toBe(false);
       expect(await left(theirs, 'draft')).toBe(3);
+      expect(await lines(theirs)).toBe(2);
       // The run purges both, each in its own org.
       await retention();
       expect(await left(mine, 'draft')).toBe(0);
       expect(await left(theirs, 'draft')).toBe(0);
+      expect(await lines(mine)).toBe(0);
+      expect(await lines(theirs)).toBe(0);
     });
 
     it('does not replace the shared summary with nothing when the draft is purged while a publish is waiting: the old summary stays and nothing is claimed shared', async () => {
@@ -655,7 +703,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
   it('removes nothing but orphan meeting media, and leaves an object another file row names', async () => {
     const meetingId = await createMeeting('recorder', { title: 'Orphan test' });
     await upload('recorder', meetingId, 'audio', 'a');
-    const live = (await rows<{ id: string; storage_key: string }>("SELECT id, storage_key FROM crove_kernel.file WHERE org_id = $1 AND filename = $2", [orgId, `meeting-${meetingId}.opus`]))[0]!;
+    const live = (await rows<{ id: string; storage_key: string }>("SELECT id, storage_key FROM crove_kernel.file WHERE org_id = $1 AND filename = $2", [orgId, `meeting-${meetingId}.ogg`]))[0]!;
     // A live segment is never an orphan, and the discard refuses it.
     await sweep();
     expect(store.storage.has(live.storage_key)).toBe(true);
@@ -828,6 +876,10 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     const docId = randomUUID();
     await rows("INSERT INTO crove_kernel.file (org_id, id, filename, content_type, size_bytes, sha256, storage_key, source, created_by) VALUES ($1, $2, 'contract.pdf', 'application/pdf', 10, $3, $4, 'upload', $5)", [purgeOrgId, docId, 'c'.repeat(64), `org/${purgeOrgId}/${'c'.repeat(64)}`, userIds.get('purgeOwner')]);
 
+    // Links (L1, #2587): one on the shared meeting and one on the attendees-only one (a deal each, which has no foreign key).
+    const sharedLink = randomUUID();
+    await rows('INSERT INTO crove_meetings.meeting_link (org_id, id, meeting_id, deal_id, created_by) VALUES ($1, $2, $3, $4, $5), ($1, $6, $7, $4, $5)', [purgeOrgId, sharedLink, shared, randomUUID(), userIds.get('purgeOwner'), randomUUID(), hidden]);
+
     // The export: the shared meeting, a count for the attendees-only one, no file row of any recording.
     const exported = async (table: string) => {
       const lines: string[] = [];
@@ -840,6 +892,8 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     expect(exportedMeetings.map((m) => m.id)).toEqual([shared]);
     expect(await exported('meetings.private_count')).toEqual([expect.objectContaining({ org_id: purgeOrgId, meetings: 1 })]);
     expect(JSON.stringify(await exported('meetings.meeting'))).not.toContain('Attendees only');
+    // The export carries the links of the shared meeting only, never one of an attendees-only meeting.
+    expect((await exported('meetings.link')).map((l) => l.id)).toEqual([sharedLink]);
     const exportedFiles = await exported('kernel.file');
     expect(exportedFiles.filter((f) => String(f.source).startsWith('meeting_'))).toEqual([]);
     // The filter is on the source alone: the ordinary document is the one file row exported.
@@ -868,7 +922,7 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
       }
     });
     await expect(purgeOrg(worker, 30, { ref: purgeOrgId, reason: 'test' })).resolves.toMatchObject({ kind: 'purged', orgId: purgeOrgId });
-    for (const t of ['meeting', 'meeting_reader', 'audio_segment', 'meeting_video', 'media_key']) {
+    for (const t of ['meeting', 'meeting_reader', 'meeting_link', 'audio_segment', 'meeting_video', 'media_key']) {
       expect(await count(`SELECT 1 FROM crove_meetings.${t} WHERE org_id = $1`, [purgeOrgId]), t).toBe(0);
     }
     expect(await count("SELECT 1 FROM crove_kernel.file WHERE org_id = $1 AND source LIKE 'meeting_%'", [purgeOrgId])).toBe(0);

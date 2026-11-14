@@ -29,6 +29,8 @@ export const CONVERSATION_REPLY_MAX = 8_000;
 export const CONVERSATION_FACEBOOK_DIRECT_MAX = 2_000;
 export const CONVERSATION_INSTAGRAM_COMMENT_MAX = 2_200;
 export const CONVERSATION_INSTAGRAM_DIRECT_MAX = 1_000;
+// Threads' own limit of 500 characters a post applies to a reply [U until the live check and the official page settle it] (#3133, plan section 4.4).
+export const CONVERSATION_THREADS_REPLY_MAX = 500;
 export const CONVERSATION_NOTE_MAX = 5_000;
 export const CONVERSATION_EVENTS_MAX = 1_000;
 export const CONVERSATION_LIST_MAX = 100;
@@ -64,9 +66,17 @@ export const CONVERSATION_PROVIDER_RULES: Readonly<Record<string, ConversationPr
   // 2200 characters, reversible hide/unhide, no reply window) and Instagram direct messages (up to 1000 characters, 24-hour standard
   // window plus 7-day HUMAN_AGENT window = 168 hours).
   instagram: { kinds: ['comment_thread', 'direct'], replyMax: CONVERSATION_INSTAGRAM_COMMENT_MAX, canHide: true, windowHours: 168 },
+  // Threads replies to the business's own posts (#3133, plan docs/plan/conversations-channels.md section 4.4): public comment threads, one
+  // per top-level reply, no reply window. No private-message API was found. `canHide` stays false until the live check confirms that
+  // `POST /{reply-id}/manage_reply` hides a top-level reply (docs/runbooks/threads-conversations-live-check.md, row 8); the adapter has the
+  // call already, so confirming it is a one-word change here. `replyMax` 500 is Threads' post limit [U].
+  threads: { kinds: ['comment_thread'], replyMax: CONVERSATION_THREADS_REPLY_MAX, canHide: false, windowHours: null },
   // Zalo OA (#2304): private chats only (no comment API found); 2000 characters a message and a 48-hour free window from the customer's
   // last message [S, U until the live check settles them].
   zalo_oa: { kinds: ['direct'], replyMax: 2000, canHide: false, windowHours: 48 },
+  // Telegram bot chats (#3132, plan section 4.2): private chats only (a group is out of v1), up to 4096 characters (TELEGRAM_TEXT_MAX of
+  // @crove/channel) and no reply window: a bot may answer a user who wrote to it at any time. A blocked bot is refused as `permission`.
+  telegram: { kinds: ['direct'], replyMax: 4096, canHide: false, windowHours: null },
   // An email reply is as long as any other reply the core takes (CONVERSATION_REPLY_MAX), so the input, the box and the channel agree.
   email: { kinds: ['email'], replyMax: CONVERSATION_REPLY_MAX, canHide: false, windowHours: null },
 };
@@ -249,6 +259,60 @@ export const SAVED_REPLIES_MAX = 200;
 export const CONVERSATION_DRAFT_MESSAGES = 12;
 export const zSavedReplyView = z.strictObject({ id: zId, title: z.string(), body: z.string(), keywords: z.array(z.string()), useCount: z.number().int() });
 export type SavedReplyView = z.infer<typeof zSavedReplyView>;
+
+// The one placeholder a saved reply may hold (#3102, plan docs/plan/conversations.md section 5.6): the contact's display name, written `{tên}`. It is
+// filled in the reply box when the reply is picked, so the person reads the final text before pressing Send, and the send command refuses a body that
+// still holds it, so the braces never reach a customer. No other field is a placeholder. Case and the missing diacritic are tolerated ("{Tên}", "{ten}"),
+// and spaces inside the braces; the body is read in NFC so a name typed with combining marks matches too.
+export const SAVED_REPLY_NAME_PLACEHOLDER = '{tên}';
+// One or two braces each side ("{tên}", "{{tên}}"): bounded, so a text of many braces cannot make the match slow.
+const NAME_PLACEHOLDER = /\{{1,2}[^\S\n]*t[eê]n[^\S\n]*\}{1,2}/giu;
+// The longest name that is put into a reply: a platform name is untrusted text of any length.
+const FILLED_NAME_MAX = 100;
+
+/** Whether the text still holds the contact-name placeholder (a reply with one is refused by the send command). */
+export function hasNamePlaceholder(text: string): boolean {
+  return new RegExp(NAME_PLACEHOLDER.source, NAME_PLACEHOLDER.flags).test(text.normalize('NFC'));
+}
+
+// What of a contact's name may be put into a reply: one line, no control or invisible characters, no braces (so a name can never write a placeholder),
+// at most FILLED_NAME_MAX characters. Null when nothing is left.
+function usableName(name: string | null | undefined): string | null {
+  if (!name) return null;
+  const cleaned = Array.from(
+    name
+      .normalize('NFC')
+      .replace(/[\p{Cc}\p{Cf}{}]/gu, ' ')
+      .replace(/\s+/gu, ' ')
+      .trim(),
+  )
+    .slice(0, FILLED_NAME_MAX)
+    .join('')
+    .trim();
+  return cleaned === '' ? null : cleaned;
+}
+
+/** Fills the placeholder of a saved reply (or of a draft that kept it) with the contact's name. With no usable name the placeholder is dropped and the text
+ * around it tidied (no double space, no space or stray comma before a mark), so no "{tên}" ever stays. A text with no placeholder comes back unchanged. */
+export function fillNamePlaceholder(text: string, name: string | null | undefined): string {
+  const body = text.normalize('NFC');
+  if (!hasNamePlaceholder(body)) return text;
+  const filled = usableName(name);
+  if (filled !== null) return body.replace(NAME_PLACEHOLDER, () => filled);
+  // Each placeholder becomes a mark, and only the spaces and the marks of punctuation next to a mark are tidied: the rest of the text stays as written.
+  const MARK = '\uE000';
+  return body
+    .replaceAll(MARK, '')
+    .replace(NAME_PLACEHOLDER, MARK)
+    .replace(/\uE000(?:[^\S\n]*\uE000)+/gu, MARK)
+    .replace(/(^|\n)[^\S\n]*\uE000[^\S\n]*(?:[,;:]+[^\S\n]*)?/gu, '$1')
+    .replace(/[,;:][^\S\n]*\uE000(?=[,.!?…])/gu, '')
+    .replace(/([([])[^\S\n]*\uE000[^\S\n]*/gu, '$1')
+    .replace(/[^\S\n]*\uE000(?=[,.;:!?…)\]])/gu, '')
+    .replace(/[^\S\n]*\uE000[^\S\n]*(?=\n|$)/gu, '')
+    .replace(/[^\S\n]*\uE000[^\S\n]*/gu, ' ')
+    .trim();
+}
 
 // Another thread of the same customer, as the contact panel lists it: what it is and where it stands, no text.
 export const CONVERSATION_OTHERS_MAX = 10;

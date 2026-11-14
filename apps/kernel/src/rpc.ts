@@ -1,11 +1,13 @@
 // oRPC implementation of @crove/kernel-contract. Handlers only call the runtime (execute/query).
 import { implement, ORPCError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
-import { CALENDAR_OAUTH_PROVIDERS, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@crove/kernel-contract';
+import { CALENDAR_OAUTH_PROVIDERS, MARKETPLACE_PLATFORM_KEYS, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@crove/kernel-contract';
 import { sandboxBankFeed } from '@crove/bank-feed';
 import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad-platform';
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@crove/einvoice';
-import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, FinanceOverview, HrPayslip, HrRunSheet, HrRunSummary, PaymentReminderDraft, TodayList } from '@crove/kernel-contract';
+import type { McpWakeView, QuoteLinkCreated } from '@crove/kernel-contract';
+import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wake-setup.ts';
+import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, PaymentReminderDraft, TodayList } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWordPress, discordLogin, mastodonLogin, telegramLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
 import {
@@ -41,18 +43,21 @@ import {
 } from '@crove/kernel';
 import type { z } from 'zod';
 import type { CompanyCandidates, ConversationAutoDraft, zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zTask } from '@crove/kernel-contract';
-import type { QuoteSuggestSource, SuggestedSlots } from '@crove/mod-crm';
+import type { FollowupSource, MeetingBriefSource, QuoteSuggestSource, SuggestedSlots } from '@crove/mod-crm';
 import { sql } from 'kysely';
 import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, type BriefResult } from '@crove/agent';
 import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type ConversationReader } from './conversations-ai.ts';
 import { suggestCompanies, type CompanyAi } from './contact-company-ai.ts';
 import { wordReminder, type ReminderAi } from './payment-reminder-ai.ts';
+import { wordFollowup, type FollowupAi } from './followup-ai.ts';
 import { explainPayslip, flagMonth, prepareMonth, type PayrollAi, type PayrollReads } from './payroll-coworker-ai.ts';
 import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
+import { crmFollowupAi, draftCrmFollowup } from './crm-followup-ai.ts';
+import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
-import { runMeetingSummary, type ModelPort } from './member-vy-ports.ts';
+import { runLiveNotes, runMeetingSummary, type ModelPort } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems } from './stock-ai.ts';
-import type { EInvoiceSuggestSource, ReorderSource, SuggestSource } from '@crove/mod-finance';
+import { MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
 import { explainPayrollMatch, payrollMatchAi } from './finance-payroll-match-ai.ts';
 import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
@@ -238,10 +243,14 @@ export interface RpcChannels {
   broker: CredentialBroker;
   // The offline sandbox channel is enabled (CHANNEL_SANDBOX).
   sandbox: boolean;
+  // Tests only: how the wake-up receiver's name is looked up before it is accepted (the system resolver by default; the egress guard checks every send again).
+  wakeResolve?: WakeResolve;
   // The offline sandbox bank feed is enabled (BANK_FEED_SANDBOX, ADR-0039).
   bankFeedSandbox?: boolean;
   // The e-invoice providers this deployment offers, by adapter id (ADR-0044): the offline sandbox when EINVOICE_SANDBOX is on, a real adapter when its own switch is.
   einvoiceProviders?: Readonly<Record<string, EInvoiceProvider>>;
+  // The marketplace providers this deployment offers, by adapter id (ADR-0045 point 7, #2519): the offline sandbox when MARKETPLACE_PROVIDERS names it.
+  marketplaceProviders?: Readonly<Record<string, MarketplaceProvider>>;
   // The ad platforms this deployment offers, by provider id (ADR-0040, #2217): the offline sandbox when ADS_SANDBOX is on.
   adsPlatforms?: Readonly<Record<string, AdPlatform>>;
   // The write Meta app is the read ads app or the Pages app (metaWriteAppShared of the config): switching running ads off then closes every
@@ -347,6 +356,8 @@ export function createRpcHandler(
   // The finance coworker's wording of a payment reminder (#2488): the same reader and model, a budget of its own. It reads no customer text (the model is told the
   // notice level, the language and the sender's name), so the org's switch for AI on its customers' messages does not apply.
   const reminderAi: ReminderAi = { reader: conversationReader?.reminderWords ? { reminderWords: conversationReader.reminderWords.bind(conversationReader) } : null, budget: suggestionBudget() };
+  // The meetings coworker's wording of a follow-up email (L3, #2590): the same reader and model, a budget of its own. The model is told the language and the sender's name only.
+  const followupAi: FollowupAi = { reader: conversationReader?.followupWords ? { followupWords: conversationReader.followupWords.bind(conversationReader) } : null, budget: suggestionBudget() };
   // The finance coworker on stock (#2514): which item a goods line is about and the wording of a reorder message. The same reader and model, a budget of its own. It reads a line's
   // description and unit and the item names (no amount, party or document number), and what it answers is a suggestion a person confirms or a draft they edit.
   const stockCoworker = stockAi(
@@ -365,6 +376,14 @@ export function createRpcHandler(
   // The sales coworker on the lines of a quote (#2698): the same reader and model, a budget of its own. It is told the deal, the customer's latest words (only while the org's switch for AI on customers'
   // words is on) and the earlier quotes to them, and what it answers only fills the editor as proposals that a person applies or drops.
   const quoteCoworker = quoteAi(conversationReader?.quoteLines ? { quoteLines: conversationReader.quoteLines.bind(conversationReader) } : null, suggestionBudget());
+
+  // The sales coworker's draft of the follow-up message for a "Cần theo dõi" step (#3101): the same reader and model, a budget of its own. It is told only the reason of the step and a hint, never a fact
+  // of the deal; the facts and the link are composed by code, and what it answers is a text for the person to read, edit and send. Nothing is stored or sent.
+  const followupCoworker = crmFollowupAi(conversationReader?.crmFollowupWords ? { crmFollowupWords: conversationReader.crmFollowupWords.bind(conversationReader) } : null, suggestionBudget());
+
+  // Dy's brief before a booking linked to a deal (#3115): the same reader and model, a budget of its own. It is told the deal's facts and, while the org allows AI on customers' words, the latest messages the
+  // member may read; what it answers is a summary and 2 to 3 points that are refused when they hold a figure, a link or a name the facts do not hold. Computed when read; nothing is stored or sent.
+  const meetingBriefCoworker = meetingBriefAi(conversationReader?.meetingBrief ? { meetingBrief: conversationReader.meetingBrief.bind(conversationReader) } : null, suggestionBudget());
 
   const guard = async <T>(fn: () => Promise<T>): Promise<T> => {
     try {
@@ -407,6 +426,7 @@ export function createRpcHandler(
     return inOrg(context, fn);
   };
   // The e-invoice provider this deployment offers under an adapter id (EINVOICE_SANDBOX and, later, one switch per real adapter), or nothing.
+  const marketplaceProviderOf = (id: string): MarketplaceProvider | undefined => (Object.hasOwn(channels?.marketplaceProviders ?? {}, id) ? channels?.marketplaceProviders?.[id] : undefined);
   const einvoiceProviderOf = (id: string): EInvoiceProvider | undefined => (Object.hasOwn(channels?.einvoiceProviders ?? {}, id) ? channels?.einvoiceProviders?.[id] : undefined);
   // The commands check the role again; this answers first, in words, before anything is sealed or called.
   const requireOwnerOrAdmin = async (context: RpcContext, message: string) => {
@@ -884,15 +904,49 @@ export function createRpcHandler(
       create: os.meetings.create.handler(meetingsCommand('meetings.meeting.create')),
       delete: os.meetings.delete.handler(meetingsCommand('meetings.meeting.delete')),
       ownerDelete: os.meetings.ownerDelete.handler(meetingsCommand('meetings.meeting.owner_delete')),
+      ownerList: os.meetings.ownerList.handler(meetingsCommand('meetings.meeting.owner_list')),
+      // The recorder's live notes pane (L4a-2, #3110): the poll, the tick that copies a finished window and starts the next, and the two buttons.
+      liveStatus: os.meetings.liveStatus.handler(meetingsQuery('meetings.live.status')),
+      liveStart: os.meetings.liveStart.handler(meetingsCommand('meetings.live.start')),
+      liveTick: os.meetings.liveTick.handler(meetingsCommand('meetings.live.tick')),
+      liveStop: os.meetings.liveStop.handler(meetingsCommand('meetings.live.stop')),
+      // The running notes, from the new lines and the previous notes only (the same stage A shape as the summary, see member-vy-ports.ts).
+      liveNotes: os.meetings.liveNotes.handler(({ context, input }) =>
+        inOrg(context, (orgId, actor) => runLiveNotes({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
+      ),
+      followup: {
+        draft: os.meetings.followup.draft.handler(meetingsQuery('meetings.followup.draft')),
+        // The wording is asked of the model outside any transaction, from the language and sender the draft read in the recorder's own one (recorder only, a published summary).
+        wording: os.meetings.followup.wording.handler(({ context, input }) =>
+          inMeetings(context, async (orgId, actor) => {
+            const draft = await runtime.query<FollowupDraft>('meetings.followup.draft', { meetingId: input.meetingId }, { actor, orgId });
+            return wordFollowup(followupAi, orgId, actor.userId, { lang: draft.lang, org: draft.org }, input.hint);
+          }),
+        ),
+        // A send runs once per idempotency key: a double click or a retry gets the first answer, never a second mail.
+        send: os.meetings.followup.send.handler(({ context, input }) => inMeetings(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('meetings.followup.send', rest, { actor, orgId, idempotencyKey });
+        })),
+      },
+      links: {
+        add: os.meetings.links.add.handler(meetingsCommand('meetings.link.add')),
+        remove: os.meetings.links.remove.handler(meetingsCommand('meetings.link.remove')),
+        list: os.meetings.links.list.handler(meetingsQuery('meetings.link.list')),
+        byTarget: os.meetings.links.byTarget.handler(meetingsQuery('meetings.link.by_target')),
+        suggest: os.meetings.links.suggest.handler(meetingsQuery('meetings.link.suggest')),
+      },
       settings: {
         get: os.meetings.settings.get.handler(meetingsQuery('meetings.settings.get')),
         set: os.meetings.settings.set.handler(meetingsCommand('meetings.settings.set')),
       },
+      search: os.meetings.search.handler(meetingsQuery('meetings.search')),
       transcript: {
         get: os.meetings.transcript.get.handler(meetingsQuery('meetings.transcript.get')),
         draftStore: os.meetings.transcript.draftStore.handler(meetingsCommand('meetings.transcript.draft_store')),
         correct: os.meetings.transcript.correct.handler(meetingsCommand('meetings.transcript.correct')),
         start: os.meetings.transcript.start.handler(meetingsCommand('meetings.transcript.start')),
+        cancel: os.meetings.transcript.cancel.handler(meetingsCommand('meetings.transcript.cancel')),
         status: os.meetings.transcript.status.handler(meetingsQuery('meetings.transcript.status')),
         copyResult: os.meetings.transcript.copyResult.handler(meetingsCommand('meetings.transcript.copy_result')),
       },
@@ -936,6 +990,7 @@ export function createRpcHandler(
         list: os.crm.deals.list.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal.list', input, { actor, orgId }))),
         get: os.crm.deals.get.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal.get', input, { actor, orgId }))),
         byParty: os.crm.deals.byParty.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.party.deals', input, { actor, orgId }))),
+        bookings: os.crm.deals.bookings.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal.bookings', input, { actor, orgId }))),
         conversations: os.crm.deals.conversations.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal.conversations', input, { actor, orgId }))),
         create: os.crm.deals.create.handler(crmCommand('crm.deal.create')),
         update: os.crm.deals.update.handler(crmCommand('crm.deal.update')),
@@ -947,6 +1002,13 @@ export function createRpcHandler(
         list: os.crm.nextSteps.list.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.next_step.list', input, { actor, orgId }))),
         done: os.crm.nextSteps.done.handler(crmCommand('crm.next_step.done')),
         snooze: os.crm.nextSteps.snooze.handler(crmCommand('crm.next_step.snooze')),
+        draft: os.crm.nextSteps.draft.handler(({ context, input }) =>
+          inCrm(context, async (orgId, actor) => {
+            const source = await runtime.query<FollowupSource>('crm.followup.source', { nextStepId: input.nextStepId }, { actor, orgId });
+            const makeLink = (quoteId: string) => runtime.execute<QuoteLinkCreated>('crm.quote.create_link', { quoteId }, { actor, orgId });
+            return draftCrmFollowup({ ai: followupCoworker, publicUrl: channels?.publicUrl ?? '', makeLink }, orgId, actor.userId, source, input.hint);
+          }),
+        ),
       },
       dealSetting: {
         get: os.crm.dealSetting.get.handler(({ context }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal_setting.get', {}, { actor, orgId }))),
@@ -1017,6 +1079,16 @@ export function createRpcHandler(
         list: os.crm.bookings.list.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.booking.list', input, { actor, orgId }))),
         cancel: os.crm.bookings.cancel.handler(crmCommand('crm.booking.cancel')),
         move: os.crm.bookings.move.handler(crmCommand('crm.booking.move')),
+        // A booking and a deal (#3103): a person links one, or takes the link off; neither mails anyone.
+        linkDeal: os.crm.bookings.linkDeal.handler(crmCommand('crm.booking.link_deal')),
+        unlinkDeal: os.crm.bookings.unlinkDeal.handler(crmCommand('crm.booking.unlink_deal')),
+        // Dy's brief before a booking linked to a deal (#3115): the facts in the member's own transaction (a booking and a conversation they may not read give nothing), then the model outside it.
+        meetingBrief: os.crm.bookings.meetingBrief.handler(({ context, input }) =>
+          inCrm(context, async (orgId, actor) => {
+            const source = await runtime.query<MeetingBriefSource>('crm.booking.meeting_brief_source', { bookingId: input.bookingId }, { actor, orgId });
+            return prepareMeetingBrief(meetingBriefCoworker, orgId, actor.userId, source);
+          }),
+        ),
         // Times to offer a client (#1440): the type's free slots, inside the days and times the client's message asks
         // for when the deployment's model can read it (a paid call, on the drafts' budget), else the next free ones.
         // Read-only: the member sends the reply. A model that fails or is off leaves the next free slots and says so.
@@ -1669,6 +1741,14 @@ export function createRpcHandler(
           return runtime.execute('kernel.channel.disconnect', rest, { actor, orgId, idempotencyKey });
         }),
       ),
+      // Telegram bot chats on or off (#3132): the connection holds the bot token already; the webhook call is a job's.
+      setTelegramChats: os.channels.setTelegramChats.handler(({ context, input }) =>
+        inOrg(context, async (orgId, actor) => {
+          if (!channels?.telegram) throw new DomainError('CHANNEL_PROVIDER_DISABLED', 404, 'Kênh này chưa được bật trên máy chủ');
+          if (input.on && channels.broker.id === 'none') throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
+          return runtime.execute<{ chatState: 'off' | 'enabling' | 'on' | 'disabling' }>('kernel.channel.telegram_chat_set', input, { actor, orgId });
+        }),
+      ),
       // An app password is checked once by opening a session, then sealed with the account's DID and dropped; it never
       // reaches a log, an audit row or an answer.
       connectBluesky: os.channels.connectBluesky.handler(({ context, input }) =>
@@ -2092,6 +2172,47 @@ export function createRpcHandler(
           ? guard(() => revokeOwnSessionsWithoutOrg(runtime, actorOf(context.user), input))
           : inOrg(context, (orgId, actor) => runtime.execute('kernel.session.revoke', input, { actor, orgId })),
       ),
+    },
+    mcp: {
+      memberGrants: {
+        get: os.mcp.memberGrants.get.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.mcp.member_grants.get', {}, { actor, orgId }))),
+        set: os.mcp.memberGrants.set.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.mcp.member_grants.set', input, { actor, orgId }))),
+      },
+      grant: {
+        list: os.mcp.grant.list.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.mcp.grant.list', {}, { actor, orgId }))),
+        revoke: os.mcp.grant.revoke.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.mcp.grant.revoke', input, { actor, orgId }))),
+      },
+      // The wake-up webhook of a grant (ADR-0051 decision 4, #3024): the secret is made and sealed here, and only the person who asked sees it, once.
+      wake: {
+        get: os.mcp.wake.get.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.mcp.wake.get', input, { actor, orgId }))),
+        set: os.mcp.wake.set.handler(({ context, input }) =>
+          inOrg(context, async (orgId, actor) => {
+            const broker = channels?.broker;
+            if (!broker || broker.id === 'none') throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
+            // The command checks the role again; checking first keeps a member from learning how the deployment resolves names.
+            await assertWakeHostPublic(input.url, channels?.wakeResolve);
+            const made = makeWakeSecret(broker, orgId, input.grantId);
+            const done = await runtime.execute<{ created: boolean }>('kernel.mcp.wake.set', { ...input, credential: made.credential }, { actor, orgId });
+            const [view] = await runtime.query<McpWakeView[]>('kernel.mcp.wake.get', { grantId: input.grantId }, { actor, orgId });
+            if (!view) throw new DomainError('MCP_WAKE_NOT_FOUND', 404, 'Quyền kết nối này chưa có địa chỉ nhận');
+            // The secret goes back only when this call made the wake-up; a change to an existing one leaves its secret alone and the one made here is dropped.
+            return { ...view, secret: done.created ? made.secret : null };
+          }),
+        ),
+        rotateSecret: os.mcp.wake.rotateSecret.handler(({ context, input }) =>
+          inOrg(context, async (orgId, actor) => {
+            const broker = channels?.broker;
+            if (!broker || broker.id === 'none') throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
+            const made = makeWakeSecret(broker, orgId, input.grantId);
+            await runtime.execute('kernel.mcp.wake.rotate_secret', { grantId: input.grantId, credential: made.credential }, { actor, orgId });
+            const [view] = await runtime.query<McpWakeView[]>('kernel.mcp.wake.get', { grantId: input.grantId }, { actor, orgId });
+            if (!view) throw new DomainError('MCP_WAKE_NOT_FOUND', 404, 'Quyền kết nối này chưa có địa chỉ nhận');
+            return { ...view, secret: made.secret };
+          }),
+        ),
+        clear: os.mcp.wake.clear.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.mcp.wake.clear', input, { actor, orgId }))),
+        test: os.mcp.wake.test.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.mcp.wake.test', input, { actor, orgId }))),
+      },
     },
     extension: {
       tokens: {
@@ -2523,7 +2644,108 @@ export function createRpcHandler(
       },
     },
     marketplace: {
+      // What the connect card may offer (#2519): the adapters this deployment enabled with the platforms each serves, and every platform with whether an adapter serves it. A platform with
+      // none is read from the report file the org brings. Never a credential or a host.
+      providers: os.marketplace.providers.handler(({ context }) =>
+        inFinance(context, async () => {
+          const adapters = Object.entries(channels?.marketplaceProviders ?? {}).map(([id, provider]) => ({
+            id,
+            offline: provider.hosts.length === 0,
+            connectFields: [...provider.connectFields],
+            platforms: (Object.keys(provider.capabilities.platforms) as Array<(typeof MARKETPLACE_PLATFORM_KEYS)[number]>).sort(),
+          }));
+          return {
+            adapters,
+            platforms: MARKETPLACE_PLATFORM_KEYS.map((platform) => {
+              const serving = adapters.filter((a) => a.platforms.includes(platform)).map((a) => a.id);
+              return { platform, adapter: serving.length > 0, adapters: serving };
+            }),
+          };
+        }),
+      ),
+      // The org's own seller account at a marketplace (ADR-0045 point 7). The fields it types are sealed here, once; the command gets the envelope, never the secret, and only the worker opens it.
+      connections: {
+        list: os.marketplace.connections.list.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace_connection.list', {}, { actor, orgId }))),
+        connect: os.marketplace.connections.connect.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới kết nối được sàn thương mại điện tử');
+            const provider = marketplaceProviderOf(input.adapter);
+            if (!provider || !channels) throw new DomainError('MARKETPLACE_DISABLED', 404, 'Bộ kết nối sàn này chưa được bật');
+            if (!Object.hasOwn(provider.capabilities.platforms, input.platform)) throw new DomainError('MARKETPLACE_PLATFORM', 422, 'Bộ kết nối này chưa đọc được sàn đã chọn; hãy nhập file báo cáo của sàn');
+            if (Object.keys(input.fields).length !== provider.connectFields.length || !provider.connectFields.every((name) => Object.hasOwn(input.fields, name))) {
+              throw new DomainError('MARKETPLACE_FIELDS', 422, 'Hãy nhập đủ các thông tin mà sàn yêu cầu, không thêm thông tin khác');
+            }
+            const target = await runtime.query<{ legalEntityId: string }>(
+              'finance.marketplace_connection.target',
+              { adapter: input.adapter, platform: input.platform, legalEntityId: input.legalEntityId },
+              { actor, orgId },
+            );
+            const channelProvider = `marketplace_${input.adapter}`;
+            const externalAccountId = `${target.legalEntityId}:${input.platform}`;
+            // The offline provider has no account: it is sealed with its own fixed word, so a credential row exists for the flow and holds nothing of the org's.
+            const secret = provider.hosts.length === 0 ? SANDBOX_MARKETPLACE_SECRET : JSON.stringify(input.fields);
+            const sealed = channels.broker.seal(secret, { orgId, provider: channelProvider, externalAccountId });
+            const connected = await runtime.execute<{ id: string }>(
+              'finance.marketplace_connection.connect',
+              {
+                adapter: input.adapter,
+                platform: input.platform,
+                legalEntityId: target.legalEntityId,
+                displayName: provider.hosts.length === 0 ? `Sàn thử nghiệm (${input.platform})` : `${input.adapter} (${input.platform})`,
+                credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
+              },
+              { actor, orgId },
+            );
+            return { id: connected.id };
+          }),
+        ),
+        test: os.marketplace.connections.test.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới kiểm tra được kết nối sàn');
+            const rows = await runtime.query<MarketplaceConnection[]>('finance.marketplace_connection.list', {}, { actor, orgId });
+            const row = rows.find((r) => r.id === input.id);
+            if (!row) throw new DomainError('MARKETPLACE_CONNECTION_NOT_FOUND', 404, 'Không tìm thấy kết nối sàn này');
+            const provider = marketplaceProviderOf(row.provider.slice('marketplace_'.length));
+            if (!provider) throw new DomainError('MARKETPLACE_DISABLED', 404, 'Bộ kết nối sàn này chưa được bật');
+            // The API never opens a credential: a provider reached over the network is tested by the worker (a later build, with its adapter). The offline provider reaches no host and needs
+            // no credential, so its test runs here.
+            if (provider.hosts.length > 0) throw new DomainError('MARKETPLACE_PROVIDER_NOT_READY', 503, 'Bộ kết nối này chưa kiểm tra được từ màn hình, sẽ có khi bộ kết nối của nó hoàn thành');
+            let state: MarketplaceTestResult;
+            try {
+              state = await provider.testConnection(SANDBOX_MARKETPLACE_SECRET);
+            } catch (error) {
+              state = error instanceof MarketplaceProviderError && error.kind === 'credentials' ? 'wrong_credentials' : 'unreachable';
+            }
+            return runtime.execute('finance.marketplace_connection.record_test', { id: row.id, state }, { actor, orgId });
+          }),
+        ),
+        disconnect: os.marketplace.connections.disconnect.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới ngắt được kết nối sàn');
+            const rows = await runtime.query<MarketplaceConnection[]>('finance.marketplace_connection.list', {}, { actor, orgId });
+            const row = rows.find((r) => r.id === input.id);
+            if (!row) return { removed: false };
+            // The credential goes first: a failure after it leaves a row of a closed connection that a second disconnect removes, never a live credential with no row.
+            await runtime.execute('kernel.channel.disconnect', { connectionId: row.connectionId }, { actor, orgId });
+            return runtime.execute<{ removed: boolean }>('finance.marketplace_connection.unlink', { id: row.id }, { actor, orgId });
+          }),
+        ),
+        pollNow: os.marketplace.connections.pollNow.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới lấy đơn từ sàn được');
+            const rows = await runtime.query<MarketplaceConnection[]>('finance.marketplace_connection.list', {}, { actor, orgId });
+            const row = rows.find((r) => r.id === input.id);
+            if (!row) throw new DomainError('MARKETPLACE_CONNECTION_NOT_FOUND', 404, 'Không tìm thấy kết nối sàn này');
+            const provider = marketplaceProviderOf(row.provider.slice('marketplace_'.length));
+            if (!provider) throw new DomainError('MARKETPLACE_DISABLED', 404, 'Bộ kết nối sàn này chưa được bật');
+            // Only the offline provider is pulled from a button: a real adapter is polled by the worker on its own schedule, once it is built and reviewed.
+            if (provider.hosts.length > 0) throw new DomainError('MARKETPLACE_PROVIDER_NOT_READY', 503, 'Bộ kết nối này chưa lấy đơn được từ màn hình, sẽ có khi bộ kết nối của nó hoàn thành');
+            return runtime.execute<{ queued: boolean }>('finance.marketplace_connection.request_poll', { id: row.id }, { actor, orgId });
+          }),
+        ),
+      },
       staged: os.marketplace.staged.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.staged', {}, { actor, orgId }))),
+      balance: os.marketplace.balance.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.balance', input ?? {}, { actor, orgId }))),
       preview: os.marketplace.preview.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.preview', input, { actor, orgId }))),
       confirm: os.marketplace.confirm.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => {

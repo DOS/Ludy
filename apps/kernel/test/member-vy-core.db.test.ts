@@ -57,7 +57,8 @@ suite('member Vy database core (ADR-0049 stage A slice 1)', () => {
   const outcome = <T>(p: Promise<T>) => p.then((value) => ({ ok: true as const, value }), (error: { message: string }) => ({ ok: false as const, message: error.message }));
 
   // A member's Vy agent, a run and a result and a memory entry, seeded as the superuser with the binding set aside.
-  async function seed(userId: string, key: string, expired: boolean) {
+  async function seed(userId: string, key: string, expired: boolean, ageDays = 0) {
+    const born = ageDays > 0 ? `now() - interval '${ageDays} days'` : 'now()';
     await admin(async (c) => {
       await c.query('SET session_replication_role = replica');
       const agentId = randomUUID();
@@ -67,10 +68,10 @@ suite('member Vy database core (ADR-0049 stage A slice 1)', () => {
       await c.query(`INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, finished_at) VALUES ($1, $2, $3, 'notes', 'succeeded', true, now() - interval '2 hours', now() - interval '1 hour', now() - interval '90 minutes')`, [orgId, runId, agentId]);
       await c.query(
         `INSERT INTO crove_kernel.member_vy_result (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, created_at, expires_at)
-         VALUES ($1, $2, $3, $4, 'notes.summary', 'note', $5, 'ready', 'Tóm tắt riêng', ${expired ? "now() - interval '30 days', now() - interval '1 day'" : "now(), now() + interval '30 days'"})`,
+         VALUES ($1, $2, $3, $4, 'notes.summary', 'note', $5, 'ready', 'Tóm tắt riêng', ${expired ? "now() - interval '30 days', now() - interval '1 day'" : `${born}, now() + interval '30 days'`})`,
         [orgId, randomUUID(), userId, runId, randomUUID()],
       );
-      await c.query(`INSERT INTO crove_kernel.member_vy_memory (org_id, id, member_user_id, body) VALUES ($1, $2, $3, 'Gọi khách là anh')`, [orgId, randomUUID(), userId]);
+      await c.query(`INSERT INTO crove_kernel.member_vy_memory (org_id, id, member_user_id, body, created_at, updated_at) VALUES ($1, $2, $3, 'Gọi khách là anh', ${born}, ${born})`, [orgId, randomUUID(), userId]);
     });
   }
   const rows = (table: string) => admin(async (c) => (await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.${table}`)).rows[0]?.n);
@@ -116,7 +117,8 @@ suite('member Vy database core (ADR-0049 stage A slice 1)', () => {
       await c.query('COMMIT');
     });
     await seed(users.recent, 'recent', false);
-    await seed(users.old, 'old', false);
+    // The data of `old` was made before its removal (40 days ago, the removal 31): its latest exit is recorded, so the purge may remove it (#2822, from the review of #2920).
+    await seed(users.old, 'old', false, 40);
   }, 300_000);
 
   afterAll(async () => {
@@ -157,7 +159,7 @@ suite('member Vy database core (ADR-0049 stage A slice 1)', () => {
     expect(await rows('member_vy_result'), 'the expired one is gone, the other three stay').toBe('3');
   });
 
-  it('purges a former member\'s results and memory at once, and nothing of a member who is back', async () => {
+  it('purges a former member\'s results and memory once their latest exit is recorded and 30 days old, and nothing of a member who is back or whose exit is not recorded', async () => {
     const wrongOrg = await outcome(inContext(workerUrl, asSystem, (c) => c.query('SELECT crove_kernel.member_vy_member_data_purge($1::uuid, $2::uuid)', [randomUUID(), users.gone])));
     expect(wrongOrg.ok, 'another org id').toBe(false);
     const present = await inContext(workerUrl, asSystem, (c) => c.query<{ n: string }>('SELECT crove_kernel.member_vy_member_data_purge($1::uuid, $2::uuid) AS n', [orgId, users.member]));
@@ -167,7 +169,8 @@ suite('member Vy database core (ADR-0049 stage A slice 1)', () => {
       await c.query('COMMIT');
       return out.rows[0]?.n;
     });
-    expect(purged).toBe('2');
+    expect(purged, 'a former member with no removal in the audit trail: the definer keeps their rows (the latest exit is not recorded)').toBe('0');
+    expect(await rows('member_vy_result'), 'their rows are all still there').toBe('3');
     // The audit trail's 30 days: a member removed now keeps everything, one removed 31 days ago loses it.
     const purgeOf = (user: string) =>
       inContext(workerUrl, asSystem, async (c) => {

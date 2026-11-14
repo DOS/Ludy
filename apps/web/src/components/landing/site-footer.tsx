@@ -1,5 +1,5 @@
 import type { Dictionary } from '../../content/vi';
-import { APP_PAGES, appPagePath, DOCS_URL, GITHUB_URL, LICENSE_URL, SECURITY_URL, SIGN_IN_URL, type AppPageKey } from '../../content/site';
+import { APP_PAGES, appPagePath, DOCS_URL, GITHUB_URL, LEGAL_PAGES, LICENSE_URL, SECURITY_URL, SIGN_IN_URL, type AppPageKey } from '../../content/site';
 import { LudyMark } from './ui';
 
 export function SiteFooter({ dict }: { dict: Dictionary }) {
@@ -31,6 +31,9 @@ export function SiteFooter({ dict }: { dict: Dictionary }) {
           </a>
           <a href={SECURITY_URL} className="text-muted hover:text-fg">
             {footer.security}
+          </a>
+          <a href={LEGAL_PAGES.privacy.path} className="text-muted hover:text-fg">
+            {footer.privacy}
           </a>
           <a href={LICENSE_URL} className="text-muted hover:text-fg">
             AGPL-3.0

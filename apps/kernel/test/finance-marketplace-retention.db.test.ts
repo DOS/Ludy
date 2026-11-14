@@ -63,7 +63,10 @@ class MemoryStore implements BlobStore {
   }
   // How many times each key was deleted: the job deletes once before the marker and once after.
   readonly deletes = new Map<string, number>();
-  async delete(key: string) {
+  // The options of every delete: the job asks for the retention tag each time (#2789).
+  readonly options: unknown[] = [];
+  async delete(key: string, options?: { retention?: 'expire' }) {
+    this.options.push(options);
     this.deletes.set(key, (this.deletes.get(key) ?? 0) + 1);
     this.blobs.delete(key);
   }
@@ -217,6 +220,8 @@ suite('retention of marketplace report originals (#2516, C-2b3)', () => {
     expect(store.has(before.storage_key)).toBe(false);
     // Once before the marker and once after it (the window of a same-bytes upload in between).
     expect(store.deletes.get(before.storage_key)).toBe(2);
+    // Both deletes ask for the retention tag, so a versioned bucket's lifecycle rule can expire the version they leave (#2789).
+    expect(store.options).toEqual([{ retention: 'expire' }, { retention: 'expire' }]);
     const after = await fileRow(fileId);
     expect(after.original_deleted_at).not.toBeNull();
     expect(after.sha256).toBe(before.sha256);

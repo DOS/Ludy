@@ -41,7 +41,7 @@ import { JOURNAL_VOUCHER_SOURCE } from './domain/journal-voucher.ts';
 import { ledgerPeriod } from './domain/ledger-reports.ts';
 import { payrollPaymentMention } from './domain/bank-payroll.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
-import { latestRevision } from './source-entry.ts';
+import { latestRevision, reversedSource } from './source-entry.ts';
 
 const REQUESTERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -422,18 +422,20 @@ export const bankPayrollMatch = defineQuery({
       .where(({ not, exists, selectFrom }) =>
         not(exists(selectFrom('crove_finance.journal_entry as r').select('r.id').whereRef('r.org_id', '=', 'e.org_id').whereRef('r.reverses_entry_id', '=', 'e.id'))),
       )
+      // The newest 24 runs: a run has one live posting voucher (a reversed one is left out above), so a voucher here is a run. Older unpaid runs are not offered; two years of months is the window (#2918).
       .orderBy('j.voucher_date', 'desc')
       .limit(24)
       .execute();
     const runIds = posted.map((r) => r.payroll_run_id as string);
     if (runIds.length === 0) return none;
-    // What is paid or asked for already, by run and kind.
+    // What is paid or asked for already, by run and kind. A payment voucher that was reversed does not hold its kind (#2854), so it is offered again.
     const taken = new Set<string>();
     const paid = await ctx.trx
-      .selectFrom('crove_finance.cash_voucher')
-      .select(['payroll_run_id', 'payroll_payment_kind'])
-      .where('org_id', '=', ctx.orgId)
-      .where('payroll_run_id', 'in', runIds)
+      .selectFrom('crove_finance.cash_voucher as v')
+      .select(['v.payroll_run_id', 'v.payroll_payment_kind'])
+      .where('v.org_id', '=', ctx.orgId)
+      .where('v.payroll_run_id', 'in', runIds)
+      .where(sql<boolean>`NOT ${reversedSource('v', VOUCHER_SOURCE)}`)
       .execute();
     for (const v of paid) taken.add(`${v.payroll_run_id}:${v.payroll_payment_kind}`);
     const open = await ctx.trx

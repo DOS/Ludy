@@ -41,11 +41,20 @@ export async function openMeeting(trx: QueryContext['trx'], orgId: string, meeti
 }
 
 // A new run replaces the earlier draft, corrections included: the recorder asked for it. The caller has checked that the caller is the recorder.
-export async function replaceDraft(ctx: { trx: QueryContext['trx']; orgId: string }, meetingId: string, segments: readonly TranscriptSegmentInput[]): Promise<void> {
+// `fromRun` is set only by the copy of a Vy result (meetings.transcript.copy_result): those rows are the model's text, so they are born tainted and name the run they came
+// from (source_run_id), and nothing can change either afterwards but the recorder's review (crove_meetings.draft_review). What the recorder typed is not tainted.
+export async function replaceDraft(
+  ctx: { trx: QueryContext['trx']; orgId: string },
+  meetingId: string,
+  segments: readonly TranscriptSegmentInput[],
+  fromRun?: { tainted: true; sourceRunId: string },
+): Promise<void> {
   for (const segment of segments) {
     if (segment.endSeconds < segment.startSeconds) throw new DomainError('INVALID', 422, 'A transcript segment ends before it starts');
   }
   await ctx.trx.deleteFrom('crove_meetings.transcript_segment').where('org_id', '=', ctx.orgId).where('meeting_id', '=', meetingId).where('stage', '=', 'draft').execute();
+  // The batch transcript replaces the live preview (ADR-0052 L4a, #3110): once a real transcript is stored the "Bản nháp trực tiếp" lines are gone, with the text they held.
+  if (segments.length > 0) await ctx.trx.deleteFrom('crove_meetings.live_line').where('org_id', '=', ctx.orgId).where('meeting_id', '=', meetingId).execute();
   for (let i = 0; i < segments.length; i += INSERT_BATCH) {
     const rows = segments.slice(i, i + INSERT_BATCH).map((s) => ({
       org_id: ctx.orgId,
@@ -55,6 +64,7 @@ export async function replaceDraft(ctx: { trx: QueryContext['trx']; orgId: strin
       speaker_label: s.speakerLabel,
       text: s.text,
       stage: 'draft' as const,
+      ...(fromRun ? { tainted: fromRun.tainted, source_run_id: fromRun.sourceRunId } : {}),
     }));
     await ctx.trx.insertInto('crove_meetings.transcript_segment').values(rows).execute();
   }

@@ -18,6 +18,7 @@ import { meetingsCommands, meetingsQueries } from '@crove/mod-meetings';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
+import { fakeMediaMeasurer } from './fake-media.ts';
 import { RateLimiter } from '../src/rate-limit.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -49,6 +50,7 @@ class MemoryStore implements BlobStore {
 
 const EXT_ID = 'a'.repeat(32); // the id this test's deployment lists in EXTENSION_IDS
 const OTHER_EXT_ID = 'b'.repeat(32);
+const STORE_EXT_ID = 'emfhpcbmdbbeomfkdadbellllngmlhmf'; // the Chrome Web Store build (#3010)
 const challengeOf = (verifier: string) => createHash('sha256').update(verifier).digest('base64url');
 const webm = () => new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, ...Array.from({ length: 64 }, (_, i) => i)]);
 
@@ -186,6 +188,7 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
       aiEnabled: false,
       // A budget the test can spend: the default is a person's few sign-ins a minute.
       extensionTokenLimit: new RateLimiter({ perMinute: 40 }),
+      mediaMeasurer: fakeMediaMeasurer(),
     });
     const created = await rpc('org/create', await asBrowser('owner', null), { name: `Extension Org ${randomUUID().slice(0, 6)}`, idempotencyKey: randomUUID() });
     expect(created.status).toBe(200);
@@ -446,18 +449,26 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     expect(() => loadConfig({ DATABASE_URL: appUrlText, AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent', EXTENSION_IDS: 'not-an-id' })).toThrow(/EXTENSION_IDS/);
     const configured = (await app.request('/api/config')).json() as Promise<{ extensionIds: string[] }>;
     expect((await configured).extensionIds).toEqual([EXT_ID]);
-    // No EXTENSION_IDS and no store id yet: the allow-list is empty and refuses every extension, so a store build fails closed.
+    // No EXTENSION_IDS: the default list holds the Chrome Web Store build's id (#3010) and nothing else.
     const none = loadConfig({ DATABASE_URL: appUrlText, AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
     expect(none.EXTENSION_IDS).toBeUndefined();
-    expect(DEFAULT_EXTENSION_IDS).toEqual([]);
-    const closed = createHttpApp({ config: none, runtime: sharedRuntime, store, broker: sharedBroker, authenticate: createAuthenticator(none, sharedDb), pool, aiEnabled: false });
-    expect(((await (await closed.request('/api/config')).json()) as { extensionIds: string[] }).extensionIds).toEqual([]);
-    const refusedAll = await closed.request('/api/extension/authorize', {
-      method: 'POST',
-      headers: await asBrowser('recorder'),
-      body: JSON.stringify({ extensionId: EXT_ID, codeChallenge: challengeOf('v'.repeat(43)), codeChallengeMethod: 'S256', scopes: ['meetings'], deviceName: 'x' }),
-    });
+    expect(DEFAULT_EXTENSION_IDS).toEqual([STORE_EXT_ID]);
+    const byDefault = createHttpApp({ config: none, runtime: sharedRuntime, store, broker: sharedBroker, authenticate: createAuthenticator(none, sharedDb), pool, aiEnabled: false });
+    expect(((await (await byDefault.request('/api/config')).json()) as { extensionIds: string[] }).extensionIds).toEqual([STORE_EXT_ID]);
+    const authorizeAs = async (extensionId: string) =>
+      byDefault.request('/api/extension/authorize', {
+        method: 'POST',
+        headers: await asBrowser('recorder'),
+        body: JSON.stringify({ extensionId, codeChallenge: challengeOf('v'.repeat(43)), codeChallengeMethod: 'S256', scopes: ['meetings'], deviceName: 'x' }),
+      });
+    // The store build's id receives a code with EXTENSION_IDS unset; any id not listed is still refused.
+    const accepted = await authorizeAs(STORE_EXT_ID);
+    expect(accepted.status).toBe(200);
+    expect(((await accepted.json()) as { code?: string }).code).toMatch(/^crc_/);
+    const refusedAll = await authorizeAs(EXT_ID);
     expect(refusedAll.status).toBe(403);
+    // A server that sets EXTENSION_IDS uses only that list: the store id is refused unless it is named there.
+    expect((await app.request('/api/extension/authorize', { method: 'POST', headers: await asBrowser('recorder'), body: JSON.stringify({ extensionId: STORE_EXT_ID, codeChallenge: challengeOf('v'.repeat(43)), codeChallengeMethod: 'S256', scopes: ['meetings'], deviceName: 'x' }) })).status).toBe(403);
   });
 
   it('voids a member\'s tokens for good when their role drops below member, with one audit row of ids only', async () => {

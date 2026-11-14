@@ -12,7 +12,7 @@ import { isCashOverLimit, money, toMoney, type Obligation } from '@crove/l10n-vn
 import { sql } from 'kysely';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
-import { buildRunPosting, buildRunPostingFromTotals, monthLabel } from './payroll-posting.ts';
+import { buildRunPosting, buildRunPostingFromTotals, groupProblem, monthLabel, type StoredGroup } from './payroll-posting.ts';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 
@@ -115,7 +115,7 @@ export const verifyPayrollPayment = defineCommand({
 
 // The amount of each payment of the approved runs asked for, for the matching of a bank statement line with a payment (#2532). Owners and admins, who are the ones that ask for a payment. It reads the
 // run's totals by cost department (crove_hr.payroll_run_totals, in the caller's own context), never a line, and gives a run only when the same checks the verification makes hold: a run that is not
-// approved, that has an adjustment made before its split was kept, a line not calculated or a figure the sums cannot be trusted for is not offered (asking for its payment says why). The amounts equal the obligations of the run's
+// approved, that has an adjustment made before its split was kept, a line not calculated, a department or fund the posting does not know or per-fund sums that do not add to the insurance, or a figure the sums cannot be trusted for is not offered (asking for its payment says why). The amounts equal the obligations of the run's
 // entry (a test ties them): the net pay, the insurance (what employees and the employer owe), the union fee and the tax.
 export const payrollPaymentAmounts = defineQuery({
   name: 'hr.payroll.payment.amounts',
@@ -127,13 +127,15 @@ export const payrollPaymentAmounts = defineQuery({
     for (const runId of new Set(runIds)) {
       const { rows } = await sql<{ totals: unknown }>`SELECT crove_hr.payroll_run_totals(${runId}::uuid) AS totals`.execute(ctx.trx);
       const t = rows[0]?.totals as
-        | { month: string; status: string; counts: Record<string, number>; groups: { net: string; unionFee: string; pit: string; employeeInsurance: string; employerInsurance: string }[] }
+        | { month: string; status: string; counts: Record<string, number>; groups: StoredGroup[] }
         | null
         | undefined;
       if (!t || t.status !== 'approved') continue;
       const c = t.counts;
       if ((c.lines ?? 0) === 0 || [c.adjustmentsIncomplete, c.notCalculated, c.noFunction, c.noFunds, c.noDeductions, c.badLines].some((n) => (n ?? 0) > 0)) continue;
       const groups = t.groups;
+      // A group the posting would refuse (an unknown department or fund, per-fund sums that do not add to the insurance) is not offered either: the offer must be one the request can follow.
+      if (groups.some((g) => groupProblem(g) !== null)) continue;
       const sum = (pick: (g: (typeof groups)[number]) => string) => groups.reduce((acc, g) => acc.plus(money(pick(g))), money(0));
       const all: Record<PayrollPaymentKind, ReturnType<typeof sum>> = {
         net_pay: sum((g) => g.net),

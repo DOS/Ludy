@@ -361,6 +361,27 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     expect(await voucherOf(o, approved.runId, 'tax')).toHaveLength(1);
   });
 
+  it('does not offer the payments of a run whose stored fund shares were changed (#2918): the offer and the posting agree', async () => {
+    const o = await org('tt133', 'solo');
+    const march = await approvedRun(o);
+    const [good] = await o.query<HrRunPaymentAmounts[]>(o.owner, 'hr.payroll.payment.amounts', { runIds: [march.runId] });
+    expect(good?.amounts.net_pay).toBeDefined();
+    // A raw session that lifts the freeze of an approved run (outside the commands) changes one fund's share: the funds no longer add to the insurance the lines carry.
+    await withAdmin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('ALTER TABLE crove_hr.payroll_line DISABLE TRIGGER frozen_row');
+      const done = await c.query(
+        `UPDATE crove_hr.payroll_line SET breakdown = jsonb_set(breakdown, '{insurance,funds,0,employee}', '"1"') WHERE org_id = $1 AND run_id = $2 AND kind = 'pay' AND breakdown #> '{insurance,funds,0}' IS NOT NULL`,
+        [o.orgId, march.runId],
+      );
+      await c.query('ALTER TABLE crove_hr.payroll_line ENABLE ALWAYS TRIGGER frozen_row');
+      await c.query('COMMIT');
+      expect(done.rowCount).toBeGreaterThan(0);
+    });
+    expect(await o.query<HrRunPaymentAmounts[]>(o.owner, 'hr.payroll.payment.amounts', { runIds: [march.runId] })).toEqual([]);
+    await expect(ask(o, march.runId, o.owner)).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH' });
+  });
+
   it('pays a month that carries corrections from the signed totals: the amounts add the corrections, the voucher equals the entry, and a kind the corrections take below zero is refused', async () => {
     const o = await org('tt133', 'solo');
     const [employee] = await rows<{ id: string }>('SELECT id FROM crove_hr.payroll_employee WHERE org_id = $1 ORDER BY created_at, id LIMIT 1', [o.orgId]);
@@ -549,6 +570,208 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     expect((await rows<{ status: string }>('SELECT status FROM crove_hr.payroll_run WHERE org_id = $1 AND id = $2', [o.orgId, runId]))[0]?.status).toBe('approved');
     expect(await o.query<HrRunPaymentAmounts[]>(o.owner, 'hr.payroll.payment.amounts', { runIds: [runId] })).toHaveLength(1);
     expect((await matchOf(o, line)).candidates).toEqual([]);
+  });
+
+  // Reverses one journal entry through the ordinary path: a proposal of finance.journal.reverse that the owner approves.
+  async function reverseEntry(o: Org, entryId: string | undefined, date = '2026-03-31') {
+    const asked = await rt.execute<{ proposalId: string }>(
+      'kernel.proposal.request',
+      { command: 'finance.journal.reverse', input: { entryId, entryDate: date, reason: 'Lập lại' } },
+      { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+    await approve(o, asked.proposalId);
+  }
+  const postingEntry = async (o: Org, runId: string) =>
+    (
+      await rows<{ id: string }>(
+        `SELECT e.id FROM crove_finance.journal_entry e JOIN crove_finance.journal_voucher j ON j.org_id = e.org_id AND j.id = e.source_id AND e.source_type = 'finance.journal_voucher'
+          WHERE j.org_id = $1 AND j.payroll_run_id = $2 AND e.reverses_entry_id IS NULL`,
+        [o.orgId, runId],
+      )
+    )[0]?.id;
+  const paymentEntry = async (o: Org, voucherId: string) =>
+    (await rows<{ id: string }>(`SELECT id FROM crove_finance.journal_entry WHERE org_id = $1 AND source_type = 'finance.cash_voucher' AND source_id = $2 AND reverses_entry_id IS NULL`, [o.orgId, voucherId]))[0]?.id;
+
+  it('refuses a payment request, and the record of a request made before, once the posting of the run was reversed, and records nothing (#2854)', async () => {
+    const o = await org('tt133', 'solo');
+    const { runId } = await postedRun(o);
+    // Asked while the posting stood: it waits for approval.
+    const waiting = await pay(o, runId, 'tax');
+    await reverseEntry(o, await postingEntry(o, runId));
+    // A new request is refused, and so is the approval of the one that was waiting: the posting it rests on is gone.
+    await expect(pay(o, runId, 'net_pay')).rejects.toMatchObject({ code: 'HR_PAYMENT_POSTING_REVERSED', status: 409 });
+    await expect(approve(o, waiting.proposalId)).rejects.toMatchObject({ code: 'HR_PAYMENT_POSTING_REVERSED' });
+    expect(await voucherOf(o, runId, 'tax')).toHaveLength(0);
+    expect(await voucherOf(o, runId, 'net_pay')).toHaveLength(0);
+  });
+
+  it('lets the same run and kind be recorded again once its payment voucher was reversed, and still refuses a second live voucher of it, in the command and in the table (#2854)', async () => {
+    const o = await org('tt133', 'solo');
+    const { runId, totals } = await postedRun(o);
+    const first = await approve(o, (await pay(o, runId, 'net_pay')).proposalId);
+    const [firstVoucher] = await voucherOf(o, runId, 'net_pay');
+    // A live voucher holds the kind: refused by the command, and by the table for a row written some other way (a raw insert, whatever its proposal).
+    await expect(pay(o, runId, 'net_pay')).rejects.toMatchObject({ code: 'HR_PAYMENT_DONE' });
+    const other = (await pay(o, runId, 'union')).proposalId;
+    const insert = (proposal: string) =>
+      rows(
+        `INSERT INTO crove_finance.cash_voucher (org_id, voucher_type, number, voucher_date, cash_account, description, amount, proposal_id, payroll_run_id, payroll_payment_kind)
+         VALUES ($1, 'bank_debit', 0, '2026-03-31', '1121', 'chi', 1000, $2, $3, 'net_pay')`,
+        [o.orgId, proposal, runId],
+      );
+    await expect(insert(other)).rejects.toMatchObject({ code: '23505', constraint: 'cash_voucher_payroll_payment_uq' });
+    // The voucher is reversed (its entry has a reversal): the kind is free, so the payment is asked for and recorded again, and the new voucher is the live one.
+    await reverseEntry(o, await paymentEntry(o, firstVoucher?.id as string));
+    const again = await approve(o, (await pay(o, runId, 'net_pay')).proposalId);
+    expect(again.voucherId).not.toBe(first.voucherId);
+    const vouchers = await voucherOf(o, runId, 'net_pay');
+    expect(vouchers).toHaveLength(2);
+    expect(vouchers.every((v) => money(v.amount).equals(money(totals.net)))).toBe(true);
+    // Two live vouchers of one run and kind are still refused: the second record is HR_PAYMENT_DONE, and a raw insert is the table's unique violation.
+    await expect(pay(o, runId, 'net_pay')).rejects.toMatchObject({ code: 'HR_PAYMENT_DONE' });
+    await expect(insert(other)).rejects.toMatchObject({ code: '23505', constraint: 'cash_voucher_payroll_payment_uq' });
+    // The same goes for another kind of the same run: it was never held.
+    expect(await voucherOf(o, runId, 'tax')).toHaveLength(0);
+  });
+
+  it('offers a payment again to a money-out line once its voucher was reversed: a reversed voucher does not hold its kind for the matching either (#2854)', async () => {
+    const o = await org('tt133', 'solo');
+    const { runId, totals } = await postedRun(o);
+    const [first, second] = (await statement(o, [{ out: vn(totals.net), description: 'Tra luong' }, { out: vn(totals.net), description: 'Tra luong lan 2' }])) as [string, string];
+    await approve(o, (await pay(o, runId, 'net_pay', { bankLineId: first })).proposalId);
+    // Recorded: the payment is not offered to the other line.
+    expect((await matchOf(o, second)).candidates).toEqual([]);
+    const [voucher] = await voucherOf(o, runId, 'net_pay');
+    await reverseEntry(o, await paymentEntry(o, voucher?.id as string));
+    // Reversed: the kind is free again, so the other line is offered the payment.
+    expect((await matchOf(o, second)).candidates).toHaveLength(1);
+  });
+
+  it('shows a reversed payment as not recorded on the card of the month, so the step is offered and can be recorded again (#2854)', async () => {
+    const o = await org('tt133', 'solo');
+    const { runId } = await postedRun(o);
+    await approve(o, (await pay(o, runId, 'net_pay')).proposalId);
+    expect((await settlementOf(o, runId)).payments.net_pay).toEqual({ status: 'recorded', proposalId: null });
+    const [voucher] = await voucherOf(o, runId, 'net_pay');
+    await reverseEntry(o, await paymentEntry(o, voucher?.id as string));
+    // The reversed voucher no longer counts: the card offers the step again (no recorded status, no proposal waiting), and the other kinds are untouched.
+    expect((await settlementOf(o, runId)).payments.net_pay).toEqual({ status: 'none', proposalId: null });
+    const again = await pay(o, runId, 'net_pay');
+    expect((await settlementOf(o, runId)).payments.net_pay).toEqual({ status: 'pending', proposalId: again.proposalId });
+    await approve(o, again.proposalId);
+    expect((await settlementOf(o, runId)).payments.net_pay).toEqual({ status: 'recorded', proposalId: null });
+    expect((await settlementOf(o, runId)).payments.tax).toEqual({ status: 'none', proposalId: null });
+  });
+
+  it('posts a run again after its posting was reversed, then pays it, and still refuses two live postings of one run, in the command and in the table (#2931)', async () => {
+    const o = await org('tt133', 'solo');
+    const { runId } = await postedRun(o);
+    const [first] = await rows<{ id: string }>('SELECT id FROM crove_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId]);
+    const insertPosting = () =>
+      rows(
+        `INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, payroll_run_id) SELECT org_id, voucher_date, description, proposal_id, payroll_run_id FROM crove_finance.journal_voucher WHERE id = $1`,
+        [first?.id],
+      );
+    // A live posting holds the run: a new request is refused, and so is a row written some other way.
+    await expect(ask(o, runId, o.owner)).rejects.toMatchObject({ code: 'HR_POSTING_DONE' });
+    await expect(insertPosting()).rejects.toMatchObject({ code: '23505', constraint: 'journal_voucher_payroll_run_uq' });
+    // Reversed: the card says so, payments are refused, and the posting can be asked for again.
+    await reverseEntry(o, await postingEntry(o, runId));
+    expect((await settlementOf(o, runId)).posting).toEqual({ status: 'reversed', proposalId: null });
+    await expect(pay(o, runId, 'net_pay')).rejects.toMatchObject({ code: 'HR_PAYMENT_POSTING_REVERSED' });
+    const again = await ask(o, runId, o.owner);
+    expect((await settlementOf(o, runId)).posting).toEqual({ status: 'pending', proposalId: again.proposalId });
+    // One request at a time, also after a reversal.
+    await expect(ask(o, runId, o.owner)).rejects.toMatchObject({ code: 'HR_POSTING_OPEN' });
+    const second = await approve(o, again.proposalId);
+    expect(second.voucherId).not.toBe(first?.id);
+    expect((await settlementOf(o, runId)).posting).toEqual({ status: 'posted', proposalId: null });
+    expect(await rows('SELECT id FROM crove_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId])).toHaveLength(2);
+    // The run is payable again, against the posting that stands.
+    const paid = await approve(o, (await pay(o, runId, 'net_pay')).proposalId);
+    expect(paid.voucherId).toBeTruthy();
+    expect((await settlementOf(o, runId)).payments.net_pay).toEqual({ status: 'recorded', proposalId: null });
+    // Two live postings of one run are still refused, now by the new one.
+    await expect(ask(o, runId, o.owner)).rejects.toMatchObject({ code: 'HR_POSTING_DONE' });
+    await expect(insertPosting()).rejects.toMatchObject({ code: '23505', constraint: 'journal_voucher_payroll_run_uq' });
+  });
+
+  it('makes a writer of a run wait while another holds the posting slot of that run, once an earlier posting was reversed (the advisory lock of 20261227014500, held alone so no other lock explains the wait) (#2931)', async () => {
+    const o = await org('tt133', 'solo');
+    const { runId } = await postedRun(o);
+    const [voucher] = await rows<{ id: string }>('SELECT id FROM crove_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId]);
+    await reverseEntry(o, await postingEntry(o, runId));
+    // The writer copies the reversed voucher (its proposal passes the effect check) for the same run.
+    const insert = (c: pg.Client) =>
+      c.query(
+        `INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, payroll_run_id) SELECT org_id, voucher_date, description, proposal_id, payroll_run_id FROM crove_finance.journal_voucher WHERE id = $1`,
+        [voucher?.id],
+      );
+    const holder = new pg.Client({ connectionString: adminUrl });
+    const writer = new pg.Client({ connectionString: adminUrl });
+    await Promise.all([holder.connect(), writer.connect()]);
+    try {
+      // The holder takes only the slot's advisory key (the number series and the unique keys are not touched), as a first writer would in the trigger.
+      await holder.query('BEGIN');
+      await holder.query(`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('crove_finance.journal_voucher_payroll_slot:' || $1::text || ':' || $2::text, 0))`, [o.orgId, runId]);
+      await writer.query('BEGIN');
+      let finished = false;
+      const waiting = insert(writer).then(() => {
+        finished = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      // Only the slot lock can hold the writer here.
+      expect(finished).toBe(false);
+      await holder.query('ROLLBACK');
+      await waiting;
+      expect(finished).toBe(true);
+      await writer.query('ROLLBACK');
+    } finally {
+      await Promise.all([holder, writer].map((c) => c.query('ROLLBACK').catch(() => undefined)));
+      await Promise.all([holder.end(), writer.end()]);
+    }
+  });
+
+  it('makes two writers of one run and kind take turns even when their voucher types differ (the lock of 20261212114500; voucher numbers are locked per type, so only this lock holds them), and does not hold another kind (#2854)', async () => {
+    const o = await org('tt133', 'solo');
+    const { runId } = await postedRun(o);
+    // A proposal holds one voucher, so each writer has its own proposal.
+    const proposals = { first: (await pay(o, runId, 'union')).proposalId, second: (await pay(o, runId, 'insurance')).proposalId, third: (await pay(o, runId, 'tax')).proposalId };
+    const insert = (c: pg.Client, type: 'cash_payment' | 'bank_debit', kind: string, proposal: string) =>
+      c.query(
+        `INSERT INTO crove_finance.cash_voucher (org_id, voucher_type, number, voucher_date, cash_account, description, amount, proposal_id, payroll_run_id, payroll_payment_kind)
+         VALUES ($1, $2, 0, '2026-03-31', $3, 'chi', 1000, $4, $5, $6)`,
+        [o.orgId, type, type === 'cash_payment' ? '1111' : '1121', proposal, runId, kind],
+      );
+    const first = new pg.Client({ connectionString: adminUrl });
+    const second = new pg.Client({ connectionString: adminUrl });
+    const third = new pg.Client({ connectionString: adminUrl });
+    await Promise.all([first.connect(), second.connect(), third.connect()]);
+    try {
+      // The first writer holds the (run, net_pay) slot without committing.
+      await first.query('BEGIN');
+      await insert(first, 'cash_payment', 'net_pay', proposals.first);
+      // Another kind of the same run, of yet another voucher type, goes through at once.
+      await third.query('BEGIN');
+      await insert(third, 'bank_debit', 'tax', proposals.third);
+      await third.query('ROLLBACK');
+      // The same kind with another voucher type waits for the first writer.
+      await second.query('BEGIN');
+      let finished = false;
+      const waiting = insert(second, 'bank_debit', 'net_pay', proposals.second).then(() => {
+        finished = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      expect(finished).toBe(false);
+      // The first writer lets go (it would never commit a voucher without its entry anyway): the second goes on.
+      await first.query('ROLLBACK');
+      await waiting;
+      expect(finished).toBe(true);
+      await second.query('ROLLBACK');
+    } finally {
+      await Promise.all([first, second, third].map((c) => c.query('ROLLBACK').catch(() => undefined)));
+      await Promise.all([first.end(), second.end(), third.end()]);
+    }
   });
 
   it('offers amounts equal to the obligations of the run\'s entry, by kind: what the query adds up is what the payment will ask for', async () => {

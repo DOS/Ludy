@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
-import { CONVERSATION_FACEBOOK_DIRECT_MAX, CONVERSATION_INSTAGRAM_COMMENT_MAX, CONVERSATION_INSTAGRAM_DIRECT_MAX, CONVERSATION_NOTE_MAX, CONVERSATION_RETENTION_MONTHS, CONVERSATION_REPLY_MAX, type ConversationAttachmentView, type ConversationDetail, type ConversationIntent, type ConversationKind, type ConversationMessage, type ConversationStatus, type ConversationSummary } from '@crove/kernel-contract';
+import { CONVERSATION_FACEBOOK_DIRECT_MAX, CONVERSATION_INSTAGRAM_COMMENT_MAX, CONVERSATION_INSTAGRAM_DIRECT_MAX, CONVERSATION_NOTE_MAX, CONVERSATION_RETENTION_MONTHS, CONVERSATION_REPLY_MAX, CONVERSATION_THREADS_REPLY_MAX, conversationRules, type ConversationAttachmentView, type ConversationDetail, type ConversationIntent, type ConversationKind, type ConversationMessage, type ConversationStatus, type ConversationSummary } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { NativeSelect } from '@crove/ui/components/native-select';
@@ -21,7 +21,7 @@ import { channelsOfPosts, INBOX_PAGE_SIZE, inboxListInput, mergeConversationPage
 import { client, errorMessage, fetchConversationImage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { appendQuoteMessage, canInsertQuoteLink } from '../lib/quote-reply.ts';
 import { StepUpPrompt } from './two-factor.tsx';
-import { DraftPanel } from './conversation-drafts.tsx';
+import { DraftPanel, replyTextFor } from './conversation-drafts.tsx';
 import { IntentBadge, IntentBar } from './conversation-intent.tsx';
 import { REPLY_INSERT_EVENT, type ReplyInsert } from './quote-send.tsx';
 
@@ -50,7 +50,7 @@ function UnverifiedMark() {
   );
 }
 
-const SEND_ERRORS = ['ZALO_TOKEN', 'ZALO_NO_TOKEN', 'ZALO_QUOTA', 'ZALO_RATE_LIMIT', 'ZALO_NOT_FOLLOWER', 'ZALO_BLOCKED', 'ZALO_OA_ACCESS', 'ZALO_BAD_PARAM', 'ZALO_TEXT_LENGTH', 'ZALO_DIRECT_ONLY', 'ZALO_UNREACHABLE', 'ZALO_5XX', 'ZALO_NO_MESSAGE_ID', 'ZALO_BAD_ANSWER', 'FB_WINDOW_CLOSED', 'FB_PRIVATE_REPLIED', 'FB_RECIPIENT_UNAVAILABLE', 'FB_NOT_FOUND', 'FB_TEXT_LENGTH', 'FB_NO_MESSAGE_ID', 'IG_TEXT_LENGTH', 'IG_COMMENT_LENGTH', 'NO_PAGE_TOKEN', 'BAD_PAGE_ID', 'BAD_IG_ID', 'BAD_COMMENT_ID', 'BAD_RECIPIENT_ID', 'CHANNEL_NOT_ACTIVE', 'CHANNEL_OWNER_LEFT', 'CREDENTIAL_ERROR', 'WORKER_LOST', 'SUPPRESSED', 'BOUNCED', 'COMPLAINED', 'MAIL_OFF', 'NO_ADDRESS', 'TEMPLATE_DATA', 'TEMPLATE_UNKNOWN', 'SEND_TIMEOUT', 'SEND_FAILED', 'OUTCOME_UNKNOWN'] as const;
+const SEND_ERRORS = ['ZALO_TOKEN', 'ZALO_NO_TOKEN', 'ZALO_QUOTA', 'ZALO_RATE_LIMIT', 'ZALO_NOT_FOLLOWER', 'ZALO_BLOCKED', 'ZALO_OA_ACCESS', 'ZALO_BAD_PARAM', 'ZALO_TEXT_LENGTH', 'ZALO_DIRECT_ONLY', 'ZALO_UNREACHABLE', 'ZALO_5XX', 'ZALO_NO_MESSAGE_ID', 'ZALO_BAD_ANSWER', 'FB_WINDOW_CLOSED', 'FB_PRIVATE_REPLIED', 'FB_RECIPIENT_UNAVAILABLE', 'FB_NOT_FOUND', 'FB_TEXT_LENGTH', 'FB_NO_MESSAGE_ID', 'IG_TEXT_LENGTH', 'IG_COMMENT_LENGTH', 'THREADS_REPLY_CAP', 'THREADS_TEXT_LENGTH', 'NO_TOKEN', 'BAD_REPLY_ID', 'LATE_PUBLISH', 'CONTAINER_NOT_READY', 'NO_POST_ID', 'CONTAINER_PUBLISHED', 'NO_PAGE_TOKEN', 'BAD_PAGE_ID', 'BAD_IG_ID', 'BAD_COMMENT_ID', 'BAD_RECIPIENT_ID', 'CHANNEL_NOT_ACTIVE', 'CHANNEL_OWNER_LEFT', 'CREDENTIAL_ERROR', 'WORKER_LOST', 'SUPPRESSED', 'BOUNCED', 'COMPLAINED', 'MAIL_OFF', 'NO_ADDRESS', 'TEMPLATE_DATA', 'TEMPLATE_UNKNOWN', 'SEND_TIMEOUT', 'SEND_FAILED', 'OUTCOME_UNKNOWN'] as const;
 const isKnownSendError = (code: string): code is (typeof SEND_ERRORS)[number] => (SEND_ERRORS as readonly string[]).includes(code);
 
 const refresh = () => void queryClient.invalidateQueries({ queryKey: orpc.conversations.key() });
@@ -544,7 +544,8 @@ function MessageRow({ message: m, detail, members, userId, canWrite, isAdmin, co
       if (onOpenConversation) onOpenConversation(done.conversationId);
     },
   });
-  const canHide = canWrite && detail.conversation.kind === 'comment_thread' && !mine && !m.removed;
+  // Only where the platform's hide is confirmed (the provider's rules): Threads' is not until its live check (#3133).
+  const canHide = canWrite && detail.conversation.kind === 'comment_thread' && !mine && !m.removed && Boolean(conversationRules(detail.conversation.channel.provider)?.canHide);
   const supportsPrivateReply =
     detail.conversation.kind === 'comment_thread' &&
     !mine &&
@@ -685,9 +686,13 @@ function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail; seen:
       ? kind === 'direct'
         ? CONVERSATION_INSTAGRAM_DIRECT_MAX
         : CONVERSATION_INSTAGRAM_COMMENT_MAX
-      : detail.conversation.channel.provider === 'facebook_page' && kind === 'direct'
-        ? CONVERSATION_FACEBOOK_DIRECT_MAX
-        : CONVERSATION_REPLY_MAX;
+      : detail.conversation.channel.provider === 'threads'
+        ? CONVERSATION_THREADS_REPLY_MAX
+        : detail.conversation.channel.provider === 'facebook_page' && kind === 'direct'
+          ? CONVERSATION_FACEBOOK_DIRECT_MAX
+          : detail.conversation.channel.provider === 'telegram'
+            ? (conversationRules('telegram')?.replyMax ?? CONVERSATION_REPLY_MAX)
+            : CONVERSATION_REPLY_MAX;
   const [insertTooLong, setInsertTooLong] = useState(false);
   // The listener below reads what is in the box now without being set up again at every keystroke.
   const textNow = useRef(text);
@@ -743,11 +748,13 @@ function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail; seen:
       <DraftPanel
         detail={detail}
         onUse={(draft) => {
-          setText(draft.body ?? '');
+          // A draft may keep the saved reply's `{tên}` as a fill (#3102): it is filled here, as for a saved reply.
+          setText(replyTextFor(draft.body ?? '', detail));
           setFrom({ draftId: draft.id });
         }}
         onUseSaved={(reply) => {
-          setText(reply.body);
+          // `{tên}` becomes the contact's name here, in the box, before Send (#3102); with no name it is dropped.
+          setText(replyTextFor(reply.body, detail));
           // The text is now the saved reply's, so it no longer began from a draft.
           setFrom({ savedReplyId: reply.id });
         }}

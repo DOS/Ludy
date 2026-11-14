@@ -162,6 +162,9 @@ suite('module enablement on PostgreSQL (plan Decision 12, ADR-0031)', () => {
     // CRM slice 1 (#2223): deals, the pipeline, the contacts and the contact import ride with the crm module alone.
     const crmNames = [...crmOnly.commands, ...crmOnly.queries].map((d) => d.name);
     for (const name of ['crm.deal.create', 'crm.deal.move', 'crm.deal.board', 'crm.stage.add', 'crm.contact.list', 'crm.import.stage', 'crm.import.commit', 'crm.import.expire']) expect(crmNames, name).toContain(name);
+    // A booking's link to a deal (#3103) rides with the crm module as well.
+    for (const name of ['crm.booking.link_deal', 'crm.booking.unlink_deal', 'crm.deal.bookings']) expect(crmNames, name).toContain(name);
+    expect(names.filter((name) => name.startsWith('crm.'))).toEqual([]);
     // And the notes module (#1671).
     expect(all.commands.map((c) => c.name)).toContain('notes.note.create');
     const notesOnly = moduleDefinitions(configFor('notes'));
@@ -199,6 +202,22 @@ suite('module enablement on PostgreSQL (plan Decision 12, ADR-0031)', () => {
     const ok = await full.query<Lookup<unknown[]>>('probe.lookup', { name: 'finance.accounts.list' }, { actor, orgId });
     expect(ok.status).toBe('ok');
     expect(ok.status === 'ok' && Array.isArray(ok.value)).toBe(true);
+  });
+
+  // A booking's link to a deal (#3103) lives in the crm module alone: with it off the kernel's calendar (a member's hours, events and free time) works as it did, and nothing of
+  // a deal link is registered or asked for.
+  it('keeps the calendar working with the crm module off, and registers no booking-deal link (#3103)', async () => {
+    const runtime = new Runtime(db, { manifests: TEST_MANIFESTS, absentModules: ['crm'] }).register(moduleDefinitions(configFor('kernel')));
+    const actor = asUser(owner);
+    expect(runtime.installed('crm')).toBe(false);
+    const day = new Date(Date.now() + 5 * 86_400_000).toISOString().slice(0, 10);
+    await runtime.execute('kernel.calendar.hours.save', { timeZone: 'Asia/Ho_Chi_Minh', windows: [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, start: 0, end: 1440 })) }, { actor, orgId });
+    await runtime.execute('kernel.calendar.event.add', { startsAt: `${day}T03:00:00.000Z`, endsAt: `${day}T04:00:00.000Z`, timeZone: 'Asia/Ho_Chi_Minh', title: 'Họp nội bộ', kind: 'manual' }, { actor, orgId });
+    const events = await adminQuery<{ title: string; kind: string }>("SELECT title, kind FROM crove_kernel.calendar_event WHERE org_id = $1 AND title = 'Họp nội bộ'", [orgId]);
+    expect(events).toEqual([{ title: 'Họp nội bộ', kind: 'manual' }]);
+    await expect(runtime.execute('crm.booking.link_deal', { bookingId: randomUUID(), dealId: randomUUID() }, { actor, orgId })).rejects.toMatchObject({ code: 'COMMAND_NOT_FOUND', status: 404 });
+    await expect(runtime.execute('crm.booking.unlink_deal', { bookingId: randomUUID() }, { actor, orgId })).rejects.toMatchObject({ code: 'COMMAND_NOT_FOUND' });
+    await expect(runtime.query('crm.deal.bookings', { dealId: randomUUID() }, { actor, orgId })).rejects.toMatchObject({ code: 'QUERY_NOT_FOUND' });
   });
 
   // The CRM's screens joined the Engage app (#2435): the shell changed, not the modules. The accounting reads its customers and vendors from the kernel's

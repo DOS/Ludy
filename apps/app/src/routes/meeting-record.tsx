@@ -4,7 +4,7 @@
 // exists. The recording is written to this device as it goes (IndexedDB), so a reload or a closed tab loses at most the
 // last few seconds, and it is uploaded when stopped through the same media route as a file upload. Vy has no part on this
 // screen: the recorder, the timer and the upload work with AI off.
-import { Link, useNavigate, useParams } from '@tanstack/react-router';
+import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import type { ConsentMethod, MeetingLanguage, MeetingVisibility } from '@crove/kernel-contract';
@@ -18,17 +18,21 @@ import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { useMe } from '../components/conversation-inbox.tsx';
 import { NotesSubnav } from '../components/notes-subnav.tsx';
 import { ErrorText, PageHeader } from '../components/ui.tsx';
-import { errorMessage, orpc, queryClient, uploadMeetingMedia } from '../lib/api.ts';
+import { errorMessage, orpc, queryClient, sendLiveChunk, uploadMeetingMedia } from '../lib/api.ts';
 import {
   assembleRecording,
   beginRecording,
   prepareCapture,
+  createBrowserLiveRecorder,
   createClock,
   createIndexedDbChunkStore,
   formatClock,
   pickRecorderMime,
   startBlocker,
+  startLiveCapture,
+  uploadAfterLive,
   type ChunkStore,
+  type LiveCapture,
   type RecordingKind,
   type RecordingMeta,
   type RecordingWriter,
@@ -48,6 +52,8 @@ interface Live {
   pending: Set<Promise<void>>;
   wakeLock: { release(): Promise<void> } | null;
   failed: boolean;
+  // The audio-only recorder that sends pieces to the server when live notes were ticked (ADR-0052 L4a); null otherwise.
+  liveCapture: LiveCapture | null;
 }
 
 type WakeLockApi = { request(type: 'screen'): Promise<{ release(): Promise<void> }> };
@@ -62,10 +68,14 @@ export function MeetingRecordPage() {
   const scope = userId ? `${slug}:${userId}` : null;
 
   const [phase, setPhase] = useState<Phase>('setup');
-  const [title, setTitle] = useState('');
+  // A booking opens this screen with its title, contact and calendar event (L1, #2587); the meeting is linked to them once it is created.
+  const prefill = useSearch({ strict: false }) as { title?: string; partyId?: string; calendarEventId?: string };
+  const [title, setTitle] = useState(prefill.title ?? '');
   const [language, setLanguage] = useState<MeetingLanguage>('vi');
   const [visibility, setVisibility] = useState<MeetingVisibility>('attendees');
   const [withVideo, setWithVideo] = useState(false);
+  // Off at every visit and never remembered: ticked for one recording only.
+  const [liveNotes, setLiveNotes] = useState(false);
   const [consentMethod, setConsentMethod] = useState<ConsentMethod | ''>('');
   const [consentAgreed, setConsentAgreed] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -86,6 +96,8 @@ export function MeetingRecordPage() {
   const unmounted = useRef(false);
   // The meeting created for this screen, reused if a later local step fails, so a retry makes no second meeting.
   const createdMeetingId = useRef<string | null>(null);
+  // The links of a booking are set once per created meeting; a failed link never blocks the recording (the recorder can link on the meeting page).
+  const linkedMeetingId = useRef<string | null>(null);
   // Recordings this tab wrote: shown in the recovery list at once; another tab's only once its heartbeat is stale.
   const ownIds = useRef(new Set<string>());
 
@@ -157,6 +169,7 @@ export function MeetingRecordPage() {
 
   const releaseDevices = (l: Live | null, stopRecorder: boolean) => {
     if (!l) return;
+    if (stopRecorder) l.liveCapture?.abandon();
     if (stopRecorder && l.recorder.state !== 'inactive') {
       try {
         l.recorder.stop();
@@ -189,8 +202,18 @@ export function MeetingRecordPage() {
         }),
       createMeeting: async () => {
         // The meeting row stores who confirmed the notice and how; the server refuses media for a meeting without it.
-        createdMeetingId.current ??= (await orpc.meetings.create.call({ title: title.trim(), language, visibility, keepVideo: withVideo, consentMethod: consentMethod as ConsentMethod })).meetingId;
-        return createdMeetingId.current;
+        createdMeetingId.current ??= (await orpc.meetings.create.call({ title: title.trim(), language, visibility, keepVideo: withVideo, consentMethod: consentMethod as ConsentMethod, liveNotes })).meetingId;
+        const meetingId = createdMeetingId.current;
+        if (linkedMeetingId.current !== meetingId) {
+          linkedMeetingId.current = meetingId;
+          const targets = [
+            ...(prefill.partyId ? [{ kind: 'party' as const, targetId: prefill.partyId }] : []),
+            ...(prefill.calendarEventId ? [{ kind: 'calendar_event' as const, targetId: prefill.calendarEventId }] : []),
+          ];
+          const results = await Promise.allSettled(targets.map((target) => orpc.meetings.links.add.call({ meetingId, ...target })));
+          if (results.some((r) => r.status === 'rejected')) toast(t('links.prefillFailed'), 'error');
+        }
+        return meetingId;
       },
       makeRecorder: (stream) => {
         const mimeType = pickRecorderMime((type) => MediaRecorder.isTypeSupported(type), kind);
@@ -223,7 +246,7 @@ export function MeetingRecordPage() {
       return;
     }
     const { stream, recorder, writer } = result;
-    const l: Live = { stream, recorder, writer, pending: new Set(), wakeLock: result.wakeLock, failed: false };
+    const l: Live = { stream, recorder, writer, pending: new Set(), wakeLock: result.wakeLock, failed: false, liveCapture: null };
     live.current = l;
     recorder.ondataavailable = (event) => {
       const write = writer.addChunk(event.data, clock.current.elapsedMs(Date.now())).catch(() => {
@@ -243,6 +266,14 @@ export function MeetingRecordPage() {
       setElapsed(0);
       // A chunk every 5 seconds is written to the device while recording.
       recorder.start(5000);
+      // A second, audio-only recorder sends pieces of about 15 seconds; none is made without the tick, and a failure
+      // here never stops the recording.
+      l.liveCapture = startLiveCapture({
+        enabled: liveNotes,
+        makeRecorder: () => createBrowserLiveRecorder(stream),
+        send: (piece) => sendLiveChunk({ meetingId: writer.meta().meetingId, ...piece }),
+        now: () => Date.now(),
+      });
       setPhase('recording');
     } catch (err) {
       releaseDevices(l, true);
@@ -260,11 +291,13 @@ export function MeetingRecordPage() {
     if (!l) return;
     if (l.recorder.state === 'recording') {
       l.recorder.pause();
+      l.liveCapture?.pause();
       clock.current.pause(Date.now());
       setElapsed(clock.current.elapsedMs(Date.now()));
       setPhase('paused');
     } else if (l.recorder.state === 'paused') {
       l.recorder.resume();
+      l.liveCapture?.resume();
       clock.current.resume(Date.now());
       setPhase('recording');
     }
@@ -276,16 +309,20 @@ export function MeetingRecordPage() {
     clock.current.pause(Date.now());
     setElapsed(clock.current.elapsedMs(Date.now()));
     setPhase('uploading');
+    // The live recorder stops first; its last piece is taken in onStopped before the devices are released.
+    void l.liveCapture?.halt();
     l.recorder.stop();
   };
 
   // The browser fires the last chunk before `stop`: wait for every write, then upload what the device holds.
   const onStopped = async (l: Live) => {
     await Promise.all(l.pending);
+    await l.liveCapture?.halt();
     const meta = l.writer.meta();
     releaseDevices(l, false);
     if (unmounted.current) return;
-    await uploadAndClear(meta, l.failed);
+    // The live pieces are refused once the final recording is stored: they finish (or give up) first, then the upload.
+    await uploadAfterLive(l.liveCapture, () => uploadAndClear(meta, l.failed));
   };
 
   const uploadAndClear = async (meta: RecordingMeta, partial = false): Promise<boolean> => {
@@ -427,6 +464,13 @@ export function MeetingRecordPage() {
             <div className="flex items-center gap-2">
               <Checkbox id="record-video" checked={withVideo} onCheckedChange={(c) => setWithVideo(Boolean(c))} />
               <Label htmlFor="record-video" className="cursor-pointer">{t('record.withVideo')}</Label>
+            </div>
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <Checkbox id="record-live-notes" checked={liveNotes} onCheckedChange={(c) => setLiveNotes(Boolean(c))} />
+                <Label htmlFor="record-live-notes" className="cursor-pointer">{t('record.liveNotes')}</Label>
+              </div>
+              <p className="pl-6 text-xs text-muted-foreground">{t('record.liveNotesHint')}</p>
             </div>
             <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-4">
               <div className="text-sm font-semibold">{t('form.consentSectionTitle')}</div>

@@ -4,6 +4,7 @@
 // after confirming; the result lists what was erased and what the law or a record keeps. Members' private notes and
 // to-dos that mention the value are only counted, per author, never shown (#1678, ADR-0037): the owner tells their
 // authors first, and the erasure then deletes the ones a notice named and edits the value out of shared notes.
+// An owner also finds here every meeting of the org, the ones they cannot read included, as metadata only, to delete one (#2703).
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
@@ -12,9 +13,11 @@ import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
 import { TableCell, TableRow } from '@crove/ui/components/table';
+import { MeetingOwnerDeletion } from '../components/meeting-owner-deletion.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, PageSkeleton, TableSkeleton } from '../components/ui.tsx';
 import { errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
+import { getConfig } from '../lib/auth.ts';
 
 const HANDLING_BADGE = { erase: 'warning', keep_legal: 'secondary', keep_org: 'secondary', keep_record: 'secondary' } as const;
 
@@ -226,6 +229,8 @@ export function PersonalDataPage() {
           )}
         </>
       )}
+      {/* A separate section: the owner's compliance deletion of meetings, which never shows a meeting's title or text. */}
+      {isOwner && getConfig().modules.includes('meetings') && <MeetingOwnerDeletion nameOf={nameOf} />}
     </>
   );
 }

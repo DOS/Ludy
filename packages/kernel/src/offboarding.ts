@@ -44,7 +44,7 @@ export const EXPORT_TABLES = {
   'kernel.calendar_event': { from: 'crove_kernel.calendar_event', omit: [] },
   // Connected channel accounts (ADR-0025). Their sealed tokens (crove_kernel.credential) are secrets and stay out.
   // The keyed hash of the Meta user who granted a connection (Meta's data deletion callback) is the deployment's, not the org's.
-  'kernel.channel_connection': { from: 'crove_kernel.channel_connection', omit: ['granted_by_hash'] },
+  'kernel.channel_connection': { from: 'crove_kernel.channel_connection', omit: ['granted_by_hash', 'chat_hook', 'chat_hook_next'] },
   // Which members use which channels (#2303), and the conversation core (CV6, #2305): the customers' comments and messages, the
   // identities they wrote under, the org's internal notes on them and its retention. Read marks are per-member state and stay out.
   'kernel.channel_access': { from: 'crove_kernel.channel_access', omit: [] },
@@ -118,6 +118,8 @@ export const EXPORT_TABLES = {
   // meeting_private_counts, a definer that answers counts only). Never audio or video.
   'meetings.meeting': { from: 'crove_kernel.meeting_export_rows()', omit: [] },
   'meetings.private_count': { from: 'crove_kernel.meeting_private_counts()', omit: [] },
+  // The links (a party, a deal, a calendar event) of those shared meetings (L1, #2587): ids only, never of an attendees-only meeting.
+  'meetings.link': { from: 'crove_kernel.meeting_link_export_rows()', omit: [] },
   // Each member's Vy (ADR-0049, #2822): per member how many private results and memory entries it holds (crove_kernel.member_vy_private_counts(), a definer that answers counts only, for the
   // worker's system context). Never a body: the results and the memory are sealed to their member, and a person who leaves is purged, so an export carries only that they existed.
   'kernel.member_vy_private_count': { from: 'crove_kernel.member_vy_private_counts()', omit: [] },
