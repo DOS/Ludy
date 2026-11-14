@@ -24,7 +24,7 @@ export interface HostedLoginConfig {
 export type HostedStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 
 export const HOSTED_STORAGE_KEY = 'ludy-hosted-login';
-export const HOSTED_CALLBACK_PATH = '/auth/hosted-callback';
+export const HOSTED_CALLBACK_PATH = '/hosted-login/callback';
 export const HOSTED_MAX_AGE_MS = 10 * 60_000;
 // What a code may look like on the way back: a one-time token, never more than this and never anything but these characters.
 const CODE_PATTERN = /^[A-Za-z0-9._~-]{16,512}$/;

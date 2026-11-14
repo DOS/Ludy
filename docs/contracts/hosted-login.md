@@ -1,6 +1,6 @@
 # Contract: a hosted login page for Ludy (issue #2704)
 
-What an identity provider implements so that Ludy can send people to the provider's own sign-in page and get a standard Supabase Auth session back. It is written for whoever builds the provider's side (for the pilot: the team that runs the DOS ID sign-in page). Ludy's side is generic and names no provider: [Ludy's settings](#ludys-settings) are the only configuration.
+What an identity provider implements so that Ludy can send people to the provider's own sign-in page and get a standard Supabase Auth session back. It is written for whoever builds the provider's side (for the pilot: whoever runs the pilot's identity provider). Ludy's side is generic and names no provider: [Ludy's settings](#ludys-settings) are the only configuration.
 
 This is an authorization-code flow with PKCE ([RFC 7636](https://www.rfc-editor.org/rfc/rfc7636), method S256), shaped like OAuth 2.0's but with no client secret, because Ludy's app is a browser app (a public client). It does **not** use Supabase Auth's OAuth 2.1 server: tokens that server issues to a client carry a `client_id`, and Ludy's kernel refuses them on purpose (ADR-0028). The session this flow returns is an ordinary Supabase Auth browser session.
 
@@ -27,7 +27,7 @@ Ludy app                      Hosted login page (provider)          Token endpoi
 | Parameter | Value |
 |---|---|
 | `response_type` | `code` |
-| `redirect_uri` | the app's callback: `<app origin>/auth/hosted-callback` |
+| `redirect_uri` | the app's callback: `<app origin>/hosted-login/callback` |
 | `state` | 43 characters of base64url, random per attempt |
 | `code_challenge` | base64url(SHA-256(`code_verifier`)), 43 characters, no padding |
 | `code_challenge_method` | `S256` (the only method) |
@@ -35,7 +35,7 @@ Ludy app                      Hosted login page (provider)          Token endpoi
 The provider must:
 
 - Refuse the request without redirecting when `redirect_uri` is not **exactly** (byte for byte, no wildcard, no prefix, no normalisation) one of the callback addresses registered for Ludy, or when `response_type` or `code_challenge_method` is anything else, or when `code_challenge` is not 43 characters of `[A-Za-z0-9_-]`. Never redirect to an unregistered address, whatever the error.
-- Keep `state`, `redirect_uri` and `code_challenge` with the sign-in attempt on the server (not in a cookie the page can swap), and use them only for this attempt.
+- Serve the login page with `frame-ancestors 'none'` (no framing), and keep `state`, `redirect_uri` and `code_challenge` with the sign-in attempt on the server (not in a cookie the page can swap), and use them only for this attempt.
 
 ### 2. The page returns a code
 
@@ -58,7 +58,7 @@ The redirect carries nothing else: no token, no email, no user id.
 `POST <token endpoint URL>`, `Content-Type: application/json`, from the user's browser (cross-origin, so CORS applies), body:
 
 ```json
-{ "grant_type": "authorization_code", "code": "...", "code_verifier": "...", "redirect_uri": "<app origin>/auth/hosted-callback" }
+{ "grant_type": "authorization_code", "code": "...", "code_verifier": "...", "redirect_uri": "<app origin>/hosted-login/callback" }
 ```
 
 `code_verifier` is 43 characters of base64url (32 random bytes), made by the app for this attempt. The request is sent without cookies (`credentials: omit`), without a referrer, without following redirects and without caching.
@@ -69,6 +69,7 @@ The endpoint must:
 - Find the code, and refuse (`400`, `{"error":"invalid_grant"}`, the same answer for every cause, no detail) unless **all** hold: it exists, it is unused and under 60 seconds old, `redirect_uri` equals the one stored with it exactly, and base64url(SHA-256(`code_verifier`)) equals the stored `code_challenge` (compared in constant time). Mark the code used before answering.
 - Rate limit by code and by client address, and answer `429` over the limit.
 - Send `Cache-Control: no-store` and `Pragma: no-cache` on every answer.
+- Expect every `/verify` call to come from the provider server's one address, so Supabase Auth's per-address rate limit on it is shared by all users (fine at pilot scale; raise it before it is not).
 
 ### 4. The session
 
@@ -84,8 +85,8 @@ The session must be:
 
 - **Fresh**: a new Supabase Auth session for the user, with its own refresh-token family, never the provider's own page session or one already given to another app. A way that needs only standard Supabase Auth calls and the service role key, held only by the provider's server: `admin.generateLink({ type: 'magiclink', email })` for the user, then `POST /auth/v1/verify` with `{ "token_hash": <hashed_token>, "type": "magiclink" }`, which answers a new session. (Nothing is mailed by `generateLink`.)
 - **From the same Supabase Auth project** that Ludy's `AUTH_ISSUER`, `AUTH_JWKS_URL` and `PUBLIC_AUTH_URL` name: the access token must verify against that project's JWKS (ES256 or RS256), with `aud = authenticated`, `role = authenticated`, a `session_id` and the user's confirmed `email`. It must not be anonymous and must not be issued to an OAuth client (no `client_id` claim, no `oauth_provider/` method in `amr`).
-- **`aal1`**: signing in through this flow is a first factor. A user with a second factor enrolled in that project does the second factor in Ludy afterwards (Ludy asks for it when an action needs it; policy P11, ADR-0028). The endpoint does not pass `aal2` on a page's own earlier MFA.
-- **Only for the user who signed in at the page**, whose email is confirmed. Ludy additionally decides who may use the deployment (`AUTH_ALLOWED_EMAILS`).
+- **`aal1`**: signing in through this flow is a first factor. A user with a second factor enrolled in that project does the second factor in Ludy afterwards: the app asks for it at once, and the kernel enforces it for approvals, posting and member changes (R3, policy P11) and, once the provider states the enrolment in the token, for every request (ADR-0028, section 3). The endpoint does not pass `aal2` on a page's own earlier MFA.
+- **Only for the user who signed in at the page**, whose email is confirmed. `generateLink` creates a user when the address is unknown, and `/verify` of a magic link marks the email confirmed, so the endpoint must check **before** calling `generateLink` that the user exists and has `email_confirmed_at` set, and never call it for an address that does not belong to the code's user. Ludy additionally decides who may use the deployment (`AUTH_ALLOWED_EMAILS`).
 
 Errors: `400 {"error":"invalid_grant"}` for every refusal of step 3, `429`, `5xx` for the provider's own failures. Ludy shows one message for all of them ("sign-in did not complete") and discards the attempt; the user starts again.
 
@@ -109,7 +110,7 @@ These are tested in `apps/app/test/hosted-login.test.ts`:
 | `AUTH_HOSTED_LOGIN_NAME` | the words on the sign-in button ("Continue with <name>"); optional, at most 40 characters |
 | `VITE_HOSTED_LOGIN_ORIGIN` | build environment of a web app served apart from its API: the token endpoint's origin, so the app's Content-Security-Policy lets the browser call it ([split-app-api.md](../runbooks/split-app-api.md)) |
 
-The provider registers, for Ludy: the callback address `<app origin>/auth/hosted-callback` (for the pilot, the app's own address), and the app's origin for CORS on the token endpoint.
+The provider registers, for Ludy: the callback address `<app origin>/hosted-login/callback` (for the pilot, the app's own address), and the app's origin for CORS on the token endpoint.
 
 ## Checks for the provider's tests
 
@@ -117,4 +118,5 @@ The provider registers, for Ludy: the callback address `<app origin>/auth/hosted
 - A code redeemed twice: the second answer is `invalid_grant`, and so is the first when it comes after 60 seconds, with the wrong verifier, or with another `redirect_uri` (also one that differs only by a trailing slash, a case or a query).
 - A `redirect_uri` that is not registered gets an error page, never a redirect.
 - A preflight and a `POST` from another origin get no `Access-Control-Allow-Origin` for it.
+- The token endpoint never calls `generateLink` for a user that is missing or unconfirmed.
 - The access token verifies against the project's JWKS, has `aal1`, and refreshing its refresh token does not invalidate the provider's own page session (a separate family).

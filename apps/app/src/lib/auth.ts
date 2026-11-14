@@ -3,7 +3,7 @@ import type { Translate } from '../i18n/runtime.ts';
 import { apiUrl, serverOrigin } from './api-base.ts';
 import { ClientError } from './errors.ts';
 import { withInviteToken } from './invite.ts';
-import { completeHostedLogin, readHostedCallback, type HostedFailure, type HostedLoginConfig } from './hosted-login.ts';
+import { HOSTED_STORAGE_KEY, completeHostedLogin, readHostedCallback, type HostedCallback, type HostedFailure, type HostedLoginConfig } from './hosted-login.ts';
 
 export interface PublicConfig {
   authUrl: string;
@@ -227,11 +227,33 @@ let callbackNotice: CallbackNotice | null = null;
 
 // Runs once at startup, before the router reads the URL. A failed link lands here with Supabase Auth's error.
 // A recovery link always opens the new-password screen, even if Supabase Auth redirected it elsewhere.
+// The hosted login's return (#2704) is read and taken out of the address bar before anything else runs, before the config is
+// fetched and before auth-js is created: auth-js reads `code` from the address on creation and would try to redeem it as its
+// own PKCE code, and the one-time code must not stay in the address bar or the history whatever happens next. main.tsx calls
+// this first; settleCallback calls it again, which finds nothing more.
+let capturedHosted: HostedCallback | null = null;
+
+export function captureHostedCallback(): void {
+  const callback = readHostedCallback(window.location);
+  if (!callback) return;
+  capturedHosted = callback;
+  window.history.replaceState(null, '', '/');
+}
+
+// The attempt is over without a redeem (the app could not start, or the deployment has no hosted login): nothing is kept.
+export function discardHostedLogin(): void {
+  capturedHosted = null;
+  try {
+    window.sessionStorage.removeItem(HOSTED_STORAGE_KEY);
+  } catch {
+    // A storage that refuses a removal kept nothing.
+  }
+}
+
 export async function settleCallback(): Promise<void> {
-  // The hosted login's return (#2704) is read and taken out of the address bar before auth-js is created: auth-js reads
-  // `code` from the address on creation and would try to redeem it as its own PKCE code.
-  const hosted = readHostedCallback(window.location);
-  if (hosted) window.history.replaceState(null, '', '/');
+  captureHostedCallback();
+  const hosted = capturedHosted;
+  capturedHosted = null;
   let recovery = false;
   const { data: listener } = auth().onAuthStateChange((event: string) => {
     if (event === 'PASSWORD_RECOVERY') recovery = true;
@@ -261,13 +283,21 @@ export async function settleCallback(): Promise<void> {
 
 // Redeems the hosted login's code and signs this browser in with the session it returns; the failure, or null. The tab is
 // left on the path the login started from.
-async function redeemHosted(callback: NonNullable<ReturnType<typeof readHostedCallback>>): Promise<HostedFailure | 'session' | null> {
+export async function redeemHosted(callback: HostedCallback): Promise<HostedFailure | 'session' | null> {
   const hostedConfig = getConfig().hostedLogin;
-  if (!hostedConfig) return 'missing';
+  if (!hostedConfig) {
+    discardHostedLogin();
+    return 'missing';
+  }
   const result = await completeHostedLogin(callback, { config: hostedConfig, origin: window.location.origin, storage: window.sessionStorage, fetchFn: (input, init) => fetch(input, init) });
   if (!result.ok) return result.reason;
-  const { error } = await auth().setSession({ access_token: result.accessToken, refresh_token: result.refreshToken });
-  if (error) return 'session';
+  try {
+    const { error } = await auth().setSession({ access_token: result.accessToken, refresh_token: result.refreshToken });
+    if (error) return 'session';
+  } catch {
+    // A token that is not a JWT makes auth-js throw rather than answer an error; either way no session was made.
+    return 'session';
+  }
   window.history.replaceState(null, '', result.returnPath);
   return null;
 }

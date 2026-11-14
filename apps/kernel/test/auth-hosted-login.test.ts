@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The hosted login's settings (issue #2704, docs/contracts/hosted-login.md): both addresses or neither, https, the app told, the
 // token endpoint's origin in the policy of the app the kernel serves.
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type pg from 'pg';
 import { describe, expect, it } from 'vitest';
 import type { BlobStore, Runtime } from '@crove/kernel-runtime';
@@ -62,5 +65,30 @@ describe('AUTH_HOSTED_LOGIN_*', () => {
   it('adds only the token endpoint origin to the policy of the app the kernel serves', () => {
     expect(contentSecurityPolicy('/auth/v1', null)).not.toContain('login.example.test');
     expect(contentSecurityPolicy('/auth/v1', null, false, null, 'https://login.example.test')).toContain("connect-src 'self' http://localhost https://login.example.test;");
+  });
+
+  it('sends the served app that policy, and the callback path gets the app like any other deep link', async () => {
+    const dist = mkdtempSync(join(tmpdir(), 'crove-web-'));
+    try {
+      writeFileSync(join(dist, 'index.html'), '<!doctype html><title>app</title>');
+      const served = (env: Record<string, string>) =>
+        createHttpApp({
+          config: loadConfig({ ...BASE, WEB_DIST: dist, ...env }),
+          runtime: { installed: () => true, modules: () => ['kernel'] } as unknown as Runtime,
+          store: {} as BlobStore,
+          authenticate: async () => {
+            throw new Error('not used');
+          },
+          pool: {} as pg.Pool,
+          aiEnabled: false,
+        });
+      const on = await served(URLS).request('/hosted-login/callback?code=abc&state=def');
+      expect(on.status).toBe(200);
+      expect(on.headers.get('content-security-policy')).toContain('https://login.example.test');
+      const off = await served({}).request('/hosted-login/callback');
+      expect(off.headers.get('content-security-policy')).not.toContain('login.example.test');
+    } finally {
+      rmSync(dist, { recursive: true, force: true });
+    }
   });
 });
