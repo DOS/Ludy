@@ -56,7 +56,7 @@ export type MeetingExtensionStatus = z.infer<typeof zMeetingExtensionStatus>;
 export const RECORDING_NOW_WINDOW_HOURS = 4;
 export const zMeetingRecordingNowInput = z.strictObject({});
 export const zMeetingRecordingNow = z.strictObject({
-  recording: z.strictObject({ meetingId: zId, title: z.string(), startedAt: z.string() }).nullable(),
+  recording: z.strictObject({ meetingId: zId, startedAt: z.string() }).nullable(),
 });
 export type MeetingRecordingNow = z.infer<typeof zMeetingRecordingNow>;
 

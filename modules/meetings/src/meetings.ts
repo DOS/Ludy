@@ -603,7 +603,7 @@ export const meetingMediaKeyReseal = defineCommand({
 
 // The recording indicator of the app header (A1, #3159): the caller's own meeting made by the extension that has no audio yet
 // (no media recorded yet, so no end time) and started in the last RECORDING_NOW_WINDOW_HOURS. A person's own meetings only; nothing of any other member. Not sensitive:
-// it returns a title the caller wrote and a start time, and the app asks every few seconds.
+// it returns an id and a start time, never a title, and the app asks every few seconds.
 export const meetingRecordingNow = defineQuery({
   name: 'meetings.meeting.recording_now',
   input: zMeetingRecordingNowInput,
@@ -614,7 +614,7 @@ export const meetingRecordingNow = defineQuery({
     const since = new Date(now.getTime() - RECORDING_NOW_WINDOW_HOURS * 3_600_000);
     const row = await ctx.trx
       .selectFrom('crove_meetings.meeting')
-      .select(['id', 'title', 'started_at'])
+      .select(['id', 'started_at'])
       .where('org_id', '=', ctx.orgId)
       .where('recorder_user_id', '=', userId)
       .where('status', '=', 'ready')
@@ -626,7 +626,7 @@ export const meetingRecordingNow = defineQuery({
       .limit(1)
       .executeTakeFirst();
     return zMeetingRecordingNow.parse({
-      recording: row ? { meetingId: row.id, title: row.title, startedAt: new Date(row.started_at as Date | string).toISOString() } : null,
+      recording: row ? { meetingId: row.id, startedAt: new Date(row.started_at as Date | string).toISOString() } : null,
     });
   },
 });

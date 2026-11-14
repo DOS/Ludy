@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The always-visible recording chip (Meetings A1, #3159): "Đang ghi 12:31" on every screen while this member records, in the
 // app (the recorder screen publishes it) or with the extension (`meetings.meeting.recording_now`, derived from the meeting row).
-// It disappears when the recording stops. It is not an AI surface and shows no meeting content beyond the title the member wrote.
+// It disappears when the recording stops. It is not an AI surface and shows no meeting content, not even a title.
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useEffect, useState, useSyncExternalStore } from 'react';

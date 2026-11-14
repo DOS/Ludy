@@ -1378,7 +1378,7 @@ suite('meetings module database integration tests (#2576)', () => {
     await admin(async (c) => void (await c.query('UPDATE crove_meetings.meeting SET extension_token_id = $1 WHERE id = $2', [randomUUID(), meetingId])));
     const now = await rpc('meetings/recordingNow', 'recorder', {});
     expect(now.status).toBe(200);
-    expect(now.body.recording).toMatchObject({ meetingId, title: 'Recording now' });
+    expect(now.body.recording).toEqual({ meetingId, startedAt: expect.any(String) });
     // Another member sees nothing of it.
     expect((await rpc('meetings/recordingNow', 'attendee', {})).body.recording).toBeNull();
     // Older than the window: not a recording any more.
