@@ -18,7 +18,7 @@ import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 const READ_ONCE = { staleTime: 5 * 60_000, refetchOnWindowFocus: false } as const;
 const NOTES_MAX = 6000;
 
-function Preview({ meetingId, runId, onCopied }: { meetingId: string; runId: string; onCopied: () => void }) {
+export function NotesPreviewPanel({ meetingId, runId, onCopied }: { meetingId: string; runId: string; onCopied: () => void }) {
   const t = useTranslations('meetings');
   const tr = useTranslations('meetings.results');
   const preview = useQuery({ ...orpc.meetings.results.enhancePreview.queryOptions({ input: { meetingId, runId } }), ...READ_ONCE });
@@ -114,7 +114,7 @@ export function MeetingNotes({ meetingId }: { meetingId: string }) {
         {enhance.isPending && <p role="status">{tr('vy.running')}</p>}
         {enhance.error && <ErrorText>{errorMessage(enhance.error)}</ErrorText>}
         {answer?.state === 'failed' && <ErrorText>{`${tr('vy.failed')} ${codeText(tr, answer.errorCode) ?? tr('vy.codes.default')}`}</ErrorText>}
-        {answer?.state === 'ready' && <Preview key={answer.runId} meetingId={meetingId} runId={answer.runId} onCopied={() => enhance.reset()} />}
+        {answer?.state === 'ready' && <NotesPreviewPanel key={answer.runId} meetingId={meetingId} runId={answer.runId} onCopied={() => enhance.reset()} />}
       </CardContent>
     </Card>
   );
