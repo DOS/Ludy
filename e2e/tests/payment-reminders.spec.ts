@@ -63,7 +63,7 @@ test('lists an overdue customer, drafts the reminder, sends it on a click with t
 
   await test.step('book the sale (dated 15/09/2026) with a second factor', async () => {
     await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
-    await nav.getByRole('link', { name: 'Chứng từ', exact: true }).click();
+    await nav.getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ }).click();
     await page.locator('input[type=file]').setInputFiles(INVOICE);
     const proposal = page.getByRole('row').filter({ has: page.getByRole('link', { name: BUYER }) });
     await expect(proposal).toBeVisible({ timeout: 60_000 });

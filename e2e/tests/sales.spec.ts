@@ -39,7 +39,7 @@ test('set the tax code, upload a sales e-invoice, approve it, then find it in th
 
   await test.step('upload the e-invoice the org issued and open the sale proposal', async () => {
     await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
-    await nav.getByRole('link', { name: 'Chứng từ', exact: true }).click();
+    await nav.getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ }).click();
     await page.locator('input[type=file]').setInputFiles(INVOICE);
     const proposal = page.getByRole('row').filter({ has: page.getByRole('link', { name: BUYER }) });
     await expect(proposal).toBeVisible({ timeout: 60_000 });
@@ -65,7 +65,7 @@ test('set the tax code, upload a sales e-invoice, approve it, then find it in th
 
   await test.step('the sale in Documents and the journal', async () => {
     await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
-    await nav.getByRole('link', { name: 'Chứng từ', exact: true }).click();
+    await nav.getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ }).click();
     await page.getByRole('link', { name: 'Tất cả chứng từ' }).click();
     const document = page.getByRole('row').filter({ hasText: 'C26TAB-1234' });
     await expect(document.getByRole('cell')).toHaveText(['15/09/2026', 'C26TAB-1234', 'Bán ra', BUYER, /^1\.800\.000/, /^180\.000/, /^1\.980\.000/, 'Đã ghi sổ', 'Ghi chú']);

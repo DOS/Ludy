@@ -57,7 +57,7 @@ test('set an expiry, find an expired proposal with its reason and ask for it aga
 
   await test.step('the Inbox lists it under "Hết hạn" with its reason, and it cannot be approved', async () => {
     await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
-    await page.getByRole('navigation').getByRole('link', { name: 'Chứng từ', exact: true }).click();
+    await page.getByRole('navigation').getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ }).click();
     await expect(page.getByText('Trích trước tiền điện tháng 10')).toHaveCount(0);
     await page.getByRole('tab', { name: 'Hết hạn' }).click();
     await expect(page.getByText('Hết hạn sau 15 ngày chờ duyệt')).toBeVisible();

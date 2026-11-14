@@ -38,7 +38,7 @@ test('the finance screens follow the legal entity chosen in the sidebar', async 
 
   await test.step('the Inbox is not kept per entity, so the switcher is not shown there', async () => {
     await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
-    await nav.getByRole('link', { name: 'Chứng từ', exact: true }).click();
+    await nav.getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ }).click();
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
     await expect(switcher).toHaveCount(0);
   });

@@ -134,7 +134,7 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
     await expect(vendor.getByRole('cell').first()).toHaveText(`${SELLER}024 3826 0000 · hoadon@example.com`);
 
     await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
-    await nav.getByRole('link', { name: 'Chứng từ', exact: true }).click();
+    await nav.getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ }).click();
     await page.getByRole('link', { name: 'Tất cả chứng từ' }).click();
     const document = page.getByRole('row').filter({ hasText: 'C26TAB-1234' });
     await expect(document).toHaveCount(1);

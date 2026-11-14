@@ -23,7 +23,7 @@ const internetRow = (page: Page) => page.getByRole('row').filter({ hasText: 'Cư
 
 async function openProposal(page: Page, file: ReturnType<typeof invoice>) {
   await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
-  await page.getByRole('navigation').getByRole('link', { name: 'Chứng từ', exact: true }).click();
+  await page.getByRole('navigation').getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ }).click();
   await page.locator('input[type=file]').setInputFiles(file);
   await expect(page.getByRole('link', { name: SELLER })).toBeVisible({ timeout: 60_000 });
   await page.getByRole('link', { name: SELLER }).click();

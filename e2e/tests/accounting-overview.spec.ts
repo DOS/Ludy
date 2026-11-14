@@ -17,7 +17,7 @@ test('the Kế toán app opens on Tổng quan, with every card at 0 for a new or
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/accounting$`));
     await expect(page.getByRole('heading', { name: 'Tổng quan', exact: true })).toBeVisible();
     await expect(nav.getByRole('link', { name: 'Tổng quan tài chính', exact: true })).toBeVisible();
-    await expect(nav.getByRole('link', { name: 'Chứng từ', exact: true })).toBeVisible();
+    await expect(nav.getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ })).toBeVisible();
   });
 
   await test.step('a new org has every card at 0 and points at the first steps, with no sentence from the coworker', async () => {

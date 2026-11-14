@@ -80,7 +80,7 @@ test('fetch the period purchase list and invoice XML from the tax portal', async
 
   await test.step('the downloaded invoices wait in the Inbox', async () => {
     await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
-    await nav.getByRole('link', { name: 'Chứng từ', exact: true }).click();
+    await nav.getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ }).click();
     await expect(page.getByRole('row').filter({ has: page.getByRole('link', { name: SELLER }) })).toHaveCount(2, { timeout: 120_000 });
     await expect(page.getByRole('row').filter({ hasText: 'CÔNG TY CỔ PHẦN VẬT TƯ MẪU' })).toHaveCount(1, { timeout: 60_000 });
   });

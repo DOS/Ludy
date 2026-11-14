@@ -20,7 +20,7 @@ test('with AI off the coworker says so, the line is assigned by hand, and nothin
   const nav = page.getByRole('navigation');
 
   await test.step('post an invoice whose first line is on 156, so it is a goods line that matches no item', async () => {
-    await nav.getByRole('link', { name: 'Chứng từ', exact: true }).click();
+    await nav.getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ }).click();
     await page.locator('input[type=file]').setInputFiles(INVOICE);
     await expect(page.getByRole('link', { name: SELLER })).toBeVisible({ timeout: 60_000 });
     await page.getByRole('link', { name: SELLER }).click();

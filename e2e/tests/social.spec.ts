@@ -87,7 +87,7 @@ test('attaches images to a post, shows them in the preview and keeps them out of
 
   // An image for a post is not a document: the Inbox stays empty.
   await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
-  await page.getByRole('navigation').getByRole('link', { name: 'Chứng từ', exact: true }).click();
+  await page.getByRole('navigation').getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ }).click();
   await expect(page.getByText('mat-tien.png')).toHaveCount(0);
 });
 

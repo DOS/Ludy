@@ -97,7 +97,7 @@ test('import the tax portal purchase list and see which invoices Crove lacks', a
 
   await test.step('upload a purchase e-invoice; it waits in the Inbox', async () => {
     await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
-    await nav.getByRole('link', { name: 'Chứng từ', exact: true }).click();
+    await nav.getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ }).click();
     await page.locator('input[type=file]').setInputFiles(INVOICE);
     await expect(page.getByRole('row').filter({ has: page.getByRole('link', { name: SELLER }) })).toBeVisible({ timeout: 60_000 });
   });

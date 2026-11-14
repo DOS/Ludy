@@ -25,7 +25,7 @@ const invoice = (number: number, month: string) => ({
 
 async function goToInbox(page: Page) {
   await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
-  await page.getByRole('navigation').getByRole('link', { name: 'Chứng từ', exact: true }).click();
+  await page.getByRole('navigation').getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ }).click();
 }
 
 test('a vendor group of clean invoices is approved in one action, and a rule shows how often it was corrected', async ({ page }) => {
