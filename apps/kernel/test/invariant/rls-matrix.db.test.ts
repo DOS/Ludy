@@ -87,8 +87,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_permission_override',
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',
-  // #3165 (meetings integrations B1): a member's own calendar meetings cache. Lands before its table (step 1 of 2).
-  'crove_meetings.calendar_agenda',
   'crove_meetings.live_line',
   'crove_meetings.meeting_link',
   'crove_notes.link',
