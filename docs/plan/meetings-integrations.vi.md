@@ -24,7 +24,7 @@
 
 Hai điểm JOY nên biết:
 
-1. **A2:** hiện nay máy chủ đã từ chối âm thanh khi chưa có xác nhận, nên cài đặt mới chỉ làm chặt hơn cách xác nhận được chấp nhận. Nếu JOY muốn điều gì mạnh hơn thế, xin cho biết.
+1. **A2:** hiện nay máy chủ đã từ chối âm thanh khi chưa có xác nhận, nên cài đặt mới chỉ làm chặt hơn cách xác nhận được chấp nhận (PO Meetings đã quyết như vậy).
 2. **A6 là webhook của từng thành viên, không phải của cả công ty,** vì một cuộc họp chỉ người ghi và người dự đọc được; webhook của cả công ty do chủ đặt sẽ gửi cuộc họp riêng tư tới nơi người dự không chọn. Cách làm giống các kết nối AI của từng thành viên đã có; công ty phải bật công tắc (mặc định tắt).
 
 Việc cần người thật: không cần tài khoản nào. Luật sư đọc câu thông báo và chính sách "chặt" qua việc #2585 đã có.
@@ -32,7 +32,7 @@ Việc cần người thật: không cần tài khoản nào. Luật sư đọc 
 ## Nhóm B: lịch và kênh gửi kết quả (giai đoạn M3)
 
 - **B1, B2: đọc lịch Google để gợi ý "ghi cuộc họp này" (P2).** Dùng lại kết nối Google Calendar đã có, **không thêm kết nối Google thứ hai**. Hiện kết nối chỉ đọc giờ bận, không đọc tên cuộc họp; muốn đọc tên và giờ thì người dùng phải bật một công tắc riêng và đồng ý lại với Google. Trong tiện ích hiện thẻ "Sắp họp: Họp giao ban 9:00 (Google Meet)" với nút "Ghi cuộc họp này"; sau khi ghi xong, Ludy gợi ý "Gắn vào sự kiện lịch này?" khi đúng một sự kiện trùng giờ. **Ludy không bao giờ tự vào họp hay tự ghi theo lịch.** Chỉ lưu tên, giờ, địa chỉ cuộc họp và số người mời (không lưu địa chỉ người mời, không lưu mô tả), trong 1 ngày trước đến 7 ngày sau, chỉ chính thành viên đó đọc được, xoá ngay khi ngắt kết nối. Không dùng AI, có chủ ý: khớp theo giờ trùng, người bấm xác nhận.
-- **B3: lịch Outlook (Microsoft Graph) (P2).** Cùng hình dạng như B1. **Cần PO và JOY lưu ý:** tài liệu phạm vi sản phẩm ([scope.md](../product/scope.md)) xếp lịch Microsoft 365 vào mức "ít doanh nghiệp nhỏ dùng"; vì JOY nêu đích danh Outlook nên vẫn lên kế hoạch, nhưng tách riêng để có thể hạ xuống P3 mà không ảnh hưởng phần còn lại.
+- **B3: lịch Outlook (Microsoft Graph) (P2).** Cùng hình dạng như B1. **Đã được PO Meetings quyết giữ ở P2.** Lưu ý: tài liệu phạm vi sản phẩm ([scope.md](../product/scope.md)) xếp lịch Microsoft 365 vào mức "ít doanh nghiệp nhỏ dùng"; vì JOY nêu đích danh Outlook nên vẫn lên kế hoạch, nhưng tách riêng để có thể hạ xuống P3 mà không ảnh hưởng phần còn lại nếu cần.
 - **B4: đăng biên bản đã duyệt lên Slack và Teams (P2).** Chủ hoặc quản trị dán một địa chỉ webhook (Slack "Incoming Webhook", Teams "Workflows"), cất kín như mật khẩu. Người ghi họp đọc đúng nội dung sẽ đăng rồi bấm "Gửi". Cách này **không cần Ludy đăng ký ứng dụng Slack hay lên Slack Marketplace**, không cần duyệt; chỉ đăng, không bao giờ đọc lịch sử kênh. Không dùng AI: văn bản đã duyệt được gửi nguyên.
 - **B5: gửi biên bản cho khách qua Zalo OA, trong cửa sổ trả lời miễn phí (P2).** Dùng lại Zalo OA đã có trong Hộp thư, **không xây thêm một kết nối Zalo thứ hai**. Nút "Gửi qua Zalo" tạo một bản nháp trả lời trong cuộc trò chuyện của khách (các dòng người ghi chọn), người ghi bấm gửi bằng nút Gửi sẵn có. Quá cửa sổ trả lời thì nút bị khoá kèm lý do, **không gửi tin mẫu hay tin tính tiền**. Không dùng AI.
 - **B6: ZNS (tin thông báo tính tiền của Zalo) (Icebox, P3).** Mỗi tin là tiền thật (báo cáo thấy khoảng 250 đến 360 đồng một tin ở một đối tác, chưa kiểm chứng), cần mẫu Zalo duyệt trước, không có môi trường thử. Chỉ làm khi JOY quyết định chi tiền: khi đó mỗi tin phải đi qua một đồng hồ ngân sách chi tiêu, bị từ chối khi hết ngân sách, và chỉ gửi khi người bấm.
@@ -81,13 +81,16 @@ Dịch ghi chú trực tiếp, thư theo dõi đã dịch, chia sẻ bản dịc
 3. B1 rồi B2; B4 và B5 làm lúc nào cũng được sau khi có cơ chế webhook của A6; B3 sau B1 và B-OA2.
 4. Nhóm C chờ mốc GA gate và chờ ứng dụng nền tảng đầu tiên; thứ tự theo nền tảng khách thí điểm dùng (báo cáo gợi ý Google, Zoom, Microsoft).
 
-## Năm câu PO sẽ hỏi JOY một lần
+## Các câu đã được PO Meetings quyết (2026-11-14) và một câu còn mở
 
-1. "Cần xác nhận trước khi ghi" (A2) có đúng là cài đặt làm chặt cách xác nhận như mô tả, hay JOY muốn điều gì mạnh hơn?
-2. Webhook của từng thành viên (A6) có chấp nhận được thay cho webhook của cả công ty không?
-3. Lịch Outlook (B3) có giữ ở P2 không, khi phạm vi sản phẩm xếp nó vào mức ít doanh nghiệp nhỏ dùng?
-4. ZNS (B6) nằm ở Icebox tới khi JOY quyết định chi tiền, đúng không?
-5. Bản dịch (nhóm E) riêng tư cho từng người đã bấm, ở bản đầu, thay vì một bản chung cho mọi người đọc; cách này tốn một lần dịch cho mỗi người nhưng không bao giờ để Vy của người này ghi chữ cho người khác đọc.
+Bốn câu kế hoạch nêu ra đã được PO Meetings quyết, ghi lại ở đây:
+
+1. **A2:** cài đặt "Cần xác nhận trước khi ghi" chỉ làm chặt cách xác nhận được chấp nhận (chế độ "Chặt"), cộng chỉ báo "đang ghi" luôn hiện của A1; không có gì mạnh hơn.
+2. **A6:** webhook là của từng thành viên, vì lý do nêu ở trên.
+3. **B3:** lịch Outlook giữ ở P2 (JOY đã duyệt nhóm B nguyên khối).
+4. **B6:** ZNS ở Icebox (P3) tới khi JOY quyết định chi tiền; PO sẽ hỏi JOY riêng.
+
+Câu còn mở, dành cho PO Meetings: bản dịch (nhóm E) ở bản đầu riêng tư cho từng người đã bấm, thay vì một bản chung cho mọi người đọc; cách này tốn một lần dịch cho mỗi người nhưng không bao giờ để Vy của người này ghi chữ cho người khác đọc.
 
 Số issue: A1 #3159, A2 #3160, A3 #3161, A4 #3162, A5 #3163, A6 #3164; B1 #3165, B2 #3166, B3 #3167, B4 #3168, B5 #3169, B6 #3170, B-OA1 #3171, B-OA2 #3172; C1 #3173, C2 #3174, C3 #3175, C4 #3176, C-OA1 #3177, C-OA2 #3178, C-OA3 #3179; D1 #3180, D2 #3181, D-OA1 #3182; E1 #3184, E2 #3185, E3 #3186. Chưa việc nào được nhận làm.
 
