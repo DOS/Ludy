@@ -4,6 +4,8 @@
 // store that keeps a recording on the device as it goes, so a reload or a closed tab does not lose it. The screen
 // (routes/meeting-record.tsx) owns the browser APIs; nothing here calls a model, and nothing leaves the device.
 
+import type { RecordingStopReason } from './stop-reason.ts';
+
 export type RecordingKind = 'audio' | 'video';
 
 // Browsers differ: Chrome, Edge and Firefox record WebM (Opus; Firefox audio may be Ogg Opus), Safari records MP4 (AAC).
@@ -108,6 +110,9 @@ export interface RecordingMeta {
   chunkCount: number;
   // Touched while the recording is live (every chunk and a heartbeat), so another tab can tell it is still being written.
   updatedAt: number;
+  // How the recording ended (A1, #3159): 'user' when the recorder clicked stop, a reason code when it ended by itself; absent while
+  // it runs or when nobody saw it end (a closed tab). The upload sends a reason code so the meeting can say it stopped early.
+  stopped?: 'user' | RecordingStopReason;
 }
 
 // Where the chunks live. The screen uses IndexedDB; tests use a map.
@@ -185,6 +190,8 @@ export interface RecordingWriter {
   meta: () => RecordingMeta;
   addChunk(chunk: Blob, elapsedMs: number): Promise<void>;
   touch(elapsedMs: number): Promise<void>;
+  // Records how the recording ended, once (the first word wins), and saves it with the chunks.
+  markStopped(by: 'user' | RecordingStopReason): Promise<void>;
 }
 
 export async function beginRecording(store: ChunkStore, meta: Omit<RecordingMeta, 'chunkCount' | 'elapsedMs' | 'updatedAt'>): Promise<RecordingWriter> {
@@ -210,6 +217,15 @@ export async function beginRecording(store: ChunkStore, meta: Omit<RecordingMeta
         await store.put(current);
       });
       queue = next.catch(() => undefined);
+      return next;
+    },
+    markStopped(by) {
+      // Set at once (the screen reads it right after), saved behind the chunks.
+      if (current.stopped !== undefined) return Promise.resolve();
+      current = { ...current, stopped: by };
+      // Never rejects: the mark is already in memory, and a device too full to save it must not stop the recording from ending.
+      const next = queue.then(() => store.put(current)).catch(() => undefined);
+      queue = next;
       return next;
     },
   };
@@ -289,3 +305,11 @@ export async function prepareCapture<S extends CaptureStream, R extends CaptureR
 
 // Live notes (ADR-0052 L4a): the sender, the audio-only live recorder wrapper and the stop order.
 export * from './live.ts';
+export * from './notice.ts';
+export * from './stop-reason.ts';
+
+// The reason code an upload of this recording carries (A1, #3159): none when the recorder stopped it, the code when it ended by itself,
+// 'unknown' when nobody saw it end (a closed tab, a crash) and it is being recovered.
+export function stopReasonForUpload(meta: Pick<RecordingMeta, 'stopped'>): RecordingStopReason | undefined {
+  return meta.stopped === 'user' ? undefined : (meta.stopped ?? 'unknown');
+}

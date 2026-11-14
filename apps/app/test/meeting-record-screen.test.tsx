@@ -8,6 +8,7 @@ import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
 import { en } from '../src/i18n/messages/en.ts';
 import { catalog } from '../src/i18n/runtime.ts';
+import { RECORDING_NOTICE } from '@crove/meeting-recorder';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
 
@@ -69,6 +70,14 @@ describe('MeetingRecordPage before recording', () => {
     expect(html).toContain(en.meetings.record.liveNotes);
     expect(html).toContain(en.meetings.record.liveNotesHint);
     expect(/id="record-live-notes"[^>]*aria-checked="true"/.test(html)).toBe(false);
+  });
+
+  it('shows the recording notice kit: the text, a copy button, the other language, the draft marker, and the new method (A1, #3159)', () => {
+    expect(html).toContain(RECORDING_NOTICE.text.vi);
+    expect(html).toContain(en.meetings.form.noticeCopy);
+    expect(html).toContain(en.meetings.form.noticeShowEn);
+    expect(html).toContain('#2585');
+    expect(html).toContain(en.meetings.form.inCallChat);
   });
 
   it('says nothing here uses AI', () => {

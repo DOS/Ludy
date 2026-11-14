@@ -13,3 +13,5 @@ button.danger { background: #d92d20; color: #fff; border: 0; border-radius: 4px;
 .error { color: #d92d20; margin: 6px 0; }
 .rec { color: #d92d20; font-weight: 700; }
 .consent { border: 1px solid; border-radius: 6px; padding: 8px; margin: 8px 0; }
+.notice { margin: 4px 0; padding: 6px; border-radius: 4px; background: rgba(127, 127, 127, 0.15); font-style: italic; }
+.lost { border: 1px solid #b54708; border-radius: 6px; padding: 8px; margin: 8px 0; }

@@ -6,6 +6,7 @@
 import { isLocalhost, ludyUrl } from './ludy-address.ts';
 import type { Me } from './features.ts';
 import type { ConsentMethod } from './consent.ts';
+import type { RecordingStopReason } from '@crove/meeting-recorder';
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -43,6 +44,8 @@ export interface MeetingCreate {
   title: string;
   keepVideo: boolean;
   consentMethod: ConsentMethod;
+  // The version of the recording notice text this popup showed; the server stores it on the meeting (A1, #3159).
+  consentNoticeVersion?: string;
   // Live notes (ADR-0052 L4a): the server defaults to off.
   liveNotes: boolean;
 }
@@ -54,7 +57,8 @@ export interface Client {
   createMeeting(input: MeetingCreate): Promise<{ meetingId: string }>;
   // One piece of the audio of a live-notes meeting; throws LudyError with the HTTP status (the live sender retries or gives up by it).
   sendLiveChunk(input: { meetingId: string; seq: number; lengthSeconds: number; blob: Blob }): Promise<void>;
-  uploadMedia(input: { meetingId: string; kind: 'audio' | 'video'; file: File; lengthSeconds: number; uploads: 'presigned' | 'direct' }): Promise<Uploaded>;
+  // `stopReason`: the recording stopped without the member's click (A1, #3159); the server keeps the code on the meeting.
+  uploadMedia(input: { meetingId: string; kind: 'audio' | 'video'; file: File; lengthSeconds: number; uploads: 'presigned' | 'direct'; stopReason?: RecordingStopReason }): Promise<Uploaded>;
 }
 
 export function createClient(address: string, token: string | null, fetchImpl: FetchLike = (input, init) => fetch(input, init)): Client {
@@ -95,7 +99,7 @@ export function createClient(address: string, token: string | null, fetchImpl: F
     },
     async createMeeting(input) {
       // oRPC's wire format: the input in `json`. Language and visibility take the server's defaults of the app's recorder.
-      const body = { json: { title: input.title.trim(), language: 'vi', visibility: 'attendees', keepVideo: input.keepVideo, consentMethod: input.consentMethod, liveNotes: input.liveNotes } };
+      const body = { json: { title: input.title.trim(), language: 'vi', visibility: 'attendees', keepVideo: input.keepVideo, consentMethod: input.consentMethod, ...(input.consentNoticeVersion ? { consentNoticeVersion: input.consentNoticeVersion } : {}), liveNotes: input.liveNotes } };
       const out = (await (await call('/api/rpc/meetings/create', json(body))).json()) as { json?: { meetingId?: unknown } };
       if (typeof out.json?.meetingId !== 'string') throw new LudyError('BAD_RESPONSE', 502, 'Máy chủ trả lời không đúng dạng');
       return { meetingId: out.json.meetingId };
@@ -107,7 +111,7 @@ export function createClient(address: string, token: string | null, fetchImpl: F
       const type = /^audio\/[\w.+-]+$/.test(base) ? base : 'application/octet-stream';
       await call(`/api/meetings/${encodeURIComponent(meetingId)}/live-chunk?${query.toString()}`, { method: 'POST', headers: { 'content-type': type }, body: blob });
     },
-    async uploadMedia({ meetingId, kind, file, lengthSeconds, uploads }) {
+    async uploadMedia({ meetingId, kind, file, lengthSeconds, uploads, stopReason }) {
       const purpose = kind === 'audio' ? 'meeting_audio' : 'meeting_video';
       if (uploads === 'presigned') {
         const grant = (await (await call('/api/files/uploads', json({ purpose }))).json()) as { uploadId: string; url: string; fields: Record<string, string> };
@@ -118,10 +122,11 @@ export function createClient(address: string, token: string | null, fetchImpl: F
         form.append('file', file);
         const stored = await fetchImpl(target.toString(), { method: 'POST', body: form, credentials: 'omit', redirect: 'error' }).catch(() => null);
         if (!stored?.ok) throw new LudyError('STORAGE_UPLOAD_FAILED', stored?.status ?? 0, 'Không tải được tệp lên kho lưu trữ');
-        return (await (await retryWhileBusy(() => call(`/api/meetings/${encodeURIComponent(meetingId)}/media`, json({ uploadId: grant.uploadId, kind, lengthSeconds })))).json()) as Uploaded;
+        return (await (await retryWhileBusy(() => call(`/api/meetings/${encodeURIComponent(meetingId)}/media`, json({ uploadId: grant.uploadId, kind, lengthSeconds, ...(stopReason ? { stopReason } : {}) })))).json()) as Uploaded;
       }
       // The file itself as the body (#2780), sealed by the server as it arrives; the kind and length are in the query.
       const query = new URLSearchParams({ kind, lengthSeconds: String(lengthSeconds) });
+      if (stopReason) query.set('stopReason', stopReason);
       const type = /^(?:audio|video)\/[\w.+-]+$/.test(file.type) ? file.type : 'application/octet-stream';
       return (await (await retryWhileBusy(() => call(`/api/meetings/${encodeURIComponent(meetingId)}/media?${query.toString()}`, { method: 'POST', headers: { 'content-type': type }, body: file }))).json()) as Uploaded;
     },
