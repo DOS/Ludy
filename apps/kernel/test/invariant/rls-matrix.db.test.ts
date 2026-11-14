@@ -2355,11 +2355,14 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     make: (o) => {
       const hookId = randomUUID();
       const id = randomUUID();
+      // A member has at most one webhook, and the member_hook factory's own row is the owner's: this delivery's webhook is another member's.
+      const member = o.freshUser();
       return {
         setup: [
+          { table: 'crove_kernel.tenant_member', values: { org_id: o.id, user_id: member, role: 'member' } },
           {
             table: 'crove_meetings.member_hook',
-            values: { org_id: o.id, id: hookId, user_id: o.owner, url: 'https://hooks.example.com/ludy-minutes', secret_sealed: '{"keyId":"k1","envelope":"AAAAAAAAAAAAAAAA"}', secret_hint: 'whk_00000000' },
+            values: { org_id: o.id, id: hookId, user_id: member, url: 'https://hooks.example.com/ludy-minutes', secret_sealed: '{"keyId":"k1","envelope":"AAAAAAAAAAAAAAAA"}', secret_hint: 'whk_00000000' },
           },
         ],
         row: {
@@ -2518,7 +2521,8 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
-  // #3164 (meetings integrations A6): a member's own webhook for the minutes they publish (the org's owner is the member of the factory's row). Definer-only, in MACHINERY.
+  // #3164 (meetings integrations A6): a member's own webhook for the minutes they publish (the org's owner is the member of the factory's row; at most one per member, so
+  // the row's id has a default and (org_id, user_id) is unique). Definer-only, in MACHINERY.
   'crove_meetings.member_hook': {
     make: (o) => ({
       setup: [],
