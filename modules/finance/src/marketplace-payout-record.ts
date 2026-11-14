@@ -62,7 +62,7 @@ async function checkBankLine(ctx: QueryContext, line: StoredBankLine, legalEntit
   if (line.legalEntityId !== legalEntityId) throw bankLineRefused(422, 'Dòng sao kê này thuộc pháp nhân khác với kỳ đối soát', { reason: 'ENTITY' });
   if (!new Decimal(line.amount).equals(new Decimal(received))) throw bankLineRefused(422, 'Số tiền của dòng sao kê phải đúng bằng số tiền ròng sàn trả của kỳ đối soát', { reason: 'AMOUNT' });
   if (line.date < periodFrom) throw bankLineRefused(422, 'Dòng sao kê này có trước kỳ đối soát nên không phải khoản sàn trả của kỳ', { reason: 'DATE' });
-  const payout = await payoutOfBankLine(ctx, line.id);
+  const payout = await payoutOfBankLine(ctx, line.id, { reversedToo: true });
   if (payout?.state === 'posted' || (pendingToo && payout?.state === 'proposed')) throw bankLineRefused(409, 'Dòng sao kê này đã dùng cho một khoản sàn trả', { reason: 'PAYOUT' });
   const state = (await bankLineStates(ctx, [line.id])).get(line.id);
   if (state?.status === 'matched') throw bankLineRefused(409, `Dòng sao kê này đã có chứng từ ${state.code}`, { reason: 'MATCHED' });
@@ -109,8 +109,8 @@ async function buildPayout(ctx: QueryContext, maps: Maps, settlementId: string, 
     .select('j.id')
     .where('j.org_id', '=', ctx.orgId)
     .where('j.payout_settlement_id', '=', settlement.id)
-    .where(sql<boolean>`NOT ${reversedSource('j', JOURNAL_VOUCHER_SOURCE)}`)
     .executeTakeFirst();
+  // Any payout voucher counts, reversed or not, as the settlement's own posting does (the database holds one per settlement for good): a reversed payout is not posted again here, the accountant handles it.
   if (paid) throw new DomainError('MARKETPLACE_PAYOUT_POSTED', 409, 'Khoản sàn trả của kỳ đối soát này đã được ghi sổ');
   const lockedThrough = await periodLockedThrough(ctx, settlement.legal_entity_id);
   if (lockedThrough && line.date <= lockedThrough) {

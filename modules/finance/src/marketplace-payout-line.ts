@@ -9,15 +9,12 @@ import { reversedSource } from './source-entry.ts';
 
 export type PayoutOfLine = { state: 'posted'; voucherId: string } | { state: 'proposed'; proposalId: string } | null;
 
-// The payout voucher that names the line and whose entry is not reversed, else a pending payout proposal that names it, else null.
-export async function payoutOfBankLine(ctx: QueryContext, bankLineId: string): Promise<PayoutOfLine> {
-  const posted = await ctx.trx
-    .selectFrom('crove_finance.journal_voucher as j')
-    .select('j.id')
-    .where('j.org_id', '=', ctx.orgId)
-    .where('j.payout_bank_line_id', '=', bankLineId)
-    .where(sql<boolean>`NOT ${reversedSource('j', JOURNAL_VOUCHER_SOURCE)}`)
-    .executeTakeFirst();
+// The payout voucher that names the line and whose entry is not reversed, else a pending payout proposal that names it, else null. With `reversedToo`, a payout voucher whose entry was reversed counts as
+// well: the database allows one payout voucher per line for good (20261231090000), so the payout's own check must refuse a line that held one, though a bank voucher may take it again.
+export async function payoutOfBankLine(ctx: QueryContext, bankLineId: string, options: { reversedToo?: boolean } = {}): Promise<PayoutOfLine> {
+  let query = ctx.trx.selectFrom('crove_finance.journal_voucher as j').select('j.id').where('j.org_id', '=', ctx.orgId).where('j.payout_bank_line_id', '=', bankLineId);
+  if (!options.reversedToo) query = query.where(sql<boolean>`NOT ${reversedSource('j', JOURNAL_VOUCHER_SOURCE)}`);
+  const posted = await query.executeTakeFirst();
   if (posted) return { state: 'posted', voucherId: posted.id };
   const proposed = await ctx.trx
     .selectFrom('crove_kernel.proposal')

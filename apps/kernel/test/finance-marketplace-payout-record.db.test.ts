@@ -250,6 +250,22 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     await expect(rows(`INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, payout_settlement_id, payout_bank_line_id) VALUES ($1, '2026-10-20', 'x', $2, $3, $4)`, [o.orgId, first.proposalId, randomUUID(), line])).rejects.toMatchObject({ code: '23505' });
   });
 
+  it('does not post a reversed payout again: the settlement and the line stay with it, and a bank voucher may take the freed line', async () => {
+    const { o, settlement, line } = await posted();
+    const done = await approve(o, (await ask(o, settlement, line)).proposalId);
+    // The accountant reverses the payout (a wrong line, for instance) through the ordinary reversal.
+    const asked = await rt.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.journal.reverse', input: { entryId: done.journalEntryId, entryDate: '2026-10-21', reason: 'Nhầm dòng sao kê' } }, { actor: asUser(o.admin), orgId: o.orgId, idempotencyKey: randomUUID() });
+    await approve(o, asked.proposalId);
+    expect((await rows('SELECT 1 FROM crove_finance.journal_entry WHERE org_id = $1 AND reverses_entry_id = $2', [o.orgId, done.journalEntryId])).length).toBe(1);
+    // Asking again is refused cleanly at the request (the database holds one payout voucher per settlement and per line for good), never as a unique violation at the approval.
+    await expect(ask(o, settlement, line)).rejects.toMatchObject({ code: 'MARKETPLACE_PAYOUT_POSTED', status: 409 });
+    const other = await bankLine(o, '2026-10-21', RECEIVED);
+    await expect(ask(o, settlement, other)).rejects.toMatchObject({ code: 'MARKETPLACE_PAYOUT_POSTED', status: 409 });
+    expect(await payoutsOf(o, settlement)).toHaveLength(1);
+    // The freed line is open for a bank voucher again.
+    await expect(rt.execute('kernel.proposal.request', { command: 'finance.voucher.record', input: { type: 'bank_credit', date: '2026-10-20', cashAccount: '1121', description: 'thu lại', lines: [{ account: '711', amount: RECEIVED }], bankLineId: line } }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() })).resolves.toMatchObject({ proposalId: expect.any(String) });
+  });
+
   it('refuses a line a bank voucher already took', async () => {
     const { o, settlement, line } = await posted();
     const voucher = await rt.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.voucher.record', input: { type: 'bank_credit', date: '2026-10-20', cashAccount: '1121', description: 'thu tiền sàn', lines: [{ account: '711', amount: RECEIVED }], bankLineId: line } }, { actor: asUser(o.admin), orgId: o.orgId, idempotencyKey: randomUUID() });

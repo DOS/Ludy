@@ -2,7 +2,7 @@
 -- Crove finance (issue #2516): the trigger and the ledger effect of the posting of a marketplace payout. Idempotent; applied files stay untouched.
 --
 -- crove_finance.effect_proposal_check          the journal voucher's trigger lists the new command, so a voucher may name a proposal only when that proposal is executing one of the commands that
---                                              post vouchers: the body of 20261231071600 (the trigger's arguments) with the command added (the list is the trigger's arguments).
+--                                              post vouchers: the list is the trigger's arguments, those of 20261231071600 with the command added.
 -- crove_finance.ledger_effect_recorded         the body of 20261231071600 (which carries the marketplace settlement branch) with the branch for the new command: its effect is a voucher naming the settlement it pays and the bank line, with its entry, stored in this transaction.
 SET LOCAL lock_timeout = '2s';
 
