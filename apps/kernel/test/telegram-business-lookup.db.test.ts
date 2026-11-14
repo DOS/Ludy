@@ -15,7 +15,7 @@ import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove
 import { CredentialVault, Runtime, parseVaultKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
-import { BUSINESS_LOOKUP_PER_CONNECTION, BUSINESS_LOOKUP_WINDOW_MS, runConversationIntake, runTelegramChatHook, type BusinessLookup } from '../src/conversations-worker.ts';
+import { BUSINESS_LOOKUP_PER_CONNECTION, BUSINESS_LOOKUP_PER_PASS, BUSINESS_LOOKUP_WINDOW_MS, runConversationIntake, runTelegramChatHook, type BusinessLookup } from '../src/conversations-worker.ts';
 import { createHttpApp } from '../src/http.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -248,16 +248,47 @@ suite('Telegram Business connection read back on PostgreSQL (#3224)', () => {
     for (const secret of [TOKEN, '555555555:', REFUSED, ...ids, 'not found', 'Unauthorized', 'Bad Gateway', 'api.telegram.org']) expect(text).not.toContain(secret);
   });
 
-  it('gives one connection at most a few lookups in a window, however many ids its messages name', async () => {
+  it('makes a few lookups in one pass and gives one connection at most a few in a window, however many ids its messages name', async () => {
     const t = telegram();
     const lookup = lookupWith(t);
-    const many = Array.from({ length: BUSINESS_LOOKUP_PER_CONNECTION + 3 }, (_, i) => `Flood-${i}_x=`);
-    for (const [i, id] of many.entries()) expect((await post(business(`Ngập ${i}`, { chat: 3100 + i, messageId: 1, connectionId: id }))).status).toBe(200);
-    await intake(lookup);
+    const flood = async (round: number) => {
+      for (let i = 0; i < BUSINESS_LOOKUP_PER_PASS + 3; i++) expect((await post(business(`Ngập ${round}.${i}`, { chat: 3100 + round * 20 + i, messageId: 1, connectionId: `Flood-${round}-${i}_x=` }))).status).toBe(200);
+      await intake(lookup);
+    };
+    // One pass: the notices over the pass's share are ignored, not asked.
+    await flood(0);
+    expect(t.calls).toHaveLength(BUSINESS_LOOKUP_PER_PASS);
+    await flood(1);
+    expect(t.calls).toHaveLength(Math.min(2 * BUSINESS_LOOKUP_PER_PASS, BUSINESS_LOOKUP_PER_CONNECTION));
+    // The connection's share of the window is spent: new ids are not asked until it passes.
+    await flood(2);
     expect(t.calls).toHaveLength(BUSINESS_LOOKUP_PER_CONNECTION);
-    // The ones that were over the cap are asked in the next window, not at once.
+    clock += BUSINESS_LOOKUP_WINDOW_MS + 1;
+    await flood(3);
+    expect(t.calls).toHaveLength(BUSINESS_LOOKUP_PER_CONNECTION + BUSINESS_LOOKUP_PER_PASS);
+  });
+
+  it('does not let a lookup answer overwrite a business_connection update recorded while Telegram was being asked', async () => {
+    const id = 'Raced-555_x=';
+    const t = telegram({ getBusinessConnection: [answer(id)] });
+    const inner = lookupWith(t);
+    const real = inner.adapter('telegram');
+    const lookup: BusinessLookup = {
+      ...inner,
+      adapter: () => ({
+        provider: 'telegram',
+        reply: (input) => (real as NonNullable<typeof real>).reply(input),
+        // The owner disconnects the chatbot in Telegram while the answer is on its way: the update is recorded first.
+        businessConnection: async (input) => {
+          const reported = await (real as NonNullable<typeof real>).businessConnection?.(input);
+          await worker.execute('kernel.channel.telegram_business_record', { connectionId, account: { id, userId: String(OWNER_TG), name: null, username: null, canReply: false, enabled: false } }, { actor: { type: 'system', component: 'test' }, orgId });
+          return reported as NonNullable<typeof reported>;
+        },
+      }),
+    };
+    expect((await post(business('Tin đang đua', { chat: 3400, messageId: 1, connectionId: id }))).status).toBe(200);
     await intake(lookup);
-    expect(t.calls).toHaveLength(BUSINESS_LOOKUP_PER_CONNECTION);
+    expect((await accounts()).find((a) => a.id === id)).toMatchObject({ enabled: false, canReply: false, approved: false });
   });
 
   it('does not look anything up for a business_connection update, a bot chat message, or a connection whose chats are off', async () => {

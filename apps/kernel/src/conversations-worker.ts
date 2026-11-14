@@ -108,12 +108,15 @@ export interface IntakeDeps {
 // call, never logged), and records an enabled answer exactly as the update would have: as an account nobody has allowed yet (the person's allowing is never
 // skipped, and a message that came before it is not kept, plan 4.2 point 9). A disabled, unknown or failed answer records nothing. At most one lookup per
 // connection and id in a window, and a few per connection in it, so a flood of messages (or of ids) is not a flood of calls to Telegram; a failure counts as the
-// lookup. The window is kept in this process: another worker process may ask once more, which is the same bounded cost.
+// lookup, and one pass makes a few at most. The window is kept in this process: another worker process may ask once more, which is the same bounded cost.
 // ---------------------------------------------------------------------------------------------------------------------
 
 // How long an id that was looked up is not looked up again, and how many lookups one connection gets in that time.
 export const BUSINESS_LOOKUP_WINDOW_MS = 10 * 60_000;
 export const BUSINESS_LOOKUP_PER_CONNECTION = 10;
+// The most lookups one intake pass makes: each can wait on Telegram's deadline, and a pass must end well inside its notices' lease. A notice past this is
+// taken as an unknown connection (ignored); the next message of that id looks it up.
+export const BUSINESS_LOOKUP_PER_PASS = 5;
 const BUSINESS_LOOKUP_TRACKED = 2000;
 
 export interface BusinessLookup {
@@ -143,10 +146,11 @@ function takeBusinessLookup(deps: BusinessLookup, connectionId: string, id: stri
 }
 
 // Looks the connection up and records it. Returns what became of it, a short word for the log: nothing of Telegram's answer, the id or the token is in it.
-async function readBackBusinessConnection(deps: IntakeDeps, lookup: BusinessLookup, target: { orgId: string; connectionId: string }, id: string): Promise<string> {
+async function readBackBusinessConnection(deps: IntakeDeps, lookup: BusinessLookup, budget: { left: number }, target: { orgId: string; connectionId: string }, id: string): Promise<string> {
   const options = { actor: SYSTEM, orgId: target.orgId };
   const known = await deps.runtime.query<{ lookup: boolean }>('kernel.channel.telegram_business_known', { connectionId: target.connectionId, id }, options);
   if (!known.lookup) return 'known';
+  if (budget.left <= 0) return 'limited';
   if (!takeBusinessLookup(lookup, target.connectionId, id)) return 'limited';
   let opened: Opened;
   try {
@@ -157,6 +161,7 @@ async function readBackBusinessConnection(deps: IntakeDeps, lookup: BusinessLook
   if (opened.kind === 'refused') return `failed:${opened.code}`;
   const adapter = lookup.adapter('telegram');
   if (!adapter?.businessConnection) return 'failed:NO_ADAPTER';
+  budget.left--;
   let answer;
   try {
     answer = await adapter.businessConnection({ secret: opened.secret, businessConnectionId: id });
@@ -166,6 +171,9 @@ async function readBackBusinessConnection(deps: IntakeDeps, lookup: BusinessLook
   if (answer.kind === 'failed') return `failed:${answer.code}`;
   // A connection that is off stays ignored, as one Telegram reported off would.
   if (!answer.state.enabled) return 'disabled';
+  // A `business_connection` update may have been recorded while Telegram was asked: it is newer than this answer, and the account is no longer unknown.
+  const again = await deps.runtime.query<{ lookup: boolean }>('kernel.channel.telegram_business_known', { connectionId: target.connectionId, id }, options);
+  if (!again.lookup) return 'known';
   const { userId, name, username, canReply, enabled } = answer.state;
   const recorded = await deps.runtime.execute<{ applied: boolean }>('kernel.channel.telegram_business_record', { connectionId: target.connectionId, account: { id: answer.state.id, userId, name: name ?? null, username: username ?? null, canReply, enabled } }, options);
   return recorded.applied ? 'recorded' : 'not_recorded';
@@ -179,6 +187,7 @@ const isPermanent = (error: unknown): boolean => error instanceof DomainError &&
 export async function runConversationIntake(deps: IntakeDeps): Promise<{ stored: number; dropped: number }> {
   const log = deps.log ?? ((message: string) => console.log(`[conversations] ${message}`));
   const out = { stored: 0, dropped: 0 };
+  const lookups = { left: BUSINESS_LOOKUP_PER_PASS };
   // The notices the database dropped (poison or too old), by id: a body is personal data, so an alert names ids and counts only.
   const lost: ClaimedNotice[] = [];
   for (const notice of await claimNotices(deps.workerDb)) {
@@ -224,7 +233,7 @@ export async function runConversationIntake(deps: IntakeDeps): Promise<{ stored:
           }
           if (parsed.events.length === 0) continue;
           if (parsed.businessConnectionId && !parsed.businessState && deps.businessLookup && notice.provider === 'telegram_chat') {
-            const outcome = await readBackBusinessConnection(deps, deps.businessLookup, target, parsed.businessConnectionId);
+            const outcome = await readBackBusinessConnection(deps, deps.businessLookup, lookups, target, parsed.businessConnectionId);
             if (outcome !== 'known' && outcome !== 'limited') log(`a telegram business connection read back: ${outcome}`);
           }
           const done = await deps.runtime.execute<{ stored: number }>(
