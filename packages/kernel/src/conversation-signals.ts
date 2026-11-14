@@ -14,10 +14,11 @@
 // refuses instead, and the rule reports "could not check".
 //
 // "Unanswered" is the inbox's own state: status `new`, the customer wrote last and nobody has answered or resolved. The wait counts from the oldest customer message after
-// the last message of the org's (any outbound message, whatever its delivery state: the thread is `pending` from the moment a reply is queued). A message the customer removed
+// the last message of the org's (any outbound message, whatever its delivery state: the thread is `pending` from the moment a reply is queued), restarted by a silence longer than the
+// window (a person resolving a thread is not an answer, so a customer who comes back to a handled thread after a day starts a new wait). A message the customer removed
 // or the org hid does not wait. The instant is the later of the platform's time and the arrival time, so a mail whose Date header is years old never makes a thread look
 // older than it is (the same care the thread's own activity time takes).
-import { zConversationUnansweredSignals, zConversationUnansweredSignalsInput, type ConversationUnansweredSignal } from '@crove/kernel-contract';
+import { CONVERSATION_REPLY_WINDOW_HOURS, zConversationUnansweredSignals, zConversationUnansweredSignalsInput, type ConversationUnansweredSignal } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { sql } from 'kysely';
 import { DomainError, defineQuery } from '@crove/kernel-runtime';
@@ -35,12 +36,17 @@ export const conversationUnansweredSignals = defineQuery({
       SELECT DISTINCT ON (c.party_id) c.party_id, c.id AS conversation_id, w.since
       FROM crove_kernel.conversation c
       CROSS JOIN LATERAL (
-        SELECT pg_catalog.min(GREATEST(m.sent_at, m.received_at)) AS since
-        FROM crove_kernel.conversation_message m
-        WHERE m.org_id = c.org_id AND m.conversation_id = c.id AND m.direction = 'in'
-          AND m.platform_removed_at IS NULL AND m.hidden_at IS NULL
-          AND m.seq > COALESCE((SELECT pg_catalog.max(o.seq) FROM crove_kernel.conversation_message o
-                                WHERE o.org_id = c.org_id AND o.conversation_id = c.id AND o.direction = 'out'), 0)
+        -- The wait starts at the last message that follows a gap longer than the window: a person's "resolved" is not an answer, so a thread the customer came back to after a silence of a full window
+        -- (handled by phone, then resolved, then written to again) waits from that return and not from the message that was already handled.
+        SELECT pg_catalog.max(x.at) FILTER (WHERE x.prev IS NULL OR x.at - x.prev > pg_catalog.make_interval(hours => ${CONVERSATION_REPLY_WINDOW_HOURS}::int)) AS since
+        FROM (
+          SELECT GREATEST(m.sent_at, m.received_at) AS at, pg_catalog.lag(GREATEST(m.sent_at, m.received_at)) OVER (ORDER BY m.seq) AS prev
+          FROM crove_kernel.conversation_message m
+          WHERE m.org_id = c.org_id AND m.conversation_id = c.id AND m.direction = 'in'
+            AND m.platform_removed_at IS NULL AND m.hidden_at IS NULL
+            AND m.seq > COALESCE((SELECT pg_catalog.max(o.seq) FROM crove_kernel.conversation_message o
+                                  WHERE o.org_id = c.org_id AND o.conversation_id = c.id AND o.direction = 'out'), 0)
+        ) x
       ) w
       WHERE c.org_id = ${ctx.orgId}::uuid AND c.status = 'new' AND w.since IS NOT NULL
         AND c.party_id IN (${sql.join(input.partyIds.map((id) => sql`${id}::uuid`))})

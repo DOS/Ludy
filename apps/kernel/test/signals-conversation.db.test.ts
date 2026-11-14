@@ -62,7 +62,7 @@ suite('the unanswered conversation rule on Home, end to end (#3124)', () => {
       await exec<Deal>(owner, 'crm.deal.move', { dealId: deal.id, version: deal.version, stageId: (await stage(stageName)).id });
     }
     // A thread of `partyId` whose messages arrived `hoursAgo` hours before now: [direction, hoursAgo] in order. The last of the thread decides its status as the inbox's own rule does (the customer last: new).
-    async function thread(partyId: string | null, messages: Array<['in' | 'out', number]>, over: { channelId?: string; kind?: 'direct' | 'comment_thread'; status?: 'new' | 'pending' | 'resolved'; hidden?: boolean } = {}): Promise<string> {
+    async function thread(partyId: string | null, messages: Array<['in' | 'out', number] | ['in' | 'out', number, number]>, over: { channelId?: string; kind?: 'direct' | 'comment_thread'; status?: 'new' | 'pending' | 'resolved'; hidden?: boolean; removed?: boolean } = {}): Promise<string> {
       const id = randomUUID();
       const last = messages.at(-1)?.[0];
       const status = over.status ?? (last === 'in' ? 'new' : 'pending');
@@ -73,11 +73,12 @@ suite('the unanswered conversation rule on Home, end to end (#3124)', () => {
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, ${status === 'resolved' ? 'now()' : 'NULL'}, now(), now())`,
           [orgId, id, over.channelId ?? open, over.kind ?? 'comment_thread', `t-${id}`, partyId, status, messages.length],
         );
-        for (const [i, [direction, hours]] of messages.entries()) {
+        for (const [i, [direction, hours, receivedHours]] of messages.entries()) {
           const at = `now() - make_interval(secs => ${Math.round(hours * 3600)})`;
+          const arrived = `now() - make_interval(secs => ${Math.round((receivedHours ?? hours) * 3600)})`;
           await c.query(
-            `INSERT INTO crove_kernel.conversation_message (org_id, conversation_id, channel_connection_id, kind, seq, direction, sent_at, received_at, author_kind, author_user_id, body, send_state, hidden_at)
-             VALUES ($1, $2, $3, $4, $5, $6, ${at}, ${at}, $7, NULL, $8, $9, ${over.hidden && direction === 'in' ? 'now()' : 'NULL'})`,
+            `INSERT INTO crove_kernel.conversation_message (org_id, conversation_id, channel_connection_id, kind, seq, direction, sent_at, received_at, author_kind, author_user_id, body, send_state, hidden_at, platform_removed_at)
+             VALUES ($1, $2, $3, $4, $5, $6, ${at}, ${arrived}, $7, NULL, $8, $9, ${over.hidden && direction === 'in' ? 'now()' : 'NULL'}, ${over.removed && direction === 'in' ? 'now()' : 'NULL'})`,
             [orgId, id, over.channelId ?? open, over.kind ?? 'comment_thread', i + 1, direction, direction === 'in' ? 'contact' : 'system', direction === 'in' ? SECRET : 'Dạ em gửi báo giá ạ', direction === 'in' ? null : 'sent'],
           );
         }
@@ -122,8 +123,8 @@ suite('the unanswered conversation rule on Home, end to end (#3124)', () => {
 
   it('fires for a customer unanswered 25 hours on an open deal, and not on its near misses', async () => {
     const o = await org();
-    const [late, recent, answered, wonDeal, lostDeal, noDeal, resolved, hiddenOnly, noContact] = [await o.party('A'), await o.party('B'), await o.party('C'), await o.party('D'), await o.party('E'), await o.party('F'), await o.party('G'), await o.party('H'), await o.party('I')];
-    for (const p of [late, recent, answered, resolved, hiddenOnly, noContact]) await o.openDeal(p);
+    const [late, recent, answered, wonDeal, lostDeal, noDeal, resolved, hiddenOnly, noContact, removedOnly, lateArrival, answeredStaleStatus] = [await o.party('A'), await o.party('B'), await o.party('C'), await o.party('D'), await o.party('E'), await o.party('F'), await o.party('G'), await o.party('H'), await o.party('I'), await o.party('J'), await o.party('K'), await o.party('L')];
+    for (const p of [late, recent, answered, resolved, hiddenOnly, noContact, removedOnly, lateArrival, answeredStaleStatus]) await o.openDeal(p);
     await o.closedDeal(wonDeal, 'Thắng');
     await o.closedDeal(lostDeal, 'Thua');
     const lateThread = await o.thread(late, [['in', 25]]);
@@ -135,6 +136,9 @@ suite('the unanswered conversation rule on Home, end to end (#3124)', () => {
     await o.thread(resolved, [['in', 40]], { status: 'resolved' }); // a person closed it
     await o.thread(hiddenOnly, [['in', 40]], { hidden: true }); // the only message was hidden by the org
     await o.thread(null, [['in', 40]]); // a thread with no contact set joins nothing
+    await o.thread(removedOnly, [['in', 40]], { removed: true }); // the customer removed their only message
+    await o.thread(lateArrival, [['in', 40, 10]]); // written 40 h ago by the platform's clock but only stored 10 h ago: the later time counts
+    await o.thread(answeredStaleStatus, [['in', 30], ['out', 26]], { status: 'new' }); // the status says new but an answer follows the message: nothing waits
     expect(noContact).toBeTruthy();
     expect(fired(await o.home(o.owner))).toEqual([late]);
     const item = (await o.home(o.owner)).find((i) => i.id === `${RULE}${late}`);
@@ -160,6 +164,22 @@ suite('the unanswered conversation rule on Home, end to end (#3124)', () => {
     expect(items.find((i) => i.id === `${RULE}${partyB}`)).toMatchObject({ title: { params: { hours: 48 } }, href: `/social/inbox?c=${older}` });
     // Longest wait first on Home.
     expect(items.filter((i) => i.id.startsWith(RULE)).map((i) => i.id.slice(RULE.length))).toEqual([partyB, partyA]);
+  });
+
+  it('restarts the wait when the customer comes back to a handled thread after a silence longer than the window (a resolve is not an answer)', async () => {
+    const o = await org();
+    const [handled, silent, chatty] = [await o.party('A'), await o.party('B'), await o.party('C')];
+    for (const p of [handled, silent, chatty]) await o.openDeal(p);
+    // Answered by phone 72 h ago and resolved with no reply in the inbox; the customer wrote again 1 h ago (the thread reopened as new): the wait is 1 hour, so nothing fires.
+    await o.thread(handled, [['in', 72], ['in', 1]]);
+    // The same, but the customer's return is 30 h old: the wait counts from the return, not from the handled message.
+    await o.thread(silent, [['in', 72], ['in', 30]]);
+    // Messages less than a window apart are one wait, counted from the first.
+    await o.thread(chatty, [['in', 40], ['in', 20], ['in', 5]]);
+    const items = await o.home(o.owner);
+    expect(fired(items).sort()).toEqual([silent, chatty].sort());
+    expect(items.find((i) => i.id === `${RULE}${silent}`)?.title.params).toEqual({ hours: 30 });
+    expect(items.find((i) => i.id === `${RULE}${chatty}`)?.title.params).toEqual({ hours: 40 });
   });
 
   it('shows a member only the threads they may read: a private message without the permission and a channel they are limited away from give them no flag', async () => {
