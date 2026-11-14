@@ -107,9 +107,27 @@ describe('the Sàn screen (#2516)', () => {
       expect(html).toContain('Stored settlements waiting to be posted: 2');
       expect(html).not.toContain('data-testid="marketplace-line-text"');
       expect(html).not.toContain('data-testid="marketplace-line-ai-state"');
-      // Before the facts arrive nothing is invented.
+      // Before the facts arrive the line says it is reading, and invents nothing.
       cache.current.clear();
-      expect(render({ rows: [] }, 'en', null, null)).not.toContain('data-testid="marketplace-line"');
+      const waiting = render({ rows: [] }, 'en', null, null);
+      expect(waiting).toContain('data-testid="marketplace-line-loading"');
+      expect(waiting).not.toContain('data-testid="marketplace-line"');
+    });
+
+    it('does not show an older sentence beside facts that have changed since', () => {
+      // The cached sentence was written for 2 settlements; the facts now say 1.
+      const html = render({ rows: [] }, 'en', line(), { ...FACTS, settlementsToPost: 1 });
+      expect(html).toContain('Stored settlements waiting to be posted: 1');
+      expect(html).not.toContain('data-testid="marketplace-line-text"');
+      cache.current.clear();
+      const busy = render({ rows: [] }, 'en', line({ ai: 'busy', text: null }), { ...FACTS, settlementsToPost: 1 });
+      expect(busy).not.toContain('data-testid="marketplace-line-ai-state"');
+    });
+
+    it('treats less than half a dong as nothing, as the coworker is told', () => {
+      const html = render({ rows: [] }, 'en', line({ facts: { settlementsToPost: 0, awaitingPayout: '0.4', feesAwaitingInvoice: '0' }, ai: 'none', text: null }));
+      expect(html).toContain('Nothing is waiting here.');
+      expect(html).not.toContain('Platforms still owe');
     });
 
     it('shows the facts alone with AI off, and leaves out a fact that is zero', () => {

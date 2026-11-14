@@ -1005,6 +1005,8 @@ export const vi = {
     lineAwaiting: 'Sàn còn nợ: {amount}',
     lineFees: 'Phí đang chờ hóa đơn: {amount}',
     lineNothing: 'Hiện không có gì đang chờ.',
+    lineLoading: 'Đang đọc điều đang chờ...',
+    lineError: 'Chưa đọc được điều đang chờ. Bảng bên dưới không bị ảnh hưởng; hãy thử lại sau ít phút.',
     lineNote: '{finance} chỉ đọc các số này từ sổ sách và không ghi sổ giúp; bạn quyết định ghi gì.',
     lineAi: {
       busy: '{finance} đang bận, tạm thời chỉ có các số ở trên.',

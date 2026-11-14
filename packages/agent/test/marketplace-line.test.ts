@@ -57,6 +57,11 @@ describe('the sentence the model gives', () => {
     expect(code('Sàn còn nợ 3 đồng.')).toBe('FIGURES');
     expect(code('Có 1.600.000 kỳ đối soát chờ ghi sổ.')).toBe('BINDING');
     expect(code('Sàn còn nợ 1.600.000 đồng, phí chờ hóa đơn 120.000 đồng, còn 120.000 đồng sàn nợ.')).toBe('BINDING');
+    // The nearest cue decides, wherever it stands: "fees" after the amount beats a distant "outstanding".
+    expect(code('500,000 dong in fees remain outstanding.', { ...EN, awaitingPayout: '500000', feesAwaitingInvoice: '120000' })).toBe('BINDING');
+    expect(code('1,600,000 dong of fees are waiting for an invoice.', EN)).toBe('BINDING');
+    expect(code('120,000 dong of fees are waiting for an invoice.', EN)).toBe('KEPT');
+    expect(code('The platforms still owe 1,600,000 dong in all.', EN)).toBe('KEPT');
     // A number with no thing beside it at all.
     expect(code('Có 2 việc đang chờ.')).toBe('BINDING');
     // A count equal to another figure only counts where a settlement word stands.
@@ -87,6 +92,11 @@ describe('the sentence the model gives', () => {
       'Đã khớp 2 kỳ đối soát.',
       'Đã xử lý xong 2 kỳ đối soát.',
       'Phí 120.000 đồng đã ghi nhận.',
+      'Kỳ đối soát vừa được ghi sổ.',
+      'Kỳ đối soát mới được duyệt.',
+      'Các kỳ đối soát được ghi sổ.',
+      'Ghi sổ xong các kỳ đối soát.',
+      'Phí chờ hóa đơn thì đã xong rồi.',
     ]) {
       expect(code(text), text).toBe('CLAIM');
     }
@@ -105,6 +115,7 @@ describe('the sentence the model gives', () => {
       expect(code(text, EN), text).toBe('CLAIM');
     }
     // Still to come is a fact, not a claim.
+    expect(code('Có 2 kỳ đối soát đã lưu đang chờ được ghi sổ.')).toBe('KEPT');
     expect(code('2 stored settlements are waiting to be posted and 120,000 dong of fees are yet to be matched to an invoice.', EN)).toBe('KEPT');
     expect(code('2 stored settlements are not yet posted.', EN)).toBe('KEPT');
   });

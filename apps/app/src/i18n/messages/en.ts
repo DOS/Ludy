@@ -1007,6 +1007,8 @@ export const en = {
     lineAwaiting: 'Platforms still owe: {amount}',
     lineFees: 'Fees awaiting an invoice: {amount}',
     lineNothing: 'Nothing is waiting here.',
+    lineLoading: 'Reading what is waiting...',
+    lineError: 'Could not read what is waiting. The table below is not affected; try again in a moment.',
     lineNote: '{finance} only reads these figures from the books and posts nothing; you decide what to post.',
     lineAi: {
       busy: '{finance} is busy, the figures above stand alone for now.',
