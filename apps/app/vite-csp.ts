@@ -9,6 +9,7 @@
 // header governs the page:
 //   VITE_API_URL          the API's origin (also read by the app, src/lib/api-base.ts)
 //   VITE_AUTH_URL         Supabase Auth's URL when it is not the API's (the origin is allowed); default: the API's origin
+//   VITE_HOSTED_LOGIN_ORIGIN the origin of the hosted login's token endpoint (AUTH_HOSTED_LOGIN_TOKEN_URL) the browser calls
 //   VITE_STORAGE_ORIGIN   the bucket's public origin when files go to and from it by presigned URL (S3_PUBLIC_ENDPOINT)
 //   VITE_TURNSTILE        true when the booking page shows Cloudflare Turnstile (TURNSTILE_SITE_KEY)
 import type { Plugin } from 'vite';
@@ -29,6 +30,7 @@ export interface CspOrigins {
   apiOrigin: string;
   authOrigin?: string | undefined;
   storageOrigin?: string | undefined;
+  hostedLoginOrigin?: string | undefined;
   turnstile?: boolean | undefined;
 }
 
@@ -47,7 +49,7 @@ function originOf(name: string, raw: string): string {
 
 // The origin-dependent directives, as one policy string.
 export function metaCsp(origins: CspOrigins): string {
-  const connect = ["'self'", ...new Set([origins.authOrigin ?? origins.apiOrigin, origins.apiOrigin, ...(origins.storageOrigin ? [origins.storageOrigin] : [])])];
+  const connect = ["'self'", ...new Set([origins.authOrigin ?? origins.apiOrigin, origins.apiOrigin, ...(origins.storageOrigin ? [origins.storageOrigin] : []), ...(origins.hostedLoginOrigin ? [origins.hostedLoginOrigin] : [])])];
   return [
     "default-src 'self'",
     origins.turnstile ? `script-src 'self' ${TURNSTILE_ORIGIN}` : "script-src 'self'",
@@ -67,10 +69,12 @@ export function cspOriginsFromEnv(env: Record<string, string | undefined>): CspO
   if (api === '') return null;
   const auth = (env['VITE_AUTH_URL'] ?? '').trim();
   const storage = (env['VITE_STORAGE_ORIGIN'] ?? '').trim();
+  const hosted = (env['VITE_HOSTED_LOGIN_ORIGIN'] ?? '').trim();
   return {
     apiOrigin: originOf('VITE_API_URL', api),
     authOrigin: auth === '' ? undefined : originOf('VITE_AUTH_URL', auth),
     storageOrigin: storage === '' ? undefined : originOf('VITE_STORAGE_ORIGIN', storage),
+    hostedLoginOrigin: hosted === '' ? undefined : originOf('VITE_HOSTED_LOGIN_ORIGIN', hosted),
     turnstile: (env['VITE_TURNSTILE'] ?? '').trim() === 'true',
   };
 }

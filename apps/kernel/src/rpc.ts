@@ -55,7 +55,7 @@ import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
 import { crmFollowupAi, draftCrmFollowup } from './crm-followup-ai.ts';
 import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
-import { askStatusOf, runLiveNotes, runMeetingAsk, runMeetingSummary, runMeetingTranslation, runNotesEnhance, translationStatusOf, type ModelPort } from './member-vy-ports.ts';
+import { askStatusOf, runLiveNotes, runMeetingAsk, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runTranscriptTranslation, transcriptTranslationStatusOf, translationStatusOf, type ModelPort } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems } from './stock-ai.ts';
 import { MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
@@ -365,6 +365,8 @@ export function createRpcHandler(
   const summaries = new DraftBudget({ perUserPerMinute: 4, perOrgPerMinute: 20 });
   // A translation is a shorter call than a summary and any reader may ask: its own budget, apart from the summaries'.
   const translations = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
+  // The transcript is translated a chunk a request, the page asking again while it is open: its own, higher rate, so a one-hour transcript is not stopped by the summary's.
+  const transcriptTranslations = new DraftBudget({ perUserPerMinute: 20, perOrgPerMinute: 60 });
   // A question across meetings (A3, #3161) is one model call over at most 40 lines and any member may ask: its own budget, apart from the summaries' and the translations'.
   const asks = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
   const suggestionBudget = () => new DraftBudget({ perUserPerMinute: 12, perOrgPerMinute: 60 });
@@ -1014,6 +1016,15 @@ export function createRpcHandler(
           inMeetings(context, (orgId, actor) => runMeetingTranslation({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: translations, price: aiPrice }, orgId, actor, input.meetingId, input.stage)),
         ),
         get: os.meetings.translation.get.handler(meetingsQuery('meetings.translation.get')),
+        // The transcript (E2, #3185): the member's own Vy translates the next batch of the lines they read, in the request; the page asks again while it is open.
+        transcriptStatus: os.meetings.translation.transcriptStatus.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => transcriptTranslationStatusOf({ runtime, price: aiPrice, hasModel: summaryModel !== null }, orgId, actor, input.meetingId)),
+        ),
+        transcriptTranslate: os.meetings.translation.transcriptTranslate.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => runTranscriptTranslation({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: transcriptTranslations, price: aiPrice }, orgId, actor, input.meetingId)),
+        ),
+        transcriptStop: os.meetings.translation.transcriptStop.handler(meetingsCommand('meetings.translation.transcript_stop')),
+        transcriptGet: os.meetings.translation.transcriptGet.handler(meetingsQuery('meetings.translation.transcript_get')),
       },
       // Ask across meetings (A3, #3161): the member's own Vy answers from the lines the member's own search finds, each sentence with a citation to a transcript line; nothing is stored or sent;
       // see member-vy-ports.ts.
