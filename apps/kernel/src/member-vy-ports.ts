@@ -3,7 +3,7 @@
 // service, so memory is the member's own rows of crove_kernel.member_vy_memory, read and written only through the member's own commands, in the
 // member's own user context. Asking about anyone else is refused before a command is run, and the database would refuse it anyway (the
 // restrictive policy shows a member their own rows only). Knowledge has no declared queries yet: a feature that asks gets no passages.
-import { AiBudgetExhaustedError, AskModelError, SUMMARY_TIMEOUT_MS, SummaryModelError, TranslationModelError, aiCost, generateMeetingAskText, generateMeetingSummaryText, generateMeetingTranslationText, withAiScope, type AiConfig, type AiMeter } from '@crove/agent';
+import { ASK_TIMEOUT_MS, AiBudgetExhaustedError, AskModelError, SUMMARY_TIMEOUT_MS, SummaryModelError, TranslationModelError, aiCost, generateMeetingAskText, generateMeetingSummaryText, generateMeetingTranslationText, withAiScope, type AiConfig, type AiMeter } from '@crove/agent';
 import { AskError, SummaryError, TranslationError, askAcrossMeetings, bindPorts, noKnowledge, privateText, revealPrivateText, enhanceNotes, summarizeMeeting, translateSummary, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type Ports } from '@crove/agent/member-vy';
 import { ASK_ESTIMATE, ASK_HITS_MAX, templateSections, type AskAnswer, type AskLines, type AskStatus, type LiveNotesDone, type LiveNotesInput, type MeetingSummaryTemplate, type Summarized, type Transcript, type Translated, type TranslationSource, type TranslationStatus } from '@crove/kernel-contract';
 import { DomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
@@ -66,7 +66,7 @@ export function summaryModelPort(config: AiConfig, timeoutMs: number = SUMMARY_T
       prompt.feature === 'meetings.translate'
         ? generateMeetingTranslationText(config, prompt, timeoutMs)
         : prompt.feature === 'meetings.ask'
-          ? generateMeetingAskText(config, prompt, timeoutMs)
+          ? generateMeetingAskText(config, prompt, Math.min(timeoutMs, ASK_TIMEOUT_MS))
           : generateMeetingSummaryText(config, prompt, timeoutMs),
   };
 }
@@ -82,6 +82,12 @@ function codeOf(error: unknown): string {
   if (error instanceof AskError) return error.code;
   if (error instanceof AskModelError) return error.kind === 'timeout' ? 'ASK_TIMEOUT' : 'ASK_FAILED';
   return 'SUMMARY_FAILED';
+}
+
+// The fixed code of a failure of a question: the codes of the question's own checks, and a general one (never the summary's) for anything unexpected.
+function askCodeOf(error: unknown): string {
+  const code = codeOf(error);
+  return code === 'SUMMARY_FAILED' ? 'ASK_FAILED' : code;
 }
 
 // A hard wall clock over the whole work, whatever the model port does: the member never waits longer.
@@ -404,15 +410,26 @@ export async function runMeetingAsk(deps: MeetingAskDeps, orgId: string, actor: 
     const { lines } = await deps.runtime.query<AskLines>('meetings.ask.lines', { question }, as);
     if (lines.length === 0) return { state: 'none', errorCode: null, sentences: [], sources: [], hits: [], dropped: 0 };
     const hits = lines.slice(0, ASK_HITS_MAX);
-    // 3. The checks come first: the switch, vy.use, the kill switches and the budget. A refusal here has made no run.
-    const started = await deps.runtime.execute<{ runId: string }>('meetings.ask.start', {}, as);
+    // 3. The checks come first: the switch, vy.use, the kill switches (the member's own Vy's included) and the budget. A refusal here has made no run, and the member still has the lines their
+    //    search found: the answer is the plain hit list with the fixed code.
+    let started: { runId: string };
+    try {
+      started = await deps.runtime.execute<{ runId: string }>('meetings.ask.start', {}, as);
+    } catch (error: unknown) {
+      if (error instanceof DomainError && (error.code === 'AI_BUDGET_EXHAUSTED' || error.code === 'VY_RUN_BUSY')) {
+        const errorCode = error.code === 'VY_RUN_BUSY' ? 'ASK_BUSY' : error.code;
+        console.error(`[meetings-ask] run not started: ${errorCode}`);
+        return { state: 'failed', errorCode, sentences: [], sources: [], hits, dropped: 0 };
+      }
+      throw error;
+    }
     const runId = started.runId;
     const fail = async (errorCode: string): Promise<AskAnswer> => {
       try {
         await deps.runtime.execute('kernel.member_vy.result.store', { runId, outcome: { status: 'failed', errorCode } }, as);
       } catch (storeError: unknown) {
         // The run stays open until it expires; the caller still gets the failure, and only the codes are logged.
-        console.error(`[meetings-ask] failed result not stored: ${codeOf(storeError)}`);
+        console.error(`[meetings-ask] failed result not stored: ${askCodeOf(storeError)}`);
       }
       console.error(`[meetings-ask] run failed: ${errorCode}`);
       return { state: 'failed', errorCode, sentences: [], sources: [], hits, dropped: 0 };
@@ -429,7 +446,7 @@ export async function runMeetingAsk(deps: MeetingAskDeps, orgId: string, actor: 
       checked = result.answer;
     } catch (error: unknown) {
       // Any failure before the answer is named by a fixed code and stored as the run's failed result: the run must not stay open.
-      return await fail(error instanceof SummaryModelError ? 'ASK_TIMEOUT' : codeOf(error));
+      return await fail(error instanceof SummaryModelError ? 'ASK_TIMEOUT' : askCodeOf(error));
     }
     // The sentences name the lines they cite by their place among the sources, in the order they are first cited.
     const order: number[] = [];
@@ -451,8 +468,9 @@ export async function runMeetingAsk(deps: MeetingAskDeps, orgId: string, actor: 
     try {
       stored = await deps.runtime.execute<{ stored: boolean; status: 'ready' | 'failed' }>('kernel.member_vy.result.store', { runId, outcome: { status: 'ready', body } }, as);
     } catch (error: unknown) {
-      if (error instanceof DomainError && error.code === 'VY_RUN_NOT_LIVE') throw error;
-      return await fail(codeOf(error));
+      // The run ended while the model was answering (the member cancelled it, a switch stopped it): the text is not shown, and the member keeps the plain list.
+      if (error instanceof DomainError && error.code === 'VY_RUN_NOT_LIVE') return { state: 'failed', errorCode: 'AI_STOPPED', sentences: [], sources: [], hits, dropped: 0 };
+      return await fail(askCodeOf(error));
     }
     // The kernel re-checked the switches and the budget at the store and may have stopped the run: its answer is the state, and nothing of the model's text is shown for a stopped run.
     if (stored.status === 'failed') {

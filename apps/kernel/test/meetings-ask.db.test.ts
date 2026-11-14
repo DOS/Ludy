@@ -232,17 +232,17 @@ suite("the member's Vy answering across meetings (A3, #3161)", () => {
     };
     expect(await code({ generate: async () => { throw new AiBudgetExhaustedError('org', null); } })).toBe('AI_BUDGET_EXHAUSTED');
     expect(await code({ generate: async () => ({ text: 'xin lỗi, tôi không làm được', usage: { inputTokens: 1, outputTokens: 1 } }) })).toBe('ASK_UNPARSABLE');
-    expect(await code({ generate: async () => { throw new Error(`provider said: ${question}`); } })).toBe('SUMMARY_FAILED');
+    expect(await code({ generate: async () => { throw new Error(`provider said: ${question}`); } })).toBe('ASK_FAILED');
     const timed = await ask('attendee', question, { model: { generate: () => new Promise(() => undefined) }, timeoutMs: 150 });
     expect(timed).toMatchObject({ state: 'failed', errorCode: 'ASK_TIMEOUT' });
     const failed = (await resultRows()).filter((r) => r.status === 'failed');
-    expect(failed.map((r) => r.error_code).slice(-4)).toEqual(['AI_BUDGET_EXHAUSTED', 'ASK_UNPARSABLE', 'SUMMARY_FAILED', 'ASK_TIMEOUT']);
+    expect(failed.map((r) => r.error_code).slice(-4)).toEqual(['AI_BUDGET_EXHAUSTED', 'ASK_UNPARSABLE', 'ASK_FAILED', 'ASK_TIMEOUT']);
     expect(failed.every((r) => r.body === null)).toBe(true);
     expect(logged.join('\n')).not.toContain('Failseven');
     expect(logged.join('\n')).toContain('ASK_UNPARSABLE');
   });
 
-  it('stores nothing of the question or the answer: the result row holds counts, the audit row hashes the question, and no log names them', async () => {
+  it('stores nothing of the question or the answer: the result row holds counts, the read of the lines leaves an audit row with no question text, and no log names them', async () => {
     const m = await meeting('recorder', 'Họp không để lại dấu', 'attendees', ['attendee']);
     await line(m, 'Zorbaxx đồng ý chiết khấu 8% phần trăm', 'published', 5);
     const question = 'Zorbaxx được bao nhiêu?';
@@ -260,7 +260,7 @@ suite("the member's Vy answering across meetings (A3, #3161)", () => {
     const copies = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM crove_meetings.meeting_result x WHERE x::text LIKE '%Zorbaxx%'`);
     expect(Number(copies.rows[0]?.n)).toBe(0);
     expect(logged.join('\n')).not.toContain('Zorbaxx');
-    // The read of the lines left an audit row, naming the query and the hash of its input.
+    // The read of the lines left an audit row naming the query (this test's runtime has no audit key, so the row carries no hash here; the question text is in none of the kernel's tables, audit included).
     const audit = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND audit_event::text LIKE '%meetings.ask.lines%'`, [orgId]);
     expect(Number(audit.rows[0]?.n)).toBeGreaterThan(0);
   });
@@ -294,6 +294,40 @@ suite("the member's Vy answering across meetings (A3, #3161)", () => {
     expect(await status('outsider')).toMatchObject({ enabled: false, reason: 'forbidden' });
     expect(await refuses(ask('outsider', question))).toBe('VY_NOT_ALLOWED');
     expect(modelCalls).toBe(0);
+  });
+
+  it('a spent hard-stop budget of the meetings module says so in the box, refuses the question before a line is read, and calls nothing', async () => {
+    const m = await meeting('recorder', 'Họp hết ngân sách', 'attendees', ['attendee']);
+    await line(m, 'Budgetspent chiết khấu 8% phần trăm', 'published', 5);
+    const status = () => askStatusOf({ runtime, price: undefined, model: deps().model, meter: () => meter }, orgId, asUser('attendee'));
+    await sqlAdmin(`INSERT INTO crove_kernel.budget_policy (org_id, scope, target, monthly_limit, hard_stop, updated_by) VALUES ($1, 'module', 'meetings', crove_kernel.ai_budget_spent($1::uuid, 'module', 'meetings'), true, $2)`, [orgId, users.owner]);
+    try {
+      expect(await status()).toEqual({ enabled: false, reason: 'budget', estimate: null });
+      expect(await refuses(ask('attendee', 'Budgetspent là gì?'))).toBe('AI_BUDGET_EXHAUSTED');
+      expect(modelCalls).toBe(0);
+    } finally {
+      await sqlAdmin('DELETE FROM crove_kernel.budget_policy WHERE org_id = $1', [orgId]);
+    }
+    expect(await status()).toMatchObject({ enabled: true, reason: null });
+  });
+
+  it("a stopped Vy of the member's own, which the box cannot see, refuses at the start and still leaves the member the plain hit list", async () => {
+    const m = await meeting('recorder', 'Họp Vy dừng', 'attendees', ['attendee']);
+    await line(m, 'Agentstop chiết khấu 8% phần trăm', 'published', 5);
+    const question = 'Agentstop là gì?';
+    // A first question makes the member's own Vy; then a kill switch for that agent alone.
+    expect((await ask('attendee', question)).state).toBe('answered');
+    const agent = (await sqlAdmin<{ id: string }>(`SELECT id FROM crove_kernel.agent WHERE org_id = $1 AND kind = 'member_vy' AND member_user_id = $2`, [orgId, users.attendee])).rows[0]?.id as string;
+    const id = (await sqlAdmin<{ id: string }>('INSERT INTO crove_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, $2, $3, $4) RETURNING id', [orgId, 'agent', agent, users.owner])).rows[0]?.id as string;
+    try {
+      const calls = modelCalls;
+      const out = await ask('attendee', question);
+      expect(out).toMatchObject({ state: 'failed', errorCode: 'AI_BUDGET_EXHAUSTED', sentences: [] });
+      expect(out.hits.map((h) => h.text)).toEqual(['Agentstop chiết khấu 8% phần trăm']);
+      expect(modelCalls).toBe(calls);
+    } finally {
+      await sqlAdmin('UPDATE crove_kernel.kill_switch SET released_at = now(), released_by = engaged_by WHERE org_id = $1 AND id = $2', [orgId, id]);
+    }
   });
 
   it('shows the cost of one question before the member asks, a figure only when the deployment sets a price', async () => {

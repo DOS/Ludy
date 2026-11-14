@@ -19,7 +19,7 @@ import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
 
 const READ_ONCE = { staleTime: 60_000, refetchOnWindowFocus: false } as const;
-const KNOWN_FAILURES = ['AI_BUDGET_EXHAUSTED', 'AI_STOPPED', 'ASK_TIMEOUT', 'ASK_FAILED', 'ASK_UNPARSABLE', 'ASK_TOO_LONG', 'ASK_NOTHING'] as const;
+const KNOWN_FAILURES = ['AI_BUDGET_EXHAUSTED', 'AI_STOPPED', 'ASK_TIMEOUT', 'ASK_FAILED', 'ASK_UNPARSABLE', 'ASK_TOO_LONG', 'ASK_NOTHING', 'ASK_BUSY'] as const;
 // The most of the AI budget that may be left before the box says it is running low.
 const LOW_PERCENT_LEFT = 15;
 
@@ -155,7 +155,7 @@ export function MeetingAsk({ slug }: { slug: string }) {
           <Label id="meeting-ask-label" htmlFor="meeting-ask-input">
             {t('label')}
           </Label>
-          <Textarea id="meeting-ask-input" rows={2} maxLength={ASK_QUESTION_MAX} placeholder={t('placeholder')} value={text} onChange={(e) => setText(e.target.value)} />
+          <Textarea id="meeting-ask-input" aria-describedby="meeting-ask-hint" rows={2} maxLength={ASK_QUESTION_MAX} placeholder={t('placeholder')} value={text} onChange={(e) => setText(e.target.value)} />
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button type="submit" loading={ask.isPending || (plain !== null && search.isFetching)} disabled={ask.isPending}>
@@ -180,14 +180,12 @@ export function MeetingAsk({ slug }: { slug: string }) {
           )}
         </div>
       </form>
-      <p className="text-xs text-muted-foreground">{t('hint')}</p>
-      {tooShort && <ErrorText>{t('tooShort', { min: String(ASK_QUESTION_MIN) })}</ErrorText>}
+      <p id="meeting-ask-hint" className="text-xs text-muted-foreground">
+        {t('hint')}
+      </p>
       <div aria-live="polite" className="space-y-2">
-        {ask.isPending && (
-          <p role="status" className="text-xs">
-            {t('running')}
-          </p>
-        )}
+        {tooShort && <ErrorText>{t('tooShort', { min: String(ASK_QUESTION_MIN) })}</ErrorText>}
+        {ask.isPending && <p className="text-xs">{t('running')}</p>}
         {ask.error && <ErrorText>{errorMessage(ask.error)}</ErrorText>}
         {ask.data && asked !== null && <AskResult slug={slug} answer={ask.data} typed={askKeywords(asked, 6).join(' ')} />}
         {plain !== null && asked !== null && (

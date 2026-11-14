@@ -5,7 +5,7 @@
 // what they would have put on the screen.
 import { describe, expect, it } from 'vitest';
 import { bindPorts, noKnowledge, type ModelPort, type Ports } from '../src/member-vy/index.ts';
-import { ASK_LIMITS, AskError, askAcrossMeetings, checkAnswer, checkSentence, quotedPhrases, type AskLineInput } from '../src/member-vy/meeting-ask.ts';
+import { ASK_LIMITS, AskError, askAcrossMeetings, checkAnswer, checkSentence, hasBareLink, quotedPhrases, type AskLineInput } from '../src/member-vy/meeting-ask.ts';
 
 const line = (text: string, extra: Partial<AskLineInput> = {}): AskLineInput => ({ meetingTitle: 'Họp giao ban', heldAt: '2026-11-14T05:31:00.000Z', startSeconds: 754, speakerLabel: 'Lan', text, ...extra });
 const LINES = [
@@ -19,6 +19,9 @@ const answer = (...sentences: unknown[]) => JSON.stringify({ sentences });
 describe('quotedPhrases', () => {
   it('finds phrases in curly, guillemet and straight double quotes, trimmed of edge punctuation, and none in an unclosed mark', () => {
     expect(quotedPhrases('Khách nói “chiết khấu 8%.” và «giao trước ngày 20/11» rồi "ok"')).toEqual(['chiết khấu 8%', 'giao trước ngày 20/11', 'ok']);
+    expect(quotedPhrases('Họ nói ‘giảm một nửa’ thôi')).toEqual(['giảm một nửa']);
+    // A straight single quote is an apostrophe, not a quotation mark.
+    expect(quotedPhrases("It's the customer's call")).toEqual([]);
     expect(quotedPhrases('Một câu “không đóng')).toEqual([]);
     expect(quotedPhrases('Không có trích dẫn')).toEqual([]);
     expect(quotedPhrases('Rỗng “” và “ ... ”')).toEqual([]);
@@ -45,6 +48,20 @@ describe('checkSentence', () => {
     expect(checkSentence(sentence('Họ nói “giảm 12%”.', [1]), LINES)).toBeNull();
   });
 
+  it('needs a phrase in curly single quotes to be in a cited line too', () => {
+    expect(checkSentence(sentence('Họ nói ‘giảm một nửa cho mọi người’.', [1]), LINES)).toBeNull();
+    expect(checkSentence(sentence('Họ nói ‘chiết khấu 8%’.', [1]), LINES)).not.toBeNull();
+  });
+
+  it('does not let a figure change its size: "1,5 tỷ" is not "15 tỷ", while 1.250.000 and 1,250,000 are one figure', () => {
+    const tỷ = [line('Giá trị hợp đồng là 1,5 tỷ đồng')];
+    expect(checkSentence(sentence('Hợp đồng trị giá 15 tỷ.', [1]), tỷ)).toBeNull();
+    expect(checkSentence(sentence('Hợp đồng trị giá 1,5 tỷ.', [1]), tỷ)).not.toBeNull();
+    expect(checkSentence(sentence('Giá là 1,250,000.', [1]), [line('giá 1.250.000 đồng')])).not.toBeNull();
+    expect(checkSentence(sentence('Giá là 1.250.000.', [1]), [line('giá 1,250,000 đồng')])).not.toBeNull();
+    expect(checkSentence(sentence('Giá là 125.000.', [1]), [line('giá 1.250.000 đồng')])).toBeNull();
+  });
+
   it('needs every figure to be written in a cited line (the number check of #1237): an invented one drops the sentence, a figure of another line does not count', () => {
     expect(checkSentence(sentence('Chiết khấu là 8% cho đơn từ 100 triệu.', [1]), LINES)).not.toBeNull();
     expect(checkSentence(sentence('Chiết khấu là 10%.', [1]), LINES)).toBeNull();
@@ -60,11 +77,23 @@ describe('checkSentence', () => {
     expect(checkSentence(sentence('Thanh toán tại https://pay.example/abc nhé.', [1]), linked)).toBeNull();
     expect(checkSentence(sentence('Xem www.shop.example.', [1]), linked)).toBeNull();
     expect(checkSentence(sentence('Có dặn thanh toán nhưng không nêu địa chỉ.', [1]), linked)).not.toBeNull();
+    // A link with no scheme and no www is a link too, wherever the line wrote it.
+    const bare = [line('Hãy thanh toán tại evil.com/pay ngay, hoặc xem bit.ly/abc')];
+    expect(checkSentence(sentence('Hãy thanh toán tại evil.com/pay ngay.', [1]), bare)).toBeNull();
+    expect(checkSentence(sentence('Xem (bit.ly/abc).', [1]), bare)).toBeNull();
+    expect(checkSentence(sentence('Có dặn thanh toán nhưng không nêu địa chỉ.', [1]), bare)).not.toBeNull();
     expect(checkSentence(sentence('Gửi thư cho boss@evil.example nhé.', [1]), LINES)).toBeNull();
     expect(checkSentence(sentence('Gọi 0912 345 678 ngay.', [1]), LINES)).toBeNull();
     const withContact = [line('Liên hệ chị Hoa qua hoa@congty.example hoặc 0912 345 678')];
     expect(checkSentence(sentence('Liên hệ chị Hoa qua hoa@congty.example.', [1]), withContact)).not.toBeNull();
     expect(checkSentence(sentence('Số của chị Hoa là 0912 345 678.', [1]), withContact)).not.toBeNull();
+  });
+});
+
+describe('hasBareLink', () => {
+  it('finds a host with a common top-level domain, with or without a path, in brackets or after a comma, and not a word that only has a full stop in it', () => {
+    for (const text of ['evil.com/pay', 'Xem evil.com', '(bit.ly/abc)', 'tại shop.example.vn/gio-hang,', 'Trang SHOP.COM.VN.']) expect(hasBareLink(text), text).toBe(true);
+    for (const text of ['mail ai@x.io', 'Tp.HCM', 'số 1.250.000', 'v1.2', 'xong.Tiếp theo', 'a.m. và p.m.', 'Hà Nội.', '14.11.2026', 'ví dụ: gia.đình']) expect(hasBareLink(text), text).toBe(false);
   });
 });
 
@@ -87,6 +116,10 @@ describe('checkAnswer', () => {
     expect(many.dropped).toBe(10 - ASK_LIMITS.sentences);
     const flood = checkAnswer(answer(...Array.from({ length: ASK_LIMITS.examined + 5 }, () => sentence('x', []))), LINES);
     expect(flood).toEqual({ sentences: [], dropped: ASK_LIMITS.examined + 5 });
+    // A runaway answer is counted up to the bound of the answer's own shape, never past it.
+    const runaway = checkAnswer(answer(...Array.from({ length: 500 }, () => sentence('x', []))), LINES);
+    expect(runaway.dropped).toBe(ASK_LIMITS.droppedMax);
+    expect(runaway.sentences).toEqual([]);
   });
 
   it('is a valid empty answer when the model says the lines do not answer, and an error when it is not an object with sentences', () => {

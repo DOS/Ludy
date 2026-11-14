@@ -1703,6 +1703,7 @@ export const vi = {
         ASK_UNPARSABLE: 'Không đọc được câu trả lời. Hãy thử lại.',
         ASK_TOO_LONG: 'Các dòng tìm được quá dài để gửi một lần. Hãy hỏi hẹp hơn.',
         ASK_NOTHING: 'Không có gì để hỏi.',
+        ASK_BUSY: 'Vy đang trả lời một câu hỏi khác của bạn. Hãy thử lại sau giây lát.',
         default: 'Có lỗi xảy ra. Hãy thử lại.',
       },
       chip: '{title}, {date}, {time}',

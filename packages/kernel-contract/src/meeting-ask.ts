@@ -68,10 +68,10 @@ export type AskLines = z.infer<typeof zAskLines>;
 
 // Words that say nothing about what to look for in Vietnamese or English; compared after folding (lower case, Vietnamese marks and đ removed), the way the search folds what it is given.
 const STOP_WORDS = new Set<string>([
-  // Vietnamese, folded.
-  'la', 'va', 'cua', 'cho', 'co', 'khong', 'duoc', 'da', 'dang', 'se', 'nhu', 'the', 'nao', 'gi', 'sao', 'bao', 'nhieu', 'may', 'khi', 'nao', 'o', 'dau', 'ai', 'cac', 'nhung', 'mot', 'hai',
-  'nay', 'kia', 'do', 'thi', 'ma', 'de', 'voi', 'trong', 'ngoai', 'tren', 'duoi', 'tu', 'den', 've', 'theo', 'hay', 'hoac', 'vi', 'nen', 'cung', 'con', 'roi', 'luon', 'rat', 'qua', 'lai', 'nua',
-  'toi', 'minh', 'ban', 'anh', 'chi', 'em', 'ho', 'chung', 'cuoc', 'hop', 'noi', 'bao', 'hoi', 'cho', 'biet', 'cam', 'on', 'vui', 'long', 'xin',
+  // Vietnamese, folded. Only words that are function words whatever the marks: not "hop" (hợp đồng), "chi", "ma" (mã), "the" (thẻ), "ban" (bàn), "chung", "qua" (quà), "minh" (a name), "noi", "on", "long".
+  'la', 'va', 'cua', 'cho', 'co', 'khong', 'duoc', 'da', 'dang', 'se', 'nhu', 'nao', 'gi', 'sao', 'bao', 'nhieu', 'may', 'khi', 'o', 'dau', 'ai', 'cac', 'nhung', 'mot', 'hai',
+  'nay', 'kia', 'do', 'thi', 'de', 'voi', 'trong', 'ngoai', 'tren', 'duoi', 'tu', 'den', 've', 'theo', 'hay', 'hoac', 'vi', 'nen', 'cung', 'con', 'roi', 'luon', 'rat', 'lai', 'nua',
+  'toi', 'anh', 'em', 'cuoc', 'xin',
   // English.
   'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'do', 'does', 'did', 'what', 'which', 'who', 'whom', 'when', 'where', 'why', 'how', 'much', 'many', 'of', 'to', 'in', 'on', 'at', 'for',
   'and', 'or', 'with', 'about', 'from', 'by', 'it', 'its', 'this', 'that', 'these', 'those', 'we', 'you', 'they', 'i', 'me', 'my', 'our', 'your', 'their', 'meeting', 'meetings', 'said', 'say', 'tell',

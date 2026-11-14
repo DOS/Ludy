@@ -100,6 +100,7 @@ describe('askBlocked', () => {
 
   it('reads a fixed code of a failed answer by its words, and any other code by the general ones', () => {
     expect(failureKey('ASK_TIMEOUT')).toBe('ASK_TIMEOUT');
+    expect(failureKey('ASK_BUSY')).toBe('ASK_BUSY');
     expect(failureKey('AI_BUDGET_EXHAUSTED')).toBe('AI_BUDGET_EXHAUSTED');
     expect(failureKey('SUMMARY_FAILED')).toBe('default');
     expect(failureKey(null)).toBe('default');

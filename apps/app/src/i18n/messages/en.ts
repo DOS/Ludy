@@ -1706,6 +1706,7 @@ export const en = {
         ASK_UNPARSABLE: 'The answer could not be read. Try again.',
         ASK_TOO_LONG: 'The matching lines are too long to send in one go. Ask something narrower.',
         ASK_NOTHING: 'There was nothing to ask about.',
+        ASK_BUSY: 'Vy is already answering a question for you. Try again in a moment.',
         default: 'Something went wrong. Try again.',
       },
       chip: '{title}, {date}, {time}',
