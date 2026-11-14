@@ -286,7 +286,7 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
       // admin's, for the company), so a member grant never carries a write. The database refuses the rest again (a CHECK and the grant definer).
       const asked = new Set(String(interaction.params.scope ?? '').split(' '));
       const draftAsked = asked.has(MCP_DRAFT_SCOPE);
-      if (parsed.data.draft && (!draftAsked || parsed.data.kind !== 'company')) {
+      if (parsed.data.draft && (!draftAsked || !asked.has(MCP_SCOPE) || parsed.data.kind !== 'company')) {
         throw new DomainError('INVALID', 422, 'Ứng dụng này không xin quyền soạn bản nháp, hoặc quyền này chỉ cấp được cho tổ chức, không cấp được cho riêng bạn');
       }
       const scopes = parsed.data.draft ? [MCP_SCOPE, MCP_DRAFT_SCOPE] : [MCP_SCOPE];
@@ -423,13 +423,16 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
               if (left <= 0) throw new DomainError('RATE_LIMITED', 429, 'Daily row budget used up');
             }
             value = await tool.read(args);
-            await chargeRows(tool.rows(value));
+            // The one write tool reads no rows: nothing is charged after it, so nothing can fail after its draft is committed and turn a success into an error.
+            if (tool.annotations.readOnlyHint) await chargeRows(tool.rows(value));
           } catch (error) {
             await writeCallAudit(tool.name, requestId, error instanceof DomainError ? (error.status === 429 ? 'rate_limited' : 'refused') : 'failed').catch(() => undefined);
             throw error;
           }
-          // The answer leaves only after its audit row is written.
-          await writeCallAudit(tool.name, requestId, 'ok');
+          // The answer of a read leaves only after its audit row is written; a failure to write it fails the call. The write has committed its draft (and its own audit row in the org's log)
+          // by now, so a failure of this call row is logged and does not turn the answer into an error: a retry would make a second draft.
+          if (tool.annotations.readOnlyHint) await writeCallAudit(tool.name, requestId, 'ok');
+          else await writeCallAudit(tool.name, requestId, 'ok').catch((error) => logEvent('error', 'mcp call audit failed after a write', { grantId: claims.grantId, requestId, error: toDomainError(error).code }));
           return value;
         },
         describeError: (error) => {
@@ -531,7 +534,7 @@ function toolsFor(runtime: Runtime, actor: UserActor, orgId: string, draftBudget
     {
       name: 'ludy_about',
       title: 'About this connection',
-      description: 'Tells which Ludy organization this connection is for, the name this client gave itself, and what the connection may do (read only). It reads no business data. Call it to check the connection works.',
+      description: 'Tells which Ludy organization this connection is for, the name this client gave itself, and what the connection may do (its scopes: reading, and for some connections writing Social post drafts). It reads no business data. Call it to check the connection works.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       argsSchema: z.strictObject({}),
       outputSchema: {
@@ -721,7 +724,7 @@ function draftTool(runtime: Runtime, actor: UserActor, orgId: string, draftBudge
     name: 'ludy_social_draft_create',
     title: 'Create a Social draft for review',
     description:
-      'Creates ONE draft Social post in the organization, for a person to review: the text, optionally a title, a link, a time zone and a proposed time (only a suggestion: nothing is scheduled), and 1 to 20 channels (connectionId, from ludy_social_posts_list; each channel may have its own text and title). The draft is marked as written by an AI app and as not trusted. It stays a draft: nobody is notified, and a person must send it to review and approve every channel in Ludy before anything is published. This tool cannot approve, schedule, publish, edit or delete anything, upload media, or connect a channel. Every successful call makes a new draft, so do not repeat one that succeeded. A few drafts a minute at most; over that the answer says how long to wait.',
+      'Creates ONE draft Social post in the organization, for a person to review: the text, optionally a title, a link, a time zone and a proposed time (only a suggestion: nothing is scheduled), and 1 to 20 channels (connectionId: the id of a channel, which ludy_social_posts_list shows for the channels of posts that exist; each channel may have its own text and title). The draft is marked as written by an AI app and as not trusted. It stays a draft: nobody is notified, and a person must send it to review and approve every channel in Ludy before anything is published. This tool cannot approve, schedule, publish, edit or delete anything, upload media, or connect a channel. Every successful call makes a new draft, so do not repeat one that succeeded. A few drafts a minute at most; over that the answer says how long to wait.',
     inputSchema: schemaOf(zMcpDraftCreate),
     argsSchema: zMcpDraftCreate,
     outputSchema: {

@@ -57,6 +57,8 @@ describe('the consent page and the draft scope', () => {
     const html = render(details(['ludy.read', 'ludy.social.draft'], 'member'));
     expect(html).not.toContain('data-testid="oauth-consent-draft"');
     expect(html).toContain('data-testid="oauth-consent-draft-company-only"');
-    expect(html).toContain(en.oauthConsent.draftCompanyOnly);
+    expect(html).toContain(en.oauthConsent.draftOwnerOnly);
+    expect(html).not.toContain(en.oauthConsent.draftCompanyOnly);
+    // An owner who picks the member kind is told to choose the company instead (the radio group is there for them).
   });
 });

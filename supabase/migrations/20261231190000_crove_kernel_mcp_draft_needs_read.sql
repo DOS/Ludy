@@ -6,6 +6,19 @@
 -- Forward only: 20261231180000 is applied and untouched; the two functions are restated whole from it with the lines above changed. Idempotent.
 SET LOCAL lock_timeout = '2s';
 
+-- A grant that holds the draft scope without the read scope (20261231180000 let the grant definer accept one, though no consent page could ask for it) is ended first, with its tokens: it could
+-- enter the read context alone. The CHECK below is then added NOT VALID, so such an ended row (the only kind that can exist) never fails the deploy, and every new or changed row is held to the rule.
+DO $$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN SELECT g.org_id, g.id, g.oauth_grant_id FROM crove_kernel.agent_grant g
+           WHERE 'ludy.social.draft' = ANY (g.scopes) AND NOT ('ludy.read' = ANY (g.scopes)) AND g.revoked_at IS NULL LOOP
+    UPDATE crove_kernel.agent_grant g SET revoked_at = pg_catalog.clock_timestamp() WHERE g.org_id = r.org_id AND g.id = r.id;
+    PERFORM crove_kernel.oauth_record_revoke_by_grant(r.oauth_grant_id);
+  END LOOP;
+END $$;
+
 DO $$
 BEGIN
   ALTER TABLE crove_kernel.agent_grant DROP CONSTRAINT IF EXISTS agent_grant_scopes_ck;
@@ -13,8 +26,15 @@ BEGIN
     CHECK (pg_catalog.cardinality(scopes) BETWEEN 1 AND 4
            AND scopes <@ ARRAY['ludy.read', 'ludy.member.read', 'ludy.social.draft']::text[]
            AND (NOT ('ludy.member.read' = ANY (scopes)) OR kind = 'member')
-           AND (NOT ('ludy.social.draft' = ANY (scopes)) OR (kind = 'company' AND 'ludy.read' = ANY (scopes))));
+           AND (NOT ('ludy.social.draft' = ANY (scopes)) OR (kind = 'company' AND 'ludy.read' = ANY (scopes)))) NOT VALID;
 EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+-- Validated whenever every row already holds (the usual case: no draft-only grant ever existed); left NOT VALID only if an ended one does, which still holds every new row to the rule.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM crove_kernel.agent_grant g WHERE 'ludy.social.draft' = ANY (g.scopes) AND NOT ('ludy.read' = ANY (g.scopes))) THEN
+    ALTER TABLE crove_kernel.agent_grant VALIDATE CONSTRAINT agent_grant_scopes_ck;
+  END IF;
 END $$;
 
 -- The company grant's definer, restated whole from 20261231180000 with one more condition on the scopes: the read scope is always among them.

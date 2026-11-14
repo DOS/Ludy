@@ -95,7 +95,7 @@ export function OauthConsentPage({ uid }: { uid: string }) {
             )}
             {draftAsked && org && kind === 'member' && (
               <p className="text-sm text-muted-foreground" data-testid="oauth-consent-draft-company-only">
-                {t('draftCompanyOnly')}
+                {t(privileged ? 'draftCompanyOnly' : 'draftOwnerOnly')}
               </p>
             )}
             {org && <p className="text-sm font-medium text-foreground">{t(draftOn ? 'allowDraft' : 'allow', { client: details.data.client.name, org: org.name })}</p>}
