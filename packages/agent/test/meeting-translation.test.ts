@@ -44,6 +44,23 @@ describe('digit runs and contacts', () => {
   });
 });
 
+describe('a long run of punctuation', () => {
+  // The text is a model's: nothing on the path may take more than linear time on a long run of dots, dashes or commas (CodeQL, polynomial regular expression).
+  it('is read in linear time by the contact scan, the name check and the whole segment check', () => {
+    const run = (text: string) => {
+      const started = performance.now();
+      contactsIn(text);
+      digitRuns(text);
+      checkSegment(seg(text.slice(0, 5000)), text.slice(0, 5000));
+      checkSegment(seg('Gửi báo giá'), `${'.'.repeat(11_000)}x`);
+      return performance.now() - started;
+    };
+    for (const text of ['.'.repeat(200_000) + 'x', 'a' + '.'.repeat(200_000), '-'.repeat(200_000) + '@', ','.repeat(200_000) + '1', ('1.'.repeat(100_000)), '@'.repeat(200_000), ' .'.repeat(100_000)]) {
+      expect(run(text), text.slice(0, 8)).toBeLessThan(1500);
+    }
+  });
+});
+
 describe('checkSegment', () => {
   it('keeps a faithful translation, and one that writes the same figure with other separators', () => {
     expect(checkSegment(seg('Chốt giá 1.250.000 cho khách A.'), 'Agreed on a price of 1,250,000 for customer A.')).toMatchObject({ state: 'ok', codes: [] });

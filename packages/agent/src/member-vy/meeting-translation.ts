@@ -97,7 +97,18 @@ function held(token: NumberToken, others: readonly NumberToken[], loose = false)
   return (loose || token.parts.length > 1) && token.parts.every((p) => groups.has(p));
 }
 
-const trimEdge = (token: string): string => token.replace(/^[^\p{L}\p{N}@]+|[^\p{L}\p{N}/]+$/gu, '');
+// Edge trimming by index, never by a pattern with an alternation of two unbounded runs (that one is quadratic on a long run of punctuation, and the text is a model's). Linear in the token.
+const WORD_CHAR = /^[\p{L}\p{N}]$/u;
+function trimEdges(token: string, keepStart: (c: string) => boolean, keepEnd: (c: string) => boolean): string {
+  const chars = [...token];
+  let from = 0;
+  let to = chars.length;
+  while (from < to && !WORD_CHAR.test(chars[from] as string) && !keepStart(chars[from] as string)) from += 1;
+  while (to > from && !WORD_CHAR.test(chars[to - 1] as string) && !keepEnd(chars[to - 1] as string)) to -= 1;
+  return chars.slice(from, to).join('');
+}
+// A link or an address keeps a leading @ and a trailing /.
+const trimEdge = (token: string): string => trimEdges(token, (c) => c === '@', (c) => c === '/');
 
 // The ways to reach someone off the page that a text writes, normalized: a link or an email address as the token (lower case, no trailing punctuation), a phone-like run as its
 // digits. Linear scans; no backtracking pattern runs on text a model wrote.
@@ -166,7 +177,7 @@ function midSentenceCapitals(text: string): string[] {
   let atStart = true;
   for (const token of text.normalize('NFC').split(/\s+/)) {
     if (token === '') continue;
-    const bare = token.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+    const bare = trimEdges(token, () => false, () => false);
     if (bare !== '' && !atStart) {
       const first = bare[0] as string;
       const upper = first !== first.toLowerCase() && first === first.toUpperCase();
