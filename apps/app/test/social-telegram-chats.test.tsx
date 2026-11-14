@@ -16,7 +16,7 @@ vi.mock('../src/lib/api.ts', async () => {
   return { orpc: {}, client: { channels: { setTelegramChats: async () => ({ chatState: 'enabling' }) } }, queryClient: client.current, errorMessage: (e: unknown) => String(e) };
 });
 
-const { TelegramChats } = await import('../src/components/social-telegram-chats.tsx');
+const { TelegramBusiness, TelegramChats } = await import('../src/components/social-telegram-chats.tsx');
 
 type State = 'off' | 'enabling' | 'on' | 'disabling';
 type Account = { ref: string; name: string | null; username: string | null; enabled: boolean; canReply: boolean; approved: boolean };
@@ -114,15 +114,17 @@ describe('the Telegram chats card', () => {
     expect(html).not.toContain('data-testid="telegram-business-account"');
   });
 
-  it('lists each account by name and @username with what the bot can do, and says a reply is a person\'s and lasts 24 hours', () => {
+  it('lists each account by its name and, on a line of its own, its labelled @username, with what the bot can do, and says a reply is a person\'s and lasts 24 hours', () => {
     const html = render('on', null, true, 'vi', {
       business: [account(), account({ ref: 'bbbbbbbbbbbb', name: null, username: null, canReply: false }), account({ ref: 'cccccccccccc', name: 'Minh', username: null, enabled: false }), account({ ref: 'dddddddddddd', name: null, username: 'kho_hang' })],
     });
     expect(html.match(/data-testid="telegram-business-account"/g)).toHaveLength(4);
-    expect(text(html)).toContain('Lan Trần @lan_tran: đã nối, bot trả lời được');
-    expect(text(html)).toContain('Một tài khoản Telegram: đã nối, bot đọc được nhưng chưa trả lời được');
-    expect(text(html)).toContain('Minh: đã ngắt, tin của tài khoản này không được nhận');
-    expect(text(html)).toContain('@kho_hang: đã nối, bot trả lời được');
+    expect(text(html)).toContain('Lan Trần tên người dùng @lan_tran : đã nối, bot trả lời được');
+    expect(text(html)).toContain('Một tài khoản Telegram (chưa có @tên người dùng nên không phân biệt được với tài khoản khác) : đã nối, bot đọc được nhưng chưa trả lời được');
+    expect(text(html)).toContain('Minh (chưa có @tên người dùng nên không phân biệt được với tài khoản khác) : đã ngắt, tin của tài khoản này không được nhận');
+    expect(text(html)).toContain('Một tài khoản Telegram tên người dùng @kho_hang : đã nối, bot trả lời được');
+    // The @username has its own element, so a name that says "@someone" is not read as one.
+    expect(html.match(/data-testid="telegram-business-username"/g)).toHaveLength(4);
     expect(text(html)).toContain('chỉ khi có người bấm Gửi');
     expect(text(html)).toContain('trong 24 giờ kể từ tin cuối của khách');
     // The setup steps are for an owner who has none connected.
@@ -132,19 +134,53 @@ describe('the Telegram chats card', () => {
   it('keeps a new account out until a person allows it: it says so, warns that anyone with Premium can connect the bot, and offers the choice only to an owner or admin', () => {
     const pending = { business: [account({ approved: false })] };
     const html = render('on', null, true, 'vi', pending);
-    expect(text(html)).toContain('Lan Trần @lan_tran: đã nối, đang chờ bạn cho phép; chưa tin nhắn nào của tài khoản này được nhận');
+    expect(text(html)).toContain('Lan Trần tên người dùng @lan_tran : đã nối, đang chờ bạn cho phép; chưa tin nhắn nào của tài khoản này được nhận');
     expect(text(html)).toContain('Ai dùng Telegram Premium cũng có thể nối bot này vào tài khoản của họ');
     expect(text(html)).toContain('nhận ra qua @tên người dùng');
-    // Beside the button that turns chats off, one to allow the account.
+    // Beside the button that turns chats off, one to allow the account, which asks again before it does anything.
     expect(html.match(/<button/g)).toHaveLength(2);
     expect(text(html)).toContain('Cho nhận tin');
-    // An allowed account offers to stop; a member sees the state and no button; a disconnected account has none.
-    expect(text(render('on', null, true, 'vi', { business: [account()] }))).toContain('Ngừng nhận tin');
-    expect(text(render('on', null, true, 'vi', { business: [account()] }))).not.toContain('Ai dùng Telegram Premium');
+    expect(html).not.toContain('data-testid="telegram-business-confirm"');
     expect(render('on', null, false, 'vi', pending)).not.toContain('<button');
-    const gone = text(render('on', null, true, 'vi', { business: [account({ enabled: false })] }));
+    // A disconnected account that nobody allowed has nothing to press.
+    const gone = text(render('on', null, true, 'vi', { business: [account({ enabled: false, approved: false })] }));
     expect(gone).not.toContain('Cho nhận tin');
     expect(gone).not.toContain('Ngừng nhận tin');
+  });
+
+  it('can stop an allowed account whether it is connected or not, so a reconnect does not resume it unasked, and shows no allow button for it', () => {
+    for (const enabled of [true, false]) {
+      const html = text(render('on', null, true, 'vi', { business: [account({ enabled })] }));
+      expect(html).toContain('Ngừng nhận tin');
+      expect(html).not.toContain('Cho nhận tin');
+    }
+    // A member sees the state and no button.
+    expect(render('on', null, false, 'vi', { business: [account()] })).not.toContain('<button');
+  });
+
+  it('asks again before allowing, naming the @username to check, or saying plainly that an account with none cannot be checked', () => {
+    const view = (accounts: Account[], locale: 'vi' | 'en' = 'vi', canEdit = true) =>
+      renderToStaticMarkup(
+        <QueryClientProvider client={client.current}>
+          <IntlProvider locale={locale} messages={(locale === 'vi' ? viMessages : enMessages) as never} timeZone="Asia/Ho_Chi_Minh">
+            <TelegramBusiness connectionId="00000000-0000-4000-8000-0000000000aa" accounts={accounts} canEdit={canEdit} initialConfirm="aaaaaaaaaaaa" />
+          </IntlProvider>
+        </QueryClientProvider>,
+      );
+    const named = view([account({ approved: false })]);
+    expect(named).toContain('data-testid="telegram-business-confirm"');
+    expect(text(named)).toContain('Cho tin nhắn của @lan_tran vào Hộp thư của bạn? Chỉ làm vậy nếu đó là tài khoản của chính bạn.');
+    expect(text(named)).toContain('Đúng, cho phép');
+    expect(text(named)).toContain('Hủy');
+    // The first button is replaced by the question.
+    expect(text(named)).not.toContain('Cho nhận tin');
+    const unnamed = view([account({ approved: false, username: null })]);
+    expect(text(unnamed)).toContain('Tài khoản này chưa có @tên người dùng nên bạn không kiểm tra được của ai.');
+    expect(text(view([account({ approved: false })], 'en'))).toContain('Allow the chats of @lan_tran to come into your Inbox? Only do it if that is your own account.');
+    expect(text(view([account({ approved: false, username: null })], 'en'))).toContain('has no @username, so you cannot check whose it is');
+    // Only an owner or admin sees the question, and only for an account that is waiting.
+    expect(view([account({ approved: false })], 'vi', false)).not.toContain('data-testid="telegram-business-confirm"');
+    expect(view([account()])).not.toContain('data-testid="telegram-business-confirm"');
   });
 
   it('shows nothing of Business mode while chats are off or being switched', () => {
@@ -155,9 +191,9 @@ describe('the Telegram chats card', () => {
     expect(text(render('on', null, true, 'en'))).toContain('Telegram Business (your own Telegram Premium account)');
     expect(text(render('on', null, true, 'en'))).toContain('open Telegram, Settings, Business, Chatbots and choose this bot');
     const html = render('on', null, true, 'en', { business: [account({ name: 'Lan', username: null }), account({ ref: 'bbbbbbbbbbbb', name: 'Minh', username: null, enabled: false, approved: false }), account({ ref: 'cccccccccccc', name: 'Stranger', username: 'x_y', approved: false })] });
-    expect(text(html)).toContain('Lan: connected, the bot can answer');
-    expect(text(html)).toContain('Minh: disconnected, its messages are not taken in');
-    expect(text(html)).toContain('Stranger @x_y: connected, waiting for you to allow it');
+    expect(text(html)).toContain('Lan (no @username, so it cannot be told from another account) : connected, the bot can answer');
+    expect(text(html)).toContain('Minh (no @username, so it cannot be told from another account) : disconnected, its messages are not taken in');
+    expect(text(html)).toContain('Stranger username @x_y : connected, waiting for you to allow it');
     expect(text(html)).toContain('Allow its chats');
     expect(text(html)).toContain('Stop its chats');
     expect(text(html)).toContain('Anyone with Telegram Premium can connect this bot');

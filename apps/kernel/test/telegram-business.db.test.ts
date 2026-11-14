@@ -370,6 +370,110 @@ suite('Telegram Business mode on PostgreSQL (#3191)', () => {
     expect((await accountsOf(a))[0]).toMatchObject({ canReply: false, enabled: true });
   });
 
+  it('answers a business thread only through an account that is on, allowed and may reply, and says why not: the reply, the queued send, the retry, the draft and the thread\'s own state all refuse', async () => {
+    const t = telegram();
+    const adapter = new TelegramPublisher(undefined, new TelegramConversations({ fetch: t.fetchImpl })).conversations;
+    const deps = { runtime: worker, broker: vault, adapter: (p: string) => (p === 'telegram' ? adapter : undefined) };
+    const state = async (over: { enabled?: boolean; canReply?: boolean }) => {
+      expect((await post(a.hook, connection({ enabled: over.enabled ?? true, canReply: over.canReply ?? true }))).status).toBe(200);
+      await intake();
+    };
+    const detail = async (id: string) => (await api.query<{ reply: { allowed: boolean; reason: string | null } }>('kernel.conversation.get', { conversationId: id }, asOwner(a))).reply;
+    const allow = (on: boolean) => api.execute('kernel.channel.telegram_business_allow', { connectionId: a.connectionId, ref, allow: on }, asOwner(a));
+    await state({});
+    await allow(true);
+    expect((await post(a.hook, business('Còn hàng không shop?', { chat: 2501, messageId: 1 }))).status).toBe(200);
+    await intake();
+    const thread = (await threadRow(a, `b:2501:${CONN}`)) as { id: string; last_seq: number };
+    expect(await detail(thread.id)).toEqual({ allowed: true, reason: null });
+    // A reply is queued while the account is on; the owner stops the account before the worker sends it: nothing goes to Telegram, and the message says why.
+    const queued = await api.execute<{ messageId: string }>('kernel.conversation.reply', { conversationId: thread.id, body: 'Dạ còn ạ', lastSeenSeq: thread.last_seq }, asOwner(a));
+    await allow(false);
+    expect(await runConversationJob(deps, { orgId: a.orgId, messageId: queued.messageId, connectionId: a.connectionId, action: 'reply' })).toBe('settled');
+    expect(t.calls).toHaveLength(0);
+    expect(await rows('SELECT send_state, send_error_code FROM crove_kernel.conversation_message WHERE org_id = $1 AND id = $2', [a.orgId, queued.messageId])).toEqual([{ send_state: 'failed', send_error_code: 'BUSINESS_ACCOUNT_STOPPED' }]);
+    // The same for a new reply, a retry of that one, a draft and what the screen is told.
+    expect(await detail(thread.id)).toEqual({ allowed: false, reason: 'business_stopped' });
+    await expect(api.execute('kernel.conversation.reply', { conversationId: thread.id, body: 'Dạ còn ạ', lastSeenSeq: thread.last_seq + 1 }, asOwner(a))).rejects.toMatchObject({ code: 'BUSINESS_ACCOUNT_STOPPED', status: 409 });
+    await expect(api.execute('kernel.conversation.reply_settle', { messageId: queued.messageId, action: 'retry' }, asOwner(a))).rejects.toMatchObject({ code: 'BUSINESS_ACCOUNT_STOPPED' });
+    // A connection Telegram reports as disconnected, even when allowed, answers nothing; one with no right to reply is read-only.
+    await allow(true);
+    await state({ enabled: false });
+    expect(await detail(thread.id)).toEqual({ allowed: false, reason: 'business_stopped' });
+    await state({ canReply: false });
+    expect(await detail(thread.id)).toEqual({ allowed: false, reason: 'business_read_only' });
+    await expect(api.execute('kernel.conversation.reply', { conversationId: thread.id, body: 'Dạ còn ạ', lastSeenSeq: thread.last_seq + 1 }, asOwner(a))).rejects.toMatchObject({ code: 'BUSINESS_ACCOUNT_READ_ONLY' });
+    // Back on, allowed and with the right: answered, and the retry of the refused message is accepted.
+    await state({});
+    expect(await detail(thread.id)).toEqual({ allowed: true, reason: null });
+    expect(await api.execute('kernel.conversation.reply_settle', { messageId: queued.messageId, action: 'retry' }, asOwner(a))).toMatchObject({ state: 'queued' });
+    expect(await runConversationJob(deps, { orgId: a.orgId, messageId: queued.messageId, connectionId: a.connectionId, action: 'reply' })).toBe('accepted');
+    expect(t.calls.map((c) => c.method)).toEqual(['sendMessage']);
+    // A draft is not asked either, so no model call is spent on a thread nobody may answer: a customer's last message waits in a thread of its own.
+    expect((await post(a.hook, business('Anh ơi cho em hỏi giá', { chat: 2504, messageId: 1 }))).status).toBe(200);
+    await intake();
+    const waitingThread = (await threadRow(a, `b:2504:${CONN}`)) as { id: string };
+    await allow(false);
+    await expect(api.execute('kernel.conversation.draft_request', { conversationId: waitingThread.id }, asOwner(a))).rejects.toMatchObject({ code: 'BUSINESS_ACCOUNT_STOPPED' });
+    await allow(true);
+    await state({ canReply: false });
+    await expect(api.execute('kernel.conversation.draft_request', { conversationId: waitingThread.id }, asOwner(a))).rejects.toMatchObject({ code: 'BUSINESS_ACCOUNT_READ_ONLY' });
+    expect(await rows('SELECT 1 FROM crove_kernel.conversation_draft WHERE org_id = $1 AND conversation_id = $2', [a.orgId, waitingThread.id])).toHaveLength(0);
+    await state({});
+    // A business thread that holds no customer message (the owner wrote first) has no window to answer in: Telegram answers only chats with a message in the last 24 hours.
+    expect((await post(a.hook, business('Chào anh, em là chủ shop', { chat: 2502, messageId: 1, own: true }))).status).toBe(200);
+    await intake();
+    const own = (await threadRow(a, `b:2502:${CONN}`)) as { id: string; last_seq: number; reply_window_until: Date | null };
+    expect(own.reply_window_until).toBeNull();
+    expect(await detail(own.id)).toEqual({ allowed: false, reason: 'window_closed' });
+    await expect(api.execute('kernel.conversation.reply', { conversationId: own.id, body: 'Alo', lastSeenSeq: own.last_seq }, asOwner(a))).rejects.toMatchObject({ code: 'REPLY_WINDOW_CLOSED' });
+  });
+
+  it('keeps nothing that names the customer\'s chat or the business connection in a finished call row, so erasing the customer leaves no copy of them', async () => {
+    const t = telegram({ sendMessage: [{ body: { ok: true, result: { message_id: 9100 } } }] });
+    const adapter = new TelegramPublisher(undefined, new TelegramConversations({ fetch: t.fetchImpl })).conversations;
+    const deps = { runtime: worker, broker: vault, adapter: (p: string) => (p === 'telegram' ? adapter : undefined) };
+    expect((await post(a.hook, business('Số của mình là 0912 345 678', { chat: 8827361, messageId: 1 }))).status).toBe(200);
+    await intake();
+    const thread = (await threadRow(a, `b:8827361:${CONN}`)) as { id: string; last_seq: number };
+    const { messageId } = await api.execute<{ messageId: string }>('kernel.conversation.reply', { conversationId: thread.id, body: 'Dạ em nhận rồi ạ', lastSeenSeq: thread.last_seq }, asOwner(a));
+    expect(await runConversationJob(deps, { orgId: a.orgId, messageId, connectionId: a.connectionId, action: 'reply' })).toBe('accepted');
+    // The message keeps the whole id (it is how the echo of the reply is told to be the same message); the call row keeps the platform's own message id only.
+    expect(await rows('SELECT external_message_id FROM crove_kernel.conversation_message WHERE org_id = $1 AND id = $2', [a.orgId, messageId])).toEqual([{ external_message_id: `b:8827361:${CONN}:9100` }]);
+    expect(await rows('SELECT external_ref FROM crove_kernel.external_call WHERE org_id = $1 AND key LIKE $2', [a.orgId, `conversation.reply:${messageId}:%`])).toEqual([{ external_ref: '9100' }]);
+    await api.execute('kernel.conversation.erase_contact', { conversationId: thread.id, confirm: true }, { actor: { type: 'user', userId: a.ownerId, aal: 'aal2', sessionId: randomUUID(), mfaAt: nowSec() }, orgId: a.orgId, idempotencyKey: randomUUID() });
+    expect(await threadRow(a, `b:8827361:${CONN}`)).toBeUndefined();
+    // Nothing the org holds names the customer's chat or the business connection any more: not the call rows, the audit log nor the events.
+    // (Other customers' messages through the same business connection keep naming it, so the messages are checked for the erased chat only.)
+    for (const [table, column] of [['external_call', 'external_ref'], ['audit_event', 'detail::text'], ['outbox_event', 'payload::text'], ['conversation_message', 'external_message_id']] as const) {
+      for (const needle of table === 'conversation_message' ? ['8827361'] : ['8827361', CONN]) expect({ table, needle, found: (await rows(`SELECT 1 FROM crove_kernel.${table} WHERE org_id = $1 AND ${column} LIKE $2`, [a.orgId, `%${needle}%`])).length }).toEqual({ table, needle, found: 0 });
+    }
+  });
+
+  it('refuses a business thread that does not come through the gate: no business connection, or another one, or a business connection with a bot thread', async () => {
+    const event = (threadId: string, id: string) => ({ kind: 'direct' as const, threadId, messageId: `${threadId}:${id}`, direction: 'in' as const, contact: { id: '2601' }, text: 'Thử', at: new Date().toISOString() });
+    const ingest = (events: ReturnType<typeof event>[], via?: string) => worker.execute<{ stored: number; ignored: number }>('kernel.conversation.ingest', { connectionId: a.connectionId, events, ...(via ? { businessConnectionId: via } : {}) }, { actor: { type: 'system', component: 'test' }, orgId: a.orgId });
+    // A thread of the business shape with no business connection named, or the wrong one, is refused (whatever the notice parser said).
+    expect(await ingest([event(`b:2601:${CONN}`, '1')])).toMatchObject({ stored: 0, ignored: 1 });
+    expect(await ingest([event(`b:2601:${OTHER_CONN}`, '2')], CONN)).toMatchObject({ stored: 0, ignored: 1 });
+    // A business connection with a thread that is a bot chat's is refused too.
+    expect(await ingest([event('2601', '3')], CONN)).toMatchObject({ stored: 0, ignored: 1 });
+    expect(await rows("SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id IN ($2, '2601')", [a.orgId, `b:2601:${CONN}`])).toHaveLength(0);
+    // The right pair is taken (the account is on and allowed by now).
+    expect(await ingest([event(`b:2601:${CONN}`, '4')], CONN)).toMatchObject({ stored: 1, ignored: 0 });
+  });
+
+  it('takes an edit of a message older than two days, which carries the message\'s first date', async () => {
+    const old = new Date(Date.now() - 3 * 86_400_000).toISOString();
+    const thread = `b:2701:${CONN}`;
+    await worker.execute('kernel.conversation.ingest', { connectionId: a.connectionId, businessConnectionId: CONN, events: [{ kind: 'direct', threadId: thread, messageId: `${thread}:1`, direction: 'in', contact: { id: '2701' }, text: 'Giá cũ', at: old }] }, { actor: { type: 'system', component: 'test' }, orgId: a.orgId });
+    const edit = business('Giá mới', { chat: 2701, messageId: 1, field: 'edited_business_message', date: Math.floor(Date.parse(old) / 1000) });
+    expect((await post(a.hook, edit)).status).toBe(200);
+    expect(await waiting()).toBe(1);
+    await intake();
+    expect((await messagesOf(a, thread)).map((m) => m.body)).toEqual(['Giá mới']);
+  });
+
   it('records accounts only while chats are on, keeps at most ten, and forgets them when the connection is disconnected', async () => {
     // While chats are on the command records an account; once they are off it is refused quietly and nothing changes.
     const first = await worker.execute<{ applied: boolean }>('kernel.channel.telegram_business_record', { connectionId: b.connectionId, account: { id: 'x1', userId: '1', name: null, username: null, canReply: true, enabled: true } }, { actor: { type: 'system', component: 'test' }, orgId: b.orgId });

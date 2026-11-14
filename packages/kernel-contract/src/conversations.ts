@@ -338,7 +338,7 @@ export const zConversationDetail = z.strictObject({
   // The comment thread a private reply continues, when the reader may see it.
   parentId: zId.nullable(),
   // Whether a reply can be sent now, else why not (a code the screen turns into words).
-  reply: z.strictObject({ allowed: z.boolean(), reason: z.enum(['channel_inactive', 'not_supported', 'window_closed']).nullable() }),
+  reply: z.strictObject({ allowed: z.boolean(), reason: z.enum(['channel_inactive', 'not_supported', 'window_closed', 'business_stopped', 'business_read_only']).nullable() }),
   // Events of this channel may be missing between these two times (the platform's history could not be read back far enough to fill
   // them): shown on a thread that was active after `from`.
   gap: z.strictObject({ from: z.iso.datetime({ offset: true }), to: z.iso.datetime({ offset: true }) }).nullable(),

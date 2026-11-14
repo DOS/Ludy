@@ -3,10 +3,12 @@
 -- stay untouched.
 --
 -- crove_kernel.channel_connection.chat_business: the business accounts a Telegram connection's bot is connected to, as Telegram told it in its
--- business_connection updates: a JSON array of at most 10 entries {id, userId, name, canReply, enabled}. Only the system command
--- kernel.channel.telegram_business_record writes it, from an update the webhook route verified; the core stores a business message only while
--- the entry for its business connection is enabled. Empty for a connection that has none; cleared when the connection is disconnected. The shape of
--- an entry is the command's to check; the table only keeps it a small array.
+-- business_connection updates: a JSON array of at most 10 entries {id, userId, name, username, canReply, enabled, approved}. The system command
+-- kernel.channel.telegram_business_record writes what Telegram says (from an update the webhook route verified; a new account starts with approved
+-- false and an update never changes it), and only an owner or admin, through kernel.channel.telegram_business_allow, sets approved: Telegram lets any
+-- Premium user connect a bot that has Business Mode on, so the core stores a business message only while the entry for its business connection is
+-- enabled and approved, and answers a business thread only through such an entry. Empty for a connection that has none; cleared when the connection
+-- is disconnected. The shape of an entry is the commands' to check; the table only keeps it a small array.
 SET LOCAL lock_timeout = '2s';
 
 ALTER TABLE crove_kernel.channel_connection ADD COLUMN IF NOT EXISTS chat_business jsonb NOT NULL DEFAULT '[]'::jsonb;

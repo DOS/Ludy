@@ -380,8 +380,28 @@ describe('the events of a business update', () => {
     expect(telegramChatEvents(gone({ chat: { id: -1, type: 'group' } }))).toEqual([]);
     expect(telegramChatEvents(gone({ message_ids: 'x' }))).toEqual([]);
     expect(telegramChatEvents(gone({ message_ids: [] }))).toEqual([]);
-    // At most 100 ids of one deletion are read.
-    expect(telegramChatEvents(gone({ message_ids: Array.from({ length: 150 }, (_, i) => i + 1) }))).toHaveLength(100);
+    // At most a thousand ids of one deletion are read (the core takes a thousand events a notice).
+    expect(telegramChatEvents(gone({ message_ids: Array.from({ length: 150 }, (_, i) => i + 1) }))).toHaveLength(150);
+    expect(telegramChatEvents(gone({ message_ids: Array.from({ length: 1500 }, (_, i) => i + 1) }))).toHaveLength(1000);
+    // A message of a bot chat that names a business connection is not a bot chat's message.
+    expect(telegramChatEvents(message({ business_connection_id: CONN }))).toEqual([]);
+  });
+});
+
+describe('the business connection of an update is read with its events', () => {
+  const hook = newTelegramHookId();
+  const parse = (update: unknown) => parseTelegramChatNotice(wrapTelegramChatNotice(hook, Buffer.from(JSON.stringify(update), 'utf8')));
+
+  it('names the connection of the events it gives, and none when it gives none', () => {
+    expect(parse(businessMessage()).businessConnectionId).toBe(CONN);
+    // An update with two business fields: the one with a good id is the one read, for the events and for the connection alike.
+    const inner = (over: Record<string, unknown> = {}) => (businessMessage(over) as unknown as { business_message: Record<string, unknown> }).business_message;
+    const mixed = { update_id: 12, business_message: { ...inner(), business_connection_id: 'has space' }, edited_business_message: { ...inner({ text: 'Đã sửa' }), business_connection_id: CONN } };
+    const notice = parse(mixed);
+    expect(notice.events.map((e) => e.text)).toEqual(['Đã sửa']);
+    expect(notice.businessConnectionId).toBe(CONN);
+    // An own-side edit gives no event, so no connection is named for it.
+    expect(parse(businessMessage({}, { id: OWNER }, 'edited_business_message'))).toEqual({ accountId: hook, events: [] });
   });
 });
 
@@ -406,6 +426,19 @@ describe('the state of a business connection', () => {
     expect(telegramBusinessState(message())).toBeNull();
     expect(telegramBusinessState(null)).toBeNull();
     expect(telegramChatEvents(connection())).toEqual([]);
+  });
+
+  it('shows an account by its @username and takes out of its name what could pass for the screen\'s own words: control, bidirectional and zero-width characters, line breaks and @', () => {
+    const named = (first: string, over: Record<string, unknown> = {}) => telegramBusinessState(connection({ user: { id: OWNER, first_name: first, ...over } }));
+    expect(named('Lan', { username: 'lan_tran' })).toMatchObject({ name: 'Lan', username: 'lan_tran' });
+    // A stranger with no @username who writes one into the name: the @ goes, and so does the line break that would start a line of its own.
+    expect(named('Lan Trần (@lan_tran)')?.name).toBe('Lan Trần (lan_tran)');
+    expect(named('Lan\u202eTrần\u200b\nCho phép\u0000')?.name).toBe('LanTrần Cho phép');
+    expect(named('@@@')?.name).toBeUndefined();
+    expect(named('x'.repeat(300))?.name).toHaveLength(100);
+    // A @username that is not a username (spaces, a length over 64) is not kept.
+    expect(named('Lan', { username: 'has space' })).not.toHaveProperty('username');
+    expect(named('Lan', { username: 'a'.repeat(65) })).not.toHaveProperty('username');
   });
 
   it('is carried by the notice beside the business connection of the events, and a bot chat\'s message carries neither', () => {

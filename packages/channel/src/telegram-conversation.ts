@@ -123,6 +123,8 @@ export const TELEGRAM_BUSINESS_WINDOW_HOURS = 24;
 // A removal notice has no date of its own, so it is dated at the earliest instant an event may have: no later than an erased customer's erasure, so an
 // erased customer is never brought back by a deletion notice (the core ignores what is dated at or before the erasure).
 const REMOVED_AT = '2020-01-01T00:00:00.000Z';
+// A deletion names up to this many messages (the core takes a thousand events a notice).
+const DELETED_IDS_MAX = 1000;
 
 const threadOf = (chatId: string, businessId: string | null): string => (businessId ? `b:${chatId}:${businessId}` : chatId);
 const messageKey = (thread: string, messageId: string): string => `${thread}:${messageId}`;
@@ -180,47 +182,53 @@ function messageEvent(m: TelegramMessage, businessId: string | null, edited: boo
 
 const objectOf = (value: unknown): Record<string, unknown> | null => (typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null);
 
-// The events of one update: a private chat's message, or with Business mode a message of a connected account's chat, its edit and its deletion. A group,
-// a supergroup, a channel and every other kind of update (a callback, a member's change) give none, and a bot's own message in a bot chat none. Returns []
-// for any of those, never throws.
-export function telegramChatEvents(update: unknown): InboundConversationEvent[] {
+// One update read once: its events and the business connection they came through (null for a bot chat's message), so the two can never disagree.
+function scan(update: unknown): { events: InboundConversationEvent[]; via: string | null } {
+  const none = { events: [], via: null };
   const u = objectOf(update);
-  if (!u) return [];
+  if (!u) return none;
   const one = (value: unknown, businessId: string | null, edited: boolean): InboundConversationEvent[] => {
     const m = objectOf(value);
     const event = m ? messageEvent(m as TelegramMessage, businessId, edited) : null;
     return event ? [event] : [];
   };
   const message = objectOf(u.message);
-  if (message) return one(message, null, false);
+  // A bot chat's message names no business connection: one that does is not a bot chat's, and is not taken as one.
+  if (message) return message.business_connection_id === undefined ? { events: one(message, null, false), via: null } : none;
   for (const [field, edited] of [['business_message', false], ['edited_business_message', true]] as const) {
     const m = objectOf(u[field]);
     const businessId = m ? businessIdOf(m.business_connection_id) : null;
-    if (m && businessId) return one(m, businessId, edited);
+    if (m && businessId) {
+      const events = one(m, businessId, edited);
+      return { events, via: events.length > 0 ? businessId : null };
+    }
   }
   const deleted = objectOf(u.deleted_business_messages);
   const businessId = deleted ? businessIdOf(deleted.business_connection_id) : null;
   const chat = objectOf(deleted?.chat);
   const chatId = idText(chat?.id);
-  if (!deleted || !businessId || !chat || chat.type !== 'private' || !chatId || chatId.length > ID_MAX || !Array.isArray(deleted.message_ids)) return [];
+  if (!deleted || !businessId || !chat || chat.type !== 'private' || !chatId || chatId.length > ID_MAX || !Array.isArray(deleted.message_ids)) return none;
   const thread = threadOf(chatId, businessId);
   const events: InboundConversationEvent[] = [];
-  for (const id of deleted.message_ids.slice(0, 100)) {
+  for (const id of deleted.message_ids.slice(0, DELETED_IDS_MAX)) {
     const messageId = idText(id);
     if (messageId) events.push({ kind: 'direct', threadId: thread, messageId: messageKey(thread, messageId), direction: 'in', contact: { id: chatId }, text: '', at: REMOVED_AT, removed: true });
   }
-  return events;
+  return { events, via: events.length > 0 ? businessId : null };
 }
 
-// The business connection an update's events came through (null for a bot chat's message): the core stores them only while it is enabled.
-function businessConnectionOf(update: unknown): string | null {
-  const u = objectOf(update);
-  if (!u) return null;
-  for (const field of ['business_message', 'edited_business_message', 'deleted_business_messages']) {
-    const m = objectOf(u[field]);
-    if (m) return businessIdOf(m.business_connection_id);
-  }
-  return null;
+// The events of one update: a private chat's message, or with Business mode a message of a connected account's chat, its edit and its deletion. A group,
+// a supergroup, a channel and every other kind of update (a callback, a member's change) give none, and a bot's own message in a bot chat none. Returns []
+// for any of those, never throws.
+export const telegramChatEvents = (update: unknown): InboundConversationEvent[] => scan(update).events;
+
+// An account's name as the owner is shown it to decide whether to allow the account: the name is the account's own choice, so what could pass for the screen's
+// own words is taken out: control, format (bidirectional and zero-width) and line characters, and `@`, which would let a name wear a @username it does not have.
+function accountNameOf(user: TelegramUser): string | undefined {
+  const name = nameOf(user);
+  if (!name) return undefined;
+  const plain = name.replace(/[\p{Zl}\p{Zp}\r\n\t]/gu, ' ').replace(/[\p{Cc}\p{Cf}@]/gu, '').replace(/\s+/g, ' ').trim().slice(0, 100);
+  return plain === '' ? undefined : plain;
 }
 
 // A `business_connection` update: the bot was connected to, edited on or disconnected from a business account. Anything that does not read as a
@@ -233,7 +241,7 @@ export function telegramBusinessState(update: unknown): ConversationBusinessStat
   const userId = idText(user?.id);
   if (!id || !user || !userId || userId.length > ID_MAX) return null;
   const rights = objectOf(connection.rights);
-  const name = nameOf(user);
+  const name = accountNameOf(user);
   const username = typeof user.username === 'string' && /^[A-Za-z0-9_]{1,64}$/.test(user.username) ? user.username : null;
   return { id, userId, ...(name ? { name } : {}), ...(username ? { username } : {}), canReply: rights?.can_reply === true || connection.can_reply === true, enabled: connection.is_enabled === true };
 }
@@ -252,8 +260,7 @@ export function parseTelegramChatNotice(body: Uint8Array): ConversationNotice {
   if (typeof envelope !== 'object' || envelope === null || envelope.v !== 1 || typeof envelope.hook !== 'string' || !TELEGRAM_HOOK_PATTERN.test(envelope.hook)) {
     throw new ConversationNoticeError('malformed');
   }
-  const events = telegramChatEvents(envelope.update);
-  const via = events.length > 0 ? businessConnectionOf(envelope.update) : null;
+  const { events, via } = scan(envelope.update);
   const state = telegramBusinessState(envelope.update);
   return { accountId: envelope.hook, events, ...(via ? { businessConnectionId: via } : {}), ...(state ? { businessState: state } : {}) };
 }

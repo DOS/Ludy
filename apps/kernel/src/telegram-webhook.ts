@@ -94,9 +94,10 @@ export async function acceptTelegramWebhook(
   // Only the messages of the customer not yet seen and not too old are worth a place in the queue.
   const keys: string[] = [];
   for (const event of telegramChatEvents(update)) {
-    // A removal carries no date of its own (it is dated at the earliest instant an event may have, so an erased customer is not brought back by it), so
-    // the age of a message does not apply to it. The message id names its chat, so the key is the hook and the id.
-    if (!event.removed && now - Date.parse(event.at) > TELEGRAM_NOTICE_MAX_AGE_MS) continue;
+    // A removal carries no date of its own (it is dated at the earliest instant an event may have, so an erased customer is not brought back by it), and an
+    // edit carries the message's first date, not the edit's: the age of a message does not apply to either. The message id names its chat, so the key is the
+    // hook and the id.
+    if (!event.removed && !event.edited && now - Date.parse(event.at) > TELEGRAM_NOTICE_MAX_AGE_MS) continue;
     // An edit repeats a message id on purpose (each edit is its own update), so it is told apart by the update's id.
     const key = event.edited ? `${request.hook}:update:${(update as { update_id: number }).update_id}` : `${request.hook}:${event.removed ? 'removed:' : ''}${event.messageId}`;
     if (!replays?.has(key)) keys.push(key);

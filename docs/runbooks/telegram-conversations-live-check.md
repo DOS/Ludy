@@ -59,8 +59,8 @@ Fill one row per fact as it is settled; commit the table with the fixes it cause
 | 26 | An edit of a customer's message (`edited_business_message`) changes the stored words once per edit; a deletion (`deleted_business_messages`, `message_ids`) blanks them; a deletion of an erased customer's message brings nothing back | [O], [live] | `telegramChatEvents`, `REMOVED_AT` | |
 | 27 | The owner takes the chatbot away in Telegram: a `business_connection` update with `is_enabled` false arrives, the card says "đã ngắt" and later messages of that account are not taken in | [O], [live] | `telegram_business_record` | |
 | 28 | `message_id` is unique inside one chat only: two customers' messages with the same `message_id` are both stored (bot chats and business chats) | [O] | `messageKey` | |
-| 29 | The business connection id, the account's user id and its name appear in no log, audit row or event (the screen shows the name only) | design | `telegram_business_record` audit | |
-| 30 | **A stranger's account.** A second Premium account that is not the owner's connects the bot (Business Mode on): its `business_connection` arrives, the card lists it as waiting with its @username, and **none of its chats is stored** until an owner allows it; **Ngừng nhận tin** ends an allowed account's messages at once | [live] | `telegram_business_allow`, the ingest gate | |
+| 29 | The business connection id and the account's user id appear in no log, audit row or event, and neither do its name and @username (the screen shows the name and @username, and names the account to the server by a fingerprint) | design | `telegram_business_record` audit | |
+| 30 | **A stranger's account.** A second Premium account that is not the owner's connects the bot (Business Mode on): its `business_connection` arrives, the card lists it as waiting with its @username, and **none of its chats is stored** until an owner allows it; **Ngừng nhận tin** ends an allowed account's messages at once, and a reply queued to one of its threads fails with `BUSINESS_ACCOUNT_STOPPED` instead of reaching Telegram | [live] | `telegram_business_allow`, the ingest gate | |
 
 ## 2. Steps
 
