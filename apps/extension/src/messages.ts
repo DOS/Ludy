@@ -76,14 +76,15 @@ export interface Lost {
   type: 'lost';
   reason: RecordingStopReason;
   meetingId: string;
+  title: string;
   uploaded: boolean;
 }
 
 export function parseLost(raw: unknown): Lost | null {
   if (!isObject(raw) || raw.type !== 'lost') return null;
-  const { reason, meetingId, uploaded } = raw;
-  if (!isRecordingStopReason(reason) || typeof meetingId !== 'string' || meetingId === '' || typeof uploaded !== 'boolean') return null;
-  return { type: 'lost', reason, meetingId, uploaded };
+  const { reason, meetingId, title, uploaded } = raw;
+  if (!isRecordingStopReason(reason) || typeof meetingId !== 'string' || meetingId === '' || typeof title !== 'string' || typeof uploaded !== 'boolean') return null;
+  return { type: 'lost', reason, meetingId, title: title.slice(0, 200), uploaded };
 }
 
 export function readLost(raw: unknown): LostState | null {

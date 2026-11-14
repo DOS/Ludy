@@ -33,7 +33,7 @@ chrome.runtime.onMessage.addListener((raw, sender, respond) => {
         void running
           .stop(reason)
           .catch(() => ({ uploaded: false, meetingId: running.meetingId }))
-          .then((done) => chrome.runtime.sendMessage({ type: 'lost', reason, meetingId: running.meetingId, uploaded: done.uploaded } satisfies Lost))
+          .then((done) => chrome.runtime.sendMessage({ type: 'lost', reason, meetingId: running.meetingId, title: command.title.trim(), uploaded: done.uploaded } satisfies Lost))
           .catch(() => undefined);
       });
       ticker = setInterval(() => void chrome.runtime.sendMessage({ type: 'tick', elapsedMs: started.running.elapsedMs() } satisfies Tick).catch(() => undefined), 1000);

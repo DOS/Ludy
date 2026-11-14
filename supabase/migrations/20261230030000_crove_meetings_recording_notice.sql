@@ -4,8 +4,8 @@
 --
 -- 1. consent_method takes 'in_call_chat': the recorder pasted the recording notice in the call's chat. The three older values stay.
 -- 2. recording_stop_reason: a code (never text) saying why a recording stopped without the recorder's own click (tab closed, microphone
---    or permission lost, storage full, the recorder screen left). NULL for a recording the recorder stopped. The stop time is ended_at,
---    which meetings.meeting.recording_stopped sets together with it. A column grant keeps it writable only through that command.
+--    or permission lost, storage full, the recorder screen left). NULL for a recording the recorder stopped. The stop time is ended_at (already
+--    granted), which meetings.media.record sets with it from the upload's reason code. The column grant is for that command only.
 SET LOCAL lock_timeout = '2s';
 
 ALTER TABLE crove_meetings.meeting DROP CONSTRAINT IF EXISTS meeting_consent_method_check;

@@ -223,8 +223,9 @@ export async function beginRecording(store: ChunkStore, meta: Omit<RecordingMeta
       // Set at once (the screen reads it right after), saved behind the chunks.
       if (current.stopped !== undefined) return Promise.resolve();
       current = { ...current, stopped: by };
-      const next = queue.then(() => store.put(current));
-      queue = next.catch(() => undefined);
+      // Never rejects: the mark is already in memory, and a device too full to save it must not stop the recording from ending.
+      const next = queue.then(() => store.put(current)).catch(() => undefined);
+      queue = next;
       return next;
     },
   };

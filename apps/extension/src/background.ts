@@ -98,11 +98,8 @@ chrome.runtime.onMessage.addListener((raw, sender, respond) => {
   if (message.type === 'lost') {
     const lost = parseLost(raw);
     if (!lost) return undefined;
-    void chrome.storage.local.get(RECORDING_KEY).then((stored) => {
-      const state = stored[RECORDING_KEY] as RecordingState | undefined;
-      // Only the recording the worker knows is marked; a late message about another meeting is ignored.
-      if (state && state.meetingId === lost.meetingId) void markLost({ meetingId: lost.meetingId, title: state.title, reason: lost.reason, at: Date.now(), uploaded: lost.uploaded });
-    });
+    // Works even if the member clicked Stop while the saved part was uploading: the notice is about the recording that ended by itself.
+    void markLost({ meetingId: lost.meetingId, title: lost.title, reason: lost.reason, at: Date.now(), uploaded: lost.uploaded });
     return undefined;
   }
   if (message.type === 'start') {

@@ -1315,6 +1315,7 @@ suite('meetings module database integration tests (#2576)', () => {
 
   // Meetings A1 (#3159): the recording notice, the new consent method, the stop reason and the recording indicator's query.
   const OGG = Buffer.concat([Buffer.from([0x4f, 0x67, 0x67, 0x53, 0x00, 0x02]), Buffer.from('a1 notice upload '.repeat(40))]);
+  const WEBM = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.from('a1 video upload '.repeat(40))]);
   const uploadRaw = async (meetingId: string, query: string, who = 'recorder') =>
     app.request(`/api/meetings/${meetingId}/media${query}`, {
       method: 'POST',
@@ -1364,7 +1365,8 @@ suite('meetings module database integration tests (#2576)', () => {
     expect((await uploadRaw(String(clean.body.meetingId), '?kind=audio')).status).toBe(200);
     const cleanGot = await rpc('meetings/get', 'recorder', { meetingId: String(clean.body.meetingId) });
     expect(cleanGot.body.recordingStopReason).toBeNull();
-    expect(cleanGot.body.endedAt).toBeNull();
+    // Its end time is set by the upload like any other, so the recording chip lets go of it.
+    expect(typeof cleanGot.body.endedAt).toBe('string');
   });
 
   it('23. A1: recording_now shows the caller\'s own extension meeting that is still waiting for audio, and nothing once it has audio or stopped', async () => {
@@ -1386,6 +1388,18 @@ suite('meetings module database integration tests (#2576)', () => {
     expect((await rpc('meetings/recordingNow', 'recorder', {})).body.recording).toMatchObject({ meetingId });
     // Once its audio arrives (and the stop is recorded) the chip has nothing to show.
     expect((await uploadRaw(meetingId, '?kind=audio&stopReason=mic_lost')).status).toBe(200);
+    expect((await rpc('meetings/recordingNow', 'recorder', {})).body.recording).toBeNull();
+    // A video recording (no audio segment of its own) ends the chip too.
+    const withVideo = await rpc('meetings/create', 'recorder', { title: 'Recording video', consentMethod: 'told_at_start', keepVideo: true });
+    const videoId = String(withVideo.body.meetingId);
+    await admin(async (c) => void (await c.query('UPDATE crove_meetings.meeting SET extension_token_id = $1 WHERE id = $2', [randomUUID(), videoId])));
+    expect((await rpc('meetings/recordingNow', 'recorder', {})).body.recording).toMatchObject({ meetingId: videoId });
+    const video = await app.request(`/api/meetings/${videoId}/media?kind=video`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug, 'content-type': 'video/webm', 'content-length': String(WEBM.length) },
+      body: new Uint8Array(WEBM),
+    });
+    expect(video.status).toBe(200);
     expect((await rpc('meetings/recordingNow', 'recorder', {})).body.recording).toBeNull();
   });
 });

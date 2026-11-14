@@ -270,7 +270,7 @@ export const meetingMediaRecord = defineCommand({
     const userId = userOf(ctx.actor);
     const meeting = await ctx.trx
       .selectFrom('crove_meetings.meeting')
-      .select(['id', 'recorder_user_id', 'keep_video', 'extension_token_id', 'started_at', 'recording_stop_reason', sql<string>`audio_retention_date::text`.as('audio_retention_day')])
+      .select(['id', 'recorder_user_id', 'keep_video', 'extension_token_id', 'started_at', 'ended_at', 'recording_stop_reason', sql<string>`audio_retention_date::text`.as('audio_retention_day')])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
       .executeTakeFirst();
@@ -361,11 +361,13 @@ export const meetingMediaRecord = defineCommand({
 
     // A recording that stopped without the recorder's click (A1, #3159): the reason code and the stop time (the start plus what was
     // recorded, never later than now) stay on the meeting, once, so it can say "Ghi âm đã dừng lúc ...". A code, never text.
-    if (input.stopReason !== undefined && meeting.recording_stop_reason === null && meeting.started_at !== null) {
+    // Every recording that reaches the server ends its meeting's recording: ended_at is set once (the first media wins), which is also what
+    // takes the meeting out of the app's recording chip.
+    if (meeting.ended_at === null && meeting.started_at !== null) {
       const endedAt = new Date(Math.min(new Date(meeting.started_at).getTime() + input.lengthSeconds * 1000, ctx.now.getTime()));
       await ctx.trx
         .updateTable('crove_meetings.meeting')
-        .set({ recording_stop_reason: input.stopReason, ended_at: endedAt, updated_at: ctx.now })
+        .set({ ended_at: endedAt, updated_at: ctx.now, ...(input.stopReason !== undefined && meeting.recording_stop_reason === null ? { recording_stop_reason: input.stopReason } : {}) })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.meetingId)
         .execute();
@@ -600,7 +602,7 @@ export const meetingMediaKeyReseal = defineCommand({
 });
 
 // The recording indicator of the app header (A1, #3159): the caller's own meeting made by the extension that has no audio yet
-// and started in the last RECORDING_NOW_WINDOW_HOURS. A person's own meetings only; nothing of any other member. Not sensitive:
+// (no media recorded yet, so no end time) and started in the last RECORDING_NOW_WINDOW_HOURS. A person's own meetings only; nothing of any other member. Not sensitive:
 // it returns a title the caller wrote and a start time, and the app asks every few seconds.
 export const meetingRecordingNow = defineQuery({
   name: 'meetings.meeting.recording_now',
@@ -620,7 +622,6 @@ export const meetingRecordingNow = defineQuery({
       .where('started_at', '>', since)
       .where('ended_at', 'is', null)
       .where((eb) => eb.or([eb('text_retention_date', 'is', null), eb('text_retention_date', '>', vnDay(now))]))
-      .where(sql<boolean>`NOT EXISTS (SELECT 1 FROM crove_meetings.audio_segment a WHERE a.org_id = crove_meetings.meeting.org_id AND a.meeting_id = crove_meetings.meeting.id)`)
       .orderBy('started_at', 'desc')
       .limit(1)
       .executeTakeFirst();
