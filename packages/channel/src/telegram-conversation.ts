@@ -9,9 +9,10 @@
 // connection holds, and the `secret_token` Telegram echoes in X-Telegram-Bot-Api-Secret-Token is not stored anywhere but derived from the
 // hook under a key of the deployment (telegramHookSecret), so the route can check it before it reads the body or asks the database.
 import { createHmac, createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { ConversationNoticeError, type ConversationAdapter, type ConversationBusinessState, type ConversationCallResult, type ConversationChatHookInput, type ConversationChatHookResult, type ConversationNotice, type ConversationReplyInput, type InboundConversationEvent } from './conversation.ts';
-import { TELEGRAM_TEXT_MAX, TelegramClient, TelegramError, telegramSecretOf } from './telegram.ts';
-import type { Fetch } from './oauth.ts';
+import { ConversationNoticeError, type ConversationAdapter, type ConversationBusinessState, type ConversationCallResult, type ConversationChatHookInput, type ConversationChatHookResult, type ConversationMediaInput, type ConversationMediaResult, type ConversationNotice, type ConversationReplyInput, type InboundConversationEvent } from './conversation.ts';
+import { TELEGRAM_HOSTS, TELEGRAM_TEXT_MAX, TelegramClient, TelegramError, telegramSecretOf } from './telegram.ts';
+import { mediaHostAllowed } from './zalo-conversation.ts';
+import { allowlistedFetch, type Fetch } from './oauth.ts';
 
 // The most a notice may weigh: one update is a few hundred bytes (a photo lists its sizes), so a body past this is no update of Telegram's.
 export const TELEGRAM_MAX_NOTICE_BYTES = 64 * 1024;
@@ -71,6 +72,21 @@ const PLACEHOLDERS: ReadonlyArray<readonly [string, string]> = [
   ['poll', '[Khách gửi một cuộc khảo sát]'],
   ['dice', '[Khách gửi một biểu tượng]'],
 ];
+
+// Customers' photos (#3192). A message's `photo` lists the sizes of one photo (`PhotoSize`: file_id, file_unique_id, width, height, file_size?) [O]; the
+// largest one that fits the cap is the image, named by its `file_id` (a reference, not an address and not the bot's token). The bytes are fetched by the media job
+// through `getFile` and `https://api.telegram.org/file/bot<token>/<file_path>` [O], a host that is the Bot API's own: the job's guard lists it and nothing else.
+export const TELEGRAM_MEDIA_HOSTS: readonly string[] = Object.freeze([...TELEGRAM_HOSTS]);
+// The cap of a stored image (`CONVERSATION_IMAGE_MAX_BYTES` of @crove/kernel-contract, which the kernel's media test holds this to: this package does not
+// import the contract).
+export const TELEGRAM_PHOTO_MAX_BYTES = 5 * 1024 * 1024;
+// A `file_id` is a base64url string of the bot's own [O: opaque]; the core's reference pattern takes `[A-Za-z0-9._:=-]{1,300}`, of which these are the ones a file id uses.
+const FILE_ID = /^[A-Za-z0-9_-]{1,300}$/;
+// A `file_path` as Telegram's own server gives it (`photos/file_12.jpg`): plain segments, never absolute (a self-hosted Bot API server answers with a local path),
+// never `.` or `..`, so the address built from it cannot leave the bot's file path.
+const FILE_PATH = /^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,127}(?:\/[A-Za-z0-9_-][A-Za-z0-9_.-]{0,127}){0,3}$/;
+// A photo lists a handful of sizes (four or five in practice); more than this is no photo of Telegram's.
+const PHOTO_SIZES_MAX = 20;
 
 const TEXT_MAX = 20_000;
 const NAME_MAX = 200;
@@ -132,14 +148,36 @@ const threadOf = (chatId: string, businessId: string | null): string => (busines
 const messageKey = (thread: string, messageId: string): string => `${thread}:${messageId}`;
 const businessIdOf = (value: unknown): string | null => (typeof value === 'string' && BUSINESS_ID.test(value) ? value : null);
 
-// What the message says: its words, with a placeholder naming an attachment the customer sent (or, for the account's own side, that was sent).
-function bodyOf(m: TelegramMessage, own: boolean): string | null {
+// The photo of a message as the image the core will fetch: the largest of its sizes (by pixels) whose declared size fits the cap, named by its `file_id`. None when
+// there is no photo, or no size that reads as one (an id that is not a file id, a size without its pixels, every size over the cap): the message then keeps its
+// placeholder line alone. At most one image, whatever the sizes: they are one photo.
+function photoOf(m: TelegramMessage): Array<{ kind: 'image'; mediaRef: string }> {
+  if (!Array.isArray(m.photo)) return [];
+  let best: { id: string; pixels: number } | null = null;
+  for (const size of m.photo.slice(0, PHOTO_SIZES_MAX)) {
+    const s = objectOf(size);
+    if (!s) continue;
+    const id = typeof s.file_id === 'string' && FILE_ID.test(s.file_id) ? s.file_id : null;
+    const width = typeof s.width === 'number' && Number.isSafeInteger(s.width) && s.width > 0 ? s.width : null;
+    const height = typeof s.height === 'number' && Number.isSafeInteger(s.height) && s.height > 0 ? s.height : null;
+    if (!id || !width || !height) continue;
+    // A size whose declared weight is over the cap would only be refused at the fetch: the next one down is taken instead.
+    if (typeof s.file_size === 'number' && s.file_size > TELEGRAM_PHOTO_MAX_BYTES) continue;
+    if (best === null || width * height > best.pixels) best = { id, pixels: width * height };
+  }
+  return best ? [{ kind: 'image', mediaRef: best.id }] : [];
+}
+
+// What the message says: its words, with a placeholder naming an attachment the customer sent (or, for the account's own side, that was sent). A photo that is
+// fetched as an image says its caption alone (as a WhatsApp image does): its words, or the placeholder when it has none; a fetch that fails leaves those words.
+function bodyOf(m: TelegramMessage, own: boolean, withImage = false): string | null {
   const body = typeof m.text === 'string' ? m.text : typeof m.caption === 'string' ? m.caption : '';
   const cleaned = clean(body).slice(0, TEXT_MAX);
   const found = PLACEHOLDERS.find(([field]) => m[field] !== undefined && m[field] !== null)?.[1] ?? null;
   const placeholder = found !== null && own ? found.replace('Khách gửi', 'Đã gửi') : found;
   // A message with neither words nor a kind we know (a service message) says nothing.
   if (cleaned.trim() === '' && placeholder === null) return null;
+  if (withImage && cleaned.trim() !== '') return cleaned;
   return cleaned.trim() === '' ? (placeholder as string) : placeholder !== null ? `${cleaned}\n${placeholder}`.slice(0, TEXT_MAX) : cleaned;
 }
 
@@ -156,16 +194,23 @@ function messageEvent(m: TelegramMessage, businessId: string | null, edited: boo
   if (fromId && fromId.length > ID_MAX) return null;
   if (businessId === null) {
     if (!fromId || m.from?.is_bot === true) return null;
-    const text = bodyOf(m, false);
+    // A customer's photo is an image to fetch (an edit brings none: the message keeps the images of its first arrival, so an edit says its words the way the
+    // first arrival did, with no placeholder line beside the image).
+    const photo = photoOf(m);
+    const images = edited ? [] : photo;
+    const text = bodyOf(m, false, photo.length > 0);
     if (text === null) return null;
     const name = nameOf(m.from);
-    return { kind: 'direct', threadId: thread, messageId: messageKey(thread, messageId), direction: 'in', contact: { id: fromId, ...(name ? { name } : {}) }, text, at };
+    return { kind: 'direct', threadId: thread, messageId: messageKey(thread, messageId), direction: 'in', contact: { id: fromId, ...(name ? { name } : {}) }, text, at, ...(images.length > 0 ? { attachments: images } : {}) };
   }
   const fromCustomer = fromId === chatId;
   // An account's own message edited is not news: the core changes only a stored customer body, so it would only create a message.
   if (edited && !fromCustomer) return null;
   if (fromCustomer && m.from?.is_bot === true) return null;
-  const text = bodyOf(m, !fromCustomer);
+  // Only the customer's photos are fetched: what the account itself sent stays a placeholder line, and an edit brings no images.
+  const photo = fromCustomer ? photoOf(m) : [];
+  const images = edited ? [] : photo;
+  const text = bodyOf(m, !fromCustomer, photo.length > 0);
   if (text === null) return null;
   // The customer is the chat's other party: `Chat.first_name`, `last_name` and `username` are theirs in a private chat [O].
   const name = nameOf(fromCustomer ? m.from : (m.chat as TelegramUser | undefined));
@@ -179,6 +224,7 @@ function messageEvent(m: TelegramMessage, businessId: string | null, edited: boo
     at,
     ...(edited ? { edited: true } : {}),
     ...(fromCustomer ? { replyWindowHours: TELEGRAM_BUSINESS_WINDOW_HOURS } : {}),
+    ...(images.length > 0 ? { attachments: images } : {}),
   };
 }
 
@@ -319,6 +365,49 @@ export class TelegramConversations implements ConversationAdapter {
     }
   }
 
+  // The bytes of a customer's photo, by its file id (#3192), in the two calls the Bot API asks for [O]: `getFile` answers the file's path, and
+  // `https://api.telegram.org/file/bot<token>/<file_path>` serves it. Both go through the caller's guarded fetch (public addresses only, the connection pinned to the
+  // checked address, https, no redirect followed, a byte cap), and the bot's token is in those two paths and nowhere else: not in the result, not in a header, and not in
+  // a failure, which is a short code and never Telegram's words or an address. The path Telegram answers is checked before an address is built from it, and a declared
+  // size above the cap is refused before the second call.
+  async media(input: ConversationMediaInput): Promise<ConversationMediaResult> {
+    const s = telegramSecretOf(input.secret);
+    if (!s) return { kind: 'failed', retry: false, code: 'NO_TELEGRAM_TOKEN' };
+    if (!FILE_ID.test(input.mediaRef)) return { kind: 'failed', retry: false, code: 'BAD_MEDIA_REF' };
+    // Before the token goes anywhere: the deployment's list must name the Bot API's host.
+    if (!mediaHostAllowed(TELEGRAM_HOSTS[0], input.hosts)) return { kind: 'failed', retry: false, code: 'TG_MEDIA_HOST' };
+    let located: { file_size?: unknown; file_path?: unknown } | null;
+    try {
+      located = await new TelegramClient(input.fetch, 15_000).call<{ file_size?: unknown; file_path?: unknown } | null>(s.botToken, 'getFile', { file_id: input.mediaRef });
+    } catch (error) {
+      if (error instanceof TelegramError) {
+        // The token was refused, or the file id is unknown or past its life: asking again will not change it. A busy Telegram may.
+        if (error.status === 401 || error.status === 404) return { kind: 'failed', retry: false, code: 'TELEGRAM_TOKEN_REFUSED' };
+        // A 400 is "wrong file_id or the file is temporarily unavailable" [M] (one text for both: not asked for again), or a file over what a bot may download.
+        if (error.status === 400) return { kind: 'failed', retry: false, code: /too big/i.test(error.message) ? 'BAD_SIZE' : 'TG_MEDIA_GONE' };
+        return { kind: 'failed', retry: error.status === 429 || error.status >= 500, code: error.status === 429 || error.status >= 500 ? 'TG_MEDIA_BUSY' : `TG_MEDIA_${error.status}` };
+      }
+      return { kind: 'failed', retry: transientEgress(error), code: 'TG_MEDIA_ERROR' };
+    }
+    const size = typeof located?.file_size === 'number' ? located.file_size : null;
+    if (size !== null && size > input.maxBytes) return { kind: 'failed', retry: false, code: 'BAD_SIZE' };
+    // A file with no path (one over what a bot may download) or a path that is not plain segments is no file to fetch.
+    const path = typeof located?.file_path === 'string' ? located.file_path : '';
+    if (!FILE_PATH.test(path)) return { kind: 'failed', retry: false, code: 'TG_MEDIA_PATH' };
+    let response: Response;
+    try {
+      // The same check as the Bot API calls get: the Bot API's host only, https, no redirect asked for, a deadline.
+      response = await allowlistedFetch(TELEGRAM_HOSTS, input.fetch, 20_000)(`https://${TELEGRAM_HOSTS[0]}/file/bot${s.botToken}/${path}`, { method: 'GET' });
+    } catch (error) {
+      return { kind: 'failed', retry: transientEgress(error), code: 'TG_MEDIA_FETCH' };
+    }
+    if (response.status === 429 || response.status >= 500) return { kind: 'failed', retry: true, code: `HTTP_${response.status}` };
+    if (response.status !== 200) return { kind: 'failed', retry: false, code: `HTTP_${response.status}` };
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength === 0 || bytes.byteLength > input.maxBytes) return { kind: 'failed', retry: false, code: 'BAD_SIZE' };
+    return { kind: 'ok', bytes };
+  }
+
   // Points the bot's webhook at the connection's hook, or takes it away. On: refused before any call when another connection of the org holds the
   // same bot, when the deployment's address is not https (Telegram only takes https) or when there is no key to derive the secret from.
   async chatHook(input: ConversationChatHookInput): Promise<ConversationChatHookResult> {
@@ -339,6 +428,13 @@ export class TelegramConversations implements ConversationAdapter {
     const set = await setTelegramWebhook(s.botToken, { url, secretToken: telegramHookSecret(input.key, input.hook) }, this.fetchImpl);
     return set.kind === 'done' ? { kind: 'done', botId } : set;
   }
+}
+
+// Whether asking again may bring the file: a name that did not resolve, a timeout and a dropped connection may; an error with no code says nothing, so it is asked
+// again (up to the row's five tries).
+function transientEgress(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return code === undefined || code === 'dns' || code === 'timeout' || code === 'network';
 }
 
 function replyFailure(error: unknown): ConversationCallResult {
