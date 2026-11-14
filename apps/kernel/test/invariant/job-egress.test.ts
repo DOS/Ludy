@@ -116,6 +116,9 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
   // The sweep (every minute) hands the wake-up deliveries it stored to the delivery queue; each exists only for a receiver an owner or admin set through kernel.mcp.wake.set, which
   // declares the external effect (the webhook of ADR-0051 decision 4, #3024).
   'kernel-mcp-wake-sweep handler': { command: 'kernel.mcp.wake.set' },
+  // The sweep (every minute) hands the minutes-webhook deliveries to the delivery queue; each exists only for an address a member set through meetings.hook.set, which declares the
+  // external effect, while the owner's switch is on (meetings integrations A6, #3164).
+  'kernel-meeting-hook-sweep handler': { command: 'meetings.hook.set' },
 };
 
 // Reviewed send sites that may be listed before the site exists, so the two steps of an invariant change can land apart (the PENDING_DEPS pattern): each names the issue that adds
@@ -123,6 +126,7 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
 // any other. Remove the entry here once the site is on the base branch.
 const OTHER_SENDS_PENDING: Readonly<Record<string, string>> = {
   'kernel-mcp-wake-sweep handler': '#3024',
+  'kernel-meeting-hook-sweep handler': '#3164',
 };
 
 // Events that feed a queue with egress and that no command emits: a definer writes them for a request without one.

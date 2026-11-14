@@ -65,6 +65,10 @@ const MACHINERY = new Set([
   'crove_kernel.subject_key',
   // The wrapped data key of a meeting's media (ADR-0047 point 4): definer-only, no login role grant.
   'crove_meetings.media_key',
+  // #3164 (meetings integrations A6): a member's own webhook for the minutes they publish (address and sealed secret) and its deliveries, a body that is wiped when the delivery settles:
+  // reached only by definers, no login role grant. Land before their tables (PENDING_TABLES).
+  'crove_meetings.hook_delivery',
+  'crove_meetings.member_hook',
   'crove_social.chat_alert_target',
 ]);
 // Tables whose row factory (and MACHINERY entry, for definer-only tables) lands on main before the table itself. CI
@@ -87,8 +91,10 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_permission_override',
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',
+  'crove_meetings.hook_delivery',
   'crove_meetings.live_line',
   'crove_meetings.meeting_link',
+  'crove_meetings.member_hook',
   'crove_notes.link',
   'crove_notes.note',
   'crove_projects.project',
@@ -2343,6 +2349,29 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // #3164 (meetings integrations A6): one delivery of a member's minutes webhook, here a ping whose body carries the ids of its own row and no meeting data. Definer-only, in MACHINERY.
+  // It references the member's webhook of the same org.
+  'crove_meetings.hook_delivery': {
+    make: (o) => {
+      const hookId = randomUUID();
+      const id = randomUUID();
+      return {
+        setup: [
+          {
+            table: 'crove_meetings.member_hook',
+            values: { org_id: o.id, id: hookId, user_id: o.owner, url: 'https://hooks.example.com/ludy-minutes', secret_sealed: '{"keyId":"k1","envelope":"AAAAAAAAAAAAAAAA"}', secret_hint: 'whk_00000000' },
+          },
+        ],
+        row: {
+          org_id: o.id,
+          id,
+          hook_id: hookId,
+          type: 'ping',
+          body: JSON.stringify({ id, type: 'ping', created_at: '2026-11-14T03:00:00.000Z', org: o.id, data: {} }),
+        },
+      };
+    },
+  },
   // #3109 (ADR-0052 L4a): one live piece of a recording, named by its ciphertext file row; read, written and deleted by the recorder alone.
   'crove_meetings.live_chunk': {
     make: (o) => {
@@ -2488,6 +2517,13 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         },
       };
     },
+  },
+  // #3164 (meetings integrations A6): a member's own webhook for the minutes they publish (the org's owner is the member of the factory's row). Definer-only, in MACHINERY.
+  'crove_meetings.member_hook': {
+    make: (o) => ({
+      setup: [],
+      row: { org_id: o.id, user_id: o.owner, url: 'https://hooks.example.com/ludy-minutes', secret_sealed: '{"keyId":"k1","envelope":"AAAAAAAAAAAAAAAA"}', secret_hint: 'whk_00000000' },
+    }),
   },
   // #2575: timestamped transcript segment of a meeting (ADR-0047 point 1, 3).
   'crove_meetings.transcript_segment': {
