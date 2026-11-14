@@ -17,12 +17,14 @@ import {
   zFinanceSupplierBankChangeSignal,
   zFinanceSupplierPaymentsWaitingSignal,
 } from '@crove/kernel-contract';
+import * as contract from '@crove/kernel-contract';
 import { crmQueries } from '@crove/mod-crm';
 import { financeQueries } from '@crove/mod-finance';
 import { kernelQueries } from '@crove/kernel';
 
 // The only keys a signal row may have: ids, days, counts and amounts. Adding a key is a change to this protected file and needs a privacy review.
-const ROW_KEYS = ['amount', 'changedOn', 'count', 'dealId', 'lastSaleOn', 'oldestDueOn', 'partyId', 'wonOn'];
+// `conversationId` and `since` belong to the conversation read of the fourth rule (#3124): the id of the thread and the moment its oldest unanswered customer message arrived, never a word of it.
+const ROW_KEYS = ['amount', 'changedOn', 'conversationId', 'count', 'dealId', 'lastSaleOn', 'oldestDueOn', 'partyId', 'since', 'wonOn'];
 
 const ROWS = {
   'finance.signals.sales': zFinanceSalesSignal,
@@ -32,6 +34,10 @@ const ROWS = {
   'finance.signals.supplier_bank_changes': zFinanceSupplierBankChangeSignal,
   'finance.signals.supplier_payments_waiting': zFinanceSupplierPaymentsWaitingSignal,
 } as const;
+// The conversation read of the fourth rule joins the pinned set once the contract exports it (step 1 of the two-step plan accepts both states: it passes before the read exists and pins it after).
+const CONVERSATION_READ = 'kernel.conversation.signals_unanswered';
+const conversationRow = (contract as Record<string, unknown>).zConversationUnansweredSignal as z.ZodObject | undefined;
+const PINNED: Record<string, z.ZodObject> = { ...ROWS, ...(conversationRow ? { [CONVERSATION_READ]: conversationRow } : {}) };
 
 // A value the schema refuses: it fails to parse or throws (a date check that throws on a malformed day still refuses the row; a follow-up makes it fail cleanly).
 const refuses = (run: () => { success: boolean }): boolean => {
@@ -43,7 +49,7 @@ const refuses = (run: () => { success: boolean }): boolean => {
 };
 
 describe('the signals contract carries ids, dates, counts and amounts only', () => {
-  for (const [read, schema] of Object.entries(ROWS)) {
+  for (const [read, schema] of Object.entries(PINNED)) {
     it(`${read}: only pinned keys, and one extra key voids a row`, () => {
       const keys = Object.keys(schema.shape).sort();
       expect(keys.filter((k) => !ROW_KEYS.includes(k)), `${read} has a key outside the pinned list`).toEqual([]);
@@ -52,7 +58,7 @@ describe('the signals contract carries ids, dates, counts and amounts only', () 
       // Each value is a uuid, a date, a count or a decimal string: parse a row of the right shape, then the same row with one more key.
       const sample: Record<string, unknown> = {};
       for (const key of keys) {
-        sample[key] = key.endsWith('Id') ? '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b' : key === 'count' ? 1 : key === 'amount' ? '100000' : '2026-11-10';
+        sample[key] = key.endsWith('Id') ? '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b' : key === 'count' ? 1 : key === 'amount' ? '100000' : key === 'since' ? '2026-11-10T09:00:00+07:00' : '2026-11-10';
       }
       const ok = schema.safeParse(sample);
       expect(ok.success, `${read}: ${JSON.stringify(ok.error?.issues)}`).toBe(true);
@@ -76,10 +82,10 @@ describe('a registered signals read is a plain, role-listed, scope-limited query
     extension?: unknown;
     mcp?: { scope: string };
   }>;
-  const signals = all.filter((q) => /^(finance|crm)\.signals\./.test(q.name));
+  const signals = all.filter((q) => /^((finance|crm)\.signals\.|kernel\.conversation\.signals_)/.test(q.name));
 
-  it('has no read outside the six names of the contract', () => {
-    expect(signals.map((q) => q.name).filter((n) => !(n in ROWS))).toEqual([]);
+  it('has no read outside the names of the contract', () => {
+    expect(signals.map((q) => q.name).filter((n) => !(n in PINNED))).toEqual([]);
   });
 
   it('lists roles, is not sensitive, streamed or open to member mode or an extension token, and declares at most the AI-app scope', () => {

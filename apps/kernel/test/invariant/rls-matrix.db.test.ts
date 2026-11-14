@@ -89,6 +89,8 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_vy_result',
   'crove_meetings.live_line',
   'crove_meetings.meeting_link',
+  // #3163 (meetings integrations A5): the recorder's own rough notes. Lands before its table (step 1 of 2).
+  'crove_meetings.meeting_note',
   'crove_notes.link',
   'crove_notes.note',
   'crove_projects.project',
