@@ -10482,6 +10482,7 @@ export const vi = {
       },
       marketplace: {
         balance: 'Xem tiền của từng sàn trong sổ sách',
+        facts: 'Xem điều đang chờ trên màn hình sàn (kỳ đối soát chờ ghi sổ, sàn còn nợ, phí chờ hóa đơn)',
         assign: 'Gán dòng đơn hàng của sàn cho mặt hàng',
         unassign: 'Bỏ gán dòng đơn hàng của sàn khỏi mặt hàng',
         confirm: 'Nhập báo cáo đơn hàng của sàn',

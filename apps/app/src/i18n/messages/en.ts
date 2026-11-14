@@ -10485,6 +10485,7 @@ export const en = {
       },
       marketplace: {
         balance: 'View where each marketplace platform stands in the books',
+        facts: 'View what is waiting on the marketplace screen (settlements to post, what platforms owe, fees awaiting an invoice)',
         assign: 'Assign a marketplace order line to an item',
         unassign: 'Take a marketplace order line back from its item',
         confirm: 'Import a marketplace order report',
