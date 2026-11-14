@@ -12,6 +12,8 @@ test('an accountant sees every company on one screen and opens one with a click'
   await page.goto('/');
   await signInNewUser(page, newEmail('clients'));
   const first = await createOrg(page, 'Công ty An Bình');
+  // A new org opens on the overview (#3225); the uploads are on the Inbox.
+  await page.goto(page.url().replace(/\/overview$/, '/inbox'));
 
   await test.step('the first company files quarterly and has an invoice waiting', async () => {
     await page.locator('input[type=file]').setInputFiles(INVOICE);

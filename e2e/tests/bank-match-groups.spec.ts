@@ -28,6 +28,8 @@ test('a clean bank match is asked for and approved in one action, then listed wi
     await page.goto('/');
     await signUp(page, newEmail('match'));
     const created = await createOrg(page, 'Công ty khớp sao kê');
+    // A new org opens on the overview (#3225); the uploads are on the Inbox.
+    await page.goto(page.url().replace(/\/overview$/, '/inbox'));
     await expect(page.getByRole('heading', { name: 'Chứng từ chờ duyệt' })).toBeVisible();
     await page.locator('input[type=file]').setInputFiles({
       name: `hd-${NUMBER}.xml`,

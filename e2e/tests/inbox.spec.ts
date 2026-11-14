@@ -28,6 +28,8 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
 
   const slug = await test.step('create the first org', async () => {
     const created = await createOrg(page, 'Công ty E2E');
+    // A new org opens on the overview (#3225); the uploads are on the Inbox.
+    await page.goto(page.url().replace(/\/overview$/, '/inbox'));
     await expect(page.getByRole('heading', { name: 'Chứng từ chờ duyệt' })).toBeVisible();
     return created;
   });
@@ -349,6 +351,8 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
 test('reject a proposal with a reason through the dialog', async ({ page }) => {
   await signInNewUser(page, newEmail('inbox-reject'));
   const slug = await createOrg(page, 'Công ty Từ Chối');
+  // A new org opens on the overview (#3225); the uploads are on the Inbox.
+  await page.goto(page.url().replace(/\/overview$/, '/inbox'));
 
   await test.step('upload the e-invoice and open its proposal', async () => {
     await page.locator('input[type=file]').setInputFiles(INVOICE);
