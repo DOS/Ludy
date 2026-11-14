@@ -6,6 +6,7 @@ import { ENGLISH, T } from './strings.ts';
 import { DEFAULT_ADDRESS, isDefaultAddress, originPattern, parseAddress, stalePattern } from './ludy-address.ts';
 import { activeAccount, loadState, saveState, withAccount, withAddress, withFeature, withoutAccount, type State } from './state.ts';
 import { visibleFeatures, FEATURES, type Me } from './features.ts';
+import { AGENDA_SCOPE, agendaLine, type AgendaNext } from './agenda.ts';
 import { connectUrl, deviceName, newPkce, parseConnectResult } from './auth.ts';
 import { createClient, LudyError } from './api.ts';
 import { CONSENT_METHODS, consentBlocker } from './consent.ts';
@@ -37,6 +38,8 @@ let ticker: ReturnType<typeof setInterval> | undefined;
 // extension knows no meeting language before the meeting exists, so the browser's language is the default.
 let noticeLang: RecordingNoticeLanguage = T === ENGLISH ? 'en' : 'vi';
 let copyNote = '';
+// Shown under the "Sắp họp" cards after a title was filled in from one.
+let agendaNote = '';
 // Set when the org refused the method as not written (A2, #3160): the unwritten choice is then not offered for the rest of this popup.
 let strictOrg = false;
 
@@ -107,13 +110,13 @@ function signInView(state: State): Node[] {
   ];
 }
 
-async function signIn(state: State): Promise<void> {
+async function signIn(state: State, withAgenda = false): Promise<void> {
   notice = T.signingIn;
   await render();
   try {
     const pkce = await newPkce();
     const redirect = chrome.identity.getRedirectURL('connect');
-    const returned = await chrome.identity.launchWebAuthFlow({ url: connectUrl(state.address, pkce, redirect, deviceName(navigator.userAgent)), interactive: true });
+    const returned = await chrome.identity.launchWebAuthFlow({ url: connectUrl(state.address, pkce, redirect, deviceName(navigator.userAgent), withAgenda), interactive: true });
     const result = returned ? parseConnectResult(returned, pkce, redirect) : { error: 'invalid' };
     if ('error' in result) {
       notice = result.error === 'access_denied' ? T.signInDenied : T.signInFailed;
@@ -158,12 +161,12 @@ async function signedInView(state: State): Promise<Node[]> {
   }
   const features = visibleFeatures(me);
   if (features.length === 0) out.push(h('p', {}, T.noFeatures));
-  for (const feature of features) if (feature.id === 'meetings') out.push(...(await meetingsView(state)));
+  for (const feature of features) if (feature.id === 'meetings') out.push(...(await meetingsView(state, me, account.token)));
   out.push(...(await pendingView(state, account.orgId, account.token)));
   return out;
 }
 
-async function meetingsView(state: State): Promise<Node[]> {
+async function meetingsView(state: State, me: Me, token: string): Promise<Node[]> {
   const feature = FEATURES[0]!;
   const out: Node[] = [h('h2', {}, T.meetings)];
   const granted = await chrome.permissions.contains({ permissions: [...feature.permissions] });
@@ -190,6 +193,7 @@ async function meetingsView(state: State): Promise<Node[]> {
     );
     return out;
   }
+  out.push(...(await agendaView(state, me, token)));
   const title = h('input', { type: 'text', id: 'title', value: draft.title, maxlength: '200' });
   title.addEventListener('input', () => void (draft.title = title.value));
   const method = h('select', { id: 'method' },
@@ -229,6 +233,36 @@ async function meetingsView(state: State): Promise<Node[]> {
     h('button', { onclick: () => void turnOff(state) }, T.meetingsOff),
   );
   return out;
+}
+
+// The "Sắp họp" cards (B2, #3166): the member's next meetings, when the token holds the agenda scope; one button to ask for it when it does not. A click on "Ghi cuộc họp này" only fills the
+// title below; the consent step, the confirmations and "Bắt đầu ghi" are the member's, as always. A failing read (an old server, a refused scope) draws nothing.
+async function agendaView(state: State, me: Me, token: string): Promise<Node[]> {
+  if (!me.scopes.includes(AGENDA_SCOPE)) {
+    return [h('div', { class: 'agenda', id: 'agenda-ask' }, h('p', { class: 'note' }, T.agendaNote), h('button', { id: 'agenda-on', onclick: () => void signIn(state, true) }, T.agendaOn))];
+  }
+  if (me.features.agenda !== true) return [];
+  const next: AgendaNext | null = await createClient(state.address, token).agendaNext().catch(() => null);
+  if (!next) return [];
+  if (!next.enabled) return [h('p', { class: 'note', id: 'agenda-off' }, T.agendaOff)];
+  if (next.events.length === 0) return [];
+  return [
+    h('div', { class: 'agenda', id: 'agenda' },
+      h('strong', {}, T.agendaTitle),
+      ...next.events.map((event) =>
+        h('div', { class: 'row agenda-event' },
+          h('span', {}, agendaLine(T.agendaLine, T.agendaUntitled, event)),
+          h('button', { class: 'agenda-record', onclick: () => void fillTitle(event.title) }, T.agendaRecord))),
+      ...(agendaNote ? [h('p', { class: 'note', id: 'agenda-filled', role: 'status' }, agendaNote)] : [])),
+  ];
+}
+
+// Puts the event's title in the recording form and nothing else: no consent is ticked, nothing starts.
+async function fillTitle(title: string): Promise<void> {
+  draft.title = title.slice(0, 200);
+  agendaNote = T.agendaFilled;
+  await render();
+  document.getElementById('title')?.focus();
 }
 
 function lostView(lost: LostState): Node[] {
@@ -285,8 +319,10 @@ async function startRecording(): Promise<void> {
     // Only after the member's click here, and only for the tab they are on.
     const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
     const reply = (await chrome.runtime.sendMessage({ type: 'start', ...draft, streamId })) as StartReply;
-    if (reply.ok) draft = { title: '', consentMethod: '', consentAgreed: false, keepVideo: false, liveNotes: false };
-    else {
+    if (reply.ok) {
+      draft = { title: '', consentMethod: '', consentAgreed: false, keepVideo: false, liveNotes: false };
+      agendaNote = '';
+    } else {
       notice = T.blockers[reply.reason];
       if (reply.reason === 'consentPolicy') {
         strictOrg = true;

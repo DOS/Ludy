@@ -1037,6 +1037,8 @@ export function createRpcHandler(
       // A member's own Google Calendar meetings (B1, #3165): the member's own rows, no model; see modules/meetings/src/agenda.ts.
       agenda: {
         list: os.meetings.agenda.list.handler(meetingsQuery('meetings.agenda.list')),
+        // The extension's "Sắp họp" card: the `agenda` token scope opens exactly this procedure (auth-extension.ts lists the route).
+        next: os.meetings.agenda.next.handler(meetingsQuery('meetings.agenda.next')),
         suggest: os.meetings.agenda.suggest.handler(meetingsQuery('meetings.agenda.suggest')),
         setReadEvents: os.meetings.agenda.setReadEvents.handler(meetingsCommand('meetings.agenda.set_read_events')),
         link: os.meetings.agenda.link.handler(meetingsCommand('meetings.agenda.link')),

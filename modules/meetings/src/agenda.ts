@@ -9,12 +9,16 @@
 import { sql } from 'kysely';
 import {
   AGENDA_LIST_MAX,
+  AGENDA_NEXT_MAX,
+  AGENDA_NEXT_MINUTES,
   AGENDA_OVERLAP_MINUTES,
   zAgendaClear,
   zAgendaCleared,
   zAgendaLink,
   zAgendaLinked,
   zAgendaList,
+  zAgendaNext,
+  zAgendaNextInput,
   zAgendaReadEventsSet,
   zAgendaReplace,
   zAgendaReplaced,
@@ -24,6 +28,7 @@ import {
   zAgendaListInput,
   type AgendaEvent,
   type AgendaList,
+  type AgendaNext,
   type AgendaSuggestion,
 } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
@@ -93,6 +98,50 @@ export const agendaList = defineQuery({
       .limit(AGENDA_LIST_MAX)
       .execute();
     return zAgendaList.parse({ enabled: true, events: rows.map(toEvent) });
+  },
+});
+
+// The host of a join address (meet.google.com, zoom.us, teams.microsoft.com): all the extension is told of it, so a stolen token learns no meeting link.
+function hostOf(url: string | null): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).hostname.toLowerCase().slice(0, 100);
+  } catch {
+    return null;
+  }
+}
+
+// The extension's "Sắp họp" card (B2, #3166): the member's own next events, at most 5 starting within 30 minutes or running now, none already recorded, with the title, the times and the join host
+// only. It runs for a browser member too (the same rows, the same row security) and for an extension token holding the `agenda` scope and no other; a read is audited naming the token. Time is the
+// only rule here: nothing is matched, suggested or started, and the recording's consent step is the extension's own.
+export const agendaNext = defineQuery({
+  name: 'meetings.agenda.next',
+  input: zAgendaNextInput,
+  access: ROLES,
+  extension: { scope: 'agenda' },
+  sensitive: true,
+  handler: async (ctx): Promise<AgendaNext> => {
+    const userId = userOf(ctx.actor);
+    const enabled = await ctx.trx
+      .selectFrom('crove_kernel.calendar_connection')
+      .select('id')
+      .where('org_id', '=', ctx.orgId)
+      .where('user_id', '=', userId)
+      .where('status', '=', 'active')
+      .where('read_events', '=', true)
+      .limit(1)
+      .executeTakeFirst();
+    if (!enabled) return zAgendaNext.parse({ enabled: false, events: [] });
+    const now = new Date();
+    const rows = await agendaOf(ctx.trx, ctx.orgId, userId)
+      .where('a.meeting_id', 'is', null)
+      .where('a.ends_at', '>', now)
+      .where('a.starts_at', '<=', new Date(now.getTime() + AGENDA_NEXT_MINUTES * 60_000))
+      .orderBy('a.starts_at')
+      .orderBy('a.id')
+      .limit(AGENDA_NEXT_MAX)
+      .execute();
+    return zAgendaNext.parse({ enabled: true, events: rows.map((r) => ({ title: r.title, startsAt: r.starts_at.toISOString(), endsAt: r.ends_at.toISOString(), joinHost: hostOf(r.join_url) })) });
   },
 });
 
@@ -220,4 +269,4 @@ export const agendaReplace = defineCommand({
 });
 
 export const agendaCommands = [agendaSetReadEvents, agendaClear, agendaLink, agendaReplace];
-export const agendaQueries = [agendaList, agendaSuggest];
+export const agendaQueries = [agendaList, agendaNext, agendaSuggest];

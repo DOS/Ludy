@@ -25,7 +25,8 @@ export function ExtensionConnectPage() {
   const [chosen, setChosen] = useState<string | null>(null);
   const orgs = (me.data?.orgs ?? []).filter((org) => CONNECTORS.has(org.role));
   const org = orgs.find((o) => o.slug === chosen) ?? (orgs.length === 1 ? orgs[0] : undefined);
-  const needsModule = request?.scopes.includes('meetings') === true && !getConfig().modules.includes('meetings');
+  // Both scopes belong to the meetings module (the agenda scope reads the calendar cache the module keeps).
+  const needsModule = request !== null && request.scopes.length > 0 && !getConfig().modules.includes('meetings');
 
   const approve = useMutation({
     mutationFn: async () => {

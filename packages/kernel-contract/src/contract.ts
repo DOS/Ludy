@@ -403,7 +403,7 @@ import {
   zSummaryCopy,
 } from './meetings.ts';
 import { zAskAnswer, zAskEmpty, zAskInput, zAskStatus } from './meeting-ask.ts';
-import { zAgendaLink, zAgendaLinked, zAgendaList, zAgendaListInput, zAgendaReadEventsSet, zAgendaSetReadEvents, zAgendaSuggestInput, zAgendaSuggestion } from './meeting-agenda.ts';
+import { zAgendaLink, zAgendaLinked, zAgendaList, zAgendaListInput, zAgendaNext, zAgendaNextInput, zAgendaReadEventsSet, zAgendaSetReadEvents, zAgendaSuggestInput, zAgendaSuggestion } from './meeting-agenda.ts';
 import { zFollowupDraft, zFollowupSendCall, zFollowupSent, zFollowupWording, zFollowupWordingAsk } from './meeting-followup.ts';
 import { zExtensionOrgToken, zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked, zExtensionTokenRevokedMember } from './extension.ts';
 import { zMcpGrantRevoke, zMcpGrantRevoked, zMcpGrantView, zMcpMemberGrantsSet, zMcpMemberGrantsView, zMcpWakeCleared, zMcpWakeTested, zMcpWakeGetInput, zMcpWakeGrantRef, zMcpWakeSet, zMcpWakeView, zMcpWakeWithSecret } from './mcp.ts';
@@ -961,6 +961,8 @@ export const contract = {
     // a recording overlaps, `setReadEvents` the member's switch (the cache is deleted when it goes off), `link` the click that attaches a recorded meeting to its event.
     agenda: {
       list: oc.input(zAgendaListInput).output(zAgendaList),
+      // The extension's "Sắp họp" card (B2, #3166, the `agenda` token scope): the next few events, title, time and join host only.
+      next: oc.input(zAgendaNextInput).output(zAgendaNext),
       suggest: oc.input(zAgendaSuggestInput).output(zAgendaSuggestion),
       setReadEvents: oc.input(zAgendaSetReadEvents).output(zAgendaReadEventsSet),
       link: oc.input(zAgendaLink).output(zAgendaLinked),

@@ -40,8 +40,9 @@ const REACHABLE = [
   'meetings.meeting.extension_status:meetings',
 ];
 
-// Reachable only once L4a-1 (#3109, ADR-0052) is on main: the test accepts the command either present or absent, so it holds before and after that change.
-const REACHABLE_WITH_L4A = ['meetings.live.chunk:meetings'];
+// Reachable only once L4a-1 (#3109, ADR-0052) is on main, and the next-meetings read of B2 (#3166, the `agenda` scope): the test accepts each either present or absent, so it holds before and
+// after that change. Each is exactly the one name listed, under exactly the scope listed.
+const REACHABLE_WHEN_LANDED = ['meetings.live.chunk:meetings', 'meetings.agenda.next:agenda'];
 
 const CREATE = { title: 'Họp tuần', consentMethod: 'told_at_start' as const, visibility: 'attendees' as const, language: 'vi' as const, keepVideo: false };
 
@@ -142,8 +143,8 @@ suite('the extension token past the HTTP edge: scope, standing and meetings (#25
       extension?: { scope: string };
     }>;
     const reachable = defs.filter((d) => d.extension !== undefined).map((d) => `${d.name}:${d.extension?.scope}`);
-    expect(reachable.filter((name) => !REACHABLE_WITH_L4A.includes(name)).sort()).toEqual([...REACHABLE].sort());
-    expect(reachable.filter((name) => REACHABLE_WITH_L4A.includes(name)).length).toBeLessThanOrEqual(REACHABLE_WITH_L4A.length);
+    expect(reachable.filter((name) => !REACHABLE_WHEN_LANDED.includes(name)).sort()).toEqual([...REACHABLE].sort());
+    expect(reachable.filter((name) => REACHABLE_WHEN_LANDED.includes(name)).length).toBeLessThanOrEqual(REACHABLE_WHEN_LANDED.length);
     expect([...EXTENSION_SCOPES]).toEqual([...EXTENSION_SCOPE_IDS]);
   });
 

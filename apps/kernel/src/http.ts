@@ -1878,7 +1878,7 @@ export function createHttpApp(deps: HttpDeps) {
       orgId: extension.orgId,
       scopes: extension.scopes,
       expiresAt: extension.expiresAt,
-      features: { meetings: extension.scopes.includes('meetings') && runtime.installed('meetings') },
+      features: { meetings: extension.scopes.includes('meetings') && runtime.installed('meetings'), agenda: extension.scopes.includes('agenda') && runtime.installed('meetings') },
     });
   });
 

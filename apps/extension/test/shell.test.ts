@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
 import { EXTENSION_SCOPE_IDS } from '@crove/kernel-contract';
 import { FEATURES, visibleFeatures } from '../src/features.ts';
+import { AGENDA_SCOPE } from '../src/agenda.ts';
 import { activeAccount, emptyState, readState, withAccount, withAddress, withFeature, withoutAccount } from '../src/state.ts';
 import { connectUrl, newPkce, parseConnectResult } from '../src/auth.ts';
 import { capturePage, type PageCaptureFeature } from '../src/page-capture.ts';
@@ -18,8 +19,8 @@ describe('features by module and permission', () => {
     expect(visibleFeatures(null)).toEqual([]);
   });
 
-  it('asks for the scopes the kernel knows, one per feature', () => {
-    expect(FEATURES.map((f) => f.scope).sort()).toEqual([...EXTENSION_SCOPE_IDS].sort());
+  it('asks for the scopes the kernel knows: one per feature, and the agenda scope only when the member chooses it (B2)', () => {
+    expect([...FEATURES.map((f) => f.scope), AGENDA_SCOPE].sort()).toEqual([...EXTENSION_SCOPE_IDS].sort());
   });
 });
 
