@@ -7,7 +7,7 @@
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { ConsentMethod, MeetingLanguage, MeetingVisibility } from '@crove/kernel-contract';
+import { MEETING_SUMMARY_TEMPLATES, type ConsentMethod, type MeetingLanguage, type MeetingSummaryTemplate, type MeetingVisibility } from '@crove/kernel-contract';
 import { Button } from '@crove/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
 import { Checkbox } from '@crove/ui/components/checkbox';
@@ -78,6 +78,8 @@ export function MeetingRecordPage() {
   const [title, setTitle] = useState(prefill.title ?? '');
   const [language, setLanguage] = useState<MeetingLanguage>('vi');
   const [visibility, setVisibility] = useState<MeetingVisibility>('attendees');
+  // The minutes template (A4, #3162): the general summary unless the recorder picks another; changeable later on the meeting's page.
+  const [summaryTemplate, setSummaryTemplate] = useState<MeetingSummaryTemplate>('general');
   const [withVideo, setWithVideo] = useState(false);
   // Off at every visit and never remembered: ticked for one recording only.
   const [liveNotes, setLiveNotes] = useState(false);
@@ -227,7 +229,7 @@ export function MeetingRecordPage() {
         }),
       createMeeting: async () => {
         // The meeting row stores who confirmed the notice and how; the server refuses media for a meeting without it.
-        createdMeetingId.current ??= (await orpc.meetings.create.call({ title: title.trim(), language, visibility, keepVideo: withVideo, consentMethod: consentMethod as ConsentMethod, consentNoticeVersion: RECORDING_NOTICE.version, liveNotes })).meetingId;
+        createdMeetingId.current ??= (await orpc.meetings.create.call({ title: title.trim(), language, visibility, keepVideo: withVideo, summaryTemplate, consentMethod: consentMethod as ConsentMethod, consentNoticeVersion: RECORDING_NOTICE.version, liveNotes })).meetingId;
         const meetingId = createdMeetingId.current;
         if (linkedMeetingId.current !== meetingId) {
           linkedMeetingId.current = meetingId;
@@ -493,6 +495,16 @@ export function MeetingRecordPage() {
                   <NativeSelectOption value="org">{t('form.visibilityOrg')}</NativeSelectOption>
                 </NativeSelect>
               </div>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="record-template">{t('templates.label')}</Label>
+              <NativeSelect id="record-template" value={summaryTemplate} onChange={(e) => setSummaryTemplate(e.target.value as MeetingSummaryTemplate)}>
+                {MEETING_SUMMARY_TEMPLATES.map((code) => (
+                  <NativeSelectOption key={code} value={code}>
+                    {t(`templates.names.${code}`)}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
             </div>
             <div className="flex items-center gap-2">
               <Checkbox id="record-video" checked={withVideo} onCheckedChange={(c) => setWithVideo(Boolean(c))} />

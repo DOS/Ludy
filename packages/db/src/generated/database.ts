@@ -2897,6 +2897,7 @@ export interface MeetingsMeetingTable {
   extension_token_id: ColumnType<string | null, string | null, NotGranted>;
   live_notes: ColumnType<boolean, boolean | undefined, NotGranted>;
   recording_stop_reason: string | null;
+  summary_template: Generated<string>;
 }
 
 /** crove_meetings.meeting_video */

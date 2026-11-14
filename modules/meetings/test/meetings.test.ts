@@ -31,10 +31,12 @@ describe('meetings manifest and constants', () => {
     expect(meetingsManifest.tables.crove_meetings.audio_segment).toBeDefined();
     expect(meetingsManifest.tables.crove_meetings.meeting_video).toBeDefined();
     expect(meetingsManifest.tables.crove_meetings.media_key).toBeDefined();
-    expect(meetingsManifest.routes).toHaveLength(3);
+    expect(meetingsManifest.routes).toHaveLength(4);
     expect(meetingsManifest.routes[0].path).toBe('meetings');
     expect(meetingsManifest.routes[1].path).toBe('meetings/record');
     expect(meetingsManifest.routes[2].path).toBe('meetings/$id');
+    // The printable minutes, outside the org's frame (A4, #3162).
+    expect(meetingsManifest.routes[3].path).toBe('print/meeting-minutes/$id');
     expect(meetingsManifest.nav).toEqual([]);
   });
 
@@ -83,6 +85,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.transcript.start',
       'meetings.transcript.cancel',
       'meetings.transcript.copy_result',
+      'meetings.minutes.set_template',
       'meetings.summary.save',
       'meetings.action_item.create',
       'meetings.action_item.edit',

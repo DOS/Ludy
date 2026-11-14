@@ -375,6 +375,8 @@ import {
   zActionItemSource,
   zActionItemsAccepted,
   zMeetingResultSave,
+  zMeetingTemplateSet,
+  zMeetingTemplateSetDone,
   zMeetingResultSaved,
   zMeetingResults,
   zResultPublish,
@@ -892,6 +894,8 @@ export const contract = {
     list: oc.input(zMeetingListInput).output(z.array(zMeetingSummary)),
     get: oc.input(zMeetingRef).output(zMeetingDetail),
     create: oc.input(zMeetingCreate).output(zMeetingCreated),
+    // The recorder picks the minutes template of their meeting (A4, #3162).
+    setTemplate: oc.input(zMeetingTemplateSet).output(zMeetingTemplateSetDone),
     // The status of a meeting the calling extension token created, and nothing of its content (issue #2582).
     extensionStatus: oc.input(zMeetingRef).output(zMeetingExtensionStatus),
     // The calling member's meeting the extension is recording right now, for the app's recording chip (A1, #3159).

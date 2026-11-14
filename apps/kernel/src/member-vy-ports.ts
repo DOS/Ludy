@@ -5,7 +5,7 @@
 // restrictive policy shows a member their own rows only). Knowledge has no declared queries yet: a feature that asks gets no passages.
 import { AiBudgetExhaustedError, SUMMARY_TIMEOUT_MS, SummaryModelError, TranslationModelError, aiCost, generateMeetingSummaryText, generateMeetingTranslationText, withAiScope, type AiConfig, type AiMeter } from '@crove/agent';
 import { SummaryError, TranslationError, bindPorts, noKnowledge, privateText, revealPrivateText, summarizeMeeting, translateSummary, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type Ports } from '@crove/agent/member-vy';
-import type { LiveNotesDone, LiveNotesInput, Summarized, Transcript, Translated, TranslationSource, TranslationStatus } from '@crove/kernel-contract';
+import { templateSections, type LiveNotesDone, type LiveNotesInput, type MeetingSummaryTemplate, type Summarized, type Transcript, type Translated, type TranslationSource, type TranslationStatus } from '@crove/kernel-contract';
 import { DomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
@@ -117,12 +117,14 @@ export async function runMeetingSummary(deps: MeetingSummaryDeps, orgId: string,
     try {
       // 2. The recorder's own read of the transcript, and of the meeting's language.
       const transcript = await deps.runtime.query<Transcript>('meetings.transcript.get', { meetingId }, as);
-      const meeting = await deps.runtime.query<{ language: 'vi' | 'en' }>('meetings.meeting.get', { meetingId }, as);
+      const meeting = await deps.runtime.query<{ language: 'vi' | 'en'; summaryTemplate: MeetingSummaryTemplate }>('meetings.meeting.get', { meetingId }, as);
+      // The minutes template the recorder picked (A4, #3162): the same run fills its sections; the templates are code, the model only writes the text.
+      const template = { code: meeting.summaryTemplate, sections: templateSections(meeting.summaryTemplate) };
       const segments = transcript.segments.map((s) => ({ startSeconds: s.startSeconds, endSeconds: s.endSeconds, speakerLabel: s.speakerLabel, text: s.text }));
       // 3. The one call, outside any transaction, in the scope of this run.
       const ports: Ports = { model, memory: nothingToRemember, knowledge: noKnowledge };
       const result = await withDeadline(
-        withAiScope({ orgId, memberRunId: runId, meter }, () => summarizeMeeting({ segments, language: meeting.language }, bindPorts({ orgId, memberUserId: actor.userId }, ports))),
+        withAiScope({ orgId, memberRunId: runId, meter }, () => summarizeMeeting({ segments, language: meeting.language, template }, bindPorts({ orgId, memberUserId: actor.userId }, ports))),
         timeoutMs,
       );
       body = revealPrivateText(result.body);
