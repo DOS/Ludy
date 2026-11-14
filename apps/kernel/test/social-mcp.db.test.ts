@@ -217,8 +217,7 @@ suite('the Social MCP reads (#3227)', () => {
     const seen = JSON.stringify([a, await queue()]);
     // The author and the assignee (people's ids), the platform's own id of a published post, and the stored hash of a channel's content.
     for (const never of [users.memberA, users.adminA, 'platform-id-xyz']) expect(seen).not.toContain(never);
-    expect(seen).not.toContain('contentHash');
-    expect(seen).not.toContain('search');
+    for (const key of ['contentHash', 'content_hash', 'external_post_id', 'externalPostId', 'assignee', 'authorUserId', 'searchText', 'settings']) expect(seen).not.toContain(key);
   });
 
   it('turns every text into one plain line a model reads as a person does, cuts a long one and says so', async () => {
@@ -284,5 +283,44 @@ suite('the Social MCP reads (#3227)', () => {
       const member = await refusal(runtime.query(name, {}, { actor: mcp(users.memberA, memberGrant), orgId: orgA }));
       expect([member.status, member.code], `${name}: a member`).toEqual([401, 'MCP_GRANT_INVALID']);
     }
+  });
+
+  it('shows each channel as the Social lists do: a published or taken-down channel at its publish time, a queued one at its slot before its own time, a cancelled one not at all, a failure with its code, and a channel text cut with its own flag', async () => {
+    const orgC = (await createOrg(runtime, browser(users.ownerA), 'Org C')).orgId;
+    const c1 = await channel(orgC, users.ownerA, 'C một');
+    const c2 = await channel(orgC, users.ownerA, 'C hai');
+    const c3 = await channel(orgC, users.ownerA, 'C ba');
+    const c4 = await channel(orgC, users.ownerA, 'C bốn');
+    const planned = new Date(Date.now() + 10 * HOUR);
+    const slot = new Date(Date.now() + 20 * HOUR);
+    const own = new Date(Date.now() + 30 * HOUR);
+    const mixed = await create(orgC, users.ownerA, {
+      body: 'Bài nhiều kênh',
+      scheduledAt: planned.toISOString(),
+      channels: [{ connectionId: c1, body: `${'Riêng '.repeat(500)}hết` }, { connectionId: c2 }, { connectionId: c3 }, { connectionId: c4 }],
+    });
+    const published = new Date(Date.now() - 5 * HOUR);
+    await admin(async (c) => {
+      const set = (conn: string, sql: string, args: unknown[] = []) => c.query(`UPDATE crove_social.post_variant SET ${sql} WHERE org_id = $1 AND post_id = $2 AND channel_connection_id = $3`, [orgC, mixed, conn, ...args]);
+      await set(c1, 'queue_slot_at = $4, scheduled_at = $5', [slot, own]);
+      await set(c2, "status = 'cancelled'");
+      await set(c3, "status = 'removed', removed_at = now(), published_at = $4", [published]);
+      await set(c4, "status = 'failed', error_code = 'RATE_LIMITED'");
+    });
+    const only = await runtime.query<Posts>('social.mcp.posts', { limit: 50 }, await grantOf(orgC, users.ownerA));
+    const post = only.posts.find((p) => p.id === mixed) as Post;
+    expect(post.channels.map((c) => c.connectionId)).toEqual([c1, c3, c4]);
+    const [first, removed, failed] = post.channels as [Channel, Channel, Channel];
+    expect(first.at).toBe(slot.toISOString());
+    expect(first).toMatchObject({ textTruncated: true });
+    expect([...(first.text as string)].length).toBeLessThanOrEqual(MCP_TEXT_MAX);
+    expect(removed).toMatchObject({ status: 'removed', takenDown: true, at: published.toISOString() });
+    expect(failed).toMatchObject({ status: 'failed', errorCode: 'RATE_LIMITED', at: planned.toISOString() });
+    // A window that holds the queue slot but not the channel's own time finds the post, and the channel shows the time the window matched.
+    const window = await runtime.query<Posts>('social.mcp.posts', { from: new Date(slot.getTime() - HOUR).toISOString(), to: new Date(slot.getTime() + HOUR).toISOString() }, await grantOf(orgC, users.ownerA));
+    expect(window.posts.map((p) => p.id)).toEqual([mixed]);
+    // The window edges: `to` is exclusive, `from` inclusive.
+    expect((await runtime.query<Posts>('social.mcp.posts', { to: slot.toISOString(), from: slot.toISOString() }, await grantOf(orgC, users.ownerA))).posts).toEqual([]);
+    expect((await runtime.query<Posts>('social.mcp.posts', { from: slot.toISOString() }, await grantOf(orgC, users.ownerA))).posts.map((p) => p.id)).toEqual([mixed]);
   });
 });

@@ -50,7 +50,7 @@ export interface McpChannelRow {
   textTruncated: boolean;
   title: string | null;
   linkUrl: string | null;
-  // When it goes out: the channel's own time, else its queue slot, else the post's planned time.
+  // When it goes out, or when it went out once published: its queue slot, else its own time, else the post's planned time.
   at: string | null;
   // When it went to review (a channel in review only).
   submittedAt: string | null;
@@ -86,7 +86,7 @@ export interface McpReviewQueue {
   inReview: McpPostRow[];
   inReviewTotal: number;
   inReviewTruncated: boolean;
-  // Drafts an AI wrote that nobody has sent to review yet, newest first.
+  // Drafts an AI wrote with no channel waiting in review (not yet sent, or sent back with changes requested), newest first.
   aiDrafts: McpPostRow[];
   aiDraftsTotal: number;
   aiDraftsTruncated: boolean;
@@ -160,7 +160,8 @@ async function viewPosts(ctx: Pick<QueryContext, 'trx' | 'orgId'>, scope: Channe
     const text = textOf(p.body ?? '');
     const channels = (byPost.get(id) ?? []).map((v): McpChannelRow => {
       const own = v.body === null ? null : textOf(v.body);
-      const at = v.scheduled_at ?? v.queue_slot_at ?? p.scheduled_at;
+      // The time the `from` and `to` filter reads (post-filter.ts): when it was published once it has been, else its queue slot, else its own time, else the post's.
+      const at = v.status === 'published' || v.status === 'removed' ? v.published_at : (v.queue_slot_at ?? v.scheduled_at ?? p.scheduled_at);
       const since = v.status === 'in_review' ? v.review_since : null;
       return {
         variantId: v.id,
@@ -231,8 +232,8 @@ export const mcpPosts = defineQuery({
   },
 });
 
-// `ludy_social_review_queue`: what waits for a person. `inReview`: the posts with a channel in review, the one waiting longest first. `aiDrafts`: the drafts an AI wrote that no
-// one has sent to review (a draft an MCP client creates lands here until a person submits it, then moves to `inReview`).
+// `ludy_social_review_queue`: what waits for a person. `inReview`: the posts with a channel in review, the one waiting longest first. `aiDrafts`: the drafts an AI wrote with no
+// channel waiting in review (a draft an MCP client creates lands here until a person submits it, then moves to `inReview`; one sent back with changes requested is here too).
 export const mcpReviewQueue = defineQuery({
   name: 'social.mcp.review_queue',
   input: zMcpReviewQueueInput,
@@ -250,6 +251,7 @@ export const mcpReviewQueue = defineQuery({
           .whereRef('v.org_id', '=', 'p.org_id')
           .whereRef('v.post_id', '=', 'p.id')
           .where('v.status', '=', 'in_review')
+          .where(connectionInScope(scope, 'v.channel_connection_id'))
           .as('since'),
       )
       .execute();
