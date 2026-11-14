@@ -57,6 +57,8 @@ export type PersonalDataResult = z.infer<typeof zPersonalDataResult>;
 export const zPersonalDataErasure = z.object({
   erased: z.array(z.object({ column: z.string(), rows: z.number().int() })),
   kept: z.array(z.object({ column: z.string(), rows: z.number().int(), reason: z.string() })),
+  // The rough notes (A5, #3163) the erasure changed, per recorder: counts only. Present only when some were changed.
+  meetingNotes: z.array(z.object({ recorderUserId: z.string(), notes: z.number().int() })).optional(),
 });
 export type PersonalDataErasure = z.infer<typeof zPersonalDataErasure>;
 

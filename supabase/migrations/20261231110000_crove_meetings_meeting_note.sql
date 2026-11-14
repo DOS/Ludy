@@ -93,8 +93,9 @@ GRANT EXECUTE ON FUNCTION crove_meetings.personal_row_ids(text, text) TO crove_t
 
 -- crove_meetings.personal_note_counts(kind, value)  per RECORDER, how many rough notes of THEIR meetings hold the value, among the notes the caller cannot read (every note but the caller's own).
 --                                                   Numbers and the recorder's id only: never text or a meeting id. An owner's user context only (the counts are an oracle for a guessed value).
--- crove_meetings.personal_note_erase(kind, value)   redacts the value in the CALLER's own notes (the owner is the recorder: the owner's own erasure is the authority, as for every row they read),
---                                                   returns how many notes it changed and how many other notes still hold the value (private to their recorders, so left). An owner's user context only.
+-- crove_meetings.personal_note_erase(kind, value)   redacts the value in the rough notes of EVERY recorder of the org (the org is the data controller and the owner's erasure is its authority, as
+--                                                   for the machine translations of E1, which an erasure deletes for every member), and returns, per recorder, how many notes it changed.
+--                                                   Numbers and the recorder's id only: never text or a meeting id. An owner's user context only.
 -- Same matcher as personal_matches and personal_erase (crove_kernel.text_mentions and text_redact, which raise on any shape but the finder's probe before a row is read).
 CREATE OR REPLACE FUNCTION crove_meetings.personal_note_counts(p_kind text, p_value text)
 RETURNS TABLE (recorder_user_id uuid, notes bigint)
@@ -122,7 +123,7 @@ REVOKE ALL ON FUNCTION crove_meetings.personal_note_counts(text, text) FROM PUBL
 GRANT EXECUTE ON FUNCTION crove_meetings.personal_note_counts(text, text) TO crove_tenant;
 
 CREATE OR REPLACE FUNCTION crove_meetings.personal_note_erase(p_kind text, p_value text)
-RETURNS TABLE (erased bigint, kept bigint)
+RETURNS TABLE (recorder_user_id uuid, erased bigint)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   v_org uuid := crove_kernel.ctx_org_id();
@@ -135,19 +136,19 @@ BEGIN
     RAISE EXCEPTION 'MEETINGS_FORBIDDEN' USING ERRCODE = '42501';
   END IF;
   PERFORM crove_kernel.text_mention_pattern(p_kind, p_value);
-  -- The caller's own notes only: the rows are locked first, so a recorder's edit waits for this redaction.
-  WITH mine AS (
-    SELECT n.id FROM crove_meetings.meeting_note n
-     WHERE n.org_id = v_org AND crove_kernel.text_mentions(n.body, p_kind, p_value) AND crove_meetings.is_meeting_recorder(v_org, n.meeting_id)
-     ORDER BY n.id FOR NO KEY UPDATE
+  -- Every note of the org that holds the value: the rows are locked first (a recorder's edit waits for this redaction), then only those rows are changed. Nothing but the text changes.
+  RETURN QUERY
+  WITH hit AS (
+    SELECT n.id, m.recorder_user_id AS recorder FROM crove_meetings.meeting_note n
+      JOIN crove_meetings.meeting m ON m.org_id = v_org AND m.id = n.meeting_id
+     WHERE n.org_id = v_org AND crove_kernel.text_mentions(n.body, p_kind, p_value)
+     ORDER BY n.id FOR NO KEY UPDATE OF n
   ), done AS (
     UPDATE crove_meetings.meeting_note n
        SET body = pg_catalog.left(crove_kernel.text_redact(n.body, p_kind, p_value, v_mark), 8000), updated_at = pg_catalog.now()
-      FROM mine WHERE n.org_id = v_org AND n.id = mine.id
-    RETURNING 1)
-  SELECT pg_catalog.count(*) INTO erased FROM done;
-  SELECT pg_catalog.count(*) INTO kept FROM crove_meetings.meeting_note n WHERE n.org_id = v_org AND crove_kernel.text_mentions(n.body, p_kind, p_value);
-  RETURN NEXT;
+      FROM hit WHERE n.org_id = v_org AND n.id = hit.id
+    RETURNING hit.recorder AS recorder)
+  SELECT d.recorder, pg_catalog.count(*)::bigint FROM done d GROUP BY d.recorder ORDER BY d.recorder;
 END;
 $$;
 REVOKE ALL ON FUNCTION crove_meetings.personal_note_erase(text, text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;

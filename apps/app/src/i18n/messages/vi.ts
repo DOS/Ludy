@@ -5820,6 +5820,7 @@ export const vi = {
     meetingTextSummary: '{meetings, plural, other {# cuộc họp}} có nội dung bạn không đọc được, của {recorders, plural, other {# người ghi}}, có nhắc đến giá trị này',
     meetingTextSkipped: 'Tổ chức có quá nhiều nội dung họp để tìm trong một lần nên chưa tìm trong nội dung họp. Các kết quả khác vẫn đầy đủ. Hãy tìm lại sau hoặc liên hệ hỗ trợ.',
     meetingTextRecorder: '{name}: {meetings, plural, other {# cuộc họp}}, {lines, plural, other {# dòng ghi lời}}, {results, plural, other {# bản tóm tắt hoặc quyết định}}, {items, plural, other {# việc cần làm}}, {titles, plural, other {# tiêu đề}}',
+    erasedNotes: '{name}: {notes, plural, other {# ghi chú riêng}} đã được xóa giá trị này',
     meetingTextNotes: ', {notes, plural, other {# ghi chú riêng}}',
     meetingTextHint: 'Chỉ những người được chia sẻ mới đọc được cuộc họp, nên ở đây chỉ hiện số lượng, không hiện nội dung hay tiêu đề. Người ghi có thể xóa cuộc họp, và chủ sở hữu có thể xóa mà không cần đọc.',
     formerMember: 'Thành viên cũ',

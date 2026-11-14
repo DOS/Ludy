@@ -157,34 +157,49 @@ suite('the recorder\'s rough notes and Vy\'s expansion of them (A5, #3163)', () 
   });
 
   // The finder (L5): a value in the recorder's own notes is listed where the actor is the recorder (row security as for every table); the notes of another recorder are counted for the owner per
-  // recorder, never listed and never shown, and an erasure redacts the owner's own notes and leaves, and reports, the notes of others.
-  it('finds a value in the notes: lists the owner\'s own, counts another recorder\'s without showing them, and an erasure edits only the owner\'s own', async () => {
+  // recorder, never listed and never shown. The org is the data controller: the owner's erasure redacts the value in EVERY recorder's notes and reports the count per recorder.
+  it('finds a value in the notes (lists the owner\'s own, counts another recorder\'s without showing them) and an erasure by the owner redacts every recorder\'s notes, counted per recorder', async () => {
     const email = 'ghi.chu.rieng@congty.example';
     const own = await seedMeeting('owner');
     await exec('owner', 'meetings.notes.save', { meetingId: own, body: `gửi hợp đồng cho ${email}\nmột dòng khác` });
     const theirs = await seedMeeting('recorder');
-    await exec('recorder', 'meetings.notes.save', { meetingId: theirs, body: `nhắc ${email} về báo giá` });
+    await exec('recorder', 'meetings.notes.save', { meetingId: theirs, body: `nhắc ${email} về báo giá\n${email} lần hai` });
+    const clean = await seedMeeting('recorder');
+    await exec('recorder', 'meetings.notes.save', { meetingId: clean, body: 'ghi chú không nhắc ai' });
     const find = () => runtime.execute<PersonalDataResult>('kernel.personal_data.find', { value: email }, { actor: asUser('owner'), orgId, idempotencyKey: randomUUID() });
     const found = await find();
     expect(found.matches.filter((m) => m.column.startsWith('crove_meetings.')).map((m) => m.column)).toEqual(['crove_meetings.meeting_note.body']);
     // The recorder's notes are counted for their recorder, with no text, no meeting and no title.
     expect(found.meetingText).toEqual([{ recorderUserId: users.recorder, meetings: 0, lines: 0, results: 0, items: 0, titles: 0, notes: 1 }]);
     expect(JSON.stringify(found)).not.toContain('nhắc');
-    // A member who is not an owner gets no counts at all.
-    const admin = await runtime.execute<PersonalDataResult>('kernel.personal_data.find', { value: email }, { actor: asUser('recorder'), orgId, idempotencyKey: randomUUID() }).then(
+    // A member who is not an owner cannot run the finder.
+    const refused = await runtime.execute<PersonalDataResult>('kernel.personal_data.find', { value: email }, { actor: asUser('recorder'), orgId, idempotencyKey: randomUUID() }).then(
       () => 'ok',
       (error: unknown) => (error as { code?: string }).code ?? 'ERR',
     );
-    expect(admin).not.toBe('ok');
+    expect(refused).not.toBe('ok');
 
     const mfa = { type: 'user' as const, userId: users.owner as string, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) };
     const erased = await runtime.execute<PersonalDataErasure>('kernel.personal_data.erase', { value: email }, { actor: mfa, orgId, idempotencyKey: randomUUID() });
-    expect(erased.erased.find((e) => e.column === 'crove_meetings.meeting_note.body')?.rows).toBe(1);
-    expect(erased.kept.some((k) => k.column === 'crove_meetings.meeting_note' && /another member/.test(k.reason) && k.rows === 1)).toBe(true);
-    // The owner's note has the value replaced and its other line untouched; the other recorder's note is as they wrote it.
+    expect(erased.erased.find((e) => e.column === 'crove_meetings.meeting_note.body')?.rows).toBe(2);
+    // Counted per recorder: the owner's own note and the member's note, no text and no meeting.
+    expect(erased.meetingNotes?.slice().sort((a, b) => a.recorderUserId.localeCompare(b.recorderUserId))).toEqual(
+      [
+        { recorderUserId: users.owner as string, notes: 1 },
+        { recorderUserId: users.recorder as string, notes: 1 },
+      ].sort((a, b) => a.recorderUserId.localeCompare(b.recorderUserId)),
+    );
+    expect(JSON.stringify(erased)).not.toContain('nhắc');
+    expect(erased.kept.some((k) => k.column.startsWith('crove_meetings.meeting_note'))).toBe(false);
+    // Every mention is replaced, in the member's note too; the lines around it and an untouched note stay as written.
     expect((await noteRows(own)).map((r) => r.body)).toEqual(['gửi hợp đồng cho [đã xóa]\nmột dòng khác']);
-    expect((await noteRows(theirs)).map((r) => r.body)).toEqual([`nhắc ${email} về báo giá`]);
-    expect((await find()).matches.filter((m) => m.column.startsWith('crove_meetings.'))).toEqual([]);
+    expect((await noteRows(theirs)).map((r) => r.body)).toEqual(['nhắc [đã xóa] về báo giá\n[đã xóa] lần hai']);
+    expect((await noteRows(clean)).map((r) => r.body)).toEqual(['ghi chú không nhắc ai']);
+    expect((await find()).meetingText).toEqual([]);
+    // The audit row holds counts, never the value or the text.
+    const audit = JSON.stringify((await sqlAdmin(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.erase' ORDER BY id DESC LIMIT 1`, [orgId])).rows);
+    expect(audit).not.toContain(email);
+    expect(audit).not.toContain('nhắc');
   });
 
   it('expands the notes with the transcript: own lines verbatim, added lines on a real second, a private result the recorder reads and copies into a tainted draft', async () => {

@@ -5826,6 +5826,7 @@ export const en = {
     meetingTextSummary: '{meetings, plural, one {# meeting} other {# meetings}} with text you cannot read, by {recorders, plural, one {# recorder} other {# recorders}}, mention this value',
     meetingTextSkipped: 'This organization holds too much meeting text to search in one go, so meeting text was not searched. The other results are complete. Search again later or contact support.',
     meetingTextRecorder: '{name}: {meetings, plural, one {# meeting} other {# meetings}}, {lines, plural, one {# transcript line} other {# transcript lines}}, {results, plural, one {# summary or decisions} other {# summaries or decisions}}, {items, plural, one {# action item} other {# action items}}, {titles, plural, one {# title} other {# titles}}',
+    erasedNotes: '{name}: {notes, plural, one {# private note} other {# private notes}} had this value removed',
     meetingTextNotes: ', {notes, plural, one {# private note} other {# private notes}}',
     meetingTextHint: 'Only the people a meeting is shared with can read it, so only the counts show here, never the text or the title. The recorder of a meeting can delete it, and an owner can delete it without reading it.',
     formerMember: 'Former member',
