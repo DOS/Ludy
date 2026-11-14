@@ -94,3 +94,4 @@ export * from './domain/duplicate.ts';
 export * from './suggestions.ts';
 export * from './domain/suggestion.ts';
 export { socialManifest } from './manifest.ts';
+export { MCP_POSTS_DEFAULT, MCP_POSTS_MAX, MCP_TEXT_MAX, zMcpPostsInput, zMcpReviewQueueInput } from './mcp.ts';
