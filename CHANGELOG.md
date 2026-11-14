@@ -4,6 +4,7 @@ What changed in each release that reaches the pilot. A release is a `v*` tag of 
 
 ## Unreleased (on `main` after v0.3.2)
 
+- **Meetings: live notes** (L4a, ADR-0052, off by default, ticked per meeting at the consent step as "Ghi chú trực tiếp"): while a meeting is recorded, the extension or the app sends the audio in pieces of about 15 seconds, each sealed under its own key and kept only until the final recording arrives (#3109, #3117, #3118); the recorder's own Vy turns them into a live transcript on the meeting page, about 30 to 45 seconds behind the speech (not yet measured), and refreshes running notes (summary, decisions, action items as "Đề xuất" drafts) every 5 minutes or on a click; only the recorder sees them, nothing becomes a task without the recorder's click, each piece is admitted on its cost against the AI budget, a spent budget or the kill switch stops the notes and never the recording, it runs only while the meeting page is open, and the live text is replaced by the batch transcript and deleted with the meeting (#3110, #3119, #3121, #3123).
 - **Bookings linked to deals** (#3103): a deal lists its upcoming and past bookings, "Đặt lịch" on a deal gives the client a booking link that carries the deal, and on the Lịch hẹn screen Dy suggests the guest's open deal by email or phone (no AI model) for a person to confirm; link and unlink are audited commands.
 
 ## v0.3.2 (2026-11-13)
