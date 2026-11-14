@@ -121,7 +121,7 @@ suite('one live Vy run per member per feature (#3029)', () => {
   it('bounds a member at one live run per declared feature, whatever the starts', async () => {
     for (let round = 0; round < 2; round++) for (const feature of FEATURES) await start(users.carol, feature);
     expect(await liveOf(users.carol)).toEqual([...FEATURES].sort());
-    expect(FEATURES.length, 'the declared member-mode features, and no per-member cap beyond them (ADR-0049 decision 1)').toBe(7);
+    expect(FEATURES.length, 'the declared member-mode features, and no per-member cap beyond them (ADR-0049 decision 1)').toBe(8);
   });
 
   it('ends every live run of the member, whichever the feature, when vy.use is denied, a kill switch is engaged and the member is removed', async () => {
