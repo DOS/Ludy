@@ -266,6 +266,21 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     await expect(rt.execute('kernel.proposal.request', { command: 'finance.voucher.record', input: { type: 'bank_credit', date: '2026-10-20', cashAccount: '1121', description: 'thu lại', lines: [{ account: '711', amount: RECEIVED }], bankLineId: line } }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() })).resolves.toMatchObject({ proposalId: expect.any(String) });
   });
 
+  it('shows the line of a payout on the bank screen: proposed while it waits, matched with its own code once posted, open again when the payout is reversed', async () => {
+    const { o, settlement, line } = await posted();
+    const state = async () =>
+      new Map((await rt.query<{ lines: { id: string; state: { status: string; code?: string; proposalId?: string } }[] }>('finance.bank.lines', { bankAccount: '1121', period: '2026-10' }, { actor: asUser(o.owner), orgId: o.orgId })).lines.map((l) => [l.id, l.state] as const)).get(line);
+    expect(await state()).toEqual({ status: 'open' });
+    const { proposalId } = await ask(o, settlement, line);
+    expect(await state()).toEqual({ status: 'proposed', proposalId });
+    const done = await approve(o, proposalId);
+    expect(await state()).toMatchObject({ status: 'matched', code: expect.stringMatching(/^NVK\d{5,}$/) });
+    // The payout's entry reversed frees the line for a bank voucher (the payout itself is not posted again, see the test of the reversed payout).
+    const asked = await rt.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.journal.reverse', input: { entryId: done.journalEntryId, entryDate: '2026-10-21', reason: 'Nhầm dòng sao kê' } }, { actor: asUser(o.admin), orgId: o.orgId, idempotencyKey: randomUUID() });
+    await approve(o, asked.proposalId);
+    expect(await state()).toEqual({ status: 'open' });
+  });
+
   it('refuses a line a bank voucher already took', async () => {
     const { o, settlement, line } = await posted();
     const voucher = await rt.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.voucher.record', input: { type: 'bank_credit', date: '2026-10-20', cashAccount: '1121', description: 'thu tiền sàn', lines: [{ account: '711', amount: RECEIVED }], bankLineId: line } }, { actor: asUser(o.admin), orgId: o.orgId, idempotencyKey: randomUUID() });

@@ -22,8 +22,22 @@ export async function payoutOfBankLine(ctx: QueryContext, bankLineId: string, op
     .where('org_id', '=', ctx.orgId)
     .where('command', '=', MARKETPLACE_PAYOUT_COMMAND)
     .where('status', '=', 'pending')
-    .where(sql<string>`payload->>'bankLineId'`, '=', bankLineId)
+    // The id in a stored proposal keeps the case it was given (zId is z.uuid()), so both sides are lowered.
+    .where(sql<string>`lower(payload->>'bankLineId')`, '=', bankLineId.toLowerCase())
     .orderBy('created_at')
     .executeTakeFirst();
   return proposed ? { state: 'proposed', proposalId: proposed.id } : null;
+}
+
+// The posted payout vouchers (entry not reversed) that name any of the lines, for the bank screen's line states.
+export async function payoutVouchersOfLines(ctx: QueryContext, bankLineIds: readonly string[]): Promise<{ id: string; number: number; bankLineId: string }[]> {
+  if (bankLineIds.length === 0) return [];
+  const rows = await ctx.trx
+    .selectFrom('crove_finance.journal_voucher as j')
+    .select(['j.id', 'j.number', 'j.payout_bank_line_id'])
+    .where('j.org_id', '=', ctx.orgId)
+    .where('j.payout_bank_line_id', 'in', [...bankLineIds])
+    .where(sql<boolean>`NOT ${reversedSource('j', JOURNAL_VOUCHER_SOURCE)}`)
+    .execute();
+  return rows.flatMap((r) => (r.payout_bank_line_id ? [{ id: r.id, number: r.number, bankLineId: r.payout_bank_line_id }] : []));
 }
