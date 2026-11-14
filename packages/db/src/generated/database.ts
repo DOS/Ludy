@@ -1260,6 +1260,8 @@ export interface FinanceJournalVoucherTable {
   stock_count_id: ColumnType<string | null, string | null, NotGranted>;
   payroll_run_id: ColumnType<string | null, string | null, NotGranted>;
   settlement_id: ColumnType<string | null, string | null, NotGranted>;
+  payout_settlement_id: ColumnType<string | null, string | null, NotGranted>;
+  payout_bank_line_id: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_finance.legal_entity_books */

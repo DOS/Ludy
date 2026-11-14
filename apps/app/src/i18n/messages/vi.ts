@@ -9351,6 +9351,11 @@ export const vi = {
       MARKETPLACE_SETTLEMENT_NOT_FOUND: 'Không tìm thấy kỳ đối soát này của sàn',
       MARKETPLACE_SETTLEMENT_POSTED: 'Kỳ đối soát này của sàn đã được hạch toán',
       MARKETPLACE_SETTLEMENT_MISMATCH: 'Đề xuất hạch toán không khớp kỳ đối soát đã lưu; hãy lập lại đề xuất',
+      MARKETPLACE_PAYOUT_NOT_POSTABLE: 'Không ghi sổ được khoản sàn trả này (kỳ đối soát có khoản điều chỉnh khác chưa giải thích, số tiền không phải đồng nguyên, hoặc không còn gì để thu)',
+      MARKETPLACE_PAYOUT_SETTLEMENT_NOT_POSTED: 'Ghi sổ kỳ đối soát trước, rồi mới ghi khoản sàn trả',
+      MARKETPLACE_PAYOUT_BANK_LINE: 'Dòng sao kê này không dùng được cho khoản sàn trả (phải là tiền vào, đúng bằng số tiền ròng của kỳ đối soát, cùng pháp nhân và chưa gắn với chứng từ nào)',
+      MARKETPLACE_PAYOUT_POSTED: 'Khoản sàn trả của kỳ đối soát này đã được ghi sổ',
+      MARKETPLACE_PAYOUT_MISMATCH: 'Đề xuất ghi sổ không khớp kỳ đối soát hoặc dòng sao kê đã lưu; hãy lập lại đề xuất',
       HR_PAYMENT_NEGATIVE: 'Khoản này âm sau các điều chỉnh của tháng (phải hoàn lại) nên chưa ghi chi được ở đây; kế toán xử lý riêng',
       HR_PAYMENT_NOT_POSTED: 'Bảng lương này chưa được hạch toán; hãy hạch toán trước khi ghi chi lương hay nộp các khoản',
       HR_PAYMENT_POSTING_REVERSED: 'Bút toán hạch toán của bảng lương này đã bị đảo nên chưa chi lương hay nộp các khoản được',
@@ -10442,6 +10447,10 @@ export const vi = {
       marketplace_settlement: {
         prepare: 'Kiểm tra kỳ đối soát của sàn trước khi đề xuất ghi sổ',
         record: 'Ghi sổ kỳ đối soát của sàn thành một bút toán',
+      },
+      marketplace_payout: {
+        prepare: 'Kiểm tra khoản sàn trả và dòng sao kê trước khi đề xuất ghi sổ',
+        record: 'Ghi sổ khoản sàn trả (tiền nhận, phí, thuế sàn giữ lại) thành một bút toán',
       },
       einvoice: {
         draft_from_order: 'Lập bản nháp hóa đơn bán ra từ đơn bán hàng',

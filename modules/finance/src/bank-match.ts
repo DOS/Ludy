@@ -38,6 +38,7 @@ import { learnedParties } from './bank-rules.ts';
 import { matchLine, type MatchCandidate } from './domain/bank-match.ts';
 import { VOUCHER_SOURCE } from './domain/cash-voucher.ts';
 import { JOURNAL_VOUCHER_SOURCE } from './domain/journal-voucher.ts';
+import { payoutOfBankLine } from './marketplace-payout-line.ts';
 import { ledgerPeriod } from './domain/ledger-reports.ts';
 import { payrollPaymentMention } from './domain/bank-payroll.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
@@ -184,6 +185,10 @@ export async function checkBankLineVoucher(
   if (options.pendingToo && state?.status === 'proposed') {
     throw new DomainError('BANK_LINE_PROPOSED', 409, 'Dòng sao kê này đã có chứng từ đang chờ duyệt', { proposalId: state.proposalId });
   }
+  // A platform's payout (#2516) settles a line too: a line it posted is matched, and one it proposed is proposed, though the line's state above knows only bank vouchers.
+  const payout = await payoutOfBankLine(ctx, line.id);
+  if (payout?.state === 'posted') throw new DomainError('BANK_LINE_MATCHED', 409, 'Dòng sao kê này đã dùng cho một khoản sàn trả', { voucherId: payout.voucherId });
+  if (options.pendingToo && payout?.state === 'proposed') throw new DomainError('BANK_LINE_PROPOSED', 409, 'Dòng sao kê này đã có khoản sàn trả đang chờ duyệt', { proposalId: payout.proposalId });
   return line;
 }
 
