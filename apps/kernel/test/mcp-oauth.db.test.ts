@@ -431,7 +431,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
       const initialized = await post({ 'mcp-protocol-version': version }, { jsonrpc: '2.0', method: 'notifications/initialized' });
       expect(initialized.status).toBe(202);
       const list = (await (await post({ 'mcp-protocol-version': version }, { jsonrpc: '2.0', id: 2, method: 'tools/list' })).json()) as any;
-      expect(list.result.tools.map((t: any) => t.name)).toEqual(['ludy_about', 'ludy_invoices_list', 'ludy_parties_list', 'ludy_signals']);
+      expect(list.result.tools.map((t: any) => t.name)).toEqual(['ludy_about', 'ludy_invoices_list', 'ludy_parties_list', 'ludy_signals', 'ludy_social_posts_list', 'ludy_social_review_queue']);
       for (const tool of list.result.tools) expect(tool.annotations, tool.name).toMatchObject({ readOnlyHint: true, destructiveHint: false, idempotentHint: true });
       const called = (await (await post({ 'mcp-protocol-version': version }, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'ludy_about', arguments: {} } })).json()) as any;
       expect(called.result.structuredContent.clientName).toBe('Test MCP client');
@@ -596,7 +596,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     expect(client.getServerVersion()?.name).toBe('ludy');
     expect(client.getServerCapabilities()?.tools).toBeDefined();
     const listed = await client.listTools();
-    expect(listed.tools.map((t) => t.name)).toEqual(['ludy_about', 'ludy_invoices_list', 'ludy_parties_list', 'ludy_signals']);
+    expect(listed.tools.map((t) => t.name)).toEqual(['ludy_about', 'ludy_invoices_list', 'ludy_parties_list', 'ludy_signals', 'ludy_social_posts_list', 'ludy_social_review_queue']);
     expect(listed.tools[0]?.annotations).toMatchObject({ readOnlyHint: true });
     const called = await client.callTool({ name: 'ludy_about', arguments: {} });
     expect(called.isError).toBeFalsy();
