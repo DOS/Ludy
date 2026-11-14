@@ -20,6 +20,8 @@ const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.
 const suite = ADMIN ? describe : describe.skip;
 const TODAY = vietnamToday();
 const RULES = ['kernel.signals.deal_without_invoice', 'kernel.signals.receivable_with_open_deal', 'kernel.signals.supplier_bank_changed'] as const;
+// The fourth rule (#3124) reads conversations, which a grant's context cannot: the rule query refuses a grant, and kernel.mcp.signals names it not_available.
+const CONVERSATION_RULE = 'kernel.signals.conversation_unanswered';
 const READS = ['crm.signals.won_deals', 'crm.signals.open_deals', 'finance.signals.sales', 'finance.signals.overdue_receivables'] as const;
 
 suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
@@ -165,7 +167,7 @@ suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
     expect(await run(actor, 'crm.signals.open_deals')).toHaveLength(1);
   });
 
-  it('runs the three rules over MCP for a company grant with the items of the owner\'s own Home, rule 3 quiet while its reads do not exist', async () => {
+  it('runs the rules over MCP for a company grant with the items of the owner\'s own Home, rule 3 quiet while its reads do not exist', async () => {
     const g = await grant(users.owner);
     const actor = mcp(users.owner, g, 'company');
     for (const rule of RULES) expect(await run(actor, rule), rule).toEqual(await run(browser(users.owner), rule));
@@ -194,7 +196,7 @@ suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
     ].map((i) => i.id).sort());
     expect(answer.items).toHaveLength(2);
     expect(answer.checked).toEqual(['deal_without_invoice', 'receivable_with_open_deal']);
-    expect(answer.unchecked).toEqual([{ rule: 'supplier_bank_changed', reason: 'not_available' }]);
+    expect(answer.unchecked).toEqual([{ rule: 'supplier_bank_changed', reason: 'not_available' }, { rule: 'conversation_unanswered', reason: 'not_available' }]);
     // A branch-limited member's grant gets no item, and is told in so many words that two rules could not be checked: an empty list is never "all clear".
     const branch = mcp(users.branchMember, await grant(users.branchMember, { kind: 'member' }), 'member');
     const limited = (await run(branch, 'kernel.mcp.signals')) as unknown as { items: unknown[]; checked: string[]; unchecked: Array<{ rule: string; reason: string }> };
@@ -204,7 +206,16 @@ suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
       { rule: 'deal_without_invoice', reason: 'partial_view' },
       { rule: 'receivable_with_open_deal', reason: 'partial_view' },
       { rule: 'supplier_bank_changed', reason: 'not_available' },
+      { rule: 'conversation_unanswered', reason: 'not_available' },
     ]);
+  });
+
+  it('refuses the conversation rule to a grant instead of answering an empty list that could read as "all clear"', async () => {
+    for (const kind of ['company', 'member'] as const) {
+      const actor = mcp(users.owner, await grant(users.owner, { kind }), kind);
+      await expect(run(actor, CONVERSATION_RULE), kind).rejects.toBeInstanceOf(DomainError);
+    }
+    expect(await run(browser(users.owner), CONVERSATION_RULE)).toEqual([]);
   });
 
   it('does not let a grant run Home itself or anything the rules do not name', async () => {

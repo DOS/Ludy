@@ -17,7 +17,7 @@ const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 
 // The reads the lines agreed to expose (issue #2383): Accounting finance.today, Notes and CRM crm.today and
 // kernel.conversation.today, Marketing social.today and ads.today; and the kernel's own cross-app rules (signals.ts, Vy plan C4).
-export const TODAY_READS: readonly string[] = ['finance.today', 'crm.today', 'social.today', 'ads.today', 'kernel.conversation.today', 'kernel.signals.deal_without_invoice', 'kernel.signals.receivable_with_open_deal', 'kernel.signals.supplier_bank_changed'];
+export const TODAY_READS: readonly string[] = ['finance.today', 'crm.today', 'social.today', 'ads.today', 'kernel.conversation.today', 'kernel.signals.deal_without_invoice', 'kernel.signals.receivable_with_open_deal', 'kernel.signals.supplier_bank_changed', 'kernel.signals.conversation_unanswered'];
 
 export function todayQuery(options: { reads?: readonly string[] } = {}) {
   const reads = options.reads ?? TODAY_READS;

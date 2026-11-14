@@ -10,6 +10,7 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import {
+  zConversationUnansweredSignal,
   zCrmOpenDealSignal,
   zCrmWonDealSignal,
   zFinanceOverdueReceivableSignal,
@@ -17,7 +18,6 @@ import {
   zFinanceSupplierBankChangeSignal,
   zFinanceSupplierPaymentsWaitingSignal,
 } from '@crove/kernel-contract';
-import * as contract from '@crove/kernel-contract';
 import { crmQueries } from '@crove/mod-crm';
 import { financeQueries } from '@crove/mod-finance';
 import { kernelQueries } from '@crove/kernel';
@@ -33,12 +33,9 @@ const ROWS = {
   'finance.signals.overdue_receivables': zFinanceOverdueReceivableSignal,
   'finance.signals.supplier_bank_changes': zFinanceSupplierBankChangeSignal,
   'finance.signals.supplier_payments_waiting': zFinanceSupplierPaymentsWaitingSignal,
+  // The inbox's side of the fourth rule (#3124): ids and an instant, never a word of a message.
+  'kernel.conversation.signals_unanswered': zConversationUnansweredSignal,
 } as const;
-// The conversation read of the fourth rule joins the pinned set once the contract exports it (step 1 of the two-step plan accepts both states: it passes before the read exists and pins it after).
-const CONVERSATION_READ = 'kernel.conversation.signals_unanswered';
-const conversationRow = (contract as Record<string, unknown>).zConversationUnansweredSignal as z.ZodObject | undefined;
-const PINNED: Record<string, z.ZodObject> = { ...ROWS, ...(conversationRow ? { [CONVERSATION_READ]: conversationRow } : {}) };
-
 // A value the schema refuses: it fails to parse or throws (a date check that throws on a malformed day still refuses the row; a follow-up makes it fail cleanly).
 const refuses = (run: () => { success: boolean }): boolean => {
   try {
@@ -49,7 +46,7 @@ const refuses = (run: () => { success: boolean }): boolean => {
 };
 
 describe('the signals contract carries ids, dates, counts and amounts only', () => {
-  for (const [read, schema] of Object.entries(PINNED)) {
+  for (const [read, schema] of Object.entries(ROWS)) {
     it(`${read}: only pinned keys, and one extra key voids a row`, () => {
       const keys = Object.keys(schema.shape).sort();
       expect(keys.filter((k) => !ROW_KEYS.includes(k)), `${read} has a key outside the pinned list`).toEqual([]);
@@ -85,7 +82,7 @@ describe('a registered signals read is a plain, role-listed, scope-limited query
   const signals = all.filter((q) => /^((finance|crm)\.signals\.|kernel\.conversation\.signals_)/.test(q.name));
 
   it('has no read outside the names of the contract', () => {
-    expect(signals.map((q) => q.name).filter((n) => !(n in PINNED))).toEqual([]);
+    expect(signals.map((q) => q.name).filter((n) => !(n in ROWS))).toEqual([]);
   });
 
   it('lists roles, is not sensitive, streamed or open to member mode or an extension token, and declares at most the AI-app scope', () => {

@@ -191,6 +191,8 @@ export const vi = {
         supplierBankChangedMore: '{count, plural, other {# nhà cung cấp khác}} đã đổi tài khoản ngân hàng và có khoản thanh toán đang chờ',
         supplierBankChangedUnchecked: '{count, plural, other {# nhà cung cấp}} đã đổi tài khoản ngân hàng gần đây; chưa kiểm tra được các khoản thanh toán đang chờ của họ, hãy tự xem trước khi trả',
         supplierBankChangedPartial: 'Bạn chỉ xem được một phần dữ liệu nhà cung cấp, nên chưa kiểm tra đủ việc đổi tài khoản ngân hàng: hãy tự xem các khoản thanh toán đang chờ trước khi trả',
+        conversationUnanswered: 'Khách này nhắn đã {hours, plural, other {# giờ}} mà chưa được trả lời, và vẫn còn deal đang mở',
+        conversationUnansweredMore: '{count, plural, other {# khách khác}} nhắn quá 24 giờ chưa được trả lời mà vẫn còn deal đang mở',
       },
       crm: {
         noActivity: 'Nhắc: deal này đã {days, plural, other {# ngày}} chưa có cập nhật',
@@ -10962,6 +10964,7 @@ export const vi = {
         composing: 'Báo mình đang soạn trả lời một hội thoại',
         set_availability: 'Đặt mình đang nhận hay tạm vắng với hội thoại mới',
         set_intent: 'Gán, đổi hoặc bỏ ý định của một hội thoại',
+        signals_unanswered: 'Xem khách nào nhắn lâu chưa được trả lời, theo mã và thời điểm (không có nội dung tin nhắn)',
         intent_source: 'Đọc lời khách để gợi ý ý định',
         contact_candidates: 'Tìm liên hệ có thể là khách này',
         today: 'Xem các hội thoại đang chờ bạn trả lời hôm nay',
@@ -11250,6 +11253,7 @@ export const vi = {
         deal_without_invoice: 'Xem các deal đã thắng mà chưa có hóa đơn bán hàng',
         receivable_with_open_deal: 'Xem các khách có công nợ quá hạn mà vẫn còn deal đang mở',
         supplier_bank_changed: 'Xem các nhà cung cấp đổi tài khoản ngân hàng khi còn khoản thanh toán đang chờ',
+        conversation_unanswered: 'Xem các khách nhắn quá 24 giờ chưa được trả lời mà vẫn còn deal đang mở',
       },
       subject_key: {
         reseal: 'Mã hóa lại khóa dữ liệu của người đã niêm phong sau khi đổi khóa',
