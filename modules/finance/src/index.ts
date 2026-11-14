@@ -60,6 +60,7 @@ import { stockCountCommands, stockCountQueries } from './stock-count.ts';
 import { stockExportCommands } from './stock-export.ts';
 import { householdCommands, householdQueries } from './household.ts';
 import { householdBookCommands, householdBookQueries } from './household-books.ts';
+import { householdReturnQueries } from './household-return.ts';
 import { stockReportQueries } from './stock-report.ts';
 import { stockLowQueries } from './stock-low.ts';
 export type { ReorderSource, SuggestSource } from './stock-low.ts';
@@ -193,6 +194,7 @@ export const financeQueries = [
   payrollSettlement,
   ...householdQueries,
   ...householdBookQueries,
+  ...householdReturnQueries,
   ...fixedAssetQueries,
   ...bankFeedQueries,
   ...bankAccountNumberQueries,

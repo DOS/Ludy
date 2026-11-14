@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The household business kind's tables and the tenant role (#2517, ADR-0045) on a real PostgreSQL 17: the four tables that hold the law (thresholds, percentages by trade, the expense groups and
-// the forms) are read-only to every tenant login, edited only by a migration, so no request can change a rate or a threshold; and a household profile is append-only, so a row a book was made
+// The household business kind's tables and the tenant role (#2517, #2518, ADR-0045) on a real PostgreSQL 17: the five tables that hold the law (thresholds, percentages by trade, the expense groups,
+// the book forms and the return form) are read-only to every tenant login, edited only by a migration, so no request can change a rate or a threshold; and a household profile is append-only, so a row a book was made
 // under never changes in place and none is deleted. Each statement is a valid one on a column the table has, so a refusal can only be the privilege check (42501), never a typo.
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
 // Part of the invariant suite: CI runs this file from the base branch on protected-path PRs (AGENTS.md).
@@ -19,6 +19,7 @@ const TABLES: ReadonlyArray<readonly [table: string, column: string]> = [
   ['household_trade_rate', 'source'],
   ['household_expense_group_map', 'source'],
   ['household_form_version', 'source'],
+  ['household_return_form_version', 'source'],
   ['household_profile', 'tax_group'],
 ];
 

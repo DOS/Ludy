@@ -88,3 +88,41 @@ export const zHouseholdS1a = z.strictObject({
   total: zMoney,
 });
 export type HouseholdS1a = z.infer<typeof zHouseholdS1a>;
+
+// The quarterly return worksheet 01/CNKD of a household that pays by a percentage of revenue (#2518, plan 8.5 and 12 row 7). A WORKSHEET: Ludy never files and never calls the tax authority; the household
+// or its accountant files through the tax portal or eTax Mobile. Revenue is the ledger's own movement of account 511 over the quarter (so it ties to S1a and to the settlements of #2516), split by
+// the trades of the profile: a household with one trade has it all on that trade; with several, the household enters the split (`split`, per ask, nothing stored) and what is not yet given a trade is
+// `unassigned`, which holds the totals back (`totals` is null) rather than guess. VAT and PIT are revenue times the percentage in force on the quarter's last day, each rounded to a whole dong; the
+// exempt band of the year is NOT deducted because the rule is unconfirmed (#2520). The tax the platforms already withheld comes from the stored settlements whose period ends in the quarter (it is not
+// posted to the ledger yet), reversed ones left out. `commentary` is true while any row behind the figures (the form, a percentage) is not confirmed by the accountant; the Excel file is refused then
+// (`forExport`), the screen shows the figures as a draft.
+export const HOUSEHOLD_RETURN_FORMS = ['01/CNKD'] as const;
+export const zHouseholdReturnForm = z.enum(HOUSEHOLD_RETURN_FORMS);
+export const zHouseholdCnkdGet = z.strictObject({
+  legalEntityId: zId,
+  year: z.number().int().min(2026).max(2100),
+  quarter: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
+  split: z.array(z.strictObject({ trade: zHouseholdTrade, revenue: zMoney })).max(HOUSEHOLD_TRADES.length).optional(),
+  forExport: z.boolean().optional(),
+});
+export type HouseholdCnkdGet = z.infer<typeof zHouseholdCnkdGet>;
+export const zHouseholdCnkdLine = z.strictObject({ trade: zHouseholdTrade, revenue: zMoney, vatPercent: z.string(), pitPercent: z.string(), vat: zMoney, pit: zMoney });
+export type HouseholdCnkdLine = z.infer<typeof zHouseholdCnkdLine>;
+export const zHouseholdCnkd = z.strictObject({
+  period: z.strictObject({ year: z.number().int(), quarter: z.number().int().min(1).max(4), from: zLocalDate, to: zLocalDate }),
+  household: z.strictObject({ name: z.string(), taxCode: z.string().nullable(), representativeName: z.string().nullable() }),
+  form: z.strictObject({ form: zHouseholdReturnForm, version: z.string(), name: z.string(), status: zHouseholdRuleStatus }),
+  revenue: zMoney,
+  lines: z.array(zHouseholdCnkdLine),
+  unassigned: zMoney,
+  totals: z.strictObject({ revenue: zMoney, vat: zMoney, pit: zMoney, tax: zMoney }).nullable(),
+  withheld: z.strictObject({
+    total: zMoney,
+    settlements: z.array(z.strictObject({ id: zId, platform: z.string(), periodStart: zLocalDate, periodEnd: zLocalDate, taxWithheld: zMoney })),
+  }),
+  due: zMoney.nullable(),
+  overpaid: zMoney.nullable(),
+  unconfirmed: z.array(z.strictObject({ kind: z.enum(['form', 'rate']), key: z.string(), effectiveFrom: zLocalDate })),
+  commentary: z.boolean(),
+});
+export type HouseholdCnkd = z.infer<typeof zHouseholdCnkd>;

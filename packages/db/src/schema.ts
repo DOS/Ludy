@@ -501,10 +501,12 @@ export const HOUSEHOLD_PIT_METHODS = ['percentage', 'income'] as const;
 export const HOUSEHOLD_RULE_STATUSES = ['commentary', 'confirmed'] as const;
 export const HOUSEHOLD_EXPENSE_GROUPS = ['materials_goods', 'wages_insurance', 'depreciation', 'outside_services', 'interest', 'other'] as const;
 export const HOUSEHOLD_BOOKS = ['S1a', 'S2a', 'S2b', 'S2c', 'S2d', 'S2e', 'S3a'] as const;
+export const HOUSEHOLD_RETURN_FORMS = ['01/CNKD'] as const;
 export type HouseholdPitMethod = (typeof HOUSEHOLD_PIT_METHODS)[number];
 export type HouseholdRuleStatus = (typeof HOUSEHOLD_RULE_STATUSES)[number];
 export type HouseholdExpenseGroup = (typeof HOUSEHOLD_EXPENSE_GROUPS)[number];
 export type HouseholdBook = (typeof HOUSEHOLD_BOOKS)[number];
+export type HouseholdReturnForm = (typeof HOUSEHOLD_RETURN_FORMS)[number];
 export const STOCK_MOVE_SOURCES = ['document_line', 'manual', 'reversal', 'order_line', 'count', 'crm_order_line'] as const;
 export type StockMoveSource = (typeof STOCK_MOVE_SOURCES)[number];
 export type StockItemTable = Refine<
@@ -523,6 +525,8 @@ export type HouseholdThresholdTable = Refine<G.FinanceHouseholdThresholdTable, {
 export type HouseholdTradeRateTable = Refine<G.FinanceHouseholdTradeRateTable, { trade: StockTrade; status: HouseholdRuleStatus }>;
 export type HouseholdExpenseGroupMapTable = Refine<G.FinanceHouseholdExpenseGroupMapTable, { expense_group: HouseholdExpenseGroup; status: HouseholdRuleStatus }>;
 export type HouseholdFormVersionTable = Refine<G.FinanceHouseholdFormVersionTable, { book: HouseholdBook; pit_methods: Array<'none' | HouseholdPitMethod>; status: HouseholdRuleStatus }>;
+// The return worksheet's form version (#2518): a global law table of its own, so a return never shows up in the list of books.
+export type HouseholdReturnFormVersionTable = Refine<G.FinanceHouseholdReturnFormVersionTable, { form: HouseholdReturnForm; pit_methods: HouseholdPitMethod[]; status: HouseholdRuleStatus }>;
 // Marketplace orders (#2515, ADR-0045 point 5): the platform, how far a line has got, and which move of an order line a stock move is (a shipment out, a return in).
 export const CHANNEL_PLATFORMS = ['shopee', 'tiktok_shop', 'lazada'] as const;
 export type ChannelPlatform = (typeof CHANNEL_PLATFORMS)[number];
@@ -1231,6 +1235,7 @@ type Refined = Tables<{
   'crove_finance.household_trade_rate': HouseholdTradeRateTable;
   'crove_finance.household_expense_group_map': HouseholdExpenseGroupMapTable;
   'crove_finance.household_form_version': HouseholdFormVersionTable;
+  'crove_finance.household_return_form_version': HouseholdReturnFormVersionTable;
   'crove_finance.stock_move': StockMoveTable;
   'crove_finance.stock_period': StockPeriodTable;
   'crove_finance.stock_period_item': StockPeriodItemTable;

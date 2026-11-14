@@ -399,7 +399,7 @@ import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoi
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
 import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsFlag, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsCapLowerCall, zAdsChangeRequest, zAdsFlagSettingCall, zAdsFlagSettings, zAdsProposalView, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView, zAdsWeeklyNote, zAdsWriteState } from './ads.ts';
 import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView, zAdsCampaignRequestAsked, zAdsCampaignRequestCall, zAdsCampaignRequestView, zAdsLaunchCancelCall, zAdsLaunchRetryCall, zAdsLaunchStopCall } from './ads-campaign.ts';
-import { zHouseholdProfileGet, zHouseholdS1a, zHouseholdS1aGet, zHouseholdProfileSet, zHouseholdProfileView, zHouseholdRules, zHouseholdRulesGet } from './household.ts';
+import { zHouseholdCnkd, zHouseholdCnkdGet, zHouseholdProfileGet, zHouseholdS1a, zHouseholdS1aGet, zHouseholdProfileSet, zHouseholdProfileView, zHouseholdRules, zHouseholdRulesGet } from './household.ts';
 import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankPayrollExplainAsk, zBankPayrollExplanation, zBankPayrollMatch, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
@@ -1958,6 +1958,8 @@ export const contract = {
     rules: oc.input(zHouseholdRulesGet.optional()).output(zHouseholdRules),
     // S1a-HKD, the sales listing of a household of group 1, from the ledger's account 511; refused for an entity whose profile does not require it.
     s1a: oc.input(zHouseholdS1aGet).output(zHouseholdS1a),
+    // The 01/CNKD return worksheet of a household that pays by a percentage of revenue, one quarter (#2518); a worksheet, never filed by Ludy.
+    cnkd: oc.input(zHouseholdCnkdGet).output(zHouseholdCnkd),
   },
   paymentReminders: {
     list: oc.input(z.object({ legalEntityId: zId.optional() }).optional()).output(zPaymentReminderList),
