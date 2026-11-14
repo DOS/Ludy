@@ -69,6 +69,8 @@ export const AI_FEATURES = {
   'meetings.transcribe': 'meetings',
   // The recorder's Vy summarizing one meeting (#2580, M6 part B2): one call over the transcript, the member waiting for it, through their own meter.
   'meetings.summary': 'meetings',
+  // The member's Vy translating a meeting summary between Vietnamese and English (meetings integrations E1, #3184): one call over the summary, its decisions and item titles, the member waiting for it. A key of its own, so a translation never cuts off a transcription, a summary or live notes (#3029).
+  'meetings.translate': 'meetings',
 } as const satisfies Record<string, string>;
 export type AiFeature = keyof typeof AI_FEATURES;
 export const AI_FEATURE_KEYS = Object.keys(AI_FEATURES) as AiFeature[];
