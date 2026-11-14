@@ -2,6 +2,7 @@
 // What the runtime lets an MCP grant do with the one MCP write command (#3227, step 3; owner decision 2026-11-14), as the base copy of the suite will hold it:
 // - a grant that holds `ludy.social.draft` runs that one command and no other: every Social command that approves, submits, schedules, edits, cancels, archives or creates for a person, and the
 //   grant approval, is refused with rule `mcp_scope`, and nothing it tried changed the draft;
+// - only an owner or admin can consent to the scope, as a company grant; a read-only consent stays read-only, and no member grant can hold it;
 // - a grant that holds only `ludy.read`, a browser session, a member's grant and a claim of the scope the database row does not hold cannot run the draft, and a refusal of a company grant is
 //   audited as the grant's call.
 // Part of the invariant suite; the fixtures are its own, and it imports package code under test, never helpers from outside test/invariant/. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
@@ -160,5 +161,22 @@ suite('the MCP draft command is the only write an MCP grant has (#3227)', () => 
     expect([forged.status, forged.details]).toEqual([403, expect.objectContaining({ rule: 'mcp_scope' })]);
     // None of those left a post behind.
     expect((await admin((c) => c.query(`SELECT count(*)::int AS n FROM crove_social.post WHERE org_id = $1 AND body = 'x'`, [orgA]))).rows[0].n).toBe(0);
+  });
+
+  it('is the one door to the scope: only an owner or admin can consent to it, as a company grant, and no member grant can hold it', async () => {
+    const approve = (userId: string, input: Record<string, unknown>) =>
+      runtime.execute<{ grantId: string }>('kernel.mcp.grant.approve', { clientId: `c-${randomUUID()}`, clientName: 'Client', clientHost: 'client.example.com', oauthGrantId: `g-${randomUUID()}`, ...input }, { actor: browser(userId), orgId: orgA });
+    const scopesOf = async (id: string) => (await admin((c) => c.query('SELECT scopes, kind FROM crove_kernel.agent_grant WHERE id = $1', [id]))).rows[0] as { scopes: string[]; kind: string };
+    for (const who of [users.ownerA, users.adminA]) {
+      const made = await approve(who, { scopes: ['ludy.read', 'ludy.social.draft'] });
+      expect(await scopesOf(made.grantId)).toEqual({ scopes: ['ludy.read', 'ludy.social.draft'], kind: 'company' });
+    }
+    // A read-only consent never gains the scope: it stays what it asked for.
+    expect((await scopesOf((await approve(users.ownerA, { scopes: ['ludy.read'] })).grantId)).scopes).toEqual(['ludy.read']);
+    // A plain member cannot make a company grant, and a member-bound grant cannot hold the scope or a company grant the member scope.
+    expect((await refusal(approve(users.memberA, { scopes: ['ludy.read', 'ludy.social.draft'] }))).status).toBe(403);
+    expect([403, 422]).toContain((await refusal(approve(users.memberA, { kind: 'member', scopes: ['ludy.member.read', 'ludy.social.draft'] }))).status);
+    expect([403, 422]).toContain((await refusal(approve(users.ownerA, { kind: 'member', scopes: ['ludy.social.draft'] }))).status);
+    expect((await refusal(approve(users.ownerA, { scopes: ['ludy.member.read'] }))).status).toBe(422);
   });
 });

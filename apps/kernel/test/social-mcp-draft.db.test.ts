@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The one MCP write (#3227, step 3; owner decision 2026-11-14): `social.mcp.draft_create` as the runtime runs it for a company grant that holds `ludy.social.draft`. The draft is an AI post made
-// over MCP (origin ai, actor_origin mcp, tainted, author the consenting user), a draft with draft channels, in the review queue's AI list, and no person's approval is skipped: no other command runs for
-// the grant (each Social command that approves, submits, schedules, edits, cancels, archives or creates for a person is refused with rule mcp_scope), a grant without the scope is refused, and the limits
-// are a person's own. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// over MCP (origin ai, actor_origin mcp, tainted, author the consenting user), a draft with draft channels, in the review queue's AI list, and nobody's approval is skipped. The refusal pins (no other
+// command runs for the grant, a grant without the scope cannot run this one, who may consent to the scope) are in test/invariant/mcp-draft-runtime.db.test.ts; this file keeps the draft's behavior:
+// what it creates, where it shows, the person's own limits, the audit row, the strict channel and the signature. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -148,46 +148,6 @@ suite('the MCP draft command (#3227)', () => {
     expect(seen.find((p) => p.id === made.postId)).toMatchObject({ origin: 'ai', tainted: true });
   });
 
-  it('cannot be published without a person: nothing of the grant approves, and the channel stays a draft', async () => {
-    const made = await draft({ body: 'Chờ người duyệt', channels: [{ connectionId: conns.a1 }] });
-    const variantId = made.variants[0]?.variantId as string;
-    const ctx = await grantActor();
-    // Every command that moves a post on, or edits it, is closed to the grant by the runtime (mcp_scope), the approval and publish path included.
-    const attempts: Array<[string, unknown]> = [
-      ['social.post.submit', { postId: made.postId }],
-      ['social.variant.decide', { postId: made.postId, decision: 'approved', variants: [{ variantId, revision: 1, contentHash: `sha256:${'a'.repeat(64)}` }] }],
-      ['social.variant.schedule', { postId: made.postId, variantIds: [variantId], at: new Date(Date.now() + 86_400_000).toISOString() }],
-      ['social.variant.cancel', { variantIds: [variantId] }],
-      ['social.post.update', { postId: made.postId, revision: 1, body: 'đổi' }],
-      ['social.post.archive', { postId: made.postId }],
-      ['social.post.create', { body: 'Người soạn', channels: [{ connectionId: conns.a1 }] }],
-      ['kernel.mcp.grant.approve', { clientId: 'c', clientName: 'c', clientHost: 'c.example.com', scopes: ['ludy.read'], oauthGrantId: 'g' }],
-    ];
-    for (const [name, input] of attempts) {
-      const refused = await refusal(runtime.execute(name, input, ctx));
-      expect([refused.status, refused.details], name).toEqual([403, expect.objectContaining({ rule: 'mcp_scope' })]);
-    }
-    const [v] = await variantRows(made.postId);
-    expect(v).toMatchObject({ status: 'draft', published_at: null });
-    expect((await row(made.postId)).status).toBe('draft');
-  });
-
-  it('is closed to a grant without the scope, to a browser session and to a grant of another person who is only a member', async () => {
-    const readOnlyCtx = await grantActor(orgA, users.ownerA, ['ludy.read']);
-    const readOnly = await refusal(draft({ body: 'x', channels: [{ connectionId: conns.a1 }] }, readOnlyCtx));
-    expect([readOnly.status, readOnly.details]).toEqual([403, expect.objectContaining({ rule: 'mcp_scope' })]);
-    // A client probing for write ability shows up in the org's audit log as the grant's refused call, like any other refused command.
-    const denied = await admin((c) => c.query(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'social.mcp.draft_create' AND outcome = 'denied' AND detail ->> 'mcpGrant' = $2`, [orgA, readOnlyCtx.actor.mcp?.grantId]));
-    expect(denied.rowCount).toBe(1);
-    expect(denied.rows[0].detail).toMatchObject({ mcpCall: true, mcpClient: 'client-1', mcpClientName: 'Test client' });
-    expect((await refusal(draft({ body: 'x', channels: [{ connectionId: conns.a1 }] }, { actor: browser(users.ownerA), orgId: orgA }))).status).toBe(403);
-    const memberGrant = await insertGrant(orgA, users.memberA);
-    expect((await refusal(draft({ body: 'x', channels: [{ connectionId: conns.a1 }] }, { actor: mcp(users.memberA, memberGrant, ['ludy.read', 'ludy.social.draft']), orgId: orgA }))).status).toBe(401);
-    // A scope the grant claims but the database row does not hold is refused too (the token's claim is checked against the row).
-    const forged = await refusal(draft({ body: 'x', channels: [{ connectionId: conns.a1 }] }, { actor: mcp(users.ownerA, await insertGrant(orgA, users.ownerA, ['ludy.read']), ['ludy.read', 'ludy.social.draft']), orgId: orgA }));
-    expect([forged.status, forged.details]).toEqual([403, expect.objectContaining({ rule: 'mcp_scope' })]);
-  });
-
   it('refuses a revoked grant, another org\'s channel and anything outside the person\'s own limits, with the same codes', async () => {
     const grant = await insertGrant(orgA, users.ownerA);
     const ctx = { actor: mcp(users.ownerA, grant, ['ludy.read', 'ludy.social.draft']), orgId: orgA };
@@ -231,23 +191,6 @@ suite('the MCP draft command (#3227)', () => {
     const ok = await draft({ ...base, channels: [{ connectionId: conns.a1, body: 'Riêng', title: 'Tiêu đề riêng' }] });
     const [v] = await variantRows(ok.postId);
     expect(v).toMatchObject({ body: 'Riêng', title: 'Tiêu đề riêng', status: 'draft' });
-  });
-
-  it('is the one door to the scope: only an owner or admin can consent to it, as a company grant, and no member grant can hold it', async () => {
-    const approve = (userId: string, input: Record<string, unknown>) =>
-      runtime.execute<{ grantId: string }>('kernel.mcp.grant.approve', { clientId: `c-${randomUUID()}`, clientName: 'Client', clientHost: 'client.example.com', oauthGrantId: `g-${randomUUID()}`, ...input }, { actor: browser(userId), orgId: orgA });
-    const scopesOf = async (id: string) => (await admin((c) => c.query('SELECT scopes, kind FROM crove_kernel.agent_grant WHERE id = $1', [id]))).rows[0] as { scopes: string[]; kind: string };
-    for (const who of [users.ownerA, users.adminA]) {
-      const made = await approve(who, { scopes: ['ludy.read', 'ludy.social.draft'] });
-      expect(await scopesOf(made.grantId)).toEqual({ scopes: ['ludy.read', 'ludy.social.draft'], kind: 'company' });
-    }
-    // A read-only consent never gains the scope: it stays what it asked for.
-    expect((await scopesOf((await approve(users.ownerA, { scopes: ['ludy.read'] })).grantId)).scopes).toEqual(['ludy.read']);
-    // A plain member cannot make a company grant, and a member-bound grant cannot hold the scope or a company grant the member scope.
-    expect((await refusal(approve(users.memberA, { scopes: ['ludy.read', 'ludy.social.draft'] }))).status).toBe(403);
-    expect([403, 422]).toContain((await refusal(approve(users.memberA, { kind: 'member', scopes: ['ludy.member.read', 'ludy.social.draft'] }))).status);
-    expect([403, 422]).toContain((await refusal(approve(users.ownerA, { kind: 'member', scopes: ['ludy.social.draft'] }))).status);
-    expect((await refusal(approve(users.ownerA, { scopes: ['ludy.member.read'] }))).status).toBe(422);
   });
 
   it('copies the channel\'s default signature into the draft\'s channel like any post, and the database lets that one setting in', async () => {

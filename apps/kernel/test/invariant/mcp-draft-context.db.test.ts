@@ -330,6 +330,15 @@ suite('the write context of the MCP draft command (#3227)', () => {
     }
   });
 
+  it('takes the member row lock before the grant row lock, the order a demotion takes them', async () => {
+    const def = (await admin((c) => c.query(`SELECT pg_get_functiondef('${ENTRY}'::regprocedure) AS def`))).rows[0].def as string;
+    const member = def.search(/FROM crove_kernel\.tenant_member m WHERE [^;]*FOR SHARE;/);
+    const grantRow = def.search(/FROM crove_kernel\.agent_grant g WHERE [^;]*FOR SHARE OF g;/);
+    expect(member, 'the member row lock').toBeGreaterThan(-1);
+    expect(grantRow, 'the grant row lock').toBeGreaterThan(-1);
+    expect(member, 'the member row is locked first').toBeLessThan(grantRow);
+  });
+
   it('does not deadlock when a draft enters while a demotion of its grantor commits: it waits, then is refused', async () => {
     const g = await grant(orgId, users.admin);
     const demote = new pg.Client({ connectionString: adminUrl });
