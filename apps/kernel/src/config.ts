@@ -781,6 +781,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (config.AUTH_SIGNUP_POLICY !== 'allowlist' && config.AUTH_SIGNUP_ALLOWED_DOMAINS.length > 0) {
     throw new Error(`AUTH_SIGNUP_ALLOWED_DOMAINS applies to AUTH_SIGNUP_POLICY=allowlist only (it is ${config.AUTH_SIGNUP_POLICY}); set the policy or remove the domains`);
   }
+  // The /auth/v1 proxy refuses /authorize and /callback under a restricted policy, so a provider button there would land on its 403.
+  if (config.AUTH_OAUTH_PROVIDERS.length > 0 && config.AUTH_UPSTREAM_URL && config.AUTH_SIGNUP_POLICY !== 'open') {
+    throw new Error(
+      `AUTH_OAUTH_PROVIDERS needs AUTH_SIGNUP_POLICY=open (it is ${config.AUTH_SIGNUP_POLICY}) behind the bundled Supabase Auth: the /auth/v1 proxy refuses provider sign-in under a restricted policy; use a remote identity provider (AUTH_UPSTREAM_URL empty) or leave AUTH_OAUTH_PROVIDERS unset`,
+    );
+  }
   if (config.AUTH_SIGNUP_POLICY !== 'open' && !config.AUTH_UPSTREAM_URL) {
     throw new Error(
       `AUTH_SIGNUP_POLICY=${config.AUTH_SIGNUP_POLICY} is enforced by the /auth/v1 proxy in front of the bundled Supabase Auth (AUTH_UPSTREAM_URL); ` +

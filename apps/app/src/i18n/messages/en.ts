@@ -449,6 +449,12 @@ export const en = {
       signup_not_allowed: "This email can't sign up here. If you were invited, open the link in the invite email on this device and sign up from there, with the address it was sent to; otherwise ask your organization's admin.",
       signup_method_not_allowed: 'This sign-in method is turned off on this server. Sign in with your email and password.',
       signup_disabled: "Sign-up is closed on this server. Ask your organization's admin.",
+      identity_already_exists: 'This provider account is already linked to another account.',
+      provider_email_needs_verification: 'The provider has not confirmed your email address yet. Confirm it there, then try again.',
+      unexpected_failure: 'Sign-in did not complete. Try again.',
+      oauth_provider_not_supported: 'This sign-in method is not available on this server.',
+      bad_oauth_callback: 'Sign-in did not complete. Try again.',
+      bad_oauth_state: 'Sign-in did not complete. Try again.',
     },
   },
   legal: {

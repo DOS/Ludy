@@ -156,6 +156,10 @@ describe('AUTH_OAUTH_PROVIDERS (the sign-in buttons, issue #2704)', () => {
     for (const bad of ['go ogle!', 'g', 'https://evil.example', 'a1,../b', 'ünï']) {
       expect(() => loadConfig({ ...BASE_ENV, AUTH_OAUTH_PROVIDERS: bad }), bad).toThrow(/AUTH_OAUTH_PROVIDERS/);
     }
+    // Behind the bundled Supabase Auth the proxy refuses provider sign-in under a restricted policy: the buttons would be dead.
+    const bundled = { ...BASE_ENV, AUTH_UPSTREAM_URL: 'http://auth:9999', AUTH_SESSION_CHECK: 'db', AUTH_OAUTH_PROVIDERS: 'google' };
+    expect(() => loadConfig({ ...bundled, AUTH_SIGNUP_POLICY: 'invite_only' })).toThrow(/AUTH_OAUTH_PROVIDERS needs AUTH_SIGNUP_POLICY=open/);
+    expect(loadConfig({ ...bundled, AUTH_SIGNUP_POLICY: 'open' }).AUTH_OAUTH_PROVIDERS).toEqual(['google']);
     const many = Array.from({ length: 13 }, (_, i) => `provider${i}`).join(',');
     expect(() => loadConfig({ ...BASE_ENV, AUTH_OAUTH_PROVIDERS: many })).toThrow(/AUTH_OAUTH_PROVIDERS/);
   });

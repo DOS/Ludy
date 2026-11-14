@@ -188,6 +188,13 @@ const AUTH_ERRORS = [
   'signup_not_allowed',
   'signup_method_not_allowed',
   'signup_disabled',
+  // A provider sign-in that did not complete (the return from the provider's page).
+  'identity_already_exists',
+  'provider_email_needs_verification',
+  'unexpected_failure',
+  'oauth_provider_not_supported',
+  'bad_oauth_callback',
+  'bad_oauth_state',
 ] as const;
 type AuthErrorCode = (typeof AUTH_ERRORS)[number];
 

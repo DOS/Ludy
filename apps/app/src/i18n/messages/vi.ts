@@ -447,6 +447,12 @@ export const vi = {
       signup_not_allowed: 'Email này chưa được phép đăng ký. Nếu bạn được mời, hãy mở liên kết trong email mời trên thiết bị này rồi đăng ký từ đó, bằng đúng email đã nhận lời mời; nếu không, hãy hỏi quản trị viên của tổ chức.',
       signup_method_not_allowed: 'Cách đăng nhập này đang tắt trên máy chủ. Hãy đăng nhập bằng email và mật khẩu.',
       signup_disabled: 'Máy chủ này đang tạm đóng đăng ký tài khoản mới. Hãy hỏi quản trị viên của tổ chức.',
+      identity_already_exists: 'Tài khoản của nhà cung cấp này đã được liên kết với một tài khoản khác.',
+      provider_email_needs_verification: 'Nhà cung cấp chưa xác nhận địa chỉ email của bạn. Hãy xác nhận ở đó rồi thử lại.',
+      unexpected_failure: 'Chưa đăng nhập xong. Hãy thử lại.',
+      oauth_provider_not_supported: 'Máy chủ này chưa hỗ trợ cách đăng nhập này.',
+      bad_oauth_callback: 'Chưa đăng nhập xong. Hãy thử lại.',
+      bad_oauth_state: 'Chưa đăng nhập xong. Hãy thử lại.',
     },
   },
   legal: {

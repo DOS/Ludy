@@ -29,6 +29,14 @@ export function AuthPage() {
   // render, like the errors above.
   const [callback, setCallback] = useState<CallbackNotice | null>(peekCallbackNotice);
   useEffect(clearCallbackNotice, []);
+  // Back from a provider's page restores this screen from the browser's cache with the buttons still busy (#2704).
+  useEffect(() => {
+    const restored = (event: PageTransitionEvent) => {
+      if (event.persisted) setBusy(false);
+    };
+    window.addEventListener('pageshow', restored);
+    return () => window.removeEventListener('pageshow', restored);
+  }, []);
   // Checked by the form itself, so each error sits under its field (#1515); the server checks again.
   const fields = useFieldErrors<'email' | 'password'>((field) => {
     if (field === 'email') return !email.trim() ? t('emailRequired') : isEmailAddress(email) ? null : t('emailInvalid');
