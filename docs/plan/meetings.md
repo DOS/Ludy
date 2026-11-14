@@ -266,7 +266,7 @@ No Meetings sub-session is running and no Meetings PR is open.
 | #328 | The owner, a lawyer | Review of the privacy notice the store listing links to |
 | L4b (#2592) | The owner | ADR-0052 questions 2, 3, 4, 6, 7 and 8 (a meeting bot); stays in the Icebox until answered |
 
-**Icebox follow-ups:** #3125 (the live preview on the 30-day draft expiry), #3126 (assemble the live pieces when the final upload never arrives).
+**Follow-ups (owner moved both to M3 P2 on 2026-11-14):** #3125 (the live preview on the 30-day draft expiry, built), #3126 (assemble the live pieces when the final upload never arrives).
 
 **To resume:** a new Meetings PO session reads this section and the issues above, then picks the first item a person has unblocked.
 

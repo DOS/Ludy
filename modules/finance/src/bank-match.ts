@@ -422,6 +422,7 @@ export const bankPayrollMatch = defineQuery({
       .where(({ not, exists, selectFrom }) =>
         not(exists(selectFrom('crove_finance.journal_entry as r').select('r.id').whereRef('r.org_id', '=', 'e.org_id').whereRef('r.reverses_entry_id', '=', 'e.id'))),
       )
+      // The newest 24 runs: a run has one live posting voucher (a reversed one is left out above), so a voucher here is a run. Older unpaid runs are not offered; two years of months is the window (#2918).
       .orderBy('j.voucher_date', 'desc')
       .limit(24)
       .execute();
