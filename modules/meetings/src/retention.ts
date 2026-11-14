@@ -13,12 +13,16 @@ import { sql } from 'kysely';
 import {
   MEETING_RETENTION_DEFAULTS,
   meetingSettingsProblem,
+  zMeetingConsentPolicy,
+  zMeetingConsentPolicyGet,
   zMeetingMediaDiscard,
   zMeetingOrphanKeys,
   zMeetingRetentionShred,
   zMeetingSettingsGet,
   zMeetingShredReplay,
   zMeetingSettingsSet,
+  type MeetingConsentPolicy,
+  type MeetingConsentPolicyState,
   type MeetingSettings,
 } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
@@ -95,6 +99,37 @@ export async function readRetentionSettings(trx: QueryContext['trx'], orgId: str
     .executeTakeFirst();
   return row ? settingsOf(row) : { ...MEETING_RETENTION_DEFAULTS };
 }
+
+/** The org's consent policy (A2, #3160); 'standard' for an org whose row cannot be read. */
+export async function readConsentPolicy(trx: QueryContext['trx'], orgId: string): Promise<MeetingConsentPolicy> {
+  const row = await trx.selectFrom('crove_kernel.tenant').select(['meeting_consent_policy']).where('org_id', '=', orgId).executeTakeFirst();
+  return row?.meeting_consent_policy ?? 'standard';
+}
+
+// Every member reads it: the recorder's screens hide the methods a strict org does not accept.
+export const meetingConsentPolicyGet = defineQuery({
+  name: 'meetings.consent_policy.get',
+  input: zMeetingConsentPolicyGet,
+  access: ['owner', 'admin', 'member'],
+  handler: async (ctx): Promise<MeetingConsentPolicyState> => ({ policy: await readConsentPolicy(ctx.trx, ctx.orgId) }),
+});
+
+// "Cần xác nhận trước khi ghi" (A2, #3160): only an owner or admin, and only for meetings created afterwards (nothing is re-stamped; meetings.meeting.create
+// reads the policy when a meeting is made). The database's guard trigger holds every other writer. The audit row holds codes only.
+export const meetingConsentPolicySet = defineCommand({
+  name: 'meetings.consent_policy.set',
+  input: zMeetingConsentPolicy,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: ['owner', 'admin'],
+  handler: async (ctx, input): Promise<MeetingConsentPolicyState> => {
+    if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Only authenticated members can perform this action');
+    const previous = await readConsentPolicy(ctx.trx, ctx.orgId);
+    await ctx.trx.updateTable('crove_kernel.tenant').set({ meeting_consent_policy: input.policy }).where('org_id', '=', ctx.orgId).execute();
+    ctx.audit({ policy: input.policy, previous });
+    return { policy: input.policy };
+  },
+});
 
 export const meetingSettingsGet = defineQuery({
   name: 'meetings.settings.get',

@@ -298,6 +298,7 @@ export const KERNEL_ERROR_CODES = [
   'HOUSEHOLD_PROFILE_DATE',
   'HOUSEHOLD_PROFILE_ORDER',
   'HOUSEHOLD_PROFILE_LOCKED',
+  'HOUSEHOLD_BOOK_NOT_REQUIRED',
   // Members' notes (#1671).
   'NOTE_NOT_FOUND',
   'NOTE_AUTHOR_ONLY',
@@ -352,6 +353,10 @@ export const KERNEL_ERROR_CODES = [
   'SUMMARY_RESULT_INVALID',
   'SUMMARY_RESULT_NOT_FOUND',
   'SUMMARY_RESULT_NOT_READY',
+  // The minutes templates (Meetings A4, #3162).
+  'SUMMARY_REQUIRED',
+  'SUMMARY_TEMPLATE_CHANGED',
+  'TEMPLATE_MISMATCH',
   // The member's Vy translating the summary they read (meetings integrations E1, #3184).
   'TRANSLATE_OFF',
   'TRANSLATION_NOT_FOUND',
@@ -382,6 +387,8 @@ export const KERNEL_ERROR_CODES = [
   'LIVE_PIECE_UNREADABLE',
   'MEDIA_ALREADY_RECORDED',
   'MEETING_SETTINGS_INVALID',
+  // A strict org accepts only a written consent method (A2, #3160).
+  'CONSENT_METHOD_NOT_ALLOWED',
   // A member's own to-dos (#1673).
   'TODO_NOT_FOUND',
   'TODO_IN_TRASH',

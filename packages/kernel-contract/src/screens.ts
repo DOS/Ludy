@@ -52,6 +52,8 @@ const FINANCE_SCREENS = {
     { path: 'sales-invoices' },
     // The items of stock, their moves and the goods lines not yet assigned to an item (#2512).
     { path: 'stock' },
+    // The books of a household business (#2517): reached from Settings (Pháp nhân) for an entity of kind household, so it has no menu item of its own.
+    { path: 'household' },
     // Where each platform's money stands in the books: the Sàn screen (#2516). Reached from the stock screen, not the menu: each app's menu fits a 1366x768 window without scrolling (e2e layout).
     { path: 'marketplace' },
     { path: 'bank' },
@@ -197,8 +199,9 @@ const HR_SCREENS = {
 
 // AI Meeting Notes (issue #2576, ADR-0047, meetings plan M2): accessed through Cuoc hop tab inside Ludy Notes;
 // the in-app recorder at /o/$slug/meetings/record (M7, #2581); individual meetings at /o/$slug/meetings/$id. No navbar item on the rail.
+// The printable minutes ("Xem biên bản", A4, #3162) are outside the org's frame so only the sheet reaches the paper.
 export const MEETINGS_SCREENS = {
-  routes: [{ path: 'meetings' }, { path: 'meetings/record' }, { path: 'meetings/$id' }],
+  routes: [{ path: 'meetings' }, { path: 'meetings/record' }, { path: 'meetings/$id' }, { path: 'print/meeting-minutes/$id' }],
   nav: [],
 } as const satisfies ModuleScreens;
 

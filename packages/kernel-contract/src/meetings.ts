@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { z } from 'zod';
+import { SECTIONS_MAX, zMeetingSummaryTemplate, zSectionEntry } from './meeting-templates.ts';
 import { zId } from './schemas.ts';
 
 // `in_call_chat`: the recorder pasted the recording notice in the call's chat (Meetings A1, #3159).
@@ -73,6 +74,8 @@ export const zMeetingSummary = z.strictObject({
   keepVideo: z.boolean(),
   // Live notes were opted into for this meeting (ADR-0052 L4a), at the consent step, and cannot change afterwards.
   liveNotes: z.boolean(),
+  // The minutes template the recorder picked (Meetings A4, #3162): a code; its sections live in code (meeting-templates.ts).
+  summaryTemplate: zMeetingSummaryTemplate,
   audioRetentionDate: z.string(),
   // null: the org keeps text until a person deletes the meeting.
   textRetentionDate: z.string().nullable(),
@@ -110,6 +113,8 @@ export const zMeetingCreate = z.strictObject({
   keepVideo: z.boolean().default(false),
   // "Ghi chú trực tiếp" (ADR-0052 L4a): off by default, opted in per meeting at the consent step, fixed once the meeting exists.
   liveNotes: z.boolean().default(false),
+  // The minutes template (A4, #3162): the general summary unless the recorder picks another; the recorder can change it later (meetings.minutes.set_template).
+  summaryTemplate: zMeetingSummaryTemplate.default('general'),
   consentMethod: zConsentMethod,
   // The version of the notice text the client showed (and the recorder may have copied); absent means the current one.
   consentNoticeVersion: z.string().max(20).refine((v) => KNOWN_CONSENT_NOTICE_VERSIONS.includes(v), 'Unknown notice version').optional(),
@@ -122,6 +127,11 @@ export const zMeetingCreated = z.strictObject({
   meetingId: zId,
 });
 export type MeetingCreated = z.infer<typeof zMeetingCreated>;
+
+// The recorder picks (or changes) the minutes template of their meeting (A4, #3162). It decides the sections the next summary run fills and the headings the
+// recorder types under; text already saved is not touched.
+export const zMeetingTemplateSet = z.strictObject({ meetingId: zId, summaryTemplate: zMeetingSummaryTemplate });
+export const zMeetingTemplateSetDone = z.strictObject({ meetingId: zId, summaryTemplate: zMeetingSummaryTemplate });
 
 export const zMeetingDeleted = z.strictObject({
   meetingId: zId,
@@ -344,6 +354,17 @@ export type MeetingSettingsSet = z.infer<typeof zMeetingSettingsSet>;
 
 export const zMeetingSettingsGet = z.strictObject({});
 
+// The org setting "Cần xác nhận trước khi ghi" (Meetings A2, #3160): `standard` accepts any consent method (today); `strict` accepts only a written
+// one (WRITTEN_CONSENT_METHODS), so "said at the start" alone is refused when a meeting is created. A change applies to meetings created afterwards.
+export const MEETING_CONSENT_POLICIES = ['standard', 'strict'] as const;
+export type MeetingConsentPolicy = (typeof MEETING_CONSENT_POLICIES)[number];
+export const zMeetingConsentPolicyValue = z.enum(MEETING_CONSENT_POLICIES);
+export const WRITTEN_CONSENT_METHODS: readonly ConsentMethod[] = ['in_invite', 'in_writing', 'in_call_chat'];
+export const consentMethodAllowed = (policy: MeetingConsentPolicy, method: ConsentMethod): boolean => policy === 'standard' || WRITTEN_CONSENT_METHODS.includes(method);
+export const zMeetingConsentPolicyGet = z.strictObject({});
+export const zMeetingConsentPolicy = z.strictObject({ policy: zMeetingConsentPolicyValue });
+export type MeetingConsentPolicyState = z.infer<typeof zMeetingConsentPolicy>;
+
 // System commands of the nightly retention and the shred replay (worker only).
 export const zMeetingRetentionShred = z.strictObject({
   meetingId: zId,
@@ -491,11 +512,16 @@ export type ItemFlag = (typeof ITEM_FLAGS)[number];
 const zDay = z.iso.date();
 
 // Saves the recorder's own summary and decisions as the draft (replacing the earlier draft).
-export const zMeetingResultSave = z.strictObject({
-  meetingId: zId,
-  summary: z.string().trim().min(1).max(RESULT_SUMMARY_MAX),
-  decisions: z.array(z.string().trim().min(1).max(RESULT_DECISION_MAX)).max(RESULT_DECISIONS_MAX),
-});
+// A meeting on the general template (Tóm tắt chung) is saved as `summary`; one on another template (A4, #3162) is saved as the template's `sections` and the
+// summary is made from them by code (sectionsToText), so a result is one text however it was typed. The module refuses the mix.
+export const zMeetingResultSave = z
+  .strictObject({
+    meetingId: zId,
+    summary: z.string().trim().max(RESULT_SUMMARY_MAX).default(''),
+    sections: z.array(zSectionEntry).max(SECTIONS_MAX).default([]),
+    decisions: z.array(z.string().trim().min(1).max(RESULT_DECISION_MAX)).max(RESULT_DECISIONS_MAX),
+  })
+  .refine((v) => v.summary !== '' || v.sections.some((s) => s.text !== ''), { message: 'write a summary or a section', path: ['summary'] });
 export const zMeetingResultSaved = z.strictObject({ meetingId: zId, decisions: z.number().int().min(0) });
 
 const zItemFields = {
@@ -585,6 +611,9 @@ export const zSummaryCopy = z.strictObject({ meetingId: zId, runId: zId });
 export const zSummaryCopied = z.strictObject({ meetingId: zId, decisions: z.number().int().min(0), items: z.number().int().min(0), dropped: z.number().int().min(0) });
 // What a summary run stores in its result row: the body the agent package's checks produced. The copy command reads it back strictly, as it reads a transcript.
 export const zSummaryResult = z.strictObject({
+  // The template the run was asked for and the sections it filled (A4, #3162); a body stored before that has neither, which reads as the general summary.
+  template: zMeetingSummaryTemplate.default('general'),
+  sections: z.array(zSectionEntry).max(SECTIONS_MAX).default([]),
   summary: z.string().max(RESULT_SUMMARY_MAX),
   decisions: z.array(z.string().min(1).max(RESULT_DECISION_MAX)).max(RESULT_DECISIONS_MAX),
   items: z

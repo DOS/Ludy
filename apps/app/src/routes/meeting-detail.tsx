@@ -325,7 +325,16 @@ export function MeetingDetailPage() {
       <MeetingLive meetingId={id} liveNotes={meeting.liveNotes} isRecorder={meeting.isRecorder} />
       {/* The transcript: the recorder's draft, or what was shared with the meeting */}
       <MeetingTranscript meetingId={id} {...(seg ? { focusSegmentId: seg } : {})} />
-      <MeetingResults meetingId={id} readers={meeting.readers} />
+      <MeetingResults
+        meetingId={id}
+        readers={meeting.readers}
+        template={meeting.summaryTemplate}
+        minutesLink={
+          <Link to="/o/$slug/print/meeting-minutes/$id" params={{ slug, id }} className="text-sm text-link underline">
+            {t('minutes.open')}
+          </Link>
+        }
+      />
 
       <div className="grid gap-6 md:grid-cols-2">
         {/* Consent Record Card */}

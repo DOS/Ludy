@@ -342,6 +342,8 @@ import {
   zLiveStopped,
   zLiveTick,
   zLiveTicked,
+  zMeetingConsentPolicy,
+  zMeetingConsentPolicyGet,
   zMeetingExtensionStatus,
   zMeetingRecordingNow,
   zMeetingRecordingNowInput,
@@ -373,6 +375,8 @@ import {
   zActionItemSource,
   zActionItemsAccepted,
   zMeetingResultSave,
+  zMeetingTemplateSet,
+  zMeetingTemplateSetDone,
   zMeetingResultSaved,
   zMeetingResults,
   zResultPublish,
@@ -397,7 +401,7 @@ import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoi
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
 import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsFlag, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsCapLowerCall, zAdsChangeRequest, zAdsFlagSettingCall, zAdsFlagSettings, zAdsProposalView, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView, zAdsWeeklyNote, zAdsWriteState } from './ads.ts';
 import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView, zAdsCampaignRequestAsked, zAdsCampaignRequestCall, zAdsCampaignRequestView, zAdsLaunchCancelCall, zAdsLaunchRetryCall, zAdsLaunchStopCall } from './ads-campaign.ts';
-import { zHouseholdProfileGet, zHouseholdProfileSet, zHouseholdProfileView, zHouseholdRules, zHouseholdRulesGet } from './household.ts';
+import { zHouseholdProfileGet, zHouseholdS1a, zHouseholdS1aGet, zHouseholdProfileSet, zHouseholdProfileView, zHouseholdRules, zHouseholdRulesGet } from './household.ts';
 import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankPayrollExplainAsk, zBankPayrollExplanation, zBankPayrollMatch, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
@@ -890,6 +894,8 @@ export const contract = {
     list: oc.input(zMeetingListInput).output(z.array(zMeetingSummary)),
     get: oc.input(zMeetingRef).output(zMeetingDetail),
     create: oc.input(zMeetingCreate).output(zMeetingCreated),
+    // The recorder picks the minutes template of their meeting (A4, #3162).
+    setTemplate: oc.input(zMeetingTemplateSet).output(zMeetingTemplateSetDone),
     // The status of a meeting the calling extension token created, and nothing of its content (issue #2582).
     extensionStatus: oc.input(zMeetingRef).output(zMeetingExtensionStatus),
     // The calling member's meeting the extension is recording right now, for the app's recording chip (A1, #3159).
@@ -926,6 +932,11 @@ export const contract = {
     settings: {
       get: oc.input(zMeetingSettingsGet).output(zMeetingSettings),
       set: oc.input(zMeetingSettingsSet).output(zMeetingSettings),
+    },
+    // "Cần xác nhận trước khi ghi" (A2, #3160): standard or strict; every member reads it, an owner or admin changes it.
+    consentPolicy: {
+      get: oc.input(zMeetingConsentPolicyGet).output(zMeetingConsentPolicy),
+      set: oc.input(zMeetingConsentPolicy).output(zMeetingConsentPolicy),
     },
     // Search across the transcript lines the caller reads (L2, #2589): plain folded text search, no model call.
     search: oc.input(zMeetingSearchInput).output(zMeetingSearchResult),
@@ -1952,6 +1963,8 @@ export const contract = {
     profile: oc.input(zHouseholdProfileGet).output(zHouseholdProfileView),
     profileSet: oc.input(zHouseholdProfileSet).output(zHouseholdProfileView),
     rules: oc.input(zHouseholdRulesGet.optional()).output(zHouseholdRules),
+    // S1a-HKD, the sales listing of a household of group 1, from the ledger's account 511; refused for an entity whose profile does not require it.
+    s1a: oc.input(zHouseholdS1aGet).output(zHouseholdS1a),
   },
   paymentReminders: {
     list: oc.input(z.object({ legalEntityId: zId.optional() }).optional()).output(zPaymentReminderList),

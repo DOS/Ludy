@@ -2753,6 +2753,7 @@ export interface KernelTenantTable {
   meeting_video_retention_days: Generated<number>;
   meeting_text_retention_days: Generated<number>;
   mcp_member_grants: Generated<boolean>;
+  meeting_consent_policy: Generated<string>;
 }
 
 /** crove_kernel.today_mail */
@@ -2898,6 +2899,7 @@ export interface MeetingsMeetingTable {
   extension_token_id: ColumnType<string | null, string | null, NotGranted>;
   live_notes: ColumnType<boolean, boolean | undefined, NotGranted>;
   recording_stop_reason: string | null;
+  summary_template: Generated<string>;
 }
 
 /** crove_meetings.meeting_video */

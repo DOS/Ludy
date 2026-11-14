@@ -68,7 +68,7 @@ async function booksFor(ctx: Ctx, method: 'none' | 'percentage' | 'income', date
     .sort((a, b) => a.book.localeCompare(b.book));
 }
 
-async function viewOf(ctx: Ctx, entity: string, date: string): Promise<HouseholdProfileView> {
+export async function householdProfileView(ctx: Ctx, entity: string, date: string): Promise<HouseholdProfileView> {
   // An entity that is no longer a household (its kind was changed) keeps its old rows but shows no profile and no book.
   const kind = await ctx.trx.selectFrom('crove_kernel.legal_entity').select('kind').where('org_id', '=', ctx.orgId).where('id', '=', entity).executeTakeFirst();
   const profile = kind?.kind === 'household' ? await profileAt(ctx, entity, date) : null;
@@ -83,7 +83,7 @@ export const householdProfileGet = defineQuery({
   access: ALL,
   handler: async (ctx, input): Promise<HouseholdProfileView> => {
     const entity = await resolveLegalEntity(ctx, input.legalEntityId);
-    return viewOf(ctx, entity, input.date ?? vietnamToday());
+    return householdProfileView(ctx, entity, input.date ?? vietnamToday());
   },
 });
 
@@ -143,7 +143,7 @@ export const householdProfileSet = defineCommand({
       .execute();
     ctx.audit({ legalEntityId: entity, effectiveFrom: input.effectiveFrom, taxGroup: input.taxGroup, pitMethod: input.pitMethod, trades: input.trades, einvoiceRegistered: input.einvoiceRegistered });
     // The answer is stored with the request's idempotency key for a week, so it holds no name: the screen reads the profile again.
-    const view = await viewOf(ctx, entity, input.effectiveFrom);
+    const view = await householdProfileView(ctx, entity, input.effectiveFrom);
     return { ...view, profile: view.profile ? { ...view.profile, representativeName: null } : null };
   },
 });

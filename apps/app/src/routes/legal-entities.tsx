@@ -4,6 +4,7 @@
 // org (#1317). Entities are never deleted. The server enforces
 // every rule; the screen only offers what can succeed and shows the server's reason otherwise.
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { Link, useParams } from '@tanstack/react-router';
 import { useId, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { LEGAL_ENTITY_KINDS, normalizeTaxCode, type LegalEntity, type LegalEntityKind } from '@crove/kernel-contract';
@@ -128,6 +129,18 @@ function EntityForm({
   );
 }
 
+// The way to the books of a household business (#2517); a component of its own, so the router is read only for an entity of that kind.
+function HouseholdLink({ id }: { id: string }) {
+  const t = useTranslations('legalEntities');
+  const { slug } = useParams({ strict: false }) as { slug?: string };
+  if (!slug) return null;
+  return (
+    <Link to="/o/$slug/household" params={{ slug }} className="text-sm text-link hover:underline" data-testid={`household-link-${id}`}>
+      {t('booksLink')}
+    </Link>
+  );
+}
+
 function EntityRow({ entity, entities }: { entity: LegalEntity; entities: readonly LegalEntity[] }) {
   const t = useTranslations('legalEntities');
   const [editing, setEditing] = useState(false);
@@ -166,9 +179,12 @@ function EntityRow({ entity, entities }: { entity: LegalEntity; entities: readon
               {parent ? ` · ${t('under', { parent })}` : null}
             </p>
           </div>
-          <Button type="button" variant="ghost" size="sm" onClick={() => setEditing(true)} aria-label={t('editOf', { name: entity.name })}>
-            {t('edit')}
-          </Button>
+          <div className="flex shrink-0 items-center gap-1">
+            {entity.kind === 'household' && <HouseholdLink id={entity.id} />}
+            <Button type="button" variant="ghost" size="sm" onClick={() => setEditing(true)} aria-label={t('editOf', { name: entity.name })}>
+              {t('edit')}
+            </Button>
+          </div>
         </div>
       )}
       {update.error && <ErrorText>{errorMessage(update.error)}</ErrorText>}

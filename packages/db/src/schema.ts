@@ -72,6 +72,8 @@ type ActorType = (typeof ACTOR_TYPES)[number];
 export const TENANT_STATUSES = ['active', 'offboarding', 'closed'] as const;
 // How often the org files its VAT return (issue #318); null until an owner or admin chooses.
 export const VAT_FILING_PERIODS = ['month', 'quarter'] as const;
+// "Cần xác nhận trước khi ghi" (Meetings A2, #3160): which consent methods a new meeting may use.
+export const MEETING_CONSENT_POLICIES = ['standard', 'strict'] as const;
 
 export type TenantTable = Refine<
   G.KernelTenantTable,
@@ -79,6 +81,7 @@ export type TenantTable = Refine<
     // 'offboarding': only owners may enter (kernel.org.offboard, issue #38); 'closed' is set by staff.
     status: Generated<(typeof TENANT_STATUSES)[number]>;
     vat_filing_period: (typeof VAT_FILING_PERIODS)[number] | null;
+    meeting_consent_policy: Generated<(typeof MEETING_CONSENT_POLICIES)[number]>;
     // inbound_token is the active inbound token. Every token ever issued, retired ones included, is in
     // crove_kernel.inbound_address, which only definers read and write; rotation is the command kernel.inbound.rotate.
   }
@@ -1064,6 +1067,9 @@ export type MeetingConsentMethod = (typeof MEETING_CONSENT_METHODS)[number];
 // Why a recording stopped without the recorder's own click (A1, #3159): a code, never text.
 export const MEETING_RECORDING_STOP_REASONS = ['tab_closed', 'mic_lost', 'permission_lost', 'storage_full', 'left_screen', 'unknown'] as const;
 export type MeetingRecordingStopReason = (typeof MEETING_RECORDING_STOP_REASONS)[number];
+// The minutes template a recorder picked for a meeting (A4, #3162): a code, never text. The sections of each live in code (packages/kernel-contract).
+export const MEETING_SUMMARY_TEMPLATES = ['general', 'briefing', 'customer', 'supplier', 'one_on_one'] as const;
+export type MeetingSummaryTemplate = (typeof MEETING_SUMMARY_TEMPLATES)[number];
 
 export type MeetingsMeetingTable = Refine<
   G.MeetingsMeetingTable,
@@ -1072,6 +1078,7 @@ export type MeetingsMeetingTable = Refine<
     language: Generated<MeetingLanguage>;
     status: Generated<MeetingStatus>;
     consent_method: MeetingConsentMethod;
+    summary_template: Generated<MeetingSummaryTemplate>;
     recording_stop_reason: ColumnType<MeetingRecordingStopReason | null, MeetingRecordingStopReason | null | undefined, MeetingRecordingStopReason | null>;
   }
 >;
