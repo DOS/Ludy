@@ -258,8 +258,16 @@ export async function settleCallback(): Promise<void> {
   const { data: listener } = auth().onAuthStateChange((event: string) => {
     if (event === 'PASSWORD_RECOVERY') recovery = true;
   });
-  const { error } = await auth().initialize();
-  listener.subscription.unsubscribe();
+  let error: Awaited<ReturnType<ReturnType<typeof auth>['initialize']>>['error'];
+  try {
+    ({ error } = await auth().initialize());
+  } catch (thrown) {
+    // The start-up stops here: a hosted login's stored attempt is not left behind.
+    if (hosted) discardHostedLogin();
+    throw thrown;
+  } finally {
+    listener.subscription.unsubscribe();
+  }
   const url = new URL(window.location.href);
   const hadCode = url.searchParams.has('code');
   // The one-time code and any error leave the address bar and history; a leaked code could still be exchanged.

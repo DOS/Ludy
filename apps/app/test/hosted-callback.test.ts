@@ -9,7 +9,7 @@ const TOKEN_URL = 'https://login.example.test/token';
 const CONFIG = { url: 'https://login.example.test/sign-in', tokenUrl: TOKEN_URL, name: null };
 const CODE = 'abcdEFGH0123456789-_.~xyzABCD';
 
-const seen = vi.hoisted(() => ({ constructedAt: [] as string[], sessions: [] as unknown[], setSessionError: null as unknown }));
+const seen = vi.hoisted(() => ({ constructedAt: [] as string[], sessions: [] as unknown[], setSessionError: null as unknown, initializeThrows: false }));
 
 vi.mock('@supabase/auth-js', () => ({
   AuthClient: class {
@@ -20,6 +20,7 @@ vi.mock('@supabase/auth-js', () => ({
       return { data: { subscription: { unsubscribe() {} } } };
     }
     async initialize() {
+      if (seen.initializeThrows) throw new TypeError('storage unavailable');
       return { error: null };
     }
     async getSession() {
@@ -72,6 +73,7 @@ beforeEach(() => {
   seen.constructedAt.length = 0;
   seen.sessions.length = 0;
   seen.setSessionError = null;
+  seen.initializeThrows = false;
 });
 afterEach(() => vi.unstubAllGlobals());
 
@@ -146,5 +148,20 @@ describe('the hosted login return at start-up', () => {
     auth.discardHostedLogin();
     expect(win.url.search).toBe('');
     expect(win.storage.size).toBe(0);
+  });
+
+  it('discards the attempt when auth-js cannot initialize, so a verifier is not left behind', async () => {
+    seen.initializeThrows = true;
+    const first = installWindow(`${ORIGIN}/`);
+    const callbackUrl = await returned(first.storage);
+    const win = installWindow(callbackUrl);
+    win.storage.set(HOSTED_STORAGE_KEY, first.storage.get(HOSTED_STORAGE_KEY) ?? '');
+    const fetchFn = stubFetch(CONFIG, () => new Response('{}', { status: 200 }));
+    const auth = await import('../src/lib/auth.ts');
+    await auth.loadConfig();
+    await expect(auth.settleCallback()).rejects.toThrow('storage unavailable');
+    expect(win.storage.size).toBe(0);
+    expect(win.url.search).toBe('');
+    expect(fetchFn.mock.calls.filter(([u]) => String(u) === TOKEN_URL)).toHaveLength(0);
   });
 });

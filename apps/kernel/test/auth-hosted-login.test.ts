@@ -40,6 +40,14 @@ describe('AUTH_HOSTED_LOGIN_*', () => {
     expect(() => loadConfig({ ...BASE, ...URLS, AUTH_HOSTED_LOGIN_NAME: '<b>x</b>' })).toThrow(/AUTH_HOSTED_LOGIN_NAME/);
   });
 
+  it('refuses a localhost address on a public deployment', () => {
+    const publicDeployment = { PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1', CROVE_CONTEXT_TOKEN_KEY: Buffer.alloc(48, 5).toString('base64'), EXPORT_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'), AUTH_AUTOCONFIRM: 'false' };
+    const local = { AUTH_HOSTED_LOGIN_URL: 'http://localhost:4000/login', AUTH_HOSTED_LOGIN_TOKEN_URL: 'http://localhost:4000/token' };
+    expect(() => loadConfig({ ...BASE, ...publicDeployment, ...URLS })).not.toThrow();
+    expect(() => loadConfig({ ...BASE, ...publicDeployment, ...local })).toThrow(/localhost address on a public PUBLIC_URL/);
+    expect(() => loadConfig({ ...BASE, ...publicDeployment, ...URLS, AUTH_HOSTED_LOGIN_TOKEN_URL: 'http://127.0.0.1:4000/token' })).toThrow(/AUTH_HOSTED_LOGIN_TOKEN_URL is a localhost address/);
+  });
+
   it('accepts http for a login page on this machine, for development', () => {
     expect(hostedLoginView(loadConfig({ ...BASE, AUTH_HOSTED_LOGIN_URL: 'http://localhost:4000/login', AUTH_HOSTED_LOGIN_TOKEN_URL: 'http://localhost:4000/token' }))?.url).toBe('http://localhost:4000/login');
   });

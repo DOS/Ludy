@@ -998,6 +998,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     }
   }
   if (!isLocalUrl(config.PUBLIC_URL)) {
+    // A hosted login on this machine would send every visitor to their own localhost.
+    for (const [name, value] of [['AUTH_HOSTED_LOGIN_URL', config.AUTH_HOSTED_LOGIN_URL], ['AUTH_HOSTED_LOGIN_TOKEN_URL', config.AUTH_HOSTED_LOGIN_TOKEN_URL]] as const) {
+      if (value !== undefined && isLocalUrl(value)) throw new Error(`${name} is a localhost address on a public PUBLIC_URL; use the provider's https address`);
+    }
     if (config.CROVE_CONTEXT_TOKEN_KEY !== undefined) {
       // Compared as bytes, so the unpadded or base64url spelling of the test key is the test key too.
       const bytes = Buffer.from(config.CROVE_CONTEXT_TOKEN_KEY.trim(), 'base64');
