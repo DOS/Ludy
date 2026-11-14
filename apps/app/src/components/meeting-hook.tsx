@@ -16,6 +16,15 @@ import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { ErrorText } from './ui.tsx';
 
+// The host of an address (never its path, which can carry a token).
+const hostOf = (url: string): string => {
+  try {
+    return new URL(url).host;
+  } catch {
+    return '';
+  }
+};
+
 export function MeetingHookCard() {
   const t = useTranslations('meetings.hook');
   const f = useFormat();
@@ -84,9 +93,30 @@ export function MeetingHookCard() {
           </p>
         )}
         {!switchOn ? (
-          <p className="text-muted-foreground" data-testid="meeting-hook-disabled">
-            {isOwner ? t('offOwner') : t('offMember')}
-          </p>
+          <div className="space-y-2">
+            <p className="text-muted-foreground" data-testid="meeting-hook-disabled">
+              {isOwner ? t('offOwner') : t('offMember')}
+            </p>
+            {view && (
+              <p className="flex flex-wrap items-center gap-2 text-subtle-foreground" data-testid="meeting-hook-saved">
+                <span>{t('savedWhileOff', { host: hostOf(view.url) })}</span>
+                {confirmClear ? (
+                  <span className="flex gap-2" role="alertdialog" aria-label={t('confirmClear')}>
+                    <Button size="sm" variant="destructive" type="button" disabled={clear.isPending} onClick={() => clear.mutate({})}>
+                      {t('clear')}
+                    </Button>
+                    <Button size="sm" variant="outline" type="button" onClick={() => setConfirmClear(false)}>
+                      {t('cancel')}
+                    </Button>
+                  </span>
+                ) : (
+                  <Button size="sm" variant="outline" type="button" onClick={() => setConfirmClear(true)}>
+                    {t('clear')}
+                  </Button>
+                )}
+              </p>
+            )}
+          </div>
         ) : (
           <div className="space-y-2">
             <p className="rounded-md border border-border p-2 text-foreground" data-testid="meeting-hook-warning">

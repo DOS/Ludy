@@ -243,16 +243,26 @@ export async function enqueueMinutesHook(ctx: CommandContext, published: Publish
     published_at: publishedAt,
     // A meeting without a start time (not expected for one with a result) is dated by its publish.
     started_at: meeting.started_at ? new Date(meeting.started_at).toISOString() : publishedAt,
-    length_seconds: meeting.length_seconds ?? null,
+    // A length the body cannot carry (the meeting row only requires it to be a whole number of seconds, not a day or less) is sent as null: the webhook never blocks a publish.
+    length_seconds: meeting.length_seconds !== null && Number.isInteger(meeting.length_seconds) && meeting.length_seconds >= 0 && meeting.length_seconds <= 86400 ? meeting.length_seconds : null,
   };
-  if (hook.fields.includes('title')) data.title = meeting.title;
-  if (hook.fields.includes('summary') && published.summary) data.summary = published.summary;
-  if (hook.fields.includes('decisions') && published.decisions && published.decisions.length > 0) data.decisions = published.decisions;
+  // Each value is cut to what the body carries (the builder's limits), so a long text never fails a publish; nothing is added.
+  if (hook.fields.includes('title') && meeting.title) data.title = meeting.title.slice(0, 300);
+  if (hook.fields.includes('summary') && published.summary) data.summary = published.summary.slice(0, 8000);
+  if (hook.fields.includes('decisions') && published.decisions && published.decisions.length > 0) data.decisions = published.decisions.slice(0, 50).map((d) => d.slice(0, 1000)).filter((d) => d.length > 0);
   if (hook.fields.includes('action_items') && published.items.length > 0) {
-    data.action_items = published.items.map((i) => ({ text: i.title, owner: i.whoDrafted && i.whoDrafted.length > 0 ? i.whoDrafted : null, due: dateOnly(i.whenParsed) }));
+    data.action_items = published.items
+      .slice(0, 100)
+      .filter((i) => i.title.length > 0)
+      .map((i) => ({ text: i.title.slice(0, 300), owner: i.whoDrafted && i.whoDrafted.length > 0 ? i.whoDrafted.slice(0, 200) : null, due: dateOnly(i.whenParsed) }));
   }
-  // The strict builder: a key or a value that does not fit throws and the publish fails whole, so nothing that was not meant to leave is stored.
-  const text = meetingHookBody({ id: eventId, type: 'meeting.result_published', created_at: publishedAt, org: ctx.orgId, data });
+  // The strict builder: a key or a value that does not fit is refused. The webhook is optional and never blocks the minutes: a body that cannot be built stores nothing and the publish goes on.
+  let text: string;
+  try {
+    text = meetingHookBody({ id: eventId, type: 'meeting.result_published', created_at: publishedAt, org: ctx.orgId, data });
+  } catch {
+    return false;
+  }
   const { rows } = await sql<{ stored: boolean }>`
     SELECT crove_meetings.hook_enqueue_publish(${eventId}::uuid, ${hook.hook_id}::uuid, ${published.meetingId}::uuid, ${text}::jsonb) AS stored`
     .execute(ctx.trx)

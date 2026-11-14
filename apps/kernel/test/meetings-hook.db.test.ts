@@ -318,6 +318,38 @@ suite("a member's minutes webhook (A6, #3164)", () => {
     expect(await state(f)).toMatchObject({ status: 'dropped', body: null });
   });
 
+  it('never lets the webhook block a publish, leaves a published event alone when a draft is edited, and drops what waits when the address or the fields narrow', async () => {
+    await setHook('recorder', ['title', 'summary', 'decisions', 'action_items']);
+    // A meeting longer than a day publishes, and its length goes out as null (the body carries at most a day).
+    const long = await seedPublishable('recorder', 'Họp rất dài');
+    await sqlAdmin(`UPDATE crove_meetings.meeting SET length_seconds = 200000 WHERE org_id = $1 AND id = $2`, [orgId, long]);
+    await publish('recorder', long);
+    const body = (await deliveries(long))[0]?.body as { data: { length_seconds: number | null } };
+    expect(body.data.length_seconds).toBeNull();
+    // Editing a draft after the publish (a new draft action item, its text changed) does not drop the published event.
+    const keep = await seedPublishable('recorder', 'Họp giữ nguyên');
+    await publish('recorder', keep);
+    await sqlAdmin(
+      `INSERT INTO crove_meetings.action_item (org_id, id, meeting_id, title, who_drafted, when_drafted, stage, status, tainted) VALUES ($1, $2, $3, 'Việc nháp mới', '', '', 'draft', 'suggested', false)`,
+      [orgId, randomUUID(), keep],
+    );
+    await sqlAdmin(`UPDATE crove_meetings.action_item SET title = 'Việc nháp đã sửa' WHERE org_id = $1 AND meeting_id = $2 AND stage = 'draft'`, [orgId, keep]);
+    expect((await deliveries(keep))[0]).toMatchObject({ status: 'queued' });
+    expect((await deliveries(keep))[0]?.body).not.toBeNull();
+    // The same address and the same or more fields keep what waits; a new address or a field taken away drops it and wipes the body.
+    await setHook('recorder', ['title', 'summary', 'decisions', 'action_items']);
+    expect((await deliveries(keep))[0]).toMatchObject({ status: 'queued' });
+    await setHook('recorder', ['title', 'summary', 'decisions']);
+    expect((await deliveries(keep))[0]).toMatchObject({ status: 'dropped', body: null });
+    await setHook('recorder', ['title', 'summary', 'decisions', 'action_items']);
+    const moved = await seedPublishable('recorder', 'Họp đổi địa chỉ');
+    await publish('recorder', moved);
+    expect((await deliveries(moved))[0]).toMatchObject({ status: 'queued' });
+    await setHook('recorder', ['title', 'summary', 'decisions', 'action_items'], 'https://other.example.com/minutes');
+    expect((await deliveries(moved))[0]).toMatchObject({ status: 'dropped', body: null });
+    await setHook('recorder', ['title']);
+  });
+
   it('stops when the member is disabled, leaves, or the meeting is deleted', async () => {
     // A queued event whose meeting is deleted goes with it.
     const m = await seedPublishable('recorder', 'Họp bị xóa');

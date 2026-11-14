@@ -1788,6 +1788,7 @@ export const en = {
       switchOffNote: 'Turning it off stops every member\'s address and drops messages not yet sent.',
       offOwner: 'This is off for your organization. Turn it on above so members can set an address; it stays off until you do.',
       offMember: 'The owner of your organization has not turned this on, so nothing is sent and no address can be saved.',
+      savedWhileOff: 'Your saved address ({host}) stays unused while this is off. You can remove it.',
       noSealing: 'This server has no key to seal secrets (CREDENTIAL_KEY), so no address can be saved until it is set.',
       notSet: 'not set',
       on: 'On',

@@ -73,6 +73,15 @@ describe('MeetingHookCard', () => {
     expect(member).not.toContain(`>${en.meetings.hook.set}<`);
   });
 
+  it('lets a member who saved an address see its host and remove it while the owner has it off, never its path', () => {
+    const html = render({ switchOn: false, hook: view({ url: 'https://hooks.example.com/secret-token-path' }) }, 'member');
+    expect(html).toContain('meeting-hook-saved');
+    expect(html).toContain('hooks.example.com');
+    expect(html).not.toContain('secret-token-path');
+    expect(html).toContain(`>${en.meetings.hook.clear}<`);
+    expect(render({ switchOn: false }, 'member')).not.toContain('meeting-hook-saved');
+  });
+
   it('offers a member the setup once the owner turned it on, with the warning that text leaves Ludy and cannot be recalled, before anything is saved', () => {
     const html = render({ switchOn: true }, 'member');
     expect(html).not.toContain('meeting-hook-switch');

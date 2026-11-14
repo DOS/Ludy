@@ -1786,6 +1786,7 @@ export const vi = {
       switchOffNote: 'Tắt sẽ dừng địa chỉ của mọi thành viên và bỏ các tin chưa gửi.',
       offOwner: 'Mục này đang tắt trong tổ chức của bạn. Hãy bật ở trên để thành viên cài được địa chỉ; nó giữ nguyên trạng thái tắt cho tới khi bạn bật.',
       offMember: 'Chủ sở hữu tổ chức chưa bật mục này, nên chưa gửi gì và chưa lưu được địa chỉ nào.',
+      savedWhileOff: 'Địa chỉ bạn đã lưu ({host}) không được dùng khi mục này tắt. Bạn có thể gỡ nó.',
       noSealing: 'Máy chủ này chưa có khóa để mã hóa bí mật (CREDENTIAL_KEY), nên chưa lưu được địa chỉ nào cho tới khi cài khóa.',
       notSet: 'chưa cài',
       on: 'Đang bật',

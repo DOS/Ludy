@@ -21,7 +21,7 @@ What it is: a member gives one https address on the Meetings screen ("Gửi biê
 
 ## Leaving Ludy cannot be recalled
 
-What the member ticks leaves Ludy the moment the minutes are published. Ludy cannot take it back from the address or from any tool behind it, and a personal-data erasure done later in Ludy does not reach it. The card says so before an address is saved. Inside Ludy the text is kept only while a message waits: the stored copy is cleared the moment the message is sent, fails or is dropped, and a waiting message is dropped, copy cleared, when the meeting's title, summary, decisions or an action item change (which is what an erasure does), when the meeting is deleted, and when the hook is turned off.
+What the member ticks leaves Ludy the moment the minutes are published. Ludy cannot take it back from the address or from any tool behind it, and a personal-data erasure done later in Ludy does not reach it. The card says so before an address is saved. Inside Ludy the text is kept only while a message waits: the stored copy is cleared the moment the message is sent, fails or is dropped, and a waiting message is dropped, copy cleared, when the meeting's title, the published summary or decisions, or a published action item change (which is what an erasure does; editing a draft does not), when the meeting is deleted, when the hook is turned off, and when the member saves a new address or takes a field away. A meeting longer than a day is sent with `length_seconds` null, and a text longer than the body carries is cut to its limit; the webhook never blocks the minutes from being published.
 
 ## The secret
 

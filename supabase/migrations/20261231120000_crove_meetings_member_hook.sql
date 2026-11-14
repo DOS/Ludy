@@ -267,10 +267,10 @@ BEGIN
 END $$;
 DROP TRIGGER IF EXISTS meeting_result_hook_drop ON crove_meetings.meeting_result;
 CREATE TRIGGER meeting_result_hook_drop AFTER UPDATE OF summary, decisions ON crove_meetings.meeting_result
-  FOR EACH ROW WHEN (OLD.summary IS DISTINCT FROM NEW.summary OR OLD.decisions IS DISTINCT FROM NEW.decisions) EXECUTE FUNCTION crove_meetings.hook_drop_on_text_change();
+  FOR EACH ROW WHEN (OLD.stage = 'published' AND (OLD.summary IS DISTINCT FROM NEW.summary OR OLD.decisions IS DISTINCT FROM NEW.decisions)) EXECUTE FUNCTION crove_meetings.hook_drop_on_text_change();
 DROP TRIGGER IF EXISTS action_item_hook_drop ON crove_meetings.action_item;
 CREATE TRIGGER action_item_hook_drop AFTER UPDATE OF title, who_drafted, when_drafted ON crove_meetings.action_item
-  FOR EACH ROW WHEN (OLD.title IS DISTINCT FROM NEW.title OR OLD.who_drafted IS DISTINCT FROM NEW.who_drafted OR OLD.when_drafted IS DISTINCT FROM NEW.when_drafted)
+  FOR EACH ROW WHEN (OLD.stage = 'published' AND (OLD.title IS DISTINCT FROM NEW.title OR OLD.who_drafted IS DISTINCT FROM NEW.who_drafted OR OLD.when_drafted IS DISTINCT FROM NEW.when_drafted))
   EXECUTE FUNCTION crove_meetings.hook_drop_on_text_change();
 DROP TRIGGER IF EXISTS meeting_hook_drop ON crove_meetings.meeting;
 CREATE TRIGGER meeting_hook_drop AFTER UPDATE OF title ON crove_meetings.meeting
@@ -302,6 +302,9 @@ DECLARE
   v_org uuid := crove_kernel.ctx_org_id();
   v_user uuid;
   v_new boolean;
+  v_old_id uuid;
+  v_old_url text;
+  v_old_fields text[];
 BEGIN
   v_user := crove_meetings.hook_caller();
   IF NOT (SELECT t.meeting_hooks FROM crove_kernel.tenant t WHERE t.org_id = v_org) THEN
@@ -314,6 +317,12 @@ BEGIN
      OR p_fields IS NULL OR NOT (p_fields <@ ARRAY['title', 'summary', 'decisions', 'action_items']::text[])
      OR p_enabled IS NULL THEN
     RAISE EXCEPTION 'MEETING_HOOK_INVALID' USING ERRCODE = '22023';
+  END IF;
+  -- A stored body was built for the address and the fields it was stored under: a new address, or a field taken away, drops what still waits (and wipes its body) so text never goes
+  -- where, or in a form, the member no longer chose.
+  SELECT h.id, h.url, h.fields INTO v_old_id, v_old_url, v_old_fields FROM crove_meetings.member_hook h WHERE h.org_id = v_org AND h.user_id = v_user;
+  IF v_old_id IS NOT NULL AND (v_old_url IS DISTINCT FROM p_url OR NOT (v_old_fields <@ p_fields)) THEN
+    PERFORM crove_meetings.hook_drop_queued(v_org, v_old_id, NULL);
   END IF;
   INSERT INTO crove_meetings.member_hook AS h (org_id, user_id, url, fields, enabled, secret_sealed, secret_hint)
   VALUES (v_org, v_user, p_url, p_fields, p_enabled, p_sealed, p_hint)
