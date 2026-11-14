@@ -159,7 +159,7 @@ export function ShellNav({ slug, apps, app, inApp, badges, orgs, email, onOpenPa
             return (
               <section
                 key={group.id}
-                className={index === 0 ? '' : 'mt-3'}
+                className={index === 0 ? '' : 'mt-3 md:mt-2'}
                 {...(heading ? { 'aria-labelledby': labelId } : { 'aria-label': group.id === 'reports' ? t('reports') : t(`appNames.${current.id}`) })}
               >
                 {heading && (
@@ -178,7 +178,7 @@ export function ShellNav({ slug, apps, app, inApp, badges, orgs, email, onOpenPa
                           to={item.to}
                           params={{ slug }}
                           onClick={onNavigate}
-                          className={`flex min-h-11 items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm hover:bg-sidebar-accent hover:text-foreground md:min-h-0 md:py-1 ${viaTab ? 'bg-primary/15 text-foreground' : 'text-muted-foreground'}`}
+                          className={`flex min-h-11 items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm hover:bg-sidebar-accent hover:text-foreground md:min-h-0 md:py-0.5 ${viaTab ? 'bg-primary/15 text-foreground' : 'text-muted-foreground'}`}
                           {...(viaTab ? { 'aria-current': 'page' as const } : {})}
                           activeProps={{ className: 'bg-primary/15 !text-foreground' }}
                         >
