@@ -36,12 +36,15 @@ const SUMMARY = `Chốt giá, gửi báo giá tới ${EMAIL}`;
 // oracle for a guessed value, #1972); the row ids the finder reads only an owner or an admin may ask for, and they are ids of rows the caller can read anyway.
 const PERSONAL_DEFINERS: Record<string, 'owner' | 'admin'> = {
   'crove_meetings.personal_matches(text, text)': 'owner',
+  // The recorders' rough notes (A5, #3163): counted per recorder, and the owner's own notes redacted. Owner only, numbers only.
+  'crove_meetings.personal_note_counts(text, text)': 'owner',
+  'crove_meetings.personal_note_erase(text, text)': 'owner',
   'crove_meetings.personal_notice_items(text, text)': 'owner',
   'crove_meetings.personal_erase(text, text)': 'owner',
   'crove_meetings.personal_row_ids(text, text)': 'admin',
 };
 // What the kind code of a personal_row_ids answer stands for.
-const ROW_KIND_TABLE: Record<number, string> = { 1: 'transcript_segment', 2: 'meeting_result', 3: 'action_item', 4: 'meeting' };
+const ROW_KIND_TABLE: Record<number, string> = { 1: 'transcript_segment', 2: 'meeting_result', 3: 'action_item', 4: 'meeting', 5: 'meeting_note' };
 
 suite('personal data in meeting text on PostgreSQL (#2594, ADR-0047)', () => {
   const dbName = `crove_test_meetings_personal_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
