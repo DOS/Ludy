@@ -24,6 +24,9 @@ import {
   ORG_HEADER,
   SOCIAL_IMAGE_TYPES,
   DEFAULT_EXTENSION_IDS,
+  LIVE_CHUNK_MAX_BYTES,
+  LIVE_CHUNK_MAX_COUNT,
+  LIVE_CHUNK_MAX_SECONDS,
   zExtensionAuthorize,
   XLSX_CONTENT_TYPE,
   accountParents,
@@ -136,8 +139,9 @@ import { streamedBody } from './owner-run-export.ts';
 import { MAX_EMAIL_BYTES, acceptInboundEmail, secretMatches } from './inbound.ts';
 import { MAX_MAIL_WEBHOOK_BYTES, acceptMailWebhook } from './mail-events.ts';
 import { MAX_BANK_FEED_WEBHOOK_BYTES, acceptBankFeedWebhook } from './bank-feed-webhook.ts';
-import { FACEBOOK_MAX_NOTICE_BYTES, ZALO_MAX_NOTICE_BYTES } from '@crove/channel';
+import { FACEBOOK_MAX_NOTICE_BYTES, TELEGRAM_MAX_NOTICE_BYTES, ZALO_MAX_NOTICE_BYTES } from '@crove/channel';
 import { ZALO_SIGNATURE_HEADER, ZALO_WEBHOOK_PATH, ZaloReplayCache, acceptZaloWebhook, type ZaloWebhookConfig } from './zalo-webhook.ts';
+import { TELEGRAM_SECRET_HEADER, TELEGRAM_WEBHOOK_PATH, TELEGRAM_UNAUTHORIZED, TelegramReplayCache, acceptTelegramWebhook, telegramWebhookAuthorized, type TelegramWebhookConfig } from './telegram-webhook.ts';
 import { FACEBOOK_SIGNATURE_HEADER, FACEBOOK_WEBHOOK_PATH, FacebookReplayCache, acceptFacebookWebhook, verifyFacebookWebhookChallenge, type FacebookWebhookConfig } from './facebook-webhook.ts';
 import { ADS_DELETION_PATH, MAX_ADS_DELETION_BYTES } from './ads-deletion.ts';
 import { acceptMetaDeletion, metaDeletionStatus, renderMetaDeletionStatus } from './meta-deletion.ts';
@@ -235,6 +239,14 @@ export interface HttpDeps {
   zaloWebhookLimit?: RateLimiter;
   // The events that route has parked lately (replay guard); unset: its own, one per process.
   zaloReplays?: ZaloReplayCache;
+  // Telegram's webhook for the conversation core (#3132): the keys the per-connection secret is derived from. Unset: the route does not exist.
+  telegramWebhook?: TelegramWebhookConfig;
+  // Refused requests per minute per client address for that route.
+  telegramWebhookLimit?: RateLimiter;
+  // Verified updates per minute per hook (a flood on a public bot).
+  telegramHookLimit?: RateLimiter;
+  // The messages that route has parked lately (replay guard); unset: its own, one per process.
+  telegramReplays?: TelegramReplayCache;
   // Meta Page webhook for the conversation core (CV2, #2307): the app secret and verify token that guard it. Unset: the route does not exist.
   facebookWebhook?: FacebookWebhookConfig;
   // Refused requests per minute per client address for that route.
@@ -473,6 +485,9 @@ const BANK_FEED_WEBHOOKS_PER_MINUTE = 120;
 // Refused requests (a bad signature, a body that is no notice) one address may send a minute; verified notices are not counted.
 const ZALO_WEBHOOKS_PER_MINUTE = 120;
 const FACEBOOK_WEBHOOKS_PER_MINUTE = 120;
+const TELEGRAM_WEBHOOKS_PER_MINUTE = 120;
+// Verified updates one hook takes a minute: ten a second, far above what a shop's customers write, so only a flood hits it.
+const TELEGRAM_VERIFIED_PER_HOOK_PER_MINUTE = 600;
 // Meta posts one request per person who removes the app: a few a minute is plenty, and a status page is read by one person.
 const ADS_DELETION_PER_MINUTE = 60;
 // Quote PDFs one member may take a minute (#2695).
@@ -880,6 +895,52 @@ export function createHttpApp(deps: HttpDeps) {
         return problem(c, error);
       }
     });
+  }
+
+  // Telegram's webhook of customers' private-chat messages (#3132): the secret derived from the hook in the path is checked first of all, before the
+  // body is read or the database asked, so an unauthenticated request costs one HMAC; the body is then capped before it is read, and a verified
+  // message is only parked for the worker (the org comes from the stored connection). Every refusal is the same 401. The per-address limit is charged
+  // to refused requests only, as Zalo's is, so a flood of forged ones cannot cost a real update. A verified flood (anyone may write to a public bot)
+  // is held to a rate per hook, so one bot cannot fill the backlog every org shares (429, which Telegram retries later); what is left is bounded by
+  // the provider's backlog cap (conversation_inbound_enqueue).
+  const telegramWebhook = deps.telegramWebhook;
+  if (telegramWebhook) {
+    const telegramLimit = deps.telegramWebhookLimit ?? new RateLimiter({ perMinute: TELEGRAM_WEBHOOKS_PER_MINUTE });
+    const telegramHookLimit = deps.telegramHookLimit ?? new RateLimiter({ perMinute: TELEGRAM_VERIFIED_PER_HOOK_PER_MINUTE });
+    const telegramReplays = deps.telegramReplays ?? new TelegramReplayCache();
+    const limited = (c: Context, limiter: RateLimiter, key: string): Response | null => {
+      const decision = limiter.take(key);
+      if (decision.allowed) return null;
+      warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+      c.header('retry-after', String(decision.retryAfterSeconds));
+      return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+    };
+    app.post(
+      TELEGRAM_WEBHOOK_PATH,
+      async (c, next) => {
+        const hook = c.req.param('hook');
+        if (!telegramWebhookAuthorized(telegramWebhook, { hook, secret: c.req.header(TELEGRAM_SECRET_HEADER) })) {
+          return limited(c, telegramLimit, clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS))) ?? c.json({ code: TELEGRAM_UNAUTHORIZED.code }, TELEGRAM_UNAUTHORIZED.status);
+        }
+        const over = limited(c, telegramHookLimit, hook);
+        if (over) return over;
+        await next();
+      },
+      bodyLimit({ maxSize: TELEGRAM_MAX_NOTICE_BYTES }),
+      async (c) => {
+        try {
+          const outcome = await acceptTelegramWebhook(runtime, telegramWebhook, { hook: c.req.param('hook'), secret: c.req.header(TELEGRAM_SECRET_HEADER), body: async () => new Uint8Array(await c.req.arrayBuffer()) }, telegramReplays);
+          if (outcome.status === 200) return c.json({ ok: true }, 200);
+          if (outcome.status === 401 || outcome.status === 400) {
+            const refused = limited(c, telegramLimit, clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+            if (refused) return refused;
+          }
+          return c.json({ code: outcome.code }, outcome.status);
+        } catch (error) {
+          return problem(c, error);
+        }
+      },
+    );
   }
 
   const facebookWebhook = deps.facebookWebhook;
@@ -2403,12 +2464,12 @@ export function createHttpApp(deps: HttpDeps) {
   // What the media routes need of a meeting: whether the caller recorded it and whether it keeps video. An extension
   // token (#2582) reads it through the status query, which answers 404 for any meeting the token did not create and
   // returns no title, reader or content; the token's member is then the recorder, as the query checks.
-  const meetingFacts = async (user: AuthUser, orgId: string, meetingId: string): Promise<{ isRecorder: boolean; keepVideo: boolean }> => {
+  const meetingFacts = async (user: AuthUser, orgId: string, meetingId: string): Promise<{ isRecorder: boolean; keepVideo: boolean; liveNotes: boolean }> => {
     if (user.extension) {
-      const status = await runtime.query<{ keepVideo: boolean }>('meetings.meeting.extension_status', { meetingId }, { actor: actorOf(user), orgId });
-      return { isRecorder: true, keepVideo: status.keepVideo };
+      const status = await runtime.query<{ keepVideo: boolean; liveNotes: boolean }>('meetings.meeting.extension_status', { meetingId }, { actor: actorOf(user), orgId });
+      return { isRecorder: true, keepVideo: status.keepVideo, liveNotes: status.liveNotes };
     }
-    return runtime.query<{ isRecorder: boolean; keepVideo: boolean }>('meetings.meeting.get', { meetingId }, { actor: actorOf(user), orgId });
+    return runtime.query<{ isRecorder: boolean; keepVideo: boolean; liveNotes: boolean }>('meetings.meeting.get', { meetingId }, { actor: actorOf(user), orgId });
   };
   const mediaGate: MiddlewareHandler<{ Variables: { user: AuthUser; mediaBodyCap: number } }> = async (c, next) => {
     let release: (() => void) | null = null;
@@ -2691,6 +2752,102 @@ export function createHttpApp(deps: HttpDeps) {
       }
     } catch (error) {
       return problem(c, error);
+    }
+  });
+
+  // A piece of about 15 seconds of the recording, sent while a live-notes meeting runs (ADR-0052 L4a, #3109). The route does what meetings.media.record's upload
+  // does for a whole file: it seals the bytes under a data key of their own (bound to the meeting and to the piece's place, live:<seq>) and stores the ciphertext;
+  // meetings.live.chunk then records it, as the recorder and only for a meeting that opted in. Nothing of the audio is kept in clear, and the final upload of the
+  // recording is the authoritative audio: a piece that fails (here or in the command) is dropped and never touches it. The whole body (at most one MiB) is read
+  // after the gate has said the meeting takes live pieces, so a meeting that did not opt in costs no bytes.
+  const liveChunks = new ConcurrencyLimiter({ total: 8, perKey: 2 });
+  app.post('/api/meetings/:id/live-chunk', async (c) => {
+    let release: (() => void) | null = null;
+    try {
+      if (!runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
+      const user = c.get('user');
+      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      const meetingId = c.req.param('id') ?? '';
+      const meeting = await meetingFacts(user, orgId, meetingId);
+      if (!meeting.isRecorder) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder may send live notes audio');
+      if (!meeting.liveNotes) throw new DomainError('LIVE_NOTES_NOT_ENABLED', 409, 'Live notes were not turned on for this meeting');
+      const seqText = c.req.query('seq') ?? '';
+      const lengthText = c.req.query('lengthSeconds') ?? '';
+      if (!/^\d{1,3}$/.test(seqText) || !/^\d{1,3}$/.test(lengthText)) throw new DomainError('BAD_REQUEST', 400, 'seq and lengthSeconds must be whole numbers');
+      const seq = Number(seqText);
+      const lengthSeconds = Number(lengthText);
+      if (seq >= LIVE_CHUNK_MAX_COUNT || lengthSeconds < 1 || lengthSeconds > LIVE_CHUNK_MAX_SECONDS) throw new DomainError('BAD_REQUEST', 400, 'seq or lengthSeconds is out of range');
+      if (!/^(?:audio\/|application\/octet-stream)/i.test(c.req.header('content-type') ?? '')) {
+        throw new DomainError('BAD_REQUEST', 400, 'Content-Type must be audio/* or application/octet-stream');
+      }
+      // The declared size is checked before one byte is read, and the body limit stops a body that lies about it.
+      const declared = c.req.header('content-length') ?? '';
+      if (c.req.header('transfer-encoding') !== undefined || !/^\d+$/.test(declared)) throw new DomainError('BAD_REQUEST', 400, 'Tệp phải được gửi kèm Content-Length hợp lệ');
+      if (Number(declared) < 1) throw new DomainError('NO_FILE', 400, 'Tệp rỗng');
+      if (Number(declared) > LIVE_CHUNK_MAX_BYTES) throw new DomainError('FILE_TOO_LARGE', 413, 'Tệp vượt quá giới hạn tối đa');
+      release = liveChunks.tryAcquire(user.userId);
+      if (!release) throw busy(c);
+      // Read with a count and a stall timeout, so a body that is longer than it said, or stops arriving, is refused and never held.
+      const rawBody = c.req.raw.body;
+      if (!rawBody) throw new DomainError('NO_FILE', 400, 'Tệp rỗng');
+      const pieces: Uint8Array[] = [];
+      let received = 0;
+      for await (const piece of streamPieces(rawBody as ReadableStream<Uint8Array>, mediaStallMs)) {
+        received += piece.byteLength;
+        if (received > LIVE_CHUNK_MAX_BYTES) throw new DomainError('FILE_TOO_LARGE', 413, 'Tệp vượt quá giới hạn tối đa');
+        pieces.push(piece);
+      }
+      if (received !== Number(declared)) throw new DomainError('BAD_REQUEST', 400, 'Tệp có kích thước không khớp với Content-Length');
+      const bytes = Buffer.concat(pieces);
+
+      const broker = deps.broker ?? createCredentialBroker(config);
+      const keyId = broker.keyId;
+      if (!keyId || (!broker.derive && !broker.deriveKey)) throw new DomainError('MEDIA_KEY_UNAVAILABLE', 503, 'Media encryption key unavailable');
+      const wrapSubkey = broker.deriveKey
+        ? broker.deriveKey(keyId, 'crove.meetings.v1|wrap')
+        : broker.derive && broker.keyId === keyId
+          ? broker.derive('crove.meetings.v1|wrap')
+          : null;
+      if (!wrapSubkey) throw new DomainError('MEDIA_KEY_UNAVAILABLE', 503, 'Media encryption key derivation failed');
+      const dataKey = generateMediaDataKey();
+      try {
+        const binding: BlobMediaBinding = { orgId, meetingId, kind: `live:${seq}` };
+        const wrappedKey = wrapMediaKeyWithSubkey(dataKey, { ...binding, keyId }, wrapSubkey);
+        const sealed = await sealMedia({ source: onepiece(bytes), expectedLength: bytes.byteLength, kind: 'audio', dataKey, binding, maxBytes: LIVE_CHUNK_MAX_BYTES, store, orgId, opaque: seq > 0 });
+        let recorded: { duplicate: boolean };
+        try {
+          recorded = await runtime.execute<{ duplicate: boolean }>(
+            'meetings.live.chunk',
+            {
+              meetingId,
+              seq,
+              keyId,
+              wrappedKeyHex: wrappedKey.toString('hex'),
+              storageKey: sealed.key,
+              generation: sealed.generation,
+              sizeBytes: sealed.size,
+              sha256: sealed.sha256,
+              contentType: sealed.contentType,
+              lengthSeconds,
+            },
+            { actor: actorOf(user), orgId },
+          );
+        } catch (error) {
+          // Refused (a closed recording, no opt-in, a limit): the sealed bytes have no row, so drop them.
+          if (sealed.created) await store.delete(sealed.key).catch((err) => console.error('[http] live chunk cleanup failed', err));
+          throw error;
+        }
+        // A retry of a piece already kept: the first one stands, and the object this retry just stored has no row.
+        if (recorded.duplicate && sealed.created) await store.delete(sealed.key).catch((err) => console.error('[http] live chunk cleanup failed', err));
+        return c.json({ meetingId, seq, duplicate: recorded.duplicate });
+      } finally {
+        dataKey.fill(0);
+        wrapSubkey.fill(0);
+      }
+    } catch (error) {
+      return problem(c, error);
+    } finally {
+      release?.();
     }
   });
 

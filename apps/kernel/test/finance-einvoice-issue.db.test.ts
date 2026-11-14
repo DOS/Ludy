@@ -272,6 +272,37 @@ suite('issuing a sales e-invoice (#2502)', () => {
     await expect(rt.query('finance.einvoice.issue_request', { proposalId: randomUUID() }, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toMatchObject({ code: 'EINVOICE_DRAFT_NOT_FOUND' });
   });
 
+  it('tells the Inbox card which sales orders the draft was made from, each once in the order of its lines, and none for a draft nobody made from an order (#2849)', async () => {
+    const o = await org({ team: false });
+    const series = await sync(o);
+    const plain = await save(o, series);
+    const { proposalId: plainRequest } = await request(o, plain.id);
+    const view = (proposalId: string) => rt.query<{ sourceOrderIds: string[] }>('finance.einvoice.issue_request', { proposalId }, { actor: asUser(o.owner), orgId: o.orgId });
+    expect((await view(plainRequest)).sourceOrderIds).toEqual([]);
+    // A draft made from two orders: its lines carry the source the hand-off wrote (set here as the hand-off does, with the triggers off).
+    const made = await save(o, series);
+    const orderA = randomUUID();
+    const orderB = randomUUID();
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query("UPDATE crove_finance.einvoice_draft_line SET source_kind = 'crm.sales_order', source_id = $3, source_line_no = line_no WHERE org_id = $1 AND draft_id = $2 AND line_no = 1", [o.orgId, made.id, orderB]);
+      await c.query("UPDATE crove_finance.einvoice_draft_line SET source_kind = 'crm.sales_order', source_id = $3, source_line_no = line_no WHERE org_id = $1 AND draft_id = $2 AND line_no = 2", [o.orgId, made.id, orderA]);
+      await c.query('COMMIT');
+    });
+    const { proposalId } = await request(o, made.id);
+    // Each order once, by the first line that names it; the lines' own view is unchanged.
+    expect((await view(proposalId)).sourceOrderIds).toEqual([orderB, orderA]);
+    // A source of another kind is not an order of Engage.
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query("UPDATE crove_finance.einvoice_draft_line SET source_kind = 'booking' WHERE org_id = $1 AND draft_id = $2 AND line_no = 1", [o.orgId, made.id]);
+      await c.query('COMMIT');
+    });
+    expect((await view(proposalId)).sourceOrderIds).toEqual([orderA]);
+  });
+
   it('hashes the content so that no text moves a boundary between two fields without changing the hash', async () => {
     const o = await org({ team: true });
     const series = await sync(o);

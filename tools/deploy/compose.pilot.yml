@@ -29,6 +29,7 @@ services:
     command: ['api']
     environment:
       CROVE_MODULES: ${CROVE_MODULES:-finance}
+      MARKETPLACE_PROVIDERS: ${MARKETPLACE_PROVIDERS:-}
       WORKER_DATABASE_URL: !reset null
       EXTRACT_URL: !reset null
       MEDIA_MAX_INPUT_BYTES: ${MEDIA_MAX_INPUT_BYTES:-1000000000}
@@ -74,6 +75,7 @@ services:
       disable: true
     environment:
       CROVE_MODULES: ${CROVE_MODULES:-finance}
+      MARKETPLACE_PROVIDERS: ${MARKETPLACE_PROVIDERS:-}
       # What only the API reads (#2130): the MCP endpoint's authorization server, with its signing key and cookie secrets. One group, because
       # OAUTH_SERVER=on makes config demand the other two.
       OAUTH_SERVER: !reset null
@@ -99,4 +101,5 @@ services:
   prober:
     environment:
       CROVE_MODULES: ${CROVE_MODULES:-finance}
+      MARKETPLACE_PROVIDERS: ${MARKETPLACE_PROVIDERS:-}
       PROBER_AUTH_URL: ${PROBER_AUTH_URL:-http://api:8080/auth/v1}

@@ -18,6 +18,7 @@
 // Polls (#1118): settings.poll makes the post one sendPoll, the text its question (telegramPollOf).
 import type { CommentResult, ConnectedAccount, EditInput, EditResult, PinInput, Publisher, PublishInput, PublishResult, RemoveInput, RemoveResult, RetrySafety } from './index.ts';
 import { commentResult, EDIT_NOT_SUPPORTED, editResult, removeResult } from './comment.ts';
+import type { ConversationAdapter } from './conversation.ts';
 import { holdsLink } from './text.ts';
 import { allowlistedFetch, ConnectorError, type Fetch } from './oauth.ts';
 
@@ -163,7 +164,7 @@ export class TelegramError extends Error {
   }
 }
 
-class TelegramClient {
+export class TelegramClient {
   private readonly fetch: Fetch;
   constructor(fetchImpl?: Fetch, timeoutMs = 30_000) {
     this.fetch = allowlistedFetch(TELEGRAM_HOSTS, fetchImpl, timeoutMs);
@@ -309,10 +310,14 @@ function telegramResult(error: unknown): PublishResult {
 export class TelegramPublisher implements Publisher {
   readonly provider = 'telegram' as const;
   readonly publishSafety: RetrySafety = 'never';
+  // The bot's private chats (#3132): the replies of the conversation core, through the same bot token the connection holds. Given by the
+  // composition root (new TelegramConversations()), so this file and telegram-conversation.ts do not import each other.
+  readonly conversations?: ConversationAdapter;
   private readonly fetchImpl: Fetch | undefined;
 
-  constructor(fetchImpl?: Fetch) {
+  constructor(fetchImpl?: Fetch, conversations?: ConversationAdapter) {
     this.fetchImpl = fetchImpl;
+    if (conversations) this.conversations = conversations;
   }
 
   async publish(input: PublishInput): Promise<PublishResult> {

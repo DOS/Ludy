@@ -14,7 +14,7 @@ import { REFRESH_SWEEP_MS, refreshChannels } from './channel-refresh.ts';
 import { RESEAL_SWEEP_MS, resealCredentials, unopenableKeysLog } from './credential-reseal.ts';
 import { resealSubjectKeys, unopenableSubjectKeysLog } from './subject-key-reseal.ts';
 import type { ExtractClient } from '@crove/extract-contract';
-import { EINVOICE_DUE_PAGE, FINANCE_NOTIFYING_EVENTS, PERIOD_CLOSING_SWEEP_MS, einvoiceDue, extractAndPropose, readMarketplaceFile, readMarketplaceIncomeFile, importPortalList, readStatementFile, recordExtractionFailure, recordStatementReadFailure, recordPortalListFailure, sweepPeriodClosing } from '@crove/mod-finance';
+import { EINVOICE_DUE_PAGE, FINANCE_NOTIFYING_EVENTS, MARKETPLACE_POLL_DUE_PAGE, PERIOD_CLOSING_SWEEP_MS, einvoiceDue, marketplacePollDue, type MarketplaceProvider, extractAndPropose, readMarketplaceFile, readMarketplaceIncomeFile, importPortalList, readStatementFile, recordExtractionFailure, recordStatementReadFailure, recordPortalListFailure, sweepPeriodClosing } from '@crove/mod-finance';
 import { ACCOUNT_SWEEP_MS, CHAT_ALERT_TEST_EVENT, CHAT_ALERTING_EVENTS, DIGEST_SWEEP_MS, EVERGREEN_SWEEP_MS, EXTERNAL_SWEEP_MS, FEED_SWEEP_MS, LATE_ID_SWEEP_MS, METRICS_SWEEP_MS, NOTIFYING_EVENTS, PUBLISH_STALE_SECONDS, QUEUE_LOW_SWEEP_MS, RECURRING_SWEEP_MS, REMINDER_SWEEP_MS, REPORT_SCHEDULE_SWEEP_MS, runChannelOptionJob, runCommentJob, runPublishJob, runEditJob, runRemoveJob, runThreadJob, sweepAccounts, sweepDigests, sweepEvergreen, sweepExternalPosts, sweepLateIds, sweepMetrics, sweepQueueLow, sweepRecurring, sweepReminders, sweepAssignmentReminders, sweepReportSchedules, REMOVE_READY, REMOVE_SWEEP_MS, REMOVE_WATCH_AFTER_MS, isProvider, runRemoveWatch, sweepRemovals } from '@crove/mod-social';
 import { sweepFeeds } from './feeds.ts';
 import { SECURITY_SWEEP_MS, sweepSecuritySignals, type SecurityThresholds } from './security-signals.ts';
@@ -40,6 +40,7 @@ import { archiveOutbox } from './outbox-retention.ts';
 import { RETENTION_CRON, RETENTION_TZ, expireExports, runRetention, sweepInboundBlobs, sweepStaging } from './retention.ts';
 import { runMarketplaceRetention } from './marketplace-retention.ts';
 import { runMeetingsTranscribe, type MeetingsTranscribeDeps, type MeetingsTranscribeJob } from './meetings-transcribe.ts';
+import { runMeetingsLiveNotes, type MeetingsLiveNotesDeps, type MeetingsLiveNotesJob } from './meetings-live-notes.ts';
 import { createShredRefSync, replayShreds, runMeetingsRetention, sweepMeetingMedia } from './meetings-retention.ts';
 import { CRM_DEAL_STALE_CRON, CRM_IMPORT_EXPIRE_CRON, raiseCrmNextSteps, sweepCrmImports } from './crm-worker.ts';
 import { MEMBER_VY_SWEEP_CRON, MEMBER_VY_SWEEP_EXPIRE_SECONDS, MEMBER_VY_SWEEP_TZ, sweepMemberVyFormerMembers, sweepMemberVyResults } from './member-vy-worker.ts';
@@ -61,13 +62,14 @@ import { DraftBudget } from './ai-draft-limit.ts';
 import { opsAlert } from './ops-alert.ts';
 import { BANK_FEEDS_DUE_PAGE, bankFeedsDue, runBankFeedSync, type BankFeedSyncJob } from './bank-feed-sync.ts';
 import { runEInvoiceIssue, type EInvoiceIssueJob } from './einvoice-issue-job.ts';
+import { runMarketplacePoll, type MarketplacePollJob } from './marketplace-poll-job.ts';
 import { runAdsLaunch, type AdsLaunchJob } from './ads-launch.ts';
 import { runAdsActivate, type AdsActivateJob } from './ads-activate.ts';
 import { runAdsPause, type AdsPauseJob } from './ads-pause.ts';
 import { runAdsRevoke } from './ads-revoke.ts';
 import { ADS_DUE_PAGE, adsDue, pruneAdsRuns, runAdsSync, type AdsSyncJob } from './ads-sync.ts';
 import { failUnaskable, runAdsCampaignDraft, sweepAdsCampaignRequests, type AdsCampaignDraftJob } from './ads-worker.ts';
-import { failUndraftable, requestDueConversationDrafts, sweepConversationComposing, sweepConversationDrafts, runConversationDraft, type ConversationDraftJob, dueConversationAttachments, dueConversationSync, failUnsendable, requestConversationAttachments, requestConversationSync, purgeExpiredConversations, runConversationAttachment, runConversationDeletions, runConversationIntake, runConversationJob, runConversationSync, sweepConversationBlobs, sweepStaleReplies, type ConversationAttachmentJob, type ConversationJob, type ConversationSyncJob } from './conversations-worker.ts';
+import { failUndraftable, requestDueConversationDrafts, sweepConversationComposing, sweepConversationDrafts, runConversationDraft, type ConversationDraftJob, dueConversationAttachments, dueConversationSync, failChatHook, failUnsendable, requestConversationAttachments, requestConversationSync, purgeExpiredConversations, runConversationAttachment, runConversationDeletions, runConversationIntake, runConversationJob, runConversationSync, runTelegramChatHook, sweepConversationBlobs, sweepStaleReplies, type ConversationAttachmentJob, type ConversationChatJob, type ConversationJob, type ConversationSyncJob } from './conversations-worker.ts';
 import { runLiveCheck } from './calendar-live.ts';
 import { CALENDAR_SYNC_SWEEP_MS, runCalendarWriteBack, syncCalendars, type CalendarWriteBackJob } from './calendar-sync.ts';
 import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhook.ts';
@@ -351,6 +353,10 @@ const BANK_FEED_SYNC_CRON = '30 5 * * *';
 // The sweep that queues the e-invoices whose time to ask has come (finance.einvoice_due), every minute; the relay queues a draft the moment it is approved.
 const EINVOICE_SWEEP_CRON = '* * * * *';
 const EINVOICE_ISSUE_RETRY_LIMIT = 3;
+// The sweep that pulls every active marketplace connection's orders (#2519), every fifteen minutes; a poll retries a few times, then dead-letters. The relay queues one the moment an owner
+// or admin asks for it. What a poll reads is only staged for a member.
+const MARKETPLACE_POLL_CRON = '*/15 * * * *';
+const MARKETPLACE_POLL_RETRY_LIMIT = 3;
 const BANK_FEED_SYNC_RETRY_LIMIT = 3;
 // The hourly sweep of every ad account (ADR-0040, #2217), at ten past; a sync retries a few times, then dead-letters. The
 // sweep also prunes the old sync runs (an indexed delete of what is past 90 days, nothing most hours).
@@ -413,6 +419,10 @@ export interface WorkerDeps {
     // Read each account's recent history to fill what the webhook missed (CHANNEL_ZALO_HISTORY, CHANNEL_FACEBOOK_HISTORY).
     conversationHistory?: boolean;
     facebookHistory?: boolean;
+    // Read the replies under a Threads profile's recent posts (CHANNEL_THREADS_HISTORY, #3133).
+    threadsHistory?: boolean;
+    // Poll the comments of a YouTube channel that opted in (CHANNEL_YOUTUBE_HISTORY, #3134).
+    youtubeHistory?: boolean;
     // The media hosts a customer's image may be fetched from, by provider (CHANNEL_ZALO_MEDIA_HOSTS): unset, the provider's own list.
     conversationMediaHosts?: readonly string[];
     publishers: Readonly<Record<string, Publisher>>;
@@ -420,6 +430,8 @@ export interface WorkerDeps {
     bankFeeds?: Readonly<Record<string, BankFeedProvider>>;
     // The e-invoice provider adapters this deployment offers (ADR-0044, #2502), by adapter id; the worker alone uses them, with the credentials it opens.
     einvoiceProviders?: Readonly<Record<string, EInvoiceProvider>>;
+    // The marketplace providers this deployment offers (ADR-0045 point 7, #2519), by adapter id; the worker alone uses them, with the credentials it opens.
+    marketplaceProviders?: Readonly<Record<string, MarketplaceProvider>>;
     // The ad platform adapters this deployment offers (ADR-0040, #2217), by provider id: read-only, the worker alone uses
     // them, with the credentials it opens.
     adPlatforms?: Readonly<Record<string, AdPlatform>>;
@@ -1125,6 +1137,11 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await boss.work<MeetingsTranscribeJob>(QUEUES.meetingsTranscribe, { batchSize: 1 }, async ([job]) => {
       if (job) await runMeetingsTranscribe(transcribeDeps, job.data);
     });
+    // Live notes (#3110, L4a-2): one job per window the recorder's tick started, on the same provider and never retried for the same reason.
+    const liveDeps: MeetingsLiveNotesDeps = { ...transcribeDeps };
+    await boss.work<MeetingsLiveNotesJob>(QUEUES.meetingsLiveNotes, { batchSize: 1 }, async ([job]) => {
+      if (job) await runMeetingsLiveNotes(liveDeps, job.data);
+    });
   }
 
   // Notes (#1671): a former member's private notes 30 days after they left, the daily trash and the to-do reminders
@@ -1265,6 +1282,41 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await dropCron(QUEUES.einvoiceIssue);
   }
 
+  // Marketplaces (ADR-0045 point 7, #2519): a connection's pull of orders, queued by the relay below when an owner or admin asks and, every fifteen minutes, for every active connection of an
+  // active org. The adapters are the deployment's; with none on, nothing is queued and nothing is asked. A pull only stages a file for a member; it confirms nothing.
+  const marketplaceProviders = deps.channels?.marketplaceProviders;
+  const marketplaceBroker = deps.channels?.broker;
+  if (finance && marketplaceProviders && marketplaceBroker && Object.keys(marketplaceProviders).length > 0) {
+    await boss.work<MarketplacePollJob | { sweep: true }>(QUEUES.marketplacePoll, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      if ('sweep' in job.data) {
+        let after: { orgId: string; id: string } | null = null;
+        for (;;) {
+          const page = await marketplacePollDue(deps.workerDb, after);
+          for (const row of page) {
+            const adapter = row.provider.startsWith('marketplace_') ? row.provider.slice('marketplace_'.length) : '';
+            if (!Object.hasOwn(marketplaceProviders, adapter)) continue;
+            await boss.send(QUEUES.marketplacePoll, { orgId: row.orgId, connectionId: row.id } satisfies MarketplacePollJob, {
+              singletonKey: jobKey(row.orgId, QUEUES.marketplacePoll, row.id),
+              retryLimit: MARKETPLACE_POLL_RETRY_LIMIT,
+              retryDelay: 30,
+              retryBackoff: true,
+            });
+          }
+          const last = page.at(-1);
+          if (!last || page.length < MARKETPLACE_POLL_DUE_PAGE) break;
+          after = { orgId: last.orgId, id: last.id };
+        }
+        return;
+      }
+      const done = await runMarketplacePoll({ runtime: deps.runtime, broker: marketplaceBroker, store: deps.store, providers: marketplaceProviders }, job.data);
+      console.log(`[marketplace] ${job.data.connectionId.slice(0, 8)}: ${done.state}${'orders' in done ? `, ${done.orders} order(s)` : ''}`);
+    });
+    await boss.schedule(QUEUES.marketplacePoll, MARKETPLACE_POLL_CRON, { sweep: true }, { tz: RETENTION_TZ, missed: 'once' });
+  } else {
+    await dropCron(QUEUES.marketplacePoll);
+  }
+
   // Ads (ADR-0040, #2217): an ad account's sync, queued by the relay below when an account is linked or a refresh is asked
   // for, and every hour for every active ad account of an active org. The adapters are the deployment's; with none on,
   // the sweep queues nothing.
@@ -1385,8 +1437,15 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   const conversationPublishers = deps.channels?.publishers;
   const conversationBroker = deps.channels?.broker;
   if (conversationPublishers && conversationBroker) {
-    await boss.work<ConversationJob | ConversationSyncJob | ConversationAttachmentJob>(QUEUES.conversationsReply, { batchSize: 1 }, async ([job]) => {
+    await boss.work<ConversationJob | ConversationSyncJob | ConversationAttachmentJob | ConversationChatJob>(QUEUES.conversationsReply, { batchSize: 1 }, async ([job]) => {
       if (!job) return;
+      // Telegram bot chats switched on or off (#3132): the webhook is set or deleted with the bot token only this worker opens; ids only in the job. The
+      // webhook's address is the API's own origin (PUBLIC_URL, where webhooks are answered), not the web app's.
+      if (job.data.action === 'chat') {
+        const outcome = await runTelegramChatHook({ runtime: deps.runtime, broker: conversationBroker, adapter: (provider: string) => (Object.hasOwn(conversationPublishers, provider) ? conversationPublishers[provider]?.conversations : undefined), baseUrl: deps.publicUrl ?? '' }, job.data);
+        console.log(`[conversations] chat ${job.data.on ? 'enable' : 'disable'} ${job.data.connectionId}: ${outcome}`);
+        return;
+      }
       // A customer's image (CV5c): fetched through the egress guard from the platform's media hosts; the log names the image by id only.
       if (job.data.action === 'attachment') {
         const outcome = await runConversationAttachment({ runtime: deps.runtime, store: deps.store, hosts: deps.channels?.conversationMediaHosts }, job.data);
@@ -2293,6 +2352,18 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                 const transcribeJob: MeetingsTranscribeJob = { orgId: row.org_id, meetingId: String(row.payload.meetingId), runId: String(row.payload.runId), agentId: String(row.payload.agentId) };
                 await boss.send(QUEUES.meetingsTranscribe, transcribeJob, { singletonKey: jobKey(row.org_id, QUEUES.meetingsTranscribe, transcribeJob.runId), retryLimit: 0, expireInSeconds: 4 * 3600 });
               }
+              // A window of the live notes the recorder's tick asked for (#3110): ids and the window's bounds only.
+              if (deps.runtime.installed('meetings') && deps.meetingsTranscribe && deps.channels?.broker && row.type === 'meetings.live_notes.requested') {
+                const liveJob: MeetingsLiveNotesJob = {
+                  orgId: row.org_id,
+                  meetingId: String(row.payload.meetingId),
+                  runId: String(row.payload.runId),
+                  agentId: String(row.payload.agentId),
+                  afterSeq: Number(row.payload.afterSeq),
+                  pieces: Number(row.payload.pieces),
+                };
+                await boss.send(QUEUES.meetingsLiveNotes, liveJob, { singletonKey: jobKey(row.org_id, QUEUES.meetingsLiveNotes, liveJob.runId), retryLimit: 0, expireInSeconds: 1800 });
+              }
               // A member who left (#1671): their private notes are removed 30 days later, beside the rest.
               if (notes) await queueNotesMemberPurge(boss, row);
               // A bank feed connected, or an account of one mapped (ADR-0039, #2044): its sync lists the accounts and
@@ -2317,6 +2388,16 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                 await boss.send(QUEUES.einvoiceIssue, { orgId: row.org_id, draftId } satisfies EInvoiceIssueJob, {
                   singletonKey: jobKey(row.org_id, QUEUES.einvoiceIssue, draftId),
                   retryLimit: EINVOICE_ISSUE_RETRY_LIMIT,
+                  retryDelay: 30,
+                  retryBackoff: true,
+                });
+              }
+              // An owner or admin asked for a marketplace connection's orders now (#2519): its poll asks the provider, writes the answer as a file and ingests it. Ids only in the job.
+              if (finance && deps.channels?.marketplaceProviders && Object.keys(deps.channels.marketplaceProviders).length > 0 && row.type === 'finance.marketplace_poll_requested') {
+                const connectionId = String(row.payload.connection_id);
+                await boss.send(QUEUES.marketplacePoll, { orgId: row.org_id, connectionId } satisfies MarketplacePollJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.marketplacePoll, connectionId),
+                  retryLimit: MARKETPLACE_POLL_RETRY_LIMIT,
                   retryDelay: 30,
                   retryBackoff: true,
                 });
@@ -2380,6 +2461,16 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               if (row.type === 'kernel.conversation.attachment_queued' && deps.channels?.publishers && deps.channels.broker) {
                 const attachmentJob: ConversationAttachmentJob = { orgId: row.org_id, connectionId: String(row.payload.connectionId), action: 'attachment', attachmentId: String(row.payload.attachmentId) };
                 await boss.send(QUEUES.conversationsReply, attachmentJob, { singletonKey: jobKey(row.org_id, QUEUES.conversationsReply, `attachment:${attachmentJob.attachmentId}:${row.event_id}`), retryLimit: 2, retryDelay: 60, retryBackoff: true });
+              }
+              // Telegram bot chats switched on or off (#3132): the job sets or deletes the webhook; ids only (never the hook), and no retry: a failure is
+              // recorded for the screen and a person turns it on again. With no channel here the attempt is recorded as failed at once.
+              if (row.type === 'kernel.channel.chat_queued') {
+                const chatJob: ConversationChatJob = { orgId: row.org_id, connectionId: String(row.payload.connectionId), action: 'chat', on: row.payload.action !== 'disable' };
+                if (deps.channels?.publishers && deps.channels.broker) {
+                  await boss.send(QUEUES.conversationsReply, chatJob, { singletonKey: jobKey(row.org_id, QUEUES.conversationsReply, `chat:${chatJob.on ? 'on' : 'off'}:${row.event_id}`), retryLimit: 0 });
+                } else {
+                  await failChatHook(deps.runtime, chatJob);
+                }
               }
               // Vy's draft of a reply (CV8): ids only in the job; with no model here the draft is settled as none at once.
               if (row.type === 'kernel.conversation.draft_queued') {
@@ -2645,6 +2736,8 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               if (id === 'facebook_page' || id === 'instagram') {
                 return Boolean(deps.channels?.facebookHistory ?? deps.channels?.conversationHistory);
               }
+              if (id === 'threads') return Boolean(deps.channels?.threadsHistory ?? deps.channels?.conversationHistory);
+              if (id === 'youtube') return Boolean(deps.channels?.youtubeHistory ?? deps.channels?.conversationHistory);
               return Boolean(deps.channels?.conversationHistory);
             })
             .map(([id]) => id);

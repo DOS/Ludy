@@ -138,8 +138,13 @@ export async function bookingRequest(runtime: Runtime, org: string, type: string
   const token = randomBytes(32).toString('base64url');
   const id = await runtime.orgless(async (db) => {
     try {
-      const { rows } = await sql<{ id: string | null }>`
-        SELECT crove_crm.booking_request(${s.org}, ${s.type}, ${new Date(r.startsAt)}, ${r.name}, ${r.email}, ${r.phone ?? null}, ${r.note ?? null}, ${r.timeZone}, ${sha256(token)}) AS id`.execute(db);
+      // A request that came through a deal's "Đặt lịch" link names the deal (#3103); the definer keeps it only when it is a deal of this org, in the same call and transaction as the request.
+      const { rows } =
+        r.dealId === undefined
+          ? await sql<{ id: string | null }>`
+              SELECT crove_crm.booking_request(${s.org}, ${s.type}, ${new Date(r.startsAt)}, ${r.name}, ${r.email}, ${r.phone ?? null}, ${r.note ?? null}, ${r.timeZone}, ${sha256(token)}) AS id`.execute(db)
+          : await sql<{ id: string | null }>`
+              SELECT crove_crm.booking_request_deal(${s.org}, ${s.type}, ${new Date(r.startsAt)}, ${r.name}, ${r.email}, ${r.phone ?? null}, ${r.note ?? null}, ${r.timeZone}, ${sha256(token)}, ${r.dealId}::uuid) AS id`.execute(db);
       return rows[0]?.id ?? null;
     } catch (error) {
       const code = (error as { code?: string } | null)?.code;

@@ -16,6 +16,8 @@ import {
   metaSignatureOk,
   parseFacebookNotices,
   parseInstagramNotices,
+  parseThreadsNotices,
+  threadsSignatureOk,
   type InboundConversationEvent,
 } from '@crove/channel';
 import { DomainError, type Runtime } from '@crove/kernel-runtime';
@@ -30,6 +32,9 @@ export interface FacebookWebhookConfig {
   appSecretPrevious?: string | undefined;
   // The secret of the Instagram app when it is not the app above (`CHANNEL_INSTAGRAM_APP_ID`, #2212): its notices are signed with it.
   instagramAppSecret?: string | undefined;
+  // The secret of the Threads app (`CHANNEL_THREADS_APP_SECRET`, #3133): its reply notices are signed with it, and are taken in only when it
+  // verifies; the same URL serves them, with the same verify token. A notice the Pages or Instagram secret signed is never read as Threads'.
+  threadsAppSecret?: string | undefined;
   // Shared token configured in Meta App Dashboard -> Webhooks (`CHANNEL_META_WEBHOOK_VERIFY_TOKEN`).
   verifyToken: string;
   // Clock for notice age checks; defaults to `Date.now`.
@@ -112,27 +117,34 @@ function eventReplayKey(accountId: string, event: InboundConversationEvent): str
 
 export async function acceptFacebookWebhook(
   runtime: Runtime,
-  config: Pick<FacebookWebhookConfig, 'appSecret' | 'appSecretPrevious' | 'instagramAppSecret' | 'now'>,
+  config: Pick<FacebookWebhookConfig, 'appSecret' | 'appSecretPrevious' | 'instagramAppSecret' | 'threadsAppSecret' | 'now'>,
   request: { signature: string | undefined; body: Uint8Array },
   replays?: FacebookReplayCache,
 ): Promise<FacebookWebhookOutcome> {
-  // A notice is signed by the app it was subscribed on: the Pages app's secret (or the one it replaces), or the Instagram app's.
-  const signed =
+  // A notice is signed by the app it was subscribed on: the Pages app's secret (or the one it replaces), the Instagram app's, or the Threads app's.
+  // A Threads app's reply notice is taken in only when the Threads secret verified it, and a Page or Instagram one only when theirs did (when
+  // one Meta app holds both products its secret is all of them).
+  const metaSigned =
     metaSignatureOk({ body: request.body, header: request.signature, appSecret: config.appSecret, appSecretPrevious: config.appSecretPrevious }) ||
     (config.instagramAppSecret !== undefined && metaSignatureOk({ body: request.body, header: request.signature, appSecret: config.instagramAppSecret }));
-  if (!signed) return { status: 401, code: 'WEBHOOK_SIGNATURE' };
+  const threadsSigned = config.threadsAppSecret !== undefined && threadsSignatureOk({ body: request.body, header: request.signature, appSecret: config.threadsAppSecret });
+  if (!metaSigned && !threadsSigned) return { status: 401, code: 'WEBHOOK_SIGNATURE' };
   const now = (config.now ?? Date.now)();
-  let pageNotices: ReturnType<typeof parseFacebookNotices>;
-  let igNotices: ReturnType<typeof parseInstagramNotices>;
+  let pageNotices: ReturnType<typeof parseFacebookNotices> = [];
+  let igNotices: ReturnType<typeof parseInstagramNotices> = [];
+  let threadsNotices: ReturnType<typeof parseThreadsNotices> = [];
   try {
-    pageNotices = parseFacebookNotices(request.body, now);
-    igNotices = parseInstagramNotices(request.body, now);
+    if (metaSigned) {
+      pageNotices = parseFacebookNotices(request.body, now);
+      igNotices = parseInstagramNotices(request.body, now);
+    }
+    if (threadsSigned) threadsNotices = parseThreadsNotices(request.body, now);
   } catch (error) {
     if (error instanceof ConversationNoticeError) return { status: 400, code: 'WEBHOOK_MALFORMED' };
     throw error;
   }
-  const provider = igNotices.length > 0 ? 'instagram' : 'facebook_page';
-  const notices = igNotices.length > 0 ? igNotices : pageNotices;
+  const provider = threadsNotices.length > 0 ? 'threads' : igNotices.length > 0 ? 'instagram' : 'facebook_page';
+  const notices = threadsNotices.length > 0 ? threadsNotices : igNotices.length > 0 ? igNotices : pageNotices;
   const freshKeys: string[] = [];
   for (const notice of notices) {
     for (const event of notice.events) {

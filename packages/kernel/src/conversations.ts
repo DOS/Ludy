@@ -62,6 +62,17 @@ import {
   zConversationSandboxComment,
   zConversationSyncRequest,
   zConversationSettle,
+  zYoutubeCommentsSet,
+  YOUTUBE_COMMENT_SCOPE,
+  YOUTUBE_POLL_BUDGET_UNITS,
+  YOUTUBE_POLL_MAX_UNITS,
+  YOUTUBE_POLL_RETRY_MINUTES,
+  YOUTUBE_POLL_DELAYS_MINUTES,
+  YOUTUBE_REPLY_UNITS,
+  youtubePollAllowed,
+  youtubePollDelayMinutes,
+  youtubeQuotaNow,
+  type YoutubeCommentsStatus,
   zSavedReplyId,
   zSavedReplyInput,
   zSavedReplyList,
@@ -100,6 +111,7 @@ import {
   type ConversationSummary,
   type SavedReplyListed,
   type SavedReplyView,
+  hasNamePlaceholder,
 } from '@crove/kernel-contract';
 import { z } from 'zod';
 import { zId, zTodayItems, type TodayItem } from '@crove/kernel-contract';
@@ -112,6 +124,8 @@ const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];
 const HOUR_MS = 3_600_000;
+// How far before the last read a YouTube poll starts (#3134).
+const YOUTUBE_POLL_OVERLAP_MS = 30 * 60_000;
 // The most messages one detail read returns (a thread longer than this shows its latest).
 export const CONVERSATION_MESSAGES_MAX = 500;
 
@@ -207,6 +221,27 @@ interface ConnectionRow {
   display_name: string;
   updated_at: Date;
 }
+// A YouTube connection's quota counters (#3134), as the pure functions of the contract read them.
+async function youtubeQuotaRow(ctx: Pick<QueryContext, 'trx' | 'orgId'>, connectionId: string, lock = false) {
+  const query = ctx.trx
+    .selectFrom('crove_kernel.channel_connection')
+    .select(['provider', 'status', 'scopes', 'comments_enabled', 'quota_reset_at', 'quota_poll_units', 'quota_reply_units', 'quota_blocked_until', 'history_next_at', 'history_idle_polls', 'history_synced_at'])
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', connectionId);
+  // The two writers of the counters (a poll's record and an accepted reply's units) read the row under a lock, so two transactions on one connection
+  // never write totals computed from the same stale read; the readers that only decide do not lock.
+  return (lock ? query.forUpdate() : query).executeTakeFirst();
+}
+
+// A reply to a YouTube comment is refused up front while Google has said the project's quota is spent (a call would be refused anyway, and costs a
+// unit): the person is told when sending is possible again. Sending resumes by itself after the reset, as the block ends.
+async function refuseWhileYoutubeQuotaSpent(ctx: Pick<QueryContext, 'trx' | 'orgId'>, now: Date, connectionId: string): Promise<void> {
+  const row = await youtubeQuotaRow(ctx, connectionId);
+  if (row?.quota_blocked_until && row.quota_blocked_until.getTime() > now.getTime()) {
+    throw new DomainError('YOUTUBE_QUOTA_SPENT', 409, 'Hạn mức YouTube trong ngày đã hết, chưa gửi được trả lời. Sẽ gửi lại được sau khi hạn mức đặt lại', { until: row.quota_blocked_until.toISOString() });
+  }
+}
+
 async function connectionOf(ctx: Pick<QueryContext, 'trx' | 'orgId'>, connectionId: string): Promise<ConnectionRow | null> {
   const row = await ctx.trx
     .selectFrom('crove_kernel.channel_connection')
@@ -254,6 +289,24 @@ async function ingestEvents(ctx: CommandContext, connectionId: string, inputEven
     out.ignored = inputEvents.length;
     ctx.audit({ connection_id: connectionId, ...out });
     return out;
+  }
+  // A YouTube channel whose owner did not opt in to reading comments (#3134) has none stored.
+  if (connection.provider === 'youtube') {
+    const on = await ctx.trx.selectFrom('crove_kernel.channel_connection').select('comments_enabled').where('org_id', '=', ctx.orgId).where('id', '=', connectionId).executeTakeFirst();
+    if (!on?.comments_enabled) {
+      out.ignored = inputEvents.length;
+      ctx.audit({ connection_id: connectionId, ...out });
+      return out;
+    }
+  }
+  // A Threads profile that did not opt in to reading replies (#3133) has none stored, whatever the platform pushes for the app.
+  if (connection.provider === 'threads') {
+    const scopes = await ctx.trx.selectFrom('crove_kernel.channel_connection').select('scopes').where('org_id', '=', ctx.orgId).where('id', '=', connectionId).executeTakeFirst();
+    if (!scopes?.scopes.includes('threads_read_replies')) {
+      out.ignored = inputEvents.length;
+      ctx.audit({ connection_id: connectionId, ...out });
+      return out;
+    }
   }
   // Oldest first, so a thread's messages take their seq in the order the platform dated them within one notice.
   const events = inputEvents.map((event, i) => ({ event, i })).sort((a, b) => Date.parse(a.event.at) - Date.parse(b.event.at) || a.i - b.i);
@@ -369,6 +422,23 @@ const customerLock = (ctx: CommandContext, provider: string, externalUserId: str
 // The thread an email joins (#2439): the one that holds a Message-ID the mail names in In-Reply-To or References, within this org and this
 // channel only, so an id that points at another org's conversation finds nothing and opens a thread of its own. A mail that names none opens a
 // thread whose id is its own Message-ID. The subject never joins threads: a wrong merge would show one customer another's mail.
+// Threads nests replies to any depth, and a reply names its direct parent, not the top-level reply that opens the thread (#3133): when that parent is a
+// message already stored on this connection (the profile's own answer, or a customer's reply that came first), the new reply joins its thread. A parent
+// not stored (the top-level reply, or an ancestor outside what was read) leaves the event's own thread id.
+async function nestedThreadId(ctx: CommandContext, connectionId: string, provider: string, event: ConversationEvent): Promise<string> {
+  if (provider !== 'threads' || event.kind !== 'comment_thread' || event.threadId === event.messageId) return event.threadId;
+  const row = await ctx.trx
+    .selectFrom('crove_kernel.conversation_message as m')
+    .innerJoin('crove_kernel.conversation as c', (join) => join.onRef('c.org_id', '=', 'm.org_id').onRef('c.id', '=', 'm.conversation_id'))
+    .select('c.external_thread_id')
+    .where('m.org_id', '=', ctx.orgId)
+    .where('m.channel_connection_id', '=', connectionId)
+    .where('m.external_message_id', '=', event.threadId)
+    .where('c.kind', '=', 'comment_thread')
+    .executeTakeFirst();
+  return row?.external_thread_id ?? event.threadId;
+}
+
 async function emailThreadId(ctx: CommandContext, connectionId: string, event: ConversationEvent): Promise<string> {
   const refs = [...new Set(event.refs ?? [])];
   // A sender the receiving server did not vouch for may be anyone writing as the customer: the mail opens a thread of its own.
@@ -424,7 +494,10 @@ async function ingestEvent(
   original: ConversationEvent,
   reserved: MailImageSlot[],
 ): Promise<'stored' | 'duplicates' | 'ignored'> {
-  let event: ConversationEvent = original.kind === 'email' ? { ...original, threadId: await emailThreadId(ctx, connectionId, original) } : original;
+  let event: ConversationEvent =
+    original.kind === 'email'
+      ? { ...original, threadId: await emailThreadId(ctx, connectionId, original) }
+      : { ...original, threadId: await nestedThreadId(ctx, connectionId, provider, original) };
   const existing = await ctx.trx
     .selectFrom('crove_kernel.conversation_message')
     .select(['id', 'conversation_id', 'body', 'direction', 'hidden_at', 'platform_removed_at', 'author_identity_id', 'sender_verified'])
@@ -501,6 +574,7 @@ async function ingestEvent(
   // The thread is found again under the lock: a mail of this customer that was in flight at the same time (the first mail, as this one answers it) has
   // committed by now, and the first lookup may have missed it.
   if (original.kind === 'email') event = { ...original, threadId: await emailThreadId(ctx, connectionId, original) };
+  else event = { ...original, threadId: await nestedThreadId(ctx, connectionId, provider, original) };
   // A customer erased at the org's request: nothing of theirs dated at or before the erasure comes back (a replayed body, a redelivery,
   // a removal notice). The tombstone is the identity row an erasure leaves, found by the keyed hash of the platform's user id.
   const hashed = await sql<{ h: string }>`SELECT crove_kernel.conversation_identity_hash(${provider}, ${event.contact.id}) AS h`.execute(ctx.trx);
@@ -1140,6 +1214,12 @@ async function markRead(ctx: CommandContext, conversationId: string, userId: str
     .execute();
 }
 
+// A reply that still holds the contact-name placeholder `{tên}` is refused before anything is read or written (#3102): the box fills it when a saved reply
+// is picked, so a body that still has it means the fill was skipped, and the braces must never reach a customer. The error names no text.
+const refuseUnfilledPlaceholder = (body: string): void => {
+  if (hasNamePlaceholder(body)) throw new DomainError('REPLY_PLACEHOLDER', 422, 'Câu trả lời còn chỗ trống {tên} chưa điền, hãy sửa lại trước khi gửi');
+};
+
 export const conversationReply = defineCommand({
   name: 'kernel.conversation.reply',
   input: zConversationReply,
@@ -1150,6 +1230,7 @@ export const conversationReply = defineCommand({
   target: (input) => ({ type: 'kernel.conversation', id: input.conversationId }),
   handler: async (ctx, input): Promise<{ messageId: string; seq: number }> => {
     const me = requireUser(ctx);
+    refuseUnfilledPlaceholder(input.body);
     const conversation = await lockConversation(ctx, input.conversationId);
     const connection = await connectionOf(ctx, conversation.channel_connection_id);
     if (!connection || connection.status !== 'active') throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kênh này không còn hoạt động, hãy kết nối lại');
@@ -1167,6 +1248,7 @@ export const conversationReply = defineCommand({
     if (conversation.reply_window_until && conversation.reply_window_until.getTime() < ctx.now.getTime()) {
       throw new DomainError('REPLY_WINDOW_CLOSED', 409, 'Đã quá thời gian nền tảng cho phép trả lời cuộc trò chuyện này');
     }
+    if (connection.provider === 'youtube') await refuseWhileYoutubeQuotaSpent(ctx, ctx.now, connection.id);
     // The guarantee against two people answering one customer: a message newer than the one the sender saw.
     if (input.lastSeenSeq !== conversation.last_seq) {
       throw new DomainError('CONVERSATION_MOVED', 409, 'Hội thoại vừa có tin mới, hãy đọc lại trước khi trả lời', { lastSeq: String(conversation.last_seq) });
@@ -1257,6 +1339,7 @@ export const conversationReplyPrivately = defineCommand({
   target: (input) => ({ type: 'kernel.conversation_message', id: input.messageId }),
   handler: async (ctx, input): Promise<ConversationPrivateReplied> => {
     const me = requireUser(ctx);
+    refuseUnfilledPlaceholder(input.body);
     const comment = await ctx.trx
       .selectFrom('crove_kernel.conversation_message')
       .select(['id', 'conversation_id', 'channel_connection_id', 'kind', 'direction', 'external_message_id', 'author_identity_id', 'sent_at', 'platform_removed_at'])
@@ -1564,6 +1647,19 @@ const zCallResult = z.discriminatedUnion('kind', [
 
 // Stores what the platform answered for a reply; an answer for a call that is no longer the message's current one changes
 // nothing.
+// A reply YouTube accepted cost 50 units of the project's day [O]: counted beside the connection's polling budget, so the screen shows what was spent.
+async function countYoutubeReplyUnits(ctx: CommandContext, connectionId: string): Promise<void> {
+  const row = await youtubeQuotaRow(ctx, connectionId, true);
+  if (row?.provider !== 'youtube') return;
+  const q = youtubeQuotaNow({ resetAt: row.quota_reset_at, pollUnits: row.quota_poll_units, replyUnits: row.quota_reply_units, blockedUntil: row.quota_blocked_until }, ctx.now);
+  await ctx.trx
+    .updateTable('crove_kernel.channel_connection')
+    .set({ quota_reset_at: q.resetAt, quota_poll_units: q.pollUnits, quota_reply_units: q.replyUnits + YOUTUBE_REPLY_UNITS })
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', connectionId)
+    .execute();
+}
+
 export const conversationReplyRecord = defineCommand({
   name: 'kernel.conversation.reply_record',
   input: z.strictObject({ messageId: zId, callKey: z.string().min(1).max(300), result: zCallResult }),
@@ -1614,6 +1710,7 @@ export const conversationReplyRecord = defineCommand({
         .where('id', '=', message.id)
         .execute();
       await call({ state: 'succeeded', external_ref: result.externalId });
+      await countYoutubeReplyUnits(ctx, message.channel_connection_id);
       return { state: 'sent' };
     }
     if (result.kind === 'rejected') {
@@ -1665,6 +1762,7 @@ export const conversationReplySettle = defineCommand({
     // sent after it; a person writes a new one.
     if (thread && thread.last_seq > message.seq) throw new DomainError('CONVERSATION_MOVED', 409, 'Hội thoại vừa có tin mới nên chưa gửi lại. Hãy đọc tin mới rồi viết câu trả lời mới');
     if (thread?.reply_window_until && thread.reply_window_until.getTime() < ctx.now.getTime()) throw new DomainError('REPLY_WINDOW_CLOSED', 409, 'Đã quá thời gian nền tảng cho phép trả lời cuộc trò chuyện này');
+    if (connection.provider === 'youtube') await refuseWhileYoutubeQuotaSpent(ctx, ctx.now, connection.id);
     await ctx.trx
       .updateTable('crove_kernel.conversation_message')
       .set({ send_state: 'queued', send_attempt: message.send_attempt + 1, send_error_code: null })
@@ -2567,7 +2665,9 @@ export const conversationHistoryBegin = defineCommand({
     // hour, and make no platform call.
     if (
       (row.provider === 'facebook_page' && !row.scopes.includes('pages_read_user_content')) ||
-      (row.provider === 'instagram' && !row.scopes.includes('instagram_manage_comments'))
+      (row.provider === 'instagram' && !row.scopes.includes('instagram_manage_comments')) ||
+      // A Threads profile connected without the "also read and answer replies" opt-in (#3133) has no reply-reading permission.
+      (row.provider === 'threads' && !row.scopes.includes('threads_read_replies'))
     ) {
       await ctx.trx
         .updateTable('crove_kernel.channel_connection')
@@ -2577,12 +2677,53 @@ export const conversationHistoryBegin = defineCommand({
         .execute();
       return { action: 'none' };
     }
+    // A YouTube channel is read only after its owner's opt-in, and only within the connection's daily unit budget (#3134): a poll that might not fit
+    // the rest of the day's budget does not start, and neither does one while Google's own quota is spent. No platform call is made; the next
+    // look is when the budget resets or the block ends, so the relay does not ask again each pass.
+    if (row.provider === 'youtube') {
+      const quota = await youtubeQuotaRow(ctx, input.connectionId);
+      const held = async (until: Date): Promise<HistoryWork> => {
+        await ctx.trx.updateTable('crove_kernel.channel_connection').set({ history_next_at: until }).where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).execute();
+        return { action: 'none' };
+      };
+      if (!quota?.comments_enabled || !quota.scopes.includes(YOUTUBE_COMMENT_SCOPE)) return held(new Date(ctx.now.getTime() + HOUR_MS));
+      const allowed = youtubePollAllowed({ resetAt: quota.quota_reset_at, pollUnits: quota.quota_poll_units, replyUnits: quota.quota_reply_units, blockedUntil: quota.quota_blocked_until }, ctx.now, YOUTUBE_POLL_MAX_UNITS);
+      if (!allowed.allowed) return held(allowed.until);
+    }
     // Back to the last read, or to the connection's start, and never further than the window.
     const floor = new Date(ctx.now.getTime() - HISTORY_WINDOW_DAYS * 24 * HOUR_MS);
     const from = row.history_synced_at ?? row.connected_at;
-    return { action: 'call', provider: row.provider, since: (from && from.getTime() > floor.getTime() ? from : floor).toISOString() };
+    // A YouTube poll reads back a margin before the last one ended (#3134): a comment published while the poll ran, or listed late, is dated before the
+    // next `since`, and would otherwise be dropped for good. The ingest is idempotent on the comment id, so the overlap costs no extra request.
+    const start = row.provider === 'youtube' && from ? new Date(from.getTime() - YOUTUBE_POLL_OVERLAP_MS) : from;
+    return { action: 'call', provider: row.provider, since: (start && start.getTime() > floor.getTime() ? start : floor).toISOString() };
   },
 });
+
+// The counters and the next poll after a YouTube pass: its units are added to the day's (a period that ended starts a new one), a pass that found
+// nothing new waits longer (15, 30, 60, then 120 minutes), a failed one waits 30 minutes (120 when only a person can fix it), and Google's own quota
+// spent holds polling until its reset. The next poll also waits for the budget's reset when the rest of the day's budget cannot hold one more.
+async function youtubeRecord(ctx: CommandContext, connectionId: string, quota: NonNullable<z.infer<typeof zConversationHistoryRecord>['quota']>): Promise<{ counted: boolean }> {
+  const row = await youtubeQuotaRow(ctx, connectionId, true);
+  if (row?.provider !== 'youtube') return { counted: false };
+  const state = { resetAt: row.quota_reset_at, pollUnits: row.quota_poll_units, replyUnits: row.quota_reply_units, blockedUntil: row.quota_blocked_until };
+  const q = youtubeQuotaNow(state, ctx.now);
+  const pollUnits = q.pollUnits + quota.units;
+  const blockedUntil = quota.blockedUntil ? new Date(quota.blockedUntil) : q.blockedUntil;
+  const idle = quota.outcome === 'ok' ? (quota.newMessages > 0 ? 0 : Math.min(row.history_idle_polls + 1, YOUTUBE_POLL_DELAYS_MINUTES.length - 1)) : row.history_idle_polls;
+  const waitMinutes = quota.outcome === 'ok' ? youtubePollDelayMinutes(idle) : quota.outcome === 'retry' ? YOUTUBE_POLL_RETRY_MINUTES : 120;
+  let next = new Date(ctx.now.getTime() + waitMinutes * 60_000);
+  if (blockedUntil && blockedUntil.getTime() > next.getTime()) next = blockedUntil;
+  const after = youtubePollAllowed({ resetAt: q.resetAt, pollUnits, replyUnits: q.replyUnits, blockedUntil }, next, YOUTUBE_POLL_MAX_UNITS);
+  if (!after.allowed && after.until.getTime() > next.getTime()) next = after.until;
+  await ctx.trx
+    .updateTable('crove_kernel.channel_connection')
+    .set({ quota_reset_at: q.resetAt, quota_poll_units: pollUnits, quota_reply_units: q.replyUnits, quota_blocked_until: blockedUntil, history_idle_polls: idle, history_next_at: next })
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', connectionId)
+    .execute();
+  return { counted: true };
+}
 
 export const conversationHistoryRecord = defineCommand({
   name: 'kernel.conversation.history_record',
@@ -2593,6 +2734,13 @@ export const conversationHistoryRecord = defineCommand({
   target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
   handler: async (ctx, input): Promise<{ complete: boolean }> => {
     requireSystem(ctx);
+    // A YouTube pass (#3134) also counts its units against the day's budget and sets when the next poll is due; a failed pass leaves the gap and the
+    // last-read time alone.
+    const quota = input.quota ? await youtubeRecord(ctx, input.connectionId, input.quota) : null;
+    if (input.quota && quota?.counted && input.quota.outcome !== 'ok') {
+      ctx.audit({ connection_id: input.connectionId, complete: false, outcome: input.quota.outcome, units: input.quota.units });
+      return { complete: false };
+    }
     // A read that reached back everywhere leaves no gap (and clears an older one); else the period is kept for the threads to show.
     await ctx.trx
       .updateTable('crove_kernel.channel_connection')
@@ -2981,6 +3129,72 @@ export const conversationAutoDraftSet = defineCommand({
   },
 });
 
+// The opt-in and the day's quota units of the org's YouTube connections (#3134), for the Channels screen: what Ludy counted for each connection (the
+// project's own total is Google's). A period that ended reads as zero.
+export const conversationYoutubeComments = defineQuery({
+  name: 'kernel.conversation.youtube_comments',
+  input: z.strictObject({}),
+  access: ALL,
+  handler: async (ctx): Promise<YoutubeCommentsStatus[]> => {
+    const now = new Date();
+    const rows = await ctx.trx
+      .selectFrom('crove_kernel.channel_connection')
+      .select(['id', 'display_name', 'scopes', 'comments_enabled', 'quota_reset_at', 'quota_poll_units', 'quota_reply_units', 'quota_blocked_until', 'history_next_at', 'history_synced_at'])
+      .where('org_id', '=', ctx.orgId)
+      .where('provider', '=', 'youtube')
+      .where('status', '=', 'active')
+      .orderBy('display_name')
+      .orderBy('id')
+      .execute();
+    return rows.map((row) => {
+      const q = youtubeQuotaNow({ resetAt: row.quota_reset_at, pollUnits: row.quota_poll_units, replyUnits: row.quota_reply_units, blockedUntil: row.quota_blocked_until }, now);
+      return {
+        connectionId: row.id,
+        displayName: row.display_name,
+        enabled: row.comments_enabled,
+        scopeGranted: row.scopes.includes(YOUTUBE_COMMENT_SCOPE),
+        pollUnitsUsed: q.pollUnits,
+        pollBudget: YOUTUBE_POLL_BUDGET_UNITS,
+        replyUnitsUsed: q.replyUnits,
+        resetAt: q.resetAt.toISOString(),
+        blockedUntil: q.blockedUntil ? q.blockedUntil.toISOString() : null,
+        nextPollAt: row.comments_enabled && row.history_next_at ? row.history_next_at.toISOString() : null,
+        lastPolledAt: row.comments_enabled && row.history_synced_at ? row.history_synced_at.toISOString() : null,
+      };
+    });
+  },
+});
+
+// The owner's or an admin's switch to read and answer a YouTube channel's comments (#3134): reading spends the Google project's quota and stores the
+// commenters' words, so it is a person's choice, off by default. It needs the comment scope (the connect dialog asks for it; a grant without it
+// reconnects). Turning it on reads at once; turning it off stops the polling and keeps what was stored (the org's retention applies as always).
+export const conversationYoutubeCommentsSet = defineCommand({
+  name: 'kernel.conversation.youtube_comments_set',
+  input: zYoutubeCommentsSet,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: ADMINS,
+  target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
+  handler: async (ctx, input): Promise<{ enabled: boolean }> => {
+    requireUser(ctx);
+    const row = await youtubeQuotaRow(ctx, input.connectionId);
+    if (!row || row.provider !== 'youtube' || row.status !== 'active') throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kênh YouTube này không còn hoạt động, hãy kết nối lại');
+    if (input.enabled && !row.scopes.includes(YOUTUBE_COMMENT_SCOPE)) {
+      throw new DomainError('YOUTUBE_SCOPE_MISSING', 409, 'Kênh YouTube này chưa cho phép đọc bình luận. Hãy kết nối lại và cho phép quyền quản lý bình luận');
+    }
+    // Switching it on again changes nothing (it would otherwise force a new read of the whole window and reset the interval).
+    if (input.enabled && row.comments_enabled) return { enabled: true };
+    await ctx.trx
+      .updateTable('crove_kernel.channel_connection')
+      .set(input.enabled ? { comments_enabled: true, history_synced_at: null, history_next_at: ctx.now, history_idle_polls: 0, history_requested_at: null } : { comments_enabled: false, history_next_at: null })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .execute();
+    ctx.audit({ connection_id: input.connectionId, enabled: input.enabled });
+    return { enabled: input.enabled };
+  },
+});
+
 // Asks for a draft of the thread's last customer message: a row requested (no text) and the event the draft queue takes, with ids only. At most one
 // draft is in play per thread, so asking again returns the one that is. Nothing is asked of a thread whose last message is not a customer's.
 async function openDraft(ctx: CommandContext, conversation: ConversationRow, source: 'auto' | 'asked', requestedBy: string | null): Promise<{ draftId: string; queued: boolean }> {
@@ -3224,9 +3438,10 @@ export const conversationCommands = [
   conversationSavedReplyUpdate,
   conversationSavedReplyDelete,
   conversationAutoDraftSet,
+  conversationYoutubeCommentsSet,
   conversationDraftRequest,
   conversationDraftEnqueue,
   conversationDraftRecord,
   conversationDraftDiscard,
 ];
-export const conversationQueries = [conversationList, conversationIntentSource, conversationContactCandidates, conversationAvailability, conversationToday, conversationCounts, conversationGet, conversationRetention, conversationAttachmentSource, conversationAttachmentGet, conversationSavedReplyList, conversationAutoDraft, conversationDraftSource];
+export const conversationQueries = [conversationList, conversationIntentSource, conversationContactCandidates, conversationAvailability, conversationToday, conversationCounts, conversationGet, conversationRetention, conversationAttachmentSource, conversationAttachmentGet, conversationSavedReplyList, conversationAutoDraft, conversationYoutubeComments, conversationDraftSource];

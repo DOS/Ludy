@@ -26,10 +26,11 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { sql } from 'kysely';
-import { GOOGLE_CALENDAR_EVENTS_SCOPE, MEET_URL, freeSlots, zBookingCancel, zBookingListQuery, zBookingMove, zId, zonedDate, zoneOffsetMs, type BookingItem, type Interval, type WorkingHours } from '@crove/kernel-contract';
+import { BOOKING_DEAL_LIST_MAX, GOOGLE_CALENDAR_EVENTS_SCOPE, MEET_URL, freeSlots, zBookingCancel, zBookingDealLink, zBookingDealUnlink, zBookingListQuery, zBookingMove, zDealBookingsQuery, zId, zonedDate, zoneOffsetMs, type BookingDealChanged, type BookingItem, type DealBookings, type Interval, type WorkingHours } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { busyOf, createMailMessage, workingHoursOf } from '@crove/kernel';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { openDealsFor, suggestDeals } from './booking-deals.ts';
 
 const DAY_MS = 86_400_000;
 // Who may still host a booking: anyone who can change their own calendar.
@@ -657,6 +658,68 @@ export const bookingMove = defineCommand({
   },
 });
 
+// Linking a booking to a deal (#3103, docs/plan/calendar.md "Deal links"). The deal's panel lists its bookings, and a person confirms Dy's suggestion (booking-deals.ts) with
+// a click. Whoever may read a booking may link it or take its link off: the host of its type, a host it holds, or an owner or admin; the deal is any deal of the org (deals are
+// read by every role). Past and cancelled bookings can be linked too, so the deal's history is complete. Nothing is mailed and no calendar event changes. A booking made
+// from a deal's "Đặt lịch" link carries the deal from the start (crove_crm.booking_request_deal); these commands are the only other writers of crove_crm.booking.deal_id.
+async function bookingOfCaller(ctx: CommandContext, bookingId: string): Promise<NonNullable<Awaited<ReturnType<typeof lockBooking>>>> {
+  if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
+  const userId = ctx.actor.userId;
+  const booking = await lockBooking(ctx, bookingId);
+  // A request the worker has not decided or refused is not a booking: the screen never lists it.
+  if (!booking || (booking.status !== 'confirmed' && booking.status !== 'cancelled') || booking.calendar_event_id === null) {
+    throw new DomainError('BOOKING_NOT_FOUND', 404, 'Không tìm thấy lịch hẹn này');
+  }
+  if (ctx.role !== 'owner' && ctx.role !== 'admin') {
+    const type = await eventTypeOf(ctx, booking.event_type_id);
+    const events = await eventsOf(ctx, booking);
+    if (type.host_user_id !== userId && !events.some((e) => e.userId === userId)) {
+      throw new DomainError('BOOKING_HOST_FORBIDDEN', 403, 'Bạn chỉ liên kết được lịch hẹn do chính mình chủ trì');
+    }
+  }
+  return booking;
+}
+
+export const bookingLinkDeal = defineCommand({
+  name: 'crm.booking.link_deal',
+  input: zBookingDealLink,
+  // It writes one internal column and sends nothing (R1).
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: STAFF,
+  target: (input) => ({ type: 'crm.booking', id: input.bookingId }),
+  handler: async (ctx, input): Promise<BookingDealChanged> => {
+    // The deal is read in this org alone and held (a key share, which only a delete of it conflicts with) before the booking row is locked, the order a delete of a deal takes
+    // (the deal, then the bookings its key clears), so the two cannot wait on each other, and a deal deleted at the same moment cannot leave a link to nothing.
+    const deal = await ctx.trx.selectFrom('crove_crm.deal').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.dealId).forKeyShare().executeTakeFirst();
+    if (!deal) throw new DomainError('DEAL_NOT_FOUND', 404, 'Không tìm thấy cơ hội này');
+    const booking = await bookingOfCaller(ctx, input.bookingId);
+    if (booking.deal_id !== deal.id) {
+      await ctx.trx.updateTable('crove_crm.booking').set({ deal_id: deal.id }).where('org_id', '=', ctx.orgId).where('id', '=', booking.id).execute();
+    }
+    // Ids only: the deal's title and the guest's details stay out of the audit row.
+    ctx.audit({ bookingId: booking.id, dealId: deal.id, previousDealId: booking.deal_id, linked: booking.deal_id !== deal.id });
+    return { bookingId: booking.id, dealId: deal.id };
+  },
+});
+
+export const bookingUnlinkDeal = defineCommand({
+  name: 'crm.booking.unlink_deal',
+  input: zBookingDealUnlink,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: STAFF,
+  target: (input) => ({ type: 'crm.booking', id: input.bookingId }),
+  handler: async (ctx, input): Promise<BookingDealChanged> => {
+    const booking = await bookingOfCaller(ctx, input.bookingId);
+    if (booking.deal_id !== null) {
+      await ctx.trx.updateTable('crove_crm.booking').set({ deal_id: null }).where('org_id', '=', ctx.orgId).where('id', '=', booking.id).execute();
+    }
+    ctx.audit({ bookingId: booking.id, previousDealId: booking.deal_id, unlinked: booking.deal_id !== null });
+    return { bookingId: booking.id, dealId: null };
+  },
+});
+
 // One reminder before a booking (a job the worker queued from crm.booking.scheduled): mailed to the visitor only while
 // the booking is confirmed and still starts at the time the job was queued for, and once per lead and time.
 export const bookingRemind = defineCommand({
@@ -723,11 +786,14 @@ export const bookingRemind = defineCommand({
 
 // The bookings a member sees (#1320): confirmed and cancelled ones (requests the worker refused are not bookings), of
 // the types the member leads or held on their calendar (#1373), or of the whole org for owners and admins (scope
-// 'org'). The screen pages them by period; a record that names one (a note's link, #1672) reads it by id.
+// 'org'). The screen pages them by period; a record that names one (a note's link, #1672) reads it by id; a deal's panel
+// reads the ones linked to it (#3103). Each item says its deal; `suggest` also looks for the open deals of the guest of
+// each booking that has none (Dy's rule, booking-deals.ts), which the Home read does not need.
 async function loadBookings(
   ctx: QueryContext,
   userId: string,
-  filter: { scope: 'mine' | 'org'; period: 'upcoming' | 'past' } | { scope: 'mine' | 'org'; id: string } | { scope: 'mine'; day: { from: Date; to: Date } },
+  filter: { scope: 'mine' | 'org'; period: 'upcoming' | 'past'; dealId?: string } | { scope: 'mine' | 'org'; id: string } | { scope: 'mine'; day: { from: Date; to: Date } },
+  options: { suggest?: boolean; limit?: number } = {},
 ): Promise<BookingItem[]> {
   // A day (the Home read, today.ts): the confirmed bookings that start in it and have not ended, earliest first.
   const upcoming = ('period' in filter && filter.period === 'upcoming') || 'day' in filter;
@@ -736,6 +802,9 @@ async function loadBookings(
     .innerJoin('crove_crm.event_type as e', (j) => j.onRef('e.org_id', '=', 'b.org_id').onRef('e.id', '=', 'b.event_type_id'))
     // Confirmed and cancelled bookings always hold their event (booking_confirmed_event).
     .innerJoin('crove_kernel.calendar_event as ev', (j) => j.onRef('ev.org_id', '=', 'b.org_id').onRef('ev.id', '=', 'b.calendar_event_id'))
+    // The linked deal, when there is one (#3103).
+    .leftJoin('crove_crm.deal as dl', (j) => j.onRef('dl.org_id', '=', 'b.org_id').onRef('dl.id', '=', 'b.deal_id'))
+    .leftJoin('crove_crm.pipeline_stage as ds', (j) => j.onRef('ds.org_id', '=', 'dl.org_id').onRef('ds.id', '=', 'dl.stage_id'))
     .select([
       'b.id',
       'b.status',
@@ -750,6 +819,10 @@ async function loadBookings(
       'b.calendar_event_id',
       'b.meeting_state',
       'b.meeting_url',
+      'b.deal_id',
+      'dl.title as deal_title',
+      'ds.name as deal_stage',
+      'ds.kind as deal_status',
       'e.id as type_id',
       'e.slug',
       'e.title',
@@ -771,12 +844,18 @@ async function loadBookings(
     );
   if ('id' in filter) query = query.where('b.id', '=', filter.id);
   else if ('day' in filter) query = query.where('b.starts_at', '>=', filter.day.from).where('b.starts_at', '<', filter.day.to).where('b.ends_at', '>', new Date());
-  else query = query.where('b.ends_at', upcoming ? '>' : '<=', new Date());
+  else {
+    query = query.where('b.ends_at', upcoming ? '>' : '<=', new Date());
+    if (filter.dealId !== undefined) query = query.where('b.deal_id', '=', filter.dealId);
+  }
   const rows = await query
     .orderBy('b.starts_at', upcoming ? 'asc' : 'desc')
     .orderBy('b.id')
-    .limit(200)
+    .limit(options.limit ?? 200)
     .execute();
+  // Dy's suggestions (#3103): one read of the open deals that might fit any unlinked booking of the page, then the fixed rule per booking.
+  const unlinked = options.suggest === true ? rows.filter((r) => r.deal_id === null) : [];
+  const candidates = await openDealsFor(ctx, unlinked.map((r) => ({ partyId: r.party_id, email: r.email, phone: r.phone })));
   return rows.map((r) => ({
     id: r.id,
     eventType: { id: r.type_id, slug: r.slug, title: r.title, active: r.active },
@@ -790,6 +869,8 @@ async function loadBookings(
     partyId: r.party_id,
     calendarEventId: r.calendar_event_id as string,
     meeting: { state: r.meeting_state, url: r.meeting_url },
+    deal: r.deal_id !== null && r.deal_title !== null && r.deal_stage !== null && r.deal_status !== null ? { id: r.deal_id, title: r.deal_title, stage: r.deal_stage, status: r.deal_status } : null,
+    dealSuggestions: r.deal_id === null && options.suggest === true ? suggestDeals({ partyId: r.party_id, email: r.email, phone: r.phone }, candidates) : [],
   }));
 }
 
@@ -814,7 +895,7 @@ export const bookingList = defineQuery({
     if (input.scope === 'org' && !manages(ctx)) {
       throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu hoặc quản trị viên mới xem được lịch hẹn của cả tổ chức');
     }
-    return loadBookings(ctx, userId, { scope: input.scope, period: input.period });
+    return loadBookings(ctx, userId, { scope: input.scope, period: input.period }, { suggest: input.withSuggestions === true });
   },
 });
 
@@ -826,9 +907,34 @@ export const bookingGet = defineQuery({
   access: STAFF,
   handler: async (ctx, input): Promise<BookingItem> => {
     const userId = bookingUser(ctx);
-    const [booking] = await loadBookings(ctx, userId, { scope: manages(ctx) ? 'org' : 'mine', id: input.id });
+    const [booking] = await loadBookings(ctx, userId, { scope: manages(ctx) ? 'org' : 'mine', id: input.id }, { suggest: true });
     if (!booking) throw new DomainError('BOOKING_NOT_FOUND', 404, 'Không tìm thấy lịch hẹn');
     return booking;
+  },
+});
+
+// One booking as the screen shows it to the caller (the rule of crm.booking.get: any of the org's for owners and admins, otherwise a type they lead or held on their calendar), without Dy's
+// deal suggestions; a booking the caller may not read is not found (#3115: the meeting brief is read under the same rule).
+export async function readableBooking(ctx: QueryContext, id: string): Promise<BookingItem> {
+  const [booking] = await loadBookings(ctx, bookingUser(ctx), { scope: manages(ctx) ? 'org' : 'mine', id });
+  if (!booking) throw new DomainError('BOOKING_NOT_FOUND', 404, 'Không tìm thấy lịch hẹn');
+  return booking;
+}
+
+// The deal panel's read (#3103): the bookings linked to the deal that the caller may read (the same rule as the screen: the types they lead or hold, or the whole org for
+// owners and admins), upcoming first to last and past last to first. Roles that read no booking get nothing; a deal of another org is not found.
+export const dealBookings = defineQuery({
+  name: 'crm.deal.bookings',
+  input: zDealBookingsQuery,
+  access: STAFF,
+  handler: async (ctx, input): Promise<DealBookings> => {
+    const userId = bookingUser(ctx);
+    const deal = await ctx.trx.selectFrom('crove_crm.deal').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.dealId).executeTakeFirst();
+    if (!deal) throw new DomainError('DEAL_NOT_FOUND', 404, 'Không tìm thấy cơ hội này');
+    const scope = manages(ctx) ? 'org' : 'mine';
+    const upcoming = await loadBookings(ctx, userId, { scope, period: 'upcoming', dealId: deal.id }, { limit: BOOKING_DEAL_LIST_MAX });
+    const past = await loadBookings(ctx, userId, { scope, period: 'past', dealId: deal.id }, { limit: BOOKING_DEAL_LIST_MAX });
+    return { upcoming, past };
   },
 });
 
@@ -857,6 +963,6 @@ export const bookingLiveTarget = defineQuery({
     return { hostUserIds: [...new Set(held.map((h) => h.userId))], ...window(start, start + type.duration_min * 60_000) };
   },
 });
-export const bookingQueries = [bookingList, bookingGet, bookingLiveTarget];
+export const bookingQueries = [bookingList, bookingGet, dealBookings, bookingLiveTarget];
 
-export const bookingCommands = [bookingConfirm, bookingMailData, bookingMeetingSettle, bookingManage, bookingRemind, bookingCancel, bookingMove];
+export const bookingCommands = [bookingConfirm, bookingMailData, bookingMeetingSettle, bookingManage, bookingRemind, bookingCancel, bookingMove, bookingLinkDeal, bookingUnlinkDeal];

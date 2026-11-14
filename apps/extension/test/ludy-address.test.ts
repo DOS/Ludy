@@ -50,10 +50,45 @@ describe('no request goes anywhere but the configured address', () => {
     await client.config();
     await client.exchangeCode('crc_x', 'v'.repeat(43));
     await client.me();
-    await client.createMeeting({ title: 'Họp', keepVideo: false, consentMethod: 'in_invite' });
+    await client.createMeeting({ title: 'Họp', keepVideo: false, consentMethod: 'in_invite', liveNotes: false });
     await client.uploadMedia({ meetingId: '11111111-1111-4111-8111-111111111111', kind: 'audio', file: new File(['a'], 'a.webm'), lengthSeconds: 1, uploads: 'direct' });
     expect(urls).toHaveLength(5);
     for (const url of urls) expect(new URL(url).origin).toBe('https://ludy.congty.vn');
+  });
+
+  it('a live piece goes to its meeting with the seq, the length, the audio type and the token; a refusal carries its status', async () => {
+    const seen: Array<{ url: string; init: RequestInit | undefined }> = [];
+    let status = 200;
+    const fetchImpl = vi.fn(async (input: string, init?: RequestInit) => {
+      seen.push({ url: input, init });
+      return status === 200 ? Response.json({ meetingId: 'm', seq: 3, duplicate: false }) : Response.json({ code: 'LIVE_CLOSED', message: 'closed' }, { status });
+    });
+    const client = createClient('https://ludy.congty.vn', 'crx_abc', fetchImpl);
+    await client.sendLiveChunk({ meetingId: 'm 1', seq: 3, lengthSeconds: 15, blob: new Blob(['a'], { type: 'audio/webm;codecs=opus' }) });
+    const url = new URL(seen[0]!.url);
+    expect(url.origin + url.pathname).toBe('https://ludy.congty.vn/api/meetings/m%201/live-chunk');
+    expect(url.searchParams.get('seq')).toBe('3');
+    expect(url.searchParams.get('lengthSeconds')).toBe('15');
+    const headers = new Headers(seen[0]!.init?.headers);
+    expect(headers.get('content-type')).toBe('audio/webm');
+    expect(headers.get('authorization')).toBe('Bearer crx_abc');
+    expect(seen[0]!.init?.credentials).toBe('omit');
+    await client.sendLiveChunk({ meetingId: 'm', seq: 0, lengthSeconds: 1, blob: new Blob(['a']) });
+    expect(new Headers(seen[1]!.init?.headers).get('content-type')).toBe('application/octet-stream');
+    status = 409;
+    await expect(client.sendLiveChunk({ meetingId: 'm', seq: 1, lengthSeconds: 1, blob: new Blob(['a']) })).rejects.toMatchObject({ status: 409, code: 'LIVE_CLOSED' });
+  });
+
+  it('createMeeting sends liveNotes as given', async () => {
+    const bodies: unknown[] = [];
+    const fetchImpl = vi.fn(async (_input: string, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return Response.json({ json: { meetingId: 'm1' } });
+    });
+    const client = createClient('https://ludy.congty.vn', 'crx_abc', fetchImpl);
+    await client.createMeeting({ title: 'Họp', keepVideo: false, consentMethod: 'in_invite', liveNotes: true });
+    await client.createMeeting({ title: 'Họp', keepVideo: false, consentMethod: 'in_invite', liveNotes: false });
+    expect(bodies.map((b) => (b as { json: { liveNotes: boolean } }).json.liveNotes)).toEqual([true, false]);
   });
 
   it('a call that needs the token makes no request without one', async () => {
@@ -123,7 +158,7 @@ describe('no request goes anywhere but the configured address', () => {
     const client = createClient('https://app.ludy.vn', 'crx_t', fetchImpl);
     await client.config();
     await client.me();
-    await client.createMeeting({ title: 'Họp', keepVideo: false, consentMethod: 'in_invite' });
+    await client.createMeeting({ title: 'Họp', keepVideo: false, consentMethod: 'in_invite', liveNotes: false });
     await client.uploadMedia({ meetingId: '11111111-1111-4111-8111-111111111111', kind: 'audio', file: new File(['a'], 'a.webm'), lengthSeconds: 1, uploads: 'presigned' });
     expect(seen.length).toBeGreaterThanOrEqual(6);
     for (const init of seen) expect(init?.redirect).toBe('error');

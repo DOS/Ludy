@@ -122,7 +122,6 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
 // the site. While the site is absent from the code the entry is not required to be found and its command is not required to exist; once the site is found it is reviewed like
 // any other. Remove the entry here once the site is on the base branch.
 const OTHER_SENDS_PENDING: Readonly<Record<string, string>> = {
-  'finance-marketplace-poll handler': '#2519',
   'kernel-mcp-wake-sweep handler': '#3024',
 };
 

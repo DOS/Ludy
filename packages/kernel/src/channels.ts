@@ -9,6 +9,7 @@
 //   stores. Connecting an account that is already connected replaces its tokens on the same connection row.
 // - Only the worker reads a credential back (kernel.channel.credential, system actor, credential_get granted to
 //   crove_worker alone), and only while the member who connected the account is still in the org.
+import { createHash, randomBytes } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { isAdProviderId, isAdWriteProviderId, zId } from '@crove/kernel-contract';
@@ -40,6 +41,9 @@ function credentialError(error: unknown): never {
       throw error;
   }
 }
+
+// A fresh hook for a Telegram connection's webhook (#3132): 32 random bytes, base64url, 43 characters.
+const newChatHook = (): string => randomBytes(32).toString('base64url');
 
 function requireUser(ctx: CommandContext): string {
   if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới kết nối được kênh');
@@ -79,6 +83,8 @@ export const channelConnect = defineCommand({
       granted_by_hash: isAdProviderId(input.provider) ? null : (input.grantedByHash ?? null),
       // A reconnect is read again at once for what the webhook missed (CV5b, #2329).
       history_synced_at: null,
+      // ... also a YouTube channel, whose due time is its own interval (#3134): a reconnect after a refused token must not wait out the hold.
+      history_next_at: null,
       updated_at: ctx.now,
     };
     // Two connects of one account at once serialize here, so the second finds the first's row and reconnects
@@ -88,7 +94,7 @@ export const channelConnect = defineCommand({
     // member who reconnects becomes its connector, so the credential lives on their membership from now on.
     const existing = await ctx.trx
       .selectFrom('crove_kernel.channel_connection')
-      .select(['id'])
+      .select(['id', 'chat_state'])
       .where('org_id', '=', ctx.orgId)
       .where('provider', '=', input.provider)
       .where('external_account_id', '=', input.externalAccountId)
@@ -99,6 +105,17 @@ export const channelConnect = defineCommand({
     if (existing) {
       await ctx.trx.updateTable('crove_kernel.channel_connection').set(values).where('org_id', '=', ctx.orgId).where('id', '=', existing.id).execute();
       id = existing.id;
+      // A Telegram connection that answers chats gets a new hook, and so a new secret, with its new token (#3132): the webhook is set again by a job,
+      // with the token that was just sealed, and the old hook stays valid until then. A connection being turned off stays as it is.
+      if (input.provider === 'telegram' && (existing.chat_state === 'on' || existing.chat_state === 'enabling')) {
+        await ctx.trx
+          .updateTable('crove_kernel.channel_connection')
+          .set({ chat_hook_next: newChatHook(), chat_state: 'enabling', chat_error: null, chat_changed_at: ctx.now })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', id)
+          .execute();
+        await ctx.emit(TELEGRAM_CHAT_QUEUED, { connectionId: id, action: 'enable' });
+      }
     } else {
       const row = await ctx.trx
         .insertInto('crove_kernel.channel_connection')
@@ -129,16 +146,24 @@ export const channelDisconnect = defineCommand({
     requireUser(ctx);
     const row = await ctx.trx
       .selectFrom('crove_kernel.channel_connection')
-      .select(['status', 'provider'])
+      .select(['status', 'provider', 'chat_state'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
       .forUpdate()
       .executeTakeFirst();
     if (!row) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
+    // A Telegram connection that still receives chats is turned off first (#3132): turning off is what removes the webhook at Telegram, which
+    // needs the token this disconnect forgets.
+    // One that is no longer active (its token was refused) cannot be asked, so it may go: the webhook is then removed in BotFather.
+    if (row.status === 'active' && row.chat_state !== 'off') {
+      throw new DomainError('CHAT_IS_ON', 409, 'Hãy tắt nhận tin nhắn của khách trước khi ngắt kết nối kênh này, để Ludy gỡ webhook ở Telegram');
+    }
     if (row.status !== 'revoked') {
       await ctx.trx
         .updateTable('crove_kernel.channel_connection')
-        .set({ status: 'revoked', status_reason: input.reason ?? 'disconnected', updated_at: ctx.now })
+        // A Telegram connection that answered chats gives its hook up too (#3132): the webhook at Telegram is left to be removed in BotFather, and a
+        // notice that still comes in on it finds no connection and is dropped.
+        .set({ status: 'revoked', status_reason: input.reason ?? 'disconnected', updated_at: ctx.now, chat_state: 'off', chat_hook: null, chat_hook_next: null, chat_bot_id: null })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.connectionId)
         .execute();
@@ -421,6 +446,12 @@ export interface ChannelConnectionView {
   connectedBy: string;
   expiresAt: string | null;
   connectedAt: string;
+  // Whether the connection also answers customers' private chats (Telegram, #3132): off, enabling, on or disabling; and the code of the last
+  // attempt that failed (only while off), for the screen to word.
+  chatState: 'off' | 'enabling' | 'on' | 'disabling';
+  chatError: string | null;
+  // When the state last changed: a switch standing for minutes was lost, and the screen offers it again.
+  chatChangedAt: string | null;
 }
 
 const iso = (d: Date | string | null) => (d === null ? null : new Date(d).toISOString());
@@ -433,7 +464,7 @@ export const channelsList = defineQuery({
   handler: async (ctx: QueryContext, input): Promise<ChannelConnectionView[]> => {
     let q = ctx.trx
       .selectFrom('crove_kernel.channel_connection')
-      .select(['id', 'provider', 'external_account_id', 'display_name', 'scopes', 'status', 'status_reason', 'connected_by', 'expires_at', 'connected_at'])
+      .select(['id', 'provider', 'external_account_id', 'display_name', 'scopes', 'status', 'status_reason', 'connected_by', 'expires_at', 'connected_at', 'chat_state', 'chat_error', 'chat_changed_at'])
       .where('org_id', '=', ctx.orgId)
       // Social and messaging channels only: a bank feed's connection (provider bank_..., ADR-0039) is the finance
       // module's, listed with its accounts by finance.bank_feed.accounts. Left out before the limit, so they never
@@ -444,6 +475,8 @@ export const channelsList = defineQuery({
       // Nor an e-invoice provider's (provider einvoice_..., ADR-0044): its external account id holds the seller's tax code and the legal entity, which only the
       // finance module's list shows, to the members of that entity.
       .where('provider', 'not like', 'einvoice\\_%')
+      // Nor a marketplace seller account's (provider marketplace_..., ADR-0045 point 7): its external account id names the legal entity, which only the finance module's list shows.
+      .where('provider', 'not like', 'marketplace\\_%')
       // Nor the Inbox's email connection (#2439): it is made by the first customer mail and is not a place to publish. The screen that limits which
       // channels a member may read (includeEmail) lists it, since reading email is one of those channels.
       .where('provider', input.includeEmail ? 'is not' : '<>', input.includeEmail ? null : 'email');
@@ -460,6 +493,9 @@ export const channelsList = defineQuery({
       connectedBy: r.connected_by,
       expiresAt: iso(r.expires_at),
       connectedAt: iso(r.connected_at) ?? '',
+      chatState: r.chat_state as ChannelConnectionView['chatState'],
+      chatError: r.chat_error,
+      chatChangedAt: iso(r.chat_changed_at),
     }));
   },
 });
@@ -489,5 +525,185 @@ export const channelCredential = defineQuery({
   },
 });
 
-export const channelCommands = [channelConnect, channelDisconnect, channelMarkExpired, channelRevokeByPlatform, channelCloseOrphan, channelOAuthBegin, channelOAuthConsume, channelRefresh, channelReseal];
-export const channelQueries = [channelsList, channelCredential];
+// ---------------------------------------------------------------------------------------------------------------------
+// Telegram bot chats (#3132, plan docs/plan/conversations-channels.md section 4.2). A Telegram connection already holds the bot token (to
+// post to a channel); an owner or admin may also turn on "answer chats", which points the bot's webhook at this deployment. The platform call
+// is the worker's (it alone opens the token); these commands say what to do and record what came of it. The hook (the connection's address in
+// the webhook path) is a capability: it is never in an audit row, an event or a command result, only in the one query the worker reads.
+//
+// The state machine (channel_connection.chat_state): off, enabling (chat_hook_next is being set at Telegram by a job), on (chat_hook is live),
+// disabling (a job is deleting the webhook). A new hook (a first turn on, or a reconnect with a new token) is put in chat_hook_next and replaces
+// chat_hook only once the worker has set it at Telegram, so the old webhook stays valid meanwhile and no message in between is lost. A job that was
+// lost leaves a switch standing: after CHAT_RETRY_AFTER_MS the same command asks again, so the screen never stays stuck.
+// ---------------------------------------------------------------------------------------------------------------------
+
+export const TELEGRAM_CHAT_QUEUED = 'kernel.channel.chat_queued';
+const zChatAction = z.enum(['enable', 'disable']);
+const zChatCode = z.string().regex(/^[A-Za-z0-9_.:-]{1,60}$/);
+const zHookFp = z.string().regex(/^[0-9a-f]{16}$/);
+// A switch whose job has not recorded its answer after this long is asked again.
+const CHAT_RETRY_AFTER_MS = 2 * 60_000;
+// A short fingerprint of a hook: lets a job say which hook it set without the hook travelling back in a command's input.
+const hookFp = (hook: string): string => createHash('sha256').update(hook).digest('hex').slice(0, 16);
+type ChatState = ChannelConnectionView['chatState'];
+
+// Turns the chats of a Telegram connection on or off. On puts a fresh hook in chat_hook_next (so turning off and on again rotates the address)
+// and hands the worker the setWebhook call; off keeps the hooks until the worker has deleted the webhook. A connection that is no longer active
+// (its token was refused) cannot be asked of Telegram: turning it off is done here, and the webhook is left to be removed in BotFather.
+// R2 and external: the call it leads to reaches Telegram.
+export const channelTelegramChatSet = defineCommand({
+  name: 'kernel.channel.telegram_chat_set',
+  input: z.strictObject({ connectionId: zId, on: z.boolean() }),
+  risk: 'R2',
+  sideEffect: 'external',
+  access: ADMINS,
+  target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
+  handler: async (ctx, input): Promise<{ chatState: ChatState }> => {
+    requireUser(ctx);
+    const row = await ctx.trx
+      .selectFrom('crove_kernel.channel_connection')
+      .select(['provider', 'status', 'chat_state', 'chat_changed_at'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
+    if (row.provider !== 'telegram') throw new DomainError('CHAT_NOT_SUPPORTED', 409, 'Kênh này không nhận tin nhắn riêng của khách');
+    const state = row.chat_state as ChatState;
+    const stale = row.chat_changed_at === null || ctx.now.getTime() - row.chat_changed_at.getTime() > CHAT_RETRY_AFTER_MS;
+    const update = (set: Record<string, unknown>) =>
+      ctx.trx
+        .updateTable('crove_kernel.channel_connection')
+        .set({ ...set, chat_changed_at: ctx.now } as never)
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.connectionId)
+        .execute();
+    if (input.on) {
+      if (row.status !== 'active') throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kênh này không còn hoạt động, hãy kết nối lại');
+      if (state === 'on' || (state === 'enabling' && !stale)) return { chatState: state };
+      if (state === 'disabling' && !stale) throw new DomainError('CHAT_BUSY', 409, 'Đang tắt nhận tin nhắn, hãy thử lại sau ít giây');
+      await update({ chat_hook_next: newChatHook(), chat_state: 'enabling', chat_error: null, chat_bot_id: null });
+      await ctx.emit(TELEGRAM_CHAT_QUEUED, { connectionId: input.connectionId, action: 'enable' });
+      ctx.audit({ connection_id: input.connectionId, action: 'enable' });
+      return { chatState: 'enabling' };
+    }
+    if (state === 'off') {
+      // Nothing is set at Telegram: only a failed attempt's message is cleared.
+      await ctx.trx.updateTable('crove_kernel.channel_connection').set({ chat_error: null }).where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).execute();
+      return { chatState: 'off' };
+    }
+    if (row.status !== 'active') {
+      await update({ chat_hook: null, chat_hook_next: null, chat_state: 'off', chat_bot_id: null, chat_error: null });
+      ctx.audit({ connection_id: input.connectionId, action: 'disable', local: true });
+      return { chatState: 'off' };
+    }
+    if (state === 'disabling' && !stale) return { chatState: state };
+    await update({ chat_state: 'disabling' });
+    await ctx.emit(TELEGRAM_CHAT_QUEUED, { connectionId: input.connectionId, action: 'disable' });
+    ctx.audit({ connection_id: input.connectionId, action: 'disable' });
+    return { chatState: 'disabling' };
+  },
+});
+
+export interface TelegramChatWork {
+  action: 'call' | 'none';
+  // The hook to set (an enable), for the worker to build the webhook address and its secret from. In memory only: never logged or stored.
+  hook?: string;
+  // Its fingerprint, which the worker hands back to say which hook it set.
+  hookFp?: string;
+  // The bots the org's other connections already answer chats with: the same bot cannot have two webhooks.
+  takenBotIds?: string[];
+}
+
+// What the worker's job is to do for a connection. An enable sets the hook being set (chat_hook_next); when the live hook changed while the worker
+// was at it (`usedHookFp` is the one it set), it is to set the live one again. A disable needs no hook. `none` when the connection moved on since
+// the event (turned off again, disconnected, inactive). A query, so its answer (the hook) is never an audit row.
+export const channelTelegramChatWork = defineQuery({
+  name: 'kernel.channel.telegram_chat_work',
+  input: z.strictObject({ connectionId: zId, action: zChatAction, usedHookFp: zHookFp.optional() }),
+  access: 'system',
+  handler: async (ctx, input): Promise<TelegramChatWork> => {
+    const row = await ctx.trx
+      .selectFrom('crove_kernel.channel_connection')
+      .select(['provider', 'status', 'chat_state', 'chat_hook', 'chat_hook_next'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .executeTakeFirst();
+    if (!row || row.provider !== 'telegram' || row.status !== 'active') return { action: 'none' };
+    if (input.action === 'disable') return row.chat_state === 'disabling' ? { action: 'call' } : { action: 'none' };
+    const hook =
+      row.chat_state === 'enabling' && row.chat_hook_next
+        ? row.chat_hook_next
+        : row.chat_state === 'on' && row.chat_hook && input.usedHookFp && hookFp(row.chat_hook) !== input.usedHookFp
+          ? row.chat_hook
+          : null;
+    if (!hook) return { action: 'none' };
+    const others = await ctx.trx
+      .selectFrom('crove_kernel.channel_connection')
+      .select('chat_bot_id')
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '<>', input.connectionId)
+      .where('provider', '=', 'telegram')
+      .where('status', '=', 'active')
+      .where('chat_state', 'in', ['enabling', 'on'])
+      .where('chat_bot_id', 'is not', null)
+      .execute();
+    return { action: 'call', hook, hookFp: hookFp(hook), takenBotIds: others.flatMap((o) => (o.chat_bot_id ? [o.chat_bot_id] : [])) };
+  },
+});
+
+// What came of the worker's call. An enable that worked makes the hook being set the live one (and remembers the bot); one that failed leaves the
+// old live hook (a reconnect that did not take) or none, with the code for the screen to word. A disable ends with no hook, failed or not: nothing
+// is received any more either way. Applies only while the connection is still in the state the call was for, and an enable only if the hook it set is
+// still the one wanted (`hookFp`): `hookChanged` tells the job to look again. The code is code-shaped: what Telegram says in words never lands in a row.
+export const channelTelegramChatRecord = defineCommand({
+  name: 'kernel.channel.telegram_chat_record',
+  input: z.strictObject({ connectionId: zId, action: zChatAction, outcome: z.enum(['done', 'failed']), botId: z.string().regex(/^[0-9]{3,20}$/).optional(), code: zChatCode.optional(), hookFp: zHookFp.optional() }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
+  handler: async (ctx, input): Promise<{ applied: boolean; hookChanged: boolean; chatState: ChatState | null }> => {
+    const row = await ctx.trx
+      .selectFrom('crove_kernel.channel_connection')
+      .select(['chat_state', 'chat_hook', 'chat_hook_next'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .forUpdate()
+      .executeTakeFirst();
+    const state = (row?.chat_state ?? null) as ChatState | null;
+    const skipped = (hookChanged = false) => ({ applied: false, hookChanged, chatState: state });
+    if (!row) return skipped();
+    const set = (values: Record<string, unknown>) =>
+      ctx.trx
+        .updateTable('crove_kernel.channel_connection')
+        .set({ ...values, chat_changed_at: ctx.now } as never)
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.connectionId)
+        .execute();
+    const failure = input.outcome === 'failed' ? (input.code ?? 'FAILED') : null;
+    if (input.action === 'disable') {
+      if (state !== 'disabling') return skipped();
+      await set({ chat_hook: null, chat_hook_next: null, chat_state: 'off', chat_bot_id: null, chat_error: failure });
+      ctx.audit({ connection_id: input.connectionId, action: 'disable', outcome: input.outcome, ...(failure ? { code: failure } : {}) });
+      return { applied: true, hookChanged: false, chatState: 'off' };
+    }
+    if (state === 'enabling' && row.chat_hook_next) {
+      if (input.hookFp && hookFp(row.chat_hook_next) !== input.hookFp) return skipped(true);
+      if (input.outcome === 'done') {
+        await set({ chat_hook: row.chat_hook_next, chat_hook_next: null, chat_state: 'on', chat_error: null, chat_bot_id: input.botId ?? null });
+      } else if (row.chat_hook) {
+        await set({ chat_hook_next: null, chat_state: 'on', chat_error: failure });
+      } else {
+        await set({ chat_hook: null, chat_hook_next: null, chat_state: 'off', chat_bot_id: null, chat_error: failure });
+      }
+      ctx.audit({ connection_id: input.connectionId, action: 'enable', outcome: input.outcome, ...(failure ? { code: failure } : {}) });
+      return { applied: true, hookChanged: false, chatState: input.outcome === 'done' || row.chat_hook ? 'on' : 'off' };
+    }
+    // The worker set a hook that is no longer the live one (a newer enable finished first): it is to set the live one again.
+    return skipped(state === 'on' && row.chat_hook !== null && input.hookFp !== undefined && hookFp(row.chat_hook) !== input.hookFp);
+  },
+});
+
+export const channelCommands = [channelConnect, channelDisconnect, channelMarkExpired, channelRevokeByPlatform, channelCloseOrphan, channelOAuthBegin, channelOAuthConsume, channelRefresh, channelReseal, channelTelegramChatSet, channelTelegramChatRecord];
+export const channelQueries = [channelsList, channelCredential, channelTelegramChatWork];

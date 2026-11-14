@@ -13,7 +13,7 @@ const chosen = (value: 'vi' | 'en') => (context: BrowserContext) => context.addC
 const vietnamese = chosen('vi');
 const english = chosen('en');
 // Each visit names its language, so a machine whose browser language is English still measures the Vietnamese pages.
-const VISITS = ['/', '/ke-toan', '/engage', '/notes'].flatMap((path) => [
+const VISITS = ['/', '/ke-toan', '/engage', '/notes', '/privacy'].flatMap((path) => [
   { path, label: path, setup: vietnamese },
   { path, label: `${path} in English`, setup: english },
 ]);

@@ -40,6 +40,9 @@ export interface SealInput {
   expectedLength: number;
   // The most plaintext accepted, counted while it streams.
   maxBytes: number;
+  // A live piece after the first (ADR-0052 L4a) is a slice in the middle of a recorder stream, with no container header to sniff: it is sealed as opaque bytes and
+  // its type is application/octet-stream. The first piece, and every upload of a whole recording, is sniffed as before.
+  opaque?: boolean;
   store: BlobStore;
   orgId: string;
 }
@@ -116,7 +119,7 @@ export async function sealMedia(input: SealInput): Promise<SealedMedia> {
     }
     if (total === 0) throw new DomainError('NO_FILE', 400, 'Tệp rỗng');
     const head = Buffer.concat(held);
-    const contentType = detectMediaContainer(head, kind);
+    const contentType = input.opaque ? 'application/octet-stream' : detectMediaContainer(head, kind);
     if (!contentType) throw new DomainError('INVALID_MEDIA_CONTAINER', 400, 'Uploaded media is not a supported audio/video container');
 
     const write = await stagedWriteFor(input.store, `org/${orgId}`);

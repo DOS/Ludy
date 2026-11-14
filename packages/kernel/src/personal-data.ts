@@ -291,6 +291,13 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: "What was said in a meeting, which may name or describe a person: found where the actor reads the meeting; counted per recorder where the owner cannot; deleted with the meeting (its recorder, an owner, or the retention job)",
   },
+  // The live preview of a meeting being recorded (ADR-0052 L4a-2, issue #3110): the recorder's own Vy's transcription of the pieces sent so far. Only the recorder reads it (no
+  // finder, owner or admin can), the batch transcript replaces it, and it goes with the meeting, so a request is answered the way it is for the transcript: by deleting the meeting.
+  'crove_meetings.live_line.text': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: "A draft of what was said in a meeting being recorded, which may name or describe a person: read by its recorder alone, replaced by the transcript after the meeting and deleted with the meeting (its recorder, an owner, or the retention job)",
+  },
   'crove_meetings.transcript_segment.speaker_label': {
     kind: 'free_text',
     handling: 'erase',

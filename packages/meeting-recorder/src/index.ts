@@ -286,3 +286,6 @@ export async function prepareCapture<S extends CaptureStream, R extends CaptureR
     return { status: 'failed', reason: 'setup', error };
   }
 }
+
+// Live notes (ADR-0052 L4a): the sender, the audio-only live recorder wrapper and the stop order.
+export * from './live.ts';

@@ -11,6 +11,7 @@ import { NativeSelect } from '@crove/ui/components/native-select';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { MeetingLinks } from '../components/meeting-links.tsx';
 import { MeetingResults, memberLabel } from '../components/meeting-results.tsx';
+import { MeetingLive } from '../components/meeting-live.tsx';
 import { MeetingTranscript } from '../components/meeting-transcript.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
@@ -318,6 +319,7 @@ export function MeetingDetailPage() {
         )}
       </div>
 
+      <MeetingLive meetingId={id} liveNotes={meeting.liveNotes} isRecorder={meeting.isRecorder} />
       {/* The transcript: the recorder's draft, or what was shared with the meeting */}
       <MeetingTranscript meetingId={id} {...(seg ? { focusSegmentId: seg } : {})} />
       <MeetingResults meetingId={id} readers={meeting.readers} />

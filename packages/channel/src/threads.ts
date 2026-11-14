@@ -40,6 +40,7 @@ import { graphTime, pagingCursor, platformLink, RECENT_PAGES_MAX, RECENT_POSTS_M
 import { holdsLink } from './text.ts';
 import { allowlistedFetch, ConnectorError, type AuthorizeInput, type ExchangeInput, type Fetch, type OAuthConnector } from './oauth.ts';
 import { QUOTA_RETRY_MS, quotaExhausted } from './instagram.ts';
+import { THREADS_REPLY_SCOPES, ThreadsConversations } from './threads-conversation.ts';
 
 export const THREADS_HOSTS = ['graph.threads.net'] as const;
 // threads_manage_insights (#819): post counts and the account's followers; a channel connected before asks again.
@@ -151,7 +152,8 @@ export class ThreadsConnector implements OAuthConnector {
     const url = new URL('https://threads.net/oauth/authorize');
     url.searchParams.set('client_id', this.app.appId);
     url.searchParams.set('redirect_uri', input.redirectUri);
-    url.searchParams.set('scope', THREADS_SCOPES.join(','));
+    // The inbox opt-in (#3133): "also read and answer replies" adds the reply-reading permission and reconnects.
+    url.searchParams.set('scope', [...THREADS_SCOPES, ...(input.comments ? THREADS_REPLY_SCOPES : [])].join(','));
     url.searchParams.set('response_type', 'code');
     url.searchParams.set('state', input.state);
     return url.toString();
@@ -178,7 +180,23 @@ export class ThreadsConnector implements OAuthConnector {
     const id = typeof me.id === 'string' || typeof me.id === 'number' ? String(me.id) : '';
     if (!NUMERIC_ID.test(id)) throw new ConnectorError('provider', 'Threads answered without a user id');
     const name = typeof me.username === 'string' && me.username ? `@${me.username}` : `Threads ${id}`;
-    return [{ provider: 'threads', externalAccountId: id, displayName: name.slice(0, 200), scopes: [...THREADS_SCOPES], expiresAt: expiryOf(long), secret: JSON.stringify({ accessToken: token }) }];
+    // Threads does not say what was granted, so the reply-reading permission is recorded only when a read that needs it works with this token
+    // (#3133): a profile that never opted in, or declined it, is read as without, and nothing is ever read for it. [M]: the probe is
+    // `GET /me/replies`, settled by the live check; an answer that is not a clear success counts as not granted, never as granted.
+    const replies = await this.client
+      .call<{ data?: unknown }>('GET', `${VERSION}/me/replies`, { token, params: { fields: 'id', limit: '1' }, timeoutMs: 10_000 })
+      .then((answer) => Array.isArray(answer.data))
+      .catch(() => false);
+    return [
+      {
+        provider: 'threads',
+        externalAccountId: id,
+        displayName: name.slice(0, 200),
+        scopes: [...THREADS_SCOPES, ...(replies ? THREADS_REPLY_SCOPES : [])],
+        expiresAt: expiryOf(long),
+        secret: JSON.stringify({ accessToken: token }),
+      },
+    ];
   }
 }
 
@@ -292,6 +310,8 @@ export function threadsReplyControlOf(settings: Readonly<Record<string, unknown>
 export class ThreadsPublisher implements Publisher {
   readonly provider = 'threads' as const;
   readonly publishSafety: RetrySafety = 'reconcile_only';
+  // The replies under the profile's own posts, in the conversation core (#3133).
+  readonly conversations: ThreadsConversations;
   private readonly client: ThreadsClient;
   private readonly waitMs: number;
   private readonly pollMs: number;
@@ -304,6 +324,13 @@ export class ThreadsPublisher implements Publisher {
     this.pollMs = timing.pollMs ?? POLL_MS;
     this.commentWaitMs = timing.commentWaitMs ?? COMMENT_WAIT_MS;
     this.commentBudgetMs = timing.commentBudgetMs ?? COMMENT_BUDGET_MS;
+    this.conversations = new ThreadsConversations({
+      call: (method, path, options) => this.client.call(method, path, options),
+      failure: threadsResult,
+      comment: (input) => this.comment(input),
+      token: tokenIn,
+      version: VERSION,
+    });
   }
 
   // A post's counts (plan §3.6, #744): views, likes, replies, and reposts, quotes and shares together, from the media

@@ -33,6 +33,12 @@ export const MEMBER_VY_FEATURES = {
   'meetings.transcribe': { module: 'meetings', expiryMinutes: 240 },
   // The recorder's Vy summarizing one meeting in the foreground (#2580, M6): one model call over the transcript, the member waiting for it.
   'meetings.summary': { module: 'meetings', expiryMinutes: 30 },
+  // The recorder's Vy taking live notes of one meeting being recorded (#3110, L4a-2): one run per window of one or two pieces (15 to 30 seconds), so a window that
+  // fails or is abandoned never holds the next one; its own key, so it never cuts off a transcription or a summary (#3029).
+  'meetings.live_notes': { module: 'meetings', expiryMinutes: 30 },
+  // The running notes of a live-notes meeting (#3110): one model call over the new preview lines and the previous notes, the recorder's pane waiting for it. A run of its own,
+  // because a member's Vy has one live run per feature and a window (meetings.live_notes) may be running.
+  'meetings.live_summary': { module: 'meetings', expiryMinutes: 30 },
 } as const;
 export type MemberVyFeature = keyof typeof MEMBER_VY_FEATURES;
 const FEATURE_KEYS = Object.keys(MEMBER_VY_FEATURES) as [MemberVyFeature, ...MemberVyFeature[]];
@@ -662,6 +668,60 @@ export const memberVyRunCheck = defineQuery({
   },
 });
 
+// The pieces of the recorder's own recording that are going on now, for the recorder's own live notes run (ADR-0052 L4a, #3110). The same shape and the same rules as the
+// finished audio below: the database function crove_meetings.live_for_member_vy is the gate (this run's own context, the meeting its result row names, the run's member the
+// recorder and active, the meeting opted into live notes and inside its audio period), each piece carries its own wrapped key (media_key kind live:<seq>, #3109) and never
+// plaintext, and the file rows are then read by exactly the ids it returned. An empty answer is not an error: the window simply has nothing new yet.
+async function openLivePieces(ctx: CommandContext, meetingId: string, afterSeq: number, limit: number) {
+  type Row = { seq: number; length_seconds: number; start_offset_seconds: number; file_id: string; is_english: boolean; key_id: string; wrapped_key: Buffer };
+  let rows: Row[];
+  try {
+    rows = (await sql<Row>`SELECT * FROM crove_meetings.live_for_member_vy(${ctx.orgId}::uuid, ${meetingId}::uuid, ${afterSeq}::int, ${limit}::int)`.execute(ctx.trx)).rows;
+  } catch (error: unknown) {
+    const code = /MEETINGS_(RUN_REQUIRED|NOT_RECORDER|KEY_SHREDDED|WORKER_ONLY)/.exec(error instanceof Error ? error.message : '')?.[0];
+    if (code === 'MEETINGS_KEY_SHREDDED') throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Khóa giải mã của bản ghi đã bị hủy');
+    if (code) throw new DomainError('FORBIDDEN', 403, 'Lượt chạy này không đọc được bản ghi của cuộc họp này');
+    throw error;
+  }
+  const files = rows.length
+    ? await ctx.trx
+        .selectFrom('crove_kernel.file')
+        .select(['id', 'storage_key', 'generation', 'size_bytes', 'sha256', 'content_type'])
+        .where('org_id', '=', ctx.orgId)
+        .where(
+          'id',
+          'in',
+          rows.map((r) => r.file_id),
+        )
+        .execute()
+    : [];
+  const byId = new Map(files.map((f) => [f.id, f]));
+  ctx.audit({ runId: ctx.memberVy?.runId, subjectId: meetingId, count: rows.length });
+  return {
+    language: rows[0]?.is_english ? 'en' : 'vi',
+    pieces: rows.flatMap((r) => {
+      const file = byId.get(r.file_id);
+      // A piece whose file row is gone (the final recording landed and the sweep took it) is left out: the window goes on with what is still there.
+      if (!file) return [];
+      return [
+        {
+          seq: r.seq,
+          lengthSeconds: r.length_seconds,
+          startOffsetSeconds: r.start_offset_seconds,
+          keyId: r.key_id,
+          wrappedKey: r.wrapped_key,
+          fileId: r.file_id,
+          storageKey: file.storage_key,
+          generation: file.generation,
+          sizeBytes: Number(file.size_bytes),
+          sha256: file.sha256,
+          contentType: file.content_type,
+        },
+      ];
+    }),
+  };
+}
+
 // The recorder's own recording, for the recorder's own transcription run (ADR-0049 decision 8, #2578): the file ids, the order, the offsets and lengths and the
 // wrapped key of ONE meeting's audio, never plaintext (the worker fetches and decrypts). The database function crove_meetings.audio_for_member_vy is the gate:
 // it answers only in this run's own context, for the meeting the run's result row names, when the run's member is that meeting's recorder and is active. The
@@ -669,7 +729,10 @@ export const memberVyRunCheck = defineQuery({
 // a count; the runtime audits no read of a member-scoped context, and a sensitive query is refused to an agent): the one memberVy command beside the store.
 export const memberVyMeetingAudioOpen = defineCommand({
   name: 'kernel.member_vy.meeting_audio.open',
-  input: z.object({ meetingId: zId }),
+  // `live` asks for the pieces of a recording that is going on (ADR-0052 L4a, #3110) instead of the finished audio: the same door, so the audit allowlist and the list of
+  // member-mode commands stay as they were. `afterSeq` is the piece the preview has reached and `limit` the window; the run's feature decides which gate answers (the
+  // database function of each refuses the other's runs), so a transcription run can never read a live piece nor a live run the finished audio.
+  input: z.object({ meetingId: zId, live: z.object({ afterSeq: z.number().int().min(-1).max(100_000), limit: z.number().int().min(1).max(100) }).optional() }),
   risk: 'R1',
   sideEffect: 'internal',
   access: ['owner', 'admin', 'member'],
@@ -677,6 +740,7 @@ export const memberVyMeetingAudioOpen = defineCommand({
   memberVy: { taint: 'propagate' },
   handler: async (ctx, input) => {
     if (!ctx.memberVy) throw new DomainError('FORBIDDEN', 403, 'Chỉ lượt chạy nền của Vy mới đọc được bản ghi này', { rule: 'member_vy_context' });
+    if (input.live) return openLivePieces(ctx, input.meetingId, input.live.afterSeq, input.live.limit);
     type Row = { segment_order: number; start_offset_seconds: number; length_seconds: number; file_id: string; is_english: boolean; key_id: string; wrapped_key: Buffer };
     let rows: Row[];
     try {
