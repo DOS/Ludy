@@ -27,6 +27,8 @@ import {
   LIVE_CHUNK_MAX_BYTES,
   LIVE_CHUNK_MAX_COUNT,
   LIVE_CHUNK_MAX_SECONDS,
+  RECORDING_STOP_REASONS,
+  type RecordingStopReason,
   zExtensionAuthorize,
   XLSX_CONTENT_TYPE,
   accountParents,
@@ -128,6 +130,7 @@ import { actorOf, bearerIssuedToOAuthClient, oauthClientRefused, type Authentica
 import { exchangeExtensionCode, extensionIdOfOrigin, newExtensionCode, refuseOutsideScopes, voidUndeliveredExtensionToken, wellFormedExtensionCode, wellFormedVerifier } from './auth-extension.ts';
 import { ConcurrencyLimiter, type Semaphore } from './concurrency.ts';
 import { onepiece, sealMedia, sizeText, streamPieces } from './media-seal.ts';
+import { assembleLivePieces } from './meetings-live-assemble.ts';
 import { decryptedWindows, mediaMeasurerFor, unavailable as mediaProbeUnavailable, type MediaMeasurer } from './meetings-measure.ts';
 import { MEDIA_TICKET_KEY_LABEL, MEDIA_TICKET_MAX_TTL_SECONDS, MEDIA_TICKET_PURPOSE, peekMediaTicketKeyId, signMediaTicket, verifyMediaTicket, wellFormedMediaTicket } from './media-ticket.ts';
 import { BODY_STALL_TIMEOUT_MS } from './upload-timeouts.ts';
@@ -334,6 +337,8 @@ export interface HttpDeps {
   conversationReader?: ConversationReader;
   // The recorder's Vy summarizing a meeting (#2580, M6 part B2); unset: the summary is off.
   summaryModel?: ModelPort | null;
+  // The deployment's AI prices (AI_PRICE_*), for the cost a translation shows before the click (#3184); unset: no figure.
+  aiPrice?: { inputPerMTok: string; outputPerMTok: string };
   // The public tax registry lookup for onboarding (issue #324); unset: off (TAX_CODE_LOOKUP_URL).
   taxLookup?: TaxCodeLookup;
   // The assisted purchase-invoice sync from the tax portal (issue #325); unset: off (TAX_PORTAL_SYNC).
@@ -557,7 +562,7 @@ function clientIp(c: Context, trustedHops: number): string | null {
 export function createHttpApp(deps: HttpDeps) {
   const { config, runtime, store, authenticate } = deps;
   const app = new Hono<{ Variables: { user: AuthUser } }>();
-  const rpc = createRpcHandler(runtime, deps.mailer ? createInviteMailSender(deps.mailer, appUrl(config), {}, config.INBOUND_DOMAIN && config.INBOUND_SECRET ? config.INBOUND_DOMAIN : null, config.BRAND_NAME) : undefined, deps.channels, deps.socialWriter, deps.taxLookup, undefined, undefined, deps.portalSync, deps.bookingReader, deps.aiMeter, deps.aiEnabled, deps.conversationReader, deps.summaryModel ?? null);
+  const rpc = createRpcHandler(runtime, deps.mailer ? createInviteMailSender(deps.mailer, appUrl(config), {}, config.INBOUND_DOMAIN && config.INBOUND_SECRET ? config.INBOUND_DOMAIN : null, config.BRAND_NAME) : undefined, deps.channels, deps.socialWriter, deps.taxLookup, undefined, undefined, deps.portalSync, deps.bookingReader, deps.aiMeter, deps.aiEnabled, deps.conversationReader, deps.summaryModel ?? null, deps.aiPrice);
   const perMinute = config.API_RATE_LIMIT_PER_MINUTE;
   const limiter = deps.rateLimiter !== undefined ? deps.rateLimiter : perMinute > 0 ? new RateLimiter({ perMinute }) : null;
 
@@ -2593,6 +2598,14 @@ export function createHttpApp(deps: HttpDeps) {
         // The plaintext as it arrives, sealed piece by piece below (#2780): never held whole, and its declared length is checked.
         let source: AsyncIterable<Uint8Array>;
         let declaredLength: number;
+        // Why the recording stopped without the recorder's click, when the client says so (A1, #3159): a code from a fixed list in the
+        // JSON body, the form or the query, whichever carries the file. Anything else is refused; absent means the recorder stopped it.
+        let stopReason: RecordingStopReason | undefined;
+        const readStopReason = (value: unknown): RecordingStopReason | undefined => {
+          if (value === undefined || value === null || value === '') return undefined;
+          if (typeof value === 'string' && (RECORDING_STOP_REASONS as readonly string[]).includes(value)) return value as RecordingStopReason;
+          throw new DomainError('BAD_REQUEST', 400, 'stopReason is not a known code');
+        };
 
         const verifyRecorderAndKind = async (mediaKind: 'audio' | 'video') => {
           const meeting = await meetingFacts(user, orgId, meetingId);
@@ -2631,11 +2644,13 @@ export function createHttpApp(deps: HttpDeps) {
             uploadId?: unknown;
             kind?: unknown;
             lengthSeconds?: unknown;
+            stopReason?: unknown;
           } | null;
           if (!body || typeof body.uploadId !== 'string' || (body.kind !== 'audio' && body.kind !== 'video')) {
             throw new DomainError('BAD_REQUEST', 400, 'uploadId and kind (audio|video) required');
           }
           kind = body.kind;
+          stopReason = readStopReason(body.stopReason);
           if (kind === 'video') {
             // The staged bytes are read whole into memory: one video transfer per process (a multipart one took its slot in the gate).
             releaseJsonVideo = videoTransfers.tryAcquire(user.userId);
@@ -2686,6 +2701,7 @@ export function createHttpApp(deps: HttpDeps) {
             throw new DomainError('BAD_REQUEST', 400, 'kind must be audio or video');
           }
           kind = kindVal;
+          stopReason = readStopReason(formData.get('stopReason'));
           const kindHint = c.req.query('kind');
           if (kindHint !== undefined && kindHint !== kind) throw new DomainError('BAD_REQUEST', 400, 'kind does not match the declared kind');
           await verifyRecorderAndKind(kind);
@@ -2715,6 +2731,7 @@ export function createHttpApp(deps: HttpDeps) {
           const kindVal = c.req.query('kind');
           if (kindVal !== 'audio' && kindVal !== 'video') throw new DomainError('BAD_REQUEST', 400, 'kind must be audio or video');
           kind = kindVal;
+          stopReason = readStopReason(c.req.query('stopReason'));
           await verifyRecorderAndKind(kind);
           const lengthVal = c.req.query('lengthSeconds');
           if (lengthVal !== undefined) {
@@ -2780,6 +2797,7 @@ export function createHttpApp(deps: HttpDeps) {
               sha256,
               contentType: sniffedContentType,
               lengthSeconds: measuredSeconds,
+              ...(stopReason !== undefined ? { stopReason } : {}),
             },
             { actor: actorOf(user), orgId },
           );
@@ -2893,6 +2911,33 @@ export function createHttpApp(deps: HttpDeps) {
         dataKey.fill(0);
         wrapSubkey.fill(0);
       }
+    } catch (error) {
+      return problem(c, error);
+    } finally {
+      release?.();
+    }
+  });
+
+  // Join the live pieces of a recording that never finished into its audio (ADR-0052 L4a, #3126): the recorder's own click, after the window of the pieces has passed with no
+  // final upload. The pieces are the recorder's own and are read in their own session (the plan is a query as the recorder; the route decrypts one piece at a time, seals the
+  // join under a fresh audio key, has crove-media measure it, and meetings.live.assemble_record records it and discards the pieces). Not in the extension's routes: the click is the app's.
+  const liveAssembles = new ConcurrencyLimiter({ total: 2, perKey: 1 });
+  app.post('/api/meetings/:id/live-assemble', async (c) => {
+    let release: (() => void) | null = null;
+    try {
+      if (!runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
+      const user = c.get('user');
+      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      const meetingId = c.req.param('id') ?? '';
+      const meeting = await meetingFacts(user, orgId, meetingId);
+      if (!meeting.isRecorder) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can join its live pieces');
+      release = liveAssembles.tryAcquire(user.userId);
+      if (!release) throw busy(c);
+      const result = await assembleLivePieces(
+        { runtime, store, broker: deps.broker ?? createCredentialBroker(config), measurer: mediaMeasurer, maxBytes: meetingMediaCap('audio') },
+        { actor: actorOf(user), orgId, meetingId },
+      );
+      return c.json(result);
     } catch (error) {
       return problem(c, error);
     } finally {

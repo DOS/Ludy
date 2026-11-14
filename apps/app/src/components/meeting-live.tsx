@@ -5,13 +5,13 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 import { useTranslations } from 'use-intl';
-import type { LiveStatus } from '@crove/kernel-contract';
+import type { LiveAssembleState, LiveStatus } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
 import { ErrorText } from './ui.tsx';
 import { clock } from './meeting-transcript.tsx';
-import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { assembleLivePieces, errorMessage, orpc, queryClient } from '../lib/api.ts';
 
 // The cadence of the status poll and of the tick, in milliseconds, and of the running notes (ADR-0052: every five minutes, or on the recorder's click).
 export const LIVE_POLL_MS = 10_000;
@@ -52,6 +52,16 @@ export function createTickGate(): { run(call: () => Promise<unknown>): Promise<b
   };
 }
 
+// What the recording-not-uploaded box shows: nothing while the final recording may still arrive (during and after the meeting, until the longest recording time has passed),
+// nothing when there are no pieces or the recording exists (an expired meeting that kept its recording has no pieces left); the offer when the pieces can be joined; the reason
+// when they cannot: no first piece, or the audio period ended while pieces were still kept.
+export type AssembleView = 'none' | 'offer' | 'first_piece_missing' | 'expired';
+export function assembleView(state: LiveAssembleState): AssembleView {
+  if (state.available) return 'offer';
+  if ((state.reason === 'first_piece_missing' || state.reason === 'expired') && state.pieces > 0) return state.reason;
+  return 'none';
+}
+
 export function MeetingLive({ meetingId, liveNotes, isRecorder }: { meetingId: string; liveNotes: boolean; isRecorder: boolean }) {
   if (!liveNotes || !isRecorder) return null;
   return <LivePane meetingId={meetingId} />;
@@ -80,6 +90,14 @@ function LivePane({ meetingId }: { meetingId: string }) {
       void queryClient.invalidateQueries({ queryKey: orpc.meetings.results.get.key() });
     },
   });
+  // The recorder's click joins the live pieces into the recording (#3126): the page then shows the recording, and the pane the result.
+  const assemble = useMutation({
+    mutationFn: () => assembleLivePieces(meetingId),
+    onSuccess: () => {
+      refresh();
+      void queryClient.invalidateQueries({ queryKey: orpc.meetings.key() });
+    },
+  });
   const start = useMutation({ mutationFn: () => orpc.meetings.liveStart.call({ meetingId }), onSuccess: refresh });
   const stop = useMutation({ mutationFn: () => orpc.meetings.liveStop.call({ meetingId }), onSuccess: refresh });
 
@@ -101,7 +119,9 @@ function LivePane({ meetingId }: { meetingId: string }) {
 
   if (!data) return null;
   const notice = liveNotice(data);
-  const error = status.error ?? tick.error ?? start.error ?? stop.error ?? notes.error;
+  const error = status.error ?? tick.error ?? start.error ?? stop.error ?? notes.error ?? assemble.error;
+  const view = assembleView(data.assemble);
+  const gaps = (missing: number[]) => ({ count: String(missing.length), list: missing.slice(0, 20).join(', ') + (missing.length > 20 ? ', ...' : '') });
   return (
     <Card data-testid="live-pane">
       <CardHeader>
@@ -137,6 +157,28 @@ function LivePane({ meetingId }: { meetingId: string }) {
                   {t('stop')}
                 </Button>
               </>
+            )}
+          </div>
+        )}
+        {(view !== 'none' || assemble.data) && (
+          <div role="status" className="space-y-2 rounded-md border p-3" data-testid="live-assemble">
+            <p className="font-medium">{t('assemble.title')}</p>
+            {assemble.data ? (
+              <>
+                <p>{t('assemble.done', { pieces: String(assemble.data.pieces), length: clock(assemble.data.lengthSeconds) })}</p>
+                {assemble.data.missing.length > 0 && <p data-testid="live-assemble-gaps">{t('assemble.doneGaps', gaps(assemble.data.missing))}</p>}
+              </>
+            ) : view === 'offer' ? (
+              <>
+                <p>{t('assemble.offer', { pieces: String(data.assemble.pieces) })}</p>
+                {data.assemble.missing.length > 0 && <p data-testid="live-assemble-gaps">{t('assemble.gaps', gaps(data.assemble.missing))}</p>}
+                <p className="text-xs text-muted-foreground">{t('assemble.lateUpload')}</p>
+                <Button size="sm" loading={assemble.isPending} onClick={() => assemble.mutate()}>
+                  {t('assemble.button')}
+                </Button>
+              </>
+            ) : (
+              view !== 'none' && <p className="text-xs text-muted-foreground">{t(`assemble.reasons.${view}`)}</p>
             )}
           </div>
         )}

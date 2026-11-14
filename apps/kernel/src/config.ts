@@ -554,7 +554,7 @@ const schema = z.object({
   // (TRANSCRIBE_BASE_URL and TRANSCRIBE_MODEL; the key is optional for a local model). The module works with it off: no run starts and the screen shows
   // no button. AI_PRICE_AUDIO_PER_MIN is the price of one minute of audio in the unit of the other AI_PRICE_* settings (default 0: counted, not priced).
   MEETINGS_TRANSCRIBE: z.enum(['on', 'off']).default('off'),
-  // The recorder's Vy summarizing a meeting (#2580, M6): off unless MEETINGS_SUMMARY=on (it also needs the deployment's AI provider and Vy turned on for members).
+  // The recorder's Vy summarizing a meeting (#2580, M6): off unless MEETINGS_SUMMARY=on (it also needs the deployment's AI provider and Vy turned on for members). The same switch lets a member's Vy translate the summary they read (#3184).
   // The module works with it off: the recorder types a summary and items by hand, and no button asks Vy.
   MEETINGS_SUMMARY: z.enum(['on', 'off']).default('off'),
   // How many meeting videos this process streams at once, over all members (#2965; each member may have 3, or this many if it is lower). A stream holds a slot until its body ends,
