@@ -399,6 +399,7 @@ import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoi
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
 import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsFlag, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsCapLowerCall, zAdsChangeRequest, zAdsFlagSettingCall, zAdsFlagSettings, zAdsProposalView, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView, zAdsWeeklyNote, zAdsWriteState } from './ads.ts';
 import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView, zAdsCampaignRequestAsked, zAdsCampaignRequestCall, zAdsCampaignRequestView, zAdsLaunchCancelCall, zAdsLaunchRetryCall, zAdsLaunchStopCall } from './ads-campaign.ts';
+import { zHouseholdProfileGet, zHouseholdProfileSet, zHouseholdProfileView, zHouseholdRules, zHouseholdRulesGet } from './household.ts';
 import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankPayrollExplainAsk, zBankPayrollExplanation, zBankPayrollMatch, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
@@ -645,6 +646,11 @@ export const contract = {
     setTelegramChats: oc
       .input(z.object({ connectionId: zId, on: z.boolean() }))
       .output(z.object({ chatState: z.enum(['off', 'enabling', 'on', 'disabling']) })),
+    // Allows a Telegram Business account's chats in, or stops them (#3191): any Premium user can connect a bot that has Business Mode on, so an owner or
+    // admin chooses which accounts count. The account is named by the `ref` the connection list gave.
+    setTelegramBusiness: oc
+      .input(z.object({ connectionId: zId, ref: z.string().regex(/^[0-9a-f]{12}$/), allow: z.boolean() }))
+      .output(z.object({ approved: z.boolean() })),
     // A Discord channel (#832): the URL of a webhook a server admin made in the channel's settings. The server checks the
     // webhook with Discord, then seals its token; the format is checked by the server, in words.
     connectDiscord: oc
@@ -1941,6 +1947,13 @@ export const contract = {
   // admins, members; R2, a mail): queues the reminder the person approved, its facts rebuilt from the books; STALE_REMINDER (409) when the
   // level or total moved since the draft, CUSTOMER_EMAIL_REQUIRED (409), ALREADY_REMINDED (409) for a second one of the level within three days
   // unless confirm is true, PAY_TO_NOT_FOUND (422).
+  // The household business kind (#2517, plan stock-and-marketplaces.md 8.5): the profile of a legal entity of kind household and the law as dated data. Every role reads;
+  // owners and admins set a new row from a date (R1, audited). A row of the law that is still `commentary` is marked so in the answer.
+  household: {
+    profile: oc.input(zHouseholdProfileGet).output(zHouseholdProfileView),
+    profileSet: oc.input(zHouseholdProfileSet).output(zHouseholdProfileView),
+    rules: oc.input(zHouseholdRulesGet.optional()).output(zHouseholdRules),
+  },
   paymentReminders: {
     list: oc.input(z.object({ legalEntityId: zId.optional() }).optional()).output(zPaymentReminderList),
     draft: oc.input(z.object({ partyId: zId, legalEntityId: zId.optional() })).output(zPaymentReminderDraft),

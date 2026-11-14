@@ -6,7 +6,8 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { ConversationAdapter, ConversationMediaInput } from '@crove/channel';
+import { TELEGRAM_PHOTO_MAX_BYTES, type ConversationAdapter, type ConversationMediaInput } from '@crove/channel';
+import { CONVERSATION_IMAGE_MAX_BYTES } from '@crove/kernel-contract';
 import { fetchConversationMedia, mediaHostsOf } from '../src/conversation-media.ts';
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0, 0, 0, 2, 0, 0, 0, 3, 8, 6, 0, 0, 0, 0, 0, 0, 0]);
@@ -95,6 +96,16 @@ describe('mediaHostsOf', () => {
     expect(mediaHostsOf('whatsapp', undefined, { whatsapp: ['media.example.test'] })).toEqual(['media.example.test']);
     // Zalo's list is its own and is not changed by WhatsApp's.
     expect(mediaHostsOf('zalo_oa', undefined, { whatsapp: ['media.example.test'] })).toContain('zdn.vn');
-    expect(mediaHostsOf('telegram', undefined)).toEqual([]);
+    // A provider with no list has no allowed host.
+    expect(mediaHostsOf('linkedin_page', undefined)).toEqual([]);
+  });
+
+  it('has Telegram\'s one host, the Bot API\'s own, which no deployment list changes (#3192)', () => {
+    expect(mediaHostsOf('telegram', undefined)).toEqual(['api.telegram.org']);
+    expect(mediaHostsOf('telegram', ['media.example.test'], { telegram: ['media.example.test'], whatsapp: ['media.example.test'] })).toEqual(['api.telegram.org']);
+  });
+
+  it('holds the Telegram package\'s cap to the core\'s (the package does not import the contract)', () => {
+    expect(TELEGRAM_PHOTO_MAX_BYTES).toBe(CONVERSATION_IMAGE_MAX_BYTES);
   });
 });

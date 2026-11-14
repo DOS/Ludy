@@ -6,7 +6,7 @@
 // never what the platform or the host declared, and never SVG or anything that could be rendered as a page).
 //
 // Nothing here logs or returns the address or any byte of the image except as the result's own bytes: a failure is a short code.
-import { FACEBOOK_MEDIA_HOSTS, INSTAGRAM_MEDIA_HOSTS, WHATSAPP_MEDIA_HOSTS, ZALO_MEDIA_HOSTS, mediaHostAllowed, type ConversationAdapter } from '@crove/channel';
+import { FACEBOOK_MEDIA_HOSTS, INSTAGRAM_MEDIA_HOSTS, TELEGRAM_MEDIA_HOSTS, WHATSAPP_MEDIA_HOSTS, ZALO_MEDIA_HOSTS, mediaHostAllowed, type ConversationAdapter } from '@crove/channel';
 import { CONVERSATION_IMAGE_MAX_BYTES, type ConversationImageType } from '@crove/kernel-contract';
 import { EgressError, egressFetch, guardedFetch, type EgressOptions } from '@crove/kernel-runtime';
 import { imageSize } from './media-probe.ts';
@@ -45,6 +45,8 @@ export function mediaHostsOf(provider: string, configured: readonly string[] | u
   if (provider === 'zalo_oa') return configured && configured.length > 0 ? configured : ZALO_MEDIA_HOSTS;
   if (provider === 'facebook_page') return FACEBOOK_MEDIA_HOSTS;
   if (provider === 'instagram') return INSTAGRAM_MEDIA_HOSTS;
+  // Telegram serves a bot's files from the Bot API's own host (#3192): the one host, never the deployment's to widen.
+  if (provider === 'telegram') return TELEGRAM_MEDIA_HOSTS;
   if (provider === 'whatsapp') {
     const own = byProvider && Object.hasOwn(byProvider, provider) ? byProvider[provider] : undefined;
     return own && own.length > 0 ? own : WHATSAPP_MEDIA_HOSTS;

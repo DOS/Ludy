@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useMutation } from '@tanstack/react-query';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import { Button } from '@crove/ui/components/button';
 import { ErrorText } from './ui.tsx';
@@ -13,11 +13,14 @@ const SETTLE_EVERY_MS = 2000;
 const SETTLE_TIMES = 30;
 
 type ChatState = 'off' | 'enabling' | 'on' | 'disabling';
+// A Telegram Business account the bot is connected to (#3191): its name and @username, whether the connection is on, whether the bot may send, and whether
+// an owner or admin allowed it (any Premium user can connect a bot that has Business Mode on); `ref` names it to the server when allowing or stopping it.
+type BusinessAccount = { ref: string; name: string | null; username: string | null; enabled: boolean; canReply: boolean; approved: boolean };
 
 // Whether a Telegram connection also answers customers' private chats (#3132): off, being turned on or off by the server, or on. The server
 // sets the bot's webhook in a job, so the screen asks again until the state settles, and offers the switch again when it stood too long. A failed
 // attempt shows its code in words. `active`: the connection still works; one whose token was refused can only be turned off.
-export function TelegramChats({ channel, canEdit, active = true, now = Date.now() }: { channel: { id: string; chatState: ChatState; chatError: string | null; chatChangedAt?: string | null }; canEdit: boolean; active?: boolean; now?: number }) {
+export function TelegramChats({ channel, canEdit, active = true, now = Date.now() }: { channel: { id: string; chatState: ChatState; chatError: string | null; chatChangedAt?: string | null; chatBusiness?: BusinessAccount[] }; canEdit: boolean; active?: boolean; now?: number }) {
   const t = useTranslations('social');
   const switching = channel.chatState === 'enabling' || channel.chatState === 'disabling';
   const stuck = switching && channel.chatChangedAt != null && now - Date.parse(channel.chatChangedAt) > TELEGRAM_CHATS_STUCK_MS;
@@ -72,6 +75,75 @@ export function TelegramChats({ channel, canEdit, active = true, now = Date.now(
         </Button>
       )}
       {setChats.error && <ErrorText>{errorMessage(setChats.error)}</ErrorText>}
+      {channel.chatState === 'on' && <TelegramBusiness connectionId={channel.id} accounts={channel.chatBusiness ?? []} canEdit={canEdit} />}
+    </div>
+  );
+}
+
+// Telegram Business (#3191): an owner with Telegram Premium connects the bot to their own account in Telegram, and the bot then answers that account's
+// customer chats. Nothing is turned on here but the choice of accounts: the screen says what to do in Telegram, in the order that works, lists the
+// accounts Telegram told Ludy about, and an owner or admin allows the ones that are theirs. Telegram lets any Premium user connect a bot that has
+// Business Mode on, so an account is not taken in until a person allows it, and stopping it ends its messages at once.
+export function TelegramBusiness({ connectionId, accounts, canEdit, initialConfirm = null }: { connectionId: string; accounts: BusinessAccount[]; canEdit: boolean; initialConfirm?: string | null }) {
+  const t = useTranslations('social');
+  // The account whose "allow" is waiting for a second click: allowing an account is the one step that lets a stranger's chats in, so it asks twice.
+  // (`initialConfirm` is for the tests, which cannot click.)
+  const [confirming, setConfirming] = useState<string | null>(initialConfirm);
+  const allow = useMutation({
+    mutationFn: (v: { ref: string; allow: boolean }) => client.channels.setTelegramBusiness({ connectionId, ref: v.ref, allow: v.allow }),
+    onSuccess: () => {
+      setConfirming(null);
+      void queryClient.invalidateQueries({ queryKey: orpc.channels.list.key() });
+    },
+  });
+  const status = (a: BusinessAccount): string =>
+    !a.enabled ? t('telegramBusinessOff') : !a.approved ? t('telegramBusinessPending') : a.canReply ? t('telegramBusinessOn') : t('telegramBusinessReadOnly');
+  return (
+    <div className="mt-2 space-y-1" data-testid="telegram-business">
+      <p className="text-xs font-medium text-foreground">{t('telegramBusinessTitle')}</p>
+      {accounts.length === 0 ? (
+        <p className="text-xs text-subtle-foreground">{t('telegramBusinessHint')}</p>
+      ) : (
+        <>
+          <ul className="space-y-2 text-xs text-subtle-foreground">
+            {accounts.map((a) => (
+              <li key={a.ref} data-testid="telegram-business-account" className="space-y-1">
+                {/* The name is the account's own choice and can say anything; the @username is unique, so it has a line of its own, labelled. */}
+                <p>
+                  <span>{a.name ?? t('telegramBusinessUnnamed')}</span> <span data-testid="telegram-business-username">{a.username ? `${t('telegramBusinessUsername')} @${a.username}` : t('telegramBusinessNoUsername')}</span>: {status(a)}
+                </p>
+                {canEdit && a.enabled && !a.approved && confirming !== a.ref && (
+                  <Button variant="outline" size="sm" onClick={() => setConfirming(a.ref)}>
+                    {t('telegramBusinessAllow')}
+                  </Button>
+                )}
+                {canEdit && a.enabled && !a.approved && confirming === a.ref && (
+                  <div className="space-y-1" data-testid="telegram-business-confirm">
+                    <p className="text-warning">{a.username ? t('telegramBusinessConfirm', { username: a.username }) : t('telegramBusinessConfirmNoUsername')}</p>
+                    <div className="flex gap-2">
+                      <Button variant="outline" size="sm" loading={allow.isPending && allow.variables?.ref === a.ref} onClick={() => allow.mutate({ ref: a.ref, allow: true })}>
+                        {t('telegramBusinessConfirmYes')}
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => setConfirming(null)}>
+                        {t('telegramBusinessConfirmNo')}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                {/* An allowed account can be stopped whether or not it is connected now: a reconnect must not resume it unasked. */}
+                {canEdit && a.approved && (
+                  <Button variant="outline" size="sm" loading={allow.isPending && allow.variables?.ref === a.ref} onClick={() => allow.mutate({ ref: a.ref, allow: false })}>
+                    {t('telegramBusinessStop')}
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
+          {accounts.some((a) => a.enabled && !a.approved) && <p className="text-xs text-warning">{t('telegramBusinessPendingNote')}</p>}
+          <p className="text-xs text-subtle-foreground">{t('telegramBusinessWindow')}</p>
+        </>
+      )}
+      {allow.error && <ErrorText>{errorMessage(allow.error)}</ErrorText>}
     </div>
   );
 }

@@ -185,7 +185,7 @@ suite('channel connections through the API (ADR-0025)', () => {
       expect(listed.body).toHaveLength(1);
       expect(listed.body[0]).toMatchObject({ id: connectionId, provider: 'sandbox', displayName: 'Trang thử nghiệm', status: 'active', connectedBy: owner.userId });
       expect(Object.keys(listed.body[0]).sort()).toEqual(
-        ['chatChangedAt', 'chatError', 'chatState', 'connectedAt', 'connectedBy', 'displayName', 'expiresAt', 'externalAccountId', 'id', 'provider', 'scopes', 'status', 'statusReason'].sort(),
+        ['chatBusiness', 'chatChangedAt', 'chatError', 'chatState', 'connectedAt', 'connectedBy', 'displayName', 'expiresAt', 'externalAccountId', 'id', 'provider', 'scopes', 'status', 'statusReason'].sort(),
       );
     }
     // The worker opens the sealed sandbox token for this org and account.

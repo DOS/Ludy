@@ -68,6 +68,11 @@ export interface CroveFinanceSchema {
   'crove_finance.einvoice_draft_line': FinanceEinvoiceDraftLineTable;
   'crove_finance.einvoice_series': FinanceEinvoiceSeriesTable;
   'crove_finance.fixed_asset': FinanceFixedAssetTable;
+  'crove_finance.household_expense_group_map': FinanceHouseholdExpenseGroupMapTable;
+  'crove_finance.household_form_version': FinanceHouseholdFormVersionTable;
+  'crove_finance.household_profile': FinanceHouseholdProfileTable;
+  'crove_finance.household_threshold': FinanceHouseholdThresholdTable;
+  'crove_finance.household_trade_rate': FinanceHouseholdTradeRateTable;
   'crove_finance.input_vat_check': FinanceInputVatCheckTable;
   'crove_finance.journal_entry': FinanceJournalEntryTable;
   'crove_finance.journal_line': FinanceJournalLineTable;
@@ -1138,6 +1143,60 @@ export interface FinanceFixedAssetTable {
   legal_entity_id: ColumnType<string, string, NotGranted>;
 }
 
+/** crove_finance.household_expense_group_map */
+export interface FinanceHouseholdExpenseGroupMapTable {
+  expense_group: ColumnType<string, NotGranted, NotGranted>;
+  account_prefix: ColumnType<string, NotGranted, NotGranted>;
+  effective_from: ColumnType<string, NotGranted, NotGranted>;
+  source: ColumnType<string, NotGranted, NotGranted>;
+  status: ColumnType<string, NotGranted, NotGranted>;
+}
+
+/** crove_finance.household_form_version */
+export interface FinanceHouseholdFormVersionTable {
+  book: ColumnType<string, NotGranted, NotGranted>;
+  version: ColumnType<string, NotGranted, NotGranted>;
+  effective_from: ColumnType<string, NotGranted, NotGranted>;
+  name: ColumnType<string, NotGranted, NotGranted>;
+  pit_methods: ColumnType<string[], NotGranted, NotGranted>;
+  source: ColumnType<string, NotGranted, NotGranted>;
+  status: ColumnType<string, NotGranted, NotGranted>;
+}
+
+/** crove_finance.household_profile */
+export interface FinanceHouseholdProfileTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  effective_from: ColumnType<string, string, NotGranted>;
+  tax_group: ColumnType<number, number, NotGranted>;
+  pit_method: ColumnType<string | null, string | null, NotGranted>;
+  trades: ColumnType<string[], string[] | undefined, NotGranted>;
+  einvoice_registered: ColumnType<boolean, boolean | undefined, NotGranted>;
+  representative_name: ColumnType<string | null, string | null, NotGranted>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_finance.household_threshold */
+export interface FinanceHouseholdThresholdTable {
+  code: ColumnType<string, NotGranted, NotGranted>;
+  effective_from: ColumnType<string, NotGranted, NotGranted>;
+  amount: ColumnType<string, NotGranted, NotGranted>;
+  source: ColumnType<string, NotGranted, NotGranted>;
+  status: ColumnType<string, NotGranted, NotGranted>;
+}
+
+/** crove_finance.household_trade_rate */
+export interface FinanceHouseholdTradeRateTable {
+  trade: ColumnType<string, NotGranted, NotGranted>;
+  effective_from: ColumnType<string, NotGranted, NotGranted>;
+  vat_percent: ColumnType<string, NotGranted, NotGranted>;
+  pit_percent: ColumnType<string, NotGranted, NotGranted>;
+  source: ColumnType<string, NotGranted, NotGranted>;
+  status: ColumnType<string, NotGranted, NotGranted>;
+}
+
 /** crove_finance.input_vat_check */
 export interface FinanceInputVatCheckTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -1883,6 +1942,7 @@ export interface KernelChannelConnectionTable {
   quota_blocked_until: ColumnType<Date | null, Date | string | null, Date | string | null>;
   history_next_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   history_idle_polls: Generated<number>;
+  chat_business: ColumnType<unknown, string | undefined, string>;
 }
 
 /** crove_kernel.conversation_attachment */

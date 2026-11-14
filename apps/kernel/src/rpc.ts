@@ -1780,6 +1780,8 @@ export function createRpcHandler(
           return runtime.execute<{ chatState: 'off' | 'enabling' | 'on' | 'disabling' }>('kernel.channel.telegram_chat_set', input, { actor, orgId });
         }),
       ),
+      // Allows a Telegram Business account's chats in, or stops them (#3191): the org's owner or admin chooses, nothing of an account is stored before.
+      setTelegramBusiness: os.channels.setTelegramBusiness.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute<{ approved: boolean }>('kernel.channel.telegram_business_allow', input, { actor, orgId }))),
       // An app password is checked once by opening a session, then sealed with the account's DID and dropped; it never
       // reaches a log, an audit row or an answer.
       connectBluesky: os.channels.connectBluesky.handler(({ context, input }) =>
@@ -2594,6 +2596,11 @@ export function createRpcHandler(
         get: os.paymentReminders.customer.get.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.customer_collection.get', input, { actor, orgId }))),
         set: os.paymentReminders.customer.set.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.customer_collection.set', input, { actor, orgId }))),
       },
+    },
+    household: {
+      profile: os.household.profile.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.profile_get', input, { actor, orgId }))),
+      profileSet: os.household.profileSet.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.household.profile_set', input, { actor, orgId }))),
+      rules: os.household.rules.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.rules', input ?? {}, { actor, orgId }))),
     },
     einvoice: {
       status: os.einvoice.status.handler(async () => ({ sandbox: Boolean(einvoiceProviderOf('sandbox')) })),
