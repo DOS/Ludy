@@ -5,7 +5,8 @@
 // checked again in the background worker so a popup cannot skip it.
 import { startBlocker } from '@crove/meeting-recorder';
 
-export const CONSENT_METHODS = ['told_at_start', 'in_invite', 'in_writing'] as const;
+// `in_call_chat`: the recorder pasted the recording notice in the call's chat (A1, #3159).
+export const CONSENT_METHODS = ['told_at_start', 'in_invite', 'in_writing', 'in_call_chat'] as const;
 export type ConsentMethod = (typeof CONSENT_METHODS)[number];
 
 export interface ConsentInput {

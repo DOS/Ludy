@@ -27,6 +27,8 @@ import {
   LIVE_CHUNK_MAX_BYTES,
   LIVE_CHUNK_MAX_COUNT,
   LIVE_CHUNK_MAX_SECONDS,
+  RECORDING_STOP_REASONS,
+  type RecordingStopReason,
   zExtensionAuthorize,
   XLSX_CONTENT_TYPE,
   accountParents,
@@ -2593,6 +2595,14 @@ export function createHttpApp(deps: HttpDeps) {
         // The plaintext as it arrives, sealed piece by piece below (#2780): never held whole, and its declared length is checked.
         let source: AsyncIterable<Uint8Array>;
         let declaredLength: number;
+        // Why the recording stopped without the recorder's click, when the client says so (A1, #3159): a code from a fixed list in the
+        // JSON body, the form or the query, whichever carries the file. Anything else is refused; absent means the recorder stopped it.
+        let stopReason: RecordingStopReason | undefined;
+        const readStopReason = (value: unknown): RecordingStopReason | undefined => {
+          if (value === undefined || value === null || value === '') return undefined;
+          if (typeof value === 'string' && (RECORDING_STOP_REASONS as readonly string[]).includes(value)) return value as RecordingStopReason;
+          throw new DomainError('BAD_REQUEST', 400, 'stopReason is not a known code');
+        };
 
         const verifyRecorderAndKind = async (mediaKind: 'audio' | 'video') => {
           const meeting = await meetingFacts(user, orgId, meetingId);
@@ -2631,11 +2641,13 @@ export function createHttpApp(deps: HttpDeps) {
             uploadId?: unknown;
             kind?: unknown;
             lengthSeconds?: unknown;
+            stopReason?: unknown;
           } | null;
           if (!body || typeof body.uploadId !== 'string' || (body.kind !== 'audio' && body.kind !== 'video')) {
             throw new DomainError('BAD_REQUEST', 400, 'uploadId and kind (audio|video) required');
           }
           kind = body.kind;
+          stopReason = readStopReason(body.stopReason);
           if (kind === 'video') {
             // The staged bytes are read whole into memory: one video transfer per process (a multipart one took its slot in the gate).
             releaseJsonVideo = videoTransfers.tryAcquire(user.userId);
@@ -2686,6 +2698,7 @@ export function createHttpApp(deps: HttpDeps) {
             throw new DomainError('BAD_REQUEST', 400, 'kind must be audio or video');
           }
           kind = kindVal;
+          stopReason = readStopReason(formData.get('stopReason'));
           const kindHint = c.req.query('kind');
           if (kindHint !== undefined && kindHint !== kind) throw new DomainError('BAD_REQUEST', 400, 'kind does not match the declared kind');
           await verifyRecorderAndKind(kind);
@@ -2715,6 +2728,7 @@ export function createHttpApp(deps: HttpDeps) {
           const kindVal = c.req.query('kind');
           if (kindVal !== 'audio' && kindVal !== 'video') throw new DomainError('BAD_REQUEST', 400, 'kind must be audio or video');
           kind = kindVal;
+          stopReason = readStopReason(c.req.query('stopReason'));
           await verifyRecorderAndKind(kind);
           const lengthVal = c.req.query('lengthSeconds');
           if (lengthVal !== undefined) {
@@ -2780,6 +2794,7 @@ export function createHttpApp(deps: HttpDeps) {
               sha256,
               contentType: sniffedContentType,
               lengthSeconds: measuredSeconds,
+              ...(stopReason !== undefined ? { stopReason } : {}),
             },
             { actor: actorOf(user), orgId },
           );

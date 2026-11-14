@@ -2892,6 +2892,7 @@ export interface MeetingsMeetingTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   extension_token_id: ColumnType<string | null, string | null, NotGranted>;
   live_notes: ColumnType<boolean, boolean | undefined, NotGranted>;
+  recording_stop_reason: string | null;
 }
 
 /** crove_meetings.meeting_video */
