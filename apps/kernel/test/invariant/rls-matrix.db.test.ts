@@ -89,8 +89,12 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_vy_result',
   'crove_meetings.live_line',
   'crove_meetings.meeting_link',
+  'crove_meetings.translation',
   'crove_notes.link',
   'crove_notes.note',
+  'crove_projects.project',
+  'crove_projects.project_member',
+  'crove_projects.project_task',
 ]);
 // Tables whose rows belong to one member (ADR-0037, notes plan §3.6 and step N1): unlike saved_view and notification,
 // the system context reads only what the value's predicate selects (over alias t, operators schema-qualified so a
@@ -165,6 +169,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_meetings.meeting_result', () => 'false'], // As above (summaries and decisions, ADR-0047).
   ['crove_meetings.meeting_video', () => 'false'], // As above.
   ['crove_meetings.transcript_segment', () => 'false'], // As above (transcript segments, ADR-0047).
+  ['crove_meetings.translation', () => 'false'], // A machine translation, read by the member who asked for it, a user (meetings integrations E1, #3184).
   // Catalog 'read': the notes its member could read, own private and shared (the factory's private notes are the first owner's, not the member's, so only the shared ones).
   [
     'crove_notes.link',
@@ -245,6 +250,8 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_meetings.meeting_video', 'false'],
   // Meeting transcript segments (ADR-0047 point 2): worker system context reads and writes nothing.
   ['crove_meetings.transcript_segment', 'false'],
+  // A machine translation of a summary (meetings integrations E1, #3184): the asker's alone; worker system context reads and writes nothing.
+  ['crove_meetings.translation', 'false'],
   // A link reads through its parent: the system context sees the links of shared notes (the factory's parent).
   [
     'crove_notes.link',
@@ -558,6 +565,14 @@ const notesLinkRow = (o: { id: string; owner: string; party: string }, noteId: s
   target_id: o.party,
   party_id: o.party,
   created_by: o.owner,
+});
+// Projects on kernel tasks (ADR-0048, docs/plan/projects.md section 4.1, #2586): an active project owned by the org's owner.
+const projectsProjectRow = (o: { id: string; owner: string }) => ({
+  org_id: o.id,
+  id: randomUUID(),
+  name: `RLS matrix project ${tag()}`,
+  owner_user_id: o.owner,
+  status: 'active',
 });
 const journalEntry = (org: string, id: string): Row => ({
   table: 'crove_finance.journal_entry',
@@ -2465,6 +2480,28 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // #3184 (meetings integrations E1): the machine translation of a meeting's summary, private to the member who asked (the org's owner, who is the recorder of the factory's
+  // meeting); read, written and deleted by that member alone, so the system context reads none.
+  'crove_meetings.translation': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          meeting_id: meeting.id,
+          member_user_id: o.owner,
+          kind: 'summary',
+          target_language: 'en',
+          source_stage: 'draft',
+          source_hash: 'a'.repeat(64),
+          body: '[{"text":"RLS matrix translation","state":"ok","warnings":[]}]',
+          tainted: 'true',
+        },
+      };
+    },
+  },
   // Notes and personal to-dos (ADR-0037, notes plan §3.4), in AUTHOR_ONLY. The matrix seeds as the superuser with no
   // context, so each factory names its author or owner: the org's owner, the user every member-context actor enters
   // as. Each also seeds a private row beside the one it probes, so the system context's read count (AUTHOR_ONLY) fails
@@ -2489,6 +2526,32 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // Private by nature: the system context reads none.
   'crove_notes.todo': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), owner_user_id: o.owner, title: 'RLS matrix to-do', time_zone: 'Asia/Ho_Chi_Minh', sort_key: 'a0' } }),
+  },
+  // Projects and task board (ADR-0048, docs/plan/projects.md section 4.1 and 6, #2586): org-visible under apply_tenant_rls.
+  'crove_projects.project': {
+    make: (o) => ({ row: projectsProjectRow(o) }),
+  },
+  'crove_projects.project_member': {
+    make: (o) => {
+      const project = projectsProjectRow(o);
+      return {
+        setup: [{ table: 'crove_projects.project', values: project }],
+        row: { org_id: o.id, id: randomUUID(), project_id: project.id, user_id: o.owner },
+      };
+    },
+  },
+  'crove_projects.project_task': {
+    make: (o) => {
+      const project = projectsProjectRow(o);
+      const task = { org_id: o.id, id: randomUUID(), title: 'RLS matrix task', source: 'human', created_by_type: 'user' };
+      return {
+        setup: [
+          { table: 'crove_projects.project', values: project },
+          { table: 'crove_kernel.task', values: task },
+        ],
+        row: { org_id: o.id, id: randomUUID(), project_id: project.id, task_id: task.id },
+      };
+    },
   },
   // A channel's daily count of followers (#645), recorded by the worker: one per channel and day.
   'crove_social.account_snapshot': {
