@@ -41,7 +41,18 @@ const box = (body: string, enabled: boolean) => {
   client.current.setQueryData(['meetings', 'results', 'summaryStatus'], { meetingId: 'm1', enabled, reason: enabled ? null : 'off' });
   return wrap(<MeetingNotes meetingId="m1" />);
 };
-const buttons = (html: string) => [...html.matchAll(/<button([^>]*)>((?:(?!<\/button>).)*)<\/button>/g)].map((m) => ({ attrs: m[1] ?? '', text: (m[2] ?? '').replace(/<[^>]*>/g, '') }));
+// The text of a piece of markup, by a scan (no pattern is used to strip tags): everything outside a tag.
+const textOf = (html: string): string => {
+  let out = '';
+  let inTag = false;
+  for (const ch of html) {
+    if (ch === '<') inTag = true;
+    else if (ch === '>') inTag = false;
+    else if (!inTag) out += ch;
+  }
+  return out;
+};
+const buttons = (html: string) => [...html.matchAll(/<button([^>]*)>((?:(?!<\/button>).)*)<\/button>/g)].map((m) => ({ attrs: m[1] ?? '', text: textOf(m[2] ?? '') }));
 
 describe('MeetingNotes', () => {
   it('shows the recorder their saved notes and a private note, and saves with no AI at all', () => {
@@ -89,8 +100,8 @@ describe('the expansion', () => {
 
   it('tells the recorder\'s own lines from the lines Vy added, and gives each added line the time of its transcript line', () => {
     const html = render(preview());
-    const own = [...html.matchAll(/<li[^>]*data-own="true"[^>]*>(.*?)<\/li>/g)].map((m) => (m[1] ?? '').replace(/<[^>]*>/g, ''));
-    const added = [...html.matchAll(/<li[^>]*data-own="false"[^>]*>(.*?)<\/li>/g)].map((m) => (m[1] ?? '').replace(/<[^>]*>/g, ''));
+    const own = [...html.matchAll(/<li[^>]*data-own="true"[^>]*>(.*?)<\/li>/g)].map((m) => textOf(m[1] ?? ''));
+    const added = [...html.matchAll(/<li[^>]*data-own="false"[^>]*>(.*?)<\/li>/g)].map((m) => textOf(m[1] ?? ''));
     expect(own).toEqual(['báo giá khách A', 'Nam gửi trước thứ sáu']);
     expect(added).toHaveLength(1);
     expect(added[0]).toContain(en.meetings.notes.added);
