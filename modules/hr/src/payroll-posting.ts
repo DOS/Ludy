@@ -184,7 +184,7 @@ export interface BuiltTotals {
   // How many correction lines the run carries (a count, never a line): see BuiltPosting.
   adjustments: number;
 }
-interface StoredGroup {
+export interface StoredGroup {
   payFunction: string;
   gross: string;
   unionFee: string;
@@ -195,6 +195,16 @@ interface StoredGroup {
   funds: { fund: StoredFund['fund']; employee: string; employer: string }[];
   employeeInsurance: string;
   employerInsurance: string;
+}
+// What is wrong with one cost department's stored sums, as the reason a refusal names, or null: the department and the funds must be known, and the per-fund sums must add to the insurance the lines
+// carry, so the entry rests on one fact, not two. The posting refuses a run with such a group; the payment amounts do not offer one (#2918).
+export function groupProblem(g: StoredGroup): string | null {
+  if (!(PAY_FUNCTIONS as readonly string[]).includes(g.payFunction)) return 'bộ phận hạch toán';
+  if (g.funds.some((f) => !(FUNDS as readonly string[]).includes(f.fund))) return 'quỹ bảo hiểm';
+  const employee = g.funds.reduce((acc, f) => acc.plus(f.employee), money(0));
+  const employer = g.funds.reduce((acc, f) => acc.plus(f.employer), money(0));
+  if (!employee.equals(money(g.employeeInsurance)) || !employer.equals(money(g.employerInsurance))) return 'bảo hiểm';
+  return null;
 }
 export async function buildRunPostingFromTotals(ctx: CommandContext, runId: string): Promise<BuiltTotals> {
   if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
@@ -215,12 +225,8 @@ export async function buildRunPostingFromTotals(ctx: CommandContext, runId: stri
   // The per-line identities that the sums cannot show (two lines wrong by opposite amounts cancel in a department's total): the database counts the lines that break them, and a run with any is refused.
   if ((c.badLines ?? 0) > 0) throw mismatch('toàn vẹn dòng lương');
   const lines: PostingLine[] = t.groups.map((g) => {
-    if (!(PAY_FUNCTIONS as readonly string[]).includes(g.payFunction)) throw mismatch('bộ phận hạch toán');
-    if (g.funds.some((f) => !(FUNDS as readonly string[]).includes(f.fund))) throw mismatch('quỹ bảo hiểm');
-    // The per-fund sums must add to the insurance the lines carry: the entry rests on one fact, not two.
-    const employee = g.funds.reduce((acc, f) => acc.plus(f.employee), money(0));
-    const employer = g.funds.reduce((acc, f) => acc.plus(f.employer), money(0));
-    if (!employee.equals(money(g.employeeInsurance)) || !employer.equals(money(g.employerInsurance))) throw mismatch('bảo hiểm');
+    const problem = groupProblem(g);
+    if (problem) throw mismatch(problem);
     return {
       payFunction: g.payFunction as PayFunction,
       gross: g.gross,

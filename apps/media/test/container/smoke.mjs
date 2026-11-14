@@ -91,6 +91,9 @@ const p1 = await callEndpoint('/probe', audio5s);
 check('probe audio5s returns correct metadata', p1.status === 200 && p1.json.ok && p1.json.result.hasAudio && !p1.json.result.hasVideo && p1.json.result.durationSeconds >= 4.9, p1);
 
 // Test 2: Probe video
+const m1 = await callEndpoint('/measure', audio5s);
+check('measure audio5s reads the length from the stream', m1.status === 200 && m1.json.ok && m1.json.result.hasAudio && m1.json.result.durationSeconds >= 4.5 && m1.json.result.durationSeconds <= 5.5, m1);
+
 const p2 = await callEndpoint('/probe', video5s);
 check('probe video5s detects both audio and video', p2.status === 200 && p2.json.ok && p2.json.result.hasAudio && p2.json.result.hasVideo && p2.json.result.durationSeconds >= 4.9, p2);
 

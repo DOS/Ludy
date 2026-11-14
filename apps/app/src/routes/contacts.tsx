@@ -16,6 +16,7 @@ import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { CompanyPeople, PersonCompany } from '../components/company-link.tsx';
+import { LinkedMeetings, meetingsInstalled } from '../components/linked-meetings.tsx';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
 import { EditParty, refreshParties } from '../components/party-edit.tsx';
 import { DataTable, Empty, ErrorText, FieldError, PageHeader, TableSkeleton, fieldControl, focusFirstInvalid, isEmailAddress, useFieldErrors } from '../components/ui.tsx';
@@ -186,6 +187,7 @@ function ContactPanel({ contact, canEdit, columns }: { contact: Contact; canEdit
         )}
         {contact.kind === 'person' ? <PersonCompany person={contact} canEdit={canEdit} /> : <CompanyPeople company={contact} canEdit={canEdit} />}
         <ContactDeals partyId={contact.id} />
+        {meetingsInstalled() && <LinkedMeetings kind="party" targetId={contact.id} />}
         {notesInstalled() && <RecordNotesPanel slug={slug} target={{ targetType: 'kernel.party', targetId: contact.id }} headingId={`notes-${contact.id}`} label={tn('panel.toggleOf', { name: contact.name })} />}
         <ContactTimeline partyId={contact.id} />
       </TableCell>

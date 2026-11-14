@@ -4,7 +4,7 @@
 #   docker compose -p crove-split -f docker-compose.yml -f docker-compose.split.yml up -d --build
 #   node tools/e2e/split-stack.mjs
 #   docker compose -p crove-split -f docker-compose.yml -f docker-compose.split.yml down -v
-#   docker image rm crove:split crove-extract:split
+#   docker image rm crove:split crove-extract:split crove-media:split
 #
 # The CI job `split-stack` in .github/workflows/ci.yml runs exactly this. The all-in-one `crove` service is moved
 # to the `all-in-one` profile, so it does not start. Images are tagged :split so a running default stack keeps its
@@ -62,6 +62,9 @@ services:
 
   crove-extract:
     image: crove-extract:split
+
+  crove-media:
+    image: crove-media:split
 
   # Same image and digest as the MinIO in the CI `check` job. Not on the `extract` network: the sandbox has no route
   # to the blobs. No port is published; tools/e2e/split-stack.mjs lists the bucket with `mc` inside the container.

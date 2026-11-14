@@ -59,6 +59,19 @@ describe('ConversationWriter', () => {
     expect(await again.draft(request({ savedReplies: saved }))).toMatchObject({ kind: 'draft' });
   });
 
+  it('keeps the contact-name placeholder of a saved reply as a fill, never as a figure, and tells the model to keep it as written (#3102)', async () => {
+    const saved = [{ title: 'Chào', body: 'Chào {tên}, shop mở cửa 8h đến 21h mỗi ngày ạ.' }];
+    const { writer, asked } = writerSaying('Chào {tên}, shop mở cửa 8h đến 21h mỗi ngày ạ.');
+    expect(await writer.draft(request({ savedReplies: saved }))).toEqual({ kind: 'draft', body: 'Chào {tên}, shop mở cửa 8h đến 21h mỗi ngày ạ.' });
+    expect(asked[0]?.system).toContain('keep {tên} exactly as written');
+    expect(asked[0]?.system).toContain('Never write the customer\'s name yourself');
+    expect(asked[0]?.prompt).toContain('- Chào: Chào {tên}, shop mở cửa');
+    // The placeholder adds no figure, so a draft that holds one is judged like any other text: an invented figure still refuses it.
+    expect(draftFiguresOutside('Chào {tên}, shop mở cửa 8h ạ', ['Chào {tên}, shop mở cửa 8h đến 21h'])).toEqual([]);
+    const { writer: invented } = writerSaying('Chào {tên}, giá 200.000đ ạ');
+    expect(await invented.draft(request({ savedReplies: saved }))).toEqual({ kind: 'none', code: 'FIGURES' });
+  });
+
   it('gives no draft when the model states a figure or a link that nothing it read contains', async () => {
     for (const [said, code] of [
       ['Dạ áo giá 199.000đ ạ', 'FIGURES'],

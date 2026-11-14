@@ -5,7 +5,7 @@
 // restrictive policy shows a member their own rows only). Knowledge has no declared queries yet: a feature that asks gets no passages.
 import { AiBudgetExhaustedError, SUMMARY_TIMEOUT_MS, SummaryModelError, generateMeetingSummaryText, withAiScope, type AiConfig, type AiMeter } from '@crove/agent';
 import { SummaryError, bindPorts, noKnowledge, privateText, revealPrivateText, summarizeMeeting, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type Ports } from '@crove/agent/member-vy';
-import type { Summarized, Transcript } from '@crove/kernel-contract';
+import type { LiveNotesDone, LiveNotesInput, Summarized, Transcript } from '@crove/kernel-contract';
 import { DomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
@@ -146,3 +146,73 @@ export async function runMeetingSummary(deps: MeetingSummaryDeps, orgId: string,
   }
 }
 
+
+// The running notes of a meeting being recorded (#3110, L4a-2, ADR-0052): the same stage A shape as the summary above, over the NEW preview lines and the previous notes only,
+// so the model call does not grow with the meeting. As the recorder, in their own session:
+//   1. meetings.live.notes_start: the checks (the recorder, the opt-in, the deployment's switch), nothing new to read means no run and no spend, then the kernel's run.start
+//      (vy.use, the kill switches, the budget) for the feature meetings.live_summary;
+//   2. meetings.live.notes_input: the previous notes and the lines written since, read as the recorder;
+//   3. the one model call, outside any transaction, in the scope of this run, with the checks of plan section 5.3 in code: the previous notes go in as the first lines of
+//      the text it may quote, so a figure they hold passes and a figure nothing holds is removed;
+//   4. kernel.member_vy.result.store, then meetings.live.notes_copy, the recorder's own command, copies the checked notes into the live draft (tainted, "Đề xuất").
+// Neither the lines nor the answer are logged: a failure is named by a fixed code. A spent budget or a kill switch comes back as the failed state with its code, and the
+// recording is not touched.
+export async function runLiveNotes(deps: MeetingSummaryDeps, orgId: string, actor: UserActor, meetingId: string): Promise<LiveNotesDone> {
+  const as = { actor, orgId };
+  const timeoutMs = deps.timeoutMs ?? SUMMARY_TIMEOUT_MS;
+  const model = deps.model;
+  const meter = deps.meter(actor);
+  if (!model || !meter) throw new DomainError('SUMMARY_OFF', 422, 'Notes by Vy are not turned on here');
+  const ticket = deps.budget.take(orgId, actor.userId);
+  if (!ticket.allowed) throw new DomainError('SUMMARY_BUSY', 429, 'Vy is busy; try again in a few minutes', { retryAfterSeconds: ticket.retryAfterSeconds });
+  try {
+    const started = await deps.runtime.execute<{ meetingId: string; runId: string | null }>('meetings.live.notes_start', { meetingId }, as);
+    const runId = started.runId;
+    // Nothing new since the notes were last made: nothing was started and nothing is spent.
+    if (runId === null) return { meetingId, state: 'nothing', runId: null, errorCode: null, decisions: 0, items: 0 };
+    const fail = async (errorCode: string): Promise<LiveNotesDone> => {
+      try {
+        await deps.runtime.execute('kernel.member_vy.result.store', { runId, outcome: { status: 'failed', errorCode } }, as);
+      } catch (storeError: unknown) {
+        console.error(`[meetings-live-notes] failed result not stored: ${codeOf(storeError)}`);
+      }
+      console.error(`[meetings-live-notes] notes run failed: ${errorCode}`);
+      return { meetingId, state: 'failed', runId, errorCode, decisions: 0, items: 0 };
+    };
+    let body: string;
+    try {
+      const input = await deps.runtime.query<LiveNotesInput>('meetings.live.notes_input', { meetingId }, as);
+      const previous = input.previous;
+      const earlier = previous ? [previous.summary, ...previous.decisions, ...previous.items].filter((t) => t.trim() !== '').join(' ') : '';
+      const reach = input.lines.reduce((n, l) => Math.max(n, l.endSeconds), 0);
+      // The previous notes are the first "line" the model may quote and the checks may match a figure against; the new lines follow.
+      const segments = [
+        ...(earlier === '' ? [] : [{ startSeconds: 0, endSeconds: reach, speakerLabel: 'Ghi chú trước', text: earlier }]),
+        ...input.lines.map((l) => ({ startSeconds: l.startSeconds, endSeconds: l.endSeconds, speakerLabel: 'Người nói', text: l.text })),
+      ];
+      const ports: Ports = { model, memory: nothingToRemember, knowledge: noKnowledge };
+      const result = await withDeadline(
+        withAiScope({ orgId, memberRunId: runId, meter }, () => summarizeMeeting({ segments, language: input.language }, bindPorts({ orgId, memberUserId: actor.userId }, ports))),
+        timeoutMs,
+      );
+      body = revealPrivateText(result.body);
+    } catch (error: unknown) {
+      return await fail(codeOf(error));
+    }
+    let stored: { stored: boolean; status: 'ready' | 'failed' };
+    try {
+      stored = await deps.runtime.execute<{ stored: boolean; status: 'ready' | 'failed' }>('kernel.member_vy.result.store', { runId, outcome: { status: 'ready', body } }, as);
+    } catch (error: unknown) {
+      if (error instanceof DomainError && error.code === 'VY_RUN_NOT_LIVE') throw error;
+      return await fail(codeOf(error));
+    }
+    if (stored.status === 'failed') {
+      console.error('[meetings-live-notes] notes run failed: AI_STOPPED');
+      return { meetingId, state: 'failed', runId, errorCode: 'AI_STOPPED', decisions: 0, items: 0 };
+    }
+    // The recorder's own copy into the live draft: the checked notes, tainted, the model's words for the recorder to read.
+    return await deps.runtime.execute<LiveNotesDone>('meetings.live.notes_copy', { meetingId, runId }, as);
+  } finally {
+    ticket.release();
+  }
+}

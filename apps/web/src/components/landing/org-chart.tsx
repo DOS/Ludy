@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 'use client';
 
 import { Bot, Check, ListChecks, TriangleAlert } from 'lucide-react';
@@ -19,24 +20,39 @@ function NodeCard({ node, selected, onSelect, a }: { node: Node; selected: boole
       aria-pressed={selected}
       // Opaque and stacked over the connector lines behind it; test/a11y.spec.ts reads this name (#1657).
       data-org-node=""
-      className={`relative z-10 mx-auto flex w-full max-w-[210px] min-w-0 flex-col gap-1.5 rounded-lg border bg-surface p-2.5 text-left transition-colors sm:p-3 lg:py-2 ${
+      className={`relative z-10 mx-auto flex w-full max-w-[210px] min-w-0 flex-col gap-2 rounded-lg border bg-surface p-2.5 text-left transition-colors sm:p-3 ${
         isAgent ? 'border-dashed border-accent/70' : 'border-line-strong/50'
       } ${selected ? 'outline-2 outline-offset-2 outline-accent' : 'hover:bg-surface-2'}`}
     >
-      <span className="flex items-center gap-2">
-        {isAgent ? (
-          <Bot className="size-4 shrink-0 text-accent-ink" aria-hidden="true" />
-        ) : isTasks ? (
-          <ListChecks className="size-4 shrink-0 text-muted" aria-hidden="true" />
-        ) : (
-          <span className="hidden size-6 shrink-0 items-center justify-center rounded-full bg-surface-2 text-[10px] font-semibold text-muted sm:inline-flex" aria-hidden="true">
-            {node.initials}
+      {node.avatar ? (
+        <span className="flex flex-col items-start gap-1.5 sm:flex-row sm:items-center sm:gap-2.5">
+          <img
+            src={node.avatar}
+            alt=""
+            width={40}
+            height={40}
+            className="size-8 shrink-0 rounded-full border border-line object-cover sm:size-10"
+          />
+          <span className="flex min-w-0 flex-col gap-0.5">
+            {/* A word longer than a phone's narrow card (Accounting) breaks, hyphenated where the language allows (#1657). */}
+            <span className="min-w-0 text-[13px] leading-tight font-semibold hyphens-auto [overflow-wrap:anywhere] sm:text-sm">{node.name}</span>
+            <span className="text-[11px] leading-snug text-subtle hyphens-auto [overflow-wrap:anywhere] sm:text-xs">{node.role}</span>
           </span>
-        )}
-        {/* A word longer than a phone's narrow card (Accounting) breaks, hyphenated where the language allows (#1657). */}
-        <span className="min-w-0 text-[13px] leading-tight font-semibold hyphens-auto [overflow-wrap:anywhere] sm:text-sm">{node.name}</span>
-      </span>
-      <span className="text-[11px] leading-snug text-subtle sm:text-xs">{node.role}</span>
+        </span>
+      ) : (
+        <>
+          <span className="flex items-center gap-2">
+            {isAgent ? (
+              <Bot className="size-4 shrink-0 text-accent-ink" aria-hidden="true" />
+            ) : isTasks ? (
+              <ListChecks className="size-4 shrink-0 text-muted" aria-hidden="true" />
+            ) : null}
+            {/* A word longer than a phone's narrow card (Accounting) breaks, hyphenated where the language allows (#1657). */}
+            <span className="min-w-0 text-[13px] leading-tight font-semibold hyphens-auto [overflow-wrap:anywhere] sm:text-sm">{node.name}</span>
+          </span>
+          <span className="text-[11px] leading-snug text-subtle sm:text-xs">{node.role}</span>
+        </>
+      )}
       {node.budget ? (
         <span className="flex flex-col gap-1">
           <span className="h-1 rounded-full bg-surface-2">
@@ -70,7 +86,7 @@ export function OrgChart({ dict }: { dict: Dictionary }) {
 
   return (
     <div className="grid overflow-hidden rounded-lg border border-line bg-surface lg:grid-cols-[minmax(0,1fr)_360px]">
-      <div className="min-w-0 border-b border-line lg:border-r lg:border-b-0">
+      <div className="flex min-w-0 flex-col border-b border-line lg:border-r lg:border-b-0">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3">
           <div className="text-sm">
             <span className="font-semibold">{a.chartTitle}</span> <span className="text-subtle">{a.chartSub}</span>
@@ -88,12 +104,12 @@ export function OrgChart({ dict }: { dict: Dictionary }) {
         </div>
         {/* Text on the dot grid sits on the card's own surface (#1657): a dot never falls behind a letter, so the
             contrast is text-subtle on surface, as everywhere else on the card. */}
-        <div className="canvas-dots px-2 py-6 sm:px-6 sm:py-8 lg:py-4">
-          <p className="mx-auto mb-5 w-fit lg:mb-2 bg-surface px-2 text-center text-xs text-subtle">{a.hint}</p>
+        <div className="canvas-dots flex flex-1 flex-col justify-center px-2 py-6 sm:px-6 sm:py-8 lg:py-5">
+          <p className="mx-auto mb-5 w-fit bg-surface px-2 text-center text-xs text-subtle lg:mb-3">{a.hint}</p>
           <div className="grid grid-cols-3 gap-x-2 sm:gap-x-4">
             <div className="col-span-3">{node('tuan')}</div>
             {/* Director to the two managers */}
-            <div className="relative col-span-3 h-8 lg:h-5" aria-hidden="true">
+            <div className="relative col-span-3 h-8 lg:h-6" aria-hidden="true">
               <span className="absolute top-0 left-1/2 h-1/2 w-px bg-line-strong" />
               <span className="absolute top-1/2 right-[16.667%] left-[16.667%] h-px bg-line-strong" />
               <span className="absolute top-1/2 left-[16.667%] h-1/2 w-px bg-line-strong" />
@@ -103,7 +119,7 @@ export function OrgChart({ dict }: { dict: Dictionary }) {
             <div />
             {node('minh')}
             {/* Managers to their agents: dashed, the path a proposal travels up */}
-            <div className="relative col-span-3 h-14 lg:h-9" aria-hidden="true">
+            <div className="relative col-span-3 h-14 lg:h-11" aria-hidden="true">
               <span className="absolute top-0 left-[16.667%] h-full border-l border-dashed border-accent/70" />
               <span className="absolute top-0 right-[16.667%] h-full border-l border-dashed border-accent/70" />
               <span className="travel-up absolute top-0 left-[16.667%] size-2 rounded-full bg-accent ring-4 ring-accent/20" />

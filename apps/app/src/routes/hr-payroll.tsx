@@ -619,7 +619,7 @@ function Settlement({ runId }: { runId: string }) {
                 {t('settlePending')}
               </Link>
             )}
-            {s.posting.status === 'none' && (
+            {(s.posting.status === 'none' || s.posting.status === 'reversed') && (
               <Button variant="outline" size="sm" loading={post.isPending} onClick={() => post.mutate()} data-testid="hr-settle-post">
                 {t('settlePost')}
               </Button>
@@ -643,13 +643,16 @@ function Settlement({ runId }: { runId: string }) {
 }
 
 // The bank bulk-salary file of an approved month (#2532): one file for one bank, chosen from the bank list (#2897); the file holds the people whose record names that bank. A sensitive read (names and account numbers): the server asks for a second factor used in the last 5
-// minutes and the action that was refused runs again once it is verified. Ludy never makes a transfer; the accountant uploads the file to the bank.
-function BankFile({ runId, month }: { runId: string; month: string }) {
+// minutes and the action that was refused runs again once it is verified. Ludy never makes a transfer; the accountant uploads the file to the bank. A saved template of the run's legal entity (#2893, the
+// screen "Mẫu file lương") may be chosen: the file then follows its columns, headers and remark; without one the generic layout is used.
+function BankFile({ runId, month, legalEntityId }: { runId: string; month: string; legalEntityId: string }) {
   const t = useTranslations('hrPayroll');
   const [bank, setBank] = useState('');
+  const [templateId, setTemplateId] = useState('');
+  const templates = useQuery(orpc.hr.payroll.bankTemplates.list.queryOptions({ input: { legalEntityId } }));
   const download = useMutation({
     mutationFn: async () => {
-      const response = await apiFetch(`/api/payroll-bank-file/${runId}.xlsx?bank=${encodeURIComponent(bank)}`);
+      const response = await apiFetch(`/api/payroll-bank-file/${runId}.xlsx?bank=${encodeURIComponent(bank)}${templateId === '' ? '' : `&template=${encodeURIComponent(templateId)}`}`);
       const url = URL.createObjectURL(await response.blob());
       const a = document.createElement('a');
       a.href = url;
@@ -669,6 +672,17 @@ function BankFile({ runId, month }: { runId: string; month: string }) {
         <div className="space-y-1">
           <Label htmlFor="hr-bank-name">{t('bankFileBank')}</Label>
           <BankSelect id="hr-bank-name" value={bank} onChange={setBank} />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="hr-bank-template">{t('bankFileTemplate')}</Label>
+          <NativeSelect id="hr-bank-template" value={templateId} onChange={(e) => setTemplateId(e.target.value)} data-testid="hr-bank-template-select">
+            <NativeSelectOption value="">{t('bankFileTemplateGeneric')}</NativeSelectOption>
+            {(templates.data ?? []).map((template) => (
+              <NativeSelectOption key={template.id} value={template.id}>
+                {template.name}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
         </div>
         <Button variant="outline" loading={download.isPending} disabled={bank === ''} onClick={() => download.mutate()} data-testid="hr-bank-file-download">
           {t('bankFileDownload')}
@@ -840,7 +854,7 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
       )}
       {!draft && <p className="mt-4 text-sm text-muted-foreground">{t('frozenNote')}</p>}
       {s.run.status === 'approved' && <Settlement runId={runId} />}
-      {s.run.status === 'approved' && <BankFile runId={runId} month={s.run.month} />}
+      {s.run.status === 'approved' && <BankFile runId={runId} month={s.run.month} legalEntityId={s.run.legalEntityId} />}
       {s.rules.length > 0 && (
         <details className="mt-6 text-xs text-muted-foreground">
           <summary className="cursor-pointer">{t('rulesUsed', { count: String(s.rules.length) })}</summary>

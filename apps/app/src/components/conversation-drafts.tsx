@@ -7,7 +7,9 @@ import { useState, type FormEvent } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
 import {
+  fillNamePlaceholder,
   SAVED_REPLY_BODY_MAX,
+  SAVED_REPLY_NAME_PLACEHOLDER,
   SAVED_REPLY_KEYWORDS_MAX,
   SAVED_REPLY_TITLE_MAX,
   type ConversationDetail,
@@ -23,6 +25,16 @@ import { Textarea } from '@crove/ui/components/textarea';
 import { ErrorText, Spinner } from './ui.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { getConfig } from '../lib/auth.ts';
+
+// The name a saved reply's `{tên}` is filled with (#3102): the linked contact's name when a person linked one, else the name the platform gave. Null when
+// the thread has neither (only a short tail of an id), and then the placeholder is dropped, never shown.
+export function contactNameOf(contact: Pick<ConversationDetail['conversation']['contact'], 'partyName' | 'displayName'>): string | null {
+  return contact.partyName?.trim() || contact.displayName?.trim() || null;
+}
+
+// The text a saved reply or a draft puts in the reply box: its words with the contact's name in place of `{tên}`, so the person reads the final text
+// before pressing Send.
+export const replyTextFor = (body: string, detail: ConversationDetail): string => fillNamePlaceholder(body, contactNameOf(detail.conversation.contact));
 
 const refresh = () => void queryClient.invalidateQueries({ queryKey: orpc.conversations.key() });
 
@@ -119,6 +131,9 @@ export function SavedRepliesManager({ canWrite }: { canWrite: boolean }) {
       <div>
         <p className="text-sm font-medium text-foreground">{t('saved.title')}</p>
         <p className="text-xs text-subtle-foreground">{t('saved.hint')}</p>
+        <p className="text-xs text-subtle-foreground" data-testid="saved-reply-name-hint">
+          {t('saved.nameHint', { placeholder: SAVED_REPLY_NAME_PLACEHOLDER })}
+        </p>
       </div>
       {list.isError && <ErrorText>{errorMessage(list.error)}</ErrorText>}
       {list.data && list.data.replies.length === 0 && !editing && <p className="text-sm text-muted-foreground">{t('saved.empty')}</p>}

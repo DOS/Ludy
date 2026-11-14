@@ -8,6 +8,7 @@ import {
   ListObjectsV2Command,
   PutObjectCommand,
   PutObjectRetentionCommand,
+  PutObjectTaggingCommand,
 } from '@aws-sdk/client-s3';
 import { describe, expect, it } from 'vitest';
 import {
@@ -18,6 +19,8 @@ import {
   BlobStoreVersioningError,
   BlobTooLargeError,
   DOWNLOAD_TTL_SECONDS,
+  RETENTION_TAG_KEY,
+  RETENTION_TAG_VALUE,
   S3BlobStore,
   UPLOAD_TTL_SECONDS,
   archiveKey,
@@ -331,6 +334,65 @@ describe('S3BlobStore with a mocked client', () => {
       throw s3Error('AccessDenied', 403);
     });
     await expect(denied.store.delete(key)).rejects.toMatchObject({ name: 'AccessDenied' });
+  });
+});
+
+describe('retention delete on a versioned bucket (#2789)', () => {
+  const names = (sent: Command[]) => sent.map((c) => c.constructor.name);
+
+  it('tags the object before it deletes it, with the one fixed tag', async () => {
+    const { store, sent } = fakeStore(() => ({}));
+    await store.delete(key, { retention: 'expire' });
+    expect(names(sent)).toEqual(['PutObjectTaggingCommand', 'DeleteObjectCommand']);
+    expect(sent[0]).toBeInstanceOf(PutObjectTaggingCommand);
+    expect(sent[0]?.input).toEqual({ Bucket: 'crove-files', Key: key, Tagging: { TagSet: [{ Key: RETENTION_TAG_KEY, Value: RETENTION_TAG_VALUE }] } });
+    expect([RETENTION_TAG_KEY, RETENTION_TAG_VALUE]).toEqual(['ludy-retention', 'expired']);
+  });
+
+  it('deletes nothing when the tag cannot be set (fail closed), whatever the error', async () => {
+    for (const [name, status] of [['AccessDenied', 403], ['InternalError', 500], ['SlowDown', 503]] as const) {
+      const { store, sent } = fakeStore((c) => {
+        if (c instanceof PutObjectTaggingCommand) throw s3Error(name, status);
+        return {};
+      });
+      await expect(store.delete(key, { retention: 'expire' })).rejects.toMatchObject({ name });
+      expect(names(sent), name).toEqual(['PutObjectTaggingCommand']);
+    }
+  });
+
+  it('still deletes when there is nothing current to tag (a missing key, or a delete marker answering 405 with its header)', async () => {
+    const marker = Object.assign(s3Error('MethodNotAllowed', 405), { $response: { headers: { 'x-amz-delete-marker': 'true' } } });
+    for (const failure of [s3Error('NoSuchKey', 404), marker]) {
+      const { store, sent } = fakeStore((c) => {
+        if (c instanceof PutObjectTaggingCommand) throw failure;
+        return {};
+      });
+      await expect(store.delete(key, { retention: 'expire' })).resolves.toBeUndefined();
+      expect(names(sent), failure.name).toEqual(['PutObjectTaggingCommand', 'DeleteObjectCommand']);
+    }
+  });
+
+  it('fails closed on a 405 that is not a delete marker (a store without tagging answering a live object)', async () => {
+    for (const failure of [s3Error('MethodNotAllowed', 405), Object.assign(s3Error('MethodNotAllowed', 405), { $response: { headers: {} } })]) {
+      const { store, sent } = fakeStore((c) => {
+        if (c instanceof PutObjectTaggingCommand) throw failure;
+        return {};
+      });
+      await expect(store.delete(key, { retention: 'expire' })).rejects.toMatchObject({ name: 'MethodNotAllowed' });
+      expect(names(sent)).toEqual(['PutObjectTaggingCommand']);
+    }
+  });
+
+  it('sends no tag command for an ordinary delete, an unversioned bucket or a GCS store', async () => {
+    const plain = fakeStore(() => ({}));
+    await plain.store.delete(key);
+    expect(names(plain.sent)).toEqual(['DeleteObjectCommand']);
+    const off = fakeStore(() => ({}), { versioning: 'off' });
+    await off.store.delete(key, { retention: 'expire' });
+    expect(names(off.sent)).toEqual(['DeleteObjectCommand']);
+    const gcs = fakeStore(() => ({}), { flavor: 'gcs' });
+    await gcs.store.delete(key, { retention: 'expire' });
+    expect(names(gcs.sent)).toEqual(['DeleteObjectCommand']);
   });
 });
 
@@ -684,6 +746,9 @@ describe('presigned transfers (plan §7.6), signed offline', () => {
     expect(policy.conditions).toContainEqual(['content-length-range', 1, 25 * 1024 * 1024]);
     expect(policy.conditions).toContainEqual({ key: a });
     expect(policy.conditions).toContainEqual({ bucket: 'crove-files' });
+    // No tagging field: S3 refuses a form field the policy does not name, so a browser upload cannot set the retention tag (#2789).
+    expect(Object.keys(form.fields).filter((k) => /tagging/i.test(k))).toEqual([]);
+    expect(JSON.stringify(policy.conditions)).not.toMatch(/tagging/i);
     // No starts-with condition: the form cannot write any other key.
     expect(policy.conditions.filter((c) => Array.isArray(c) && c[0] === 'starts-with')).toEqual([]);
     const expires = Date.parse(policy.expiration);

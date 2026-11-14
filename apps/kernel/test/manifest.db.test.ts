@@ -25,6 +25,13 @@ const CONTROL_PLANE: ModuleManifest = {
   dependsOn: [],
   tables: {
     crove_kernel: {
+      // The MCP endpoint's grants (#2975): a client's name and host as it declared them, never a secret.
+      agent_grant: columns(['org_id', 'id', 'user_id', 'client_id', 'client_name', 'client_host', 'scopes', 'max_risk', 'kind', 'member_id', 'oauth_grant_id', 'created_at', 'expires_at', 'revoked_at', 'last_used_at', 'created_by', 'rows_day', 'rows_used']),
+      // The wake-up receiver of an MCP grant (#3024): the URL can carry a token in its path and the secrets are sealed; none of the three is ever returned to a member who is not an owner or admin.
+      agent_grant_wake: columns(['org_id', 'id', 'grant_id', 'enabled', 'paused_reason', 'previous_until', 'secret_hint', 'schedule', 'schedule_minute', 'schedule_weekday', 'next_due_at', 'failing_since', 'consecutive_failures', 'last_delivery_at', 'last_status', 'signals_checked_at', 'created_at', 'updated_at', 'created_by'], { url: 'sensitive', secret_sealed: 'sensitive', previous_sealed: 'sensitive' }),
+      // One wake-up to send (#3024): its body holds ids, dates and amounts of the org's records, no text; and the keys of the signals already sent for a grant.
+      agent_wake_delivery: columns(['org_id', 'id', 'grant_id', 'type', 'status', 'attempts', 'last_code', 'created_at', 'queued_at', 'sent_at'], { body: 'sensitive' }),
+      agent_wake_signal_seen: columns(['org_id', 'id', 'grant_id', 'key', 'first_seen_at', 'last_seen_at']),
       auth_email_send: columns(['id', 'client_hash', 'target_hash', 'reserved_at']),
       auth_session: columns(['user_id', 'session_id', 'status', 'first_seen_at', 'last_seen_at', 'revoked_at', 'revoked_by', 'reason', 'evidence_at']),
       // The keys of the blobs of deleted images (#2357), emptied by the worker once each object is gone: no tenant column, no personal data.
@@ -37,6 +44,8 @@ const CONTROL_PLANE: ModuleManifest = {
       global_kill_switch: columns(['id', 'key', 'engaged', 'reason', 'changed_by', 'changed_at']),
       inbound_address: columns(['org_id', 'id', 'created_at', 'retired_at', 'kind'], { token: 'sensitive' }),
       inbound_pending: columns(['seq', 'blob_id', 'raw_sha256', 'size_bytes', 'received_at'], { recipient: 'sensitive' }),
+      // The embedded authorization server's records (#2975): the key is only a SHA-256, the payload holds the client's metadata and the consenting account id.
+      oauth_record: columns(['model', 'grant_id', 'uid', 'created_at', 'expires_at', 'consumed_at'], { key_hash: 'sensitive', payload: 'sensitive' }),
       stream_ticket: columns(['ticket_hash', 'user_id', 'stream_org_id', 'session_id', 'aal', 'mfa_at', 'token_expires_at', 'expires_at', 'created_at']),
       user_account: columns(['id', 'issuer', 'created_at', 'last_seen_at', 'disabled_at'], { subject: 'pii', email: 'contact', display_name: 'pii', status_reason: 'pii' }),
     },

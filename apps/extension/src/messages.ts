@@ -10,6 +10,8 @@ export interface StartRequest {
   consentMethod: string;
   consentAgreed: boolean;
   keepVideo: boolean;
+  // "Ghi chú trực tiếp" (ADR-0052 L4a): off unless ticked for this one recording.
+  liveNotes: boolean;
   // From chrome.tabCapture.getMediaStreamId in the popup, after the member's click on the tab.
   streamId: string;
 }
@@ -25,6 +27,7 @@ export interface CaptureStart {
   consentMethod: ConsentMethod;
   consentAgreed: boolean;
   keepVideo: boolean;
+  liveNotes: boolean;
   streamId: string;
 }
 
@@ -64,20 +67,20 @@ export const isOwnSender = (sender: unknown, ownId: string | undefined): boolean
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
 
 // The start request of the popup, or null when any field is not what it must be. The flags are booleans, not truthy
-// values: a string "false" must not count as consent, nor as a video that was not asked for.
+// values: a string "false" must not count as consent, nor as a video or live notes that were not asked for.
 export function parseStartRequest(raw: unknown): StartRequest | null {
   if (!isObject(raw)) return null;
-  const { title, consentMethod, consentAgreed, keepVideo, streamId } = raw;
+  const { title, consentMethod, consentAgreed, keepVideo, liveNotes, streamId } = raw;
   if (typeof title !== 'string' || typeof consentMethod !== 'string' || typeof streamId !== 'string' || streamId === '') return null;
-  if (typeof consentAgreed !== 'boolean' || typeof keepVideo !== 'boolean') return null;
-  return { title, consentMethod, consentAgreed, keepVideo, streamId };
+  if (typeof consentAgreed !== 'boolean' || typeof keepVideo !== 'boolean' || typeof liveNotes !== 'boolean') return null;
+  return { title, consentMethod, consentAgreed, keepVideo, liveNotes, streamId };
 }
 
 // The worker's capture command for the offscreen document, or null when it is malformed.
 export function parseCaptureStart(raw: unknown): CaptureStart | null {
   if (!isObject(raw) || raw.target !== 'offscreen' || raw.type !== 'capture-start') return null;
-  const { address, token, orgId, uploads, title, consentMethod, consentAgreed, keepVideo, streamId } = raw;
-  const request = parseStartRequest({ title, consentMethod, consentAgreed, keepVideo, streamId });
+  const { address, token, orgId, uploads, title, consentMethod, consentAgreed, keepVideo, liveNotes, streamId } = raw;
+  const request = parseStartRequest({ title, consentMethod, consentAgreed, keepVideo, liveNotes, streamId });
   if (!request || typeof address !== 'string' || typeof token !== 'string' || typeof orgId !== 'string') return null;
   if (uploads !== 'presigned' && uploads !== 'direct') return null;
   if (!(CONSENT_METHODS as readonly string[]).includes(request.consentMethod)) return null;

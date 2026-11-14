@@ -504,6 +504,7 @@ export function StockPage() {
   const negative = list.filter((i) => i.onHand.startsWith('-'));
   const lines = unassigned.data ?? [];
   const suggestions = useLineSuggestions(lines, list);
+  const { slug } = useParams({ strict: false }) as { slug: string };
 
   return (
     <>
@@ -518,6 +519,11 @@ export function StockPage() {
           ) : undefined
         }
       />
+      <p className="mb-4 text-sm">
+        <Link to="/o/$slug/marketplace" params={{ slug }} className="text-link underline" data-testid="stock-marketplace-link">
+          {t('marketplaceLink')}
+        </Link>
+      </p>
       {negative.length > 0 && (
         <Alert className="mb-4" data-testid="stock-negative">
           <AlertDescription>

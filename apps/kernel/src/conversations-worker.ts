@@ -16,6 +16,7 @@ import {
   parseFacebookNotices,
   parseInstagramNotices,
   parseSandboxNotice,
+  parseThreadsNotices,
   parseZaloNotice,
   type ConversationAdapter,
   type ConversationNotice,
@@ -47,6 +48,8 @@ export const NOTICE_PARSERS: Readonly<Record<string, NoticeParser>> = {
   instagram: parseInstagramNotices,
   // Zalo OA (#2304): its signature was checked by the route before the body was parked.
   zalo_oa: parseZaloNotice,
+  // Threads replies (#3133): X-Hub-Signature-256 was checked with the Threads app's secret by the route before the body was parked.
+  threads: parseThreadsNotices,
 };
 
 export interface ClaimedNotice {

@@ -118,6 +118,8 @@ export const EXPORT_TABLES = {
   // meeting_private_counts, a definer that answers counts only). Never audio or video.
   'meetings.meeting': { from: 'crove_kernel.meeting_export_rows()', omit: [] },
   'meetings.private_count': { from: 'crove_kernel.meeting_private_counts()', omit: [] },
+  // The links (a party, a deal, a calendar event) of those shared meetings (L1, #2587): ids only, never of an attendees-only meeting.
+  'meetings.link': { from: 'crove_kernel.meeting_link_export_rows()', omit: [] },
   // Each member's Vy (ADR-0049, #2822): per member how many private results and memory entries it holds (crove_kernel.member_vy_private_counts(), a definer that answers counts only, for the
   // worker's system context). Never a body: the results and the memory are sealed to their member, and a person who leaves is purged, so an export carries only that they existed.
   'kernel.member_vy_private_count': { from: 'crove_kernel.member_vy_private_counts()', omit: [] },

@@ -61,14 +61,14 @@ describe('command labels (#1654)', () => {
   });
 
   it('adds the label column to the real export and keeps every cell of it', () => {
-    const entry = { id: 'e1', at: '2026-10-01T00:00:00.000Z', actorType: 'user' as const, actorId: 'u1', targetType: 'proposal', targetId: 't1', proposalId: null };
+    const entry = { id: 'e1', at: '2026-10-01T00:00:00.000Z', actorType: 'user' as const, actorId: 'u1', targetType: 'proposal', targetId: 't1', proposalId: null, via: null };
     const csv = auditCsv([
       { ...entry, actorName: 'Lê, Văn "A"', command: 'kernel.proposal.approve', outcome: 'ok', detail: 'a, b\r\nc' },
       { ...entry, actorName: '=HYPERLINK("x")', command: 'kernel.retired.command', outcome: 'failed', detail: null },
     ]);
     const labeled = withCommandLabels(csv, (name) => commandLabel(vi.commands, name));
     const lines = labeled.split('\r\n');
-    expect(lines[0]).toBe('﻿occurred_at,actor_type,actor_id,actor_name,command,command_label,outcome,target_type,target_id,proposal_id,detail');
+    expect(lines[0]).toBe('﻿occurred_at,actor_type,actor_id,actor_name,command,command_label,outcome,target_type,target_id,proposal_id,via,detail');
     expect(labeled).toContain(',kernel.proposal.approve,Duyệt đề xuất,ok,');
     expect(labeled).toContain(',kernel.retired.command,,failed,');
     // Without the added column, the file is the server's, byte for byte.

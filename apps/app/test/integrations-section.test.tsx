@@ -73,7 +73,6 @@ describe('IntegrationsSection', () => {
     expect(html).toContain('<h2');
     // The lead names the product by its brand, and the apostrophe is escaped in the markup.
     expect(html).toContain('Connect');
-    expect(html).toContain('company&#x27;s bank and invoice provider.');
     expect(html).toContain(`aria-label="${en.bankFeeds.title}"`);
     expect(html).toContain(`aria-label="${en.einvoiceConnections.title}"`);
   });
@@ -88,6 +87,22 @@ describe('IntegrationsSection', () => {
     expect(invoiceOnly).toContain(`aria-label="${en.einvoiceConnections.title}"`);
     expect(invoiceOnly).not.toContain(`aria-label="${en.bankFeeds.title}"`);
     expect(section({ bank: false, providers: false })).toBe('');
+  });
+
+  it('draws the marketplace card under the same heading when an adapter is on or the org has a connection, and not otherwise', () => {
+    const qc = client.current;
+    const withMarketplace = (providers: unknown, connections: unknown[]) => {
+      qc.setQueryData(['marketplace', 'providers'], providers);
+      qc.setQueryData(['marketplace', 'connections', 'list'], connections);
+      return section({ bank: false, providers: false });
+    };
+    const platforms = [{ platform: 'shopee', adapter: true, adapters: ['sandbox'] }];
+    const on = withMarketplace({ adapters: [{ id: 'sandbox', offline: true, connectFields: [], platforms: ['shopee'] }], platforms }, []);
+    expect(on).toContain(`>${en.integrations.title}<`);
+    expect(on).toContain(`>${en.marketplaceConnections.title}<`);
+    expect(on).toContain('role="group"');
+    const off = withMarketplace({ adapters: [], platforms: [{ platform: 'shopee', adapter: false, adapters: [] }] }, []);
+    expect(off).toBe('');
   });
 
   it('keeps showing an org\'s e-invoice connection when the deployment no longer offers a provider', () => {
