@@ -3,14 +3,14 @@
 // see, and one click shares them with the meeting's readers; a reader sees what was shared and makes a team task from an item: they confirm the title, pick the
 // date and the seat. Nothing here needs AI; the work Vy does for this screen arrives in a later step and lands in these same drafts.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
-import type { ActionItemView } from '@crove/kernel-contract';
+import { MEETING_SUMMARY_TEMPLATES, templateSections, textToSections, type ActionItemView, type MeetingSummaryTemplate } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
 import { Input } from '@crove/ui/components/input';
-import { NativeSelect } from '@crove/ui/components/native-select';
+import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { Textarea } from '@crove/ui/components/textarea';
 import { DateInput } from './date-input.tsx';
 import { ErrorText } from './ui.tsx';
@@ -31,30 +31,99 @@ const refresh = () => {
   void queryClient.invalidateQueries({ queryKey: orpc.meetings.results.key() });
 };
 
-// The recorder's draft summary and decisions (one decision per line).
-function SummaryEditor({ meetingId, summary, decisions }: { meetingId: string; summary: string; decisions: string[] }) {
+// The recorder picks the minutes template of their meeting (A4, #3162): the sections Vy fills and the sections they type under. The kernel keeps only the code.
+function TemplatePicker({ meetingId, template }: { meetingId: string; template: MeetingSummaryTemplate }) {
+  const t = useTranslations('meetings');
+  const pick = useMutation({
+    mutationFn: (summaryTemplate: MeetingSummaryTemplate) => orpc.meetings.setTemplate.call({ meetingId, summaryTemplate }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: orpc.meetings.get.key() });
+    },
+  });
+  return (
+    <div className="space-y-1" data-testid="template-picker">
+      <label htmlFor="minutes-template" className="text-xs font-medium text-muted-foreground">
+        {t('templates.label')}
+      </label>
+      <NativeSelect id="minutes-template" value={template} disabled={pick.isPending} onChange={(e) => pick.mutate(e.target.value as MeetingSummaryTemplate)}>
+        {MEETING_SUMMARY_TEMPLATES.map((code) => (
+          <NativeSelectOption key={code} value={code}>
+            {t(`templates.names.${code}`)}
+          </NativeSelectOption>
+        ))}
+      </NativeSelect>
+      <p className="text-xs text-muted-foreground">{t('templates.hint')}</p>
+      {pick.error && <ErrorText>{errorMessage(pick.error)}</ErrorText>}
+    </div>
+  );
+}
+
+// The recorder's draft summary and decisions (one decision per line). On a template the summary is typed section by section; the kernel makes the one text from them.
+function SummaryEditor({ meetingId, summary, decisions, template }: { meetingId: string; summary: string; decisions: string[]; template: MeetingSummaryTemplate }) {
   const t = useTranslations('meetings.results');
+  const tm = useTranslations('meetings');
+  const defs = templateSections(template);
+  const parsed = defs.length === 0 ? null : textToSections(template, summary);
+  // Text that is not in this template's form (typed before the recorder changed the type) goes into the first section, never lost.
+  const reflowed = defs.length > 0 && parsed === null && summary.trim() !== '';
   const [text, setText] = useState(summary);
+  const [values, setValues] = useState<Record<string, string>>(() =>
+    Object.fromEntries(defs.map((d, i) => [d.key, parsed ? ((parsed.find((p) => p.key === d.key)?.text) ?? '') : i === 0 ? summary : ''])),
+  );
   const [lines, setLines] = useState(decisions.join('\n'));
-  const parsed = lines.split('\n').map((l) => l.trim()).filter(Boolean);
-  const save = useMutation({ mutationFn: () => orpc.meetings.results.saveSummary.call({ meetingId, summary: text.trim(), decisions: parsed }), onSuccess: refresh });
+  const decisionList = lines.split('\n').map((l) => l.trim()).filter(Boolean);
+  const sections = defs.map((d) => ({ key: d.key, text: (values[d.key] ?? '').trim() })).filter((x) => x.text !== '');
+  // A section holds at most 1200 characters; text reflowed into the first one can be longer, and the recorder splits it before saving.
+  const tooLong = defs.some((d) => (values[d.key] ?? '').length > 1200);
+  const save = useMutation({
+    mutationFn: () =>
+      orpc.meetings.results.saveSummary.call(defs.length === 0 ? { meetingId, summary: text.trim(), decisions: decisionList } : { meetingId, sections, decisions: decisionList }),
+    onSuccess: refresh,
+  });
   return (
     <div className="space-y-2">
-      <Textarea aria-label={t('summary')} value={text} maxLength={8000} rows={5} onChange={(e) => setText(e.target.value)} />
+      {defs.length === 0 ? (
+        <Textarea aria-label={t('summary')} value={text} maxLength={8000} rows={5} onChange={(e) => setText(e.target.value)} />
+      ) : (
+        <div className="space-y-2" data-testid="section-editor">
+          {reflowed && <p className="text-xs text-muted-foreground">{tm('templates.reflow')}</p>}
+          {tooLong && <ErrorText>{tm('templates.tooLong')}</ErrorText>}
+          {defs.map((d) => (
+            <div key={d.key} className="space-y-1">
+              <label htmlFor={`section-${d.key}`} className="text-xs font-medium">
+                {tm(`templates.sections.${template}.${d.key}` as never)}
+              </label>
+              <Textarea id={`section-${d.key}`} value={values[d.key] ?? ''} maxLength={1200} rows={3} onChange={(e) => setValues((v) => ({ ...v, [d.key]: e.target.value }))} />
+            </div>
+          ))}
+        </div>
+      )}
       <Textarea aria-label={t('decisions')} placeholder={t('decisionsHint')} value={lines} rows={3} onChange={(e) => setLines(e.target.value)} />
       {save.error && <ErrorText>{errorMessage(save.error)}</ErrorText>}
-      <Button size="sm" loading={save.isPending} disabled={text.trim() === ''} onClick={() => save.mutate()}>
+      <Button size="sm" loading={save.isPending} disabled={defs.length === 0 ? text.trim() === '' : sections.length === 0 || tooLong} onClick={() => save.mutate()}>
         {t('saveDraft')}
       </Button>
     </div>
   );
 }
 
-function SummaryText({ summary, decisions }: { summary: string; decisions: string[] }) {
+function SummaryText({ summary, decisions, template }: { summary: string; decisions: string[]; template: MeetingSummaryTemplate }) {
   const t = useTranslations('meetings.results');
+  const tm = useTranslations('meetings');
+  // A template's text is shown under its headings; text that is not in the template's form is shown whole.
+  const sections = textToSections(template, summary)?.filter((s) => s.text !== '') ?? null;
   return (
     <div className="space-y-2 text-sm">
-      <p className="whitespace-pre-wrap">{summary}</p>
+      {sections === null ? (
+        <p className="whitespace-pre-wrap">{summary}</p>
+      ) : (
+        sections.map((s) => (
+          <div key={s.key}>
+            <p className="text-xs font-medium text-muted-foreground">{tm(`templates.sections.${template}.${s.key}` as never)}</p>
+            <p className="whitespace-pre-wrap">{s.text}</p>
+          </div>
+        ))
+      )}
       {decisions.length > 0 && (
         <div>
           <p className="text-xs font-medium text-muted-foreground">{t('decisions')}</p>
@@ -239,7 +308,8 @@ function VySummary({ meetingId, hasModelDraft }: { meetingId: string; hasModelDr
   );
 }
 
-export function MeetingResults({ meetingId, readers }: { meetingId: string; readers: readonly string[] }) {
+// `template` is the meeting's minutes template (A4, #3162); `minutesLink` is the "Xem biên bản" link the page puts beside the title (it knows the route; this panel does not).
+export function MeetingResults({ meetingId, readers, template = 'general', minutesLink }: { meetingId: string; readers: readonly string[]; template?: MeetingSummaryTemplate; minutesLink?: ReactNode }) {
   const t = useTranslations('meetings.results');
   const query = useQuery({ ...orpc.meetings.results.get.queryOptions({ input: { meetingId } }), ...READ_ONCE });
   const publish = useMutation({ mutationFn: () => orpc.meetings.results.publish.call({ meetingId, confirmed: true }), onSuccess: refresh });
@@ -260,18 +330,22 @@ export function MeetingResults({ meetingId, readers }: { meetingId: string; read
   return (
     <Card data-testid="meeting-results">
       <CardHeader>
-        <CardTitle className="text-base font-medium">{t('title')}</CardTitle>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle className="text-base font-medium">{t('title')}</CardTitle>
+          {minutesLink}
+        </div>
         <CardDescription className="text-xs text-muted-foreground">{isRecorder ? t('recorderNote') : t('readerNote')}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {published && (
           <section className="space-y-1">
             {isRecorder && <h3 className="text-xs font-medium text-muted-foreground">{t('publishedTitle')}</h3>}
-            <SummaryText summary={published.summary} decisions={published.decisions} />
+            <SummaryText summary={published.summary} decisions={published.decisions} template={template} />
             <MeetingTranslation meetingId={meetingId} stage="published" original={{ summary: published.summary, decisions: published.decisions, items: items.filter((i) => i.stage === 'published') }} />
           </section>
         )}
         {isRecorder && (published || items.some((i) => i.stage === 'published')) && <MeetingFollowup meetingId={meetingId} />}
+        {isRecorder && <TemplatePicker meetingId={meetingId} template={template} />}
         {isRecorder && <VySummary meetingId={meetingId} hasModelDraft={(draft?.tainted ?? false) || items.some((i) => i.stage === 'draft' && i.tainted)} />}
         {isRecorder && (
           <section className="space-y-2">
@@ -280,7 +354,7 @@ export function MeetingResults({ meetingId, readers }: { meetingId: string; read
               {draft?.tainted && <Badge variant="outline">{t('fromVy')}</Badge>}
             </h3>
             {hasDraft && <p className="text-xs text-muted-foreground">{t('draftExpiry')}</p>}
-            <SummaryEditor key={draft?.id ?? 'new'} meetingId={meetingId} summary={draft?.summary ?? ''} decisions={draft?.decisions ?? []} />
+            <SummaryEditor key={`${template}-${draft?.id ?? 'new'}`} meetingId={meetingId} summary={draft?.summary ?? ''} decisions={draft?.decisions ?? []} template={template} />
             {hasDraft && <MeetingTranslation meetingId={meetingId} stage="draft" original={{ summary: draft?.summary ?? '', decisions: draft?.decisions ?? [], items: items.filter((i) => i.stage === 'draft') }} />}
           </section>
         )}

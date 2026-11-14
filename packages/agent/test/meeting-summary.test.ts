@@ -19,6 +19,7 @@ import {
   type ModelPort,
   type Ports,
   type SummarySegment,
+  type SummaryTemplate,
 } from '../src/member-vy/index.ts';
 
 const A: MemberRef = { orgId: 'org-1', memberUserId: 'alice' };
@@ -59,6 +60,8 @@ describe('checkSummary', () => {
       SEGMENTS,
     );
     expect(out).toEqual<MeetingSummaryBody>({
+      template: 'general',
+      sections: [],
       summary: 'Cuộc họp bàn báo giá cho khách A, tổng 120 triệu. Chốt giữ giá cũ.',
       decisions: ['Giữ giá cũ'],
       items: [{ title: 'Gửi báo giá cho khách A', who: 'Nam', when: 'trước thứ sáu', seconds: 25 }],
@@ -148,6 +151,88 @@ describe('checkSummary', () => {
   it('reads JSON the model wrapped in a code fence or in a sentence', () => {
     const wrapped = 'Đây là kết quả:\n```json\n' + body({ summary: 'Họp báo giá.', decisions: [], items: [] }) + '\n```';
     expect(checkSummary(wrapped, SEGMENTS).summary).toBe('Họp báo giá.');
+  });
+});
+
+// A4 (#3162): the same run fills the sections of a minutes template; the sections get the same checks as the summary.
+const BRIEFING: SummaryTemplate = {
+  code: 'briefing',
+  sections: [
+    { key: 'progress', title: 'Kết quả công việc kỳ trước', hint: 'done' },
+    { key: 'issues', title: 'Vướng mắc, tồn tại', hint: 'blockers' },
+    { key: 'plan', title: 'Kế hoạch kỳ tới', hint: 'next' },
+  ],
+};
+describe('checkSummary with a template', () => {
+  it('keeps the sections the template names, in its order, with the template code, and no summary', () => {
+    const out = checkSummary(
+      body({
+        summary: 'ignored on a template',
+        sections: [
+          { key: 'plan', text: 'Nam gửi báo giá trước thứ sáu.\nHọp lại lúc 9 giờ sáng thứ hai.' },
+          { key: 'progress', text: 'Báo giá cho khách A tổng 120 triệu.' },
+        ],
+        decisions: ['Giữ giá cũ'],
+        items: [],
+      }),
+      SEGMENTS,
+      BRIEFING,
+    );
+    expect(out.template).toBe('briefing');
+    expect(out.summary).toBe('');
+    expect(out.sections).toEqual([
+      { key: 'progress', text: 'Báo giá cho khách A tổng 120 triệu.' },
+      { key: 'plan', text: 'Nam gửi báo giá trước thứ sáu.\nHọp lại lúc 9 giờ sáng thứ hai.' },
+    ]);
+    expect(out.dropped).toBe(0);
+  });
+
+  it('removes a sentence of a section that writes a figure the transcript lacks or a way to reach someone, and drops a key the template does not have or repeats', () => {
+    const out = checkSummary(
+      body({
+        sections: [
+          { key: 'progress', text: 'Báo giá cho khách A. Tổng 999 triệu. Gọi 0912 345 678.' },
+          { key: 'progress', text: 'Lần hai của cùng một mục.' },
+          { key: 'secret', text: 'Không có trong mẫu.' },
+          { key: 'issues', text: 'Xem https://evil.example/x' },
+        ],
+        decisions: [],
+        items: [],
+      }),
+      SEGMENTS,
+      BRIEFING,
+    );
+    expect(out.sections).toEqual([{ key: 'progress', text: 'Báo giá cho khách A.' }]);
+    // 2 sentences, 1 repeated key, 1 foreign key, 1 link line.
+    expect(out.dropped).toBe(5);
+  });
+
+  it('caps a section by whole lines and refuses an answer whose sections, decisions and items are all empty', () => {
+    const long = Array.from({ length: 40 }, (_, i) => `Dòng số ${i === 0 ? 'một' : 'tiếp'} ${'báo giá '.repeat(10)}`).join('\n');
+    const out = checkSummary(body({ sections: [{ key: 'progress', text: long }], decisions: [], items: [] }), SEGMENTS, BRIEFING);
+    expect((out.sections[0] as { text: string }).text.length).toBeLessThanOrEqual(1200);
+    expect(() => checkSummary(body({ sections: [{ key: 'plan', text: 'Giá 999 triệu.' }], decisions: [], items: [] }), SEGMENTS, BRIEFING)).toThrow(SummaryError);
+  });
+
+  it('counts an answer that gave a summary or an object instead of the list of sections', () => {
+    const summaryOnly = checkSummary(body({ summary: 'Họp báo giá.', decisions: ['Giữ giá cũ'], items: [] }), SEGMENTS, BRIEFING);
+    expect(summaryOnly.sections).toEqual([]);
+    expect(summaryOnly.summary).toBe('');
+    expect(summaryOnly.dropped).toBe(1);
+    const asObject = checkSummary(body({ sections: { plan: 'Họp lại.' }, decisions: ['Giữ giá cũ'], items: [] }), SEGMENTS, BRIEFING);
+    expect(asObject.dropped).toBe(1);
+  });
+
+  it('asks the model for the sections with their keys and hints, and leaves the general instruction alone', async () => {
+    const fake = fakeModel(body({ sections: [{ key: 'plan', text: 'Họp lại lúc 9 giờ sáng thứ hai.' }], decisions: [], items: [] }));
+    const out = await summarizeMeeting({ segments: SEGMENTS, language: 'vi', template: BRIEFING }, bindPorts(A, fake.ports));
+    expect(out.parsed.sections).toEqual([{ key: 'plan', text: 'Họp lại lúc 9 giờ sáng thứ hai.' }]);
+    const system = (fake.seen[0] as { system: string }).system;
+    expect(system).toContain('key "progress" (Kết quả công việc kỳ trước): done');
+    expect(system).toContain('"sections"');
+    const general = fakeModel(body({ summary: 'Họp báo giá.', decisions: [], items: [] }));
+    await summarizeMeeting({ segments: SEGMENTS, language: 'vi' }, bindPorts(A, general.ports));
+    expect((general.seen[0] as { system: string }).system).not.toContain('key "');
   });
 });
 

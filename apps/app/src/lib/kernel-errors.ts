@@ -348,6 +348,10 @@ export const KERNEL_ERROR_CODES = [
   'SUMMARY_RESULT_INVALID',
   'SUMMARY_RESULT_NOT_FOUND',
   'SUMMARY_RESULT_NOT_READY',
+  // The minutes templates (Meetings A4, #3162).
+  'SUMMARY_REQUIRED',
+  'SUMMARY_TEMPLATE_CHANGED',
+  'TEMPLATE_MISMATCH',
   // The member's Vy translating the summary they read (meetings integrations E1, #3184).
   'TRANSLATE_OFF',
   'TRANSLATION_NOT_FOUND',
