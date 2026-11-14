@@ -153,7 +153,7 @@ suite('vy.use (ADR-0049 decision 10)', () => {
     const check = (roleKey: string, legalEntityId: string | null = null) =>
       admin((c) => c.query('SELECT crove_kernel.role_assignment_check($1::uuid, $2::uuid, $3::text, $4::text, $5::uuid)', [orgId, users.viewer, 'viewer', roleKey, legalEntityId]));
     await expect(check('finance.chief_accountant')).rejects.toThrow(/ROLE_PRIVILEGED_FOR_VIEWER/);
-    for (const roleKey of ['crm.sales', 'desk.agent', 'hr.manager', 'finance.accountant', 'finance.viewer']) {
+    for (const roleKey of ['crm.sales', 'desk.agent', 'hr.manager', 'social.marketer', 'finance.accountant', 'finance.viewer']) {
       // desk.agent also grants kernel.conversation.direct.read, a real permission: refused too.
       if (roleKey === 'desk.agent') await expect(check(roleKey)).rejects.toThrow(/ROLE_PRIVILEGED_FOR_VIEWER/);
       else await expect(check(roleKey), `${roleKey} for a viewer`).resolves.toBeDefined();
