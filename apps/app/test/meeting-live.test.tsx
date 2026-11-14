@@ -24,7 +24,7 @@ vi.mock('../src/lib/api.ts', async () => {
   return { orpc: node([]), queryClient: client.current, errorMessage: String };
 });
 
-const { MeetingLive, createTickGate, liveActive, liveNotice } = await import('../src/components/meeting-live.tsx');
+const { MeetingLive, assembleView, createTickGate, liveActive, liveNotice } = await import('../src/components/meeting-live.tsx');
 
 const status = (over: Partial<LiveStatus> = {}): LiveStatus => ({
   meetingId: 'm1',
@@ -35,6 +35,7 @@ const status = (over: Partial<LiveStatus> = {}): LiveStatus => ({
   errorCode: null,
   lines: [],
   notesUpdatedAt: null,
+  assemble: { available: false, reason: 'no_pieces', pieces: 0, missing: [] },
   ...over,
 });
 
@@ -118,6 +119,38 @@ describe('liveActive', () => {
     expect(liveActive(status({ state: 'off' }))).toBe(false);
     expect(liveActive(status({ state: 'stopped' }))).toBe(false);
     expect(liveActive(status({ enabled: false }))).toBe(false);
+  });
+});
+
+describe('the recording that was not uploaded (#3126)', () => {
+  const assemble = (over: Partial<LiveStatus['assemble']>): LiveStatus['assemble'] => ({ available: false, reason: 'no_pieces', pieces: 0, missing: [], ...over });
+
+  it('offers the click with the piece count, the late-upload rule and the gaps', () => {
+    const html = render(status({ state: 'stopped', assemble: assemble({ available: true, reason: null, pieces: 12, missing: [3, 7] }) }));
+    expect(html).toContain('live-assemble');
+    expect(html).toContain('Ghép bản ghi từ các đoạn trực tiếp');
+    expect(html).toContain('12 đoạn');
+    expect(html).toContain('Thiếu 2 đoạn (số 3, 7)');
+    expect(html).toContain('bản đến muộn bị từ chối');
+    expect(render(status({ assemble: assemble({ available: true, reason: null, pieces: 3 }) }))).not.toContain('live-assemble-gaps');
+  });
+
+  it('says why the pieces cannot be joined yet or at all, and shows nothing when there is nothing to join', () => {
+    // While the final recording may still arrive (during the meeting and until the longest recording time has passed) the box is not shown at all.
+    expect(render(status({ assemble: assemble({ reason: 'still_recording', pieces: 4 }) }))).not.toContain('live-assemble');
+    expect(render(status({ assemble: assemble({ reason: 'first_piece_missing', pieces: 4, missing: [0] }) }))).toContain('thiếu đoạn đầu');
+    expect(render(status({ assemble: assemble({ reason: 'expired', pieces: 2 }) }))).toContain('thời hạn giữ âm thanh');
+    // An expired meeting that kept its recording has no pieces left: nothing to say.
+    expect(render(status({ assemble: assemble({ reason: 'expired', pieces: 0 }) }))).not.toContain('live-assemble');
+    for (const reason of ['no_pieces', 'audio_recorded'] as const) expect(render(status({ assemble: assemble({ reason, pieces: 4 }) }))).not.toContain('live-assemble');
+    expect(assembleView(assemble({ reason: 'still_recording', pieces: 4 }))).toBe('none');
+    expect(assembleView(assemble({ reason: 'expired', pieces: 0 }))).toBe('none');
+    expect(render(status({ assemble: assemble({ available: true, reason: null, pieces: 5 }) }), {}, 'en')).toContain('Join the recording from the live pieces');
+  });
+
+  it('is offered even when the deployment cannot transcribe: joining needs no AI', () => {
+    const html = render(status({ enabled: false, state: 'off', runId: null, assemble: assemble({ available: true, reason: null, pieces: 5 }) }));
+    expect(html).toContain('Ghép bản ghi từ các đoạn trực tiếp');
   });
 });
 

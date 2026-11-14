@@ -17,6 +17,7 @@ import {
   parseInstagramNotices,
   TELEGRAM_HOOK_KEY_INFO,
   parseSandboxNotice,
+  parseWhatsAppNotices,
   parseTelegramChatNotice,
   parseThreadsNotices,
   parseZaloNotice,
@@ -29,7 +30,7 @@ import { BlobConflictError, DomainError, putFile, sha256Hex, type BlobStore, typ
 import { AiBudgetExhaustedError, withAiScope, type AiMeter, type ConversationWriter, type ReplyDraftResult } from '@crove/agent';
 import type { AttachmentSource, DraftSource, HideWork, HistoryWork, ProfileWork, ReplyWork, TelegramChatWork, UsageLimits } from '@crove/kernel';
 import type { DraftBudget } from './ai-draft-limit.ts';
-import { fetchConversationImage, mediaHostsOf, type FetchConversationImageOptions } from './conversation-media.ts';
+import { fetchConversationImage, fetchConversationMedia, mediaHostsOf, type FetchConversationImageOptions } from './conversation-media.ts';
 import { opsAlert } from './ops-alert.ts';
 
 const SYSTEM = { type: 'system' as const, component: 'conversations' };
@@ -50,6 +51,8 @@ export const NOTICE_PARSERS: Readonly<Record<string, NoticeParser>> = {
   instagram: parseInstagramNotices,
   // Zalo OA (#2304): its signature was checked by the route before the body was parked.
   zalo_oa: parseZaloNotice,
+  // WhatsApp Business (#3131): X-Hub-Signature-256 was checked by the route before the body was parked.
+  whatsapp: parseWhatsAppNotices,
   // Telegram bot chats (#3132): the hook and its secret were checked by the route before the update was parked; the notice's account id is the hook.
   telegram_chat: parseTelegramChatNotice,
   // Threads replies (#3133): X-Hub-Signature-256 was checked with the Threads app's secret by the route before the body was parked.
@@ -314,14 +317,54 @@ export async function runConversationSync(deps: SendDeps, job: ConversationSyncJ
     answer = { kind: 'failed', retry: true, code: 'ADAPTER_ERROR' };
   }
   if (answer.kind === 'failed') {
+    // A provider that meters its API (YouTube, #3134) has its spent units and its next poll recorded, and is never read again by the job's own retry:
+    // asking again at once would spend more of a quota that is the failure. Its poll comes back by its own interval (the kernel sets it).
+    if (work.provider === 'youtube') {
+      await deps.runtime.execute(
+        'kernel.conversation.history_record',
+        {
+          connectionId: job.connectionId,
+          complete: false,
+          gapFrom: null,
+          gapTo: null,
+          quota: { units: Math.min(answer.units ?? 0, 1000), outcome: answer.retry ? 'retry' : 'final', newMessages: 0, blockedUntil: answer.quotaUntil ? answer.quotaUntil.toISOString() : null },
+        },
+        options,
+      );
+      return 'failed';
+    }
     // Asked again by the job's retry, then by the next pass after an hour; a refusal that will not change waits for the reconnect.
     if (answer.retry) throw new Error('history read failed');
     return 'failed';
   }
-  for (let i = 0; i < answer.events.length; i += INGEST_CHUNK) {
-    await deps.runtime.execute('kernel.conversation.ingest', { connectionId: job.connectionId, events: answer.events.slice(i, i + INGEST_CHUNK) }, options);
+  let stored = 0;
+  try {
+    for (let i = 0; i < answer.events.length; i += INGEST_CHUNK) {
+      const ingested = await deps.runtime.execute<{ stored: number }>('kernel.conversation.ingest', { connectionId: job.connectionId, events: answer.events.slice(i, i + INGEST_CHUNK) }, options);
+      stored += ingested.stored;
+    }
+  } catch (error) {
+    if (work.provider !== 'youtube') throw error;
+    // The platform was asked and its units are spent whatever happens after: they are counted, and the poll comes back by its own interval, never by the
+    // job's retry (which would ask Google again, uncounted, while the store is failing).
+    await deps.runtime.execute(
+      'kernel.conversation.history_record',
+      { connectionId: job.connectionId, complete: false, gapFrom: null, gapTo: null, quota: { units: Math.min(answer.units ?? 0, 1000), outcome: 'retry', newMessages: 0, blockedUntil: null } },
+      options,
+    );
+    return 'failed';
   }
-  await deps.runtime.execute('kernel.conversation.history_record', { connectionId: job.connectionId, complete: answer.complete, gapFrom: answer.complete ? null : work.since, gapTo: answer.complete ? null : answer.oldest }, options);
+  await deps.runtime.execute(
+    'kernel.conversation.history_record',
+    {
+      connectionId: job.connectionId,
+      complete: answer.complete,
+      gapFrom: answer.complete ? null : work.since,
+      gapTo: answer.complete ? null : answer.oldest,
+      ...(work.provider === 'youtube' ? { quota: { units: Math.min(answer.units ?? 0, 1000), outcome: 'ok' as const, newMessages: stored, blockedUntil: null } } : {}),
+    },
+    options,
+  );
   return answer.complete ? 'complete' : 'gap';
 }
 
@@ -359,6 +402,12 @@ export interface AttachmentDeps {
   store: BlobStore;
   // The deployment's own list of media hosts (CHANNEL_ZALO_MEDIA_HOSTS); unset, each provider's own.
   hosts?: readonly string[] | undefined;
+  // The deployment's own list of another provider's media hosts (CHANNEL_WHATSAPP_MEDIA_HOSTS, #3131); an empty list is the provider's own.
+  providerHosts?: Readonly<Record<string, readonly string[]>> | undefined;
+  // For an image given by a reference (#3131): the credential broker that opens the connection's token inside this job, and the provider's adapter that turns the
+  // reference into bytes with it. Without them such an image is dropped (nothing can fetch it).
+  broker?: CredentialBroker | undefined;
+  adapter?: ((provider: string) => ConversationAdapter | undefined) | undefined;
   // Tests only: the egress guard's resolver, address check and port.
   egress?: FetchConversationImageOptions['egress'];
 }
@@ -374,7 +423,25 @@ export async function runConversationAttachment(deps: AttachmentDeps, job: Conve
     await deps.runtime.execute('kernel.conversation.attachment_record', { outcome: 'failed', attachmentId: job.attachmentId, retry, code }, options);
     return retry ? 'retry' : 'dropped';
   };
-  const got = await fetchConversationImage(source.sourceUrl, { hosts: mediaHostsOf(source.provider, deps.hosts), ...(deps.egress ? { egress: deps.egress } : {}) });
+  const hosts = mediaHostsOf(source.provider, deps.hosts, deps.providerHosts);
+  let got: Awaited<ReturnType<typeof fetchConversationImage>>;
+  if (source.sourceUrl !== null) {
+    got = await fetchConversationImage(source.sourceUrl, { hosts, ...(deps.egress ? { egress: deps.egress } : {}) });
+  } else if (source.mediaRef !== null) {
+    // The reference is turned into bytes by the adapter with the connection's sealed token, opened here and nowhere else; nothing of it is logged or put in a job.
+    const adapter = deps.adapter?.(source.provider);
+    if (!adapter?.media || !deps.broker) return failed(false, 'NO_MEDIA_ADAPTER');
+    let opened: Opened;
+    try {
+      opened = await open({ runtime: deps.runtime, broker: deps.broker }, job);
+    } catch {
+      return failed(true, 'CREDENTIAL_ERROR');
+    }
+    if (opened.kind === 'refused') return failed(false, opened.code);
+    got = await fetchConversationMedia(adapter, { externalAccountId: opened.externalAccountId, secret: opened.secret, mediaRef: source.mediaRef, hosts, ...(deps.egress ? { egress: deps.egress } : {}) });
+  } else {
+    return 'none';
+  }
   if (got.kind === 'failed') return failed(got.retry, got.code);
   const sha256 = sha256Hex(got.bytes);
   let generation: string;

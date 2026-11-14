@@ -195,7 +195,7 @@ describe('prepareCapture (setup order and cleanup, issue #2581 review finding 1)
     const track = { stop: () => void log.push('track.stop') };
     const stream = { getTracks: () => [track] };
     const recorder = { state: 'inactive', stop: () => void log.push('recorder.stop') };
-    const writer = { meta: () => ({}) as RecordingMeta, addChunk: () => Promise.resolve(), touch: () => Promise.resolve() };
+    const writer = { meta: () => ({}) as RecordingMeta, addChunk: () => Promise.resolve(), touch: () => Promise.resolve(), markStopped: () => Promise.resolve() };
     const deps = {
       openStore: () => (opts.failAt === 'store' ? Promise.reject(new Error('idb')) : Promise.resolve()),
       getStream: async () => {

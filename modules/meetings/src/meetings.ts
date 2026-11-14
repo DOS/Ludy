@@ -16,6 +16,8 @@ import { linkCommands, linkQueries } from './links.ts';
 import { liveNotesCommands } from './live-notes.ts';
 import { liveRunCommands, liveRunQueries } from './live-run.ts';
 import { liveCommands } from './live.ts';
+import { liveAssembleCommands, liveAssembleQueries } from './live-assemble.ts';
+import { recordSealedMedia } from './media-record.ts';
 import { dropFollowupPayloads } from './followup-erase.ts';
 import { followupCommands, followupQueries } from './followup.ts';
 import {
@@ -35,6 +37,10 @@ import {
   MEETING_OWNER_LIST_PAGE,
   zMeetingCreate,
   zMeetingExtensionStatus,
+  zMeetingRecordingNow,
+  zMeetingRecordingNowInput,
+  RECORDING_NOW_WINDOW_HOURS,
+  type MeetingRecordingNow,
   zMeetingListInput,
   zMeetingMediaKeyReseal,
   zMeetingMediaMeta,
@@ -46,6 +52,7 @@ import {
   type ConsentMethod,
   type MeetingDetail,
   type MeetingExtensionStatus,
+  type RecordingStopReason,
   type MeetingLanguage,
   type MeetingOwnerList,
   type MeetingOwnerListItem,
@@ -72,20 +79,7 @@ function userOf(actor: CommandContext['actor'] | QueryContext['actor']): string 
   return actor.userId;
 }
 
-const MEDIA_EXTENSIONS: Record<string, string> = {
-  'audio/webm': 'webm',
-  'video/webm': 'webm',
-  'audio/mp4': 'm4a',
-  'video/mp4': 'mp4',
-  'audio/ogg': 'ogg',
-  'audio/wav': 'wav',
-  'audio/mpeg': 'mp3',
-};
-
-/** File extension for a sniffed container (detectMediaContainer), so the stored name matches the bytes (#2703). */
-export function mediaExtension(contentType: string, kind: 'audio' | 'video'): string {
-  return MEDIA_EXTENSIONS[contentType] ?? (kind === 'audio' ? 'bin' : 'mp4');
-}
+export { mediaExtension } from './media-record.ts';
 
 export function detectMediaContainer(bytes: Uint8Array, kind: 'audio' | 'video'): string | null {
   if (bytes.length < 12) return null;
@@ -142,6 +136,7 @@ interface MeetingRow {
   consent_confirmed_by: string;
   consent_confirmed_at: Date | string;
   consent_notice_version: string;
+  recording_stop_reason: RecordingStopReason | null;
   audio_retention_date: Date | string;
   text_retention_date: Date | string | null;
   created_at: Date | string;
@@ -205,7 +200,7 @@ export const meetingCreate = defineCommand({
         consent_method: input.consentMethod,
         consent_confirmed_by: userId,
         consent_confirmed_at: startedAt,
-        consent_notice_version: CONSENT_NOTICE_VERSION,
+        consent_notice_version: input.consentNoticeVersion ?? CONSENT_NOTICE_VERSION,
         audio_retention_date: dates.audio,
         text_retention_date: dates.text,
         extension_token_id: extensionTokenId,
@@ -245,6 +240,7 @@ export const meetingCreate = defineCommand({
       title: auditValue(MEETING, 'title', input.title),
       visibility: input.visibility,
       consentMethod: input.consentMethod,
+      consentNoticeVersion: input.consentNoticeVersion ?? CONSENT_NOTICE_VERSION,
       liveNotes: input.liveNotes,
     });
 
@@ -265,7 +261,7 @@ export const meetingMediaRecord = defineCommand({
     const userId = userOf(ctx.actor);
     const meeting = await ctx.trx
       .selectFrom('crove_meetings.meeting')
-      .select(['id', 'recorder_user_id', 'keep_video', 'extension_token_id', sql<string>`audio_retention_date::text`.as('audio_retention_day')])
+      .select(['id', 'recorder_user_id', 'keep_video', 'extension_token_id', 'started_at', 'ended_at', 'recording_stop_reason', sql<string>`audio_retention_date::text`.as('audio_retention_day')])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
       .executeTakeFirst();
@@ -291,70 +287,23 @@ export const meetingMediaRecord = defineCommand({
       throw new DomainError('INVALID_STORAGE_KEY', 400, 'Storage key must match org and sha256');
     }
 
-    // The recording is complete, whatever its kind (a video holds the same audio): the live pieces (ADR-0052 L4a) are not kept beside it. The meeting's live lock
-    // is taken first, so a piece being recorded at this moment either commits before this and is deleted here, or waits and finds the recording ended. Their keys go
-    // first, so they are unreadable from this commit, and their file rows are left for the worker's orphan sweep. A meeting with no live pieces has nothing to delete.
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`meetings.live:${ctx.orgId}:${input.meetingId}`}, 0))`.execute(ctx.trx);
-    const { rows: discarded } = await sql<{ n: number }>`SELECT crove_meetings.live_chunk_discard(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS n`.execute(ctx.trx);
-    const liveChunksDiscarded = Number(discarded[0]?.n ?? 0);
-    const wrappedKey = Buffer.from(input.wrappedKeyHex, 'hex');
-    await sql`SELECT crove_meetings.media_key_seal(
-      ${ctx.orgId}::uuid,
-      ${input.meetingId}::uuid,
-      ${input.keyId}::text,
-      ${input.kind}::text,
-      ${wrappedKey}::bytea
-    )`.execute(ctx.trx);
+    const { fileId, liveChunksDiscarded } = await recordSealedMedia(ctx, { userId, meetingId: input.meetingId, audioRetentionDay: meeting.audio_retention_day, input });
 
-    const fileId = randomUUID();
-    const filename = `meeting-${input.meetingId}.${mediaExtension(input.contentType, input.kind)}`;
-    await ctx.trx
-      .insertInto('crove_kernel.file')
-      .values({
-        org_id: ctx.orgId,
-        id: fileId,
-        filename,
-        content_type: input.contentType,
-        size_bytes: String(input.sizeBytes),
-        sha256: input.sha256,
-        storage_key: input.storageKey,
-        generation: input.generation ?? null,
-        source: input.kind === 'audio' ? 'meeting_audio' : 'meeting_video',
-        created_by: userId,
-      })
-      .execute();
-
-    if (input.kind === 'audio') {
+    // A recording that stopped without the recorder's click (A1, #3159): the reason code and the stop time (the start plus what was
+    // recorded, never later than now) stay on the meeting, once, so it can say "Ghi âm đã dừng lúc ...". A code, never text.
+    // Every recording that reaches the server ends its meeting's recording: ended_at is set once (the first media wins), which is also what
+    // takes the meeting out of the app's recording chip.
+    if (meeting.ended_at === null && meeting.started_at !== null) {
+      const endedAt = new Date(Math.min(new Date(meeting.started_at).getTime() + input.lengthSeconds * 1000, ctx.now.getTime()));
       await ctx.trx
-        .insertInto('crove_meetings.audio_segment')
-        .values({
-          org_id: ctx.orgId,
-          id: randomUUID(),
-          meeting_id: input.meetingId,
-          file_id: fileId,
-          segment_order: 0,
-          start_offset_seconds: 0,
-          length_seconds: input.lengthSeconds,
-        })
-        .execute();
-    } else {
-      // The org's video period from the recording, never past the meeting's own audio date.
-      const videoDay = retentionDates(ctx.now, await readRetentionSettings(ctx.trx, ctx.orgId)).video;
-      const videoRetentionDate = videoDay < meeting.audio_retention_day ? videoDay : meeting.audio_retention_day;
-      await ctx.trx
-        .insertInto('crove_meetings.meeting_video')
-        .values({
-          org_id: ctx.orgId,
-          id: randomUUID(),
-          meeting_id: input.meetingId,
-          file_id: fileId,
-          length_seconds: input.lengthSeconds,
-          video_retention_date: videoRetentionDate,
-        })
+        .updateTable('crove_meetings.meeting')
+        .set({ ended_at: endedAt, updated_at: ctx.now, ...(input.stopReason !== undefined && meeting.recording_stop_reason === null ? { recording_stop_reason: input.stopReason } : {}) })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.meetingId)
         .execute();
     }
 
-    ctx.audit({ meetingId: input.meetingId, kind: input.kind, fileId, ...(liveChunksDiscarded > 0 ? { liveChunksDiscarded } : {}) });
+    ctx.audit({ meetingId: input.meetingId, kind: input.kind, fileId, ...(input.stopReason !== undefined ? { stopReason: input.stopReason } : {}), ...(liveChunksDiscarded > 0 ? { liveChunksDiscarded } : {}) });
     return { fileId };
   },
 });
@@ -582,6 +531,36 @@ export const meetingMediaKeyReseal = defineCommand({
   },
 });
 
+// The recording indicator of the app header (A1, #3159): the caller's own meeting made by the extension that has no audio yet
+// (no media recorded yet, so no end time) and started in the last RECORDING_NOW_WINDOW_HOURS. A person's own meetings only; nothing of any other member. Not sensitive:
+// it returns an id and a start time, never a title, and the app asks every few seconds.
+export const meetingRecordingNow = defineQuery({
+  name: 'meetings.meeting.recording_now',
+  input: zMeetingRecordingNowInput,
+  access: READERS,
+  handler: async (ctx): Promise<MeetingRecordingNow> => {
+    const userId = userOf(ctx.actor);
+    const now = new Date();
+    const since = new Date(now.getTime() - RECORDING_NOW_WINDOW_HOURS * 3_600_000);
+    const row = await ctx.trx
+      .selectFrom('crove_meetings.meeting')
+      .select(['id', 'started_at'])
+      .where('org_id', '=', ctx.orgId)
+      .where('recorder_user_id', '=', userId)
+      .where('status', '=', 'ready')
+      .where('extension_token_id', 'is not', null)
+      .where('started_at', '>', since)
+      .where('ended_at', 'is', null)
+      .where((eb) => eb.or([eb('text_retention_date', 'is', null), eb('text_retention_date', '>', vnDay(now))]))
+      .orderBy('started_at', 'desc')
+      .limit(1)
+      .executeTakeFirst();
+    return zMeetingRecordingNow.parse({
+      recording: row ? { meetingId: row.id, startedAt: new Date(row.started_at as Date | string).toISOString() } : null,
+    });
+  },
+});
+
 export const meetingList = defineQuery({
   name: 'meetings.meeting.list',
   input: zMeetingListInput,
@@ -689,6 +668,7 @@ export const meetingGet = defineQuery({
       consentConfirmedBy: meeting.consent_confirmed_by,
       consentConfirmedAt: new Date(meeting.consent_confirmed_at).toISOString(),
       consentNoticeVersion: meeting.consent_notice_version,
+      recordingStopReason: meeting.recording_stop_reason,
       readers: readerIds,
       videoRetentionDate,
       isRecorder: meeting.recorder_user_id === userId,
@@ -988,6 +968,7 @@ export const meetingsCommands = [
   ...linkCommands,
   ...followupCommands,
   ...liveCommands,
+  ...liveAssembleCommands,
   ...liveRunCommands,
   ...liveNotesCommands,
 ];
@@ -996,6 +977,7 @@ export const meetingsQueries = [
   meetingList,
   meetingGet,
   meetingExtensionStatus,
+  meetingRecordingNow,
   meetingAudioRead,
   meetingVideoRead,
   meetingMediaMeta,
@@ -1010,4 +992,5 @@ export const meetingsQueries = [
   ...linkQueries,
   ...followupQueries,
   ...liveRunQueries,
+  ...liveAssembleQueries,
 ];

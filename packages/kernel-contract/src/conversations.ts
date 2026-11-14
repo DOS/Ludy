@@ -29,6 +29,8 @@ export const CONVERSATION_REPLY_MAX = 8_000;
 export const CONVERSATION_FACEBOOK_DIRECT_MAX = 2_000;
 export const CONVERSATION_INSTAGRAM_COMMENT_MAX = 2_200;
 export const CONVERSATION_INSTAGRAM_DIRECT_MAX = 1_000;
+// WhatsApp Business (Cloud API) text body limit [M until the live check, docs/runbooks/whatsapp-conversations-live-check.md].
+export const CONVERSATION_WHATSAPP_REPLY_MAX = 4_096;
 // Threads' own limit of 500 characters a post applies to a reply [U until the live check and the official page settle it] (#3133, plan section 4.4).
 export const CONVERSATION_THREADS_REPLY_MAX = 500;
 export const CONVERSATION_NOTE_MAX = 5_000;
@@ -74,9 +76,18 @@ export const CONVERSATION_PROVIDER_RULES: Readonly<Record<string, ConversationPr
   // Zalo OA (#2304): private chats only (no comment API found); 2000 characters a message and a 48-hour free window from the customer's
   // last message [S, U until the live check settles them].
   zalo_oa: { kinds: ['direct'], replyMax: 2000, canHide: false, windowHours: 48 },
+  // WhatsApp Business, Cloud API (#3131, plan docs/plan/conversations-channels.md section 4.1): private chats only, 4096 characters a message,
+  // and a free-form reply only inside 24 hours of the customer's last message [S, live]. Past the window the Send button is disabled with the
+  // reason: Ludy sends no template and no business-initiated message (a paid message the business did not mean to buy).
+  whatsapp: { kinds: ['direct'], replyMax: CONVERSATION_WHATSAPP_REPLY_MAX, canHide: false, windowHours: 24 },
   // Telegram bot chats (#3132, plan section 4.2): private chats only (a group is out of v1), up to 4096 characters (TELEGRAM_TEXT_MAX of
   // @crove/channel) and no reply window: a bot may answer a user who wrote to it at any time. A blocked bot is refused as `permission`.
   telegram: { kinds: ['direct'], replyMax: 4096, canHide: false, windowHours: null },
+  // YouTube comments on the business's own channel (#3134, plan docs/plan/conversations-channels.md section 4.5): public comment threads, one per
+  // top-level comment, no reply window. YouTube's own comment limit is 10,000 characters [U] and the core's reply is at most CONVERSATION_REPLY_MAX,
+  // so that is the rule here. `canHide` is false in v1: hiding is `comments.setModerationStatus` and acts on someone else's words, so it waits
+  // for the live check (docs/runbooks/youtube-conversations-live-check.md).
+  youtube: { kinds: ['comment_thread'], replyMax: CONVERSATION_REPLY_MAX, canHide: false, windowHours: null },
   // An email reply is as long as any other reply the core takes (CONVERSATION_REPLY_MAX), so the input, the box and the channel agree.
   email: { kinds: ['email'], replyMax: CONVERSATION_REPLY_MAX, canHide: false, windowHours: null },
 };
@@ -91,6 +102,10 @@ export const zConversationAddress = z.strictObject({ conversationAddress: z.stri
 export type ConversationAddressView = z.infer<typeof zConversationAddress>;
 export const conversationRules = (provider: string): ConversationProviderRules | null =>
   Object.hasOwn(CONVERSATION_PROVIDER_RULES, provider) ? (CONVERSATION_PROVIDER_RULES[provider] ?? null) : null;
+// The channels whose unclear send (`unknown`) a person may not send again with a button: no platform history can say whether it arrived, so a second send may
+// reach the customer twice (WhatsApp, #3131). The person looks on the platform and marks it sent. An email is the same by its own rule.
+const NO_RESEND_WHEN_UNKNOWN: readonly string[] = ['whatsapp'];
+export const conversationCanResendUnknown = (provider: string, kind: string): boolean => kind !== 'email' && !NO_RESEND_WHEN_UNKNOWN.includes(provider);
 
 // Text the database can store: PostgreSQL refuses a NUL character in text, which would fail a whole notice.
 const noNul = (value: string) => !value.includes('\u0000');
@@ -102,10 +117,21 @@ export const zConversationIntent = z.enum(CONVERSATION_INTENTS);
 
 // An image the platform says a customer's message carries, by the address it can be fetched from (personal data: kept only until fetched,
 // at most six days, and never in an audit row, an event, a log or a job). https only; the fetch itself is limited to the platform's media hosts.
-export const zConversationEventImage = z.strictObject({
+const zConversationEventImageUrl = z.strictObject({
   kind: z.literal('image'),
   url: z.string().min(1).max(2000).refine(noNul, 'NUL character').refine((value) => value.startsWith('https://'), 'https only'),
 });
+// An image whose bytes need the connection's token (WhatsApp's media id, Telegram's file_id; #3131, plan docs/plan/conversations-channels.md section 4.1): a
+// provider-scoped reference that is not a URL and holds no token. Exactly one of `url` and `mediaRef` (the union of two strict objects). The reference is
+// personal data like the address: it travels in the parked notice and the ingest event only until the pending row is made, lives in the row's `source_ref`
+// (class pii) until the bytes are stored, and the fetch job turns it into bytes with the sealed credential. Never in a job, an emitted event, an audit row or
+// a log, and no token-bearing address is ever stored.
+export const CONVERSATION_MEDIA_REF_PATTERN = /^[A-Za-z0-9._:=-]{1,300}$/;
+const zConversationEventImageRef = z.strictObject({
+  kind: z.literal('image'),
+  mediaRef: z.string().regex(CONVERSATION_MEDIA_REF_PATTERN),
+});
+export const zConversationEventImage = z.union([zConversationEventImageUrl, zConversationEventImageRef]);
 
 // One thing a notice told us, in the core's own words. `contact` is the customer of the thread (the commenter, or the
 // person writing to the page, also when the event is the page's own message seen as an echo); `direction` out is the
@@ -129,6 +155,9 @@ export const zConversationEvent = z.strictObject({
   hiddenOnly: z.boolean().optional(),
   // The images the customer's message carries (CV5c, #2357); each is fetched later by the worker and shown beside the message's text.
   attachments: z.array(zConversationEventImage).max(CONVERSATION_ATTACHMENTS_MAX).optional(),
+  // The platform says a message the org sent did not reach the customer (WhatsApp's status `failed`, #3131): the stored outbound message with this platform id
+  // becomes `failed` with this short code, which the screen words for a person. An outbound event only, with no text; it never creates a message or a thread.
+  deliveryFailed: z.strictObject({ code: z.string().regex(/^[A-Za-z0-9_.:-]{1,60}$/) }).optional(),
   // Email only (#2439): the subject line, and the Message-IDs the mail names in In-Reply-To and References, which decide the thread.
   subject: z.string().trim().min(1).max(EMAIL_SUBJECT_MAX).refine(noNul, 'NUL character').optional(),
   refs: z.array(zThreadId).max(EMAIL_REFS_MAX).optional(),
@@ -460,6 +489,17 @@ export const zConversationHistoryRecord = z.strictObject({
   complete: z.boolean(),
   gapFrom: z.iso.datetime({ offset: true }).nullable(),
   gapTo: z.iso.datetime({ offset: true }).nullable(),
+  // A provider that meters its API (YouTube, #3134): the units the pass spent, whether it read ('ok') or failed ('retry' worth trying again later, 'final'
+  // until a person acts), how many new messages it stored, and until when the platform's own quota is spent. A failed pass leaves the gap and the
+  // last-read time alone and only moves the counters and the next poll. Other providers leave it out.
+  quota: z
+    .strictObject({
+      units: z.number().int().min(0).max(1000),
+      outcome: z.enum(['ok', 'retry', 'final']),
+      newMessages: z.number().int().min(0).max(100_000),
+      blockedUntil: z.iso.datetime({ offset: true }).nullable(),
+    })
+    .optional(),
 });
 export const zConversationProfileBegin = z.strictObject({ identityId: zId, connectionId: zId });
 export const zConversationProfileApply = z.strictObject({
@@ -515,6 +555,87 @@ export const zConversationDraftRecord = z.discriminatedUnion('outcome', [
   // No draft: the model gave none, was refused or failed; `code` is a short code, never a platform's or a model's words.
   z.strictObject({ outcome: z.literal('none'), draftId: zId, code: z.string().regex(/^[A-Za-z0-9_.:-]{1,60}$/) }),
 ]);
+// YouTube comments (#3134, plan docs/plan/conversations-channels.md section 4.5). YouTube meters its Data API in quota units per Google Cloud
+// project, not per business, and has no push for comments, so a connection that opted in is polled within a daily unit budget of its own.
+// Costs [O]: a list request is 1 unit, a reply (`comments.insert`) is 50; the day resets at midnight Pacific time. The costs and the budget are
+// static data: the live check (docs/runbooks/youtube-conversations-live-check.md) measures what one poll and one reply really cost.
+// The scope reading and answering comments needs (asked for at connect since #791).
+export const YOUTUBE_COMMENT_SCOPE = 'https://www.googleapis.com/auth/youtube.force-ssl';
+export const YOUTUBE_LIST_UNITS = 1;
+export const YOUTUBE_REPLY_UNITS = 50;
+// What polling may spend for one connection in one Pacific day. A poll of the newest comments is a few list requests, so 150 is about one poll
+// every 15 minutes (96 a day) with room to catch up; a deployment's 10,000 units a day then hold the polling of about 60 channels with replies to spare.
+// Replies are a person's act and are never held back by this budget; their units are counted beside it and shown.
+export const YOUTUBE_POLL_BUDGET_UNITS = 150;
+// The wait to the next poll, by how many polls in a row found nothing new: 15 minutes, then 30, 60 and 120, back to 15 at the first new comment.
+export const YOUTUBE_POLL_DELAYS_MINUTES = [15, 30, 60, 120] as const;
+// A read that failed for a reason worth trying again (a network error, a burst limit) waits this long.
+export const YOUTUBE_POLL_RETRY_MINUTES = 30;
+export const youtubePollDelayMinutes = (idlePolls: number): number => {
+  const i = Math.max(0, Math.min(Math.trunc(idlePolls), YOUTUBE_POLL_DELAYS_MINUTES.length - 1));
+  return YOUTUBE_POLL_DELAYS_MINUTES[i] as number;
+};
+const PACIFIC = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+// How far Pacific time is from UTC at an instant, in milliseconds (-7 or -8 hours).
+function pacificOffsetMs(at: number): number {
+  const parts = PACIFIC.formatToParts(new Date(at));
+  const part = (type: string) => Number(parts.find((p) => p.type === type)?.value);
+  return Date.UTC(part('year'), part('month') - 1, part('day'), part('hour'), part('minute'), part('second')) - (at - (at % 1000));
+}
+// When the day's quota resets: the next midnight Pacific time, plus a minute so a poll never lands before the platform's own reset.
+export function youtubeQuotaResetAt(now: Date): Date {
+  const day = 86_400_000;
+  const at = now.getTime();
+  const midnightWall = Math.floor((at + pacificOffsetMs(at)) / day) * day + day;
+  // The offset at that midnight, which differs from now's across a daylight saving change.
+  return new Date(midnightWall - pacificOffsetMs(midnightWall - pacificOffsetMs(at)) + 60_000);
+}
+// The counters of a connection at an instant: a period that ended counts as zero (the next record starts a new one).
+export interface YoutubeQuotaState {
+  resetAt: Date | null;
+  pollUnits: number;
+  replyUnits: number;
+  blockedUntil: Date | null;
+}
+export function youtubeQuotaNow(state: YoutubeQuotaState, now: Date): { pollUnits: number; replyUnits: number; resetAt: Date; blockedUntil: Date | null } {
+  const live = state.resetAt !== null && state.resetAt.getTime() > now.getTime();
+  return {
+    pollUnits: live ? state.pollUnits : 0,
+    replyUnits: live ? state.replyUnits : 0,
+    resetAt: live && state.resetAt ? state.resetAt : youtubeQuotaResetAt(now),
+    blockedUntil: state.blockedUntil && state.blockedUntil.getTime() > now.getTime() ? state.blockedUntil : null,
+  };
+}
+// Whether a poll that costs at most `cost` units may start now, and when to look again when it may not.
+export function youtubePollAllowed(state: YoutubeQuotaState, now: Date, cost: number): { allowed: true } | { allowed: false; until: Date; reason: 'budget' | 'blocked' } {
+  const q = youtubeQuotaNow(state, now);
+  if (q.blockedUntil) return { allowed: false, until: q.blockedUntil, reason: 'blocked' };
+  if (q.pollUnits + cost > YOUTUBE_POLL_BUDGET_UNITS) return { allowed: false, until: q.resetAt, reason: 'budget' };
+  return { allowed: true };
+}
+// The most units one poll may spend: the pages read plus the reply refreshes, so a poll that would not fit the day's budget does not start.
+export const YOUTUBE_POLL_MAX_UNITS = 8;
+// What the Channels screen shows for a YouTube connection (units counted by Ludy for this connection; the project's own total is Google's).
+export const zYoutubeCommentsStatus = z.strictObject({
+  connectionId: zId,
+  displayName: z.string(),
+  // The person's opt-in: nothing is read or stored until it is on.
+  enabled: z.boolean(),
+  // Whether the grant holds the comment scope (youtube.force-ssl); when not, a reconnect asks for it.
+  scopeGranted: z.boolean(),
+  pollUnitsUsed: z.number().int().min(0),
+  pollBudget: z.number().int().min(0),
+  replyUnitsUsed: z.number().int().min(0),
+  // When the day's counters reset (ISO), when polling is held until (the project's quota was spent, or the day's budget), when it next runs, and when it last did.
+  resetAt: z.string(),
+  blockedUntil: z.string().nullable(),
+  nextPollAt: z.string().nullable(),
+  lastPolledAt: z.string().nullable(),
+});
+export const zYoutubeCommentsStatusList = z.array(zYoutubeCommentsStatus);
+export const zYoutubeCommentsSet = z.strictObject({ connectionId: zId, enabled: z.boolean() });
+export type YoutubeCommentsStatus = z.infer<typeof zYoutubeCommentsStatus>;
+
 export const zConversationAutoDraft = z.strictObject({ autoDraft: z.boolean() });
 export const zConversationAutoDraftSet = z.strictObject({ autoDraft: z.boolean() });
 export type ConversationAutoDraft = z.infer<typeof zConversationAutoDraft>;

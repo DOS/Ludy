@@ -98,6 +98,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.link.remove',
       'meetings.followup.send',
       'meetings.live.chunk',
+      'meetings.live.assemble_record',
       'meetings.live.start',
       'meetings.live.stop',
       'meetings.live.notes_start',
@@ -117,6 +118,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.meeting.list',
       'meetings.meeting.get',
       'meetings.meeting.extension_status',
+      'meetings.meeting.recording_now',
       'meetings.meeting.audio_read',
       'meetings.meeting.video_read',
       'meetings.meeting.media_meta',
@@ -137,6 +139,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.followup.draft',
       'meetings.live.status',
       'meetings.live.notes_input',
+      'meetings.live.assemble_plan',
     ]);
 
     expect(meetingList.name).toBe('meetings.meeting.list');

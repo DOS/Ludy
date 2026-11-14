@@ -256,10 +256,12 @@ suite('search across readable meetings (#2589, L2)', () => {
     await line(m, 'Một chuyện hiếm là quỳnhlâm', 'published', 9000);
     await sqlAdmin('ANALYZE crove_meetings.transcript_segment');
     // The planner may still read a table of this size in order; what matters is that the index can answer the test, which a non-indexable predicate could not.
+    // The probe names only the search predicate: with org_id in it as well, the planner may pick the primary key (every row of the table is this org's) and
+    // filter the text afterwards, which made the test depend on the planner's estimate of a prefix query instead of on whether the index can answer it.
     const plan = await admin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL enable_seqscan = off');
-      const rows = (await c.query<{ 'QUERY PLAN': string }>(`EXPLAIN SELECT id FROM crove_meetings.transcript_segment WHERE org_id = $1 AND search @@ crove_kernel.search_query('quynhlam')`, [orgId])).rows;
+      const rows = (await c.query<{ 'QUERY PLAN': string }>(`EXPLAIN SELECT id FROM crove_meetings.transcript_segment WHERE search @@ crove_kernel.search_query('quynhlam')`)).rows;
       await c.query('ROLLBACK');
       return rows.map((r) => r['QUERY PLAN']).join('\n');
     });

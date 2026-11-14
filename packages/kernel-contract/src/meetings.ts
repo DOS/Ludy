@@ -2,8 +2,21 @@
 import { z } from 'zod';
 import { zId } from './schemas.ts';
 
-export const CONSENT_METHODS = ['told_at_start', 'in_invite', 'in_writing'] as const;
+// `in_call_chat`: the recorder pasted the recording notice in the call's chat (Meetings A1, #3159).
+export const CONSENT_METHODS = ['told_at_start', 'in_invite', 'in_writing', 'in_call_chat'] as const;
 export type ConsentMethod = (typeof CONSENT_METHODS)[number];
+
+// Why a recording stopped without the recorder's own click (Meetings A1, #3159): a code, never text. The screens turn it into
+// plain words ("Tab họp đã đóng", "Micro bị mất"...). Same set as the CHECK on crove_meetings.meeting.recording_stop_reason.
+export const RECORDING_STOP_REASONS = ['tab_closed', 'mic_lost', 'permission_lost', 'storage_full', 'left_screen', 'unknown'] as const;
+export type RecordingStopReason = (typeof RECORDING_STOP_REASONS)[number];
+export const zRecordingStopReason = z.enum(RECORDING_STOP_REASONS);
+
+// The versions of the recording notice text a meeting may store as `consent_notice_version` (A1, #3159). The text itself
+// lives in one place, packages/meeting-recorder/src/notice.ts, and carries the current version; a client sends the version
+// it showed, the server accepts only a known one. A new wording adds a version here and keeps the old ones.
+export const CONSENT_NOTICE_VERSION = '2026-11-v1';
+export const KNOWN_CONSENT_NOTICE_VERSIONS: readonly string[] = [CONSENT_NOTICE_VERSION];
 
 export const MEETING_VISIBILITIES = ['attendees', 'org'] as const;
 export type MeetingVisibility = (typeof MEETING_VISIBILITIES)[number];
@@ -37,6 +50,16 @@ export const zMeetingExtensionStatus = z.strictObject({
 });
 export type MeetingExtensionStatus = z.infer<typeof zMeetingExtensionStatus>;
 
+// The recording indicator (Meetings A1, #3159): the calling member's own meeting, made by the extension, that is still waiting for its
+// first audio, so the app header can show "Đang ghi 12:31" while the extension records. Derived from the meeting row: no heartbeat, no
+// new route for the extension. `null` when there is none. The window is in RECORDING_NOW_WINDOW_HOURS.
+export const RECORDING_NOW_WINDOW_HOURS = 4;
+export const zMeetingRecordingNowInput = z.strictObject({});
+export const zMeetingRecordingNow = z.strictObject({
+  recording: z.strictObject({ meetingId: zId, startedAt: z.string() }).nullable(),
+});
+export type MeetingRecordingNow = z.infer<typeof zMeetingRecordingNow>;
+
 export const zMeetingSummary = z.strictObject({
   id: zId,
   title: z.string(),
@@ -66,6 +89,8 @@ export const zMeetingDetail = zMeetingSummary.extend({
   consentConfirmedBy: zId,
   consentConfirmedAt: z.string(),
   consentNoticeVersion: z.string(),
+  // Set when the recording stopped without the recorder's click; the stop time is `endedAt` (A1, #3159).
+  recordingStopReason: zRecordingStopReason.nullable(),
   readers: z.array(zId),
   videoRetentionDate: z.string().nullable(),
   isRecorder: z.boolean(),
@@ -86,6 +111,8 @@ export const zMeetingCreate = z.strictObject({
   // "Ghi chú trực tiếp" (ADR-0052 L4a): off by default, opted in per meeting at the consent step, fixed once the meeting exists.
   liveNotes: z.boolean().default(false),
   consentMethod: zConsentMethod,
+  // The version of the notice text the client showed (and the recorder may have copied); absent means the current one.
+  consentNoticeVersion: z.string().max(20).refine((v) => KNOWN_CONSENT_NOTICE_VERSIONS.includes(v), 'Unknown notice version').optional(),
   readerUserIds: z.array(zId).optional(),
   lengthSeconds: z.number().int().nonnegative().optional(),
 });
@@ -175,6 +202,8 @@ export const zMeetingMediaRecord = zMeetingRef.extend({
   contentType: z.string().min(1).max(64),
   // Measured by crove-media at upload (#2985), never the client's value: the upload route is the only caller.
   lengthSeconds: z.number().int().positive(),
+  // The recording stopped without the recorder's click (A1, #3159): a code the upload route validated; absent for a recording the recorder stopped.
+  stopReason: zRecordingStopReason.optional(),
 });
 export type MeetingMediaRecord = z.infer<typeof zMeetingMediaRecord>;
 
@@ -208,6 +237,75 @@ export const zMeetingLiveChunkRecorded = z.strictObject({
   duplicate: z.boolean(),
 });
 export type MeetingLiveChunkRecorded = z.infer<typeof zMeetingLiveChunkRecorded>;
+
+// The recorder's click "Ghép bản ghi từ các đoạn trực tiếp" when the final recording never arrived (ADR-0052 L4a, issue #3126). Once the window of the live pieces has
+// passed with pieces and no final audio, the pieces are joined, in order, into one recording under a fresh audio key. Why a piece may not be assembled yet or at all:
+//   none                 it can be assembled now
+//   no_pieces            the meeting kept no live piece
+//   still_recording      the window (LIVE_CHUNK_WINDOW_SECONDS) has not passed: the final recording may still come
+//   audio_recorded       the final audio or video is recorded (the pieces were discarded with it)
+//   first_piece_missing  piece 0 carries the container header; without it the later pieces cannot be read
+//   expired              the meeting's audio period has ended (the pieces are shredded)
+export const LIVE_ASSEMBLE_REASONS = ['no_pieces', 'still_recording', 'audio_recorded', 'first_piece_missing', 'expired'] as const;
+export type LiveAssembleReason = (typeof LIVE_ASSEMBLE_REASONS)[number];
+export const zLiveAssembleState = z.strictObject({
+  // The pane offers the click only when this is true.
+  available: z.boolean(),
+  reason: z.enum(LIVE_ASSEMBLE_REASONS).nullable(),
+  // How many pieces the meeting holds, and the numbers missing between 0 and the last one (a gap is reported, never fatal).
+  pieces: z.number().int().min(0),
+  missing: z.array(z.number().int().min(0)).max(LIVE_CHUNK_MAX_COUNT),
+});
+export type LiveAssembleState = z.infer<typeof zLiveAssembleState>;
+
+// What the route records after it joined and sealed the pieces. The wrapped key and the storage address are ciphertext metadata; the length is crove-media's. pieces and
+// lastSeq say which set the route joined, so a set that changed meanwhile is refused instead of recorded.
+export const zMeetingLiveAssemble = zMeetingRef.extend({
+  keyId: z.string().min(1).max(64),
+  wrappedKeyHex: z.string().regex(/^[0-9a-fA-F]{120}$/),
+  storageKey: z.string().min(1).max(255),
+  generation: z.string().nullable().optional(),
+  sizeBytes: z.number().int().positive(),
+  sha256: z.string().regex(/^[0-9a-fA-F]{64}$/),
+  contentType: z.string().min(1).max(64),
+  lengthSeconds: z.number().int().positive(),
+  pieces: z.number().int().min(1).max(LIVE_CHUNK_MAX_COUNT),
+  lastSeq: z.number().int().min(0).max(LIVE_CHUNK_MAX_COUNT - 1),
+  // The pieces the plan left out because their key or file is gone: they count as missing in the answer. pieces + leftOut is every piece the meeting holds.
+  leftOut: z.array(z.number().int().min(0).max(LIVE_CHUNK_MAX_COUNT - 1)).max(LIVE_CHUNK_MAX_COUNT).default([]),
+});
+export type MeetingLiveAssemble = z.infer<typeof zMeetingLiveAssemble>;
+
+// What the plan query answers to the recorder's own route: the pieces in order with their files and wrapped keys (never plaintext), the numbers missing, and the last piece's number.
+export interface LiveAssemblePlanPiece {
+  seq: number;
+  lengthSeconds: number;
+  fileId: string;
+  storageKey: string;
+  generation: string | null;
+  sizeBytes: number;
+  sha256: string;
+  contentType: string;
+  keyId: string;
+  wrappedKey: Buffer;
+}
+export interface LiveAssemblePlan {
+  meetingId: string;
+  pieces: LiveAssemblePlanPiece[];
+  missing: number[];
+  // The pieces left out of `pieces` because their key or file is gone (also in `missing`).
+  leftOut: number[];
+  lastSeq: number;
+}
+
+export const zMeetingLiveAssembled = z.strictObject({
+  meetingId: zId,
+  fileId: zId,
+  pieces: z.number().int().min(1),
+  missing: z.array(z.number().int().min(0)).max(LIVE_CHUNK_MAX_COUNT),
+  lengthSeconds: z.number().int().positive(),
+});
+export type MeetingLiveAssembled = z.infer<typeof zMeetingLiveAssembled>;
 
 // The worker's reseal of one media key after a credential key rotation (system actor only).
 export const zMeetingMediaKeyReseal = z.strictObject({
@@ -597,6 +695,8 @@ export const zLiveStatus = z.strictObject({
   errorCode: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/).nullable(),
   lines: z.array(zLiveLine),
   notesUpdatedAt: z.string().nullable(),
+  // Whether the recorder may join the pieces into the recording because the final upload never arrived (#3126); only the recorder sees it.
+  assemble: zLiveAssembleState,
 });
 export type LiveStatus = z.infer<typeof zLiveStatus>;
 

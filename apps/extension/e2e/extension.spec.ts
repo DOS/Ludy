@@ -174,6 +174,16 @@ test('the shell talks to the configured address only', async () => {
   expect(fake.requests.map((r) => r.path)).toContain('/api/extension/me');
 });
 
+// The popup as if the member had granted the feature's browser permissions (a click-only prompt automation cannot answer), so the consent step shows.
+const popupGranted = async (): Promise<Page> => {
+  const page = await context.newPage();
+  await page.addInitScript(() => {
+    (chrome.permissions as { contains: unknown }).contains = async () => true;
+  });
+  await page.goto(`chrome-extension://${extensionId}/popup.html`);
+  return page;
+};
+
 // Runs one capture in the offscreen document's module: a fake tab (a tone, and a picture only when asked), the fake
 // microphone device, three seconds, stop.
 async function record(keepVideo: boolean): Promise<{ ok: boolean; uploaded?: boolean; left: number }> {
@@ -222,7 +232,7 @@ test('video off: the meeting is created with its consent and only audio arrives'
   fake.uploads.length = 0;
   const result = await record(false);
   expect(result).toEqual({ ok: true, uploaded: true, left: 0 });
-  expect(fake.created).toEqual([{ title: 'Họp thử', language: 'vi', visibility: 'attendees', keepVideo: false, consentMethod: 'told_at_start', liveNotes: false }]);
+  expect(fake.created).toEqual([{ title: 'Họp thử', language: 'vi', visibility: 'attendees', keepVideo: false, consentMethod: 'told_at_start', consentNoticeVersion: '2026-11-v1', liveNotes: false }]);
   expect(fake.uploads).toHaveLength(1);
   expect(fake.uploads[0]).toMatchObject({ kind: 'audio', fileType: expect.stringMatching(/^audio\/webm/) });
   expect(fake.uploads[0]!.bytes).toBeGreaterThan(1000);
@@ -245,6 +255,106 @@ test('a failed upload keeps the recording on the device', async () => {
   fake.failUploads = false;
   expect(result).toEqual({ ok: true, uploaded: false, left: 1 });
   expect(fake.uploads).toHaveLength(0);
+});
+
+// A1 (#3159): the meeting tab's track ends while recording (the tab was closed or its capture taken away). The capture reports it
+// once, with a code, and what was saved is uploaded with that code; a stop the member asks for carries none.
+test('a recording whose tab ends by itself uploads what it has with the reason code', async () => {
+  fake.created.length = 0;
+  fake.uploads.length = 0;
+  const page = await context.newPage();
+  await page.goto(`chrome-extension://${extensionId}/offscreen.html`);
+  const result = await page.evaluate(
+    async ([base, address]) => {
+      const run = (await import(`${base}capture-run.js`)) as typeof import('../src/capture-run.ts');
+      const deps = run.browserDeps();
+      let tabTrack: MediaStreamTrack | null = null;
+      deps.getTabStream = async () => {
+        const context = new AudioContext();
+        const tone = context.createOscillator();
+        const out = context.createMediaStreamDestination();
+        tone.connect(out);
+        tone.start();
+        tabTrack = out.stream.getAudioTracks()[0]!;
+        return new MediaStream([tabTrack]);
+      };
+      const params = { address, token: 'crx_test', orgId: 'org1', uploads: 'direct', title: 'Họp bị ngắt', consentMethod: 'in_call_chat', consentAgreed: true, keepVideo: false, liveNotes: false, streamId: 'fake' } as const;
+      const started = await run.startCapture(params, deps);
+      if (!started.ok) return { ok: false, reasons: [] as string[], uploaded: false };
+      const reasons: string[] = [];
+      let finished: Promise<{ uploaded: boolean }> | null = null;
+      started.running.onLost((reason) => {
+        reasons.push(reason);
+        finished = started.running.stop(reason);
+      });
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      // The browser fires `ended` on the track when its tab goes away.
+      tabTrack!.dispatchEvent(new Event('ended'));
+      const done = await (finished as Promise<{ uploaded: boolean }> | null);
+      // A second sign of the same loss reports nothing more.
+      tabTrack!.dispatchEvent(new Event('ended'));
+      return { ok: true, reasons, uploaded: done?.uploaded ?? false };
+    },
+    [`chrome-extension://${extensionId}/`, fake.origin] as const,
+  );
+  await page.close();
+  expect(result).toEqual({ ok: true, reasons: ['tab_closed'], uploaded: true });
+  expect(fake.created[0]).toMatchObject({ consentMethod: 'in_call_chat', consentNoticeVersion: '2026-11-v1' });
+  expect(fake.uploads).toHaveLength(1);
+  expect(fake.uploads[0]).toMatchObject({ kind: 'audio', stopReason: 'tab_closed' });
+});
+
+test('a stop the member asks for carries no reason code', async () => {
+  fake.uploads.length = 0;
+  expect(await record(false)).toMatchObject({ ok: true, uploaded: true });
+  expect(fake.uploads[0]).toMatchObject({ stopReason: null });
+});
+
+test('the consent step shows the recording notice: the text, the other language, copied to the clipboard on the click, and the draft marker (A1, #3159)', async () => {
+  await seed({ meetings: true });
+  const page = await popupGranted();
+  await expect(page.locator('#notice-text')).toContainText('Cuộc họp này đang được ghi âm để lập biên bản');
+  await expect(page.getByText('#2585').first()).toBeVisible();
+  // The new method is one of the choices.
+  await expect(page.locator('#method option')).toHaveText(['Chọn...', 'Nói ở đầu cuộc họp', 'Ghi trong lời mời', 'Bằng văn bản', 'Đã dán thông báo vào khung chat cuộc họp']);
+  await page.evaluate(() => {
+    (window as unknown as { copied: string[] }).copied = [];
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (text: string) => void (window as unknown as { copied: string[] }).copied.push(text) }, configurable: true });
+  });
+  await page.locator('#copy-notice').click();
+  await expect(page.locator('#copy-note')).toContainText('Đã sao chép');
+  // The English one is one click away, and copying then copies that text.
+  await page.locator('#notice-lang').click();
+  await expect(page.locator('#notice-text')).toContainText('This meeting is being recorded to prepare the minutes');
+  await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (text: string) => void (window as unknown as { copied: string[] }).copied.push(text) }, configurable: true }));
+  await page.locator('#copy-notice').click();
+  const copied = await page.evaluate(() => (window as unknown as { copied: string[] }).copied);
+  expect(copied).toHaveLength(2);
+  expect(copied[0]).toContain('Cuộc họp này đang được ghi âm');
+  expect(copied[1]).toContain('This meeting is being recorded');
+  // Copying ticks nothing: the start is still refused without the method and the confirmation.
+  await page.locator('#title').fill('Họp thử');
+  await page.locator('#start').click();
+  await expect(page.getByRole('alert')).toContainText('Vui lòng chọn cách đã báo cho người tham gia');
+  await page.close();
+});
+
+test('a recording that ended by itself shows when and why in the popup and the badge, until the member says they saw it (A1, #3159)', async () => {
+  await seed({ meetings: true });
+  const worker = context.serviceWorkers()[0]!;
+  await worker.evaluate(async () => {
+    await chrome.storage.local.set({ 'ludy-extension-recording-lost': { meetingId: 'm1', title: 'Họp thử', reason: 'tab_closed', at: Date.now(), uploaded: true } });
+    await chrome.action.setBadgeText({ text: '!' });
+  });
+  const page = await popupGranted();
+  const lost = page.locator('#lost');
+  await expect(lost).toContainText('Ghi âm đã dừng lúc');
+  await expect(lost).toContainText('Tab họp đã đóng');
+  await expect(lost).toContainText('đã được tải lên');
+  await page.locator('#lost-dismiss').click();
+  await expect(page.locator('#lost')).toHaveCount(0);
+  expect(await worker.evaluate(() => chrome.action.getBadgeText({}))).toBe('');
+  await page.close();
 });
 
 test('a redirect from the configured address is not followed: the token goes nowhere else', async () => {

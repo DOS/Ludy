@@ -2,15 +2,15 @@
 // The popup: the shell (address, sign-in, org picker, the features of this org) and the meetings feature (turn on, the
 // consent step, "Ghi cả video", start and stop). Every string is set as text, never as markup. Nothing here reads a page:
 // the one tab it touches is the active one the member clicked the icon on, and only to ask for its audio.
-import { T } from './strings.ts';
+import { ENGLISH, T } from './strings.ts';
 import { DEFAULT_ADDRESS, isDefaultAddress, originPattern, parseAddress, stalePattern } from './ludy-address.ts';
 import { activeAccount, loadState, saveState, withAccount, withAddress, withFeature, withoutAccount, type State } from './state.ts';
 import { visibleFeatures, FEATURES, type Me } from './features.ts';
 import { connectUrl, deviceName, newPkce, parseConnectResult } from './auth.ts';
 import { createClient, LudyError } from './api.ts';
 import { CONSENT_METHODS, consentBlocker } from './consent.ts';
-import { RECORDING_KEY, type RecordingState, type StartReply, type StopReply } from './messages.ts';
-import { formatClock, createIndexedDbChunkStore, type RecordingMeta } from '@crove/meeting-recorder';
+import { LOST_KEY, readLost, RECORDING_KEY, type LostState, type RecordingState, type StartReply, type StopReply } from './messages.ts';
+import { formatClock, createIndexedDbChunkStore, noticeToCopy, otherNoticeLanguage, RECORDING_NOTICE, type RecordingMeta, type RecordingNoticeLanguage } from '@crove/meeting-recorder';
 import { uploadSaved } from './capture-run.ts';
 
 const root = document.getElementById('root') as HTMLElement;
@@ -33,6 +33,20 @@ function h<K extends keyof HTMLElementTagNameMap>(tag: K, props: Props = {}, ...
 let notice = '';
 let draft = { title: '', consentMethod: '', consentAgreed: false, keepVideo: false, liveNotes: false };
 let ticker: ReturnType<typeof setInterval> | undefined;
+// The recording notice shown in the consent step (A1, #3159): the popup's language first, the other one a click away. The
+// extension knows no meeting language before the meeting exists, so the browser's language is the default.
+let noticeLang: RecordingNoticeLanguage = T === ENGLISH ? 'en' : 'vi';
+let copyNote = '';
+
+async function copyNotice(): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(noticeToCopy(noticeLang).text);
+    copyNote = T.noticeCopied;
+  } catch {
+    copyNote = T.noticeCopyFailed;
+  }
+  await render();
+}
 
 async function render(): Promise<void> {
   clearInterval(ticker);
@@ -159,6 +173,9 @@ async function meetingsView(state: State): Promise<Node[]> {
     return out;
   }
   const recording = (await area.get(RECORDING_KEY))[RECORDING_KEY] as RecordingState | undefined;
+  // A recording that ended by itself (A1, #3159): when, why, and whether what was saved is already uploaded. Shown until dismissed.
+  const lost = readLost((await area.get(LOST_KEY))[LOST_KEY]);
+  if (lost && !recording) out.push(...lostView(lost));
   if (recording) {
     const clock = h('span', { class: 'rec' });
     const tick = () => void (clock.textContent = `REC ${formatClock(Date.now() - recording.startedAt)}`);
@@ -191,7 +208,13 @@ async function meetingsView(state: State): Promise<Node[]> {
     h('div', { class: 'consent' },
       h('strong', {}, T.consentTitle),
       h('p', { class: 'note' }, T.consentNotice),
-      h('p', { class: 'note' }, T.consentSpoken),
+      h('strong', { class: 'note' }, T.noticeHeading),
+      h('p', { class: 'notice', id: 'notice-text', lang: noticeLang }, RECORDING_NOTICE.text[noticeLang]),
+      h('div', { class: 'row' },
+        h('button', { id: 'copy-notice', onclick: () => void copyNotice() }, T.noticeCopy),
+        h('button', { id: 'notice-lang', onclick: () => void ((noticeLang = otherNoticeLanguage(noticeLang)), (copyNote = ''), render()) }, otherNoticeLanguage(noticeLang) === 'en' ? T.noticeShowEn : T.noticeShowVi)),
+      copyNote ? h('p', { class: 'note', id: 'copy-note', role: 'status' }, copyNote) : null,
+      h('p', { class: 'note' }, T.noticeDraft),
       h('label', { class: 'block', for: 'method' }, T.consentMethod),
       method,
       h('div', { class: 'row' }, agreed, h('label', { for: 'agreed' }, T.consentConfirm)),
@@ -203,6 +226,25 @@ async function meetingsView(state: State): Promise<Node[]> {
     h('button', { onclick: () => void turnOff(state) }, T.meetingsOff),
   );
   return out;
+}
+
+function lostView(lost: LostState): Node[] {
+  const time = new Date(lost.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return [
+    h('div', { class: 'lost', id: 'lost', role: 'alert' },
+      h('strong', {}, T.lostLine.replace('{time}', time)),
+      h('p', {}, `${lost.title}: ${T.lostReasons[lost.reason]}`),
+      h('p', { class: 'note' }, lost.uploaded ? T.lostUploaded : T.lostKept),
+      h('button', { id: 'lost-dismiss', onclick: () => void dismissLost() }, T.lostDismiss)),
+  ];
+}
+
+async function dismissLost(): Promise<void> {
+  await area.remove(LOST_KEY);
+  // The "!" of the badge goes with it; nothing is recording.
+  await chrome.action.setBadgeText({ text: '' });
+  await chrome.action.setTitle({ title: 'Ludy' });
+  await render();
 }
 
 async function turnOn(state: State): Promise<void> {

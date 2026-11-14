@@ -64,7 +64,7 @@ turn on `sprint_review` with `line_scopes`.
 | Notes & CRM (notes, to-dos, bookings and calendar) | `line:notes-crm` | `b8743ac2` | `Notes & CRM Product Owner` |
 | Engage (Ludy Engage: Social in `modules/social`, Ads, Hộp thư/Help Desk and the CRM folded in, DESIGN.md 2026-11-03) | `line:social-management` | `735657ce` | `Ludy Engage Product Owner` |
 | AI Meeting Notes | `line:meetings` | `8c4c0494` | AI Meeting Notes Product Owner |
-| Platform (the shared backend core: kernel, database, tenancy, authentication and sessions, the command runtime, the WORM archive; Vy, the AI general manager; architecture and ADRs; security reviews; CI, deploy and operations) | `line:platform` | `3d3f0729` | `0: Điều phối` (the coordinator session) |
+| Platform (the shared backend core: kernel, database, tenancy, authentication and sessions, the command runtime, the WORM archive; Vy, the AI general manager; architecture and ADRs; security reviews; CI, deploy and operations) | `line:platform` | `3d3f0729` | `Platform Product Owner` (the coordinator session; titled `0: Điều phối` until 2026-11-14) |
 
 - Social is not paused. Decision D5 was answered by JOY on 2026-10-17 as
   "no for Social" (backlog review, Decision 17), and JOY confirmed on

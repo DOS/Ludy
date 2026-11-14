@@ -27,6 +27,8 @@ import {
   LIVE_CHUNK_MAX_BYTES,
   LIVE_CHUNK_MAX_COUNT,
   LIVE_CHUNK_MAX_SECONDS,
+  RECORDING_STOP_REASONS,
+  type RecordingStopReason,
   zExtensionAuthorize,
   XLSX_CONTENT_TYPE,
   accountParents,
@@ -128,6 +130,7 @@ import { actorOf, bearerIssuedToOAuthClient, oauthClientRefused, type Authentica
 import { exchangeExtensionCode, extensionIdOfOrigin, newExtensionCode, refuseOutsideScopes, voidUndeliveredExtensionToken, wellFormedExtensionCode, wellFormedVerifier } from './auth-extension.ts';
 import { ConcurrencyLimiter, type Semaphore } from './concurrency.ts';
 import { onepiece, sealMedia, sizeText, streamPieces } from './media-seal.ts';
+import { assembleLivePieces } from './meetings-live-assemble.ts';
 import { decryptedWindows, mediaMeasurerFor, unavailable as mediaProbeUnavailable, type MediaMeasurer } from './meetings-measure.ts';
 import { MEDIA_TICKET_KEY_LABEL, MEDIA_TICKET_MAX_TTL_SECONDS, MEDIA_TICKET_PURPOSE, peekMediaTicketKeyId, signMediaTicket, verifyMediaTicket, wellFormedMediaTicket } from './media-ticket.ts';
 import { BODY_STALL_TIMEOUT_MS } from './upload-timeouts.ts';
@@ -139,10 +142,11 @@ import { streamedBody } from './owner-run-export.ts';
 import { MAX_EMAIL_BYTES, acceptInboundEmail, secretMatches } from './inbound.ts';
 import { MAX_MAIL_WEBHOOK_BYTES, acceptMailWebhook } from './mail-events.ts';
 import { MAX_BANK_FEED_WEBHOOK_BYTES, acceptBankFeedWebhook } from './bank-feed-webhook.ts';
-import { FACEBOOK_MAX_NOTICE_BYTES, TELEGRAM_MAX_NOTICE_BYTES, ZALO_MAX_NOTICE_BYTES } from '@crove/channel';
+import { FACEBOOK_MAX_NOTICE_BYTES, TELEGRAM_MAX_NOTICE_BYTES, WHATSAPP_MAX_NOTICE_BYTES, ZALO_MAX_NOTICE_BYTES } from '@crove/channel';
 import { ZALO_SIGNATURE_HEADER, ZALO_WEBHOOK_PATH, ZaloReplayCache, acceptZaloWebhook, type ZaloWebhookConfig } from './zalo-webhook.ts';
 import { TELEGRAM_SECRET_HEADER, TELEGRAM_WEBHOOK_PATH, TELEGRAM_UNAUTHORIZED, TelegramReplayCache, acceptTelegramWebhook, telegramWebhookAuthorized, type TelegramWebhookConfig } from './telegram-webhook.ts';
 import { FACEBOOK_SIGNATURE_HEADER, FACEBOOK_WEBHOOK_PATH, FacebookReplayCache, acceptFacebookWebhook, verifyFacebookWebhookChallenge, type FacebookWebhookConfig } from './facebook-webhook.ts';
+import { WHATSAPP_SIGNATURE_HEADER, WHATSAPP_WEBHOOK_PATH, WhatsAppReplayCache, acceptWhatsAppWebhook, verifyWhatsAppWebhookChallenge, type WhatsAppWebhookConfig } from './whatsapp-webhook.ts';
 import { ADS_DELETION_PATH, MAX_ADS_DELETION_BYTES } from './ads-deletion.ts';
 import { acceptMetaDeletion, metaDeletionStatus, renderMetaDeletionStatus } from './meta-deletion.ts';
 import type { BankFeedProvider } from '@crove/bank-feed';
@@ -253,6 +257,12 @@ export interface HttpDeps {
   facebookWebhookLimit?: RateLimiter;
   // The comment events that route has parked lately (replay guard); unset: its own, one per process.
   facebookReplays?: FacebookReplayCache;
+  // WhatsApp Business webhook for the conversation core (#3131): the app secret and verify token of the WhatsApp product's Meta app. Unset: the route does not exist.
+  whatsappWebhook?: WhatsAppWebhookConfig;
+  // Refused requests per minute per client address for that route.
+  whatsappWebhookLimit?: RateLimiter;
+  // The events that route has parked lately (replay guard); unset: its own, one per process.
+  whatsappReplays?: WhatsAppReplayCache;
   // Meta's data deletion callback for the Ads connection (plan section 9, #2219): the app secret that signs the request. Unset
   // (no Meta ads app configured): the route does not exist. With ads installed only.
   adsDeletion?: { appSecret: string };
@@ -487,6 +497,7 @@ const BANK_FEED_WEBHOOKS_PER_MINUTE = 120;
 // Refused requests (a bad signature, a body that is no notice) one address may send a minute; verified notices are not counted.
 const ZALO_WEBHOOKS_PER_MINUTE = 120;
 const FACEBOOK_WEBHOOKS_PER_MINUTE = 120;
+const WHATSAPP_WEBHOOKS_PER_MINUTE = 120;
 const TELEGRAM_WEBHOOKS_PER_MINUTE = 120;
 // Verified updates one hook takes a minute: ten a second, far above what a shop's customers write, so only a flood hits it.
 const TELEGRAM_VERIFIED_PER_HOOK_PER_MINUTE = 600;
@@ -697,7 +708,7 @@ export function createHttpApp(deps: HttpDeps) {
       bankFeeds: { sandbox: Boolean(deps.channels?.bankFeedSandbox) },
       // Ad platforms (ADR-0040): which this deployment offers; none leaves the Ads screen with nothing to connect.
       ads: { sandbox: Object.hasOwn(deps.channels?.adsPlatforms ?? {}, 'sandbox_ads') },
-      channels: { sandbox: Boolean(deps.channels?.sandbox), bluesky: Boolean(deps.channels?.bluesky), telegram: Boolean(deps.channels?.telegram), mastodon: Boolean(deps.channels?.mastodon), discord: Boolean(deps.channels?.discord), wordpress: Boolean(deps.channels?.wordpress), oauth: deps.channels && deps.channels.broker.id !== 'none' ? Object.keys(deps.channels.connectors ?? {}).sort() : [] },
+      channels: { sandbox: Boolean(deps.channels?.sandbox), bluesky: Boolean(deps.channels?.bluesky), telegram: Boolean(deps.channels?.telegram), mastodon: Boolean(deps.channels?.mastodon), discord: Boolean(deps.channels?.discord), wordpress: Boolean(deps.channels?.wordpress), ...(deps.channels?.whatsapp ? { whatsapp: true } : {}), oauth: deps.channels && deps.channels.broker.id !== 'none' ? Object.keys(deps.channels.connectors ?? {}).sort() : [] },
     }),
   );
 
@@ -973,6 +984,47 @@ export function createHttpApp(deps: HttpDeps) {
         if (outcome.status === 200) return c.json({ ok: true }, 200);
         if (outcome.status === 401 || outcome.status === 400) {
           const limited = chargeRefusal(c);
+          if (limited) return limited;
+        }
+        return c.json({ code: outcome.code }, outcome.status);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+  }
+
+  // WhatsApp Business (Cloud API) webhook of customers' messages (conversation core, #3131): the same shape as Meta's Page webhook above. GET answers the
+  // verify-token handshake in constant time; POST checks X-Hub-Signature-256 over the raw bytes before anything else, caps the body before reading it, charges
+  // the per-address limit only to REFUSED requests (a verified notice is never refused for rate), and only parks the signed body for the worker, which finds the
+  // org from the stored connection by the phone number id. The route names no org, writes no tenant row and logs nothing of the body.
+  const whatsappWebhook = deps.whatsappWebhook;
+  if (whatsappWebhook) {
+    const whatsappLimit = deps.whatsappWebhookLimit ?? new RateLimiter({ perMinute: WHATSAPP_WEBHOOKS_PER_MINUTE });
+    const whatsappReplays = deps.whatsappReplays ?? new WhatsAppReplayCache();
+    const chargeWhatsAppRefusal = (c: Context): Response | null => {
+      const decision = whatsappLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+      if (decision.allowed) return null;
+      warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+      c.header('retry-after', String(decision.retryAfterSeconds));
+      return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+    };
+    app.get(WHATSAPP_WEBHOOK_PATH, (c) => {
+      const outcome = verifyWhatsAppWebhookChallenge(whatsappWebhook, {
+        mode: c.req.query('hub.mode'),
+        verifyToken: c.req.query('hub.verify_token'),
+        challenge: c.req.query('hub.challenge'),
+      });
+      if (outcome.status === 200) return c.text(outcome.challenge, 200);
+      const limited = chargeWhatsAppRefusal(c);
+      if (limited) return limited;
+      return c.json({ code: outcome.code }, outcome.status);
+    });
+    app.post(WHATSAPP_WEBHOOK_PATH, bodyLimit({ maxSize: WHATSAPP_MAX_NOTICE_BYTES }), async (c) => {
+      try {
+        const outcome = await acceptWhatsAppWebhook(runtime, whatsappWebhook, { signature: c.req.header(WHATSAPP_SIGNATURE_HEADER), body: new Uint8Array(await c.req.arrayBuffer()) }, whatsappReplays);
+        if (outcome.status === 200) return c.json({ ok: true }, 200);
+        if (outcome.status === 401 || outcome.status === 400) {
+          const limited = chargeWhatsAppRefusal(c);
           if (limited) return limited;
         }
         return c.json({ code: outcome.code }, outcome.status);
@@ -2546,6 +2598,14 @@ export function createHttpApp(deps: HttpDeps) {
         // The plaintext as it arrives, sealed piece by piece below (#2780): never held whole, and its declared length is checked.
         let source: AsyncIterable<Uint8Array>;
         let declaredLength: number;
+        // Why the recording stopped without the recorder's click, when the client says so (A1, #3159): a code from a fixed list in the
+        // JSON body, the form or the query, whichever carries the file. Anything else is refused; absent means the recorder stopped it.
+        let stopReason: RecordingStopReason | undefined;
+        const readStopReason = (value: unknown): RecordingStopReason | undefined => {
+          if (value === undefined || value === null || value === '') return undefined;
+          if (typeof value === 'string' && (RECORDING_STOP_REASONS as readonly string[]).includes(value)) return value as RecordingStopReason;
+          throw new DomainError('BAD_REQUEST', 400, 'stopReason is not a known code');
+        };
 
         const verifyRecorderAndKind = async (mediaKind: 'audio' | 'video') => {
           const meeting = await meetingFacts(user, orgId, meetingId);
@@ -2584,11 +2644,13 @@ export function createHttpApp(deps: HttpDeps) {
             uploadId?: unknown;
             kind?: unknown;
             lengthSeconds?: unknown;
+            stopReason?: unknown;
           } | null;
           if (!body || typeof body.uploadId !== 'string' || (body.kind !== 'audio' && body.kind !== 'video')) {
             throw new DomainError('BAD_REQUEST', 400, 'uploadId and kind (audio|video) required');
           }
           kind = body.kind;
+          stopReason = readStopReason(body.stopReason);
           if (kind === 'video') {
             // The staged bytes are read whole into memory: one video transfer per process (a multipart one took its slot in the gate).
             releaseJsonVideo = videoTransfers.tryAcquire(user.userId);
@@ -2639,6 +2701,7 @@ export function createHttpApp(deps: HttpDeps) {
             throw new DomainError('BAD_REQUEST', 400, 'kind must be audio or video');
           }
           kind = kindVal;
+          stopReason = readStopReason(formData.get('stopReason'));
           const kindHint = c.req.query('kind');
           if (kindHint !== undefined && kindHint !== kind) throw new DomainError('BAD_REQUEST', 400, 'kind does not match the declared kind');
           await verifyRecorderAndKind(kind);
@@ -2668,6 +2731,7 @@ export function createHttpApp(deps: HttpDeps) {
           const kindVal = c.req.query('kind');
           if (kindVal !== 'audio' && kindVal !== 'video') throw new DomainError('BAD_REQUEST', 400, 'kind must be audio or video');
           kind = kindVal;
+          stopReason = readStopReason(c.req.query('stopReason'));
           await verifyRecorderAndKind(kind);
           const lengthVal = c.req.query('lengthSeconds');
           if (lengthVal !== undefined) {
@@ -2733,6 +2797,7 @@ export function createHttpApp(deps: HttpDeps) {
               sha256,
               contentType: sniffedContentType,
               lengthSeconds: measuredSeconds,
+              ...(stopReason !== undefined ? { stopReason } : {}),
             },
             { actor: actorOf(user), orgId },
           );
@@ -2846,6 +2911,33 @@ export function createHttpApp(deps: HttpDeps) {
         dataKey.fill(0);
         wrapSubkey.fill(0);
       }
+    } catch (error) {
+      return problem(c, error);
+    } finally {
+      release?.();
+    }
+  });
+
+  // Join the live pieces of a recording that never finished into its audio (ADR-0052 L4a, #3126): the recorder's own click, after the window of the pieces has passed with no
+  // final upload. The pieces are the recorder's own and are read in their own session (the plan is a query as the recorder; the route decrypts one piece at a time, seals the
+  // join under a fresh audio key, has crove-media measure it, and meetings.live.assemble_record records it and discards the pieces). Not in the extension's routes: the click is the app's.
+  const liveAssembles = new ConcurrencyLimiter({ total: 2, perKey: 1 });
+  app.post('/api/meetings/:id/live-assemble', async (c) => {
+    let release: (() => void) | null = null;
+    try {
+      if (!runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
+      const user = c.get('user');
+      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      const meetingId = c.req.param('id') ?? '';
+      const meeting = await meetingFacts(user, orgId, meetingId);
+      if (!meeting.isRecorder) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can join its live pieces');
+      release = liveAssembles.tryAcquire(user.userId);
+      if (!release) throw busy(c);
+      const result = await assembleLivePieces(
+        { runtime, store, broker: deps.broker ?? createCredentialBroker(config), measurer: mediaMeasurer, maxBytes: meetingMediaCap('audio') },
+        { actor: actorOf(user), orgId, meetingId },
+      );
+      return c.json(result);
     } catch (error) {
       return problem(c, error);
     } finally {
