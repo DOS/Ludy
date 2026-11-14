@@ -96,6 +96,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.link.remove',
       'meetings.followup.send',
       'meetings.live.chunk',
+      'meetings.live.assemble_record',
       'meetings.live.start',
       'meetings.live.stop',
       'meetings.live.notes_start',
@@ -133,6 +134,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.followup.draft',
       'meetings.live.status',
       'meetings.live.notes_input',
+      'meetings.live.assemble_plan',
     ]);
 
     expect(meetingList.name).toBe('meetings.meeting.list');

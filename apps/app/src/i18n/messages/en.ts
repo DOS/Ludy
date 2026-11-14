@@ -1827,6 +1827,19 @@ export const en = {
       otherStopped: 'Live notes have stopped.',
       code: 'Code: {code}',
       recordingContinues: 'The recording itself continues.',
+      assemble: {
+        title: 'The recording was not uploaded',
+        offer: 'The full recording of this meeting was not uploaded. You can join the recording from the {pieces} pieces sent during the meeting.',
+        button: 'Join the recording from the live pieces',
+        gaps: '{count} pieces are missing (numbers {list}): the recording has a gap there.',
+        lateUpload: 'If the full recording arrives late after you join, the joined one is kept and the late one is refused.',
+        done: 'Joined {pieces} pieces into a recording of {length}. You can play it back and transcribe it as usual.',
+        doneGaps: '{count} pieces were missing (numbers {list}), so the recording has a gap there.',
+        reasons: {
+          first_piece_missing: 'Cannot be joined: the first piece, which holds the start of the file, is missing, so the later pieces cannot be read.',
+          expired: 'Cannot be joined: the audio retention period of this meeting has ended.',
+        },
+      },
     },
     followup: {
       open: 'Write a thank-you email',
@@ -9344,6 +9357,13 @@ export const en = {
       AUDIO_NOT_FOUND: 'This meeting has no audio recording.',
       INVALID_PURPOSE: 'This file cannot be uploaded for the purpose chosen.',
       MEDIA_RETENTION_PASSED: 'The period this meeting was to be kept has ended, so no new audio or video is accepted.',
+      LIVE_ASSEMBLE_TIMEOUT: 'Joining the pieces took too long and was stopped; nothing was changed. Try again.',
+      LIVE_NO_PIECES: 'This meeting has no live pieces to join.',
+      LIVE_STILL_OPEN: 'The full recording may still arrive. You can join the pieces after the longest recording time (4 hours 15 minutes) has passed.',
+      LIVE_FIRST_PIECE_MISSING: 'The first piece, which holds the start of the file, is missing, so the later pieces cannot be joined.',
+      LIVE_PIECES_CHANGED: 'The pieces changed while they were being joined. Try again.',
+      LIVE_PIECE_UNREADABLE: 'A piece could not be read from storage, so they cannot be joined yet. Tell your system administrator.',
+      MEDIA_ALREADY_RECORDED: 'This meeting already has its recording; the one that arrived first is kept and the later one is refused.',
       MEETING_SETTINGS_INVALID: 'A kept video cannot be kept longer than the audio.',
       FILE_TOO_LARGE: 'The uploaded meeting file exceeds the maximum allowed size (300 MB for audio, 2 GB for video).',
       TODO_NOT_FOUND: 'This to-do was not found.',
@@ -11034,6 +11054,8 @@ export const en = {
     },
     meetings: {
       live: {
+        assemble_plan: "Read the recorder's own live pieces to join them into the recording",
+        assemble_record: 'Record the recording joined from the live pieces and delete the pieces',
         chunk: 'Take a piece of the audio of a meeting being recorded (live notes)',
         notes_copy: 'Copy the live notes Vy just made into your draft',
         notes_input: 'Read the new draft lines and the earlier notes to make the live notes',
