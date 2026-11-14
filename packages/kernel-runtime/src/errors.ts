@@ -155,6 +155,10 @@ export function toDomainError(error: unknown): DomainError {
       if (pg.message === 'MCP_GRANT_REVOKED' || pg.message === 'MCP_GRANT_EXPIRED' || pg.message === 'MCP_GRANT_NOT_MEMBER' || pg.message === 'MCP_GRANT_NOT_COMPANY' || pg.message === 'MCP_MEMBER_GRANTS_OFF') {
         return new DomainError('MCP_GRANT_INVALID', 401, 'Quyền kết nối MCP không còn hiệu lực', undefined, { audit: { mcpRefusal: pg.message } });
       }
+      // crove_kernel.enter_mcp_company_draft_context (#3227): the grant does not hold the write scope the command declares (the runtime checks it first, so this is the database agreeing).
+      if (pg.message === 'MCP_GRANT_SCOPE') {
+        return new DomainError('FORBIDDEN', 403, 'Quyền kết nối MCP không được thực hiện việc này', { rule: 'mcp_scope' });
+      }
       // A second enter_context in one transaction (plan §4.5 item 1): a bug in the caller, never a user's 403.
       if (pg.message?.includes('CONTEXT_REENTRY')) return new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
       // A context or seal that does not verify (plan §4.5 item 5, T11): tampering or a bug, never a user's 403.
