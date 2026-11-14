@@ -38,7 +38,7 @@ catalog:
   exceljs: 4.4.0
   fast-check: 4.10.2
   fast-xml-parser: 5.11.2
-  hono: 4.13.13
+  hono: 4.13.16
   jose: 6.2.12
   kanel: 4.0.4
   kanel-kysely: 4.0.0
