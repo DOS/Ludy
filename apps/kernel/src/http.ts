@@ -671,6 +671,8 @@ export function createHttpApp(deps: HttpDeps) {
     c.json({
       authUrl: publicAuthUrl(config),
       authAnonKey: config.PUBLIC_AUTH_ANON_KEY ?? null,
+      // Sign-in buttons besides email and password (AUTH_OAUTH_PROVIDERS, #2704): provider ids of the identity provider.
+      authProviders: config.AUTH_OAUTH_PROVIDERS,
       aiEnabled: deps.aiEnabled,
       // The MCP endpoint and its authorization server are on (OAUTH_SERVER=on, #2975): Settings then lists the connected AI apps.
       mcpEnabled: deps.oauth !== undefined,

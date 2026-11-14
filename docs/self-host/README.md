@@ -139,6 +139,7 @@ sign-in API), you can sign people in there instead (ADR-0027, ADR-0028). Set, in
 | `AUTH_SESSION_CHECK` | `jwt` |
 | `AUTH_UPSTREAM_URL` | empty (`AUTH_UPSTREAM_URL=`): no bundled proxy. Unset means the bundled Supabase Auth |
 | `AUTH_ALLOWED_EMAILS` | who may use this deployment: exact addresses and `@domain` entries. Without it every account of that provider can sign in here and create orgs |
+| `AUTH_OAUTH_PROVIDERS` | optional: the provider ids it has enabled (`google,github`); each shows a "Continue with ..." button. The app signs in with standard Supabase OAuth (PKCE), so the provider's redirect URLs must allow your app's address. Every listed provider must issue verified emails. Behind the bundled Supabase Auth this needs `AUTH_SIGNUP_POLICY=open`, which opens self-sign-up for every method (the boot refuses it otherwise) |
 | `AUTH_SIGNUP_POLICY` | leave unset: sign-up is the provider's to restrict |
 
 An upgrade note: compose now reads `AUTH_ISSUER`, `AUTH_SESSION_CHECK`, `AUTH_JWKS_URL`, `PUBLIC_AUTH_URL`, `PUBLIC_AUTH_ANON_KEY` and `AUTH_UPSTREAM_URL` from `.env` (before, it fixed the bundled Supabase Auth and ignored them), so a stray line of those in an existing `.env` now takes effect.
