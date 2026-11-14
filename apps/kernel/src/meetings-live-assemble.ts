@@ -122,7 +122,7 @@ export async function assembleLivePieces(deps: LiveAssembleDeps, input: { actor:
           lengthSeconds,
           pieces: plan.pieces.length,
           lastSeq: plan.lastSeq,
-          skipped: plan.skipped,
+          leftOut: plan.leftOut,
         },
         { actor, orgId },
       );

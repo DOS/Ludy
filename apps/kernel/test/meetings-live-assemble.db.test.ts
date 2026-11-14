@@ -426,9 +426,9 @@ suite('meetings live pieces assembled on PostgreSQL (#3126)', () => {
     const record = (over: Record<string, unknown>) => appRuntime.execute('meetings.live.assemble_record', assembleInput(meetingId, over), { actor: userActor('recorder'), orgId });
     await refusedWith(() => record({ lastSeq: 5 }), 'LIVE_PIECES_CHANGED');
     await refusedWith(() => record({ pieces: 9 }), 'LIVE_PIECES_CHANGED');
-    // A set that holds more than the route joined is refused too (a stale plan), unless the rest is named as skipped.
+    // A set that holds more than the route joined is refused too (a stale plan), unless the rest is named as leftOut.
     await refusedWith(() => record({ pieces: 2 }), 'LIVE_PIECES_CHANGED');
-    await refusedWith(() => record({ pieces: 2, skipped: [7] }), 'LIVE_PIECES_CHANGED');
+    await refusedWith(() => record({ pieces: 2, leftOut: [7] }), 'LIVE_PIECES_CHANGED');
     await refusedWith(() => record({ storageKey: fileKey(orgId, 'a'.repeat(64)) }), 'INVALID_STORAGE_KEY');
     expect(await audioRows(meetingId)).toBe(0);
     expect(await audioKeys(meetingId)).toBe(0);

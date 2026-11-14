@@ -242,8 +242,8 @@ export const zMeetingLiveAssemble = zMeetingRef.extend({
   lengthSeconds: z.number().int().positive(),
   pieces: z.number().int().min(1).max(LIVE_CHUNK_MAX_COUNT),
   lastSeq: z.number().int().min(0).max(LIVE_CHUNK_MAX_COUNT - 1),
-  // The pieces the plan left out because their key or file is gone: they count as missing in the answer. pieces + skipped is every piece the meeting holds.
-  skipped: z.array(z.number().int().min(0).max(LIVE_CHUNK_MAX_COUNT - 1)).max(LIVE_CHUNK_MAX_COUNT).default([]),
+  // The pieces the plan left out because their key or file is gone: they count as missing in the answer. pieces + leftOut is every piece the meeting holds.
+  leftOut: z.array(z.number().int().min(0).max(LIVE_CHUNK_MAX_COUNT - 1)).max(LIVE_CHUNK_MAX_COUNT).default([]),
 });
 export type MeetingLiveAssemble = z.infer<typeof zMeetingLiveAssemble>;
 
@@ -265,7 +265,7 @@ export interface LiveAssemblePlan {
   pieces: LiveAssemblePlanPiece[];
   missing: number[];
   // The pieces left out of `pieces` because their key or file is gone (also in `missing`).
-  skipped: number[];
+  leftOut: number[];
   lastSeq: number;
 }
 
