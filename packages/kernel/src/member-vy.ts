@@ -42,6 +42,9 @@ export const MEMBER_VY_FEATURES = {
   // The member's Vy translating the summary of a meeting in the foreground (meetings integrations E1, #3184): one model call, the member waiting for it, any reader for what they read; its own key, so it
   // never cuts off a transcription, a summary or live notes (#3029).
   'meetings.translate': { module: 'meetings', expiryMinutes: 30 },
+  // The member's Vy answering one question across the meetings the member reads, with a citation to a transcript line on every sentence (meetings integrations A3, #3161): one model call over at most 40 lines
+  // the member's own search found, the member waiting for it. Its own key, so it never cuts off a transcription, a summary, a translation or live notes (#3029). The run's result row holds counts only, never the answer.
+  'meetings.ask': { module: 'meetings', expiryMinutes: 30 },
 } as const;
 export type MemberVyFeature = keyof typeof MEMBER_VY_FEATURES;
 const FEATURE_KEYS = Object.keys(MEMBER_VY_FEATURES) as [MemberVyFeature, ...MemberVyFeature[]];

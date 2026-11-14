@@ -358,6 +358,9 @@ export const KERNEL_ERROR_CODES = [
   'NOTES_TOO_LONG',
   // The member's Vy translating the summary they read (meetings integrations E1, #3184).
   'TRANSLATE_OFF',
+  // The member's Vy answering across meetings (Meetings A3, #3161).
+  'ASK_OFF',
+  'ASK_BUSY',
   'TRANSLATION_NOT_FOUND',
   'TRANSLATION_NOTHING',
   'TRANSLATION_RESULT_INVALID',

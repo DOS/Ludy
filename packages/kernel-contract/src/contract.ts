@@ -398,6 +398,7 @@ import {
   zSummaryCopied,
   zSummaryCopy,
 } from './meetings.ts';
+import { zAskAnswer, zAskEmpty, zAskInput, zAskStatus } from './meeting-ask.ts';
 import { zFollowupDraft, zFollowupSendCall, zFollowupSent, zFollowupWording, zFollowupWordingAsk } from './meeting-followup.ts';
 import { zExtensionOrgToken, zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked, zExtensionTokenRevokedMember } from './extension.ts';
 import { zMcpGrantRevoke, zMcpGrantRevoked, zMcpGrantView, zMcpMemberGrantsSet, zMcpMemberGrantsView, zMcpWakeCleared, zMcpWakeTested, zMcpWakeGetInput, zMcpWakeGrantRef, zMcpWakeSet, zMcpWakeView, zMcpWakeWithSecret } from './mcp.ts';
@@ -945,6 +946,12 @@ export const contract = {
     },
     // Search across the transcript lines the caller reads (L2, #2589): plain folded text search, no model call.
     search: oc.input(zMeetingSearchInput).output(zMeetingSearchResult),
+    // Ask across meetings (A3, #3161): the member's own Vy answers a question from the lines the member's own search finds, each sentence with a citation to a transcript line; nothing is stored or sent.
+    // `status` is the box (may Vy be asked now, the cost of one question), `ask` is the click.
+    ask: {
+      status: oc.input(zAskEmpty).output(zAskStatus),
+      ask: oc.input(zAskInput).output(zAskAnswer),
+    },
     // The transcript (#2578): the recorder's draft, read, replaced by a transcription run and corrected by hand.
     transcript: {
       get: oc.input(zMeetingRef).output(zTranscript),
