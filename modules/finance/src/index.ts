@@ -43,6 +43,7 @@ import { marketplaceConnectionCommands, marketplaceConnectionQueries } from './m
 import { einvoiceCommands, einvoiceQueries } from './einvoice-drafts.ts';
 import { marketplaceBalanceQueries } from './marketplace-balance.ts';
 import { marketplaceFactsQueries } from './marketplace-facts.ts';
+import { marketplaceWorklistQueries } from './marketplace-worklist.ts';
 import { marketplaceIncomeCommands, marketplaceIncomeQueries } from './marketplace-income.ts';
 import { marketplaceRetentionCommands, marketplaceRetentionQueries } from './marketplace-retention.ts';
 import { marketplaceCommands, marketplaceQueries } from './marketplace-orders.ts';
@@ -75,6 +76,7 @@ export { NOT_A_REPORT, readMarketplaceFile, recordMarketplaceReadFailure, type M
 export { createMarketplaceSettlementCommands } from './marketplace-settlement-record.ts';
 export { createMarketplacePayoutCommands } from './marketplace-payout-record.ts';
 export { createMarketplaceFeeClearingCommands } from './marketplace-fee-clearing-record.ts';
+export { createMarketplaceWorklist } from './marketplace-worklist.ts';
 export { MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from './marketplace-posting-map.ts';
 export { readMarketplaceIncomeFile, recordMarketplaceIncomeReadFailure, type MarketplaceIncomeFileDeps } from './marketplace-income.ts';
 export { NOT_A_STATEMENT, readStatementFile, recordStatementReadFailure, statementFileRows, unmappedMessage, type StatementFileDeps, type StatementStageOutcome } from './bank-statement-file.ts';
@@ -257,6 +259,7 @@ export const financeQueries = [
   ...marketplaceIncomeQueries,
   ...marketplaceBalanceQueries,
   ...marketplaceFactsQueries,
+  ...marketplaceWorklistQueries,
   ...marketplaceRetentionQueries,
   financeToday,
   searchQuery,

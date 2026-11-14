@@ -2,7 +2,7 @@
 // The Sàn screen's read (#2516 slice D, plan docs/plan/stock-and-marketplaces.md section 8.4, "The payout"): for each platform an entity sells on, where the platform's money stands in the books,
 // read from the ledger by account and by the platform's party (crove_finance.marketplace_party). Facts only: no model call, nothing stored, no buyer or order data. Amounts are decimal strings.
 import { z } from 'zod';
-import { zId, zMoney } from './schemas.ts';
+import { zId, zLocalDate, zMoney } from './schemas.ts';
 
 export const zMarketplaceBalanceInput = z.strictObject({ legalEntityId: zId.optional() });
 export type MarketplaceBalanceInput = z.infer<typeof zMarketplaceBalanceInput>;
@@ -32,6 +32,9 @@ export type MarketplaceBalance = z.infer<typeof zMarketplaceBalance>;
 // data is in it, so there is nothing in it for a model to follow.
 export const zMarketplaceFacts = z.strictObject({
   settlementsToPost: z.number().int().min(0),
+  // The stored settlements that are posted and standing and have no payout voucher yet (the platform's transfer is not recorded). Shown by code beside the other facts; the coworker's sentence is
+  // not told it (see packages/agent marketplace-line.ts: a fourth count needs its own cue words in the sentence checks).
+  payoutsToMatch: z.number().int().min(0),
   awaitingPayout: zMoney,
   feesAwaitingInvoice: zMoney,
 });
@@ -47,3 +50,51 @@ export const zMarketplaceLine = z.strictObject({
   text: z.string().nullable(),
 });
 export type MarketplaceLine = z.infer<typeof zMarketplaceLine>;
+
+// What the Sàn screen lets a person act on (#2516 slice F, plan docs/plan/stock-and-marketplaces.md section 8.4): three short lists, read by code from the books and the stored settlements, no model
+// call and no buyer data. Each item is one proposal a person can ask for (finance.marketplace_settlement.record, finance.marketplace_payout.record, finance.marketplace_fee_clearing.record); nothing
+// is posted by reading them. `postingConfirmed` is the gate: false while the accountant has not confirmed the account map of an entity in view (#2520), when every request would be refused.
+// A settlement to post: a stored settlement that stands and has no posting voucher; `net` is what its entry would post (sales less seller discounts less refunds).
+export const zMarketplaceSettlementToPost = z.object({
+  id: zId,
+  legalEntityId: zId,
+  platform: z.string(),
+  platformName: z.string(),
+  periodFrom: zLocalDate,
+  periodTo: zLocalDate,
+  net: zMoney,
+});
+export type MarketplaceSettlementToPost = z.infer<typeof zMarketplaceSettlementToPost>;
+// A bank line the platform's transfer may be: the entity's, money in, equal to the net, not before the period, and free. Shown by its date, amount and statement reference.
+export const zMarketplacePayoutCandidate = z.object({ id: zId, date: zLocalDate, amount: zMoney, reference: z.string().nullable() });
+export type MarketplacePayoutCandidate = z.infer<typeof zMarketplacePayoutCandidate>;
+// A posted settlement that waits for its payout: `received` is the net the platform paid (the amount the bank line must equal), with the candidate lines (none yet when the statement has not come).
+export const zMarketplacePayoutToMatch = z.object({
+  settlementId: zId,
+  legalEntityId: zId,
+  platform: z.string(),
+  platformName: z.string(),
+  periodFrom: zLocalDate,
+  periodTo: zLocalDate,
+  received: zMoney,
+  candidates: z.array(zMarketplacePayoutCandidate),
+});
+export type MarketplacePayoutToMatch = z.infer<typeof zMarketplacePayoutToMatch>;
+// A platform's fee invoice that can clear fees waiting on 1388: `clearable` is what a clearing would take now (the smaller of what the invoice still has to clear and the platform's 1388 balance).
+export const zMarketplaceInvoiceToClear = z.object({
+  documentId: zId,
+  legalEntityId: zId,
+  platform: z.string(),
+  platformName: z.string(),
+  invoice: z.string(),
+  date: zLocalDate,
+  clearable: zMoney,
+});
+export type MarketplaceInvoiceToClear = z.infer<typeof zMarketplaceInvoiceToClear>;
+export const zMarketplaceWorklist = z.object({
+  postingConfirmed: z.boolean(),
+  settlements: z.array(zMarketplaceSettlementToPost),
+  payouts: z.array(zMarketplacePayoutToMatch),
+  invoices: z.array(zMarketplaceInvoiceToClear),
+});
+export type MarketplaceWorklist = z.infer<typeof zMarketplaceWorklist>;

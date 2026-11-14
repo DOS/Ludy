@@ -51,8 +51,53 @@ interface Built {
   party: { id: string; name: string; taxCode: string | null };
 }
 
+// The invoice's standing entry: its latest revision, original (not a reversal), with whether a reversal points at it. Null when the document has no entry.
+export async function standingInvoiceEntry(ctx: QueryContext, documentId: string): Promise<{ id: string; entryDate: string; reversed: boolean } | null> {
+  const entry = await ctx.trx
+    .selectFrom('crove_finance.journal_entry as e')
+    .leftJoin('crove_finance.journal_entry as r', (join) => join.onRef('r.org_id', '=', 'e.org_id').onRef('r.reverses_entry_id', '=', 'e.id'))
+    .select(['e.id', 'e.entry_date', 'r.id as reversal'])
+    .where('e.org_id', '=', ctx.orgId)
+    .where('e.source_type', '=', PURCHASE_SOURCE)
+    .where('e.source_id', '=', documentId)
+    .where('e.reverses_entry_id', 'is', null)
+    .where(latestRevision('e'))
+    .executeTakeFirst();
+  return entry ? { id: entry.id, entryDate: String(entry.entry_date).slice(0, 10), reversed: entry.reversal !== null } : null;
+}
+
+// The credit (less debit) to 331 that the invoice's entry names the party for: what the invoice has to clear.
+export async function invoicePayable(ctx: QueryContext, entryId: string, partyId: string): Promise<string> {
+  return (
+    await ctx.trx
+      .selectFrom('crove_finance.journal_line as l')
+      .select(sql<string>`coalesce(sum(l.credit) - sum(l.debit), 0)`.as('total'))
+      .where('l.org_id', '=', ctx.orgId)
+      .where('l.entry_id', '=', entryId)
+      .where('l.party_id', '=', partyId)
+      .where('l.account_code', 'like', `${MARKETPLACE_POSTING_MAPS.tt133?.feePayable.code ?? '331'}%`)
+      .executeTakeFirstOrThrow()
+  ).total;
+}
+
+// What the invoice's standing clearings took: the credit to 1388 of every clearing voucher that names it and whose entry is not reversed.
+export async function invoiceCleared(ctx: QueryContext, documentId: string): Promise<string> {
+  return (
+    await ctx.trx
+      .selectFrom('crove_finance.journal_voucher as j')
+      .innerJoin('crove_finance.journal_entry as e', (join) => join.onRef('e.org_id', '=', 'j.org_id').onRef('e.source_id', '=', 'j.id').on('e.source_type', '=', JOURNAL_VOUCHER_SOURCE).on('e.reverses_entry_id', 'is', null))
+      .innerJoin('crove_finance.journal_line as l', (join) => join.onRef('l.org_id', '=', 'e.org_id').onRef('l.entry_id', '=', 'e.id'))
+      .select(sql<string>`coalesce(sum(l.credit), 0)`.as('total'))
+      .where('j.org_id', '=', ctx.orgId)
+      .where('j.fee_document_id', '=', documentId)
+      .where('l.account_code', 'like', `${MARKETPLACE_POSTING_MAPS.tt133?.feeAwaitingInvoice.code ?? '1388'}%`)
+      .where(sql<boolean>`NOT ${reversedSource('j', JOURNAL_VOUCHER_SOURCE)}`)
+      .executeTakeFirstOrThrow()
+  ).total;
+}
+
 // The sum of the account's lines (debit minus credit) that name the party, in the entity: a reversal entry takes back what it reverses, so the balance already counts it.
-async function balanceOf(ctx: QueryContext, legalEntityId: string, partyId: string, prefix: string): Promise<{ balance: string; lastDate: string | null }> {
+export async function balanceOf(ctx: QueryContext, legalEntityId: string, partyId: string, prefix: string): Promise<{ balance: string; lastDate: string | null }> {
   const row = await ctx.trx
     .selectFrom('crove_finance.journal_line as l')
     .innerJoin('crove_finance.journal_entry as e', (join) => join.onRef('e.org_id', '=', 'l.org_id').onRef('e.id', '=', 'l.entry_id'))
@@ -90,41 +135,16 @@ async function buildClearing(ctx: QueryContext, maps: Maps, documentId: string, 
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`channel_settlement:${ctx.orgId}:${doc.legal_entity_id}:${link.platform}`}, 0))`.execute(ctx.trx);
   }
   // The invoice's standing entry (its latest revision, not reversed) and its credit to 331 naming the platform: what it has to clear. An invoice paid another way credits no 331 and clears nothing.
-  const entry = await ctx.trx
-    .selectFrom('crove_finance.journal_entry as e')
-    .leftJoin('crove_finance.journal_entry as r', (join) => join.onRef('r.org_id', '=', 'e.org_id').onRef('r.reverses_entry_id', '=', 'e.id'))
-    .select(['e.id', 'e.entry_date', 'r.id as reversal'])
-    .where('e.org_id', '=', ctx.orgId)
-    .where('e.source_type', '=', PURCHASE_SOURCE)
-    .where('e.source_id', '=', doc.id)
-    .where('e.reverses_entry_id', 'is', null)
-    .where(latestRevision('e'))
-    .executeTakeFirst();
+  const entry = await standingInvoiceEntry(ctx, doc.id);
   if (!entry) throw notUsable('NOT_POSTED');
-  if (entry.reversal) throw notUsable('REVERSED');
-  const payable = (await ctx.trx
-    .selectFrom('crove_finance.journal_line as l')
-    .select(sql<string>`coalesce(sum(l.credit) - sum(l.debit), 0)`.as('total'))
-    .where('l.org_id', '=', ctx.orgId)
-    .where('l.entry_id', '=', entry.id)
-    .where('l.party_id', '=', link.id)
-    .where('l.account_code', 'like', `${(MARKETPLACE_POSTING_MAPS.tt133?.feePayable.code ?? '331')}%`)
-    .executeTakeFirstOrThrow()).total;
+  if (entry.reversed) throw notUsable('REVERSED');
+  const payable = await invoicePayable(ctx, entry.id, link.id);
   if (!money(payable).greaterThan(0)) throw notUsable('NO_PAYABLE');
   // What the invoice's standing clearings took: the credit to 1388 of every clearing voucher that names it and whose entry is not reversed.
-  const cleared = (await ctx.trx
-    .selectFrom('crove_finance.journal_voucher as j')
-    .innerJoin('crove_finance.journal_entry as e', (join) => join.onRef('e.org_id', '=', 'j.org_id').onRef('e.source_id', '=', 'j.id').on('e.source_type', '=', JOURNAL_VOUCHER_SOURCE).on('e.reverses_entry_id', 'is', null))
-    .innerJoin('crove_finance.journal_line as l', (join) => join.onRef('l.org_id', '=', 'e.org_id').onRef('l.entry_id', '=', 'e.id'))
-    .select(sql<string>`coalesce(sum(l.credit), 0)`.as('total'))
-    .where('j.org_id', '=', ctx.orgId)
-    .where('j.fee_document_id', '=', doc.id)
-    .where('l.account_code', 'like', `${(MARKETPLACE_POSTING_MAPS.tt133?.feeAwaitingInvoice.code ?? '1388')}%`)
-    .where(sql<boolean>`NOT ${reversedSource('j', JOURNAL_VOUCHER_SOURCE)}`)
-    .executeTakeFirstOrThrow()).total;
+  const cleared = await invoiceCleared(ctx, doc.id);
   const waiting = await balanceOf(ctx, doc.legal_entity_id, link.id, MARKETPLACE_POSTING_MAPS.tt133?.feeAwaitingInvoice.code ?? '1388');
   // The entry is dated the later of the invoice's own posting (its entry date, which may follow the invoice date) and the last posting on the platform's 1388, so it never precedes either.
-  const invoiceDate = String(entry.entry_date).slice(0, 10);
+  const invoiceDate = entry.entryDate;
   const date = waiting.lastDate && waiting.lastDate > invoiceDate ? waiting.lastDate : invoiceDate;
   const regime = (await booksOn(ctx, doc.legal_entity_id, date)).regime;
   const map = requireConfirmedMarketplaceMap(regime, maps);
