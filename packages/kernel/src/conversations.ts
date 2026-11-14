@@ -119,6 +119,7 @@ import { z } from 'zod';
 import { zId, zTodayItems, type TodayItem } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, conversationKey, defineCommand, defineQuery, newConversationBlobId, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { parseBusinessAccounts } from './channels.ts';
 import { createMailMessage } from './mail.ts';
 import { notifyMembers, ownersAndAdmins } from './notifications.ts';
 
@@ -264,6 +265,31 @@ const previewOf = (body: string): string => {
 };
 
 // ---------------------------------------------------------------------------------------------------------------------
+// Telegram Business threads (#3191): a thread `b:<chat id>:<business connection id>` is answered only through the account it came in on, and only
+// while that account is enabled, allowed by a person of the org and has the right to reply, and the 24 hours Telegram gives after the customer's last
+// message have not run out. Stopping an account stops answering its threads at once (the connection to Telegram is still live, so nothing else would).
+// ---------------------------------------------------------------------------------------------------------------------
+
+type BusinessReplyBlock = 'business_stopped' | 'business_read_only' | 'window_closed';
+const BUSINESS_THREAD = /^b:-?\d{1,20}:(.+)$/;
+async function businessReplyBlock(ctx: Pick<QueryContext, 'trx' | 'orgId'>, connectionId: string, provider: string, threadId: string, replyWindowUntil: Date | null, now: number): Promise<BusinessReplyBlock | null> {
+  if (provider !== 'telegram' || !threadId.startsWith('b:')) return null;
+  const via = BUSINESS_THREAD.exec(threadId)?.[1];
+  const stored = await ctx.trx.selectFrom('crove_kernel.channel_connection').select('chat_business').where('org_id', '=', ctx.orgId).where('id', '=', connectionId).executeTakeFirst();
+  const account = via ? parseBusinessAccounts(stored?.chat_business).find((a) => a.id === via) : undefined;
+  if (!account || !account.enabled || !account.approved) return 'business_stopped';
+  if (!account.canReply) return 'business_read_only';
+  // A business thread with no customer message in it has no window to answer in: Telegram answers only chats with a message in the last 24 hours.
+  return replyWindowUntil === null || replyWindowUntil.getTime() < now ? 'window_closed' : null;
+}
+const businessBlockError = (block: BusinessReplyBlock): DomainError =>
+  block === 'window_closed'
+    ? new DomainError('REPLY_WINDOW_CLOSED', 409, 'Đã quá thời gian nền tảng cho phép trả lời cuộc trò chuyện này')
+    : block === 'business_stopped'
+      ? new DomainError('BUSINESS_ACCOUNT_STOPPED', 409, 'Tài khoản Telegram Business này chưa được cho phép hoặc đã ngắt, nên chưa trả lời được')
+      : new DomainError('BUSINESS_ACCOUNT_READ_ONLY', 409, 'Bot chưa có quyền trả lời của tài khoản Telegram Business này');
+
+// ---------------------------------------------------------------------------------------------------------------------
 // Intake
 // ---------------------------------------------------------------------------------------------------------------------
 
@@ -278,11 +304,11 @@ export const conversationIngest = defineCommand({
   target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
   handler: async (ctx, input): Promise<ConversationIngested> => {
     requireSystem(ctx);
-    return ingestEvents(ctx, input.connectionId, input.events);
+    return ingestEvents(ctx, input.connectionId, input.events, input.businessConnectionId);
   },
 });
 
-async function ingestEvents(ctx: CommandContext, connectionId: string, inputEvents: readonly ConversationEvent[]): Promise<ConversationIngested> {
+async function ingestEvents(ctx: CommandContext, connectionId: string, inputEvents: readonly ConversationEvent[], businessConnectionId?: string): Promise<ConversationIngested> {
   const out: ConversationIngested = { stored: 0, duplicates: 0, ignored: 0 };
   const reserved: MailImageSlot[] = [];
   const connection = await connectionOf(ctx, connectionId);
@@ -310,6 +336,20 @@ async function ingestEvents(ctx: CommandContext, connectionId: string, inputEven
       return out;
     }
   }
+  // Telegram Business (#3191): the events came through a business connection, which counts only while this connection's stored state lists it as
+  // enabled and allowed by a person of the org (any Premium user can connect a bot that has Business Mode on). An unknown, disabled or not yet allowed
+  // one stores nothing, and a chat of the business account with itself (the contact is the account's own user) is nobody's customer.
+  let ownerUserId: string | null = null;
+  if (businessConnectionId !== undefined) {
+    const stored = connection.provider === 'telegram' ? await ctx.trx.selectFrom('crove_kernel.channel_connection').select('chat_business').where('org_id', '=', ctx.orgId).where('id', '=', connectionId).executeTakeFirst() : undefined;
+    const account = parseBusinessAccounts(stored?.chat_business).find((a) => a.id === businessConnectionId && a.enabled && a.approved);
+    if (!account) {
+      out.ignored = inputEvents.length;
+      ctx.audit({ connection_id: connectionId, ...out });
+      return out;
+    }
+    ownerUserId = account.userId;
+  }
   // A WhatsApp number can change hands (one org disconnects it, another connects it) while notices of the first are still waiting: a notice names no org
   // and may wait up to seven days. An event dated before this connection began is the earlier holder's customer's, never ours. A reconnect of a live
   // connection keeps its row and its date; a number connected again after a disconnect is a new row, so its date is the start of this holder.
@@ -321,11 +361,15 @@ async function ingestEvents(ctx: CommandContext, connectionId: string, inputEven
   // Oldest first, so a thread's messages take their seq in the order the platform dated them within one notice.
   const events = inputEvents.map((event, i) => ({ event, i })).sort((a, b) => Date.parse(a.event.at) - Date.parse(b.event.at) || a.i - b.i);
   for (const { event } of events) {
-    if (!rules.kinds.includes(event.kind) || (notBefore !== null && Date.parse(event.at) < notBefore)) {
+    // A Telegram business thread (`b:<chat>:<business connection id>`) is stored only through the gate above, and only for the connection that gate
+    // checked: a thread of that shape with no business connection, or of another one, is refused whatever the notice parser said.
+    const businessThread = connection.provider === 'telegram' && event.threadId.startsWith('b:');
+    const businessMismatch = connection.provider === 'telegram' && (businessThread !== (businessConnectionId !== undefined) || (businessThread && BUSINESS_THREAD.exec(event.threadId)?.[1] !== businessConnectionId));
+    if (!rules.kinds.includes(event.kind) || businessMismatch || (ownerUserId !== null && event.contact.id === ownerUserId) || (notBefore !== null && Date.parse(event.at) < notBefore)) {
       out.ignored++;
       continue;
     }
-    const result = await ingestEvent(ctx, connectionId, connection.provider, rules.windowHours, event, reserved);
+    const result = await ingestEvent(ctx, connectionId, connection.provider, event.replyWindowHours ?? rules.windowHours, event, reserved);
     out[result]++;
   }
   // The audit row holds counts only: the reserved keys are the worker's to write and are never recorded.
@@ -611,6 +655,9 @@ async function ingestEvent(
     return 'duplicates';
   }
   if (event.hiddenOnly) return 'ignored';
+  // An edit of a Telegram message the core does not hold stores nothing: it would be a message the org never took in (one that came before its account was
+  // allowed, or that was purged with its thread), brought back by a replayed or late edit that carries the first date of the message.
+  if (event.edited && provider === 'telegram') return 'ignored';
   // One customer's intake and erasure take turns: erase_contact holds the same lock while it deletes and writes the tombstone, so a message
   // that was in flight is checked against the tombstone after the erasure commits, not before it.
   await customerLock(ctx, provider, event.contact.id);
@@ -1167,6 +1214,7 @@ export const conversationGet = defineQuery({
     if (!connection || connection.status !== 'active') reason = 'channel_inactive';
     else if (!rules || !rules.kinds.includes(row.kind as ConversationKind) || parent?.external_thread_id?.startsWith('private:')) reason = 'not_supported';
     else if (row.reply_window_until && row.reply_window_until.getTime() < Date.now()) reason = 'window_closed';
+    else reason = (await businessReplyBlock(ctx, row.channel_connection_id, connection.provider, parent?.external_thread_id ?? '', row.reply_window_until, Date.now())) ?? null;
     let gap: ConversationDetail['gap'] = null;
     const lastAt = row.last_message_at;
     if (connection && lastAt) {
@@ -1291,6 +1339,8 @@ export const conversationReply = defineCommand({
     if (conversation.reply_window_until && conversation.reply_window_until.getTime() < ctx.now.getTime()) {
       throw new DomainError('REPLY_WINDOW_CLOSED', 409, 'Đã quá thời gian nền tảng cho phép trả lời cuộc trò chuyện này');
     }
+    const businessBlock = await businessReplyBlock(ctx, conversation.channel_connection_id, connection.provider, conversation.external_thread_id, conversation.reply_window_until, ctx.now.getTime());
+    if (businessBlock) throw businessBlockError(businessBlock);
     if (connection.provider === 'youtube') await refuseWhileYoutubeQuotaSpent(ctx, ctx.now, connection.id);
     // The guarantee against two people answering one customer: a message newer than the one the sender saw.
     if (input.lastSeenSeq !== conversation.last_seq) {
@@ -1650,6 +1700,13 @@ export const conversationReplyBegin = defineCommand({
       await ctx.trx.updateTable('crove_kernel.conversation_message').set({ send_state: 'failed', send_error_code: 'NO_CONTACT' }).where('org_id', '=', ctx.orgId).where('id', '=', message.id).execute();
       return { action: 'none', reason: 'settled' };
     }
+    // An account stopped (or disconnected, or without the right to reply) after the reply was queued: nothing is sent through it.
+    const threadRow = await ctx.trx.selectFrom('crove_kernel.conversation').select('reply_window_until').where('org_id', '=', ctx.orgId).where('id', '=', message.conversation_id).executeTakeFirst();
+    const businessBlock = await businessReplyBlock(ctx, message.channel_connection_id, connection.provider, conversation.thread, threadRow?.reply_window_until ?? null, ctx.now.getTime());
+    if (businessBlock && businessBlock !== 'window_closed') {
+      await ctx.trx.updateTable('crove_kernel.conversation_message').set({ send_state: 'failed', send_error_code: businessBlockError(businessBlock).code }).where('org_id', '=', ctx.orgId).where('id', '=', message.id).execute();
+      return { action: 'none', reason: 'settled' };
+    }
     const callKey = replyCallKey(message.id, message.send_attempt);
     await ctx.trx
       .insertInto('crove_kernel.external_call')
@@ -1675,6 +1732,11 @@ export const conversationReplyBegin = defineCommand({
 });
 
 const zErrorKind = z.enum(['token_expired', 'permission', 'bad_request', 'rate_limited', 'transient']);
+// What a call row keeps of the platform's id of an accepted reply: the part after the last colon. An id may be prefixed with the chat it belongs to (Telegram's
+// is `<chat id>:<message id>`, and a business chat's names the business connection too), which names the customer, and a finished call row never changes (its
+// guard says so) and does not go with the thread when the customer is erased: so only the platform's own message id is kept there. The message itself keeps
+// the whole id (that is how a repeat of it is told), and goes with the thread.
+const callRefOf = (externalId: string): string => externalId.slice(externalId.lastIndexOf(':') + 1) || externalId;
 // What a call row is set to once its outcome is known (external_call's own columns).
 interface CallSet {
   state: 'succeeded' | 'failed' | 'ambiguous' | 'started';
@@ -1720,7 +1782,7 @@ export const conversationReplyRecord = defineCommand({
     if (message.send_state === 'sent') {
       await ctx.trx
         .updateTable('crove_kernel.external_call')
-        .set({ state: 'succeeded', finished_at: ctx.now, updated_at: ctx.now, ...(result.kind === 'accepted' ? { external_ref: result.externalId } : {}) })
+        .set({ state: 'succeeded', finished_at: ctx.now, updated_at: ctx.now, ...(result.kind === 'accepted' ? { external_ref: callRefOf(result.externalId) } : {}) })
         .where('org_id', '=', ctx.orgId)
         .where('key', '=', current)
         .where('state', 'in', ['started', 'ambiguous'])
@@ -1752,7 +1814,7 @@ export const conversationReplyRecord = defineCommand({
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', message.id)
         .execute();
-      await call({ state: 'succeeded', external_ref: result.externalId });
+      await call({ state: 'succeeded', external_ref: callRefOf(result.externalId) });
       await countYoutubeReplyUnits(ctx, message.channel_connection_id);
       return { state: 'sent' };
     }
@@ -1811,11 +1873,13 @@ export const conversationReplySettle = defineCommand({
       throw new DomainError('SEND_UNKNOWN_NO_RESEND', 409, 'Tin nhắn này có thể đã đến khách. Hãy kiểm tra trên kênh rồi đánh dấu là đã gửi, không gửi lại bằng nút');
     }
     if (!connection || connection.status !== 'active') throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kênh này không còn hoạt động, hãy kết nối lại');
-    const thread = await ctx.trx.selectFrom('crove_kernel.conversation').select(['reply_window_until', 'last_seq']).where('org_id', '=', ctx.orgId).where('id', '=', message.conversation_id).executeTakeFirst();
+    const thread = await ctx.trx.selectFrom('crove_kernel.conversation').select(['reply_window_until', 'last_seq', 'external_thread_id']).where('org_id', '=', ctx.orgId).where('id', '=', message.conversation_id).executeTakeFirst();
     // The same rule as a new reply: a newer message means the customer's words changed what is worth saying, so an earlier reply is not
     // sent after it; a person writes a new one.
     if (thread && thread.last_seq > message.seq) throw new DomainError('CONVERSATION_MOVED', 409, 'Hội thoại vừa có tin mới nên chưa gửi lại. Hãy đọc tin mới rồi viết câu trả lời mới');
     if (thread?.reply_window_until && thread.reply_window_until.getTime() < ctx.now.getTime()) throw new DomainError('REPLY_WINDOW_CLOSED', 409, 'Đã quá thời gian nền tảng cho phép trả lời cuộc trò chuyện này');
+    const businessBlock = thread ? await businessReplyBlock(ctx, message.channel_connection_id, connection.provider, thread.external_thread_id, thread.reply_window_until, ctx.now.getTime()) : null;
+    if (businessBlock) throw businessBlockError(businessBlock);
     if (connection.provider === 'youtube') await refuseWhileYoutubeQuotaSpent(ctx, ctx.now, connection.id);
     await ctx.trx
       .updateTable('crove_kernel.conversation_message')
@@ -3277,6 +3341,9 @@ async function openDraft(ctx: CommandContext, conversation: ConversationRow, sou
   if (conversation.reply_window_until && conversation.reply_window_until.getTime() < ctx.now.getTime()) {
     throw new DomainError('REPLY_WINDOW_CLOSED', 409, 'Đã quá thời gian nền tảng cho phép trả lời cuộc trò chuyện này');
   }
+  // Nor for a Telegram Business thread nobody may answer (its account is stopped, not allowed, read-only or has no window): no model call is spent on it.
+  const businessBlock = connection ? await businessReplyBlock(ctx, conversation.channel_connection_id, connection.provider, conversation.external_thread_id, conversation.reply_window_until, ctx.now.getTime()) : null;
+  if (businessBlock) throw businessBlockError(businessBlock);
   const open = await ctx.trx.selectFrom('crove_kernel.conversation_draft').select(['id', 'basis_seq']).where('org_id', '=', ctx.orgId).where('conversation_id', '=', conversation.id).where('state', 'in', ['requested', 'live']).executeTakeFirst();
   if (open && open.basis_seq === conversation.last_seq) return { draftId: open.id, queued: false };
   if (open) {
@@ -3333,7 +3400,7 @@ export const conversationDraftEnqueue = defineCommand({
     try {
       return await openDraft(ctx, conversation, 'auto', null);
     } catch (error) {
-      if (error instanceof DomainError && ['DRAFT_NOT_NEEDED', 'REPLY_NOT_SUPPORTED', 'REPLY_WINDOW_CLOSED'].includes(error.code)) return { draftId: null, queued: false };
+      if (error instanceof DomainError && ['DRAFT_NOT_NEEDED', 'REPLY_NOT_SUPPORTED', 'REPLY_WINDOW_CLOSED', 'BUSINESS_ACCOUNT_STOPPED', 'BUSINESS_ACCOUNT_READ_ONLY'].includes(error.code)) return { draftId: null, queued: false };
       throw error;
     }
   },

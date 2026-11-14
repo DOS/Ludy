@@ -644,6 +644,11 @@ export const contract = {
     setTelegramChats: oc
       .input(z.object({ connectionId: zId, on: z.boolean() }))
       .output(z.object({ chatState: z.enum(['off', 'enabling', 'on', 'disabling']) })),
+    // Allows a Telegram Business account's chats in, or stops them (#3191): any Premium user can connect a bot that has Business Mode on, so an owner or
+    // admin chooses which accounts count. The account is named by the `ref` the connection list gave.
+    setTelegramBusiness: oc
+      .input(z.object({ connectionId: zId, ref: z.string().regex(/^[0-9a-f]{12}$/), allow: z.boolean() }))
+      .output(z.object({ approved: z.boolean() })),
     // A Discord channel (#832): the URL of a webhook a server admin made in the channel's settings. The server checks the
     // webhook with Discord, then seals its token; the format is checked by the server, in words.
     connectDiscord: oc

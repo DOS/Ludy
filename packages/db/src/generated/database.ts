@@ -1942,6 +1942,7 @@ export interface KernelChannelConnectionTable {
   quota_blocked_until: ColumnType<Date | null, Date | string | null, Date | string | null>;
   history_next_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   history_idle_polls: Generated<number>;
+  chat_business: ColumnType<unknown, string | undefined, string>;
 }
 
 /** crove_kernel.conversation_attachment */

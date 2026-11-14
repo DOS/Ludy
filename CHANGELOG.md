@@ -2,6 +2,10 @@
 
 What changed in each release that reaches the pilot. A release is a `v*` tag of `main`, deployed by `.github/workflows/deploy.yml`; how to cut one is in [docs/product-owner-config.md](docs/product-owner-config.md) ("Branches, environments and gates"). Pull request numbers link the detail.
 
+## Unreleased (on `main` after v0.3.2)
+
+- **Telegram Business mode in Hộp thư** (#3191, second slice of #3132): an owner with Telegram Premium connects the shop's bot to their own account in Telegram (Settings, Business, Chatbots), and that account's customer chats come into Hộp thư as threads of their own, answered through the same bot as the owner's own message, only when a person presses Send, for 24 hours after the customer's last message. Dy drafts as for any chat; a business connection that is off, or that Ludy was never told of, stores nothing; what the owner typed in Telegram shows as already answered; a customer's edit and deletion change the stored words. The Channels card names the connected accounts and says how to connect in the order that works. Any Premium user can connect a bot that has Business Mode on, so an owner or admin allows each account (by its @username) before any of its chats is stored, and can stop it at once (a stopped, disconnected or read-only account is not answered, whatever was queued). No new switch: a connection whose chats were turned on before this version asks for the business updates after chats are turned off and on once. Also fixes a latent bug of the bot chats (#3141): a Telegram message id is unique inside one chat only, so the stored id now names the chat. Live check rows 18 to 30 in `docs/runbooks/telegram-conversations-live-check.md` need an owner with Telegram Premium.
+
 ## v0.3.2 (2026-11-14)
 
 Before the first deploy of this release: link the GHCR package `ghcr.io/dos/ludy-media` to the repository for the deploy token (one time), or the deploy stops at pull and changes nothing. JOY linked it on 2026-11-14.
