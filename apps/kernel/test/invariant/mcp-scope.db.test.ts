@@ -70,8 +70,8 @@ describe('which definitions an MCP grant can reach (#2975)', () => {
       expect(q.stream === true, q.name).toBe(false);
       expect(q.memberVy, q.name).toBeUndefined();
       expect(q.extension, q.name).toBeUndefined();
-      // Member-private data (ADR-0049, ADR-0037): nothing from the notes, the member's own results or memory, until the member-bound grant exists.
-      expect(q.name.startsWith('notes.') || q.name.startsWith('kernel.member_vy.') || q.name.startsWith('kernel.inbox'), q.name).toBe(false);
+      // Member-private data (ADR-0049, ADR-0037): nothing from the notes, the member's own results or memory, until the member-bound grant exists. Conversations are never reachable over MCP (a customer's messages; the signals rule over them reports not_available).
+      expect(q.name.startsWith('notes.') || q.name.startsWith('kernel.member_vy.') || q.name.startsWith('kernel.inbox') || q.name.startsWith('kernel.conversation.'), q.name).toBe(false);
     }
   });
 
