@@ -60,7 +60,7 @@ export interface MeetingSummaryBody {
   dropped: number;
 }
 
-export type SummaryErrorCode = 'SUMMARY_UNPARSABLE' | 'SUMMARY_EMPTY' | 'SUMMARY_TOO_LONG' | 'SUMMARY_NO_TRANSCRIPT';
+export type SummaryErrorCode = 'SUMMARY_UNPARSABLE' | 'SUMMARY_EMPTY' | 'SUMMARY_TOO_LONG' | 'SUMMARY_NO_TRANSCRIPT' | 'NOTES_TOO_LONG';
 export class SummaryError extends Error {
   code: SummaryErrorCode;
   constructor(code: SummaryErrorCode) {
@@ -295,8 +295,9 @@ export async function summarizeMeeting(input: MeetingSummaryInput, ports: BoundP
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 export const ENHANCE_LIMITS = {
-  // The most lines a note may have, and the longest line Vy may add.
+  // The most lines a note may have (more is refused, never cut: the recorder must not believe every line was merged), the most lines Vy may add, and the longest of them.
   noteLines: 300,
+  addedLines: 100,
   addedChars: 300,
   // The whole text of the expansion, own lines included, as one summary text (8000 characters is the database's limit, headings need room).
   totalChars: 7400,
@@ -326,13 +327,12 @@ export interface EnhancedBody {
   enhanced: { sections: Array<{ key: string | null; lines: EnhancedLine[] }> };
 }
 
-/** The recorder's lines: one per non-empty line of the notes, as typed (outer whitespace trimmed), at most noteLines of them. */
+/** The recorder's lines: one per non-empty line of the notes, as typed (outer whitespace trimmed). */
 export function noteLines(notes: string): string[] {
   return notes
     .split('\n')
     .map((line) => line.trim())
-    .filter((line) => line !== '')
-    .slice(0, ENHANCE_LIMITS.noteLines);
+    .filter((line) => line !== '');
 }
 
 /**
@@ -352,6 +352,7 @@ export function checkEnhanced(raw: string, segments: readonly SummarySegment[], 
   // The recorder's own lines count first, so Vy's additions never push them out of the text's budget.
   const ownTotal = notes.reduce((n, line) => n + line.length + 1, 0);
   let addedTotal = 0;
+  let addedCount = 0;
   if (Array.isArray(parsed.sections)) {
     for (const entry of parsed.sections) {
       if (!isRecord(entry) || !Array.isArray(entry.lines)) {
@@ -387,11 +388,12 @@ export function checkEnhanced(raw: string, segments: readonly SummarySegment[], 
         }
         // Every line Vy adds rests on a real moment of the transcript, has no figure nobody said and no way to reach someone off the page.
         const real = typeof seconds === 'number' && Number.isInteger(seconds) && segments.some((s) => seconds >= Math.floor(s.startSeconds) && seconds <= Math.ceil(s.endSeconds));
-        if (!real || foreign(text) || hasContact(text) || addedTotal + text.length + 1 > ENHANCE_LIMITS.totalChars - ownTotal) {
+        if (!real || foreign(text) || hasContact(text) || addedCount >= ENHANCE_LIMITS.addedLines || addedTotal + text.length + 1 > ENHANCE_LIMITS.totalChars - ownTotal) {
           dropped += 1;
           continue;
         }
         addedTotal += text.length + 1;
+        addedCount += 1;
         (groups.get(key) as EnhancedLine[]).push({ own: false, text, seconds: seconds as number });
       }
     }
@@ -438,6 +440,8 @@ export async function enhanceNotes(input: EnhanceInput, ports: BoundPorts): Prom
   const notes = noteLines(input.notes);
   if (input.segments.length === 0) throw new SummaryError('SUMMARY_NO_TRANSCRIPT');
   if (notes.length === 0) throw new SummaryError('SUMMARY_EMPTY');
+  // Refused before any call, never cut: a line that was left out would not be in the result.
+  if (notes.length > ENHANCE_LIMITS.noteLines) throw new SummaryError('NOTES_TOO_LONG');
   const text = `NOTES:\n${notes.map((line, i) => `${i + 1}: ${oneLine(line, 6000)}`).join('\n')}\n\nTRANSCRIPT:\n${transcriptLines(input.segments)}`;
   if (new TextEncoder().encode(text).length > SUMMARY_LIMITS.transcriptBytes) throw new SummaryError('SUMMARY_TOO_LONG');
   const out = await runFeature({ instruction: ENHANCE_INSTRUCTION(input.language, template), subject: privateText(text), maxSubjectChars: SUMMARY_LIMITS.transcriptBytes }, ports);

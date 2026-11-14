@@ -32,6 +32,8 @@ export const zMeetingTextCount = z.object({
   results: z.number().int(),
   items: z.number().int(),
   titles: z.number().int(),
+  // The recorder's own rough notes (A5, #3163) that mention the value, private to them: present only when there are some, so an answer without notes reads as it always did.
+  notes: z.number().int().optional(),
 });
 export type MeetingTextCount = z.infer<typeof zMeetingTextCount>;
 

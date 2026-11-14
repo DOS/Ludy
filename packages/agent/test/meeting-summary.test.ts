@@ -410,6 +410,19 @@ describe('enhanced notes', () => {
     expect(() => checkEnhanced('not json', SEGMENTS, NOTES)).toThrow(SummaryError);
   });
 
+  it('refuses notes with more lines than one run takes, before any call, and caps the lines Vy adds', async () => {
+    const many = Array.from({ length: 301 }, (_, i) => `dòng ${i}`).join('\n');
+    const fake = fakeModel('{}');
+    const refused = await enhanceNotes({ segments: SEGMENTS, language: 'vi', notes: many }, bindPorts(A, fake.ports)).then(() => null, (e: unknown) => (e as { code?: string }).code);
+    expect(refused).toBe('NOTES_TOO_LONG');
+    expect(fake.seen).toHaveLength(0);
+    // No digits: a figure nobody said would remove the line for another reason.
+    const lines = Array.from({ length: 130 }, (_, i) => ({ text: `Dòng thêm ${String.fromCharCode(97 + (i % 26))}${String.fromCharCode(97 + Math.floor(i / 26))}.`, seconds: 25 }));
+    const out = checkEnhanced(answer({ sections: [{ key: 'all', lines: [{ note: 1 }, ...lines] }] }), SEGMENTS, NOTES);
+    expect((out.enhanced.sections[0] as { lines: Array<{ own: boolean }> }).lines.filter((l) => !l.own)).toHaveLength(100);
+    expect(out.dropped).toBe(30);
+  });
+
   it('places lines in the template\'s sections in its order, drops a key the template lacks, and appends an unnamed note line to the last section that has lines', () => {
     const template: SummaryTemplate = {
       code: 'briefing',

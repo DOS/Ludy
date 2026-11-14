@@ -205,6 +205,7 @@ export function PersonalDataPage() {
               {meetingText.map((m) => (
                 <p key={m.recorderUserId} className="text-xs text-muted-foreground">
                   {t('meetingTextRecorder', { name: nameOf(m.recorderUserId), meetings: m.meetings, lines: m.lines, results: m.results, items: m.items, titles: m.titles })}
+                  {m.notes ? t('meetingTextNotes', { notes: m.notes }) : null}
                 </p>
               ))}
               <p className="pt-1 text-xs text-muted-foreground">{t('meetingTextHint')}</p>

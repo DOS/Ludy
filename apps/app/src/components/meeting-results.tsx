@@ -260,6 +260,7 @@ export function codeText(t: ReturnType<typeof useTranslations>, code: unknown): 
     case 'SUMMARY_EMPTY':
     case 'SUMMARY_TOO_LONG':
     case 'SUMMARY_NO_TRANSCRIPT':
+    case 'NOTES_TOO_LONG':
       return t(`vy.codes.${code}`);
     default:
       return null;

@@ -82,7 +82,9 @@ export function MeetingNotes({ meetingId }: { meetingId: string }) {
   const dirty = draft !== null && draft.trim() !== saved.trim();
   const save = useMutation({
     mutationFn: () => orpc.meetings.results.notesSave.call({ meetingId, body: text.trim() }),
-    onSuccess: () => {
+    onSuccess: (done) => {
+      // The saved text goes into the cache before the draft is let go, so a keystroke right after the save starts from what was saved, not from the text before it.
+      queryClient.setQueryData(orpc.meetings.results.notesGet.key(), { meetingId, body: done.saved ? text.trim() : '', updatedAt: done.saved ? new Date().toISOString() : null });
       setDraft(null);
       void queryClient.invalidateQueries({ queryKey: orpc.meetings.results.notesGet.key() });
     },

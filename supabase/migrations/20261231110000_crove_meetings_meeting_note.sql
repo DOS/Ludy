@@ -46,7 +46,7 @@ CREATE POLICY meeting_note_delete ON crove_meetings.meeting_note AS RESTRICTIVE 
 -- crove_meetings.personal_row_ids restated from 20261204200000 (the newest definition) with one addition, marked below: kind 5 is a rough note whose text holds the value. Same signature,
 -- owner, search_path and grants. The notes are the recorder's private text, so a hit counts only for their recorder (the stage is 'draft' for the check below: no reader passes it), the
 -- finder then reads the rows by id under row security as for every table, and an owner who is not the recorder gets neither a row nor a count. personal_matches and personal_erase are
--- not restated: an erasure leaves the notes and reports them kept (the registry says so: they go with the meeting, which the recorder or an owner deletes).
+-- not restated (their result columns are a contract, and a changed one needs a DROP and an ADR): the notes have two sibling functions below, with the same owner-only rule and the same matcher.
 CREATE OR REPLACE FUNCTION crove_meetings.personal_row_ids(p_kind text, p_value text)
 RETURNS TABLE (kind smallint, id uuid)
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
@@ -90,3 +90,65 @@ END;
 $$;
 REVOKE ALL ON FUNCTION crove_meetings.personal_row_ids(text, text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_meetings.personal_row_ids(text, text) TO crove_tenant;
+
+-- crove_meetings.personal_note_counts(kind, value)  per RECORDER, how many rough notes of THEIR meetings hold the value, among the notes the caller cannot read (every note but the caller's own).
+--                                                   Numbers and the recorder's id only: never text or a meeting id. An owner's user context only (the counts are an oracle for a guessed value).
+-- crove_meetings.personal_note_erase(kind, value)   redacts the value in the CALLER's own notes (the owner is the recorder: the owner's own erasure is the authority, as for every row they read),
+--                                                   returns how many notes it changed and how many other notes still hold the value (private to their recorders, so left). An owner's user context only.
+-- Same matcher as personal_matches and personal_erase (crove_kernel.text_mentions and text_redact, which raise on any shape but the finder's probe before a row is read).
+CREATE OR REPLACE FUNCTION crove_meetings.personal_note_counts(p_kind text, p_value text)
+RETURNS TABLE (recorder_user_id uuid, notes bigint)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_org uuid := crove_kernel.ctx_org_id();
+BEGIN
+  IF v_org IS NULL OR crove_kernel.ctx_actor_type() IS DISTINCT FROM 'user' OR NOT EXISTS (
+    SELECT 1 FROM crove_kernel.tenant_member m
+    WHERE m.org_id = v_org AND m.user_id = crove_kernel.ctx_user_id() AND m.role = 'owner'
+  ) THEN
+    RAISE EXCEPTION 'MEETINGS_FORBIDDEN' USING ERRCODE = '42501';
+  END IF;
+  PERFORM crove_kernel.text_mention_pattern(p_kind, p_value);
+  RETURN QUERY
+  SELECT m.recorder_user_id, pg_catalog.count(*)::bigint
+    FROM crove_meetings.meeting_note n
+    JOIN crove_meetings.meeting m ON m.org_id = v_org AND m.id = n.meeting_id
+   WHERE n.org_id = v_org AND crove_kernel.text_mentions(n.body, p_kind, p_value) AND NOT crove_meetings.is_meeting_recorder(v_org, n.meeting_id)
+   GROUP BY m.recorder_user_id
+   ORDER BY m.recorder_user_id;
+END;
+$$;
+REVOKE ALL ON FUNCTION crove_meetings.personal_note_counts(text, text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+GRANT EXECUTE ON FUNCTION crove_meetings.personal_note_counts(text, text) TO crove_tenant;
+
+CREATE OR REPLACE FUNCTION crove_meetings.personal_note_erase(p_kind text, p_value text)
+RETURNS TABLE (erased bigint, kept bigint)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_org uuid := crove_kernel.ctx_org_id();
+  v_mark constant text := '[đã xóa]';
+BEGIN
+  IF v_org IS NULL OR crove_kernel.ctx_actor_type() IS DISTINCT FROM 'user' OR NOT EXISTS (
+    SELECT 1 FROM crove_kernel.tenant_member m
+    WHERE m.org_id = v_org AND m.user_id = crove_kernel.ctx_user_id() AND m.role = 'owner'
+  ) THEN
+    RAISE EXCEPTION 'MEETINGS_FORBIDDEN' USING ERRCODE = '42501';
+  END IF;
+  PERFORM crove_kernel.text_mention_pattern(p_kind, p_value);
+  -- The caller's own notes only: the rows are locked first, so a recorder's edit waits for this redaction.
+  WITH mine AS (
+    SELECT n.id FROM crove_meetings.meeting_note n
+     WHERE n.org_id = v_org AND crove_kernel.text_mentions(n.body, p_kind, p_value) AND crove_meetings.is_meeting_recorder(v_org, n.meeting_id)
+     ORDER BY n.id FOR NO KEY UPDATE
+  ), done AS (
+    UPDATE crove_meetings.meeting_note n
+       SET body = pg_catalog.left(crove_kernel.text_redact(n.body, p_kind, p_value, v_mark), 8000), updated_at = pg_catalog.now()
+      FROM mine WHERE n.org_id = v_org AND n.id = mine.id
+    RETURNING 1)
+  SELECT pg_catalog.count(*) INTO erased FROM done;
+  SELECT pg_catalog.count(*) INTO kept FROM crove_meetings.meeting_note n WHERE n.org_id = v_org AND crove_kernel.text_mentions(n.body, p_kind, p_value);
+  RETURN NEXT;
+END;
+$$;
+REVOKE ALL ON FUNCTION crove_meetings.personal_note_erase(text, text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+GRANT EXECUTE ON FUNCTION crove_meetings.personal_note_erase(text, text) TO crove_tenant;

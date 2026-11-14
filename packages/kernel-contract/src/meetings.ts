@@ -615,7 +615,8 @@ export const zSummaryCopied = z.strictObject({ meetingId: zId, decisions: z.numb
 // (key null on the general summary, which has one block). The text is the same one copied into the draft by meetings.summary.copy_result; this shape is for the recorder to read first.
 export const NOTES_BODY_MAX = 6000;
 export const ENHANCED_LINE_MAX = 6000;
-export const ENHANCED_LINES_MAX = 300;
+// The note lines (at most 300) and the lines Vy adds (at most 100) of one section.
+export const ENHANCED_LINES_MAX = 400;
 export const zEnhancedLine = z.strictObject({
   // true: the recorder's own line, verbatim; false: a line Vy added, with `seconds` pointing at a real line of the transcript.
   own: z.boolean(),
