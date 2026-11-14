@@ -11212,6 +11212,9 @@ export const en = {
         get: 'Read the summary and the action items of a meeting',
         publish: 'Share the summary and the action items with the meeting\'s attendees',
       },
+      minutes: {
+        set_template: 'Pick the meeting type (minutes template)',
+      },
       summary: {
         save: 'Save the summary and the decisions of a meeting',
         copy_result: 'Copy the summary Vy finished for a meeting into the draft',

@@ -11209,6 +11209,9 @@ export const vi = {
         get: 'Xem tóm tắt và việc cần làm của cuộc họp',
         publish: 'Chia sẻ tóm tắt và việc cần làm với người dự họp',
       },
+      minutes: {
+        set_template: 'Chọn loại cuộc họp (mẫu biên bản)',
+      },
       summary: {
         save: 'Lưu tóm tắt và các quyết định của cuộc họp',
         copy_result: 'Chép bản tóm tắt Vy đã xong của cuộc họp vào bản nháp',
