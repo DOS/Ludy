@@ -47,6 +47,8 @@ export const meetingsManifest = defineModule({
           'consent_confirmed_by',
           'consent_confirmed_at',
           'consent_notice_version',
+          // A code (tab_closed, mic_lost, ...), never text or personal data (A1, #3159).
+          'recording_stop_reason',
           'audio_retention_date',
           'text_retention_date',
           'created_at',
