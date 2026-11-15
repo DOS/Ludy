@@ -701,4 +701,62 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     });
     expect((await open.request('/api/extension/token', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pad: 'x'.repeat(2000) }) })).status).toBe(413);
   });
+
+  // AUTH_ALLOWED_EMAILS binds the token that outlives a browser session (#3223): the owner's email against the list on every use, before the verify definer stamps
+  // last_used_at, so a refused account costs no write.
+  it('refuses a token whose account the allow-list leaves out, on every use and with no database write, and lets it through once it is listed (#3223)', async () => {
+    const token = (await signedIn('recorder')).token;
+    const email = String(accounts.get('recorder')?.email);
+    const tokenHash = createHash('sha256').update(token).digest();
+    const row = () => admin(async (c) => (await c.query<{ last_used_at: Date | null; revoked_at: Date | null }>('SELECT last_used_at, revoked_at FROM crove_kernel.extension_token WHERE token_hash = $1', [tokenHash])).rows[0]);
+    const audits = () => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.audit_event WHERE org_id = $1', [orgId])).rows[0]?.n));
+    const appWith = (list: string | undefined) => {
+      const config = loadConfig({ DATABASE_URL: appUrlText, AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent', EXTENSION_IDS: EXT_ID, ...(list === undefined ? {} : { AUTH_ALLOWED_EMAILS: list }) });
+      return createHttpApp({ config, runtime: sharedRuntime, store, broker: sharedBroker, authenticate: createAuthenticator(config, sharedDb), pool, aiEnabled: false, extensionTokenLimit: new RateLimiter({ perMinute: 40 }), extensionBearerLimit: new RateLimiter({ perMinute: 1000 }) });
+    };
+    const me = (target: ReturnType<typeof createHttpApp>, bearer = token) => target.request('/api/extension/me', { headers: { authorization: `Bearer ${bearer}` } });
+
+    // A new token has never been used: the first allowed use stamps it, a refusal must not.
+    expect((await row())?.last_used_at).toBeNull();
+    const auditsBefore = await audits();
+
+    // The list names somebody else (an address and a domain): every use is 403 ACCOUNT_NOT_ALLOWED, however often, and nothing is written.
+    const elsewhere = appWith('someone-else@ext-http.test @elsewhere.test');
+    for (let use = 0; use < 3; use++) {
+      const refused = await me(elsewhere);
+      expect(refused.status).toBe(403);
+      expect(await refused.json()).toMatchObject({ code: 'ACCOUNT_NOT_ALLOWED' });
+    }
+    expect((await row())?.last_used_at, 'a refusal must not stamp last_used_at').toBeNull();
+    expect(await audits()).toBe(auditsBefore);
+
+    // A route outside the token's scopes is refused the same way for such an account (the account check comes first, before any route is read).
+    const outside = await elsewhere.request('/api/rpc/kernel/org/get', { method: 'POST', headers: asToken(token), body: '{}' });
+    expect(outside.status).toBe(403);
+    expect(await outside.json()).toMatchObject({ code: 'ACCOUNT_NOT_ALLOWED' });
+
+    // A token no row has still gets the flat 401 while the list is set: the list says nothing about tokens that do not exist.
+    const unknown = await me(elsewhere, `crx_${randomBytes(32).toString('base64url')}`);
+    expect(unknown.status).toBe(401);
+    expect(await unknown.json()).toMatchObject({ code: 'EXTENSION_TOKEN_INVALID' });
+
+    // Listed by address (any letter case) or by domain: the token works and is stamped as before.
+    expect((await me(appWith(email.toUpperCase()))).status).toBe(200);
+    expect((await row())?.last_used_at).not.toBeNull();
+    expect((await me(appWith('@ext-http.test'))).status).toBe(200);
+
+    // Standing is not loosened: a revoked token of a listed account is refused 401 by the verify, as before.
+    const second = await signedIn('recorder');
+    await admin((c) => c.query('UPDATE crove_kernel.extension_token SET revoked_at = now() WHERE token_hash = $1', [createHash('sha256').update(second.token).digest()]));
+    expect((await me(appWith('@ext-http.test'), second.token)).status).toBe(401);
+
+    // The list unset: today's behavior, exactly (no account read, the token works).
+    expect((await me(appWith(undefined))).status).toBe(200);
+
+    // The definer answers the owner's email for a known hash and NULL for an unknown one, to the API login only.
+    const ask = async (hash: Buffer) => (await pool.query<{ email: string | null }>('SELECT crove_kernel.extension_token_account_email($1::bytea) AS email', [hash])).rows[0]?.email;
+    expect(await ask(tokenHash)).toBe(email);
+    expect(await ask(randomBytes(32))).toBeNull();
+    expect(await ask(randomBytes(31))).toBeNull();
+  });
 });

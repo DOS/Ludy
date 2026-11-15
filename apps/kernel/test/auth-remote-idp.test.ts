@@ -6,7 +6,7 @@ import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair, type JWK } from
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { Db } from '@crove/db';
 import { createAuthenticator, createTokenVerifier } from '../src/auth.ts';
-import { createEmailAccess, parseAllowedEmails } from '../src/auth-access.ts';
+import { createAccountEmailAccess, createEmailAccess, parseAllowedEmails } from '../src/auth-access.ts';
 import { loadConfig } from '../src/config.ts';
 
 const ISSUER = 'https://idp.example.test/auth/v1';
@@ -145,6 +145,30 @@ describe('AUTH_ALLOWED_EMAILS', () => {
 
   it('allows everything for an empty list', () => {
     expect(() => createEmailAccess([])('anyone@example.net', false)).not.toThrow();
+  });
+});
+
+// The same list for the credentials that carry no email: an extension token and an MCP grant (issue #3223).
+describe('AUTH_ALLOWED_EMAILS for the account behind a token or grant', () => {
+  const entries = parseAllowedEmails('Owner@Example.test @team.example.test').entries;
+
+  it('is absent when the list is unset, so the edge never reads an account', () => {
+    expect(createAccountEmailAccess([])).toBeNull();
+    expect(loadConfig(BASE_ENV).AUTH_ALLOWED_EMAILS).toEqual([]);
+  });
+
+  it('allows a listed address (any letter case) and a listed domain, and refuses everyone else with 403', () => {
+    const access = createAccountEmailAccess(entries);
+    expect(access).not.toBeNull();
+    for (const email of ['owner@example.test', 'OWNER@EXAMPLE.TEST', ' owner@example.test ', 'anyone@team.example.test']) expect(() => access?.(email), email).not.toThrow();
+    for (const email of ['stranger@example.net', 'x@sub.team.example.test', 'a@b@team.example.test', 'owner+tag@example.test']) {
+      expect(() => access?.(email), email).toThrowError(expect.objectContaining({ status: 403, code: 'ACCOUNT_NOT_ALLOWED' }));
+    }
+  });
+
+  it('refuses an account with no email on record', () => {
+    const access = createAccountEmailAccess(entries);
+    for (const email of [null, undefined, '', '   ']) expect(() => access?.(email), String(email)).toThrowError(expect.objectContaining({ status: 403, code: 'ACCOUNT_NOT_ALLOWED' }));
   });
 });
 

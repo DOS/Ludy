@@ -4,6 +4,7 @@
 // could open, with no write; Home only merges them. This file is the one shape all of those reads import, so none
 // defines its own. Nothing here reads or writes: it is the schema and the type.
 import { z } from 'zod';
+import { COWORKER_BY_MODULE, type CoworkerKey } from './coworkers.ts';
 import { zId, zLocalDate, zMoney } from './schemas.ts';
 
 export const TODAY_KINDS = ['proposal', 'flag', 'message', 'deadline'] as const;
@@ -98,11 +99,31 @@ export function sortTodayItems(items: readonly TodayItem[]): TodayItem[] {
   );
 }
 
+// The AI coworker that raised an item (Vy plan C1a, issue #3265): the coworker of the item's app in COWORKER_BY_MODULE (finance Ly,
+// crm and conversations Dy, social and ads Uy), and Vy, the general manager, for an app with none of its own (Notes). Deterministic: no model.
+export type TodayCoworkerKey = Exclude<CoworkerKey, 'system'>;
+export function todayCoworkerKey(app: TodayApp): TodayCoworkerKey {
+  return Object.hasOwn(COWORKER_BY_MODULE, app) ? (COWORKER_BY_MODULE[app] as TodayCoworkerKey) : 'gm';
+}
+
+// The coworkers' names now, by what each covers (never by name, so a rename changes one value here and nothing else): the display name
+// of the org's own agent of that coworker, or the roster's default when the org has none. `gm` is Vy, who also stands for the summary
+// line. The hidden system coworker is not listed. Home reads a name from here for each item and for the brief; no item carries one.
+export const zTodayCoworkers = z.strictObject({
+  gm: z.string().min(1).max(200),
+  finance: z.string().min(1).max(200),
+  sales: z.string().min(1).max(200),
+  marketing: z.string().min(1).max(200),
+});
+export type TodayCoworkers = z.infer<typeof zTodayCoworkers>;
+
 // The answer of the Home read: the merged, ordered items (at most TODAY_ITEMS_MAX), how many items a line sent that did
 // not match the shape (never shown; above 0 is a bug in that line's read), how many were cut after the merge for being
 // past the cap (the least urgent ones), and how many lines' reads refused (a DomainError other than not registered).
+// coworkers: the names of the AI coworkers now, so Home labels each item with the one that raised it (todayCoworkerKey) and the brief with Vy.
 export const zTodayList = z.object({
   items: zTodayItems,
+  coworkers: zTodayCoworkers,
   dropped: z.number().int().nonnegative(),
   truncated: z.number().int().nonnegative(),
   failed: z.number().int().nonnegative(),
