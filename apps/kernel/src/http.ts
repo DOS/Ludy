@@ -109,6 +109,7 @@ import {
 import { readLogoImage, renderQuotePdf, type QuoteDocumentData } from '@crove/mod-crm';
 import { buildBankFileWorkbook, buildDeclarationWorkbook } from '@crove/mod-hr';
 import { readYearArchiveManifest, verifyYearArchive } from './year-archive.ts';
+import { hostedLoginTokenOrigin, hostedLoginView } from './auth-hosted-login.ts';
 import { clientBucket, createDbEmailLimiter, emailSendRequest, type EmailLimiter } from './auth-email-limit.ts';
 import {
   createDbInviteChecks,
@@ -157,6 +158,7 @@ import { createCredentialBroker } from './credentials.ts';
 import { pgBossSchemaVersion } from './jobs-schema.ts';
 import type { MailProvider } from './mail.ts';
 import { RateLimiter } from './rate-limit.ts';
+import { DraftBudget } from './ai-draft-limit.ts';
 import { mountMcp, mountOauthProvider } from './mcp-endpoint.ts';
 import type { OauthServer } from './oauth-server.ts';
 import { reviewAnswer, reviewFile, reviewMedia, reviewView, REVIEW_ANSWERS_PER_MINUTE, REVIEW_FILES_PER_MINUTE, REVIEW_VIEWS_PER_MINUTE } from './review-link.ts';
@@ -517,7 +519,8 @@ export const EXPORT_BUSY_RETRY_SECONDS = 5;
 export const TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
 // apiOrigin is the API's origin when the app is served apart from it (a split deployment), so its media (a meeting's video by
 // ticket) may be played; null when the kernel serves the app itself and 'self' is the API.
-export function contentSecurityPolicy(authUrl: string, storageOrigin: string | null, turnstile = false, apiOrigin: string | null = null): string {
+// connectOrigin: one more origin the app calls (the hosted login's token endpoint, #2704), or null.
+export function contentSecurityPolicy(authUrl: string, storageOrigin: string | null, turnstile = false, apiOrigin: string | null = null, connectOrigin: string | null = null): string {
   // Hosted Supabase Auth lives on another origin; the bundled one is proxied under /auth/v1. With presigned
   // transfers the app also posts uploads to, and fetches downloads from, the bucket's origin.
   const authOrigin = new URL(authUrl, 'http://localhost').origin;
@@ -538,7 +541,7 @@ export function contentSecurityPolicy(authUrl: string, storageOrigin: string | n
     // A meeting's audio plays from a blob URL the app makes, and its video from the stream route by ticket (#2703): media-src
     // would otherwise fall back to default-src, which refuses blob: and, apart from the API, the API's origin.
     `media-src 'self' blob:${apiOrigin ? ` ${apiOrigin}` : ''}`,
-    `connect-src 'self' ${authOrigin}${storageOrigin ? ` ${storageOrigin}` : ''}`,
+    `connect-src 'self' ${[...new Set([authOrigin, ...(storageOrigin ? [storageOrigin] : []), ...(connectOrigin ? [connectOrigin] : [])])].join(' ')}`,
     ...(turnstile ? [`frame-src ${TURNSTILE_ORIGIN}`] : []),
     "object-src 'none'",
     "base-uri 'none'",
@@ -564,7 +567,9 @@ function clientIp(c: Context, trustedHops: number): string | null {
 export function createHttpApp(deps: HttpDeps) {
   const { config, runtime, store, authenticate } = deps;
   const app = new Hono<{ Variables: { user: AuthUser } }>();
-  const rpc = createRpcHandler(runtime, deps.mailer ? createInviteMailSender(deps.mailer, appUrl(config), {}, config.INBOUND_DOMAIN && config.INBOUND_SECRET ? config.INBOUND_DOMAIN : null, config.BRAND_NAME) : undefined, deps.channels, deps.socialWriter, deps.taxLookup, undefined, undefined, deps.portalSync, deps.bookingReader, deps.aiMeter, deps.aiEnabled, deps.conversationReader, deps.summaryModel ?? null, deps.aiPrice);
+  // One drafts budget (#386) for the API: a person's own drafts and the MCP draft tool of an AI app take their turns from the same counters and the same one-at-a-time rule.
+  const drafts = new DraftBudget();
+  const rpc = createRpcHandler(runtime, deps.mailer ? createInviteMailSender(deps.mailer, appUrl(config), {}, config.INBOUND_DOMAIN && config.INBOUND_SECRET ? config.INBOUND_DOMAIN : null, config.BRAND_NAME) : undefined, deps.channels, deps.socialWriter, deps.taxLookup, drafts, undefined, deps.portalSync, deps.bookingReader, deps.aiMeter, deps.aiEnabled, deps.conversationReader, deps.summaryModel ?? null, deps.aiPrice);
   const perMinute = config.API_RATE_LIMIT_PER_MINUTE;
   const limiter = deps.rateLimiter !== undefined ? deps.rateLimiter : perMinute > 0 ? new RateLimiter({ perMinute }) : null;
 
@@ -663,6 +668,7 @@ export function createHttpApp(deps: HttpDeps) {
       authenticate,
       clientKey: (c) => clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)),
       serverVersion: config.CROVE_BUILD ?? 'dev',
+      draftBudget: drafts,
     });
   }
 
@@ -673,6 +679,8 @@ export function createHttpApp(deps: HttpDeps) {
       authAnonKey: config.PUBLIC_AUTH_ANON_KEY ?? null,
       // Sign-in buttons besides email and password (AUTH_OAUTH_PROVIDERS, #2704): provider ids of the identity provider.
       authProviders: config.AUTH_OAUTH_PROVIDERS,
+      // The identity provider's hosted login page and its token endpoint (AUTH_HOSTED_LOGIN_*, #2704); null: none.
+      hostedLogin: hostedLoginView(config),
       aiEnabled: deps.aiEnabled,
       // The MCP endpoint and its authorization server are on (OAUTH_SERVER=on, #2975): Settings then lists the connected AI apps.
       mcpEnabled: deps.oauth !== undefined,
@@ -3732,7 +3740,7 @@ export function createHttpApp(deps: HttpDeps) {
     app.use('/assets/*', serveStatic({ root }));
     app.use('/favicon.svg', serveStatic({ root }));
     const indexPath = join(config.WEB_DIST, 'index.html');
-    const csp = contentSecurityPolicy(publicAuthUrl(config), store.direct ? directTransferOrigin(config) : null, Boolean(config.TURNSTILE_SITE_KEY));
+    const csp = contentSecurityPolicy(publicAuthUrl(config), store.direct ? directTransferOrigin(config) : null, Boolean(config.TURNSTILE_SITE_KEY), null, hostedLoginTokenOrigin(config));
     let indexHtml: string | null = null;
     app.get('*', async (c) => {
       c.header('content-security-policy', csp);

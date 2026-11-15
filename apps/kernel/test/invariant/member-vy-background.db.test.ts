@@ -385,14 +385,16 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   });
 
   // The context of a member-bound MCP grant (ADR-0051, design note on #2975 slice 3) adds one writer of the sealed context and one reader of the sealed member, each its own kind, and the
-  // context of a company MCP grant (slice 3e) adds one more writer (it seals no member and has no catalog, so no reader): they are accepted here once they exist, and only these three
-  // names (`enter_mcp_member_context`, `ctx_mcp_member_id`, `enter_mcp_company_context`); a fourth writer or reader still fails the exact sets below.
+  // context of a company MCP grant (slice 3e) adds one more writer (it seals no member and has no catalog, so no reader), and the write context of the one MCP write command (#3227, step 3)
+  // one more writer: they are accepted here once they exist, and only these names (`enter_mcp_member_context`, `ctx_mcp_member_id`, `enter_mcp_company_context` with its core, and
+  // `enter_mcp_company_draft_context`, pinned in its own case below); another writer or reader still fails the exact sets below.
   const mcpMemberObjects = async () => {
     const found = await admin((c) =>
-      c.query<{ entry: boolean; helper: boolean; company: boolean; core: boolean }>(
+      c.query<{ entry: boolean; helper: boolean; company: boolean; core: boolean; draft: boolean }>(
         `SELECT to_regprocedure('crove_kernel.enter_mcp_member_context(uuid,uuid)') IS NOT NULL AS entry, to_regprocedure('crove_kernel.ctx_mcp_member_id()') IS NOT NULL AS helper,
                 to_regprocedure('crove_kernel.enter_mcp_company_context(uuid,uuid)') IS NOT NULL AS company,
-                to_regprocedure('crove_kernel.seal_mcp_company_context(uuid,uuid)') IS NOT NULL AS core`,
+                to_regprocedure('crove_kernel.seal_mcp_company_context(uuid,uuid)') IS NOT NULL AS core,
+                to_regprocedure('crove_kernel.enter_mcp_company_draft_context(uuid,uuid)') IS NOT NULL AS draft`,
       ),
     );
     const row = found.rows[0];
@@ -402,6 +404,8 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       entry: [
         ...(row?.entry ? ['crove_kernel.enter_mcp_member_context(uuid,uuid)'] : []),
         ...(row?.core ? ['crove_kernel.seal_mcp_company_context(uuid,uuid)'] : row?.company ? ['crove_kernel.enter_mcp_company_context(uuid,uuid)'] : []),
+        // The write context of the one MCP write command (#3227, step 3, owner decision 2026-11-14): one more writer of the seal, its own kind (`mcp_company_draft`), accepted once it exists.
+        ...(row?.draft ? ['crove_kernel.enter_mcp_company_draft_context(uuid,uuid)'] : []),
       ],
       helper: row?.helper ? ['crove_kernel.ctx_mcp_member_id()'] : [],
     };
@@ -428,6 +432,56 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       rows.map((r) => r.n).sort(),
       "functions that call ctx_write",
     ).toEqual([...CTX_WRITERS, MEMBER_ENTRY, ...(await mcpMemberObjects()).entry].sort());
+  });
+
+  // The write context of the one MCP write command (#3227): accepted above by name only when it exists, so its properties are pinned here, whatever file later creates it: a weaker writer cannot
+  // pass the base copy of this suite. The API login alone runs it, its search path is pinned, and what it seals has no user, R1, taint and its own kind.
+  it("pins the write context of the MCP draft command when it exists: the API login alone, a pinned search path, no user, R1, tainted, its own kind", async () => {
+    const entry = "crove_kernel.enter_mcp_company_draft_context(uuid,uuid)";
+    const found = await admin((c) => c.query<{ ok: boolean }>(`SELECT to_regprocedure('${entry}') IS NOT NULL AS ok`));
+    if (found.rows[0]?.ok !== true) return;
+    await admin(async (c) => {
+      const logins = (await c.query<{ rolname: string }>(`SELECT rolname FROM pg_roles WHERE rolname LIKE 'crove\\_%' AND NOT rolsuper`)).rows;
+      expect(logins.length).toBeGreaterThan(0);
+      for (const { rolname } of logins) {
+        const ok = (await c.query<{ ok: boolean }>(`SELECT has_function_privilege($1, '${entry}', 'EXECUTE') AS ok`, [rolname])).rows[0]?.ok;
+        expect(ok, `${rolname} execute the draft entry`).toBe(rolname === "crove_app");
+      }
+      expect((await c.query<{ ok: boolean }>(`SELECT has_function_privilege('public', '${entry}', 'EXECUTE') AS ok`)).rows[0]?.ok).toBe(false);
+      const row = (await c.query<{ proconfig: string[] | null; secdef: boolean; def: string }>(`SELECT proconfig, prosecdef AS secdef, pg_get_functiondef(oid) AS def FROM pg_proc WHERE oid = '${entry}'::regprocedure`)).rows[0];
+      expect(row?.secdef).toBe(true);
+      // The whole setting, as one element: `pg_catalog, pg_temp, public` is another element and fails.
+      expect(row?.proconfig, "the draft entry's settings").toEqual(["search_path=pg_catalog, pg_temp"]);
+      // The shape it seals, read from its own text: an agent-shaped context with no user, at R1, tainted, of its own kind, naming the grant and the grantor.
+      for (const part of [/'actor',\s*'agent'/, /'user',\s*NULL/, /'max_risk',\s*'R1'/, /'tainted',\s*true/, /'kind',\s*'mcp_company_draft'/, /'grantor',\s*v_user/]) {
+        expect(row?.def, String(part)).toMatch(part);
+      }
+      expect(row?.def).not.toMatch(/'max_risk',\s*'R[23]'/);
+    });
+    // The text checks above are supplementary: a later expression in the same function could override a key, so what it seals is read back from a live entry of a real company grant.
+    const grantId = randomUUID();
+    await admin((c) =>
+      c.query(
+        `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
+         VALUES ($1, $2, $3, $4, 'Pin client', 'client.example.com', ARRAY['ludy.read', 'ludy.social.draft'], $5, now(), now() + interval '30 days', $3)`,
+        [orgId, grantId, users.owner, `pin-client-${grantId}`, `pin-oauth-${grantId}`],
+      ),
+    );
+    const sealed = await inContext(
+      appUrl,
+      (c) => c.query("SELECT crove_kernel.enter_mcp_company_draft_context($1::uuid, $2::uuid)", [orgId, grantId]),
+      sealOf,
+    );
+    expect(sealed, "the sealed context of the draft entry").toMatchObject({
+      actor: "agent",
+      user: null,
+      max_risk: "R1",
+      tainted: true,
+      kind: "mcp_company_draft",
+      grantor: users.owner,
+      org: orgId,
+      agent: grantId,
+    });
   });
 
   it("pins the functions that touch the context's key, its seal or its settings: only the writer and the verifier", async () => {

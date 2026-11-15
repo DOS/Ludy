@@ -76,6 +76,7 @@ function adapter(busy: CalendarAdapter['busy']): CalendarAdapter & { asked: Arra
     },
     asked,
     revoke: async () => ({ revoked: true }),
+    events: async () => ({ events: [] }),
     writeEvent: async () => ({ ok: true }),
     removeEvent: async () => ({ ok: true }),
   };

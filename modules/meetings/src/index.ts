@@ -11,4 +11,4 @@ export { itemFlags, itemIsClean } from './results.ts';
 export { matchAttendee, parseWhen, plainName } from './summary.ts';
 export { setSummaryEnabled } from './summary-run.ts';
 export { translateCommands } from './translate.ts';
-export { translationHash } from './translate-run.ts';
+export { lineHash, translationHash } from './translate-run.ts';

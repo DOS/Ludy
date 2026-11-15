@@ -2,7 +2,8 @@
 // Marketplace income reports (#2516, ADR-0045), end to end with AI off: a Shopee order report is imported so its orders are known, then an income report is dropped on the Inbox, waits there as
 // a card that shows the period, the totals and the net the file states and says nothing of the buyer, and is confirmed by a person. A second report that names orders the org does not know shows
 // its refusal in words, holds the confirm button, and is skipped. No model is called: the screen is code, and a person decides each report. The reader is checked in apps/extract and the
-// checks and guards in apps/kernel/test/finance-marketplace-income.db.test.ts.
+// checks and guards in apps/kernel/test/finance-marketplace-income.db.test.ts. The stored settlement then shows on the Sàn screen as a settlement to post, its action disabled while the account map is
+// unconfirmed (#2516 slice F).
 import { expect, test } from '@playwright/test';
 import { buildXlsx, type XlsxCell } from '../../apps/extract/test/xlsx-fixture.ts';
 import { createOrg, newEmail, signUp } from '../lib/session.ts';
@@ -76,5 +77,18 @@ test('an income report waits as a card, is confirmed by a person; one naming unk
     await page.getByTestId('staged-income-reject').click();
     await expect(page.getByText('Đã bỏ qua báo cáo; không có gì được lưu')).toBeVisible();
     await expect(page.getByTestId('staged-income-report')).toHaveCount(0);
+  });
+
+  await test.step('the stored settlement waits on the Sàn screen with its action disabled until the accountant confirms the account map (#2516 slice F)', async () => {
+    await page.goto(page.url().replace(/\/inbox$/, '/marketplace'));
+    const actions = page.getByTestId('marketplace-actions');
+    await expect(actions).toBeVisible();
+    await expect(actions.getByTestId('marketplace-gate')).toContainText('Chờ kế toán xác nhận bảng tài khoản sàn (#2520)');
+    await expect(actions.getByTestId('marketplace-action-settlement')).toHaveCount(1);
+    await expect(actions.getByTestId('marketplace-action-settlement')).toContainText('Shopee');
+    await expect(actions.getByTestId('marketplace-post')).toBeDisabled();
+    // Nothing else waits yet: no payout to record, no invoice to clear.
+    await expect(page.getByTestId('marketplace-actions-payouts')).toHaveCount(0);
+    await expect(page.getByTestId('marketplace-actions-invoices')).toHaveCount(0);
   });
 });

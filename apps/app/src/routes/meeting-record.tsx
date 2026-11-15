@@ -74,7 +74,7 @@ export function MeetingRecordPage() {
 
   const [phase, setPhase] = useState<Phase>('setup');
   // A booking opens this screen with its title, contact and calendar event (L1, #2587); the meeting is linked to them once it is created.
-  const prefill = useSearch({ strict: false }) as { title?: string; partyId?: string; calendarEventId?: string };
+  const prefill = useSearch({ strict: false }) as { title?: string; partyId?: string; calendarEventId?: string; agendaId?: string };
   const [title, setTitle] = useState(prefill.title ?? '');
   const [language, setLanguage] = useState<MeetingLanguage>('vi');
   const [visibility, setVisibility] = useState<MeetingVisibility>('attendees');
@@ -237,7 +237,11 @@ export function MeetingRecordPage() {
             ...(prefill.partyId ? [{ kind: 'party' as const, targetId: prefill.partyId }] : []),
             ...(prefill.calendarEventId ? [{ kind: 'calendar_event' as const, targetId: prefill.calendarEventId }] : []),
           ];
-          const results = await Promise.allSettled(targets.map((target) => orpc.meetings.links.add.call({ meetingId, ...target })));
+          const results = await Promise.allSettled([
+            ...targets.map((target) => orpc.meetings.links.add.call({ meetingId, ...target })),
+            // "Ghi cuộc họp này" from the member's own calendar list: the meeting is linked to that event once it exists (B1).
+            ...(prefill.agendaId ? [orpc.meetings.agenda.link.call({ agendaId: prefill.agendaId, meetingId })] : []),
+          ]);
           if (results.some((r) => r.status === 'rejected')) toast(t('links.prefillFailed'), 'error');
         }
         return meetingId;

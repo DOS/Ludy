@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { Hono } from 'hono';
 import type pg from 'pg';
 import { describe, expect, it } from 'vitest';
-import { DomainError, type BlobStore, type Runtime } from '@crove/kernel-runtime';
+import { DomainError, EXTENSION_SCOPES, type BlobStore, type Runtime } from '@crove/kernel-runtime';
 import type { AuthUser } from '../../src/auth.ts';
 import { EXTENSION_ROUTES } from '../../src/auth-extension.ts';
 import { loadConfig } from '../../src/config.ts';
@@ -205,6 +205,8 @@ describe('route enumeration (ADR-0028, gate T1)', () => {
 // enumerates the whole route table with such a user, so a route added tomorrow is refused to a token unless someone puts
 // it on the list, in a PR the security review reads. Nothing that reads a meeting's content is on it.
 const UUID = randomUUID();
+// Every scope a token may hold (the runtime's list): a token with all of them reaches exactly the listed routes, and a token with one scope only those of that scope (B2, #3166, the `agenda` scope).
+const ALL_SCOPES = [...EXTENSION_SCOPES];
 
 function extensionAuthenticate(scopes: readonly string[]): HttpDeps['authenticate'] {
   return async (): Promise<AuthUser> => ({
@@ -236,7 +238,7 @@ describe('route enumeration with an extension token (#2582)', () => {
     EXTENSION_ROUTES.some((r) => r.method === method && r.path.replace(':id', UUID) === path);
 
   it('refuses a token on every route of the table but the listed ones', async () => {
-    const target = app(extensionAuthenticate(['meetings']));
+    const target = app(extensionAuthenticate(ALL_SCOPES));
     const open: string[] = [];
     for (const { method, path } of routesOf(target)) {
       if (isPublic(path)) continue;
@@ -253,12 +255,20 @@ describe('route enumeration with an extension token (#2582)', () => {
   });
 
   it('opens exactly the listed routes to a token that holds their scope, and refuses them to one that does not', async () => {
-    const holder = app(extensionAuthenticate(['meetings']));
+    const holder = app(extensionAuthenticate(ALL_SCOPES));
     const other = app(extensionAuthenticate(['somethingelse']));
     for (const route of EXTENSION_ROUTES) {
       const path = route.path.replace(':id', UUID);
       expect(await edgeRefused(holder, route.method, path), `${route.method} ${route.path} for the scope holder`).toBe(false);
       expect(await edgeRefused(other, route.method, path), `${route.method} ${route.path} for another scope`).toBe(route.scope !== null ? true : false);
+    }
+    // A token with one scope opens the routes of that scope and the scope-free ones, and nothing of another scope: the agenda scope opens no meetings route and the meetings scope no agenda route.
+    for (const scope of ALL_SCOPES) {
+      const single = app(extensionAuthenticate([scope]));
+      for (const route of EXTENSION_ROUTES) {
+        const path = route.path.replace(':id', UUID);
+        expect(await edgeRefused(single, route.method, path), `${route.method} ${route.path} for a token with only ${scope}`).toBe(route.scope !== null && route.scope !== scope);
+      }
     }
     // A listed path with another method, a trailing slash, a different case, an encoded segment or a dot segment is no route.
     for (const route of EXTENSION_ROUTES) {
@@ -277,13 +287,18 @@ describe('route enumeration with an extension token (#2582)', () => {
   });
 
   it('keeps every way to read a meeting, a file or the account closed to a token', async () => {
-    const target = app(extensionAuthenticate(['meetings']));
+    const target = app(extensionAuthenticate(ALL_SCOPES));
     const closed: Array<[string, string]> = [
       ['POST', '/api/rpc/meetings/get'],
       ['POST', '/api/rpc/meetings/list'],
       ['POST', '/api/rpc/meetings/delete'],
       ['POST', '/api/rpc/meetings/readers/add'],
       ['POST', '/api/rpc/meetings/settings/get'],
+      // The member's calendar (B1, #3165): only the `agenda` scope's one read (listed in auth-extension.ts) reaches it; the list, the suggestion, the switch and the link stay closed to every token.
+      ['POST', '/api/rpc/meetings/agenda/list'],
+      ['POST', '/api/rpc/meetings/agenda/suggest'],
+      ['POST', '/api/rpc/meetings/agenda/setReadEvents'],
+      ['POST', '/api/rpc/meetings/agenda/link'],
       ['POST', '/api/rpc/extension/tokens/list'],
       ['POST', '/api/rpc/extension/tokens/revoke'],
       ['POST', '/api/rpc/me/get'],
@@ -304,7 +319,7 @@ describe('route enumeration with an extension token (#2582)', () => {
   });
 
   it('lists no route that does not exist, and none that reads content', async () => {
-    const target = app(extensionAuthenticate(['meetings']));
+    const target = app(extensionAuthenticate(ALL_SCOPES));
     const paths = new Set(routesOf(target).map((r) => r.path));
     for (const route of EXTENSION_ROUTES) {
       // The RPC procedures live under the one wildcard route; every other entry is a route of its own.

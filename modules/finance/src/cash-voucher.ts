@@ -211,6 +211,8 @@ export async function recordVoucherPayload(ctx: CommandContext, payload: CashVou
   // The text of the bank line a person's own choice of party was made from (#2402), kept to teach a rule below.
   let taughtBy: { description: string; counterpartyAccount: string | null } | null = null;
   if (payload.bankLineId) {
+    // Under the line's lock, like the payout's record (#2516): a payout that holds the line commits first, and the check below then sees it; the database's own check sees only bank vouchers.
+    await lockBankLine(ctx, payload.bankLineId);
     const line = await checkBankLineVoucher(
       ctx,
       payload.bankLineId,

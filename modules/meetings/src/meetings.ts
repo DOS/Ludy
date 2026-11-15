@@ -13,6 +13,8 @@ import { summaryCommands, summaryQueries } from './summary.ts';
 import { summaryRunCommands, summaryRunQueries } from './summary-run.ts';
 import { translateCommands } from './translate.ts';
 import { translateRunCommands, translateRunQueries } from './translate-run.ts';
+import { askRunCommands, askRunQueries } from './ask.ts';
+import { agendaCommands, agendaQueries } from './agenda.ts';
 import { linkCommands, linkQueries } from './links.ts';
 import { hookCommands, hookQueries } from './hook.ts';
 import { liveNotesCommands } from './live-notes.ts';
@@ -983,6 +985,8 @@ export const meetingsCommands = [
   ...summaryRunCommands,
   ...translateCommands,
   ...translateRunCommands,
+  ...askRunCommands,
+  ...agendaCommands,
   ...linkCommands,
   ...followupCommands,
   ...liveCommands,
@@ -1011,6 +1015,8 @@ export const meetingsQueries = [
   ...summaryQueries,
   ...summaryRunQueries,
   ...translateRunQueries,
+  ...askRunQueries,
+  ...agendaQueries,
   ...linkQueries,
   ...followupQueries,
   ...liveRunQueries,

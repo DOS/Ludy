@@ -13,9 +13,11 @@ import { startThemeSync } from './lib/theme-runtime.ts';
 import { queryClient } from './lib/api.ts';
 import { forgetShare } from './lib/social-share.ts';
 import { forgetPushDevice } from './lib/push.ts';
-import { auth, loadConfig, settleCallback } from './lib/auth.ts';
+import { auth, captureHostedCallback, discardHostedLogin, loadConfig, settleCallback } from './lib/auth.ts';
 import './styles.css';
 
+// The hosted login's one-time code leaves the address bar before anything can fail or read it (lib/auth.ts).
+captureHostedCallback();
 const root = createRoot(document.getElementById('root') as HTMLElement);
 startLocaleSync();
 startThemeSync();
@@ -31,6 +33,7 @@ async function start() {
     setBrandName((await loadConfig()).brandName);
     document.title = brandName();
   } catch {
+    discardHostedLogin();
     root.render(
       <IconDefaults>
         <I18nProvider>

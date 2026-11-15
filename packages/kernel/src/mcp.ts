@@ -10,7 +10,7 @@
 // system context), as the system, naming the grant, the client and the tool, so it never reads as the person's own click.
 // - kernel.mcp.about: `ludy_about`: the org's name, the grant and its scope. It holds no business data.
 // - kernel.mcp.parties: `ludy_parties_list` (slice 1b), the party register as the contacts screen shows it to an owner or admin; its comment is its privacy review.
-// No command declares `mcp`: an MCP grant reaches no write (a test pins it).
+// No command of the kernel declares `mcp`. The one command an MCP grant may run, the Social draft (#3227), is declared in modules/social, and a test pins that it is the only one.
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { MCP_SCOPE_IDS, plainLine, zMcpGrantRevoke, zMcpMemberGrantsSet, zMcpMemberGrantsView, type McpGrantView } from '@crove/kernel-contract';

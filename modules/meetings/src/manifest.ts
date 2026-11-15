@@ -21,6 +21,11 @@ export const meetingsManifest = defineModule({
         'length_seconds',
         'created_at',
       ]),
+      // A member's own Google Calendar meetings, read to suggest "record this meeting" (B1, #3165): title, start, end, time zone, a join address and the number of invitees, never an invitee address, a description or an attachment. Read by the member alone.
+      calendar_agenda: columns(
+        ['org_id', 'id', 'connection_id', 'user_id', 'external_id', 'starts_at', 'ends_at', 'time_zone', 'invitee_count', 'meeting_id', 'updated_at'],
+        { title: 'pii', join_url: 'sensitive' },
+      ),
       // One event of a member's minutes webhook (member_hook, A6, #3164): the body holds the text the recorder approved and is set to NULL the moment the delivery settles, so afterwards the row is ids, a status and times.
       hook_delivery: columns(['org_id', 'id', 'hook_id', 'meeting_id', 'type', 'status', 'attempts', 'last_code', 'created_at', 'handed_at', 'sent_at'], { body: 'pii' }),
       // The pieces of about 15 seconds a recorder sends while a live-notes meeting runs (ADR-0052 L4a, #3109): order, the ciphertext's file row, size and the recorder's own length. No key, no text.

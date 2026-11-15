@@ -49,9 +49,11 @@ class RuntimeMeter implements AiMeter {
 
   private async checkMemberVy(call: AiCall): Promise<AiBudgetCheck> {
     if (this.authority.kind !== 'member') throw new Error('a member Vy call needs the member as the meter authority');
+    // A call that knows its cost (a transcript translation chunk) is admitted on it: one that would reach a hard-stop budget is refused before it is made (#3185).
+    const projected = call.expected ? aiCost([call.expected], this.options.price) : '0';
     const answer = await this.runtime.query<{ allowed: true } | { allowed: false; scope: 'org' | 'module' | 'agent'; retryAt: string }>(
       'kernel.member_vy.meter.check',
-      { feature: call.feature },
+      /^0+(?:\.0+)?$/.test(projected) ? { feature: call.feature } : { feature: call.feature, projectedCost: projected },
       this.as(call.orgId),
     );
     return answer.allowed ? { allowed: true, hasOrgBudget: true } : answer;
