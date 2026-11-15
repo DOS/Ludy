@@ -416,7 +416,9 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
 
   it('counts the cash limit per person: a person whose pay is over it and whose corrections take the total under it is no longer counted', async () => {
     const o = await org('tt133', 'solo');
-    const [employee] = await rows<{ id: string }>('SELECT id FROM crove_hr.payroll_employee WHERE org_id = $1 ORDER BY created_at, id LIMIT 1', [o.orgId]);
+    // Pick a fixed person by name rather than ORDER BY created_at, id or the first pay line, so uuid_v7 ties never mix two employees across runs.
+    const [employee] = await rows<{ id: string }>('SELECT id FROM crove_hr.payroll_employee WHERE org_id = $1 AND display_name = $2', [o.orgId, TEAM[0]?.name]);
+    expect(employee?.id).toBeTruthy();
     const march = await approvedRun(o);
     const verified = (runId: string) => o.exec<{ cashLarge: number }>(o.owner, 'hr.payroll.payment.verify', { runId, kind: 'net_pay' });
     const { proposalId } = await ask(o, march.runId, o.owner);
@@ -427,7 +429,9 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     let payNet = '0';
     const april = await approvedRun(o, '2026-04', async (runId) => {
       const sheet = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId });
-      payNet = (sheet.lines.find((l) => l.kind === 'pay') as HrRunSheet['lines'][number]).figures?.net ?? '0';
+      const payLine = sheet.lines.find((l) => l.kind === 'pay' && l.employeeId === employee?.id);
+      expect(payLine).toBeDefined();
+      payNet = payLine?.figures?.net ?? '0';
       await o.exec(o.owner, 'hr.payroll.line.adjust', { runId, adjustsRunId: march.runId, employeeId: employee?.id, note: 'Hoàn lại', gross: money(payNet).minus(1000000).negated().toFixed(0), pit: '0' });
     });
     // The person's own pay line is over the limit (the premise of this test), whatever the correction does to their total.
