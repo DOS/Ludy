@@ -200,6 +200,7 @@ export const en = {
     count: '{count, plural, one {# item} other {# items}}',
     due: 'Due {when}',
     open: 'Open',
+    from: 'From {name}',
     since: {
       title: 'Since yesterday',
       subtitle: 'What your AI coworkers did for you over the last day. Items that need approval wait in your inbox.',

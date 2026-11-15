@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { MouseEvent } from 'react';
 import { useRouter } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
-import type { TodayItem, TodaySeverity } from '@crove/kernel-contract';
+import { todayCoworkerKey, type TodayCoworkers, type TodayItem, type TodaySeverity } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Card } from '@crove/ui/components/card';
 import { NavIcon } from '@crove/ui/components/nav-icon';
@@ -42,7 +42,9 @@ function useTitle() {
   };
 }
 
-function TodayRow({ item, slug }: { item: TodayItem; slug: string }) {
+// The coworker's name goes first in the row's small print: who raised it (Ly for finance, Dy for CRM and conversations, Uy for Social and Ads,
+// Vy for the rest), by the name the org gave it now. A person still approves; the name only says who is asking (#3265).
+function TodayRow({ item, slug, coworkers }: { item: TodayItem; slug: string; coworkers: TodayCoworkers }) {
   const t = useTranslations('today');
   const f = useFormat();
   const router = useRouter();
@@ -65,6 +67,7 @@ function TodayRow({ item, slug }: { item: TodayItem; slug: string }) {
         <span className="min-w-0 flex-1">
           <span className="block text-foreground">{title(item)}</span>
           <span className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-subtle-foreground">
+            <span data-testid="today-coworker">{t('from', { name: coworkers[todayCoworkerKey(item.app)] })}</span>
             {item.severity && <Badge variant={SEVERITY_VARIANT[item.severity]}>{t(`severity.${item.severity}`)}</Badge>}
             {item.count !== undefined && <span className="tabular-nums">{t('count', { count: item.count })}</span>}
             {item.amount !== undefined && <span className="font-mono tabular-nums">{f.money(item.amount, item.currency)}</span>}
@@ -99,7 +102,7 @@ export function TodayList({ slug }: { slug: string }) {
           <Empty title={t('empty')} hint={t('emptyHint')} />
         ) : (
           <div className="space-y-5">
-            <TodayBrief slug={slug} items={today.data?.items ?? []} />
+            <TodayBrief slug={slug} items={today.data?.items ?? []} name={today.data.coworkers.gm} />
             {groups.map((group) => (
               <div key={group.kind}>
                 <h3 className="mb-2 flex items-baseline gap-2 text-sm font-semibold">
@@ -109,7 +112,7 @@ export function TodayList({ slug }: { slug: string }) {
                 <Card className="block overflow-hidden p-0">
                   <ul className="divide-y">
                     {group.items.map((item) => (
-                      <TodayRow key={`${item.app}:${item.id}`} item={item} slug={slug} />
+                      <TodayRow key={`${item.app}:${item.id}`} item={item} slug={slug} coworkers={today.data.coworkers} />
                     ))}
                   </ul>
                 </Card>

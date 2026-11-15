@@ -198,6 +198,7 @@ export const vi = {
     count: '{count, plural, other {# mục}}',
     due: 'Hạn {when}',
     open: 'Mở',
+    from: 'Từ {name}',
     since: {
       title: 'Từ hôm qua',
       subtitle: 'Việc các đồng nghiệp AI đã làm cho bạn trong 24 giờ qua. Việc cần duyệt chờ bạn trong hộp duyệt.',
