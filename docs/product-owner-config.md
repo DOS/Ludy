@@ -41,9 +41,11 @@ and it carries JOY's authority, so a change to it is a change to agent instructi
   than hardcoding vendor model names, and configure Antigravity to use
   `Orchestrator (Carbon)` / `Gemini 4 Carbon`. A PO on `Gemini 4 Carbon` or
   `Orchestrator (Carbon)` runs its own independent flagship security review
-  (a fresh-context read-only `research` subagent, which answers directly on
-  Carbon without handing off to Hydrogen) and never waits on Claude Opus
-  when Claude quota is exhausted or the line runs on Antigravity.
+  (a fresh-context read-only `research` subagent via `Model: "inherit"`, where
+  under `Orchestrator (Carbon)` Carbon leads and may route routine substeps to
+  Hydrogen; use `Gemini 4 Carbon` or `Claude Opus` when zero Hydrogen delegation
+  is needed) and never waits on Claude Opus when Claude quota is exhausted or
+  the line runs on Antigravity.
 
 ## Board
 
@@ -220,8 +222,10 @@ The DOS organization ids are the same in every DOS repository.
   flagship model; owner decision 2026-11-15, see above). PO sessions and
   independent security reviews of protected-path PRs run on a flagship model:
   Claude Opus on Claude Code; Claude Opus, Gemini 4 Carbon or `Orchestrator
-  (Carbon)` on Antigravity (read-only `research` reviews run on Carbon in
-  plan mode without handing off to Hydrogen).
+  (Carbon)` on Antigravity (fresh-context read-only `research` subagent via
+  `Model: "inherit"`; under `Orchestrator (Carbon)`, Carbon leads and may route
+  routine substeps to Hydrogen, so use `Gemini 4 Carbon` or `Claude Opus` when
+  zero Hydrogen delegation is needed).
 - agent_effort: high (owner decisions 2026-10-27, 2026-10-30 and 2026-10-31;
   skipped on Antigravity, which has no session effort API). Exception: xhigh
   only for hard work (a protected-path security change, a migration, a
