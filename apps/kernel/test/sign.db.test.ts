@@ -533,6 +533,15 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
       workerRuntime.execute('sign.envelope.send', { envelopeId }, { actor: agentActor, orgId: org.orgId }),
     ).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
 
+    // Token-issuing send refuses idempotencyKey so plaintext links never enter idempotency_key.response.
+    await expect(
+      runtime.execute('sign.envelope.send', { envelopeId }, { actor: asUser(member), orgId: org.orgId, idempotencyKey: 'send-key-1' }),
+    ).rejects.toMatchObject({ code: 'IDEMPOTENCY_UNSUPPORTED', status: 400 });
+    const sendIdemRows = await admin(async (c) =>
+      (await c.query("SELECT key FROM crove_kernel.idempotency_key WHERE org_id = $1 AND command = 'sign.envelope.send'", [org.orgId])).rows,
+    );
+    expect(sendIdemRows).toEqual([]);
+
     // Sequential send activates only s1 (order 1) and mints 1 raw link.
     const sent = await runtime.execute<{ envelopeId: string; status: string; links: Array<{ signerId: string; tokenId: string; token: string }> }>(
       'sign.envelope.send',
@@ -610,6 +619,20 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     expect(rotatedRows).toHaveLength(2);
     expect(rotatedRows[0].revoked_at).not.toBeNull();
     expect(rotatedRows[1].revoked_at).toBeNull();
+
+    // Token-issuing create_link also refuses idempotencyKey without revoking existing token or storing idempotency rows.
+    await expect(
+      runtime.execute('sign.signer.create_link', { envelopeId, signerId: s1.signerId }, { actor: asUser(member), orgId: org.orgId, idempotencyKey: 'link-key-1' }),
+    ).rejects.toMatchObject({ code: 'IDEMPOTENCY_UNSUPPORTED', status: 400 });
+    const linkIdemRows = await admin(async (c) =>
+      (await c.query("SELECT key FROM crove_kernel.idempotency_key WHERE org_id = $1 AND command = 'sign.signer.create_link'", [org.orgId])).rows,
+    );
+    expect(linkIdemRows).toEqual([]);
+    const rotatedAfterRefusal = await admin(async (c) =>
+      (await c.query('SELECT id, revoked_at FROM crove_sign.signing_token WHERE org_id = $1 AND signer_id = $2 ORDER BY created_at', [org.orgId, s1.signerId])).rows,
+    );
+    expect(rotatedAfterRefusal).toHaveLength(2);
+    expect(rotatedAfterRefusal[1].revoked_at).toBeNull();
 
     // remind succeeds then hits 5m cooldown 429.
     const reminded = await runtime.execute<{ remindedSignerIds: string[] }>(

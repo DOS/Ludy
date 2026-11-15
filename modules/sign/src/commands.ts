@@ -880,6 +880,8 @@ export const envelopeSend = defineCommand({
   risk: 'R2',
   sideEffect: 'internal',
   access: WRITERS,
+  // Returns raw one-time signing tokens; disallow idempotency replay storage so plaintext tokens are never persisted.
+  noIdempotency: true,
   target,
   writes: [
     tableWrite(signManifest.tables, 'crove_sign', 'envelope', ['status', 'sent_at', 'version', 'updated_at']),
@@ -1025,6 +1027,8 @@ export const signerCreateLink = defineCommand({
   risk: 'R2',
   sideEffect: 'internal',
   access: WRITERS,
+  // Returns raw one-time signing tokens; disallow idempotency replay storage so plaintext tokens are never persisted.
+  noIdempotency: true,
   target,
   writes: [SIGNING_TOKEN_WRITE, SIGNING_OTP_INVALIDATE_WRITE, SIGNING_EVENT_WRITE],
   handler: async (ctx, input) => {
