@@ -69,6 +69,10 @@ const MACHINERY = new Set([
   // reached only by definers, no login role grant. Land before their tables (PENDING_TABLES).
   'crove_meetings.hook_delivery',
   'crove_meetings.member_hook',
+  // #3168 (meetings integrations B4): the sealed address of an org's minutes channel (a Slack or Teams webhook), read out only by the worker, for a queued post, through a definer. No login role grant.
+  'crove_meetings.chat_channel_target',
+  // #3168: the message of a queued post to a minutes channel, kept only while the post is queued and deleted when it settles: reached only by definers, no login role grant. Lands before its table (PENDING_TABLES).
+  'crove_meetings.chat_post_body',
   'crove_social.chat_alert_target',
 ]);
 // Tables whose row factory (and MACHINERY entry, for definer-only tables) lands on main before the table itself. CI
@@ -91,6 +95,11 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_permission_override',
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',
+  // #3168 (meetings integrations B4): the org's minutes channels, their sealed addresses, the recorder's log of posts and the message of a queued post. Land before their tables (step 1 of 2).
+  'crove_meetings.chat_channel',
+  'crove_meetings.chat_channel_target',
+  'crove_meetings.chat_post',
+  'crove_meetings.chat_post_body',
   'crove_meetings.live_line',
   'crove_meetings.meeting_link',
   'crove_notes.link',
@@ -165,6 +174,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_meetings.action_item', () => 'false'], // As above (action items, ADR-0047).
   ['crove_meetings.audio_segment', () => 'false'], // Meetings read through the recorder and the readers, who are users (ADR-0047).
   ['crove_meetings.calendar_agenda', () => 'false'], // A member's own calendar meetings, read by that member, a user (meetings integrations B1, #3165).
+  ['crove_meetings.chat_post', () => 'false'], // The recorder's own log of minutes posted to a channel, read by the recorder, a user (meetings integrations B4, #3168).
   ['crove_meetings.live_chunk', () => 'false'], // The recorder's own live pieces, read by the recorder, a user (ADR-0052 L4a, #3109).
   ['crove_meetings.live_line', () => 'false'], // The live preview of a recording, read by the recorder, a user (ADR-0052 L4a, #3110).
   ['crove_meetings.meeting', () => 'false'], // As above.
@@ -242,6 +252,8 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_meetings.audio_segment', 'false'],
   // A member's own calendar meetings (meetings integrations B1, #3165): the member's alone; worker system context reads and writes nothing (its one writer is a definer).
   ['crove_meetings.calendar_agenda', 'false'],
+  // The recorder's own log of minutes posted to a channel (meetings integrations B4, #3168): the recorder's alone; the worker system context reads and writes nothing.
+  ['crove_meetings.chat_post', 'false'],
   // Live pieces of a recording (ADR-0052 L4a, #3109): worker system context reads and writes nothing.
   ['crove_meetings.live_chunk', 'false'],
   // The live preview of a recording (ADR-0052 L4a, #3110): worker system context reads and writes nothing.
@@ -429,6 +441,14 @@ const channelConnectionRow = (o: { id: string; owner: string }) => ({
   connected_by: o.owner,
 });
 // The org's team chat alert (#863): its kind and alert kinds; the sealed target is in chat_alert_target.
+const chatChannelRow = (o: { id: string; owner: string }) => ({
+  org_id: o.id,
+  id: randomUUID(),
+  kind: 'slack',
+  label: 'RLS matrix channel',
+  host: 'hooks.slack.com',
+  created_by: o.owner,
+});
 const chatAlertRow = (o: { id: string; owner: string }) => ({
   org_id: o.id,
   id: randomUUID(),
@@ -2370,6 +2390,48 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           ends_at: new Date(start.getTime() + 1_800_000).toISOString(),
           time_zone: 'Asia/Ho_Chi_Minh',
         },
+      };
+    },
+  },
+  // #3168 (meetings integrations B4): an org's channel for minutes (a Slack or Teams webhook). Tenant data, no secret: every member reads it, owners and admins change it through the commands.
+  'crove_meetings.chat_channel': { make: (o) => ({ row: chatChannelRow(o) }) },
+  // Definer-only machinery: the sealed address of a minutes channel, one row per channel. The envelope is opaque bytes here; only the worker opens a real one, for a queued post.
+  'crove_meetings.chat_channel_target': {
+    make: (o) => {
+      const channel = chatChannelRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.chat_channel', values: channel }],
+        row: { org_id: o.id, channel_id: channel.id, key_id: 'rls-matrix', envelope: '\\x00' },
+      };
+    },
+  },
+  // #3168: the recorder's log of one click to post minutes to a channel (ids, state, hashes; never the text). Written and read by the recorder alone; no tenant role updates it (the worker's definer does).
+  'crove_meetings.chat_post': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      const channel = chatChannelRow(o);
+      return {
+        setup: [
+          { table: 'crove_meetings.meeting', values: meeting },
+          { table: 'crove_meetings.chat_channel', values: channel },
+        ],
+        row: { org_id: o.id, id: randomUUID(), meeting_id: meeting.id, channel_id: channel.id, user_id: o.owner, facts_key: '0'.repeat(64), text_hash: '1'.repeat(64) },
+      };
+    },
+  },
+  // Definer-only machinery (#3168): the message of a queued post, one row per post, deleted when the post settles. The body is the exact shape chat_body_ok accepts.
+  'crove_meetings.chat_post_body': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      const channel = chatChannelRow(o);
+      const post = { org_id: o.id, id: randomUUID(), meeting_id: meeting.id, channel_id: channel.id, user_id: o.owner, facts_key: '0'.repeat(64), text_hash: '1'.repeat(64) };
+      return {
+        setup: [
+          { table: 'crove_meetings.meeting', values: meeting },
+          { table: 'crove_meetings.chat_channel', values: channel },
+          { table: 'crove_meetings.chat_post', values: post },
+        ],
+        row: { org_id: o.id, post_id: post.id, body: JSON.stringify({ v: 1, lang: 'vi', title: 'RLS matrix', day: '2030-01-01', summary: '', decisions: [], items: [], link: null }) },
       };
     },
   },
