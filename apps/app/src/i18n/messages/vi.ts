@@ -2688,7 +2688,9 @@ export const vi = {
     deals: {
       title: 'Cơ hội',
       open: 'Mở màn Cơ hội',
-      empty: 'Liên hệ này chưa có cơ hội nào. Thêm cơ hội ở màn Cơ hội.',
+      empty: 'Liên hệ này chưa có cơ hội nào. Bấm Thêm cơ hội để tạo.',
+      add: 'Thêm cơ hội',
+      addOf: 'Thêm cơ hội cho {name}',
       close: 'dự kiến chốt {date}',
       kind: { open: 'Đang mở', won: 'Thắng', lost: 'Thua' },
     },
@@ -3466,6 +3468,12 @@ export const vi = {
       partySearch: 'Gõ tên hoặc mã số thuế để tìm',
       partyResults: 'Kết quả tìm khách hàng',
       partyNone: 'Không thấy khách hàng nào khớp.',
+      newParty: {
+        open: 'Thêm liên hệ mới',
+        title: 'Thêm liên hệ mới',
+        submit: 'Thêm liên hệ',
+        cancel: 'Hủy',
+      },
       partyRequired: 'Chọn khách hàng cho cơ hội.',
       changeParty: 'Đổi khách hàng',
       amount: 'Số tiền (VND)',

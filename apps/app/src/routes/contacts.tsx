@@ -16,6 +16,7 @@ import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { CompanyPeople, PersonCompany } from '../components/company-link.tsx';
+import { DealForm } from '../components/deal-form.tsx';
 import { LinkedMeetings, meetingsInstalled } from '../components/linked-meetings.tsx';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
 import { EditParty, refreshParties } from '../components/party-edit.tsx';
@@ -121,22 +122,38 @@ function ContactTimeline({ partyId }: { partyId: string }) {
   );
 }
 
-// The contact's deals (K1's crm.party.deals): the title, the stage it sits in, the amount and the expected close date, and a
-// way to the deals screen, where a deal is added and moved.
-function ContactDeals({ partyId }: { partyId: string }) {
+// The contact's deals (K1's crm.party.deals): the title, the stage it sits in, the amount and the expected close date, a way to
+// the deals screen, where a deal is moved, and "Thêm cơ hội", which opens the deal form with this contact chosen (#3292). A viewer
+// reads the deals and has no button.
+export function ContactDeals({ contact, canEdit }: { contact: Contact; canEdit: boolean }) {
+  const partyId = contact.id;
   const t = useTranslations('contacts');
   const { slug } = useParams({ strict: false }) as { slug: string };
   const { locale } = useLocaleSetting();
+  const [adding, setAdding] = useState(false);
+  const org = useQuery({ ...orpc.org.get.queryOptions(), enabled: canEdit });
   const deals = useQuery(orpc.crm.deals.byParty.queryOptions({ input: { partyId } }));
   const stages = useQuery(orpc.crm.pipeline.stages.queryOptions({ input: {} }));
   return (
     <div data-testid="contact-deals">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm font-medium text-muted-foreground">{t('deals.title')}</p>
-        <Link to="/o/$slug/deals" params={{ slug }} className="text-sm text-link underline">
-          {t('deals.open')}
-        </Link>
+        <div className="flex flex-wrap items-center gap-3">
+          {canEdit && !adding && (
+            <Button variant="outline" size="sm" onClick={() => setAdding(true)} aria-label={t('deals.addOf', { name: contact.name })}>
+              {t('deals.add')}
+            </Button>
+          )}
+          <Link to="/o/$slug/deals" params={{ slug }} className="text-sm text-link underline">
+            {t('deals.open')}
+          </Link>
+        </div>
       </div>
+      {adding && (
+        <div className="mb-3">
+          <DealForm deal={null} members={org.data?.members ?? []} presetParty={{ id: contact.id, name: contact.name, kind: contact.kind, taxCode: contact.taxCode }} onDone={() => setAdding(false)} />
+        </div>
+      )}
       {deals.isLoading ? (
         <p className="text-sm text-subtle-foreground">{t('loading')}</p>
       ) : deals.error ? (
@@ -186,7 +203,7 @@ function ContactPanel({ contact, canEdit, columns }: { contact: Contact; canEdit
           </Button>
         )}
         {contact.kind === 'person' ? <PersonCompany person={contact} canEdit={canEdit} /> : <CompanyPeople company={contact} canEdit={canEdit} />}
-        <ContactDeals partyId={contact.id} />
+        <ContactDeals contact={contact} canEdit={canEdit} />
         {meetingsInstalled() && <LinkedMeetings kind="party" targetId={contact.id} />}
         {notesInstalled() && <RecordNotesPanel slug={slug} target={{ targetType: 'kernel.party', targetId: contact.id }} headingId={`notes-${contact.id}`} label={tn('panel.toggleOf', { name: contact.name })} />}
         <ContactTimeline partyId={contact.id} />
