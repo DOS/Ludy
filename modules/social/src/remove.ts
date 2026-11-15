@@ -317,6 +317,8 @@ export async function sweepRemovals(deps: { runtime: Runtime; workerDb: Db }, pr
   let queued = 0;
   for (const row of rows) {
     try {
+      // An app that is off for the org (ADR-0053) has nothing to do here: no call, no refusal row, no line in the log.
+      if (!(await deps.runtime.appOn(row.org_id, 'social'))) continue;
       const done = await deps.runtime.execute<{ queued: boolean }>('social.remove.schedule', { variantId: row.variant_id }, { actor: SWEEP_ACTOR, orgId: row.org_id });
       if (done.queued) queued += 1;
     } catch (error) {

@@ -168,6 +168,23 @@ export function parseLogFormat(value: string | undefined): LogFormat {
   throw new Error('LOG_FORMAT must be json or text');
 }
 
+// The module an error says is off for the org (a DomainError MODULE_OFF, ADR-0053), or null. Read by shape: this file stays free of imports.
+function moduleOffOf(error: unknown): string | null {
+  if (typeof error !== 'object' || error === null || (error as { code?: unknown }).code !== 'MODULE_OFF') return null;
+  const module = (error as { details?: { module?: unknown } }).details?.module;
+  return typeof module === 'string' ? module : 'unknown';
+}
+
+// One line a minute per queue and module for the jobs that ended because their app is off (ids only, never the payload).
+const skippedJobLines = new Map<string, number>();
+function noteSkippedJob(queue: string, module: string, orgId: string | undefined): void {
+  const key = `${queue}:${module}`;
+  const now = Date.now();
+  if (now - (skippedJobLines.get(key) ?? 0) < 60_000) return;
+  skippedJobLines.set(key, now);
+  console.info(`[jobs] ${queue} skipped: ${module} is off${orgId ? ` for org ${orgId.slice(0, 8)}` : ''}`);
+}
+
 interface WorkerLike {
   work: unknown;
 }
@@ -191,7 +208,14 @@ export function withJobLogContext(boss: WorkerLike): void {
         () => {
           // A rejection is logged here, while the job's ids are on the line (pg-boss reports it later, outside this
           // context), and then rethrown so pg-boss still records the failed job and retries it.
-          const failed = (error: unknown): never => {
+          const failed = (error: unknown): never | undefined => {
+            // An app that is off for the org (ADR-0053, MODULE_OFF) is its state, not a failure: the job ends, no retry, no dead letter, no stack
+            // trace. One line a minute per queue and module says so (ids only, never the payload).
+            const off = moduleOffOf(error);
+            if (off !== null) {
+              noteSkippedJob(name, off, orgId);
+              return undefined;
+            }
             console.error(`[jobs] ${name} handler failed`, error);
             throw error;
           };

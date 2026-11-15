@@ -343,6 +343,33 @@ describe('the lines of a job (#2175)', () => {
     expect(log.raw.join('\n')).not.toContain('payload-secret');
   });
 
+  it('ends a job whose app is off for the org without a failure, a retry or a stack trace, and rethrows anything else (ADR-0053)', async () => {
+    const log = capture('worker');
+    const { boss, run } = fakeBoss();
+    const org = randomUUID();
+    const off = Object.assign(new Error('Ứng dụng social đã được tắt cho công ty này'), { code: 'MODULE_OFF', details: { module: 'social' } });
+    await boss.work('social-link-preview', async () => {
+      throw off;
+    });
+    await boss.work('kernel-other', async () => {
+      throw new Error('boom');
+    });
+    // The handler resolves: pg-boss records the job as done, so it is neither retried nor sent to the dead letter queue.
+    await expect(run('social-link-preview', [{ id: 'job-1', data: { orgId: org, body: 'payload-secret' } }])).resolves.toBeUndefined();
+    await expect(run('kernel-other', [{ id: 'job-2' }])).rejects.toThrow('boom');
+    const text = log.raw.join('\n');
+    // One line says the job was skipped, with the queue, the app and the org's first characters, and no payload.
+    expect(text).toContain('[jobs] social-link-preview skipped: social is off');
+    expect(text).toContain(org.slice(0, 8));
+    expect(text).not.toContain('payload-secret');
+    expect(text).not.toContain('[jobs] social-link-preview handler failed');
+    expect(text).toContain('[jobs] kernel-other handler failed');
+    // A second skip within the minute adds no line for the same queue and app.
+    const before = log.raw.length;
+    await run('social-link-preview', [{ id: 'job-3', data: { orgId: org } }]);
+    expect(log.raw.length).toBe(before);
+  });
+
   it('has no org for a job whose payload names none (or not a uuid), and no job id for a batch; a handler without options still works', async () => {
     const log = capture('worker');
     const { boss, run } = fakeBoss();

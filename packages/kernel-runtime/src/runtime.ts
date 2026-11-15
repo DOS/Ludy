@@ -1637,6 +1637,8 @@ export class Runtime {
   readonly #entitlementInflight = new Map<string, Promise<readonly string[]>>();
   #entitlementFailureLoggedAt = 0;
   #appsOffColumn = false;
+  // appOn's answer per org, shared by the callers of one sweep.
+  readonly #appsOnCache = new Map<string, { at: number; modules: Promise<ReadonlySet<string>> }>();
   #entitlementFailureNotedAt = 0;
   // The apps the org switched off as one call reads them, per entered context (one transaction), so a page of lookups reads the row once.
   readonly #appsOffMemo = new WeakMap<object, Promise<ReadonlySet<string>>>();
@@ -1896,6 +1898,28 @@ export class Runtime {
     const on = new Set(rows.map((r) => r.m));
     const keys = this.#entitlementsPort ? await this.entitlementsOf(orgId, null) : null;
     return installed.filter((m) => m === 'kernel' || (on.has(m) && (keys === null || entitledTo(keys, m))));
+  }
+
+  // Whether the app is on for the org (ADR-0053 section 1): the answer of effectiveModules, kept 5 seconds per org so a sweep over many rows of
+  // one org asks once. kernel is always on. Errors (the database, not a refusal) are thrown to the caller, which is already per item.
+  async appOn(orgId: string, module: string): Promise<boolean> {
+    if (module === 'kernel') return true;
+    const now = Date.now();
+    const hit = this.#appsOnCache.get(orgId);
+    if (hit && now - hit.at < 5_000) return (await hit.modules).has(module);
+    const modules = this.effectiveModules(orgId).then((list) => new Set(list) as ReadonlySet<string>);
+    this.#appsOnCache.delete(orgId);
+    this.#appsOnCache.set(orgId, { at: now, modules });
+    if (this.#appsOnCache.size > 2_000) {
+      const oldest = this.#appsOnCache.keys().next().value;
+      if (oldest !== undefined) this.#appsOnCache.delete(oldest);
+    }
+    try {
+      return (await modules).has(module);
+    } catch (error) {
+      this.#appsOnCache.delete(orgId);
+      throw error;
+    }
   }
 
   // The org's entitlement keys: cached for a minute, one port call at a time per org, and on a failure of the port (a throw, or no answer in 3
@@ -3098,7 +3122,10 @@ export class Runtime {
       // membership was established (plan §4.4 steps 7 and 14: a record the actor named is not in the org, such as
       // MEMBER_NOT_FOUND for a member of another org) is audited as failed like 409 and 422. Other statuses are not
       // audited today.
-      if (entered && !orgIsNew && AUDITED_REFUSAL_STATUSES.has(domain.status)) {
+      // A refusal because the app is off is the org's state, not an attempt to audit, and the worker, a sweep and the relay meet it every
+      // tick for every item of an off org: it writes no row and spends none of the refusal budget when the system is the actor. A person's
+      // or an AI agent's call keeps its failed row.
+      if (entered && !orgIsNew && AUDITED_REFUSAL_STATUSES.has(domain.status) && !(domain.code === 'MODULE_OFF' && actor.type === 'system')) {
         await this.writeRefusalAudit(name, def, input, canonical, actor, orgId, domain);
       } else if ((!entered || orgIsNew) && isPreMembershipRefusal(domain)) {
         // Refused before the caller was a member of the org (or the org-less command's new org rolled back with

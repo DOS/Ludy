@@ -73,6 +73,8 @@ export async function sweepNotesReminders(deps: { runtime: Runtime; workerDb: Db
     SELECT org_id, id, remind_at FROM crove_notes.todo_reminders_claim(${REMIND_SWEEP_LIMIT}::int)`.execute(deps.workerDb);
   let sent = 0;
   for (const row of rows) {
+    // The claim marked the reminder sent; an org whose Notes is off (ADR-0053) does not get it late either, and nothing is logged for it.
+    if (!(await deps.runtime.appOn(row.org_id, 'notes').catch(() => true))) continue;
     const remind = () =>
       deps.runtime.execute<{ sent: number }>('notes.todo.remind', { todoId: row.id, remindAt: new Date(row.remind_at).toISOString() }, { actor: ACTOR, orgId: row.org_id });
     try {

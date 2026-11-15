@@ -491,6 +491,43 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
     await expect(o2.exec(rt, 'probe.busy', o2.member)).rejects.toMatchObject(refusal);
   });
 
+  it('writes no refusal row for the system when an app is off, and keeps the failed row of a person and of an AI agent', async () => {
+    const o = await org();
+    const agent = await o.agent();
+    await o.setApp('probe', false);
+    const refusals = (command: string) =>
+      withAdmin(async (c) => (await c.query("SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome IN ('denied', 'failed')", [o.orgId, command])).rowCount);
+    // The worker, a sweep and the relay meet MODULE_OFF every tick for every item: no row, so none of the refusal budget is spent.
+    for (let i = 0; i < 3; i++) {
+      await expect(worker.execute('probe.sys_touch', {}, { actor: SYSTEM, orgId: o.orgId, idempotencyKey: randomUUID() })).rejects.toMatchObject({ code: 'MODULE_OFF' });
+    }
+    expect(await refusals('probe.sys_touch')).toBe(0);
+    // A person's call, and an AI agent's, keep the row of what they tried.
+    await expect(o.exec(rt, 'probe.touch', o.member)).rejects.toMatchObject({ code: 'MODULE_OFF' });
+    expect(await refusals('probe.touch')).toBe(1);
+    await expect(worker.execute('probe.agent_touch', {}, { actor: agent, orgId: o.orgId, idempotencyKey: randomUUID() })).rejects.toMatchObject({ code: 'MODULE_OFF' });
+    expect(await refusals('probe.agent_touch')).toBe(1);
+  });
+
+  it('answers whether an app is on for an org from the worker, kernel always, and sees a switch after the short cache', async () => {
+    const o = await org();
+    const fresh = runtimeWith({}, workerPool);
+    await expect(fresh.appOn(o.orgId, 'probe')).resolves.toBe(true);
+    await expect(fresh.appOn(o.orgId, 'kernel')).resolves.toBe(true);
+    await expect(fresh.appOn(o.orgId, 'unknown_app')).resolves.toBe(false);
+    await o.setApp('probe', false);
+    // A runtime that has not asked yet sees the switch at once; the one that asked keeps its answer for at most 5 seconds.
+    await expect(runtimeWith({}, workerPool).appOn(o.orgId, 'probe')).resolves.toBe(false);
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date() });
+    vi.setSystemTime(Date.now() + 6_000);
+    await expect(fresh.appOn(o.orgId, 'probe')).resolves.toBe(false);
+    await expect(fresh.appOn(o.orgId, 'finance')).resolves.toBe(true);
+    // Another org is untouched, and an entitlement the port does not give is off.
+    const p = await org();
+    await expect(fresh.appOn(p.orgId, 'probe')).resolves.toBe(true);
+    await expect(runtimeWith({ entitlements: async () => ['finance'] }, workerPool).appOn(p.orgId, 'probe')).resolves.toBe(false);
+  });
+
   it('lists the apps an org has, without a context: deployment, choice and entitlement together', async () => {
     const o = await org();
     // The modules this runtime registered ('other' has no definition, so it is not one of them).

@@ -51,6 +51,8 @@ export async function raiseCrmNextSteps(deps: { runtime: Runtime; workerDb: Db }
     const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM crove_crm.deal_stale_orgs(${after}::uuid, ${STALE_ORGS_BATCH}::int) ORDER BY org_id`.execute(deps.workerDb);
     for (const row of rows) {
       try {
+        // An app that is off for the org (ADR-0053) has nothing to do here: no call, no refusal row, no line in the log.
+        if (!(await deps.runtime.appOn(row.org_id, 'crm'))) continue;
         raised += (await deps.runtime.execute<{ raised: number; closed: number }>('crm.next_step.raise', {}, { actor: STALE_ACTOR, orgId: row.org_id })).raised;
         orgs += 1;
       } catch (error) {

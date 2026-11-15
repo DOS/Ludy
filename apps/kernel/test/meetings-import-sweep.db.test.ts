@@ -30,6 +30,8 @@ const asDomain = (error: unknown): never => {
   const message = (error as { message?: string } | null)?.message ?? 'ERR';
   throw new DomainError(message, 409, message);
 };
+// The Meetings app is installed here (a definition of its module), so the worker's per-org check (ADR-0053) finds it on for every org.
+const meetingsInstalled = defineQuery({ name: 'meetings.test_installed', input: z.object({}), access: ['owner'], handler: async () => 'on' });
 const begin = defineCommand({
   name: 'test.mp.begin',
   input: z.strictObject({ recordingId: z.string(), meetingId: z.string(), stagingKey: z.string() }),
@@ -169,7 +171,7 @@ suite('the meetings import sweep and job on PostgreSQL (meetings integrations C1
     pools.push(appPool, workerPool);
     personDb = createDb(appPool);
     workerDbHandle = createDb(workerPool);
-    const defs = { commands: [...kernelCommands, begin, imported, rawReplace], queries: [...kernelQueries({ inboundDomain: null }), recordingRows] };
+    const defs = { commands: [...kernelCommands, begin, imported, rawReplace], queries: [...kernelQueries({ inboundDomain: null }), recordingRows, meetingsInstalled] };
     api = new Runtime(personDb, { manifests: TEST_MANIFESTS }).register(defs);
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(defs);
   }, 300_000);

@@ -39,6 +39,8 @@ export async function runMeetingChatSweep(deps: ChatSweepDeps): Promise<{ handed
         await deps.runtime.execute('meetings.chat.record', { id: row.id, outcome: 'expired', httpStatus: null, code: null }, ctx);
         done.expired += 1;
       } else {
+        // An org whose Meetings is off (ADR-0053) is sent nothing: no job is queued for a post that would be refused. The expiry and the lost ones above still run.
+        if (!(await deps.runtime.appOn(row.org_id, 'meetings'))) continue;
         await deps.send({ orgId: row.org_id, id: row.id });
         await deps.runtime.execute('meetings.chat.queued', { id: row.id }, ctx);
         done.handedOver += 1;

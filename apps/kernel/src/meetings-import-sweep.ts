@@ -51,6 +51,8 @@ export async function runMeetingsImportSweep(deps: MeetingsImportSweepDeps): Pro
   const open = await sql<OpenRow>`SELECT org_id, id, connection_id, provider, external_id, has_audio, has_video, size_bytes, staging_key FROM crove_kernel.meeting_platform_import_open(${OPEN_PER_PASS}::int)`.execute(deps.workerDb);
   for (const row of open.rows) {
     try {
+      // An org whose Meetings is off (ADR-0053) downloads nothing from a platform.
+      if (!(await deps.runtime.appOn(row.org_id, 'meetings'))) continue;
       await deps.send({
         orgId: row.org_id,
         id: row.id,
@@ -87,6 +89,8 @@ export async function runMeetingsImportSweep(deps: MeetingsImportSweepDeps): Pro
     const ctx = { actor: ACTOR, orgId: row.org_id };
     const adapter = deps.adapters[row.provider];
     try {
+      // Nor does it list a platform's recordings: no call to the platform for an app that is off.
+      if (!(await deps.runtime.appOn(row.org_id, 'meetings'))) continue;
       if (!adapter) throw new MeetingPlatformError('platform_unavailable');
       const sealed = await deps.runtime.query<{ keyId: string; envelope: string; provider: string; externalAccount: string }>('kernel.meeting_platform.credential', { connectionId: row.connection_id }, ctx);
       const secret = deps.broker.open({ keyId: sealed.keyId, envelope: Buffer.from(sealed.envelope, 'base64') }, meetingPlatformBinding(row.org_id, sealed.provider as MeetingPlatformProvider, sealed.externalAccount));
