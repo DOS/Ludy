@@ -65,7 +65,7 @@ Not requested, by rule of plan section 5.7: `<all_urls>`, `tabs`, `activeTab`, `
 
 For the store's "single purpose" field (the store wants one narrow purpose, stated plainly). Draft:
 
-> Ludy records the audio (and, only when the member ticks it, the video) of a meeting that is open in the member's browser tab, together with their microphone, and uploads it to the member's own Ludy workspace as a meeting, after the member confirms the participants were told. Signing in to Ludy, choosing the workspace and turning meeting recording on or off exist only to serve that one purpose.
+> Ludy records the audio (and, only when the member ticks it, the video) of a meeting that is open in the member's browser tab, together with their microphone, and uploads it to the member's own Ludy workspace as a meeting, after the member confirms the participants were told. Signing in to Ludy, choosing the workspace and turning meeting recording on or off exist only to serve that one purpose. The "starting soon" card, which fills in the meeting title from the member's own calendar (only when the member turned calendar reading on in Ludy), and the optional live notes, which send the audio to the same workspace while recording instead of only at the end, serve the same purpose and send nothing to any other address.
 
 Check against the manifest's `description`, which is a message reference whose texts are in `apps/extension/_locales/<lang>/messages.json` (vi: "Ghi lại cuộc họp trên trình duyệt vào Ludy: ghi âm tab họp cùng micro, tải lên khi dừng."; en: "Record a browser meeting's tab audio and your microphone into Ludy, and upload it when you stop."), and keep the two aligned: the store compares them.
 
@@ -95,8 +95,8 @@ What the extension handles, from `src/api.ts`, `src/state.ts`, `src/auth.ts`, `s
 | Store category | Tick? | Why |
 |---|---|---|
 | Authentication information | Yes | The extension token, kept in the extension's storage and sent to the member's Ludy address with each request. Its scope is one workspace, one member and the turned-on features; it expires after 90 days and the member can revoke it in Ludy |
-| Personal communications | Yes | The audio of a meeting the member chooses to record, with their microphone, and the video only when they tick "Ghi cả video". The member confirms that participants were told before anything is recorded |
-| Personally identifiable information | Yes | The meeting's name the member types, and the voices (and, with video, the faces) of participants in the recording. The extension also sends a device name such as "Tiện ích Ludy, Chrome trên Windows" (browser and operating system, never an address or serial number) so the member can see and revoke the device in Ludy. Declared on the side of more disclosure (Meetings PO decision, 2026-11-11) |
+| Personal communications | Yes | The audio of a meeting the member chooses to record, with their microphone, and the video only when they tick "Ghi cả video"; with "Ghi chú trực tiếp" ticked, pieces of the audio are sent while recording and not only at the end. The member confirms that participants were told before anything is recorded |
+| Personally identifiable information | Yes | The meeting's name the member types, the title and time of the member's next calendar meetings (only when they turned calendar reading on in Ludy; shown in the popup, used to fill in the meeting title and not kept by the extension), and the voices (and, with video, the faces) of participants in the recording. The extension also sends a device name such as "Tiện ích Ludy, Chrome trên Windows" (browser and operating system, never an address or serial number) so the member can see and revoke the device in Ludy. Declared on the side of more disclosure (Meetings PO decision, 2026-11-11) |
 | Website content | No | The extension reads no page content, no address, no title and no selected text. The generic page-capture contract exists in the code (`src/page-capture.ts`) but no feature uses it and the permissions it would need are not in the manifest |
 | Web history, location, financial and payment information, health information, user activity | No | Not collected. No analytics, no telemetry, no advertising identifier (`apps/extension/src` has no such code; every request goes to the configured Ludy address) |
 
@@ -140,6 +140,8 @@ Cách hoạt động
 - Trước khi ghi, bạn phải xác nhận đã thông báo cho tất cả người tham gia rằng cuộc họp được ghi âm. Không có xác nhận thì không bắt đầu được.
 - Khi ghi, biểu tượng hiện REC và đồng hồ chạy. Bản ghi được lưu trên máy bạn khi đang ghi, nên đóng tab nhầm không làm mất.
 - Khi dừng, bản ghi được tải lên cuộc họp trong Ludy. Âm thanh được mã hóa khi lưu. Video chỉ được lưu khi bạn tích "Ghi cả video".
+- Nếu bạn bật đọc lịch trong Ludy, thẻ "Sắp họp" hiện tối đa 5 cuộc họp trong 30 phút tới của bạn để điền sẵn tên khi bạn bấm "Ghi cuộc họp này"; Ludy không tự ghi gì.
+- Nếu bạn tick "Ghi chú trực tiếp", âm thanh được gửi lên Ludy ngay trong lúc ghi (không đợi tới lúc dừng) để Vy ghi chú trong cuộc họp.
 - Phiên bản tóm tắt, ghi lời và việc cần làm chạy trong Ludy và do người ghi duyệt; tiện ích chỉ ghi và tải lên.
 
 Quyền riêng tư
@@ -148,7 +150,7 @@ Quyền riêng tư
 - Bạn có thể thu hồi tiện ích bất cứ lúc nào ở Cài đặt, mục thiết bị đã kết nối, trong Ludy.
 - Mã nguồn mở theo giấy phép AGPL-3.0.
 
-Cần có tài khoản Ludy và tổ chức đã bật tính năng cuộc họp. Hiện giao diện của tiện ích bằng tiếng Việt.
+Cần có tài khoản Ludy và tổ chức đã bật tính năng cuộc họp. Giao diện của tiện ích bằng tiếng Anh nếu trình duyệt của bạn dùng tiếng Anh, và bằng tiếng Việt với mọi ngôn ngữ khác.
 ```
 
 **en**
@@ -162,6 +164,8 @@ How it works
 - Before recording, you must confirm that you told every participant the meeting is recorded. Without that confirmation it cannot start.
 - While recording, the icon shows REC and a timer runs. The recording is kept on your device as it goes, so closing the tab by mistake does not lose it.
 - When you stop, the recording is uploaded to the meeting in Ludy. Audio is encrypted when stored. Video is stored only if you tick "Record video too".
+- If you turn on calendar reading in Ludy, a "Starting soon" card shows up to 5 meetings in your next 30 minutes so the title is filled in when you click "Record this meeting"; Ludy never records by itself.
+- If you tick "Live notes", the audio is sent to Ludy while you record (not only when you stop) so Vy can take notes during the meeting.
 - The summary, the transcript and the action items run inside Ludy and are reviewed by the person who recorded; the extension only records and uploads.
 
 Privacy
@@ -187,11 +191,70 @@ The store takes up to five. Use a clean test workspace with no customer data and
 | 4 | Upload done | "Đã tải lên", and the meeting in Ludy with its audio player (a second window or a composite) | the meeting page of the app |
 | 5 | Settings, connected devices in Ludy | The extension listed and the revoke button, to show the member stays in control | Ludy Settings |
 
-Also needed by the dashboard (check): a **128 by 128 icon** (gap 1 above: `dist/icons/icon-128.png`), a **small promotional tile of 440 by 280** pixels, and optionally a marquee of 1400 by 560. Edge has its own sizes if the extension is ever listed there (plan section 11 lists the Edge Add-ons store as a possible later step).
+Also needed by the dashboard (check): a **128 by 128 icon** (gap 1 above: `dist/icons/icon-128.png`), a **small promotional tile of 440 by 280** pixels, and optionally a marquee of 1400 by 560. The Edge Add-ons store has its own fields and may have its own image sizes: see "Microsoft Edge Add-ons (D2)" below (step E3).
 
 ### Data-use disclosures
 
 The "Privacy practices" answers above are the data-use disclosures. Keep one rule: the listing text, the privacy policy page (`apps/web/src/content/privacy-vi.ts`, `privacy-en.ts`; bump `PRIVACY_VERSION` and `PRIVACY_UPDATED` in `site.ts`) and the dashboard answers say the same things. When one changes (a permission, a new feature, a new data type), change all three before submitting.
+
+## Policy review 2026: what only a person can do (D1, #3180)
+
+The written review is [the extension against the Chrome Web Store policy of 2026](../security/extension-store-policy-review-2026.md): a verdict and the evidence for each point, and what was fixed in the code and the drafts. It could **not** read the store's policy pages (the session has no route to `developer.chrome.com`), so these items are for the coordinator to hand to the owner. Do them before the first submission, and again before D2 (Edge) with Microsoft's pages.
+
+| # | Item | Who | Check |
+|---|---|---|---|
+| P1 | Read the current store pages and correct the review in the same PR if one differs: the program policies, the user data policy (Limited Use, prominent disclosure, privacy policy rules), the listing and privacy-practices requirements, anything on `tabCapture` and audio, and the Chrome developer blog post on the 2026 policy changes (`cws-policy-updates-2026`). Write the date you read them at the top of the review | owner or the coordinator with access | the review names the date and any changed row |
+| P2 | Prove on a real Chrome that the browser accepts `offscreen` together with `tabCapture` as **optional** permissions: step 3 of the manual test in [the extension README](../../apps/extension/README.md) ("the browser asks for tab capture" when "Bật ghi cuộc họp" is clicked). The e2e tests replace this prompt, so nothing automated has checked it. If Chrome refuses, `offscreen` has to move to `permissions` (a change of the fixed list in `manifest-policy.ts`, so the security review first) | a person, with Chrome | the result is on the issue or the PR |
+| P3 | Paste the updated texts into the dashboard: the single-purpose statement, the vi and en long descriptions and the "why" of the two data categories in "Privacy practices" (all above, corrected in D1: the calendar card and live notes). The permission justifications above did not change (no permission was added) | owner | the dashboard shows the new text |
+| P4 | Show the lawyer (#2585, #328) the privacy page **version 1.1** (calendar reading for Google and Outlook, live notes) before submitting. The page's effective date is 2026-11-15, the day of the change: move it in `site.ts`, `privacy-vi.ts` and `privacy-en.ts` if the deploy is later. If the store policy asks for an explicit Limited Use statement (P1), the lawyer decides the sentence; a proposal: "Ludy's use of information received through the extension adheres to the Chrome Web Store User Data Policy, including the Limited Use requirements." It was not added to the live page because it is a legal commitment | owner, lawyer | the lawyer's answer is on #2585 |
+| P5 | Fill the dashboard's **test instructions** for the store's reviewer: a test Ludy workspace (Ludy Cloud) with the `meetings` module on, a test account and its sign-in, and how to reach the consent step and the recording; a reviewer cannot judge an extension that needs an account without one. No real customer data. The credentials go only into the dashboard field, never into the repository | owner | the field is filled |
+| P6 | Upload the regenerated screenshots 1 (`apps/extension/store/vi-1-…` and `en-1-…`: the popup note now says where the recording goes) | owner | the listing shows the new images |
+| P7 | Re-enter the "Privacy practices" answers and the three certifications from this runbook, as a declaration the owner makes; the dashboard is the place the store reads them | owner | the tab is saved |
+| P8 | Edge (D2): read Microsoft's Edge Add-ons policies and listing fields, and whether a Chrome package with `tabCapture` is accepted unchanged; none of that was read for D1 or D2 | owner or coordinator | step E1 of "Microsoft Edge Add-ons" below, which names what was read |
+
+## Microsoft Edge Add-ons (D2, #3181)
+
+How the same extension reaches the Edge Add-ons store, what is the same as Chrome, the one step that needs a code change, and what only a person can do. The plan is [section 7 of the integrations plan](../plan/meetings-integrations.md); the Chrome side is everything above.
+
+**What was and was not read.** Microsoft's own pages could **not** be read: the session that wrote this section has no route to `learn.microsoft.com` (the name does not resolve: it is outside the session's allowed network domains), and no other route was tried (no mirror, no search summary, no cache). Every Edge store fact below is marked **[unverified]**: it is general knowledge of the store from before this session, or a statement of what the plan says is still to be re-checked. What is said about the extension (the package, the permissions, the code) was read in this repository and is cited. Item E1 below is a person's re-read of Microsoft's pages, and any row it contradicts is corrected in the same PR.
+
+### What is the same, and what the repository already does for Edge
+
+- **One package for both stores.** The release workflow (`.github/workflows/extension-package.yml`) builds one Manifest V3 zip, `manifest.json` at its root, checked against the fixed permission list, with its SHA-256. Nothing in it is Chrome-only: the manifest (`apps/extension/manifest.json`) uses the `chrome.*` namespace, `identity`, `storage`, optional `tabCapture` and `offscreen`, and no Chrome-store-specific key. **No separate Edge zip is made**, and the workflow is unchanged: the same `ludy-extension-X.Y.Z.zip` from the GitHub release is uploaded to both stores, and its hash is written down once. *That Edge Add-ons accepts a Chrome Manifest V3 package unchanged is [unverified] (E1).* If Microsoft's checks reject a manifest key, the change is in `apps/extension/scripts/build.mjs` (an option for an Edge build) and in the workflow (a second zip), which is a protected path: a PR for the Meetings PO's review, not an edit on the side. The fixed permission list does not change for Edge.
+- **The code names Edge where it matters:** the device name shown in Ludy's connected devices says "Edge" for an Edge browser (`apps/extension/src/auth.ts:53`, the user agent contains `Edg/`); the README and the privacy page already say "Chrome and Edge"; the manual test of the README is written for both browsers.
+- **The sign-in assumes the redirect address `https://<32 letters a to p>.chromiumapp.org/…`** from `chrome.identity.getRedirectURL()` (`apps/app/src/lib/extension-connect.ts:12` accepts only that shape, and `packages/kernel-contract/src/extension.ts` says "Chrome and Edge give an extension this redirect address"). That Edge gives the same shape is **[unverified]**; the manual test below checks it first, because if Edge gives another host the sign-in cannot work and needs a code change.
+
+### The one step that needs a code change: the Edge extension id
+
+A Ludy server signs in only the extension ids it lists (`DEFAULT_EXTENSION_IDS` in `packages/kernel-contract/src/extension.ts`, or the server's `EXTENSION_IDS`). The list holds the **Chrome** store id only (#3010). **The Edge Add-ons item will have its own id** (assigned by Microsoft when the draft is created: [unverified], but the same is true of any second store), so **Ludy Cloud refuses the Edge store build at sign-in ("the request is not valid") until that id is added.** This cannot be done ahead: the id does not exist before the owner creates the item (E3). When the owner has it (E5), the coordinator opens a one-line PR, as #3010 did: add the id to `DEFAULT_EXTENSION_IDS` and to the test that pins it. An unpacked Edge build (Load unpacked) has yet another id (shown at `edge://extensions`); a test server lists it in `EXTENSION_IDS`.
+
+### What only a person can do
+
+| # | Step | Who | Check |
+|---|---|---|---|
+| E1 | Read Microsoft's pages and mark each **[unverified]** fact of this section verified or corrected in the same PR: the Edge Add-ons developer policies; the listing and privacy requirements; the review time; **whether a Chrome Manifest V3 package with `tabCapture` and `offscreen` is accepted unchanged** (and whether the manifest key `minimum_chrome_version`, which the package sets to 116, is accepted or Edge wants its own); whether Edge asks for extra justification for `tabCapture`; whether publishing by API is offered; the registration cost and any identity check. Write the date you read them | owner or the coordinator with access to the pages | this section names the date and what changed |
+| E2 | Register a Microsoft Partner Center developer account for Edge Add-ons (D-OA1): a role mailbox of the org that publishes Ludy as the account owner, two-step verification on, the registration cost (**new spending: the owner decides**) and any identity check [unverified] | owner | the account exists; nothing about it is written in the repository |
+| E3 | Create the extension in Partner Center and upload the **same zip** as Chrome (take it from the GitHub release, check `sha256sum --check` as in C6). Fill the listing from "Store listing" above (Vietnamese default and English), the category, the privacy policy link `https://ludy.so/privacy`, the contact the owner chooses, and the images of `apps/extension/store/` (the Edge field list and image sizes are [unverified]: check them in Partner Center and regenerate with `scripts/store-art.mjs` if a size differs) | owner | the draft shows the manifest's name and version and no manifest error |
+| E4 | Enter the permission justifications and the data-use answers of "Privacy practices" above (the same declaration as Chrome; the form's fields and wording are [unverified] and may differ) and the **notes for the certification team** the same way as P5 (a test workspace, a test account, how to reach the consent step; credentials only in the dashboard field, never in the repository) | owner (the lawyer sees the answers first, #2585) | every permission has a justification; the notes field is filled |
+| E5 | Note the **Edge extension id** shown in Partner Center and send it to the coordinator, who adds it to `DEFAULT_EXTENSION_IDS` in a PR (above) before the first Edge install is tested against Ludy Cloud | owner, then the coordinator | the PR is merged; the id is public, not a secret |
+| E6 | Run the manual Edge test below and put its result on #3181 (this is the issue's first acceptance item: a recorded test, both voices, the consent step first, the REC badge) | a person, with Edge | the result is on the issue |
+| E7 | Submit for review, choosing manual publish so the owner decides the moment; watch the account's email for the result. An update is the same flow as "Updating the extension" with the same zip and a higher version (Partner Center's update step and whether it takes the same version rule as Chrome are [unverified]) | owner | "in review" or the store's own word for it |
+| E8 | After approval, install from the Edge Add-ons page in a fresh Edge profile, sign in to a test workspace, record five minutes of a Meet, and put the result on #3181 | a person | the evidence is on the issue |
+
+### The manual test on Edge
+
+The 60-minute test of [the extension README](../../apps/extension/README.md) ("Manual test: a 60-minute Google Meet in Chrome and Edge") is the test; run it once in Edge, on Windows, macOS or Linux, with these additions:
+
+1. **Install:** unzip the release zip (so what is tested is the package that will be uploaded) and load it at `edge://extensions` (Developer mode, Load unpacked); copy its id and list it in `EXTENSION_IDS` of the test server (or, after E5, install the store build).
+2. **The redirect address first:** open the popup's service worker console at `edge://extensions` and run `chrome.identity.getRedirectURL()`; it must be `https://<32 letters a to p>.chromiumapp.org/`, the shape the Ludy sign-in accepts. If it is not, stop: the sign-in needs a code change and the rest cannot pass.
+3. **Sign in and the device name:** the sign-in window opens and returns; in Ludy under connected devices the device reads "Tiện ích Ludy, Edge …" (`auth.ts:53`).
+4. **The permission prompt (also settles P2 for Edge):** "Bật ghi cuộc họp" makes Edge ask for tab capture; allow. The microphone page opens; allow.
+5. **The recording:** the consent step runs first and refuses an empty confirmation; the REC badge and the timer show; both voices arrive in the meeting's audio; the other person hears you; the other tab is not muted; lock and unlock the screen once; a stopped upload can be retried.
+6. **Record the result** on #3181: Edge version, operating system, Meet, minutes recorded, and for each step pass or what happened. A step that fails on Edge and passes on Chrome is a bug to file (P2 line, `tooling`), not a reason to change the permission list.
+
+### Why there is no Edge job in CI
+
+The extension's e2e tests launch the browser Playwright installs as `chromium` (`apps/extension/e2e/extension.spec.ts`: `channel: 'chromium'`, the new headless mode, the one headless mode that loads an unpacked extension), and the CI job installs only that (`pnpm --filter @crove/extension exec playwright install --with-deps chromium` in `ci.yml`). An `msedge` channel would not be a drop-in: it needs Edge on the runner (whether the image has it was **not** checked here), a headed run, and a branded browser that still honours `--load-extension` (**[unverified]**: Chrome stable has stopped doing so, and Edge may follow). Installing a browser in CI changes `.github/workflows/`, a protected path, so it is not done here; the coordinator decides, with the Meetings PO, whether the manual test is enough or an Edge job is worth building. The same unverified list is why the e2e config was not given an Edge option.
 
 ## Submitting
 
