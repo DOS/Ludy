@@ -79,6 +79,13 @@ const PUBLIC: Record<string, string> = {
 // here first, in a PR of its own; the PR that adds the route moves it into PUBLIC. A route here may be public and may
 // not exist yet; the stale-list check below skips it, and nothing else does.
 const PENDING: Record<string, string> = {
+  '/api/sign/view': 'public eSign link view (#3324): single-use fragment token is the credential in the JSON body; rate limited per IP and token hash, enforces org_app_on and entitlement with opaque 404',
+  '/api/sign/pdf': 'public eSign source PDF stream (#3324): same token in JSON body; enforces OTP gate (403 OTP_REQUIRED), bounded concurrency, and opaque 404',
+  '/api/sign/otp/request': 'public eSign email OTP challenge request (#3324): same token in JSON body; rate limited per IP, token hash, and DB hourly cap',
+  '/api/sign/otp/verify': 'public eSign email OTP verification (#3324): same token in JSON body; locks OTP after 5 failed attempts without leaking secrets',
+  '/api/sign/submit': 'public eSign single-use submission (#3324): same token in JSON body; atomic token consume prevents concurrent replay (409)',
+  '/api/sign/decline': 'public eSign single-use decline (#3324): same token in JSON body; atomic token consume prevents concurrent replay (409) and revokes remaining envelope tokens',
+  '/api/sign/verify': 'public eSign certificate integrity lookup (#3324): takes certificateCode and client-hashed sealed PDF sha256; checks org_app_on + entitlement with opaque 404',
 };
 const isPublic = (path: string) => Object.hasOwn(PUBLIC, path) || Object.hasOwn(PENDING, path);
 
