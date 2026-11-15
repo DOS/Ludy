@@ -7,7 +7,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useId, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import type { NoteLinkTargetInput, NoteSummary, TodoSummary } from '@crove/kernel-contract';
+import { TODO_TITLE_MAX, type NoteLinkTargetInput, type NoteSummary, type TodoSummary } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
@@ -159,7 +159,7 @@ function AddTodo({ target, onDone }: { target: NoteLinkTargetInput; onDone: () =
       <label htmlFor={`${id}-todo-title`} className="sr-only">
         {t('panel.addTodoTitle')}
       </label>
-      <Input id={`${id}-todo-title`} value={title} maxLength={200} placeholder={t('panel.addTodoTitle')} onChange={(e) => setTitle(e.target.value)} autoFocus />
+      <Input id={`${id}-todo-title`} value={title} maxLength={TODO_TITLE_MAX} placeholder={t('panel.addTodoTitle')} onChange={(e) => setTitle(e.target.value)} autoFocus />
       <div className="flex flex-wrap items-center gap-3">
         <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <VisibilityIcon shared={false} className="size-3.5" />

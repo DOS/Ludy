@@ -318,6 +318,7 @@ function Editor({
           onAdd={(target) => linkAdd.mutateAsync(target)}
           adding={linkAdd.isPending}
           error={linkAdd.error}
+          onClearError={() => linkAdd.reset()}
         />
       )}
 

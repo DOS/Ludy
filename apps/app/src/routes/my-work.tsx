@@ -102,6 +102,18 @@ function HandOverDialog({ todo, disabled, onDone }: { todo: Todo; disabled: bool
       onDone();
     },
   });
+  const resetForm = () => {
+    setPositionId('');
+    setProjectId('');
+    setTitle(todo.title);
+    setDescription(handOverDescription(todo));
+    handOver.reset();
+  };
+  const onOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen);
+    if (nextOpen) resetForm();
+    else handOver.reset();
+  };
   // The dialog renders in a portal but sits inside the editor's form in React's tree, so its submit stops here and
   // never saves the editor (the editor ignores keys from outside its own form).
   const submit = (event: FormEvent) => {
@@ -110,8 +122,8 @@ function HandOverDialog({ todo, disabled, onDone }: { todo: Todo; disabled: bool
     if (positionId && title.trim() && !handOver.isPending) handOver.mutate({ positionId, projectId, title, description });
   };
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <Button type="button" variant="outline" disabled={disabled} title={disabled ? t('handOverSaveFirst') : undefined} onClick={() => setOpen(true)} data-testid="todo-hand-over">
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <Button type="button" variant="outline" disabled={disabled} title={disabled ? t('handOverSaveFirst') : undefined} onClick={() => onOpenChange(true)} data-testid="todo-hand-over">
         {t('handOver')}
       </Button>
       <DialogContent closeLabel={common('close')} className="sm:max-w-lg">
@@ -156,6 +168,7 @@ function HandOverDialog({ todo, disabled, onDone }: { todo: Todo; disabled: bool
             {todo.dueOn === null ? t('handOverNoDue') : t('handOverDue', { due: todo.dueTime ? t('dueAt', { day: f.date(todo.dueOn), time: todo.dueTime }) : f.date(todo.dueOn) })}
           </p>
           {chart.data && positions.length === 0 && <p className="text-xs text-subtle-foreground">{t('handOverNoPositions')}</p>}
+          {hasProjects && projects.error && <ErrorText>{errorMessage(projects.error)}</ErrorText>}
           {handOver.error && <ErrorText>{errorMessage(handOver.error)}</ErrorText>}
           <DialogFooter>
             <DialogClose render={<Button type="button" variant="outline" />}>{common('cancel')}</DialogClose>
@@ -381,6 +394,7 @@ function TodoEditor({ todo, onClose }: { todo: Todo; onClose: () => void }) {
             onAdd={(target) => linkAdd.mutateAsync(target)}
             adding={linkAdd.isPending}
             error={linkAdd.error}
+            onClearError={() => linkAdd.reset()}
           />
         )}
         <div className="flex flex-wrap items-center gap-2">

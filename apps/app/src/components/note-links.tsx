@@ -123,11 +123,13 @@ export function RecordLinkAdder({
   onAdd,
   adding = false,
   error,
+  onClearError,
 }: {
   existingLinks: NoteLink[];
   onAdd: (target: NoteLinkTargetInput) => Promise<unknown> | unknown;
   adding?: boolean;
   error?: unknown;
+  onClearError?: (() => void) | undefined;
 }) {
   const t = useTranslations('notes.links');
   const common = useTranslations('common');
@@ -160,7 +162,16 @@ export function RecordLinkAdder({
   if (!open) {
     return (
       <div>
-        <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)} data-testid="add-record-link">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            onClearError?.();
+            setOpen(true);
+          }}
+          data-testid="add-record-link"
+        >
           {t('add')}
         </Button>
       </div>
@@ -169,9 +180,13 @@ export function RecordLinkAdder({
 
   const handleAdd = async () => {
     if (!targetId || adding) return;
-    await onAdd({ targetType, targetId });
-    setTargetId('');
-    setOpen(false);
+    try {
+      await onAdd({ targetType, targetId });
+      setTargetId('');
+      setOpen(false);
+    } catch {
+      // Surfaced through the caller's error state; keep the picker open so the user can retry.
+    }
   };
 
   return (
@@ -186,6 +201,7 @@ export function RecordLinkAdder({
             onChange={(e) => {
               setTargetType(e.target.value as LinkableType);
               setTargetId('');
+              onClearError?.();
             }}
             data-testid="record-link-type"
           >
@@ -200,7 +216,10 @@ export function RecordLinkAdder({
             className="mt-1 w-full"
             value={targetId}
             disabled={loading || options.length === 0}
-            onChange={(e) => setTargetId(e.target.value)}
+            onChange={(e) => {
+              setTargetId(e.target.value);
+              onClearError?.();
+            }}
             data-testid="record-link-target"
           >
             <NativeSelectOption value="">{t('pickPlaceholder')}</NativeSelectOption>
@@ -226,6 +245,7 @@ export function RecordLinkAdder({
           onClick={() => {
             setTargetId('');
             setOpen(false);
+            onClearError?.();
           }}
         >
           {common('cancel')}

@@ -557,8 +557,10 @@ export const projectTaskCreate = defineCommand({
   target: projectTarget,
   handler: async (ctx, input): Promise<{ projectId: string; taskId: string }> => {
     const userId = userOf(ctx.actor);
-    const row = await loadProject(ctx.trx, ctx.orgId, input.projectId, true);
-    assertNotArchived(row);
+    // Check existence/status without a row lock before calling kernel.task.create (which locks crove_kernel.position),
+    // then lock crove_projects.project afterwards so concurrent task/project writes share the position -> project lock order.
+    const preview = await loadProject(ctx.trx, ctx.orgId, input.projectId, false);
+    assertNotArchived(preview);
 
     const { taskId } = await ctx.run<{ taskId: string }>('kernel.task.create', {
       title: input.title,
@@ -570,6 +572,9 @@ export const projectTaskCreate = defineCommand({
     if (input.status !== undefined && input.status !== 'todo') {
       await ctx.run('kernel.task.set_status', { id: taskId, status: input.status });
     }
+
+    const row = await loadProject(ctx.trx, ctx.orgId, input.projectId, true);
+    assertNotArchived(row);
 
     await ctx.trx
       .insertInto('crove_projects.project_task')
