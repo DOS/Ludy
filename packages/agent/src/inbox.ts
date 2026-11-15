@@ -14,6 +14,14 @@ import { z } from 'zod';
 import { chatModel, type AiConfig, type AiUsage } from './index.ts';
 import { metered } from './meter.ts';
 import { PayrollCoworker, type PayrollCallOptions, type PayrollFlagResult, type PayrollPrepareResult, type PayrollSheet, type PayslipExplainRequest, type PayslipExplainResult } from './payroll-coworker.ts';
+import {
+  createLaborComplianceGenerator,
+  reviewLaborCompliance,
+  type LaborComplianceGenerator,
+  type LaborComplianceInput,
+  type LaborComplianceResult,
+  type ReviewLaborComplianceOptions,
+} from './labor-coworker.ts';
 import { checkMarketplaceLineSentence, marketplaceLineInstructions, marketplaceLinePrompt, type MarketplaceLineFacts, type MarketplaceLineResult } from './marketplace-line.ts';
 import { checkPayrollMatchSentence, payrollMatchInstructions, payrollMatchPrompt, type PayrollMatchFacts, type PayrollMatchResult } from './payroll-match.ts';
 import { checkOverviewSentence, overviewInstructions, overviewPrompt, overviewQuiet, type OverviewFacts, type OverviewSentenceResult } from './overview.ts';
@@ -234,11 +242,13 @@ export class InboxReader {
   private readonly generateEInvoiceDraft: EInvoiceDraftGenerator;
   private readonly generateQuoteLines: QuoteLinesGenerator;
   private readonly generateProjectWeeklyStatus: ProjectWeeklyStatusGenerator;
+  private readonly generateLaborCheck: LaborComplianceGenerator;
   private readonly payroll: PayrollCoworker;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
-  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; payrollMatch?: PayrollMatchGenerator; marketplaceLine?: MarketplaceLineGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
+  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; payrollMatch?: PayrollMatchGenerator; marketplaceLine?: MarketplaceLineGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; laborCheck?: LaborComplianceGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
     this.payroll = new PayrollCoworker(config, generators.payroll);
+    this.generateLaborCheck = generators.laborCheck ?? createLaborComplianceGenerator(config);
     const timeoutMs = config.timeoutMs ?? 60_000;
     this.generateIntents =
       generators.intents ??
@@ -457,6 +467,9 @@ export class InboxReader {
   }
   payrollExplain(request: PayslipExplainRequest, options?: PayrollCallOptions): Promise<PayslipExplainResult> {
     return this.payroll.explain(request, options);
+  }
+  laborCheck(input: LaborComplianceInput, options?: Omit<ReviewLaborComplianceOptions, 'generate'>): Promise<LaborComplianceResult> {
+    return reviewLaborCompliance(input, { ...options, generate: this.generateLaborCheck });
   }
 
   /** The finance coworker's sentence on the Kế toán overview (#2631) from its aggregated figures, or why there is none: when nothing moved the model is not asked,

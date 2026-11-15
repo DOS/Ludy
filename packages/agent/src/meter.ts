@@ -55,6 +55,8 @@ export const AI_FEATURES = {
   'finance.payroll_prepare': 'finance',
   'finance.payroll_flag': 'finance',
   'finance.payroll_explain': 'finance',
+  // The finance coworker's pre-export compliance review for Sổ quản lý lao động and Báo cáo 01/PLI (#3372): code computes every finding and count, and the model summarizes pseudonymized readiness.
+  'finance.labor_check': 'finance',
   // The finance coworker's one line on why a bank statement line may be a payroll payment (#2532): code decided by the amount, the model only words it from the kind, month, amount and date (no name, no
   // description, no account); a line that states a figure it was not given is refused, and a person asks for the payment and approves it.
   'finance.bank_match_explain': 'finance',

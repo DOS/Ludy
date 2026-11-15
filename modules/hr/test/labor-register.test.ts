@@ -179,6 +179,15 @@ describe('Báo cáo 01/PLI (build01PliReport)', () => {
       [LABOR_REGISTER_ERASED_PLACEHOLDER, ''],
       ['An', 'Nam'],
     ]);
+
+    const unknownGenderDoc = build01PliReport({
+      period: '2026-H1',
+      employer,
+      persons: [samplePerson('1', 'An', { gender: null, startedOn: '2025-01-01' })],
+    });
+    const unknownGenderSummary = new Map((unknownGenderDoc.sheets[0]?.rows ?? []).map((r) => [r.item, r.value]));
+    expect(unknownGenderSummary.get('Cuối kỳ: Lao động nữ (không gồm hồ sơ đã xóa)')).toBe('Chưa có dữ liệu');
+    expect(unknownGenderDoc.notes.join(' ')).toContain('Chưa đủ dữ liệu giới tính');
   });
 
   it('supports full-year YYYY 01/PLI reports capturing H1 exits alongside H2 hires', () => {
@@ -255,6 +264,53 @@ describe('Báo cáo 01/PLI (build01PliReport)', () => {
         persons: [samplePerson('3', 'Chi', { contractKind: 'fixed_term', contractStartDate: null })],
       }),
     ).toThrow(/contractStartDate/);
+
+    const uncertainContractDoc = buildLaborRegister({
+      employer,
+      asOf: '2026-06-30',
+      persons: [
+        samplePerson('4', 'Dương', {
+          contractKind: 'fixed_term',
+          contractStartDate: null,
+          contractDateUncertain: true,
+          contractEndDate: null,
+          note: 'Chưa đủ kỳ lương đã duyệt để xác định ngày hợp đồng.',
+        }),
+      ],
+    });
+    expect(uncertainContractDoc.sheets[0]?.rows[0]).toMatchObject({
+      contractType: 'Xác định thời hạn',
+      contractStartDate: '',
+      contractEndDate: '',
+      note: 'Chưa đủ kỳ lương đã duyệt để xác định ngày hợp đồng.',
+    });
+  });
+
+  it('keeps known female count on 01/PLI when another active worker has gender other, and only flags null/missing gender', () => {
+    const knownOtherDoc = build01PliReport({
+      period: '2026-H1',
+      employer,
+      persons: [
+        samplePerson('1', 'Nguyễn Nữ', { gender: 'female', startedOn: '2026-01-01', contractStartDate: '2026-01-01' }),
+        samplePerson('2', 'Trần Nam', { gender: 'male', startedOn: '2026-01-01', contractStartDate: '2026-01-01' }),
+        samplePerson('3', 'Lê Khác', { gender: 'other', startedOn: '2026-01-01', contractStartDate: '2026-01-01' }),
+      ],
+    });
+    const knownSummary = new Map((knownOtherDoc.sheets[0]?.rows ?? []).map((r) => [r.item, r.value]));
+    expect(knownSummary.get('Cuối kỳ: Lao động nữ (không gồm hồ sơ đã xóa)')).toBe('1');
+    expect(knownOtherDoc.notes.join(' ')).not.toContain('Chưa đủ dữ liệu giới tính');
+
+    const missingGenderDoc = build01PliReport({
+      period: '2026-H1',
+      employer,
+      persons: [
+        samplePerson('1', 'Nguyễn Nữ', { gender: 'female', startedOn: '2026-01-01', contractStartDate: '2026-01-01' }),
+        samplePerson('2', 'Phạm Thiếu Giới Tính', { gender: null, startedOn: '2026-01-01', contractStartDate: '2026-01-01' }),
+      ],
+    });
+    const missingSummary = new Map((missingGenderDoc.sheets[0]?.rows ?? []).map((r) => [r.item, r.value]));
+    expect(missingSummary.get('Cuối kỳ: Lao động nữ (không gồm hồ sơ đã xóa)')).toBe('Chưa có dữ liệu');
+    expect(missingGenderDoc.notes.join(' ')).toContain('Chưa đủ dữ liệu giới tính');
   });
 });
 
