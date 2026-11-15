@@ -38,12 +38,13 @@ const ANSWER: SinceYesterday = {
   ],
 };
 
-function render(opts: { data?: unknown; error?: boolean; locale?: 'en' | 'vi' } = {}): string {
+async function render(opts: { data?: unknown; error?: boolean; locale?: 'en' | 'vi' } = {}): Promise<string> {
   const qc = client.current;
   qc.clear();
   const key = ['today', 'sinceYesterday'];
   if (opts.data !== undefined) qc.setQueryData(key, opts.data);
-  if (opts.error) void qc.fetchQuery({ queryKey: key, queryFn: () => Promise.reject(new Error('boom')), retry: false }).catch(() => undefined);
+  // A failed fetch settled before the render; with data cached it is a failed refetch, which keeps the last good data.
+  if (opts.error) await qc.fetchQuery({ queryKey: key, queryFn: () => Promise.reject(new Error('boom')), retry: false, staleTime: 0 }).catch(() => undefined);
   const locale = opts.locale ?? 'en';
   return renderToStaticMarkup(
     <QueryClientProvider client={qc}>
@@ -64,25 +65,27 @@ describe('SinceYesterday', () => {
     expect(zSinceYesterday.safeParse({ items: [{ ...ANSWER.items[0], count: 0 }] }).success).toBe(false);
   });
 
-  it('says one line per coworker with its name and count, each linking to the AI inbox in the org', () => {
-    const html = render({ data: ANSWER });
+  it('says one line per coworker with its name and count, each linking to the AI inbox in the org', async () => {
+    const html = await render({ data: ANSWER });
     expect(html).toContain('Since yesterday');
-    expect(html).toContain('Ly prepared 5 items for you');
+    expect(html).toContain('Ly did 5 things for you');
     // A renamed coworker shows the name the kernel gave.
-    expect(html).toContain('Lan prepared 1 item for you');
+    expect(html).toContain('Lan did 1 thing for you');
     expect([...html.matchAll(/<a href="([^"]*)"/g)].map((m) => m[1])).toEqual(['/o/acme/inbox', '/o/acme/inbox']);
   });
 
-  it('says it in Vietnamese', () => {
-    const html = render({ data: ANSWER, locale: 'vi' });
+  it('says it in Vietnamese', async () => {
+    const html = await render({ data: ANSWER, locale: 'vi' });
     expect(html).toContain(viMessages.today.since.title);
-    expect(html).toContain('Ly đã chuẩn bị 5 mục cho bạn');
+    expect(html).toContain('Ly đã làm 5 việc cho bạn');
   });
 
-  it('renders nothing when every count is zero (nobody is listed), while loading and on an error', () => {
-    expect(render({ data: { items: [] } })).toBe('');
-    expect(render()).toBe('');
-    expect(render({ error: true })).toBe('');
+  it('renders nothing when every count is zero (nobody is listed), while loading, on an error and when a refetch fails over old counts', async () => {
+    expect(await render({ data: { items: [] } })).toBe('');
+    expect(await render()).toBe('');
+    expect(await render({ error: true })).toBe('');
+    // The query keeps the last good counts through a failed refetch; the section does not show them.
+    expect(await render({ data: ANSWER, error: true })).toBe('');
   });
 
   it('never calls a coworker an assistant (DESIGN.md 1.1)', () => {

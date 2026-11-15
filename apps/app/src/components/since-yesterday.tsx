@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // "Since yesterday" on Home (Vy plan C1c, issue #3256): one line per AI coworker that prepared something over the last day, as
-// "<name> prepared N things for you", linking to where a person approves it. The counts come from kernel.since_yesterday
+// "<name> did N things for you", linking to where a person approves it. The counts come from kernel.since_yesterday
 // (the member's readable activity rows, no model), so the section is the same with AI off. It shows nothing while it loads, when
 // it fails and when every count is zero: Home has a list of what needs the member, and a quiet day adds no empty box to it.
 import { useQuery } from '@tanstack/react-query';
@@ -40,7 +40,8 @@ export function SinceYesterday({ slug }: { slug: string }) {
   const live = useStreamLive();
   const since = useQuery({ ...orpc.today.sinceYesterday.queryOptions(), refetchInterval: pollEvery(live, 5 * 60_000, SAFETY_POLL_MS) });
   const items = since.data?.items ?? [];
-  if (items.length === 0) return null;
+  // A failed refetch keeps the last good data in the query: the section still shows nothing then.
+  if (since.isError || items.length === 0) return null;
   return (
     <section className="mt-8" aria-labelledby="overview-since">
       <h2 id="overview-since" className="text-lg font-semibold">

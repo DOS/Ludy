@@ -201,7 +201,7 @@ export const vi = {
     since: {
       title: 'Từ hôm qua',
       subtitle: 'Việc các đồng nghiệp AI đã làm cho bạn trong 24 giờ qua. Việc cần duyệt chờ bạn trong hộp duyệt.',
-      line: '{name} đã chuẩn bị {count, plural, other {# mục}} cho bạn',
+      line: '{name} đã làm {count, plural, other {# việc}} cho bạn',
       open: 'Mở',
     },
     fallback: {

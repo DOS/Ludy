@@ -203,7 +203,7 @@ export const en = {
     since: {
       title: 'Since yesterday',
       subtitle: 'What your AI coworkers did for you over the last day. Items that need approval wait in your inbox.',
-      line: '{name} prepared {count, plural, one {# item} other {# items}} for you',
+      line: '{name} did {count, plural, one {# thing} other {# things}} for you',
       open: 'Open',
     },
     fallback: {
