@@ -1829,7 +1829,7 @@ export const en = {
         stagedHint: 'The recording is downloaded and waiting to be received. Keep this page open; after 55 minutes you must import it again.',
         imported: 'Imported: open the meeting',
         failed: 'Could not import: {reason}',
-        unavailable: 'No recording can be imported right now.',
+        viewerOnly: 'Only members can import recordings. Your role is view-only.',
       },
       errors: {
         download_failed: 'The recording could not be downloaded from the platform. Try again in a few minutes.',
@@ -1866,6 +1866,7 @@ export const en = {
       claim: {
         working: 'Processing the recording...',
         waiting: 'A recording is downloaded but not received yet. Keep this page open; after 55 minutes you must import it again.',
+        retry: 'Try again',
       },
     },
     ask: {

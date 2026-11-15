@@ -104,7 +104,7 @@ export function MeetingPlatforms({ canConnect }: { canConnect: boolean }) {
       <h2 className="text-base font-semibold text-foreground">{t('title')}</h2>
       <p className="text-sm text-muted-foreground">{t('intro')}</p>
       {connections.isPending && !connections.error && (
-        <div data-testid="meeting-platforms-loading">
+        <div data-testid="meeting-platforms-loading" aria-label={t('loading')}>
           <RowsSkeleton rows={2} />
         </div>
       )}

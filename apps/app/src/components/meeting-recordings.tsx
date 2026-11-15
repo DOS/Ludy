@@ -159,7 +159,7 @@ function offers(row: MeetingPlatformRecordingView, words: { audio: string; video
   return items.length > 0 ? items.join(', ') : words.nothing;
 }
 
-function RecordingRow({ row, slug, onImport }: { row: MeetingPlatformRecordingView; slug: string; onImport: (row: MeetingPlatformRecordingView) => void }) {
+function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatformRecordingView; slug: string; canImport: boolean; onImport: (row: MeetingPlatformRecordingView) => void }) {
   const t = useTranslations('meetings.platform.recordings');
   const tp = useTranslations('meetings.platform');
   const f = useFormat();
@@ -189,9 +189,15 @@ function RecordingRow({ row, slug, onImport }: { row: MeetingPlatformRecordingVi
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           {row.status === 'suggested' && block === null && (
             <>
-              <Button type="button" size="sm" aria-label={t('importOf', { title })} data-testid="meeting-recording-import" onClick={() => onImport(row)}>
-                {t('import')}
-              </Button>
+              {canImport ? (
+                <Button type="button" size="sm" aria-label={t('importOf', { title })} data-testid="meeting-recording-import" onClick={() => onImport(row)}>
+                  {t('import')}
+                </Button>
+              ) : (
+                <span className="text-xs text-muted-foreground" data-testid="meeting-recording-viewer">
+                  {t('viewerOnly')}
+                </span>
+              )}
               {quiet(t('dismiss'), t('dismissOf', { title }))}
             </>
           )}
@@ -225,7 +231,7 @@ function RecordingRow({ row, slug, onImport }: { row: MeetingPlatformRecordingVi
                   {tp('settings.title')}
                 </Link>
               )}
-              {canRetry(row) && (
+              {canImport && canRetry(row) && (
                 <Button type="button" size="sm" variant="outline" aria-label={t('importOf', { title })} data-testid="meeting-recording-retry" onClick={() => onImport(row)}>
                   {t('retry')}
                 </Button>
@@ -252,6 +258,9 @@ export function PlatformRecordings({ slug }: { slug: string }) {
   const on = meetingsInstalled();
   const recordings = useMeetingPlatformRecordings(on);
   const connections = useQuery({ ...orpc.meetingPlatform.connections.queryOptions(), enabled: on });
+  // A member demoted to viewer after connecting still sees their own list (the server lets a viewer read and dismiss), but the import itself is a meeting the viewer may not create: no "Nhập" until the role is known to allow it.
+  const org = useQuery({ ...orpc.org.get.queryOptions(), enabled: on });
+  const canImport = org.data !== undefined && org.data.role !== 'viewer';
   const [target, setTarget] = useState<MeetingPlatformRecordingView | null>(null);
   if (!on) return null;
   const rows = recordings.data ?? [];
@@ -278,7 +287,7 @@ export function PlatformRecordings({ slug }: { slug: string }) {
       {rows.length > 0 && (
         <ul className="divide-y rounded-lg border border-border bg-card">
           {rows.map((row) => (
-            <RecordingRow key={row.id} row={row} slug={slug} onImport={setTarget} />
+            <RecordingRow key={row.id} row={row} slug={slug} canImport={canImport} onImport={setTarget} />
           ))}
         </ul>
       )}

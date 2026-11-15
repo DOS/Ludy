@@ -5,7 +5,7 @@ import { IMPORT_CONSENT_NOTICE_VERSION, MEETING_PLATFORM_ERROR_CODES, MEETING_PL
 import { IMPORT_NOTICE } from '@crove/meeting-recorder';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
-import { IMPORT_MAX_SECONDS, POLL_BUSY_MS, POLL_IDLE_MS, canRetry, canSubmitImport, errorKey, importBlock, isInFlight, lengthParts, pollMs, rowsToClaim } from '../src/lib/meeting-platform.ts';
+import { IMPORT_MAX_SECONDS, POLL_BUSY_MS, POLL_IDLE_MS, canRetry, canSubmitImport, errorKey, importBlock, isBenignClaimRefusal, isInFlight, lengthParts, pollMs, rowsToClaim } from '../src/lib/meeting-platform.ts';
 
 const row = (over: Partial<MeetingPlatformRecordingView> = {}): MeetingPlatformRecordingView => ({
   id: 'r1',
@@ -126,5 +126,13 @@ describe('the words', () => {
 
   it('shows the notice version the server accepts', () => {
     expect(IMPORT_NOTICE.version).toBe(IMPORT_CONSENT_NOTICE_VERSION);
+  });
+});
+
+describe('isBenignClaimRefusal', () => {
+  it('treats a row that moved on (another tab claimed it, no longer staged, not theirs) as no error, and anything else as one', () => {
+    expect(isBenignClaimRefusal({ code: 'MEETING_PLATFORM_STATE', status: 409 })).toBe(true);
+    expect(isBenignClaimRefusal({ code: 'MEETING_PLATFORM_NOT_FOUND', status: 404 })).toBe(true);
+    for (const error of [{ code: 'MEDIA_PROBE_UNAVAILABLE', status: 503 }, { code: 'IMPORT_ONLY', status: 403 }, new TypeError('Failed to fetch'), new Error('x'), null, undefined, 'x']) expect(isBenignClaimRefusal(error)).toBe(false);
   });
 });

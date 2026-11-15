@@ -57,3 +57,10 @@ export function rowsToClaim(rows: readonly MeetingPlatformRecordingView[] | unde
   for (const row of rows ?? []) if (row.status === 'staged' && row.meetingId !== null && !tried.has(row.id)) out.push({ id: row.id, meetingId: row.meetingId });
   return out;
 }
+
+// A claim the server refuses because the row has already moved on (another tab claimed it first, or it is no longer staged or no longer the member's) is not an error for the member: the next read of
+// the list says what became of it. Any other failure (a network error, a server error, a media check that could not run) is shown, with a way to try again.
+export function isBenignClaimRefusal(error: unknown): boolean {
+  const code = typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined;
+  return code === 'MEETING_PLATFORM_STATE' || code === 'MEETING_PLATFORM_NOT_FOUND';
+}

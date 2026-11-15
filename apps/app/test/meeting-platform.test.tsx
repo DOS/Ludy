@@ -78,6 +78,8 @@ const wrap = (node: ReactNode, locale: 'en' | 'vi' = 'en') => (
 );
 const reset = () => {
   client.current.clear();
+  // The signed-in member's role: a member by default (the Meetings tab offers "Nhập" only to someone who may import).
+  client.current.setQueryData(['org', 'get'], { role: 'member' });
   config.modules = ['kernel', 'meetings'];
   config.sandbox = true;
 };
@@ -199,6 +201,23 @@ describe('PlatformRecordings (Meetings tab)', () => {
     const vn = renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />, 'vi'));
     expect(vn).toContain(viMessages.meetings.platform.recordings.title);
     expect(vn).toContain('1 giờ 5 phút');
+  });
+
+  it('offers a viewer no "Nhập" or retry, says why, and still lets them dismiss; nothing is offered before the role is known', () => {
+    reset();
+    client.current.setQueryData(KEYS.connections, [connection()]);
+    client.current.setQueryData(KEYS.recordings, [recording(), recording({ id: 'f', status: 'failed', meetingId: 'm5', errorCode: 'download_failed' })]);
+    client.current.setQueryData(['org', 'get'], { role: 'viewer' });
+    for (const locale of ['en', 'vi'] as const) {
+      const words = locale === 'en' ? en : viMessages;
+      const html = renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />, locale));
+      expect(html).not.toContain('meeting-recording-import');
+      expect(html).not.toContain('meeting-recording-retry');
+      expect(html).toContain(esc(words.meetings.platform.recordings.viewerOnly));
+      expect(html).toContain(words.meetings.platform.recordings.dismiss);
+    }
+    client.current.removeQueries({ queryKey: ['org', 'get'] });
+    expect(renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />))).not.toContain('meeting-recording-import');
   });
 
   it('offers no "Nhập" for a video-only recording or one over 90 minutes or 300 MB, and says why', () => {

@@ -5,9 +5,10 @@
 // "not_claimed" and is imported again. Nothing here calls a model or starts a recording.
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
+import { Button } from '@crove/ui/components/button';
 import { ErrorText } from './ui.tsx';
 import { claimImportedMedia, errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { rowsToClaim } from '../lib/meeting-platform.ts';
+import { isBenignClaimRefusal, rowsToClaim } from '../lib/meeting-platform.ts';
 import { useMeetingPlatformRecordings } from './meeting-recordings.tsx';
 import { meetingsInstalled } from './linked-meetings.tsx';
 
@@ -19,22 +20,26 @@ export function ImportAutoClaim() {
   const tried = useRef<Set<string>>(new Set());
   const [claiming, setClaiming] = useState<readonly string[]>([]);
   const [failure, setFailure] = useState<unknown>(null);
+  // Bumped by "Thử lại": the effect runs again for the rows this page already tried.
+  const [again, setAgain] = useState(0);
   const rows = recordings.data;
   useEffect(() => {
     for (const { id, meetingId } of rowsToClaim(rows, tried.current)) {
       tried.current.add(id);
       setClaiming((now) => [...now, id]);
       void claimImportedMedia(meetingId, id)
-        .catch((error: unknown) => setFailure(error))
-        .finally(() => {
+        .then(() => setFailure(null))
+        // The row moved on (another tab claimed it): the list tells the rest, no message.
+        .catch((error: unknown) => setFailure(isBenignClaimRefusal(error) ? null : error))
+        .finally(async () => {
+          // Wait for the new list before the row stops counting as "being claimed", so the "waiting" line does not flash between the two.
+          await Promise.all([queryClient.invalidateQueries({ queryKey: orpc.meetingPlatform.recordings.key() }), queryClient.invalidateQueries({ queryKey: orpc.meetings.key() })]);
           setClaiming((now) => now.filter((x) => x !== id));
-          void queryClient.invalidateQueries({ queryKey: orpc.meetingPlatform.recordings.key() });
-          void queryClient.invalidateQueries({ queryKey: orpc.meetings.key() });
         });
     }
-  }, [rows]);
+  }, [rows, again]);
   if (!on) return null;
-  const waiting = (rows ?? []).some((r) => r.status === 'staged' && !claiming.includes(r.id));
+  const waiting = failure === null && (rows ?? []).some((r) => r.status === 'staged' && !claiming.includes(r.id));
   if (claiming.length === 0 && !waiting && failure === null) return null;
   return (
     <div className="space-y-2" data-testid="meeting-import-claim">
@@ -48,7 +53,24 @@ export function ImportAutoClaim() {
           {t('waiting')}
         </p>
       )}
-      {failure !== null && <ErrorText>{errorMessage(failure)}</ErrorText>}
+      {failure !== null && (
+        <div className="flex flex-wrap items-center gap-2">
+          <ErrorText>{errorMessage(failure)}</ErrorText>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            data-testid="meeting-import-claim-retry"
+            onClick={() => {
+              setFailure(null);
+              tried.current.clear();
+              setAgain((n) => n + 1);
+            }}
+          >
+            {t('retry')}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

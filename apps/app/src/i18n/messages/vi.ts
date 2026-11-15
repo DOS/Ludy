@@ -1826,7 +1826,7 @@ export const vi = {
         stagedHint: 'Bản ghi đã tải xong và chờ được nhận. Hãy giữ trang này mở; sau 55 phút bạn phải nhập lại.',
         imported: 'Đã nhập: mở cuộc họp',
         failed: 'Không nhập được: {reason}',
-        unavailable: 'Không có bản ghi nào bạn nhập được lúc này.',
+        viewerOnly: 'Chỉ thành viên mới nhập được bản ghi. Bạn đang ở quyền chỉ xem.',
       },
       errors: {
         download_failed: 'Không tải được bản ghi từ nền tảng. Hãy thử lại sau ít phút.',
@@ -1863,6 +1863,7 @@ export const vi = {
       claim: {
         working: 'Đang xử lý bản ghi...',
         waiting: 'Có bản ghi đã tải xong nhưng chưa được nhận. Hãy giữ trang này mở; sau 55 phút bạn phải nhập lại.',
+        retry: 'Thử lại',
       },
     },
     ask: {
