@@ -29,8 +29,9 @@ type N = { type: string; start: number; end: number; [key: string]: any };
 // Node network module, never allowed).
 export type Reach = 'tenant_url' | `provider:${string}` | 'publishers' | 'raw_network';
 
-// The egress guard (packages/kernel-runtime/src/egress.ts).
-const GUARDS: ReadonlySet<string> = new Set(['guardedFetch', 'guardedRequest', 'egressFetch']);
+// The egress guard (packages/kernel-runtime/src/egress.ts). guardedStream, the streaming sibling of guardedRequest that the meeting import job downloads through (#3173), is named
+// here before it exists on main, so a job that imports it counts as reaching tenant_url from the day it lands.
+const GUARDS: ReadonlySet<string> = new Set(['guardedFetch', 'guardedRequest', 'guardedStream', 'egressFetch']);
 // What @crove/channel exports that reaches no platform: its constants, its errors and these helpers. Anything else
 // (publishers, connectors, refreshers, logins, checks, send helpers) reaches one: Telegram or Discord when it names
 // them, provider:channel otherwise.
