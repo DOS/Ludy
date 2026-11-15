@@ -2,7 +2,7 @@
 -- Crove kernel (issue #2591): the org purge also deletes projects, project members and project-task links
 -- (crove_projects.project_task, crove_projects.project_member, crove_projects.project), ahead of the kernel tasks and
 -- members they reference. Idempotent; applied files stay untouched.
--- This is the body of 20270101070000 (the newest, with the members' minutes webhooks) with one change: the three
+-- This is the body of 20270102030000 (the newest, with the meeting platform connections) with one change: the three
 -- crove_projects tables join the list of tables deleted whole, children first, before crove_kernel.task and
 -- crove_kernel.tenant_member. Its signature, owner, grants and every other list and step are unchanged.
 SET LOCAL lock_timeout = '2s';
@@ -35,7 +35,7 @@ DECLARE
   v_kernel_first text[] := ARRAY[
     'crove_kernel.member_vy_memory', 'crove_kernel.member_vy_result',
     'crove_hr.payroll_bank_template', 'crove_hr.payroll_dependent', 'crove_hr.payroll_employee',
-    'crove_meetings.calendar_agenda', 'crove_meetings.hook_delivery', 'crove_meetings.member_hook', 'crove_meetings.translation', 'crove_meetings.meeting_note', 'crove_meetings.media_key', 'crove_meetings.action_item', 'crove_meetings.meeting_result', 'crove_meetings.transcript_segment', 'crove_meetings.live_line', 'crove_meetings.live_chunk', 'crove_meetings.audio_segment', 'crove_meetings.meeting_video', 'crove_meetings.meeting_reader', 'crove_meetings.meeting',
+    'crove_meetings.chat_post_body', 'crove_meetings.chat_post', 'crove_meetings.chat_channel_target', 'crove_meetings.chat_channel', 'crove_meetings.calendar_agenda', 'crove_meetings.hook_delivery', 'crove_meetings.member_hook', 'crove_meetings.translation', 'crove_meetings.meeting_note', 'crove_meetings.media_key', 'crove_meetings.action_item', 'crove_meetings.meeting_result', 'crove_meetings.transcript_segment', 'crove_meetings.live_line', 'crove_meetings.live_chunk', 'crove_meetings.audio_segment', 'crove_meetings.meeting_video', 'crove_meetings.meeting_reader', 'crove_meetings.meeting',
     'crove_kernel.saved_reply', 'crove_kernel.conversation_setting', 'crove_kernel.member_availability', 'crove_kernel.conversation_composing', 'crove_kernel.conversation_draft', 'crove_kernel.conversation_note', 'crove_kernel.conversation_read', 'crove_kernel.conversation_attachment', 'crove_kernel.conversation_message', 'crove_kernel.conversation', 'crove_kernel.conversation_identity', 'crove_kernel.channel_access',
     'crove_ads.ad_flag_setting', 'crove_ads.ad_campaign_request', 'crove_ads.ad_campaign_draft', 'crove_ads.ad_spend_cap', 'crove_ads.ad_org_setting', 'crove_ads.ad_sync_run', 'crove_ads.ad_spend_day', 'crove_ads.ad_account',
     'crove_kernel.today_mail', 'crove_kernel.saved_view', 'crove_notes.link', 'crove_notes.todo', 'crove_notes.note',
@@ -49,7 +49,7 @@ DECLARE
     'crove_kernel.tax_profile', 'crove_kernel.usage_deferral', 'crove_kernel.file_upload', 'crove_kernel.record_le',
     'crove_kernel.budget_policy', 'crove_kernel.kill_switch', 'crove_kernel.credential', 'crove_kernel.subject_key', 'crove_kernel.calendar_credential',
     'crove_finance.vendor_account_rule', 'crove_finance.categorization_rule', 'crove_finance.stock_alias', 'crove_finance.marketplace_party', 'crove_finance.einvoice_connection', 'crove_finance.marketplace_connection', 'crove_finance.einvoice_series', 'crove_finance.bank_party_rule', 'crove_finance.customer_collection', 'crove_finance.collection_setting', 'crove_finance.bank_account_number', 'crove_finance.bank_feed_account', 'crove_finance.bank_feed_listed_account', 'crove_crm.booking_feed', 'crove_crm.booking', 'crove_kernel.availability_rule',
-    'crove_kernel.calendar_event_link', 'crove_kernel.calendar_event', 'crove_kernel.calendar_connection', 'crove_crm.sales_order_delivery', 'crove_crm.sales_order_line', 'crove_crm.sales_order', 'crove_crm.quote_link', 'crove_crm.quote_line', 'crove_crm.quote', 'crove_crm.quote_setting', 'crove_crm.deal_next_step', 'crove_crm.deal_setting', 'crove_crm.deal', 'crove_crm.pipeline_stage', 'crove_crm.import_row', 'crove_crm.import_batch', 'crove_crm.event_type'];
+    'crove_kernel.calendar_event_link', 'crove_kernel.calendar_event', 'crove_kernel.calendar_connection', 'crove_kernel.meeting_platform_recording', 'crove_kernel.meeting_platform_credential', 'crove_kernel.meeting_platform_connection', 'crove_crm.sales_order_delivery', 'crove_crm.sales_order_line', 'crove_crm.sales_order', 'crove_crm.quote_link', 'crove_crm.quote_line', 'crove_crm.quote', 'crove_crm.quote_setting', 'crove_crm.deal_next_step', 'crove_crm.deal_setting', 'crove_crm.deal', 'crove_crm.pipeline_stage', 'crove_crm.import_row', 'crove_crm.import_batch', 'crove_crm.event_type'];
   v_social text[] := ARRAY[
     'crove_social.account_snapshot', 'crove_social.bio_click', 'crove_social.bio_page', 'crove_social.brand_voice',
     'crove_social.calendar_feed', 'crove_social.calendar_note', 'crove_social.channel_policy',

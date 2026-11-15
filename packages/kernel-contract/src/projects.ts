@@ -66,6 +66,7 @@ export const zProjectTaskCreate = z.strictObject({
   description: z.string().max(10000).optional(),
   assigneePositionId: zId.nullable(),
   due: z.iso.datetime().optional(),
+  status: z.enum(BOARD_TASK_STATUSES).optional(),
 });
 export type ProjectTaskCreateInput = z.infer<typeof zProjectTaskCreate>;
 
