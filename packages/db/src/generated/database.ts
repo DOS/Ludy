@@ -2864,6 +2864,7 @@ export interface MeetingsChatPostTable {
   code: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   handed_at: ColumnType<Date | null, Date | string | null, NotGranted>;
+  sending_at: ColumnType<Date | null, Date | string | null, NotGranted>;
   settled_at: ColumnType<Date | null, Date | string | null, NotGranted>;
 }
 
