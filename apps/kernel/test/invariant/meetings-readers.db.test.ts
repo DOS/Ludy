@@ -6,8 +6,9 @@
 // - an attendee, owner, and admin read and write no draft result rows (stage = 'draft'), only the meeting recorder does;
 // - no non-owner role or PUBLIC has any table or column privilege on crove_meetings.media_key;
 // - worker and admin SECURITY DEFINER functions in crove_meetings pin search_path = pg_catalog, pg_temp, grant no EXECUTE to PUBLIC,
-//   and return only allowed metadata scalar or table column types, never meeting text. One narrow, locked exception (owner decision of 2026-11-15, A6, #3164): four named functions of
-//   the member's minutes webhook, named columns of named types, executable by named roles alone (fixtures/definer-return-types.ts).
+//   and return only allowed metadata scalar or table column types, never meeting text. One narrow, locked exception (owner decision of 2026-11-15, A6, #3164, extended by one function
+//   the same day for B4, #3168): five named functions of the minutes webhook and of the minutes posted to Slack and Teams, named columns of named types, executable by named roles alone
+//   (fixtures/definer-return-types.ts).
 // While crove_meetings tables do not exist yet (to_regclass is null), the tests pass cleanly with zero skipped tests.
 // Staged table arrival across M2 (#2576), M4 (#2578), and M6 (#2580) is tested with explicit assertions and zero skipped tests.
 // Part of the invariant suite; it imports package code under test, never helpers from outside test/invariant/.
@@ -23,7 +24,7 @@ import { Runtime } from '@crove/kernel-runtime';
 import { financeCommands, financeQueries } from '@crove/mod-finance';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
-import { HOOK_DEFINER_EXECUTORS, HOOK_DEFINER_TEXT, validateDefinerReturnType } from './fixtures/definer-return-types.ts';
+import { BODY_FUNCTIONS, HOOK_DEFINER_EXECUTORS, HOOK_DEFINER_TEXT, validateDefinerReturnType } from './fixtures/definer-return-types.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -848,9 +849,9 @@ suite('meeting notes readers and permissions on PostgreSQL (#2575, ADR-0047)', (
     }
   });
 
-  // The exception is locked to its roles: each of the four functions that exists is executable by the roles named for it and by no other (PUBLIC, crove_tenant, crove_definer_tenant and
-  // the other login role included), and nothing outside the four returns a column named body.
-  it('grants the four minutes-webhook definers that return text to their own role alone', async () => {
+  // The exception is locked to its roles: each of the five functions that exists is executable by the roles named for it and by no other (PUBLIC, crove_tenant, crove_definer_tenant and
+  // the other login role included), and nothing outside the five returns a column named body.
+  it('grants the five definers that return text (the minutes webhook and the minutes posted to a channel) to their own role alone', async () => {
     const { rows } = await admin((c) =>
       c.query<{ proname: string; grantees: string[]; rettype: string }>(
         `SELECT p.proname,
@@ -866,8 +867,8 @@ suite('meeting notes readers and permissions on PostgreSQL (#2575, ADR-0047)', (
       expect([...fn.grantees].sort(), `${fn.proname} is executable by ${HOOK_DEFINER_EXECUTORS[fn.proname]?.join(', ')} alone`).toEqual([...(HOOK_DEFINER_EXECUTORS[fn.proname] ?? [])].sort());
     }
     // A function that has text columns only by the exception: one that does not return `body` is not hook_delivery_get, and none other may.
-    for (const fn of rows.filter((r) => /\bbody\b/i.test(r.rettype))) expect(fn.proname, 'only hook_delivery_get returns a body column').toBe('hook_delivery_get');
-    // The same names in another schema or a new function of the same module do not widen the list: the allowlist has exactly these four.
-    expect(Object.keys(HOOK_DEFINER_TEXT).sort()).toEqual(['hook_delivery_get', 'hook_for_publish', 'hook_get', 'hook_target']);
+    for (const fn of rows.filter((r) => /\bbody\b/i.test(r.rettype))) expect(BODY_FUNCTIONS, `only ${BODY_FUNCTIONS.join(' and ')} return a body column, not ${fn.proname}`).toContain(fn.proname);
+    // The same names in another schema or a new function of the same module do not widen the list: the allowlist has exactly these five.
+    expect(Object.keys(HOOK_DEFINER_TEXT).sort()).toEqual(['chat_post_get', 'hook_delivery_get', 'hook_for_publish', 'hook_get', 'hook_target']);
   });
 });

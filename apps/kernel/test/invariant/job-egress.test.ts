@@ -119,6 +119,9 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
   // The sweep (every minute) hands the minutes-webhook deliveries to the delivery queue; each exists only for an address a member set through meetings.hook.set, which declares the
   // external effect, while the owner's switch is on (meetings integrations A6, #3164).
   'kernel-meeting-hook-sweep handler': { command: 'meetings.hook.set' },
+  // The sweep (every minute) hands the posts of approved minutes to the delivery queue; each exists only for a channel an owner or admin saved through meetings.chat.channel_save and a click of the
+  // meeting's recorder through meetings.chat.post, which declares the external effect (meetings integrations B4, #3168).
+  'kernel-meeting-chat-sweep handler': { command: 'meetings.chat.post' },
 };
 
 // Reviewed send sites that may be listed before the site exists, so the two steps of an invariant change can land apart (the PENDING_DEPS pattern): each names the issue that adds
