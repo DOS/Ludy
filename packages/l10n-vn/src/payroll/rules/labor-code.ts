@@ -41,4 +41,33 @@ export const LABOR_CODE_RULES: readonly PayrollRule[] = [
     source: { cite: `${CODE} Art. 105: normal working time is at most 8 hours a day and 48 hours a week`, confidence: 'primary' },
     value: { perDay: '8' },
   }),
+  defineRule({
+    kind: 'overtime_caps',
+    key: 'default',
+    effectiveFrom: '2021-01-01',
+    status: 'commentary',
+    source: {
+      cite: `${CODE} Art. 107(2)(b) and (c): overtime hours may not exceed 40 hours in 1 month and 200 hours in 1 year (300 hours in a year in listed sectors with notice)`,
+      confidence: 'primary',
+    },
+    value: { monthlyHours: '40', annualHours: '200' },
+  }),
+  defineRule({
+    kind: 'annual_leave',
+    key: 'default',
+    effectiveFrom: '2021-01-01',
+    status: 'commentary',
+    source: {
+      cite: `${CODE} Art. 113 and Art. 114 and Decree 145/2020/ND-CP Art. 66: 12 working days a year in normal conditions, 14 for heavy or hazardous work, 16 for specially heavy or hazardous work, plus 1 extra day for every full 5 years worked for the employer; a hire, end, or unpaid month with at least 50% of working days (halfMonthWorkingDaysRatio 0.5) counts toward annual leave`,
+      confidence: 'commentary',
+    },
+    value: {
+      standardDaysPerYear: '12',
+      heavyDaysPerYear: '14',
+      specialHeavyDaysPerYear: '16',
+      seniorityYearsStep: 5,
+      seniorityExtraDays: '1',
+      halfMonthWorkingDaysRatio: '0.5',
+    },
+  }),
 ];

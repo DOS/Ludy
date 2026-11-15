@@ -54,7 +54,7 @@ export type OvertimeExemptionMode = 'premium_only' | 'whole_pay';
  * - `pit_deduction`: personal, dependent, dependent_income_limit, voluntary_pension_cap.
  * - `pit_withholding`: 'no_or_short_contract'.
  * - `pit_meal_cash_cap`, `pit_overtime_exemption`, `overtime_multiples`, `night_premium`, `deduction_cap`,
- *   `standard_hours`: 'default'.
+ *   `standard_hours`, `annual_leave`, `overtime_caps`: 'default'.
  */
 export interface RuleValues {
   minimum_wage: { monthly: Money; hourly: Money };
@@ -72,6 +72,15 @@ export interface RuleValues {
   night_premium: { nightWork: string; nightOvertimeExtra: string };
   deduction_cap: { percent: Percent };
   standard_hours: { perDay: string };
+  annual_leave: {
+    standardDaysPerYear: string;
+    heavyDaysPerYear: string;
+    specialHeavyDaysPerYear: string;
+    seniorityYearsStep: number;
+    seniorityExtraDays: string;
+    halfMonthWorkingDaysRatio: string;
+  };
+  overtime_caps: { monthlyHours: string; annualHours: string };
 }
 
 export type RuleKind = keyof RuleValues;
