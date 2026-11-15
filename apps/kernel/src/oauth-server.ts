@@ -186,7 +186,26 @@ export async function createOauthServer(config: Config, run: RunDb): Promise<Oau
       jwks: '/oauth/jwks',
     },
     // The account of a grant is a person's user_account id. Nothing else is known of them here.
-    findAccount: async (_ctx, id) => ({ accountId: id, claims: async () => ({ sub: id }) }),
+    // With AUTH_ALLOWED_EMAILS set, the account behind the grant the token belongs to is checked here too (#3223): this runs in the refresh grant
+    // before the old refresh token is consumed and the rotated one saved, so a refused refresh leaves the client's token usable once the account is
+    // listed again, instead of tripping the provider's reuse detection and revoking the grant for good. A grant with no agent_grant row yet (the
+    // code exchange) passes here and is judged by extraTokenClaims.
+    findAccount: async (_ctx, id, token) => {
+      const grantId = (token as { grantId?: string } | undefined)?.grantId;
+      if (accountAccess && grantId) {
+        const { rows } = await run((db) =>
+          sql<{ email: string | null }>`SELECT crove_kernel.mcp_grant_account_email(g.grant_id) AS email FROM crove_kernel.mcp_grant_for_oauth(${grantId}::text) g`.execute(db),
+        );
+        if (rows[0]) {
+          try {
+            accountAccess(rows[0].email);
+          } catch {
+            return undefined;
+          }
+        }
+      }
+      return { accountId: id, claims: async () => ({ sub: id }) };
+    },
     // The access token names the live grant and org. Without one (revoked, expired, stopped, the person no longer an owner or admin) no token is
     // signed, so a refresh after a revoke fails here as well as at its destroyed refresh token.
     extraTokenClaims: async (_ctx, token) => {

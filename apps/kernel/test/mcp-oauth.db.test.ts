@@ -447,6 +447,12 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
       const exchanged = await tokens(second, secondCode);
       expect(exchanged.status).toBe(400);
       expect(exchanged.body.access_token).toBeUndefined();
+      // The refused refresh consumed nothing: once the account is listed again the same refresh token works, and the provider's reuse detection has
+      // not revoked the grant (it would, had the refresh token been consumed and a rotated one lost).
+      await swap(accounts.get('owner')?.email ?? 'owner@mcp.test');
+      const again = await refreshWith(c.clientId, c.refresh);
+      expect(again.status).toBe(200);
+      expect(await aboutStatus(String(again.body.access_token))).toBe(200);
     } finally {
       await swap(null);
     }
