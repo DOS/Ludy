@@ -11389,6 +11389,7 @@ export const en = {
           claim_failed: 'Record that a meeting platform recording could not be imported',
         },
         import_failed: 'Record that the download of a meeting platform recording failed',
+        import_holds: 'Check whether a meeting platform recording still holds its staging key',
         import_open: 'View the meeting platform recordings waiting to download',
         import_staged: 'Record that a meeting platform recording was downloaded',
         recording: {
