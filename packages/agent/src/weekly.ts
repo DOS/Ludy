@@ -132,13 +132,23 @@ export function weeklyAsk(facts: WeeklyFacts): { system: string; prompt: string 
   return { system, prompt: `${weeklyFactsText(facts)}\n\nWrite the status of the week.` };
 }
 
+// A number said in words that the shared check of overview.ts does not see because its unit is not one of its own: the week's counts are of deals, tasks, customers and orders ("chín deal", "ba việc",
+// "hai mươi lăm khách"). The Vietnamese words that can only be numbers are refused wherever they stand; the ones that also mean something else (một, ba, năm, tư) only before a unit of the status, so "năm nay"
+// and "một số việc" stay allowed. "một" and "ba" before a unit are numbers too: the model is told the figures as digits and has no need to say one in words.
+const WEEKLY_UNITS = '(?:deal|deals|việc|công việc|khách|khách hàng|đơn|đơn hàng|hợp đồng|cơ hội|khoản|nhiệm vụ|phần trăm|ngày|tuần|tháng|lần|đồng)';
+const WEEKLY_NUMBER_WORDS = [
+  /(?<![\p{L}])(?:hai|bốn|sáu|bảy|tám|chín|mười|mươi|lăm)(?![\p{L}])/iu,
+  new RegExp(`(?<![\\p{L}])(?:một|ba|năm|tư)\\s+${WEEKLY_UNITS}(?![\\p{L}])`, 'iu'),
+];
+const wordNumber = (sentence: string): boolean => WEEKLY_NUMBER_WORDS.some((w) => w.test(sentence.normalize('NFKC')));
+
 /** The sentences that write only what the figures hold (at most WEEKLY_SENTENCES_MAX, each at most WEEKLY_SENTENCE_MAX characters), and how many were dropped. */
 export function checkedWeeklySentences(sentences: readonly string[], facts: WeeklyFacts): { kept: string[]; dropped: number } {
   const text = weeklyFactsText(facts);
   const kept: string[] = [];
   let dropped = 0;
   for (const sentence of sentences.flatMap((s) => sentencesOf(s))) {
-    const fits = Array.from(sentence).length <= WEEKLY_SENTENCE_MAX && statedFiguresProblem(sentence, [text]) === null;
+    const fits = Array.from(sentence).length <= WEEKLY_SENTENCE_MAX && statedFiguresProblem(sentence, [text]) === null && !wordNumber(sentence);
     if (fits && kept.length < WEEKLY_SENTENCES_MAX) kept.push(sentence);
     else dropped += 1;
   }

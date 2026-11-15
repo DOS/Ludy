@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // "Tuần này" answer (#3257, Vy plan C5), unit part: the figures are the card's own, the sentences are Vy's checked against them or the template, and the AI budget, the rate limit and AI off
 // each leave the template or the figures alone. The model is a stub.
+import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { AiBudgetExhaustedError, WeeklyWriter, templateWeekly, type WeeklyFacts, type WeeklyResult } from '@crove/agent';
 import type { WeeklyFigures } from '@crove/kernel-contract';
 import type { DraftTicket } from '../src/ai-draft-limit.ts';
+import { todayWeeklyQuery } from '@crove/kernel';
 import { weeklyAnswer, weeklyFactsOf } from '../src/today-weekly.ts';
 
 const figures: WeeklyFigures = {
@@ -82,5 +84,35 @@ describe('weeklyAnswer', () => {
       }, t.take),
     ).rejects.toThrow(/database down/);
     expect(t.released).toEqual([1]);
+  });
+});
+
+// The cap rules: a read cut by its own cap would give an undercount, so its figure is null, never a smaller number.
+describe('kernel.today_weekly.figures with reads cut by their caps', () => {
+  const run = (reads: Record<string, unknown>) =>
+    todayWeeklyQuery({ today: () => '2026-11-16', now: () => new Date('2026-11-16T03:00:00Z') }).handler(
+      { query: async (name: string) => ({ status: 'ok', value: reads[name] }) } as unknown as Parameters<ReturnType<typeof todayWeeklyQuery>['handler']>[0],
+      {},
+    );
+  const won = (n: number, wonOn: string) => Array.from({ length: n }, () => ({ dealId: randomUUID(), partyId: randomUUID(), wonOn, amount: '1' }));
+  const open = (n: number) => Array.from({ length: n }, () => ({ dealId: randomUUID(), partyId: randomUUID() }));
+  const tasks = (n: number, due: string | null) => ({ tasks: Array.from({ length: n }, () => ({ status: 'todo', due })) });
+
+  it('gives no deal figure when the won list reached its cap and its oldest win is still inside the window', async () => {
+    expect((await run({ 'crm.signals.won_deals': won(500, '2026-11-12') })).deals).toBeNull();
+  });
+
+  it('gives no open count when the open list reached its cap, and no task count when the task list did', async () => {
+    const f = await run({ 'crm.signals.won_deals': [], 'crm.signals.open_deals': open(500), 'kernel.task.list': tasks(200, '2026-11-01T00:00:00Z') });
+    expect(f.deals).toEqual({ won: { count: 0, amount: '0' }, open: null });
+    expect(f.tasks).toBeNull();
+    const ok = await run({ 'crm.signals.won_deals': [], 'crm.signals.open_deals': open(499), 'kernel.task.list': tasks(199, '2026-11-01T00:00:00Z') });
+    expect(ok.deals?.open).toBe(499);
+    expect(ok.tasks).toEqual({ late: 199 });
+  });
+
+  it('gives null for every group whose read is missing or outside its contract', async () => {
+    const f = await run({ 'crm.signals.won_deals': [{ nope: 1 }], 'finance.overview': { nope: 1 }, 'kernel.task.list': { nope: 1 } });
+    expect([f.deals, f.money, f.tasks]).toEqual([null, null, null]);
   });
 });

@@ -12,7 +12,7 @@ import { Card } from '@crove/ui/components/card';
 import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
 import { client } from '../lib/api.ts';
 import { briefDay } from '../lib/today-brief.ts';
-import { readStoredWeekly, storeWeekly, weeklyAutoShown, weeklyStorageKey } from '../lib/today-weekly.ts';
+import { weeklyAutoShown, weeklyCacheKey } from '../lib/today-weekly.ts';
 
 type Tile = { key: 'dealsWon' | 'dealsOpen' | 'cash' | 'receivables' | 'payables' | 'tasksLate'; value: string; kind: 'money' | 'number'; hint?: string };
 
@@ -40,17 +40,13 @@ export function TodayWeekly({ slug }: { slug: string }) {
   // Monday to Wednesday the card shows by itself; on the other days the member asks for it, and the model is not called until they do.
   const [asked, setAsked] = useState(false);
   const shown = weeklyAutoShown() || asked;
-  const key = weeklyStorageKey(slug, briefDay(), language);
+  const key = weeklyCacheKey(slug, briefDay(), language);
   const weekly = useQuery({
     queryKey: ['today', 'weekly', key],
-    // An answer kept in this tab for the same day asks the model once; the card never waits for it.
-    initialData: () => readStoredWeekly(key),
-    queryFn: async () => {
-      const fresh = await client.today.weekly({ language });
-      storeWeekly(key, fresh);
-      return fresh;
-    },
+    // The answer lives in the query cache of this session only (emptied on sign-out), so the same day and language ask the model once and no one else in this tab finds it.
+    queryFn: () => client.today.weekly({ language }),
     placeholderData: keepPreviousData,
+    gcTime: 60 * 60 * 1000,
     enabled: shown,
     // A final answer is good for the hour; a fallback is asked again soon.
     staleTime: (query) => (query.state.data?.final ? 60 * 60 * 1000 : 30 * 1000),

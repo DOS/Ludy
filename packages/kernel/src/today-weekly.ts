@@ -5,7 +5,8 @@
 //   - Engage's CRM: `crm.signals.won_deals` (deals won in the window: their number and the sum of their amounts) and `crm.signals.open_deals` (deals still open);
 //   - Accounting: `finance.overview` run twice (as of today and as of the day before the window): cash, receivables and payables, now and a week ago;
 //   - the kernel's own `kernel.task.list`, the member's own seats: open tasks past their due time.
-// A group is null when its read is not registered, its module is off, it refuses the member (a role, a book narrower than the org) or it answers outside its contract,
+// A group is null when its read is not registered, its module is off, it refuses the member (no right to the books, or several entities and no default one) or it answers outside its contract,
+// (a member who can open only one non-default entity gets that entity's books: it is what they can open, and the deal and task figures are the org's own),
 // and also when the answer was cut by the read's own cap so the figure would be an undercount: a figure the member cannot see, or cannot trust, is never shown as 0.
 // The words come later (packages/agent weekly.ts) and are told these figures only. Amounts stay decimal strings; the one sum is made by PostgreSQL's numeric.
 import { sql } from 'kysely';

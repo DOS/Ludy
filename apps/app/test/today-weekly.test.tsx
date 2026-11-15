@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // "Tuần này" on Home (#3257) as the member sees it: shown by itself Monday to Wednesday and asked for on the other days, only the figures the member can open, Vy's sentences marked as
 // written by it, the template marked as automatic, and the figures alone when the month's AI budget is spent. Rendered on the server with the answer seeded in the cache.
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
@@ -18,7 +20,7 @@ vi.mock('../src/lib/api.ts', async () => {
 });
 
 const { TodayWeekly, weeklyTiles } = await import('../src/components/today-weekly.tsx');
-const { weeklyStorageKey, weeklyAutoShown } = await import('../src/lib/today-weekly.ts');
+const { weeklyCacheKey, weeklyAutoShown } = await import('../src/lib/today-weekly.ts');
 const { briefDay } = await import('../src/lib/today-brief.ts');
 
 // 2026-11-16 is a Monday, 2026-11-20 a Friday (Vietnam time).
@@ -40,7 +42,7 @@ function render(opts: { now: Date; data?: Weekly; locale?: 'en' | 'vi' }): strin
   const qc = client.current;
   qc.clear();
   const locale = opts.locale ?? 'en';
-  if (opts.data) qc.setQueryData(['today', 'weekly', weeklyStorageKey('acme', briefDay(), locale)], opts.data);
+  if (opts.data) qc.setQueryData(['today', 'weekly', weeklyCacheKey('acme', briefDay(), locale)], opts.data);
   setActiveLocale(locale);
   return renderToStaticMarkup(
     <I18nProvider>
@@ -111,6 +113,13 @@ describe('TodayWeekly', () => {
   it('shows a quiet placeholder while it loads, in Vietnamese too', () => {
     expect(render({ now: MONDAY })).toContain(catalog('en').today.weekly.loading);
     expect(render({ now: MONDAY, data: answer(), locale: 'vi' })).toContain('Tuần này');
+  });
+});
+
+describe('the cache', () => {
+  it('never reaches sessionStorage: the next person to sign in in the same tab could find balances there', () => {
+    const source = readFileSync(fileURLToPath(new URL('../src/components/today-weekly.tsx', import.meta.url)), 'utf8') + readFileSync(fileURLToPath(new URL('../src/lib/today-weekly.ts', import.meta.url)), 'utf8');
+    expect(source).not.toMatch(/sessionStorage|localStorage/);
   });
 });
 

@@ -160,7 +160,7 @@ export const zTodayWeeklyInput = z.object({ language: z.enum(['vi', 'en']) });
 export const zTodayWeekly = z.object({
   figures: zWeeklyFigures,
   writtenBy: z.enum(['vy', 'template']).nullable(),
-  sentences: z.array(z.string().max(400)).max(5),
+  sentences: z.array(z.string().max(600)).max(5),
   budgetSpent: z.boolean(),
   final: z.boolean(),
 });

@@ -99,13 +99,25 @@ describe('sentences', () => {
     }
   });
 
+  it('drops a number said in words before the units of the week (deal, việc, khách), which the shared check does not know', () => {
+    for (const s of ['Tuần qua có chín deal thắng.', 'Bạn có chín việc đã quá hạn.', 'Có ba deal thắng.', 'Có hai mươi lăm khách hàng.', 'Có năm việc quá hạn.', 'Có một đơn hàng mới.', 'Có mười hai deal đang mở.']) {
+      expect(checkedWeeklySentences([s], facts()).kept, s).toEqual([]);
+    }
+  });
+
+  it('keeps ordinary words that look like number words', () => {
+    for (const s of ['Năm nay tiền mặt tăng 20.000.000 đồng.', 'Một số việc đã quá hạn.', 'Bạn có 2 việc đã quá hạn.', 'Tuần qua có 3 deal thắng.']) {
+      expect(checkedWeeklySentences([s], facts()).kept, s).toEqual([s]);
+    }
+  });
+
   it('drops a number hidden by an invisible character, and a sentence that is too long', () => {
     expect(checkedWeeklySentences(['Có 9​9 deal thắng.'], facts()).kept).toEqual([]);
     expect(checkedWeeklySentences([`${'a'.repeat(310)}.`], facts()).kept).toEqual([]);
   });
 
   it('are cut at five', () => {
-    expect(checkedWeeklySentences(['Một.', 'Hai.', 'Ba.', 'Bốn.', 'Năm.', 'Sáu.'], facts()).kept).toHaveLength(5);
+    expect(checkedWeeklySentences(['Tuần ổn.', 'Tiền về đều.', 'Khách trả tốt.', 'Chi phí gọn.', 'Việc đúng hạn.', 'Mọi thứ yên.'], facts()).kept).toHaveLength(5);
   });
 });
 
