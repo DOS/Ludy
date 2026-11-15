@@ -36,6 +36,20 @@ and it carries JOY's authority, so a change to it is a change to agent instructi
   never as inline text in a message. Each question still names what is
   decided, why it matters, the options, the recommendation (first) and what
   happens without an answer, in Vietnamese with full diacritics (AGENTS.md).
+- Owner decision 2026-11-15 (Antigravity chat): "Cái này hardcode tên model
+  thì không hợp lý. Nếu được thì quy định model flagship và model yếu hơn 1
+  cách generic thôi nhỉ? Vì hết Claude Opus limit thì làm sao? Trong khi
+  Antigravity nhiều limit model Gemini hơn. Tự nhiên Carbon phải chờ Opus
+  duyệt khá vô lý" and "Nên sửa cấu hình, ít nhất cho Antigravity để dùng
+  model phù hợp". Define PO, security-review and worker models by generic
+  capability tier (flagship vs worker) rather than hardcoding vendor model
+  names, and configure Antigravity to use `Orchestrator (Carbon)` /
+  `Gemini 4 Carbon` for PO sessions and workers. Independent security reviews
+  of protected-path PRs run only on `Gemini 4 Carbon` or `Claude Opus` (fresh
+  context, with no Hydrogen routing), so a PO on `Gemini 4 Carbon` runs its
+  own independent security review without waiting on Claude Opus, while a PO
+  on `Orchestrator (Carbon)` holds a protected-path PR's security-review gate
+  for a `Gemini 4 Carbon` or `Claude Opus` review (or owner acceptance).
 
 ## Board
 
@@ -203,21 +217,31 @@ The DOS organization ids are the same in every DOS repository.
   is not a failure.
 - claim_gate: none
 - external_review_app: none
-- local_reviews: `codex review --base origin/main` in the background, then
-  a fresh-context subagent given the diff and the issue; docs-only PRs skip
-  both and need `pnpm docs:check`. A protected-path PR also gets an
-  independent security review before merge, run by its line's PO with a
-  fresh-context Opus reviewer that did not write the change, and a PR that
-  changes the shared core also gets the Platform PO's review of those files
-  ("Shared-core review").
+- local_reviews: `codex review -c model_reasoning_effort=<subagent_effort> --base origin/main`
+  in the background, then a fresh-context subagent given the diff and the
+  issue; docs-only PRs skip both and need `pnpm docs:check`. A protected-path
+  PR also gets an independent security review before merge, run by its line's
+  PO with a fresh-context flagship-model reviewer that did not write the
+  change, and a PR that changes the shared core also gets the Platform PO's
+  review of those files ("Shared-core review").
 - shared_core_review: `line:platform`: the paths in "Shared-core review"
   below.
-- agent_effort: high. PO sessions run on Opus at effort high. Every sub-session
-  runs on Sonnet 5.5 (`claude-sonnet-5-5`) at effort high, and at xhigh only
-  for hard work (a protected-path security change, a migration, a root-cause
-  hunt). The security review of a protected-path PR runs on
-  Opus; Codex reviews at effort high (AGENTS.md, owner decisions 2026-10-27,
-  2026-10-30 and 2026-10-31).
+- agent_model: claude-sonnet-5-5 (Claude Code sub-sessions; Antigravity:
+  `inherit` on `Orchestrator (Carbon)` or `Gemini 4 Carbon`, or the PO's
+  flagship model; owner decision 2026-11-15, see above). PO sessions run on a
+  flagship model (`Claude Opus` on Claude Code; `Claude Opus`,
+  `Gemini 4 Carbon` or `Orchestrator (Carbon)` on Antigravity); independent
+  security reviews of protected-path PRs run only on `Gemini 4 Carbon` or
+  `Claude Opus` with fresh context and no Hydrogen routing (`Orchestrator
+  (Carbon)` stays allowed for PO sessions and workers).
+- agent_effort: high (owner decisions 2026-10-27, 2026-10-30 and 2026-10-31;
+  skipped on Antigravity, which has no session effort API). Exception: xhigh
+  only for hard work (a protected-path security change, a migration, a
+  root-cause hunt); on Antigravity, the security review's stand-in for
+  `xhigh` is the no-delegation flagship model (`Gemini 4 Carbon` or
+  `Claude Opus`).
+- subagent_effort: high (passed to Codex CLI reviews as
+  `-c model_reasoning_effort=high` on every host, Antigravity included).
 
 ## Shared-core review
 
