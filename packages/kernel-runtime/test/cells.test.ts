@@ -21,13 +21,13 @@ const ORG = '01900000-0000-7000-8000-000000000001';
 const NEW_ORG = '01900000-0000-7000-8000-000000000002';
 const USER: UserActor = { type: 'user', userId: '01900000-0000-7000-8000-0000000000aa', aal: 'aal1' };
 
-// A database that records each statement and answers enter_context with `role`, the app gate's read of the org's switched-off apps (ADR-0053) with none off, everything else with no rows.
+// A database that records each statement and answers enter_context with `role`, the app gate's read of the org's switched-off apps (ADR-0053) with none off (and answers the catalog check that the column exists), everything else with no rows.
 function fakeDb(role: string) {
   const statements: string[] = [];
   const connection: DatabaseConnection = {
     async executeQuery<R>(query: CompiledQuery): Promise<QueryResult<R>> {
       statements.push(query.sql);
-      const rows = /crove_kernel\.enter_(?:user_)?context\(/.test(query.sql) ? [{ role }] : /"apps_off"/.test(query.sql) ? [{ apps_off: [] }] : [];
+      const rows = /crove_kernel\.enter_(?:user_)?context\(/.test(query.sql) ? [{ role }] : /pg_attribute/.test(query.sql) ? [{ present: true }] : /"apps_off"/.test(query.sql) ? [{ apps_off: [] }] : [];
       return { rows: rows as R[] };
     },
     // oxlint-disable-next-line require-yield

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // What the per-org app gate lets through while an app is off (ADR-0053 section 3): the definitions that declare runsWhenOff are an exact list,
-// so a new one is a visible, reviewed addition, never a quiet one. Each is a keeping duty (retention, shredding, erasure, the revocation of
-// a leaver's links, the reseal of a sealed key) or a read for one, of an app, and none is of kernel (which the gate never refuses). No command
+// so a new one is a visible, reviewed addition, never a quiet one. Each is a keeping duty or a command that only stops, revokes or deletes (retention, shredding, erasure, stopping spend, the revocation of
+// a leaver's links, the reseal of a sealed key, or a command that only stops spend, revokes a link or deletes) or a read for one, of an app, and none is of kernel (which the gate never refuses). No command
 // declares opensBusyWork yet: slice c adds the first (the Meetings recording start).
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.ts';

@@ -388,14 +388,15 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
     const o = await org();
     // A database that does not yet have the column (an upgrade in progress): nothing can be off, so the app runs. A fresh runtime has not seen the column.
     await withAdmin((c) => c.query('ALTER TABLE crove_kernel.tenant RENAME COLUMN apps_off TO apps_off_hidden'));
+    const upgrading = runtimeWith();
     try {
-      await expect(o.exec(runtimeWith(), 'probe.touch', o.member)).resolves.toBe('ran');
+      await expect(o.exec(upgrading, 'probe.touch', o.member)).resolves.toBe('ran');
     } finally {
       await withAdmin((c) => c.query('ALTER TABLE crove_kernel.tenant RENAME COLUMN apps_off_hidden TO apps_off'));
     }
-    // Back with the column: the choice is read again.
+    // Back with the column: the same runtime reads the choice again ("absent" is never cached).
     await o.setApp('probe', false);
-    await expect(o.exec(runtimeWith(), 'probe.touch', o.member)).rejects.toMatchObject(refusal);
+    await expect(o.exec(upgrading, 'probe.touch', o.member)).rejects.toMatchObject(refusal);
   });
 
   it('records no sensitive read of an app that is off', async () => {

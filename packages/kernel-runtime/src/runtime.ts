@@ -1960,7 +1960,7 @@ export class Runtime {
   }
 
   // Whether crove_kernel.tenant has the apps_off column (slice a's migration). Once seen it stays true for the process.
-  async hasAppsOffColumn(trx: Transaction<Database>): Promise<boolean> {
+  private async hasAppsOffColumn(trx: Transaction<Database>): Promise<boolean> {
     if (this.#appsOffColumn) return true;
     const { rows } = await sql<{ present: boolean }>`
       SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a WHERE a.attrelid = 'crove_kernel.tenant'::pg_catalog.regclass AND a.attname = 'apps_off' AND NOT a.attisdropped) AS present`.execute(trx);
