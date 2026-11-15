@@ -325,5 +325,25 @@ describe('parseTimekeepingSheet (#3348)', () => {
       unpaidLeaveDays: '2',
       annualLeaveDays: '0',
     });
+
+    // Total summary columns (e.g. "Total night OT hours") are ignored so they do not double-count detailed OT columns.
+    const totalNightOt = parseTimekeepingSheet(
+      'Employee Code\tNormal day night OT hours\tHoliday night OT hours\tTotal night OT hours\nNV01\t5\t3\t8\n',
+      { month: '2026-08' },
+    );
+    expect(totalNightOt.errors).toEqual([]);
+    expect(totalNightOt.rows[0]?.totalOvertimeHours).toBe('8');
+    expect(totalNightOt.rows[0]?.overtime).toEqual([
+      { dayKind: 'normal_day', night: true, hours: '5' },
+      { dayKind: 'holiday', night: true, hours: '3' },
+    ]);
+
+    // A delimiter that collapses data rows into a single cell loses to tab and preserves extra_columns diagnostics.
+    const tsvExtraWithCommaHeader = parseTimekeepingSheet('Employee code, ID\tUnpaid leave\nE01\t2\t5\n', {
+      month: '2026-08',
+    });
+    expect(tsvExtraWithCommaHeader.delimiter).toBe('\t');
+    expect(tsvExtraWithCommaHeader.rows).toEqual([]);
+    expect(tsvExtraWithCommaHeader.errors.map((err) => err.code)).toContain('extra_columns');
   });
 });

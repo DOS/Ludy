@@ -80,6 +80,10 @@ const BALANCE_OR_QUOTA_WORDS = [
   'entitled',
   'quota',
   'limit',
+  'total',
+  'subtotal',
+  'sum',
+  'tong',
 ] as const;
 const BALANCE_OR_QUOTA_PHRASES = [
   'so du',
@@ -492,12 +496,20 @@ function trimmedCellCount(cells: readonly string[]): number {
 function scoreDelimiterAttempt(
   rows: readonly ParsedGridRow[],
   header: HeaderDetection | null,
-): { overflowCount: number; alignedCount: number; recognizedCount: number } {
-  if (header === null) return { overflowCount: Number.MAX_SAFE_INTEGER, alignedCount: 0, recognizedCount: 0 };
+): { unsplitCount: number; overflowCount: number; alignedCount: number; recognizedCount: number } {
+  if (header === null) {
+    return {
+      unsplitCount: Number.MAX_SAFE_INTEGER,
+      overflowCount: Number.MAX_SAFE_INTEGER,
+      alignedCount: 0,
+      recognizedCount: 0,
+    };
+  }
   const headerCells = rows[header.rowIndex]?.cells ?? [];
   const headerRawLen = headerCells.length;
   const headerTrimLen = trimmedCellCount(headerCells);
   const recognizedCount = Object.values(header.columns).filter((v) => v !== null).length;
+  let unsplitCount = 0;
   let overflowCount = 0;
   let alignedCount = 0;
   for (let i = header.rowIndex + 1; i < rows.length; i++) {
@@ -505,13 +517,16 @@ function scoreDelimiterAttempt(
     if (row === undefined) continue;
     const rowTrimLen = trimmedCellCount(row.cells);
     if (rowTrimLen === 0) continue;
+    if (headerRawLen > 1 && row.cells.length <= 1) {
+      unsplitCount += 1;
+    }
     if (rowTrimLen > headerTrimLen) {
       overflowCount += 1;
     } else if (row.cells.length === headerRawLen) {
       alignedCount += 1;
     }
   }
-  return { overflowCount, alignedCount, recognizedCount };
+  return { unsplitCount, overflowCount, alignedCount, recognizedCount };
 }
 
 /**
@@ -561,6 +576,7 @@ export function parseTimekeepingSheet(text: string, options?: TimekeepingSheetOp
   });
 
   const compareScored = (a: (typeof attempts)[number], b: (typeof attempts)[number]): number =>
+    a.score.unsplitCount - b.score.unsplitCount ||
     a.score.overflowCount - b.score.overflowCount ||
     b.score.alignedCount - a.score.alignedCount ||
     b.score.recognizedCount - a.score.recognizedCount;
