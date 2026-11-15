@@ -54,7 +54,7 @@ describe('Sổ quản lý lao động (buildLaborRegister)', () => {
       employer,
       asOf: '2026-08-15',
       persons: [
-        samplePerson('2', 'Trần Bình'),
+        samplePerson('2', 'Trần Bình', { startedOn: '2023-05-01', contractStartDate: '2025-05-01' }),
         samplePerson('1', 'Nguyễn An', { contractKind: 'fixed_term', contractEndDate: '2027-01-01', baseWage: '12500000' }),
       ],
     });
@@ -67,9 +67,9 @@ describe('Sổ quản lý lao động (buildLaborRegister)', () => {
     expect(doc.draft).toContain('#2535');
 
     const rows = doc.sheets[0]?.rows ?? [];
-    expect(rows.map((r) => [r.seq, r.name, r.contractType, r.baseWage])).toEqual([
-      ['1', 'Nguyễn An', 'Xác định thời hạn', '12500000.00'],
-      ['2', 'Trần Bình', 'Không xác định thời hạn', '15000000.00'],
+    expect(rows.map((r) => [r.seq, r.name, r.startedOn, r.contractType, r.contractStartDate, r.baseWage])).toEqual([
+      ['1', 'Nguyễn An', '2025-01-01', 'Xác định thời hạn', '2025-01-01', '12500000.00'],
+      ['2', 'Trần Bình', '2023-05-01', 'Không xác định thời hạn', '2025-05-01', '15000000.00'],
     ]);
   });
 
@@ -228,9 +228,9 @@ describe('Báo cáo 01/PLI (build01PliReport)', () => {
         },
       ],
     });
-    expect(noContractRegister.sheets[0]?.rows.map((r) => [r.contractType, r.contractStartDate])).toEqual([
-      ['Không ký HĐLĐ', ''],
-      ['Không ký HĐLĐ', ''],
+    expect(noContractRegister.sheets[0]?.rows.map((r) => [r.startedOn, r.contractType, r.contractStartDate])).toEqual([
+      ['2026-08-01', 'Không ký HĐLĐ', ''],
+      ['2026-08-05', 'Không ký HĐLĐ', ''],
     ]);
 
     const noContractPli = build01PliReport({

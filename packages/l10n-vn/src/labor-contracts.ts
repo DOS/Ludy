@@ -286,6 +286,7 @@ export type LaborContractFindingCode =
   | 'unknown_probation_role_tier'
   | 'probation_end_before_start'
   | 'invalid_probation_duration'
+  | 'probation_duration_mismatch'
   | 'probation_exceeds_cap'
   | 'probation_working_days_unverified'
   | 'probation_outside_contract'
@@ -356,6 +357,15 @@ function checkFixedTermEndMatchesMonths(
   termMonths: number,
 ): string | null {
   const expectedEnd = deriveFixedTermEndDate(startDate, termMonths);
+  return compareCalendarDates(endDate, expectedEnd) === 0 ? null : formatIsoCalendarDate(expectedEnd);
+}
+
+function checkCalendarProbationMatchesDays(
+  startDate: CalendarDate,
+  endDate: CalendarDate,
+  durationDays: number,
+): string | null {
+  const expectedEnd = addCalendarDays(startDate, durationDays - 1);
   return compareCalendarDates(endDate, expectedEnd) === 0 ? null : formatIsoCalendarDate(expectedEnd);
 }
 
@@ -615,12 +625,40 @@ function checkProbationTerms(
   if (tier !== null && pStart && pEnd && diffCalendarDays(pStart, pEnd) >= 0) {
     const cap = PROBATION_CAPS[tier];
     const inclusiveDays = diffCalendarDays(pStart, pEnd) + 1;
-    if (cap.unit === 'calendar_days' && inclusiveDays > cap.maxDays) {
+    const hasValidDurationDays =
+      probation.durationDays !== undefined &&
+      probation.durationDays !== null &&
+      Number.isInteger(probation.durationDays) &&
+      probation.durationDays >= 1;
+
+    if (cap.unit === 'calendar_days') {
+      if (inclusiveDays > cap.maxDays) {
+        findings.push({
+          code: 'probation_exceeds_cap',
+          severity: 'error',
+          field: 'probation.endDate',
+          message: `Probation span (${inclusiveDays} calendar days) exceeds the ${cap.maxDays}-calendar-day limit for ${tier}.`,
+          cite: cap.cite,
+        });
+      }
+      if (hasValidDurationDays) {
+        const expectedProbEndIso = checkCalendarProbationMatchesDays(pStart, pEnd, probation.durationDays as number);
+        if (expectedProbEndIso !== null) {
+          findings.push({
+            code: 'probation_duration_mismatch',
+            severity: 'error',
+            field: 'probation.endDate',
+            message: `Probation endDate (${probation.endDate}) does not match durationDays (${probation.durationDays}; expected ${expectedProbEndIso}).`,
+            cite: cap.cite,
+          });
+        }
+      }
+    } else if (hasValidDurationDays && inclusiveDays < (probation.durationDays as number)) {
       findings.push({
-        code: 'probation_exceeds_cap',
+        code: 'probation_duration_mismatch',
         severity: 'error',
         field: 'probation.endDate',
-        message: `Probation span (${inclusiveDays} calendar days) exceeds the ${cap.maxDays}-calendar-day limit for ${tier}.`,
+        message: `Probation span (${inclusiveDays} calendar day(s)) cannot contain ${probation.durationDays} working day(s).`,
         cite: cap.cite,
       });
     } else if (cap.unit === 'working_days' && inclusiveDays > cap.maxDays && (probation.durationDays === undefined || probation.durationDays === null)) {
@@ -865,18 +903,32 @@ export function evaluateContractAlerts(terms: LaborContractTermsInput, options: 
     throw new Error(`Probation endDate (${terms.probation?.endDate}) cannot be earlier than startDate (${terms.probation?.startDate})`);
   }
   if (
-    probEnd === null &&
     probStart !== null &&
     terms.probation?.durationDays !== undefined &&
     terms.probation.durationDays !== null &&
-    isProbationRoleTier(terms.probation.roleTier) &&
-    PROBATION_CAPS[terms.probation.roleTier].unit === 'calendar_days'
+    isProbationRoleTier(terms.probation.roleTier)
   ) {
     if (!Number.isInteger(terms.probation.durationDays) || terms.probation.durationDays < 1) {
       throw new Error(`Invalid probation.durationDays: ${String(terms.probation.durationDays)}`);
     }
-    probEnd = addCalendarDays(probStart, terms.probation.durationDays - 1);
-    probEndIso = formatIsoCalendarDate(probEnd);
+    const probCap = PROBATION_CAPS[terms.probation.roleTier];
+    if (probCap.unit === 'calendar_days') {
+      if (probEnd !== null) {
+        const expectedProbEndIso = checkCalendarProbationMatchesDays(probStart, probEnd, terms.probation.durationDays);
+        if (expectedProbEndIso !== null) {
+          throw new Error(
+            `Probation endDate (${terms.probation.endDate}) does not match durationDays (${terms.probation.durationDays}; expected ${expectedProbEndIso})`,
+          );
+        }
+      } else {
+        probEnd = addCalendarDays(probStart, terms.probation.durationDays - 1);
+        probEndIso = formatIsoCalendarDate(probEnd);
+      }
+    } else if (probEnd !== null && diffCalendarDays(probStart, probEnd) + 1 < terms.probation.durationDays) {
+      throw new Error(
+        `Probation span (${diffCalendarDays(probStart, probEnd) + 1} calendar day(s)) cannot contain ${terms.probation.durationDays} working day(s)`,
+      );
+    }
   }
 
   const alerts: ContractAlert[] = [];

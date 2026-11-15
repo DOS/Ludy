@@ -276,6 +276,37 @@ describe('checkLaborContractTerms (Labor Code 2019 Arts. 14, 20, 24-27)', () => 
     expect(collegeFail.ok).toBe(false);
     expect(collegeFail.findings.map((f) => f.code)).toEqual(['probation_exceeds_cap', 'probation_wage_below_85_percent']);
 
+    const probationMismatch = checkLaborContractTerms({
+      contractKind: 'fixed_term',
+      startDate: '2026-01-01',
+      termMonths: 12,
+      contractWage: '10000000',
+      probation: {
+        roleTier: 'college_or_above',
+        startDate: '2026-01-01',
+        endDate: '2026-01-10',
+        durationDays: 60,
+        wage: '8500000',
+      },
+    });
+    expect(probationMismatch.ok).toBe(false);
+    expect(probationMismatch.findings.map((f) => f.code)).toContain('probation_duration_mismatch');
+
+    const probationAligned = checkLaborContractTerms({
+      contractKind: 'fixed_term',
+      startDate: '2026-01-01',
+      termMonths: 12,
+      contractWage: '10000000',
+      probation: {
+        roleTier: 'college_or_above',
+        startDate: '2026-01-01',
+        endDate: '2026-03-01',
+        durationDays: 60,
+        wage: '8500000',
+      },
+    });
+    expect(probationAligned.ok).toBe(true);
+
     const managerOk = checkLaborContractTerms({
       contractKind: 'indefinite',
       startDate: '2026-01-01',
@@ -461,6 +492,23 @@ describe('evaluateContractAlerts', () => {
         { asOf: '2026-01-15' },
       ),
     ).toThrow(/does not match termMonths/);
+
+    expect(() =>
+      evaluateContractAlerts(
+        {
+          contractKind: 'fixed_term',
+          startDate: '2026-01-01',
+          termMonths: 12,
+          probation: {
+            roleTier: 'college_or_above',
+            startDate: '2026-01-01',
+            endDate: '2026-01-10',
+            durationDays: 60,
+          },
+        },
+        { asOf: '2026-02-20' },
+      ),
+    ).toThrow(/does not match durationDays/);
   });
 });
 
