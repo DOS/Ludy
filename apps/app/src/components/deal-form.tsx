@@ -88,10 +88,14 @@ function PartyPicker({ value, onPick, invalid, describedBy, locked }: { value: P
       />
       {open && (
         <ul className="max-h-48 overflow-auto rounded-md border border-border text-sm" aria-label={t('form.partyResults')}>
-          {found.data?.length === 0 && (
+          {found.data?.length === 0 && !found.isPlaceholderData && (
             <li className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-muted-foreground">
               <span>{t('form.partyNone')}</span>
-              <Button type="button" size="sm" variant="outline" onClick={() => setCreating(true)}>
+              <Button type="button" size="sm" variant="outline" onClick={() => {
+                  // The deal is for the new contact: the customer chosen before is let go, so it cannot be saved with the old one meanwhile.
+                  onPick(null);
+                  setCreating(true);
+                }}>
                 {t('form.newParty.open')}
               </Button>
             </li>

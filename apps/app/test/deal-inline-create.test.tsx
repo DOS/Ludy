@@ -73,6 +73,13 @@ describe('the inline new contact group', () => {
     expect(html).not.toMatch(/<button[^>]*type="submit"/);
   });
 
+  it('turns a searched tax code into a company with that tax code, not a person named by it', () => {
+    const html = render(<NewPartyGroup initialName="0123456780" onCreated={() => undefined} onCancel={() => undefined} />);
+    expect(html).toContain('Mã số thuế');
+    expect(html).toContain('value="0123456780"');
+    expect(html).toMatch(/<option value="organization" selected/);
+  });
+
   it('speaks English in an English session', () => {
     const html = render(<NewPartyGroup initialName="" onCreated={() => undefined} onCancel={() => undefined} />, 'en');
     expect(html).toContain('Add a new contact');

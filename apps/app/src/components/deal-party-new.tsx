@@ -6,14 +6,14 @@
 // refusal shows here. The deal form is a <form>: this is a group with its own button, not a nested form, and Enter in a field adds
 // the contact and never submits the deal.
 import { useMutation } from '@tanstack/react-query';
-import { useState, type KeyboardEvent } from 'react';
+import { useRef, useState, type KeyboardEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { normalizeTaxCode, type PartyChoice } from '@crove/kernel-contract';
 import { Button } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect } from '@crove/ui/components/native-select';
 import { refreshParties } from './party-edit.tsx';
-import { ErrorText, Field, isEmailAddress, useFieldErrors } from './ui.tsx';
+import { ErrorText, Field, focusFirstInvalid, isEmailAddress, useFieldErrors } from './ui.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
 
 type NewField = 'name' | 'taxCode' | 'email';
@@ -24,12 +24,16 @@ const orNull = (value: string) => (value.trim() === '' ? null : value.trim());
 export function NewPartyGroup({ initialName, onCreated, onCancel }: { initialName: string; onCreated: (party: PartyChoice) => void; onCancel: () => void }) {
   const t = useTranslations('deals');
   const tc = useTranslations('contacts');
-  const [kind, setKind] = useState<Kind>('person');
-  const [name, setName] = useState(initialName.trim());
+  // A search that is a tax code becomes the tax code of a company, not the name of a person.
+  const searchedTaxCode = normalizeTaxCode(initialName) ? initialName.trim() : '';
+  const [kind, setKind] = useState<Kind>(searchedTaxCode ? 'organization' : 'person');
+  const [name, setName] = useState(searchedTaxCode ? '' : initialName.trim());
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
-  const [taxCode, setTaxCode] = useState('');
-  const create = useMutation(orpc.parties.create.mutationOptions());
+  const [taxCode, setTaxCode] = useState(searchedTaxCode);
+  // The lists refresh when the contact exists, even if this group was closed before the answer came.
+  const root = useRef<HTMLDivElement>(null);
+  const create = useMutation(orpc.parties.create.mutationOptions({ onSuccess: refreshParties }));
   const fields = useFieldErrors<NewField>((field) => {
     if (field === 'name') return name.trim() ? null : tc('nameRequired');
     if (field === 'taxCode') return kind === 'person' || !taxCode.trim() || normalizeTaxCode(taxCode) ? null : tc('taxCodeInvalid');
@@ -37,13 +41,15 @@ export function NewPartyGroup({ initialName, onCreated, onCancel }: { initialNam
   });
   const submit = () => {
     if (create.isPending) return;
-    if (!fields.checkAll(['name', 'taxCode', 'email'])) return;
+    if (!fields.checkAll(['name', 'taxCode', 'email'])) {
+      if (root.current) focusFirstInvalid(root.current);
+      return;
+    }
     const tax = kind === 'organization' ? orNull(taxCode) : null;
     create.mutate(
       { kind, name: name.trim(), taxCode: tax, email: orNull(email), phone: orNull(phone) },
       {
         onSuccess: ({ partyId }) => {
-          refreshParties();
           onCreated({ id: partyId, name: name.trim(), kind, taxCode: tax });
         },
       },
@@ -51,12 +57,13 @@ export function NewPartyGroup({ initialName, onCreated, onCancel }: { initialNam
   };
   // Enter adds the contact; the deal form around this group is not submitted by it.
   const onEnter = (e: KeyboardEvent<HTMLElement>) => {
-    if (e.key !== 'Enter' || (e.target as HTMLElement).tagName === 'BUTTON') return;
+    // Enter that ends a Vietnamese input method's syllable is not a request to add the contact.
+    if (e.key !== 'Enter' || e.nativeEvent.isComposing || (e.target as HTMLElement).tagName === 'BUTTON') return;
     e.preventDefault();
     submit();
   };
   return (
-    <div role="group" aria-label={t('form.newParty.title')} className="grid gap-3 rounded-md border border-border p-3 sm:grid-cols-2" data-testid="deal-new-party" onKeyDown={onEnter}>
+    <div ref={root} role="group" aria-label={t('form.newParty.title')} className="grid gap-3 rounded-md border border-border p-3 sm:grid-cols-2" data-testid="deal-new-party" onKeyDown={onEnter}>
       <p className="text-sm font-medium text-foreground sm:col-span-2">{t('form.newParty.title')}</p>
       <Field label={tc('fields.name')} error={fields.of('name')} className="sm:col-span-2">
         {(c) => <Input {...c} maxLength={300} autoFocus value={name} onChange={(e) => (setName(e.target.value), fields.edit('name'))} onBlur={(e) => fields.blur('name', e.target.value)} />}
