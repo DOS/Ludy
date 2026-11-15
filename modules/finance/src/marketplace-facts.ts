@@ -8,7 +8,9 @@ import { zMarketplaceBalanceInput, type MarketplaceFacts } from '@crove/kernel-c
 import type { MemberRole } from '@crove/db';
 import { defineQuery } from '@crove/kernel-runtime';
 import { money, sum, toMoney } from '@crove/l10n-vn';
+import { JOURNAL_VOUCHER_SOURCE } from './domain/journal-voucher.ts';
 import { loadMarketplaceBalance } from './marketplace-balance.ts';
+import { reversedSource } from './source-entry.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 
@@ -25,8 +27,16 @@ export const marketplaceFacts = defineQuery({
       WHERE s.org_id = ${ctx.orgId}::uuid AND ${entity} AND s.reversal_of IS NULL
         AND NOT EXISTS (SELECT 1 FROM crove_finance.channel_settlement r WHERE r.org_id = s.org_id AND r.legal_entity_id = s.legal_entity_id AND r.reversal_of = s.id)
         AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_voucher v WHERE v.org_id = s.org_id AND v.settlement_id = s.id)`.execute(ctx.trx);
+    // A settlement whose posting stands and that has no payout voucher yet: the platform's transfer is not recorded (a reversed payout counts as a payout voucher: it is not posted again).
+    const owed = await sql<{ n: string }>`
+      SELECT count(*) AS n FROM crove_finance.channel_settlement s
+      WHERE s.org_id = ${ctx.orgId}::uuid AND ${entity} AND s.reversal_of IS NULL
+        AND NOT EXISTS (SELECT 1 FROM crove_finance.channel_settlement r WHERE r.org_id = s.org_id AND r.legal_entity_id = s.legal_entity_id AND r.reversal_of = s.id)
+        AND EXISTS (SELECT 1 FROM crove_finance.journal_voucher v WHERE v.org_id = s.org_id AND v.settlement_id = s.id AND NOT ${reversedSource('v', JOURNAL_VOUCHER_SOURCE)})
+        AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_voucher p WHERE p.org_id = s.org_id AND p.payout_settlement_id = s.id)`.execute(ctx.trx);
     return {
       settlementsToPost: Number(rows[0]?.n ?? '0'),
+      payoutsToMatch: Number(owed.rows[0]?.n ?? '0'),
       awaitingPayout: toMoney(sum(balance.rows.map((r) => money(r.awaitingPayout)).filter((v) => v.gt(0)))),
       feesAwaitingInvoice: toMoney(sum(balance.rows.map((r) => money(r.feesAwaitingInvoice)).filter((v) => v.gt(0)))),
     };

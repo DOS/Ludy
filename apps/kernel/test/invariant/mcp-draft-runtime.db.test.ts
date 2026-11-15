@@ -32,6 +32,7 @@ suite('the MCP draft command is the only write an MCP grant has (#3227)', () => 
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let runtime: Runtime;
+  let workerRuntime: Runtime;
   let orgA = '';
   let orgB = '';
   const users = { ownerA: '', adminA: '', memberA: '', ownerB: '' };
@@ -103,6 +104,8 @@ suite('the MCP draft command is the only write an MCP grant has (#3227)', () => 
     pools.push(pool);
     const db = createDb(pool);
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...socialQueries] });
+    // The wake entry of the worker (a property of the runtime, never of an actor): it must never run a write.
+    workerRuntime = new Runtime(db, { manifests: TEST_MANIFESTS, mcpEntry: 'worker' }).register({ commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...socialQueries] });
     for (const key of Object.keys(users) as Array<keyof typeof users>) {
       users[key] = await upsertIdentity(db, { issuer: 'mcp-draft-runtime', subject: key, email: `${key}@mcp-draft-runtime.test`, name: null });
     }
@@ -178,5 +181,37 @@ suite('the MCP draft command is the only write an MCP grant has (#3227)', () => 
     expect([403, 422]).toContain((await refusal(approve(users.memberA, { kind: 'member', scopes: ['ludy.member.read', 'ludy.social.draft'] }))).status);
     expect([403, 422]).toContain((await refusal(approve(users.ownerA, { kind: 'member', scopes: ['ludy.social.draft'] }))).status);
     expect((await refusal(approve(users.ownerA, { scopes: ['ludy.member.read'] }))).status).toBe(422);
+    // The draft scope never stands alone: a consent that holds it holds the read scope too, so a draft-only grant can never enter the read context either.
+    expect((await refusal(approve(users.ownerA, { scopes: ['ludy.social.draft'] }))).status).toBe(422);
+  });
+
+  it('never enters a write context for a member-bound grant or the worker\'s wake entry, whatever scopes the claim lists, and notes the refusal as a security event', async () => {
+    const input = { body: 'không được tạo', channels: [{ connectionId: conns.a1 }] };
+    // A member-bound grant (the database cannot hold the draft scope for it) whose claim lists the scope anyway.
+    const memberGrantId = randomUUID();
+    await admin((c) =>
+      c.query(
+        `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by, kind, member_id)
+         VALUES ($1, $2, $3, 'cm-draft', 'M', 'm.example.com', ARRAY['ludy.member.read'], 'oauth-cm-draft', now(), now() + interval '30 days', $3, 'member', $3)`,
+        [orgA, memberGrantId, users.memberA],
+      ),
+    );
+    const memberActor: UserActor = { type: 'user', userId: users.memberA, aal: 'aal1', mcp: { grantId: memberGrantId, clientId: 'cm-draft', clientName: 'M', scopes: ['ludy.read', 'ludy.social.draft'], kind: 'member' } };
+    const viaMember = await refusal(runtime.execute('social.mcp.draft_create', input, { actor: memberActor, orgId: orgA }));
+    expect([viaMember.status, viaMember.details]).toEqual([403, expect.objectContaining({ rule: 'mcp_scope' })]);
+    // The company grant on the worker's runtime: the wake entry runs reads only. A different caller from the member path (the security event is sampled per caller), so each refusal path's own event is asserted.
+    const workerCtx = await grantActor(orgA, users.adminA);
+    const viaWorker = await refusal(workerRuntime.execute('social.mcp.draft_create', input, workerCtx));
+    expect([viaWorker.status, viaWorker.details]).toEqual([403, expect.objectContaining({ rule: 'mcp_scope' })]);
+    // No post was made, and each refusal left a security event naming the caller, the command and the org (the org's own audit takes none: no context was entered).
+    expect((await admin((c) => c.query(`SELECT count(*)::int AS n FROM crove_social.post WHERE org_id = $1 AND body = $2`, [orgA, input.body]))).rows[0].n).toBe(0);
+    for (const [path, caller] of [
+      ['the member-bound grant', users.memberA],
+      ['the worker entry', users.adminA],
+    ] as const) {
+      const events = await admin((c) => c.query(`SELECT caller, code, target_org FROM crove_kernel.security_event WHERE command = 'social.mcp.draft_create' AND caller = $1 AND code = 'FORBIDDEN'`, [`user:${caller}`]));
+      expect(events.rowCount, `${path}: a security event`).toBeGreaterThan(0);
+      expect(events.rows[0], path).toMatchObject({ caller: `user:${caller}`, code: 'FORBIDDEN', target_org: orgA });
+    }
   });
 });
