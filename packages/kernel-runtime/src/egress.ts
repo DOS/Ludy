@@ -342,8 +342,13 @@ export async function guardedRequest(raw: string, request: GuardedRequest, optio
 // everything including the body. The body is handed out as it arrives; maxBytes is enforced while it streams, and the
 // socket is released when the body ends, fails, is stopped early (the iterator's return()) or destroy() is called.
 // The caller's headers (a bearer token) go on the first request and, by default, on a redirect only to the very same
-// host; a redirect to any other host is sent without them ('none' drops them on every redirect).
+// origin (scheme, host and port); a redirect to anywhere else is sent without them ('none' drops them on every redirect).
+// The first request goes only to one of `firstHosts`, exact host names (compared lower-cased, no suffix, no wildcard): the guard
+// refuses any other first host as 'blocked' before resolving it or opening a connection, so the caller's headers can never leave
+// for a host the caller did not name, whatever `hostAllowed` accepts for the hops a redirect leads to (a CDN suffix, say). The
+// option is required: a caller that has no list to give has no business sending headers.
 export interface EgressStreamOptions extends Omit<EgressOptions, 'overLimit'> {
+  firstHosts: readonly string[];
   redirectHeaders?: 'same-host' | 'none';
 }
 
@@ -358,6 +363,12 @@ export interface EgressStream {
   destroy(): void;
 }
 
+// Whether a hop of guardedStream carries the caller's headers: the first request always; a redirect only to the very same origin (scheme, host and port), and only while the options keep headers on
+// redirects. URL.host alone is not enough: a redirect from https to http on the same host name has the same host, and is another place (a token must not go in the clear).
+export function streamHeadersGo(first: URL, url: URL, hop: number, redirectHeaders: 'same-host' | 'none'): boolean {
+  return hop === 0 || (redirectHeaders === 'same-host' && url.origin === first.origin);
+}
+
 export async function guardedStream(raw: string, request: { headers?: Readonly<Record<string, string>> }, options: EgressStreamOptions): Promise<EgressStream> {
   const deadline = Date.now() + options.timeoutMs;
   const maxRedirects = options.maxRedirects ?? 3;
@@ -365,10 +376,12 @@ export async function guardedStream(raw: string, request: { headers?: Readonly<R
   const guard: EgressOptions = { ...options, httpsOnly: options.httpsOnly ?? true, overLimit: 'fail' };
   const callerHeaders = guardedHeaders(request.headers);
   const first = egressTarget(raw, options.anyPort);
+  const firstHost = first.hostname.startsWith('[') ? first.hostname.slice(1, -1) : first.hostname;
+  if (!options.firstHosts.some((host) => host.toLowerCase() === firstHost)) throw new EgressError('blocked', 'not an allowed first host');
   let url = first;
   for (let hop = 0; ; hop++) {
     const target = await addressFor(url, guard, deadline);
-    const forward = hop === 0 || ((options.redirectHeaders ?? 'same-host') === 'same-host' && url.host === first.host);
+    const forward = streamHeadersGo(first, url, hop, options.redirectHeaders ?? 'same-host');
     const result = await openHop(url, target, guard, deadline, { method: 'GET', headers: forward ? callerHeaders : {}, body: null });
     if ('redirect' in result) {
       if (hop >= maxRedirects) throw new EgressError('redirects', 'too many redirects');
