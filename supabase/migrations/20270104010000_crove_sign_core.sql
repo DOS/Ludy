@@ -64,12 +64,14 @@ CREATE INDEX IF NOT EXISTS envelope_status_updated_idx ON crove_sign.envelope (o
 CREATE INDEX IF NOT EXISTS envelope_source_link_idx ON crove_sign.envelope (org_id, source_kind, source_id) WHERE source_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS envelope_certificate_code_uq ON crove_sign.envelope (org_id, certificate_code) WHERE certificate_code IS NOT NULL;
 CREATE INDEX IF NOT EXISTS envelope_expire_due_idx ON crove_sign.envelope (org_id, expires_at) WHERE status IN ('sent', 'in_progress') AND expires_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS envelope_inspect_pending_idx ON crove_sign.envelope (org_id, updated_at, id) WHERE status = 'draft' AND inspect_status = 'pending';
+CREATE INDEX IF NOT EXISTS envelope_seal_pending_idx ON crove_sign.envelope (org_id, updated_at, id) WHERE status = 'completed' AND seal_status IS NULL;
 
 CREATE TABLE IF NOT EXISTS crove_sign.signer (
   org_id uuid NOT NULL,
   id uuid NOT NULL DEFAULT crove_kernel.uuid_v7(),
   envelope_id uuid NOT NULL,
-  routing_order integer NOT NULL DEFAULT 1 CHECK (routing_order >= 1 AND routing_order <= 50),
+  routing_order integer NOT NULL DEFAULT 1 CHECK (routing_order >= 1 AND routing_order <= 100),
   signer_role text NOT NULL DEFAULT 'signer' CHECK (signer_role IN ('signer', 'approver', 'cc')),
   role_label text NOT NULL CHECK (pg_catalog.length(pg_catalog.btrim(role_label)) BETWEEN 1 AND 120),
   name text NOT NULL CHECK (pg_catalog.length(pg_catalog.btrim(name)) BETWEEN 1 AND 200),
@@ -314,12 +316,16 @@ BEGIN
     IF NEW.org_id IS DISTINCT FROM crove_kernel.ctx_org_id() THEN
       RETURN NEW;
     END IF;
-    IF NEW.status <> 'draft' OR NEW.sealed_file_id IS NOT NULL OR NEW.sealed_storage_key IS NOT NULL
-       OR NEW.sealed_generation IS NOT NULL OR NEW.sealed_sha256 IS NOT NULL OR NEW.certificate_file_id IS NOT NULL
+    IF NEW.status <> 'draft' OR NEW.inspect_status <> 'pending' OR NEW.inspect_error IS NOT NULL
+       OR NEW.page_count IS NOT NULL OR NEW.page_dimensions_json IS NOT NULL OR NEW.seal_status IS NOT NULL
+       OR NEW.sealed_file_id IS NOT NULL OR NEW.sealed_storage_key IS NOT NULL
+       OR NEW.sealed_generation IS NOT NULL OR NEW.sealed_sha256 IS NOT NULL
+       OR NEW.certificate_file_id IS NOT NULL OR NEW.certificate_storage_key IS NOT NULL
+       OR NEW.certificate_generation IS NOT NULL OR NEW.certificate_sha256 IS NOT NULL
        OR NEW.certificate_code IS NOT NULL OR NEW.sent_at IS NOT NULL OR NEW.completed_at IS NOT NULL
        OR NEW.declined_at IS NOT NULL OR NEW.voided_at IS NOT NULL OR NEW.voided_by IS NOT NULL
        OR NEW.void_reason IS NOT NULL OR NEW.expired_at IS NOT NULL THEN
-      RAISE EXCEPTION 'ENVELOPE_FORBIDDEN' USING ERRCODE = '42501', DETAIL = 'an envelope starts as a draft without sealing or completion data';
+      RAISE EXCEPTION 'ENVELOPE_FORBIDDEN' USING ERRCODE = '42501', DETAIL = 'an envelope starts as an uninspected draft without sealing or completion data';
     END IF;
     RETURN NEW;
   END IF;
@@ -332,43 +338,49 @@ BEGIN
   IF v_old IS NOT DISTINCT FROM v_new THEN
     RETURN NEW;
   END IF;
-  IF (NEW.org_id, NEW.id, NEW.created_by, NEW.created_at)
-     IS DISTINCT FROM (OLD.org_id, OLD.id, OLD.created_by, OLD.created_at) THEN
-    RAISE EXCEPTION 'ENVELOPE_IMMUTABLE' USING ERRCODE = '42501', DETAIL = 'envelope identity columns are immutable';
+  IF (NEW.org_id, NEW.id, NEW.created_by, NEW.created_at,
+      NEW.source_kind, NEW.source_id, NEW.source_file_id, NEW.source_storage_key, NEW.source_generation, NEW.source_sha256)
+     IS DISTINCT FROM (OLD.org_id, OLD.id, OLD.created_by, OLD.created_at,
+      OLD.source_kind, OLD.source_id, OLD.source_file_id, OLD.source_storage_key, OLD.source_generation, OLD.source_sha256) THEN
+    RAISE EXCEPTION 'ENVELOPE_IMMUTABLE' USING ERRCODE = '42501', DETAIL = 'envelope identity and source document columns are immutable';
   END IF;
-  -- Sealed/certificate/completion columns are written only by system workers.
-  IF (NEW.seal_status, NEW.sealed_file_id, NEW.sealed_storage_key, NEW.sealed_generation, NEW.sealed_sha256,
+  -- Inspection, sealing, certificate, and completion columns are written only by system workers.
+  IF (NEW.inspect_status, NEW.inspect_error, NEW.page_count, NEW.page_dimensions_json,
+      NEW.seal_status, NEW.sealed_file_id, NEW.sealed_storage_key, NEW.sealed_generation, NEW.sealed_sha256,
       NEW.certificate_file_id, NEW.certificate_storage_key, NEW.certificate_generation, NEW.certificate_sha256,
       NEW.certificate_code, NEW.completed_at, NEW.declined_at, NEW.expired_at)
-     IS DISTINCT FROM (OLD.seal_status, OLD.sealed_file_id, OLD.sealed_storage_key, OLD.sealed_generation, OLD.sealed_sha256,
+     IS DISTINCT FROM (OLD.inspect_status, OLD.inspect_error, OLD.page_count, OLD.page_dimensions_json,
+      OLD.seal_status, OLD.sealed_file_id, OLD.sealed_storage_key, OLD.sealed_generation, OLD.sealed_sha256,
       OLD.certificate_file_id, OLD.certificate_storage_key, OLD.certificate_generation, OLD.certificate_sha256,
       OLD.certificate_code, OLD.completed_at, OLD.declined_at, OLD.expired_at) THEN
-    RAISE EXCEPTION 'ENVELOPE_SYSTEM_ONLY' USING ERRCODE = '42501', DETAIL = 'sealed and completion metadata are system-managed';
+    RAISE EXCEPTION 'ENVELOPE_SYSTEM_ONLY' USING ERRCODE = '42501', DETAIL = 'inspection, sealed, and completion metadata are system-managed';
+  END IF;
+  IF OLD.status IN ('draft', 'sent', 'in_progress') AND NEW.status = 'voided' THEN
+    IF NEW.voided_at IS NULL OR (pg_catalog.to_jsonb(OLD) - ARRAY['status', 'voided_at', 'voided_by', 'void_reason', 'version', 'updated_at'])
+       IS DISTINCT FROM (pg_catalog.to_jsonb(NEW) - ARRAY['status', 'voided_at', 'voided_by', 'void_reason', 'version', 'updated_at']) THEN
+      RAISE EXCEPTION 'ENVELOPE_FROZEN' USING ERRCODE = '42501', DETAIL = 'only void metadata can change when voiding';
+    END IF;
+    RETURN NEW;
   END IF;
   IF OLD.status = 'draft' THEN
     IF NEW.status = 'draft' THEN
+      IF (NEW.sent_at, NEW.voided_at, NEW.voided_by, NEW.void_reason)
+         IS DISTINCT FROM (OLD.sent_at, OLD.voided_at, OLD.voided_by, OLD.void_reason) THEN
+        RAISE EXCEPTION 'ENVELOPE_SYSTEM_ONLY' USING ERRCODE = '42501', DETAIL = 'lifecycle timestamps cannot be modified on a draft';
+      END IF;
       RETURN NEW;
     END IF;
     IF NEW.status = 'sent' THEN
       IF OLD.inspect_status <> 'passed' THEN
         RAISE EXCEPTION 'ENVELOPE_NOT_INSPECTED' USING ERRCODE = '42501', DETAIL = 'source PDF must pass inspection before sending';
       END IF;
-      IF (NEW.source_kind, NEW.source_id, NEW.source_file_id, NEW.source_storage_key, NEW.source_generation,
-          NEW.source_sha256, NEW.inspect_status, NEW.inspect_error, NEW.page_count, NEW.page_dimensions_json, NEW.routing_mode)
-         IS DISTINCT FROM (OLD.source_kind, OLD.source_id, OLD.source_file_id, OLD.source_storage_key, OLD.source_generation,
-          OLD.source_sha256, OLD.inspect_status, OLD.inspect_error, OLD.page_count, OLD.page_dimensions_json, OLD.routing_mode) THEN
-        RAISE EXCEPTION 'ENVELOPE_FROZEN' USING ERRCODE = '42501', DETAIL = 'source document and routing mode cannot change while sending';
+      IF NEW.sent_at IS NULL OR (pg_catalog.to_jsonb(OLD) - ARRAY['status', 'sent_at', 'version', 'updated_at'])
+         IS DISTINCT FROM (pg_catalog.to_jsonb(NEW) - ARRAY['status', 'sent_at', 'version', 'updated_at']) THEN
+        RAISE EXCEPTION 'ENVELOPE_FROZEN' USING ERRCODE = '42501', DETAIL = 'only status and sent_at can change when sending';
       END IF;
       RETURN NEW;
     END IF;
-    RAISE EXCEPTION 'ENVELOPE_INVALID_TRANSITION' USING ERRCODE = '42501', DETAIL = 'draft envelope can only move to sent';
-  END IF;
-  IF OLD.status IN ('sent', 'in_progress') AND NEW.status = 'voided' THEN
-    IF (pg_catalog.to_jsonb(OLD) - ARRAY['status', 'voided_at', 'voided_by', 'void_reason', 'version', 'updated_at'])
-       IS DISTINCT FROM (pg_catalog.to_jsonb(NEW) - ARRAY['status', 'voided_at', 'voided_by', 'void_reason', 'version', 'updated_at']) THEN
-      RAISE EXCEPTION 'ENVELOPE_FROZEN' USING ERRCODE = '42501', DETAIL = 'only void metadata can change when voiding';
-    END IF;
-    RETURN NEW;
+    RAISE EXCEPTION 'ENVELOPE_INVALID_TRANSITION' USING ERRCODE = '42501', DETAIL = 'draft envelope can only move to sent or voided';
   END IF;
   RAISE EXCEPTION 'ENVELOPE_FROZEN' USING ERRCODE = '42501', DETAIL = 'envelope is frozen after leaving draft';
 END $$;
@@ -501,7 +513,9 @@ DECLARE
   v_events integer := 0;
   v_draft_ids uuid[];
 BEGIN
-  IF v_org IS NULL OR crove_kernel.ctx_actor_type() IS DISTINCT FROM 'system' THEN
+  IF v_org IS NULL
+     OR crove_kernel.ctx_actor_type() IS DISTINCT FROM 'system'
+     OR NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER') THEN
     RAISE EXCEPTION 'SIGN_CLEANUP_SYSTEM_CONTEXT' USING ERRCODE = '42501';
   END IF;
 
@@ -517,10 +531,12 @@ BEGIN
     AND COALESCE(t.revoked_at, t.used_at, t.expires_at) < p_secret_cutoff;
   GET DIAGNOSTICS v_tokens = ROW_COUNT;
 
-  -- Clean un-sent abandoned drafts older than draft cutoff, never touching non-draft envelopes.
+  -- Lock abandoned draft envelopes before deleting their event chain so concurrent send cannot race.
   v_draft_ids := ARRAY(
     SELECT e.id FROM crove_sign.envelope e
     WHERE e.org_id = v_org AND e.status = 'draft' AND e.updated_at < p_draft_cutoff
+    ORDER BY e.updated_at ASC, e.id ASC
+    FOR UPDATE OF e SKIP LOCKED
   );
   IF COALESCE(pg_catalog.array_length(v_draft_ids, 1), 0) > 0 THEN
     PERFORM pg_catalog.set_config('crove.sign_cleanup', v_org::text, true);
@@ -543,7 +559,7 @@ BEGIN
 END $$;
 
 REVOKE ALL ON FUNCTION crove_sign.cleanup_org_stale(timestamptz, timestamptz) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
-GRANT EXECUTE ON FUNCTION crove_sign.cleanup_org_stale(timestamptz, timestamptz) TO crove_tenant;
+GRANT EXECUTE ON FUNCTION crove_sign.cleanup_org_stale(timestamptz, timestamptz) TO crove_worker;
 
 CREATE OR REPLACE FUNCTION crove_sign.signing_event_append_only() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
@@ -565,6 +581,7 @@ BEGIN
   IF TG_OP = 'DELETE'
      AND v_cur_role = v_cleanup_owner
      AND pg_catalog.current_setting('crove.sign_cleanup', true) = OLD.org_id::text
+     AND pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER')
      AND crove_kernel.ctx_actor_type() = 'system'
      AND crove_kernel.ctx_org_id() = OLD.org_id
      AND EXISTS (SELECT 1 FROM crove_sign.envelope e WHERE e.org_id = OLD.org_id AND e.id = OLD.envelope_id AND e.status = 'draft') THEN
@@ -820,81 +837,60 @@ END $$;
 REVOKE ALL ON FUNCTION crove_sign.personal_erase_otp(text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_sign.personal_erase_otp(text) TO crove_tenant;
 
--- ---------------------------------------------------------------------------
--- 7. File sources & upload purposes
--- ---------------------------------------------------------------------------
-ALTER TABLE crove_kernel.file DROP CONSTRAINT IF EXISTS file_source_check;
-ALTER TABLE crove_kernel.file
-  ADD CONSTRAINT file_source_check CHECK (source IN ('upload', 'email', 'social', 'import', 'meeting_audio', 'meeting_video', 'sign_document', 'sign_sealed', 'sign_certificate'));
+CREATE OR REPLACE FUNCTION crove_sign.work_recovery_candidates(
+  p_older_than timestamptz,
+  p_limit integer DEFAULT 100,
+  p_org_id uuid DEFAULT NULL
+)
+RETURNS TABLE(work_kind text, org_id uuid, envelope_id uuid)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  v_limit integer := LEAST(GREATEST(COALESCE(p_limit, 100), 1), 500);
+BEGIN
+  IF NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER') THEN
+    RAISE EXCEPTION 'SIGN_RECOVERY_WORKER_ONLY' USING ERRCODE = '42501';
+  END IF;
 
-ALTER TABLE crove_kernel.file_upload DROP CONSTRAINT IF EXISTS file_upload_purpose_check;
-ALTER TABLE crove_kernel.file_upload
-  ADD CONSTRAINT file_upload_purpose_check CHECK (purpose IN ('document', 'social', 'import', 'meeting_audio', 'meeting_video', 'sign_document'));
+  RETURN QUERY
+  SELECT q.work_kind, q.org_id, q.envelope_id
+  FROM (
+    SELECT 'inspect'::text AS work_kind, e.org_id, e.id AS envelope_id, e.updated_at
+    FROM crove_sign.envelope e
+    JOIN crove_kernel.tenant t ON t.org_id = e.org_id
+    WHERE t.status = 'active'
+      AND (p_org_id IS NULL OR e.org_id = p_org_id)
+      AND crove_kernel.org_app_on(e.org_id, 'sign')
+      AND e.status = 'draft'
+      AND e.inspect_status = 'pending'
+      AND e.updated_at <= p_older_than
+    UNION ALL
+    SELECT 'seal'::text AS work_kind, e.org_id, e.id AS envelope_id, e.updated_at
+    FROM crove_sign.envelope e
+    JOIN crove_kernel.tenant t ON t.org_id = e.org_id
+    WHERE t.status = 'active'
+      AND (p_org_id IS NULL OR e.org_id = p_org_id)
+      AND crove_kernel.org_app_on(e.org_id, 'sign')
+      AND e.status = 'completed'
+      AND e.seal_status IS NULL
+      AND e.updated_at <= p_older_than
+  ) q
+  ORDER BY q.updated_at ASC, q.envelope_id ASC
+  LIMIT v_limit;
+END $$;
+
+REVOKE ALL ON FUNCTION crove_sign.work_recovery_candidates(timestamptz, integer, uuid) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+GRANT EXECUTE ON FUNCTION crove_sign.work_recovery_candidates(timestamptz, integer, uuid) TO crove_worker;
 
 -- ---------------------------------------------------------------------------
--- 8. Queues & worker health optional modules
+-- 7. Queues
 -- ---------------------------------------------------------------------------
 SELECT crove_jobs.create_queue('sign-pdf-inspect', '{"policy":"standard","deadLetter":"kernel-job.dlq"}'::jsonb);
 SELECT crove_jobs.create_queue('sign-pdf-seal', '{"policy":"standard","deadLetter":"kernel-job.dlq"}'::jsonb);
 SELECT crove_jobs.create_queue('sign-expire-sweep', '{"policy":"standard","deadLetter":"kernel-job.dlq"}'::jsonb);
 SELECT crove_jobs.create_queue('sign-cleanup', '{"policy":"standard","deadLetter":"kernel-job.dlq"}'::jsonb);
-
-CREATE OR REPLACE FUNCTION crove_kernel.health(p_dead_letter_window_seconds integer DEFAULT 3600)
- RETURNS TABLE(checked_at timestamp with time zone, outbox_pending integer, outbox_oldest_age_seconds double precision, inbound_pending integer, inbound_oldest_age_seconds double precision, jobs_schema_present boolean, jobs_queued integer, job_oldest_queued_age_seconds double precision, dead_letter_count integer, worker_heartbeat_age_seconds double precision)
- LANGUAGE plpgsql
- STABLE SECURITY DEFINER
- SET search_path = pg_catalog, pg_temp
-AS $$
-DECLARE
-  v_window interval := pg_catalog.make_interval(secs => LEAST(GREATEST(COALESCE(p_dead_letter_window_seconds, 3600), 60), 604800));
-  v_worked text[];
-  v_expected text[] := pg_catalog.string_to_array(COALESCE(pg_catalog.current_setting('crove.prober_modules', true), ''), ',');
-BEGIN
-  checked_at := pg_catalog.now();
-
-  SELECT pg_catalog.count(*)::int INTO outbox_pending
-  FROM (SELECT 1 FROM crove_kernel.outbox_pending LIMIT 10000) s;
-  SELECT EXTRACT(EPOCH FROM checked_at - e.created_at)::double precision INTO outbox_oldest_age_seconds
-  FROM crove_kernel.outbox_pending p
-  JOIN crove_kernel.outbox_event e ON e.org_id = p.org_id AND e.id = p.event_id
-  ORDER BY p.seq LIMIT 1;
-
-  SELECT pg_catalog.count(*)::int INTO inbound_pending
-  FROM (SELECT 1 FROM crove_kernel.inbound_pending LIMIT 10000) s;
-  SELECT EXTRACT(EPOCH FROM checked_at - i.received_at)::double precision INTO inbound_oldest_age_seconds
-  FROM crove_kernel.inbound_pending i ORDER BY i.seq LIMIT 1;
-
-  IF NOT EXISTS (SELECT 1 FROM crove_kernel.worker_heartbeat h WHERE h.beat_at > checked_at - interval '1 hour' AND h.modules IS NULL) THEN
-    SELECT pg_catalog.array_agg(DISTINCT m) INTO v_worked
-    FROM crove_kernel.worker_heartbeat h, pg_catalog.unnest(h.modules) m
-    WHERE h.beat_at > checked_at - interval '7 days';
-  END IF;
-
-  jobs_schema_present := pg_catalog.to_regclass('crove_jobs.job') IS NOT NULL;
-  IF jobs_schema_present THEN
-    SELECT pg_catalog.count(*)::int, EXTRACT(EPOCH FROM checked_at - pg_catalog.min(q.start_after))::double precision
-    INTO jobs_queued, job_oldest_queued_age_seconds
-    FROM (
-      SELECT j.start_after FROM crove_jobs.job j
-      WHERE j.state IN ('created', 'retry') AND j.start_after <= checked_at
-        AND (v_worked IS NULL OR pg_catalog.split_part(j.name, '-', 1) <> ALL (ARRAY['finance', 'social', 'ads', 'crm', 'notes', 'meetings', 'sign'])
-             OR pg_catalog.split_part(j.name, '-', 1) = ANY (v_worked)
-             OR pg_catalog.split_part(j.name, '-', 1) = ANY (v_expected))
-      ORDER BY j.start_after LIMIT 10000
-    ) q;
-    SELECT pg_catalog.count(*)::int INTO dead_letter_count
-    FROM (
-      SELECT 1 FROM crove_jobs.job j
-      WHERE j.state = 'failed' AND COALESCE(j.completed_on, j.created_on) > checked_at - v_window
-      LIMIT 10000
-    ) d;
-  END IF;
-
-  SELECT EXTRACT(EPOCH FROM checked_at - pg_catalog.max(h.beat_at))::double precision INTO worker_heartbeat_age_seconds
-  FROM crove_kernel.worker_heartbeat h;
-
-  RETURN NEXT;
-END $$;
 
 REVOKE ALL ON FUNCTION crove_sign.envelope_guard(), crove_sign.signer_guard(), crove_sign.field_guard(), crove_sign.signing_event_append_only()
 FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;

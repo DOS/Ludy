@@ -269,3 +269,6 @@ BEGIN
   blob_keys := v_keys;
   RETURN NEXT;
 END $$;
+
+REVOKE ALL ON FUNCTION crove_kernel.org_purge(integer) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+GRANT EXECUTE ON FUNCTION crove_kernel.org_purge(integer) TO crove_worker;

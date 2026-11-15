@@ -24,11 +24,32 @@ const REMIND_COOLDOWN_MS = 5 * 60_000;
 const DEFAULT_LINK_TTL_HOURS = 30 * 24;
 const DEFAULT_RETENTION_DAYS = 90;
 const EXPIRE_SWEEP_BATCH = 100;
-const FIELD_COORD_EPSILON = 1e-6;
+const NORM_SCALE = 1_000_000;
+const MAX_ROUTING_ORDER = 100;
 
 const zSha256Hex = z.string().regex(/^[0-9a-f]{64}$/, '64-character lowercase sha256 hex');
 const zNormMin0 = z.number().finite().min(0).lt(1);
 const zNormSpan = z.number().finite().gt(0).lte(1);
+
+function toMicroNorm(value: number): number {
+  return Math.round(value * NORM_SCALE);
+}
+
+function formatMicroNorm(micro: number): string {
+  return (micro / NORM_SCALE).toFixed(6);
+}
+
+function nextDefaultRoutingOrder(existing: ReadonlyArray<{ routing_order: number }>): number {
+  const maxOrder = existing.reduce((max, item) => Math.max(max, item.routing_order), 0);
+  if (maxOrder < MAX_ROUTING_ORDER) {
+    return maxOrder + 1;
+  }
+  const used = new Set(existing.map((item) => item.routing_order));
+  for (let order = 1; order <= MAX_ROUTING_ORDER; order += 1) {
+    if (!used.has(order)) return order;
+  }
+  return MAX_ROUTING_ORDER;
+}
 
 const target = (input: { envelopeId: string }) => ({ type: 'sign.envelope', id: input.envelopeId });
 
@@ -101,14 +122,6 @@ function assertDraft(status: string): void {
   if (status !== 'draft') {
     throw new DomainError('SIGN_ENVELOPE_NOT_DRAFT', 409, 'Envelope can no longer be edited once sent');
   }
-}
-
-function formatNorm(value: number, label: string): string {
-  const formatted = value.toFixed(6);
-  if ((label === 'wNorm' || label === 'hNorm') && Number(formatted) <= 0) {
-    throw new DomainError('SIGN_INVALID_FIELD', 422, `${label} rounds to zero at 6 decimal precision`);
-  }
-  return formatted;
 }
 
 const zEnvelopeCreate = z.strictObject({
@@ -250,7 +263,7 @@ const zEnvelopeInspectComplete = z.discriminatedUnion('outcome', [
   z.strictObject({
     envelopeId: zId,
     outcome: z.literal('failed'),
-    error: z.string().min(1).max(1000),
+    error: z.string().min(1).max(500),
   }),
 ]);
 
@@ -435,7 +448,7 @@ const zSignerAdd = z.strictObject({
   roleLabel: z.string().trim().min(1).max(100).optional(),
   name: z.string().trim().min(1).max(200),
   email: z.email().max(254).nullable().optional(),
-  phone: z.string().trim().min(1).max(40).nullable().optional(),
+  phone: z.string().trim().min(6).max(32).nullable().optional(),
   deliveryMode: z.enum(SIGN_DELIVERY_MODES).default('link'),
   requireEmailOtp: z.boolean().default(false),
 });
@@ -490,8 +503,7 @@ export const signerAdd = defineCommand({
         `An envelope can have at most ${EXTRACT_LIMITS.maxPdfSealSigners} signers`,
       );
     }
-    const maxOrder = existing.reduce((max, item) => Math.max(max, item.routing_order), 0);
-    const routingOrder = input.routingOrder ?? maxOrder + 1;
+    const routingOrder = input.routingOrder ?? nextDefaultRoutingOrder(existing);
     const defaultRoleLabel =
       input.signerRole === 'approver' ? 'Approver' : input.signerRole === 'cc' ? 'CC' : 'Signer';
     const roleLabel = input.roleLabel ?? defaultRoleLabel;
@@ -708,10 +720,26 @@ const zFieldItem = z
     fontSizePt: z.number().int().min(6).max(36).nullable().optional(),
   })
   .superRefine((item, issueCtx) => {
-    if (item.xNorm + item.wNorm > 1 + FIELD_COORD_EPSILON) {
+    const x = toMicroNorm(item.xNorm);
+    const y = toMicroNorm(item.yNorm);
+    const w = toMicroNorm(item.wNorm);
+    const h = toMicroNorm(item.hNorm);
+    if (x < 0 || x >= NORM_SCALE) {
+      issueCtx.addIssue({ code: 'custom', path: ['xNorm'], message: 'xNorm rounds outside [0, 1)' });
+    }
+    if (y < 0 || y >= NORM_SCALE) {
+      issueCtx.addIssue({ code: 'custom', path: ['yNorm'], message: 'yNorm rounds outside [0, 1)' });
+    }
+    if (w < 1 || w > NORM_SCALE) {
+      issueCtx.addIssue({ code: 'custom', path: ['wNorm'], message: 'wNorm rounds outside (0, 1]' });
+    }
+    if (h < 1 || h > NORM_SCALE) {
+      issueCtx.addIssue({ code: 'custom', path: ['hNorm'], message: 'hNorm rounds outside (0, 1]' });
+    }
+    if (x + w > NORM_SCALE) {
       issueCtx.addIssue({ code: 'custom', path: ['wNorm'], message: 'xNorm + wNorm must be <= 1' });
     }
-    if (item.yNorm + item.hNorm > 1 + FIELD_COORD_EPSILON) {
+    if (y + h > NORM_SCALE) {
       issueCtx.addIssue({ code: 'custom', path: ['hNorm'], message: 'yNorm + hNorm must be <= 1' });
     }
   });
@@ -800,10 +828,10 @@ export const fieldSet = defineCommand({
             signer_id: f.signerId,
             field_type: f.fieldType,
             page_number: f.pageNumber,
-            x_norm: formatNorm(f.xNorm, 'xNorm'),
-            y_norm: formatNorm(f.yNorm, 'yNorm'),
-            w_norm: formatNorm(f.wNorm, 'wNorm'),
-            h_norm: formatNorm(f.hNorm, 'hNorm'),
+            x_norm: formatMicroNorm(toMicroNorm(f.xNorm)),
+            y_norm: formatMicroNorm(toMicroNorm(f.yNorm)),
+            w_norm: formatMicroNorm(toMicroNorm(f.wNorm)),
+            h_norm: formatMicroNorm(toMicroNorm(f.hNorm)),
             label: f.label ?? null,
             required: f.required,
             proposed_by_ai: f.proposedByAi,
@@ -942,7 +970,7 @@ export const envelopeSend = defineCommand({
       .where('id', 'in', dueIds)
       .execute();
 
-    const defaultExpiry = new Date(Math.max(ctx.now.getTime(), Date.now()) + DEFAULT_LINK_TTL_HOURS * 3_600_000);
+    const defaultExpiry = new Date(ctx.now.getTime() + DEFAULT_LINK_TTL_HOURS * 3_600_000);
     const tokenExpiresAt = row.expires_at ? new Date(row.expires_at) : defaultExpiry;
 
     const links: IssuedSigningLink[] = [];
@@ -1026,7 +1054,7 @@ export const signerCreateLink = defineCommand({
       throw new DomainError('SIGN_SIGNER_NOT_DUE', 409, 'Signer is not currently awaiting signature');
     }
 
-    const baseNowMs = Math.max(ctx.now.getTime(), Date.now());
+    const baseNowMs = ctx.now.getTime();
     const requestedExpiry = new Date(baseNowMs + input.expiresInHours * 3_600_000);
     const expiresAt =
       row.expires_at && new Date(row.expires_at).getTime() < requestedExpiry.getTime()
@@ -1241,7 +1269,7 @@ const zEnvelopeSealComplete = z.discriminatedUnion('outcome', [
   z.strictObject({
     envelopeId: zId,
     outcome: z.literal('failed'),
-    error: z.string().min(1).max(1000),
+    error: z.string().min(1).max(500),
   }),
 ]);
 
@@ -1261,14 +1289,21 @@ export const envelopeSealComplete = defineCommand({
     if (row.status !== 'completed') {
       throw new DomainError('SIGN_ENVELOPE_NOT_COMPLETED', 409, 'Only completed envelopes can be sealed');
     }
-    if (row.seal_status === 'sealed' && input.outcome === 'sealed') {
-      ctx.audit({ envelopeId: row.id, sealStatus: 'sealed', idempotent: true });
+    if (row.seal_status === 'sealed') {
+      ctx.audit({
+        envelopeId: row.id,
+        sealStatus: 'sealed',
+        idempotent: true,
+        ...(input.outcome === 'failed' ? { ignoredOutcome: input.outcome } : {}),
+      });
       return {
         envelopeId: row.id,
         sealStatus: 'sealed' as const,
         sealedFileId: row.sealed_file_id,
         certificateFileId: row.certificate_file_id,
         certificateCode: row.certificate_code,
+        idempotent: true,
+        ...(input.outcome === 'failed' ? { ignoredOutcome: input.outcome } : {}),
       };
     }
 

@@ -19,7 +19,7 @@ import { AVAILABLE_MODULES, loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
 import { orgPurgeCommand, runOrgPurge } from '../src/org-purge.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
-import { runSignPdfInspectJob, runSignPdfSealJob, sweepSignCleanup, sweepSignExpire } from '../src/sign-worker.ts';
+import { SIGN_ACTOR, runSignPdfInspectJob, runSignPdfSealJob, sweepSignCleanup, sweepSignExpire, sweepSignPendingWork } from '../src/sign-worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -144,13 +144,14 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     filename: string,
     purpose?: string,
     mime = 'application/pdf',
+    slug = org.slug,
   ) {
     const form = new FormData();
     form.append('file', new File([Buffer.from(bytes)], filename, { type: mime }));
     if (purpose !== undefined) form.append('purpose', purpose);
     const res = await targetApp.request('/api/files', {
       method: 'POST',
-      headers: { authorization: `Bearer ${await tokenFor(who)}`, 'x-crove-org': org.slug },
+      headers: { authorization: `Bearer ${await tokenFor(who)}`, 'x-crove-org': slug },
       body: form,
     });
     const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
@@ -933,5 +934,216 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
       );
       expect(remaining, table).toBe(0);
     }
+  });
+
+  it('enforces draft void, 500-char inspect error, routing order reuse, field micro-units, SQL envelope guards, seal fail-safe, and pending work recovery', async () => {
+    const createdReg = await rpc('org/create', owner, { name: 'Sign Regressions Org', idempotencyKey: randomUUID() }, null);
+    expect(createdReg.status).toBe(200);
+    const regOrgId = String(createdReg.body.orgId);
+    const regSlug = String(createdReg.body.slug);
+
+    const upload = await uploadFile(app, owner, pdfFixture('regressions'), 'regressions.pdf', 'sign_document', 'application/pdf', regSlug);
+    expect(upload.status).toBe(200);
+    const sourceFileId = ((upload.body?.files as Array<{ fileId: string }>) ?? [])[0]!.fileId;
+
+    // 1. Draft void transitions envelope and its signers to voided cleanly.
+    const draftEnv = await runtime.execute<{ envelopeId: string }>(
+      'sign.envelope.create',
+      { title: 'Draft Void', sourceFileId },
+      { actor: asUser(owner), orgId: regOrgId },
+    );
+    const draftSigner = await runtime.execute<{ signerId: string }>(
+      'sign.signer.add',
+      { envelopeId: draftEnv.envelopeId, signerRole: 'signer', name: 'Draft Signer', email: 'draft-void@sign.test' },
+      { actor: asUser(owner), orgId: regOrgId },
+    );
+    const voidedDraft = await runtime.execute<{ status: string }>(
+      'sign.envelope.void',
+      { envelopeId: draftEnv.envelopeId, reason: 'Cancelled before send' },
+      { actor: asUser(owner), orgId: regOrgId },
+    );
+    expect(voidedDraft.status).toBe('voided');
+    const voidedRows = await admin(async (c) => ({
+      env: (await c.query('SELECT status, void_reason FROM crove_sign.envelope WHERE org_id = $1 AND id = $2', [regOrgId, draftEnv.envelopeId])).rows[0],
+      signer: (await c.query('SELECT status FROM crove_sign.signer WHERE org_id = $1 AND id = $2', [regOrgId, draftSigner.signerId])).rows[0],
+    }));
+    expect(voidedRows.env).toEqual({ status: 'voided', void_reason: 'Cancelled before send' });
+    expect(voidedRows.signer).toEqual({ status: 'voided' });
+
+    // 2. Inspect error longer than 500 chars is clamped by sign-worker and satisfies DB CHECK.
+    const failEnv = await runtime.execute<{ envelopeId: string }>(
+      'sign.envelope.create',
+      { title: 'Inspect 500 Clamp', sourceFileId },
+      { actor: asUser(owner), orgId: regOrgId },
+    );
+    const inspectFail = await runSignPdfInspectJob(
+      { workerDb, runtime: workerRuntime, store, extract: mockExtract({ inspectError: { code: 'invalid', message: `bad-pdf-${'x'.repeat(640)}` } }) },
+      { orgId: regOrgId, envelopeId: failEnv.envelopeId },
+    );
+    expect(inspectFail.status).toBe('failed');
+    const inspectRow = await admin(async (c) =>
+      (await c.query<{ inspect_status: string; inspect_error: string }>('SELECT inspect_status, inspect_error FROM crove_sign.envelope WHERE org_id = $1 AND id = $2', [regOrgId, failEnv.envelopeId])).rows[0],
+    );
+    expect(inspectRow?.inspect_status).toBe('failed');
+    expect(inspectRow?.inspect_error.length).toBe(500);
+
+    // 3. Routing order up to 100, default order reuse after delete, phone <6 refusal, and field micro-unit validation.
+    const mainEnv = await runtime.execute<{ envelopeId: string }>(
+      'sign.envelope.create',
+      { title: 'Guard And Seal Env', sourceFileId },
+      { actor: asUser(owner), orgId: regOrgId },
+    );
+    await runSignPdfInspectJob({ workerDb, runtime: workerRuntime, store, extract: mockExtract() }, { orgId: regOrgId, envelopeId: mainEnv.envelopeId });
+
+    const s1 = await runtime.execute<{ signerId: string; routingOrder: number }>(
+      'sign.signer.add',
+      { envelopeId: mainEnv.envelopeId, signerRole: 'signer', name: 'First Slot', email: 'slot1@sign.test', routingOrder: 1 },
+      { actor: asUser(owner), orgId: regOrgId },
+    );
+    const s100 = await runtime.execute<{ signerId: string; routingOrder: number }>(
+      'sign.signer.add',
+      { envelopeId: mainEnv.envelopeId, signerRole: 'signer', name: 'Slot 100', email: 'slot100@sign.test', routingOrder: 100 },
+      { actor: asUser(owner), orgId: regOrgId },
+    );
+    expect(s100.routingOrder).toBe(100);
+    await runtime.execute('sign.signer.remove', { envelopeId: mainEnv.envelopeId, signerId: s1.signerId }, { actor: asUser(owner), orgId: regOrgId });
+
+    const sReused = await runtime.execute<{ signerId: string; routingOrder: number }>(
+      'sign.signer.add',
+      { envelopeId: mainEnv.envelopeId, signerRole: 'signer', name: 'Reused Slot', email: 'reused@sign.test' },
+      { actor: asUser(owner), orgId: regOrgId },
+    );
+    expect(sReused.routingOrder).toBe(1);
+    await runtime.execute('sign.signer.remove', { envelopeId: mainEnv.envelopeId, signerId: s100.signerId }, { actor: asUser(owner), orgId: regOrgId });
+
+    await expect(
+      runtime.execute(
+        'sign.signer.add',
+        { envelopeId: mainEnv.envelopeId, signerRole: 'signer', name: 'Short Phone', email: 'short-phone@sign.test', phone: '12345' },
+        { actor: asUser(owner), orgId: regOrgId },
+      ),
+    ).rejects.toMatchObject({ code: 'VALIDATION', status: 422 });
+
+    for (const badBox of [
+      { xNorm: 0.1, yNorm: 0.1, wNorm: 0.0000004, hNorm: 0.1 },
+      { xNorm: 0.9999999, yNorm: 0.1, wNorm: 0.000001, hNorm: 0.1 },
+      { xNorm: 0.5, yNorm: 0.1, wNorm: 0.500001, hNorm: 0.1 },
+    ]) {
+      await expect(
+        runtime.execute(
+          'sign.field.set',
+          { envelopeId: mainEnv.envelopeId, fields: [{ signerId: sReused.signerId, fieldType: 'signature', pageNumber: 1, ...badBox }] },
+          { actor: asUser(owner), orgId: regOrgId },
+        ),
+      ).rejects.toMatchObject({ code: 'VALIDATION', status: 422 });
+    }
+
+    await runtime.execute(
+      'sign.field.set',
+      {
+        envelopeId: mainEnv.envelopeId,
+        fields: [{ signerId: sReused.signerId, fieldType: 'signature', pageNumber: 1, xNorm: 0.5, yNorm: 0.5, wNorm: 0.5, hNorm: 0.5 }],
+      },
+      { actor: asUser(owner), orgId: regOrgId },
+    );
+
+    // 4. Direct tenant SQL cannot forge inspect_status on INSERT/UPDATE or mutate source_file_id.
+    const meta = await admin(async (c) =>
+      (
+        await c.query<{ source_storage_key: string; source_generation: string; source_sha256: string }>(
+          'SELECT source_storage_key, source_generation, source_sha256 FROM crove_sign.envelope WHERE org_id = $1 AND id = $2',
+          [regOrgId, mainEnv.envelopeId],
+        )
+      ).rows[0]!,
+    );
+    const expectTenantSqlRejects = async (sqlText: string, params: unknown[], pattern: RegExp) => {
+      const c = await pool.connect();
+      try {
+        await c.query('BEGIN');
+        await c.query('SELECT crove_kernel.enter_context($1::uuid, $2::uuid)', [owner.userId, regOrgId]);
+        await expect(c.query(sqlText, params)).rejects.toThrow(pattern);
+      } finally {
+        await c.query('ROLLBACK').catch(() => {});
+        c.release();
+      }
+    };
+    await expectTenantSqlRejects(
+      `INSERT INTO crove_sign.envelope (org_id, title, source_file_id, source_storage_key, source_generation, source_sha256, inspect_status, created_by)
+       VALUES ($1, 'Forged Inspect', $2, $3, $4, $5, 'passed', $6)`,
+      [regOrgId, sourceFileId, meta.source_storage_key, meta.source_generation, meta.source_sha256, owner.userId],
+      /ENVELOPE_FORBIDDEN/,
+    );
+    await expectTenantSqlRejects(
+      "UPDATE crove_sign.envelope SET inspect_status = 'passed' WHERE org_id = $1 AND id = $2",
+      [regOrgId, failEnv.envelopeId],
+      /ENVELOPE_SYSTEM_ONLY/,
+    );
+    await expectTenantSqlRejects(
+      'UPDATE crove_sign.envelope SET source_file_id = $3 WHERE org_id = $1 AND id = $2',
+      [regOrgId, failEnv.envelopeId, randomUUID()],
+      /ENVELOPE_IMMUTABLE/,
+    );
+
+    // 5. Late seal_complete outcome='failed' never overwrites a sealed envelope.
+    await runtime.execute('sign.envelope.send', { envelopeId: mainEnv.envelopeId }, { actor: asUser(owner), orgId: regOrgId });
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(
+        'UPDATE crove_sign.field SET signature_png_base64 = $3, filled_at = now() WHERE org_id = $1 AND envelope_id = $2',
+        [regOrgId, mainEnv.envelopeId, 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='],
+      );
+      await c.query("UPDATE crove_sign.signer SET status = 'signed', signed_at = now() WHERE org_id = $1 AND envelope_id = $2", [regOrgId, mainEnv.envelopeId]);
+      await c.query("UPDATE crove_sign.envelope SET status = 'completed', completed_at = now() WHERE org_id = $1 AND id = $2", [regOrgId, mainEnv.envelopeId]);
+      await c.query('COMMIT');
+    });
+    const sealDone = await runSignPdfSealJob({ workerDb, runtime: workerRuntime, store, extract: mockExtract() }, { orgId: regOrgId, envelopeId: mainEnv.envelopeId });
+    expect(sealDone.status).toBe('sealed');
+
+    const lateFail = await workerRuntime.execute<{ sealStatus: string; idempotent?: boolean; ignoredOutcome?: string }>(
+      'sign.envelope.seal_complete',
+      { envelopeId: mainEnv.envelopeId, outcome: 'failed', error: 'late timeout' },
+      { actor: SIGN_ACTOR, orgId: regOrgId },
+    );
+    expect(lateFail).toMatchObject({ sealStatus: 'sealed', idempotent: true, ignoredOutcome: 'failed' });
+    const sealedRow = await admin(async (c) =>
+      (await c.query<{ seal_status: string; sealed_file_id: string | null }>('SELECT seal_status, sealed_file_id FROM crove_sign.envelope WHERE org_id = $1 AND id = $2', [regOrgId, mainEnv.envelopeId])).rows[0],
+    );
+    expect(sealedRow?.seal_status).toBe('sealed');
+    expect(sealedRow?.sealed_file_id).toBeTruthy();
+
+    // 6. ADR-0053: sweepSignPendingWork skips pending inspect work while sign is off and recovers it once turned back on.
+    const pendingEnv = await runtime.execute<{ envelopeId: string }>(
+      'sign.envelope.create',
+      { title: 'Pending Recovery', sourceFileId },
+      { actor: asUser(owner), orgId: regOrgId },
+    );
+    await runtime.execute('kernel.org.set_app', { module: 'sign', enabled: false }, { actor: asUser(owner), orgId: regOrgId, idempotencyKey: randomUUID() });
+    const offInspectIds: string[] = [];
+    const offRecovered = await sweepSignPendingWork({
+      workerDb,
+      orgId: regOrgId,
+      olderThan: new Date(Date.now() + 5_000),
+      enqueueInspect: async (_orgId, envId) => {
+        offInspectIds.push(envId);
+      },
+      enqueueSeal: async () => {},
+    });
+    expect(offRecovered).toEqual({ inspect: 0, seal: 0 });
+    expect(offInspectIds).toEqual([]);
+
+    await runtime.execute('kernel.org.set_app', { module: 'sign', enabled: true }, { actor: asUser(owner), orgId: regOrgId, idempotencyKey: randomUUID() });
+    const onInspectIds: string[] = [];
+    const onRecovered = await sweepSignPendingWork({
+      workerDb,
+      orgId: regOrgId,
+      olderThan: new Date(Date.now() + 5_000),
+      enqueueInspect: async (_orgId, envId) => {
+        onInspectIds.push(envId);
+      },
+      enqueueSeal: async () => {},
+    });
+    expect(onRecovered.inspect).toBeGreaterThanOrEqual(1);
+    expect(onInspectIds).toContain(pendingEnv.envelopeId);
   });
 });

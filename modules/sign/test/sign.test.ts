@@ -344,8 +344,8 @@ describe('sign sealing payloads and certificate artifacts', () => {
     expect(t1.length).toBeGreaterThanOrEqual(40);
     expect(hashSigningToken(t1)).toMatch(/^[0-9a-f]{64}$/);
     expect(hashSigningToken(t1)).toBe(hashSigningToken(t1));
-    expect(maskEmail('a@b.co')).toBe('a***@b.co');
-    expect(maskEmail('ab@b.co')).toBe('a***@b.co');
+    expect(maskEmail('a@example.com')).toBe('a***@example.com');
+    expect(maskEmail('ab@example.com')).toBe('a***@example.com');
     expect(maskEmail(null)).toBeNull();
   });
 

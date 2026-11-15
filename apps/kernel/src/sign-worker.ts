@@ -90,7 +90,7 @@ export async function runSignPdfInspectJob(
     if (error instanceof BlobIntegrityError || error instanceof BlobTooLargeError) {
       await deps.runtime.execute(
         'sign.envelope.inspect_complete',
-        { envelopeId: job.envelopeId, outcome: 'failed', error: error.message.slice(0, 1000) },
+        { envelopeId: job.envelopeId, outcome: 'failed', error: error.message.slice(0, 500) },
         options,
       );
       return { status: 'failed' };
@@ -103,7 +103,7 @@ export async function runSignPdfInspectJob(
     if (INPUT_ERROR_CODES.includes(res.code)) {
       await deps.runtime.execute(
         'sign.envelope.inspect_complete',
-        { envelopeId: job.envelopeId, outcome: 'failed', error: res.message.slice(0, 1000) },
+        { envelopeId: job.envelopeId, outcome: 'failed', error: res.message.slice(0, 500) },
         options,
       );
       return { status: 'failed' };
@@ -157,7 +157,7 @@ export async function runSignPdfSealJob(
       {
         envelopeId: job.envelopeId,
         outcome: 'failed',
-        error: (chain.reason ?? 'Event hash chain verification failed before sealing').slice(0, 1000),
+        error: (chain.reason ?? 'Event hash chain verification failed before sealing').slice(0, 500),
       },
       options,
     );
@@ -179,7 +179,7 @@ export async function runSignPdfSealJob(
     if (error instanceof BlobIntegrityError || error instanceof BlobTooLargeError) {
       await deps.runtime.execute(
         'sign.envelope.seal_complete',
-        { envelopeId: job.envelopeId, outcome: 'failed', error: error.message.slice(0, 1000) },
+        { envelopeId: job.envelopeId, outcome: 'failed', error: error.message.slice(0, 500) },
         options,
       );
       return { status: 'failed' };
@@ -187,7 +187,10 @@ export async function runSignPdfSealJob(
     throw error;
   }
 
-  const completedAtIso = envelope.completedAtIso ?? new Date().toISOString();
+  if (!envelope.completedAtIso) {
+    throw new Error(`Completed envelope ${envelope.id} is missing completed_at timestamp`);
+  }
+  const completedAtIso = envelope.completedAtIso;
   const certificateCode = generateCertificateCode(envelope.id, completedAtIso, chain.tipHash);
 
   let certificate;
@@ -211,7 +214,7 @@ export async function runSignPdfSealJob(
     const message = error instanceof Error ? error.message : 'Invalid seal payload';
     await deps.runtime.execute(
       'sign.envelope.seal_complete',
-      { envelopeId: job.envelopeId, outcome: 'failed', error: message.slice(0, 1000) },
+      { envelopeId: job.envelopeId, outcome: 'failed', error: message.slice(0, 500) },
       options,
     );
     return { status: 'failed' };
@@ -222,7 +225,7 @@ export async function runSignPdfSealJob(
     if (INPUT_ERROR_CODES.includes(res.code)) {
       await deps.runtime.execute(
         'sign.envelope.seal_complete',
-        { envelopeId: job.envelopeId, outcome: 'failed', error: res.message.slice(0, 1000) },
+        { envelopeId: job.envelopeId, outcome: 'failed', error: res.message.slice(0, 500) },
         options,
       );
       return { status: 'failed' };
@@ -344,4 +347,32 @@ export async function sweepSignCleanup(deps: SignSweepDeps): Promise<{
     totals.draftEvents += res.draftEvents;
   }
   return totals;
+}
+
+export interface SignPendingWorkDeps {
+  workerDb: Db;
+  enqueueInspect: (orgId: string, envelopeId: string) => Promise<void>;
+  enqueueSeal: (orgId: string, envelopeId: string) => Promise<void>;
+  orgId?: string;
+  olderThan?: Date;
+}
+
+export async function sweepSignPendingWork(deps: SignPendingWorkDeps): Promise<{ inspect: number; seal: number }> {
+  const olderThan = deps.olderThan ?? new Date(Date.now() - 60_000);
+  const { rows } = await sql<{ work_kind: 'inspect' | 'seal'; org_id: string; envelope_id: string }>`
+    SELECT work_kind, org_id, envelope_id
+    FROM crove_sign.work_recovery_candidates(${olderThan}::timestamptz, ${SWEEP_ORG_BATCH}, ${deps.orgId ?? null}::uuid)
+  `.execute(deps.workerDb);
+  let inspect = 0;
+  let seal = 0;
+  for (const row of rows) {
+    if (row.work_kind === 'inspect') {
+      await deps.enqueueInspect(row.org_id, row.envelope_id);
+      inspect += 1;
+    } else {
+      await deps.enqueueSeal(row.org_id, row.envelope_id);
+      seal += 1;
+    }
+  }
+  return { inspect, seal };
 }
