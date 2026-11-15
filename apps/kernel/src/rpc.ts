@@ -2599,6 +2599,8 @@ export function createRpcHandler(
       reopen: os.conversations.reopen.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.reopen', input, { actor, orgId }))),
       note: os.conversations.note.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.note', input, { actor, orgId }))),
       linkContact: os.conversations.linkContact.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.link_contact', input, { actor, orgId }))),
+      followUp: os.conversations.followUp.handler(({ context, input }) => keyed(context, 'kernel.conversation.follow_up', input)),
+      tasks: os.conversations.tasks.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.tasks', input, { actor, orgId }))),
       setIntent: os.conversations.setIntent.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.set_intent', input, { actor, orgId }))),
       // The Inbox's suggestions (CV3, #2306): the thread's text is read in the member's own transaction, then the model is called outside it, through the
       // AI meter. Nothing is stored; a model that is off, refused or failing leaves no suggestion and no error.
