@@ -104,6 +104,9 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
   'channels.marketplaceProviders': ['provider:marketplace'],
   // The outside calendar adapters (#2123): Google's OAuth and Calendar hosts, through @crove/channel.
   'channels.calendars': ['provider:channel'],
+  // The meeting platform adapters (meetings integrations C1, #3173): the offline sandbox reaches nothing, and a real adapter (Google Meet, Zoom, Teams: C2 to C4) its platform's own API hosts, each bound to them by its allowlisted
+  // fetch; the file itself is downloaded by the import job through guardedStream, so the field is classified for what it can reach: the platforms of @crove/channel. Only the import job and its sweep reach the field.
+  'channels.meetingPlatforms': ['provider:channel'],
   publicUrl: [],
   // Where the links in mail and chat alerts open the web app (APP_URL, #2261): a string, no egress.
   appUrl: [],
