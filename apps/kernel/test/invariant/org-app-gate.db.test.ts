@@ -5,9 +5,11 @@
 // a query, not_installed for ctx.query: step 2, the runtime change). What it pins from today, and must keep after step 2:
 // a person who is not a member of the org learns nothing about its apps (the same refusal whether the app is on or off, never
 // MODULE_OFF); kernel is never refused, so the owner can always switch an app back on; another org is unaffected; the
-// owner's choice shows at once and an app switched back on runs again; and a billing port that fails never takes a command
+// owner's choice shows in kernel.org.apps at once and an app switched back on runs again; and a billing port that fails never takes a command
 // down (it fails open). A third tests-only PR makes the "either" cases strict once step 2 is on main (the runtime PR cannot
-// edit this base file, protected.yml). Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
+// edit this base file, protected.yml). Two things step 2 must keep for this file to pass: a module that is registered but
+// listed in no deployment setting (`probe`) counts as on for the runtime, and the billing option is named `entitlements`
+// (the strict PR checks it, since an unknown name would leave the failing-port case passing for no reason). Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
 // Part of the invariant suite: CI runs this file from the base branch on protected-path PRs (AGENTS.md).
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -157,7 +159,7 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b step 1)', () => {
     const o = await org();
     await o.setApp('probe', false);
     await o.setApp('other', false);
-    // kernel is never refused: the owner still reads the org and the apps, and can switch an app back on.
+    // kernel is never refused: a member still reads the org and the apps, and the owner can switch an app back on.
     await expect(rt.query('kernel.org.get', {}, { actor: asUser(o.member), orgId: o.orgId })).resolves.toMatchObject({ orgId: o.orgId });
     const apps = await rt.query<{ apps: Array<{ id: string; enabled: boolean }> }>('kernel.org.apps', {}, { actor: asUser(o.member), orgId: o.orgId });
     expect(apps.apps.filter((a) => !a.enabled).map((a) => a.id).sort()).toEqual(['other', 'probe']);
