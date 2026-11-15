@@ -107,6 +107,7 @@ function signInView(state: State): Node[] {
     h('h2', {}, T.setupTitle),
     ...addressForm(state),
     h('p', { class: 'note' }, state.address),
+    h('p', { class: 'note', id: 'sign-in-device-note' }, T.signInDeviceNote),
     h('button', { class: 'primary', onclick: () => void signIn(state) }, T.signIn),
   ];
 }
