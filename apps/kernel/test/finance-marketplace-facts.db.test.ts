@@ -133,7 +133,7 @@ suite('the Sàn line facts on PostgreSQL (#2516 slice E)', () => {
   });
 
   it('is all zeros while nothing is stored, posted or linked', async () => {
-    expect(await facts()).toEqual({ settlementsToPost: 0, payoutsToMatch: 0, awaitingPayout: '0', feesAwaitingInvoice: '0' });
+    expect(await facts()).toEqual({ settlementsToPost: 0, payoutsToMatch: 0, settlementsHalfReversed: 0, awaitingPayout: '0', feesAwaitingInvoice: '0' });
   });
 
   it('counts the stored settlements that stand and are not posted, leaving out a posted one, a reversed one and its reversal', async () => {
@@ -179,12 +179,12 @@ suite('the Sàn line facts on PostgreSQL (#2516 slice E)', () => {
     expect(f.feesAwaitingInvoice).toBe('120000');
     // Alone, an overpaid platform is no news.
     const only = await facts(owner, orgA, { legalEntityId: branch });
-    expect(only).toEqual({ settlementsToPost: 1, payoutsToMatch: 0, awaitingPayout: '0', feesAwaitingInvoice: '0' });
+    expect(only).toEqual({ settlementsToPost: 1, payoutsToMatch: 0, settlementsHalfReversed: 0, awaitingPayout: '0', feesAwaitingInvoice: '0' });
   });
 
   it('is read by every role, never shows another org anything, and writes nothing', async () => {
     for (const who of [owner, member, viewer]) expect((await facts(who)).settlementsToPost).toBe(2);
-    expect(await facts(stranger, orgB)).toEqual({ settlementsToPost: 0, payoutsToMatch: 0, awaitingPayout: '0', feesAwaitingInvoice: '0' });
+    expect(await facts(stranger, orgB)).toEqual({ settlementsToPost: 0, payoutsToMatch: 0, settlementsHalfReversed: 0, awaitingPayout: '0', feesAwaitingInvoice: '0' });
     const before = await admin(async (c) => (await c.query<{ n: string }>('SELECT (SELECT count(*) FROM crove_finance.journal_voucher) + (SELECT count(*) FROM crove_finance.journal_entry) AS n')).rows[0]?.n);
     await facts();
     expect(await admin(async (c) => (await c.query<{ n: string }>('SELECT (SELECT count(*) FROM crove_finance.journal_voucher) + (SELECT count(*) FROM crove_finance.journal_entry) AS n')).rows[0]?.n)).toBe(before);
