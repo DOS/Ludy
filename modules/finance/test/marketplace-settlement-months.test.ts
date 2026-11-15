@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { monthEntryDate, settlementMonthsOf, settlementPosted, type SettlementMonthLine } from '../src/marketplace-settlement-months.ts';
 
-const line = (sales: string, deliveredOn: string | null, over: Partial<SettlementMonthLine> = {}): SettlementMonthLine => ({ sales, sellerDiscount: '0', refund: '0', deliveredOn, ...over });
+const line = (sales: string, deliveredOn: string | null, over: Partial<SettlementMonthLine> = {}): SettlementMonthLine => ({ sales, sellerDiscount: '0', refund: '0', taxWithheld: '0', deliveredOn, ...over });
 
 describe('the months of a settlement', () => {
   it('puts the sale in the month of delivery and dates the entry on the last day of that month, or the settlement\'s last day for its own month', () => {
