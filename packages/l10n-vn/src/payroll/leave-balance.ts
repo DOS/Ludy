@@ -179,28 +179,92 @@ function completedYears(hireDate: string, evalDate: string): number {
   return years < 0 ? 0 : years;
 }
 
+interface Rational {
+  num: bigint;
+  den: bigint;
+}
+
+const ZERO_BI = BigInt('0');
+const ONE_BI = BigInt('1');
+const TEN_BI = BigInt('10');
+const ZERO_RATIONAL: Rational = { num: ZERO_BI, den: ONE_BI };
+
+function gcdBigInt(a: bigint, b: bigint): bigint {
+  let x = a < ZERO_BI ? -a : a;
+  let y = b < ZERO_BI ? -b : b;
+  while (y !== ZERO_BI) {
+    const t = x % y;
+    x = y;
+    y = t;
+  }
+  return x === ZERO_BI ? ONE_BI : x;
+}
+
+function makeRational(num: bigint, den: bigint): Rational {
+  if (den < ZERO_BI) return makeRational(-num, -den);
+  if (num === ZERO_BI) return ZERO_RATIONAL;
+  const g = gcdBigInt(num, den);
+  return { num: num / g, den: den / g };
+}
+
+function toRational(d: Decimal): Rational {
+  const fixed = d.toFixed();
+  const dot = fixed.indexOf('.');
+  if (dot === -1) return { num: BigInt(fixed), den: ONE_BI };
+  const intPart = fixed.slice(0, dot);
+  const fracPart = fixed.slice(dot + 1);
+  return makeRational(BigInt(`${intPart}${fracPart}`), TEN_BI ** BigInt(fracPart.length));
+}
+
+function addRational(a: Rational, b: Rational): Rational {
+  return makeRational(a.num * b.den + b.num * a.den, a.den * b.den);
+}
+
+function subRational(a: Rational, b: Rational): Rational {
+  return makeRational(a.num * b.den - b.num * a.den, a.den * b.den);
+}
+
+function mulRational(a: Rational, b: Rational): Rational {
+  return makeRational(a.num * b.num, a.den * b.den);
+}
+
+function divRational(a: Rational, b: Rational): Rational {
+  return makeRational(a.num * b.den, a.den * b.num);
+}
+
+function cmpRational(a: Rational, b: Rational): number {
+  const diff = a.num * b.den - b.num * a.den;
+  return diff > ZERO_BI ? 1 : diff < ZERO_BI ? -1 : 0;
+}
+
 /**
- * Consumes Decree 145/2020/ND-CP Art. 65(4) approved unpaid-leave allowance for one month.
- * Returns the covered approved days (which count as working time), uncovered approved days,
- * and remaining cumulative allowance in months.
+ * Consumes Decree 145/2020/ND-CP Art. 65(4) approved unpaid-leave allowance for one month
+ * using exact rational arithmetic so multi-month fractions never accumulate division rounding error.
  */
 function consumeApprovedUnpaidAllowance(
   approvedInMonth: Decimal,
   totalMonthWork: Decimal,
-  allowanceMonthsRemaining: Decimal,
-  zero: Decimal,
-): { coveredDays: Decimal; uncoveredApproved: Decimal; nextAllowance: Decimal } {
-  if (!approvedInMonth.greaterThan(0) || !allowanceMonthsRemaining.greaterThan(0) || !totalMonthWork.greaterThan(0)) {
-    return { coveredDays: zero, uncoveredApproved: approvedInMonth, nextAllowance: allowanceMonthsRemaining };
+  allowanceMonthsRemaining: Rational,
+): { coveredDays: Rational; uncoveredApproved: Rational; nextAllowance: Rational } {
+  const approved = toRational(approvedInMonth);
+  const totalWork = toRational(totalMonthWork);
+  if (approved.num <= ZERO_BI || allowanceMonthsRemaining.num <= ZERO_BI || totalWork.num <= ZERO_BI) {
+    return { coveredDays: ZERO_RATIONAL, uncoveredApproved: approved, nextAllowance: allowanceMonthsRemaining };
   }
-  const maxCoveredDays = allowanceMonthsRemaining.times(totalMonthWork);
-  const coveredDays = approvedInMonth.lessThanOrEqualTo(maxCoveredDays) ? approvedInMonth : maxCoveredDays;
-  const uncoveredApproved = approvedInMonth.minus(coveredDays);
-  const subtracted = allowanceMonthsRemaining.minus(coveredDays.div(totalMonthWork));
+  const maxCoveredDays = mulRational(allowanceMonthsRemaining, totalWork);
+  if (cmpRational(approved, maxCoveredDays) <= 0) {
+    const consumedFraction = divRational(approved, totalWork);
+    const nextAllowance = subRational(allowanceMonthsRemaining, consumedFraction);
+    return {
+      coveredDays: approved,
+      uncoveredApproved: ZERO_RATIONAL,
+      nextAllowance: nextAllowance.num < ZERO_BI ? ZERO_RATIONAL : nextAllowance,
+    };
+  }
   return {
-    coveredDays,
-    uncoveredApproved,
-    nextAllowance: subtracted.isNegative() ? zero : subtracted,
+    coveredDays: maxCoveredDays,
+    uncoveredApproved: subRational(approved, maxCoveredDays),
+    nextAllowance: ZERO_RATIONAL,
   };
 }
 
@@ -303,8 +367,8 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
     throw invalid('annual_leave seniorityYearsStep must be a positive integer');
   }
 
-  const halfRatio = money(rule.value.halfMonthWorkingDaysRatio);
-  let allowanceMonthsRemaining = money(rule.value.approvedUnpaidMonthsAllowance);
+  const halfRatio = toRational(money(rule.value.halfMonthWorkingDaysRatio));
+  let allowanceMonthsRemaining = toRational(money(rule.value.approvedUnpaidMonthsAllowance));
   let eligibleMonths = 0;
   if (input.eligibleMonths !== undefined) {
     eligibleMonths = input.eligibleMonths;
@@ -329,7 +393,7 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
       const workedExplicit = input.workedDaysByMonth?.[ym];
       const approvedInMonth = approvedUnpaidByMonth.get(ym) ?? zero;
       const unapprovedInMonth = unapprovedUnpaidByMonth.get(ym) ?? zero;
-      let effectiveRatio: Decimal;
+      let effectiveRatio: Rational;
 
       if (workedExplicit !== undefined) {
         if (monthStd === undefined) {
@@ -340,23 +404,22 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
           approvedInMonth,
           totalMonthWork,
           allowanceMonthsRemaining,
-          zero,
         );
         allowanceMonthsRemaining = nextAllowance;
         const paidLeaveInMonth = paidLeaveByMonth.get(ym) ?? zero;
         const holidayRaw = input.paidHolidayDaysByMonth?.[ym];
         const paidHolidayInMonth = holidayRaw !== undefined ? money(holidayRaw.trim()) : zero;
-        effectiveRatio = money(workedExplicit.trim())
-          .plus(paidLeaveInMonth)
-          .plus(paidHolidayInMonth)
-          .plus(coveredDays)
-          .div(totalMonthWork);
+        const totalEffectiveWork = addRational(
+          toRational(money(workedExplicit.trim()).plus(paidLeaveInMonth).plus(paidHolidayInMonth)),
+          coveredDays,
+        );
+        effectiveRatio = divRational(totalEffectiveWork, toRational(totalMonthWork));
       } else {
         let totalMonthWork: Decimal;
-        let activeMonthWork: Decimal;
+        let activeMonthWork: Rational;
         if (monthStd !== undefined && startDay === 1 && endDay === daysInMonth) {
           totalMonthWork = money(monthStd.trim());
-          activeMonthWork = totalMonthWork;
+          activeMonthWork = toRational(totalMonthWork);
         } else if (input.workweek !== undefined || monthStd === undefined) {
           // Default to Vietnam's 6-day Mon-Sat schedule when no working-day override or workweek is given,
           // so both partial months and unpaid_leave deductions work out of the box with zero setup.
@@ -365,10 +428,12 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
           const activeWork = countWorkdaysInSpan(yearNum, idx, startDay, endDay, schedule);
           if (monthStd !== undefined) {
             totalMonthWork = money(monthStd.trim());
-            activeMonthWork = totalWork > 0 ? totalMonthWork.times(String(activeWork)).div(String(totalWork)) : zero;
+            activeMonthWork = totalWork > 0
+              ? divRational(mulRational(toRational(totalMonthWork), toRational(money(String(activeWork)))), toRational(money(String(totalWork))))
+              : ZERO_RATIONAL;
           } else {
             totalMonthWork = money(String(totalWork));
-            activeMonthWork = money(String(activeWork));
+            activeMonthWork = toRational(money(String(activeWork)));
           }
         } else {
           totalMonthWork = money(monthStd.trim());
@@ -386,7 +451,7 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
               `partial month ${ym} working days (${monthStd}) do not match Mon-Fri (${monFriTotal}), Mon-Sat (${monSatTotal}), or calendar (${daysInMonth}) days; pass workedDaysByMonth[${ym}], workweek, or eligibleMonths`,
             );
           }
-          activeMonthWork = money(String(activeWork));
+          activeMonthWork = toRational(money(String(activeWork)));
         }
 
         // Decree 145/2020/ND-CP Art. 65(4): employer-approved unpaid leave up to 1 month/year counts as working time.
@@ -394,15 +459,14 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
           approvedInMonth,
           totalMonthWork,
           allowanceMonthsRemaining,
-          zero,
         );
         allowanceMonthsRemaining = nextAllowance;
-        const effectiveUnpaid = unapprovedInMonth.plus(uncoveredApproved);
-        const actual = activeMonthWork.minus(effectiveUnpaid);
-        effectiveRatio = (actual.isNegative() ? zero : actual).div(totalMonthWork);
+        const effectiveUnpaid = addRational(toRational(unapprovedInMonth), uncoveredApproved);
+        const actual = subRational(activeMonthWork, effectiveUnpaid);
+        effectiveRatio = actual.num <= ZERO_BI ? ZERO_RATIONAL : divRational(actual, toRational(totalMonthWork));
       }
 
-      if (effectiveRatio.greaterThanOrEqualTo(halfRatio)) {
+      if (cmpRational(effectiveRatio, halfRatio) >= 0) {
         eligibleMonths += 1;
       }
     }

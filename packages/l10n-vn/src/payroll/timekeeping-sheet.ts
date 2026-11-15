@@ -51,9 +51,16 @@ const NUMERIC_COLUMNS: readonly TimekeepingColumn[] = [
 // Classification helpers use whole-word / phrase matching in priority order (holiday before weekly rest day,
 // unpaid personal leave before paid personal leave, night OT before ordinary night work, specific compound OT
 // before generic night OT) and classify every column once so duplicates never fall back into another bucket.
+interface HeaderMatch {
+  field: TimekeepingColumn;
+  specificity: 'phrase' | 'exact';
+}
+
 interface HeaderClassification {
   field: TimekeepingColumn;
   specificity: 'phrase' | 'exact';
+  isSummaryTotal: boolean;
+  unitMismatch: 'days' | 'hours' | null;
 }
 
 function hasPhrase(key: string, phrase: string): boolean {
@@ -69,6 +76,29 @@ function hasWord(key: string, word: string): boolean {
 }
 
 const TOTAL_SUMMARY_LABELS = new Set(['tong cong', 'tong so', 'tong', 'total', 'subtotal', 'grand total']);
+const SUMMARY_TOTAL_WORDS = ['total', 'subtotal', 'sum', 'tong'] as const;
+const HOUR_UNIT_WORDS = ['gio', 'hour', 'hours', 'hrs', 'hr', 'h'] as const;
+const DAY_UNIT_WORDS = ['ngay', 'day', 'days'] as const;
+const DAY_KIND_PHRASES = [
+  'weekly rest day',
+  'regular day',
+  'normal day',
+  'rest day',
+  'weekday',
+  'ngay nghi hang tuan',
+  'ngay nghi tuan',
+  'ngay nghi le',
+  'ngay nghi',
+  'ngay thuong',
+  'ngay le',
+  'ngay tet',
+] as const;
+const DAY_UNIT_COLUMNS = new Set<TimekeepingColumn>([
+  'unpaidLeaveDays',
+  'annualLeaveDays',
+  'personalPaidDays',
+  'daysNotEmployed',
+]);
 const BALANCE_OR_QUOTA_WORDS = [
   'balance',
   'remaining',
@@ -80,10 +110,6 @@ const BALANCE_OR_QUOTA_WORDS = [
   'entitled',
   'quota',
   'limit',
-  'total',
-  'subtotal',
-  'sum',
-  'tong',
 ] as const;
 const BALANCE_OR_QUOTA_PHRASES = [
   'so du',
@@ -138,6 +164,7 @@ export type TimekeepingIssueCode =
   | 'extra_columns'
   | 'duplicate_employee'
   | 'duplicate_header_column'
+  | 'incompatible_column_unit'
   | 'overtime_cap_exceeded';
 
 export interface TimekeepingIssue {
@@ -323,7 +350,20 @@ function isBalanceOrQuotaHeader(key: string): boolean {
   return BALANCE_OR_QUOTA_WORDS.some((w) => hasWord(key, w)) || hasAnyPhrase(key, BALANCE_OR_QUOTA_PHRASES);
 }
 
-function classifyHeader(key: string): HeaderClassification | null {
+function hasUnitMismatch(field: TimekeepingColumn, key: string): 'days' | 'hours' | null {
+  if (!NUMERIC_COLUMNS.includes(field)) return null;
+  if (DAY_UNIT_COLUMNS.has(field)) {
+    return HOUR_UNIT_WORDS.some((w) => hasWord(key, w)) ? 'days' : null;
+  }
+  let stripped = key;
+  for (const phrase of DAY_KIND_PHRASES) {
+    stripped = stripped.replaceAll(phrase, ' ');
+  }
+  stripped = stripped.trim().replace(/\s+/g, ' ');
+  return DAY_UNIT_WORDS.some((w) => hasWord(stripped, w)) ? 'hours' : null;
+}
+
+function matchHeaderField(key: string): HeaderMatch | null {
   if (hasAnyPhrase(key, ['ma nhan vien', 'ma nv', 'employee code', 'staff code', 'emp code', 'employee id', 'staff id'])) {
     return { field: 'employeeCode', specificity: 'phrase' };
   }
@@ -405,33 +445,82 @@ function classifyHeader(key: string): HeaderClassification | null {
   return null;
 }
 
+function classifyHeader(key: string): HeaderClassification | null {
+  const matched = matchHeaderField(key);
+  if (matched === null) return null;
+  return {
+    field: matched.field,
+    specificity: matched.specificity,
+    isSummaryTotal: SUMMARY_TOTAL_WORDS.some((w) => hasWord(key, w)),
+    unitMismatch: hasUnitMismatch(matched.field, key),
+  };
+}
+
+interface UnitMismatchColumn {
+  col: number;
+  column: TimekeepingColumn;
+  header: string;
+  expectedUnit: 'days' | 'hours';
+}
+
 interface HeaderDetection {
   rowIndex: number;
   rowNumber: number;
   columns: Record<TimekeepingColumn, number | null>;
   duplicates: Array<{ column: TimekeepingColumn; header: string }>;
+  unitMismatches: UnitMismatchColumn[];
 }
 
 function detectHeader(rows: readonly ParsedGridRow[]): HeaderDetection | null {
   for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
     const row = rows[rowIndex];
     if (row === undefined) continue;
-    const byField = new Map<TimekeepingColumn, Array<{ col: number; raw: string; specificity: 'phrase' | 'exact' }>>();
+    const byField = new Map<
+      TimekeepingColumn,
+      Array<{ col: number; raw: string; specificity: 'phrase' | 'exact'; isSummaryTotal: boolean }>
+    >();
+    const unitMismatches: UnitMismatchColumn[] = [];
     for (let col = 0; col < row.cells.length; col++) {
       const raw = (row.cells[col] ?? '').trim();
       const key = timekeepingHeaderKey(raw);
       if (!key) continue;
       const classified = classifyHeader(key);
       if (classified === null) continue;
+      if (classified.unitMismatch !== null) {
+        unitMismatches.push({
+          col,
+          column: classified.field,
+          header: raw,
+          expectedUnit: classified.unitMismatch,
+        });
+        continue;
+      }
       const bucket = byField.get(classified.field) ?? [];
-      bucket.push({ col, raw, specificity: classified.specificity });
+      bucket.push({
+        col,
+        raw,
+        specificity: classified.specificity,
+        isSummaryTotal: classified.isSummaryTotal,
+      });
       byField.set(classified.field, bucket);
     }
 
+    const hasSpecificNightOt =
+      byField.has('normalDayNightOtHours') ||
+      byField.has('weeklyRestDayNightOtHours') ||
+      byField.has('holidayNightOtHours');
     const columns = emptyColumns();
     const duplicates: Array<{ column: TimekeepingColumn; header: string }> = [];
     for (const [field, hits] of byField) {
-      const ordered = [...hits].sort((a, b) => {
+      // Ignore derived total columns (e.g. "Total night OT hours") when detailed breakdowns exist,
+      // while preserving standalone monthly summary columns ("Tong ngay nghi khong luong").
+      const withoutShadowedTotal =
+        field === 'nightOtHours' && hasSpecificNightOt ? hits.filter((h) => !h.isSummaryTotal) : hits;
+      if (withoutShadowedTotal.length === 0) continue;
+      const effectiveHits = withoutShadowedTotal.some((h) => !h.isSummaryTotal)
+        ? withoutShadowedTotal.filter((h) => !h.isSummaryTotal)
+        : withoutShadowedTotal;
+      const ordered = [...effectiveHits].sort((a, b) => {
         if (a.specificity !== b.specificity) return a.specificity === 'phrase' ? -1 : 1;
         return a.col - b.col;
       });
@@ -445,8 +534,8 @@ function detectHeader(rows: readonly ParsedGridRow[]): HeaderDetection | null {
 
     const hasEmployee = columns.employeeCode !== null || columns.displayName !== null;
     const hasMetric = NUMERIC_COLUMNS.some((c) => columns[c] !== null);
-    if (hasEmployee && hasMetric) {
-      return { rowIndex, rowNumber: row.rowNumber, columns, duplicates };
+    if (hasEmployee && (hasMetric || unitMismatches.length > 0)) {
+      return { rowIndex, rowNumber: row.rowNumber, columns, duplicates, unitMismatches };
     }
   }
   return null;
@@ -496,11 +585,13 @@ function trimmedCellCount(cells: readonly string[]): number {
 function scoreDelimiterAttempt(
   rows: readonly ParsedGridRow[],
   header: HeaderDetection | null,
-): { unsplitCount: number; overflowCount: number; alignedCount: number; recognizedCount: number } {
+  delimiter: TimekeepingDelimiter,
+): { unsplitCount: number; overflowCount: number; residualCount: number; alignedCount: number; recognizedCount: number } {
   if (header === null) {
     return {
       unsplitCount: Number.MAX_SAFE_INTEGER,
       overflowCount: Number.MAX_SAFE_INTEGER,
+      residualCount: Number.MAX_SAFE_INTEGER,
       alignedCount: 0,
       recognizedCount: 0,
     };
@@ -508,10 +599,29 @@ function scoreDelimiterAttempt(
   const headerCells = rows[header.rowIndex]?.cells ?? [];
   const headerRawLen = headerCells.length;
   const headerTrimLen = trimmedCellCount(headerCells);
-  const recognizedCount = Object.values(header.columns).filter((v) => v !== null).length;
+  const allRecognizedCols = [
+    ...Object.values(header.columns).filter((v): v is number => v !== null),
+    ...header.unitMismatches.map((m) => m.col),
+  ];
+  const strictValueCols = [
+    ...(header.columns.employeeCode !== null ? [header.columns.employeeCode] : []),
+    ...NUMERIC_COLUMNS.map((c) => header.columns[c]).filter((v): v is number => v !== null),
+  ];
+  const otherDelimiters = TIMEKEEPING_DELIMITERS.filter((d) => d !== delimiter);
+  const recognizedCount = allRecognizedCols.length;
   let unsplitCount = 0;
   let overflowCount = 0;
+  let residualCount = 0;
   let alignedCount = 0;
+
+  if (delimiter !== '\t') {
+    for (const colIdx of allRecognizedCols) {
+      if ((headerCells[colIdx] ?? '').includes('\t')) {
+        residualCount += 1;
+      }
+    }
+  }
+
   for (let i = header.rowIndex + 1; i < rows.length; i++) {
     const row = rows[i];
     if (row === undefined) continue;
@@ -525,8 +635,21 @@ function scoreDelimiterAttempt(
     } else if (row.cells.length === headerRawLen) {
       alignedCount += 1;
     }
+    if (delimiter !== '\t') {
+      for (const colIdx of allRecognizedCols) {
+        if ((row.cells[colIdx] ?? '').includes('\t')) {
+          residualCount += 1;
+        }
+      }
+    }
+    for (const colIdx of strictValueCols) {
+      const cell = (row.cells[colIdx] ?? '').trim();
+      if (cell !== '' && otherDelimiters.some((other) => cell.includes(other))) {
+        residualCount += 1;
+      }
+    }
   }
-  return { unsplitCount, overflowCount, alignedCount, recognizedCount };
+  return { unsplitCount, overflowCount, residualCount, alignedCount, recognizedCount };
 }
 
 /**
@@ -571,15 +694,17 @@ export function parseTimekeepingSheet(text: string, options?: TimekeepingSheetOp
   const attempts = candidates.map((c) => {
     const attemptParsed = parseDelimitedRows(body, c.d);
     const attemptHeader = detectHeader(attemptParsed.rows);
-    const score = scoreDelimiterAttempt(attemptParsed.rows, attemptHeader);
+    const score = scoreDelimiterAttempt(attemptParsed.rows, attemptHeader, c.d);
     return { delimiter: c.d, count: c.n, parsed: attemptParsed, header: attemptHeader, score };
   });
 
   const compareScored = (a: (typeof attempts)[number], b: (typeof attempts)[number]): number =>
     a.score.unsplitCount - b.score.unsplitCount ||
     a.score.overflowCount - b.score.overflowCount ||
+    a.score.residualCount - b.score.residualCount ||
     b.score.alignedCount - a.score.alignedCount ||
-    b.score.recognizedCount - a.score.recognizedCount;
+    b.score.recognizedCount - a.score.recognizedCount ||
+    TIMEKEEPING_DELIMITERS.indexOf(a.delimiter) - TIMEKEEPING_DELIMITERS.indexOf(b.delimiter);
 
   const cleanHeaders = attempts.filter((a) => a.parsed.quoteError === null && a.header !== null).sort(compareScored);
   const brokenHeaders = attempts.filter((a) => a.parsed.quoteError !== null && a.header !== null).sort(compareScored);
@@ -659,6 +784,32 @@ export function parseTimekeepingSheet(text: string, options?: TimekeepingSheetOp
         header: dup.header,
       }),
     );
+  }
+
+  if (header.unitMismatches.length > 0) {
+    for (const mismatch of header.unitMismatches) {
+      errors.push(
+        makeIssue(
+          'error',
+          'incompatible_column_unit',
+          `Row ${header.rowNumber}, column "${mismatch.header}": ${mismatch.column} expects values in ${mismatch.expectedUnit}`,
+          {
+            rowNumber: header.rowNumber,
+            column: mismatch.column,
+            header: mismatch.header,
+          },
+        ),
+      );
+    }
+    return {
+      delimiter: chosenDelimiter,
+      headerRow: header.rowNumber,
+      columns: header.columns,
+      rows: [],
+      errors,
+      warnings,
+      rulesUsed,
+    };
   }
 
   const rows: TimekeepingRow[] = [];

@@ -345,5 +345,66 @@ describe('parseTimekeepingSheet (#3348)', () => {
     expect(tsvExtraWithCommaHeader.delimiter).toBe('\t');
     expect(tsvExtraWithCommaHeader.rows).toEqual([]);
     expect(tsvExtraWithCommaHeader.errors.map((err) => err.code)).toContain('extra_columns');
+
+    // Standalone monthly total columns ("Tong ngay nghi khong luong", "Total Normal Day OT Hours", standalone
+    // "Total night OT hours") are preserved when detailed breakdown columns are absent, while non-total columns win when present.
+    const vnTotals = parseTimekeepingSheet(
+      'Ma NV\tNghi phep nam\tTong ngay nghi khong luong\tTong gio lam them ngay thuong\nNV01\t1\t2\t6\n',
+      { month: '2026-08' },
+    );
+    expect(vnTotals.errors).toEqual([]);
+    expect(vnTotals.warnings).toEqual([]);
+    expect(vnTotals.rows[0]).toMatchObject({
+      employeeCode: 'NV01',
+      annualLeaveDays: '1',
+      unpaidLeaveDays: '2',
+      overtime: [{ dayKind: 'normal_day', night: false, hours: '6' }],
+      totalOvertimeHours: '6',
+    });
+
+    const enTotals = parseTimekeepingSheet(
+      'Employee Code\tAnnual Leave\tTotal Unpaid Leave Days\tTotal Normal Day OT Hours\tTotal night OT hours\nNV01\t1\t2\t6\t3\n',
+      { month: '2026-08' },
+    );
+    expect(enTotals.errors).toEqual([]);
+    expect(enTotals.rows[0]).toMatchObject({
+      employeeCode: 'NV01',
+      annualLeaveDays: '1',
+      unpaidLeaveDays: '2',
+      totalOvertimeHours: '9',
+    });
+
+    // Reject hour-unit leave columns and day-unit OT/night columns rather than misapplying numeric magnitudes.
+    const hourLeave = parseTimekeepingSheet('Employee Code\tUnpaid leave hours\tNormal day OT hours\nNV01\t8\t4\n', {
+      month: '2026-08',
+    });
+    expect(hourLeave.rows).toEqual([]);
+    expect(hourLeave.columns.unpaidLeaveDays).toBeNull();
+    expect(hourLeave.errors.map((e) => [e.code, e.column])).toEqual([['incompatible_column_unit', 'unpaidLeaveDays']]);
+
+    const vnHourLeave = parseTimekeepingSheet('Ma NV\tGiờ nghỉ không lương\nNV01\t8\n', { month: '2026-08' });
+    expect(vnHourLeave.rows).toEqual([]);
+    expect(vnHourLeave.errors.map((e) => [e.code, e.column])).toEqual([['incompatible_column_unit', 'unpaidLeaveDays']]);
+
+    const dayOt = parseTimekeepingSheet('Ma NV\tNormal day OT days\tNight work (days)\nNV01\t1\t2\n', {
+      month: '2026-08',
+    });
+    expect(dayOt.rows).toEqual([]);
+    expect(dayOt.errors.map((e) => [e.code, e.column])).toEqual([
+      ['incompatible_column_unit', 'normalDayOtHours'],
+      ['incompatible_column_unit', 'nightHours'],
+    ]);
+
+    // Delimiter selection rejects a candidate that leaves another delimiter embedded inside recognized header/data cells.
+    const mixedCommaTsv = parseTimekeepingSheet(
+      'Notes,a,b,c,d,e,f\nEmployee code, ID\tUnpaid leave, days\tNotes\nE01\t2\ta,3,c\n',
+      { month: '2026-08' },
+    );
+    expect(mixedCommaTsv.delimiter).toBe('\t');
+    expect(mixedCommaTsv.errors).toEqual([]);
+    expect(mixedCommaTsv.rows[0]).toMatchObject({
+      employeeCode: 'E01',
+      unpaidLeaveDays: '2',
+    });
   });
 });

@@ -562,4 +562,43 @@ describe('calculateLeaveBalance (#3348)', () => {
     expect(omittedWorkweek).toMatchObject({ eligibleMonths: 6, entitlementDays: '6' });
     expect(explicitDefaultWorkweek).toMatchObject({ eligibleMonths: 6, entitlementDays: '6' });
   });
+
+  it('preserves exact rational approved-unpaid-leave allowance across multiple fractional months', () => {
+    // 9 + 1 + 1 + 1 + 1 = 13/26 = 0.5 months used; 0.5 months (13/26) remain for month 6 -> exactly 50% eligible.
+    for (const prefix of [
+      [9, 1, 1, 1, 1],
+      [1, 1, 1, 1, 9],
+      [3, 6, 1, 1, 1, 1],
+    ]) {
+      const entries = [...prefix, 26].map((days, idx) => ({
+        kind: 'unpaid_leave' as const,
+        month: `2026-0${idx + 1}`,
+        days: String(days),
+        approved: true,
+      }));
+      const res = calculateLeaveBalance({
+        year: '2026',
+        category: 'standard',
+        hireDate: '2025-01-01',
+        standardWorkingDays: '26',
+        entries,
+      });
+      expect(res).toMatchObject({ eligibleMonths: 12, entitlementDays: '12' });
+    }
+
+    // Exceeding by 0.5 days (9 + 1 + 1 + 1 + 1.5 = 13.5/26) leaves 12.5/26 < 0.5 for month 6.
+    const justOverHalf = calculateLeaveBalance({
+      year: '2026',
+      category: 'standard',
+      hireDate: '2025-01-01',
+      standardWorkingDays: '26',
+      entries: [9, 1, 1, 1, 1.5, 26].map((days, idx) => ({
+        kind: 'unpaid_leave' as const,
+        month: `2026-0${idx + 1}`,
+        days: String(days),
+        approved: true,
+      })),
+    });
+    expect(justOverHalf).toMatchObject({ eligibleMonths: 11, entitlementDays: '11' });
+  });
 });
