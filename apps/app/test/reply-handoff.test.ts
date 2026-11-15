@@ -49,7 +49,9 @@ describe('reply handoff', () => {
     expect(takeReplyHandoff('c1')).toBeNull();
     vi.stubGlobal('sessionStorage', { ...memory(), setItem: () => { throw new Error('full'); } });
     expect(putReplyHandoff('c1', 'x')).toBe(false);
-    vi.unstubAllGlobals();
-    expect(putReplyHandoff('c1', 'x')).toBe(false); // no sessionStorage in a bare node run
+    // No sessionStorage at all (stubbed absent, so the case does not depend on the runner: a newer Node has a built-in one).
+    vi.stubGlobal('sessionStorage', undefined);
+    expect(putReplyHandoff('c1', 'x')).toBe(false);
+    expect(takeReplyHandoff('c1')).toBeNull();
   });
 });
