@@ -19,7 +19,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { buildKernelCommands, createOrg, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, defineCommand, defineQuery, type Lookup } from '@crove/kernel-runtime';
+import { Runtime, defineCommand, defineQuery, type AgentActor, type Lookup } from '@crove/kernel-runtime';
+import { financeCommands, financeQueries } from '@crove/mod-finance';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -31,9 +32,18 @@ const suite = ADMIN ? describe : describe.skip;
 const touch = defineCommand({ name: 'probe.touch', input: z.object({}), risk: 'R1', sideEffect: 'none', access: ['owner', 'admin', 'member'], handler: async () => 'ran' });
 const read = defineQuery({ name: 'probe.read', input: z.object({}), access: [...MEMBERS], handler: async () => 'read' });
 const lookup = defineQuery({ name: 'kernel.gate_lookup', input: z.object({}), access: [...MEMBERS], handler: (ctx) => ctx.query<string>('probe.read', {}) });
+// The same for the other two kinds of actor: a system command and query (the worker's), and an agent's. Each declares its writes (none).
+const sysTouch = defineCommand({ name: 'probe.sys_touch', input: z.object({}), risk: 'R1', sideEffect: 'none', access: 'system', writes: [], handler: async () => 'ran' });
+const sysRead = defineQuery({ name: 'probe.sys_read', input: z.object({}), access: 'system', handler: async () => 'read' });
+const agentTouch = defineCommand({ name: 'probe.agent_touch', input: z.object({}), risk: 'R0', sideEffect: 'none', access: [], agent: { roles: 'any' }, writes: [], handler: async () => 'ran' });
+const agentRead = defineQuery({ name: 'probe.agent_read', input: z.object({}), access: [], agent: { roles: 'any' }, handler: async () => 'read' });
+// Kernel's own probes for the same actors: never refused, whatever apps are off.
+const kernelSysRead = defineQuery({ name: 'kernel.gate_sys_read', input: z.object({}), access: 'system', handler: async () => 'read' });
+const kernelAgentRead = defineQuery({ name: 'kernel.gate_agent_read', input: z.object({}), access: [], agent: { roles: 'any' }, handler: async () => 'read' });
 const SHIPPED = ['kernel', 'probe', 'other'] as const;
+const SYSTEM = { type: 'system' as const, component: 'kernel.agent' };
 
-type Actor = { type: 'user'; userId: string; aal: 'aal1' | 'aal2' };
+type Actor = { type: 'user'; userId: string; aal: 'aal1' | 'aal2'; sessionId?: string; mfaAt?: number };
 
 suite('the per-org app gate of the runtime (ADR-0053, slice b step 1)', () => {
   const dbName = `crove_test_orggate_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
@@ -41,8 +51,12 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b step 1)', () => {
   let pool: pg.Pool;
   let rt: Runtime;
   let failing: Runtime;
+  // The worker login role's runtime, where agents and the system actor run.
+  let worker: Runtime;
+  let workerPool: pg.Pool;
 
   const asUser = (userId: string): Actor => ({ type: 'user', userId, aal: 'aal1' });
+  const asMfa = (userId: string): Actor => ({ type: 'user', userId, aal: 'aal2', sessionId: '7e1c2b4a-5d6f-4a8b-9c0d-1e2f3a4b5c6d', mfaAt: Math.floor(Date.now() / 1000) });
 
   async function withAdmin<T>(fn: (admin: pg.Client) => Promise<T>): Promise<T> {
     const admin = new pg.Client({ connectionString: adminUrl });
@@ -67,16 +81,35 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b step 1)', () => {
     const run = (runtime: Runtime, user: string) => runtime.execute<string>('probe.touch', {}, { actor: asUser(user), orgId, idempotencyKey: randomUUID() });
     const readIt = (user: string) => rt.query<string>('probe.read', {}, { actor: asUser(user), orgId });
     const viaLookup = (user: string) => rt.query<Lookup<string>>('kernel.gate_lookup', {}, { actor: asUser(user), orgId });
-    return { orgId, owner, admin, member, viewer, setApp, run, readIt, viaLookup };
+    // An AI agent of the org with a live run (the worker starts it, as the agent runtime does).
+    const agent = async (): Promise<AgentActor> => {
+      const { agentId, positionId } = await rt.execute<{ agentId: string; positionId: string }>(
+        'kernel.agent.template.install',
+        { templateKey: 'finance.chief_accountant', reportsTo: null },
+        { actor: asMfa(owner), orgId, idempotencyKey: randomUUID() },
+      );
+      await rt.execute('kernel.task.create', { title: 'Việc thử', assigneePositionId: positionId }, { actor: asUser(owner), orgId, idempotencyKey: randomUUID() });
+      const started = await worker.execute<{ runId: string | null }>('kernel.agent.run.start', { agentId }, { actor: SYSTEM, orgId });
+      if (!started.runId) throw new Error('no run');
+      return { type: 'agent', agentId, runId: started.runId };
+    };
+    // The rows a run of probe.touch leaves: an idempotency key and an 'ok' audit row.
+    const traces = () =>
+      withAdmin(async (c) => ({
+        keys: (await c.query("SELECT 1 FROM crove_kernel.idempotency_key WHERE org_id = $1 AND command = 'probe.touch'", [orgId])).rowCount,
+        audits: (await c.query("SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'probe.touch' AND outcome = 'ok'", [orgId])).rowCount,
+      }));
+    return { orgId, owner, admin, member, viewer, setApp, run, readIt, viaLookup, agent, traces };
   }
 
-  // What a call answered: its value, or its refusal as { code, status, module }.
-  async function outcome<T>(call: Promise<T>): Promise<{ ok: T } | { refused: { code: string; status: number; module?: unknown } }> {
+  // What a call answered: its value, or its whole refusal (code, status, message and details), so a comparison of two refusals
+  // sees a leak through any of them.
+  async function outcome<T>(call: Promise<T>): Promise<{ ok: T } | { refused: { code: string; status: number; message: string; details: unknown } }> {
     try {
       return { ok: await call };
     } catch (error) {
-      const e = error as { code?: string; status?: number; details?: { module?: unknown } };
-      return { refused: { code: String(e.code), status: Number(e.status), ...(e.details?.module !== undefined ? { module: e.details.module } : {}) } };
+      const e = error as { code?: string; status?: number; message?: string; details?: unknown };
+      return { refused: { code: String(e.code), status: Number(e.status), message: String(e.message), details: e.details ?? null } };
     }
   }
 
@@ -86,7 +119,8 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b step 1)', () => {
     if ('ok' in answer) {
       expect(answer.ok).toEqual(ran);
     } else {
-      expect(answer.refused).toEqual({ code: 'MODULE_OFF', status: 404, module: 'probe' });
+      // MODULE_OFF 404 naming the app, with any message and any further details.
+      expect(answer.refused).toMatchObject({ code: 'MODULE_OFF', status: 404, details: { module: 'probe' } });
     }
   }
 
@@ -105,10 +139,24 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b step 1)', () => {
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 6 });
     const definitions = {
-      commands: [...buildKernelCommands({ shippedModules: SHIPPED }), touch],
-      queries: [...kernelQueries({ inboundDomain: null, apps: { shipped: SHIPPED, deployment: SHIPPED, entitlements: async () => ['full'] } }), read, lookup],
+      commands: [...buildKernelCommands({ shippedModules: SHIPPED }), ...financeCommands, touch, sysTouch, agentTouch],
+      queries: [
+        ...kernelQueries({ inboundDomain: null, apps: { shipped: SHIPPED, deployment: SHIPPED, entitlements: async () => ['full'] } }),
+        ...financeQueries,
+        read,
+        lookup,
+        sysRead,
+        agentRead,
+        kernelSysRead,
+        kernelAgentRead,
+      ],
     };
     rt = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register(definitions);
+    const wurl = new URL(adminUrl);
+    wurl.username = 'crove_worker';
+    wurl.password = 'test-worker-pw';
+    workerPool = createPool({ connectionString: wurl.toString(), max: 2 });
+    worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(definitions);
     // A runtime whose billing port throws. Step 2 adds the option (`entitlements`, the billing port's function) and then
     // fails open to the last answer, `full` when it has none; until then the option is ignored. Either way a command runs.
     failing = new Runtime(createDb(pool), {
@@ -121,6 +169,7 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b step 1)', () => {
 
   afterAll(async () => {
     await pool?.end();
+    await workerPool?.end();
     if (!ADMIN) return;
     const root = new pg.Client({ connectionString: ADMIN });
     await root.connect();
@@ -143,7 +192,10 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b step 1)', () => {
   it('answers a call into an app the org switched off by running it or by the typed refusal, and runs it again when switched back on', async () => {
     const o = await org();
     await o.setApp('probe', false);
-    expectRunsOrModuleOff(await outcome(o.run(rt, o.member)), 'ran');
+    const ranOff = await outcome(o.run(rt, o.member));
+    expectRunsOrModuleOff(ranOff, 'ran');
+    // A refused call leaves no trace: no idempotency key and no 'ok' audit row for it. (A call that still ran leaves both.)
+    expect(await o.traces()).toEqual('refused' in ranOff ? { keys: 0, audits: 0 } : { keys: 1, audits: 1 });
     expectRunsOrModuleOff(await outcome(o.readIt(o.member)), 'read');
     // ctx.query answers the lookup, or not_installed (never a thrown refusal).
     const looked = await o.viaLookup(o.member);
@@ -165,6 +217,27 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b step 1)', () => {
     expect(apps.apps.filter((a) => !a.enabled).map((a) => a.id).sort()).toEqual(['other', 'probe']);
     await expect(o.setApp('probe', true)).resolves.toMatchObject({ module: 'probe', enabled: true });
     await expect(o.run(rt, o.member)).resolves.toBe('ran');
+  });
+
+  it('answers a system actor and an AI agent like a user, and never refuses them in kernel', async () => {
+    const o = await org();
+    const agent = await o.agent();
+    const asSystem = { actor: SYSTEM, orgId: o.orgId, idempotencyKey: randomUUID() };
+    const asAgent = { actor: agent, orgId: o.orgId, idempotencyKey: randomUUID() };
+    // With the app on, both run what they may.
+    await expect(worker.execute('probe.sys_touch', {}, asSystem)).resolves.toBe('ran');
+    await expect(worker.query('probe.sys_read', {}, { actor: SYSTEM, orgId: o.orgId })).resolves.toBe('read');
+    await expect(worker.execute('probe.agent_touch', {}, asAgent)).resolves.toBe('ran');
+    await expect(worker.query('probe.agent_read', {}, { actor: agent, orgId: o.orgId })).resolves.toBe('read');
+    await o.setApp('probe', false);
+    // Off: the call runs (today) or is refused with MODULE_OFF (step 2), for the system actor and for the agent alike.
+    expectRunsOrModuleOff(await outcome(worker.execute('probe.sys_touch', {}, { ...asSystem, idempotencyKey: randomUUID() })), 'ran');
+    expectRunsOrModuleOff(await outcome(worker.query('probe.sys_read', {}, { actor: SYSTEM, orgId: o.orgId })), 'read');
+    expectRunsOrModuleOff(await outcome(worker.execute('probe.agent_touch', {}, { ...asAgent, idempotencyKey: randomUUID() })), 'ran');
+    expectRunsOrModuleOff(await outcome(worker.query('probe.agent_read', {}, { actor: agent, orgId: o.orgId })), 'read');
+    // kernel is never refused, for either, with the app off.
+    await expect(worker.query('kernel.gate_sys_read', {}, { actor: SYSTEM, orgId: o.orgId })).resolves.toBe('read');
+    await expect(worker.query('kernel.gate_agent_read', {}, { actor: agent, orgId: o.orgId })).resolves.toBe('read');
   });
 
   it('touches no other org: an app one org switched off still runs for the next', async () => {
