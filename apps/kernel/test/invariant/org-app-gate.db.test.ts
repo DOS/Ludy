@@ -2,7 +2,7 @@
 // The runtime gate of per-org app enablement (ADR-0053 sections 3 and 5, slice b of #3307, issue #3309), step 3: strict. Step 1
 // (#3326) accepted both behaviors until the runtime change landed (step 2, #3357); this file now requires it. A command, a query, a
 // stream, a nested command and a lookup into an app the org switched off, or does not hold, answer MODULE_OFF 404 naming the app
-// (not_installed for ctx.query), for a user, the system actor and an AI agent, and leave no idempotency key and no 'ok' audit row; the
+// (not_installed for ctx.query), for a user, the system actor and an AI agent, and leave no 'ok' audit row (a refused call rolls back whole); the
 // gate comes before the role check; a person who is not a member of the org learns nothing about its apps (the same whole refusal
 // whether the app is on or off, never MODULE_OFF); kernel is never refused, so the owner can always switch an app back on; another org
 // is unaffected; an app switched back on runs again; and the billing option is named `entitlements`: a port that answers [] holds
@@ -17,7 +17,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { buildKernelCommands, createOrg, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, defineCommand, defineQuery, type AgentActor, type Lookup } from '@crove/kernel-runtime';
+import { Runtime, defineCommand, defineQuery, mintContextToken, type AgentActor, type Lookup } from '@crove/kernel-runtime';
 import { financeCommands, financeQueries } from '@crove/mod-finance';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 
@@ -49,12 +49,12 @@ const agentRead = defineQuery({ name: 'probe.agent_read', input: z.object({}), a
 // Kernel's own probes for the same actors: never refused, whatever apps are off.
 const kernelSysRead = defineQuery({ name: 'kernel.gate_sys_read', input: z.object({}), access: 'system', handler: async () => 'read' });
 const kernelAgentRead = defineQuery({ name: 'kernel.gate_agent_read', input: z.object({}), access: [], agent: { roles: 'any' }, handler: async () => 'read' });
-const SHIPPED = ['kernel', 'probe', 'other'] as const;
+const SHIPPED = ['kernel', 'finance', 'probe', 'other'] as const;
 const SYSTEM = { type: 'system' as const, component: 'kernel.agent' };
 
 type Actor = { type: 'user'; userId: string; aal: 'aal1' | 'aal2'; sessionId?: string; mfaAt?: number };
 
-suite('the per-org app gate of the runtime (ADR-0053, slice b step 1)', () => {
+suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
   const dbName = `crove_test_orggate_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
@@ -199,7 +199,7 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b step 1)', () => {
     expectModuleOff(await outcome(o.readIt(o.member)));
     expectModuleOff(await outcome(rt.stream('probe.stream', {}, { actor: asUser(o.member), orgId: o.orgId }, async () => {})));
     expectModuleOff(await outcome(rt.execute('kernel.gate_nested', {}, { actor: asUser(o.member), orgId: o.orgId, idempotencyKey: randomUUID() })));
-    // A refused call leaves no trace: no idempotency key and no 'ok' audit row for it.
+    // A refused call rolls back whole: no idempotency key and no 'ok' audit row for it.
     expect(await o.traces()).toEqual({ keys: 0, audits: 0 });
     // ctx.query answers the typed not_installed, as for an app the deployment leaves out.
     await expect(o.viaLookup(o.member)).resolves.toEqual({ status: 'not_installed', module: 'probe' });
@@ -221,6 +221,46 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b step 1)', () => {
     expect(apps.apps.filter((a) => !a.enabled).map((a) => a.id).sort()).toEqual(['other', 'probe']);
     await expect(o.setApp('probe', true)).resolves.toMatchObject({ module: 'probe', enabled: true });
     await expect(o.run(rt, o.member)).resolves.toBe('ran');
+  });
+
+  it('refuses the command an approved proposal runs, and the proposal waits until the app is back on', async () => {
+    const o = await org();
+    // A posted entry (as the API login in the owner's context), and a proposal of the member to reverse it.
+    const appUrl = new URL(adminUrl);
+    appUrl.username = 'crove_app';
+    appUrl.password = 'test-app-pw';
+    const entryId = await (async () => {
+      const c = new pg.Client({ connectionString: appUrl.toString() });
+      await c.connect();
+      try {
+        await c.query('BEGIN');
+        await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: o.owner, orgId: o.orgId, sessionId: null, aal: 'aal1', mfaAt: null })]);
+        const { rows } = await c.query<{ id: string }>(`SELECT crove_finance.post_journal_entry('2026-10-01'::date, 'test', 'test', $1::uuid, $2::jsonb) AS id`, [
+          randomUUID(),
+          JSON.stringify([
+            { line_no: 1, account_code: '6422', debit: '1000', credit: '0' },
+            { line_no: 2, account_code: '1111', debit: '0', credit: '1000' },
+          ]),
+        ]);
+        await c.query('COMMIT');
+        return rows[0]?.id as string;
+      } finally {
+        await c.end();
+      }
+    })();
+    const requested = await rt.execute<{ proposalId: string }>(
+      'kernel.proposal.request',
+      { command: 'finance.journal.reverse', input: { entryId, entryDate: '2026-10-15', reason: 'Ghi nhầm' } },
+      { actor: asUser(o.member), orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+    await expect(o.setApp('finance', false)).resolves.toMatchObject({ module: 'finance', enabled: false });
+    const approve = () => rt.execute('kernel.proposal.approve', { id: requested.proposalId, revision: 1 }, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+    await expect(approve()).rejects.toMatchObject({ code: 'MODULE_OFF', status: 404, details: { module: 'finance' } });
+    const state = () => withAdmin(async (c) => (await c.query<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE id = $1', [requested.proposalId])).rows[0]?.status);
+    expect(await state()).toBe('pending');
+    await o.setApp('finance', true);
+    await expect(approve()).resolves.toMatchObject({ journalEntryId: expect.any(String) });
+    expect(await state()).toBe('executed');
   });
 
   it('answers a system actor and an AI agent like a user, and never refuses them in kernel', async () => {
@@ -289,17 +329,17 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b step 1)', () => {
     await expect(o.run(withPort(async () => ['probe']), o.member)).resolves.toBe('ran');
     await expect(o.run(withPort(async () => ['full']), o.member)).resolves.toBe('ran');
     expectModuleOff(await outcome(o.run(withPort(async () => ['other']), o.member)));
-    // Another org is asked for by its own id.
+    // One runtime serves two orgs and keeps what the port said of each apart: the port holds A to nothing and B to everything.
     const other = await org();
-    const askedFor: string[] = [];
-    await other.run(
-      withPort(async (orgId) => {
-        askedFor.push(orgId);
-        return ['full'];
-      }),
-      other.member,
-    );
-    expect(askedFor).toEqual([other.orgId]);
+    const asked = new Set<string>();
+    const both = withPort(async (orgId) => {
+      asked.add(orgId);
+      return orgId === o.orgId ? [] : ['full'];
+    });
+    expectModuleOff(await outcome(o.run(both, o.member)));
+    await expect(other.run(both, other.member)).resolves.toBe('ran');
+    expectModuleOff(await outcome(o.run(both, o.member)));
+    expect([...asked].sort()).toEqual([o.orgId, other.orgId].sort());
   });
 
   it('does not let a failing billing port take a command down', async () => {
