@@ -89,7 +89,7 @@ export interface LaborRegisterInput {
 }
 
 export interface Report01PliInput {
-  /** Semiannual period `YYYY-H1` or `YYYY-H2`. */
+  /** Reporting period: `YYYY-H1` (first half), `YYYY-H2` (second half), or `YYYY` (annual 01/PLI filing). */
   period: string;
   employer: DeclarationEmployer;
   persons: readonly LaborRegisterPerson[];
@@ -309,11 +309,12 @@ export function buildLaborRegister(input: LaborRegisterInput): LaborRegisterDocu
 // ---------------------------------------------------------------------------------------------------------------------
 
 const SEMIANNUAL_RE = /^(\d{4})-H([12])$/;
+const ANNUAL_RE = /^(\d{4})$/;
 
 export function parseSemiannualPeriod(period: string): { year: number; half: 1 | 2; startDate: string; endDate: string } {
   const match = SEMIANNUAL_RE.exec(period);
   if (!match) {
-    throw new DomainError('HR_INVALID_PERIOD', 422, `Kỳ báo cáo 01/PLI phải có dạng YYYY-H1 hoặc YYYY-H2 (nhận: ${period})`);
+    throw new DomainError('HR_INVALID_PERIOD', 422, `Kỳ báo cáo 01/PLI bán niên phải có dạng YYYY-H1 hoặc YYYY-H2 (nhận: ${period})`);
   }
   const year = Number(match[1]);
   const half = Number(match[2]) as 1 | 2;
@@ -323,6 +324,27 @@ export function parseSemiannualPeriod(period: string): { year: number; half: 1 |
   return half === 1
     ? { year, half, startDate: `${match[1]}-01-01`, endDate: `${match[1]}-06-30` }
     : { year, half, startDate: `${match[1]}-07-01`, endDate: `${match[1]}-12-31` };
+}
+
+export function parse01PliPeriod(period: string): { year: number; kind: 'H1' | 'H2' | 'annual'; startDate: string; endDate: string } {
+  const annual = ANNUAL_RE.exec(period);
+  if (annual) {
+    const year = Number(annual[1]);
+    if (year < 2000 || year > 2100) {
+      throw new DomainError('HR_INVALID_PERIOD', 422, `Năm kỳ báo cáo 01/PLI không hợp lệ: ${period}`);
+    }
+    return { year, kind: 'annual', startDate: `${annual[1]}-01-01`, endDate: `${annual[1]}-12-31` };
+  }
+  if (!SEMIANNUAL_RE.test(period)) {
+    throw new DomainError('HR_INVALID_PERIOD', 422, `Kỳ báo cáo 01/PLI phải có dạng YYYY-H1, YYYY-H2 hoặc YYYY (nhận: ${period})`);
+  }
+  const semiannual = parseSemiannualPeriod(period);
+  return {
+    year: semiannual.year,
+    kind: semiannual.half === 1 ? 'H1' : 'H2',
+    startDate: semiannual.startDate,
+    endDate: semiannual.endDate,
+  };
 }
 
 const REPORT_01PLI_DETAIL_COLUMNS: DeclarationColumn[] = [
@@ -346,9 +368,9 @@ const REPORT_01PLI_DETAIL_COLUMNS: DeclarationColumn[] = [
   { key: 'note', header: 'Ghi chú', kind: 'text' },
 ];
 
-/** Builds the semiannual 01/PLI labor usage report (`ludy-hr-01pli/1`) for submission to `Sở Nội vụ`. */
+/** Builds the semiannual or annual 01/PLI labor usage report (`ludy-hr-01pli/1`) for submission to `Sở Nội vụ`. */
 export function build01PliReport(input: Report01PliInput): LaborRegisterDocument {
-  const window = parseSemiannualPeriod(input.period);
+  const window = parse01PliPeriod(input.period);
   validatePersons(input.persons);
 
   const inPeriod = sortPersons(
@@ -444,7 +466,7 @@ export function build01PliReport(input: Report01PliInput): LaborRegisterDocument
   };
 
   const notes = [
-    'Báo cáo tình hình sử dụng lao động Mẫu 01/PLI được lập định kỳ 6 tháng (kỳ 6 tháng đầu năm trước ngày 05/06 và kỳ cả năm trước ngày 05/12) gửi Sở Nội vụ.',
+    'Báo cáo tình hình sử dụng lao động Mẫu 01/PLI gửi Sở Nội vụ cho kỳ 6 tháng đầu năm (YYYY-H1, trước ngày 05/06) và kỳ cả năm (YYYY, trước ngày 05/12; đồng thời hỗ trợ lọc riêng YYYY-H2 cho 6 tháng cuối năm).',
     'Ludy chỉ tạo bảng kê để đối chiếu; đơn vị tự kiểm tra, ký và nộp trên Cổng Dịch vụ công Quốc gia hoặc kênh chính thức của Sở Nội vụ.',
   ];
   if (erasedCount > 0) {

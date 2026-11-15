@@ -181,6 +181,28 @@ describe('Báo cáo 01/PLI (build01PliReport)', () => {
     ]);
   });
 
+  it('supports full-year YYYY 01/PLI reports capturing H1 exits alongside H2 hires', () => {
+    const annual = build01PliReport({
+      period: '2026',
+      employer,
+      persons: [
+        samplePerson('1', 'An', { startedOn: '2025-03-01' }),
+        samplePerson('2', 'Bình', { startedOn: '2026-02-01', endedOn: '2026-04-30' }),
+        samplePerson('3', 'Chi', { startedOn: '2026-08-01' }),
+        samplePerson('4', 'Em', { startedOn: '2024-01-01', endedOn: '2025-12-31' }),
+      ],
+    });
+    const [summary, detail] = annual.sheets;
+    const metric = (prefix: string) => summary?.rows.find((r) => r.item?.startsWith(prefix))?.value;
+    expect(annual.header.find((h) => h.label === 'Kỳ báo cáo')?.value).toBe('2026 (2026-01-01 đến 2026-12-31)');
+    expect(metric('Tổng số lao động sử dụng trong kỳ')).toBe('3');
+    expect(metric('Số lao động đầu kỳ')).toBe('1');
+    expect(metric('Số lao động tăng mới trong kỳ')).toBe('2');
+    expect(metric('Số lao động giảm trong kỳ')).toBe('1');
+    expect(metric('Số lao động cuối kỳ')).toBe('2');
+    expect(detail?.rows.map((r) => r.name)).toEqual(['An', 'Bình', 'Chi']);
+  });
+
   it('rejects invalid semiannual periods and invalid calendar dates', () => {
     expect(() => build01PliReport({ period: '2026-H3', employer, persons: [] })).toThrow(/01\/PLI/);
     expect(() => build01PliReport({ period: '2026-Q1', employer, persons: [] })).toThrow(/01\/PLI/);
