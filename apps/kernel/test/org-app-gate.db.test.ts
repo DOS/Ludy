@@ -522,6 +522,11 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
     vi.setSystemTime(Date.now() + 6_000);
     await expect(fresh.appOn(o.orgId, 'probe')).resolves.toBe(false);
     await expect(fresh.appOn(o.orgId, 'finance')).resolves.toBe(true);
+    // `fresh` never reads a kept answer: a one-shot job asks it, so an app switched back on a moment ago is not read as off.
+    vi.useRealTimers();
+    await o.setApp('probe', true);
+    await expect(fresh.appOn(o.orgId, 'probe')).resolves.toBe(false);
+    await expect(fresh.appOn(o.orgId, 'probe', { fresh: true })).resolves.toBe(true);
     // Another org is untouched, and an entitlement the port does not give is off.
     const p = await org();
     await expect(fresh.appOn(p.orgId, 'probe')).resolves.toBe(true);

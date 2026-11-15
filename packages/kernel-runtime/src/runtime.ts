@@ -1902,11 +1902,13 @@ export class Runtime {
 
   // Whether the app is on for the org (ADR-0053 section 1): the answer of effectiveModules, kept 5 seconds per org so a sweep over many rows of
   // one org asks once. kernel is always on. Errors (the database, not a refusal) are thrown to the caller, which is already per item.
-  async appOn(orgId: string, module: string): Promise<boolean> {
+  // `fresh` skips the kept answer: a one-shot job that is dropped when the app is off (it is queued once and nothing sends it again) asks fresh, so an app
+  // switched back on a moment ago is never read as still off.
+  async appOn(orgId: string, module: string, options: { fresh?: boolean } = {}): Promise<boolean> {
     if (module === 'kernel') return true;
     const now = Date.now();
     const hit = this.#appsOnCache.get(orgId);
-    if (hit && now - hit.at < 5_000) return (await hit.modules).has(module);
+    if (hit && !options.fresh && now - hit.at < 5_000) return (await hit.modules).has(module);
     const modules = this.effectiveModules(orgId).then((list) => new Set(list) as ReadonlySet<string>);
     this.#appsOnCache.delete(orgId);
     this.#appsOnCache.set(orgId, { at: now, modules });

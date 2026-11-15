@@ -1195,12 +1195,12 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     };
     await boss.work<MeetingsTranscribeJob>(QUEUES.meetingsTranscribe, { batchSize: 1 }, async ([job]) => {
       // The audio is opened through a kernel command, which no gate refuses: an org whose Meetings is off (ADR-0053) must not have it sent to a provider.
-      if (job && (await deps.runtime.appOn(job.data.orgId, 'meetings'))) await runMeetingsTranscribe(transcribeDeps, job.data);
+      if (job && (await deps.runtime.appOn(job.data.orgId, 'meetings', { fresh: true }))) await runMeetingsTranscribe(transcribeDeps, job.data);
     });
     // Live notes (#3110, L4a-2): one job per window the recorder's tick started, on the same provider and never retried for the same reason.
     const liveDeps: MeetingsLiveNotesDeps = { ...transcribeDeps };
     await boss.work<MeetingsLiveNotesJob>(QUEUES.meetingsLiveNotes, { batchSize: 1 }, async ([job]) => {
-      if (job && (await deps.runtime.appOn(job.data.orgId, 'meetings'))) await runMeetingsLiveNotes(liveDeps, job.data);
+      if (job && (await deps.runtime.appOn(job.data.orgId, 'meetings', { fresh: true }))) await runMeetingsLiveNotes(liveDeps, job.data);
     });
   }
 
@@ -1326,7 +1326,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await boss.work<MeetingsImportJob>(QUEUES.meetingsImport, { batchSize: 1, localConcurrency: MEETINGS_IMPORT_CONCURRENCY, includeMetadata: true }, async ([job]) => {
       if (!job) return;
       // Every call of an import is a kernel command, which no gate refuses: an org whose Meetings is off (ADR-0053) downloads nothing.
-      if (!(await deps.runtime.appOn(job.data.orgId, 'meetings'))) return;
+      if (!(await deps.runtime.appOn(job.data.orgId, 'meetings', { fresh: true }))) return;
       await runMeetingsImport(importDeps, job.data, { retryCount: job.retryCount, retryLimit: MEETINGS_IMPORT_RETRY_LIMIT, ...(job.signal ? { signal: job.signal } : {}) });
     });
     await boss.work(QUEUES.meetingsImportSweep, { batchSize: 1 }, async () => {
