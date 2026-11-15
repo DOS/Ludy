@@ -9931,6 +9931,7 @@ export const vi = {
       MARKETPLACE_SETTLEMENT_NOT_FOUND: 'Không tìm thấy kỳ đối soát này của sàn',
       MARKETPLACE_SETTLEMENT_POSTED: 'Kỳ đối soát này của sàn đã được hạch toán',
       MARKETPLACE_SETTLEMENT_WAITING_DELIVERY: 'Kỳ đối soát còn dòng chưa có ngày giao hàng: chờ ngày giao rồi mới ghi sổ',
+      MARKETPLACE_TAX_RATE_UNCONFIRMED: 'Tỷ lệ thuế của ngành nghề chưa được kế toán xác nhận: chờ kế toán xác nhận',
       MARKETPLACE_SETTLEMENT_MISMATCH: 'Đề xuất hạch toán không khớp kỳ đối soát đã lưu; hãy lập lại đề xuất',
       MARKETPLACE_PAYOUT_NOT_POSTABLE: 'Không ghi sổ được khoản sàn trả này (kỳ đối soát có khoản điều chỉnh khác chưa giải thích, số tiền không phải đồng nguyên, hoặc không còn gì để thu)',
       MARKETPLACE_PAYOUT_SETTLEMENT_NOT_POSTED: 'Ghi sổ kỳ đối soát trước, rồi mới ghi khoản sàn trả',

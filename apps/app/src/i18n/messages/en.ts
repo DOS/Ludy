@@ -9934,6 +9934,7 @@ export const en = {
       MARKETPLACE_SETTLEMENT_NOT_FOUND: 'This marketplace settlement was not found',
       MARKETPLACE_SETTLEMENT_POSTED: 'This marketplace settlement has already been posted',
       MARKETPLACE_SETTLEMENT_WAITING_DELIVERY: 'Some lines of this settlement have no delivery day yet: wait for the delivery day before posting',
+      MARKETPLACE_TAX_RATE_UNCONFIRMED: 'The accountant has not confirmed the tax rates of the trade yet; waiting for the accountant',
       MARKETPLACE_SETTLEMENT_MISMATCH: 'The posting proposal does not match the stored settlement; ask for it again',
       MARKETPLACE_PAYOUT_NOT_POSTABLE: 'This platform payout cannot be posted (the settlement has an unexplained other adjustment, an amount that is not a whole dong, or nothing to collect)',
       MARKETPLACE_PAYOUT_SETTLEMENT_NOT_POSTED: 'Post the settlement first, then the payout',

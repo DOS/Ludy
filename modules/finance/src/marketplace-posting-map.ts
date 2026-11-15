@@ -29,6 +29,12 @@ export interface MarketplacePostingMap {
   feeAwaitingInvoice: MarketplaceAccount;
   // Tax the platform withheld and settled for the seller (a later slice).
   taxWithheld: MarketplaceAccount;
+  // The VAT the platform withheld for a household seller, credited at the settlement posting (#2516 slice C2; the payout debits it, so it nets to zero): Dr 511 / Cr 3331.
+  vatPayable: MarketplaceAccount;
+  // The PIT the platform withheld for a household seller, credited at the settlement posting: Dr pitExpense / Cr 3335.
+  pitPayable: MarketplaceAccount;
+  // The debit side of that PIT. A choice for the accountant (#2520): 6422 here, 811 or the owner's drawing account 4212 are the alternatives.
+  pitExpense: MarketplaceAccount;
 }
 
 // Frozen at runtime too, so no caller flips a status in place: a map is confirmed only by a reviewed change of this file.
@@ -50,6 +56,9 @@ export const MARKETPLACE_POSTING_MAPS: Readonly<Record<string, MarketplacePostin
     feePayable: row('331', 'Plan 8.4 The payout: Dr 331 (the platform) for fees already invoiced.'),
     feeAwaitingInvoice: row('1388', 'Plan 8.4 The payout: Dr 1388 for fees whose invoice has not come; the platform fee e-invoice clears it.'),
     taxWithheld: row('333', 'Plan 8.4 The payout: Dr 333 for tax the platform withheld and settled for the seller.'),
+    vatPayable: row('3331', 'AI consensus 2026-11-15 (A4): a household seller credits 3331 for the VAT the platform withheld at the settlement posting (Dr 511), so the payout debit nets it to zero.'),
+    pitPayable: row('3335', 'AI consensus 2026-11-15 (A4): a household seller credits 3335 for the PIT the platform withheld at the settlement posting, so the payout debit nets it to zero.'),
+    pitExpense: row('6422', 'Accounting PO proposal 2026-11-15: the PIT a platform withheld on a household\'s revenue is booked Dr 6422 (taxes and fees of the business), Cr 3335; the accountant decides between 6422, 811 and the owner\'s drawing account 4212 (#2520).'),
   },
 });
 
@@ -58,7 +67,7 @@ export function requireConfirmedMarketplaceMap(regime: string, maps: Readonly<Re
   const map = Object.hasOwn(maps, regime) ? maps[regime] : undefined;
   if (!map) throw new DomainError('MARKETPLACE_POSTING_REGIME_UNKNOWN', 422, 'Chế độ kế toán này chưa có bảng tài khoản hạch toán tiền của sàn', { regime });
   // The map and the accounts a proposal posts to must all be confirmed, so flipping only the top flag does not open the gate.
-  const rows = [map.receivable, map.revenue, map.salesReturn, map.cash, map.feePayable, map.feeAwaitingInvoice, map.taxWithheld];
+  const rows = [map.receivable, map.revenue, map.salesReturn, map.cash, map.feePayable, map.feeAwaitingInvoice, map.taxWithheld, map.vatPayable, map.pitPayable, map.pitExpense];
   if (map.status !== 'confirmed' || rows.some((r) => r.status !== 'confirmed')) {
     throw new DomainError('MARKETPLACE_POSTING_MAP_UNCONFIRMED', 409, 'Bảng tài khoản hạch toán tiền của sàn chưa được kế toán xác nhận: chờ kế toán xác nhận', { regime });
   }

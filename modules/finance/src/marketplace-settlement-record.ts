@@ -21,6 +21,7 @@ import { assertUsableAccounts } from './accounts.ts';
 import { journalVoucherTitle } from './domain/journal-voucher.ts';
 import { checkJournalVoucherLines, postJournalVoucher } from './journal-voucher.ts';
 import { requireConfirmedMarketplaceMap, MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from './marketplace-posting-map.ts';
+import { householdTaxRate } from './marketplace-household-tax.ts';
 import { postingsOf, settlementMonthsFor } from './marketplace-settlement-months.ts';
 import { settlementProposal, type SettlementProposal } from './marketplace-settlement-posting.ts';
 import { booksOn } from './payroll-posting.ts';
@@ -102,6 +103,9 @@ async function buildSettlement(ctx: QueryContext, maps: Maps, settlementId: stri
     .where('m.legal_entity_id', '=', settlement.legal_entity_id)
     .where('m.platform', '=', settlement.platform)
     .executeTakeFirst();
+  // A household seller's withheld tax is split by its one line of business's rate pair (read only when something was withheld); any other seller has no tax lines.
+  const withheld = months.some((m) => m.lines.some((l) => money(l.taxWithheld ?? '0').greaterThan(0)));
+  const tax = withheld ? await householdTaxRate(ctx, settlement.legal_entity_id, periodTo) : null;
   const proposals = months.map((m) =>
     settlementProposal(
       {
@@ -113,13 +117,14 @@ async function buildSettlement(ctx: QueryContext, maps: Maps, settlementId: stri
         date: m.date,
         partyId: link?.id ?? null,
         lines: m.lines,
+        tax,
       },
       maps,
     ),
   );
   // Each voucher holds whole dong, so each month's sums must be whole.
   for (const proposal of proposals) {
-    for (const [what, value] of [['sales', proposal.sales], ['sellerDiscount', proposal.sellerDiscount], ['refund', proposal.refund], ['total', proposal.total]] as const) wholeDong(what, value);
+    for (const [what, value] of [['sales', proposal.sales], ['sellerDiscount', proposal.sellerDiscount], ['refund', proposal.refund], ['taxWithheld', proposal.taxWithheld], ['total', proposal.total]] as const) wholeDong(what, value);
     for (const l of proposal.lines) {
       wholeDong('debit', l.debit);
       wholeDong('credit', l.credit);

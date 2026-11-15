@@ -7,7 +7,8 @@
 //   the settlement WAIT ("chờ ngày giao"): nothing is dated by a guess, and nothing is posted until every sale has its day;
 // - a refund belongs to the month of the settlement's last day (the refund reduces revenue in the period it occurs, PO decision 2026-11-08);
 // - a line refunded at least as much as it sold needs no delivery day: it is the refund in the month of the settlement's last day, sale and refund together;
-// - a month whose net is zero has no entry and is not listed; a month with a negative net runs the entry the other way (the platform owing less).
+// - the tax the platform withheld on a line goes with the piece that holds the line's sale (the month of its delivery, or the refund month for a line refunded at least as much as it sold);
+// - a month whose net is zero has no entry and is not listed, unless tax was withheld on its lines (then it is listed and posts only that tax); a month with a negative net runs the entry the other way (the platform owing less).
 import { money, sum, toMoney } from '@crove/l10n-vn';
 import type { QueryContext } from '@crove/kernel-runtime';
 import { JOURNAL_VOUCHER_SOURCE } from './domain/journal-voucher.ts';
@@ -18,6 +19,8 @@ export interface SettlementMonthLine {
   sales: string;
   sellerDiscount: string;
   refund: string;
+  // The tax the platform withheld on the line (a household seller; the settlement posting credits it to 3331 and 3335).
+  taxWithheld: string;
   // The delivery day of the line's order (YYYY-MM-DD), or null while no line of the order has one.
   deliveredOn: string | null;
 }
@@ -29,7 +32,7 @@ export interface SettlementMonth {
   date: string;
   // The pieces the entry is built from (the sums are all that is posted).
   lines: SettlementPostingLine[];
-  // Sales less seller discounts less refunds of the month, signed, never zero.
+  // Sales less seller discounts less refunds of the month, signed; zero only for a month that carries withheld tax.
   net: string;
 }
 
@@ -55,7 +58,7 @@ export function settlementMonthsOf(lines: readonly SettlementMonthLine[], period
     const sale = money(l.sales).minus(money(l.sellerDiscount));
     if (money(l.refund).greaterThanOrEqualTo(sale)) {
       // Refunded at least as much as it sold: no delivery day is needed, the whole line is the refund in the settlement's own month.
-      put(endMonth, { sales: l.sales, sellerDiscount: l.sellerDiscount, refund: l.refund });
+      put(endMonth, { sales: l.sales, sellerDiscount: l.sellerDiscount, refund: l.refund, taxWithheld: l.taxWithheld });
       continue;
     }
     // A delivery after the settlement's last day cannot be what the platform paid for: the day is not usable, the line waits.
@@ -63,14 +66,16 @@ export function settlementMonthsOf(lines: readonly SettlementMonthLine[], period
       waiting += 1;
       continue;
     }
-    put(l.deliveredOn.slice(0, 7), { sales: l.sales, sellerDiscount: l.sellerDiscount, refund: '0' });
-    if (!money(l.refund).isZero()) put(endMonth, { sales: '0', sellerDiscount: '0', refund: l.refund });
+    put(l.deliveredOn.slice(0, 7), { sales: l.sales, sellerDiscount: l.sellerDiscount, refund: '0', taxWithheld: l.taxWithheld });
+    if (!money(l.refund).isZero()) put(endMonth, { sales: '0', sellerDiscount: '0', refund: l.refund, taxWithheld: '0' });
   }
   const months: SettlementMonth[] = [];
   for (const month of [...buckets.keys()].sort()) {
     const pieces = buckets.get(month) ?? [];
     const net = money(toMoney(sum(pieces.map((p) => p.sales)))).minus(money(toMoney(sum(pieces.map((p) => p.sellerDiscount))))).minus(money(toMoney(sum(pieces.map((p) => p.refund)))));
-    if (net.isZero()) continue;
+    // A month with a zero net has no entry, unless the platform withheld tax on its lines: that tax is still credited (the entry then holds only the tax lines).
+    const tax = money(toMoney(sum(pieces.map((p) => p.taxWithheld ?? '0'))));
+    if (net.isZero() && tax.isZero()) continue;
     months.push({ month, date: monthEntryDate(month, periodTo), lines: pieces, net: toMoney(net) });
   }
   return { months, waiting };
@@ -92,6 +97,7 @@ export async function settlementMonthsFor(ctx: Ctx, settlements: ReadonlyArray<{
         'l.sales',
         'l.seller_discount',
         'l.refund',
+        'l.tax_withheld',
         eb
           .selectFrom('crove_finance.channel_order_line as ol')
           .select((x) => x.fn.max('ol.delivered_at').as('d'))
@@ -104,7 +110,7 @@ export async function settlementMonthsFor(ctx: Ctx, settlements: ReadonlyArray<{
       .where('l.settlement_id', 'in', ids.slice(i, i + 500))
       .execute();
     for (const r of rows) {
-      byId.get(r.settlement_id)?.push({ sales: r.sales, sellerDiscount: r.seller_discount, refund: r.refund, deliveredOn: r.delivered_on === null ? null : String(r.delivered_on).slice(0, 10) });
+      byId.get(r.settlement_id)?.push({ sales: r.sales, sellerDiscount: r.seller_discount, refund: r.refund, taxWithheld: r.tax_withheld, deliveredOn: r.delivered_on === null ? null : String(r.delivered_on).slice(0, 10) });
     }
   }
   for (const [id, lines] of byId) out.set(id, settlementMonthsOf(lines, (end.get(id) ?? '').slice(0, 10)));

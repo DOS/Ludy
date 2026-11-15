@@ -16,6 +16,14 @@ export interface SettlementPostingLine {
   sellerDiscount: string;
   // The refund the platform deducted on this line, a positive amount.
   refund: string;
+  // The tax the platform withheld on this line (VAT and PIT together), a positive amount; absent is none.
+  taxWithheld?: string;
+}
+
+// The household's rate pair for its one line of business on the settlement's date (marketplace-household-tax.ts); the withheld tax is split between VAT and PIT in this proportion.
+export interface HouseholdTaxRate {
+  vatPercent: string;
+  pitPercent: string;
 }
 
 export interface SettlementProposalInput {
@@ -30,6 +38,8 @@ export interface SettlementProposalInput {
   // The platform's party (crove_finance.marketplace_party, a later slice); null until then.
   partyId: string | null;
   lines: readonly SettlementPostingLine[];
+  // A household seller's rate pair, or null for any other seller: the withheld tax is posted only for a household (an enterprise seller has no tax lines, plan row 18).
+  tax?: HouseholdTaxRate | null;
 }
 
 export interface ProposedJournalLine {
@@ -48,29 +58,55 @@ export interface SettlementProposal {
   sales: string;
   sellerDiscount: string;
   refund: string;
+  // The tax the platform withheld that the entry credits to 3331 and 3335, whole dong; '0' for a seller that is no household.
+  taxWithheld: string;
   lines: ProposedJournalLine[];
   total: string;
 }
 
 // The lines of the entry, from the map's accounts. Nothing is checked about the status here: settlementProposal is the gated entry point.
-function settlementProposalLines(input: SettlementProposalInput, map: Pick<MarketplacePostingMap, 'receivable' | 'revenue' | 'salesReturn'>): ProposedJournalLine[] {
+function settlementProposalLines(input: SettlementProposalInput, map: Pick<MarketplacePostingMap, 'receivable' | 'revenue' | 'salesReturn' | 'vatPayable' | 'pitPayable' | 'pitExpense'>): ProposedJournalLine[] {
   const bad = (reason: string, extra: Record<string, unknown> = {}) => new DomainError('MARKETPLACE_SETTLEMENT_NOT_POSTABLE', 422, reason, extra);
   // Each line's amounts are decimal strings of at most four places and not negative: a negative discount or sale must not inflate the revenue.
   for (const l of input.lines) {
-    for (const v of [l.sales, l.sellerDiscount, l.refund]) {
+    for (const v of [l.sales, l.sellerDiscount, l.refund, l.taxWithheld ?? '0']) {
       if (typeof v !== 'string' || !/^\d+(\.\d{1,4})?$/.test(v)) throw bad('Số tiền của dòng đối soát không hợp lệ', { amount: String(v) });
     }
   }
   const net = money(toMoney(sum(input.lines.map((l) => l.sales)))).minus(money(toMoney(sum(input.lines.map((l) => l.sellerDiscount))))).minus(money(toMoney(sum(input.lines.map((l) => l.refund)))));
   // A negative net (refunds and discounts above the sales, for example a quiet month with returns from the one before) is legitimate: the entry runs the other way, the platform owing less.
   const amount = toMoney(net.abs());
-  if (money(amount).isZero()) throw bad('Kỳ đối soát có doanh thu ròng bằng 0; không có bút toán để lập', { net: amount });
+  const tax = withheldSplit(input);
+  // A zero net has no 131 / 511 pair; a month that carries withheld tax still posts that tax (the tax lines alone balance), anything else has nothing to post.
+  if (money(amount).isZero() && !tax) throw bad('Kỳ đối soát có doanh thu ròng bằng 0; không có bút toán để lập', { net: amount });
   const memo = `${input.platform} ${input.periodFrom} đến ${input.periodTo}, tháng ${input.month}`;
   const owed = net.greaterThan(0);
-  return [
-    { account: owed ? map.receivable.code : map.revenue.code, debit: amount, credit: '0', partyId: owed ? input.partyId : null, memo },
-    { account: owed ? map.revenue.code : map.receivable.code, debit: '0', credit: amount, partyId: owed ? null : input.partyId, memo },
-  ];
+  const lines: ProposedJournalLine[] = money(amount).isZero()
+    ? []
+    : [
+        { account: owed ? map.receivable.code : map.revenue.code, debit: amount, credit: '0', partyId: owed ? input.partyId : null, memo },
+        { account: owed ? map.revenue.code : map.receivable.code, debit: '0', credit: amount, partyId: owed ? null : input.partyId, memo },
+      ];
+  if (tax) {
+    const taxMemo = `${memo}, thuế sàn đã khấu trừ`;
+    if (!money(tax.vat).isZero()) lines.push({ account: map.revenue.code, debit: tax.vat, credit: '0', partyId: null, memo: taxMemo }, { account: map.vatPayable.code, debit: '0', credit: tax.vat, partyId: null, memo: taxMemo });
+    if (!money(tax.pit).isZero()) lines.push({ account: map.pitExpense.code, debit: tax.pit, credit: '0', partyId: null, memo: taxMemo }, { account: map.pitPayable.code, debit: '0', credit: tax.pit, partyId: null, memo: taxMemo });
+  }
+  return lines;
+}
+
+// The withheld tax of the entry's pieces split into VAT and PIT by the household's rate pair: VAT = tax x vat% / (vat% + pit%) rounded to whole dong, the remainder PIT, so the two add up to
+// exactly what the platform withheld. Null when the seller is no household or nothing was withheld.
+export function withheldSplit(input: Pick<SettlementProposalInput, 'lines' | 'tax'>): { total: string; vat: string; pit: string } | null {
+  const total = money(toMoney(sum(input.lines.map((l) => l.taxWithheld ?? '0'))));
+  if (!input.tax || total.isZero()) return null;
+  // The VAT part is rounded and the PIT part is the remainder, so a total that is not whole dong would leave a fractional PIT: refused here, as the payout refuses it, never rounded.
+  if (!total.isInteger()) throw new DomainError('MARKETPLACE_SETTLEMENT_NOT_POSTABLE', 422, 'Thuế sàn đã khấu trừ phải là số đồng nguyên để hạch toán', { what: 'taxWithheld', taxWithheld: toMoney(total) });
+  const vatPercent = money(input.tax.vatPercent);
+  const rates = vatPercent.plus(money(input.tax.pitPercent));
+  if (!rates.greaterThan(0)) throw new DomainError('MARKETPLACE_SETTLEMENT_NOT_POSTABLE', 422, 'Tỷ lệ thuế của ngành nghề không hợp lệ để tách thuế sàn đã khấu trừ', { vatPercent: input.tax.vatPercent, pitPercent: input.tax.pitPercent });
+  const vat = total.times(vatPercent).div(rates).toDecimalPlaces(0, 4);
+  return { total: toMoney(total), vat: toMoney(vat), pit: toMoney(total.minus(vat)) };
 }
 
 // The gated proposal: the map of the regime must be confirmed, the net not zero, and the entry must pass the journal voucher's own shape checks. The party of the 131 line may still be null
@@ -87,6 +123,7 @@ export function settlementProposal(input: SettlementProposalInput, maps?: Readon
     sales: toMoney(sum(input.lines.map((l) => l.sales))),
     sellerDiscount: toMoney(sum(input.lines.map((l) => l.sellerDiscount))),
     refund: toMoney(sum(input.lines.map((l) => l.refund))),
+    taxWithheld: withheldSplit(input)?.total ?? '0',
     lines, total: journalVoucherTotal(lines),
   };
 }
