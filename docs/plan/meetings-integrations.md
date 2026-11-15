@@ -4,6 +4,8 @@
 >
 > **Caveat from the research, which holds here too:** no vendor page could be opened when the research ran; every fact about Google, Zoom, Microsoft, Slack, Zalo, Chrome and Edge comes from search-result summaries, and every price is unverified. Each build issue below starts by re-checking its facts on the vendor's own page and writes what it found on the issue ("Facts to re-check" in each group). A fact marked **[recheck]** is one the build must not rely on before that. The Vietnamese legal points stay commentary until a lawyer confirms them (meetings.md section 7, #2585).
 
+> **Update 2026-11-15 (owner decision): group C is deferred to the roadmap and is not built now.** C1's core (the import tables, the job, the consent method, the app) is merged and kept; C2, C3, C4, the owner actions C-OA1 to C-OA3 and the follow-up C2a (#3306) are in the Icebox at P3. Reason and what stays: [section 6](#6-group-c-import-after-the-meeting-deferred-owner-decision-2026-11-15).
+
 ## 1. What the owner decided
 
 Approved on 2026-11-14, as the report recommended:
@@ -12,7 +14,7 @@ Approved on 2026-11-14, as the report recommended:
 |---|---|---|
 | **A. Learn from competitors** (no outside account) | Ask across meetings with citations to transcript lines; the member's rough notes rewritten by AI ("enhance my notes"); Vietnamese minutes templates (biên bản); a one-click "we are recording" notice with Vietnamese text to paste in the call chat, an org setting "consent required before recording" and an always-visible recording indicator; a webhook fired when minutes are approved | section 4 |
 | **B. Calendar and output channels** | Read Google and Outlook calendars to suggest "record this meeting" and attach recordings to the right event; send approved minutes through Slack (post only), Microsoft Teams (Workflows webhook) and Zalo OA (ZNS only if paid messages go through the AI/spend budget and a person approves); email already exists (L3) | section 5 |
-| **C. Import after the meeting** | Bring recordings or transcripts in from Google Meet (REST), Zoom (cloud recording and webhooks) and Microsoft Teams (Graph), preferring the audio so Ludy transcribes Vietnamese itself. Needs the owner's platform apps; only paid platform plans have recordings | section 6 |
+| **C. Import after the meeting** | Bring recordings or transcripts in from Google Meet (REST), Zoom (cloud recording and webhooks) and Microsoft Teams (Graph), preferring the audio so Ludy transcribes Vietnamese itself. Needs the owner's platform apps; only paid platform plans have recordings. **Deferred 2026-11-15 (the core of C1 is merged and kept)** | section 6 |
 | **D. The extension on Edge** | Publish on Microsoft Edge Add-ons and review the extension against the Chrome Web Store 2026 policy | section 7 |
 | **E. Translation** (added later on 2026-11-14) | A reader of a meeting, or the recorder before publishing, clicks "Dịch sang ..." on the transcript or the summary; Vietnamese to English and English to Vietnamese first; Chinese, Japanese and Korean later | section 7a |
 
@@ -158,7 +160,16 @@ ZNS messages need a template Zalo approves in advance (about 400 characters per 
 
 Email already exists (L3, #3015). This plan adds nothing, except that the same "published result only, a person sends" rule is the pattern every new channel follows.
 
-## 6. Group C: import after the meeting (GA gate, P2)
+## 6. Group C: import after the meeting (deferred, owner decision 2026-11-15)
+
+> **Decision (owner, 2026-11-15): group C goes on the roadmap for later and is not built now.** C2 (Google Meet), C3 (Zoom), C4 (Microsoft Teams), the Meet video-to-audio step C2a (#3306) and the owner actions C-OA1 to C-OA3 (#3177 to #3179) are moved to the Icebox at P3; their issues carry the decision.
+>
+> **Reason (owner):** about 99% of Ludy's users have no Google Workspace, Zoom Pro or Microsoft 365 business plan, so a free account cannot cloud-record and there is nothing for these platforms to hand over. Free users are served by the extension recording a Meet call live and by uploading a recorded file (including a local Zoom recording), which need no platform account. This matches the fit rule of `docs/product/scope.md`: group C serves a minority of the target businesses.
+>
+> **What stays.** C1's core is merged and kept (#3173): the platform connection, suggestion and recording tables, the sweep, the download job, the consent method `platform_notice`, the import-only media gate, the Settings section, the Meetings card and the auto-claim. Only the offline sandbox adapter exists, so nothing here reaches a real platform. The hardening of `guardedStream` (#3291, PR #3305) stays too: it hardens code that is already merged. **What was learned stays on the issues, for the day group C is picked up:** the Google facts read from Google's own pages (the Drive read scopes `drive.readonly` and `drive.meet.readonly` are **Restricted**, so the CASA assessment and an allowed app type apply; `meetings.space.readonly` is Sensitive; the Picker route with `drive.file` is the owner's first choice if C2 is ever built; `conferenceRecords.list` returns only the organizer's conferences; a Meet recording is an MP4 with no audio-only file, so C2a is needed) are on #3174, and the audio-extraction scope is #3306.
+>
+> **Not changed by this decision:** the plan below is the design for when group C returns; read it as deferred, not as a commitment. The owner actions need no work now.
+
 
 The three platforms close or tax the live door (Google's Media API ends on 2027-01-15 and Zoom bots must leave when their person leaves, per the research) but keep an after-meeting door. Ludy uses only that door and prefers **the audio file**: if a platform's own transcript is poor in Vietnamese, Ludy's own Vietnamese transcription of the same audio is the point of the module. All of C is optional and needs the owner's platform apps (Ludy Cloud holds one approved app per platform in the private Cloud layer; a self-hoster registers their own, which is a short, documented step for a small company).
 
@@ -240,15 +251,15 @@ Added by the owner on 2026-11-14 ("Tính năng dịch transcript và summary n�
 1. **A first** (no account); **E1 and E2** need none either and can run in parallel with A (E2 after E1): A1 and A2 (the notice and policy), A6 and the webhook can go in parallel with A3, A4, A5. A5 uses A4's templates, so A4 first.
 2. **D1** early (small, reduces the risk of store refusal of the present listing), **D2** after D1 and after D-OA1.
 3. **B1 then B2** (Google calendar then the extension), **B4** (Slack and Teams) any time after A6's webhook machinery exists, **B5** after L1 (built); **B3** (Outlook) after B1 and B-OA2.
-4. **C1** after the first platform's app exists, **C2, C3, C4** in the order the pilot customer's platform dictates (the report suggests Google, Zoom, Microsoft). All of C waits for the GA gate.
+4. **C1** is built and merged (its core is kept). **C2, C3, C4** are deferred to the roadmap (owner decision 2026-11-15, section 6); if they return, in the order the pilot customer's platform dictates (the report suggests Google, Zoom, Microsoft).
 
 | Owner action | Needed by | What |
 |---|---|---|
 | B-OA1 (#3171) | B1 | Google OAuth consent screen: add the calendar read scope, verify it |
 | B-OA2 (#3172) | B3 | Microsoft Entra app for calendar read, redirect URI, publisher domain |
-| C-OA1 (#3177) | C2 | Google scopes for Meet recordings and Drive: classification, CASA decision, verification |
-| C-OA2 (#3178) | C3 | Zoom Marketplace app, scopes, webhook endpoint, App Review |
-| C-OA3 (#3179) | C4 | Microsoft app permissions for recordings and transcripts, publisher verification, Azure billing decision, customer admin guide |
+| C-OA1 (#3177) (deferred) | C2 | Google scopes for Meet recordings and Drive: classification, CASA decision, verification |
+| C-OA2 (#3178) (deferred) | C3 | Zoom Marketplace app, scopes, webhook endpoint, App Review |
+| C-OA3 (#3179) (deferred) | C4 | Microsoft app permissions for recordings and transcripts, publisher verification, Azure billing decision, customer admin guide |
 | D-OA1 (#3182) | D2 | Edge Add-ons developer account, listing and submission |
 | (existing) #2585 | A1, A2 | the lawyer's reading of the notice text and consent policy |
 
@@ -257,7 +268,7 @@ Added by the owner on 2026-11-14 ("Tính năng dịch transcript và summary n�
 - **The facts are unverified.** Mitigation: each issue re-checks first and records the result; nothing in a build depends on a price.
 - **Consent.** The strongest risk is a recording the others did not know about. A1 and A2 make telling people a one-click act and the policy tightenable; none of it replaces the lawyer's reading.
 - **A webhook or channel post leaks a private meeting.** A6 is member-owned and field-limited; B4 and B5 send only a published result a person reads and clicks; the dialogs say who will read it. Every outward post is an R2 command.
-- **Google CASA cost.** Decided by C-OA1 before C2 is built; the plan does not assume a figure.
+- **Google CASA cost.** Decided by C-OA1 before C2 is built; the plan does not assume a figure. The Drive read scopes are Restricted (read on Google's pages, 2026-11-15); group C is deferred, so no spend is asked now.
 - **Microsoft billing.** The owner decides the Azure account; a one-person company never needs it under 600 minutes a month **[recheck]**.
 - **The platform apps are one per platform.** Ludy Cloud holds approved apps; a self-hoster registers their own; the core never needs them.
 - **Translation quality and cost (group E).** Nobody measured Vietnamese and English translation of meeting talk; a wrong figure in a translated summary could mislead a foreign partner. Mitigation: the label "Bản dịch máy", the original always beside it, the code checks on figures and names, the warnings, a bilingual person's spot check on E1, the cost shown before the click and the admission before each chunk.
@@ -285,12 +296,13 @@ Step ids A1 to A6, B1 to B6, C1 to C4, D1 to D2 and E1 to E3 name the steps of t
 | B-OA1 (#3171) | owner-action: Google calendar read scope | Add the read scope to the consent screen of the Ludy calendar client; verification if sensitive; update the runbook | The scope is on the screen; verification state recorded; no secret in the repo | none (runbook only) | M3, P2 | No |
 | B-OA2 (#3172) | owner-action: Microsoft Entra app for calendar | Register the multi-tenant app, delegated `Calendars.Read`, redirect URI, publisher domain | The app exists; whether admin consent is needed is written on the issue | none | M3, P2 | No |
 | C1 (#3173) | The import core | Platform connections, suggestion list, "Nhập" with a consent method for platform notice, download job into the upload pipeline, audio first; platform webhooks only suggest; Vietnamese comparison of platform and Ludy transcripts | Nothing is downloaded before the click; the import goes through the same staging, encryption and `crove-media` path; the platform's copy is never deleted by Ludy; the WER comparison is reported on the issue; with no platform app the core of Meetings is unchanged; AI: transcription and summary as for an upload, metered | `modules/meetings/**`, `packages/channel/**`, `apps/kernel/src/**`, `apps/app/src/**`, a migration | GA gate, P2 | Yes (migration, public route) |
-| C2 (#3174) | Import from Google Meet | Meet REST recordings and transcripts, Drive download, for the member's own meetings of the last 14 days | Imports a recording into the C1 flow; stops for the owner's decision if the scopes are restricted; the facts are re-checked first | `packages/channel/**`, `apps/kernel/src/**` | GA gate, P2 | Yes (OAuth route) |
-| C3 (#3175) | Import from Zoom | Zoom cloud recording list, `recording.completed` webhook (signature checked, public route, only suggests), audio-only file | A forged webhook is refused; the route is on the reasoned public list (two-step); a recording imports; an app not yet reviewed works for its own account | `packages/channel/**`, `apps/kernel/src/**`, route-coverage invariant | GA gate, P2 | Yes (public route) |
-| C4 (#3176) | Import from Microsoft Teams | Graph recordings and transcripts for the member's meetings; the plain reason when admin consent or the tenant switch is missing; cost shown before the first import; customer admin guide | A recording imports; a missing consent or switch shows a plain message; the Azure decision is the owner's | `packages/channel/**`, `apps/kernel/src/**`, `docs/runbooks/` | GA gate, P2 | Yes (OAuth route) |
-| C-OA1 (#3177) | owner-action: Google Meet and Drive scopes | Read the scope categories; decide CASA spend if restricted; add scopes, verification | Decision and cost recorded; verification state recorded | none | GA gate, P2 | No |
-| C-OA2 (#3178) | owner-action: Zoom app and App Review | Zoom Marketplace app, scopes, webhook endpoint, App Review | App exists; review state recorded | none | GA gate, P2 | No |
-| C-OA3 (#3179) | owner-action: Microsoft recordings and transcripts | Add recording and transcript permissions, publisher verification, Azure billing decision, tenant admin steps for customers | Permissions on the app; billing decision recorded | none | GA gate, P2 | No |
+| C2 (#3174) | Import from Google Meet | Meet REST recordings and transcripts, Drive download, for the member's own meetings of the last 14 days | Imports a recording into the C1 flow; stops for the owner's decision if the scopes are restricted; the facts are re-checked first | `packages/channel/**`, `apps/kernel/src/**` | Icebox, P3 (deferred 2026-11-15) | Yes (OAuth route) |
+| C2a (#3306) | Stream a platform video into crove-media and stage only the audio | The worker streams a video download into crove-media's normalize and stages only the audio; a video input cap; lifts the video-only refusal when media is configured | A video-only sandbox recording imports with the audio only staged | `apps/kernel/src/meetings-import.ts`, `packages/media-contract`, `apps/media/**` | Icebox, P3 (deferred 2026-11-15) | Yes |
+| C3 (#3175) | Import from Zoom | Zoom cloud recording list, `recording.completed` webhook (signature checked, public route, only suggests), audio-only file | A forged webhook is refused; the route is on the reasoned public list (two-step); a recording imports; an app not yet reviewed works for its own account | `packages/channel/**`, `apps/kernel/src/**`, route-coverage invariant | Icebox, P3 (deferred 2026-11-15) | Yes (public route) |
+| C4 (#3176) | Import from Microsoft Teams | Graph recordings and transcripts for the member's meetings; the plain reason when admin consent or the tenant switch is missing; cost shown before the first import; customer admin guide | A recording imports; a missing consent or switch shows a plain message; the Azure decision is the owner's | `packages/channel/**`, `apps/kernel/src/**`, `docs/runbooks/` | Icebox, P3 (deferred 2026-11-15) | Yes (OAuth route) |
+| C-OA1 (#3177) | owner-action: Google Meet and Drive scopes | Read the scope categories; decide CASA spend if restricted; add scopes, verification | Decision and cost recorded; verification state recorded | none | Icebox, P3 (deferred 2026-11-15) | No |
+| C-OA2 (#3178) | owner-action: Zoom app and App Review | Zoom Marketplace app, scopes, webhook endpoint, App Review | App exists; review state recorded | none | Icebox, P3 (deferred 2026-11-15) | No |
+| C-OA3 (#3179) | owner-action: Microsoft recordings and transcripts | Add recording and transcript permissions, publisher verification, Azure billing decision, tenant admin steps for customers | Permissions on the app; billing decision recorded | none | Icebox, P3 (deferred 2026-11-15) | No |
 | D1 (#3180) | Review the extension against the Chrome Web Store 2026 policy | A written review in `docs/security/`; fix blocking items in strings, manifest or listing text | Each policy point has a verdict and evidence; blocking items fixed; the permission list is not loosened | `docs/security/**`, `apps/extension/**`, `apps/extension/store/**` | M3, P2 | Only if `package.json` changes |
 | D2 (#3181) | The extension on Edge Add-ons | Test on Edge; Edge zip from the packaging workflow; runbook steps and facts; listing text | The recording flow works on Edge (recorded test); the zip installs in Edge; the runbook is complete without a credential | `apps/extension/**`, `.github/workflows/extension-package.yml`, `docs/runbooks/extension-store.md` | M3, P2 | Yes (workflow, if edited) |
 | D-OA1 (#3182) | owner-action: Edge Add-ons account and submission | Partner Center account, listing, submission | The extension is installable from Edge Add-ons | none | M3, P2 | No |
