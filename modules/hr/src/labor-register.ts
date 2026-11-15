@@ -144,21 +144,21 @@ function formatMoneyCell(label: string, raw: string | null | undefined, employee
     if (raw.trim() === '') return '';
     parsed = money(raw);
   } catch {
-    throw new DomainError('HR_INVALID_AMOUNT', 422, `Số tiền ${label} không hợp lệ cho nhân viên ${employeeId}`);
+    throw new DomainError('VALIDATION', 422, `Số tiền ${label} không hợp lệ cho nhân viên ${employeeId}`);
   }
   if (parsed.isNegative()) {
-    throw new DomainError('HR_INVALID_AMOUNT', 422, `Số tiền ${label} không được âm cho nhân viên ${employeeId}`);
+    throw new DomainError('VALIDATION', 422, `Số tiền ${label} không được âm cho nhân viên ${employeeId}`);
   }
   return parsed.toDecimalPlaces(2).toFixed(2);
 }
 
 function assertDate(label: string, value: string | null | undefined, required: boolean, employeeId: string): void {
   if (value === undefined || value === null || value === '') {
-    if (required) throw new DomainError('HR_INVALID_DATE', 422, `Thiếu hoặc sai định dạng ${label} cho nhân viên ${employeeId}`);
+    if (required) throw new DomainError('VALIDATION', 422, `Thiếu hoặc sai định dạng ${label} cho nhân viên ${employeeId}`);
     return;
   }
   if (!isValidCalendarDate(value)) {
-    throw new DomainError('HR_INVALID_DATE', 422, `Ngày ${label} (${value}) không hợp lệ cho nhân viên ${employeeId}`);
+    throw new DomainError('VALIDATION', 422, `Ngày ${label} (${value}) không hợp lệ cho nhân viên ${employeeId}`);
   }
 }
 
@@ -169,11 +169,11 @@ function validatePersons(persons: readonly LaborRegisterPerson[]): void {
   const seen = new Set<string>();
   for (const p of persons) {
     if (seen.has(p.employeeId)) {
-      throw new DomainError('HR_DUPLICATE_EMPLOYEE', 422, `Danh sách có nhân viên trùng mã: ${p.employeeId}`);
+      throw new DomainError('VALIDATION', 422, `Danh sách có nhân viên trùng mã: ${p.employeeId}`);
     }
     seen.add(p.employeeId);
     if (!isLaborContractKind(p.contractKind) && p.contractKind !== 'none') {
-      throw new DomainError('HR_INVALID_CONTRACT_KIND', 422, `Loại hợp đồng không hợp lệ (${String(p.contractKind)}) cho nhân viên ${p.employeeId}`);
+      throw new DomainError('VALIDATION', 422, `Loại hợp đồng không hợp lệ (${String(p.contractKind)}) cho nhân viên ${p.employeeId}`);
     }
     const contractStartDate = optionalDateOf(p.contractStartDate);
     assertDate('startedOn', p.startedOn, true, p.employeeId);
@@ -241,7 +241,7 @@ const LABOR_REGISTER_COLUMNS: DeclarationColumn[] = [
 /** Builds the Labor Management Register (`Sổ quản lý lao động`, layout `ludy-hr-labor-register/1`). */
 export function buildLaborRegister(input: LaborRegisterInput): LaborRegisterDocument {
   if (input.asOf !== undefined && !isValidCalendarDate(input.asOf)) {
-    throw new DomainError('HR_INVALID_DATE', 422, `Ngày chốt sổ không hợp lệ: ${input.asOf}`);
+    throw new DomainError('VALIDATION', 422, `Ngày chốt sổ không hợp lệ: ${input.asOf}`);
   }
   validatePersons(input.persons);
 
@@ -317,12 +317,12 @@ const ANNUAL_RE = /^(\d{4})$/;
 export function parseSemiannualPeriod(period: string): { year: number; half: 1 | 2; startDate: string; endDate: string } {
   const match = SEMIANNUAL_RE.exec(period);
   if (!match) {
-    throw new DomainError('HR_INVALID_PERIOD', 422, `Kỳ báo cáo 01/PLI bán niên phải có dạng YYYY-H1 hoặc YYYY-H2 (nhận: ${period})`);
+    throw new DomainError('REPORT_PERIOD_INVALID', 422, `Kỳ báo cáo 01/PLI bán niên phải có dạng YYYY-H1 hoặc YYYY-H2 (nhận: ${period})`);
   }
   const year = Number(match[1]);
   const half = Number(match[2]) as 1 | 2;
   if (year < 2000 || year > 2100) {
-    throw new DomainError('HR_INVALID_PERIOD', 422, `Năm kỳ báo cáo 01/PLI không hợp lệ: ${period}`);
+    throw new DomainError('REPORT_PERIOD_INVALID', 422, `Năm kỳ báo cáo 01/PLI không hợp lệ: ${period}`);
   }
   return half === 1
     ? { year, half, startDate: `${match[1]}-01-01`, endDate: `${match[1]}-06-30` }
@@ -334,12 +334,12 @@ export function parse01PliPeriod(period: string): { year: number; kind: 'H1' | '
   if (annual) {
     const year = Number(annual[1]);
     if (year < 2000 || year > 2100) {
-      throw new DomainError('HR_INVALID_PERIOD', 422, `Năm kỳ báo cáo 01/PLI không hợp lệ: ${period}`);
+      throw new DomainError('REPORT_PERIOD_INVALID', 422, `Năm kỳ báo cáo 01/PLI không hợp lệ: ${period}`);
     }
     return { year, kind: 'annual', startDate: `${annual[1]}-01-01`, endDate: `${annual[1]}-12-31` };
   }
   if (!SEMIANNUAL_RE.test(period)) {
-    throw new DomainError('HR_INVALID_PERIOD', 422, `Kỳ báo cáo 01/PLI phải có dạng YYYY-H1, YYYY-H2 hoặc YYYY (nhận: ${period})`);
+    throw new DomainError('REPORT_PERIOD_INVALID', 422, `Kỳ báo cáo 01/PLI phải có dạng YYYY-H1, YYYY-H2 hoặc YYYY (nhận: ${period})`);
   }
   const semiannual = parseSemiannualPeriod(period);
   return {
