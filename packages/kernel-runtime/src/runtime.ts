@@ -1636,6 +1636,7 @@ export class Runtime {
   // One port call at a time per org: concurrent callers share it.
   readonly #entitlementInflight = new Map<string, Promise<readonly string[]>>();
   #entitlementFailureLoggedAt = 0;
+  #appsOffColumn = false;
   #entitlementFailureNotedAt = 0;
   // The apps the org switched off as one call reads them, per entered context (one transaction), so a page of lookups reads the row once.
   readonly #appsOffMemo = new WeakMap<object, Promise<ReadonlySet<string>>>();
@@ -1707,6 +1708,8 @@ export class Runtime {
         throw new Error(`command ${c.name}: agent access names a role list or 'any', and taint is 'propagate' or absent`);
       }
       checkAppFlags(`command ${c.name}`, c);
+      // An org-less command runs before there is an org to gate, so only the kernel's (org creation) may be one.
+      if (c.bootstrap !== undefined && moduleOf(c.name) !== 'kernel') throw new Error(`command ${c.name}: an org-less (bootstrap) command is a kernel command: the app gate cannot read an org it runs before`);
       if (c.opensBusyWork !== undefined && (c.opensBusyWork !== true || moduleOf(c.name) === 'kernel' || c.runsWhenOff !== undefined)) {
         throw new Error(`command ${c.name}: opensBusyWork is true, on a command of an app (not kernel) that is not also runsWhenOff`);
       }
@@ -1944,7 +1947,8 @@ export class Runtime {
     } catch (error) {
       if (now - this.#entitlementFailureLoggedAt > 60_000) {
         this.#entitlementFailureLoggedAt = now;
-        console.error('[runtime] ENTITLEMENTS_UNAVAILABLE', { orgId, reason: error instanceof Error ? error.message.slice(0, 100) : 'unknown', haveLastAnswer: last !== undefined });
+        // The error's name only: a port's message can carry anything its service said (an address, a token), and a log line is no place for it.
+        console.error('[runtime] ENTITLEMENTS_UNAVAILABLE', { orgId, reason: error instanceof Error ? error.name.slice(0, 40) : 'unknown', haveLastAnswer: last !== undefined });
       }
       const fallback = last ?? ['full'];
       // The fallback counts as fresh for only the retry interval.
@@ -1955,12 +1959,24 @@ export class Runtime {
     }
   }
 
+  // Whether crove_kernel.tenant has the apps_off column (slice a's migration). Once seen it stays true for the process.
+  async hasAppsOffColumn(trx: Transaction<Database>): Promise<boolean> {
+    if (this.#appsOffColumn) return true;
+    const { rows } = await sql<{ present: boolean }>`
+      SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a WHERE a.attrelid = 'crove_kernel.tenant'::pg_catalog.regclass AND a.attname = 'apps_off' AND NOT a.attisdropped) AS present`.execute(trx);
+    this.#appsOffColumn = rows[0]?.present === true;
+    return this.#appsOffColumn;
+  }
+
   // The apps the org switched off, read in the caller's transaction and context (no cache: the owner's choice takes effect at once). With
   // `lock` the row is read FOR SHARE, held to commit (CommandDef.opensBusyWork; never in a read-only transaction).
   private appsOffOf(trx: Transaction<Database>, orgId: string, entered: object, lock: boolean): Promise<ReadonlySet<string>> {
     const known = lock ? undefined : this.#appsOffMemo.get(entered);
     if (known) return known;
     const read = (async () => {
+      // A database before the migration that adds the column (an upgrade in progress, or a test of one) has no choice to read: nothing is off. A
+      // row the context cannot read, on a database that has the column, is another matter and fails closed below.
+      if (!(await this.hasAppsOffColumn(trx))) return new Set<string>() as ReadonlySet<string>;
       let query = trx.selectFrom('crove_kernel.tenant').select('apps_off').where('org_id', '=', orgId);
       if (lock) query = query.forShare();
       const row = await query.executeTakeFirst();

@@ -144,6 +144,10 @@ export interface Connector {
 }
 
 // Which module entitlements an org holds (plan Decision 10). Self-host grants every module.
+// The contract the per-org app gate relies on (ADR-0053): answer the keys the org holds, `full` for every app, and [] for an org with no plan,
+// which holds no app but kernel. Throw (or time out, 3 seconds) only when the service itself is unavailable: the runtime then fails open to the
+// last answer it had for the org, `full` when it has none, so a failing port must never be how an org is told it holds nothing. The runtime
+// caches an answer for a minute per org and asks once at a time per org; the function should be cheap and safe to call often.
 export interface Billing {
   entitlements(orgId: string): Promise<readonly string[]>;
 }

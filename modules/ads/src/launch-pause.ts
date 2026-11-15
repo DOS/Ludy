@@ -51,6 +51,7 @@ export interface AdsLaunchStopped {
 
 export const adsLaunchStop = defineCommand({
   name: 'ads.launch.stop',
+  runsWhenOff: 'stops a running ad launch, so paid spend can still be stopped while the app is off',
   input: z.strictObject({ launchId: zId }),
   // It only stops spend (the objects at the platform are paused afterwards, from the queue), so it needs no proposal and no second factor, and speed is the point.
   risk: 'R2',

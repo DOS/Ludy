@@ -152,6 +152,7 @@ export const adsAccountLinkWrite = defineCommand({
 
 export const adsAccountDisconnect = defineCommand({
   name: 'ads.account.disconnect',
+  runsWhenOff: 'disconnects an ad account and pauses its ads, which stays possible while the app is off',
   input: z.strictObject({ adAccountId: zId }),
   // Closing is a stop: owners and admins, and it drops both sealed tokens. The account's row and figures stay (deleting them is its own
   // action).

@@ -68,6 +68,7 @@ export const reviewLinkCreate = defineCommand({
 
 export const reviewLinkRevoke = defineCommand({
   name: 'social.review_link.revoke',
+  runsWhenOff: 'revokes a client review link, so a leaked link can still be killed while the app is off',
   input: z.strictObject({ linkId: zId }),
   risk: 'R1',
   sideEffect: 'internal',

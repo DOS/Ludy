@@ -82,7 +82,7 @@ const ownerCommand = defineCommand({
 
 const createOrg = defineCommand({
   sideEffect: 'none',
-  name: 'test.create_org',
+  name: 'kernel.create_org',
   input: z.object({}),
   risk: 'R1',
   access: ['owner'],
@@ -149,7 +149,7 @@ describe('cell resolution', () => {
 
   it('runs an org-less command on the control plane', async () => {
     const { resolver, tenant, control } = cells();
-    await expect(runtimeOn(resolver).executeOrgless('test.create_org', {}, { actor: USER })).resolves.toBe('created');
+    await expect(runtimeOn(resolver).executeOrgless('kernel.create_org', {}, { actor: USER })).resolves.toBe('created');
     expect(resolver.controlPlane).toHaveBeenCalledTimes(1);
     expect(resolver.resolveTenant).not.toHaveBeenCalled();
     expect(control.some((s) => /enter_(?:user_)?context/.test(s))).toBe(true);

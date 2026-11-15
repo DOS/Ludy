@@ -59,6 +59,7 @@ export const bookingFeedCreate = defineCommand({
 
 export const bookingFeedRevoke = defineCommand({
   name: 'crm.booking_feed.revoke',
+  runsWhenOff: 'revokes a calendar feed link, so a leaked link can still be killed while the app is off',
   input: z.strictObject({}),
   risk: 'R1',
   sideEffect: 'internal',

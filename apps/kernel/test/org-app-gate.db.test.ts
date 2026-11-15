@@ -313,6 +313,8 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
     expect(() => registry().register({ queries: [defineQuery({ name: 'kernel.d', input: z.object({}), access: ['owner'], runsWhenOff: 'a reason long enough', handler: async () => 1 })] })).toThrow(/never refused/);
     expect(() => registry().register({ commands: [defineCommand({ ...base, name: 'kernel.e', opensBusyWork: true })] })).toThrow(/opensBusyWork/);
     expect(() => registry().register({ queries: [defineQuery({ name: 'probe.q', input: z.object({}), access: ['owner'], opensBusyWork: true, handler: async () => 1 } as never)] })).toThrow(/opensBusyWork is for commands/);
+    expect(() => registry().register({ commands: [defineCommand({ ...base, name: 'probe.boot', bootstrap: async () => randomUUID() })] })).toThrow(/is a kernel command/);
+    expect(() => registry().register({ commands: [defineCommand({ ...base, name: 'kernel.boot', bootstrap: async () => randomUUID() })] })).not.toThrow();
     expect(() => registry().register({ commands: [defineCommand({ ...base, name: 'probe.f', opensBusyWork: true, runsWhenOff: 'a reason long enough' })] })).toThrow(/opensBusyWork/);
     expect(() => registry().register({ commands: [defineCommand({ ...base, name: 'probe.g', runsWhenOff: 'a reason long enough' }), defineCommand({ ...base, name: 'probe.h', opensBusyWork: true })] })).not.toThrow();
   });
@@ -380,6 +382,20 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
     // The org's own choice never depends on billing: switched off, it is off whatever the port says.
     await o.setApp('probe', false);
     await expect(o.exec(flaky, 'probe.touch', o.member)).rejects.toMatchObject(refusal);
+  });
+
+  it('reads a database before the migration that adds the choice as having nothing switched off, and fails closed on a missing row after it', async () => {
+    const o = await org();
+    // A database that does not yet have the column (an upgrade in progress): nothing can be off, so the app runs. A fresh runtime has not seen the column.
+    await withAdmin((c) => c.query('ALTER TABLE crove_kernel.tenant RENAME COLUMN apps_off TO apps_off_hidden'));
+    try {
+      await expect(o.exec(runtimeWith(), 'probe.touch', o.member)).resolves.toBe('ran');
+    } finally {
+      await withAdmin((c) => c.query('ALTER TABLE crove_kernel.tenant RENAME COLUMN apps_off_hidden TO apps_off'));
+    }
+    // Back with the column: the choice is read again.
+    await o.setApp('probe', false);
+    await expect(o.exec(runtimeWith(), 'probe.touch', o.member)).rejects.toMatchObject(refusal);
   });
 
   it('records no sensitive read of an app that is off', async () => {
