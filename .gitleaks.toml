@@ -8,6 +8,14 @@ title = "crove"
 [extend]
 useDefault = true
 
+# The public id of a minutes-webhook secret (meetings integrations A6, #3164): "whk_" and eight hex digits, the hint a receiver sees
+# beside a signature to tell which secret signed. It is not a secret (the secret is "whsec_" and 32 random bytes, sealed and never
+# written to the repo), and the screens, the runbook and the tests show it next to the key name `secretHint`, which the generic
+# key rule takes for a credential. This matches that shape only, whatever the file or commit.
+[[allowlists]]
+description = "the public hint of a minutes-webhook secret (whk_ and 8 hex digits)"
+regexes = ['''whk_[0-9a-f]{8}''']
+
 [[rules]]
 id = "g1-supabase-project-url"
 description = "Supabase project URL or DB host (G1)"
