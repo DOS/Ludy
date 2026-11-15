@@ -280,6 +280,7 @@ export const meetingMediaRecord = defineCommand({
 
 export const meetingDelete = defineCommand({
   name: 'meetings.meeting.delete',
+  runsWhenOff: 'deletes a meeting and its recording, which the owner of the data may still do while the app is off',
   input: zMeetingRef,
   risk: 'R1',
   sideEffect: 'internal',
@@ -318,6 +319,7 @@ export const meetingDelete = defineCommand({
 
 export const meetingOwnerDelete = defineCommand({
   name: 'meetings.meeting.owner_delete',
+  runsWhenOff: 'deletes a meeting and its recording on the org owner\'s word while the app is off',
   input: zMeetingRef,
   risk: 'R3',
   sideEffect: 'internal',
@@ -478,6 +480,7 @@ export const meetingReaderRemove = defineCommand({
 // the one it read (the definer compares the key id and the wrapped bytes under the update). System actor only.
 export const meetingMediaKeyReseal = defineCommand({
   name: 'meetings.media_key.reseal',
+  runsWhenOff: 'rewraps the sealed recording keys under the current key while the app is off',
   input: zMeetingMediaKeyReseal,
   risk: 'R1',
   sideEffect: 'internal',

@@ -9857,6 +9857,7 @@ export const vi = {
       ROLE_REVOKE_WIDENS_SCOPE: 'Đây là pháp nhân cuối cùng mà thành viên này được xem. Thu hồi thì họ sẽ xem được mọi pháp nhân; nếu họ không còn làm việc cho tổ chức, hãy xóa họ khỏi tổ chức',
       UNKNOWN_PRESET: 'Không có quy tắc duyệt này',
       APP_ALWAYS_ON: 'Lõi của hệ thống luôn bật, không tắt được',
+      MODULE_OFF: 'Ứng dụng này đã được tắt cho công ty',
       UNKNOWN_APP: 'Không có ứng dụng này',
       NO_CHIEF_ACCOUNTANT: 'Hãy giao vai trò kế toán trưởng cho một thành viên trước khi chọn quy tắc chỉ kế toán trưởng duyệt bút toán',
       LAST_CHIEF_ACCOUNTANT: 'Tổ chức đang dùng quy tắc chỉ kế toán trưởng duyệt bút toán nên phải còn ít nhất một kế toán trưởng; hãy giao vai trò cho người khác hoặc đổi quy tắc duyệt trước',

@@ -49,6 +49,7 @@ export const calendarFeedCreate = defineCommand({
 
 export const calendarFeedRevoke = defineCommand({
   name: 'social.calendar_feed.revoke',
+  runsWhenOff: 'revokes a calendar feed link, so a leaked link can still be killed while the app is off',
   input: z.strictObject({}),
   risk: 'R1',
   sideEffect: 'internal',

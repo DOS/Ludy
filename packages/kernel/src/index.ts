@@ -30,7 +30,7 @@ export * from './user-status.ts';
 export { WAITING_FOR_AI_BUDGET, WAITING_FOR_BUDGET } from './file-status.ts';
 export { approvalPolicies, decideAgentApproval, decideApproval, eligibleApprovers, HUMAN_REVIEW_RULES, LEDGER_APPROVE_PERMISSION, liveApprovalCommands, PROPOSAL_CO_AUTHOR_COMMANDS } from './approval.ts';
 export { ROLE_LABELS } from './roles.ts';
-export { appEffective, entitledTo, switchableApps, type OrgApps, type OrgAppsOptions } from './org-apps.ts';
+export { appEffective, switchableApps, type OrgApps, type OrgAppsOptions } from './org-apps.ts';
 export { MEMBER_VY_FEATURES, MEMBER_VY_RUN_ERROR_CODES } from './member-vy.ts';
 export type { MemberVyRunErrorCode } from './member-vy.ts';
 export { MEMBER_VY_SINKS, MEMBER_VY_KNOWN_CONSUMERS } from './member-vy-sinks.ts';

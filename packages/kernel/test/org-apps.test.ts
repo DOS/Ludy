@@ -2,7 +2,8 @@
 // The effective set of an org's apps (ADR-0053 section 1), without a database: kernel is always on; any other app is on
 // only when the deployment runs it, the org holds it and did not switch it off.
 import { describe, expect, it } from 'vitest';
-import { appEffective, entitledTo, switchableApps } from '../src/org-apps.ts';
+import { entitledTo } from '@crove/kernel-runtime';
+import { appEffective, switchableApps } from '../src/org-apps.ts';
 
 const DEPLOYMENT = ['kernel', 'finance', 'social'];
 

@@ -18,6 +18,7 @@ export const trashCutoff = (now: Date): Date => new Date(now.getTime() - NOTE_TR
 
 export const trashEmpty = defineCommand({
   name: 'notes.trash.empty',
+  runsWhenOff: 'empties the notes trash after its retention period while the app is off',
   input: z.strictObject({}),
   risk: 'R3',
   sideEffect: 'irreversible',
@@ -40,6 +41,7 @@ export const trashEmpty = defineCommand({
 // younger than 30 days, so still in the outbox (#997).
 export const memberItemsPurge = defineCommand({
   name: 'notes.member_items.purge',
+  runsWhenOff: 'purges a leaving member\'s private notes after the grace period while the app is off',
   input: z.strictObject({ userId: zId, eventId: zId.optional() }),
   risk: 'R3',
   sideEffect: 'irreversible',

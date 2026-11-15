@@ -727,6 +727,7 @@ export const importCommit = defineCommand({
 // this org's rows alone. The rows are deleted and the batches marked expired, counts only in the audit row.
 export const importExpire = defineCommand({
   name: 'crm.import.expire',
+  runsWhenOff: 'expires staged contact imports, which hold customer data, while the app is off',
   input: z.strictObject({}),
   risk: 'R3',
   sideEffect: 'irreversible',

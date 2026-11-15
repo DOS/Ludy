@@ -180,6 +180,7 @@ export interface RetentionOutcome {
 // meeting's id is the audit target.
 export const meetingRetentionShred = defineCommand({
   name: 'meetings.retention.shred',
+  runsWhenOff: 'applies the org\'s retention period to recordings, which still runs while the app is off',
   input: zMeetingRetentionShred,
   risk: 'R3',
   sideEffect: 'irreversible',
@@ -216,6 +217,7 @@ export const meetingRetentionShred = defineCommand({
 // After a restore: deletes a meeting a shred reference of the archive store names (ADR-0017 section 8). Idempotent.
 export const meetingShredReplay = defineCommand({
   name: 'meetings.shred.replay',
+  runsWhenOff: 'replays a restore\'s shred list so deleted meetings stay deleted while the app is off',
   input: zMeetingShredReplay,
   risk: 'R3',
   sideEffect: 'irreversible',
@@ -237,6 +239,7 @@ export const meetingShredReplay = defineCommand({
 // another file row of the org also names is reported as shared and never deleted: the objects are content addressed.
 export const meetingMediaOrphanKeys = defineQuery({
   name: 'meetings.media.orphan_keys',
+  runsWhenOff: 'lists recording keys that no meeting uses, for the retention that still runs while the app is off',
   input: zMeetingOrphanKeys,
   access: 'system',
   handler: async (ctx, input): Promise<Array<{ fileId: string; storageKey: string; shared: boolean }>> => {
@@ -253,6 +256,7 @@ export const meetingMediaOrphanKeys = defineQuery({
 // Deletes one orphan meeting media file row once its object is gone; the definer refuses a row a segment or video row still names.
 export const meetingMediaDiscard = defineCommand({
   name: 'meetings.media.discard',
+  runsWhenOff: 'deletes the media of a meeting the retention removed, while the app is off',
   input: zMeetingMediaDiscard,
   risk: 'R3',
   sideEffect: 'irreversible',

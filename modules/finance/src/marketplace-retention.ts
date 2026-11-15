@@ -19,6 +19,7 @@ const zFile = z.strictObject({ fileId: zId });
 // The blob key of one due file, and whether another file row names the same key (then the worker leaves the object). Nothing for a file that is not due.
 export const marketplaceRetentionKey = defineQuery({
   name: 'finance.marketplace_retention.key',
+  runsWhenOff: 'reads the file key of a report the retention removes while the app is off',
   input: zFile,
   access: 'system',
   handler: async (ctx, input): Promise<{ storageKey: string; shared: boolean } | null> => {
@@ -33,6 +34,7 @@ export const marketplaceRetentionKey = defineQuery({
 // Marks the original deleted (the worker deleted the object first) and deletes the staged versions of the read. applied is false for a file that is not, or no longer, due.
 export const marketplaceRetentionApply = defineCommand({
   name: 'finance.marketplace_retention.apply',
+  runsWhenOff: 'removes marketplace report files at the end of their retention while the app is off',
   input: zFile,
   risk: 'R3',
   sideEffect: 'irreversible',

@@ -902,6 +902,8 @@ export const approveProposal = defineCommand({
 export const BULK_ITEM_REFUSALS: ReadonlySet<string> = new Set([
   // The proposal (lockPendingProposal, refuseWhileReextracting): another org's id reads like one that does not exist.
   'NOT_FOUND',
+  // The proposal's command belongs to an app the org switched off or does not hold (ADR-0053): that item waits, the others go on.
+  'MODULE_OFF',
   'PROPOSAL_DECIDED',
   // A proposal that expired while the batch was prepared (#876).
   'PROPOSAL_EXPIRED',
