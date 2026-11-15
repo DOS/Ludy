@@ -75,7 +75,16 @@ function hasWord(key: string, word: string): boolean {
   return ` ${key} `.includes(` ${word} `);
 }
 
-const TOTAL_SUMMARY_LABELS = new Set(['tong cong', 'tong so', 'tong', 'total', 'subtotal', 'grand total']);
+const TOTAL_SUMMARY_LABELS = new Set([
+  'tổng cộng',
+  'tổng số',
+  'tổng',
+  'tong cong',
+  'tong so',
+  'total',
+  'subtotal',
+  'grand total',
+]);
 const SUMMARY_TOTAL_WORDS = ['total', 'subtotal', 'sum', 'tong'] as const;
 const HOUR_UNIT_WORDS = ['gio', 'hour', 'hours', 'hrs', 'hr', 'h'] as const;
 const DAY_UNIT_WORDS = ['ngay', 'day', 'days'] as const;
@@ -623,15 +632,27 @@ function makeIssue(
   };
 }
 
+function normalizeSummaryLabel(raw: string): string {
+  return raw
+    .trim()
+    .normalize('NFC')
+    .toLowerCase()
+    .replace(/[\s.:;,-]+/g, ' ')
+    .trim();
+}
+
 function isSummaryRow(code: string | null, name: string | null, cells: readonly string[]): boolean {
-  const codeKey = code ? timekeepingHeaderKey(code) : '';
-  const nameKey = name ? timekeepingHeaderKey(name) : '';
-  const codeIsTotal = codeKey !== '' && TOTAL_SUMMARY_LABELS.has(codeKey);
-  const nameIsTotal = nameKey !== '' && TOTAL_SUMMARY_LABELS.has(nameKey);
-  if (codeIsTotal && (nameKey === '' || nameIsTotal)) return true;
-  if (nameIsTotal && codeKey === '') return true;
-  if (codeKey === '' && nameKey === '') {
-    return cells.some((c) => TOTAL_SUMMARY_LABELS.has(timekeepingHeaderKey(c)));
+  const codeLabel = code ? normalizeSummaryLabel(code) : '';
+  const nameLabel = name ? normalizeSummaryLabel(name) : '';
+  const codeIsTotal = codeLabel !== '' && TOTAL_SUMMARY_LABELS.has(codeLabel);
+  const nameIsTotal = nameLabel !== '' && TOTAL_SUMMARY_LABELS.has(nameLabel);
+  if (codeIsTotal && (nameLabel === '' || nameIsTotal)) return true;
+  if (nameIsTotal && codeLabel === '') return true;
+  if (codeLabel === '' && nameLabel === '') {
+    return cells.some((c) => {
+      const label = normalizeSummaryLabel(c);
+      return TOTAL_SUMMARY_LABELS.has(label) || label === 'tong';
+    });
   }
   return false;
 }

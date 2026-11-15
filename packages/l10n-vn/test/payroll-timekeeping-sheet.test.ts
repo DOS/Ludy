@@ -454,4 +454,37 @@ describe('parseTimekeepingSheet (#3348)', () => {
     expect(tsvExtraWithNotesComma.rows).toEqual([]);
     expect(tsvExtraWithNotesComma.errors.map((e) => e.code)).toEqual(['extra_columns']);
   });
+
+  it('preserves employee names whose stripped spelling collides with summary labels while skipping real totals', () => {
+    const withCodes = parseTimekeepingSheet(
+      'Mã NV\tHọ tên\tNghỉ không lương\nNV01\tTòng\t2\nNV02\tTống\t1\nNV03\tTống Công\t0.5\nNV04\tTong\t1\n',
+      { month: '2026-08' },
+    );
+    expect(withCodes.errors).toEqual([]);
+    expect(withCodes.rows.map((r) => ({ code: r.employeeCode, name: r.displayName, unpaid: r.unpaidLeaveDays }))).toEqual([
+      { code: 'NV01', name: 'Tòng', unpaid: '2' },
+      { code: 'NV02', name: 'Tống', unpaid: '1' },
+      { code: 'NV03', name: 'Tống Công', unpaid: '0.5' },
+      { code: 'NV04', name: 'Tong', unpaid: '1' },
+    ]);
+
+    for (const [name, expectedDays] of [
+      ['Tòng', '2'],
+      ['Tống', '1'],
+      ['Tống Công', '0.5'],
+      ['Tong', '1'],
+    ] as const) {
+      const single = parseTimekeepingSheet(`Họ tên\tNghỉ không lương\n${name}\t${expectedDays}\n`, { month: '2026-08' });
+      expect(single.errors).toEqual([]);
+      expect(single.rows.map((r) => ({ name: r.displayName, unpaid: r.unpaidLeaveDays }))).toEqual([
+        { name, unpaid: expectedDays },
+      ]);
+    }
+
+    const skippedSummary = parseTimekeepingSheet('Họ tên\tNghỉ không lương\nTổng\t3\nTổng cộng:\t4\n', {
+      month: '2026-08',
+    });
+    expect(skippedSummary.errors).toEqual([]);
+    expect(skippedSummary.rows).toEqual([]);
+  });
 });
