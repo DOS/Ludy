@@ -236,7 +236,8 @@ export function summaryEnabled(config: Pick<Config, 'MEETINGS_SUMMARY'>): boolea
 // none registered, so its commands answer COMMAND_NOT_FOUND, a ctx.query into it answers not_installed (with the
 // absentModules buildRuntime passes), and the
 // routes and jobs that ask Runtime.installed() are not registered either.
-export function moduleDefinitions(config: Config): ModuleDefinitions {
+// `billing` answers the org's entitlements for kernel.org.apps (ADR-0053); self-host grants every module.
+export function moduleDefinitions(config: Config, billing: Billing = selfHostBilling): ModuleDefinitions {
   // Mail a module queues (the scheduled report, #704) gets the deployment's Message-ID domain too.
   setMessageIdDomain(messageIdDomain(config));
   setInboundAuthservId(config.INBOUND_AUTHSERV_ID);
@@ -253,8 +254,13 @@ export function moduleDefinitions(config: Config): ModuleDefinitions {
         uploadBeginLimits: { perMinute: config.UPLOAD_BEGIN_LIMIT_PER_MINUTE },
         inviteLimits: { perRecipientPerDay: config.INVITE_LIMIT_PER_RECIPIENT_PER_DAY },
         messageIdDomain: messageIdDomain(config),
+        shippedModules: AVAILABLE_MODULES,
       }),
-      queries: kernelQueries({ inboundDomain: config.INBOUND_DOMAIN ?? null, overview: overviewContributions(config) }),
+      queries: kernelQueries({
+        inboundDomain: config.INBOUND_DOMAIN ?? null,
+        overview: overviewContributions(config),
+        apps: { shipped: AVAILABLE_MODULES, deployment: config.CROVE_MODULES, entitlements: (orgId) => billing.entitlements(orgId) },
+      }),
     }),
     finance: () => ({ commands: financeCommands, queries: financeQueries }),
     social: () => ({ commands: socialCommands, queries: socialQueries }),
@@ -308,20 +314,21 @@ function subjectVaultOf(config: Config): SubjectVault | null {
   return vault;
 }
 
-export function serverRuntime(cells: CellResolver, config: Config, options: Omit<RuntimeOptions, 'absentModules' | 'manifests'>): Runtime {
+export function serverRuntime(cells: CellResolver, config: Config, options: Omit<RuntimeOptions, 'absentModules' | 'manifests'> & { billing?: Billing }): Runtime {
+  const { billing, ...runtimeOptions } = options;
   // Modules this build ships that CROVE_MODULES leaves out (ADR-0031).
   const absentModules = AVAILABLE_MODULES.filter((module) => !config.CROVE_MODULES.includes(module));
   const runtime = new Runtime(cells, {
     // The key of the sensitive-read audit hash: derived from the credential key (environment or key file, never the database), none without one.
     readAuditKey: createCredentialBroker(config).derive?.('crove.audit.read.v1') ?? null,
-    ...options,
+    ...runtimeOptions,
     // ctx.query into one of them answers not_installed; any other unknown query is QUERY_NOT_FOUND.
     absentModules,
     // The subject keys (ADR-0017): wrap keys derived from every credential key this deployment opens, none without one.
     subjectVault: subjectVaultOf(config),
     // Every declared write must name a manifest table with that manifest's column classes (P04, #1710).
     manifests: moduleManifests(config).map((manifest) => manifest.tables),
-  }).register(moduleDefinitions(config));
+  }).register(moduleDefinitions(config, billing));
   // A command registry that does not fit together (a reviser naming no proposal command, two revisers for one
   // command) fails the boot (#216). Revisers of commands in modules this deployment leaves out are not checked.
   runtime.validate({ absentModules });
@@ -597,6 +604,8 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
     const db = createDb(pool);
     // One database is the control plane and the only cell (Decision 14, plan §3.6).
     const runtime = serverRuntime(singleCell(db), config, {
+      // The org's entitlements, for kernel.org.apps (ADR-0053).
+      billing: resolved.billing,
       // Approval audit rows name the build their policy ran under (plan §4.7, #1402).
       build: config.CROVE_BUILD ?? 'dev',
       // Audit and idempotency rows hash a command's input under the deployment's key (#1732), so an exported or
