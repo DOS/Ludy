@@ -11,8 +11,9 @@ export const COWORKER_KEYS = ['gm', 'finance', 'sales', 'marketing', 'system'] a
 export type CoworkerKey = (typeof COWORKER_KEYS)[number];
 
 // gm: Vy, the general manager across every app (the Home brief, routing, the command bar) and Ludy Notes. finance: Ly, Ludy Kế
-// toán. sales: Dy, Engage's Inbox and its customers and sales (the conversations inbox, the contacts, the deals and the
-// bookings of Ludy CRM). marketing: Uy, Engage's marketing (publishing and Ads). system: Hy, reserved and shown nowhere yet.
+// toán and Ludy Nhân sự (#2538, owner decision 2026-11-15). sales: Dy, Engage's Inbox and its customers and sales (the conversations
+// inbox, the contacts, the deals and the bookings of Ludy CRM). marketing: Uy, Engage's marketing (publishing and Ads).
+// system: Hy, reserved and shown nowhere yet.
 export const COWORKER_ROSTER: Readonly<Record<CoworkerKey, string>> = {
   gm: 'Vy',
   finance: 'Ly',
@@ -24,6 +25,7 @@ export const COWORKER_ROSTER: Readonly<Record<CoworkerKey, string>> = {
 // The coworker of each module of the catalog of agent templates. The system coworker is hidden: no module has it yet.
 export const COWORKER_BY_MODULE: Readonly<Record<string, CoworkerKey>> = {
   finance: 'finance',
+  hr: 'finance',
   crm: 'sales',
   conversations: 'sales',
   social: 'marketing',
