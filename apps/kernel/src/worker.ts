@@ -48,7 +48,7 @@ import { WAKE_JOB_EXPIRE_SECONDS, WAKE_RETRY_DELAY_SECONDS, WAKE_RETRY_LIMIT, ru
 import { MCP_WAKE_SWEEP_CRON, MCP_WAKE_SWEEP_EXPIRE_SECONDS, runWakeSweep } from './mcp-wake-sweep.ts';
 import { runMeetingHookDelivery, type MeetingHookJob } from './meeting-hook.ts';
 import { MEETING_HOOK_SWEEP_CRON, MEETING_HOOK_SWEEP_EXPIRE_SECONDS, runMeetingHookSweep } from './meeting-hook-sweep.ts';
-import { MEETINGS_IMPORT_EXPIRE_SECONDS, MEETINGS_IMPORT_RETRY_LIMIT, runMeetingsImport, type MeetingsImportJob } from './meetings-import.ts';
+import { MEETINGS_IMPORT_CONCURRENCY, MEETINGS_IMPORT_EXPIRE_SECONDS, MEETINGS_IMPORT_RETRY_LIMIT, runMeetingsImport, type MeetingsImportJob } from './meetings-import.ts';
 import { MEETINGS_IMPORT_SWEEP_CRON, MEETINGS_IMPORT_SWEEP_EXPIRE_SECONDS, runMeetingsImportSweep } from './meetings-import-sweep.ts';
 import { NOTES_REMIND_CRON, NOTES_TRASH_CRON, NOTES_TRASH_TZ, queueNotesMemberPurge, runNotesMemberPurge, sweepNotesFormerMembers, sweepNotesReminders, sweepNotesTrash, type NotesMemberPurgeJob } from './notes-worker.ts';
 import { PERIOD_BALANCE_VERIFY_CRON, runPeriodBalanceReconciliation } from './period-balance.ts';
@@ -1252,7 +1252,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   const meetingPlatforms = deps.channels?.meetingPlatforms;
   if (deps.runtime.installed('meetings') && meetingPlatforms && Object.keys(meetingPlatforms).length > 0 && wakeBroker && wakeBroker.id !== 'none') {
     const importDeps = { runtime: deps.runtime, broker: wakeBroker, store: deps.store, adapters: meetingPlatforms, media: null };
-    await boss.work<MeetingsImportJob>(QUEUES.meetingsImport, { batchSize: 1, includeMetadata: true }, async ([job]) => {
+    await boss.work<MeetingsImportJob>(QUEUES.meetingsImport, { batchSize: 1, localConcurrency: MEETINGS_IMPORT_CONCURRENCY, includeMetadata: true }, async ([job]) => {
       if (!job) return;
       await runMeetingsImport(importDeps, job.data, { retryCount: job.retryCount, retryLimit: MEETINGS_IMPORT_RETRY_LIMIT });
     });

@@ -27,6 +27,9 @@ const DOWNLOAD_TIMEOUT_MS = 20 * 60_000;
 // The queue tries a transient failure this many more times (a minute apart, doubling), and a job may run this long.
 export const MEETINGS_IMPORT_RETRY_LIMIT = 3;
 export const MEETINGS_IMPORT_EXPIRE_SECONDS = 30 * 60;
+// How many downloads one worker buffers at once. A download is held in memory (up to MEETING_PLATFORM_IMPORT_MAX_BYTES, 300 MB), so the peak of a worker is this many times 300 MB when the platform
+// declares the size (one buffer, filled as the stream arrives) and up to twice that per download when it does not (the pieces, then their join): 600 MB, at most 1.2 GB with two. Pinned by a test.
+export const MEETINGS_IMPORT_CONCURRENCY = 2;
 
 export interface MeetingsImportJob {
   orgId: string;
@@ -63,7 +66,7 @@ export type MeetingsImportResult = 'staged' | 'failed' | 'skipped';
 
 // How a failed step is told to the member and whether the queue should try again.
 function classify(error: unknown): { code: MeetingPlatformErrorCode; retry: boolean } {
-  if (error instanceof MeetingPlatformError) return { code: error.code as MeetingPlatformErrorCode, retry: error.code === 'platform_unavailable' };
+  if (error instanceof MeetingPlatformError) return { code: error.code as MeetingPlatformErrorCode, retry: error.code === 'platform_unavailable' || error.code === 'download_failed' };
   if (error instanceof EgressError) {
     if (error.code === 'too_large') return { code: 'too_large', retry: false };
     if (error.code === 'blocked' || error.code === 'invalid_url' || error.code === 'redirects') return { code: 'platform_refused', retry: false };
@@ -115,6 +118,18 @@ async function fetchBytes(deps: MeetingsImportDeps, download: MeetingPlatformDow
     if (response.status < 200 || response.status >= 300) throw new MeetingPlatformError('platform_refused');
     const declared = Number(response.headers['content-length']);
     if (Number.isFinite(declared) && declared > MEETING_PLATFORM_IMPORT_MAX_BYTES) throw new MeetingPlatformError('too_large');
+    // With the size declared, one buffer is filled as the pieces arrive (peak: the file); without it the pieces are joined at the end (peak: twice the file).
+    if (Number.isFinite(declared) && declared >= 0) {
+      const whole = new Uint8Array(declared);
+      let at = 0;
+      for await (const chunk of response.body) {
+        if (at + chunk.byteLength > declared) throw new MeetingPlatformError('download_failed');
+        whole.set(chunk, at);
+        at += chunk.byteLength;
+      }
+      if (at !== declared) throw new MeetingPlatformError('download_failed');
+      return whole;
+    }
     const chunks: Uint8Array[] = [];
     let total = 0;
     for await (const chunk of response.body) {
