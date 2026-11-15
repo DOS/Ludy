@@ -14,6 +14,7 @@ import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { canInsertQuoteLink } from '../lib/quote-reply.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
+import { ConversationTasks } from './conversation-tasks.tsx';
 import { POLL_MS, useContactName, useMe } from './conversation-inbox.tsx';
 import { FollowupReplyInsert } from './followup-draft.tsx';
 import { QuoteReplyInsert } from './quote-send.tsx';
@@ -184,6 +185,7 @@ export function ContactPanel({ conversationId, onOpen }: { conversationId: strin
       {canWrite && <LinkContact key={`${conversationId}:${c.contact.partyId ?? ''}`} conversationId={conversationId} defaultName={c.contact.displayName ?? ''} hasParty={c.contact.partyId !== null} />}
       {canWrite && c.contact.partyId !== null && canInsertQuoteLink(c.kind) && <QuoteReplyInsert conversationId={conversationId} partyId={c.contact.partyId} canReply={detail.data.reply.allowed} />}
       {canWrite && c.contact.partyId !== null && canInsertQuoteLink(c.kind) && <FollowupReplyInsert conversationId={conversationId} partyId={c.contact.partyId} canReply={detail.data.reply.allowed} />}
+      <ConversationTasks key={`tasks:${conversationId}`} conversationId={conversationId} canWrite={canWrite} />
       <div className="space-y-1">
         <h3 className="text-sm font-semibold text-foreground">{t('others')}</h3>
         {others.length === 0 ? (

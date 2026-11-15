@@ -224,6 +224,9 @@ import {
   zAvailabilityEntry,
   zAvailabilitySet,
   zConversationNoteAdd,
+  zConversationFollowUp,
+  zConversationFollowedUp,
+  zConversationTaskList,
   zConversationPrivateReplied,
   zConversationPrivateReply,
   zConversationReplied,
@@ -1947,6 +1950,9 @@ export const contract = {
     reopen: oc.input(zConversationId).output(z.object({ conversationId: zId })),
     note: oc.input(zConversationNoteAdd).output(z.object({ noteId: zId })),
     linkContact: oc.input(zConversationLinkContact).output(z.object({ conversationId: zId })),
+    // "Create task" (CV3, #3295): a person makes a kernel task that links back to the thread; the thread lists its open tasks. No agent, no model.
+    followUp: oc.input(zConversationFollowUp.extend({ idempotencyKey: zId })).output(zConversationFollowedUp),
+    tasks: oc.input(zConversationId).output(zConversationTaskList),
     // The intent (CV3, #2306): a person applies, changes or clears it (the only thing stored). The AI coworker's suggestion and the likely contacts of a
     // customer are read apart: a model call through the AI budget meter, never stored, and with the model off, spent or failing the answer is no suggestion.
     setIntent: oc.input(zConversationSetIntent).output(z.object({ conversationId: zId, intent: zConversationIntent.nullable() })),
