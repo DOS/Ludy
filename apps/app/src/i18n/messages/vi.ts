@@ -11478,6 +11478,7 @@ export const vi = {
           claim_failed: 'Ghi nhận bản ghi từ nền tảng họp không nhập được',
         },
         import_failed: 'Ghi nhận việc tải bản ghi từ nền tảng họp thất bại',
+        import_holds: 'Xem một bản ghi từ nền tảng họp còn giữ khóa tạm này không',
         import_open: 'Xem các bản ghi đang chờ tải từ nền tảng họp',
         import_staged: 'Ghi nhận bản ghi từ nền tảng họp đã tải xong',
         recording: {
