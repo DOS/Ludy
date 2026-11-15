@@ -22,7 +22,7 @@ export type MarketplacePlatform = (typeof MARKETPLACE_PLATFORMS)[number];
 export const ORDER_STAGES = ['placed', 'shipped', 'completed', 'cancelled', 'returned', 'unknown'] as const;
 export type OrderStage = (typeof ORDER_STAGES)[number];
 
-export const ORDER_FIELDS = ['orderNo', 'lineKey', 'orderedAt', 'shippedAt', 'status', 'returnStatus', 'sku', 'itemName', 'variation', 'quantity', 'unitPrice', 'amount'] as const;
+export const ORDER_FIELDS = ['orderNo', 'lineKey', 'orderedAt', 'shippedAt', 'deliveredAt', 'status', 'returnStatus', 'sku', 'itemName', 'variation', 'quantity', 'unitPrice', 'amount'] as const;
 export type OrderField = (typeof ORDER_FIELDS)[number];
 
 interface Words {
@@ -75,6 +75,8 @@ export const MARKETPLACE_PROFILES: readonly MarketplaceProfile[] = [
       lineKey: NONE,
       orderedAt: { contains: ['ngay dat hang', 'order creation date', 'order date'] },
       shippedAt: { contains: ['ngay gui hang', 'thoi gian giao hang cho don vi van chuyen', 'ship time', 'shipping date'] },
+      // The completion column of the file (unverified against a real export, #2521): the day the order was completed is the day of successful delivery.
+      deliveredAt: { contains: ['thoi gian hoan thanh don hang', 'ngay hoan thanh', 'order complete time', 'order completed time', 'completed time'] },
       status: { contains: ['trang thai don hang', 'order status'] },
       returnStatus: { contains: ['trang thai tra hang hoan tien', 'return refund status', 'return status'] },
       sku: { contains: ['sku phan loai hang', 'sku reference no', 'sku san pham', 'parent sku reference no', 'sku'] },
@@ -98,6 +100,7 @@ export const MARKETPLACE_PROFILES: readonly MarketplaceProfile[] = [
       lineKey: NONE,
       orderedAt: { contains: ['created time', 'order created time', 'thoi gian tao', 'order creation time'] },
       shippedAt: { contains: ['shipped time', 'rts time', 'thoi gian giao cho van chuyen'] },
+      deliveredAt: { contains: ['delivered time', 'delivery time', 'thoi gian giao hang thanh cong', 'thoi gian hoan thanh'] },
       status: { contains: ['order status', 'trang thai don hang'] },
       returnStatus: { contains: ['cancelation return type', 'cancellation return type', 'cancel return type'] },
       sku: { contains: ['seller sku', 'ma sku nguoi ban', 'sku id'] },
@@ -121,6 +124,7 @@ export const MARKETPLACE_PROFILES: readonly MarketplaceProfile[] = [
       lineKey: { contains: ['orderitemid', 'order item id'] },
       orderedAt: { contains: ['createtime', 'create time', 'created at'] },
       shippedAt: { contains: ['shippedtime', 'shipped time'] },
+      deliveredAt: { contains: ['deliveredtime', 'delivered time', 'deliveredat', 'delivery date'] },
       status: { contains: [], exact: ['status'] },
       returnStatus: NONE,
       sku: { contains: ['sellersku', 'seller sku', 'shopsku', 'shop sku', 'lazadasku'] },
@@ -146,7 +150,7 @@ function claim(profile: MarketplaceProfile, headers: Map<number, string>): Recor
   const columns = Object.fromEntries(ORDER_FIELDS.map((f) => [f, null])) as Record<OrderField, number | null>;
   const taken = new Set<number>();
   // The specific fields before the ones whose words are short ("sku", "status", "quantity") so a longer header is not taken by a shorter word.
-  const order: OrderField[] = ['orderNo', 'lineKey', 'returnStatus', 'orderedAt', 'shippedAt', 'status', 'itemName', 'variation', 'sku', 'quantity', 'unitPrice', 'amount'];
+  const order: OrderField[] = ['orderNo', 'lineKey', 'returnStatus', 'orderedAt', 'shippedAt', 'deliveredAt', 'status', 'itemName', 'variation', 'sku', 'quantity', 'unitPrice', 'amount'];
   for (const field of order) {
     const words = profile.columns[field];
     for (const word of words.contains) {
@@ -232,6 +236,8 @@ export interface OrderLine {
   // YYYY-MM-DD, or null when the file has no such column or the cell is empty.
   orderedAt: string | null;
   shippedAt: string | null;
+  // The day of successful delivery, read from the completion column; null when the file has none or the cell is empty. Revenue belongs to its month (#2520 working answer A5).
+  deliveredAt: string | null;
   stage: OrderStage;
   // The status as the file words it (cut), kept so a person sees what an `unknown` stage was.
   statusLabel: string | null;
@@ -442,9 +448,11 @@ export function orderLines(rows: StatementGrid, mapping: OrderMapping, maxRows: 
     }
     const orderedText = text(row, 'orderedAt');
     const shippedText = text(row, 'shippedAt');
+    const deliveredText = text(row, 'deliveredAt');
     const orderedAt = orderedText === '' ? null : readDay(cell(row, 'orderedAt'));
     const shippedAt = shippedText === '' ? null : readDay(cell(row, 'shippedAt'));
-    if ((orderedText !== '' && orderedAt === null) || (shippedText !== '' && shippedAt === null)) {
+    const deliveredAt = deliveredText === '' ? null : readDay(cell(row, 'deliveredAt'));
+    if ((orderedText !== '' && orderedAt === null) || (shippedText !== '' && shippedAt === null) || (deliveredText !== '' && deliveredAt === null)) {
       skipped.push({ rowNo, reason: 'bad_date' });
       continue;
     }
@@ -472,6 +480,7 @@ export function orderLines(rows: StatementGrid, mapping: OrderMapping, maxRows: 
       lineKey,
       orderedAt,
       shippedAt,
+      deliveredAt,
       stage,
       statusLabel: statusLabel === '' ? null : clip(statusLabel, MAX_LABEL),
       sku: sku === '' ? null : sku,

@@ -148,12 +148,12 @@ const keyOf = (k: OrderKey) => `${k.platform}\u0000${k.orderNo}\u0000${k.lineKey
 
 // The lines of this entity the report names, as the org holds them now, by (platform, order number, line).
 async function knownLines(ctx: Pick<QueryContext, 'trx' | 'orgId'>, legalEntityId: string, platform: Platform, orderNos: readonly string[]) {
-  const map = new Map<string, { id: string; stage: Stage; quantity: string; sku: string | null; shippedAt: string | null; orderedAt: string | null; attempt: number }>();
+  const map = new Map<string, { id: string; stage: Stage; quantity: string; sku: string | null; shippedAt: string | null; deliveredAt: string | null; orderedAt: string | null; attempt: number }>();
   for (let i = 0; i < orderNos.length; i += 1000) {
     const rows = await ctx.trx
       .selectFrom('crove_finance.channel_order_line as l')
       .innerJoin('crove_finance.channel_order as o', (join) => join.onRef('o.org_id', '=', 'l.org_id').onRef('o.id', '=', 'l.order_id'))
-      .select(['l.id', 'l.line_key', 'l.stage', 'l.quantity', 'l.sku', 'l.shipped_at', 'l.attempt', 'o.order_no', 'o.ordered_at'])
+      .select(['l.id', 'l.line_key', 'l.stage', 'l.quantity', 'l.sku', 'l.shipped_at', 'l.delivered_at', 'l.attempt', 'o.order_no', 'o.ordered_at'])
       .where('l.org_id', '=', ctx.orgId)
       .where('o.legal_entity_id', '=', legalEntityId)
       .where('o.platform', '=', platform)
@@ -166,6 +166,7 @@ async function knownLines(ctx: Pick<QueryContext, 'trx' | 'orgId'>, legalEntityI
         quantity: String(r.quantity),
         sku: r.sku,
         shippedAt: r.shipped_at === null ? null : String(r.shipped_at).slice(0, 10),
+        deliveredAt: r.delivered_at === null ? null : String(r.delivered_at).slice(0, 10),
         orderedAt: r.ordered_at === null ? null : String(r.ordered_at).slice(0, 10),
         attempt: r.attempt,
       });
@@ -405,17 +406,36 @@ export const marketplaceConfirm = defineCommand({
         const key = keyOf({ platform, orderNo: line.orderNo, lineKey: line.lineKey });
         const was = known.get(key);
         if (was) {
+          // The delivery day is only kept on a delivered line (completed, or returned after it): the day a report gives to a line that is not there yet is not written.
+          const deliveredAt = was.deliveredAt === null && line.deliveredAt !== null && (line.stage === 'completed' || line.stage === 'returned') ? line.deliveredAt : null;
           if (canAdvance(was.stage, line.stage)) {
-            // The shipping day is set once; a later report can give it, never change it.
+            // The shipping day and the delivery day are set once; a later report can give them, never change them.
             await ctx.trx
               .updateTable('crove_finance.channel_order_line')
-              .set({ stage: line.stage, ...(was.shippedAt === null && line.shippedAt !== null ? { shipped_at: line.shippedAt } : {}), updated_at: ctx.now })
+              .set({
+                stage: line.stage,
+                ...(was.shippedAt === null && line.shippedAt !== null ? { shipped_at: line.shippedAt } : {}),
+                ...(deliveredAt !== null ? { delivered_at: deliveredAt } : {}),
+                updated_at: ctx.now,
+              })
               .where('org_id', '=', ctx.orgId)
               .where('id', '=', was.id)
               .execute();
             updatedLines += 1;
             touched.push({ id: was.id, stage: line.stage, quantity: was.quantity, shippedAt: was.shippedAt ?? line.shippedAt, orderedAt: was.orderedAt ?? line.orderedAt, sku: was.sku, attempt: was.attempt });
           } else {
+            // A line that is already delivered and has no delivery day yet takes it from this report (the earlier file had no completion column).
+            if (was.deliveredAt === null && line.deliveredAt !== null && (was.stage === 'completed' || was.stage === 'returned')) {
+              await ctx.trx
+                .updateTable('crove_finance.channel_order_line')
+                .set({ delivered_at: line.deliveredAt, updated_at: ctx.now })
+                .where('org_id', '=', ctx.orgId)
+                .where('id', '=', was.id)
+                .execute();
+              updatedLines += 1;
+              touched.push({ id: was.id, stage: was.stage, quantity: was.quantity, shippedAt: was.shippedAt, orderedAt: was.orderedAt ?? line.orderedAt, sku: was.sku, attempt: was.attempt });
+              continue;
+            }
             duplicateLines += 1;
             // A line known and unchanged may still have stock to move (the item was assigned since).
             touched.push({ id: was.id, stage: was.stage, quantity: was.quantity, shippedAt: was.shippedAt, orderedAt: was.orderedAt ?? line.orderedAt, sku: was.sku, attempt: was.attempt });
@@ -440,6 +460,7 @@ export const marketplaceConfirm = defineCommand({
             amount: line.amount,
             stage: line.stage,
             shipped_at: line.shippedAt,
+            delivered_at: line.stage === 'completed' || line.stage === 'returned' ? line.deliveredAt : null,
             source_sha256: staged.sha256,
             source_row: line.rowNo,
           })
