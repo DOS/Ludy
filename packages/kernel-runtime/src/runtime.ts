@@ -51,9 +51,15 @@ export interface ExtensionAccess {
   scope: ExtensionScope;
 }
 
-// The scopes an MCP grant may hold (ADR-0051 decision 2, issue #2975). Only a QUERY can declare one (QueryDef.mcp): no command type
-// carries `mcp`, so a grant reaches no write. crove_kernel.agent_grant's CHECK lists the same scopes; a new one is a migration and an entry here.
-export const MCP_SCOPES = Object.freeze(['ludy.read'] as const);
+// The scopes an MCP grant may hold (ADR-0051 decision 2, issue #2975). A QUERY declares a read scope (QueryDef.mcp). A COMMAND may declare a write scope
+// (CommandDef.mcp) only from the short list below, which the owner widened one scope at a time (#3227, 2026-11-14: `ludy.social.draft`, one command that creates a
+// draft post for a person to review); every other command is closed to an MCP grant. crove_kernel.agent_grant's CHECK lists the same scopes; a new one is a migration
+// and an entry here.
+export const MCP_READ_SCOPES = Object.freeze(['ludy.read'] as const);
+export const MCP_WRITE_SCOPES = Object.freeze(['ludy.social.draft'] as const);
+export const MCP_SCOPES = Object.freeze([...MCP_READ_SCOPES, ...MCP_WRITE_SCOPES] as const);
+export type McpReadScope = (typeof MCP_READ_SCOPES)[number];
+export type McpWriteScope = (typeof MCP_WRITE_SCOPES)[number];
 export type McpScope = (typeof MCP_SCOPES)[number];
 
 // What an MCP access token proved at the HTTP edge: the grant it belongs to, the client it was issued to (id and the name the client
@@ -70,9 +76,14 @@ export interface McpGrant {
   kind?: 'company' | 'member';
 }
 
-// The declaration that opens a query to an MCP grant holding `scope` (and to no other scope).
+// The declaration that opens a query to an MCP grant holding a read `scope` (and to no other scope).
 export interface McpAccess {
-  scope: McpScope;
+  scope: McpReadScope;
+}
+
+// The declaration that opens a command to an MCP grant holding a write `scope` (and to no other scope): the grant enters its write context (a company grant only) for it.
+export interface McpWriteAccess {
+  scope: McpWriteScope;
 }
 
 export interface UserActor {
@@ -254,8 +265,10 @@ export interface CommandDef<I = unknown, O = unknown> {
   // Opens the command to a Ludy extension token that holds this scope (issue #2582, ADR-0047 point 10). Absent: an
   // extension token never runs it. Only a command run by users with a role list, below R3.
   extension?: ExtensionAccess;
-  // An MCP grant never runs a command (ADR-0051 decision 2, #2975): the field exists only to be refused, by type and at register().
-  mcp?: never;
+  // Opens the command to an MCP grant that holds this write scope (ADR-0051 decision 2, #3227; absent: an MCP grant never runs it). register() accepts it only for a scope of
+  // MCP_WRITE_SCOPES on an R1 command that has no side effect beyond its transaction, runs for owners and admins by a role list, and is no extension, agent, member-mode,
+  // bootstrap, sensitive or permission command; the database lets the sealed write context write only what its guard names.
+  mcp?: McpWriteAccess;
   // Org-less commands (creating an org) start without an org. `bootstrap` calls a definer that creates the
   // org with the actor as a member, or returns the org an earlier request with the same idempotency key
   // created. executeOrgless() then enters that org as the actor, so membership is checked as on every other
@@ -701,9 +714,9 @@ function mcpDetail(mcp: McpGrant): Record<string, unknown> {
   return { mcpCall: true, mcpGrant: mcp.grantId, mcpClient: mcp.clientId, mcpClientName: mcp.clientName };
 }
 
-// A user actor made from an MCP grant reaches a query only when it declares a scope the grant holds. A command is closed to it whatever it
-// declares. Any other actor is not restricted here.
-function authorizeMcp(access: McpAccess | undefined, actor: Actor): void {
+// A user actor made from an MCP grant reaches a query or a command only when it declares a scope the grant holds (a command only a write scope, and
+// register() allows that on one narrow kind of command). Every other command is closed to it. Any other actor is not restricted here.
+function authorizeMcp(access: McpAccess | McpWriteAccess | undefined, actor: Actor): void {
   if (actor.type !== 'user' || !actor.mcp) return;
   if (!access || !actor.mcp.scopes.includes(access.scope)) {
     throw new DomainError('FORBIDDEN', 403, 'Quyền kết nối MCP không được thực hiện việc này', { rule: 'mcp_scope' });
@@ -1264,11 +1277,11 @@ function snapshotMemberVy(value: unknown, what: string): unknown {
 }
 
 // What register() keeps of an MCP access declaration: a frozen copy, its scope checked to be a known one.
-function snapshotMcp(value: unknown, what: string): unknown {
+function snapshotMcp(value: unknown, what: string, allowed: readonly string[] = MCP_READ_SCOPES): unknown {
   if (value === undefined) return undefined;
   const copy = plainCopy(value, what);
-  if (typeof copy.scope !== 'string' || !(MCP_SCOPES as readonly string[]).includes(copy.scope)) {
-    throw new Error(`${what}: the scope is one of ${MCP_SCOPES.join(', ')}`);
+  if (typeof copy.scope !== 'string' || !allowed.includes(copy.scope)) {
+    throw new Error(`${what}: the scope is one of ${allowed.join(', ')}`);
   }
   return Object.freeze(copy);
 }
@@ -1295,6 +1308,7 @@ function snapshotCommand(def: CommandDef<any, any>): CommandDef<unknown, unknown
   if (Object.hasOwn(copy, 'agentApprovers')) copy.agentApprovers = snapshotAgent(copy.agentApprovers, `${label}: agentApprovers`);
   if (Object.hasOwn(copy, 'memberVy')) copy.memberVy = snapshotMemberVy(copy.memberVy, `${label}: memberVy`);
   if (Object.hasOwn(copy, 'extension')) copy.extension = snapshotExtension(copy.extension, `${label}: extension`);
+  if (Object.hasOwn(copy, 'mcp')) copy.mcp = snapshotMcp(copy.mcp, `${label}: mcp`, MCP_WRITE_SCOPES);
   if (Array.isArray(copy.writes)) {
     copy.writes = Object.freeze(
       copy.writes.map((w: unknown, i: number) => {
@@ -1712,9 +1726,28 @@ export class Runtime {
           throw new Error(`command ${c.name}: writes ${contactOrPayment.join(', ')}, so Vy in member mode may not run it (P04: it asks for a proposal instead)`);
         }
       }
-      // An MCP grant runs no command (ADR-0051 decision 2): a definition that declares `mcp` is a mistake, whatever the type says.
+      // An MCP grant runs a command only when it declares a write scope (ADR-0051 decision 2, #3227), and only the narrow kind the sealed write context can run: an R1 command with
+      // no side effect beyond its transaction, for owners and admins by a role list, that is no extension, agent, member-mode, bootstrap, sensitive or permission command, takes
+      // no sealed input and runs under no proposal.
       if ((c as { mcp?: unknown }).mcp !== undefined) {
-        throw new Error(`command ${c.name}: an MCP grant runs no command, so a command cannot declare mcp (ADR-0051 decision 2)`);
+        snapshotMcp((c as { mcp?: unknown }).mcp, `command ${c.name}: mcp`, MCP_WRITE_SCOPES);
+        const roles = c.access as readonly string[];
+        if (
+          !Array.isArray(c.access) ||
+          roles.length === 0 ||
+          roles.some((r) => r !== 'owner' && r !== 'admin') ||
+          c.risk !== 'R1' ||
+          c.sideEffect !== 'internal' ||
+          c.extension !== undefined ||
+          c.agent !== undefined ||
+          c.memberVy !== undefined ||
+          c.bootstrap !== undefined ||
+          c.permission !== undefined ||
+          c.sealedInput !== undefined ||
+          (c as { sensitive?: unknown }).sensitive !== undefined
+        ) {
+          throw new Error(`command ${c.name}: an MCP grant runs only an R1 command with no side effect, whose access is owner and admin and that is no extension, agent, member-mode, bootstrap, sensitive, permission or sealed-input command (ADR-0051 decision 2)`);
+        }
       }
       if (c.extension !== undefined && (!Array.isArray(c.access) || c.risk === 'R3' || c.agent !== undefined || c.bootstrap !== undefined)) {
         throw new Error(`command ${c.name}: an extension token reaches only a user command with a role list as access, below R3, that no agent runs and that creates no org (ADR-0047 point 10)`);
@@ -1938,15 +1971,16 @@ export class Runtime {
     await this.#sessions.check(trx, { ...actor, sessionId }, orgId);
   }
 
-  private async enter(trx: Transaction<Database>, actor: Actor, orgId: string): Promise<Entered> {
+  private async enter(trx: Transaction<Database>, actor: Actor, orgId: string, mcpWrite?: McpWriteScope): Promise<Entered> {
     await this.checkSession(trx, actor, orgId);
-    return this.enterContext(trx, actor, orgId);
+    return this.enterContext(trx, actor, orgId, mcpWrite);
   }
 
   // Works on a hot standby too: the re-entry guard's advisory lock and pg_locks read are allowed during recovery
   // (PostgreSQL 17, probed in #105). What a standby refuses is every write (25006, INTERNAL 500): commands, a session
   // check that records a first-seen session, refusal audits. Replica reads are not wired up (plan §3.3).
-  private async enterContext(trx: Transaction<Database>, actor: Actor, orgId: string): Promise<Entered> {
+  // `mcpWrite` is the write scope a command declares (CommandDef.mcp), set only when a command runs: an MCP grant that holds it enters its sealed write context in place of the read-only one.
+  private async enterContext(trx: Transaction<Database>, actor: Actor, orgId: string, mcpWrite?: McpWriteScope): Promise<Entered> {
     if (actor.type === 'system') {
       await sql`SELECT crove_kernel.enter_system_context(${orgId}::uuid)`.execute(trx);
       return { role: null, agent: null, memberVy: null };
@@ -1985,6 +2019,11 @@ export class Runtime {
         memberVy: null,
       };
     }
+    if (mcpWrite !== undefined && actor.type === 'user' && actor.mcp && (actor.mcp.kind === 'member' || this.#mcpEntry === 'worker')) {
+      // A write scope belongs to a company grant on the API's own entry: a member-bound grant and the worker's wake entry never enter a write context. A company grant without the scope enters its read
+      // context below, where authorizeMcp refuses the command after entry, so the refusal is audited as the grant's, as any other refused command is.
+      throw new DomainError('FORBIDDEN', 403, 'Quyền kết nối MCP không được thực hiện việc này', { rule: 'mcp_scope' });
+    }
     if (actor.mcp?.kind === 'member') {
       // A member-bound MCP grant (ADR-0051 decision 2): the sealed context is the grant's, not the person's (no user in the seal, tainted, R0), and
       // it is entered afresh in every request, so a revoke, a demotion or a switch turned off applies to the next call. Queries only: the transaction
@@ -1995,6 +2034,18 @@ export class Runtime {
       const role = got?.role;
       // The member of the seal is the consenting user the edge named; anything else is a bug or tampering, never answered as a role.
       if (!got || got.member !== actor.userId || got.maxRisk !== 'R0' || got.tainted !== true || (role !== 'owner' && role !== 'admin' && role !== 'member' && role !== 'viewer')) {
+        throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+      }
+      return { role, agent: null, memberVy: null };
+    }
+    if (actor.mcp && mcpWrite !== undefined && actor.mcp.scopes.includes(mcpWrite)) {
+      // A company MCP grant that holds a write scope runs the command that declares it (ADR-0051 decision 2, #3227): the same sealed shape as the read context (agent-shaped, no user,
+      // tainted), at R1 and of its own kind, so the database guard lets it write exactly what that scope names. The grantor named in the seal is the user the edge named, else a bug.
+      const { rows } = await sql<{ entered: { role: string; grantor: string; maxRisk: string; tainted: boolean } }>`
+        SELECT crove_kernel.enter_mcp_company_draft_context(${orgId}::uuid, ${actor.mcp.grantId}::uuid) AS entered`.execute(trx);
+      const got = rows[0]?.entered;
+      const role = got?.role;
+      if (!got || got.grantor !== actor.userId || got.maxRisk !== 'R1' || got.tainted !== true || (role !== 'owner' && role !== 'admin')) {
         throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
       }
       return { role, agent: null, memberVy: null };
@@ -2050,8 +2101,8 @@ export class Runtime {
   private async authorize(trx: Transaction<Database>, def: CommandDef<unknown, unknown>, actor: Actor, entered: Entered, viaProposal: boolean): Promise<readonly string[] | null> {
     // First of all: an extension token reaches a command only through the scope the command declares (ADR-0047 point 10).
     authorizeExtension(def.extension, actor);
-    // An MCP grant runs no command, whatever the command declares (no command type carries `mcp`).
-    authorizeMcp(undefined, actor);
+    // An MCP grant runs a command only when it declares a write scope the grant holds; every other command is closed to it.
+    authorizeMcp(def.mcp, actor);
     try {
       this.authorizeRole(def, actor, entered, viaProposal);
       return null;
@@ -2794,7 +2845,7 @@ export class Runtime {
       const db = await cell();
       return await db.transaction().execute(async (trx) => {
         orgId = await resolveOrg(trx);
-        context = await this.enter(trx, actor, orgId);
+        context = await this.enter(trx, actor, orgId, def.mcp?.scope);
         entered = true;
         if (def.bootstrap) {
           const { rows } = await sql<{ fresh: boolean }>`

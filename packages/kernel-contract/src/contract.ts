@@ -190,8 +190,8 @@ import {
   zSocialSavedViewSave,
 } from './schemas.ts';
 import { zMarketplaceConnect, zMarketplaceConnection, zMarketplaceConnectionTested, zMarketplaceProviders } from './marketplace-connections.ts';
-import { zMarketplaceBalance, zMarketplaceBalanceInput, zMarketplaceFacts, zMarketplaceLine, zMarketplaceLineAsk } from './marketplace-balance.ts';
-import { zMarketplaceSettlementRequest, zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
+import { zMarketplaceBalance, zMarketplaceBalanceInput, zMarketplaceFacts, zMarketplaceLine, zMarketplaceLineAsk, zMarketplaceWorklist } from './marketplace-balance.ts';
+import { zMarketplaceFeeClearingRequest, zMarketplacePayoutRequest, zMarketplaceSettlementRequest, zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
 import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggestInput, zStockSuggested, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
 import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoicePrevious, zEInvoicePreviousInput, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStatus, zEInvoiceSuggested, zEInvoiceSuggestInput } from './einvoice.ts';
 import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
@@ -403,6 +403,7 @@ import {
   zSummaryCopy,
 } from './meetings.ts';
 import { zAskAnswer, zAskEmpty, zAskInput, zAskStatus } from './meeting-ask.ts';
+import { zAgendaLink, zAgendaLinked, zAgendaList, zAgendaListInput, zAgendaReadEventsSet, zAgendaSetReadEvents, zAgendaSuggestInput, zAgendaSuggestion } from './meeting-agenda.ts';
 import { zFollowupDraft, zFollowupSendCall, zFollowupSent, zFollowupWording, zFollowupWordingAsk } from './meeting-followup.ts';
 import { zExtensionOrgToken, zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked, zExtensionTokenRevokedMember } from './extension.ts';
 import { zMcpGrantRevoke, zMcpGrantRevoked, zMcpGrantView, zMcpMemberGrantsSet, zMcpMemberGrantsView, zMcpWakeCleared, zMcpWakeTested, zMcpWakeGetInput, zMcpWakeGrantRef, zMcpWakeSet, zMcpWakeView, zMcpWakeWithSecret } from './mcp.ts';
@@ -561,7 +562,7 @@ export const contract = {
     providers: oc.output(z.array(zCalendarOAuthProvider)),
     connections: oc.output(z.array(zCalendarConnectionView)),
     connectStart: oc
-      .input(z.strictObject({ provider: zCalendarOAuthProvider, writeBack: z.boolean().optional() }))
+      .input(z.strictObject({ provider: zCalendarOAuthProvider, writeBack: z.boolean().optional(), readEvents: z.boolean().optional() }))
       .output(z.strictObject({ authorizeUrl: z.url({ protocol: /^https$/ }), state: zOAuthState, expiresAt: z.iso.datetime({ offset: true }) })),
     connectFinish: oc
       .input(z.strictObject({ provider: zCalendarOAuthProvider, state: zOAuthState, code: z.string().min(1).max(2048) }))
@@ -955,6 +956,14 @@ export const contract = {
     ask: {
       status: oc.input(zAskEmpty).output(zAskStatus),
       ask: oc.input(zAskInput).output(zAskAnswer),
+    },
+    // A member's own Google Calendar meetings, read to suggest "record this meeting" (B1, #3165): no model; code matches by time and a person confirms. `list` is today's meetings, `suggest` the event
+    // a recording overlaps, `setReadEvents` the member's switch (the cache is deleted when it goes off), `link` the click that attaches a recorded meeting to its event.
+    agenda: {
+      list: oc.input(zAgendaListInput).output(zAgendaList),
+      suggest: oc.input(zAgendaSuggestInput).output(zAgendaSuggestion),
+      setReadEvents: oc.input(zAgendaSetReadEvents).output(zAgendaReadEventsSet),
+      link: oc.input(zAgendaLink).output(zAgendaLinked),
     },
     // The transcript (#2578): the recorder's draft, read, replaced by a transcription run and corrected by hand.
     transcript: {
@@ -1774,6 +1783,12 @@ export const contract = {
           // The posting of a stored marketplace settlement (#2516): the server builds one journal voucher from its lines; an owner or an admin approves. Refused until the accountant has confirmed
           // the account map. MARKETPLACE_POSTING_MAP_UNCONFIRMED, MARKETPLACE_SETTLEMENT_POSTED, PERIOD_LOCKED (409), MARKETPLACE_SETTLEMENT_NOT_POSTABLE (422), MARKETPLACE_SETTLEMENT_NOT_FOUND (404).
           z.object({ command: z.literal('finance.marketplace_settlement.record'), input: zMarketplaceSettlementRequest, idempotencyKey: zId }),
+          // The posting of a platform's payout (#2516): the server builds one journal voucher from the settlement's lines, and the bank line only has to match the net; an owner or an admin approves. Refused
+          // until the accountant has confirmed the account map, and while the settlement is not posted. MARKETPLACE_PAYOUT_SETTLEMENT_NOT_POSTED, MARKETPLACE_PAYOUT_BANK_LINE, MARKETPLACE_PAYOUT_POSTED (409).
+          z.object({ command: z.literal('finance.marketplace_payout.record'), input: zMarketplacePayoutRequest, idempotencyKey: zId }),
+          // The clearing of the fees on 1388 by the platform's fee invoice (#2516): one journal voucher Dr 331 / Cr 1388 built from a posted purchase document; an owner or an admin approves. Refused until the
+          // accountant has confirmed the account map. MARKETPLACE_FEE_DOCUMENT (422), MARKETPLACE_FEE_NOTHING_TO_CLEAR (409), PERIOD_LOCKED (409).
+          z.object({ command: z.literal('finance.marketplace_fee_clearing.record'), input: zMarketplaceFeeClearingRequest, idempotencyKey: zId }),
         ]),
       )
       .output(z.object({ proposalId: zId })),
@@ -2106,6 +2121,9 @@ export const contract = {
     balance: oc.input(zMarketplaceBalanceInput.optional()).output(zMarketplaceBalance),
     // The facts the coworker's line is written from (#2516 slice E): stored settlements not yet posted, the platforms' balance and the fees awaiting an invoice. Every role reads; facts only.
     facts: oc.input(zMarketplaceBalanceInput.optional()).output(zMarketplaceFacts),
+    // What the Sàn screen lets a person act on (#2516 slice F): the settlements to post, the posted settlements waiting for their payout with the bank lines it may be, the fee invoices that can clear, and
+    // whether the account map is confirmed. A read: the actions themselves are inbox.request of the finance commands.
+    worklist: oc.input(zMarketplaceBalanceInput.optional()).output(zMarketplaceWorklist),
     // The finance coworker's one line on the Sàn screen: the facts always, and one checked sentence when a model is on, within the AI budget. Read only: it stores nothing and posts nothing.
     line: oc.input(zMarketplaceLineAsk).output(zMarketplaceLine),
   },
