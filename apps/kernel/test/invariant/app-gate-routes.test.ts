@@ -59,14 +59,14 @@ const CLASSES: Record<string, { app: string; gate: Gate; why: string }> = {
   '/.well-known/openid-configuration': { app: 'kernel', gate: 'kernel', why: 'OAuth metadata' },
   '/oauth/*': { app: 'kernel', gate: 'kernel', why: 'authorization server' },
   '/mcp': { app: 'kernel', gate: 'kernel', why: 'MCP endpoint: its calls into an app answer MODULE_OFF from the runtime' },
-  // #3324 (eSign): its PR makes each of these ask org_app_on and the entitlement with an opaque 404, and moves it to 'sql'.
-  '/api/sign/view': { app: 'sign', gate: 'pending', why: '#3324' },
-  '/api/sign/pdf': { app: 'sign', gate: 'pending', why: '#3324' },
-  '/api/sign/otp/request': { app: 'sign', gate: 'pending', why: '#3324' },
-  '/api/sign/otp/verify': { app: 'sign', gate: 'pending', why: '#3324' },
-  '/api/sign/submit': { app: 'sign', gate: 'pending', why: '#3324' },
-  '/api/sign/decline': { app: 'sign', gate: 'pending', why: '#3324' },
-  '/api/sign/verify': { app: 'sign', gate: 'pending', why: '#3324' },
+  // #3324 (eSign): each public route gates via its crove_sign SECURITY DEFINER resolver (org_app_on + entitlement with opaque 404).
+  '/api/sign/view': { app: 'sign', gate: 'sql', why: 'crove_sign.public_token_resolve + crove_sign.public_record_view gate org_app_on + entitlement -> 404' },
+  '/api/sign/pdf': { app: 'sign', gate: 'sql', why: 'crove_sign.public_pdf_source gates org_app_on + entitlement -> 404' },
+  '/api/sign/otp/request': { app: 'sign', gate: 'sql', why: 'crove_sign.public_request_otp gates org_app_on + entitlement -> 404' },
+  '/api/sign/otp/verify': { app: 'sign', gate: 'sql', why: 'crove_sign.public_verify_otp gates org_app_on + entitlement -> 404' },
+  '/api/sign/submit': { app: 'sign', gate: 'sql', why: 'crove_sign.public_submit gates org_app_on + entitlement -> 404' },
+  '/api/sign/decline': { app: 'sign', gate: 'sql', why: 'crove_sign.public_decline gates org_app_on + entitlement -> 404' },
+  '/api/sign/verify': { app: 'sign', gate: 'sql', why: 'crove_sign.public_verify_certificate gates org_app_on + entitlement -> 404' },
 };
 
 // The paths of the two lists of route-coverage.test.ts: a key at the start of a line inside `const PUBLIC` or `const PENDING`. A line at the key indent that
@@ -102,10 +102,10 @@ describe('public routes against the per-org app gate (ADR-0053, slice c C2)', ()
     expect(Object.keys(CLASSES).filter((p) => !paths.has(p))).toEqual([]);
   });
 
-  it('gates every route of Social, CRM and Finance in SQL or by dropping, and keeps kernel and pending classes honest', () => {
+  it('gates every route of Social, CRM, Finance and Sign in SQL or by dropping, and keeps kernel and pending classes honest', () => {
     const { pending } = publicLists();
     for (const [path, c] of Object.entries(CLASSES)) {
-      if (['social', 'crm', 'social+crm', 'finance'].includes(c.app)) expect(['sql', 'dropped'], path).toContain(c.gate);
+      if (['social', 'crm', 'social+crm', 'finance', 'sign'].includes(c.app)) expect(['sql', 'dropped'], path).toContain(c.gate);
       // The kernel class belongs to the kernel app and the kernel app to the kernel class: an app's route cannot be filed as kernel.
       expect(c.gate === 'kernel', `${path}: kernel gate and kernel app go together`).toBe(c.app === 'kernel');
       // 'pending' stands only for a route that is still in route-coverage's PENDING list (not in the code yet).

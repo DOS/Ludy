@@ -39,6 +39,7 @@ export * from './mail-address.ts';
 export * from './signals.ts';
 export * from './today.ts';
 export * from './coworkers.ts';
+export * from './sign.ts';
 
 export const ORG_HEADER = 'x-crove-org';
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;

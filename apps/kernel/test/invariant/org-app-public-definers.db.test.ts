@@ -27,6 +27,14 @@ const CHECKED: ReadonlyArray<readonly [string, string]> = [
   ['crove_crm.quote_link_view(text)', 'crm'],
   ['crove_crm.quote_link_logo(text)', 'crm'],
   ['crove_finance.bank_feed_notice_claim(integer)', 'finance'],
+  ['crove_sign.public_token_resolve(text,boolean)', 'sign'],
+  ['crove_sign.public_pdf_source(text)', 'sign'],
+  ['crove_sign.public_verify_certificate(text,text)', 'sign'],
+  ['crove_sign.public_record_view(text,text,text)', 'sign'],
+  ['crove_sign.public_request_otp(text,text)', 'sign'],
+  ['crove_sign.public_verify_otp(text,text,text,text)', 'sign'],
+  ['crove_sign.public_submit(text,boolean,text,text,jsonb,text,text,text)', 'sign'],
+  ['crove_sign.public_decline(text,text,text,text)', 'sign'],
 ];
 
 suite('the public definers carry the app check (ADR-0053, C2)', () => {
@@ -60,7 +68,7 @@ suite('the public definers carry the app check (ADR-0053, C2)', () => {
         const { rows } = await client.query<{ def: string; secdef: boolean }>('SELECT pg_get_functiondef($1::regprocedure) AS def, prosecdef AS secdef FROM pg_proc WHERE oid = $1::regprocedure', [fn]);
         // The review link lookup is a plain helper of the definers; every other function of the list is itself one.
         if (fn !== 'crove_social.review_link_by_token(text,boolean)') expect(rows[0]?.secdef, fn).toBe(true);
-        expect(rows[0]?.def, fn).toContain(`crove_kernel.org_app_on(t.org_id, '${app}')`);
+        expect(rows[0]?.def, fn).toMatch(new RegExp(`crove_kernel\\.org_app_on\\([a-z0-9_]+\\.org_id, '${app}'\\)`));
       }
     } finally {
       await client.end();
