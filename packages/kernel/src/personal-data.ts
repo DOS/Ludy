@@ -313,6 +313,15 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: "A machine translation of a meeting's summary, which may name or describe a person: read by the member who asked alone, deleted with the meeting (its recorder, an owner, the retention job or the org purge) and with the summary it translated, and dropped, not redacted, by an erasure that touches the meeting",
   },
+  // The body of a minutes-webhook event waiting to be sent (meetings integrations A6, issue #3164): the title, summary, decisions and action items the recorder ticked, copied at publish and kept
+  // only while the event waits. The database wipes it (sets it to NULL) the moment the delivery settles, and drops a waiting event, wiping it, when the meeting's title, its published summary or
+  // decisions or an action item change (which is what the erasure's redaction does), when the hook is turned off or its address changes, when the member leaves, the owner turns the feature off, or
+  // the meeting is deleted. No finder reads it; a copy already sent leaves Ludy and cannot be recalled (the screen says so).
+  'crove_meetings.hook_delivery.body': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: "The text of minutes the recorder chose to send to their own address, which may name or describe a person: kept only while the event waits (minutes, at most 8 hours), wiped when it is sent, fails or is dropped, and dropped, wiped, by an erasure that touches the meeting's text, by the member turning the hook off or changing its address, and with the meeting, the member and the org; a copy already sent cannot be recalled",
+  },
   // The recorder's own rough notes of a meeting (meetings integrations A5, issue #3163): typed by the recorder, read, written and deleted by the recorder alone (row security: an owner, an
   // admin, an attendee, an agent and the system context read none). The finder lists the row for the recorder acting as owner (crove_meetings.personal_row_ids, kind 5) and counts the notes of
   // other recorders per recorder (crove_meetings.personal_note_counts), never listing them. The org is the data controller: the owner's erasure redacts the value in the notes of every recorder

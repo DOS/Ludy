@@ -16,6 +16,7 @@ import { translateRunCommands, translateRunQueries } from './translate-run.ts';
 import { askRunCommands, askRunQueries } from './ask.ts';
 import { agendaCommands, agendaQueries } from './agenda.ts';
 import { linkCommands, linkQueries } from './links.ts';
+import { hookCommands, hookQueries } from './hook.ts';
 import { liveNotesCommands } from './live-notes.ts';
 import { liveRunCommands, liveRunQueries } from './live-run.ts';
 import { liveCommands } from './live.ts';
@@ -992,6 +993,7 @@ export const meetingsCommands = [
   ...liveAssembleCommands,
   ...liveRunCommands,
   ...liveNotesCommands,
+  ...hookCommands,
 ];
 
 export const meetingsQueries = [
@@ -1019,4 +1021,5 @@ export const meetingsQueries = [
   ...followupQueries,
   ...liveRunQueries,
   ...liveAssembleQueries,
+  ...hookQueries,
 ];

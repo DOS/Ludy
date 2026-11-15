@@ -37,6 +37,7 @@ const TS_TENANT_LOCKS: Readonly<Record<string, string>> = {
   'packages/kernel/src/tax-code.ts': "the org's tax code and VAT filing period: an UPDATE of the tenant row only",
   'modules/finance/src/missing-invoices.ts': "the missing-invoice reminder day: an UPDATE of the tenant row only",
   'modules/meetings/src/retention.ts': "the meeting retention settings (audio, video and text periods): an UPDATE of the tenant row only",
+  'modules/meetings/src/hook.ts': "the owner's switch for members' minutes webhooks: an UPDATE of the tenant row only, then the drop of the org's queued deliveries (delivery rows, no member, assignment or position row)",
   'modules/finance/src/own-tax-code.ts': "a purchase posting and an extraction read the org's and the entities' tax codes FOR SHARE (loadOwnTaxCodes); they write ledger rows, never a member or position row",
   'packages/kernel/src/personal-data.ts': "an erasure clears the org's contact email (a raw UPDATE of the tenant row); its only row lock, the parties FOR UPDATE, comes before, and it touches no member or position row",
 };
