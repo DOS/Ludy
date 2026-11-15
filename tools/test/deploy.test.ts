@@ -679,6 +679,8 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     const keyOf = () => KEY_LINE.exec(envFile())?.[1] ?? '';
     const stubKey = () => readFileSync(`${root}/openssl-key`, 'utf8').trim();
     const opensslCalls = () => (existsSync(`${log}.openssl`) ? readFileSync(`${log}.openssl`, 'utf8') : '');
+    // Copies of the env file that stay in .deploy: none, unless a write could not be put back.
+    const leftovers = () => readdirSync(`${dir}/.deploy`).filter((f) => f.startsWith('env-key.') || f.startsWith('env-old.'));
     const files = (d: string): string[] =>
       readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? files(`${d}/${e.name}`) : [`${d}/${e.name}`]));
 
@@ -706,7 +708,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(readFileSync(`${dir}/.deploy/history.log`, 'utf8')).toContain('context token key generated');
       expect(opensslCalls()).toBe('openssl rand -base64 32\n');
       // No copy of the env file is left behind.
-      expect(readdirSync(`${dir}/.deploy`).filter((f) => f.startsWith('env-key.'))).toEqual([]);
+      expect(leftovers()).toEqual([]);
 
       // The second deploy keeps the key: present, no new key, `migrate` has nothing to install.
       writeFileSync(`${root}/openssl-key`, `${randomBytes(32).toString('base64')}\n`);
@@ -732,8 +734,11 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       ['empty double quotes', 'CROVE_CONTEXT_TOKEN_KEY=""', 'CROVE_CONTEXT_TOKEN_KEY=@KEY@'],
       ['empty single quotes and a comment', "CROVE_CONTEXT_TOKEN_KEY='' # later", 'CROVE_CONTEXT_TOKEN_KEY=@KEY@'],
       ['a comment as the value', 'CROVE_CONTEXT_TOKEN_KEY= # to fill in', 'CROVE_CONTEXT_TOKEN_KEY=@KEY@'],
+      ['empty quotes and a comment with a hash in it', 'CROVE_CONTEXT_TOKEN_KEY="" # required by #1822', 'CROVE_CONTEXT_TOKEN_KEY=@KEY@'],
+      ['empty quotes and a comment right after them', 'CROVE_CONTEXT_TOKEN_KEY=""#later', 'CROVE_CONTEXT_TOKEN_KEY=@KEY@'],
       ['only spaces', 'CROVE_CONTEXT_TOKEN_KEY=   ', 'CROVE_CONTEXT_TOKEN_KEY=@KEY@'],
       ['a CRLF line break', 'CROVE_CONTEXT_TOKEN_KEY=\r', 'CROVE_CONTEXT_TOKEN_KEY=@KEY@\r'],
+      ['the colon form of a dotenv file', 'CROVE_CONTEXT_TOKEN_KEY: ', 'CROVE_CONTEXT_TOKEN_KEY=@KEY@'],
     ])('takes %s for a missing key and replaces that line only', (_name, line, replaced) => {
       writeFileSync(`${dir}/.env`, `A=1\n${line}\nB=2\n`);
       const res = deploy('v1.0.0', 'a');
@@ -746,8 +751,10 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       ['a value', 'CROVE_CONTEXT_TOKEN_KEY=abc'],
       ['export and a quoted value', 'export CROVE_CONTEXT_TOKEN_KEY="abc"'],
       ['a value and a comment', 'CROVE_CONTEXT_TOKEN_KEY = abc # mine'],
+      ['a quoted value with a space and a hash', 'CROVE_CONTEXT_TOKEN_KEY="a # b"'],
       ['a value that starts with a hash (in doubt: kept)', 'CROVE_CONTEXT_TOKEN_KEY=#abc'],
       ['a key that is not 44 characters (never judged, never replaced)', 'CROVE_CONTEXT_TOKEN_KEY=short'],
+      ['the colon form of a dotenv file', 'CROVE_CONTEXT_TOKEN_KEY: abc'],
       ['a later empty line after a set one: the earlier is shadowed, so this is not set', null],
     ])('never replaces an existing key: %s', (_name, line) => {
       if (line === null) return;
@@ -825,7 +832,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(calls().some((l) => l.startsWith('compose run'))).toBe(false);
       expect(running()).toContain(image('a'));
       expect(state('current')).toBe(releaseDir('v1.0.0', 'a'));
-      expect(readdirSync(`${dir}/.deploy`).filter((f) => f.startsWith('env-key.'))).toEqual([]);
+      expect(leftovers()).toEqual([]);
       expect(readFileSync(`${dir}/.deploy/history.log`, 'utf8')).toContain('failed: context token key');
     });
 
@@ -871,6 +878,53 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(run(['rollback']).status).toBe(0);
       expect(keyOf()).toBe(key);
       expect(opensslCalls()).toBe('openssl rand -base64 32\n');
+    });
+
+    // A write into the env file that fails or is cut off is put back; when even that fails, both copies stay and are named.
+    describe('a failed overwrite of the env file', () => {
+      const ORIGINAL = 'POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=\nOTHER=1\n';
+      // A `cat` that writes three bytes and fails when it reads the pattern's file.
+      const failingCat = (pattern: string) => {
+        const real = spawnSync('bash', ['-c', 'command -v cat'], { encoding: 'utf8' }).stdout.trim();
+        writeFileSync(`${root}/bin/cat`, `#!/bin/sh\nfor a in "$@"; do case "$a" in ${pattern}) printf 'cut'; exit 1;; esac; done\nexec ${real} "$@"\n`);
+        chmodSync(`${root}/bin/cat`, 0o755);
+      };
+
+      it('puts the env file back as it was and stops before migrate', () => {
+        writeFileSync(`${dir}/.env`, ORIGINAL);
+        failingCat('*/env-key.*');
+        const res = deploy('v1.0.0', 'a');
+        expect(res.status, res.out).toBe(1);
+        expect(res.out).toContain('the file was put back as it was');
+        expect(envFile()).toBe(ORIGINAL);
+        expect(leftovers()).toEqual([]);
+        expect(calls().some((l) => l.startsWith('compose run'))).toBe(false);
+        expect(res.out).not.toContain(stubKey());
+      });
+
+      it('keeps the old and the new copy, names them, and says what to do when it cannot put it back', () => {
+        writeFileSync(`${dir}/.env`, ORIGINAL);
+        failingCat('*/env-key.*|*/env-old.*');
+        const res = deploy('v1.0.0', 'a');
+        expect(res.status, res.out).toBe(1);
+        expect(res.out).toContain('and so did putting it back');
+        const [old, fresh] = [leftovers().find((f) => f.startsWith('env-old.')) ?? '', leftovers().find((f) => f.startsWith('env-key.')) ?? ''];
+        expect(res.out).toContain(`${dir}/.deploy/${old}`);
+        expect(res.out).toContain(`${dir}/.deploy/${fresh}`);
+        expect(readFileSync(`${dir}/.deploy/${old}`, 'utf8')).toBe(ORIGINAL);
+        expect(statSync(`${dir}/.deploy/${old}`).mode & 0o777).toBe(0o600);
+        expect(statSync(`${dir}/.deploy/${fresh}`).mode & 0o777).toBe(0o600);
+        expect(readFileSync(`${dir}/.deploy/${fresh}`, 'utf8')).toContain(`CROVE_CONTEXT_TOKEN_KEY=${stubKey()}`);
+        expect(res.out).not.toContain(stubKey());
+      });
+    });
+
+    it('takes the key from the env file only: a variable of the caller does not reach migrate', () => {
+      writeFileSync(`${dir}/.env`, 'CROVE_CONTEXT_TOKEN_KEY=\n');
+      const res = deploy('v1.0.0', 'a', { CROVE_CONTEXT_TOKEN_KEY: 'from-the-session' });
+      expect(res.status, res.out).toBe(0);
+      expect(res.out).toContain('context token key generated');
+      expect(existsSync(`${log}.envvar`)).toBe(false);
     });
 
     // The count is read only, runs as the database's superuser in its container, and never fails the deploy.

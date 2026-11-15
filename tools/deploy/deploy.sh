@@ -52,6 +52,10 @@ readonly EXIT_FAILED=1 EXIT_USAGE=2 EXIT_ROLLBACK_FAILED=3
 # Git Bash on Windows (the tests) rewrites arguments that look like paths; Linux ignores these.
 export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
 
+# The env file is the one source of the context token key (#3282): a variable of the SSH session would win over the file in
+# compose's interpolation, and `migrate` would install a key the file does not hold.
+unset CROVE_CONTEXT_TOKEN_KEY
+
 DEPLOY_DIR="${CROVE_DEPLOY_DIR:-/opt/crove}"
 ENV_FILE="${CROVE_ENV_FILE:-}"
 # Seconds: `docker compose up --wait` per step (Supabase Auth may migrate for minutes on an upgrade), /readyz, and
@@ -326,8 +330,14 @@ release_lock() { if [ "$LOCK_HELD" = 1 ]; then rm -rf "$(state_dir)/lock"; fi; }
 PULL_CONFIG=''
 cleanup() {
   if [ -n "$PULL_CONFIG" ]; then rm -rf "$PULL_CONFIG"; fi
-  # The copy of the env file made while the context token key is written holds that key.
-  if [ -n "${KEY_TMP:-}" ]; then rm -f "$KEY_TMP"; fi
+  # The copies of the env file made while the context token key is written hold that key (and the old file). Stopped while
+  # the env file itself is being overwritten, they are the way back: kept, and named.
+  if [ "${KEY_WRITING:-0}" = 1 ]; then
+    err "stopped while writing the context token key into $ENV_FILE: the file may be incomplete. The old file is at ${KEY_BAK:-?} and the new one at ${KEY_TMP:-?} (both mode 600): copy the old one over $ENV_FILE and delete both"
+  else
+    if [ -n "${KEY_TMP:-}" ]; then rm -f "$KEY_TMP"; fi
+    if [ -n "${KEY_BAK:-}" ]; then rm -f "$KEY_BAK"; fi
+  fi
   release_lock
 }
 
@@ -658,19 +668,19 @@ preflight() {
 # idempotency rows"). They run on the host, after the database is up and before `migrate`, so the key never leaves it.
 
 # The line numbers of the last CROVE_CONTEXT_TOKEN_KEY assignment in the env file, and whether its value is set. Read like a
-# dotenv file, the last assignment wins: `export` and spaces around `=` are allowed, a ` # comment` is not part of the value, `""` and
+# dotenv file, the last assignment wins: `export` and spaces around `=` (or `:`, which the dotenv parser of compose accepts too) are allowed, a ` # comment` is not part of the value, `""` and
 # `''` are empty, and a commented-out line is not an assignment. When a value is in doubt (`KEY=#x`) it counts as set: a key that
 # is there is never replaced, and a deploy that wrongly takes a key for missing would destroy one.
 # Sets KEY_LINE (0: no assignment) and KEY_SET (1: the effective value is not empty). Builtins only: the value is never
 # an argument or an environment variable of another process, and it is never printed.
 KEY_LINE=0 KEY_SET=0
 env_key_scan() {
-  local line raw value n=0
+  local file="${1:-$ENV_FILE}" line raw value n=0
   KEY_LINE=0 KEY_SET=0
   while IFS= read -r line || [ -n "$line" ]; do
     n=$((n + 1))
     line="${line%$'\r'}"
-    if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?CROVE_CONTEXT_TOKEN_KEY[[:space:]]*=(.*)$ ]]; then
+    if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?CROVE_CONTEXT_TOKEN_KEY[[:space:]]*[=:](.*)$ ]]; then
       KEY_LINE=$n
       raw="${BASH_REMATCH[2]}"
       value="$raw"
@@ -678,13 +688,17 @@ env_key_scan() {
         value=''
       else
         value="${value#"${value%%[![:space:]]*}"}"
-        if [[ "$value" =~ ^(.*[^[:space:]])[[:space:]]+#.*$ ]]; then value="${BASH_REMATCH[1]}"; fi
-        value="${value%"${value##*[![:space:]]}"}"
-        if [ "$value" = '""' ] || [ "$value" = "''" ]; then value=''; fi
+        # Empty quotes end the value, whatever follows them (a comment); else a comment starts at the first ` #`.
+        if [[ "$value" =~ ^(\"\"|\'\')[[:space:]]*(#.*)?$ ]]; then
+          value=''
+        else
+          value="${value%%[[:space:]]#*}"
+          value="${value%"${value##*[![:space:]]}"}"
+        fi
       fi
       if [ -n "$value" ]; then KEY_SET=1; else KEY_SET=0; fi
     fi
-  done <"$ENV_FILE"
+  done <"$file"
 }
 
 # Before anything changes: when the env file has no context token key, the deploy must be able to make one.
@@ -695,16 +709,19 @@ context_token_key_preflight() {
   [ -w "$ENV_FILE" ] || die "$EXIT_USAGE" "$ENV_FILE has no CROVE_CONTEXT_TOKEN_KEY and the deploy user cannot write to the file (docs/runbooks/context-token-key.md)"
 }
 
-# The temporary copy of the env file while the key is written (it holds the key): removed on every exit.
-KEY_TMP=''
+# The temporary files while the key is written: the new env file (it holds the key) and a copy of the old one. Removed on
+# every exit, except while the env file itself is being overwritten (KEY_WRITING=1): a stop then keeps both and names them.
+KEY_TMP='' KEY_BAK='' KEY_WRITING=0
 
 # ensure_context_token_key: when the env file has no context token key, makes one with `openssl rand -base64 32` and writes it
 # into the file (#1822, docs/runbooks/context-token-key.md section 1); an existing key is never replaced, rotation stays a
 # manual step. The key is never printed, logged, passed as an argument or exported: it lives in one shell variable, goes to
 # a 0600 copy of the file by `printf` (a builtin) and from there into the file with `cat >`, which keeps the file's inode,
-# owner and mode. The log says only `context token key generated` or `present`. Returns 1 when the key could not be written.
+# owner and mode. The new copy is checked before the file is touched (every line of the old file, the key line, nothing
+# cut short by a full disk), and the old file is kept in a second 0600 copy so a failed or interrupted overwrite is put
+# back. The log says only `context token key generated` or `present`. Returns 1 when the key could not be written.
 ensure_context_token_key() {
-  local key line n=0 cr=''
+  local key line n=0 cr='' lines bad=0
   env_key_scan
   if ((KEY_SET)); then
     log 'context token key present'
@@ -715,6 +732,11 @@ ensure_context_token_key() {
     KEY_TMP=''
     return 1
   }
+  KEY_BAK="$(mktemp "$(state_dir)/env-old.XXXXXX")" || {
+    err 'cannot make a temporary file for the context token key'
+    KEY_BAK=''
+    return 1
+  }
   key="$(openssl rand -base64 32 </dev/null)" || key=''
   # 32 bytes in base64: 43 characters and one `=`.
   if [[ ! "$key" =~ ^[A-Za-z0-9+/]{43}=$ ]]; then
@@ -722,29 +744,53 @@ ensure_context_token_key() {
     key=''
     return 1
   fi
-  while IFS= read -r line || [ -n "$line" ]; do
-    n=$((n + 1))
-    if [ "$n" = "$KEY_LINE" ]; then
-      # Keep a line break of CRLF as it was; the replaced line loses `export`, which compose does not need.
-      if [ "${line: -1}" = $'\r' ]; then cr=$'\r'; fi
-      printf 'CROVE_CONTEXT_TOKEN_KEY=%s%s\n' "$key" "$cr"
-    else
-      printf '%s\n' "$line"
-    fi
-  done <"$ENV_FILE" >"$KEY_TMP"
-  if [ "$KEY_LINE" = 0 ]; then printf 'CROVE_CONTEXT_TOKEN_KEY=%s\n' "$key" >>"$KEY_TMP"; fi
-  key=''
-  # Into the file itself, not a rename: the owner, the mode and the inode of the env file stay. A write that fails halfway
-  # is tried once more from the copy; if that fails too, the copy is kept (it is the whole new file) and named.
-  if ! { cat "$KEY_TMP" >"$ENV_FILE" && cmp -s "$KEY_TMP" "$ENV_FILE"; }; then
-    if ! { cat "$KEY_TMP" >"$ENV_FILE" && cmp -s "$KEY_TMP" "$ENV_FILE"; }; then
-      err "writing the context token key into $ENV_FILE failed and the file may be incomplete: the whole new file is at $KEY_TMP (mode 600); copy it over $ENV_FILE and delete it"
-      KEY_TMP=''
-      return 1
-    fi
+  {
+    while IFS= read -r line || [ -n "$line" ]; do
+      n=$((n + 1))
+      if [ "$n" = "$KEY_LINE" ]; then
+        # Keep a line break of CRLF as it was; the replaced line loses `export`, which compose does not need.
+        if [ "${line: -1}" = $'\r' ]; then cr=$'\r'; fi
+        printf 'CROVE_CONTEXT_TOKEN_KEY=%s%s\n' "$key" "$cr" || bad=1
+      else
+        printf '%s\n' "$line" || bad=1
+      fi
+    done <"$ENV_FILE"
+    if [ "$KEY_LINE" = 0 ]; then printf 'CROVE_CONTEXT_TOKEN_KEY=%s\n' "$key" || bad=1; fi
+  } >"$KEY_TMP" || bad=1
+  if ((bad)); then
+    err 'writing the new env file failed (is the disk full?); the env file was not touched'
+    key=''
+    return 1
   fi
-  rm -f "$KEY_TMP"
-  KEY_TMP=''
+  key=''
+  # The new copy must hold every line of the old file (and the key line, added if there was none) and the key.
+  lines=$(($(wc -l <"$KEY_TMP")))
+  if [ "$KEY_LINE" = 0 ]; then n=$((n + 1)); fi
+  env_key_scan "$KEY_TMP"
+  if [ "$lines" != "$n" ] || ((KEY_SET == 0)); then
+    err 'the new env file is incomplete (is the disk full?); the env file was not touched'
+    return 1
+  fi
+  cat "$ENV_FILE" >"$KEY_BAK" && cmp -s "$ENV_FILE" "$KEY_BAK" || {
+    err 'cannot keep a copy of the env file; the env file was not touched'
+    return 1
+  }
+  # Into the file itself, not a rename: the owner, the mode and the inode of the env file stay. A write that fails or is
+  # cut off is put back from the old copy; if that fails too, both copies are kept and named.
+  KEY_WRITING=1
+  if ! { cat "$KEY_TMP" >"$ENV_FILE" && cmp -s "$KEY_TMP" "$ENV_FILE"; }; then
+    if { cat "$KEY_BAK" >"$ENV_FILE" && cmp -s "$KEY_BAK" "$ENV_FILE"; }; then
+      KEY_WRITING=0
+      err "writing the context token key into $ENV_FILE failed; the file was put back as it was"
+    else
+      err "writing the context token key into $ENV_FILE failed and so did putting it back: the file may be incomplete. The old file is at $KEY_BAK and the new one at $KEY_TMP (both mode 600): copy the old one over $ENV_FILE and delete both"
+      KEY_TMP='' KEY_BAK=''
+    fi
+    return 1
+  fi
+  KEY_WRITING=0
+  rm -f "$KEY_TMP" "$KEY_BAK"
+  KEY_TMP='' KEY_BAK=''
   env_key_scan
   ((KEY_SET)) || {
     err "the context token key is not in $ENV_FILE after writing it"
