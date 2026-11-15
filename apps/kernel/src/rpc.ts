@@ -2884,6 +2884,8 @@ export function createRpcHandler(
       staged: os.marketplace.staged.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.staged', {}, { actor, orgId }))),
       balance: os.marketplace.balance.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.balance', input ?? {}, { actor, orgId }))),
       facts: os.marketplace.facts.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.facts', input ?? {}, { actor, orgId }))),
+      // What the screen lets a person act on (#2516 slice F): a read; the actions are inbox.request of the finance commands.
+      worklist: os.marketplace.worklist.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.worklist', input ?? {}, { actor, orgId }))),
       // The facts are read again here in the caller's own transaction, so what the model is told comes from the books, never from the caller; the sentence is a read and posts nothing.
       line: os.marketplace.line.handler(({ context, input }) =>
         inFinance(context, async (orgId, actor) => {

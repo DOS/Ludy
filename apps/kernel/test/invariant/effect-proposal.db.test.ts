@@ -133,6 +133,10 @@ suite('ledger rows naming a proposal on PostgreSQL (#1853)', () => {
   const payoutVoucher = (proposalId: string) => (c: pg.Client) =>
     c.query(`INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, payout_settlement_id, payout_bank_line_id) VALUES ($1, '2026-10-15', 'sàn trả', $2, $3, $4)`, [orgId, proposalId, randomUUID(), randomUUID()]);
 
+  // The clearing of the fees on 1388 by a platform's fee invoice (#2516): a journal voucher that names the purchase document it clears.
+  const feeClearingVoucher = (proposalId: string) => (c: pg.Client) =>
+    c.query(`INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, fee_document_id) VALUES ($1, '2026-10-15', 'cấn trừ phí sàn', $2, $3)`, [orgId, proposalId, randomUUID()]);
+
   const PATHS = [
     { name: 'purchase document', command: 'finance.purchase.record', write: purchaseDocument },
     { name: 'cash voucher', command: 'finance.voucher.record', write: cashVoucher },
@@ -140,6 +144,7 @@ suite('ledger rows naming a proposal on PostgreSQL (#1853)', () => {
     { name: 'journal voucher', command: 'finance.journal_voucher.record', write: journalVoucher },
     { name: 'marketplace settlement voucher', command: 'finance.marketplace_settlement.record', write: settlementVoucher },
     { name: 'marketplace payout voucher', command: 'finance.marketplace_payout.record', write: payoutVoucher },
+    { name: 'marketplace fee clearing voucher', command: 'finance.marketplace_fee_clearing.record', write: feeClearingVoucher },
     { name: 'reversal entry', command: 'finance.journal.reverse', write: reversal },
   ] as const;
 

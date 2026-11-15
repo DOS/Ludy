@@ -26,13 +26,18 @@ export function OauthConsentPage({ uid }: { uid: string }) {
   // A member or viewer can only connect for themself; an owner or admin picks.
   const privileged = org?.role === 'owner' || org?.role === 'admin';
   const kind: 'company' | 'member' = privileged ? chosenKind : 'member';
+  // The draft scope (#3227, writing Social post drafts a person reviews) is a choice, off by default: offered only when the client asked for it, and only for the company (a member grant never carries a write).
+  const [draft, setDraft] = useState(false);
+  const draftAsked = details.data?.scopes.includes('ludy.social.draft') === true;
+  const draftOffered = draftAsked && org !== undefined && kind === 'company';
+  const draftOn = draftOffered && draft;
 
   const answer = useMutation({
     mutationFn: async (decision: 'approve' | 'deny') => {
       const response = await apiFetch(`/oauth/interaction/${encodeURIComponent(uid)}/consent`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(decision === 'approve' ? { decision, orgId: org?.orgId, kind } : { decision }),
+        body: JSON.stringify(decision === 'approve' ? { decision, orgId: org?.orgId, kind, draft: draftOn } : { decision }),
       });
       const body = (await response.json()) as { redirectTo?: string };
       return safeResume(body.redirectTo ?? '', window.location.origin);
@@ -79,15 +84,30 @@ export function OauthConsentPage({ uid }: { uid: string }) {
                 ))}
               </fieldset>
             )}
-            {org && <p className="text-sm font-medium text-foreground">{t('allow', { client: details.data.client.name, org: org.name })}</p>}
+            {draftOffered && (
+              <label className="flex cursor-pointer items-start gap-2 rounded-lg border p-3 text-sm text-foreground" data-testid="oauth-consent-draft">
+                <input type="checkbox" className="mt-1" checked={draft} onChange={(event) => setDraft(event.target.checked)} />
+                <span>
+                  <span className="block font-medium">{t('draftOption')}</span>
+                  <span className="block text-muted-foreground">{t('scope.draft')}</span>
+                </span>
+              </label>
+            )}
+            {draftAsked && org && kind === 'member' && (
+              <p className="text-sm text-muted-foreground" data-testid="oauth-consent-draft-company-only">
+                {t(privileged ? 'draftCompanyOnly' : 'draftOwnerOnly')}
+              </p>
+            )}
+            {org && <p className="text-sm font-medium text-foreground">{t(draftOn ? 'allowDraft' : 'allow', { client: details.data.client.name, org: org.name })}</p>}
             {org && kind === 'member' && (
               <p className="text-sm text-foreground" data-testid="oauth-consent-member-only">
                 {t('memberOnly', { org: org.name })}
               </p>
             )}
             <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
-              <li>{t('scope.read')}</li>
-              <li>{t('limits')}</li>
+              <li>{t(draftOn ? 'scope.readDraftOn' : 'scope.read')}</li>
+              {draftOn && <li>{t('scope.draft')}</li>}
+              <li>{t(draftOn ? 'limitsDraft' : 'limits')}</li>
               <li>{t('actsAs')}</li>
               <li>{t('revokeHint', { days: details.data.expiresInDays })}</li>
             </ul>

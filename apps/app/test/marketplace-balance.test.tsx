@@ -83,7 +83,7 @@ describe('the Sàn screen (#2516)', () => {
   });
 
   describe('the coworker\'s line (#2516 slice E)', () => {
-    const FACTS = { settlementsToPost: 2, awaitingPayout: '1600000', feesAwaitingInvoice: '120000' };
+    const FACTS = { settlementsToPost: 2, payoutsToMatch: 0, awaitingPayout: '1600000', feesAwaitingInvoice: '120000' };
     const line = (over: Partial<MarketplaceLine> = {}): MarketplaceLine => ({ facts: FACTS, ai: 'used', text: '2 stored settlements are waiting to be posted.', ...over });
 
     it('shows the facts and the sentence, even before any platform is posted', () => {
@@ -125,7 +125,7 @@ describe('the Sàn screen (#2516)', () => {
     });
 
     it('treats less than half a dong as nothing, as the coworker is told', () => {
-      const html = render({ rows: [] }, 'en', line({ facts: { settlementsToPost: 0, awaitingPayout: '0.4', feesAwaitingInvoice: '0' }, ai: 'none', text: null }));
+      const html = render({ rows: [] }, 'en', line({ facts: { settlementsToPost: 0, payoutsToMatch: 0, awaitingPayout: '0.4', feesAwaitingInvoice: '0' }, ai: 'none', text: null }));
       expect(html).toContain('Nothing is waiting here.');
       expect(html).not.toContain('Platforms still owe');
     });
@@ -149,7 +149,7 @@ describe('the Sàn screen (#2516)', () => {
     });
 
     it('says nothing is waiting when every fact is zero, and shows no sentence for it', () => {
-      const html = render({ rows: [] }, 'en', line({ facts: { settlementsToPost: 0, awaitingPayout: '0', feesAwaitingInvoice: '0' }, ai: 'none', text: null }));
+      const html = render({ rows: [] }, 'en', line({ facts: { settlementsToPost: 0, payoutsToMatch: 0, awaitingPayout: '0', feesAwaitingInvoice: '0' }, ai: 'none', text: null }));
       expect(html).toContain('Nothing is waiting here.');
     });
 

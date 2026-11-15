@@ -7,7 +7,8 @@
 // session of the SPA: the provider's own cookies authorize only an interaction, never /api.
 //
 // What this file fixes, so a deployment cannot weaken it:
-//   - one resource, `PUBLIC_URL/mcp`, one scope, `ludy.read`; any other resource is `invalid_target`, any other scope `invalid_scope`;
+//   - one resource, `PUBLIC_URL/mcp`, two scopes, `ludy.read` and `ludy.social.draft` (#3227: the one write, a Social draft for a person to review, which a person must tick on the consent page and a company
+//     grant alone can hold); any other resource is `invalid_target`, any other scope `invalid_scope`;
 //   - public clients only (no client secret, `token_endpoint_auth_method: none`), authorization code with PKCE, refresh token;
 //   - access tokens are JWTs (RFC 9068), ES256, 10 minutes, audience exactly the resource, with the grant and org of the live agent_grant
 //     as claims; the token is refused at the endpoint the moment the grant is no longer in good standing (crove_kernel.mcp_grant_verify);
@@ -23,6 +24,8 @@ import type { Config } from './config.ts';
 import { oauthAdapterFor } from './oauth-adapter.ts';
 
 export const MCP_SCOPE = MCP_SCOPE_IDS[0];
+// The scope of the one MCP write (#3227): a draft Social post. Never part of a grant unless the person ticked it on the consent page.
+export const MCP_DRAFT_SCOPE = MCP_SCOPE_IDS[2];
 export const ACCESS_TOKEN_SECONDS = 600;
 const CODE_SECONDS = 60;
 const REFRESH_SECONDS = 30 * 24 * 3600;
@@ -92,10 +95,10 @@ export async function createOauthServer(config: Config, run: RunDb): Promise<Oau
     cookies: { keys: cookieKeys },
     // Dynamic registration and metadata documents only: no client is configured here.
     clients: [],
-    // `ludy.read` is the one resource server's scope (getResourceServerInfo) and is listed here too, because the provider accepts a scope in a client's
+    // `ludy.read` and `ludy.social.draft` are the resource server's scopes (getResourceServerInfo) and are listed here too, because the provider accepts a scope in a client's
     // registration or request only from this list, and the official MCP client registers with the scope the resource metadata advertises. The consent grants it
     // as a resource scope and also as a scope of the provider (see mcp-endpoint.ts), so an authorization that names it does not loop back to the consent page.
-    scopes: ['openid', 'ludy.read'],
+    scopes: ['openid', MCP_SCOPE, MCP_DRAFT_SCOPE],
     claims: {},
     // Public clients only: a client holds no secret, so nothing to steal from its registration.
     clientAuthMethods: ['none'],
@@ -154,7 +157,7 @@ export async function createOauthServer(config: Config, run: RunDb): Promise<Oau
         useGrantedResource: async () => true,
         getResourceServerInfo: async (_ctx, indicator) => {
           if (indicator !== resource) throw new errors.InvalidTarget();
-          return { scope: MCP_SCOPE, audience: resource, accessTokenTTL: ACCESS_TOKEN_SECONDS, accessTokenFormat: 'jwt', jwt: { sign: { alg: 'ES256' } } };
+          return { scope: `${MCP_SCOPE} ${MCP_DRAFT_SCOPE}`, audience: resource, accessTokenTTL: ACCESS_TOKEN_SECONDS, accessTokenFormat: 'jwt', jwt: { sign: { alg: 'ES256' } } };
         },
       },
     },
