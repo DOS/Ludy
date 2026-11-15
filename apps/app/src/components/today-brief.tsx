@@ -12,8 +12,10 @@ import { useLocaleSetting } from '../i18n/provider.tsx';
 import { client } from '../lib/api.ts';
 import { briefDay, briefStorageKey, listFingerprint, readStoredBrief, storeBrief } from '../lib/today-brief.ts';
 
-export function TodayBrief({ slug, items }: { slug: string; items: readonly TodayItem[] }) {
+// name: the general manager's name now (the list's `coworkers.gm`): the summary line is hers, whether she wrote it or the template did.
+export function TodayBrief({ slug, items, name }: { slug: string; items: readonly TodayItem[]; name: string }) {
   const t = useTranslations('today.brief');
+  const today = useTranslations('today');
   const { locale } = useLocaleSetting();
   const language = locale === 'en' ? 'en' : 'vi';
   const key = briefStorageKey(slug, briefDay(), language, listFingerprint(items));
@@ -51,6 +53,7 @@ export function TodayBrief({ slug, items }: { slug: string; items: readonly Toda
       <div className="flex items-center gap-2">
         <h3 className="text-sm font-semibold">{t('title')}</h3>
         {writtenBy === 'vy' && <Badge variant="proposal">{t('aiBadge')}</Badge>}
+        <span className="text-xs text-subtle-foreground" data-testid="today-brief-coworker">{today('from', { name })}</span>
       </div>
       <p className="mt-2 text-sm text-foreground">{sentences.join(' ')}</p>
       <p className="mt-2 text-xs text-subtle-foreground">{writtenBy === 'vy' ? t('byVy') : t('byTemplate')}</p>
