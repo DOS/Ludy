@@ -3,6 +3,7 @@
 // what could not be read), the live check against the stock items before a member confirms, and the confirmed orders. No buyer data of any kind appears anywhere here: the importer
 // never reads the report's buyer columns.
 import { z } from 'zod';
+import { zMonth } from './journal-voucher.ts';
 import { zId, zJournalAmount, zJournalVoucherProposal, zLocalDate } from './schemas.ts';
 import { zStockFactor } from './stock.ts';
 
@@ -212,6 +213,9 @@ export type MarketplaceSettlementRequest = z.infer<typeof zMarketplaceSettlement
 // so the refund stays visible beside the net. The platform's party on the 131 line is null until the platform's first posting creates it.
 export const zMarketplaceSettlementProposal = zJournalVoucherProposal.extend({
   settlementId: zId,
+  // A settlement posts as one general voucher per month of delivery (#2516 rework slice C1), all of them by this one proposal in one transaction: the proposal shows the entries of every month
+  // one after the other in `lines` (each line's memo names its month) and lists the months, their entry dates and totals here; `date` is the settlement's last day and `total` the sum.
+  months: z.array(z.strictObject({ month: zMonth, date: zLocalDate, total: zJournalAmount })).min(1).max(12),
   platform: zMarketplacePlatform,
   periodFrom: zLocalDate,
   periodTo: zLocalDate,

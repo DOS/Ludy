@@ -79,14 +79,16 @@ test('an income report waits as a card, is confirmed by a person; one naming unk
     await expect(page.getByTestId('staged-income-report')).toHaveCount(0);
   });
 
-  await test.step('the stored settlement waits on the Sàn screen with its action disabled until the accountant confirms the account map (#2516 slice F)', async () => {
+  await test.step('the stored settlement waits on the Sàn screen for the delivery day of its sales: no month to post and no button until the orders carry one (#2516 slice F and the rework, slice C1)', async () => {
     await page.goto(page.url().replace(/\/inbox$/, '/marketplace'));
     const actions = page.getByTestId('marketplace-actions');
     await expect(actions).toBeVisible();
     await expect(actions.getByTestId('marketplace-gate')).toContainText('Chờ kế toán xác nhận bảng tài khoản sàn (#2520)');
     await expect(actions.getByTestId('marketplace-action-settlement')).toHaveCount(1);
     await expect(actions.getByTestId('marketplace-action-settlement')).toContainText('Shopee');
-    await expect(actions.getByTestId('marketplace-post')).toBeDisabled();
+    // The orders of the income report have no delivery day yet (an order report with a completion column gives it), so the settlement waits and offers nothing to ask for.
+    await expect(actions.getByTestId('marketplace-post')).toHaveCount(0);
+    await expect(actions.getByTestId('marketplace-post-waiting')).toContainText('Chờ ngày giao hàng');
     // Nothing else waits yet: no payout to record, no invoice to clear.
     await expect(page.getByTestId('marketplace-actions-payouts')).toHaveCount(0);
     await expect(page.getByTestId('marketplace-actions-invoices')).toHaveCount(0);

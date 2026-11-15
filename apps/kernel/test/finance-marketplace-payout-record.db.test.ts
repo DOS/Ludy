@@ -33,6 +33,8 @@ const confirmedMaps = (): Record<string, MarketplacePostingMap> => {
 const notMarketplace = (name: string) => !name.startsWith('finance.marketplace_settlement.') && !name.startsWith('finance.marketplace_payout.');
 
 interface SeedLine {
+  // The day the line's order was delivered; the first day of the period when absent, no order line (no delivery day) when null.
+  delivered?: string | null;
   sales: string;
   discount?: string;
   refund?: string;
@@ -94,6 +96,7 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
       for (const [i, l] of lines.entries()) {
         const orderId = randomUUID();
         await c.query('INSERT INTO crove_finance.channel_order (org_id, id, platform, order_no) VALUES ($1, $2, $3, $4)', [o.orgId, orderId, platform, `MK${randomUUID().slice(0, 12)}`]);
+        if (l.delivered !== null) await c.query("INSERT INTO crove_finance.channel_order_line (org_id, order_id, line_key, quantity, stage, delivered_at) VALUES ($1, $2, 'L1', 1, 'completed', $3)", [o.orgId, orderId, l.delivered ?? start]);
         await c.query(
           'INSERT INTO crove_finance.channel_settlement_line (org_id, id, settlement_id, order_id, line_key, sales, seller_discount, commission, service_fee, payment_fee, shipping, tax_withheld, refund, other, net) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)',
           [o.orgId, randomUUID(), id, orderId, `K${i}`, l.sales, l.discount ?? '0', l.commission ?? '0', l.service ?? '0', l.payment ?? '0', l.shipping ?? '0', l.tax ?? '0', l.refund ?? '0', l.other ?? '0', netOf(l)],
@@ -202,6 +205,44 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     const { o, settlement, line } = await posted('tiktok_shop', [{ sales: '90000', discount: '0' }], '90000');
     const done = await approve(o, (await ask(o, settlement, line)).proposalId);
     expect((await entryOf(o, done.journalEntryId)).map((l) => [l.account_code, l.debit, l.credit])).toEqual([['1121', '90000', '0'], ['131', '0', '90000']]);
+  });
+
+  it('posts a settlement of two months with one proposal and takes its payout once both vouchers stand; a month reversed on its own refuses the payout', async () => {
+    const o = await org();
+    // Two months of delivery: the first line was delivered in September, the second in October. The platform paid both at once.
+    const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', delivered: '2026-09-28' }, { sales: '200000', delivered: '2026-10-02' }]);
+    const line = await bankLine(o, '2026-10-20', '300000');
+    const done = await post(o, settlement);
+    expect(await rows("SELECT 1 FROM crove_finance.journal_voucher WHERE org_id = $1 AND settlement_id = $2", [o.orgId, settlement])).toHaveLength(2);
+    const { proposalId } = await ask(o, settlement, line);
+    await approve(o, proposalId);
+    expect(await payoutsOf(o, settlement)).toHaveLength(1);
+    // The credit to 131 is what the two months posted (the stored lines' whole): the platform's balance on 131 is nil.
+    const balance = await rows<{ net: string }>("SELECT coalesce(sum(l.debit - l.credit), 0)::text AS net FROM crove_finance.journal_line l WHERE l.org_id = $1 AND l.account_code = '131'", [o.orgId]);
+    expect(Number(balance[0]?.net)).toBe(0);
+    expect(done.journalEntryId).toBeTruthy();
+  });
+
+  it('refuses the payout when one month of the settlement is reversed on its own, at the request and the approval', async () => {
+    const o = await org();
+    const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', delivered: '2026-09-28' }, { sales: '200000', delivered: '2026-10-02' }]);
+    const line = await bankLine(o, '2026-10-20', '300000');
+    const done = await post(o, settlement);
+    const pending = await ask(o, settlement, line);
+    // The accountant reverses the first month's entry (the voucher of September) through the proposal path; the other month stands.
+    const asked = await rt.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.journal.reverse', input: { entryId: done.journalEntryId, entryDate: '2026-10-16', reason: 'Đảo để sửa' } }, { actor: asUser(o.admin), orgId: o.orgId, idempotencyKey: randomUUID() });
+    await approve(o, asked.proposalId);
+    await expect(approve(o, pending.proposalId)).rejects.toMatchObject({ code: 'MARKETPLACE_PAYOUT_SETTLEMENT_NOT_POSTED', status: 409 });
+    await expect(ask(o, settlement, line)).rejects.toMatchObject({ code: 'MARKETPLACE_PAYOUT_SETTLEMENT_NOT_POSTED', status: 409 });
+    expect(await payoutsOf(o, settlement)).toHaveLength(0);
+  });
+
+  it('refuses a payout while a sale of the settlement waits for its delivery day', async () => {
+    const o = await org();
+    const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000' }, { sales: '50000', delivered: null }]);
+    const line = await bankLine(o, '2026-10-20', '150000');
+    await expect(askSettlement(o, settlement)).rejects.toMatchObject({ code: 'MARKETPLACE_SETTLEMENT_WAITING_DELIVERY', status: 422 });
+    await expect(ask(o, settlement, line)).rejects.toMatchObject({ code: 'MARKETPLACE_PAYOUT_SETTLEMENT_NOT_POSTED', status: 409 });
   });
 
   it('refuses a payout before its settlement is posted, and after that posting was reversed: ghi sổ kỳ đối soát trước', async () => {

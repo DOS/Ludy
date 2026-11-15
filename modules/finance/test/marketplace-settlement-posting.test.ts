@@ -11,7 +11,7 @@ const confirmed = (): Record<string, MarketplacePostingMap> => {
   return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c(base.feePayable), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld) } };
 };
 const input = (lines: SettlementProposalInput['lines'], over: Partial<SettlementProposalInput> = {}): SettlementProposalInput => ({
-  regime: 'tt133', platform: 'shopee', periodFrom: '2026-10-01', periodTo: '2026-10-15', partyId: null, lines, ...over,
+  regime: 'tt133', platform: 'shopee', periodFrom: '2026-10-01', periodTo: '2026-10-15', month: '2026-10', date: '2026-10-15', partyId: null, lines, ...over,
 });
 const code = (fn: () => unknown) => {
   try { fn(); } catch (e) { return e instanceof DomainError ? { code: e.code, status: e.status } : e; }

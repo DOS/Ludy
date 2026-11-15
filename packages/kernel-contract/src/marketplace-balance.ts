@@ -2,6 +2,7 @@
 // The Sàn screen's read (#2516 slice D, plan docs/plan/stock-and-marketplaces.md section 8.4, "The payout"): for each platform an entity sells on, where the platform's money stands in the books,
 // read from the ledger by account and by the platform's party (crove_finance.marketplace_party). Facts only: no model call, nothing stored, no buyer or order data. Amounts are decimal strings.
 import { z } from 'zod';
+import { zMonth } from './journal-voucher.ts';
 import { zId, zLocalDate, zMoney } from './schemas.ts';
 
 export const zMarketplaceBalanceInput = z.strictObject({ legalEntityId: zId.optional() });
@@ -54,7 +55,8 @@ export type MarketplaceLine = z.infer<typeof zMarketplaceLine>;
 // What the Sàn screen lets a person act on (#2516 slice F, plan docs/plan/stock-and-marketplaces.md section 8.4): three short lists, read by code from the books and the stored settlements, no model
 // call and no buyer data. Each item is one proposal a person can ask for (finance.marketplace_settlement.record, finance.marketplace_payout.record, finance.marketplace_fee_clearing.record); nothing
 // is posted by reading them. `postingConfirmed` is the gate: false while the accountant has not confirmed the account map of an entity in view (#2520), when every request would be refused.
-// A settlement to post: a stored settlement that stands and has no posting voucher; `net` is what its entry would post (sales less seller discounts less refunds).
+// A settlement to post: a stored settlement that stands and has no posting voucher. It posts as one voucher per month of delivery (#2516 rework slice C1), all by one proposal; `months` are those months and
+// `net` the sum of what their entries post (sales less seller discounts less refunds). A settlement with a sale that has no delivery day yet waits (`waitingLines` of them, no month), nothing to ask for.
 export const zMarketplaceSettlementToPost = z.object({
   id: zId,
   legalEntityId: zId,
@@ -62,7 +64,10 @@ export const zMarketplaceSettlementToPost = z.object({
   platformName: z.string(),
   periodFrom: zLocalDate,
   periodTo: zLocalDate,
+  // The months of delivery (YYYY-MM) the entries are for; none while the settlement waits for the delivery day of some of its sales.
+  months: z.array(zMonth),
   net: zMoney,
+  waitingLines: z.number().int().min(0),
   // A proposal for it already waits in the Inbox: the screen links to it instead of offering a second request.
   proposalId: zId.nullable(),
 });

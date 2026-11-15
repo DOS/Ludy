@@ -127,6 +127,7 @@ export async function postJournalVoucher(
   settlementId: string | null = null,
   payout: { settlementId: string; bankLineId: string } | null = null,
   feeDocumentId: string | null = null,
+  settlementMonth: string | null = null,
 ) {
   if (!ctx.proposalId) throw new DomainError('FORBIDDEN', 403, 'Lệnh này chỉ chạy qua đề xuất đã duyệt');
   const legalEntityId = await resolveLegalEntity(ctx, payload.legalEntityId);
@@ -149,6 +150,8 @@ export async function postJournalVoucher(
       ...(payrollRunId === null ? {} : { payroll_run_id: payrollRunId }),
       // The column of a marketplace settlement's posting is written only for one, as the others.
       ...(settlementId === null ? {} : { settlement_id: settlementId }),
+      // A settlement's posting is one voucher per month of delivery (YYYY-MM), stored as the first day of the month.
+      ...(settlementMonth === null ? {} : { settlement_month: `${settlementMonth}-01` }),
       // The columns of a platform payout's posting are written only for one, as the others.
       ...(payout === null ? {} : { payout_settlement_id: payout.settlementId, payout_bank_line_id: payout.bankLineId }),
       // The column of a marketplace fee clearing is written only for one, as the others.
