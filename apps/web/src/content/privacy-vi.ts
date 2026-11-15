@@ -15,7 +15,7 @@ export const privacyVi: PrivacyCopy = {
   crumbLabel: 'Đường dẫn trang',
   title: 'Chính sách quyền riêng tư',
   lead: 'Trang này nói rõ Ludy xử lý dữ liệu thế nào khi bạn dùng tiện ích Ludy cho trình duyệt và khi bạn dùng Ludy Cloud. Phần về tiện ích đi trước, vì đó là phần cần đọc trước khi bạn bấm ghi.',
-  versionLine: 'Phiên bản 1.0, có hiệu lực từ 13/11/2026.',
+  versionLine: 'Phiên bản 1.1, có hiệu lực từ 15/11/2026.',
   reviewNotice: 'Chính sách này đang được rà soát và có thể được cập nhật.',
   contentsTitle: 'Nội dung',
   sections: [
@@ -58,6 +58,8 @@ export const privacyVi: PrivacyCopy = {
             ['Mã đăng nhập của tiện ích', 'Sau khi bạn đăng nhập Ludy và cho phép tiện ích', 'Để Ludy biết tiện ích làm việc cho bạn, trong một tổ chức'],
             ['Tên thiết bị, ví dụ "Tiện ích Ludy, Chrome trên Windows"', 'Khi bạn kết nối tiện ích', 'Để bạn thấy và thu hồi thiết bị trong Ludy. Chỉ gồm trình duyệt và hệ điều hành, không có địa chỉ mạng hay số sê-ri'],
             ['Địa chỉ Ludy và các tính năng bạn đã bật', 'Khi bạn cài đặt tiện ích', 'Lưu trong bộ nhớ riêng của tiện ích trên máy bạn'],
+            ['Các cuộc họp sắp tới trong lịch của bạn (tên, giờ, nơi họp; tối đa 5 cuộc trong 30 phút tới)', 'Chỉ khi bạn bật đọc lịch trong Ludy và cho phép thêm một lần ở bước đăng nhập tiện ích', 'Để hiện thẻ "Sắp họp" và điền sẵn tên cuộc họp khi bạn bấm "Ghi cuộc họp này". Tiện ích chỉ hiển thị danh sách này, không lưu'],
+            ['Âm thanh gửi đi trong lúc ghi', 'Chỉ khi bạn tick "Ghi chú trực tiếp" cho cuộc họp đó', `Để ${N.gm} ghi chú ngay trong cuộc họp: các mẩu âm thanh được gửi tới địa chỉ Ludy của bạn khi đang ghi, không đợi tới lúc dừng; có thể tốn thêm phút phiên âm`],
           ],
         },
         {
@@ -201,7 +203,9 @@ export const privacyVi: PrivacyCopy = {
           items: [
             'Dữ liệu tài khoản: họ tên, email, mật khẩu (chỉ lưu dạng băm), yếu tố xác thực hai lớp; và hoạt động như thời điểm đăng nhập, địa chỉ IP, trình duyệt, nhật ký thao tác. Với dữ liệu này, Ludy là bên kiểm soát dữ liệu.',
             'Dữ liệu trong sổ sách của tổ chức (chứng từ, hóa đơn, sao kê, bút toán, và cuộc họp): tổ chức quyết định mục đích xử lý. Ludy là bên xử lý và chỉ làm theo chỉ dẫn của tổ chức.',
-            'Lịch Google: chỉ khi một thành viên tự kết nối lịch của mình. Ludy đọc các khoảng giờ bận, không đọc tiêu đề hay người tham dự. Mọi thành viên của tổ chức thấy các khoảng giờ bận này (không kèm nội dung).',
+            'Lịch Google: chỉ khi một thành viên tự kết nối lịch của mình. Mặc định Ludy chỉ đọc các khoảng giờ bận, không đọc tiêu đề hay người tham dự, và mọi thành viên của tổ chức thấy các khoảng giờ bận này (không kèm nội dung).',
+            'Chỉ khi chính thành viên đó bật "Cho Ludy đọc tên và giờ cuộc họp trong lịch" và cho phép thêm một lần trên trang của Google, Ludy đọc từ lịch chính của họ, trong khoảng từ 1 ngày trước đến 7 ngày sau: tên cuộc họp (cắt còn 200 ký tự), giờ bắt đầu và kết thúc, múi giờ, địa chỉ vào họp trên Google Meet, Zoom hoặc Teams và số người được mời. Ludy không đọc địa chỉ email người được mời, phần mô tả hay tệp đính kèm. Chỉ chính thành viên đó đọc được các dòng này (chủ sở hữu, quản trị viên, thành viên khác và hệ thống không đọc). Chúng bị xóa ngay khi họ tắt việc đọc hoặc ngắt kết nối lịch; các dòng nằm ngoài khoảng trên được dọn đi theo lịch quét, và dòng đã gắn với một cuộc họp đã ghi được giữ cùng cuộc họp đó. Tên cuộc họp có thể chứa tên người khác.',
+            'Lịch Outlook (Microsoft): chỉ khi một thành viên tự kết nối lịch của mình. Microsoft chỉ có loại quyền đọc kèm tiêu đề sự kiện, nên quyền được cấp ngay từ lúc kết nối ở mức đó và màn hình nói rõ như vậy; việc Ludy đọc và giữ gì do mã của Ludy và công tắc của thành viên quyết định. Mặc định Ludy chỉ đọc và giữ các khoảng giờ bận. Chỉ khi thành viên bật "Cho Ludy đọc tên và giờ cuộc họp trong lịch", Ludy mới đọc và giữ tên cuộc họp, giờ, địa chỉ vào họp Teams và số người được mời (Ludy đếm số người được mời trong bộ nhớ và không giữ địa chỉ nào), trong cùng khoảng từ 1 ngày trước đến 7 ngày sau, với cùng quy tắc về người đọc và việc xóa như lịch Google ở trên.',
             'Mục đích: cung cấp dịch vụ, bảo mật (xác thực đăng nhập, xác thực hai lớp, nhật ký kiểm toán), hỗ trợ và vận hành, và trả lời yêu cầu hợp lệ của cơ quan nhà nước.',
             'Ludy không bán dữ liệu cá nhân, không dùng chứng từ hay sổ sách của bạn để quảng cáo, và không dùng chúng để huấn luyện mô hình AI.',
             'AI với chứng từ: hóa đơn điện tử dạng XML được đọc trực tiếp, không qua AI. PDF và ảnh chụp chứng từ được gửi tới nhà cung cấp AI của triển khai để đọc nội dung. Kết quả luôn được kiểm bằng quy tắc và do người duyệt trước khi ghi sổ.',
