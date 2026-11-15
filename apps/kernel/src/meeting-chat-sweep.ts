@@ -31,6 +31,9 @@ export async function runMeetingChatSweep(deps: ChatSweepDeps): Promise<{ handed
   for (const row of open.rows) {
     const ctx = { actor: ACTOR, orgId: row.org_id };
     try {
+      // An org whose Meetings is off (ADR-0053) is handed nothing and has nothing recorded: every branch below calls a command that is refused for it (the records of
+      // `lost` and `expire` do not run while the app is off), so its rows stay open, untouched and quiet, until the app is back on.
+      if (!(await deps.runtime.appOn(row.org_id, 'meetings'))) continue;
       if (row.kind === 'lost') {
         // An attempt began and never concluded (the worker died, or the outcome could not be recorded): the request may be in the channel, so it is settled ambiguous and never sent again.
         await deps.runtime.execute('meetings.chat.record', { id: row.id, outcome: 'ambiguous', httpStatus: null, code: 'CHANNEL_NO_ANSWER' }, ctx);
@@ -39,8 +42,6 @@ export async function runMeetingChatSweep(deps: ChatSweepDeps): Promise<{ handed
         await deps.runtime.execute('meetings.chat.record', { id: row.id, outcome: 'expired', httpStatus: null, code: null }, ctx);
         done.expired += 1;
       } else {
-        // An org whose Meetings is off (ADR-0053) is sent nothing: no job is queued for a post that would be refused. The expiry and the lost ones above still run.
-        if (!(await deps.runtime.appOn(row.org_id, 'meetings'))) continue;
         await deps.send({ orgId: row.org_id, id: row.id });
         await deps.runtime.execute('meetings.chat.queued', { id: row.id }, ctx);
         done.handedOver += 1;

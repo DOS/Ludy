@@ -370,6 +370,29 @@ describe('the lines of a job (#2175)', () => {
     expect(log.raw.length).toBe(before);
   });
 
+  it('does not end quietly a job of a keeping queue: a refusal there is a defect and fails loudly', async () => {
+    const log = capture('worker');
+    const handlers = new Map<string, Handler>();
+    const boss = {
+      work: async (name: string, ...rest: unknown[]) => {
+        handlers.set(name, rest.at(-1) as Handler);
+        return 'worker-id';
+      },
+    };
+    withJobLogContext(boss, { loudQueues: new Set(['kernel-ads-pause']) });
+    const off = Object.assign(new Error('off'), { code: 'MODULE_OFF', details: { module: 'ads' } });
+    await boss.work('kernel-ads-pause', async () => {
+      throw off;
+    });
+    await boss.work('kernel-ads-sync', async () => {
+      throw off;
+    });
+    await expect(handlers.get('kernel-ads-pause')!([{ id: 'j1' }])).rejects.toBe(off);
+    await expect(handlers.get('kernel-ads-sync')!([{ id: 'j2' }])).resolves.toBeUndefined();
+    expect(log.raw.join('\n')).toContain('[jobs] kernel-ads-pause handler failed');
+    expect(log.raw.join('\n')).toContain('[jobs] kernel-ads-sync skipped: ads is off');
+  });
+
   it('has no org for a job whose payload names none (or not a uuid), and no job id for a batch; a handler without options still works', async () => {
     const log = capture('worker');
     const { boss, run } = fakeBoss();
@@ -435,7 +458,7 @@ describe('the lines of a job (#2175)', () => {
   it('is installed in the worker before any job is registered, and the logger is started by main for the long-running roles', () => {
     const worker = readFileSync(join(import.meta.dirname, '..', 'src', 'worker.ts'), 'utf8');
     const created = worker.indexOf('new PgBoss(');
-    const wrapped = worker.indexOf('withJobLogContext(boss)');
+    const wrapped = worker.indexOf('withJobLogContext(boss');
     const firstWork = worker.indexOf('boss.work');
     expect(created).toBeGreaterThan(0);
     expect(wrapped).toBeGreaterThan(created);

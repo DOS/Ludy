@@ -295,7 +295,7 @@ const AGENDA_BACK_MS = DAY_MS;
 const AGENDA_AHEAD_MS = 7 * DAY_MS;
 
 // Reads the member's events and hands them to the meetings module's own command, which replaces the cache (the system context cannot read it back, so a definer does the delete and the write).
-// A deployment without the meetings module has no such command: the call fails and is only logged. Nothing here keeps a title in a log: a failure is named by a code.
+// An org whose Meetings is off, or a deployment without the meetings module, has no agenda to keep: the provider is not read and nothing is logged. Nothing here keeps a title in a log: a failure is named by a code.
 async function readAgenda(deps: CalendarSyncDeps, job: CalendarSyncJob, adapter: CalendarAdapter, secret: string, at: Date, options: { actor: SystemActor; orgId: string }): Promise<void> {
   try {
     // An org whose Meetings is off (ADR-0053) has no agenda to keep: the provider is not read, and nothing is logged for the refusal that would follow.

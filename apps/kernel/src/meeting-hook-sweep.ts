@@ -35,7 +35,8 @@ export async function runMeetingHookSweep(deps: MeetingHookSweepDeps): Promise<{
         await deps.runtime.execute('meetings.hook.record', { id: row.id, outcome: 'expired' }, ctx);
         done.expired += 1;
       } else {
-        // An org whose Meetings is off (ADR-0053) is sent nothing: no job is queued for a delivery that would be refused. The expiry above still runs.
+        // An org whose Meetings is off (ADR-0053) is sent nothing: no job is queued for a delivery that would be refused. The expiry above is a keeping duty
+        // (meetings.hook.record declares runsWhenOff once step 0 has landed) and still runs.
         if (!(await deps.runtime.appOn(row.org_id, 'meetings'))) continue;
         await deps.send({ orgId: row.org_id, id: row.id });
         await deps.runtime.execute('meetings.hook.queued', { id: row.id }, ctx);

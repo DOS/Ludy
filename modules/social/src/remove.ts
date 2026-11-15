@@ -11,7 +11,7 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 import { zId } from '@crove/kernel-contract';
 import type { Db, MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import { DomainError, defineCommand, moduleOffOf, type CommandContext, type Runtime, type SystemActor } from '@crove/kernel-runtime';
 import { REMOVE_READY, isProvider, removeAtFit, removeAtOf, removeWindowMs } from './domain/channels.ts';
 import { callRevision, publishCallKey } from './domain/publish.ts';
 import { COMMENT_STALE_MS, type CommentCall } from './comments.ts';
@@ -317,11 +317,11 @@ export async function sweepRemovals(deps: { runtime: Runtime; workerDb: Db }, pr
   let queued = 0;
   for (const row of rows) {
     try {
-      // An app that is off for the org (ADR-0053) has nothing to do here: no call, no refusal row, no line in the log.
-      if (!(await deps.runtime.appOn(row.org_id, 'social'))) continue;
       const done = await deps.runtime.execute<{ queued: boolean }>('social.remove.schedule', { variantId: row.variant_id }, { actor: SWEEP_ACTOR, orgId: row.org_id });
       if (done.queued) queued += 1;
     } catch (error) {
+      // Social off: a planned takedown is exposure-stopping and joins runsWhenOff in C3 (ADR-0053); until then it is refused quietly, row by row.
+      if (moduleOffOf(error) !== null) continue;
       console.warn(`[social-remove] planned removal of variant ${row.variant_id.slice(0, 8)}: ${error instanceof DomainError ? error.code : error instanceof Error ? error.name : 'error'}`);
     }
   }

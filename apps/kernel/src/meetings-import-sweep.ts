@@ -17,6 +17,8 @@ export const MEETINGS_IMPORT_SWEEP_EXPIRE_SECONDS = 120;
 // Rows and connections one pass handles at most; the rest wait for the next minute.
 const OPEN_PER_PASS = 200;
 const CONNECTIONS_PER_PASS = 50;
+// How many pages of due connections one pass reads at most while it skips those of an org whose Meetings is off.
+const MAX_DUE_PAGES = 20;
 
 const ACTOR = { type: 'system' as const, component: 'meetings.import' };
 const codeOf = (error: unknown) => (error instanceof DomainError ? error.code : error instanceof Error ? error.name : 'error');
@@ -84,30 +86,43 @@ export async function runMeetingsImportSweep(deps: MeetingsImportSweepDeps): Pro
   }
 
   // The suggestions of the connections that are due.
-  const due = await sql<{ org_id: string; connection_id: string; provider: MeetingPlatformProvider }>`SELECT org_id, connection_id, provider FROM crove_kernel.meeting_platform_sync_due(NULL::uuid, NULL::uuid, ${CONNECTIONS_PER_PASS}::int)`.execute(deps.workerDb);
-  for (const row of due.rows) {
-    const ctx = { actor: ACTOR, orgId: row.org_id };
-    const adapter = deps.adapters[row.provider];
-    try {
-      // Nor does it list a platform's recordings: no call to the platform for an app that is off.
-      if (!(await deps.runtime.appOn(row.org_id, 'meetings'))) continue;
-      if (!adapter) throw new MeetingPlatformError('platform_unavailable');
-      const sealed = await deps.runtime.query<{ keyId: string; envelope: string; provider: string; externalAccount: string }>('kernel.meeting_platform.credential', { connectionId: row.connection_id }, ctx);
-      const secret = deps.broker.open({ keyId: sealed.keyId, envelope: Buffer.from(sealed.envelope, 'base64') }, meetingPlatformBinding(row.org_id, sealed.provider as MeetingPlatformProvider, sealed.externalAccount));
-      const parsed = JSON.parse(secret) as { accessToken?: unknown; refreshToken?: unknown };
-      if (typeof parsed.accessToken !== 'string' || parsed.accessToken === '') throw new MeetingPlatformError('connection_expired');
-      const since = new Date(now().getTime() - MEETING_PLATFORM_LIST_DAYS * 86_400_000);
-      const listed = await adapter.list({ accessToken: parsed.accessToken, ...(typeof parsed.refreshToken === 'string' ? { refreshToken: parsed.refreshToken } : {}) }, since);
-      await deps.runtime.execute('kernel.meeting_platform.recording_replace', { connectionId: row.connection_id, rows: listed.slice(0, 100) }, ctx);
-      done.listed += 1;
-    } catch (error) {
-      done.failures += 1;
-      const code = error instanceof MeetingPlatformError ? error.code : error instanceof DomainError && /MEETING_PLATFORM_(NOT_ACTIVE|OWNER_LEFT)/.test(error.code) ? 'connection_expired' : 'platform_unavailable';
-      console.warn(`[meetings-import-sweep] connection ${row.connection_id.slice(0, 8)} not listed`, codeOf(error));
-      await deps.runtime
-        .execute('kernel.meeting_platform.sync_failed', { connectionId: row.connection_id, code, expired: code === 'connection_expired' }, ctx)
-        .catch((inner) => console.warn('[meetings-import-sweep] could not record the failure', codeOf(inner)));
+  // The suggestions of the connections that are due.
+  // The connections of an org whose Meetings is off are skipped, and the due list is paged by its key, so those rows (still due, the sync never ran)
+  // do not sit at the head of every pass and hide the connections of the orgs behind them.
+  let after: { org: string; id: string } | null = null;
+  // A pass lists at most CONNECTIONS_PER_PASS connections, as before: only the ones it does not skip count.
+  let worked = 0;
+  for (let page = 0; page < MAX_DUE_PAGES && worked < CONNECTIONS_PER_PASS; page++) {
+    const due: { rows: Array<{ org_id: string; connection_id: string; provider: MeetingPlatformProvider }> } = await sql<{ org_id: string; connection_id: string; provider: MeetingPlatformProvider }>`SELECT org_id, connection_id, provider FROM crove_kernel.meeting_platform_sync_due(${after?.org ?? null}::uuid, ${after?.id ?? null}::uuid, ${CONNECTIONS_PER_PASS}::int)`.execute(deps.workerDb);
+    for (const row of due.rows) {
+      const ctx = { actor: ACTOR, orgId: row.org_id };
+      const adapter = deps.adapters[row.provider];
+      // Nor does it list a platform's recordings: no call to the platform for an app that is off. A database error here is no platform error: the
+      // connection is left for the next pass, not marked failed.
+      if (!(await deps.runtime.appOn(row.org_id, 'meetings').catch(() => false))) continue;
+      worked += 1;
+      try {
+        if (!adapter) throw new MeetingPlatformError('platform_unavailable');
+        const sealed = await deps.runtime.query<{ keyId: string; envelope: string; provider: string; externalAccount: string }>('kernel.meeting_platform.credential', { connectionId: row.connection_id }, ctx);
+        const secret = deps.broker.open({ keyId: sealed.keyId, envelope: Buffer.from(sealed.envelope, 'base64') }, meetingPlatformBinding(row.org_id, sealed.provider as MeetingPlatformProvider, sealed.externalAccount));
+        const parsed = JSON.parse(secret) as { accessToken?: unknown; refreshToken?: unknown };
+        if (typeof parsed.accessToken !== 'string' || parsed.accessToken === '') throw new MeetingPlatformError('connection_expired');
+        const since = new Date(now().getTime() - MEETING_PLATFORM_LIST_DAYS * 86_400_000);
+        const listed = await adapter.list({ accessToken: parsed.accessToken, ...(typeof parsed.refreshToken === 'string' ? { refreshToken: parsed.refreshToken } : {}) }, since);
+        await deps.runtime.execute('kernel.meeting_platform.recording_replace', { connectionId: row.connection_id, rows: listed.slice(0, 100) }, ctx);
+        done.listed += 1;
+      } catch (error) {
+        done.failures += 1;
+        const code = error instanceof MeetingPlatformError ? error.code : error instanceof DomainError && /MEETING_PLATFORM_(NOT_ACTIVE|OWNER_LEFT)/.test(error.code) ? 'connection_expired' : 'platform_unavailable';
+        console.warn(`[meetings-import-sweep] connection ${row.connection_id.slice(0, 8)} not listed`, codeOf(error));
+        await deps.runtime
+          .execute('kernel.meeting_platform.sync_failed', { connectionId: row.connection_id, code, expired: code === 'connection_expired' }, ctx)
+          .catch((inner) => console.warn('[meetings-import-sweep] could not record the failure', codeOf(inner)));
+      }
     }
+    const last = due.rows.at(-1);
+    if (due.rows.length < CONNECTIONS_PER_PASS || !last) break;
+    after = { org: last.org_id, id: last.connection_id };
   }
   return done;
 }

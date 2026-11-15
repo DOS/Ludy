@@ -182,7 +182,8 @@ function noteSkippedJob(queue: string, module: string, orgId: string | undefined
   const now = Date.now();
   if (now - (skippedJobLines.get(key) ?? 0) < 60_000) return;
   skippedJobLines.set(key, now);
-  console.info(`[jobs] ${queue} skipped: ${module} is off${orgId ? ` for org ${orgId.slice(0, 8)}` : ''}`);
+  // A warning, not info: a billing port that wrongly answers [] would end every job of every app this way, and this line is the only signal.
+  console.warn(`[jobs] ${queue} skipped: ${module} is off${orgId ? ` for org ${orgId.slice(0, 8)}` : ''}`);
 }
 
 interface WorkerLike {
@@ -194,7 +195,7 @@ type WorkFunction = (name: string, ...rest: unknown[]) => Promise<string>;
  * Wraps `boss.work` so each job's handler runs in a log context: the queue, the job's id (when it comes one at a time) and
  * the org its payload names. Call it once, right after creating the queue client, before any `work` registration.
  */
-export function withJobLogContext(boss: WorkerLike): void {
+export function withJobLogContext(boss: WorkerLike, options: { loudQueues?: ReadonlySet<string> } = {}): void {
   const original = (boss.work as WorkFunction).bind(boss);
   (boss as { work: WorkFunction }).work = (name, ...rest) => {
     const handler = rest.at(-1);
@@ -212,7 +213,7 @@ export function withJobLogContext(boss: WorkerLike): void {
             // An app that is off for the org (ADR-0053, MODULE_OFF) is its state, not a failure: the job ends, no retry, no dead letter, no stack
             // trace. One line a minute per queue and module says so (ids only, never the payload).
             const off = moduleOffOf(error);
-            if (off !== null) {
+            if (off !== null && !options.loudQueues?.has(name)) {
               noteSkippedJob(name, off, orgId);
               return undefined;
             }

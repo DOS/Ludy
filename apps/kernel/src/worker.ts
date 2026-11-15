@@ -725,7 +725,9 @@ export async function recordLastAttemptFailure(
 export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>> {
   const boss = new PgBoss({ connectionString: deps.connectionString, schema: JOB_SCHEMA, migrate: false, createSchema: false });
   // Every job runs with its queue, its id and the org its payload names on its log lines (#2175).
-  withJobLogContext(boss);
+  // The queues whose job runs a keeping duty (stop spend, revoke, retention, an AI agent's approval) are not ended quietly on MODULE_OFF: a refusal there
+  // is a defect and fails loudly, retried and dead-lettered as before.
+  withJobLogContext(boss, { loudQueues: new Set<string>([QUEUES.adsPause, QUEUES.adsRevoke, QUEUES.notesMemberPurge, QUEUES.notesTrash, QUEUES.crmImportExpire, QUEUES.agentProposal]) });
   boss.on('error', (error) => console.error('[pg-boss]', error));
   await boss.start();
 
@@ -843,6 +845,8 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         }
       }
     } catch (error) {
+      // An app that is off for the org (ADR-0053) ends the job at the wrapper: no stack trace, no retries, no failed run recorded.
+      if (moduleOffOf(error) !== null) throw error;
       console.error(`[extract] file ${fileId}${version ? ` version ${version}` : ''} attempt ${job.retryCount + 1}`, error);
       if (job.retryCount < EXTRACT_RETRY_LIMIT) throw error;
       // The last attempt records a failed run either way, so the file never stays "being read".
@@ -859,6 +863,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       const done = await importPortalList({ runtime: deps.runtime, store: deps.store, extract: deps.extract }, orgId, listId, job.retryCount);
       if (done) console.log(`[portal-list] list ${listId}: ${done.rows} row(s)`);
     } catch (error) {
+      if (moduleOffOf(error) !== null) throw error;
       console.error(`[portal-list] list ${listId} attempt ${job.retryCount + 1}`, error);
       if (job.retryCount < PORTAL_LIST_RETRY_LIMIT) throw error;
       await recordPortalListFailure(deps.runtime, orgId, listId, 'Không đọc được danh sách sau nhiều lần thử; hãy nhập lại tệp');
