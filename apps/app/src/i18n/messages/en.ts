@@ -200,6 +200,12 @@ export const en = {
     count: '{count, plural, one {# item} other {# items}}',
     due: 'Due {when}',
     open: 'Open',
+    since: {
+      title: 'Since yesterday',
+      subtitle: 'What your AI coworkers prepared over the last day. You approve each item before anything is sent or spent.',
+      line: '{name} prepared {count, plural, one {# item} other {# items}} for you',
+      open: 'Open',
+    },
     fallback: {
       flag: 'A warning needs your attention',
       proposal: 'A proposal is waiting for your approval',
@@ -11335,6 +11341,7 @@ export const en = {
           start: 'Start a run of Vy working for you',
         },
       },
+      since_yesterday: 'Read what the AI coworkers prepared since yesterday',
       vy_data: {
         member_data: {
           purge: "Remove a former member's Vy results and memory after 30 days (daily sweep)",
