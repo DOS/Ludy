@@ -164,4 +164,19 @@ suite('the delivery day of an order line (#2516)', () => {
     await confirm(o, report(row('F1', 'Hoàn trả', '')));
     expect((await days(o)).find((r) => r.order_no === 'F1')).toMatchObject({ stage: 'returned', delivered_at: '2026-11-03' });
   });
+
+  it('keeps no day for a delivery that did not happen: a shipped line that comes back and a line first seen returned, while a completed line that comes back may take its day', async () => {
+    const o = await org();
+    await confirm(o, report(row('G1', 'Đang giao', ''), row('G2', 'Hoàn thành', '')));
+    // G1 failed delivery: the platform closes the order and fills its completion column, and the parcel came back. G3 is new and first seen returned, with a day.
+    await confirm(o, report(row('G1', 'Hoàn trả', '2026-11-08'), row('G3', 'Hoàn trả', '2026-11-08')));
+    // G2 is completed with no day and then comes back with one.
+    await confirm(o, report(row('G2', 'Hoàn trả', '2026-11-09')));
+    expect(await days(o)).toEqual([
+      { order_no: 'G1', stage: 'returned', delivered_at: null },
+      // G2 was completed, then came back: the day the report gives with the return is kept (it was delivered).
+      { order_no: 'G2', stage: 'returned', delivered_at: '2026-11-09' },
+      { order_no: 'G3', stage: 'returned', delivered_at: null },
+    ]);
+  });
 });

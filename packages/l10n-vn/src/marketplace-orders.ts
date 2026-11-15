@@ -451,8 +451,9 @@ export function orderLines(rows: StatementGrid, mapping: OrderMapping, maxRows: 
     const deliveredText = text(row, 'deliveredAt');
     const orderedAt = orderedText === '' ? null : readDay(cell(row, 'orderedAt'));
     const shippedAt = shippedText === '' ? null : readDay(cell(row, 'shippedAt'));
+    // The completion cell does not decide stock, so a cell that is no day (a dash, a word) is no day, not a refused row: the line waits for its day ("chờ ngày giao").
     const deliveredAt = deliveredText === '' ? null : readDay(cell(row, 'deliveredAt'));
-    if ((orderedText !== '' && orderedAt === null) || (shippedText !== '' && shippedAt === null) || (deliveredText !== '' && deliveredAt === null)) {
+    if ((orderedText !== '' && orderedAt === null) || (shippedText !== '' && shippedAt === null)) {
       skipped.push({ rowNo, reason: 'bad_date' });
       continue;
     }

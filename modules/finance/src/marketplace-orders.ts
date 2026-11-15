@@ -406,8 +406,9 @@ export const marketplaceConfirm = defineCommand({
         const key = keyOf({ platform, orderNo: line.orderNo, lineKey: line.lineKey });
         const was = known.get(key);
         if (was) {
-          // The delivery day is only kept on a delivered line (completed, or returned after it): the day a report gives to a line that is not there yet is not written.
-          const deliveredAt = was.deliveredAt === null && line.deliveredAt !== null && (line.stage === 'completed' || line.stage === 'returned') ? line.deliveredAt : null;
+          // The delivery day is kept only for a delivery that happened: a line reported completed, or one that was completed and then came back. A line that goes from shipped to returned
+          // is a failed delivery (the parcel came back to the seller): whatever day the platform gives it, none is written.
+          const deliveredAt = was.deliveredAt === null && line.deliveredAt !== null && (line.stage === 'completed' || (line.stage === 'returned' && was.stage === 'completed')) ? line.deliveredAt : null;
           if (canAdvance(was.stage, line.stage)) {
             // The shipping day and the delivery day are set once; a later report can give them, never change them.
             await ctx.trx
@@ -424,8 +425,8 @@ export const marketplaceConfirm = defineCommand({
             updatedLines += 1;
             touched.push({ id: was.id, stage: line.stage, quantity: was.quantity, shippedAt: was.shippedAt ?? line.shippedAt, orderedAt: was.orderedAt ?? line.orderedAt, sku: was.sku, attempt: was.attempt });
           } else {
-            // A line that is already delivered and has no delivery day yet takes it from this report (the earlier file had no completion column).
-            if (was.deliveredAt === null && line.deliveredAt !== null && (was.stage === 'completed' || was.stage === 'returned')) {
+            // A line that is already completed and has no delivery day yet takes it from a report that says it is completed (the earlier file had no completion column).
+            if (was.deliveredAt === null && line.deliveredAt !== null && was.stage === 'completed' && line.stage === 'completed') {
               await ctx.trx
                 .updateTable('crove_finance.channel_order_line')
                 .set({ delivered_at: line.deliveredAt, updated_at: ctx.now })
@@ -460,7 +461,8 @@ export const marketplaceConfirm = defineCommand({
             amount: line.amount,
             stage: line.stage,
             shipped_at: line.shippedAt,
-            delivered_at: line.stage === 'completed' || line.stage === 'returned' ? line.deliveredAt : null,
+            // A new line reported returned was never seen delivered: it gets no day.
+            delivered_at: line.stage === 'completed' ? line.deliveredAt : null,
             source_sha256: staged.sha256,
             source_row: line.rowNo,
           })
