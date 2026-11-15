@@ -558,9 +558,9 @@ suite('projects module on PostgreSQL (#2591)', () => {
     const exportView = await query<OrgExportView>(owner.userId, org.orgId, 'kernel.org.export.get');
     expect(exportView.export?.tables.find((t) => t.table === 'projects.project')?.rows).toBe(1);
 
-    // PDPL erase on a 200-char project name whose redaction expansion truncates right after whitespace must btrim cleanly (#2591 review).
-    const shortEmail = 'a@b.com';
-    const edgeName = `${shortEmail} ${'x'.repeat(200 - shortEmail.length - 3)} y`;
+    // PDPL erase on a 200-char project name whose +2 redaction expansion to 8-char '[đã xóa]' truncates right after whitespace must btrim cleanly (#2591 review).
+    const shortEmail = 'a@test';
+    const edgeName = `${shortEmail} ${'x'.repeat(200 - shortEmail.length - 4)} yy`;
     expect(edgeName).toHaveLength(200);
     const { projectId: edgeProjectId } = await exec<{ projectId: string }>(owner.userId, org.orgId, 'projects.project.create', {
       name: edgeName,
@@ -586,7 +586,7 @@ suite('projects module on PostgreSQL (#2591)', () => {
       { actor: asMfa(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() },
     );
     const edgeBoard = await query<ProjectBoard>(owner.userId, org.orgId, 'projects.board', { projectId: edgeProjectId });
-    expect(edgeBoard.project.name).toContain('[đã xóa]');
+    expect(edgeBoard.project.name).toBe(`[đã xóa] ${'x'.repeat(190)}`);
     expect(edgeBoard.project.name.length).toBeLessThanOrEqual(200);
     expect(edgeBoard.project.name).toBe(edgeBoard.project.name.trim());
     expect(edgeBoard.seats.find((s) => s.id === archivedSeatId)).toMatchObject({ id: archivedSeatId, status: 'archived', title: 'Vị trí cũ' });
