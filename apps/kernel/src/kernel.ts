@@ -7,7 +7,7 @@ import type { Server } from 'node:http';
 import { configureUploadTimeouts } from './upload-timeouts.ts';
 import { memberMeter } from './ai-meter.ts';
 import { summaryModelPort, type ModelPort } from './member-vy-ports.ts';
-import { AdsCampaignWriter, ConversationWriter, InboxReader, InvoiceExtractor, SchedulingReader, SocialWriter, TodayWriter, WeeklyWriter, type InvoiceReader } from '@crove/agent';
+import { AdsCampaignWriter, ConversationWriter, InboxReader, InvoiceExtractor, SchedulingReader, SignAiReader, SocialWriter, TodayWriter, WeeklyWriter, type InvoiceReader } from '@crove/agent';
 import {
   BlueskyPublisher,
   TELEGRAM_HOOK_KEY_INFO,
@@ -85,7 +85,7 @@ import { notesCommands, notesManifest, notesQueries } from '@crove/mod-notes';
 import { projectsCommands, projectsManifest, projectsQueries } from '@crove/mod-projects';
 import { adsBusy, adsCommands, adsManifest, adsQueries } from '@crove/mod-ads';
 import { meetingsBusy, meetingsCommands, meetingsManifest, meetingsQueries, setSummaryEnabled, setTranscribeBroker, setTranscribeEnabled } from '@crove/mod-meetings';
-import { signCommands, signManifest, signQueries } from '@crove/mod-sign';
+import { signAiCommands, signAiQueries, signCommands, signManifest, signQueries } from '@crove/mod-sign';
 import { GoogleAdsConnector, MetaAdsConnector, MetaWriteConnector, adActivators, adLaunchWriters, adPausers, adPlatforms, adRevokers, adStateReaders, type AdActivator, type AdPauser, type AdPlatform, type AdRevoker, type AdStateReader, type LaunchWriter } from '@crove/ad-platform';
 import { createSandboxEInvoiceProvider, type EInvoiceProvider } from '@crove/einvoice';
 import { createSandboxMarketplaceProvider, isMarketplaceAdapter, type MarketplaceProvider } from '@crove/mod-finance';
@@ -174,6 +174,8 @@ export interface KernelAdapters {
   // The Inbox's suggested intent and likely contacts (CV3, #2306) through the same endpoint; null: no suggestion, the inbox as it is.
   // The model behind the recorder's Vy summary of a meeting (#2580); the route is on only with MEETINGS_SUMMARY=on as well.
   summaryModel?: ModelPort | null;
+  // Vy's eSign field placement and risky clause review (#3351); null runs manual signing without AI.
+  signAi?: Pick<SignAiReader, 'proposeFields' | 'summarizeRiskClauses'> | null;
   inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'followupWords' | 'overviewSentence' | 'payrollMatchSentence' | 'marketplaceLineSentence' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'crmFollowupWords' | 'meetingBrief' | 'projectWeeklyStatus' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain' | 'laborCheck'>>) | null;
   storage: BlobStore;
   // Outbound mail (member invites, issue #129); the default logs that nothing was sent.
@@ -276,7 +278,7 @@ export function moduleDefinitions(config: Config, billing: Billing = selfHostBil
     notes: () => ({ commands: notesCommands, queries: notesQueries }),
     meetings: () => ({ commands: meetingsCommands, queries: meetingsQueries }),
     projects: () => ({ commands: projectsCommands, queries: projectsQueries }),
-    sign: () => ({ commands: signCommands, queries: signQueries }),
+    sign: () => ({ commands: [...signCommands, ...signAiCommands], queries: [...signQueries, ...signAiQueries] }),
     hr: () => ({ commands: hrCommands, queries: hrQueries }),
   };
   const enabled = config.CROVE_MODULES.map((module) => all[module]());
@@ -618,6 +620,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
     adsCampaignWriter: adapters.adsCampaignWriter ?? null,
     inboxReader: adapters.inboxReader ?? null,
     summaryModel: adapters.summaryModel ?? null,
+    signAi: adapters.signAi ?? null,
     storage: adapters.storage,
     mail: adapters.mail ?? createLogProvider(),
     broker: adapters.broker ?? noCredentialBroker,
@@ -978,6 +981,7 @@ export function defaultAdapters(config: Config): KernelAdapters {
     adsCampaignWriter: aiConfig ? new AdsCampaignWriter(aiConfig) : null,
     inboxReader: aiConfig ? new InboxReader(aiConfig) : null,
     summaryModel: aiConfig ? summaryModelPort(aiConfig) : null,
+    signAi: aiConfig ? new SignAiReader(aiConfig) : null,
     // API and worker build the same store from config; with STORAGE=s3 they share no volume (T7).
     storage: createBlobStore(config),
     // SMTP from SMTP_*; without SMTP_HOST, the log fallback.

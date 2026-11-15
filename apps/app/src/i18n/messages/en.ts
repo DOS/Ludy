@@ -7229,6 +7229,8 @@ export const en = {
       meetings_followup_words: 'Wording the opening and closing of a meeting follow-up email',
       projects_weekly_status: 'Summarizing a project week from counts and task titles/comments',
       projects_tasks_from_note: 'Proposing project tasks from a note',
+      sign_field_propose: 'Proposing signature field placements on a PDF contract',
+      sign_clause_summary: 'Summarizing a PDF contract and quoting clauses to review',
       kernel_unattributed: 'Not attributed to a feature (before the meter)',
     },
   },
@@ -11413,6 +11415,8 @@ export const en = {
       TASK_CHECKED_OUT: 'An AI agent is working on this task, so it cannot be edited right now',
       OUTSIDE_LEGAL_ENTITY: 'The chosen position cannot view the legal entity of this task',
       FILE_SOURCE_CONFLICT: 'This file is already stored with a different purpose in this organization; upload a new file instead.',
+      SIGN_AI_SOURCE_TEXT_REQUIRED: 'Extracted text from the PDF could not be read, so AI proposals cannot be verified.',
+      SIGN_AI_STOPPED: 'AI features are currently paused for this organization.',
       SIGN_DOCUMENT_NOT_INSPECTED: 'This PDF is still being inspected or failed validation; wait for inspection before sending.',
       SIGN_DUPLICATE_SIGNER: 'Each signer can appear only once in the signing order list.',
       SIGN_EMAIL_REQUIRED: 'An email address is required for email delivery or email OTP verification.',
@@ -12833,6 +12837,11 @@ export const en = {
       weekly_status_source: 'Read weekly task counts and titles for one project',
     },
     sign: {
+      ai_analysis: {
+        get: 'Read the latest AI field and clause analysis of an envelope',
+        record: 'Record AI analysis results on a signing envelope (system)',
+        source: 'Read draft envelope layout and signer roles for AI analysis',
+      },
       envelope: {
         create: 'Create a signing envelope draft',
         events: 'Read the signing audit chain of an envelope',
@@ -12841,6 +12850,7 @@ export const en = {
         inspect_complete: 'Record PDF inspection results for an envelope (system)',
         inspect_job_data: 'Read PDF inspection input for an envelope (system)',
         list: 'List signing envelopes',
+        propose_fields: 'Save Vy proposed fields and clause review on a draft envelope',
         remind: 'Send a reminder to pending signers',
         seal_complete: 'Record sealed PDF and certificate files (system)',
         seal_job_data: 'Read PDF sealing input for a completed envelope (system)',

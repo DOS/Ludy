@@ -7226,6 +7226,8 @@ export const vi = {
       meetings_followup_words: 'Soạn lời mở đầu và kết thư gửi sau cuộc họp',
       projects_weekly_status: 'Tóm tắt tình hình tuần của một dự án từ số liệu và tên việc',
       projects_tasks_from_note: 'Đề xuất việc dự án từ ghi chú',
+      sign_field_propose: 'Đề xuất vị trí ô ký trên hợp đồng PDF',
+      sign_clause_summary: 'Tóm tắt hợp đồng PDF và trích dẫn điều khoản cần lưu ý',
       kernel_unattributed: 'Chưa gán tính năng (trước khi có đồng hồ)',
     },
   },
@@ -11410,6 +11412,8 @@ export const vi = {
       TASK_CHECKED_OUT: 'Tác tử AI đang xử lý việc này nên chưa sửa được',
       OUTSIDE_LEGAL_ENTITY: 'Vị trí nhận việc không được xem pháp nhân của việc này',
       FILE_SOURCE_CONFLICT: 'Tệp này đã tồn tại với mục đích khác trong tổ chức; hãy tải lên tệp khác',
+      SIGN_AI_SOURCE_TEXT_REQUIRED: 'Chưa đọc được nội dung văn bản từ tệp PDF nên không thể kiểm chứng gợi ý của AI',
+      SIGN_AI_STOPPED: 'Tính năng AI hiện đang tạm dừng cho tổ chức này',
       SIGN_DOCUMENT_NOT_INSPECTED: 'Tài liệu PDF đang được kiểm tra hoặc kiểm tra chưa đạt; hãy chờ kiểm tra xong rồi gửi',
       SIGN_DUPLICATE_SIGNER: 'Mỗi người ký chỉ được xuất hiện một lần trong danh sách thứ tự ký',
       SIGN_EMAIL_REQUIRED: 'Cần có địa chỉ email để gửi qua email hoặc xác thực mã OTP qua email',
@@ -12830,6 +12834,11 @@ export const vi = {
       weekly_status_source: 'Đọc số liệu và tên công việc trong tuần của một dự án',
     },
     sign: {
+      ai_analysis: {
+        get: 'Đọc bản phân tích ô ký và điều khoản AI mới nhất của hồ sơ ký',
+        record: 'Ghi kết quả phân tích AI cho hồ sơ ký (hệ thống)',
+        source: 'Đọc thông tin khung trang và vai trò người ký để AI phân tích',
+      },
       envelope: {
         create: 'Tạo bản nháp hồ sơ ký',
         events: 'Xem chuỗi nhật ký ký của hồ sơ',
@@ -12838,6 +12847,7 @@ export const vi = {
         inspect_complete: 'Ghi kết quả kiểm tra tệp PDF của hồ sơ ký (hệ thống)',
         inspect_job_data: 'Đọc dữ liệu đầu vào để kiểm tra PDF hồ sơ ký (hệ thống)',
         list: 'Xem danh sách hồ sơ ký',
+        propose_fields: 'Lưu đề xuất ô ký và điều khoản của Vy cho hồ sơ ký nháp',
         remind: 'Gửi nhắc ký tới những người đang chờ ký',
         seal_complete: 'Ghi nhận tệp PDF đã niêm phong và chứng thư số (hệ thống)',
         seal_job_data: 'Đọc dữ liệu niêm phong cho hồ sơ đã ký xong (hệ thống)',

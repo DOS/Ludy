@@ -1149,8 +1149,10 @@ export const KERNEL_ERROR_CODES = [
   'FILE_IS_NOT_IMPORT',
   'FILE_ORIGINAL_DELETED',
   'VIDEO_TOO_LONG',
-  // File upload source guard and eSign (#3323).
+  // File upload source guard and eSign (#3323, #3351).
   'FILE_SOURCE_CONFLICT',
+  'SIGN_AI_SOURCE_TEXT_REQUIRED',
+  'SIGN_AI_STOPPED',
   'SIGN_DOCUMENT_NOT_INSPECTED',
   'SIGN_DUPLICATE_SIGNER',
   'SIGN_EMAIL_REQUIRED',
