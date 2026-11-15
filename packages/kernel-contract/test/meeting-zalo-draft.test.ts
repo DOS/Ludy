@@ -61,7 +61,7 @@ describe('buildMeetingZaloDraft', () => {
 
   it('strips braces, control and invisible characters, so the name placeholder can never be written', () => {
     const d = buildMeetingZaloDraft({ ...base, decisions: ['Gửi {tên} bản\u200b tin\u0007 {{Tên}}'], tickedDecisions: [0], tickedItems: [], title: 'Họp {ten}' });
-    expect(d.text).not.toMatch(/[{}\u200b\u0007]/u);
+    expect(['{', '}', '\u200b', '\u0007'].some((c) => d.text.includes(c))).toBe(false);
     expect(hasNamePlaceholder(d.text)).toBe(false);
     expect(d.text).toContain('- Gửi tên bản tin Tên');
   });
