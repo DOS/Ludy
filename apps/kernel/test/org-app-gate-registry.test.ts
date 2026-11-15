@@ -15,12 +15,16 @@ describe('definitions that run while their app is off for an org', () => {
   it('are exactly these commands', () => {
     expect(named(commands)).toEqual(
       [
+        'ads.account.delete_history',
         'ads.account.erase',
         'ads.account.forget_write',
+        'ads.pause.begin',
+        'ads.pause.record',
         'ads.token_revoke.record',
         'crm.booking_feed.revoke_for_member',
         'crm.import.expire',
         'finance.marketplace_retention.apply',
+        'hr.payroll.employee.erase',
         'meetings.chat.reseal',
         'meetings.media.discard',
         'meetings.media_key.reseal',
@@ -35,7 +39,7 @@ describe('definitions that run while their app is off for an org', () => {
   });
 
   it('are exactly these queries', () => {
-    expect(named(queries)).toEqual(['finance.marketplace_retention.key', 'meetings.chat.target', 'meetings.media.orphan_keys', 'social.chat_alert.target']);
+    expect(named(queries)).toEqual(['ads.pause.pending', 'finance.marketplace_retention.key', 'meetings.chat.target', 'meetings.media.orphan_keys', 'social.chat_alert.target']);
   });
 
   it('each give a one-line reason, and none is a kernel definition', () => {

@@ -109,6 +109,7 @@ async function settleWindDown(ctx: Db, launchId: string, done: boolean, next: Da
 
 export const adsPauseBegin = defineCommand({
   name: 'ads.pause.begin',
+  runsWhenOff: 'claims a stopped launch to pause at the platform, so spend stops while the app is off',
   input: zPauseBeginInput,
   // The platform is called by the job, not here: this claims a stopped launch and says what to pause. It only ever leads to PAUSED.
   risk: 'R2',
@@ -255,6 +256,7 @@ export interface PauseRecorded {
 
 export const adsPauseRecord = defineCommand({
   name: 'ads.pause.record',
+  runsWhenOff: 'records the platform\'s answer to a pause, so a stop is finished while the app is off',
   input: z.strictObject({ launchId: zId, callKey: z.string().min(1).max(200), via: z.enum(['connection', 'copy']), result: zPauseResult }),
   // It records what the platform answered to a pause (R1): the call was the job's, it spends nothing, and the only status it can have set is PAUSED.
   risk: 'R1',
@@ -403,6 +405,7 @@ const ACTIVATION_IN_FLIGHT_SECONDS = 360;
 const PENDING_PAGE = 50;
 export const adsPausePending = defineQuery({
   name: 'ads.pause.pending',
+  runsWhenOff: 'reads what a revocation still has to pause at the platform while the app is off',
   input: z.strictObject({ revokeId: zId }),
   access: 'system',
   handler: async (ctx, input): Promise<PausePending> => {

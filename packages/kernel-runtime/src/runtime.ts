@@ -1120,7 +1120,6 @@ function logInternal(where: string, error: unknown, ids: { orgId?: string | null
   });
 }
 
-// The module a command, query or event belongs to: the part of its name before the first dot.
 // Whether the entitlement keys hold the module (plan Decision 10): `full` grants every module, otherwise one key per module id; kernel is
 // always held. The one function every gate uses (packages/kernel's kernel.org.apps too).
 export function entitledTo(entitlements: readonly string[], module: string): boolean {
@@ -1129,8 +1128,11 @@ export function entitledTo(entitlements: readonly string[], module: string): boo
 
 const ENTITLEMENT_TTL_MS = 60_000;
 const ENTITLEMENT_TIMEOUT_MS = 3_000;
+// After a failed answer the fallback is kept this long before the port is asked again, so an outage costs one wait a few seconds, not one per call.
+const ENTITLEMENT_RETRY_MS = 10_000;
 const ENTITLEMENT_CACHE_MAX = 5_000;
 
+// The module a command, query or event belongs to: the part of its name before the first dot.
 function moduleOf(name: string): string {
   const dot = name.indexOf('.');
   return dot === -1 ? name : name.slice(0, dot);
@@ -1322,9 +1324,6 @@ function snapshotExtension(value: unknown, what: string): unknown {
   return Object.freeze(copy);
 }
 
-// A command definition as register() checks, keeps and runs it (#1766): a frozen copy, with the policy fields it
-// holds (access, agent, agentApprovers, writes) copied and frozen as well; keys it did not have stay absent. The
-// handler and the other functions are kept as they are.
 // runsWhenOff is a one-line reason, and only where there is an app to be off for: not a kernel command, which the gate never refuses.
 function checkAppFlags(label: string, def: { name: string; runsWhenOff?: unknown }): void {
   if (def.runsWhenOff === undefined) return;
@@ -1334,6 +1333,9 @@ function checkAppFlags(label: string, def: { name: string; runsWhenOff?: unknown
   if (moduleOf(def.name) === 'kernel') throw new Error(`${label}: a kernel definition is never refused by the app gate, so it declares no runsWhenOff`);
 }
 
+// A command definition as register() checks, keeps and runs it (#1766): a frozen copy, with the policy fields it
+// holds (access, agent, agentApprovers, writes) copied and frozen as well; keys it did not have stay absent. The
+// handler and the other functions are kept as they are.
 function snapshotCommand(def: CommandDef<any, any>): CommandDef<unknown, unknown> {
   const label = `command ${String((def as { name?: unknown } | null)?.name)}`;
   const copy = plainCopy(def, `${label}: the definition`);
@@ -1630,7 +1632,10 @@ export class Runtime {
   #savepointSeq = 0;
   // The billing port's function (RuntimeOptions.entitlements), or null: every app held. Its last answer per org, with when it came.
   readonly #entitlementsPort: ((orgId: string) => Promise<readonly string[]>) | null;
-  readonly #entitlementCache = new Map<string, { keys: readonly string[]; at: number }>();
+  readonly #entitlementCache = new Map<string, { keys: readonly string[]; at: number; failed?: boolean }>();
+  // One port call at a time per org: concurrent callers share it.
+  readonly #entitlementInflight = new Map<string, Promise<readonly string[]>>();
+  #entitlementFailureLoggedAt = 0;
   #entitlementFailureNotedAt = 0;
   // The apps the org switched off as one call reads them, per entered context (one transaction), so a page of lookups reads the row once.
   readonly #appsOffMemo = new WeakMap<object, Promise<ReadonlySet<string>>>();
@@ -1838,6 +1843,7 @@ export class Runtime {
       if (this.#queries.has(q.name)) throw new Error(`duplicate query ${q.name}`);
       if (!validAccess(q.access, ['system'])) throw new Error(`query ${q.name}: access is a role list or 'system'`);
       checkAppFlags(`query ${q.name}`, q);
+      if ((q as { opensBusyWork?: unknown }).opensBusyWork !== undefined) throw new Error(`query ${q.name}: opensBusyWork is for commands (a read-only transaction takes no row lock)`);
       if (q.agent !== undefined && !validAccess(q.agent.roles, ['any'])) throw new Error(`query ${q.name}: agent access names a role list or 'any'`);
       if (q.memberVy !== undefined && q.stream === true) {
         throw new Error(`query ${q.name}: Vy in member mode reads no streamed query (a stream is not a bounded read of the member's own rows)`);
@@ -1889,15 +1895,41 @@ export class Runtime {
     return installed.filter((m) => m === 'kernel' || (on.has(m) && (keys === null || entitledTo(keys, m))));
   }
 
-  // The org's entitlement keys: cached for a minute, and on a failure of the port (a throw, or no answer in 3 seconds) the last answer, `full`
-  // when there is none, with a security event once a minute (the actor is null for a caller with none, which notes nothing).
-  private async entitlementsOf(orgId: string, actor: Actor | null): Promise<readonly string[]> {
+  // The org's entitlement keys: cached for a minute, one port call at a time per org, and on a failure of the port (a throw, or no answer in 3
+  // seconds) the last answer, `full` when there is none, kept for 10 seconds before the port is asked again, with one log line a minute and one
+  // security event a minute (never for an actor that is the system or none: nothing is noted for them). The event is noted outside the call's
+  // transaction: noting needs a second connection, and a single-cell deployment shares one pool.
+  private entitlementsOf(orgId: string, actor: Actor | null): Promise<readonly string[]> {
     const port = this.#entitlementsPort;
-    if (!port) return ['full'];
+    if (!port) return Promise.resolve(['full']);
     const now = Date.now();
     const cached = this.#entitlementCache.get(orgId);
-    if (cached && now - cached.at < ENTITLEMENT_TTL_MS) return cached.keys;
+    if (cached && now - cached.at < ENTITLEMENT_TTL_MS) return Promise.resolve(cached.keys);
+    const running = this.#entitlementInflight.get(orgId);
+    if (running) return running;
+    const call = this.askEntitlements(orgId, port, cached?.keys, now).finally(() => this.#entitlementInflight.delete(orgId));
+    this.#entitlementInflight.set(orgId, call);
+    // The note belongs to the call that started the port call, and its actor.
+    void call.then((keys) => {
+      const failed = this.#entitlementCache.get(orgId)?.failed === true;
+      if (failed && keys && actor && actor.type !== 'system' && Date.now() - this.#entitlementFailureNotedAt > 60_000) {
+        this.#entitlementFailureNotedAt = Date.now();
+        setImmediate(() => void this.noteSecurityEvent('runtime.entitlements', actor, orgId, 'ENTITLEMENTS_UNAVAILABLE'));
+      }
+    });
+    return call;
+  }
+
+  private async askEntitlements(orgId: string, port: (orgId: string) => Promise<readonly string[]>, last: readonly string[] | undefined, now: number): Promise<readonly string[]> {
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const remember = (keys: readonly string[], at: number, failed: boolean) => {
+      this.#entitlementCache.delete(orgId);
+      this.#entitlementCache.set(orgId, { keys, at, failed });
+      if (this.#entitlementCache.size > ENTITLEMENT_CACHE_MAX) {
+        const oldest = this.#entitlementCache.keys().next().value;
+        if (oldest !== undefined) this.#entitlementCache.delete(oldest);
+      }
+    };
     try {
       const answer = await Promise.race([
         port(orgId),
@@ -1907,20 +1939,17 @@ export class Runtime {
       ]);
       if (!Array.isArray(answer) || !answer.every((k) => typeof k === 'string')) throw new Error('the entitlements port answered something other than a list of keys');
       const keys: readonly string[] = Object.freeze([...answer]);
-      this.#entitlementCache.delete(orgId);
-      this.#entitlementCache.set(orgId, { keys, at: now });
-      if (this.#entitlementCache.size > ENTITLEMENT_CACHE_MAX) {
-        const oldest = this.#entitlementCache.keys().next().value;
-        if (oldest !== undefined) this.#entitlementCache.delete(oldest);
-      }
+      remember(keys, now, false);
       return keys;
     } catch (error) {
-      if (now - this.#entitlementFailureNotedAt > 60_000) {
-        this.#entitlementFailureNotedAt = now;
-        console.error('[runtime] ENTITLEMENTS_UNAVAILABLE', { orgId, reason: error instanceof Error ? error.message.slice(0, 100) : 'unknown', haveLastAnswer: cached !== undefined });
-        if (actor) await this.noteSecurityEvent('runtime.entitlements', actor, orgId, 'ENTITLEMENTS_UNAVAILABLE');
+      if (now - this.#entitlementFailureLoggedAt > 60_000) {
+        this.#entitlementFailureLoggedAt = now;
+        console.error('[runtime] ENTITLEMENTS_UNAVAILABLE', { orgId, reason: error instanceof Error ? error.message.slice(0, 100) : 'unknown', haveLastAnswer: last !== undefined });
       }
-      return cached?.keys ?? ['full'];
+      const fallback = last ?? ['full'];
+      // The fallback counts as fresh for only the retry interval.
+      remember(fallback, now - ENTITLEMENT_TTL_MS + ENTITLEMENT_RETRY_MS, true);
+      return fallback;
     } finally {
       if (timer) clearTimeout(timer);
     }
@@ -1935,7 +1964,9 @@ export class Runtime {
       let query = trx.selectFrom('crove_kernel.tenant').select('apps_off').where('org_id', '=', orgId);
       if (lock) query = query.forShare();
       const row = await query.executeTakeFirst();
-      return new Set(row?.apps_off ?? []) as ReadonlySet<string>;
+      // A row the context cannot read is no row: fail closed, never read it as 'no app is off'.
+      if (!row) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+      return new Set(row.apps_off) as ReadonlySet<string>;
     })();
     this.#appsOffMemo.set(entered, read);
     return read;
@@ -3228,6 +3259,8 @@ export class Runtime {
       await db.transaction().execute(async (trx) => {
         const entered = await this.enter(trx, options.actor, options.orgId);
         onEntered();
+        // An app that is off is refused before the audit row, which says a read started: no sensitive read of an app that is off is recorded.
+        await this.refuseIfAppOff(trx, options.orgId, entered, options.actor, def);
         try {
           this.authorizeQuery(def, options.actor, entered);
         } catch (error) {

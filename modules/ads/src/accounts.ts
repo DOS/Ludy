@@ -224,6 +224,7 @@ async function deleteHistory(ctx: CommandContext, adAccountId: string, removeAcc
 // loses its row, so nothing of it is left. The audit row names the account and the counts, never a figure.
 export const adsAccountDeleteHistory = defineCommand({
   name: 'ads.account.delete_history',
+  runsWhenOff: 'deletes an ad account\'s synced history on the owner\'s request while the app is off',
   input: zAdsAccountDeleteHistory,
   risk: 'R2',
   sideEffect: 'internal',

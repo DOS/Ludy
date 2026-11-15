@@ -41,6 +41,8 @@ const streamed = defineQuery({
 });
 const sysTouch = defineCommand({ name: 'probe.sys_touch', input: z.object({}), risk: 'R1', sideEffect: 'none', access: 'system', writes: [], handler: async () => 'ran' });
 const agentTouch = defineCommand({ name: 'probe.agent_touch', input: z.object({}), risk: 'R0', sideEffect: 'none', access: [], agent: { roles: 'any' }, writes: [], handler: async () => 'ran' });
+// A sensitive read: its audit row (a read started) is written before the handler, so the gate must refuse before it.
+const secret = defineQuery({ name: 'probe.secret', input: z.object({}), access: ['owner', 'admin'], sensitive: true, handler: async () => 'secret' });
 // Keeping, not work: runs while the app is off, with the reason.
 const keep = defineCommand({
   name: 'probe.keep',
@@ -53,7 +55,21 @@ const keep = defineCommand({
 });
 const keepRead = defineQuery({ name: 'probe.keep_read', input: z.object({}), access: [...MEMBERS], runsWhenOff: 'reads what a retention duty still has to keep', handler: async () => 'kept' });
 // A command that opens busy work (a recording start): the runtime reads the tenant row FOR SHARE to commit.
-const busy = defineCommand({ name: 'probe.busy', input: z.object({}), risk: 'R1', sideEffect: 'none', access: ['owner', 'admin', 'member'], opensBusyWork: true, handler: async () => 'busy' });
+// Its handler can be held, so a test sees a switch wait for a command that is running.
+const busyHold: { wait: Promise<void> | null; entered: boolean } = { wait: null, entered: false };
+const busy = defineCommand({
+  name: 'probe.busy',
+  input: z.object({}),
+  risk: 'R1',
+  sideEffect: 'none',
+  access: ['owner', 'admin', 'member'],
+  opensBusyWork: true,
+  handler: async () => {
+    busyHold.entered = true;
+    await busyHold.wait;
+    return 'busy';
+  },
+});
 // Kernel-side callers into the app: a nested command, and a lookup.
 const nested = defineCommand({
   name: 'kernel.gate_nested',
@@ -102,8 +118,10 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
   async function org() {
     const owner = await person('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Gate ${randomUUID().slice(0, 6)}`);
-    const [admin, member] = [await person('admin'), await person('member')];
-    await withAdmin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')", [orgId, admin, member]));
+    const [admin, member, viewer] = [await person('admin'), await person('member'), await person('viewer')];
+    await withAdmin((c) =>
+      c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, admin, member, viewer]),
+    );
     const setApp = (module: string, enabled: boolean) => rt.execute('kernel.org.set_app', { module, enabled }, { actor: asUser(owner), orgId, idempotencyKey: randomUUID() });
     const exec = <T = string>(runtime: Runtime, name: string, user: string, input: unknown = {}) => runtime.execute<T>(name, input, { actor: asUser(user), orgId, idempotencyKey: randomUUID() });
     const query = <T = string>(runtime: Runtime, name: string, user: string) => runtime.query<T>(name, {}, { actor: asUser(user), orgId });
@@ -123,7 +141,7 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
         keys: (await c.query('SELECT 1 FROM crove_kernel.idempotency_key WHERE org_id = $1 AND command = $2', [orgId, command])).rowCount,
         audits: (await c.query("SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = 'ok'", [orgId, command])).rowCount,
       }));
-    return { orgId, owner, admin, member, setApp, exec, query, agent, traces };
+    return { orgId, owner, admin, member, viewer, setApp, exec, query, agent, traces };
   }
 
   const refusal = { code: 'MODULE_OFF', status: 404, details: { module: 'probe' } };
@@ -152,6 +170,7 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
         ...kernelQueries({ inboundDomain: null, apps: { shipped: SHIPPED, deployment: SHIPPED, entitlements: async () => ['full'] } }),
         ...financeQueries,
         read,
+        secret,
         streamed,
         keepRead,
         lookup,
@@ -187,8 +206,9 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
     await expect(rt.stream('probe.stream', {}, { actor: asUser(o.member), orgId: o.orgId }, async () => {})).rejects.toMatchObject(refusal);
     // The refused call wrote no idempotency key and no 'ok' audit row (the earlier successful run left one of each).
     expect(await o.traces('probe.touch')).toEqual(before);
-    // A role that could not run the command anyway gets the same answer: the gate comes before the role check.
-    await expect(o.exec(rt, 'probe.touch', o.owner)).rejects.toMatchObject({ message: expect.stringContaining('probe') });
+    // A role that could not run the command anyway (a viewer) gets MODULE_OFF, not FORBIDDEN: the gate comes before the role check.
+    await expect(o.exec(rt, 'probe.touch', o.viewer)).rejects.toMatchObject(refusal);
+    await expect(o.exec(rt, 'probe.touch', o.member)).rejects.toMatchObject({ message: expect.stringContaining('probe') });
     // ctx.query answers the typed not_installed, as for an app the deployment leaves out.
     await expect(o.query<Lookup<string>>(rt, 'kernel.gate_lookup', o.member)).resolves.toEqual({ status: 'not_installed', module: 'probe' });
     // Back on: everything as before, the data and the registry untouched.
@@ -292,6 +312,7 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
     expect(() => registry().register({ commands: [defineCommand({ ...base, name: 'kernel.c', runsWhenOff: 'a reason long enough' })] })).toThrow(/never refused by the app gate/);
     expect(() => registry().register({ queries: [defineQuery({ name: 'kernel.d', input: z.object({}), access: ['owner'], runsWhenOff: 'a reason long enough', handler: async () => 1 })] })).toThrow(/never refused/);
     expect(() => registry().register({ commands: [defineCommand({ ...base, name: 'kernel.e', opensBusyWork: true })] })).toThrow(/opensBusyWork/);
+    expect(() => registry().register({ queries: [defineQuery({ name: 'probe.q', input: z.object({}), access: ['owner'], opensBusyWork: true, handler: async () => 1 } as never)] })).toThrow(/opensBusyWork is for commands/);
     expect(() => registry().register({ commands: [defineCommand({ ...base, name: 'probe.f', opensBusyWork: true, runsWhenOff: 'a reason long enough' })] })).toThrow(/opensBusyWork/);
     expect(() => registry().register({ commands: [defineCommand({ ...base, name: 'probe.g', runsWhenOff: 'a reason long enough' }), defineCommand({ ...base, name: 'probe.h', opensBusyWork: true })] })).not.toThrow();
   });
@@ -344,7 +365,12 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
     // No answer ever known: the app runs (fail open to full), and a security event says the port failed.
     const before = await withAdmin(async (c) => (await c.query("SELECT 1 FROM crove_kernel.security_event WHERE code = 'ENTITLEMENTS_UNAVAILABLE'")).rowCount);
     await expect(o.exec(flaky, 'probe.touch', o.member)).resolves.toBe('ran');
-    const after = await withAdmin(async (c) => (await c.query("SELECT 1 FROM crove_kernel.security_event WHERE code = 'ENTITLEMENTS_UNAVAILABLE'")).rowCount);
+    // The event is noted after the call's transaction, so it arrives a moment later.
+    let after = before ?? 0;
+    for (let i = 0; i < 100 && after === (before ?? 0); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      after = (await withAdmin(async (c) => (await c.query("SELECT 1 FROM crove_kernel.security_event WHERE code = 'ENTITLEMENTS_UNAVAILABLE'")).rowCount)) ?? 0;
+    }
     expect(after).toBe((before ?? 0) + 1);
     // A known answer is kept after the cache expires: [] holds nothing, so the app stays off while the port is down.
     await expect(o.exec(port, 'probe.touch', o.member)).rejects.toMatchObject(refusal);
@@ -354,6 +380,39 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
     // The org's own choice never depends on billing: switched off, it is off whatever the port says.
     await o.setApp('probe', false);
     await expect(o.exec(flaky, 'probe.touch', o.member)).rejects.toMatchObject(refusal);
+  });
+
+  it('records no sensitive read of an app that is off', async () => {
+    const o = await org();
+    const rows = () => withAdmin(async (c) => (await c.query("SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'probe.secret' AND outcome = 'ok'", [o.orgId])).rowCount);
+    await expect(o.query(rt, 'probe.secret', o.owner)).resolves.toBe('secret');
+    expect(await rows()).toBe(1);
+    await o.setApp('probe', false);
+    await expect(o.query(rt, 'probe.secret', o.owner)).rejects.toMatchObject(refusal);
+    expect(await rows()).toBe(1);
+  });
+
+  it('shares one port call among concurrent callers of an org, and does not ask again for ten seconds after a failure', async () => {
+    const o = await org();
+    const asked: string[] = [];
+    const slow = runtimeWith({
+      entitlements: async (orgId) => {
+        asked.push(orgId);
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        return ['probe'];
+      },
+    });
+    await Promise.all([1, 2, 3, 4, 5].map(() => o.query(slow, 'probe.read', o.member)));
+    expect(asked).toHaveLength(1);
+    const failing: string[] = [];
+    const down = runtimeWith({
+      entitlements: async (orgId) => {
+        failing.push(orgId);
+        throw new Error('billing is down');
+      },
+    });
+    for (let i = 0; i < 4; i++) await expect(o.query(down, 'probe.read', o.member)).resolves.toBe('read');
+    expect(failing).toHaveLength(1);
   });
 
   it('makes a command that opens busy work wait for a switch on the tenant row, whichever commits first', async () => {
@@ -382,9 +441,37 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
       await holder.query('ROLLBACK').catch(() => {});
       await holder.end();
     }
-    // Opposite order: shared holders do not block each other, and a switch waits for a command that is running.
+    // Opposite order: a command that opened work is running (its share lock is held to commit); a switch waits for it, then commits.
     const o2 = await org();
-    await expect(o2.exec(rt, 'probe.busy', o2.member)).resolves.toBe('busy');
+    let release = () => {};
+    busyHold.wait = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    busyHold.entered = false;
+    try {
+      const running = o2.exec(rt, 'probe.busy', o2.member);
+      for (let i = 0; i < 200 && !busyHold.entered; i++) await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(busyHold.entered).toBe(true);
+      let switched = false;
+      const switching = o2.setApp('probe', false).then(() => {
+        switched = true;
+      });
+      let blocked = false;
+      for (let i = 0; i < 100 && !blocked; i++) {
+        blocked = (await withAdmin(async (c) => (await c.query("SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE '%tenant%for update%'")).rowCount)) === 1;
+        if (!blocked) await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(blocked).toBe(true);
+      expect(switched).toBe(false);
+      release();
+      await expect(running).resolves.toBe('busy');
+      await switching;
+    } finally {
+      release();
+      busyHold.wait = null;
+    }
+    // The switch committed after the command: the next one that opens work is refused.
+    await expect(o2.exec(rt, 'probe.busy', o2.member)).rejects.toMatchObject(refusal);
   });
 
   it('lists the apps an org has, without a context: deployment, choice and entitlement together', async () => {

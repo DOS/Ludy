@@ -8,6 +8,7 @@ describe('bulk approval item refusals', () => {
   it('refuses one item for its proposal, policy or content codes', () => {
     for (const [code, status] of [
       ['NOT_FOUND', 404],
+      ['MODULE_OFF', 404],
       ['PROPOSAL_DECIDED', 409],
       ['PROPOSAL_EXPIRED', 409],
       ['STALE_REVISION', 409],
