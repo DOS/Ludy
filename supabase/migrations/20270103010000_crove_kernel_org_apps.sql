@@ -124,8 +124,8 @@ CREATE CONSTRAINT TRIGGER tenant_apps_requires_audit
                      OR OLD.apps_version IS DISTINCT FROM NEW.apps_version)
   EXECUTE FUNCTION crove_kernel.tenant_apps_requires_audit();
 
--- Whether the org has not switched the module off. kernel is always on; an org with no tenant row answers false, so no
--- work is found for it. A closed org keeps its row and its choice: whether work runs for a closed org is not this
+-- Whether the org has not switched the module off. kernel always answers true, with or without a tenant row; for any
+-- other module an org with no tenant row answers false, so no work is found for it. A closed org keeps its row and its choice: whether work runs for a closed org is not this
 -- function's question (the sweeps already skip it).
 CREATE OR REPLACE FUNCTION crove_kernel.org_app_on(p_org uuid, p_module text)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$

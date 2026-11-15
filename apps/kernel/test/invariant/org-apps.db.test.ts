@@ -13,7 +13,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { buildKernelCommands, createOrg, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, type CommandDef } from '@crove/kernel-runtime';
+import { Runtime, type AgentActor, type CommandDef } from '@crove/kernel-runtime';
+import { financeCommands, financeQueries } from '@crove/mod-finance';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
 
@@ -23,7 +24,7 @@ const ROLES = ['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenan
 const SHIPPED = ['kernel', 'finance', 'social', 'hr'] as const;
 const suite = ADMIN ? describe : describe.skip;
 
-type Actor = { type: 'user'; userId: string; aal: 'aal1' | 'aal2' };
+type Actor = { type: 'user'; userId: string; aal: 'aal1' | 'aal2'; sessionId?: string; mfaAt?: number };
 
 suite('apps an org turned off on PostgreSQL (ADR-0053)', () => {
   const dbName = `crove_test_orgapps_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
@@ -31,11 +32,16 @@ suite('apps an org turned off on PostgreSQL (ADR-0053)', () => {
   let appUrl = '';
   let pool: pg.Pool;
   let rt: Runtime;
+  // The worker login role's runtime and URL, where agents run.
+  let worker: Runtime;
+  let workerPool: pg.Pool;
+  let workerUrl = '';
   // What the billing port answers for each org; absent means self-host's `full`.
   const entitlements = new Map<string, readonly string[]>();
   const clients: pg.Client[] = [];
 
   const asUser = (userId: string): Actor => ({ type: 'user', userId, aal: 'aal1' });
+  const asMfa = (userId: string): Actor => ({ type: 'user', userId, aal: 'aal2', sessionId: '7e1c2b4a-5d6f-4a8b-9c0d-1e2f3a4b5c6d', mfaAt: Math.floor(Date.now() / 1000) });
 
   async function connect(url: string): Promise<pg.Client> {
     const client = new pg.Client({ connectionString: url });
@@ -117,19 +123,30 @@ suite('apps an org turned off on PostgreSQL (ADR-0053)', () => {
     url.password = 'test-app-pw';
     appUrl = url.toString();
     pool = createPool({ connectionString: appUrl, max: 4 });
-    rt = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({
-      commands: buildKernelCommands({ shippedModules: SHIPPED }),
-      queries: kernelQueries({
-        inboundDomain: null,
-        // The deployment runs finance and social, not hr.
-        apps: { shipped: SHIPPED, deployment: ['kernel', 'finance', 'social'], entitlements: async (orgId) => entitlements.get(orgId) ?? ['full'] },
-      }),
-    });
+    const definitions = {
+      commands: [...buildKernelCommands({ shippedModules: SHIPPED }), ...financeCommands],
+      queries: [
+        ...kernelQueries({
+          inboundDomain: null,
+          // The deployment runs finance and social, not hr.
+          apps: { shipped: SHIPPED, deployment: ['kernel', 'finance', 'social'], entitlements: async (orgId) => entitlements.get(orgId) ?? ['full'] },
+        }),
+        ...financeQueries,
+      ],
+    };
+    rt = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register(definitions);
+    const wurl = new URL(adminUrl);
+    wurl.username = 'crove_worker';
+    wurl.password = 'test-worker-pw';
+    workerUrl = wurl.toString();
+    workerPool = createPool({ connectionString: workerUrl, max: 2 });
+    worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(definitions);
   }, 120_000);
 
   afterAll(async () => {
     for (const c of clients) await c.end().catch(() => {});
     await pool?.end();
+    await workerPool?.end();
     if (!ADMIN) return;
     const root = new pg.Client({ connectionString: ADMIN });
     await root.connect();
@@ -218,15 +235,53 @@ suite('apps an org turned off on PostgreSQL (ADR-0053)', () => {
     await expect(o.setApp(asUser(o.owner), 'kernel', false)).rejects.toMatchObject({ code: 'APP_ALWAYS_ON', status: 422 });
     await expect(o.setApp(asUser(o.owner), 'payroll', false)).rejects.toMatchObject({ code: 'UNKNOWN_APP', status: 422 });
     for (const module of ['Social', 'social,hr', '', 'a b', 'x'.repeat(51)]) {
-      await expect(o.setApp(asUser(o.owner), module, false)).rejects.toBeTruthy();
+      await expect(o.setApp(asUser(o.owner), module, false)).rejects.toMatchObject({ code: 'VALIDATION', status: 422 });
     }
     expect(await o.choice()).toEqual({ off: [], version: 1 });
   });
 
   it('refuses an MCP grant that tries to run it', async () => {
     const o = await org();
-    const mcp = { type: 'user' as const, userId: o.owner, aal: 'aal1' as const, mcp: { grantId: randomUUID(), clientId: 'client-1', clientName: 'Test client', scopes: ['ludy.read', 'ludy.write'] } };
-    await expect(rt.execute('kernel.org.set_app', { module: 'social', enabled: false }, { actor: mcp, orgId: o.orgId, idempotencyKey: randomUUID() })).rejects.toBeTruthy();
+    // A real grant (the consent row), so the refusal is the scope rule, not a missing grant.
+    const grantId = randomUUID();
+    await withAdmin((c) =>
+      c.query(
+        `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
+         VALUES ($1, $2, $3, $5, 'Test client', 'client.example.com', ARRAY['ludy.read'], $4, now(), now() + interval '30 days', $3)`,
+        [o.orgId, grantId, o.owner, `oauth-${grantId}`, `client-${grantId}`],
+      ),
+    );
+    const mcp = { type: 'user' as const, userId: o.owner, aal: 'aal1' as const, mcp: { grantId, clientId: `client-${grantId}`, clientName: 'Test client', scopes: ['ludy.read'] } };
+    await expect(rt.execute('kernel.org.set_app', { module: 'social', enabled: false }, { actor: mcp, orgId: o.orgId, idempotencyKey: randomUUID() })).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403, details: { rule: 'mcp_scope' } });
+    expect(await o.choice()).toEqual({ off: [], version: 1 });
+  });
+
+  it('refuses an AI agent, as a command and as a direct write', async () => {
+    const o = await org();
+    const { agentId, positionId } = await o.exec<{ agentId: string; positionId: string }>(asMfa(o.owner), 'kernel.agent.template.install', {
+      templateKey: 'finance.chief_accountant',
+      reportsTo: null,
+    });
+    await o.exec(asUser(o.owner), 'kernel.task.create', { title: 'Việc thử', assigneePositionId: positionId });
+    const started = await worker.execute<{ runId: string | null }>('kernel.agent.run.start', { agentId }, { actor: { type: 'system', component: 'kernel.agent' }, orgId: o.orgId });
+    expect(started.runId).toBeTruthy();
+    const agent: AgentActor = { type: 'agent', agentId, runId: started.runId as string };
+    await expect(worker.execute('kernel.org.set_app', { module: 'social', enabled: false }, { actor: agent, orgId: o.orgId, idempotencyKey: randomUUID() })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      status: 403,
+    });
+    // A direct write in the agent's own context: the database refuses it, whatever the agent's grants. The kernel's own agent
+    // write guard (AGENT_FORBIDDEN, on every tenant table) answers first; tenant_apps_guard refuses a non-user context too.
+    const direct = new pg.Client({ connectionString: workerUrl });
+    await direct.connect();
+    clients.push(direct);
+    await direct.query('BEGIN');
+    try {
+      await direct.query('SELECT crove_kernel.enter_agent_context($1::uuid, $2::uuid, $3::uuid)', [o.orgId, agentId, agent.runId]);
+      await expect(direct.query("UPDATE crove_kernel.tenant SET apps_off = '{social}', apps_version = 2 WHERE org_id = $1", [o.orgId])).rejects.toMatchObject({ code: '42501', message: 'AGENT_FORBIDDEN' });
+    } finally {
+      await direct.query('ROLLBACK').catch(() => {});
+    }
     expect(await o.choice()).toEqual({ off: [], version: 1 });
   });
 
@@ -322,11 +377,11 @@ suite('apps an org turned off on PostgreSQL (ADR-0053)', () => {
     for (const bad of ["'{kernel}'", "'{social,social}'", "'{Social}'", "'{a b}'", "ARRAY[NULL]::text[]", "'{1x}'", "ARRAY[repeat('x', 51)]"]) {
       await expect(staff(`UPDATE crove_kernel.tenant SET apps_off = ${bad}, apps_version = 2 WHERE org_id = $1`)).rejects.toMatchObject({ message: 'APPS_OFF_INVALID' });
     }
-    await expect(staff('UPDATE crove_kernel.tenant SET apps_off = NULL WHERE org_id = $1')).rejects.toBeTruthy();
+    await expect(staff('UPDATE crove_kernel.tenant SET apps_off = NULL WHERE org_id = $1')).rejects.toMatchObject({ code: '23514', message: 'APPS_OFF_INVALID' });
     // A support fix of the authorization is allowed (a superuser), with a version that grows.
     await staff("UPDATE crove_kernel.tenant SET apps_off = '{social}', apps_version = 2 WHERE org_id = $1");
     expect(await o.choice()).toEqual({ off: ['social'], version: 2 });
-    await expect(staff('UPDATE crove_kernel.tenant SET apps_version = 0 WHERE org_id = $1')).rejects.toBeTruthy();
+    await expect(staff('UPDATE crove_kernel.tenant SET apps_version = 0 WHERE org_id = $1')).rejects.toMatchObject({ code: '23514', constraint: 'tenant_apps_version_check' });
   });
 
   it('answers org_app_on to the API and the worker only, and lets nobody call the guards', async () => {
