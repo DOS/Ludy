@@ -10,10 +10,16 @@ export const AGENDA_OVERLAP_MINUTES = 15;
 export const AGENDA_LIST_MAX = 50;
 // The most events one replace carries (the adapter's own cut).
 export const AGENDA_REPLACE_MAX = 300;
+// What the extension's "Sắp họp" card may read (B2, #3166): at most this many events, starting within this many minutes (or running now).
+export const AGENDA_NEXT_MAX = 5;
+export const AGENDA_NEXT_MINUTES = 30;
+
+// A title is cut at 200 characters (code points) in the cache, so the answer's check counts code points too: an emoji is two UTF-16 units and a title of a hundred of them is still a valid one.
+const zAgendaTitle = z.string().refine((title) => Array.from(title).length <= 200, 'title is at most 200 characters');
 
 export const zAgendaEvent = z.strictObject({
   id: zId,
-  title: z.string().max(200),
+  title: zAgendaTitle,
   startsAt: z.iso.datetime({ offset: true }),
   endsAt: z.iso.datetime({ offset: true }),
   timeZone: z.string().min(1).max(64),
@@ -30,6 +36,18 @@ export type AgendaEvent = z.infer<typeof zAgendaEvent>;
 export const zAgendaListInput = z.strictObject({});
 export const zAgendaList = z.strictObject({ enabled: z.boolean(), events: z.array(zAgendaEvent).max(AGENDA_LIST_MAX) });
 export type AgendaList = z.infer<typeof zAgendaList>;
+
+// The member's next meetings for the extension (the `agenda` token scope): the title, the start and end, and the host of the join address (never the address, an id or the invitees). `enabled` says whether
+// the member reads their calendar at all (the B1 switch is on and the grant carries the scope), so the popup can tell "nothing soon" from "not switched on".
+export const zAgendaNextInput = z.strictObject({});
+export const zAgendaNextEvent = z.strictObject({
+  title: zAgendaTitle,
+  startsAt: z.iso.datetime({ offset: true }),
+  endsAt: z.iso.datetime({ offset: true }),
+  joinHost: z.string().max(100).nullable(),
+});
+export const zAgendaNext = z.strictObject({ enabled: z.boolean(), events: z.array(zAgendaNextEvent).max(AGENDA_NEXT_MAX) });
+export type AgendaNext = z.infer<typeof zAgendaNext>;
 
 export const zAgendaSuggestInput = z.strictObject({ meetingId: zId });
 // For a meeting the member recorded: the event it is linked to, or the one event that overlaps its time (when exactly one does and it is not linked elsewhere); both null otherwise.

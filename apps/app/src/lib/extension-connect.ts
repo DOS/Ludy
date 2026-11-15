@@ -41,6 +41,8 @@ export function parseConnectRequest(search: string, allowedIds: readonly string[
   if (!allowedIds.includes(extensionId)) return null;
   const asked = (params.get('scope') ?? EXTENSION_SCOPE_IDS[0]).split(/[ ,]+/).filter(Boolean);
   if (asked.length === 0 || asked.length > EXTENSION_SCOPE_IDS.length || !asked.every(isScope)) return null;
+  // The agenda scope rides with the meetings scope (B2): alone it could not even be exchanged for a token.
+  if (asked.includes('agenda') && !asked.includes('meetings')) return null;
   const deviceName = (params.get('device') ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
   return { extensionId, codeChallenge, redirect, state, scopes: [...new Set(asked)].sort(), deviceName };
 }

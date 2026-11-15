@@ -155,6 +155,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.ask.lines',
       'meetings.ask.status',
       'meetings.agenda.list',
+      'meetings.agenda.next',
       'meetings.agenda.suggest',
       'meetings.link.list',
       'meetings.link.by_target',
