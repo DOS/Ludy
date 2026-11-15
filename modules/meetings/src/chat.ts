@@ -149,12 +149,14 @@ interface PostRow {
 }
 
 // How the recorder's last post of this meeting to each channel ended. A row `started` and older than the busy window is read as ambiguous: the request that made it died before it recorded an outcome.
-function lastOf(posts: readonly PostRow[], channelId: string, now: number): { last: ChatPreviewChannel['last']; at: Date | null } {
+function lastOf(posts: readonly PostRow[], channelId: string, now: number): { last: ChatPreviewChannel['last']; at: Date | null; needsTick: boolean } {
   const mine = posts.filter((p) => p.channel_id === channelId);
   const row = mine[0];
-  if (!row) return { last: 'none', at: null };
-  if (row.state === 'started') return { last: now - row.created_at.getTime() < CHAT_BUSY_SECONDS * 1000 ? 'busy' : 'ambiguous', at: row.created_at };
-  return { last: row.state as ChatPreviewChannel['last'], at: row.created_at };
+  // The tick looks at every earlier post, as meetings.chat.begin does: one that went, may have gone, or never recorded its outcome, whatever the newest one did.
+  const needsTick = mine.some((p) => p.state === 'sent' || p.state === 'ambiguous' || p.state === 'started');
+  if (!row) return { last: 'none', at: null, needsTick };
+  if (row.state === 'started') return { last: now - row.created_at.getTime() < CHAT_BUSY_SECONDS * 1000 ? 'busy' : 'ambiguous', at: row.created_at, needsTick };
+  return { last: row.state as ChatPreviewChannel['last'], at: row.created_at, needsTick };
 }
 
 // Posts of the caller's own for this meeting, newest first (row security shows the recorder their own and nobody else's).
@@ -201,9 +203,11 @@ export const chatPreview = defineQuery({
       factsKey: key,
       message,
       tooLong: chatMessageTooLong(message),
+      // The route puts the address in (it holds the app's URL); the module has none.
+      link: null,
       channels: channels.map((c): ChatPreviewChannel => {
-        const { last, at } = lastOf(posts, c.id, now);
-        return { id: c.id, kind: c.kind, label: c.label, host: c.host, last, lastAt: at ? at.toISOString() : null };
+        const { last, at, needsTick } = lastOf(posts, c.id, now);
+        return { id: c.id, kind: c.kind, label: c.label, host: c.host, last, lastAt: at ? at.toISOString() : null, needsTick };
       }),
       postsLeft: Math.max(0, CHAT_POSTS_PER_MEETING_PER_DAY - (await postsLast24h(ctx.trx, ctx.orgId, input.meetingId))),
     });
@@ -225,8 +229,13 @@ export const chatBegin = defineCommand({
     const { message, key } = await messageOf(ctx.trx, ctx.orgId, input.meetingId);
     if (key !== input.factsKey || chatTextHash(message) !== input.textHash) throw staleChat();
     if (chatMessageTooLong(message)) throw new DomainError('CHAT_MESSAGE_TOO_LONG', 422, 'Biên bản quá dài để gửi vào kênh; hãy rút gọn tóm tắt rồi chia sẻ lại');
-    const channel = await ctx.trx.selectFrom('crove_meetings.chat_channel').select(['kind', 'host']).where('org_id', '=', ctx.orgId).where('id', '=', input.channelId).executeTakeFirst();
+    const channel = await ctx.trx.selectFrom('crove_meetings.chat_channel').select(['kind', 'host', 'created_by']).where('org_id', '=', ctx.orgId).where('id', '=', input.channelId).executeTakeFirst();
     if (!channel) throw new DomainError('CHAT_CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh này');
+    // The address belongs to the member who saved it: while they are not an owner or admin any more, nothing is posted to it (chat_target_for_post checks again, and also that they are not disabled).
+    const saver = await ctx.trx.selectFrom('crove_kernel.tenant_member').select('role').where('org_id', '=', ctx.orgId).where('user_id', '=', channel.created_by).executeTakeFirst();
+    if (!saver || (saver.role !== 'owner' && saver.role !== 'admin')) {
+      throw new DomainError('CHAT_CHANNEL_OWNER_LEFT', 409, 'Người đã thêm kênh này không còn là chủ sở hữu hoặc quản trị viên; hãy nhờ chủ sở hữu hoặc quản trị viên dán lại địa chỉ');
+    }
     if ((await postsLast24h(ctx.trx, ctx.orgId, input.meetingId)) >= CHAT_POSTS_PER_MEETING_PER_DAY) {
       throw new DomainError('CHAT_LIMIT', 429, `Cuộc họp này đã gửi biên bản ${CHAT_POSTS_PER_MEETING_PER_DAY} lần trong 24 giờ qua; hãy thử lại sau`);
     }

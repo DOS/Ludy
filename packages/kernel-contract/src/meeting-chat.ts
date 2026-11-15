@@ -165,6 +165,8 @@ export const zChatPreviewChannel = z.strictObject({
   // How this recorder's last post of this meeting to this channel ended: none, sent, ambiguous (maybe in the channel: a repeat needs the tick), failed (nothing went out), busy (one is running now).
   last: z.enum(['none', 'sent', 'ambiguous', 'failed', 'busy']),
   lastAt: z.string().nullable(),
+  // Whether a post to this channel needs the recorder's tick: an earlier post of this meeting went, may have gone, or never recorded its outcome (whatever the newest one did).
+  needsTick: z.boolean(),
 });
 export type ChatPreviewChannel = z.infer<typeof zChatPreviewChannel>;
 
@@ -174,6 +176,8 @@ export const zChatPreview = z.strictObject({
   factsKey: z.string().regex(/^[0-9a-f]{64}$/),
   message: zChatMessage,
   tooLong: z.boolean(),
+  // The address the post carries back to the meeting, as the server will write it (the API's APP_URL or PUBLIC_URL); null when the server cannot make one. The dialog shows exactly this.
+  link: z.string().nullable(),
   channels: z.array(zChatPreviewChannel),
   postsLeft: z.number().int().min(0),
 });

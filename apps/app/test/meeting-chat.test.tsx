@@ -4,7 +4,7 @@
 import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { buildChatMessage, type ChatPreview, type ChatPreviewChannel } from '@crove/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
@@ -25,19 +25,11 @@ vi.mock('../src/lib/api.ts', async () => {
     });
   return { orpc: node([]), queryClient: client.current, errorMessage: String };
 });
-vi.mock('@tanstack/react-router', async (importOriginal) => ({ ...(await importOriginal<object>()), useParams: () => ({ slug: 'acme' }) }));
 
 const { ChatForm, MeetingChatPost, MinutesChannelsCard } = await import('../src/components/meeting-chat.tsx');
 
-beforeAll(() => {
-  vi.stubGlobal('window', { location: { origin: 'https://app.test' }, confirm: () => true });
-});
-afterAll(() => {
-  vi.unstubAllGlobals();
-});
-
 const MEETING = '0198a0b4-3c5d-7e6f-8a9b-0c1d2e3f4a5b';
-const channel = (over: Partial<ChatPreviewChannel> = {}): ChatPreviewChannel => ({ id: '0198a0b4-3c5d-7e6f-8a9b-0c1d2e3f0001', kind: 'slack', label: 'Kênh #hop-giao-ban', host: 'hooks.slack.com', last: 'none', lastAt: null, ...over });
+const channel = (over: Partial<ChatPreviewChannel> = {}): ChatPreviewChannel => ({ id: '0198a0b4-3c5d-7e6f-8a9b-0c1d2e3f0001', kind: 'slack', label: 'Kênh #hop-giao-ban', host: 'hooks.slack.com', last: 'none', lastAt: null, needsTick: false, ...over });
 const preview = (over: Partial<ChatPreview> = {}): ChatPreview => ({
   meetingId: MEETING,
   factsKey: 'a'.repeat(64),
@@ -48,6 +40,7 @@ const preview = (over: Partial<ChatPreview> = {}): ChatPreview => ({
     facts: { summary: 'Chốt báo giá tuần này.', decisions: ['Giữ giá cũ'], items: [{ title: 'Gửi báo giá cho khách', who: 'An', when: 'thứ sáu' }] },
   }),
   tooLong: false,
+  link: `https://app.test/o/acme/meetings/${MEETING}`,
   channels: [channel()],
   postsLeft: 6,
   ...over,
@@ -100,17 +93,21 @@ describe('ChatForm', () => {
   });
 
   it('waits for the tick before posting again to a channel that got the minutes, or may have, and not after a failure', () => {
-    const sent = form(preview({ channels: [channel({ last: 'sent', lastAt: '2026-11-13T03:00:00.000Z' })] }));
+    const sent = form(preview({ channels: [channel({ last: 'sent', lastAt: '2026-11-13T03:00:00.000Z', needsTick: true })] }));
     expect(sent).toContain(en.meetings.chat.last.sent);
     expect(sent).toContain('data-testid="chat-repeat"');
     expect(sendDisabled(sent)).toBe(true);
-    const ambiguous = form(preview({ channels: [channel({ last: 'ambiguous' })] }));
+    const ambiguous = form(preview({ channels: [channel({ last: 'ambiguous', needsTick: true })] }));
     expect(ambiguous).toContain(en.meetings.chat.last.ambiguous);
     expect(ambiguous).toContain('data-testid="chat-repeat"');
     const failed = form(preview({ channels: [channel({ last: 'failed' })] }));
     expect(failed).toContain(en.meetings.chat.last.failed);
     expect(failed).not.toContain('data-testid="chat-repeat"');
     expect(sendDisabled(failed)).toBe(false);
+    // An older post that went still needs the tick when the newest one failed (the server counts every earlier post).
+    const afterFailed = form(preview({ channels: [channel({ last: 'failed', needsTick: true })] }));
+    expect(afterFailed).toContain('data-testid="chat-repeat"');
+    expect(sendDisabled(afterFailed)).toBe(true);
     expect(sendDisabled(form(preview({ channels: [channel({ last: 'busy' })] })))).toBe(true);
   });
 

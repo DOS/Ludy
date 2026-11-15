@@ -6,7 +6,6 @@
 //                        channels, and says everyone in the channel will read it even if they cannot open the meeting. The recorder picks a channel and presses "Gửi"; a repeat needs a tick; nothing is sent
 //                        without that click. No AI part: the text is the published minutes, formatted by code.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useParams } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
 import { CHAT_LABEL_MAX, CHAT_URL_MAX, MEETING_CHAT_KINDS, chatMessageText, type ChatPosted, type ChatPreview, type MeetingChatKind } from '@crove/kernel-contract';
@@ -190,6 +189,7 @@ const RESULT_CODES = [
   'CHANNEL_TIMEOUT',
   'CHANNEL_NO_ANSWER',
   'CHANNEL_SERVER_ERROR',
+  'CHANNEL_MESSAGE_TOO_LARGE',
 ] as const;
 type ResultCode = (typeof RESULT_CODES)[number];
 const isResultCode = (code: string): code is ResultCode => (RESULT_CODES as readonly string[]).includes(code);
@@ -208,12 +208,11 @@ function ChatBody({ meetingId, onDone }: { meetingId: string; onDone: (label: st
 
 export function ChatForm({ preview, onDone, onReload }: { preview: ChatPreview; onDone: (label: string, kind: MeetingChatKind, posted: ChatPosted) => void; onReload?: () => void }) {
   const t = useTranslations('meetings.chat');
-  const params = useParams({ strict: false }) as { slug?: string };
   const [channelId, setChannelId] = useState<string | null>(preview.channels.length === 1 ? (preview.channels[0]?.id ?? null) : null);
   const [repeat, setRepeat] = useState(false);
   const channel = preview.channels.find((c) => c.id === channelId) ?? null;
-  // The link the post carries opens the meeting in this app: only people who can view the meeting get past the sign-in and the meeting's own readers rule.
-  const link = params.slug ? `${window.location.origin}/o/${encodeURIComponent(params.slug)}/meetings/${preview.meetingId}` : null;
+  // The link is the one the server will write (the preview returns it): only people who can view the meeting get past the sign-in and the meeting's own readers rule.
+  const link = preview.link;
   const post = useMutation({
     mutationFn: () => {
       if (!channel) throw new Error('no channel');
@@ -223,7 +222,7 @@ export function ChatForm({ preview, onDone, onReload }: { preview: ChatPreview; 
       if (channel) onDone(channel.label, channel.kind, posted);
     },
   });
-  const needsTick = channel !== null && (channel.last === 'sent' || channel.last === 'ambiguous');
+  const needsTick = channel !== null && channel.needsTick;
   const code = (post.error as { code?: string } | null)?.code;
   const askTick = needsTick || code === 'CHAT_ALREADY_POSTED';
   const blocked = channel === null || preview.tooLong || preview.postsLeft === 0 || channel.last === 'busy' || (askTick && !repeat);

@@ -54,8 +54,11 @@ The build environment could not reach `docs.slack.dev` or `learn.microsoft.com`,
 | | `CHANNEL_RATE_LIMITED` (429) | "Đợi N giây rồi thử lại": the recorder presses "Gửi" again; nothing is retried by Ludy |
 | | `CHANNEL_UNREACHABLE` | The guard refused the host or the name did not resolve: a private address, or no DNS from the server |
 | | `CHANNEL_ADDRESS_INVALID` | The saved address is no longer the service's own: paste it again |
+| | `CHANNEL_MESSAGE_TOO_LARGE` | A Teams card past about 24 KB once encoded is refused before any call: shorten the summary and share it again |
 | | `CHANNEL_ADDRESS_UNREADABLE` | The credential key changed or was lost: paste it again (see key rotation) |
 | "Không rõ biên bản đã vào ... chưa" | `CHANNEL_TIMEOUT`, `CHANNEL_NO_ANSWER`, `CHANNEL_SERVER_ERROR` | The request left and no usable answer came back. **Look in the channel first.** A new post needs the recorder's tick ("Tôi muốn gửi lại"). A post whose request died before it recorded an outcome (a restart) reads as ambiguous after two minutes |
+
+**The channel belongs to the person who pasted it.** While they are an owner or admin of the org (and not disabled), recorders can post to it; once they are demoted, removed or disabled, a post says `CHAT_CHANNEL_OWNER_LEFT` and an owner or admin pastes the address again (which makes them its owner). Teams addresses are on multi-tenant Microsoft hosts and the screen shows only the host, so this keeps a channel from outliving the person who vouched for its destination.
 
 One post per meeting at a time (`CHAT_POST_BUSY`), at most six a day per meeting (`CHAT_LIMIT`), and a post is refused when the published result changed since the recorder read it (`STALE_CHAT`): they reopen the dialog and read the new text.
 

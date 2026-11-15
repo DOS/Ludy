@@ -7,7 +7,7 @@ import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@crove/einvoice';
 import type { McpWakeView, QuoteLinkCreated } from '@crove/kernel-contract';
 import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wake-setup.ts';
-import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, PaymentReminderDraft, TodayList, WeeklyFigures } from '@crove/kernel-contract';
+import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, PaymentReminderDraft, TodayList, WeeklyFigures } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { weeklyAnswer } from './today-weekly.ts';
 import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
@@ -52,7 +52,7 @@ import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type C
 import { suggestCompanies, type CompanyAi } from './contact-company-ai.ts';
 import { wordReminder, type ReminderAi } from './payment-reminder-ai.ts';
 import { wordFollowup, type FollowupAi } from './followup-ai.ts';
-import { postMinutesFromClick, saveMinutesChannel, type MinutesChatDeps } from './meeting-chat.ts';
+import { minutesLink, postMinutesFromClick, saveMinutesChannel, type MinutesChatDeps } from './meeting-chat.ts';
 import { explainPayslip, flagMonth, prepareMonth, type PayrollAi, type PayrollReads } from './payroll-coworker-ai.ts';
 import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
 import { crmFollowupAi, draftCrmFollowup } from './crm-followup-ai.ts';
@@ -995,7 +995,12 @@ export function createRpcHandler(
         channels: os.meetings.chat.channels.handler(meetingsQuery('meetings.chat.channels')),
         saveChannel: os.meetings.chat.saveChannel.handler(({ context, input }) => inMeetings(context, (orgId, actor) => saveMinutesChannel(minutesChat(), { orgId, orgSlug: context.orgSlug, actor }, input))),
         removeChannel: os.meetings.chat.removeChannel.handler(meetingsCommand('meetings.chat.channel_remove')),
-        preview: os.meetings.chat.preview.handler(meetingsQuery('meetings.chat.preview')),
+        preview: os.meetings.chat.preview.handler(({ context, input }) =>
+          inMeetings(context, async (orgId, actor) => {
+            const view = await runtime.query<ChatPreview>('meetings.chat.preview', input, { actor, orgId });
+            return { ...view, link: minutesLink(channels?.publicUrl ?? '', context.orgSlug, input.meetingId) };
+          }),
+        ),
         post: os.meetings.chat.post.handler(({ context, input }) => inMeetings(context, (orgId, actor) => postMinutesFromClick(minutesChat(), { orgId, orgSlug: context.orgSlug, actor }, input))),
       },
       links: {

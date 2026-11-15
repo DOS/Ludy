@@ -135,6 +135,20 @@ describe('how an answer is classified', () => {
     expect(calls).toBe(0);
   });
 
+  it('refuses a Teams card past the size limit before any request, and still posts a long Slack text', async () => {
+    let calls = 0;
+    const counting = async () => {
+      calls += 1;
+      return new Response('ok', { status: 200 });
+    };
+    // Letters of three bytes in UTF-8 and escapes make a card heavier than its characters.
+    const heavy: MinutesMessage = { ...message, summary: '界'.repeat(8000), decisions: Array.from({ length: 30 }, () => '界-(*)_'.repeat(60)) };
+    expect(await postMinutes('teams', TEAMS, heavy, null, counting)).toMatchObject({ state: 'failed', code: 'CHANNEL_MESSAGE_TOO_LARGE' });
+    expect(calls).toBe(0);
+    expect(await postMinutes('slack', SLACK, heavy, null, counting)).toMatchObject({ state: 'sent' });
+    expect(calls).toBe(1);
+  });
+
   it('carries the address in no result and posts to it once, as JSON', async () => {
     const seen: Array<{ url: string; method: string | undefined; type: string | null }> = [];
     const results = [

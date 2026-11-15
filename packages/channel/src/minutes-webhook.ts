@@ -12,6 +12,8 @@
 export const SLACK_WEBHOOK_HOSTS = ['hooks.slack.com'] as const;
 export const TEAMS_WEBHOOK_HOST_SUFFIXES = ['.logic.azure.com', '.api.powerplatform.com'] as const;
 export type MinutesKind = 'slack' | 'teams';
+// A Teams card is refused before any call when its encoded body passes this many bytes (the service takes about 28 KB [unverified]; escapes and 3-byte letters weigh).
+export const TEAMS_BODY_MAX_BYTES = 24_000;
 
 // The minutes as the module builds them (kernel-contract's ChatMessage; the same shape, kept here so this package needs nothing of the contract).
 export interface MinutesMessage {
@@ -135,6 +137,7 @@ export async function postMinutes(kind: MinutesKind, address: string, message: M
   const parsed = parseMinutesUrl(kind, address);
   if (!parsed) return failed('CHANNEL_ADDRESS_INVALID');
   const body = kind === 'slack' ? slackMinutesBody(message, link) : teamsMinutesBody(message, link);
+  if (kind === 'teams' && Buffer.byteLength(body, 'utf8') > TEAMS_BODY_MAX_BYTES) return failed('CHANNEL_MESSAGE_TOO_LARGE');
   let answer: Response;
   try {
     answer = await send(parsed.url, { method: 'POST', headers: { 'content-type': 'application/json; charset=utf-8' }, body });

@@ -265,6 +265,45 @@ suite('minutes posted to Slack and Teams from the recorder\'s click (B4, #3168)'
     expect((await preview(meeting)).channels[0]).toMatchObject({ last: 'sent' });
   });
 
+  it('keeps asking the person who saved the channel to still be an owner or admin: a demoted or disabled saver stops the post until an owner or admin pastes the address again', async () => {
+    const meeting = await seedMeeting(true);
+    const { id: channel } = await saveChannel('admin', 'slack', SLACK_URL);
+    expect(await post(meeting, channel)).toMatchObject({ state: 'sent' });
+    await sqlAdmin(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgId, users.admin]);
+    try {
+      const before = sent.length;
+      expect(await refuses(post(meeting, channel, { confirmRepeat: true }))).toBe('CHAT_CHANNEL_OWNER_LEFT');
+      expect(sent).toHaveLength(before);
+      expect((await posts(meeting)).map((p) => p.state)).toEqual(['sent']);
+      // The owner pastes the address again: the channel is theirs now and works.
+      await saveChannel('owner', 'slack', SLACK_URL, 'Kênh họp giao ban', channel);
+      expect(await post(meeting, channel, { confirmRepeat: true })).toMatchObject({ state: 'sent' });
+    } finally {
+      await sqlAdmin(`UPDATE crove_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [orgId, users.admin]);
+    }
+    // A saver who is disabled: the call never leaves, and the address does not open for the post.
+    const other = await saveChannel('admin', 'slack', SLACK_URL, 'Kênh của admin');
+    await sqlAdmin('UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1', [users.admin]);
+    try {
+      const before = sent.length;
+      expect(await post(meeting, other.id)).toMatchObject({ state: 'failed', code: 'CHANNEL_ADDRESS_UNREADABLE' });
+      expect(sent).toHaveLength(before);
+    } finally {
+      await sqlAdmin('UPDATE crove_kernel.user_account SET disabled_at = NULL WHERE id = $1', [users.admin]);
+    }
+  });
+
+  it('asks for the tick as long as any earlier post went, may have gone or never recorded its outcome, even when the newest one failed', async () => {
+    const meeting = await seedMeeting(true);
+    const { id: channel } = await saveChannel('owner', 'slack', SLACK_URL);
+    expect((await preview(meeting)).channels[0]).toMatchObject({ last: 'none', needsTick: false });
+    expect(await post(meeting, channel)).toMatchObject({ state: 'sent' });
+    next = { status: 404 };
+    expect(await post(meeting, channel, { confirmRepeat: true })).toMatchObject({ state: 'failed' });
+    expect((await preview(meeting)).channels[0]).toMatchObject({ last: 'failed', needsTick: true });
+    expect(await refuses(post(meeting, channel))).toBe('CHAT_ALREADY_POSTED');
+  });
+
   it('records a refused call as failed (no tick needed), a rate limit with its seconds, and a lost answer as ambiguous (a tick needed)', async () => {
     const meeting = await seedMeeting(true);
     const { id: channel } = await saveChannel('owner', 'slack', SLACK_URL);

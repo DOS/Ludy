@@ -77,6 +77,12 @@ export async function saveMinutesChannel(deps: MinutesChatDeps, scope: MinutesCh
   );
 }
 
+// The address a post carries back to the meeting: the app's address, the org and the meeting. null without an app address or an org slug. The dialog shows this very value (the preview returns it).
+export function minutesLink(publicUrl: string, orgSlug: string | null, meetingId: string): string | null {
+  const base = publicUrl.replace(/\/$/, '');
+  return base !== '' && orgSlug ? `${base}/o/${encodeURIComponent(orgSlug)}/meetings/${meetingId}` : null;
+}
+
 const codeOf = (error: unknown) => (error instanceof DomainError ? error.code : error instanceof Error ? error.name : 'error');
 
 // The recorder's click. Throws a DomainError for what refuses before anything is sent (not published, the facts changed, a tick missing, the limit); once a call may have left, it answers with the outcome.
@@ -92,8 +98,7 @@ export async function postMinutesFromClick(deps: MinutesChatDeps, scope: Minutes
     { meetingId: input.meetingId, channelId: input.channelId, factsKey: view.factsKey, textHash: sha256Hex(chatMessageCanonical(view.message)), confirmRepeat: input.confirmRepeat },
     ctx,
   );
-  const base = deps.publicUrl.replace(/\/$/, '');
-  const link = base !== '' && scope.orgSlug ? `${base}/o/${encodeURIComponent(scope.orgSlug)}/meetings/${input.meetingId}` : null;
+  const link = minutesLink(deps.publicUrl, scope.orgSlug, input.meetingId);
   let result: MinutesPostResult;
   try {
     // 3. The sealed address of this post, opened with the broker; it lives in this scope only.

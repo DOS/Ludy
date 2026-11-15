@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS crove_meetings.chat_channel (
   label text NOT NULL CHECK (pg_catalog.char_length(label) BETWEEN 1 AND 200),
   -- The address's host as the adapter parsed it when it was saved, for the screen and the check at the send. Not a secret.
   host text NOT NULL CHECK (host ~ '^[a-z0-9][a-z0-9.-]{0,251}[a-z0-9]$'),
-  -- The member who saved the address; the post uses it only while they are an owner or admin of the org (checked by the command, as the chat alert's worker does).
+  -- The member who saved the address; the post uses it only while they are an owner or admin of the org and not disabled (checked by meetings.chat.begin and again by chat_target_for_post, as the chat alert's worker does).
   created_by uuid NOT NULL,
   created_at timestamptz NOT NULL DEFAULT pg_catalog.now(),
   updated_at timestamptz NOT NULL DEFAULT pg_catalog.now(),
@@ -131,7 +131,7 @@ BEGIN
 END $$;
 
 -- The sealed address of a channel, for the API process, to post once for a recorder's own click. Raises MEETINGS_API_ONLY (42501) for a login that is not the API's, NO_CONTEXT (42501) outside a signed-in
--- member's context, and CHAT_POST_NOT_OPEN (P0002) unless the post is the caller's own, is still `started`, was made under two minutes ago and is on a meeting the caller records. It returns the key id
+-- member's context, CHAT_CHANNEL_OWNER_LEFT (42501) when the member who saved the address is no longer an owner or admin or is disabled, and CHAT_POST_NOT_OPEN (P0002) unless the post is the caller's own, is still `started`, was made under two minutes ago and is on a meeting the caller records. It returns the key id
 -- and the sealed bytes: the envelope opens only with the deployment's credential key, which the database never holds, and the API process alone uses it.
 CREATE OR REPLACE FUNCTION crove_meetings.chat_target_for_post(p_post_id uuid)
 RETURNS TABLE (key_id text, envelope bytea)
@@ -151,6 +151,15 @@ BEGIN
   WHERE p.org_id = v_org AND p.id = p_post_id AND p.user_id = v_user AND p.state = 'started' AND p.created_at > pg_catalog.clock_timestamp() - interval '2 minutes';
   IF NOT FOUND OR NOT crove_meetings.is_meeting_recorder(v_org, v_post.meeting_id) THEN
     RAISE EXCEPTION 'CHAT_POST_NOT_OPEN' USING ERRCODE = 'P0002';
+  END IF;
+  -- The address belongs to the member who saved it: once they are no longer an owner or admin of the org, or are disabled, it opens for nobody (an owner or admin pastes it again).
+  IF NOT EXISTS (
+    SELECT 1 FROM crove_meetings.chat_channel c
+    JOIN crove_kernel.tenant_member m ON m.org_id = c.org_id AND m.user_id = c.created_by AND m.role IN ('owner', 'admin')
+    JOIN crove_kernel.user_account u ON u.id = m.user_id AND u.disabled_at IS NULL
+    WHERE c.org_id = v_org AND c.id = v_post.channel_id
+  ) THEN
+    RAISE EXCEPTION 'CHAT_CHANNEL_OWNER_LEFT' USING ERRCODE = '42501';
   END IF;
   RETURN QUERY
     SELECT t.key_id, t.envelope FROM crove_meetings.chat_channel_target t WHERE t.org_id = v_org AND t.channel_id = v_post.channel_id;

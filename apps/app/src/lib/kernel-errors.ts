@@ -347,6 +347,7 @@ export const KERNEL_ERROR_CODES = [
   'CHAT_CHANNEL_NOT_FOUND',
   'CHAT_KIND_FIXED',
   'CHAT_SAVE_LIMIT',
+  'CHAT_CHANNEL_OWNER_LEFT',
   'FOLLOWUP_TOO_LARGE',
   // Transcription as the recorder's own Vy (#2578, M4b).
   'TRANSCRIBE_OFF',
