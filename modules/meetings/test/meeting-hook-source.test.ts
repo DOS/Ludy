@@ -28,7 +28,7 @@ const SOURCES = [
   'apps/kernel/src/meeting-hook-sweep.ts',
   'apps/kernel/src/meeting-hook-setup.ts',
 ];
-const MIGRATION = 'supabase/migrations/20270101050000_crove_meetings_member_hook.sql';
+const MIGRATION = 'supabase/migrations/20270101060000_crove_meetings_member_hook.sql';
 
 describe('the minutes webhook composer reads nothing of the transcript', () => {
   it('names no transcript, audio, video, reader, attendee, translation or notes table or column in its sources or its migration', () => {

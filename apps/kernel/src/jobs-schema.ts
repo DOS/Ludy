@@ -74,7 +74,7 @@ export const QUEUES = {
   // Created by the wake-up delivery migration (20261224000000): one delivery of an MCP grant's wake-up webhook, and the sweep that hands deliveries over (ADR-0051 decision 4, #3024).
   mcpWake: 'kernel-mcp-wake',
   mcpWakeSweep: 'kernel-mcp-wake-sweep',
-  // Created by the member minutes webhook migration (20270101050000): one delivery of a member's minutes webhook, and the sweep that hands deliveries over (meetings integrations A6, #3164).
+  // Created by the member minutes webhook migration (20270101060000): one delivery of a member's minutes webhook, and the sweep that hands deliveries over (meetings integrations A6, #3164).
   meetingHook: 'kernel-meeting-hook',
   meetingHookSweep: 'kernel-meeting-hook-sweep',
   // Created by the meetings transcription migration (20261202000000): one run of the recorder's Vy transcribing a meeting (#2578, M4b).
