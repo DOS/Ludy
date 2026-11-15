@@ -91,6 +91,18 @@ export async function verifyExtensionBearer(db: Db, token: string): Promise<Exte
   return { tokenId: row.token_id, orgId: row.org_id, userId: row.user_id, scopes, expiresAt: new Date(row.expires_at).toISOString() };
 }
 
+// The email of the account that owns a token, for AUTH_ALLOWED_EMAILS (issue #3223): null when no token has this value. Read-only (a STABLE
+// definer), unlike verifyExtensionBearer, which stamps last_used_at, so the edge asks it first and a refused account costs no write. It looks at
+// no standing: a revoked or expired token still answers here and is then refused by verifyExtensionBearer as before.
+export async function extensionTokenAccountEmail(db: Db, token: string): Promise<string | null> {
+  try {
+    const { rows } = await sql<{ email: string | null }>`SELECT crove_kernel.extension_token_account_email(${hashExtensionSecret(token)}::bytea) AS email`.execute(db);
+    return rows[0]?.email ?? null;
+  } catch (error) {
+    throw toDomainError(error);
+  }
+}
+
 export interface ExtensionExchange {
   // The one-time code the token came from: the audit row of the exchange names it with the token.
   codeId: string;

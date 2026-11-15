@@ -26,6 +26,7 @@ import { zMcpDraftCreate, zMcpPostsInput, zMcpReviewQueueInput } from '@crove/mo
 import { DraftBudget } from './ai-draft-limit.ts';
 import type { AuthUser } from './auth.ts';
 import { actorOf } from './auth.ts';
+import { createAccountEmailAccess } from './auth-access.ts';
 import type { Config } from './config.ts';
 import { logEvent, runWithLogContext } from './log.ts';
 import { handleMcp, RPC_INTERNAL, type McpHeaders, type ToolDescriptor } from './mcp-protocol.ts';
@@ -199,6 +200,8 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
   const refusalAuditLimiter = new RateLimiter({ perMinute: 6, ...(deps.now ? { now: deps.now } : {}) });
   const inFlight = new Map<string, number>();
   const draftBudget = deps.draftBudget ?? new DraftBudget(deps.now ? { now: deps.now } : {});
+  // AUTH_ALLOWED_EMAILS for an MCP grant, which carries no email (issue #3223); null while the list is unset.
+  const accountAccess = createAccountEmailAccess(config.AUTH_ALLOWED_EMAILS);
 
   const tooMany = tooManyRequests;
 
@@ -359,6 +362,17 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
     if (token === null) return challenge(c, null);
     const claims = await oauth.verifyAccessToken(token);
     if (!claims) return challenge(c, 'invalid_token');
+    // With AUTH_ALLOWED_EMAILS set: the email of the person who gave the grant against the list, before mcp_grant_verify, which stamps last_used_at (a refusal writes
+    // nothing, not even a call audit row). A grant no row has gives no email and falls through to the 401 below, as before.
+    if (accountAccess) {
+      try {
+        const { rows } = await runtime.orgless((db) => sql<{ email: string | null }>`SELECT crove_kernel.mcp_grant_account_email(${claims.grantId}::uuid) AS email`.execute(db));
+        const email = rows[0]?.email;
+        if (typeof email === 'string') accountAccess(email);
+      } catch (error) {
+        return problem(c, error);
+      }
+    }
     // The grant's standing, in the database, before anything is spent on the request: revoked, expired, stopped, the person no longer an owner or admin.
     let grant: { orgId: string; userId: string; scopes: string[]; clientName: string; kind: 'company' | 'member' } | null = null;
     try {

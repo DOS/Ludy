@@ -357,6 +357,66 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     expect((await refreshWith(c.clientId, c.refresh)).status).toBe(400);
   });
 
+  // AUTH_ALLOWED_EMAILS binds the grant that outlives a browser session (#3223): the email of the person who gave it against the list on every call, before
+  // mcp_grant_verify stamps last_used_at and before any call audit row, so a refused account costs no write.
+  it('refuses a grant whose account the allow-list leaves out, on every call and with no database write, and lets it through once it is listed (#3223)', async () => {
+    const c = await connect();
+    const email = String(accounts.get('owner')?.email);
+    const grant = () => admin(async (client) => (await client.query<{ id: string; last_used_at: Date | null }>('SELECT id, last_used_at FROM crove_kernel.agent_grant WHERE client_id = $1', [c.clientId])).rows[0]);
+    const audits = () => admin(async (client) => Number((await client.query<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.audit_event WHERE org_id = $1', [orgId])).rows[0]?.n));
+    const row = await grant();
+    expect(row).toBeDefined();
+    // Start from a grant that was never used, so a stamp would show.
+    await admin((client) => client.query('UPDATE crove_kernel.agent_grant SET last_used_at = NULL WHERE id = $1', [row?.id]));
+    const before = await audits();
+
+    // The same keys and resource, a deployment that lists people: the token verifies there as it does here.
+    const appWith = async (list: string) => {
+      const config = loadConfig({ ...bootEnv, AUTH_ALLOWED_EMAILS: list });
+      const oauth = await createOauthServer(config, (fn) => sharedRuntime.orgless(fn));
+      return createHttpApp({ config, oauth, runtime: sharedRuntime, store: new MemoryStore(), authenticate: createAuthenticator(config, sharedDb), pool, aiEnabled: false });
+    };
+    const call = (target: Awaited<ReturnType<typeof appWith>>, access: string) =>
+      target.request(`${base}/mcp`, {
+        method: 'POST',
+        headers: modernHeaders(access, 'tools/call', 'ludy_about'),
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'ludy_about', arguments: {}, _meta: { 'io.modelcontextprotocol/protocolVersion': '2026-07-28' } } }),
+      });
+
+    // The list names somebody else (an address and a domain): every call is 403 ACCOUNT_NOT_ALLOWED, however often, and nothing is written.
+    const elsewhere = await appWith('someone-else@mcp.test @elsewhere.test');
+    for (let use = 0; use < 3; use++) {
+      const refused = await call(elsewhere, c.access);
+      expect(refused.status).toBe(403);
+      expect(await refused.json()).toMatchObject({ code: 'ACCOUNT_NOT_ALLOWED' });
+    }
+    expect((await grant())?.last_used_at, 'a refusal must not stamp last_used_at').toBeNull();
+    expect(await audits(), 'a refusal writes no call audit row').toBe(before);
+
+    // A token no grant has still gets the flat 401 challenge there: the list says nothing about grants that do not exist.
+    expect((await call(elsewhere, 'not-a-token')).status).toBe(401);
+
+    // Listed by address (any letter case) or by domain: the call works and the grant is stamped as before.
+    const listed = await appWith(email.toUpperCase());
+    const answered = await call(listed, c.access);
+    expect(answered.status).toBe(200);
+    expect(await answered.json()).toMatchObject({ result: { structuredContent: { clientName: 'Test MCP client' } } });
+    expect((await grant())?.last_used_at).not.toBeNull();
+    expect((await call(await appWith('@mcp.test'), c.access)).status).toBe(200);
+
+    // The list unset (the server of this suite): today's behavior, exactly.
+    expect(await aboutStatus(c.access)).toBe(200);
+
+    // Standing is not loosened by the list: a revoked grant of a listed account is refused 401, as before.
+    for (const g of (await grantsOf()).filter((x) => x.id === row?.id)) expect((await rpc('mcp/grant/revoke', await asBrowser('owner'), { grantId: g.id })).status).toBe(200);
+    expect((await call(listed, c.access)).status).toBe(401);
+
+    // The definer answers the person's email for a known grant and NULL for an unknown one, to the API login only.
+    const ask = async (id: string) => (await pool.query<{ email: string | null }>('SELECT crove_kernel.mcp_grant_account_email($1::uuid) AS email', [id])).rows[0]?.email;
+    expect(await ask(String(row?.id))).toBe(email);
+    expect(await ask(randomUUID())).toBeNull();
+  });
+
   it('lets a member connect their own AI app once the org allows it: refused while the switch is off, a token that reads only what a member reads, and the very next call refused when the owner turns the switch off', async () => {
     const member = 'member-own-app';
     await jwt(member);

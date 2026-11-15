@@ -10,9 +10,15 @@
 // (`owner@example.com`) and of domains written with a leading `@` (`@example.com`, exact domain, no subdomains). Unset:
 // no restriction, as before. Set: a token whose `email` matches no entry is refused with 403 ACCOUNT_NOT_ALLOWED on
 // every request that carries an access token, before any database work, so no user account is created for it; taking
-// an entry out of the list takes effect on that person's next such request. It does not end what they were already
-// given: a Ludy extension token, an MCP grant (neither carries an email) and an open /api/stream connection. Taking
-// someone away also means disabling the account or removing them from the org (docs/runbooks/pilot-sign-in-remote-idp.md). The check reads the email of the verified token, so it is only as strong as the
+// an entry out of the list takes effect on that person's next such request.
+//
+// Two credentials outlive a browser session and carry no email: a Ludy extension token and an MCP grant (issue #3223). With the
+// list set, the edge reads the email of the account that owns the token or grant (crove_kernel.extension_token_account_email,
+// mcp_grant_account_email, read-only definers) and applies the same list to it, BEFORE the definers that verify the credential
+// (they stamp last_used_at), so a refused account costs no database write: 403 ACCOUNT_NOT_ALLOWED on every use. Unset: the
+// edge asks nothing, as before. That email is the one Ludy saw at the account's last browser sign-in, so an address the provider
+// changed since is judged by the old one until that person signs in again. An open /api/stream connection is still checked by
+// its session only (it ends with the access token's expiry). The check reads the email of the verified token, so it is only as strong as the
 // provider's promise that it issues tokens for confirmed addresses (the provider must require email confirmation);
 // a token that says its email is not verified (`user_metadata.email_verified` is false) is refused too (a courtesy, not a
 // boundary: Supabase Auth lets the user write `user_metadata`, so only the provider's email confirmation is one).
@@ -57,5 +63,19 @@ export function createEmailAccess(entries: readonly string[]): EmailAccess {
     const at = address.lastIndexOf('@');
     const allowed = addresses.has(address) || (at > 0 && address.indexOf('@') === at && domains.has(address.slice(at)));
     if (!allowed || emailVerified === false) throw accountNotAllowed();
+  };
+}
+
+// The same list for a credential that carries no email claim (an extension token, an MCP grant): null when the list is unset,
+// so the caller does not even read the account. Given the account's stored email, it throws 403 ACCOUNT_NOT_ALLOWED unless the
+// list allows it. No email on record counts as not allowed. `email_verified` is not known here, so only the list is applied.
+export type AccountEmailAccess = (email: string | null | undefined) => void;
+
+export function createAccountEmailAccess(entries: readonly string[]): AccountEmailAccess | null {
+  if (entries.length === 0) return null;
+  const check = createEmailAccess(entries);
+  return (email) => {
+    if (typeof email !== 'string' || email.trim() === '') throw accountNotAllowed();
+    check(email, undefined);
   };
 }
