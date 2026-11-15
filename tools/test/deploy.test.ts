@@ -1,7 +1,8 @@
 // tools/deploy/deploy.sh (issue #56) against stand-ins for docker and curl (tools/test/deploy-stubs): the order of
 // the steps, the readiness gate, rollback on a failed smoke test, the state it records, and what it refuses.
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -39,6 +40,7 @@ function run(args: string[], env: Record<string, string> = {}, input?: string) {
       CROVE_WORKER_SETTLE: '0',
       STUB_LOG: log,
       STUB_DEPLOY_DIR: dir,
+      STUB_OPENSSL_KEY_FILE: `${root}/openssl-key`,
       // The account step of the smoke test stays off unless a case turns it on.
       SMOKE_EMAIL: '',
       SMOKE_PASSWORD: '',
@@ -68,7 +70,9 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     compose = `${root}/docker-compose.yml`;
     mkdirSync(dir);
     mkdirSync(`${root}/bin`);
-    for (const stub of ['docker', 'curl']) {
+    // The key the stand-in for openssl makes (a new one for each case): the cases look for it in every log.
+    writeFileSync(`${root}/openssl-key`, `${randomBytes(32).toString('base64')}\n`);
+    for (const stub of ['docker', 'curl', 'openssl']) {
       // LF endings whatever the checkout did (core.autocrlf on Windows): bash refuses a CR in the shebang.
       writeFileSync(`${root}/bin/${stub}`, readFileSync(join(import.meta.dirname, 'deploy-stubs', stub), 'utf8').replaceAll('\r\n', '\n'));
       chmodSync(`${root}/bin/${stub}`, 0o755);
@@ -665,6 +669,306 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     for (const [i, c] of ['a', 'b', 'c', 'd'].entries()) expect(deploy(`v1.${i}.0`, c, { CROVE_KEEP_RELEASES: '2' }).status).toBe(0);
     const left = readdirSync(`${dir}/releases`).sort();
     expect(left).toEqual([releaseDir('v1.2.0', 'c'), releaseDir('v1.3.0', 'd')]);
+  });
+
+  // #3282: the production steps of #1822 (the context token key) and #1750 (the plain idempotency rows) run in the deploy, on the
+  // host, after the database is up and before `migrate`.
+  describe('context token key and plain idempotency rows (#3282)', () => {
+    const KEY_LINE = /^CROVE_CONTEXT_TOKEN_KEY=([A-Za-z0-9+/]{43}=)$/m;
+    const envFile = () => readFileSync(`${dir}/.env`, 'utf8');
+    const keyOf = () => KEY_LINE.exec(envFile())?.[1] ?? '';
+    const stubKey = () => readFileSync(`${root}/openssl-key`, 'utf8').trim();
+    const opensslCalls = () => (existsSync(`${log}.openssl`) ? readFileSync(`${log}.openssl`, 'utf8') : '');
+    // Copies of the env file that stay in .deploy: none, unless a write could not be put back.
+    const leftovers = () => readdirSync(`${dir}/.deploy`).filter((f) => f.startsWith('env-key.') || f.startsWith('env-old.'));
+    const files = (d: string): string[] =>
+      readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? files(`${d}/${e.name}`) : [`${d}/${e.name}`]));
+
+    it('writes a 44-character key into an empty line before migrate, keeps the file, and a second deploy leaves it alone', () => {
+      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=\nOTHER=1\n');
+      chmodSync(`${dir}/.env`, 0o600);
+      const before = statSync(`${dir}/.env`);
+      const first = deploy('v1.0.0', 'a');
+      expect(first.status, first.out).toBe(0);
+      const key = keyOf();
+      expect(key).toHaveLength(44);
+      expect(key).toBe(stubKey());
+      // Only that line changed; the file keeps its inode (so its owner) and its mode.
+      expect(envFile()).toBe(`POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=${key}\nOTHER=1\n`);
+      const after = statSync(`${dir}/.env`);
+      expect(after.ino).toBe(before.ino);
+      expect(after.mode & 0o777).toBe(0o600);
+      // The log says it, names the person step, and `migrate` (which saw the key) installs it afterwards.
+      expect(first.out).toContain('context token key generated');
+      expect(first.out).toContain('person step: copy CROVE_CONTEXT_TOKEN_KEY');
+      expect(first.out).not.toContain('context token key present');
+      const at = (text: string) => first.out.indexOf(text);
+      expect(at('context token key generated')).toBeLessThan(at('running migrations'));
+      expect(at('running migrations')).toBeLessThan(at('context token key installed'));
+      expect(readFileSync(`${dir}/.deploy/history.log`, 'utf8')).toContain('context token key generated');
+      expect(opensslCalls()).toBe('openssl rand -base64 32\n');
+      // No copy of the env file is left behind.
+      expect(leftovers()).toEqual([]);
+
+      // The second deploy keeps the key: present, no new key, `migrate` has nothing to install.
+      writeFileSync(`${root}/openssl-key`, `${randomBytes(32).toString('base64')}\n`);
+      const second = deploy('v1.1.0', 'b');
+      expect(second.status, second.out).toBe(0);
+      expect(second.out).toContain('context token key present');
+      expect(second.out).not.toContain('context token key generated');
+      expect(second.out).toContain('context token key unchanged');
+      expect(keyOf()).toBe(key);
+      expect(opensslCalls()).toBe('openssl rand -base64 32\n');
+    });
+
+    it('adds the line when the env file has none, also when its last line has no line break', () => {
+      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x');
+      const res = deploy('v1.0.0', 'a');
+      expect(res.status, res.out).toBe(0);
+      expect(envFile()).toBe(`POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=${stubKey()}\n`);
+      expect(res.out).toContain('context token key installed');
+    });
+
+    it.each([
+      ['export and spaces', 'export  CROVE_CONTEXT_TOKEN_KEY =', 'CROVE_CONTEXT_TOKEN_KEY=@KEY@'],
+      ['empty double quotes', 'CROVE_CONTEXT_TOKEN_KEY=""', 'CROVE_CONTEXT_TOKEN_KEY=@KEY@'],
+      ['empty single quotes and a comment', "CROVE_CONTEXT_TOKEN_KEY='' # later", 'CROVE_CONTEXT_TOKEN_KEY=@KEY@'],
+      ['a comment as the value', 'CROVE_CONTEXT_TOKEN_KEY= # to fill in', 'CROVE_CONTEXT_TOKEN_KEY=@KEY@'],
+      ['empty quotes and a comment with a hash in it', 'CROVE_CONTEXT_TOKEN_KEY="" # required by #1822', 'CROVE_CONTEXT_TOKEN_KEY=@KEY@'],
+      ['empty quotes and a comment right after them', 'CROVE_CONTEXT_TOKEN_KEY=""#later', 'CROVE_CONTEXT_TOKEN_KEY=@KEY@'],
+      ['only spaces', 'CROVE_CONTEXT_TOKEN_KEY=   ', 'CROVE_CONTEXT_TOKEN_KEY=@KEY@'],
+      ['a CRLF line break', 'CROVE_CONTEXT_TOKEN_KEY=\r', 'CROVE_CONTEXT_TOKEN_KEY=@KEY@\r'],
+      ['the colon form of a dotenv file', 'CROVE_CONTEXT_TOKEN_KEY: ', 'CROVE_CONTEXT_TOKEN_KEY=@KEY@'],
+    ])('takes %s for a missing key and replaces that line only', (_name, line, replaced) => {
+      writeFileSync(`${dir}/.env`, `A=1\n${line}\nB=2\n`);
+      const res = deploy('v1.0.0', 'a');
+      expect(res.status, res.out).toBe(0);
+      expect(res.out).toContain('context token key generated');
+      expect(envFile()).toBe(`A=1\n${replaced.replace('@KEY@', stubKey())}\nB=2\n`);
+    });
+
+    it.each([
+      ['a value', 'CROVE_CONTEXT_TOKEN_KEY=abc'],
+      ['export and a quoted value', 'export CROVE_CONTEXT_TOKEN_KEY="abc"'],
+      ['a value and a comment', 'CROVE_CONTEXT_TOKEN_KEY = abc # mine'],
+      ['a quoted value with a space and a hash', 'CROVE_CONTEXT_TOKEN_KEY="a # b"'],
+      ['a value that starts with a hash (in doubt: kept)', 'CROVE_CONTEXT_TOKEN_KEY=#abc'],
+      ['a key that is not 44 characters (never judged, never replaced)', 'CROVE_CONTEXT_TOKEN_KEY=short'],
+      ['the colon form of a dotenv file', 'CROVE_CONTEXT_TOKEN_KEY: abc'],
+    ])('never replaces an existing key: %s', (_name, line) => {
+      const content = `A=1\n${line}\nB=2\n`;
+      writeFileSync(`${dir}/.env`, content);
+      const res = deploy('v1.0.0', 'a');
+      expect(res.status, res.out).toBe(0);
+      expect(res.out).toContain('context token key present');
+      expect(res.out).not.toContain('context token key generated');
+      expect(envFile()).toBe(content);
+      expect(opensslCalls()).toBe('');
+    });
+
+    it('reads the last assignment, ignores comments and CROVE_CONTEXT_TOKEN_KEY_FILE, and replaces only the last line', () => {
+      // The last assignment wins, as in a dotenv file: set, then empty again, is missing; the earlier line stays as it is.
+      writeFileSync(`${dir}/.env`, 'CROVE_CONTEXT_TOKEN_KEY=old\nCROVE_CONTEXT_TOKEN_KEY=\n');
+      expect(deploy('v1.0.0', 'a').status).toBe(0);
+      expect(envFile()).toBe(`CROVE_CONTEXT_TOKEN_KEY=old\nCROVE_CONTEXT_TOKEN_KEY=${stubKey()}\n`);
+      // Empty, then set: present.
+      writeFileSync(`${dir}/.env`, 'CROVE_CONTEXT_TOKEN_KEY=\nCROVE_CONTEXT_TOKEN_KEY=real\n');
+      const present = deploy('v1.1.0', 'b');
+      expect(present.out).toContain('context token key present');
+      expect(envFile()).toBe('CROVE_CONTEXT_TOKEN_KEY=\nCROVE_CONTEXT_TOKEN_KEY=real\n');
+      // A commented-out line and another setting that starts with the same name are no assignment: the line is added.
+      writeFileSync(`${dir}/.env`, '# CROVE_CONTEXT_TOKEN_KEY=abc\nCROVE_CONTEXT_TOKEN_KEY_FILE=/data/key\n');
+      const added = deploy('v1.2.0', 'c');
+      expect(added.out).toContain('context token key generated');
+      expect(envFile()).toBe(`# CROVE_CONTEXT_TOKEN_KEY=abc\nCROVE_CONTEXT_TOKEN_KEY_FILE=/data/key\nCROVE_CONTEXT_TOKEN_KEY=${stubKey()}\n`);
+    });
+
+    it('never puts the key in a log, an argument, another process\'s environment or the release directory', () => {
+      // Every command the script runs through a recording shim: its arguments and its whole environment are kept.
+      const shims = ['cat', 'cmp', 'mktemp', 'rm', 'sed', 'grep', 'tr', 'head', 'tail', 'mv', 'cp', 'mkdir', 'date'];
+      for (const name of shims) {
+        const real = spawnSync('bash', ['-c', `command -v ${name}`], { encoding: 'utf8' }).stdout.trim();
+        writeFileSync(`${root}/bin/${name}`, `#!/bin/sh\nprintf '%s %s\\n' "${name}" "$*" >>"$STUB_LOG.shim-argv"\nenv >>"$STUB_LOG.shim-env"\nexec ${real} "$@"\n`);
+        chmodSync(`${root}/bin/${name}`, 0o755);
+      }
+      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=\n');
+      const res = deploy('v1.0.0', 'a');
+      expect(res.status, res.out).toBe(0);
+      const key = keyOf();
+      expect(key).toBe(stubKey());
+      // The shims did see the run, so an empty log would prove nothing.
+      const argv = readFileSync(`${log}.shim-argv`, 'utf8');
+      expect(argv).toContain('mktemp ');
+      expect(argv).toContain('cmp ');
+      const places: Record<string, string> = {
+        'the deploy log': res.out,
+        'the stub docker calls': readFileSync(log, 'utf8'),
+        'the stub curl calls': readFileSync(`${log}.argv`, 'utf8'),
+        'the arguments of the commands it ran': argv,
+        'their environments': readFileSync(`${log}.shim-env`, 'utf8'),
+        'openssl\'s arguments': opensslCalls(),
+      };
+      for (const f of files(dir)) if (f !== `${dir}/.env`) places[f] = readFileSync(f, 'utf8');
+      for (const [place, text] of Object.entries(places)) expect(text.includes(key), `the key is in ${place}`).toBe(false);
+      // Only the env file holds it, and nothing stays that holds a copy of the file.
+      expect(files(dir).filter((f) => readFileSync(f, 'utf8').includes(key))).toEqual([`${dir}/.env`]);
+    });
+
+    it('stops before anything changes when the key cannot be made, and leaves the env file as it was', () => {
+      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=\n');
+      expect(deploy('v1.0.0', 'a', { STUB_OPENSSL_FAIL: '1' }).status).toBe(1);
+      expect(deploy('v1.0.0', 'a').status).toBe(0);
+      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=\n');
+      rmSync(log);
+      const failed = deploy('v1.1.0', 'b', { STUB_OPENSSL_FAIL: '1' });
+      expect(failed.status, failed.out).toBe(1);
+      expect(failed.out).toContain('openssl did not make a 32 byte key');
+      expect(failed.out).toContain('the context token key could not be written');
+      expect(failed.out).toContain(`${releaseDir('v1.0.0', 'a')} still runs`);
+      expect(envFile()).toBe('POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=\n');
+      // The migration did not run, the services were not changed, no copy of the env file is left.
+      expect(calls().some((l) => l.startsWith('compose run'))).toBe(false);
+      expect(running()).toContain(image('a'));
+      expect(state('current')).toBe(releaseDir('v1.0.0', 'a'));
+      expect(leftovers()).toEqual([]);
+      expect(readFileSync(`${dir}/.deploy/history.log`, 'utf8')).toContain('failed: context token key');
+    });
+
+    it.each(['', 'not a key', 'AAAA', `${'A'.repeat(44)}`, `${'A'.repeat(43)}=\nsecond line`])('refuses what is not a 32 byte key from openssl (%j)', (answer) => {
+      writeFileSync(`${root}/openssl-key`, `${answer}\n`);
+      const res = deploy('v1.0.0', 'a');
+      expect(res.status, res.out).toBe(1);
+      expect(res.out).toContain('openssl did not make a 32 byte key');
+      expect(envFile()).toBe('POSTGRES_PASSWORD=x\n');
+    });
+
+    it.skipIf(process.getuid?.() === 0)('refuses before pulling when the env file has no key and cannot be written', () => {
+      chmodSync(`${dir}/.env`, 0o444);
+      const res = deploy('v1.0.0', 'a');
+      expect(res.status, res.out).toBe(2);
+      expect(res.out).toContain('the deploy user cannot write to the file');
+      expect(calls()).toEqual([]);
+      // A key that is there needs no write access.
+      chmodSync(`${dir}/.env`, 0o644);
+      writeFileSync(`${dir}/.env`, 'CROVE_CONTEXT_TOKEN_KEY=abc\n');
+      chmodSync(`${dir}/.env`, 0o444);
+      expect(deploy('v1.0.0', 'a').status).toBe(0);
+    });
+
+    it('makes the key with the real openssl: 44 characters of base64', () => {
+      if (spawnSync('bash', ['-c', 'command -v openssl']).status !== 0) return;
+      rmSync(`${root}/bin/openssl`);
+      const res = deploy('v1.0.0', 'a');
+      expect(res.status, res.out).toBe(0);
+      const key = keyOf();
+      expect(key).toMatch(/^[A-Za-z0-9+/]{43}=$/);
+      expect(Buffer.from(key, 'base64')).toHaveLength(32);
+    });
+
+    it('leaves the key where it is when the migration fails, on a rollback and on a later deploy', () => {
+      writeFileSync(`${dir}/.env`, 'CROVE_CONTEXT_TOKEN_KEY=\n');
+      const failed = deploy('v1.0.0', 'a', { STUB_MIGRATE_EXIT: '1' });
+      expect(failed.status, failed.out).toBe(1);
+      const key = keyOf();
+      expect(key).toBe(stubKey());
+      expect(deploy('v1.0.0', 'a').status).toBe(0);
+      expect(deploy('v1.1.0', 'b').status).toBe(0);
+      expect(run(['rollback']).status).toBe(0);
+      expect(keyOf()).toBe(key);
+      expect(opensslCalls()).toBe('openssl rand -base64 32\n');
+    });
+
+    // A write into the env file that fails or is cut off is put back; when even that fails, both copies stay and are named.
+    describe('a failed overwrite of the env file', () => {
+      const ORIGINAL = 'POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=\nOTHER=1\n';
+      // A `cat` that writes three bytes and fails when it reads the pattern's file.
+      const failingCat = (pattern: string) => {
+        const real = spawnSync('bash', ['-c', 'command -v cat'], { encoding: 'utf8' }).stdout.trim();
+        writeFileSync(`${root}/bin/cat`, `#!/bin/sh\nfor a in "$@"; do case "$a" in ${pattern}) printf 'cut'; exit 1;; esac; done\nexec ${real} "$@"\n`);
+        chmodSync(`${root}/bin/cat`, 0o755);
+      };
+
+      it('puts the env file back as it was and stops before migrate', () => {
+        writeFileSync(`${dir}/.env`, ORIGINAL);
+        failingCat('*/env-key.*');
+        const res = deploy('v1.0.0', 'a');
+        expect(res.status, res.out).toBe(1);
+        expect(res.out).toContain('the file was put back as it was');
+        expect(envFile()).toBe(ORIGINAL);
+        expect(leftovers()).toEqual([]);
+        expect(calls().some((l) => l.startsWith('compose run'))).toBe(false);
+        expect(res.out).not.toContain(stubKey());
+      });
+
+      it('keeps the old and the new copy, names them, and says what to do when it cannot put it back', () => {
+        writeFileSync(`${dir}/.env`, ORIGINAL);
+        failingCat('*/env-key.*|*/env-old.*');
+        const res = deploy('v1.0.0', 'a');
+        expect(res.status, res.out).toBe(1);
+        expect(res.out).toContain('and so did putting it back');
+        // The cleanup does not name the copies a second time, with no path.
+        expect(res.out).not.toContain('stopped while writing');
+        const [old, fresh] = [leftovers().find((f) => f.startsWith('env-old.')) ?? '', leftovers().find((f) => f.startsWith('env-key.')) ?? ''];
+        expect(res.out).toContain(`${dir}/.deploy/${old}`);
+        expect(res.out).toContain(`${dir}/.deploy/${fresh}`);
+        expect(readFileSync(`${dir}/.deploy/${old}`, 'utf8')).toBe(ORIGINAL);
+        expect(statSync(`${dir}/.deploy/${old}`).mode & 0o777).toBe(0o600);
+        expect(statSync(`${dir}/.deploy/${fresh}`).mode & 0o777).toBe(0o600);
+        expect(readFileSync(`${dir}/.deploy/${fresh}`, 'utf8')).toContain(`CROVE_CONTEXT_TOKEN_KEY=${stubKey()}`);
+        expect(res.out).not.toContain(stubKey());
+      });
+    });
+
+    it('takes the key from the env file only: a variable of the caller does not reach migrate', () => {
+      writeFileSync(`${dir}/.env`, 'CROVE_CONTEXT_TOKEN_KEY=\n');
+      const res = deploy('v1.0.0', 'a', { CROVE_CONTEXT_TOKEN_KEY: 'from-the-session' });
+      expect(res.status, res.out).toBe(0);
+      expect(res.out).toContain('context token key generated');
+      expect(existsSync(`${log}.envvar`)).toBe(false);
+    });
+
+    // The count is read only, runs as the database's superuser in its container, and never fails the deploy.
+    it('prints the plain idempotency rows after the database is up and before migrate', () => {
+      const res = deploy('v1.0.0', 'a', { STUB_PLAIN_ROWS: '7' });
+      expect(res.status, res.out).toBe(0);
+      expect(res.out).toContain('[deploy] plain idempotency rows: 7\n');
+      const c = calls();
+      const exec = c.findIndex((l) => l.startsWith('compose exec '));
+      expect(exec).toBeGreaterThan(indexOf(c, 'compose up --detach --no-build --no-deps --wait --wait-timeout 600 db'));
+      expect(exec).toBeLessThan(indexOf(c, 'compose run --rm --no-TTY --no-deps migrate'));
+      expect(c.filter((l) => l.startsWith('compose exec '))).toEqual([
+        "compose exec -T -e PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=30000 -c lock_timeout=5000 db psql -X -q -t -A -v ON_ERROR_STOP=1 -U postgres -d postgres -c SELECT count(*) FROM crove_kernel.idempotency_key WHERE NOT starts_with(request_sha256, 'k1:')",
+      ]);
+      expect(deploy('v1.1.0', 'b').out).toContain('[deploy] plain idempotency rows: 0\n');
+      // No temporary file of the count stays.
+      expect(readdirSync(`${dir}/.deploy`).filter((f) => f.startsWith('count-err.'))).toEqual([]);
+    });
+
+    it.each([
+      ['psql fails', { STUB_PSQL_FAIL: 'psql: error: relation "crove_kernel.idempotency_key" does not exist' }, 'does not exist'],
+      ['it answers something else than a number', { STUB_PLAIN_ROWS: 'many' }, 'no answer'],
+      ['it answers nothing', { STUB_PLAIN_ROWS: '' }, 'no answer'],
+    ])('never fails the deploy when the count did not run: %s', (_name, env, text) => {
+      const res = deploy('v1.0.0', 'a', env);
+      expect(res.status, res.out).toBe(0);
+      expect(res.out).toContain('plain idempotency rows: unknown (the count did not run; the deploy goes on)');
+      expect(res.out).toContain(text);
+      expect(res.out).toContain('deployed v1.0.0');
+      expect(state('current')).toBe(releaseDir('v1.0.0', 'a'));
+    });
+
+    it('does not count or touch the key on a rollback', () => {
+      expect(deploy('v1.0.0', 'a').status).toBe(0);
+      expect(deploy('v1.1.0', 'b').status).toBe(0);
+      const envBefore = envFile();
+      rmSync(log);
+      const res = run(['rollback']);
+      expect(res.status, res.out).toBe(0);
+      expect(res.out).not.toContain('plain idempotency rows');
+      expect(res.out).not.toContain('context token key');
+      expect(calls().some((l) => l.startsWith('compose exec '))).toBe(false);
+      expect(envFile()).toBe(envBefore);
+    });
   });
 
   describe('smoke', () => {
