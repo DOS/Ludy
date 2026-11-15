@@ -132,7 +132,7 @@ One proposal per run through the finance proposal path (R3, four-eyes where the 
 - **Erasure.** The personal-data registry lists every payroll column: the run lines and their amounts `keep_legal` until the retention a lawyer confirms (row 22); everything else `erase`. After the retention the per-subject key of the person is deleted and the append-only lines stay as amounts nobody can tie to a person. A request from a former employee is answered with what is kept and why (the Law's Art. 14).
 - **Audit and logs** carry ids and counts, never a value of a classified column (the audit marker of plan section 5.2).
 - **The model** sees the pseudonymized sheet only (section 6.7).
-- **Where it lives.** A self-hosted install keeps employee data on the org's own server. For Ludy Cloud the lawyer's answers on the processor's exemption and on cross-border storage (section 8) come before payroll is switched on there.
+- **Where it lives.** A self-hosted install keeps employee data on the org's own server. On Ludy Cloud, HR (`Ludy Nhân sự`, module `hr`) is enabled by default for every org as the approved product default (owner decision 2026-11-15, [#2538](https://github.com/DOS/Ludy/issues/2538), logged at `https://github.com/DOS/Ludy/issues/1210#issuecomment-6897161133`): `hr` is in `AVAILABLE_MODULES` (`apps/kernel/src/config.ts`, enabled when `CROVE_MODULES` is unset, empty, or includes `hr`), and [ADR-0053](../adr/0053-per-org-app-enablement.md) keeps modules on per org by default once its per-org enablement slices ship. This records approved policy rather than verified live deployment state: `tools/deploy/compose.pilot.yml` currently defaults `CROVE_MODULES` to `finance`, so any live pilot `CROVE_MODULES` environment-variable change follows a separate Production runbook and owner approval. [#2536](https://github.com/DOS/Ludy/issues/2536) tracks the lawyer's PDPL processor exemption, cross-border storage, retention, and HTKK XSD review.
 
 ### 6.7 The finance coworker's part
 
@@ -146,13 +146,13 @@ All proposals, all checked by code, all confirmed by a person; each under `meter
 
 ## 7. What waits, and why
 
-- **Time-keeping and leave balances.** The first slices take overtime hours and unpaid days as monthly inputs (typed or imported from a spreadsheet); a time-keeping system is a different product.
+- **Time-keeping and leave balances (Stage 1, [#2540](https://github.com/DOS/Ludy/issues/2540)).** The first slices (#2531) take overtime hours and unpaid days as monthly inputs (typed or imported from a spreadsheet). Owner decision 2026-11-15 reopened the 3-stage SME HRM roadmap (`https://github.com/DOS/Ludy/issues/1210#issuecomment-6897161133`): Stage 1 moves lightweight time-keeping inputs and annual leave balances into `M3 Paid pilot` (`priority:P2`); a full biometric or enterprise time-keeping system remains out of scope.
 - **An employee portal and payslip by email.** Email holds a salary: a separately approved step.
-- **Foreign employees** (the non-resident rate, the work permit, the 12-month insurance rule), **piece-rate and hourly staff**, **severance and job-loss calculation**, **the 13th month**, **annual finalization by authorization** beyond the data export.
+- **13th-month pay, severance and job-loss calculation, foreign employees, piece-rate and hourly staff, and annual finalization by authorization beyond the data export.** Per the 2026-11-15 owner decision (`https://github.com/DOS/Ludy/issues/1210#issuecomment-6897161133`), 13th-month pay and severance calculation (with labor contract tracking, the labor management register, and 01/PLI report data) move into Stage 2 ([#2541](https://github.com/DOS/Ludy/issues/2541), `M3 Paid pilot`, `priority:P2`); job-loss allowance calculation, foreign employees (the non-resident rate, the work permit, the 12-month insurance rule), piece-rate and hourly staff, and annual finalization filing beyond the `#2533` data export wait beyond Stage 2, and HTKK XML stays gated on the lawyer's XSD licence review in [#2536](https://github.com/DOS/Ludy/issues/2536).
 - **XML for the tax authority's tool**, until the XSD licence and the current layout are settled.
 - **Insurance claims** (sickness, maternity), and any integration with the agency's portal: no public API.
 - **Several entities and hundreds of employees**: the Icebox.
-- **Electronic labor contracts and the labor management register**: the register data (row 17) is a later export.
+- **Labor contract tracking, the labor management register, and 01/PLI report data (Stage 2, [#2541](https://github.com/DOS/Ludy/issues/2541)).** Moved into `M3 Paid pilot` (`priority:P2`) by the 2026-11-15 owner decision as Stage 2 (after Stage 1 in #2540); Stage 3 (departments and lightweight recruiting) follows Phase 7 HRM in [crove-os-kernel.md](crove-os-kernel.md#phase-7-hrm-10-weeks-when-wedge-customers-pull-for-it), and electronic contract signing uses Ludy Sign.
 
 ## 8. What needs a person who is not an agent
 
@@ -162,7 +162,7 @@ All proposals, all checked by code, all confirmed by a person; each under `meter
 | The accountant | Give 6 to 10 worked examples (a single employee with and without dependents, the cap, an unpaid fortnight, overtime, a new hire mid-month, a bonus, a 10% payment) with the figures to the dong | the golden tests of the calculator |
 | A lawyer | The Personal Data Protection Law items: whether a processor like Ludy is covered by the customer's exemption from the impact assessment (Art. 38), whether Ludy Cloud abroad is a cross-border transfer for an employer's own staff data, the retention periods (payroll sheet, labor contract, insurance records), the answer to a former employee's deletion request, whether salary is sensitive data under Decree 356; the licence to use the XSD copied from the HTKK installer; whether an I-VAN contract is needed to export a file for it | none was read in primary text |
 | A small employer (the pilot partner's client) | One anonymized month of a real payroll (headers, amounts, no names, identity numbers or accounts), the bank's bulk-salary template, the D02-LT file the agency's portal accepted, and a quarterly return as filed | golden files for the calculator and the exports; no real personal data enters the repository |
-| The owner (through the Accounting PO) | **Decided (2026-11-08):** salaries per person for owners and admins only, as ADR-0046 point 4; totals by account in the books for Kế toán (section 6.6). **Still open: whether payroll is switched on in Ludy Cloud** before the lawyer's answers | the cloud switch waits for the lawyer |
+| The owner (through the Accounting/HRM PO) | **Decided ([#2538](https://github.com/DOS/Ludy/issues/2538)):** **2026-11-08:** salaries per person for owners and admins only, as ADR-0046 point 4; totals by account in the books for Kế toán (section 6.6). **2026-11-15:** HR (`Ludy Nhân sự`) is enabled by default on Ludy Cloud for every org as the approved product default (with `Ly` as its coworker); `compose.pilot.yml` still defaults `CROVE_MODULES` to `finance`, so any live pilot `CROVE_MODULES` change goes through a Production runbook and owner approval | both parts of #2538 decided; #2536 keeps the lawyer's PDPL, retention, and XSD review open |
 
 No agent holds the org's digital signature, files on a portal or touches an employee's real data in testing.
 
@@ -192,9 +192,9 @@ Order: the rules and the calculator first (no migration, can be built while the 
 | 7 (#2535) | owner-action: the accountant confirms the rule rows and gives the worked examples | none |
 | 8 (#2536) | owner-action: a lawyer answers the personal-data, retention and XSD questions | none |
 | 9 (#2537) | owner-action: a small employer gives an anonymized month, the bank template, the accepted D02-LT and a filed return | none |
-| 10 (#2538) | owner-action: who may read salaries (decided 2026-11-08, section 6.6); payroll in Ludy Cloud (open) | none |
+| 10 (#2538) | owner-action (M3 Paid pilot, P2): decided (2026-11-08 who may read salaries, section 6.6; 2026-11-15 HR enabled by default on Ludy Cloud and Ly mapped as HR coworker, section 6.6 and ADR-0046) | none |
 | 11 (#2539) | Icebox, P3: payslip by email | 3 |
-| 12 (#2540) | Icebox, P3: time-keeping and leave balances | 3 |
-| 13 (#2541) | Icebox, P3: foreign employees, severance and job-loss calculation, the 13th month, annual finalization by authorization, XML for the tax authority's tool, the labor management register export | 5 and the lawyer's answers |
+| 12 (#2540) | M3 Paid pilot, P2 (Stage 1, reopened 2026-11-15): lightweight time-keeping inputs and annual leave balances | 3 |
+| 13 (#2541) | M3 Paid pilot, P2 (Stage 2, reopened 2026-11-15): labor contracts, the labor management register and 01/PLI report data, 13th-month pay, severance calculation (job-loss allowance calculation, foreign employees, piece-rate/hourly staff, and finalization filing wait beyond Stage 2; HTKK XML stays gated on #2536) | 5, 12 (#2540), and the lawyer's answers (#2536) for HTKK XML |
 
 Each issue says in its acceptance what the finance coworker does on that screen, that the core works with AI off, and that a person approves every posting and every month.
