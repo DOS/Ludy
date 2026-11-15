@@ -208,4 +208,61 @@ describe('parseTimekeepingSheet (#3348)', () => {
     expect(calc.gross).toBe('28966347');
     expect(calc.rulesUsed.some((r) => r.kind === 'overtime_caps' || r.kind === 'annual_leave')).toBe(false);
   });
+
+  it('classifies holiday OT ("ngay nghi le"), day/night word orders, unpaid personal leave, and shift OT accurately', () => {
+    const vn = [
+      'Ma NV\tNghi viec rieng khong huong luong\tLam them ngay nghi le\tLam them ban dem ngay nghi le\tLam them ngay thuong ban dem\tLam them ngay nghi tuan ban dem\tLam them ca dem',
+      'NV01\t2\t3\t4\t5\t1.5\t2.5',
+    ].join('\n');
+
+    const resVn = parseTimekeepingSheet(vn, { month: '2026-08' });
+    expect(resVn.errors).toEqual([]);
+    expect(resVn.warnings).toEqual([]);
+    expect(resVn.rows[0]).toMatchObject({
+      unpaidLeaveDays: '2',
+      personalPaidDays: '0',
+      nightHours: '0',
+      totalOvertimeHours: '16',
+      overtime: [
+        { dayKind: 'holiday', night: false, hours: '3' },
+        { dayKind: 'normal_day', night: true, hours: '5' },
+        { dayKind: 'weekly_rest_day', night: true, hours: '1.5' },
+        { dayKind: 'holiday', night: true, hours: '4' },
+        { dayKind: 'normal_day', night: true, hours: '2.5' },
+      ],
+    });
+
+    const en = 'Ma NV\tNghi khong huong luong\tNight OT holiday\nNV02\t1\t3\n';
+    const resEn = parseTimekeepingSheet(en, { month: '2026-08' });
+    expect(resEn.errors).toEqual([]);
+    expect(resEn.rows[0]).toMatchObject({
+      unpaidLeaveDays: '1',
+      overtime: [{ dayKind: 'holiday', night: true, hours: '3' }],
+    });
+  });
+
+  it('prevents duplicate specific headers from spilling into general columns and reports unclosed CSV quotes and spaced numbers', () => {
+    const dupHeader = 'Ma NV\tOT dem ngay thuong\tOT dem ngay thuong\nNV01\t2\t2\n';
+    const dupRes = parseTimekeepingSheet(dupHeader, { month: '2026-08' });
+    expect(dupRes.errors).toEqual([]);
+    expect(dupRes.columns.normalDayNightOtHours).toBe(1);
+    expect(dupRes.columns.nightOtHours).toBeNull();
+    expect(dupRes.warnings).toMatchObject([{ code: 'duplicate_header_column', column: 'normalDayNightOtHours', header: 'OT dem ngay thuong' }]);
+    expect(dupRes.rows[0]?.totalOvertimeHours).toBe('2');
+
+    const unclosed = 'Ma NV,Ho ten,Unpaid leave\nNV01,"Nguyen, Van A,1\nNV02,"Tran B",2\n';
+    const quoteRes = parseTimekeepingSheet(unclosed, { month: '2026-08' });
+    expect(quoteRes.rows).toEqual([]);
+    expect(quoteRes.errors.map((e) => [e.code, e.rowNumber])).toEqual([['unclosed_quote', 2]]);
+
+    const unclosedAtEof = 'Ma NV,Ho ten,Unpaid leave\nNV01,"Nguyen, Van A,1\nNV02,Tran B,2\n';
+    const eofRes = parseTimekeepingSheet(unclosedAtEof, { month: '2026-08' });
+    expect(eofRes.rows).toEqual([]);
+    expect(eofRes.errors.map((e) => [e.code, e.rowNumber])).toEqual([['unclosed_quote', 2]]);
+
+    const spaced = 'STT\tHo ten\tUnpaid leave\n1\tCong\t1\n2\tAn\t1 2\nTong cong\t\t13\n';
+    const spacedRes = parseTimekeepingSheet(spaced, { month: '2026-08' });
+    expect(spacedRes.rows.map((r) => r.displayName)).toEqual(['Cong']);
+    expect(spacedRes.errors.map((e) => [e.code, e.rowNumber, e.column])).toEqual([['invalid_number', 3, 'unpaidLeaveDays']]);
+  });
 });

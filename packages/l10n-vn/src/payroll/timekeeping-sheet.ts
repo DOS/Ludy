@@ -48,83 +48,37 @@ const NUMERIC_COLUMNS: readonly TimekeepingColumn[] = [
   'nightHours',
 ];
 
-// Claim order: specific compound headers (unpaid/personal leave before generic leave; day-kind night OT before
-// generic night OT; night OT before ordinary night work; employee code before name) take precedence.
-const CLAIM_ORDER: readonly TimekeepingColumn[] = [
-  'employeeCode',
-  'displayName',
-  'unpaidLeaveDays',
-  'personalPaidDays',
-  'annualLeaveDays',
-  'daysNotEmployed',
-  'normalDayNightOtHours',
-  'weeklyRestDayNightOtHours',
-  'holidayNightOtHours',
-  'nightOtHours',
-  'normalDayOtHours',
-  'weeklyRestDayOtHours',
-  'holidayOtHours',
-  'nightHours',
-];
+// Classification helpers use whole-word / phrase matching in priority order (holiday before weekly rest day,
+// unpaid personal leave before paid personal leave, night OT before ordinary night work, specific compound OT
+// before generic night OT) and classify every column once so duplicates never fall back into another bucket.
+interface HeaderClassification {
+  field: TimekeepingColumn;
+  specificity: 'phrase' | 'exact';
+}
 
-const HEADER_WORDS: Record<TimekeepingColumn, { contains: readonly string[]; exact?: readonly string[] }> = {
-  employeeCode: {
-    contains: ['ma nhan vien', 'ma nv', 'employee code', 'staff code', 'emp code'],
-    exact: ['code', 'ma', 'nv'],
-  },
-  displayName: {
-    contains: ['ho va ten', 'ho ten', 'ten nhan vien', 'ten nv', 'employee name', 'staff name', 'display name', 'full name'],
-    exact: ['nhan vien', 'name', 'ten'],
-  },
-  unpaidLeaveDays: {
-    contains: ['ngay nghi khong luong', 'nghi phep khong luong', 'nghi khong luong', 'khong luong', 'unpaid leave days', 'unpaid leave', 'unpaid days'],
-    exact: ['unpaid', 'nkl'],
-  },
-  personalPaidDays: {
-    contains: ['ngay nghi viec rieng', 'nghi phep viec rieng', 'nghi viec rieng', 'viec rieng huong luong', 'viec rieng', 'personal paid days', 'personal paid leave', 'personal paid', 'personal leave'],
-    exact: ['nvr'],
-  },
-  annualLeaveDays: {
-    contains: ['ngay nghi phep nam', 'nghi phep nam', 'ngay phep nam', 'phep nam', 'nghi phep', 'annual leave days', 'annual leave'],
-    exact: ['phep', 'annual'],
-  },
-  daysNotEmployed: {
-    contains: ['ngay chua lam viec', 'ngay khong lam viec', 'ngay chua lam', 'ngay sau nghi', 'days not employed', 'not employed days'],
-    exact: ['not employed'],
-  },
-  normalDayNightOtHours: {
-    contains: ['lam them ban dem ngay thuong', 'lam them dem ngay thuong', 'ot ban dem ngay thuong', 'ot dem ngay thuong', 'tang ca dem ngay thuong', 'normal day night ot', 'normal night ot'],
-  },
-  weeklyRestDayNightOtHours: {
-    contains: ['lam them ban dem ngay nghi', 'lam them dem ngay nghi', 'ot ban dem ngay nghi', 'ot dem ngay nghi', 'tang ca dem ngay nghi', 'weekly rest day night ot', 'rest day night ot'],
-  },
-  holidayNightOtHours: {
-    contains: ['lam them ban dem ngay le', 'lam them dem ngay le', 'ot ban dem ngay le', 'ot dem ngay le', 'tang ca dem ngay le', 'holiday night ot'],
-  },
-  nightOtHours: {
-    contains: ['lam them ban dem', 'lam them dem', 'tang ca ban dem', 'tang ca dem', 'ot ban dem', 'ot dem', 'overtime night', 'night ot hours', 'night overtime hours', 'night overtime', 'night ot'],
-  },
-  normalDayOtHours: {
-    contains: ['lam them ngay thuong', 'tang ca ngay thuong', 'ot ngay thuong', 'normal day ot hours', 'normal day overtime', 'normal day ot'],
-  },
-  weeklyRestDayOtHours: {
-    contains: ['lam them ngay nghi hang tuan', 'lam them ngay nghi tuan', 'lam them ngay nghi', 'tang ca ngay nghi', 'ot ngay nghi', 'weekly rest day ot hours', 'weekly rest day overtime', 'weekly rest day ot', 'rest day ot'],
-  },
-  holidayOtHours: {
-    contains: ['lam them ngay le', 'lam them ngay tet', 'tang ca ngay le', 'ot ngay le', 'holiday ot hours', 'holiday overtime', 'holiday ot'],
-  },
-  nightHours: {
-    contains: ['gio lam ban dem', 'gio lam dem', 'lam viec ban dem', 'lam ban dem', 'ca dem', 'night work hours', 'night hours'],
-  },
-};
+function hasPhrase(key: string, phrase: string): boolean {
+  return key === phrase || key.includes(phrase);
+}
 
-const TOTAL_SUMMARY_LABELS = new Set(['tong cong', 'tong', 'cong', 'total']);
+function hasAnyPhrase(key: string, phrases: readonly string[]): boolean {
+  return phrases.some((p) => hasPhrase(key, p));
+}
+
+function hasWord(key: string, word: string): boolean {
+  return ` ${key} `.includes(` ${word} `);
+}
+
+const TOTAL_SUMMARY_LABELS = new Set(['tong cong', 'tong so', 'tong', 'total', 'subtotal', 'grand total']);
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 const LATEST_DATE_SENTINEL = '9999-12-31';
 const CAMEL_BOUNDARY = new RegExp('([a-z0-9])([A-Z])', 'g');
+const NON_NEGATIVE_DECIMAL = new RegExp('^\\d+(?:\\.\\d+)?$');
+const NEGATIVE_DECIMAL = new RegExp('^-\\d+(?:\\.\\d+)?$');
 
 export type TimekeepingIssueCode =
   | 'empty_input'
+  | 'unclosed_quote'
+  | 'malformed_quote'
   | 'missing_header'
   | 'missing_employee_column'
   | 'missing_timekeeping_columns'
@@ -161,7 +115,9 @@ export interface TimekeepingPayrollInputs {
    *   `normalDayNightOtHours` / `weeklyRestDayNightOtHours` / `holidayNightOtHours` columns when present)
    *
    * Ordinary `nightHours` (regular hours worked 22:00-06:00, not overtime) maps to `nightHours` below, never into
-   * `overtime`, and does not count toward the monthly overtime cap.
+   * `overtime`, and does not count toward the monthly overtime cap. Numeric values use canonical decimal strings from
+   * `toMoney()` (callers writing to `hr.payroll.line.inputs.set` should keep day entries within `zHrDays` and hours
+   * within `zHours`).
    */
   overtime: OvertimeEntry[];
   /** Ordinary night work hours (22:00-06:00 within regular working hours; +30% premium). */
@@ -240,15 +196,23 @@ interface ParsedGridRow {
   cells: string[];
 }
 
-function parseDelimitedRows(body: string, delimiter: TimekeepingDelimiter): ParsedGridRow[] {
+interface DelimitedParseResult {
+  rows: ParsedGridRow[];
+  quoteError: { code: 'unclosed_quote' | 'malformed_quote'; rowNumber: number } | null;
+}
+
+function parseDelimitedRows(body: string, delimiter: TimekeepingDelimiter): DelimitedParseResult {
   const rows: ParsedGridRow[] = [];
   let cells: string[] = [];
   let value = '';
   let quoted = false;
+  let justClosedQuote = false;
+  let quoteStartRow: number | null = null;
   let rowNo = 1;
   const endCell = () => {
     cells.push(value);
     value = '';
+    justClosedQuote = false;
   };
   const endRow = () => {
     endCell();
@@ -264,11 +228,27 @@ function parseDelimitedRows(body: string, delimiter: TimekeepingDelimiter): Pars
         i++;
       } else if (ch === '"') {
         quoted = false;
+        justClosedQuote = true;
       } else {
         value += ch;
       }
+    } else if (justClosedQuote) {
+      if (ch === delimiter) {
+        endCell();
+      } else if (ch === '\n') {
+        endRow();
+      } else if (ch === '\r') {
+        // CR precedes LF; ignore until newline or EOF.
+      } else if (ch === ' ') {
+        // Tolerate trailing space after closing quote before delimiter/newline.
+      } else {
+        return { rows, quoteError: { code: 'unclosed_quote', rowNumber: quoteStartRow ?? rowNo } };
+      }
     } else if (ch === '"' && value === '') {
       quoted = true;
+      quoteStartRow = rowNo;
+    } else if (ch === '"') {
+      return { rows, quoteError: { code: 'malformed_quote', rowNumber: rowNo } };
     } else if (ch === delimiter) {
       endCell();
     } else if (ch === '\n') {
@@ -277,20 +257,90 @@ function parseDelimitedRows(body: string, delimiter: TimekeepingDelimiter): Pars
       value += ch;
     }
   }
+  if (quoted) {
+    return { rows, quoteError: { code: 'unclosed_quote', rowNumber: quoteStartRow ?? rowNo } };
+  }
   if (value !== '' || cells.length > 0) endRow();
-  return rows;
+  return { rows, quoteError: null };
 }
 
 function emptyColumns(): Record<TimekeepingColumn, number | null> {
   return Object.fromEntries(TIMEKEEPING_COLUMNS.map((c) => [c, null])) as Record<TimekeepingColumn, number | null>;
 }
 
-function matchColumn(key: string): TimekeepingColumn | null {
-  for (const field of CLAIM_ORDER) {
-    const spec = HEADER_WORDS[field];
-    if (spec.contains.some((w) => key === w || key.includes(w))) return field;
-    if (spec.exact?.includes(key)) return field;
+function classifyHeader(key: string): HeaderClassification | null {
+  if (hasAnyPhrase(key, ['ma nhan vien', 'ma nv', 'employee code', 'staff code', 'emp code', 'employee id', 'staff id'])) {
+    return { field: 'employeeCode', specificity: 'phrase' };
   }
+  if (key === 'code' || key === 'ma' || key === 'nv') {
+    return { field: 'employeeCode', specificity: 'exact' };
+  }
+
+  if (hasAnyPhrase(key, ['ho va ten', 'ho ten', 'ten nhan vien', 'ten nv', 'employee name', 'staff name', 'display name', 'full name'])) {
+    return { field: 'displayName', specificity: 'phrase' };
+  }
+  if (key === 'nhan vien' || key === 'name' || key === 'ten') {
+    return { field: 'displayName', specificity: 'exact' };
+  }
+
+  // Unpaid leave (including unpaid personal leave "Nghi viec rieng khong huong luong") takes priority over paid personal leave.
+  if (hasAnyPhrase(key, ['khong huong luong', 'khong luong', 'unpaid'])) {
+    return { field: 'unpaidLeaveDays', specificity: 'phrase' };
+  }
+  if (key === 'nkl') {
+    return { field: 'unpaidLeaveDays', specificity: 'exact' };
+  }
+
+  if (hasAnyPhrase(key, ['viec rieng', 'personal paid', 'personal leave'])) {
+    return { field: 'personalPaidDays', specificity: 'phrase' };
+  }
+  if (key === 'nvr') {
+    return { field: 'personalPaidDays', specificity: 'exact' };
+  }
+
+  if (hasAnyPhrase(key, ['ngay chua lam', 'ngay khong lam viec', 'ngay sau nghi', 'not employed'])) {
+    return { field: 'daysNotEmployed', specificity: 'phrase' };
+  }
+
+  const isOt = hasAnyPhrase(key, ['lam them', 'tang ca', 'tang gio', 'overtime']) || hasWord(key, 'ot');
+
+  if (!isOt) {
+    if (hasAnyPhrase(key, ['phep nam', 'nghi phep', 'annual leave'])) {
+      return { field: 'annualLeaveDays', specificity: 'phrase' };
+    }
+    if (key === 'phep' || key === 'annual') {
+      return { field: 'annualLeaveDays', specificity: 'exact' };
+    }
+    if (hasAnyPhrase(key, ['gio lam ban dem', 'gio lam dem', 'lam viec ban dem', 'lam ban dem', 'ca dem', 'night work', 'night hours', 'night shift'])) {
+      return { field: 'nightHours', specificity: 'phrase' };
+    }
+    if (key === 'dem' || key === 'night') {
+      return { field: 'nightHours', specificity: 'exact' };
+    }
+    return null;
+  }
+
+  const hasNight = hasAnyPhrase(key, ['ban dem', 'ca dem']) || hasWord(key, 'dem') || hasWord(key, 'night');
+  // Check public holidays ("ngay nghi le", "ngay le", "tet") before generic "ngay nghi" weekly rest day.
+  const hasHoliday = hasWord(key, 'le') || hasWord(key, 'tet') || hasAnyPhrase(key, ['nghi le', 'ngay le', 'nghi tet', 'ngay tet', 'holiday']);
+  if (hasHoliday) {
+    return { field: hasNight ? 'holidayNightOtHours' : 'holidayOtHours', specificity: 'phrase' };
+  }
+
+  const hasRestDay = hasAnyPhrase(key, ['ngay nghi', 'hang tuan', 'cuoi tuan', 'rest day', 'weekly rest', 'weekend']);
+  if (hasRestDay) {
+    return { field: hasNight ? 'weeklyRestDayNightOtHours' : 'weeklyRestDayOtHours', specificity: 'phrase' };
+  }
+
+  const hasNormalDay = hasAnyPhrase(key, ['ngay thuong', 'binh thuong', 'normal day', 'weekday', 'regular day']) || hasWord(key, 'normal');
+  if (hasNormalDay) {
+    return { field: hasNight ? 'normalDayNightOtHours' : 'normalDayOtHours', specificity: 'phrase' };
+  }
+
+  if (hasNight) {
+    return { field: 'nightOtHours', specificity: 'phrase' };
+  }
+
   return null;
 }
 
@@ -305,43 +355,36 @@ function detectHeader(rows: readonly ParsedGridRow[]): HeaderDetection | null {
   for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
     const row = rows[rowIndex];
     if (row === undefined) continue;
-    const headers = new Map<number, { raw: string; key: string }>();
+    const byField = new Map<TimekeepingColumn, Array<{ col: number; raw: string; specificity: 'phrase' | 'exact' }>>();
     for (let col = 0; col < row.cells.length; col++) {
       const raw = (row.cells[col] ?? '').trim();
       const key = timekeepingHeaderKey(raw);
-      if (key) headers.set(col, { raw, key });
+      if (!key) continue;
+      const classified = classifyHeader(key);
+      if (classified === null) continue;
+      const bucket = byField.get(classified.field) ?? [];
+      bucket.push({ col, raw, specificity: classified.specificity });
+      byField.set(classified.field, bucket);
     }
+
     const columns = emptyColumns();
-    const taken = new Set<number>();
-    for (const field of CLAIM_ORDER) {
-      const spec = HEADER_WORDS[field];
-      for (const word of spec.contains) {
-        const hit = [...headers].find(([col, h]) => !taken.has(col) && (h.key === word || h.key.includes(word)));
-        if (hit) {
-          columns[field] = hit[0];
-          taken.add(hit[0]);
-          break;
-        }
-      }
-      if (columns[field] === null && spec.exact) {
-        const hit = [...headers].find(([col, h]) => !taken.has(col) && spec.exact?.includes(h.key));
-        if (hit) {
-          columns[field] = hit[0];
-          taken.add(hit[0]);
-        }
+    const duplicates: Array<{ column: TimekeepingColumn; header: string }> = [];
+    for (const [field, hits] of byField) {
+      const ordered = [...hits].sort((a, b) => {
+        if (a.specificity !== b.specificity) return a.specificity === 'phrase' ? -1 : 1;
+        return a.col - b.col;
+      });
+      const primary = ordered[0];
+      if (primary === undefined) continue;
+      columns[field] = primary.col;
+      for (const extra of ordered.slice(1)) {
+        duplicates.push({ column: field, header: extra.raw });
       }
     }
+
     const hasEmployee = columns.employeeCode !== null || columns.displayName !== null;
     const hasMetric = NUMERIC_COLUMNS.some((c) => columns[c] !== null);
     if (hasEmployee && hasMetric) {
-      const duplicates: Array<{ column: TimekeepingColumn; header: string }> = [];
-      for (const [col, h] of headers) {
-        if (taken.has(col)) continue;
-        const matched = matchColumn(h.key);
-        if (matched !== null && columns[matched] !== null) {
-          duplicates.push({ column: matched, header: h.raw });
-        }
-      }
       return { rowIndex, rowNumber: row.rowNumber, columns, duplicates };
     }
   }
@@ -368,13 +411,16 @@ function makeIssue(
   };
 }
 
-function isSummaryRow(code: string | null, name: string | null): boolean {
+function isSummaryRow(code: string | null, name: string | null, cells: readonly string[]): boolean {
   const codeKey = code ? timekeepingHeaderKey(code) : '';
   const nameKey = name ? timekeepingHeaderKey(name) : '';
   const codeIsTotal = codeKey !== '' && TOTAL_SUMMARY_LABELS.has(codeKey);
   const nameIsTotal = nameKey !== '' && TOTAL_SUMMARY_LABELS.has(nameKey);
   if (codeIsTotal && (nameKey === '' || nameIsTotal)) return true;
   if (nameIsTotal && codeKey === '') return true;
+  if (codeKey === '' && nameKey === '') {
+    return cells.some((c) => TOTAL_SUMMARY_LABELS.has(timekeepingHeaderKey(c)));
+  }
   return false;
 }
 
@@ -418,32 +464,54 @@ export function parseTimekeepingSheet(text: string, options?: TimekeepingSheetOp
     .sort((a, b) => b.n - a.n);
 
   let chosenDelimiter: TimekeepingDelimiter = candidates[0]?.d ?? '\t';
-  let parsedRows = parseDelimitedRows(body, chosenDelimiter);
-  let header = detectHeader(parsedRows);
+  let parsed = parseDelimitedRows(body, chosenDelimiter);
+  let header = detectHeader(parsed.rows);
 
-  if (header === null) {
+  if (header === null && parsed.quoteError === null) {
     for (const candidate of candidates) {
-      const attemptRows = parseDelimitedRows(body, candidate.d);
-      const attemptHeader = detectHeader(attemptRows);
+      const attempt = parseDelimitedRows(body, candidate.d);
+      if (attempt.quoteError !== null) {
+        chosenDelimiter = candidate.d;
+        parsed = attempt;
+        break;
+      }
+      const attemptHeader = detectHeader(attempt.rows);
       if (attemptHeader !== null) {
         chosenDelimiter = candidate.d;
-        parsedRows = attemptRows;
+        parsed = attempt;
         header = attemptHeader;
         break;
       }
     }
   }
 
+  if (parsed.quoteError !== null) {
+    const quoteMsg =
+      parsed.quoteError.code === 'unclosed_quote'
+        ? `Row ${parsed.quoteError.rowNumber}: unclosed quoted cell`
+        : `Row ${parsed.quoteError.rowNumber}: unexpected quote inside unquoted cell`;
+    return {
+      delimiter: chosenDelimiter,
+      headerRow: header?.rowNumber ?? null,
+      columns: header?.columns ?? emptyColumns(),
+      rows: [],
+      errors: [makeIssue('error', parsed.quoteError.code, quoteMsg, { rowNumber: parsed.quoteError.rowNumber })],
+      warnings: [],
+      rulesUsed,
+    };
+  }
+
+  const parsedRows = parsed.rows;
   if (header === null) {
     const hasEmployeeAny = parsedRows.some((row) =>
       row.cells.some((c) => {
-        const col = matchColumn(timekeepingHeaderKey(c));
+        const col = classifyHeader(timekeepingHeaderKey(c))?.field ?? null;
         return col === 'employeeCode' || col === 'displayName';
       }),
     );
     const hasMetricAny = parsedRows.some((row) =>
       row.cells.some((c) => {
-        const col = matchColumn(timekeepingHeaderKey(c));
+        const col = classifyHeader(timekeepingHeaderKey(c))?.field ?? null;
         return col !== null && NUMERIC_COLUMNS.includes(col);
       }),
     );
@@ -493,7 +561,7 @@ export function parseTimekeepingSheet(text: string, options?: TimekeepingSheetOp
     const employeeCode = rawCode === '' ? null : rawCode;
     const displayName = rawName === '' ? null : rawName;
 
-    if (isSummaryRow(employeeCode, displayName)) continue;
+    if (isSummaryRow(employeeCode, displayName, gridRow.cells)) continue;
 
     let rowValid = true;
     let employeeKey = '';
@@ -542,24 +610,7 @@ export function parseTimekeepingSheet(text: string, options?: TimekeepingSheetOp
         values.set(col, zero);
         continue;
       }
-      let parsed: Decimal;
-      try {
-        parsed = money(rawCell);
-      } catch {
-        rowValid = false;
-        errors.push(
-          makeIssue('error', 'invalid_number', `Row ${gridRow.rowNumber}, column ${col}: invalid decimal value "${rawCell}"`, {
-            rowNumber: gridRow.rowNumber,
-            column: col,
-            header: (headerCells[colIdx] ?? '').trim() || null,
-            employeeKey: displayKey,
-            value: rawCell,
-          }),
-        );
-        values.set(col, zero);
-        continue;
-      }
-      if (parsed.isNegative()) {
+      if (NEGATIVE_DECIMAL.test(rawCell)) {
         rowValid = false;
         errors.push(
           makeIssue('error', 'negative_number', `Row ${gridRow.rowNumber}, column ${col}: negative value "${rawCell}" is not allowed`, {
@@ -573,7 +624,21 @@ export function parseTimekeepingSheet(text: string, options?: TimekeepingSheetOp
         values.set(col, zero);
         continue;
       }
-      values.set(col, parsed);
+      if (!NON_NEGATIVE_DECIMAL.test(rawCell)) {
+        rowValid = false;
+        errors.push(
+          makeIssue('error', 'invalid_number', `Row ${gridRow.rowNumber}, column ${col}: invalid decimal value "${rawCell}"`, {
+            rowNumber: gridRow.rowNumber,
+            column: col,
+            header: (headerCells[colIdx] ?? '').trim() || null,
+            employeeKey: displayKey,
+            value: rawCell,
+          }),
+        );
+        values.set(col, zero);
+        continue;
+      }
+      values.set(col, money(rawCell));
     }
 
     const getDec = (col: TimekeepingColumn): Decimal => values.get(col) ?? zero;

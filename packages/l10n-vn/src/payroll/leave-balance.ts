@@ -15,6 +15,9 @@ export type LeaveCategory = (typeof LEAVE_CATEGORIES)[number];
 export const LEAVE_ENTRY_KINDS = ['opening_balance', 'annual_leave', 'personal_paid', 'unpaid_leave'] as const;
 export type LeaveEntryKind = (typeof LEAVE_ENTRY_KINDS)[number];
 
+export const LEAVE_WORKWEEKS = ['mon_fri', 'mon_sat', 'all_days'] as const;
+export type LeaveWorkweek = (typeof LEAVE_WORKWEEKS)[number];
+
 export interface LeaveEntry {
   kind: LeaveEntryKind;
   /** Calendar month in YYYY-MM format. Entries outside the requested year (or after asOfMonth) are ignored after validation. */
@@ -43,6 +46,10 @@ export interface LeaveBalanceInput {
   standardWorkingDays?: string;
   /** Optional per-month standard working days override keyed by YYYY-MM. */
   workingDaysByMonth?: Readonly<Record<string, string>>;
+  /** Optional workweek schedule (`'mon_fri'`, `'mon_sat'`, `'all_days'`) used to count working days in partial months. */
+  workweek?: LeaveWorkweek;
+  /** Optional actual working days worked in YYYY-MM (net of partial employment and unpaid leave); requires `workingDaysByMonth[month]` or `standardWorkingDays`. */
+  workedDaysByMonth?: Readonly<Record<string, string>>;
 }
 
 export interface LeaveBalanceResult {
@@ -76,7 +83,10 @@ export interface LeaveBalanceResult {
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 const YEAR_PATTERN = new RegExp('^\\d{4}$');
 const ISO_DATE_PATTERN = new RegExp('^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$');
+const NON_NEGATIVE_DECIMAL = new RegExp('^\\d+(?:\\.\\d+)?$');
+const NEGATIVE_DECIMAL = new RegExp('^-\\d+(?:\\.\\d+)?$');
 const CALENDAR_MONTHS = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'] as const;
+const WEEKDAY_NAMES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
 const FIRST_DAY = '01';
 const LAST_MONTH = CALENDAR_MONTHS[CALENDAR_MONTHS.length - 1];
 const YEAR_FLOOR = '0001';
@@ -104,18 +114,43 @@ function parseIsoDate(name: string, value: string): DateParts {
 }
 
 function parseNonNegativeDays(name: string, value: string | undefined, required = false): Decimal {
-  if (value === undefined || value.trim() === '') {
+  if (value === undefined) {
     if (required) throw invalid(`${name} is required`);
     return money(0);
   }
-  let parsed: Decimal;
-  try {
-    parsed = money(value);
-  } catch {
+  const trimmed = value.trim();
+  if (trimmed === '') {
+    if (required) throw invalid(`${name} is required`);
+    return money(0);
+  }
+  if (NEGATIVE_DECIMAL.test(trimmed)) {
+    throw invalid(`${name} cannot be negative`);
+  }
+  if (!NON_NEGATIVE_DECIMAL.test(trimmed)) {
     throw invalid(`${name} is not a decimal number`);
   }
-  if (parsed.isNegative()) throw invalid(`${name} cannot be negative`);
-  return parsed;
+  return money(trimmed);
+}
+
+function isScheduledWorkday(yearNum: number, monthIdxZeroBased: number, day: number, workweek: LeaveWorkweek): boolean {
+  if (workweek === 'all_days') return true;
+  const wd = WEEKDAY_NAMES[new Date(Date.UTC(yearNum, monthIdxZeroBased, day)).getUTCDay()];
+  if (workweek === 'mon_sat') return wd !== 'sun';
+  return wd !== 'sun' && wd !== 'sat';
+}
+
+function countWorkdaysInSpan(
+  yearNum: number,
+  monthIdxZeroBased: number,
+  startDay: number,
+  endDay: number,
+  workweek: LeaveWorkweek,
+): number {
+  let count = 0;
+  for (let day = startDay; day <= endDay; day++) {
+    if (isScheduledWorkday(yearNum, monthIdxZeroBased, day, workweek)) count += 1;
+  }
+  return count;
 }
 
 function parsePositiveWorkingDays(name: string, value: string): Decimal {
@@ -172,9 +207,16 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
   if (input.standardWorkingDays !== undefined) {
     parsePositiveWorkingDays('standardWorkingDays', input.standardWorkingDays);
   }
+  if (input.workweek !== undefined && !LEAVE_WORKWEEKS.includes(input.workweek)) {
+    throw invalid(`unknown workweek: ${String(input.workweek)}`);
+  }
   for (const [ym, days] of Object.entries(input.workingDaysByMonth ?? {})) {
     if (!MONTH.test(ym)) throw invalid(`workingDaysByMonth key ${ym} must be YYYY-MM`);
     parsePositiveWorkingDays(`workingDaysByMonth[${ym}]`, days);
+  }
+  for (const [ym, days] of Object.entries(input.workedDaysByMonth ?? {})) {
+    if (!MONTH.test(ym)) throw invalid(`workedDaysByMonth key ${ym} must be YYYY-MM`);
+    parseNonNegativeDays(`workedDaysByMonth[${ym}]`, days, true);
   }
 
   const zero = money(0);
@@ -240,10 +282,60 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
       const activeDays = endDay >= startDay ? endDay - startDay + 1 : 0;
       if (activeDays === 0) continue;
 
-      const calendarRatio = money(String(activeDays)).div(String(daysInMonth));
       const monthStd = input.workingDaysByMonth?.[ym] ?? input.standardWorkingDays;
+      const workedExplicit = input.workedDaysByMonth?.[ym];
       const unpaidInMonth = unpaidByMonth.get(ym) ?? zero;
-      const effectiveRatio = monthStd !== undefined && unpaidInMonth.greaterThan(0) ? calendarRatio.minus(unpaidInMonth.div(money(monthStd))) : calendarRatio;
+      let effectiveRatio: Decimal;
+
+      if (workedExplicit !== undefined) {
+        if (monthStd === undefined) {
+          throw invalid(`standardWorkingDays or workingDaysByMonth[${ym}] is required when workedDaysByMonth[${ym}] is provided`);
+        }
+        effectiveRatio = money(workedExplicit.trim()).div(money(monthStd.trim()));
+      } else if (startDay === 1 && endDay === daysInMonth) {
+        if (unpaidInMonth.equals(0)) {
+          effectiveRatio = money(1);
+        } else if (monthStd !== undefined) {
+          const stdDec = money(monthStd.trim());
+          const actual = stdDec.minus(unpaidInMonth);
+          effectiveRatio = (actual.isNegative() ? zero : actual).div(stdDec);
+        } else if (input.workweek !== undefined) {
+          const totalWork = countWorkdaysInSpan(yearNum, idx, 1, daysInMonth, input.workweek);
+          const stdDec = money(String(totalWork));
+          const actual = stdDec.minus(unpaidInMonth);
+          effectiveRatio = (actual.isNegative() ? zero : actual).div(stdDec);
+        } else {
+          effectiveRatio = money(1);
+        }
+      } else if (input.workweek !== undefined) {
+        const activeWork = countWorkdaysInSpan(yearNum, idx, startDay, endDay, input.workweek);
+        const totalWork = countWorkdaysInSpan(yearNum, idx, 1, daysInMonth, input.workweek);
+        const stdDec = money(monthStd !== undefined ? monthStd.trim() : String(totalWork));
+        const actual = money(String(activeWork)).minus(unpaidInMonth);
+        effectiveRatio = (actual.isNegative() ? zero : actual).div(stdDec);
+      } else if (monthStd !== undefined) {
+        const stdDec = money(monthStd.trim());
+        const monFriTotal = countWorkdaysInSpan(yearNum, idx, 1, daysInMonth, 'mon_fri');
+        const monSatTotal = countWorkdaysInSpan(yearNum, idx, 1, daysInMonth, 'mon_sat');
+        let activeWork: number;
+        if (stdDec.equals(String(monFriTotal))) {
+          activeWork = countWorkdaysInSpan(yearNum, idx, startDay, endDay, 'mon_fri');
+        } else if (stdDec.equals(String(monSatTotal))) {
+          activeWork = countWorkdaysInSpan(yearNum, idx, startDay, endDay, 'mon_sat');
+        } else if (stdDec.equals(String(daysInMonth))) {
+          activeWork = activeDays;
+        } else {
+          throw invalid(
+            `partial month ${ym} working days (${monthStd}) do not match Mon-Fri (${monFriTotal}), Mon-Sat (${monSatTotal}), or calendar (${daysInMonth}) days; pass workedDaysByMonth[${ym}], workweek, or eligibleMonths`,
+          );
+        }
+        const actual = money(String(activeWork)).minus(unpaidInMonth);
+        effectiveRatio = (actual.isNegative() ? zero : actual).div(stdDec);
+      } else {
+        const actual = money(String(activeDays)).minus(unpaidInMonth);
+        effectiveRatio = (actual.isNegative() ? zero : actual).div(String(daysInMonth));
+      }
+
       if (effectiveRatio.greaterThanOrEqualTo(halfRatio)) {
         eligibleMonths += 1;
       }
@@ -264,6 +356,7 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
   const monthsInYear = String(CALENDAR_MONTHS.length);
   const entitlementDays = toMoney(money(baseDaysPerYear).times(String(eligibleMonths)).div(monthsInYear));
   const seniorityDays = toMoney(fullSeniorityDays.times(String(eligibleMonths)).div(monthsInYear));
+  // Sum rounded components so printed entitlementDays + seniorityDays matches totalEntitlementDays.
   const totalEntitlement = money(entitlementDays).plus(money(seniorityDays));
   const signedBalance = totalEntitlement.plus(openingTotal).minus(takenAnnual);
   const remainingAnnual = signedBalance.isNegative() ? zero : signedBalance;

@@ -263,5 +263,62 @@ describe('calculateLeaveBalance (#3348)', () => {
         }),
       ).code,
     ).toBe('invalid_input');
+    expect(refusal(() => calculateLeaveBalance({ year: '2026', category: 'standard', hireDate: '2025-01-01', openingBalanceDays: '1 2' })).code).toBe(
+      'invalid_input',
+    );
+    expect(refusal(() => calculateLeaveBalance({ year: '2026', category: 'standard', hireDate: '2025-01-01', openingBalanceDays: '1e2' })).code).toBe(
+      'invalid_input',
+    );
+  });
+
+  it('uses working-day schedules and workedDaysByMonth in partial months instead of calendar-day ratios', () => {
+    // March 2026 has 22 Mon-Fri days; starting 2026-03-17 (Tuesday) works 11/22 = 0.5 -> 10 eligible months.
+    expect(
+      calculateLeaveBalance({
+        year: '2026',
+        category: 'standard',
+        hireDate: '2026-03-17',
+        workingDaysByMonth: { '2026-03': '22' },
+      }),
+    ).toMatchObject({ eligibleMonths: 10, entitlementDays: '10' });
+
+    expect(
+      calculateLeaveBalance({
+        year: '2026',
+        category: 'standard',
+        hireDate: '2026-03-17',
+        workweek: 'mon_fri',
+      }),
+    ).toMatchObject({ eligibleMonths: 10, entitlementDays: '10' });
+
+    // When custom workingDaysByMonth doesn't match Mon-Fri/Mon-Sat/calendar counts, require workedDaysByMonth or workweek.
+    expect(() =>
+      calculateLeaveBalance({
+        year: '2026',
+        category: 'standard',
+        hireDate: '2026-03-17',
+        workingDaysByMonth: { '2026-03': '21' },
+      }),
+    ).toThrow(PayrollRefusedError);
+
+    expect(
+      calculateLeaveBalance({
+        year: '2026',
+        category: 'standard',
+        hireDate: '2026-03-17',
+        workingDaysByMonth: { '2026-03': '21' },
+        workedDaysByMonth: { '2026-03': '11' },
+      }).eligibleMonths,
+    ).toBe(10);
+
+    expect(
+      calculateLeaveBalance({
+        year: '2026',
+        category: 'standard',
+        hireDate: '2026-03-17',
+        workingDaysByMonth: { '2026-03': '21' },
+        workedDaysByMonth: { '2026-03': '10' },
+      }).eligibleMonths,
+    ).toBe(9);
   });
 });
