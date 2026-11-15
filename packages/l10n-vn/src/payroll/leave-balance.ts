@@ -52,6 +52,8 @@ export interface LeaveBalanceInput {
   workweek?: LeaveWorkweek;
   /** Optional actual working days worked in YYYY-MM (net of partial employment and unpaid leave); requires `workingDaysByMonth[month]` or `standardWorkingDays`. */
   workedDaysByMonth?: Readonly<Record<string, string>>;
+  /** Optional paid public-holiday days in YYYY-MM (Labor Code 2019 Art. 112 / Decree 145 Art. 65); added alongside `workedDaysByMonth` without consuming annual or personal paid leave. */
+  paidHolidayDaysByMonth?: Readonly<Record<string, string>>;
 }
 
 export interface LeaveBalanceResult {
@@ -245,6 +247,10 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
     if (!MONTH.test(ym)) throw invalid(`workedDaysByMonth key ${ym} must be YYYY-MM`);
     parseNonNegativeDays(`workedDaysByMonth[${ym}]`, days, true);
   }
+  for (const [ym, days] of Object.entries(input.paidHolidayDaysByMonth ?? {})) {
+    if (!MONTH.test(ym)) throw invalid(`paidHolidayDaysByMonth key ${ym} must be YYYY-MM`);
+    parseNonNegativeDays(`paidHolidayDaysByMonth[${ym}]`, days, true);
+  }
 
   const zero = money(0);
   let openingTotal = parseNonNegativeDays('openingBalanceDays', input.openingBalanceDays);
@@ -338,7 +344,13 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
         );
         allowanceMonthsRemaining = nextAllowance;
         const paidLeaveInMonth = paidLeaveByMonth.get(ym) ?? zero;
-        effectiveRatio = money(workedExplicit.trim()).plus(paidLeaveInMonth).plus(coveredDays).div(totalMonthWork);
+        const holidayRaw = input.paidHolidayDaysByMonth?.[ym];
+        const paidHolidayInMonth = holidayRaw !== undefined ? money(holidayRaw.trim()) : zero;
+        effectiveRatio = money(workedExplicit.trim())
+          .plus(paidLeaveInMonth)
+          .plus(paidHolidayInMonth)
+          .plus(coveredDays)
+          .div(totalMonthWork);
       } else {
         let totalMonthWork: Decimal;
         let activeMonthWork: Decimal;

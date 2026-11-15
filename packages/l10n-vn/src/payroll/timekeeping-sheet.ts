@@ -69,6 +69,52 @@ function hasWord(key: string, word: string): boolean {
 }
 
 const TOTAL_SUMMARY_LABELS = new Set(['tong cong', 'tong so', 'tong', 'total', 'subtotal', 'grand total']);
+const BALANCE_OR_QUOTA_WORDS = [
+  'balance',
+  'remaining',
+  'carryover',
+  'opening',
+  'closing',
+  'accrued',
+  'entitlement',
+  'entitled',
+  'quota',
+  'limit',
+] as const;
+const BALANCE_OR_QUOTA_PHRASES = [
+  'so du',
+  'du phep',
+  'con lai',
+  'phep ton',
+  'ton phep',
+  'ton dau',
+  'ton cuoi',
+  'dau ky',
+  'cuoi ky',
+  'chuyen ky',
+  'chuyen sang',
+  'tich luy',
+  'dinh muc',
+  'duoc huong',
+  'quy phep',
+  'han muc',
+  'nam truoc',
+  'ky truoc',
+  'carry over',
+  'carried over',
+  'carried forward',
+  'brought forward',
+  'prior year',
+  'previous year',
+  'last year',
+  'days left',
+  'leave left',
+  'hours left',
+  'annual left',
+  'ot cap',
+  'overtime cap',
+  'leave cap',
+] as const;
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 const LATEST_DATE_SENTINEL = '9999-12-31';
 const CAMEL_BOUNDARY = new RegExp('([a-z0-9])([A-Z])', 'g');
@@ -269,6 +315,10 @@ function emptyColumns(): Record<TimekeepingColumn, number | null> {
   return Object.fromEntries(TIMEKEEPING_COLUMNS.map((c) => [c, null])) as Record<TimekeepingColumn, number | null>;
 }
 
+function isBalanceOrQuotaHeader(key: string): boolean {
+  return BALANCE_OR_QUOTA_WORDS.some((w) => hasWord(key, w)) || hasAnyPhrase(key, BALANCE_OR_QUOTA_PHRASES);
+}
+
 function classifyHeader(key: string): HeaderClassification | null {
   if (hasAnyPhrase(key, ['ma nhan vien', 'ma nv', 'employee code', 'staff code', 'emp code', 'employee id', 'staff id'])) {
     return { field: 'employeeCode', specificity: 'phrase' };
@@ -282,6 +332,12 @@ function classifyHeader(key: string): HeaderClassification | null {
   }
   if (key === 'nhan vien' || key === 'name' || key === 'ten') {
     return { field: 'displayName', specificity: 'exact' };
+  }
+
+  // Balance/remaining/carryover/quota headers (e.g. "Annual leave balance", "Phep nam con lai") must not be
+  // misinterpreted as monthly leave taken or overtime worked.
+  if (isBalanceOrQuotaHeader(key)) {
+    return null;
   }
 
   // Unpaid leave (including unpaid personal leave "Nghi viec rieng khong huong luong") takes priority over paid personal leave.

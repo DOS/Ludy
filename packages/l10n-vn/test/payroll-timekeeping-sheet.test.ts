@@ -294,5 +294,24 @@ describe('parseTimekeepingSheet (#3348)', () => {
     expect(tsvAlignedRes.delimiter).toBe('\t');
     expect(tsvAlignedRes.errors).toEqual([]);
     expect(tsvAlignedRes.rows[0]).toMatchObject({ employeeCode: 'E01', unpaidLeaveDays: '2' });
+
+    // Balance, remaining, and carryover leave columns do not shadow monthly leave taken columns.
+    const balanceBeforeTaken = parseTimekeepingSheet(
+      'Employee Code\tAnnual leave balance\tAnnual leave\tUnpaid leave balance\tUnpaid leave\tSo du phep nam\nNV01\t10\t2\t5\t1\t8\n',
+      { month: '2026-08' },
+    );
+    expect(balanceBeforeTaken.errors).toEqual([]);
+    expect(balanceBeforeTaken.warnings).toEqual([]);
+    expect(balanceBeforeTaken.rows[0]).toMatchObject({
+      employeeCode: 'NV01',
+      annualLeaveDays: '2',
+      unpaidLeaveDays: '1',
+    });
+
+    const balanceOnly = parseTimekeepingSheet('Employee Code\tAnnual leave balance\tPhep nam con lai\nNV01\t10\t8\n', {
+      month: '2026-08',
+    });
+    expect(balanceOnly.rows).toEqual([]);
+    expect(balanceOnly.errors.map((err) => err.code)).toContain('missing_timekeeping_columns');
   });
 });

@@ -500,4 +500,43 @@ describe('calculateLeaveBalance (#3348)', () => {
     expect(fullYear.entitlementDays).toBe('24');
     expect(asOfDec.entitlementDays).toBe(fullYear.entitlementDays);
   });
+
+  it('adds paidHolidayDaysByMonth when workedDaysByMonth is given without altering personalPaidDays', () => {
+    // 7 actual worked days + 5 paid public holiday days in a 24-day month = 12/24 (0.5 >= halfMonthWorkingDaysRatio).
+    const withHolidays = calculateLeaveBalance({
+      year: '2026',
+      category: 'standard',
+      hireDate: '2026-04-20',
+      standardWorkingDays: '24',
+      asOfMonth: '2026-04',
+      workedDaysByMonth: { '2026-04': '7' },
+      paidHolidayDaysByMonth: { '2026-04': '5' },
+    });
+    expect(withHolidays).toMatchObject({
+      eligibleMonths: 1,
+      entitlementDays: '1',
+      personalPaidDays: '0',
+      takenAnnualDays: '0',
+    });
+
+    // Without paidHolidayDaysByMonth, 7/24 < 0.5 drops the month.
+    const withoutHolidays = calculateLeaveBalance({
+      year: '2026',
+      category: 'standard',
+      hireDate: '2026-04-20',
+      standardWorkingDays: '24',
+      asOfMonth: '2026-04',
+      workedDaysByMonth: { '2026-04': '7' },
+    });
+    expect(withoutHolidays).toMatchObject({ eligibleMonths: 0, entitlementDays: '0' });
+
+    expect(() =>
+      calculateLeaveBalance({
+        year: '2026',
+        category: 'standard',
+        hireDate: '2026-01-01',
+        paidHolidayDaysByMonth: { '2026-13': '1' },
+      }),
+    ).toThrow(PayrollRefusedError);
+  });
 });
