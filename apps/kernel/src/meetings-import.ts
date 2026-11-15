@@ -71,7 +71,8 @@ function classify(error: unknown): { code: MeetingPlatformErrorCode; retry: bool
   if (error instanceof MeetingPlatformError) return { code: error.code as MeetingPlatformErrorCode, retry: error.code === 'platform_unavailable' || error.code === 'download_failed' };
   if (error instanceof EgressError) {
     if (error.code === 'too_large') return { code: 'too_large', retry: false };
-    if (error.code === 'blocked' || error.code === 'invalid_url' || error.code === 'redirects') return { code: 'platform_refused', retry: false };
+    // A compressed answer (we ask for identity) is the platform's way of answering, the same on every try, like a blocked address or a redirect loop: refused, no retry.
+    if (error.code === 'blocked' || error.code === 'invalid_url' || error.code === 'redirects' || error.code === 'encoding') return { code: 'platform_refused', retry: false };
     return { code: 'platform_unavailable', retry: true };
   }
   if (error instanceof DomainError) {
