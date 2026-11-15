@@ -195,8 +195,9 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   // The same, for a member's minutes webhook: the one request to the address the member set (through the signing helper of mcp-wake.ts, the egress guard), and a sweep that reaches nothing.
   [QUEUES.meetingHook]: ['tenant_url'],
   [QUEUES.meetingHookSweep]: 'none',
-  // The download reaches the platform's own hosts through the guarded stream; the sweep lists recordings through the adapters.
-  [QUEUES.meetingsImport]: ['provider:channel'],
+  // The download goes to the platform's own hosts through the guarded stream (guardedStream), and the URL it fetches comes from the platform's answer (the adapter's prepareDownload), not from code: so it is declared as
+  // tenant_url as well as provider:channel (the adapter's hosts and CDN suffixes narrow it). The sweep lists recordings through the adapters.
+  [QUEUES.meetingsImport]: ['provider:channel', 'tenant_url'],
   [QUEUES.meetingsImportSweep]: ['provider:channel'],
   // The same, for the minutes posted to a Slack or Teams channel: the one request to the webhook address an owner or admin saved, through the egress guard (postMinutes of the channel adapters), and a sweep that reaches nothing.
   [QUEUES.meetingChat]: ['provider:channel', 'tenant_url'],
