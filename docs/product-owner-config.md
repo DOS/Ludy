@@ -36,6 +36,14 @@ and it carries JOY's authority, so a change to it is a change to agent instructi
   never as inline text in a message. Each question still names what is
   decided, why it matters, the options, the recommendation (first) and what
   happens without an answer, in Vietnamese with full diacritics (AGENTS.md).
+- Owner decision 2026-11-15 (Antigravity chat): define PO, security-review
+  and worker models by generic capability tier (flagship vs worker) rather
+  than hardcoding vendor model names, and configure Antigravity to use
+  `Orchestrator (Carbon)` / `Gemini 4 Carbon`. A PO on `Gemini 4 Carbon` or
+  `Orchestrator (Carbon)` runs its own independent flagship security review
+  (a fresh-context read-only `research` subagent, which answers directly on
+  Carbon without handing off to Hydrogen) and never waits on Claude Opus
+  when Claude quota is exhausted or the line runs on Antigravity.
 
 ## Board
 
@@ -198,21 +206,28 @@ The DOS organization ids are the same in every DOS repository.
   is not a failure.
 - claim_gate: none
 - external_review_app: none
-- local_reviews: `codex review --base origin/main` in the background, then
-  a fresh-context subagent given the diff and the issue; docs-only PRs skip
-  both and need `pnpm docs:check`. A protected-path PR also gets an
-  independent security review before merge, run by its line's PO with a
-  fresh-context Opus reviewer that did not write the change, and a PR that
-  changes the shared core also gets the Platform PO's review of those files
-  ("Shared-core review").
+- local_reviews: `codex review -c model_reasoning_effort=<subagent_effort> --base origin/main`
+  in the background, then a fresh-context subagent given the diff and the
+  issue; docs-only PRs skip both and need `pnpm docs:check`. A protected-path
+  PR also gets an independent security review before merge, run by its line's
+  PO with a fresh-context flagship-model reviewer that did not write the
+  change, and a PR that changes the shared core also gets the Platform PO's
+  review of those files ("Shared-core review").
 - shared_core_review: `line:platform`: the paths in "Shared-core review"
   below.
-- agent_effort: high. PO sessions run on Opus at effort high. Every sub-session
-  runs on Sonnet 5.5 (`claude-sonnet-5-5`) at effort high, and at xhigh only
-  for hard work (a protected-path security change, a migration, a root-cause
-  hunt). The security review of a protected-path PR runs on
-  Opus; Codex reviews at effort high (AGENTS.md, owner decisions 2026-10-27,
-  2026-10-30 and 2026-10-31).
+- agent_model: claude-sonnet-5-5 (Claude Code sub-sessions; Antigravity:
+  `inherit` on `Orchestrator (Carbon)` or `Gemini 4 Carbon`, or the PO's
+  flagship model; owner decision 2026-11-15, see above). PO sessions and
+  independent security reviews of protected-path PRs run on a flagship model:
+  Claude Opus on Claude Code; Claude Opus, Gemini 4 Carbon or `Orchestrator
+  (Carbon)` on Antigravity (read-only `research` reviews run on Carbon in
+  plan mode without handing off to Hydrogen).
+- agent_effort: high (owner decisions 2026-10-27, 2026-10-30 and 2026-10-31;
+  skipped on Antigravity, which has no session effort API). Exception: xhigh
+  only for hard work (a protected-path security change, a migration, a
+  root-cause hunt).
+- subagent_effort: high (passed to Codex CLI reviews as
+  `-c model_reasoning_effort=high` on every host, Antigravity included).
 
 ## Shared-core review
 
