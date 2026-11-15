@@ -222,6 +222,7 @@ describe('calculateLeaveBalance (#3348)', () => {
           seniorityYearsStep: 5,
           seniorityExtraDays: '1',
           halfMonthWorkingDaysRatio: '0.5',
+          approvedUnpaidMonthsAllowance: '1',
         },
       }),
     ];
@@ -334,5 +335,89 @@ describe('calculateLeaveBalance (#3348)', () => {
         entries: [{ kind: 'unpaid_leave', month: '2026-05', days: '26' }],
       }),
     ).toMatchObject({ eligibleMonths: 11, entitlementDays: '11' });
+  });
+
+  it('honors Decree 145 Art. 65(4) 1-month cumulative allowance only for employer-approved unpaid leave', () => {
+    // 1 cumulative month (26 days on Mon-Sat default) of approved unpaid leave still counts as eligible working time.
+    expect(
+      calculateLeaveBalance({
+        year: '2026',
+        category: 'standard',
+        hireDate: '2025-01-01',
+        entries: [{ kind: 'unpaid_leave', month: '2026-03', days: '26', approved: true }],
+      }),
+    ).toMatchObject({ eligibleMonths: 12, entitlementDays: '12' });
+
+    // Approved unpaid leave split across months consumes the 1-month allowance chronologically;
+    // 13 + 26 days across Mar and May leaves 13 worked days in May (13/26 = 0.5 -> still counts),
+    // whereas 14 + 26 days leaves 12 worked days in May (12/26 < 0.5 -> May drops).
+    expect(
+      calculateLeaveBalance({
+        year: '2026',
+        category: 'standard',
+        hireDate: '2025-01-01',
+        entries: [
+          { kind: 'unpaid_leave', month: '2026-03', days: '13', approved: true },
+          { kind: 'unpaid_leave', month: '2026-05', days: '26', approved: true },
+        ],
+      }),
+    ).toMatchObject({ eligibleMonths: 12, entitlementDays: '12' });
+
+    expect(
+      calculateLeaveBalance({
+        year: '2026',
+        category: 'standard',
+        hireDate: '2025-01-01',
+        entries: [
+          { kind: 'unpaid_leave', month: '2026-03', days: '14', approved: true },
+          { kind: 'unpaid_leave', month: '2026-05', days: '26', approved: true },
+        ],
+      }),
+    ).toMatchObject({ eligibleMonths: 11, entitlementDays: '11' });
+
+    // Unapproved (or unspecified approved flag) unpaid leave does not receive the Art. 65(4) allowance.
+    expect(
+      calculateLeaveBalance({
+        year: '2026',
+        category: 'standard',
+        hireDate: '2025-01-01',
+        entries: [{ kind: 'unpaid_leave', month: '2026-03', days: '26', approved: false }],
+      }),
+    ).toMatchObject({ eligibleMonths: 11, entitlementDays: '11' });
+  });
+
+  it('clamps rule lookup date by endedOn so post-termination rules do not change entitlement', () => {
+    const midYearRules = [
+      ...PAYROLL_RULES,
+      defineRule({
+        kind: 'annual_leave',
+        key: 'default',
+        effectiveFrom: '2026-07-01',
+        status: 'confirmed',
+        source: { cite: 'Mid-year company policy change from 2026-07-01', confidence: 'primary' },
+        value: {
+          standardDaysPerYear: '24',
+          heavyDaysPerYear: '26',
+          specialHeavyDaysPerYear: '28',
+          seniorityYearsStep: 5,
+          seniorityExtraDays: '1',
+          halfMonthWorkingDaysRatio: '0.5',
+          approvedUnpaidMonthsAllowance: '1',
+        },
+      }),
+    ];
+
+    expect(
+      calculateLeaveBalance(
+        {
+          year: '2026',
+          category: 'standard',
+          hireDate: '2025-01-01',
+          endedOn: '2026-06-30',
+          entries: [],
+        },
+        midYearRules,
+      ),
+    ).toMatchObject({ eligibleMonths: 6, entitlementDays: '6' });
   });
 });

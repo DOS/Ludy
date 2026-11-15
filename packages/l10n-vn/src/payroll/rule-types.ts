@@ -79,6 +79,7 @@ export interface RuleValues {
     seniorityYearsStep: number;
     seniorityExtraDays: string;
     halfMonthWorkingDaysRatio: string;
+    approvedUnpaidMonthsAllowance: string;
   };
   overtime_caps: { monthlyHours: string; annualHours: string };
 }

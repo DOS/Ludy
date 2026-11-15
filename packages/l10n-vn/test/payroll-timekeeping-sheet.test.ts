@@ -278,5 +278,14 @@ describe('parseTimekeepingSheet (#3348)', () => {
     expect(csvFallbackRes.delimiter).toBe(',');
     expect(csvFallbackRes.errors).toEqual([]);
     expect(csvFallbackRes.rows[0]).toMatchObject({ employeeCode: 'NV01', displayName: 'Pham, Minh', unpaidLeaveDays: '1' });
+
+    // Non-empty trailing cells beyond the header columns raise an extra_columns error, while empty trailing cells are tolerated.
+    const extraColRes = parseTimekeepingSheet('Ma NV,Unpaid leave\nNV01,1,5\n', { month: '2026-08' });
+    expect(extraColRes.rows).toEqual([]);
+    expect(extraColRes.errors.map((err) => err.code)).toContain('extra_columns');
+
+    const emptyTrailingRes = parseTimekeepingSheet('Ma NV,Unpaid leave,\nNV01,1,\n', { month: '2026-08' });
+    expect(emptyTrailingRes.errors).toEqual([]);
+    expect(emptyTrailingRes.rows[0]).toMatchObject({ employeeCode: 'NV01', unpaidLeaveDays: '1' });
   });
 });

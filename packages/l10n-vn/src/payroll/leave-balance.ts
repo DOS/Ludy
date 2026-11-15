@@ -24,6 +24,8 @@ export interface LeaveEntry {
   month: string;
   /** Non-negative decimal string supporting 0.5-day increments. */
   days: string;
+  /** For `'unpaid_leave'`, marks employer-approved unpaid leave eligible for Decree 145/2020 Art. 65(4) (up to 1 month/year counted). */
+  approved?: boolean;
 }
 
 export interface LeaveBalanceInput {
@@ -224,6 +226,8 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
   let takenAnnual = zero;
   let personalPaid = zero;
   const unpaidByMonth = new Map<string, Decimal>();
+  const approvedUnpaidByMonth = new Map<string, Decimal>();
+  const unapprovedUnpaidByMonth = new Map<string, Decimal>();
 
   for (const entry of input.entries ?? []) {
     if (!LEAVE_ENTRY_KINDS.includes(entry.kind)) {
@@ -244,14 +248,19 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
       personalPaid = personalPaid.plus(days);
     } else {
       unpaidByMonth.set(entry.month, (unpaidByMonth.get(entry.month) ?? zero).plus(days));
+      const bucket = entry.approved === true ? approvedUnpaidByMonth : unapprovedUnpaidByMonth;
+      bucket.set(entry.month, (bucket.get(entry.month) ?? zero).plus(days));
     }
   }
 
   const yearNum = new Date(`${input.year}-${FIRST_DAY}-${FIRST_DAY}T00:00:00Z`).getUTCFullYear();
+  const yearStart = `${input.year}-${FIRST_DAY}-${FIRST_DAY}`;
   const cutoffMonth = input.asOfMonth ?? `${input.year}-${LAST_MONTH}`;
   const cutoffIdx = CALENDAR_MONTHS.findIndex((m) => `${input.year}-${m}` === cutoffMonth);
   const yearCutoffDate = monthEndIso(yearNum, cutoffIdx, cutoffMonth);
-  const ruleLookupDate = input.asOfMonth !== undefined ? `${input.asOfMonth}-${FIRST_DAY}` : yearCutoffDate;
+  const baseLookupDate = input.asOfMonth !== undefined ? `${input.asOfMonth}-${FIRST_DAY}` : yearCutoffDate;
+  const clampedEndedOn = endedOn !== null && endedOn >= yearStart ? endedOn : null;
+  const ruleLookupDate = clampedEndedOn !== null && clampedEndedOn < baseLookupDate ? clampedEndedOn : baseLookupDate;
 
   const rule = ruleInForce(rules, 'annual_leave', 'default', ruleLookupDate);
   if (rule === undefined) {
@@ -262,6 +271,7 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
   }
 
   const halfRatio = money(rule.value.halfMonthWorkingDaysRatio);
+  let allowanceMonthsRemaining = money(rule.value.approvedUnpaidMonthsAllowance);
   let eligibleMonths = 0;
   if (input.eligibleMonths !== undefined) {
     eligibleMonths = input.eligibleMonths;
@@ -284,7 +294,8 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
 
       const monthStd = input.workingDaysByMonth?.[ym] ?? input.standardWorkingDays;
       const workedExplicit = input.workedDaysByMonth?.[ym];
-      const unpaidInMonth = unpaidByMonth.get(ym) ?? zero;
+      const approvedInMonth = approvedUnpaidByMonth.get(ym) ?? zero;
+      const unapprovedInMonth = unapprovedUnpaidByMonth.get(ym) ?? zero;
       let effectiveRatio: Decimal;
 
       if (workedExplicit !== undefined) {
@@ -292,37 +303,51 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
           throw invalid(`standardWorkingDays or workingDaysByMonth[${ym}] is required when workedDaysByMonth[${ym}] is provided`);
         }
         effectiveRatio = money(workedExplicit.trim()).div(money(monthStd.trim()));
-      } else if (input.workweek !== undefined || monthStd === undefined) {
-        // Default to Vietnam's 6-day Mon-Sat schedule when no working-day override or workweek is given,
-        // so both partial months and unpaid_leave deductions work out of the box with zero setup.
-        const schedule: LeaveWorkweek = input.workweek ?? 'mon_sat';
-        const totalWork = countWorkdaysInSpan(yearNum, idx, 1, daysInMonth, schedule);
-        const activeWork = countWorkdaysInSpan(yearNum, idx, startDay, endDay, schedule);
-        const stdDec = money(monthStd !== undefined ? monthStd.trim() : String(totalWork));
-        const actual = money(String(activeWork)).minus(unpaidInMonth);
-        effectiveRatio = (actual.isNegative() ? zero : actual).div(stdDec);
-      } else if (startDay === 1 && endDay === daysInMonth) {
-        const stdDec = money(monthStd.trim());
-        const actual = stdDec.minus(unpaidInMonth);
-        effectiveRatio = (actual.isNegative() ? zero : actual).div(stdDec);
       } else {
-        const stdDec = money(monthStd.trim());
-        const monFriTotal = countWorkdaysInSpan(yearNum, idx, 1, daysInMonth, 'mon_fri');
-        const monSatTotal = countWorkdaysInSpan(yearNum, idx, 1, daysInMonth, 'mon_sat');
-        let activeWork: number;
-        if (stdDec.equals(String(monFriTotal))) {
-          activeWork = countWorkdaysInSpan(yearNum, idx, startDay, endDay, 'mon_fri');
-        } else if (stdDec.equals(String(monSatTotal))) {
-          activeWork = countWorkdaysInSpan(yearNum, idx, startDay, endDay, 'mon_sat');
-        } else if (stdDec.equals(String(daysInMonth))) {
-          activeWork = activeDays;
+        let totalMonthWork: Decimal;
+        let activeMonthWork: Decimal;
+        if (input.workweek !== undefined || monthStd === undefined) {
+          // Default to Vietnam's 6-day Mon-Sat schedule when no working-day override or workweek is given,
+          // so both partial months and unpaid_leave deductions work out of the box with zero setup.
+          const schedule: LeaveWorkweek = input.workweek ?? 'mon_sat';
+          const totalWork = countWorkdaysInSpan(yearNum, idx, 1, daysInMonth, schedule);
+          const activeWork = countWorkdaysInSpan(yearNum, idx, startDay, endDay, schedule);
+          totalMonthWork = money(monthStd !== undefined ? monthStd.trim() : String(totalWork));
+          activeMonthWork = money(String(activeWork));
+        } else if (startDay === 1 && endDay === daysInMonth) {
+          totalMonthWork = money(monthStd.trim());
+          activeMonthWork = totalMonthWork;
         } else {
-          throw invalid(
-            `partial month ${ym} working days (${monthStd}) do not match Mon-Fri (${monFriTotal}), Mon-Sat (${monSatTotal}), or calendar (${daysInMonth}) days; pass workedDaysByMonth[${ym}], workweek, or eligibleMonths`,
-          );
+          totalMonthWork = money(monthStd.trim());
+          const monFriTotal = countWorkdaysInSpan(yearNum, idx, 1, daysInMonth, 'mon_fri');
+          const monSatTotal = countWorkdaysInSpan(yearNum, idx, 1, daysInMonth, 'mon_sat');
+          let activeWork: number;
+          if (totalMonthWork.equals(String(monFriTotal))) {
+            activeWork = countWorkdaysInSpan(yearNum, idx, startDay, endDay, 'mon_fri');
+          } else if (totalMonthWork.equals(String(monSatTotal))) {
+            activeWork = countWorkdaysInSpan(yearNum, idx, startDay, endDay, 'mon_sat');
+          } else if (totalMonthWork.equals(String(daysInMonth))) {
+            activeWork = activeDays;
+          } else {
+            throw invalid(
+              `partial month ${ym} working days (${monthStd}) do not match Mon-Fri (${monFriTotal}), Mon-Sat (${monSatTotal}), or calendar (${daysInMonth}) days; pass workedDaysByMonth[${ym}], workweek, or eligibleMonths`,
+            );
+          }
+          activeMonthWork = money(String(activeWork));
         }
-        const actual = money(String(activeWork)).minus(unpaidInMonth);
-        effectiveRatio = (actual.isNegative() ? zero : actual).div(stdDec);
+
+        // Decree 145/2020/ND-CP Art. 65(4): employer-approved unpaid leave up to 1 month/year counts as working time.
+        let uncoveredApproved = approvedInMonth;
+        if (approvedInMonth.greaterThan(0) && allowanceMonthsRemaining.greaterThan(0) && totalMonthWork.greaterThan(0)) {
+          const maxCoveredDays = allowanceMonthsRemaining.times(totalMonthWork);
+          const coveredDays = approvedInMonth.lessThanOrEqualTo(maxCoveredDays) ? approvedInMonth : maxCoveredDays;
+          uncoveredApproved = approvedInMonth.minus(coveredDays);
+          allowanceMonthsRemaining = allowanceMonthsRemaining.minus(coveredDays.div(totalMonthWork));
+          if (allowanceMonthsRemaining.isNegative()) allowanceMonthsRemaining = zero;
+        }
+        const effectiveUnpaid = unapprovedInMonth.plus(uncoveredApproved);
+        const actual = activeMonthWork.minus(effectiveUnpaid);
+        effectiveRatio = (actual.isNegative() ? zero : actual).div(totalMonthWork);
       }
 
       if (effectiveRatio.greaterThanOrEqualTo(halfRatio)) {

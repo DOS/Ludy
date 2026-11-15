@@ -71,6 +71,7 @@ describe('payroll rule data', () => {
         seniorityYearsStep: 5,
         seniorityExtraDays: '1',
         halfMonthWorkingDaysRatio: '0.5',
+        approvedUnpaidMonthsAllowance: '1',
       },
     });
     expect(leaveRule?.source.cite).toContain('Labor Code 2019');

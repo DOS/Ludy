@@ -85,6 +85,7 @@ export type TimekeepingIssueCode =
   | 'missing_employee_key'
   | 'invalid_number'
   | 'negative_number'
+  | 'extra_columns'
   | 'duplicate_employee'
   | 'duplicate_header_column'
   | 'overtime_cap_exceeded';
@@ -532,6 +533,10 @@ export function parseTimekeepingSheet(text: string, options?: TimekeepingSheetOp
   }
 
   const headerCells = parsedRows[header.rowIndex]?.cells ?? [];
+  let effectiveHeaderLength = headerCells.length;
+  while (effectiveHeaderLength > 0 && (headerCells[effectiveHeaderLength - 1] ?? '').trim() === '') {
+    effectiveHeaderLength -= 1;
+  }
   const errors: TimekeepingIssue[] = [];
   const warnings: TimekeepingIssue[] = [];
 
@@ -575,6 +580,24 @@ export function parseTimekeepingSheet(text: string, options?: TimekeepingSheetOp
     }
 
     const displayKey = employeeCode ?? displayName;
+    if (gridRow.cells.length > effectiveHeaderLength) {
+      const extraNonEmpty = gridRow.cells.slice(effectiveHeaderLength).find((c) => c.trim() !== '');
+      if (extraNonEmpty !== undefined) {
+        rowValid = false;
+        errors.push(
+          makeIssue(
+            'error',
+            'extra_columns',
+            `Row ${gridRow.rowNumber}: extra column value "${extraNonEmpty.trim()}" beyond ${effectiveHeaderLength} header column(s)`,
+            {
+              rowNumber: gridRow.rowNumber,
+              employeeKey: displayKey,
+              value: extraNonEmpty.trim(),
+            },
+          ),
+        );
+      }
+    }
     if (employeeKey !== '') {
       const priorRow = seenKeys.get(employeeKey);
       if (priorRow !== undefined) {
