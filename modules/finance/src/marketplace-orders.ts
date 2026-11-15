@@ -416,7 +416,8 @@ export const marketplaceConfirm = defineCommand({
               .set({
                 stage: line.stage,
                 ...(was.shippedAt === null && line.shippedAt !== null ? { shipped_at: line.shippedAt } : {}),
-                ...(deliveredAt !== null ? { delivered_at: deliveredAt } : {}),
+                // coalesce: another confirmation that stored a day first keeps its day (the table refuses a change, which would fail this whole confirm).
+                ...(deliveredAt !== null ? { delivered_at: sql<string>`coalesce(delivered_at, ${deliveredAt}::date)` } : {}),
                 updated_at: ctx.now,
               })
               .where('org_id', '=', ctx.orgId)
@@ -432,6 +433,8 @@ export const marketplaceConfirm = defineCommand({
                 .set({ delivered_at: line.deliveredAt, updated_at: ctx.now })
                 .where('org_id', '=', ctx.orgId)
                 .where('id', '=', was.id)
+                // A day another confirmation stored first is kept.
+                .where('delivered_at', 'is', null)
                 .execute();
               updatedLines += 1;
               touched.push({ id: was.id, stage: was.stage, quantity: was.quantity, shippedAt: was.shippedAt, orderedAt: was.orderedAt ?? line.orderedAt, sku: was.sku, attempt: was.attempt });
