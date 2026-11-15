@@ -4,11 +4,11 @@ import { describe, expect, it } from 'vitest';
 import { mediaUploadQuery, needsAudioExtraction } from '../src/lib/meeting-upload.ts';
 
 describe('needsAudioExtraction', () => {
-  it('is true for a video type or a video file name, in any case', () => {
+  it('is true for an MP4 or QuickTime type or a video file name, in any case', () => {
     for (const file of [
       { type: 'video/mp4', name: 'zoom.mp4' },
       { type: 'video/quicktime', name: 'teams.mov' },
-      { type: 'video/webm', name: 'rec' },
+      { type: 'video/mp4', name: 'rec' },
       { type: '', name: 'Zoom Meeting.MP4' },
       { type: 'application/octet-stream', name: 'call.MoV' },
       { type: '', name: 'clip.m4v' },
@@ -25,6 +25,10 @@ describe('needsAudioExtraction', () => {
       { type: '', name: 'a.m4a' },
       { type: 'audio/webm', name: 'a.webm' },
       { type: 'audio/ogg', name: 'a.ogg' },
+      // An audio file a browser types as video/*: uploaded as audio, as before.
+      { type: 'video/ogg', name: 'a.ogg' },
+      { type: 'video/webm', name: 'a.webm' },
+      { type: 'video/ogg', name: 'a.opus' },
       { type: '', name: 'notes.txt' },
     ]) {
       expect(needsAudioExtraction(file), `${file.type} ${file.name}`).toBe(false);

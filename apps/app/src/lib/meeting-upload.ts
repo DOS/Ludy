@@ -4,11 +4,14 @@
 import type { RecordingStopReason } from '@crove/meeting-recorder';
 
 const VIDEO_NAME = /\.(?:mp4|mov|m4v)$/i;
+// The video types of a local Zoom, Teams or phone recording. Not every video/* type: a browser may type an Ogg or WebM audio file as video/ogg or
+// video/webm, and that file is uploaded as audio as it always was (the server's container check for a video accepts only MP4, QuickTime and Matroska).
+const VIDEO_TYPE = /^video\/(?:mp4|quicktime|x-m4v)$/i;
 
 // A video by its type or its name. An audio type (audio/mp4, .m4a) is never one: its audio is uploaded as it is.
 export function needsAudioExtraction(file: { type: string; name: string }): boolean {
   if (/^audio\//i.test(file.type)) return false;
-  return /^video\//i.test(file.type) || VIDEO_NAME.test(file.name);
+  return VIDEO_TYPE.test(file.type) || VIDEO_NAME.test(file.name);
 }
 
 // The query of the raw-body upload: the kind and the length go in it, because the body is only the file.

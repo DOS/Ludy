@@ -192,6 +192,74 @@ describe('extractAudioFromVideo', () => {
     }
   });
 
+  it('ends on the deadline while the decrypted video is still streaming: deletes the sealed video, zeroes the key, no unhandled rejection', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      reset();
+      const { key, newKey } = keyOf();
+      let signal: AbortSignal | undefined;
+      // Reads one window and then never answers, as a sandbox stuck on the file would.
+      const stuck: MediaExtractClient = {
+        extractAudio: async (source, given) => {
+          signal = given;
+          const iterator = source[Symbol.asyncIterator]();
+          await iterator.next();
+          return new Promise(() => undefined);
+        },
+      };
+      await expect(run(createMediaAudioExtractor(stuck, { timeoutMs: 30 }), { newKey })).rejects.toMatchObject({ code: 'MEDIA_EXTRACT_TIMEOUT', status: 503 });
+      expect(signal?.aborted).toBe(true);
+      expect(stored).toHaveLength(1);
+      expect(deleted).toEqual(stored);
+      expect(await filesLeft()).toEqual([]);
+      expect(key.equals(Buffer.alloc(32))).toBe(true);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
+  it('cleans up when the sandbox refuses before it read a single window', async () => {
+    reset();
+    const { key, newKey } = keyOf();
+    const error = new DomainError('MEDIA_PROBE_UNAVAILABLE', 503, 'down');
+    await expect(run({ configured: true, extract: async () => { throw error; } }, { newKey })).rejects.toBe(error);
+    expect(deleted).toEqual(stored);
+    expect(await filesLeft()).toEqual([]);
+    expect(key.equals(Buffer.alloc(32))).toBe(true);
+  });
+
+  it('still returns the audio, and zeroes the key, when deleting the temporary object fails (it is logged)', async () => {
+    reset();
+    const { key, newKey } = keyOf();
+    const logged: unknown[][] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => void logged.push(args);
+    const failing = Object.create(store, { delete: { value: async () => { throw new Error('storage down'); } } }) as LocalDiskStore;
+    try {
+      const out = await extractAudioFromVideo({
+        source: pieces(video),
+        expectedLength: video.length,
+        maxBytes: 10_000_000,
+        store: failing,
+        orgId,
+        meetingId,
+        extractor: reading(() => ({ audio: opus, durationSeconds: 10 })),
+        newKey,
+      });
+      expect(out.audio).toEqual(opus);
+    } finally {
+      console.error = original;
+    }
+    expect(logged.some((args) => String(args[0]).includes('temporary video cleanup failed'))).toBe(true);
+    expect(key.equals(Buffer.alloc(32))).toBe(true);
+    // Remove what the failing delete left, so later tests see an empty directory.
+    for (const key2 of stored) await store.delete(key2);
+  });
+
   it('refuses a file that is not a video container, stores nothing and zeroes the key without calling the sandbox', async () => {
     reset();
     const { key, newKey } = keyOf();

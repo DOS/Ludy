@@ -1928,7 +1928,7 @@ export const vi = {
       visibilityAttendees: 'Chỉ người tham dự được cấp quyền',
       visibilityOrg: 'Chủ sở hữu, quản trị viên và thành viên có quyền với mọi pháp nhân (không gồm người xem)',
       audioFile: 'Tệp âm thanh (tối đa 300 MB)',
-      audioFileVideoHint: 'Có thể chọn tệp ghi hình (MP4, MOV, tối đa 2 GB): Ludy chỉ lấy phần âm thanh và không lưu hình.',
+      audioFileVideoHint: 'Có thể chọn tệp ghi hình (MP4, tối đa 2 GB): Ludy chỉ lấy phần âm thanh và không lưu hình.',
       keepVideo: 'Lưu cả bản ghi video',
       videoFile: 'Tệp video (tối đa 2 GB)',
       consentSectionTitle: 'Xác nhận đồng ý ghi âm (Bắt buộc)',

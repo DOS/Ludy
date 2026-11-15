@@ -1930,7 +1930,7 @@ export const en = {
       visibilityAttendees: 'Attendees granted access only',
       visibilityOrg: 'Owners, admins and members with access to every entity (not viewers)',
       audioFile: 'Audio file (up to 300 MB)',
-      audioFileVideoHint: 'You can also pick a video recording (MP4, MOV, up to 2 GB): Ludy keeps only the audio and does not store the video.',
+      audioFileVideoHint: 'You can also pick a video recording (MP4, up to 2 GB): Ludy keeps only the audio and does not store the video.',
       keepVideo: 'Keep video recording',
       videoFile: 'Video file (up to 2 GB)',
       consentSectionTitle: 'Recording consent confirmation (Mandatory)',
