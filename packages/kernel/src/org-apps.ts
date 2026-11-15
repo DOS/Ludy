@@ -48,7 +48,7 @@ export function setAppCommand(options: { shipped?: readonly string[] } = {}) {
     sideEffect: 'internal',
     access: ['owner', 'admin'],
     handler: async (ctx, input) => {
-      if (input.module === 'kernel') throw new DomainError('APP_ALWAYS_ON', 422, 'Lõi của Crove luôn bật, không tắt được');
+      if (input.module === 'kernel') throw new DomainError('APP_ALWAYS_ON', 422, 'Lõi của hệ thống luôn bật, không tắt được');
       if (options.shipped && !switchableApps(options.shipped).includes(input.module)) {
         throw new DomainError('UNKNOWN_APP', 422, 'Không có ứng dụng này');
       }
