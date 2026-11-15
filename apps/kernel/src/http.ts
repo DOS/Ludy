@@ -134,6 +134,7 @@ import { exchangeExtensionCode, extensionIdOfOrigin, newExtensionCode, refuseOut
 import { ConcurrencyLimiter, type Semaphore } from './concurrency.ts';
 import { onepiece, sealMedia, sizeText, streamPieces } from './media-seal.ts';
 import { assembleLivePieces } from './meetings-live-assemble.ts';
+import { extractAudioFromVideo, mediaAudioExtractorFor, type MediaAudioExtractor } from './meetings-extract.ts';
 import { decryptedWindows, mediaMeasurerFor, unavailable as mediaProbeUnavailable, type MediaMeasurer } from './meetings-measure.ts';
 import { MEDIA_TICKET_KEY_LABEL, MEDIA_TICKET_MAX_TTL_SECONDS, MEDIA_TICKET_PURPOSE, peekMediaTicketKeyId, signMediaTicket, verifyMediaTicket, wellFormedMediaTicket } from './media-ticket.ts';
 import { BODY_STALL_TIMEOUT_MS } from './upload-timeouts.ts';
@@ -230,6 +231,8 @@ export interface HttpDeps {
   broker?: CredentialBroker;
   // Measures the length of meeting media in crove-media (#2985). Unset: made from config.MEDIA_URL (none when that is unset too).
   mediaMeasurer?: MediaMeasurer;
+  // Takes the audio out of a video uploaded as a meeting's audio (#3337); none without MEDIA_URL.
+  mediaExtractor?: MediaAudioExtractor;
   authenticate: Authenticate;
   pool: pg.Pool;
   aiEnabled: boolean;
@@ -2207,6 +2210,7 @@ export function createHttpApp(deps: HttpDeps) {
   // Sensitive-audited playback routes for encrypted meeting audio and video (#2576).
   const MEETING_STREAM_WINDOW_BYTES = 4 * 1024 * 1024;
   const mediaMeasurer = deps.mediaMeasurer ?? mediaMeasurerFor(config.MEDIA_URL, config.MEDIA_CALL_TIMEOUT_MS);
+  const mediaExtractor = deps.mediaExtractor ?? mediaAudioExtractorFor(config.MEDIA_URL, config.MEDIA_CALL_TIMEOUT_MS);
   // The most bytes one meeting recording may have: the plan's limit, or the lower cap of this deployment's crove-media (#2989).
   const meetingMediaCap = (kind: 'audio' | 'video') => Math.min(kind === 'video' ? MAX_MEETING_VIDEO_BYTES : MAX_MEETING_AUDIO_BYTES, config.MEDIA_MAX_INPUT_BYTES ?? Number.POSITIVE_INFINITY);
   const PLAYBACK_AUDIT_WINDOW_MS = 10 * 60_000;
@@ -2537,7 +2541,7 @@ export function createHttpApp(deps: HttpDeps) {
     }
     return runtime.query<{ isRecorder: boolean; keepVideo: boolean; liveNotes: boolean }>('meetings.meeting.get', { meetingId }, { actor: actorOf(user), orgId });
   };
-  const mediaGate: MiddlewareHandler<{ Variables: { user: AuthUser; mediaBodyCap: number } }> = async (c, next) => {
+  const mediaGate: MiddlewareHandler<{ Variables: { user: AuthUser; mediaBodyCap: number; videoSlotHeld: boolean } }> = async (c, next) => {
     let release: (() => void) | null = null;
     let releaseVideo: (() => void) | null = null;
     try {
@@ -2552,7 +2556,14 @@ export function createHttpApp(deps: HttpDeps) {
       const hint = c.req.query('kind');
       if (hint !== undefined && hint !== 'audio' && hint !== 'video') throw new DomainError('BAD_REQUEST', 400, 'kind must be audio or video');
       const videoSize = !json && meeting.keepVideo && hint !== 'audio';
-      const cap = json ? META_BODY_MAX_BYTES : meetingMediaCap(videoSize ? 'video' : 'audio') + 1024 * 1024;
+      // `extract=audio` (#3337): the file is a video whose audio alone is kept. It is sized and counted as a video (the video cap, the video transfer slot),
+      // and refused before one byte is read when crove-media is not configured. The JSON shape (a staged upload) is capped by its own grant and takes the slot in the route.
+      const extractFlag = c.req.query('extract');
+      if (extractFlag !== undefined && extractFlag !== 'audio') throw new DomainError('BAD_REQUEST', 400, 'extract must be audio');
+      const extract = extractFlag === 'audio';
+      if (extract && hint === 'video') throw new DomainError('BAD_REQUEST', 400, 'extract=audio is only for kind audio');
+      if (extract && !mediaExtractor.configured) throw mediaProbeUnavailable();
+      const cap = json ? META_BODY_MAX_BYTES : meetingMediaCap(videoSize || extract ? 'video' : 'audio') + 1024 * 1024;
       // The raw body of the file (#2780) is sealed as it streams, so its size is declared up front: a body without a
       // Content-Length, or sent chunked, is refused before it is read (the body limit below would hold a chunked body whole to
       // count it, which is what streaming is for). Browsers send the length of a File they upload.
@@ -2568,10 +2579,12 @@ export function createHttpApp(deps: HttpDeps) {
       c.set('mediaBodyCap', cap);
       release = large.tryAcquire(user.userId);
       if (!release) throw busy(c);
-      if (videoSize) {
+      const takeVideoSlot = videoSize || (extract && !json);
+      if (takeVideoSlot) {
         releaseVideo = videoTransfers.tryAcquire(user.userId);
         if (!releaseVideo) throw busy(c);
       }
+      c.set('videoSlotHeld', takeVideoSlot);
     } catch (error) {
       release?.();
       return problem(c, error);
@@ -2583,7 +2596,7 @@ export function createHttpApp(deps: HttpDeps) {
       releaseVideo?.();
     }
   };
-  const mediaBodyLimit: MiddlewareHandler<{ Variables: { user: AuthUser; mediaBodyCap: number } }> = (c, next) =>
+  const mediaBodyLimit: MiddlewareHandler<{ Variables: { user: AuthUser; mediaBodyCap: number; videoSlotHeld: boolean } }> = (c, next) =>
     bodyLimit({ maxSize: c.get('mediaBodyCap') })(c, next);
   app.post('/api/meetings/:id/media', mediaGate, mediaBodyLimit, async (c) => {
     try {
@@ -2595,6 +2608,8 @@ export function createHttpApp(deps: HttpDeps) {
       const meetingId = c.req.param('id');
       const release = completes.tryAcquire(user.userId);
       if (!release) throw busy(c);
+      // `extract=audio` (#3337): the file is a video and only its audio is kept. The gate has checked the flag in the query; a multipart form may carry it as a field.
+      let extract = c.req.query('extract') === 'audio';
 
       // Set by prepareKeys inside the try (a closure, so the compiler cannot see it): typed as what they may hold.
       let dataKey = null as Buffer | null;
@@ -2607,6 +2622,7 @@ export function createHttpApp(deps: HttpDeps) {
       try {
         // The length of the recording is measured in crove-media after sealing, so without it nothing is read or stored (#2985).
         if (!mediaMeasurer.configured) throw mediaProbeUnavailable();
+        if (extract && !mediaExtractor.configured) throw mediaProbeUnavailable();
         const contentTypeHeader = c.req.header('content-type') ?? '';
         let kind: 'audio' | 'video';
         // The plaintext as it arrives, sealed piece by piece below (#2780): never held whole, and its declared length is checked.
@@ -2670,7 +2686,10 @@ export function createHttpApp(deps: HttpDeps) {
           }
           kind = body.kind;
           stopReason = readStopReason(body.stopReason);
-          if (kind === 'video') {
+          if (extract && (kind !== 'audio' || typeof body.importId === 'string')) {
+            throw new DomainError('BAD_REQUEST', 400, 'extract=audio is only for an uploaded file of kind audio, not a platform import');
+          }
+          if (kind === 'video' || extract) {
             // The staged bytes are read whole into memory: one video transfer per process (a multipart one took its slot in the gate).
             releaseJsonVideo = videoTransfers.tryAcquire(user.userId);
             if (!releaseJsonVideo) throw busy(c);
@@ -2706,11 +2725,12 @@ export function createHttpApp(deps: HttpDeps) {
             );
             stagingKeyToDelete = uploaded.stagingKey;
 
-            const expectedPurpose = kind === 'audio' ? 'meeting_audio' : 'meeting_video';
-            if (uploaded.purpose !== expectedPurpose) {
+            // A video whose audio is extracted (#3337) is staged for video (the grant of meeting_audio is capped at the audio size, which a video exceeds): either purpose fits there.
+            const purposeFits = extract ? uploaded.purpose === 'meeting_video' || uploaded.purpose === 'meeting_audio' : uploaded.purpose === (kind === 'audio' ? 'meeting_audio' : 'meeting_video');
+            if (!purposeFits) {
               throw new DomainError('INVALID_PURPOSE', 400, 'Mục đích tệp không khớp với lượt đăng ký tải lên');
             }
-            claim = { stagingKey: uploaded.stagingKey, cap: Math.min(uploaded.maxBytes, meetingMediaCap(kind)) };
+            claim = { stagingKey: uploaded.stagingKey, cap: Math.min(uploaded.maxBytes, meetingMediaCap(extract ? 'video' : kind)) };
           }
 
           prepareKeys(kind);
@@ -2738,6 +2758,21 @@ export function createHttpApp(deps: HttpDeps) {
           }
           kind = kindVal;
           stopReason = readStopReason(formData.get('stopReason'));
+          const extractField = formData.get('extract');
+          if (extractField !== null && extractField !== '') {
+            if (extractField !== 'audio') throw new DomainError('BAD_REQUEST', 400, 'extract must be audio');
+            extract = true;
+          }
+          if (extract) {
+            if (kind !== 'audio') throw new DomainError('BAD_REQUEST', 400, 'extract=audio is only for kind audio');
+            // A form field is read with the form, so only now: a deployment without crove-media refuses here (the query flag is refused before the body).
+            if (!mediaExtractor.configured) throw mediaProbeUnavailable();
+            // The gate took the slot when the query said so; a form field alone takes it here. A form is held whole by its parser: a large video goes as the raw body.
+            if (!c.get('videoSlotHeld')) {
+              releaseJsonVideo = videoTransfers.tryAcquire(user.userId);
+              if (!releaseJsonVideo) throw busy(c);
+            }
+          }
           const kindHint = c.req.query('kind');
           if (kindHint !== undefined && kindHint !== kind) throw new DomainError('BAD_REQUEST', 400, 'kind does not match the declared kind');
           await verifyRecorderAndKind(kind);
@@ -2746,7 +2781,7 @@ export function createHttpApp(deps: HttpDeps) {
           if (!fileVal || !(fileVal instanceof Blob)) {
             throw new DomainError('NO_FILE', 400, 'Tệp tải lên không hợp lệ');
           }
-          const maxBytes = meetingMediaCap(kind);
+          const maxBytes = meetingMediaCap(extract ? 'video' : kind);
           if (fileVal.size > maxBytes) {
             throw new DomainError('FILE_TOO_LARGE', 413, `Tệp vượt quá giới hạn tối đa (${sizeText(maxBytes)})`);
           }
@@ -2767,6 +2802,7 @@ export function createHttpApp(deps: HttpDeps) {
           const kindVal = c.req.query('kind');
           if (kindVal !== 'audio' && kindVal !== 'video') throw new DomainError('BAD_REQUEST', 400, 'kind must be audio or video');
           kind = kindVal;
+          if (extract && kind !== 'audio') throw new DomainError('BAD_REQUEST', 400, 'extract=audio is only for kind audio');
           stopReason = readStopReason(c.req.query('stopReason'));
           await verifyRecorderAndKind(kind);
           const lengthVal = c.req.query('lengthSeconds');
@@ -2790,6 +2826,22 @@ export function createHttpApp(deps: HttpDeps) {
 
         if (!keys || !dataKey) throw new Error('media keys were not prepared');
         const { keyId, wrappedKey, binding } = keys;
+
+        // The video of an `extract=audio` upload is sealed under a throwaway key, streamed to crove-media and deleted; what is sealed below, and recorded,
+        // is only the Opus audio it returned (audio cap, audio container, measured like any audio): the video is never stored (#3337).
+        if (extract) {
+          const extracted = await extractAudioFromVideo({
+            source,
+            expectedLength: declaredLength,
+            maxBytes: meetingMediaCap('video'),
+            store,
+            orgId,
+            meetingId,
+            extractor: mediaExtractor,
+          });
+          source = onepiece(extracted.audio);
+          declaredLength = extracted.audio.length;
+        }
 
         // Sealed as it streams: the container is sniffed from the first bytes, the cap is counted as the bytes arrive, and the
         // ciphertext goes to the store's streamed write, which hashes it and stores it under its content address.

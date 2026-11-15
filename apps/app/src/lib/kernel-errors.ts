@@ -407,6 +407,9 @@ export const KERNEL_ERROR_CODES = [
   'VIDEO_NOT_ENABLED',
   'MEDIA_KEY_SHREDDED',
   'MEDIA_KEY_UNAVAILABLE',
+  // A video uploaded as a meeting's audio (#3337): it has no sound, or taking the sound out ran out of time.
+  'NO_AUDIO_TRACK',
+  'MEDIA_EXTRACT_TIMEOUT',
   // The video player's ticket (#2703): one neutral wording for a ticket the stream refuses, and one for a ticket the app could not get.
   'VIDEO_TICKET_INVALID',
   'VIDEO_TICKET_UNAVAILABLE',
@@ -1154,7 +1157,7 @@ type KernelErrorRule = keyof typeof KERNEL_ERROR_RULES;
 
 // Codes whose kernel message is not the kernel's Vietnamese: the SPA words them in every locale. The English media answers of the meeting player (its retention and key
 // refusals, #2703) are among them, so a Vietnamese screen shows the Vietnamese message, not the kernel's English one.
-const LIBRARY_CODES: ReadonlySet<KernelErrorCode> = new Set(['BAD_REQUEST', 'INTERNAL_SERVER_ERROR', 'MEDIA_KEY_SHREDDED', 'MEDIA_KEY_UNAVAILABLE', 'AUDIO_NOT_FOUND']);
+const LIBRARY_CODES: ReadonlySet<KernelErrorCode> = new Set(['BAD_REQUEST', 'INTERNAL_SERVER_ERROR', 'MEDIA_KEY_SHREDDED', 'MEDIA_KEY_UNAVAILABLE', 'AUDIO_NOT_FOUND', 'NO_AUDIO_TRACK', 'MEDIA_EXTRACT_TIMEOUT']);
 
 export function isKernelErrorCode(code: string): code is KernelErrorCode {
   return (KERNEL_ERROR_CODES as readonly string[]).includes(code);
