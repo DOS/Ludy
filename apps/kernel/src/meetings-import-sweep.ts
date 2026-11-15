@@ -27,7 +27,7 @@ export interface MeetingsImportSweepDeps {
   broker: CredentialBroker;
   store: BlobStore;
   adapters: Readonly<Partial<Record<string, MeetingPlatformAdapter>>>;
-  // Hands one recording to the kernel-meetings-import queue (a singleton job per recording).
+  // Hands one recording to the kernel-meeting-import queue (a singleton job per recording).
   send: (job: MeetingsImportJob) => Promise<unknown>;
   now?: () => Date;
 }

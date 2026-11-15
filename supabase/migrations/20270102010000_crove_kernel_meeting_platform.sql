@@ -595,8 +595,8 @@ GRANT EXECUTE ON FUNCTION crove_kernel.meeting_platform_sync_failed(uuid, text, 
 
 -- ---------------------------------------------------------------------------
 -- Queues (QUEUES in apps/kernel/src/jobs-schema.ts; both send their dead letters to kernel-job.dlq):
---   kernel-meetings-import        one download of a recording to staging. 'stately': at most one queued and one active job per recording.
---   kernel-meetings-import-sweep  the worker's sweep, every minute: hands over the importing rows, lists the connections' recordings, expires what was not claimed.
+--   kernel-meeting-import        one download of a recording to staging. 'stately': at most one queued and one active job per recording.
+--   kernel-meeting-import-sweep  the worker's sweep, every minute: hands over the importing rows, lists the connections' recordings, expires what was not claimed.
 -- ---------------------------------------------------------------------------
-SELECT crove_jobs.create_queue('kernel-meetings-import', '{"policy":"stately","deadLetter":"kernel-job.dlq"}'::jsonb);
-SELECT crove_jobs.create_queue('kernel-meetings-import-sweep', '{"policy":"standard","deadLetter":"kernel-job.dlq"}'::jsonb);
+SELECT crove_jobs.create_queue('kernel-meeting-import', '{"policy":"stately","deadLetter":"kernel-job.dlq"}'::jsonb);
+SELECT crove_jobs.create_queue('kernel-meeting-import-sweep', '{"policy":"standard","deadLetter":"kernel-job.dlq"}'::jsonb);

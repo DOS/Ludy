@@ -4,12 +4,13 @@
 // - every definer of crove_kernel named meeting_platform_* returns exactly the columns pinned below (names and types): the worker-facing ones return opaque ids, the provider, the platform's id, enums, sizes, times and
 //   the staging key, never the recording's title, a display name or any free text;
 // - who may execute each definer is pinned (the worker's, the API login's, or nobody), and the credential table has no grant to any role;
-// - the recording's title is a column that only a member's own row-security read can return: no definer of the family selects it.
+// - the recording's title is a column that only a member's own row-security read can return: no definer of the family selects it;
+// - no Crove login reads or writes the sealed credential table directly (the API login and the worker login both get permission denied), and only the worker login can execute the definer that opens a credential.
 // Part of the invariant suite: CI runs this file from the base branch on protected-path PRs (AGENTS.md). Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { migrate } from '@crove/db/migrate';
+import { migrate, setRolePasswords } from '@crove/db/migrate';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -87,6 +88,7 @@ suite('meeting platform definers return no meeting text (#3173)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
+    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
   }, 120_000);
 
   afterAll(async () => {
@@ -160,5 +162,31 @@ suite('meeting platform definers return no meeting text (#3173)', () => {
     );
     // Only the sweep's writer (recording_replace) names the title column, and only to write it; no other definer's body mentions it.
     expect(sources.rows.filter((r) => /\btitle\b/.test(r.src.replace(/--.*$/gm, ''))).map((r) => r.proname)).toEqual([]);
+  });
+
+  it('lets no Crove login touch the sealed credential table: the API login and the worker login both get permission denied', async () => {
+    for (const [role, password] of [['crove_app', 'test-app-pw'], ['crove_worker', 'test-worker-pw']] as const) {
+      const url = new URL(adminUrl);
+      url.username = role;
+      url.password = password;
+      const client = new pg.Client({ connectionString: url.toString() });
+      await client.connect();
+      try {
+        for (const statement of [
+          'SELECT * FROM crove_kernel.meeting_platform_credential',
+          'INSERT INTO crove_kernel.meeting_platform_credential (org_id, id, key_id, envelope) VALUES (gen_random_uuid(), gen_random_uuid(), \'k\', \'\\x00\')',
+          'UPDATE crove_kernel.meeting_platform_credential SET key_id = \'x\'',
+          'DELETE FROM crove_kernel.meeting_platform_credential',
+        ]) {
+          await expect(client.query(statement), `${role}: ${statement}`).rejects.toMatchObject({ code: '42501' });
+        }
+        // Only the worker login may execute the definer that opens a credential; the API login is refused before any context is read.
+        const call = client.query('SELECT * FROM crove_kernel.meeting_platform_credential_get(gen_random_uuid())');
+        if (role === 'crove_app') await expect(call).rejects.toMatchObject({ code: '42501' });
+        else await expect(call).rejects.toMatchObject({ message: 'NO_CONTEXT' });
+      } finally {
+        await client.end();
+      }
+    }
   });
 });

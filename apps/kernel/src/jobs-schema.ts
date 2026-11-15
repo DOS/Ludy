@@ -78,8 +78,8 @@ export const QUEUES = {
   meetingHook: 'kernel-meeting-hook',
   meetingHookSweep: 'kernel-meeting-hook-sweep',
   // Meeting platform recordings (meetings integrations C1, #3173): one download of a recording the member chose to import, and the sweep that hands them over, lists suggestions and expires.
-  meetingsImport: 'kernel-meetings-import',
-  meetingsImportSweep: 'kernel-meetings-import-sweep',
+  meetingsImport: 'kernel-meeting-import',
+  meetingsImportSweep: 'kernel-meeting-import-sweep',
   // Created by the meetings transcription migration (20261202000000): one run of the recorder's Vy transcribing a meeting (#2578, M4b).
   meetingsTranscribe: 'meetings-transcribe',
   meetingsLiveNotes: 'meetings-live-notes',

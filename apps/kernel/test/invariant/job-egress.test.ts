@@ -124,7 +124,7 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
   'kernel-meeting-chat-sweep handler': { command: 'meetings.chat.post' },
   // The sweep (every minute) hands the recordings a member chose to import to the download queue; each exists only for a click on "Nhập" through meetings.import.start, which declares the external effect
   // (meetings integrations C1, #3173). The same sweep lists suggestions and expires staged bytes; it downloads nothing.
-  'kernel-meetings-import-sweep handler': { command: 'meetings.import.start' },
+  'kernel-meeting-import-sweep handler': { command: 'meetings.import.start' },
 };
 
 // Reviewed send sites that may be listed before the site exists, so the two steps of an invariant change can land apart (the PENDING_DEPS pattern): each names the issue that adds
@@ -133,7 +133,7 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
 const OTHER_SENDS_PENDING: Readonly<Record<string, string>> = {
   'kernel-mcp-wake-sweep handler': '#3024',
   'kernel-meeting-chat-sweep handler': '#3168',
-  'kernel-meetings-import-sweep handler': '#3173',
+  'kernel-meeting-import-sweep handler': '#3173',
 };
 
 // Events that feed a queue with egress and that no command emits: a definer writes them for a request without one.

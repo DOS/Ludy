@@ -4,7 +4,7 @@
 // - The member presses "Nhập" on a suggestion. meetings.import.start is the one command behind it: it creates the meeting with its consent record (the platform showed its own notice to everyone
 //   and the importer confirms it) through the same core as meetings.meeting.create, then links the recording and queues the download (crove_kernel.meeting_platform_recording_begin).
 // - It does no network I/O itself. The queued download is made by the worker's import job, which is why the command declares an external effect, like meetings.hook.set: the job
-//   (`kernel-meetings-import-sweep handler`, apps/kernel/test/invariant/job-egress.test.ts) is justified by this command.
+//   (`kernel-meeting-import-sweep handler`, apps/kernel/test/invariant/job-egress.test.ts) is justified by this command.
 // - The bytes then wait in staging; the member's own request claims, seals and records them through POST /api/meetings/:id/media, so the sealing code is the one an upload uses.
 // - No AI part: the transcript and minutes of the imported meeting are the ordinary ones, started by the member. Audit rows hold ids and the provider, never a title or a platform text.
 import { zMeetingImportStart, type MeetingLanguage } from '@crove/kernel-contract';
