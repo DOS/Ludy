@@ -52,6 +52,8 @@ const MACHINERY = new Set([
   'crove_kernel.auth_session_org',
   'crove_kernel.calendar_credential',
   'crove_kernel.credential',
+  // #3173 (meetings integrations C1): the sealed tokens of a member's meeting platform connection: reached only by definers, no login role grant. Lands before its table (PENDING_TABLES).
+  'crove_kernel.meeting_platform_credential',
   // #2582: one-time PKCE authorization codes for the Ludy extension. Definer-only, no login role grant.
   'crove_kernel.extension_auth_code',
   // #2582: scoped extension tokens (one org, one member, 90 days, hashed). Definer-only, no login role grant.
@@ -92,6 +94,9 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.agent_grant',
   'crove_kernel.agent_wake_delivery',
   'crove_kernel.agent_wake_signal_seen',
+  'crove_kernel.meeting_platform_connection',
+  'crove_kernel.meeting_platform_credential',
+  'crove_kernel.meeting_platform_recording',
   'crove_kernel.member_permission_override',
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',
@@ -164,6 +169,8 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_kernel.conversation_read', () => 'false'], // Per member.
   ['crove_kernel.file', () => `t.source OPERATOR(pg_catalog.<>) ALL (ARRAY['meeting_audio', 'meeting_video'])`], // Meeting media rows are the meeting's readers' alone (#2874); a member Vy reads one only through its own run's meeting, which the matrix's Vy has none of.
   ['crove_kernel.inbox_item', () => 'false'], // Per member.
+  ['crove_kernel.meeting_platform_connection', () => 'false'], // A member's own connection to a meeting platform (meetings integrations C1, #3173).
+  ['crove_kernel.meeting_platform_recording', () => 'false'], // A member's own suggested and imported platform recordings, read by that member, a user (C1, #3173).
   ['crove_kernel.member_permission_override', () => 'false'], // Read by the member and the admins in a user context.
   ['crove_kernel.member_vy_memory', (m) => `t.member_user_id OPERATOR(pg_catalog.=) '${m}'::uuid`], // Catalog 'read': its own member's entries (the matrix seeds none for it).
   ['crove_kernel.member_vy_result', (m) => `t.member_user_id OPERATOR(pg_catalog.=) '${m}'::uuid`], // Its own member's results (the matrix seeds none for it).
@@ -243,6 +250,8 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_hr.payroll_line', 'false'],
   ['crove_hr.payroll_run', 'false'],
   // What Vy keeps about one member (ADR-0049 decision 3, stage A): the member's alone. The system context, an owner, an admin, another member and an org-chart agent read and write none; the cases are in member-vy-private.db.test.ts.
+  // A member's own recordings a meeting platform offered (meetings integrations C1, #3173): the member's alone; the worker's system context reads and writes nothing (its writers are definers).
+  ['crove_kernel.meeting_platform_recording', 'false'],
   ['crove_kernel.member_vy_memory', 'false'],
   // One run's result for one member (ADR-0049 decision 3): the member's alone, the system context's included; only named definers expire or purge it.
   ['crove_kernel.member_vy_result', 'false'],
@@ -429,6 +438,16 @@ const calendarConnectionRow = (o: { id: string; owner: string }) => ({
   provider: 'google',
   external_account: `rls-${tag()}@calendar.test`,
   display_name: 'RLS matrix calendar',
+});
+// A member's connection to a meeting platform (meetings integrations C1, #3173). One per (org, member, provider, account), so every row gets its own account; the rows belong to the owner, the user every
+// member-context actor enters as.
+const meetingPlatformConnectionRow = (o: { id: string; owner: string }) => ({
+  org_id: o.id,
+  id: randomUUID(),
+  user_id: o.owner,
+  provider: 'sandbox',
+  external_account: `rls-${tag()}@meeting-platform.test`,
+  display_name: 'RLS matrix meeting platform',
 });
 // A connected channel account (ADR-0025). One live connection per (org, provider, account), so every row gets its
 // own account id.
@@ -2140,6 +2159,28 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   'crove_kernel.mail_suppression': {
     update: { set: 'lift_reason = lift_reason' },
     make: (o) => ({ row: { org_id: o.id, to_hash: hex64(), scope: 'all', reason: 'manual' } }),
+  },
+  // #3173 (meetings integrations C1): a member's connection to a meeting platform, under the same own-row policy as a calendar connection; tenant roles update only the state columns (a column grant).
+  'crove_kernel.meeting_platform_connection': { update: { set: 'display_name = display_name' }, make: (o) => ({ row: meetingPlatformConnectionRow(o) }) },
+  // Definer-only machinery: the sealed tokens of a meeting platform connection, keyed by the connection's id.
+  'crove_kernel.meeting_platform_credential': {
+    make: (o) => {
+      const connection = meetingPlatformConnectionRow(o);
+      return {
+        setup: [{ table: 'crove_kernel.meeting_platform_connection', values: connection }],
+        row: { org_id: o.id, id: connection.id, key_id: 'rls-matrix', envelope: '\\x00' },
+      };
+    },
+  },
+  // A recording a meeting platform offered, suggested to its member: read by that member alone and written by definers only (tenant roles have no insert, update or delete).
+  'crove_kernel.meeting_platform_recording': {
+    make: (o) => {
+      const connection = meetingPlatformConnectionRow(o);
+      return {
+        setup: [{ table: 'crove_kernel.meeting_platform_connection', values: connection }],
+        row: { org_id: o.id, id: randomUUID(), connection_id: connection.id, user_id: o.owner, external_id: `rlsmatrix${tag()}`, started_at: new Date().toISOString() },
+      };
+    },
   },
   // A member's availability for the inbox (CV3, #2306): available or away, which decides whom a new conversation is told to. One row per member (a unique
   // key), the owner the member-context probes enter as, so the seed holds it already; every member reads it, a member writes their own through its command.
