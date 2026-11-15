@@ -59,8 +59,8 @@ export function TodayAgenda({ slug }: { slug: string }) {
   const providers = useQuery({ ...orpc.calendar.providers.queryOptions(), enabled: on, staleTime: 5 * 60_000 });
   if (!on || !agenda.data) return null;
   if (!agenda.data.enabled) {
-    // Only where Google Calendar can be connected at all; otherwise there is nothing to switch on.
-    if (!(providers.data ?? []).includes('google_calendar')) return null;
+    // Only where a calendar (Google or Outlook) can be connected at all; otherwise there is nothing to switch on.
+    if ((providers.data ?? []).length === 0) return null;
     return (
       <p className="text-xs text-muted-foreground" data-testid="meeting-agenda-off">
         {t('off')}{' '}

@@ -327,6 +327,37 @@ describe('reading the member\'s meetings in the sweep (B1, #3165)', () => {
   });
 });
 
+describe('an Outlook connection in the sweep (B3, #3167)', () => {
+  const outlook = (over: Partial<CalendarAdapter> = {}) => adapter({ provider: 'microsoft', oauthProvider: 'microsoft_calendar', ...over });
+  const sealed = (secret: string) => {
+    const s = vault.seal(secret, calendarBinding(ORG, 'microsoft', ACCOUNT));
+    return { provider: 'microsoft', externalAccount: ACCOUNT, keyId: s.keyId, envelope: s.envelope.toString('base64') };
+  };
+  const runOutlook = (rt: Runtime, a: CalendarAdapter) => runCalendarSync({ runtime: rt, broker: vault, adapters: { microsoft_calendar: a }, now: () => NOW }, { orgId: ORG, connectionId: CONNECTION });
+
+  it('is synced by the adapter of its own provider: busy times, and the events only when the switch is on', async () => {
+    const event = { id: 'e1', title: 'Họp giao ban', startsAt: '2026-11-03T08:00:00.000Z', endsAt: '2026-11-03T09:00:00.000Z', timeZone: 'UTC', joinUrl: 'https://teams.microsoft.com/l/meetup-join/x', invitees: 2 };
+    const off = fakeRuntime({ ...fresh, provider: 'microsoft' }, sealed(SECRET));
+    const offEvents = vi.fn(async () => ({ events: [event] }));
+    expect(await runOutlook(off.runtime, outlook({ events: offEvents }))).toEqual({ outcome: 'synced', added: 2, removed: 1 });
+    expect(offEvents).not.toHaveBeenCalled();
+    const on = fakeRuntime({ ...fresh, provider: 'microsoft', readEvents: true }, sealed(SECRET));
+    const onEvents = vi.fn(async (_secret: string, _from: Date, _to: Date) => ({ events: [event] }));
+    expect(await runOutlook(on.runtime, outlook({ events: onEvents }))).toEqual({ outcome: 'synced', added: 2, removed: 1 });
+    expect(onEvents).toHaveBeenCalledTimes(1);
+    const replace = on.calls.find((c) => c.name === 'meetings.agenda.replace');
+    expect(replace?.input).toEqual({ connectionId: CONNECTION, from: '2026-11-02T05:30:00.000Z', events: [event] });
+  });
+
+  it('is not synced by the adapter of another provider: a Google adapter alone leaves it skipped', async () => {
+    const { runtime, calls } = fakeRuntime({ ...fresh, provider: 'microsoft' }, sealed(SECRET));
+    const google = adapter();
+    expect(await run(runtime, google)).toEqual({ outcome: 'skipped', reason: 'no_adapter' });
+    expect(google.busyCalls).toHaveLength(0);
+    expect(calls.some((c) => c.name === 'kernel.calendar.busy_replace')).toBe(false);
+  });
+});
+
 describe('write-back in the sweep', () => {
   const on = { ...fresh, writeBack: true };
   const upsert = { eventId: 'e1', externalId: 'ext1ext1ext1', kind: 'upsert', summary: 'Tư vấn: Lan', startsAt: '2026-11-04T02:00:00.000Z', endsAt: '2026-11-04T03:00:00.000Z', hash: 'sha256:aaa' };

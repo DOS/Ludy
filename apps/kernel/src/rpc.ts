@@ -1,7 +1,7 @@
 // oRPC implementation of @crove/kernel-contract. Handlers only call the runtime (execute/query).
 import { implement, ORPCError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
-import { CALENDAR_OAUTH_PROVIDERS, GOOGLE_CALENDAR_EVENTS_READ_SCOPE, MARKETPLACE_PLATFORM_KEYS, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@crove/kernel-contract';
+import { CALENDAR_OAUTH_PROVIDERS, MARKETPLACE_PLATFORM_KEYS, canReadEventsWith, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@crove/kernel-contract';
 import { sandboxBankFeed } from '@crove/bank-feed';
 import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad-platform';
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@crove/einvoice';
@@ -323,6 +323,10 @@ function connectorFailure(error: unknown): DomainError {
     // reading reports to this app before. Said as it is, since accepting more permissions cannot help.
     if (error.kind === 'denied' && error.code === 'WRITE_PERMISSION_GRANTED') {
       return new DomainError('OAUTH_WRITE_PERMISSION', 422, 'Ứng dụng Meta này đang giữ quyền sửa quảng cáo (ads_management hoặc business_management) do bạn từng cấp. Hãy gỡ ứng dụng Meta này trong Cài đặt Facebook (Tích hợp doanh nghiệp) rồi kết nối lại, hoặc dùng một ứng dụng Meta riêng chỉ có quyền ads_read');
+    }
+    // A Microsoft tenant whose administrator must allow the app first (B3): said plainly, never retried.
+    if (error.kind === 'denied' && error.code === 'ADMIN_CONSENT_REQUIRED') {
+      return new DomainError('OAUTH_ADMIN_CONSENT_REQUIRED', 422, 'Tổ chức Microsoft của bạn yêu cầu quản trị viên cho phép ứng dụng này trước. Hãy nhờ quản trị viên Microsoft 365 cho phép Ludy đọc lịch, rồi kết nối lại.');
     }
     if (error.kind === 'denied' && error.code === 'MANAGER_ACCOUNT_UNSUPPORTED') {
       return new DomainError('OAUTH_GOOGLE_MANAGER_ONLY', 422, 'Tài khoản Google này chỉ truy cập được tài khoản quản lý (MCC), không có tài khoản quảng cáo trực tiếp; hãy đăng nhập bằng tài khoản Google truy cập trực tiếp tài khoản quảng cáo');
@@ -2307,7 +2311,7 @@ export function createRpcHandler(
           );
           // A grant without the events-read scope (the member connected again for another permission, or refused it on Google's screen) turns the read of their meetings off in the connect
           // command; the meetings it already cached are deleted now, best effort (a deployment without the meetings module has nothing to delete, and the list hides them meanwhile).
-          if (!account.scopes.includes(GOOGLE_CALENDAR_EVENTS_READ_SCOPE)) await clearAgenda(runtime, { actor, orgId }, done.connectionId);
+          if (!canReadEventsWith(adapter.provider, account.scopes)) await clearAgenda(runtime, { actor, orgId }, done.connectionId);
           return { ...done, displayName: account.displayName };
         }),
       ),

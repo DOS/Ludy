@@ -523,6 +523,11 @@ const schema = z.object({
   // APP_URL/calendar/oauth/google_calendar/callback. With neither set, the connect button is not offered.
   CALENDAR_GOOGLE_CLIENT_ID: optional,
   CALENDAR_GOOGLE_CLIENT_SECRET: optional,
+  // Outlook calendars (Meetings B3, #3167): the operator's own Microsoft Entra app registration (delegated Graph calendar read, redirect URI
+  // APP_URL/calendar/oauth/microsoft_calendar/callback). The tenant is `common` (work, school and personal accounts) unless one is given. With neither id nor secret set, the connect button is not offered.
+  CALENDAR_MICROSOFT_CLIENT_ID: optional,
+  CALENDAR_MICROSOFT_CLIENT_SECRET: optional,
+  CALENDAR_MICROSOFT_TENANT: optional,
   // The deployment's TikTok app (Login Kit and Content Posting API, Direct Post), S9. Callback URL:
   // APP_URL/channels/oauth/tiktok/callback.
   CHANNEL_TIKTOK_CLIENT_KEY: optional,
@@ -896,6 +901,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (config.CHANNEL_GOOGLE_ADS_CLIENT_ID && !/^[0-9]{6,32}-[A-Za-z0-9_-]{8,64}\.apps\.googleusercontent\.com$/.test(config.CHANNEL_GOOGLE_ADS_CLIENT_ID)) throw new Error('CHANNEL_GOOGLE_ADS_CLIENT_ID is the client id of a Google OAuth web client');
   if (Boolean(config.CALENDAR_GOOGLE_CLIENT_ID) !== Boolean(config.CALENDAR_GOOGLE_CLIENT_SECRET)) throw new Error('set both CALENDAR_GOOGLE_CLIENT_ID and CALENDAR_GOOGLE_CLIENT_SECRET, or neither');
   if (config.CALENDAR_GOOGLE_CLIENT_ID && !/^[0-9]{6,32}-[A-Za-z0-9_-]{8,64}\.apps\.googleusercontent\.com$/.test(config.CALENDAR_GOOGLE_CLIENT_ID)) throw new Error('CALENDAR_GOOGLE_CLIENT_ID is the client id of a Google OAuth web client');
+  if (Boolean(config.CALENDAR_MICROSOFT_CLIENT_ID) !== Boolean(config.CALENDAR_MICROSOFT_CLIENT_SECRET)) throw new Error('set both CALENDAR_MICROSOFT_CLIENT_ID and CALENDAR_MICROSOFT_CLIENT_SECRET, or neither');
+  if (config.CALENDAR_MICROSOFT_CLIENT_ID && !/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(config.CALENDAR_MICROSOFT_CLIENT_ID)) throw new Error('CALENDAR_MICROSOFT_CLIENT_ID is the application (client) id of a Microsoft Entra app registration, a UUID');
+  if (config.CALENDAR_MICROSOFT_TENANT && !/^(?:common|organizations|consumers|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|(?:[A-Za-z0-9-]{1,63}\.)+[A-Za-z]{2,63})$/.test(config.CALENDAR_MICROSOFT_TENANT)) throw new Error('CALENDAR_MICROSOFT_TENANT is common, organizations, consumers, a directory id or a verified domain');
   if (config.CHANNEL_GOOGLE_BUSINESS === 'true' && !config.CHANNEL_GOOGLE_CLIENT_ID) throw new Error('CHANNEL_GOOGLE_BUSINESS needs CHANNEL_GOOGLE_CLIENT_ID and CHANNEL_GOOGLE_CLIENT_SECRET');
   if (config.CHANNEL_GOOGLE_CLIENT_ID && !/^[0-9]{6,32}-[A-Za-z0-9_-]{8,64}\.apps\.googleusercontent\.com$/.test(config.CHANNEL_GOOGLE_CLIENT_ID)) throw new Error('CHANNEL_GOOGLE_CLIENT_ID is the client id of a Google OAuth web client');
   if (Boolean(config.CHANNEL_X_CLIENT_ID) !== Boolean(config.CHANNEL_X_CLIENT_SECRET)) throw new Error('set both CHANNEL_X_CLIENT_ID and CHANNEL_X_CLIENT_SECRET, or neither');
@@ -1073,7 +1081,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     }
     // A provider sends the authorization code to APP_URL (else PUBLIC_URL)/channels/oauth/<provider>/callback (#375), a
     // page of the web app.
-    const oauthApps = [config.CHANNEL_META_APP_ID, config.CHANNEL_INSTAGRAM_APP_ID, config.CHANNEL_META_ADS_APP_ID, config.CHANNEL_META_ADS_WRITE_APP_ID, config.CHANNEL_GOOGLE_ADS_CLIENT_ID, config.CHANNEL_ZALO_APP_ID, config.CHANNEL_THREADS_APP_ID, config.CHANNEL_LINKEDIN_CLIENT_ID, config.CHANNEL_LINKEDIN_PAGE_CLIENT_ID, config.CHANNEL_GOOGLE_CLIENT_ID, config.CHANNEL_TIKTOK_CLIENT_KEY, config.CHANNEL_X_CLIENT_ID, config.CHANNEL_PINTEREST_APP_ID, config.CALENDAR_GOOGLE_CLIENT_ID];
+    const oauthApps = [config.CHANNEL_META_APP_ID, config.CHANNEL_INSTAGRAM_APP_ID, config.CHANNEL_META_ADS_APP_ID, config.CHANNEL_META_ADS_WRITE_APP_ID, config.CHANNEL_GOOGLE_ADS_CLIENT_ID, config.CHANNEL_ZALO_APP_ID, config.CHANNEL_THREADS_APP_ID, config.CHANNEL_LINKEDIN_CLIENT_ID, config.CHANNEL_LINKEDIN_PAGE_CLIENT_ID, config.CHANNEL_GOOGLE_CLIENT_ID, config.CHANNEL_TIKTOK_CLIENT_KEY, config.CHANNEL_X_CLIENT_ID, config.CHANNEL_PINTEREST_APP_ID, config.CALENDAR_GOOGLE_CLIENT_ID, config.CALENDAR_MICROSOFT_CLIENT_ID];
     if (oauthApps.some(Boolean) && !appUrl(config).startsWith('https://')) {
       throw new Error('channel OAuth sends authorization codes back to the web app (APP_URL, else PUBLIC_URL); on a public deployment it must be https when a CHANNEL_* or CALENDAR_* app is set');
     }
