@@ -7,17 +7,11 @@
 // yet: slices b (the runtime), c (worker and routes), e (Vy, Home, MCP) and d (the Settings screen) build on it.
 import { z } from 'zod';
 import { zOrgApps, zOrgAppSet } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+import { DomainError, defineCommand, defineQuery, entitledTo } from '@crove/kernel-runtime';
 
 // The modules the build ships that an org may switch (kernel is never one of them).
 export function switchableApps(shipped: readonly string[]): string[] {
   return shipped.filter((module) => module !== 'kernel');
-}
-
-// Whether an org holds the module (plan Decision 10): `full` grants every module, otherwise one key per module id.
-// kernel is always held.
-export function entitledTo(entitlements: readonly string[], module: string): boolean {
-  return module === 'kernel' || entitlements.includes('full') || entitlements.includes(module);
 }
 
 // The effective rule of ADR-0053 section 1 for one module: the deployment runs it, the org holds it and did not turn it

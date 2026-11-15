@@ -478,6 +478,7 @@ export const meetingReaderRemove = defineCommand({
 // the one it read (the definer compares the key id and the wrapped bytes under the update). System actor only.
 export const meetingMediaKeyReseal = defineCommand({
   name: 'meetings.media_key.reseal',
+  runsWhenOff: 'rewraps the sealed recording keys under the current key while the app is off',
   input: zMeetingMediaKeyReseal,
   risk: 'R1',
   sideEffect: 'internal',

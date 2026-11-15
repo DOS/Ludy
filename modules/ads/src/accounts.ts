@@ -254,6 +254,7 @@ export const adsAccountDeleteHistory = defineCommand({
 // account's row and everything under it go, whatever its connection's state (the connection is closed by its own command).
 export const adsAccountErase = defineCommand({
   name: 'ads.account.erase',
+  runsWhenOff: 'erases an ad account\'s data after its deletion request while the app is off',
   input: z.strictObject({ adAccountId: zId }),
   risk: 'R1',
   sideEffect: 'internal',

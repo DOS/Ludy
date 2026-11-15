@@ -314,7 +314,9 @@ function subjectVaultOf(config: Config): SubjectVault | null {
   return vault;
 }
 
-export function serverRuntime(cells: CellResolver, config: Config, options: Omit<RuntimeOptions, 'absentModules' | 'manifests'> & { billing?: Billing }): Runtime {
+// `billing` answers the org's entitlements to the per-org app gate (ADR-0053): the runtime is always given its function, so a caller cannot
+// leave the gate without one (it would hold every app for every org); self-host's port grants `full`.
+export function serverRuntime(cells: CellResolver, config: Config, options: Omit<RuntimeOptions, 'absentModules' | 'manifests' | 'entitlements'> & { billing?: Billing }): Runtime {
   const { billing, ...runtimeOptions } = options;
   // Modules this build ships that CROVE_MODULES leaves out (ADR-0031).
   const absentModules = AVAILABLE_MODULES.filter((module) => !config.CROVE_MODULES.includes(module));
@@ -324,6 +326,8 @@ export function serverRuntime(cells: CellResolver, config: Config, options: Omit
     ...runtimeOptions,
     // ctx.query into one of them answers not_installed; any other unknown query is QUERY_NOT_FOUND.
     absentModules,
+    // The per-org app gate asks the billing port which apps the org holds (ADR-0053). After the spread: no caller's option replaces it.
+    entitlements: (orgId) => (billing ?? selfHostBilling).entitlements(orgId),
     // The subject keys (ADR-0017): wrap keys derived from every credential key this deployment opens, none without one.
     subjectVault: subjectVaultOf(config),
     // Every declared write must name a manifest table with that manifest's column classes (P04, #1710).

@@ -196,6 +196,7 @@ export const adsAccountDisconnect = defineCommand({
 // without a live write connection (W2 launches only with both).
 export const adsAccountForgetWrite = defineCommand({
   name: 'ads.account.forget_write',
+  runsWhenOff: 'forgets a write connection after its erasure request while the app is off',
   input: z.strictObject({ adAccountId: zId }),
   risk: 'R1',
   sideEffect: 'internal',

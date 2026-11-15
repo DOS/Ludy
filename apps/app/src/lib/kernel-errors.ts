@@ -468,6 +468,8 @@ export const KERNEL_ERROR_CODES = [
   'UNKNOWN_PRESET',
   // Turning an app on or off for the org (ADR-0053, #3313).
   'APP_ALWAYS_ON',
+  // A call into an app the org switched off or does not hold (ADR-0053).
+  'MODULE_OFF',
   'UNKNOWN_APP',
   'NO_CHIEF_ACCOUNTANT',
   'LAST_CHIEF_ACCOUNTANT',

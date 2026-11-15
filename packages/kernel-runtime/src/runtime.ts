@@ -275,6 +275,14 @@ export interface CommandDef<I = unknown, O = unknown> {
   // command, and writes the handler's changes, the audit row and the idempotency key in one transaction.
   // `env` says how the runtime checks sessions, for definers that also read the upstream Auth records (invites).
   bootstrap?: (trx: Transaction<Database>, actor: UserActor, input: I, idempotencyKey: string | null, env: BootstrapEnv) => Promise<string>;
+  // The per-org app gate (ADR-0053): a command of an app the org switched off (or does not hold) is refused with MODULE_OFF. A command that
+  // keeps what the org owes (retention, shredding, erasure, the revocation of a leaver's links, the reseal of a sealed key) declares why it
+  // runs while its app is off; the default is refused. A one-line reason, listed by a test so a new one is a visible, reviewed addition.
+  runsWhenOff?: string;
+  // The command opens work the app's switch-off must wait for (a recording start, ADR-0053 section 4): the runtime reads the org's tenant
+  // row FOR SHARE in this command's transaction, held to commit, and kernel.org.set_app holds it FOR UPDATE while it runs the app's busy
+  // probe, so a switch and a start meet on the row and either order is safe. Shared holders do not block each other.
+  opensBusyWork?: true;
   // access 'proposal_revision' only, and required there: the proposal command whose pending proposals this reviser
   // revises. The runtime refuses the reviser for a proposal of any other command. One reviser per proposal command;
   // the edit finds it through reviserOf() on its context, so this is the only place the pairing is written.
@@ -412,6 +420,8 @@ export interface QueryDef<I = unknown, O = unknown> {
   // Facts of the read to keep in its audit row's detail, from its parsed input: names of what is read (a table), never a value or personal data. The
   // keys of the runtime's own detail (read, stage, the actor's) are kept as they are. Ignored without `sensitive`.
   auditDetail?: (input: I) => Record<string, string>; // keys and values are names (AUDIT_DETAIL_KEY, TARGET_TYPE), checked before the row is written
+  // Why this read runs while its app is switched off for the org (ADR-0053), as CommandDef.runsWhenOff; the default is refused with MODULE_OFF.
+  runsWhenOff?: string;
   // sink is set exactly when the query runs through Runtime.stream().
   handler: (ctx: QueryContext, input: I, sink?: QuerySink) => Promise<O>;
 }
@@ -649,6 +659,12 @@ export interface RuntimeOptions {
   // never mistaken for a module that is off. Unset (tests and tools that register only some modules): every module
   // without a registered command or query answers not_installed.
   absentModules?: readonly string[];
+  // The org's entitlements, the `billing` port's answer (plan Decision 10, ADR-0053): the entitlement keys the org holds, `full` for every
+  // module. The per-org app gate refuses an app the org does not hold. A runtime given none holds every app for every org, so the server
+  // always passes it (createKernel). The answer is cached per org for 60 seconds in this process. If the port throws or takes over 3
+  // seconds, the gate fails open to the last answer for the org, `full` when it has none, and records a security event (an entitlement is a
+  // commercial limit, not a safety one); the deployment's list and the org's own choice still apply.
+  entitlements?: (orgId: string) => Promise<readonly string[]>;
   // The build this runtime runs: the git SHA of the image (CROVE_BUILD). Default 'dev' (a local build, tests).
   build?: string;
   // How a command's input is hashed into audit_event.input_sha256 and idempotency_key.request_sha256 (#1732).
@@ -1105,6 +1121,16 @@ function logInternal(where: string, error: unknown, ids: { orgId?: string | null
 }
 
 // The module a command, query or event belongs to: the part of its name before the first dot.
+// Whether the entitlement keys hold the module (plan Decision 10): `full` grants every module, otherwise one key per module id; kernel is
+// always held. The one function every gate uses (packages/kernel's kernel.org.apps too).
+export function entitledTo(entitlements: readonly string[], module: string): boolean {
+  return module === 'kernel' || entitlements.includes('full') || entitlements.includes(module);
+}
+
+const ENTITLEMENT_TTL_MS = 60_000;
+const ENTITLEMENT_TIMEOUT_MS = 3_000;
+const ENTITLEMENT_CACHE_MAX = 5_000;
+
 function moduleOf(name: string): string {
   const dot = name.indexOf('.');
   return dot === -1 ? name : name.slice(0, dot);
@@ -1299,6 +1325,15 @@ function snapshotExtension(value: unknown, what: string): unknown {
 // A command definition as register() checks, keeps and runs it (#1766): a frozen copy, with the policy fields it
 // holds (access, agent, agentApprovers, writes) copied and frozen as well; keys it did not have stay absent. The
 // handler and the other functions are kept as they are.
+// runsWhenOff is a one-line reason, and only where there is an app to be off for: not a kernel command, which the gate never refuses.
+function checkAppFlags(label: string, def: { name: string; runsWhenOff?: unknown }): void {
+  if (def.runsWhenOff === undefined) return;
+  if (typeof def.runsWhenOff !== 'string' || def.runsWhenOff.trim().length < 10 || def.runsWhenOff.includes('\n')) {
+    throw new Error(`${label}: runsWhenOff is a one-line reason of at least 10 characters`);
+  }
+  if (moduleOf(def.name) === 'kernel') throw new Error(`${label}: a kernel definition is never refused by the app gate, so it declares no runsWhenOff`);
+}
+
 function snapshotCommand(def: CommandDef<any, any>): CommandDef<unknown, unknown> {
   const label = `command ${String((def as { name?: unknown } | null)?.name)}`;
   const copy = plainCopy(def, `${label}: the definition`);
@@ -1593,6 +1628,12 @@ export class Runtime {
   private readonly inputHash: InputHashMode;
   // Numbers the savepoints of ctx.tryRun, so each call has its own.
   #savepointSeq = 0;
+  // The billing port's function (RuntimeOptions.entitlements), or null: every app held. Its last answer per org, with when it came.
+  readonly #entitlementsPort: ((orgId: string) => Promise<readonly string[]>) | null;
+  readonly #entitlementCache = new Map<string, { keys: readonly string[]; at: number }>();
+  #entitlementFailureNotedAt = 0;
+  // The apps the org switched off as one call reads them, per entered context (one transaction), so a page of lookups reads the row once.
+  readonly #appsOffMemo = new WeakMap<object, Promise<ReadonlySet<string>>>();
 
   // A plain Db is one cell that also holds the control plane (singleCell).
   readonly #mcpEntry: 'api' | 'worker';
@@ -1615,6 +1656,8 @@ export class Runtime {
     const refusalAudit = options.refusalAudit ?? DEFAULT_REFUSAL_AUDIT_LIMITS;
     this.refusalAudit = refusalAudit === 'unbounded' ? 'unbounded' : Object.freeze(validateRefusalAuditLimits(refusalAudit));
     this.#absentModules = options.absentModules ? new Set(options.absentModules) : null;
+    if (options.entitlements !== undefined && typeof options.entitlements !== 'function') throw new Error('entitlements: the billing port function, or absent');
+    this.#entitlementsPort = options.entitlements ?? null;
     this.build = options.build ?? 'dev';
     const inputHash = options.inputHash ?? 'keyed';
     if (!(INPUT_HASH_MODES as readonly string[]).includes(inputHash)) throw new Error(`unknown input hash mode ${String(inputHash)}`);
@@ -1657,6 +1700,10 @@ export class Runtime {
       if (!validAccess(c.access, ACCESS_KINDS)) throw new Error(`command ${c.name}: access is a role list or one of ${ACCESS_KINDS.join(', ')}`);
       if (c.agent !== undefined && (!validAccess(c.agent.roles, ['any']) || (c.agent.taint !== undefined && c.agent.taint !== 'propagate'))) {
         throw new Error(`command ${c.name}: agent access names a role list or 'any', and taint is 'propagate' or absent`);
+      }
+      checkAppFlags(`command ${c.name}`, c);
+      if (c.opensBusyWork !== undefined && (c.opensBusyWork !== true || moduleOf(c.name) === 'kernel' || c.runsWhenOff !== undefined)) {
+        throw new Error(`command ${c.name}: opensBusyWork is true, on a command of an app (not kernel) that is not also runsWhenOff`);
       }
       // Every command says what it does beyond its transaction (#1637): the risk it derives is the floor of its own.
       if (typeof c.sideEffect !== 'string' || !(SIDE_EFFECTS as readonly string[]).includes(c.sideEffect)) {
@@ -1790,6 +1837,7 @@ export class Runtime {
       if (typeof q.name !== 'string' || q.name.length === 0) throw new Error('a query is named');
       if (this.#queries.has(q.name)) throw new Error(`duplicate query ${q.name}`);
       if (!validAccess(q.access, ['system'])) throw new Error(`query ${q.name}: access is a role list or 'system'`);
+      checkAppFlags(`query ${q.name}`, q);
       if (q.agent !== undefined && !validAccess(q.agent.roles, ['any'])) throw new Error(`query ${q.name}: agent access names a role list or 'any'`);
       if (q.memberVy !== undefined && q.stream === true) {
         throw new Error(`query ${q.name}: Vy in member mode reads no streamed query (a stream is not a bounded read of the member's own rows)`);
@@ -1827,6 +1875,97 @@ export class Runtime {
   // before registering a module's routes and jobs, so the registry is the one source of what is installed.
   installed(module: string): boolean {
     return this.#installedModules.has(module);
+  }
+
+  // The apps this org has: the modules this runtime registered (the deployment's), that the org did not switch off and holds
+  // (ADR-0053 section 1), kernel always, sorted. For callers with no context (the worker's sweeps, Vy's tool list, the app's menus); a call
+  // inside a command or a query is gated by the call itself. The org's choice comes from crove_kernel.org_app_on, read without a context.
+  async effectiveModules(orgId: string): Promise<string[]> {
+    const installed = this.modules();
+    const db = await this.#cells.resolveTenant(orgId);
+    const { rows } = await sql<{ m: string }>`SELECT m FROM pg_catalog.unnest(${installed}::text[]) AS m WHERE crove_kernel.org_app_on(${orgId}::uuid, m)`.execute(db);
+    const on = new Set(rows.map((r) => r.m));
+    const keys = this.#entitlementsPort ? await this.entitlementsOf(orgId, null) : null;
+    return installed.filter((m) => m === 'kernel' || (on.has(m) && (keys === null || entitledTo(keys, m))));
+  }
+
+  // The org's entitlement keys: cached for a minute, and on a failure of the port (a throw, or no answer in 3 seconds) the last answer, `full`
+  // when there is none, with a security event once a minute (the actor is null for a caller with none, which notes nothing).
+  private async entitlementsOf(orgId: string, actor: Actor | null): Promise<readonly string[]> {
+    const port = this.#entitlementsPort;
+    if (!port) return ['full'];
+    const now = Date.now();
+    const cached = this.#entitlementCache.get(orgId);
+    if (cached && now - cached.at < ENTITLEMENT_TTL_MS) return cached.keys;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const answer = await Promise.race([
+        port(orgId),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('the entitlements port did not answer')), ENTITLEMENT_TIMEOUT_MS);
+        }),
+      ]);
+      if (!Array.isArray(answer) || !answer.every((k) => typeof k === 'string')) throw new Error('the entitlements port answered something other than a list of keys');
+      const keys: readonly string[] = Object.freeze([...answer]);
+      this.#entitlementCache.delete(orgId);
+      this.#entitlementCache.set(orgId, { keys, at: now });
+      if (this.#entitlementCache.size > ENTITLEMENT_CACHE_MAX) {
+        const oldest = this.#entitlementCache.keys().next().value;
+        if (oldest !== undefined) this.#entitlementCache.delete(oldest);
+      }
+      return keys;
+    } catch (error) {
+      if (now - this.#entitlementFailureNotedAt > 60_000) {
+        this.#entitlementFailureNotedAt = now;
+        console.error('[runtime] ENTITLEMENTS_UNAVAILABLE', { orgId, reason: error instanceof Error ? error.message.slice(0, 100) : 'unknown', haveLastAnswer: cached !== undefined });
+        if (actor) await this.noteSecurityEvent('runtime.entitlements', actor, orgId, 'ENTITLEMENTS_UNAVAILABLE');
+      }
+      return cached?.keys ?? ['full'];
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  // The apps the org switched off, read in the caller's transaction and context (no cache: the owner's choice takes effect at once). With
+  // `lock` the row is read FOR SHARE, held to commit (CommandDef.opensBusyWork; never in a read-only transaction).
+  private appsOffOf(trx: Transaction<Database>, orgId: string, entered: object, lock: boolean): Promise<ReadonlySet<string>> {
+    const known = lock ? undefined : this.#appsOffMemo.get(entered);
+    if (known) return known;
+    const read = (async () => {
+      let query = trx.selectFrom('crove_kernel.tenant').select('apps_off').where('org_id', '=', orgId);
+      if (lock) query = query.forShare();
+      const row = await query.executeTakeFirst();
+      return new Set(row?.apps_off ?? []) as ReadonlySet<string>;
+    })();
+    this.#appsOffMemo.set(entered, read);
+    return read;
+  }
+
+  // Whether the call's app is off for the org (ADR-0053): the org switched it off, or does not hold it. kernel, and a definition that
+  // declares runsWhenOff, are never off. Called after the session and the membership are checked, so a stranger learns nothing.
+  private async appIsOff(
+    trx: Transaction<Database>,
+    orgId: string,
+    entered: object,
+    actor: Actor,
+    def: { name: string; runsWhenOff?: string; opensBusyWork?: true },
+  ): Promise<boolean> {
+    const module = moduleOf(def.name);
+    if (module === 'kernel' || def.runsWhenOff !== undefined) return false;
+    if ((await this.appsOffOf(trx, orgId, entered, def.opensBusyWork === true)).has(module)) return true;
+    return this.#entitlementsPort !== null && !entitledTo(await this.entitlementsOf(orgId, actor), module);
+  }
+
+  private async refuseIfAppOff(
+    trx: Transaction<Database>,
+    orgId: string,
+    entered: object,
+    actor: Actor,
+    def: { name: string; runsWhenOff?: string; opensBusyWork?: true },
+  ): Promise<void> {
+    if (!(await this.appIsOff(trx, orgId, entered, actor, def))) return;
+    const module = moduleOf(def.name);
+    throw new DomainError('MODULE_OFF', 404, `Ứng dụng ${module} đã được tắt cho công ty này`, { module });
   }
 
   // The installed modules, sorted.
@@ -1871,6 +2010,8 @@ export class Runtime {
       if (absent && !this.#installedModules.has(module)) return { status: 'not_installed', module };
       throw new DomainError('QUERY_NOT_FOUND', 404, `Không có truy vấn ${name}`);
     }
+    // An app the org switched off answers the same typed not_installed as one the deployment leaves out.
+    if (await this.appIsOff(trx, orgId, entered, actor, def)) return { status: 'not_installed', module: moduleOf(name) };
     const input = parseInput(def.input, rawInput);
     this.authorizeQuery(def, actor, entered);
     refuseStreamed(def);
@@ -2707,6 +2848,8 @@ export class Runtime {
         throw new Error(`command ${cleanRoot}: declares no contact or payment write (P04), so it cannot run ${nested.def.name}, which declares ${startsJobs.join(', ')}: the job it starts runs later under its own declaration (#2107)`);
       }
       const { proposalId } = nested;
+      // A nested command, and the command an approved proposal runs, answers to the same gate: MODULE_OFF rolls the caller back.
+      await this.refuseIfAppOff(trx, base.orgId, base.entered, base.actor, nested.def);
       const permissionEntities = await this.authorize(trx, nested.def, base.actor, base.entered, proposalId !== null);
       if (proposalId !== null && (nested.def.access === 'proposal' || nested.def.access === 'proposal_revision')) {
         await this.requireProposalState(trx, base.orgId, nested.def, proposalId, { def, commandId });
@@ -2853,6 +2996,8 @@ export class Runtime {
             FROM crove_kernel.tenant t WHERE t.org_id = ${orgId}::uuid`.execute(trx);
           orgIsNew = rows[0]?.fresh === true;
         }
+        // The per-org app gate (ADR-0053), after the session and the membership and before the role check, the idempotency key and the handler.
+        if (!def.bootstrap) await this.refuseIfAppOff(trx, orgId, context, actor, def);
         const permissionEntities = await this.authorize(trx, def, actor, context, false);
         this.requireStepUp(def, actor);
         await this.requireLiveSession(def, actor);
@@ -3200,6 +3345,7 @@ export class Runtime {
         await sql`SET TRANSACTION READ ONLY`.execute(trx);
         const entered = await this.enterContext(trx, options.actor, options.orgId);
         reached = true;
+        await this.refuseIfAppOff(trx, options.orgId, entered, options.actor, def);
         this.authorizeQuery(def, options.actor, entered);
         refuseStreamed(def);
         return (await def.handler(this.queryContext(trx.withPlugin(refuseTransactionControl(name)), options.orgId, options.actor, entered, def.sensitive === true), input)) as O;
@@ -3246,6 +3392,7 @@ export class Runtime {
           await sql`SET LOCAL idle_in_transaction_session_timeout = ${sql.lit(`${STREAM_IDLE_MINUTES}min`)}`.execute(trx);
           const entered = await this.enterContext(trx, options.actor, options.orgId);
           reached = true;
+          await this.refuseIfAppOff(trx, options.orgId, entered, options.actor, def);
           this.authorizeQuery(def, options.actor, entered);
           return (await def.handler(this.queryContext(trx.withPlugin(refuseTransactionControl(name)), options.orgId, options.actor, entered, def.sensitive === true), input, sink)) as O;
         });
