@@ -126,7 +126,8 @@ export const zMeetingCreate = z.strictObject({
   // A live recording or an upload never claims the platform's own notice: that method belongs to meetings.import.start alone (C1, #3173).
   consentMethod: zConsentMethod.exclude(['platform_notice']),
   // The version of the notice text the client showed (and the recorder may have copied); absent means the current one.
-  consentNoticeVersion: z.string().max(20).refine((v) => KNOWN_CONSENT_NOTICE_VERSIONS.includes(v), 'Unknown notice version').optional(),
+  // The import notice is for imports alone (zMeetingImportStart): a live meeting never records a text that was not shown.
+  consentNoticeVersion: z.string().max(20).refine((v) => v !== IMPORT_CONSENT_NOTICE_VERSION && KNOWN_CONSENT_NOTICE_VERSIONS.includes(v), 'Unknown notice version').optional(),
   readerUserIds: z.array(zId).optional(),
   lengthSeconds: z.number().int().nonnegative().optional(),
 });

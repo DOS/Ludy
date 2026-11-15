@@ -149,7 +149,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
   }
   const staged = async (o: Org, user: string, connectionId: string, externalId: string) => {
     const r = await importing(o, user, connectionId, externalId);
-    await o.sys('kernel.meeting_platform.import_staged', { recordingId: r.recordingId });
+    await o.sys('kernel.meeting_platform.import_staged', { recordingId: r.recordingId, stagingKey: r.key });
     return r;
   };
   const claimed = async (o: Org, user: string, connectionId: string, externalId: string) => {
@@ -266,7 +266,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     await o.exec(o.lan, 'kernel.meeting_platform.recording.dismiss', { recordingId: dismissed });
     const running = await importing(o, o.lan, c.connectionId, 'run');
     const failed = await importing(o, o.lan, c.connectionId, 'fail');
-    await o.sys('kernel.meeting_platform.import_failed', { recordingId: failed.recordingId, code: 'download_failed' });
+    await o.sys('kernel.meeting_platform.import_failed', { recordingId: failed.recordingId, code: 'download_failed', stagingKey: failed.key });
     expect(await replace(o, c.connectionId, [listed('d', { title: 'Mới' }), listed('run', { title: 'Mới' }), listed('fail', { title: 'Mới' })])).toEqual({ count: 0 });
     expect(await rowOf('d', c.connectionId)).toMatchObject({ status: 'dismissed', title: 'Họp d' });
     expect(await rowOf('run', c.connectionId)).toMatchObject({ status: 'importing', title: 'Họp run' });
@@ -319,7 +319,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     const key = stagingKey();
     const as = (user: string, name: string, input: unknown) => o.exec(user, name, input);
     // Nothing moves a suggestion but the member's click: the worker's and the claim's steps are not allowed on it.
-    expect(await refuses(o.sys('kernel.meeting_platform.import_staged', { recordingId }))).toBe('MEETING_PLATFORM_STATE');
+    expect(await o.sys('kernel.meeting_platform.import_staged', { recordingId, stagingKey: key })).toMatchObject({ applied: 0 });
     expect(await refuses(as(o.lan, 'kernel.meeting_platform.import.claim', { recordingId }))).toBe('MEETING_PLATFORM_STATE');
     // A recording with a transcript alone is not imported; a malformed key is refused.
     expect(await refuses(as(o.lan, 'test.mp.begin', { recordingId: await idOf('none', c.connectionId), meetingId, stagingKey: key }))).toBe('MEETING_PLATFORM_NO_AUDIO');
@@ -341,10 +341,17 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     const open = await o.sysQuery<Array<Record<string, unknown>>>('kernel.meeting_platform.import_open', { limit: 200 });
     expect(open.find((r) => r.recordingId === recordingId)).toEqual({ orgId: o.orgId, recordingId, connectionId: c.connectionId, provider: 'sandbox', externalId: 'v', hasAudio: true, hasVideo: false, sizeBytes: 5000, stagingKey: key });
     // The worker's bytes arrive.
-    await o.sys('kernel.meeting_platform.import_staged', { recordingId });
+    expect(await o.sysQuery('kernel.meeting_platform.import_holds', { recordingId, stagingKey: key })).toBe('importing');
+    expect(await o.sys('kernel.meeting_platform.import_staged', { recordingId, stagingKey: stagingKey() })).toMatchObject({ applied: 0 });
+    expect(await o.sys('kernel.meeting_platform.import_staged', { recordingId, stagingKey: key })).toMatchObject({ applied: 1 });
+    expect(await o.sysQuery('kernel.meeting_platform.import_holds', { recordingId, stagingKey: key })).toBe('staged');
+    expect(await o.sysQuery('kernel.meeting_platform.import_holds', { recordingId, stagingKey: stagingKey() })).toBe('none');
     expect(await rowOf('v', c.connectionId)).toMatchObject({ status: 'staged', staging_key: key });
     expect((await sqlAdmin<{ s: boolean }>('SELECT staged_at IS NOT NULL AS s FROM crove_kernel.meeting_platform_recording WHERE id = $1', [recordingId])).rows[0]?.s).toBe(true);
-    expect(await refuses(o.sys('kernel.meeting_platform.import_staged', { recordingId }))).toBe('MEETING_PLATFORM_STATE');
+    expect(await o.sys('kernel.meeting_platform.import_staged', { recordingId, stagingKey: key })).toMatchObject({ applied: 0 });
+    // A duplicate or stale job cannot fail a row that is staged, whatever it was handed.
+    expect(await o.sys('kernel.meeting_platform.import_failed', { recordingId, code: 'timeout', stagingKey: key })).toMatchObject({ applied: 0 });
+    expect((await rowOf('v', c.connectionId))?.status).toBe('staged');
     expect((await o.sysQuery<Array<{ recordingId: string }>>('kernel.meeting_platform.import_open', { limit: 200 })).some((r) => r.recordingId === recordingId)).toBe(false);
     // The member's own request takes them: only theirs, once.
     expect(await refuses(as(o.nam, 'kernel.meeting_platform.import.claim', { recordingId }))).toBe('MEETING_PLATFORM_NOT_FOUND');
@@ -365,7 +372,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     expect(await refuses(as(o.lan, 'test.mp.begin', { recordingId, meetingId, stagingKey: stagingKey() }))).toBe('MEETING_PLATFORM_STATE');
     expect(await refuses(as(o.lan, 'kernel.meeting_platform.import.claim', { recordingId }))).toBe('MEETING_PLATFORM_STATE');
     expect(await refuses(as(o.lan, 'kernel.meeting_platform.recording.dismiss', { recordingId }))).toBe('MEETING_PLATFORM_NOT_FOUND');
-    await o.sys('kernel.meeting_platform.import_failed', { recordingId, code: 'timeout' });
+    expect(await o.sys('kernel.meeting_platform.import_failed', { recordingId, code: 'timeout', stagingKey: key })).toMatchObject({ applied: 0 });
     await as(o.lan, 'kernel.meeting_platform.import.claim_failed', { recordingId, code: 'claim_failed' });
     expect((await rowOf('v', c.connectionId))?.status).toBe('imported');
     expect(await mine(o, o.lan)).toContainEqual(expect.objectContaining({ id: recordingId, status: 'imported', meetingId }));
@@ -376,10 +383,12 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     const c = await connect(o, o.lan);
     // The worker's download fails.
     const a = await importing(o, o.lan, c.connectionId, 'a');
-    await o.sys('kernel.meeting_platform.import_failed', { recordingId: a.recordingId, code: 'recording_gone' });
+    expect(await o.sys('kernel.meeting_platform.import_failed', { recordingId: a.recordingId, code: 'recording_gone', stagingKey: stagingKey() })).toMatchObject({ applied: 0 });
+    expect((await rowOf('a', c.connectionId))?.status).toBe('importing');
+    await o.sys('kernel.meeting_platform.import_failed', { recordingId: a.recordingId, code: 'recording_gone', stagingKey: a.key });
     expect(await rowOf('a', c.connectionId)).toMatchObject({ status: 'failed', error_code: 'recording_gone', staging_key: null });
     expect(await mine(o, o.lan)).toContainEqual(expect.objectContaining({ id: a.recordingId, status: 'failed', errorCode: 'recording_gone' }));
-    expect(await refuses(o.sys('kernel.meeting_platform.import_failed', { recordingId: a.recordingId, code: 'because' }))).toBe('VALIDATION');
+    expect(await refuses(o.sys('kernel.meeting_platform.import_failed', { recordingId: a.recordingId, code: 'because', stagingKey: stagingKey() }))).toBe('VALIDATION');
     // Again from the failed row.
     await o.exec(o.lan, 'test.mp.begin', { recordingId: a.recordingId, meetingId: randomUUID(), stagingKey: stagingKey() });
     expect(await rowOf('a', c.connectionId)).toMatchObject({ status: 'importing', error_code: null });
@@ -395,9 +404,9 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     expect((await mine(o, o.lan)).some((r) => r.id === b.recordingId)).toBe(false);
     expect(await refuses(o.exec(o.lan, 'kernel.meeting_platform.recording.dismiss', { recordingId: b.recordingId }))).toBe('MEETING_PLATFORM_NOT_FOUND');
     // The worker's steps are the worker's: the API login is refused whatever the actor says.
-    expect(await refuses(api.execute('kernel.meeting_platform.import_failed', { recordingId: a.recordingId, code: 'timeout' }, { actor: SYSTEM, orgId: o.orgId }))).toBe('FORBIDDEN');
-    expect(await refuses(api.execute('kernel.meeting_platform.import_staged', { recordingId: a.recordingId }, { actor: SYSTEM, orgId: o.orgId }))).toBe('FORBIDDEN');
-    expect(await refuses(o.exec(o.lan, 'kernel.meeting_platform.import_staged', { recordingId: a.recordingId }))).not.toBeNull();
+    expect(await refuses(api.execute('kernel.meeting_platform.import_failed', { recordingId: a.recordingId, code: 'timeout', stagingKey: stagingKey() }, { actor: SYSTEM, orgId: o.orgId }))).toBe('FORBIDDEN');
+    expect(await refuses(api.execute('kernel.meeting_platform.import_staged', { recordingId: a.recordingId, stagingKey: stagingKey() }, { actor: SYSTEM, orgId: o.orgId }))).toBe('FORBIDDEN');
+    expect(await refuses(o.exec(o.lan, 'kernel.meeting_platform.import_staged', { recordingId: a.recordingId, stagingKey: stagingKey() }))).not.toBeNull();
   });
 
   it('lists a member own recordings newest first, at most 50, with the provider of their connection', async () => {
@@ -415,7 +424,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     expect(list.some((r) => r.title === 'Họp oldest')).toBe(false);
   });
 
-  it('the sweep expires what nobody claimed: staged at 55 minutes, claimed at 30, importing at 2 hours, suggestions at 14 days', async () => {
+  it('the sweep expires what nobody claimed: staged at 55 minutes, claimed at 60, importing at 2 hours, suggestions at 14 days', async () => {
     const o = await org();
     const c = await connect(o, o.lan);
     const back = (id: string, column: 'updated_at' | 'staged_at' | 'started_at', ms: number) =>
@@ -425,11 +434,11 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     const freshStaged = await staged(o, o.lan, c.connectionId, 'staged-new');
     await back(staleStaged.recordingId, 'staged_at', 56 * MIN);
     await back(freshStaged.recordingId, 'staged_at', 54 * MIN);
-    // claimed: 31 minutes and 29
+    // claimed: 61 minutes and 59 (longer than the upload request's own 45-minute limit)
     const staleClaim = await claimed(o, o.lan, c.connectionId, 'claim-old');
     const freshClaim = await claimed(o, o.lan, c.connectionId, 'claim-new');
-    await back(staleClaim.recordingId, 'updated_at', 31 * MIN);
-    await back(freshClaim.recordingId, 'updated_at', 29 * MIN);
+    await back(staleClaim.recordingId, 'updated_at', 61 * MIN);
+    await back(freshClaim.recordingId, 'updated_at', 59 * MIN);
     // importing: 2 hours and a minute, and 1 hour 59
     const staleImport = await importing(o, o.lan, c.connectionId, 'import-old');
     const freshImport = await importing(o, o.lan, c.connectionId, 'import-new');
@@ -470,7 +479,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     // Importing, staged and claimed each hold it.
     const r = await importing(o, o.lan, c.connectionId, 'one');
     expect(await refuses(o.exec(o.lan, 'kernel.meeting_platform.disconnect', { connectionId: c.connectionId }))).toBe('MEETING_PLATFORM_BUSY');
-    await o.sys('kernel.meeting_platform.import_staged', { recordingId: r.recordingId });
+    await o.sys('kernel.meeting_platform.import_staged', { recordingId: r.recordingId, stagingKey: r.key });
     expect(await refuses(o.exec(o.lan, 'kernel.meeting_platform.disconnect', { connectionId: c.connectionId }))).toBe('MEETING_PLATFORM_BUSY');
     await o.exec(o.lan, 'kernel.meeting_platform.import.claim', { recordingId: r.recordingId });
     expect(await refuses(o.exec(o.lan, 'kernel.meeting_platform.disconnect', { connectionId: c.connectionId }))).toBe('MEETING_PLATFORM_BUSY');

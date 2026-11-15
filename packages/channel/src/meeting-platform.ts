@@ -52,7 +52,7 @@ export interface MeetingPlatformDownload {
   sizeBytes?: number | null | undefined;
   // The exact hosts the egress guard may talk to first.
   hosts: readonly string[];
-  // CDN suffixes the guard allows only after a redirect.
+  // CDN suffixes the guard allows (a platform's file usually sits on one, reached by a redirect; the headers of the request go only to the first host, never to a redirect target).
   hostSuffixes: readonly string[];
   // The offline sandbox only; the job reads these bytes instead of opening a connection (`url` is then `sandbox://local/<id>` and `hosts` is empty).
   inline?: { bytes: Uint8Array; contentType: string } | undefined;

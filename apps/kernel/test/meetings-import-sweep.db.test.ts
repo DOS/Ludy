@@ -138,7 +138,7 @@ suite('the meetings import sweep and job on PostgreSQL (meetings integrations C1
   }
   const staged = async (o: Org, user: string, connectionId: string, externalId: string) => {
     const r = await importing(o, user, connectionId, externalId);
-    await o.sys('kernel.meeting_platform.import_staged', { recordingId: r.recordingId });
+    await o.sys('kernel.meeting_platform.import_staged', { recordingId: r.recordingId, stagingKey: r.key });
     return r;
   };
   beforeAll(async () => {
@@ -311,5 +311,31 @@ suite('the meetings import sweep and job on PostgreSQL (meetings integrations C1
     // A member who left is not due at all (the sweep's page skips them): nothing is listed or opened for them.
     expect((await sqlAdmin<{ status: string }>('SELECT status FROM crove_kernel.meeting_platform_connection WHERE id = $1', [connectionId])).rows[0]?.status).toBe('active');
     expect(await sqlAdmin<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.meeting_platform_recording WHERE connection_id = $1', [connectionId])).toMatchObject({ rows: [{ n: '0' }] });
+  });
+
+  it('a duplicate job and a stale job after a re-click do nothing: the row is staged once and the bytes are never deleted by the wrong job', async () => {
+    const o = await org();
+    const connectionId = await connectSealed(o, o.lan);
+    await runMeetingsImportSweep(sweepDeps(o).deps);
+    const audio = await sqlAdmin<{ id: string }>("SELECT id FROM crove_kernel.meeting_platform_recording WHERE connection_id = $1 AND external_id = 'sandbox-rec-audio'", [connectionId]);
+    const recordingId = audio.rows[0]?.id as string;
+    const key = stagingKey();
+    await o.exec(o.lan, 'test.mp.begin', { recordingId, meetingId: randomUUID(), stagingKey: key });
+    const job: MeetingsImportJob = { orgId: o.orgId, id: recordingId, connectionId, provider: 'sandbox', externalId: 'sandbox-rec-audio', hasAudio: true, hasVideo: false, sizeBytes: null, stagingKey: key };
+    const blobs = store();
+    const deps = { runtime: worker, broker: vault, store: blobs, adapters: { sandbox: new SandboxMeetingPlatform() }, media: null } as never;
+    // The first job stages the row; a duplicate job of the same recording and key finds it staged and touches nothing (the bytes stay).
+    expect(await runMeetingsImport(deps, job, { retryCount: 0, retryLimit: 3 })).toBe('staged');
+    expect(await runMeetingsImport(deps, job, { retryCount: 0, retryLimit: 3 })).toBe('skipped');
+    expect(blobs.deleted).toEqual([]);
+    expect(blobs.stored.has(key)).toBe(true);
+    expect((await rowOf('sandbox-rec-audio', connectionId))?.status).toBe('staged');
+    // The row fails (the member did not claim in time), is begun again with a NEW key, and the old job comes back: it does nothing to the new attempt.
+    await sqlAdmin("UPDATE crove_kernel.meeting_platform_recording SET staged_at = now() - interval '56 minutes' WHERE id = $1", [recordingId]);
+    await runMeetingsImportSweep(sweepDeps(o).deps);
+    const fresh = stagingKey();
+    await o.exec(o.lan, 'test.mp.begin', { recordingId, meetingId: randomUUID(), stagingKey: fresh });
+    expect(await runMeetingsImport(deps, job, { retryCount: 0, retryLimit: 3 })).toBe('skipped');
+    expect(await rowOf('sandbox-rec-audio', connectionId)).toMatchObject({ status: 'importing', staging_key: fresh });
   });
 });

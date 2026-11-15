@@ -414,7 +414,8 @@ BEGIN
   IF v_row.status NOT IN ('suggested', 'failed') THEN
     RAISE EXCEPTION 'MEETING_PLATFORM_STATE' USING ERRCODE = '55000';
   END IF;
-  IF NOT (v_row.has_audio OR v_row.has_video) THEN
+  -- C1 takes an audio file as it is; the audio of a video-only recording needs crove-media's extraction, which is not wired yet (a follow-up), so it is refused here and no empty meeting is made for it.
+  IF NOT v_row.has_audio THEN
     RAISE EXCEPTION 'MEETING_PLATFORM_NO_AUDIO' USING ERRCODE = '22023';
   END IF;
   UPDATE crove_kernel.meeting_platform_recording r
@@ -448,29 +449,47 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
   LIMIT GREATEST(1, LEAST(p_limit, 200))
 $$;
 
--- The worker's outcomes, in the org's system context: the bytes are in staging, or the download failed (a short code, never the platform's message).
-CREATE OR REPLACE FUNCTION crove_kernel.meeting_platform_import_staged(p_recording uuid)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+-- The worker's outcomes, in the org's system context. Each is bound to the STAGING KEY the job was handed, so a second or stale job (the sweep hands over an importing row every minute until it is staged, and a
+-- failed row that is begun again gets a new key) can neither stage nor fail a row that moved on: it matches only an importing row that still holds exactly this key, and returns how many rows it changed.
+-- import_staged: the bytes are in staging. import_failed: the download failed (a short code, never the platform's message).
+CREATE OR REPLACE FUNCTION crove_kernel.meeting_platform_import_staged(p_recording uuid, p_staging_key text)
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   v_org uuid := crove_kernel.meeting_platform_system();
+  v_n integer;
 BEGIN
   UPDATE crove_kernel.meeting_platform_recording r SET status = 'staged', staged_at = pg_catalog.now(), updated_at = pg_catalog.now()
-  WHERE r.org_id = v_org AND r.id = p_recording AND r.status = 'importing';
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'MEETING_PLATFORM_STATE' USING ERRCODE = '55000';
-  END IF;
+  WHERE r.org_id = v_org AND r.id = p_recording AND r.status = 'importing' AND r.staging_key = p_staging_key;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  RETURN v_n;
 END $$;
 
-CREATE OR REPLACE FUNCTION crove_kernel.meeting_platform_import_failed(p_recording uuid, p_code text)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+CREATE OR REPLACE FUNCTION crove_kernel.meeting_platform_import_failed(p_recording uuid, p_code text, p_staging_key text)
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   v_org uuid := crove_kernel.meeting_platform_system();
+  v_n integer;
 BEGIN
   IF p_code IS NULL OR p_code !~ '^[a-z][a-z0-9_]{1,39}$' THEN
     RAISE EXCEPTION 'MEETING_PLATFORM_INVALID' USING ERRCODE = '22023';
   END IF;
   UPDATE crove_kernel.meeting_platform_recording r SET status = 'failed', error_code = p_code, staging_key = NULL, staged_at = NULL, updated_at = pg_catalog.now()
-  WHERE r.org_id = v_org AND r.id = p_recording AND r.status IN ('importing', 'staged', 'claimed');
+  WHERE r.org_id = v_org AND r.id = p_recording AND r.status = 'importing' AND r.staging_key = p_staging_key;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  RETURN v_n;
+END $$;
+
+-- What the row holds for this key, for the job: 'importing' (this job's turn), 'staged' or 'claimed' (another job already did it, its bytes are live) or 'none' (the row moved on: failed, begun again with another key,
+-- gone). An enum, never text of a meeting.
+CREATE OR REPLACE FUNCTION crove_kernel.meeting_platform_import_holds(p_recording uuid, p_staging_key text)
+RETURNS text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_org uuid := crove_kernel.meeting_platform_system();
+  v_status text;
+BEGIN
+  SELECT r.status INTO v_status FROM crove_kernel.meeting_platform_recording r
+  WHERE r.org_id = v_org AND r.id = p_recording AND r.staging_key = p_staging_key AND r.status IN ('importing', 'staged', 'claimed');
+  RETURN COALESCE(v_status, 'none');
 END $$;
 
 -- The member's request takes the staged bytes: the row must be theirs and staged. It becomes claimed; the staging key is returned for the sealing (the same route as an upload). Raises
@@ -523,7 +542,7 @@ BEGIN
   WHERE r.org_id = v_org AND r.meeting_id = p_meeting AND r.user_id = v_user AND r.status = 'claimed';
 END $$;
 
--- The sweep: suggestions older than 14 days go; staged bytes the member did not claim within 55 minutes (the daily staging sweep deletes a staging/ object older than an hour: STAGING_MAX_AGE_MS), and a claim that never finished within 30 minutes, fail with `not_claimed` and
+-- The sweep: suggestions older than 14 days go; staged bytes the member did not claim within 55 minutes (the daily staging sweep deletes a staging/ object older than an hour: STAGING_MAX_AGE_MS), and a claim that never finished within 60 minutes (longer than the upload request's own 45-minute limit), fail with `not_claimed` and
 -- `claim_failed`; a download that has run for 2 hours fails with `timeout`. Returns the staging keys whose bytes the job must delete (a failed row forgets its key), never text of a meeting.
 CREATE OR REPLACE FUNCTION crove_kernel.meeting_platform_recording_sweep()
 RETURNS TABLE (staging_key text)
@@ -539,7 +558,7 @@ BEGIN
              CASE WHEN r.status = 'staged' THEN 'not_claimed' WHEN r.status = 'claimed' THEN 'claim_failed' ELSE 'timeout' END AS code
       FROM crove_kernel.meeting_platform_recording r
       WHERE (r.status = 'staged' AND r.staged_at < pg_catalog.now() - interval '55 minutes')
-         OR (r.status = 'claimed' AND r.updated_at < pg_catalog.now() - interval '30 minutes')
+         OR (r.status = 'claimed' AND r.updated_at < pg_catalog.now() - interval '60 minutes')
          OR (r.status = 'importing' AND r.updated_at < pg_catalog.now() - interval '2 hours')
       FOR UPDATE
     ), upd AS (
@@ -554,8 +573,9 @@ REVOKE ALL ON FUNCTION crove_kernel.meeting_platform_recording_replace(uuid, jso
 REVOKE ALL ON FUNCTION crove_kernel.meeting_platform_recording_begin(uuid, uuid, text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 REVOKE ALL ON FUNCTION crove_kernel.meeting_platform_recording_dismiss(uuid) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 REVOKE ALL ON FUNCTION crove_kernel.meeting_platform_import_open(integer) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
-REVOKE ALL ON FUNCTION crove_kernel.meeting_platform_import_staged(uuid) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
-REVOKE ALL ON FUNCTION crove_kernel.meeting_platform_import_failed(uuid, text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+REVOKE ALL ON FUNCTION crove_kernel.meeting_platform_import_staged(uuid, text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+REVOKE ALL ON FUNCTION crove_kernel.meeting_platform_import_failed(uuid, text, text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+REVOKE ALL ON FUNCTION crove_kernel.meeting_platform_import_holds(uuid, text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 REVOKE ALL ON FUNCTION crove_kernel.meeting_platform_recording_claim(uuid) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 REVOKE ALL ON FUNCTION crove_kernel.meeting_platform_recording_claim_failed(uuid, text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 REVOKE ALL ON FUNCTION crove_kernel.meeting_platform_recording_imported(uuid) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
@@ -563,8 +583,9 @@ REVOKE ALL ON FUNCTION crove_kernel.meeting_platform_recording_sweep() FROM PUBL
 GRANT EXECUTE ON FUNCTION
   crove_kernel.meeting_platform_recording_replace(uuid, jsonb),
   crove_kernel.meeting_platform_import_open(integer),
-  crove_kernel.meeting_platform_import_staged(uuid),
-  crove_kernel.meeting_platform_import_failed(uuid, text),
+  crove_kernel.meeting_platform_import_staged(uuid, text),
+  crove_kernel.meeting_platform_import_failed(uuid, text, text),
+  crove_kernel.meeting_platform_import_holds(uuid, text),
   crove_kernel.meeting_platform_recording_sweep()
 TO crove_worker;
 GRANT EXECUTE ON FUNCTION

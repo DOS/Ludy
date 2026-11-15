@@ -379,34 +379,49 @@ export const meetingPlatformImportOpen = defineQuery({
   },
 });
 
-// The worker's outcomes: the bytes are in staging, or the download failed (a short code, never the platform's message).
+// The worker's outcomes: the bytes are in staging, or the download failed (a short code, never the platform's message). Each names the staging key the job was handed and changes only an importing row that still
+// holds exactly that key, so a duplicate or stale job cannot stage or fail a row that moved on; `applied` is how many rows it changed (0 or 1).
+const zStagingKey = z.string().regex(/^staging\/[0-9a-f]{64}$/);
+
 export const meetingPlatformImportStaged = defineCommand({
   name: 'kernel.meeting_platform.import_staged',
-  input: zMeetingPlatformRecordingRef,
+  input: z.strictObject({ recordingId: zId, stagingKey: zStagingKey }),
   risk: 'R1',
   sideEffect: 'internal',
   access: 'system',
   target: (input) => ({ type: 'kernel.meeting_platform_recording', id: input.recordingId }),
   handler: async (ctx, input) => {
     requireSystem(ctx.actor);
-    await sql`SELECT crove_kernel.meeting_platform_import_staged(${input.recordingId}::uuid)`.execute(ctx.trx).catch(platformError);
-    ctx.audit({ recording_id: input.recordingId });
-    return { recordingId: input.recordingId, staged: true as const };
+    const { rows } = await sql<{ n: number }>`SELECT crove_kernel.meeting_platform_import_staged(${input.recordingId}::uuid, ${input.stagingKey}) AS n`.execute(ctx.trx).catch(platformError);
+    ctx.audit({ recording_id: input.recordingId, applied: rows[0]?.n ?? 0 });
+    return { recordingId: input.recordingId, applied: rows[0]?.n ?? 0 };
   },
 });
 
 export const meetingPlatformImportFailed = defineCommand({
   name: 'kernel.meeting_platform.import_failed',
-  input: z.strictObject({ recordingId: zId, code: zMeetingPlatformErrorCode }),
+  input: z.strictObject({ recordingId: zId, code: zMeetingPlatformErrorCode, stagingKey: zStagingKey }),
   risk: 'R1',
   sideEffect: 'internal',
   access: 'system',
   target: (input) => ({ type: 'kernel.meeting_platform_recording', id: input.recordingId }),
   handler: async (ctx, input) => {
     requireSystem(ctx.actor);
-    await sql`SELECT crove_kernel.meeting_platform_import_failed(${input.recordingId}::uuid, ${input.code})`.execute(ctx.trx).catch(platformError);
-    ctx.audit({ recording_id: input.recordingId, code: input.code });
-    return { recordingId: input.recordingId, code: input.code };
+    const { rows } = await sql<{ n: number }>`SELECT crove_kernel.meeting_platform_import_failed(${input.recordingId}::uuid, ${input.code}, ${input.stagingKey}) AS n`.execute(ctx.trx).catch(platformError);
+    ctx.audit({ recording_id: input.recordingId, code: input.code, applied: rows[0]?.n ?? 0 });
+    return { recordingId: input.recordingId, code: input.code, applied: rows[0]?.n ?? 0 };
+  },
+});
+
+// What the row holds for a staging key, for the job (an enum): importing is this job's turn, staged or claimed means another job already did it and its bytes are live, none means the row moved on.
+export const meetingPlatformImportHolds = defineQuery({
+  name: 'kernel.meeting_platform.import_holds',
+  input: z.strictObject({ recordingId: zId, stagingKey: zStagingKey }),
+  access: 'system',
+  handler: async (ctx, input): Promise<'importing' | 'staged' | 'claimed' | 'none'> => {
+    requireSystem(ctx.actor);
+    const { rows } = await sql<{ holds: 'importing' | 'staged' | 'claimed' | 'none' }>`SELECT crove_kernel.meeting_platform_import_holds(${input.recordingId}::uuid, ${input.stagingKey}) AS holds`.execute(ctx.trx).catch(platformError);
+    return rows[0]?.holds ?? 'none';
   },
 });
 
@@ -506,4 +521,4 @@ export const meetingPlatformCommands = [
   meetingPlatformImportFailed,
   meetingPlatformSweep,
 ];
-export const meetingPlatformQueries = [meetingPlatformConnections, meetingPlatformRecordings, meetingPlatformCredential, meetingPlatformSyncDue, meetingPlatformImportOpen];
+export const meetingPlatformQueries = [meetingPlatformConnections, meetingPlatformRecordings, meetingPlatformCredential, meetingPlatformImportHolds, meetingPlatformSyncDue, meetingPlatformImportOpen];

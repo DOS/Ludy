@@ -26,20 +26,22 @@ interface Calls {
   deleted: string[];
 }
 
-function harness(over: Partial<MeetingsImportDeps> = {}, executeError?: (name: string) => Error | undefined): { deps: MeetingsImportDeps; calls: Calls } {
+function harness(over: Partial<MeetingsImportDeps> = {}, executeError?: (name: string) => Error | undefined, holds: Array<'importing' | 'staged' | 'claimed' | 'none'> = ['importing'], applied = 1): { deps: MeetingsImportDeps; calls: Calls } {
   const calls: Calls = { executed: [], stored: new Map(), deleted: [] };
+  const asked = [...holds];
   const sealed = { keyId: 'k1', envelope: Buffer.from('sealed').toString('base64'), provider: 'sandbox', externalAccount: 'sandbox@local' };
   const deps = {
     runtime: {
       query: async (name: string) => {
         if (name === 'kernel.meeting_platform.credential') return sealed;
+        if (name === 'kernel.meeting_platform.import_holds') return asked.length > 1 ? asked.shift() : asked[0];
         throw new Error(`unexpected query ${name}`);
       },
       execute: async (name: string, input: Record<string, unknown>) => {
         const error = executeError?.(name);
         if (error) throw error;
         calls.executed.push({ name, input });
-        return {};
+        return { applied };
       },
     },
     broker: { id: 'test', open: () => JSON.stringify({ accessToken: 'token-123' }) },
@@ -61,6 +63,7 @@ function harness(over: Partial<MeetingsImportDeps> = {}, executeError?: (name: s
 
 const attempt = { retryCount: 0, retryLimit: 3 };
 const recorded = (calls: Calls) => calls.executed.map((c) => `${c.name}:${String(c.input.code ?? '')}`);
+const failedWith = (code: string) => `kernel.meeting_platform.import_failed:${code}`;
 
 describe('runMeetingsImport', () => {
   it('stages the bytes of an audio recording under the row\'s staging key and says so', async () => {
@@ -68,7 +71,7 @@ describe('runMeetingsImport', () => {
     expect(await runMeetingsImport(deps, job(), attempt)).toBe('staged');
     expect(calls.stored.get(KEY)?.byteLength).toBeGreaterThan(44);
     expect(calls.executed.map((c) => c.name)).toEqual(['kernel.meeting_platform.import_staged']);
-    expect(calls.executed[0]?.input).toEqual({ recordingId: job().id });
+    expect(calls.executed[0]?.input).toEqual({ recordingId: job().id, stagingKey: KEY });
   });
 
   it('refuses a declared size over the cap before any network call, and a video-only recording while no audio extraction is wired', async () => {
@@ -87,7 +90,7 @@ describe('runMeetingsImport', () => {
     expect(await runMeetingsImport(deps, job({ hasAudio: false, hasVideo: true }), attempt)).toBe('failed');
     expect(touched).toEqual([]);
     expect(recorded(calls)).toEqual(['kernel.meeting_platform.import_failed:too_large', 'kernel.meeting_platform.import_failed:no_audio']);
-    expect(calls.deleted).toEqual([KEY, KEY]);
+    expect(calls.deleted).toEqual([]);
   });
 
   it('records the platform\'s answers as short codes: a recording that is gone, a refused token, and never the platform\'s words', async () => {
@@ -107,7 +110,7 @@ describe('runMeetingsImport', () => {
   it('fails with connection_expired when the credential is not available (the member left, or the connection expired)', async () => {
     const { deps, calls } = harness({
       runtime: {
-        query: async () => Promise.reject(new DomainError('MEETING_PLATFORM_OWNER_LEFT', 409, 'x')),
+        query: async (name: string) => (name === 'kernel.meeting_platform.import_holds' ? 'importing' : Promise.reject(new DomainError('MEETING_PLATFORM_OWNER_LEFT', 409, 'x'))),
         execute: async (name: string, input: Record<string, unknown>) => {
           calls.executed.push({ name, input });
           return {};
@@ -128,10 +131,32 @@ describe('runMeetingsImport', () => {
     expect(recorded(last.calls)).toEqual(['kernel.meeting_platform.import_failed:platform_unavailable']);
   });
 
-  it('drops the bytes and skips when the row is no longer importing', async () => {
-    const { deps, calls } = harness({}, (name) => (name === 'kernel.meeting_platform.import_staged' ? new DomainError('MEETING_PLATFORM_STATE', 409, 'x') : undefined));
-    expect(await runMeetingsImport(deps, job(), attempt)).toBe('skipped');
-    expect(calls.deleted).toEqual([KEY]);
+  it('does nothing when it is not this job\'s turn: another job staged the row, or it failed, or it was begun again with another key', async () => {
+    for (const holds of ['staged', 'claimed', 'none'] as const) {
+      const spy: MeetingPlatformAdapter = { provider: 'sandbox', hosts: [], list: async () => [], prepareDownload: async () => Promise.reject(new Error('not reached')) };
+      const { deps, calls } = harness({ adapters: { sandbox: spy } }, undefined, [holds]);
+      expect(await runMeetingsImport(deps, job(), attempt)).toBe('skipped');
+      expect(calls.executed).toEqual([]);
+      expect(calls.stored.size).toBe(0);
+      expect(calls.deleted).toEqual([]);
+    }
+  });
+
+  it('when the row moved on while it downloaded, deletes its bytes only if the row holds no copy under the key (never another job\'s staged bytes)', async () => {
+    const orphan = harness({}, undefined, ['importing', 'none'], 0);
+    expect(await runMeetingsImport(orphan.deps, job(), attempt)).toBe('skipped');
+    expect(orphan.calls.deleted).toEqual([KEY]);
+    const shared = harness({}, undefined, ['importing', 'staged'], 0);
+    expect(await runMeetingsImport(shared.deps, job(), attempt)).toBe('skipped');
+    expect(shared.calls.deleted).toEqual([]);
+  });
+
+  it('records a failure under the key it was handed', async () => {
+    const gone: MeetingPlatformAdapter = { provider: 'sandbox', hosts: [], list: async () => [], prepareDownload: async () => Promise.reject(new MeetingPlatformError('recording_gone')) };
+    const { deps, calls } = harness({ adapters: { sandbox: gone } });
+    expect(await runMeetingsImport(deps, job(), attempt)).toBe('failed');
+    expect(calls.executed).toEqual([{ name: 'kernel.meeting_platform.import_failed', input: { recordingId: job().id, code: 'recording_gone', stagingKey: KEY } }]);
+    expect(recorded(calls)).toEqual([failedWith('recording_gone')]);
   });
 
   describe('a download over the network', () => {

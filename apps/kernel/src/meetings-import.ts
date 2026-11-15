@@ -149,14 +149,21 @@ async function fetchBytes(deps: MeetingsImportDeps, download: MeetingPlatformDow
   }
 }
 
-// One attempt for one recording. Throws, so the queue retries, only for a transient failure with tries left; anything else is recorded on the row.
+// One attempt for one recording. Throws, so the queue retries, only for a transient failure with tries remain; anything else is recorded on the row. Every outcome names the staging key this job was handed and
+// changes the row only while it still holds exactly that key (the sweep hands an importing row over every minute until it is staged, and a failed row begun again gets a new key), so a duplicate or stale job
+// does nothing and never deletes bytes another job staged.
 export async function runMeetingsImport(deps: MeetingsImportDeps, job: MeetingsImportJob, attempt: { retryCount: number; retryLimit: number }): Promise<MeetingsImportResult> {
   const ctx = { actor: ACTOR, orgId: job.orgId };
+  const holds = await deps.runtime.query<'importing' | 'staged' | 'claimed' | 'none'>('kernel.meeting_platform.import_holds', { recordingId: job.id, stagingKey: job.stagingKey }, ctx);
+  // Not this job's turn (another job staged it, the row failed, or it was begun again with another key): nothing is downloaded or touched.
+  if (holds !== 'importing') return 'skipped';
   const fail = async (code: MeetingPlatformErrorCode): Promise<'failed'> => {
-    await deps.runtime.execute('kernel.meeting_platform.import_failed', { recordingId: job.id, code }, ctx).catch((error) => console.warn(`[meetings-import] ${job.id.slice(0, 8)} could not record ${code}`, codeOf(error)));
-    await deps.store.delete(job.stagingKey).catch(() => undefined);
+    await deps.runtime
+      .execute('kernel.meeting_platform.import_failed', { recordingId: job.id, code, stagingKey: job.stagingKey }, ctx)
+      .catch((error) => console.warn(`[meetings-import] ${job.id.slice(0, 8)} could not record ${code}`, codeOf(error)));
     return 'failed';
   };
+  let wrote = false;
   try {
     const adapter = deps.adapters[job.provider];
     if (!adapter) return await fail('platform_unavailable');
@@ -175,22 +182,19 @@ export async function runMeetingsImport(deps: MeetingsImportDeps, job: MeetingsI
       });
     }
     await deps.store.put(job.stagingKey, bytes, 'application/octet-stream');
-    try {
-      await deps.runtime.execute('kernel.meeting_platform.import_staged', { recordingId: job.id }, ctx);
-    } catch (error) {
-      // The row is no longer importing (failed by the sweep, or imported another way): the bytes are not wanted.
-      await deps.store.delete(job.stagingKey).catch(() => undefined);
-      if (error instanceof DomainError && error.code === 'MEETING_PLATFORM_STATE') return 'skipped';
-      throw error;
-    }
-    return 'staged';
+    wrote = true;
+    const staged = await deps.runtime.execute<{ applied: number }>('kernel.meeting_platform.import_staged', { recordingId: job.id, stagingKey: job.stagingKey }, ctx);
+    if (staged.applied === 1) return 'staged';
+    // The row no longer waits for these bytes. Delete them only if it holds no other copy under this key: another job's staged bytes (same key) are the member's to claim.
+    const now = await deps.runtime.query<'importing' | 'staged' | 'claimed' | 'none'>('kernel.meeting_platform.import_holds', { recordingId: job.id, stagingKey: job.stagingKey }, ctx);
+    if (now === 'none') await deps.store.delete(job.stagingKey).catch(() => undefined);
+    return 'skipped';
   } catch (error) {
     const { code, retry } = classify(error);
     console.warn(`[meetings-import] ${job.id.slice(0, 8)} not staged`, codeOf(error));
-    if (retry && attempt.retryCount < attempt.retryLimit) {
-      await deps.store.delete(job.stagingKey).catch(() => undefined);
-      throw new Error(`meetings import ${job.id.slice(0, 8)} not staged (attempt ${attempt.retryCount + 1})`);
-    }
+    if (retry && attempt.retryCount < attempt.retryLimit) throw new Error(`meetings import ${job.id.slice(0, 8)} not staged (attempt ${attempt.retryCount + 1})`);
+    // A failure after the bytes were written but before the row moved is left to the sweep (the row times out and its key's bytes are deleted there).
+    if (wrote) return 'failed';
     return fail(code);
   }
 }

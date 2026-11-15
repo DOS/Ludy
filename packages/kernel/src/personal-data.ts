@@ -172,11 +172,13 @@ export const PERSONAL_DATA_COLUMNS = {
     reason: "The member's own account on a meeting platform; disconnecting removes it, and it is not exported with the org. Its row policy hides it from the admin who runs an erasure: the member disconnects it",
   },
   // The title of a recording the platform offers to import: the platform's words, which may name or describe a person. Read by the member alone (row security), kept as a suggestion for at most
-  // 14 days, deleted when the member disconnects the platform, and with the org; an import copies nothing of it (the meeting has its own title).
+  // The title of a recording a meeting platform offers the member (meetings integrations C1, #3173), read by that member alone through row security. A suggested or dismissed row is deleted 14 days after the
+  // recording's date; a failed or imported row keeps it until the member disconnects the platform, the org is purged or the retry is dismissed; an import also starts the new meeting's own title as a copy of it, and
+  // that copy follows the meeting's text rules, not this row's.
   'crove_kernel.meeting_platform_recording.title': {
     kind: 'free_text',
     handling: 'erase',
-    reason: "The title of a recording a meeting platform offers the member, which may name or describe a person: read by that member alone, a suggestion is deleted after 14 days or when they disconnect the platform, and it goes with the org",
+    reason: "The title of a recording a meeting platform offers the member, which may name or describe a person: read by that member alone; a suggestion is deleted 14 days after the recording, a failed or imported row keeps it until the member disconnects the platform or the org is purged, and an import copies it into the new meeting's own title",
   },
   // Bank feeds (ADR-0039, #2044): the accounts a connection reaches, as the worker listed them; not the books.
   'crove_finance.bank_feed_listed_account.display_name': {
