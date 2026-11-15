@@ -421,12 +421,12 @@ function checkKindSpecificTerms(
   // under_one_month
   const hasTermMonths = terms.termMonths !== undefined && terms.termMonths !== null;
   const hasEndDate = terms.endDate !== undefined && terms.endDate !== null;
-  if (!hasTermMonths && !hasEndDate) {
+  if (!hasEndDate) {
     findings.push({
       code: 'missing_under_one_month_duration',
       severity: 'error',
       field: 'endDate',
-      message: 'An under-one-month contract requires either endDate or termMonths (< 1) to verify duration.',
+      message: 'An under-one-month contract requires endDate to verify duration and track expiry alerts.',
       cite: 'Labor Code 2019 Art. 14(2) & Art. 20(1)(b)',
     });
   }

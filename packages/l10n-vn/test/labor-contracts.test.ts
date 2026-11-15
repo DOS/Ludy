@@ -113,7 +113,7 @@ describe('checkLaborContractTerms (Labor Code 2019 Arts. 14, 20, 24-27)', () => 
     expect(shortFixedWithProbation.ok).toBe(false);
     expect(shortFixedWithProbation.findings.map((f) => f.code)).toContain('probation_not_allowed_under_one_month');
 
-    // under_one_month requires explicit endDate or termMonths so oral contracts cannot bypass duration checks.
+    // under_one_month requires endDate (even if fractional termMonths is provided) so duration & expiry alerts stay unambiguous.
     const missingUnderOneMonthDuration = checkLaborContractTerms({
       contractKind: 'under_one_month',
       form: 'oral',
@@ -121,6 +121,14 @@ describe('checkLaborContractTerms (Labor Code 2019 Arts. 14, 20, 24-27)', () => 
     });
     expect(missingUnderOneMonthDuration.ok).toBe(false);
     expect(missingUnderOneMonthDuration.findings.map((f) => f.code)).toContain('missing_under_one_month_duration');
+
+    const fractionalOnlyUnderOneMonth = checkLaborContractTerms({
+      contractKind: 'under_one_month',
+      startDate: '2026-01-01',
+      termMonths: 0.5,
+    });
+    expect(fractionalOnlyUnderOneMonth.ok).toBe(false);
+    expect(fractionalOnlyUnderOneMonth.findings.map((f) => f.code)).toContain('missing_under_one_month_duration');
   });
 
   it('enforces fixed_term 1..36 months and max 1 renewal (fixedTermSequence > 2 -> must_convert_to_indefinite)', () => {
