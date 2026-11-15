@@ -75,14 +75,14 @@ export function followupFixedWords(lang: Lang, day: string): FollowupWords {
 
 const noSummary = () => new DomainError('NO_PUBLISHED_SUMMARY', 409, 'Chia sẻ tóm tắt của cuộc họp trước khi soạn thư cảm ơn');
 
-interface Published {
+export interface Published {
   facts: FollowupFacts;
   key: string;
 }
 
 // The facts of the mail, from what the readers of the meeting read: the published summary, its decisions and the published action items. The key digests them with the
 // published result's id and time, so a result shared again (a new row) or unpublished is a different key.
-async function publishedFacts(trx: Trx, orgId: string, meetingId: string): Promise<Published> {
+export async function publishedFacts(trx: Trx, orgId: string, meetingId: string): Promise<Published> {
   const result = await trx
     .selectFrom('crove_meetings.meeting_result')
     .select(['id', 'summary', 'decisions', 'updated_at'])
@@ -179,7 +179,7 @@ async function sendsToday(ctx: { trx: Trx; orgId: string }, meetingId: string): 
   return new Set(rows.map((r) => r.batch ?? '')).size;
 }
 
-async function meetingFacts(trx: Trx, orgId: string, meetingId: string): Promise<{ lang: Lang; day: string }> {
+export async function meetingFacts(trx: Trx, orgId: string, meetingId: string): Promise<{ lang: Lang; day: string }> {
   const row = await trx.selectFrom('crove_meetings.meeting').select(['language', 'started_at', 'created_at']).where('org_id', '=', orgId).where('id', '=', meetingId).executeTakeFirstOrThrow();
   return { lang: row.language === 'en' ? 'en' : 'vi', day: vnDay(row.started_at ?? row.created_at) };
 }

@@ -26,6 +26,12 @@ export const meetingsManifest = defineModule({
         ['org_id', 'id', 'connection_id', 'user_id', 'external_id', 'starts_at', 'ends_at', 'time_zone', 'invitee_count', 'meeting_id', 'updated_at'],
         { title: 'pii', join_url: 'sensitive' },
       ),
+      // The org's channels for minutes, Slack or Teams (B4, #3168): a name and the address's host. No secret: the address is sealed in chat_channel_target.
+      chat_channel: columns(['org_id', 'id', 'kind', 'label', 'host', 'created_by', 'created_at', 'updated_at']),
+      // The sealed address of a minutes channel (B4, #3168): definer-only, opened by the API process for the recorder's own post in flight.
+      chat_channel_target: columns(['org_id', 'channel_id', 'key_id', 'sealed_at'], { envelope: 'sensitive' }),
+      // The recorder's log of minutes posted to a channel (B4, #3168): ids, a state, the status, a code and hashes; never the text.
+      chat_post: columns(['org_id', 'id', 'meeting_id', 'channel_id', 'user_id', 'facts_key', 'text_hash', 'state', 'http_status', 'code', 'created_at', 'settled_at']),
       // The pieces of about 15 seconds a recorder sends while a live-notes meeting runs (ADR-0052 L4a, #3109): order, the ciphertext's file row, size and the recorder's own length. No key, no text.
       live_chunk: columns(['org_id', 'id', 'meeting_id', 'seq', 'file_id', 'size_bytes', 'length_seconds', 'created_at']),
       // The live transcript preview of a meeting being recorded (ADR-0052 L4a, #3110): the recorder's alone, replaced by the batch transcript. Its text is personal data.

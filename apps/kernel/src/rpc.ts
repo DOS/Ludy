@@ -52,6 +52,7 @@ import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type C
 import { suggestCompanies, type CompanyAi } from './contact-company-ai.ts';
 import { wordReminder, type ReminderAi } from './payment-reminder-ai.ts';
 import { wordFollowup, type FollowupAi } from './followup-ai.ts';
+import { postMinutesFromClick, saveMinutesChannel, type MinutesChatDeps } from './meeting-chat.ts';
 import { explainPayslip, flagMonth, prepareMonth, type PayrollAi, type PayrollReads } from './payroll-coworker-ai.ts';
 import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
 import { crmFollowupAi, draftCrmFollowup } from './crm-followup-ai.ts';
@@ -264,8 +265,10 @@ function discordFailure(code: string | undefined): DomainError | null {
 const PROVIDER_LABELS: Record<string, string> = { sandbox: 'test channel', facebook_page: 'Facebook Page', instagram: 'Instagram', zalo_oa: 'Zalo Official Account (article)', tiktok: 'TikTok', youtube: 'YouTube', threads: 'Threads', linkedin: 'LinkedIn', x: 'X', bluesky: 'Bluesky', google_business: 'Google Business Profile', telegram: 'Telegram', mastodon: 'Mastodon', pinterest: 'Pinterest', discord: 'Discord', wordpress: 'WordPress (blog post)', linkedin_page: 'LinkedIn Page', whatsapp: 'WhatsApp' };
 
 export interface RpcChannels {
-  // Seals tokens before kernel.channel.connect stores them; never opens one in the API.
+  // Seals tokens before kernel.channel.connect stores them; never opens one in the API, except the address of a minutes channel for the recorder's own post in flight (meeting-chat.ts, B4).
   broker: CredentialBroker;
+  // Tests only: the minutes post's fetch or egress options, and its save budget.
+  minutes?: Pick<MinutesChatDeps, 'send' | 'egress' | 'saves'>;
   // The offline sandbox channel is enabled (CHANNEL_SANDBOX).
   sandbox: boolean;
   // Tests only: how the wake-up receiver's name is looked up before it is accepted (the system resolver by default; the egress guard checks every send again).
@@ -533,6 +536,11 @@ export function createRpcHandler(
   const inMeetings = async <T>(context: RpcContext, fn: (orgId: string, actor: UserActor) => Promise<T>) => {
     if (!meetings) throw new ORPCError('NOT_FOUND', { status: 404, message: 'Mô-đun Cuộc họp chưa được bật' });
     return inOrg(context, fn);
+  };
+  // The minutes channels' API half (meeting-chat.ts): the credential broker seals and opens, the egress guard posts.
+  const minutesChat = (): MinutesChatDeps => {
+    if (!channels) throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
+    return { runtime, broker: channels.broker, publicUrl: channels.publicUrl ?? '', ...channels.minutes };
   };
   const meetingsCommand =
     (name: string) =>
@@ -981,6 +989,14 @@ export function createRpcHandler(
           const { idempotencyKey, ...rest } = input;
           return runtime.execute('meetings.followup.send', rest, { actor, orgId, idempotencyKey });
         })),
+      },
+      // Minutes to a Slack or Teams channel (B4, #3168). The API seals the pasted address and opens it only for the recorder's own post in flight; the post is made in this request.
+      chat: {
+        channels: os.meetings.chat.channels.handler(meetingsQuery('meetings.chat.channels')),
+        saveChannel: os.meetings.chat.saveChannel.handler(({ context, input }) => inMeetings(context, (orgId, actor) => saveMinutesChannel(minutesChat(), { orgId, orgSlug: context.orgSlug, actor }, input))),
+        removeChannel: os.meetings.chat.removeChannel.handler(meetingsCommand('meetings.chat.channel_remove')),
+        preview: os.meetings.chat.preview.handler(meetingsQuery('meetings.chat.preview')),
+        post: os.meetings.chat.post.handler(({ context, input }) => inMeetings(context, (orgId, actor) => postMinutesFromClick(minutesChat(), { orgId, orgSlug: context.orgSlug, actor }, input))),
       },
       links: {
         add: os.meetings.links.add.handler(meetingsCommand('meetings.link.add')),

@@ -188,6 +188,8 @@ export interface CroveMeetingsSchema {
   'crove_meetings.action_item': MeetingsActionItemTable;
   'crove_meetings.audio_segment': MeetingsAudioSegmentTable;
   'crove_meetings.calendar_agenda': MeetingsCalendarAgendaTable;
+  'crove_meetings.chat_channel': MeetingsChatChannelTable;
+  'crove_meetings.chat_post': MeetingsChatPostTable;
   'crove_meetings.live_chunk': MeetingsLiveChunkTable;
   'crove_meetings.live_line': MeetingsLiveLineTable;
   'crove_meetings.meeting': MeetingsMeetingTable;
@@ -2832,6 +2834,34 @@ export interface MeetingsCalendarAgendaTable {
   invitee_count: ColumnType<number, NotGranted, NotGranted>;
   meeting_id: ColumnType<string | null, NotGranted, string | null>;
   updated_at: ColumnType<Date, NotGranted, NotGranted>;
+}
+
+/** crove_meetings.chat_channel */
+export interface MeetingsChatChannelTable {
+  org_id: string;
+  id: Generated<string>;
+  kind: string;
+  label: string;
+  host: string;
+  created_by: string;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_meetings.chat_post */
+export interface MeetingsChatPostTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  meeting_id: ColumnType<string, string, NotGranted>;
+  channel_id: ColumnType<string, string, NotGranted>;
+  user_id: ColumnType<string, string, NotGranted>;
+  facts_key: ColumnType<string, string, NotGranted>;
+  text_hash: ColumnType<string, string, NotGranted>;
+  state: Generated<string>;
+  http_status: number | null;
+  code: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  settled_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 /** crove_meetings.live_chunk */
