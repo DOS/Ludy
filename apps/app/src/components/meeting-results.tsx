@@ -15,6 +15,7 @@ import { Textarea } from '@crove/ui/components/textarea';
 import { DateInput } from './date-input.tsx';
 import { ErrorText } from './ui.tsx';
 import { MeetingFollowup } from './meeting-followup.tsx';
+import { MeetingChatPost } from './meeting-chat.tsx';
 import { MeetingTranslation } from './meeting-translation.tsx';
 import { clock } from './meeting-transcript.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -346,6 +347,7 @@ export function MeetingResults({ meetingId, readers, template = 'general', minut
           </section>
         )}
         {isRecorder && (published || items.some((i) => i.stage === 'published')) && <MeetingFollowup meetingId={meetingId} />}
+        {isRecorder && (published || items.some((i) => i.stage === 'published')) && <MeetingChatPost meetingId={meetingId} />}
         {isRecorder && <TemplatePicker meetingId={meetingId} template={template} />}
         {isRecorder && <VySummary meetingId={meetingId} hasModelDraft={(draft?.tainted ?? false) || items.some((i) => i.stage === 'draft' && i.tainted)} />}
         {isRecorder && (

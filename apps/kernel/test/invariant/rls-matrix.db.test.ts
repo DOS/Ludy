@@ -100,11 +100,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_permission_override',
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',
-  // #3168 (meetings integrations B4): the org's minutes channels, their sealed addresses, the recorder's log of posts and the message of a queued post. Land before their tables (step 1 of 2).
-  'crove_meetings.chat_channel',
-  'crove_meetings.chat_channel_target',
-  'crove_meetings.chat_post',
-  'crove_meetings.chat_post_body',
   'crove_meetings.live_line',
   'crove_meetings.meeting_link',
   'crove_notes.link',

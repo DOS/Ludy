@@ -50,6 +50,8 @@ import { runMeetingHookDelivery, type MeetingHookJob } from './meeting-hook.ts';
 import { MEETING_HOOK_SWEEP_CRON, MEETING_HOOK_SWEEP_EXPIRE_SECONDS, runMeetingHookSweep } from './meeting-hook-sweep.ts';
 import { MEETINGS_IMPORT_CONCURRENCY, MEETINGS_IMPORT_EXPIRE_SECONDS, MEETINGS_IMPORT_RETRY_LIMIT, runMeetingsImport, type MeetingsImportJob } from './meetings-import.ts';
 import { MEETINGS_IMPORT_SWEEP_CRON, MEETINGS_IMPORT_SWEEP_EXPIRE_SECONDS, runMeetingsImportSweep } from './meetings-import-sweep.ts';
+import { CHAT_JOB_EXPIRE_SECONDS, CHAT_RETRY_DELAY_SECONDS, CHAT_RETRY_LIMIT, runMeetingChat, type ChatJob } from './meeting-chat-job.ts';
+import { MEETING_CHAT_SWEEP_CRON, MEETING_CHAT_SWEEP_EXPIRE_SECONDS, runMeetingChatSweep } from './meeting-chat-sweep.ts';
 import { NOTES_REMIND_CRON, NOTES_TRASH_CRON, NOTES_TRASH_TZ, queueNotesMemberPurge, runNotesMemberPurge, sweepNotesFormerMembers, sweepNotesReminders, sweepNotesTrash, type NotesMemberPurgeJob } from './notes-worker.ts';
 import { PERIOD_BALANCE_VERIFY_CRON, runPeriodBalanceReconciliation } from './period-balance.ts';
 import { runYearArchive } from './year-archive.ts';
@@ -1244,6 +1246,27 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await boss.schedule(QUEUES.meetingHookSweep, MEETING_HOOK_SWEEP_CRON, null, { tz: MEMBER_VY_SWEEP_TZ, missed: 'once', expireInSeconds: MEETING_HOOK_SWEEP_EXPIRE_SECONDS });
   } else {
     await dropCron(QUEUES.meetingHookSweep);
+  }
+  // Minutes posted to a Slack or Teams channel (meetings integrations B4, #3168): a sweep every minute hands over the posts stored at the recorder's click (meeting-chat-sweep.ts), and one job per post sends
+  // it to the address an owner or admin saved (meeting-chat-job.ts, through the egress guard). The worker opens the sealed address (ADR-0025). Without a credential key no address can be opened, so neither
+  // runs, and only when the meetings module is installed: its commands are what the sweep and the job run.
+  if (deps.runtime.installed('meetings') && wakeBroker && wakeBroker.id !== 'none') {
+    await boss.work<ChatJob>(QUEUES.meetingChat, { batchSize: 1, includeMetadata: true }, async ([job]) => {
+      if (!job) return;
+      await runMeetingChat({ runtime: deps.runtime, broker: wakeBroker }, job.data, { retryCount: job.retryCount, retryLimit: CHAT_RETRY_LIMIT });
+    });
+    await boss.work(QUEUES.meetingChatSweep, { batchSize: 1 }, async () => {
+      const done = await runMeetingChatSweep({
+        runtime: deps.runtime,
+        workerDb: deps.workerDb,
+        send: (job: ChatJob) =>
+          boss.send(QUEUES.meetingChat, job, { singletonKey: jobKey(job.orgId, QUEUES.meetingChat, job.id), retryLimit: CHAT_RETRY_LIMIT, retryDelay: CHAT_RETRY_DELAY_SECONDS, retryBackoff: true, expireInSeconds: CHAT_JOB_EXPIRE_SECONDS }),
+      });
+      if (done.handedOver + done.expired + done.lost + done.failures > 0) console.log(`[meeting-chat-sweep] handed over ${done.handedOver}, expired ${done.expired}, lost ${done.lost}, failures ${done.failures}`);
+    });
+    await boss.schedule(QUEUES.meetingChatSweep, MEETING_CHAT_SWEEP_CRON, null, { tz: MEMBER_VY_SWEEP_TZ, missed: 'once', expireInSeconds: MEETING_CHAT_SWEEP_EXPIRE_SECONDS });
+  } else {
+    await dropCron(QUEUES.meetingChatSweep);
   }
 
   // Meeting platform recordings (meetings integrations C1, #3173): a sweep every minute hands over the recordings a member chose to import, lists each due connection's finished recordings as suggestions and
