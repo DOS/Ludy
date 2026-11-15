@@ -92,7 +92,7 @@ describe('MeetingHookCard', () => {
     const owner = render({ switchOn: true }, 'owner');
     expect(owner).toContain(`>${en.meetings.hook.switchOn}<`);
     expect(owner).toContain(`>${en.meetings.hook.switchTurnOff}<`);
-    expect(owner).toContain(en.meetings.hook.switchOffNote.replace("'", '&#x27;'));
+    expect(owner).toContain(en.meetings.hook.switchOffNote.replaceAll("'", '&#x27;'));
   });
 
   it('says so when the server has no key to seal a secret', () => {
