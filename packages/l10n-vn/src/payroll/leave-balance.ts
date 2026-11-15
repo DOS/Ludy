@@ -426,15 +426,8 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
           const schedule: LeaveWorkweek = input.workweek ?? 'mon_sat';
           const totalWork = countWorkdaysInSpan(yearNum, idx, 1, daysInMonth, schedule);
           const activeWork = countWorkdaysInSpan(yearNum, idx, startDay, endDay, schedule);
-          if (monthStd !== undefined) {
-            totalMonthWork = money(monthStd.trim());
-            activeMonthWork = totalWork > 0
-              ? divRational(mulRational(toRational(totalMonthWork), toRational(money(String(activeWork)))), toRational(money(String(totalWork))))
-              : ZERO_RATIONAL;
-          } else {
-            totalMonthWork = money(String(totalWork));
-            activeMonthWork = toRational(money(String(activeWork)));
-          }
+          totalMonthWork = monthStd !== undefined ? money(monthStd.trim()) : money(String(totalWork));
+          activeMonthWork = toRational(money(String(activeWork)));
         } else {
           totalMonthWork = money(monthStd.trim());
           const monFriTotal = countWorkdaysInSpan(yearNum, idx, 1, daysInMonth, 'mon_fri');

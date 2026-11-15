@@ -601,4 +601,25 @@ describe('calculateLeaveBalance (#3348)', () => {
     });
     expect(justOverHalf).toMatchObject({ eligibleMonths: 11, entitlementDays: '11' });
   });
+
+  it('keeps working days and unpaid leave in the same unit across partial-month workweek and workedDaysByMonth inputs', () => {
+    // July 16..31 2026 has 14 Mon-Sat days; 1 unpaid day leaves 13 working days, meeting 13/26 = 0.5 identically either way.
+    const viaSchedule = calculateLeaveBalance({
+      year: '2026',
+      category: 'standard',
+      hireDate: '2026-07-16',
+      workweek: 'mon_sat',
+      standardWorkingDays: '26',
+      entries: [{ kind: 'unpaid_leave', month: '2026-07', days: '1' }],
+    });
+    const viaWorked = calculateLeaveBalance({
+      year: '2026',
+      category: 'standard',
+      hireDate: '2026-07-16',
+      standardWorkingDays: '26',
+      workedDaysByMonth: { '2026-07': '13' },
+    });
+    expect(viaSchedule).toMatchObject({ eligibleMonths: 6, entitlementDays: '6' });
+    expect(viaWorked).toMatchObject({ eligibleMonths: 6, entitlementDays: '6' });
+  });
 });

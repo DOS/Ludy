@@ -423,5 +423,35 @@ describe('parseTimekeepingSheet (#3348)', () => {
     const rateOnly = parseTimekeepingSheet('Employee Code\tNormal day OT rate\nNV01\t1.5\n', { month: '2026-08' });
     expect(rateOnly.rows).toEqual([]);
     expect(rateOnly.errors.map((e) => e.code)).toContain('missing_timekeeping_columns');
+
+    // Percentage rate headers ("OT ngày thường (%)") are ignored, while tier-annotated hours headers ("OT 150%") remain usable.
+    const percentRate = parseTimekeepingSheet(
+      'Ma NV\tOT ngày thường (%)\tGiờ làm thêm ngày thường\nNV01\t150\t8\n',
+      { month: '2026-08' },
+    );
+    expect(percentRate.errors).toEqual([]);
+    expect(percentRate.warnings).toEqual([]);
+    expect(percentRate.columns.normalDayOtHours).toBe(2);
+    expect(percentRate.rows[0]?.overtime).toEqual([{ dayKind: 'normal_day', night: false, hours: '8' }]);
+
+    // Reject minute/second unit columns instead of misinterpreting minutes as hours or days.
+    const minuteColumns = parseTimekeepingSheet(
+      'Employee Code\tNormal day OT (minutes)\tUnpaid leave (minutes)\tNghỉ không lương (phút)\nNV01\t120\t120\t60\n',
+      { month: '2026-08' },
+    );
+    expect(minuteColumns.rows).toEqual([]);
+    expect(minuteColumns.errors.map((e) => [e.code, e.column])).toEqual([
+      ['incompatible_column_unit', 'normalDayOtHours'],
+      ['incompatible_column_unit', 'unpaidLeaveDays'],
+      ['incompatible_column_unit', 'unpaidLeaveDays'],
+    ]);
+
+    // Delimiter scoring penalizes residual tabs in recognized cells before overflowCount so structural TSV errors surface.
+    const tsvExtraWithNotesComma = parseTimekeepingSheet('Employee code, ID\tUnpaid leave\nE01\t2\tNotes,3\n', {
+      month: '2026-08',
+    });
+    expect(tsvExtraWithNotesComma.delimiter).toBe('\t');
+    expect(tsvExtraWithNotesComma.rows).toEqual([]);
+    expect(tsvExtraWithNotesComma.errors.map((e) => e.code)).toEqual(['extra_columns']);
   });
 });
