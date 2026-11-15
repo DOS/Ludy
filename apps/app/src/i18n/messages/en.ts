@@ -254,9 +254,9 @@ export const en = {
         oneUnanswered: '{provider, select, facebook_page {A customer on Facebook is} instagram {A customer on Instagram is} zalo_oa {A customer on Zalo is} telegram {A customer on Telegram is} whatsapp {A customer on WhatsApp is} other {A customer is}} waiting for a reply',
       },
       projects: {
-        taskOverdue: 'A project task assigned to your seat is overdue',
-        taskOverdueDays: 'A project task assigned to your seat is {days, plural, one {# day} other {# days}} overdue',
-        taskDueToday: 'A project task assigned to your seat is due today',
+        taskOverdue: 'A project task for you is overdue',
+        taskOverdueDays: 'A project task for you is {days, plural, one {# day} other {# days}} overdue',
+        taskDueToday: 'A project task for you is due today',
         ownerTaskOverdue: 'A task in a project you own is overdue',
         ownerTaskOverdueDays: 'A task in a project you own is {days, plural, one {# day} other {# days}} overdue',
         vacantSeat: 'A task in a project you own is assigned to a vacant seat',

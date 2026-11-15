@@ -46,7 +46,7 @@ describe('projects.today pure projection (#2596)', () => {
         row({ taskId: taskId(1), due: twoDaysLate, ownerUserId: ME }),
         row({ taskId: taskId(2), due: twoHoursLate, ownerUserId: OTHER }),
       ],
-      { userId: ME, now: NOW },
+      { userId: ME, role: 'member', now: NOW },
     );
 
     expect(items).toEqual([
@@ -80,11 +80,11 @@ describe('projects.today pure projection (#2596)', () => {
     // 2026-11-11 08:00:00+07:00 (tomorrow in VN)
     const dueTomorrowVn = new Date('2026-11-11T01:00:00.000Z');
 
-    const items = projectsTodayItemsOf(
+    const memberItems = projectsTodayItemsOf(
       [
         row({ taskId: taskId(1), due: dueTonightVn }),
         row({ taskId: taskId(2), due: dueTomorrowVn }),
-        // Unassigned root task owned by user is not on a member seat -> not a member deadline
+        // Unassigned root task owned by a member project owner is not on a member seat -> not a member deadline
         row({
           taskId: taskId(3),
           ownerUserId: ME,
@@ -94,14 +94,40 @@ describe('projects.today pure projection (#2596)', () => {
           due: dueTonightVn,
         }),
       ],
-      { userId: ME, now: vnMorning },
+      { userId: ME, role: 'member', now: vnMorning },
     );
 
-    expect(items).toEqual([
+    expect(memberItems).toEqual([
       {
         kind: 'deadline',
         app: 'projects',
         id: `due:${taskId(1)}`,
+        title: { key: 'projects.taskDueToday', params: {} },
+        dueAt: dueTonightVn.toISOString(),
+        href: `/projects/${PROJECT_ID}`,
+      },
+    ]);
+
+    // Solo org owner with no seats sees unassigned due-today tasks without triggering vacantSeat.
+    const soloOwnerItems = projectsTodayItemsOf(
+      [
+        row({
+          taskId: taskId(3),
+          ownerUserId: ME,
+          assigneePositionId: null,
+          holderUserId: null,
+          positionStatus: null,
+          due: dueTonightVn,
+        }),
+      ],
+      { userId: ME, role: 'owner', now: vnMorning },
+    );
+
+    expect(soloOwnerItems).toEqual([
+      {
+        kind: 'deadline',
+        app: 'projects',
+        id: `due:${taskId(3)}`,
         title: { key: 'projects.taskDueToday', params: {} },
         dueAt: dueTonightVn.toISOString(),
         href: `/projects/${PROJECT_ID}`,
@@ -177,8 +203,17 @@ describe('projects.today pure projection (#2596)', () => {
           positionStatus: 'archived',
           due: lateOther,
         }),
+        // Archived unheld seat -> NOT a vacant seat
+        row({
+          taskId: taskId(9),
+          ownerUserId: ME,
+          assigneePositionId: SEAT_VACANT,
+          holderUserId: null,
+          holderAgentId: null,
+          positionStatus: 'archived',
+        }),
       ],
-      { userId: ME, now: NOW },
+      { userId: ME, role: 'member', now: NOW },
     );
 
     expect(items.map((i) => `${i.id}:${i.title.key}`)).toEqual([
@@ -187,6 +222,50 @@ describe('projects.today pure projection (#2596)', () => {
       `vacant:${taskId(4)}:projects.vacantSeat`,
     ]);
     expect(items.find((i) => i.id === `waiting:${taskId(2)}`)?.title.params).toEqual({ days: 3 });
+  });
+
+  it('falls back to org owners when project owner_user_id is null and returns [] for viewers', () => {
+    const late = new Date(NOW.getTime() - 2 * 86_400_000);
+    const waiting3Days = new Date(NOW.getTime() - 3 * 86_400_000);
+    const orphanedRows = [
+      row({
+        taskId: taskId(1),
+        ownerUserId: null,
+        assigneePositionId: SEAT_AGENT,
+        holderUserId: OTHER,
+        due: late,
+      }),
+      row({
+        taskId: taskId(2),
+        ownerUserId: null,
+        status: 'waiting',
+        updatedAt: waiting3Days,
+        assigneePositionId: SEAT_AGENT,
+        holderUserId: OTHER,
+      }),
+      row({
+        taskId: taskId(3),
+        ownerUserId: null,
+        assigneePositionId: SEAT_VACANT,
+        holderUserId: null,
+        holderAgentId: null,
+      }),
+    ];
+
+    expect(projectsTodayItemsOf(orphanedRows, { userId: ME, role: 'owner', now: NOW }).map((i) => i.id)).toEqual([
+      `overdue:${taskId(1)}`,
+      `waiting:${taskId(2)}`,
+      `vacant:${taskId(3)}`,
+    ]);
+    expect(projectsTodayItemsOf(orphanedRows, { userId: ME, role: 'admin', now: NOW })).toEqual([]);
+    expect(projectsTodayItemsOf(orphanedRows, { userId: ME, role: 'member', now: NOW })).toEqual([]);
+
+    // Even if a demoted viewer still owns a project or holds a seat, projects.today emits nothing actionable.
+    const viewerRows = [
+      row({ taskId: taskId(4), ownerUserId: ME, due: late }),
+      row({ taskId: taskId(5), ownerUserId: ME, status: 'waiting', updatedAt: waiting3Days }),
+    ];
+    expect(projectsTodayItemsOf(viewerRows, { userId: ME, role: 'viewer', now: NOW })).toEqual([]);
   });
 
   it('caps output at TODAY_ITEMS_MAX with a trailing projects.more overflow item', () => {
@@ -198,7 +277,7 @@ describe('projects.today pure projection (#2596)', () => {
       }),
     );
 
-    const items = projectsTodayItemsOf(rows, { userId: ME, now: NOW });
+    const items = projectsTodayItemsOf(rows, { userId: ME, role: 'member', now: NOW });
     expect(items).toHaveLength(TODAY_ITEMS_MAX);
     expect(items.at(-1)).toEqual({
       kind: 'flag',

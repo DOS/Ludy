@@ -242,6 +242,51 @@ suite('projects.today on PostgreSQL (#2596)', () => {
         href: `/projects/${fixedProjId}`,
       },
     ]);
+
+    // Solo owner OPC with zero seats sees unassigned overdue and due-today tasks without triggering vacantSeat.
+    const soloOwner = await person('solo-owner');
+    const soloOrg = await createOrg(rt, asUser(soloOwner.userId), 'Hộ kinh doanh Solo');
+    const { projectId: soloProjId } = await exec<{ projectId: string }>(soloOrg.orgId, soloOwner.userId, 'projects.project.create', {
+      name: 'Việc cửa hàng',
+    });
+    const { taskId: soloOverdueId } = await exec<{ taskId: string }>(soloOrg.orgId, soloOwner.userId, 'projects.task.create', {
+      projectId: soloProjId,
+      title: 'Đặt hàng quá hạn',
+      assigneePositionId: null,
+      due: fixedOverdue,
+    });
+    const { taskId: soloDueTodayId } = await exec<{ taskId: string }>(soloOrg.orgId, soloOwner.userId, 'projects.task.create', {
+      projectId: soloProjId,
+      title: 'Kiểm kê hôm nay',
+      assigneePositionId: null,
+      due: fixedDueToday,
+    });
+    await exec(soloOrg.orgId, soloOwner.userId, 'projects.task.create', {
+      projectId: soloProjId,
+      title: 'Việc không hạn',
+      assigneePositionId: null,
+    });
+
+    const soloItems = zTodayItems.parse(await todayAt(soloOrg.orgId, soloOwner.userId, '2026-11-10T10:00:00+07:00'));
+    expect(soloItems).toEqual([
+      {
+        kind: 'flag',
+        app: 'projects',
+        id: `overdue:${soloOverdueId}`,
+        title: { key: 'projects.taskOverdueDays', params: { days: 2 } },
+        severity: 'warn',
+        dueAt: fixedOverdue,
+        href: `/projects/${soloProjId}`,
+      },
+      {
+        kind: 'deadline',
+        app: 'projects',
+        id: `due:${soloDueTodayId}`,
+        title: { key: 'projects.taskDueToday', params: {} },
+        dueAt: fixedDueToday,
+        href: `/projects/${soloProjId}`,
+      },
+    ]);
   });
 
   it('shows overdue, vacant-seat and 3-day waiting tasks to the project owner, deduplicates, and ignores excluded items (AC 2)', async () => {
@@ -401,6 +446,17 @@ suite('projects.today on PostgreSQL (#2596)', () => {
     expect(await todayAt(org.orgId, orgOwner.userId)).toEqual([]);
     // Cross-org isolation: otherOrg sees nothing.
     expect(await todayAt(otherOrg.orgId, otherOrgOwner.userId)).toEqual([]);
+
+    // Removing the project owner sets owner_user_id = NULL and vacates projOwnerSeat; orgOwner inherits the flags.
+    await execMfa(org.orgId, orgOwner.userId, 'kernel.member.remove', { userId: projOwner.userId });
+    const inheritedItems = zTodayItems.parse(await todayAt(org.orgId, orgOwner.userId));
+    expect(inheritedItems.map((i) => `${i.id}:${i.title.key}`)).toEqual([
+      `overdue:${coworkerOverdueId}:projects.ownerTaskOverdueDays`,
+      `overdue:${bothOverdueId}:projects.ownerTaskOverdue`,
+      `waiting:${stuckWaitingId}:projects.waitingStuck`,
+      `vacant:${bothOverdueId}:projects.vacantSeat`,
+      `vacant:${vacantTaskId}:projects.vacantSeat`,
+    ]);
   });
 
   it('respects le_scope for entity-limited members and viewers, and writes zero rows (AC 3)', async () => {
@@ -460,6 +516,7 @@ suite('projects.today on PostgreSQL (#2596)', () => {
     // Seed tasks in defaultEntity (hidden from scopedMember), branchEntity (visible), and org-wide NULL (visible).
     let hiddenTaskId = '';
     let visibleBranchTaskId = '';
+    let orgWideTaskId = '';
     await withAdmin(async (c) => {
       hiddenTaskId = (
         await c.query<{ id: string }>(
@@ -472,12 +529,20 @@ suite('projects.today on PostgreSQL (#2596)', () => {
         await c.query<{ id: string }>(
           `INSERT INTO crove_kernel.task (org_id, title, assignee_position_id, status, due, source, created_by_type, legal_entity_id, updated_at)
            VALUES ($1, 'Việc chi nhánh được xem', $2, 'todo', $3, 'human', 'user', $4, $5) RETURNING id`,
-          [org.orgId, scopedSeat, new Date(NOW_MS - DAY_MS), branchEntityId, new Date(NOW_MS - DAY_MS)],
+          [org.orgId, scopedSeat, new Date(NOW_MS - 2 * DAY_MS), branchEntityId, new Date(NOW_MS - 2 * DAY_MS)],
+        )
+      ).rows[0]?.id as string;
+      orgWideTaskId = (
+        await c.query<{ id: string }>(
+          `INSERT INTO crove_kernel.task (org_id, title, assignee_position_id, status, due, source, created_by_type, legal_entity_id, updated_at)
+           VALUES ($1, 'Việc chung toàn tổ chức', $2, 'todo', $3, 'human', 'user', NULL, $4) RETURNING id`,
+          [org.orgId, scopedSeat, new Date(NOW_MS - DAY_MS), new Date(NOW_MS - DAY_MS)],
         )
       ).rows[0]?.id as string;
     });
     await exec(org.orgId, owner.userId, 'projects.task.add', { projectId, taskId: hiddenTaskId });
     await exec(org.orgId, owner.userId, 'projects.task.add', { projectId, taskId: visibleBranchTaskId });
+    await exec(org.orgId, owner.userId, 'projects.task.add', { projectId, taskId: orgWideTaskId });
 
     // Record audit and outbox counts before read queries.
     const countsBefore = await withAdmin(async (c) => {
@@ -486,18 +551,22 @@ suite('projects.today on PostgreSQL (#2596)', () => {
       return { audit: Number(audit.rows[0]?.n ?? 0), outbox: Number(outbox.rows[0]?.n ?? 0) };
     });
 
-    // Plain viewer has no seats and owns no projects -> sees nothing.
+    // Plain viewer sees nothing.
     expect(await todayAt(org.orgId, plainViewer.userId)).toEqual([]);
 
-    // Scoped member sees only the branch task, never the hidden default-entity overdue/waiting task.
+    // Scoped member sees branch and org-wide tasks, never the hidden default-entity overdue/waiting task.
     const scopedItems = zTodayItems.parse(await todayAt(org.orgId, scopedMember.userId));
-    expect(scopedItems.map((i) => i.id)).toEqual([`overdue:${visibleBranchTaskId}`]);
+    expect(scopedItems.map((i) => i.id)).toEqual([`overdue:${visibleBranchTaskId}`, `overdue:${orgWideTaskId}`]);
 
-    const countsAfter = await withAdmin(async (c) => {
+    const countsAfterReads = await withAdmin(async (c) => {
       const audit = await c.query<{ n: string }>('SELECT count(*)::text AS n FROM crove_kernel.audit_event WHERE org_id = $1', [org.orgId]);
       const outbox = await c.query<{ n: string }>('SELECT count(*)::text AS n FROM crove_kernel.outbox_event WHERE org_id = $1', [org.orgId]);
       return { audit: Number(audit.rows[0]?.n ?? 0), outbox: Number(outbox.rows[0]?.n ?? 0) };
     });
-    expect(countsAfter).toEqual(countsBefore);
+    expect(countsAfterReads).toEqual(countsBefore);
+
+    // Demoting scopedMember (still project owner and seat holder) to viewer suppresses all actionable alerts.
+    await execMfa(org.orgId, owner.userId, 'kernel.member.change_role', { userId: scopedMember.userId, role: 'viewer' });
+    expect(await todayAt(org.orgId, scopedMember.userId)).toEqual([]);
   });
 });

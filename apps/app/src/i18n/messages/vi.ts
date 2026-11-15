@@ -252,9 +252,9 @@ export const vi = {
         oneUnanswered: '{provider, select, facebook_page {Một khách trên Facebook} instagram {Một khách trên Instagram} zalo_oa {Một khách trên Zalo} telegram {Một khách trên Telegram} whatsapp {Một khách trên WhatsApp} other {Một khách}} đang chờ bạn trả lời',
       },
       projects: {
-        taskOverdue: 'Một việc dự án của vị trí bạn giữ đã quá hạn',
-        taskOverdueDays: 'Một việc dự án của vị trí bạn giữ đã quá hạn {days, plural, other {# ngày}}',
-        taskDueToday: 'Một việc dự án của vị trí bạn giữ đến hạn hôm nay',
+        taskOverdue: 'Một việc dự án của bạn đã quá hạn',
+        taskOverdueDays: 'Một việc dự án của bạn đã quá hạn {days, plural, other {# ngày}}',
+        taskDueToday: 'Một việc dự án của bạn đến hạn hôm nay',
         ownerTaskOverdue: 'Một việc trong dự án bạn phụ trách đã quá hạn',
         ownerTaskOverdueDays: 'Một việc trong dự án bạn phụ trách đã quá hạn {days, plural, other {# ngày}}',
         vacantSeat: 'Một việc trong dự án bạn phụ trách đang giao cho vị trí trống',

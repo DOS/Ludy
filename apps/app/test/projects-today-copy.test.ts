@@ -61,13 +61,13 @@ describe('the Projects items of Home, in words (#2596)', () => {
     const enSay = sayIn('en');
     const viSay = sayIn('vi');
     expect(enSay('today.items.projects.taskOverdueDays', { days: 1 })).toBe(
-      'A project task assigned to your seat is 1 day overdue',
+      'A project task for you is 1 day overdue',
     );
     expect(enSay('today.items.projects.taskOverdueDays', { days: 5 })).toBe(
-      'A project task assigned to your seat is 5 days overdue',
+      'A project task for you is 5 days overdue',
     );
     expect(viSay('today.items.projects.taskOverdueDays', { days: 5 })).toBe(
-      'Một việc dự án của vị trí bạn giữ đã quá hạn 5 ngày',
+      'Một việc dự án của bạn đã quá hạn 5 ngày',
     );
     expect(enSay('today.items.projects.waitingStuck', { days: 3 })).toBe(
       'A task in a project you own has been waiting without an update for 3 days',

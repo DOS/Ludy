@@ -14,6 +14,7 @@ import { defineQuery } from '@crove/kernel-runtime';
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 
 const DAY_MS = 86_400_000;
+const PROJECT_TODAY_ROW_LIMIT = 500;
 export const STUCK_WAITING_DAYS = 3;
 
 export interface ProjectTodayRow {
@@ -43,8 +44,8 @@ function toDate(value: Date | string): Date {
   return value instanceof Date ? value : new Date(value);
 }
 
-function overdueTitle(isMySeat: boolean, overdueDays: number): TodayTitle {
-  if (isMySeat) {
+function overdueTitle(isMine: boolean, overdueDays: number): TodayTitle {
+  if (isMine) {
     return overdueDays >= 1
       ? { key: 'projects.taskOverdueDays', params: { days: overdueDays } }
       : { key: 'projects.taskOverdue', params: {} };
@@ -57,12 +58,15 @@ function overdueTitle(isMySeat: boolean, overdueDays: number): TodayTitle {
 /**
  * Pure projection of visible active-project open task rows into Home TodayItems for one actor.
  * Flags appear in urgency order (overdue -> waiting stuck -> vacant seat), followed by deadlines due today.
+ * Viewers cannot manage projects or update task state, so they receive no actionable items.
  */
 export function projectsTodayItemsOf(
   rows: readonly ProjectTodayRow[],
-  options: { userId: string; now: Date },
+  options: { userId: string; role: MemberRole | null; now: Date },
 ): TodayItem[] {
-  const { userId, now } = options;
+  const { userId, role, now } = options;
+  if (role === null || role === 'viewer') return [];
+  const isOwner = role === 'owner';
   const nowMs = now.getTime();
   const todayVn = vietnamToday(now);
   const stuckCutoffMs = nowMs - STUCK_WAITING_DAYS * DAY_MS;
@@ -72,10 +76,13 @@ export function projectsTodayItemsOf(
   for (const row of rows) {
     if (row.status === 'done' || row.status === 'cancelled') continue;
 
+    // A task with no seat (assignee_position_id IS NULL) belongs to the org's owners (docs/plan/projects.md §3).
     const isMySeat =
       row.assigneePositionId !== null && row.holderUserId === userId && row.positionStatus !== 'archived';
-    const isProjectOwner = row.ownerUserId === userId;
-    if (!isMySeat && !isProjectOwner) continue;
+    const isMine = isMySeat || (isOwner && row.assigneePositionId === null);
+    // Removed project owners leave owner_user_id NULL, which falls back to the org's owners.
+    const isProjectOwner = row.ownerUserId === userId || (row.ownerUserId === null && isOwner);
+    if (!isMine && !isProjectOwner) continue;
 
     const href = `/projects/${row.projectId}`;
     const dueDate = row.due === null ? null : toDate(row.due);
@@ -94,13 +101,13 @@ export function projectsTodayItemsOf(
             kind: 'flag',
             app: 'projects',
             id: `overdue:${row.taskId}`,
-            title: overdueTitle(isMySeat, overdueDays),
+            title: overdueTitle(isMine, overdueDays),
             severity: 'warn',
             dueAt: dueDate.toISOString(),
             href,
           },
         });
-      } else if (isMySeat && vietnamToday(dueDate) === todayVn) {
+      } else if (isMine && vietnamToday(dueDate) === todayVn) {
         prioritized.push({
           priority: 3,
           sortMs: dueMs,
@@ -134,10 +141,11 @@ export function projectsTodayItemsOf(
       });
     }
 
-    // An unassigned root task (assignee_position_id IS NULL) belongs to no seat and is not a vacant seat.
+    // An unassigned root task (assignee_position_id IS NULL) or archived seat is not a vacant seat.
     if (
       isProjectOwner &&
       row.assigneePositionId !== null &&
+      row.positionStatus !== 'archived' &&
       row.holderUserId === null &&
       row.holderAgentId === null
     ) {
@@ -189,12 +197,16 @@ export function projectsTodayItemsOf(
 export const projectsToday = defineQuery({
   name: 'projects.today',
   // `now` is only passed by deterministic tests; Home passes {}.
-  input: z.object({ now: z.iso.datetime().optional() }),
+  input: z.object({ now: z.iso.datetime({ offset: true }).optional() }),
   access: ALL,
   handler: async (ctx, input): Promise<TodayItem[]> => {
-    if (ctx.actor.type !== 'user' || ctx.role === null) return [];
+    if (ctx.actor.type !== 'user' || ctx.role === null || ctx.role === 'viewer') return [];
     const userId = ctx.actor.userId;
+    const isOwner = ctx.role === 'owner';
     const now = input.now ? new Date(input.now) : new Date();
+    const todayVn = vietnamToday(now);
+    const vnTomorrowStart = new Date(Date.parse(`${todayVn}T00:00:00.000+07:00`) + DAY_MS);
+    const stuckCutoff = new Date(now.getTime() - STUCK_WAITING_DAYS * DAY_MS);
 
     const rows = await ctx.trx
       .selectFrom('crove_projects.project_task as pt')
@@ -227,14 +239,30 @@ export const projectsToday = defineQuery({
         eb.or([
           eb('p.owner_user_id', '=', userId),
           eb.and([eb('pos.holder_user_id', '=', userId), eb('pos.status', '<>', 'archived')]),
+          ...(isOwner
+            ? [eb('p.owner_user_id', 'is', null), eb('t.assignee_position_id', 'is', null)]
+            : []),
+        ]),
+      )
+      .where((eb) =>
+        eb.or([
+          eb.and([eb('t.due', 'is not', null), eb('t.due', '<', vnTomorrowStart)]),
+          eb.and([eb('t.status', '=', 'waiting'), eb('t.updated_at', '<=', stuckCutoff)]),
+          eb.and([
+            eb('t.assignee_position_id', 'is not', null),
+            eb('pos.holder_user_id', 'is', null),
+            eb('pos.holder_agent_id', 'is', null),
+            eb('pos.status', '<>', 'archived'),
+          ]),
         ]),
       )
       .orderBy(sql`t.due ASC NULLS LAST`)
       .orderBy('t.updated_at', 'asc')
       .orderBy('t.created_at', 'asc')
       .orderBy('t.id', 'asc')
+      .limit(PROJECT_TODAY_ROW_LIMIT)
       .execute();
 
-    return projectsTodayItemsOf(rows, { userId, now });
+    return projectsTodayItemsOf(rows, { userId, role: ctx.role, now });
   },
 });
