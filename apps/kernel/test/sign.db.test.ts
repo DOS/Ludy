@@ -11,7 +11,7 @@ import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { decodePdfSealInput, type ExtractClient, type PdfSealInput } from '@crove/extract-contract';
 import { buildKernelCommands, kernelQueries } from '@crove/kernel';
 import type { PersonalDataErasure, PersonalDataResult } from '@crove/kernel-contract';
-import { Runtime, sha256Hex, type AgentActor, type BlobStore } from '@crove/kernel-runtime';
+import { Runtime, fileKey, sha256Hex, type AgentActor, type BlobStore } from '@crove/kernel-runtime';
 import { financeCommands, financeQueries } from '@crove/mod-finance';
 import { signCommands, signManifest, signQueries } from '@crove/mod-sign';
 import { createAuthenticator } from '../src/auth.ts';
@@ -1097,6 +1097,19 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
       await c.query("UPDATE crove_sign.envelope SET status = 'completed', completed_at = now() WHERE org_id = $1 AND id = $2", [regOrgId, mainEnv.envelopeId]);
       await c.query('COMMIT');
     });
+    await expect(
+      workerRuntime.execute(
+        'sign.envelope.seal_complete',
+        {
+          envelopeId: mainEnv.envelopeId,
+          outcome: 'sealed',
+          certificateCode: 'CS-TEST-0000-0000',
+          sealedFileId: sourceFileId,
+          certificateFileId: sourceFileId,
+        },
+        { actor: SIGN_ACTOR, orgId: regOrgId },
+      ),
+    ).rejects.toMatchObject({ code: 'SIGN_INVALID_SEALED_FILE', status: 422 });
     const sealDone = await runSignPdfSealJob({ workerDb, runtime: workerRuntime, store, extract: mockExtract() }, { orgId: regOrgId, envelopeId: mainEnv.envelopeId });
     expect(sealDone.status).toBe('sealed');
 
@@ -1145,5 +1158,54 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     });
     expect(onRecovered.inspect).toBeGreaterThanOrEqual(1);
     expect(onInspectIds).toContain(pendingEnv.envelopeId);
+
+    // 7. Inbound email attaching a colliding sign_document PDF keeps the sign source as duplicate without failing valid attachments.
+    const invoicePdf = pdfFixture('inbound-invoice');
+    const invoiceSha = sha256Hex(invoicePdf);
+    const invoiceKey = fileKey(regOrgId, invoiceSha);
+    const invoiceGen = await store.put(invoiceKey, invoicePdf);
+    const inbound = await workerRuntime.execute<{ duplicate: boolean; fileIds: string[] }>(
+      'kernel.inbound.receive',
+      {
+        messageId: `<sign-colliding-${randomUUID()}@mail.test>`,
+        from: 'sender@example.com',
+        subject: 'Signed contract and invoice',
+        files: [
+          {
+            filename: 'signed-copy.pdf',
+            contentType: 'application/pdf',
+            sizeBytes: pdfFixture('regressions').byteLength,
+            sha256: meta.source_sha256,
+            storageKey: meta.source_storage_key,
+            generation: meta.source_generation,
+            source: 'email',
+          },
+          {
+            filename: 'invoice.pdf',
+            contentType: 'application/pdf',
+            sizeBytes: invoicePdf.byteLength,
+            sha256: invoiceSha,
+            storageKey: invoiceKey,
+            generation: invoiceGen,
+            source: 'email',
+          },
+        ],
+      },
+      { actor: { type: 'system', component: 'inbound.email' }, orgId: regOrgId },
+    );
+    expect(inbound.duplicate).toBe(false);
+    expect(inbound.fileIds).toHaveLength(2);
+    const collidingRow = await admin(async (c) =>
+      (await c.query<{ source: string }>('SELECT source FROM crove_kernel.file WHERE org_id = $1 AND id = $2', [regOrgId, sourceFileId])).rows[0],
+    );
+    expect(collidingRow?.source).toBe('sign_document');
+    const newInvoiceRow = await admin(async (c) =>
+      (await c.query<{ source: string }>('SELECT source FROM crove_kernel.file WHERE org_id = $1 AND id = $2', [regOrgId, inbound.fileIds[1]])).rows[0],
+    );
+    expect(newInvoiceRow?.source).toBe('email');
+
+    const directConflict = await uploadFile(app, owner, pdfFixture('regressions'), 'conflict.pdf', 'document', 'application/pdf', regSlug);
+    expect(directConflict.status).toBe(409);
+    expect(directConflict.body?.code).toBe('FILE_SOURCE_CONFLICT');
   });
 });

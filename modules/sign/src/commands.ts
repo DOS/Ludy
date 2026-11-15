@@ -14,7 +14,7 @@ import {
 } from '@crove/db';
 import { EXTRACT_LIMITS } from '@crove/extract-contract';
 import { tableWrite, zId } from '@crove/kernel-contract';
-import { DomainError, GENERATION_PATTERN, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
 import { appendSigningEvent } from './events.ts';
 import { signManifest } from './manifest.ts';
 import { generateRawSigningToken, hashSigningToken } from './sealing.ts';
@@ -27,7 +27,6 @@ const EXPIRE_SWEEP_BATCH = 100;
 const NORM_SCALE = 1_000_000;
 const MAX_ROUTING_ORDER = 100;
 
-const zSha256Hex = z.string().regex(/^[0-9a-f]{64}$/, '64-character lowercase sha256 hex');
 const zNormMin0 = z.number().finite().min(0).lt(1);
 const zNormSpan = z.number().finite().gt(0).lte(1);
 
@@ -1250,21 +1249,13 @@ export const envelopeVoid = defineCommand({
   },
 });
 
-const zStoredEvidenceFile = z.strictObject({
-  filename: z.string().min(1).max(255),
-  sizeBytes: z.number().int().positive(),
-  sha256: zSha256Hex,
-  storageKey: z.string().min(1),
-  generation: z.string().regex(GENERATION_PATTERN),
-});
-
 const zEnvelopeSealComplete = z.discriminatedUnion('outcome', [
   z.strictObject({
     envelopeId: zId,
     outcome: z.literal('sealed'),
     certificateCode: z.string().min(1).max(64),
-    sealedFile: zStoredEvidenceFile,
-    certificateFile: zStoredEvidenceFile,
+    sealedFileId: zId,
+    certificateFileId: zId,
   }),
   z.strictObject({
     envelopeId: zId,
@@ -1276,13 +1267,27 @@ const zEnvelopeSealComplete = z.discriminatedUnion('outcome', [
 export const envelopeSealComplete = defineCommand({
   name: 'sign.envelope.seal_complete',
   input: zEnvelopeSealComplete,
-  // Runs nested kernel.file.ingest (same rule as social.media.save_stock, #1698: static job-egress check treats
-  // any caller of kernel.file.ingest as reaching the extraction queue's provider egress).
-  risk: 'R2',
-  sideEffect: 'external',
+  risk: 'R1',
+  sideEffect: 'internal',
   access: 'system',
   target,
-  // Omit writes: calls nested kernel.file.ingest (which writes crove_kernel.file with no writes declaration of its own).
+  writes: [
+    tableWrite(signManifest.tables, 'crove_sign', 'envelope', [
+      'sealed_file_id',
+      'sealed_storage_key',
+      'sealed_generation',
+      'sealed_sha256',
+      'certificate_file_id',
+      'certificate_storage_key',
+      'certificate_generation',
+      'certificate_sha256',
+      'certificate_code',
+      'seal_status',
+      'version',
+      'updated_at',
+    ]),
+    SIGNING_EVENT_WRITE,
+  ],
   handler: async (ctx, input) => {
     assertSystem(ctx);
     const row = await lockEnvelope(ctx, input.envelopeId);
@@ -1335,29 +1340,39 @@ export const envelopeSealComplete = defineCommand({
       };
     }
 
-    const sealedIngest = await ctx.run<{ fileId: string; duplicate: boolean }>('kernel.file.ingest', {
-      ...input.sealedFile,
-      contentType: 'application/pdf',
-      source: 'sign_sealed',
-    });
-    const certIngest = await ctx.run<{ fileId: string; duplicate: boolean }>('kernel.file.ingest', {
-      ...input.certificateFile,
-      contentType: 'application/json',
-      source: 'sign_certificate',
-    });
+    const [sealedFile, certFile] = await Promise.all([
+      ctx.trx
+        .selectFrom('crove_kernel.file')
+        .select(['id', 'source', 'storage_key', 'generation', 'sha256'])
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.sealedFileId)
+        .executeTakeFirst(),
+      ctx.trx
+        .selectFrom('crove_kernel.file')
+        .select(['id', 'source', 'storage_key', 'generation', 'sha256'])
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.certificateFileId)
+        .executeTakeFirst(),
+    ]);
+    if (!sealedFile || sealedFile.source !== 'sign_sealed') {
+      throw new DomainError('SIGN_INVALID_SEALED_FILE', 422, 'Sealed PDF file reference is invalid');
+    }
+    if (!certFile || certFile.source !== 'sign_certificate') {
+      throw new DomainError('SIGN_INVALID_CERTIFICATE_FILE', 422, 'Certificate file reference is invalid');
+    }
 
     const nextVersion = row.version + 1;
     await ctx.trx
       .updateTable('crove_sign.envelope')
       .set({
-        sealed_file_id: sealedIngest.fileId,
-        sealed_storage_key: input.sealedFile.storageKey,
-        sealed_generation: input.sealedFile.generation,
-        sealed_sha256: input.sealedFile.sha256,
-        certificate_file_id: certIngest.fileId,
-        certificate_storage_key: input.certificateFile.storageKey,
-        certificate_generation: input.certificateFile.generation,
-        certificate_sha256: input.certificateFile.sha256,
+        sealed_file_id: sealedFile.id,
+        sealed_storage_key: sealedFile.storage_key,
+        sealed_generation: sealedFile.generation,
+        sealed_sha256: sealedFile.sha256,
+        certificate_file_id: certFile.id,
+        certificate_storage_key: certFile.storage_key,
+        certificate_generation: certFile.generation,
+        certificate_sha256: certFile.sha256,
         certificate_code: input.certificateCode,
         seal_status: 'sealed',
         version: nextVersion,
@@ -1373,25 +1388,25 @@ export const envelopeSealComplete = defineCommand({
       eventType: 'envelope_sealed',
       actorType: 'system',
       actorLabel: actorLabelOf(ctx),
-      documentSha256: input.sealedFile.sha256,
+      documentSha256: sealedFile.sha256,
       payloadJson: {
         certificateCode: input.certificateCode,
-        sealedSha256: input.sealedFile.sha256,
-        certificateSha256: input.certificateFile.sha256,
+        sealedSha256: sealedFile.sha256,
+        certificateSha256: certFile.sha256,
       },
       occurredAt: ctx.now,
     });
     ctx.audit({
       envelopeId: row.id,
       sealStatus: 'sealed',
-      sealedFileId: sealedIngest.fileId,
-      certificateFileId: certIngest.fileId,
+      sealedFileId: sealedFile.id,
+      certificateFileId: certFile.id,
     });
     return {
       envelopeId: row.id,
       sealStatus: 'sealed' as const,
-      sealedFileId: sealedIngest.fileId,
-      certificateFileId: certIngest.fileId,
+      sealedFileId: sealedFile.id,
+      certificateFileId: certFile.id,
       certificateCode: input.certificateCode,
     };
   },

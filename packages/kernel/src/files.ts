@@ -123,7 +123,10 @@ export async function ingestFileRow(ctx: CommandContext, input: IngestFile, crea
     if (input.source === 'import' && existing.source !== 'import') {
       throw new DomainError('FILE_IS_NOT_IMPORT', 409, 'Tệp này đã có trong chứng từ của tổ chức nên không nhập làm danh sách được; hãy xuất lại danh sách từ cổng thuế rồi tải lên');
     }
-    if ((isSignSource(input.source) || isSignSource(existing.source)) && input.source !== existing.source) {
+    // Emailed copies (direct attachments or entries inside an emailed archive) of an existing eSign artifact stay a
+    // duplicate (preserving the sign source so one colliding PDF never fails the whole inbound message, #506/#3323).
+    // Direct uploads or sign writes with mismatched sources still fail with FILE_SOURCE_CONFLICT.
+    if ((isSignSource(input.source) || (isSignSource(existing.source) && input.source !== 'email')) && input.source !== existing.source) {
       throw new DomainError('FILE_SOURCE_CONFLICT', 409, 'Tệp này đã tồn tại với mục đích khác trong tổ chức; hãy dùng tệp khác');
     }
     // A document whose bytes were first uploaded as a post image is still read as a document, once.

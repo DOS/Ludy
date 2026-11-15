@@ -279,26 +279,40 @@ export async function runSignPdfSealJob(
   );
 
   const base = safeArtifactBase(envelope.title);
+  const sealedIngest = await deps.runtime.execute<{ fileId: string }>(
+    'kernel.file.ingest',
+    {
+      filename: `${base}-signed.pdf`,
+      contentType: 'application/pdf',
+      sizeBytes: sealedBytes.byteLength,
+      sha256: sealedSha256,
+      storageKey: sealedStorageKey,
+      generation: sealedGeneration,
+      source: 'sign_sealed',
+    },
+    options,
+  );
+  const certIngest = await deps.runtime.execute<{ fileId: string }>(
+    'kernel.file.ingest',
+    {
+      filename: `${base}-certificate.json`,
+      contentType: 'application/json',
+      sizeBytes: certArtifact.bytes.byteLength,
+      sha256: certArtifact.sha256,
+      storageKey: certStorageKey,
+      generation: certGeneration,
+      source: 'sign_certificate',
+    },
+    options,
+  );
   await deps.runtime.execute(
     'sign.envelope.seal_complete',
     {
       envelopeId: job.envelopeId,
       outcome: 'sealed',
       certificateCode,
-      sealedFile: {
-        filename: `${base}-signed.pdf`,
-        sizeBytes: sealedBytes.byteLength,
-        sha256: sealedSha256,
-        storageKey: sealedStorageKey,
-        generation: sealedGeneration,
-      },
-      certificateFile: {
-        filename: `${base}-certificate.json`,
-        sizeBytes: certArtifact.bytes.byteLength,
-        sha256: certArtifact.sha256,
-        storageKey: certStorageKey,
-        generation: certGeneration,
-      },
+      sealedFileId: sealedIngest.fileId,
+      certificateFileId: certIngest.fileId,
     },
     options,
   );
