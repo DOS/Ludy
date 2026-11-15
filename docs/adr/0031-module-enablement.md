@@ -5,6 +5,7 @@
 - Deciders: owner (JOY)
 - Builds on: ADR-0030 (composition root), plan Decision 10 (entitlements)
 - Tracking: issue #44
+- Amended by: [ADR-0053](0053-per-org-app-enablement.md) (per-org enablement: an org's owner or admin turns apps on and off, one gate with entitlements)
 
 ## Context and problem statement
 
