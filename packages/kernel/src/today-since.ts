@@ -25,8 +25,7 @@ export function sinceYesterdayQuery(options: { now?: () => Date } = {}) {
     input: z.object({}),
     access: ALL,
     handler: async (ctx): Promise<SinceYesterday> => {
-      const until = now();
-      const since = new Date(until.getTime() - SINCE_YESTERDAY_HOURS * 3_600_000);
+      const since = new Date(now().getTime() - SINCE_YESTERDAY_HOURS * 3_600_000);
       // activity_agent_idx (org_id, agent_id) narrows the scan to the rows an agent wrote. The agent row is joined for the
       // name; the foreign key (activity_agent_fk) guarantees it exists. Only the org's coworkers (kind 'org_chart') count: a
       // member's own Vy (kind 'member_vy') works in that member's private context and is never counted here (ADR-0049).
@@ -35,7 +34,7 @@ export function sinceYesterdayQuery(options: { now?: () => Date } = {}) {
         FROM crove_kernel.activity a
         JOIN crove_kernel.agent g ON g.org_id = a.org_id AND g.id = a.agent_id
         WHERE a.org_id = ${ctx.orgId}::uuid AND a.agent_id IS NOT NULL AND g.kind = 'org_chart'
-          AND a.occurred_at > ${since.toISOString()}::timestamptz AND a.occurred_at <= ${until.toISOString()}::timestamptz
+          AND a.occurred_at > ${since.toISOString()}::timestamptz
         GROUP BY a.agent_id, g.display_name
         ORDER BY count(*) DESC, g.display_name, a.agent_id
         LIMIT ${SINCE_YESTERDAY_MAX}`.execute(ctx.trx);

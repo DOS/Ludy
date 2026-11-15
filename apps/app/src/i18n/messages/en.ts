@@ -202,7 +202,7 @@ export const en = {
     open: 'Open',
     since: {
       title: 'Since yesterday',
-      subtitle: 'What your AI coworkers prepared over the last day. You approve each item before anything is sent or spent.',
+      subtitle: 'What your AI coworkers did for you over the last day. Items that need approval wait in your inbox.',
       line: '{name} prepared {count, plural, one {# item} other {# items}} for you',
       open: 'Open',
     },

@@ -200,7 +200,7 @@ export const vi = {
     open: 'Mở',
     since: {
       title: 'Từ hôm qua',
-      subtitle: 'Việc các đồng nghiệp AI đã chuẩn bị trong 24 giờ qua. Bạn duyệt từng việc trước khi gửi hay chi gì.',
+      subtitle: 'Việc các đồng nghiệp AI đã làm cho bạn trong 24 giờ qua. Việc cần duyệt chờ bạn trong hộp duyệt.',
       line: '{name} đã chuẩn bị {count, plural, other {# mục}} cho bạn',
       open: 'Mở',
     },
