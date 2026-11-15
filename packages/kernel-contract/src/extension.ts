@@ -16,7 +16,8 @@ export const EXTENSION_ID_FORMAT = /^[a-p]{32}$/;
 export const zExtensionId = z.string().regex(EXTENSION_ID_FORMAT);
 
 // The ids that may receive a sign-in code when the deployment sets none (EXTENSION_IDS): the Ludy extension's id in the
-// Chrome Web Store (#3010, first upload 2026-11-13; an item keeps its id for life, and the id is public, not a secret).
+// Chrome Web Store (#3010, first upload 2026-11-13; an item keeps its id for life, and the id is public, not a secret). The Edge Add-ons
+// item has its own id, to be added here the same way once the owner has created it (D2, #3181; docs/runbooks/extension-store.md, step E5).
 // Any other id is refused, so an unpacked or self-built extension (its own id, shown at chrome://extensions) needs
 // EXTENSION_IDS on the server it connects to, and a server that sets EXTENSION_IDS uses only that list.
 export const DEFAULT_EXTENSION_IDS: readonly string[] = Object.freeze(['emfhpcbmdbbeomfkdadbellllngmlhmf']);
