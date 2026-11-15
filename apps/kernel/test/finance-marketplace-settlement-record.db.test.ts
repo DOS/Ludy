@@ -430,6 +430,14 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     expect(await rows('SELECT 1 FROM crove_finance.journal_voucher WHERE org_id = ANY($1)', [[o.orgId, o2.orgId]])).toHaveLength(0);
   });
 
+  it('refuses a household settlement whose withheld total is not whole dong, and posts nothing', async () => {
+    const o = await org();
+    await household(o, ['goods']);
+    const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '1000000', delivered: '2026-10-02', tax: '15000.5' }]);
+    await expect(ask(o, settlement)).rejects.toMatchObject({ code: 'MARKETPLACE_SETTLEMENT_NOT_POSTABLE', status: 422 });
+    expect(await rows('SELECT 1 FROM crove_finance.journal_voucher WHERE org_id = $1', [o.orgId])).toHaveLength(0);
+  });
+
   it('refuses an entity of kind household that has no profile in force, rather than treating it as a company', async () => {
     const o = await org();
     await withAdmin((c) => c.query("UPDATE crove_kernel.legal_entity SET kind = 'household' WHERE org_id = $1 AND id = $2", [o.orgId, o.entity]));

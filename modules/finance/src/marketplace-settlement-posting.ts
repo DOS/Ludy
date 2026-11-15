@@ -100,6 +100,8 @@ function settlementProposalLines(input: SettlementProposalInput, map: Pick<Marke
 export function withheldSplit(input: Pick<SettlementProposalInput, 'lines' | 'tax'>): { total: string; vat: string; pit: string } | null {
   const total = money(toMoney(sum(input.lines.map((l) => l.taxWithheld ?? '0'))));
   if (!input.tax || total.isZero()) return null;
+  // The VAT part is rounded and the PIT part is the remainder, so a total that is not whole dong would leave a fractional PIT: refused here, as the payout refuses it, never rounded.
+  if (!total.isInteger()) throw new DomainError('MARKETPLACE_SETTLEMENT_NOT_POSTABLE', 422, 'Thuế sàn đã khấu trừ phải là số đồng nguyên để hạch toán', { what: 'taxWithheld', taxWithheld: toMoney(total) });
   const vatPercent = money(input.tax.vatPercent);
   const rates = vatPercent.plus(money(input.tax.pitPercent));
   if (!rates.greaterThan(0)) throw new DomainError('MARKETPLACE_SETTLEMENT_NOT_POSTABLE', 422, 'Tỷ lệ thuế của ngành nghề không hợp lệ để tách thuế sàn đã khấu trừ', { vatPercent: input.tax.vatPercent, pitPercent: input.tax.pitPercent });

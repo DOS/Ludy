@@ -142,6 +142,12 @@ describe('the tax a platform withheld from a household seller (slice C2)', () =>
   it('refuses a rate pair that cannot split the tax', () => {
     expect(code(() => settlementProposal(taxed('150000', { tax: { vatPercent: '0', pitPercent: '0' } }), maps))).toEqual({ code: 'MARKETPLACE_SETTLEMENT_NOT_POSTABLE', status: 422 });
   });
+  it('refuses a withheld total that is not whole dong, with a rate pair that would round it away', () => {
+    for (const tax of ['100.5', '100.4', '0.5']) {
+      expect(code(() => settlementProposal(taxed(tax, { tax: { vatPercent: '1', pitPercent: '0' } }), maps))).toEqual({ code: 'MARKETPLACE_SETTLEMENT_NOT_POSTABLE', status: 422 });
+      expect(code(() => settlementProposal(taxed(tax), maps))).toEqual({ code: 'MARKETPLACE_SETTLEMENT_NOT_POSTABLE', status: 422 });
+    }
+  });
   it('refuses a malformed or negative tax amount', () => {
     expect(code(() => settlementProposal(taxed('-5'), maps))).toEqual({ code: 'MARKETPLACE_SETTLEMENT_NOT_POSTABLE', status: 422 });
   });
