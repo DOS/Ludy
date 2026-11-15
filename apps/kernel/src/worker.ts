@@ -1222,8 +1222,8 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   }
 
   // A member's minutes webhook (meetings integrations A6, #3164): a sweep every minute hands over the deliveries stored at publish (meeting-hook-sweep.ts), and one job per delivery posts it to the
-  // address the member set (meeting-hook.ts, through the signing helper of mcp-wake.ts). The same rule as the wake-up: without a credential key no secret can be opened, so neither runs.
-  if (wakeBroker && wakeBroker.id !== 'none') {
+  // address the member set (meeting-hook.ts, through the signing helper of mcp-wake.ts). The same rule as the wake-up (without a credential key no secret can be opened, so neither runs), and only when the meetings module is installed: its commands are what the sweep and the job run.
+  if (deps.runtime.installed('meetings') && wakeBroker && wakeBroker.id !== 'none') {
     await boss.work<MeetingHookJob>(QUEUES.meetingHook, { batchSize: 1, includeMetadata: true }, async ([job]) => {
       if (!job) return;
       await runMeetingHookDelivery({ runtime: deps.runtime, broker: wakeBroker }, job.data, { retryCount: job.retryCount, retryLimit: WAKE_RETRY_LIMIT });

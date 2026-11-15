@@ -383,6 +383,20 @@ suite("a member's minutes webhook (A6, #3164)", () => {
     await setHook('recorder', ['title']);
   });
 
+  it('cuts a long text without splitting an emoji, so a publish never fails for the webhook', async () => {
+    await setHook('recorder', ['title', 'summary', 'decisions', 'action_items']);
+    const meetingId = await seedPublishable('recorder', 'Họp emoji');
+    // An action item of 299 characters and one emoji (300 code points, 301 UTF-16 units): the cut at 300 units would leave half the emoji.
+    await sqlAdmin(`UPDATE crove_meetings.action_item SET title = $3 WHERE org_id = $1 AND meeting_id = $2 AND title = 'Kiểm kho'`, [orgId, meetingId, `${'a'.repeat(299)}\u{1F600}`]);
+    await sqlAdmin(`UPDATE crove_meetings.meeting_result SET summary = $3 WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId, `${'b'.repeat(7999)}\u{1F600}`]);
+    await publish('recorder', meetingId);
+    const body = (await deliveries(meetingId))[0]?.body as { data: { summary: string; action_items: Array<{ text: string }> } };
+    expect(body.data.summary).toBe('b'.repeat(7999));
+    expect(body.data.action_items.map((i) => i.text)).toContain('a'.repeat(299));
+    expect(JSON.stringify(body)).not.toMatch(/\\ud[89ab]/i);
+    await setHook('recorder', ['title']);
+  });
+
   it('stops when the member is disabled, leaves, or the meeting is deleted', async () => {
     // A queued event whose meeting is deleted goes with it.
     const m = await seedPublishable('recorder', 'Họp bị xóa');

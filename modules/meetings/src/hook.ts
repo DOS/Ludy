@@ -245,15 +245,20 @@ export async function enqueueMinutesHook(ctx: CommandContext, published: Publish
     // A length the body cannot carry (the meeting row only requires it to be a whole number of seconds, not a day or less) is sent as null: the webhook never blocks a publish.
     length_seconds: meeting.length_seconds !== null && Number.isInteger(meeting.length_seconds) && meeting.length_seconds >= 0 && meeting.length_seconds <= 86400 ? meeting.length_seconds : null,
   };
-  // Each value is cut to what the body carries (the builder's limits), so a long text never fails a publish; nothing is added.
-  if (hook.fields.includes('title') && meeting.title) data.title = meeting.title.slice(0, 300);
-  if (hook.fields.includes('summary') && published.summary) data.summary = published.summary.slice(0, 8000);
-  if (hook.fields.includes('decisions') && published.decisions && published.decisions.length > 0) data.decisions = published.decisions.slice(0, 50).map((d) => d.slice(0, 1000)).filter((d) => d.length > 0);
+  // Each value is cut to what the body carries (the builder's limits, counted in UTF-16 units like the builder), so a long text never fails a publish; nothing is added. A cut never leaves
+  // half of an emoji (a lone surrogate would be refused by the database when the body is stored as jsonb and would fail the publish).
+  const clamp = (text: string, max: number): string => {
+    const cut = text.slice(0, max);
+    return cut.length > 0 && /[\ud800-\udbff]/.test(cut.charAt(cut.length - 1)) ? cut.slice(0, -1) : cut;
+  };
+  if (hook.fields.includes('title') && meeting.title) data.title = clamp(meeting.title, 300);
+  if (hook.fields.includes('summary') && published.summary) data.summary = clamp(published.summary, 8000);
+  if (hook.fields.includes('decisions') && published.decisions && published.decisions.length > 0) data.decisions = published.decisions.slice(0, 50).map((d) => clamp(d, 1000)).filter((d) => d.length > 0);
   if (hook.fields.includes('action_items') && published.items.length > 0) {
     data.action_items = published.items
       .slice(0, 100)
       .filter((i) => i.title.length > 0)
-      .map((i) => ({ text: i.title.slice(0, 300), owner: i.whoDrafted && i.whoDrafted.length > 0 ? i.whoDrafted.slice(0, 200) : null, due: dateOnly(i.whenParsed) }));
+      .map((i) => ({ text: clamp(i.title, 300), owner: i.whoDrafted && i.whoDrafted.length > 0 ? clamp(i.whoDrafted, 200) : null, due: dateOnly(i.whenParsed) }));
   }
   // The strict builder: a key or a value that does not fit is refused. The webhook is optional and never blocks the minutes: a body that cannot be built stores nothing and the publish goes on.
   let text: string;
