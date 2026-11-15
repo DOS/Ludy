@@ -18,6 +18,7 @@ import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { useMe } from '../components/conversation-inbox.tsx';
 import { NotesSubnav } from '../components/notes-subnav.tsx';
 import { useConsentPolicy } from '../components/consent-policy.tsx';
+import { ImportAutoClaim } from '../components/meeting-import-claim.tsx';
 import { RecordingNotice } from '../components/recording-notice.tsx';
 import { ErrorText, PageHeader } from '../components/ui.tsx';
 import { errorMessage, orpc, queryClient, sendLiveChunk, uploadMeetingMedia } from '../lib/api.ts';
@@ -415,6 +416,8 @@ export function MeetingRecordPage() {
         }
       />
       <NotesSubnav slug={slug} active="meetings" />
+      {/* An import the member started (C1, #3173): its copied audio is claimed here too */}
+      <ImportAutoClaim />
 
       {error && <ErrorText>{error}</ErrorText>}
       {unsupported && <ErrorText>{t('record.unsupported')}</ErrorText>}
