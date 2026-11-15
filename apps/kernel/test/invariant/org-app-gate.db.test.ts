@@ -1,15 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The runtime gate of per-org app enablement (ADR-0053 sections 3 and 5, slice b of #3307, issue #3309), step 1 of its two
-// protected steps: this file accepts BOTH behaviors for what the runtime does not do yet. A command, a query and a lookup
-// into an app the org switched off either still run (today) or answer the typed refusal (MODULE_OFF 404 for a command and
-// a query, not_installed for ctx.query: step 2, the runtime change). What it pins from today, and must keep after step 2:
-// a person who is not a member of the org learns nothing about its apps (the same refusal whether the app is on or off, never
-// MODULE_OFF); kernel is never refused, so the owner can always switch an app back on; another org is unaffected; the
-// owner's choice shows in kernel.org.apps at once and an app switched back on runs again; and a billing port that fails never takes a command
-// down (it fails open). A third tests-only PR makes the "either" cases strict once step 2 is on main (the runtime PR cannot
-// edit this base file, protected.yml). Two things step 2 must keep for this file to pass: a module that is registered but
-// listed in no deployment setting (`probe`) counts as on for the runtime, and the billing option is named `entitlements`
-// (the strict PR checks it, since an unknown name would leave the failing-port case passing for no reason). Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
+// The runtime gate of per-org app enablement (ADR-0053 sections 3 and 5, slice b of #3307, issue #3309), step 3: strict. Step 1
+// (#3326) accepted both behaviors until the runtime change landed (step 2, #3357); this file now requires it. A command, a query, a
+// stream, a nested command and a lookup into an app the org switched off, or does not hold, answer MODULE_OFF 404 naming the app
+// (not_installed for ctx.query), for a user, the system actor and an AI agent, and leave no 'ok' audit row (a refused call rolls back whole); the
+// gate comes before the role check; a person who is not a member of the org learns nothing about its apps (the same whole refusal
+// whether the app is on or off, never MODULE_OFF); kernel is never refused, so the owner can always switch an app back on; another org
+// is unaffected; an app switched back on runs again; and the billing option is named `entitlements`: a port that answers [] holds
+// no app, so a refused call proves the runtime reads it, and a port that throws never takes a command down (it fails open).
+// Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
 // Part of the invariant suite: CI runs this file from the base branch on protected-path PRs (AGENTS.md).
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -19,7 +17,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { buildKernelCommands, createOrg, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, defineCommand, defineQuery, type AgentActor, type Lookup } from '@crove/kernel-runtime';
+import { Runtime, defineCommand, defineQuery, mintContextToken, type AgentActor, type Lookup } from '@crove/kernel-runtime';
 import { financeCommands, financeQueries } from '@crove/mod-finance';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 
@@ -31,6 +29,17 @@ const suite = ADMIN ? describe : describe.skip;
 // The app under test: a module id the build "ships" for this file, with a command, a query, and a kernel query that looks it up.
 const touch = defineCommand({ name: 'probe.touch', input: z.object({}), risk: 'R1', sideEffect: 'none', access: ['owner', 'admin', 'member'], handler: async () => 'ran' });
 const read = defineQuery({ name: 'probe.read', input: z.object({}), access: [...MEMBERS], handler: async () => 'read' });
+const streamed = defineQuery({
+  name: 'probe.stream',
+  input: z.object({}),
+  access: [...MEMBERS],
+  stream: true,
+  handler: async (_ctx, _input, sink) => {
+    await sink?.(['batch']);
+    return 'streamed';
+  },
+});
+const nested = defineCommand({ name: 'kernel.gate_nested', input: z.object({}), risk: 'R1', sideEffect: 'none', access: ['owner', 'admin', 'member'], handler: async (ctx) => ctx.run('probe.touch', {}) });
 const lookup = defineQuery({ name: 'kernel.gate_lookup', input: z.object({}), access: [...MEMBERS], handler: (ctx) => ctx.query<string>('probe.read', {}) });
 // The same for the other two kinds of actor: a system command and query (the worker's), and an agent's. Each declares its writes (none).
 const sysTouch = defineCommand({ name: 'probe.sys_touch', input: z.object({}), risk: 'R1', sideEffect: 'none', access: 'system', writes: [], handler: async () => 'ran' });
@@ -40,17 +49,19 @@ const agentRead = defineQuery({ name: 'probe.agent_read', input: z.object({}), a
 // Kernel's own probes for the same actors: never refused, whatever apps are off.
 const kernelSysRead = defineQuery({ name: 'kernel.gate_sys_read', input: z.object({}), access: 'system', handler: async () => 'read' });
 const kernelAgentRead = defineQuery({ name: 'kernel.gate_agent_read', input: z.object({}), access: [], agent: { roles: 'any' }, handler: async () => 'read' });
-const SHIPPED = ['kernel', 'probe', 'other'] as const;
+const SHIPPED = ['kernel', 'finance', 'probe', 'other'] as const;
 const SYSTEM = { type: 'system' as const, component: 'kernel.agent' };
 
 type Actor = { type: 'user'; userId: string; aal: 'aal1' | 'aal2'; sessionId?: string; mfaAt?: number };
 
-suite('the per-org app gate of the runtime (ADR-0053, slice b step 1)', () => {
+suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
   const dbName = `crove_test_orggate_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   let rt: Runtime;
-  let failing: Runtime;
+  let definitionsOf: { commands: any[]; queries: any[] };
+  // A runtime whose billing port is the given function (the option is named `entitlements`).
+  const withPort = (port: (orgId: string) => Promise<readonly string[]>) => new Runtime(createDb(pool), { manifests: TEST_MANIFESTS, entitlements: port }).register(definitionsOf);
   // The worker login role's runtime, where agents and the system actor run.
   let worker: Runtime;
   let workerPool: pg.Pool;
@@ -113,15 +124,10 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b step 1)', () => {
     }
   }
 
-  // Step 1: a call into an app the org switched off either still runs (the runtime does not gate yet) or is refused with
-  // MODULE_OFF 404 naming the app (step 2). Anything else is a defect either way.
-  function expectRunsOrModuleOff<T>(answer: Awaited<ReturnType<typeof outcome<T>>>, ran: T): void {
-    if ('ok' in answer) {
-      expect(answer.ok).toEqual(ran);
-    } else {
-      // MODULE_OFF 404 naming the app, with any message and any further details.
-      expect(answer.refused).toMatchObject({ code: 'MODULE_OFF', status: 404, details: { module: 'probe' } });
-    }
+  // A call into an app the org switched off, or does not hold, is refused with MODULE_OFF 404 naming the app (any message, any further details).
+  function expectModuleOff<T>(answer: Awaited<ReturnType<typeof outcome<T>>>): void {
+    expect('refused' in answer, JSON.stringify(answer)).toBe(true);
+    expect((answer as { refused: unknown }).refused).toMatchObject({ code: 'MODULE_OFF', status: 404, details: { module: 'probe' } });
   }
 
   beforeAll(async () => {
@@ -139,11 +145,12 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b step 1)', () => {
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 6 });
     const definitions = {
-      commands: [...buildKernelCommands({ shippedModules: SHIPPED }), ...financeCommands, touch, sysTouch, agentTouch],
+      commands: [...buildKernelCommands({ shippedModules: SHIPPED }), ...financeCommands, touch, sysTouch, agentTouch, nested],
       queries: [
         ...kernelQueries({ inboundDomain: null, apps: { shipped: SHIPPED, deployment: SHIPPED, entitlements: async () => ['full'] } }),
         ...financeQueries,
         read,
+        streamed,
         lookup,
         sysRead,
         agentRead,
@@ -157,14 +164,7 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b step 1)', () => {
     wurl.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: wurl.toString(), max: 2 });
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(definitions);
-    // A runtime whose billing port throws. Step 2 adds the option (`entitlements`, the billing port's function) and then
-    // fails open to the last answer, `full` when it has none; until then the option is ignored. Either way a command runs.
-    failing = new Runtime(createDb(pool), {
-      manifests: TEST_MANIFESTS,
-      entitlements: async () => {
-        throw new Error('billing is down');
-      },
-    } as ConstructorParameters<typeof Runtime>[1]).register(definitions);
+    definitionsOf = definitions;
   }, 120_000);
 
   afterAll(async () => {
@@ -189,22 +189,26 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b step 1)', () => {
     }
   });
 
-  it('answers a call into an app the org switched off by running it or by the typed refusal, and runs it again when switched back on', async () => {
+  it('refuses a command, a query, a stream, a nested command and a lookup of an app the org switched off, leaving no trace, and runs them again when it is back on', async () => {
     const o = await org();
     await o.setApp('probe', false);
-    const ranOff = await outcome(o.run(rt, o.member));
-    expectRunsOrModuleOff(ranOff, 'ran');
-    // A refused call leaves no trace: no idempotency key and no 'ok' audit row for it. (A call that still ran leaves both.)
-    expect(await o.traces()).toEqual('refused' in ranOff ? { keys: 0, audits: 0 } : { keys: 1, audits: 1 });
-    expectRunsOrModuleOff(await outcome(o.readIt(o.member)), 'read');
-    // ctx.query answers the lookup, or not_installed (never a thrown refusal).
-    const looked = await o.viaLookup(o.member);
-    expect([{ status: 'ok', value: 'read' }, { status: 'not_installed', module: 'probe' }]).toContainEqual(looked);
+    expectModuleOff(await outcome(o.run(rt, o.member)));
+    expectModuleOff(await outcome(o.run(rt, o.owner)));
+    // A role that could not run the command anyway (a viewer) gets MODULE_OFF: the gate comes before the role check.
+    expectModuleOff(await outcome(o.run(rt, o.viewer)));
+    expectModuleOff(await outcome(o.readIt(o.member)));
+    expectModuleOff(await outcome(rt.stream('probe.stream', {}, { actor: asUser(o.member), orgId: o.orgId }, async () => {})));
+    expectModuleOff(await outcome(rt.execute('kernel.gate_nested', {}, { actor: asUser(o.member), orgId: o.orgId, idempotencyKey: randomUUID() })));
+    // A refused call rolls back whole: no idempotency key and no 'ok' audit row for it.
+    expect(await o.traces()).toEqual({ keys: 0, audits: 0 });
+    // ctx.query answers the typed not_installed, as for an app the deployment leaves out.
+    await expect(o.viaLookup(o.member)).resolves.toEqual({ status: 'not_installed', module: 'probe' });
     // Switched back on: everything runs as before.
     await o.setApp('probe', true);
     await expect(o.run(rt, o.member)).resolves.toBe('ran');
     await expect(o.readIt(o.member)).resolves.toBe('read');
     await expect(o.viaLookup(o.member)).resolves.toEqual({ status: 'ok', value: 'read' });
+    await expect(rt.execute('kernel.gate_nested', {}, { actor: asUser(o.member), orgId: o.orgId, idempotencyKey: randomUUID() })).resolves.toBe('ran');
   });
 
   it('leaves the other apps of the org, and the kernel, running while one is off', async () => {
@@ -219,6 +223,46 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b step 1)', () => {
     await expect(o.run(rt, o.member)).resolves.toBe('ran');
   });
 
+  it('refuses the command an approved proposal runs, and the proposal waits until the app is back on', async () => {
+    const o = await org();
+    // A posted entry (as the API login in the owner's context), and a proposal of the member to reverse it.
+    const appUrl = new URL(adminUrl);
+    appUrl.username = 'crove_app';
+    appUrl.password = 'test-app-pw';
+    const entryId = await (async () => {
+      const c = new pg.Client({ connectionString: appUrl.toString() });
+      await c.connect();
+      try {
+        await c.query('BEGIN');
+        await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: o.owner, orgId: o.orgId, sessionId: null, aal: 'aal1', mfaAt: null })]);
+        const { rows } = await c.query<{ id: string }>(`SELECT crove_finance.post_journal_entry('2026-10-01'::date, 'test', 'test', $1::uuid, $2::jsonb) AS id`, [
+          randomUUID(),
+          JSON.stringify([
+            { line_no: 1, account_code: '6422', debit: '1000', credit: '0' },
+            { line_no: 2, account_code: '1111', debit: '0', credit: '1000' },
+          ]),
+        ]);
+        await c.query('COMMIT');
+        return rows[0]?.id as string;
+      } finally {
+        await c.end();
+      }
+    })();
+    const requested = await rt.execute<{ proposalId: string }>(
+      'kernel.proposal.request',
+      { command: 'finance.journal.reverse', input: { entryId, entryDate: '2026-10-15', reason: 'Ghi nhầm' } },
+      { actor: asUser(o.member), orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+    await expect(o.setApp('finance', false)).resolves.toMatchObject({ module: 'finance', enabled: false });
+    const approve = () => rt.execute('kernel.proposal.approve', { id: requested.proposalId, revision: 1 }, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+    await expect(approve()).rejects.toMatchObject({ code: 'MODULE_OFF', status: 404, details: { module: 'finance' } });
+    const state = () => withAdmin(async (c) => (await c.query<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE id = $1', [requested.proposalId])).rows[0]?.status);
+    expect(await state()).toBe('pending');
+    await o.setApp('finance', true);
+    await expect(approve()).resolves.toMatchObject({ journalEntryId: expect.any(String) });
+    expect(await state()).toBe('executed');
+  });
+
   it('answers a system actor and an AI agent like a user, and never refuses them in kernel', async () => {
     const o = await org();
     const agent = await o.agent();
@@ -230,11 +274,11 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b step 1)', () => {
     await expect(worker.execute('probe.agent_touch', {}, asAgent)).resolves.toBe('ran');
     await expect(worker.query('probe.agent_read', {}, { actor: agent, orgId: o.orgId })).resolves.toBe('read');
     await o.setApp('probe', false);
-    // Off: the call runs (today) or is refused with MODULE_OFF (step 2), for the system actor and for the agent alike.
-    expectRunsOrModuleOff(await outcome(worker.execute('probe.sys_touch', {}, { ...asSystem, idempotencyKey: randomUUID() })), 'ran');
-    expectRunsOrModuleOff(await outcome(worker.query('probe.sys_read', {}, { actor: SYSTEM, orgId: o.orgId })), 'read');
-    expectRunsOrModuleOff(await outcome(worker.execute('probe.agent_touch', {}, { ...asAgent, idempotencyKey: randomUUID() })), 'ran');
-    expectRunsOrModuleOff(await outcome(worker.query('probe.agent_read', {}, { actor: agent, orgId: o.orgId })), 'read');
+    // Off: refused with MODULE_OFF, for the system actor and for the agent alike.
+    expectModuleOff(await outcome(worker.execute('probe.sys_touch', {}, { ...asSystem, idempotencyKey: randomUUID() })));
+    expectModuleOff(await outcome(worker.query('probe.sys_read', {}, { actor: SYSTEM, orgId: o.orgId })));
+    expectModuleOff(await outcome(worker.execute('probe.agent_touch', {}, { ...asAgent, idempotencyKey: randomUUID() })));
+    expectModuleOff(await outcome(worker.query('probe.agent_read', {}, { actor: agent, orgId: o.orgId })));
     // kernel is never refused, for either, with the app off.
     await expect(worker.query('kernel.gate_sys_read', {}, { actor: SYSTEM, orgId: o.orgId })).resolves.toBe('read');
     await expect(worker.query('kernel.gate_agent_read', {}, { actor: agent, orgId: o.orgId })).resolves.toBe('read');
@@ -272,11 +316,40 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b step 1)', () => {
     }
   });
 
+  it('reads the billing option `entitlements`: a port that holds the org to nothing refuses its apps, one that holds the app does not', async () => {
+    const o = await org();
+    // A port answering [] holds no app but kernel: the app is refused though the org never switched it off.
+    const nothing = withPort(async () => []);
+    expectModuleOff(await outcome(o.run(nothing, o.member)));
+    expectModuleOff(await outcome(nothing.query<string>('probe.read', {}, { actor: asUser(o.member), orgId: o.orgId })));
+    await expect(nothing.query<Lookup<string>>('kernel.gate_lookup', {}, { actor: asUser(o.member), orgId: o.orgId })).resolves.toEqual({ status: 'not_installed', module: 'probe' });
+    // kernel is never refused for want of an entitlement.
+    await expect(nothing.query('kernel.org.get', {}, { actor: asUser(o.member), orgId: o.orgId })).resolves.toMatchObject({ orgId: o.orgId });
+    // The key of the app, or `full`, holds it; the key of another app does not.
+    await expect(o.run(withPort(async () => ['probe']), o.member)).resolves.toBe('ran');
+    await expect(o.run(withPort(async () => ['full']), o.member)).resolves.toBe('ran');
+    expectModuleOff(await outcome(o.run(withPort(async () => ['other']), o.member)));
+    // One runtime serves two orgs and keeps what the port said of each apart: the port holds A to nothing and B to everything.
+    const other = await org();
+    const asked = new Set<string>();
+    const both = withPort(async (orgId) => {
+      asked.add(orgId);
+      return orgId === o.orgId ? [] : ['full'];
+    });
+    expectModuleOff(await outcome(o.run(both, o.member)));
+    await expect(other.run(both, other.member)).resolves.toBe('ran');
+    expectModuleOff(await outcome(o.run(both, o.member)));
+    expect([...asked].sort()).toEqual([o.orgId, other.orgId].sort());
+  });
+
   it('does not let a failing billing port take a command down', async () => {
     const o = await org();
+    const failing = withPort(async () => {
+      throw new Error('billing is down');
+    });
     await expect(o.run(failing, o.member)).resolves.toBe('ran');
     await o.setApp('probe', false);
-    // Off by the org's own choice: the same answers as with a working port (the choice does not depend on billing).
-    expectRunsOrModuleOff(await outcome(o.run(failing, o.member)), 'ran');
+    // Off by the org's own choice: refused whatever the port says (the choice does not depend on billing).
+    expectModuleOff(await outcome(o.run(failing, o.member)));
   });
 });
