@@ -287,5 +287,12 @@ describe('parseTimekeepingSheet (#3348)', () => {
     const emptyTrailingRes = parseTimekeepingSheet('Ma NV,Unpaid leave,\nNV01,1,\n', { month: '2026-08' });
     expect(emptyTrailingRes.errors).toEqual([]);
     expect(emptyTrailingRes.rows[0]).toMatchObject({ employeeCode: 'NV01', unpaidLeaveDays: '1' });
+
+    // Unquoted TSV containing commas in both a header label and a notes column selects tab via structural alignment.
+    const unquotedTsvWithCommas = 'Employee code, ID\tUnpaid leave\tNotes\nE01\t2\ta,b,c,d,e,f,g,h\n';
+    const tsvAlignedRes = parseTimekeepingSheet(unquotedTsvWithCommas, { month: '2026-08' });
+    expect(tsvAlignedRes.delimiter).toBe('\t');
+    expect(tsvAlignedRes.errors).toEqual([]);
+    expect(tsvAlignedRes.rows[0]).toMatchObject({ employeeCode: 'E01', unpaidLeaveDays: '2' });
   });
 });

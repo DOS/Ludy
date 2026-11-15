@@ -253,6 +253,7 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
   const unpaidByMonth = new Map<string, Decimal>();
   const approvedUnpaidByMonth = new Map<string, Decimal>();
   const unapprovedUnpaidByMonth = new Map<string, Decimal>();
+  const paidLeaveByMonth = new Map<string, Decimal>();
 
   for (const entry of input.entries ?? []) {
     if (!LEAVE_ENTRY_KINDS.includes(entry.kind)) {
@@ -269,8 +270,10 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
       openingTotal = openingTotal.plus(days);
     } else if (entry.kind === 'annual_leave') {
       takenAnnual = takenAnnual.plus(days);
+      paidLeaveByMonth.set(entry.month, (paidLeaveByMonth.get(entry.month) ?? zero).plus(days));
     } else if (entry.kind === 'personal_paid') {
       personalPaid = personalPaid.plus(days);
+      paidLeaveByMonth.set(entry.month, (paidLeaveByMonth.get(entry.month) ?? zero).plus(days));
     } else {
       unpaidByMonth.set(entry.month, (unpaidByMonth.get(entry.month) ?? zero).plus(days));
       const bucket = entry.approved === true ? approvedUnpaidByMonth : unapprovedUnpaidByMonth;
@@ -283,9 +286,8 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
   const cutoffMonth = input.asOfMonth ?? `${input.year}-${LAST_MONTH}`;
   const cutoffIdx = CALENDAR_MONTHS.findIndex((m) => `${input.year}-${m}` === cutoffMonth);
   const yearCutoffDate = monthEndIso(yearNum, cutoffIdx, cutoffMonth);
-  const baseLookupDate = input.asOfMonth !== undefined ? `${input.asOfMonth}-${FIRST_DAY}` : yearCutoffDate;
   const clampedEndedOn = endedOn !== null && endedOn >= yearStart ? endedOn : null;
-  const ruleLookupDate = clampedEndedOn !== null && clampedEndedOn < baseLookupDate ? clampedEndedOn : baseLookupDate;
+  const ruleLookupDate = clampedEndedOn !== null && clampedEndedOn < yearCutoffDate ? clampedEndedOn : yearCutoffDate;
 
   const rule = ruleInForce(rules, 'annual_leave', 'default', ruleLookupDate);
   if (rule === undefined) {
@@ -335,7 +337,8 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
           zero,
         );
         allowanceMonthsRemaining = nextAllowance;
-        effectiveRatio = money(workedExplicit.trim()).plus(coveredDays).div(totalMonthWork);
+        const paidLeaveInMonth = paidLeaveByMonth.get(ym) ?? zero;
+        effectiveRatio = money(workedExplicit.trim()).plus(paidLeaveInMonth).plus(coveredDays).div(totalMonthWork);
       } else {
         let totalMonthWork: Decimal;
         let activeMonthWork: Decimal;

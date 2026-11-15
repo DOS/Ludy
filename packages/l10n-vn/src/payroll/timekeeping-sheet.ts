@@ -425,6 +425,33 @@ function isSummaryRow(code: string | null, name: string | null, cells: readonly 
   return false;
 }
 
+function trimmedCellCount(cells: readonly string[]): number {
+  let len = cells.length;
+  while (len > 0 && (cells[len - 1] ?? '').trim() === '') {
+    len -= 1;
+  }
+  return len;
+}
+
+function scoreDelimiterAttempt(rows: readonly ParsedGridRow[], header: HeaderDetection | null): { overflowCount: number; alignedCount: number } {
+  if (header === null) return { overflowCount: Number.MAX_SAFE_INTEGER, alignedCount: 0 };
+  const headerLen = trimmedCellCount(rows[header.rowIndex]?.cells ?? []);
+  let overflowCount = 0;
+  let alignedCount = 0;
+  for (let i = header.rowIndex + 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (row === undefined) continue;
+    const rowLen = trimmedCellCount(row.cells);
+    if (rowLen === 0) continue;
+    if (rowLen > headerLen) {
+      overflowCount += 1;
+    } else if (rowLen === headerLen) {
+      alignedCount += 1;
+    }
+  }
+  return { overflowCount, alignedCount };
+}
+
 /**
  * Pure deterministic parser for monthly timekeeping TSV/CSV exports.
  * Maps Vietnamese and English columns into leave counts, `OvertimeEntry[]`, and `payrollInputs`
@@ -467,12 +494,19 @@ export function parseTimekeepingSheet(text: string, options?: TimekeepingSheetOp
   const attempts = candidates.map((c) => {
     const attemptParsed = parseDelimitedRows(body, c.d);
     const attemptHeader = detectHeader(attemptParsed.rows);
-    return { delimiter: c.d, count: c.n, parsed: attemptParsed, header: attemptHeader };
+    const score = scoreDelimiterAttempt(attemptParsed.rows, attemptHeader);
+    return { delimiter: c.d, count: c.n, parsed: attemptParsed, header: attemptHeader, score };
   });
 
+  const compareScored = (a: (typeof attempts)[number], b: (typeof attempts)[number]): number =>
+    a.score.overflowCount - b.score.overflowCount || b.score.alignedCount - a.score.alignedCount;
+
+  const cleanHeaders = attempts.filter((a) => a.parsed.quoteError === null && a.header !== null).sort(compareScored);
+  const brokenHeaders = attempts.filter((a) => a.parsed.quoteError !== null && a.header !== null).sort(compareScored);
+
   const selected =
-    attempts.find((a) => a.parsed.quoteError === null && a.header !== null) ??
-    attempts.find((a) => a.parsed.quoteError !== null && a.header !== null) ??
+    cleanHeaders[0] ??
+    brokenHeaders[0] ??
     attempts.find((a) => a.parsed.quoteError === null && a.count > 0) ??
     attempts.find((a) => a.parsed.quoteError === null) ??
     attempts[0];
@@ -533,10 +567,7 @@ export function parseTimekeepingSheet(text: string, options?: TimekeepingSheetOp
   }
 
   const headerCells = parsedRows[header.rowIndex]?.cells ?? [];
-  let effectiveHeaderLength = headerCells.length;
-  while (effectiveHeaderLength > 0 && (headerCells[effectiveHeaderLength - 1] ?? '').trim() === '') {
-    effectiveHeaderLength -= 1;
-  }
+  const effectiveHeaderLength = trimmedCellCount(headerCells);
   const errors: TimekeepingIssue[] = [];
   const warnings: TimekeepingIssue[] = [];
 

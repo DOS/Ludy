@@ -447,4 +447,57 @@ describe('calculateLeaveBalance (#3348)', () => {
       ),
     ).toMatchObject({ eligibleMonths: 6, entitlementDays: '6' });
   });
+
+  it('counts paid annual and personal leave with workedDaysByMonth and uses identical month-end rule lookup for asOfMonth 12', () => {
+    // 12 worked days + 14 personal_paid (or annual_leave) days = 26 working days in Jan -> full 12 eligible months.
+    expect(
+      calculateLeaveBalance({
+        year: '2026',
+        category: 'standard',
+        hireDate: '2025-01-01',
+        standardWorkingDays: '26',
+        workedDaysByMonth: { '2026-01': '12' },
+        entries: [{ kind: 'personal_paid', month: '2026-01', days: '14' }],
+      }),
+    ).toMatchObject({ eligibleMonths: 12, entitlementDays: '12', personalPaidDays: '14' });
+
+    expect(
+      calculateLeaveBalance({
+        year: '2026',
+        category: 'standard',
+        hireDate: '2025-01-01',
+        standardWorkingDays: '26',
+        workedDaysByMonth: { '2026-02': '12' },
+        entries: [{ kind: 'annual_leave', month: '2026-02', days: '14' }],
+      }),
+    ).toMatchObject({ eligibleMonths: 12, entitlementDays: '12', takenAnnualDays: '14' });
+
+    // asOfMonth: '2026-12' evaluates at 2026-12-31, matching a full-year lookup with asOfMonth omitted.
+    const decMidRules = [
+      ...PAYROLL_RULES,
+      defineRule({
+        kind: 'annual_leave',
+        key: 'default',
+        effectiveFrom: '2026-12-15',
+        status: 'confirmed',
+        source: { cite: 'Mid-December company policy change from 2026-12-15', confidence: 'primary' },
+        value: {
+          standardDaysPerYear: '24',
+          heavyDaysPerYear: '26',
+          specialHeavyDaysPerYear: '28',
+          seniorityYearsStep: 5,
+          seniorityExtraDays: '1',
+          halfMonthWorkingDaysRatio: '0.5',
+          approvedUnpaidMonthsAllowance: '1',
+        },
+      }),
+    ];
+    const fullYear = calculateLeaveBalance({ year: '2026', category: 'standard', hireDate: '2025-01-01' }, decMidRules);
+    const asOfDec = calculateLeaveBalance(
+      { year: '2026', category: 'standard', hireDate: '2025-01-01', asOfMonth: '2026-12' },
+      decMidRules,
+    );
+    expect(fullYear.entitlementDays).toBe('24');
+    expect(asOfDec.entitlementDays).toBe(fullYear.entitlementDays);
+  });
 });
