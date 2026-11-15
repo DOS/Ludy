@@ -171,11 +171,56 @@ suite('household business profile and rules (#2517)', () => {
     await setProfile(o, { effectiveFrom: '2026-03-01' });
     for (const date of ['2026-03-01', '2026-02-01']) await expect(setProfile(o, { effectiveFrom: date, taxGroup: 2, pitMethod: 'percentage' })).rejects.toMatchObject({ code: 'HOUSEHOLD_PROFILE_ORDER' });
     await admin((c) =>
-      c.query("INSERT INTO crove_finance.period_lock (org_id, legal_entity_id, locked_from, locked_through) VALUES ($1, $2, '2026-01-01', '2026-06-30')", [o.orgId, o.household]),
+      c.query("INSERT INTO crove_finance.period_lock (org_id, legal_entity_id, locked_from, locked_through) VALUES ($1, $2, '2026-01-01', '2026-06-30') ON CONFLICT (org_id, legal_entity_id) DO UPDATE SET locked_from = excluded.locked_from, locked_through = excluded.locked_through", [o.orgId, o.household]),
     );
     await expect(setProfile(o, { effectiveFrom: '2026-06-30', taxGroup: 2, pitMethod: 'percentage' })).rejects.toMatchObject({ code: 'HOUSEHOLD_PROFILE_LOCKED' });
     await setProfile(o, { effectiveFrom: '2026-07-01', taxGroup: 2, pitMethod: 'percentage' });
     expect((await profileAt(o, '2026-06-30')).profile?.taxGroup).toBe(1);
+  });
+
+  // #3188: a lock of a month in flight (the entity's period_lock row held FOR UPDATE, as lock_period does) and a profile write wait for each other.
+  const pending = async (promise: Promise<unknown>) => {
+    const state = await Promise.race([promise.then(() => 'done', () => 'done'), new Promise((resolve) => setTimeout(() => resolve('waiting'), 700))]);
+    return state === 'waiting';
+  };
+  it('makes a profile write wait for a period lock in flight and then refuses the date it locked', async () => {
+    const o = await org();
+    await setProfile(o, { effectiveFrom: '2026-03-01' });
+    const locker = new pg.Client({ connectionString: adminUrl });
+    await locker.connect();
+    try {
+      await locker.query('BEGIN');
+      await locker.query('INSERT INTO crove_finance.period_lock (org_id, legal_entity_id) VALUES ($1, $2) ON CONFLICT (org_id, legal_entity_id) DO NOTHING', [o.orgId, o.household]);
+      await locker.query('SELECT 1 FROM crove_finance.period_lock WHERE org_id = $1 AND legal_entity_id = $2 FOR UPDATE', [o.orgId, o.household]);
+      const write = setProfile(o, { effectiveFrom: '2026-05-01', taxGroup: 2, pitMethod: 'percentage' });
+      write.catch(() => undefined);
+      expect(await pending(write)).toBe(true);
+      await locker.query("UPDATE crove_finance.period_lock SET locked_from = '2026-01-01', locked_through = '2026-06-30' WHERE org_id = $1 AND legal_entity_id = $2", [o.orgId, o.household]);
+      await locker.query('COMMIT');
+      await expect(write).rejects.toMatchObject({ code: 'HOUSEHOLD_PROFILE_LOCKED' });
+    } finally {
+      await locker.end();
+    }
+    expect((await profileAt(o, '2026-06-30')).profile?.taxGroup).toBe(1);
+  });
+
+  it('lets a profile write go on, after the wait, when the lock in flight locks nothing', async () => {
+    const o = await org();
+    await setProfile(o, { effectiveFrom: '2026-03-01' });
+    const locker = new pg.Client({ connectionString: adminUrl });
+    await locker.connect();
+    try {
+      await locker.query('BEGIN');
+      await locker.query('INSERT INTO crove_finance.period_lock (org_id, legal_entity_id) VALUES ($1, $2) ON CONFLICT (org_id, legal_entity_id) DO NOTHING', [o.orgId, o.household]);
+      await locker.query('SELECT 1 FROM crove_finance.period_lock WHERE org_id = $1 AND legal_entity_id = $2 FOR UPDATE', [o.orgId, o.household]);
+      const write = setProfile(o, { effectiveFrom: '2026-05-01', taxGroup: 2, pitMethod: 'percentage' });
+      expect(await pending(write)).toBe(true);
+      await locker.query('ROLLBACK');
+      await write;
+    } finally {
+      await locker.end();
+    }
+    expect((await profileAt(o, '2026-05-01')).profile?.taxGroup).toBe(2);
   });
 
   it('lets owners and admins set a profile, every role read it, and keeps the name out of the audit row', async () => {
