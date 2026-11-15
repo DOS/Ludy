@@ -12,7 +12,7 @@ import { client, errorMessage, queryClient, setCurrentOrg } from '../lib/api.ts'
 import { needsAdminConsent, takeAdminLink } from '../lib/calendar-oauth.ts';
 import { takeOAuthAttempt } from '../lib/oauth.ts';
 
-type Callback = { kind: 'finish'; slug: string; state: string; code: string } | { kind: 'cancelled'; slug: string | null; adminConsent: boolean; adminLink: string | null } | { kind: 'lost' };
+type Callback = { kind: 'finish'; slug: string; state: string; code: string; adminLink: string | null } | { kind: 'cancelled'; slug: string | null; adminConsent: boolean; adminLink: string | null } | { kind: 'lost' };
 
 // Read once per page load: the address bar is cleaned right after, so a reload never replays the code.
 function readCallback(provider: string): Callback {
@@ -20,14 +20,16 @@ function readCallback(provider: string): Callback {
   window.history.replaceState(null, '', window.location.pathname);
   const state = params.get('state') ?? '';
   const slug = state ? takeOAuthAttempt(state) : null;
+  // Kept for either way an administrator's consent can turn up: Microsoft's redirect with an error, or its refusal of the code a moment later.
+  const adminLink = state ? takeAdminLink(state) : null;
   // A refusal that a Microsoft tenant's administrator has to lift is told apart from the member's own "no".
   if (params.get('error')) {
     const adminConsent = needsAdminConsent(provider, params);
-    return { kind: 'cancelled', slug, adminConsent, adminLink: adminConsent && state ? takeAdminLink(state) : null };
+    return { kind: 'cancelled', slug, adminConsent, adminLink: adminConsent ? adminLink : null };
   }
   const code = params.get('code');
   if (!slug || !code) return { kind: 'lost' };
-  return { kind: 'finish', slug, state, code };
+  return { kind: 'finish', slug, state, code, adminLink };
 }
 
 export function CalendarOAuthCallbackPage() {
@@ -96,6 +98,14 @@ export function CalendarOAuthCallbackPage() {
         )}
         {finish.data && <p className="text-sm text-foreground">{t('oauthConnected', { name: finish.data.displayName })}</p>}
         {finish.error && <ErrorText>{errorMessage(finish.error)}</ErrorText>}
+        {finish.error && (finish.error as { code?: string }).code === 'OAUTH_ADMIN_CONSENT_REQUIRED' && callback?.kind === 'finish' && callback.adminLink && (
+          <div className="space-y-2 text-sm text-foreground" data-testid="calendar-admin-consent">
+            <p className="text-xs text-muted-foreground">{t('oauthAdminConsentLink')}</p>
+            <code className="block break-all rounded bg-muted p-2 text-xs" data-testid="calendar-admin-link">
+              {callback.adminLink}
+            </code>
+          </div>
+        )}
         {!busy && back}
       </Card>
     </main>

@@ -62,18 +62,17 @@ class MicrosoftCalendarError extends Error {
   readonly reason: string | undefined;
   readonly codes: readonly number[];
   constructor(status: number, body: Record<string, unknown> | null) {
-    const graph = body?.error !== null && typeof body?.error === 'object' ? (body.error as { code?: unknown; message?: unknown }) : null;
-    super(typeof graph?.message === 'string' ? graph.message : typeof body?.error_description === 'string' ? firstLine(body.error_description) : `Microsoft answered ${status}`);
+    const graph = body?.error !== null && typeof body?.error === 'object' ? (body.error as { code?: unknown }) : null;
+    const reason = typeof graph?.code === 'string' ? graph.code : typeof body?.error === 'string' ? body.error : undefined;
+    const codes = Array.isArray(body?.error_codes) ? (body.error_codes as unknown[]).filter((c): c is number => typeof c === 'number') : aadstsOf(body?.error_description);
+    // The message is the status and the codes, never Microsoft's own words: its descriptions and Graph's messages can carry the member's address (a sign-in name) and identifiers, and this text reaches the server log.
+    super(`Microsoft answered ${status}${reason ? ` (${reason.slice(0, 80)}${codes.length > 0 ? `, AADSTS${codes.slice(0, 3).join(', AADSTS')}` : ''})` : ''}`);
     this.name = 'MicrosoftCalendarError';
     this.status = status;
-    const reason = typeof graph?.code === 'string' ? graph.code : typeof body?.error === 'string' ? body.error : undefined;
     this.reason = reason;
-    this.codes = Array.isArray(body?.error_codes) ? (body.error_codes as unknown[]).filter((c): c is number => typeof c === 'number') : aadstsOf(body?.error_description);
+    this.codes = codes;
   }
 }
-
-// The first line of a Microsoft error description ("AADSTS70000: ... Trace ID: ..." follows with identifiers we never keep).
-const firstLine = (text: string): string => text.split(/\r?\n/, 1)[0]?.slice(0, 300) ?? '';
 
 // The AADSTS numbers a description names.
 export function aadstsOf(description: unknown): number[] {
@@ -123,7 +122,8 @@ export function idTokenClaims(idToken: unknown, clientId: string): { email: stri
     return null;
   }
   if (claims.aud !== clientId) return null;
-  const candidates = [claims.email, claims.preferred_username].filter((c): c is string => typeof c === 'string' && /^[^\s@]+@[^\s@]+$/.test(c.trim()));
+  // The sign-in name first: it is on every account and stays the same, where `email` is optional and an administrator can edit it (a changed address would make a second connection).
+  const candidates = [claims.preferred_username, claims.email].filter((c): c is string => typeof c === 'string' && /^[^\s@]+@[^\s@]+$/.test(c.trim()));
   const email = candidates[0]?.trim().toLowerCase();
   if (!email) return null;
   const name = typeof claims.name === 'string' && claims.name.trim() !== '' ? claims.name.trim() : email;
@@ -286,7 +286,9 @@ export class MicrosoftCalendarAdapter implements CalendarAdapter {
         if (item !== null && typeof item === 'object' && !each(item as Record<string, unknown>)) return false;
       }
       const link = typeof body['@odata.nextLink'] === 'string' ? body['@odata.nextLink'] : null;
-      next = link !== null && graphLink(link) ? link : null;
+      // A next link that is not Graph's own is not followed, and the list is then not whole.
+      if (link !== null && !graphLink(link)) return true;
+      next = link;
       if (!next) return false;
     }
     return true;
@@ -321,23 +323,33 @@ export class MicrosoftCalendarAdapter implements CalendarAdapter {
     const s = microsoftCalendarSecretOf(secret);
     if (!s) return { refused: 'NO_ACCESS_TOKEN' };
     const busy: BusyInterval[] = [];
-    let more = false;
-    try {
-      more = await this.view(s.accessToken, from, to, BUSY_FIELDS, BUSY_PAGES, timeoutMs, (item) => {
+    // One read of [a, b): when the pages run out before the end of the list the range is cut in two and each half is read, down to one day; a day that still does not fit is a failure.
+    const collect = async (a: Date, b: Date): Promise<boolean> => {
+      const found: BusyInterval[] = [];
+      const more = await this.view(s.accessToken, a, b, BUSY_FIELDS, BUSY_PAGES, timeoutMs, (item) => {
         if (item.isCancelled === true) return true;
         const showAs = item.showAs;
         if (showAs !== 'busy' && showAs !== 'tentative' && showAs !== 'oof') return true;
         const start = graphInstant((item.start as { dateTime?: unknown } | undefined)?.dateTime);
         const end = graphInstant((item.end as { dateTime?: unknown } | undefined)?.dateTime);
-        if (Number.isFinite(start) && Number.isFinite(end) && end > start) busy.push({ start: new Date(start).toISOString(), end: new Date(end).toISOString() });
+        if (Number.isFinite(start) && Number.isFinite(end) && end > start) found.push({ start: new Date(start).toISOString(), end: new Date(end).toISOString() });
         return true;
       });
+      if (!more) {
+        busy.push(...found);
+        return true;
+      }
+      if (b.getTime() - a.getTime() <= 86_400_000) return false;
+      const middle = new Date(a.getTime() + Math.floor((b.getTime() - a.getTime()) / 2));
+      return (await collect(a, middle)) && (await collect(middle, b));
+    };
+    try {
+      // A calendar with more events than the pages hold would leave blocks out, and a missing block lets a booking land on a busy time: that is a failure to try again, never a shorter list.
+      if (!(await collect(from, to))) return { failed: 'TOO_MANY_EVENTS' };
     } catch (error) {
       if (error instanceof MicrosoftCalendarError) return error.status === 401 ? { refused: 'invalid_token' } : { failed: error.reason ?? String(error.status) };
       return { failed: 'NETWORK' };
     }
-    // A calendar with more events than the pages hold would leave blocks out, and a missing block lets a booking land on a busy time: that is a failure to try again, never a shorter list.
-    if (more) return { failed: 'TOO_MANY_EVENTS' };
     return { busy };
   }
 

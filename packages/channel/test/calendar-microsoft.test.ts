@@ -111,6 +111,14 @@ describe('MicrosoftCalendarAdapter, the token exchange', () => {
     expect((await admin({ error: 'invalid_client', error_description: 'AADSTS7000215: Invalid client secret provided.', error_codes: [7000215] }))?.kind).toBe('provider');
   });
 
+  it('keeps Microsoft\'s own words, which can hold the member\'s sign-in name, out of an error message', async () => {
+    const error = (await new MicrosoftCalendarAdapter(APP, microsoft({ [TOKEN]: [{ status: 400, body: { error: 'invalid_request', error_description: 'AADSTS50020: User account \'lan.nguyen@congty.example\' from identity provider does not exist in tenant.', error_codes: [50020] } }] }).fetchImpl).exchange({ code: 'c', redirectUri: REDIRECT, codeVerifier: 'v' }).catch((e: unknown) => e)) as Error;
+    expect(error.message).not.toMatch(/@|congty|User account/);
+    expect(error.message).toContain('50020');
+    const graph = (await new MicrosoftCalendarAdapter(APP, microsoft({ [VIEW]: [{ status: 400, body: { error: { code: 'ErrorInvalidUser', message: 'The user lan.nguyen@congty.example was not found.' } } }] }).fetchImpl).events(SECRET, new Date(), new Date()));
+    expect(JSON.stringify(graph)).not.toMatch(/@|congty/);
+  });
+
   it('puts no token, code or trace identifier in an error', async () => {
     const error = (await new MicrosoftCalendarAdapter(APP, microsoft({ [TOKEN]: [{ status: 400, body: { error: 'invalid_grant', error_description: 'AADSTS70008: expired.\r\nTrace ID: 11111111-2222\r\nCorrelation ID: 33333333', error_codes: [70008] } }] }).fetchImpl)
       .exchange({ code: 'SECRET-CODE', redirectUri: REDIRECT, codeVerifier: 'SECRET-VERIFIER' })
@@ -120,8 +128,10 @@ describe('MicrosoftCalendarAdapter, the token exchange', () => {
 });
 
 describe('the ID token and the AADSTS codes', () => {
-  it('reads an address from email or the sign-in name, only for this app', () => {
+  it('reads an address from the sign-in name or email, only for this app, the sign-in name first', () => {
     expect(idTokenClaims(idToken({ aud: APP.clientId, preferred_username: 'Boss@Cty.example', name: 'Sếp' }), APP.clientId)).toEqual({ email: 'boss@cty.example', name: 'Sếp' });
+    expect(idTokenClaims(idToken({ aud: APP.clientId, email: 'other@cty.example', preferred_username: 'upn@cty.example' }), APP.clientId)?.email).toBe('upn@cty.example');
+    expect(idTokenClaims(idToken({ aud: APP.clientId, email: 'only@cty.example', preferred_username: 'not-an-address' }), APP.clientId)?.email).toBe('only@cty.example');
     expect(idTokenClaims(idToken({ aud: APP.clientId, preferred_username: 'not-an-address' }), APP.clientId)).toBeNull();
     expect(idTokenClaims(idToken({ aud: 'other', email: 'a@b.example' }), APP.clientId)).toBeNull();
     expect(idTokenClaims('not.a-jwt', APP.clientId)).toBeNull();
@@ -296,11 +306,37 @@ describe('MicrosoftCalendarAdapter, busy times', () => {
     expect(calls[0]?.url.search).not.toMatch(/subject|attendees|onlineMeeting|body|organizer/);
   });
 
+  it('fails, rather than answer a shorter list, when Graph points to a next page it will not be followed to', async () => {
+    const body = (link: string) => ({ value: [{ start: { dateTime: '2026-11-14T04:00:00.0000000' }, end: { dateTime: '2026-11-14T05:00:00.0000000' }, showAs: 'busy' }], '@odata.nextLink': link });
+    for (const link of ['https://evil.example/next', 'http://graph.microsoft.com/v1.0/me/calendarView?x=1', 'not a url']) {
+      const { calls, fetchImpl } = microsoft({ [VIEW]: Array.from({ length: 40 }, () => ({ body: body(link) })) });
+      expect(await new MicrosoftCalendarAdapter(APP, fetchImpl).busy(SECRET, new Date('2026-11-14T00:00:00Z'), new Date('2026-11-14T06:00:00Z'))).toEqual({ failed: 'TOO_MANY_EVENTS' });
+      expect(calls.every((c) => c.url.host === 'graph.microsoft.com')).toBe(true);
+    }
+  });
+
+  it('cuts a range that does not fit its pages in halves and reads each, and fails only for a day that still does not fit', async () => {
+    const more = { value: [{ start: { dateTime: '2026-11-14T04:00:00.0000000' }, end: { dateTime: '2026-11-14T05:00:00.0000000' }, showAs: 'busy' }], '@odata.nextLink': 'https://graph.microsoft.com/v1.0/me/calendarView?%24skiptoken=abc' };
+    const route = async (input: string) => {
+      const url = new URL(input);
+      const span = Date.parse(url.searchParams.get('endDateTime') ?? '') - Date.parse(url.searchParams.get('startDateTime') ?? '');
+      // The 8 day read has too many events for its pages; each 4 day half fits.
+      return span > 5 * 86_400_000 || url.searchParams.has('$skiptoken') ? more : { value: [{ start: { dateTime: '2026-11-14T08:00:00.0000000' }, end: { dateTime: '2026-11-14T09:00:00.0000000' }, showAs: 'busy' }] };
+    };
+    const fetchImpl: Fetch = async (input) => new Response(JSON.stringify(await route(input)), { headers: { 'content-type': 'application/json' } });
+    const answer = await new MicrosoftCalendarAdapter(APP, fetchImpl).busy(SECRET, new Date('2026-11-14T00:00:00Z'), new Date('2026-11-22T00:00:00Z'));
+    expect(answer).toEqual({ busy: [{ start: '2026-11-14T08:00:00.000Z', end: '2026-11-14T09:00:00.000Z' }, { start: '2026-11-14T08:00:00.000Z', end: '2026-11-14T09:00:00.000Z' }] });
+  });
+
   it('fails, rather than answer a shorter list, when the calendar holds more events than the pages do', async () => {
     const page = { value: [{ start: { dateTime: '2026-11-14T04:00:00.0000000' }, end: { dateTime: '2026-11-14T05:00:00.0000000' }, showAs: 'busy' }], '@odata.nextLink': 'https://graph.microsoft.com/v1.0/me/calendarView?%24skiptoken=abc' };
-    const { calls, fetchImpl } = microsoft({ [VIEW]: Array.from({ length: 13 }, () => ({ body: page })) });
-    expect(await new MicrosoftCalendarAdapter(APP, fetchImpl).busy(SECRET, new Date(), new Date())).toEqual({ failed: 'TOO_MANY_EVENTS' });
-    expect(calls).toHaveLength(12);
+    const urls: URL[] = [];
+    const fetchImpl: Fetch = async (input) => (urls.push(new URL(input)), new Response(JSON.stringify(page), { headers: { 'content-type': 'application/json' } }));
+    expect(await new MicrosoftCalendarAdapter(APP, fetchImpl).busy(SECRET, new Date('2026-11-14T00:00:00Z'), new Date('2026-11-17T00:00:00Z'))).toEqual({ failed: 'TOO_MANY_EVENTS' });
+    const calls = urls.map((url) => ({ url }));
+    // It was cut in halves down to a day and still did not fit: a failure, with every request on Graph.
+    expect(calls.length).toBeGreaterThan(12);
+    expect(calls.every((c) => c.url.host === 'graph.microsoft.com')).toBe(true);
     // The last page ends the list: nothing is missing.
     const done = microsoft({ [VIEW]: [...Array.from({ length: 11 }, () => ({ body: page })), { body: { value: [] } }] });
     expect('busy' in (await new MicrosoftCalendarAdapter(APP, done.fetchImpl).busy(SECRET, new Date(), new Date()))).toBe(true);
