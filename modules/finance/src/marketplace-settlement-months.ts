@@ -42,7 +42,7 @@ export interface SettlementMonths {
   waiting: number;
 }
 
-const lastDayOf = (month: string): string => {
+export const lastDayOf = (month: string): string => {
   const [y, m] = month.split('-').map(Number) as [number, number];
   return `${month}-${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, '0')}`;
 };
