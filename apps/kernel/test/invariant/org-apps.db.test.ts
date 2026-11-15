@@ -223,6 +223,13 @@ suite('apps an org turned off on PostgreSQL (ADR-0053)', () => {
     expect(await o.choice()).toEqual({ off: [], version: 1 });
   });
 
+  it('refuses an MCP grant that tries to run it', async () => {
+    const o = await org();
+    const mcp = { type: 'user' as const, userId: o.owner, aal: 'aal1' as const, mcp: { grantId: randomUUID(), clientId: 'client-1', clientName: 'Test client', scopes: ['ludy.read', 'ludy.write'] } };
+    await expect(rt.execute('kernel.org.set_app', { module: 'social', enabled: false }, { actor: mcp, orgId: o.orgId, idempotencyKey: randomUUID() })).rejects.toBeTruthy();
+    expect(await o.choice()).toEqual({ off: [], version: 1 });
+  });
+
   it('is a command no agent, MCP grant, extension token or member Vy can run', () => {
     const def = buildKernelCommands({ shippedModules: SHIPPED }).find((c) => c.name === 'kernel.org.set_app') as CommandDef<unknown, unknown>;
     expect(def).toBeDefined();
@@ -248,10 +255,46 @@ suite('apps an org turned off on PostgreSQL (ADR-0053)', () => {
     await expect(write(o.admin, SET)).rejects.toMatchObject({ message: 'APPS_UNAUDITED' });
     expect(await o.choice()).toEqual({ off: [], version: 1 });
 
-    // The audit row is for one app: a write that switches a second one in the same commit is refused with the first one's row.
+    // The audit row names one app and one version, and the write must be exactly that change. Each of these writes comes with
+    // a matching 'ok' audit row of the command in the same transaction, so only the set and version checks can refuse it.
     await o.setApp(asUser(o.owner), 'social', false);
-    await expect(write(o.owner, "UPDATE crove_kernel.tenant SET apps_off = '{hr,social}', apps_version = 3 WHERE org_id = $1")).rejects.toMatchObject({ message: 'APPS_UNAUDITED' });
+    const withAuditRow = (userId: string, row: { module: string; enabled: boolean; version: number }, sql: string) =>
+      committedInContext(userId, o.orgId, async (c) => {
+        await c.query(
+          `INSERT INTO crove_kernel.audit_event (org_id, actor_type, actor_id, command, command_id, outcome, input_sha256, detail)
+           VALUES ($1, 'user', $2, 'kernel.org.set_app', $3, 'ok', 'test', $4::jsonb)`,
+          [o.orgId, userId, randomUUID(), JSON.stringify({ ...row, changed: true })],
+        );
+        await c.query(sql, [o.orgId]);
+      });
+    // A second app switched in the same write.
+    await expect(
+      withAuditRow(o.owner, { module: 'hr', enabled: false, version: 3 }, "UPDATE crove_kernel.tenant SET apps_off = '{finance,hr,social}', apps_version = 3 WHERE org_id = $1"),
+    ).rejects.toMatchObject({ message: 'APPS_UNAUDITED' });
+    // Enabling an app that was not off (the list does not change, the version does).
+    await expect(withAuditRow(o.owner, { module: 'finance', enabled: true, version: 3 }, 'UPDATE crove_kernel.tenant SET apps_version = 3 WHERE org_id = $1')).rejects.toMatchObject({
+      message: 'APPS_UNAUDITED',
+    });
+    // Turning off an app that is already off, and a version bump with no change of the list.
+    await expect(withAuditRow(o.owner, { module: 'social', enabled: false, version: 3 }, 'UPDATE crove_kernel.tenant SET apps_version = 3 WHERE org_id = $1')).rejects.toMatchObject({
+      message: 'APPS_UNAUDITED',
+    });
+    // The audit row says the opposite of the write.
+    await expect(
+      withAuditRow(o.owner, { module: 'hr', enabled: true, version: 3 }, "UPDATE crove_kernel.tenant SET apps_off = '{hr,social}', apps_version = 3 WHERE org_id = $1"),
+    ).rejects.toMatchObject({ message: 'APPS_UNAUDITED' });
+    // A row for another version.
+    await expect(
+      withAuditRow(o.owner, { module: 'hr', enabled: false, version: 7 }, "UPDATE crove_kernel.tenant SET apps_off = '{hr,social}', apps_version = 3 WHERE org_id = $1"),
+    ).rejects.toMatchObject({ message: 'APPS_UNAUDITED' });
+    // A row by a member is not the command's (members cannot run it).
+    await expect(
+      withAuditRow(o.member, { module: 'hr', enabled: false, version: 3 }, "UPDATE crove_kernel.tenant SET apps_off = '{hr,social}', apps_version = 3 WHERE org_id = $1"),
+    ).rejects.toMatchObject({ message: 'APPS_FORBIDDEN' });
     expect(await o.choice()).toEqual({ off: ['social'], version: 2 });
+    // The same write with the exact row commits: the control that shows the cases above fail for their own reason.
+    await withAuditRow(o.owner, { module: 'hr', enabled: false, version: 3 }, "UPDATE crove_kernel.tenant SET apps_off = '{hr,social}', apps_version = 3 WHERE org_id = $1");
+    expect(await o.choice()).toEqual({ off: ['hr', 'social'], version: 3 });
   });
 
   it('touches no other org: a member of one org changes nothing of another', async () => {

@@ -2,7 +2,7 @@
 -- Crove kernel (issue #3313, ADR-0053 slice a of #3307): the apps an org's owner or admin turned off for their own
 -- company. Idempotent; applied files stay untouched.
 --
--- crove_kernel.tenant  apps_off      the module ids the org switched off, sorted, default empty: every app is on with no
+-- crove_kernel.tenant  apps_off      the module ids the org switched off (the command keeps them sorted), default empty: every app is on with no
 --                                    setup, and a module shipped later is on for every org until someone turns it off;
 --                      apps_version  starts at 1 and grows by one on every change.
 --
@@ -124,12 +124,12 @@ CREATE CONSTRAINT TRIGGER tenant_apps_requires_audit
                      OR OLD.apps_version IS DISTINCT FROM NEW.apps_version)
   EXECUTE FUNCTION crove_kernel.tenant_apps_requires_audit();
 
--- Whether the org has not switched the module off. kernel is always on; an org without a tenant row (purged) answers
--- false, so no work is found for it.
+-- Whether the org has not switched the module off. kernel is always on; an org with no tenant row answers false, so no
+-- work is found for it. A closed org keeps its row and its choice: whether work runs for a closed org is not this
+-- function's question (the sweeps already skip it).
 CREATE OR REPLACE FUNCTION crove_kernel.org_app_on(p_org uuid, p_module text)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
-  SELECT p_module = 'kernel'
-         OR COALESCE((SELECT NOT (p_module = ANY (t.apps_off)) FROM crove_kernel.tenant t WHERE t.org_id = p_org), false)
+  SELECT COALESCE(p_module = 'kernel' OR (SELECT NOT (p_module = ANY (t.apps_off)) FROM crove_kernel.tenant t WHERE t.org_id = p_org), false)
 $$;
 
 -- EXECUTE matrix: the triggers' functions are callable by nobody; org_app_on by the API (public pages) and the worker
