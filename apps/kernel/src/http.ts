@@ -1940,6 +1940,11 @@ export function createHttpApp(deps: HttpDeps) {
       if (type !== 'application/zip') throw new DomainError('UNSUPPORTED_TYPE', 415, `${name}: chỉ nhận tệp Excel dạng .xlsx`);
       if (bytes.byteLength > MAX_IMPORT_BYTES) throw new DomainError('TOO_LARGE', 413, `${name} vượt quá 10 MB`);
       type = XLSX_CONTENT_TYPE;
+    } else if (purpose === 'sign_document') {
+      if (type !== 'application/pdf') {
+        throw new DomainError('UNSUPPORTED_TYPE', 415, `${name}: tài liệu ký điện tử chỉ nhận tệp PDF`);
+      }
+      if (bytes.byteLength > MAX_UPLOAD_BYTES) throw new DomainError('TOO_LARGE', 413, `${name} vượt quá 25 MB`);
     } else if (video) {
       if (bytes.byteLength > MAX_SOCIAL_VIDEO_BYTES) throw new DomainError('TOO_LARGE', 413, `${name} vượt quá 100 MB`);
       const ms = videoDurationMs(bytes);
@@ -1971,7 +1976,7 @@ export function createHttpApp(deps: HttpDeps) {
         sha256,
         storageKey,
         generation,
-        source: purpose === 'social' ? 'social' : purpose === 'import' ? 'import' : 'upload',
+        source: purpose === 'social' ? 'social' : purpose === 'import' ? 'import' : purpose === 'sign_document' ? 'sign_document' : 'upload',
         ...(durationMs === undefined ? {} : { durationMs }),
         ...(size ? { imageWidth: size.width, imageHeight: size.height } : {}),
         // A document only: the entity it is booked in (#1764), which the command checks the uploader sees.
@@ -2007,6 +2012,10 @@ export function createHttpApp(deps: HttpDeps) {
     if (value === 'import') return 'import';
     if (value === 'meeting_audio' || value === 'meeting_video') {
       if (!runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mục đích tải lên không hợp lệ');
+      return value;
+    }
+    if (value === 'sign_document') {
+      if (!runtime.installed('sign')) throw new DomainError('NOT_FOUND', 404, 'Mục đích tải lên không hợp lệ');
       return value;
     }
     throw new DomainError('INVALID', 400, 'Mục đích tải lên không hợp lệ');

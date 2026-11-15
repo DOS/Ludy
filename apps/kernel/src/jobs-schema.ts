@@ -114,6 +114,11 @@ export const QUEUES = {
   adsActivate: 'ads-activate',
   // Created by the calendar write-back queue migration (20261112090000): a booking's event made to match the member's connected calendar (#2124).
   calendarWriteback: 'kernel-calendar-writeback',
+  // Created by the eSign core migration (20270104010000): PDF inspection, sealing, overdue expiration, and OTP/token cleanup (#3323).
+  signPdfInspect: 'sign-pdf-inspect',
+  signPdfSeal: 'sign-pdf-seal',
+  signExpireSweep: 'sign-expire-sweep',
+  signCleanup: 'sign-cleanup',
   // Created by the dead letter migration (20261103150000): every other queue's dead letters (#1720, dead-letter.ts).
   deadLetter: 'kernel-job.dlq',
 } as const;
@@ -236,6 +241,11 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   [QUEUES.adsActivate]: ['provider:ad_platform'],
   // The calendar adapters (channels.calendars): the provider's events are written through them.
   [QUEUES.calendarWriteback]: ['provider:channel'],
+  // eSign jobs talk only to the internal crove-extract service or the database, never to an external origin (#3323).
+  [QUEUES.signPdfInspect]: 'none',
+  [QUEUES.signPdfSeal]: 'none',
+  [QUEUES.signExpireSweep]: 'none',
+  [QUEUES.signCleanup]: 'none',
   [QUEUES.deadLetter]: 'none',
 };
 

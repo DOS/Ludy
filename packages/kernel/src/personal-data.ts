@@ -47,6 +47,9 @@ export interface PersonalDataColumn {
   // Private items (ADR-0037): the finder lists a row only when it is shared ('unless_shared': its visibility is 'org'),
   // or never ('always'); private ones are counted per author through crove_notes.private_matches instead, with no text.
   privateRows?: 'unless_shared' | 'always';
+  // A machinery table closed to crove_tenant (such as crove_sign.signing_otp): findPersonalData skips direct SELECT,
+  // while erase invokes the table's narrow SECURITY DEFINER helper.
+  machinery?: true;
   // A text[] column searched as its items joined by a space, as crove_notes.private_matches reads a note's tags.
   list?: true;
 }
@@ -416,6 +419,19 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_hr.payroll_dependent.display_name': { kind: 'name', handling: 'erase', reason: "A dependent's name; hr.payroll.employee.erase replaces it with a placeholder together with its employee's record" },
   'crove_projects.project.name': { kind: 'free_text', handling: 'erase', reason: "A project's title, which may name a person: mentions are replaced with a redaction marker" },
   'crove_projects.project.description': { kind: 'free_text', handling: 'erase', reason: "A project's description, which may name a person: mentions are replaced with a redaction marker" },
+  // eSign (#3323): executed envelope signer records and append-only audit events stay for statutory verification; ephemeral email OTP rows erase via definer.
+  'crove_sign.signer.name': { kind: 'name', handling: 'keep_record', reason: 'Signer legal name preserved on executed e-signature envelope and audit certificate under statutory e-transaction evidence retention' },
+  'crove_sign.signer.email': { kind: 'email', handling: 'keep_record', reason: 'Signer email address preserved on e-signature envelope and audit certificate under statutory e-transaction evidence retention' },
+  'crove_sign.signer.phone': { kind: 'phone', handling: 'keep_record', reason: 'Signer phone number preserved on e-signature envelope record under statutory e-transaction evidence retention' },
+  'crove_sign.signer.signature_typed_text': { kind: 'name', handling: 'keep_record', reason: 'Typed signature representation preserved on executed e-signature signer record' },
+  'crove_sign.signer.signer_user_agent': { kind: 'other', handling: 'keep_record', reason: 'Device user-agent string preserved in execution evidence for e-signature dispute resolution' },
+  'crove_sign.signer.signer_ip_hash': { kind: 'other', handling: 'hashed', reason: 'Keyed SHA-256 hash of signer IP address preserved for execution integrity without storing raw IP' },
+  'crove_sign.signer.require_email_otp': { kind: 'other', handling: 'not_personal', reason: 'Boolean flag configuring whether email OTP is required to view and sign' },
+  'crove_sign.field.signature_png_base64': { kind: 'other', handling: 'keep_record', reason: 'Handwritten signature bitmap embedded inside sealed e-signature document and evidence record' },
+  'crove_sign.signing_otp.email': { kind: 'email', handling: 'erase', machinery: true, reason: 'Ephemeral email OTP target address; erased by crove_sign.personal_erase_otp and swept within 24 hours' },
+  'crove_sign.signing_event.actor_label': { kind: 'other', handling: 'keep_record', reason: 'Append-only hash-chained signing_event actor label retained for statutory verification' },
+  'crove_sign.signing_event.ip_hash': { kind: 'other', handling: 'hashed', reason: 'Keyed SHA-256 hash of event actor IP address preserved in append-only hash-chained signing_event' },
+  'crove_sign.signing_event.user_agent': { kind: 'other', handling: 'keep_record', reason: 'Event actor user-agent string preserved in append-only hash-chained signing_event for dispute resolution' },
 } as const satisfies Record<string, PersonalDataColumn>;
 
 export type PersonalDataColumnKey = keyof typeof PERSONAL_DATA_COLUMNS;
@@ -455,7 +471,7 @@ export const SEALED_COLUMNS: Readonly<Record<string, { handling: 'shred'; reason
 // handles a user's own account, and no tenant code reads them (control-plane-reads.test.ts).
 export const PERSONAL_DATA_NAME_PATTERN =
   '(^|_)(email|emails|phone|phones|address|addresses|tax_code|recipient|recipients|person_name|reviewer_name|display_name|from_address|to_address|national_id|id_number|birth_date|full_name)($|_)';
-export const PERSONAL_DATA_SCHEMAS = ['crove_kernel', 'crove_finance', 'crove_social', 'crove_crm', 'crove_notes', 'crove_hr', 'crove_meetings', 'crove_projects'] as const;
+export const PERSONAL_DATA_SCHEMAS = ['crove_kernel', 'crove_finance', 'crove_social', 'crove_crm', 'crove_notes', 'crove_hr', 'crove_meetings', 'crove_projects', 'crove_sign'] as const;
 
 // The finder (#923): an owner or admin looks up one person by email address, phone number, or tax code or national ID
 // (digits), across the columns above that hold such a value, and gets every matching row as JSON (the search column
@@ -576,6 +592,7 @@ async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: 
   for (const [key, entry] of Object.entries(PERSONAL_DATA_COLUMNS) as Array<[string, PersonalDataColumn]>) {
     if (!searchable(entry.handling)) continue;
     if (entry.privateRows === 'always') continue;
+    if (entry.machinery) continue;
     const [schema, table, column] = key.split('.') as [string, string, string];
     const ref = sql.ref(`t.${column}`);
     const match = columnMatch(entry.kind, probe, entry.list ? sql`pg_catalog.array_to_string(${ref}, ' ')` : ref);
@@ -981,6 +998,9 @@ export const personalDataErase = defineCommand({
         UPDATE crove_kernel.tenant t SET contact_email = NULL
          WHERE t.org_id = ${ctx.orgId}::uuid AND ${match('email', 't.contact_email') ?? never}`.execute(ctx.trx);
       add('crove_kernel.tenant.contact_email', Number(contact.numAffectedRows ?? 0));
+      const { rows: signOtp } = await sql<{ count: number }>`
+        SELECT crove_sign.personal_erase_otp(${probe.email}) AS count`.execute(ctx.trx);
+      add('crove_sign.signing_otp.email', Number(signOtp[0]?.count ?? 0));
       // A schedule keeps its other recipients; one left with nobody is deleted (it mailed only this person).
       // Deleted first, so an address listed twice in different cases never leaves an empty list.
       const dropped = await sql`

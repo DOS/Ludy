@@ -6,6 +6,7 @@ import { hrManifest } from '@crove/mod-hr';
 import { meetingsManifest } from '@crove/mod-meetings';
 import { notesManifest } from '@crove/mod-notes';
 import { projectsManifest } from '@crove/mod-projects';
+import { signManifest } from '@crove/mod-sign';
 
 const entries = PERSONAL_DATA_COLUMNS as Record<string, PersonalDataColumn>;
 
@@ -162,5 +163,30 @@ describe('personal-data registry: projects (#2591)', () => {
     for (const key of personal) {
       expect(entries[key]).toMatchObject({ kind: 'free_text', handling: 'erase' });
     }
+  });
+});
+
+describe('personal-data registry: sign (#3323)', () => {
+  const personal = Object.entries(signManifest.tables.crove_sign).flatMap(([table, cols]) =>
+    Object.entries(cols as Record<string, string>)
+      .filter(([, cls]) => cls === 'pii' || cls === 'contact' || cls === 'national_id' || cls === 'payment' || cls === 'sensitive')
+      .map(([column]) => `crove_sign.${table}.${column}`),
+  );
+
+  it('scans crove_sign and registers every personal-data and hashed column', () => {
+    expect(PERSONAL_DATA_SCHEMAS).toContain('crove_sign');
+    expect(personal).toEqual(
+      expect.arrayContaining([
+        'crove_sign.signer.name',
+        'crove_sign.signer.email',
+        'crove_sign.signer.phone',
+        'crove_sign.signing_otp.email',
+        'crove_sign.signing_event.actor_label',
+      ]),
+    );
+    const nonToken = personal.filter((key) => key !== 'crove_sign.signing_token.token_sha256' && key !== 'crove_sign.signing_otp.otp_sha256');
+    expect(nonToken.filter((key) => !(key in PERSONAL_DATA_COLUMNS) && !(key in PERSONAL_DATA_PENDING))).toEqual([]);
+    expect(entries['crove_sign.signing_otp.email']).toMatchObject({ kind: 'email', handling: 'erase', machinery: true });
+    expect(entries['crove_sign.signer.email']).toMatchObject({ kind: 'email', handling: 'keep_record' });
   });
 });

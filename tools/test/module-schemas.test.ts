@@ -69,14 +69,14 @@ describe('no cross-module SQL (plan §5.4)', () => {
 const KERNEL_DIRS = ['packages/kernel/src', 'packages/kernel-runtime/src', 'apps/kernel/src', 'packages/db/src'];
 // The kernel source files that name a module's schema, with the modules they name and why.
 const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why: string }> = {
-  'packages/db/src/generated/database.ts': { modules: ['ads', 'crm', 'finance', 'hr', 'meetings', 'notes', 'projects', 'social'], why: 'Kysely types of every table crove_tenant reads, generated (pnpm db:types); types only, no SQL' },
-  'packages/db/src/schema.ts': { modules: ['ads', 'crm', 'finance', 'hr', 'meetings', 'notes', 'projects', 'social'], why: 'refinements of the generated table types (CHECK unions, trigger-set columns); types only, no SQL' },
+  'packages/db/src/generated/database.ts': { modules: ['ads', 'crm', 'finance', 'hr', 'meetings', 'notes', 'projects', 'sign', 'social'], why: 'Kysely types of every table crove_tenant reads, generated (pnpm db:types); types only, no SQL' },
+  'packages/db/src/schema.ts': { modules: ['ads', 'crm', 'finance', 'hr', 'meetings', 'notes', 'projects', 'sign', 'social'], why: 'refinements of the generated table types (CHECK unions, trigger-set columns); types only, no SQL' },
   'packages/kernel/src/member-vy.ts': {
     modules: ['meetings'],
     why: "the recorder's own Vy reads the recorder's own recording through the audited kernel.member_vy.meeting_audio.open, which calls the definer crove_meetings.audio_for_member_vy (#2578): a run exists only after meetings.transcript.start (a meetings command, registered only when meetings is installed), and the definer refuses anything but that run's own meeting",
   },
   'packages/kernel/src/offboarding.ts': {
-    modules: ['ads', 'crm', 'finance', 'hr', 'meetings', 'notes', 'projects', 'social'],
+    modules: ['ads', 'crm', 'finance', 'hr', 'meetings', 'notes', 'projects', 'sign', 'social'],
     why: 'the org export lists every table of every schema (its manifest needs a part per table): a module left out exports its old rows or none, and its data stays, as ADR-0031 says; hr is read only by the owner-run people export (#2676)',
   },
   'packages/kernel/src/parties.ts': {
@@ -84,8 +84,8 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
     why: "a party's kind changes only while nothing points at it (#2438): the check reads the books and the deals, bookings and rules that name the party, whatever is installed now, because an earlier install of finance or crm left rows that still read its kind (PARTY_KIND_HOLDERS; a database test lists every foreign key to party)",
   },
   'packages/kernel/src/personal-data.ts': {
-    modules: ['crm', 'finance', 'hr', 'meetings', 'notes', 'projects', 'social'],
-    why: 'the personal-data registry, find and erase: an erasure reaches data an earlier install of the module left, whatever is installed now; private notes and to-dos are counted through crove_notes.private_matches (#1678); the payroll people (#2530) are registered here and their sealed columns listed; the meeting columns (#2579) are registered, and erased by deleting the meeting; project names and descriptions (#2591) are redacted in place',
+    modules: ['crm', 'finance', 'hr', 'meetings', 'notes', 'projects', 'sign', 'social'],
+    why: 'the personal-data registry, find and erase: an erasure reaches data an earlier install of the module left, whatever is installed now; private notes and to-dos are counted through crove_notes.private_matches (#1678); the payroll people (#2530) are registered here and their sealed columns listed; the meeting columns (#2579) are registered, and erased by deleting the meeting; project names and descriptions (#2591) are redacted in place; eSign OTP emails are erased via crove_sign.personal_erase_otp (#3323)',
   },
   'apps/kernel/src/meta-deletion.ts': { modules: ['ads'], why: "Meta's one data deletion callback fans a verified request out to the Ads side (crove_ads.deletion_request) as well as to the conversations (CV6, #2305): the Ads definers are called only for a secret the deployment holds for the Ads app" },
   'apps/kernel/src/ads-deletion.ts': { modules: ['ads'], why: "Meta's data deletion callback of the Ads connection: its signed request, the status page, and the worker's erasure of the accounts a request names, only when ads is installed (http.ts, worker.ts)" },
@@ -107,6 +107,7 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
   'apps/kernel/src/feeds.ts': { modules: ['social'], why: 'the RSS feed sweep, timed only when social is installed (worker.ts)' },
   'apps/kernel/src/missing-invoice-mail.ts': { modules: ['finance'], why: 'the missing invoice reminders, timed only when finance is installed (worker.ts)' },
   'apps/kernel/src/notes-worker.ts': { modules: ['notes'], why: 'the notes jobs, worked and scheduled only when notes is installed (worker.ts)' },
+  'apps/kernel/src/sign-worker.ts': { modules: ['sign'], why: 'the eSign PDF inspect/seal workers and sweeps, worked and scheduled only when sign is installed (worker.ts)' },
   'apps/kernel/src/period-balance.ts': { modules: ['finance'], why: 'the period balance reconciliation, worked and scheduled only when finance is installed (worker.ts)' },
   'apps/kernel/src/quote-link.ts': { modules: ['crm'], why: 'the public quote page route (the definer crove_crm.quote_link_view), registered only when crm is installed (http.ts)' },
   'apps/kernel/src/report-link.ts': { modules: ['social'], why: 'public report link routes, registered only when social is installed (http.ts)' },
