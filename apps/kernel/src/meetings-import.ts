@@ -66,6 +66,8 @@ export type MeetingsImportResult = 'staged' | 'failed' | 'skipped';
 
 // How a failed step is told to the member and whether the queue should try again.
 function classify(error: unknown): { code: MeetingPlatformErrorCode; retry: boolean } {
+  // A sealed token that does not parse (not JSON, a bad envelope) will not parse next time either: the connection needs a new token.
+  if (error instanceof SyntaxError) return { code: 'connection_expired', retry: false };
   if (error instanceof MeetingPlatformError) return { code: error.code as MeetingPlatformErrorCode, retry: error.code === 'platform_unavailable' || error.code === 'download_failed' };
   if (error instanceof EgressError) {
     if (error.code === 'too_large') return { code: 'too_large', retry: false };
@@ -91,13 +93,21 @@ async function openCredential(deps: MeetingsImportDeps, job: MeetingsImportJob):
 }
 
 // The platform's file, in memory, counted against the cap as it arrives.
-async function fetchBytes(deps: MeetingsImportDeps, download: MeetingPlatformDownload): Promise<Uint8Array> {
+async function fetchBytes(deps: MeetingsImportDeps, download: MeetingPlatformDownload, signal?: AbortSignal): Promise<Uint8Array> {
   if (download.inline) {
     if (download.inline.bytes.byteLength > MEETING_PLATFORM_IMPORT_MAX_BYTES) throw new MeetingPlatformError('too_large');
     return download.inline.bytes;
   }
   const hosts = new Set(download.hosts);
   const suffixes = download.hostSuffixes;
+  // The first request goes to one of the adapter's exact hosts; the CDN suffixes are for the hops a redirect leads to (the guard asks its allowlist for every hop, so the first host is checked here).
+  let first = '';
+  try {
+    first = new URL(download.url).hostname.toLowerCase();
+  } catch {
+    throw new MeetingPlatformError('platform_refused');
+  }
+  if (!hosts.has(first)) throw new MeetingPlatformError('platform_refused');
   const open = deps.stream ?? guardedStream;
   const response = await open(
     download.url,
@@ -111,7 +121,11 @@ async function fetchBytes(deps: MeetingsImportDeps, download: MeetingPlatformDow
       ...deps.streamOptions,
     },
   );
+  // A job the queue gives up on (its expiry) or a worker that stops closes the connection at once.
+  const stop = () => response.destroy();
+  signal?.addEventListener('abort', stop, { once: true });
   try {
+    if (signal?.aborted) throw new MeetingPlatformError('platform_unavailable');
     if (response.status === 401 || response.status === 403) throw new MeetingPlatformError('connection_expired');
     if (response.status === 404 || response.status === 410) throw new MeetingPlatformError('recording_gone');
     if (response.status === 429 || response.status >= 500) throw new MeetingPlatformError('platform_unavailable');
@@ -123,6 +137,7 @@ async function fetchBytes(deps: MeetingsImportDeps, download: MeetingPlatformDow
       const whole = new Uint8Array(declared);
       let at = 0;
       for await (const chunk of response.body) {
+        if (signal?.aborted) throw new MeetingPlatformError('platform_unavailable');
         if (at + chunk.byteLength > declared) throw new MeetingPlatformError('download_failed');
         whole.set(chunk, at);
         at += chunk.byteLength;
@@ -133,6 +148,7 @@ async function fetchBytes(deps: MeetingsImportDeps, download: MeetingPlatformDow
     const chunks: Uint8Array[] = [];
     let total = 0;
     for await (const chunk of response.body) {
+      if (signal?.aborted) throw new MeetingPlatformError('platform_unavailable');
       total += chunk.byteLength;
       if (total > MEETING_PLATFORM_IMPORT_MAX_BYTES) throw new MeetingPlatformError('too_large');
       chunks.push(chunk);
@@ -145,6 +161,7 @@ async function fetchBytes(deps: MeetingsImportDeps, download: MeetingPlatformDow
     }
     return out;
   } finally {
+    signal?.removeEventListener('abort', stop);
     response.destroy();
   }
 }
@@ -152,7 +169,7 @@ async function fetchBytes(deps: MeetingsImportDeps, download: MeetingPlatformDow
 // One attempt for one recording. Throws, so the queue retries, only for a transient failure with tries remain; anything else is recorded on the row. Every outcome names the staging key this job was handed and
 // changes the row only while it still holds exactly that key (the sweep hands an importing row over every minute until it is staged, and a failed row begun again gets a new key), so a duplicate or stale job
 // does nothing and never deletes bytes another job staged.
-export async function runMeetingsImport(deps: MeetingsImportDeps, job: MeetingsImportJob, attempt: { retryCount: number; retryLimit: number }): Promise<MeetingsImportResult> {
+export async function runMeetingsImport(deps: MeetingsImportDeps, job: MeetingsImportJob, attempt: { retryCount: number; retryLimit: number; signal?: AbortSignal }): Promise<MeetingsImportResult> {
   const ctx = { actor: ACTOR, orgId: job.orgId };
   const holds = await deps.runtime.query<'importing' | 'staged' | 'claimed' | 'none'>('kernel.meeting_platform.import_holds', { recordingId: job.id, stagingKey: job.stagingKey }, ctx);
   // Not this job's turn (another job staged it, the row failed, or it was begun again with another key): nothing is downloaded or touched.
@@ -172,8 +189,8 @@ export async function runMeetingsImport(deps: MeetingsImportDeps, job: MeetingsI
     const format = job.hasAudio ? 'audio' : job.hasVideo && deps.media ? 'video' : null;
     if (format === null) return await fail('no_audio');
     const credential = await openCredential(deps, job);
-    const download = await adapter.prepareDownload(credential, job.externalId, format);
-    let bytes = await fetchBytes(deps, download);
+    const download = await adapter.prepareDownload(credential, job.externalId, format, attempt.signal);
+    let bytes = await fetchBytes(deps, download, attempt.signal);
     if (bytes.byteLength === 0) throw new MeetingPlatformError('download_failed');
     if (download.format === 'video') {
       if (!deps.media) return await fail('no_audio');

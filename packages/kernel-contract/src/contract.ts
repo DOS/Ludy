@@ -416,6 +416,7 @@ import {
   zMeetingHooksSwitch,
 } from './meeting-hook.ts';
 import { zFollowupDraft, zFollowupSendCall, zFollowupSent, zFollowupWording, zFollowupWordingAsk } from './meeting-followup.ts';
+import { zChatChannelList, zChatChannelRemove, zChatChannelRemoved, zChatChannelSaveCall, zChatChannelSaved, zChatEmpty, zChatPostCall, zChatPosted, zChatPreview, zChatStatus, zChatStatusInput } from './meeting-chat.ts';
 import { zExtensionOrgToken, zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked, zExtensionTokenRevokedMember } from './extension.ts';
 import { zMcpGrantRevoke, zMcpGrantRevoked, zMcpGrantView, zMcpMemberGrantsSet, zMcpMemberGrantsView, zMcpWakeCleared, zMcpWakeTested, zMcpWakeGetInput, zMcpWakeGrantRef, zMcpWakeSet, zMcpWakeView, zMcpWakeWithSecret } from './mcp.ts';
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
@@ -967,6 +968,17 @@ export const contract = {
       draft: oc.input(zMeetingRef).output(zFollowupDraft),
       wording: oc.input(zFollowupWordingAsk).output(zFollowupWording),
       send: oc.input(zFollowupSendCall).output(zFollowupSent),
+    },
+    // Approved minutes posted to a Slack or Microsoft Teams channel (B4, #3168): an owner or admin pastes a webhook address (sealed, never shown again); the recorder of a meeting with a published result reads the
+    // exact message (`preview`), picks a channel and presses "Gửi" (`post`, R2: queues the post, which the worker's job sends through the egress guard; no model).
+    chat: {
+      channels: oc.input(zChatEmpty).output(zChatChannelList),
+      saveChannel: oc.input(zChatChannelSaveCall).output(zChatChannelSaved),
+      removeChannel: oc.input(zChatChannelRemove).output(zChatChannelRemoved),
+      preview: oc.input(zMeetingRef).output(zChatPreview),
+      post: oc.input(zChatPostCall).output(zChatPosted),
+      // How the recorder's newest post of the meeting to a channel stands (the dialog polls it after the click: the post is sent by the worker's job).
+      status: oc.input(zChatStatusInput).output(zChatStatus),
     },
     // The org's three retention settings (#2579): anyone who reads meetings sees them, an owner or admin changes them.
     settings: {

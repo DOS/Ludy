@@ -214,6 +214,47 @@ describe('runMeetingsImport', () => {
       }
     });
 
+    it('sends the first request to one of the adapter\'s exact hosts: a CDN suffix host is refused before any connection, and an unparsable address too', async () => {
+      for (const url of ['https://a.cdn.example.test/rec.m4a', 'https://elsewhere.example.test/rec.m4a', 'not a url']) {
+        let opened = 0;
+        const { deps, calls } = harness({
+          adapters: { sandbox: remote(url) },
+          stream: (async () => {
+            opened += 1;
+            throw new Error('not reached');
+          }) as unknown as NonNullable<MeetingsImportDeps['stream']>,
+        });
+        expect(await runMeetingsImport(deps, job(), attempt)).toBe('failed');
+        expect(opened).toBe(0);
+        expect(recorded(calls)).toEqual([failedWith('platform_refused')]);
+      }
+    });
+
+    it('closes the connection when the queue aborts the job, and a token that does not parse is a permanent failure', async () => {
+      let destroyed = 0;
+      const controller = new AbortController();
+      const { deps } = harness({
+        adapters: { sandbox: remote() },
+        stream: (async () => ({
+          url: 'https://files.example.test/rec.m4a',
+          status: 200,
+          headers: {},
+          body: (async function* () {
+            controller.abort();
+            yield new Uint8Array([1]);
+          })(),
+          destroy: () => {
+            destroyed += 1;
+          },
+        })) as unknown as NonNullable<MeetingsImportDeps['stream']>,
+      });
+      await expect(runMeetingsImport(deps, job(), { retryCount: 0, retryLimit: 3, signal: controller.signal })).rejects.toThrow();
+      expect(destroyed).toBeGreaterThanOrEqual(1);
+      const bad = harness({ broker: { id: 'test', open: () => 'not json' } as never });
+      expect(await runMeetingsImport(bad.deps, job(), attempt)).toBe('failed');
+      expect(recorded(bad.calls)).toEqual([failedWith('connection_expired')]);
+    });
+
     it('lets the guard talk to the adapter\'s hosts and CDN suffixes only', async () => {
       let allowed: ((host: string) => boolean) | undefined;
       const { deps } = harness({

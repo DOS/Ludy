@@ -31,6 +31,7 @@ import { PlatformRecordings } from '../components/meeting-recordings.tsx';
 import { NotesSubnav } from '../components/notes-subnav.tsx';
 import { ConsentPolicyCard, useConsentPolicy } from '../components/consent-policy.tsx';
 import { MeetingHookCard } from '../components/meeting-hook.tsx';
+import { MinutesChannelsCard } from '../components/meeting-chat.tsx';
 import { RecordingNotice } from '../components/recording-notice.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient, uploadMeetingMedia } from '../lib/api.ts';
@@ -336,6 +337,7 @@ export function MeetingsPage() {
       <RetentionSettingsCard />
       <ConsentPolicyCard />
       <MeetingHookCard />
+      <MinutesChannelsCard />
 
       {/* New Meeting Modal with Mandatory Consent Gate */}
       <Dialog open={modalOpen} onOpenChange={(open) => {

@@ -1144,6 +1144,14 @@ export type MeetingsTranslationTable = Refine<
   }
 >;
 
+// The org's channels for minutes (meetings integrations B4, #3168): which service the webhook belongs to, and how far one click's post got.
+export const MEETING_CHAT_KINDS = ['slack', 'teams'] as const;
+export type MeetingChatKind = (typeof MEETING_CHAT_KINDS)[number];
+export const MEETING_CHAT_POST_STATES = ['queued', 'sent', 'failed', 'ambiguous', 'dropped'] as const;
+export type MeetingChatPostState = (typeof MEETING_CHAT_POST_STATES)[number];
+export type MeetingsChatChannelTable = Refine<G.MeetingsChatChannelTable, { kind: MeetingChatKind }>;
+export type MeetingsChatPostTable = Refine<G.MeetingsChatPostTable, { state: Generated<MeetingChatPostState> }>;
+
 type Refined = Tables<{
   'crove_ads.ad_account': AdsAdAccountTable;
   'crove_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
@@ -1172,6 +1180,8 @@ type Refined = Tables<{
   'crove_hr.payroll_line': HrPayrollLineTable;
   'crove_hr.payroll_run': HrPayrollRunTable;
   'crove_meetings.action_item': MeetingsActionItemTable;
+  'crove_meetings.chat_channel': MeetingsChatChannelTable;
+  'crove_meetings.chat_post': MeetingsChatPostTable;
   'crove_meetings.meeting': MeetingsMeetingTable;
   'crove_meetings.meeting_result': MeetingsMeetingResultTable;
   'crove_meetings.transcript_segment': MeetingsTranscriptSegmentTable;

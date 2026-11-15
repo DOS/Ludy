@@ -1594,7 +1594,7 @@ suite('meetings module database integration tests (#2576)', () => {
     expect((await recordingRow(recordingId)).status).toBe('staged');
   });
 
-  it('31. C1: a staged file that is no media, and a row linked to another meeting, fail the row with a short code and drop the bytes', async () => {
+  it('31. C1: a staged file that is no media fails the row with a short code and drops the bytes, and a request for another meeting is refused before the row moves', async () => {
     const hostile = await suggest('recorder');
     const { meetingId } = await startImport('recorder', { recordingId: hostile });
     const hostileKey = await stage(hostile, Buffer.from('this is not audio at all, only text '.repeat(10)));
@@ -1607,14 +1607,14 @@ suite('meetings module database integration tests (#2576)', () => {
     expect(again.meetingId).not.toBe(meetingId);
     expect(await recordingRow(hostile)).toMatchObject({ status: 'importing', meeting_id: again.meetingId });
 
-    // The row is linked to one meeting; claiming it on the recorder's other meeting is refused as not found and fails the row (claim_failed).
+    // The row is linked to one meeting; claiming it on the recorder's other meeting is refused as not found BEFORE the row moves: it stays staged, with its bytes, for the right meeting.
     const linked = await suggest('recorder');
-    await startImport('recorder', { recordingId: linked });
+    const linkedMeeting = await startImport('recorder', { recordingId: linked });
     const key = await stage(linked);
     const other = String((await rpc('meetings/create', 'recorder', { title: 'Một cuộc họp khác', consentMethod: 'told_at_start' })).body.meetingId);
     expect((await claimImport('recorder', other, { importId: linked, kind: 'audio' })).status).toBe(404);
-    expect(await recordingRow(linked)).toMatchObject({ status: 'failed', staging_key: null, error_code: 'claim_failed' });
-    expect(store.staged.has(key)).toBe(false);
+    expect(await recordingRow(linked)).toMatchObject({ status: 'staged', staging_key: key, meeting_id: linkedMeeting.meetingId });
+    expect(store.staged.has(key)).toBe(true);
   });
 
   it('32. C1: a meeting that is no import is untouched when its media is recorded', async () => {
@@ -1624,7 +1624,29 @@ suite('meetings module database integration tests (#2576)', () => {
     expect(imported).toBe(0);
   });
 
-  it('33. C1: the click goes through the API as meetings/importStart: it returns the meeting, the row is importing, a viewer and a strict org are refused with the command\'s code', async () => {
+  it('33. C1: a platform-notice meeting takes media only as the claimed import of its recorder: an upload, before or after, is refused IMPORT_ONLY and records nothing', async () => {
+    const segments = (meetingId: string) =>
+      admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_meetings.audio_segment WHERE meeting_id = $1', [meetingId])).rows[0]?.n));
+    const recordingId = await suggest('recorder');
+    const { meetingId } = await startImport('recorder', { recordingId });
+    // The recorder's own upload into the import's meeting, while the row is still importing.
+    const early = await uploadRaw(meetingId, '?kind=audio');
+    expect(early.status).toBe(403);
+    expect(((await early.json()) as { code?: string }).code).toBe('IMPORT_ONLY');
+    // Staged but not claimed: still an upload, still refused, and the staged bytes stay for the claim.
+    const key = await stage(recordingId);
+    expect((await uploadRaw(meetingId, '?kind=audio')).status).toBe(403);
+    expect(store.staged.has(key)).toBe(true);
+    expect(await segments(meetingId)).toBe(0);
+    // The claim of that meeting by the same member goes through ...
+    expect((await claimImport('recorder', meetingId, { importId: recordingId, kind: 'audio' })).status).toBe(200);
+    expect(await segments(meetingId)).toBe(1);
+    // ... and once imported the meeting takes no further media from an upload.
+    expect((await uploadRaw(meetingId, '?kind=audio')).status).toBe(403);
+    expect(await segments(meetingId)).toBe(1);
+  });
+
+  it('34. C1: the click goes through the API as meetings/importStart: it returns the meeting, the row is importing, a viewer and a strict org are refused with the command\'s code', async () => {
     const body = { language: 'vi', visibility: 'attendees', consentMethod: 'platform_notice', consentNoticeVersion: IMPORT_NOTICE_VERSION, consentConfirmed: true };
     const recordingId = await suggest('recorder');
     const done = await rpc('meetings/importStart', 'recorder', { recordingId, ...body });

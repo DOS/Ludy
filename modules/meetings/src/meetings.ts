@@ -15,6 +15,7 @@ import { translateCommands } from './translate.ts';
 import { translateRunCommands, translateRunQueries } from './translate-run.ts';
 import { askRunCommands, askRunQueries } from './ask.ts';
 import { agendaCommands, agendaQueries } from './agenda.ts';
+import { chatCommands, chatQueries } from './chat.ts';
 import { linkCommands, linkQueries } from './links.ts';
 import { hookCommands, hookQueries } from './hook.ts';
 import { liveNotesCommands } from './live-notes.ts';
@@ -938,6 +939,7 @@ export const meetingsCommands = [
   ...translateRunCommands,
   ...askRunCommands,
   ...agendaCommands,
+  ...chatCommands,
   ...linkCommands,
   ...followupCommands,
   ...liveCommands,
@@ -969,6 +971,7 @@ export const meetingsQueries = [
   ...translateRunQueries,
   ...askRunQueries,
   ...agendaQueries,
+  ...chatQueries,
   ...linkQueries,
   ...followupQueries,
   ...liveRunQueries,
