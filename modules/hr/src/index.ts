@@ -11,6 +11,7 @@ export * from './employees.ts';
 export * from './payroll-run.ts';
 export * from './payroll-posting.ts';
 export * from './declarations.ts';
+export * from './labor-register.ts';
 export * from './bank-template.ts';
 export { declarationMonths } from './declaration-export.ts';
 export { buildDeclarationWorkbook, amountCell } from './declaration-xlsx.ts';
