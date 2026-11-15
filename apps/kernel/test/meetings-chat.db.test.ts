@@ -399,6 +399,37 @@ suite('minutes posted to Slack and Teams by a worker job (B4, #3168)', () => {
     expect(sent).toHaveLength(before);
   });
 
+  it('hands the sealed address to the worker only while the channel stands: its saver an owner or admin and not disabled, its org active, the channel there, and the org of the worker\'s own context', async () => {
+    const { id: channel } = await saveChannel('admin', 'slack', SLACK_URL);
+    const system = { actor: { type: 'system' as const, component: 'meetings.chat' }, orgId };
+    const target = () => worker.query<{ keyId: string; envelope: string } | null>('meetings.chat.target', { channelId: channel }, system);
+    expect(await target()).toMatchObject({ keyId: expect.any(String), envelope: expect.any(String) });
+    // A user's own request never reaches it (no system context): the query is the worker's alone.
+    expect(await refuses(runtime.query('meetings.chat.target', { channelId: channel }, { actor: asUser('owner'), orgId }))).not.toBeNull();
+    // A saver who was demoted, then restored, then disabled, then enabled again: the address is handed out only while the saver stands.
+    await sqlAdmin(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgId, users.admin]);
+    expect(await target()).toBeNull();
+    await sqlAdmin(`UPDATE crove_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [orgId, users.admin]);
+    expect(await target()).not.toBeNull();
+    await sqlAdmin('UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1', [users.admin]);
+    expect(await target()).toBeNull();
+    await sqlAdmin('UPDATE crove_kernel.user_account SET disabled_at = NULL WHERE id = $1', [users.admin]);
+    expect(await target()).not.toBeNull();
+    // An org that is not active (offboarding or closed) hands out nothing.
+    const status = (await sqlAdmin<{ status: string }>('SELECT status FROM crove_kernel.tenant WHERE org_id = $1', [orgId])).rows[0]?.status;
+    await sqlAdmin(`UPDATE crove_kernel.tenant SET status = 'closed' WHERE org_id = $1`, [orgId]);
+    try {
+      // The runtime may refuse to enter an org that is not active at all, or the definer hands out nothing: either way no address.
+      expect(await target().catch(() => null)).toBeNull();
+    } finally {
+      await sqlAdmin('UPDATE crove_kernel.tenant SET status = $2 WHERE org_id = $1', [orgId, status]);
+    }
+    expect(await target()).not.toBeNull();
+    // A removed channel is gone with its address.
+    await exec('owner', 'meetings.chat.channel_remove', { id: channel });
+    expect(await target()).toBeNull();
+  });
+
   it('checks the host again at the send: a sealed address on another host is never called', async () => {
     const meeting = await seedMeeting(true);
     const id = randomUUID();
