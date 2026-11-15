@@ -23,7 +23,8 @@
 # old container that still answers fails the test. A deploy given --build checks the same, and so does a rollback to
 # a release that was deployed with one; a release without a build id (deployed before /version) skips that step.
 #
-# Deploy: pull the three images by digest, start the database, run `migrate`, start Supabase Auth and run `auth-grants`,
+# Deploy: pull the three images by digest, start the database, make the context token key when the env file has none and
+# count the plain idempotency rows (#3282), run `migrate`, start Supabase Auth and run `auth-grants`,
 # start the other services, then the app: the worker before the API when they run as separate services (`worker`
 # and `api`), else the all-in-one `crove` service. It waits for /readyz (every committed migration in the ledger,
 # Supabase Auth grants in place) and runs the smoke test. When anything after the migration fails, it rolls back to
@@ -325,6 +326,8 @@ release_lock() { if [ "$LOCK_HELD" = 1 ]; then rm -rf "$(state_dir)/lock"; fi; }
 PULL_CONFIG=''
 cleanup() {
   if [ -n "$PULL_CONFIG" ]; then rm -rf "$PULL_CONFIG"; fi
+  # The copy of the env file made while the context token key is written holds that key.
+  if [ -n "${KEY_TMP:-}" ]; then rm -f "$KEY_TMP"; fi
   release_lock
 }
 
@@ -650,6 +653,127 @@ preflight() {
   mkdir -p "$(state_dir)" "$DEPLOY_DIR/releases"
 }
 
+# ---------------------------------------------------------------------------------------------------------------
+# Production steps of a deploy (#3282, docs/runbooks/deploy.md, "Steps for the context token key and plain
+# idempotency rows"). They run on the host, after the database is up and before `migrate`, so the key never leaves it.
+
+# The line numbers of the last CROVE_CONTEXT_TOKEN_KEY assignment in the env file, and whether its value is set. Read like a
+# dotenv file, the last assignment wins: `export` and spaces around `=` are allowed, a ` # comment` is not part of the value, `""` and
+# `''` are empty, and a commented-out line is not an assignment. When a value is in doubt (`KEY=#x`) it counts as set: a key that
+# is there is never replaced, and a deploy that wrongly takes a key for missing would destroy one.
+# Sets KEY_LINE (0: no assignment) and KEY_SET (1: the effective value is not empty). Builtins only: the value is never
+# an argument or an environment variable of another process, and it is never printed.
+KEY_LINE=0 KEY_SET=0
+env_key_scan() {
+  local line raw value n=0
+  KEY_LINE=0 KEY_SET=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    n=$((n + 1))
+    line="${line%$'\r'}"
+    if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?CROVE_CONTEXT_TOKEN_KEY[[:space:]]*=(.*)$ ]]; then
+      KEY_LINE=$n
+      raw="${BASH_REMATCH[2]}"
+      value="$raw"
+      if [[ "$raw" =~ ^[[:space:]]+# ]]; then
+        value=''
+      else
+        value="${value#"${value%%[![:space:]]*}"}"
+        if [[ "$value" =~ ^(.*[^[:space:]])[[:space:]]+#.*$ ]]; then value="${BASH_REMATCH[1]}"; fi
+        value="${value%"${value##*[![:space:]]}"}"
+        if [ "$value" = '""' ] || [ "$value" = "''" ]; then value=''; fi
+      fi
+      if [ -n "$value" ]; then KEY_SET=1; else KEY_SET=0; fi
+    fi
+  done <"$ENV_FILE"
+}
+
+# Before anything changes: when the env file has no context token key, the deploy must be able to make one.
+context_token_key_preflight() {
+  env_key_scan
+  ((KEY_SET)) && return 0
+  command -v openssl >/dev/null || die "$EXIT_USAGE" "$ENV_FILE has no CROVE_CONTEXT_TOKEN_KEY and openssl is not installed to make one (docs/runbooks/context-token-key.md)"
+  [ -w "$ENV_FILE" ] || die "$EXIT_USAGE" "$ENV_FILE has no CROVE_CONTEXT_TOKEN_KEY and the deploy user cannot write to the file (docs/runbooks/context-token-key.md)"
+}
+
+# The temporary copy of the env file while the key is written (it holds the key): removed on every exit.
+KEY_TMP=''
+
+# ensure_context_token_key: when the env file has no context token key, makes one with `openssl rand -base64 32` and writes it
+# into the file (#1822, docs/runbooks/context-token-key.md section 1); an existing key is never replaced, rotation stays a
+# manual step. The key is never printed, logged, passed as an argument or exported: it lives in one shell variable, goes to
+# a 0600 copy of the file by `printf` (a builtin) and from there into the file with `cat >`, which keeps the file's inode,
+# owner and mode. The log says only `context token key generated` or `present`. Returns 1 when the key could not be written.
+ensure_context_token_key() {
+  local key line n=0 cr=''
+  env_key_scan
+  if ((KEY_SET)); then
+    log 'context token key present'
+    return 0
+  fi
+  KEY_TMP="$(mktemp "$(state_dir)/env-key.XXXXXX")" || {
+    err 'cannot make a temporary file for the context token key'
+    KEY_TMP=''
+    return 1
+  }
+  key="$(openssl rand -base64 32 </dev/null)" || key=''
+  # 32 bytes in base64: 43 characters and one `=`.
+  if [[ ! "$key" =~ ^[A-Za-z0-9+/]{43}=$ ]]; then
+    err 'openssl did not make a 32 byte key'
+    key=''
+    return 1
+  fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    n=$((n + 1))
+    if [ "$n" = "$KEY_LINE" ]; then
+      # Keep a line break of CRLF as it was; the replaced line loses `export`, which compose does not need.
+      if [ "${line: -1}" = $'\r' ]; then cr=$'\r'; fi
+      printf 'CROVE_CONTEXT_TOKEN_KEY=%s%s\n' "$key" "$cr"
+    else
+      printf '%s\n' "$line"
+    fi
+  done <"$ENV_FILE" >"$KEY_TMP"
+  if [ "$KEY_LINE" = 0 ]; then printf 'CROVE_CONTEXT_TOKEN_KEY=%s\n' "$key" >>"$KEY_TMP"; fi
+  key=''
+  # Into the file itself, not a rename: the owner, the mode and the inode of the env file stay. A write that fails halfway
+  # is tried once more from the copy; if that fails too, the copy is kept (it is the whole new file) and named.
+  if ! { cat "$KEY_TMP" >"$ENV_FILE" && cmp -s "$KEY_TMP" "$ENV_FILE"; }; then
+    if ! { cat "$KEY_TMP" >"$ENV_FILE" && cmp -s "$KEY_TMP" "$ENV_FILE"; }; then
+      err "writing the context token key into $ENV_FILE failed and the file may be incomplete: the whole new file is at $KEY_TMP (mode 600); copy it over $ENV_FILE and delete it"
+      KEY_TMP=''
+      return 1
+    fi
+  fi
+  rm -f "$KEY_TMP"
+  KEY_TMP=''
+  env_key_scan
+  ((KEY_SET)) || {
+    err "the context token key is not in $ENV_FILE after writing it"
+    return 1
+  }
+  log 'context token key generated'
+  log "person step: copy CROVE_CONTEXT_TOKEN_KEY from $ENV_FILE on the host into the secret store (open the file in an editor; never print it into a shared log), docs/runbooks/context-token-key.md"
+  record 'context token key generated'
+}
+
+# count_plain_idempotency_rows: the read-only count of idempotency rows that still hold a plain SHA-256 (#1750 step 2 may not
+# merge while there are any): the query as the superuser inside the database container (the table is under row-level
+# security, so only a role that bypasses it counts every org), in a session that is read only and times out. It writes
+# `plain idempotency rows: <n>` to the log and never fails the deploy: a count that did not run says so and the deploy goes on.
+PLAIN_IDEMPOTENCY_SQL="SELECT count(*) FROM crove_kernel.idempotency_key WHERE NOT starts_with(request_sha256, 'k1:')"
+count_plain_idempotency_rows() {
+  local n='' why='' errfile
+  errfile="$(mktemp "$(state_dir)/count-err.XXXXXX" 2>/dev/null)" || errfile=/dev/null
+  if n="$(dc exec -T -e 'PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=30000 -c lock_timeout=5000' db \
+    psql -X -q -t -A -v ON_ERROR_STOP=1 -U postgres -d postgres -c "$PLAIN_IDEMPOTENCY_SQL" 2>"$errfile" </dev/null)" && [[ "$n" =~ ^[0-9]+$ ]]; then
+    log "plain idempotency rows: $n"
+  else
+    why="$(head -c 300 "$errfile" 2>/dev/null | tr '\r\n' '  ')" || why=''
+    log "plain idempotency rows: unknown (the count did not run; the deploy goes on): ${why:-no answer}"
+  fi
+  if [ "$errfile" != /dev/null ]; then rm -f "$errfile"; fi
+  return 0
+}
+
 
 # Installs this script on the host for manual rollbacks (when it is not already that copy).
 install_self() {
@@ -744,6 +868,7 @@ do_deploy() {
   ((build_given == 0)) || valid_build "$build" || die "$EXIT_USAGE" "--build must match [A-Za-z0-9._-]{1,64}: '$build'"
   read_registry_password
   preflight
+  context_token_key_preflight
   acquire_lock
 
   local digest name dir current
@@ -786,6 +911,15 @@ do_deploy() {
   if ! up db; then
     recover "$current" "deploy $name (database)" "$name"
   fi
+  # The production steps of #1822 and #1750 (docs/runbooks/deploy.md), on the host, with the database up and before
+  # `migrate`, which installs the key: make the context token key when the env file has none, and count the plain
+  # idempotency rows (this one never fails the deploy).
+  if ! ensure_context_token_key; then
+    if [ -n "$current" ]; then activate "$current"; fi
+    record "deploy $name failed: context token key"
+    die "$EXIT_FAILED" "the context token key could not be written into $ENV_FILE; the services were not changed${current:+ ($current still runs)}"
+  fi
+  count_plain_idempotency_rows
   # Migrations first, with the new image. They are forward only: the running release keeps working on the new
   # schema (expand and contract), so a failure here needs no rollback of the services.
   log 'running migrations'

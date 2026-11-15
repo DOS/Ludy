@@ -4,6 +4,11 @@
 # `compose ps --status running` lists), STUB_WORKER_DOWN_DIGEST (the worker is down while this image runs),
 # STUB_MIGRATE_EXIT, STUB_PULL_FAIL, STUB_BUILD_TIMES (space-separated digest=CROVE_BUILD_TIME pairs that `image
 # inspect` answers; an image not listed carries none).
+#
+# `compose run migrate` reads the env file the way the real step does (#3282): with a CROVE_CONTEXT_TOKEN_KEY it logs
+# `context token key installed`, or `unchanged` when the same key was installed by an earlier run (kept in
+# $STUB_LOG.installed); without one it logs nothing. It never prints the key. `compose exec` is the read-only count of
+# plain idempotency rows: it answers STUB_PLAIN_ROWS (default 0), or fails with STUB_PSQL_FAIL as its error text.
 set -euo pipefail
 
 if [ "${1:-}" = login ]; then
@@ -36,9 +41,14 @@ fi
 
 # Skip the global options deploy.sh passes before the subcommand.
 files=()
+envfile=''
 while (($# > 0)); do
   case "$1" in
-    --project-directory | --env-file) shift 2 ;;
+    --env-file)
+      envfile="$2"
+      shift 2
+      ;;
+    --project-directory) shift 2 ;;
     -f)
       files+=("$2")
       shift 2
@@ -61,7 +71,25 @@ case "$sub" in
     ;;
   port) echo '127.0.0.1:18080' ;;
   run)
-    case "$args" in *migrate*) exit "${STUB_MIGRATE_EXIT:-0}" ;; esac
+    case "$args" in
+      *migrate*)
+        key="$(sed -n 's/^CROVE_CONTEXT_TOKEN_KEY=//p' "$envfile" | tail -n 1)"
+        if [ -n "$key" ]; then
+          if [ -f "$STUB_LOG.installed" ] && [ "$(cat "$STUB_LOG.installed")" = "$key" ]; then echo 'context token key unchanged'; else
+            printf '%s\n' "$key" >"$STUB_LOG.installed"
+            echo 'context token key installed'
+          fi
+        fi
+        exit "${STUB_MIGRATE_EXIT:-0}"
+        ;;
+    esac
+    ;;
+  exec)
+    if [ -n "${STUB_PSQL_FAIL:-}" ]; then
+      echo "$STUB_PSQL_FAIL" >&2
+      exit 1
+    fi
+    echo "${STUB_PLAIN_ROWS-0}"
     ;;
   ps)
     # The worker is down while the image in STUB_WORKER_DOWN_DIGEST is the active release.

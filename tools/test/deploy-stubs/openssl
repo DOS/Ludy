@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
+# A stand-in for openssl in tools/test/deploy.test.ts: `openssl rand -base64 32` answers the content of
+# $STUB_OPENSSL_KEY_FILE (a key the test knows, kept in a file so that it is in no process's environment, and the test can
+# look for it in every log). STUB_OPENSSL_FAIL makes it fail; any other call is refused.
+set -euo pipefail
+[ "$*" = 'rand -base64 32' ] || {
+  echo "stub openssl: unexpected $*" >&2
+  exit 99
+}
+printf 'openssl %s\n' "$*" >>"$STUB_LOG.openssl"
+[ -z "${STUB_OPENSSL_FAIL:-}" ] || exit 1
+cat "$STUB_OPENSSL_KEY_FILE"
