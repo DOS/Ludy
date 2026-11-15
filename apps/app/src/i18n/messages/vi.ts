@@ -276,6 +276,25 @@ export const vi = {
       byVy: '{gm}, tổng quản của các đồng nghiệp AI, viết từ số liệu của danh sách bên dưới; mọi con số đã được đối chiếu với danh sách. Bạn xem và duyệt từng việc ở màn của nó.',
       byTemplate: 'Tóm tắt tự động từ số liệu của danh sách bên dưới.',
     },
+    // "Tuần này" dưới danh sách (#3257): 7 ngày qua, số liệu do chính các ứng dụng tính và những câu của Vy viết trên đó.
+    weekly: {
+      title: 'Tuần này',
+      window: '7 ngày qua',
+      ask: 'Xem tuần này thế nào',
+      loading: 'Đang soạn tóm tắt tuần',
+      aiBadge: '{gm} viết',
+      byVy: '{gm}, tổng quản của các đồng nghiệp AI, viết từ các số liệu trên; mọi con số đã được đối chiếu với chúng. Chỉ tính những gì bạn mở được ở từng ứng dụng.',
+      byTemplate: 'Tóm tắt tự động từ các số liệu trên. Chỉ tính những gì bạn mở được ở từng ứng dụng.',
+      budgetSpent: 'AI hiện chưa dùng được (ngân sách tháng này đã hết hoặc AI đang tắt) nên đây là tóm tắt tự động. Chỉ tính những gì bạn mở được ở từng ứng dụng.',
+      tiles: {
+        dealsWon: 'Deal thắng',
+        dealsOpen: 'Deal đang mở',
+        cash: 'Tiền mặt và tiền gửi',
+        receivables: 'Phải thu của khách hàng',
+        payables: 'Phải trả người bán',
+        tasksLate: 'Việc của bạn quá hạn',
+      },
+    },
   },
   overview: {
     title: 'Tổng quan',
@@ -6455,6 +6474,7 @@ export const vi = {
       finance_payroll_flag: 'Viết một câu cho mỗi điểm bất thường của bảng lương',
       finance_payroll_explain: 'Giải thích một phiếu lương từ các khoản đã lưu',
       today_brief: 'Bản tin hằng ngày của Vy trên Tổng quan',
+      today_weekly: 'Mục "Tuần này" của Vy trên Tổng quan',
       ads_campaign_draft: 'Soạn nội dung chiến dịch quảng cáo',
       finance_overview_explain: 'Viết một câu giải thích tổng quan Kế toán',
       finance_bank_match_explain: 'Giải thích vì sao một giao dịch ngân hàng có thể là khoản trả lương',
@@ -11490,6 +11510,9 @@ export const vi = {
         save: 'Lưu thông tin thuế',
       },
       today: 'Xem việc cần bạn hôm nay',
+      today_weekly: {
+        figures: 'Xem số liệu 7 ngày qua, cho thẻ "Tuần này"',
+      },
       today_mail: {
         get: 'Xem cài đặt thư tóm tắt hằng ngày',
         send: 'Gửi thư tóm tắt hằng ngày của một tổ chức',

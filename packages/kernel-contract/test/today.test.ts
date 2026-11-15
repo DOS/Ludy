@@ -2,7 +2,7 @@
 // The "Hôm nay cần bạn" item shape (#2383) every line's read returns.
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { TODAY_APPS, TODAY_KINDS, sortTodayItems, todayCurrency, zTodayItem, zTodayItemBase, zTodayItems, zTodayList, type TodayItem } from '../src/today.ts';
+import { TODAY_APPS, TODAY_KINDS, sortTodayItems, todayCurrency, weeklyShownByDefault, zTodayItem, zTodayItemBase, zTodayItems, zTodayList, zTodayWeekly, zWeeklyFigures, type TodayItem } from '../src/today.ts';
 
 const item = (over: Record<string, unknown> = {}) => ({
   kind: 'proposal',
@@ -156,3 +156,20 @@ describe('sortTodayItems', () => {
   });
 });
 
+
+describe('"Tuần này" (#3257)', () => {
+  it('is shown by itself Monday to Wednesday, by the Vietnam calendar day', () => {
+    // 2026-11-16 is a Monday.
+    const week = ['2026-11-16', '2026-11-17', '2026-11-18', '2026-11-19', '2026-11-20', '2026-11-21', '2026-11-22'].map(weeklyShownByDefault);
+    expect(week).toEqual([true, true, true, false, false, false, false]);
+    expect(weeklyShownByDefault('not a day')).toBe(false);
+  });
+
+  it('holds the figures to its shape: decimal strings for money, null for a group that cannot be opened, nothing else', () => {
+    const figures = { from: '2026-11-10', to: '2026-11-16', before: '2026-11-09', deals: null, money: { cash: { amount: '1.5', previous: '0' }, receivables: { amount: '0', previous: '0' }, payables: { amount: '0', previous: '0' } }, tasks: { late: 0 } };
+    expect(zWeeklyFigures.safeParse(figures).success).toBe(true);
+    expect(zWeeklyFigures.safeParse({ ...figures, money: { ...figures.money, cash: { amount: 1.5, previous: '0' } } }).success).toBe(false);
+    expect(zWeeklyFigures.safeParse({ ...figures, title: 'x' }).success).toBe(false);
+    expect(zTodayWeekly.safeParse({ figures, writtenBy: 'template', sentences: ['a'], budgetSpent: false, final: true }).success).toBe(true);
+  });
+});
