@@ -2755,6 +2755,7 @@ export const vi = {
         none: 'Chưa có việc nào cho hội thoại này.',
         add: 'Tạo việc',
         titleLabel: 'Tên việc',
+        defaultTitle: 'Theo dõi hội thoại trên {channel}',
         titleHint: 'Mọi thành viên đều xem được việc này, nên hãy tự viết ngắn gọn, đừng chép nguyên lời khách.',
         save: 'Giao việc',
         cancel: 'Hủy',

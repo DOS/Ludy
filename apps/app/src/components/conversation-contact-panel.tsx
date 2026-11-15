@@ -185,7 +185,7 @@ export function ContactPanel({ conversationId, onOpen }: { conversationId: strin
       {canWrite && <LinkContact key={`${conversationId}:${c.contact.partyId ?? ''}`} conversationId={conversationId} defaultName={c.contact.displayName ?? ''} hasParty={c.contact.partyId !== null} />}
       {canWrite && c.contact.partyId !== null && canInsertQuoteLink(c.kind) && <QuoteReplyInsert conversationId={conversationId} partyId={c.contact.partyId} canReply={detail.data.reply.allowed} />}
       {canWrite && c.contact.partyId !== null && canInsertQuoteLink(c.kind) && <FollowupReplyInsert conversationId={conversationId} partyId={c.contact.partyId} canReply={detail.data.reply.allowed} />}
-      <ConversationTasks key={`tasks:${conversationId}`} conversationId={conversationId} canWrite={canWrite} />
+      <ConversationTasks key={`tasks:${conversationId}`} conversationId={conversationId} channelName={c.channel.displayName} canWrite={canWrite} />
       <div className="space-y-1">
         <h3 className="text-sm font-semibold text-foreground">{t('others')}</h3>
         {others.length === 0 ? (

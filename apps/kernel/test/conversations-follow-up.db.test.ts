@@ -119,7 +119,7 @@ suite('Create task from a conversation (CV3, #3295)', () => {
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registered);
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' }).register(registered);
     const config = loadConfig({ DATABASE_URL: appUrl, AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
-    app = createHttpApp({ config, runtime, store: {} as BlobStore, authenticate: createAuthenticator(config, db), pool });
+    app = createHttpApp({ config, runtime, store: {} as BlobStore, authenticate: createAuthenticator(config, db), pool, aiEnabled: false });
 
     for (const who of [owner, desk, lan, viewer]) {
       const me = await rpc('me/get', who, undefined, { slug: null });

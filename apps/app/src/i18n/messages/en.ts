@@ -2757,6 +2757,7 @@ export const en = {
         none: 'No task for this conversation yet.',
         add: 'Create task',
         titleLabel: 'Task title',
+        defaultTitle: 'Follow up on the conversation on {channel}',
         titleHint: 'Every member can see this task, so write it yourself in a few words; do not paste the customer\'s words.',
         save: 'Assign task',
         cancel: 'Cancel',

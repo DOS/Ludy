@@ -22,15 +22,20 @@ const refresh = () => {
   void queryClient.invalidateQueries({ queryKey: orpc.tasks.key() });
 };
 
-function NewTask({ conversationId, onDone }: { conversationId: string; onDone: () => void }) {
+function NewTask({ conversationId, channelName, onDone }: { conversationId: string; channelName: string; onDone: () => void }) {
   const t = useTranslations('conversations.contact.tasks');
   const tt = useTranslations('tasks');
   const chart = useQuery(orpc.chart.get.queryOptions());
-  const [title, setTitle] = useState('');
+  // A fixed default (the org's own channel name, never a word of the customer's), so two clicks make a task; a person can change it.
+  const [title, setTitle] = useState(() => t('defaultTitle', { channel: channelName }));
   const [assignee, setAssignee] = useState('');
   const [dueOn, setDueOn] = useState('');
-  // One key per form, so a second click on a slow connection makes one task, not two.
-  const [key] = useState(() => crypto.randomUUID());
+  // One key per version of the form, so a second click on a slow connection makes one task, not two, and an edit after a failure is a new request.
+  const [key, setKey] = useState(() => crypto.randomUUID());
+  const edited = <T,>(set: (value: T) => void) => (value: T) => {
+    set(value);
+    setKey(crypto.randomUUID());
+  };
   const create = useMutation({
     ...orpc.conversations.followUp.mutationOptions(),
     onSuccess: () => {
@@ -50,11 +55,11 @@ function NewTask({ conversationId, onDone }: { conversationId: string; onDone: (
       <label className="block text-xs font-medium text-muted-foreground" htmlFor={`task-title-${conversationId}`}>
         {t('titleLabel')}
       </label>
-      <Input id={`task-title-${conversationId}`} required maxLength={300} value={title} onChange={(e) => setTitle(e.target.value)} />
+      <Input id={`task-title-${conversationId}`} required maxLength={300} value={title} onChange={(e) => edited(setTitle)(e.target.value)} />
       <p className="text-xs text-muted-foreground">{t('titleHint')}</p>
       <label className="block text-xs font-medium text-muted-foreground">
         {tt('assignTo')}
-        <NativeSelect className="mt-1 w-full" value={assignee} onChange={(e) => setAssignee(e.target.value)}>
+        <NativeSelect className="mt-1 w-full" value={assignee} onChange={(e) => edited(setAssignee)(e.target.value)}>
           <NativeSelectOption value="">{tt('rootAssignee')}</NativeSelectOption>
           {positions.map((p) => (
             <NativeSelectOption key={p.id} value={p.id}>
@@ -65,7 +70,7 @@ function NewTask({ conversationId, onDone }: { conversationId: string; onDone: (
       </label>
       <label className="block text-xs font-medium text-muted-foreground">
         {tt('dueLabel')}
-        <DateInput value={dueOn} onChange={setDueOn} className="mt-1" aria-label={tt('dueLabel')} />
+        <DateInput value={dueOn} onChange={edited(setDueOn)} className="mt-1" aria-label={tt('dueLabel')} />
       </label>
       <div className="flex gap-2">
         <Button type="submit" size="sm" loading={create.isPending} disabled={title.trim() === ''}>
@@ -80,7 +85,7 @@ function NewTask({ conversationId, onDone }: { conversationId: string; onDone: (
   );
 }
 
-export function ConversationTasks({ conversationId, canWrite }: { conversationId: string; canWrite: boolean }) {
+export function ConversationTasks({ conversationId, channelName, canWrite }: { conversationId: string; channelName: string; canWrite: boolean }) {
   const t = useTranslations('conversations.contact.tasks');
   const tt = useTranslations('tasks');
   const f = useFormat();
@@ -112,7 +117,7 @@ export function ConversationTasks({ conversationId, canWrite }: { conversationId
       )}
       {canWrite &&
         (adding ? (
-          <NewTask conversationId={conversationId} onDone={() => setAdding(false)} />
+          <NewTask conversationId={conversationId} channelName={channelName} onDone={() => setAdding(false)} />
         ) : (
           <Button type="button" size="sm" variant="outline" onClick={() => setAdding(true)}>
             {t('add')}

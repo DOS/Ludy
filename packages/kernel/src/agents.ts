@@ -768,6 +768,9 @@ export const createTaskFromConversation = defineCommand({
   access: MEMBERS,
   handler: async (ctx, input) => {
     requireUser(ctx);
+    // The thread must be one the caller may read (row-level security decides): a task linked to a private thread is listed to its readers.
+    const thread = await ctx.trx.selectFrom('crove_kernel.conversation').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.conversationId).executeTakeFirst();
+    if (!thread) throw new DomainError('CONVERSATION_NOT_FOUND', 404, 'Không tìm thấy hội thoại này');
     const created = await insertHumanTask(ctx, {
       title: input.title,
       description: null,
