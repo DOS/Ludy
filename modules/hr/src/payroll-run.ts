@@ -156,7 +156,10 @@ function figuresOf(person: Person, inputs: HrPayrollInputs, month: string, worki
     };
     const checks: HrCheck[] = [...c.checks, otCheck];
     const rulesUsed = totalOt.greaterThan(0) && !c.rulesUsed.some((r) => r.id === capRule.id)
-      ? [...c.rulesUsed, { id: capRule.id, status: capRule.status }].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+      ? [
+          ...c.rulesUsed,
+          { id: capRule.id, kind: capRule.kind, key: capRule.key, effectiveFrom: capRule.effectiveFrom, status: capRule.status },
+        ].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
       : c.rulesUsed;
     return {
       status: 'calculated',
@@ -659,6 +662,23 @@ function totalsOf(lines: readonly StoredLine[]): HrRunFigures {
 const refsOf = (value: unknown): RuleRef[] => (Array.isArray(value) ? (value as RuleRef[]) : []);
 const checksOf = (value: unknown): HrCheck[] => (Array.isArray(value) ? (value as HrCheck[]) : []);
 
+function sameChecks(stored: readonly HrCheck[], fresh: readonly HrCheck[]): boolean {
+  if (stored.length !== fresh.length) return false;
+  const a = [...stored].sort((x, y) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
+  const b = [...fresh].sort((x, y) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
+  return a.every((c, i) => {
+    const f = b[i];
+    return f !== undefined && c.id === f.id && c.ok === f.ok && money(c.actual).equals(money(f.actual)) && money(c.limit).equals(money(f.limit));
+  });
+}
+
+function sameRuleIds(stored: readonly RuleRef[], fresh: readonly RuleRef[]): boolean {
+  if (stored.length !== fresh.length) return false;
+  const a = stored.map((r) => r.id).sort();
+  const b = fresh.map((r) => r.id).sort();
+  return a.every((id, i) => id === b[i]);
+}
+
 // The fingerprint of the figures a person looks at: the run's month and working days, and every line's identity, inputs, figures and rules. If any of it changes after the sheet was
 // shown, an approval that names the old fingerprint is refused and the person looks again.
 function fingerprintOf(run: { id: string; month: string; working_days: string }, lines: readonly StoredLine[]): string {
@@ -716,7 +736,22 @@ export const runApprove = defineCommand({
       if (l.employment_id !== person.terms.id) return true;
       const f = figuresOf(person, parseInputs(l.inputs), run.month, run.working_days);
       const same = (a: string | null, b: string | null) => (a === null || b === null ? a === b : money(a).equals(money(b)));
-      return !(same(f.gross, l.gross) && same(f.employee_insurance, l.employee_insurance) && same(f.employer_insurance, l.employer_insurance) && same(f.union_fee, l.union_fee) && same(f.taxable_income, l.taxable_income) && same(f.pit, l.pit) && same(f.net, l.net) && same(f.employer_cost, l.employer_cost));
+      const freshChecks = JSON.parse(f.checks) as HrCheck[];
+      const freshRules = JSON.parse(f.rules_used) as RuleRef[];
+      return !(
+        f.status === l.status &&
+        f.refusal === l.refusal &&
+        same(f.gross, l.gross) &&
+        same(f.employee_insurance, l.employee_insurance) &&
+        same(f.employer_insurance, l.employer_insurance) &&
+        same(f.union_fee, l.union_fee) &&
+        same(f.taxable_income, l.taxable_income) &&
+        same(f.pit, l.pit) &&
+        same(f.net, l.net) &&
+        same(f.employer_cost, l.employer_cost) &&
+        sameChecks(checksOf(l.checks), freshChecks) &&
+        sameRuleIds(refsOf(l.rules_used), freshRules)
+      );
     });
     // A pay line of a person no longer paid in this month (ended before it, erased, no terms in force) is stale too: approving would freeze pay for someone who is not paid.
     const paidNow = new Set(people.map((p) => p.employeeId));

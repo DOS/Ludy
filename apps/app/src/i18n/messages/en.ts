@@ -968,6 +968,7 @@ export const en = {
       placeholder: 'Name\tUnpaid leave\tDays not employed\tNight hours\tNormal day OT',
       summary: 'Matched {matched}, unmatched {unmatched}, ambiguous {ambiguous}, duplicate target {duplicate}, invalid values {invalid}.',
       tooMany: 'At most {max} rows can be imported at once.',
+      ambiguousError: 'Some timekeeping rows match multiple employees with the same name; disambiguate with employee ID before applying.',
       duplicateTargetError: 'Multiple rows point to the same employee line; resolve collisions before applying.',
       invalidValuesError: 'Some rows contain days or hours outside the accepted format.',
       overtimeWarningBadge: '>40h',
@@ -11399,6 +11400,7 @@ export const en = {
         },
         run: {
           approve: 'Approve the month\'s pay run (second factor, freezes the figures)',
+          import_timekeeping: 'Import timekeeping rows into a draft pay run',
           list: 'View the pay run months',
           open: 'Open the pay run of a month from the people at work',
           recalculate: 'Recalculate the whole draft pay run',

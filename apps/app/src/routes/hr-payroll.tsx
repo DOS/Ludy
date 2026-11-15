@@ -743,7 +743,16 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
       {s.blocking.length > 0 && <BlockingRules rules={s.blocking} />}
       {draft && s.lines.length > 0 && <MonthCoworker runId={runId} />}
       {draft && hasPayLines && importing && (
-        <TimekeepingImportPanel runId={runId} month={s.run.month} lines={s.lines} onImported={refresh} onClose={() => setImporting(false)} />
+        <TimekeepingImportPanel
+          runId={runId}
+          month={s.run.month}
+          lines={s.lines}
+          onImported={async () => {
+            setAccept(false);
+            await refresh();
+          }}
+          onClose={() => setImporting(false)}
+        />
       )}
       {draft && s.obstacles.includes('refused_lines') && <ErrorText>{t('refusedLines')}</ErrorText>}
       {payslip && <Payslip key={payslip} lineId={payslip} onClose={() => setPayslip(null)} />}

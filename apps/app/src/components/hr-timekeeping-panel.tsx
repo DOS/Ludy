@@ -105,6 +105,7 @@ export function TimekeepingImportPanel({
             })}
           </p>
           {preview.tooManyRows && <ErrorText>{t('timekeeping.tooMany', { max: String(HR_TIMEKEEPING_MAX_ROWS) })}</ErrorText>}
+          {preview.ambiguousCount > 0 && <ErrorText>{t('timekeeping.ambiguousError')}</ErrorText>}
           {preview.duplicateTargetCount > 0 && <ErrorText>{t('timekeeping.duplicateTargetError')}</ErrorText>}
           {preview.invalidValueCount > 0 && <ErrorText>{t('timekeeping.invalidValuesError')}</ErrorText>}
           {preview.errors.map((issue, idx) => (

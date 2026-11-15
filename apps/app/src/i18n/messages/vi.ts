@@ -966,6 +966,7 @@ export const vi = {
       placeholder: 'Họ tên\tNghỉ không lương\tNgày chưa làm\tGiờ làm đêm\tLàm thêm ngày thường',
       summary: 'Khớp {matched} dòng, chưa khớp {unmatched}, trùng tên {ambiguous}, trùng dòng đích {duplicate}, giá trị không hợp lệ {invalid}.',
       tooMany: 'Chỉ nhập được tối đa {max} dòng mỗi lần.',
+      ambiguousError: 'Có dòng chấm công trùng họ tên nhân viên trong bảng lương; hãy bổ sung mã nhân viên trước khi áp dụng.',
       duplicateTargetError: 'Có nhiều dòng chấm công cùng trỏ vào một nhân viên; sửa lại trước khi áp dụng.',
       invalidValuesError: 'Một số dòng có số ngày hoặc giờ không đúng định dạng cho phép.',
       overtimeWarningBadge: '>40h',
@@ -11396,6 +11397,7 @@ export const vi = {
         },
         run: {
           approve: 'Duyệt bảng lương tháng (cần xác thực hai bước, khóa số liệu)',
+          import_timekeeping: 'Nhập bảng chấm công hàng loạt vào các dòng lương đang soạn',
           list: 'Xem danh sách các tháng lương',
           open: 'Mở bảng lương của một tháng từ những người đang làm việc',
           recalculate: 'Tính lại cả bảng lương đang soạn',

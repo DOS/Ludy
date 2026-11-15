@@ -111,7 +111,7 @@ describe('HR timekeeping matching and preview (#3371)', () => {
     expect(preview.rows[1]?.row.overtimeCapExceeded).toBe(true);
   });
 
-  it('marks ambiguous names and unmatched rows without guessing', () => {
+  it('marks ambiguous names and unmatched rows without guessing, and blocks apply when ambiguous rows exist', () => {
     const lines = [
       payLine('line-a', 'emp-1', 'Nguyễn Văn Bình'),
       payLine('line-b', 'emp-2', 'nguyễn  văn  bình'),
@@ -119,6 +119,7 @@ describe('HR timekeeping matching and preview (#3371)', () => {
     ];
     const sheet = [
       'Họ tên\tNghỉ không lương\tLàm thêm ngày thường',
+      'Phạm Thị Dung\t0\t2',
       'Nguyễn Văn Bình\t1\t5',
       'Người Không Tồn Tại\t2\t0',
     ].join('\n');
@@ -126,10 +127,10 @@ describe('HR timekeeping matching and preview (#3371)', () => {
     const preview = buildTimekeepingPreview(sheet, '2026-11', lines);
     expect(preview.ambiguousCount).toBe(1);
     expect(preview.unmatchedCount).toBe(1);
-    expect(preview.matchedCount).toBe(0);
-    expect(preview.validRows).toEqual([]);
+    expect(preview.matchedCount).toBe(1);
+    expect(preview.validRows).toHaveLength(1);
     expect(preview.canApply).toBe(false);
-    expect(preview.rows.map((r) => r.status)).toEqual(['ambiguous', 'unmatched']);
+    expect(preview.rows.map((r) => r.status)).toEqual(['matched', 'ambiguous', 'unmatched']);
   });
 
   it('detects duplicate target lineId collisions and blocks apply', () => {

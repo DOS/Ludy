@@ -137,7 +137,7 @@ export function buildTimekeepingPreview(text: string, month: string, lines: read
   });
 
   const tooManyRows = validRows.length > HR_TIMEKEEPING_MAX_ROWS;
-  const canApply = validRows.length > 0 && !tooManyRows && sheet.errors.length === 0 && duplicateTargetCount === 0 && invalidValueCount === 0;
+  const canApply = validRows.length > 0 && !tooManyRows && sheet.errors.length === 0 && ambiguousCount === 0 && duplicateTargetCount === 0 && invalidValueCount === 0;
 
   return {
     rows,
