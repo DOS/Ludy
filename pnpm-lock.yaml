@@ -557,6 +557,9 @@ importers:
       '@crove/mod-notes':
         specifier: workspace:*
         version: link:../../modules/notes
+      '@crove/mod-projects':
+        specifier: workspace:*
+        version: link:../../modules/projects
       '@crove/mod-social':
         specifier: workspace:*
         version: link:../../modules/social

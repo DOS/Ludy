@@ -11,6 +11,7 @@ import { crmManifest } from '@crove/mod-crm';
 import { financeManifest } from '@crove/mod-finance';
 import { hrManifest } from '@crove/mod-hr';
 import { notesManifest } from '@crove/mod-notes';
+import { projectsManifest } from '@crove/mod-projects';
 import { socialManifest } from '@crove/mod-social';
 import { meetingsManifest } from '@crove/mod-meetings';
 import { loadConfig } from '../src/config.ts';
@@ -34,6 +35,7 @@ export const MODULE_MANIFESTS: Manifests = {
   crm: { manifest: crmManifest, file: 'modules/crm/src/manifest.ts' },
   notes: { manifest: notesManifest, file: 'modules/notes/src/manifest.ts' },
   meetings: { manifest: meetingsManifest, file: 'modules/meetings/src/manifest.ts' },
+  projects: { manifest: projectsManifest, file: 'modules/projects/src/manifest.ts' },
   hr: { manifest: hrManifest, file: 'modules/hr/src/manifest.ts' },
 };
 
