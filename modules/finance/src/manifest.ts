@@ -19,7 +19,7 @@ export const financeManifest = defineModule({
       cash_voucher: columns(['org_id', 'id', 'voucher_type', 'number', 'voucher_date', 'cash_account', 'party_id', 'amount', 'proposal_id', 'created_by', 'created_at', 'bank_line_id', 'legal_entity_id', 'number_period', 'number_allocation_id', 'payroll_run_id', 'payroll_payment_kind'], { person_name: 'pii', description: 'pii' }),
       categorization_rule: columns(['org_id', 'id', 'vendor_party_id', 'match_kind', 'match_text', 'label', 'debit_account', 'confirmed_by', 'confirmed_at', 'source_document_id', 'created_at', 'legal_entity_id']),
       channel_order: columns(['org_id', 'id', 'legal_entity_id', 'platform', 'order_no', 'ordered_at', 'created_at']),
-      channel_order_line: columns(['org_id', 'id', 'legal_entity_id', 'order_id', 'line_key', 'sku', 'item_name', 'quantity', 'unit_price', 'amount', 'stage', 'shipped_at', 'attempt', 'source_sha256', 'source_row', 'created_at', 'updated_at']),
+      channel_order_line: columns(['org_id', 'id', 'legal_entity_id', 'order_id', 'line_key', 'sku', 'item_name', 'quantity', 'unit_price', 'amount', 'stage', 'shipped_at', 'delivered_at', 'attempt', 'source_sha256', 'source_row', 'created_at', 'updated_at']),
       channel_settlement: columns(['org_id', 'id', 'legal_entity_id', 'platform', 'period_start', 'period_end', 'payout_ref', 'report_net', 'source_sha256', 'reversal_of', 'created_at']),
       channel_settlement_line: columns(['org_id', 'id', 'legal_entity_id', 'settlement_id', 'order_id', 'line_key', 'sales', 'seller_discount', 'commission', 'service_fee', 'payment_fee', 'shipping', 'tax_withheld', 'refund', 'other', 'net', 'source_row', 'adjustment', 'created_at']),
       chart: columns(['regime', 'version', 'name']),

@@ -424,7 +424,7 @@ suite('marketplace connections (#2519)', () => {
       async listOrders(_secret, _platform, since) {
         if (since !== null) return { orders: [], nextCursor: since };
         const line = (n: string, quantity: string) => ({ lineKey: `${n}-1`, sku: 'MAU-001', itemName: 'Áo', quantity, unitPrice: '100000', amount: '150000' });
-        const order = (orderNo: string, quantity: string) => ({ orderNo, orderedAt: '2026-11-02', shippedAt: null, stage: 'placed' as const, lines: [line(orderNo, quantity)] });
+        const order = (orderNo: string, quantity: string) => ({ orderNo, orderedAt: '2026-11-02', shippedAt: null, deliveredAt: null, stage: 'placed' as const, lines: [line(orderNo, quantity)] });
         return { orders: [order('7000000001', '1.5'), order('7000000003', '3')], nextCursor: 'sandbox:2' };
       },
     };
