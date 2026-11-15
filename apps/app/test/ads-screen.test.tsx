@@ -15,7 +15,7 @@ import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { I18nProvider } from '../src/i18n/provider.tsx';
 import { catalog, setActiveLocale, translatorFor } from '../src/i18n/runtime.ts';
-import { ADS_PREVIEW_CHARS, adsChangeLine, adsChangePlan, adsChangeText, clampText, visibleBidi, type AdsPlanFormat } from '../src/lib/ads-change.ts';
+import { ADS_PREVIEW_CHARS, ADS_PREVIEW_LINES, adsChangeLine, adsChangePlan, adsChangeText, clampText, visibleBidi, type AdsPlanFormat } from '../src/lib/ads-change.ts';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
 
@@ -482,6 +482,8 @@ describe('running ads: the stops, the requests, the switches and the caps (#2294
     const html = card(stateOf({ pending: [waiting('p1', launch), waiting('p2', { change: 'launches_unblock' })] }), 'owner');
     expect(html.split('data-testid="ads-pending-plan"')).toHaveLength(2);
     expect(html).toContain(`>${en.ads.change.plan.showPlan}<`);
+    expect(html).toContain('aria-label="Show the whole plan of “Cà phê Mộc”"');
+    expect(html).toContain(`>${en.ads.change.plan.audience}<`);
     expect(html).toContain('Ghé quán nhé.');
     expect(html).toContain('A conversation with your Facebook Page');
   });
@@ -958,6 +960,22 @@ describe('the whole launch plan on the approval card (#3296)', () => {
     const emoji = clampText('😀'.repeat(ADS_PREVIEW_CHARS + 1));
     expect(emoji.shown).toBe(`${'😀'.repeat(ADS_PREVIEW_CHARS)}…`);
     expect(emoji.full).toBe('😀'.repeat(ADS_PREVIEW_CHARS + 1));
+  });
+
+  it('cuts a text of many short lines at the line limit, so a preview stays short', () => {
+    const many = Array.from({ length: 40 }, (_, i) => `dòng ${i}`).join('\n');
+    const cut = clampText(many);
+    expect(cut.full).toBe(many);
+    expect(cut.shown.split('\n')).toHaveLength(ADS_PREVIEW_LINES);
+    expect(cut.shown.endsWith('\u2026')).toBe(true);
+    expect(clampText('một\nhai\nba\nbốn').full).toBeNull();
+    expect(clampText('\n'.repeat(200)).shown.split('\n').length).toBeLessThanOrEqual(ADS_PREVIEW_LINES);
+  });
+
+  it('shows the invisible characters as codes too, and leaves the joiners that emoji need', () => {
+    expect(visibleBidi('a\u200Bb\u2060c\uFEFFd\u00ADe\u2028f')).toBe('a\u27e8U+200B\u27e9b\u27e8U+2060\u27e9c\u27e8U+FEFF\u27e9d\u27e8U+00AD\u27e9e\u27e8U+2028\u27e9f');
+    expect(visibleBidi('x\u{E0067}y')).toBe('x\u27e8U+E0067\u27e9y');
+    expect(visibleBidi('👨\u200D👩')).toBe('👨\u200D👩');
   });
 
   it('shows the characters that reorder text as visible codes instead of applying them', () => {

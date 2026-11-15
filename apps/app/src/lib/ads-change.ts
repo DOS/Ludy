@@ -70,25 +70,33 @@ export function adsChangeLine(change: AdsChange, t: Translate, money: (amount: s
   return change.change === 'cap_set' || change.change === 'campaign_launch' ? `${title} ${detail}` : title;
 }
 
-// The characters that change how text is ordered or hide where it ends: they are shown as a visible code, never applied, so that a hostile ad text
-// cannot reorder the card around it or make a link read as another (the marks of right-to-left text, the embeddings and the overrides, the isolates).
-const BIDI_CONTROLS = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu;
+// The characters that change how text is ordered or make part of it invisible: they are shown as a visible code, never applied, so that a hostile ad text
+// cannot reorder the card around it, hide behind blanks or make a link read as another (the marks of right-to-left text, the embeddings and the overrides, the
+// isolates, the soft hyphen, the zero-width space, the word joiner, the byte order mark, the line and paragraph separators and the tag characters). The
+// zero-width joiner and non-joiner stay: emoji and some scripts need them.
+const BIDI_CONTROLS = /[\u00ad\u061c\u200b\u200e\u200f\u2028\u2029\u202a-\u202e\u2060\u2066-\u2069\ufeff\u{e0000}-\u{e007f}]/gu;
 export function visibleBidi(text: string): string {
   return text.replace(BIDI_CONTROLS, (ch) => `\u27e8U+${ch.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}\u27e9`);
 }
 
-// How much of an ad text the card shows before the expander, in characters (code points, so a surrogate pair is never cut in two).
+// How much of an ad text the card shows before the expander: characters (code points, so a surrogate pair is never cut in two) and lines (a text of many
+// short lines would otherwise stand as tall as the whole plan).
 export const ADS_PREVIEW_CHARS = 160;
+export const ADS_PREVIEW_LINES = 4;
 export interface ClampedText {
-  // The text with its control characters made visible, cut at ADS_PREVIEW_CHARS when longer, with the ellipsis; the whole text when short.
+  // The text with its control characters made visible, cut when longer than the limits, with the ellipsis; the whole text when short.
   shown: string;
   // The whole text when `shown` is cut, else null: the card puts it behind an expander.
   full: string | null;
 }
 export function clampText(text: string, limit: number = ADS_PREVIEW_CHARS): ClampedText {
   const whole = visibleBidi(text);
+  const lines = whole.split(/\r\n|\r|\n/);
   const chars = Array.from(whole);
-  return chars.length <= limit ? { shown: whole, full: null } : { shown: `${chars.slice(0, limit).join('').trimEnd()}\u2026`, full: whole };
+  if (chars.length <= limit && lines.length <= ADS_PREVIEW_LINES) return { shown: whole, full: null };
+  const byLines = lines.slice(0, ADS_PREVIEW_LINES).join('\n');
+  const kept = Array.from(byLines).slice(0, limit).join('').trimEnd();
+  return { shown: `${kept}\u2026`, full: whole };
 }
 
 export interface AdsAdPreview {

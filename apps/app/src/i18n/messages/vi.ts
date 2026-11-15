@@ -4315,6 +4315,7 @@ export const vi = {
         text: 'Nội dung',
         button: 'Nút',
         showPlan: 'Xem toàn bộ kế hoạch',
+        showPlanOf: 'Xem toàn bộ kế hoạch “{name}”',
         showAll: 'Xem toàn bộ nội dung',
       },
       aiField: {

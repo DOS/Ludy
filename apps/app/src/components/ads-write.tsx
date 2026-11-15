@@ -19,7 +19,7 @@ import { Card } from '@crove/ui/components/card';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { useFormat } from '../i18n/provider.tsx';
-import { adsChangeLine } from '../lib/ads-change.ts';
+import { adsChangeLine, visibleBidi } from '../lib/ads-change.ts';
 import { AdsPlanPreview, useAdsPlanView } from './ads-plan-preview.tsx';
 import { toUnits } from '../lib/decimal.ts';
 import { NO_WRITE_OFFER, writeConnectWay, type AdWriteOffer } from '../lib/ads.ts';
@@ -223,9 +223,11 @@ function PendingRow({ p, slug }: { p: AdsWriteState['pending'][number]; slug: st
       </div>
       {plan && (
         <details className="mt-2" data-testid="ads-pending-plan">
-          <summary className="cursor-pointer text-link hover:underline">{root('ads.change.plan.showPlan')}</summary>
+          <summary className="cursor-pointer text-link hover:underline" aria-label={p.change.change === 'campaign_launch' ? root('ads.change.plan.showPlanOf', { name: visibleBidi(p.change.plan.name) }) : undefined}>
+            {root('ads.change.plan.showPlan')}
+          </summary>
           <div className="mt-2">
-            <AdsPlanPreview plan={plan} />
+            <AdsPlanPreview plan={plan} nested />
           </div>
         </details>
       )}

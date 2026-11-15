@@ -66,27 +66,34 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   );
 }
 
-export function AdsPlanPreview({ plan }: { plan: AdsPlanView }) {
+// `nested` puts the headings one level lower, for a plan shown inside a list under a heading of its own.
+export function AdsPlanPreview({ plan, nested = false }: { plan: AdsPlanView; nested?: boolean }) {
   const t = useTranslations('ads.change.plan');
+  const Heading = nested ? 'h4' : 'h3';
   return (
     <div className="space-y-3 text-sm" data-testid="ads-plan">
-      <h3 className="text-sm font-medium text-muted-foreground">{t('title')}</h3>
+      <Heading className="text-sm font-medium text-muted-foreground">{t('title')}</Heading>
       <dl className="space-y-2">
         <Row label={t('objective')}>{plan.objective}</Row>
         <Row label={t('schedule')}>{plan.schedule}</Row>
+      </dl>
+      <p className="text-sm font-medium text-foreground">{t('audience')}</p>
+      <dl className="space-y-2">
         <Row label={t('location')}>{plan.audience.locations}</Row>
         <Row label={t('age')}>{plan.audience.age}</Row>
         <Row label={t('gender')}>{plan.audience.gender}</Row>
         <Row label={t('interests')}>
           <span dir="auto">{plan.audience.interests}</span>
         </Row>
+      </dl>
+      <dl className="space-y-2">
         <Row label={t('placements')}>{plan.placements}</Row>
         <Row label={t('destination')}>
           <Clamped text={plan.destination} label={t('destination')} />
         </Row>
       </dl>
       <div className="space-y-2">
-        <h3 className="text-sm font-medium text-muted-foreground">{t('adsTitle')}</h3>
+        <Heading className="text-sm font-medium text-muted-foreground">{t('adsTitle')}</Heading>
         <ol className="space-y-2">
           {plan.ads.map((ad, index) => (
             <li key={index} className="space-y-1 rounded-md border border-border p-3" data-testid="ads-plan-ad">

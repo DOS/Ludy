@@ -4319,6 +4319,7 @@ export const en = {
         text: 'Text',
         button: 'Button',
         showPlan: 'Show the whole plan',
+        showPlanOf: 'Show the whole plan of “{name}”',
         showAll: 'Show the whole text',
       },
       aiField: {
