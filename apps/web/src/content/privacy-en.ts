@@ -15,7 +15,7 @@ export const privacyEn: PrivacyCopy = {
   crumbLabel: 'Breadcrumb',
   title: 'Privacy policy',
   lead: 'This page explains how Ludy handles data when you use the Ludy browser extension and when you use Ludy Cloud. The extension comes first, because it is the part to read before you press record.',
-  versionLine: 'Version 1.0, effective 13 November 2026.',
+  versionLine: 'Version 1.1, effective 15 November 2026.',
   reviewNotice: 'This policy is being reviewed and may be updated.',
   contentsTitle: 'Contents',
   sections: [
@@ -58,6 +58,8 @@ export const privacyEn: PrivacyCopy = {
             ['The extension\'s sign-in token', 'After you sign in to Ludy and allow the extension', 'So Ludy knows the extension works for you, in one organization'],
             ['A device name, for example "Tiện ích Ludy, Chrome trên Windows"', 'When you connect the extension', 'So you can see and revoke the device in Ludy. It holds the browser and the operating system only, never a network address or serial number'],
             ['The Ludy address and the features you turned on', 'When you set the extension up', 'Kept in the extension\'s own storage on your computer'],
+            ['Your next meetings from your calendar (title, time, place; at most 5 in the next 30 minutes)', 'Only when you turn on calendar reading in Ludy and allow it once more when you sign in to the extension', 'To show the "Starting soon" card and fill in the meeting title when you click "Record this meeting". The extension only displays this list and does not keep it'],
+            ['Audio sent while you record', 'Only when you tick "Live notes" for that meeting', `So ${N.gm} can take notes during the meeting: small pieces of audio go to your Ludy address while you record, without waiting for you to stop; this may use extra transcription minutes`],
           ],
         },
         {
@@ -122,6 +124,7 @@ export const privacyEn: PrivacyCopy = {
             'Readers: the person who recorded it, and the members named as attendees. The recorder can share the meeting with the whole organization.',
             'Owners and admins see that a meeting exists (date, length, recorder) to manage budgets and retention, but do not read the content of a meeting shared only with its attendees. An owner can delete a meeting to answer a personal-data request without reading it.',
             'Viewers, the AI coworkers of the org chart and the system read nothing from a meeting.',
+            'Minutes sent to a member\'s own address: this feature is off by default. When the owner of the organization turns it on and a member sets their own address, the parts of the minutes that member chose (title, summary, decisions, action items) are sent to that address each time they publish the minutes. The transcript, audio, video and attendees\' contact details are never sent. The copy kept for sending is deleted from Ludy as soon as the delivery is done or Ludy stops trying. Ludy cannot take back what was sent to that address, and the settings screen says so before the member saves.',
             `${N.gm}, working for the recorder, reads what the recorder reads, only within the meeting being processed. ${N.gm}'s output (transcript, summary, decisions, action items) is a draft that only the recorder sees, until the recorder publishes it to the readers of the meeting. A draft that is never published expires after 30 days. ${N.gm} does not create tasks, send mail or send notifications from a meeting's content on its own.`,
           ],
         },
@@ -201,7 +204,9 @@ export const privacyEn: PrivacyCopy = {
           items: [
             'Account data: name, email, password (stored only as a hash), two-factor method; and activity such as sign-in times, IP address, browser and an action log. For this data Ludy is the data controller.',
             'Data in an organization\'s books (documents, invoices, bank statements, journal entries, and meetings): the organization decides why it is processed. Ludy is the processor and acts only on the organization\'s instructions.',
-            'Google Calendar: only when a member connects their own calendar. Ludy reads busy time slots, not titles or attendees. Every member of the organization sees these busy slots (without any content).',
+            'Google Calendar: only when a member connects their own calendar. By default Ludy reads busy time slots only, not titles or attendees, and every member of the organization sees these busy slots (without any content).',
+            'Only when that member turns on "Let Ludy read the names and times of meetings in my calendar" and allows it once more on Google\'s page, Ludy reads from their primary calendar, from 1 day back to 7 days ahead: the meeting name (cut at 200 characters), start and end, time zone, the Google Meet, Zoom or Teams join address and the number of invitees. Ludy does not read invitees\' email addresses, descriptions or attachments. Only that member can read these rows (owners, admins, other members and the system cannot). They are deleted at once when the member turns the reading off or disconnects the calendar; rows outside that window are cleaned up by a scheduled sweep, and a row linked to a meeting the member recorded is kept with that meeting. A meeting name can contain other people\'s names.',
+            'Outlook (Microsoft) calendar: only when a member connects their own calendar. Microsoft offers only a permission that includes event titles, so the grant is at that level from the moment of connecting, and the screen says so; what Ludy reads and keeps is decided by Ludy\'s own code and the member\'s switch. By default Ludy reads and keeps busy time slots only. Only when the member turns on "Let Ludy read the names and times of meetings in my calendar" does Ludy read and keep the meeting name, time, Teams join address and number of invitees (Ludy counts the invitees in memory and keeps no address), in the same window from 1 day back to 7 days ahead, with the same rules on who can read it and on deletion as for Google Calendar above.',
             'Purposes: to provide the service, security (sign-in checks, two-factor, audit log), support and operations, and answering valid requests from public authorities.',
             'Ludy does not sell personal data, does not use your documents or books for advertising, and does not use them to train AI models.',
             'AI with documents: e-invoices in XML are read directly, without AI. PDFs and photos of documents are sent to the deployment\'s AI provider to be read. The result is always checked by rules and approved by a person before it is booked.',
