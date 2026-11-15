@@ -90,6 +90,13 @@ suite('the meetings import sweep and job on PostgreSQL (meetings integrations C1
     }
   }
   const sqlAdmin = <R extends pg.QueryResultRow = pg.QueryResultRow>(text: string, params: unknown[] = []) => admin((c) => c.query<R>(text, params));
+  // The meeting a click made: begin checks that it exists and is the member's to record, so the test makes a real one (as the command does) with the platform-notice consent.
+  const meetingFor = async (o: { orgId: string }, user: string): Promise<string> =>
+    (await sqlAdmin<{ id: string }>(
+      `INSERT INTO crove_meetings.meeting (org_id, recorder_user_id, title, consent_method, consent_confirmed_by, consent_notice_version, audio_retention_date, text_retention_date)
+       VALUES ($1, $2, 'Họp thử', 'platform_notice', $2, '2026-11-imp-v1', current_date + 7, current_date + 30) RETURNING id`,
+      [o.orgId, user],
+    )).rows[0]?.id as string;
   const person = (name: string) => upsertIdentity(personDb, { issuer: 'mp', subject: randomUUID(), email: `${name}-${randomUUID().slice(0, 8)}@mp.test`, name: null });
 
   async function org() {
@@ -131,7 +138,7 @@ suite('the meetings import sweep and job on PostgreSQL (meetings integrations C1
   async function importing(o: Org, user: string, connectionId: string, externalId: string) {
     await replace(o, connectionId, [listed(externalId)]);
     const recordingId = await idOf(externalId, connectionId);
-    const meetingId = randomUUID();
+    const meetingId = await meetingFor(o, user);
     const key = stagingKey();
     await o.exec(user, 'test.mp.begin', { recordingId, meetingId, stagingKey: key });
     return { recordingId, meetingId, key };
@@ -259,7 +266,7 @@ suite('the meetings import sweep and job on PostgreSQL (meetings integrations C1
     const audio = await sqlAdmin<{ id: string }>("SELECT id FROM crove_kernel.meeting_platform_recording WHERE connection_id = $1 AND external_id = 'sandbox-rec-audio'", [connectionId]);
     const recordingId = audio.rows[0]?.id as string;
     const key = stagingKey();
-    await o.exec(o.lan, 'test.mp.begin', { recordingId, meetingId: randomUUID(), stagingKey: key });
+    await o.exec(o.lan, 'test.mp.begin', { recordingId, meetingId: await meetingFor(o, o.lan), stagingKey: key });
     const run = sweepDeps(o);
     const done = await runMeetingsImportSweep(run.deps);
     expect(done.handedOver).toBeGreaterThanOrEqual(1);
@@ -320,7 +327,7 @@ suite('the meetings import sweep and job on PostgreSQL (meetings integrations C1
     const audio = await sqlAdmin<{ id: string }>("SELECT id FROM crove_kernel.meeting_platform_recording WHERE connection_id = $1 AND external_id = 'sandbox-rec-audio'", [connectionId]);
     const recordingId = audio.rows[0]?.id as string;
     const key = stagingKey();
-    await o.exec(o.lan, 'test.mp.begin', { recordingId, meetingId: randomUUID(), stagingKey: key });
+    await o.exec(o.lan, 'test.mp.begin', { recordingId, meetingId: await meetingFor(o, o.lan), stagingKey: key });
     const job: MeetingsImportJob = { orgId: o.orgId, id: recordingId, connectionId, provider: 'sandbox', externalId: 'sandbox-rec-audio', hasAudio: true, hasVideo: false, sizeBytes: null, stagingKey: key };
     const blobs = store();
     const deps = { runtime: worker, broker: vault, store: blobs, adapters: { sandbox: new SandboxMeetingPlatform() }, media: null } as never;
@@ -334,7 +341,7 @@ suite('the meetings import sweep and job on PostgreSQL (meetings integrations C1
     await sqlAdmin("UPDATE crove_kernel.meeting_platform_recording SET staged_at = now() - interval '56 minutes' WHERE id = $1", [recordingId]);
     await runMeetingsImportSweep(sweepDeps(o).deps);
     const fresh = stagingKey();
-    await o.exec(o.lan, 'test.mp.begin', { recordingId, meetingId: randomUUID(), stagingKey: fresh });
+    await o.exec(o.lan, 'test.mp.begin', { recordingId, meetingId: await meetingFor(o, o.lan), stagingKey: fresh });
     expect(await runMeetingsImport(deps, job, { retryCount: 0, retryLimit: 3 })).toBe('skipped');
     expect(await rowOf('sandbox-rec-audio', connectionId)).toMatchObject({ status: 'importing', staging_key: fresh });
   });

@@ -2362,7 +2362,8 @@ export function createRpcHandler(
           const { orgId, role } = await resolveMembership(runtime, context.user, context.orgSlug);
           if (role === 'viewer') throw new DomainError('FORBIDDEN', 403, 'Người xem không kết nối được nền tảng họp');
           if (!channels?.sandbox) throw new DomainError('CHANNEL_PROVIDER_DISABLED', 404, 'Kênh thử nghiệm (sandbox) chưa được bật');
-          const sealed = channels.broker.seal(randomBytes(24).toString('hex'), meetingPlatformBinding(orgId, 'sandbox', 'sandbox@local'));
+          // The token is sealed in the shape the job and the sweep open: JSON with an accessToken (the sandbox platform checks nothing, but the shape is the real one).
+          const sealed = channels.broker.seal(JSON.stringify({ accessToken: randomBytes(24).toString('hex') }), meetingPlatformBinding(orgId, 'sandbox', 'sandbox@local'));
           return runtime.execute<{ connectionId: string; reconnected: boolean }>(
             'kernel.meeting_platform.connect',
             {

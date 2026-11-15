@@ -9935,6 +9935,7 @@ export const en = {
       LIVE_PIECES_CHANGED: 'The pieces changed while they were being joined. Try again.',
       LIVE_PIECE_UNREADABLE: 'A piece could not be read from storage, so they cannot be joined yet. Tell your system administrator.',
       MEDIA_ALREADY_RECORDED: 'This meeting already has its recording; the one that arrived first is kept and the later one is refused.',
+      IMPORT_ONLY: 'This meeting holds only the recording imported from its meeting platform; no other audio can be added to it.',
       MEETING_PLATFORM_BUSY: 'A recording from this platform is still being imported. Wait for it to finish or fail, then disconnect.',
       MEETING_PLATFORM_NOT_ACTIVE: 'The connection to this meeting platform is no longer valid. Connect again.',
       MEETING_PLATFORM_NOT_FOUND: 'This meeting platform connection or recording was not found.',

@@ -411,6 +411,10 @@ BEGIN
   IF NOT FOUND THEN
     RAISE EXCEPTION 'MEETING_PLATFORM_NOT_FOUND' USING ERRCODE = 'P0002';
   END IF;
+  -- The meeting the click just made must exist and be this member's to record (a kernel row naming a meeting by id, so it is checked here and not only by the command that calls this).
+  IF NOT EXISTS (SELECT 1 FROM crove_meetings.meeting m WHERE m.org_id = v_org AND m.id = p_meeting AND m.recorder_user_id = v_user) THEN
+    RAISE EXCEPTION 'MEETING_PLATFORM_NOT_FOUND' USING ERRCODE = 'P0002';
+  END IF;
   IF v_row.status NOT IN ('suggested', 'failed') THEN
     RAISE EXCEPTION 'MEETING_PLATFORM_STATE' USING ERRCODE = '55000';
   END IF;
@@ -494,7 +498,7 @@ END $$;
 
 -- The member's request takes the staged bytes: the row must be theirs and staged. It becomes claimed; the staging key is returned for the sealing (the same route as an upload). Raises
 -- MEETING_PLATFORM_NOT_FOUND (P0002) and MEETING_PLATFORM_STATE (55000) otherwise.
-CREATE OR REPLACE FUNCTION crove_kernel.meeting_platform_recording_claim(p_recording uuid)
+CREATE OR REPLACE FUNCTION crove_kernel.meeting_platform_recording_claim(p_recording uuid, p_meeting uuid)
 RETURNS TABLE (staging_key text, meeting_id uuid, size_bytes bigint)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
@@ -504,6 +508,10 @@ DECLARE
 BEGIN
   SELECT * INTO v_row FROM crove_kernel.meeting_platform_recording r WHERE r.org_id = v_org AND r.id = p_recording AND r.user_id = v_user FOR UPDATE;
   IF NOT FOUND THEN
+    RAISE EXCEPTION 'MEETING_PLATFORM_NOT_FOUND' USING ERRCODE = 'P0002';
+  END IF;
+  -- The request must be for the meeting this recording was begun for (checked before anything moves, so a wrong meeting id does not leave the row claimed).
+  IF v_row.meeting_id IS DISTINCT FROM p_meeting THEN
     RAISE EXCEPTION 'MEETING_PLATFORM_NOT_FOUND' USING ERRCODE = 'P0002';
   END IF;
   IF v_row.status <> 'staged' THEN
@@ -576,7 +584,7 @@ REVOKE ALL ON FUNCTION crove_kernel.meeting_platform_import_open(integer) FROM P
 REVOKE ALL ON FUNCTION crove_kernel.meeting_platform_import_staged(uuid, text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 REVOKE ALL ON FUNCTION crove_kernel.meeting_platform_import_failed(uuid, text, text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 REVOKE ALL ON FUNCTION crove_kernel.meeting_platform_import_holds(uuid, text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
-REVOKE ALL ON FUNCTION crove_kernel.meeting_platform_recording_claim(uuid) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+REVOKE ALL ON FUNCTION crove_kernel.meeting_platform_recording_claim(uuid, uuid) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 REVOKE ALL ON FUNCTION crove_kernel.meeting_platform_recording_claim_failed(uuid, text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 REVOKE ALL ON FUNCTION crove_kernel.meeting_platform_recording_imported(uuid) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 REVOKE ALL ON FUNCTION crove_kernel.meeting_platform_recording_sweep() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
@@ -591,7 +599,7 @@ TO crove_worker;
 GRANT EXECUTE ON FUNCTION
   crove_kernel.meeting_platform_recording_begin(uuid, uuid, text),
   crove_kernel.meeting_platform_recording_dismiss(uuid),
-  crove_kernel.meeting_platform_recording_claim(uuid),
+  crove_kernel.meeting_platform_recording_claim(uuid, uuid),
   crove_kernel.meeting_platform_recording_claim_failed(uuid, text),
   crove_kernel.meeting_platform_recording_imported(uuid)
 TO crove_app;

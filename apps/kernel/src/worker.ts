@@ -1277,7 +1277,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     const importDeps = { runtime: deps.runtime, broker: wakeBroker, store: deps.store, adapters: meetingPlatforms, media: null };
     await boss.work<MeetingsImportJob>(QUEUES.meetingsImport, { batchSize: 1, localConcurrency: MEETINGS_IMPORT_CONCURRENCY, includeMetadata: true }, async ([job]) => {
       if (!job) return;
-      await runMeetingsImport(importDeps, job.data, { retryCount: job.retryCount, retryLimit: MEETINGS_IMPORT_RETRY_LIMIT });
+      await runMeetingsImport(importDeps, job.data, { retryCount: job.retryCount, retryLimit: MEETINGS_IMPORT_RETRY_LIMIT, ...(job.signal ? { signal: job.signal } : {}) });
     });
     await boss.work(QUEUES.meetingsImportSweep, { batchSize: 1 }, async () => {
       const done = await runMeetingsImportSweep({

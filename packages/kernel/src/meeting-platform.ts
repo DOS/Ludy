@@ -206,7 +206,8 @@ export const meetingPlatformRecordingDismiss = defineCommand({
 // The member's request takes the bytes the worker staged: the row must be theirs and staged; it becomes claimed and the staging key comes back for the sealing (the same route as an upload).
 export const meetingPlatformImportClaim = defineCommand({
   name: 'kernel.meeting_platform.import.claim',
-  input: zMeetingPlatformRecordingRef,
+  // The meeting the request is for: the definer refuses a recording that was begun for another meeting before anything moves.
+  input: z.strictObject({ recordingId: zId, meetingId: zId }),
   risk: 'R1',
   sideEffect: 'internal',
   access: EDITORS,
@@ -214,13 +215,13 @@ export const meetingPlatformImportClaim = defineCommand({
   handler: async (ctx, input): Promise<{ stagingKey: string; meetingId: string; sizeBytes: number | null }> => {
     requireUser(ctx);
     const { rows } = await sql<{ staging_key: string; meeting_id: string; size_bytes: string | number | null }>`
-      SELECT staging_key, meeting_id, size_bytes FROM crove_kernel.meeting_platform_recording_claim(${input.recordingId}::uuid)`
+      SELECT staging_key, meeting_id, size_bytes FROM crove_kernel.meeting_platform_recording_claim(${input.recordingId}::uuid, ${input.meetingId}::uuid)`
       .execute(ctx.trx)
       .catch(platformError);
     const row = rows[0];
     if (!row) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
     // The audit row names the recording only: never the staging key.
-    ctx.audit({ recording_id: input.recordingId });
+    ctx.audit({ recording_id: input.recordingId, meeting_id: input.meetingId });
     return { stagingKey: row.staging_key, meetingId: row.meeting_id, sizeBytes: row.size_bytes === null ? null : Number(row.size_bytes) };
   },
 });
@@ -427,6 +428,8 @@ export const meetingPlatformImportHolds = defineQuery({
 
 // Expiry across every org (the context's org only hosts the audit row): old suggestions go, staged bytes nobody claimed, stalled claims and downloads fail. Returns the staging keys whose bytes the
 // job must delete.
+// Not called by the worker, which runs the definer directly on its own login (as the conversation and campaign sweeps do): this command is the audited, system-only seam of the same definer, kept so that its
+// expiry rules are tested through the runtime (meeting-platform.db.test.ts) and so that a later job may call it without a new grant.
 export const meetingPlatformSweep = defineCommand({
   name: 'kernel.meeting_platform.sweep',
   input: z.strictObject({}),

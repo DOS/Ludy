@@ -9923,6 +9923,7 @@ export const vi = {
       LIVE_PIECES_CHANGED: 'Các đoạn đã thay đổi trong lúc ghép. Hãy thử lại.',
       LIVE_PIECE_UNREADABLE: 'Không đọc được một đoạn từ kho lưu trữ nên chưa ghép được. Hãy báo người quản trị hệ thống.',
       MEDIA_ALREADY_RECORDED: 'Cuộc họp này đã có bản ghi rồi; bản ghi đến trước được giữ và bản đến sau bị từ chối.',
+      IMPORT_ONLY: 'Cuộc họp này chỉ chứa bản ghi nhập từ nền tảng họp của nó; không thêm âm thanh khác vào được.',
       MEETING_PLATFORM_BUSY: 'Còn bản ghi đang được nhập từ nền tảng này. Hãy chờ nhập xong hoặc báo lỗi rồi hãy ngắt kết nối.',
       MEETING_PLATFORM_NOT_ACTIVE: 'Kết nối với nền tảng họp này đã hết hiệu lực. Hãy kết nối lại.',
       MEETING_PLATFORM_NOT_FOUND: 'Không tìm thấy bản ghi hoặc kết nối nền tảng họp này.',

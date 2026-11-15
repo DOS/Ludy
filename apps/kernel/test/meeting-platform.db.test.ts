@@ -88,6 +88,13 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     }
   }
   const sqlAdmin = <R extends pg.QueryResultRow = pg.QueryResultRow>(text: string, params: unknown[] = []) => admin((c) => c.query<R>(text, params));
+  // The meeting a click made: begin checks that it exists and is the member's to record, so the test makes a real one (as the command does) with the platform-notice consent.
+  const meetingFor = async (o: { orgId: string }, user: string): Promise<string> =>
+    (await sqlAdmin<{ id: string }>(
+      `INSERT INTO crove_meetings.meeting (org_id, recorder_user_id, title, consent_method, consent_confirmed_by, consent_notice_version, audio_retention_date, text_retention_date)
+       VALUES ($1, $2, 'Họp thử', 'platform_notice', $2, '2026-11-imp-v1', current_date + 7, current_date + 30) RETURNING id`,
+      [o.orgId, user],
+    )).rows[0]?.id as string;
   const person = (name: string) => upsertIdentity(personDb, { issuer: 'mp', subject: randomUUID(), email: `${name}-${randomUUID().slice(0, 8)}@mp.test`, name: null });
 
   async function org() {
@@ -142,7 +149,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
   async function importing(o: Org, user: string, connectionId: string, externalId: string) {
     await replace(o, connectionId, [listed(externalId)]);
     const recordingId = await idOf(externalId, connectionId);
-    const meetingId = randomUUID();
+    const meetingId = await meetingFor(o, user);
     const key = stagingKey();
     await o.exec(user, 'test.mp.begin', { recordingId, meetingId, stagingKey: key });
     return { recordingId, meetingId, key };
@@ -154,7 +161,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
   };
   const claimed = async (o: Org, user: string, connectionId: string, externalId: string) => {
     const r = await staged(o, user, connectionId, externalId);
-    await o.exec(user, 'kernel.meeting_platform.import.claim', { recordingId: r.recordingId });
+    await o.exec(user, 'kernel.meeting_platform.import.claim', { recordingId: r.recordingId, meetingId: r.meetingId });
     return r;
   };
 
@@ -315,19 +322,23 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     const c = await connect(o, o.lan);
     await replace(o, c.connectionId, [listed('v', { sizeBytes: 5000 }), listed('none', { hasAudio: false, hasVideo: false, hasTranscript: true })]);
     const recordingId = await idOf('v', c.connectionId);
-    const meetingId = randomUUID();
+    const meetingId = await meetingFor(o, o.lan);
     const key = stagingKey();
     const as = (user: string, name: string, input: unknown) => o.exec(user, name, input);
     // Nothing moves a suggestion but the member's click: the worker's and the claim's steps are not allowed on it.
     expect(await o.sys('kernel.meeting_platform.import_staged', { recordingId, stagingKey: key })).toMatchObject({ applied: 0 });
-    expect(await refuses(as(o.lan, 'kernel.meeting_platform.import.claim', { recordingId }))).toBe('MEETING_PLATFORM_STATE');
+    // A suggestion was begun for no meeting, so a claim for any meeting finds nothing to take.
+    expect(await refuses(as(o.lan, 'kernel.meeting_platform.import.claim', { recordingId, meetingId }))).toBe('MEETING_PLATFORM_NOT_FOUND');
+    // The click needs a meeting that exists and is the member's own: a stranger's, or none, is refused and the row stays a suggestion.
+    expect(await refuses(as(o.lan, 'test.mp.begin', { recordingId, meetingId: randomUUID(), stagingKey: key }))).toBe('MEETING_PLATFORM_NOT_FOUND');
+    expect(await refuses(as(o.lan, 'test.mp.begin', { recordingId, meetingId: await meetingFor(o, o.nam), stagingKey: key }))).toBe('MEETING_PLATFORM_NOT_FOUND');
     // A recording with a transcript alone is not imported; a malformed key is refused.
     expect(await refuses(as(o.lan, 'test.mp.begin', { recordingId: await idOf('none', c.connectionId), meetingId, stagingKey: key }))).toBe('MEETING_PLATFORM_NO_AUDIO');
     expect(await refuses(as(o.lan, 'test.mp.begin', { recordingId, meetingId, stagingKey: 'staging/short' }))).toBe('MEETING_PLATFORM_INVALID');
     // Another member, an owner and a viewer cannot begin, claim or dismiss it: for them it does not exist.
     for (const who of [o.nam, o.owner]) {
       expect(await refuses(as(who, 'test.mp.begin', { recordingId, meetingId, stagingKey: key })), who).toBe('MEETING_PLATFORM_NOT_FOUND');
-      expect(await refuses(as(who, 'kernel.meeting_platform.import.claim', { recordingId })), who).toBe('MEETING_PLATFORM_NOT_FOUND');
+      expect(await refuses(as(who, 'kernel.meeting_platform.import.claim', { recordingId, meetingId })), who).toBe('MEETING_PLATFORM_NOT_FOUND');
       expect(await refuses(as(who, 'kernel.meeting_platform.recording.dismiss', { recordingId })), who).toBe('MEETING_PLATFORM_NOT_FOUND');
     }
     expect((await rowOf('v', c.connectionId))?.status).toBe('suggested');
@@ -335,7 +346,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     await as(o.lan, 'test.mp.begin', { recordingId, meetingId, stagingKey: key });
     expect(await rowOf('v', c.connectionId)).toMatchObject({ status: 'importing', meeting_id: meetingId, staging_key: key });
     expect(await refuses(as(o.lan, 'test.mp.begin', { recordingId, meetingId, stagingKey: stagingKey() }))).toBe('MEETING_PLATFORM_STATE');
-    expect(await refuses(as(o.lan, 'kernel.meeting_platform.import.claim', { recordingId }))).toBe('MEETING_PLATFORM_STATE');
+    expect(await refuses(as(o.lan, 'kernel.meeting_platform.import.claim', { recordingId, meetingId }))).toBe('MEETING_PLATFORM_STATE');
     expect(await refuses(as(o.lan, 'kernel.meeting_platform.recording.dismiss', { recordingId }))).toBe('MEETING_PLATFORM_NOT_FOUND');
     // The worker is told which rows are importing, without a title.
     const open = await o.sysQuery<Array<Record<string, unknown>>>('kernel.meeting_platform.import_open', { limit: 200 });
@@ -354,11 +365,14 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     expect((await rowOf('v', c.connectionId))?.status).toBe('staged');
     expect((await o.sysQuery<Array<{ recordingId: string }>>('kernel.meeting_platform.import_open', { limit: 200 })).some((r) => r.recordingId === recordingId)).toBe(false);
     // The member's own request takes them: only theirs, once.
-    expect(await refuses(as(o.nam, 'kernel.meeting_platform.import.claim', { recordingId }))).toBe('MEETING_PLATFORM_NOT_FOUND');
+    // A request for another meeting is refused before the row moves: it stays staged for the right one.
+    expect(await refuses(as(o.lan, 'kernel.meeting_platform.import.claim', { recordingId, meetingId: await meetingFor(o, o.lan) }))).toBe('MEETING_PLATFORM_NOT_FOUND');
+    expect((await rowOf('v', c.connectionId))?.status).toBe('staged');
+    expect(await refuses(as(o.nam, 'kernel.meeting_platform.import.claim', { recordingId, meetingId }))).toBe('MEETING_PLATFORM_NOT_FOUND');
     expect(await refuses(as(o.lan, 'test.mp.begin', { recordingId, meetingId, stagingKey: stagingKey() }))).toBe('MEETING_PLATFORM_STATE');
-    expect(await as(o.lan, 'kernel.meeting_platform.import.claim', { recordingId })).toEqual({ stagingKey: key, meetingId, sizeBytes: 5000 });
+    expect(await as(o.lan, 'kernel.meeting_platform.import.claim', { recordingId, meetingId })).toEqual({ stagingKey: key, meetingId, sizeBytes: 5000 });
     expect((await rowOf('v', c.connectionId))?.status).toBe('claimed');
-    expect(await refuses(as(o.lan, 'kernel.meeting_platform.import.claim', { recordingId }))).toBe('MEETING_PLATFORM_STATE');
+    expect(await refuses(as(o.lan, 'kernel.meeting_platform.import.claim', { recordingId, meetingId }))).toBe('MEETING_PLATFORM_STATE');
     // The audit row of the claim names the recording, never the staging key.
     const audit = await sqlAdmin<{ detail: unknown }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.meeting_platform.import.claim'", [o.orgId]);
     expect(JSON.stringify(audit.rows)).not.toContain(key);
@@ -370,7 +384,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     expect(await rowOf('v', c.connectionId)).toMatchObject({ status: 'imported', staging_key: null, error_code: null, meeting_id: meetingId });
     // Done is done.
     expect(await refuses(as(o.lan, 'test.mp.begin', { recordingId, meetingId, stagingKey: stagingKey() }))).toBe('MEETING_PLATFORM_STATE');
-    expect(await refuses(as(o.lan, 'kernel.meeting_platform.import.claim', { recordingId }))).toBe('MEETING_PLATFORM_STATE');
+    expect(await refuses(as(o.lan, 'kernel.meeting_platform.import.claim', { recordingId, meetingId }))).toBe('MEETING_PLATFORM_STATE');
     expect(await refuses(as(o.lan, 'kernel.meeting_platform.recording.dismiss', { recordingId }))).toBe('MEETING_PLATFORM_NOT_FOUND');
     expect(await o.sys('kernel.meeting_platform.import_failed', { recordingId, code: 'timeout', stagingKey: key })).toMatchObject({ applied: 0 });
     await as(o.lan, 'kernel.meeting_platform.import.claim_failed', { recordingId, code: 'claim_failed' });
@@ -390,7 +404,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     expect(await mine(o, o.lan)).toContainEqual(expect.objectContaining({ id: a.recordingId, status: 'failed', errorCode: 'recording_gone' }));
     expect(await refuses(o.sys('kernel.meeting_platform.import_failed', { recordingId: a.recordingId, code: 'because', stagingKey: stagingKey() }))).toBe('VALIDATION');
     // Again from the failed row.
-    await o.exec(o.lan, 'test.mp.begin', { recordingId: a.recordingId, meetingId: randomUUID(), stagingKey: stagingKey() });
+    await o.exec(o.lan, 'test.mp.begin', { recordingId: a.recordingId, meetingId: await meetingFor(o, o.lan), stagingKey: stagingKey() });
     expect(await rowOf('a', c.connectionId)).toMatchObject({ status: 'importing', error_code: null });
     // The route fails after the claim.
     const b = await claimed(o, o.lan, c.connectionId, 'b');
@@ -481,7 +495,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     expect(await refuses(o.exec(o.lan, 'kernel.meeting_platform.disconnect', { connectionId: c.connectionId }))).toBe('MEETING_PLATFORM_BUSY');
     await o.sys('kernel.meeting_platform.import_staged', { recordingId: r.recordingId, stagingKey: r.key });
     expect(await refuses(o.exec(o.lan, 'kernel.meeting_platform.disconnect', { connectionId: c.connectionId }))).toBe('MEETING_PLATFORM_BUSY');
-    await o.exec(o.lan, 'kernel.meeting_platform.import.claim', { recordingId: r.recordingId });
+    await o.exec(o.lan, 'kernel.meeting_platform.import.claim', { recordingId: r.recordingId, meetingId: r.meetingId });
     expect(await refuses(o.exec(o.lan, 'kernel.meeting_platform.disconnect', { connectionId: c.connectionId }))).toBe('MEETING_PLATFORM_BUSY');
     expect((await o.query<unknown[]>(o.lan, 'kernel.meeting_platform.connections')).length).toBe(2);
     // Another member cannot take it away, an unknown id is not found, and the failed import frees it.

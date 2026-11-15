@@ -2687,9 +2687,10 @@ export function createHttpApp(deps: HttpDeps) {
           let claim: { stagingKey: string; cap: number };
           if (typeof body.importId === 'string') {
             // The worker staged the bytes; this request takes them, then seals and records them like an upload (the row is the member's own: another's is answered as absent).
+            // The claim names this route's meeting, so a recording begun for another meeting is refused before the row moves (it never ends up claimed by a request it cannot serve).
             const imported = await runtime.execute<{ stagingKey: string; meetingId: string }>(
               'kernel.meeting_platform.import.claim',
-              { recordingId: body.importId },
+              { recordingId: body.importId, meetingId },
               { actor: actorOf(user), orgId },
             );
             claimedImportId = body.importId;
