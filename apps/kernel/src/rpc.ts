@@ -7,8 +7,9 @@ import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@crove/einvoice';
 import type { McpWakeView, QuoteLinkCreated } from '@crove/kernel-contract';
 import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wake-setup.ts';
-import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, PaymentReminderDraft, TodayList } from '@crove/kernel-contract';
+import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, PaymentReminderDraft, TodayList, WeeklyFigures } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
+import { weeklyAnswer } from './today-weekly.ts';
 import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
 import {
   ALT_TEXT_IMAGE_MAX_BYTES,
@@ -26,6 +27,7 @@ import {
 import { CAPABILITIES, isProvider as isSocialProvider, strictestAltTextLimit } from '@crove/mod-social/contract';
 import { channelNotAllowed, periodSummaryInput, voiceNotes, type BrandVoice, type PeriodSummaryData } from '@crove/mod-social';
 import {
+  TODAY_WEEKLY_READ,
   clientOverviews,
   createOrg,
   myOrgs,
@@ -45,7 +47,7 @@ import type { z } from 'zod';
 import type { CompanyCandidates, ConversationAutoDraft, zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zTask } from '@crove/kernel-contract';
 import type { FollowupSource, MeetingBriefSource, QuoteSuggestSource, SuggestedSlots } from '@crove/mod-crm';
 import { sql } from 'kysely';
-import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, type BriefResult } from '@crove/agent';
+import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, type BriefResult, type WeeklyFacts, type WeeklyResult } from '@crove/agent';
 import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type ConversationReader } from './conversations-ai.ts';
 import { suggestCompanies, type CompanyAi } from './contact-company-ai.ts';
 import { wordReminder, type ReminderAi } from './payment-reminder-ai.ts';
@@ -136,6 +138,8 @@ export type SocialDrafter = Pick<SocialWriter, 'draft' | 'rewrite'> &
     draftStored?: (request: Omit<DraftRequest, 'images'>, images: readonly { file: StoredImage; mime: string }[]) => Promise<DraftResult | null>;
     // Vy's daily brief on Home (#2383), through the same endpoint and the same budget meter.
     brief?: (facts: BriefFacts) => Promise<BriefResult>;
+    // Vy's "Tuần này" on Home (#3257), through the same endpoint and the same budget meter.
+    weekly?: (facts: WeeklyFacts) => Promise<WeeklyResult>;
   };
 
 // A stored file as the vision reads take it: the row's reference, hash and recorded size.
@@ -360,6 +364,8 @@ export function createRpcHandler(
   const os = implement(contract).$context<RpcContext>();
   // Vy's brief on Home has its own rate limit and one-at-a-time lock, so opening Home never makes a reply or post draft wait.
   const briefs = new DraftBudget();
+  // "Tuần này" has a rate limit of its own, apart from the brief's, so the two cards of Home never make each other wait.
+  const weeklies = new DraftBudget();
   // Its model calls have a budget of their own (a few a minute for each member and for the org, one at a time for a member), apart from the reply drafts'.
   // A summary is a long call a member waits for: one at a time for a member, a few a minute.
   const summaries = new DraftBudget({ perUserPerMinute: 4, perOrgPerMinute: 20 });
@@ -686,6 +692,13 @@ export function createRpcHandler(
         inOrg(context, async (orgId, actor) => {
           const { items } = await runtime.query<TodayList>('kernel.today', {}, { actor, orgId });
           return briefAnswer(items, input.language, vietnamToday(), socialWriter?.brief, () => briefs.take(orgId, actor.userId));
+        }),
+      ),
+      // "Tuần này" (#3257): the figures of the last 7 days from the lines' reads in the member's own context, then Vy's sentences over them (numbers checked) or the template. Nothing is stored.
+      weekly: os.today.weekly.handler(({ context, input }) =>
+        inOrg(context, async (orgId, actor) => {
+          const figures = await runtime.query<WeeklyFigures>(TODAY_WEEKLY_READ, {}, { actor, orgId });
+          return weeklyAnswer(figures, input.language, socialWriter?.weekly, () => weeklies.take(orgId, actor.userId));
         }),
       ),
     },

@@ -14,6 +14,7 @@ import { cn } from '@crove/ui/lib/utils';
 import { OrgNotesPanel } from '../components/notes-panel.tsx';
 import { SalesNumberGaps } from '../components/sales-number-gaps.tsx';
 import { TodayList } from '../components/today-list.tsx';
+import { TodayWeekly } from '../components/today-weekly.tsx';
 import { DueWhen, TONE_CLASS, usePeriodLabel } from '../components/tax-due.tsx';
 import { useChosenEntity, useLegalEntity } from '../components/entity-switcher.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, Spinner } from '../components/ui.tsx';
@@ -252,6 +253,11 @@ export function OverviewPage() {
 
       {/* What needs the member today across the apps (#2383), from each line's own read. */}
       <TodayList slug={slug} />
+
+      {/* "Tuần này" (#3257): the last 7 days in figures computed by code, with Vy's checked sentences; Monday to Wednesday by itself, any day on request. */}
+      <div className="mt-6">
+        <TodayWeekly slug={slug} />
+      </div>
 
       <section className="mt-8" aria-labelledby="overview-waiting">
         <h2 id="overview-waiting" className="text-sm font-semibold">

@@ -48,6 +48,7 @@ import { orgOverviewQuery, RECENT_FILES, type OverviewContribution } from './ove
 import { conversationSignalsQueries } from './conversation-signals.ts';
 import { conversationUnansweredQuery, dealWithoutInvoiceQuery, receivableWithOpenDealQuery, supplierBankChangedQuery } from './signals.ts';
 import { todayQuery } from './today.ts';
+import { todayWeeklyQuery } from './today-weekly.ts';
 import { proposalReminderQueries } from './proposal-reminders.ts';
 import { mayResubmit, resubmitSource } from './proposal-resubmit.ts';
 import { taxCalendarQueries } from './tax-calendar.ts';
@@ -648,5 +649,5 @@ export const streamCheck = defineQuery({
 
 // overview: the home screen's figures of the modules this deployment enables (#1261), from the composition root.
 export function kernelQueries(options: OrgDetailOptions & { overview?: readonly OverviewContribution[] }) {
-  return [orgDetailQuery(options), orgOverviewQuery({ contributions: options.overview ?? [] }), todayQuery(), dealWithoutInvoiceQuery(), receivableWithOpenDealQuery(), supplierBankChangedQuery(), conversationUnansweredQuery(), ...conversationSignalsQueries, streamCheck, inboxList, inboxGet, filesRecent, filesStaged, inboundRecent, inboundText, fileGet, ...archiveQueries, sessionsList, ...inviteQueries, ...offboardingQueries, ...agentQueries, ...channelQueries, ...extensionQueries, ...mcpQueries, ...conversationQueries, ...mailQueries, ...proposalReminderQueries, ...taxCalendarQueries, ...legalEntityQueries, ...numberingQueries, ...roleQueries, ...calendarQueries, ...timelineQueries, ...auditLogQueries, ...partyQueries, ...notificationQueries, ...inboxItemQueries, ...savedViewQueries, ...todayMailQueries, ...usageQueries, ...aiBudgetQueries, ...memberVyQueries];
+  return [orgDetailQuery(options), orgOverviewQuery({ contributions: options.overview ?? [] }), todayQuery(), todayWeeklyQuery(), dealWithoutInvoiceQuery(), receivableWithOpenDealQuery(), supplierBankChangedQuery(), conversationUnansweredQuery(), ...conversationSignalsQueries, streamCheck, inboxList, inboxGet, filesRecent, filesStaged, inboundRecent, inboundText, fileGet, ...archiveQueries, sessionsList, ...inviteQueries, ...offboardingQueries, ...agentQueries, ...channelQueries, ...extensionQueries, ...mcpQueries, ...conversationQueries, ...mailQueries, ...proposalReminderQueries, ...taxCalendarQueries, ...legalEntityQueries, ...numberingQueries, ...roleQueries, ...calendarQueries, ...timelineQueries, ...auditLogQueries, ...partyQueries, ...notificationQueries, ...inboxItemQueries, ...savedViewQueries, ...todayMailQueries, ...usageQueries, ...aiBudgetQueries, ...memberVyQueries];
 }
