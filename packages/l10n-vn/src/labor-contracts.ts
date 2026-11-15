@@ -110,6 +110,32 @@ function toCivilDayNumber(date: CalendarDate): number {
   return era * 146097 + doe - 719468;
 }
 
+/** Inverse Howard Hinnant days-to-civil conversion without `Date`. */
+function civilFromDayNumber(daysSinceEpoch: number): CalendarDate {
+  const shifted = daysSinceEpoch + 719468;
+  const era = Math.floor((shifted >= 0 ? shifted : shifted - 146096) / 146097);
+  const doe = shifted - era * 146097;
+  const yoe = Math.floor((doe - Math.floor(doe / 1460) + Math.floor(doe / 36524) - Math.floor(doe / 146096)) / 365);
+  const y = yoe + era * 400;
+  const doy = doe - (365 * yoe + Math.floor(yoe / 4) - Math.floor(yoe / 100));
+  const mp = Math.floor((5 * doy + 2) / 153);
+  const day = doy - Math.floor((153 * mp + 2) / 5) + 1;
+  const month = mp + (mp < 10 ? 3 : -9);
+  const year = y + (month <= 2 ? 1 : 0);
+  return { year, month, day };
+}
+
+function addCalendarDays(date: CalendarDate, days: number): CalendarDate {
+  return civilFromDayNumber(toCivilDayNumber(date) + days);
+}
+
+function formatIsoCalendarDate(date: CalendarDate): string {
+  const year = String(date.year).padStart(4, '0');
+  const month = String(date.month).padStart(2, '0');
+  const day = String(date.day).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 export function diffCalendarDays(from: CalendarDate, to: CalendarDate): number {
   return toCivilDayNumber(to) - toCivilDayNumber(from);
 }
@@ -124,6 +150,10 @@ export function addCalendarMonths(date: CalendarDate, months: number): CalendarD
   const month = (totalMonths % 12) + 1;
   const day = Math.min(date.day, daysInCalendarMonth(year, month));
   return { year, month, day };
+}
+
+function deriveFixedTermEndDate(start: CalendarDate, termMonths: number): CalendarDate {
+  return addCalendarDays(addCalendarMonths(start, termMonths), -1);
 }
 
 function requireIsoCalendarDate(label: string, value: string): CalendarDate {
@@ -283,8 +313,9 @@ function isLaborContractForm(value: string): value is LaborContractForm {
 }
 
 function exceedsOneMonthSpan(start: CalendarDate, end: CalendarDate): boolean {
-  if (compareCalendarDates(end, addCalendarMonths(start, 1)) >= 0) return true;
-  return start.day === 1 && end.year === start.year && end.month === start.month && end.day === daysInCalendarMonth(start.year, start.month);
+  // Inclusive [start, end] reaches 1 calendar month once end >= (start + 1 month) - 1 day
+  // (e.g. 2026-01-01..2026-01-31, 2026-01-15..2026-02-14, 2026-02-01..2026-02-28).
+  return compareCalendarDates(end, deriveFixedTermEndDate(start, 1)) >= 0;
 }
 
 function checkKindSpecificTerms(
@@ -644,7 +675,17 @@ export function checkLaborContractTerms(terms: LaborContractTermsInput): LaborCo
   }
 
   if (terms.probation !== undefined && terms.probation !== null) {
-    checkProbationTerms(terms.probation, validKind, parsedStart, parsedEnd, jobWage, hasContractWageField, findings);
+    const derivedEnd =
+      parsedEnd === null &&
+      validKind === 'fixed_term' &&
+      parsedStart !== null &&
+      terms.termMonths !== undefined &&
+      terms.termMonths !== null &&
+      Number.isInteger(terms.termMonths) &&
+      terms.termMonths >= 1
+        ? deriveFixedTermEndDate(parsedStart, terms.termMonths)
+        : parsedEnd;
+    checkProbationTerms(terms.probation, validKind, parsedStart, derivedEnd, jobWage, hasContractWageField, findings);
   }
 
   return {
@@ -700,9 +741,20 @@ export function evaluateContractAlerts(terms: LaborContractTermsInput, options: 
   if (!kindCheck.ok) throw new Error(kindCheck.message);
 
   const startDate = requireIsoCalendarDate('startDate', terms.startDate);
-  const endDate = terms.endDate !== undefined && terms.endDate !== null ? requireIsoCalendarDate('endDate', terms.endDate) : null;
-  if (endDate && diffCalendarDays(startDate, endDate) < 0) {
-    throw new Error(`Contract endDate (${terms.endDate}) cannot be earlier than startDate (${terms.startDate})`);
+  let endDate: CalendarDate | null = null;
+  let endIso: string | null = null;
+  if (terms.endDate !== undefined && terms.endDate !== null) {
+    endDate = requireIsoCalendarDate('endDate', terms.endDate);
+    endIso = terms.endDate;
+    if (diffCalendarDays(startDate, endDate) < 0) {
+      throw new Error(`Contract endDate (${terms.endDate}) cannot be earlier than startDate (${terms.startDate})`);
+    }
+  } else if (kindCheck.kind === 'fixed_term' && terms.termMonths !== undefined && terms.termMonths !== null) {
+    if (!Number.isInteger(terms.termMonths) || terms.termMonths < 1) {
+      throw new Error(`Invalid fixed_term termMonths: ${String(terms.termMonths)}`);
+    }
+    endDate = deriveFixedTermEndDate(startDate, terms.termMonths);
+    endIso = formatIsoCalendarDate(endDate);
   }
 
   const probStart =
@@ -720,23 +772,23 @@ export function evaluateContractAlerts(terms: LaborContractTermsInput, options: 
   const alerts: ContractAlert[] = [];
   const contractDaysRemaining = endDate ? diffCalendarDays(asOfDate, endDate) : null;
 
-  if (endDate && contractDaysRemaining !== null && kindCheck.kind !== 'indefinite') {
+  if (endDate && endIso && contractDaysRemaining !== null && kindCheck.kind !== 'indefinite') {
     if (contractDaysRemaining < 0) {
       alerts.push({
         code: 'contract_expired',
         severity: 'error',
-        targetDate: terms.endDate as string,
+        targetDate: endIso,
         daysRemaining: contractDaysRemaining,
-        message: `Contract expired ${Math.abs(contractDaysRemaining)} day(s) ago on ${terms.endDate}; renew or conclude within 30 days under Art. 20(2).`,
+        message: `Contract expired ${Math.abs(contractDaysRemaining)} day(s) ago on ${endIso}; renew or conclude within 30 days under Art. 20(2).`,
         cite: 'Labor Code 2019 Art. 20(2) & Art. 34(1)',
       });
     } else if (contractDaysRemaining <= noticeDays) {
       alerts.push({
         code: 'contract_expiring_soon',
         severity: 'warning',
-        targetDate: terms.endDate as string,
+        targetDate: endIso,
         daysRemaining: contractDaysRemaining,
-        message: `Contract expires in ${contractDaysRemaining} day(s) on ${terms.endDate}.`,
+        message: `Contract expires in ${contractDaysRemaining} day(s) on ${endIso}.`,
         cite: 'Labor Code 2019 Art. 20(2) & Art. 35/36',
       });
     }
@@ -764,7 +816,7 @@ export function evaluateContractAlerts(terms: LaborContractTermsInput, options: 
       alerts.push({
         code: 'must_convert_to_indefinite',
         severity: 'error',
-        targetDate: terms.endDate ?? null,
+        targetDate: endIso,
         daysRemaining: contractDaysRemaining,
         message: 'Fixed-term renewal ceiling exceeded; this contract must be converted to an indefinite-term contract.',
         cite: 'Labor Code 2019 Art. 20(2)',
@@ -773,7 +825,7 @@ export function evaluateContractAlerts(terms: LaborContractTermsInput, options: 
       alerts.push({
         code: 'final_fixed_term_renewal',
         severity: 'warning',
-        targetDate: terms.endDate ?? null,
+        targetDate: endIso,
         daysRemaining: contractDaysRemaining,
         message: 'Contract is on its second (final) fixed-term; the next renewal must be indefinite term.',
         cite: 'Labor Code 2019 Art. 20(2)',
@@ -865,8 +917,12 @@ export function calculateSeveranceAllowance(input: SeveranceAllowanceInput): Sev
   const unemploymentInsuredMonths = requireNonNegativeInteger('unemploymentInsuredMonths', input.unemploymentInsuredMonths ?? 0);
   const priorSettledMonths = requireNonNegativeInteger('priorSettledMonths', input.priorSettledMonths ?? 0);
 
-  if (input.sixMonthWages.length === 0) {
-    throw new Error('sixMonthWages must contain at least one monthly wage');
+  if (totalWorkedMonths >= 6) {
+    if (input.sixMonthWages.length !== 6) {
+      throw new Error('sixMonthWages must contain all 6 consecutive prior monthly wages when totalWorkedMonths >= 6');
+    }
+  } else if (input.sixMonthWages.length === 0 || input.sixMonthWages.length > 6) {
+    throw new Error('sixMonthWages must contain between 1 and 6 monthly wages when totalWorkedMonths < 6');
   }
   const parsedWages = input.sixMonthWages.map((wage, index) => parseNonNegativeMoney(`sixMonthWages[${index}]`, wage));
   const averageWageDecimal = sum(parsedWages).dividedBy(parsedWages.length);

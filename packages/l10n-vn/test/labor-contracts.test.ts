@@ -74,6 +74,24 @@ describe('checkLaborContractTerms (Labor Code 2019 Arts. 14, 20, 24-27)', () => 
     expect(oneMonthContract.ok).toBe(false);
     expect(oneMonthContract.findings.map((f) => f.code)).toContain('under_one_month_exceeds_limit');
 
+    // Mid-month inclusive 1-month span (2026-01-15..2026-02-14) also reaches 1 month -> rejected even for oral form.
+    const midMonthFullMonth = checkLaborContractTerms({
+      contractKind: 'under_one_month',
+      form: 'oral',
+      startDate: '2026-01-15',
+      endDate: '2026-02-14',
+    });
+    expect(midMonthFullMonth.ok).toBe(false);
+    expect(midMonthFullMonth.findings.map((f) => f.code)).toContain('under_one_month_exceeds_limit');
+
+    const midMonthValid = checkLaborContractTerms({
+      contractKind: 'under_one_month',
+      form: 'oral',
+      startDate: '2026-01-15',
+      endDate: '2026-02-13',
+    });
+    expect(midMonthValid.ok).toBe(true);
+
     const withProbation = checkLaborContractTerms({
       contractKind: 'under_one_month',
       startDate: '2026-08-01',
@@ -219,6 +237,35 @@ describe('checkLaborContractTerms (Labor Code 2019 Arts. 14, 20, 24-27)', () => 
     expect(res.ok).toBe(false);
     expect(res.findings.filter((f) => f.code === 'invalid_date')).toHaveLength(2);
   });
+
+  it('flags missing contract wage for probation, unverified working days on other tier, and probation outside contract', () => {
+    const missingWage = checkLaborContractTerms({
+      contractKind: 'fixed_term',
+      startDate: '2026-01-01',
+      termMonths: 12,
+      probation: { roleTier: 'other', durationDays: 5, wage: '8000000' },
+    });
+    expect(missingWage.ok).toBe(false);
+    expect(missingWage.findings.map((f) => f.code)).toContain('missing_contract_wage_for_probation');
+
+    const workingDaysSpan = checkLaborContractTerms({
+      contractKind: 'fixed_term',
+      startDate: '2026-01-01',
+      termMonths: 1,
+      contractWage: '10000000',
+      probation: { roleTier: 'other', startDate: '2026-01-01', endDate: '2026-01-09', wage: '8500000' },
+    });
+    expect(workingDaysSpan.findings.map((f) => f.code)).toContain('probation_working_days_unverified');
+
+    const outsideDerived = checkLaborContractTerms({
+      contractKind: 'fixed_term',
+      startDate: '2026-01-01',
+      termMonths: 1,
+      contractWage: '15000000',
+      probation: { roleTier: 'college_or_above', startDate: '2026-01-01', endDate: '2026-02-15', wage: '12750000' },
+    });
+    expect(outsideDerived.findings.map((f) => f.code)).toContain('probation_outside_contract');
+  });
 });
 
 describe('evaluateContractAlerts', () => {
@@ -255,6 +302,24 @@ describe('evaluateContractAlerts', () => {
     expect(expired.alerts.map((a) => [a.code, a.daysRemaining])).toEqual([
       ['contract_expired', -5],
       ['final_fixed_term_renewal', -5],
+    ]);
+
+    // Fixed-term without explicit endDate derives inclusive end date from startDate + termMonths (2026-12-31).
+    const derivedExpiring = evaluateContractAlerts(
+      { contractKind: 'fixed_term', startDate: '2026-01-01', termMonths: 12 },
+      { asOf: '2026-12-01' },
+    );
+    expect(derivedExpiring.alerts).toMatchObject([
+      { code: 'contract_expiring_soon', targetDate: '2026-12-31', daysRemaining: 30 },
+    ]);
+
+    const derivedExpired = evaluateContractAlerts(
+      { contractKind: 'fixed_term', startDate: '2026-01-01', termMonths: 12, fixedTermSequence: 2 },
+      { asOf: '2027-01-05' },
+    );
+    expect(derivedExpired.alerts).toMatchObject([
+      { code: 'contract_expired', targetDate: '2026-12-31', daysRemaining: -5 },
+      { code: 'final_fixed_term_renewal', targetDate: '2026-12-31', daysRemaining: -5 },
     ]);
   });
 
@@ -357,7 +422,7 @@ describe('calculateSeveranceAllowance (Labor Code 2019 Art. 46 & Decree 145 Art.
     const allInsured = calculateSeveranceAllowance({
       totalWorkedMonths: 24,
       unemploymentInsuredMonths: 24,
-      sixMonthWages: ['10000000'],
+      sixMonthWages: ['10000000', '10000000', '10000000', '10000000', '10000000', '10000000'],
     });
     expect(allInsured).toMatchObject({
       eligible: true,
@@ -367,18 +432,45 @@ describe('calculateSeveranceAllowance (Labor Code 2019 Art. 46 & Decree 145 Art.
       pitExemptAmount: '0',
       taxableExcess: '0',
     });
+
+    // Under 6 months total tenure (always ineligible) accepts 1..6 monthly wages without fabricating dummy months.
+    const fourMonthExit = calculateSeveranceAllowance({
+      totalWorkedMonths: 4,
+      sixMonthWages: ['10000000', '10000000', '10000000', '10000000'],
+    });
+    expect(fourMonthExit).toMatchObject({
+      eligible: false,
+      reason: 'worked_under_12_months',
+      averageWage: '10000000',
+      amount: '0',
+    });
   });
 
-  it('rejects invalid month counts or empty wages', () => {
+  it('rejects invalid month counts, empty wages, or partial wage history when tenure >= 6 months', () => {
     expect(() =>
       calculateSeveranceAllowance({ totalWorkedMonths: -1, sixMonthWages: ['10000000'] }),
     ).toThrow(/non-negative integer/);
     expect(() =>
-      calculateSeveranceAllowance({ totalWorkedMonths: 12.5, sixMonthWages: ['10000000'] }),
+      calculateSeveranceAllowance({ totalWorkedMonths: 12.5, sixMonthWages: ['10000000', '10000000', '10000000', '10000000', '10000000', '10000000'] }),
     ).toThrow(/non-negative integer/);
     expect(() =>
-      calculateSeveranceAllowance({ totalWorkedMonths: 12, sixMonthWages: [] }),
-    ).toThrow(/at least one/);
+      calculateSeveranceAllowance({ totalWorkedMonths: 3, sixMonthWages: [] }),
+    ).toThrow(/between 1 and 6/);
+    expect(() =>
+      calculateSeveranceAllowance({ totalWorkedMonths: 24, sixMonthWages: ['20000000'] }),
+    ).toThrow(/all 6 consecutive/);
+    expect(() =>
+      calculateSeveranceAllowance({
+        totalWorkedMonths: 24,
+        sixMonthWages: ['10000000', '10000000', '10000000', '10000000', '10000000'],
+      }),
+    ).toThrow(/all 6 consecutive/);
+    expect(() =>
+      calculateSeveranceAllowance({
+        totalWorkedMonths: 24,
+        sixMonthWages: ['10000000', '10000000', '10000000', '10000000', '10000000', '10000000', '10000000'],
+      }),
+    ).toThrow(/all 6 consecutive/);
   });
 });
 

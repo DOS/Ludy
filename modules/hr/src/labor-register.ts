@@ -133,6 +133,10 @@ const WORKER_GROUP_LABEL: Readonly<Record<LaborRegisterWorkerGroup, string>> = {
 
 const textOf = (value: string | null | undefined): string => value ?? '';
 
+function optionalDateOf(value: string | null | undefined): string | null {
+  return value === undefined || value === null || value === '' ? null : value;
+}
+
 function formatMoneyCell(label: string, raw: string | null | undefined, employeeId: string): string {
   if (raw === undefined || raw === null || raw === '') return '';
   let parsed: ReturnType<typeof money>;
@@ -178,10 +182,12 @@ function validatePersons(persons: readonly LaborRegisterPerson[]): void {
     if (!p.erased) {
       assertDate('birthDate', p.birthDate, false, p.employeeId);
     }
-    if (p.endedOn && p.endedOn < p.startedOn) {
+    const endedOn = optionalDateOf(p.endedOn);
+    const contractEndDate = optionalDateOf(p.contractEndDate);
+    if (endedOn !== null && endedOn < p.startedOn) {
       throw new DomainError('HR_END_BEFORE_START', 422, `Ngày nghỉ việc trước ngày bắt đầu của nhân viên ${p.employeeId}`);
     }
-    if (p.contractEndDate && p.contractEndDate < p.contractStartDate) {
+    if (contractEndDate !== null && contractEndDate < p.contractStartDate) {
       throw new DomainError('HR_END_BEFORE_START', 422, `Ngày kết thúc hợp đồng trước ngày bắt đầu của nhân viên ${p.employeeId}`);
     }
   }
@@ -346,7 +352,10 @@ export function build01PliReport(input: Report01PliInput): LaborRegisterDocument
   validatePersons(input.persons);
 
   const inPeriod = sortPersons(
-    input.persons.filter((p) => p.startedOn <= window.endDate && (p.endedOn === undefined || p.endedOn === null || p.endedOn >= window.startDate)),
+    input.persons.filter((p) => {
+      const endedOn = optionalDateOf(p.endedOn);
+      return p.startedOn <= window.endDate && (endedOn === null || endedOn >= window.startDate);
+    }),
   );
 
   let atStartCount = 0;
@@ -366,10 +375,11 @@ export function build01PliReport(input: Report01PliInput): LaborRegisterDocument
     if (erased) erasedCount += 1;
     else if (!p.insuranceNumber && p.insured !== false) missingInsuranceNoCount += 1;
 
+    const endedOn = optionalDateOf(p.endedOn);
     const startedBefore = p.startedOn < window.startDate;
     const hiredHere = p.startedOn >= window.startDate && p.startedOn <= window.endDate;
-    const endedHere = p.endedOn !== undefined && p.endedOn !== null && p.endedOn >= window.startDate && p.endedOn <= window.endDate;
-    const activeAtEnd = p.endedOn === undefined || p.endedOn === null || p.endedOn > window.endDate;
+    const endedHere = endedOn !== null && endedOn >= window.startDate && endedOn <= window.endDate;
+    const activeAtEnd = endedOn === null || endedOn > window.endDate;
 
     if (startedBefore) atStartCount += 1;
     if (hiredHere) hiredCount += 1;

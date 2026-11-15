@@ -155,6 +155,32 @@ describe('Báo cáo 01/PLI (build01PliReport)', () => {
     expect(detailRows.map((r) => r.name)).toEqual([LABOR_REGISTER_ERASED_PLACEHOLDER, 'An', 'Bình', 'Chi']);
   });
 
+  it('treats empty endedOn string identically to null and orders erased staff by employeeId without female/name leak', () => {
+    const doc = build01PliReport({
+      period: '2026-H1',
+      employer,
+      persons: [
+        samplePerson('1', 'An', { gender: 'male', startedOn: '2025-01-01', endedOn: '' }),
+        samplePerson('e2', 'Zoe Erased', { erased: true, gender: 'female', startedOn: '2025-01-01', endedOn: '' }),
+        samplePerson('e1', 'Anh Erased', { erased: true, gender: 'female', startedOn: '2025-01-01', endedOn: null }),
+      ],
+    });
+    const [summary, detail] = doc.sheets;
+    const metric = (prefix: string) => summary?.rows.find((r) => r.item?.startsWith(prefix))?.value;
+    expect(metric('Tổng số lao động sử dụng trong kỳ')).toBe('3');
+    expect(metric('Số lao động đầu kỳ')).toBe('3');
+    expect(metric('Số lao động giảm trong kỳ')).toBe('0');
+    expect(metric('Số lao động cuối kỳ')).toBe('3');
+    expect(metric('Cuối kỳ: Lao động nữ')).toBe('0');
+
+    // Both erased rows share placeholder name and tie-break by employeeId (`e1` before `e2`) rather than Zoe vs Anh.
+    expect(detail?.rows.map((r) => [r.name, r.gender])).toEqual([
+      [LABOR_REGISTER_ERASED_PLACEHOLDER, ''],
+      [LABOR_REGISTER_ERASED_PLACEHOLDER, ''],
+      ['An', 'Nam'],
+    ]);
+  });
+
   it('rejects invalid semiannual periods and invalid calendar dates', () => {
     expect(() => build01PliReport({ period: '2026-H3', employer, persons: [] })).toThrow(/01\/PLI/);
     expect(() => build01PliReport({ period: '2026-Q1', employer, persons: [] })).toThrow(/01\/PLI/);
