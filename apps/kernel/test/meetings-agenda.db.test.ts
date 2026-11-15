@@ -11,7 +11,7 @@ import { z } from 'zod';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { GOOGLE_CALENDAR_EVENTS_READ_SCOPE, type AgendaList, type AgendaNext, type AgendaSuggestion } from '@crove/kernel-contract';
+import { GOOGLE_CALENDAR_EVENTS_READ_SCOPE, MICROSOFT_CALENDAR_READ_SCOPE, type AgendaList, type AgendaNext, type AgendaSuggestion } from '@crove/kernel-contract';
 import { Runtime, defineQuery } from '@crove/kernel-runtime';
 import { meetingsCommands, meetingsQueries } from '@crove/mod-meetings';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
@@ -59,9 +59,9 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
   const sqlAdmin = <R extends pg.QueryResultRow = pg.QueryResultRow>(text: string, params: unknown[] = []) => admin((c) => c.query<R>(text, params));
 
   // A connection of a member: the grant either carries the events-read scope or not; the switch is the member's, through the module's command.
-  async function connection(who: string, scopes: string[] = ['https://www.googleapis.com/auth/calendar.freebusy', GOOGLE_CALENDAR_EVENTS_READ_SCOPE], account = `${who}-${randomUUID().slice(0, 6)}@gmail.test`): Promise<string> {
+  async function connection(who: string, scopes: string[] = ['https://www.googleapis.com/auth/calendar.freebusy', GOOGLE_CALENDAR_EVENTS_READ_SCOPE], account = `${who}-${randomUUID().slice(0, 6)}@gmail.test`, provider = 'google'): Promise<string> {
     const id = randomUUID();
-    await sqlAdmin(`INSERT INTO crove_kernel.calendar_connection (org_id, id, user_id, provider, external_account, display_name, scopes) VALUES ($1, $2, $3, 'google', $4, $4, $5)`, [orgId, id, users[who], account, scopes]);
+    await sqlAdmin(`INSERT INTO crove_kernel.calendar_connection (org_id, id, user_id, provider, external_account, display_name, scopes) VALUES ($1, $2, $3, $6, $4, $4, $5)`, [orgId, id, users[who], account, scopes, provider]);
     return id;
   }
   const on = (who: string, connectionId: string) => exec(who, 'meetings.agenda.set_read_events', { connectionId, enabled: true });
@@ -180,6 +180,31 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
     ]);
     const list = await query<AgendaList>('lan', 'meetings.agenda.list');
     expect(list.events.every((e) => e.invitees >= 0)).toBe(true);
+  });
+
+  it('works the same for an Outlook connection (B3): the switch needs the Microsoft read scope, the sweep writes through the same definer, and a grant of the other provider opens nothing', async () => {
+    const MS = ['openid', 'profile', 'email', MICROSOFT_CALENDAR_READ_SCOPE];
+    // The connection view says what the grant carries.
+    const c = await connection('lan', MS, `lan-${randomUUID().slice(0, 6)}@congty.example`, 'microsoft');
+    const view = (await query<Array<{ id: string; provider: string; canReadEvents: boolean; readEvents: boolean; canWriteBack: boolean }>>('lan', 'kernel.calendar.connections')).find((v) => v.id === c);
+    expect(view).toMatchObject({ provider: 'microsoft', canReadEvents: true, readEvents: false, canWriteBack: false });
+    // Off by default; on only with the Microsoft scope.
+    expect(await query<AgendaList>('lan', 'meetings.agenda.list')).toEqual({ enabled: false, events: [] });
+    expect(await sweep(c, [event('o1', 30)])).toEqual({ connectionId: c, written: 0 });
+    expect(await on('lan', c)).toMatchObject({ readEvents: true });
+    expect(await sweep(c, [event('o1', 30, 60, { joinUrl: 'https://teams.microsoft.com/l/meetup-join/x' })])).toEqual({ connectionId: c, written: 1 });
+    const list = await query<AgendaList>('lan', 'meetings.agenda.list');
+    expect(list.enabled).toBe(true);
+    // The cache is the member's alone, as for Google.
+    expect((await query<AgendaList>('nam', 'meetings.agenda.list')).events).toEqual([]);
+    // Switching off deletes it at once.
+    await off('lan', c);
+    expect(await cached(c)).toEqual([]);
+    // A Microsoft connection with Google's scope (or the reverse) cannot turn the read on.
+    const wrong = await connection('nam', ['https://www.googleapis.com/auth/calendar.freebusy', GOOGLE_CALENDAR_EVENTS_READ_SCOPE], `nam-${randomUUID().slice(0, 6)}@congty.example`, 'microsoft');
+    expect(await refuses(on('nam', wrong))).toBe('CALENDAR_READ_SCOPE_MISSING');
+    const wrongGoogle = await connection('nam', MS, `nam-${randomUUID().slice(0, 6)}@gmail.test`, 'google');
+    expect(await refuses(on('nam', wrongGoogle))).toBe('CALENDAR_READ_SCOPE_MISSING');
   });
 
   it('keeps only what the table allows: no address, description or attachment column, a join address that is https, a bounded title', async () => {

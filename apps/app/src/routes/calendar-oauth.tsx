@@ -9,17 +9,22 @@ import type { CalendarOAuthProvider } from '@crove/kernel-contract';
 import { Card } from '@crove/ui/components/card';
 import { ErrorText, ScreenTitle, Spinner } from '../components/ui.tsx';
 import { client, errorMessage, queryClient, setCurrentOrg } from '../lib/api.ts';
+import { needsAdminConsent, takeAdminLink } from '../lib/calendar-oauth.ts';
 import { takeOAuthAttempt } from '../lib/oauth.ts';
 
-type Callback = { kind: 'finish'; slug: string; state: string; code: string } | { kind: 'cancelled'; slug: string | null } | { kind: 'lost' };
+type Callback = { kind: 'finish'; slug: string; state: string; code: string } | { kind: 'cancelled'; slug: string | null; adminConsent: boolean; adminLink: string | null } | { kind: 'lost' };
 
 // Read once per page load: the address bar is cleaned right after, so a reload never replays the code.
-function readCallback(): Callback {
+function readCallback(provider: string): Callback {
   const params = new URLSearchParams(window.location.search);
   window.history.replaceState(null, '', window.location.pathname);
   const state = params.get('state') ?? '';
   const slug = state ? takeOAuthAttempt(state) : null;
-  if (params.get('error')) return { kind: 'cancelled', slug };
+  // A refusal that a Microsoft tenant's administrator has to lift is told apart from the member's own "no".
+  if (params.get('error')) {
+    const adminConsent = needsAdminConsent(provider, params);
+    return { kind: 'cancelled', slug, adminConsent, adminLink: adminConsent && state ? takeAdminLink(state) : null };
+  }
   const code = params.get('code');
   if (!slug || !code) return { kind: 'lost' };
   return { kind: 'finish', slug, state, code };
@@ -33,9 +38,9 @@ export function CalendarOAuthCallbackPage() {
   const read = useRef<Callback | null>(null);
   const [callback, setCallback] = useState<Callback | null>(null);
   useEffect(() => {
-    read.current ??= readCallback();
+    read.current ??= readCallback(provider);
     setCallback(read.current);
-  }, []);
+  }, [provider]);
   const started = useRef(false);
   const finish = useMutation({
     mutationFn: (c: Extract<Callback, { kind: 'finish' }>) => {
@@ -69,7 +74,20 @@ export function CalendarOAuthCallbackPage() {
       <Card className="block w-full max-w-md space-y-4 p-6">
         <ScreenTitle name={t('oauthTitle')} />
         <h1 className="text-lg font-semibold text-foreground">{t('oauthTitle')}</h1>
-        {callback?.kind === 'cancelled' && <p className="text-sm text-muted-foreground">{t('oauthCancelled')}</p>}
+        {callback?.kind === 'cancelled' && !callback.adminConsent && <p className="text-sm text-muted-foreground">{t('oauthCancelled')}</p>}
+        {callback?.kind === 'cancelled' && callback.adminConsent && (
+          <div className="space-y-2 text-sm text-foreground" data-testid="calendar-admin-consent">
+            <p>{t('oauthAdminConsent')}</p>
+            {callback.adminLink && (
+              <>
+                <p className="text-xs text-muted-foreground">{t('oauthAdminConsentLink')}</p>
+                <code className="block break-all rounded bg-muted p-2 text-xs" data-testid="calendar-admin-link">
+                  {callback.adminLink}
+                </code>
+              </>
+            )}
+          </div>
+        )}
         {callback?.kind === 'lost' && <ErrorText>{t('oauthLost')}</ErrorText>}
         {busy && (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
