@@ -23,7 +23,6 @@ import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
 import { pickInForce } from './domain/household-rules.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
-import { periodLockedThrough } from './period-lock.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
@@ -121,8 +120,10 @@ export const householdProfileSet = defineCommand({
     if (latest && input.effectiveFrom <= latest.effective_from) {
       throw new DomainError('HOUSEHOLD_PROFILE_ORDER', 409, `Hồ sơ mới phải có hiệu lực sau ngày ${latest.effective_from} của hồ sơ gần nhất; một thay đổi là một dòng mới từ ngày đó`);
     }
-    // Not inside a locked period: the books of a closed period keep the profile they were made under.
-    const lockedThrough = await periodLockedThrough(ctx as QueryContext, entity);
+    // Not inside a locked period: the books of a closed period keep the profile they were made under. The entity's lock row is held
+    // FOR SHARE to the end of this transaction (#3188), so a lock of a month racing this write waits for it instead of slipping in
+    // between the read and the insert.
+    const lockedThrough = (await sql<{ locked_through: string | null }>`SELECT crove_finance.period_lock_share(${entity}::uuid) AS locked_through`.execute(ctx.trx)).rows[0]?.locked_through ?? null;
     if (lockedThrough && input.effectiveFrom <= lockedThrough) {
       throw new DomainError('HOUSEHOLD_PROFILE_LOCKED', 409, `Kỳ đến hết ngày ${lockedThrough} đã khóa sổ; hồ sơ mới phải có hiệu lực sau ngày đó`);
     }
