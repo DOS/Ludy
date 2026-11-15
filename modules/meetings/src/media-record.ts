@@ -43,6 +43,16 @@ export interface RecordSealedMedia {
  */
 export async function recordSealedMedia(ctx: CommandContext, p: RecordSealedMedia): Promise<{ fileId: string; liveChunksDiscarded: number }> {
   const { input, meetingId, userId } = p;
+  // A meeting made by importing a platform recording (consent method `platform_notice`, C1 #3173) holds only that import: an upload, a presigned upload or a live assembly into it is refused, because the consent
+  // on record is the platform's own notice for that one recording and says nothing of any other audio. The import's own request passes: its recording row was claimed by this member for this meeting.
+  const { rows: made } = await sql<{ imported: boolean; claimed: boolean }>`
+    SELECT m.consent_method = 'platform_notice' AS imported,
+           EXISTS (SELECT 1 FROM crove_kernel.meeting_platform_recording r
+                   WHERE r.org_id = m.org_id AND r.meeting_id = m.id AND r.user_id = ${userId}::uuid AND r.status = 'claimed') AS claimed
+    FROM crove_meetings.meeting m WHERE m.org_id = ${ctx.orgId}::uuid AND m.id = ${meetingId}::uuid`.execute(ctx.trx);
+  if (made[0]?.imported === true && made[0].claimed !== true) {
+    throw new DomainError('IMPORT_ONLY', 403, 'This meeting holds only the recording imported from its meeting platform');
+  }
   // The lock is taken first, so a piece being recorded at this moment either commits before this and is deleted here, or waits and finds the recording ended.
   await lockMeetingMedia(ctx, meetingId);
   // One recording of a kind: whichever arrives first stands (a late final upload after an assembly, or the other way round, is told so, not left to a unique violation).
@@ -91,5 +101,8 @@ export async function recordSealedMedia(ctx: CommandContext, p: RecordSealedMedi
       .values({ org_id: ctx.orgId, id: randomUUID(), meeting_id: meetingId, file_id: fileId, length_seconds: input.lengthSeconds, video_retention_date: videoRetentionDate })
       .execute();
   }
+  // A recording imported from a meeting platform (C1, #3173) is done once its media is recorded: the definer moves a claimed recording of this meeting and member to imported, and does nothing
+  // for a meeting that is no import.
+  await sql`SELECT crove_kernel.meeting_platform_recording_imported(${meetingId}::uuid)`.execute(ctx.trx);
   return { fileId, liveChunksDiscarded };
 }

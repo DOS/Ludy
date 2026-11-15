@@ -1851,6 +1851,7 @@ export const en = {
       noticeShowVi: 'Vietnamese version',
       noticeDraft: 'Draft, waiting for a lawyer to read it (#2585). Not legal advice. Ludy posts nothing into the call: you paste it yourself.',
       inCallChat: 'Pasted the notice in the meeting chat',
+      platformNotice: 'The meeting platform showed its own recording notice to everyone (imported recording)',
       consentConfirmCheckbox: 'I confirm that all participants have been notified and gave consent according to regulations.',
       titleRequired: 'Enter the meeting title.',
       consentMethodRequired: 'Choose how the participants were told.',
@@ -9934,6 +9935,13 @@ export const en = {
       LIVE_PIECES_CHANGED: 'The pieces changed while they were being joined. Try again.',
       LIVE_PIECE_UNREADABLE: 'A piece could not be read from storage, so they cannot be joined yet. Tell your system administrator.',
       MEDIA_ALREADY_RECORDED: 'This meeting already has its recording; the one that arrived first is kept and the later one is refused.',
+      IMPORT_ONLY: 'This meeting holds only the recording imported from its meeting platform; no other audio can be added to it.',
+      MEETING_PLATFORM_BUSY: 'A recording from this platform is still being imported. Wait for it to finish or fail, then disconnect.',
+      MEETING_PLATFORM_NOT_ACTIVE: 'The connection to this meeting platform is no longer valid. Connect again.',
+      MEETING_PLATFORM_NOT_FOUND: 'This meeting platform connection or recording was not found.',
+      MEETING_PLATFORM_NO_AUDIO: 'The platform offers only a video file, so there is no audio file to import.',
+      MEETING_PLATFORM_OWNER_LEFT: 'The person who connected this meeting platform is no longer a member of the organization.',
+      MEETING_PLATFORM_STATE: 'This recording cannot be imported in its current state (already imported, importing or skipped).',
       MEETING_SETTINGS_INVALID: 'A kept video cannot be kept longer than the audio.',
       FILE_TOO_LARGE: 'The uploaded meeting file exceeds the maximum allowed size (300 MB for audio, 2 GB for video).',
       TODO_NOT_FOUND: 'This to-do was not found.',
@@ -11447,6 +11455,29 @@ export const en = {
           lift: 'Allow mail to an address again',
         },
       },
+      meeting_platform: {
+        connect: 'Connect a meeting platform',
+        connections: 'View my meeting platforms',
+        credential: 'Read the sealed sign-in of a meeting platform',
+        disconnect: 'Disconnect a meeting platform',
+        import: {
+          claim: 'Take a downloaded recording from a meeting platform',
+          claim_failed: 'Record that a meeting platform recording could not be imported',
+        },
+        import_failed: 'Record that the download of a meeting platform recording failed',
+        import_holds: 'Check whether a meeting platform recording still holds its staging key',
+        import_open: 'View the meeting platform recordings waiting to download',
+        import_staged: 'Record that a meeting platform recording was downloaded',
+        recording: {
+          dismiss: 'Dismiss a suggested recording from a meeting platform',
+        },
+        recording_replace: 'Update the suggested recordings from a meeting platform',
+        recordings: 'View my meeting platform recordings',
+        refresh: 'Refresh the list of meeting platform recordings',
+        sweep: 'Clear expired meeting platform recordings',
+        sync_failed: 'Record that a meeting platform could not be listed',
+        sync_due: 'View the meeting platform connections due for a sync',
+      },
       member_vy: {
         memory: {
           delete: 'Delete something Vy remembers about you',
@@ -11712,6 +11743,9 @@ export const en = {
         switch: {
           set: 'Allow or stop members sending minutes to their own address',
         },
+      },
+      import: {
+        start: 'Import a recording a meeting platform finished as a meeting',
       },
       live: {
         assemble_plan: "Read the recorder's own live pieces to join them into the recording",

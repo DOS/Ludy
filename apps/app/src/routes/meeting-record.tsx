@@ -7,7 +7,7 @@
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { MEETING_SUMMARY_TEMPLATES, type ConsentMethod, type MeetingLanguage, type MeetingSummaryTemplate, type MeetingVisibility } from '@crove/kernel-contract';
+import { MEETING_SUMMARY_TEMPLATES, type LiveConsentMethod, type MeetingLanguage, type MeetingSummaryTemplate, type MeetingVisibility } from '@crove/kernel-contract';
 import { Button } from '@crove/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
 import { Checkbox } from '@crove/ui/components/checkbox';
@@ -83,7 +83,7 @@ export function MeetingRecordPage() {
   const [withVideo, setWithVideo] = useState(false);
   // Off at every visit and never remembered: ticked for one recording only.
   const [liveNotes, setLiveNotes] = useState(false);
-  const [consentMethod, setConsentMethod] = useState<ConsentMethod | ''>('');
+  const [consentMethod, setConsentMethod] = useState<LiveConsentMethod | ''>('');
   // A strict org accepts only a written method (A2, #3160): the unwritten one is not offered, and a choice made before the policy loaded is dropped.
   const consentPolicy = useConsentPolicy();
   useEffect(() => {
@@ -229,7 +229,7 @@ export function MeetingRecordPage() {
         }),
       createMeeting: async () => {
         // The meeting row stores who confirmed the notice and how; the server refuses media for a meeting without it.
-        createdMeetingId.current ??= (await orpc.meetings.create.call({ title: title.trim(), language, visibility, keepVideo: withVideo, summaryTemplate, consentMethod: consentMethod as ConsentMethod, consentNoticeVersion: RECORDING_NOTICE.version, liveNotes })).meetingId;
+        createdMeetingId.current ??= (await orpc.meetings.create.call({ title: title.trim(), language, visibility, keepVideo: withVideo, summaryTemplate, consentMethod: consentMethod as LiveConsentMethod, consentNoticeVersion: RECORDING_NOTICE.version, liveNotes })).meetingId;
         const meetingId = createdMeetingId.current;
         if (linkedMeetingId.current !== meetingId) {
           linkedMeetingId.current = meetingId;
@@ -527,7 +527,7 @@ export function MeetingRecordPage() {
               <RecordingNotice meetingLanguage={language} />
               <div className="space-y-1">
                 <Label htmlFor="record-consent-method" className="text-xs">{t('form.consentMethod')}</Label>
-                <NativeSelect id="record-consent-method" value={consentMethod} onChange={(e) => setConsentMethod(e.target.value as ConsentMethod)} required>
+                <NativeSelect id="record-consent-method" value={consentMethod} onChange={(e) => setConsentMethod(e.target.value as LiveConsentMethod)} required>
                   <NativeSelectOption value="" disabled>{t('form.selectConsentMethod')}</NativeSelectOption>
                   {consentPolicy === 'standard' && <NativeSelectOption value="told_at_start">{t('form.toldAtStart')}</NativeSelectOption>}
                   <NativeSelectOption value="in_invite">{t('form.inInvite')}</NativeSelectOption>

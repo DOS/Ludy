@@ -1849,6 +1849,7 @@ export const vi = {
       noticeShowVi: 'Bản tiếng Việt',
       noticeDraft: 'Bản nháp, chờ luật sư đọc lại (#2585). Không phải tư vấn pháp lý. Ludy không tự gửi gì vào cuộc họp: bạn tự dán.',
       inCallChat: 'Đã dán thông báo vào khung chat cuộc họp',
+      platformNotice: 'Nền tảng họp đã hiện thông báo ghi hình cho mọi người (nhập bản ghi có sẵn)',
       consentConfirmCheckbox: 'Tôi xác nhận đã thông báo và nhận được sự đồng thuận của tất cả người tham dự theo đúng quy định.',
       cancel: 'Hủy',
       titleRequired: 'Vui lòng nhập tên cuộc họp.',
@@ -9922,6 +9923,13 @@ export const vi = {
       LIVE_PIECES_CHANGED: 'Các đoạn đã thay đổi trong lúc ghép. Hãy thử lại.',
       LIVE_PIECE_UNREADABLE: 'Không đọc được một đoạn từ kho lưu trữ nên chưa ghép được. Hãy báo người quản trị hệ thống.',
       MEDIA_ALREADY_RECORDED: 'Cuộc họp này đã có bản ghi rồi; bản ghi đến trước được giữ và bản đến sau bị từ chối.',
+      IMPORT_ONLY: 'Cuộc họp này chỉ chứa bản ghi nhập từ nền tảng họp của nó; không thêm âm thanh khác vào được.',
+      MEETING_PLATFORM_BUSY: 'Còn bản ghi đang được nhập từ nền tảng này. Hãy chờ nhập xong hoặc báo lỗi rồi hãy ngắt kết nối.',
+      MEETING_PLATFORM_NOT_ACTIVE: 'Kết nối với nền tảng họp này đã hết hiệu lực. Hãy kết nối lại.',
+      MEETING_PLATFORM_NOT_FOUND: 'Không tìm thấy bản ghi hoặc kết nối nền tảng họp này.',
+      MEETING_PLATFORM_NO_AUDIO: 'Nền tảng chỉ có bản hình, chưa có tệp âm thanh để nhập.',
+      MEETING_PLATFORM_OWNER_LEFT: 'Người đã kết nối nền tảng họp này không còn là thành viên của tổ chức.',
+      MEETING_PLATFORM_STATE: 'Bản ghi này đang ở trạng thái không nhập được lúc này (đã nhập, đang nhập hoặc đã bỏ qua).',
       MEETING_SETTINGS_INVALID: 'Video không thể được lưu lâu hơn âm thanh.',
       INVALID_READER: 'Người xem phải là chủ sở hữu, quản trị viên hoặc thành viên đang hoạt động của tổ chức.',
       INVALID_MEDIA_CONTAINER: 'Tệp này không phải định dạng âm thanh hoặc video được hỗ trợ.',
@@ -11444,6 +11452,29 @@ export const vi = {
           lift: 'Bỏ chặn gửi thư đến một địa chỉ',
         },
       },
+      meeting_platform: {
+        connect: 'Kết nối nền tảng họp',
+        connections: 'Xem các nền tảng họp của tôi',
+        credential: 'Đọc thông tin đăng nhập đã niêm phong của nền tảng họp',
+        disconnect: 'Ngắt kết nối nền tảng họp',
+        import: {
+          claim: 'Nhận bản ghi đã tải về từ nền tảng họp',
+          claim_failed: 'Ghi nhận bản ghi từ nền tảng họp không nhập được',
+        },
+        import_failed: 'Ghi nhận việc tải bản ghi từ nền tảng họp thất bại',
+        import_holds: 'Xem một bản ghi từ nền tảng họp còn giữ khóa tạm này không',
+        import_open: 'Xem các bản ghi đang chờ tải từ nền tảng họp',
+        import_staged: 'Ghi nhận bản ghi từ nền tảng họp đã tải xong',
+        recording: {
+          dismiss: 'Bỏ qua một bản ghi gợi ý từ nền tảng họp',
+        },
+        recording_replace: 'Cập nhật các bản ghi gợi ý từ nền tảng họp',
+        recordings: 'Xem các bản ghi từ nền tảng họp của tôi',
+        refresh: 'Làm mới danh sách bản ghi từ nền tảng họp',
+        sweep: 'Dọn các bản ghi từ nền tảng họp hết hạn',
+        sync_failed: 'Ghi nhận không đọc được danh sách bản ghi của nền tảng họp',
+        sync_due: 'Xem các kết nối nền tảng họp cần đồng bộ',
+      },
       member_vy: {
         memory: {
           delete: 'Xóa một mục Vy ghi nhớ về bạn',
@@ -11709,6 +11740,9 @@ export const vi = {
         switch: {
           set: 'Cho phép hoặc dừng việc thành viên gửi biên bản tới địa chỉ riêng',
         },
+      },
+      import: {
+        start: 'Nhập bản ghi họp có sẵn từ nền tảng họp thành một cuộc họp',
       },
       live: {
         assemble_plan: 'Đọc các đoạn trực tiếp của người ghi để ghép thành bản ghi',

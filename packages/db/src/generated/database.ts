@@ -148,6 +148,8 @@ export interface CroveKernelSchema {
   'crove_kernel.mail_message': KernelMailMessageTable;
   'crove_kernel.mail_suppression': KernelMailSuppressionTable;
   'crove_kernel.mcp_member_table': KernelMcpMemberTableTable;
+  'crove_kernel.meeting_platform_connection': KernelMeetingPlatformConnectionTable;
+  'crove_kernel.meeting_platform_recording': KernelMeetingPlatformRecordingTable;
   'crove_kernel.member_availability': KernelMemberAvailabilityTable;
   'crove_kernel.member_invite': KernelMemberInviteTable;
   'crove_kernel.member_permission_override': KernelMemberPermissionOverrideTable;
@@ -2322,6 +2324,46 @@ export interface KernelMcpMemberTableTable {
   table_name: ColumnType<string, NotGranted, NotGranted>;
   mode: ColumnType<string, NotGranted, NotGranted>;
   adr: ColumnType<string, NotGranted, NotGranted>;
+}
+
+/** crove_kernel.meeting_platform_connection */
+export interface KernelMeetingPlatformConnectionTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  user_id: ColumnType<string, string, NotGranted>;
+  provider: ColumnType<string, string, NotGranted>;
+  external_account: ColumnType<string, string, NotGranted>;
+  display_name: string;
+  scopes: Generated<string[]>;
+  status: Generated<string>;
+  status_reason: string | null;
+  expires_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  last_synced_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  connected_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_kernel.meeting_platform_recording */
+export interface KernelMeetingPlatformRecordingTable {
+  org_id: ColumnType<string, NotGranted, NotGranted>;
+  id: ColumnType<string, NotGranted, NotGranted>;
+  connection_id: ColumnType<string, NotGranted, NotGranted>;
+  user_id: ColumnType<string, NotGranted, NotGranted>;
+  external_id: ColumnType<string, NotGranted, NotGranted>;
+  title: ColumnType<string, NotGranted, NotGranted>;
+  started_at: ColumnType<Date, NotGranted, NotGranted>;
+  length_seconds: ColumnType<number | null, NotGranted, NotGranted>;
+  size_bytes: ColumnType<string | null, NotGranted, NotGranted>;
+  has_audio: ColumnType<boolean, NotGranted, NotGranted>;
+  has_video: ColumnType<boolean, NotGranted, NotGranted>;
+  has_transcript: ColumnType<boolean, NotGranted, NotGranted>;
+  status: ColumnType<string, NotGranted, NotGranted>;
+  meeting_id: ColumnType<string | null, NotGranted, NotGranted>;
+  staging_key: ColumnType<string | null, NotGranted, NotGranted>;
+  staged_at: ColumnType<Date | null, NotGranted, NotGranted>;
+  error_code: ColumnType<string | null, NotGranted, NotGranted>;
+  created_at: ColumnType<Date, NotGranted, NotGranted>;
+  updated_at: ColumnType<Date, NotGranted, NotGranted>;
 }
 
 /** crove_kernel.member_availability */

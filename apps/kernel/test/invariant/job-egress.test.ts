@@ -132,7 +132,6 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
 // any other. Remove the entry here once the site is on the base branch.
 const OTHER_SENDS_PENDING: Readonly<Record<string, string>> = {
   'kernel-mcp-wake-sweep handler': '#3024',
-  'kernel-meeting-import-sweep handler': '#3173',
 };
 
 // Events that feed a queue with egress and that no command emits: a definer writes them for a request without one.

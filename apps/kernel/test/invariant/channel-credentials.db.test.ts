@@ -42,11 +42,6 @@ const SEALED_STORES = [
   'crove_meetings.chat_channel_target.envelope',
   'crove_social.chat_alert_target.envelope',
 ];
-// Sealed stores listed before their table exists, so the two steps of an invariant change can land apart (the PENDING_TABLES pattern of rls-matrix): each names the issue that adds the table. While the
-// column is absent it is not required to be found; once it is found it is held to the same rules as any other. Remove the entry once the table is on the base branch.
-const SEALED_STORES_PENDING: Readonly<Record<string, string>> = {
-  'crove_kernel.meeting_platform_credential.envelope': '#3173',
-};
 // Stores that are allowed until a date, each with the issue and the reason. The test accepts the store being absent (the table lands in a later change) or
 // present, and fails on the day after `expires` (yyyy-mm-dd), so the allowance is replaced by pinned tests or removed before then. None is open.
 const SEALED_ALLOWANCES: Readonly<Record<string, { issue: string; expires: string; reason: string }>> = {
@@ -230,7 +225,7 @@ suite('channel credentials on PostgreSQL (ADR-0025)', () => {
     }
     // Nothing but the named stores and an allowed one that exists; an allowed one that does not exist yet is accepted.
     expect(found.filter((col) => !SEALED_STORES.includes(col) && !Object.hasOwn(SEALED_ALLOWANCES, col))).toEqual([]);
-    expect(SEALED_STORES.filter((col) => !found.includes(col) && !Object.hasOwn(SEALED_STORES_PENDING, col))).toEqual([]);
+    expect(SEALED_STORES.filter((col) => !found.includes(col))).toEqual([]);
   });
 
   it('lets no Crove role touch an allowed sealed copy, where it exists', async () => {

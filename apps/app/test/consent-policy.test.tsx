@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import { WRITTEN_CONSENT_METHODS, consentMethodAllowed } from '@crove/kernel-contract';
+import { CONSENT_METHODS, LIVE_CONSENT_METHODS, WRITTEN_CONSENT_METHODS, consentMethodAllowed } from '@crove/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { catalog } from '../src/i18n/runtime.ts';
@@ -62,8 +62,11 @@ describe('ConsentPolicyCard', () => {
 
 describe('the rule the server applies', () => {
   it('standard accepts every method; strict only the written ones', () => {
-    for (const method of ['told_at_start', 'in_invite', 'in_writing', 'in_call_chat'] as const) expect(consentMethodAllowed('standard', method)).toBe(true);
+    for (const method of CONSENT_METHODS) expect(consentMethodAllowed('standard', method)).toBe(true);
     expect(consentMethodAllowed('strict', 'told_at_start')).toBe(false);
+    // An import's method (the platform's own notice, C1 #3173) is not a written one, so a strict org refuses it.
+    expect(consentMethodAllowed('strict', 'platform_notice')).toBe(false);
+    expect(LIVE_CONSENT_METHODS).toEqual(['told_at_start', 'in_invite', 'in_writing', 'in_call_chat']);
     expect([...WRITTEN_CONSENT_METHODS].every((m) => consentMethodAllowed('strict', m))).toBe(true);
     expect(WRITTEN_CONSENT_METHODS).toEqual(['in_invite', 'in_writing', 'in_call_chat']);
   });

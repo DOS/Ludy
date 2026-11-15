@@ -52,7 +52,7 @@ const MACHINERY = new Set([
   'crove_kernel.auth_session_org',
   'crove_kernel.calendar_credential',
   'crove_kernel.credential',
-  // #3173 (meetings integrations C1): the sealed tokens of a member's meeting platform connection: reached only by definers, no login role grant. Lands before its table (PENDING_TABLES).
+  // #3173 (meetings integrations C1): the sealed tokens of a member's meeting platform connection: reached only by definers, no login role grant.
   'crove_kernel.meeting_platform_credential',
   // #2582: one-time PKCE authorization codes for the Ludy extension. Definer-only, no login role grant.
   'crove_kernel.extension_auth_code',
@@ -73,7 +73,7 @@ const MACHINERY = new Set([
   'crove_meetings.member_hook',
   // #3168 (meetings integrations B4): the sealed address of an org's minutes channel (a Slack or Teams webhook), read out only by the worker, for a queued post, through a definer. No login role grant.
   'crove_meetings.chat_channel_target',
-  // #3168: the message of a queued post to a minutes channel, kept only while the post is queued and deleted when it settles: reached only by definers, no login role grant. Lands before its table (PENDING_TABLES).
+  // #3168: the message of a queued post to a minutes channel, kept only while the post is queued and deleted when it settles: reached only by definers, no login role grant.
   'crove_meetings.chat_post_body',
   'crove_social.chat_alert_target',
 ]);
@@ -94,9 +94,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.agent_grant',
   'crove_kernel.agent_wake_delivery',
   'crove_kernel.agent_wake_signal_seen',
-  'crove_kernel.meeting_platform_connection',
-  'crove_kernel.meeting_platform_credential',
-  'crove_kernel.meeting_platform_recording',
   'crove_kernel.member_permission_override',
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',

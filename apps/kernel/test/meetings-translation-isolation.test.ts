@@ -14,7 +14,7 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
     const naming = readdirSync(MIGRATIONS)
       .filter((name) => name.endsWith('.sql') && /crove_meetings\.translation\b/.test(readFileSync(join(MIGRATIONS, name), 'utf8')))
       .map((name) => name.replace(/^\d+_/, ''));
-    // The org purge's list names every tenant table, so each later restatement of it (A5, #3163: the rough notes table; B1, #3165: the calendar cache; A6, #3164: the member's webhook tables; B4, #3168: the minutes channels) names this one too, as the list's entry and nothing else.
+    // The org purge's list names every tenant table, so each later restatement of it (A5, #3163: the rough notes table; B1, #3165: the calendar cache; A6, #3164: the member's webhook tables; B4, #3168; C1, #3173: the meeting platform import tables: the minutes channels) names this one too, as the list's entry and nothing else.
     expect(naming).toEqual([
       'crove_meetings_translation.sql',
       'crove_kernel_org_purge_translation.sql',
@@ -23,6 +23,7 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       'crove_kernel_org_purge_calendar_agenda.sql',
       'crove_kernel_org_purge_meeting_hook.sql',
       'crove_kernel_org_purge_meeting_chat.sql',
+      'crove_kernel_org_purge_meeting_platform.sql',
     ]);
   });
 });

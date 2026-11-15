@@ -8,7 +8,7 @@ import { vietnamToday } from '@crove/kernel-contract';
 import { DomainError, inboundKey, type AgentProgram, type BlobStore, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
 import { KERNEL_NOTIFYING_EVENTS, PROPOSAL_NUDGE_SWEEP_MS, TODAY_MAIL_SWEEP_MS, runAgentWake, sweepProposalNudges, sweepTodayMail, type UsageLimits } from '@crove/kernel';
 import { aiDocumentFailure, type AdsCampaignWriter, type ConversationWriter, type InvoiceReader } from '@crove/agent';
-import type { CalendarAdapter, ConversationAdapter, Publisher, Refresher } from '@crove/channel';
+import type { CalendarAdapter, ConversationAdapter, MeetingPlatformAdapter, Publisher, Refresher } from '@crove/channel';
 import { postMessage, type WebhookTarget } from './alert.ts';
 import { REFRESH_SWEEP_MS, refreshChannels } from './channel-refresh.ts';
 import { RESEAL_SWEEP_MS, resealCredentials, unopenableKeysLog } from './credential-reseal.ts';
@@ -48,6 +48,8 @@ import { WAKE_JOB_EXPIRE_SECONDS, WAKE_RETRY_DELAY_SECONDS, WAKE_RETRY_LIMIT, ru
 import { MCP_WAKE_SWEEP_CRON, MCP_WAKE_SWEEP_EXPIRE_SECONDS, runWakeSweep } from './mcp-wake-sweep.ts';
 import { runMeetingHookDelivery, type MeetingHookJob } from './meeting-hook.ts';
 import { MEETING_HOOK_SWEEP_CRON, MEETING_HOOK_SWEEP_EXPIRE_SECONDS, runMeetingHookSweep } from './meeting-hook-sweep.ts';
+import { MEETINGS_IMPORT_CONCURRENCY, MEETINGS_IMPORT_EXPIRE_SECONDS, MEETINGS_IMPORT_RETRY_LIMIT, runMeetingsImport, type MeetingsImportJob } from './meetings-import.ts';
+import { MEETINGS_IMPORT_SWEEP_CRON, MEETINGS_IMPORT_SWEEP_EXPIRE_SECONDS, runMeetingsImportSweep } from './meetings-import-sweep.ts';
 import { CHAT_JOB_EXPIRE_SECONDS, CHAT_RETRY_DELAY_SECONDS, CHAT_RETRY_LIMIT, runMeetingChat, type ChatJob } from './meeting-chat-job.ts';
 import { MEETING_CHAT_SWEEP_CRON, MEETING_CHAT_SWEEP_EXPIRE_SECONDS, runMeetingChatSweep } from './meeting-chat-sweep.ts';
 import { NOTES_REMIND_CRON, NOTES_TRASH_CRON, NOTES_TRASH_TZ, queueNotesMemberPurge, runNotesMemberPurge, sweepNotesFormerMembers, sweepNotesReminders, sweepNotesTrash, type NotesMemberPurgeJob } from './notes-worker.ts';
@@ -458,6 +460,8 @@ export interface WorkerDeps {
     adActivators?: Readonly<Record<string, AdActivator>>;
     // The outside calendar adapters this deployment offers (#2123), by OAuth provider id.
     calendars?: Readonly<Partial<Record<string, CalendarAdapter>>>;
+    // The meeting platform adapters this deployment offers (C1, #3173), by provider id: the sandbox, then Google Meet, Zoom and Teams (C2 to C4).
+    meetingPlatforms?: Readonly<Partial<Record<string, MeetingPlatformAdapter>>>;
   };
   // PUBLIC_URL, where Social short links (#706) point.
   publicUrl?: string;
@@ -1263,6 +1267,30 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await boss.schedule(QUEUES.meetingChatSweep, MEETING_CHAT_SWEEP_CRON, null, { tz: MEMBER_VY_SWEEP_TZ, missed: 'once', expireInSeconds: MEETING_CHAT_SWEEP_EXPIRE_SECONDS });
   } else {
     await dropCron(QUEUES.meetingChatSweep);
+  }
+
+  // Meeting platform recordings (meetings integrations C1, #3173): a sweep every minute hands over the recordings a member chose to import, lists each due connection's finished recordings as suggestions and
+  // expires what was not claimed (meetings-import-sweep.ts); one job per recording downloads it to staging (meetings-import.ts). Nothing is downloaded before the member's click. Needs the credential
+  // key (a token can only be opened with it) and at least one platform adapter.
+  const meetingPlatforms = deps.channels?.meetingPlatforms;
+  if (deps.runtime.installed('meetings') && meetingPlatforms && Object.keys(meetingPlatforms).length > 0 && wakeBroker && wakeBroker.id !== 'none') {
+    const importDeps = { runtime: deps.runtime, broker: wakeBroker, store: deps.store, adapters: meetingPlatforms, media: null };
+    await boss.work<MeetingsImportJob>(QUEUES.meetingsImport, { batchSize: 1, localConcurrency: MEETINGS_IMPORT_CONCURRENCY, includeMetadata: true }, async ([job]) => {
+      if (!job) return;
+      await runMeetingsImport(importDeps, job.data, { retryCount: job.retryCount, retryLimit: MEETINGS_IMPORT_RETRY_LIMIT, ...(job.signal ? { signal: job.signal } : {}) });
+    });
+    await boss.work(QUEUES.meetingsImportSweep, { batchSize: 1 }, async () => {
+      const done = await runMeetingsImportSweep({
+        ...importDeps,
+        workerDb: deps.workerDb,
+        send: (job: MeetingsImportJob) =>
+          boss.send(QUEUES.meetingsImport, job, { singletonKey: jobKey(job.orgId, QUEUES.meetingsImport, job.id), retryLimit: MEETINGS_IMPORT_RETRY_LIMIT, retryDelay: 60, retryBackoff: true, expireInSeconds: MEETINGS_IMPORT_EXPIRE_SECONDS }),
+      });
+      if (done.handedOver + done.expired + done.listed + done.failures > 0) console.log(`[meetings-import-sweep] handed over ${done.handedOver}, expired ${done.expired}, listed ${done.listed}, failures ${done.failures}`);
+    });
+    await boss.schedule(QUEUES.meetingsImportSweep, MEETINGS_IMPORT_SWEEP_CRON, null, { tz: MEMBER_VY_SWEEP_TZ, missed: 'once', expireInSeconds: MEETINGS_IMPORT_SWEEP_EXPIRE_SECONDS });
+  } else {
+    await dropCron(QUEUES.meetingsImportSweep);
   }
 
   // Bank feeds (ADR-0039, #2044): a connection's sync, queued by the relay above and, once a day, for every active
