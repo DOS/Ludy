@@ -20,6 +20,7 @@ import type {
   Note,
   NoteRecordPanel,
   NoteWritten,
+  NotesExport,
   ProjectBoard,
   Todo,
   TodoHandedOver,
@@ -320,6 +321,14 @@ suite('projects P4: link notes and private to-dos to tasks and projects (#2595)'
       async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_notes.link WHERE todo_id = $1', [todoId])).rowCount,
     );
     expect(authorSql).toBe(2);
+
+    // Personal export includes links attached to the owner's private to-dos, while exposing nothing to others.
+    const authorExport = await o.query<NotesExport>(o.author, 'notes.mine.export');
+    expect(authorExport.todos.find((x) => x.id === todoId)?.links).toEqual([
+      { targetType: 'kernel.task', targetId: o.taskId },
+      { targetType: 'projects.project', targetId: o.projectId },
+    ]);
+    expect(await o.query<NotesExport>(o.owner, 'notes.mine.export')).toMatchObject({ todos: [] });
 
     // Other users and viewers cannot link/unlink another member's private to-do or link an inaccessible task.
     await expect(

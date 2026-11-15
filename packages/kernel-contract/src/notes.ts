@@ -350,6 +350,7 @@ export const zNotesExport = z.object({
       // The note it was made from and the team task it was handed over as, when there are.
       sourceNoteId: z.string().nullable(),
       taskId: z.string().nullable(),
+      links: z.array(z.object({ targetType: z.string(), targetId: z.string() })),
     }),
   ),
   truncated: z.boolean(),
