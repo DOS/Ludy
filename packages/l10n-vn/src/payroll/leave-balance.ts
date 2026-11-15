@@ -354,17 +354,22 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
       } else {
         let totalMonthWork: Decimal;
         let activeMonthWork: Decimal;
-        if (input.workweek !== undefined || monthStd === undefined) {
+        if (monthStd !== undefined && startDay === 1 && endDay === daysInMonth) {
+          totalMonthWork = money(monthStd.trim());
+          activeMonthWork = totalMonthWork;
+        } else if (input.workweek !== undefined || monthStd === undefined) {
           // Default to Vietnam's 6-day Mon-Sat schedule when no working-day override or workweek is given,
           // so both partial months and unpaid_leave deductions work out of the box with zero setup.
           const schedule: LeaveWorkweek = input.workweek ?? 'mon_sat';
           const totalWork = countWorkdaysInSpan(yearNum, idx, 1, daysInMonth, schedule);
           const activeWork = countWorkdaysInSpan(yearNum, idx, startDay, endDay, schedule);
-          totalMonthWork = money(monthStd !== undefined ? monthStd.trim() : String(totalWork));
-          activeMonthWork = money(String(activeWork));
-        } else if (startDay === 1 && endDay === daysInMonth) {
-          totalMonthWork = money(monthStd.trim());
-          activeMonthWork = totalMonthWork;
+          if (monthStd !== undefined) {
+            totalMonthWork = money(monthStd.trim());
+            activeMonthWork = totalWork > 0 ? totalMonthWork.times(String(activeWork)).div(String(totalWork)) : zero;
+          } else {
+            totalMonthWork = money(String(totalWork));
+            activeMonthWork = money(String(activeWork));
+          }
         } else {
           totalMonthWork = money(monthStd.trim());
           const monFriTotal = countWorkdaysInSpan(yearNum, idx, 1, daysInMonth, 'mon_fri');

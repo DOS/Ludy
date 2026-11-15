@@ -313,5 +313,17 @@ describe('parseTimekeepingSheet (#3348)', () => {
     });
     expect(balanceOnly.rows).toEqual([]);
     expect(balanceOnly.errors.map((err) => err.code)).toContain('missing_timekeeping_columns');
+
+    // TSV rows with trailing empty cells preserve structural column alignment against commas inside header/notes.
+    const tsvTrailingBlank = parseTimekeepingSheet('Employee code, ID\tUnpaid leave\tNotes\tAnnual leave\nE01\t2\ta,3\t\n', {
+      month: '2026-08',
+    });
+    expect(tsvTrailingBlank.delimiter).toBe('\t');
+    expect(tsvTrailingBlank.errors).toEqual([]);
+    expect(tsvTrailingBlank.rows[0]).toMatchObject({
+      employeeCode: 'E01',
+      unpaidLeaveDays: '2',
+      annualLeaveDays: '0',
+    });
   });
 });

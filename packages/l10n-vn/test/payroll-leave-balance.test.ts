@@ -539,4 +539,27 @@ describe('calculateLeaveBalance (#3348)', () => {
       }),
     ).toThrow(PayrollRefusedError);
   });
+
+  it('treats explicit default workweek mon_sat identically to omitting workweek when standardWorkingDays is given', () => {
+    // July 2026 has 27 Mon-Sat calendar days, but full-month denominator standardWorkingDays is 26.
+    const omittedWorkweek = calculateLeaveBalance({
+      year: '2026',
+      category: 'standard',
+      hireDate: '2025-01-01',
+      asOfMonth: '2026-07',
+      standardWorkingDays: '26',
+      entries: [{ kind: 'unpaid_leave', month: '2026-07', days: '14' }],
+    });
+    const explicitDefaultWorkweek = calculateLeaveBalance({
+      year: '2026',
+      category: 'standard',
+      hireDate: '2025-01-01',
+      asOfMonth: '2026-07',
+      standardWorkingDays: '26',
+      workweek: 'mon_sat',
+      entries: [{ kind: 'unpaid_leave', month: '2026-07', days: '14' }],
+    });
+    expect(omittedWorkweek).toMatchObject({ eligibleMonths: 6, entitlementDays: '6' });
+    expect(explicitDefaultWorkweek).toMatchObject({ eligibleMonths: 6, entitlementDays: '6' });
+  });
 });

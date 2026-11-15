@@ -489,23 +489,29 @@ function trimmedCellCount(cells: readonly string[]): number {
   return len;
 }
 
-function scoreDelimiterAttempt(rows: readonly ParsedGridRow[], header: HeaderDetection | null): { overflowCount: number; alignedCount: number } {
-  if (header === null) return { overflowCount: Number.MAX_SAFE_INTEGER, alignedCount: 0 };
-  const headerLen = trimmedCellCount(rows[header.rowIndex]?.cells ?? []);
+function scoreDelimiterAttempt(
+  rows: readonly ParsedGridRow[],
+  header: HeaderDetection | null,
+): { overflowCount: number; alignedCount: number; recognizedCount: number } {
+  if (header === null) return { overflowCount: Number.MAX_SAFE_INTEGER, alignedCount: 0, recognizedCount: 0 };
+  const headerCells = rows[header.rowIndex]?.cells ?? [];
+  const headerRawLen = headerCells.length;
+  const headerTrimLen = trimmedCellCount(headerCells);
+  const recognizedCount = Object.values(header.columns).filter((v) => v !== null).length;
   let overflowCount = 0;
   let alignedCount = 0;
   for (let i = header.rowIndex + 1; i < rows.length; i++) {
     const row = rows[i];
     if (row === undefined) continue;
-    const rowLen = trimmedCellCount(row.cells);
-    if (rowLen === 0) continue;
-    if (rowLen > headerLen) {
+    const rowTrimLen = trimmedCellCount(row.cells);
+    if (rowTrimLen === 0) continue;
+    if (rowTrimLen > headerTrimLen) {
       overflowCount += 1;
-    } else if (rowLen === headerLen) {
+    } else if (row.cells.length === headerRawLen) {
       alignedCount += 1;
     }
   }
-  return { overflowCount, alignedCount };
+  return { overflowCount, alignedCount, recognizedCount };
 }
 
 /**
@@ -555,7 +561,9 @@ export function parseTimekeepingSheet(text: string, options?: TimekeepingSheetOp
   });
 
   const compareScored = (a: (typeof attempts)[number], b: (typeof attempts)[number]): number =>
-    a.score.overflowCount - b.score.overflowCount || b.score.alignedCount - a.score.alignedCount;
+    a.score.overflowCount - b.score.overflowCount ||
+    b.score.alignedCount - a.score.alignedCount ||
+    b.score.recognizedCount - a.score.recognizedCount;
 
   const cleanHeaders = attempts.filter((a) => a.parsed.quoteError === null && a.header !== null).sort(compareScored);
   const brokenHeaders = attempts.filter((a) => a.parsed.quoteError !== null && a.header !== null).sort(compareScored);
