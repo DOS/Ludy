@@ -70,8 +70,9 @@ const MACHINERY = new Set([
   'crove_meetings.hook_delivery',
   'crove_meetings.member_hook',
   // #3168 (meetings integrations B4): the sealed address of an org's minutes channel (a Slack or Teams webhook), read out only by the API process for the recorder's own post in flight, through a definer. No login role grant.
-  // Lands before its table (PENDING_TABLES).
   'crove_meetings.chat_channel_target',
+  // #3168: the message of a queued post to a minutes channel, kept only while the post is queued and deleted when it settles: reached only by definers, no login role grant. Lands before its table (PENDING_TABLES).
+  'crove_meetings.chat_post_body',
   'crove_social.chat_alert_target',
 ]);
 // Tables whose row factory (and MACHINERY entry, for definer-only tables) lands on main before the table itself. CI
@@ -94,10 +95,11 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_permission_override',
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',
-  // #3168 (meetings integrations B4): the org's minutes channels, their sealed addresses and the recorder's log of posts. Land before their tables (step 1 of 2).
+  // #3168 (meetings integrations B4): the org's minutes channels, their sealed addresses, the recorder's log of posts and the message of a queued post. Land before their tables (step 1 of 2).
   'crove_meetings.chat_channel',
   'crove_meetings.chat_channel_target',
   'crove_meetings.chat_post',
+  'crove_meetings.chat_post_body',
   'crove_meetings.hook_delivery',
   'crove_meetings.live_line',
   'crove_meetings.meeting_link',
@@ -2405,9 +2407,8 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
-  // #3168: the recorder's log of one click to post minutes to a channel (ids, state, hashes; never the text). Written and read by the recorder alone; tenant roles may update only the outcome columns.
+  // #3168: the recorder's log of one click to post minutes to a channel (ids, state, hashes; never the text). Written and read by the recorder alone; no tenant role updates it (the worker's definer does).
   'crove_meetings.chat_post': {
-    update: { set: 'state = state' },
     make: (o) => {
       const meeting = meetingsMeetingRow(o);
       const channel = chatChannelRow(o);
@@ -2417,6 +2418,22 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           { table: 'crove_meetings.chat_channel', values: channel },
         ],
         row: { org_id: o.id, id: randomUUID(), meeting_id: meeting.id, channel_id: channel.id, user_id: o.owner, facts_key: '0'.repeat(64), text_hash: '1'.repeat(64) },
+      };
+    },
+  },
+  // Definer-only machinery (#3168): the message of a queued post, one row per post, deleted when the post settles. The body is the exact shape chat_body_ok accepts.
+  'crove_meetings.chat_post_body': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      const channel = chatChannelRow(o);
+      const post = { org_id: o.id, id: randomUUID(), meeting_id: meeting.id, channel_id: channel.id, user_id: o.owner, facts_key: '0'.repeat(64), text_hash: '1'.repeat(64) };
+      return {
+        setup: [
+          { table: 'crove_meetings.meeting', values: meeting },
+          { table: 'crove_meetings.chat_channel', values: channel },
+          { table: 'crove_meetings.chat_post', values: post },
+        ],
+        row: { org_id: o.id, post_id: post.id, body: JSON.stringify({ v: 1, lang: 'vi', title: 'RLS matrix', day: '2030-01-01', summary: '', decisions: [], items: [], link: null }) },
       };
     },
   },
