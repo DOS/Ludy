@@ -254,7 +254,7 @@ import { zDepreciationRequest, zJournalVoucherRequest, zYearClosingRequest } fro
 import { zFixedAsset, zFixedAssetCreate, zFixedAssetEnd } from './fixed-asset.ts';
 import { zStatementsHtkkCheck, zStatementsHtkkYear } from './statements-htkk.ts';
 import { zTaxObligationMark, zTaxProfile } from './tax-calendar.ts';
-import { zTodayBrief, zTodayBriefInput, zTodayList, zTodayMailSet, zTodayMailSetting, zTodayWeekly, zTodayWeeklyInput } from './today.ts';
+import { zSinceYesterday, zTodayBrief, zTodayBriefInput, zTodayList, zTodayMailSet, zTodayMailSetting, zTodayWeekly, zTodayWeeklyInput } from './today.ts';
 import { zBookEntity, zLegalEntity, zLegalEntityInput } from './legal-entity.ts';
 import { zBuiltinRoleKey, zMemberRoles, zRoleAssignInput } from './roles.ts';
 import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCalendarEventView, zCalendarRange, zCalendarSlot, zCalendarSlotsQuery, zCalendarOAuthProvider, zMyCalendar, zWorkingHours } from './calendar.ts';
@@ -445,6 +445,8 @@ export const contract = {
   // today read and ordered flags first. Every role; each line shows only what the member could open there. Reads only.
   today: {
     list: oc.output(zTodayList),
+    // What each AI coworker prepared over the last day, counts only, for the rows the member can open (#3256). Every role; no model.
+    sinceYesterday: oc.output(zSinceYesterday),
     // Vy's brief of the same list: a few checked sentences, or the plain template, or none (#2383). One model call at most, counted
     // against the AI budget; every role.
     brief: oc.input(zTodayBriefInput).output(zTodayBrief),

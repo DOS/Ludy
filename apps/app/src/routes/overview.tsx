@@ -13,6 +13,7 @@ import { TableCell, TableRow } from '@crove/ui/components/table';
 import { cn } from '@crove/ui/lib/utils';
 import { OrgNotesPanel } from '../components/notes-panel.tsx';
 import { SalesNumberGaps } from '../components/sales-number-gaps.tsx';
+import { SinceYesterday } from '../components/since-yesterday.tsx';
 import { TodayList } from '../components/today-list.tsx';
 import { TodayWeekly } from '../components/today-weekly.tsx';
 import { DueWhen, TONE_CLASS, usePeriodLabel } from '../components/tax-due.tsx';
@@ -258,6 +259,9 @@ export function OverviewPage() {
       <div className="mt-6">
         <TodayWeekly slug={slug} />
       </div>
+
+      {/* What each AI coworker prepared over the last day (#3256): counts only, nothing when there is none. */}
+      <SinceYesterday slug={slug} />
 
       <section className="mt-8" aria-labelledby="overview-waiting">
         <h2 id="overview-waiting" className="text-sm font-semibold">

@@ -198,6 +198,12 @@ export const vi = {
     count: '{count, plural, other {# mục}}',
     due: 'Hạn {when}',
     open: 'Mở',
+    since: {
+      title: 'Từ hôm qua',
+      subtitle: 'Việc các đồng nghiệp AI đã làm cho bạn trong 24 giờ qua. Việc cần duyệt chờ bạn trong hộp duyệt.',
+      line: '{name} đã làm {count, plural, other {# việc}} cho bạn',
+      open: 'Mở',
+    },
     fallback: {
       flag: 'Một cảnh báo cần bạn xem',
       proposal: 'Một đề xuất đang chờ bạn duyệt',
@@ -11341,6 +11347,7 @@ export const vi = {
           start: 'Bắt đầu một lượt Vy làm việc cho bạn',
         },
       },
+      since_yesterday: 'Xem việc các đồng nghiệp AI đã chuẩn bị từ hôm qua',
       vy_data: {
         member_data: {
           purge: 'Xóa kết quả và ghi nhớ Vy của thành viên đã rời sau 30 ngày (dọn hằng ngày)',
