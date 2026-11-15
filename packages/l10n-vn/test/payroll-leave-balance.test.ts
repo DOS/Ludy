@@ -384,6 +384,33 @@ describe('calculateLeaveBalance (#3348)', () => {
         entries: [{ kind: 'unpaid_leave', month: '2026-03', days: '26', approved: false }],
       }),
     ).toMatchObject({ eligibleMonths: 11, entitlementDays: '11' });
+
+    // Passing workedDaysByMonth for a month with approved unpaid leave stays consistent with omitting it:
+    // 1 month approved unpaid counts (12 months); a second month overflows the 1-month allowance (11 months).
+    expect(
+      calculateLeaveBalance({
+        year: '2026',
+        category: 'standard',
+        hireDate: '2025-01-01',
+        standardWorkingDays: '26',
+        workedDaysByMonth: { '2026-03': '0' },
+        entries: [{ kind: 'unpaid_leave', month: '2026-03', days: '26', approved: true }],
+      }),
+    ).toMatchObject({ eligibleMonths: 12, entitlementDays: '12' });
+
+    expect(
+      calculateLeaveBalance({
+        year: '2026',
+        category: 'standard',
+        hireDate: '2025-01-01',
+        standardWorkingDays: '26',
+        workedDaysByMonth: { '2026-03': '0', '2026-05': '0' },
+        entries: [
+          { kind: 'unpaid_leave', month: '2026-03', days: '26', approved: true },
+          { kind: 'unpaid_leave', month: '2026-05', days: '26', approved: true },
+        ],
+      }),
+    ).toMatchObject({ eligibleMonths: 11, entitlementDays: '11' });
   });
 
   it('clamps rule lookup date by endedOn so post-termination rules do not change entitlement', () => {

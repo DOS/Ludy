@@ -178,6 +178,31 @@ function completedYears(hireDate: string, evalDate: string): number {
 }
 
 /**
+ * Consumes Decree 145/2020/ND-CP Art. 65(4) approved unpaid-leave allowance for one month.
+ * Returns the covered approved days (which count as working time), uncovered approved days,
+ * and remaining cumulative allowance in months.
+ */
+function consumeApprovedUnpaidAllowance(
+  approvedInMonth: Decimal,
+  totalMonthWork: Decimal,
+  allowanceMonthsRemaining: Decimal,
+  zero: Decimal,
+): { coveredDays: Decimal; uncoveredApproved: Decimal; nextAllowance: Decimal } {
+  if (!approvedInMonth.greaterThan(0) || !allowanceMonthsRemaining.greaterThan(0) || !totalMonthWork.greaterThan(0)) {
+    return { coveredDays: zero, uncoveredApproved: approvedInMonth, nextAllowance: allowanceMonthsRemaining };
+  }
+  const maxCoveredDays = allowanceMonthsRemaining.times(totalMonthWork);
+  const coveredDays = approvedInMonth.lessThanOrEqualTo(maxCoveredDays) ? approvedInMonth : maxCoveredDays;
+  const uncoveredApproved = approvedInMonth.minus(coveredDays);
+  const subtracted = allowanceMonthsRemaining.minus(coveredDays.div(totalMonthWork));
+  return {
+    coveredDays,
+    uncoveredApproved,
+    nextAllowance: subtracted.isNegative() ? zero : subtracted,
+  };
+}
+
+/**
  * Pure deterministic annual-leave balance calculator for a calendar year.
  * Pro-rates statutory leave by eligible months in `year`, adds seniority bonus (+1 day per full 5 years),
  * aggregates opening balance, annual leave taken, paid personal leave (without deducting annual leave),
@@ -302,7 +327,15 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
         if (monthStd === undefined) {
           throw invalid(`standardWorkingDays or workingDaysByMonth[${ym}] is required when workedDaysByMonth[${ym}] is provided`);
         }
-        effectiveRatio = money(workedExplicit.trim()).div(money(monthStd.trim()));
+        const totalMonthWork = money(monthStd.trim());
+        const { coveredDays, nextAllowance } = consumeApprovedUnpaidAllowance(
+          approvedInMonth,
+          totalMonthWork,
+          allowanceMonthsRemaining,
+          zero,
+        );
+        allowanceMonthsRemaining = nextAllowance;
+        effectiveRatio = money(workedExplicit.trim()).plus(coveredDays).div(totalMonthWork);
       } else {
         let totalMonthWork: Decimal;
         let activeMonthWork: Decimal;
@@ -337,14 +370,13 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
         }
 
         // Decree 145/2020/ND-CP Art. 65(4): employer-approved unpaid leave up to 1 month/year counts as working time.
-        let uncoveredApproved = approvedInMonth;
-        if (approvedInMonth.greaterThan(0) && allowanceMonthsRemaining.greaterThan(0) && totalMonthWork.greaterThan(0)) {
-          const maxCoveredDays = allowanceMonthsRemaining.times(totalMonthWork);
-          const coveredDays = approvedInMonth.lessThanOrEqualTo(maxCoveredDays) ? approvedInMonth : maxCoveredDays;
-          uncoveredApproved = approvedInMonth.minus(coveredDays);
-          allowanceMonthsRemaining = allowanceMonthsRemaining.minus(coveredDays.div(totalMonthWork));
-          if (allowanceMonthsRemaining.isNegative()) allowanceMonthsRemaining = zero;
-        }
+        const { uncoveredApproved, nextAllowance } = consumeApprovedUnpaidAllowance(
+          approvedInMonth,
+          totalMonthWork,
+          allowanceMonthsRemaining,
+          zero,
+        );
+        allowanceMonthsRemaining = nextAllowance;
         const effectiveUnpaid = unapprovedInMonth.plus(uncoveredApproved);
         const actual = activeMonthWork.minus(effectiveUnpaid);
         effectiveRatio = (actual.isNegative() ? zero : actual).div(totalMonthWork);
