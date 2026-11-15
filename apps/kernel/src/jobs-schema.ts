@@ -78,7 +78,7 @@ export const QUEUES = {
   meetingHook: 'kernel-meeting-hook',
   meetingHookSweep: 'kernel-meeting-hook-sweep',
   // Created by the meetings transcription migration (20261202000000): one run of the recorder's Vy transcribing a meeting (#2578, M4b).
-  // Created by the minutes channels migration (20270101080000): one post of approved minutes to a Slack or Teams channel, and the sweep that hands posts over (meetings integrations B4, #3168).
+  // Created by the minutes channels migration (20270101090000): one post of approved minutes to a Slack or Teams channel, and the sweep that hands posts over (meetings integrations B4, #3168).
   meetingChat: 'kernel-meeting-chat',
   meetingChatSweep: 'kernel-meeting-chat-sweep',
   meetingsTranscribe: 'meetings-transcribe',
