@@ -120,6 +120,6 @@ suite('the body of a queued post to a channel (B4, #3168)', () => {
     expect(checks.rows.map((r) => r.def).join('\n')).toContain('chat_body_ok(body)');
     // The log of a click holds ids, a state, a status, a code and two hashes: no column that could hold the text.
     const post = await admin((c) => c.query<{ column_name: string }>(`SELECT column_name FROM information_schema.columns WHERE table_schema = 'crove_meetings' AND table_name = 'chat_post' ORDER BY ordinal_position`));
-    expect(post.rows.map((r) => r.column_name)).toEqual(['org_id', 'id', 'meeting_id', 'channel_id', 'user_id', 'facts_key', 'text_hash', 'state', 'attempts', 'http_status', 'code', 'created_at', 'handed_at', 'settled_at']);
+    expect(post.rows.map((r) => r.column_name)).toEqual(['org_id', 'id', 'meeting_id', 'channel_id', 'user_id', 'facts_key', 'text_hash', 'state', 'attempts', 'http_status', 'code', 'created_at', 'handed_at', 'sending_at', 'settled_at']);
   });
 });
