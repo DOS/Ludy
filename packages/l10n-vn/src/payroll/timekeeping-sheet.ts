@@ -81,13 +81,18 @@ const HOUR_UNIT_WORDS = ['gio', 'hour', 'hours', 'hrs', 'hr', 'h'] as const;
 const DAY_UNIT_WORDS = ['ngay', 'day', 'days'] as const;
 const DAY_KIND_PHRASES = [
   'weekly rest day',
+  'weekend day',
+  'holiday day',
   'regular day',
   'normal day',
   'rest day',
   'weekday',
   'ngay nghi hang tuan',
+  'ngay nghi cuoi tuan',
   'ngay nghi tuan',
   'ngay nghi le',
+  'ngay cuoi tuan',
+  'ngay binh thuong',
   'ngay nghi',
   'ngay thuong',
   'ngay le',
@@ -99,6 +104,49 @@ const DAY_UNIT_COLUMNS = new Set<TimekeepingColumn>([
   'personalPaidDays',
   'daysNotEmployed',
 ]);
+const RATE_OR_MONEY_WORDS = [
+  'rate',
+  'multiplier',
+  'factor',
+  'ratio',
+  'percent',
+  'percentage',
+  'amount',
+  'amt',
+  'pay',
+  'payment',
+  'wage',
+  'wages',
+  'salary',
+  'cost',
+  'price',
+  'allowance',
+  'bonus',
+  'deduction',
+  'money',
+  'cash',
+  'vnd',
+  'usd',
+  'tien',
+  'gia',
+] as const;
+const RATE_OR_MONEY_PHRASES = [
+  'he so',
+  'ty le',
+  'ti le',
+  'phan tram',
+  'don gia',
+  'thanh tien',
+  'tien luong',
+  'muc luong',
+  'tru luong',
+  'phu cap',
+  'tro cap',
+  'khau tru',
+  'giam tru',
+  'chi phi',
+  'tien thuong',
+] as const;
 const BALANCE_OR_QUOTA_WORDS = [
   'balance',
   'remaining',
@@ -350,6 +398,10 @@ function isBalanceOrQuotaHeader(key: string): boolean {
   return BALANCE_OR_QUOTA_WORDS.some((w) => hasWord(key, w)) || hasAnyPhrase(key, BALANCE_OR_QUOTA_PHRASES);
 }
 
+function isRateOrMoneyHeader(key: string): boolean {
+  return RATE_OR_MONEY_WORDS.some((w) => hasWord(key, w)) || hasAnyPhrase(key, RATE_OR_MONEY_PHRASES);
+}
+
 function hasUnitMismatch(field: TimekeepingColumn, key: string): 'days' | 'hours' | null {
   if (!NUMERIC_COLUMNS.includes(field)) return null;
   if (DAY_UNIT_COLUMNS.has(field)) {
@@ -378,9 +430,9 @@ function matchHeaderField(key: string): HeaderMatch | null {
     return { field: 'displayName', specificity: 'exact' };
   }
 
-  // Balance/remaining/carryover/quota headers (e.g. "Annual leave balance", "Phep nam con lai") must not be
-  // misinterpreted as monthly leave taken or overtime worked.
-  if (isBalanceOrQuotaHeader(key)) {
+  // Ignore balance/quota headers and multiplier/rate/monetary columns (e.g. "Normal day OT rate",
+  // "Tien lam them", "He so OT") so rates or amounts are never parsed as hours or leave days.
+  if (isBalanceOrQuotaHeader(key) || isRateOrMoneyHeader(key)) {
     return null;
   }
 

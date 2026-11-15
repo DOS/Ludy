@@ -406,5 +406,22 @@ describe('parseTimekeepingSheet (#3348)', () => {
       employeeCode: 'E01',
       unpaidLeaveDays: '2',
     });
+
+    // Rate, multiplier, and monetary OT/leave columns do not shadow or duplicate hour/day quantity columns.
+    const rateAndPay = parseTimekeepingSheet(
+      'Employee Code\tNormal day OT rate\tHe so OT ngay thuong\tTien OT ngay thuong\tNormal day OT hours\tLam them ngay cuoi tuan\nNV01\t1.5\t1.5\t1800000\t8\t4\n',
+      { month: '2026-08' },
+    );
+    expect(rateAndPay.errors).toEqual([]);
+    expect(rateAndPay.warnings).toEqual([]);
+    expect(rateAndPay.columns.normalDayOtHours).toBe(4);
+    expect(rateAndPay.rows[0]?.overtime).toEqual([
+      { dayKind: 'normal_day', night: false, hours: '8' },
+      { dayKind: 'weekly_rest_day', night: false, hours: '4' },
+    ]);
+
+    const rateOnly = parseTimekeepingSheet('Employee Code\tNormal day OT rate\nNV01\t1.5\n', { month: '2026-08' });
+    expect(rateOnly.rows).toEqual([]);
+    expect(rateOnly.errors.map((e) => e.code)).toContain('missing_timekeeping_columns');
   });
 });
