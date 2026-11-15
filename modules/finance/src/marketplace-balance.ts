@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Where each platform's money stands in the books, for the Sàn screen (#2516 slice D, plan docs/plan/stock-and-marketplaces.md section 8.4, "The payout"). Read only, from the ledger: the
-// lines on the platform's balance account (131) and on the fees-awaiting-invoice account (1388) that name the platform's party (crove_finance.marketplace_party), per legal entity. Facts only:
+// lines on the platform's balance account (131) and on the platform's payable account (331, where the fees the platform kept wait for their invoice) that name the platform's party (crove_finance.marketplace_party), per legal entity. Facts only:
 // no model call, nothing written, no order or buyer data. A reversal entry takes back what the entry it reverses posted, so it counts against the same figure, never as a payout.
 // Notes for the posting and payout slices of #2516: `paidOut` is what payouts CLEARED on 131 (the whole credit, which also covers the fees and the tax the platform kept), not the money received on
 // 112; every credit to 131 that is not a reversal counts as a payout, so an entry that credits 131 for another reason (a refund above the sales) would be counted as one and must be handled here
@@ -14,9 +14,9 @@ import { MARKETPLACE_POSTING_MAPS } from './marketplace-posting-map.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 
-// The accounts the plan names for the platform's balance and for the fees whose invoice has not come (the TT133 map, the one regime a map exists for); a sub-account extends its parent's code.
+// The accounts the plan names for the platform's balance (131) and for what is owed to it (331; a debit balance is fees kept that no invoice has cleared yet; the TT133 map, the one regime a map exists for); a sub-account extends its parent's code.
 const RECEIVABLE = MARKETPLACE_POSTING_MAPS.tt133?.receivable.code ?? '131';
-const FEES_AWAITING = MARKETPLACE_POSTING_MAPS.tt133?.feeAwaitingInvoice.code ?? '1388';
+const FEES_AWAITING = MARKETPLACE_POSTING_MAPS.tt133?.feePayable.code ?? '331';
 
 // The balance rows of the platforms an entity (or every entity the caller may see) sells on; shared by the screen's read and by the facts the coworker's line is written from (slice E).
 export async function loadMarketplaceBalance(ctx: QueryContext, legalEntityId: string | undefined): Promise<MarketplaceBalance> {

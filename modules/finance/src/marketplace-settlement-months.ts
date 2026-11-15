@@ -144,3 +144,28 @@ export async function postingsOf(ctx: Ctx, settlementIds: readonly string[]): Pr
 // Whether the settlement's posting stands. All the months of a settlement are posted together by one proposal in one transaction, so a settlement either has all its vouchers or none: it is posted when
 // it has vouchers and none is reversed. (One month reversed, with the others standing, is not posted: the payout is refused until the accountant has put the settlement right.)
 export const settlementPosted = (postings: readonly SettlementPostings[]): boolean => postings.length > 0 && postings.every((p) => !p.reversed);
+
+// The VAT and the PIT the settlement's vouchers credited to the two tax accounts (slice C2), exactly as posted: the sums of the credits of their entries' lines on the accounts the map names (a
+// sub-account counts with its parent). The payout debits these amounts, so the accounts net to zero whatever rounding each month's split did. Zero when the settlement credited none.
+export async function postedSettlementTax(ctx: Ctx, settlementId: string, vatCode: string, pitCode: string): Promise<{ vat: string; pit: string }> {
+  const rows = await ctx.trx
+    .selectFrom('crove_finance.journal_voucher as j')
+    .innerJoin('crove_finance.journal_entry as e', (join) =>
+      join.onRef('e.org_id', '=', 'j.org_id').onRef('e.source_id', '=', 'j.id').on('e.source_type', '=', JOURNAL_VOUCHER_SOURCE).on('e.reverses_entry_id', 'is', null),
+    )
+    .innerJoin('crove_finance.journal_line as l', (join) => join.onRef('l.org_id', '=', 'e.org_id').onRef('l.entry_id', '=', 'e.id'))
+    .select(['l.account_code'])
+    .select((eb) => eb.fn.sum<string>('l.credit').as('credit'))
+    .where('j.org_id', '=', ctx.orgId)
+    .where('j.settlement_id', '=', settlementId)
+    .where((eb) => eb.or([eb('l.account_code', 'like', `${vatCode}%`), eb('l.account_code', 'like', `${pitCode}%`)]))
+    .groupBy('l.account_code')
+    .execute();
+  let vat = money('0');
+  let pit = money('0');
+  for (const r of rows) {
+    if (r.account_code.startsWith(vatCode)) vat = vat.plus(money(r.credit));
+    else pit = pit.plus(money(r.credit));
+  }
+  return { vat: toMoney(vat), pit: toMoney(pit) };
+}

@@ -52,7 +52,9 @@ async function postingConfirmed(ctx: QueryContext, legalEntityId: string | undef
 }
 
 // The read over a set of account maps. A test passes its own with a confirmed map; the shipped one is made from MARKETPLACE_POSTING_MAPS (every row `commentary`, so the gate reads closed).
-export const createMarketplaceWorklist = (options: { maps?: Maps } = {}) =>
+// `feeClearing` lists the platforms' fee invoices that still have fees to clear on 1388: RETIRED (slice D, #2516; the payout debits fees to 331 and the invoice nets them by itself), so the shipped read
+// lists none; a test of the dormant logic passes `feeClearing: true` (deleting it is #3315).
+export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: boolean } = {}) =>
   defineQuery({
     name: 'finance.marketplace.worklist',
     input: zMarketplaceBalanceInput,
@@ -146,7 +148,7 @@ export const createMarketplaceWorklist = (options: { maps?: Maps } = {}) =>
         .where('m.org_id', '=', ctx.orgId);
       if (input.legalEntityId !== undefined) links = links.where('m.legal_entity_id', '=', input.legalEntityId);
       const invoices: MarketplaceWorklist['invoices'] = [];
-      for (const link of await links.orderBy('m.platform').execute()) {
+      for (const link of options.feeClearing === true ? await links.orderBy('m.platform').execute() : []) {
         const waiting = money((await balanceOf(ctx, link.legal_entity_id, link.party_id, feesAccount)).balance);
         if (!waiting.greaterThan(0)) continue;
         const docs = await ctx.trx

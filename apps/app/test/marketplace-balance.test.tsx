@@ -64,7 +64,7 @@ describe('the Sàn screen (#2516)', () => {
     expect(html).toContain('Sales posted (131)');
     expect(html).toContain('Cleared by payouts');
     expect(html).toContain('Still owed by the platform');
-    expect(html).toContain('Fees awaiting an invoice (1388)');
+    expect(html).toContain('Fees awaiting an invoice (331)');
     expect(html).toContain('data-testid="marketplace-balance-note"');
     expect(html).not.toContain('<button');
     expect(cache.calls).toEqual([]);
@@ -79,7 +79,7 @@ describe('the Sàn screen (#2516)', () => {
   it('reads in Vietnamese', () => {
     const html = render({ rows: [{ legalEntityId: entity, platform: 'shopee', platformName: 'Shopee', salesPosted: '10', paidOut: '0', awaitingPayout: '10', feesAwaitingInvoice: '0' }] }, 'vi');
     expect(html).toContain('Còn chờ sàn trả');
-    expect(html).toContain('Phí chờ hóa đơn (1388)');
+    expect(html).toContain('Phí chờ hóa đơn (331)');
   });
 
   describe('the coworker\'s line (#2516 slice E)', () => {

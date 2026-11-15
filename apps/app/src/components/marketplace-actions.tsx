@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // What a person can act on at the Sàn screen (#2516 slice F, plan docs/plan/stock-and-marketplaces.md section 8.4): the stored settlements to post, the posted settlements waiting for their payout (with the
-// bank lines the platform's transfer may be) and the platform's fee invoices that can clear the fees waiting on 1388. Read by code (marketplace.worklist), no model call. Each button only asks for the
+// bank lines the platform's transfer may be) and the platform's fee invoices that (clearing is retired, so none is listed). Read by code (marketplace.worklist), no model call. Each button only asks for the
 // proposal (inbox.request of the finance command) and links to it in the Inbox: nothing posts from here, a second person approves there. While the accountant has not confirmed the account map (#2520) the
 // three are disabled under one line that says so, instead of letting a request fail. Nothing is shown when nothing waits.
 import { useMutation, useQuery } from '@tanstack/react-query';

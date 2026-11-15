@@ -205,8 +205,15 @@ export function feeClearingProposalMismatch(stored: MarketplaceFeeClearingPropos
 }
 
 // The commands over a set of account maps. A test passes its own with a confirmed map; the shipped set is made from MARKETPLACE_POSTING_MAPS.
-export function createMarketplaceFeeClearingCommands(options: { maps?: Maps } = {}) {
+// RETIRED (AI consensus 2026-11-15, A1, route b; #2516 slice D): the payout now debits the platform's fees to 331, the fee invoice credits 331 and nets them by itself, so nothing moves fees from 1388
+// any more and the shipped commands refuse at `prepare` and at `record` with MARKETPLACE_FEE_CLEARING_RETIRED. The logic and its tests stay (disabled, not removed; deleting them is #3315): a test
+// that exercises it passes `retired: false`, which no shipped set does.
+export function createMarketplaceFeeClearingCommands(options: { maps?: Maps; retired?: boolean } = {}) {
   const maps = options.maps ?? MARKETPLACE_POSTING_MAPS;
+  const retired = options.retired ?? true;
+  const refuseRetired = () => {
+    if (retired) throw new DomainError('MARKETPLACE_FEE_CLEARING_RETIRED', 409, 'Bù trừ phí sàn đã ngưng: phí sàn giữ lại ghi nợ 331 khi sàn trả, hóa đơn phí ghi có 331 và tự bù trừ');
+  };
 
   const prepare = defineCommand({
     name: 'finance.marketplace_fee_clearing.prepare',
@@ -216,6 +223,7 @@ export function createMarketplaceFeeClearingCommands(options: { maps?: Maps } = 
     access: REQUESTERS,
     writes: [],
     handler: async (ctx, input) => {
+      refuseRetired();
       // The lock is taken here too: the sums are read under the platform's lock at the request as at the approval (Accounting PO, 2026-11-14).
       const built = await buildClearing(ctx, maps, input.purchaseDocumentId, true);
       await assertUsableAccounts(ctx, built.proposal.lines.map((l) => l.account));
@@ -234,6 +242,7 @@ export function createMarketplaceFeeClearingCommands(options: { maps?: Maps } = 
     proposalKind: JOURNAL_VOUCHER_KIND,
     handler: async (ctx, { payload }) => {
       if (!ctx.proposalId) throw new DomainError('FORBIDDEN', 403, 'Lệnh này chỉ chạy qua đề xuất đã duyệt');
+      refuseRetired();
       // The entry is built again from the posted invoice and the waiting fees, in the approver's context under the platform's lock, and the stored proposal must equal it: a proposal row not written by
       // the preparer (raw SQL) cannot clear more than the invoice and the waiting fees allow, nor into another entity.
       const built = await buildClearing(ctx, maps, payload.purchaseDocumentId, true);
