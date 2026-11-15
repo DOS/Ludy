@@ -3068,13 +3068,15 @@ export interface MeetingsTranslationTable {
 export interface NotesLinkTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
-  note_id: ColumnType<string, string, NotGranted>;
+  note_id: ColumnType<string | null, string | null, NotGranted>;
   target_type: ColumnType<string, string, NotGranted>;
   target_id: ColumnType<string, string, NotGranted>;
   party_id: ColumnType<string | null, string | null, NotGranted>;
   file_id: ColumnType<string | null, string | null, NotGranted>;
   created_by: ColumnType<string, string, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  todo_id: ColumnType<string | null, string | null, NotGranted>;
+  task_id: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_notes.note */

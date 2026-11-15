@@ -90,6 +90,7 @@ export const notesExportMine = defineQuery({
             .execute();
     const linksOf = new Map<string, { targetType: string; targetId: string }[]>();
     for (const l of links) {
+      if (l.note_id === null) continue;
       const list = linksOf.get(l.note_id) ?? [];
       list.push({ targetType: l.target_type, targetId: l.target_id });
       linksOf.set(l.note_id, list);

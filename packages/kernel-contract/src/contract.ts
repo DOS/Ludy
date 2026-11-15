@@ -315,6 +315,9 @@ import {
   zTodoCreate,
   zTodoHandOver,
   zTodoHandedOver,
+  zTodoLinkAdd,
+  zTodoLinkRemove,
+  zTodoLinkWritten,
   zTodoList,
   zTodoRef,
   zTodoReorder,
@@ -953,6 +956,8 @@ export const contract = {
       reorder: oc.input(zTodoReorder).output(zTodoWritten),
       delete: oc.input(zTodoRef).output(zTodoWritten),
       restore: oc.input(zTodoRef).output(zTodoWritten),
+      linkAdd: oc.input(zTodoLinkAdd).output(zTodoLinkWritten),
+      linkRemove: oc.input(zTodoLinkRemove).output(zTodoLinkWritten),
       // Hands an open to-do over to a position as a team task (#1674), with the text the member confirmed.
       handOver: oc.input(zTodoHandOver).output(zTodoHandedOver),
       // My work: my open to-dos and the open tasks of the positions I hold (#1674).

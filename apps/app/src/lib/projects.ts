@@ -2,6 +2,9 @@
 // Client-side ordering, filtering and view helpers for Projects (issue #2591, ADR-0048, plan §9 P2).
 import type { ProjectBoard, ProjectStatus, ProjectSummary, ProjectTaskCard } from '@crove/kernel-contract';
 import type { TaskStatus } from './agents.ts';
+import { getConfig } from './auth.ts';
+
+export const projectsInstalled = (): boolean => getConfig().modules.includes('projects');
 
 export const PROJECT_BOARD_COLUMNS = ['todo', 'in_progress', 'waiting', 'in_review', 'done'] as const;
 export const PROJECT_STATUSES = ['active', 'on_hold', 'done', 'archived'] as const;

@@ -8,7 +8,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useEffect, useMemo, useRef, useState, type FormEvent, type RefObject } from 'react';
 import { useTranslations } from 'use-intl';
-import type { MyWorkTask, Todo, TodoListView, TodoStep, TodoSummary } from '@crove/kernel-contract';
+import type { MyWorkTask, NoteLinkTargetInput, Todo, TodoListView, TodoStep, TodoSummary } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
@@ -20,14 +20,17 @@ import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { Textarea } from '@crove/ui/components/textarea';
 import { cn } from '@crove/ui/lib/utils';
 import { DateInput } from '../components/date-input.tsx';
+import { NoteLinks, RecordLinkAdder } from '../components/note-links.tsx';
 import { TimeInput } from '../components/time-input.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { NotesSubnav } from '../components/notes-subnav.tsx';
+import { refreshProjectQueries } from '../components/project-task-dialog.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, clientForOrg, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
 import { toast } from '../lib/toast.ts';
 import { browserTimeZone, groupTodos, handOverDescription, moveTarget, myWorkShortcut, stepSelection, type MyWorkAction } from '../lib/my-work.ts';
+import { projectsInstalled } from '../lib/projects.ts';
 
 const refresh = () => void queryClient.invalidateQueries({ queryKey: orpc.notes.todos.key() });
 
@@ -71,18 +74,30 @@ function HandOverDialog({ todo, disabled, onDone }: { todo: Todo; disabled: bool
   const t = useTranslations('myWork');
   const common = useTranslations('common');
   const f = useFormat();
+  const hasProjects = projectsInstalled();
   const chart = useQuery(orpc.chart.get.queryOptions());
   const positions = (chart.data?.positions ?? []).filter((p) => p.status !== 'archived');
   const [open, setOpen] = useState(false);
   const [positionId, setPositionId] = useState('');
+  const [projectId, setProjectId] = useState('');
+  const projects = useQuery({ ...orpc.projects.list.queryOptions({ input: {} }), enabled: open && hasProjects });
+  const activeProjects = (projects.data?.projects ?? []).filter((p) => p.status !== 'archived');
   const [title, setTitle] = useState(todo.title);
   const [description, setDescription] = useState(() => handOverDescription(todo));
   const handOver = useMutation({
-    mutationFn: (v: { positionId: string; title: string; description: string }) =>
-      client.notes.todos.handOver({ todoId: todo.id, revision: todo.revision, positionId: v.positionId, title: v.title.trim(), description: v.description }),
+    mutationFn: (v: { positionId: string; projectId: string; title: string; description: string }) =>
+      client.notes.todos.handOver({
+        todoId: todo.id,
+        revision: todo.revision,
+        positionId: v.positionId,
+        ...(v.projectId ? { projectId: v.projectId } : {}),
+        title: v.title.trim(),
+        description: v.description,
+      }),
     onSuccess: () => {
       refresh();
       void queryClient.invalidateQueries({ queryKey: orpc.tasks.key() });
+      if (hasProjects) void refreshProjectQueries();
       setOpen(false);
       onDone();
     },
@@ -92,7 +107,7 @@ function HandOverDialog({ todo, disabled, onDone }: { todo: Todo; disabled: bool
   const submit = (event: FormEvent) => {
     event.preventDefault();
     event.stopPropagation();
-    if (positionId && title.trim() && !handOver.isPending) handOver.mutate({ positionId, title, description });
+    if (positionId && title.trim() && !handOver.isPending) handOver.mutate({ positionId, projectId, title, description });
   };
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -116,6 +131,19 @@ function HandOverDialog({ todo, disabled, onDone }: { todo: Todo; disabled: bool
               ))}
             </NativeSelect>
           </label>
+          {hasProjects && (
+            <label className="block text-xs">
+              <span className="text-subtle-foreground">{t('handOverProject')}</span>
+              <NativeSelect className="mt-1 w-full" value={projectId} onChange={(e) => setProjectId(e.target.value)} data-testid="hand-over-project">
+                <NativeSelectOption value="">{t('handOverNoProject')}</NativeSelectOption>
+                {activeProjects.map((p) => (
+                  <NativeSelectOption key={p.id} value={p.id}>
+                    {p.name}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </label>
+          )}
           <label className="block text-xs">
             <span className="text-subtle-foreground">{t('handOverTaskTitle')}</span>
             <Input required maxLength={300} value={title} onChange={(e) => setTitle(e.target.value)} className="mt-1" />
@@ -232,6 +260,20 @@ function TodoEditor({ todo, onClose }: { todo: Todo; onClose: () => void }) {
       });
     },
   });
+  const linkAdd = useMutation({
+    mutationFn: (target: NoteLinkTargetInput) => client.notes.todos.linkAdd({ todoId: todo.id, ...target }),
+    onSuccess: () => {
+      refresh();
+      void queryClient.invalidateQueries({ queryKey: orpc.notes.panel.key() });
+    },
+  });
+  const linkRemove = useMutation({
+    mutationFn: (linkId: string) => client.notes.todos.linkRemove({ linkId }),
+    onSuccess: () => {
+      refresh();
+      void queryClient.invalidateQueries({ queryKey: orpc.notes.panel.key() });
+    },
+  });
   const addStep = () => {
     const text = newStep.trim();
     if (!text || steps.length >= 50) return;
@@ -326,6 +368,21 @@ function TodoEditor({ todo, onClose }: { todo: Todo; onClose: () => void }) {
             </span>
           </span>
         </label>
+        <NoteLinks
+          links={todo.links}
+          slug={slug}
+          onRemove={todo.deletedAt === null ? (linkId) => linkRemove.mutate(linkId) : undefined}
+          removingId={linkRemove.isPending ? linkRemove.variables : undefined}
+        />
+        {linkRemove.error && <ErrorText>{errorMessage(linkRemove.error)}</ErrorText>}
+        {todo.deletedAt === null && (
+          <RecordLinkAdder
+            existingLinks={todo.links}
+            onAdd={(target) => linkAdd.mutateAsync(target)}
+            adding={linkAdd.isPending}
+            error={linkAdd.error}
+          />
+        )}
         <div className="flex flex-wrap items-center gap-2">
           <Button loading={save.isPending} type="submit" disabled={save.isPending || !title.trim()}>
             {t('save')}
