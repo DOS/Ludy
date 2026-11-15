@@ -320,6 +320,35 @@ function exceedsOneMonthSpan(start: CalendarDate, end: CalendarDate): boolean {
   return compareCalendarDates(end, deriveFixedTermEndDate(start, 1)) >= 0;
 }
 
+function checkRenewalSequence(fixedTermSequence: number | null | undefined, findings: LaborContractFinding[]): void {
+  if (fixedTermSequence === undefined || fixedTermSequence === null) return;
+  if (!Number.isInteger(fixedTermSequence) || fixedTermSequence < 1) {
+    findings.push({
+      code: 'invalid_fixed_term_sequence',
+      severity: 'error',
+      field: 'fixedTermSequence',
+      message: 'fixedTermSequence must be a positive integer (1 for initial contract, 2 for first renewal).',
+      cite: 'Labor Code 2019 Art. 20(2)',
+    });
+  } else if (fixedTermSequence > FIXED_TERM_MAX_SEQUENCE) {
+    findings.push({
+      code: 'must_convert_to_indefinite',
+      severity: 'error',
+      field: 'fixedTermSequence',
+      message: 'A definite-term contract may be renewed at most once; subsequent renewal must convert to an indefinite-term contract.',
+      cite: 'Labor Code 2019 Art. 20(2)',
+    });
+  } else if (fixedTermSequence === FIXED_TERM_MAX_SEQUENCE) {
+    findings.push({
+      code: 'final_fixed_term_renewal',
+      severity: 'warning',
+      field: 'fixedTermSequence',
+      message: 'This is the second definite-term contract (final permitted renewal); any further continuation converts to indefinite term.',
+      cite: 'Labor Code 2019 Art. 20(2)',
+    });
+  }
+}
+
 function checkKindSpecificTerms(
   terms: LaborContractTermsInput,
   contractKind: LaborContractKind,
@@ -366,33 +395,7 @@ function checkKindSpecificTerms(
       });
     }
 
-    if (terms.fixedTermSequence !== undefined && terms.fixedTermSequence !== null) {
-      if (!Number.isInteger(terms.fixedTermSequence) || terms.fixedTermSequence < 1) {
-        findings.push({
-          code: 'invalid_fixed_term_sequence',
-          severity: 'error',
-          field: 'fixedTermSequence',
-          message: 'fixedTermSequence must be a positive integer (1 for initial contract, 2 for first renewal).',
-          cite: 'Labor Code 2019 Art. 20(2)',
-        });
-      } else if (terms.fixedTermSequence > FIXED_TERM_MAX_SEQUENCE) {
-        findings.push({
-          code: 'must_convert_to_indefinite',
-          severity: 'error',
-          field: 'fixedTermSequence',
-          message: 'A fixed-term contract may be renewed at most once; subsequent renewal must convert to an indefinite-term contract.',
-          cite: 'Labor Code 2019 Art. 20(2)',
-        });
-      } else if (terms.fixedTermSequence === FIXED_TERM_MAX_SEQUENCE) {
-        findings.push({
-          code: 'final_fixed_term_renewal',
-          severity: 'warning',
-          field: 'fixedTermSequence',
-          message: 'This is the second fixed-term contract (final permitted renewal); any further continuation converts to indefinite term.',
-          cite: 'Labor Code 2019 Art. 20(2)',
-        });
-      }
-    }
+    checkRenewalSequence(terms.fixedTermSequence, findings);
     return;
   }
 
@@ -418,7 +421,7 @@ function checkKindSpecificTerms(
     return;
   }
 
-  // under_one_month
+  // under_one_month (still an Art. 20(1)(b) definite-term contract subject to Art. 20(2) renewal limits)
   const hasTermMonths = terms.termMonths !== undefined && terms.termMonths !== null;
   const hasEndDate = terms.endDate !== undefined && terms.endDate !== null;
   if (!hasEndDate) {
@@ -450,6 +453,7 @@ function checkKindSpecificTerms(
       cite: 'Labor Code 2019 Art. 14(2) & Art. 20(1)(b)',
     });
   }
+  checkRenewalSequence(terms.fixedTermSequence, findings);
 }
 
 function isEffectiveDurationUnderOneMonth(
@@ -872,7 +876,7 @@ export function evaluateContractAlerts(terms: LaborContractTermsInput, options: 
     }
   }
 
-  if (kindCheck.kind === 'fixed_term' && terms.fixedTermSequence !== undefined && terms.fixedTermSequence !== null) {
+  if (kindCheck.kind !== 'indefinite' && terms.fixedTermSequence !== undefined && terms.fixedTermSequence !== null) {
     if (!Number.isInteger(terms.fixedTermSequence) || terms.fixedTermSequence < 1) {
       throw new Error(`Invalid fixedTermSequence: ${String(terms.fixedTermSequence)}`);
     }
@@ -882,7 +886,7 @@ export function evaluateContractAlerts(terms: LaborContractTermsInput, options: 
         severity: 'error',
         targetDate: endIso,
         daysRemaining: contractDaysRemaining,
-        message: 'Fixed-term renewal ceiling exceeded; this contract must be converted to an indefinite-term contract.',
+        message: 'Definite-term renewal ceiling exceeded; this contract must be converted to an indefinite-term contract.',
         cite: 'Labor Code 2019 Art. 20(2)',
       });
     } else if (terms.fixedTermSequence === FIXED_TERM_MAX_SEQUENCE) {
@@ -891,7 +895,7 @@ export function evaluateContractAlerts(terms: LaborContractTermsInput, options: 
         severity: 'warning',
         targetDate: endIso,
         daysRemaining: contractDaysRemaining,
-        message: 'Contract is on its second (final) fixed-term; the next renewal must be indefinite term.',
+        message: 'Contract is on its second (final) definite-term renewal; the next renewal must be indefinite term.',
         cite: 'Labor Code 2019 Art. 20(2)',
       });
     }

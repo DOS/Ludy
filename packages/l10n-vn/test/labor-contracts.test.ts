@@ -129,6 +129,16 @@ describe('checkLaborContractTerms (Labor Code 2019 Arts. 14, 20, 24-27)', () => 
     });
     expect(fractionalOnlyUnderOneMonth.ok).toBe(false);
     expect(fractionalOnlyUnderOneMonth.findings.map((f) => f.code)).toContain('missing_under_one_month_duration');
+
+    // Art. 20(2) renewal ceiling applies to under_one_month definite-term contracts as well.
+    const thirdUnderOneMonth = checkLaborContractTerms({
+      contractKind: 'under_one_month',
+      startDate: '2026-08-01',
+      endDate: '2026-08-20',
+      fixedTermSequence: 3,
+    });
+    expect(thirdUnderOneMonth.ok).toBe(false);
+    expect(thirdUnderOneMonth.findings.map((f) => f.code)).toContain('must_convert_to_indefinite');
   });
 
   it('enforces fixed_term 1..36 months and max 1 renewal (fixedTermSequence > 2 -> must_convert_to_indefinite)', () => {
@@ -380,6 +390,15 @@ describe('evaluateContractAlerts', () => {
     );
     expect(derivedProbationAlert.alerts).toMatchObject([
       { code: 'probation_ending_soon', targetDate: '2026-03-01', daysRemaining: 9 },
+    ]);
+
+    const underOneMonthRenewalAlert = evaluateContractAlerts(
+      { contractKind: 'under_one_month', startDate: '2026-08-01', endDate: '2026-08-20', fixedTermSequence: 3 },
+      { asOf: '2026-08-10' },
+    );
+    expect(underOneMonthRenewalAlert.alerts).toMatchObject([
+      { code: 'must_convert_to_indefinite', targetDate: '2026-08-20', daysRemaining: 10 },
+      { code: 'contract_expiring_soon', targetDate: '2026-08-20', daysRemaining: 10 },
     ]);
   });
 
