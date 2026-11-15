@@ -991,7 +991,7 @@ export function createRpcHandler(
           return runtime.execute('meetings.followup.send', rest, { actor, orgId, idempotencyKey });
         })),
       },
-      // Minutes to a Slack or Teams channel (B4, #3168). The API seals the pasted address and opens it only for the recorder's own post in flight; the post is made in this request.
+      // Minutes to a Slack or Teams channel (B4, #3168). The API only seals the pasted address and queues the recorder's click; the worker job (kernel-meeting-chat) opens the sealed address and posts (ADR-0025).
       chat: {
         channels: os.meetings.chat.channels.handler(meetingsQuery('meetings.chat.channels')),
         saveChannel: os.meetings.chat.saveChannel.handler(({ context, input }) => inMeetings(context, (orgId, actor) => saveMinutesChannel(minutesChat(), { orgId, orgSlug: context.orgSlug, actor }, input))),

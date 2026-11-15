@@ -6,13 +6,15 @@
 // drops a queued post, and no row, audit entry or log line holds the address or the text.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { sql } from 'kysely';
 import pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import { CHAT_POSTS_PER_MEETING_PER_DAY, type ChatChannelList, type ChatPosted, type ChatPreview, type ChatStatus } from '@crove/kernel-contract';
-import { CredentialVault, Runtime, parseVaultKey } from '@crove/kernel-runtime';
+import { CredentialVault, Runtime, defineCommand, parseVaultKey } from '@crove/kernel-runtime';
 import { meetingsCommands, meetingsQueries } from '@crove/mod-meetings';
 import { resealCredentials } from '../src/credential-reseal.ts';
 import { CHAT_RETRY_LIMIT, runMeetingChat, type ChatDeps, type ChatJob } from '../src/meeting-chat-job.ts';
@@ -135,7 +137,22 @@ suite('minutes posted to Slack and Teams by a worker job (B4, #3168)', () => {
     const workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 4 });
     pools.push(appPool, workerPool);
     workerDb = createDb(workerPool);
-    const registry = { commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] };
+    // A command that only this test has: the recorder's own insert of a post row, with the columns the worker alone may set, to see the database refuse it (the policy of chat_post).
+    const rawInsert = defineCommand({
+      name: 'meetings.test.chat_post_insert',
+      input: z.strictObject({ meetingId: z.string(), channelId: z.string(), sendingAt: z.boolean(), handedAt: z.boolean() }),
+      risk: 'R1',
+      sideEffect: 'none',
+      access: ['owner', 'admin', 'member'],
+      handler: async (ctx, input) => {
+        const stamp = (on: boolean) => (on ? sql`pg_catalog.now()` : sql`NULL`);
+        await sql`
+          INSERT INTO crove_meetings.chat_post (org_id, meeting_id, channel_id, user_id, facts_key, text_hash, handed_at, sending_at)
+          VALUES (${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${input.channelId}::uuid, ${ctx.actor.type === 'user' ? ctx.actor.userId : null}::uuid, ${'a'.repeat(64)}, ${'b'.repeat(64)}, ${stamp(input.handedAt)}, ${stamp(input.sendingAt)})`.execute(ctx.trx);
+        return { ok: true };
+      },
+    });
+    const registry = { commands: [...kernelCommands, ...meetingsCommands, rawInsert], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] };
     runtime = new Runtime(createDb(appPool), { manifests: TEST_MANIFESTS }).register(registry);
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registry);
     for (const key of ['owner', 'admin', 'recorder', 'attendee', 'viewer', 'outsider']) users[key] = await upsertIdentity(createDb(appPool), { issuer: 'chat', subject: key, email: `${key}@chat.test`, name: key });
@@ -536,6 +553,20 @@ suite('minutes posted to Slack and Teams by a worker job (B4, #3168)', () => {
       expect(await bodyRows(q.postId), `${outcome}: settled leaves no body`).toBe(0);
     }
     expect(await bodies()).toBe(0);
+  });
+
+  it('lets the recorder insert only a plain queued post: the columns of the worker (handed_at, sending_at) are refused at the insert', async () => {
+    const meeting = await seedMeeting(true);
+    const { id: channel } = await saveChannel('owner', 'slack', SLACK_URL);
+    const insert = (who: string, flags: { sendingAt: boolean; handedAt: boolean }) => refuses(exec(who, 'meetings.test.chat_post_insert', { meetingId: meeting, channelId: channel, ...flags }));
+    expect(await insert('recorder', { sendingAt: true, handedAt: false })).not.toBeNull();
+    expect(await insert('recorder', { sendingAt: false, handedAt: true })).not.toBeNull();
+    expect(await insert('recorder', { sendingAt: true, handedAt: true })).not.toBeNull();
+    expect(await posts(meeting)).toEqual([]);
+    // The plain row passes the policy (the control: the refusals above are the columns, not the test's insert), and only the recorder may.
+    expect(await insert('recorder', { sendingAt: false, handedAt: false })).toBeNull();
+    expect(await insert('attendee', { sendingAt: false, handedAt: false })).not.toBeNull();
+    expect(await posts(meeting)).toHaveLength(1);
   });
 
   it('carries no link in a post when the app address is not https', async () => {

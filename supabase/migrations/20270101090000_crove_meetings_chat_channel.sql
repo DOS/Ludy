@@ -187,7 +187,8 @@ CREATE POLICY chat_post_read ON crove_meetings.chat_post AS RESTRICTIVE FOR SELE
   USING (crove_kernel.ctx_actor_type() = 'user' AND user_id = crove_kernel.ctx_user_id() AND crove_meetings.is_meeting_recorder(org_id, meeting_id));
 DROP POLICY IF EXISTS chat_post_insert ON crove_meetings.chat_post;
 CREATE POLICY chat_post_insert ON crove_meetings.chat_post AS RESTRICTIVE FOR INSERT TO crove_tenant
-  WITH CHECK (crove_kernel.ctx_actor_type() = 'user' AND user_id = crove_kernel.ctx_user_id() AND crove_meetings.is_meeting_recorder(org_id, meeting_id) AND state = 'queued' AND attempts = 0 AND settled_at IS NULL);
+  WITH CHECK (crove_kernel.ctx_actor_type() = 'user' AND user_id = crove_kernel.ctx_user_id() AND crove_meetings.is_meeting_recorder(org_id, meeting_id) AND state = 'queued' AND attempts = 0 AND settled_at IS NULL
+         AND handed_at IS NULL AND sending_at IS NULL);
 DROP POLICY IF EXISTS chat_post_update ON crove_meetings.chat_post;
 CREATE POLICY chat_post_update ON crove_meetings.chat_post AS RESTRICTIVE FOR UPDATE TO crove_tenant
   USING (false) WITH CHECK (false);
