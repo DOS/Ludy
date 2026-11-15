@@ -1623,4 +1623,28 @@ suite('meetings module database integration tests (#2576)', () => {
     const imported = await admin(async (c) => Number((await c.query<{ n: string }>(`SELECT count(*) AS n FROM crove_kernel.meeting_platform_recording WHERE meeting_id = $1`, [String(made.body.meetingId)])).rows[0]?.n));
     expect(imported).toBe(0);
   });
+
+  it('33. C1: the click goes through the API as meetings/importStart: it returns the meeting, the row is importing, a viewer and a strict org are refused with the command\'s code', async () => {
+    const body = { language: 'vi', visibility: 'attendees', consentMethod: 'platform_notice', consentNoticeVersion: IMPORT_NOTICE_VERSION, consentConfirmed: true };
+    const recordingId = await suggest('recorder');
+    const done = await rpc('meetings/importStart', 'recorder', { recordingId, ...body });
+    expect(done.status).toBe(200);
+    expect(done.body).toEqual({ meetingId: expect.any(String) });
+    expect(await recordingRow(recordingId)).toMatchObject({ status: 'importing', meeting_id: done.body.meetingId });
+    // The same input shape is checked at the edge: no consent tick, or another notice, is a 400 and nothing is made.
+    const other = await suggest('recorder');
+    expect((await rpc('meetings/importStart', 'recorder', { recordingId: other, ...body, consentConfirmed: false })).status).toBe(400);
+    expect((await rpc('meetings/importStart', 'recorder', { recordingId: other, ...body, consentNoticeVersion: '2026-11-v1' })).status).toBe(400);
+    expect((await rpc('meetings/importStart', 'viewer', { recordingId: other, ...body })).status).toBeGreaterThanOrEqual(400);
+    expect((await recordingRow(other)).status).toBe('suggested');
+    // A strict org answers CONSENT_METHOD_NOT_ALLOWED, which the app words before the click.
+    expect((await rpc('meetings/consentPolicy/set', 'owner', { policy: 'strict' })).status).toBe(200);
+    try {
+      const refused = await rpc('meetings/importStart', 'recorder', { recordingId: other, ...body });
+      expect(refused.status).toBe(422);
+      expect(refused.body.code).toBe('CONSENT_METHOD_NOT_ALLOWED');
+    } finally {
+      expect((await rpc('meetings/consentPolicy/set', 'owner', { policy: 'standard' })).status).toBe(200);
+    }
+  });
 });

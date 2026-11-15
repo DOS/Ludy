@@ -10,6 +10,7 @@ import { Label } from '@crove/ui/components/label';
 import { NativeSelect } from '@crove/ui/components/native-select';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { AgendaAttach } from '../components/meeting-agenda.tsx';
+import { ImportAutoClaim } from '../components/meeting-import-claim.tsx';
 import { MeetingLinks } from '../components/meeting-links.tsx';
 import { MeetingResults, memberLabel } from '../components/meeting-results.tsx';
 import { MeetingLive } from '../components/meeting-live.tsx';
@@ -323,6 +324,9 @@ export function MeetingDetailPage() {
           <Empty title={t('detail.noMedia')} />
         )}
       </div>
+
+      {/* An import the member started (C1, #3173): its copied audio is claimed here too */}
+      <ImportAutoClaim />
 
       {/* The recorder's own calendar (B1, #3165): link this recording to the one event it overlaps, after a click */}
       {meeting.isRecorder && <AgendaAttach meetingId={id} />}
