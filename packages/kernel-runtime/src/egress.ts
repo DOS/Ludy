@@ -343,7 +343,7 @@ export async function guardedRequest(raw: string, request: GuardedRequest, optio
 // socket is released when the body ends, fails, is stopped early (the iterator's return()) or destroy() is called.
 // The caller's headers (a bearer token) go on the first request and, by default, on a redirect only to the very same
 // origin (scheme, host and port); a redirect to anywhere else is sent without them ('none' drops them on every redirect).
-// The first request goes only to one of `firstHosts`, exact host names (compared lower-cased, no suffix, no wildcard): the guard
+// The first request goes only to one of `firstHosts`, exact host names (ASCII or punycode, lower-cased on comparison, no brackets, no trailing dot, no suffix, no wildcard): the guard
 // refuses any other first host as 'blocked' before resolving it or opening a connection, so the caller's headers can never leave
 // for a host the caller did not name, whatever `hostAllowed` accepts for the hops a redirect leads to (a CDN suffix, say). The
 // option is required: a caller that has no list to give has no business sending headers.

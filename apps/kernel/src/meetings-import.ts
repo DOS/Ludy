@@ -52,7 +52,8 @@ export interface MeetingsImportDeps {
   media?: { extractAudio(video: Uint8Array): Promise<Uint8Array> } | null;
   // Tests only: the guarded transfer and its options.
   stream?: typeof guardedStream;
-  streamOptions?: Partial<EgressStreamOptions>;
+  // Tests only (timeouts, a local server): never the security fields, so no caller of the seam can undo the first-host list or the per-hop allowlist.
+  streamOptions?: Partial<Omit<EgressStreamOptions, 'firstHosts' | 'hostAllowed'>>;
 }
 
 interface SealedCredential {

@@ -197,6 +197,8 @@ describe('guardedStream', () => {
     const go = (to: string, hop = 1, mode: 'same-host' | 'none' = 'same-host') => streamHeadersGo(first, new URL(to), hop, mode);
     expect(go('https://files.example.test/rec', 0, 'none')).toBe(true);
     expect(go('https://files.example.test/other')).toBe(true);
+    // The default port is the same origin, written or not.
+    expect(go('https://files.example.test:443/other')).toBe(true);
     // URL.host is the same for each of these; the origin is not.
     expect(new URL('http://files.example.test/rec').host).toBe(first.host);
     expect(go('http://files.example.test/rec')).toBe(false);
@@ -205,14 +207,14 @@ describe('guardedStream', () => {
     expect(go('https://files.example.test/other', 1, 'none')).toBe(false);
   });
 
-  it('keeps the caller headers only on the same origin: a redirect to the same host on another port gets none', async () => {
+  it('does not send the caller headers to the same host name on another port after a redirect', async () => {
     const headers = { Authorization: 'Bearer secret' };
     const moved = await guardedStream(url('a.test', '/to-other-port'), { headers }, opts());
     expect(moved.url).toBe(`http://a.test:${otherPort}/echo`);
     expect(JSON.parse((await drain(moved.body)).toString('utf8'))).toEqual({ auth: null, host: `a.test:${otherPort}` });
   });
 
-  it('refuses a compressed 2xx answer and a declared length over the cap up front, with no byte read, and closes the socket', async () => {
+  it('refuses a compressed 2xx answer and a declared length over the cap when the answer starts, and closes the socket', async () => {
     const compressed = await guardedStream(url('a.test', '/gzip'), {}, opts()).then(() => null, (e: unknown) => e);
     expect(compressed).toBeInstanceOf(EgressError);
     expect((compressed as EgressError).code).toBe('encoding');
