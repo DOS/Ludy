@@ -14,7 +14,7 @@
 -- personal-data erasure redacts a summary, an action item or a title), and goes with its hook (member leaves, hook cleared) and with its meeting (ON DELETE CASCADE).
 SET LOCAL lock_timeout = '2s';
 
--- The owner's switch (crove_kernel.tenant.meeting_hooks and its guard trigger) is made by a kernel migration, 20261231115900_crove_kernel_meeting_hooks_switch.sql, which runs first.
+-- The owner's switch (crove_kernel.tenant.meeting_hooks and its guard trigger) is made by a kernel migration, 20270101040000_crove_kernel_meeting_hooks_switch.sql, which runs first.
 
 -- ---------------------------------------------------------------------------
 -- The body check: the same shapes and limits as meetingHookEvent (packages/kernel-contract/src/meeting-hook-body.ts).
