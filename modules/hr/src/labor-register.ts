@@ -68,7 +68,7 @@ export interface LaborRegisterPerson {
   position?: string | null;
   workerGroup?: LaborRegisterWorkerGroup | null;
   contractKind: LaborRegisterContractKind;
-  contractStartDate: string;
+  contractStartDate?: string | null;
   contractEndDate?: string | null;
   startedOn: string;
   endedOn?: string | null;
@@ -175,8 +175,9 @@ function validatePersons(persons: readonly LaborRegisterPerson[]): void {
     if (!isLaborContractKind(p.contractKind) && p.contractKind !== 'none') {
       throw new DomainError('HR_INVALID_CONTRACT_KIND', 422, `Loại hợp đồng không hợp lệ (${String(p.contractKind)}) cho nhân viên ${p.employeeId}`);
     }
+    const contractStartDate = optionalDateOf(p.contractStartDate);
     assertDate('startedOn', p.startedOn, true, p.employeeId);
-    assertDate('contractStartDate', p.contractStartDate, true, p.employeeId);
+    assertDate('contractStartDate', p.contractStartDate, p.contractKind !== 'none', p.employeeId);
     assertDate('endedOn', p.endedOn, false, p.employeeId);
     assertDate('contractEndDate', p.contractEndDate, false, p.employeeId);
     if (!p.erased) {
@@ -187,7 +188,7 @@ function validatePersons(persons: readonly LaborRegisterPerson[]): void {
     if (endedOn !== null && endedOn < p.startedOn) {
       throw new DomainError('HR_END_BEFORE_START', 422, `Ngày nghỉ việc trước ngày bắt đầu của nhân viên ${p.employeeId}`);
     }
-    if (contractEndDate !== null && contractEndDate < p.contractStartDate) {
+    if (contractEndDate !== null && contractStartDate !== null && contractEndDate < contractStartDate) {
       throw new DomainError('HR_END_BEFORE_START', 422, `Ngày kết thúc hợp đồng trước ngày bắt đầu của nhân viên ${p.employeeId}`);
     }
   }
@@ -263,7 +264,7 @@ export function buildLaborRegister(input: LaborRegisterInput): LaborRegisterDocu
       qualification: erased ? '' : textOf(p.qualification),
       position: erased ? '' : textOf(p.position),
       contractType: CONTRACT_LABEL[p.contractKind],
-      contractStartDate: p.contractStartDate,
+      contractStartDate: textOf(optionalDateOf(p.contractStartDate)),
       contractEndDate: textOf(p.contractEndDate),
       baseWage: formatMoneyCell('lương hợp đồng', p.baseWage, p.employeeId),
       insured: p.insured === undefined ? '' : p.insured ? 'Có' : 'Không',
@@ -427,7 +428,7 @@ export function build01PliReport(input: Report01PliInput): LaborRegisterDocument
       baseWage: formatMoneyCell('mức lương', p.baseWage, p.employeeId),
       allowance: formatMoneyCell('phụ cấp lương', p.allowance, p.employeeId),
       otherAmounts: formatMoneyCell('khoản bổ sung khác', p.otherAmounts, p.employeeId),
-      contractStartDate: p.contractStartDate,
+      contractStartDate: textOf(optionalDateOf(p.contractStartDate)),
       contractType: CONTRACT_LABEL[p.contractKind],
       contractEndDate: textOf(p.contractEndDate),
       insuranceStartMonth: textOf(p.insuranceStartMonth),

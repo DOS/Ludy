@@ -686,25 +686,6 @@ export function checkLaborContractTerms(terms: LaborContractTermsInput): LaborCo
     });
   }
 
-  const form = terms.form ?? 'written';
-  if (!isLaborContractForm(form)) {
-    findings.push({
-      code: 'invalid_contract_form',
-      severity: 'error',
-      field: 'form',
-      message: `Invalid contract form "${form}"; expected "written", "electronic", or "oral".`,
-      cite: 'Labor Code 2019 Art. 14',
-    });
-  } else if (form === 'oral' && validKind !== 'under_one_month') {
-    findings.push({
-      code: 'oral_contract_not_allowed',
-      severity: 'error',
-      field: 'form',
-      message: 'Oral labor contracts are only allowed for contracts with a term under 1 month.',
-      cite: 'Labor Code 2019 Art. 14(2)',
-    });
-  }
-
   const parsedStart = parseIsoCalendarDate(terms.startDate);
   if (parsedStart === null) {
     findings.push({
@@ -738,6 +719,36 @@ export function checkLaborContractTerms(terms: LaborContractTermsInput): LaborCo
     }
   }
 
+  const derivedEnd =
+    parsedEnd === null &&
+    validKind === 'fixed_term' &&
+    parsedStart !== null &&
+    terms.termMonths !== undefined &&
+    terms.termMonths !== null &&
+    Number.isInteger(terms.termMonths) &&
+    terms.termMonths >= 1
+      ? deriveFixedTermEndDate(parsedStart, terms.termMonths)
+      : parsedEnd;
+
+  const form = terms.form ?? 'written';
+  if (!isLaborContractForm(form)) {
+    findings.push({
+      code: 'invalid_contract_form',
+      severity: 'error',
+      field: 'form',
+      message: `Invalid contract form "${form}"; expected "written", "electronic", or "oral".`,
+      cite: 'Labor Code 2019 Art. 14',
+    });
+  } else if (form === 'oral' && !isEffectiveDurationUnderOneMonth(validKind, terms.termMonths, parsedStart, derivedEnd)) {
+    findings.push({
+      code: 'oral_contract_not_allowed',
+      severity: 'error',
+      field: 'form',
+      message: 'Oral labor contracts are only allowed for contracts with a term under 1 month.',
+      cite: 'Labor Code 2019 Art. 14(2)',
+    });
+  }
+
   let jobWage: DecimalValue | null = null;
   const hasContractWageField = terms.contractWage !== undefined && terms.contractWage !== null;
   if (hasContractWageField) {
@@ -759,16 +770,6 @@ export function checkLaborContractTerms(terms: LaborContractTermsInput): LaborCo
   }
 
   if (terms.probation !== undefined && terms.probation !== null) {
-    const derivedEnd =
-      parsedEnd === null &&
-      validKind === 'fixed_term' &&
-      parsedStart !== null &&
-      terms.termMonths !== undefined &&
-      terms.termMonths !== null &&
-      Number.isInteger(terms.termMonths) &&
-      terms.termMonths >= 1
-        ? deriveFixedTermEndDate(parsedStart, terms.termMonths)
-        : parsedEnd;
     checkProbationTerms(terms.probation, validKind, terms.termMonths, parsedStart, derivedEnd, jobWage, hasContractWageField, findings);
   }
 

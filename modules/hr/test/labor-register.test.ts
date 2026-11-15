@@ -210,6 +210,52 @@ describe('Báo cáo 01/PLI (build01PliReport)', () => {
       buildLaborRegister({ employer, asOf: '2026-02-30', persons: [] }),
     ).toThrow(/không hợp lệ/);
   });
+
+  it('allows missing contractStartDate when contractKind is none, while still requiring it for signed contracts', () => {
+    const noContractRegister = buildLaborRegister({
+      employer,
+      persons: [
+        samplePerson('1', 'An', {
+          contractKind: 'none',
+          contractStartDate: null,
+          startedOn: '2026-08-01',
+        }),
+        {
+          employeeId: '2',
+          name: 'Bình',
+          contractKind: 'none',
+          startedOn: '2026-08-05',
+        },
+      ],
+    });
+    expect(noContractRegister.sheets[0]?.rows.map((r) => [r.contractType, r.contractStartDate])).toEqual([
+      ['Không ký HĐLĐ', ''],
+      ['Không ký HĐLĐ', ''],
+    ]);
+
+    const noContractPli = build01PliReport({
+      period: '2026-H2',
+      employer,
+      persons: [
+        samplePerson('1', 'An', {
+          contractKind: 'none',
+          contractStartDate: null,
+          startedOn: '2026-08-01',
+        }),
+      ],
+    });
+    expect(noContractPli.sheets[1]?.rows[0]).toMatchObject({
+      contractType: 'Không ký HĐLĐ',
+      contractStartDate: '',
+    });
+
+    expect(() =>
+      buildLaborRegister({
+        employer,
+        persons: [samplePerson('3', 'Chi', { contractKind: 'fixed_term', contractStartDate: null })],
+      }),
+    ).toThrow(/contractStartDate/);
+  });
 });
 
 describe('HR_DECLARATION_MAX_PEOPLE cap & ExcelJS workbook output', () => {

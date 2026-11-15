@@ -66,6 +66,26 @@ describe('checkLaborContractTerms (Labor Code 2019 Arts. 14, 20, 24-27)', () => 
     expect(invalidOral.ok).toBe(false);
     expect(invalidOral.findings.map((f) => f.code)).toContain('oral_contract_not_allowed');
 
+    // A fixed_term contract whose actual dates span < 1 month also satisfies Art. 14(2) for oral form, while 1 full calendar month does not.
+    const shortFixedOral = checkLaborContractTerms({
+      contractKind: 'fixed_term',
+      form: 'oral',
+      startDate: '2026-08-01',
+      endDate: '2026-08-20',
+      contractWage: '8000000',
+    });
+    expect(shortFixedOral.ok).toBe(true);
+
+    const fullMonthFixedOral = checkLaborContractTerms({
+      contractKind: 'fixed_term',
+      form: 'oral',
+      startDate: '2026-08-01',
+      endDate: '2026-08-31',
+      contractWage: '8000000',
+    });
+    expect(fullMonthFixedOral.ok).toBe(false);
+    expect(fullMonthFixedOral.findings.map((f) => f.code)).toContain('oral_contract_not_allowed');
+
     const oneMonthContract = checkLaborContractTerms({
       contractKind: 'under_one_month',
       startDate: '2026-02-01',
