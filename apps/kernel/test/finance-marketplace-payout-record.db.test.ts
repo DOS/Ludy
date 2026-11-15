@@ -225,6 +225,66 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     await expect(ask(e, s2, l2)).rejects.toMatchObject({ code: 'MARKETPLACE_PAYOUT_NOT_POSTABLE', status: 422 });
   });
 
+  // Reversing a settlement's or a payout's entry through the generic reversal (#3329, option C): the request, its title for the approver, and the entries of a settlement.
+  const askReversal = (o: Org, entryId: string, entryDate = '2026-10-21') =>
+    rt.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.journal.reverse', input: { entryId, entryDate, reason: 'Đảo để sửa' } }, { actor: asUser(o.admin), orgId: o.orgId, idempotencyKey: randomUUID() });
+  const titleOf = async (o: Org, proposalId: string) => (await rows<{ title: string }>('SELECT title FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.title ?? '';
+  // The entries of the settlement's month vouchers, oldest month first.
+  const monthEntries = async (o: Org, settlementId: string) =>
+    (
+      await rows<{ id: string }>(
+        `SELECT e.id FROM crove_finance.journal_voucher v JOIN crove_finance.journal_entry e ON e.org_id = v.org_id AND e.source_type = 'finance.journal_voucher' AND e.source_id = v.id AND e.reverses_entry_id IS NULL
+         WHERE v.org_id = $1 AND v.settlement_id = $2 ORDER BY v.settlement_month`,
+        [o.orgId, settlementId],
+      )
+    ).map((r) => r.id);
+
+  it('refuses to reverse a settlement month while its payout stands, warns when the payout is reversed (its bank line opens again), and lets the settlement be reversed after', async () => {
+    const { o, settlement, line } = await posted();
+    const paid = await approve(o, (await ask(o, settlement, line)).proposalId);
+    const [month] = await monthEntries(o, settlement);
+    // The payout stands: the settlement's posting is not reversed first (the payout cleared what it posted).
+    await expect(askReversal(o, month as string)).rejects.toMatchObject({ code: 'MARKETPLACE_SETTLEMENT_PAYOUT_STANDS', status: 409 });
+    // The payout itself: asked for with a warning in the title for the approver, then approved.
+    const payoutReversal = await askReversal(o, paid.journalEntryId);
+    expect(await titleOf(o, payoutReversal.proposalId)).toContain('cảnh báo: khoản sàn trả này đã khớp một dòng ngân hàng');
+    await approve(o, payoutReversal.proposalId);
+    // Reversed payout: the settlement's single month can be reversed now, with no half-reversed warning (no other month stands).
+    const monthReversal = await askReversal(o, month as string);
+    expect(await titleOf(o, monthReversal.proposalId)).not.toContain('cảnh báo');
+    await approve(o, monthReversal.proposalId);
+  });
+
+  it('warns when one month of a settlement is reversed while another stands, lists the settlement as half reversed with the months left, and blocks its payout until the rest is reversed', async () => {
+    const o = await org();
+    const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', delivered: '2026-09-28' }, { sales: '200000', delivered: '2026-10-02' }]);
+    await bankLine(o, '2026-10-20', '300000');
+    await post(o, settlement);
+    const [first, second] = await monthEntries(o, settlement);
+    expect(await rt.query<{ settlementsHalfReversed: number }>('finance.marketplace.facts', {}, { actor: asUser(o.owner), orgId: o.orgId })).toMatchObject({ settlementsHalfReversed: 0 });
+    const firstReversal = await askReversal(o, first as string);
+    expect(await titleOf(o, firstReversal.proposalId)).toContain('cảnh báo: kỳ đối soát còn 1 tháng chưa đảo');
+    await approve(o, firstReversal.proposalId);
+    // Half reversed: one standing, one reversed. The facts count it and the work list names it with the count.
+    const facts = await rt.query<{ settlementsHalfReversed: number }>('finance.marketplace.facts', {}, { actor: asUser(o.owner), orgId: o.orgId });
+    expect(facts.settlementsHalfReversed).toBe(1);
+    const work = await rt.query<{ halfReversed: { settlementId: string; standingMonths: number; reversedMonths: number; platformName: string }[] }>('finance.marketplace.worklist', {}, { actor: asUser(o.owner), orgId: o.orgId });
+    expect(work.halfReversed).toEqual([expect.objectContaining({ settlementId: settlement, standingMonths: 1, reversedMonths: 1, platformName: 'Shopee' })]);
+    // The last month: no warning (nothing else stands), and once it is reversed the settlement is no longer half reversed.
+    const secondReversal = await askReversal(o, second as string);
+    expect(await titleOf(o, secondReversal.proposalId)).not.toContain('cảnh báo');
+    await approve(o, secondReversal.proposalId);
+    expect(await rt.query<{ settlementsHalfReversed: number }>('finance.marketplace.facts', {}, { actor: asUser(o.owner), orgId: o.orgId })).toMatchObject({ settlementsHalfReversed: 0 });
+    expect((await rt.query<{ halfReversed: unknown[] }>('finance.marketplace.worklist', {}, { actor: asUser(o.owner), orgId: o.orgId })).halfReversed).toEqual([]);
+  });
+
+  it('refuses a reversal of a settlement entry dated in a closed period at the request', async () => {
+    const { o, settlement } = await posted();
+    const [month] = await monthEntries(o, settlement);
+    await rt.execute('finance.period.lock', { month: '2026-10' }, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+    await expect(askReversal(o, month as string, '2026-10-21')).rejects.toMatchObject({ code: 'PERIOD_LOCKED', status: 409 });
+  });
+
   it('posts the payout of a settlement with no fee and no tax as two lines', async () => {
     const { o, settlement, line } = await posted('tiktok_shop', [{ sales: '90000', discount: '0' }], '90000');
     const done = await approve(o, (await ask(o, settlement, line)).proposalId);
