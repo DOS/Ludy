@@ -346,7 +346,7 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_meetings.chat_post_body.body': {
     kind: 'free_text',
     handling: 'erase',
-    reason: "The text of minutes the recorder chose to post to a channel of the org, which may name or describe a person: kept only while the post waits (a minute or so, at most 8 hours), deleted when it is sent, fails, is dropped or expires, dropped by an erasure that touches the meeting's text, and deleted with the channel, the meeting and the org; a copy already sent to the channel cannot be recalled and the dialog says so.",
+    reason: "The text of minutes the recorder chose to post to a channel of the org, which may name or describe a person: kept only while the post waits (a minute or so, and at most 8 hours while the worker runs), deleted when it is sent, fails, is dropped or expires, dropped by an erasure that touches the meeting's text, and deleted with the channel, the meeting and the org; a copy already sent to the channel cannot be recalled and the dialog says so.",
   },
   'crove_meetings.transcript_segment.speaker_label': {
     kind: 'free_text',

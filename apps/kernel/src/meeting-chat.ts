@@ -27,8 +27,8 @@ export class MinutesSaveBudget {
   constructor(perMinute = 10, now?: () => number) {
     this.limiter = new RateLimiter({ perMinute, ...(now ? { now } : {}) });
   }
-  take(orgId: string) {
-    const decision = this.limiter.take(orgId);
+  take(key: string) {
+    const decision = this.limiter.take(key);
     if (!decision.allowed) throw new DomainError('CHAT_SAVE_LIMIT', 429, 'Bạn vừa lưu kênh nhiều lần; hãy đợi một phút rồi thử lại', { retryAfterSeconds: decision.retryAfterSeconds });
   }
 }
@@ -50,7 +50,8 @@ const BAD_ADDRESS = {
 // Adds a channel, or pastes a new address into one. The address is checked here, sealed here and dropped here: the command gets the envelope.
 export async function saveMinutesChannel(deps: MinutesChatDeps, scope: MinutesChatScope, input: ChatChannelSaveCall): Promise<ChatChannelSaved> {
   if (deps.broker.id === 'none') throw NO_KEY();
-  (deps.saves ?? defaultSaves).take(scope.orgId);
+  // The budget is per org and member, so a member who is refused later cannot use up the owner's saves.
+  (deps.saves ?? defaultSaves).take(`${scope.orgId}:${scope.actor.userId}`);
   const parsed = parseMinutesUrl(input.kind, input.url);
   if (!parsed) throw new DomainError('CHAT_URL_INVALID', 422, BAD_ADDRESS[input.kind]);
   const id = input.id ?? randomUUID();
@@ -72,6 +73,8 @@ export function minutesLink(publicUrl: string, orgSlug: string | null, meetingId
 // The recorder's click. Throws a DomainError for what refuses before anything is queued (not published, the facts changed, a tick missing, a post already waiting, the limit); otherwise the post is
 // queued and this answers with its id: the job sends it and the dialog asks `meetings.chat.status` how it stands.
 export async function postMinutesFromClick(deps: MinutesChatDeps, scope: MinutesChatScope, input: ChatPostCall): Promise<ChatPosted> {
+  // Without a credential key no worker opens an address, so a post would wait with its message: refuse it here.
+  if (deps.broker.id === 'none') throw NO_KEY();
   const ctx = { actor: scope.actor, orgId: scope.orgId };
   // The message the recorder is about to send, from the published result in their own context: only to compare its key, the module rebuilds it again in the command.
   const view = await deps.runtime.query<ChatPreview>('meetings.chat.preview', { meetingId: input.meetingId }, ctx);

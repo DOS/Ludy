@@ -1258,7 +1258,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         send: (job: ChatJob) =>
           boss.send(QUEUES.meetingChat, job, { singletonKey: jobKey(job.orgId, QUEUES.meetingChat, job.id), retryLimit: CHAT_RETRY_LIMIT, retryDelay: CHAT_RETRY_DELAY_SECONDS, retryBackoff: true, expireInSeconds: CHAT_JOB_EXPIRE_SECONDS }),
       });
-      if (done.handedOver + done.expired + done.failures > 0) console.log(`[meeting-chat-sweep] handed over ${done.handedOver}, expired ${done.expired}, failures ${done.failures}`);
+      if (done.handedOver + done.expired + done.lost + done.failures > 0) console.log(`[meeting-chat-sweep] handed over ${done.handedOver}, expired ${done.expired}, lost ${done.lost}, failures ${done.failures}`);
     });
     await boss.schedule(QUEUES.meetingChatSweep, MEETING_CHAT_SWEEP_CRON, null, { tz: MEMBER_VY_SWEEP_TZ, missed: 'once', expireInSeconds: MEETING_CHAT_SWEEP_EXPIRE_SECONDS });
   } else {

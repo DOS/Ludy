@@ -499,6 +499,28 @@ suite('minutes posted to Slack and Teams by a worker job (B4, #3168)', () => {
     expect((await posts(third)).at(-1)).toMatchObject({ state: 'dropped' });
   });
 
+  it('lets neither the sweep\'s expiry nor a drop settle a post whose attempt has begun, and lets no job begin an expired post', async () => {
+    const meeting = await seedMeeting(true);
+    const { id: channel } = await saveChannel('owner', 'slack', SLACK_URL);
+    const system = { actor: { type: 'system' as const, component: 'meetings.chat' }, orgId };
+    const record = async (id: string, outcome: string) => (await worker.execute<{ recorded: boolean }>('meetings.chat.record', { id, outcome, httpStatus: null, code: null }, system)).recorded;
+    const q = await post(meeting, channel);
+    expect(await record(q.postId, 'begin')).toBe(true);
+    // The request may be out: an expiry or a drop from elsewhere (the sweep, a stale list) changes nothing, the body stays for the attempt's own outcome.
+    expect(await record(q.postId, 'expired')).toBe(false);
+    expect(await record(q.postId, 'dropped')).toBe(false);
+    expect((await posts(meeting)).at(-1)).toMatchObject({ state: 'queued' });
+    expect(await bodies()).toBe(1);
+    expect(await record(q.postId, 'sent')).toBe(true);
+    // A post older than eight hours cannot begin: only the sweep expires it, so the job and the sweep agree on one rule.
+    const old = await post(meeting, channel, { confirmRepeat: true });
+    await sqlAdmin(`UPDATE crove_meetings.chat_post SET created_at = now() - interval '9 hours' WHERE org_id = $1 AND id = $2`, [orgId, old.postId]);
+    expect(await record(old.postId, 'begin')).toBe(false);
+    expect(await runJob(old.postId)).toBe('skipped');
+    expect(await record(old.postId, 'expired')).toBe(true);
+    expect((await posts(meeting)).find((p) => p.code === 'POST_EXPIRED')).toMatchObject({ state: 'failed' });
+  });
+
   it('leaves no body row for any post that settled, whichever way, and keeps it only while the post is queued', async () => {
     const meeting = await seedMeeting(true);
     const { id: channel } = await saveChannel('owner', 'slack', SLACK_URL);
@@ -606,11 +628,19 @@ suite('minutes posted to Slack and Teams by a worker job (B4, #3168)', () => {
     const meeting = await seedMeeting(true);
     const { id: channel } = await saveChannel('owner', 'slack', SLACK_URL);
     expect(await refuses(saveMinutesChannel(deps({ broker: { id: 'none', seal: vault.seal.bind(vault) } }), scope('owner'), { kind: 'slack', label: 'x', url: SLACK_URL }))).toBe('BROKER_NOT_CONFIGURED');
+    // No credential key, no worker to open an address: a click is refused instead of queueing a message that nothing would send or expire.
+    const view = await preview(meeting);
+    expect(await refuses(postMinutesFromClick(deps({ broker: { id: 'none', seal: vault.seal.bind(vault) } }), scope('recorder'), { meetingId: meeting, channelId: channel, factsKey: view.factsKey, confirmRepeat: false }))).toBe('BROKER_NOT_CONFIGURED');
+    expect(await posts(meeting)).toEqual([]);
+    // A member refused at the role check does not use up the owner's saves.
+    const tight = new MinutesSaveBudget(1);
+    expect(await refuses(saveMinutesChannel(deps({ saves: tight }), scope('recorder'), { kind: 'slack', label: 'x', url: SLACK_URL }))).not.toBe('CHAT_SAVE_LIMIT');
+    expect(await refuses(saveMinutesChannel(deps({ saves: tight }), scope('owner'), { kind: 'slack', label: 'Của owner', url: SLACK_URL }))).toBeNull();
     const q = await post(meeting, channel);
     expect(await bodies()).toBe(1);
     expect(await refuses(exec('recorder', 'meetings.chat.channel_remove', { id: channel }))).not.toBeNull();
     await exec('admin', 'meetings.chat.channel_remove', { id: channel });
-    expect((await sqlAdmin('SELECT 1 FROM crove_meetings.chat_channel_target WHERE org_id = $1', [orgId])).rowCount).toBe(0);
+    expect((await sqlAdmin('SELECT 1 FROM crove_meetings.chat_channel_target WHERE org_id = $1 AND channel_id = $2', [orgId, channel])).rowCount).toBe(0);
     expect(await posts(meeting)).toEqual([]);
     expect(await bodies()).toBe(0);
     expect(await runJob(q.postId)).toBe('skipped');

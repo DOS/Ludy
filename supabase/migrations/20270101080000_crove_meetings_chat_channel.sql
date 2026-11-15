@@ -463,7 +463,7 @@ BEGIN
 END $$;
 
 -- The outcome of one attempt. 'begin' comes first, before the request leaves: it marks the attempt as begun (sending_at) and answers whether this job may go on (false when an attempt already
--- began: nobody else begins, so a post is never sent twice). 'sent', 'failed' and 'ambiguous' settle the post as they say; 'retry': nothing went out, sending_at is cleared and the queue tries again (the body stays); 'dropped': the post no longer stands,
+-- began, or the post is older than eight hours: nobody else begins, so a post is never sent twice and a stale one is only expired). 'sent', 'failed' and 'ambiguous' settle the post as they say; 'retry': nothing went out, sending_at is cleared and the queue tries again (the body stays); 'dropped': the post no longer stands,
 -- so nothing is sent; 'expired': the post waited too long with no attempt made (the worker was down), failed. Every outcome but 'retry' settles the post and DELETES its body. A post already
 -- settled is left as it is (false). The code is a fixed word, never the service's own; the status is the HTTP status of the answer, when there was one.
 CREATE OR REPLACE FUNCTION crove_meetings.chat_record(p_id uuid, p_outcome text, p_http integer, p_code text)
@@ -477,7 +477,8 @@ BEGIN
     RAISE EXCEPTION 'CHAT_POST_INVALID' USING ERRCODE = '22023';
   END IF;
   IF p_outcome = 'begin' THEN
-    UPDATE crove_meetings.chat_post p SET sending_at = pg_catalog.clock_timestamp() WHERE p.org_id = v_org AND p.id = p_id AND p.state = 'queued' AND p.sending_at IS NULL;
+    UPDATE crove_meetings.chat_post p SET sending_at = pg_catalog.clock_timestamp() WHERE p.org_id = v_org AND p.id = p_id AND p.state = 'queued' AND p.sending_at IS NULL
+      AND p.created_at > pg_catalog.clock_timestamp() - interval '8 hours';
     RETURN FOUND;
   END IF;
   UPDATE crove_meetings.chat_post p SET
@@ -487,7 +488,9 @@ BEGIN
     http_status = p_http,
     code = CASE WHEN p_outcome = 'sent' THEN NULL WHEN p_outcome = 'expired' THEN 'POST_EXPIRED' ELSE p_code END,
     settled_at = CASE WHEN p_outcome = 'retry' THEN NULL ELSE pg_catalog.clock_timestamp() END
-  WHERE p.org_id = v_org AND p.id = p_id AND p.state = 'queued';
+  WHERE p.org_id = v_org AND p.id = p_id AND p.state = 'queued'
+    -- 'dropped' and 'expired' never settle a post whose attempt has begun: its request may be out, and only the attempt's own outcome (or the sweep's 'lost') settles it.
+    AND (p.sending_at IS NULL OR p_outcome NOT IN ('dropped', 'expired'));
   IF NOT FOUND THEN
     RETURN false;
   END IF;
