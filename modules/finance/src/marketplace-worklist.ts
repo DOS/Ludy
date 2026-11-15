@@ -18,6 +18,7 @@ import { bankLineStates } from './bank-match.ts';
 import { balanceOf, invoiceCleared, invoicePayable, standingInvoiceEntry } from './marketplace-fee-clearing-record.ts';
 import { payoutOfBankLine } from './marketplace-payout-line.ts';
 import { requireConfirmedMarketplaceMap, MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from './marketplace-posting-map.ts';
+import { feeAccrualOffers } from './marketplace-fee-accrual.ts';
 import { halfReversedSettlements } from './marketplace-half-reversed.ts';
 import { postingsOf, settlementMonthsFor, settlementPosted } from './marketplace-settlement-months.ts';
 import { platformPartyName } from './marketplace-settlement-record.ts';
@@ -55,7 +56,7 @@ async function postingConfirmed(ctx: QueryContext, legalEntityId: string | undef
 // The read over a set of account maps. A test passes its own with a confirmed map; the shipped one is made from MARKETPLACE_POSTING_MAPS (every row `commentary`, so the gate reads closed).
 // `feeClearing` lists the platforms' fee invoices that still have fees to clear on 1388: RETIRED (slice D, #2516; the payout debits fees to 331 and the invoice nets them by itself), so the shipped read
 // lists none; a test of the dormant logic passes `feeClearing: true` (deleting it is #3315).
-export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: boolean } = {}) =>
+export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: boolean; today?: string | (() => string) } = {}) =>
   defineQuery({
     name: 'finance.marketplace.worklist',
     input: zMarketplaceBalanceInput,
@@ -194,7 +195,12 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
         reversedMonths: h.reversed,
       }));
 
-      return { postingConfirmed: await postingConfirmed(ctx, input.legalEntityId, options.maps ?? MARKETPLACE_POSTING_MAPS), settlements, payouts, invoices, halfReversed };
+      // The month-end accrual of the fees without an invoice, and the reversal of a standing one (slice F, option 2): a company's, never a household's. `options.today` is for a test.
+      const offers = await feeAccrualOffers(ctx, input.legalEntityId, (typeof options.today === 'function' ? options.today() : (options.today ?? (await databaseToday(ctx.trx)))), options.maps ?? MARKETPLACE_POSTING_MAPS, platformPartyName);
+      const accruals: MarketplaceWorklist['accruals'] = offers.accruals.map((a) => ({ ...a, platformName: platformPartyName(a.platform) }));
+      const accrualReversals: MarketplaceWorklist['accrualReversals'] = offers.reversals.map((r) => ({ ...r, platformName: platformPartyName(r.platform) }));
+
+      return { postingConfirmed: await postingConfirmed(ctx, input.legalEntityId, options.maps ?? MARKETPLACE_POSTING_MAPS), settlements, payouts, invoices, halfReversed, accruals, accrualReversals };
     },
   });
 

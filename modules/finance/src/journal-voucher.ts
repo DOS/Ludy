@@ -33,6 +33,7 @@ import {
 } from './domain/journal-voucher.ts';
 import { postNewEntry } from './ledger.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
+import { refuseSecondFeeAccrual } from './marketplace-fee-accrual-guard.ts';
 import { dateLabel, periodLockedThrough } from './period-lock.ts';
 
 const REQUESTERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -73,6 +74,8 @@ export const prepareJournalVoucher = defineCommand({
     const parties = await checkJournalVoucherLines(ctx, lines, false);
     // The legal entity whose books the voucher goes to (#1280), stored with the proposal so the approver posts it there.
     const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
+    // A month-end accrual of platform fees (a key in the description, slice F of #2516): one standing at a time, one waiting per platform and month.
+    await refuseSecondFeeAccrual(ctx, legalEntityId, input.description);
     // A month already locked (in that entity) is refused now, while the user is still on the form; the posting guard
     // refuses it again when the proposal is approved, with a lock made since.
     const lockedThrough = await periodLockedThrough(ctx, legalEntityId);
@@ -196,6 +199,8 @@ export const recordJournalVoucher = defineCommand({
     // The stored payload is checked as if new: a sub-account deactivated or a party gone since it was asked for is
     // refused here. The total is the lines' sum, never taken from the payload as is.
     await checkJournalVoucherLines(ctx, lines, true);
+    // Asked again at the approval: an accrual posted since the request, or another proposal of the same accrual, refuses this one.
+    if (payload.legalEntityId) await refuseSecondFeeAccrual(ctx, payload.legalEntityId, payload.description, ctx.proposalId);
     if (journalVoucherTotal(lines) !== payload.total) {
       throw new DomainError('JOURNAL_VOUCHER_INVALID', 422, 'Tổng số tiền không khớp các dòng của phiếu', { problems: ['TOTAL_MISMATCH'] });
     }
