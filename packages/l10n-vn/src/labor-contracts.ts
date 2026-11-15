@@ -275,6 +275,8 @@ export type LaborContractFindingCode =
   | 'invalid_fixed_term_duration'
   | 'fixed_term_exceeds_36_months'
   | 'indefinite_has_term_months'
+  | 'indefinite_has_end_date'
+  | 'missing_under_one_month_duration'
   | 'under_one_month_exceeds_limit'
   | 'invalid_fixed_term_sequence'
   | 'must_convert_to_indefinite'
@@ -354,12 +356,12 @@ function checkKindSpecificTerms(
       });
     }
 
-    if (parsedStart && parsedEnd && compareCalendarDates(parsedEnd, addCalendarMonths(parsedStart, FIXED_TERM_MAX_MONTHS)) > 0) {
+    if (parsedStart && parsedEnd && compareCalendarDates(parsedEnd, deriveFixedTermEndDate(parsedStart, FIXED_TERM_MAX_MONTHS)) > 0) {
       findings.push({
         code: 'fixed_term_exceeds_36_months',
         severity: 'error',
         field: 'endDate',
-        message: 'Fixed-term contract endDate exceeds 36 months from startDate.',
+        message: 'Fixed-term contract endDate exceeds 36 inclusive months from startDate.',
         cite: 'Labor Code 2019 Art. 20(1)(b)',
       });
     }
@@ -404,11 +406,31 @@ function checkKindSpecificTerms(
         cite: 'Labor Code 2019 Art. 20(1)(a)',
       });
     }
+    if (terms.endDate !== undefined && terms.endDate !== null) {
+      findings.push({
+        code: 'indefinite_has_end_date',
+        severity: 'error',
+        field: 'endDate',
+        message: 'An indefinite-term contract must not specify endDate.',
+        cite: 'Labor Code 2019 Art. 20(1)(a)',
+      });
+    }
     return;
   }
 
   // under_one_month
-  if (terms.termMonths !== undefined && terms.termMonths !== null) {
+  const hasTermMonths = terms.termMonths !== undefined && terms.termMonths !== null;
+  const hasEndDate = terms.endDate !== undefined && terms.endDate !== null;
+  if (!hasTermMonths && !hasEndDate) {
+    findings.push({
+      code: 'missing_under_one_month_duration',
+      severity: 'error',
+      field: 'endDate',
+      message: 'An under-one-month contract requires either endDate or termMonths (< 1) to verify duration.',
+      cite: 'Labor Code 2019 Art. 14(2) & Art. 20(1)(b)',
+    });
+  }
+  if (hasTermMonths) {
     if (typeof terms.termMonths !== 'number' || !Number.isFinite(terms.termMonths) || terms.termMonths <= 0 || terms.termMonths >= 1) {
       findings.push({
         code: 'under_one_month_exceeds_limit',
@@ -430,16 +452,31 @@ function checkKindSpecificTerms(
   }
 }
 
+function isEffectiveDurationUnderOneMonth(
+  contractKind: LaborContractKind | null,
+  termMonths: number | null | undefined,
+  parsedStart: CalendarDate | null,
+  effectiveEnd: CalendarDate | null,
+): boolean {
+  if (contractKind === 'under_one_month') return true;
+  if (contractKind !== 'fixed_term') return false;
+  if (parsedStart && effectiveEnd && diffCalendarDays(parsedStart, effectiveEnd) >= 0 && !exceedsOneMonthSpan(parsedStart, effectiveEnd)) {
+    return true;
+  }
+  return typeof termMonths === 'number' && Number.isFinite(termMonths) && termMonths > 0 && termMonths < 1;
+}
+
 function checkProbationTerms(
   probation: ProbationTermsInput,
   contractKind: LaborContractKind | null,
+  contractTermMonths: number | null | undefined,
   parsedContractStart: CalendarDate | null,
   parsedContractEnd: CalendarDate | null,
   jobWage: DecimalValue | null,
   hasContractWageField: boolean,
   findings: LaborContractFinding[],
 ): void {
-  if (contractKind === 'under_one_month') {
+  if (isEffectiveDurationUnderOneMonth(contractKind, contractTermMonths, parsedContractStart, parsedContractEnd)) {
     findings.push({
       code: 'probation_not_allowed_under_one_month',
       severity: 'error',
@@ -495,7 +532,19 @@ function checkProbationTerms(
       cite: 'Labor Code 2019 Art. 25',
     });
   }
-  if ((pStart && parsedContractStart && compareCalendarDates(pStart, parsedContractStart) < 0) || (pEnd && parsedContractEnd && compareCalendarDates(pEnd, parsedContractEnd) > 0)) {
+  const capForEffectiveEnd = tier !== null ? PROBATION_CAPS[tier] : null;
+  const effectiveProbEnd =
+    pEnd !== null
+      ? pEnd
+      : pStart !== null &&
+          capForEffectiveEnd?.unit === 'calendar_days' &&
+          probation.durationDays !== undefined &&
+          probation.durationDays !== null &&
+          Number.isInteger(probation.durationDays) &&
+          probation.durationDays >= 1
+        ? addCalendarDays(pStart, probation.durationDays - 1)
+        : null;
+  if ((pStart && parsedContractStart && compareCalendarDates(pStart, parsedContractStart) < 0) || (effectiveProbEnd && parsedContractEnd && compareCalendarDates(effectiveProbEnd, parsedContractEnd) > 0)) {
     findings.push({
       code: 'probation_outside_contract',
       severity: 'warning',
@@ -685,7 +734,7 @@ export function checkLaborContractTerms(terms: LaborContractTermsInput): LaborCo
       terms.termMonths >= 1
         ? deriveFixedTermEndDate(parsedStart, terms.termMonths)
         : parsedEnd;
-    checkProbationTerms(terms.probation, validKind, parsedStart, derivedEnd, jobWage, hasContractWageField, findings);
+    checkProbationTerms(terms.probation, validKind, terms.termMonths, parsedStart, derivedEnd, jobWage, hasContractWageField, findings);
   }
 
   return {
@@ -761,12 +810,27 @@ export function evaluateContractAlerts(terms: LaborContractTermsInput, options: 
     terms.probation?.startDate !== undefined && terms.probation.startDate !== null
       ? requireIsoCalendarDate('probation.startDate', terms.probation.startDate)
       : null;
-  const probEnd =
+  let probEnd =
     terms.probation?.endDate !== undefined && terms.probation.endDate !== null
       ? requireIsoCalendarDate('probation.endDate', terms.probation.endDate)
       : null;
+  let probEndIso: string | null = terms.probation?.endDate ?? null;
   if (probStart && probEnd && diffCalendarDays(probStart, probEnd) < 0) {
     throw new Error(`Probation endDate (${terms.probation?.endDate}) cannot be earlier than startDate (${terms.probation?.startDate})`);
+  }
+  if (
+    probEnd === null &&
+    probStart !== null &&
+    terms.probation?.durationDays !== undefined &&
+    terms.probation.durationDays !== null &&
+    isProbationRoleTier(terms.probation.roleTier) &&
+    PROBATION_CAPS[terms.probation.roleTier].unit === 'calendar_days'
+  ) {
+    if (!Number.isInteger(terms.probation.durationDays) || terms.probation.durationDays < 1) {
+      throw new Error(`Invalid probation.durationDays: ${String(terms.probation.durationDays)}`);
+    }
+    probEnd = addCalendarDays(probStart, terms.probation.durationDays - 1);
+    probEndIso = formatIsoCalendarDate(probEnd);
   }
 
   const alerts: ContractAlert[] = [];
@@ -794,15 +858,15 @@ export function evaluateContractAlerts(terms: LaborContractTermsInput, options: 
     }
   }
 
-  if (probEnd && terms.probation?.endDate) {
+  if (probEnd && probEndIso) {
     const probDaysRemaining = diffCalendarDays(asOfDate, probEnd);
     if (probDaysRemaining >= 0 && probDaysRemaining <= noticeDays) {
       alerts.push({
         code: 'probation_ending_soon',
         severity: 'warning',
-        targetDate: terms.probation.endDate,
+        targetDate: probEndIso,
         daysRemaining: probDaysRemaining,
-        message: `Probation ends in ${probDaysRemaining} day(s) on ${terms.probation.endDate}; notify the result under Art. 27.`,
+        message: `Probation ends in ${probDaysRemaining} day(s) on ${probEndIso}; notify the result under Art. 27.`,
         cite: 'Labor Code 2019 Art. 27',
       });
     }

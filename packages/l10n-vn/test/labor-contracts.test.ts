@@ -101,6 +101,26 @@ describe('checkLaborContractTerms (Labor Code 2019 Arts. 14, 20, 24-27)', () => 
     });
     expect(withProbation.ok).toBe(false);
     expect(withProbation.findings.map((f) => f.code)).toContain('probation_not_allowed_under_one_month');
+
+    // A fixed_term contract whose actual dates span < 1 month also triggers the Art. 24(3) probation ban.
+    const shortFixedWithProbation = checkLaborContractTerms({
+      contractKind: 'fixed_term',
+      startDate: '2026-08-01',
+      endDate: '2026-08-20',
+      contractWage: '8000000',
+      probation: { roleTier: 'other', durationDays: 6, wage: '8500000' },
+    });
+    expect(shortFixedWithProbation.ok).toBe(false);
+    expect(shortFixedWithProbation.findings.map((f) => f.code)).toContain('probation_not_allowed_under_one_month');
+
+    // under_one_month requires explicit endDate or termMonths so oral contracts cannot bypass duration checks.
+    const missingUnderOneMonthDuration = checkLaborContractTerms({
+      contractKind: 'under_one_month',
+      form: 'oral',
+      startDate: '2026-08-01',
+    });
+    expect(missingUnderOneMonthDuration.ok).toBe(false);
+    expect(missingUnderOneMonthDuration.findings.map((f) => f.code)).toContain('missing_under_one_month_duration');
   });
 
   it('enforces fixed_term 1..36 months and max 1 renewal (fixedTermSequence > 2 -> must_convert_to_indefinite)', () => {
@@ -142,6 +162,25 @@ describe('checkLaborContractTerms (Labor Code 2019 Arts. 14, 20, 24-27)', () => 
     });
     expect(over36.ok).toBe(false);
     expect(over36.findings.filter((f) => f.code === 'fixed_term_exceeds_36_months').length).toBeGreaterThanOrEqual(1);
+
+    // 2026-01-01..2029-01-01 is 36 inclusive months + 1 day (inclusive cap is 2028-12-31).
+    const thirtySixPlusOneDay = checkLaborContractTerms({
+      contractKind: 'fixed_term',
+      startDate: '2026-01-01',
+      endDate: '2029-01-01',
+    });
+    expect(thirtySixPlusOneDay.ok).toBe(false);
+    expect(thirtySixPlusOneDay.findings.map((f) => f.code)).toContain('fixed_term_exceeds_36_months');
+
+    // Indefinite contract forbids both termMonths and endDate.
+    const finiteIndefinite = checkLaborContractTerms({
+      contractKind: 'indefinite',
+      startDate: '2026-01-01',
+      endDate: '2026-12-31',
+      termMonths: 12,
+    });
+    expect(finiteIndefinite.ok).toBe(false);
+    expect(finiteIndefinite.findings.map((f) => f.code)).toEqual(['indefinite_has_term_months', 'indefinite_has_end_date']);
   });
 
   it('enforces probation caps by role tier and exact 85% wage floor without float rounding', () => {
@@ -320,6 +359,19 @@ describe('evaluateContractAlerts', () => {
     expect(derivedExpired.alerts).toMatchObject([
       { code: 'contract_expired', targetDate: '2026-12-31', daysRemaining: -5 },
       { code: 'final_fixed_term_renewal', targetDate: '2026-12-31', daysRemaining: -5 },
+    ]);
+
+    // Calendar-day probation tier derives inclusive probation endDate from startDate + durationDays (2026-01-01 + 59d = 2026-03-01).
+    const derivedProbationAlert = evaluateContractAlerts(
+      {
+        contractKind: 'indefinite',
+        startDate: '2026-01-01',
+        probation: { roleTier: 'college_or_above', startDate: '2026-01-01', durationDays: 60 },
+      },
+      { asOf: '2026-02-20' },
+    );
+    expect(derivedProbationAlert.alerts).toMatchObject([
+      { code: 'probation_ending_soon', targetDate: '2026-03-01', daysRemaining: 9 },
     ]);
   });
 
