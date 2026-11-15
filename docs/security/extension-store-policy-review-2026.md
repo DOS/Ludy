@@ -32,7 +32,7 @@ A verdict here is therefore a statement about the extension. It is not a stateme
 
 - `apps/extension/src/strings.ts`: the note before turning meeting recording on says where the recording goes (point 3), and the calendar card's note says "Google or Outlook" (it named only Google). No manifest, permission or `package.json` change; the permission list is not loosened.
 - `apps/extension/store/en-1-screenshot-1280x800.png` and `vi-1-…`: regenerated with `node scripts/store-art.mjs`, because the popup note is in them.
-- `apps/web/src/content/privacy-vi.ts`, `privacy-en.ts`, `site.ts`: points 4 above; version 1.1, 2026-11-15. **This is live copy on the marketing site once merged:** the effective date in the page is the date of this change, so the owner moves it if the merge or the deploy is later, in the same three files.
+- `apps/web/src/content/privacy-vi.ts`, `privacy-en.ts`, `site.ts`: points 4 above, and one bullet under "Who can read a meeting" for the minutes a member sends to their own address (A6, #3269: off by default, only the parts the member ticked, the copy kept for sending is deleted once the delivery is done or given up, what was sent cannot be taken back); version 1.1, 2026-11-15. **This is live copy on the marketing site once merged:** the effective date in the page is the date of this change, so the owner moves it if the merge or the deploy is later, in the same three files.
 - `docs/runbooks/extension-store.md`: the single-purpose draft, the long descriptions and the data-safety "why" rows brought in line, and the new section for what only a person can do.
 
 ## Follow-ups that are not blocking
