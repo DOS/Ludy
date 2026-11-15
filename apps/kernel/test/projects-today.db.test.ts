@@ -1,0 +1,503 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// projects.today (#2596), the Projects line of Home's "Hôm nay cần bạn", on PostgreSQL 17 through the runtime:
+// 1) A member with overdue and due-today tasks on their seats sees warn flags and deadlines linked to /projects/<id>,
+//    plus end-to-end merge through kernel.today with dropped === 0 and todayCoworkerKey('projects') === 'gm' (Vy).
+// 2) A project owner sees overdue tasks, vacant-seat tasks and waiting tasks untouched for 3 days, with deduplication
+//    and exclusions (unassigned assignee_position_id NULL, agent-held seats, < 3 day waits, done/cancelled tasks,
+//    inactive/on_hold/done/archived projects, cross-org isolation).
+// 3) A viewer and an entity-limited (le_scope) member see only tasks they can open; zero rows are written.
+// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import pg from 'pg';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createDb, createPool, type Db } from '@crove/db';
+import { migrate, setRolePasswords } from '@crove/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
+import { todayCoworkerKey, zTodayItems, type TodayItem, type TodayList } from '@crove/kernel-contract';
+import { Runtime } from '@crove/kernel-runtime';
+import { financeCommands } from '@crove/mod-finance';
+import { projectsCommands, projectsQueries } from '@crove/mod-projects';
+import { TEST_MANIFESTS } from './manifests.ts';
+
+const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
+const suite = ADMIN ? describe : describe.skip;
+
+const DAY_MS = 86_400_000;
+const NOW = '2026-11-10T03:00:00.000Z'; // 2026-11-10 10:00:00+07:00
+const NOW_MS = Date.parse(NOW);
+
+suite('projects.today on PostgreSQL (#2596)', () => {
+  const dbName = `crove_test_projects_today_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  let adminUrl = '';
+  let pool: pg.Pool;
+  let db: Db;
+  let rt: Runtime;
+
+  const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const, sessionId: randomUUID() });
+  const asMfa = (userId: string) => ({
+    type: 'user' as const,
+    userId,
+    aal: 'aal2' as const,
+    sessionId: randomUUID(),
+    mfaAt: Math.floor(Date.now() / 1000),
+  });
+
+  async function withAdmin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
+    const client = new pg.Client({ connectionString: adminUrl });
+    await client.connect();
+    try {
+      return await fn(client);
+    } finally {
+      await client.end();
+    }
+  }
+
+  async function person(tag: string) {
+    const email = `${tag}-${randomUUID().slice(0, 8)}@projects-today.test`;
+    const userId = await upsertIdentity(db, {
+      issuer: 'test',
+      subject: randomUUID(),
+      email,
+      name: `Person ${tag}`,
+    });
+    return { userId, email, name: `Person ${tag}` };
+  }
+
+  async function inviteAndJoin(orgId: string, ownerId: string, user: { email: string; userId: string }, role: 'admin' | 'member' | 'viewer') {
+    const inv = await rt.execute<{ acceptPath: string }>(
+      'kernel.member.invite.create',
+      { email: user.email, role },
+      { actor: asMfa(ownerId), orgId, idempotencyKey: randomUUID() },
+    );
+    await rt.executeOrgless(
+      'kernel.member.invite.accept',
+      { token: inv.acceptPath.split('#')[1] },
+      { actor: asUser(user.userId) },
+    );
+  }
+
+  const exec = <T>(orgId: string, userId: string, command: string, input: unknown) =>
+    rt.execute<T>(command, input, { actor: asUser(userId), orgId, idempotencyKey: randomUUID() });
+
+  const execMfa = <T>(orgId: string, userId: string, command: string, input: unknown) =>
+    rt.execute<T>(command, input, { actor: asMfa(userId), orgId, idempotencyKey: randomUUID() });
+
+  const todayAt = (orgId: string, userId: string, now: string = NOW) =>
+    rt.query<TodayItem[]>('projects.today', { now }, { actor: asUser(userId), orgId });
+
+  beforeAll(async () => {
+    const root = new pg.Client({ connectionString: ADMIN });
+    await root.connect();
+    await root.query(`CREATE DATABASE ${dbName}`);
+    await root.end();
+    const base = new URL(ADMIN as string);
+    base.pathname = `/${dbName}`;
+    adminUrl = base.toString();
+    await migrate({ adminUrl, dir: MIGRATIONS });
+    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    const appUrl = new URL(adminUrl);
+    appUrl.username = 'crove_app';
+    appUrl.password = 'test-app-pw';
+
+    pool = createPool({ connectionString: appUrl.toString(), max: 4 });
+    db = createDb(pool);
+    rt = new Runtime(db, { manifests: TEST_MANIFESTS, stepUp: 'required' }).register({
+      commands: [...kernelCommands, ...projectsCommands, ...financeCommands],
+      queries: [...kernelQueries({ inboundDomain: null }), ...projectsQueries],
+    });
+  }, 120_000);
+
+  afterAll(async () => {
+    await pool?.end();
+    if (!ADMIN) return;
+    const root = new pg.Client({ connectionString: ADMIN });
+    await root.connect();
+    await root.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+    await root.end();
+  });
+
+  it('shows overdue and due-today tasks for a member seat, links to the board with no free text, and integrates into kernel.today (AC 1 & 4)', async () => {
+    const owner = await person('owner-m');
+    const member = await person('member-m');
+    const org = await createOrg(rt, asUser(owner.userId), 'Doanh nghiệp Alpha');
+    await inviteAndJoin(org.orgId, owner.userId, member, 'member');
+
+    const { positionId: memberSeat } = await execMfa<{ positionId: string }>(org.orgId, owner.userId, 'kernel.position.create', {
+      title: 'Nhân viên vận hành',
+      module: 'crm',
+      roleKey: 'crm.sales',
+    });
+    await execMfa(org.orgId, owner.userId, 'kernel.position.assign', {
+      id: memberSeat,
+      holder: { type: 'user', userId: member.userId },
+    });
+
+    const projectName = 'Project Secret Title 7742';
+    const taskSecretTitle = 'Task Secret Title 8819';
+    const { projectId } = await exec<{ projectId: string }>(org.orgId, owner.userId, 'projects.project.create', {
+      name: projectName,
+    });
+
+    const realNow = Date.now();
+    const overdueDue = new Date(realNow - 2 * DAY_MS - 3_600_000).toISOString();
+    // Deterministic clock (10:00+07:00) for same-day vs tomorrow boundary check, plus real clock check on overdue task via kernel.today.
+    const fixedDueToday = new Date(NOW_MS + 3_600_000).toISOString();
+    const fixedOverdue = new Date(NOW_MS - 2 * DAY_MS - 3_600_000).toISOString();
+    const fixedTomorrow = new Date(NOW_MS + DAY_MS).toISOString();
+
+    const { taskId: overdueId } = await exec<{ taskId: string }>(org.orgId, owner.userId, 'projects.task.create', {
+      projectId,
+      title: taskSecretTitle,
+      assigneePositionId: memberSeat,
+      due: overdueDue,
+      status: 'in_progress',
+    });
+
+    const itemsReal = zTodayItems.parse(await todayAt(org.orgId, member.userId, new Date(realNow).toISOString()));
+    expect(itemsReal).toEqual([
+      {
+        kind: 'flag',
+        app: 'projects',
+        id: `overdue:${overdueId}`,
+        title: { key: 'projects.taskOverdueDays', params: { days: 2 } },
+        severity: 'warn',
+        dueAt: overdueDue,
+        href: `/projects/${projectId}`,
+      },
+    ]);
+
+    const serialized = JSON.stringify(itemsReal);
+    expect(serialized).not.toContain(projectName);
+    expect(serialized).not.toContain(taskSecretTitle);
+    expect(serialized).not.toContain(member.name);
+
+    const home = await rt.query<TodayList>('kernel.today', {}, { actor: asUser(member.userId), orgId: org.orgId });
+    expect(home.dropped).toBe(0);
+    expect(home.failed).toBe(0);
+    expect(home.coworkers.gm).toBe('Vy');
+    expect(todayCoworkerKey('projects')).toBe('gm');
+    const projectHomeItems = home.items.filter((i) => i.app === 'projects');
+    expect(projectHomeItems.map((i) => i.id)).toEqual([`overdue:${overdueId}`]);
+
+    // Check deterministic due-today vs tomorrow at fixed clock NOW (10:00+07:00), plus done exclusion.
+    const fixedOrg = await createOrg(rt, asUser(owner.userId), 'Doanh nghiệp Fixed');
+    await inviteAndJoin(fixedOrg.orgId, owner.userId, member, 'member');
+    const { positionId: fixedSeat } = await execMfa<{ positionId: string }>(fixedOrg.orgId, owner.userId, 'kernel.position.create', {
+      title: 'Kỹ thuật',
+      module: 'crm',
+      roleKey: 'crm.sales',
+    });
+    await execMfa(fixedOrg.orgId, owner.userId, 'kernel.position.assign', {
+      id: fixedSeat,
+      holder: { type: 'user', userId: member.userId },
+    });
+    const { projectId: fixedProjId } = await exec<{ projectId: string }>(fixedOrg.orgId, owner.userId, 'projects.project.create', {
+      name: 'Fixed clock board',
+    });
+    const { taskId: fixedOverdueId } = await exec<{ taskId: string }>(fixedOrg.orgId, owner.userId, 'projects.task.create', {
+      projectId: fixedProjId,
+      title: 'Late on fixed clock',
+      assigneePositionId: fixedSeat,
+      due: fixedOverdue,
+    });
+    const { taskId: fixedDueTodayId } = await exec<{ taskId: string }>(fixedOrg.orgId, owner.userId, 'projects.task.create', {
+      projectId: fixedProjId,
+      title: 'Due today on fixed clock',
+      assigneePositionId: fixedSeat,
+      due: fixedDueToday,
+    });
+    await exec(fixedOrg.orgId, owner.userId, 'projects.task.create', {
+      projectId: fixedProjId,
+      title: 'Due tomorrow on fixed clock',
+      assigneePositionId: fixedSeat,
+      due: fixedTomorrow,
+    });
+    await exec(fixedOrg.orgId, owner.userId, 'projects.task.create', {
+      projectId: fixedProjId,
+      title: 'Done task excluded',
+      assigneePositionId: fixedSeat,
+      due: fixedOverdue,
+      status: 'done',
+    });
+
+    const fixedItems = zTodayItems.parse(await todayAt(fixedOrg.orgId, member.userId, NOW));
+    expect(fixedItems).toEqual([
+      {
+        kind: 'flag',
+        app: 'projects',
+        id: `overdue:${fixedOverdueId}`,
+        title: { key: 'projects.taskOverdueDays', params: { days: 2 } },
+        severity: 'warn',
+        dueAt: fixedOverdue,
+        href: `/projects/${fixedProjId}`,
+      },
+      {
+        kind: 'deadline',
+        app: 'projects',
+        id: `due:${fixedDueTodayId}`,
+        title: { key: 'projects.taskDueToday', params: {} },
+        dueAt: fixedDueToday,
+        href: `/projects/${fixedProjId}`,
+      },
+    ]);
+  });
+
+  it('shows overdue, vacant-seat and 3-day waiting tasks to the project owner, deduplicates, and ignores excluded items (AC 2)', async () => {
+    const orgOwner = await person('org-owner');
+    const projOwner = await person('proj-owner');
+    const coworker = await person('coworker');
+    const otherOrgOwner = await person('other-org');
+
+    const org = await createOrg(rt, asUser(orgOwner.userId), 'Công ty Beta');
+    const otherOrg = await createOrg(rt, asUser(otherOrgOwner.userId), 'Công ty Gamma');
+    await inviteAndJoin(org.orgId, orgOwner.userId, projOwner, 'member');
+    await inviteAndJoin(org.orgId, orgOwner.userId, coworker, 'member');
+
+    const { positionId: projOwnerSeat } = await execMfa<{ positionId: string }>(org.orgId, orgOwner.userId, 'kernel.position.create', {
+      title: 'Trưởng dự án',
+      module: 'crm',
+      roleKey: 'crm.sales',
+    });
+    await execMfa(org.orgId, orgOwner.userId, 'kernel.position.assign', {
+      id: projOwnerSeat,
+      holder: { type: 'user', userId: projOwner.userId },
+    });
+
+    const { positionId: coworkerSeat } = await execMfa<{ positionId: string }>(org.orgId, orgOwner.userId, 'kernel.position.create', {
+      title: 'Kế toán',
+      module: 'finance',
+      roleKey: 'finance.accountant',
+    });
+    await execMfa(org.orgId, orgOwner.userId, 'kernel.position.assign', {
+      id: coworkerSeat,
+      holder: { type: 'user', userId: coworker.userId },
+    });
+
+    const { positionId: vacantSeat } = await execMfa<{ positionId: string }>(org.orgId, orgOwner.userId, 'kernel.position.create', {
+      title: 'Vị trí đang trống',
+      module: 'crm',
+      roleKey: 'crm.sales',
+    });
+
+    const installedAgent = await execMfa<{ agentId: string; positionId: string }>(org.orgId, orgOwner.userId, 'kernel.agent.template.install', {
+      templateKey: 'finance.chief_accountant',
+      displayName: 'Ly kế toán',
+    });
+
+    const { projectId } = await exec<{ projectId: string }>(org.orgId, projOwner.userId, 'projects.project.create', {
+      name: 'Dự án triển khai',
+      ownerUserId: projOwner.userId,
+    });
+
+    // Overdue task where projOwner is BOTH seat holder and project owner -> emitted ONCE.
+    const { taskId: bothOverdueId } = await exec<{ taskId: string }>(org.orgId, projOwner.userId, 'projects.task.create', {
+      projectId,
+      title: 'Của trưởng dự án quá hạn',
+      assigneePositionId: projOwnerSeat,
+      due: new Date(NOW_MS - 3_600_000).toISOString(),
+    });
+    // Overdue task on coworker's seat in projOwner's project.
+    const { taskId: coworkerOverdueId } = await exec<{ taskId: string }>(org.orgId, projOwner.userId, 'projects.task.create', {
+      projectId,
+      title: 'Của đồng nghiệp quá hạn',
+      assigneePositionId: coworkerSeat,
+      due: new Date(NOW_MS - 2 * DAY_MS).toISOString(),
+    });
+    // Vacant seat task.
+    const { taskId: vacantTaskId } = await exec<{ taskId: string }>(org.orgId, projOwner.userId, 'projects.task.create', {
+      projectId,
+      title: 'Việc ở vị trí trống',
+      assigneePositionId: vacantSeat,
+    });
+    // Unassigned solo-owner task (assignee_position_id IS NULL) -> NOT a vacant seat.
+    await exec(org.orgId, projOwner.userId, 'projects.task.create', {
+      projectId,
+      title: 'Việc chưa gán vị trí',
+      assigneePositionId: null,
+    });
+    // Agent-held seat -> NOT a vacant seat.
+    await exec(org.orgId, projOwner.userId, 'projects.task.create', {
+      projectId,
+      title: 'Việc của trợ thủ',
+      assigneePositionId: installedAgent.positionId,
+    });
+
+    // Seed waiting >= 3 days and waiting < 3 days directly so task_before_update does not overwrite updated_at.
+    let stuckWaitingId = '';
+    let freshWaitingId = '';
+    await withAdmin(async (c) => {
+      stuckWaitingId = (
+        await c.query<{ id: string }>(
+          `INSERT INTO crove_kernel.task (org_id, title, assignee_position_id, status, source, created_by_type, updated_at)
+           VALUES ($1, 'Việc chờ 4 ngày', $2, 'waiting', 'human', 'user', $3) RETURNING id`,
+          [org.orgId, coworkerSeat, new Date(NOW_MS - 4 * DAY_MS)],
+        )
+      ).rows[0]?.id as string;
+      freshWaitingId = (
+        await c.query<{ id: string }>(
+          `INSERT INTO crove_kernel.task (org_id, title, assignee_position_id, status, source, created_by_type, updated_at)
+           VALUES ($1, 'Việc mới chờ 2 ngày', $2, 'waiting', 'human', 'user', $3) RETURNING id`,
+          [org.orgId, coworkerSeat, new Date(NOW_MS - 2 * DAY_MS)],
+        )
+      ).rows[0]?.id as string;
+    });
+    await exec(org.orgId, projOwner.userId, 'projects.task.add', { projectId, taskId: stuckWaitingId });
+    await exec(org.orgId, projOwner.userId, 'projects.task.add', { projectId, taskId: freshWaitingId });
+
+    // On-hold project with overdue + vacant + stuck tasks -> excluded because project status <> 'active'.
+    const { projectId: holdProjectId } = await exec<{ projectId: string }>(org.orgId, projOwner.userId, 'projects.project.create', {
+      name: 'Dự án tạm dừng',
+      ownerUserId: projOwner.userId,
+    });
+    await exec(org.orgId, projOwner.userId, 'projects.task.create', {
+      projectId: holdProjectId,
+      title: 'Việc trong dự án tạm dừng',
+      assigneePositionId: vacantSeat,
+      due: new Date(NOW_MS - DAY_MS).toISOString(),
+    });
+    await exec(org.orgId, projOwner.userId, 'projects.project.set_status', { projectId: holdProjectId, status: 'on_hold' });
+
+    const ownerItems = zTodayItems.parse(await todayAt(org.orgId, projOwner.userId));
+    expect(ownerItems).toEqual([
+      {
+        kind: 'flag',
+        app: 'projects',
+        id: `overdue:${coworkerOverdueId}`,
+        title: { key: 'projects.ownerTaskOverdueDays', params: { days: 2 } },
+        severity: 'warn',
+        dueAt: new Date(NOW_MS - 2 * DAY_MS).toISOString(),
+        href: `/projects/${projectId}`,
+      },
+      {
+        kind: 'flag',
+        app: 'projects',
+        id: `overdue:${bothOverdueId}`,
+        title: { key: 'projects.taskOverdue', params: {} },
+        severity: 'warn',
+        dueAt: new Date(NOW_MS - 3_600_000).toISOString(),
+        href: `/projects/${projectId}`,
+      },
+      {
+        kind: 'flag',
+        app: 'projects',
+        id: `waiting:${stuckWaitingId}`,
+        title: { key: 'projects.waitingStuck', params: { days: 4 } },
+        severity: 'warn',
+        href: `/projects/${projectId}`,
+      },
+      {
+        kind: 'flag',
+        app: 'projects',
+        id: `vacant:${vacantTaskId}`,
+        title: { key: 'projects.vacantSeat', params: {} },
+        severity: 'warn',
+        href: `/projects/${projectId}`,
+      },
+    ]);
+
+    // Org owner who does not own the project and holds no overdue seat gets nothing from projOwner's project.
+    expect(await todayAt(org.orgId, orgOwner.userId)).toEqual([]);
+    // Cross-org isolation: otherOrg sees nothing.
+    expect(await todayAt(otherOrg.orgId, otherOrgOwner.userId)).toEqual([]);
+  });
+
+  it('respects le_scope for entity-limited members and viewers, and writes zero rows (AC 3)', async () => {
+    const owner = await person('owner-rls');
+    const plainViewer = await person('viewer-rls');
+    const scopedMember = await person('scoped-member');
+
+    const org = await createOrg(rt, asUser(owner.userId), 'Tổ chức đa pháp nhân');
+    await inviteAndJoin(org.orgId, owner.userId, plainViewer, 'viewer');
+    await inviteAndJoin(org.orgId, owner.userId, scopedMember, 'member');
+
+    let defaultEntityId = '';
+    let branchEntityId = '';
+    await withAdmin(async (c) => {
+      defaultEntityId = (
+        await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [org.orgId])
+      ).rows[0]?.id as string;
+      branchEntityId = (
+        await c.query<{ id: string }>(
+          `INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh Hà Nội', 'branch', $2) RETURNING id`,
+          [org.orgId, owner.userId],
+        )
+      ).rows[0]?.id as string;
+      await c.query(
+        `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
+         VALUES ($1, $2, 'external_accountant', $3, $4)`,
+        [org.orgId, scopedMember.userId, branchEntityId, owner.userId],
+      );
+    });
+
+    const { positionId: ownerSeat } = await execMfa<{ positionId: string }>(org.orgId, owner.userId, 'kernel.position.create', {
+      title: 'Điều hành',
+      module: 'crm',
+      roleKey: 'crm.sales',
+    });
+    await execMfa(org.orgId, owner.userId, 'kernel.position.assign', {
+      id: ownerSeat,
+      holder: { type: 'user', userId: owner.userId },
+    });
+
+    const { positionId: scopedSeat } = await execMfa<{ positionId: string }>(org.orgId, owner.userId, 'kernel.position.create', {
+      title: 'Kế toán chi nhánh',
+      module: 'finance',
+      roleKey: 'finance.accountant',
+      leScope: [branchEntityId],
+    });
+    await execMfa(org.orgId, owner.userId, 'kernel.position.assign', {
+      id: scopedSeat,
+      holder: { type: 'user', userId: scopedMember.userId },
+    });
+
+    const { projectId } = await exec<{ projectId: string }>(org.orgId, owner.userId, 'projects.project.create', {
+      name: 'Dự án kiểm toán',
+      ownerUserId: scopedMember.userId,
+    });
+
+    // Seed tasks in defaultEntity (hidden from scopedMember), branchEntity (visible), and org-wide NULL (visible).
+    let hiddenTaskId = '';
+    let visibleBranchTaskId = '';
+    await withAdmin(async (c) => {
+      hiddenTaskId = (
+        await c.query<{ id: string }>(
+          `INSERT INTO crove_kernel.task (org_id, title, assignee_position_id, status, due, source, created_by_type, legal_entity_id, updated_at)
+           VALUES ($1, 'Việc trụ sở chính bị ẩn', $2, 'waiting', $3, 'human', 'user', $4, $5) RETURNING id`,
+          [org.orgId, ownerSeat, new Date(NOW_MS - DAY_MS), defaultEntityId, new Date(NOW_MS - 4 * DAY_MS)],
+        )
+      ).rows[0]?.id as string;
+      visibleBranchTaskId = (
+        await c.query<{ id: string }>(
+          `INSERT INTO crove_kernel.task (org_id, title, assignee_position_id, status, due, source, created_by_type, legal_entity_id, updated_at)
+           VALUES ($1, 'Việc chi nhánh được xem', $2, 'todo', $3, 'human', 'user', $4, $5) RETURNING id`,
+          [org.orgId, scopedSeat, new Date(NOW_MS - DAY_MS), branchEntityId, new Date(NOW_MS - DAY_MS)],
+        )
+      ).rows[0]?.id as string;
+    });
+    await exec(org.orgId, owner.userId, 'projects.task.add', { projectId, taskId: hiddenTaskId });
+    await exec(org.orgId, owner.userId, 'projects.task.add', { projectId, taskId: visibleBranchTaskId });
+
+    // Record audit and outbox counts before read queries.
+    const countsBefore = await withAdmin(async (c) => {
+      const audit = await c.query<{ n: string }>('SELECT count(*)::text AS n FROM crove_kernel.audit_event WHERE org_id = $1', [org.orgId]);
+      const outbox = await c.query<{ n: string }>('SELECT count(*)::text AS n FROM crove_kernel.outbox_event WHERE org_id = $1', [org.orgId]);
+      return { audit: Number(audit.rows[0]?.n ?? 0), outbox: Number(outbox.rows[0]?.n ?? 0) };
+    });
+
+    // Plain viewer has no seats and owns no projects -> sees nothing.
+    expect(await todayAt(org.orgId, plainViewer.userId)).toEqual([]);
+
+    // Scoped member sees only the branch task, never the hidden default-entity overdue/waiting task.
+    const scopedItems = zTodayItems.parse(await todayAt(org.orgId, scopedMember.userId));
+    expect(scopedItems.map((i) => i.id)).toEqual([`overdue:${visibleBranchTaskId}`]);
+
+    const countsAfter = await withAdmin(async (c) => {
+      const audit = await c.query<{ n: string }>('SELECT count(*)::text AS n FROM crove_kernel.audit_event WHERE org_id = $1', [org.orgId]);
+      const outbox = await c.query<{ n: string }>('SELECT count(*)::text AS n FROM crove_kernel.outbox_event WHERE org_id = $1', [org.orgId]);
+      return { audit: Number(audit.rows[0]?.n ?? 0), outbox: Number(outbox.rows[0]?.n ?? 0) };
+    });
+    expect(countsAfter).toEqual(countsBefore);
+  });
+});

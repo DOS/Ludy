@@ -1,0 +1,214 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Unit tests for modules/projects/src/today.ts (#2596): deterministic projection rules, deduplication,
+// Vietnam calendar day boundaries, vacant vs unassigned seat semantics, and TODAY_ITEMS_MAX capping.
+import { describe, expect, it } from 'vitest';
+import { TODAY_ITEMS_MAX, todayCoworkerKey, zTodayItems } from '@crove/kernel-contract';
+import { projectsTodayItemsOf, STUCK_WAITING_DAYS, type ProjectTodayRow } from '../src/today.ts';
+
+const ME = '0190c4a1-0000-7000-8000-000000000001';
+const OTHER = '0190c4a1-0000-7000-8000-000000000002';
+const AGENT = '0190c4a1-0000-7000-8000-000000000003';
+const PROJECT_ID = '0190c4a1-0000-7000-8000-000000000100';
+const SEAT_ME = '0190c4a1-0000-7000-8000-000000000201';
+const SEAT_VACANT = '0190c4a1-0000-7000-8000-000000000202';
+const SEAT_AGENT = '0190c4a1-0000-7000-8000-000000000203';
+
+// 2026-11-10 10:00:00+07:00
+const NOW = new Date('2026-11-10T03:00:00.000Z');
+const taskId = (n: number) => `0190c4a1-0000-7000-8000-${String(n).padStart(12, '0')}`;
+
+const row = (over: Partial<ProjectTodayRow> = {}): ProjectTodayRow => ({
+  taskId: taskId(1),
+  projectId: PROJECT_ID,
+  ownerUserId: OTHER,
+  status: 'todo',
+  due: null,
+  updatedAt: new Date(NOW.getTime() - 3_600_000),
+  createdAt: new Date(NOW.getTime() - 86_400_000),
+  assigneePositionId: SEAT_ME,
+  holderUserId: ME,
+  holderAgentId: null,
+  positionStatus: 'active',
+  ...over,
+});
+
+describe('projects.today pure projection (#2596)', () => {
+  it('routes app "projects" to Vy ("gm") with zero model usage', () => {
+    expect(todayCoworkerKey('projects')).toBe('gm');
+    expect(STUCK_WAITING_DAYS).toBe(3);
+  });
+
+  it('emits warn flags for overdue tasks on the member seat and deduplicates when also project owner', () => {
+    const twoDaysLate = new Date(NOW.getTime() - 2 * 86_400_000 - 3_600_000);
+    const twoHoursLate = new Date(NOW.getTime() - 2 * 3_600_000);
+    const items = projectsTodayItemsOf(
+      [
+        row({ taskId: taskId(1), due: twoDaysLate, ownerUserId: ME }),
+        row({ taskId: taskId(2), due: twoHoursLate, ownerUserId: OTHER }),
+      ],
+      { userId: ME, now: NOW },
+    );
+
+    expect(items).toEqual([
+      {
+        kind: 'flag',
+        app: 'projects',
+        id: `overdue:${taskId(1)}`,
+        title: { key: 'projects.taskOverdueDays', params: { days: 2 } },
+        severity: 'warn',
+        dueAt: twoDaysLate.toISOString(),
+        href: `/projects/${PROJECT_ID}`,
+      },
+      {
+        kind: 'flag',
+        app: 'projects',
+        id: `overdue:${taskId(2)}`,
+        title: { key: 'projects.taskOverdue', params: {} },
+        severity: 'warn',
+        dueAt: twoHoursLate.toISOString(),
+        href: `/projects/${PROJECT_ID}`,
+      },
+    ]);
+    expect(zTodayItems.safeParse(items).success).toBe(true);
+  });
+
+  it('emits deadlines for due-today tasks using Vietnam calendar day (UTC+7)', () => {
+    // 2026-11-10 02:00:00+07:00 = 2026-11-09 19:00:00 UTC (differs in UTC, same VN day)
+    const vnMorning = new Date('2026-11-09T19:00:00.000Z');
+    // 2026-11-10 23:30:00+07:00 = 2026-11-10 16:30:00 UTC
+    const dueTonightVn = new Date('2026-11-10T16:30:00.000Z');
+    // 2026-11-11 08:00:00+07:00 (tomorrow in VN)
+    const dueTomorrowVn = new Date('2026-11-11T01:00:00.000Z');
+
+    const items = projectsTodayItemsOf(
+      [
+        row({ taskId: taskId(1), due: dueTonightVn }),
+        row({ taskId: taskId(2), due: dueTomorrowVn }),
+        // Unassigned root task owned by user is not on a member seat -> not a member deadline
+        row({
+          taskId: taskId(3),
+          ownerUserId: ME,
+          assigneePositionId: null,
+          holderUserId: null,
+          positionStatus: null,
+          due: dueTonightVn,
+        }),
+      ],
+      { userId: ME, now: vnMorning },
+    );
+
+    expect(items).toEqual([
+      {
+        kind: 'deadline',
+        app: 'projects',
+        id: `due:${taskId(1)}`,
+        title: { key: 'projects.taskDueToday', params: {} },
+        dueAt: dueTonightVn.toISOString(),
+        href: `/projects/${PROJECT_ID}`,
+      },
+    ]);
+  });
+
+  it('emits owner flags for overdue, vacant seat, and 3-day waiting without counting unassigned or agent-held seats', () => {
+    const waiting3Days = new Date(NOW.getTime() - 3 * 86_400_000);
+    const waitingUnder3Days = new Date(NOW.getTime() - 3 * 86_400_000 + 60_000);
+    const lateOther = new Date(NOW.getTime() - 86_400_000);
+
+    const items = projectsTodayItemsOf(
+      [
+        // Owner's overdue task held by someone else
+        row({ taskId: taskId(1), ownerUserId: ME, assigneePositionId: SEAT_AGENT, holderUserId: OTHER, due: lateOther }),
+        // Owner's task waiting exactly 3 days
+        row({
+          taskId: taskId(2),
+          ownerUserId: ME,
+          status: 'waiting',
+          updatedAt: waiting3Days,
+          assigneePositionId: SEAT_AGENT,
+          holderUserId: OTHER,
+        }),
+        // Owner's task waiting 2 days 23h59m -> NOT included
+        row({
+          taskId: taskId(3),
+          ownerUserId: ME,
+          status: 'waiting',
+          updatedAt: waitingUnder3Days,
+          assigneePositionId: SEAT_AGENT,
+          holderUserId: OTHER,
+        }),
+        // Vacant seat -> included
+        row({
+          taskId: taskId(4),
+          ownerUserId: ME,
+          assigneePositionId: SEAT_VACANT,
+          holderUserId: null,
+          holderAgentId: null,
+        }),
+        // Agent-held seat -> NOT vacant
+        row({
+          taskId: taskId(5),
+          ownerUserId: ME,
+          assigneePositionId: SEAT_AGENT,
+          holderUserId: null,
+          holderAgentId: AGENT,
+        }),
+        // Unassigned solo-owner task (assignee_position_id IS NULL) -> NOT vacant
+        row({
+          taskId: taskId(6),
+          ownerUserId: ME,
+          assigneePositionId: null,
+          holderUserId: null,
+          holderAgentId: null,
+          positionStatus: null,
+        }),
+        // Closed task -> excluded
+        row({
+          taskId: taskId(7),
+          ownerUserId: ME,
+          status: 'done',
+          assigneePositionId: SEAT_VACANT,
+          holderUserId: null,
+          holderAgentId: null,
+        }),
+        // Archived seat held by user -> excluded for member seat check
+        row({
+          taskId: taskId(8),
+          ownerUserId: OTHER,
+          positionStatus: 'archived',
+          due: lateOther,
+        }),
+      ],
+      { userId: ME, now: NOW },
+    );
+
+    expect(items.map((i) => `${i.id}:${i.title.key}`)).toEqual([
+      `overdue:${taskId(1)}:projects.ownerTaskOverdueDays`,
+      `waiting:${taskId(2)}:projects.waitingStuck`,
+      `vacant:${taskId(4)}:projects.vacantSeat`,
+    ]);
+    expect(items.find((i) => i.id === `waiting:${taskId(2)}`)?.title.params).toEqual({ days: 3 });
+  });
+
+  it('caps output at TODAY_ITEMS_MAX with a trailing projects.more overflow item', () => {
+    const rows = Array.from({ length: TODAY_ITEMS_MAX + 5 }, (_, idx) =>
+      row({
+        taskId: taskId(idx + 1),
+        ownerUserId: ME,
+        due: new Date(NOW.getTime() - (idx + 1) * 3_600_000),
+      }),
+    );
+
+    const items = projectsTodayItemsOf(rows, { userId: ME, now: NOW });
+    expect(items).toHaveLength(TODAY_ITEMS_MAX);
+    expect(items.at(-1)).toEqual({
+      kind: 'flag',
+      app: 'projects',
+      id: 'more',
+      title: { key: 'projects.more', params: { count: 6 } },
+      count: 6,
+      severity: 'warn',
+      href: '/projects',
+    });
+    expect(zTodayItems.safeParse(items).success).toBe(true);
+  });
+});

@@ -33,6 +33,7 @@ import {
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { projectsManifest } from './manifest.ts';
+import { projectsToday } from './today.ts';
 
 const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -967,4 +968,4 @@ export const projectsCommands = [
   projectTaskCreate,
 ];
 
-export const projectsQueries = [projectList, projectGet, projectBoard, projectUnassignedTasks];
+export const projectsQueries = [projectList, projectGet, projectBoard, projectUnassignedTasks, projectsToday];
