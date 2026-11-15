@@ -2,7 +2,7 @@
 // The rate pair that splits the tax a platform withheld from a household seller into VAT and PIT (#2516 rework, slice C2; plan docs/plan/stock-and-marketplaces.md section 8.4, rows 9 and 18).
 // A settlement line holds ONE amount withheld, no split by the platform (no real file gives one yet, #2521), so the split rule is the household's: the percentages of its ONE line of business on the
 // day of the settlement's last day (household_trade_rate, dated rows). A household with no line of business or several is refused, never guessed: with several the pair is ambiguous.
-// A seller that is no household (no profile, or an entity that is not of kind household) has no tax lines at all (null). A rate row still `commentary` is refused too: nothing that computes a tax
+// A seller that is no household (an entity that is not of kind household) has no tax lines at all (null); a household with no profile in force is refused. A rate row still `commentary` is refused too: nothing that computes a tax
 // may rely on a row the accountant has not checked (household.ts, #2520).
 import { DomainError, type QueryContext } from '@crove/kernel-runtime';
 import { pickInForce } from './domain/household-rules.ts';
@@ -22,7 +22,8 @@ export async function householdTaxRate(ctx: Ctx, legalEntityId: string, date: st
     .orderBy('effective_from', 'desc')
     .limit(1)
     .executeTakeFirst();
-  if (!profile) return null;
+  // An entity of kind household with no profile in force is no company: its tax cannot be split, so it is refused, never treated as a seller with no tax lines.
+  if (!profile) throw new DomainError('MARKETPLACE_SETTLEMENT_NOT_POSTABLE', 422, 'Hộ kinh doanh chưa có hồ sơ hiệu lực vào ngày đối soát nên chưa tách được thuế sàn đã khấu trừ: hãy lập hồ sơ hộ kinh doanh', { reason: 'TAX_SPLIT_PROFILE' });
   const trades = [...profile.trades];
   const trade = trades[0];
   if (trades.length !== 1 || trade === undefined) {

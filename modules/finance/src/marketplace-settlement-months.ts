@@ -8,7 +8,7 @@
 // - a refund belongs to the month of the settlement's last day (the refund reduces revenue in the period it occurs, PO decision 2026-11-08);
 // - a line refunded at least as much as it sold needs no delivery day: it is the refund in the month of the settlement's last day, sale and refund together;
 // - the tax the platform withheld on a line goes with the piece that holds the line's sale (the month of its delivery, or the refund month for a line refunded at least as much as it sold);
-// - a month whose net is zero has no entry and is not listed; a month with a negative net runs the entry the other way (the platform owing less).
+// - a month whose net is zero has no entry and is not listed, unless tax was withheld on its lines (then it is listed and posts only that tax); a month with a negative net runs the entry the other way (the platform owing less).
 import { money, sum, toMoney } from '@crove/l10n-vn';
 import type { QueryContext } from '@crove/kernel-runtime';
 import { JOURNAL_VOUCHER_SOURCE } from './domain/journal-voucher.ts';
@@ -32,7 +32,7 @@ export interface SettlementMonth {
   date: string;
   // The pieces the entry is built from (the sums are all that is posted).
   lines: SettlementPostingLine[];
-  // Sales less seller discounts less refunds of the month, signed, never zero.
+  // Sales less seller discounts less refunds of the month, signed; zero only for a month that carries withheld tax.
   net: string;
 }
 
@@ -73,7 +73,9 @@ export function settlementMonthsOf(lines: readonly SettlementMonthLine[], period
   for (const month of [...buckets.keys()].sort()) {
     const pieces = buckets.get(month) ?? [];
     const net = money(toMoney(sum(pieces.map((p) => p.sales)))).minus(money(toMoney(sum(pieces.map((p) => p.sellerDiscount))))).minus(money(toMoney(sum(pieces.map((p) => p.refund)))));
-    if (net.isZero()) continue;
+    // A month with a zero net has no entry, unless the platform withheld tax on its lines: that tax is still credited (the entry then holds only the tax lines).
+    const tax = money(toMoney(sum(pieces.map((p) => p.taxWithheld ?? '0'))));
+    if (net.isZero() && tax.isZero()) continue;
     months.push({ month, date: monthEntryDate(month, periodTo), lines: pieces, net: toMoney(net) });
   }
   return { months, waiting };

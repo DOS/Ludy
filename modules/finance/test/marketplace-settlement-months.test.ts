@@ -53,4 +53,12 @@ describe('whether the posting stands', () => {
     expect(settlementPosted([{ month: null, reversed: false }])).toBe(true);
     expect(settlementPosted([{ month: null, reversed: true }])).toBe(false);
   });
+
+  it('keeps a month whose net is zero when tax was withheld on its lines, and drops it when none was', () => {
+    const lines = [line('40000', '2026-11-03', { taxWithheld: '600' }), line('100000', '2026-10-05', { refund: '40000' })];
+    const kept = settlementMonthsOf(lines, '2026-11-15');
+    expect(kept.months.map((m) => [m.month, m.net])).toEqual([['2026-10', '100000'], ['2026-11', '0']]);
+    const dropped = settlementMonthsOf([line('40000', '2026-11-03'), line('100000', '2026-10-05', { refund: '40000' })], '2026-11-15');
+    expect(dropped.months.map((m) => m.month)).toEqual(['2026-10']);
+  });
 });

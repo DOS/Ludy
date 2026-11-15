@@ -132,6 +132,13 @@ describe('the tax a platform withheld from a household seller (slice C2)', () =>
     expect(settlementProposal(taxed('0'), maps).lines).toHaveLength(2);
     expect(settlementProposal(taxed('150000', { tax: null }), maps).taxWithheld).toBe('0');
   });
+  it('posts only the tax lines for a month whose net is zero but whose lines carry withheld tax, and still refuses a zero net with no tax', () => {
+    const zero = input([{ sales: '40000', sellerDiscount: '0', refund: '0', taxWithheld: '600' }, { sales: '0', sellerDiscount: '0', refund: '40000', taxWithheld: '0' }], { tax: { vatPercent: '1', pitPercent: '0.5' } });
+    const p = settlementProposal(zero, maps);
+    expect(p.lines.map((l) => [l.account, l.debit, l.credit])).toEqual([['511', '400', '0'], ['3331', '0', '400'], ['6422', '200', '0'], ['3335', '0', '200']]);
+    expect(p.total).toBe('600');
+    expect(code(() => settlementProposal({ ...zero, tax: null }, maps))).toEqual({ code: 'MARKETPLACE_SETTLEMENT_NOT_POSTABLE', status: 422 });
+  });
   it('refuses a rate pair that cannot split the tax', () => {
     expect(code(() => settlementProposal(taxed('150000', { tax: { vatPercent: '0', pitPercent: '0' } }), maps))).toEqual({ code: 'MARKETPLACE_SETTLEMENT_NOT_POSTABLE', status: 422 });
   });

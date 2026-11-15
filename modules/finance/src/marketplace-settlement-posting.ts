@@ -76,14 +76,17 @@ function settlementProposalLines(input: SettlementProposalInput, map: Pick<Marke
   const net = money(toMoney(sum(input.lines.map((l) => l.sales)))).minus(money(toMoney(sum(input.lines.map((l) => l.sellerDiscount))))).minus(money(toMoney(sum(input.lines.map((l) => l.refund)))));
   // A negative net (refunds and discounts above the sales, for example a quiet month with returns from the one before) is legitimate: the entry runs the other way, the platform owing less.
   const amount = toMoney(net.abs());
-  if (money(amount).isZero()) throw bad('Kỳ đối soát có doanh thu ròng bằng 0; không có bút toán để lập', { net: amount });
+  const tax = withheldSplit(input);
+  // A zero net has no 131 / 511 pair; a month that carries withheld tax still posts that tax (the tax lines alone balance), anything else has nothing to post.
+  if (money(amount).isZero() && !tax) throw bad('Kỳ đối soát có doanh thu ròng bằng 0; không có bút toán để lập', { net: amount });
   const memo = `${input.platform} ${input.periodFrom} đến ${input.periodTo}, tháng ${input.month}`;
   const owed = net.greaterThan(0);
-  const lines: ProposedJournalLine[] = [
-    { account: owed ? map.receivable.code : map.revenue.code, debit: amount, credit: '0', partyId: owed ? input.partyId : null, memo },
-    { account: owed ? map.revenue.code : map.receivable.code, debit: '0', credit: amount, partyId: owed ? null : input.partyId, memo },
-  ];
-  const tax = withheldSplit(input);
+  const lines: ProposedJournalLine[] = money(amount).isZero()
+    ? []
+    : [
+        { account: owed ? map.receivable.code : map.revenue.code, debit: amount, credit: '0', partyId: owed ? input.partyId : null, memo },
+        { account: owed ? map.revenue.code : map.receivable.code, debit: '0', credit: amount, partyId: owed ? null : input.partyId, memo },
+      ];
   if (tax) {
     const taxMemo = `${memo}, thuế sàn đã khấu trừ`;
     if (!money(tax.vat).isZero()) lines.push({ account: map.revenue.code, debit: tax.vat, credit: '0', partyId: null, memo: taxMemo }, { account: map.vatPayable.code, debit: '0', credit: tax.vat, partyId: null, memo: taxMemo });
