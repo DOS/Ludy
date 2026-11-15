@@ -75,6 +75,10 @@ const MACHINERY = new Set([
   'crove_meetings.chat_channel_target',
   // #3168: the message of a queued post to a minutes channel, kept only while the post is queued and deleted when it settles: reached only by definers, no login role grant.
   'crove_meetings.chat_post_body',
+  // #3330 / #3323 (eSign): single-use hashed access tokens (token_sha256) and short-lived email OTP hashes (otp_sha256):
+  // reached only by definers with RLS enabled and zero login role grants. Land before their tables (PENDING_TABLES).
+  'crove_sign.signing_otp',
+  'crove_sign.signing_token',
   'crove_social.chat_alert_target',
 ]);
 // Tables whose row factory (and MACHINERY entry, for definer-only tables) lands on main before the table itself. CI
@@ -104,6 +108,13 @@ const PENDING_TABLES = new Set<string>([
   'crove_projects.project',
   'crove_projects.project_member',
   'crove_projects.project_task',
+  'crove_sign.ai_analysis',
+  'crove_sign.envelope',
+  'crove_sign.field',
+  'crove_sign.signer',
+  'crove_sign.signing_event',
+  'crove_sign.signing_otp',
+  'crove_sign.signing_token',
 ]);
 // Tables whose rows belong to one member (ADR-0037, notes plan §3.6 and step N1): unlike saved_view and notification,
 // the system context reads only what the value's predicate selects (over alias t, operators schema-qualified so a
@@ -325,6 +336,8 @@ const APPEND_ONLY = new Set<string>([
   'crove_finance.channel_settlement_line',
   // The household profile of an entity (#2517): a change of tax group, method or trades is a new row from its effective date, never an edit of an earlier one.
   'crove_finance.household_profile',
+  // #3330 / #3323 (eSign): hash-chained signing ledger per envelope (SELECT and INSERT only; no runtime role holds UPDATE or DELETE).
+  'crove_sign.signing_event',
 ]);
 const PRIVILEGE_DENIED = /permission denied for (table|relation)/;
 
@@ -615,6 +628,45 @@ const projectsProjectRow = (o: { id: string; owner: string }) => ({
   name: `RLS matrix project ${tag()}`,
   owner_user_id: o.owner,
   status: 'active',
+});
+// eSign Slice 1 (docs/plan/esign.md section 2.1, #3330 / #3323): parent rows for crove_sign.* factories.
+const signEnvelopeRow = (o: { id: string; owner: string; file: string }) => {
+  const sha256 = hex64();
+  return {
+    org_id: o.id,
+    id: randomUUID(),
+    title: 'RLS matrix envelope',
+    status: 'draft',
+    routing_mode: 'parallel',
+    source_kind: 'standalone',
+    source_file_id: o.file,
+    source_storage_key: `org/${o.id}/${sha256}`,
+    source_generation: '1',
+    source_sha256: sha256,
+    inspect_status: 'pending',
+    created_by: o.owner,
+  };
+};
+const signSignerRow = (org: string, envelopeId: string) => ({
+  org_id: org,
+  id: randomUUID(),
+  envelope_id: envelopeId,
+  routing_order: 1,
+  role_label: 'Signer',
+  name: 'RLS matrix signer',
+  email: 'signer@rls.test',
+  delivery_mode: 'link',
+  require_email_otp: 'false',
+  status: 'waiting',
+});
+const signTokenRow = (org: string, envelopeId: string, signerId: string, createdBy: string) => ({
+  org_id: org,
+  id: randomUUID(),
+  envelope_id: envelopeId,
+  signer_id: signerId,
+  token_sha256: hex64(),
+  expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+  created_by: createdBy,
 });
 const journalEntry = (org: string, id: string): Row => ({
   table: 'crove_finance.journal_entry',
@@ -2737,6 +2789,123 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           { table: 'crove_kernel.task', values: task },
         ],
         row: { org_id: o.id, id: randomUUID(), project_id: project.id, task_id: task.id },
+      };
+    },
+  },
+  // eSign Slice 1 (docs/plan/esign.md section 2.1, #3330 / #3323): Vy's tainted field proposals and clause summaries, tied to an envelope.
+  'crove_sign.ai_analysis': {
+    make: (o) => {
+      const envelope = signEnvelopeRow(o);
+      return {
+        setup: [{ table: 'crove_sign.envelope', values: envelope }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          envelope_id: envelope.id,
+          source_sha256: envelope.source_sha256,
+          status: 'pending',
+          proposed_fields_json: '[]',
+          prompt_version: 'v1',
+        },
+      };
+    },
+  },
+  // eSign Slice 1 (#3330 / #3323): a signing packet whose source_file_id is a logical ref to crove_kernel.file (no cross-module FK).
+  'crove_sign.envelope': { make: (o) => ({ row: signEnvelopeRow(o) }) },
+  // eSign Slice 1 (#3330 / #3323): placed signature/input field on a PDF page assigned to one signer.
+  'crove_sign.field': {
+    make: (o) => {
+      const envelope = signEnvelopeRow(o);
+      const signer = signSignerRow(o.id, envelope.id);
+      return {
+        setup: [
+          { table: 'crove_sign.envelope', values: envelope },
+          { table: 'crove_sign.signer', values: signer },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          envelope_id: envelope.id,
+          signer_id: signer.id,
+          field_type: 'signature',
+          page_number: 1,
+          x_norm: '0.100000',
+          y_norm: '0.100000',
+          w_norm: '0.300000',
+          h_norm: '0.080000',
+          required: 'true',
+          proposed_by_ai: 'false',
+        },
+      };
+    },
+  },
+  // eSign Slice 1 (#3330 / #3323): recipient required to sign an envelope.
+  'crove_sign.signer': {
+    make: (o) => {
+      const envelope = signEnvelopeRow(o);
+      return {
+        setup: [{ table: 'crove_sign.envelope', values: envelope }],
+        row: signSignerRow(o.id, envelope.id),
+      };
+    },
+  },
+  // eSign Slice 1 (#3330 / #3323): append-only, hash-chained audit event per envelope (unique seq per envelope).
+  'crove_sign.signing_event': {
+    make: (o) => {
+      const envelope = signEnvelopeRow(o);
+      return {
+        setup: [{ table: 'crove_sign.envelope', values: envelope }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          envelope_id: envelope.id,
+          seq: 1,
+          event_type: 'envelope_created',
+          actor_type: 'user',
+          actor_label: 'RLS matrix owner',
+          document_sha256: envelope.source_sha256,
+          event_hash: hex64(),
+          payload_json: '{}',
+        },
+      };
+    },
+  },
+  // Definer-only machinery (#3330 / #3323): short-lived hashed email OTP records bound to a signer and signing token.
+  'crove_sign.signing_otp': {
+    make: (o) => {
+      const envelope = signEnvelopeRow(o);
+      const signer = signSignerRow(o.id, envelope.id);
+      const token = signTokenRow(o.id, envelope.id, signer.id, o.owner);
+      return {
+        setup: [
+          { table: 'crove_sign.envelope', values: envelope },
+          { table: 'crove_sign.signer', values: signer },
+          { table: 'crove_sign.signing_token', values: token },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          signer_id: signer.id,
+          signing_token_id: token.id,
+          email: 'signer@rls.test',
+          otp_sha256: hex64(),
+          expires_at: new Date(Date.now() + 600_000).toISOString(),
+          attempts: 0,
+        },
+      };
+    },
+  },
+  // Definer-only machinery (#3330 / #3323): hashed single-use access capabilities backing /-/sign#<token>.
+  'crove_sign.signing_token': {
+    make: (o) => {
+      const envelope = signEnvelopeRow(o);
+      const signer = signSignerRow(o.id, envelope.id);
+      return {
+        setup: [
+          { table: 'crove_sign.envelope', values: envelope },
+          { table: 'crove_sign.signer', values: signer },
+        ],
+        row: signTokenRow(o.id, envelope.id, signer.id, o.owner),
       };
     },
   },
