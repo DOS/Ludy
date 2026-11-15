@@ -39,6 +39,7 @@ const SEALED_STORES = [
   'crove_kernel.calendar_credential.envelope',
   'crove_kernel.credential.envelope',
   'crove_kernel.meeting_platform_credential.envelope',
+  'crove_meetings.chat_channel_target.envelope',
   'crove_social.chat_alert_target.envelope',
 ];
 // Sealed stores listed before their table exists, so the two steps of an invariant change can land apart (the PENDING_TABLES pattern of rls-matrix): each names the issue that adds the table. While the
@@ -49,9 +50,6 @@ const SEALED_STORES_PENDING: Readonly<Record<string, string>> = {
 // Stores that are allowed until a date, each with the issue and the reason. The test accepts the store being absent (the table lands in a later change) or
 // present, and fails on the day after `expires` (yyyy-mm-dd), so the allowance is replaced by pinned tests or removed before then. None is open.
 const SEALED_ALLOWANCES: Readonly<Record<string, { issue: string; expires: string; reason: string }>> = {
-  // The address of an org's minutes channel (a Slack or Teams webhook), sealed for the binding (org, 'meeting-chat', the channel's id). The table lands in the change that builds B4; that change names the
-  // column in SEALED_STORES and removes this line. Until then an absent table is accepted, and a present one must have no grant to any Crove role (the next test).
-  'crove_meetings.chat_channel_target.envelope': { issue: '#3168', expires: '2026-12-31', reason: 'meetings integrations B4: the sealed webhook address of a minutes channel, opened only by the worker, for a queued post' },
 };
 
 suite('channel credentials on PostgreSQL (ADR-0025)', () => {

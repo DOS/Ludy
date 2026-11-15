@@ -26,6 +26,14 @@ export const meetingsManifest = defineModule({
         ['org_id', 'id', 'connection_id', 'user_id', 'external_id', 'starts_at', 'ends_at', 'time_zone', 'invitee_count', 'meeting_id', 'updated_at'],
         { title: 'pii', join_url: 'sensitive' },
       ),
+      // The org's channels for minutes, Slack or Teams (B4, #3168): a name and the address's host. No secret: the address is sealed in chat_channel_target.
+      chat_channel: columns(['org_id', 'id', 'kind', 'label', 'host', 'created_by', 'created_at', 'updated_at']),
+      // The sealed address of a minutes channel (B4, #3168): definer-only, opened by the worker's job (the API seals it and never opens it).
+      chat_channel_target: columns(['org_id', 'id', 'channel_id', 'key_id', 'sealed_at'], { envelope: 'sensitive' }),
+      // The recorder's log of minutes posted to a channel (B4, #3168): ids, a state, the status, a code and hashes; never the text.
+      chat_post: columns(['org_id', 'id', 'meeting_id', 'channel_id', 'user_id', 'facts_key', 'text_hash', 'state', 'attempts', 'http_status', 'code', 'created_at', 'handed_at', 'sending_at', 'settled_at']),
+      // The message of a queued post (B4, #3168): definer-only, deleted when the post settles. The body is the meeting's text, personal data.
+      chat_post_body: columns(['org_id', 'id', 'post_id', 'created_at'], { body: 'pii' }),
       // One event of a member's minutes webhook (member_hook, A6, #3164): the body holds the text the recorder approved and is set to NULL the moment the delivery settles, so afterwards the row is ids, a status and times.
       hook_delivery: columns(['org_id', 'id', 'hook_id', 'meeting_id', 'type', 'status', 'attempts', 'last_code', 'created_at', 'handed_at', 'sent_at'], { body: 'pii' }),
       // The pieces of about 15 seconds a recorder sends while a live-notes meeting runs (ADR-0052 L4a, #3109): order, the ciphertext's file row, size and the recorder's own length. No key, no text.
