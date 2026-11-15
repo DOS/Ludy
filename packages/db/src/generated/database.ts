@@ -943,6 +943,7 @@ export interface FinanceChannelOrderLineTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   attempt: Generated<number>;
+  delivered_at: string | null;
 }
 
 /** crove_finance.channel_order */

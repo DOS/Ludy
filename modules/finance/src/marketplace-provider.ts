@@ -85,6 +85,8 @@ export interface MarketplaceOrder {
   // ISO days (YYYY-MM-DD).
   orderedAt: string;
   shippedAt: string | null;
+  // The day of successful delivery (the completion column of the platform's report), or null while the platform gives none. Revenue belongs to its month (#2520, working answer A5).
+  deliveredAt: string | null;
   stage: MarketplaceOrderStage;
   lines: readonly MarketplaceOrderLine[];
 }
@@ -138,6 +140,7 @@ interface Recorded {
   orderNo: string;
   orderedAt: string;
   shippedAt: string | null;
+  deliveredAt: string | null;
   stage: MarketplaceOrderStage;
   lines: ReadonlyArray<[sku: string, name: string, quantity: string, unitPrice: string]>;
 }
@@ -145,19 +148,19 @@ interface Recorded {
 // Three recorded orders for each platform, in the order they were "placed". The names are made up, the order numbers carry the platform's own look, and no buyer is named.
 const RECORDED: Readonly<Record<MarketplacePlatformKey, readonly Recorded[]>> = {
   shopee: [
-    { orderNo: '2611A0001', orderedAt: '2026-11-02', shippedAt: '2026-11-03', stage: 'completed', lines: [['MAU-001', 'Áo thun mẫu cổ tròn', '2', '150000'], ['MAU-002', 'Mũ vải mẫu', '1', '90000']] },
-    { orderNo: '2611A0002', orderedAt: '2026-11-04', shippedAt: '2026-11-05', stage: 'shipped', lines: [['MAU-001', 'Áo thun mẫu cổ tròn', '1', '150000']] },
-    { orderNo: '2611A0003', orderedAt: '2026-11-06', shippedAt: null, stage: 'placed', lines: [['MAU-003', 'Túi vải mẫu', '3', '65000']] },
+    { orderNo: '2611A0001', orderedAt: '2026-11-02', shippedAt: '2026-11-03', deliveredAt: '2026-11-05', stage: 'completed', lines: [['MAU-001', 'Áo thun mẫu cổ tròn', '2', '150000'], ['MAU-002', 'Mũ vải mẫu', '1', '90000']] },
+    { orderNo: '2611A0002', orderedAt: '2026-11-04', shippedAt: '2026-11-05', deliveredAt: null, stage: 'shipped', lines: [['MAU-001', 'Áo thun mẫu cổ tròn', '1', '150000']] },
+    { orderNo: '2611A0003', orderedAt: '2026-11-06', shippedAt: null, deliveredAt: null, stage: 'placed', lines: [['MAU-003', 'Túi vải mẫu', '3', '65000']] },
   ],
   tiktok_shop: [
-    { orderNo: '5771000001', orderedAt: '2026-11-01', shippedAt: '2026-11-02', stage: 'completed', lines: [['MAU-002', 'Mũ vải mẫu', '2', '88000']] },
-    { orderNo: '5771000002', orderedAt: '2026-11-03', shippedAt: null, stage: 'cancelled', lines: [['MAU-003', 'Túi vải mẫu', '1', '65000']] },
-    { orderNo: '5771000003', orderedAt: '2026-11-05', shippedAt: '2026-11-06', stage: 'shipped', lines: [['MAU-001', 'Áo thun mẫu cổ tròn', '1', '149000']] },
+    { orderNo: '5771000001', orderedAt: '2026-11-01', shippedAt: '2026-11-02', deliveredAt: '2026-11-04', stage: 'completed', lines: [['MAU-002', 'Mũ vải mẫu', '2', '88000']] },
+    { orderNo: '5771000002', orderedAt: '2026-11-03', shippedAt: null, deliveredAt: null, stage: 'cancelled', lines: [['MAU-003', 'Túi vải mẫu', '1', '65000']] },
+    { orderNo: '5771000003', orderedAt: '2026-11-05', shippedAt: '2026-11-06', deliveredAt: null, stage: 'shipped', lines: [['MAU-001', 'Áo thun mẫu cổ tròn', '1', '149000']] },
   ],
   lazada: [
-    { orderNo: '9101000001', orderedAt: '2026-11-02', shippedAt: '2026-11-03', stage: 'completed', lines: [['MAU-001', 'Áo thun mẫu cổ tròn', '1', '152000'], ['MAU-003', 'Túi vải mẫu', '1', '66000']] },
-    { orderNo: '9101000002', orderedAt: '2026-11-04', shippedAt: '2026-11-05', stage: 'returned', lines: [['MAU-002', 'Mũ vải mẫu', '1', '91000']] },
-    { orderNo: '9101000003', orderedAt: '2026-11-06', shippedAt: null, stage: 'placed', lines: [['MAU-002', 'Mũ vải mẫu', '2', '91000']] },
+    { orderNo: '9101000001', orderedAt: '2026-11-02', shippedAt: '2026-11-03', deliveredAt: '2026-11-05', stage: 'completed', lines: [['MAU-001', 'Áo thun mẫu cổ tròn', '1', '152000'], ['MAU-003', 'Túi vải mẫu', '1', '66000']] },
+    { orderNo: '9101000002', orderedAt: '2026-11-04', shippedAt: '2026-11-05', deliveredAt: '2026-11-07', stage: 'returned', lines: [['MAU-002', 'Mũ vải mẫu', '1', '91000']] },
+    { orderNo: '9101000003', orderedAt: '2026-11-06', shippedAt: null, deliveredAt: null, stage: 'placed', lines: [['MAU-002', 'Mũ vải mẫu', '2', '91000']] },
   ],
 };
 
@@ -179,6 +182,7 @@ function orderOf(r: Recorded): MarketplaceOrder {
     orderNo: r.orderNo,
     orderedAt: r.orderedAt,
     shippedAt: r.shippedAt,
+    deliveredAt: r.deliveredAt,
     stage: r.stage,
     lines: r.lines.map(([sku, itemName, quantity, unitPrice], index) => ({ lineKey: `${r.orderNo}-${index + 1}`, sku, itemName, quantity, unitPrice, amount: toMoney(money(quantity).times(unitPrice)) })),
   };
@@ -260,20 +264,20 @@ const EN_STATUS: Record<MarketplaceOrderStage, string> = { placed: 'Awaiting shi
 
 const LAYOUTS: Readonly<Record<MarketplacePlatformKey, Layout>> = {
   shopee: {
-    head: ['Mã đơn hàng', 'Ngày đặt hàng', 'Ngày gửi hàng', 'Trạng Thái Đơn Hàng', 'SKU phân loại hàng', 'Tên sản phẩm', 'Giá ưu đãi', 'Số lượng', 'Tổng giá bán (sản phẩm)'],
+    head: ['Mã đơn hàng', 'Ngày đặt hàng', 'Ngày gửi hàng', 'Trạng Thái Đơn Hàng', 'SKU phân loại hàng', 'Tên sản phẩm', 'Giá ưu đãi', 'Số lượng', 'Tổng giá bán (sản phẩm)', 'Thời gian hoàn thành đơn hàng'],
     rowPerUnit: false,
-    row: (o, l, _unit, text) => [o.orderNo, o.orderedAt, o.shippedAt ?? '', VN_STATUS[o.stage], l.sku ?? '', text(l.itemName), decimal(l.unitPrice), decimal(l.quantity), decimal(l.amount)],
+    row: (o, l, _unit, text) => [o.orderNo, o.orderedAt, o.shippedAt ?? '', VN_STATUS[o.stage], l.sku ?? '', text(l.itemName), decimal(l.unitPrice), decimal(l.quantity), decimal(l.amount), o.deliveredAt ?? ''],
   },
   tiktok_shop: {
-    head: ['Order ID', 'Order Status', 'Order Substatus', 'Seller SKU', 'Product Name', 'Quantity', 'SKU Unit Original Price', 'SKU Subtotal After Discount', 'Created Time', 'Shipped Time'],
+    head: ['Order ID', 'Order Status', 'Order Substatus', 'Seller SKU', 'Product Name', 'Quantity', 'SKU Unit Original Price', 'SKU Subtotal After Discount', 'Created Time', 'Shipped Time', 'Delivered Time'],
     rowPerUnit: false,
-    row: (o, l, _unit, text) => [o.orderNo, EN_STATUS[o.stage], EN_STATUS[o.stage], l.sku ?? '', text(l.itemName), decimal(l.quantity), decimal(l.unitPrice), decimal(l.amount), o.orderedAt, o.shippedAt ?? ''],
+    row: (o, l, _unit, text) => [o.orderNo, EN_STATUS[o.stage], EN_STATUS[o.stage], l.sku ?? '', text(l.itemName), decimal(l.quantity), decimal(l.unitPrice), decimal(l.amount), o.orderedAt, o.shippedAt ?? '', o.deliveredAt ?? ''],
   },
   lazada: {
-    head: ['orderNumber', 'orderItemId', 'status', 'createTime', 'shippedTime', 'itemName', 'sellerSku', 'unitPrice', 'paidPrice'],
+    head: ['orderNumber', 'orderItemId', 'status', 'createTime', 'shippedTime', 'itemName', 'sellerSku', 'unitPrice', 'paidPrice', 'deliveredTime'],
     rowPerUnit: true,
     // One row per unit: the unit's own item id, and its share of the line's amount (a whole number of units).
-    row: (o, l, unit, text) => [o.orderNo, `${l.lineKey}-${unit.index}`, EN_STATUS[o.stage], o.orderedAt, o.shippedAt ?? '', text(l.itemName), l.sku ?? '', decimal(l.unitPrice), decimal(unit.amount)],
+    row: (o, l, unit, text) => [o.orderNo, `${l.lineKey}-${unit.index}`, EN_STATUS[o.stage], o.orderedAt, o.shippedAt ?? '', text(l.itemName), l.sku ?? '', decimal(l.unitPrice), decimal(unit.amount), o.deliveredAt ?? ''],
   },
 };
 

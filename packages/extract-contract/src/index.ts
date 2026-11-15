@@ -396,7 +396,7 @@ export type ExtractedBankStatement = z.infer<typeof zExtractedBankStatement>;
 // Every mapping is `confirmed: false` until the golden files of real sellers (#2521) check it.
 export const MARKETPLACE_PLATFORMS = ['shopee', 'tiktok_shop', 'lazada'] as const;
 export const MARKETPLACE_ORDER_STAGES = ['placed', 'shipped', 'completed', 'cancelled', 'returned', 'unknown'] as const;
-export const MARKETPLACE_ORDER_FIELDS = ['orderNo', 'lineKey', 'orderedAt', 'shippedAt', 'status', 'returnStatus', 'sku', 'itemName', 'variation', 'quantity', 'unitPrice', 'amount'] as const;
+export const MARKETPLACE_ORDER_FIELDS = ['orderNo', 'lineKey', 'orderedAt', 'shippedAt', 'deliveredAt', 'status', 'returnStatus', 'sku', 'itemName', 'variation', 'quantity', 'unitPrice', 'amount'] as const;
 export const MARKETPLACE_SKIP_REASONS = ['no_order_no', 'bad_quantity', 'bad_amount', 'bad_date', 'bad_id', 'too_long'] as const;
 export const zExtractedMarketplaceOrders = z.strictObject({
   recognized: z.boolean(),
@@ -417,6 +417,8 @@ export const zExtractedMarketplaceOrders = z.strictObject({
         lineKey: z.string().min(1).max(120),
         orderedAt: zLocalDate.nullable(),
         shippedAt: zLocalDate.nullable(),
+        // A staged read stored before this field existed has none: it reads as null.
+        deliveredAt: zLocalDate.nullable().default(null),
         stage: z.enum(MARKETPLACE_ORDER_STAGES),
         statusLabel: z.string().max(100).nullable(),
         sku: z.string().max(100).nullable(),
