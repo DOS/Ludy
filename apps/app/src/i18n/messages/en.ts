@@ -200,6 +200,12 @@ export const en = {
     count: '{count, plural, one {# item} other {# items}}',
     due: 'Due {when}',
     open: 'Open',
+    since: {
+      title: 'Since yesterday',
+      subtitle: 'What your AI coworkers did for you over the last day. Items that need approval wait in your inbox.',
+      line: '{name} did {count, plural, one {# thing} other {# things}} for you',
+      open: 'Open',
+    },
     fallback: {
       flag: 'A warning needs your attention',
       proposal: 'A proposal is waiting for your approval',
@@ -277,6 +283,25 @@ export const en = {
       aiBadge: 'Written by {gm}',
       byVy: '{gm}, the general manager of the AI coworkers, wrote this from the figures of the list below; every number was checked against the list. You review and approve each item on its own screen.',
       byTemplate: 'An automatic summary of the figures of the list below.',
+    },
+    // "This week" below the list (#3257): the last 7 days, figures computed by the apps' own reads and Vy's sentences over them.
+    weekly: {
+      title: 'This week',
+      window: 'The last 7 days',
+      ask: 'See how this week went',
+      loading: 'Writing the status of the week',
+      aiBadge: 'Written by {gm}',
+      byVy: '{gm}, the general manager of the AI coworkers, wrote this from the figures above; every number was checked against them. Only what you can open in each app is counted.',
+      byTemplate: 'An automatic summary of the figures above. Only what you can open in each app is counted.',
+      budgetSpent: "The AI is not available now (this month's budget is spent or it is switched off), so this summary is automatic. Only what you can open in each app is counted.",
+      tiles: {
+        dealsWon: 'Deals won',
+        dealsOpen: 'Deals still open',
+        cash: 'Cash and bank deposits',
+        receivables: 'Receivables from customers',
+        payables: 'Payables to suppliers',
+        tasksLate: 'Your tasks past due',
+      },
     },
   },
   overview: {
@@ -6301,13 +6326,16 @@ export const en = {
     defaultDevice: 'Browser',
     limits: 'The extension can only do the above, in this organization, with your permissions; it cannot read the content of a meeting or any other data.',
     revokeHint: 'The access lasts 90 days. You can disconnect it any time in Settings, under extension devices.',
-    scope: { meetings: 'Create a meeting with its consent record, upload its recording (and video if you choose) to that meeting and see whether it has finished processing.' },
+    scope: {
+      meetings: 'Create a meeting with its consent record, upload its recording (and video if you choose) to that meeting and see whether it has finished processing.',
+      agenda: 'See the title, time and meeting place (Meet, Zoom or Teams) of up to 5 meetings in your calendar starting within the next 30 minutes, to suggest recording them. Needs "Let Ludy read the names and times of meetings in my calendar" turned on in Settings; it cannot see the join address, invitees or description.',
+    },
   },
   extensionDevices: {
     title: '{brand} extension devices',
     intro: 'The browsers that use the {brand} extension with your account in this organization. Disconnecting one refuses that extension from its next request.',
     none: 'No device is connected.',
-    scope: { meetings: 'Meeting recording' },
+    scope: { meetings: 'Meeting recording', agenda: 'Upcoming meeting suggestions' },
     lastUsed: 'Last used {at}',
     neverUsed: 'Never used',
     connectedAt: 'connected {at}',
@@ -6411,7 +6439,7 @@ export const en = {
     title: 'Extension devices of the members',
     intro: "The browsers that use the {brand} extension with a member's account in this organization. Disconnecting one refuses that extension from its next request, and the change is written to the audit log. Your own devices are in the card above.",
     none: "No other member's device is connected.",
-    scope: { meetings: 'Meeting recording' },
+    scope: { meetings: 'Meeting recording', agenda: 'Upcoming meeting suggestions' },
     lastUsed: 'Last used {at}',
     neverUsed: 'Never used',
     connectedAt: 'connected {at}',
@@ -6502,6 +6530,7 @@ export const en = {
       finance_payroll_flag: 'Putting each payroll anomaly in one sentence',
       finance_payroll_explain: 'Explaining a payslip from its stored components',
       today_brief: "Vy's daily brief on Home",
+      today_weekly: "Vy's \"This week\" on Home",
       ads_campaign_draft: 'Drafting the content of an ad campaign',
       finance_overview_explain: 'One sentence explaining the Accounting overview',
       finance_bank_match_explain: 'Explaining why a bank transaction may be a payroll payment',
@@ -11362,6 +11391,7 @@ export const en = {
           start: 'Start a run of Vy working for you',
         },
       },
+      since_yesterday: 'Read what the AI coworkers prepared since yesterday',
       vy_data: {
         member_data: {
           purge: "Remove a former member's Vy results and memory after 30 days (daily sweep)",
@@ -11540,6 +11570,9 @@ export const en = {
         save: 'Save the tax profile',
       },
       today: 'Read what needs you today',
+      today_weekly: {
+        figures: 'Read the figures of the last 7 days, for the "This week" card',
+      },
       today_mail: {
         get: 'Read the daily brief mail setting',
         send: 'Send the daily brief mails of an org',
@@ -11559,6 +11592,7 @@ export const en = {
         clear: 'Delete the meetings saved from your calendar',
         link: 'Link a recorded meeting to an event in your calendar',
         list: "See today's meetings in your calendar",
+        next: 'See the meetings starting soon in your calendar (the extension\'s "Starting soon" card)',
         replace: "Refresh a member's meetings saved from their calendar (system)",
         set_read_events: 'Turn reading the names and times of meetings in your calendar on or off',
         suggest: 'See the calendar event that overlaps a meeting you recorded',

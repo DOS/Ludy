@@ -6,7 +6,7 @@ import { zId } from './schemas.ts';
 
 // The scopes an extension token may hold, one per feature of the extension. @crove/kernel-runtime keeps the list the
 // runtime enforces (EXTENSION_SCOPES) and crove_kernel.extension_token's CHECK the same one; a test pins the two lists.
-export const EXTENSION_SCOPE_IDS = ['meetings'] as const;
+export const EXTENSION_SCOPE_IDS = ['meetings', 'agenda'] as const;
 export type ExtensionScopeId = (typeof EXTENSION_SCOPE_IDS)[number];
 export const zExtensionScope = z.enum(EXTENSION_SCOPE_IDS);
 
@@ -27,7 +27,8 @@ export const zExtensionAuthorize = z.strictObject({
   extensionId: zExtensionId,
   codeChallenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
   codeChallengeMethod: z.literal('S256'),
-  scopes: z.array(zExtensionScope).min(1).max(EXTENSION_SCOPE_IDS.length),
+  // The agenda scope rides with the meetings scope (B2): the token's own exchange is a meetings command, and the card exists to start a recording.
+  scopes: z.array(zExtensionScope).min(1).max(EXTENSION_SCOPE_IDS.length).refine((scopes) => !scopes.includes('agenda') || scopes.includes('meetings'), 'agenda needs meetings'),
   deviceName: z.string().trim().min(1).max(80),
 });
 

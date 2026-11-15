@@ -8,8 +8,9 @@ import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, t
 import type { McpWakeView, MeetingHookView, QuoteLinkCreated } from '@crove/kernel-contract';
 import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wake-setup.ts';
 import { makeHookSecret } from './meeting-hook-setup.ts';
-import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, PaymentReminderDraft, TodayList } from '@crove/kernel-contract';
+import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, PaymentReminderDraft, TodayList, WeeklyFigures } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
+import { weeklyAnswer } from './today-weekly.ts';
 import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
 import {
   ALT_TEXT_IMAGE_MAX_BYTES,
@@ -27,6 +28,7 @@ import {
 import { CAPABILITIES, isProvider as isSocialProvider, strictestAltTextLimit } from '@crove/mod-social/contract';
 import { channelNotAllowed, periodSummaryInput, voiceNotes, type BrandVoice, type PeriodSummaryData } from '@crove/mod-social';
 import {
+  TODAY_WEEKLY_READ,
   clientOverviews,
   createOrg,
   myOrgs,
@@ -46,7 +48,7 @@ import type { z } from 'zod';
 import type { CompanyCandidates, ConversationAutoDraft, zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zTask } from '@crove/kernel-contract';
 import type { FollowupSource, MeetingBriefSource, QuoteSuggestSource, SuggestedSlots } from '@crove/mod-crm';
 import { sql } from 'kysely';
-import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, type BriefResult } from '@crove/agent';
+import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, type BriefResult, type WeeklyFacts, type WeeklyResult } from '@crove/agent';
 import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type ConversationReader } from './conversations-ai.ts';
 import { suggestCompanies, type CompanyAi } from './contact-company-ai.ts';
 import { wordReminder, type ReminderAi } from './payment-reminder-ai.ts';
@@ -137,6 +139,8 @@ export type SocialDrafter = Pick<SocialWriter, 'draft' | 'rewrite'> &
     draftStored?: (request: Omit<DraftRequest, 'images'>, images: readonly { file: StoredImage; mime: string }[]) => Promise<DraftResult | null>;
     // Vy's daily brief on Home (#2383), through the same endpoint and the same budget meter.
     brief?: (facts: BriefFacts) => Promise<BriefResult>;
+    // Vy's "Tuần này" on Home (#3257), through the same endpoint and the same budget meter.
+    weekly?: (facts: WeeklyFacts) => Promise<WeeklyResult>;
   };
 
 // A stored file as the vision reads take it: the row's reference, hash and recorded size.
@@ -361,6 +365,8 @@ export function createRpcHandler(
   const os = implement(contract).$context<RpcContext>();
   // Vy's brief on Home has its own rate limit and one-at-a-time lock, so opening Home never makes a reply or post draft wait.
   const briefs = new DraftBudget();
+  // "Tuần này" has a rate limit of its own, apart from the brief's, so the two cards of Home never make each other wait.
+  const weeklies = new DraftBudget();
   // Its model calls have a budget of their own (a few a minute for each member and for the org, one at a time for a member), apart from the reply drafts'.
   // A summary is a long call a member waits for: one at a time for a member, a few a minute.
   const summaries = new DraftBudget({ perUserPerMinute: 4, perOrgPerMinute: 20 });
@@ -676,6 +682,8 @@ export function createRpcHandler(
     },
     today: {
       list: os.today.list.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.today', {}, { actor, orgId }))),
+      // What each AI coworker prepared over the last day: counts of the member's readable activity rows (#3256), no model.
+      sinceYesterday: os.today.sinceYesterday.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.since_yesterday', {}, { actor, orgId }))),
       // Vy's brief (#2383): written from the member's own list only (the same query, in their context), so it can say
       // nothing they could not see. No model, or the per-member AI rate limit: the plain template. The month's AI budget
       // spent: no brief, and Home shows the list alone. Nothing is stored.
@@ -687,6 +695,13 @@ export function createRpcHandler(
         inOrg(context, async (orgId, actor) => {
           const { items } = await runtime.query<TodayList>('kernel.today', {}, { actor, orgId });
           return briefAnswer(items, input.language, vietnamToday(), socialWriter?.brief, () => briefs.take(orgId, actor.userId));
+        }),
+      ),
+      // "Tuần này" (#3257): the figures of the last 7 days from the lines' reads in the member's own context, then Vy's sentences over them (numbers checked) or the template. Nothing is stored.
+      weekly: os.today.weekly.handler(({ context, input }) =>
+        inOrg(context, async (orgId, actor) => {
+          const figures = await runtime.query<WeeklyFigures>(TODAY_WEEKLY_READ, {}, { actor, orgId });
+          return weeklyAnswer(figures, input.language, socialWriter?.weekly, () => weeklies.take(orgId, actor.userId));
         }),
       ),
     },
@@ -1077,6 +1092,8 @@ export function createRpcHandler(
       // A member's own Google Calendar meetings (B1, #3165): the member's own rows, no model; see modules/meetings/src/agenda.ts.
       agenda: {
         list: os.meetings.agenda.list.handler(meetingsQuery('meetings.agenda.list')),
+        // The extension's "Sắp họp" card: the `agenda` token scope opens exactly this procedure (auth-extension.ts lists the route).
+        next: os.meetings.agenda.next.handler(meetingsQuery('meetings.agenda.next')),
         suggest: os.meetings.agenda.suggest.handler(meetingsQuery('meetings.agenda.suggest')),
         setReadEvents: os.meetings.agenda.setReadEvents.handler(meetingsCommand('meetings.agenda.set_read_events')),
         link: os.meetings.agenda.link.handler(meetingsCommand('meetings.agenda.link')),

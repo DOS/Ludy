@@ -254,7 +254,7 @@ import { zDepreciationRequest, zJournalVoucherRequest, zYearClosingRequest } fro
 import { zFixedAsset, zFixedAssetCreate, zFixedAssetEnd } from './fixed-asset.ts';
 import { zStatementsHtkkCheck, zStatementsHtkkYear } from './statements-htkk.ts';
 import { zTaxObligationMark, zTaxProfile } from './tax-calendar.ts';
-import { zTodayBrief, zTodayBriefInput, zTodayList, zTodayMailSet, zTodayMailSetting } from './today.ts';
+import { zSinceYesterday, zTodayBrief, zTodayBriefInput, zTodayList, zTodayMailSet, zTodayMailSetting, zTodayWeekly, zTodayWeeklyInput } from './today.ts';
 import { zBookEntity, zLegalEntity, zLegalEntityInput } from './legal-entity.ts';
 import { zBuiltinRoleKey, zMemberRoles, zRoleAssignInput } from './roles.ts';
 import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCalendarEventView, zCalendarRange, zCalendarSlot, zCalendarSlotsQuery, zCalendarOAuthProvider, zMyCalendar, zWorkingHours } from './calendar.ts';
@@ -403,7 +403,7 @@ import {
   zSummaryCopy,
 } from './meetings.ts';
 import { zAskAnswer, zAskEmpty, zAskInput, zAskStatus } from './meeting-ask.ts';
-import { zAgendaLink, zAgendaLinked, zAgendaList, zAgendaListInput, zAgendaReadEventsSet, zAgendaSetReadEvents, zAgendaSuggestInput, zAgendaSuggestion } from './meeting-agenda.ts';
+import { zAgendaLink, zAgendaLinked, zAgendaList, zAgendaListInput, zAgendaNext, zAgendaNextInput, zAgendaReadEventsSet, zAgendaSetReadEvents, zAgendaSuggestInput, zAgendaSuggestion } from './meeting-agenda.ts';
 import {
   zMeetingHookCleared,
   zMeetingHookNone,
@@ -454,9 +454,14 @@ export const contract = {
   // today read and ordered flags first. Every role; each line shows only what the member could open there. Reads only.
   today: {
     list: oc.output(zTodayList),
+    // What each AI coworker prepared over the last day, counts only, for the rows the member can open (#3256). Every role; no model.
+    sinceYesterday: oc.output(zSinceYesterday),
     // Vy's brief of the same list: a few checked sentences, or the plain template, or none (#2383). One model call at most, counted
     // against the AI budget; every role.
     brief: oc.input(zTodayBriefInput).output(zTodayBrief),
+    // "Tuần này" (#3257): the last 7 days in figures computed by code from the lines' reads in the member's own context, with Vy's checked sentences or the template. One model call at most, counted
+    // against the AI budget (`today.weekly`); every role; nothing is stored.
+    weekly: oc.input(zTodayWeeklyInput).output(zTodayWeekly),
     // The caller's own opt-in to the daily brief by email (#2406); every role, only their own setting.
     mail: {
       get: oc.output(zTodayMailSetting),
@@ -980,6 +985,8 @@ export const contract = {
     // a recording overlaps, `setReadEvents` the member's switch (the cache is deleted when it goes off), `link` the click that attaches a recorded meeting to its event.
     agenda: {
       list: oc.input(zAgendaListInput).output(zAgendaList),
+      // The extension's "Sắp họp" card (B2, #3166, the `agenda` token scope): the next few events, title, time and join host only.
+      next: oc.input(zAgendaNextInput).output(zAgendaNext),
       suggest: oc.input(zAgendaSuggestInput).output(zAgendaSuggestion),
       setReadEvents: oc.input(zAgendaSetReadEvents).output(zAgendaReadEventsSet),
       link: oc.input(zAgendaLink).output(zAgendaLinked),

@@ -7,7 +7,7 @@ import type { Server } from 'node:http';
 import { configureUploadTimeouts } from './upload-timeouts.ts';
 import { memberMeter } from './ai-meter.ts';
 import { summaryModelPort, type ModelPort } from './member-vy-ports.ts';
-import { AdsCampaignWriter, ConversationWriter, InboxReader, InvoiceExtractor, SchedulingReader, SocialWriter, TodayWriter, type InvoiceReader } from '@crove/agent';
+import { AdsCampaignWriter, ConversationWriter, InboxReader, InvoiceExtractor, SchedulingReader, SocialWriter, TodayWriter, WeeklyWriter, type InvoiceReader } from '@crove/agent';
 import {
   BlueskyPublisher,
   TELEGRAM_HOOK_KEY_INFO,
@@ -159,6 +159,8 @@ export interface KernelAdapters {
   conversationWriter?: Pick<ConversationWriter, 'draft'> | null;
   // Vy's daily brief on Home (#2383) through the same endpoint; null: Home shows the plain template.
   today?: Pick<TodayWriter, 'brief'> | null;
+  // Vy's "Tuần này" on Home (#3257) through the same endpoint; null: Home shows the template built from the figures.
+  weekly?: Pick<WeeklyWriter, 'weekly'> | null;
   // The AI coworker's campaign drafts for running ads (W1b, #2295) through the same endpoint; null: no draft is made and a request says so (AI_OFF).
   adsCampaignWriter?: Pick<AdsCampaignWriter, 'draft'> | null;
   // The Inbox's suggested intent and likely contacts (CV3, #2306) through the same endpoint; null: no suggestion, the inbox as it is.
@@ -574,6 +576,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
     scheduler: adapters.scheduler ?? null,
     conversationWriter: adapters.conversationWriter ?? null,
     today: adapters.today ?? null,
+    weekly: adapters.weekly ?? null,
     adsCampaignWriter: adapters.adsCampaignWriter ?? null,
     inboxReader: adapters.inboxReader ?? null,
     summaryModel: adapters.summaryModel ?? null,
@@ -692,7 +695,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           ...(resolved.broker.id !== 'none' ? { broker: resolved.broker } : {}),
           aiEnabled: resolved.ai !== null,
           aiMeter: (actor) => memberMeter(runtime, actor, { price: { inputPerMTok: config.AI_PRICE_INPUT_PER_MTOK, outputPerMTok: config.AI_PRICE_OUTPUT_PER_MTOK } }),
-          ...(resolved.writer ? { socialWriter: { ...socialDrafter(resolved.writer, config.AI_VISION === 'true' ? store : null), ...(resolved.today ? { brief: resolved.today.brief.bind(resolved.today) } : {}) } } : {}),
+          ...(resolved.writer ? { socialWriter: { ...socialDrafter(resolved.writer, config.AI_VISION === 'true' ? store : null), ...(resolved.today ? { brief: resolved.today.brief.bind(resolved.today) } : {}), ...(resolved.weekly ? { weekly: resolved.weekly.weekly.bind(resolved.weekly) } : {}) } } : {}),
           ...(resolved.scheduler ? { bookingReader: resolved.scheduler } : {}),
           ...(resolved.inboxReader ? { conversationReader: resolved.inboxReader } : {}),
           ...(resolved.summaryModel ? { summaryModel: resolved.summaryModel } : {}),
@@ -931,6 +934,7 @@ export function defaultAdapters(config: Config): KernelAdapters {
     scheduler: aiConfig ? new SchedulingReader(aiConfig) : null,
     conversationWriter: aiConfig ? new ConversationWriter(aiConfig) : null,
     today: aiConfig ? new TodayWriter(aiConfig) : null,
+    weekly: aiConfig ? new WeeklyWriter(aiConfig) : null,
     adsCampaignWriter: aiConfig ? new AdsCampaignWriter(aiConfig) : null,
     inboxReader: aiConfig ? new InboxReader(aiConfig) : null,
     summaryModel: aiConfig ? summaryModelPort(aiConfig) : null,

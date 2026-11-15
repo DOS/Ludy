@@ -198,6 +198,12 @@ export const vi = {
     count: '{count, plural, other {# mục}}',
     due: 'Hạn {when}',
     open: 'Mở',
+    since: {
+      title: 'Từ hôm qua',
+      subtitle: 'Việc các đồng nghiệp AI đã làm cho bạn trong 24 giờ qua. Việc cần duyệt chờ bạn trong hộp duyệt.',
+      line: '{name} đã làm {count, plural, other {# việc}} cho bạn',
+      open: 'Mở',
+    },
     fallback: {
       flag: 'Một cảnh báo cần bạn xem',
       proposal: 'Một đề xuất đang chờ bạn duyệt',
@@ -275,6 +281,25 @@ export const vi = {
       aiBadge: '{gm} viết',
       byVy: '{gm}, tổng quản của các đồng nghiệp AI, viết từ số liệu của danh sách bên dưới; mọi con số đã được đối chiếu với danh sách. Bạn xem và duyệt từng việc ở màn của nó.',
       byTemplate: 'Tóm tắt tự động từ số liệu của danh sách bên dưới.',
+    },
+    // "Tuần này" dưới danh sách (#3257): 7 ngày qua, số liệu do chính các ứng dụng tính và những câu của Vy viết trên đó.
+    weekly: {
+      title: 'Tuần này',
+      window: '7 ngày qua',
+      ask: 'Xem tuần này thế nào',
+      loading: 'Đang soạn tóm tắt tuần',
+      aiBadge: '{gm} viết',
+      byVy: '{gm}, tổng quản của các đồng nghiệp AI, viết từ các số liệu trên; mọi con số đã được đối chiếu với chúng. Chỉ tính những gì bạn mở được ở từng ứng dụng.',
+      byTemplate: 'Tóm tắt tự động từ các số liệu trên. Chỉ tính những gì bạn mở được ở từng ứng dụng.',
+      budgetSpent: 'AI hiện chưa dùng được (ngân sách tháng này đã hết hoặc AI đang tắt) nên đây là tóm tắt tự động. Chỉ tính những gì bạn mở được ở từng ứng dụng.',
+      tiles: {
+        dealsWon: 'Deal thắng',
+        dealsOpen: 'Deal đang mở',
+        cash: 'Tiền mặt và tiền gửi',
+        receivables: 'Phải thu của khách hàng',
+        payables: 'Phải trả người bán',
+        tasksLate: 'Việc của bạn quá hạn',
+      },
     },
   },
   overview: {
@@ -6296,13 +6321,16 @@ export const vi = {
     defaultDevice: 'Trình duyệt',
     limits: 'Tiện ích chỉ làm được những việc trên, trong tổ chức này, với quyền của bạn; không đọc được nội dung cuộc họp hay dữ liệu khác.',
     revokeHint: 'Mã có hiệu lực 90 ngày. Bạn ngắt kết nối bất cứ lúc nào ở Cài đặt, mục thiết bị tiện ích.',
-    scope: { meetings: 'Tạo cuộc họp có ghi nhận đồng ý, tải bản ghi âm (và hình nếu bạn chọn) lên cuộc họp đó và xem cuộc họp đã xử lý xong chưa.' },
+    scope: {
+      meetings: 'Tạo cuộc họp có ghi nhận đồng ý, tải bản ghi âm (và hình nếu bạn chọn) lên cuộc họp đó và xem cuộc họp đã xử lý xong chưa.',
+      agenda: 'Xem tên, giờ và nơi họp (Meet, Zoom hay Teams) của tối đa 5 cuộc họp sắp diễn ra trong 30 phút tới trong lịch của bạn, để gợi ý ghi âm. Cần bật "Cho Ludy đọc tên và giờ cuộc họp trong lịch" trong Cài đặt; không xem được địa chỉ vào họp, người được mời hay phần mô tả.',
+    },
   },
   extensionDevices: {
     title: 'Thiết bị tiện ích {brand}',
     intro: 'Các trình duyệt đang dùng tiện ích {brand} với tài khoản của bạn trong tổ chức này. Ngắt kết nối một thiết bị thì tiện ích đó bị từ chối ngay từ yêu cầu tiếp theo.',
     none: 'Chưa có thiết bị nào kết nối.',
-    scope: { meetings: 'Ghi âm cuộc họp' },
+    scope: { meetings: 'Ghi âm cuộc họp', agenda: 'Gợi ý cuộc họp sắp tới' },
     lastUsed: 'Dùng gần nhất {at}',
     neverUsed: 'Chưa dùng lần nào',
     connectedAt: 'kết nối từ {at}',
@@ -6406,7 +6434,7 @@ export const vi = {
     title: 'Thiết bị tiện ích của các thành viên',
     intro: 'Các trình duyệt đang dùng tiện ích {brand} với tài khoản của một thành viên trong tổ chức này. Ngắt kết nối một thiết bị thì tiện ích đó bị từ chối ngay từ yêu cầu tiếp theo, và thay đổi được ghi vào nhật ký kiểm toán. Thiết bị của chính bạn nằm ở thẻ phía trên.',
     none: 'Chưa có thiết bị nào của thành viên khác đang kết nối.',
-    scope: { meetings: 'Ghi âm cuộc họp' },
+    scope: { meetings: 'Ghi âm cuộc họp', agenda: 'Gợi ý cuộc họp sắp tới' },
     lastUsed: 'Dùng gần nhất {at}',
     neverUsed: 'Chưa dùng lần nào',
     connectedAt: 'kết nối từ {at}',
@@ -6499,6 +6527,7 @@ export const vi = {
       finance_payroll_flag: 'Viết một câu cho mỗi điểm bất thường của bảng lương',
       finance_payroll_explain: 'Giải thích một phiếu lương từ các khoản đã lưu',
       today_brief: 'Bản tin hằng ngày của Vy trên Tổng quan',
+      today_weekly: 'Mục "Tuần này" của Vy trên Tổng quan',
       ads_campaign_draft: 'Soạn nội dung chiến dịch quảng cáo',
       finance_overview_explain: 'Viết một câu giải thích tổng quan Kế toán',
       finance_bank_match_explain: 'Giải thích vì sao một giao dịch ngân hàng có thể là khoản trả lương',
@@ -11359,6 +11388,7 @@ export const vi = {
           start: 'Bắt đầu một lượt Vy làm việc cho bạn',
         },
       },
+      since_yesterday: 'Xem việc các đồng nghiệp AI đã chuẩn bị từ hôm qua',
       vy_data: {
         member_data: {
           purge: 'Xóa kết quả và ghi nhớ Vy của thành viên đã rời sau 30 ngày (dọn hằng ngày)',
@@ -11537,6 +11567,9 @@ export const vi = {
         save: 'Lưu thông tin thuế',
       },
       today: 'Xem việc cần bạn hôm nay',
+      today_weekly: {
+        figures: 'Xem số liệu 7 ngày qua, cho thẻ "Tuần này"',
+      },
       today_mail: {
         get: 'Xem cài đặt thư tóm tắt hằng ngày',
         send: 'Gửi thư tóm tắt hằng ngày của một tổ chức',
@@ -11556,6 +11589,7 @@ export const vi = {
         clear: 'Xóa các cuộc họp đã lưu từ lịch của bạn',
         link: 'Gắn một cuộc họp đã ghi vào sự kiện lịch của bạn',
         list: 'Xem các cuộc họp hôm nay trong lịch của bạn',
+        next: 'Xem các cuộc họp sắp diễn ra trong lịch của bạn (thẻ "Sắp họp" của tiện ích)',
         replace: 'Cập nhật các cuộc họp đã lưu từ lịch của một thành viên (hệ thống)',
         set_read_events: 'Bật hoặc tắt việc đọc tên và giờ cuộc họp trong lịch của bạn',
         suggest: 'Xem sự kiện lịch trùng giờ với một cuộc họp bạn đã ghi',

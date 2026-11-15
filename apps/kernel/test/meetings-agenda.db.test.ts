@@ -3,7 +3,7 @@
 // carries the events-read scope, off deletes the cache at once), the sweep's write through the one definer (a count, never text; nothing for a connection that is off), the cache read by its member
 // alone (an owner, an admin, another member and the system context read none), no invitee address, description or attachment anywhere, the suggestion by time overlap only (one event within 15
 // minutes), the member's own click that links a meeting to its event, and nothing that starts a recording.
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -11,7 +11,7 @@ import { z } from 'zod';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { GOOGLE_CALENDAR_EVENTS_READ_SCOPE, type AgendaList, type AgendaSuggestion } from '@crove/kernel-contract';
+import { GOOGLE_CALENDAR_EVENTS_READ_SCOPE, type AgendaList, type AgendaNext, type AgendaSuggestion } from '@crove/kernel-contract';
 import { Runtime, defineQuery } from '@crove/kernel-runtime';
 import { meetingsCommands, meetingsQueries } from '@crove/mod-meetings';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
@@ -121,6 +121,8 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
   // Each test starts without the members' connections and caches: the list and the suggestion look at all of a member's own events.
   beforeEach(async () => {
     await sqlAdmin('DELETE FROM crove_kernel.calendar_connection WHERE org_id = $1', [orgId]);
+    // The card hides an event a meeting of the member covers, so meetings of earlier tests would hide this test's events.
+    await sqlAdmin('DELETE FROM crove_meetings.meeting WHERE org_id = $1', [orgId]);
   });
 
   afterAll(async () => {
@@ -361,5 +363,138 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
     expect(await cached(c)).toEqual([]);
     expect(await call('crove_worker', 'test-worker-pw', 'system')).toBe('ok');
     expect((await cached(c)).map((r) => r.external_id)).toEqual(['hand']);
+  });
+
+  // B2 (#3166): the extension's "Sắp họp" card reads the member's next events through a token that holds the `agenda` scope.
+  describe('the next meetings for the extension (the agenda scope)', () => {
+    const ext = (who: string, tokenId: string, scopes: readonly string[]) => ({ type: 'user' as const, userId: users[who] as string, aal: 'aal1' as const, mfaAt: null, extension: { tokenId, scopes } });
+    // Inserted directly: a sign-in always asks for meetings with agenda, so these single-scope rows exist to prove what each scope alone opens.
+    async function token(who: string, scopes: string[]): Promise<string> {
+      const id = randomUUID();
+      await sqlAdmin(
+        `INSERT INTO crove_kernel.extension_token (org_id, id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by)
+         VALUES ($1, $2, $3, $4, 'Test device', $5, now(), now() + interval '30 days', $3)`,
+        [orgId, id, users[who], createHash('sha256').update(randomBytes(32)).digest(), scopes],
+      );
+      return id;
+    }
+    const next = (who: string, tokenId: string, scopes: readonly string[] = ['agenda']) => runtime.query<AgendaNext>('meetings.agenda.next', {}, { actor: ext(who, tokenId, scopes), orgId });
+
+    it('answers at most 5 events starting within 30 minutes or running now, none recorded, with title, times and join host only', async () => {
+      const c = await connection('lan');
+      await on('lan', c);
+      await sweep(c, [
+        event('later', 31),
+        event('soon', 29, 30, { joinUrl: 'https://meet.google.com/abc-defg-hij', title: 'Họp giao ban' }),
+        event('running', -20, 40, { joinUrl: 'https://us02web.zoom.us/j/12345?pwd=secret' }),
+        event('over', -90, 30),
+        event('a', 5),
+        event('b', 6),
+        event('c', 7),
+        event('d', 8),
+        event('e', 9),
+        event('recorded', 1),
+      ]);
+      const recordedRow = (await sqlAdmin<{ id: string }>("SELECT id FROM crove_meetings.calendar_agenda WHERE connection_id = $1 AND external_id = 'recorded'", [c])).rows[0]?.id as string;
+      // Linked to a meeting that ran far from every event here, so only the link (not the recording's time) hides it.
+      await exec('lan', 'meetings.agenda.link', { agendaId: recordedRow, meetingId: await meeting('lan', 600) });
+      const t = await token('lan', ['agenda']);
+      const answer = await next('lan', t);
+      expect(answer.enabled).toBe(true);
+      // Earliest first: the running one, then the soon ones; five at most, so the 29 minute one is cut by the limit and the 31 minute one by the window.
+      expect(answer.events.map((e) => e.title)).toEqual(['Họp running', 'Họp a', 'Họp b', 'Họp c', 'Họp d']);
+      // Exactly these fields: no id, no address, no invitee count.
+      expect(Object.keys(answer.events[0] ?? {}).sort()).toEqual(['endsAt', 'joinHost', 'startsAt', 'title']);
+      expect(answer.events[0]?.joinHost).toBe('us02web.zoom.us');
+      expect(JSON.stringify(answer)).not.toMatch(/secret|pwd|12345|abc-defg/);
+      // Without the others in the way the Meet event shows its host and the title as the calendar wrote it.
+      await sweep(c, [event('soon', 29, 30, { joinUrl: 'https://meet.google.com/abc-defg-hij', title: 'Họp giao ban' })]);
+      expect((await next('lan', t)).events).toEqual([expect.objectContaining({ title: 'Họp giao ban', joinHost: 'meet.google.com' })]);
+    });
+
+    it('does not offer an event the member already recorded: a meeting they started within its time hides it from the card', async () => {
+      const c = await connection('lan');
+      await on('lan', c);
+      await sweep(c, [event('recorded', 2, 30), event('open', 26, 30), event('late', 28, 30)]);
+      const t = await token('lan', ['agenda']);
+      expect((await next('lan', t)).events.map((e) => e.title)).toEqual(['Họp recorded', 'Họp open', 'Họp late']);
+      // A meeting started right at the first event's time (the extension made it when the member clicked Start).
+      await meeting('lan', 2, 30);
+      expect((await next('lan', t)).events.map((e) => e.title)).toEqual(['Họp open', 'Họp late']);
+      // Another member's recording hides nothing of this member's.
+      await meeting('nam', 26, 30);
+      expect((await next('lan', t)).events.map((e) => e.title)).toEqual(['Họp open', 'Họp late']);
+    });
+
+    it('answers a title of a hundred emoji, which is under 200 characters but over 200 UTF-16 units', async () => {
+      const c = await connection('lan');
+      await on('lan', c);
+      const emoji = '😀'.repeat(100);
+      await sweep(c, [event('emoji', 5, 30, { title: emoji })]);
+      const answer = await next('lan', await token('lan', ['agenda']));
+      expect(answer.events.map((e) => e.title)).toEqual([emoji]);
+    });
+
+    it('says the read is not switched on, and reads nothing for another member', async () => {
+      const t = await token('nam', ['agenda']);
+      expect(await next('nam', t)).toEqual({ enabled: false, events: [] });
+      const c = await connection('lan');
+      await on('lan', c);
+      await sweep(c, [event('mine', 5)]);
+      const n = await connection('nam');
+      await on('nam', n);
+      expect((await next('nam', t)).events).toEqual([]);
+      // Switched off again: the cache is gone and the answer says why.
+      await off('lan', c);
+      expect(await next('lan', await token('lan', ['agenda']))).toEqual({ enabled: false, events: [] });
+    });
+
+    it('opens to the agenda scope alone and to that query alone: a meetings token is refused it, an agenda token is refused everything else', async () => {
+      const agendaToken = await token('lan', ['agenda']);
+      const meetingsToken = await token('lan', ['meetings']);
+      const refusedWith = async (promise: Promise<unknown>) => {
+        const error = (await promise.then(() => null, (e: unknown) => e)) as { code?: string; details?: { rule?: string } } | null;
+        return error === null ? 'ok' : `${error.code} ${error.details?.rule ?? ''}`.trim();
+      };
+      expect(await refusedWith(next('lan', meetingsToken, ['meetings']))).toBe('FORBIDDEN extension_scope');
+      const as = { actor: ext('lan', agendaToken, ['agenda']), orgId };
+      const m = await meeting('lan', 1);
+      for (const attempt of [
+        () => runtime.query('meetings.agenda.list', {}, as),
+        () => runtime.query('meetings.agenda.suggest', { meetingId: m }, as),
+        () => runtime.execute('meetings.agenda.set_read_events', { connectionId: randomUUID(), enabled: true }, as),
+        () => runtime.execute('meetings.agenda.clear', { connectionId: randomUUID() }, as),
+        () => runtime.execute('meetings.agenda.link', { agendaId: randomUUID(), meetingId: m }, as),
+        () => runtime.query('meetings.meeting.list', {}, as),
+        () => runtime.execute('meetings.meeting.create', { title: 'x', consentMethod: 'told_at_start', visibility: 'attendees', language: 'vi', keepVideo: false }, as),
+      ]) {
+        expect(await refusedWith(attempt()), 'an agenda token reaches only meetings.agenda.next').toBe('FORBIDDEN extension_scope');
+      }
+      // The read leaves an audit row naming the token.
+      await next('lan', agendaToken);
+      const audit = (await sqlAdmin<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE command = 'meetings.agenda.next' AND org_id = $1", [orgId])).rows;
+      expect(audit.length).toBeGreaterThan(0);
+      expect(audit.some((r) => r.detail.extensionToken === agendaToken)).toBe(true);
+    });
+
+    it('refuses a revoked token at once, and a token of another member', async () => {
+      const t = await token('lan', ['agenda']);
+      expect((await next('lan', t)).events).toEqual([]);
+      expect(await refuses(next('nam', t))).toBe('EXTENSION_TOKEN_INVALID');
+      await sqlAdmin('UPDATE crove_kernel.extension_token SET revoked_at = now() WHERE id = $1', [t]);
+      expect(await refuses(next('lan', t))).toBe('EXTENSION_TOKEN_INVALID');
+    });
+
+    it('lets the sign-in ask for the agenda scope (with or without meetings) and for no scope the database does not know', async () => {
+      const issue = (scopes: string[]) =>
+        exec('lan', 'kernel.extension.code.issue', { codeHash: createHash('sha256').update(randomBytes(32)).digest('hex'), codeChallenge: 'A'.repeat(43), scopes, deviceName: 'Test device', extensionId: 'a'.repeat(32) });
+      // The agenda scope rides with meetings: alone it is refused (its exchange is a meetings command).
+      expect(await refuses(issue(['agenda']))).toBe('VALIDATION');
+      expect(await issue(['agenda', 'meetings'])).toMatchObject({ expiresInSeconds: 300 });
+      expect(await refuses(issue(['nope']))).toBe('VALIDATION');
+      // The database refuses an unknown scope even when the application's own check is bypassed.
+      const direct = await sqlAdmin("INSERT INTO crove_kernel.extension_token (org_id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by) VALUES ($1, $2, $3, 'x', ARRAY['nope'], now(), now() + interval '1 day', $2)", [orgId, users.lan, createHash('sha256').update(randomBytes(32)).digest()]).then(() => 'inserted', (e: { code?: string }) => e.code);
+      expect(direct).toBe('23514');
+    });
   });
 });
