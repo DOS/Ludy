@@ -4,7 +4,7 @@
 // could open, with no write; Home only merges them. This file is the one shape all of those reads import, so none
 // defines its own. Nothing here reads or writes: it is the schema and the type.
 import { z } from 'zod';
-import { zMoney } from './schemas.ts';
+import { zLocalDate, zMoney } from './schemas.ts';
 
 export const TODAY_KINDS = ['proposal', 'flag', 'message', 'deadline'] as const;
 export type TodayKind = (typeof TODAY_KINDS)[number];
@@ -123,6 +123,48 @@ export const zTodayBrief = z.object({
   final: z.boolean(),
 });
 export type TodayBrief = z.infer<typeof zTodayBrief>;
+
+// "Tuần này" on Home (Vy plan C5, slice V6, #3257): how the business did in the last 7 days, in figures computed by code from the lines' own reads in the
+// member's own context, and a few sentences by Vy over them. The window is the 7 days ending today in Vietnam (`from` to `to`, both inclusive); the money is
+// compared with the end of the day before the window (`before`). Every group is null when the member cannot open what it reads (no right, a book they may not
+// see, a module that is off, a read that would have been cut by its cap): a figure the member cannot see is never shown as 0. Nothing is stored.
+export const WEEKLY_DAYS = 7;
+// The days of the week the card shows by itself (Vietnam time, 1 = Monday): Monday to Wednesday. On the other days a member asks for it.
+export const WEEKLY_DEFAULT_WEEKDAYS: readonly number[] = [1, 2, 3];
+
+/** Whether the "Tuần này" card is shown without being asked on a Vietnam calendar day (YYYY-MM-DD): Monday to Wednesday. */
+export function weeklyShownByDefault(day: string): boolean {
+  const at = Date.parse(`${day}T00:00:00Z`);
+  if (!Number.isFinite(at)) return false;
+  const weekday = new Date(at).getUTCDay() || 7;
+  return WEEKLY_DEFAULT_WEEKDAYS.includes(weekday);
+}
+
+const zWeeklyBalance = z.strictObject({ amount: zMoney, previous: zMoney });
+export const zWeeklyFigures = z.strictObject({
+  from: zLocalDate,
+  to: zLocalDate,
+  before: zLocalDate,
+  // Deals won in the window (their number and the sum of their amounts) and deals still open now; `open` is null alone when the list was cut by its cap.
+  deals: z.strictObject({ won: z.strictObject({ count: z.number().int().nonnegative(), amount: zMoney }), open: z.number().int().nonnegative().nullable() }).nullable(),
+  // Cash (111, 112), receivables from customers (131) and payables to suppliers (331) at the end of `to`, and at the end of `before`, in the book currency.
+  money: z.strictObject({ cash: zWeeklyBalance, receivables: zWeeklyBalance, payables: zWeeklyBalance }).nullable(),
+  // The member's own open tasks that are past their due time now.
+  tasks: z.strictObject({ late: z.number().int().nonnegative() }).nullable(),
+});
+export type WeeklyFigures = z.infer<typeof zWeeklyFigures>;
+
+// What Home shows: the figures (so the card can show them as numbers beside the sentences), and the sentences by Vy or the template built from the figures alone.
+// writtenBy null with no sentences: the month's AI budget is spent (budgetSpent) or there is nothing to say (no figure at all); the figures still show. `final` as in the brief.
+export const zTodayWeeklyInput = z.object({ language: z.enum(['vi', 'en']) });
+export const zTodayWeekly = z.object({
+  figures: zWeeklyFigures,
+  writtenBy: z.enum(['vy', 'template']).nullable(),
+  sentences: z.array(z.string().max(600)).max(5),
+  budgetSpent: z.boolean(),
+  final: z.boolean(),
+});
+export type TodayWeekly = z.infer<typeof zTodayWeekly>;
 
 // The member's own opt-in to the daily brief by email (#2406): off by default, set from their own notification settings. The
 // server sends the mail only when it has SMTP; the app reads that from its config.

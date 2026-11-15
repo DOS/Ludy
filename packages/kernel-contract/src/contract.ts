@@ -254,7 +254,7 @@ import { zDepreciationRequest, zJournalVoucherRequest, zYearClosingRequest } fro
 import { zFixedAsset, zFixedAssetCreate, zFixedAssetEnd } from './fixed-asset.ts';
 import { zStatementsHtkkCheck, zStatementsHtkkYear } from './statements-htkk.ts';
 import { zTaxObligationMark, zTaxProfile } from './tax-calendar.ts';
-import { zTodayBrief, zTodayBriefInput, zTodayList, zTodayMailSet, zTodayMailSetting } from './today.ts';
+import { zTodayBrief, zTodayBriefInput, zTodayList, zTodayMailSet, zTodayMailSetting, zTodayWeekly, zTodayWeeklyInput } from './today.ts';
 import { zBookEntity, zLegalEntity, zLegalEntityInput } from './legal-entity.ts';
 import { zBuiltinRoleKey, zMemberRoles, zRoleAssignInput } from './roles.ts';
 import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCalendarEventView, zCalendarRange, zCalendarSlot, zCalendarSlotsQuery, zCalendarOAuthProvider, zMyCalendar, zWorkingHours } from './calendar.ts';
@@ -448,6 +448,9 @@ export const contract = {
     // Vy's brief of the same list: a few checked sentences, or the plain template, or none (#2383). One model call at most, counted
     // against the AI budget; every role.
     brief: oc.input(zTodayBriefInput).output(zTodayBrief),
+    // "Tuần này" (#3257): the last 7 days in figures computed by code from the lines' reads in the member's own context, with Vy's checked sentences or the template. One model call at most, counted
+    // against the AI budget (`today.weekly`); every role; nothing is stored.
+    weekly: oc.input(zTodayWeeklyInput).output(zTodayWeekly),
     // The caller's own opt-in to the daily brief by email (#2406); every role, only their own setting.
     mail: {
       get: oc.output(zTodayMailSetting),

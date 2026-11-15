@@ -30,6 +30,8 @@ export const AI_FEATURES = {
   'conversation.draft': 'conversation',
   // Vy's daily brief on Home (#2383): it spans the apps, so it counts against the kernel's own budget line.
   'today.brief': 'kernel',
+  // Vy's "Tuần này" on Home (#3257, Vy plan C5): the status of the last 7 days written from figures that code computed in the member's own context, and dropped sentence by sentence when it states a number they do not hold.
+  'today.weekly': 'kernel',
   // The AI coworker's campaign drafts for running ads (W1b, #2295): the creative part only, never money.
   'ads.campaign_draft': 'ads',
   // The Inbox's suggestions (CV3, #2306): the intent of a conversation, and which contact a customer most likely is.

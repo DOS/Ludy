@@ -278,6 +278,25 @@ export const en = {
       byVy: '{gm}, the general manager of the AI coworkers, wrote this from the figures of the list below; every number was checked against the list. You review and approve each item on its own screen.',
       byTemplate: 'An automatic summary of the figures of the list below.',
     },
+    // "This week" below the list (#3257): the last 7 days, figures computed by the apps' own reads and Vy's sentences over them.
+    weekly: {
+      title: 'This week',
+      window: 'The last 7 days',
+      ask: 'See how this week went',
+      loading: 'Writing the status of the week',
+      aiBadge: 'Written by {gm}',
+      byVy: '{gm}, the general manager of the AI coworkers, wrote this from the figures above; every number was checked against them. Only what you can open in each app is counted.',
+      byTemplate: 'An automatic summary of the figures above. Only what you can open in each app is counted.',
+      budgetSpent: "The AI is not available now (this month's budget is spent or it is switched off), so this summary is automatic. Only what you can open in each app is counted.",
+      tiles: {
+        dealsWon: 'Deals won',
+        dealsOpen: 'Deals still open',
+        cash: 'Cash and bank deposits',
+        receivables: 'Receivables from customers',
+        payables: 'Payables to suppliers',
+        tasksLate: 'Your tasks past due',
+      },
+    },
   },
   overview: {
     title: 'Overview',
@@ -6461,6 +6480,7 @@ export const en = {
       finance_payroll_flag: 'Putting each payroll anomaly in one sentence',
       finance_payroll_explain: 'Explaining a payslip from its stored components',
       today_brief: "Vy's daily brief on Home",
+      today_weekly: "Vy's \"This week\" on Home",
       ads_campaign_draft: 'Drafting the content of an ad campaign',
       finance_overview_explain: 'One sentence explaining the Accounting overview',
       finance_bank_match_explain: 'Explaining why a bank transaction may be a payroll payment',
@@ -11496,6 +11516,9 @@ export const en = {
         save: 'Save the tax profile',
       },
       today: 'Read what needs you today',
+      today_weekly: {
+        figures: 'Read the figures of the last 7 days, for the "This week" card',
+      },
       today_mail: {
         get: 'Read the daily brief mail setting',
         send: 'Send the daily brief mails of an org',
