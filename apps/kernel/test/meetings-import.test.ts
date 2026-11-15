@@ -141,7 +141,7 @@ describe('runMeetingsImport', () => {
       list: async () => [],
       prepareDownload: async (): Promise<MeetingPlatformDownload> => ({ url, headers: { authorization: 'Bearer token-123' }, format: 'audio', hosts: ['files.example.test'], hostSuffixes: ['.cdn.example.test'] }),
     });
-    const stream = (status: number, pieces: number[][], headers: Record<string, string> = {}): MeetingsImportDeps['stream'] => async () =>
+    const stream = (status: number, pieces: number[][], headers: Record<string, string> = {}): NonNullable<MeetingsImportDeps['stream']> => async () =>
       ({
         url: 'https://files.example.test/rec.m4a',
         status,
@@ -196,7 +196,7 @@ describe('runMeetingsImport', () => {
         stream: (async (_url: string, _request: unknown, options: { hostAllowed?: (host: string) => boolean }) => {
           allowed = options.hostAllowed;
           return { url: _url, status: 200, headers: {}, body: (async function* () { yield new Uint8Array([1]); })(), destroy: () => undefined } as EgressStream;
-        }) as unknown as MeetingsImportDeps['stream'],
+        }) as unknown as NonNullable<MeetingsImportDeps['stream']>,
       });
       await runMeetingsImport(deps, job(), attempt);
       expect(allowed?.('files.example.test')).toBe(true);

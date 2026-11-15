@@ -2687,7 +2687,7 @@ export function createHttpApp(deps: HttpDeps) {
           let claim: { stagingKey: string; cap: number };
           if (typeof body.importId === 'string') {
             // The worker staged the bytes; this request takes them, then seals and records them like an upload (the row is the member's own: another's is answered as absent).
-            const imported = await runtime.execute<{ stagingKey: string; meetingId: string; sizeBytes: number | string | null }>(
+            const imported = await runtime.execute<{ stagingKey: string; meetingId: string }>(
               'kernel.meeting_platform.import.claim',
               { recordingId: body.importId },
               { actor: actorOf(user), orgId },
@@ -2695,8 +2695,8 @@ export function createHttpApp(deps: HttpDeps) {
             claimedImportId = body.importId;
             stagingKeyToDelete = imported.stagingKey;
             if (imported.meetingId !== meetingId) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy bản ghi này');
-            const listed = imported.sizeBytes === null ? NaN : Number(imported.sizeBytes);
-            claim = { stagingKey: imported.stagingKey, cap: Math.min(Number.isFinite(listed) && listed > 0 ? listed : meetingMediaCap('audio'), meetingMediaCap('audio')) };
+            // The job already held the file to the same audio cap (MEETING_PLATFORM_IMPORT_MAX_BYTES); a later extraction of audio from a video can change its size, so the cap is the upload's own.
+            claim = { stagingKey: imported.stagingKey, cap: meetingMediaCap('audio') };
           } else {
             const uploaded = await runtime.execute<{ stagingKey: string; maxBytes: number; purpose?: string }>(
               'kernel.file.upload.claim',
