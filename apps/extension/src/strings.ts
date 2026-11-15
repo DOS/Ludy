@@ -118,7 +118,7 @@ export const ENGLISH: Strings = {
   signingIn: 'Opening the sign-in page...',
   signInFailed: 'Sign-in did not work. Please try again.',
   signInDenied: 'You did not allow the extension.',
-  signInDeviceNote: 'When you connect, the extension sends a device name (the browser and the operating system, for example "Chrome on Windows") so you can see and revoke this device in Ludy.',
+  signInDeviceNote: 'When you connect, the extension sends a device name (the browser and the operating system, for example "Tiện ích Ludy, Chrome trên Windows") so you can see and revoke this device in Ludy.',
   org: 'Organization',
   addOrg: 'Connect another organization',
   signOut: 'Sign out of the extension',
