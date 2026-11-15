@@ -53,6 +53,7 @@ export const meetingImportStart = defineCommand({
   // The command itself makes no call. It queues the download of a recording from the platform the member connected, which the worker makes.
   sideEffect: 'external',
   access: ROLES,
+  target: (input) => ({ type: 'kernel.meeting_platform_recording', id: input.recordingId }),
   handler: async (ctx, input) => {
     // The importer confirms what everyone was told: a person does, never an agent acting for one.
     if (ctx.actor.type !== 'user' || ctx.actor.mcp) throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới nhập được bản ghi');

@@ -7,7 +7,7 @@ import {
   MEETING_AUDIO_RETENTION_CHOICES,
   MEETING_TEXT_RETENTION_CHOICES,
   MEETING_VIDEO_RETENTION_CHOICES,
-  type ConsentMethod,
+  type LiveConsentMethod,
   type MeetingLanguage,
   type MeetingSettings,
   type MeetingSummary,
@@ -147,7 +147,7 @@ export function MeetingsPage() {
   const [language, setLanguage] = useState<MeetingLanguage>('vi');
   const [visibility, setVisibility] = useState<MeetingVisibility>('attendees');
   const [keepVideo, setKeepVideo] = useState(false);
-  const [consentMethod, setConsentMethod] = useState<ConsentMethod | ''>('');
+  const [consentMethod, setConsentMethod] = useState<LiveConsentMethod | ''>('');
   // A strict org accepts only a written method (A2, #3160): the unwritten one is not offered, and a choice made before the policy loaded is dropped.
   const consentPolicy = useConsentPolicy();
   useEffect(() => {
@@ -444,7 +444,7 @@ export function MeetingsPage() {
                 <NativeSelect
                   id="consent-method"
                   value={consentMethod}
-                  onChange={(e) => setConsentMethod(e.target.value as ConsentMethod)}
+                  onChange={(e) => setConsentMethod(e.target.value as LiveConsentMethod)}
                   required
                   disabled={meetingCreated}
                 >

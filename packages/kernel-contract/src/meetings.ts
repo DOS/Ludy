@@ -10,7 +10,8 @@ export const CONSENT_METHODS = ['told_at_start', 'in_invite', 'in_writing', 'in_
 export type ConsentMethod = (typeof CONSENT_METHODS)[number];
 // The methods only an import may use. A live recording (the app's recorder, the extension) is made while the call runs, so it never offers these: the screens and the extension filter them out.
 export const IMPORT_ONLY_CONSENT_METHODS: readonly ConsentMethod[] = ['platform_notice'];
-export const LIVE_CONSENT_METHODS: readonly ConsentMethod[] = CONSENT_METHODS.filter((m) => !IMPORT_ONLY_CONSENT_METHODS.includes(m));
+export type LiveConsentMethod = Exclude<ConsentMethod, 'platform_notice'>;
+export const LIVE_CONSENT_METHODS: readonly LiveConsentMethod[] = CONSENT_METHODS.filter((m): m is LiveConsentMethod => !IMPORT_ONLY_CONSENT_METHODS.includes(m));
 
 // Why a recording stopped without the recorder's own click (Meetings A1, #3159): a code, never text. The screens turn it into
 // plain words ("Tab họp đã đóng", "Micro bị mất"...). Same set as the CHECK on crove_meetings.meeting.recording_stop_reason.
@@ -122,7 +123,8 @@ export const zMeetingCreate = z.strictObject({
   liveNotes: z.boolean().default(false),
   // The minutes template (A4, #3162): the general summary unless the recorder picks another; the recorder can change it later (meetings.minutes.set_template).
   summaryTemplate: zMeetingSummaryTemplate.default('general'),
-  consentMethod: zConsentMethod,
+  // A live recording or an upload never claims the platform's own notice: that method belongs to meetings.import.start alone (C1, #3173).
+  consentMethod: zConsentMethod.exclude(['platform_notice']),
   // The version of the notice text the client showed (and the recorder may have copied); absent means the current one.
   consentNoticeVersion: z.string().max(20).refine((v) => KNOWN_CONSENT_NOTICE_VERSIONS.includes(v), 'Unknown notice version').optional(),
   readerUserIds: z.array(zId).optional(),

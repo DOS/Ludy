@@ -314,6 +314,23 @@ export const meetingPlatformRecordingReplace = defineCommand({
   },
 });
 
+// The sweep could not list a connection: a short code becomes its status_reason and its last listing moves to now, so the next try waits (the due list skips it for 10 minutes; a refresh brings it
+// back). expired: the provider refused the grant, so the member connects again.
+export const meetingPlatformSyncFailed = defineCommand({
+  name: 'kernel.meeting_platform.sync_failed',
+  input: z.strictObject({ connectionId: zId, code: zMeetingPlatformErrorCode, expired: z.boolean() }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'kernel.meeting_platform_connection', id: input.connectionId }),
+  handler: async (ctx, input) => {
+    requireSystem(ctx.actor);
+    await sql`SELECT crove_kernel.meeting_platform_sync_failed(${input.connectionId}::uuid, ${input.code}, ${input.expired})`.execute(ctx.trx).catch(platformError);
+    ctx.audit({ connection_id: input.connectionId, code: input.code, expired: input.expired });
+    return { connectionId: input.connectionId, code: input.code, expired: input.expired };
+  },
+});
+
 export interface MeetingPlatformImportOpen {
   orgId: string;
   recordingId: string;
@@ -484,6 +501,7 @@ export const meetingPlatformCommands = [
   meetingPlatformImportClaim,
   meetingPlatformImportClaimFailed,
   meetingPlatformRecordingReplace,
+  meetingPlatformSyncFailed,
   meetingPlatformImportStaged,
   meetingPlatformImportFailed,
   meetingPlatformSweep,

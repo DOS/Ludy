@@ -11372,6 +11372,28 @@ export const en = {
           lift: 'Allow mail to an address again',
         },
       },
+      meeting_platform: {
+        connect: 'Connect a meeting platform',
+        connections: 'View my meeting platforms',
+        credential: 'Read the sealed sign-in of a meeting platform',
+        disconnect: 'Disconnect a meeting platform',
+        import: {
+          claim: 'Take a downloaded recording from a meeting platform',
+          claim_failed: 'Record that a meeting platform recording could not be imported',
+        },
+        import_failed: 'Record that the download of a meeting platform recording failed',
+        import_open: 'View the meeting platform recordings waiting to download',
+        import_staged: 'Record that a meeting platform recording was downloaded',
+        recording: {
+          dismiss: 'Dismiss a suggested recording from a meeting platform',
+        },
+        recording_replace: 'Update the suggested recordings from a meeting platform',
+        recordings: 'View my meeting platform recordings',
+        refresh: 'Refresh the list of meeting platform recordings',
+        sweep: 'Clear expired meeting platform recordings',
+        sync_failed: 'Record that a meeting platform could not be listed',
+        sync_due: 'View the meeting platform connections due for a sync',
+      },
       member_vy: {
         memory: {
           delete: 'Delete something Vy remembers about you',
@@ -11624,6 +11646,9 @@ export const en = {
         switch: {
           set: 'Allow or stop members sending minutes to their own address',
         },
+      },
+      import: {
+        start: 'Import a recording a meeting platform finished as a meeting',
       },
       live: {
         assemble_plan: "Read the recorder's own live pieces to join them into the recording",

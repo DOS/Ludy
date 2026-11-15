@@ -11369,6 +11369,28 @@ export const vi = {
           lift: 'Bỏ chặn gửi thư đến một địa chỉ',
         },
       },
+      meeting_platform: {
+        connect: 'Kết nối nền tảng họp',
+        connections: 'Xem các nền tảng họp của tôi',
+        credential: 'Đọc thông tin đăng nhập đã niêm phong của nền tảng họp',
+        disconnect: 'Ngắt kết nối nền tảng họp',
+        import: {
+          claim: 'Nhận bản ghi đã tải về từ nền tảng họp',
+          claim_failed: 'Ghi nhận bản ghi từ nền tảng họp không nhập được',
+        },
+        import_failed: 'Ghi nhận việc tải bản ghi từ nền tảng họp thất bại',
+        import_open: 'Xem các bản ghi đang chờ tải từ nền tảng họp',
+        import_staged: 'Ghi nhận bản ghi từ nền tảng họp đã tải xong',
+        recording: {
+          dismiss: 'Bỏ qua một bản ghi gợi ý từ nền tảng họp',
+        },
+        recording_replace: 'Cập nhật các bản ghi gợi ý từ nền tảng họp',
+        recordings: 'Xem các bản ghi từ nền tảng họp của tôi',
+        refresh: 'Làm mới danh sách bản ghi từ nền tảng họp',
+        sweep: 'Dọn các bản ghi từ nền tảng họp hết hạn',
+        sync_failed: 'Ghi nhận không đọc được danh sách bản ghi của nền tảng họp',
+        sync_due: 'Xem các kết nối nền tảng họp cần đồng bộ',
+      },
       member_vy: {
         memory: {
           delete: 'Xóa một mục Vy ghi nhớ về bạn',
@@ -11621,6 +11643,9 @@ export const vi = {
         switch: {
           set: 'Cho phép hoặc dừng việc thành viên gửi biên bản tới địa chỉ riêng',
         },
+      },
+      import: {
+        start: 'Nhập bản ghi họp có sẵn từ nền tảng họp thành một cuộc họp',
       },
       live: {
         assemble_plan: 'Đọc các đoạn trực tiếp của người ghi để ghép thành bản ghi',
