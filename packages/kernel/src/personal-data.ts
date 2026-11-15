@@ -339,6 +339,15 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: "The title of an event of a member's own calendar, which may name or describe a person: a cache of the next 7 days and the last day, read by that member alone, deleted at once when they switch the read off or disconnect the calendar, a day after the event ended at the next sync (a row the member linked to a meeting stays until that meeting goes), and with the org",
   },
+  // The message of a post of approved minutes to a Slack or Teams channel waiting to be sent (meetings integrations B4, issue #3168): the title, day, summary, decisions, action items and link back, copied at
+  // the recorder's click and kept only while the post is queued. The database DELETES the row the moment the post settles, and drops a queued post, deleting it, when the meeting's title, its published summary
+  // or decisions or an action item change (which is what the erasure's redaction does), when the channel is removed or its saver stops standing (the job drops it), and with the meeting and the org. No finder
+  // reads it; a copy already sent leaves Ludy and cannot be recalled (the dialog says so).
+  'crove_meetings.chat_post_body.body': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: "The text of minutes the recorder chose to post to a channel of the org, which may name or describe a person: kept only while the post waits (a minute or so, and at most 8 hours while the worker runs), deleted when it is sent, fails, is dropped or expires, dropped by an erasure that touches the meeting's text, and deleted with the channel, the meeting and the org; a copy already sent to the channel cannot be recalled and the dialog says so.",
+  },
   'crove_meetings.transcript_segment.speaker_label': {
     kind: 'free_text',
     handling: 'erase',

@@ -8,7 +8,7 @@ import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, t
 import type { McpWakeView, MeetingHookView, QuoteLinkCreated } from '@crove/kernel-contract';
 import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wake-setup.ts';
 import { makeHookSecret } from './meeting-hook-setup.ts';
-import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, PaymentReminderDraft, TodayList, WeeklyFigures } from '@crove/kernel-contract';
+import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, PaymentReminderDraft, TodayList, WeeklyFigures } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { weeklyAnswer } from './today-weekly.ts';
 import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
@@ -53,6 +53,7 @@ import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type C
 import { suggestCompanies, type CompanyAi } from './contact-company-ai.ts';
 import { wordReminder, type ReminderAi } from './payment-reminder-ai.ts';
 import { wordFollowup, type FollowupAi } from './followup-ai.ts';
+import { minutesLink, postMinutesFromClick, saveMinutesChannel, type MinutesChatDeps } from './meeting-chat.ts';
 import { explainPayslip, flagMonth, prepareMonth, type PayrollAi, type PayrollReads } from './payroll-coworker-ai.ts';
 import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
 import { crmFollowupAi, draftCrmFollowup } from './crm-followup-ai.ts';
@@ -265,8 +266,10 @@ function discordFailure(code: string | undefined): DomainError | null {
 const PROVIDER_LABELS: Record<string, string> = { sandbox: 'test channel', facebook_page: 'Facebook Page', instagram: 'Instagram', zalo_oa: 'Zalo Official Account (article)', tiktok: 'TikTok', youtube: 'YouTube', threads: 'Threads', linkedin: 'LinkedIn', x: 'X', bluesky: 'Bluesky', google_business: 'Google Business Profile', telegram: 'Telegram', mastodon: 'Mastodon', pinterest: 'Pinterest', discord: 'Discord', wordpress: 'WordPress (blog post)', linkedin_page: 'LinkedIn Page', whatsapp: 'WhatsApp' };
 
 export interface RpcChannels {
-  // Seals tokens before kernel.channel.connect stores them; never opens one in the API.
+  // Seals tokens before kernel.channel.connect stores them; never opens one in the API (a minutes channel's address included, B4: its worker job opens it).
   broker: CredentialBroker;
+  // Tests only: the save budget of the minutes channels' addresses.
+  minutes?: Pick<MinutesChatDeps, 'saves'>;
   // The offline sandbox channel is enabled (CHANNEL_SANDBOX).
   sandbox: boolean;
   // Tests only: how the wake-up receiver's name is looked up before it is accepted (the system resolver by default; the egress guard checks every send again).
@@ -534,6 +537,11 @@ export function createRpcHandler(
   const inMeetings = async <T>(context: RpcContext, fn: (orgId: string, actor: UserActor) => Promise<T>) => {
     if (!meetings) throw new ORPCError('NOT_FOUND', { status: 404, message: 'Mô-đun Cuộc họp chưa được bật' });
     return inOrg(context, fn);
+  };
+  // The minutes channels' API half (meeting-chat.ts): the credential broker seals (never opens); the worker job kernel-meeting-chat opens and posts.
+  const minutesChat = (): MinutesChatDeps => {
+    if (!channels) throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
+    return { runtime, broker: channels.broker, publicUrl: channels.publicUrl ?? '', ...channels.minutes };
   };
   const meetingsCommand =
     (name: string) =>
@@ -982,6 +990,20 @@ export function createRpcHandler(
           const { idempotencyKey, ...rest } = input;
           return runtime.execute('meetings.followup.send', rest, { actor, orgId, idempotencyKey });
         })),
+      },
+      // Minutes to a Slack or Teams channel (B4, #3168). The API only seals the pasted address and queues the recorder's click; the worker job (kernel-meeting-chat) opens the sealed address and posts (ADR-0025).
+      chat: {
+        channels: os.meetings.chat.channels.handler(meetingsQuery('meetings.chat.channels')),
+        saveChannel: os.meetings.chat.saveChannel.handler(({ context, input }) => inMeetings(context, (orgId, actor) => saveMinutesChannel(minutesChat(), { orgId, orgSlug: context.orgSlug, actor }, input))),
+        removeChannel: os.meetings.chat.removeChannel.handler(meetingsCommand('meetings.chat.channel_remove')),
+        status: os.meetings.chat.status.handler(meetingsQuery('meetings.chat.status')),
+        preview: os.meetings.chat.preview.handler(({ context, input }) =>
+          inMeetings(context, async (orgId, actor) => {
+            const view = await runtime.query<ChatPreview>('meetings.chat.preview', input, { actor, orgId });
+            return { ...view, link: minutesLink(channels?.publicUrl ?? '', context.orgSlug, input.meetingId) };
+          }),
+        ),
+        post: os.meetings.chat.post.handler(({ context, input }) => inMeetings(context, (orgId, actor) => postMinutesFromClick(minutesChat(), { orgId, orgSlug: context.orgSlug, actor }, input))),
       },
       links: {
         add: os.meetings.links.add.handler(meetingsCommand('meetings.link.add')),

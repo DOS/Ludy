@@ -34,13 +34,10 @@ const suite = ADMIN ? describe : describe.skip;
 // crove_ads.ad_token_seal is the copy a closed ads connection keeps for at most seven days, to revoke the permissions at the platform (#2296, ADR-0025's
 // amendment of 2026-11-03): its behaviour is pinned by invariant/ads-token-seal.db.test.ts and ads-token-seal-source.test.ts, which replaced the dated
 // allowance the step before it carried.
-const SEALED_STORES = ['crove_ads.ad_token_seal.envelope', 'crove_kernel.calendar_credential.envelope', 'crove_kernel.credential.envelope', 'crove_social.chat_alert_target.envelope'];
+const SEALED_STORES = ['crove_ads.ad_token_seal.envelope', 'crove_kernel.calendar_credential.envelope', 'crove_kernel.credential.envelope', 'crove_meetings.chat_channel_target.envelope', 'crove_social.chat_alert_target.envelope'];
 // Stores that are allowed until a date, each with the issue and the reason. The test accepts the store being absent (the table lands in a later change) or
 // present, and fails on the day after `expires` (yyyy-mm-dd), so the allowance is replaced by pinned tests or removed before then. None is open.
 const SEALED_ALLOWANCES: Readonly<Record<string, { issue: string; expires: string; reason: string }>> = {
-  // The address of an org's minutes channel (a Slack or Teams webhook), sealed for the binding (org, 'meeting-chat', the channel's id). The table lands in the change that builds B4; that change names the
-  // column in SEALED_STORES and removes this line. Until then an absent table is accepted, and a present one must have no grant to any Crove role (the next test).
-  'crove_meetings.chat_channel_target.envelope': { issue: '#3168', expires: '2026-12-31', reason: 'meetings integrations B4: the sealed webhook address of a minutes channel, opened only by the worker, for a queued post' },
 };
 
 suite('channel credentials on PostgreSQL (ADR-0025)', () => {
