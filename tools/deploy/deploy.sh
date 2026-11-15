@@ -361,6 +361,7 @@ guard_run() {
 
 # docker compose for the active files in $DEPLOY_DIR. The project name comes from the compose file (`crove`) or
 # COMPOSE_PROJECT_NAME in the env file, so volumes stay the same from release to release.
+DC_PREFIX=()
 dc() {
   local args=(compose --project-directory "$DEPLOY_DIR" --env-file "$ENV_FILE" -f "$DEPLOY_DIR/docker-compose.yml")
   # The pilot's split API and worker (tools/deploy/compose.pilot.yml, #2118) right after the release's file: they extend its
@@ -372,7 +373,8 @@ dc() {
   # (crove-db:local, built from tools/wal) is on the host, never pulled: a deploy starts `db` with --no-build.
   if [ -f "$DEPLOY_DIR/compose.wal.yml" ]; then args+=(-f "$DEPLOY_DIR/compose.wal.yml"); fi
   if [ -f "$DEPLOY_DIR/compose.host.yml" ]; then args+=(-f "$DEPLOY_DIR/compose.host.yml"); fi
-  docker "${args[@]}" "$@"
+  # DC_PREFIX: a command to run docker under (the count of plain idempotency rows runs under `timeout`).
+  ${DC_PREFIX[@]+"${DC_PREFIX[@]}"} docker "${args[@]}" "$@"
 }
 
 # Image pins of a release. The images are exported too, so compose.host.yml can use ${CROVE_IMAGE} for services it
@@ -721,6 +723,8 @@ KEY_TMP='' KEY_BAK='' KEY_WRITING=0
 # cut short by a full disk), and the old file is kept in a second 0600 copy so a failed or interrupted overwrite is put
 # back. The log says only `context token key generated` or `present`. Returns 1 when the key could not be written.
 ensure_context_token_key() {
+  # Never traced: a `set -x` of a caller would print the key.
+  { set +x; } 2>/dev/null
   local key line n=0 cr='' lines bad=0
   env_key_scan
   if ((KEY_SET)); then
@@ -784,7 +788,8 @@ ensure_context_token_key() {
       err "writing the context token key into $ENV_FILE failed; the file was put back as it was"
     else
       err "writing the context token key into $ENV_FILE failed and so did putting it back: the file may be incomplete. The old file is at $KEY_BAK and the new one at $KEY_TMP (both mode 600): copy the old one over $ENV_FILE and delete both"
-      KEY_TMP='' KEY_BAK=''
+      # Kept for the operator: the cleanup must not remove them, nor name them again with no path.
+      KEY_TMP='' KEY_BAK='' KEY_WRITING=0
     fi
     return 1
   fi
@@ -798,7 +803,7 @@ ensure_context_token_key() {
   }
   log 'context token key generated'
   log "person step: copy CROVE_CONTEXT_TOKEN_KEY from $ENV_FILE on the host into the secret store (open the file in an editor; never print it into a shared log), docs/runbooks/context-token-key.md"
-  record 'context token key generated'
+  record 'context token key generated' || true
 }
 
 # count_plain_idempotency_rows: the read-only count of idempotency rows that still hold a plain SHA-256 (#1750 step 2 may not
@@ -809,6 +814,9 @@ PLAIN_IDEMPOTENCY_SQL="SELECT count(*) FROM crove_kernel.idempotency_key WHERE N
 count_plain_idempotency_rows() {
   local n='' why='' errfile
   errfile="$(mktemp "$(state_dir)/count-err.XXXXXX" 2>/dev/null)" || errfile=/dev/null
+  # A wall-clock bound besides the session's timeouts, where `timeout` exists: a stuck `docker compose exec` ends as a count that did not run.
+  DC_PREFIX=()
+  if command -v timeout >/dev/null; then DC_PREFIX=(timeout -k 5 60); fi
   if n="$(dc exec -T -e 'PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=30000 -c lock_timeout=5000' db \
     psql -X -q -t -A -v ON_ERROR_STOP=1 -U postgres -d postgres -c "$PLAIN_IDEMPOTENCY_SQL" 2>"$errfile" </dev/null)" && [[ "$n" =~ ^[0-9]+$ ]]; then
     log "plain idempotency rows: $n"
@@ -816,6 +824,7 @@ count_plain_idempotency_rows() {
     why="$(head -c 300 "$errfile" 2>/dev/null | tr '\r\n' '  ')" || why=''
     log "plain idempotency rows: unknown (the count did not run; the deploy goes on): ${why:-no answer}"
   fi
+  DC_PREFIX=()
   if [ "$errfile" != /dev/null ]; then rm -f "$errfile"; fi
   return 0
 }

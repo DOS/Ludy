@@ -755,9 +755,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       ['a value that starts with a hash (in doubt: kept)', 'CROVE_CONTEXT_TOKEN_KEY=#abc'],
       ['a key that is not 44 characters (never judged, never replaced)', 'CROVE_CONTEXT_TOKEN_KEY=short'],
       ['the colon form of a dotenv file', 'CROVE_CONTEXT_TOKEN_KEY: abc'],
-      ['a later empty line after a set one: the earlier is shadowed, so this is not set', null],
     ])('never replaces an existing key: %s', (_name, line) => {
-      if (line === null) return;
       const content = `A=1\n${line}\nB=2\n`;
       writeFileSync(`${dir}/.env`, content);
       const res = deploy('v1.0.0', 'a');
@@ -908,6 +906,8 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
         const res = deploy('v1.0.0', 'a');
         expect(res.status, res.out).toBe(1);
         expect(res.out).toContain('and so did putting it back');
+        // The cleanup does not name the copies a second time, with no path.
+        expect(res.out).not.toContain('stopped while writing');
         const [old, fresh] = [leftovers().find((f) => f.startsWith('env-old.')) ?? '', leftovers().find((f) => f.startsWith('env-key.')) ?? ''];
         expect(res.out).toContain(`${dir}/.deploy/${old}`);
         expect(res.out).toContain(`${dir}/.deploy/${fresh}`);
