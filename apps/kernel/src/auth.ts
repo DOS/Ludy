@@ -7,9 +7,9 @@ import type { Db } from '@crove/db';
 import { resolveIdentity } from '@crove/kernel';
 import { DomainError, toDomainError, type Aal, type UserActor } from '@crove/kernel-runtime';
 import type { Config } from './config.ts';
-import { createEmailAccess } from './auth-access.ts';
+import { createAccountEmailAccess, createEmailAccess } from './auth-access.ts';
 import { createLiveCheck, type LiveCheck } from './sessions.ts';
-import { isExtensionBearer, verifyExtensionBearer, type ExtensionIdentity } from './auth-extension.ts';
+import { extensionTokenAccountEmail, isExtensionBearer, verifyExtensionBearer, type ExtensionIdentity } from './auth-extension.ts';
 
 export interface AuthUser {
   userId: string;
@@ -200,12 +200,20 @@ export function createAuthenticator(
 ) {
   // Caches only the identity mapping; no authorization decision. Assurance and session come from every token.
   const cache = new Map<string, { user: Pick<AuthUser, 'userId' | 'email' | 'name'>; expires: number }>();
+  // AUTH_ALLOWED_EMAILS for the credential that carries no email (issue #3223); null while the list is unset.
+  const accountAccess = createAccountEmailAccess(config.AUTH_ALLOWED_EMAILS);
 
   return async function authenticate(header: string | undefined): Promise<AuthUser> {
     const token = header?.startsWith('Bearer ') ? header.slice(7).trim() : null;
     if (!token) throw new DomainError('UNAUTHENTICATED', 401, 'Bạn cần đăng nhập');
     // The Ludy extension's own kind of credential (issue #2582): never a JWT, never the identity cache.
     if (isExtensionBearer(token)) {
+      // With AUTH_ALLOWED_EMAILS set: the owner's email against the list, before verifyExtensionBearer, which stamps last_used_at (a refusal writes nothing).
+      // A token no row has gives no email and falls through to the 401 below, as before.
+      if (accountAccess) {
+        const email = await extensionTokenAccountEmail(db, token);
+        if (email !== null) accountAccess(email);
+      }
       const extension = await verifyExtensionBearer(db, token);
       return { userId: extension.userId, email: '', name: null, aal: 'aal1', sessionId: '', mfaAt: null, extension };
     }
