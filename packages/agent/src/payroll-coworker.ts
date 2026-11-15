@@ -90,7 +90,7 @@ export interface PayrollLineFacts {
   /** Consecutive months, this one included, in which the person had overtime pay. */
   overtimeMonthsInRow: number;
   dependentsWithoutRegistration: number;
-  checks: { minimumWageFailed: boolean; deductionCapFailed: boolean; netBelowMinimum: boolean; insuredAboveCap: boolean; cashPaymentOverLimit: boolean };
+  checks: { minimumWageFailed: boolean; deductionCapFailed: boolean; overtimeCapFailed: boolean; netBelowMinimum: boolean; insuredAboveCap: boolean; cashPaymentOverLimit: boolean };
 }
 
 /** A line as the server holds it: the person's id is only here, to map an alias back. It never goes in a prompt. */
@@ -141,6 +141,7 @@ export function pseudonymizeSheet(lines: readonly PayrollSheetLine[], options: {
       checks: {
         minimumWageFailed: line.checks.minimumWageFailed === true,
         deductionCapFailed: line.checks.deductionCapFailed === true,
+        overtimeCapFailed: line.checks.overtimeCapFailed === true,
         netBelowMinimum: line.checks.netBelowMinimum === true,
         insuredAboveCap: line.checks.insuredAboveCap === true,
         cashPaymentOverLimit: line.checks.cashPaymentOverLimit === true,
@@ -193,7 +194,7 @@ const oneLine = (text: string) => text.replace(/\s+/g, ' ').trim();
 // Flag: anomalies found by code, each put in a sentence by the model
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-export const PAYROLL_ANOMALY_KINDS = ['pay_moved', 'net_below_minimum', 'deduction_over_cap', 'dependent_unregistered', 'insured_above_cap', 'cash_payment_over_limit', 'rule_blocks'] as const;
+export const PAYROLL_ANOMALY_KINDS = ['pay_moved', 'net_below_minimum', 'deduction_over_cap', 'overtime_over_cap', 'dependent_unregistered', 'insured_above_cap', 'cash_payment_over_limit', 'rule_blocks'] as const;
 export type PayrollAnomalyKind = (typeof PAYROLL_ANOMALY_KINDS)[number];
 
 export interface PayrollAnomaly {
@@ -236,6 +237,7 @@ export function findAnomalies(sheet: PayrollSheet): PayrollAnomaly[] {
     if (line.checks.netBelowMinimum) add('net_below_minimum', who, vi ? `${who}: thực nhận ${amountOf(line.figures.net, language)}, thấp hơn mức lương tối thiểu của tháng` : `${who}: net pay ${amountOf(line.figures.net, language)}, below the month's minimum wage`);
     else if (line.checks.minimumWageFailed) add('net_below_minimum', who, vi ? `${who}: lương cơ bản ${amountOf(line.figures.base_wage, language)}, không đạt kiểm tra lương tối thiểu của tháng` : `${who}: base wage ${amountOf(line.figures.base_wage, language)} fails the month's minimum wage check`);
     if (line.checks.deductionCapFailed) add('deduction_over_cap', who, vi ? `${who}: có khoản khấu trừ vượt mức 30% lương theo quy định của Bộ luật Lao động; tổng khấu trừ tháng này ${amountOf(line.figures.deductions, language)}` : `${who}: a deduction is over the 30% cap of the Labor Code; total deductions this month ${amountOf(line.figures.deductions, language)}`);
+    if (line.checks.overtimeCapFailed) add('overtime_over_cap', who, vi ? `${who}: tổng giờ làm thêm vượt mức 40 giờ/tháng theo quy định của Bộ luật Lao động; tiền làm thêm tháng này ${amountOf(line.figures.overtime, language)}` : `${who}: total overtime hours exceed the 40 hours/month cap of the Labor Code; overtime pay this month ${amountOf(line.figures.overtime, language)}`);
     if (line.dependentsWithoutRegistration > 0) add('dependent_unregistered', who, vi ? `${who}: ${line.dependentsWithoutRegistration} người phụ thuộc chưa đăng ký` : `${who}: ${line.dependentsWithoutRegistration} dependent(s) without a registration`);
     if (line.checks.insuredAboveCap) add('insured_above_cap', who, vi ? `${who}: mức đóng bảo hiểm vượt mức trần` : `${who}: the insured wage is above the cap`);
     if (line.checks.cashPaymentOverLimit) add('cash_payment_over_limit', who, vi ? `${who}: trả tiền mặt ${amountOf(line.figures.net, language)}, từ ${amountOf(CASH_PAYMENT_LIMIT, language)} trở lên phải chuyển khoản thì chi phí lương mới được trừ khi tính thuế thu nhập doanh nghiệp` : `${who}: ${amountOf(line.figures.net, language)} paid in cash; ${amountOf(CASH_PAYMENT_LIMIT, language)} or more must be non-cash for the pay to be deductible for corporate income tax`);

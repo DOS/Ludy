@@ -18,6 +18,7 @@ import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { BankSelect } from '../components/bank-select.tsx';
+import { TimekeepingImportPanel } from '../components/hr-timekeeping-panel.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -702,6 +703,7 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
   const [shown, setShown] = useState<string | null>(null);
   const [payslip, setPayslip] = useState<string | null>(null);
   const [adjusting, setAdjusting] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [accept, setAccept] = useState(false);
   const [days, setDays] = useState('');
   const recalc = useMutation({
@@ -716,7 +718,8 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
   if (q.error) return <ErrorText>{errorMessage(q.error)}</ErrorText>;
   const s = q.data;
   const draft = s.run.status === 'draft';
-  const flagged = s.lines.some((l) => l.flags.some((x) => x === 'check_minimum_wage' || x === 'check_deduction_cap'));
+  const hasPayLines = s.lines.some((l) => l.kind === 'pay');
+  const flagged = s.lines.some((l) => l.flags.some((x) => x === 'check_minimum_wage' || x === 'check_deduction_cap' || x === 'check_overtime_cap'));
   return (
     <>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
@@ -726,12 +729,22 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
           </h2>
           <p className="text-sm text-muted-foreground">{t('sheetMeta', { employer: s.run.employerName, days: s.run.workingDays })}</p>
         </div>
-        <Button variant="ghost" onClick={onBack}>
-          {t('back')}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {draft && hasPayLines && (
+            <Button variant="outline" size="sm" onClick={() => setImporting((v) => !v)} data-testid="hr-timekeeping-toggle">
+              {t('timekeeping.toggle')}
+            </Button>
+          )}
+          <Button variant="ghost" onClick={onBack}>
+            {t('back')}
+          </Button>
+        </div>
       </div>
       {s.blocking.length > 0 && <BlockingRules rules={s.blocking} />}
       {draft && s.lines.length > 0 && <MonthCoworker runId={runId} />}
+      {draft && hasPayLines && importing && (
+        <TimekeepingImportPanel runId={runId} month={s.run.month} lines={s.lines} onImported={refresh} onClose={() => setImporting(false)} />
+      )}
       {draft && s.obstacles.includes('refused_lines') && <ErrorText>{t('refusedLines')}</ErrorText>}
       {payslip && <Payslip key={payslip} lineId={payslip} onClose={() => setPayslip(null)} />}
       {adjusting && <AdjustForm sheet={s} approvedRuns={approvedRuns} onClose={() => setAdjusting(false)} />}
@@ -788,7 +801,7 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
                   {l.kind === 'adjustment' ? <p className="text-sm">{l.note}</p> : <Breakdown line={l} money={f.money} />}
                   {l.checks.filter((c) => !c.ok).map((c) => (
                     <p key={c.id} className="mt-2 text-xs text-destructive">
-                      {t(`check.${c.id}`, { actual: f.money(c.actual, 'VND'), limit: f.money(c.limit, 'VND') })}
+                      {t(`check.${c.id}`, c.id === 'overtime_cap' ? { actual: c.actual, limit: c.limit } : { actual: f.money(c.actual, 'VND'), limit: f.money(c.limit, 'VND') })}
                     </p>
                   ))}
                   {l.refusal && <p className="mt-2 text-xs text-destructive">{l.refusal}</p>}

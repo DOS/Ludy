@@ -11,7 +11,7 @@
 // Audit facts carry ids, counts and field names, never an amount, a name or the fingerprint: audit rows reach the WORM archive, and a plain hash over a small run's inputs and figures
 // could be confirmed by guessing after the person is erased. The fingerprint lives in the run's own approval record, which the org purge deletes.
 import { createHash } from 'node:crypto';
-import { money, toMoney, calculatePayroll, listRulesUsed, PAYROLL_RULES, PayrollRefusedError, type PayrollCalculation, type PayrollEmployment, type PayrollMonthInputs, type RuleRef } from '@crove/l10n-vn';
+import { money, ruleInForce, sum, toMoney, calculatePayroll, listRulesUsed, PAYROLL_RULES, PayrollRefusedError, type PayrollCalculation, type PayrollEmployment, type PayrollMonthInputs, type RuleRef } from '@crove/l10n-vn';
 import type { MemberRole } from '@crove/db';
 import {
   HR_DEFAULT_WORKING_DAYS,
@@ -23,6 +23,7 @@ import {
   zHrPayrollInputs,
   zHrPayslipRef,
   zHrRunApprove,
+  zHrRunImportTimekeeping,
   zHrRunList,
   zHrRunOpen,
   zHrRunRecalculate,
@@ -143,6 +144,20 @@ function calculationOf(person: Person, inputs: HrPayrollInputs, month: string, w
 function figuresOf(person: Person, inputs: HrPayrollInputs, month: string, workingDays: string): LineFigures {
   try {
     const c = calculationOf(person, inputs, month, workingDays);
+    const start = monthStart(month);
+    const capRule = ruleInForce(PAYROLL_RULES, 'overtime_caps', 'default', start);
+    if (!capRule) throw new PayrollRefusedError('no_rule_in_force', `no overtime_caps rule for default in force on ${start}`);
+    const totalOt = sum(inputs.overtime.map((o) => o.hours));
+    const otCheck: HrCheck = {
+      id: 'overtime_cap',
+      ok: totalOt.lessThanOrEqualTo(capRule.value.monthlyHours),
+      actual: toMoney(totalOt),
+      limit: capRule.value.monthlyHours,
+    };
+    const checks: HrCheck[] = [...c.checks, otCheck];
+    const rulesUsed = totalOt.greaterThan(0) && !c.rulesUsed.some((r) => r.id === capRule.id)
+      ? [...c.rulesUsed, { id: capRule.id, status: capRule.status }].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+      : c.rulesUsed;
     return {
       status: 'calculated',
       gross: c.gross,
@@ -154,8 +169,8 @@ function figuresOf(person: Person, inputs: HrPayrollInputs, month: string, worki
       net: c.net,
       employer_cost: c.employerCost,
       breakdown: JSON.stringify(c.breakdown),
-      checks: JSON.stringify(c.checks),
-      rules_used: JSON.stringify(c.rulesUsed),
+      checks: JSON.stringify(checks),
+      rules_used: JSON.stringify(rulesUsed),
       refusal: null,
     };
   } catch (error) {
@@ -390,6 +405,19 @@ export const runRecalculate = defineCommand({
   },
 });
 
+const LINE_UPDATE_COLUMNS = [
+  'employment_id', 'status', 'inputs', 'gross', 'employee_insurance', 'employer_insurance', 'union_fee', 'taxable_income', 'pit', 'net', 'employer_cost', 'breakdown', 'checks', 'rules_used', 'refusal', 'updated_at',
+] as const;
+
+async function updatePayLine(ctx: CommandContext, lineId: string, employmentId: string, inputs: HrPayrollInputs, figures: LineFigures): Promise<void> {
+  await ctx.trx
+    .updateTable('crove_hr.payroll_line')
+    .set({ employment_id: employmentId, inputs: JSON.stringify(inputs), ...figures, updated_at: ctx.now })
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', lineId)
+    .execute();
+}
+
 export const lineInputsSet = defineCommand({
   name: 'hr.payroll.line.inputs.set',
   input: zHrLineInputsSet,
@@ -398,11 +426,7 @@ export const lineInputsSet = defineCommand({
   access: MANAGERS,
   permission: 'hr.payroll.run',
   target: (input: { lineId: string }) => ({ type: 'hr.payroll_line', id: input.lineId }),
-  writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_line', [
-      'employment_id', 'status', 'inputs', 'gross', 'employee_insurance', 'employer_insurance', 'union_fee', 'taxable_income', 'pit', 'net', 'employer_cost', 'breakdown', 'checks', 'rules_used', 'refusal', 'updated_at',
-    ]),
-  ],
+  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_line', [...LINE_UPDATE_COLUMNS])],
   handler: async (ctx, input): Promise<HrRunWritten> => {
     userOf(ctx.actor);
     // The run is locked before the line, as every other command does, so two requests cannot wait on each other.
@@ -422,14 +446,62 @@ export const lineInputsSet = defineCommand({
     const person = (await peopleOf(ctx, run.legal_entity_id, run.month)).find((p) => p.employeeId === line.employee_id);
     if (!person) throw new DomainError('HR_EMPLOYEE_NOT_PAID', 409, 'Nhân viên này không có lương trong tháng này');
     const f = figuresOf(person, input.inputs, run.month, run.working_days);
-    await ctx.trx
-      .updateTable('crove_hr.payroll_line')
-      .set({ employment_id: person.terms.id, inputs: JSON.stringify(input.inputs), ...f, updated_at: ctx.now })
-      .where('org_id', '=', ctx.orgId)
-      .where('id', '=', line.id)
-      .execute();
+    await updatePayLine(ctx, line.id, person.terms.id, input.inputs, f);
     ctx.audit({ runId: run.id, lineId: line.id, inputKeys: auditValue(LINE, 'inputs', Object.keys(input.inputs).length), refused: f.status === 'refused' });
     return { runId: run.id, lineId: line.id };
+  },
+});
+
+export const runImportTimekeeping = defineCommand({
+  name: 'hr.payroll.run.import_timekeeping',
+  input: zHrRunImportTimekeeping,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MANAGERS,
+  permission: 'hr.payroll.run',
+  target: (input: { runId: string }) => ({ type: 'hr.payroll_run', id: input.runId }),
+  writes: [
+    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_line', [...LINE_UPDATE_COLUMNS]),
+    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_run', ['updated_at']),
+  ],
+  handler: async (ctx, input): Promise<HrRunWritten> => {
+    userOf(ctx.actor);
+    const run = await loadRun(ctx, input.runId);
+    if (run.status !== 'draft') throw notDraft();
+    const lineIds = input.rows.map((r) => r.lineId);
+    const locked = await ctx.trx
+      .selectFrom('crove_hr.payroll_line')
+      .select(['id', 'employee_id', 'kind', 'inputs'])
+      .where('org_id', '=', ctx.orgId)
+      .where('run_id', '=', run.id)
+      .where('id', 'in', lineIds)
+      .orderBy('id')
+      .forUpdate()
+      .execute();
+    const byLineId = new Map(locked.map((l) => [l.id, l]));
+    const people = new Map((await peopleOf(ctx, run.legal_entity_id, run.month)).map((p) => [p.employeeId, p]));
+    const updates = input.rows.map((row) => {
+      const line = byLineId.get(row.lineId);
+      if (!line) throw lineNotFound();
+      if (line.kind !== 'pay') throw new DomainError('HR_LINE_NOT_PAY', 422, 'Dòng điều chỉnh không có số liệu nhập');
+      const person = people.get(line.employee_id);
+      if (!person) throw new DomainError('HR_EMPLOYEE_NOT_PAID', 409, 'Nhân viên này không có lương trong tháng này');
+      const existing = parseInputs(line.inputs);
+      const merged: HrPayrollInputs = {
+        ...existing,
+        unpaidLeaveDays: row.unpaidLeaveDays,
+        daysNotEmployed: row.daysNotEmployed,
+        nightHours: row.nightHours,
+        overtime: row.overtime,
+      };
+      return { lineId: line.id, employmentId: person.terms.id, inputs: merged, figures: figuresOf(person, merged, run.month, run.working_days) };
+    });
+    for (const u of updates) {
+      await updatePayLine(ctx, u.lineId, u.employmentId, u.inputs, u.figures);
+    }
+    await ctx.trx.updateTable('crove_hr.payroll_run').set({ updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', run.id).execute();
+    ctx.audit({ updatedLines: input.rows.length });
+    return { runId: run.id, lines: input.rows.length };
   },
 });
 
@@ -660,7 +732,7 @@ export const runApprove = defineCommand({
     if (fingerprint !== input.fingerprint) throw new DomainError('HR_RUN_CHANGED', 409, 'Số liệu đã thay đổi từ lúc bạn xem bảng lương; hãy xem lại rồi duyệt');
     const flagged = failedChecks(lines);
     if (flagged > 0 && !input.acceptFlags) {
-      throw new DomainError('HR_FLAGS_NOT_ACCEPTED', 422, `${flagged} dòng có cảnh báo (lương tối thiểu hoặc mức khấu trừ); hãy xem và xác nhận đã xem`, { flagged });
+      throw new DomainError('HR_FLAGS_NOT_ACCEPTED', 422, `${flagged} dòng có cảnh báo (lương tối thiểu, mức khấu trừ hoặc giới hạn làm thêm giờ); hãy xem và xác nhận đã xem`, { flagged });
     }
     const totals = totalsOf(lines);
     await ctx.trx
@@ -775,6 +847,7 @@ export const runSheet = defineQuery({
       if (l.status === 'refused') flags.push('refused');
       if (checks.some((c) => c.id === 'minimum_wage' && !c.ok)) flags.push('check_minimum_wage');
       if (checks.some((c) => c.id === 'deduction_cap' && !c.ok)) flags.push('check_deduction_cap');
+      if (checks.some((c) => c.id === 'overtime_cap' && !c.ok)) flags.push('check_overtime_cap');
       // The net pay under the month's minimum wage is flagged too: a deduction or unpaid days can take it there even when the base wage is above it.
       const minimum = checks.find((c) => c.id === 'minimum_wage');
       if (minimum && l.net !== null && money(l.net).lessThan(money(minimum.limit))) flags.push('net_below_minimum');
@@ -862,5 +935,5 @@ export const linePayslip = defineQuery({
   },
 });
 
-export const hrPayrollCommands = [runOpen, runRecalculate, lineInputsSet, lineAdjust, runApprove];
+export const hrPayrollCommands = [runOpen, runRecalculate, lineInputsSet, runImportTimekeeping, lineAdjust, runApprove];
 export const hrPayrollQueries = [runList, runSheet, linePayslip];
