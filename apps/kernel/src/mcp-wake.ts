@@ -48,6 +48,33 @@ export function wakeSignature(secret: string, timestamp: string, text: string): 
   return `v1=${createHmac('sha256', secret).update(`${timestamp}.${text}`).digest('hex')}`;
 }
 
+// One signed request to a receiver, shared by every webhook of Ludy (the wake-up of an MCP grant here, a member's minutes webhook in meeting-hook.ts): the guard's https-only fetch with one resolution per
+// attempt, the headers of ADR-0051 decision 4, each secret signing the timestamp, a dot and the exact bytes of the body, and the receiver's answer read to a byte limit and never looked at. It answers the HTTP
+// status; a name the guard refuses, one that does not resolve, a timeout or a dropped connection throws. This file is the only one that signs.
+export interface SignedPost {
+  url: string;
+  eventId: string;
+  // The exact bytes of the body, which is what the signature covers.
+  message: string;
+  // The secrets in the clear, newest first; more than one while a rotation overlaps.
+  secrets: readonly string[];
+}
+export async function postSigned(deps: { now?: () => number; egress?: Partial<EgressOptions> }, post: SignedPost): Promise<number> {
+  const timestamp = String(Math.floor((deps.now ? deps.now() : Date.now()) / 1000));
+  const send = egressFetch({ timeoutMs: ATTEMPT_MS, maxBytes: MAX_ANSWER, overLimit: 'truncate', httpsOnly: true, userAgent: 'Ludy-Webhook/1', ...deps.egress });
+  const answer = await send(post.url, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'Ludy-Event-Id': post.eventId,
+      'Ludy-Timestamp': timestamp,
+      'Ludy-Signature': post.secrets.map((s) => wakeSignature(s, timestamp, post.message)).join(','),
+    },
+    body: post.message,
+  });
+  return answer.status;
+}
+
 // One attempt for one delivery. Throws, so the queue retries, only when the attempt failed and tries remain; the last failure is recorded as final and returned.
 export async function runWakeDelivery(deps: WakeDeps, job: WakeJob, attempt: { retryCount: number; retryLimit: number }): Promise<WakeResult> {
   const ctx = { actor: ACTOR, orgId: job.orgId };
@@ -68,19 +95,7 @@ export async function runWakeDelivery(deps: WakeDeps, job: WakeJob, attempt: { r
     // The body is checked once more as it is sent: what the receiver gets is what the builder accepts.
     const { body: stored } = delivery;
     const text = wakeBody(stored);
-    const timestamp = String(Math.floor((deps.now ? deps.now() : Date.now()) / 1000));
-    const send = egressFetch({ timeoutMs: ATTEMPT_MS, maxBytes: MAX_ANSWER, overLimit: 'truncate', httpsOnly: true, userAgent: 'Ludy-Webhook/1', ...deps.egress });
-    const answer = await send(target.url, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'Ludy-Event-Id': job.id,
-        'Ludy-Timestamp': timestamp,
-        'Ludy-Signature': secrets.map((s) => wakeSignature(s, timestamp, text)).join(','),
-      },
-      body: text,
-    });
-    status = answer.status;
+    status = await postSigned(deps, { url: target.url, eventId: job.id, message: text, secrets });
   } catch (error) {
     // A key that no longer opens, a stored body that no longer fits, a name the guard refuses, one that does not resolve, a timeout, a dropped connection: a failed attempt, recorded
     // like any other, so the delivery counts it, is never handed over again for want of an attempt, and an owner sees the wake-up failing.
