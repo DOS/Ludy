@@ -1080,6 +1080,7 @@ export const vi = {
     halfReversedRow: 'Đảo dở: còn {standing} tháng chưa đảo (đã đảo {reversed})',
     accrualsTitle: 'Trích trước phí sàn chưa có hóa đơn (cuối tháng)',
     accrualsHint: 'Phí sàn đã giữ lại khi sàn trả (nợ TK 331) mà hóa đơn chưa về: ghi chi phí Nợ 6421 / Có 335, ước tính theo sổ cái lúc đề xuất. Bút toán tự đảo vào ngày 1 tháng sau. Người duyệt đọc đủ các dòng.',
+    accrualMonth: 'Tháng trích trước',
     accrualAmount: 'Số trích trước',
     accrue: 'Lập đề xuất trích trước',
     accrualReversalsTitle: 'Đảo khoản trích trước phí sàn',

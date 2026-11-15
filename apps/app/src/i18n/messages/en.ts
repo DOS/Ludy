@@ -1082,6 +1082,7 @@ export const en = {
     halfReversedRow: 'Half reversed: {standing} months still stand ({reversed} reversed)',
     accrualsTitle: 'Accrue platform fees without an invoice (month end)',
     accrualsHint: 'Fees the platform kept at a payout (a debit on 331) whose invoice has not come: expense Dr 6421 / Cr 335, estimated from the ledger when you ask. The entry is reversed on the first day of the next month. The approver reads every line.',
+    accrualMonth: 'Month accrued',
     accrualAmount: 'Amount to accrue',
     accrue: 'Ask for the accrual',
     accrualReversalsTitle: 'Reverse the platform fee accrual',

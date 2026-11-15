@@ -261,7 +261,7 @@ export function MarketplaceActions({ legalEntityId, ready }: { legalEntityId: st
         <div data-testid="marketplace-actions-accrual-reversals">
           <h3 className="mb-1 text-sm font-medium">{t('accrualReversalsTitle')}</h3>
           <p className="mb-2 text-sm text-subtle-foreground">{t('accrualReversalsHint')}</p>
-          <DataTable head={[t('platform'), t('month'), t('accrualAmount'), t('reverseOn'), '']} numeric={[2]}>
+          <DataTable head={[t('platform'), t('accrualMonth'), t('accrualAmount'), t('reverseOn'), '']} numeric={[2]}>
             {data.accrualReversals.map((r) => (
               <AccrualReversalRow key={r.entryId} r={r} open={open} />
             ))}
@@ -272,7 +272,7 @@ export function MarketplaceActions({ legalEntityId, ready }: { legalEntityId: st
         <div data-testid="marketplace-actions-accruals">
           <h3 className="mb-1 text-sm font-medium">{t('accrualsTitle')}</h3>
           <p className="mb-2 text-sm text-subtle-foreground">{t('accrualsHint')}</p>
-          <DataTable head={[t('platform'), t('month'), t('accrualAmount'), '']} numeric={[2]}>
+          <DataTable head={[t('platform'), t('accrualMonth'), t('accrualAmount'), '']} numeric={[2]}>
             {data.accruals.map((a) => (
               <AccrualRow key={`${a.legalEntityId}:${a.platform}:${a.month}`} a={a} open={open} />
             ))}

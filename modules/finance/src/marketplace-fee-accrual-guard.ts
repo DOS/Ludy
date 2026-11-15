@@ -44,6 +44,9 @@ export async function feeAccrualsOf(ctx: Ctx, legalEntityId: string, platform: s
     .where('e.source_type', '=', 'finance.journal_voucher')
     .where('e.reverses_entry_id', 'is', null)
     .where(sql<boolean>`pg_catalog.strpos(e.description, ${prefix}) > 0`)
+    // A tag typed on any other voucher is not an accrual: it must credit the accrued expense account (335) and debit an expense account of class 6.
+    .where(sql<boolean>`EXISTS (SELECT 1 FROM crove_finance.journal_line c WHERE c.org_id = e.org_id AND c.entry_id = e.id AND c.account_code LIKE '335%' AND c.credit > 0)`)
+    .where(sql<boolean>`EXISTS (SELECT 1 FROM crove_finance.journal_line d WHERE d.org_id = e.org_id AND d.entry_id = e.id AND d.account_code LIKE '64%' AND d.debit > 0)`)
     .execute();
   const standing: StandingFeeAccrual[] = [];
   const everMonths = new Set<string>();

@@ -346,6 +346,20 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     expect(after.accruals).toEqual([]);
   });
 
+  it('does not take a tagged voucher that is not an accrual for the platform\'s standing accrual', async () => {
+    const o = await companyWithFees();
+    today.value = '2026-10-31';
+    const [offer] = (await worklist(o)).accruals;
+    // The tag typed on an unrelated voucher (Dr 1111 / Cr 511) changes nothing: it blocks no accrual and is not offered for reversal.
+    const forged = await askAccrual(o, { ...(offer as NonNullable<typeof offer>), expenseAccount: '1111', accruedAccount: '511' });
+    await approve(o, forged.proposalId);
+    today.value = '2026-11-02';
+    expect((await worklist(o)).accrualReversals).toEqual([]);
+    today.value = '2026-10-31';
+    const real = await askAccrual(o, offer as NonNullable<typeof offer>);
+    expect(real.proposalId).toBeTruthy();
+  });
+
   it('offers a household no accrual, and no accrual of a platform whose 331 holds no debit', async () => {
     const { o } = await posted();
     today.value = '2026-10-31';

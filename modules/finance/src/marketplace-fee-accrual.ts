@@ -16,6 +16,7 @@ import type { MarketplacePostingMap } from './marketplace-posting-map.ts';
 import { feeAccrualDescription, feeAccrualsOf, pendingFeeAccrualProposal } from './marketplace-fee-accrual-guard.ts';
 import { lastDayOf } from './marketplace-settlement-months.ts';
 import { booksOn } from './payroll-posting.ts';
+import { addDays } from './domain/payment-reminder.ts';
 import { periodLockedThrough } from './period-lock.ts';
 
 export interface FeeAccrualOffer {
@@ -77,11 +78,14 @@ export async function feeAccrualOffers(
     // A household keeps no accrual.
     if (link.kind === 'household') continue;
     const { standing, everMonths } = await feeAccrualsOf(ctx, link.legal_entity_id, link.platform);
+    const lockedThrough = await periodLockedThrough(ctx, link.legal_entity_id);
     if (standing.length > 0) {
       // A standing accrual is reversed from the first day of the month after it; nothing new is offered before.
       for (const s of standing) {
-        const reverseOn = `${nextMonth(s.month)}-01`;
-        if (today < reverseOn) continue;
+        const firstDay = `${nextMonth(s.month)}-01`;
+        if (today < firstDay) continue;
+        // A locked period refuses an entry dated inside it: the reversal is dated the day after the lock when that is later.
+        const reverseOn = lockedThrough && lockedThrough >= firstDay ? addDays(lockedThrough, 1) : firstDay;
         const lines = await ctx.trx
           .selectFrom('crove_finance.journal_line')
           .select((eb) => eb.fn.sum<string>('credit').as('credit'))
@@ -102,7 +106,6 @@ export async function feeAccrualOffers(
       continue;
     }
     if (everMonths.has(month)) continue;
-    const lockedThrough = await periodLockedThrough(ctx, link.legal_entity_id);
     if (lockedThrough && date <= lockedThrough) continue;
     const regime = (await booksOn(ctx, link.legal_entity_id, date)).regime;
     const map = Object.hasOwn(maps, regime) ? maps[regime] : undefined;
