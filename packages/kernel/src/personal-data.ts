@@ -705,7 +705,13 @@ export function heldFilesReason(until: Date | null): string {
 export const ACTIVITY_REDACT_MIN_DIGITS = 10;
 // What a quoted value becomes in free text the erasure changes, as crove_kernel.personal_data_redact_activity writes it.
 export const REDACTED_MARK = '[đã xóa]';
-const SHORT_NUMBER_COLUMNS = new Set(['crove_kernel.activity.summary', 'crove_kernel.task.title', 'crove_kernel.task.description']);
+const SHORT_NUMBER_COLUMNS = new Set([
+  'crove_kernel.activity.summary',
+  'crove_kernel.task.title',
+  'crove_kernel.task.description',
+  'crove_projects.project.name',
+  'crove_projects.project.description',
+]);
 // The meeting text columns the redaction of crove_meetings.personal_erase would change, left as they are for a short number (#3064).
 const SHORT_NUMBER_MEETING_COLUMNS = new Set([
   'crove_meetings.meeting.title',
@@ -1178,7 +1184,14 @@ export const personalDataErase = defineCommand({
       const projectDescription = freeTextMatch(probe, sql.ref('p.description'));
       const { rows: projects } = await sql<{ name: boolean; description: boolean }>`
         UPDATE crove_projects.project p
-           SET name = CASE WHEN ${projectName} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('p.name'), REDACTED_MARK)}, ${PROJECT_NAME_MAX}::int) ELSE p.name END,
+           SET name = CASE
+                        WHEN ${projectName}
+                          THEN COALESCE(
+                            NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('p.name'), REDACTED_MARK)}, ${PROJECT_NAME_MAX}::int)), ''),
+                            ${REDACTED_MARK}
+                          )
+                        ELSE p.name
+                      END,
                description = CASE WHEN ${projectDescription} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('p.description'), REDACTED_MARK)}, ${PROJECT_DESCRIPTION_MAX}::int)
                                   ELSE p.description END,
                updated_at = ${ctx.now}

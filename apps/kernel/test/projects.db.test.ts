@@ -456,12 +456,20 @@ suite('projects module on PostgreSQL (#2591)', () => {
     });
     // Seed tasks with explicit entity tags directly at insert (legal_entity_id is immutable on UPDATE), then attach to project.
     let defaultTaskId = '';
+    let unattachedHiddenTaskId = '';
     let branchTaskId = '';
     await withAdmin(async (c) => {
       defaultTaskId = (
         await c.query<{ id: string }>(
           `INSERT INTO crove_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
            VALUES ($1, 'Bút toán trụ sở chính', 'human', 'user', $2) RETURNING id`,
+          [org.orgId, defaultEntityId],
+        )
+      ).rows[0]?.id as string;
+      unattachedHiddenTaskId = (
+        await c.query<{ id: string }>(
+          `INSERT INTO crove_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
+           VALUES ($1, 'Bút toán trụ sở chưa gắn', 'human', 'user', $2) RETURNING id`,
           [org.orgId, defaultEntityId],
         )
       ).rows[0]?.id as string;
@@ -492,8 +500,11 @@ suite('projects module on PostgreSQL (#2591)', () => {
     expect(scopedBoard.totalVisible).toBe(2);
     expect(scopedBoard.hiddenByEntityCount).toBe(1);
 
-    // Scoped member cannot unlink the hidden task.
+    // Scoped member gets identical TASK_NOT_FOUND whether the hidden task is linked to the project or not.
     await expect(exec(branchAccountant.userId, org.orgId, 'projects.task.remove', { projectId, taskId: defaultTaskId })).rejects.toMatchObject({
+      code: 'TASK_NOT_FOUND',
+    });
+    await expect(exec(branchAccountant.userId, org.orgId, 'projects.task.remove', { projectId, taskId: unattachedHiddenTaskId })).rejects.toMatchObject({
       code: 'TASK_NOT_FOUND',
     });
   });
@@ -546,6 +557,39 @@ suite('projects module on PostgreSQL (#2591)', () => {
 
     const exportView = await query<OrgExportView>(owner.userId, org.orgId, 'kernel.org.export.get');
     expect(exportView.export?.tables.find((t) => t.table === 'projects.project')?.rows).toBe(1);
+
+    // PDPL erase on a 200-char project name whose redaction expansion truncates right after whitespace must btrim cleanly (#2591 review).
+    const shortEmail = 'a@b.com';
+    const edgeName = `${shortEmail} ${'x'.repeat(200 - shortEmail.length - 3)} y`;
+    expect(edgeName).toHaveLength(200);
+    const { projectId: edgeProjectId } = await exec<{ projectId: string }>(owner.userId, org.orgId, 'projects.project.create', {
+      name: edgeName,
+    });
+    const { positionId: archivedSeatId } = await rt.execute<{ positionId: string }>(
+      'kernel.position.create',
+      { title: 'Vị trí cũ', module: 'projects', roleKey: 'project_lead' },
+      { actor: asMfa(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() },
+    );
+    await exec(owner.userId, org.orgId, 'projects.task.create', {
+      projectId: edgeProjectId,
+      title: 'Việc gắn vị trí sắp lưu trữ',
+      assigneePositionId: archivedSeatId,
+    });
+    await rt.execute(
+      'kernel.position.update',
+      { id: archivedSeatId, status: 'archived' },
+      { actor: asMfa(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() },
+    );
+    await rt.execute<PersonalDataErasure>(
+      'kernel.personal_data.erase',
+      { value: shortEmail },
+      { actor: asMfa(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() },
+    );
+    const edgeBoard = await query<ProjectBoard>(owner.userId, org.orgId, 'projects.board', { projectId: edgeProjectId });
+    expect(edgeBoard.project.name).toContain('[đã xóa]');
+    expect(edgeBoard.project.name.length).toBeLessThanOrEqual(200);
+    expect(edgeBoard.project.name).toBe(edgeBoard.project.name.trim());
+    expect(edgeBoard.seats.find((s) => s.id === archivedSeatId)).toMatchObject({ id: archivedSeatId, status: 'archived', title: 'Vị trí cũ' });
 
     // Offboard and backdate audit events so org_purge closes & purges the org, deleting projects before tasks.
     await rt.execute('kernel.org.offboard', { confirmSlug: org.slug }, { actor: asMfa(owner.userId), orgId: org.orgId });

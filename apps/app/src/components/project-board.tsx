@@ -175,11 +175,12 @@ function QuickAddTask({
       <div className="flex flex-wrap items-center justify-between gap-1.5">
         <button
           type="button"
+          aria-expanded={showMore}
           onClick={() => setShowMore((v) => !v)}
           className="inline-flex min-h-8 items-center gap-1 rounded px-1.5 text-xs text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
           <ProjectIcon name="filters" className="size-3.5" />
-          <span>{showMore ? t('board.quickAddCancel') : t('board.quickAddDue')}</span>
+          <span>{showMore ? t('board.quickAddHideOptions') : t('board.quickAddDue')}</span>
         </button>
         <div className="flex items-center gap-1.5">
           <Button type="button" size="sm" variant="ghost" onClick={reset}>

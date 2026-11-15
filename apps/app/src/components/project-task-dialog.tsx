@@ -325,12 +325,16 @@ export function EditProjectTaskDialog({
   const titleField = fieldControl(`edit-project-task-${task.id}`, { error: titleError });
   const activeSeats = seats.filter((s) => s.status !== 'archived' || s.id === task.assigneePositionId);
 
-  const submit = (e: FormEvent) => {
+  const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (task.checkedOut) return;
     const nextTitle = title.trim();
     if (!nextTitle) {
       setTitleError(true);
+      return;
+    }
+    if (!e.currentTarget.checkValidity()) {
+      e.currentTarget.reportValidity();
       return;
     }
     const nextDesc = description.trim() ? description.trim() : null;

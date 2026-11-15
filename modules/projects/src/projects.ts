@@ -510,6 +510,14 @@ export const projectTaskRemove = defineCommand({
     const row = await loadProject(ctx.trx, ctx.orgId, input.projectId, true);
     assertNotArchived(row);
 
+    const visibleTask = await ctx.trx
+      .selectFrom('crove_kernel.task')
+      .select('id')
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.taskId)
+      .executeTakeFirst();
+    if (!visibleTask) throw taskNotFound();
+
     const existing = await ctx.trx
       .selectFrom('crove_projects.project_task')
       .select('id')
@@ -520,14 +528,6 @@ export const projectTaskRemove = defineCommand({
 
     let removed = false;
     if (existing) {
-      const visibleTask = await ctx.trx
-        .selectFrom('crove_kernel.task')
-        .select('id')
-        .where('org_id', '=', ctx.orgId)
-        .where('id', '=', input.taskId)
-        .executeTakeFirst();
-      if (!visibleTask) throw taskNotFound();
-
       await ctx.trx
         .deleteFrom('crove_projects.project_task')
         .where('org_id', '=', ctx.orgId)
@@ -716,11 +716,22 @@ export const projectBoard = defineQuery({
       .execute();
     const onProjectIds = new Set(projectMemberRows.map((m) => m.user_id));
 
+    const { rows: usedPositionRows } = await sql<{ id: string }>`
+      SELECT DISTINCT t.assignee_position_id AS id
+        FROM crove_projects.project_task pt
+        JOIN crove_kernel.task t ON t.org_id = pt.org_id AND t.id = pt.task_id
+       WHERE pt.org_id = ${ctx.orgId}::uuid
+         AND pt.project_id = ${row.id}::uuid
+         AND t.assignee_position_id IS NOT NULL`.execute(ctx.trx);
+    const usedPositionIds = usedPositionRows.map((p) => p.id);
+
     const positionRows = await ctx.trx
       .selectFrom('crove_kernel.position')
       .select(['id', 'title', 'status', 'holder_user_id', 'holder_agent_id'])
       .where('org_id', '=', ctx.orgId)
-      .where('status', '<>', 'archived')
+      .where((eb) =>
+        usedPositionIds.length > 0 ? eb.or([eb('status', '<>', 'archived'), eb('id', 'in', usedPositionIds)]) : eb('status', '<>', 'archived'),
+      )
       .orderBy('title', 'asc')
       .orderBy('id', 'asc')
       .execute();
@@ -752,7 +763,7 @@ export const projectBoard = defineQuery({
       };
     });
 
-    const viewerHasSeat = positionRows.some((p) => p.holder_user_id === userId);
+    const viewerHasSeat = positionRows.some((p) => p.status !== 'archived' && p.holder_user_id === userId);
     const seats: ProjectSeat[] = positionRows.map((p) => {
       let holder: ProjectSeatHolder | null = null;
       if (p.holder_user_id !== null) {

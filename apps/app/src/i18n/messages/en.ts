@@ -7016,6 +7016,7 @@ export const en = {
       quickAddAssignee: 'Assign to',
       quickAddSubmit: 'Add',
       quickAddCancel: 'Cancel',
+      quickAddHideOptions: 'Hide options',
     },
     task: {
       openDetail: 'Open task detail',

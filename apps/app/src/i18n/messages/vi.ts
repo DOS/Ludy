@@ -7013,6 +7013,7 @@ export const vi = {
       quickAddAssignee: 'Giao cho',
       quickAddSubmit: 'Thêm',
       quickAddCancel: 'Hủy',
+      quickAddHideOptions: 'Ẩn tùy chọn',
     },
     task: {
       openDetail: 'Mở chi tiết việc',

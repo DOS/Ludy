@@ -243,7 +243,11 @@ export function ProjectDetailPage() {
     ...(includeCancelled ? { includeCancelled: true } : {}),
   };
   const boardQueryOptions = orpc.projects.board.queryOptions({ input: boardInput });
-  const boardQuery = useQuery(boardQueryOptions);
+  const boardQuery = useQuery({
+    ...boardQueryOptions,
+    // Task checkout releases are not pushed over SSE yet; poll only while an agent holds a lease.
+    refetchInterval: (query) => (query.state.data?.tasks.some((item) => item.checkedOut) ? 5_000 : false),
+  });
 
   const setTaskStatus = useMutation({
     mutationFn: (vars: { id: string; status: TaskStatus }) =>
