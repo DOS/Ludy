@@ -87,6 +87,43 @@ export const EXPORT_TABLES = {
   // The tax portal's purchase lists and their rows (#465), kept like the ledger; the files are in kernel.file.
   'finance.portal_invoice_list': { from: 'crove_finance.portal_invoice_list', omit: [] },
   'finance.portal_invoice_row': { from: 'crove_finance.portal_invoice_row', omit: [] },
+  // The rest of the books and what they are made from (#3201): bank statement lines and the bank feed's accounts, the recorded bank account numbers, the marketplace
+  // orders and income reports with the connections and party links they were read through, the stock book, fixed assets and their depreciation, the sales e-invoice
+  // drafts and their series, the VAT checks and returns, the period locks and balances, and each entity's regime and, for a household business, its profile (the
+  // representative's name is kept_legal and belongs to the owner's copy). Sync cursors and the e-invoice idempotency key are machinery and stay out.
+  'finance.bank_line': { from: 'crove_finance.bank_line', omit: [] },
+  'finance.bank_feed_account': { from: 'crove_finance.bank_feed_account', omit: ['cursor'] },
+  'finance.bank_feed_listed_account': { from: 'crove_finance.bank_feed_listed_account', omit: [] },
+  'finance.bank_account_number': { from: 'crove_finance.bank_account_number', omit: [] },
+  'finance.channel_order': { from: 'crove_finance.channel_order', omit: [] },
+  'finance.channel_order_line': { from: 'crove_finance.channel_order_line', omit: [] },
+  'finance.channel_settlement': { from: 'crove_finance.channel_settlement', omit: [] },
+  'finance.channel_settlement_line': { from: 'crove_finance.channel_settlement_line', omit: [] },
+  'finance.marketplace_connection': { from: 'crove_finance.marketplace_connection', omit: ['poll_cursor'] },
+  'finance.marketplace_party': { from: 'crove_finance.marketplace_party', omit: [] },
+  'finance.stock_item': { from: 'crove_finance.stock_item', omit: [] },
+  'finance.stock_alias': { from: 'crove_finance.stock_alias', omit: [] },
+  'finance.stock_move': { from: 'crove_finance.stock_move', omit: [] },
+  'finance.stock_count': { from: 'crove_finance.stock_count', omit: [] },
+  'finance.stock_count_line': { from: 'crove_finance.stock_count_line', omit: [] },
+  'finance.stock_period': { from: 'crove_finance.stock_period', omit: [] },
+  'finance.stock_period_item': { from: 'crove_finance.stock_period_item', omit: [] },
+  'finance.fixed_asset': { from: 'crove_finance.fixed_asset', omit: [] },
+  'finance.depreciation_line': { from: 'crove_finance.depreciation_line', omit: [] },
+  'finance.einvoice_connection': { from: 'crove_finance.einvoice_connection', omit: [] },
+  'finance.einvoice_series': { from: 'crove_finance.einvoice_series', omit: [] },
+  'finance.einvoice_draft': { from: 'crove_finance.einvoice_draft', omit: ['idempotency_key'] },
+  'finance.einvoice_draft_line': { from: 'crove_finance.einvoice_draft_line', omit: [] },
+  'finance.input_vat_check': { from: 'crove_finance.input_vat_check', omit: [] },
+  'finance.vat_return_filed': { from: 'crove_finance.vat_return_filed', omit: [] },
+  'finance.purchase_document_void': { from: 'crove_finance.purchase_document_void', omit: [] },
+  'finance.period_lock': { from: 'crove_finance.period_lock', omit: [] },
+  'finance.period_balance_delta': { from: 'crove_finance.period_balance_delta', omit: [] },
+  'finance.legal_entity_books': { from: 'crove_finance.legal_entity_books', omit: [] },
+  'finance.household_profile': { from: 'crove_finance.household_profile', omit: [] },
+  // How long a customer has to pay, and the weekly reminder item.
+  'finance.collection_setting': { from: 'crove_finance.collection_setting', omit: [] },
+  'finance.customer_collection': { from: 'crove_finance.customer_collection', omit: [] },
   // The crm module's event types (#1314).
   'crm.event_type': { from: 'crove_crm.event_type', omit: [] },
   // Visitors' bookings (#1318); the request token's hash is the visitor's credential and stays out.
