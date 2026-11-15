@@ -464,6 +464,9 @@ export const KERNEL_ERROR_CODES = [
   'VY_RUN_BUSY',
   // The approval rule preset (#1402).
   'UNKNOWN_PRESET',
+  // Turning an app on or off for the org (ADR-0053, #3313).
+  'APP_ALWAYS_ON',
+  'UNKNOWN_APP',
   'NO_CHIEF_ACCOUNTANT',
   'LAST_CHIEF_ACCOUNTANT',
   // Editing a party (#887).

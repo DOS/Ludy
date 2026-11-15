@@ -2805,6 +2805,8 @@ export interface KernelTenantTable {
   mcp_member_grants: Generated<boolean>;
   meeting_consent_policy: Generated<string>;
   meeting_hooks: Generated<boolean>;
+  apps_off: Generated<string[]>;
+  apps_version: Generated<number>;
 }
 
 /** crove_kernel.today_mail */

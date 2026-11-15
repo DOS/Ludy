@@ -9794,6 +9794,8 @@ export const en = {
       ROLE_DEMOTION_MIXES_SCOPE: 'This member holds both organization-wide roles and roles for some legal entities, so they cannot be made a member or viewer yet. Revoke their organization-wide roles to keep them limited to those entities, or their entity roles to let them see every entity, then try again.',
       ROLE_REVOKE_WIDENS_SCOPE: 'This is the last legal entity this member may see. Revoking it would let them see every entity; if they no longer work for the organization, remove them instead.',
       UNKNOWN_PRESET: 'There is no such approval rule.',
+      APP_ALWAYS_ON: 'The core of the system is always on and cannot be turned off.',
+      UNKNOWN_APP: 'There is no such app.',
       NO_CHIEF_ACCOUNTANT: 'Give a member the chief accountant role before choosing the rule where only the chief accountant approves postings.',
       LAST_CHIEF_ACCOUNTANT: 'Only the chief accountant approves postings in this organization, so it must keep at least one. Give the role to someone else or change the approval rule first.',
       LEGAL_ENTITY_DEFAULT_TAX_CODE: "The default legal entity has the organization's tax code; change it under Tax code.",
@@ -11648,6 +11650,7 @@ export const en = {
         void: 'Void a voucher number',
       },
       org: {
+        apps: "View the organization's apps",
         create: 'Create an organization',
         export: {
           current: 'Read the newest data export',
@@ -11662,6 +11665,7 @@ export const en = {
         overview: 'Read the organization overview',
         purge: "Purge the organization's data",
         set_address: "Set the organization's address",
+        set_app: "Turn one of the organization's apps on or off",
         set_approval_preset: 'Set the approval preset',
         set_contact_email: 'Set the contact email',
         set_tax_code: 'Set the tax code',
