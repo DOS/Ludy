@@ -47,7 +47,7 @@ const documentId = '00000000-0000-4000-8000-0000000000c1';
 const EMPTY: MarketplaceWorklist = { postingConfirmed: true, settlements: [], payouts: [], invoices: [] };
 const FULL = (over: Partial<MarketplaceWorklist> = {}): MarketplaceWorklist => ({
   postingConfirmed: true,
-  settlements: [{ id: settlementId, legalEntityId: entity, platform: 'shopee', platformName: 'Shopee', periodFrom: '2026-10-01', periodTo: '2026-10-15', month: '2026-10', net: '335000', waitingLines: 0, proposalId: null }],
+  settlements: [{ id: settlementId, legalEntityId: entity, platform: 'shopee', platformName: 'Shopee', periodFrom: '2026-10-01', periodTo: '2026-10-15', months: ['2026-10'], net: '335000', waitingLines: 0, proposalId: null }],
   payouts: [
     {
       settlementId,
@@ -124,22 +124,21 @@ describe('the Sàn screen actions (#2516 slice F)', () => {
     expect(html.match(/data-testid="marketplace-action-invoice"/g)).toHaveLength(1);
   });
 
-  it('shows the month of delivery of a settlement, one row for each, and a settlement that waits for a delivery day with no button', () => {
+  it('shows the months of delivery of a settlement in one row, and a settlement that waits for a delivery day with no button', () => {
     const base = FULL();
     const one = base.settlements[0]!;
     const html = render({
       ...base,
       settlements: [
-        { ...one, month: '2026-09', net: '100000' },
-        { ...one, month: '2026-10', net: '235000' },
-        { ...one, id: '00000000-0000-4000-8000-0000000000a9', month: null, net: '0', waitingLines: 3 },
+        { ...one, months: ['2026-09', '2026-10'], net: '335000' },
+        { ...one, id: '00000000-0000-4000-8000-0000000000a9', months: [], net: '0', waitingLines: 3 },
       ],
     });
-    expect(html.match(/data-testid="marketplace-action-settlement"/g)).toHaveLength(3);
-    expect(html).toContain('2026-09');
+    expect(html.match(/data-testid="marketplace-action-settlement"/g)).toHaveLength(2);
+    expect(html).toContain('2026-09, 2026-10');
     expect(html).toContain('3 lines have no delivery day yet');
-    // Two buttons (one for each month with a net), and the waiting row has the note instead.
-    expect(html.match(/data-testid="marketplace-post"/g)).toHaveLength(2);
+    // One button (for the settlement with months), and the waiting row has the note instead.
+    expect(html.match(/data-testid="marketplace-post"/g)).toHaveLength(1);
     expect(html).toContain('marketplace-post-waiting');
     expect(html).toContain('Waiting for the delivery day');
   });

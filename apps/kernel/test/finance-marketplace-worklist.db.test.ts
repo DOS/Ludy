@@ -114,8 +114,8 @@ suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
     return line?.id as string;
   }
 
-  const askSettlement = (o: Org, settlementId: string, user = o.admin, runtime = rt, month = '2026-10') =>
-    runtime.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.marketplace_settlement.record', input: { settlementId, month } }, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
+  const askSettlement = (o: Org, settlementId: string, user = o.admin, runtime = rt) =>
+    runtime.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.marketplace_settlement.record', input: { settlementId } }, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
   const ask = (o: Org, settlementId: string, bankLineId: string, user = o.admin, runtime = rt) =>
     runtime.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.marketplace_payout.record', input: { settlementId, bankLineId } }, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
   async function approve(o: Org, proposalId: string, user = o.owner, runtime = rt) {
@@ -177,7 +177,7 @@ suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
   const worklist = (o: Org, runtime = rt, legalEntityId?: string) =>
     runtime.query<{
       postingConfirmed: boolean;
-      settlements: { id: string; platform: string; platformName: string; periodFrom: string; periodTo: string; month: string | null; net: string; waitingLines: number; proposalId: string | null }[];
+      settlements: { id: string; platform: string; platformName: string; periodFrom: string; periodTo: string; months: string[]; net: string; waitingLines: number; proposalId: string | null }[];
       payouts: { settlementId: string; received: string; proposalId: string | null; candidates: { id: string; date: string; amount: string; reference: string | null }[] }[];
       invoices: { documentId: string; clearable: string; invoice: string; proposalId: string | null }[];
     }>('finance.marketplace.worklist', legalEntityId === undefined ? {} : { legalEntityId }, { actor: asUser(o.owner), orgId: o.orgId });
@@ -250,28 +250,22 @@ suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
     expect((await worklist(await org())).settlements).toEqual([]);
   });
 
-  it('lists a settlement once for each month of delivery that has no voucher, and one that waits for a delivery day as a single row with nothing to ask for', async () => {
+  it('lists a settlement once with its months of delivery, and one that waits for a delivery day with nothing to ask for', async () => {
     const o = await org();
     const two = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', delivered: '2026-09-28' }, { sales: '200000', delivered: '2026-10-02' }]);
     const waits = await seed(o, 'tiktok_shop', '2026-10-01', '2026-10-15', [{ sales: '90000' }, { sales: '10000', delivered: null }, { sales: '5000', delivered: null }]);
     const list = await worklist(o);
-    expect(list.settlements.map((s) => [s.id === two ? 'two' : s.id === waits ? 'waits' : 'other', s.month, s.net, s.waitingLines]).sort()).toEqual(
-      [['two', '2026-09', '100000', 0], ['two', '2026-10', '200000', 0], ['waits', null, '0', 2]].sort(),
+    expect(list.settlements.map((s) => [s.id === two ? 'two' : s.id === waits ? 'waits' : 'other', s.months, s.net, s.waitingLines]).sort()).toEqual(
+      [['two', ['2026-09', '2026-10'], '300000', 0], ['waits', [], '0', 2]].sort(),
     );
-    // The settlement counts once for the coworker's line, whatever its months.
     expect((await facts(o)).settlementsToPost).toBe(2);
-    // A pending proposal is carried on the row of its month only.
-    const asked = await askSettlement(o, two, o.admin, rt, '2026-09');
-    const rowsNow = (await worklist(o)).settlements.filter((s) => s.id === two);
-    expect(rowsNow.find((s) => s.month === '2026-09')?.proposalId).toBe(asked.proposalId);
-    expect(rowsNow.find((s) => s.month === '2026-10')?.proposalId).toBeNull();
-    // Posting one month leaves the other on the list; the settlement is not yet posted in full, so it is not offered for its payout.
+    // A pending proposal is carried on the row; a settlement that waits has none to carry.
+    const asked = await askSettlement(o, two);
+    expect((await worklist(o)).settlements.find((s) => s.id === two)?.proposalId).toBe(asked.proposalId);
+    await expect(askSettlement(o, waits)).rejects.toMatchObject({ code: 'MARKETPLACE_SETTLEMENT_WAITING_DELIVERY' });
+    // One approval posts both months: the row goes, the settlement is offered for its payout, and counts once there.
     await approve(o, asked.proposalId);
-    expect((await worklist(o)).settlements.filter((s) => s.id === two).map((s) => s.month)).toEqual(['2026-10']);
-    expect((await worklist(o)).payouts.map((p) => p.settlementId)).not.toContain(two);
-    expect((await facts(o)).payoutsToMatch).toBe(0);
-    await approve(o, (await askSettlement(o, two, o.admin, rt, '2026-10')).proposalId);
-    expect((await worklist(o)).settlements.filter((s) => s.id === two)).toEqual([]);
+    expect((await worklist(o)).settlements.map((s) => s.id)).toEqual([waits]);
     expect((await worklist(o)).payouts.map((p) => p.settlementId)).toContain(two);
     expect((await facts(o)).payoutsToMatch).toBe(1);
     expect((await facts(o)).settlementsToPost).toBe(1);

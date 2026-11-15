@@ -68,10 +68,10 @@ function SettlementRow({ s, open }: { s: MarketplaceSettlementToPost; open: bool
     <TableRow data-testid="marketplace-action-settlement">
       <TableCell className="px-4 py-3">{s.platformName}</TableCell>
       <TableCell className="px-4 py-3">{period(s.periodFrom, s.periodTo)}</TableCell>
-      <TableCell className="px-4 py-3" data-testid="marketplace-settlement-month">{s.month ?? t('monthWaiting', { count: String(s.waitingLines) })}</TableCell>
-      <TableCell className={NUM}>{s.month === null ? '' : f.money(s.net)}</TableCell>
+      <TableCell className="px-4 py-3" data-testid="marketplace-settlement-month">{s.months.length === 0 ? t('monthWaiting', { count: String(s.waitingLines) }) : s.months.join(', ')}</TableCell>
+      <TableCell className={NUM}>{s.months.length === 0 ? '' : f.money(s.net)}</TableCell>
       <TableCell className="px-4 py-3 text-right">
-        {s.month === null ? (
+        {s.months.length === 0 ? (
           <span className="text-sm text-subtle-foreground" data-testid="marketplace-post-waiting">{t('waitingDelivery')}</span>
         ) : (
           <AskButton
@@ -79,7 +79,7 @@ function SettlementRow({ s, open }: { s: MarketplaceSettlementToPost; open: bool
             disabled={!open}
             testId="marketplace-post"
             pending={s.proposalId}
-            ask={(idempotencyKey) => client.inbox.request({ command: 'finance.marketplace_settlement.record', idempotencyKey, input: { settlementId: s.id, month: s.month as string } })}
+            ask={(idempotencyKey) => client.inbox.request({ command: 'finance.marketplace_settlement.record', idempotencyKey, input: { settlementId: s.id } })}
           />
         )}
       </TableCell>
@@ -163,7 +163,7 @@ export function MarketplaceActions({ legalEntityId, ready }: { legalEntityId: st
           <p className="mb-2 text-sm text-subtle-foreground">{t('settlementsHint')}</p>
           <DataTable head={[t('platform'), t('period'), t('month'), t('net'), '']} numeric={[3]}>
             {data.settlements.map((s) => (
-              <SettlementRow key={`${s.id}:${s.month ?? ''}`} s={s} open={open} />
+              <SettlementRow key={s.id} s={s} open={open} />
             ))}
           </DataTable>
         </div>

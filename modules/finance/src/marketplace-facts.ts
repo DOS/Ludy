@@ -9,7 +9,7 @@ import type { MemberRole } from '@crove/db';
 import { defineQuery } from '@crove/kernel-runtime';
 import { money, sum, toMoney } from '@crove/l10n-vn';
 import { loadMarketplaceBalance } from './marketplace-balance.ts';
-import { fullyPosted, monthsToPost, paidSettlementIds, postingsOf, settlementMonthsFor } from './marketplace-settlement-months.ts';
+import { postingsOf, settlementMonthsFor, settlementPosted } from './marketplace-settlement-months.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 
@@ -25,21 +25,22 @@ export const marketplaceFacts = defineQuery({
       await sql<{ id: string; period_end: string }>`
         SELECT s.id, s.period_end::text FROM crove_finance.channel_settlement s
         WHERE s.org_id = ${ctx.orgId}::uuid AND ${entity} AND s.reversal_of IS NULL
-          AND NOT EXISTS (SELECT 1 FROM crove_finance.channel_settlement r WHERE r.org_id = s.org_id AND r.legal_entity_id = s.legal_entity_id AND r.reversal_of = s.id)`.execute(ctx.trx)
+          AND NOT EXISTS (SELECT 1 FROM crove_finance.channel_settlement r WHERE r.org_id = s.org_id AND r.legal_entity_id = s.legal_entity_id AND r.reversal_of = s.id)
+          -- A settlement with a payout voucher waits for nothing (it counts in neither number), so the history of paid settlements is not read each time.
+          AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_voucher p WHERE p.org_id = s.org_id AND p.payout_settlement_id = s.id)`.execute(ctx.trx)
     ).rows;
     const ids = standing.map((s) => s.id);
     const months = await settlementMonthsFor(ctx, standing.map((s) => ({ id: s.id, periodEnd: s.period_end })));
     const postings = await postingsOf(ctx, ids);
-    const paid = await paidSettlementIds(ctx, ids);
-    // Waiting to be posted: a month that has no voucher yet, or sales that wait for their delivery day (and no voucher that posted the whole settlement before the months).
-    // Waiting for the platform's transfer to be recorded: the posting stands in full and there is no payout voucher yet (a reversed payout counts as a payout voucher: it is not posted again).
+    // Waiting to be posted: no voucher yet and either a month to post or sales that wait for their delivery day (a settlement of zero net has nothing to post). Waiting for the platform's transfer to be
+    // recorded: the posting stands and there is no payout voucher yet (a reversed payout counts as a payout voucher: it is not posted again).
     let toPost = 0;
     let toMatch = 0;
     for (const s of standing) {
       const m = months.get(s.id) ?? { months: [], waiting: 0 };
       const p = postings.get(s.id) ?? [];
-      if (monthsToPost(m, p).length > 0 || (m.waiting > 0 && !p.some((x) => x.month === null))) toPost += 1;
-      if (fullyPosted(m, p) && !paid.has(s.id)) toMatch += 1;
+      if (p.length === 0 && (m.months.length > 0 || m.waiting > 0)) toPost += 1;
+      if (settlementPosted(p)) toMatch += 1;
     }
     return {
       settlementsToPost: toPost,

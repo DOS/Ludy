@@ -115,8 +115,8 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     return line?.id as string;
   }
 
-  const askSettlement = (o: Org, settlementId: string, user = o.admin, runtime = rt, month = '2026-10') =>
-    runtime.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.marketplace_settlement.record', input: { settlementId, month } }, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
+  const askSettlement = (o: Org, settlementId: string, user = o.admin, runtime = rt) =>
+    runtime.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.marketplace_settlement.record', input: { settlementId } }, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
   const ask = (o: Org, settlementId: string, bankLineId: string, user = o.admin, runtime = rt) =>
     runtime.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.marketplace_payout.record', input: { settlementId, bankLineId } }, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
   async function approve(o: Org, proposalId: string, user = o.owner, runtime = rt) {
@@ -207,21 +207,34 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     expect((await entryOf(o, done.journalEntryId)).map((l) => [l.account_code, l.debit, l.credit])).toEqual([['1121', '90000', '0'], ['131', '0', '90000']]);
   });
 
-  it('asks for every month of the settlement to be posted before its payout: one month of two is not enough, and the payout posts once both stand', async () => {
+  it('posts a settlement of two months with one proposal and takes its payout once both vouchers stand; a month reversed on its own refuses the payout', async () => {
     const o = await org();
     // Two months of delivery: the first line was delivered in September, the second in October. The platform paid both at once.
     const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', delivered: '2026-09-28' }, { sales: '200000', delivered: '2026-10-02' }]);
     const line = await bankLine(o, '2026-10-20', '300000');
-    await approve(o, (await askSettlement(o, settlement, o.admin, rt, '2026-09')).proposalId);
-    // One month posted: the payout is refused at the request and, for a proposal made before, at its approval (the rebuilt check is the same).
-    await expect(ask(o, settlement, line)).rejects.toMatchObject({ code: 'MARKETPLACE_PAYOUT_SETTLEMENT_NOT_POSTED', status: 409 });
-    await approve(o, (await askSettlement(o, settlement, o.admin, rt, '2026-10')).proposalId);
+    const done = await post(o, settlement);
+    expect(await rows("SELECT 1 FROM crove_finance.journal_voucher WHERE org_id = $1 AND settlement_id = $2", [o.orgId, settlement])).toHaveLength(2);
     const { proposalId } = await ask(o, settlement, line);
     await approve(o, proposalId);
     expect(await payoutsOf(o, settlement)).toHaveLength(1);
     // The credit to 131 is what the two months posted (the stored lines' whole): the platform's balance on 131 is nil.
     const balance = await rows<{ net: string }>("SELECT coalesce(sum(l.debit - l.credit), 0)::text AS net FROM crove_finance.journal_line l WHERE l.org_id = $1 AND l.account_code = '131'", [o.orgId]);
     expect(Number(balance[0]?.net)).toBe(0);
+    expect(done.journalEntryId).toBeTruthy();
+  });
+
+  it('refuses the payout when one month of the settlement is reversed on its own, at the request and the approval', async () => {
+    const o = await org();
+    const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', delivered: '2026-09-28' }, { sales: '200000', delivered: '2026-10-02' }]);
+    const line = await bankLine(o, '2026-10-20', '300000');
+    const done = await post(o, settlement);
+    const pending = await ask(o, settlement, line);
+    // The accountant reverses the first month's entry (the voucher of September) through the proposal path; the other month stands.
+    const asked = await rt.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.journal.reverse', input: { entryId: done.journalEntryId, entryDate: '2026-10-16', reason: 'Đảo để sửa' } }, { actor: asUser(o.admin), orgId: o.orgId, idempotencyKey: randomUUID() });
+    await approve(o, asked.proposalId);
+    await expect(approve(o, pending.proposalId)).rejects.toMatchObject({ code: 'MARKETPLACE_PAYOUT_SETTLEMENT_NOT_POSTED', status: 409 });
+    await expect(ask(o, settlement, line)).rejects.toMatchObject({ code: 'MARKETPLACE_PAYOUT_SETTLEMENT_NOT_POSTED', status: 409 });
+    expect(await payoutsOf(o, settlement)).toHaveLength(0);
   });
 
   it('refuses a payout while a sale of the settlement waits for its delivery day', async () => {

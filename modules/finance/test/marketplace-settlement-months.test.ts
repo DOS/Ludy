@@ -2,7 +2,7 @@
 // The months a settlement is posted in (#2516 rework, slice C1): the sale of a line belongs to the month of its order's delivery, a refund to the month of the settlement's last day, a line refunded at
 // least as much as it sold needs no delivery day, a line with no usable day makes the settlement wait, and the two questions asked of the vouchers that exist (what still waits, whether it is posted).
 import { describe, expect, it } from 'vitest';
-import { fullyPosted, monthEntryDate, monthsToPost, settlementMonthsOf, type SettlementMonthLine } from '../src/marketplace-settlement-months.ts';
+import { monthEntryDate, settlementMonthsOf, settlementPosted, type SettlementMonthLine } from '../src/marketplace-settlement-months.ts';
 
 const line = (sales: string, deliveredOn: string | null, over: Partial<SettlementMonthLine> = {}): SettlementMonthLine => ({ sales, sellerDiscount: '0', refund: '0', deliveredOn, ...over });
 
@@ -44,23 +44,13 @@ describe('the months of a settlement', () => {
   });
 });
 
-describe('what still waits, and whether the posting stands', () => {
-  const months = settlementMonthsOf([line('100000', '2026-09-28'), line('50000', '2026-10-02')], '2026-10-15');
-  it('offers the months with no voucher, reversed or not, and none when a voucher posted the whole settlement', () => {
-    expect(monthsToPost(months, []).map((m) => m.month)).toEqual(['2026-09', '2026-10']);
-    expect(monthsToPost(months, [{ month: '2026-09', reversed: false }]).map((m) => m.month)).toEqual(['2026-10']);
-    expect(monthsToPost(months, [{ month: '2026-09', reversed: true }]).map((m) => m.month)).toEqual(['2026-10']);
-    expect(monthsToPost(months, [{ month: null, reversed: false }])).toEqual([]);
-  });
-
-  it('is posted only when every month stands, with no sale waiting for its day', () => {
-    expect(fullyPosted(months, [])).toBe(false);
-    expect(fullyPosted(months, [{ month: '2026-09', reversed: false }])).toBe(false);
-    expect(fullyPosted(months, [{ month: '2026-09', reversed: false }, { month: '2026-10', reversed: true }])).toBe(false);
-    expect(fullyPosted(months, [{ month: '2026-09', reversed: false }, { month: '2026-10', reversed: false }])).toBe(true);
-    expect(fullyPosted(months, [{ month: null, reversed: false }])).toBe(true);
-    expect(fullyPosted(months, [{ month: null, reversed: true }])).toBe(false);
-    expect(fullyPosted({ months: months.months, waiting: 1 }, [{ month: '2026-09', reversed: false }, { month: '2026-10', reversed: false }])).toBe(false);
-    expect(fullyPosted({ months: [], waiting: 0 }, [])).toBe(false);
+describe('whether the posting stands', () => {
+  it('stands when the settlement has vouchers and none is reversed: all its months are posted together or none', () => {
+    expect(settlementPosted([])).toBe(false);
+    expect(settlementPosted([{ month: '2026-09', reversed: false }, { month: '2026-10', reversed: false }])).toBe(true);
+    // One month reversed, the others standing: not posted, the payout waits until the accountant puts the settlement right.
+    expect(settlementPosted([{ month: '2026-09', reversed: false }, { month: '2026-10', reversed: true }])).toBe(false);
+    expect(settlementPosted([{ month: null, reversed: false }])).toBe(true);
+    expect(settlementPosted([{ month: null, reversed: true }])).toBe(false);
   });
 });

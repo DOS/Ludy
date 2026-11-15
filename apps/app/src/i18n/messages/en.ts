@@ -1068,7 +1068,7 @@ export const en = {
     invoice: 'Fee invoice',
     clearable: 'Can clear',
     settlementsTitle: 'Settlements waiting to be posted',
-    settlementsHint: 'One entry per month of delivery of a settlement: the platform owes you the net sales (131 / 511). A settlement with lines that have no delivery day yet waits. It is only proposed here; a second person approves it in the Inbox.',
+    settlementsHint: 'One entry for each month of delivery of a settlement, in one proposal: the platform owes you the net sales (131 / 511). A settlement with lines that have no delivery day yet waits. It is only proposed here; a second person approves it in the Inbox.',
     post: 'Post',
     payoutsTitle: 'Posted settlements waiting for the money to be recorded',
     payoutsHint: 'Choose the bank line of the platform\'s transfer: money in, equal to the net of the settlement, not before its period. It is only proposed here.',

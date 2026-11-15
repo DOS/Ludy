@@ -113,8 +113,8 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
     return line?.id as string;
   }
 
-  const askSettlement = (o: Org, settlementId: string, user = o.admin, runtime = rt, month = '2026-10') =>
-    runtime.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.marketplace_settlement.record', input: { settlementId, month } }, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
+  const askSettlement = (o: Org, settlementId: string, user = o.admin, runtime = rt) =>
+    runtime.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.marketplace_settlement.record', input: { settlementId } }, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
   const ask = (o: Org, settlementId: string, bankLineId: string, user = o.admin, runtime = rt) =>
     runtime.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.marketplace_payout.record', input: { settlementId, bankLineId } }, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
   async function approve(o: Org, proposalId: string, user = o.owner, runtime = rt) {

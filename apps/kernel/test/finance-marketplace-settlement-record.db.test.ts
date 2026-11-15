@@ -118,8 +118,8 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     return id;
   }
 
-  const ask = (o: Org, settlementId: string, user = o.admin, runtime = rt, month = '2026-10') =>
-    runtime.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.marketplace_settlement.record', input: { settlementId, month } }, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
+  const ask = (o: Org, settlementId: string, user = o.admin, runtime = rt) =>
+    runtime.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.marketplace_settlement.record', input: { settlementId } }, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
   async function approve(o: Org, proposalId: string, user = o.owner, runtime = rt) {
     const detail = await runtime.query<{ revision: number }>('kernel.inbox.get', { id: proposalId }, { actor: asUser(user), orgId: o.orgId });
     return runtime.execute<{ voucherId: string; journalEntryId: string; code: string }>('kernel.proposal.approve', { id: proposalId, revision: detail.revision }, { actor: asMfa(user), orgId: o.orgId });
@@ -277,9 +277,9 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     const o = await org();
     const early = await seed(o, 'shopee', '2026-09-01', '2026-09-15', TWO);
     const late = await seed(o, 'shopee', '2026-09-16', '2026-09-30', TWO);
-    const pending = await ask(o, late, o.admin, rt, '2026-09');
+    const pending = await ask(o, late);
     await rt.execute('finance.period.lock', { month: '2026-09' }, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
-    await expect(ask(o, early, o.admin, rt, '2026-09')).rejects.toMatchObject({ code: 'PERIOD_LOCKED', status: 409 });
+    await expect(ask(o, early)).rejects.toMatchObject({ code: 'PERIOD_LOCKED', status: 409 });
     await expect(approve(o, pending.proposalId)).rejects.toMatchObject({ code: 'PERIOD_LOCKED', status: 409 });
     expect(await vouchersOf(o, late)).toHaveLength(0);
     expect(await parties(o, 'Shopee')).toHaveLength(0);
@@ -332,29 +332,38 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     expect(MARKETPLACE_POSTING_MAPS.tt133?.status).toBe('commentary');
   });
 
-  it('posts a settlement as one voucher per month of delivery: the sale in the month it was delivered, a refund in the settlement\'s own month', async () => {
+  it('posts a settlement as one voucher per month of delivery, all by ONE proposal: the sale in the month it was delivered, a refund in the settlement\'s own month', async () => {
     const o = await org();
     const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [
       { sales: '100000', discount: '10000', delivered: '2026-09-28' },
       { sales: '200000', delivered: '2026-10-02', refund: '30000' },
       { sales: '50000', delivered: '2026-10-09' },
     ]);
-    // September: the sale of the first line. October: the other two, less the refund of the second, dated on the settlement's last day.
-    const sept = await ask(o, settlement, o.admin, rt, '2026-09');
-    const oct = await ask(o, settlement, o.admin, rt, '2026-10');
-    const stored = async (id: string) => (await rows<{ payload: { date: string; month: string; total: string; sales: string; refund: string } }>('SELECT payload FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, id]))[0]?.payload;
-    expect(await stored(sept.proposalId)).toMatchObject({ month: '2026-09', date: '2026-09-30', total: '90000', sales: '100000', refund: '0' });
-    expect(await stored(oct.proposalId)).toMatchObject({ month: '2026-10', date: '2026-10-15', total: '220000', sales: '250000', refund: '30000' });
-    await approve(o, sept.proposalId);
-    await approve(o, oct.proposalId);
-    const vouchers = await rows<{ settlement_month: string; voucher_date: string }>("SELECT settlement_month::text, voucher_date::text FROM crove_finance.journal_voucher WHERE org_id = $1 AND settlement_id = $2 ORDER BY settlement_month", [o.orgId, settlement]);
+    // One proposal for the settlement: September (the sale of the first line) and October (the other two, less the refund of the second, dated on the settlement's last day).
+    const { proposalId } = await ask(o, settlement);
+    const stored = (await rows<{ payload: { date: string; total: string; sales: string; refund: string; months: { month: string; date: string; total: string }[]; lines: { account: string; memo: string }[] } }>('SELECT payload FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.payload;
+    expect(stored).toMatchObject({ date: '2026-10-15', total: '310000', sales: '350000', refund: '30000', months: [{ month: '2026-09', date: '2026-09-30', total: '90000' }, { month: '2026-10', date: '2026-10-15', total: '220000' }] });
+    // Every month's entry is on the proposal, each line's memo naming its month.
+    expect(stored?.lines).toHaveLength(4);
+    expect(stored?.lines.map((l) => l.memo.slice(-7))).toEqual(['2026-09', '2026-09', '2026-10', '2026-10']);
+    await approve(o, proposalId);
+    const vouchers = await rows<{ settlement_month: string; voucher_date: string; proposal_id: string }>('SELECT settlement_month::text, voucher_date::text, proposal_id FROM crove_finance.journal_voucher WHERE org_id = $1 AND settlement_id = $2 ORDER BY settlement_month', [o.orgId, settlement]);
     expect(vouchers).toEqual([
-      { settlement_month: '2026-09-01', voucher_date: '2026-09-30' },
-      { settlement_month: '2026-10-01', voucher_date: '2026-10-15' },
+      { settlement_month: '2026-09-01', voucher_date: '2026-09-30', proposal_id: proposalId },
+      { settlement_month: '2026-10-01', voucher_date: '2026-10-15', proposal_id: proposalId },
     ]);
-    // A month is posted once, and a month the settlement does not have is not postable.
-    await expect(ask(o, settlement, o.admin, rt, '2026-09')).rejects.toMatchObject({ code: 'MARKETPLACE_SETTLEMENT_POSTED', status: 409 });
-    await expect(ask(o, settlement, o.admin, rt, '2026-08')).rejects.toMatchObject({ code: 'MARKETPLACE_SETTLEMENT_NOT_POSTABLE', status: 422 });
+    // The settlement is posted in full: a second request is refused, and a closed month refuses the whole settlement, nothing partial.
+    await expect(ask(o, settlement)).rejects.toMatchObject({ code: 'MARKETPLACE_SETTLEMENT_POSTED', status: 409 });
+  });
+
+  it('refuses the whole settlement when any month is in a closed period, and posts none of them', async () => {
+    const o = await org();
+    const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', delivered: '2026-09-28' }, { sales: '200000', delivered: '2026-10-02' }]);
+    const { proposalId } = await ask(o, settlement);
+    await rt.execute('finance.period.lock', { month: '2026-09' }, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+    await expect(approve(o, proposalId)).rejects.toMatchObject({ code: 'PERIOD_LOCKED', status: 409 });
+    await expect(ask(o, settlement)).rejects.toMatchObject({ code: 'PERIOD_LOCKED', status: 409 });
+    expect(await vouchersOf(o, settlement)).toHaveLength(0);
   });
 
   it('waits for the delivery day: a sale with none makes the whole settlement wait, and nothing is dated by a guess', async () => {

@@ -207,14 +207,15 @@ export const MARKETPLACE_ORIGINAL_RETENTION_DAYS = 90;
 // MARKETPLACE_POSTING_MAP_UNCONFIRMED (409), MARKETPLACE_POSTING_REGIME_UNKNOWN, MARKETPLACE_SETTLEMENT_NOT_POSTABLE, MARKETPLACE_SETTLEMENT_MISMATCH, PERIOD_LOCKED (409),
 // MARKETPLACE_SETTLEMENT_POSTED (409), MARKETPLACE_SETTLEMENT_NOT_FOUND (404).
 export const MARKETPLACE_SETTLEMENT_COMMAND = 'finance.marketplace_settlement.record';
-// A settlement posts as one entry per month of delivery (YYYY-MM, #2516 rework slice C1), so the request names the month with the settlement.
-export const zMarketplaceSettlementRequest = z.strictObject({ settlementId: zId, month: zMonth });
+export const zMarketplaceSettlementRequest = z.strictObject({ settlementId: zId });
 export type MarketplaceSettlementRequest = z.infer<typeof zMarketplaceSettlementRequest>;
 // The proposal (kind finance.journal_voucher, shown as one) with the settlement it posts, the platform and the period, and the settlement's sales, seller discounts and refunds in whole dong,
 // so the refund stays visible beside the net. The platform's party on the 131 line is null until the platform's first posting creates it.
 export const zMarketplaceSettlementProposal = zJournalVoucherProposal.extend({
   settlementId: zId,
-  month: zMonth,
+  // A settlement posts as one general voucher per month of delivery (#2516 rework slice C1), all of them by this one proposal in one transaction: the proposal shows the entries of every month
+  // one after the other in `lines` (each line's memo names its month) and lists the months, their entry dates and totals here; `date` is the settlement's last day and `total` the sum.
+  months: z.array(z.strictObject({ month: zMonth, date: zLocalDate, total: zJournalAmount })).min(1).max(12),
   platform: zMarketplacePlatform,
   periodFrom: zLocalDate,
   periodTo: zLocalDate,

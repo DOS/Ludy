@@ -23,7 +23,7 @@ import { journalVoucherTitle } from './domain/journal-voucher.ts';
 import { checkJournalVoucherLines, postJournalVoucher } from './journal-voucher.ts';
 import { payoutOfBankLine } from './marketplace-payout-line.ts';
 import { payoutProposal, type PayoutProposal } from './marketplace-payout-posting.ts';
-import { fullyPosted, postingsOf, settlementMonthsFor } from './marketplace-settlement-months.ts';
+import { postingsOf, settlementPosted } from './marketplace-settlement-months.ts';
 import { requireConfirmedMarketplaceMap, MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from './marketplace-posting-map.ts';
 import { platformPartyName } from './marketplace-settlement-record.ts';
 import { booksOn } from './payroll-posting.ts';
@@ -94,12 +94,11 @@ async function buildPayout(ctx: QueryContext, maps: Maps, settlementId: string, 
   const reversed = await ctx.trx.selectFrom('crove_finance.channel_settlement').select('id').where('org_id', '=', ctx.orgId).where('reversal_of', '=', settlement.id).executeTakeFirst();
   if (reversed) throw notPostable('Kỳ đối soát này đã bị đảo nên không ghi khoản sàn trả', { reason: 'REVERSED' });
   // A payout before its settlement is posted is refused (Accounting PO decision 2026-11-13): there is no holding state, the settlement's posting comes first and stands. A settlement posts as one voucher
-  // per month of delivery (#2516 rework, slice C1), so "posted" means EVERY month has a voucher that is not reversed and no sale still waits for its delivery day; a settlement never posted, or posted
-  // in part, or posted and reversed, is refused. The payout's own credit to 131 is built from the stored lines (their whole), which equals the sum of the months once they all stand.
+  // per month of delivery (#2516 rework, slice C1), all by one proposal in one transaction, so "posted" means the settlement has its vouchers and none is reversed; a settlement never posted, or with a month
+  // reversed, is refused. The payout's own credit to 131 is built from the stored lines (their whole), which equals the sum of the months once they all stand.
   const posted = (await postingsOf(ctx, [settlement.id])).get(settlement.id) ?? [];
-  const months = (await settlementMonthsFor(ctx, [{ id: settlement.id, periodEnd: periodTo }])).get(settlement.id) ?? { months: [], waiting: 0 };
-  if (!fullyPosted(months, posted)) {
-    throw new DomainError('MARKETPLACE_PAYOUT_SETTLEMENT_NOT_POSTED', 409, 'Ghi sổ kỳ đối soát (đủ mọi tháng giao) trước, rồi mới ghi khoản sàn trả', { settlementId: settlement.id });
+  if (!settlementPosted(posted)) {
+    throw new DomainError('MARKETPLACE_PAYOUT_SETTLEMENT_NOT_POSTED', 409, 'Ghi sổ kỳ đối soát trước, rồi mới ghi khoản sàn trả', { settlementId: settlement.id });
   }
   const paid = await ctx.trx
     .selectFrom('crove_finance.journal_voucher as j')

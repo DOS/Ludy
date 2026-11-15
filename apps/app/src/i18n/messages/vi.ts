@@ -1066,7 +1066,7 @@ export const vi = {
     invoice: 'Hóa đơn phí',
     clearable: 'Cấn trừ được',
     settlementsTitle: 'Kỳ đối soát chờ ghi sổ',
-    settlementsHint: 'Mỗi tháng giao của một kỳ ghi một bút toán: sàn nợ bạn doanh thu ròng (131 / 511). Kỳ còn dòng chưa có ngày giao thì chờ. Ở đây chỉ lập đề xuất; người thứ hai duyệt trong Hộp thư.',
+    settlementsHint: 'Mỗi kỳ ghi một bút toán cho mỗi tháng giao, cùng một đề xuất: sàn nợ bạn doanh thu ròng (131 / 511). Kỳ còn dòng chưa có ngày giao thì chờ. Ở đây chỉ lập đề xuất; người thứ hai duyệt trong Hộp thư.',
     post: 'Ghi sổ',
     payoutsTitle: 'Kỳ đối soát đã ghi sổ, chờ ghi nhận tiền về',
     payoutsHint: 'Chọn dòng sao kê của khoản sàn chuyển: tiền vào, đúng bằng số tiền ròng của kỳ, không trước kỳ đó. Ở đây chỉ lập đề xuất.',
