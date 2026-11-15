@@ -46,7 +46,7 @@ export interface LeaveBalanceInput {
   standardWorkingDays?: string;
   /** Optional per-month standard working days override keyed by YYYY-MM. */
   workingDaysByMonth?: Readonly<Record<string, string>>;
-  /** Optional workweek schedule (`'mon_fri'`, `'mon_sat'`, `'all_days'`) used to count working days in partial months. */
+  /** Workweek schedule (`'mon_fri'`, `'mon_sat'`, `'all_days'`) used to count working days; defaults to `'mon_sat'` (6-day week). */
   workweek?: LeaveWorkweek;
   /** Optional actual working days worked in YYYY-MM (net of partial employment and unpaid leave); requires `workingDaysByMonth[month]` or `standardWorkingDays`. */
   workedDaysByMonth?: Readonly<Record<string, string>>;
@@ -292,28 +292,20 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
           throw invalid(`standardWorkingDays or workingDaysByMonth[${ym}] is required when workedDaysByMonth[${ym}] is provided`);
         }
         effectiveRatio = money(workedExplicit.trim()).div(money(monthStd.trim()));
-      } else if (startDay === 1 && endDay === daysInMonth) {
-        if (unpaidInMonth.equals(0)) {
-          effectiveRatio = money(1);
-        } else if (monthStd !== undefined) {
-          const stdDec = money(monthStd.trim());
-          const actual = stdDec.minus(unpaidInMonth);
-          effectiveRatio = (actual.isNegative() ? zero : actual).div(stdDec);
-        } else if (input.workweek !== undefined) {
-          const totalWork = countWorkdaysInSpan(yearNum, idx, 1, daysInMonth, input.workweek);
-          const stdDec = money(String(totalWork));
-          const actual = stdDec.minus(unpaidInMonth);
-          effectiveRatio = (actual.isNegative() ? zero : actual).div(stdDec);
-        } else {
-          effectiveRatio = money(1);
-        }
-      } else if (input.workweek !== undefined) {
-        const activeWork = countWorkdaysInSpan(yearNum, idx, startDay, endDay, input.workweek);
-        const totalWork = countWorkdaysInSpan(yearNum, idx, 1, daysInMonth, input.workweek);
+      } else if (input.workweek !== undefined || monthStd === undefined) {
+        // Default to Vietnam's 6-day Mon-Sat schedule when no working-day override or workweek is given,
+        // so both partial months and unpaid_leave deductions work out of the box with zero setup.
+        const schedule: LeaveWorkweek = input.workweek ?? 'mon_sat';
+        const totalWork = countWorkdaysInSpan(yearNum, idx, 1, daysInMonth, schedule);
+        const activeWork = countWorkdaysInSpan(yearNum, idx, startDay, endDay, schedule);
         const stdDec = money(monthStd !== undefined ? monthStd.trim() : String(totalWork));
         const actual = money(String(activeWork)).minus(unpaidInMonth);
         effectiveRatio = (actual.isNegative() ? zero : actual).div(stdDec);
-      } else if (monthStd !== undefined) {
+      } else if (startDay === 1 && endDay === daysInMonth) {
+        const stdDec = money(monthStd.trim());
+        const actual = stdDec.minus(unpaidInMonth);
+        effectiveRatio = (actual.isNegative() ? zero : actual).div(stdDec);
+      } else {
         const stdDec = money(monthStd.trim());
         const monFriTotal = countWorkdaysInSpan(yearNum, idx, 1, daysInMonth, 'mon_fri');
         const monSatTotal = countWorkdaysInSpan(yearNum, idx, 1, daysInMonth, 'mon_sat');
@@ -331,9 +323,6 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
         }
         const actual = money(String(activeWork)).minus(unpaidInMonth);
         effectiveRatio = (actual.isNegative() ? zero : actual).div(stdDec);
-      } else {
-        const actual = money(String(activeDays)).minus(unpaidInMonth);
-        effectiveRatio = (actual.isNegative() ? zero : actual).div(String(daysInMonth));
       }
 
       if (effectiveRatio.greaterThanOrEqualTo(halfRatio)) {

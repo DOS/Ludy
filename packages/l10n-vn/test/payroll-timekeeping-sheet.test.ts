@@ -264,5 +264,19 @@ describe('parseTimekeepingSheet (#3348)', () => {
     const spacedRes = parseTimekeepingSheet(spaced, { month: '2026-08' });
     expect(spacedRes.rows.map((r) => r.displayName)).toEqual(['Cong']);
     expect(spacedRes.errors.map((e) => [e.code, e.rowNumber, e.column])).toEqual([['invalid_number', 3, 'unpaidLeaveDays']]);
+
+    // Valid TSV whose notes cell contains many commas must fall back to tab rather than failing on comma-mode quote errors.
+    const tsvManyCommas = 'Ma NV\tNghi khong luong\tGhi chu\nNV01\t1\t"a,b,c,d,e,f"\n';
+    const commaTsvRes = parseTimekeepingSheet(tsvManyCommas, { month: '2026-08' });
+    expect(commaTsvRes.delimiter).toBe('\t');
+    expect(commaTsvRes.errors).toEqual([]);
+    expect(commaTsvRes.rows[0]?.unpaidLeaveDays).toBe('1');
+
+    // CSV preceded by a semicolon-heavy preamble note falls back to comma cleanly.
+    const csvWithSemiPreamble = 'Ghi chu: a; b; c; d; e; f\nMa NV,Ho ten,Unpaid leave\nNV01,"Pham, Minh",1\n';
+    const csvFallbackRes = parseTimekeepingSheet(csvWithSemiPreamble, { month: '2026-08' });
+    expect(csvFallbackRes.delimiter).toBe(',');
+    expect(csvFallbackRes.errors).toEqual([]);
+    expect(csvFallbackRes.rows[0]).toMatchObject({ employeeCode: 'NV01', displayName: 'Pham, Minh', unpaidLeaveDays: '1' });
   });
 });

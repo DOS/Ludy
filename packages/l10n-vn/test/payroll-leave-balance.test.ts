@@ -27,7 +27,7 @@ describe('calculateLeaveBalance (#3348)', () => {
   });
 
   it('applies halfMonthWorkingDaysRatio (0.5) to mid-year hire and termination months', () => {
-    // July has 31 days: hired July 16 -> 16/31 >= 0.5 (6 months); hired July 17 -> 15/31 < 0.5 (5 months).
+    // Default Mon-Sat schedule: July 2026 has 27 Mon-Sat days: Jul 16 -> 14/27 >= 0.5 (6 months); Jul 17 -> 13/27 < 0.5 (5 months).
     expect(calculateLeaveBalance({ year: '2026', category: 'standard', hireDate: '2026-07-16' })).toMatchObject({
       eligibleMonths: 6,
       entitlementDays: '6',
@@ -37,17 +37,21 @@ describe('calculateLeaveBalance (#3348)', () => {
       entitlementDays: '5',
     });
 
-    // February 2026 has 28 days: hired Feb 15 -> 14/28 = 0.5 (counts -> 11 months); Feb 16 -> 13/28 < 0.5 (10 months).
-    expect(calculateLeaveBalance({ year: '2026', category: 'standard', hireDate: '2026-02-15' }).eligibleMonths).toBe(11);
-    expect(calculateLeaveBalance({ year: '2026', category: 'standard', hireDate: '2026-02-16' }).eligibleMonths).toBe(10);
+    // February 2026 has 24 Mon-Sat days (Feb 15 is Sunday): hired Mon Feb 16 -> 12/24 = 0.5 (11 months); Feb 17 -> 11/24 < 0.5 (10 months).
+    expect(calculateLeaveBalance({ year: '2026', category: 'standard', hireDate: '2026-02-16' }).eligibleMonths).toBe(11);
+    expect(calculateLeaveBalance({ year: '2026', category: 'standard', hireDate: '2026-02-17' }).eligibleMonths).toBe(10);
 
-    // Leap year February 2028 (29 days): hired Feb 15 -> 15/29 >= 0.5 (11 months); Feb 16 -> 14/29 < 0.5 (10 months).
+    // Explicit all_days workweek checks calendar day counts (Feb 15 -> 14/28 = 0.5; Feb 16 -> 13/28 < 0.5).
+    expect(calculateLeaveBalance({ year: '2026', category: 'standard', hireDate: '2026-02-15', workweek: 'all_days' }).eligibleMonths).toBe(11);
+    expect(calculateLeaveBalance({ year: '2026', category: 'standard', hireDate: '2026-02-16', workweek: 'all_days' }).eligibleMonths).toBe(10);
+
+    // Leap year February 2028 (25 Mon-Sat days, 29 calendar days): Feb 15 -> 13/25 >= 0.5 (11 months); Feb 16 -> 12/25 < 0.5 (10 months).
     expect(calculateLeaveBalance({ year: '2028', category: 'standard', hireDate: '2028-02-15' }).eligibleMonths).toBe(11);
     expect(calculateLeaveBalance({ year: '2028', category: 'standard', hireDate: '2028-02-16' }).eligibleMonths).toBe(10);
 
-    // Ended May 15 -> 15/31 < 0.5 (4 months); ended May 16 -> 16/31 >= 0.5 (5 months).
-    expect(calculateLeaveBalance({ year: '2026', category: 'standard', hireDate: '2024-01-01', endedOn: '2026-05-15' }).eligibleMonths).toBe(4);
-    expect(calculateLeaveBalance({ year: '2026', category: 'standard', hireDate: '2024-01-01', endedOn: '2026-05-16' }).eligibleMonths).toBe(5);
+    // Ended May 14 -> 12/26 < 0.5 (4 months); ended May 15 -> 13/26 = 0.5 (5 months) on Mon-Sat default.
+    expect(calculateLeaveBalance({ year: '2026', category: 'standard', hireDate: '2024-01-01', endedOn: '2026-05-14' }).eligibleMonths).toBe(4);
+    expect(calculateLeaveBalance({ year: '2026', category: 'standard', hireDate: '2024-01-01', endedOn: '2026-05-15' }).eligibleMonths).toBe(5);
   });
 
   it('adds +1 seniority day per full 5 years completed and pro-rates for partial years', () => {
@@ -320,5 +324,15 @@ describe('calculateLeaveBalance (#3348)', () => {
         workedDaysByMonth: { '2026-03': '10' },
       }).eligibleMonths,
     ).toBe(9);
+
+    // With zero setup (no standardWorkingDays or workweek), full-month unpaid leave still deducts against Mon-Sat default.
+    expect(
+      calculateLeaveBalance({
+        year: '2026',
+        category: 'standard',
+        hireDate: '2025-01-01',
+        entries: [{ kind: 'unpaid_leave', month: '2026-05', days: '26' }],
+      }),
+    ).toMatchObject({ eligibleMonths: 11, entitlementDays: '11' });
   });
 });

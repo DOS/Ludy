@@ -463,27 +463,22 @@ export function parseTimekeepingSheet(text: string, options?: TimekeepingSheetOp
     .map((d) => ({ d, n: countOutsideQuotes(body, d) }))
     .sort((a, b) => b.n - a.n);
 
-  let chosenDelimiter: TimekeepingDelimiter = candidates[0]?.d ?? '\t';
-  let parsed = parseDelimitedRows(body, chosenDelimiter);
-  let header = detectHeader(parsed.rows);
+  const attempts = candidates.map((c) => {
+    const attemptParsed = parseDelimitedRows(body, c.d);
+    const attemptHeader = detectHeader(attemptParsed.rows);
+    return { delimiter: c.d, count: c.n, parsed: attemptParsed, header: attemptHeader };
+  });
 
-  if (header === null && parsed.quoteError === null) {
-    for (const candidate of candidates) {
-      const attempt = parseDelimitedRows(body, candidate.d);
-      if (attempt.quoteError !== null) {
-        chosenDelimiter = candidate.d;
-        parsed = attempt;
-        break;
-      }
-      const attemptHeader = detectHeader(attempt.rows);
-      if (attemptHeader !== null) {
-        chosenDelimiter = candidate.d;
-        parsed = attempt;
-        header = attemptHeader;
-        break;
-      }
-    }
-  }
+  const selected =
+    attempts.find((a) => a.parsed.quoteError === null && a.header !== null) ??
+    attempts.find((a) => a.parsed.quoteError !== null && a.header !== null) ??
+    attempts.find((a) => a.parsed.quoteError === null && a.count > 0) ??
+    attempts.find((a) => a.parsed.quoteError === null) ??
+    attempts[0];
+
+  const chosenDelimiter: TimekeepingDelimiter = selected?.delimiter ?? '\t';
+  const parsed: DelimitedParseResult = selected?.parsed ?? { rows: [], quoteError: null };
+  const header: HeaderDetection | null = selected?.header ?? null;
 
   if (parsed.quoteError !== null) {
     const quoteMsg =
