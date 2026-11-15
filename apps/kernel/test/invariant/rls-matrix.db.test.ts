@@ -69,7 +69,7 @@ const MACHINERY = new Set([
   // reached only by definers, no login role grant. Land before their tables (PENDING_TABLES).
   'crove_meetings.hook_delivery',
   'crove_meetings.member_hook',
-  // #3168 (meetings integrations B4): the sealed address of an org's minutes channel (a Slack or Teams webhook), read out only by the API process for the recorder's own post in flight, through a definer. No login role grant.
+  // #3168 (meetings integrations B4): the sealed address of an org's minutes channel (a Slack or Teams webhook), read out only by the worker, for a queued post, through a definer. No login role grant.
   'crove_meetings.chat_channel_target',
   // #3168: the message of a queued post to a minutes channel, kept only while the post is queued and deleted when it settles: reached only by definers, no login role grant. Lands before its table (PENDING_TABLES).
   'crove_meetings.chat_post_body',
@@ -2397,7 +2397,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   },
   // #3168 (meetings integrations B4): an org's channel for minutes (a Slack or Teams webhook). Tenant data, no secret: every member reads it, owners and admins change it through the commands.
   'crove_meetings.chat_channel': { make: (o) => ({ row: chatChannelRow(o) }) },
-  // Definer-only machinery: the sealed address of a minutes channel, one row per channel. The envelope is opaque bytes here; only the API process opens a real one, for the recorder's own post in flight.
+  // Definer-only machinery: the sealed address of a minutes channel, one row per channel. The envelope is opaque bytes here; only the worker opens a real one, for a queued post.
   'crove_meetings.chat_channel_target': {
     make: (o) => {
       const channel = chatChannelRow(o);

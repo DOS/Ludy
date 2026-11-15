@@ -52,7 +52,8 @@ suite('the body of a queued post to a channel (B4, #3168)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    present = (await admin((c) => c.query<{ ok: boolean }>(`SELECT to_regprocedure('crove_meetings.chat_body_ok(jsonb)') IS NOT NULL AS ok`))).rows[0]?.ok === true;
+    // Present when the check function OR the body table exists: a body table without its check function fails the tests below instead of passing vacuously.
+    present = (await admin((c) => c.query<{ ok: boolean }>(`SELECT (to_regprocedure('crove_meetings.chat_body_ok(jsonb)') IS NOT NULL OR to_regclass('crove_meetings.chat_post_body') IS NOT NULL) AS ok`))).rows[0]?.ok === true;
   }, 300_000);
 
   afterAll(async () => {
@@ -102,6 +103,13 @@ suite('the body of a queued post to a channel (B4, #3168)', () => {
       ['long item title', { ...GOOD, items: [{ ...GOOD.items[0], title: 'x'.repeat(301) }] }],
       ['long owner', { ...GOOD, items: [{ ...GOOD.items[0], who: 'x'.repeat(201) }] }],
       ['long date', { ...GOOD, items: [{ ...GOOD.items[0], when: 'x'.repeat(101) }] }],
+      ['item title an object', { ...GOOD, items: [{ ...GOOD.items[0], title: { text: 'x' } }] }],
+      ['item title an array', { ...GOOD, items: [{ ...GOOD.items[0], title: ['x'] }] }],
+      ['item owner an object', { ...GOOD, items: [{ ...GOOD.items[0], who: { name: 'An' } }] }],
+      ['item owner an array', { ...GOOD, items: [{ ...GOOD.items[0], who: ['An'] }] }],
+      ['item date an object', { ...GOOD, items: [{ ...GOOD.items[0], when: { text: 'x' } }] }],
+      ['item date an array', { ...GOOD, items: [{ ...GOOD.items[0], when: ['x'] }] }],
+      ['item not an object', { ...GOOD, items: ['x'] }],
       ['http link', { ...GOOD, link: 'http://app.example.test/x' }],
       ['link with a space', { ...GOOD, link: 'https://app.example.test/x y' }],
       ['long link', { ...GOOD, link: `https://app.example.test/${'x'.repeat(500)}` }],
@@ -121,5 +129,30 @@ suite('the body of a queued post to a channel (B4, #3168)', () => {
     // The log of a click holds ids, a state, a status, a code and two hashes: no column that could hold the text.
     const post = await admin((c) => c.query<{ column_name: string }>(`SELECT column_name FROM information_schema.columns WHERE table_schema = 'crove_meetings' AND table_name = 'chat_post' ORDER BY ordinal_position`));
     expect(post.rows.map((r) => r.column_name)).toEqual(['org_id', 'id', 'meeting_id', 'channel_id', 'user_id', 'facts_key', 'text_hash', 'state', 'attempts', 'http_status', 'code', 'created_at', 'handed_at', 'sending_at', 'settled_at']);
+    // The type of every column, so a column cannot be widened into something that holds text (a jsonb or a long text) without this test saying so; the three text columns that carry words are bounded by a CHECK.
+    const types = await admin((c) =>
+      c.query<{ column_name: string; data_type: string }>(`SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = 'crove_meetings' AND table_name = 'chat_post' ORDER BY ordinal_position`),
+    );
+    expect(Object.fromEntries(types.rows.map((r) => [r.column_name, r.data_type]))).toEqual({
+      org_id: 'uuid',
+      id: 'uuid',
+      meeting_id: 'uuid',
+      channel_id: 'uuid',
+      user_id: 'uuid',
+      facts_key: 'text',
+      text_hash: 'text',
+      state: 'text',
+      attempts: 'integer',
+      http_status: 'smallint',
+      code: 'text',
+      created_at: 'timestamp with time zone',
+      handed_at: 'timestamp with time zone',
+      sending_at: 'timestamp with time zone',
+      settled_at: 'timestamp with time zone',
+    });
+    const postChecks = (await admin((c) => c.query<{ def: string }>(`SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conrelid = 'crove_meetings.chat_post'::regclass AND contype = 'c'`))).rows.map((r) => r.def).join('\n');
+    expect(postChecks).toContain("facts_key ~ '^[0-9a-f]{64}$'");
+    expect(postChecks).toContain("text_hash ~ '^[0-9a-f]{64}$'");
+    expect(postChecks).toContain("code ~ '^[A-Z0-9_]{1,64}$'");
   });
 });

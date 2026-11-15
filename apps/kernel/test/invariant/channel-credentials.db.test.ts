@@ -40,7 +40,7 @@ const SEALED_STORES = ['crove_ads.ad_token_seal.envelope', 'crove_kernel.calenda
 const SEALED_ALLOWANCES: Readonly<Record<string, { issue: string; expires: string; reason: string }>> = {
   // The address of an org's minutes channel (a Slack or Teams webhook), sealed for the binding (org, 'meeting-chat', the channel's id). The table lands in the change that builds B4; that change names the
   // column in SEALED_STORES and removes this line. Until then an absent table is accepted, and a present one must have no grant to any Crove role (the next test).
-  'crove_meetings.chat_channel_target.envelope': { issue: '#3168', expires: '2026-12-31', reason: 'meetings integrations B4: the sealed webhook address of a minutes channel, opened only by the API process for the recorder\'s own post in flight' },
+  'crove_meetings.chat_channel_target.envelope': { issue: '#3168', expires: '2026-12-31', reason: 'meetings integrations B4: the sealed webhook address of a minutes channel, opened only by the worker, for a queued post' },
 };
 
 suite('channel credentials on PostgreSQL (ADR-0025)', () => {
