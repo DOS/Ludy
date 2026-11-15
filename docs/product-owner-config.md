@@ -65,6 +65,7 @@ turn on `sprint_review` with `line_scopes`.
 | Engage (Ludy Engage: Social in `modules/social`, Ads, Hộp thư/Help Desk and the CRM folded in, DESIGN.md 2026-11-03) | `line:social-management` | `735657ce` | `Ludy Engage Product Owner` |
 | AI Meeting Notes | `line:meetings` | `8c4c0494` | AI Meeting Notes Product Owner |
 | Platform (the shared backend core: kernel, database, tenancy, authentication and sessions, the command runtime, the WORM archive; Vy, the AI general manager; architecture and ADRs; security reviews; CI, deploy and operations) | `line:platform` | `3d3f0729` | `Platform Product Owner` (the coordinator session; titled `0: Điều phối` until 2026-11-14) |
+| eSign (Ludy Ký kết: electronic signatures, envelopes, templates, audit certificates, `modules/sign`) | `line:esign` | `none` | `eSign Product Owner` |
 
 - Social is not paused. Decision D5 was answered by JOY on 2026-10-17 as
   "no for Social" (backlog review, Decision 17), and JOY confirmed on
@@ -123,6 +124,10 @@ turn on `sprint_review` with `line_scopes`.
   acceptance gate of its own line's PRs, protected-path ones included.
 - Each line owns its feature's behavior and data; Frontend owns presentation
   and UX across the apps.
+- Owner decisions 2026-11-15 (eSign PO chat, #3318, #3319, docs/plan/esign.md):
+  - Slice 1 ships self-contained Documenso-style electronic signatures (draw/type signature, optional email OTP via ADR-0034, tamper-evident SHA-256 PDF sealing, independent audit certificate) running 100% locally on `docker compose up` with zero external provider accounts; Vietnamese public CAs (`VNPT SmartCA`, `Viettel MySign`, `MISA WeSign`) sit behind a pluggable adapter in Slice 2.
+  - Standalone per-org toggleable app `Ký kết` / `eSign` (`'sign'`, ADR-0031, ADR-0053); `Vy` (`gm`) proposes signature/date/text fields and summarizes risky clauses via the `packages/agent` AI budget meter (core works with AI off; humans approve every placement and send).
+  - Public signing uses fragment links `/-/sign#<token>` (`Referrer-Policy: no-referrer`, single-use replay rejection, optional email OTP, and no mandatory third-party CAPTCHA per `#203`); templates and Engage quote / HR contract handoffs stay in Slice 2; `Product Line` board option stays `none` so existing option ids are not mutated.
 
 ## Issue fields
 
@@ -248,7 +253,9 @@ it reviewed, and repeats it if those files change again.
 
 - sub_sessions_normal: 1 (JOY caps the repository at 3 sub-sessions at
   once, across every line; owner decision 2026-10-31)
-- sub_sessions_max: 2
+- sub_sessions_max: 3 (JOY clarification 2026-11-15: "Tao thấ mới có 2 phiên
+  con thôi mà. Tối đa 3 phiên con + 1 PO", up to 3 active sub-sessions + 1 PO
+  session; Engage keeps its 2026-11-08 4-sub-session exception)
 
 A PO keeps its context small at natural breaks. With a warm cache, it uses
 `/compact` with a focus. After a long idle, such as overnight, it starts a
