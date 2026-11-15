@@ -301,6 +301,13 @@ export const zMe = z.object({
   orgs: z.array(zOrgSummary),
 });
 
+// The apps an org may switch (ADR-0053, #3313): per app, whether the deployment runs it (CROVE_MODULES), the org holds
+// it (entitlements), the org did not switch it off, and all three (what its members get).
+export const zOrgApp = z.object({ id: z.string(), deployment: z.boolean(), entitled: z.boolean(), enabled: z.boolean(), effective: z.boolean() });
+export const zOrgApps = z.object({ apps: z.array(zOrgApp), version: z.number().int().positive(), canChange: z.boolean() });
+export const zOrgAppSet = z.object({ module: z.string().regex(/^[a-z][a-z0-9_]{0,49}$/), enabled: z.boolean() });
+export const zOrgAppSetResult = z.object({ module: z.string(), enabled: z.boolean(), version: z.number().int().positive() });
+
 // How often an org files its VAT return (issue #318).
 export const zVatFilingPeriod = z.enum(VAT_FILING_PERIODS);
 

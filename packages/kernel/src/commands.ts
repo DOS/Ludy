@@ -67,6 +67,7 @@ import { setAddress, setContactEmail } from './org-address.ts';
 import { partyCommands } from './parties.ts';
 import { setTaxCode, setVatFilingPeriod } from './tax-code.ts';
 import { setApprovalPreset } from './approval-preset.ts';
+import { setAppCommand } from './org-apps.ts';
 import { legalEntityCommands } from './legal-entities.ts';
 import { numberingCommands } from './numbering.ts';
 import { cancelMemberVyRuns, memberVyCommands } from './member-vy.ts';
@@ -1258,6 +1259,8 @@ export function buildKernelCommands(
     uploadBeginLimits?: UploadBeginLimits;
     inviteLimits?: InviteLimits;
     messageIdDomain?: string;
+    // The modules this build ships, so kernel.org.set_app refuses an app that does not exist (ADR-0053); absent: any well-formed id.
+    shippedModules?: readonly string[];
   } = {},
 ) {
   return [
@@ -1266,6 +1269,7 @@ export function buildKernelCommands(
       ? inviteCreateCommand(options.inviteLimits, { messageIdDomain: options.messageIdDomain })
       : createInvite,
     ...otherKernelCommands,
+    setAppCommand(options.shippedModules ? { shipped: options.shippedModules } : {}),
     options.uploadBeginLimits ? beginUploadCommand(options.uploadBeginLimits) : beginUpload,
     options.inboundRotateLimits ? inboundRotateCommand(options.inboundRotateLimits) : rotateInbound,
     options.inboundRotateLimits ? conversationAddressRotateCommand(options.inboundRotateLimits) : rotateConversationAddress,
