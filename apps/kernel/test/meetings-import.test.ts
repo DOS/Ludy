@@ -214,6 +214,17 @@ describe('runMeetingsImport', () => {
       }
     });
 
+    it('does not retry a compressed answer: the egress guard\'s encoding refusal is permanent and says platform_refused, while a network error is tried again', async () => {
+      // The first attempt of a job with retries left: a permanent refusal settles the row at once (no throw, so the queue does not retry) ...
+      const refused = harness({ adapters: { sandbox: remote() }, stream: async () => Promise.reject(new EgressError('encoding', 'the response is compressed')) });
+      expect(await runMeetingsImport(refused.deps, job(), { retryCount: 0, retryLimit: 3 })).toBe('failed');
+      expect(recorded(refused.calls)).toEqual(['kernel.meeting_platform.import_failed:platform_refused']);
+      // ... where a transient network error throws for the queue to retry and settles nothing yet.
+      const flaky = harness({ adapters: { sandbox: remote() }, stream: async () => Promise.reject(new EgressError('network', 'reset')) });
+      await expect(runMeetingsImport(flaky.deps, job(), { retryCount: 0, retryLimit: 3 })).rejects.toThrow();
+      expect(recorded(flaky.calls)).toEqual([]);
+    });
+
     it('sends the first request to one of the adapter\'s exact hosts: a CDN suffix host is refused before any connection, and an unparsable address too', async () => {
       for (const url of ['https://a.cdn.example.test/rec.m4a', 'https://elsewhere.example.test/rec.m4a', 'not a url']) {
         let opened = 0;
