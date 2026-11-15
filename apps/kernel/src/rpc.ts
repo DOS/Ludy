@@ -681,6 +681,8 @@ export function createRpcHandler(
     },
     today: {
       list: os.today.list.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.today', {}, { actor, orgId }))),
+      // What each AI coworker prepared over the last day: counts of the member's readable activity rows (#3256), no model.
+      sinceYesterday: os.today.sinceYesterday.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.since_yesterday', {}, { actor, orgId }))),
       // Vy's brief (#2383): written from the member's own list only (the same query, in their context), so it can say
       // nothing they could not see. No model, or the per-member AI rate limit: the plain template. The month's AI budget
       // spent: no brief, and Home shows the list alone. Nothing is stored.

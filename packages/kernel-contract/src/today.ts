@@ -4,7 +4,7 @@
 // could open, with no write; Home only merges them. This file is the one shape all of those reads import, so none
 // defines its own. Nothing here reads or writes: it is the schema and the type.
 import { z } from 'zod';
-import { zLocalDate, zMoney } from './schemas.ts';
+import { zId, zLocalDate, zMoney } from './schemas.ts';
 
 export const TODAY_KINDS = ['proposal', 'flag', 'message', 'deadline'] as const;
 export type TodayKind = (typeof TODAY_KINDS)[number];
@@ -108,6 +108,26 @@ export const zTodayList = z.object({
   failed: z.number().int().nonnegative(),
 });
 export type TodayList = z.infer<typeof zTodayList>;
+
+// "Since yesterday" on Home (Vy plan C1c, issue #3256): what each AI coworker prepared for the org over the last day, as a count
+// of the activity rows its commands left (`activity.agent_id`), read in the member's own context, so the count is of the rows
+// that member can open (the activity table's own policy: org and legal-entity scope). Counts only: no row's text, no record, no
+// name but the coworker's current one (the agent's display name, which a rename changes). A coworker with no rows is not listed.
+// The same list holds with AI off: nothing here calls a model.
+export const SINCE_YESTERDAY_HOURS = 24;
+// The most coworkers one answer lists (an org holds a handful of agents; the cut ones are the ones that prepared least).
+export const SINCE_YESTERDAY_MAX = 20;
+export const zSinceYesterdayItem = z.strictObject({
+  agentId: zId,
+  // The agent's display name now (1 to 200 characters).
+  name: z.string().min(1).max(200),
+  count: z.number().int().positive(),
+  // Where the prepared items wait for the member: an in-app path (the AI inbox).
+  href: zTodayHref,
+});
+export type SinceYesterdayItem = z.infer<typeof zSinceYesterdayItem>;
+export const zSinceYesterday = z.object({ items: z.array(zSinceYesterdayItem).max(SINCE_YESTERDAY_MAX) });
+export type SinceYesterday = z.infer<typeof zSinceYesterday>;
 
 // Vy's daily brief (#2383): written from the same items, shown above the list. writtenBy says who wrote it ('vy': the
 // model, every number checked against the figures; 'template': built from the figures with no model); null with no
