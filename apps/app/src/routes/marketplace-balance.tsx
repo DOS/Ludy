@@ -20,7 +20,7 @@ const NUM = 'px-4 py-3 text-right tabular-nums';
 // is display only. With AI off, busy, out of budget or refused, the facts stand alone (the state is named in a few words).
 // Zero as the coworker is told it: whole dong, so less than half a dong is nothing (the same rule as packages/agent marketplace-line.ts).
 const ZERO = /^-?0*(\.[0-4]\d*)?$/;
-const sameFacts = (a: MarketplaceFacts, b: MarketplaceFacts) => a.settlementsToPost === b.settlementsToPost && a.payoutsToMatch === b.payoutsToMatch && a.awaitingPayout === b.awaitingPayout && a.feesAwaitingInvoice === b.feesAwaitingInvoice;
+const sameFacts = (a: MarketplaceFacts, b: MarketplaceFacts) => a.settlementsToPost === b.settlementsToPost && a.payoutsToMatch === b.payoutsToMatch && a.settlementsHalfReversed === b.settlementsHalfReversed && a.awaitingPayout === b.awaitingPayout && a.feesAwaitingInvoice === b.feesAwaitingInvoice;
 function CoworkerLine({ legalEntityId, ready }: { legalEntityId: string | undefined; ready: boolean }) {
   const t = useTranslations('marketplaceBalance');
   const f = useFormat();
@@ -46,6 +46,8 @@ function CoworkerLine({ legalEntityId, ready }: { legalEntityId: string | undefi
   if (facts.data.settlementsToPost > 0) parts.push(t('lineSettlements', { count: String(facts.data.settlementsToPost) }));
   // Counted by code beside the others; the coworker's sentence is not told it (the checks that keep the sentence to the facts bind three numbers).
   if (facts.data.payoutsToMatch > 0) parts.push(t('linePayouts', { count: String(facts.data.payoutsToMatch) }));
+  // Also counted by code only (#3329): a settlement with some months reversed and some standing, the accountant's to finish.
+  if (facts.data.settlementsHalfReversed > 0) parts.push(t('lineHalfReversed', { count: String(facts.data.settlementsHalfReversed) }));
   if (!ZERO.test(facts.data.awaitingPayout)) parts.push(t('lineAwaiting', { amount: f.money(facts.data.awaitingPayout) }));
   if (!ZERO.test(facts.data.feesAwaitingInvoice)) parts.push(t('lineFees', { amount: f.money(facts.data.feesAwaitingInvoice) }));
   // The sentence belongs to the facts it was written from: after the facts change (a settlement posted), an older answer is not shown beside the new figures.

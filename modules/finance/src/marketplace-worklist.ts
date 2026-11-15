@@ -18,6 +18,7 @@ import { bankLineStates } from './bank-match.ts';
 import { balanceOf, invoiceCleared, invoicePayable, standingInvoiceEntry } from './marketplace-fee-clearing-record.ts';
 import { payoutOfBankLine } from './marketplace-payout-line.ts';
 import { requireConfirmedMarketplaceMap, MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from './marketplace-posting-map.ts';
+import { halfReversedSettlements } from './marketplace-half-reversed.ts';
 import { postingsOf, settlementMonthsFor, settlementPosted } from './marketplace-settlement-months.ts';
 import { platformPartyName } from './marketplace-settlement-record.ts';
 import { booksOn } from './payroll-posting.ts';
@@ -181,7 +182,19 @@ export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: 
         }
       }
 
-      return { postingConfirmed: await postingConfirmed(ctx, input.legalEntityId, options.maps ?? MARKETPLACE_POSTING_MAPS), settlements, payouts, invoices };
+      // Settlements with some month vouchers reversed and some standing (#3329): the accountant finishes the reversal, the payout first.
+      const halfReversed: MarketplaceWorklist['halfReversed'] = (await halfReversedSettlements(ctx, input.legalEntityId)).map((h) => ({
+        settlementId: h.id,
+        legalEntityId: h.legalEntityId,
+        platform: h.platform,
+        platformName: platformPartyName(h.platform),
+        periodFrom: h.periodFrom,
+        periodTo: h.periodTo,
+        standingMonths: h.standing,
+        reversedMonths: h.reversed,
+      }));
+
+      return { postingConfirmed: await postingConfirmed(ctx, input.legalEntityId, options.maps ?? MARKETPLACE_POSTING_MAPS), settlements, payouts, invoices, halfReversed };
     },
   });
 

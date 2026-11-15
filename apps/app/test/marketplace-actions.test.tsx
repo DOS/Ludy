@@ -44,9 +44,10 @@ const lineA = '00000000-0000-4000-8000-0000000000b1';
 const lineB = '00000000-0000-4000-8000-0000000000b2';
 const documentId = '00000000-0000-4000-8000-0000000000c1';
 
-const EMPTY: MarketplaceWorklist = { postingConfirmed: true, settlements: [], payouts: [], invoices: [] };
+const EMPTY: MarketplaceWorklist = { postingConfirmed: true, settlements: [], payouts: [], invoices: [], halfReversed: [] };
 const FULL = (over: Partial<MarketplaceWorklist> = {}): MarketplaceWorklist => ({
   postingConfirmed: true,
+  halfReversed: [],
   settlements: [{ id: settlementId, legalEntityId: entity, platform: 'shopee', platformName: 'Shopee', periodFrom: '2026-10-01', periodTo: '2026-10-15', months: ['2026-10'], net: '335000', waitingLines: 0, proposalId: null }],
   payouts: [
     {
@@ -141,6 +142,17 @@ describe('the Sàn screen actions (#2516 slice F)', () => {
     expect(html.match(/data-testid="marketplace-post"/g)).toHaveLength(1);
     expect(html).toContain('marketplace-post-waiting');
     expect(html).toContain('Waiting for the delivery day');
+  });
+
+  it('lists a half-reversed settlement with how many months still stand, in both languages, with no button', () => {
+    const half = [{ settlementId, legalEntityId: entity, platform: 'shopee', platformName: 'Shopee', periodFrom: '2026-10-01', periodTo: '2026-10-15', standingMonths: 2, reversedMonths: 1 }];
+    const en = render({ ...EMPTY, halfReversed: half }, 'en');
+    expect(en).toContain('data-testid="marketplace-actions-half-reversed"');
+    expect(en).toContain('Half reversed: 2 months still stand (1 reversed)');
+    expect(en).not.toContain('data-testid="marketplace-post"');
+    expect(render({ ...EMPTY, halfReversed: half }, 'vi')).toContain('Đảo dở: còn 2 tháng chưa đảo (đã đảo 1)');
+    // The half-reversed settlement alone is enough to show the section (nothing else waits), and with nothing at all the component stays empty.
+    expect(render(EMPTY, 'en')).toBe('');
   });
 
   it('offers the bank lines by date, amount and reference, never a free-text id', () => {
