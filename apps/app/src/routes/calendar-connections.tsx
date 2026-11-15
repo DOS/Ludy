@@ -12,6 +12,7 @@ import { meetingsInstalled } from '../components/linked-meetings.tsx';
 import { ErrorText } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, getCurrentOrg, orpc, queryClient } from '../lib/api.ts';
+import { adminConsentLink, oauthProviderOf, rememberAdminLink } from '../lib/calendar-oauth.ts';
 import { rememberOAuthAttempt } from '../lib/oauth.ts';
 
 const refresh = () => queryClient.invalidateQueries({ queryKey: orpc.calendar.connections.key() });
@@ -36,8 +37,10 @@ function ConnectionRow({
   const readEvents = useMutation(orpc.meetings.agenda.setReadEvents.mutationOptions({ onSuccess: refreshAgenda }));
   // Writing appointments is Google's for now, for a member who edits, on a connection that works.
   const offerWriteBack = canEdit && connection.provider === 'google' && connection.status === 'active';
-  // Reading the names and times of the member's own meetings (B1): offered with the meetings module, for the same connection. Off until the member ticks it, and only after Google's own consent.
-  const offerReadEvents = offerWriteBack && meetingsInstalled();
+  // Reading the names and times of the member's own meetings (B1, B3): offered with the meetings module, for a Google or Microsoft connection that works. Off until the member ticks it; Google
+  // asks its own consent for it, Microsoft's carries it from the connect.
+  const offerReadEvents = canEdit && oauthProviderOf(connection.provider) !== null && connection.status === 'active' && meetingsInstalled();
+  const microsoft = connection.provider === 'microsoft';
   const note =
     connection.status === 'expired'
       ? t('externalExpired')
@@ -83,19 +86,24 @@ function ConnectionRow({
             <Checkbox checked={connection.readEvents} disabled={readEvents.isPending} onCheckedChange={(on) => readEvents.mutate({ connectionId: connection.id, enabled: on === true })} data-testid="calendar-read-events" />
             <span>
               <span className="font-medium text-foreground">{t('externalReadEvents')}</span>
-              <span className="block">{t('externalReadEventsHint')}</span>
+              <span className="block">{microsoft ? t('externalReadEventsHintMicrosoft') : t('externalReadEventsHint')}</span>
             </span>
           </label>
         ) : (
           <div className="mt-1 text-xs text-muted-foreground">
             <p className="font-medium text-foreground">{t('externalReadEvents')}</p>
-            <p>{t('externalReadEventsHint')}</p>
+            <p>{microsoft ? t('externalReadEventsHintMicrosoft') : t('externalReadEventsHint')}</p>
             <Button type="button" variant="outline" size="sm" className="mt-1" onClick={onAllowReadEvents} data-testid="calendar-allow-read-events">
               {t('externalAllowReadEvents')}
             </Button>
           </div>
         ))}
       {readEvents.error && <ErrorText>{errorMessage(readEvents.error)}</ErrorText>}
+      {microsoft && (
+        <p className="mt-1 text-xs text-muted-foreground" data-testid="calendar-microsoft-note">
+          {t('externalMicrosoftNote')}
+        </p>
+      )}
     </li>
   );
 }
@@ -118,6 +126,9 @@ export function ExternalCalendars({ canEdit }: { canEdit: boolean }) {
       // The org the screen is showing: the provider sends the browser back to one address for every org.
       const slug = getCurrentOrg();
       if (slug) rememberOAuthAttempt(attempt.state, slug);
+      // For a Microsoft tenant that turns out to need its administrator: the address to hand them, kept for the callback page.
+      const link = adminConsentLink(attempt.authorizeUrl);
+      if (link) rememberAdminLink(attempt.state, link);
       window.location.assign(attempt.authorizeUrl);
     },
   });
@@ -129,6 +140,7 @@ export function ExternalCalendars({ canEdit }: { canEdit: boolean }) {
     <div className="mt-4" aria-label={t('externalTitle')}>
       <p className="text-xs font-medium text-muted-foreground">{t('externalTitle')}</p>
       <p className="mt-1 text-xs text-subtle-foreground">{t('externalIntro')}</p>
+      {(offered.includes('microsoft_calendar') || rows.some((c) => c.provider === 'microsoft')) && <p className="mt-1 text-xs text-subtle-foreground">{t('externalIntroMicrosoft')}</p>}
       {rows.length === 0 ? (
         <p className="mt-2 text-sm text-subtle-foreground">{t('externalNone')}</p>
       ) : (
@@ -139,7 +151,7 @@ export function ExternalCalendars({ canEdit }: { canEdit: boolean }) {
               connection={c}
               canEdit={canEdit}
               onAllowWriteBack={() => start.mutate({ provider: 'google_calendar', writeBack: true, readEvents: c.canReadEvents })}
-              onAllowReadEvents={() => start.mutate({ provider: 'google_calendar', readEvents: true, writeBack: c.canWriteBack })}
+              onAllowReadEvents={() => start.mutate({ provider: oauthProviderOf(c.provider) ?? 'google_calendar', readEvents: true, ...(c.provider === 'google' ? { writeBack: c.canWriteBack } : {}) })}
             />
           ))}
         </ul>
@@ -147,7 +159,7 @@ export function ExternalCalendars({ canEdit }: { canEdit: boolean }) {
       {canEdit && offered.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-2">
           {offered.map((p) => (
-            <Button key={p} loading={start.isPending && start.variables?.provider === p} type="button" variant="outline" size="sm" disabled={start.isPending} onClick={() => start.mutate({ provider: p, ...keepOf(rows) })}>
+            <Button key={p} loading={start.isPending && start.variables?.provider === p} type="button" variant="outline" size="sm" disabled={start.isPending} onClick={() => start.mutate({ provider: p, ...(p === 'google_calendar' ? keepOf(rows) : {}) })}>
               {t('externalConnect', { provider: t(`externalProviders.${p}`) })}
             </Button>
           ))}

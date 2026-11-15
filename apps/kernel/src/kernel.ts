@@ -32,6 +32,7 @@ import {
   YouTubeRefresher,
   GoogleBusinessConnector,
   GoogleCalendarAdapter,
+  MicrosoftCalendarAdapter,
   type CalendarAdapter,
   GoogleBusinessPublisher,
   GoogleBusinessRefresher,
@@ -354,9 +355,12 @@ export function channelConversationAdapters(config: WhatsAppConfig): Record<stri
 
 // The outside calendar providers this deployment has an OAuth app for (#2123), by OAuth provider id; one without
 // credentials is not offered, and with none the connect buttons are hidden.
-export function calendarAdapters(config: Pick<Config, 'CALENDAR_GOOGLE_CLIENT_ID' | 'CALENDAR_GOOGLE_CLIENT_SECRET'>): Partial<Record<string, CalendarAdapter>> {
+export function calendarAdapters(config: Pick<Config, 'CALENDAR_GOOGLE_CLIENT_ID' | 'CALENDAR_GOOGLE_CLIENT_SECRET' | 'CALENDAR_MICROSOFT_CLIENT_ID' | 'CALENDAR_MICROSOFT_CLIENT_SECRET' | 'CALENDAR_MICROSOFT_TENANT'>): Partial<Record<string, CalendarAdapter>> {
   const adapters: Partial<Record<string, CalendarAdapter>> = {};
   if (config.CALENDAR_GOOGLE_CLIENT_ID && config.CALENDAR_GOOGLE_CLIENT_SECRET) adapters.google_calendar = new GoogleCalendarAdapter({ clientId: config.CALENDAR_GOOGLE_CLIENT_ID, clientSecret: config.CALENDAR_GOOGLE_CLIENT_SECRET });
+  if (config.CALENDAR_MICROSOFT_CLIENT_ID && config.CALENDAR_MICROSOFT_CLIENT_SECRET) {
+    adapters.microsoft_calendar = new MicrosoftCalendarAdapter({ clientId: config.CALENDAR_MICROSOFT_CLIENT_ID, clientSecret: config.CALENDAR_MICROSOFT_CLIENT_SECRET, ...(config.CALENDAR_MICROSOFT_TENANT ? { tenant: config.CALENDAR_MICROSOFT_TENANT } : {}) });
+  }
   return adapters;
 }
 

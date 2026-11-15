@@ -14,7 +14,7 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
-import { CALENDAR_LINK_MAX_ATTEMPTS, CALENDAR_PROVIDERS, GOOGLE_CALENDAR_EVENTS_READ_SCOPE, GOOGLE_CALENDAR_EVENTS_SCOPE, zCalendarOAuthProvider, zId, type CalendarConnectionView } from '@crove/kernel-contract';
+import { CALENDAR_LINK_MAX_ATTEMPTS, CALENDAR_PROVIDERS, GOOGLE_CALENDAR_EVENTS_SCOPE, canReadEventsWith, zCalendarOAuthProvider, zId, type CalendarConnectionView } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
 
@@ -143,7 +143,7 @@ export const calendarConnect = defineCommand({
     if (existing) {
       // The read of the member's meetings stays on only if the new grant still carries its scope (a grant is exactly what was asked for this time: connecting again for
       // write-back alone drops it), so the switch never reads on without the grant.
-      await ctx.trx.updateTable('crove_kernel.calendar_connection').set({ ...values, read_events: existing.read_events && input.scopes.includes(GOOGLE_CALENDAR_EVENTS_READ_SCOPE) }).where('org_id', '=', ctx.orgId).where('id', '=', existing.id).execute();
+      await ctx.trx.updateTable('crove_kernel.calendar_connection').set({ ...values, read_events: existing.read_events && canReadEventsWith(input.provider, input.scopes) }).where('org_id', '=', ctx.orgId).where('id', '=', existing.id).execute();
       id = existing.id;
     } else {
       const row = await ctx.trx
@@ -658,7 +658,7 @@ export const calendarConnectionState = defineQuery({
       // Bookings are written to this calendar: the member turned it on and the grant carries the events scope.
       writeBack: row.write_back && row.scopes.includes(GOOGLE_CALENDAR_EVENTS_SCOPE),
       // The member's meetings are read through this connection (B1): the member turned it on and the grant carries the events-read scope.
-      readEvents: row.read_events && row.scopes.includes(GOOGLE_CALENDAR_EVENTS_READ_SCOPE),
+      readEvents: row.read_events && canReadEventsWith(row.provider, row.scopes),
     };
   },
 });
@@ -688,8 +688,8 @@ export const calendarConnections = defineQuery({
       lastSyncedAt: r.last_synced_at ? r.last_synced_at.toISOString() : null,
       writeBack: r.write_back,
       canWriteBack: r.scopes.includes(GOOGLE_CALENDAR_EVENTS_SCOPE),
-      readEvents: r.read_events && r.scopes.includes(GOOGLE_CALENDAR_EVENTS_READ_SCOPE),
-      canReadEvents: r.scopes.includes(GOOGLE_CALENDAR_EVENTS_READ_SCOPE),
+      readEvents: r.read_events && canReadEventsWith(r.provider, r.scopes),
+      canReadEvents: canReadEventsWith(r.provider, r.scopes),
       connectedAt: r.connected_at.toISOString(),
     }));
   },
@@ -785,7 +785,7 @@ export const calendarReadEventsSet = defineCommand({
     if (!row || row.user_id !== userId) throw new DomainError('CALENDAR_NOT_FOUND', 404, 'Không tìm thấy lịch đã kết nối này');
     if (input.enabled) {
       if (row.status !== 'active') throw new DomainError('CALENDAR_NOT_ACTIVE', 409, 'Lịch này không còn hoạt động, hãy kết nối lại');
-      if (!row.scopes.includes(GOOGLE_CALENDAR_EVENTS_READ_SCOPE)) throw new DomainError('CALENDAR_READ_SCOPE_MISSING', 409, 'Hãy kết nối lại lịch này và cho phép Ludy đọc tên và giờ cuộc họp trong lịch');
+      if (!canReadEventsWith(row.provider, row.scopes)) throw new DomainError('CALENDAR_READ_SCOPE_MISSING', 409, 'Hãy kết nối lại lịch này và cho phép Ludy đọc tên và giờ cuộc họp trong lịch');
     }
     await ctx.trx.updateTable('crove_kernel.calendar_connection').set({ read_events: input.enabled }).where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).execute();
     ctx.audit({ connection_id: input.connectionId, provider: row.provider, read_events: input.enabled });
