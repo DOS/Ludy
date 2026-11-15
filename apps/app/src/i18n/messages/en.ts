@@ -3475,6 +3475,8 @@ export const en = {
         title: 'Add a new contact',
         submit: 'Add contact',
         cancel: 'Cancel',
+        phoneTaken: 'This phone number already belongs to {name}.',
+        useExisting: 'Use this contact',
       },
       partyRequired: 'Choose the customer for the deal.',
       changeParty: 'Change customer',

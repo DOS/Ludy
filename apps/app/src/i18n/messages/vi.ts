@@ -3473,6 +3473,8 @@ export const vi = {
         title: 'Thêm liên hệ mới',
         submit: 'Thêm liên hệ',
         cancel: 'Hủy',
+        phoneTaken: 'Số điện thoại này đã có ở liên hệ {name}.',
+        useExisting: 'Chọn liên hệ này',
       },
       partyRequired: 'Chọn khách hàng cho cơ hội.',
       changeParty: 'Đổi khách hàng',

@@ -3,7 +3,8 @@
 // fields (name, kind, phone, email and, for a company, the tax code) runs the party create command and hands the new party to the
 // picker, so a seller adds a deal for a customer who is not yet a contact without leaving the form. It is the contacts screen's own
 // command (kernel.party.create), so a tax code that already belongs to a contact is refused there, naming that contact, and the
-// refusal shows here. The deal form is a <form>: this is a group with its own button, not a nested form, and Enter in a field adds
+// refusal shows here. The command does not refuse a phone number, so a number already on a contact is checked first (lib/new-party.ts,
+// a read of the contacts search) and that contact is offered with "Chọn liên hệ này". The deal form is a <form>: this is a group with its own button, not a nested form, and Enter in a field adds
 // the contact and never submits the deal.
 import { useMutation } from '@tanstack/react-query';
 import { useRef, useState, type KeyboardEvent } from 'react';
@@ -14,7 +15,8 @@ import { Input } from '@crove/ui/components/input';
 import { NativeSelect } from '@crove/ui/components/native-select';
 import { refreshParties } from './party-edit.tsx';
 import { ErrorText, Field, focusFirstInvalid, isEmailAddress, useFieldErrors } from './ui.tsx';
-import { errorMessage, orpc } from '../lib/api.ts';
+import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { resolveNewParty, type PhoneHit } from '../lib/new-party.ts';
 
 type NewField = 'name' | 'taxCode' | 'email';
 type Kind = PartyChoice['kind'];
@@ -39,28 +41,39 @@ export function NewPartyGroup({ initialName, onCreated, onCancel }: { initialNam
     if (field === 'taxCode') return kind === 'person' || !taxCode.trim() || normalizeTaxCode(taxCode) ? null : tc('taxCodeInvalid');
     return !email.trim() || isEmailAddress(email) ? null : tc('emailInvalid');
   });
-  const submit = () => {
-    if (create.isPending) return;
+  // The contact that already has the typed number: offered in place of a second one (the party command does not refuse a phone).
+  const [existing, setExisting] = useState<PhoneHit | null>(null);
+  const [checking, setChecking] = useState(false);
+  const busy = create.isPending || checking;
+  const submit = async () => {
+    if (busy) return;
     if (!fields.checkAll(['name', 'taxCode', 'email'])) {
       if (root.current) focusFirstInvalid(root.current);
       return;
     }
     const tax = kind === 'organization' ? orNull(taxCode) : null;
-    create.mutate(
-      { kind, name: name.trim(), taxCode: tax, email: orNull(email), phone: orNull(phone) },
-      {
-        onSuccess: ({ partyId }) => {
-          onCreated({ id: partyId, name: name.trim(), kind, taxCode: tax });
-        },
-      },
-    );
+    setExisting(null);
+    setChecking(true);
+    try {
+      const result = await resolveNewParty({
+        phone: orNull(phone),
+        search: async (filters) => (await queryClient.fetchQuery({ ...orpc.crm.contacts.list.queryOptions({ input: { filters } }), staleTime: 0 })).items,
+        create: () => create.mutateAsync({ kind, name: name.trim(), taxCode: tax, email: orNull(email), phone: orNull(phone) }),
+      });
+      if (result.status === 'existing') setExisting(result.party);
+      else onCreated({ id: result.value.partyId, name: name.trim(), kind, taxCode: tax });
+    } catch {
+      // The refusal shows under the fields (create.error); nothing was created.
+    } finally {
+      setChecking(false);
+    }
   };
   // Enter adds the contact; the deal form around this group is not submitted by it.
   const onEnter = (e: KeyboardEvent<HTMLElement>) => {
     // Enter that ends a Vietnamese input method's syllable is not a request to add the contact.
     if (e.key !== 'Enter' || e.nativeEvent.isComposing || (e.target as HTMLElement).tagName === 'BUTTON') return;
     e.preventDefault();
-    submit();
+    void submit();
   };
   return (
     <div ref={root} role="group" aria-label={t('form.newParty.title')} className="grid gap-3 rounded-md border border-border p-3 sm:grid-cols-2" data-testid="deal-new-party" onKeyDown={onEnter}>
@@ -76,7 +89,7 @@ export function NewPartyGroup({ initialName, onCreated, onCancel }: { initialNam
           </NativeSelect>
         )}
       </Field>
-      <Field label={tc('fields.phone')}>{(c) => <Input {...c} type="tel" maxLength={30} value={phone} onChange={(e) => setPhone(e.target.value)} />}</Field>
+      <Field label={tc('fields.phone')}>{(c) => <Input {...c} type="tel" maxLength={30} value={phone} onChange={(e) => (setPhone(e.target.value), setExisting(null))} />}</Field>
       <Field label={tc('fields.email')} error={fields.of('email')}>
         {(c) => <Input {...c} type="email" maxLength={254} value={email} onChange={(e) => (setEmail(e.target.value), fields.edit('email'))} onBlur={(e) => fields.blur('email', e.target.value)} />}
       </Field>
@@ -85,13 +98,21 @@ export function NewPartyGroup({ initialName, onCreated, onCancel }: { initialNam
           {(c) => <Input {...c} maxLength={20} value={taxCode} onChange={(e) => (setTaxCode(e.target.value), fields.edit('taxCode'))} onBlur={(e) => fields.blur('taxCode', e.target.value)} />}
         </Field>
       )}
+      {existing && (
+        <div role="status" className="flex flex-wrap items-center gap-2 text-sm sm:col-span-2" data-testid="deal-new-party-existing">
+          <span className="text-foreground">{t('form.newParty.phoneTaken', { name: existing.name })}</span>
+          <Button type="button" size="sm" variant="outline" onClick={() => onCreated({ id: existing.id, name: existing.name, kind: existing.kind, taxCode: existing.taxCode })}>
+            {t('form.newParty.useExisting')}
+          </Button>
+        </div>
+      )}
       {create.error && (
         <div className="sm:col-span-2">
           <ErrorText>{errorMessage(create.error)}</ErrorText>
         </div>
       )}
       <div className="flex gap-2 sm:col-span-2">
-        <Button type="button" size="sm" loading={create.isPending} onClick={submit}>
+        <Button type="button" size="sm" loading={busy} onClick={() => void submit()}>
           {t('form.newParty.submit')}
         </Button>
         <Button type="button" size="sm" variant="ghost" onClick={onCancel}>

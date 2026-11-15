@@ -164,6 +164,21 @@ test('add a contact inside the deal form, and a deal from the contact panel', as
     await expect(page.getByRole('searchbox', { name: 'Khách hàng' })).toBeVisible();
   });
 
+  await test.step('a phone number already on a contact offers that contact instead of making a second one', async () => {
+    await openForm();
+    await dealForm().getByRole('searchbox', { name: 'Khách hàng' }).fill('Người Khác');
+    await page.getByRole('button', { name: 'Thêm liên hệ mới' }).click();
+    // The same number as "Khách Mới", written another way.
+    await group().getByLabel('Điện thoại').fill('+84 912 345 678');
+    await group().getByRole('button', { name: 'Thêm liên hệ', exact: true }).click();
+    await expect(group().getByTestId('deal-new-party-existing')).toContainText('Khách Mới');
+    await group().getByRole('button', { name: 'Chọn liên hệ này' }).click();
+    await expect(group()).toHaveCount(0);
+    await expect(dealForm().getByText('Khách Mới')).toBeVisible();
+    await page.goto(`/o/${slug}/contacts`);
+    await expect(page.getByText('Người Khác')).toHaveCount(0);
+  });
+
   await test.step("the contact's panel adds a deal for that contact, owner defaulted to the member", async () => {
     await page.goto(`/o/${slug}/contacts`);
     await page.getByRole('button', { name: 'Mở Khách Mới' }).click();
