@@ -317,6 +317,7 @@ import {
 import {
   zMeetingCreate,
   zMeetingCreated,
+  zMeetingImportStart,
   zMeetingDeleted,
   zMeetingOwnerList,
   zMeetingLink,
@@ -932,6 +933,8 @@ export const contract = {
     list: oc.input(zMeetingListInput).output(z.array(zMeetingSummary)),
     get: oc.input(zMeetingRef).output(zMeetingDetail),
     create: oc.input(zMeetingCreate).output(zMeetingCreated),
+    // The click on "Nhập" for a recording a meeting platform finished (C1, #3173): makes the meeting with its consent record and starts the download. The app then claims the staged bytes through the media route.
+    importStart: oc.input(zMeetingImportStart).output(zMeetingCreated),
     // The recorder picks the minutes template of their meeting (A4, #3162).
     setTemplate: oc.input(zMeetingTemplateSet).output(zMeetingTemplateSetDone),
     // The status of a meeting the calling extension token created, and nothing of its content (issue #2582).

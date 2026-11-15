@@ -224,6 +224,19 @@ export async function uploadMeetingMedia(
   return (await response.json()) as { fileId: string };
 }
 
+// Claims the audio Ludy's worker copied from a meeting platform (meetings integrations C1, #3173): the same media route an upload ends at, with the recording's id in place of an upload id
+// and no bytes in the request. The server seals the staged file with the meeting key and records it; a row that is not staged, or is another member's, is refused there.
+export async function claimImportedMedia(meetingId: string, recordingId: string): Promise<{ fileId: string }> {
+  const response = await retryWhileBusy(() =>
+    apiFetch(`/api/meetings/${encodeURIComponent(meetingId)}/media`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ importId: recordingId, kind: 'audio' }),
+    }),
+  );
+  return (await response.json()) as { fileId: string };
+}
+
 // One piece of the audio of a live-notes meeting (ADR-0052 L4a, #3109): the raw bytes as the body, the seq and the length in
 // the query. Not retried here (the live sender retries by the error's status, which an ApiError carries) and no busy wait: a
 // failed piece may be dropped, the recording uploaded at the end is the one that counts.
