@@ -4,10 +4,13 @@
 // Send button. Only what the recorder ticked from the PUBLISHED result goes in: a title line, the summary (only when ticked, off by default), the ticked decisions and the ticked
 // action items with their dates. An action item's owner is never included (the owners are the business's own staff), and neither is a transcript, audio or any attendee detail:
 // the input type has no field for them, so no caller can pass one.
-import { hasNamePlaceholder } from './conversations.ts';
+import { CONVERSATION_PROVIDER_RULES, hasNamePlaceholder } from './conversations.ts';
 
-// What the Zalo reply may hold at most (the `zalo_oa` rule of the conversation core, CONVERSATION_PROVIDER_RULES), counted as the send command counts it: on the trimmed text.
-export const MEETING_ZALO_DRAFT_MAX = 2000;
+// The fallback only keeps the type total (the rules table is indexed by provider name); the table has the `zalo_oa` entry, and a test pins that.
+const ZALO_FALLBACK_MAX = 2000;
+
+// What the Zalo reply may hold at most: the `zalo_oa` rule of the conversation core, so the Zalo live check's correction of the limit reaches this builder. Counted as the send command counts it: on the trimmed text.
+export const MEETING_ZALO_DRAFT_MAX: number = CONVERSATION_PROVIDER_RULES.zalo_oa?.replyMax ?? ZALO_FALLBACK_MAX;
 
 // The fixed words around the ticked lines, supplied by the screen's own translation so the draft speaks the language of the business.
 export interface MeetingZaloLabels {

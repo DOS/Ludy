@@ -62,15 +62,15 @@ const thread = (id: string, provider = 'zalo_oa', kind = 'direct', lastMessageAt
   lastMessageAt,
 });
 
-const detail = (allowed: boolean, reason: string | null = null) => ({
-  conversation: { contact: { partyName: 'Anh Nam', displayName: 'Nam Zalo' }, channel: { displayName: 'OA Cửa hàng' } },
+const detail = (allowed: boolean, reason: string | null = null, replyWindowUntil: string | null = null) => ({
+  conversation: { contact: { partyName: 'Anh Nam', displayName: 'Nam Zalo' }, channel: { displayName: 'OA Cửa hàng' }, replyWindowUntil },
   reply: { allowed, reason },
 });
 
-function render(threads: unknown[], reply: { allowed: boolean; reason: string | null } | null, locale: 'en' | 'vi' = 'en', summary: string | null = 'Tóm tắt nội bộ'): string {
+function render(threads: unknown[], reply: { allowed: boolean; reason: string | null; until?: string | null } | null, locale: 'en' | 'vi' = 'en', summary: string | null = 'Tóm tắt nội bộ'): string {
   client.current.setQueryData(['meetings', 'links', 'list'], [{ id: 'l1', meetingId: 'm1', kind: 'party', targetId: 'p1', label: 'Anh Nam', createdBy: 'u1', createdAt: '2026-11-11T08:00:00.000Z' }]);
   client.current.setQueryData(['crm', 'contacts', 'conversations'], threads);
-  if (reply) client.current.setQueryData(['conversations', 'get'], detail(reply.allowed, reply.reason));
+  if (reply) client.current.setQueryData(['conversations', 'get'], detail(reply.allowed, reply.reason, reply.until ?? null));
   const node: ReactNode = (
     <QueryClientProvider client={client.current}>
       <IntlProvider locale={locale} messages={catalog(locale)}>
@@ -123,6 +123,14 @@ describe('MeetingZalo', () => {
     const html = render([thread('t1')], { allowed: false, reason: 'window_closed' });
     expect(html).toContain('meeting-zalo-closed');
     expect(html).toContain(en.conversations.replyBlocked.window_closed);
+  });
+
+  it('treats a window whose own end has passed as closed even when the last read said open (a page left open), and a thread that failed to read as not answerable', () => {
+    const passed = render([thread('t1')], { allowed: true, reason: null, until: '2020-01-01T00:00:00.000Z' });
+    expect(passed).toContain('meeting-zalo-closed');
+    expect(passed).toContain(en.conversations.replyBlocked.window_closed);
+    const open = render([thread('t1')], { allowed: true, reason: null, until: '2999-01-01T00:00:00.000Z' });
+    expect(open).not.toContain('meeting-zalo-closed');
   });
 
   it('shows nothing without a Zalo thread, without the CRM or Hộp thư module, or while the thread has not been read yet (the button is off and says it is checking)', () => {

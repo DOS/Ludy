@@ -23,6 +23,8 @@ const ZALO = 'zalo_oa';
 const THREADS_MAX = 5;
 // The window can close between two looks: the thread is read again when the panel is seen, never trusted for long.
 const FRESH = { staleTime: 30_000, refetchOnWindowFocus: true } as const;
+// A page left open is looked at again every minute, and the window is also compared with the clock below.
+const WINDOW_POLL_MS = 60_000;
 
 const installed = (): boolean => {
   const modules = getConfig().modules;
@@ -72,11 +74,12 @@ function ZaloPanel({ title, summary, decisions, items, threads }: { title: strin
   const tc = useTranslations('conversations');
   const { slug } = useParams({ strict: false }) as { slug: string };
   const navigate = useNavigate();
-  const details = useQueries({ queries: threads.map((th) => ({ ...orpc.conversations.get.queryOptions({ input: { conversationId: th.id } }), ...FRESH, retry: false })) });
+  const details = useQueries({ queries: threads.map((th) => ({ ...orpc.conversations.get.queryOptions({ input: { conversationId: th.id } }), ...FRESH, refetchInterval: WINDOW_POLL_MS, retry: false })) });
   const [picked, setPicked] = useState<string | null>(null);
   const [includeSummary, setIncludeSummary] = useState(false);
-  const [tickedDecisions, setTickedDecisions] = useState<readonly number[]>([]);
-  const [tickedItems, setTickedItems] = useState<readonly number[]>([]);
+  // Ticks are kept by what was ticked (a decision's text, an item's id), never by position: when the results change under an open panel (a new publish), a tick follows its line or goes.
+  const [tickedDecisions, setTickedDecisions] = useState<readonly string[]>([]);
+  const [tickedItems, setTickedItems] = useState<readonly string[]>([]);
   const [storageFailed, setStorageFailed] = useState(false);
   const [opening, setOpening] = useState(false);
 
@@ -91,9 +94,9 @@ function ZaloPanel({ title, summary, decisions, items, threads }: { title: strin
     summary,
     includeSummary,
     decisions,
-    tickedDecisions,
+    tickedDecisions: decisions.flatMap((d, i) => (tickedDecisions.includes(d) ? [i] : [])),
     items: items.map((i) => ({ title: i.title, whenDate: i.whenDate })),
-    tickedItems,
+    tickedItems: items.flatMap((it, i) => (tickedItems.includes(it.id) ? [i] : [])),
     labels: {
       heading: (name) => t('heading', { title: name }),
       summary: t('draftSummary'),
@@ -102,10 +105,13 @@ function ZaloPanel({ title, summary, decisions, items, threads }: { title: strin
       due: (date) => t('draftDue', { date }),
     },
   });
-  const toggle = (list: readonly number[], at: number, on: boolean): number[] => (on ? [...new Set([...list, at])] : list.filter((x) => x !== at));
-  const allowed = detail?.reply.allowed === true;
+  const toggle = (list: readonly string[], key: string, on: boolean): string[] => (on ? [...new Set([...list, key])] : list.filter((x) => x !== key));
+  // Open only while the last read says so, the read did not fail, and the window's own end has not passed on the clock (a page left open); the send command checks again.
+  const windowEnd = detail?.conversation.replyWindowUntil ?? null;
+  const expired = windowEnd !== null && new Date(windowEnd).getTime() <= Date.now();
+  const allowed = detail?.reply.allowed === true && !failed && !expired;
   // A thread that cannot be read now (access taken away, a network error) is not offered: the button stays off and says the channel cannot be answered from here.
-  const reason = detail ? (detail.reply.allowed ? null : (detail.reply.reason ?? 'not_supported')) : failed ? 'not_supported' : null;
+  const reason = failed ? 'not_supported' : detail ? (!detail.reply.allowed ? (detail.reply.reason ?? 'not_supported') : expired ? 'window_closed' : null) : null;
   const canOpen = allowed && draft.hasLines && draft.fits && !opening;
   const name = (i: number): string => {
     const d = details[i]?.data as ConversationDetail | undefined;
@@ -150,7 +156,7 @@ function ZaloPanel({ title, summary, decisions, items, threads }: { title: strin
           <legend className="text-xs font-medium text-muted-foreground">{t('decisions')}</legend>
           {decisions.map((d, i) => (
             <label key={`d${i}`} className="flex items-start gap-2 text-sm">
-              <Checkbox checked={tickedDecisions.includes(i)} onCheckedChange={(on) => setTickedDecisions(toggle(tickedDecisions, i, on === true))} />
+              <Checkbox checked={tickedDecisions.includes(d)} onCheckedChange={(on) => setTickedDecisions(toggle(tickedDecisions, d, on === true))} />
               <span className="min-w-0 whitespace-pre-wrap break-words">{d}</span>
             </label>
           ))}
@@ -159,9 +165,9 @@ function ZaloPanel({ title, summary, decisions, items, threads }: { title: strin
       {items.length > 0 && (
         <fieldset className="space-y-1">
           <legend className="text-xs font-medium text-muted-foreground">{t('items')}</legend>
-          {items.map((it, i) => (
+          {items.map((it) => (
             <label key={it.id} className="flex items-start gap-2 text-sm">
-              <Checkbox checked={tickedItems.includes(i)} onCheckedChange={(on) => setTickedItems(toggle(tickedItems, i, on === true))} />
+              <Checkbox checked={tickedItems.includes(it.id)} onCheckedChange={(on) => setTickedItems(toggle(tickedItems, it.id, on === true))} />
               <span className="min-w-0 break-words">
                 {it.title}
                 {it.whenDate && <span className="text-muted-foreground">{` (${t('itemDue', { date: it.whenDate.split('-').reverse().join('/') })})`}</span>}

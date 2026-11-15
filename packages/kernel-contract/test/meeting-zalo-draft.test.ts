@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The text "Gửi qua Zalo" puts in a customer's reply box (meetings integrations B5, #3169): only ticked lines, never an owner, no braces, never cut.
 import { describe, expect, it } from 'vitest';
-import { MEETING_ZALO_DRAFT_MAX, buildMeetingZaloDraft, hasNamePlaceholder, type MeetingZaloInput } from '../src/index.ts';
+import { CONVERSATION_PROVIDER_RULES, MEETING_ZALO_DRAFT_MAX, buildMeetingZaloDraft, hasNamePlaceholder, type MeetingZaloInput } from '../src/index.ts';
 
 const labels = {
   heading: (title: string) => `Biên bản cuộc họp "${title}"`,
@@ -26,6 +26,11 @@ const base: MeetingZaloInput = {
 };
 
 describe('buildMeetingZaloDraft', () => {
+  it('takes its limit from the Zalo rule of the conversation core, so a correction there reaches it', () => {
+    expect(CONVERSATION_PROVIDER_RULES.zalo_oa).toBeDefined();
+    expect(MEETING_ZALO_DRAFT_MAX).toBe(CONVERSATION_PROVIDER_RULES.zalo_oa?.replyMax);
+  });
+
   it('holds the title and only the ticked lines, with dates as day/month/year', () => {
     const d = buildMeetingZaloDraft(base);
     expect(d.text).toBe('Biên bản cuộc họp "Họp với anh Nam"\n\nQuyết định:\n- Chốt giá 10 triệu\n\nViệc cần làm:\n- Gửi báo giá (hạn 31/12/2026)\n- Đặt lịch giao');
