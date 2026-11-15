@@ -17,8 +17,10 @@
 // mcp_grant_account_email, read-only definers) and applies the same list to it, BEFORE the definers that verify the credential
 // (they stamp last_used_at), so a refused account costs no database write: 403 ACCOUNT_NOT_ALLOWED on every use. Unset: the
 // edge asks nothing, as before. That email is the one Ludy saw at the account's last browser sign-in, so an address the provider
-// changed since is judged by the old one until that person signs in again. An open /api/stream connection is still checked by
-// its session only (it ends with the access token's expiry). The check reads the email of the verified token, so it is only as strong as the
+// changed since is judged by the old one until that person signs in again. The OAuth token endpoint applies it too (a refresh or a code
+// exchange for such an account gets invalid_grant, oauth-server.ts). Not covered: an open /api/stream connection, checked by its session only (it ends with
+// the access token's expiry), and the signed MCP wake-up webhooks the worker still sends for such a grant (record ids, dates and amounts only; every call
+// back to /mcp is refused). Disabling the account or removing them from the org ends both. The check reads the email of the verified token, so it is only as strong as the
 // provider's promise that it issues tokens for confirmed addresses (the provider must require email confirmation);
 // a token that says its email is not verified (`user_metadata.email_verified` is false) is refused too (a courtesy, not a
 // boundary: Supabase Auth lets the user write `user_metadata`, so only the provider's email confirmation is one).

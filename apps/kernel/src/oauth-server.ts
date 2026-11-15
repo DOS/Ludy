@@ -20,6 +20,7 @@ import { createLocalJWKSet, exportJWK, importJWK, jwtVerify, type JSONWebKeySet,
 import Provider, { errors, type Configuration } from 'oidc-provider';
 import type { Db } from '@crove/db';
 import { MCP_SCOPE_IDS } from '@crove/kernel-contract';
+import { createAccountEmailAccess } from './auth-access.ts';
 import type { Config } from './config.ts';
 import { oauthAdapterFor } from './oauth-adapter.ts';
 
@@ -87,6 +88,8 @@ export async function createOauthServer(config: Config, run: RunDb): Promise<Oau
   const publicSet = await publicKeySet(privateSet);
   const verifyKeys = createLocalJWKSet(publicSet);
   const allowedOrigins = (config.MCP_ALLOWED_ORIGINS ?? '').split(',').map((o) => o.trim()).filter((o) => o.length > 0);
+  // AUTH_ALLOWED_EMAILS for a refresh (issue #3223): no access token is signed for the grant of an account the list leaves out; null while the list is unset.
+  const accountAccess = createAccountEmailAccess(config.AUTH_ALLOWED_EMAILS);
   const cookieKeys = (config.OAUTH_COOKIE_KEYS ?? '').split(',').map((k) => k.trim()).filter((k) => k.length > 0);
 
   const configuration: Configuration = {
@@ -194,6 +197,14 @@ export async function createOauthServer(config: Config, run: RunDb): Promise<Oau
       );
       const row = rows[0];
       if (!row) throw new errors.InvalidGrant('the grant is no longer valid');
+      if (accountAccess) {
+        const { rows: owner } = await run((db) => sql<{ email: string | null }>`SELECT crove_kernel.mcp_grant_account_email(${row.grant_id}::uuid) AS email`.execute(db));
+        try {
+          accountAccess(owner[0]?.email);
+        } catch {
+          throw new errors.InvalidGrant('the account is not allowed to use this deployment');
+        }
+      }
       return { [GRANT_CLAIM]: row.grant_id, [ORG_CLAIM]: row.org_id };
     },
     // Errors are JSON with the OAuth error code, never a page: the clients are programs, and nothing of the server's state is shown.

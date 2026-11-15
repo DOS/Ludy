@@ -417,6 +417,41 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     expect(await ask(randomUUID())).toBeNull();
   });
 
+  // The refresh is a use of the grant too (#3223): with the list leaving the account out, the token endpoint signs no new access token.
+  it('refuses a refresh and a code exchange for a grant whose account the allow-list leaves out, with invalid_grant (#3223)', async () => {
+    const c = await connect();
+    const port = Number(new URL(base).port);
+    // The consent is the person's own browser sign-in, which the list would refuse: it is done first, and its code is traded after.
+    const second = await consent('owner');
+    expect(second.consentStatus).toBe(200);
+    const secondCode = (await codeOf(second)).code;
+    const serveWith = async (list: string | null) => {
+      const config = loadConfig({ ...bootEnv, ...(list === null ? {} : { AUTH_ALLOWED_EMAILS: list }) });
+      const oauth = await createOauthServer(config, (fn) => sharedRuntime.orgless(fn));
+      const app = createHttpApp({ config, oauth, runtime: sharedRuntime, store: new MemoryStore(), authenticate: createAuthenticator(config, sharedDb), pool, aiEnabled: false });
+      return serve({ fetch: app.fetch, port, hostname: '127.0.0.1' }) as unknown as Server;
+    };
+    const swap = async (list: string | null) => {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+      server = await serveWith(list);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    };
+    try {
+      await swap('someone-else@mcp.test');
+      const refused = await refreshWith(c.clientId, c.refresh);
+      expect(refused.status).toBe(400);
+      expect(refused.body.error).toBe('invalid_grant');
+      expect(refused.body.access_token).toBeUndefined();
+      // A code of such an account is not traded for tokens either.
+      const exchanged = await tokens(second, secondCode);
+      expect(exchanged.status).toBe(400);
+      expect(exchanged.body.access_token).toBeUndefined();
+    } finally {
+      await swap(null);
+    }
+  });
+
   it('lets a member connect their own AI app once the org allows it: refused while the switch is off, a token that reads only what a member reads, and the very next call refused when the owner turns the switch off', async () => {
     const member = 'member-own-app';
     await jwt(member);
