@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The proposed entry of a stored marketplace settlement (#2516, ADR-0045 point 6, plan docs/plan/stock-and-marketplaces.md section 8.4), as pure functions over decimal strings.
-// ONE entry per settlement: Dr 131 (the platform) / Cr 511 for the sum of the lines' sales minus the sum of their seller discounts. The commission, service, payment and shipping fees and the
-// withheld tax stay in the settlement record and are not posted here (they are cleared at the payout, a later slice).
+// ONE entry per settlement AND MONTH of delivery (marketplace-settlement-months.ts says which pieces of the settlement belong to which month): Dr 131 (the platform) / Cr 511 for the sum of the
+// pieces' sales minus the sum of their seller discounts. The commission, service, payment and shipping fees and the withheld tax stay in the settlement record and are not posted here (they are cleared at the payout).
 // Refunds (PO decision 2026-11-08): an order the platform refunded within the settlement was not paid for, so Cr 511 = sales - seller discounts - refunds, and Dr 131 the same (TT133 has no 521,
 // the return reduces 511 directly). A refund of an earlier period's sale reduces 511 in the period the refund occurs (PO decision 2026-11-08, the usual practice; only a material prior-year error is restated). When refunds and discounts exceed the sales the entry runs the other way, Dr 511 / Cr 131 for the excess. The refund total stays visible on the proposal. The rule is commentary until the accountant confirms it (#2520). The income line cannot say whether a refund
 // belongs to this period's sale or an earlier one's (the row has the order's paid date and amounts, not the original sale's period), so a refund of an earlier sale is netted the same way here, by that decision.
@@ -24,6 +24,9 @@ export interface SettlementProposalInput {
   // The settlement's first and last payment date, YYYY-MM-DD.
   periodFrom: string;
   periodTo: string;
+  // The month of delivery the entry is for (YYYY-MM) and the date of the entry (marketplace-settlement-months.ts).
+  month: string;
+  date: string;
   // The platform's party (crove_finance.marketplace_party, a later slice); null until then.
   partyId: string | null;
   lines: readonly SettlementPostingLine[];
@@ -39,6 +42,8 @@ export interface ProposedJournalLine {
 
 export interface SettlementProposal {
   description: string;
+  month: string;
+  date: string;
   // The settlement's sales, seller discounts and refunds, so the refund stays visible beside the net.
   sales: string;
   sellerDiscount: string;
@@ -60,7 +65,7 @@ function settlementProposalLines(input: SettlementProposalInput, map: Pick<Marke
   // A negative net (refunds and discounts above the sales, for example a quiet month with returns from the one before) is legitimate: the entry runs the other way, the platform owing less.
   const amount = toMoney(net.abs());
   if (money(amount).isZero()) throw bad('Kỳ đối soát có doanh thu ròng bằng 0; không có bút toán để lập', { net: amount });
-  const memo = `${input.platform} ${input.periodFrom} đến ${input.periodTo}`;
+  const memo = `${input.platform} ${input.periodFrom} đến ${input.periodTo}, tháng ${input.month}`;
   const owed = net.greaterThan(0);
   return [
     { account: owed ? map.receivable.code : map.revenue.code, debit: amount, credit: '0', partyId: owed ? input.partyId : null, memo },
@@ -76,7 +81,9 @@ export function settlementProposal(input: SettlementProposalInput, maps?: Readon
   const problems = journalVoucherProblems(lines.map((l) => ({ ...l, partyId: l.partyId ?? (l.account === map.receivable.code ? 'pending' : null) })));
   if (problems.length > 0) throw new DomainError('MARKETPLACE_SETTLEMENT_NOT_POSTABLE', 422, 'Bút toán của kỳ đối soát không hợp lệ', { problems });
   return {
-    description: `Đối soát ${input.platform} ${input.periodFrom} đến ${input.periodTo}`.slice(0, 500),
+    description: `Đối soát ${input.platform} ${input.periodFrom} đến ${input.periodTo}, tháng ${input.month}`.slice(0, 500),
+    month: input.month,
+    date: input.date,
     sales: toMoney(sum(input.lines.map((l) => l.sales))),
     sellerDiscount: toMoney(sum(input.lines.map((l) => l.sellerDiscount))),
     refund: toMoney(sum(input.lines.map((l) => l.refund))),

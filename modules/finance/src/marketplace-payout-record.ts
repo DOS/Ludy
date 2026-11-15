@@ -19,15 +19,15 @@ import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, type QueryContext } from '@crove/kernel-runtime';
 import { assertUsableAccounts } from './accounts.ts';
 import { bankLineStates, findBankLine, lockBankLine, type StoredBankLine } from './bank-match.ts';
-import { JOURNAL_VOUCHER_SOURCE, journalVoucherTitle } from './domain/journal-voucher.ts';
+import { journalVoucherTitle } from './domain/journal-voucher.ts';
 import { checkJournalVoucherLines, postJournalVoucher } from './journal-voucher.ts';
 import { payoutOfBankLine } from './marketplace-payout-line.ts';
 import { payoutProposal, type PayoutProposal } from './marketplace-payout-posting.ts';
+import { fullyPosted, postingsOf, settlementMonthsFor } from './marketplace-settlement-months.ts';
 import { requireConfirmedMarketplaceMap, MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from './marketplace-posting-map.ts';
 import { platformPartyName } from './marketplace-settlement-record.ts';
 import { booksOn } from './payroll-posting.ts';
 import { dateLabel, periodLockedThrough } from './period-lock.ts';
-import { reversedSource } from './source-entry.ts';
 
 const REQUESTERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 type Maps = Readonly<Record<string, MarketplacePostingMap>>;
@@ -93,16 +93,13 @@ async function buildPayout(ctx: QueryContext, maps: Maps, settlementId: string, 
   if (settlement.reversal_of !== null) throw notPostable('Đây là bản đảo của một kỳ đối soát khác nên không ghi khoản sàn trả', { reason: 'REVERSAL' });
   const reversed = await ctx.trx.selectFrom('crove_finance.channel_settlement').select('id').where('org_id', '=', ctx.orgId).where('reversal_of', '=', settlement.id).executeTakeFirst();
   if (reversed) throw notPostable('Kỳ đối soát này đã bị đảo nên không ghi khoản sàn trả', { reason: 'REVERSED' });
-  // A payout before its settlement is posted is refused (Accounting PO decision 2026-11-13): there is no holding state, the settlement's posting comes first and stands.
-  const postings = await ctx.trx
-    .selectFrom('crove_finance.journal_voucher as j')
-    .select(['j.id', reversedSource('j', JOURNAL_VOUCHER_SOURCE).as('reversed')])
-    .where('j.org_id', '=', ctx.orgId)
-    .where('j.settlement_id', '=', settlement.id)
-    .execute();
-  // `every` is true for no posting at all, so a settlement never posted is refused with one that was posted and reversed.
-  if (postings.every((p) => p.reversed)) {
-    throw new DomainError('MARKETPLACE_PAYOUT_SETTLEMENT_NOT_POSTED', 409, 'Ghi sổ kỳ đối soát trước, rồi mới ghi khoản sàn trả', { settlementId: settlement.id });
+  // A payout before its settlement is posted is refused (Accounting PO decision 2026-11-13): there is no holding state, the settlement's posting comes first and stands. A settlement posts as one voucher
+  // per month of delivery (#2516 rework, slice C1), so "posted" means EVERY month has a voucher that is not reversed and no sale still waits for its delivery day; a settlement never posted, or posted
+  // in part, or posted and reversed, is refused. The payout's own credit to 131 is built from the stored lines (their whole), which equals the sum of the months once they all stand.
+  const posted = (await postingsOf(ctx, [settlement.id])).get(settlement.id) ?? [];
+  const months = (await settlementMonthsFor(ctx, [{ id: settlement.id, periodEnd: periodTo }])).get(settlement.id) ?? { months: [], waiting: 0 };
+  if (!fullyPosted(months, posted)) {
+    throw new DomainError('MARKETPLACE_PAYOUT_SETTLEMENT_NOT_POSTED', 409, 'Ghi sổ kỳ đối soát (đủ mọi tháng giao) trước, rồi mới ghi khoản sàn trả', { settlementId: settlement.id });
   }
   const paid = await ctx.trx
     .selectFrom('crove_finance.journal_voucher as j')

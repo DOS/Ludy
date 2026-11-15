@@ -15,14 +15,13 @@ import type { MemberRole } from '@crove/db';
 import { defineQuery, type QueryContext } from '@crove/kernel-runtime';
 import { money, toMoney } from '@crove/l10n-vn';
 import { bankLineStates } from './bank-match.ts';
-import { JOURNAL_VOUCHER_SOURCE } from './domain/journal-voucher.ts';
 import { balanceOf, invoiceCleared, invoicePayable, standingInvoiceEntry } from './marketplace-fee-clearing-record.ts';
 import { payoutOfBankLine } from './marketplace-payout-line.ts';
 import { requireConfirmedMarketplaceMap, MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from './marketplace-posting-map.ts';
+import { fullyPosted, monthsToPost, postingsOf, settlementMonthsFor } from './marketplace-settlement-months.ts';
 import { platformPartyName } from './marketplace-settlement-record.ts';
 import { booksOn } from './payroll-posting.ts';
 import { databaseToday } from './period-lock.ts';
-import { reversedSource } from './source-entry.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 type Maps = Readonly<Record<string, MarketplacePostingMap>>;
@@ -32,8 +31,8 @@ const MAX_CANDIDATES = 8;
 const MAX_INVOICES = 30;
 
 // The pending proposal of a command that names the item, if any (the id in a stored payload keeps the case it was given, so both sides are lowered).
-const pendingOf = (ctx: QueryContext, command: string, key: string, id: string) =>
-  sql<{ id: string }>`SELECT p.id FROM crove_kernel.proposal p WHERE p.org_id = ${ctx.orgId}::uuid AND p.command = ${command} AND p.status = 'pending' AND lower(p.payload->>${key}) = ${id.toLowerCase()} ORDER BY p.created_at LIMIT 1`
+const pendingOf = (ctx: QueryContext, command: string, key: string, id: string, also: { key: string; value: string } | null = null) =>
+  sql<{ id: string }>`SELECT p.id FROM crove_kernel.proposal p WHERE p.org_id = ${ctx.orgId}::uuid AND p.command = ${command} AND p.status = 'pending' AND lower(p.payload->>${key}) = ${id.toLowerCase()} AND (${also?.key ?? null}::text IS NULL OR p.payload->>(${also?.key ?? ''}) = ${also?.value ?? ''}) ORDER BY p.created_at LIMIT 1`
     .execute(ctx.trx)
     .then((r) => r.rows[0]?.id ?? null);
 
@@ -63,29 +62,37 @@ export const createMarketplaceWorklist = (options: { maps?: Maps } = {}) =>
       const standing = sql`s.reversal_of IS NULL AND NOT EXISTS (SELECT 1 FROM crove_finance.channel_settlement r WHERE r.org_id = s.org_id AND r.legal_entity_id = s.legal_entity_id AND r.reversal_of = s.id)`;
       const feesAccount = MARKETPLACE_POSTING_MAPS.tt133?.feeAwaitingInvoice.code ?? '1388';
 
-      // Settlements that stand and have no posting voucher: the platform paid for them and the books do not say so yet.
-      const toPost = (
-        await sql<{ id: string; legal_entity_id: string; platform: string; period_start: string; period_end: string; net: string }>`
-          SELECT s.id, s.legal_entity_id, s.platform, s.period_start::text, s.period_end::text,
-                 coalesce((SELECT sum(l.sales - l.seller_discount - l.refund) FROM crove_finance.channel_settlement_line l WHERE l.org_id = s.org_id AND l.settlement_id = s.id), 0)::text AS net
+      // Settlements that stand and still have a month to post: the platform paid for them and the books do not say so yet. A settlement posts as one voucher per month of delivery (#2516 rework,
+      // slice C1): each month without a voucher is a row (a month with a zero net posts nothing and is not one), and a settlement with a sale that has no delivery day yet is ONE row that waits
+      // ("chờ ngày giao"), with no month and nothing to ask for.
+      const standingRows = (
+        await sql<{ id: string; legal_entity_id: string; platform: string; period_start: string; period_end: string }>`
+          SELECT s.id, s.legal_entity_id, s.platform, s.period_start::text, s.period_end::text
           FROM crove_finance.channel_settlement s
           WHERE s.org_id = ${ctx.orgId}::uuid AND ${entity} AND ${standing}
-            AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_voucher v WHERE v.org_id = s.org_id AND v.settlement_id = s.id)
-          ORDER BY s.period_end DESC, s.id LIMIT ${MAX_SETTLEMENTS}`.execute(ctx.trx)
+          ORDER BY s.period_end DESC, s.id LIMIT ${MAX_SETTLEMENTS * 4}`.execute(ctx.trx)
       ).rows;
+      const monthsOf = await settlementMonthsFor(ctx, standingRows.map((s) => ({ id: s.id, periodEnd: s.period_end })));
+      const postingsOfAll = await postingsOf(ctx, standingRows.map((s) => s.id));
       const settlements: MarketplaceWorklist['settlements'] = [];
-      // A zero net posts nothing (the command refuses it), so it is not offered.
-      for (const s of toPost.filter((x) => !money(x.net).isZero())) {
-        settlements.push({
-          id: s.id,
-          legalEntityId: s.legal_entity_id,
-          platform: s.platform,
-          platformName: platformPartyName(s.platform),
-          periodFrom: s.period_start,
-          periodTo: s.period_end,
-          net: toMoney(money(s.net)),
-          proposalId: await pendingOf(ctx, 'finance.marketplace_settlement.record', 'settlementId', s.id),
-        });
+      for (const s of standingRows) {
+        if (settlements.length >= MAX_SETTLEMENTS) break;
+        const m = monthsOf.get(s.id) ?? { months: [], waiting: 0 };
+        const p = postingsOfAll.get(s.id) ?? [];
+        const base = { id: s.id, legalEntityId: s.legal_entity_id, platform: s.platform, platformName: platformPartyName(s.platform), periodFrom: s.period_start, periodTo: s.period_end };
+        if (m.waiting > 0) {
+          if (!p.some((x) => x.month === null)) settlements.push({ ...base, month: null, net: '0', waitingLines: m.waiting, proposalId: null });
+          continue;
+        }
+        for (const month of monthsToPost(m, p)) {
+          settlements.push({
+            ...base,
+            month: month.month,
+            net: toMoney(money(month.net)),
+            waitingLines: 0,
+            proposalId: await pendingOf(ctx, 'finance.marketplace_settlement.record', 'settlementId', s.id, { key: 'month', value: month.month }),
+          });
+        }
       }
 
       // Settlements whose posting stands and that have no payout voucher (reversed or not): what the platform still has to be recorded as paying.
@@ -96,13 +103,16 @@ export const createMarketplaceWorklist = (options: { maps?: Maps } = {}) =>
           FROM crove_finance.channel_settlement s
           JOIN crove_finance.channel_settlement_line l ON l.org_id = s.org_id AND l.settlement_id = s.id
           WHERE s.org_id = ${ctx.orgId}::uuid AND ${entity} AND ${standing}
-            AND EXISTS (SELECT 1 FROM crove_finance.journal_voucher v WHERE v.org_id = s.org_id AND v.settlement_id = s.id AND NOT ${reversedSource('v', JOURNAL_VOUCHER_SOURCE)})
             AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_voucher p WHERE p.org_id = s.org_id AND p.payout_settlement_id = s.id)
           GROUP BY s.id, s.legal_entity_id, s.platform, s.period_start, s.period_end
-          ORDER BY s.period_end DESC, s.id LIMIT ${MAX_SETTLEMENTS}`.execute(ctx.trx)
+          ORDER BY s.period_end DESC, s.id LIMIT ${MAX_SETTLEMENTS * 4}`.execute(ctx.trx)
       ).rows;
+      // Posted in full (every month has a voucher that is not reversed, no sale waits for its day): the rule the payout command asks for too.
+      const postedMonths = await settlementMonthsFor(ctx, posted.map((p) => ({ id: p.id, periodEnd: p.period_end })));
+      const postedPostings = await postingsOf(ctx, posted.map((p) => p.id));
+      const standingPosted = posted.filter((p) => fullyPosted(postedMonths.get(p.id) ?? { months: [], waiting: 0 }, postedPostings.get(p.id) ?? [])).slice(0, MAX_SETTLEMENTS);
       // Only a settlement the payout command could post: a receivable to clear, money received, no unexplained adjustment.
-      const payable = posted.filter((p) => money(p.receivable).greaterThan(0) && money(p.received).greaterThan(0) && money(p.other).isZero());
+      const payable = standingPosted.filter((p) => money(p.receivable).greaterThan(0) && money(p.received).greaterThan(0) && money(p.other).isZero());
       const payouts: MarketplaceWorklist['payouts'] = [];
       for (const p of payable) {
         const lines = (

@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The posting of a stored marketplace settlement (issue #2516, ADR-0045 point 6, plan docs/plan/stock-and-marketplaces.md section 8.4): ONE general journal voucher per settlement, Dr 131 (the
-// platform) / Cr 511 for the sales net of the seller discounts and the refunds (the reverse when the net is negative). The entry is built by settlementProposal (marketplace-settlement-posting.ts)
+// The posting of a stored marketplace settlement (issue #2516, ADR-0045 point 6, plan docs/plan/stock-and-marketplaces.md section 8.4): ONE general journal voucher per settlement AND MONTH of delivery
+// (marketplace-settlement-months.ts; revenue belongs to the month of successful delivery, working answer A5 of #2520), Dr 131 (the platform) / Cr 511 for the month's sales net of the seller
+// discounts and the refunds (the reverse when the net is negative). The entry is built by settlementProposal (marketplace-settlement-posting.ts)
 // from the stored lines of channel_settlement, and nothing is built or posted until the accountant has confirmed the account map (requireConfirmedMarketplaceMap, #2520):
-// - finance.marketplace_settlement.prepare (R1, internal): the preparer of kernel.proposal.request for `finance.marketplace_settlement.record`. The request carries the settlement alone. It checks
+// - finance.marketplace_settlement.prepare (R1, internal): the preparer of kernel.proposal.request for `finance.marketplace_settlement.record`. The request carries the settlement and the month. It checks
 //   the gate, that the settlement stands (it is no reversal and has none), is not posted yet, its period is open, and its accounts are usable, then returns the proposal. It writes nothing.
 // - finance.marketplace_settlement.record (R3): runs only through kernel.proposal.approve. It builds the entry again from the stored lines, in the approver's context, and refuses a stored proposal that
 //   differs from it (a proposal row written some other way cannot post lines the settlement does not hold). Then, in the same transaction, it finds the platform's party (crove_finance.marketplace_party;
-//   created with its link on the platform's first posting, one per entity and platform) and records the voucher with the settlement on it (one voucher per settlement: a unique index holds it,
-//   20261231071500) and posts its entry. The database checks at commit that the proposal has such a voucher (crove_finance.ledger_effect_recorded).
+//   created with its link on the platform's first posting, one per entity and platform) and records the voucher with the settlement on it (one voucher per settlement and month: a unique index holds it,
+//   20270102050000) and posts its entry. The database checks at commit that the proposal has such a voucher (crove_finance.ledger_effect_recorded).
 // The commands are made by createMarketplaceSettlementCommands so a test registers a set with a confirmed map; the shipped set uses MARKETPLACE_POSTING_MAPS, every row `commentary`, so it refuses.
 // No model call is made: everything here is deterministic over stored facts.
 import { sql } from 'kysely';
@@ -20,6 +21,7 @@ import { assertUsableAccounts } from './accounts.ts';
 import { journalVoucherTitle } from './domain/journal-voucher.ts';
 import { checkJournalVoucherLines, postJournalVoucher } from './journal-voucher.ts';
 import { requireConfirmedMarketplaceMap, MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from './marketplace-posting-map.ts';
+import { postingsOf, settlementMonthsFor } from './marketplace-settlement-months.ts';
 import { settlementProposal, type SettlementProposal } from './marketplace-settlement-posting.ts';
 import { booksOn } from './payroll-posting.ts';
 import { dateLabel, periodLockedThrough } from './period-lock.ts';
@@ -48,6 +50,9 @@ interface Built {
   receivable: string;
   periodFrom: string;
   periodTo: string;
+  // The month of delivery (YYYY-MM) and the date of the entry.
+  month: string;
+  date: string;
   proposal: SettlementProposal;
   // The platform's party as linked now, or null before the platform's first posting.
   party: { id: string; name: string; taxCode: string | null } | null;
@@ -56,7 +61,7 @@ interface Built {
 // Everything the proposal and the posting share, read in the caller's context: the stored settlement and its lines, the chart of the entity, the gate, the rules of a settlement that may be
 // posted, and the platform's party link. `lock` takes the lock the settlement guards use (one per entity and platform, 20261126110000) for the rest of the transaction, so a reversal of the
 // settlement or the first posting of the platform cannot run beside this one.
-async function buildSettlement(ctx: QueryContext, maps: Maps, settlementId: string, lock: boolean): Promise<Built> {
+async function buildSettlement(ctx: QueryContext, maps: Maps, settlementId: string, month: string, lock: boolean): Promise<Built> {
   const settlement = await ctx.trx
     .selectFrom('crove_finance.channel_settlement')
     .select(['id', 'legal_entity_id', 'platform', 'period_start', 'period_end', 'reversal_of'])
@@ -75,18 +80,20 @@ async function buildSettlement(ctx: QueryContext, maps: Maps, settlementId: stri
   if (settlement.reversal_of !== null) throw notPostable('Đây là bản đảo của một kỳ đối soát khác nên không hạch toán', { reason: 'REVERSAL' });
   const reversed = await ctx.trx.selectFrom('crove_finance.channel_settlement').select('id').where('org_id', '=', ctx.orgId).where('reversal_of', '=', settlement.id).executeTakeFirst();
   if (reversed) throw notPostable('Kỳ đối soát này đã bị đảo nên không hạch toán', { reason: 'REVERSED' });
-  const posted = await ctx.trx.selectFrom('crove_finance.journal_voucher').select('id').where('org_id', '=', ctx.orgId).where('settlement_id', '=', settlement.id).executeTakeFirst();
-  if (posted) throw new DomainError('MARKETPLACE_SETTLEMENT_POSTED', 409, 'Kỳ đối soát này của sàn đã được hạch toán');
-  const lockedThrough = await periodLockedThrough(ctx, settlement.legal_entity_id);
-  if (lockedThrough && periodTo <= lockedThrough) {
-    throw new DomainError('PERIOD_LOCKED', 409, `Sổ đã khóa đến hết ngày ${dateLabel(lockedThrough)}, nên không ghi được bút toán ngày ${dateLabel(periodTo)}`, { lockedThrough, entryDate: periodTo });
+  // A voucher of this month, reversed or not (the database holds one per settlement and month for good), or one that posted the whole settlement before the months, counts as posted.
+  const postings = (await postingsOf(ctx, [settlement.id])).get(settlement.id) ?? [];
+  if (postings.some((p) => p.month === null || p.month === month)) throw new DomainError('MARKETPLACE_SETTLEMENT_POSTED', 409, 'Kỳ đối soát này của sàn đã được hạch toán');
+  // The months of the settlement: a sale with no delivery day makes the whole settlement wait, and a month the settlement does not have is not postable.
+  const { months, waiting } = (await settlementMonthsFor(ctx, [{ id: settlement.id, periodEnd: periodTo }])).get(settlement.id) ?? { months: [], waiting: 0 };
+  if (waiting > 0) {
+    throw new DomainError('MARKETPLACE_SETTLEMENT_WAITING_DELIVERY', 422, 'Kỳ đối soát còn dòng chưa có ngày giao hàng: chờ ngày giao', { lines: waiting });
   }
-  const lines = await ctx.trx
-    .selectFrom('crove_finance.channel_settlement_line')
-    .select(['sales', 'seller_discount', 'refund'])
-    .where('org_id', '=', ctx.orgId)
-    .where('settlement_id', '=', settlement.id)
-    .execute();
+  const target = months.find((m) => m.month === month);
+  if (!target) throw notPostable('Kỳ đối soát không có bút toán cho tháng này (không có doanh thu ròng của tháng giao đó)', { month });
+  const lockedThrough = await periodLockedThrough(ctx, settlement.legal_entity_id);
+  if (lockedThrough && target.date <= lockedThrough) {
+    throw new DomainError('PERIOD_LOCKED', 409, `Sổ đã khóa đến hết ngày ${dateLabel(lockedThrough)}, nên không ghi được bút toán ngày ${dateLabel(target.date)}`, { lockedThrough, entryDate: target.date });
+  }
   const link = await ctx.trx
     .selectFrom('crove_finance.marketplace_party as m')
     .innerJoin('crove_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'm.org_id').onRef('p.id', '=', 'm.party_id'))
@@ -101,8 +108,10 @@ async function buildSettlement(ctx: QueryContext, maps: Maps, settlementId: stri
       platform: platformPartyName(settlement.platform),
       periodFrom,
       periodTo,
+      month: target.month,
+      date: target.date,
       partyId: link?.id ?? null,
-      lines: lines.map((l) => ({ sales: l.sales, sellerDiscount: l.seller_discount, refund: l.refund })),
+      lines: target.lines,
     },
     maps,
   );
@@ -118,6 +127,8 @@ async function buildSettlement(ctx: QueryContext, maps: Maps, settlementId: stri
     receivable: map.receivable.code,
     periodFrom,
     periodTo,
+    month: target.month,
+    date: target.date,
     proposal,
     party: link ? { id: link.id, name: link.name, taxCode: link.tax_code } : null,
   };
@@ -127,7 +138,7 @@ async function buildSettlement(ctx: QueryContext, maps: Maps, settlementId: stri
 function proposalPayload(built: Built): MarketplaceSettlementProposal {
   const { proposal } = built;
   return zMarketplaceSettlementProposal.parse({
-    date: built.periodTo,
+    date: built.date,
     description: proposal.description,
     lines: proposal.lines.map((l) => ({
       account: l.account,
@@ -139,6 +150,7 @@ function proposalPayload(built: Built): MarketplaceSettlementProposal {
     total: proposal.total,
     legalEntityId: built.legalEntityId,
     settlementId: built.settlementId,
+    month: built.month,
     platform: built.platform,
     periodFrom: built.periodFrom,
     periodTo: built.periodTo,
@@ -153,6 +165,7 @@ function proposalPayload(built: Built): MarketplaceSettlementProposal {
 export function settlementProposalMismatch(stored: MarketplaceSettlementProposal, built: MarketplaceSettlementProposal): string | null {
   if (stored.settlementId.toLowerCase() !== built.settlementId.toLowerCase()) return 'settlementId';
   if (!stored.legalEntityId || stored.legalEntityId.toLowerCase() !== built.legalEntityId?.toLowerCase()) return 'legalEntityId';
+  if (stored.month !== built.month) return 'month';
   if (stored.platform !== built.platform) return 'platform';
   if (stored.periodFrom !== built.periodFrom || stored.periodTo !== built.periodTo || stored.date !== built.date) return 'period';
   if (stored.description !== built.description) return 'description';
@@ -204,7 +217,7 @@ export function createMarketplaceSettlementCommands(options: { maps?: Maps } = {
     access: REQUESTERS,
     writes: [],
     handler: async (ctx, input) => {
-      const built = await buildSettlement(ctx, maps, input.settlementId, false);
+      const built = await buildSettlement(ctx, maps, input.settlementId, input.month, false);
       await assertUsableAccounts(ctx, built.proposal.lines.map((l) => l.account));
       const payload = proposalPayload(built);
       return { kind: JOURNAL_VOUCHER_KIND, command: MARKETPLACE_SETTLEMENT_COMMAND, title: journalVoucherTitle(payload), payload };
@@ -223,7 +236,7 @@ export function createMarketplaceSettlementCommands(options: { maps?: Maps } = {
       if (!ctx.proposalId) throw new DomainError('FORBIDDEN', 403, 'Lệnh này chỉ chạy qua đề xuất đã duyệt');
       // The entry is built again from the stored settlement, in the approver's context, and the stored proposal must equal it: a proposal row not written by the preparer (raw SQL) cannot post lines the
       // settlement does not hold, nor into another entity.
-      const built = await buildSettlement(ctx, maps, payload.settlementId, true);
+      const built = await buildSettlement(ctx, maps, payload.settlementId, payload.month, true);
       const wrong = settlementProposalMismatch(payload, proposalPayload(built));
       if (wrong) throw mismatch(wrong);
       // The platform's party, created with its link on the platform's first posting; the rebuilt 131 line names it.
@@ -232,7 +245,7 @@ export function createMarketplaceSettlementCommands(options: { maps?: Maps } = {
       const voucher: JournalVoucherProposal = { date: rebuilt.date, description: rebuilt.description, lines: rebuilt.lines, total: rebuilt.total, legalEntityId: rebuilt.legalEntityId };
       // The shape, the accounts and the parties checked as any voucher's, the parties read FOR SHARE so they stay as read until commit.
       await checkJournalVoucherLines(ctx, voucher.lines.map((l) => ({ account: l.account, partyId: l.party?.id ?? null, debit: l.debit, credit: l.credit })), true);
-      return postJournalVoucher(ctx, voucher, null, null, null, null, built.settlementId);
+      return postJournalVoucher(ctx, voucher, null, null, null, null, built.settlementId, null, null, built.month);
     },
   });
 

@@ -18,6 +18,7 @@ const built = (party: string | null = null): MarketplaceSettlementProposal => ({
   total: '335000',
   legalEntityId: ENTITY,
   settlementId: ID,
+  month: '2026-10',
   platform: 'shopee',
   periodFrom: '2026-10-01',
   periodTo: '2026-10-15',
@@ -73,9 +74,12 @@ describe('marketplace settlement commands', () => {
     expect(prepare).toMatchObject({ name: 'finance.marketplace_settlement.prepare', risk: 'R1', sideEffect: 'internal' });
     expect(record).toMatchObject({ name: 'finance.marketplace_settlement.record', risk: 'R3', sideEffect: 'financial', access: 'proposal', proposalKind: 'finance.journal_voucher' });
   });
-  it('takes the settlement alone in a request, and no extra field', () => {
-    expect(zMarketplaceSettlementRequest.safeParse({ settlementId: ID }).success).toBe(true);
-    expect(zMarketplaceSettlementRequest.safeParse({ settlementId: ID, lines: [] }).success).toBe(false);
+  it('takes the settlement and its month in a request, and no extra field', () => {
+    expect(zMarketplaceSettlementRequest.safeParse({ settlementId: ID, month: '2026-10' }).success).toBe(true);
+    // The month is part of the request: a settlement posts as one entry per month of delivery.
+    expect(zMarketplaceSettlementRequest.safeParse({ settlementId: ID }).success).toBe(false);
+    expect(zMarketplaceSettlementRequest.safeParse({ settlementId: ID, month: '2026-13' }).success).toBe(false);
+    expect(zMarketplaceSettlementRequest.safeParse({ settlementId: ID, month: '2026-10', lines: [] }).success).toBe(false);
     expect(zMarketplaceSettlementProposal.safeParse(built()).success).toBe(true);
     expect(zMarketplaceSettlementProposal.safeParse({ ...built(), sales: '1.5' }).success).toBe(false);
   });

@@ -3,6 +3,7 @@
 // what could not be read), the live check against the stock items before a member confirms, and the confirmed orders. No buyer data of any kind appears anywhere here: the importer
 // never reads the report's buyer columns.
 import { z } from 'zod';
+import { zMonth } from './journal-voucher.ts';
 import { zId, zJournalAmount, zJournalVoucherProposal, zLocalDate } from './schemas.ts';
 import { zStockFactor } from './stock.ts';
 
@@ -206,12 +207,14 @@ export const MARKETPLACE_ORIGINAL_RETENTION_DAYS = 90;
 // MARKETPLACE_POSTING_MAP_UNCONFIRMED (409), MARKETPLACE_POSTING_REGIME_UNKNOWN, MARKETPLACE_SETTLEMENT_NOT_POSTABLE, MARKETPLACE_SETTLEMENT_MISMATCH, PERIOD_LOCKED (409),
 // MARKETPLACE_SETTLEMENT_POSTED (409), MARKETPLACE_SETTLEMENT_NOT_FOUND (404).
 export const MARKETPLACE_SETTLEMENT_COMMAND = 'finance.marketplace_settlement.record';
-export const zMarketplaceSettlementRequest = z.strictObject({ settlementId: zId });
+// A settlement posts as one entry per month of delivery (YYYY-MM, #2516 rework slice C1), so the request names the month with the settlement.
+export const zMarketplaceSettlementRequest = z.strictObject({ settlementId: zId, month: zMonth });
 export type MarketplaceSettlementRequest = z.infer<typeof zMarketplaceSettlementRequest>;
 // The proposal (kind finance.journal_voucher, shown as one) with the settlement it posts, the platform and the period, and the settlement's sales, seller discounts and refunds in whole dong,
 // so the refund stays visible beside the net. The platform's party on the 131 line is null until the platform's first posting creates it.
 export const zMarketplaceSettlementProposal = zJournalVoucherProposal.extend({
   settlementId: zId,
+  month: zMonth,
   platform: zMarketplacePlatform,
   periodFrom: zLocalDate,
   periodTo: zLocalDate,
