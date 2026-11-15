@@ -273,6 +273,7 @@ export type LaborContractFindingCode =
   | 'contract_end_before_start'
   | 'missing_fixed_term_duration'
   | 'invalid_fixed_term_duration'
+  | 'fixed_term_duration_mismatch'
   | 'fixed_term_exceeds_36_months'
   | 'indefinite_has_term_months'
   | 'indefinite_has_end_date'
@@ -349,6 +350,15 @@ function checkRenewalSequence(fixedTermSequence: number | null | undefined, find
   }
 }
 
+function checkFixedTermEndMatchesMonths(
+  startDate: CalendarDate,
+  endDate: CalendarDate,
+  termMonths: number,
+): string | null {
+  const expectedEnd = deriveFixedTermEndDate(startDate, termMonths);
+  return compareCalendarDates(endDate, expectedEnd) === 0 ? null : formatIsoCalendarDate(expectedEnd);
+}
+
 function checkKindSpecificTerms(
   terms: LaborContractTermsInput,
   contractKind: LaborContractKind,
@@ -357,6 +367,13 @@ function checkKindSpecificTerms(
   findings: LaborContractFinding[],
 ): void {
   if (contractKind === 'fixed_term') {
+    const hasValidTermMonths =
+      terms.termMonths !== undefined &&
+      terms.termMonths !== null &&
+      Number.isInteger(terms.termMonths) &&
+      terms.termMonths >= 1 &&
+      terms.termMonths <= FIXED_TERM_MAX_MONTHS;
+
     if (terms.termMonths !== undefined && terms.termMonths !== null) {
       if (!Number.isInteger(terms.termMonths) || terms.termMonths < 1) {
         findings.push({
@@ -385,14 +402,28 @@ function checkKindSpecificTerms(
       });
     }
 
-    if (parsedStart && parsedEnd && compareCalendarDates(parsedEnd, deriveFixedTermEndDate(parsedStart, FIXED_TERM_MAX_MONTHS)) > 0) {
-      findings.push({
-        code: 'fixed_term_exceeds_36_months',
-        severity: 'error',
-        field: 'endDate',
-        message: 'Fixed-term contract endDate exceeds 36 inclusive months from startDate.',
-        cite: 'Labor Code 2019 Art. 20(1)(b)',
-      });
+    if (parsedStart && parsedEnd) {
+      if (compareCalendarDates(parsedEnd, deriveFixedTermEndDate(parsedStart, FIXED_TERM_MAX_MONTHS)) > 0) {
+        findings.push({
+          code: 'fixed_term_exceeds_36_months',
+          severity: 'error',
+          field: 'endDate',
+          message: 'Fixed-term contract endDate exceeds 36 inclusive months from startDate.',
+          cite: 'Labor Code 2019 Art. 20(1)(b)',
+        });
+      }
+      if (hasValidTermMonths && diffCalendarDays(parsedStart, parsedEnd) >= 0) {
+        const expectedEndIso = checkFixedTermEndMatchesMonths(parsedStart, parsedEnd, terms.termMonths as number);
+        if (expectedEndIso !== null) {
+          findings.push({
+            code: 'fixed_term_duration_mismatch',
+            severity: 'error',
+            field: 'endDate',
+            message: `Fixed-term contract endDate (${terms.endDate}) does not match termMonths (${terms.termMonths}; expected ${expectedEndIso}).`,
+            cite: 'Labor Code 2019 Art. 20(1)(b)',
+          });
+        }
+      }
     }
 
     checkRenewalSequence(terms.fixedTermSequence, findings);
@@ -802,12 +833,22 @@ export function evaluateContractAlerts(terms: LaborContractTermsInput, options: 
     if (diffCalendarDays(startDate, endDate) < 0) {
       throw new Error(`Contract endDate (${terms.endDate}) cannot be earlier than startDate (${terms.startDate})`);
     }
-  } else if (kindCheck.kind === 'fixed_term' && terms.termMonths !== undefined && terms.termMonths !== null) {
-    if (!Number.isInteger(terms.termMonths) || terms.termMonths < 1) {
+  }
+  if (kindCheck.kind === 'fixed_term' && terms.termMonths !== undefined && terms.termMonths !== null) {
+    if (!Number.isInteger(terms.termMonths) || terms.termMonths < 1 || terms.termMonths > FIXED_TERM_MAX_MONTHS) {
       throw new Error(`Invalid fixed_term termMonths: ${String(terms.termMonths)}`);
     }
-    endDate = deriveFixedTermEndDate(startDate, terms.termMonths);
-    endIso = formatIsoCalendarDate(endDate);
+    if (endDate !== null) {
+      const expectedEndIso = checkFixedTermEndMatchesMonths(startDate, endDate, terms.termMonths);
+      if (expectedEndIso !== null) {
+        throw new Error(
+          `Fixed-term contract endDate (${terms.endDate}) does not match termMonths (${terms.termMonths}; expected ${expectedEndIso})`,
+        );
+      }
+    } else {
+      endDate = deriveFixedTermEndDate(startDate, terms.termMonths);
+      endIso = formatIsoCalendarDate(endDate);
+    }
   }
 
   const probStart =

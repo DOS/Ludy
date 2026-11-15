@@ -190,6 +190,24 @@ describe('checkLaborContractTerms (Labor Code 2019 Arts. 14, 20, 24-27)', () => 
     expect(thirtySixPlusOneDay.ok).toBe(false);
     expect(thirtySixPlusOneDay.findings.map((f) => f.code)).toContain('fixed_term_exceeds_36_months');
 
+    // Contradictory termMonths and endDate must fail cleanly rather than letting alert evaluation prefer one over the other.
+    const conflictingDuration = checkLaborContractTerms({
+      contractKind: 'fixed_term',
+      startDate: '2026-01-01',
+      termMonths: 1,
+      endDate: '2026-12-31',
+    });
+    expect(conflictingDuration.ok).toBe(false);
+    expect(conflictingDuration.findings.map((f) => f.code)).toContain('fixed_term_duration_mismatch');
+
+    const alignedMidMonthDuration = checkLaborContractTerms({
+      contractKind: 'fixed_term',
+      startDate: '2026-01-15',
+      termMonths: 3,
+      endDate: '2026-04-14',
+    });
+    expect(alignedMidMonthDuration.ok).toBe(true);
+
     // Indefinite contract forbids both termMonths and endDate.
     const finiteIndefinite = checkLaborContractTerms({
       contractKind: 'indefinite',
@@ -416,6 +434,13 @@ describe('evaluateContractAlerts', () => {
         { asOf: '2026-08-01' },
       ),
     ).toThrow(/Invalid startDate calendar date/);
+
+    expect(() =>
+      evaluateContractAlerts(
+        { contractKind: 'fixed_term', startDate: '2026-01-01', termMonths: 1, endDate: '2026-12-31' },
+        { asOf: '2026-01-15' },
+      ),
+    ).toThrow(/does not match termMonths/);
   });
 });
 
