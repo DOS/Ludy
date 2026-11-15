@@ -775,10 +775,10 @@ ensure_context_token_key() {
     err 'the new env file is incomplete (is the disk full?); the env file was not touched'
     return 1
   fi
-  cat "$ENV_FILE" >"$KEY_BAK" && cmp -s "$ENV_FILE" "$KEY_BAK" || {
+  if ! { cat "$ENV_FILE" >"$KEY_BAK" && cmp -s "$ENV_FILE" "$KEY_BAK"; }; then
     err 'cannot keep a copy of the env file; the env file was not touched'
     return 1
-  }
+  fi
   # Into the file itself, not a rename: the owner, the mode and the inode of the env file stay. A write that fails or is
   # cut off is put back from the old copy; if that fails too, both copies are kept and named.
   KEY_WRITING=1

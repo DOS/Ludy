@@ -856,7 +856,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     });
 
     it('makes the key with the real openssl: 44 characters of base64', () => {
-      if (spawnSync('openssl', ['version']).status !== 0) return;
+      if (spawnSync('bash', ['-c', 'command -v openssl']).status !== 0) return;
       rmSync(`${root}/bin/openssl`);
       const res = deploy('v1.0.0', 'a');
       expect(res.status, res.out).toBe(0);
