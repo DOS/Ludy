@@ -139,7 +139,6 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
       [o.orgId, entryId],
     );
   const partyOf = async (o: Org, platform: string) => (await rows<{ party_id: string }>('SELECT party_id FROM crove_finance.marketplace_party WHERE org_id = $1 AND legal_entity_id = $2 AND platform = $3', [o.orgId, o.entity, platform]))[0]?.party_id;
-  const balance = (o: Org) => rt.query<{ rows: { platform: string; salesPosted: string; paidOut: string; awaitingPayout: string; feesAwaitingInvoice: string }[] }>('finance.marketplace.balance', {}, { actor: asUser(o.owner), orgId: o.orgId });
 
   // Two orders: sales 100 000 + 250 000, seller discounts 5 000 + 10 000 (the settlement posts Dr 131 335 000); fees 10 000 + 18 000, withheld tax 3 000: money received 85 000 + 219 000 = 304 000.
   const PAID: SeedLine[] = [
