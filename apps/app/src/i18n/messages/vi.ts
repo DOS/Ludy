@@ -1076,7 +1076,7 @@ export const vi = {
     invoicesTitle: 'Hóa đơn phí của sàn có thể cấn trừ phí đang chờ ở 1388',
     invoicesHint: 'Chuyển phần hóa đơn bao phủ từ phí chờ hóa đơn (1388) sang khoản bạn nợ sàn (331). Ở đây chỉ lập đề xuất.',
     halfReversedTitle: 'Kỳ đối soát đảo dở',
-    halfReversedHint: 'Một số tháng của kỳ đã đảo, còn tháng chưa đảo. Đảo nốt các tháng còn lại (khoản sàn trả, nếu có, đảo trước) ở Sổ nhật ký; khoản sàn trả của kỳ này bị từ chối cho tới khi đảo xong.',
+    halfReversedHint: 'Một số tháng của kỳ đã đảo, còn tháng chưa đảo. Đảo nốt các tháng còn lại ở Sổ nhật ký; khoản sàn trả của kỳ này bị từ chối cho tới khi đảo xong.',
     halfReversedRow: 'Đảo dở: còn {standing} tháng chưa đảo (đã đảo {reversed})',
     state: 'Tình trạng',
     clear: 'Cấn trừ phí',

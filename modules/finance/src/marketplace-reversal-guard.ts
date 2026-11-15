@@ -7,6 +7,7 @@
 // - WARNS (a note in the proposal's title the approver reads) when the entry is a payout, which is matched to its bank line (the reversal opens the line again), and when one month of a settlement is
 //   reversed while other months stand (the settlement is then half reversed: the payout stays refused until the rest is reversed too).
 // Every other entry gets no note and no refusal. Facts only: nothing is written and no model is asked.
+import { sql } from 'kysely';
 import type { QueryContext } from '@crove/kernel-runtime';
 import { DomainError } from '@crove/kernel-runtime';
 import { JOURNAL_VOUCHER_SOURCE } from './domain/journal-voucher.ts';
@@ -41,7 +42,12 @@ export async function marketplaceReversalNotes(ctx: Ctx, entry: ReversedEntry, e
     // The payout is matched to its bank line (the voucher names it); reversing it frees the line for a bank voucher.
     return ['cảnh báo: khoản sàn trả này đã khớp một dòng ngân hàng, đảo sẽ mở lại dòng đó'];
   }
-  // A settlement's own voucher (one month): its payout must be reversed first, and the other months, when they stand, are to be reversed too.
+  // A settlement's own voucher (one month): its payout must be reversed first, and the other months, when they stand, are to be reversed too. The platform's lock (the one the payout's approval takes,
+  // marketplace-payout-record.ts) is held first, so a payout approved at the same moment is either seen here or sees this reversal: the two cannot both pass their checks and both commit.
+  const settlement = await ctx.trx.selectFrom('crove_finance.channel_settlement').select(['legal_entity_id', 'platform']).where('org_id', '=', ctx.orgId).where('id', '=', settlementId).executeTakeFirst();
+  if (settlement) {
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`channel_settlement:${ctx.orgId}:${settlement.legal_entity_id}:${settlement.platform}`}, 0))`.execute(ctx.trx);
+  }
   const payout = await ctx.trx
     .selectFrom('crove_finance.journal_voucher as p')
     .select('p.id')

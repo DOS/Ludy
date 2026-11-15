@@ -1078,7 +1078,7 @@ export const en = {
     invoicesTitle: 'Platform fee invoices (clearing is retired)',
     invoicesHint: 'Moves what the invoice covers from fees awaiting an invoice (1388) to what you owe the platform (331). It is only proposed here.',
     halfReversedTitle: 'Half-reversed settlements',
-    halfReversedHint: 'Some months of the settlement are reversed and some still stand. Reverse the rest (the payout first, if there is one) in the journal; the settlement\'s payout is refused until then.',
+    halfReversedHint: 'Some months of the settlement are reversed and some still stand. Reverse the remaining months in the journal; the settlement\'s payout is refused until then.',
     halfReversedRow: 'Half reversed: {standing} months still stand ({reversed} reversed)',
     state: 'State',
     clear: 'Clear the fees',

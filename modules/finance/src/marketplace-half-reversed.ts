@@ -18,11 +18,11 @@ export interface HalfReversedSettlement {
   reversed: number;
 }
 
-const MAX_HALF_REVERSED = 50;
+const MAX_HALF_REVERSED = 200;
 
 export async function halfReversedSettlements(ctx: Pick<QueryContext, 'trx' | 'orgId'>, legalEntityId: string | undefined): Promise<HalfReversedSettlement[]> {
   const entity = legalEntityId === undefined ? sql`TRUE` : sql`s.legal_entity_id = ${legalEntityId}::uuid`;
-  // Settlements with at least one reversed voucher (an original entry with a reversal), the few the full read below looks at.
+  // Settlements with at least one reversed voucher (an original entry with a reversal)
   const candidates = (
     await sql<{ id: string; legal_entity_id: string; platform: string; period_start: string; period_end: string }>`
       SELECT s.id, s.legal_entity_id, s.platform, s.period_start::text, s.period_end::text
@@ -33,7 +33,13 @@ export async function halfReversedSettlements(ctx: Pick<QueryContext, 'trx' | 'o
           JOIN crove_finance.journal_entry e ON e.org_id = v.org_id AND e.source_type = 'finance.journal_voucher' AND e.source_id = v.id AND e.reverses_entry_id IS NULL
           JOIN crove_finance.journal_entry r ON r.org_id = e.org_id AND r.reverses_entry_id = e.id
           WHERE v.org_id = s.org_id AND v.settlement_id = s.id)
-      ORDER BY s.period_end DESC, s.id LIMIT ${MAX_HALF_REVERSED * 4}`.execute(ctx.trx)
+        -- ... and at least one that still stands (an original entry with no reversal), so a settlement reversed in full never takes a place among the candidates.
+        AND EXISTS (
+          SELECT 1 FROM crove_finance.journal_voucher v2
+          JOIN crove_finance.journal_entry e2 ON e2.org_id = v2.org_id AND e2.source_type = 'finance.journal_voucher' AND e2.source_id = v2.id AND e2.reverses_entry_id IS NULL
+          WHERE v2.org_id = s.org_id AND v2.settlement_id = s.id
+            AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_entry r2 WHERE r2.org_id = e2.org_id AND r2.reverses_entry_id = e2.id))
+      ORDER BY s.period_end DESC, s.id LIMIT ${MAX_HALF_REVERSED}`.execute(ctx.trx)
   ).rows;
   const postings = await postingsOf(ctx, candidates.map((c) => c.id));
   const out: HalfReversedSettlement[] = [];
