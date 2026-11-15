@@ -156,7 +156,7 @@ suite('the Sàn line facts on PostgreSQL (#2516 slice E)', () => {
   it('sums what the platforms still owe and the fees awaiting an invoice from the balance rows', async () => {
     await admin((c) => c.query("INSERT INTO crove_finance.marketplace_party (org_id, platform, party_id) VALUES ($1, 'shopee', $2)", [orgA, shopee]));
     await post([['131', 1_000_000, 0, shopee], ['511', 0, 1_000_000, null]]);
-    await post([['112', 880_000, 0, null], ['1388', 120_000, 0, shopee], ['131', 0, 1_000_000, shopee]]);
+    await post([['112', 880_000, 0, null], ['331', 120_000, 0, shopee], ['131', 0, 1_000_000, shopee]]);
     await post([['131', 500_000, 0, shopee], ['511', 0, 500_000, null]]);
     const f = await facts();
     expect(f.awaitingPayout).toBe('500000');
@@ -169,10 +169,10 @@ suite('the Sàn line facts on PostgreSQL (#2516 slice E)', () => {
       await c.query("INSERT INTO crove_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', 'TikTok Shop')", [orgA, tiktok]);
       await c.query("INSERT INTO crove_finance.marketplace_party (org_id, platform, party_id) VALUES ($1, 'tiktok_shop', $2)", [orgA, tiktok]);
     });
-    // TikTok was paid out 300000 more than it was owed, and 1388 was cleared by more than it held: both negative.
+    // TikTok was paid out 300000 more than it was owed, and the platform's 331 holds a credit (an invoice no fee waited for): both negative.
     await post([['131', 100_000, 0, tiktok], ['511', 0, 100_000, null]]);
     await post([['112', 400_000, 0, null], ['131', 0, 400_000, tiktok]]);
-    await post([['331', 50_000, 0, null], ['1388', 0, 50_000, tiktok]]);
+    await post([['112', 50_000, 0, null], ['331', 0, 50_000, tiktok]]);
     const f = await facts();
     // Shopee still owes 500000 and 120000 of its fees await an invoice; TikTok's negative balances are not waiting and do not reduce them.
     expect(f.awaitingPayout).toBe('500000');
