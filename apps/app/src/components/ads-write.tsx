@@ -20,6 +20,7 @@ import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { useFormat } from '../i18n/provider.tsx';
 import { adsChangeLine } from '../lib/ads-change.ts';
+import { AdsPlanPreview, useAdsPlanView } from './ads-plan-preview.tsx';
 import { toUnits } from '../lib/decimal.ts';
 import { NO_WRITE_OFFER, writeConnectWay, type AdWriteOffer } from '../lib/ads.ts';
 import { useAdOAuthStart } from '../lib/ads-oauth.ts';
@@ -163,15 +164,7 @@ export function AdsWriteCard({
           <p className="text-sm text-muted-foreground">{t('pendingHint')}</p>
           <ul className="divide-y text-sm">
             {pending.map((p) => (
-              <li key={p.proposalId} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2">
-                <span className="min-w-0 break-words text-foreground">{adsChangeLine(p.change, root, (amount, currency) => f.money(amount, currency))}</span>
-                <span className="flex flex-wrap items-baseline gap-x-3 text-xs text-subtle-foreground">
-                  <span>{t('pendingAsked', { when: f.dateTime(p.requestedAt) })}</span>
-                  <Link to="/o/$slug/inbox/$id" params={{ slug, id: p.proposalId }} className="text-link hover:underline">
-                    {t('pendingOpen')}
-                  </Link>
-                </span>
-              </li>
+              <PendingRow key={p.proposalId} p={p} slug={slug} />
             ))}
           </ul>
         </section>
@@ -210,6 +203,36 @@ export function AdsWriteCard({
 
 // The write state of the org. The sweep that removes a closed connection's permission runs in the worker and sends no stream hint, so while one is still
 // being tried the screen asks again.
+// One waiting request: its sentence, and for a campaign launch the whole plan behind an expander, so the list shows what is asked and the approver can read
+// what they would sign without leaving the screen (the Inbox card shows the same plan open).
+function PendingRow({ p, slug }: { p: AdsWriteState['pending'][number]; slug: string }) {
+  const t = useTranslations('ads.write');
+  const root = useTranslations();
+  const f = useFormat();
+  const plan = useAdsPlanView(p.change);
+  return (
+    <li className="py-2">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <span className="min-w-0 break-words text-foreground">{adsChangeLine(p.change, root, (amount, currency) => f.money(amount, currency))}</span>
+        <span className="flex flex-wrap items-baseline gap-x-3 text-xs text-subtle-foreground">
+          <span>{t('pendingAsked', { when: f.dateTime(p.requestedAt) })}</span>
+          <Link to="/o/$slug/inbox/$id" params={{ slug, id: p.proposalId }} className="text-link hover:underline">
+            {t('pendingOpen')}
+          </Link>
+        </span>
+      </div>
+      {plan && (
+        <details className="mt-2" data-testid="ads-pending-plan">
+          <summary className="cursor-pointer text-link hover:underline">{root('ads.change.plan.showPlan')}</summary>
+          <div className="mt-2">
+            <AdsPlanPreview plan={plan} />
+          </div>
+        </details>
+      )}
+    </li>
+  );
+}
+
 function useWriteState() {
   return useQuery({ ...orpc.ads.writeState.queryOptions(), refetchInterval: (query) => (query.state.data?.tokenRevokes.some((r) => r.state === 'pending') ? 60_000 : false) });
 }
