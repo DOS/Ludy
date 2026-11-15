@@ -16,7 +16,7 @@ const ID = '0192a000-0000-7000-8000-000000000001';
 const LINE_ID = '0192a000-0000-7000-8000-000000000004';
 const ENTITY = '0192a000-0000-7000-8000-000000000002';
 const line = (over: Partial<PayoutPostingLine> = {}): PayoutPostingLine => ({ sales: '100000', sellerDiscount: '0', commission: '0', serviceFee: '0', paymentFee: '0', shipping: '0', taxWithheld: '0', refund: '0', other: '0', net: '100000', ...over });
-const input = (lines: PayoutPostingLine[], over: Partial<PayoutProposalInput> = {}): PayoutProposalInput => ({ regime: 'tt133', platform: 'Shopee', periodFrom: '2026-10-01', periodTo: '2026-10-15', partyId: PARTY, cashAccount: '1121', lines, ...over });
+const input = (lines: PayoutPostingLine[], over: Partial<PayoutProposalInput> = {}): PayoutProposalInput => ({ regime: 'tt133', platform: 'Shopee', periodFrom: '2026-10-01', periodTo: '2026-10-15', partyId: PARTY, cashAccount: '1121', lines, taxSplit: null, ...over });
 const code = (fn: () => unknown) => {
   try { fn(); } catch (e) { return e instanceof DomainError ? { code: e.code, status: e.status, reason: (e.details as { reason?: string } | undefined)?.reason } : e; }
   return null;
@@ -26,17 +26,28 @@ describe('the entry of a platform payout', () => {
   it('is refused until the accountant confirms the account map', () => {
     expect(code(() => payoutProposal(input([line()])))).toMatchObject({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
   });
-  it('clears the receivable: Dr bank for the money received, Dr 1388 for the fees, Dr 333 for the withheld tax, Cr 131 for the sales net of discounts and refunds', () => {
+  it('clears the receivable: Dr bank for the money received, Dr 331 for the fees, Dr 3331 and 3335 for the withheld tax as the settlement credited it, Cr 131 for the sales net of discounts and refunds', () => {
     // 100 000 + 50 000 sales, 10 000 discount, 5 000 refund: the settlement posted Dr 131 135 000. Fees 9 000 (commission 6 000, service 2 000, payment 1 000), shipping 1 000, tax 2 000.
     const lines = [line({ sales: '100000', sellerDiscount: '10000', commission: '6000', serviceFee: '2000', paymentFee: '1000', shipping: '1000', taxWithheld: '2000', refund: '5000', net: '73000' }), line({ sales: '50000', net: '50000' })];
-    const p = payoutProposal(input(lines), confirmed());
+    const p = payoutProposal(input(lines, { taxSplit: { vat: '1334', pit: '666' } }), confirmed());
     expect(p).toMatchObject({ receivable: '135000', received: '123000', fees: '10000', taxWithheld: '2000', total: '135000' });
     expect(p.lines.map((l) => [l.account, l.debit, l.credit, l.partyId])).toEqual([
       ['1121', '123000', '0', null],
-      ['1388', '10000', '0', PARTY],
-      ['333', '2000', '0', null],
+      ['331', '10000', '0', PARTY],
+      ['3331', '1334', '0', null],
+      ['3335', '666', '0', null],
       ['131', '0', '135000', PARTY],
     ]);
+  });
+  it('debits the tax exactly as the settlement credited it, and refuses a withheld tax that does not match, or one with no credit to match (a seller that is no household)', () => {
+    const taxed = [line({ sales: '100000', taxWithheld: '2000', net: '98000' })];
+    expect(code(() => payoutProposal(input(taxed), confirmed()))).toMatchObject({ code: 'MARKETPLACE_PAYOUT_NOT_POSTABLE', reason: 'TAX_SPLIT' });
+    expect(code(() => payoutProposal(input(taxed, { taxSplit: { vat: '1333', pit: '666' } }), confirmed()))).toMatchObject({ reason: 'TAX_SPLIT' });
+    expect(code(() => payoutProposal(input([line()], { taxSplit: { vat: '10', pit: '0' } }), confirmed()))).toMatchObject({ reason: 'TAX_SPLIT' });
+    expect(code(() => payoutProposal(input(taxed, { taxSplit: { vat: '-1', pit: '2001' } }), confirmed()))).toMatchObject({ code: 'MARKETPLACE_PAYOUT_NOT_POSTABLE' });
+    // A pit part of zero posts only the VAT line.
+    const only = payoutProposal(input(taxed, { taxSplit: { vat: '2000', pit: '0' } }), confirmed());
+    expect(only.lines.map((l) => l.account)).toEqual(['1121', '3331', '131']);
   });
   it('omits a line with nothing on it and keeps the entry balanced', () => {
     const p = payoutProposal(input([line()]), confirmed());
@@ -67,7 +78,7 @@ const built = (party = PARTY): MarketplacePayoutProposal => ({
   description: 'Sàn trả Shopee 2026-10-01 đến 2026-10-15',
   lines: [
     { account: '1121', party: null, debit: '90000', credit: '0', memo: 'm' },
-    { account: '1388', party: { id: party, name: 'Shopee', taxCode: null }, debit: '10000', credit: '0', memo: 'm' },
+    { account: '331', party: { id: party, name: 'Shopee', taxCode: null }, debit: '10000', credit: '0', memo: 'm' },
     { account: '131', party: { id: party, name: 'Shopee', taxCode: null }, debit: '0', credit: '100000', memo: 'm' },
   ],
   total: '100000',

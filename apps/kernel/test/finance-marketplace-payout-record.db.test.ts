@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The posting of a platform's payout (#2516, ADR-0045 point 6, plan stock-and-marketplaces.md section 8.4 "The payout") on a real PostgreSQL 17, through the finance proposal path:
 // - a member asks (kernel.proposal.request, `finance.marketplace_payout.record`) with the settlement and the bank line of the transfer, finance builds ONE journal voucher from the stored lines (Dr bank
-//   for the money received, Dr 1388 for the fees, Dr 333 for the withheld tax, Cr 131 with the platform's party), an owner or an admin approves it, and approving records one voucher that names the
+//   for the money received, Dr 331 for the fees, Dr 3331 and Dr 3335 for the withheld tax, Cr 131 with the platform's party), an owner or an admin approves it, and approving records one voucher that names the
 //   settlement and the bank line, with its entry; the Sàn read then shows the receivable cleared and the fees awaiting their invoice;
 // - a payout before its settlement is posted (or after that posting was reversed) is refused: "ghi sổ kỳ đối soát trước";
 // - the bank line only confirms the transfer: money in, equal to the net, not before the period, free of other vouchers and payouts, and a bank voucher is refused for a line a payout names;
@@ -68,7 +68,7 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
   const rows = <T extends pg.QueryResultRow>(sql: string, params: unknown[] = []) => withAdmin(async (c) => (await c.query<T>(sql, params)).rows);
 
   // An org with an owner, an admin (who asks) and a member.
-  async function org(regime: 'tt133' | 'tt99' = 'tt133') {
+  async function org(regime: 'tt133' | 'tt99' = 'tt133', household = true) {
     const tag = randomUUID().slice(0, 8);
     const person = (name: string) => upsertIdentity(createDb(pool), { issuer: 'mktrecord', subject: `${name}-${tag}`, email: `${name}-${tag}@mkt.test`, name: null });
     const owner = await person('owner');
@@ -82,6 +82,14 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
       );
     }
     const entity = (await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))[0]?.id as string;
+    // A household seller of one line of business with its rates confirmed for the test: the withheld tax is split into VAT and PIT at the settlement's posting (slice C2) and the payout debits it.
+    if (household) {
+      await withAdmin(async (c) => {
+        await c.query("UPDATE crove_kernel.legal_entity SET kind = 'household' WHERE org_id = $1 AND id = $2", [orgId, entity]);
+        await c.query("INSERT INTO crove_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, pit_method, trades) VALUES ($1, $2, '2026-01-01', 2, 'percentage', ARRAY['goods']::text[])", [orgId, entity]);
+        await c.query("UPDATE crove_finance.household_trade_rate SET status = 'confirmed' WHERE trade = 'goods'");
+      });
+    }
     return { orgId, owner, admin, member, entity };
   }
   type Org = Awaited<ReturnType<typeof org>>;
@@ -182,7 +190,7 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     await rootDb.end();
   });
 
-  it('posts one voucher naming the settlement and the bank line: Dr bank, Dr 1388, Dr 333, Cr 131 with the platform party, and the Sàn read clears', async () => {
+  it('posts one voucher naming the settlement and the bank line: Dr bank, Dr 331, Dr 3331 and 3335, Cr 131 with the platform party, and the Sàn read clears', async () => {
     const { o, settlement, line } = await posted();
     const party = await partyOf(o, 'shopee');
     expect(party).toBeTruthy();
@@ -190,15 +198,31 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     const { proposalId } = await ask(o, settlement, line);
     const stored = await payloadOf(o, proposalId);
     expect(stored).toMatchObject({ settlementId: settlement, bankLineId: line, platform: 'shopee', date: '2026-10-20', received: RECEIVED, fees: '28000', taxWithheld: '3000', total: '335000', legalEntityId: o.entity });
-    expect(stored?.lines.map((l) => [l.account, l.debit, l.credit, l.party?.id ?? null])).toEqual([['1121', RECEIVED, '0', null], ['1388', '28000', '0', party], ['333', '3000', '0', null], ['131', '0', '335000', party]]);
+    expect(stored?.lines.map((l) => [l.account, l.debit, l.credit, l.party?.id ?? null])).toEqual([['1121', RECEIVED, '0', null], ['331', '28000', '0', party], ['3331', '2000', '0', null], ['3335', '1000', '0', null], ['131', '0', '335000', party]]);
     expect(await payoutsOf(o, settlement)).toHaveLength(0);
     const done = await approve(o, proposalId);
     const [voucher] = await payoutsOf(o, settlement);
     expect(voucher).toMatchObject({ id: done.voucherId, proposal_id: proposalId, payout_bank_line_id: line });
-    expect((await entryOf(o, done.journalEntryId)).map((l) => [l.account_code, l.debit, l.credit, l.party_id])).toEqual([['1121', RECEIVED, '0', null], ['1388', '28000', '0', party], ['333', '3000', '0', null], ['131', '0', '335000', party]]);
+    expect((await entryOf(o, done.journalEntryId)).map((l) => [l.account_code, l.debit, l.credit, l.party_id])).toEqual([['1121', RECEIVED, '0', null], ['331', '28000', '0', party], ['3331', '2000', '0', null], ['3335', '1000', '0', null], ['131', '0', '335000', party]]);
     expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('executed');
-    // The Sàn read: the receivable is cleared (the whole credit, fees and tax included) and the fees wait on 1388 for their invoice.
+    // The Sàn read: the receivable is cleared (the whole credit, fees and tax included) and the fees wait on 331 for their invoice.
     expect((await balance(o)).rows[0]).toMatchObject({ platform: 'shopee', salesPosted: '335000', paidOut: '335000', awaitingPayout: '0', feesAwaitingInvoice: '28000' });
+  });
+
+  it('debits the tax exactly as the settlement credited it, so 3331 and 3335 net to zero, and refuses a withheld tax the settlement did not credit (a seller that is no household)', async () => {
+    const { o, settlement, line } = await posted();
+    await approve(o, (await ask(o, settlement, line)).proposalId);
+    const totals = await rows<{ account_code: string; debit: string; credit: string }>(
+      "SELECT account_code, sum(debit)::bigint::text AS debit, sum(credit)::bigint::text AS credit FROM crove_finance.journal_line WHERE org_id = $1 AND account_code IN ('3331', '3335', '333') GROUP BY 1 ORDER BY 1",
+      [o.orgId],
+    );
+    expect(totals).toEqual([{ account_code: '3331', debit: '2000', credit: '2000' }, { account_code: '3335', debit: '1000', credit: '1000' }]);
+    // An enterprise seller: the settlement posts with no tax lines, and a payout that would debit tax nobody credited is refused, never booked to 333.
+    const e = await org('tt133', false);
+    const s2 = await seed(e, 'shopee', '2026-10-01', '2026-10-15', PAID);
+    await post(e, s2);
+    const l2 = await bankLine(e, '2026-10-20', RECEIVED);
+    await expect(ask(e, s2, l2)).rejects.toMatchObject({ code: 'MARKETPLACE_PAYOUT_NOT_POSTABLE', status: 422 });
   });
 
   it('posts the payout of a settlement with no fee and no tax as two lines', async () => {

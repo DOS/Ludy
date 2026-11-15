@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The "Sàn" screen (#2516 slice D, plan docs/plan/stock-and-marketplaces.md section 8.4, "The payout"): where each platform's money stands in the books. Per platform of the chosen entity:
-// the sales posted to 131, what the platform has paid out, what it still owes (the difference) and the fees it kept whose invoice has not come (1388). Read only, from the ledger by the
+// the sales posted to 131, what the platform has paid out, what it still owes (the difference) and the fees it kept whose invoice has not come (331). Read only, from the ledger by the
 // platform's party; facts only and nothing to press. A platform appears once its first settlement is posted; until then the screen says so. Above the table the finance coworker's one line (slice E):
 // the facts read by code (stored settlements waiting to be posted, posted settlements whose payout is not recorded, what the platforms owe, fees awaiting an invoice) always, and one checked sentence when a model is on. A draft the person acts on: it
 // posts nothing, and with AI off, busy, out of budget or refused the facts stand alone.
