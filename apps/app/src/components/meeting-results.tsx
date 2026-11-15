@@ -15,6 +15,7 @@ import { Textarea } from '@crove/ui/components/textarea';
 import { DateInput } from './date-input.tsx';
 import { ErrorText } from './ui.tsx';
 import { MeetingFollowup } from './meeting-followup.tsx';
+import { MeetingZalo } from './meeting-zalo.tsx';
 import { MeetingTranslation } from './meeting-translation.tsx';
 import { clock } from './meeting-transcript.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -309,8 +310,9 @@ function VySummary({ meetingId, hasModelDraft }: { meetingId: string; hasModelDr
   );
 }
 
-// `template` is the meeting's minutes template (A4, #3162); `minutesLink` is the "Xem biên bản" link the page puts beside the title (it knows the route; this panel does not).
-export function MeetingResults({ meetingId, readers, template = 'general', minutesLink }: { meetingId: string; readers: readonly string[]; template?: MeetingSummaryTemplate; minutesLink?: ReactNode }) {
+// `template` is the meeting's minutes template (A4, #3162); `minutesLink` is the "Xem biên bản" link the page puts beside the title (it knows the route; this panel does not); `title` is
+// the meeting's title, for the heading of the text "Gửi qua Zalo" prepares (B5, #3169).
+export function MeetingResults({ meetingId, readers, template = 'general', title = '', minutesLink }: { meetingId: string; readers: readonly string[]; template?: MeetingSummaryTemplate; title?: string; minutesLink?: ReactNode }) {
   const t = useTranslations('meetings.results');
   const query = useQuery({ ...orpc.meetings.results.get.queryOptions({ input: { meetingId } }), ...READ_ONCE });
   const publish = useMutation({ mutationFn: () => orpc.meetings.results.publish.call({ meetingId, confirmed: true }), onSuccess: refresh });
@@ -346,6 +348,10 @@ export function MeetingResults({ meetingId, readers, template = 'general', minut
           </section>
         )}
         {isRecorder && (published || items.some((i) => i.stage === 'published')) && <MeetingFollowup meetingId={meetingId} />}
+        {/* B5 (#3169): only a published result can be offered to a customer, and only the lines the recorder ticks; the draft is never read here. */}
+        {isRecorder && title !== '' && (published || items.some((i) => i.stage === 'published')) && (
+          <MeetingZalo meetingId={meetingId} title={title} summary={published?.summary ?? null} decisions={published?.decisions ?? []} items={items.filter((i) => i.stage === 'published')} />
+        )}
         {isRecorder && <TemplatePicker meetingId={meetingId} template={template} />}
         {isRecorder && <VySummary meetingId={meetingId} hasModelDraft={(draft?.tainted ?? false) || items.some((i) => i.stage === 'draft' && i.tainted)} />}
         {isRecorder && (
