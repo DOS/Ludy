@@ -3,9 +3,9 @@
 // exact list, so a new one is a visible, reviewed addition (a change to this protected file and its security review), never a quiet one made in
 // a module. Each is a keeping duty (retention, shredding, erasure, a leaver's links, the reseal of a sealed key) or a command that only stops
 // spend, revokes a link or deletes, or a read for one, of an app; none is of kernel, which the gate never refuses.
-// Step 0 of two for slice (c) (#3310): the 16 commands that RECORD the outcome of an irreversible call a job already made (publish, launch,
-// activate, e-invoice issue, chat and hook posts) join the list, because a switch-off between the call and its record would lose the outcome and
-// a later retry could do the call twice. This file accepts BOTH the list as it is on main and that list with the 16 added; a tests-only PR makes it
+// Step 0 of two for slice (c) (#3310): the 13 commands that RECORD the outcome of an irreversible call a job already made (Social publish, comment,
+// thread, remove, edit, pin, playlist, repost, auto-reply and gate; the e-invoice issue; the chat and hook posts) join the list, because a switch-off between the call and its record would lose the outcome and
+// a later retry could do the call twice. This file accepts BOTH the list as it is on main and that list with the 13 added; a tests-only PR makes it
 // strict once the commands declare runsWhenOff (the runtime and module PR cannot edit this base file).
 // Part of the invariant suite: CI runs this file from the base branch on protected-path PRs (AGENTS.md).
 import { describe, expect, it } from 'vitest';
@@ -19,9 +19,6 @@ const named = (defs: readonly { name: string; runsWhenOff?: string }[]) => defs.
 describe('definitions that run while their app is off for an org (ADR-0053)', () => {
   // The commands that record the outcome of an external write already made, which join the list in slice (c).
   const RECORDS = [
-    'ads.activate.record',
-    'ads.launch.record',
-    'finance.einvoice.job_files',
     'finance.einvoice.job_record',
     'meetings.chat.record',
     'meetings.hook.record',
