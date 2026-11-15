@@ -4,8 +4,13 @@ import { SECTIONS_MAX, zMeetingSummaryTemplate, zSectionEntry } from './meeting-
 import { zId } from './schemas.ts';
 
 // `in_call_chat`: the recorder pasted the recording notice in the call's chat (Meetings A1, #3159).
-export const CONSENT_METHODS = ['told_at_start', 'in_invite', 'in_writing', 'in_call_chat'] as const;
+// `platform_notice`: the meeting platform showed its own recording notice to everyone in the call and the importer confirms it (Meetings C1, #3173). A recording the platform already finished is
+// imported with this method only; it is not a written method (see WRITTEN_CONSENT_METHODS), so a strict org refuses it.
+export const CONSENT_METHODS = ['told_at_start', 'in_invite', 'in_writing', 'in_call_chat', 'platform_notice'] as const;
 export type ConsentMethod = (typeof CONSENT_METHODS)[number];
+// The methods only an import may use. A live recording (the app's recorder, the extension) is made while the call runs, so it never offers these: the screens and the extension filter them out.
+export const IMPORT_ONLY_CONSENT_METHODS: readonly ConsentMethod[] = ['platform_notice'];
+export const LIVE_CONSENT_METHODS: readonly ConsentMethod[] = CONSENT_METHODS.filter((m) => !IMPORT_ONLY_CONSENT_METHODS.includes(m));
 
 // Why a recording stopped without the recorder's own click (Meetings A1, #3159): a code, never text. The screens turn it into
 // plain words ("Tab họp đã đóng", "Micro bị mất"...). Same set as the CHECK on crove_meetings.meeting.recording_stop_reason.
@@ -17,7 +22,9 @@ export const zRecordingStopReason = z.enum(RECORDING_STOP_REASONS);
 // lives in one place, packages/meeting-recorder/src/notice.ts, and carries the current version; a client sends the version
 // it showed, the server accepts only a known one. A new wording adds a version here and keeps the old ones.
 export const CONSENT_NOTICE_VERSION = '2026-11-v1';
-export const KNOWN_CONSENT_NOTICE_VERSIONS: readonly string[] = [CONSENT_NOTICE_VERSION];
+// The notice text of an import (C1, #3173): the platform showed its own notice, and Ludy's own text says what Ludy does with the copy. Same string as IMPORT_NOTICE.version in the recorder kit.
+export const IMPORT_CONSENT_NOTICE_VERSION = '2026-11-imp-v1';
+export const KNOWN_CONSENT_NOTICE_VERSIONS: readonly string[] = [CONSENT_NOTICE_VERSION, IMPORT_CONSENT_NOTICE_VERSION];
 
 export const MEETING_VISIBILITIES = ['attendees', 'org'] as const;
 export type MeetingVisibility = (typeof MEETING_VISIBILITIES)[number];
@@ -122,6 +129,22 @@ export const zMeetingCreate = z.strictObject({
   lengthSeconds: z.number().int().nonnegative().optional(),
 });
 export type MeetingCreate = z.infer<typeof zMeetingCreate>;
+
+// The click on "Nhập" for a recording a meeting platform finished (C1, #3173): one command makes the meeting with its consent record and links the recording. The consent is the platform's own notice,
+// confirmed by the importer, and the notice text shown is the import one; nothing else is accepted here. Audio first: no video, no live notes.
+export const zMeetingImportStart = z.strictObject({
+  recordingId: zId,
+  // Absent means the recording's own title.
+  title: z.string().trim().min(1).max(200).optional(),
+  language: zMeetingLanguage.default('vi'),
+  visibility: zMeetingVisibility.default('attendees'),
+  readerUserIds: z.array(zId).optional(),
+  summaryTemplate: zMeetingSummaryTemplate.default('general'),
+  consentMethod: z.literal('platform_notice'),
+  consentNoticeVersion: z.literal(IMPORT_CONSENT_NOTICE_VERSION),
+  consentConfirmed: z.literal(true),
+});
+export type MeetingImportStart = z.infer<typeof zMeetingImportStart>;
 
 export const zMeetingCreated = z.strictObject({
   meetingId: zId,

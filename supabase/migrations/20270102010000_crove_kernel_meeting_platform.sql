@@ -14,7 +14,7 @@
 -- meeting_platform_oauth_begin / _consume   the single-use OAuth state of a connect, in the existing oauth_state table (the calendar's pair, for the recording providers).
 -- meeting_platform_recording    what a platform has finished that the member could import: a SUGGESTION until the member presses "Nhập", then the state of the import. Only the member reads it;
 --                               every change goes through a definer (the member's click, the worker's list and download). The staged bytes of an import wait under a staging key kept here (the
---                               staged-upload grants of crove_kernel.file_upload live 5 minutes, too short for a download) for at most 24 hours; the member's own request then claims, seals and
+--                               staged-upload grants of crove_kernel.file_upload live 5 minutes, too short for a download) for at most 55 minutes; the member's own request then claims, seals and
 --                               records them through the same route as an upload.
 --                                 status: suggested -> importing (the click) -> staged (the worker's bytes are in staging) -> claimed (the member's request took them) -> imported
 --                                         importing | staged | claimed -> failed (error_code says why); suggested | failed -> dismissed (the member's choice).
@@ -237,7 +237,7 @@ REVOKE ALL ON FUNCTION crove_kernel.meeting_platform_oauth_consume(text, text) F
 GRANT EXECUTE ON FUNCTION crove_kernel.meeting_platform_oauth_begin(text, text, text, integer) TO crove_app;
 GRANT EXECUTE ON FUNCTION crove_kernel.meeting_platform_oauth_consume(text, text) TO crove_app;
 
--- A page of the active connections of active orgs after a key, for the worker's sweep. A connection of a member who left or is disabled is not due.
+-- A page of the active connections of active orgs after a key that are due to be listed, for the worker's sweep. A connection of a member who left or is disabled is not due.
 CREATE OR REPLACE FUNCTION crove_kernel.meeting_platform_sync_due(p_after_org uuid, p_after_id uuid, p_limit int)
 RETURNS TABLE (org_id uuid, connection_id uuid, provider text)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
@@ -245,6 +245,8 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
   FROM crove_kernel.meeting_platform_connection c
   JOIN crove_kernel.tenant t ON t.org_id = c.org_id AND t.status = 'active'
   WHERE c.status = 'active'
+    -- Listed at most every 10 minutes (MEETING_PLATFORM_SYNC_MINUTES); a member's refresh clears last_synced_at so the next pass lists it at once.
+    AND (c.last_synced_at IS NULL OR c.last_synced_at < pg_catalog.now() - interval '10 minutes')
     AND (p_after_org IS NULL OR (c.org_id, c.id) > (p_after_org, p_after_id))
     AND EXISTS (
       SELECT 1 FROM crove_kernel.tenant_member m JOIN crove_kernel.user_account u ON u.id = m.user_id
@@ -521,7 +523,7 @@ BEGIN
   WHERE r.org_id = v_org AND r.meeting_id = p_meeting AND r.user_id = v_user AND r.status = 'claimed';
 END $$;
 
--- The sweep: suggestions older than 14 days go; staged bytes the member did not claim within 24 hours, and a claim that never finished within 30 minutes, fail with `not_claimed` and
+-- The sweep: suggestions older than 14 days go; staged bytes the member did not claim within 55 minutes (the daily staging sweep deletes a staging/ object older than an hour: STAGING_MAX_AGE_MS), and a claim that never finished within 30 minutes, fail with `not_claimed` and
 -- `claim_failed`; a download that has run for 2 hours fails with `timeout`. Returns the staging keys whose bytes the job must delete (a failed row forgets its key), never text of a meeting.
 CREATE OR REPLACE FUNCTION crove_kernel.meeting_platform_recording_sweep()
 RETURNS TABLE (staging_key text)
@@ -536,7 +538,7 @@ BEGIN
       SELECT r.org_id, r.id, r.staging_key AS key,
              CASE WHEN r.status = 'staged' THEN 'not_claimed' WHEN r.status = 'claimed' THEN 'claim_failed' ELSE 'timeout' END AS code
       FROM crove_kernel.meeting_platform_recording r
-      WHERE (r.status = 'staged' AND r.staged_at < pg_catalog.now() - interval '24 hours')
+      WHERE (r.status = 'staged' AND r.staged_at < pg_catalog.now() - interval '55 minutes')
          OR (r.status = 'claimed' AND r.updated_at < pg_catalog.now() - interval '30 minutes')
          OR (r.status = 'importing' AND r.updated_at < pg_catalog.now() - interval '2 hours')
       FOR UPDATE
@@ -572,6 +574,24 @@ GRANT EXECUTE ON FUNCTION
   crove_kernel.meeting_platform_recording_claim_failed(uuid, text),
   crove_kernel.meeting_platform_recording_imported(uuid)
 TO crove_app;
+
+-- The worker's note that a connection could not be listed: a short code in status_reason (never the platform's message) and last_synced_at moved to now, so the next try waits 10 minutes
+-- instead of every minute; with p_expired the provider refused the grant and the member must connect again (status expired).
+CREATE OR REPLACE FUNCTION crove_kernel.meeting_platform_sync_failed(p_connection uuid, p_code text, p_expired boolean)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_org uuid := crove_kernel.meeting_platform_system();
+BEGIN
+  IF p_code IS NULL OR p_code !~ '^[a-z][a-z0-9_]{1,39}$' THEN
+    RAISE EXCEPTION 'MEETING_PLATFORM_INVALID' USING ERRCODE = '22023';
+  END IF;
+  UPDATE crove_kernel.meeting_platform_connection c
+  SET status_reason = p_code, last_synced_at = pg_catalog.now(), updated_at = pg_catalog.now(), status = CASE WHEN p_expired THEN 'expired' ELSE c.status END
+  WHERE c.org_id = v_org AND c.id = p_connection;
+END $$;
+REVOKE ALL ON FUNCTION crove_kernel.meeting_platform_sync_failed(uuid, text, boolean) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+
+GRANT EXECUTE ON FUNCTION crove_kernel.meeting_platform_sync_failed(uuid, text, boolean) TO crove_worker;
 
 -- ---------------------------------------------------------------------------
 -- Queues (QUEUES in apps/kernel/src/jobs-schema.ts; both send their dead letters to kernel-job.dlq):

@@ -1848,6 +1848,7 @@ export const vi = {
       noticeShowVi: 'Bản tiếng Việt',
       noticeDraft: 'Bản nháp, chờ luật sư đọc lại (#2585). Không phải tư vấn pháp lý. Ludy không tự gửi gì vào cuộc họp: bạn tự dán.',
       inCallChat: 'Đã dán thông báo vào khung chat cuộc họp',
+      platformNotice: 'Nền tảng họp đã hiện thông báo ghi hình cho mọi người (nhập bản ghi có sẵn)',
       consentConfirmCheckbox: 'Tôi xác nhận đã thông báo và nhận được sự đồng thuận của tất cả người tham dự theo đúng quy định.',
       cancel: 'Hủy',
       titleRequired: 'Vui lòng nhập tên cuộc họp.',

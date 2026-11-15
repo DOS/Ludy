@@ -21,8 +21,10 @@ export type MeetingPlatformRecordingStatus = (typeof MEETING_PLATFORM_RECORDING_
 
 // The platform's list covers this many days back.
 export const MEETING_PLATFORM_LIST_DAYS = 14;
-// Staged bytes the member does not claim are deleted after this long (the row fails with `not_claimed`).
-export const MEETING_PLATFORM_STAGING_HOURS = 24;
+// Staged bytes the member does not claim fail the row (`not_claimed`) after this long: the daily staging sweep deletes a staging/ object older than an hour, so the claim window stays inside it.
+export const MEETING_PLATFORM_STAGING_MINUTES = 55;
+// The job buffers a download in memory (the blob store has no streaming write to a staging key), so the declared size and the counted stream stay under the audio cap of an upload (MAX_MEETING_AUDIO_BYTES).
+export const MEETING_PLATFORM_IMPORT_MAX_BYTES = 300 * 1024 * 1024;
 // The connection's list is refreshed at most this often by the sweep, unless the member asked (last_synced_at cleared).
 export const MEETING_PLATFORM_SYNC_MINUTES = 10;
 

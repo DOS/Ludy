@@ -1,7 +1,8 @@
 // oRPC implementation of @crove/kernel-contract. Handlers only call the runtime (execute/query).
+import { randomBytes } from 'node:crypto';
 import { implement, ORPCError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
-import { CALENDAR_OAUTH_PROVIDERS, MARKETPLACE_PLATFORM_KEYS, canReadEventsWith, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@crove/kernel-contract';
+import { CALENDAR_OAUTH_PROVIDERS, MARKETPLACE_PLATFORM_KEYS, canReadEventsWith, meetingPlatformBinding, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@crove/kernel-contract';
 import { sandboxBankFeed } from '@crove/bank-feed';
 import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad-platform';
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@crove/einvoice';
@@ -2322,6 +2323,36 @@ export function createRpcHandler(
           const done = await runtime.execute<{ connectionId: string; disconnected: true }>('kernel.calendar.disconnect', input, { actor, orgId });
           await clearAgenda(runtime, { actor, orgId }, input.connectionId);
           return done;
+        }),
+      ),
+    },
+    // Meeting platforms a member connects (meetings integrations C1, #3173): the member's own connections and recordings. Only the offline sandbox connects here; the real providers' OAuth
+    // steps are C2 to C4. The commands check the role and the owner again.
+    meetingPlatform: {
+      connections: os.meetingPlatform.connections.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.meeting_platform.connections', {}, { actor, orgId }))),
+      recordings: os.meetingPlatform.recordings.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.meeting_platform.recordings', {}, { actor, orgId }))),
+      refresh: os.meetingPlatform.refresh.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.meeting_platform.refresh', input, { actor, orgId }))),
+      dismiss: os.meetingPlatform.dismiss.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.meeting_platform.recording.dismiss', input, { actor, orgId }))),
+      disconnect: os.meetingPlatform.disconnect.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.meeting_platform.disconnect', input, { actor, orgId }))),
+      // A throwaway token is sealed for the sandbox account and dropped: the sandbox platform opens nothing, so the credential only has to exist. Connecting again is a reconnect of the same account.
+      connectSandbox: os.meetingPlatform.connectSandbox.handler(({ context }) =>
+        guard(async () => {
+          const { orgId, role } = await resolveMembership(runtime, context.user, context.orgSlug);
+          if (role === 'viewer') throw new DomainError('FORBIDDEN', 403, 'Người xem không kết nối được nền tảng họp');
+          if (!channels?.sandbox) throw new DomainError('CHANNEL_PROVIDER_DISABLED', 404, 'Kênh thử nghiệm (sandbox) chưa được bật');
+          const sealed = channels.broker.seal(randomBytes(24).toString('hex'), meetingPlatformBinding(orgId, 'sandbox', 'sandbox@local'));
+          return runtime.execute<{ connectionId: string; reconnected: boolean }>(
+            'kernel.meeting_platform.connect',
+            {
+              provider: 'sandbox',
+              externalAccount: 'sandbox@local',
+              displayName: 'Nền tảng họp thử nghiệm',
+              scopes: [],
+              expiresAt: null,
+              credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
+            },
+            { actor: actorOf(context.user), orgId },
+          );
         }),
       ),
     },

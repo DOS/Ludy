@@ -1,0 +1,181 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// The download of one platform recording to staging (meetings integrations C1, issue #3173, plan docs/plan/meetings-integrations.md section 6.1). One job per recording the member chose to
+// import ("Nhập"): it opens the member's sealed platform token (only a job opens one, ADR-0025), asks the platform adapter how to fetch the file, downloads it through the egress guard (guardedStream:
+// public addresses only, the adapter's hosts, a size cap counted while streaming), and writes the bytes under the staging key kept on the recording's row. It never seals or records anything: the
+// member's own request does that next, through the route an upload uses (claim, seal with the meeting key, measure in crove-media, record), so no meeting key or definer changes here.
+//
+// - Nothing is downloaded before the click: the job exists only for a row the member's command moved to `importing`.
+// - The platform's own copy is never touched; no participant list is read; the title is never read by the job.
+// - Audio first. A recording with an audio file is fetched as audio. One with only a video file needs the audio extracted by crove-media; the extraction is injected (`media`) and not wired in C1, so
+//   a video-only recording fails with `no_audio` until it is.
+// - The bytes are held in memory (the blob store has no streaming write to a staging key), under MEETING_PLATFORM_IMPORT_MAX_BYTES; a bigger file fails `too_large` before or while it is read.
+// - A transient failure (the platform or the network) throws so the queue retries; the last try, and every permanent failure, is recorded on the row as a short code, never the platform's message.
+import {
+  meetingPlatformBinding,
+  MEETING_PLATFORM_IMPORT_MAX_BYTES,
+  type MeetingPlatformErrorCode,
+  type MeetingPlatformProvider,
+} from '@crove/kernel-contract';
+import type { MeetingPlatformAdapter, MeetingPlatformCredential, MeetingPlatformDownload } from '@crove/channel';
+import { MeetingPlatformError } from '@crove/channel';
+import { DomainError, EgressError, guardedStream, type BlobStore, type CredentialBroker, type EgressStreamOptions, type Runtime } from '@crove/kernel-runtime';
+
+const ACTOR = { type: 'system' as const, component: 'meetings.import' };
+const codeOf = (error: unknown) => (error instanceof DomainError ? error.code : error instanceof Error ? error.name : 'error');
+// One download, redirects and the body included.
+const DOWNLOAD_TIMEOUT_MS = 20 * 60_000;
+// The queue tries a transient failure this many more times (a minute apart, doubling), and a job may run this long.
+export const MEETINGS_IMPORT_RETRY_LIMIT = 3;
+export const MEETINGS_IMPORT_EXPIRE_SECONDS = 30 * 60;
+
+export interface MeetingsImportJob {
+  orgId: string;
+  id: string;
+  connectionId: string;
+  provider: MeetingPlatformProvider;
+  externalId: string;
+  hasAudio: boolean;
+  hasVideo: boolean;
+  sizeBytes: number | null;
+  stagingKey: string;
+}
+
+export interface MeetingsImportDeps {
+  runtime: Runtime;
+  broker: CredentialBroker;
+  store: BlobStore;
+  adapters: Readonly<Partial<Record<string, MeetingPlatformAdapter>>>;
+  // The audio extraction of crove-media for a video-only recording (not wired in C1: null).
+  media?: { extractAudio(video: Uint8Array): Promise<Uint8Array> } | null;
+  // Tests only: the guarded transfer and its options.
+  stream?: typeof guardedStream;
+  streamOptions?: Partial<EgressStreamOptions>;
+}
+
+interface SealedCredential {
+  keyId: string;
+  envelope: string;
+  provider: string;
+  externalAccount: string;
+}
+
+export type MeetingsImportResult = 'staged' | 'failed' | 'skipped';
+
+// How a failed step is told to the member and whether the queue should try again.
+function classify(error: unknown): { code: MeetingPlatformErrorCode; retry: boolean } {
+  if (error instanceof MeetingPlatformError) return { code: error.code as MeetingPlatformErrorCode, retry: error.code === 'platform_unavailable' };
+  if (error instanceof EgressError) {
+    if (error.code === 'too_large') return { code: 'too_large', retry: false };
+    if (error.code === 'blocked' || error.code === 'invalid_url' || error.code === 'redirects') return { code: 'platform_refused', retry: false };
+    return { code: 'platform_unavailable', retry: true };
+  }
+  if (error instanceof DomainError) {
+    if (error.code === 'MEETING_PLATFORM_NOT_ACTIVE' || error.code === 'MEETING_PLATFORM_OWNER_LEFT' || error.code === 'MEETING_PLATFORM_NOT_FOUND') return { code: 'connection_expired', retry: false };
+  }
+  return { code: 'download_failed', retry: true };
+}
+
+async function openCredential(deps: MeetingsImportDeps, job: MeetingsImportJob): Promise<MeetingPlatformCredential> {
+  const sealed = await deps.runtime.query<SealedCredential>('kernel.meeting_platform.credential', { connectionId: job.connectionId }, { actor: ACTOR, orgId: job.orgId });
+  const secret = deps.broker.open({ keyId: sealed.keyId, envelope: Buffer.from(sealed.envelope, 'base64') }, meetingPlatformBinding(job.orgId, sealed.provider as MeetingPlatformProvider, sealed.externalAccount));
+  const parsed = JSON.parse(secret) as { accessToken?: unknown; refreshToken?: unknown; expiresAt?: unknown };
+  if (typeof parsed.accessToken !== 'string' || parsed.accessToken === '') throw new MeetingPlatformError('connection_expired');
+  return {
+    accessToken: parsed.accessToken,
+    ...(typeof parsed.refreshToken === 'string' ? { refreshToken: parsed.refreshToken } : {}),
+    ...(typeof parsed.expiresAt === 'string' ? { expiresAt: new Date(parsed.expiresAt) } : {}),
+  };
+}
+
+// The platform's file, in memory, counted against the cap as it arrives.
+async function fetchBytes(deps: MeetingsImportDeps, download: MeetingPlatformDownload): Promise<Uint8Array> {
+  if (download.inline) {
+    if (download.inline.bytes.byteLength > MEETING_PLATFORM_IMPORT_MAX_BYTES) throw new MeetingPlatformError('too_large');
+    return download.inline.bytes;
+  }
+  const hosts = new Set(download.hosts);
+  const suffixes = download.hostSuffixes;
+  const open = deps.stream ?? guardedStream;
+  const response = await open(
+    download.url,
+    { headers: download.headers },
+    {
+      timeoutMs: DOWNLOAD_TIMEOUT_MS,
+      maxBytes: MEETING_PLATFORM_IMPORT_MAX_BYTES,
+      httpsOnly: true,
+      redirectHeaders: 'same-host',
+      hostAllowed: (host) => hosts.has(host) || suffixes.some((suffix) => host === suffix.replace(/^\./, '') || host.endsWith(suffix.startsWith('.') ? suffix : `.${suffix}`)),
+      ...deps.streamOptions,
+    },
+  );
+  try {
+    if (response.status === 401 || response.status === 403) throw new MeetingPlatformError('connection_expired');
+    if (response.status === 404 || response.status === 410) throw new MeetingPlatformError('recording_gone');
+    if (response.status === 429 || response.status >= 500) throw new MeetingPlatformError('platform_unavailable');
+    if (response.status < 200 || response.status >= 300) throw new MeetingPlatformError('platform_refused');
+    const declared = Number(response.headers['content-length']);
+    if (Number.isFinite(declared) && declared > MEETING_PLATFORM_IMPORT_MAX_BYTES) throw new MeetingPlatformError('too_large');
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for await (const chunk of response.body) {
+      total += chunk.byteLength;
+      if (total > MEETING_PLATFORM_IMPORT_MAX_BYTES) throw new MeetingPlatformError('too_large');
+      chunks.push(chunk);
+    }
+    const out = new Uint8Array(total);
+    let at = 0;
+    for (const chunk of chunks) {
+      out.set(chunk, at);
+      at += chunk.byteLength;
+    }
+    return out;
+  } finally {
+    response.destroy();
+  }
+}
+
+// One attempt for one recording. Throws, so the queue retries, only for a transient failure with tries left; anything else is recorded on the row.
+export async function runMeetingsImport(deps: MeetingsImportDeps, job: MeetingsImportJob, attempt: { retryCount: number; retryLimit: number }): Promise<MeetingsImportResult> {
+  const ctx = { actor: ACTOR, orgId: job.orgId };
+  const fail = async (code: MeetingPlatformErrorCode): Promise<'failed'> => {
+    await deps.runtime.execute('kernel.meeting_platform.import_failed', { recordingId: job.id, code }, ctx).catch((error) => console.warn(`[meetings-import] ${job.id.slice(0, 8)} could not record ${code}`, codeOf(error)));
+    await deps.store.delete(job.stagingKey).catch(() => undefined);
+    return 'failed';
+  };
+  try {
+    const adapter = deps.adapters[job.provider];
+    if (!adapter) return await fail('platform_unavailable');
+    // A size the platform declared over the cap, or no audio file to take: refused before any network call.
+    if (job.sizeBytes !== null && job.sizeBytes > MEETING_PLATFORM_IMPORT_MAX_BYTES) return await fail('too_large');
+    const format = job.hasAudio ? 'audio' : job.hasVideo && deps.media ? 'video' : null;
+    if (format === null) return await fail('no_audio');
+    const credential = await openCredential(deps, job);
+    const download = await adapter.prepareDownload(credential, job.externalId, format);
+    let bytes = await fetchBytes(deps, download);
+    if (bytes.byteLength === 0) throw new MeetingPlatformError('download_failed');
+    if (download.format === 'video') {
+      if (!deps.media) return await fail('no_audio');
+      bytes = await deps.media.extractAudio(bytes).catch(() => {
+        throw new MeetingPlatformError('normalize_failed');
+      });
+    }
+    await deps.store.put(job.stagingKey, bytes, 'application/octet-stream');
+    try {
+      await deps.runtime.execute('kernel.meeting_platform.import_staged', { recordingId: job.id }, ctx);
+    } catch (error) {
+      // The row is no longer importing (failed by the sweep, or imported another way): the bytes are not wanted.
+      await deps.store.delete(job.stagingKey).catch(() => undefined);
+      if (error instanceof DomainError && error.code === 'MEETING_PLATFORM_STATE') return 'skipped';
+      throw error;
+    }
+    return 'staged';
+  } catch (error) {
+    const { code, retry } = classify(error);
+    console.warn(`[meetings-import] ${job.id.slice(0, 8)} not staged`, codeOf(error));
+    if (retry && attempt.retryCount < attempt.retryLimit) {
+      await deps.store.delete(job.stagingKey).catch(() => undefined);
+      throw new Error(`meetings import ${job.id.slice(0, 8)} not staged (attempt ${attempt.retryCount + 1})`);
+    }
+    return fail(code);
+  }
+}

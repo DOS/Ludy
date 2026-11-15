@@ -91,5 +91,8 @@ export async function recordSealedMedia(ctx: CommandContext, p: RecordSealedMedi
       .values({ org_id: ctx.orgId, id: randomUUID(), meeting_id: meetingId, file_id: fileId, length_seconds: input.lengthSeconds, video_retention_date: videoRetentionDate })
       .execute();
   }
+  // A recording imported from a meeting platform (C1, #3173) is done once its media is recorded: the definer moves a claimed recording of this meeting and member to imported, and does nothing
+  // for a meeting that is no import.
+  await sql`SELECT crove_kernel.meeting_platform_recording_imported(${meetingId}::uuid)`.execute(ctx.trx);
   return { fileId, liveChunksDiscarded };
 }

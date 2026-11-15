@@ -160,6 +160,24 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: "The member's own address in an outside calendar (their Google account); disconnecting removes it, and it is not exported with the org. Its row policy hides it from the admin who runs an erasure: the member disconnects it",
   },
+  // A member's connected meeting platform (meetings integrations C1, #3173): the member's own account on Google Meet, Zoom or Microsoft Teams, kept only for them.
+  'crove_kernel.meeting_platform_connection.display_name': {
+    kind: 'email',
+    handling: 'erase',
+    reason: "The member's own account on a meeting platform (their address there), the same value as external_account; disconnecting removes it, and it is not exported with the org",
+  },
+  'crove_kernel.meeting_platform_connection.external_account': {
+    kind: 'email',
+    handling: 'erase',
+    reason: "The member's own account on a meeting platform; disconnecting removes it, and it is not exported with the org. Its row policy hides it from the admin who runs an erasure: the member disconnects it",
+  },
+  // The title of a recording the platform offers to import: the platform's words, which may name or describe a person. Read by the member alone (row security), kept as a suggestion for at most
+  // 14 days, deleted when the member disconnects the platform, and with the org; an import copies nothing of it (the meeting has its own title).
+  'crove_kernel.meeting_platform_recording.title': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: "The title of a recording a meeting platform offers the member, which may name or describe a person: read by that member alone, a suggestion is deleted after 14 days or when they disconnect the platform, and it goes with the org",
+  },
   // Bank feeds (ADR-0039, #2044): the accounts a connection reaches, as the worker listed them; not the books.
   'crove_finance.bank_feed_listed_account.display_name': {
     kind: 'name',

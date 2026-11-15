@@ -72,6 +72,7 @@ import { numberingCommands } from './numbering.ts';
 import { cancelMemberVyRuns, memberVyCommands } from './member-vy.ts';
 import { roleCommands } from './roles.ts';
 import { calendarCommands } from './calendar.ts';
+import { meetingPlatformCommands } from './meeting-platform.ts';
 import { proposalReminderCommands } from './proposal-reminders.ts';
 import { PROPOSAL_PREPARERS, REQUESTABLE, preparedCoAuthors, preparedEntity, resubmitProposal, zPreparedProposal } from './proposal-resubmit.ts';
 import { aiBudgetCommands } from './ai-budget.ts';
@@ -1229,6 +1230,7 @@ const otherKernelCommands = [
   ...roleCommands,
   ...memberVyCommands,
   ...calendarCommands,
+  ...meetingPlatformCommands,
   setAddress,
   setContactEmail,
   queueContactMail,

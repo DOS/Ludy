@@ -1850,6 +1850,7 @@ export const en = {
       noticeShowVi: 'Vietnamese version',
       noticeDraft: 'Draft, waiting for a lawyer to read it (#2585). Not legal advice. Ludy posts nothing into the call: you paste it yourself.',
       inCallChat: 'Pasted the notice in the meeting chat',
+      platformNotice: 'The meeting platform showed its own recording notice to everyone (imported recording)',
       consentConfirmCheckbox: 'I confirm that all participants have been notified and gave consent according to regulations.',
       titleRequired: 'Enter the meeting title.',
       consentMethodRequired: 'Choose how the participants were told.',
