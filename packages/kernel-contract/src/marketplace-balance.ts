@@ -36,6 +36,8 @@ export const zMarketplaceFacts = z.strictObject({
   // The stored settlements that are posted and standing and have no payout voucher yet (the platform's transfer is not recorded). Shown by code beside the other facts; the coworker's sentence is
   // not told it (see packages/agent marketplace-line.ts: a fourth count needs its own cue words in the sentence checks).
   payoutsToMatch: z.number().int().min(0),
+  // The stored settlements that are half reversed (#3329): some month vouchers reversed and some still standing. Shown by code beside the other facts; the coworker's sentence is not told it.
+  settlementsHalfReversed: z.number().int().min(0),
   awaitingPayout: zMoney,
   feesAwaitingInvoice: zMoney,
 });
@@ -100,10 +102,24 @@ export const zMarketplaceInvoiceToClear = z.object({
   proposalId: zId.nullable(),
 });
 export type MarketplaceInvoiceToClear = z.infer<typeof zMarketplaceInvoiceToClear>;
+// A settlement that is half reversed (#3329): some of its month vouchers are reversed and some still stand. `standingMonths` is how many are left to reverse ("đảo dở: còn N tháng chưa đảo"), which the
+// accountant does one by one (the payout, if any, first); the settlement's payout stays refused meanwhile.
+export const zMarketplaceHalfReversed = z.object({
+  settlementId: zId,
+  legalEntityId: zId,
+  platform: z.string(),
+  platformName: z.string(),
+  periodFrom: zLocalDate,
+  periodTo: zLocalDate,
+  standingMonths: z.number().int().min(1),
+  reversedMonths: z.number().int().min(1),
+});
+export type MarketplaceHalfReversed = z.infer<typeof zMarketplaceHalfReversed>;
 export const zMarketplaceWorklist = z.object({
   postingConfirmed: z.boolean(),
   settlements: z.array(zMarketplaceSettlementToPost),
   payouts: z.array(zMarketplacePayoutToMatch),
   invoices: z.array(zMarketplaceInvoiceToClear),
+  halfReversed: z.array(zMarketplaceHalfReversed),
 });
 export type MarketplaceWorklist = z.infer<typeof zMarketplaceWorklist>;

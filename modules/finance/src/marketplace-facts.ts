@@ -9,6 +9,7 @@ import type { MemberRole } from '@crove/db';
 import { defineQuery } from '@crove/kernel-runtime';
 import { money, sum, toMoney } from '@crove/l10n-vn';
 import { loadMarketplaceBalance } from './marketplace-balance.ts';
+import { halfReversedSettlements } from './marketplace-half-reversed.ts';
 import { postingsOf, settlementMonthsFor, settlementPosted } from './marketplace-settlement-months.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -45,6 +46,7 @@ export const marketplaceFacts = defineQuery({
     return {
       settlementsToPost: toPost,
       payoutsToMatch: toMatch,
+      settlementsHalfReversed: (await halfReversedSettlements(ctx, input.legalEntityId)).length,
       awaitingPayout: toMoney(sum(balance.rows.map((r) => money(r.awaitingPayout)).filter((v) => v.gt(0)))),
       feesAwaitingInvoice: toMoney(sum(balance.rows.map((r) => money(r.feesAwaitingInvoice)).filter((v) => v.gt(0)))),
     };

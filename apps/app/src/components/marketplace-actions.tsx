@@ -147,7 +147,7 @@ export function MarketplaceActions({ legalEntityId, ready }: { legalEntityId: st
   const worklist = useQuery({ ...orpc.marketplace.worklist.queryOptions({ input: legalEntityId === undefined ? {} : { legalEntityId } }), enabled: ready, retry: false });
   const data = worklist.data;
   if (!data) return null;
-  if (data.settlements.length === 0 && data.payouts.length === 0 && data.invoices.length === 0) return null;
+  if (data.settlements.length === 0 && data.payouts.length === 0 && data.invoices.length === 0 && data.halfReversed.length === 0) return null;
   const open = data.postingConfirmed;
   return (
     <section className="mb-6 space-y-5" data-testid="marketplace-actions">
@@ -175,6 +175,21 @@ export function MarketplaceActions({ legalEntityId, ready }: { legalEntityId: st
           <DataTable head={[t('platform'), t('period'), t('received'), t('pickLine'), '']} numeric={[2]}>
             {data.payouts.map((p) => (
               <PayoutRow key={p.settlementId} p={p} open={open} />
+            ))}
+          </DataTable>
+        </div>
+      )}
+      {data.halfReversed.length > 0 && (
+        <div data-testid="marketplace-actions-half-reversed">
+          <h3 className="mb-1 text-sm font-medium">{t('halfReversedTitle')}</h3>
+          <p className="mb-2 text-sm text-subtle-foreground">{t('halfReversedHint')}</p>
+          <DataTable head={[t('platform'), t('period'), t('state')]}>
+            {data.halfReversed.map((h) => (
+              <TableRow key={h.settlementId} data-testid="marketplace-action-half-reversed">
+                <TableCell className="px-4 py-3">{h.platformName}</TableCell>
+                <TableCell className="px-4 py-3">{period(h.periodFrom, h.periodTo)}</TableCell>
+                <TableCell className="px-4 py-3" data-testid="marketplace-half-reversed-state">{t('halfReversedRow', { standing: String(h.standingMonths), reversed: String(h.reversedMonths) })}</TableCell>
+              </TableRow>
             ))}
           </DataTable>
         </div>
