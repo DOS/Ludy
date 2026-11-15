@@ -26,7 +26,7 @@ const suite = ADMIN ? describe : describe.skip;
 const confirmedMaps = (): Record<string, MarketplacePostingMap> => {
   const base = MARKETPLACE_POSTING_MAPS.tt133 as MarketplacePostingMap;
   const c = <T extends { status: string }>(r: T): T => ({ ...r, status: 'confirmed' });
-  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c(base.feePayable), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitExpense: c(base.pitExpense) } };
+  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c(base.feePayable), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitExpense: c(base.pitExpense), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense) } };
 };
 const notMarketplace = (name: string) => !name.startsWith('finance.marketplace_settlement.');
 

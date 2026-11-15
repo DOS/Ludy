@@ -17,7 +17,7 @@ import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import { Runtime } from '@crove/kernel-runtime';
-import { MARKETPLACE_POSTING_MAPS, createMarketplacePayoutCommands, createMarketplaceSettlementCommands, financeCommands, financeQueries, type MarketplacePostingMap } from '@crove/mod-finance';
+import { MARKETPLACE_POSTING_MAPS, createMarketplacePayoutCommands, createMarketplaceSettlementCommands, createMarketplaceWorklist, financeCommands, financeQueries, type MarketplacePostingMap } from '@crove/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -28,7 +28,7 @@ const suite = ADMIN ? describe : describe.skip;
 const confirmedMaps = (): Record<string, MarketplacePostingMap> => {
   const base = MARKETPLACE_POSTING_MAPS.tt133 as MarketplacePostingMap;
   const c = <T extends { status: string }>(r: T): T => ({ ...r, status: 'confirmed' });
-  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c(base.feePayable), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitExpense: c(base.pitExpense) } };
+  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c(base.feePayable), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitExpense: c(base.pitExpense), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense) } };
 };
 const notMarketplace = (name: string) => !name.startsWith('finance.marketplace_settlement.') && !name.startsWith('finance.marketplace_payout.');
 
@@ -174,9 +174,10 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     pool = createPool({ connectionString: url.toString(), max: 6 });
     const base = { queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] };
     // The runtime that posts registers both marketplace command sets over a confirmed map; the other, the shipped sets.
+    // The work list of this runtime reads "today" from the test (the month-end accrual depends on the day).
     rt = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({
       commands: [...kernelCommands, ...financeCommands.filter((c) => notMarketplace(c.name)), ...createMarketplaceSettlementCommands({ maps: confirmedMaps() }).commands, ...createMarketplacePayoutCommands({ maps: confirmedMaps() }).commands],
-      ...base,
+      queries: [...base.queries.filter((q) => q.name !== 'finance.marketplace.worklist'), createMarketplaceWorklist({ maps: confirmedMaps(), today: () => today.value })],
     });
     rtShipped = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...financeCommands], ...base });
   }, 120_000);
@@ -226,6 +227,8 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
   });
 
   // Reversing a settlement's or a payout's entry through the generic reversal (#3329, option C): the request, its title for the approver, and the entries of a settlement.
+  // The day the work list reads as today.
+  const today = { value: '2026-10-31' };
   const askReversal = (o: Org, entryId: string, entryDate = '2026-10-21') =>
     rt.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.journal.reverse', input: { entryId, entryDate, reason: 'Đảo để sửa' } }, { actor: asUser(o.admin), orgId: o.orgId, idempotencyKey: randomUUID() });
   const titleOf = async (o: Org, proposalId: string) => (await rows<{ title: string }>('SELECT title FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.title ?? '';
@@ -283,6 +286,77 @@ suite('the posting of a platform payout on PostgreSQL (#2516)', () => {
     const [month] = await monthEntries(o, settlement);
     await rt.execute('finance.period.lock', { month: '2026-10' }, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
     await expect(askReversal(o, month as string, '2026-10-21')).rejects.toMatchObject({ code: 'PERIOD_LOCKED', status: 409 });
+  });
+
+  // The month-end accrual of the fees without an invoice (slice F of #2516, option 2): offered by the work list, asked for as an ordinary general journal voucher, one at a time, reversed from the next month.
+  const worklist = (o: Org) =>
+    rt.query<{
+      accruals: { legalEntityId: string; platform: string; month: string; date: string; amount: string; expenseAccount: string; accruedAccount: string; description: string; proposalId: string | null }[];
+      accrualReversals: { entryId: string; month: string; amount: string; reverseOn: string; proposalId: string | null }[];
+    }>('finance.marketplace.worklist', {}, { actor: asUser(o.owner), orgId: o.orgId });
+  // What the screen sends for an offer: a general journal voucher Dr expense / Cr accrued expense.
+  const askAccrual = (o: Org, a: { date: string; description: string; legalEntityId: string; amount: string; expenseAccount: string; accruedAccount: string }) =>
+    rt.execute<{ proposalId: string }>(
+      'kernel.proposal.request',
+      {
+        command: 'finance.journal_voucher.record',
+        input: { date: a.date, description: a.description, legalEntityId: a.legalEntityId, lines: [{ account: a.expenseAccount, debit: a.amount, credit: '0' }, { account: a.accruedAccount, debit: '0', credit: a.amount }] },
+      },
+      { actor: asUser(o.admin), orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+  // A company whose settlement and payout are posted: the platform kept 12 000 of fees (Dr 331), no invoice yet.
+  async function companyWithFees() {
+    const o = await org('tt133', false);
+    const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '200000', commission: '10000', service: '2000', delivered: '2026-10-02' }]);
+    await post(o, settlement);
+    const line = await bankLine(o, '2026-10-20', '188000');
+    await approve(o, (await ask(o, settlement, line)).proposalId);
+    return o;
+  }
+
+  it('offers a company the accrual of the fees without an invoice at month end: one at a time, reversed from the next month, never repeated for the month', async () => {
+    const o = await companyWithFees();
+    today.value = '2026-10-31';
+    const [offer] = (await worklist(o)).accruals;
+    expect(offer).toMatchObject({ platform: 'shopee', month: '2026-10', date: '2026-10-31', amount: '12000', expenseAccount: '6421', accruedAccount: '335', proposalId: null });
+    expect(offer?.description).toContain('Trích trước phí sàn tháng 10/2026, ước tính');
+    // Asked for as a general journal voucher: the title says what it is, and a second request of the same month waits for the first.
+    const asked = await askAccrual(o, offer as NonNullable<typeof offer>);
+    expect(await titleOf(o, asked.proposalId)).toContain('Trích trước phí sàn tháng 10/2026, ước tính');
+    await expect(askAccrual(o, offer as NonNullable<typeof offer>)).rejects.toMatchObject({ code: 'MARKETPLACE_FEE_ACCRUAL_PENDING', status: 409 });
+    expect((await worklist(o)).accruals[0]?.proposalId).toBe(asked.proposalId);
+    await approve(o, asked.proposalId);
+    const posted = Object.fromEntries((await rows<{ a: string; d: string; c: string }>('SELECT account_code AS a, sum(debit)::bigint::text AS d, sum(credit)::bigint::text AS c FROM crove_finance.journal_line WHERE org_id = $1 AND account_code IN (\'6421\', \'335\') GROUP BY 1', [o.orgId])).map((r) => [r.a, [Number(r.d), Number(r.c)]]));
+    expect(posted).toEqual({ '6421': [12000, 0], '335': [0, 12000] });
+    // It stands: no second accrual (of any month), nothing offered again for the month, and the reversal waits for the first day of the next month.
+    await expect(askAccrual(o, offer as NonNullable<typeof offer>)).rejects.toMatchObject({ code: 'MARKETPLACE_FEE_ACCRUAL_STANDS', status: 409 });
+    const same = await worklist(o);
+    expect(same.accruals).toEqual([]);
+    expect(same.accrualReversals).toEqual([]);
+    // From the first day of the next month the reversal is offered, dated that day, and a generic reversal posts it.
+    today.value = '2026-11-01';
+    const [reversal] = (await worklist(o)).accrualReversals;
+    expect(reversal).toMatchObject({ month: '2026-10', amount: '12000', reverseOn: '2026-11-01', proposalId: null });
+    const reversed = await rt.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.journal.reverse', input: { entryId: reversal?.entryId, entryDate: reversal?.reverseOn, reason: 'Đảo trích trước phí sàn tháng 10/2026' } }, { actor: asUser(o.admin), orgId: o.orgId, idempotencyKey: randomUUID() });
+    await approve(o, reversed.proposalId);
+    // Reversed: nothing to reverse, and October is not accrued a second time.
+    today.value = '2026-11-03';
+    const after = await worklist(o);
+    expect(after.accrualReversals).toEqual([]);
+    expect(after.accruals).toEqual([]);
+  });
+
+  it('offers a household no accrual, and no accrual of a platform whose 331 holds no debit', async () => {
+    const { o } = await posted();
+    today.value = '2026-10-31';
+    expect((await worklist(o)).accruals).toEqual([]);
+    // A company whose payout cleared no fee has nothing on 331 to accrue.
+    const c = await org('tt133', false);
+    const settlement = await seed(c, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '90000', delivered: '2026-10-02' }]);
+    await post(c, settlement);
+    const line = await bankLine(c, '2026-10-20', '90000');
+    await approve(c, (await ask(c, settlement, line)).proposalId);
+    expect((await worklist(c)).accruals).toEqual([]);
   });
 
   it('posts the payout of a settlement with no fee and no tax as two lines', async () => {

@@ -9,7 +9,7 @@ import { createMarketplacePayoutCommands, payoutProposalMismatch } from '../src/
 const confirmed = (): Record<string, MarketplacePostingMap> => {
   const base = MARKETPLACE_POSTING_MAPS.tt133!;
   const c = (r: MarketplacePostingMap['revenue']) => ({ ...r, status: 'confirmed' as const });
-  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c(base.feePayable), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitExpense: c(base.pitExpense) } };
+  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c(base.feePayable), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitExpense: c(base.pitExpense), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense) } };
 };
 const PARTY = '0192a000-0000-7000-8000-000000000003';
 const ID = '0192a000-0000-7000-8000-000000000001';

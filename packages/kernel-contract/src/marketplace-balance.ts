@@ -115,11 +115,41 @@ export const zMarketplaceHalfReversed = z.object({
   reversedMonths: z.number().int().min(1),
 });
 export type MarketplaceHalfReversed = z.infer<typeof zMarketplaceHalfReversed>;
+// The month-end accrual of the fees a platform kept whose invoice has not come (#2516 slice F, option 2): `amount` is the platform's debit balance on 331 at the end of `month`, read from the ledger when the
+// list is read; `description` is the voucher's text with its stable key (the title says "Trích trước phí sàn tháng MM/YYYY, ước tính"). The screen asks for an ordinary general journal voucher Dr
+// `expenseAccount` / Cr `accruedAccount` of that amount dated `date`; a person approves the lines.
+export const zMarketplaceFeeAccrual = z.object({
+  legalEntityId: zId,
+  platform: z.string(),
+  platformName: z.string(),
+  month: zMonth,
+  date: zLocalDate,
+  amount: zMoney,
+  expenseAccount: z.string(),
+  accruedAccount: z.string(),
+  description: z.string(),
+  proposalId: zId.nullable(),
+});
+export type MarketplaceFeeAccrual = z.infer<typeof zMarketplaceFeeAccrual>;
+// The reversal of a standing accrual, offered from the first day of the month after it (`reverseOn`): the screen asks for the generic `finance.journal.reverse` of `entryId`.
+export const zMarketplaceFeeAccrualReversal = z.object({
+  legalEntityId: zId,
+  platform: z.string(),
+  platformName: z.string(),
+  month: zMonth,
+  entryId: zId,
+  amount: zMoney,
+  reverseOn: zLocalDate,
+  proposalId: zId.nullable(),
+});
+export type MarketplaceFeeAccrualReversal = z.infer<typeof zMarketplaceFeeAccrualReversal>;
 export const zMarketplaceWorklist = z.object({
   postingConfirmed: z.boolean(),
   settlements: z.array(zMarketplaceSettlementToPost),
   payouts: z.array(zMarketplacePayoutToMatch),
   invoices: z.array(zMarketplaceInvoiceToClear),
   halfReversed: z.array(zMarketplaceHalfReversed),
+  accruals: z.array(zMarketplaceFeeAccrual),
+  accrualReversals: z.array(zMarketplaceFeeAccrualReversal),
 });
 export type MarketplaceWorklist = z.infer<typeof zMarketplaceWorklist>;

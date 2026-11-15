@@ -7,7 +7,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { MarketplaceInvoiceToClear, MarketplacePayoutToMatch, MarketplaceSettlementToPost } from '@crove/kernel-contract';
+import type { MarketplaceFeeAccrual, MarketplaceFeeAccrualReversal, MarketplaceInvoiceToClear, MarketplacePayoutToMatch, MarketplaceSettlementToPost } from '@crove/kernel-contract';
 import { Alert, AlertDescription } from '@crove/ui/components/alert';
 import { Button } from '@crove/ui/components/button';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
@@ -125,6 +125,69 @@ function PayoutRow({ p, open }: { p: MarketplacePayoutToMatch; open: boolean }) 
   );
 }
 
+const monthLabel = (month: string) => `${month.slice(5, 7)}/${month.slice(0, 4)}`;
+
+// The month-end accrual of the fees without an invoice: an ordinary general journal voucher Dr expense / Cr accrued expense of the amount the books show (slice F of #2516); a person approves the two lines.
+function AccrualRow({ a, open }: { a: MarketplaceFeeAccrual; open: boolean }) {
+  const t = useTranslations('marketplaceActions');
+  const f = useFormat();
+  return (
+    <TableRow data-testid="marketplace-action-accrual">
+      <TableCell className="px-4 py-3">{a.platformName}</TableCell>
+      <TableCell className="px-4 py-3">{monthLabel(a.month)}</TableCell>
+      <TableCell className={NUM}>{f.money(a.amount)}</TableCell>
+      <TableCell className="px-4 py-3 text-right">
+        <AskButton
+          label={t('accrue')}
+          disabled={!open}
+          testId="marketplace-accrue"
+          pending={a.proposalId}
+          ask={(idempotencyKey) =>
+            client.inbox.request({
+              command: 'finance.journal_voucher.record',
+              idempotencyKey,
+              input: {
+                date: a.date,
+                description: a.description,
+                legalEntityId: a.legalEntityId,
+                lines: [
+                  { account: a.expenseAccount, debit: a.amount, credit: '0' },
+                  { account: a.accruedAccount, debit: '0', credit: a.amount },
+                ],
+              },
+            })
+          }
+        />
+      </TableCell>
+    </TableRow>
+  );
+}
+
+// The reversal of a standing accrual, from the first day of the next month: the generic reversal of the entry, dated that day.
+function AccrualReversalRow({ r, open }: { r: MarketplaceFeeAccrualReversal; open: boolean }) {
+  const t = useTranslations('marketplaceActions');
+  const f = useFormat();
+  return (
+    <TableRow data-testid="marketplace-action-accrual-reversal">
+      <TableCell className="px-4 py-3">{r.platformName}</TableCell>
+      <TableCell className="px-4 py-3">{monthLabel(r.month)}</TableCell>
+      <TableCell className={NUM}>{f.money(r.amount)}</TableCell>
+      <TableCell className="px-4 py-3">{r.reverseOn}</TableCell>
+      <TableCell className="px-4 py-3 text-right">
+        <AskButton
+          label={t('reverseAccrual')}
+          disabled={!open}
+          testId="marketplace-reverse-accrual"
+          pending={r.proposalId}
+          ask={(idempotencyKey) =>
+            client.inbox.request({ command: 'finance.journal.reverse', idempotencyKey, input: { entryId: r.entryId, entryDate: r.reverseOn, reason: t('accrualReversalReason', { month: monthLabel(r.month) }) } })
+          }
+        />
+      </TableCell>
+    </TableRow>
+  );
+}
+
 function InvoiceRow({ i, open }: { i: MarketplaceInvoiceToClear; open: boolean }) {
   const t = useTranslations('marketplaceActions');
   const f = useFormat();
@@ -147,7 +210,7 @@ export function MarketplaceActions({ legalEntityId, ready }: { legalEntityId: st
   const worklist = useQuery({ ...orpc.marketplace.worklist.queryOptions({ input: legalEntityId === undefined ? {} : { legalEntityId } }), enabled: ready, retry: false });
   const data = worklist.data;
   if (!data) return null;
-  if (data.settlements.length === 0 && data.payouts.length === 0 && data.invoices.length === 0 && data.halfReversed.length === 0) return null;
+  if (data.settlements.length === 0 && data.payouts.length === 0 && data.invoices.length === 0 && data.halfReversed.length === 0 && data.accruals.length === 0 && data.accrualReversals.length === 0) return null;
   const open = data.postingConfirmed;
   return (
     <section className="mb-6 space-y-5" data-testid="marketplace-actions">
@@ -190,6 +253,28 @@ export function MarketplaceActions({ legalEntityId, ready }: { legalEntityId: st
                 <TableCell className="px-4 py-3">{period(h.periodFrom, h.periodTo)}</TableCell>
                 <TableCell className="px-4 py-3" data-testid="marketplace-half-reversed-state">{t('halfReversedRow', { standing: String(h.standingMonths), reversed: String(h.reversedMonths) })}</TableCell>
               </TableRow>
+            ))}
+          </DataTable>
+        </div>
+      )}
+      {data.accrualReversals.length > 0 && (
+        <div data-testid="marketplace-actions-accrual-reversals">
+          <h3 className="mb-1 text-sm font-medium">{t('accrualReversalsTitle')}</h3>
+          <p className="mb-2 text-sm text-subtle-foreground">{t('accrualReversalsHint')}</p>
+          <DataTable head={[t('platform'), t('month'), t('accrualAmount'), t('reverseOn'), '']} numeric={[2]}>
+            {data.accrualReversals.map((r) => (
+              <AccrualReversalRow key={r.entryId} r={r} open={open} />
+            ))}
+          </DataTable>
+        </div>
+      )}
+      {data.accruals.length > 0 && (
+        <div data-testid="marketplace-actions-accruals">
+          <h3 className="mb-1 text-sm font-medium">{t('accrualsTitle')}</h3>
+          <p className="mb-2 text-sm text-subtle-foreground">{t('accrualsHint')}</p>
+          <DataTable head={[t('platform'), t('month'), t('accrualAmount'), '']} numeric={[2]}>
+            {data.accruals.map((a) => (
+              <AccrualRow key={`${a.legalEntityId}:${a.platform}:${a.month}`} a={a} open={open} />
             ))}
           </DataTable>
         </div>
