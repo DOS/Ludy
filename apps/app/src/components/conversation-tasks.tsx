@@ -17,6 +17,9 @@ import { taskDueFromDay } from '../lib/agents.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { browserTimeZone } from '../lib/my-work.ts';
 
+// The panel's own poll (the Inbox reads its other panes every six seconds): the stream sends no hint for tasks, so another member's task shows up on the next turn.
+const TASKS_POLL_MS = 6_000;
+
 const refresh = () => {
   void queryClient.invalidateQueries({ queryKey: orpc.conversations.key() });
   void queryClient.invalidateQueries({ queryKey: orpc.tasks.key() });
@@ -91,7 +94,7 @@ export function ConversationTasks({ conversationId, channelName, canWrite }: { c
   const f = useFormat();
   const { slug } = useParams({ strict: false }) as { slug: string };
   const [adding, setAdding] = useState(false);
-  const list = useQuery(orpc.conversations.tasks.queryOptions({ input: { conversationId } }));
+  const list = useQuery({ ...orpc.conversations.tasks.queryOptions({ input: { conversationId } }), refetchInterval: TASKS_POLL_MS });
   const tasks = list.data?.tasks ?? [];
   return (
     <div className="space-y-1" data-testid="conversation-tasks">
