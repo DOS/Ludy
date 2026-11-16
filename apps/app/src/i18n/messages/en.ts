@@ -11506,6 +11506,18 @@ export const en = {
       SIGN_SIGNER_NOT_DUE: 'This signer is not currently next in the signing order.',
       SIGN_SIGNER_NOT_FOUND: 'Recipient not found on this signing envelope.',
       SIGN_VERSION_CONFLICT: 'This signing envelope was updated elsewhere; reload and try again.',
+      OTP_REQUIRED: 'Email OTP verification is required before viewing this document.',
+      SIGN_ALREADY_SUBMITTED: 'This signing link has already been used.',
+      SIGN_CONSENT_REQUIRED: 'Electronic signature consent is required before submitting.',
+      SIGN_DUPLICATE_FIELD: 'Each signing field can only be submitted once.',
+      SIGN_EMAIL_SUPPRESSED: 'This recipient email address is suppressed and cannot receive messages.',
+      SIGN_FIELD_REQUIRED: 'Please complete every required signing field before submitting.',
+      SIGN_INVALID_SIGNATURE_PNG: 'The signature image must be a valid PNG within size limits.',
+      SIGN_OTP_NOT_REQUIRED: 'Email OTP verification is not required or has already been completed.',
+      SIGN_OTP_RATE_LIMITED: 'Too many verification code requests; wait before trying again.',
+      SIGN_OTP_REQUIRED: 'Email OTP verification is required before signing.',
+      SIGN_PDF_BUSY: 'Too many document downloads are running right now; try again in a few seconds.',
+      SIGN_QUERY_TOKEN_FORBIDDEN: 'Signing tokens must not be sent in the URL query string.',
     },
     rules: {
       org_create_busy: 'You are creating several organizations at once. Try again later.',
@@ -12917,6 +12929,7 @@ export const en = {
         source: 'Read draft envelope layout and signer roles for AI analysis',
       },
       envelope: {
+        completed_mail_data: 'Prepare completed envelope certificate email data (system)',
         create: 'Create a signing envelope draft',
         events: 'Read the signing audit chain of an envelope',
         expire_sweep: 'Expire overdue signing envelopes (system)',
@@ -12939,9 +12952,13 @@ export const en = {
       org: {
         cleanup: 'Remove expired drafts and old signing secrets for an organization (system)',
       },
+      public: {
+        otp_mail_data: 'Prepare an email OTP challenge message (system)',
+      },
       signer: {
         add: 'Add a recipient to a draft signing envelope',
         create_link: 'Issue a fresh signing link for a due signer',
+        mail_data: 'Prepare an invitation or reminder email for a signer (system)',
         remove: 'Remove a recipient from a draft signing envelope',
         reorder: 'Update the signing order on a draft envelope',
       },

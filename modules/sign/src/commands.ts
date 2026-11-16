@@ -13,11 +13,21 @@ import {
   type MemberRole,
 } from '@crove/db';
 import { EXTRACT_LIMITS } from '@crove/extract-contract';
+import { kernelManifest } from '@crove/kernel';
 import { tableWrite, zId } from '@crove/kernel-contract';
 import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
 import { appendSigningEvent } from './events.ts';
 import { signManifest } from './manifest.ts';
+import { signPublicCommands } from './public-commands.ts';
 import { generateRawSigningToken, hashSigningToken } from './sealing.ts';
+import {
+  SIGN_INVITE_MAIL_SOURCE,
+  SIGN_INVITE_MAIL_TEMPLATE,
+  SIGN_REMIND_MAIL_SOURCE,
+  SIGN_REMIND_MAIL_TEMPLATE,
+  queueSignCompletedEmail,
+  queueSignInviteEmail,
+} from './sign-mail.ts';
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const REMIND_COOLDOWN_MS = 5 * 60_000;
@@ -85,6 +95,22 @@ const SIGNING_TOKEN_WRITE = tableWrite(signManifest.tables, 'crove_sign', 'signi
 ]);
 
 const SIGNING_OTP_INVALIDATE_WRITE = tableWrite(signManifest.tables, 'crove_sign', 'signing_otp', ['invalidated_at']);
+
+const MAIL_MESSAGE_WRITE = tableWrite(kernelManifest.tables, 'crove_kernel', 'mail_message', [
+  'org_id',
+  'stream',
+  'source',
+  'source_id',
+  'template_key',
+  'to_address',
+  'to_hash',
+  'subject',
+  'payload',
+  'message_id_header',
+  'status',
+  'error_code',
+  'created_by',
+]);
 
 function userOf(ctx: CommandContext): string {
   if (ctx.actor.type !== 'user') {
@@ -884,7 +910,7 @@ export const envelopeSend = defineCommand({
   name: 'sign.envelope.send',
   input: z.strictObject({ envelopeId: zId }),
   risk: 'R2',
-  sideEffect: 'internal',
+  sideEffect: 'external',
   access: WRITERS,
   // Returns raw one-time signing tokens; disallow idempotency replay storage so plaintext tokens are never persisted.
   noIdempotency: true,
@@ -895,6 +921,7 @@ export const envelopeSend = defineCommand({
     SIGNING_TOKEN_WRITE,
     SIGNING_OTP_INVALIDATE_WRITE,
     SIGNING_EVENT_WRITE,
+    MAIL_MESSAGE_WRITE,
   ],
   handler: async (ctx, input) => {
     const userId = userOf(ctx);
@@ -909,7 +936,7 @@ export const envelopeSend = defineCommand({
 
     const signers = await ctx.trx
       .selectFrom('crove_sign.signer')
-      .select(['id', 'routing_order', 'signer_role', 'created_at'])
+      .select(['id', 'routing_order', 'signer_role', 'role_label', 'email', 'delivery_mode', 'created_at'])
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', row.id)
       .forUpdate()
@@ -981,7 +1008,30 @@ export const envelopeSend = defineCommand({
     const tokenExpiresAt = row.expires_at ? new Date(row.expires_at) : defaultExpiry;
 
     const links: IssuedSigningLink[] = [];
+    let orgName: string | null = null;
     for (const signer of dueNow) {
+      if (signer.delivery_mode === 'email' && signer.email) {
+        if (orgName === null) {
+          const tenant = await ctx.trx
+            .selectFrom('crove_kernel.tenant')
+            .select('name')
+            .where('org_id', '=', ctx.orgId)
+            .executeTakeFirstOrThrow();
+          orgName = tenant.name;
+        }
+        await queueSignInviteEmail(ctx, {
+          source: SIGN_INVITE_MAIL_SOURCE,
+          templateKey: SIGN_INVITE_MAIL_TEMPLATE,
+          orgName,
+          envelopeId: row.id,
+          signerId: signer.id,
+          to: signer.email,
+          docTitle: row.title,
+          roleLabel: signer.role_label,
+          expiresAt: row.expires_at ? new Date(row.expires_at).toISOString() : null,
+        });
+        continue;
+      }
       const rawToken = generateRawSigningToken();
       const tokenHash = hashSigningToken(rawToken);
       const { rows: minted } = await sql<{ id: string }>`
@@ -1113,10 +1163,10 @@ export const envelopeRemind = defineCommand({
     signerId: zId.optional(),
   }),
   risk: 'R2',
-  sideEffect: 'internal',
+  sideEffect: 'external',
   access: WRITERS,
   target,
-  writes: [tableWrite(signManifest.tables, 'crove_sign', 'signer', ['token_last_reminded_at', 'updated_at']), SIGNING_EVENT_WRITE],
+  writes: [tableWrite(signManifest.tables, 'crove_sign', 'signer', ['token_last_reminded_at', 'updated_at']), SIGNING_EVENT_WRITE, MAIL_MESSAGE_WRITE],
   handler: async (ctx, input) => {
     const userId = userOf(ctx);
     const row = await lockEnvelope(ctx, input.envelopeId);
@@ -1129,7 +1179,7 @@ export const envelopeRemind = defineCommand({
 
     let query = ctx.trx
       .selectFrom('crove_sign.signer')
-      .select(['id', 'status', 'signer_role', 'token_last_reminded_at'])
+      .select(['id', 'status', 'signer_role', 'role_label', 'email', 'delivery_mode', 'token_last_reminded_at'])
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', row.id)
       .forUpdate();
@@ -1161,6 +1211,31 @@ export const envelopeRemind = defineCommand({
       .where('envelope_id', '=', row.id)
       .where('id', 'in', remindedSignerIds)
       .execute();
+
+    let remindOrgName: string | null = null;
+    for (const s of eligible) {
+      if (s.delivery_mode === 'email' && s.email) {
+        if (remindOrgName === null) {
+          const tenant = await ctx.trx
+            .selectFrom('crove_kernel.tenant')
+            .select('name')
+            .where('org_id', '=', ctx.orgId)
+            .executeTakeFirstOrThrow();
+          remindOrgName = tenant.name;
+        }
+        await queueSignInviteEmail(ctx, {
+          source: SIGN_REMIND_MAIL_SOURCE,
+          templateKey: SIGN_REMIND_MAIL_TEMPLATE,
+          orgName: remindOrgName,
+          envelopeId: row.id,
+          signerId: s.id,
+          to: s.email,
+          docTitle: row.title,
+          roleLabel: s.role_label,
+          expiresAt: row.expires_at ? new Date(row.expires_at).toISOString() : null,
+        });
+      }
+    }
 
     await appendSigningEvent(ctx.trx, {
       orgId: ctx.orgId,
@@ -1277,8 +1352,8 @@ const zEnvelopeSealComplete = z.discriminatedUnion('outcome', [
 export const envelopeSealComplete = defineCommand({
   name: 'sign.envelope.seal_complete',
   input: zEnvelopeSealComplete,
-  risk: 'R1',
-  sideEffect: 'internal',
+  risk: 'R2',
+  sideEffect: 'external',
   access: 'system',
   target,
   writes: [
@@ -1297,6 +1372,7 @@ export const envelopeSealComplete = defineCommand({
       'updated_at',
     ]),
     SIGNING_EVENT_WRITE,
+    MAIL_MESSAGE_WRITE,
   ],
   handler: async (ctx, input) => {
     assertSystem(ctx);
@@ -1406,6 +1482,47 @@ export const envelopeSealComplete = defineCommand({
       },
       occurredAt: ctx.now,
     });
+
+    const recipientRows = await ctx.trx
+      .selectFrom('crove_sign.signer')
+      .select(['signer_role', 'email'])
+      .where('org_id', '=', ctx.orgId)
+      .where('envelope_id', '=', row.id)
+      .execute();
+    const { rows: senderProfiles } = await sql<{ email: string | null }>`
+      SELECT email FROM crove_kernel.member_emails(${[row.created_by]}::uuid[])`.execute(ctx.trx);
+    const signerCount = Math.max(1, recipientRows.filter((r) => r.signer_role !== 'cc').length);
+    const seenEmails = new Set<string>();
+    const emailRecipients = [
+      ...senderProfiles.map((p) => p.email),
+      ...recipientRows.map((r) => r.email),
+    ]
+      .map((rawEmail) => rawEmail?.trim().toLowerCase() ?? '')
+      .filter((addr) => {
+        if (!addr || seenEmails.has(addr)) return false;
+        seenEmails.add(addr);
+        return true;
+      });
+    if (emailRecipients.length > 0) {
+      const tenant = await ctx.trx
+        .selectFrom('crove_kernel.tenant')
+        .select('name')
+        .where('org_id', '=', ctx.orgId)
+        .executeTakeFirstOrThrow();
+      const completedAtIso = row.completed_at ? new Date(row.completed_at).toISOString() : ctx.now.toISOString();
+      for (const addr of emailRecipients) {
+        await queueSignCompletedEmail(ctx, {
+          orgName: tenant.name,
+          envelopeId: row.id,
+          to: addr,
+          docTitle: row.title,
+          certificateCode: input.certificateCode,
+          sealedSha256: sealedFile.sha256,
+          completedAtIso,
+          signerCount,
+        });
+      }
+    }
     ctx.audit({
       envelopeId: row.id,
       sealStatus: 'sealed',
@@ -1548,4 +1665,5 @@ export const signCommands = [
   envelopeSealComplete,
   envelopeExpireSweep,
   orgCleanup,
+  ...signPublicCommands,
 ];

@@ -17,6 +17,11 @@ export {
   type VerifyEventChainResult,
 } from './events.ts';
 export { signManifest } from './manifest.ts';
+export { validateSignaturePngBase64, type ValidatedSignaturePng } from './png.ts';
+export {
+  cleanUserAgent as sanitizeSignUserAgent,
+  normalizePageDimensions as normalizeSignPageDimensions,
+} from './public-commands.ts';
 export { signQueries, type SignInspectJobData, type SignSealJobData } from './queries.ts';
 export {
   clampAiBox,
@@ -33,6 +38,23 @@ export {
   type SignAiRiskClause,
   type SignAiSource,
 } from './ai.ts';
+export {
+  SIGN_COMPLETED_MAIL_SOURCE,
+  SIGN_COMPLETED_MAIL_TEMPLATE,
+  SIGN_INVITE_MAIL_SOURCE,
+  SIGN_INVITE_MAIL_TEMPLATE,
+  SIGN_OTP_MAIL_SOURCE,
+  SIGN_OTP_MAIL_TEMPLATE,
+  SIGN_REMIND_MAIL_SOURCE,
+  SIGN_REMIND_MAIL_TEMPLATE,
+  renderSignCompletedMail,
+  renderSignInviteMail,
+  renderSignOtpMail,
+  zSignCompletedMailPayload,
+  zSignInviteMailPayload,
+  zSignOtpMailPayload,
+  type RenderedSignMail,
+} from './sign-mail.ts';
 export {
   buildCanonicalCertificateArtifact,
   buildPdfSealCertificate,

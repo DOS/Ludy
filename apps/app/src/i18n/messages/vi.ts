@@ -11503,6 +11503,18 @@ export const vi = {
       SIGN_SIGNER_NOT_DUE: 'Chưa tới lượt người ký này thực hiện ký',
       SIGN_SIGNER_NOT_FOUND: 'Không tìm thấy người nhận này trong hồ sơ ký',
       SIGN_VERSION_CONFLICT: 'Hồ sơ ký vừa được cập nhật ở nơi khác; hãy tải lại rồi thử lại',
+      OTP_REQUIRED: 'Cần xác thực mã OTP qua email trước khi xem tài liệu này',
+      SIGN_ALREADY_SUBMITTED: 'Liên kết ký này đã được sử dụng rồi',
+      SIGN_CONSENT_REQUIRED: 'Cần đồng ý điều khoản ký điện tử trước khi gửi',
+      SIGN_DUPLICATE_FIELD: 'Mỗi ô ký chỉ được gửi giá trị một lần',
+      SIGN_EMAIL_SUPPRESSED: 'Địa chỉ email của người nhận này đang bị chặn gửi thư',
+      SIGN_FIELD_REQUIRED: 'Hãy hoàn thành đủ các ô ký bắt buộc trước khi gửi',
+      SIGN_INVALID_SIGNATURE_PNG: 'Ảnh chữ ký phải là tệp PNG hợp lệ và đúng kích thước cho phép',
+      SIGN_OTP_NOT_REQUIRED: 'Không cần xác thực OTP qua email hoặc đã xác thực xong rồi',
+      SIGN_OTP_RATE_LIMITED: 'Bạn yêu cầu mã OTP quá nhiều lần; hãy chờ một lát rồi thử lại',
+      SIGN_OTP_REQUIRED: 'Cần xác thực mã OTP qua email trước khi ký',
+      SIGN_PDF_BUSY: 'Máy chủ đang xử lý nhiều lượt tải tài liệu; hãy thử lại sau vài giây',
+      SIGN_QUERY_TOKEN_FORBIDDEN: 'Không được truyền mã liên kết ký qua tham số trên thanh địa chỉ',
     },
     rules: {
       org_create_busy: 'Bạn đang tạo nhiều tổ chức cùng lúc, hãy thử lại sau',
@@ -12914,6 +12926,7 @@ export const vi = {
         source: 'Đọc thông tin khung trang và vai trò người ký để AI phân tích',
       },
       envelope: {
+        completed_mail_data: 'Chuẩn bị dữ liệu email chứng thư hoàn tất hồ sơ ký (hệ thống)',
         create: 'Tạo bản nháp hồ sơ ký',
         events: 'Xem chuỗi nhật ký ký của hồ sơ',
         expire_sweep: 'Đánh dấu hết hạn các hồ sơ ký quá hạn (hệ thống)',
@@ -12936,9 +12949,13 @@ export const vi = {
       org: {
         cleanup: 'Dọn bản nháp quá hạn và bí mật ký cũ của tổ chức (hệ thống)',
       },
+      public: {
+        otp_mail_data: 'Chuẩn bị dữ liệu email gửi mã xác thực OTP (hệ thống)',
+      },
       signer: {
         add: 'Thêm người nhận vào bản nháp hồ sơ ký',
         create_link: 'Tạo liên kết ký mới cho người đang tới lượt ký',
+        mail_data: 'Chuẩn bị dữ liệu email mời ký hoặc nhắc ký (hệ thống)',
         remove: 'Gỡ người nhận khỏi bản nháp hồ sơ ký',
         reorder: 'Đổi thứ tự ký trên bản nháp hồ sơ',
       },
