@@ -189,10 +189,10 @@ export async function flagMonth(ai: PayrollAi, reads: PayrollReads, orgId: strin
 }
 
 export async function explainPayslip(ai: PayrollAi, reads: PayrollReads, orgId: string, userId: string, lineId: string, language: 'vi' | 'en'): Promise<HrCoworkerExplained> {
+  const slip = await reads.payslip(lineId);
   const none = (state: State): HrCoworkerExplained => ({ ai: state, text: null });
   if (!ai.reader) return none('off');
   const reader = ai.reader;
-  const slip = await reads.payslip(lineId);
   const request = { language, figures: payrollFiguresOf(slip.figures, slip.breakdown), dependentsCounted: dependentsCountedOf(slip.breakdown) };
   const forbidden = [slip.employeeName, slip.employerName].filter((v) => v.trim() !== '');
   const answer = await guarded(ai, orgId, userId, 'explain', () => reader.payrollExplain(request, { forbidden }));
