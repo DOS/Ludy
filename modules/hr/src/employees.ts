@@ -150,7 +150,7 @@ function prepareEmploymentTerms(terms: HrEmploymentTerms): PreparedEmploymentRow
           cite: 'Labor Code 2019 Art. 20(2)',
         });
       }
-      if (termMonths !== null && errorFindings.length === 0) {
+      if (termMonths !== null && !errorFindings.some((f) => f.field === 'termMonths')) {
         errorFindings.push({
           code: 'invalid_fixed_term_duration',
           severity: 'error',

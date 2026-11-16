@@ -291,6 +291,30 @@ suite('HR labor contract tracking, probation compliance, and expiry alerts (#338
       ).rejects.toMatchObject({ code: 'HR_CONTRACT_INVALID', status: 422, details: { findings: expect.arrayContaining([expect.objectContaining({ severity: 'error' })]) } });
     }
 
+    // Combined termMonths + fixedTermSequence on indefinite reports both fields cleanly (422 HR_CONTRACT_INVALID).
+    await expect(
+      o.exec(o.owner, 'hr.payroll.employee.add', {
+        displayName: 'Sai Kép Canary',
+        employment: {
+          effectiveFrom: '2026-02-01',
+          contractType: 'indefinite',
+          region: 'I',
+          baseWage: '15000000',
+          termMonths: 12,
+          fixedTermSequence: 1,
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: 'HR_CONTRACT_INVALID',
+      status: 422,
+      details: {
+        findings: expect.arrayContaining([
+          expect.objectContaining({ severity: 'error', field: 'termMonths' }),
+          expect.objectContaining({ severity: 'error', field: 'fixedTermSequence' }),
+        ]),
+      },
+    });
+
     // Schema bounds (sequence 3, termMonths 37) rejected at validation boundary.
     await expect(
       o.exec(o.owner, 'hr.payroll.employment.add', {
