@@ -82,6 +82,16 @@ describe('isValidCalendarDate & noteSupportsDate', () => {
 });
 
 describe('checkProposedTasks', () => {
+  it('extracts JSON wrapped in markdown fences and rejects empty or unparsable output in linear time', () => {
+    const fenced = '```json\n{"proposals":[{"title":"Review quote","positionId":null,"dueOn":null}]}\n```';
+    expect(checkProposedTasks(fenced, { noteTitle: 't', noteBody: 'b', today: TODAY, seats: SEATS }).proposals).toEqual([
+      { title: 'Review quote', assigneePositionId: null, dueOn: null },
+    ]);
+    expect(() =>
+      checkProposedTasks(`\t`.repeat(50_000), { noteTitle: 't', noteBody: 'b', today: TODAY, seats: SEATS }),
+    ).toThrow(TasksFromNoteError);
+  });
+
   it('keeps valid proposals, drops empty/duplicate rows, strips unauthorized seats and ungrounded dates', () => {
     const raw = JSON.stringify({
       proposals: [

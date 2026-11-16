@@ -301,12 +301,23 @@ function matchAllowedSeat(
   return matches.length === 1 ? matches[0]!.positionId : null;
 }
 
+function stripCodeFence(raw: string): string {
+  let s = raw.trim();
+  if (s.startsWith('```')) {
+    s = s.slice(3);
+    if (s.slice(0, 4).toLowerCase() === 'json' && (s.length === 4 || s.charCodeAt(4) <= 0x20)) {
+      s = s.slice(4);
+    }
+    s = s.trimStart();
+  }
+  if (s.endsWith('```')) {
+    s = s.slice(0, -3).trimEnd();
+  }
+  return s;
+}
+
 function parseProposalsJson(raw: string): unknown[] {
-  const cleaned = raw
-    .trim()
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/\s*```$/i, '')
-    .trim();
+  const cleaned = stripCodeFence(raw);
   const candidates = [cleaned];
   const objStart = cleaned.indexOf('{');
   const objEnd = cleaned.lastIndexOf('}');
