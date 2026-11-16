@@ -18,6 +18,7 @@ import {
   isCmsSignedDataDer,
   isValidDerSequence,
   prepareCadesSignedAttrs,
+  preparePadesSignedAttrs,
   type CaProviderId,
 } from '../src/index.ts';
 
@@ -736,12 +737,18 @@ describe('MISA eSign / WeSign adapter (esignapp.misa.vn Open API recorded respon
     });
     expect(requireLeafCert(misaSelected.certificateChainPem).subject).toContain('Signer B');
 
-    // CAdES-BES signedAttrs path: CA signs signedAttrsSetSha256 and fetchSignedCms produces ETSI.CAdES.detached.
-    const prepared = prepareCadesSignedAttrs({
+    // PAdES baseline signedAttrs path (ETSI EN 319 142-1 s6.3 Table 1 forbids signing-time inside CMS).
+    const prepared = preparePadesSignedAttrs({
+      digestSha256: DIGEST,
+      certificateChainDer: [idB.certDer],
+    });
+    expect(Buffer.from(prepared.signedAttrsDer).toString('hex')).not.toContain('06092a864886f70d010905');
+    const cadesWithTime = prepareCadesSignedAttrs({
       digestSha256: DIGEST,
       certificateChainDer: [idB.certDer],
       signingTime: new Date('2026-11-16T10:00:00.000Z'),
     });
+    expect(Buffer.from(cadesWithTime.signedAttrsDer).toString('hex')).toContain('06092a864886f70d010905');
     const canonicalSetDer = new Uint8Array([0x31, ...prepared.signedAttrsDer.subarray(1)]);
     const cadesRawSig = new Uint8Array(createSign('RSA-SHA256').update(canonicalSetDer).sign(idB.privateKey));
     const misaCadesMock = mockFetch({
@@ -780,6 +787,15 @@ describe('MISA eSign / WeSign adapter (esignapp.misa.vn Open API recorded respon
         .update(canonicalSetDer)
         .verify(requireLeafCert(cadesCms.certificateChainPem).publicKey, cadesRawSig),
     ).toBe(true);
+
+    // Duplicate certs in chain are deduplicated in CMS CertificateSet.
+    const dedupCms = assembleDetachedCmsSignedData({
+      rawSignature: cadesRawSig,
+      certificateChainDer: [idB.certDer, idB.certDer],
+      signedAttrsDer: prepared.signedAttrsDer,
+    });
+    if (!dedupCms) throw new Error('expected dedupCms');
+    expect(dedupCms.byteLength).toBe(cadesCms.cmsDer.byteLength);
 
     // Non-CAdES PKCS#7 CMS with contentType + messageDigest ONLY (missing signingCertificate/V2) must stay adbe.pkcs7.detached.
     const plainContentType = derTlv(
@@ -828,16 +844,68 @@ describe('MISA eSign / WeSign adapter (esignapp.misa.vn Open API recorded respon
     );
     expect(plainResult.subFilter).toBe('adbe.pkcs7.detached');
 
-    // Viettel HTTP 200 carrying non-zero errorCode without explicit status must map to failed rather than pending.
+    // Viettel HTTP 200 carrying numeric/string non-zero errorCode without explicit status must map to failed.
     const vtErrMock = mockFetch({
       '/vtss/service/ras/v1/login': [{ status: 200, body: { access_token: 'vt-tok-err', expires_in: 3600 } }],
-      '/vtss/service/signHash': [{ status: 200, body: { errorCode: '4004', transactionId: 'vt-tx-err' } }],
+      '/vtss/service/signHash': [
+        { status: 200, body: { errorCode: '4004', transactionId: 'vt-tx-err' } },
+        { status: 200, body: { errorCode: 4004, transactionId: 'vt-tx-err-num' } },
+      ],
     });
-    const vtErrSession = await getCaAdapter('viettel_mysign', { fetch: vtErrMock.fetchImpl }).initiateSign(
-      VIETTEL_SECRET,
-      { idempotencyKey: 'vt-req-err', digestSha256: DIGEST, certRef: 'cert-A' },
-    );
-    expect(vtErrSession).toMatchObject({ provider: 'viettel_mysign', status: 'failed', errorCode: '4004' });
+    const vtErrAdapter = getCaAdapter('viettel_mysign', { fetch: vtErrMock.fetchImpl });
+    expect(
+      await vtErrAdapter.initiateSign(VIETTEL_SECRET, { idempotencyKey: 'vt-req-err', digestSha256: DIGEST, certRef: 'cert-A' }),
+    ).toMatchObject({ provider: 'viettel_mysign', status: 'failed', errorCode: '4004' });
+    expect(
+      await vtErrAdapter.initiateSign(VIETTEL_SECRET, { idempotencyKey: 'vt-req-err-num', digestSha256: DIGEST, certRef: 'cert-A' }),
+    ).toMatchObject({ provider: 'viettel_mysign', status: 'failed', errorCode: '4004' });
+
+    // Empty-body HTTP 401/403 and non-JSON HTTP 400 across all 3 adapters must classify HTTP status before JSON checks.
+    const emptyAuthFetch = (status: number): typeof fetch => async () => new Response(null, { status });
+    for (const [provider, secret] of [
+      ['vnpt_smartca', VNPT_SECRET],
+      ['viettel_mysign', VIETTEL_SECRET],
+      ['misa_wesign', MISA_SECRET],
+    ] as const) {
+      expect(await getCaAdapter(provider, { fetch: emptyAuthFetch(401) }).testConnection(secret)).toBe('wrong_credentials');
+      expect(await getCaAdapter(provider, { fetch: emptyAuthFetch(403) }).testConnection(secret)).toBe('wrong_credentials');
+      await expect(
+        getCaAdapter(provider, { fetch: emptyAuthFetch(403) }).initiateSign(secret, {
+          idempotencyKey: 'k-403',
+          digestSha256: DIGEST,
+          certRef: 'c1',
+        }),
+      ).rejects.toMatchObject({ kind: 'credentials' });
+      await expect(getCaAdapter(provider, { fetch: emptyAuthFetch(403) }).pollStatus(secret, 'tx-403')).rejects.toMatchObject({
+        kind: 'credentials',
+      });
+    }
+    const vnpt400 = getCaAdapter('vnpt_smartca', { fetch: emptyAuthFetch(400) });
+    expect(
+      await vnpt400.initiateSign(VNPT_SECRET, { idempotencyKey: 'k-400', digestSha256: DIGEST, certRef: 'c1' }),
+    ).toMatchObject({ provider: 'vnpt_smartca', status: 'failed', errorCode: 'HTTP_400' });
+    const raw400AfterAuthFetch = (loginPath: string): typeof fetch => async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (new URL(url).pathname === loginPath) {
+        return new Response(
+          JSON.stringify({ access_token: 'tok', expires_in: 3600, Success: true, Data: { remoteSigningAccessToken: 'tok' } }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      return new Response('Bad Request', { status: 400, headers: { 'content-type': 'text/plain' } });
+    };
+    expect(
+      await getCaAdapter('viettel_mysign', { fetch: raw400AfterAuthFetch('/vtss/service/ras/v1/login') }).initiateSign(
+        VIETTEL_SECRET,
+        { idempotencyKey: 'k-vt-400', digestSha256: DIGEST, certRef: 'c1' },
+      ),
+    ).toMatchObject({ provider: 'viettel_mysign', status: 'failed', errorCode: 'HTTP_400' });
+    expect(
+      await getCaAdapter('misa_wesign', { fetch: raw400AfterAuthFetch('/api/auth/api/v1/auth/login-api') }).initiateSign(
+        MISA_SECRET,
+        { idempotencyKey: 'k-misa-400', digestSha256: DIGEST, certRef: 'c1' },
+      ),
+    ).toMatchObject({ provider: 'misa_wesign', status: 'failed', errorCode: 'HTTP_400' });
   });
 
   it('detects 2FA, inactive app, 403 credentials error, USB-only certs, and auth failures without leaking secrets', async () => {

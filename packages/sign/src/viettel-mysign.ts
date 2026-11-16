@@ -94,8 +94,13 @@ function encodeMySignDisplayLabel(raw: string | undefined, fallback: string): st
   return Buffer.from(safeText, 'utf8').toString('base64');
 }
 
+function readCodeText(value: unknown): string | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return readText(value);
+}
+
 function mapViettelStatus(rawStatus: unknown): CaSignStatus | null {
-  const text = (typeof rawStatus === 'number' ? String(rawStatus) : readText(rawStatus))?.toUpperCase();
+  const text = readCodeText(rawStatus)?.toUpperCase();
   if (!text) return null;
   if (['1', 'COMPLETE', 'COMPLETED', 'SUCCESS', 'SIGNED'].includes(text)) return 'signed';
   if (['4000', '6000', 'PENDING', 'PROCESSING', 'WAITING', 'NEW', 'IN_PROGRESS'].includes(text)) return 'pending';
@@ -184,8 +189,12 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
       write: false,
       timeoutMs,
     });
-    if (res.status === 429 || res.status >= 500 || !isRecord(res.json)) return { ok: false, reason: 'unavailable' };
-    const code = readText(pickCaseInsensitive(res.json, 'error')) ?? readText(pickCaseInsensitive(res.json, 'errorCode'));
+    if (res.status === 429 || res.status >= 500) return { ok: false, reason: 'unavailable' };
+    if (res.status === 401 || res.status === 403) return { ok: false, reason: 'credentials' };
+    if (!isRecord(res.json)) return { ok: false, reason: 'unavailable' };
+    const code =
+      readCodeText(pickCaseInsensitive(res.json, 'error')) ??
+      readCodeText(pickCaseInsensitive(res.json, 'errorCode'));
     if (res.status === 401 || res.status === 403 || code === '59033' || code === 'invalid_client' || code === 'invalid_credentials') {
       return { ok: false, reason: 'credentials' };
     }
@@ -269,10 +278,13 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
       },
       false,
     );
-    if (res.status === 429 || res.status >= 500 || (res.json === null || typeof res.json !== 'object')) {
+    if (res.status === 429 || res.status >= 500) {
       throw new CaProviderError('unavailable');
     }
-    if (res.status === 403) throw new CaProviderError('credentials');
+    if (res.status === 401 || res.status === 403) throw new CaProviderError('credentials');
+    if (res.json === null || typeof res.json !== 'object') {
+      throw new CaProviderError('unavailable');
+    }
     const records = extractViettelCertificates(res.json);
     if (records.length > 0) cacheCerts(sha256Hex(secret), records);
     return records;
@@ -339,9 +351,9 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
       errorCode:
         status === 'signed' || status === 'pending'
           ? null
-          : (readText(pickCaseInsensitive(data, 'error_code')) ??
-              readText(pickCaseInsensitive(json, 'errorCode')) ??
-              readText(pickCaseInsensitive(json, 'error'))),
+          : (readCodeText(pickCaseInsensitive(data, 'error_code')) ??
+              readCodeText(pickCaseInsensitive(json, 'errorCode')) ??
+              readCodeText(pickCaseInsensitive(json, 'error'))),
     };
   }
 
@@ -364,10 +376,9 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
       { transactionId: query.externalTxId },
       false,
     );
-    if (res.status === 429) throw new CaProviderError('unavailable');
-    if (res.status >= 500 || !isRecord(res.json)) throw new CaProviderError('unavailable');
-    if (res.status === 403) throw new CaProviderError('credentials');
-    if (res.status >= 400) throw new CaProviderError('unavailable');
+    if (res.status === 429 || res.status >= 500) throw new CaProviderError('unavailable');
+    if (res.status === 401 || res.status === 403) throw new CaProviderError('credentials');
+    if (res.status >= 400 || !isRecord(res.json)) throw new CaProviderError('unavailable');
     const session = parseSession(res.json, query.idempotencyKey ?? query.externalTxId, query.externalTxId);
     return { session, rawJson: res.json };
   }
@@ -422,10 +433,13 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
           },
           false,
         );
-        if (listRes.status === 429 || listRes.status >= 500 || listRes.json === null || typeof listRes.json !== 'object') {
+        if (listRes.status === 429 || listRes.status >= 500) {
           return 'unreachable';
         }
         if (listRes.status === 401 || listRes.status === 403) return 'wrong_credentials';
+        if (listRes.json === null || typeof listRes.json !== 'object') {
+          return 'unreachable';
+        }
         const records = extractViettelCertificates(listRes.json);
         if (records.length === 0) return 'signing_needs_person';
         const activeRemote = records.filter((r) => !r.isUsbOnly && r.isActive);
@@ -475,9 +489,23 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
         true,
       );
       if (res.status === 429) throw new CaProviderError('unavailable');
-      if (res.status >= 500 || !isRecord(res.json)) throw new CaProviderError('lost_answer');
-      if (res.status === 403) throw new CaProviderError('credentials');
-      const errCode = readText(pickCaseInsensitive(res.json, 'errorCode')) ?? readText(pickCaseInsensitive(res.json, 'error'));
+      if (res.status >= 500) throw new CaProviderError('lost_answer');
+      if (res.status === 401 || res.status === 403) throw new CaProviderError('credentials');
+      if (!isRecord(res.json)) {
+        if (res.status >= 400) {
+          return {
+            provider: 'viettel_mysign',
+            idempotencyKey: valid.idempotencyKey,
+            externalTxId: valid.idempotencyKey,
+            status: 'failed',
+            errorCode: `HTTP_${res.status}`,
+          };
+        }
+        throw new CaProviderError('lost_answer');
+      }
+      const errCode =
+        readCodeText(pickCaseInsensitive(res.json, 'errorCode')) ??
+        readCodeText(pickCaseInsensitive(res.json, 'error'));
       if (res.status === 409 || errCode?.toUpperCase() === 'DUPLICATE_REQUEST' || errCode?.toUpperCase() === 'TRANSACTION_EXISTS') {
         const dataObj = pickCaseInsensitive(res.json, 'data') ?? res.json;
         const dupTxId =
@@ -504,8 +532,8 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
       const data = pickCaseInsensitive(res.json, 'data') ?? res.json;
       const bodyErrCode =
         errCode ??
-        readText(pickCaseInsensitive(data, 'error_code')) ??
-        readText(pickCaseInsensitive(data, 'errorCode'));
+        readCodeText(pickCaseInsensitive(data, 'error_code')) ??
+        readCodeText(pickCaseInsensitive(data, 'errorCode'));
       const hasBodyError = bodyErrCode !== null && !['0', '200', 'SUCCESS'].includes(bodyErrCode.toUpperCase());
       const explicitStatus = mapViettelStatus(
         pickCaseInsensitive(data, 'status') ?? pickCaseInsensitive(data, 'transactionStatus'),

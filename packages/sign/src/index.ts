@@ -26,6 +26,7 @@ export {
   derCertToPem,
   isCmsSignedDataDer,
   prepareCadesSignedAttrs,
+  preparePadesSignedAttrs,
 } from './cms-der.ts';
 export { assertSafeCaBaseUrl, assertSafeCaRequestUrl, isSafePublicFqdn, isValidDerSequence } from './http.ts';
 

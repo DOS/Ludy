@@ -436,7 +436,10 @@ export async function postCaJson(options: {
     try {
       json = JSON.parse(text);
     } catch {
-      throw new CaProviderError(options.write ? 'lost_answer' : 'unavailable');
+      if (response.status < 400) {
+        throw new CaProviderError(options.write ? 'lost_answer' : 'unavailable');
+      }
+      json = null;
     }
   }
 

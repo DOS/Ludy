@@ -64,7 +64,7 @@ function encodeDerLength(len: number): Uint8Array {
   let n = len;
   while (n > 0) {
     bytes.unshift(n & 0xff);
-    n >>= 8;
+    n = Math.floor(n / 256);
   }
   return new Uint8Array([0x80 | bytes.length, ...bytes]);
 }
@@ -119,8 +119,8 @@ export function buildSandboxCmsDer(digestSha256: string, externalTxId: string, c
   const serialBytes = new Uint8Array(
     createHash('sha256').update(`serial:${certRef}`).digest().subarray(0, 8),
   );
-  // Ensure positive ASN.1 integer high bit is clear.
-  serialBytes[0] = (serialBytes[0] ?? 0) & 0x7f;
+  // Ensure positive canonical ASN.1 integer with non-zero leading octet so DER never encodes redundant leading 0x00.
+  serialBytes[0] = ((serialBytes[0] ?? 0) & 0x7f) || 0x01;
   const issuerName = derSeq(
     derSet(
       derSeq(

@@ -122,9 +122,9 @@ function inspectCmsSignedAttrs(bytes: Uint8Array, requireCadesAttributes: boolea
   const oid = readDerTlv(bytes, outer.valueStart);
   if (!oid) return false;
   const contentWrapper = readDerTlv(bytes, oid.tlvEnd);
-  if (!contentWrapper || contentWrapper.tag !== 0xa0) return false;
+  if (!contentWrapper || contentWrapper.tag !== 0xa0 || contentWrapper.tlvEnd !== outer.valueEnd) return false;
   const signedData = readDerTlv(bytes, contentWrapper.valueStart);
-  if (!signedData || signedData.tag !== 0x30) return false;
+  if (!signedData || signedData.tag !== 0x30 || signedData.tlvEnd !== contentWrapper.valueEnd) return false;
 
   const version = readDerTlv(bytes, signedData.valueStart);
   if (!version || version.tag !== 0x02) return false;
@@ -143,7 +143,7 @@ function inspectCmsSignedAttrs(bytes: Uint8Array, requireCadesAttributes: boolea
     pos = next.tlvEnd;
     next = readDerTlv(bytes, pos);
   }
-  if (!next || next.tag !== 0x31 || next.tlvEnd > signedData.valueEnd) return false;
+  if (!next || next.tag !== 0x31 || next.tlvEnd !== signedData.valueEnd) return false;
 
   let siPos = next.valueStart;
   let signerCount = 0;
@@ -160,6 +160,11 @@ function inspectCmsSignedAttrs(bytes: Uint8Array, requireCadesAttributes: boolea
     if (!siDigestAlg || siDigestAlg.tag !== 0x30) return false;
     const maybeAttrs = readDerTlv(bytes, siDigestAlg.tlvEnd);
     if (!maybeAttrs || maybeAttrs.tag !== 0xa0 || maybeAttrs.valueStart >= maybeAttrs.valueEnd) return false;
+
+    const siSigAlg = readDerTlv(bytes, maybeAttrs.tlvEnd);
+    if (!siSigAlg || siSigAlg.tag !== 0x30) return false;
+    const siSig = readDerTlv(bytes, siSigAlg.tlvEnd);
+    if (!siSig || siSig.tag !== 0x04 || siSig.valueStart >= siSig.valueEnd) return false;
 
     if (requireCadesAttributes) {
       let hasContentType = false;
@@ -189,7 +194,7 @@ function inspectCmsSignedAttrs(bytes: Uint8Array, requireCadesAttributes: boolea
     }
     siPos = signerInfo.tlvEnd;
   }
-  return signerCount > 0;
+  return signerCount > 0 && siPos === next.valueEnd;
 }
 
 export function cmsHasSignedAttrs(bytes: Uint8Array): boolean {
@@ -285,13 +290,11 @@ function encodeUtcTime(date: Date): Uint8Array {
   return Buffer.from(`${yy}${mm}${dd}${hh}${min}${ss}Z`, 'ascii');
 }
 
-// Prepares RFC 5652 / ETSI EN 319 122 CAdES-BES signed attributes (contentType, signingTime,
-// messageDigest, signingCertificateV2) and returns the SHA-256 hex digest of DER(SET OF Attribute)
-// for a CA to sign prior to calling assembleDetachedCmsSignedData.
-export function prepareCadesSignedAttrs(options: {
+function buildSignedAttrsDer(options: {
   readonly digestSha256: string;
   readonly certificateChainDer: readonly Uint8Array[];
   readonly signingTime?: Date;
+  readonly includeSigningTime: boolean;
 }): {
   readonly signedAttrsDer: Uint8Array;
   readonly signedAttrsSetSha256: string;
@@ -311,10 +314,6 @@ export function prepareCadesSignedAttrs(options: {
   const docDigest = new Uint8Array(Buffer.from(options.digestSha256, 'hex'));
 
   const contentTypeAttr = derSeq(derOid(OID_CONTENT_TYPE), derSet(derOid(OID_DATA)));
-  const signingTimeAttr = derSeq(
-    derOid(OID_SIGNING_TIME),
-    derSet(derNode(0x17, encodeUtcTime(options.signingTime ?? new Date()))),
-  );
   const messageDigestAttr = derSeq(derOid(OID_MESSAGE_DIGEST), derSet(derNode(0x04, docDigest)));
   const issuerSerial = derSeq(derSeq(derNode(0xa4, meta.issuerTlv)), meta.serialTlv);
   const essCertIdV2 = derSeq(derNode(0x04, certHash), issuerSerial);
@@ -322,16 +321,58 @@ export function prepareCadesSignedAttrs(options: {
     derOid(OID_SIGNING_CERT_V2),
     derSet(derSeq(derSeq(essCertIdV2))),
   );
+  const attrs = [contentTypeAttr, messageDigestAttr, signingCertV2Attr];
+  if (options.includeSigningTime) {
+    attrs.push(
+      derSeq(
+        derOid(OID_SIGNING_TIME),
+        derSet(derNode(0x17, encodeUtcTime(options.signingTime ?? new Date()))),
+      ),
+    );
+  }
 
   // X.690 section 11.6 requires SET OF DER components to be sorted in ascending octet order.
-  const attrs = [contentTypeAttr, signingTimeAttr, messageDigestAttr, signingCertV2Attr].sort((a, b) =>
-    Buffer.compare(a, b),
-  );
+  attrs.sort((a, b) => Buffer.compare(a, b));
   const body = concatBytes(...attrs);
   const canonicalSetDer = derNode(0x31, body);
   const signedAttrsDer = derNode(0xa0, body);
   const signedAttrsSetSha256 = createHash('sha256').update(canonicalSetDer).digest('hex');
   return { signedAttrsDer, signedAttrsSetSha256 };
+}
+
+// Prepares PAdES baseline signed attributes (ETSI EN 319 142-1 section 6.3 Table 1):
+// contentType, messageDigest, and signingCertificateV2, omitting signing-time (PDF /M carries claimed time).
+export function preparePadesSignedAttrs(options: {
+  readonly digestSha256: string;
+  readonly certificateChainDer: readonly Uint8Array[];
+}): {
+  readonly signedAttrsDer: Uint8Array;
+  readonly signedAttrsSetSha256: string;
+} {
+  return buildSignedAttrsDer({
+    digestSha256: options.digestSha256,
+    certificateChainDer: options.certificateChainDer,
+    includeSigningTime: false,
+  });
+}
+
+// Prepares RFC 5652 / ETSI EN 319 122 CAdES-BES signed attributes (contentType, messageDigest,
+// signingCertificateV2, and optional signingTime) and returns the SHA-256 hex digest of DER(SET OF Attribute).
+export function prepareCadesSignedAttrs(options: {
+  readonly digestSha256: string;
+  readonly certificateChainDer: readonly Uint8Array[];
+  readonly signingTime?: Date;
+  readonly includeSigningTime?: boolean;
+}): {
+  readonly signedAttrsDer: Uint8Array;
+  readonly signedAttrsSetSha256: string;
+} {
+  return buildSignedAttrsDer({
+    digestSha256: options.digestSha256,
+    certificateChainDer: options.certificateChainDer,
+    ...(options.signingTime !== undefined ? { signingTime: options.signingTime } : {}),
+    includeSigningTime: options.includeSigningTime ?? true,
+  });
 }
 
 export function assembleDetachedCmsSignedData(options: {
@@ -380,7 +421,8 @@ export function assembleDetachedCmsSignedData(options: {
         derNode(0x04, rawSignature),
       );
   const sortedCerts = [...certificateChainDer].sort((a, b) => Buffer.compare(a, b));
-  const certsField = derNode(0xa0, concatBytes(...sortedCerts));
+  const uniqueCerts = sortedCerts.filter((cert, idx) => idx === 0 || Buffer.compare(cert, sortedCerts[idx - 1]!) !== 0);
+  const certsField = derNode(0xa0, concatBytes(...uniqueCerts));
   const signedData = derSeq(
     derInt(1),
     derSet(sha256Alg),

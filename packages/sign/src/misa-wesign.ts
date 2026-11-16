@@ -235,10 +235,12 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
       write: false,
       timeoutMs,
     });
-    if (res.status === 429 || res.status >= 500 || !isRecord(res.json)) return { ok: false, reason: 'unavailable' };
+    if (res.status === 429 || res.status >= 500) return { ok: false, reason: 'unavailable' };
+    if (res.status === 401 || res.status === 403) return { ok: false, reason: 'credentials' };
+    if (!isRecord(res.json)) return { ok: false, reason: 'unavailable' };
     const code = readText(pickCaseInsensitive(res.json, 'ErrorCode'));
     const okEnvelope = extractMisaEnvelopeSuccess(res.json);
-    if (res.status === 401 || res.status === 403 || code === 'UnAuthorize' || code === 'InvalidCredentials') {
+    if (code === 'UnAuthorize' || code === 'InvalidCredentials') {
       return { ok: false, reason: 'credentials' };
     }
     if (code === 'InActiveAppID') return { ok: false, reason: 'api_not_enabled' };
@@ -357,10 +359,13 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
       }
     }
     const certsRes = await callAuthorized(secret, creds, 'POST', '/apis/RMeSign/GetListCertificate', {}, false);
-    if (certsRes.status === 429 || certsRes.status >= 500 || !isRecord(certsRes.json)) {
+    if (certsRes.status === 429 || certsRes.status >= 500) {
       throw new CaProviderError('unavailable');
     }
-    if (certsRes.status === 403) throw new CaProviderError('credentials');
+    if (certsRes.status === 401 || certsRes.status === 403) throw new CaProviderError('credentials');
+    if (!isRecord(certsRes.json)) {
+      throw new CaProviderError('unavailable');
+    }
     const records = extractMisaCertificates(certsRes.json);
     if (records.length > 0) cacheCerts(secretKey, records);
     return selectRemoteCertificateChain({
@@ -420,10 +425,9 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
       undefined,
       false,
     );
-    if (res.status === 429) throw new CaProviderError('unavailable');
-    if (res.status >= 500 || !isRecord(res.json)) throw new CaProviderError('unavailable');
-    if (res.status === 403) throw new CaProviderError('credentials');
-    if (res.status >= 400 || extractMisaEnvelopeSuccess(res.json) === false) {
+    if (res.status === 429 || res.status >= 500) throw new CaProviderError('unavailable');
+    if (res.status === 401 || res.status === 403) throw new CaProviderError('credentials');
+    if (res.status >= 400 || !isRecord(res.json) || extractMisaEnvelopeSuccess(res.json) === false) {
       throw new CaProviderError('unavailable');
     }
     const fallbackTx = query.externalTxId ?? query.idempotencyKey ?? '';
@@ -468,9 +472,9 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
         }
         cacheToken(sha256Hex(secret), auth.token, auth.userId, auth.ttlMs);
         const certsRes = await callAuthorized(secret, creds, 'POST', '/apis/RMeSign/GetListCertificate', {}, false);
-        if (certsRes.status === 429 || certsRes.status >= 500 || !isRecord(certsRes.json)) return 'unreachable';
+        if (certsRes.status === 429 || certsRes.status >= 500) return 'unreachable';
         if (certsRes.status === 401 || certsRes.status === 403) return 'wrong_credentials';
-        if (extractMisaEnvelopeSuccess(certsRes.json) === false) return 'unreachable';
+        if (!isRecord(certsRes.json) || extractMisaEnvelopeSuccess(certsRes.json) === false) return 'unreachable';
         const records = extractMisaCertificates(certsRes.json);
         if (records.length === 0) return 'signing_needs_person';
         const activeRemote = records.filter((r) => !r.isUsbOnly && r.isActive);
@@ -516,8 +520,20 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
         true,
       );
       if (res.status === 429) throw new CaProviderError('unavailable');
-      if (res.status >= 500 || !isRecord(res.json)) throw new CaProviderError('lost_answer');
-      if (res.status === 403) throw new CaProviderError('credentials');
+      if (res.status >= 500) throw new CaProviderError('lost_answer');
+      if (res.status === 401 || res.status === 403) throw new CaProviderError('credentials');
+      if (!isRecord(res.json)) {
+        if (res.status >= 400) {
+          return {
+            provider: 'misa_wesign',
+            idempotencyKey: valid.idempotencyKey,
+            externalTxId: valid.idempotencyKey,
+            status: 'failed',
+            errorCode: `HTTP_${res.status}`,
+          };
+        }
+        throw new CaProviderError('lost_answer');
+      }
 
       const errorCode = readText(pickCaseInsensitive(res.json, 'ErrorCode'));
       if (res.status === 409 || errorCode === 'DuplicateRefID' || errorCode === 'TransactionExists') {

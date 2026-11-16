@@ -772,10 +772,10 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
       tsRef = PDFRef.of(tsObjNum, 0);
     }
 
-    // ETSI EN 319 142-1 VRI dictionary key is uppercase hex SHA-1 of the CMS /Contents DER bytes.
-    const vriKey = createHash('sha1').update(cmsDer).digest('hex').toUpperCase();
+    // ETSI EN 319 142-1 §5.4.2.2: VRI key is uppercase hex SHA-1 of the full /Contents value (including zero padding).
+    // §5.4.2.3: TU and TS are mutually exclusive; omit TU whenever TS is present.
+    const vriKey = createHash('sha1').update(Buffer.from(paddedCmsHex, 'hex')).digest('hex').toUpperCase();
     const vriEntry = PDFDict.withContext(pdfDoc.context);
-    vriEntry.set(PDFName.of('TU'), PDFString.of(encodePdfDate(input.signedAtIso).slice(1, -1)));
     if (ocspRefs.length > 0) {
       const vriOcsp = PDFArray.withContext(pdfDoc.context);
       for (const ref of ocspRefs) vriOcsp.push(ref);
@@ -783,6 +783,8 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
     }
     if (tsRef) {
       vriEntry.set(PDFName.of('TS'), tsRef);
+    } else {
+      vriEntry.set(PDFName.of('TU'), PDFString.of(encodePdfDate(input.signedAtIso).slice(1, -1)));
     }
 
     const existingDssRaw = catalogDict.get(PDFName.of('DSS'));

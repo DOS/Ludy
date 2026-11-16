@@ -279,9 +279,11 @@ export function createVnptSmartCaAdapter(options: CaAdapterOptions = {}): CaSign
       },
       false,
     );
-    if (res.status === 429 || res.status >= 500 || !isRecord(res.json)) {
+    if (res.status === 429 || res.status >= 500) {
       throw new CaProviderError('unavailable');
     }
+    if (res.status === 401 || res.status === 403) throw new CaProviderError('credentials');
+    if (!isRecord(res.json)) throw new CaProviderError('unavailable');
     const code = extractCode(res.json);
     if (isVnptAuthError(code, res.status)) throw new CaProviderError('credentials');
     const records = extractVnptCertificates(res.json);
@@ -339,8 +341,9 @@ export function createVnptSmartCaAdapter(options: CaAdapterOptions = {}): CaSign
       },
       false,
     );
-    if (res.status === 429) throw new CaProviderError('unavailable');
-    if (res.status >= 500 || !isRecord(res.json)) throw new CaProviderError('unavailable');
+    if (res.status === 429 || res.status >= 500) throw new CaProviderError('unavailable');
+    if (res.status === 401 || res.status === 403) throw new CaProviderError('credentials');
+    if (!isRecord(res.json)) throw new CaProviderError('unavailable');
     const code = extractCode(res.json);
     if (isVnptAuthError(code, res.status)) throw new CaProviderError('credentials');
     if (res.status >= 400 && pickCaseInsensitive(res.json, 'status_code') === undefined) {
@@ -389,7 +392,9 @@ export function createVnptSmartCaAdapter(options: CaAdapterOptions = {}): CaSign
           },
           false,
         );
-        if (res.status === 429 || res.status >= 500 || !isRecord(res.json)) return 'unreachable';
+        if (res.status === 429 || res.status >= 500) return 'unreachable';
+        if (res.status === 401 || res.status === 403) return 'wrong_credentials';
+        if (!isRecord(res.json)) return 'unreachable';
         const code = extractCode(res.json);
         if (isVnptAuthError(code, res.status)) return 'wrong_credentials';
         const upperCode = code?.toUpperCase();
@@ -439,7 +444,20 @@ export function createVnptSmartCaAdapter(options: CaAdapterOptions = {}): CaSign
         true,
       );
       if (res.status === 429) throw new CaProviderError('unavailable');
-      if (res.status >= 500 || !isRecord(res.json)) throw new CaProviderError('lost_answer');
+      if (res.status >= 500) throw new CaProviderError('lost_answer');
+      if (res.status === 401 || res.status === 403) throw new CaProviderError('credentials');
+      if (!isRecord(res.json)) {
+        if (res.status >= 400) {
+          return {
+            provider: 'vnpt_smartca',
+            idempotencyKey: valid.idempotencyKey,
+            externalTxId: valid.idempotencyKey,
+            status: 'failed',
+            errorCode: `HTTP_${res.status}`,
+          };
+        }
+        throw new CaProviderError('lost_answer');
+      }
       const code = extractCode(res.json);
       if (isVnptAuthError(code, res.status)) throw new CaProviderError('credentials');
       if (isVnptDuplicateError(code, res.status)) {

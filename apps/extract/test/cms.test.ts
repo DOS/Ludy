@@ -426,9 +426,8 @@ describe('crove-extract pdf_embed_cms', () => {
     expect(postDigest).toBe(preDigest);
     assertByteRangeAndCms(outBytes, res.byteRange, cmsDer, { allowTrailingUpdate: true });
 
-    // Sequential second signature with LTV merges into existing /DSS rather than overwriting.
+    // Sequential second signature with OCSP-only LTV (no TS) merges into existing /DSS and emits /TU without /TS.
     const cmsDer2 = makeTestCmsDer('ltv-cms-2');
-    const tsDer2 = derSequence(new Uint8Array([0x02, 0x01, 0x02]));
     const ocspDer2 = derSequence(new Uint8Array([0x0a, 0x01, 0x01]));
     const res2 = await parse(
       'pdf_embed_cms',
@@ -437,7 +436,6 @@ describe('crove-extract pdf_embed_cms', () => {
         cmsDerBase64: Buffer.from(cmsDer2).toString('base64'),
         signerName: 'Nguyễn Thị Lan',
         signedAtIso: '2026-11-16T11:05:00.000Z',
-        timestampTokenBase64: Buffer.from(tsDer2).toString('base64'),
         ocspResponsesBase64: [Buffer.from(ocspDer2).toString('base64')],
       }),
     );
@@ -450,10 +448,23 @@ describe('crove-extract pdf_embed_cms', () => {
     expect(dss.lookup(PDFName.of('Type'), PDFName).decodeText()).toBe('DSS');
     expect(dss.lookup(PDFName.of('OCSPs'), PDFArray).size()).toBe(2);
     const vri = dss.lookup(PDFName.of('VRI'), PDFDict);
-    const expectedVriKey1 = createHash('sha1').update(cmsDer).digest('hex').toUpperCase();
-    const expectedVriKey2 = createHash('sha1').update(cmsDer2).digest('hex').toUpperCase();
-    expect(vri.get(PDFName.of(expectedVriKey1))).toBeDefined();
-    expect(vri.get(PDFName.of(expectedVriKey2))).toBeDefined();
+    const paddedBytes1 = Buffer.from(
+      Buffer.from(outBytes.subarray(res.byteRange[1] + 1, res.byteRange[2] - 1)).toString('ascii'),
+      'hex',
+    );
+    const paddedBytes2 = Buffer.from(
+      Buffer.from(outBytes2.subarray(res2.byteRange[1] + 1, res2.byteRange[2] - 1)).toString('ascii'),
+      'hex',
+    );
+    const expectedVriKey1 = createHash('sha1').update(paddedBytes1).digest('hex').toUpperCase();
+    const expectedVriKey2 = createHash('sha1').update(paddedBytes2).digest('hex').toUpperCase();
+    expect(expectedVriKey1).not.toBe(createHash('sha1').update(cmsDer).digest('hex').toUpperCase());
+    const vriEntry1 = vri.lookup(PDFName.of(expectedVriKey1), PDFDict);
+    expect(vriEntry1.get(PDFName.of('TS'))).toBeDefined();
+    expect(vriEntry1.get(PDFName.of('TU'))).toBeUndefined();
+    const vriEntry2 = vri.lookup(PDFName.of(expectedVriKey2), PDFDict);
+    expect(vriEntry2.get(PDFName.of('TU'))).toBeDefined();
+    expect(vriEntry2.get(PDFName.of('TS'))).toBeUndefined();
     expect((await inspectPdf(outBytes2)).pageCount).toBe(1);
   });
 
