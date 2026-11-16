@@ -4,6 +4,7 @@ import type { ContractRouterClient } from '@orpc/contract';
 import { createTanstackQueryUtils } from '@orpc/tanstack-query';
 import { MutationCache, QueryCache, QueryClient } from '@tanstack/react-query';
 import type { RecordingStopReason } from '@crove/meeting-recorder';
+import { mediaUploadQuery, needsAudioExtraction } from './meeting-upload.ts';
 import { DIRECT_UPLOAD_MAX_BYTES, MAX_IMPORT_BYTES, MAX_MEETING_AUDIO_BYTES, MAX_MEETING_VIDEO_BYTES, MAX_SOCIAL_VIDEO_BYTES, MAX_UPLOAD_BYTES, type contract, type UploadPurpose } from '@crove/kernel-contract';
 import { activeLocale, translator } from '../i18n/runtime.ts';
 import { apiUrl, serverOrigin } from './api-base.ts';
@@ -194,13 +195,16 @@ export async function uploadMeetingMedia(
   // The recording stopped without the recorder's click (A1, #3159): the server keeps the code on the meeting.
   stopReason?: RecordingStopReason,
 ): Promise<{ fileId: string }> {
-  const purpose = kind === 'audio' ? 'meeting_audio' : 'meeting_video';
+  // A video chosen as the audio (a local Zoom or Teams MP4) is sent with extract=audio: the server keeps only its audio and never stores the video (#3337).
+  // It is sized and staged as a video, since that is what is transferred.
+  const extractAudio = kind === 'audio' && needsAudioExtraction(file);
+  const purpose = kind === 'audio' && !extractAudio ? 'meeting_audio' : 'meeting_video';
   if (file.size > maxBytesFor(purpose)) throw tooLarge(file, purpose);
 
   if (getConfig().uploads === 'presigned') {
     const uploadId = await stageMediaUpload(file, purpose);
     const response = await retryWhileBusy(() =>
-      apiFetch(`/api/meetings/${meetingId}/media`, {
+      apiFetch(`/api/meetings/${meetingId}/media${extractAudio ? `?${mediaUploadQuery({ kind, extractAudio })}` : ''}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ uploadId, kind, ...(lengthSeconds !== undefined ? { lengthSeconds } : {}), ...(stopReason ? { stopReason } : {}) }),
@@ -211,11 +215,9 @@ export async function uploadMeetingMedia(
 
   // The file itself as the request body (#2780): the server seals it as it arrives, so a large recording is never held whole
   // there (a multipart form is parsed whole). The kind and the length go in the query, because the body is only the file.
-  const query = new URLSearchParams({ kind });
-  if (lengthSeconds !== undefined) query.set('lengthSeconds', String(lengthSeconds));
-  if (stopReason) query.set('stopReason', stopReason);
+  const query = mediaUploadQuery({ kind, extractAudio, ...(lengthSeconds !== undefined ? { lengthSeconds } : {}), ...(stopReason ? { stopReason } : {}) });
   const response = await retryWhileBusy(() =>
-    apiFetch(`/api/meetings/${meetingId}/media?${query.toString()}`, {
+    apiFetch(`/api/meetings/${meetingId}/media?${query}`, {
       method: 'POST',
       headers: { 'content-type': /^(?:audio|video)\/[\w.+-]+$/.test(file.type) ? file.type : 'application/octet-stream' },
       body: file,

@@ -9,6 +9,7 @@
     ".": "./src/index.ts",
     "./transport": "./src/transport.ts",
     "./measure": "./src/measure.ts",
+    "./extract": "./src/extract.ts",
     "./types": "./src/types.ts"
   },
   "scripts": {
