@@ -157,9 +157,9 @@ suite('HR annual leave ledger, unpaid-leave sync, and Ly anomaly (#3394)', () =>
       approved: true,
     });
 
-    const std = await o.query<HrLeaveBalanceResult>(o.admin, 'hr.payroll.leave.balance', { employeeId: emp.employeeId, year: 2026 });
+    const std = await o.query<HrLeaveBalanceResult>(o.admin, 'hr.payroll.leave.balance', { employeeId: emp.employeeId, year: '2026' });
     expect(std.balance).toMatchObject({
-      year: 2026,
+      year: '2026',
       eligibleMonths: 12,
       entitlementDays: '12',
       seniorityYears: 5,
@@ -175,7 +175,7 @@ suite('HR annual leave ledger, unpaid-leave sync, and Ly anomaly (#3394)', () =>
 
     const heavy = await o.query<HrLeaveBalanceResult>(o.owner, 'hr.payroll.leave.balance', {
       employeeId: emp.employeeId,
-      year: 2026,
+      year: '2026',
       category: 'heavy',
     });
     expect(heavy.balance.entitlementDays).toBe('14');
@@ -208,11 +208,13 @@ suite('HR annual leave ledger, unpaid-leave sync, and Ly anomaly (#3394)', () =>
     ).rejects.toMatchObject({ code: 'HR_LEAVE_DAYS_EXCEEDS_MONTH', status: 422 });
 
     // Erased employee is refused on both write and balance read.
-    await withAdmin((c) => c.query(`UPDATE crove_hr.payroll_employee SET erased_at = pg_catalog.now() WHERE org_id = $1 AND id = $2`, [o.orgId, laterEmp.employeeId]));
+    const oldEmp = await o.hire('Cụ Đặng Văn An Canary', '2005-01-01', '5000000');
+    await o.exec(o.owner, 'hr.payroll.employee.end', { employeeId: oldEmp.employeeId, endedOn: '2010-01-01' });
+    await o.exec(o.owner, 'hr.payroll.employee.erase', { employeeId: oldEmp.employeeId }, asMfa(o.owner));
     await expect(
-      o.exec(o.owner, 'hr.payroll.leave.set', { employeeId: laterEmp.employeeId, month: '2026-06', kind: 'annual_leave', days: '1' }),
+      o.exec(o.owner, 'hr.payroll.leave.set', { employeeId: oldEmp.employeeId, month: '2026-06', kind: 'annual_leave', days: '1' }),
     ).rejects.toMatchObject({ code: 'HR_EMPLOYEE_ERASED', status: 409 });
-    await expect(o.query(o.owner, 'hr.payroll.leave.balance', { employeeId: laterEmp.employeeId, year: 2026 })).rejects.toMatchObject({
+    await expect(o.query(o.owner, 'hr.payroll.leave.balance', { employeeId: oldEmp.employeeId, year: '2026' })).rejects.toMatchObject({
       code: 'HR_EMPLOYEE_ERASED',
       status: 409,
     });
@@ -236,8 +238,10 @@ suite('HR annual leave ledger, unpaid-leave sync, and Ly anomaly (#3394)', () =>
           allowances: [{ label: 'Phụ cấp ăn', type: 'meal_cash', amount: '730000', namedInContract: true }],
           bonus: '2000000',
           advance: '500000',
-          damageDeduction: '100000',
-          otherDeductions: '50000',
+          deductions: [
+            { label: 'Hư hỏng', kind: 'damage', amount: '100000' },
+            { label: 'Khác', kind: 'other', amount: '50000' },
+          ],
           overtime: [{ dayKind: 'normal_day', night: false, hours: '4' }],
         },
       });
@@ -265,8 +269,7 @@ suite('HR annual leave ledger, unpaid-leave sync, and Ly anomaly (#3394)', () =>
       expect(syncedLine.inputs?.daysNotEmployed).toBe('1');
       expect(syncedLine.inputs?.bonus).toBe('2000000');
       expect(syncedLine.inputs?.advance).toBe('500000');
-      expect(syncedLine.inputs?.damageDeduction).toBe('100000');
-      expect(syncedLine.inputs?.otherDeductions).toBe('50000');
+      expect(syncedLine.inputs?.deductions).toHaveLength(2);
       expect(syncedLine.inputs?.allowances).toHaveLength(1);
       expect(syncedLine.inputs?.overtime).toHaveLength(1);
       expect(syncedLine.flags).toContain('annual_leave_exceeded');
@@ -276,12 +279,23 @@ suite('HR annual leave ledger, unpaid-leave sync, and Ly anomaly (#3394)', () =>
       await o.exec<HrRunWritten>(o.admin, 'hr.payroll.run.sync_leave', { runId: run.runId });
 
       // Ly surfaces annual_leave_exceeded deterministically when AI is off without leaking names or dates.
-      const sheetSummary: HrRunSummary = { id: run.runId, month: '2026-11', legalEntityId: synced.run.legalEntityId, employerName: synced.run.employerName, status: 'draft', workingDays: synced.run.workingDays };
+      const sheetSummary: HrRunSummary = {
+        id: run.runId,
+        legalEntityId: synced.run.legalEntityId,
+        month: '2026-11',
+        status: 'draft',
+        workingDays: synced.run.workingDays,
+        lines: synced.lines.length,
+        refused: 0,
+        totals: synced.totals,
+        approvedAt: null,
+      };
       const reads: PayrollReads = {
-        language: async () => 'vi',
         runs: async () => [sheetSummary],
         sheet: async () => synced,
-        hasPosted: async () => false,
+        payslip: async () => {
+          throw new Error('unused');
+        },
       };
       const aiOff = await flagMonth({ reader: null, budget: new DraftBudget() }, reads, o.orgId, o.owner, run.runId, 'vi');
       expect(aiOff.ai).toBe('off');
@@ -333,17 +347,17 @@ suite('HR annual leave ledger, unpaid-leave sync, and Ly anomaly (#3394)', () =>
 
     // Non-managers and system actors are refused.
     for (const actorId of [a.member, a.viewer]) {
-      await expect(a.query(actorId, 'hr.payroll.leave.balance', { employeeId: empA.employeeId, year: 2026 })).rejects.toMatchObject({ status: 403 });
+      await expect(a.query(actorId, 'hr.payroll.leave.balance', { employeeId: empA.employeeId, year: '2026' })).rejects.toMatchObject({ status: 403 });
       await expect(a.exec(actorId, 'hr.payroll.leave.set', { employeeId: empA.employeeId, month: '2026-05', kind: 'annual_leave', days: '1' })).rejects.toMatchObject({ status: 403 });
       await expect(a.exec(actorId, 'hr.payroll.leave.delete', { entryId: saved.entryId! })).rejects.toMatchObject({ status: 403 });
       await expect(a.exec(actorId, 'hr.payroll.run.sync_leave', { runId: randomUUID() })).rejects.toMatchObject({ status: 403 });
     }
     await expect(
-      rt.execute('hr.payroll.leave.set', { employeeId: empA.employeeId, month: '2026-05', kind: 'annual_leave', days: '1' }, { actor: { type: 'system', name: 'worker' }, orgId: a.orgId }),
+      rt.execute('hr.payroll.leave.set', { employeeId: empA.employeeId, month: '2026-05', kind: 'annual_leave', days: '1' }, { actor: { type: 'system', component: 'worker' }, orgId: a.orgId }),
     ).rejects.toMatchObject({ status: 403 });
 
     // Cross-org isolation: org B cannot see or alter org A employee/entry.
-    await expect(b.query(b.owner, 'hr.payroll.leave.balance', { employeeId: empA.employeeId, year: 2026 })).rejects.toMatchObject({
+    await expect(b.query(b.owner, 'hr.payroll.leave.balance', { employeeId: empA.employeeId, year: '2026' })).rejects.toMatchObject({
       code: 'HR_EMPLOYEE_NOT_FOUND',
       status: 404,
     });
@@ -352,10 +366,16 @@ suite('HR annual leave ledger, unpaid-leave sync, and Ly anomaly (#3394)', () =>
       status: 404,
     });
 
-    // Audit redaction: sensitive days must be HMAC-wrapped, never raw '4.5'.
+    // Audit redaction: leave day counts are omitted from audit facts, never storing raw '4.5'.
     const leaveAudits = await a.audits('hr.payroll.leave.set');
     const detail = leaveAudits.find((row) => row.outcome === 'ok')?.detail as Record<string, unknown>;
-    expect(detail.days).toMatchObject({ len: 3 });
+    expect(detail).toEqual({
+      employeeId: empA.employeeId,
+      entryId: saved.entryId,
+      month: '2026-04',
+      kind: 'annual_leave',
+      approved: true,
+    });
     expect(JSON.stringify(leaveAudits)).not.toContain('4.5');
   });
 });

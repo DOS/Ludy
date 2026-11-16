@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Monthly employee leave ledger & statutory leave balance (issue #3394, #2540 slice 1c-2, docs/plan/payroll.md section 5 rows 3 & 6.7, section 7, ADR-0046).
 // Owners and admins only, in the commands/queries and in the database's policies (crove_hr.payroll_leave_entry owner_admin and le_scope).
-// Audit facts carry ids, month, kind, approved and auditValue(..., 'days') only, never raw sensitive day counts.
+// Audit facts carry ids, month, kind and approved/cleared flags only, never raw leave day counts.
 import { calculateLeaveBalance, money, PAYROLL_RULES, PayrollRefusedError, toMoney } from '@crove/l10n-vn';
 import type { MemberRole } from '@crove/db';
 import {
-  auditValue,
   tableWrite,
   zHrLeaveBalanceAsk,
   zHrLeaveDelete,
@@ -19,7 +18,6 @@ import { hrManifest } from './manifest.ts';
 import { isoDate as iso } from './payroll-dates.ts';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
-const LEAVE_ENTRY = hrManifest.tables.crove_hr.payroll_leave_entry;
 
 const userOf = (actor: QueryContext['actor']): string => {
   if (actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
@@ -100,7 +98,6 @@ export const leaveSet = defineCommand({
         month: input.month,
         kind: input.kind,
         cleared: true,
-        days: auditValue(LEAVE_ENTRY, 'days', input.days),
       });
       return { employeeId: employee.id, entryId: deleted?.id ?? null, deleted: Boolean(deleted) };
     }
@@ -134,7 +131,6 @@ export const leaveSet = defineCommand({
       month: input.month,
       kind: input.kind,
       approved: input.approved,
-      days: auditValue(LEAVE_ENTRY, 'days', input.days),
     });
     return { employeeId: employee.id, entryId: saved.id, deleted: false };
   },
@@ -219,7 +215,9 @@ export const leaveBalance = defineQuery({
           category: input.category,
           hireDate,
           endedOn,
-          entries: entries.map((e) => ({ kind: e.kind, month: e.month, days: e.days, approved: e.approved })),
+          entries: entries
+            .filter((e) => e.approved || e.kind === 'unpaid_leave')
+            .map((e) => ({ kind: e.kind, month: e.month, days: e.days, approved: e.approved })),
           ...(input.asOfMonth !== undefined ? { asOfMonth: input.asOfMonth } : {}),
           ...(input.workweek !== undefined ? { workweek: input.workweek } : {}),
         },

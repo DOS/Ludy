@@ -987,6 +987,7 @@ export const runSheet = defineQuery({
           .execute();
     const leaveByEmployee = new Map<string, LeaveEntry[]>();
     for (const row of leaveRows) {
+      if (row.kind !== 'unpaid_leave' && !row.approved) continue;
       const list = leaveByEmployee.get(row.employee_id) ?? [];
       list.push({ kind: row.kind, month: row.month, days: row.days, approved: row.approved });
       leaveByEmployee.set(row.employee_id, list);

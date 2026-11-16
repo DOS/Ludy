@@ -30,8 +30,8 @@ export function LeaveBalancePanel({ employeeId }: { employeeId: string }) {
   const t = useTranslations('hrEmployees');
   const f = useFormat();
   const today = vietnamToday();
-  const defaultYear = Number(today.slice(0, 4));
-  const [yearInput, setYearInput] = useState(String(defaultYear));
+  const defaultYear = today.slice(0, 4);
+  const [yearInput, setYearInput] = useState(defaultYear);
   const [categoryInput, setCategoryInput] = useState<HrLeaveCategory>('standard');
   const [submittedAsk, setSubmittedAsk] = useState<HrLeaveBalanceAsk>({
     employeeId,
@@ -81,7 +81,7 @@ export function LeaveBalancePanel({ employeeId }: { employeeId: string }) {
         onSubmit={(ev) => {
           ev.preventDefault();
           if (!yearValid) return;
-          setSubmittedAsk({ employeeId, year: parsedYear, category: categoryInput });
+          setSubmittedAsk({ employeeId, year: yearInput, category: categoryInput });
         }}
       >
         <div className="space-y-1">
@@ -281,7 +281,7 @@ export function LeaveBalancePanel({ employeeId }: { employeeId: string }) {
                   <li key={rule.id}>
                     <span className="font-mono">{rule.id}</span>{' '}
                     <Badge variant="secondary">{t(`leave.ruleStatus.${rule.status}`)}</Badge>{' '}
-                    <span>{rule.cite}</span>
+                    <span>{rule.key} ({rule.effectiveFrom})</span>
                   </li>
                 ))}
               </ul>

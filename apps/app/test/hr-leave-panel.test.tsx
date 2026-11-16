@@ -41,7 +41,7 @@ const EMP_ID = '00000000-0000-7000-8000-000000000020';
 
 function renderLeavePanel(result: HrLeaveBalanceResult, locale: 'vi' | 'en' = 'vi') {
   setActiveLocale(locale);
-  const year = Number(vietnamToday().slice(0, 4));
+  const year = vietnamToday().slice(0, 4);
   cache.current.setQueryData(['hr', 'payroll', 'leave', 'balance', { employeeId: EMP_ID, year, category: 'standard' }], result);
   return renderToStaticMarkup(
     <QueryClientProvider client={cache.current}>
@@ -56,7 +56,7 @@ describe('Annual leave ledger panel and pay-run leave copy (#3394)', () => {
   beforeEach(() => cache.current.clear());
 
   it('renders balance summary, entry rows, exceeded days highlight, and rule citations in vi and en', () => {
-    const year = Number(vietnamToday().slice(0, 4));
+    const year = vietnamToday().slice(0, 4);
     const sample: HrLeaveBalanceResult = {
       employeeId: EMP_ID,
       year,
@@ -85,10 +85,10 @@ describe('Annual leave ledger panel and pay-run leave copy (#3394)', () => {
         rulesUsed: [
           {
             id: 'annual_leave.standard_entitlement@2021-02-01',
-            planRow: 3,
+            kind: 'leave',
+            key: 'standard_days',
+            effectiveFrom: '2021-02-01',
             status: 'confirmed',
-            confidence: 'primary',
-            cite: 'Labor Code 2019 Art. 113(1)(a)',
           },
         ],
       },
@@ -106,7 +106,7 @@ describe('Annual leave ledger panel and pay-run leave copy (#3394)', () => {
     const htmlEn = renderLeavePanel(sample, 'en');
     expect(htmlEn).toContain('Annual leave ledger');
     expect(htmlEn).toContain('Unpaid leave');
-    expect(htmlEn).toContain('Labor Code 2019 Art. 113(1)(a)');
+    expect(htmlEn).toContain('standard_days');
   });
 
   it('provides localized vi and en copy for leave sync and annual_leave_exceeded flag', () => {
