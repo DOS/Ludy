@@ -17,9 +17,10 @@ import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { Textarea } from '@crove/ui/components/textarea';
 import { DateInput } from '../components/date-input.tsx';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
+import { TaskConversationLink } from '../components/task-conversation-link.tsx';
 import { DataTable, Empty, ErrorText, FieldError, ListSkeleton, PageHeader, PageSkeleton, fieldControl } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { OPEN_TASK_STATUSES, TASK_LIST_LIMIT, TASK_STATUSES, agentPermissions, fromTodo, meetingItemOf, socialPostOf, taskDueDay, taskDueFromDay, type TaskFilter, type TaskStatus, type TasksSearch } from '../lib/agents.ts';
+import { OPEN_TASK_STATUSES, TASK_LIST_LIMIT, TASK_STATUSES, agentPermissions, conversationOf, fromTodo, meetingItemOf, socialPostOf, taskDueDay, taskDueFromDay, type TaskFilter, type TaskStatus, type TasksSearch } from '../lib/agents.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { isModuleOff } from '../lib/errors.ts';
 import { browserTimeZone } from '../lib/my-work.ts';
@@ -438,6 +439,7 @@ export function TaskDetailPage() {
   const { task, comments, proposal } = detail.data;
   const postId = socialPostOf(task.sourceRef);
   const meetingItemId = meetingItemOf(task.sourceRef);
+  const conversationId = conversationOf(task.sourceRef);
   const members = org.data?.members ?? [];
   const authorName = (c: (typeof comments)[number]) =>
     c.authorType === 'agent'
@@ -505,6 +507,7 @@ export function TaskDetailPage() {
           </p>
         )}
         {meetingItemId && <MeetingLink itemId={meetingItemId} slug={slug} />}
+        {conversationId && <TaskConversationLink conversationId={conversationId} slug={slug} />}
         {perms.tasks && (
           <label className="block w-56 text-xs">
             <span className="text-subtle-foreground">{t('setStatus')}</span>
