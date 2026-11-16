@@ -19,6 +19,8 @@ export const meetingsManifest = defineModule({
         'segment_order',
         'start_offset_seconds',
         'length_seconds',
+        // True for a recording joined from the live pieces, which a late complete upload may replace (#3187).
+        'joined_from_pieces',
         'created_at',
       ]),
       // A member's own Google Calendar meetings, read to suggest "record this meeting" (B1, #3165): title, start, end, time zone, a join address and the number of invitees, never an invitee address, a description or an attachment. Read by the member alone.

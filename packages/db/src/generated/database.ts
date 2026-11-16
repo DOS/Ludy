@@ -2918,6 +2918,7 @@ export interface MeetingsAudioSegmentTable {
   start_offset_seconds: ColumnType<number, number | undefined, NotGranted>;
   length_seconds: ColumnType<number, number, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  joined_from_pieces: ColumnType<boolean, boolean | undefined, NotGranted>;
 }
 
 /** crove_meetings.calendar_agenda */

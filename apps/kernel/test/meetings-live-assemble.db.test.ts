@@ -3,6 +3,7 @@
 // order under a fresh audio key (ciphertext only, the length measured by the sandbox), reports a gap without failing, refuses before the window has passed or without
 // piece 0, loses cleanly against a final upload in either order, discards the pieces in the same transaction, and leaves shredding, deleting and the AI state alone.
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
@@ -511,22 +512,119 @@ suite('meetings live pieces assembled on PostgreSQL (#3126)', () => {
     expect((await click('recorder', first)).body.code).toBe('MEDIA_ALREADY_RECORDED');
     expect(await audioRows(first)).toBe(1);
 
-    // The assembly first: a late final upload is refused as a second recording, its sealed object dropped, the joined recording kept.
-    const second = await liveMeeting();
-    await sendAll(second, [0, 1]);
-    await windowPassed(second);
-    expect((await click('recorder', second)).status).toBe(200);
+    // An uploaded recording is never replaced: a second upload is refused, and its sealed object dropped.
     const objects = store.storage.size;
-    const late = await app.request(`/api/meetings/${second}/media?kind=audio`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug, 'content-type': 'audio/ogg', 'content-length': String(OGG.byteLength + 20) },
-      body: new Uint8Array(Buffer.concat([OGG, Buffer.alloc(8, 0), Buffer.from('late-final-recording'.slice(0, 12))])),
-    });
-    expect(late.status).toBe(409);
-    expect(((await late.json()) as { code?: string }).code).toBe('MEDIA_ALREADY_RECORDED');
+    const again = await lateUpload(first, 'second-upload');
+    expect(again.status).toBe(409);
+    expect(((await again.json()) as { code?: string }).code).toBe('MEDIA_ALREADY_RECORDED');
     expect(store.storage.size).toBe(objects);
-    expect(await audioRows(second)).toBe(1);
-    expect(await audioKeys(second)).toBe(1);
+    expect(await audioRows(first)).toBe(1);
+  });
+
+  // A late complete upload (#3187): sealed under its own key, like the upload route does for any recording.
+  const lateUpload = async (meetingId: string, marker: string) =>
+    app.request(`/api/meetings/${meetingId}/media?kind=audio`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug, 'content-type': 'audio/ogg', 'content-length': String(OGG.byteLength + 8 + marker.length) },
+      body: new Uint8Array(Buffer.concat([OGG, Buffer.alloc(8, 0), Buffer.from(marker)])),
+    });
+  const segmentOf = async (meetingId: string) => (await rows<{ file_id: string; joined: boolean }>('SELECT file_id, joined_from_pieces AS joined FROM crove_meetings.audio_segment WHERE meeting_id = $1', [meetingId]))[0]!;
+  const joinedMeeting = async () => {
+    const meetingId = await liveMeeting();
+    await sendAll(meetingId, [0, 1]);
+    await windowPassed(meetingId);
+    expect((await click('recorder', meetingId)).status).toBe(200);
+    return meetingId;
+  };
+
+  it('lets a late complete upload replace the joined recording in one transaction: new key and file in, the joined segment and key out, its object swept (#3187)', async () => {
+    const meetingId = await joinedMeeting();
+    const joinedSegment = await segmentOf(meetingId);
+    expect(joinedSegment.joined).toBe(true);
+    const joinedObject = (await rows<{ storage_key: string }>('SELECT storage_key FROM crove_kernel.file WHERE id = $1', [joinedSegment.file_id]))[0]!.storage_key;
+    const joinedKey = (await rows<{ wrapped_key: Buffer }>("SELECT wrapped_key FROM crove_meetings.media_key WHERE meeting_id = $1 AND kind = 'audio'", [meetingId]))[0]!.wrapped_key.toString('hex');
+
+    const late = await lateUpload(meetingId, 'complete-late');
+    expect(late.status).toBe(200);
+    // One recording, one key; the segment is the upload's (not joined) under a new file and a new key.
+    expect(await audioRows(meetingId)).toBe(1);
+    expect(await audioKeys(meetingId)).toBe(1);
+    const replaced = await segmentOf(meetingId);
+    expect(replaced.joined).toBe(false);
+    expect(replaced.file_id).not.toBe(joinedSegment.file_id);
+    const newKey = (await rows<{ wrapped_key: Buffer }>("SELECT wrapped_key FROM crove_meetings.media_key WHERE meeting_id = $1 AND kind = 'audio'", [meetingId]))[0]!.wrapped_key.toString('hex');
+    expect(newKey).not.toBe(joinedKey);
+    // The meeting plays the new recording, and the audit row says a joined one was replaced.
+    const played = await play('recorder', meetingId, 'audio');
+    expect(played.status).toBe(200);
+    expect(Buffer.from(await played.arrayBuffer()).includes(Buffer.from('complete-late'))).toBe(true);
+    const audit = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.media.record' AND outcome = 'ok' AND target_id = $2", [orgId, meetingId]);
+    expect(audit[0]!.detail).toMatchObject({ replacedJoined: true });
+    // The joined file row is left for the orphan sweep, which drops its object and then the row.
+    expect(store.storage.has(joinedObject)).toBe(true);
+    await sweep();
+    expect(store.storage.has(joinedObject)).toBe(false);
+    expect(await count('SELECT 1 FROM crove_kernel.file WHERE id = $1', [joinedSegment.file_id])).toBe(0);
+    // Nothing joins or replaces it again: the upload stands, and the next upload or a join is refused.
+    expect(((await (await lateUpload(meetingId, 'third-try')).json()) as { code?: string }).code).toBe('MEDIA_ALREADY_RECORDED');
+    expect((await click('recorder', meetingId)).body.code).toBe('MEDIA_ALREADY_RECORDED');
+  });
+
+  it('refuses the replacement once a transcript, minutes or a run was made from the joined recording, and keeps the joined one (#3187)', async () => {
+    const ins = (text: string, params: unknown[]) => rows(text, params);
+    const makeRun = async (meetingId: string, feature: string) => {
+      const userId = userIds.get('recorder')!;
+      await admin(async (c) => {
+        await c.query('SET session_replication_role = replica');
+        const agentId = randomUUID();
+        const runId = randomUUID();
+        await c.query(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3) ON CONFLICT DO NOTHING`, [orgId, agentId, userId]);
+        await c.query(`INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at, finished_at) VALUES ($1, $2, $3, 'meetings', 'succeeded', true, now() - interval '2 hours', now() + interval '1 hour', now() - interval '90 minutes')`, [orgId, runId, agentId]);
+        await c.query(
+          `INSERT INTO crove_kernel.member_vy_result (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, body, created_at, expires_at)
+           VALUES ($1, $2, $3, $4, $5, 'meeting', $6, 'ready', 'x', now(), now() + interval '30 days')`,
+          [orgId, randomUUID(), userId, runId, feature, meetingId],
+        );
+      });
+    };
+    const cases: Array<[string, (meetingId: string) => Promise<unknown>]> = [
+      ['a transcript draft', (id) => ins("INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, text) VALUES ($1, $2, 0, 1, 'xin chào')", [orgId, id])],
+      ['minutes', (id) => ins("INSERT INTO crove_meetings.meeting_result (org_id, meeting_id, summary, feature) VALUES ($1, $2, 'Tóm tắt', 'manual')", [orgId, id])],
+      ['a transcription run', (id) => makeRun(id, 'meetings.transcribe')],
+      ['a summary run', (id) => makeRun(id, 'meetings.summary')],
+    ];
+    for (const [what, derive] of cases) {
+      const meetingId = await joinedMeeting();
+      const before = await segmentOf(meetingId);
+      await derive(meetingId);
+      const objects = store.storage.size;
+      const refused = await lateUpload(meetingId, `late-${what.length}-${randomUUID().slice(0, 6)}`);
+      expect(refused.status, what).toBe(409);
+      expect(((await refused.json()) as { code?: string }).code, what).toBe('MEDIA_JOINED_IN_USE');
+      // The joined recording stays whole, flagged and playable, and the late upload's sealed object was dropped.
+      expect(await segmentOf(meetingId), what).toEqual(before);
+      expect(await audioKeys(meetingId), what).toBe(1);
+      expect(store.storage.size, what).toBe(objects);
+      expect((await play('recorder', meetingId, 'audio')).status, what).toBe(200);
+    }
+  });
+
+  it('marks the joins made before the flag existed from the audit trail, and no upload (#3187)', async () => {
+    const joined = await joinedMeeting();
+    const uploaded = await liveMeeting();
+    await sendAll(uploaded, [0]);
+    await windowPassed(uploaded);
+    expect((await lateUpload(uploaded, 'plain-upload')).status).toBe(200);
+    // As a segment from before the column was: not flagged. The migration's own statement then marks it.
+    await rows('UPDATE crove_meetings.audio_segment SET joined_from_pieces = false WHERE meeting_id = $1', [joined]);
+    const sqlText = readFileSync(`${MIGRATIONS}/20270105040000_crove_meetings_audio_segment_joined.sql`, 'utf8');
+    const backfill = /\nUPDATE crove_meetings\.audio_segment[\s\S]*?;\n/.exec(sqlText)![0];
+    await rows(backfill);
+    expect((await segmentOf(joined)).joined).toBe(true);
+    expect((await segmentOf(uploaded)).joined).toBe(false);
+    // Repeating it changes nothing.
+    await rows(backfill);
+    expect((await segmentOf(joined)).joined).toBe(true);
   });
 
   it('serializes a click and a final upload that arrive together: exactly one recording, the pieces gone, no stray object', async () => {
@@ -559,7 +657,10 @@ suite('meetings live pieces assembled on PostgreSQL (#3126)', () => {
     } finally {
       await holder.end();
     }
-    expect(outcomes.map((o) => o.status).sort()).toEqual([200, 409]);
+    // Whichever got the lock first: the upload first refuses the join (200, 409); the join first is replaced by the upload, which nothing derives from (200, 200).
+    const statuses = outcomes.map((o) => o.status).sort();
+    expect(statuses[0]).toBe(200);
+    expect([200, 409]).toContain(statuses[1]);
     expect(await audioRows(meetingId)).toBe(1);
     expect(await audioKeys(meetingId)).toBe(1);
     expect(await chunkCount(meetingId)).toBe(0);
