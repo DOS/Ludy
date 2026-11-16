@@ -572,6 +572,23 @@ export function createRpcHandler(
     (name: string) =>
     <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
       inHr(context, (orgId, actor) => runtime.query<O>(name, input, { actor, orgId }));
+  // The projects module (#2591): its procedures answer 404 when the deployment leaves it out.
+  const projects = runtime.installed('projects');
+  const inProjects = async <T>(context: RpcContext, fn: (orgId: string, actor: UserActor) => Promise<T>) => {
+    if (!projects) throw new ORPCError('NOT_FOUND', { status: 404, message: 'Mô-đun Dự án chưa được bật' });
+    return inOrg(context, fn);
+  };
+  const projectsCommand =
+    (name: string) =>
+    <O, I extends { idempotencyKey: string } = { idempotencyKey: string }>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
+      inProjects(context, (orgId, actor) => {
+        const { idempotencyKey, ...rest } = input;
+        return runtime.execute<O>(name, rest, { actor, orgId, idempotencyKey });
+      });
+  const projectsQuery =
+    (name: string) =>
+    <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
+      inProjects(context, (orgId, actor) => runtime.query<O>(name, input, { actor, orgId }));
 
   // The ads module (#2217): its procedures answer 404 when the deployment leaves it out, as the notes module's do.
   const ads = runtime.installed('ads');
@@ -893,6 +910,7 @@ export function createRpcHandler(
           finalization: os.hr.payroll.employees.finalization.handler(hrCommand('hr.payroll.employee.finalization.set')),
           end: os.hr.payroll.employees.end.handler(hrCommand('hr.payroll.employee.end')),
           erase: os.hr.payroll.employees.erase.handler(hrCommand('hr.payroll.employee.erase')),
+          severance: os.hr.payroll.employees.severance.handler(hrQuery('hr.payroll.employee.severance')),
         },
         bankTemplates: {
           list: os.hr.payroll.bankTemplates.list.handler(hrQuery('hr.payroll.bank_template.list')),
@@ -911,6 +929,8 @@ export function createRpcHandler(
           open: os.hr.payroll.runs.open.handler(hrCommand('hr.payroll.run.open')),
           recalculate: os.hr.payroll.runs.recalculate.handler(hrCommand('hr.payroll.run.recalculate')),
           importTimekeeping: os.hr.payroll.runs.importTimekeeping.handler(hrCommand('hr.payroll.run.import_timekeeping')),
+          thirteenthMonthPreview: os.hr.payroll.runs.thirteenthMonthPreview.handler(hrQuery('hr.payroll.run.thirteenth_month_preview')),
+          applyThirteenthMonth: os.hr.payroll.runs.applyThirteenthMonth.handler(hrCommand('hr.payroll.run.apply_thirteenth_month')),
           approve: os.hr.payroll.runs.approve.handler(hrCommand('hr.payroll.run.approve')),
         },
         // Where the posting and the payments of an approved month stand (#2532): finance reads its own books and the open proposals; owners and admins.
@@ -3558,6 +3578,22 @@ export function createRpcHandler(
       update: os.tasks.update.handler(({ context, input }) => keyed(context, 'kernel.task.update', input)),
       comment: os.tasks.comment.handler(({ context, input }) => keyed(context, 'kernel.task.comment', input)),
       setStatus: os.tasks.setStatus.handler(({ context, input }) => keyed(context, 'kernel.task.set_status', input)),
+    },
+    projects: {
+      list: os.projects.list.handler(projectsQuery('projects.project.list')),
+      get: os.projects.get.handler(projectsQuery('projects.project.get')),
+      board: os.projects.board.handler(projectsQuery('projects.board')),
+      unassignedTasks: os.projects.unassignedTasks.handler(projectsQuery('projects.unassigned_tasks')),
+      create: os.projects.create.handler(projectsCommand('projects.project.create')),
+      update: os.projects.update.handler(projectsCommand('projects.project.update')),
+      setStatus: os.projects.setStatus.handler(projectsCommand('projects.project.set_status')),
+      archive: os.projects.archive.handler(projectsCommand('projects.project.archive')),
+      setOwner: os.projects.setOwner.handler(projectsCommand('projects.project.set_owner')),
+      addMember: os.projects.addMember.handler(projectsCommand('projects.member.add')),
+      removeMember: os.projects.removeMember.handler(projectsCommand('projects.member.remove')),
+      addTask: os.projects.addTask.handler(projectsCommand('projects.task.add')),
+      removeTask: os.projects.removeTask.handler(projectsCommand('projects.task.remove')),
+      createTask: os.projects.createTask.handler(projectsCommand('projects.task.create')),
     },
   });
 

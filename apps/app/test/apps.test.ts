@@ -17,7 +17,7 @@ describe('apps of the shell (#1528, #3225)', () => {
     expect(appOfPath('/o/acme/guide')).toBe('finance');
     // The screens Ctrl K finds that are no menu item still open in their app.
     for (const path of ['marketplace', 'household', 'payment-reminders']) expect(appOfPath(`/o/acme/${path}`), path).toBe('finance');
-    for (const path of ['tasks', 'tasks/0190-abc', 'my-work', 'notes', 'meetings']) expect(appOfPath(`/o/acme/${path}`), path).toBe('teamwork');
+    for (const path of ['tasks', 'tasks/0190-abc', 'projects', 'projects/0190-abc', 'my-work', 'notes', 'meetings']) expect(appOfPath(`/o/acme/${path}`), path).toBe('teamwork');
     for (const path of ['agents', 'ai-usage', 'ai-connections']) expect(appOfPath(`/o/acme/${path}`), path).toBe('ai');
     expect(appOfPath('/o/acme/hr/employees')).toBe('hr');
     expect(appOfPath('/o/acme/social')).toBe('engage');
@@ -51,7 +51,7 @@ describe('apps of the shell (#1528, #3225)', () => {
   });
 
   it('puts the apps in the order of the switcher, and the overview, the bell and Settings around them', () => {
-    expect(installedApps(['kernel', 'finance', 'social', 'crm', 'hr', 'notes', 'meetings']).map((a) => a.id)).toEqual(['teamwork', 'finance', 'engage', 'hr', 'ai']);
+    expect(installedApps(['kernel', 'finance', 'social', 'crm', 'hr', 'notes', 'meetings', 'projects']).map((a) => a.id)).toEqual(['teamwork', 'finance', 'engage', 'hr', 'ai']);
     expect(TOP_ITEMS.map((i) => i.to)).toEqual(['/o/$slug/overview']);
     expect(BELL_ITEM?.to).toBe('/o/$slug/notifications');
     expect(ADMIN_ITEMS.map((i) => i.to)).toEqual(['/o/$slug/settings']);

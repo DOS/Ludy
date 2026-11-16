@@ -283,11 +283,13 @@ import {
   zHrEmployeeErased,
   zHrEmployeeList,
   zHrEmployeeRef,
+  zHrEmployeeSeveranceAsk,
+  zHrEmployeeSeveranceResult,
   zHrEmployeeSummary,
   zHrEmploymentAdd,
   zHrWritten,
 } from './hr.ts';
-import { zPayrollSettlement, zPayrollSettlementRef, zHrCoworkerAsk, zHrCoworkerExplained, zHrCoworkerFlagged, zHrCoworkerPayslipAsk, zHrCoworkerPrepared, zHrLineAdjust, zHrLineInputsSet, zHrPayslip, zHrPaymentRequest, zHrPostingRequest, zHrPayslipRef, zHrRunApprove, zHrRunImportTimekeeping, zHrRunList, zHrRunOpen, zHrRunRecalculate, zHrRunRef, zHrRunSheet, zHrRunSummary, zHrRunWritten } from './hr-payroll.ts';
+import { zPayrollSettlement, zPayrollSettlementRef, zHrCoworkerAsk, zHrCoworkerExplained, zHrCoworkerFlagged, zHrCoworkerPayslipAsk, zHrCoworkerPrepared, zHrLineAdjust, zHrLineInputsSet, zHrPayslip, zHrPaymentRequest, zHrPostingRequest, zHrPayslipRef, zHrRunApplyThirteenthMonth, zHrRunApprove, zHrRunImportTimekeeping, zHrRunList, zHrRunOpen, zHrRunRecalculate, zHrRunRef, zHrRunSheet, zHrRunSummary, zHrRunThirteenthMonthPreview, zHrRunWritten, zHrThirteenthMonthPreviewResult } from './hr-payroll.ts';
 import { zHrBankTemplate, zHrBankTemplateCreate, zHrBankTemplateEdit, zHrBankTemplateList, zHrBankTemplateRef, zHrBankTemplateWritten } from './hr-bank-template.ts';
 import {
   zNote,
@@ -421,6 +423,23 @@ import {
   zMeetingHookWithSecret,
   zMeetingHooksSwitch,
 } from './meeting-hook.ts';
+import {
+  zProjectArchive,
+  zProjectBoard,
+  zProjectBoardInput,
+  zProjectCandidateTask,
+  zProjectCreate,
+  zProjectDetail,
+  zProjectListInput,
+  zProjectListResult,
+  zProjectMemberMutate,
+  zProjectSetOwner,
+  zProjectSetStatus,
+  zProjectStatus,
+  zProjectTaskCreate,
+  zProjectTaskMutate,
+  zProjectUpdate,
+} from './projects.ts';
 import { zFollowupDraft, zFollowupSendCall, zFollowupSent, zFollowupWording, zFollowupWordingAsk } from './meeting-followup.ts';
 import { zChatChannelList, zChatChannelRemove, zChatChannelRemoved, zChatChannelSaveCall, zChatChannelSaved, zChatEmpty, zChatPostCall, zChatPosted, zChatPreview, zChatStatus, zChatStatusInput } from './meeting-chat.ts';
 import { zExtensionOrgToken, zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked, zExtensionTokenRevokedMember } from './extension.ts';
@@ -864,6 +883,7 @@ export const contract = {
         end: oc.input(zHrEmployeeEnd).output(zHrWritten),
         // An owner's erasure of an ended employee after the retention: shreds the person's key (R3).
         erase: oc.input(zHrEmployeeRef).output(zHrEmployeeErased),
+        severance: oc.input(zHrEmployeeSeveranceAsk).output(zHrEmployeeSeveranceResult),
       },
       // The saved layouts of the banks' bulk-salary files (#2893), owners and admins: list, create, edit and delete; the export applies one.
       bankTemplates: {
@@ -882,6 +902,8 @@ export const contract = {
         open: oc.input(zHrRunOpen).output(zHrRunWritten),
         recalculate: oc.input(zHrRunRecalculate).output(zHrRunWritten),
         importTimekeeping: oc.input(zHrRunImportTimekeeping).output(zHrRunWritten),
+        thirteenthMonthPreview: oc.input(zHrRunThirteenthMonthPreview).output(zHrThirteenthMonthPreviewResult),
+        applyThirteenthMonth: oc.input(zHrRunApplyThirteenthMonth).output(zHrRunWritten),
         approve: oc.input(zHrRunApprove).output(zHrRunWritten),
       },
       // Where the posting and the payments of an approved month stand, for its card (#2532): from the books and the open proposals, no person and no amount; owners and admins.
@@ -2627,6 +2649,23 @@ export const contract = {
       .output(z.object({ taskId: zId })),
     comment: oc.input(z.object({ id: zId, body: z.string().trim().min(1).max(10000), idempotencyKey: zId })).output(z.object({ commentId: zId })),
     setStatus: oc.input(z.object({ id: zId, status: zTaskStatus, idempotencyKey: zId })).output(z.object({ taskId: zId, status: zTaskStatus })),
+  },
+  // Projects and a task board on kernel tasks (#2591, ADR-0048). Off-switchable via CROVE_MODULES.
+  projects: {
+    list: oc.input(zProjectListInput).output(zProjectListResult),
+    get: oc.input(z.strictObject({ id: zId })).output(zProjectDetail),
+    board: oc.input(zProjectBoardInput).output(zProjectBoard),
+    unassignedTasks: oc.input(z.strictObject({})).output(z.array(zProjectCandidateTask)),
+    create: oc.input(zProjectCreate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId })),
+    update: oc.input(zProjectUpdate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId })),
+    setStatus: oc.input(zProjectSetStatus.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, status: zProjectStatus })),
+    archive: oc.input(zProjectArchive.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, status: z.literal('archived') })),
+    setOwner: oc.input(zProjectSetOwner.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, ownerUserId: zId })),
+    addMember: oc.input(zProjectMemberMutate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, userId: zId, added: z.boolean() })),
+    removeMember: oc.input(zProjectMemberMutate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, userId: zId, removed: z.boolean() })),
+    addTask: oc.input(zProjectTaskMutate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, taskId: zId, added: z.boolean() })),
+    removeTask: oc.input(zProjectTaskMutate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, taskId: zId, removed: z.boolean() })),
+    createTask: oc.input(zProjectTaskCreate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, taskId: zId })),
   },
 };
 

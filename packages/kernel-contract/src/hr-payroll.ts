@@ -4,7 +4,7 @@
 // changes; an approved one never does (a correction is an adjustment line in a later run). Owners and admins only, and every read is a sensitive query.
 import { z } from 'zod';
 import { zAccountCode, zCashVoucherProposal, zId, zJournalVoucherProposal, zLocalDate } from './schemas.ts';
-import { zHrWage } from './hr.ts';
+import { zHrLaborRuleRef, zHrWage } from './hr.ts';
 
 export const HR_RUN_STATUSES = ['draft', 'approved', 'paid', 'closed'] as const;
 export type HrRunStatus = (typeof HR_RUN_STATUSES)[number];
@@ -83,6 +83,62 @@ export const zHrRunImportTimekeeping = z.strictObject({
     .refine((rows) => new Set(rows.map((r) => r.lineId)).size === rows.length, { message: 'duplicate lineId' }),
 });
 export type HrRunImportTimekeeping = z.input<typeof zHrRunImportTimekeeping>;
+// Prorated 13th-month salary preview & batch apply onto draft pay lines' `inputs.bonus` (#3375, plan section 7 & rows 3, 11).
+export const zHrWorkedMonths = z.union([
+  z.number().finite().min(0).max(12).refine((n) => /^\d+(\.\d{1,2})?$/.test(String(n)), 'workedMonths 0..12 with at most 2 decimals'),
+  z.string().trim().regex(/^(?:1[01](?:\.\d{1,2})?|12(?:\.0{1,2})?|[0-9](?:\.\d{1,2})?)$/, 'workedMonths 0..12'),
+]);
+export type HrWorkedMonths = z.infer<typeof zHrWorkedMonths>;
+
+export const zHrRunThirteenthMonthPreview = z.strictObject({
+  runId: zId,
+  year: z.number().int().min(2020).max(2100).optional(),
+  minDaysForMonth: z.number().int().min(1).max(31).default(15),
+  rows: z
+    .array(z.strictObject({ lineId: zId, workedMonths: zHrWorkedMonths }))
+    .max(200)
+    .refine((rows) => new Set(rows.map((r) => r.lineId)).size === rows.length, { message: 'duplicate lineId' })
+    .optional(),
+});
+export type HrRunThirteenthMonthPreview = z.input<typeof zHrRunThirteenthMonthPreview>;
+
+export const zHrThirteenthMonthPreviewRow = z.object({
+  lineId: zId,
+  employeeId: zId,
+  employeeName: z.string(),
+  baseWage: z.string(),
+  hireDate: z.string(),
+  endedOn: z.string().nullable(),
+  workedMonths: z.string(),
+  amount: z.string(),
+  existingBonus: z.string(),
+});
+export type HrThirteenthMonthPreviewRow = z.infer<typeof zHrThirteenthMonthPreviewRow>;
+
+export const zHrThirteenthMonthPreviewResult = z.object({
+  runId: zId,
+  year: z.number().int(),
+  minDaysForMonth: z.number().int(),
+  rows: z.array(zHrThirteenthMonthPreviewRow),
+  totalAmount: z.string(),
+  rulesUsed: z.array(zHrLaborRuleRef),
+});
+export type HrThirteenthMonthPreviewResult = z.infer<typeof zHrThirteenthMonthPreviewResult>;
+
+export const HR_THIRTEENTH_MONTH_MODES = ['replace', 'add'] as const;
+export type HrThirteenthMonthMode = (typeof HR_THIRTEENTH_MONTH_MODES)[number];
+
+export const zHrRunApplyThirteenthMonth = z.strictObject({
+  runId: zId,
+  year: z.number().int().min(2020).max(2100),
+  mode: z.enum(HR_THIRTEENTH_MONTH_MODES).default('replace'),
+  rows: z
+    .array(z.strictObject({ lineId: zId, workedMonths: zHrWorkedMonths }))
+    .min(1)
+    .max(200)
+    .refine((rows) => new Set(rows.map((r) => r.lineId)).size === rows.length, { message: 'duplicate lineId' }),
+});
+export type HrRunApplyThirteenthMonth = z.input<typeof zHrRunApplyThirteenthMonth>;
 // Approving is R3 (a fresh second factor). `fingerprint` is the one the sheet showed: if the figures have changed since, the approval is refused and the person looks again.
 // `acceptFlags` says the person has seen the lines whose checks failed (the minimum wage, the cap on deductions, the monthly overtime cap).
 export const zHrRunApprove = z.strictObject({ runId: zId, fingerprint: z.string().regex(/^[0-9a-f]{64}$/), acceptFlags: z.boolean().default(false) });
@@ -142,7 +198,7 @@ export type HrRunSummary = z.infer<typeof zHrRunSummary>;
 
 // What the calculator's check says (the minimum wage, the cap on deductions), and the flags the sheet raises beside the figures: a failed check, a refused month, a person hired
 // or leaving this month (their days not employed are typed by the person).
-export const HR_LINE_FLAGS = ['check_minimum_wage', 'check_deduction_cap', 'check_overtime_cap', 'refused', 'new_hire', 'ends_this_month', 'fixed_term_months_missing', 'net_below_minimum'] as const;
+export const HR_LINE_FLAGS = ['check_minimum_wage', 'check_deduction_cap', 'check_overtime_cap', 'refused', 'new_hire', 'ends_this_month', 'fixed_term_months_missing', 'net_below_minimum', 'severance_check'] as const;
 export type HrLineFlag = (typeof HR_LINE_FLAGS)[number];
 
 export const zHrCheck = z.object({ id: z.enum(['minimum_wage', 'deduction_cap', 'overtime_cap']), ok: z.boolean(), actual: z.string(), limit: z.string() });

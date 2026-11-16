@@ -25,18 +25,22 @@ import {
   zHrEmployeeEnd,
   zHrEmployeeList,
   zHrEmployeeRef,
+  zHrEmployeeSeveranceAsk,
   zHrEmploymentAdd,
   zHrFinalizationSet,
+  zHrPayrollInputs,
   type HrDependentView,
   type HrEmployee,
   type HrEmployeeErased,
+  type HrEmployeeSeveranceResult,
   type HrEmployeeSummary,
   type HrEmploymentView,
   type HrWritten,
 } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
-import { isBankCode } from '@crove/l10n-vn';
+import { calculateSeveranceAllowance, countCompletedCalendarMonths, isBankCode, money, sum, toMoney } from '@crove/l10n-vn';
 import { hrManifest } from './manifest.ts';
+import { isoDate as iso, monthEnd, previousMonth, termsInForceForMonth } from './payroll-dates.ts';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 const OWNERS: readonly MemberRole[] = ['owner'];
@@ -66,8 +70,6 @@ const erasedError = () => new DomainError('HR_EMPLOYEE_ERASED', 409, 'Hồ sơ n
 
 // Today as a date in Vietnam (UTC+7), the day an employment's start is compared with.
 export const vietnamDay = (now: Date): string => new Date(now.getTime() + 7 * 3_600_000).toISOString().slice(0, 10);
-
-const iso = (value: Date | string): string => (typeof value === 'string' ? value : value.toISOString().slice(0, 10));
 
 type Ctx = CommandContext;
 
@@ -531,6 +533,22 @@ const termsView = (r: TermsRow): HrEmploymentView => ({
 // The terms in force on a day: the newest row that starts on or before it, in a list sorted newest first.
 const inForce = (terms: readonly HrEmploymentView[], day: string): HrEmploymentView | null => terms.find((t) => t.effectiveFrom <= day) ?? null;
 
+function recentCompletedMonths(endedOn: string, count: number): string[] {
+  const endMonth = endedOn.slice(0, 7);
+  let cursor = endedOn === monthEnd(endMonth) ? endMonth : previousMonth(endMonth);
+  const months: string[] = [];
+  for (let i = 0; i < count; i += 1) {
+    months.push(cursor);
+    cursor = previousMonth(cursor);
+  }
+  return months.reverse();
+}
+
+function baseWageInForceForMonth(termsAsc: readonly { effective_from: Date | string; base_wage: string }[], month: string): string {
+  const matched = termsInForceForMonth(termsAsc, month) ?? termsAsc[0];
+  return matched ? matched.base_wage : '0';
+}
+
 export const employeeList = defineQuery({
   name: 'hr.payroll.employee.list',
   input: zHrEmployeeList,
@@ -661,5 +679,103 @@ export const employeeGet = defineQuery({
   },
 });
 
+export const employeeSeverance = defineQuery({
+  name: 'hr.payroll.employee.severance',
+  input: zHrEmployeeSeveranceAsk,
+  access: MANAGERS,
+  sensitive: true,
+  target: targetOf,
+  handler: async (ctx, input): Promise<HrEmployeeSeveranceResult> => {
+    const e = await ctx.trx
+      .selectFrom('crove_hr.payroll_employee')
+      .select(['id', 'legal_entity_id', 'status', 'ended_on', 'erased_at'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.employeeId)
+      .executeTakeFirst();
+    if (!e) throw notFound();
+    if (e.erased_at !== null) throw erasedError();
+    const termsAsc = await ctx.trx
+      .selectFrom('crove_hr.payroll_employment')
+      .select(['effective_from', 'base_wage'])
+      .where('org_id', '=', ctx.orgId)
+      .where('employee_id', '=', e.id)
+      .orderBy('effective_from', 'asc')
+      .execute();
+    const first = termsAsc[0];
+    if (!first) throw notFound();
+    const hireDate = iso(first.effective_from);
+    const today = vietnamDay(new Date());
+    const effectiveEndedOn =
+      input.endedOn !== undefined
+        ? input.endedOn
+        : e.ended_on !== null
+          ? iso(e.ended_on)
+          : today < hireDate
+            ? hireDate
+            : today;
+    if (effectiveEndedOn < hireDate) {
+      throw new DomainError('HR_END_BEFORE_START', 422, 'Ngày nghỉ việc không thể trước ngày bắt đầu làm việc');
+    }
+    const totalWorkedMonths = input.totalWorkedMonths ?? countCompletedCalendarMonths(hireDate, effectiveEndedOn);
+    const unemploymentInsuredMonths = input.unemploymentInsuredMonths ?? 0;
+    const priorSettledMonths = input.priorSettledMonths ?? 0;
+    const terminationReason = input.terminationReason ?? 'contract_expired';
+
+    const wageMonthsCount = totalWorkedMonths >= 6 ? 6 : Math.max(1, totalWorkedMonths);
+    const months = recentCompletedMonths(effectiveEndedOn, wageMonthsCount);
+    const payLines = await ctx.trx
+      .selectFrom('crove_hr.payroll_line as l')
+      .innerJoin('crove_hr.payroll_run as r', (join) => join.onRef('r.org_id', '=', 'l.org_id').onRef('r.id', '=', 'l.run_id'))
+      .select(['r.month', 'l.inputs'])
+      .where('l.org_id', '=', ctx.orgId)
+      .where('r.legal_entity_id', '=', e.legal_entity_id)
+      .where('l.employee_id', '=', e.id)
+      .where('l.kind', '=', 'pay')
+      .where('r.status', '!=', 'draft')
+      .where('r.month', 'in', months)
+      .execute();
+    const allowancesByMonth = new Map<string, string>();
+    for (const line of payLines) {
+      const parsed = zHrPayrollInputs.parse(line.inputs ?? {});
+      const named = parsed.allowances.filter((a) => a.namedInContract).map((a) => a.amount);
+      allowancesByMonth.set(line.month, toMoney(sum(named)));
+    }
+    const sixMonthWages = months.map((month) => {
+      const baseWage = baseWageInForceForMonth(termsAsc, month);
+      const allowanceTotal = allowancesByMonth.get(month) ?? '0';
+      return toMoney(money(baseWage).plus(money(allowanceTotal)));
+    });
+    const calc = calculateSeveranceAllowance({
+      totalWorkedMonths,
+      unemploymentInsuredMonths,
+      priorSettledMonths,
+      sixMonthWages,
+      terminationReason,
+      ...(input.paidAmount !== undefined ? { paidAmount: input.paidAmount } : {}),
+    });
+    return {
+      employeeId: e.id,
+      status: e.status,
+      hireDate,
+      endedOn: effectiveEndedOn,
+      terminationReason,
+      totalWorkedMonths,
+      unemploymentInsuredMonths,
+      priorSettledMonths,
+      sixMonthWages,
+      qualifyingMonths: calc.qualifyingMonths,
+      qualifyingYears: calc.qualifyingYears,
+      averageWage: calc.averageWage,
+      eligible: calc.eligible,
+      reason: calc.reason,
+      amount: calc.amount,
+      paidAmount: calc.paidAmount,
+      pitExemptAmount: calc.pitExemptAmount,
+      taxableExcess: calc.taxableExcess,
+      rulesUsed: [...calc.rulesUsed],
+    };
+  },
+});
+
 export const hrEmployeeCommands = [employeeAdd, employeeEdit, employeeFinalizationSet, employmentAdd, employeeEnd, dependentAdd, dependentEnd, employeeErase];
-export const hrEmployeeQueries = [employeeList, employeeGet];
+export const hrEmployeeQueries = [employeeList, employeeGet, employeeSeverance];

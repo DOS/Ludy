@@ -201,6 +201,33 @@ export function DealForm({ deal, members, onDone, presetParty = null }: { deal: 
   );
 }
 
+// The hint of a deal whose customer was marked a duplicate (CRM-15, #3294): "Liên hệ này đã được đánh dấu trùng với <name>". An editor may move the
+// deal to the party that was kept with one click (`crm.deal.update`, nothing moves by itself); a viewer only reads the hint. Nothing shows for a
+// deal on a customer that is not a duplicate.
+export function DealPartyDuplicate({ deal, canEdit }: { deal: Deal; canEdit: boolean }) {
+  const t = useTranslations('deals');
+  const move = useMutation(orpc.crm.deals.update.mutationOptions({ onSuccess: refreshDeals, onError: refreshDeals }));
+  const keep = deal.partyDuplicateOf;
+  if (!keep) return null;
+  return (
+    <div data-testid="deal-party-duplicate" className="mt-1 space-y-1 text-xs">
+      <p className="text-muted-foreground">{t('duplicate.hint', { name: keep.name })}</p>
+      {canEdit && (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          loading={move.isPending}
+          onClick={() => move.mutate({ dealId: deal.id, version: deal.version, partyId: keep.id, title: deal.title, amount: deal.amount, expectedClose: deal.expectedClose, ownerUserId: deal.ownerUserId })}
+        >
+          {t('duplicate.move', { name: keep.name })}
+        </Button>
+      )}
+      {move.error && <ErrorText>{errorMessage(move.error)}</ErrorText>}
+    </div>
+  );
+}
+
 // The conversations of a deal's customer since the deal opened (#2333): channel, kind, status and last message time, with a
 // link into the Inbox thread. Message bodies stay in the Inbox and are never read or copied here.
 export function DealConversations({ dealId }: { dealId: string }) {
