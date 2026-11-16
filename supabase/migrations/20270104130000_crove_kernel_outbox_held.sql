@@ -4,11 +4,13 @@
 -- The relay claims an event (outbox_claim deletes its outbox_pending row) and queues its jobs in the same transaction. For an event of an org whose app is off the
 -- job would be refused and ended quietly, and the event lost. Instead the relay hands such an event to crove_kernel.outbox_hold, which parks its id here, and nothing is
 -- queued. The worker's held sweep asks, for each org and app with parked events, whether the app is on now (the choice and the entitlement, in TypeScript), and
--- crove_kernel.outbox_release puts the parked events back on outbox_pending, oldest first, so the relay takes them like any other. There is no expiry (ADR-0053
--- section 4: an event that nothing finds again is held, not dropped); the number of parked events per org and app is what outbox_hold_pairs answers, and the worker logs it.
--- The retention job leaves the day of a parked event unarchived-away: outbox_archive_purge answers -1 for it, as for one that still waits for the relay.
+-- crove_kernel.outbox_release puts the parked events back on outbox_pending, oldest first, so the relay takes them like any other. A parked event lives no longer than
+-- the outbox retention window (30 days at least, ADR-0053 section 4): the day's purge deletes it and its marker with the rest of the day, which the archive holds,
+-- and crove_kernel.outbox_held_expire, run just before it, tells the worker how many per app so it can log them (never an event). The app that was off recovers that
+-- work through its own sweeps on switch-on. outbox_release and outbox_archive_purge of one org run one after the other (a per-org transaction advisory lock), so a
+-- release never loses an event to the purge.
 --
--- All four functions are the worker's alone; they return ids and counts, never an event. The table has RLS on and no grant to any login role.
+-- All the functions are the worker's alone; they return ids and counts, never an event. The table has RLS on and no grant to any login role.
 SET LOCAL lock_timeout = '2s';
 
 CREATE TABLE IF NOT EXISTS crove_kernel.outbox_held (
@@ -70,6 +72,8 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM crove_kernel.tenant t WHERE t.org_id = p_org AND t.status = 'active') THEN
     RETURN 0;
   END IF;
+  -- One org's release and its day purge never run at once: the purge checks outbox_pending and deletes the day's events in several statements.
+  PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('crove_kernel.outbox:' || p_org::text, 0));
   WITH taken AS (
     DELETE FROM crove_kernel.outbox_held h
     WHERE h.org_id = p_org AND h.id IN (SELECT q.id FROM crove_kernel.outbox_held q WHERE q.org_id = p_org AND q.module = p_module ORDER BY q.id LIMIT p_limit FOR UPDATE SKIP LOCKED)
@@ -85,8 +89,33 @@ REVOKE ALL ON FUNCTION crove_kernel.outbox_hold(uuid[], uuid[], text[]), crove_k
   FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_kernel.outbox_hold(uuid[], uuid[], text[]), crove_kernel.outbox_hold_pairs(integer, uuid, text), crove_kernel.outbox_release(uuid, text, integer) TO crove_worker;
 
--- outbox_archive_purge of 20261028100000_crove_kernel_outbox_retention.sql, with one addition: the day of an event that waits while its app is off is not purged (-1, the
--- next run tries again), as the day of an event that waits for the relay is not.
+-- Deletes the markers of the events of one archived-or-due org day, the day being past the retention window, and answers how many per app, so the worker can log it. The
+-- events are archived away by the day's purge that follows, whole.
+CREATE OR REPLACE FUNCTION crove_kernel.outbox_held_expire(p_org_id uuid, p_day date, p_keep_days integer)
+RETURNS TABLE (module text, expired bigint) LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_from timestamptz := p_day::timestamp AT TIME ZONE 'UTC';
+  v_to timestamptz := (p_day + 1)::timestamp AT TIME ZONE 'UTC';
+BEGIN
+  PERFORM crove_kernel.archive_require_worker();
+  IF p_org_id IS NULL OR p_day IS NULL OR p_day >= crove_kernel.outbox_retention_cutoff(p_keep_days) THEN
+    RAISE EXCEPTION 'OUTBOX_DAY_TOO_RECENT' USING ERRCODE = '22023';
+  END IF;
+  PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('crove_kernel.outbox:' || p_org_id::text, 0));
+  RETURN QUERY
+    WITH gone AS (
+      DELETE FROM crove_kernel.outbox_held h
+      USING crove_kernel.outbox_event e
+      WHERE h.org_id = p_org_id AND e.org_id = h.org_id AND e.id = h.event_id AND e.created_at >= v_from AND e.created_at < v_to
+      RETURNING h.module
+    )
+    SELECT g.module, pg_catalog.count(*) FROM gone g GROUP BY g.module ORDER BY g.module;
+END $$;
+REVOKE ALL ON FUNCTION crove_kernel.outbox_held_expire(uuid, date, integer) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+GRANT EXECUTE ON FUNCTION crove_kernel.outbox_held_expire(uuid, date, integer) TO crove_worker;
+
+-- outbox_archive_purge of 20261028100000_crove_kernel_outbox_retention.sql, with two additions: it takes the org's lock, and it deletes the markers of the day's events
+-- first (an event that waits while its app is off is past the retention window by now, so it goes with its day; the archive holds it).
 CREATE OR REPLACE FUNCTION crove_kernel.outbox_archive_purge(p_org_id uuid, p_day date, p_keep_days int)
 RETURNS int
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
@@ -100,6 +129,7 @@ BEGIN
   IF p_day >= crove_kernel.outbox_retention_cutoff(p_keep_days) THEN
     RAISE EXCEPTION 'OUTBOX_DAY_TOO_RECENT' USING ERRCODE = '22023';
   END IF;
+  PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('crove_kernel.outbox:' || p_org_id::text, 0));
   SELECT * INTO v_archive FROM crove_kernel.outbox_archive a WHERE a.org_id = p_org_id AND a.day = p_day FOR UPDATE;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'OUTBOX_DAY_NOT_ARCHIVED' USING ERRCODE = '42501';
@@ -114,14 +144,9 @@ BEGIN
   ) THEN
     RETURN -1;
   END IF;
-  -- An event of the day that waits while its app is off is not archived away: it is still to be delivered (ADR-0053).
-  IF EXISTS (
-    SELECT 1 FROM crove_kernel.outbox_held h
-    JOIN crove_kernel.outbox_event e ON e.org_id = h.org_id AND e.id = h.event_id
-    WHERE h.org_id = p_org_id AND e.created_at >= v_from AND e.created_at < v_to
-  ) THEN
-    RETURN -1;
-  END IF;
+  -- An event of the day that waits while its app is off is past the retention window: its marker goes with the day (outbox_held_expire told the worker how many).
+  DELETE FROM crove_kernel.outbox_held h USING crove_kernel.outbox_event e
+  WHERE h.org_id = p_org_id AND e.org_id = h.org_id AND e.id = h.event_id AND e.created_at >= v_from AND e.created_at < v_to;
   PERFORM pg_catalog.set_config('crove.outbox_purge', p_org_id::text || ':' || p_day::text, true);
   DELETE FROM crove_kernel.outbox_event e WHERE e.org_id = p_org_id AND e.created_at >= v_from AND e.created_at < v_to;
   GET DIAGNOSTICS v_deleted = ROW_COUNT;

@@ -1,17 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The events of an app that is off wait and flow when it is back on (ADR-0053, slice c C3b), on PostgreSQL 17: a relay batch parks the events of an org whose app
-// is off on the claim's own transaction, the held sweep puts them back on the outbox oldest first once the app is on, a parked event older than the expiry is dropped,
-// one org's release leaves another's parked events alone, and only the worker may run the definers. Set CROVE_TEST_ADMIN_URL to a superuser URL.
+// is off on the claim's own transaction, the held sweep puts them back on the outbox oldest first once the app is on (its cursor goes on across sweeps, and an app switched on is
+// released at once for its org), one org's release leaves another's parked events alone, and the retention job drops a parked event with its day once the day is past the keep period
+// (a closed org's included, many held days included), one org's release and purge never overlapping. The definers' grants are test/invariant/outbox-held-definers.db.test.ts.
+// Set CROVE_TEST_ADMIN_URL to a superuser URL.
 import { randomUUID } from 'node:crypto';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sql } from 'kysely';
 import pg from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { buildKernelCommands, createOrg, kernelQueries, upsertIdentity } from '@crove/kernel';
 import { Runtime } from '@crove/kernel-runtime';
-import { holdEvents, planHolds, releaseHeld } from '../src/outbox-hold.ts';
+import { holdEvents, planHolds, releaseHeld, releaseHeldOfOrg } from '../src/outbox-hold.ts';
+import { archiveOutbox } from '../src/outbox-retention.ts';
+import { LocalArchiveStore } from '../src/worm.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -124,14 +131,14 @@ suite('parked events of an app that is off (ADR-0053, C3b)', () => {
     expect(again.rest.map((r) => r.event_id)).toEqual([e1, e2]);
   });
 
-  it('parks an event once, never drops a parked event however old, and leaves an org that is not active alone', async () => {
+  it('parks an event once, the sweep never drops a parked event however old, and leaves an org that is not active alone', async () => {
     const a = orgs[0] as string;
     const old = await emit(a, 'social.post.submitted');
     const fresh = await emit(a, 'social.post.submitted');
     const plan = await batch(new Set([`${a}:social`]));
     await workerDb.transaction().execute((trx) => holdEvents(trx, plan.held));
     expect(await held(a)).toEqual([old, fresh]);
-    // A year old and still waiting: there is no expiry.
+    // A year old and still waiting: the sweep does not expire it (the retention job does, with its day).
     await admin((c) => c.query("UPDATE crove_kernel.outbox_held SET held_at = now() - interval '365 days' WHERE event_id = $1", [old]));
     expect(await releaseHeld(workerDb, async () => false)).toMatchObject({ released: 0, waiting: 2 });
     expect(await held(a)).toEqual([old, fresh]);
@@ -160,44 +167,150 @@ suite('parked events of an app that is off (ADR-0053, C3b)', () => {
     await admin((c) => c.query('DELETE FROM crove_kernel.outbox_held'));
   });
 
-  it('keeps the retention job from archiving away the day of a parked event, and lets it once it is released', async () => {
-    const a = orgs[0] as string;
-    const id = await emit(a, 'social.post.submitted');
-    await batch(new Set([`${a}:social`]));
-    const day = '2020-01-01';
-    // An event of an old day, archived: the purge answers -1 while the event waits, as for one that waits for the relay.
+  // An event of the org on an old UTC day, as the relay would have left it parked (or pending), the way retention finds it.
+  async function oldEvent(org: string, day: string, parked: boolean): Promise<string> {
+    const id = await emit(org, 'social.post.submitted');
     await admin(async (c) => {
-      await c.query("ALTER TABLE crove_kernel.outbox_event DISABLE TRIGGER USER");
-      await c.query("UPDATE crove_kernel.outbox_event SET created_at = '2020-01-01T10:00:00Z' WHERE org_id = $1 AND id = $2", [a, id]);
-      await c.query("ALTER TABLE crove_kernel.outbox_event ENABLE TRIGGER USER");
-      await c.query("INSERT INTO crove_kernel.outbox_archive (org_id, day, object_key, sha256, row_count) VALUES ($1, $2, 'k', $3, 1)", [a, day, 'a'.repeat(64)]);
+      await c.query('ALTER TABLE crove_kernel.outbox_event DISABLE TRIGGER USER');
+      await c.query('UPDATE crove_kernel.outbox_event SET created_at = $3::timestamptz WHERE org_id = $1 AND id = $2', [org, id, `${day}T10:00:00Z`]);
+      await c.query('ALTER TABLE crove_kernel.outbox_event ENABLE TRIGGER USER');
+      if (parked) {
+        await c.query('DELETE FROM crove_kernel.outbox_pending WHERE org_id = $1 AND event_id = $2', [org, id]);
+        await c.query("INSERT INTO crove_kernel.outbox_held (org_id, event_id, module) VALUES ($1, $2, 'social')", [org, id]);
+      }
     });
-    const purge = () => workerDb.transaction().execute(async (trx) => (await sql<{ n: number }>`SELECT crove_kernel.outbox_archive_purge(${a}::uuid, ${day}::date, 30) AS n`.execute(trx)).rows[0]?.n);
-    expect(await purge()).toBe(-1);
-    await releaseHeld(workerDb, async () => true);
+    return id;
+  }
+  const eventCount = (org: string) => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*)::text AS n FROM crove_kernel.outbox_event WHERE org_id = $1', [org])).rows[0]?.n));
+  const store = () => new LocalArchiveStore(mkdtempSync(join(tmpdir(), 'outbox-held-archive-')));
+
+  it('drops a parked event with its day once the day is past the keep period, and logs how many per app and nothing of the event', async () => {
+    const a = orgs[0] as string;
     await admin((c) => c.query('DELETE FROM crove_kernel.outbox_pending'));
-    expect(await purge()).toBe(1);
+    const parked = await oldEvent(a, '2020-01-01', true);
+    const plain = await oldEvent(a, '2020-01-01', false);
+    await admin((c) => c.query('DELETE FROM crove_kernel.outbox_pending WHERE event_id = $1', [plain]));
+    expect(await held(a)).toEqual([parked]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const before = await eventCount(a);
+      const result = await archiveOutbox(workerDb, store());
+      // The parked event does not keep its day: both events of the day are archived and deleted, and its marker goes with it.
+      expect(result).toMatchObject({ archived: 1, purged: 2, deferred: 0 });
+      expect(await eventCount(a)).toBe(before - 2);
+      expect(await held(a)).toEqual([]);
+      const lines = warn.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('[outbox-retention]'));
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain(`org ${a} 2020-01-01: 1 parked events of social dropped`);
+      expect(lines[0]).not.toContain(parked);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
-  it('lets only the worker run the definers, and refuses a malformed call', async () => {
-    const fns = ['crove_kernel.outbox_hold(uuid[], uuid[], text[])', 'crove_kernel.outbox_hold_pairs(integer, uuid, text)', 'crove_kernel.outbox_release(uuid, text, integer)'];
-    const grantees = await admin(async (c) =>
-      (
-        await c.query<{ fn: string; grantees: string[] }>(
-          `SELECT f AS fn, COALESCE((SELECT array_agg(DISTINCT CASE WHEN x.grantee = 0 THEN 'PUBLIC' ELSE (SELECT r.rolname FROM pg_roles r WHERE r.oid = x.grantee)::text END)
-                                    FROM aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) x WHERE x.grantee <> p.proowner), '{}'::text[]) AS grantees
-           FROM unnest($1::text[]) f JOIN pg_proc p ON p.oid = f::regprocedure`,
-          [fns],
-        )
-      ).rows,
-    );
-    for (const g of grantees) expect(g.grantees, g.fn).toEqual(['crove_worker']);
-    await expect(appPool.query('SELECT * FROM crove_kernel.outbox_hold_pairs(10, NULL, NULL)')).rejects.toMatchObject({ code: '42501' });
-    await expect(workerPool.query('SELECT crove_kernel.outbox_hold(ARRAY[]::uuid[], ARRAY[gen_random_uuid()], ARRAY[]::text[])')).rejects.toMatchObject({ code: '22023' });
-    await expect(workerPool.query('SELECT crove_kernel.outbox_release(NULL, NULL, 10)')).rejects.toMatchObject({ code: '22023' });
-    await expect(workerPool.query('SELECT * FROM crove_kernel.outbox_hold_pairs(10, gen_random_uuid(), NULL)')).rejects.toMatchObject({ code: '22023' });
-    // The table itself is no login role's, and agents may not write it.
-    await expect(workerPool.query('SELECT * FROM crove_kernel.outbox_held')).rejects.toMatchObject({ code: '42501' });
-    await expect(appPool.query('SELECT * FROM crove_kernel.outbox_held')).rejects.toMatchObject({ code: '42501' });
+  it('retires the parked events of a closed org with its days, and a run with many held days purges all of them and defers none', async () => {
+    const [a, b] = orgs as [string, string];
+    await admin((c) => c.query('DELETE FROM crove_kernel.outbox_pending'));
+    await admin((c) => c.query("UPDATE crove_kernel.tenant SET status = 'closed' WHERE org_id = $1", [a]));
+    try {
+      const days = Array.from({ length: 12 }, (_, i) => `2019-03-${String(i + 1).padStart(2, '0')}`);
+      for (const day of days) {
+        await oldEvent(a, day, true);
+        await oldEvent(b, day, true);
+      }
+      expect((await held(a)).length).toBe(12);
+      const beforeA = await eventCount(a);
+      const beforeB = await eventCount(b);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        const result = await archiveOutbox(workerDb, store());
+        expect(result).toMatchObject({ archived: 24, purged: 24, deferred: 0 });
+      } finally {
+        warn.mockRestore();
+      }
+      expect(await eventCount(a)).toBe(beforeA - 12);
+      expect(await eventCount(b)).toBe(beforeB - 12);
+      expect(await held(a)).toEqual([]);
+      expect(await held(b)).toEqual([]);
+    } finally {
+      await admin((c) => c.query("UPDATE crove_kernel.tenant SET status = 'active' WHERE org_id = $1", [a]));
+    }
+  });
+
+  it('still defers the day of an event that waits for the relay, and refuses to expire the markers of a day inside the keep period', async () => {
+    const a = orgs[0] as string;
+    await admin((c) => c.query('DELETE FROM crove_kernel.outbox_pending'));
+    const waiting = await oldEvent(a, '2018-05-05', false);
+    expect(await pending()).toEqual([waiting]);
+    expect(await archiveOutbox(workerDb, store())).toMatchObject({ archived: 1, purged: 0, deferred: 1 });
+    await admin((c) => c.query('DELETE FROM crove_kernel.outbox_pending'));
+    expect(await archiveOutbox(workerDb, store())).toMatchObject({ purged: 1, deferred: 0 });
+    // A recent day is refused by the expiry whatever its markers say.
+    await expect(workerPool.query("SELECT * FROM crove_kernel.outbox_held_expire($1::uuid, current_date, 30)", [a])).rejects.toMatchObject({ code: '22023' });
+  });
+
+  it('runs one org\'s release and its day purge one after the other', async () => {
+    const a = orgs[0] as string;
+    await admin((c) => c.query('DELETE FROM crove_kernel.outbox_pending'));
+    await oldEvent(a, '2017-07-07', true);
+    const holder = new pg.Client({ connectionString: adminUrl });
+    await holder.connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query("SELECT pg_advisory_xact_lock(hashtextextended('crove_kernel.outbox:' || $1::text, 0))", [a]);
+      let released = false;
+      const release = workerPool.query("SELECT crove_kernel.outbox_release($1::uuid, 'social', 10)", [a]).then(() => {
+        released = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      expect(released).toBe(false);
+      await holder.query('COMMIT');
+      await release;
+      expect(released).toBe(true);
+    } finally {
+      await holder.end();
+    }
+    await admin((c) => c.query('DELETE FROM crove_kernel.outbox_pending'));
+  });
+
+  it('goes on across sweeps from where the last one stopped, wrapping to the start at the end, so no pair is left behind a page cap', async () => {
+    const [a, b] = orgs as [string, string];
+    await admin((c) => c.query('DELETE FROM crove_kernel.outbox_pending'));
+    await admin((c) => c.query('DELETE FROM crove_kernel.outbox_held'));
+    const ea = await emit(a, 'social.post.submitted');
+    const eb = await emit(b, 'social.post.submitted');
+    await batch(new Set([`${a}:social`, `${b}:social`]));
+    const [first, second] = [a, b].sort() as [string, string];
+    const seen: string[] = [];
+    const cursor = { after: null as { org: string; module: string } | null };
+    const limits = { pageSize: 1, maxPages: 1 };
+    // One pair per page and one page per sweep. The first sweep sees the first org only, while the app is off for both.
+    await releaseHeld(workerDb, async (org) => (seen.push(org), false), cursor, limits);
+    expect(seen).toEqual([first]);
+    // The next one goes on after it: the second org is reached and released (from the first page again it would see the first org only).
+    expect(await releaseHeld(workerDb, async (org) => (seen.push(org), org === second), cursor, limits)).toMatchObject({ released: 1, pairs: 1 });
+    expect(seen).toEqual([first, second]);
+    // Past the last pair the cursor wraps: an empty page, then the first page again.
+    expect(await releaseHeld(workerDb, async () => false, cursor, limits)).toMatchObject({ pairs: 0 });
+    expect(cursor.after).toBeNull();
+    expect(await releaseHeld(workerDb, async () => false, cursor, limits)).toMatchObject({ pairs: 1, waiting: 1 });
+    void ea;
+    void eb;
+    await admin((c) => c.query('DELETE FROM crove_kernel.outbox_pending'));
+    await admin((c) => c.query('DELETE FROM crove_kernel.outbox_held'));
+  });
+
+  it('puts back one org\'s parked events of an app that is on when that org switches an app on, and no other org\'s', async () => {
+    const [a, b] = orgs as [string, string];
+    await admin((c) => c.query('DELETE FROM crove_kernel.outbox_pending'));
+    const ea = await emit(a, 'social.post.submitted');
+    await emit(b, 'social.post.submitted');
+    await batch(new Set([`${a}:social`, `${b}:social`]));
+    expect(await releaseHeldOfOrg(workerDb, async () => false, a)).toBe(0);
+    expect(await releaseHeldOfOrg(workerDb, async () => true, a)).toBe(1);
+    expect(await pending()).toEqual([ea]);
+    expect((await held(b)).length).toBe(1);
+    await admin((c) => c.query('DELETE FROM crove_kernel.outbox_pending'));
+    await admin((c) => c.query('DELETE FROM crove_kernel.outbox_held'));
   });
 });

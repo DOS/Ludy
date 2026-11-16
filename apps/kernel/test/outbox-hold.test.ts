@@ -4,14 +4,29 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { NEVER_HELD_EVENTS, SELF_RECOVERING_EVENTS, heldAppOf, planHolds } from '../src/outbox-hold.ts';
+import { KERNEL_NOTIFYING_EVENTS } from '@crove/kernel';
+import { FINANCE_NOTIFYING_EVENTS } from '@crove/mod-finance';
+import { CHAT_ALERTING_EVENTS, NOTIFYING_EVENTS } from '@crove/mod-social';
 import { KEEPING_EVENT_COMMANDS } from '../src/worker.ts';
 
-// The kernel's own events the relay names, each consumed by a kernel job or command (conversations, sign-out, export, agents). A new kernel event must be added here, or
-// to the parked ones in heldAppOf when an app's job consumes it (as the two file events are Finance's extraction).
+// The kernel's own events the relay names, each consumed by a kernel job or command (conversations, sign-out, export, agents), or by a kernel step with an app's beside it that
+// is not parked (`kernel.channel.connected`: a bank connection starts the bank feed's sync, which has its daily sync, and Social's channel handling finds its own rows;
+// `kernel.channel.expired`: Social's notification, a kernel notification of the same event). A new kernel event must be added here, or to the parked ones in heldAppOf when an
+// app's job consumes it (as the two file events are Finance's extraction).
 const KERNEL_OWN = new Set([
   'kernel.agent.wakeup_requested',
   'kernel.channel.chat_queued',
   'kernel.channel.connected',
+  'kernel.channel.expired',
+  // The kernel's notifications and agent proposals (KERNEL_NOTIFYING_EVENTS and the proposal commands): the kernel's own consumers.
+  'kernel.file.read_failed',
+  'kernel.task.created',
+  'kernel.task.assigned',
+  'kernel.task.rerouted',
+  'kernel.personal_data.notified',
+  'kernel.proposal.original_flagged',
+  'kernel.agent.proposal_requested',
+  'kernel.agent.proposal_approved',
   'kernel.conversation.attachment_queued',
   'kernel.conversation.draft_queued',
   'kernel.conversation.hide_queued',
@@ -56,7 +71,11 @@ describe('which events wait', () => {
 
   it('classes every event type the relay names in worker.ts, so a new app consumer must say whether its events wait', () => {
     const source = readFileSync(new URL('../src/worker.ts', import.meta.url), 'utf8');
-    const types = [...new Set([...source.matchAll(/row\.type === '([a-z_.]+)'/g)].map((m) => m[1] as string))];
+    // The event types the relay names in its steps, and the ones it routes through a table: the notifications (the kernel's, Finance's and Social's), the team chat alerts and the
+    // agent proposal commands.
+    const routes = [...KERNEL_NOTIFYING_EVENTS, ...FINANCE_NOTIFYING_EVENTS, ...NOTIFYING_EVENTS, ...CHAT_ALERTING_EVENTS, 'kernel.agent.proposal_requested', 'kernel.agent.proposal_approved'];
+    expect(source).toContain("'kernel.agent.proposal_requested': 'kernel.agent.proposal.create'");
+    const types = [...new Set([...[...source.matchAll(/row\.type === '([a-z_.]+)'/g)].map((m) => m[1] as string), ...routes])];
     expect(types.length).toBeGreaterThan(30);
     const unclassed: string[] = [];
     for (const type of types) {

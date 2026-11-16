@@ -76,7 +76,7 @@ import { runAdsStateSync } from './ads-state.ts';
 import { runAdsPause, type AdsPauseJob } from './ads-pause.ts';
 import { runAdsRevoke } from './ads-revoke.ts';
 import { ADS_DUE_PAGE, adsDue, pruneAdsRuns, runAdsSync, type AdsSyncJob } from './ads-sync.ts';
-import { HELD_SWEEP_MS, holdEvents, planHolds, releaseHeld } from './outbox-hold.ts';
+import { HELD_SWEEP_MS, holdEvents, planHolds, releaseHeld, releaseHeldOfOrg, type SweepCursor } from './outbox-hold.ts';
 import { failUnaskable, runAdsCampaignDraft, sweepAdsCampaignRequests, type AdsCampaignDraftJob } from './ads-worker.ts';
 import { failUndraftable, requestDueConversationDrafts, sweepConversationComposing, sweepConversationDrafts, runConversationDraft, type ConversationDraftJob, dueConversationAttachments, dueConversationSync, failChatHook, failUnsendable, requestConversationAttachments, requestConversationSync, purgeExpiredConversations, runConversationAttachment, runConversationDeletions, runConversationIntake, runConversationJob, runConversationSync, runTelegramChatHook, sweepConversationBlobs, sweepStaleReplies, type ConversationAttachmentJob, type ConversationChatJob, type ConversationJob, type ConversationSyncJob } from './conversations-worker.ts';
 import { runLiveCheck } from './calendar-live.ts';
@@ -2650,6 +2650,11 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                   enqueueSeal: (orgId, envelopeId) => enqueueSignSeal(boss, orgId, envelopeId),
                 });
               }
+              // An app switched on (ADR-0053, C3b): the events parked while it was off go back on the outbox now, not when the held sweep comes round. A failure here is the sweep's to
+              // retry, so it never fails the relay step.
+              if (row.type === 'kernel.org.apps_changed' && row.payload.enabled === true) {
+                await releaseHeldOfOrg(deps.workerDb, (orgId, app) => deps.runtime.appOn(orgId, app, { fresh: true }), row.org_id).catch((error: unknown) => console.error('[relay] held release on apps_changed', error));
+              }
               // A bank feed connected, or an account of one mapped (ADR-0039, #2044): its sync lists the accounts and
               // pulls the mapped ones.
               if (
@@ -3096,11 +3101,12 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   // The held sweep (ADR-0053, C3b): the events parked while their app was off go back on the outbox once it is on, oldest first; one sweep at a time, none after stop.
   let releasing = false;
   let lastWaiting = 0;
+  const heldCursor: SweepCursor = { after: null };
   const heldSweep = async () => {
     if (releasing || stopped) return;
     releasing = true;
     try {
-      const done = await releaseHeld(deps.workerDb, (orgId, app) => deps.runtime.appOn(orgId, app, { fresh: true }));
+      const done = await releaseHeld(deps.workerDb, (orgId, app) => deps.runtime.appOn(orgId, app, { fresh: true }), heldCursor);
       // The number that wait is how an app left off for good shows: logged when it changes what is waiting, and when events go back.
       if (done.released > 0 || done.waiting !== lastWaiting) console.log(`[relay] held events: ${done.released} put back, ${done.waiting} still wait (${done.pairs} org and app pairs)`);
       lastWaiting = done.waiting;
