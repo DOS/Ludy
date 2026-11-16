@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // A record refused because its app went off after the platform call was made must fail loudly (ADR-0053, review F1 of C1): the ads were switched on, or the
 // invoice was issued, and nothing in Ludy would say so. The worker's quiet rule (a MODULE_OFF ends a job) must not match it, without a database.
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { DomainError, type Runtime } from '@crove/kernel-runtime';
 import type { AdActivator } from '@crove/ad-platform';
@@ -14,15 +15,15 @@ const off = (module: string) => new DomainError('MODULE_OFF', 404, 'off', { modu
 const ORG = '01900000-0000-7000-8000-000000000001';
 
 // What the worker does with a failed handler: the quiet rule of withJobLogContext, as pg-boss would see the result.
-async function quietRuleResult(queue: string, handler: () => Promise<unknown>): Promise<'resolved' | Error> {
+async function quietRuleResult(queue: string, handler: () => Promise<unknown>, retryCount = 0): Promise<'resolved' | Error> {
   let wrapped: ((jobs: unknown[]) => Promise<unknown>) | undefined;
   const boss = { work: async (_name: string, fn: (jobs: unknown[]) => Promise<unknown>) => void (wrapped = fn) };
-  withJobLogContext(boss);
+  withJobLogContext(boss, { loudOnRetryQueues: new Set(['kernel-ads-activate']) });
   await (boss.work as unknown as (n: string, f: unknown) => Promise<unknown>)(queue, handler);
   const silence = console.error;
   console.error = () => {};
   try {
-    await wrapped!([{ id: 'j', data: { orgId: ORG } }]);
+    await wrapped!([{ id: 'j', data: { orgId: ORG }, retryCount }]);
     return 'resolved';
   } catch (error) {
     return error as Error;
@@ -46,6 +47,27 @@ describe('recordAfterCall', () => {
     expect(result).toBe(error);
     // A refusal at the job's first gated call (nothing done yet) still ends quietly.
     expect(await quietRuleResult('kernel-ads-activate', async () => Promise.reject(off('ads')))).toBe('resolved');
+  });
+
+  it('keeps the retry of that job loud: its begin is refused with MODULE_OFF, and ending that quietly would leave one failed attempt as the only trace', async () => {
+    const begin = off('ads');
+    // The first attempt (retryCount 0): refused at begin, nothing was done, ends quietly. A retry (retryCount 1): the earlier attempt failed, so it fails again, to the dead letter queue.
+    expect(await quietRuleResult('kernel-ads-activate', async () => Promise.reject(begin), 0)).toBe('resolved');
+    expect(await quietRuleResult('kernel-ads-activate', async () => Promise.reject(begin), 1)).toBe(begin);
+    // A queue that is not named stays quiet on retries.
+    expect(await quietRuleResult('kernel-other', async () => Promise.reject(begin), 1)).toBe('resolved');
+  });
+
+  it('wraps the record of every runner that records after a platform call, and the worker asks those queues for metadata', () => {
+    for (const [file, name] of [['ads-activate.ts', 'ads.activate.record'], ['ads-launch.ts', 'ads.launch.record'], ['einvoice-issue-job.ts', 'finance.einvoice.job_record']] as const) {
+      const source = readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8');
+      expect(source, file).toContain(`recordAfterCall('${name}'`);
+    }
+    const worker = readFileSync(new URL('../src/worker.ts', import.meta.url), 'utf8');
+    for (const queue of ['einvoiceIssue', 'adsLaunch', 'adsActivate']) {
+      expect(worker, queue).toContain(`QUEUES.${queue}, { batchSize: 1, includeMetadata: true }`);
+      expect(worker, queue).toMatch(new RegExp(`loudOnRetryQueues: new Set<string>\\([^)]*QUEUES\\.${queue}`));
+    }
   });
 });
 

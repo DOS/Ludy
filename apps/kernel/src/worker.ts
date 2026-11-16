@@ -579,7 +579,12 @@ export async function sweepSocialPublishing(boss: PgBoss, workerDb: Db, provider
   };
   // The distinct orgs are asked together, so one port that hangs delays no more than its own timeout, not one wait per org.
   const candidates = rows.filter((r) => providers.has(r.provider));
-  const on = new Map(await Promise.all([...new Set(candidates.map((r) => r.org_id))].map(async (org) => [org, await orgOn(org)] as const)));
+  const distinct = [...new Set(candidates.map((r) => r.org_id))];
+  const on = new Map<string, boolean>();
+  // In small groups: a pass lists up to SOCIAL_SWEEP_LIMIT variants, and every org asked is a tenant read and a billing port call.
+  for (let i = 0; i < distinct.length; i += 20) {
+    await Promise.all(distinct.slice(i, i + 20).map(async (org) => void on.set(org, await orgOn(org))));
+  }
   const due = candidates.filter((r) => on.get(r.org_id) === true);
   await Promise.all(
     due.map((r) =>
@@ -733,7 +738,12 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   // Every job runs with its queue, its id and the org its payload names on its log lines (#2175).
   // The queues whose job runs a keeping duty (stop spend, revoke, retention, an AI agent's approval) are not ended quietly on MODULE_OFF: a refusal there
   // is a defect and fails loudly, retried and dead-lettered as before.
-  withJobLogContext(boss, { loudQueues: new Set<string>([QUEUES.adsPause, QUEUES.adsRevoke, QUEUES.notesMemberPurge, QUEUES.notesTrash, QUEUES.crmImportExpire, QUEUES.agentProposal]) });
+  withJobLogContext(boss, {
+    loudQueues: new Set<string>([QUEUES.adsPause, QUEUES.adsRevoke, QUEUES.notesMemberPurge, QUEUES.notesTrash, QUEUES.crmImportExpire, QUEUES.agentProposal]),
+    // The queues whose job makes a call at a platform or a provider and then records it (recordAfterCall): the first attempt may fail loudly on a refused record, and
+    // its retries then end loudly too, so the job reaches the dead letter queue and a person learns of it. Their work() asks for the job's metadata (retryCount).
+    loudOnRetryQueues: new Set<string>([QUEUES.adsLaunch, QUEUES.adsActivate, QUEUES.einvoiceIssue]),
+  });
   boss.on('error', (error) => console.error('[pg-boss]', error));
   await boss.start();
 
@@ -1388,7 +1398,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   const einvoiceProviders = deps.channels?.einvoiceProviders;
   const einvoiceBroker = deps.channels?.broker;
   if (finance && einvoiceProviders && einvoiceBroker && Object.keys(einvoiceProviders).length > 0) {
-    await boss.work<EInvoiceIssueJob | { sweep: true }>(QUEUES.einvoiceIssue, { batchSize: 1 }, async ([job]) => {
+    await boss.work<EInvoiceIssueJob | { sweep: true }>(QUEUES.einvoiceIssue, { batchSize: 1, includeMetadata: true }, async ([job]) => {
       if (!job) return;
       if ('sweep' in job.data) {
         let after: { orgId: string; draftId: string } | null = null;
@@ -1509,7 +1519,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   // only where ADS_LIVE_LAUNCH is on; a provider without one has its launches left queued, untouched. Every object the job creates is paused.
   const adWriters = deps.channels?.adWriters;
   if (ads && adWriters && adsBroker && Object.keys(adWriters).length > 0) {
-    await boss.work<AdsLaunchJob | { sweep: true }>(QUEUES.adsLaunch, { batchSize: 1 }, async ([job]) => {
+    await boss.work<AdsLaunchJob | { sweep: true }>(QUEUES.adsLaunch, { batchSize: 1, includeMetadata: true }, async ([job]) => {
       if (!job) return;
       if ('sweep' in job.data) {
         const { rows } = await sql<{ n: number }>`SELECT crove_ads.launch_requeue(${Object.keys(adWriters)}::text[], 200) AS n`.execute(deps.workerDb);
@@ -1551,7 +1561,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   // conditions, the plan and the caps before every call). The job switches the launch's own objects on with the credential of the write connection, and nothing else.
   const adActivators = deps.channels?.adActivators;
   if (ads && adActivators && adsBroker && Object.keys(adActivators).length > 0) {
-    await boss.work<AdsActivateJob | { sweep: true }>(QUEUES.adsActivate, { batchSize: 1 }, async ([job]) => {
+    await boss.work<AdsActivateJob | { sweep: true }>(QUEUES.adsActivate, { batchSize: 1, includeMetadata: true }, async ([job]) => {
       if (!job) return;
       if ('sweep' in job.data) {
         const { rows } = await sql<{ n: number }>`SELECT crove_ads.activate_requeue(${Object.keys(adActivators)}::text[], 200) AS n`.execute(deps.workerDb);

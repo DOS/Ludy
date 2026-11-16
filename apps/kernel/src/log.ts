@@ -196,7 +196,7 @@ type WorkFunction = (name: string, ...rest: unknown[]) => Promise<string>;
  * Wraps `boss.work` so each job's handler runs in a log context: the queue, the job's id (when it comes one at a time) and
  * the org its payload names. Call it once, right after creating the queue client, before any `work` registration.
  */
-export function withJobLogContext(boss: WorkerLike, options: { loudQueues?: ReadonlySet<string> } = {}): void {
+export function withJobLogContext(boss: WorkerLike, options: { loudQueues?: ReadonlySet<string>; loudOnRetryQueues?: ReadonlySet<string> } = {}): void {
   const original = (boss.work as WorkFunction).bind(boss);
   (boss as { work: WorkFunction }).work = (name, ...rest) => {
     const handler = rest.at(-1);
@@ -214,7 +214,10 @@ export function withJobLogContext(boss: WorkerLike, options: { loudQueues?: Read
             // An app that is off for the org (ADR-0053, MODULE_OFF) is its state, not a failure: the job ends, no retry, no dead letter, no stack
             // trace. One line a minute per queue and module says so (ids only, never the payload).
             const off = moduleOffOf(error);
-            if (off !== null && !options.loudQueues?.has(name)) {
+            // A retry of a job whose earlier attempt failed (a record refused after the platform call, which the first attempt rethrew loudly) is loud too: its
+            // begin is refused with MODULE_OFF, and ending that quietly would leave the one failed attempt as the only trace. Needs the queue's work() to ask for metadata.
+            const retried = single && options.loudOnRetryQueues?.has(name) === true && Number((first as { retryCount?: unknown } | undefined)?.retryCount ?? 0) > 0;
+            if (off !== null && !options.loudQueues?.has(name) && !retried) {
               noteSkippedJob(name, off, orgId);
               return undefined;
             }
