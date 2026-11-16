@@ -1809,6 +1809,10 @@ export const conversationReplyRecord = defineCommand({
   target: (input) => ({ type: 'kernel.conversation_message', id: input.messageId }),
   handler: async (ctx, input): Promise<{ state: string }> => {
     requireSystem(ctx);
+    // A YouTube reply adds to the connection's quota under its row's lock (countYoutubeReplyUnits). The erase of a channel locks the channel's row and
+    // then deletes its messages, so this takes the two in the same order (channel, then message) for YouTube: otherwise the two could wait for each other.
+    const own = await ctx.trx.selectFrom('crove_kernel.conversation_message').select('channel_connection_id').where('org_id', '=', ctx.orgId).where('id', '=', input.messageId).executeTakeFirst();
+    if (own && (await youtubeQuotaRow(ctx, own.channel_connection_id, false))?.provider === 'youtube') await youtubeQuotaRow(ctx, own.channel_connection_id, true);
     const message = await lockMessage(ctx, input.messageId);
     const current = replyCallKey(message.id, message.send_attempt);
     const { result } = input;

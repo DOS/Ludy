@@ -4,7 +4,7 @@
 // is still connected and then erases its conversations), and it asks for a fresh second factor before anything changes: the channel stays as it was
 // while the prompt is open, a cancelled prompt changes nothing, and the retry after the second factor is the same call with the same key.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import { client, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { DisconnectView } from './social-channel-disconnect-view.tsx';
@@ -15,6 +15,16 @@ export function ChannelDisconnectConfirm({ connectionId, onDone, onKeep }: { con
   const [erase, setErase] = useState(false);
   // One key per confirmed attempt, kept across the step-up retry, so a lost answer is retried to the same result.
   const [attempt] = useState(() => crypto.randomUUID());
+  // What the second factor prompt may still start: the erasure is permanent, so a prompt the person cancelled, a box they unticked or a confirmation they left
+  // (the prompt's verified callback can arrive after any of these) must not run it. Read at the moment the callback fires.
+  const mayRun = useRef(true);
+  const eraseOn = useRef(false);
+  useEffect(() => {
+    mayRun.current = true;
+    return () => {
+      mayRun.current = false;
+    };
+  }, []);
   const counts = useQuery({ ...orpc.conversations.channelCounts.queryOptions({ input: { connectionId } }), enabled: erase });
   const run = useMutation({
     mutationFn: async () => {
@@ -31,15 +41,35 @@ export function ChannelDisconnectConfirm({ connectionId, onDone, onKeep }: { con
     <DisconnectView
       erase={erase}
       onErase={(on) => {
+        eraseOn.current = on;
         setErase(on);
         run.reset();
       }}
       counts={counts.data ?? null}
       countsFailed={counts.isError}
       pending={run.isPending}
-      onConfirm={() => run.mutate()}
-      onKeep={onKeep}
-      stepUp={stepUp ? <StepUpPrompt action={t('eraseStepUp')} onVerified={() => run.mutate()} onCancel={() => run.reset()} /> : null}
+      onConfirm={() => {
+        mayRun.current = true;
+        run.mutate();
+      }}
+      onKeep={() => {
+        mayRun.current = false;
+        onKeep();
+      }}
+      stepUp={
+        stepUp ? (
+          <StepUpPrompt
+            action={t('eraseStepUp')}
+            onVerified={() => {
+              if (mayRun.current && eraseOn.current) run.mutate();
+            }}
+            onCancel={() => {
+              mayRun.current = false;
+              run.reset();
+            }}
+          />
+        ) : null
+      }
       error={run.error && !stepUp ? errorMessage(run.error) : null}
     />
   );
