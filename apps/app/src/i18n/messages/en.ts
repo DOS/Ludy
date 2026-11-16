@@ -6907,7 +6907,7 @@ export const en = {
     title: 'Quick guide',
     subtitle: 'Three steps to record purchase invoices: upload, approve and export to Excel. The guide is in Vietnamese.',
     crmTitle: 'CRM guide',
-    crmSubtitle: 'Contacts, importing them from a file, and following deals on the board. The steps are in Vietnamese.',
+    crmSubtitle: 'Contacts, importing them from a file, following deals on the board, then quotes, orders and invoices. The steps are in Vietnamese.',
     firmTitle: 'Guide for accounting firms',
     firmSubtitle:
       "One client company's month in {brand}: add the client, take in and approve invoices, bank and cash, period close, the VAT return and handing the figures to the firm's accounting software. The steps are in Vietnamese.",

@@ -1,15 +1,15 @@
 # CRM lát cắt 2: báo giá và đơn bán từ cơ hội: tóm tắt cho JOY
 
-Xong (bản nháp để anh xem, chưa xây gì). Viết ngày 2026-11-06 cho issue #2690, theo quyết định của anh trong cuộc trò chuyện với PO Engage cùng ngày. Bản đầy đủ bằng tiếng Anh, có bảng dữ liệu, các bước và nguồn, là bản chính: [crm-quotes.md](crm-quotes.md). Trang này trả lời câu CRM-Q3 trong [crm.vi.md](crm.vi.md) ("cơ hội thắng thì có nên có nút tạo hóa đơn?") và khoảng trống số một trong [competitors.vi.md](../product/competitors.vi.md).
+**Đã xây xong và có trong `main` (cập nhật ngày 2026-11-16, issue #3479).** Trang này viết ngày 2026-11-06 cho issue #2690, theo quyết định của anh trong cuộc trò chuyện với PO Engage cùng ngày, khi còn là kế hoạch; mục "Tình hình xây" bên dưới nói đã làm tới đâu. Bản đầy đủ bằng tiếng Anh, có bảng dữ liệu, các bước và nguồn, là bản chính: [crm-quotes.md](crm-quotes.md). Trang này trả lời câu CRM-Q3 trong [crm.vi.md](crm.vi.md) ("cơ hội thắng thì có nên có nút tạo hóa đơn?") và khoảng trống số một trong [competitors.vi.md](../product/competitors.vi.md).
 
-Đây là kế hoạch thiết kế. Không có giá, ngày giao hay lời hứa nào với khách. Muốn xây thì anh duyệt, rồi PO mở issue theo danh sách bước.
+Các bước dưới đây đã được xây theo đúng kế hoạch này. Không có giá, ngày giao hay lời hứa nào với khách trong trang này. Hướng dẫn cho người dùng nằm trong ứng dụng, mục Hướng dẫn, "Bước 4" (lập báo giá) và "Bước 5" (gửi, ghi nhận trả lời, đơn hàng, hóa đơn, giao hàng).
 
 ## Làm được gì sau lát cắt này
 
 Hiện nay cơ hội trong Ludy dừng ở chỗ hóa đơn bắt đầu: người bán gõ báo giá bằng Word hoặc Zalo, rồi gõ lại lần nữa khi làm hóa đơn. Sau lát cắt này, một công ty một người hoặc đội nhỏ làm được trong Ludy Engage (nhóm Khách hàng & Bán hàng):
 
 1. **Tạo báo giá từ cơ hội** bằng một cú nhấp: khách và tên cơ hội đã điền sẵn; dòng hàng gõ tay, chép từ báo giá cũ, hoặc để Dy gợi ý từ cuộc trò chuyện; tổng tiền và VAT do mã tính, không do người gõ.
-2. **Gửi báo giá**, luôn do một người bấm gửi: dưới dạng đường dẫn trong cuộc trò chuyện Zalo hoặc Messenger của khách, hoặc qua email (kèm PDF), bằng tiếng Việt, có thông tin của chính công ty.
+2. **Gửi báo giá**, luôn do một người bấm gửi: dưới dạng đường dẫn trong cuộc trò chuyện Zalo hoặc Messenger của khách, hoặc qua email (kèm PDF của đúng bản đã gửi; nếu chưa tạo được PDF thì thư vẫn đi với đường dẫn và nói rõ là không có tệp), bằng tiếng Việt, có thông tin và logo của chính công ty.
 3. **Ghi nhận khách đồng ý hoặc từ chối**; khi đồng ý, **đơn bán** được tạo ngay trong cùng một cú nhấp.
 4. **Trên đơn đã xác nhận, bấm "Lập hóa đơn"**: Kế toán tạo bản nháp hóa đơn điện tử từ các dòng của đơn (cả đơn, hoặc từng dòng khi giao hàng từng phần), các dòng đã có sẵn, để không ai gõ một lần bán hai lần. Phát hành vẫn do Kế toán duyệt.
 5. **Đánh dấu một dòng đã giao**: kho chỉ trừ khi hàng rời đi, không trừ khi xác nhận đơn.
@@ -42,25 +42,29 @@ Rút ra:
 - **Dy** (đồng nghiệp AI của hộp thư, khách hàng và bán hàng) giúp ở một chỗ: **gợi ý dòng hàng** khi người dùng bấm. Dy đọc cơ hội, tin nhắn gần đây của khách (chỉ khi tổ chức cho phép AI đọc lời khách) và các báo giá cũ. Gợi ý không được lưu: người dùng áp dụng, sửa hoặc bỏ từng dòng. Mã kiểm tra: mọi con số Dy nêu phải có trong nguồn; giá nào nguồn không có thì để trống; VAT ngoài danh sách bị từ chối; tổng do mã tính. Dy không bao giờ gửi, không ghi đồng ý, không tạo đơn. Mỗi lần gọi mô hình đi qua đồng hồ ngân sách AI; tắt AI thì trình soạn vẫn dùng bình thường.
 - **Bàn giao sang Kế toán và kho** (theo quan điểm của PO Kế toán đăng trên issue #2690 ngày 2026-11-06): Engage không bao giờ ghi vào bảng của Kế toán. Kế toán tự tạo nháp hóa đơn bằng lệnh riêng khi người dùng bấm "Lập hóa đơn" trên **đơn đã xác nhận**, không bao giờ từ báo giá. Đơn mang theo: pháp nhân, người mua (tên, mã số thuế hoặc không có nếu là khách lẻ, địa chỉ, email nhận hóa đơn), tiền tệ, các dòng (mã mặt hàng nếu có, hoặc chữ; đơn vị, số lượng, đơn giá, chiết khấu, VAT, tất cả là chuỗi thập phân), số và ngày đơn. Không có khóa ngoại nào đi qua lược đồ khác: id của đơn chính là tham chiếu nguồn của dòng nháp. Có thể lập hóa đơn cả đơn hoặc từng dòng; dòng đã lập thì lần hai bị từ chối. Bản nháp tự kiểm tra lại mọi thứ nhận vào. Phát hành vẫn cần Kế toán duyệt (chủ hoặc quản trị, hai người). `{finance}` có thể gợi ý VAT và thông tin người mua trên bản nháp nhưng không bao giờ sửa đơn.
 - **Giao hàng và kho:** kho chỉ di chuyển khi hàng rời đi, không phải khi xác nhận đơn (cùng quy tắc với nhập đơn từ sàn). Trong Engage người dùng đánh dấu một dòng **đã giao**; lệnh này ghi việc giao rồi chạy lệnh kho của Kế toán với dòng đơn làm nguồn. Giao hai lần không trừ kho hai lần; dòng dịch vụ không trừ kho; trả hàng đảo lại qua cùng đường. Hai lệnh không chung một giao dịch nên dòng có thể hiện "Chưa ghi kho" kèm nút thử lại an toàn. Màn đơn hàng gọi hai lệnh của Kế toán chỉ khi bạn bấm và chỉ khi có module Kế toán: "Lập hóa đơn" bỏ qua dòng có chiết khấu (hiện tên dòng), kho ghi ngay sau khi bấm "Đã giao" hoặc "Hoàn giao".
-- Cần thêm một ADR ngắn cho hợp đồng này, viết ở đầu bước Q4 sau khi PO Kế toán trả lời các câu hỏi bên dưới.
+- Hợp đồng này nằm trong [ADR-0050](../adr/0050-quote-acceptance-sales-order-and-accounting-handoff.md), viết ở đầu bước Q4 sau khi PO Kế toán trả lời các câu hỏi bên dưới; trạng thái của nó được làm mới ngày 2026-11-16 (đã xây).
 
 ## Các bước xây (mỗi bước một PR đầy đủ, ưu tiên P2)
 
-| Bước | Làm gì | Bảo vệ (security review) |
-|---|---|---|
-| Q1 | Dữ liệu báo giá và trình soạn: tạo từ cơ hội, dòng hàng, chép từ báo giá cũ, giá bán gần nhất, hàm tính tổng dùng chung | có (migration) |
-| Q2 | Gửi bằng đường dẫn trong cuộc trò chuyện và bằng email; trang công khai in được; theo dõi lần mở đầu tiên | có (migration, trang công khai) |
-| Q3 | PDF phía máy chủ, phông tiếng Việt, đính kèm email | có (đường gửi thư). PO Engage chọn tự viết bộ ghi PDF nhỏ, không thêm thư viện; phông Be Vietnam Pro (giấy phép OFL) nằm trong repo kèm nguồn |
-| Q4 | Ghi nhận đồng ý hoặc từ chối, tạo đơn, nút "Lập hóa đơn" trên đơn đã xác nhận (kèm phần Kế toán, do dòng Kế toán làm) | có |
-| Q4b | Đánh dấu dòng đã giao và ghi kho (kèm lệnh kho của Kế toán) | có |
-| Q5 | Dy gợi ý dòng hàng | không |
-| Q6 | Nhắc theo dõi báo giá chưa trả lời hoặc sắp hết hạn, tab báo cáo "Báo giá", kiểm thử toàn luồng, hướng dẫn | có (một migration nhỏ: thêm hai lý do nhắc) |
+| Bước | Làm gì | Bảo vệ (security review) | Trạng thái (2026-11-16) |
+|---|---|---|---|
+| Q1 | Dữ liệu báo giá và trình soạn: tạo từ cơ hội, dòng hàng, chép từ báo giá cũ, giá bán gần nhất, hàm tính tổng dùng chung | có (migration) | Đã vào `main` (#2693, PR #2710) |
+| Q2 | Gửi bằng đường dẫn trong cuộc trò chuyện và bằng email; trang công khai in được; theo dõi lần mở đầu tiên | có (migration, trang công khai) | Đã vào `main` (#2694, PR #2817); thông tin người bán được chụp lại lúc gửi (#2826, PR #2833); logo trên đầu báo giá (#2814, PR #2858) |
+| Q3 | PDF phía máy chủ, phông tiếng Việt, đính kèm email | có (đường gửi thư). PO Engage chọn tự viết bộ ghi PDF nhỏ, không thêm thư viện; phông Be Vietnam Pro (giấy phép OFL) nằm trong repo kèm nguồn | Tải PDF đã vào `main` (#2695, PR #2823); **thư báo giá đã kèm PDF** (#3418, PR #3470) |
+| Q4 | Ghi nhận đồng ý hoặc từ chối, tạo đơn, nút "Lập hóa đơn" trên đơn đã xác nhận (kèm phần Kế toán, do dòng Kế toán làm) | có | Đã vào `main`: phía CRM (#2696, PR #2830), phía Kế toán (#2818, PR #2844), nút trên màn đơn hàng (PR #2881) |
+| Q4b | Đánh dấu dòng đã giao và ghi kho (kèm lệnh kho của Kế toán) | có | Đã vào `main` (#2697, PR #2839 cho phía CRM, PR #2881 cho màn hình gọi lệnh kho) |
+| Q5 | Dy gợi ý dòng hàng | không | Đã vào `main` (#2698, PR #2812) |
+| Q6 | Nhắc theo dõi báo giá chưa trả lời hoặc sắp hết hạn, tab báo cáo "Báo giá", kiểm thử toàn luồng, hướng dẫn | có (một migration nhỏ: thêm hai lý do nhắc) | Đã vào `main` (#2699, PR #2829); hướng dẫn thêm "Bước 5" cho phần gửi, đơn hàng, hóa đơn và giao hàng (#3479) |
 
-Tình hình xây (2026-11-08): Q1 và Q5 đã vào main. Q6 đang làm phần chỉ cần main (nhắc theo dõi: báo giá gửi 5 ngày chưa trả lời, hoặc còn hiệu lực từ 3 ngày trở xuống; tab báo cáo "Báo giá"; hướng dẫn; kiểm tra khung gợi ý bằng axe); kiểm thử toàn luồng chờ Q2 và Q4.
+Làm thêm sau các bước trên, đều đã vào `main`: Dy soạn lời nhắc cho báo giá chưa được trả lời (#3101, PR #3107); sau khi gửi hoặc ghi nhận khách đồng ý, đầu thẻ báo giá của cơ hội gợi ý chuyển cơ hội sang giai đoạn "Báo giá" hoặc "Thắng" và đặt giá trị cơ hội bằng tổng báo giá, mỗi gợi ý chỉ chạy khi người dùng bấm (#3420, PR #3464, luật cố định, không gọi mô hình AI).
+
+Tình hình xây (2026-11-16): cả sáu bước và phần Kế toán đều đã có trong `main`. Còn lại, đã có issue riêng: màn đơn hàng chưa cho thấy từng dòng đã lập hóa đơn hay chưa, và chưa tắt nút hủy khi đơn có dòng đã lập nháp (#3477, cần một câu đọc mới của Kế toán, đang chờ PO Kế toán xác nhận hình dạng). Điểm A7 (hủy đơn đúng lúc có người lập hóa đơn) vẫn mở; #3477 chỉ làm nhẹ bớt, không đóng nó.
 
 Chưa làm, để Icebox (P3) trừ khi anh mở lại: khách tự đồng ý trên đường dẫn, ngưỡng chiết khấu cần người duyệt, ngôn ngữ thứ hai, dòng tùy chọn, chọn hàng từ danh mục kho, giao một phần số lượng của dòng, chứng từ giao hàng và vận chuyển, một cú nhấp "xác nhận và lập hóa đơn", mã QR hoặc link thanh toán trên báo giá.
 
 ## Câu hỏi cho anh (JOY): mỗi câu một quyết định
+
+*Cập nhật 2026-11-16: bốn câu dưới đây đã được trả lời và đã xây đúng theo khuyến nghị: người ghi nhận việc khách đồng ý (O1), không cần người duyệt chiết khấu (O2), đường dẫn trước rồi PDF (O3), hai bước xác nhận rồi lập hóa đơn (O4). Giữ lại để thấy lý do.*
 
 1. **O1. Khách có được tự bấm "Đồng ý" trên đường dẫn báo giá không, hay luôn do một người ghi nhận?** Khuyến nghị: người ghi nhận, trong lát cắt này. Người bán Việt thường chốt trong Zalo hoặc Messenger; một nút công khai tạo cam kết cần security review và quy tắc chống lạm dụng riêng, có thể làm sau khi đã dùng báo giá. Nếu không trả lời: người ghi nhận.
 2. **O2. Chiết khấu trên một mức nào đó có cần người thứ hai duyệt không?** Khuyến nghị: không. Công ty một người không có người thứ hai; ngưỡng do chủ đặt có thể thêm sau cho đội. Nếu không trả lời: không duyệt, thành viên nào cũng được chiết khấu.
@@ -69,6 +73,8 @@ Chưa làm, để Icebox (P3) trừ khi anh mở lại: khách tự đồng ý t
 4. **O4. Có nên cho người bán nhỏ một cài đặt "xác nhận đơn và lập hóa đơn luôn" chỉ bằng một cú nhấp không?** (Điểm PO Kế toán để mở cho anh.) Khuyến nghị: chưa, trong lát cắt đầu giữ hai bước (xác nhận, rồi "Lập hóa đơn"), như PO Kế toán; cài đặt tắt mặc định có thể thêm sau khi đã dùng đơn. Nếu không trả lời: hai bước.
 
 ## Câu hỏi còn lại cho PO Kế toán: mỗi câu một quyết định
+
+*Cập nhật 2026-11-16: PO Kế toán đã xác nhận A1 đến A6 ngày 2026-11-08 (ghi trong ADR-0050) và phần Kế toán đã xây (#2818). Chỉ còn A7 mở: hủy đơn đúng lúc có người lập hóa đơn, và việc xóa dữ liệu cá nhân của khách trên đơn. A2 vẫn đúng như đã viết: dòng có chiết khấu chưa vào được hóa đơn cho đến khi kế toán đọc xong nghị định (#2506).*
 
 PO Kế toán đã chốt: ai tạo nháp, khi nào, đơn mang gì, ai phát hành, khi nào kho di chuyển. Còn mở:
 
