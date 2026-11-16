@@ -293,6 +293,23 @@ suite('deleting a disconnected channel\'s conversations too on PostgreSQL (#3299
       }
     });
 
+    it('refuses a connection that is not a conversation channel (ads, bank feed, e-invoice, marketplace), with a 422 and nothing changed', async () => {
+      const o = await org();
+      await thread(o, 'n-1', 'Giữ lại', 'u-n1');
+      // A connection of a provider the conversation core has no rules for, in the same org, active with a sealed token.
+      const accountId = `ads-${randomUUID().slice(0, 8)}`;
+      const [ads] = await rows<{ id: string }>(
+        `INSERT INTO crove_kernel.channel_connection (org_id, provider, external_account_id, display_name, status, connected_by, connected_at, updated_at)
+         SELECT $1, 'meta_ads', $2, 'Tài khoản quảng cáo', 'active', $3, now(), now() RETURNING id`,
+        [o.orgId, accountId, o.owner],
+      );
+      await expect(eraseAs(o, (ads as { id: string }).id, asMfa(o.owner))).rejects.toMatchObject({ status: 422, code: 'CHANNEL_NOT_CONVERSATIONAL' });
+      // It was not disconnected, and the org's conversations are untouched.
+      expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.channel_connection WHERE id = $1', [(ads as { id: string }).id]))[0]?.status).toBe('active');
+      expect(await threads(o)).toEqual(['n-1']);
+      expect(await rows("SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.channel.disconnect' AND outcome = 'ok'", [o.orgId])).toHaveLength(0);
+    });
+
     it('changes nothing when the channel cannot be disconnected (a Telegram bot that still receives chats), and erases an expired channel', async () => {
       const o = await org();
       await thread(o, 'p-1', 'Một', 'u-p1');

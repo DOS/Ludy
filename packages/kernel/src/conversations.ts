@@ -2863,12 +2863,15 @@ export const conversationEraseChannel = defineCommand({
     requireUser(ctx);
     const connection = await ctx.trx
       .selectFrom('crove_kernel.channel_connection')
-      .select('status')
+      .select(['status', 'provider'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
       .forUpdate()
       .executeTakeFirst();
     if (!connection) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
+    // Only a conversation channel: an ads, bank feed, e-invoice, marketplace or email connection has no conversations to erase here, and this R3 command
+    // must not disconnect one. Refused before anything changes.
+    if (!conversationRules(connection.provider)) throw new DomainError('CHANNEL_NOT_CONVERSATIONAL', 422, 'Kết nối này không phải kênh trò chuyện với khách');
     if (connection.status !== 'revoked') await ctx.run('kernel.channel.disconnect', { connectionId: input.connectionId });
     const erased = await eraseConnectionConversations(ctx, input.connectionId);
     ctx.audit({ connection_id: input.connectionId, threads: erased.threads, messages: erased.messages, identities: erased.identities });

@@ -11579,6 +11579,7 @@ export const vi = {
       SLOT_KEPT_FOR_LABEL: 'Khung giờ này dành cho bài có nhãn riêng; hãy gắn nhãn đó cho bài hoặc chọn khung giờ khác',
       CHANNEL_NOT_FOUND: 'Không tìm thấy kênh đã kết nối này',
       CHANNEL_NOT_ACTIVE: 'Kênh này không còn hoạt động, hãy kết nối lại',
+      CHANNEL_NOT_CONVERSATIONAL: 'Kết nối này không phải kênh khách nhắn tin, nên không có cuộc trò chuyện để xóa',
       CHANNEL_OWNER_LEFT: 'Người đã kết nối kênh này không còn quyền quản lý kênh, hãy kết nối lại',
       CHAT_BUSY: 'Đang tắt nhận tin nhắn, hãy thử lại sau ít giây',
       CHAT_IS_ON: 'Hãy tắt nhận tin nhắn của khách trước, để gỡ webhook ở Telegram, rồi mới ngắt kết nối kênh này',
