@@ -434,6 +434,9 @@ export const projectWeeklyStatusSendMail = defineCommand({
   target: projectTarget,
   handler: async (ctx, input): Promise<ProjectWeeklyStatusSendMailResult> => {
     const userId = userOf(ctx.actor);
+    // Hold a shared per-org mail advisory lock before locking the project row so concurrent PDPL erasure
+    // either finishes first (before this command reads project.name) or rejects cleanly with PERSONAL_DATA_BUSY.
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended(${`projects.weekly_mail:${ctx.orgId}`}, 0))`.execute(ctx.trx);
     // Lock crove_projects.project FOR UPDATE before reading recipients and counts so concurrent
     // projects.task.add/remove or member changes serialize behind this send (#2609).
     const project = await loadProject(ctx.trx, ctx.orgId, input.projectId, true);

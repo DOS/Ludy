@@ -1304,6 +1304,13 @@ export const personalDataErase = defineCommand({
       add('crove_kernel.task.title', tasks.filter((t) => t.title).length);
       add('crove_kernel.task.description', tasks.filter((t) => t.description).length);
 
+      // Take the exclusive advisory lock paired with projects.weekly_status.send_mail's shared lock before dropping weekly mails and redacting projects:
+      // a concurrent send_mail either committed before this lock or sees redacted project text after it; if one is mid-flight, fail fast with PERSONAL_DATA_BUSY.
+      const { rows: mailLock } = await sql<{ ok: boolean }>`
+        SELECT pg_catalog.pg_try_advisory_xact_lock(pg_catalog.hashtextextended(${`projects.weekly_mail:${ctx.orgId}`}, 0)) AS ok`.execute(ctx.trx);
+      if (mailLock[0]?.ok !== true) {
+        throw new DomainError('PERSONAL_DATA_BUSY', 409, 'Một báo cáo tuần dự án đang được gửi cùng lúc; hãy thử lại sau ít phút');
+      }
       // Project weekly status mails that quote the person directly or belong to a project whose name or description quoted them (#2609):
       // drop payload and subject before redacting crove_projects.project so source_id matches still see unredacted project text.
       const { rows: droppedWeekly } = await sql<{ status: string }>`

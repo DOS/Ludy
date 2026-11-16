@@ -850,5 +850,22 @@ suite('projects P6 share_note & send_mail (#2609)', () => {
     ).rows[0]!;
     expect(eraseAudit.detail).toMatchObject({ project_weekly_mails: 1 });
     expect(JSON.stringify(eraseAudit)).not.toContain(projectEmail);
+
+    // A concurrent send_mail holding the shared projects.weekly_mail advisory lock causes personal_data.erase to fail cleanly with PERSONAL_DATA_BUSY rather than missing in-flight mail rows.
+    const lockClient = await pool.connect();
+    try {
+      await lockClient.query('BEGIN');
+      await lockClient.query('SELECT pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended($1, 0))', [`projects.weekly_mail:${org.orgId}`]);
+      await expect(
+        rt.execute(
+          'kernel.personal_data.erase',
+          { value: 'concurrent.check@share.test' },
+          { actor: asMfa(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() },
+        ),
+      ).rejects.toMatchObject({ code: 'PERSONAL_DATA_BUSY', status: 409 });
+      await lockClient.query('COMMIT');
+    } finally {
+      lockClient.release();
+    }
   });
 });
