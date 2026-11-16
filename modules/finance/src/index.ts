@@ -17,7 +17,7 @@ import { salesNumberGapsQuery, vatDeclarationQuery, vatExport, vatPaymentMark, v
 import { ledgerAccountQuery, ledgerBookQuery, ledgerExport, ledgerPeriodQuery } from './ledger-reports.ts';
 import { portalListImport, portalListReconcile, portalListRecord, portalListRemove, portalListSource } from './portal-list.ts';
 import { portalSyncCommands, portalSyncQueries } from './portal-sync.ts';
-import { bankImport, bankIngest, bankLines, bankPreview } from './bank.ts';
+import { bankImport, bankIngest, bankLines, bankPlatformLines, bankPreview } from './bank.ts';
 import { bankAccountNumberCommands, bankAccountNumberQueries } from './bank-account-number.ts';
 import { bankFeedCommands, bankFeedQueries } from './bank-feed.ts';
 import { bankStatementConfirm, bankStatementLines, bankStatementReject, bankStatementStage } from './bank-statement-file.ts';
@@ -238,6 +238,7 @@ export const financeQueries = [
   bookEntitiesList,
   bankPreview,
   bankLines,
+  bankPlatformLines,
   bankLineVoucher,
   bankSuggestions,
   bankPayrollMatch,

@@ -301,6 +301,41 @@ export function documentCounts(documents: readonly RecordedDocument[], provider:
   return counts;
 }
 
+interface PlatformBankLine {
+  id: string;
+  bankAccount: string;
+  date: string;
+  description: string;
+  amount: string;
+}
+
+// One month's bank and card lines that name the platform (slice D2) and what they paid in all: money out is a negative
+// amount on a statement, so the total is the money out less any money back (a refund), positive when more went out.
+export interface BankMonth<L extends PlatformBankLine> {
+  month: string;
+  lines: L[];
+  paid: string;
+}
+
+// The lines of the platform grouped by the month of their date, newest month first and, in a month, the order given.
+// A line counts when its description holds one of the platform's names as whole words (the rule of the seller names of
+// the documents), so a line the server's coarser read returned for another reason is left out. Exact decimals, no JS numbers.
+export function bankLinesByMonth<L extends PlatformBankLine>(lines: readonly L[], provider: string): BankMonth<L>[] {
+  const byMonth = new Map<string, { lines: L[]; units: bigint }>();
+  for (const line of lines) {
+    if (!sellerIsPlatform(provider, line.description)) continue;
+    const month = line.date.slice(0, 7);
+    const entry = byMonth.get(month) ?? { lines: [], units: 0n };
+    entry.lines.push(line);
+    entry.units -= toUnits(line.amount);
+    byMonth.set(month, entry);
+  }
+  return [...byMonth.entries()].sort(([a], [b]) => (a < b ? 1 : a > b ? -1 : 0)).map(([month, e]) => ({ month, lines: e.lines, paid: fromUnits(e.units) }));
+}
+
+// The bank screen at the account and month of a line (its route reads ?account= and ?month=).
+export const bankLineSearch = (line: { bankAccount: string; date: string }): { account: string; month: string } => ({ account: line.bankAccount, month: line.date.slice(0, 7) });
+
 // The platform's spend less the books' expense: positive when the platform reports more than the books hold. Shown as it
 // is, never explained away.
 export function booksDifference(platformSpend: string, books: string): string {

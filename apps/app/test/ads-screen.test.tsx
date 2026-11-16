@@ -1464,6 +1464,87 @@ describe('the books strip', () => {
       expect(Object.keys(viMessages.ads.books).sort()).toEqual(Object.keys(en.ads.books).sort());
     });
   });
+  // The bank and card lines that paid the platform (slice D2): finance.bank.platform_lines for the days of the months with
+  // spend, in the account's legal entity. September and November have spend, October has none.
+  describe('the bank and card lines', () => {
+    const bankLine = (id: string, date: string, description: string, amount: string, bankAccount = '1121') => ({ id, bankAccount, date, description, amount, state: { status: 'open' } });
+    const seeded = { '2026-09': ledger('12000000.0000'), '2026-11': ledger('2000000.0000') };
+    const bankKey = (legalEntityId = 'e1', terms: string[] = ['Sandbox Ads']) => ['bank', 'platformLines', { legalEntityId, from: '2026-09-01', to: '2026-11-30', terms }];
+    const seedLines = (lines: readonly unknown[], truncated = false, legalEntityId = 'e1') => {
+      client.current.setQueryData(bankKey(legalEntityId), { from: '2026-09-01', to: '2026-11-30', lines, truncated });
+    };
+    const reset = () => client.current.removeQueries({ queryKey: ['bank', 'platformLines'] });
+
+    it('lists each month’s lines with their date, account, amount and a link to the bank screen, and their total beside the spend', () => {
+      seedLines([bankLine('b1', '2026-09-30', 'SANDBOX ADS 1234 CARD', '-3000000'), bankLine('b2', '2026-09-02', 'Sandbox Ads Pte', '-1000000'), bankLine('b3', '2026-10-05', 'Sandbox Ads', '-400000')]);
+      const html = strip(vnd, seeded);
+      expect(html).toContain(`>${en.ads.bankLines.title}<`);
+      // September: two lines paid 4,000,000 against the 12,000,000 the platform reports.
+      expect(html).toMatch(/2 lines, paid[^<]*4[.,]000[.,]000/);
+      expect(html).toMatch(/The platform reports[^<]*12[.,]000[.,]000/);
+      expect(html).toContain('>SANDBOX ADS 1234 CARD<');
+      expect(html).toContain('href="/o/acme/bank"');
+      // October has a line and no spend, so it is not listed; November has spend and no line, and says so.
+      expect(html).not.toContain('>Sandbox Ads<');
+      expect(html.match(new RegExp(`>${en.ads.bankLines.none}<`, 'g'))).toHaveLength(1);
+      expect(html).toContain('never categorizes, matches or posts one');
+    });
+
+    it('nets a refund in the month’s total', () => {
+      seedLines([bankLine('b1', '2026-09-03', 'Sandbox Ads', '-500000'), bankLine('b2', '2026-09-10', 'Sandbox Ads refund', '100000')]);
+      expect(strip(vnd, seeded)).toMatch(/2 lines, paid[^<]*400[.,]000/);
+    });
+
+    it('says it is looking while the lines load, and marks no month as having none yet', () => {
+      reset();
+      const html = strip(vnd, seeded);
+      expect(html).toContain(en.ads.bankLines.checking);
+      expect(html).not.toContain(en.ads.bankLines.none);
+    });
+
+    it('marks no month as having none from a full page of lines, which may have left some out, and says so', () => {
+      seedLines([], true);
+      const html = strip(vnd, seeded);
+      expect(html).not.toContain(`>${en.ads.bankLines.none}<`);
+      expect(html).toContain('More than 500 lines name the platform');
+    });
+
+    it('lists the lines of an account in dollars with their total in dong, and puts no figure beside them and shows no difference', () => {
+      seedLines([bankLine('b1', '2026-09-03', 'Sandbox Ads', '-2500000')]);
+      const html = strip({ ...vnd, currency: 'USD' }, seeded);
+      expect(html).toContain(`>${en.ads.bankLines.title}<`);
+      expect(html).toMatch(/1 line, paid[^<]*2[.,]500[.,]000/);
+      expect(html).toContain('the exchange rate and the card’s fee make the two figures differ');
+      expect(html).not.toContain('The platform reports');
+      expect(html).not.toContain('<table');
+      expect(html).not.toContain(`>${en.ads.books.difference}<`);
+    });
+
+    it('follows the account’s legal entity', () => {
+      reset();
+      seedLines([bankLine('b1', '2026-09-03', 'Sandbox Ads', '-2500000')], false, 'e2');
+      expect(strip(vnd, seeded)).toContain(en.ads.bankLines.checking);
+      expect(strip({ ...vnd, legalEntityId: 'e2' }, seeded)).toContain('1 line, paid');
+    });
+
+    it('leaves the section out where the strip does not compare, for a platform with no names, and where finance is off', () => {
+      reset();
+      expect(strip({ ...vnd, provider: 'other_ads' }, seeded)).not.toContain(en.ads.bankLines.title);
+      expect(strip({ ...vnd, expenseAccountCode: null })).not.toContain(en.ads.bankLines.title);
+      expect(strip(vnd, {}, false)).toBe('');
+    });
+
+    it('has the same words in Vietnamese, in the same keys, and writes no tax figure', () => {
+      seedLines([bankLine('b1', '2026-09-03', 'Sandbox Ads', '-2500000')]);
+      strip(vnd, seeded);
+      const html = render(<AdsBooksStrip account={vnd} slug="acme" months={months} todayMonth="2026-11" financeOn />, 'vi');
+      expect(html).toContain(`>${viMessages.ads.bankLines.title}<`);
+      expect(html).toMatch(/1 dòng, đã trả[^<]*2[.,]500[.,]000/);
+      expect(html).toContain(`>${viMessages.ads.bankLines.none}<`);
+      expect(html).not.toMatch(/VAT|GTGT/);
+      expect(Object.keys(viMessages.ads.bankLines).sort()).toEqual(Object.keys(en.ads.bankLines).sort());
+    });
+  });
 });
 
 describe('Google Ads connection, short refresh-token warning, and 7-day comparison note (#2220)', () => {

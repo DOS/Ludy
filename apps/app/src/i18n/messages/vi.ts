@@ -5179,6 +5179,19 @@ export const vi = {
       documentsHint:
         'Đếm hóa đơn và biên lai đã ghi sổ của pháp nhân này, theo tháng của ngày chứng từ, có người bán mang tên như nền tảng. {brand} chỉ đếm: không viết chứng từ và không ghi bút toán.',
     },
+    bankLines: {
+      title: 'Dòng ngân hàng và thẻ đã trả cho nền tảng',
+      caption: 'Các dòng sao kê của pháp nhân này, ở bất kỳ tài khoản ngân hàng hay thẻ nào, có mô tả mang tên nền tảng, cùng số đã trả trong tháng.',
+      captionForeign: 'Các dòng sao kê của pháp nhân này có mô tả mang tên nền tảng, cùng số đã trả bằng đồng trong tháng. Tài khoản quảng cáo tính bằng {currency}.',
+      none: 'Chưa có dòng ngân hàng hay thẻ nào',
+      summary: '{count, number} dòng, đã trả {paid}.',
+      platform: 'Nền tảng báo {spend}.',
+      checking: 'Đang tìm các dòng…',
+      failed: 'Chưa đọc được các dòng sao kê: {reason}',
+      foreignNote: 'Tài khoản quảng cáo tính bằng {currency} còn sao kê tính bằng đồng: tỷ giá và phí thẻ làm hai số khác nhau, nên không đặt cạnh nhau và không cho thấy chênh lệch.',
+      tooMany: 'Có hơn {count, number} dòng mang tên nền tảng trong các tháng này, nên không tháng nào bị đánh dấu là chưa có dòng. Hãy mở sao kê ngân hàng để xem.',
+      hint: 'Một dòng được liệt kê khi mô tả của nó có tên nền tảng. {brand} chỉ đọc các dòng: không phân loại, không khớp, không ghi sổ dòng nào và không nối dòng với chứng từ. Hãy dùng màn hình ngân hàng cho việc đó.',
+    },
     runs: {
       title: 'Lịch sử cập nhật gần đây',
       empty: 'Chưa có lần cập nhật nào.',

@@ -5183,6 +5183,19 @@ export const en = {
       documentsHint:
         'Counts the invoices and receipts recorded in the books for this legal entity, by the month of their date, whose seller is named like the platform. {brand} only counts them: it never writes a document or posts an entry.',
     },
+    bankLines: {
+      title: 'Bank and card lines that paid the platform',
+      caption: 'The statement lines of this legal entity, on any bank or card account, whose description names the platform, with what they paid in the month.',
+      captionForeign: 'The statement lines of this legal entity whose description names the platform, with what they paid in dong in the month. The ad account is in {currency}.',
+      none: 'No bank or card line yet',
+      summary: '{count, plural, one {# line} other {# lines}}, paid {paid}.',
+      platform: 'The platform reports {spend}.',
+      checking: 'Looking for the lines…',
+      failed: 'The statement lines could not be read: {reason}',
+      foreignNote: 'The ad account is in {currency} and the statements are in dong: the exchange rate and the card’s fee make the two figures differ, so they are not put side by side and no difference is shown.',
+      tooMany: 'More than {count, number} lines name the platform in these months, so no month is marked as having none. Open the bank statements to look.',
+      hint: 'A line is listed when its description holds the name of the platform. {brand} only reads the lines: it never categorizes, matches or posts one, and does not tie a line to a document. Use the bank screen for that.',
+    },
     runs: {
       title: 'Recent updates',
       empty: 'No update yet.',
