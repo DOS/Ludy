@@ -98,6 +98,10 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
   // frozen view of @crove/ad-platform with `activate` and `readStatus` and nothing else (it cannot create, pause or revoke), apart from the writers so the creating view
   // cannot activate. Each is bound to its platform's host by its allowlisted fetch (the sandbox's reaches nothing). Only the activation job reaches the field.
   'channels.adActivators': ['provider:ad_platform'],
+  // The state readers of the ad platforms (#3301): what the account's sync job may call to read the status of the objects of a launch (`GET` of one object, with the review feedback);
+  // a frozen view with that one call, never the writer. Each is bound to its platform's host by its allowlisted fetch (the sandbox's reaches nothing). Only the sync job reaches the field.
+  // Classified before the field exists (#3301, step 0): the base copy of this suite must know it when the field lands.
+  'channels.adStateReaders': ['provider:ad_platform'],
   // The e-invoice provider adapters (ADR-0044, #2502): the offline sandbox reaches nothing, and a real adapter its provider's own hosts, each bound to them by its
   // allowlisted fetch, so the field is classified for what it can reach: the providers of @crove/einvoice. Only the issue job reaches the field.
   'channels.einvoiceProviders': ['provider:einvoice'],
