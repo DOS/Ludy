@@ -1688,6 +1688,58 @@ suite('ads on PostgreSQL (#2217)', () => {
           expect(await launchOf(second.id)).toMatchObject({ state: 'queued', amount: '1050000' });
         });
 
+        // #3297: the committed spend of a month on the Ads screen, read from the same ledger and caps the lock judges against.
+        it('reads the committed spend of the month for owners and admins: what an approved launch holds, the cap and the room left, and a released launch stops counting', async () => {
+          // Both accounts first: each `ready` releases what is queued, which must not reach the launches below.
+          const account = await ready('Cam kết tháng này');
+          const elsewhere = await ready('Tài khoản khác');
+          const month = inDays(2).slice(0, 7);
+          const committed = (who: Account = owner, over: Record<string, unknown> = {}) => callAs(who, 'ads/committed', { adAccountId: account, month, ...over });
+          const daysIn = (startOn: string, endOn: string) => {
+            let n = 0;
+            for (let day = startOn; day <= endOn; day = addDays(day, 1)) if (day.slice(0, 7) === month) n += 1;
+            return n;
+          };
+          // Nothing approved yet: nothing committed, the org's monthly cap of 5 000 000 in force, and the whole of it left.
+          expect(await committed()).toMatchObject({ status: 200, body: { adAccountId: account, month, currency: 'VND', hasCap: true, account: { committed: '0', cap: null, left: null }, org: { committed: '0', cap: '5000000', left: '5000000' } } });
+          const first = await approvedPlan(account, { dailyBudget: '150000' });
+          expect(first.answer.status).toBe(200);
+          const held = String(150000 * daysIn(inDays(2), inDays(8)));
+          expect((await committed()).body).toMatchObject({ hasCap: true, account: { committed: held, cap: null, left: null }, org: { committed: held, cap: '5000000', left: String(5000000 - Number(held)) } });
+          // An admin reads it too; the figure is the one the lock's own check reports as already committed for the same month.
+          expect((await committed(adminAccount)).body).toMatchObject({ org: { committed: held } });
+          const refused = await submit(owner, (await saved(owner, account, plan({ name: 'Trùng ngày', dailyBudget: '150000' }))).id);
+          expect(refused).toMatchObject({ status: 409, body: { code: 'ADS_SPEND_CAP', data: { problems: [expect.objectContaining({ committed: '150000' })] } } });
+          // An account cap of its own is read against its own launches; a launch of another account counts for the org alone.
+          const other = await approvedPlan(elsewhere, { dailyBudget: '50000' });
+          expect(other.answer.status).toBe(200);
+          const both = String(Number(held) + 50000 * daysIn(inDays(2), inDays(8)));
+          const second = await callAs(owner, 'ads/committed', { adAccountId: account, month });
+          expect(second.body).toMatchObject({ account: { committed: held }, org: { committed: both } });
+          // A month the flight does not touch holds nothing.
+          expect((await committed(owner, { month: addMonths(`${month}-01`, 6).slice(0, 7) })).body).toMatchObject({ org: { committed: '0' } });
+          // Released or finished stops counting: cancelling the launch releases its days at once.
+          const launch = (await launchOf(first.draft.id))?.id as string;
+          expect((await callAs(owner, 'ads/cancelLaunch', { launchId: launch, idempotencyKey: key() })).status).toBe(200);
+          expect((await committed()).body).toMatchObject({ account: { committed: '0' }, org: { committed: String(50000 * daysIn(inDays(2), inDays(8))) } });
+          // The roles that do not read the caps do not read this, an account that is not this org's is not found, and a bad month is refused.
+          for (const who of [member, viewer, accountant]) expect((await committed(who)).status, who.email).toBe(403);
+          expect((await callAs(owner, 'ads/committed', { adAccountId: randomUUID(), month })).status).toBe(404);
+          expect((await rpc('ads/committed', await tokenFor(outsider), { adAccountId: account, month }, otherSlug)).status).toBe(404);
+          expect((await committed(owner, { month: '2026-13' })).status).toBe(400);
+          // The sums are decimal strings.
+          expect(JSON.stringify((await committed()).body)).not.toMatch(/"committed":\d/);
+        });
+
+        it('says no cap is set when none is in force in the account’s currency', async () => {
+          const account = await ready('Chưa đặt hạn mức');
+          const month = inDays(2).slice(0, 7);
+          // The org's caps are in dong; an account that reports in another currency has no cap in force.
+          await admin((c) => c.query(`UPDATE crove_ads.ad_account SET currency = 'USD' WHERE org_id = $1 AND id = $2`, [orgId, account]));
+          expect((await callAs(owner, 'ads/committed', { adAccountId: account, month })).body).toMatchObject({ currency: 'USD', hasCap: false, account: { committed: '0', cap: null, left: null }, org: { committed: '0', cap: null, left: null } });
+          await admin((c) => c.query(`UPDATE crove_ads.ad_account SET currency = 'VND' WHERE org_id = $1 AND id = $2`, [orgId, account]));
+        });
+
         it('serialises launches approved at the same moment: the commitments never pass a cap between them', async () => {
           const account = await ready('Duyệt cùng lúc');
           // Five plans of 100 000 a day on the same days: any two fit the daily cap of 200 000, no three do. All five are asked for while none is approved.

@@ -3497,6 +3497,7 @@ export function createRpcHandler(
           }
         }),
       ),
+      committed: os.ads.committed.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.query('ads.committed', input, { actor, orgId }))),
       writeState: os.ads.writeState.handler(({ context }) => inAds(context, (orgId, actor) => runtime.query('ads.write.state', {}, { actor, orgId }))),
       // Asking for a change that opens the way to spend: a proposal in the Inbox, approved there (kernel.proposal.request).
       requestChange: os.ads.requestChange.handler(({ context, input }) =>

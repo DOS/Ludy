@@ -60,6 +60,18 @@ function eachDay(startOn: string, endOn: string): string[] {
   return days;
 }
 
+// What counts towards a cap of a scope and a currency: an account cap, that account's launches; an org cap, every launch in the currency. The one definition of it,
+// shared by the lock's check below and by the committed spend the Ads screen reads (committed-spend.ts), so the two cannot drift.
+export function countedFor(commitments: readonly Commitment[], scope: 'org' | 'account', currency: string, adAccountId: string): Commitment[] {
+  return commitments.filter((o) => o.currency === currency && (scope === 'org' || o.adAccountId === adAccountId));
+}
+
+// What these commitments hold in a calendar month ('YYYY-MM'): each one's daily budget times its days in that month, in decimal. `monthsOf` carries each
+// commitment's days by month when the caller has them already (a loop over months); the same sum for the monthly caps and for the screen.
+export function committedInMonth(commitments: readonly Commitment[], month: string, monthsOf: ReadonlyMap<Commitment, ReadonlyMap<string, number>> = new Map()): Decimal {
+  return commitments.reduce((sum, o) => sum.plus(new Decimal(o.dailyBudget).times((monthsOf.get(o) ?? daysByMonth(o.startOn, o.endOn)).get(month) ?? 0)), new Decimal(0));
+}
+
 // The caps a plan would pass given what is committed: none when it fits them all. Empty `others` is the plan against the caps alone.
 export function committedProblems(plan: CommittedPlan, others: readonly Commitment[], caps: readonly CommittedCap[]): CommittedProblem[] {
   const problems: CommittedProblem[] = [];
@@ -72,7 +84,7 @@ export function committedProblems(plan: CommittedPlan, others: readonly Commitme
     if (cap.currency !== plan.currency) continue;
     if (cap.scope === 'account' && cap.adAccountId !== plan.adAccountId) continue;
     // What counts towards this cap: an account cap, that account's launches; an org cap, every launch in the cap's currency.
-    const counted = others.filter((o) => o.currency === cap.currency && (cap.scope === 'org' || o.adAccountId === plan.adAccountId));
+    const counted = countedFor(others, cap.scope, cap.currency, plan.adAccountId);
     const limit = new Decimal(cap.amount);
     if (cap.period === 'daily') {
       for (const day of planDays) {
@@ -84,7 +96,7 @@ export function committedProblems(plan: CommittedPlan, others: readonly Commitme
       }
     } else {
       for (const [month, days] of planMonths) {
-        const committed = counted.reduce((sum, o) => sum.plus(new Decimal(o.dailyBudget).times(monthsOf.get(o)?.get(month) ?? 0)), new Decimal(0));
+        const committed = committedInMonth(counted, month, monthsOf);
         const adds = planDaily.times(days);
         if (committed.plus(adds).gt(limit)) {
           problems.push({ code: 'monthly_cap_exceeded', scope: cap.scope, period: 'monthly', cap: cap.amount, committed: committed.toFixed(), plan: adds.toFixed(), month });

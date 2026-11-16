@@ -248,6 +248,25 @@ export const zAdsCapView = z.object({
 });
 export type AdsCapView = z.infer<typeof zAdsCapView>;
 
+// The committed spend of one account's month (#3297, plan docs/plan/ads-write.md sections 3.3 and 8): what the launches that still commit can spend in the month
+// (each one's daily budget times its days in it, the lock's own sum), the monthly cap in force and the room left, for the account (its cap against its own
+// launches) and for the org (its cap against every launch of the currency), as decimal strings in the account's currency, never numbers and never converted.
+// `cap` and `left` are null when that scope has no monthly cap; `left` is below zero when a cap was lowered under what is committed. `hasCap` is whether any cap,
+// daily or monthly, the account's or the org's, is in force in the currency: none means every launch is refused until one is set. Owners and admins read it.
+export const zAdsCommittedInput = z.strictObject({ adAccountId: zId, month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'a month as YYYY-MM') });
+export type AdsCommittedInput = z.infer<typeof zAdsCommittedInput>;
+export const zAdsCommittedLine = z.object({ committed: z.string(), cap: z.string().nullable(), left: z.string().nullable() });
+export type AdsCommittedLine = z.infer<typeof zAdsCommittedLine>;
+export const zAdsCommitted = z.object({
+  adAccountId: zId,
+  month: z.string(),
+  currency: zCurrency,
+  hasCap: z.boolean(),
+  account: zAdsCommittedLine,
+  org: zAdsCommittedLine,
+});
+export type AdsCommitted = z.infer<typeof zAdsCommitted>;
+
 // The removal of the app's permissions at the platform after a connection that runs ads was closed (W2-1, #2296, ADR-0043 point 4): still being tried
 // ("pending": Ludy holds a sealed copy of the token for that alone, for at most 7 days) or given up ("gave_up": the copy is gone and the person removes the
 // app in the platform's settings by hand). Ids, states and counts; never a token.
