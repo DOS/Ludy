@@ -47,7 +47,7 @@ function page(sourceRef: unknown): string {
   qc.setQueryData(['org', 'get'], { role: 'owner', members: [] });
   qc.setQueryData(['chart', 'get'], { root: [], positions: [], agents: [], killSwitches: [] });
   qc.setQueryData(['tasks', 'get'], {
-    task: { id: TASK, title: 'Gọi lại khách', status: 'todo', description: null, due: null, createdAt: '2026-11-16T09:00:00.000Z', tainted: false, checkedOut: false, assigneePositionId: null, sourceRef },
+    task: { id: TASK, title: 'Gọi lại khách', status: 'todo', description: null, due: null, checklist: [], createdAt: '2026-11-16T09:00:00.000Z', tainted: false, checkedOut: false, assigneePositionId: null, sourceRef },
     comments: [],
     proposal: null,
   });

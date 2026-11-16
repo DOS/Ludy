@@ -27,6 +27,7 @@ import { TimeInput } from '../components/time-input.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { NotesSubnav } from '../components/notes-subnav.tsx';
 import { refreshProjectQueries } from '../components/project-task-dialog.tsx';
+import { TaskChecklistBadge } from '../components/task-checklist.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, clientForOrg, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { isModuleOff } from '../lib/errors.ts';
@@ -224,6 +225,12 @@ function TaskRow({ task, slug, chart, projectsActive }: { task: MyWorkTask; slug
         </Badge>
       )}
       <span className="text-xs text-subtle-foreground">{positionTitle(chart, task.positionId, tt('rootAssignee'), tt('unknownPosition'))}</span>
+      {task.steps && task.steps.total > 0 && (
+        <TaskChecklistBadge
+          steps={task.steps}
+          label={t('stepsDone', { done: String(task.steps.done), total: String(task.steps.total) })}
+        />
+      )}
       {task.due && (
         <Badge variant={task.overdue ? 'destructive' : 'outline'}>
           {task.overdue && <span className="sr-only">{t('overdue')}: </span>}

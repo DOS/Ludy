@@ -269,6 +269,7 @@ export const zMyWorkTask = z.object({
   group: z.enum(TODO_DUE_GROUPS),
   overdue: z.boolean(),
   tainted: z.boolean(),
+  steps: z.object({ done: z.number().int().nonnegative(), total: z.number().int().nonnegative() }).optional(),
   project: zMyWorkTaskProject.nullable(),
 });
 export type MyWorkTask = z.infer<typeof zMyWorkTask>;

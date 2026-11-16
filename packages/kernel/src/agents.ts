@@ -14,14 +14,18 @@ import { z } from 'zod';
 import {
   auditValue,
   defaultCoworkerName,
+  parseTaskChecklist,
+  serializeTaskChecklist,
   tableWrite,
   vietnamToday,
   zCheck,
   zFilterAstShape,
   zId,
   zSavedViewSortShape,
+  zTaskChecklist,
   type Check,
   type FilterAst,
+  type TaskChecklistStep,
 } from '@crove/kernel-contract';
 import type { AgentScope, Database, MemberRole, TaskStatus } from '@crove/db';
 import {
@@ -657,13 +661,19 @@ const zTaskTitle = z.string().trim().min(1).max(300);
 // A human gives work to a position (or, with no position, to the owner at the root of the chart).
 export const createTask = defineCommand({
   name: 'kernel.task.create',
-  input: z.object({ title: zTaskTitle, description: z.string().max(10000).optional(), assigneePositionId: zId.nullable(), due: z.iso.datetime().optional() }),
+  input: z.object({
+    title: zTaskTitle,
+    description: z.string().max(10000).optional(),
+    assigneePositionId: zId.nullable(),
+    due: z.iso.datetime().optional(),
+    checklist: zTaskChecklist.optional(),
+  }),
   risk: 'R1',
   sideEffect: 'internal',
   access: MEMBERS,
   handler: async (ctx, input) => {
     requireUser(ctx);
-    return insertHumanTask(ctx, { ...input, description: input.description ?? null, due: input.due ?? null, sourceRef: null, tainted: false });
+    return insertHumanTask(ctx, { ...input, description: input.description ?? null, due: input.due ?? null, checklist: input.checklist ?? [], sourceRef: null, tainted: false });
   },
 });
 
@@ -671,7 +681,15 @@ export const createTask = defineCommand({
 // input: kernel.task.get attaches the proposal a `kernel.proposal` reference names, so only kernel code chooses it.
 async function insertHumanTask(
   ctx: CommandContext,
-  input: { title: string; description: string | null; assigneePositionId: string | null; due: string | null; sourceRef: { type: string; id: string } | null; tainted: boolean },
+  input: {
+    title: string;
+    description: string | null;
+    assigneePositionId: string | null;
+    due: string | null;
+    checklist?: readonly TaskChecklistStep[];
+    sourceRef: { type: string; id: string } | null;
+    tainted: boolean;
+  },
 ): Promise<{ taskId: string }> {
   if (input.assigneePositionId) {
     const position = await lockPosition(ctx.trx, ctx.orgId, input.assigneePositionId);
@@ -688,6 +706,7 @@ async function insertHumanTask(
       source_ref: input.sourceRef === null ? null : JSON.stringify(input.sourceRef),
       created_by_type: 'user',
       due: input.due,
+      checklist: serializeTaskChecklist(input.checklist ?? []),
       tainted: input.tainted,
     })
     .returning(['id', 'tainted', 'request_depth'])
@@ -883,6 +902,7 @@ export const updateTask = defineCommand({
     description: z.string().max(10000).nullable().optional(),
     assigneePositionId: zId.nullable().optional(),
     due: z.iso.datetime().nullable().optional(),
+    checklist: zTaskChecklist.optional(),
   }),
   risk: 'R1',
   sideEffect: 'internal',
@@ -916,11 +936,16 @@ export const updateTask = defineCommand({
     const nextDescription = input.description !== undefined ? input.description : before.description;
     const nextDue = input.due !== undefined ? input.due : before.due?.toISOString() ?? null;
     const beforeDue = before.due?.toISOString() ?? null;
+    const beforeChecklist = parseTaskChecklist(before.checklist);
+    const nextChecklist = input.checklist !== undefined ? input.checklist : beforeChecklist;
+    const beforeChecklistJson = serializeTaskChecklist(beforeChecklist);
+    const nextChecklistJson = serializeTaskChecklist(nextChecklist);
     const changed = [
       ...(nextTitle !== before.title ? ['title'] : []),
       ...(nextDescription !== before.description ? ['description'] : []),
       ...(seatChanged ? ['assigneePositionId'] : []),
       ...(nextDue !== beforeDue ? ['due'] : []),
+      ...(beforeChecklistJson !== nextChecklistJson ? ['checklist'] : []),
     ];
     if (changed.length > 0) {
       await ctx.trx
@@ -930,6 +955,7 @@ export const updateTask = defineCommand({
           description: nextDescription,
           assignee_position_id: nextPositionId,
           due: nextDue,
+          checklist: nextChecklistJson,
           // A stale lease left after its run expired is cleared when the seat moves.
           ...(seatChanged ? { checkout_run_id: null, lock_expires_at: null } : {}),
         })
@@ -949,6 +975,7 @@ export const updateTask = defineCommand({
       assigneePositionId: nextPositionId,
       previousAssigneePositionId: before.assignee_position_id,
       due: nextDue,
+      checklist: auditValue(TASK_TABLE, 'checklist', nextChecklist.length > 0 ? nextChecklist : null),
     });
     return { taskId: before.id };
   },
@@ -1633,6 +1660,7 @@ function taskView(t: {
   tainted: boolean;
   created_by_type: string;
   due: Date | null;
+  checklist: unknown;
   created_at: Date;
 }) {
   return {
@@ -1648,6 +1676,7 @@ function taskView(t: {
     tainted: t.tainted,
     createdByType: t.created_by_type,
     due: t.due?.toISOString() ?? null,
+    checklist: parseTaskChecklist(t.checklist),
     createdAt: t.created_at.toISOString(),
   };
 }

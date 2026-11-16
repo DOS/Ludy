@@ -11,6 +11,7 @@ import {
   GripVerticalIcon,
   KanbanIcon,
   Link2Icon,
+  ListChecksIcon,
   ListIcon,
   PencilIcon,
   PlusIcon,
@@ -18,6 +19,7 @@ import {
   UnlinkIcon,
   UserIcon,
   UsersIcon,
+  XIcon,
 } from "lucide-react"
 
 // Consistent 16px, stroke 1.5 icons for Projects screens (DESIGN.md §3.7).
@@ -30,12 +32,14 @@ const PROJECT_ICONS = {
   bot: BotIcon,
   calendar: CalendarIcon,
   check: CheckIcon,
+  checklist: ListChecksIcon,
   edit: PencilIcon,
   filters: SlidersHorizontalIcon,
   grip: GripVerticalIcon,
   link: Link2Icon,
   list: ListIcon,
   plus: PlusIcon,
+  remove: XIcon,
   unlink: UnlinkIcon,
   user: UserIcon,
   users: UsersIcon,

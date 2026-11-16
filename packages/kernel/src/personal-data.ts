@@ -63,6 +63,8 @@ export interface PersonalDataColumn {
   machinery?: true;
   // A text[] column searched as its items joined by a space, as crove_notes.private_matches reads a note's tags.
   list?: true;
+  // A jsonb array of { text, done } steps searched by joining each step's text, keeping adjacent numbers separate.
+  jsonbSteps?: true;
 }
 
 // Keyed by schema.table.column.
@@ -279,6 +281,12 @@ export const PERSONAL_DATA_COLUMNS = {
     kind: 'free_text',
     handling: 'erase',
     reason: "A task's description, which may quote a person's email or phone; the value is replaced inside it",
+  },
+  'crove_kernel.task.checklist': {
+    kind: 'free_text',
+    handling: 'erase',
+    jsonbSteps: true,
+    reason: "A task's checklist steps, which may quote a person's email or phone; each matching step text is redacted in place",
   },
   'crove_finance.bank_line.description': {
     kind: 'free_text',
@@ -622,7 +630,12 @@ async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: 
     if (entry.machinery) continue;
     const [schema, table, column] = key.split('.') as [string, string, string];
     const ref = sql.ref(`t.${column}`);
-    const match = columnMatch(entry.kind, probe, entry.list ? sql`pg_catalog.array_to_string(${ref}, ' ')` : ref);
+    const expr = entry.list
+      ? sql`pg_catalog.array_to_string(${ref}, ' ')`
+      : entry.jsonbSteps
+        ? sql`(SELECT coalesce(pg_catalog.string_agg(s.step ->> 'text', ' | '), '') FROM pg_catalog.jsonb_array_elements(${ref}) AS s(step))`
+        : ref;
+    const match = columnMatch(entry.kind, probe, expr);
     if (!match) continue;
     // Row security already hides other members' private notes; the finder's own private ones are counted below too,
     // not listed, so every author's are reported alike.
@@ -787,6 +800,7 @@ const SHORT_NUMBER_COLUMNS = new Set([
   'crove_kernel.activity.summary',
   'crove_kernel.task.title',
   'crove_kernel.task.description',
+  'crove_kernel.task.checklist',
   'crove_projects.project.name',
   'crove_projects.project.description',
   'crove_hr.candidate.notes',
@@ -1315,16 +1329,42 @@ export const personalDataErase = defineCommand({
       // is needed. The lengths stay within the columns' limits, in case the mark is longer than a short address.
       const title = freeTextMatch(probe, sql.ref('t.title'));
       const description = freeTextMatch(probe, sql.ref('t.description'));
-      const { rows: tasks } = await sql<{ title: boolean; description: boolean }>`
+      const checklistStepText = sql`s.step ->> 'text'`;
+      const checklistStepMatch = freeTextMatch(probe, checklistStepText);
+      const checklist = sql`EXISTS (SELECT 1 FROM pg_catalog.jsonb_array_elements(t.checklist) AS s(step) WHERE ${checklistStepMatch})`;
+      const oldChecklist = sql`EXISTS (SELECT 1 FROM pg_catalog.jsonb_array_elements(o.checklist) AS s(step) WHERE ${checklistStepMatch})`;
+      const checklistStepRedact = sql`coalesce(
+        nullif(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, checklistStepText, REDACTED_MARK)}, 300)), ''),
+        ${REDACTED_MARK}
+      )`;
+      const { rows: tasks } = await sql<{ title: boolean; description: boolean; checklist: boolean }>`
         UPDATE crove_kernel.task t
            SET title = CASE WHEN ${title} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('t.title'), REDACTED_MARK)}, 300) ELSE t.title END,
                description = CASE WHEN ${description} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('t.description'), REDACTED_MARK)}, 10000)
-                                  ELSE t.description END
+                                  ELSE t.description END,
+               checklist = CASE WHEN ${checklist}
+                                THEN coalesce((
+                                  SELECT pg_catalog.jsonb_agg(
+                                    pg_catalog.jsonb_build_object(
+                                      'text',
+                                      CASE WHEN ${checklistStepMatch} THEN ${checklistStepRedact} ELSE s.step ->> 'text' END,
+                                      'done',
+                                      (s.step -> 'done')
+                                    )
+                                    ORDER BY s.ord
+                                  )
+                                  FROM pg_catalog.jsonb_array_elements(t.checklist) WITH ORDINALITY AS s(step, ord)
+                                ), '[]'::jsonb)
+                                ELSE t.checklist END
           FROM crove_kernel.task o
-         WHERE o.org_id = t.org_id AND o.id = t.id AND t.org_id = ${ctx.orgId}::uuid AND (${title} OR coalesce(${description}, false))
-         RETURNING ${freeTextMatch(probe, sql.ref('o.title'))} AS title, coalesce(${freeTextMatch(probe, sql.ref('o.description'))}, false) AS description`.execute(ctx.trx);
+         WHERE o.org_id = t.org_id AND o.id = t.id AND t.org_id = ${ctx.orgId}::uuid
+           AND (${title} OR coalesce(${description}, false) OR ${checklist})
+         RETURNING ${freeTextMatch(probe, sql.ref('o.title'))} AS title,
+                   coalesce(${freeTextMatch(probe, sql.ref('o.description'))}, false) AS description,
+                   ${oldChecklist} AS checklist`.execute(ctx.trx);
       add('crove_kernel.task.title', tasks.filter((t) => t.title).length);
       add('crove_kernel.task.description', tasks.filter((t) => t.description).length);
+      add('crove_kernel.task.checklist', tasks.filter((t) => t.checklist).length);
 
       // Take the exclusive advisory lock paired with projects.weekly_status.send_mail's shared lock before dropping weekly mails and redacting projects:
       // a concurrent send_mail either committed before this lock or sees redacted project text after it; if one is mid-flight, fail fast with PERSONAL_DATA_BUSY.
