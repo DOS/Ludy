@@ -165,7 +165,7 @@ export function view(r: Row, canDelete: boolean): Deal {
   };
 }
 
-// How far a duplicate chain is followed: the kernel refuses to mark a party a duplicate of a duplicate, so a chain only grows when the kept party is marked later.
+// How far a duplicate chain is followed: the database refuses to build one (PARTY_DUPLICATE_CHAIN), so the walk is a guard that ends at the kept party and never loops.
 const DUPLICATE_CHAIN_MAX = 10;
 
 export function base(ctx: Reader) {
