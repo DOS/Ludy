@@ -121,6 +121,7 @@ export * from './meetings.ts';
 export * from './meeting-followup.ts';
 export * from './meeting-hook.ts';
 export * from './meeting-hook-body.ts';
+export * from './meeting-zalo-draft.ts';
 export * from './meeting-platform.ts';
 export * from './projects.ts';
 export * from './ads.ts';
