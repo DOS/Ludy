@@ -67,7 +67,7 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
 });
 
 const { ProjectBoardView } = await import('../src/components/project-board.tsx');
-const { ProjectsPage, ProjectDetailPage, countOtherProjectMembers } = await import('../src/routes/projects.tsx');
+const { ProjectsPage, ProjectDetailPage, boardOrderClientForOrg, countOtherProjectMembers } = await import('../src/routes/projects.tsx');
 
 const wrap = (locale: 'vi' | 'en', node: ReactNode) => (
   <QueryClientProvider client={queryClientState.current}>
@@ -561,7 +561,7 @@ describe('projects SSR screens & board (#2591)', () => {
       truncated: false,
     };
 
-    // Cross-column drop: tasks.setStatus succeeds then projects.reorderTask fails -> do NOT revert cache back to todo.
+    // Cross-column drop: setTaskStatus succeeds then reorderTask fails -> do NOT revert cache back to todo.
     const queue = createBoardMutationQueue();
     let cached = baseBoard;
     const setBoardCalls: ProjectBoard[] = [];
@@ -574,8 +574,8 @@ describe('projects SSR screens & board (#2591)', () => {
       queryKey: ['projects', 'board', { projectId: baseBoard.project.id }],
       keyHash: 'board-org-a',
       clientForOrg: () => ({
-        tasks: { setStatus: () => Promise.resolve({}) },
-        projects: { reorderTask: () => Promise.reject(new Error('409 reorder conflict')) },
+        setTaskStatus: () => Promise.resolve({}),
+        reorderTask: () => Promise.reject(new Error('409 reorder conflict')),
       }),
       getBoard: () => cached,
       setBoard: (_key, next) => {
@@ -602,7 +602,7 @@ describe('projects SSR screens & board (#2591)', () => {
     expect(errors).toHaveLength(1);
     expect(refreshed).toBe(1);
 
-    // If tasks.setStatus itself fails before committing, the pre-move todo snapshot IS restored cleanly.
+    // If setTaskStatus itself fails before committing, the pre-move todo snapshot IS restored cleanly.
     cached = baseBoard;
     const rollbackCalls: ProjectBoard[] = [];
     await queue.enqueue({
@@ -611,8 +611,8 @@ describe('projects SSR screens & board (#2591)', () => {
       queryKey: ['projects', 'board', { projectId: baseBoard.project.id }],
       keyHash: 'board-org-a-2',
       clientForOrg: () => ({
-        tasks: { setStatus: () => Promise.reject(new Error('network down')) },
-        projects: { reorderTask: () => Promise.resolve({}) },
+        setTaskStatus: () => Promise.reject(new Error('network down')),
+        reorderTask: () => Promise.resolve({}),
       }),
       getBoard: () => cached,
       setBoard: (_key, next) => {
@@ -649,16 +649,12 @@ describe('projects SSR screens & board (#2591)', () => {
     const makeOrgClient = (clientSlug: string): BoardOrderClient => {
       seenClientSlugs.push(clientSlug);
       return {
-        tasks: {
-          setStatus: async () => {
-            if (seenClientSlugs.length === 1) await firstMoveGate;
-          },
+        setTaskStatus: async () => {
+          if (seenClientSlugs.length === 1) await firstMoveGate;
         },
-        projects: {
-          reorderTask: (input) => {
-            seenReorderCalls.push({ slug: clientSlug, taskId: input.taskId });
-            return Promise.resolve({});
-          },
+        reorderTask: (input) => {
+          seenReorderCalls.push({ slug: clientSlug, taskId: input.taskId });
+          return Promise.resolve({});
         },
       };
     };
@@ -698,7 +694,7 @@ describe('projects SSR screens & board (#2591)', () => {
       onError: () => undefined,
       optimisticUpdate: (items) => [...items],
       mutationFn: async (orgClient, markCommitted) => {
-        await orgClient.projects.reorderTask({
+        await orgClient.reorderTask({
           projectId: baseBoard.project.id,
           taskId: 't2',
           place: 'before',
@@ -718,6 +714,42 @@ describe('projects SSR screens & board (#2591)', () => {
     expect(seenReorderCalls).toEqual([
       { slug: 'org-a', taskId: 't1' },
       { slug: 'org-a', taskId: 't2' },
+    ]);
+
+    // boardOrderClientForOrg pins clientForOrg(slug) via createTanstackQueryUtils (#2610).
+    const called: Array<{ slug: string; path: string; input: unknown }> = [];
+    const scopedClient = boardOrderClientForOrg(
+      'org-pinned',
+      ((targetSlug: string) => ({
+        tasks: {
+          setStatus: (input: unknown) => {
+            called.push({ slug: targetSlug, path: 'tasks.setStatus', input });
+            return Promise.resolve({ ok: true });
+          },
+        },
+        projects: {
+          reorderTask: (input: unknown) => {
+            called.push({ slug: targetSlug, path: 'projects.reorderTask', input });
+            return Promise.resolve({ ok: true });
+          },
+        },
+      })) as unknown as Parameters<typeof boardOrderClientForOrg>[1],
+    );
+    await scopedClient.setTaskStatus({ id: 't1', status: 'done', idempotencyKey: 'k-3' });
+    await scopedClient.reorderTask({
+      projectId: baseBoard.project.id,
+      taskId: 't1',
+      place: 'before',
+      anchorId: 't2',
+      idempotencyKey: 'k-4',
+    });
+    expect(called).toEqual([
+      { slug: 'org-pinned', path: 'tasks.setStatus', input: { id: 't1', status: 'done', idempotencyKey: 'k-3' } },
+      {
+        slug: 'org-pinned',
+        path: 'projects.reorderTask',
+        input: { projectId: baseBoard.project.id, taskId: 't1', place: 'before', anchorId: 't2', idempotencyKey: 'k-4' },
+      },
     ]);
   });
 });

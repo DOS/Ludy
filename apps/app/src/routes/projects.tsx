@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Projects list and board/list screens (/o/$slug/projects and /o/$slug/projects/$id, issue #2591, ADR-0048).
+import { createTanstackQueryUtils } from '@orpc/tanstack-query';
 import { hashKey, useMutation, useQuery } from '@tanstack/react-query';
 import type { FilterAst, ProjectBoard, ProjectStatus, ProjectSummary, ProjectTaskCard, SavedViewSort } from '@crove/kernel-contract';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
@@ -52,6 +53,17 @@ import {
 } from '../lib/projects.ts';
 import { EMPTY_TASK_FILTER, astToTaskFilter, taskFilterToAst, type TaskFilterState } from '../lib/task-filter.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
+
+export function boardOrderClientForOrg(
+  targetSlug: string,
+  createOrgClient: typeof clientForOrg = clientForOrg,
+): BoardOrderClient {
+  const scopedOrpc = createTanstackQueryUtils(createOrgClient(targetSlug));
+  return {
+    setTaskStatus: (input) => scopedOrpc.tasks.setStatus.call(input),
+    reorderTask: (input) => scopedOrpc.projects.reorderTask.call(input),
+  };
+}
 
 function statusFilterParam(filter: ProjectStatusFilter): ProjectStatus[] | undefined {
   if (filter === 'all') return undefined;
@@ -301,7 +313,7 @@ export function ProjectDetailPage() {
       projectId: id,
       queryKey,
       keyHash: hashKey(queryKey),
-      clientForOrg,
+      clientForOrg: boardOrderClientForOrg,
       getBoard: (key) => queryClient.getQueryData<ProjectBoard>(key),
       setBoard: (key, board) => {
         queryClient.setQueryData<ProjectBoard>(key, board);
@@ -534,7 +546,7 @@ export function ProjectDetailPage() {
           enqueueBoardMutation(
             (items) => optimisticReorderTask(items, taskId, placement),
             async (orgClient, markCommitted) => {
-              await orgClient.projects.reorderTask({
+              await orgClient.reorderTask({
                 projectId: capturedProjectId,
                 taskId,
                 place: placement.place,

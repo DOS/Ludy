@@ -249,23 +249,19 @@ export function createBoardBatchTracker<TKey>() {
 }
 
 export interface BoardOrderClient {
-  tasks: {
-    setStatus: (input: { id: string; status: TaskStatus; idempotencyKey: string }) => Promise<unknown>;
-  };
-  projects: {
-    reorderTask: (input: {
-      projectId: string;
-      taskId: string;
-      place: TaskPlacement['place'];
-      anchorId: string;
-      idempotencyKey: string;
-    }) => Promise<unknown>;
-  };
+  setTaskStatus: (input: { id: string; status: TaskStatus; idempotencyKey: string }) => Promise<unknown>;
+  reorderTask: (input: {
+    projectId: string;
+    taskId: string;
+    place: TaskPlacement['place'];
+    anchorId: string;
+    idempotencyKey: string;
+  }) => Promise<unknown>;
 }
 
 /**
- * Runs a cross-column board drop, recording server commitment immediately after `tasks.setStatus`
- * so a subsequent `projects.reorderTask` failure does not roll the card back to its old status (#2610).
+ * Runs a cross-column board drop, recording server commitment immediately after `setTaskStatus`
+ * so a subsequent `reorderTask` failure does not roll the card back to its old status (#2610).
  */
 export async function commitBoardStatusMove(
   orgClient: BoardOrderClient,
@@ -273,10 +269,10 @@ export async function commitBoardStatusMove(
   markCommitted: () => void,
   createKey: () => string = () => crypto.randomUUID(),
 ): Promise<void> {
-  await orgClient.tasks.setStatus({ id: input.taskId, status: input.nextStatus, idempotencyKey: createKey() });
+  await orgClient.setTaskStatus({ id: input.taskId, status: input.nextStatus, idempotencyKey: createKey() });
   markCommitted();
   if (input.placement) {
-    await orgClient.projects.reorderTask({
+    await orgClient.reorderTask({
       projectId: input.projectId,
       taskId: input.taskId,
       place: input.placement.place,
