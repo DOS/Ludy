@@ -75,6 +75,7 @@ interface Terms {
   contractType: 'indefinite' | 'fixed_term' | 'none';
   region: 'I' | 'II' | 'III' | 'IV';
   baseWage: string;
+  termMonths: number | null;
 }
 
 interface Person {
@@ -205,7 +206,7 @@ async function peopleOf(ctx: Pick<QueryContext, 'trx' | 'orgId'>, legalEntityId:
   const ids = paid.map((e) => e.id);
   const terms = await ctx.trx
     .selectFrom('crove_hr.payroll_employment')
-    .select(['id', 'employee_id', 'effective_from', 'contract_type', 'region', 'base_wage'])
+    .select(['id', 'employee_id', 'effective_from', 'contract_type', 'region', 'base_wage', 'term_months'])
     .where('org_id', '=', ctx.orgId)
     .where('employee_id', 'in', ids)
     .orderBy('effective_from', 'asc')
@@ -226,7 +227,14 @@ async function peopleOf(ctx: Pick<QueryContext, 'trx' | 'orgId'>, legalEntityId:
     people.push({
       employeeId: e.id,
       endedOn: e.ended_on === null ? null : iso(e.ended_on),
-      terms: { id: inForce.id, effectiveFrom: iso(inForce.effective_from), contractType: inForce.contract_type, region: inForce.region, baseWage: inForce.base_wage },
+      terms: {
+        id: inForce.id,
+        effectiveFrom: iso(inForce.effective_from),
+        contractType: inForce.contract_type,
+        region: inForce.region,
+        baseWage: inForce.base_wage,
+        termMonths: inForce.term_months ?? null,
+      },
       dependents: count,
     });
   }
@@ -242,6 +250,20 @@ function recurringOf(previous: unknown): HrPayrollInputs {
   const kept: Record<string, unknown> = {};
   for (const key of HR_RECURRING_INPUTS) kept[key] = old[key];
   return zHrPayrollInputs.parse(kept);
+}
+
+function initialInputsFor(
+  person: Person,
+  previous?: { employment_id: string | null; inputs: unknown },
+): HrPayrollInputs {
+  const inputs = previous === undefined ? parseInputs({}) : recurringOf(previous.inputs);
+  if (
+    person.terms.termMonths !== null &&
+    (previous === undefined || previous.employment_id !== person.terms.id || inputs.contractTermMonths === null)
+  ) {
+    return { ...inputs, contractTermMonths: person.terms.termMonths };
+  }
+  return inputs;
 }
 
 async function loadRun(ctx: Ctx, runId: string) {
@@ -299,15 +321,15 @@ export const runOpen = defineCommand({
     const before = await ctx.trx
       .selectFrom('crove_hr.payroll_line as l')
       .innerJoin('crove_hr.payroll_run as r', (join) => join.onRef('r.org_id', '=', 'l.org_id').onRef('r.id', '=', 'l.run_id'))
-      .select(['l.employee_id', 'l.inputs'])
+      .select(['l.employee_id', 'l.employment_id', 'l.inputs'])
       .where('l.org_id', '=', ctx.orgId)
       .where('r.legal_entity_id', '=', entity.id)
       .where('r.month', '=', previousMonth(input.month))
       .where('l.kind', '=', 'pay')
       .execute();
-    const lastInputs = new Map(before.map((b) => [b.employee_id, b.inputs]));
+    const lastInputs = new Map(before.map((b) => [b.employee_id, { employment_id: b.employment_id, inputs: b.inputs }]));
     for (const person of people) {
-      const inputs = lastInputs.has(person.employeeId) ? recurringOf(lastInputs.get(person.employeeId)) : parseInputs({});
+      const inputs = initialInputsFor(person, lastInputs.get(person.employeeId));
       const f = figuresOf(person, inputs, input.month, workingDays);
       await ctx.trx
         .insertInto('crove_hr.payroll_line')
@@ -357,7 +379,7 @@ export const runRecalculate = defineCommand({
     const people = await peopleOf(ctx, run.legal_entity_id, run.month);
     const lines = await ctx.trx
       .selectFrom('crove_hr.payroll_line')
-      .select(['id', 'employee_id', 'inputs'])
+      .select(['id', 'employee_id', 'employment_id', 'inputs'])
       .where('org_id', '=', ctx.orgId)
       .where('run_id', '=', run.id)
       .where('kind', '=', 'pay')
@@ -367,14 +389,30 @@ export const runRecalculate = defineCommand({
     for (const person of people) {
       const existing = byEmployee.get(person.employeeId);
       if (existing) {
-        const f = figuresOf(person, parseInputs(existing.inputs), run.month, workingDays);
-        await ctx.trx.updateTable('crove_hr.payroll_line').set({ employment_id: person.terms.id, ...f, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', existing.id).execute();
+        const parsed = parseInputs(existing.inputs);
+        const nextInputs =
+          person.terms.termMonths !== null && existing.employment_id !== person.terms.id
+            ? { ...parsed, contractTermMonths: person.terms.termMonths }
+            : parsed;
+        const f = figuresOf(person, nextInputs, run.month, workingDays);
+        await ctx.trx
+          .updateTable('crove_hr.payroll_line')
+          .set({
+            employment_id: person.terms.id,
+            ...(nextInputs !== parsed ? { inputs: JSON.stringify(nextInputs) } : {}),
+            ...f,
+            updated_at: ctx.now,
+          })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', existing.id)
+          .execute();
       } else {
         // A person hired (or whose first terms were added) since the month was opened.
-        const f = figuresOf(person, parseInputs({}), run.month, workingDays);
+        const freshInputs = initialInputsFor(person);
+        const f = figuresOf(person, freshInputs, run.month, workingDays);
         await ctx.trx
           .insertInto('crove_hr.payroll_line')
-          .values({ org_id: ctx.orgId, legal_entity_id: run.legal_entity_id, run_id: run.id, employee_id: person.employeeId, employment_id: person.terms.id, kind: 'pay', inputs: JSON.stringify(parseInputs({})), ...f, created_by: userId, created_at: ctx.now, updated_at: ctx.now })
+          .values({ org_id: ctx.orgId, legal_entity_id: run.legal_entity_id, run_id: run.id, employee_id: person.employeeId, employment_id: person.terms.id, kind: 'pay', inputs: JSON.stringify(freshInputs), ...f, created_by: userId, created_at: ctx.now, updated_at: ctx.now })
           .execute();
         added += 1;
       }
@@ -976,7 +1014,7 @@ export const runSheet = defineQuery({
       : await ctx.trx.selectFrom('crove_hr.payroll_employee').select(['id', 'display_name', 'ended_on']).where('org_id', '=', ctx.orgId).where('id', 'in', employeeIds).execute();
     const firstTerms = employeeIds.length === 0
       ? []
-      : await ctx.trx.selectFrom('crove_hr.payroll_employment').select(['id', 'employee_id', 'effective_from', 'contract_type']).where('org_id', '=', ctx.orgId).where('employee_id', 'in', employeeIds).execute();
+      : await ctx.trx.selectFrom('crove_hr.payroll_employment').select(['id', 'employee_id', 'effective_from', 'contract_type', 'contract_end_on', 'probation_end_on']).where('org_id', '=', ctx.orgId).where('employee_id', 'in', employeeIds).execute();
     const adjusted = [...new Set(lines.flatMap((l) => (l.adjusts_run_id ? [l.adjusts_run_id] : [])))];
     const adjustedRuns = adjusted.length === 0 ? [] : await ctx.trx.selectFrom('crove_hr.payroll_run').select(['id', 'month']).where('org_id', '=', ctx.orgId).where('id', 'in', adjusted).execute();
     const leaveYear = run.month.slice(0, 4);
@@ -999,6 +1037,11 @@ export const runSheet = defineQuery({
     }
     const start = monthStart(run.month);
     const end = monthEnd(run.month);
+    const inMonth = (day: Date | string | null | undefined): boolean => {
+      if (!day) return false;
+      const formatted = iso(day);
+      return formatted >= start && formatted <= end;
+    };
     const views: HrLineView[] = lines.map((l) => {
       const employee = employees.find((e) => e.id === l.employee_id);
       const checks = checksOf(l.checks);
@@ -1016,11 +1059,10 @@ export const runSheet = defineQuery({
       if (l.kind === 'pay') {
         const first = own[0];
         if (first && iso(first.effective_from) > start && iso(first.effective_from) <= end) flags.push('new_hire');
-        if (employee?.ended_on && iso(employee.ended_on) >= start && iso(employee.ended_on) <= end) {
-          flags.push('ends_this_month');
-          if (first && countCompletedCalendarMonths(iso(first.effective_from), iso(employee.ended_on)) >= 12) {
-            flags.push('severance_check');
-          }
+        if (inMonth(employee?.ended_on) || inMonth(used?.contract_end_on)) flags.push('ends_this_month');
+        if (inMonth(used?.probation_end_on)) flags.push('probation_ends_this_month');
+        if (inMonth(employee?.ended_on) && first && employee?.ended_on && countCompletedCalendarMonths(iso(first.effective_from), iso(employee.ended_on)) >= 12) {
+          flags.push('severance_check');
         }
         if (used?.contract_type === 'fixed_term' && l.status === 'refused' && parseInputs(l.inputs).contractTermMonths === null) flags.push('fixed_term_months_missing');
         if (first) {

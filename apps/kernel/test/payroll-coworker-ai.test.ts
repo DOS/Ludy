@@ -273,6 +273,30 @@ describe('prepareMonth and flagMonth', () => {
     expect(requests[0]).not.toMatch(/2026-\d{2}/);
   });
 
+  it('surfaces probation_ends_this_month flag as probationEndsInMonth and probation_ends signal without leaking names or dates', async () => {
+    const probLine = line(EMP_B, NAME_B, '8950000', ['probation_ends_this_month']);
+    const probSheet: HrRunSheet = sheetOf('prob', '2026-11', [probLine]);
+    const r: PayrollReads = { ...reads(), sheet: async () => probSheet, runs: async () => [summary('prob', '2026-11')] };
+
+    const src = await payrollSource(r, 'prob');
+    expect(src.lines[0]?.contract.probationEndsInMonth).toBe(true);
+
+    const offVi = await prepareMonth({ reader: null, budget: new DraftBudget() }, r, ORG, USER, 'prob', 'vi');
+    expect(offVi.ai).toBe('off');
+    expect(offVi.items.map((i) => i.kind)).toEqual(['probation_ends']);
+    expect(offVi.items[0]?.facts).toContain(NAME_B);
+    expect(offVi.items[0]?.text).toBeNull();
+
+    const requests: string[] = [];
+    const { ai } = setup({ prepare: echoPrepare(requests) });
+    const on = await prepareMonth(ai, r, ORG, USER, 'prob', 'en');
+    expect(on.ai).toBe('used');
+    expect(on.items.map((i) => i.kind)).toEqual(['probation_ends']);
+    expect(on.items[0]?.text).toContain(NAME_B);
+    for (const secret of SECRETS) expect(requests[0]).not.toContain(secret);
+    expect(requests[0]).not.toMatch(/2026-\d{2}/);
+  });
+
   it('still lists the findings when the run has more people than one prompt holds, with no model call', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const requests: string[] = [];

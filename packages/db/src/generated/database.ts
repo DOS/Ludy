@@ -1692,6 +1692,13 @@ export interface HrPayrollEmploymentTable {
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   pay_function: ColumnType<string, string | undefined, NotGranted>;
+  contract_form: ColumnType<string | null, string | null, NotGranted>;
+  term_months: ColumnType<number | null, number | null, NotGranted>;
+  contract_end_on: ColumnType<string | null, string | null, NotGranted>;
+  fixed_term_sequence: ColumnType<number | null, number | null, NotGranted>;
+  probation_role_tier: ColumnType<string | null, string | null, NotGranted>;
+  probation_end_on: ColumnType<string | null, string | null, NotGranted>;
+  probation_wage: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_hr.payroll_leave_entry */

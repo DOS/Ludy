@@ -26,7 +26,10 @@ export const hrManifest = defineModule({
         national_id_sealed: 'national_id',
         bank_account_sealed: 'payment',
       }),
-      payroll_employment: columns(['org_id', 'id', 'legal_entity_id', 'employee_id', 'effective_from', 'contract_type', 'region', 'pay_function', 'created_by', 'created_at'], { base_wage: 'sensitive' }),
+      payroll_employment: columns(
+        ['org_id', 'id', 'legal_entity_id', 'employee_id', 'effective_from', 'contract_type', 'contract_form', 'term_months', 'contract_end_on', 'fixed_term_sequence', 'probation_role_tier', 'probation_end_on', 'region', 'pay_function', 'created_by', 'created_at'],
+        { base_wage: 'sensitive', probation_wage: 'sensitive' },
+      ),
       // Monthly employee leave ledger (#3394, #2540 slice 1c-2): opening balance, annual leave, personal paid leave, unpaid leave. Internal metadata columns like payroll_run.working_days; raw days are omitted from audit facts.
       payroll_leave_entry: columns(['org_id', 'id', 'legal_entity_id', 'employee_id', 'month', 'kind', 'days', 'approved', 'created_by', 'created_at', 'updated_at']),
       // The pay run (#2531): one month of one legal entity, and a line per person. The wage figures, the month's inputs and the breakdown are sensitive like the wage they come from; the

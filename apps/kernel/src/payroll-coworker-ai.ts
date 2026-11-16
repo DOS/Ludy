@@ -6,7 +6,7 @@
 // (none of them is read here but the display name, which is used to put names back after the checks, and to refuse a prompt that holds one). Pay is never recomputed: every figure is
 // a stored one.
 //
-// What is not stored yet is not guessed: a probation end date, the payment method of a person and the registration of a dependent are not in the stored run, so those findings are not
+// What is not stored yet is not guessed: the payment method of a person and the registration of a dependent are not in the stored run, so those findings are not
 // raised (the sheet says nothing the data does not show). Everything is read, never written: nothing here stores a text, changes a run or approves. When there is no model, the AI
 // budget is spent, the member's calls are too frequent, the call fails or its text is refused, the answer names the state (`ai`), and every finding code made is still in it (its facts, with the
 // names put back by code); the model's sentence is attached to a finding only when it passed the checks.
@@ -93,7 +93,7 @@ export async function payrollSource(reads: PayrollReads, runId: string): Promise
       previous,
       contract: {
         startsInMonth: l.flags.includes('new_hire'),
-        probationEndsInMonth: false,
+        probationEndsInMonth: l.flags.includes('probation_ends_this_month'),
         endsInMonth: l.flags.includes('ends_this_month'),
         severanceCheckSuggested: l.flags.includes('severance_check'),
       },
