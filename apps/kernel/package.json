@@ -34,6 +34,8 @@
     "@crove/mod-hr": "workspace:*",
     "@crove/mod-meetings": "workspace:*",
     "@crove/mod-notes": "workspace:*",
+    "@crove/mod-projects": "workspace:*",
+    "@crove/mod-sign": "workspace:*",
     "@crove/mod-social": "workspace:*",
     "@hono/node-server": "catalog:",
     "@orpc/server": "catalog:",

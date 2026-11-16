@@ -297,6 +297,7 @@ export const meetingHookQueued = defineCommand({
 
 export const meetingHookRecord = defineCommand({
   name: 'meetings.hook.record',
+  runsWhenOff: 'records what a meeting hook delivery answered, so a call already made is not lost when the app is switched off',
   input: zMeetingHookRecord,
   risk: 'R1',
   sideEffect: 'internal',

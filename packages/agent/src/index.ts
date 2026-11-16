@@ -18,6 +18,8 @@ export * from './overview.ts';
 export * from './marketplace-line.ts';
 export * from './payroll-match.ts';
 export * from './payroll-coworker.ts';
+export * from './labor-coworker.ts';
+export * from './recruiting-coworker.ts';
 export * from './meter.ts';
 export * from './proofread.ts';
 export * from './scheduling.ts';
@@ -31,10 +33,13 @@ export * from './summary.ts';
 export * from './summary-model.ts';
 export * from './translation-model.ts';
 export * from './ask-model.ts';
+export * from './tasks-from-note-model.ts';
 export * from './today.ts';
 export * from './weekly.ts';
+export * from './project-weekly-status.ts';
 export * from './transcribe.ts';
 export * from './transcribe-eval.ts';
+export * from './sign-ai.ts';
 
 export interface AiConfig {
   baseURL: string;

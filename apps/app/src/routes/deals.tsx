@@ -18,7 +18,7 @@ import { LinkedMeetings, meetingsInstalled } from '../components/linked-meetings
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { DealBoard } from '../components/deal-board.tsx';
 import { DealFilterBar } from '../components/deal-filter-bar.tsx';
-import { DealForm, refreshDeals, type Member } from '../components/deal-form.tsx';
+import { DealForm, DealPartyDuplicate, refreshDeals, type Member } from '../components/deal-form.tsx';
 import { DealQuotes } from '../components/deal-quotes.tsx';
 import { DealNextSteps, useNextStepCount } from '../components/deal-next-steps.tsx';
 import { DealStaleSetting } from '../components/deal-stale-setting.tsx';
@@ -95,7 +95,10 @@ function DealRow({ deal, stages, members, canEdit, canDelete, columns }: { deal:
             </Button>
           )}
         </TableCell>
-        <TableCell className="px-4 text-sm">{deal.partyName}</TableCell>
+        <TableCell className="px-4 text-sm">
+          {deal.partyName}
+          <DealPartyDuplicate deal={deal} canEdit={canEdit} />
+        </TableCell>
         <TableCell className="px-4 text-sm">
           {canEdit ? (
             <NativeSelect size="sm" aria-label={t('stageOf', { title: deal.title })} value={deal.stageId} disabled={move.isPending} onChange={(e) => pick(e.target.value)}>

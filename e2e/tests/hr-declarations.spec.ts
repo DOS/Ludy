@@ -80,7 +80,7 @@ test('an owner records the identifiers, reads each declaration list with its lay
 
   await test.step('each kind opens with its own layout version', async () => {
     for (const [kind, version, row] of [
-      ['d02lt', 'ludy-hr-d02lt/1', 'dòng 9'],
+      ['d02lt', 'ludy-hr-d02lt/2', 'dòng 9'],
       ['qtt', 'ludy-hr-05qtt/1', 'dòng 14'],
       ['certificate', 'ludy-hr-03tncn/1', 'dòng 15'],
     ] as const) {

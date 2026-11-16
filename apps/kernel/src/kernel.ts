@@ -7,7 +7,7 @@ import type { Server } from 'node:http';
 import { configureUploadTimeouts } from './upload-timeouts.ts';
 import { memberMeter } from './ai-meter.ts';
 import { summaryModelPort, type ModelPort } from './member-vy-ports.ts';
-import { AdsCampaignWriter, ConversationWriter, InboxReader, InvoiceExtractor, SchedulingReader, SocialWriter, TodayWriter, WeeklyWriter, type InvoiceReader } from '@crove/agent';
+import { AdsCampaignWriter, ConversationWriter, InboxReader, InvoiceExtractor, SchedulingReader, SignAiReader, SocialWriter, TodayWriter, WeeklyWriter, type InvoiceReader } from '@crove/agent';
 import {
   BlueskyPublisher,
   TELEGRAM_HOOK_KEY_INFO,
@@ -82,10 +82,13 @@ import { socialAgentPrograms, socialCommands, socialManifest, socialOverviewCont
 import { crmAgentPrograms, crmCommands, crmManifest, crmQueries } from '@crove/mod-crm';
 import { hrCommands, hrManifest, hrQueries } from '@crove/mod-hr';
 import { notesCommands, notesManifest, notesQueries } from '@crove/mod-notes';
-import { adsCommands, adsManifest, adsQueries } from '@crove/mod-ads';
-import { meetingsCommands, meetingsManifest, meetingsQueries, setSummaryEnabled, setTranscribeBroker, setTranscribeEnabled } from '@crove/mod-meetings';
-import { GoogleAdsConnector, MetaAdsConnector, MetaWriteConnector, adActivators, adLaunchWriters, adPausers, adPlatforms, adRevokers, type AdActivator, type AdPauser, type AdPlatform, type AdRevoker, type LaunchWriter } from '@crove/ad-platform';
-import { createSandboxEInvoiceProvider, type EInvoiceProvider } from '@crove/einvoice';
+import { projectsCommands, projectsManifest, projectsQueries } from '@crove/mod-projects';
+import { adsBusy, adsCommands, adsManifest, adsQueries } from '@crove/mod-ads';
+import { meetingsBusy, meetingsCommands, meetingsManifest, meetingsQueries, setSummaryEnabled, setTranscribeBroker, setTranscribeEnabled } from '@crove/mod-meetings';
+import { signAiCommands, signAiQueries, signCommands, signManifest, signQueries } from '@crove/mod-sign';
+import { GoogleAdsConnector, MetaAdsConnector, MetaWriteConnector, adActivators, adLaunchWriters, adPausers, adPlatforms, adRevokers, adStateReaders, type AdActivator, type AdPauser, type AdPlatform, type AdRevoker, type AdStateReader, type LaunchWriter } from '@crove/ad-platform';
+import { createMisaEInvoiceProvider, createSandboxEInvoiceProvider, misaBlockers, type EInvoiceProvider } from '@crove/einvoice';
+import { misaTransport } from './einvoice-transport.ts';
 import { createSandboxMarketplaceProvider, isMarketplaceAdapter, type MarketplaceProvider } from '@crove/mod-finance';
 import { createAuthenticator, type Authenticate } from './auth.ts';
 import { AVAILABLE_MODULES, appUrl, assertExportKey, assertSplitRoles, extractConcurrency, usageLimits, zaloMediaHostsOf, type Config, type ModuleId } from './config.ts';
@@ -144,6 +147,10 @@ export interface Connector {
 }
 
 // Which module entitlements an org holds (plan Decision 10). Self-host grants every module.
+// The contract the per-org app gate relies on (ADR-0053): answer the keys the org holds, `full` for every app, and [] for an org with no plan,
+// which holds no app but kernel. Throw (or time out, 3 seconds) only when the service itself is unavailable: the runtime then fails open to the
+// last answer it had for the org, `full` when it has none, so a failing port must never be how an org is told it holds nothing. The runtime
+// caches an answer for a minute per org and asks once at a time per org; the function should be cheap and safe to call often.
 export interface Billing {
   entitlements(orgId: string): Promise<readonly string[]>;
 }
@@ -168,7 +175,9 @@ export interface KernelAdapters {
   // The Inbox's suggested intent and likely contacts (CV3, #2306) through the same endpoint; null: no suggestion, the inbox as it is.
   // The model behind the recorder's Vy summary of a meeting (#2580); the route is on only with MEETINGS_SUMMARY=on as well.
   summaryModel?: ModelPort | null;
-  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'followupWords' | 'overviewSentence' | 'payrollMatchSentence' | 'marketplaceLineSentence' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'crmFollowupWords' | 'meetingBrief' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain'>>) | null;
+  // Vy's eSign field placement and risky clause review (#3351); null runs manual signing without AI.
+  signAi?: Pick<SignAiReader, 'proposeFields' | 'summarizeRiskClauses'> | null;
+  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'followupWords' | 'overviewSentence' | 'payrollMatchSentence' | 'marketplaceLineSentence' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'crmFollowupWords' | 'meetingBrief' | 'projectWeeklyStatus' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain' | 'laborCheck' | 'recruitingBrief'>>) | null;
   storage: BlobStore;
   // Outbound mail (member invites, issue #129); the default logs that nothing was sent.
   mail?: MailProvider;
@@ -236,7 +245,8 @@ export function summaryEnabled(config: Pick<Config, 'MEETINGS_SUMMARY'>): boolea
 // none registered, so its commands answer COMMAND_NOT_FOUND, a ctx.query into it answers not_installed (with the
 // absentModules buildRuntime passes), and the
 // routes and jobs that ask Runtime.installed() are not registered either.
-export function moduleDefinitions(config: Config): ModuleDefinitions {
+// `billing` answers the org's entitlements for kernel.org.apps (ADR-0053); self-host grants every module.
+export function moduleDefinitions(config: Config, billing: Billing = selfHostBilling): ModuleDefinitions {
   // Mail a module queues (the scheduled report, #704) gets the deployment's Message-ID domain too.
   setMessageIdDomain(messageIdDomain(config));
   setInboundAuthservId(config.INBOUND_AUTHSERV_ID);
@@ -253,8 +263,14 @@ export function moduleDefinitions(config: Config): ModuleDefinitions {
         uploadBeginLimits: { perMinute: config.UPLOAD_BEGIN_LIMIT_PER_MINUTE },
         inviteLimits: { perRecipientPerDay: config.INVITE_LIMIT_PER_RECIPIENT_PER_DAY },
         messageIdDomain: messageIdDomain(config),
+        shippedModules: AVAILABLE_MODULES,
+        appBusy: { meetings: meetingsBusy, ads: adsBusy },
       }),
-      queries: kernelQueries({ inboundDomain: config.INBOUND_DOMAIN ?? null, overview: overviewContributions(config) }),
+      queries: kernelQueries({
+        inboundDomain: config.INBOUND_DOMAIN ?? null,
+        overview: overviewContributions(config),
+        apps: { shipped: AVAILABLE_MODULES, deployment: config.CROVE_MODULES, entitlements: (orgId) => billing.entitlements(orgId) },
+      }),
     }),
     finance: () => ({ commands: financeCommands, queries: financeQueries }),
     social: () => ({ commands: socialCommands, queries: socialQueries }),
@@ -262,6 +278,8 @@ export function moduleDefinitions(config: Config): ModuleDefinitions {
     crm: () => ({ commands: crmCommands, queries: crmQueries }),
     notes: () => ({ commands: notesCommands, queries: notesQueries }),
     meetings: () => ({ commands: meetingsCommands, queries: meetingsQueries }),
+    projects: () => ({ commands: projectsCommands, queries: projectsQueries }),
+    sign: () => ({ commands: [...signCommands, ...signAiCommands], queries: [...signQueries, ...signAiQueries] }),
     hr: () => ({ commands: hrCommands, queries: hrQueries }),
   };
   const enabled = config.CROVE_MODULES.map((module) => all[module]());
@@ -287,6 +305,8 @@ const MODULE_MANIFESTS: Record<ModuleId, ModuleManifest> = {
   crm: crmManifest,
   notes: notesManifest,
   meetings: meetingsManifest,
+  projects: projectsManifest,
+  sign: signManifest,
   hr: hrManifest,
 };
 
@@ -308,20 +328,25 @@ function subjectVaultOf(config: Config): SubjectVault | null {
   return vault;
 }
 
-export function serverRuntime(cells: CellResolver, config: Config, options: Omit<RuntimeOptions, 'absentModules' | 'manifests'>): Runtime {
+// `billing` answers the org's entitlements to the per-org app gate (ADR-0053): the runtime is always given its function, so a caller cannot
+// leave the gate without one (it would hold every app for every org); self-host's port grants `full`.
+export function serverRuntime(cells: CellResolver, config: Config, options: Omit<RuntimeOptions, 'absentModules' | 'manifests' | 'entitlements'> & { billing?: Billing }): Runtime {
+  const { billing, ...runtimeOptions } = options;
   // Modules this build ships that CROVE_MODULES leaves out (ADR-0031).
   const absentModules = AVAILABLE_MODULES.filter((module) => !config.CROVE_MODULES.includes(module));
   const runtime = new Runtime(cells, {
     // The key of the sensitive-read audit hash: derived from the credential key (environment or key file, never the database), none without one.
     readAuditKey: createCredentialBroker(config).derive?.('crove.audit.read.v1') ?? null,
-    ...options,
+    ...runtimeOptions,
     // ctx.query into one of them answers not_installed; any other unknown query is QUERY_NOT_FOUND.
     absentModules,
+    // The per-org app gate asks the billing port which apps the org holds (ADR-0053). After the spread: no caller's option replaces it.
+    entitlements: (orgId) => (billing ?? selfHostBilling).entitlements(orgId),
     // The subject keys (ADR-0017): wrap keys derived from every credential key this deployment opens, none without one.
     subjectVault: subjectVaultOf(config),
     // Every declared write must name a manifest table with that manifest's column classes (P04, #1710).
     manifests: moduleManifests(config).map((manifest) => manifest.tables),
-  }).register(moduleDefinitions(config));
+  }).register(moduleDefinitions(config, billing));
   // A command registry that does not fit together (a reviser naming no proposal command, two revisers for one
   // command) fails the boot (#216). Revisers of commands in modules this deployment leaves out are not checked.
   runtime.validate({ absentModules });
@@ -392,10 +417,19 @@ export function metaConversationSecrets(config: Pick<Config, 'CHANNEL_META_APP_I
   return instagram ? { primary: instagram } : undefined;
 }
 
-// The e-invoice providers this deployment offers, by adapter id (ADR-0044 point 7): the offline sandbox when EINVOICE_SANDBOX is on. A real adapter is added here with
-// its own switch when it is built (#2503); until then no host is ever called.
-export function einvoiceProvidersOf(config: Pick<Config, 'EINVOICE_SANDBOX'>): Readonly<Record<string, EInvoiceProvider>> {
-  return config.EINVOICE_SANDBOX === 'true' ? { sandbox: createSandboxEInvoiceProvider().provider } : {};
+// The e-invoice providers this deployment offers, by adapter id (ADR-0044 point 7): the offline sandbox when EINVOICE_SANDBOX is on, and each real adapter EINVOICE_PROVIDERS names.
+// `misa` (#2503) is built but off: naming it is refused until the issues in MISA_GATES are done and written in the issue (misaBlockers), here and in loadConfig. An id this build
+// does not know is left out, so a typo offers nothing.
+export function einvoiceProvidersOf(config: Pick<Config, 'EINVOICE_SANDBOX' | 'EINVOICE_PROVIDERS'>, transport = misaTransport()): Readonly<Record<string, EInvoiceProvider>> {
+  const out: Record<string, EInvoiceProvider> = {};
+  if (config.EINVOICE_SANDBOX === 'true') out.sandbox = createSandboxEInvoiceProvider().provider;
+  for (const raw of config.EINVOICE_PROVIDERS.split(',')) {
+    if (raw.trim() !== 'misa') continue;
+    const blockers = misaBlockers();
+    if (blockers.length > 0) throw new Error(`EINVOICE_PROVIDERS=misa is refused until ${blockers.map((b) => `#${b.issue}`).join(' and ')} are done and written in issue #2503`);
+    out.misa = createMisaEInvoiceProvider({ transport });
+  }
+  return out;
 }
 
 // The marketplace providers this deployment offers, by adapter id (ADR-0045 point 7, #2519): the ones MARKETPLACE_PROVIDERS names. `sandbox` is the offline provider. A real adapter is
@@ -462,6 +496,17 @@ export function adPausersOf(config: Pick<Config, 'ADS_SANDBOX' | 'ADS_LIVE_LAUNC
 // as the launch writers (the offline sandbox's when ADS_SANDBOX is on; Meta's only where ADS_LIVE_LAUNCH is on, which a public deployment refuses).
 export function adActivatorsOf(config: Pick<Config, 'ADS_SANDBOX' | 'ADS_LIVE_LAUNCH' | 'CHANNEL_META_ADS_WRITE_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION'>): Readonly<Record<string, AdActivator>> {
   return adActivators({
+    sandbox: config.ADS_SANDBOX === 'true',
+    ...(config.ADS_LIVE_LAUNCH === 'true' && config.CHANNEL_META_ADS_WRITE_APP_SECRET
+      ? { meta: { writeAppSecret: config.CHANNEL_META_ADS_WRITE_APP_SECRET, ...(config.CHANNEL_META_GRAPH_VERSION ? { graphVersion: config.CHANNEL_META_GRAPH_VERSION } : {}) } }
+      : {}),
+  });
+}
+
+// The state readers the worker is given (#3301), by provider: the frozen view of `readStates` and nothing else, apart from the writers, built with the same providers and the same
+// switch as them (the offline sandbox's when ADS_SANDBOX is on; Meta's only where ADS_LIVE_LAUNCH is on, since without it nothing was ever launched there).
+export function adStateReadersOf(config: Pick<Config, 'ADS_SANDBOX' | 'ADS_LIVE_LAUNCH' | 'CHANNEL_META_ADS_WRITE_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION'>): Readonly<Record<string, AdStateReader>> {
+  return adStateReaders({
     sandbox: config.ADS_SANDBOX === 'true',
     ...(config.ADS_LIVE_LAUNCH === 'true' && config.CHANNEL_META_ADS_WRITE_APP_SECRET
       ? { meta: { writeAppSecret: config.CHANNEL_META_ADS_WRITE_APP_SECRET, ...(config.CHANNEL_META_GRAPH_VERSION ? { graphVersion: config.CHANNEL_META_GRAPH_VERSION } : {}) } }
@@ -585,6 +630,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
     adsCampaignWriter: adapters.adsCampaignWriter ?? null,
     inboxReader: adapters.inboxReader ?? null,
     summaryModel: adapters.summaryModel ?? null,
+    signAi: adapters.signAi ?? null,
     storage: adapters.storage,
     mail: adapters.mail ?? createLogProvider(),
     broker: adapters.broker ?? noCredentialBroker,
@@ -597,6 +643,8 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
     const db = createDb(pool);
     // One database is the control plane and the only cell (Decision 14, plan §3.6).
     const runtime = serverRuntime(singleCell(db), config, {
+      // The org's entitlements, for kernel.org.apps (ADR-0053).
+      billing: resolved.billing,
       // Approval audit rows name the build their policy ran under (plan §4.7, #1402).
       build: config.CROVE_BUILD ?? 'dev',
       // Audit and idempotency rows hash a command's input under the deployment's key (#1732), so an exported or
@@ -695,6 +743,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           store,
           authenticate,
           pool,
+          billing: resolved.billing,
           // The meetings media route seals and opens with the same broker as the worker's reseal pass. The 'none' broker
           // is left out so the route keeps its own fallback (createCredentialBroker(config)).
           ...(resolved.broker.id !== 'none' ? { broker: resolved.broker } : {}),
@@ -777,7 +826,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             exportSealer: exportSealer(config),
             exportRetentionDays: config.EXPORT_RETENTION_DAYS,
             evidenceLockDays: config.EVIDENCE_LOCK_DAYS,
-            channels: { broker: resolved.broker, einvoiceProviders: einvoiceProvidersOf(config), marketplaceProviders: marketplaceProvidersOf(config), conversationHistory: config.CHANNEL_ZALO_HISTORY === 'true', facebookHistory: config.CHANNEL_FACEBOOK_HISTORY === 'true', threadsHistory: config.CHANNEL_THREADS_HISTORY === 'true', youtubeHistory: config.CHANNEL_YOUTUBE_HISTORY === 'true', conversationMediaHosts: zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS), conversationMediaHostsBy: { whatsapp: zaloMediaHostsOf(config.CHANNEL_WHATSAPP_MEDIA_HOSTS) }, conversationAdapters: channelConversationAdapters(config), publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), meetingPlatforms: meetingPlatformAdapters({ sandbox: config.CHANNEL_SANDBOX === 'true' }), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), adPlatforms: adPlatformsOf(config), adRevokers: adRevokersOf(config), adWriters: adWritersOf(config), adPausers: adPausersOf(config), adActivators: adActivatorsOf(config) },
+            channels: { broker: resolved.broker, einvoiceProviders: einvoiceProvidersOf(config), marketplaceProviders: marketplaceProvidersOf(config), conversationHistory: config.CHANNEL_ZALO_HISTORY === 'true', facebookHistory: config.CHANNEL_FACEBOOK_HISTORY === 'true', threadsHistory: config.CHANNEL_THREADS_HISTORY === 'true', youtubeHistory: config.CHANNEL_YOUTUBE_HISTORY === 'true', conversationMediaHosts: zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS), conversationMediaHostsBy: { whatsapp: zaloMediaHostsOf(config.CHANNEL_WHATSAPP_MEDIA_HOSTS) }, conversationAdapters: channelConversationAdapters(config), publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), meetingPlatforms: meetingPlatformAdapters({ sandbox: config.CHANNEL_SANDBOX === 'true' }), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), adPlatforms: adPlatformsOf(config), adRevokers: adRevokersOf(config), adWriters: adWritersOf(config), adPausers: adPausersOf(config), adActivators: adActivatorsOf(config), adStateReaders: adStateReadersOf(config) },
             publicUrl: config.PUBLIC_URL,
             appUrl: appUrl(config),
             brand: config.BRAND_NAME,
@@ -943,6 +992,7 @@ export function defaultAdapters(config: Config): KernelAdapters {
     adsCampaignWriter: aiConfig ? new AdsCampaignWriter(aiConfig) : null,
     inboxReader: aiConfig ? new InboxReader(aiConfig) : null,
     summaryModel: aiConfig ? summaryModelPort(aiConfig) : null,
+    signAi: aiConfig ? new SignAiReader(aiConfig) : null,
     // API and worker build the same store from config; with STORAGE=s3 they share no volume (T7).
     storage: createBlobStore(config),
     // SMTP from SMTP_*; without SMTP_HOST, the log fallback.

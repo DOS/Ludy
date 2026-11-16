@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
-import { HR_DECLARATION_KINDS, zHrDeclarationDocument, zHrDeclarationQuery, hrDeclarationPeriodOk, type HrDeclarationDocument } from '@crove/kernel-contract';
+import { HR_DECLARATION_KINDS, zHrDeclarationDocument, zHrDeclarationExport, zHrDeclarationQuery, zHrLaborCheckAsk, hrDeclarationPeriodOk, type HrDeclarationDocument } from '@crove/kernel-contract';
 import { DECLARATION_KINDS, DECLARATION_LAYOUTS, buildQuarterly } from '../src/declarations.ts';
+import { LABOR_REGISTER_KINDS } from '../src/labor-register.ts';
 import { amountCell, buildDeclarationWorkbook } from '../src/declaration-xlsx.ts';
 
 const INJECTIONS = ['=HYPERLINK("http://example.test","x")', '+84901234567', '-ABC', '@SUM(A1)', '\t=1+1'];
@@ -81,14 +82,29 @@ describe('the declaration workbook (#2533)', () => {
 
 describe('the declaration contract matches the module', () => {
   it('names the same kinds, and checks the period by kind', () => {
-    expect([...HR_DECLARATION_KINDS]).toEqual([...DECLARATION_KINDS]);
+    expect([...HR_DECLARATION_KINDS]).toEqual([...DECLARATION_KINDS, ...LABOR_REGISTER_KINDS]);
     expect(hrDeclarationPeriodOk('d02lt', '2026-09')).toBe(true);
     expect(hrDeclarationPeriodOk('d02lt', '2026-13')).toBe(false);
     expect(hrDeclarationPeriodOk('kk', '2026-Q4')).toBe(true);
     expect(hrDeclarationPeriodOk('kk', '2026-Q5')).toBe(false);
     expect(hrDeclarationPeriodOk('qtt', '2026')).toBe(true);
     expect(hrDeclarationPeriodOk('certificate', '2026-09')).toBe(false);
+    expect(hrDeclarationPeriodOk('labor_register', '2026-06-30')).toBe(true);
+    expect(hrDeclarationPeriodOk('labor_register', '2024-02-29')).toBe(true);
+    expect(hrDeclarationPeriodOk('labor_register', '2026-02-29')).toBe(false);
+    expect(hrDeclarationPeriodOk('labor_register', '2026-04-31')).toBe(false);
+    expect(hrDeclarationPeriodOk('labor_register', '2019-12-31')).toBe(false);
+    expect(hrDeclarationPeriodOk('01pli', '2026-H1')).toBe(true);
+    expect(hrDeclarationPeriodOk('01pli', '2026-H2')).toBe(true);
+    expect(hrDeclarationPeriodOk('01pli', '2026')).toBe(true);
+    expect(hrDeclarationPeriodOk('01pli', '2026-H3')).toBe(false);
+    expect(hrDeclarationPeriodOk('01pli', '2026-06-30')).toBe(false);
     expect(zHrDeclarationQuery.safeParse({ kind: 'kk', period: '2026-09' }).success).toBe(false);
     expect(zHrDeclarationQuery.safeParse({ kind: 'kk', period: '2026-Q3', extra: 1 }).success).toBe(false);
+    expect(zHrDeclarationQuery.safeParse({ kind: 'labor_register', period: '2026-06-30' }).success).toBe(true);
+    expect(zHrDeclarationQuery.safeParse({ kind: '01pli', period: '2026-H1' }).success).toBe(true);
+    expect(zHrDeclarationExport.safeParse({ kind: '01pli', period: '2026-H1', rows: 2, months: [], via: 'xlsx' }).success).toBe(true);
+    expect(zHrLaborCheckAsk.safeParse({ kind: 'labor_register', period: '2026-06-30', lang: 'vi' }).success).toBe(true);
+    expect(zHrLaborCheckAsk.safeParse({ kind: 'labor_register', period: '2026-02-30' }).success).toBe(false);
   });
 });

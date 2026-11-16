@@ -9,8 +9,8 @@ import { MARKETPLACE_LINE_KEEP_MS, MARKETPLACE_LINE_REFUSED_KEEP_MS, explainMark
 
 const ORG = '11111111-1111-4111-8111-111111111111';
 const USER = '22222222-2222-4222-8222-222222222222';
-const FACTS: MarketplaceFacts = { settlementsToPost: 2, payoutsToMatch: 0, awaitingPayout: '1600000', feesAwaitingInvoice: '120000' };
-const NOTHING: MarketplaceFacts = { settlementsToPost: 0, payoutsToMatch: 0, awaitingPayout: '0', feesAwaitingInvoice: '0' };
+const FACTS: MarketplaceFacts = { settlementsToPost: 2, payoutsToMatch: 0, settlementsHalfReversed: 0, awaitingPayout: '1600000', feesAwaitingInvoice: '120000' };
+const NOTHING: MarketplaceFacts = { settlementsToPost: 0, payoutsToMatch: 0, settlementsHalfReversed: 0, awaitingPayout: '0', feesAwaitingInvoice: '0' };
 const SAID: MarketplaceLineResult = { kind: 'sentence', text: 'Có 2 kỳ đối soát đang chờ ghi sổ.' };
 
 function setup(answer: ((facts: MarketplaceLineFacts) => Promise<MarketplaceLineResult>) | null, budget = new DraftBudget()) {

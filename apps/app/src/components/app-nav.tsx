@@ -22,7 +22,7 @@ const APP_ICON: Record<AppId, NavIconName> = { teamwork: 'appTeamwork', finance:
 // A menu item's icon is the one named like its label (packages/ui nav-icon.tsx). Items without an icon of their own take
 // the closest: Ads and the AI budgets the banknote of the vouchers (money spent), the Tài chính overview the dashboard of the
 // overview, the reports and the tax the spreadsheet of the VAT return; the type fails to compile for a label that has neither.
-const OWN_ICON = { accountingOverview: 'overview', ads: 'vouchers', aiUsage: 'vouchers', aiConnections: 'settings', socialInbox: 'inbox', socialNotifications: 'alerts', reports: 'vat', tax: 'vat', salesInvoices: 'documents', stock: 'fixedAssets', declarations: 'documents', meetings: 'comments' } as const satisfies { [L in Exclude<NavLabel, NavIconName>]: NavIconName };
+const OWN_ICON = { accountingOverview: 'overview', ads: 'vouchers', aiUsage: 'vouchers', aiConnections: 'settings', socialInbox: 'inbox', socialNotifications: 'alerts', reports: 'vat', tax: 'vat', salesInvoices: 'documents', stock: 'fixedAssets', declarations: 'documents', recruiting: 'employees', meetings: 'comments' } as const satisfies { [L in Exclude<NavLabel, NavIconName>]: NavIconName };
 const menuIcon = (label: NavLabel): NavIconName => (label in OWN_ICON ? OWN_ICON[label as keyof typeof OWN_ICON] : (label as NavIconName));
 
 export interface ShellNavProps {

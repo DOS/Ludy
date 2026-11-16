@@ -193,9 +193,10 @@ const ADS_SCREENS = {
 // every query enforce; the item is hidden from everyone else by the app's role check.
 const HR_SCREENS = {
   // The bank templates of the salary file are the second tab of Bảng lương (#3225).
-  routes: [{ path: 'hr/employees' }, { path: 'hr/payroll' }, { path: 'hr/declarations' }, { path: 'hr/bank-templates', find: 'bankTemplates' }],
+  routes: [{ path: 'hr/employees' }, { path: 'hr/recruiting' }, { path: 'hr/payroll' }, { path: 'hr/declarations' }, { path: 'hr/bank-templates', find: 'bankTemplates' }],
   nav: [
     { app: 'hr', group: 'people', path: 'hr/employees', label: 'employees' },
+    { app: 'hr', group: 'people', path: 'hr/recruiting', label: 'recruiting' },
     { app: 'hr', group: 'people', path: 'hr/payroll', label: 'payroll' },
     { app: 'hr', group: 'people', path: 'hr/declarations', label: 'declarations' },
   ],
@@ -208,6 +209,18 @@ export const MEETINGS_SCREENS = {
   nav: [{ app: 'teamwork', group: 'work', path: 'meetings', label: 'meetings' }],
 } as const satisfies ModuleScreens;
 
+// Projects and a task board on kernel tasks (issue #2591, ADR-0048, projects plan P2): in Cộng tác beside Tasks, Notes and My work (#3225).
+export const PROJECTS_SCREENS = {
+  routes: [{ path: 'projects' }, { path: 'projects/$id' }],
+  nav: [{ app: 'teamwork', group: 'work', path: 'projects', label: 'projects' }],
+} as const satisfies ModuleScreens;
+
+// eSign screens arrive in Slice 1c; Slice 1a registers the module manifest with no routes or nav items yet.
+export const SIGN_SCREENS = {
+  routes: [],
+  nav: [],
+} as const satisfies ModuleScreens;
+
 export const MODULE_SCREENS = {
   kernel: KERNEL_SCREENS,
   finance: FINANCE_SCREENS,
@@ -217,4 +230,6 @@ export const MODULE_SCREENS = {
   crm: CRM_SCREENS,
   notes: NOTES_SCREENS,
   meetings: MEETINGS_SCREENS,
+  projects: PROJECTS_SCREENS,
+  sign: SIGN_SCREENS,
 } as const;

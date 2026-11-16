@@ -343,6 +343,7 @@ export type EditRecord = z.infer<typeof zEditResult>;
 // and the post a version of it, the person's; the call keys stay named by the revision it went out under.
 export const editRecord = defineCommand({
   name: 'social.edit.record',
+  runsWhenOff: "records the platform's answer to a call already made, so its outcome is not lost when the app is switched off",
   input: z.strictObject({ variantId: zId, callKey: z.string().min(1).max(300), result: zEditResult }),
   risk: 'R1',
   sideEffect: 'internal',

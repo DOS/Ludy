@@ -22,6 +22,7 @@ import {
   MAX_SOCIAL_VIDEO_MS,
   MAX_UPLOAD_BYTES,
   ORG_HEADER,
+  SIGN_PAGE_PATH,
   SOCIAL_IMAGE_TYPES,
   DEFAULT_EXTENSION_IDS,
   LIVE_CHUNK_MAX_BYTES,
@@ -164,6 +165,29 @@ import type { OauthServer } from './oauth-server.ts';
 import { reviewAnswer, reviewFile, reviewMedia, reviewView, REVIEW_ANSWERS_PER_MINUTE, REVIEW_FILES_PER_MINUTE, REVIEW_VIEWS_PER_MINUTE } from './review-link.ts';
 import { quoteLogo, quoteView, readLogoFile, QUOTE_LOGO_READS_MAX, QUOTE_VIEWS_PER_MINUTE } from './quote-link.ts';
 import { reportView, REPORT_VIEWS_PER_MINUTE } from './report-link.ts';
+import {
+  SIGN_OTP_REQUESTS_PER_MINUTE,
+  SIGN_OTP_VERIFIES_PER_MINUTE,
+  SIGN_PDF_READS_MAX,
+  SIGN_PDFS_PER_MINUTE,
+  SIGN_SUBMITS_PER_MINUTE,
+  SIGN_TOKEN_OTP_REQUESTS_PER_MINUTE,
+  SIGN_TOKEN_OTP_VERIFIES_PER_MINUTE,
+  SIGN_TOKEN_PDFS_PER_MINUTE,
+  SIGN_TOKEN_SUBMITS_PER_MINUTE,
+  SIGN_TOKEN_VIEWS_PER_MINUTE,
+  SIGN_VERIFY_PER_MINUTE,
+  SIGN_VIEWS_PER_MINUTE,
+  readPublicPdfBytes,
+  resolvePublicPdf,
+  runSignDecline,
+  runSignOtpRequest,
+  runSignOtpVerify,
+  runSignSubmit,
+  runSignVerify,
+  runSignView,
+  type SignBilling,
+} from './sign-link.ts';
 import { bookingFeed, renderBookingFeedIcs } from './booking-feed.ts';
 import { CALENDAR_FEED_HITS_PER_MINUTE, calendarFeed, renderIcs } from './calendar-feed.ts';
 import { BIO_HITS_PER_MINUTE, BIO_PAGE_CSP, bioGo, bioImage, bioView, renderBioPage } from './bio-page.ts';
@@ -201,6 +225,7 @@ import {
   StreamConnection,
   newTicket,
   streamScopeOf,
+  STREAM_FILTERED_APPS,
   ticketActor,
   ticketHash,
   wellFormedTicket,
@@ -295,6 +320,23 @@ export interface HttpDeps {
   quoteLogoLimit?: RateLimiter;
   // How many logo reads (a stored file read whole into memory) run at once in this process, across every client (#2814). Unset: QUOTE_LOGO_READS_MAX.
   quoteLogoReads?: ConcurrencyLimiter;
+  // Plan entitlements lookup used to fail closed on disabled or un-entitled modules on public edge routes (#3324).
+  billing?: SignBilling;
+  // Per-client, per-token-hash, and bounded PDF read concurrency limiters for public eSign routes (#3324).
+  signLimits?: Partial<{
+    views: RateLimiter;
+    tokenViews: RateLimiter;
+    pdfs: RateLimiter;
+    tokenPdfs: RateLimiter;
+    pdfReads: ConcurrencyLimiter;
+    otpRequest: RateLimiter;
+    tokenOtpRequest: RateLimiter;
+    otpVerify: RateLimiter;
+    tokenOtpVerify: RateLimiter;
+    submit: RateLimiter;
+    tokenSubmit: RateLimiter;
+    verify: RateLimiter;
+  }>;
   // The posting calendar feed's budget per client (#862). Unset: CALENDAR_FEED_HITS_PER_MINUTE.
   calendarFeedLimit?: RateLimiter;
   // The per-client budget of link-in-bio pages, their links and images (#707), replaceable in tests.
@@ -1280,6 +1322,166 @@ export function createHttpApp(deps: HttpDeps) {
     });
   }
 
+  // Orgless public eSign link endpoints (#3324, docs/plan/esign.md): credentials stay out of query strings,
+  // every answer sets Referrer-Policy: no-referrer and Cache-Control: no-store, disabled/expired/waiting states
+  // return one opaque 404, and rate/concurrency caps apply without any CAPTCHA gate (#203).
+  if (runtime.installed('sign')) {
+    const signBilling: SignBilling = deps.billing ?? { entitlements: async () => ['full'] };
+    const signViewLimit = deps.signLimits?.views ?? new RateLimiter({ perMinute: SIGN_VIEWS_PER_MINUTE });
+    const signTokenViewLimit = deps.signLimits?.tokenViews ?? new RateLimiter({ perMinute: SIGN_TOKEN_VIEWS_PER_MINUTE });
+    const signPdfLimit = deps.signLimits?.pdfs ?? new RateLimiter({ perMinute: SIGN_PDFS_PER_MINUTE });
+    const signTokenPdfLimit = deps.signLimits?.tokenPdfs ?? new RateLimiter({ perMinute: SIGN_TOKEN_PDFS_PER_MINUTE });
+    const signPdfReads = deps.signLimits?.pdfReads ?? new ConcurrencyLimiter({ total: SIGN_PDF_READS_MAX, perKey: SIGN_PDF_READS_MAX });
+    const signOtpReqLimit = deps.signLimits?.otpRequest ?? new RateLimiter({ perMinute: SIGN_OTP_REQUESTS_PER_MINUTE });
+    const signTokenOtpReqLimit = deps.signLimits?.tokenOtpRequest ?? new RateLimiter({ perMinute: SIGN_TOKEN_OTP_REQUESTS_PER_MINUTE });
+    const signOtpVerifyLimit = deps.signLimits?.otpVerify ?? new RateLimiter({ perMinute: SIGN_OTP_VERIFIES_PER_MINUTE });
+    const signTokenOtpVerifyLimit = deps.signLimits?.tokenOtpVerify ?? new RateLimiter({ perMinute: SIGN_TOKEN_OTP_VERIFIES_PER_MINUTE });
+    const signSubmitLimit = deps.signLimits?.submit ?? new RateLimiter({ perMinute: SIGN_SUBMITS_PER_MINUTE });
+    const signTokenSubmitLimit = deps.signLimits?.tokenSubmit ?? new RateLimiter({ perMinute: SIGN_TOKEN_SUBMITS_PER_MINUTE });
+    const signVerifyLimit = deps.signLimits?.verify ?? new RateLimiter({ perMinute: SIGN_VERIFY_PER_MINUTE });
+
+    const setSignSecurityHeaders = (c: Context) => {
+      c.header('referrer-policy', 'no-referrer');
+      c.header('cache-control', 'no-store');
+      c.header('x-content-type-options', 'nosniff');
+    };
+
+    const signBodyLimit = (maxSize: number) =>
+      bodyLimit({
+        maxSize,
+        onError: (c) => {
+          setSignSecurityHeaders(c);
+          return c.text('Payload Too Large', 413);
+        },
+      });
+
+    const signEdgeGuard = (ipLimit: RateLimiter): MiddlewareHandler => async (c, next) => {
+      setSignSecurityHeaders(c);
+      if (c.req.query('token') !== undefined) {
+        return c.json({ code: 'SIGN_QUERY_TOKEN_FORBIDDEN', message: 'Signing tokens must be submitted in the request body' }, 400);
+      }
+      const decision = ipLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+      if (!decision.allowed) {
+        warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+        c.header('retry-after', String(decision.retryAfterSeconds));
+        return c.json({ code: 'RATE_LIMITED', message: 'Bạn gửi quá nhiều yêu cầu, hãy thử lại sau', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+      }
+      await next();
+    };
+
+    const signRateLimited = (c: Context, retryAfterSeconds: number) => {
+      c.header('retry-after', String(retryAfterSeconds));
+      return c.json({ code: 'RATE_LIMITED', message: 'Bạn gửi quá nhiều yêu cầu, hãy thử lại sau', retryAfterSeconds }, 429);
+    };
+
+    const signOpaqueNotFound = (c: Context) => c.json({ code: 'NOT_FOUND', message: 'Not found' }, 404);
+    const signMeta = (c: Context) => ({ ip: clientIp(c, config.TRUSTED_PROXY_HOPS), userAgent: c.req.header('user-agent') ?? null });
+
+    app.post('/api/sign/view', signEdgeGuard(signViewLimit), signBodyLimit(2048), async (c) => {
+      try {
+        const res = await runSignView(runtime, signBilling, await c.req.json().catch(() => null), signMeta(c), (hash) => signTokenViewLimit.take(hash));
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        return c.json(res.view);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/pdf', signEdgeGuard(signPdfLimit), signBodyLimit(2048), async (c) => {
+      try {
+        const lookup = await resolvePublicPdf(runtime, signBilling, await c.req.json().catch(() => null), (hash) => signTokenPdfLimit.take(hash));
+        if (lookup.status === 'not_found') return signOpaqueNotFound(c);
+        if (lookup.status === 'rate_limited') return signRateLimited(c, lookup.retryAfterSeconds);
+        if (lookup.status === 'otp_required') {
+          return c.json({ code: 'OTP_REQUIRED', message: 'Email OTP verification is required before viewing document' }, 403);
+        }
+        const release = signPdfReads.tryAcquire('sign-pdf');
+        if (!release) {
+          c.header('retry-after', '2');
+          return c.json({ code: 'SIGN_PDF_BUSY', message: 'Máy chủ đang bận, hãy thử lại sau vài giây' }, 503);
+        }
+        try {
+          const bytes = await readPublicPdfBytes(store, lookup.source);
+          return new Response(body(bytes), {
+            headers: {
+              'content-type': 'application/pdf',
+              'content-disposition': 'inline; filename="document.pdf"',
+              'cache-control': 'no-store',
+              'referrer-policy': 'no-referrer',
+              'x-content-type-options': 'nosniff',
+              'content-security-policy': "default-src 'none'; sandbox",
+            },
+          });
+        } finally {
+          release();
+        }
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/otp/request', signEdgeGuard(signOtpReqLimit), signBodyLimit(2048), async (c) => {
+      try {
+        const res = await runSignOtpRequest(runtime, signBilling, await c.req.json().catch(() => null), (hash) => signTokenOtpReqLimit.take(hash));
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        return c.json(res.result);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/otp/verify', signEdgeGuard(signOtpVerifyLimit), signBodyLimit(2048), async (c) => {
+      try {
+        const res = await runSignOtpVerify(runtime, signBilling, await c.req.json().catch(() => null), signMeta(c), (hash) => signTokenOtpVerifyLimit.take(hash));
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        if (res.status === 'validation_error') return c.json({ code: 'VALIDATION', message: res.message }, 422);
+        if (res.result.ok) return c.json(res.result, 200);
+        if (res.result.locked) return c.json(res.result, 423);
+        return c.json(res.result, 401);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/submit', signEdgeGuard(signSubmitLimit), signBodyLimit(4 * 1024 * 1024), async (c) => {
+      try {
+        const res = await runSignSubmit(runtime, signBilling, await c.req.json().catch(() => null), signMeta(c), (hash) => signTokenSubmitLimit.take(hash));
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'already_used') return c.json({ code: 'SIGN_ALREADY_SUBMITTED', message: 'This signing link has already been used' }, 409);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        if (res.status === 'validation_error') return c.json({ code: 'VALIDATION', message: res.message }, 422);
+        return c.json(res.result);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/decline', signEdgeGuard(signSubmitLimit), signBodyLimit(8 * 1024), async (c) => {
+      try {
+        const res = await runSignDecline(runtime, signBilling, await c.req.json().catch(() => null), signMeta(c), (hash) => signTokenSubmitLimit.take(hash));
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'already_used') return c.json({ code: 'SIGN_ALREADY_SUBMITTED', message: 'This signing link has already been used' }, 409);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        if (res.status === 'validation_error') return c.json({ code: 'VALIDATION', message: res.message }, 422);
+        return c.json(res.result);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/verify', signEdgeGuard(signVerifyLimit), signBodyLimit(2048), async (c) => {
+      try {
+        const verified = await runSignVerify(runtime, signBilling, await c.req.json().catch(() => null));
+        return verified ? c.json(verified) : signOpaqueNotFound(c);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+  }
+
   // The client review page (#589): no account, the link's token is the only credential. It comes in the body, never the
   // URL, so it stays out of access logs; each client address has a small budget, and an unknown, revoked or expired
   // link answers like a malformed one.
@@ -1498,7 +1700,22 @@ export function createHttpApp(deps: HttpDeps) {
       // The stream's access line names the org the ticket was issued for (#2175).
       setLogContext({ orgId });
       // The check also answers the legal-entity scope the stream's hints are filtered by (#1692).
-      const check = () => runtime.query(STREAM_CHECK_QUERY, {}, { actor, orgId }).then(streamScopeOf);
+      // And the apps the org has off now (ADR-0053): a stream does not push the hints of an app that is off, and re-reads this on every check. A check that cannot
+      // tell leaves the filter out, as the app's own calls into an off app are refused by the runtime anyway.
+      // The apps off at the last check that could read them: a read that fails keeps that filter in force (it never widens a stream), and logs the error's class.
+      let lastAppsOff: ReadonlySet<string> | null = null;
+      const check = async () => {
+        const scope = streamScopeOf(await runtime.query(STREAM_CHECK_QUERY, {}, { actor, orgId }));
+        const on = await runtime.effectiveModules(orgId).catch((error: unknown) => {
+          console.warn(`[stream] the apps of org ${orgId.slice(0, 8)} could not be read: ${error instanceof Error ? error.name : typeof error}`);
+          return null;
+        });
+        if (on === null) return lastAppsOff && lastAppsOff.size > 0 ? { ...scope, appsOff: lastAppsOff } : scope;
+        // An app this deployment does not run is not "off": nothing writes its rows, and a runtime without it (a kernel-only one) is not filtering.
+        const appsOff = new Set(STREAM_FILTERED_APPS.filter((app) => runtime.installed(app) && !on.includes(app)));
+        lastAppsOff = appsOff;
+        return appsOff.size === 0 ? scope : { ...scope, appsOff };
+      };
       let scope: StreamScope;
       try {
         scope = await check();
@@ -1859,6 +2076,8 @@ export function createHttpApp(deps: HttpDeps) {
       // Only features this deployment runs: a scope of a module that is left out is not offered.
       if (input.scopes.includes('meetings') && !runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
       const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      // An org that switched Meetings off, or does not hold it, is not offered its scope either (ADR-0053).
+      if (input.scopes.includes('meetings') && !(await runtime.appOn(orgId, 'meetings', { fresh: true }).catch(() => true))) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
       const code = newExtensionCode();
       const issued = await runtime.execute<{ expiresInSeconds: number }>(
         'kernel.extension.code.issue',
@@ -1872,17 +2091,19 @@ export function createHttpApp(deps: HttpDeps) {
   });
 
   // What the extension shell asks right after sign-in: whose token this is and which features this deployment runs.
-  // Answered from the verified token alone, with no tenant data. A browser session has no use for it.
-  app.get('/api/extension/me', (c) => {
+  // Answered from the verified token and the org's app switch, with no tenant data: Meetings is a feature of the extension only while the org has it on
+  // (ADR-0053). A browser session has no use for it.
+  app.get('/api/extension/me', async (c) => {
     c.header('cache-control', 'no-store');
     const { extension } = c.get('user');
     if (!extension) return problem(c, new DomainError('FORBIDDEN', 403, 'Đường này chỉ dành cho tiện ích Ludy', { rule: 'extension_only' }));
+    const meetingsOn = runtime.installed('meetings') && (await runtime.appOn(extension.orgId, 'meetings', { fresh: true }).catch(() => true));
     return c.json({
       tokenId: extension.tokenId,
       orgId: extension.orgId,
       scopes: extension.scopes,
       expiresAt: extension.expiresAt,
-      features: { meetings: extension.scopes.includes('meetings') && runtime.installed('meetings'), agenda: extension.scopes.includes('agenda') && runtime.installed('meetings') },
+      features: { meetings: extension.scopes.includes('meetings') && meetingsOn, agenda: extension.scopes.includes('agenda') && meetingsOn },
     });
   });
 
@@ -1920,6 +2141,11 @@ export function createHttpApp(deps: HttpDeps) {
       if (type !== 'application/zip') throw new DomainError('UNSUPPORTED_TYPE', 415, `${name}: chỉ nhận tệp Excel dạng .xlsx`);
       if (bytes.byteLength > MAX_IMPORT_BYTES) throw new DomainError('TOO_LARGE', 413, `${name} vượt quá 10 MB`);
       type = XLSX_CONTENT_TYPE;
+    } else if (purpose === 'sign_document') {
+      if (type !== 'application/pdf') {
+        throw new DomainError('UNSUPPORTED_TYPE', 415, `${name}: tài liệu ký điện tử chỉ nhận tệp PDF`);
+      }
+      if (bytes.byteLength > MAX_UPLOAD_BYTES) throw new DomainError('TOO_LARGE', 413, `${name} vượt quá 25 MB`);
     } else if (video) {
       if (bytes.byteLength > MAX_SOCIAL_VIDEO_BYTES) throw new DomainError('TOO_LARGE', 413, `${name} vượt quá 100 MB`);
       const ms = videoDurationMs(bytes);
@@ -1951,7 +2177,7 @@ export function createHttpApp(deps: HttpDeps) {
         sha256,
         storageKey,
         generation,
-        source: purpose === 'social' ? 'social' : purpose === 'import' ? 'import' : 'upload',
+        source: purpose === 'social' ? 'social' : purpose === 'import' ? 'import' : purpose === 'sign_document' ? 'sign_document' : 'upload',
         ...(durationMs === undefined ? {} : { durationMs }),
         ...(size ? { imageWidth: size.width, imageHeight: size.height } : {}),
         // A document only: the entity it is booked in (#1764), which the command checks the uploader sees.
@@ -1989,7 +2215,24 @@ export function createHttpApp(deps: HttpDeps) {
       if (!runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mục đích tải lên không hợp lệ');
       return value;
     }
+    if (value === 'sign_document') {
+      if (!runtime.installed('sign')) throw new DomainError('NOT_FOUND', 404, 'Mục đích tải lên không hợp lệ');
+      return value;
+    }
     throw new DomainError('INVALID', 400, 'Mục đích tải lên không hợp lệ');
+  }
+
+  // The purpose of an upload, for the org it is for: Meetings and eSign upload purposes belong to their apps, so an org that switched that app off, or does not hold it,
+  // gets the answer of a purpose that is not installed (404, as when the deployment leaves the app out; ADR-0053). The grant an upload needs is a kernel command, which the app gate does not cover.
+  async function uploadPurposeFor(value: unknown, orgId: string): Promise<UploadPurpose> {
+    const purpose = uploadPurpose(value);
+    if ((purpose === 'meeting_audio' || purpose === 'meeting_video') && !(await runtime.appOn(orgId, 'meetings', { fresh: true }).catch(() => true))) {
+      throw new DomainError('NOT_FOUND', 404, 'Mục đích tải lên không hợp lệ');
+    }
+    if (purpose === 'sign_document' && !(await runtime.appOn(orgId, 'sign', { fresh: true }).catch(() => true))) {
+      throw new DomainError('NOT_FOUND', 404, 'Mục đích tải lên không hợp lệ');
+    }
+    return purpose;
   }
 
   async function uploader(c: Context<{ Variables: { user: AuthUser } }>) {
@@ -2035,7 +2278,7 @@ export function createHttpApp(deps: HttpDeps) {
       const { user, orgId } = who;
       const body = await c.req.parseBody({ all: true });
       const files = ([] as unknown[]).concat(body.file ?? []).filter((f): f is File => f instanceof File);
-      const purpose = uploadPurpose(body.purpose);
+      const purpose = await uploadPurposeFor(body.purpose, orgId);
       if (purpose === 'meeting_audio' || purpose === 'meeting_video') {
         throw new DomainError('STAGED_UPLOAD_REQUIRED', 400, 'Tệp phương tiện cuộc họp phải tải lên qua cơ chế phân đoạn (POST /api/files/uploads)');
       }
@@ -2073,12 +2316,12 @@ export function createHttpApp(deps: HttpDeps) {
       if (!direct) throw noDirect();
       const { user, orgId } = await uploader(c);
       const input = (await c.req.json().catch(() => null)) as { purpose?: unknown } | null;
-      const grant = await runtime.execute<{ uploadId: string; stagingKey: string; maxBytes: number }>('kernel.file.upload.begin', { purpose: uploadPurpose(input?.purpose) }, {
+      const purpose = await uploadPurposeFor(input?.purpose, orgId);
+      const grant = await runtime.execute<{ uploadId: string; stagingKey: string; maxBytes: number }>('kernel.file.upload.begin', { purpose }, {
         actor: actorOf(user),
         orgId,
       });
       // A meeting's media grant is no larger than crove-media takes (#2989): a recording over it is refused here, before the browser sends it to the bucket.
-      const purpose = uploadPurpose(input?.purpose);
       const grantBytes = purpose === 'meeting_audio' || purpose === 'meeting_video' ? Math.min(grant.maxBytes, meetingMediaCap(purpose === 'meeting_video' ? 'video' : 'audio')) : grant.maxBytes;
       const form = await direct.presignUpload(grant.stagingKey, grantBytes);
       c.header('cache-control', 'private, no-store');
@@ -2099,7 +2342,7 @@ export function createHttpApp(deps: HttpDeps) {
       if (!direct) throw noDirect();
       const { user, orgId } = await uploader(c);
       const input = (await c.req.json().catch(() => null)) as { filename?: unknown; purpose?: unknown; legalEntityId?: unknown } | null;
-      const purpose = uploadPurpose(input?.purpose);
+      const purpose = await uploadPurposeFor(input?.purpose, orgId);
       const legalEntityId = uploadEntity(input?.legalEntityId);
       const filename = typeof input?.filename === 'string' && input.filename.trim() ? input.filename.slice(0, 255) : 'chung-tu';
       const release = completes.tryAcquire(user.userId);
@@ -3778,6 +4021,11 @@ export function createHttpApp(deps: HttpDeps) {
     let indexHtml: string | null = null;
     app.get('*', async (c) => {
       c.header('content-security-policy', csp);
+      if (c.req.path === SIGN_PAGE_PATH || c.req.path.startsWith(`${SIGN_PAGE_PATH}/`)) {
+        c.header('referrer-policy', 'no-referrer');
+        c.header('cache-control', 'no-store');
+        c.header('x-content-type-options', 'nosniff');
+      }
       indexHtml ??= await readFile(indexPath, 'utf8');
       return c.html(indexHtml);
     });

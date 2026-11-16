@@ -86,11 +86,12 @@ export interface PayrollLineFacts {
   figures: PayrollFigures;
   /** Last month's figures of the same person, null for a person with no pay line last month. */
   previous: PayrollFigures | null;
-  contract: { startsInMonth: boolean; probationEndsInMonth: boolean; endsInMonth: boolean };
+  contract: { startsInMonth: boolean; probationEndsInMonth: boolean; endsInMonth: boolean; severanceCheckSuggested: boolean };
   /** Consecutive months, this one included, in which the person had overtime pay. */
   overtimeMonthsInRow: number;
   dependentsWithoutRegistration: number;
-  checks: { minimumWageFailed: boolean; deductionCapFailed: boolean; netBelowMinimum: boolean; insuredAboveCap: boolean; cashPaymentOverLimit: boolean };
+  exceededAnnualDays?: string;
+  checks: { minimumWageFailed: boolean; deductionCapFailed: boolean; overtimeCapFailed: boolean; netBelowMinimum: boolean; insuredAboveCap: boolean; cashPaymentOverLimit: boolean; annualLeaveExceeded: boolean };
 }
 
 /** A line as the server holds it: the person's id is only here, to map an alias back. It never goes in a prompt. */
@@ -135,15 +136,23 @@ export function pseudonymizeSheet(lines: readonly PayrollSheetLine[], options: {
       alias,
       figures: pickFigures(line.figures),
       previous: line.previous ? pickFigures(line.previous) : null,
-      contract: { startsInMonth: line.contract.startsInMonth === true, probationEndsInMonth: line.contract.probationEndsInMonth === true, endsInMonth: line.contract.endsInMonth === true },
+      contract: {
+        startsInMonth: line.contract.startsInMonth === true,
+        probationEndsInMonth: line.contract.probationEndsInMonth === true,
+        endsInMonth: line.contract.endsInMonth === true,
+        severanceCheckSuggested: line.contract.severanceCheckSuggested === true,
+      },
       overtimeMonthsInRow: Math.max(0, Math.trunc(line.overtimeMonthsInRow)),
       dependentsWithoutRegistration: Math.max(0, Math.trunc(line.dependentsWithoutRegistration)),
+      exceededAnnualDays: new Decimal(line.exceededAnnualDays ?? '0').toFixed(),
       checks: {
         minimumWageFailed: line.checks.minimumWageFailed === true,
         deductionCapFailed: line.checks.deductionCapFailed === true,
+        overtimeCapFailed: line.checks.overtimeCapFailed === true,
         netBelowMinimum: line.checks.netBelowMinimum === true,
         insuredAboveCap: line.checks.insuredAboveCap === true,
         cashPaymentOverLimit: line.checks.cashPaymentOverLimit === true,
+        annualLeaveExceeded: line.checks.annualLeaveExceeded === true,
       },
     };
   });
@@ -193,7 +202,7 @@ const oneLine = (text: string) => text.replace(/\s+/g, ' ').trim();
 // Flag: anomalies found by code, each put in a sentence by the model
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-export const PAYROLL_ANOMALY_KINDS = ['pay_moved', 'net_below_minimum', 'deduction_over_cap', 'dependent_unregistered', 'insured_above_cap', 'cash_payment_over_limit', 'rule_blocks'] as const;
+export const PAYROLL_ANOMALY_KINDS = ['pay_moved', 'net_below_minimum', 'deduction_over_cap', 'overtime_over_cap', 'dependent_unregistered', 'insured_above_cap', 'cash_payment_over_limit', 'annual_leave_exceeded', 'rule_blocks'] as const;
 export type PayrollAnomalyKind = (typeof PAYROLL_ANOMALY_KINDS)[number];
 
 export interface PayrollAnomaly {
@@ -236,9 +245,25 @@ export function findAnomalies(sheet: PayrollSheet): PayrollAnomaly[] {
     if (line.checks.netBelowMinimum) add('net_below_minimum', who, vi ? `${who}: thực nhận ${amountOf(line.figures.net, language)}, thấp hơn mức lương tối thiểu của tháng` : `${who}: net pay ${amountOf(line.figures.net, language)}, below the month's minimum wage`);
     else if (line.checks.minimumWageFailed) add('net_below_minimum', who, vi ? `${who}: lương cơ bản ${amountOf(line.figures.base_wage, language)}, không đạt kiểm tra lương tối thiểu của tháng` : `${who}: base wage ${amountOf(line.figures.base_wage, language)} fails the month's minimum wage check`);
     if (line.checks.deductionCapFailed) add('deduction_over_cap', who, vi ? `${who}: có khoản khấu trừ vượt mức 30% lương theo quy định của Bộ luật Lao động; tổng khấu trừ tháng này ${amountOf(line.figures.deductions, language)}` : `${who}: a deduction is over the 30% cap of the Labor Code; total deductions this month ${amountOf(line.figures.deductions, language)}`);
+    if (line.checks.overtimeCapFailed) add('overtime_over_cap', who, vi ? `${who}: tổng giờ làm thêm vượt mức 40 giờ/tháng theo quy định của Bộ luật Lao động; tiền làm thêm tháng này ${amountOf(line.figures.overtime, language)}` : `${who}: total overtime hours exceed the 40 hours/month cap of the Labor Code; overtime pay this month ${amountOf(line.figures.overtime, language)}`);
     if (line.dependentsWithoutRegistration > 0) add('dependent_unregistered', who, vi ? `${who}: ${line.dependentsWithoutRegistration} người phụ thuộc chưa đăng ký` : `${who}: ${line.dependentsWithoutRegistration} dependent(s) without a registration`);
     if (line.checks.insuredAboveCap) add('insured_above_cap', who, vi ? `${who}: mức đóng bảo hiểm vượt mức trần` : `${who}: the insured wage is above the cap`);
     if (line.checks.cashPaymentOverLimit) add('cash_payment_over_limit', who, vi ? `${who}: trả tiền mặt ${amountOf(line.figures.net, language)}, từ ${amountOf(CASH_PAYMENT_LIMIT, language)} trở lên phải chuyển khoản thì chi phí lương mới được trừ khi tính thuế thu nhập doanh nghiệp` : `${who}: ${amountOf(line.figures.net, language)} paid in cash; ${amountOf(CASH_PAYMENT_LIMIT, language)} or more must be non-cash for the pay to be deductible for corporate income tax`);
+    if (line.checks.annualLeaveExceeded) {
+      const exceeded = new Decimal(line.exceededAnnualDays ?? '0');
+      const daysText = amountText(exceeded.toFixed(), language);
+      add(
+        'annual_leave_exceeded',
+        who,
+        exceeded.greaterThan(0)
+          ? vi
+            ? `${who}: đã nghỉ phép năm vượt mức theo luật ${daysText} ngày`
+            : `${who}: annual leave taken exceeds statutory entitlement by ${daysText} day(s)`
+          : vi
+            ? `${who}: đã nghỉ phép năm vượt mức theo luật`
+            : `${who}: annual leave taken exceeds statutory entitlement`,
+      );
+    }
   }
   if (sheet.blockingRules > 0) add('rule_blocks', null, vi ? `Tháng này dùng ${sheet.blockingRules} quy tắc chưa được kế toán xác nhận nên chưa duyệt được` : `This month uses ${sheet.blockingRules} rule(s) the accountant has not confirmed, so it cannot be approved yet`);
   return out;
@@ -309,7 +334,7 @@ export function checkFlagSentences(anomalies: readonly PayrollAnomaly[], output:
 
 export const PAYROLL_INPUT_FIELDS = ['overtime', 'unpaid_days', 'bonus', 'allowances', 'insured', 'contract', 'none'] as const;
 export type PayrollInputField = (typeof PAYROLL_INPUT_FIELDS)[number];
-export const PAYROLL_SIGNAL_KINDS = ['new_hire', 'probation_ends', 'contract_ends', 'recurring_overtime', 'component_changed'] as const;
+export const PAYROLL_SIGNAL_KINDS = ['new_hire', 'probation_ends', 'contract_ends', 'severance_check', 'recurring_overtime', 'component_changed'] as const;
 export type PayrollSignalKind = (typeof PAYROLL_SIGNAL_KINDS)[number];
 
 export interface PayrollSignal {
@@ -326,6 +351,7 @@ export const PAYROLL_FIELDS_OF_SIGNAL: Record<PayrollSignalKind, readonly Payrol
   new_hire: ['unpaid_days', 'insured', 'contract', 'none'],
   probation_ends: ['allowances', 'insured', 'contract', 'none'],
   contract_ends: ['unpaid_days', 'insured', 'contract', 'none'],
+  severance_check: ['unpaid_days', 'bonus', 'contract', 'none'],
   recurring_overtime: ['overtime', 'none'],
   component_changed: ['allowances', 'none'],
 };
@@ -345,6 +371,15 @@ export function findSignals(sheet: PayrollSheet): PayrollSignal[] {
     if (line.contract.startsInMonth) add('new_hire', who, vi ? `${who}: bắt đầu làm việc trong tháng này, số ngày chưa làm của đầu tháng cần nhập` : `${who}: starts work this month, the days not employed at the start of the month need typing`);
     if (line.contract.probationEndsInMonth) add('probation_ends', who, vi ? `${who}: kết thúc thử việc trong tháng này` : `${who}: probation ends this month`);
     if (line.contract.endsInMonth) add('contract_ends', who, vi ? `${who}: hợp đồng hoặc việc làm kết thúc trong tháng này` : `${who}: the contract or the employment ends this month`);
+    if (line.contract.severanceCheckSuggested) {
+      add(
+        'severance_check',
+        who,
+        vi
+          ? `${who}: nghỉ việc trong tháng và đã làm đủ 12 tháng trở lên, cần kiểm tra trợ cấp thôi việc theo Bộ luật Lao động`
+          : `${who}: leaves this month with 12 or more months worked; check statutory severance allowance under the Labor Code`,
+      );
+    }
     if (line.overtimeMonthsInRow >= RECURRING_OVERTIME_MONTHS) add('recurring_overtime', who, vi ? `${who}: có tiền làm thêm giờ ${line.overtimeMonthsInRow} tháng liên tiếp, tháng này ${amountOf(line.figures.overtime, language)}` : `${who}: overtime pay for ${line.overtimeMonthsInRow} months in a row, ${amountOf(line.figures.overtime, language)} this month`);
     if (line.previous) {
       for (const key of RECURRING_COMPONENTS) {

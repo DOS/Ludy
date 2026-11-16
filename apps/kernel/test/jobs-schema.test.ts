@@ -29,11 +29,27 @@ describe('vendored pg-boss schema (External-tenant gate T6)', () => {
       (names ?? '').split(', ').map((name) => [name.slice(1, -1), JSON.parse(options ?? '{}').policy as string]),
     );
     expect(Object.fromEntries(created)).toEqual(
-      Object.fromEntries(Object.values(QUEUES).map((name) => [name, name === QUEUES.agentWake || name === QUEUES.adsSync || name === QUEUES.mcpWake || name === QUEUES.meetingHook || name === QUEUES.meetingChat || name === QUEUES.meetingsImport ? 'stately' : 'standard'])),
+      Object.fromEntries(
+        Object.values(QUEUES).map((name) => [
+          name,
+          name === QUEUES.signPdfInspect || name === QUEUES.signPdfSeal
+            ? 'exclusive'
+            : name === QUEUES.agentWake ||
+                name === QUEUES.adsSync ||
+                name === QUEUES.mcpWake ||
+                name === QUEUES.meetingHook ||
+                name === QUEUES.meetingChat ||
+                name === QUEUES.meetingsImport
+              ? 'stately'
+              : 'standard',
+        ]),
+      ),
     );
     expect(queueOptions(QUEUES.agentWake)).toBe('{"policy":"stately","deadLetter":"kernel-job.dlq"}');
     // One queued and one active sync per account (its singleton key), so a link, a refresh and the sweep never read one twice.
     expect(queueOptions(QUEUES.adsSync)).toBe('{"policy":"stately","deadLetter":"kernel-job.dlq"}');
+    expect(queueOptions(QUEUES.signPdfInspect)).toBe('{"policy":"exclusive","deadLetter":"kernel-job.dlq"}');
+    expect(queueOptions(QUEUES.signPdfSeal)).toBe('{"policy":"exclusive","deadLetter":"kernel-job.dlq"}');
     expect(queueOptions(QUEUES.extract)).toBe('{"policy":"standard","deadLetter":"kernel-job.dlq"}');
   });
 
@@ -55,7 +71,7 @@ describe('vendored pg-boss schema (External-tenant gate T6)', () => {
       expect(AVAILABLE_MODULES as readonly string[], queue).toContain(queue.split('-')[0]);
     }
     // health() lists the optional modules, whose queues alone can drop out of its job age: every module but kernel that works a queue (the hr module (#2530) has none).
-    const sql = readFileSync(join(MIGRATIONS, '20261202010000_crove_kernel_health_meetings.sql'), 'utf8');
+    const sql = readFileSync(join(MIGRATIONS, '20270104070000_crove_kernel_sign_integration.sql'), 'utf8');
     const listed = /<> ALL \(ARRAY\[([^\]]*)\]\)/.exec(sql)?.[1]?.split(',').map((m) => m.trim().replaceAll("'", ''));
     const working = new Set([...Object.values(QUEUES), ...SOCIAL_PUBLISH_QUEUES, ...MAIL_QUEUES].map((queue) => queue.split('-')[0]));
     expect(listed?.sort()).toEqual(AVAILABLE_MODULES.filter((m) => m !== 'kernel' && working.has(m)).sort());

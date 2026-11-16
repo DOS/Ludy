@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The Sàn screen's read (#2516 slice D), on PostgreSQL 17: finance.marketplace.balance reads the ledger by account (131, 1388) and by the platform's party of crove_finance.marketplace_party.
+// The Sàn screen's read (#2516 slice D), on PostgreSQL 17: finance.marketplace.balance reads the ledger by account (131, 331) and by the platform's party of crove_finance.marketplace_party.
 // A platform with no entries shows zeros; sales, payouts and fees come from the lines that name the platform's party and nobody else's; a reversal entry takes back what it reverses and is
 // never counted as a payout; another org sees nothing and an unknown entity filter gives no rows.
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
@@ -124,12 +124,12 @@ suite('the platform balance read on PostgreSQL (#2516)', () => {
     });
   });
 
-  it('adds the sales posted to 131, the payouts that cleared it and the fees kept on 1388, for the platform\'s party only', async () => {
+  it('adds the sales posted to 131, the payouts that cleared it and the fees kept on 331, for the platform\'s party only', async () => {
     // Two settlements of Shopee: Dr 131 / Cr 511.
     await post([['131', 1_000_000, 0, shopee], ['511', 0, 1_000_000, null]]);
     await post([['131', 500_000, 0, shopee], ['511', 0, 500_000, null]]);
     // A payout of the first settlement: 900,000 received, 100,000 of fees kept (invoice not come), Cr 131 for the whole.
-    await post([['112', 900_000, 0, null], ['1388', 100_000, 0, shopee], ['131', 0, 1_000_000, shopee]]);
+    await post([['112', 900_000, 0, null], ['331', 100_000, 0, shopee], ['131', 0, 1_000_000, shopee]]);
     // A customer's 131 line and a TikTok settlement are other people's figures.
     await post([['131', 777_000, 0, customer], ['511', 0, 777_000, null]]);
     await post([['131', 250_000, 0, tiktok], ['511', 0, 250_000, null]]);
@@ -146,9 +146,9 @@ suite('the platform balance read on PostgreSQL (#2516)', () => {
     await post([['131', 0, 300_000, shopee], ['511', 300_000, 0, null]], settlement);
     expect(rowOf(await balance(), 'shopee')).toMatchObject({ salesPosted: '1500000', paidOut: '1000000', awaitingPayout: '500000', feesAwaitingInvoice: '100000' });
     // A payout reversed: the Cr 131 of that entry is taken back, so it was never paid out and the fee line goes with it.
-    const payout = await post([['112', 200_000, 0, null], ['1388', 50_000, 0, shopee], ['131', 0, 250_000, shopee]]);
+    const payout = await post([['112', 200_000, 0, null], ['331', 50_000, 0, shopee], ['131', 0, 250_000, shopee]]);
     expect(rowOf(await balance(), 'shopee')).toMatchObject({ salesPosted: '1500000', paidOut: '1250000', awaitingPayout: '250000', feesAwaitingInvoice: '150000' });
-    await post([['112', 0, 200_000, null], ['1388', 0, 50_000, shopee], ['131', 250_000, 0, shopee]], payout);
+    await post([['112', 0, 200_000, null], ['331', 0, 50_000, shopee], ['131', 250_000, 0, shopee]], payout);
     expect(rowOf(await balance(), 'shopee')).toMatchObject({ salesPosted: '1500000', paidOut: '1000000', awaitingPayout: '500000', feesAwaitingInvoice: '100000' });
   });
 

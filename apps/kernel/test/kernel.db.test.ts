@@ -309,7 +309,7 @@ suite('kernel on PostgreSQL', () => {
     // kernel.org.create's definer and checks, with a handler that refuses after the org exists in the transaction.
     const failing: CommandDef<any, any> = {
       ...createOrgCommand,
-      name: 'test.org.create_then_fail',
+      name: 'kernel.org.create_then_fail',
       handler: async () => {
         throw new DomainError('INVALID', 422, 'refused after creation');
       },
@@ -318,14 +318,14 @@ suite('kernel on PostgreSQL', () => {
 
     await captureErrors(async (logged) => {
       await expect(
-        hooked.runtime.executeOrgless('test.org.create_then_fail', { name: `Hoàn tác ${tag}` }, { actor: asUser(founder) }),
+        hooked.runtime.executeOrgless('kernel.org.create_then_fail', { name: `Hoàn tác ${tag}` }, { actor: asUser(founder) }),
       ).rejects.toMatchObject({ code: 'INVALID', status: 422 });
       // No refusal-audit transaction was opened: the org rolled back, there is nothing to audit in. The refusal is
       // noted in security_event instead, with no target org (#1006).
       expect(hooked.seen.transactions).toBe(1);
       expect(logged).not.toHaveBeenCalled();
     });
-    expect(await securityEvents(founder)).toEqual([{ command: 'test.org.create_then_fail', code: 'INVALID', target_org: null, refusals: 1 }]);
+    expect(await securityEvents(founder)).toEqual([{ command: 'kernel.org.create_then_fail', code: 'INVALID', target_org: null, refusals: 1 }]);
     const left = await withAdmin(async (admin) => (await admin.query('SELECT 1 FROM crove_kernel.tenant WHERE created_by = $1', [founder])).rows.length);
     expect(left).toBe(0);
   });

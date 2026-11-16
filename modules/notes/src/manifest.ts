@@ -10,7 +10,7 @@ export const notesManifest = defineModule({
   dependsOn: ['kernel'],
   tables: {
     crove_notes: {
-      link: columns(['org_id', 'id', 'note_id', 'target_type', 'target_id', 'party_id', 'file_id', 'created_by', 'created_at']),
+      link: columns(['org_id', 'id', 'note_id', 'todo_id', 'target_type', 'target_id', 'party_id', 'file_id', 'task_id', 'created_by', 'created_at']),
       note: columns(
         ['org_id', 'id', 'author_user_id', 'visibility', 'pinned', 'tainted', 'revision', 'created_at', 'updated_at', 'archived_at', 'deleted_at'],
         { title: 'pii', body: 'pii', tags: 'pii', search: 'pii' },

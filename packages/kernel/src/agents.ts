@@ -749,6 +749,71 @@ export const createTaskFromMeeting = defineCommand({
   },
 });
 
+// A task made from a conversation of the Inbox (conversations plan docs/plan/conversations.md section 4 point 2, issue #3295): the conversation core runs this
+// inside its kernel.conversation.follow_up command (ctx.run), after it has read and locked the thread under row-level security, so the task and the thread's
+// audit row commit together. The task takes the title the person typed, the seat they picked (none: the owner at the root of the chart, a one-person
+// company's default), a due date and a `kernel.conversation` source_ref this command sets itself from the thread's id. The description is always empty and
+// the task is never tainted: a task is read by every member, and neither a customer's words nor a model's text are copied into it by this path. No RPC
+// route reaches it.
+export const createTaskFromConversation = defineCommand({
+  name: 'kernel.task.create_from_conversation',
+  input: z.strictObject({
+    conversationId: zId,
+    title: zTaskTitle,
+    positionId: zId.nullable(),
+    due: z.iso.datetime({ offset: true }).nullable(),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MEMBERS,
+  handler: async (ctx, input) => {
+    requireUser(ctx);
+    // The thread must be one the caller may read (row-level security decides): a task linked to a private thread is listed to its readers.
+    const thread = await ctx.trx.selectFrom('crove_kernel.conversation').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.conversationId).executeTakeFirst();
+    if (!thread) throw new DomainError('CONVERSATION_NOT_FOUND', 404, 'Không tìm thấy hội thoại này');
+    const created = await insertHumanTask(ctx, {
+      title: input.title,
+      description: null,
+      assigneePositionId: input.positionId,
+      due: input.due,
+      sourceRef: { type: 'kernel.conversation', id: input.conversationId },
+      tainted: false,
+    });
+    ctx.audit({ taskId: created.taskId, conversationId: input.conversationId, positionId: input.positionId });
+    return created;
+  },
+});
+
+// Tasks confirmed from Vy's note proposals (projects plan docs/plan/projects.md step P7, #2598): projects module runs
+// this inside its atomic batch confirmation command (ctx.run). Every created task keeps source_ref `notes.note` and
+// stays `tainted: true` because its proposed wording started from a private note and a model run (ADR-0029, ADR-0048).
+// No RPC route exposes this directly.
+export const createTaskFromNote = defineCommand({
+  name: 'kernel.task.create_from_note',
+  input: z.strictObject({
+    noteId: zId,
+    title: zTaskTitle,
+    positionId: zId.nullable(),
+    due: z.iso.datetime({ offset: true }).nullable(),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MEMBERS,
+  handler: async (ctx, input) => {
+    requireUser(ctx);
+    const created = await insertHumanTask(ctx, {
+      title: input.title,
+      description: null,
+      assigneePositionId: input.positionId,
+      due: input.due,
+      sourceRef: { type: 'notes.note', id: input.noteId },
+      tainted: true,
+    });
+    ctx.audit({ taskId: created.taskId, noteId: input.noteId, positionId: input.positionId });
+    return created;
+  },
+});
+
 // A person edits a task's title, description, due date or seat (projects plan docs/plan/projects.md step P1, #2588).
 // Refused while an agent's run holds a live lease on the task (TASK_CHECKED_OUT), when the new seat is archived
 // (POSITION_ARCHIVED) or when the new seat's holder cannot read the task's legal entity (OUTSIDE_LEGAL_ENTITY).
@@ -2120,6 +2185,8 @@ export const agentCommands = [
   createTask,
   createTaskFromTodo,
   createTaskFromMeeting,
+  createTaskFromConversation,
+  createTaskFromNote,
   updateTask,
   checkoutTask,
   commentTask,

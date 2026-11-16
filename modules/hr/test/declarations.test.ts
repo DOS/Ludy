@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
+import ExcelJS from 'exceljs';
+import { buildDeclarationWorkbook } from '../src/declaration-xlsx.ts';
 import {
   DECLARATION_NOTICE,
   DECLARATION_LAYOUTS,
@@ -224,6 +226,156 @@ describe('the D02-LT of the month', () => {
   it('flags a missing birth date or insurance number instead of inventing one', () => {
     const bare = buildD02Lt({ month: '2026-09', employer, persons: [{ ...newHire, birthDate: null }, raised, same, leaver, probation], lines: current, previousLines: previous });
     expect(bare.sheets[0]?.rows[0]?.note).toContain('Thiếu ngày sinh');
+  });
+
+  it('uses layout ludy-hr-d02lt/2 with position, workplace, and contractType between insuranceNumber and effectiveOn (#3437)', () => {
+    expect(DECLARATION_LAYOUTS.d02lt.version).toBe('ludy-hr-d02lt/2');
+    expect(doc.layout.version).toBe('ludy-hr-d02lt/2');
+    const cols = doc.sheets[0]?.columns ?? [];
+    const insIdx = cols.findIndex((c) => c.key === 'insuranceNumber');
+    const effIdx = cols.findIndex((c) => c.key === 'effectiveOn');
+    expect(effIdx).toBe(insIdx + 4);
+    expect(cols.slice(insIdx + 1, effIdx)).toEqual([
+      { key: 'position', header: 'Chức vụ, chức danh nghề', kind: 'text' },
+      { key: 'workplace', header: 'Phòng ban / nơi làm việc', kind: 'text' },
+      { key: 'contractType', header: 'Loại hợp đồng', kind: 'text' },
+    ]);
+    expect(doc.notes[0]).toBe('Nơi đăng ký khám chữa bệnh ban đầu chưa được lưu trong Ludy: nhập tay khi khai.');
+    expect(doc.notes.join(' ')).not.toContain('Chức danh, nơi làm việc, loại hợp đồng');
+    // Unset optional fields default cleanly to ''.
+    expect(rows[0]).toMatchObject({ position: '', workplace: '', contractType: '' });
+  });
+
+  it('resolves contractType by effective date across mid-year amendments, supports all 4 types, and blanks erased/unmatched rows (#3437)', async () => {
+    const hireUnderOne = person('1', 'An', {
+      startedOn: '2026-09-10',
+      position: 'Cộng tác viên',
+      workplace: 'Vận hành',
+      contracts: [
+        { effectiveFrom: '2026-09-10', contractType: 'under_one_month' },
+        { effectiveFrom: '2026-09-25', contractType: 'indefinite' },
+      ],
+    });
+    // Mid-year amendment: started fixed_term, converted to indefinite on 2026-06-01, then changed to none on 2026-09-15 before leaving 2026-09-20.
+    // On adjust (effectiveOn 2026-09-01) -> indefinite; on decrease (effectiveOn 2026-09-20) -> none.
+    const amendedLeaver = person('2', 'Bình', {
+      startedOn: '2025-01-01',
+      endedOn: '2026-09-20',
+      position: 'Trưởng nhóm',
+      workplace: 'Kinh doanh',
+      contracts: [
+        { effectiveFrom: '2025-01-01', contractType: 'fixed_term' },
+        { effectiveFrom: '2026-06-01', contractType: 'indefinite' },
+        { effectiveFrom: '2026-09-15', contractType: 'none' },
+      ],
+    });
+    // Fixed-term with future-only contract amendment not yet active on 2026-09-01 -> '' when effectiveFrom > effectiveOn.
+    const futureOnly = person('3', 'Chi', {
+      startedOn: '2025-01-01',
+      position: '=HYPERLINK("http://example.test","x")',
+      workplace: '+Kinh doanh',
+      contracts: [{ effectiveFrom: '2026-10-01', contractType: 'fixed_term' }],
+    });
+    // Fixed-term active as of 2026-09-01, plus erased/masked person with null/[] fields.
+    const fixedActive = person('4', 'Dũng', {
+      startedOn: '2026-01-01',
+      position: 'Kế toán viên',
+      workplace: null,
+      contracts: [
+        { effectiveFrom: '2026-01-01', contractType: 'fixed_term' },
+        { effectiveFrom: '2026-01-01', contractType: 'indefinite' },
+      ],
+    });
+    const fixedOnly = person('5', 'Em', {
+      startedOn: '2026-01-01',
+      position: 'Nhân viên',
+      workplace: 'Kho',
+      contracts: [{ effectiveFrom: '2026-01-01', contractType: 'fixed_term' }],
+    });
+    const erased = person('6', 'Đã xóa theo yêu cầu', {
+      startedOn: '2020-01-01',
+      position: null,
+      workplace: null,
+      contracts: [],
+    });
+
+    const prevLines = [
+      line('2', '2026-08', '0', { breakdown: breakdown('10000000') }),
+      line('3', '2026-08', '0', { breakdown: breakdown('10000000') }),
+      line('4', '2026-08', '0', { breakdown: breakdown('10000000') }),
+      line('5', '2026-08', '0', { breakdown: breakdown('10000000') }),
+      line('6', '2026-08', '0', { breakdown: breakdown('10000000') }),
+    ];
+    const currLines = [
+      line('1', '2026-09', '0', { breakdown: breakdown('8000000') }),
+      line('2', '2026-09', '0', { breakdown: breakdown('12000000') }),
+      line('3', '2026-09', '0', { breakdown: breakdown('11000000') }),
+      line('4', '2026-09', '0', { breakdown: breakdown('13000000') }),
+      line('5', '2026-09', '0', { breakdown: breakdown('14000000') }),
+      line('6', '2026-09', '0', { breakdown: breakdown('15000000') }),
+    ];
+
+    const res = buildD02Lt({
+      month: '2026-09',
+      employer,
+      persons: [hireUnderOne, amendedLeaver, futureOnly, fixedActive, fixedOnly, erased],
+      lines: currLines,
+      previousLines: prevLines,
+    });
+    const out = res.sheets[0]?.rows ?? [];
+    expect(out.find((r) => r.name === 'An' && r.movement === 'Tăng lao động')).toMatchObject({
+      position: 'Cộng tác viên',
+      workplace: 'Vận hành',
+      contractType: 'Dưới 1 tháng',
+      effectiveOn: '2026-09-10',
+    });
+    expect(out.find((r) => r.name === 'Bình' && r.movement === 'Điều chỉnh mức đóng')).toMatchObject({
+      position: 'Trưởng nhóm',
+      workplace: 'Kinh doanh',
+      contractType: 'Không xác định thời hạn',
+      effectiveOn: '2026-09-01',
+    });
+    expect(out.find((r) => r.name === 'Bình' && r.movement === 'Giảm lao động')).toMatchObject({
+      position: 'Trưởng nhóm',
+      workplace: 'Kinh doanh',
+      contractType: 'Không ký HĐLĐ',
+      effectiveOn: '2026-09-20',
+    });
+    expect(out.find((r) => r.name === 'Chi')).toMatchObject({
+      position: '=HYPERLINK("http://example.test","x")',
+      workplace: '+Kinh doanh',
+      contractType: '',
+    });
+    expect(out.find((r) => r.name === 'Dũng')).toMatchObject({
+      position: 'Kế toán viên',
+      workplace: '',
+      contractType: 'Không xác định thời hạn',
+    });
+    expect(out.find((r) => r.name === 'Em')).toMatchObject({
+      position: 'Nhân viên',
+      workplace: 'Kho',
+      contractType: 'Xác định thời hạn',
+    });
+    expect(out.find((r) => r.name === 'Đã xóa theo yêu cầu')).toMatchObject({
+      position: '',
+      workplace: '',
+      contractType: '',
+    });
+
+    // Verify ExcelJS workbook keeps formula-like position/workplace values as plain string cells.
+    const bytes = await buildDeclarationWorkbook(res, 'Ludy');
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer);
+    const cellValues: string[] = [];
+    wb.worksheets[0]?.eachRow((row) =>
+      row.eachCell((cell) => {
+        expect(cell.formula).toBeUndefined();
+        expect(cell.type).not.toBe(ExcelJS.ValueType.Formula);
+        if (typeof cell.value === 'string') cellValues.push(cell.value);
+      }),
+    );
+    expect(cellValues).toContain('=HYPERLINK("http://example.test","x")');
+    expect(cellValues).toContain('+Kinh doanh');
   });
 });
 

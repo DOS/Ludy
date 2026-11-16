@@ -55,6 +55,8 @@ export const AI_FEATURES = {
   'finance.payroll_prepare': 'finance',
   'finance.payroll_flag': 'finance',
   'finance.payroll_explain': 'finance',
+  // The finance coworker's pre-export compliance review for Sổ quản lý lao động and Báo cáo 01/PLI (#3372): code computes every finding and count, and the model summarizes pseudonymized readiness.
+  'finance.labor_check': 'finance',
   // The finance coworker's one line on why a bank statement line may be a payroll payment (#2532): code decided by the amount, the model only words it from the kind, month, amount and date (no name, no
   // description, no account); a line that states a figure it was not given is refused, and a person asks for the payment and approves it.
   'finance.bank_match_explain': 'finance',
@@ -78,6 +80,16 @@ export const AI_FEATURES = {
   'meetings.translate': 'meetings',
   // The member's Vy answering one question across the meetings the member reads (meetings integrations A3, #3161): one call over at most 40 transcript lines the member's own search found, the member waiting for it. A key of its own, so a question never cuts off a transcription, a summary, a translation or live notes (#3029). Nothing of the answer is stored.
   'meetings.ask': 'meetings',
+  // Vy's weekly status of one project (projects P6, #2597): transient 3 to 5 plain sentences from deterministic counts and task titles/comments only, never reading notes.
+  'projects.weekly_status': 'projects',
+  // Member-scoped Vy proposing project tasks from one note (projects P7, #2598, ADR-0049): one call over the note text and project members' active seats; nothing is created until explicit human confirmation.
+  'projects.tasks_from_note': 'projects',
+  // Ly's pseudonymized recruiting screening brief and interview focus questions (#3403 Stage 3 slice 3b-1 / #3413): reads alias C1, role facts, readiness flags, and scrubbed untrusted notes only; never decides hire or reject.
+  'hr.recruiting_brief': 'hr',
+  // Vy (the general manager) proposing signing field placements on a draft eSign PDF (#3351): one call over page sizes, declared signer role keys and bounded page text per ask, the member waiting for it. A key of its own, so field proposals never cut off risky clause summaries or other AI features.
+  'sign.field_propose': 'sign',
+  // Vy (the general manager) summarizing risky clauses with exact verbatim quotes from a draft eSign PDF (#3351): one call over bounded page text per ask, the member waiting for it.
+  'sign.clause_summary': 'sign',
 } as const satisfies Record<string, string>;
 export type AiFeature = keyof typeof AI_FEATURES;
 export const AI_FEATURE_KEYS = Object.keys(AI_FEATURES) as AiFeature[];

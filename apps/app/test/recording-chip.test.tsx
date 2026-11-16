@@ -52,6 +52,15 @@ describe('RecordingChip', () => {
     expect(render()).toContain('Paused 12:31');
   });
 
+  it('has a Stop button in the bar while it records in the app, and not for the extension\'s recording (#3197)', () => {
+    setLocalRecording({ meetingId: 'm1', title: 'Họp', paused: false, elapsedMs: () => 1000, stop: () => undefined });
+    const html = render();
+    expect(html).toContain('recording-chip-stop');
+    expect(html).toContain('>Stop<');
+    setLocalRecording(null);
+    expect(render({ meetingId: 'm2', startedAt: new Date(Date.now() - 5000).toISOString() })).not.toContain('recording-chip-stop');
+  });
+
   it('goes when the in-app recording stops', () => {
     setLocalRecording({ meetingId: 'm1', title: 'Họp', paused: false, elapsedMs: () => 1000 });
     expect(render()).toContain('recording-chip');

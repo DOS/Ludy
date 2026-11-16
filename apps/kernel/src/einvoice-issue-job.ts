@@ -7,6 +7,7 @@
 // Nothing here logs or stores a credential, the buyer's data or a provider's own text: codes and ids.
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type EInvoiceOutcome, type EInvoiceProvider, type EInvoiceRequest, type EInvoiceStatusAnswer } from '@crove/einvoice';
 import { DomainError, fileKey, putFile, sha256Hex, type BlobStore, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
+import { recordAfterCall } from './record-after-call.ts';
 
 const SYSTEM = { type: 'system' as const, component: 'finance.einvoice' };
 
@@ -77,7 +78,7 @@ export async function runEInvoiceIssue(deps: EInvoiceIssueDeps, job: EInvoiceIss
   const begun = await deps.runtime.execute<Begun>('finance.einvoice.job_begin', { draftId: job.draftId }, options);
   if (begun.action === 'none') return { action: 'none', state: begun.reason ?? 'none' };
   const { action, connectionId, adapter, key, request, draftId, legalEntityId } = begun as Omit<Required<Begun>, 'reason' | 'action'> & { action: 'issue' | 'ask' | 'poll' | 'files' };
-  const record = (step: 'issue' | 'ask' | 'poll', result: Result) => deps.runtime.execute<Recorded>('finance.einvoice.job_record', { draftId, step, result }, options);
+  const record = (step: 'issue' | 'ask' | 'poll', result: Result) => recordAfterCall('finance.einvoice.job_record', () => deps.runtime.execute<Recorded>('finance.einvoice.job_record', { draftId, step, result }, options));
   // The adapter switched off on this deployment: nothing is sent. A send that was never made goes back to a draft with the code on screen; a question about an invoice the provider
   // has or may have is held and asked again later (never ended).
   if (!Object.hasOwn(deps.providers, adapter)) {

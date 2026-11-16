@@ -61,6 +61,8 @@ function useLine() {
         return t('text.period_closing', { period: period(n.detail.period), due: n.detail.dueDate ? f.date(n.detail.dueDate) : '' });
       case 'notes.todo_due':
         return t('text.todo_due');
+      case 'projects.weekly_status':
+        return t('text.projects_weekly_status', { title: n.detail.title ?? '' });
       case 'kernel.channel_expired':
         return t('text.channel_expired');
       case 'kernel.ai_budget':
@@ -129,6 +131,8 @@ export function NotificationsPage() {
     else if (target?.to === 'myWork') void navigate({ to: '/o/$slug/my-work', params: { slug } });
     else if (target?.to === 'task') void navigate({ to: '/o/$slug/tasks/$id', params: { slug, id: target.id } });
     else if (target?.to === 'tasks') void navigate({ to: '/o/$slug/tasks', params: { slug } });
+    else if (target?.to === 'project') void navigate({ to: '/o/$slug/projects/$id', params: { slug, id: target.id } });
+    else if (target?.to === 'projects') void navigate({ to: '/o/$slug/projects', params: { slug } });
     else if (target?.to === 'conversation') void navigate({ to: '/o/$slug/social/inbox', params: { slug }, search: { c: target.id } });
     else if (target?.to === 'conversations') void navigate({ to: '/o/$slug/social/inbox', params: { slug }, search: { status: 'new' } });
     else if (target?.to === 'ads') void navigate({ to: '/o/$slug/ads', params: { slug } });

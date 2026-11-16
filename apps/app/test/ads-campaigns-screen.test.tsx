@@ -358,7 +358,7 @@ describe('a draft that is frozen', () => {
     expect(pausedHtml).toContain('cmp_101');
     expect(pausedHtml).toContain('Ad set: ');
     expect(pausedHtml).toContain('set_202');
-    expect(pausedHtml).toContain('PENDING_REVIEW (in_review)');
+    expect(pausedHtml).toContain('In review (the platform is reviewing it)');
     const liveHtml = render(
       builder({
         draft: draft({
@@ -389,6 +389,19 @@ describe('a draft that is frozen', () => {
     expect(vi).toContain('Chiến dịch: ');
     expect(vi).toContain('Nhóm quảng cáo: ');
     expect(vi).toContain('Đang bật');
+  });
+
+  it('shows a rejected ad with the reason the sync stored, and renders whatever the platform sent as text, never as markup', () => {
+    const rejected = [{ slot: 'ad_1', level: 'ad' as const, externalId: 'ad_404', name: 'Khai trương', effectiveStatus: 'DISAPPROVED', reviewReason: 'issue_1487079' }];
+    const html = render(builder({ draft: draft({ status: 'approved', launch: launch({ state: 'live', step: 'live', objects: rejected }) }) }));
+    expect(html).toContain('Rejected (platform issue code 1487079)');
+    expect(render(builder({ draft: draft({ status: 'approved', launch: launch({ state: 'live', step: 'live', objects: rejected }) }) }), 'vi')).toContain('Bị từ chối (mã vấn đề 1487079 của nền tảng)');
+    // A value that is not a code this build knows is shown as it is, escaped.
+    const hostile = [{ slot: 'ad_1', level: 'ad' as const, externalId: 'ad_404', name: 'Khai trương', effectiveStatus: 'X<IMG_SRC=x>', reviewReason: '<script>alert(1)</script>' }];
+    const escaped = render(builder({ draft: draft({ status: 'approved', launch: launch({ state: 'live', step: 'live', objects: hostile }) }) }));
+    expect(escaped).not.toContain('<script>');
+    expect(escaped).not.toContain('<IMG');
+    expect(escaped).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
   });
 
   it('a stopped launch says its commitment stays and where the pause of its ads stands: being paused, paused, or to be paused by hand', () => {

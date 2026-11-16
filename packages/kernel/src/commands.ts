@@ -54,7 +54,7 @@ import { extractionCommands, legalEntityMoveRefused, readAgainIn, refuseWhileRee
 import { ingestFileRow, zIngestFile } from './files.ts';
 import { createOrgCommand, myOrgs, orgCreateCommand, type OrgCreateLimits, type OrgSummary } from './identity.ts';
 import { acceptInvite, createInvite, inviteCreateCommand, revokeInvite, type InviteLimits } from './invites.ts';
-import { mailCommands, queueContactMail } from './mail.ts';
+import { mailCommands, queueContactMail, queueMemberMail } from './mail.ts';
 import { auditLogCommands } from './audit-log.ts';
 import { personalDataCommands } from './personal-data.ts';
 import { notificationCommands } from './notifications.ts';
@@ -67,6 +67,7 @@ import { setAddress, setContactEmail } from './org-address.ts';
 import { partyCommands } from './parties.ts';
 import { setTaxCode, setVatFilingPeriod } from './tax-code.ts';
 import { setApprovalPreset } from './approval-preset.ts';
+import { setAppCommand, type AppBusyProbe } from './org-apps.ts';
 import { legalEntityCommands } from './legal-entities.ts';
 import { numberingCommands } from './numbering.ts';
 import { cancelMemberVyRuns, memberVyCommands } from './member-vy.ts';
@@ -901,6 +902,8 @@ export const approveProposal = defineCommand({
 export const BULK_ITEM_REFUSALS: ReadonlySet<string> = new Set([
   // The proposal (lockPendingProposal, refuseWhileReextracting): another org's id reads like one that does not exist.
   'NOT_FOUND',
+  // The proposal's command belongs to an app the org switched off or does not hold (ADR-0053): that item waits, the others go on.
+  'MODULE_OFF',
   'PROPOSAL_DECIDED',
   // A proposal that expired while the batch was prepared (#876).
   'PROPOSAL_EXPIRED',
@@ -1234,6 +1237,7 @@ const otherKernelCommands = [
   setAddress,
   setContactEmail,
   queueContactMail,
+  queueMemberMail,
   ...partyCommands,
   ...mailCommands,
   ...proposalReminderCommands,
@@ -1258,6 +1262,10 @@ export function buildKernelCommands(
     uploadBeginLimits?: UploadBeginLimits;
     inviteLimits?: InviteLimits;
     messageIdDomain?: string;
+    // The modules this build ships, so kernel.org.set_app refuses an app that does not exist (ADR-0053); absent: any well-formed id.
+    shippedModules?: readonly string[];
+    // What each app is busy with, so switching it off can be refused while that work is open (ADR-0053, kernel.org.set_app).
+    appBusy?: Readonly<Record<string, AppBusyProbe>>;
   } = {},
 ) {
   return [
@@ -1266,6 +1274,7 @@ export function buildKernelCommands(
       ? inviteCreateCommand(options.inviteLimits, { messageIdDomain: options.messageIdDomain })
       : createInvite,
     ...otherKernelCommands,
+    setAppCommand({ ...(options.shippedModules ? { shipped: options.shippedModules } : {}), ...(options.appBusy ? { busy: options.appBusy } : {}) }),
     options.uploadBeginLimits ? beginUploadCommand(options.uploadBeginLimits) : beginUpload,
     options.inboundRotateLimits ? inboundRotateCommand(options.inboundRotateLimits) : rotateInbound,
     options.inboundRotateLimits ? conversationAddressRotateCommand(options.inboundRotateLimits) : rotateConversationAddress,

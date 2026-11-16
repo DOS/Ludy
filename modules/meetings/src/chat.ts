@@ -315,6 +315,7 @@ export const chatDelivery = defineQuery({
 // The sealed address of a channel (key id and sealed bytes), only while the channel stands; null otherwise. For the delivery job and the key rotation pass.
 export const chatTarget = defineQuery({
   name: 'meetings.chat.target',
+  runsWhenOff: 'reads the sealed chat targets for the key reseal that runs while the app is off',
   input: zChatTargetInput,
   access: 'system',
   handler: async (ctx, input): Promise<ChatTarget | null> => {
@@ -358,6 +359,7 @@ export const chatRecord = defineCommand({
 // Stores a resealed address after a credential key rotation, only if the stored envelope is still the one the worker read.
 export const chatReseal = defineCommand({
   name: 'meetings.chat.reseal',
+  runsWhenOff: 'rewraps the sealed chat targets under the current key while the app is off',
   input: zChatReseal,
   risk: 'R1',
   sideEffect: 'internal',

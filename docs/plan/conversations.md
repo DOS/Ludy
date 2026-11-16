@@ -303,6 +303,15 @@ What differs from the table above, each for a reason found while building. The i
 - **Copy.** The reply-draft copy that named Vy now names no AI coworker (the owner revised the coworker names on 2026-11-02; the name comes back through the roster placeholder of the app's copy when it lands, in one place).
 - **Not in this part:** the intent sorting, the applied label and its filter and the contact match (see "CV3 as built, second part"), and the stream hint for the marker.
 
+### Create task as built (#3295)
+
+The "Create task" of CV3's acceptance, built after the Inbox shipped without it. Follow-up work is an ordinary kernel task; nothing of a numbered record exists.
+- **The link is the task's own `source_ref`, so no migration.** `kernel.conversation.follow_up` (R1, owners, admins and members; the thread is read and locked under row-level security first, so a private message the caller may not read is "not found") runs `kernel.task.create_from_conversation` inside the same transaction (the pattern of `create_from_meeting`). The task gets `source_ref = {type: 'kernel.conversation', id}` set by kernel code, `source = 'human'`, no description, never tainted, and the seat the person picked (none: the owner at the root of the chart, a company of one's default) and a due day. No RPC route reaches the task command; no agent runs either.
+- **The title is the person's own words.** A task is read by every member, so the form says to write it short and the code copies nothing of the thread into it. The audit rows (`follow_up`, `create_from_conversation`) hold the conversation id, the task id and the seat, never the title.
+- **`kernel.conversation.tasks`** (every role reads, by the thread's own rule) lists the thread's open tasks (any status but done and cancelled, newest first, at most 20) from the tasks whose `source_ref` names the thread; the contact panel shows them with a link to the task and a "Tạo việc" form (title, seat, day). A second click with the same idempotency key makes one task. The conversation's status does not change.
+- **The AI coworker has no part here** (as the plan says): the core works with AI off and no model reads the thread for it. A "Dy suggests the title" would be an issue of its own through the AI budget meter.
+- **Left out:** a task whose conversation is purged or erased keeps its person-typed title and a dangling reference (the thread is gone; the task is ordinary work); the task list does not yet link back to the thread.
+
 ### CV3 as built, second part (#2306): the intent and the contact match
 
 The last part of the issue, which closes it. A person decides, the AI coworker only suggests, and every call goes through the AI budget meter (#2382).

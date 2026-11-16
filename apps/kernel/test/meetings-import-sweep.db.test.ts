@@ -30,6 +30,8 @@ const asDomain = (error: unknown): never => {
   const message = (error as { message?: string } | null)?.message ?? 'ERR';
   throw new DomainError(message, 409, message);
 };
+// The Meetings app is installed here (a definition of its module), so the worker's per-org check (ADR-0053) finds it on for every org.
+const meetingsInstalled = defineQuery({ name: 'meetings.test_installed', input: z.object({}), access: ['owner'], handler: async () => 'on' });
 const begin = defineCommand({
   name: 'test.mp.begin',
   input: z.strictObject({ recordingId: z.string(), meetingId: z.string(), stagingKey: z.string() }),
@@ -169,7 +171,7 @@ suite('the meetings import sweep and job on PostgreSQL (meetings integrations C1
     pools.push(appPool, workerPool);
     personDb = createDb(appPool);
     workerDbHandle = createDb(workerPool);
-    const defs = { commands: [...kernelCommands, begin, imported, rawReplace], queries: [...kernelQueries({ inboundDomain: null }), recordingRows] };
+    const defs = { commands: [...kernelCommands, begin, imported, rawReplace], queries: [...kernelQueries({ inboundDomain: null }), recordingRows, meetingsInstalled] };
     api = new Runtime(personDb, { manifests: TEST_MANIFESTS }).register(defs);
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(defs);
   }, 300_000);
@@ -238,6 +240,24 @@ suite('the meetings import sweep and job on PostgreSQL (meetings integrations C1
     };
   };
   const only = <T extends { orgId: string }>(o: Org, jobs: T[]) => jobs.filter((j) => j.orgId === o.orgId);
+
+  it('skips the connections of an org whose Meetings is off, calls no platform for it, and serves the org behind it', async () => {
+    const off = await org();
+    const on = await org();
+    const offConnection = await connectSealed(off, off.lan);
+    const onConnection = await connectSealed(on, on.lan);
+    // The org switched Meetings off (the choice, ADR-0053): a staff write stands in for its owner's command here.
+    await sqlAdmin("UPDATE crove_kernel.tenant SET apps_off = '{meetings}', apps_version = 2 WHERE org_id = $1", [off.orgId]);
+    const listed = (connectionId: string) => sqlAdmin<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.meeting_platform_recording WHERE connection_id = $1', [connectionId]);
+    const run = sweepDeps(on);
+    const done = await runMeetingsImportSweep(run.deps);
+    expect(done.failures).toBe(0);
+    expect(await listed(offConnection)).toMatchObject({ rows: [{ n: '0' }] });
+    expect(await listed(onConnection)).toMatchObject({ rows: [{ n: '2' }] });
+    // Nothing was recorded as a failure for the org that is off: its connection waits, untouched, for the app to come back.
+    const status = await sqlAdmin<{ status: string; last_synced_at: Date | null }>('SELECT status, last_synced_at FROM crove_kernel.meeting_platform_connection WHERE id = $1', [offConnection]);
+    expect(status.rows[0]).toMatchObject({ status: 'active', last_synced_at: null });
+  });
 
   it('lists a due connection into suggestions, not again until it is due, and again when the member refreshes', async () => {
     const o = await org();

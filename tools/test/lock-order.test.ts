@@ -33,6 +33,9 @@ const TS_TENANT_LOCKS: Readonly<Record<string, string>> = {
     "a change of the default entity locks the tenant row FOR NO KEY UPDATE, then the entity row, and may rename the org (#1317); it locks no member, assignment or position row",
   'packages/kernel/src/approval-preset.ts': 'the preset switch locks the tenant row FOR UPDATE, then only reads the chief accountants (no lock) and updates the tenant row',
   'packages/kernel/src/offboarding.ts': 'offboarding locks and updates the tenant row; it touches no member or position row',
+  'packages/kernel/src/org-apps.ts': "the org's switched-off apps: the set_app command locks the tenant row FOR UPDATE, then runs the app's busy probe (reads only) and updates it; it locks no member, assignment or position row",
+  'packages/kernel-runtime/src/runtime.ts':
+    "the per-org app gate reads the tenant row FOR SHARE, held to commit, before the handler of a command that declares opensBusyWork (ADR-0053); so that command's handler and the commands it runs lock no member, role-assignment or position row, since a membership change takes a member row and then the keep guard's tenant lock, and would deadlock against the share lock. Today meetings.meeting.create, meetings.import.start, ads.launch.begin and ads.activate.begin declare it (C3a; the registry test lists them).",
   'packages/kernel/src/org-address.ts': "the org's address and contact email: an UPDATE of the tenant row only",
   'packages/kernel/src/tax-code.ts': "the org's tax code and VAT filing period: an UPDATE of the tenant row only",
   'modules/finance/src/missing-invoices.ts': "the missing-invoice reminder day: an UPDATE of the tenant row only",

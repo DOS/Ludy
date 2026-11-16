@@ -11,6 +11,40 @@ export interface TodoGroup {
   tasks: MyWorkTask[];
 }
 
+export interface MyWorkProjectOption {
+  id: string;
+  name: string;
+}
+
+/** Distinct projects represented in My work tasks, sorted by project name. */
+export function myWorkProjects(tasks: readonly MyWorkTask[]): MyWorkProjectOption[] {
+  const byId = new Map<string, string>();
+  for (const task of tasks) {
+    if (task.project && !byId.has(task.project.id)) byId.set(task.project.id, task.project.name);
+  }
+  return [...byId.entries()]
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+}
+
+/**
+ * Filters My work open items by project:
+ * - '' (all): keeps all personal to-dos and all team tasks.
+ * - 'none': keeps only team tasks not in any project.
+ * - <projectId>: keeps only team tasks belonging to that project.
+ */
+export function filterMyWork(
+  todos: readonly TodoSummary[],
+  tasks: readonly MyWorkTask[],
+  projectFilter: string,
+): { todos: TodoSummary[]; tasks: MyWorkTask[] } {
+  if (!projectFilter) return { todos: [...todos], tasks: [...tasks] };
+  if (projectFilter === 'none') {
+    return { todos: [], tasks: tasks.filter((t) => t.project === null) };
+  }
+  return { todos: [], tasks: tasks.filter((t) => t.project?.id === projectFilter) };
+}
+
 /** The open to-dos and tasks in the groups of My work, in group order and, within a group, in the list's own order. */
 export function groupTodos(todos: readonly TodoSummary[], tasks: readonly MyWorkTask[] = []): TodoGroup[] {
   return TODO_DUE_GROUPS.map((id) => ({ id, items: todos.filter((t) => (t.group ?? 'none') === id), tasks: tasks.filter((t) => t.group === id) })).filter(

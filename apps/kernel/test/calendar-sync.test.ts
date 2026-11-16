@@ -35,6 +35,7 @@ function fakeRuntime(
   const calls: Call[] = [];
   const runtime = {
     installed: (module: string) => module !== 'crm' || behaviour.crm !== false,
+    appOn: async () => true,
     query: async (name: string, input: Record<string, unknown>) => {
       calls.push({ kind: 'query', name, input });
       if (name === 'kernel.calendar.connection_state') return state;

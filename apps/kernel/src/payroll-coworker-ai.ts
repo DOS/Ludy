@@ -6,7 +6,7 @@
 // (none of them is read here but the display name, which is used to put names back after the checks, and to refuse a prompt that holds one). Pay is never recomputed: every figure is
 // a stored one.
 //
-// What is not stored yet is not guessed: a probation end date, the payment method of a person and the registration of a dependent are not in the stored run, so those findings are not
+// What is not stored yet is not guessed: the payment method of a person and the registration of a dependent are not in the stored run, so those findings are not
 // raised (the sheet says nothing the data does not show). Everything is read, never written: nothing here stores a text, changes a run or approves. When there is no model, the AI
 // budget is spent, the member's calls are too frequent, the call fails or its text is refused, the answer names the state (`ai`), and every finding code made is still in it (its facts, with the
 // names put back by code); the model's sentence is attached to a finding only when it passed the checks.
@@ -86,19 +86,28 @@ export async function payrollSource(reads: PayrollReads, runId: string): Promise
     const previous = before.get(l.employeeId) ?? null;
     const overtime = (f: { overtime: string } | null | undefined) => f !== null && f !== undefined && new Decimal(f.overtime).greaterThan(0);
     const streak = overtime(figures) ? 1 + (overtime(previous) ? 1 + (overtime(beforeThat.get(l.employeeId)) ? 1 : 0) : 0) : 0;
+    const annualLeaveExceeded = l.flags.includes('annual_leave_exceeded');
     return {
       employeeId: l.employeeId,
       figures,
       previous,
-      contract: { startsInMonth: l.flags.includes('new_hire'), probationEndsInMonth: false, endsInMonth: l.flags.includes('ends_this_month') },
+      contract: {
+        startsInMonth: l.flags.includes('new_hire'),
+        probationEndsInMonth: l.flags.includes('probation_ends_this_month'),
+        endsInMonth: l.flags.includes('ends_this_month'),
+        severanceCheckSuggested: l.flags.includes('severance_check'),
+      },
       overtimeMonthsInRow: streak,
       dependentsWithoutRegistration: 0,
+      exceededAnnualDays: annualLeaveExceeded && typeof l.exceededAnnualDays === 'string' ? l.exceededAnnualDays : '0',
       checks: {
         minimumWageFailed: l.flags.includes('check_minimum_wage'),
         deductionCapFailed: l.flags.includes('check_deduction_cap'),
+        overtimeCapFailed: l.checks.some((c) => c.id === 'overtime_cap' && !c.ok),
         netBelowMinimum: l.flags.includes('net_below_minimum'),
         insuredAboveCap: insuredAboveCap(l.breakdown),
         cashPaymentOverLimit: false,
+        annualLeaveExceeded,
       },
     };
   });
@@ -180,10 +189,10 @@ export async function flagMonth(ai: PayrollAi, reads: PayrollReads, orgId: strin
 }
 
 export async function explainPayslip(ai: PayrollAi, reads: PayrollReads, orgId: string, userId: string, lineId: string, language: 'vi' | 'en'): Promise<HrCoworkerExplained> {
+  const slip = await reads.payslip(lineId);
   const none = (state: State): HrCoworkerExplained => ({ ai: state, text: null });
   if (!ai.reader) return none('off');
   const reader = ai.reader;
-  const slip = await reads.payslip(lineId);
   const request = { language, figures: payrollFiguresOf(slip.figures, slip.breakdown), dependentsCounted: dependentsCountedOf(slip.breakdown) };
   const forbidden = [slip.employeeName, slip.employerName].filter((v) => v.trim() !== '');
   const answer = await guarded(ai, orgId, userId, 'explain', () => reader.payrollExplain(request, { forbidden }));

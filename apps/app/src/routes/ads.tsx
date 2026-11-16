@@ -22,6 +22,7 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { AdsBooksStrip } from '../components/ads-books-strip.tsx';
 import { AdsFlagSettingsCard } from '../components/ads-flag-settings.tsx';
+import { AdsCommittedStrip } from '../components/ads-committed.tsx';
 import { AdsFlagsCard } from '../components/ads-flags.tsx';
 import { AdsWeeklyNoteCard } from '../components/ads-weekly-note.tsx';
 import { AdsRevokeNotice, AdsWriteCard } from '../components/ads-write.tsx';
@@ -896,6 +897,7 @@ function AccountPanel({
           ) : (
             <>
               <Totals summary={summary.data} currency={currency} canManage={canManage} />
+              {canManage && <AdsCommittedStrip account={account} month={todayIn(account.timeZone, now).slice(0, 7)} />}
               {summary.data.days.length === 0 ? (
                 <Empty title={t('noSpend')} hint={t('noSpendHint')} />
               ) : (

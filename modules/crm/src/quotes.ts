@@ -908,6 +908,7 @@ export const quoteLinkCreate = defineCommand({
 
 export const quoteLinkRevoke = defineCommand({
   name: 'crm.quote.revoke_link',
+  runsWhenOff: 'revokes a public quote link, so a leaked link can still be killed while the app is off',
   input: zQuoteLinkRevoke,
   risk: 'R1',
   sideEffect: 'internal',

@@ -16,6 +16,7 @@
 import { AdPlatformError, type AdActivator } from '@crove/ad-platform';
 import type { ActivateBegin, ActivateRecorded, ActivateResult } from '@crove/mod-ads';
 import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
+import { recordAfterCall } from './record-after-call.ts';
 
 const SYSTEM = { type: 'system' as const, component: 'ads.activate' };
 
@@ -90,7 +91,7 @@ function failure(error: unknown): ActivateResult {
 async function runStep(deps: AdsActivateDeps, job: AdsActivateJob, activator: AdActivator, work: Extract<ActivateBegin, { action: 'call' | 'reconcile' }>): Promise<{ next: boolean; ended: string }> {
   const options = { actor: SYSTEM, orgId: job.orgId };
   const record = (phase: 'call' | 'reconcile', result: ActivateResult) =>
-    deps.runtime.execute<ActivateRecorded>('ads.activate.record', { launchId: work.launchId, callKey: work.callKey, phase, result }, options);
+    recordAfterCall('ads.activate.record', () => deps.runtime.execute<ActivateRecorded>('ads.activate.record', { launchId: work.launchId, callKey: work.callKey, phase, result }, options));
   const ended = (recorded: ActivateRecorded, why: string) => ({
     next: recorded.recorded && recorded.next === 'continue',
     ended: recorded.recorded ? (recorded.state === 'live' ? 'live' : why) : (recorded.reason ?? 'stale'),

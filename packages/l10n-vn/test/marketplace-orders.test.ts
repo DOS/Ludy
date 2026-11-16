@@ -75,6 +75,20 @@ describe('the lines of a Shopee file', () => {
     for (const buyer of BUYER) expect(everything).not.toContain(buyer);
   });
 
+  it('reads the completion column as the day of delivery, and reads a completion cell that is no day as none', () => {
+    const head = ['Mã đơn hàng', 'Ngày đặt hàng', 'Thời gian hoàn thành đơn hàng', 'Trạng Thái Đơn Hàng', 'SKU phân loại hàng', 'Tên sản phẩm', 'Giá ưu đãi', 'Số lượng', 'Tổng giá bán (sản phẩm)'];
+    const line = (order: string, completed: string, status: string): Cell[] => [order, '2026-10-30', completed, status, 'QC-1', 'Hàng QC-1', '50.000', '2', '100.000'];
+    const result = read([head, line('D1', '02/11/2026 09:00', 'Hoàn thành'), line('D2', '', 'Hoàn thành'), line('D3', 'hôm qua', 'Hoàn thành')]);
+    expect(result.lines.map((l) => [l.orderNo, l.deliveredAt])).toEqual([
+      ['D1', '2026-11-02'],
+      ['D2', null],
+      ['D3', null],
+    ]);
+    expect(result.skipped).toEqual([]);
+    // A file with no completion column gives no day for any line.
+    expect(read([SHOPEE_HEAD, shopeeRow('2610A1', 'Hoàn thành', 'QC-1', '2', '50.000', '100.000')]).lines.map((l) => l.deliveredAt)).toEqual([null]);
+  });
+
   it('names a row it cannot read by its number and stops short of guessing', () => {
     const result = read([
       SHOPEE_HEAD,
