@@ -873,7 +873,7 @@ function AccountPanel({
   const summary = useQuery({ ...orpc.ads.summary.queryOptions({ input: { adAccountId: account.id, from: days.from, to: days.to } }), enabled: ready });
   const currency = account.currency ?? '';
   // An active connection that ends soon (a Meta token of 60 days): owners and admins reconnect it before it does, as for a paused one.
-  const endsSoon = connectionEndsSoon(account, now.getTime());
+  const endsSoon = connectionEndsSoon(account, Date.now());
   return (
     <div className="space-y-8">
       <AccountHeader account={account} canRefresh={canRefresh} onRequested={onRequested} />
