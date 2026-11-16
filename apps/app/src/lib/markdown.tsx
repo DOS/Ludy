@@ -3,18 +3,16 @@
 // has no HTML sink, apps/app/test/trusted-types.test.ts). Links open only http, https and mailto addresses, in a new
 // tab with rel="noopener noreferrer nofollow"; images are not rendered (no remote image, so no tracking pixel).
 import type { ReactNode } from 'react';
+import { Button } from '@crove/ui/components/button';
+import { INLINE_MARKDOWN, cleanNoteLineText } from './notes.ts';
 
 const SAFE_URL = /^(https?:\/\/|mailto:)/i;
-// Bold, inline code, a link, italics: the first match wins at each position. Italics need word edges for _x_ (so
-// snake_case stays as typed) and no space just inside the stars for *x* (so "2 * 3 * 4" stays); a link's address may
-// hold one level of parentheses.
-const INLINE = /\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\(((?:[^()\s]|\([^()\s]*\))+)\)|(?<![\p{L}\p{N}])_([^_]+)_(?![\p{L}\p{N}])|\*(\S(?:[^*]*\S)?)\*/gu;
 
 export function renderInline(text: string, keyPrefix = 'i'): ReactNode[] {
   const out: ReactNode[] = [];
   let last = 0;
   let n = 0;
-  for (const m of text.matchAll(INLINE)) {
+  for (const m of text.matchAll(INLINE_MARKDOWN)) {
     const at = m.index ?? 0;
     if (at > last) out.push(text.slice(last, at));
     const key = `${keyPrefix}-${n++}`;
@@ -76,22 +74,68 @@ export function parseBlocks(text: string): Block[] {
 
 const HEADING_CLASS = { 1: 'text-lg font-semibold', 2: 'text-base font-semibold', 3: 'text-sm font-semibold' } as const;
 
-export function Markdown({ text }: { text: string }) {
+interface MarkdownProps {
+  text: string;
+  onMakeTodo?: ((title: string) => void) | undefined;
+  makeTodoLabel?: string | undefined;
+  makeTodoAriaLabel?: ((title: string) => string) | undefined;
+  makeTodoDisabled?: boolean | undefined;
+}
+
+function MakeTodoButton({
+  raw,
+  onMakeTodo,
+  label,
+  ariaLabel,
+  disabled,
+}: {
+  raw: string;
+  onMakeTodo: (title: string) => void;
+  label: string;
+  ariaLabel?: ((title: string) => string) | undefined;
+  disabled?: boolean | undefined;
+}) {
+  const title = cleanNoteLineText(raw);
+  if (!title) return null;
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="xs"
+      disabled={disabled}
+      onClick={() => onMakeTodo(title)}
+      aria-label={ariaLabel ? ariaLabel(title) : label}
+      data-testid="note-line-make-todo"
+      className="shrink-0 text-subtle-foreground hover:text-foreground"
+    >
+      {label}
+    </Button>
+  );
+}
+
+export function Markdown({ text, onMakeTodo, makeTodoLabel = '', makeTodoAriaLabel, makeTodoDisabled }: MarkdownProps) {
   return (
     <div className="space-y-3 text-sm leading-relaxed break-words text-foreground">
       {parseBlocks(text).map((block, i) => {
         if (block.kind === 'heading') {
           // Inside a note, below the page's own headings: shown as headings, not outline levels of the page.
-          return (
-            <p key={i} className={HEADING_CLASS[block.level]}>
+          const heading = (
+            <p key={onMakeTodo ? undefined : i} className={HEADING_CLASS[block.level]}>
               {renderInline(block.text, `h${i}`)}
             </p>
           );
+          if (!onMakeTodo) return heading;
+          return (
+            <div key={i} className="flex flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">{heading}</div>
+              <MakeTodoButton raw={block.text} onMakeTodo={onMakeTodo} label={makeTodoLabel} ariaLabel={makeTodoAriaLabel} disabled={makeTodoDisabled} />
+            </div>
+          );
         }
         if (block.kind === 'list') {
-          const items = block.items.map((item, j) => (
-            <li key={j} className={item.checked === null ? undefined : 'list-none'}>
-              {item.checked === null ? (
+          const items = block.items.map((item, j) => {
+            const content =
+              item.checked === null ? (
                 renderInline(item.text, `l${i}-${j}`)
               ) : (
                 // A labelled, read-only checkbox: a screen reader hears the step and whether it is done.
@@ -99,9 +143,20 @@ export function Markdown({ text }: { text: string }) {
                   <input type="checkbox" checked={item.checked} readOnly disabled className="mt-1" />
                   <span className={item.checked ? 'text-muted-foreground line-through' : undefined}>{renderInline(item.text, `l${i}-${j}`)}</span>
                 </label>
-              )}
-            </li>
-          ));
+              );
+            return (
+              <li key={j} className={item.checked === null ? undefined : 'list-none'}>
+                {onMakeTodo ? (
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">{content}</div>
+                    <MakeTodoButton raw={item.text} onMakeTodo={onMakeTodo} label={makeTodoLabel} ariaLabel={makeTodoAriaLabel} disabled={makeTodoDisabled} />
+                  </div>
+                ) : (
+                  content
+                )}
+              </li>
+            );
+          });
           return block.ordered ? (
             <ol key={i} className="list-decimal space-y-1 pl-5">
               {items}
@@ -112,10 +167,22 @@ export function Markdown({ text }: { text: string }) {
             </ul>
           );
         }
+        if (!onMakeTodo) {
+          return (
+            <p key={i} className="whitespace-pre-line">
+              {renderInline(block.lines.join('\n'), `p${i}`)}
+            </p>
+          );
+        }
         return (
-          <p key={i} className="whitespace-pre-line">
-            {renderInline(block.lines.join('\n'), `p${i}`)}
-          </p>
+          <div key={i} className="space-y-1">
+            {block.lines.map((line, j) => (
+              <div key={j} className="flex flex-wrap items-start justify-between gap-2">
+                <p className="min-w-0 flex-1">{renderInline(line, `p${i}-${j}`)}</p>
+                <MakeTodoButton raw={line} onMakeTodo={onMakeTodo} label={makeTodoLabel} ariaLabel={makeTodoAriaLabel} disabled={makeTodoDisabled} />
+              </div>
+            ))}
+          </div>
         );
       })}
     </div>
