@@ -15,18 +15,13 @@ import { ProjectIcon } from '@crove/ui/components/project-icon';
 import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
 import { taskDueDay } from '../lib/agents.ts';
 import { client, errorMessage } from '../lib/api.ts';
+import { projectWeeklyStatusQueryKey } from '../lib/projects.ts';
 
 type BucketKey = 'doneThisWeek' | 'overdue' | 'waiting' | 'dueNextWeek';
 
 const BUCKET_KEYS: readonly BucketKey[] = ['doneThisWeek', 'overdue', 'waiting', 'dueNextWeek'];
 
-export function projectWeeklyStatusQueryKey(
-  slug: string,
-  projectId: string,
-  language: 'vi' | 'en',
-): readonly [string, string, string, string, 'vi' | 'en'] {
-  return ['projects', 'weeklyStatus', slug, projectId, language];
-}
+export { projectWeeklyStatusQueryKey };
 
 function bucketTestId(key: BucketKey): string {
   if (key === 'doneThisWeek') return 'weekly-count-done';

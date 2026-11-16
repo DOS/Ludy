@@ -13,7 +13,10 @@ vi.mock('../src/lib/api.ts', async () => {
   const { QueryClient: QC } = await import('@tanstack/react-query');
   queryHolder.current = new QC();
   return {
-    orpc: {},
+    orpc: {
+      projects: { key: () => [['projects']] },
+      tasks: { key: () => [['tasks']] },
+    },
     client: {},
     queryClient: queryHolder.current,
     errorMessage: (e: unknown) => String(e),
@@ -21,6 +24,7 @@ vi.mock('../src/lib/api.ts', async () => {
 });
 
 const { ProjectWeeklyStatus, projectWeeklyStatusQueryKey } = await import('../src/components/project-weekly-status.tsx');
+const { refreshProjectQueries } = await import('../src/components/project-task-dialog.tsx');
 
 const PROJECT_ID = '11111111-1111-4111-8111-111111111111';
 
@@ -132,5 +136,15 @@ describe('ProjectWeeklyStatus component (#2597)', () => {
       expect(html, state).not.toContain('data-testid="project-weekly-status-ai-badge"');
       expect(html, state).toContain('Kiểm tra hợp đồng');
     }
+  });
+
+  it('invalidates cached weekly status queries when refreshProjectQueries runs after board mutations', () => {
+    const qc = queryHolder.current;
+    const key = projectWeeklyStatusQueryKey('acme', PROJECT_ID, 'vi');
+    qc.setQueryData(key, fixture());
+    expect(qc.getQueryState(key)?.isInvalidated).toBe(false);
+
+    refreshProjectQueries();
+    expect(qc.getQueryState(key)?.isInvalidated).toBe(true);
   });
 });

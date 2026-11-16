@@ -22,11 +22,12 @@ import { useFormat } from '../i18n/provider.tsx';
 import { taskDueDay, taskDueFromDay } from '../lib/agents.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { browserTimeZone } from '../lib/my-work.ts';
-import { PROJECT_STATUSES, projectStatusVariant, taskStatusVariant } from '../lib/projects.ts';
+import { PROJECT_STATUSES, PROJECT_WEEKLY_STATUS_QUERY_PREFIX, projectStatusVariant, taskStatusVariant } from '../lib/projects.ts';
 
 export const refreshProjectQueries = () => {
   void queryClient.invalidateQueries({ queryKey: orpc.projects.key() });
   void queryClient.invalidateQueries({ queryKey: orpc.tasks.key() });
+  void queryClient.invalidateQueries({ queryKey: PROJECT_WEEKLY_STATUS_QUERY_PREFIX });
 };
 
 export function seatOptionLabel(

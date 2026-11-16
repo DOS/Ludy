@@ -126,6 +126,9 @@ export const projectWeeklyStatusSource = defineQuery({
     const hiddenByEntityCount = Number(hiddenRows[0]?.count ?? 0);
 
     // Exact, uncapped deterministic counts over visible crove_kernel.task rows in this project.
+    // `doneThisWeek` counts tasks currently in status = 'done' whose latest transition to 'done' in
+    // crove_kernel.audit_event occurred within the 7-day window (using audit_event_time_idx), so editing
+    // title/due/assignee on a task finished last month via kernel.task.update does not pull it into this week.
     const { rows: countRows } = await sql<{
       total_visible: string;
       done_this_week: string;
@@ -133,12 +136,33 @@ export const projectWeeklyStatusSource = defineQuery({
       waiting: string;
       due_next_week: string;
     }>`
+      WITH done_events AS MATERIALIZED (
+        SELECT
+          CASE
+            WHEN e.command = 'kernel.task.set_status' THEN e.target_id
+            ELSE (e.detail ->> 'task')::uuid
+          END AS task_id,
+          pg_catalog.max(e.occurred_at) AS done_at
+        FROM crove_kernel.audit_event e
+        WHERE e.org_id = ${ctx.orgId}::uuid
+          AND e.occurred_at >= ${fromStartIso}::timestamptz
+          AND e.occurred_at <= pg_catalog.now()
+          AND e.outcome = 'ok'
+          AND (
+            (e.command = 'kernel.task.set_status' AND e.target_type = 'kernel.task' AND e.target_id IS NOT NULL AND e.detail ->> 'status' = 'done')
+            OR (
+              e.command = 'kernel.task.approve_proposal'
+              AND pg_catalog.jsonb_typeof(e.detail) = 'object'
+              AND (e.detail ->> 'task') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+            )
+          )
+        GROUP BY 1
+      )
       SELECT
         pg_catalog.count(*)::text AS total_visible,
         pg_catalog.count(*) FILTER (
           WHERE t.status = 'done'
-            AND t.updated_at >= ${fromStartIso}::timestamptz
-            AND t.updated_at <= pg_catalog.now()
+            AND de.done_at IS NOT NULL
         )::text AS done_this_week,
         pg_catalog.count(*) FILTER (
           WHERE t.status NOT IN ('done', 'cancelled')
@@ -157,6 +181,8 @@ export const projectWeeklyStatusSource = defineQuery({
       FROM crove_projects.project_task pt
       JOIN crove_kernel.task t
         ON t.org_id = pt.org_id AND t.id = pt.task_id
+      LEFT JOIN done_events de
+        ON de.task_id = t.id
       WHERE pt.org_id = ${ctx.orgId}::uuid
         AND pt.project_id = ${project.id}::uuid
         AND t.status <> 'cancelled'`.execute(ctx.trx);
@@ -171,17 +197,40 @@ export const projectWeeklyStatusSource = defineQuery({
     };
 
     const [doneRes, overdueRes, waitingRes, dueNextWeekRes] = await Promise.all([
-      sql<RawBucketTaskRow>`
-        SELECT t.id, t.title, t.status, t.due
-          FROM crove_projects.project_task pt
-          JOIN crove_kernel.task t ON t.org_id = pt.org_id AND t.id = pt.task_id
-         WHERE pt.org_id = ${ctx.orgId}::uuid
-           AND pt.project_id = ${project.id}::uuid
-           AND t.status = 'done'
-           AND t.updated_at >= ${fromStartIso}::timestamptz
-           AND t.updated_at <= pg_catalog.now()
-         ORDER BY t.updated_at DESC, t.id ASC
-         LIMIT ${PROJECT_WEEKLY_STATUS_BUCKET_LIMIT}`.execute(ctx.trx),
+      counts.doneThisWeek > 0
+        ? sql<RawBucketTaskRow>`
+            WITH done_events AS MATERIALIZED (
+              SELECT
+                CASE
+                  WHEN e.command = 'kernel.task.set_status' THEN e.target_id
+                  ELSE (e.detail ->> 'task')::uuid
+                END AS task_id,
+                pg_catalog.max(e.occurred_at) AS done_at
+              FROM crove_kernel.audit_event e
+              WHERE e.org_id = ${ctx.orgId}::uuid
+                AND e.occurred_at >= ${fromStartIso}::timestamptz
+                AND e.occurred_at <= pg_catalog.now()
+                AND e.outcome = 'ok'
+                AND (
+                  (e.command = 'kernel.task.set_status' AND e.target_type = 'kernel.task' AND e.target_id IS NOT NULL AND e.detail ->> 'status' = 'done')
+                  OR (
+                    e.command = 'kernel.task.approve_proposal'
+                    AND pg_catalog.jsonb_typeof(e.detail) = 'object'
+                    AND (e.detail ->> 'task') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                  )
+                )
+              GROUP BY 1
+            )
+            SELECT t.id, t.title, t.status, t.due
+              FROM crove_projects.project_task pt
+              JOIN crove_kernel.task t ON t.org_id = pt.org_id AND t.id = pt.task_id
+              JOIN done_events de ON de.task_id = t.id
+             WHERE pt.org_id = ${ctx.orgId}::uuid
+               AND pt.project_id = ${project.id}::uuid
+               AND t.status = 'done'
+             ORDER BY de.done_at DESC, t.id ASC
+             LIMIT ${PROJECT_WEEKLY_STATUS_BUCKET_LIMIT}`.execute(ctx.trx)
+        : Promise.resolve({ rows: [] as RawBucketTaskRow[] }),
       sql<RawBucketTaskRow>`
         SELECT t.id, t.title, t.status, t.due
           FROM crove_projects.project_task pt

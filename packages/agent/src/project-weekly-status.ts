@@ -62,7 +62,35 @@ const LANGUAGE = { vi: 'Vietnamese', en: 'English' } as const;
 const oneLine = (value: string, max: number) => Array.from(value.replace(/\s+/g, ' ').trim()).slice(0, max).join('');
 const fenced = (value: string) => value.replace(/<{3,}|>{3,}/g, (run) => run.split('').join(' '));
 const INVISIBLE_FORMAT = /\p{Cf}/u;
-const MARKDOWN_NOISE = /(?:^|\n)\s*(?:#{1,6}\s|[-*•]\s|\d+[.)]\s|\|)|```/u;
+const isAsciiSpace = (ch: string | undefined): boolean => ch === ' ' || ch === '\t';
+
+/** Linear O(n) check for Markdown blocks or list/heading prefixes without any backtracking regex. */
+export function hasMarkdownNoise(item: string): boolean {
+  if (item.includes('```')) return true;
+  for (const line of item.split('\n')) {
+    const trimmed = line.trimStart();
+    if (trimmed.length === 0) continue;
+    if (trimmed.startsWith('|')) return true;
+    const first = trimmed[0];
+    if (first === '-' || first === '*' || first === '•') {
+      if (isAsciiSpace(trimmed[1])) return true;
+    }
+    if (first === '#') {
+      let hashes = 1;
+      while (hashes < 6 && trimmed[hashes] === '#') hashes += 1;
+      if (isAsciiSpace(trimmed[hashes])) return true;
+    }
+    if (first !== undefined && first >= '0' && first <= '9') {
+      let digits = 1;
+      while (digits < 4 && trimmed[digits] !== undefined && trimmed[digits]! >= '0' && trimmed[digits]! <= '9') {
+        digits += 1;
+      }
+      const sep = trimmed[digits];
+      if ((sep === '.' || sep === ')') && isAsciiSpace(trimmed[digits + 1])) return true;
+    }
+  }
+  return false;
+}
 
 function datePartsForAllowed(date: string | null): string[] {
   if (!date) return [];
@@ -191,9 +219,11 @@ export function checkProjectWeeklyStatus(
   const rawList = output?.sentences ?? [];
   if (rawList.length === 0) return { kind: 'none', code: 'EMPTY' };
 
+  const maxRawLength = PROJECT_WEEKLY_STATUS_SENTENCES_MAX * PROJECT_WEEKLY_STATUS_SENTENCE_MAX;
   for (const item of rawList) {
+    if (item.length > maxRawLength) return { kind: 'none', code: 'TOO_LONG' };
     if (INVISIBLE_FORMAT.test(item)) return { kind: 'none', code: 'FORMAT' };
-    if (MARKDOWN_NOISE.test(item)) return { kind: 'none', code: 'FORMAT' };
+    if (hasMarkdownNoise(item)) return { kind: 'none', code: 'FORMAT' };
   }
 
   const sentences = rawList.flatMap((item) => sentencesOf(item));
@@ -204,7 +234,7 @@ export function checkProjectWeeklyStatus(
 
   for (const s of sentences) {
     if (INVISIBLE_FORMAT.test(s)) return { kind: 'none', code: 'FORMAT' };
-    if (MARKDOWN_NOISE.test(s)) return { kind: 'none', code: 'FORMAT' };
+    if (hasMarkdownNoise(s)) return { kind: 'none', code: 'FORMAT' };
     if (s.length > PROJECT_WEEKLY_STATUS_SENTENCE_MAX) return { kind: 'none', code: 'TOO_LONG' };
   }
 

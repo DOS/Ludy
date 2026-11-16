@@ -271,6 +271,7 @@ suite('projects.weeklyStatus on PostgreSQL 17 (#2597)', () => {
     );
     projectId = createdProject.projectId;
 
+    let oldDoneId = '';
     await withAdmin(async (c) => {
       const insertTask = async (
         title: string,
@@ -309,8 +310,17 @@ suite('projects.weeklyStatus on PostgreSQL 17 (#2597)', () => {
       await insertTask('Gửi tờ khai thuế 15', 'in_progress', branchEntityId, '-2 days');
       await insertTask('Chờ khách xác nhận biên bản', 'waiting', branchEntityId, null);
       await insertTask('Đối chiếu công nợ tuần tới', 'todo', branchEntityId, '3 days');
-      await insertTask('Việc xong từ tháng trước', 'done', branchEntityId, '-20 days', '12 days');
+      oldDoneId = await insertTask('Việc xong từ tháng trước', 'done', branchEntityId, '-20 days', '12 days');
       await insertTask('Việc đã hủy bỏ', 'cancelled', branchEntityId, '2 days');
+
+      // Record kernel.task.set_status audit events matching actual completion times: doneBranch 2 days ago, oldDone 12 days ago.
+      await c.query(
+        `INSERT INTO crove_kernel.audit_event (org_id, occurred_at, actor_type, actor_id, command, command_id, outcome, target_type, target_id, input_sha256, detail)
+         VALUES
+           ($1, pg_catalog.now() - interval '2 days', 'user', $2, 'kernel.task.set_status', $3, 'ok', 'kernel.task', $4::uuid, repeat('a', 64), jsonb_build_object('task', $4::text, 'status', 'done')),
+           ($1, pg_catalog.now() - interval '12 days', 'user', $2, 'kernel.task.set_status', $5, 'ok', 'kernel.task', $6::uuid, repeat('b', 64), jsonb_build_object('task', $6::text, 'status', 'done'))`,
+        [org.orgId, owner.userId, randomUUID(), doneBranch, randomUUID(), oldDoneId],
+      );
 
       await c.query(
         `INSERT INTO crove_kernel.task_comment (org_id, task_id, body, author_type, author_id, tainted, created_at)
@@ -338,6 +348,14 @@ suite('projects.weeklyStatus on PostgreSQL 17 (#2597)', () => {
         [org.orgId, hiddenOverdue, owner.userId],
       );
     });
+
+    // Simulate editing the title of last month's completed task today via kernel.task.update (bumping updated_at to now):
+    // doneThisWeek must NOT recount it because its transition to 'done' was 12 days ago.
+    await rt.execute(
+      'kernel.task.update',
+      { id: oldDoneId, title: 'Việc xong từ tháng trước đã sửa tên' },
+      { actor: asUser(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() },
+    );
   });
 
   afterEach(async () => {
@@ -414,6 +432,7 @@ suite('projects.weeklyStatus on PostgreSQL 17 (#2597)', () => {
     expect(promptBody).not.toContain('Nội dung tainted');
     expect(JSON.stringify(res.body)).not.toContain('Secret Private Note 777');
     expect(JSON.stringify(res.body)).not.toContain('Shared Team Note 888');
+    expect(JSON.stringify(res.body)).not.toContain('Việc xong từ tháng trước');
 
     // Verify nothing was created/stored in project, tasks, notes, or mail.
     expect(after).toEqual(before);

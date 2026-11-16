@@ -5,6 +5,7 @@ import {
   AiBudgetExhaustedError,
   InboxReader,
   checkProjectWeeklyStatus,
+  hasMarkdownNoise,
   projectWeeklyStatusInstructions,
   projectWeeklyStatusPrompt,
   type ProjectWeeklyStatusFacts,
@@ -152,6 +153,55 @@ describe('projects.weekly_status agent checks (#2597)', () => {
         sentences: ['- Hoàn thành 2 việc.', '- Quá hạn 1 việc.', '- Chờ 1 việc.'],
       }),
     ).toEqual({ kind: 'none', code: 'FORMAT' });
+
+    expect(
+      checkProjectWeeklyStatus(facts, {
+        sentences: ['\n  \n  * Hoàn thành 2 việc.', 'Quá hạn 1 việc.', 'Chờ 1 việc.'],
+      }),
+    ).toEqual({ kind: 'none', code: 'FORMAT' });
+
+    expect(
+      checkProjectWeeklyStatus(facts, {
+        sentences: ['```Hoàn thành 2 việc.```', 'Quá hạn 1 việc.', 'Chờ 1 việc.'],
+      }),
+    ).toEqual({ kind: 'none', code: 'FORMAT' });
+
+    expect(
+      checkProjectWeeklyStatus(facts, {
+        sentences: ['1. Hoàn thành 2 việc.', 'Quá hạn 1 việc.', 'Chờ 1 việc.'],
+      }),
+    ).toEqual({ kind: 'none', code: 'FORMAT' });
+
+    expect(
+      checkProjectWeeklyStatus(facts, {
+        sentences: ['## Tiêu đề\nHoàn thành 2 việc.', 'Quá hạn 1 việc.', 'Chờ 1 việc.'],
+      }),
+    ).toEqual({ kind: 'none', code: 'FORMAT' });
+
+    expect(
+      checkProjectWeeklyStatus(facts, {
+        sentences: ['| Cột | Giá trị |', 'Quá hạn 1 việc.', 'Chờ 1 việc.'],
+      }),
+    ).toEqual({ kind: 'none', code: 'FORMAT' });
+
+    expect(
+      checkProjectWeeklyStatus(facts, {
+        sentences: ['Hoàn thành 2 việc.\n\n\n\nHiện có 1 việc quá hạn.', 'Hiện có 1 việc đang chờ.', 'Tuần tới có 2 việc.'],
+      }).kind,
+    ).toBe('summary');
+
+    // Repeated newlines run in linear time without backtracking in both hasMarkdownNoise and checkProjectWeeklyStatus.
+    expect(hasMarkdownNoise('\n'.repeat(5000) + 'x')).toBe(false);
+    expect(
+      checkProjectWeeklyStatus(facts, {
+        sentences: ['\n'.repeat(1500) + 'Hoàn thành 2 việc.', 'Quá hạn 1 việc.', 'Tuần tới có 2 việc.'],
+      }).kind,
+    ).toBe('summary');
+    expect(
+      checkProjectWeeklyStatus(facts, {
+        sentences: ['\n'.repeat(5000) + 'x', 'Quá hạn 1 việc.', 'Tuần tới có 2 việc.'],
+      }),
+    ).toEqual({ kind: 'none', code: 'TOO_LONG' });
 
     expect(
       checkProjectWeeklyStatus(facts, {
