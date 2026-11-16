@@ -448,7 +448,7 @@ suite('the member\'s Vy translating the summary (E1, #3184)', () => {
       expect((await get('attendee', meetingId)).translations[0]).toMatchObject({ stage: 'published', stale: false });
     });
 
-    it('goes through the recorder\'s own command too: a rewritten draft summary and an edited draft item drop the draft translations only', async () => {
+    it('goes through the recorder\'s own command too: an edited draft item drops the draft translations and keeps the published one\'s', async () => {
       const meetingId = await seedPublished();
       await seedDraft(meetingId);
       await translate('recorder', meetingId, 'draft');
