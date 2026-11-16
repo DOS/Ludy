@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- Crove kernel (issue #3412, Part of #3403): update crove_kernel.org_purge to delete HR departments
 -- (crove_hr.department), immediately after crove_hr.payroll_employee which references it. Idempotent; applied files stay untouched.
--- Based on 20270104080000_crove_kernel_org_purge_sign.sql (newest on origin/main), keeping every crove_sign.* step intact.
+-- Based on 20270104100000_crove_kernel_org_purge_hr_leave.sql (newest on origin/main), keeping every crove_sign.* and crove_hr.payroll_leave_entry entry intact.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_kernel.org_purge(p_min_days integer)
@@ -35,7 +35,7 @@ DECLARE
   v_kernel_first text[] := ARRAY[
     'crove_sign.signing_otp', 'crove_sign.signing_token', 'crove_sign.ai_analysis', 'crove_sign.field', 'crove_sign.signer', 'crove_sign.envelope',
     'crove_kernel.member_vy_memory', 'crove_kernel.member_vy_result',
-    'crove_hr.payroll_bank_template', 'crove_hr.payroll_dependent', 'crove_hr.payroll_employee', 'crove_hr.department',
+    'crove_hr.payroll_bank_template', 'crove_hr.payroll_dependent', 'crove_hr.payroll_leave_entry', 'crove_hr.payroll_employee', 'crove_hr.department',
     'crove_meetings.chat_post_body', 'crove_meetings.chat_post', 'crove_meetings.chat_channel_target', 'crove_meetings.chat_channel', 'crove_meetings.calendar_agenda', 'crove_meetings.hook_delivery', 'crove_meetings.member_hook', 'crove_meetings.translation', 'crove_meetings.meeting_note', 'crove_meetings.media_key', 'crove_meetings.action_item', 'crove_meetings.meeting_result', 'crove_meetings.transcript_segment', 'crove_meetings.live_line', 'crove_meetings.live_chunk', 'crove_meetings.audio_segment', 'crove_meetings.meeting_video', 'crove_meetings.meeting_reader', 'crove_meetings.meeting',
     'crove_kernel.saved_reply', 'crove_kernel.conversation_setting', 'crove_kernel.member_availability', 'crove_kernel.conversation_composing', 'crove_kernel.conversation_draft', 'crove_kernel.conversation_note', 'crove_kernel.conversation_read', 'crove_kernel.conversation_attachment', 'crove_kernel.conversation_message', 'crove_kernel.conversation', 'crove_kernel.conversation_identity', 'crove_kernel.channel_access',
     'crove_ads.ad_flag_setting', 'crove_ads.ad_campaign_request', 'crove_ads.ad_campaign_draft', 'crove_ads.ad_spend_cap', 'crove_ads.ad_org_setting', 'crove_ads.ad_sync_run', 'crove_ads.ad_spend_day', 'crove_ads.ad_account',

@@ -99,7 +99,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_finance.stock_period_item',
   'crove_hr.candidate',
   'crove_hr.job_opening',
-  'crove_hr.payroll_leave_entry',
   'crove_kernel.agent_grant',
   'crove_kernel.agent_wake_delivery',
   'crove_kernel.agent_wake_signal_seen',

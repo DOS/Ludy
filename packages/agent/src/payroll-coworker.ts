@@ -90,7 +90,8 @@ export interface PayrollLineFacts {
   /** Consecutive months, this one included, in which the person had overtime pay. */
   overtimeMonthsInRow: number;
   dependentsWithoutRegistration: number;
-  checks: { minimumWageFailed: boolean; deductionCapFailed: boolean; overtimeCapFailed: boolean; netBelowMinimum: boolean; insuredAboveCap: boolean; cashPaymentOverLimit: boolean };
+  exceededAnnualDays?: string;
+  checks: { minimumWageFailed: boolean; deductionCapFailed: boolean; overtimeCapFailed: boolean; netBelowMinimum: boolean; insuredAboveCap: boolean; cashPaymentOverLimit: boolean; annualLeaveExceeded: boolean };
 }
 
 /** A line as the server holds it: the person's id is only here, to map an alias back. It never goes in a prompt. */
@@ -143,6 +144,7 @@ export function pseudonymizeSheet(lines: readonly PayrollSheetLine[], options: {
       },
       overtimeMonthsInRow: Math.max(0, Math.trunc(line.overtimeMonthsInRow)),
       dependentsWithoutRegistration: Math.max(0, Math.trunc(line.dependentsWithoutRegistration)),
+      exceededAnnualDays: new Decimal(line.exceededAnnualDays ?? '0').toFixed(),
       checks: {
         minimumWageFailed: line.checks.minimumWageFailed === true,
         deductionCapFailed: line.checks.deductionCapFailed === true,
@@ -150,6 +152,7 @@ export function pseudonymizeSheet(lines: readonly PayrollSheetLine[], options: {
         netBelowMinimum: line.checks.netBelowMinimum === true,
         insuredAboveCap: line.checks.insuredAboveCap === true,
         cashPaymentOverLimit: line.checks.cashPaymentOverLimit === true,
+        annualLeaveExceeded: line.checks.annualLeaveExceeded === true,
       },
     };
   });
@@ -199,7 +202,7 @@ const oneLine = (text: string) => text.replace(/\s+/g, ' ').trim();
 // Flag: anomalies found by code, each put in a sentence by the model
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-export const PAYROLL_ANOMALY_KINDS = ['pay_moved', 'net_below_minimum', 'deduction_over_cap', 'overtime_over_cap', 'dependent_unregistered', 'insured_above_cap', 'cash_payment_over_limit', 'rule_blocks'] as const;
+export const PAYROLL_ANOMALY_KINDS = ['pay_moved', 'net_below_minimum', 'deduction_over_cap', 'overtime_over_cap', 'dependent_unregistered', 'insured_above_cap', 'cash_payment_over_limit', 'annual_leave_exceeded', 'rule_blocks'] as const;
 export type PayrollAnomalyKind = (typeof PAYROLL_ANOMALY_KINDS)[number];
 
 export interface PayrollAnomaly {
@@ -246,6 +249,21 @@ export function findAnomalies(sheet: PayrollSheet): PayrollAnomaly[] {
     if (line.dependentsWithoutRegistration > 0) add('dependent_unregistered', who, vi ? `${who}: ${line.dependentsWithoutRegistration} người phụ thuộc chưa đăng ký` : `${who}: ${line.dependentsWithoutRegistration} dependent(s) without a registration`);
     if (line.checks.insuredAboveCap) add('insured_above_cap', who, vi ? `${who}: mức đóng bảo hiểm vượt mức trần` : `${who}: the insured wage is above the cap`);
     if (line.checks.cashPaymentOverLimit) add('cash_payment_over_limit', who, vi ? `${who}: trả tiền mặt ${amountOf(line.figures.net, language)}, từ ${amountOf(CASH_PAYMENT_LIMIT, language)} trở lên phải chuyển khoản thì chi phí lương mới được trừ khi tính thuế thu nhập doanh nghiệp` : `${who}: ${amountOf(line.figures.net, language)} paid in cash; ${amountOf(CASH_PAYMENT_LIMIT, language)} or more must be non-cash for the pay to be deductible for corporate income tax`);
+    if (line.checks.annualLeaveExceeded) {
+      const exceeded = new Decimal(line.exceededAnnualDays ?? '0');
+      const daysText = amountText(exceeded.toFixed(), language);
+      add(
+        'annual_leave_exceeded',
+        who,
+        exceeded.greaterThan(0)
+          ? vi
+            ? `${who}: đã nghỉ phép năm vượt mức theo luật ${daysText} ngày`
+            : `${who}: annual leave taken exceeds statutory entitlement by ${daysText} day(s)`
+          : vi
+            ? `${who}: đã nghỉ phép năm vượt mức theo luật`
+            : `${who}: annual leave taken exceeds statutory entitlement`,
+      );
+    }
   }
   if (sheet.blockingRules > 0) add('rule_blocks', null, vi ? `Tháng này dùng ${sheet.blockingRules} quy tắc chưa được kế toán xác nhận nên chưa duyệt được` : `This month uses ${sheet.blockingRules} rule(s) the accountant has not confirmed, so it cannot be approved yet`);
   return out;

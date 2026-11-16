@@ -1079,6 +1079,13 @@ export type HrPayrollEmploymentTable = Refine<
 export const HR_RUN_STATUSES = ['draft', 'approved', 'paid', 'closed'] as const;
 export const HR_LINE_KINDS = ['pay', 'adjustment'] as const;
 export const HR_LINE_STATUSES = ['calculated', 'refused'] as const;
+export const HR_LEAVE_ENTRY_KINDS = ['opening_balance', 'annual_leave', 'personal_paid', 'unpaid_leave'] as const;
+export type HrLeaveEntryKind = (typeof HR_LEAVE_ENTRY_KINDS)[number];
+export type HrPayrollLeaveEntryTable = Refine<
+  G.HrPayrollLeaveEntryTable,
+  { kind: ColumnType<HrLeaveEntryKind, HrLeaveEntryKind, never>; legal_entity_id: LegalEntityColumn },
+  'legal_entity_id'
+>;
 export type HrPayrollRunTable = Refine<G.HrPayrollRunTable, { status: Generated<(typeof HR_RUN_STATUSES)[number]> }>;
 export type HrPayrollLineTable = Refine<
   G.HrPayrollLineTable,
@@ -1256,6 +1263,7 @@ type Refined = Tables<{
   'crove_hr.payroll_bank_template': HrPayrollBankTemplateTable;
   'crove_hr.payroll_employee': HrPayrollEmployeeTable;
   'crove_hr.payroll_employment': HrPayrollEmploymentTable;
+  'crove_hr.payroll_leave_entry': HrPayrollLeaveEntryTable;
   'crove_hr.payroll_line': HrPayrollLineTable;
   'crove_hr.payroll_run': HrPayrollRunTable;
   'crove_meetings.action_item': MeetingsActionItemTable;

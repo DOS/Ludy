@@ -39,6 +39,7 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { bankByCode, checkLaborContractTerms, deriveFixedTermEndDateIso, type LaborContractFinding } from '@crove/l10n-vn';
 import { BankSelect } from '../components/bank-select.tsx';
+import { LeaveBalancePanel } from '../components/hr-leave-panel.tsx';
 import { SeveranceCalculatorPanel } from '../components/hr-severance-panel.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
@@ -970,6 +971,7 @@ export function Detail({ employeeId, owner, onClose, departments }: { employeeId
     clear: { department: boolean; jobTitle: boolean; address: boolean; identity: boolean; account: boolean; bank: boolean; tax: boolean; insurance: boolean };
   } | null>(null);
   const [confirmErase, setConfirmErase] = useState(false);
+  const [leaveOpen, setLeaveOpen] = useState(false);
   const [severanceOpen, setSeveranceOpen] = useState(false);
   const run = <V,>(fn: (v: V) => Promise<unknown>, after?: () => void) => ({
     mutationFn: fn,
@@ -1369,10 +1371,16 @@ export function Detail({ employeeId, owner, onClose, departments }: { employeeId
       {(addDependent.error || endDependent.error) && <ErrorText>{errorMessage(addDependent.error ?? endDependent.error)}</ErrorText>}
 
       {!e.erased && (
-        <div className="mt-5 border-t pt-4">
-          <Button variant="outline" size="sm" onClick={() => setSeveranceOpen((v) => !v)} data-testid="hr-severance-toggle">
-            {t('severance.toggle')}
-          </Button>
+        <div className="mt-5 space-y-4 border-t pt-4">
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={() => setLeaveOpen((v) => !v)} data-testid="hr-leave-toggle">
+              {t('leave.toggle')}
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setSeveranceOpen((v) => !v)} data-testid="hr-severance-toggle">
+              {t('severance.toggle')}
+            </Button>
+          </div>
+          {leaveOpen && <LeaveBalancePanel employeeId={e.id} />}
           {severanceOpen && <SeveranceCalculatorPanel employeeId={e.id} employeeEndedOn={e.endedOn} />}
         </div>
       )}
