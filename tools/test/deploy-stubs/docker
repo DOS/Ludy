@@ -65,6 +65,8 @@ printf '%s\n' "${files[*]}" >>"$STUB_LOG.files"
 
 case "$sub" in
   config)
+    # STUB_CONFIG_FAIL_IF_ENV_HAS: the compose files do not load while the env file holds this text (#2704).
+    if [ "${1:-}" = --quiet ] && [ -n "${STUB_CONFIG_FAIL_IF_ENV_HAS:-}" ] && grep -q -F -- "$STUB_CONFIG_FAIL_IF_ENV_HAS" "$envfile"; then exit 1; fi
     if [ "${1:-}" = --services ]; then
       for s in ${STUB_SERVICES:-db migrate auth auth-grants crove-extract mailpit crove}; do echo "$s"; done
     fi

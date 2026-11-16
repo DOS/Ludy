@@ -11,7 +11,8 @@
 # The account step of the smoke test (#690): every command line goes to $STUB_LOG.argv, so a test can check that no
 # secret is on one; the sign-in body read from stdin goes to $STUB_LOG.signin, the uploaded file to
 # $STUB_LOG.upload, an RPC body to $STUB_LOG.rpc. STUB_SIGNIN_FAIL refuses the sign-in, STUB_FILE_STATUS sets the
-# uploaded file's status (default proposed), STUB_REJECT_FAIL fails the rejection.
+# uploaded file's status (default proposed), STUB_REJECT_FAIL fails the rejection. A remote identity provider (#2704): its
+# keys at .../.well-known/jwks.json (STUB_JWKS_FAIL: 404) and its https .../auth/v1/health (STUB_IDP_HEALTH_FAIL: 404).
 set -euo pipefail
 
 printf '%s\n' "$*" >>"$STUB_LOG.argv"
@@ -66,7 +67,13 @@ case "$url" in
     body="{\"build\":\"$build\",\"migrationsMissing\":$missing}"
     ;;
   */api/config) body='{"authUrl":"http://127.0.0.1:18080/auth/v1","modules":[]}' ;;
-  */auth/v1/health) body='{"name":"GoTrue"}' ;;
+  */auth/v1/health)
+    # A remote identity provider's address (https://...) answers unless STUB_IDP_HEALTH_FAIL; the key travels in a header file.
+    if [ -n "${STUB_IDP_HEALTH_FAIL:-}" ] && [[ "$url" == https://* ]]; then status=404 body='{}'; else body='{"name":"GoTrue"}'; fi
+    ;;
+  */.well-known/jwks.json)
+    if [ -n "${STUB_JWKS_FAIL:-}" ]; then status=404 body='{}'; else body='{"keys":[]}'; fi
+    ;;
   */login)
     if [ -n "${STUB_NO_BUNDLE:-}" ] || { [ -n "${STUB_NO_BUNDLE_DIGEST:-}" ] && [[ "$running" == *"$STUB_NO_BUNDLE_DIGEST"* ]]; }; then
       body='<div id="root"></div>'

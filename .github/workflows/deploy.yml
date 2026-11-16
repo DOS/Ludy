@@ -394,9 +394,10 @@ jobs:
           SMOKE_EMAIL: ${{ secrets.SMOKE_EMAIL }}
           SMOKE_PASSWORD: ${{ secrets.SMOKE_PASSWORD }}
           SMOKE_ORG: ${{ vars.SMOKE_ORG }}
-          # A remote identity provider has no /auth/v1 proxy on this host (#2704): when this run set it up, or the variable
-          # DEPLOY_REMOTE_AUTH=true says the host already uses one, the proxy checks and the smoke account are skipped.
-          SMOKE_REMOTE_AUTH: ${{ (steps.idp.outputs.enabled == 'true' || vars.DEPLOY_REMOTE_AUTH == 'true') && '1' || '' }}
+          # A remote identity provider has no /auth/v1 proxy on this host (#2704): when the environment defines AUTH_ISSUER (this run
+          # sets it up, or a rollback run leaves a host that has it), or the variable DEPLOY_REMOTE_AUTH=true says the host uses one
+          # that was set up by hand, the proxy checks and the smoke account are skipped.
+          SMOKE_REMOTE_AUTH: ${{ (steps.idp.outputs.enabled == 'true' || vars.AUTH_ISSUER != '' || vars.DEPLOY_REMOTE_AUTH == 'true') && '1' || '' }}
         run: |
           if [ "$ACTION" = deploy ]; then bash tools/deploy/deploy.sh smoke "$PUBLIC_URL" "$BUILD"; else bash tools/deploy/deploy.sh smoke "$PUBLIC_URL"; fi
 
