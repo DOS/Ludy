@@ -12,6 +12,7 @@ import type { AuthUser } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
 import { describeError, installJsonLogs, orgIdOf, parseLogFormat, redact, runWithLogContext, setLogContext, withJobLogContext, type LogLevel } from '../src/log.ts';
+import { DomainError } from '@crove/kernel-runtime';
 
 const SECRET = 'x'.repeat(32);
 const NOW = new Date('2026-10-31T12:34:56.789Z');
@@ -347,7 +348,7 @@ describe('the lines of a job (#2175)', () => {
     const log = capture('worker');
     const { boss, run } = fakeBoss();
     const org = randomUUID();
-    const off = Object.assign(new Error('Ứng dụng social đã được tắt cho công ty này'), { code: 'MODULE_OFF', details: { module: 'social' } });
+    const off = new DomainError('MODULE_OFF', 404, 'Ứng dụng social đã được tắt cho công ty này', { module: 'social' });
     await boss.work('social-link-preview', async () => {
       throw off;
     });
@@ -380,7 +381,7 @@ describe('the lines of a job (#2175)', () => {
       },
     };
     withJobLogContext(boss, { loudQueues: new Set(['kernel-ads-pause']) });
-    const off = Object.assign(new Error('off'), { code: 'MODULE_OFF', details: { module: 'ads' } });
+    const off = new DomainError('MODULE_OFF', 404, 'off', { module: 'ads' });
     await boss.work('kernel-ads-pause', async () => {
       throw off;
     });
@@ -391,6 +392,17 @@ describe('the lines of a job (#2175)', () => {
     await expect(handlers.get('kernel-ads-sync')!([{ id: 'j2' }])).resolves.toBeUndefined();
     expect(log.raw.join('\n')).toContain('[jobs] kernel-ads-pause handler failed');
     expect(log.raw.join('\n')).toContain('[jobs] kernel-ads-sync skipped: ads is off');
+  });
+
+  it('ends a job quietly only for a DomainError: a provider error that copies the code MODULE_OFF still fails loudly', async () => {
+    const log = capture('worker');
+    const { boss, run } = fakeBoss();
+    const provider = Object.assign(new Error('provider body'), { code: 'MODULE_OFF', details: { module: 'social' } });
+    await boss.work('social-comment', async () => {
+      throw provider;
+    });
+    await expect(run('social-comment', [{ id: 'job-9' }])).rejects.toBe(provider);
+    expect(log.raw.join('\n')).toContain('[jobs] social-comment handler failed');
   });
 
   it('has no org for a job whose payload names none (or not a uuid), and no job id for a batch; a handler without options still works', async () => {

@@ -86,7 +86,6 @@ export async function runMeetingsImportSweep(deps: MeetingsImportSweepDeps): Pro
   }
 
   // The suggestions of the connections that are due.
-  // The suggestions of the connections that are due.
   // The connections of an org whose Meetings is off are skipped, and the due list is paged by its key, so those rows (still due, the sync never ran)
   // do not sit at the head of every pass and hide the connections of the orgs behind them.
   let after: { org: string; id: string } | null = null;

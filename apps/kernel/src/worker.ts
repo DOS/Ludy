@@ -303,7 +303,7 @@ export interface JobSender {
 // would queue them, but deprecates query() on a client already running one).
 // The events whose consumers keep a duty while their app is off (ADR-0053): the consumer's first runtime call is a command declared runsWhenOff, so it is
 // never refused with MODULE_OFF. They never take the drop path below: a refusal there is a defect that must be loud, not a skipped event. A test pins that
-// every command named here declares runsWhenOff (relay-keeping.test.ts).
+// every command named here declares runsWhenOff (relay-app-off.test.ts).
 export const KEEPING_EVENT_COMMANDS: Readonly<Record<string, readonly string[]>> = {
   // A stop of ads, or a revocation, pauses the launches at the platform: spend stops whatever the switch says.
   'ads.pause.queued': ['ads.pause.begin', 'ads.pause.record', 'ads.pause.pending'],
@@ -311,6 +311,10 @@ export const KEEPING_EVENT_COMMANDS: Readonly<Record<string, readonly string[]>>
   'kernel.member.removed': ['crm.booking_feed.revoke_for_member', 'social.links.revoke_for_member', 'notes.member_items.purge'],
   'kernel.member.role_changed': ['crm.booking_feed.revoke_for_member', 'social.links.revoke_for_member'],
 };
+
+// The events a relay step may drop when its app is off: an allowlist, so a step added later (money, an approval, a keeping duty) is never dropped silently
+// and a refusal there stays loud. Only the Ads campaign request can reach the drop today: its step runs a gated command of its own app.
+export const DROPPABLE_EVENTS: ReadonlySet<string> = new Set(['ads.campaign.draft_queued']);
 
 // One relay step with the stopgap for an app that is off (ADR-0053): a step whose runtime call is refused with MODULE_OFF is dropped, with a line that
 // names the event id, its type and the app and never the payload, instead of rolling back the whole claimed batch and wedging the relay for every
@@ -326,7 +330,7 @@ export function relayStep(
       return await step(boss);
     } catch (error) {
       const off = moduleOffOf(error);
-      if (off === null || Object.hasOwn(KEEPING_EVENT_COMMANDS, row.type)) throw error;
+      if (off === null || !DROPPABLE_EVENTS.has(row.type)) throw error;
       log(`[relay] event ${row.event_id.slice(0, 8)} (${row.type}) dropped: ${off} is off for org ${row.org_id.slice(0, 8)}`);
       return null;
     }
@@ -573,8 +577,10 @@ export async function sweepSocialPublishing(boss: PgBoss, workerDb: Db, provider
     answers.set(orgId, answer);
     return answer;
   };
-  const due: typeof rows = [];
-  for (const r of rows) if (providers.has(r.provider) && (await orgOn(r.org_id))) due.push(r);
+  // The distinct orgs are asked together, so one port that hangs delays no more than its own timeout, not one wait per org.
+  const candidates = rows.filter((r) => providers.has(r.provider));
+  const on = new Map(await Promise.all([...new Set(candidates.map((r) => r.org_id))].map(async (org) => [org, await orgOn(org)] as const)));
+  const due = candidates.filter((r) => on.get(r.org_id) === true);
   await Promise.all(
     due.map((r) =>
       boss.send(socialPublishQueue(r.provider), { orgId: r.org_id, variantId: r.variant_id, provider: r.provider } satisfies SocialPublishJob, {

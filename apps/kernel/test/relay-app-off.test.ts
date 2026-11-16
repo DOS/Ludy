@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { DomainError } from '@crove/kernel-runtime';
 import { loadConfig } from '../src/config.ts';
 import { moduleDefinitions } from '../src/kernel.ts';
-import { KEEPING_EVENT_COMMANDS, relayStep, sweepSocialPublishing } from '../src/worker.ts';
+import { DROPPABLE_EVENTS, KEEPING_EVENT_COMMANDS, relayStep, sweepSocialPublishing } from '../src/worker.ts';
 
 const ROW = { org_id: '01900000-0000-7000-8000-000000000001', event_id: '01900000-0000-7000-8000-0000000000e1', type: 'ads.campaign.draft_queued' };
 const off = (module: string) => new DomainError('MODULE_OFF', 404, `Ứng dụng ${module} đã được tắt cho công ty này`, { module });
@@ -39,6 +39,16 @@ describe('a relay step of an app that is off', () => {
     for (const type of Object.keys(KEEPING_EVENT_COMMANDS)) {
       const step = relayStep({ ...ROW, type }, async () => {
         throw off('ads');
+      }, () => {});
+      await expect(step({ send: async () => null }), type).rejects.toMatchObject({ code: 'MODULE_OFF' });
+    }
+  });
+
+  it('drops only an event on the allowlist: any other type rethrows MODULE_OFF, so a step added later stays loud', async () => {
+    expect([...DROPPABLE_EVENTS]).toEqual(['ads.campaign.draft_queued']);
+    for (const type of ['finance.einvoice.queued', 'ads.launch.queued', 'kernel.agent.proposal_approved']) {
+      const step = relayStep({ ...ROW, type }, async () => {
+        throw off('finance');
       }, () => {});
       await expect(step({ send: async () => null }), type).rejects.toMatchObject({ code: 'MODULE_OFF' });
     }
@@ -77,6 +87,22 @@ describe('the Social publish sweep', () => {
     expect(queued).toBe(1);
     expect(sent.map((s) => s.data.variantId)).toEqual(['v1']);
     expect(asked.sort()).toEqual([A, B]);
+  });
+
+  it('asks the orgs together, so a port that hangs for one org does not make the others wait one after another', async () => {
+    const orgs = ['a', 'b', 'c'].map((c) => `01900000-0000-7000-8000-00000000000${c}`);
+    const rows = orgs.map((org_id, i) => ({ org_id, variant_id: `v${i}`, provider: 'bluesky' }));
+    const boss = { send: async () => null } as never;
+    let running = 0;
+    let peak = 0;
+    await sweepSocialPublishing(boss, dbWith(rows), new Set(['bluesky']), async () => {
+      running += 1;
+      peak = Math.max(peak, running);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      running -= 1;
+      return true;
+    });
+    expect(peak).toBe(3);
   });
 
   it('queues the variants anyway when the check cannot answer (a database blip never stops publishing)', async () => {

@@ -170,7 +170,8 @@ export function parseLogFormat(value: string | undefined): LogFormat {
 
 // The module an error says is off for the org (a DomainError MODULE_OFF, ADR-0053), or null. Read by shape: this file stays free of imports.
 function moduleOffOf(error: unknown): string | null {
-  if (typeof error !== 'object' || error === null || (error as { code?: unknown }).code !== 'MODULE_OFF') return null;
+  // Only a DomainError: a provider's error body can carry any code (GraphError copies it), and must not end a job quietly.
+  if (typeof error !== 'object' || error === null || (error as { name?: unknown }).name !== 'DomainError' || (error as { code?: unknown }).code !== 'MODULE_OFF') return null;
   const module = (error as { details?: { module?: unknown } }).details?.module;
   return typeof module === 'string' ? module : 'unknown';
 }
