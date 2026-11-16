@@ -145,31 +145,39 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
 
   await test.step('a month with spend and no invoice or receipt says so, and points to the Inbox (slice D1)', async () => {
     await expect(books.getByRole('columnheader', { name: 'Chứng từ' })).toBeVisible();
-    await expect(books.getByRole('cell', { name: /Chưa có chứng từ/ })).toBeVisible();
-    await expect(books.getByRole('link', { name: 'Tải lên ở Hộp thư' })).toHaveAttribute('href', `/o/${slug}/inbox`);
+    // The range is the last 13 months, so several months have spend and none has a document yet.
+    await expect(books.getByRole('cell', { name: /Chưa có chứng từ/ }).first()).toBeVisible();
+    await expect(books.getByRole('link', { name: 'Tải lên ở Hộp thư' }).first()).toHaveAttribute('href', `/o/${slug}/inbox`);
     await expect(books.getByText('chỉ đếm: không viết chứng từ và không ghi bút toán', { exact: false })).toBeVisible();
+    await expect(books.getByRole('cell', { name: /^\d+ chứng từ$/ })).toHaveCount(0);
   });
 
-  await test.step('a document from a seller named like the platform is counted for its month, and one for a month with no spend is not listed', async () => {
-    // A recorded purchase invoice of the sandbox platform dated today in the account's legal entity, and another dated
-    // two years back, in a month the account has no spend.
+  await test.step('a document from a seller named like the platform is counted for its month and no other', async () => {
+    // A recorded purchase invoice of the sandbox platform dated today, in the account's legal entity, with its own
+    // journal entry (the database refuses a document without one), written as the superuser like the other seeds.
     exec(
       `WITH acc AS (
          SELECT t.org_id, a.legal_entity_id FROM crove_ads.ad_account a JOIN crove_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug'
        ), seller AS (
          INSERT INTO crove_kernel.party (org_id, name, kind) SELECT org_id, 'Sandbox Ads Pte. Ltd.', 'organization' FROM acc RETURNING org_id, id
+       ), doc AS (
+         INSERT INTO crove_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id)
+         SELECT seller.org_id, seller.id, 'C26TAA', '1', (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, 'VND', 100000, 0, 100000, 'purchase', acc.legal_entity_id
+         FROM seller JOIN acc USING (org_id) RETURNING org_id, id, party_id, invoice_date, legal_entity_id
+       ), entry AS (
+         INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id)
+         SELECT org_id, invoice_date, 'HĐ Sandbox Ads', 'finance.purchase_document', id, legal_entity_id FROM doc RETURNING org_id, id, legal_entity_id
        )
-       INSERT INTO crove_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id)
-       SELECT seller.org_id, seller.id, 'C26TAA', n.number, n.day, 'VND', 100000, 0, 100000, 'purchase', acc.legal_entity_id
-       FROM seller JOIN acc USING (org_id)
-       CROSS JOIN (VALUES ('1', (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date), ('2', ((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - interval '2 years')::date)) AS n(number, day)`,
+       INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id)
+       SELECT entry.org_id, entry.id, l.line_no, l.account_code, l.debit, l.credit, doc.party_id, entry.legal_entity_id
+       FROM entry JOIN doc USING (org_id)
+       CROSS JOIN (VALUES (1, '6421', 100000, 0), (2, '331', 0, 100000)) AS l(line_no, account_code, debit, credit)`,
       { slug },
     );
     await page.reload();
-    await expect(books.getByRole('columnheader', { name: 'Chứng từ' })).toBeVisible();
-    await expect(books.getByRole('cell', { name: '1 chứng từ' })).toBeVisible();
-    await expect(books.getByRole('cell', { name: /Chưa có chứng từ/ })).toHaveCount(0);
-    await expect(books.getByRole('row')).toHaveCount(2);
+    await expect(books.getByRole('cell', { name: '1 chứng từ' })).toHaveCount(1);
+    // The other months still have none.
+    await expect(books.getByRole('cell', { name: /Chưa có chứng từ/ }).first()).toBeVisible();
   });
 
   await test.step('the screen passes an axe scan with data, at desktop and phone width, in both themes', async () => {

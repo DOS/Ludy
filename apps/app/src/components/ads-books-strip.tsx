@@ -100,7 +100,7 @@ function BooksTable({
                   ) : (
                     <span className="space-x-2">
                       <span className="font-medium">{t('books.documentMissing')}</span>
-                      <Link to="/o/$slug/inbox" params={{ slug }} className="text-link hover:underline">
+                      <Link to="/o/$slug/inbox" params={{ slug }} className="text-link underline">
                         {t('books.documentUpload')}
                       </Link>
                     </span>
