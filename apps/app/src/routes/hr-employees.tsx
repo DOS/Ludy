@@ -6,7 +6,25 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { HR_CONTRACT_TYPES, HR_PAY_FUNCTIONS, HR_REGIONS, HR_RELATIONS, vietnamToday, type HrContractType, type HrEmployeeSummary, type HrPayFunction, type HrRegion, type HrRelation } from '@crove/kernel-contract';
+import {
+  HR_CONTRACT_FORMS,
+  HR_CONTRACT_TYPES,
+  HR_PAY_FUNCTIONS,
+  HR_PROBATION_ROLE_TIERS,
+  HR_REGIONS,
+  HR_RELATIONS,
+  vietnamToday,
+  type HrContractAlert,
+  type HrContractForm,
+  type HrContractType,
+  type HrEmployeeSummary,
+  type HrEmploymentTerms,
+  type HrEmploymentView,
+  type HrPayFunction,
+  type HrProbationRoleTier,
+  type HrRegion,
+  type HrRelation,
+} from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
@@ -14,7 +32,7 @@ import { Input } from '@crove/ui/components/input';
 import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
-import { bankByCode } from '@crove/l10n-vn';
+import { bankByCode, checkLaborContractTerms, deriveFixedTermEndDateIso, type LaborContractFinding } from '@crove/l10n-vn';
 import { BankSelect } from '../components/bank-select.tsx';
 import { SeveranceCalculatorPanel } from '../components/hr-severance-panel.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
@@ -27,17 +45,188 @@ const refresh = () => queryClient.invalidateQueries({ queryKey: orpc.hr.key() })
 const ONCE = { staleTime: Infinity, refetchOnWindowFocus: false, refetchOnReconnect: false } as const;
 const NUM = 'px-4 py-3 text-right tabular-nums';
 
-interface TermsState {
+export interface TermsState {
   effectiveFrom: string;
   contractType: HrContractType;
   region: HrRegion;
   baseWage: string;
   payFunction: HrPayFunction;
+  contractForm: HrContractForm | '';
+  termMonths: string;
+  contractEndOn: string;
+  fixedTermSequence: '' | '1' | '2';
+  probationRoleTier: HrProbationRoleTier | '';
+  probationEndOn: string;
+  probationWage: string;
 }
-const blankTerms = (): TermsState => ({ effectiveFrom: vietnamToday(), contractType: 'indefinite', region: 'I', baseWage: '', payFunction: 'admin' });
 
-function TermsFields({ id, value, onChange }: { id: string; value: TermsState; onChange: (patch: Partial<TermsState>) => void }) {
+export const blankTerms = (): TermsState => ({
+  effectiveFrom: vietnamToday(),
+  contractType: 'indefinite',
+  region: 'I',
+  baseWage: '',
+  payFunction: 'admin',
+  contractForm: '',
+  termMonths: '',
+  contractEndOn: '',
+  fixedTermSequence: '',
+  probationRoleTier: '',
+  probationEndOn: '',
+  probationWage: '',
+});
+
+const idNumberOk = (v: string) => v.trim() === '' || /^(\d{10}|\d{12})$/.test(v.trim());
+const wageOk = (v: string) => /^\d{1,16}(\.\d{1,2})?$/.test(v);
+
+function hasContractDetails(terms: TermsState): boolean {
+  return (
+    terms.contractForm !== '' ||
+    terms.termMonths.trim() !== '' ||
+    terms.contractEndOn !== '' ||
+    terms.fixedTermSequence !== '' ||
+    terms.probationRoleTier !== '' ||
+    terms.probationEndOn !== '' ||
+    terms.probationWage.trim() !== ''
+  );
+}
+
+export function buildEmploymentPayload(terms: TermsState): HrEmploymentTerms {
+  const termMonthsRaw = terms.termMonths.trim();
+  const probationWageRaw = terms.probationWage.trim();
+  return {
+    effectiveFrom: terms.effectiveFrom,
+    contractType: terms.contractType,
+    region: terms.region,
+    baseWage: terms.baseWage,
+    payFunction: terms.payFunction,
+    ...(terms.contractForm !== '' ? { contractForm: terms.contractForm } : {}),
+    ...(termMonthsRaw !== '' ? { termMonths: Number(termMonthsRaw) } : {}),
+    ...(terms.contractEndOn !== '' ? { contractEndOn: terms.contractEndOn } : {}),
+    ...(terms.fixedTermSequence !== '' ? { fixedTermSequence: Number(terms.fixedTermSequence) } : {}),
+    ...(terms.probationRoleTier !== '' ? { probationRoleTier: terms.probationRoleTier } : {}),
+    ...(terms.probationEndOn !== '' ? { probationEndOn: terms.probationEndOn } : {}),
+    ...(probationWageRaw !== '' ? { probationWage: probationWageRaw } : {}),
+  };
+}
+
+function autoEndDateFor(terms: TermsState): string | null {
+  if (terms.contractType !== 'fixed_term' || terms.contractEndOn !== '') return null;
+  const raw = terms.termMonths.trim();
+  if (!/^\d+$/.test(raw)) return null;
+  return deriveFixedTermEndDateIso(terms.effectiveFrom, Number(raw));
+}
+
+export function previewContractCheck(terms: TermsState): LaborContractFinding[] {
+  if (!hasContractDetails(terms)) return [];
+  const termMonthsRaw = terms.termMonths.trim();
+  const parsedTermMonths =
+    termMonthsRaw === ''
+      ? null
+      : /^\d+$/.test(termMonthsRaw)
+        ? Number(termMonthsRaw)
+        : Number.NaN;
+  const derivedEndOn = terms.contractEndOn !== '' ? terms.contractEndOn : autoEndDateFor(terms);
+  const hasProbation =
+    terms.probationRoleTier !== '' || terms.probationEndOn !== '' || terms.probationWage.trim() !== '';
+  const result = checkLaborContractTerms({
+    contractKind: terms.contractType === 'none' ? 'under_one_month' : terms.contractType,
+    ...(terms.contractForm !== '' ? { form: terms.contractForm } : {}),
+    startDate: terms.effectiveFrom,
+    endDate: derivedEndOn,
+    termMonths: parsedTermMonths,
+    fixedTermSequence: terms.fixedTermSequence === '' ? null : Number(terms.fixedTermSequence),
+    ...(wageOk(terms.baseWage) ? { contractWage: terms.baseWage } : {}),
+    probation: hasProbation
+      ? {
+          roleTier: terms.probationRoleTier,
+          startDate: terms.effectiveFrom,
+          endDate: terms.probationEndOn !== '' ? terms.probationEndOn : null,
+          wage: terms.probationWage.trim() !== '' ? terms.probationWage.trim() : null,
+        }
+      : null,
+  });
+  const findings = [...result.findings];
+  if (terms.contractType !== 'fixed_term' && terms.fixedTermSequence !== '') {
+    findings.push({
+      code: 'invalid_fixed_term_sequence',
+      severity: 'error',
+      field: 'fixedTermSequence',
+      message: 'Fixed-term sequence is only valid for fixed-term contracts.',
+      cite: 'Labor Code 2019 Art. 20(2)',
+    });
+  }
+  return findings;
+}
+
+function formatContractAlert(t: ReturnType<typeof useTranslations<'hrEmployees'>>, f: ReturnType<typeof useFormat>, alert: HrContractAlert): string {
+  const date = alert.targetDate ? f.date(alert.targetDate) : '';
+  const days = String(Math.abs(alert.daysRemaining ?? 0));
+  switch (alert.code) {
+    case 'contract_expired':
+    case 'contract_expiring_soon':
+    case 'probation_ending_soon':
+      return t(`alerts.${alert.code}`, { days, date });
+    case 'final_fixed_term_renewal':
+    case 'must_convert_to_indefinite':
+      return t(`alerts.${alert.code}`);
+  }
+}
+
+function ContractAlertBadges({ alerts }: { alerts: readonly HrContractAlert[] }) {
   const t = useTranslations('hrEmployees');
+  const f = useFormat();
+  if (alerts.length === 0) return null;
+  return (
+    <>
+      {alerts.map((alert) => (
+        <Badge
+          key={`${alert.code}-${alert.targetDate ?? ''}`}
+          className="ml-2"
+          variant={alert.severity === 'error' ? 'destructive' : 'warning'}
+          data-testid={`hr-contract-alert-${alert.code}`}
+        >
+          {formatContractAlert(t, f, alert)}
+        </Badge>
+      ))}
+    </>
+  );
+}
+
+function formatContractTermSummary(t: ReturnType<typeof useTranslations<'hrEmployees'>>, f: ReturnType<typeof useFormat>, row: HrEmploymentView): string {
+  const parts: string[] = [];
+  if (row.termMonths !== null) parts.push(t('termMonthsShort', { months: String(row.termMonths) }));
+  if (row.contractEndOn !== null) parts.push(f.date(row.contractEndOn));
+  if (row.fixedTermSequence !== null) parts.push(t(`sequenceShort.${String(row.fixedTermSequence) as '1' | '2'}`));
+  if (row.contractForm !== null) parts.push(t(`contractForms.${row.contractForm}`));
+  return parts.length > 0 ? parts.join(' - ') : '-';
+}
+
+function formatProbationSummary(t: ReturnType<typeof useTranslations<'hrEmployees'>>, f: ReturnType<typeof useFormat>, row: HrEmploymentView): string {
+  const parts: string[] = [];
+  if (row.probationRoleTier !== null) parts.push(t(`probationTiersShort.${row.probationRoleTier}`));
+  if (row.probationEndOn !== null) parts.push(f.date(row.probationEndOn));
+  if (row.probationWage !== null) parts.push(f.money(row.probationWage, 'VND'));
+  return parts.length > 0 ? parts.join(' - ') : '-';
+}
+
+export function TermsFields({
+  id,
+  value,
+  onChange,
+  defaultExpanded = false,
+}: {
+  id: string;
+  value: TermsState;
+  onChange: (patch: Partial<TermsState>) => void;
+  defaultExpanded?: boolean;
+}) {
+  const t = useTranslations('hrEmployees');
+  const f = useFormat();
+  const [expanded, setExpanded] = useState(defaultExpanded);
+  const findings = previewContractCheck(value);
+  const errors = findings.filter((item) => item.severity === 'error');
+  const warnings = findings.filter((item) => item.severity === 'warning');
+  const derivedEnd = autoEndDateFor(value);
   return (
     <>
       <div className="space-y-1">
@@ -78,14 +267,126 @@ function TermsFields({ id, value, onChange }: { id: string; value: TermsState; o
         <Label htmlFor={`${id}-wage`}>{t('baseWage')}</Label>
         <Input id={`${id}-wage`} value={value.baseWage} inputMode="numeric" maxLength={19} onChange={(e) => onChange({ baseWage: e.target.value.replace(/[^\d.]/g, '') })} />
       </div>
+      <div className="sm:col-span-full space-y-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((v) => !v)}
+          data-testid="hr-contract-details-toggle"
+        >
+          {t('contractDetailsToggle')}
+        </Button>
+        {expanded && (
+          <div className="grid gap-3 rounded-md border p-3 sm:grid-cols-3" data-testid="hr-contract-details-panel">
+            <div className="space-y-1">
+              <Label htmlFor={`${id}-contract-form`}>{t('contractForm')}</Label>
+              <NativeSelect
+                id={`${id}-contract-form`}
+                value={value.contractForm}
+                onChange={(e) => onChange({ contractForm: e.target.value as HrContractForm | '' })}
+              >
+                <NativeSelectOption value="">{t('contractFormUnset')}</NativeSelectOption>
+                {HR_CONTRACT_FORMS.map((k) => (
+                  <NativeSelectOption key={k} value={k}>
+                    {t(`contractForms.${k}`)}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor={`${id}-term-months`}>{t('termMonths')}</Label>
+              <Input
+                id={`${id}-term-months`}
+                value={value.termMonths}
+                inputMode="numeric"
+                maxLength={2}
+                onChange={(e) => onChange({ termMonths: e.target.value.replace(/\D/g, '') })}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor={`${id}-contract-end`}>{t('contractEndOn')}</Label>
+              <Input
+                id={`${id}-contract-end`}
+                type="date"
+                value={value.contractEndOn}
+                onChange={(e) => onChange({ contractEndOn: e.target.value })}
+              />
+              {derivedEnd && (
+                <p className="text-xs text-subtle-foreground" data-testid="hr-contract-auto-end">
+                  {t('autoContractEndHint', { date: f.date(derivedEnd) })}
+                </p>
+              )}
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor={`${id}-fixed-seq`}>{t('fixedTermSequence')}</Label>
+              <NativeSelect
+                id={`${id}-fixed-seq`}
+                value={value.fixedTermSequence}
+                onChange={(e) => onChange({ fixedTermSequence: e.target.value as '' | '1' | '2' })}
+              >
+                <NativeSelectOption value="">{t('sequenceUnset')}</NativeSelectOption>
+                <NativeSelectOption value="1">{t('sequenceOptions.1')}</NativeSelectOption>
+                <NativeSelectOption value="2">{t('sequenceOptions.2')}</NativeSelectOption>
+              </NativeSelect>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor={`${id}-probation-tier`}>{t('probationRoleTier')}</Label>
+              <NativeSelect
+                id={`${id}-probation-tier`}
+                value={value.probationRoleTier}
+                onChange={(e) => onChange({ probationRoleTier: e.target.value as HrProbationRoleTier | '' })}
+              >
+                <NativeSelectOption value="">{t('probationRoleUnset')}</NativeSelectOption>
+                {HR_PROBATION_ROLE_TIERS.map((k) => (
+                  <NativeSelectOption key={k} value={k}>
+                    {t(`probationTiers.${k}`)}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor={`${id}-probation-end`}>{t('probationEndOn')}</Label>
+              <Input
+                id={`${id}-probation-end`}
+                type="date"
+                value={value.probationEndOn}
+                onChange={(e) => onChange({ probationEndOn: e.target.value })}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor={`${id}-probation-wage`}>{t('probationWage')}</Label>
+              <Input
+                id={`${id}-probation-wage`}
+                value={value.probationWage}
+                inputMode="numeric"
+                maxLength={19}
+                onChange={(e) => onChange({ probationWage: e.target.value.replace(/[^\d.]/g, '') })}
+              />
+            </div>
+          </div>
+        )}
+        {errors.length > 0 && (
+          <div className="space-y-1" data-testid="hr-contract-validation-errors">
+            {errors.map((item, index) => (
+              <ErrorText key={`${item.code}-${index}`}>{t(`contractCheck.findings.${item.code}`)}</ErrorText>
+            ))}
+          </div>
+        )}
+        {warnings.length > 0 && (
+          <div className="space-y-1 text-xs text-warning" data-testid="hr-contract-validation-warnings">
+            {warnings.map((item, index) => (
+              <p key={`${item.code}-${index}`}>{t(`contractCheck.findings.${item.code}`)}</p>
+            ))}
+          </div>
+        )}
+      </div>
     </>
   );
 }
 
-const idNumberOk = (v: string) => v.trim() === '' || /^(\d{10}|\d{12})$/.test(v.trim());
-const wageOk = (v: string) => /^\d{1,16}(\.\d{1,2})?$/.test(v);
-
-function AddForm({ onClose }: { onClose: () => void }) {
+export function AddForm({ onClose }: { onClose: () => void }) {
   const t = useTranslations('hrEmployees');
   const [name, setName] = useState('');
   const [address, setAddress] = useState('');
@@ -96,6 +397,7 @@ function AddForm({ onClose }: { onClose: () => void }) {
   const [tax, setTax] = useState('');
   const [insurance, setInsurance] = useState('');
   const [terms, setTerms] = useState(blankTerms);
+  const contractErrors = previewContractCheck(terms).filter((item) => item.severity === 'error');
   const save = useMutation({
     mutationFn: () =>
       client.hr.payroll.employees.add({
@@ -107,7 +409,7 @@ function AddForm({ onClose }: { onClose: () => void }) {
         ...(birth ? { birthDate: birth } : {}),
         ...(tax.trim() ? { taxCode: tax.trim() } : {}),
         ...(insurance.trim() ? { insuranceNumber: insurance.trim() } : {}),
-        employment: terms,
+        employment: buildEmploymentPayload(terms),
       }),
     onSuccess: async () => {
       await refresh();
@@ -156,7 +458,7 @@ function AddForm({ onClose }: { onClose: () => void }) {
       <p className="mt-2 text-xs text-subtle-foreground">{t('sealedHint')}</p>
       {save.error && <ErrorText>{errorMessage(save.error)}</ErrorText>}
       <div className="mt-4 flex flex-wrap gap-2">
-        <Button loading={save.isPending} disabled={name.trim() === '' || !wageOk(terms.baseWage) || !idNumberOk(tax) || !idNumberOk(insurance)} onClick={() => save.mutate()} data-testid="hr-employee-save">
+        <Button loading={save.isPending} disabled={name.trim() === '' || !wageOk(terms.baseWage) || !idNumberOk(tax) || !idNumberOk(insurance) || contractErrors.length > 0} onClick={() => save.mutate()} data-testid="hr-employee-save">
           {t('save')}
         </Button>
         <Button variant="ghost" onClick={onClose}>
@@ -167,7 +469,7 @@ function AddForm({ onClose }: { onClose: () => void }) {
   );
 }
 
-function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boolean; onClose: () => void }) {
+export function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boolean; onClose: () => void }) {
   const t = useTranslations('hrEmployees');
   const f = useFormat();
   // The opened numbers are not kept in the cache once the card closes (gcTime 0).
@@ -186,7 +488,8 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
       after?.();
     },
   });
-  const addTerms = useMutation(run(() => client.hr.payroll.employments.add({ employeeId, ...terms }), () => setTerms(blankTerms())));
+  const addTerms = useMutation(run(() => client.hr.payroll.employments.add({ employeeId, ...buildEmploymentPayload(terms) }), () => setTerms(blankTerms())));
+  const contractErrors = previewContractCheck(terms).filter((item) => item.severity === 'error');
   const addDependent = useMutation(
     run(
       () => client.hr.payroll.dependents.add({ employeeId, displayName: dep.name.trim(), relation: dep.relation, registeredOn: dep.registeredOn }),
@@ -232,6 +535,11 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
           {t('close')}
         </Button>
       </div>
+      {e.contractAlerts.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-1" data-testid="hr-employee-alerts">
+          <ContractAlertBadges alerts={e.contractAlerts} />
+        </div>
+      )}
       {e.erased ? (
         <p className="mt-2 text-sm text-subtle-foreground" data-testid="hr-employee-erased">
           {t('erasedNote')}
@@ -388,11 +696,13 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
       )}
 
       <h3 className="mt-5 text-sm font-medium text-foreground">{t('termsTitle')}</h3>
-      <DataTable head={[t('effectiveFrom'), t('contractType'), t('region'), t('baseWage')]} numeric={[3]}>
+      <DataTable head={[t('effectiveFrom'), t('contractType'), t('contractTermCol'), t('probationCol'), t('region'), t('baseWage')]} numeric={[5]}>
         {e.employments.map((row) => (
           <TableRow key={row.id} data-testid="hr-terms-row">
             <TableCell className="px-4 py-3">{f.date(row.effectiveFrom)}</TableCell>
             <TableCell className="px-4 py-3">{t(`contracts.${row.contractType}`)}</TableCell>
+            <TableCell className="px-4 py-3">{formatContractTermSummary(t, f, row)}</TableCell>
+            <TableCell className="px-4 py-3">{formatProbationSummary(t, f, row)}</TableCell>
             <TableCell className="px-4 py-3">{t('regionOption', { region: row.region })}</TableCell>
             <TableCell className={NUM}>{f.money(row.baseWage, 'VND')}</TableCell>
           </TableRow>
@@ -402,7 +712,7 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
         <div className="mt-3 grid gap-3 sm:grid-cols-4">
           <TermsFields id="hr-terms" value={terms} onChange={(patch) => setTerms((s) => ({ ...s, ...patch }))} />
           <div className="sm:col-span-4">
-            <Button loading={addTerms.isPending} disabled={!wageOk(terms.baseWage)} onClick={() => addTerms.mutate()} data-testid="hr-terms-add">
+            <Button loading={addTerms.isPending} disabled={!wageOk(terms.baseWage) || contractErrors.length > 0} onClick={() => addTerms.mutate()} data-testid="hr-terms-add">
               {t('addTerms')}
             </Button>
             <span className="ml-2 text-xs text-subtle-foreground">{t('termsHint')}</span>
@@ -568,6 +878,7 @@ export function HrEmployeesPage() {
                     {t('ended')}
                   </Badge>
                 )}
+                <ContractAlertBadges alerts={r.contractAlerts} />
               </TableCell>
               <TableCell className="px-4 py-3">{r.current ? t(`contracts.${r.current.contractType}`) : '-'}</TableCell>
               <TableCell className="px-4 py-3">{r.current ? t('regionOption', { region: r.current.region }) : '-'}</TableCell>

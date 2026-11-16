@@ -240,6 +240,7 @@ export const KERNEL_ERROR_CODES = [
   'HR_YEAR_NOT_BEGUN',
   'HR_RETENTION_NOT_PASSED',
   'HR_EMPLOYMENT_NOT_NEWER',
+  'HR_CONTRACT_INVALID',
   'HR_BANK_UNKNOWN',
   'HR_BANK_TEMPLATE_NAME_TAKEN',
   'HR_BANK_TEMPLATE_NOT_FOUND',
@@ -1168,7 +1169,14 @@ type KernelErrorRule = keyof typeof KERNEL_ERROR_RULES;
 
 // Codes whose kernel message is not the kernel's Vietnamese: the SPA words them in every locale. The English media answers of the meeting player (its retention and key
 // refusals, #2703) are among them, so a Vietnamese screen shows the Vietnamese message, not the kernel's English one.
-const LIBRARY_CODES: ReadonlySet<KernelErrorCode> = new Set(['BAD_REQUEST', 'INTERNAL_SERVER_ERROR', 'MEDIA_KEY_SHREDDED', 'MEDIA_KEY_UNAVAILABLE', 'AUDIO_NOT_FOUND']);
+const LIBRARY_CODES: ReadonlySet<KernelErrorCode> = new Set([
+  'BAD_REQUEST',
+  'INTERNAL_SERVER_ERROR',
+  'MEDIA_KEY_SHREDDED',
+  'MEDIA_KEY_UNAVAILABLE',
+  'AUDIO_NOT_FOUND',
+  'HR_CONTRACT_INVALID',
+]);
 
 export function isKernelErrorCode(code: string): code is KernelErrorCode {
   return (KERNEL_ERROR_CODES as readonly string[]).includes(code);
