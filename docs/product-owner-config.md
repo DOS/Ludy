@@ -259,27 +259,58 @@ owns it, the Platform PO, in the way a code owner reviews a file: it covers
 those files only, it is not an approval of the PR, and the PR's own PO keeps
 its acceptance gate, its merge and its questions to JOY.
 
-The shared core:
-- `packages/kernel-runtime/src/**` (the one write path, the blob cipher);
-- the database context guards and the migration runner (`packages/db`);
+The shared core (owner decision 2026-11-16: only what carries risk for every
+line):
+- `packages/kernel-runtime/src/**` (the one write path, the blob cipher, the
+  egress guard);
+- the database context guards and the migration runner (`packages/db`; not
+  the generated types in `packages/db/src/generated/`);
 - authentication and the HTTP edge: `auth*.ts`, `sessions*.ts`, `http.ts`,
   any `auth/` directory, `approval.ts`, `identity.ts`;
-- tenancy and kernel SQL: a migration that creates or replaces a function in
+- kernel SQL: a migration that creates or replaces a function in
   `crove_kernel` (`apply_tenant_rls`, `org_purge` and the like), changes
-  grants or roles, or touches another line's tables;
+  roles or grants on `crove_kernel` objects, or changes another line's
+  tables;
 - the gate: `.github/workflows/**`, `tools/ci/**`, `tools/deploy/**`, git
-  hooks, every `test/invariant/` directory outside the PR's own module,
-  `supabase/tests/database/_*.test.sql`, the pgTAP runner;
+  hooks, the pgTAP runner, and any change to an invariant file
+  (`test/invariant/`, `supabase/tests/database/_*.test.sql`) that loosens a
+  rule;
 - the agent harness and policy: `AGENTS.md`, `CLAUDE.md`, `.claude/settings*`,
   hooks, agents, `.mcp.json`.
 
-A line's own migrations, tables, module code and its own invariant tests are
-not shared core, even though they are protected paths: its PO reviews them.
+Not shared core, so the line's PO reviews them alone (they stay protected
+paths, with the line PO's security review):
+- a line's own migrations, tables, grants on its own tables, module code and
+  its own invariant tests;
+- an invariant change that only tightens a rule (removes an allowance or a
+  pending entry), or only adds a two-step pending entry for the line's own
+  tables, commands or send sites;
+- the generated DB types.
 
-To ask, the PR's PO comments on the PR `Security review requested (Platform
-PO)` with the head SHA and the shared-core files it changes. The Platform PO
-answers on the PR with `## Shared-core review (Platform PO)`, naming the head
-it reviewed, and repeats it if those files change again.
+How to ask and how long to wait (owner decision 2026-11-16):
+- The PR's PO adds the label `shared-core` and comments on the PR
+  `Request: Shared-core review (Platform PO)` with the head SHA and the
+  shared-core files it changes. The Platform PO watches that label, so a
+  request wakes it.
+- A review stays valid for later heads while
+  `git diff <reviewed head>..<head> -- <the shared-core files>` is empty:
+  a merge of `main`, a migration rename or a module-only fix needs no new
+  request.
+- If the Platform PO has not answered within 4 hours, the PR's PO runs an
+  independent, fresh-context flagship-model reviewer on the shared-core files
+  only, posts it as `## Shared-core review (stand-in)`, and may merge. The
+  Platform PO reviews it after the merge within 24 hours; a blocking finding
+  is a P0 forward fix or a revert. Changing an invariant on purpose stays an
+  owner decision.
+- Once `Security review (agent)` runs in CI (#95), its comment on the head
+  counts as the stand-in review.
+
+The Platform PO answers on the PR with `## Shared-core review (Platform PO)`,
+naming the head it reviewed.
+
+Cost habits for every PO: rename a migration only right before merging; skip
+update-branch when the new commits on `main` touch none of the PR's files;
+run one fresh reviewer per protected PR.
 
 ## Sessions
 
