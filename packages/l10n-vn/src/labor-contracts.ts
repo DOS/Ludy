@@ -1060,6 +1060,19 @@ export interface SeveranceAllowanceResult {
   rulesUsed: readonly LaborRuleRef[];
 }
 
+/** Counts completed calendar months in `[hireDate, endedOn]` inclusive (1 month = `(hireDate + 1 month) - 1 day`). */
+export function countCompletedCalendarMonths(hireDateStr: string, endedOnStr: string): number {
+  const start = requireIsoCalendarDate('hireDate', hireDateStr);
+  const end = requireIsoCalendarDate('endedOn', endedOnStr);
+  if (diffCalendarDays(start, end) < 0) return 0;
+  const endPlusOne = addCalendarDays(end, 1);
+  let months = Math.max(0, (end.year - start.year) * 12 + (end.month - start.month) + 1);
+  while (months > 0 && compareCalendarDates(addCalendarMonths(start, months), endPlusOne) > 0) {
+    months -= 1;
+  }
+  return months;
+}
+
 /** Rounds qualifying months to half-year / full-year units (`0` -> `0`, `1..6` -> `0.5`, `7..12` -> `1`, `> 12` similarly). */
 export function roundSeveranceQualifyingYears(qualifyingMonths: number): string {
   requireNonNegativeInteger('qualifyingMonths', qualifyingMonths);

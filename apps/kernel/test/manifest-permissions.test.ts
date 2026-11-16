@@ -57,6 +57,7 @@ describe('module manifests declare their permissions (#1630)', () => {
       'command hr.payroll.line.inputs.set: hr.payroll.run',
       'command hr.payroll.payment.verify: finance.proposal.approve',
       'command hr.payroll.posting.verify: finance.proposal.approve',
+      'command hr.payroll.run.apply_thirteenth_month: hr.payroll.run',
       'command hr.payroll.run.approve: hr.payroll.run',
       'command hr.payroll.run.import_timekeeping: hr.payroll.run',
       'command hr.payroll.run.open: hr.payroll.run',

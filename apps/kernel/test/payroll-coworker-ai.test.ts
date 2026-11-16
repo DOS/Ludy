@@ -220,6 +220,33 @@ describe('prepareMonth and flagMonth', () => {
     for (const secret of SECRETS) expect(requests[0]).not.toContain(secret);
   });
 
+  it('surfaces severance_check flag as a deterministic prepare signal in vi and en without leaking names or dates', async () => {
+    const sevLine = line(EMP_B, NAME_B, '8950000', ['ends_this_month', 'severance_check']);
+    const sevSheet: HrRunSheet = sheetOf('sev', '2026-11', [sevLine]);
+    const r: PayrollReads = { ...reads(), sheet: async () => sevSheet, runs: async () => [summary('sev', '2026-11')] };
+
+    const offVi = await prepareMonth({ reader: null, budget: new DraftBudget() }, r, ORG, USER, 'sev', 'vi');
+    expect(offVi.ai).toBe('off');
+    expect(offVi.items.map((i) => i.kind)).toEqual(['contract_ends', 'severance_check']);
+    expect(offVi.items[1]?.facts).toContain(NAME_B);
+    expect(offVi.items[1]?.facts).toContain('12');
+    expect(offVi.items[1]?.text).toBeNull();
+
+    const offEn = await prepareMonth({ reader: null, budget: new DraftBudget() }, r, ORG, USER, 'sev', 'en');
+    expect(offEn.ai).toBe('off');
+    expect(offEn.items.map((i) => i.kind)).toEqual(['contract_ends', 'severance_check']);
+    expect(offEn.items[1]?.facts).toContain(NAME_B);
+    expect(offEn.items[1]?.facts).toContain('12');
+
+    const requests: string[] = [];
+    const { ai } = setup({ prepare: echoPrepare(requests) });
+    const on = await prepareMonth(ai, r, ORG, USER, 'sev', 'vi');
+    expect(on.ai).toBe('used');
+    expect(on.items.find((i) => i.kind === 'severance_check')?.text).toContain(NAME_B);
+    for (const secret of SECRETS) expect(requests[0]).not.toContain(secret);
+    expect(requests[0]).not.toMatch(/2026-\d{2}/);
+  });
+
   it('still lists the findings when the run has more people than one prompt holds, with no model call', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const requests: string[] = [];

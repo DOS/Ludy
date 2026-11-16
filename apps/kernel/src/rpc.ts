@@ -893,6 +893,7 @@ export function createRpcHandler(
           finalization: os.hr.payroll.employees.finalization.handler(hrCommand('hr.payroll.employee.finalization.set')),
           end: os.hr.payroll.employees.end.handler(hrCommand('hr.payroll.employee.end')),
           erase: os.hr.payroll.employees.erase.handler(hrCommand('hr.payroll.employee.erase')),
+          severance: os.hr.payroll.employees.severance.handler(hrQuery('hr.payroll.employee.severance')),
         },
         bankTemplates: {
           list: os.hr.payroll.bankTemplates.list.handler(hrQuery('hr.payroll.bank_template.list')),
@@ -911,6 +912,8 @@ export function createRpcHandler(
           open: os.hr.payroll.runs.open.handler(hrCommand('hr.payroll.run.open')),
           recalculate: os.hr.payroll.runs.recalculate.handler(hrCommand('hr.payroll.run.recalculate')),
           importTimekeeping: os.hr.payroll.runs.importTimekeeping.handler(hrCommand('hr.payroll.run.import_timekeeping')),
+          thirteenthMonthPreview: os.hr.payroll.runs.thirteenthMonthPreview.handler(hrQuery('hr.payroll.run.thirteenth_month_preview')),
+          applyThirteenthMonth: os.hr.payroll.runs.applyThirteenthMonth.handler(hrCommand('hr.payroll.run.apply_thirteenth_month')),
           approve: os.hr.payroll.runs.approve.handler(hrCommand('hr.payroll.run.approve')),
         },
         // Where the posting and the payments of an approved month stand (#2532): finance reads its own books and the open proposals; owners and admins.

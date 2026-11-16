@@ -86,7 +86,7 @@ export interface PayrollLineFacts {
   figures: PayrollFigures;
   /** Last month's figures of the same person, null for a person with no pay line last month. */
   previous: PayrollFigures | null;
-  contract: { startsInMonth: boolean; probationEndsInMonth: boolean; endsInMonth: boolean };
+  contract: { startsInMonth: boolean; probationEndsInMonth: boolean; endsInMonth: boolean; severanceCheckSuggested: boolean };
   /** Consecutive months, this one included, in which the person had overtime pay. */
   overtimeMonthsInRow: number;
   dependentsWithoutRegistration: number;
@@ -135,7 +135,12 @@ export function pseudonymizeSheet(lines: readonly PayrollSheetLine[], options: {
       alias,
       figures: pickFigures(line.figures),
       previous: line.previous ? pickFigures(line.previous) : null,
-      contract: { startsInMonth: line.contract.startsInMonth === true, probationEndsInMonth: line.contract.probationEndsInMonth === true, endsInMonth: line.contract.endsInMonth === true },
+      contract: {
+        startsInMonth: line.contract.startsInMonth === true,
+        probationEndsInMonth: line.contract.probationEndsInMonth === true,
+        endsInMonth: line.contract.endsInMonth === true,
+        severanceCheckSuggested: line.contract.severanceCheckSuggested === true,
+      },
       overtimeMonthsInRow: Math.max(0, Math.trunc(line.overtimeMonthsInRow)),
       dependentsWithoutRegistration: Math.max(0, Math.trunc(line.dependentsWithoutRegistration)),
       checks: {
@@ -311,7 +316,7 @@ export function checkFlagSentences(anomalies: readonly PayrollAnomaly[], output:
 
 export const PAYROLL_INPUT_FIELDS = ['overtime', 'unpaid_days', 'bonus', 'allowances', 'insured', 'contract', 'none'] as const;
 export type PayrollInputField = (typeof PAYROLL_INPUT_FIELDS)[number];
-export const PAYROLL_SIGNAL_KINDS = ['new_hire', 'probation_ends', 'contract_ends', 'recurring_overtime', 'component_changed'] as const;
+export const PAYROLL_SIGNAL_KINDS = ['new_hire', 'probation_ends', 'contract_ends', 'severance_check', 'recurring_overtime', 'component_changed'] as const;
 export type PayrollSignalKind = (typeof PAYROLL_SIGNAL_KINDS)[number];
 
 export interface PayrollSignal {
@@ -328,6 +333,7 @@ export const PAYROLL_FIELDS_OF_SIGNAL: Record<PayrollSignalKind, readonly Payrol
   new_hire: ['unpaid_days', 'insured', 'contract', 'none'],
   probation_ends: ['allowances', 'insured', 'contract', 'none'],
   contract_ends: ['unpaid_days', 'insured', 'contract', 'none'],
+  severance_check: ['unpaid_days', 'bonus', 'contract', 'none'],
   recurring_overtime: ['overtime', 'none'],
   component_changed: ['allowances', 'none'],
 };
@@ -347,6 +353,15 @@ export function findSignals(sheet: PayrollSheet): PayrollSignal[] {
     if (line.contract.startsInMonth) add('new_hire', who, vi ? `${who}: bắt đầu làm việc trong tháng này, số ngày chưa làm của đầu tháng cần nhập` : `${who}: starts work this month, the days not employed at the start of the month need typing`);
     if (line.contract.probationEndsInMonth) add('probation_ends', who, vi ? `${who}: kết thúc thử việc trong tháng này` : `${who}: probation ends this month`);
     if (line.contract.endsInMonth) add('contract_ends', who, vi ? `${who}: hợp đồng hoặc việc làm kết thúc trong tháng này` : `${who}: the contract or the employment ends this month`);
+    if (line.contract.severanceCheckSuggested) {
+      add(
+        'severance_check',
+        who,
+        vi
+          ? `${who}: nghỉ việc trong tháng và đã làm đủ 12 tháng trở lên, cần kiểm tra trợ cấp thôi việc theo Bộ luật Lao động`
+          : `${who}: leaves this month with 12 or more months worked; check statutory severance allowance under the Labor Code`,
+      );
+    }
     if (line.overtimeMonthsInRow >= RECURRING_OVERTIME_MONTHS) add('recurring_overtime', who, vi ? `${who}: có tiền làm thêm giờ ${line.overtimeMonthsInRow} tháng liên tiếp, tháng này ${amountOf(line.figures.overtime, language)}` : `${who}: overtime pay for ${line.overtimeMonthsInRow} months in a row, ${amountOf(line.figures.overtime, language)} this month`);
     if (line.previous) {
       for (const key of RECURRING_COMPONENTS) {

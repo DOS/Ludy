@@ -14,7 +14,7 @@ const tainted = (id: string, over: Partial<PayrollSheetLine> = {}): PayrollSheet
     employeeId: id,
     figures: { ...zero(), net: '12000000', gross: '13000000' },
     previous: { ...zero(), net: '8000000' },
-    contract: { startsInMonth: false, probationEndsInMonth: true, endsInMonth: false },
+    contract: { startsInMonth: false, probationEndsInMonth: true, endsInMonth: false, severanceCheckSuggested: false },
     overtimeMonthsInRow: 0,
     dependentsWithoutRegistration: 0,
     checks: quiet,

@@ -16,6 +16,7 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { bankByCode } from '@crove/l10n-vn';
 import { BankSelect } from '../components/bank-select.tsx';
+import { SeveranceCalculatorPanel } from '../components/hr-severance-panel.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -177,6 +178,7 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
   const [endedOn, setEndedOn] = useState(vietnamToday());
   const [edit, setEdit] = useState<{ name: string; address: string; identity: string; account: string; bank: string; birth: string; tax: string; insurance: string; clear: { address: boolean; identity: boolean; account: boolean; bank: boolean; tax: boolean; insurance: boolean } } | null>(null);
   const [confirmErase, setConfirmErase] = useState(false);
+  const [severanceOpen, setSeveranceOpen] = useState(false);
   const run = <V,>(fn: (v: V) => Promise<unknown>, after?: () => void) => ({
     mutationFn: fn,
     onSuccess: async () => {
@@ -465,6 +467,15 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
         </div>
       )}
       {(addDependent.error || endDependent.error) && <ErrorText>{errorMessage(addDependent.error ?? endDependent.error)}</ErrorText>}
+
+      {!e.erased && (
+        <div className="mt-5 border-t pt-4">
+          <Button variant="outline" size="sm" onClick={() => setSeveranceOpen((v) => !v)} data-testid="hr-severance-toggle">
+            {t('severance.toggle')}
+          </Button>
+          {severanceOpen && <SeveranceCalculatorPanel employeeId={e.id} employeeEndedOn={e.endedOn} />}
+        </div>
+      )}
 
       {active && (
         <div className="mt-5 flex flex-wrap items-end gap-3 border-t pt-4">
