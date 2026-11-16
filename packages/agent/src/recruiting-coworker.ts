@@ -103,6 +103,7 @@ const CANDIDATE_ALIAS_RE = /(?<![\p{L}\p{N}])C1(?![\p{L}\p{N}])/giu;
 const OTHER_ALIAS_RE = /(?<![\p{L}\p{N}])(?:C(?:0|[2-9]|\d{2,})|E\d+)(?![\p{L}\p{N}])/giu;
 const SAFE_JS_TECH_RE = /\b(?:node|next|nuxt|nest|vue|react|express|angular|three|ember|d3|chart|socket|p5|alpine)\.js\b/giu;
 const UNTRUSTED_FENCE_TAG_RE = /\[\/?\s*UNTRUSTED_NOTES\s*\]/giu;
+const HAS_UNTRUSTED_FENCE_TAG_RE = /\[\/?\s*UNTRUSTED_NOTES\s*\]/iu;
 
 const EMAIL_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/giu;
 const OBFUSCATED_EMAIL_RE = /(?<![\p{L}\p{N}])[a-z0-9._%+-]+\s*(?:\(at\)|\[at\])\s*[a-z0-9.-]+\s*(?:\.|\[\.\]|\(dot\))\s*[a-z]{2,}(?![\p{L}\p{N}])/giu;
@@ -111,18 +112,27 @@ const WWW_URL_RE = /\bwww\.[^\s<>()]+/giu;
 const BARE_DOMAIN_TLD =
   'com|vn|net|org|me|ly|io|co|info|app|link|xyz|shop|store|click|top|site|online|page|id|tv|to|gl|be|us|biz|cc|dev|ai|gg|so|gd|ws|pw|tk|ml|ga|cf|edu|gov';
 const BARE_DOMAIN_RE = new RegExp(
-  `(?<![\\p{L}\\p{N}@._-])[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\\.(?:${BARE_DOMAIN_TLD})(?![\\p{L}\\p{N}])(?:\\/[^\\s<>()]*)?`,
+  `(?<![\\p{L}\\p{N}@._-])[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*(?:\\.(?:co|com|net|org|edu|gov)\\.[a-z]{2}|\\.(?:${BARE_DOMAIN_TLD}))(?![\\p{L}\\p{N}])(?:\\/[^\\s<>()]*)?`,
   'giu',
 );
-const INTL_PHONE_RE = /(?<![\p{L}\p{N}])(?:\+|00)\d{1,3}(?:[\s.\-()]?\d){7,12}(?![\p{L}\p{N}])/gu;
-const VN_ZERO_PHONE_RE = /(?<![\p{L}\p{N}])0(?:[\s.\-()]?\d){8,10}(?![\p{L}\p{N}])/gu;
-const GROUPED_DIGITS_RE = /(?<![\p{L}\p{N}])\d{2,4}(?:[\s-]\d{2,4}){2,4}(?![\p{L}\p{N}])/gu;
+const INTL_PHONE_RE = /(?<![\p{L}\p{N}])(?:\+|00)\d{1,3}(?:[\s.\-()/]?\d){7,12}(?![\p{L}\p{N}])/gu;
+const PAREN_PHONE_RE = /\(\s*0\d{1,3}\s*\)(?:[\s.\-/]?\d){6,9}(?![\p{L}\p{N}])/gu;
+const GROUPED_DIGITS_RE = /(?<![\p{L}\p{N}])\d{2,6}(?:[\s.\-/]\d{2,6}){1,4}(?![\p{L}\p{N}])/gu;
+const VN_ZERO_PHONE_RE = /(?<![\p{L}\p{N}])0(?:[\s.\-()/]?\d){8,10}(?![\p{L}\p{N}])/gu;
 const BARE_ID_OR_PHONE_RE = /(?<![\p{L}\p{N}])\d{9,12}(?![\p{L}\p{N}])/gu;
+const CURRENCY_RANGE_RE =
+  /(?<![\p{L}\p{N}])\d[\d.,]*(?:\s*[-–~]\s*\d[\d.,]*)?\s*(?:vnđ|vnd|đồng|dong|đ|usd|eur|sgd|jpy|triệu|trieu|tr|củ|cu)(?![\p{L}\p{N}])|(?:[$€£¥₫]|(?:usd|eur|vnd|vnđ)\b)\s*\d[\d.,]*(?:\s*[-–~]\s*(?:[$€£¥₫])?\s*\d[\d.,]*)?/giu;
+const SALARY_CONTEXT_DIGITS_RE =
+  /((?:mức\s+lương|lương(?:\s+(?:kỳ\s+vọng|mong\s+muốn|hiện\s+tại|thỏa\s+thuận|cứng|net|gross))?|thu\s+nhập|ngân\s+sách|expected\s+(?:wage|salary|pay|comp(?:ensation)?)|salary|wage|budget|compensation)\s*(?::|từ|khoảng|tầm|is|of|around|about|=)?\s*)\d[\d.,]*(?:\s*[-–~]\s*\d[\d.,]*)*/giu;
+const LARGE_SALARY_DIGITS_RE = /(?<![\p{L}\p{N}])(?:\d{1,3}(?:[.,]\d{3}){2,}|\d{7,8})(?![\p{L}\p{N}])/gu;
+
+const OUTPUT_MONETARY_AMOUNT_RE =
+  /(?<![\p{L}\p{N}])\d[\d.,]*\s*(?:vnđ|vnd|đồng|dong|đ|usd|eur|sgd|jpy|triệu|trieu|tr|nghìn|ngàn|tỷ|tỉ|[$€£¥₫])(?![\p{L}\p{N}])|[$€£¥₫]\s*\d[\d.,]*|(?:salary|wage|compensation|pay|budget|offer|mức\s+lương|lương|thu\s+nhập|ngân\s+sách)\s+(?:of|is|at|là|khoảng|tầm|:)?\s*\d[\d.,]*/iu;
 
 const AUTONOMOUS_DECISION_EN_RE =
-  /(?<![\p{L}\p{N}])(?:(?:auto(?:matically)?|immediately)\s+(?:hire|reject)|(?:must|should|shall|will)\s+(?:hire|reject)(?:\s+(?:now|immediately|this\s+candidate|c1))?|(?:hire|reject)\s+(?:immediately|now|this\s+candidate|c1|without\s+(?:an?\s+)?interview)|decision\s*:\s*(?:hire|reject)|(?:candidate|c1)\s+(?:is|has\s+been)\s+(?:hired|rejected|approved\s+for\s+hire))(?![\p{L}\p{N}])/iu;
+  /(?<![\p{L}\p{N}])(?:(?:auto(?:matically)?|immediately)\s+(?:hire|hiring|reject|rejecting)|(?:must|should|shall|will|ought\s+to|needs?\s+to)\s+(?:be\s+)?(?:hired|rejected|declined|hire|reject)(?:\s+(?:now|immediately|this\s+candidate|c1))?|(?:proceed|move)\s+(?:with|to|straight\s+to)\s+(?:hiring|hire|rejecting|reject)|(?:hire|reject)\s+(?:immediately|now|this\s+candidate|c1|without\s+(?:an?\s+)?interview)|(?:extend|issue|send)\s+(?:an?\s+)?(?:job\s+)?offer\s+(?:now|immediately)|decision\s*:\s*(?:hire|reject)|(?:candidate|c1)\s+(?:is|was|are|were|has\s+been|have\s+been|got)\s+(?:hired|rejected|auto-hired|auto-rejected|approved\s+for\s+hire))(?![\p{L}\p{N}])/iu;
 const AUTONOMOUS_DECISION_VI_RE =
-  /(?<![\p{L}\p{N}])(?:(?:tự\s+động|hãy|phải|cần|nên|chốt)\s+(?:tuyển(?:\s+dụng)?|từ\s+chối|loại(?:\s+hồ\s+sơ)?)(?:\s+(?:ngay|luôn|ứng\s+viên|c1))?|(?:tuyển(?:\s+dụng)?|từ\s+chối|loại(?:\s+hồ\s+sơ)?)\s+(?:ngay(?:\s+lập\s+tức)?|luôn)|đã\s+(?:tuyển(?:\s+dụng)?|duyệt\s+tuyển|từ\s+chối|loại)|quyết\s+định\s*:\s*(?:tuyển|từ\s+chối|loại))(?![\p{L}\p{N}])/iu;
+  /(?<![\p{L}\p{N}])(?:(?:tự\s+động|hãy|phải|cần|nên|chốt|tiến\s+hành|thực\s+hiện|xác\s+nhận)\s+(?:bị\s+|được\s+)?(?:tuyển(?:\s+dụng)?|từ\s+chối|loại(?:\s+hồ\s+sơ)?)(?:\s+(?:ngay|luôn|ứng\s+viên|c1))?(?!\s*(?:hay|hoặc|chưa|\?))|(?:đã|vừa|mới|sẽ)\s+(?:bị\s+|được\s+)?(?:tuyển(?:\s+dụng)?|duyệt\s+tuyển|từ\s+chối|loại(?:\s+hồ\s+sơ)?)(?!\s*(?:hay|hoặc|chưa|\?))|(?:tuyển(?:\s+dụng)?|từ\s+chối|loại(?:\s+hồ\s+sơ)?)\s+(?:ngay(?:\s+lập\s+tức)?|luôn)|quyết\s+định\s*:\s*(?:tuyển|từ\s+chối|loại))(?![\p{L}\p{N}])/iu;
 
 const oneLine = (text: string): string => text.replace(/\s+/g, ' ').trim();
 const cut = (text: string, max: number): string => Array.from(text).slice(0, max).join('').trim();
@@ -210,7 +220,7 @@ function redactCompactDigits(source: string, compactNeedle: string): string {
   const compactUnitIdx: number[] = [];
   for (let i = 0; i < folded.length; i += 1) {
     const ch = folded[i]!;
-    if (/[\s.,\-_()]/u.test(ch)) continue;
+    if (/[\s.,\-_()/]/u.test(ch)) continue;
     compactChars.push(ch);
     compactUnitIdx.push(i);
   }
@@ -232,16 +242,45 @@ function redactCompactDigits(source: string, compactNeedle: string): string {
   return replaceRangesInString(nfkd, ranges).normalize('NFKC');
 }
 
+function isSingleAlphaTokenMatch(candidateWord: string, rawTrimmed: string, needle: string): boolean {
+  if (foldForbiddenText(candidateWord) !== needle) return false;
+  if (candidateWord === rawTrimmed) return true;
+  if (/\p{Lu}/u.test(rawTrimmed)) {
+    return /^\p{Lu}/u.test(candidateWord);
+  }
+  if (needle.length === 2) {
+    return candidateWord === rawTrimmed.toUpperCase() || /^\p{Lu}/u.test(candidateWord);
+  }
+  if (foldForbiddenText(rawTrimmed) !== rawTrimmed.toLowerCase()) {
+    return candidateWord.toLowerCase() === rawTrimmed.toLowerCase() || /^\p{Lu}/u.test(candidateWord);
+  }
+  return true;
+}
+
+function singleAlphaForbiddenMatches(
+  sourceNfc: string,
+  rawTrimmed: string,
+  needle: string,
+): Array<{ start: number; end: number }> {
+  const ranges: Array<{ start: number; end: number }> = [];
+  for (const match of sourceNfc.matchAll(/(?<![\p{L}\p{N}])\p{L}+(?![\p{L}\p{N}])/gu)) {
+    if (isSingleAlphaTokenMatch(match[0], rawTrimmed, needle)) {
+      const start = match.index ?? 0;
+      ranges.push({ start, end: start + match[0].length });
+    }
+  }
+  return ranges;
+}
+
 function redactForbiddenValue(source: string, value: string): string {
   const rawTrimmed = value.normalize('NFKC').replace(/\s+/g, ' ').trim();
   const needle = foldForbiddenText(rawTrimmed);
-  if (needle.length < 3 || needle === 'redacted') return source;
+  if (needle.length < 2 || needle === 'redacted') return source;
 
-  // Single-word alphabetic tokens follow accent-preserving word boundaries so normal Vietnamese words are not corrupted.
   if (!/\d/.test(needle) && !needle.includes(' ') && /^[\p{L}]+$/u.test(rawTrimmed)) {
-    const flags = /\p{Lu}/u.test(rawTrimmed) ? 'gu' : 'giu';
-    const re = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(rawTrimmed)}(?![\\p{L}\\p{N}])`, flags);
-    return source.normalize('NFKC').replace(re, REDACTED);
+    const nfc = source.normalize('NFKC');
+    const ranges = singleAlphaForbiddenMatches(nfc, rawTrimmed, needle);
+    return replaceRangesInString(nfc, ranges);
   }
 
   const { nfkd, folded, starts, ends } = buildFoldedIndex(source);
@@ -261,41 +300,56 @@ function redactForbiddenValue(source: string, value: string): string {
   }
   let updated = replaceRangesInString(nfkd, ranges).normalize('NFKC');
   if (/\d/.test(needle)) {
-    updated = redactCompactDigits(updated, needle.replace(/[\s.,\-_()]/g, ''));
+    updated = redactCompactDigits(updated, needle.replace(/[\s.,\-_()/]/g, ''));
   }
   return updated;
+}
+
+function hasBoundedCompactMatch(compactStr: string, compactNeedle: string): boolean {
+  if (compactNeedle.length < 3) return false;
+  let pos = 0;
+  while (pos <= compactStr.length - compactNeedle.length) {
+    const hit = compactStr.indexOf(compactNeedle, pos);
+    if (hit === -1) break;
+    const before = compactStr[hit - 1];
+    const after = compactStr[hit + compactNeedle.length];
+    if (!isAlnumChar(before) && !isAlnumChar(after)) return true;
+    pos = hit + 1;
+  }
+  return false;
 }
 
 function matchesForbiddenToken(haystackFolded: string, compactFolded: string, rawNormalized: string, value: string): boolean {
   const rawTrimmed = value.normalize('NFKC').replace(/\s+/g, ' ').trim();
   const needle = foldForbiddenText(rawTrimmed);
-  if (needle.length < 3) return false;
+  if (needle.length < 2) return false;
   if (/\d/.test(needle)) {
     const boundedFold = new RegExp(`(?<![a-z0-9])${escapeRegExp(needle)}(?![a-z0-9])`, 'i');
-    return boundedFold.test(haystackFolded) || compactFolded.includes(needle.replace(/[\s.,\-_()]/g, ''));
+    return (
+      boundedFold.test(haystackFolded) ||
+      hasBoundedCompactMatch(compactFolded, needle.replace(/[\s.,\-_()/]/g, ''))
+    );
   }
   if (needle.includes(' ') || !/^[\p{L}]+$/u.test(rawTrimmed)) {
     const boundedFold = new RegExp(`(?<![a-z0-9])${escapeRegExp(needle)}(?![a-z0-9])`, 'i');
     return boundedFold.test(haystackFolded);
   }
-  const flags = /\p{Lu}/u.test(rawTrimmed) ? 'u' : 'iu';
-  const boundedNfc = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(rawTrimmed)}(?![\\p{L}\\p{N}])`, flags);
-  return boundedNfc.test(rawNormalized);
+  return singleAlphaForbiddenMatches(rawNormalized, rawTrimmed, needle).length > 0;
 }
 
 function findForbiddenLeaks(text: string, forbidden: readonly string[]): string[] {
   if (forbidden.length === 0) return [];
   const rawNormalized = text.normalize('NFKC').replace(/\s+/g, ' ').trim();
   const haystackFolded = foldForbiddenText(rawNormalized);
-  const compactFolded = haystackFolded.replace(/[\s.,\-_()]/g, '');
+  const compactFolded = haystackFolded.replace(/[\s.,\-_()/]/g, '');
   return forbidden.filter((value) => matchesForbiddenToken(haystackFolded, compactFolded, rawNormalized, value));
 }
 
 /**
- * Scrubs PII and prompt-injection delimiters from untrusted candidate/interviewer notes before prompt inclusion:
+ * Scrubs PII, salary/wage figures, and prompt-injection delimiters from untrusted candidate/interviewer notes before prompt inclusion:
  * - strips control characters and invisible format chars, flattens lines, and breaks fence delimiters (`<<<`, `>>>`, `[UNTRUSTED_NOTES]`);
- * - redacts caller-supplied `forbidden` strings (names, emails, phones, addresses, IDs);
- * - redacts email addresses, URLs/domains, Vietnamese & international phones, and 9/12-digit CMND/CCCD sequences;
+ * - redacts email addresses, URLs/domains, grouped/bare 9-12 digit CMND/CCCD sequences, and Vietnamese/international phones;
+ * - redacts salary/currency figures and caller-supplied `forbidden` strings (including short >=2-char names and uppercase variants);
  * - truncates cleanly to at most `RECRUITING_NOTE_MAX_CHARS` (500) characters.
  */
 export function sanitizeCandidateTextForPrompt(text: string, forbidden: readonly string[] = []): string {
@@ -308,13 +362,8 @@ export function sanitizeCandidateTextForPrompt(text: string, forbidden: readonly
 
   cleaned = fenced(cleaned).replace(UNTRUSTED_FENCE_TAG_RE, REDACTED);
 
-  const orderedForbidden = [...forbidden]
-    .filter((v) => v.trim() !== '')
-    .sort((a, b) => foldForbiddenText(b).length - foldForbiddenText(a).length);
-  for (const secret of orderedForbidden) {
-    cleaned = redactForbiddenValue(cleaned, secret);
-  }
-
+  // Scrub emails, URLs/domains, and grouped/bare IDs & phones BEFORE caller `forbidden` partial tokens
+  // so partial strings (e.g. "binh" inside "binh@secret.com" or "secret.com") never leave unredacted email/URL halves behind.
   cleaned = cleaned
     .replace(EMAIL_RE, REDACTED)
     .replace(OBFUSCATED_EMAIL_RE, REDACTED)
@@ -322,14 +371,25 @@ export function sanitizeCandidateTextForPrompt(text: string, forbidden: readonly
     .replace(WWW_URL_RE, REDACTED)
     .replace(BARE_DOMAIN_RE, REDACTED)
     .replace(INTL_PHONE_RE, REDACTED)
-    .replace(VN_ZERO_PHONE_RE, REDACTED)
+    .replace(PAREN_PHONE_RE, REDACTED)
     .replace(GROUPED_DIGITS_RE, (match) => {
       const digitCount = match.replace(/\D/g, '').length;
       return digitCount >= 9 && digitCount <= 12 ? REDACTED : match;
     })
     .replace(BARE_ID_OR_PHONE_RE, REDACTED)
-    .replace(/\s+/g, ' ')
-    .trim();
+    .replace(VN_ZERO_PHONE_RE, REDACTED)
+    .replace(CURRENCY_RANGE_RE, REDACTED)
+    .replace(SALARY_CONTEXT_DIGITS_RE, `$1${REDACTED}`)
+    .replace(LARGE_SALARY_DIGITS_RE, REDACTED);
+
+  const orderedForbidden = [...forbidden]
+    .filter((v) => v.trim() !== '')
+    .sort((a, b) => foldForbiddenText(b).length - foldForbiddenText(a).length);
+  for (const secret of orderedForbidden) {
+    cleaned = redactForbiddenValue(cleaned, secret);
+  }
+
+  cleaned = cleaned.replace(/\s+/g, ' ').trim();
 
   return cut(cleaned, RECRUITING_NOTE_MAX_CHARS);
 }
@@ -347,7 +407,7 @@ function computeReadinessForBrief(input: RecruitingBriefInput): {
   readiness: CandidateReadinessResult;
   matchedSkills: string[];
   missingSkills: string[];
-  sanitizedNotes: string[];
+  rawNotes: string[];
 } {
   const matchedSkills = normalizeSkillList(input.matchedSkills);
   const missingSkills = normalizeSkillList(input.missingSkills);
@@ -368,7 +428,7 @@ function computeReadinessForBrief(input: RecruitingBriefInput): {
     agreedWage: input.agreedWage ?? null,
     startDate: input.startDate ?? null,
   });
-  return { readiness, matchedSkills, missingSkills, sanitizedNotes: [] };
+  return { readiness, matchedSkills, missingSkills, rawNotes };
 }
 
 function buildPromptText(
@@ -378,9 +438,9 @@ function buildPromptText(
   missingSkills: readonly string[],
   sanitizedNotes: readonly string[],
 ): string {
-  const opening = cut(fenced(oneLine(input.openingTitle.replace(/\p{Cf}/gu, ''))), 120);
+  const opening = cut(fenced(oneLine(input.openingTitle.replace(/\p{Cf}/gu, '').replace(UNTRUSTED_FENCE_TAG_RE, ' '))), 120);
   const department = input.departmentName?.trim()
-    ? cut(fenced(oneLine(input.departmentName.replace(/\p{Cf}/gu, ''))), 80)
+    ? cut(fenced(oneLine(input.departmentName.replace(/\p{Cf}/gu, '').replace(UNTRUSTED_FENCE_TAG_RE, ' '))), 80)
     : 'unspecified';
   const expText =
     input.yearsExperience !== undefined && input.yearsExperience !== null && Number.isFinite(input.yearsExperience)
@@ -452,10 +512,11 @@ function verifyCandidateTextItem(
   const cleaned = oneLine(rawItem);
   if (cleaned === '' || Array.from(cleaned).length > maxChars) return null;
   if (maxSentences !== null && sentencesIn(cleaned) > maxSentences) return null;
-  if (UNTRUSTED_FENCE_TAG_RE.test(cleaned)) return null;
+  if (HAS_UNTRUSTED_FENCE_TAG_RE.test(cleaned)) return null;
   if (hasUnexpectedAlias(cleaned, trustedAliasSource)) return null;
   const bare = withoutCandidateAlias(cleaned);
   if (hasRecruitingAddress(bare)) return null;
+  if (OUTPUT_MONETARY_AMOUNT_RE.test(bare)) return null;
   if (statedFiguresProblem(bare, allowedNumberFacts) !== null) return null;
   if (forbidden.length > 0 && findForbiddenLeaks(cleaned, forbidden).length > 0) return null;
   if (hasAutonomousHireRejectDirective(cleaned)) return null;
@@ -733,7 +794,7 @@ export async function reviewCandidateProfile(
   input: RecruitingBriefInput,
   options: ReviewCandidateProfileOptions = {},
 ): Promise<RecruitingBriefResult> {
-  const { readiness, matchedSkills, missingSkills } = computeReadinessForBrief(input);
+  const { readiness, matchedSkills, missingSkills, rawNotes } = computeReadinessForBrief(input);
   const fallback = deterministicRecruitingBrief(input, readiness, matchedSkills, missingSkills);
 
   if (options.aiDisabledReason) {
@@ -744,8 +805,7 @@ export async function reviewCandidateProfile(
   }
 
   const forbidden = options.forbidden ?? [];
-  const sanitizedNotes = (input.notes ?? [])
-    .slice(0, RECRUITING_NOTES_MAX)
+  const sanitizedNotes = rawNotes
     .map((n) => sanitizeCandidateTextForPrompt(n, forbidden))
     .filter((n) => n !== '');
 

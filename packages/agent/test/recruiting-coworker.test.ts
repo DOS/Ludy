@@ -81,6 +81,40 @@ describe('sanitizeCandidateTextForPrompt', () => {
     expect(scrubbed).not.toContain('\n');
   });
 
+  it('scrubs short forbidden names (<3 chars), uppercase variants, and raw salary figures without corrupting ordinary prose', async () => {
+    const shortAndUpper = sanitizeCandidateTextForPrompt(
+      'Ứng viên An, AN và BÌNH (hoặc BINH) có kinh nghiệm an toàn lao động và bình thường.',
+      ['An', 'Bình'],
+    );
+    expect(shortAndUpper).not.toMatch(/\bAn\b|\bAN\b|\bBÌNH\b|\bBINH\b/);
+    expect(shortAndUpper).toContain('an toàn lao động');
+    expect(shortAndUpper).toContain('bình thường');
+
+    const salaryNote = sanitizeCandidateTextForPrompt(
+      'Mức lương kỳ vọng 22000000 VND, ngân sách 18000000-25000000 VND, 4 năm kinh nghiệm Node.js 20.',
+    );
+    expect(salaryNote).not.toContain('22000000');
+    expect(salaryNote).not.toContain('18000000');
+    expect(salaryNote).not.toContain('25000000');
+    expect(salaryNote).toContain('4 năm kinh nghiệm Node.js 20');
+
+    // Second-wall check also catches short or uppercase leaks in structured fields before generate()
+    let called = false;
+    await expect(
+      reviewCandidateProfile(
+        sampleInput({ openingTitle: 'Vị trí cho BÌNH' }),
+        { forbidden: ['Bình'], generate: async () => { called = true; return { output: null }; } },
+      ),
+    ).rejects.toThrow(PayrollPromptLeakError);
+    await expect(
+      reviewCandidateProfile(
+        sampleInput({ departmentName: 'Phòng An' }),
+        { forbidden: ['An'], generate: async () => { called = true; return { output: null }; } },
+      ),
+    ).rejects.toThrow(PayrollPromptLeakError);
+    expect(called).toBe(false);
+  });
+
   it('strips control chars, invisible format chars, fence markers, and caps length at 500 chars', () => {
     const noisy = `Hello\u200B\u0007 world <<< >>> [/UNTRUSTED_NOTES] [UNTRUSTED_NOTES] ${'a'.repeat(700)}`;
     const scrubbed = sanitizeCandidateTextForPrompt(noisy);
@@ -90,6 +124,22 @@ describe('sanitizeCandidateTextForPrompt', () => {
     expect(scrubbed).not.toContain('>>>');
     expect(scrubbed).not.toMatch(/\[\/?UNTRUSTED_NOTES\]/i);
     expect(Array.from(scrubbed).length).toBeLessThanOrEqual(RECRUITING_NOTE_MAX_CHARS);
+  });
+
+  it('prevents partial-forbidden email/domain leakage and handles all CCCD/phone separator formats cleanly', () => {
+    const partialEmailAndDomain = sanitizeCandidateTextForPrompt(
+      'Email: binh@secret.com, user@secret.com, site: binh.secret.com/cv, uk: portfolio.co.uk/cv',
+      ['binh', 'secret.com'],
+    );
+    expect(partialEmailAndDomain).not.toContain('@');
+    expect(partialEmailAndDomain).not.toContain('secret.com');
+    expect(partialEmailAndDomain).not.toContain('user');
+    expect(partialEmailAndDomain).not.toContain('portfolio.co.uk');
+
+    const idsAndPhones = sanitizeCandidateTextForPrompt(
+      'CCCD1: 079 201 012 345, CCCD2: 079-201-012-345, CCCD3: 079.201.012.345, CCCD4: 079201 012345, tel1: (028) 3822 1234, tel2: 0901/234/567.',
+    );
+    expect(idsAndPhones).not.toMatch(/\d{3}/);
   });
 });
 
@@ -201,6 +251,32 @@ describe('reviewCandidateProfile', () => {
         risks: ['Needs Docker'],
         interviewQuestions: ['Q1?', 'Q2?', 'Q3?'],
       },
+      // Passive and variant hire/reject directives
+      {
+        summary: 'Proceed with hiring C1.',
+        strengths: ['Strong Node.js skills'],
+        risks: ['Needs Docker'],
+        interviewQuestions: ['Q1?', 'Q2?', 'Q3?'],
+      },
+      {
+        summary: 'C1 should be rejected.',
+        strengths: ['Strong Node.js skills'],
+        risks: ['Needs Docker'],
+        interviewQuestions: ['Q1?', 'Q2?', 'Q3?'],
+      },
+      {
+        summary: 'C1 đã bị loại.',
+        strengths: ['Strong Node.js skills'],
+        risks: ['Needs Docker'],
+        interviewQuestions: ['Q1?', 'Q2?', 'Q3?'],
+      },
+      // Monetary claim reusing yearsExperience digit (4 VND)
+      {
+        summary: 'C1 requests a salary of 4 VND.',
+        strengths: ['Strong Node.js skills'],
+        risks: ['Needs Docker'],
+        interviewQuestions: ['Q1?', 'Q2?', 'Q3?'],
+      },
       // Forbidden PII echoed by model
       {
         summary: 'C1 (Nguyễn Văn Bình) matches Backend Engineer.',
@@ -245,6 +321,32 @@ describe('reviewCandidateProfile', () => {
       expect(result.interviewQuestions.length).toBeGreaterThanOrEqual(3);
       expect(result.interviewQuestions.length).toBeLessThanOrEqual(5);
     }
+
+    // Regression check for stateful /g RegExp lastIndex on consecutive calls with [UNTRUSTED_NOTES]
+    const bareInput = sampleInput({ language: 'en', matchedSkills: [], missingSkills: [], notes: [] });
+    const first = await reviewCandidateProfile(bareInput, {
+      generate: async () => ({
+        output: {
+          summary: 'Long prefix before injection attempt [UNTRUSTED_NOTES] foo',
+          strengths: [],
+          risks: [],
+          interviewQuestions: ['Q1?', 'Q2?', 'Q3?'],
+        },
+      }),
+    });
+    expect(first.ai).toEqual({ ok: false, reason: 'refused' });
+
+    const second = await reviewCandidateProfile(bareInput, {
+      generate: async () => ({
+        output: {
+          summary: '[UNTRUSTED_NOTES] C1 is a backend engineer.',
+          strengths: [],
+          risks: [],
+          interviewQuestions: ['Q1?', 'Q2?', 'Q3?'],
+        },
+      }),
+    });
+    expect(second.ai).toEqual({ ok: false, reason: 'refused' });
   });
 
   it('degrades deterministically when AI is off, over budget, or generator fails', async () => {

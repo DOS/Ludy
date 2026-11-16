@@ -229,7 +229,10 @@ function nonNegativeInt(value: number | null | undefined): number {
 
 function cleanRoleLabel(roleTitle: string | null | undefined, language: 'vi' | 'en'): string {
   const trimmed = (roleTitle ?? '').replace(/\s+/g, ' ').trim();
-  if (trimmed !== '') return trimmed;
+  if (trimmed !== '') {
+    const chars = Array.from(trimmed);
+    return chars.length <= 80 ? trimmed : chars.slice(0, 77).join('').trimEnd() + '...';
+  }
   return language === 'vi' ? 'vị trí này' : 'this role';
 }
 
@@ -567,19 +570,35 @@ function zonedDateString(timeZone: string, atMs: number): string {
   return `${String(w.year).padStart(4, '0')}-${String(w.month).padStart(2, '0')}-${String(w.day).padStart(2, '0')}`;
 }
 
-function zonedWallInstant(timeZone: string, date: string, minuteOfDay: number): number {
-  const [y, m, d] = date.split('-').map(Number) as [number, number, number];
-  const wall = Date.UTC(y, m - 1, d) + minuteOfDay * MINUTE_MS;
-  const before = zoneOffsetMs(timeZone, wall - DAY_MS);
-  const after = zoneOffsetMs(timeZone, wall + DAY_MS);
-  const reads = (at: number): boolean => at + zoneOffsetMs(timeZone, at) === wall;
-  const candidates = [wall - before, wall - after].filter(reads).sort((a, b) => a - b);
-  return candidates[0] ?? wall - before;
-}
-
 function nextUtcDate(date: string): string {
   const [y, m, d] = date.split('-').map(Number) as [number, number, number];
   return new Date(Date.UTC(y, m - 1, d) + DAY_MS).toISOString().slice(0, 10);
+}
+
+function findOffsetSubRange(
+  timeZone: string,
+  startMs: number,
+  endMs: number,
+  targetOffset: number,
+): EpochRange | null {
+  if (endMs <= startMs) return null;
+  const startMatches = zoneOffsetMs(timeZone, startMs) === targetOffset;
+  const endMatches = zoneOffsetMs(timeZone, endMs - 1) === targetOffset;
+  if (startMatches && endMatches) {
+    return { startMs, endMs };
+  }
+  if (!startMatches && !endMatches) {
+    return null;
+  }
+  let lo = startMs;
+  let hi = endMs - 1;
+  while (lo + 1 < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    const midMatches = zoneOffsetMs(timeZone, mid) === targetOffset;
+    if (startMatches === midMatches) lo = mid;
+    else hi = mid;
+  }
+  return startMatches ? { startMs, endMs: hi } : { startMs: hi, endMs };
 }
 
 function preferredEpochWindows(
@@ -589,14 +608,25 @@ function preferredEpochWindows(
   endMinute: number,
 ): EpochRange[] {
   const windows: EpochRange[] = [];
+  const seenDates = new Set<string>();
   for (const r of ranges) {
     let date = zonedDateString(timeZone, r.startMs - DAY_MS);
     const lastDate = zonedDateString(timeZone, r.endMs + DAY_MS);
     for (let guard = 0; date <= lastDate && guard < 4000; guard += 1, date = nextUtcDate(date)) {
-      const startMs = zonedWallInstant(timeZone, date, startMinute);
-      const endMs = zonedWallInstant(timeZone, date, endMinute);
-      if (endMs > startMs && endMs > r.startMs && startMs < r.endMs) {
-        windows.push({ startMs, endMs });
+      if (seenDates.has(date)) continue;
+      seenDates.add(date);
+      const [y, m, d] = date.split('-').map(Number) as [number, number, number];
+      const utcWallStart = Date.UTC(y, m - 1, d) + startMinute * MINUTE_MS;
+      const utcWallEnd = Date.UTC(y, m - 1, d) + endMinute * MINUTE_MS;
+      const offsets = new Set([
+        zoneOffsetMs(timeZone, utcWallStart - DAY_MS),
+        zoneOffsetMs(timeZone, utcWallStart),
+        zoneOffsetMs(timeZone, utcWallEnd),
+        zoneOffsetMs(timeZone, utcWallEnd + DAY_MS),
+      ]);
+      for (const offset of offsets) {
+        const sub = findOffsetSubRange(timeZone, utcWallStart - offset, utcWallEnd - offset, offset);
+        if (sub) windows.push(sub);
       }
     }
   }
@@ -617,12 +647,15 @@ function sliceNonOverlappingSlots(
 ): EpochRange[] {
   if (maxSlots <= 0) return [];
   const slots: EpochRange[] = [];
+  let minNextStartMs = -Infinity;
   for (const r of ranges) {
-    let cursor = alignStartMs(r.startMs, stepMs);
+    let cursor = alignStartMs(Math.max(r.startMs, minNextStartMs), stepMs);
     while (cursor + durationMs <= r.endMs) {
-      slots.push({ startMs: cursor, endMs: cursor + durationMs });
+      const endMs = cursor + durationMs;
+      slots.push({ startMs: cursor, endMs });
+      minNextStartMs = endMs + gapMs;
       if (slots.length >= maxSlots) return slots;
-      cursor = alignStartMs(cursor + durationMs + gapMs, stepMs);
+      cursor = alignStartMs(minNextStartMs, stepMs);
     }
   }
   return slots;

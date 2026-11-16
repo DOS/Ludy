@@ -303,21 +303,51 @@ describe('rankInterviewSlots', () => {
     ]);
 
     // 2026-11-01 in America/New_York falls back at 02:00 EDT -> 01:00 EST (UTC-4 -> UTC-5).
-    const fallBackSlots = rankInterviewSlots({
+    // Verify preferred window splits repeated wall-clock hours cleanly and excludes 01:00..01:30 EST (06:00..06:30Z).
+    const fallBackSplitSlots = rankInterviewSlots({
       workingWindows: [
-        { startIso: '2026-11-01T13:00:00.000Z', endIso: '2026-11-01T16:00:00.000Z' }, // 08:00..11:00 EST
+        { startIso: '2026-11-01T05:30:00.000Z', endIso: '2026-11-01T07:00:00.000Z' },
       ],
-      durationMinutes: 60,
+      durationMinutes: 30,
       preferredWindow: {
         timeZone: 'America/New_York',
-        startMinute: 9 * 60, // 09:00 EST = 14:00Z
-        endMinute: 11 * 60,
+        startMinute: 90, // 01:30
+        endMinute: 120, // 02:00
       },
       maxSlots: 2,
     });
-    expect(fallBackSlots).toEqual([
-      { startIso: '2026-11-01T14:00:00.000Z', endIso: '2026-11-01T15:00:00.000Z' },
-      { startIso: '2026-11-01T15:00:00.000Z', endIso: '2026-11-01T16:00:00.000Z' },
+    expect(fallBackSplitSlots).toEqual([
+      { startIso: '2026-11-01T05:30:00.000Z', endIso: '2026-11-01T06:00:00.000Z' },
+      { startIso: '2026-11-01T06:30:00.000Z', endIso: '2026-11-01T07:00:00.000Z' },
+    ]);
+  });
+
+  it('enforces minGapMinutes across separate workingWindows', () => {
+    const slots = rankInterviewSlots({
+      workingWindows: [
+        { startIso: '2026-11-17T02:00:00.000Z', endIso: '2026-11-17T03:00:00.000Z' },
+        { startIso: '2026-11-17T03:05:00.000Z', endIso: '2026-11-17T04:20:00.000Z' },
+      ],
+      durationMinutes: 60,
+      minGapMinutes: 15,
+      maxSlots: 4,
+    });
+    expect(slots).toEqual([
+      { startIso: '2026-11-17T02:00:00.000Z', endIso: '2026-11-17T03:00:00.000Z' },
+      { startIso: '2026-11-17T03:15:00.000Z', endIso: '2026-11-17T04:15:00.000Z' },
+    ]);
+
+    const tooShortSecondWindow = rankInterviewSlots({
+      workingWindows: [
+        { startIso: '2026-11-17T02:00:00.000Z', endIso: '2026-11-17T03:00:00.000Z' },
+        { startIso: '2026-11-17T03:05:00.000Z', endIso: '2026-11-17T04:05:00.000Z' },
+      ],
+      durationMinutes: 60,
+      minGapMinutes: 15,
+      maxSlots: 4,
+    });
+    expect(tooShortSecondWindow).toEqual([
+      { startIso: '2026-11-17T02:00:00.000Z', endIso: '2026-11-17T03:00:00.000Z' },
     ]);
   });
 
