@@ -12,7 +12,7 @@
 # secret is on one; the sign-in body read from stdin goes to $STUB_LOG.signin, the uploaded file to
 # $STUB_LOG.upload, an RPC body to $STUB_LOG.rpc. STUB_SIGNIN_FAIL refuses the sign-in, STUB_FILE_STATUS sets the
 # uploaded file's status (default proposed), STUB_REJECT_FAIL fails the rejection. A remote identity provider (#2704): its
-# keys at .../.well-known/jwks.json (STUB_JWKS_FAIL: 404) and its https .../auth/v1/health (STUB_IDP_HEALTH_FAIL: 404, or
+# keys at .../.well-known/jwks.json (STUB_JWKS_FAIL: 404, STUB_JWKS_EMPTY, STUB_JWKS_OCT) and its https .../auth/v1/health (STUB_IDP_HEALTH_FAIL: 404, or
 # STUB_IDP_REDIRECT: 301). /api/config reports authUrl as <base>/auth/v1, or STUB_AUTH_URL.
 set -euo pipefail
 
@@ -84,7 +84,11 @@ case "$url" in
     else body='{"name":"GoTrue"}'; fi
     ;;
   */.well-known/jwks.json)
-    if [ -n "${STUB_JWKS_FAIL:-}" ]; then status=404 body='{}'; else body='{"keys":[]}'; fi
+    # A key of an asymmetric family by default; STUB_JWKS_EMPTY: no key; STUB_JWKS_OCT: a shared key only.
+    if [ -n "${STUB_JWKS_FAIL:-}" ]; then status=404 body='{}'
+    elif [ -n "${STUB_JWKS_EMPTY:-}" ]; then body='{"keys":[]}'
+    elif [ -n "${STUB_JWKS_OCT:-}" ]; then body='{"keys":[{"kty":"oct","kid":"k1"}]}'
+    else body='{"keys":[{"kty":"EC","crv":"P-256","alg":"ES256","kid":"k1"}]}'; fi
     ;;
   */login)
     if [ -n "${STUB_NO_BUNDLE:-}" ] || { [ -n "${STUB_NO_BUNDLE_DIGEST:-}" ] && [[ "$running" == *"$STUB_NO_BUNDLE_DIGEST"* ]]; }; then

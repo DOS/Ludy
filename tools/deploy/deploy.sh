@@ -1086,7 +1086,7 @@ auth_set_names() {
 }
 
 # The dated copy of the env file, and whether this run replaced the file. Set by apply_auth_settings; restore_env puts the copy back.
-ENV_BACKUP='' ENV_CHANGED=0 ENV_WRITING=0 AUTH_TMP='' ENV_WRITTEN_DIGEST='' ENV_UNDO='' ENV_RECORD=''
+ENV_BACKUP='' ENV_CHANGED=0 ENV_WRITING=0 AUTH_TMP='' ENV_WRITTEN_DIGEST='' ENV_UNDO='' ENV_RECORD='' ENV_PRE_DIGEST=''
 
 # env_digest <file>: a checksum of the file's content, read from stdin so that nothing of it is an argument. It tells a rollback whether
 # the env file is still what the deploy wrote.
@@ -1197,8 +1197,10 @@ auth_settings_probe() {
     return 1
   }
   printf 'apikey: %s\n' "${AUTH_SET[PUBLIC_AUTH_ANON_KEY]}" >"$headers"
-  if body="$(probe_get "$keys_url")" && [[ "$body" == *'"keys"'* ]]; then log 'identity provider: AUTH_JWKS_URL answers with keys'; else
-    err 'identity provider: AUTH_JWKS_URL does not answer 200 with a JSON Web Key Set (a redirect is not followed)'
+  # At least one key, and one the kernel verifies with (ES256 or RS256: an EC or RSA key); a set with no key, or with shared (oct) keys only,
+  # would boot and then refuse every token.
+  if body="$(probe_get "$keys_url")" && [[ "$body" =~ \"keys\"[[:space:]]*:[[:space:]]*\[[[:space:]]*\{ ]] && [[ "$body" =~ \"kty\"[[:space:]]*:[[:space:]]*\"(EC|RSA)\" ]]; then log 'identity provider: AUTH_JWKS_URL answers with an ES256 or RS256 key'; else
+    err 'identity provider: AUTH_JWKS_URL does not answer 200 with a JSON Web Key Set that holds an EC or RSA key (a redirect is not followed)'
     ok=0
   fi
   if probe_get "${auth_url%/}/health" "$headers" >/dev/null; then log 'identity provider: PUBLIC_AUTH_URL answers /health'; else
@@ -1270,6 +1272,7 @@ apply_auth_settings() {
   fi
 
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  ENV_PRE_DIGEST="$(env_digest "$ENV_FILE")"
   ENV_BACKUP="$(mktemp "$ENV_FILE.bak-$stamp-XXXXXX")" || {
     err "cannot keep a dated copy of $ENV_FILE next to it (mode 600); the env file was not touched"
     ENV_BACKUP=''
@@ -1533,9 +1536,11 @@ do_deploy() {
   # (A deploy of the same release again, that changed nothing, keeps the record: that release is still the one that wrote them.)
   if [ "$ENV_CHANGED" = 1 ]; then
     # The same release deployed again with other settings keeps the copy from before its first deploy: that is the one a rollback needs.
-    local first_rel='' first_path=''
-    read -r first_rel first_path _ < <(read_state env-backup) || true
-    if [ "$first_rel" = "$name" ] && valid_path "$first_path" && [ -f "$first_path" ]; then
+    # Only while the file is still what that first deploy wrote: edits made since are in the new copy, which is then the one a rollback restores
+    # (the earlier one would put the old values over them).
+    local first_rel='' first_path='' first_digest=''
+    read -r first_rel first_path first_digest < <(read_state env-backup) || true
+    if [ "$first_rel" = "$name" ] && [ "$first_digest" = "$ENV_PRE_DIGEST" ] && valid_path "$first_path" && [ -f "$first_path" ]; then
       write_state env-backup "$name $first_path $ENV_WRITTEN_DIGEST"
     else
       write_state env-backup "$name $ENV_BACKUP $ENV_WRITTEN_DIGEST"

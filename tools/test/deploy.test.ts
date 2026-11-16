@@ -1170,7 +1170,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(res.out).toContain('smoke skipped: /auth/v1/health');
       expect(res.out).not.toContain('smoke failed');
       // The provider was asked before anything changed (its keys and its /health); the host's own proxy was not.
-      expect(res.out).toContain('identity provider: AUTH_JWKS_URL answers with keys');
+      expect(res.out).toContain('identity provider: AUTH_JWKS_URL answers with an ES256 or RS256 key');
       expect(readFileSync(log, 'utf8')).not.toContain('curl http://127.0.0.1:18080/auth/v1/health');
       // The settings file is removed once read.
       expect(existsSync(settingsPath())).toBe(false);
@@ -1475,6 +1475,19 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
         expect(envFile()).toBe(BEFORE);
       });
 
+      it('without overwriting edits made between two deploys of the same release', () => {
+        writeFileSync(`${dir}/.env`, BEFORE);
+        expect(deploy('v1.0.0', 'a').status).toBe(0);
+        expect(deployIdp('v1.1.0', 'b').status).toBe(0);
+        // The database password is rotated by hand, then the same release goes out again with other settings.
+        writeFileSync(`${dir}/.env`, envFile().replace('POSTGRES_PASSWORD=x', 'POSTGRES_PASSWORD=rotated'));
+        expect(deployIdp('v1.1.0', 'b', { ...IDP, AUTH_ALLOWED_EMAILS: '@example.net' }).status).toBe(0);
+        expect(run(['rollback']).status).toBe(0);
+        // The rollback must not bring the old password back.
+        expect(envFile()).toContain('POSTGRES_PASSWORD=rotated');
+        expect(envFile()).not.toContain('POSTGRES_PASSWORD=x');
+      });
+
       it('after the same release is deployed again with the same settings', () => {
         writeFileSync(`${dir}/.env`, BEFORE);
         expect(deploy('v1.0.0', 'a').status).toBe(0);
@@ -1493,6 +1506,12 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       const keys = deployIdp('v1.0.0', 'a', IDP, { STUB_JWKS_FAIL: '1' });
       expect(keys.status, keys.out).toBe(1);
       expect(keys.out).toContain('AUTH_JWKS_URL does not answer 200 with a JSON Web Key Set');
+      expect(keys.out).not.toContain('answers with');
+      for (const env of [{ STUB_JWKS_EMPTY: '1' }, { STUB_JWKS_OCT: '1' }]) {
+        const poor = deployIdp('v1.0.0', 'a', IDP, env);
+        expect(poor.status, poor.out).toBe(1);
+        expect(poor.out).toContain('JSON Web Key Set that holds an EC or RSA key');
+      }
       const health = deployIdp('v1.0.0', 'a', IDP, { STUB_IDP_HEALTH_FAIL: '1' });
       expect(health.status, health.out).toBe(1);
       expect(health.out).toContain('PUBLIC_AUTH_URL/health does not answer');
