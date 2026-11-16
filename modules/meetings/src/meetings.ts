@@ -319,7 +319,7 @@ export const meetingRecordingStopped = defineCommand({
       const length = input.lengthSeconds === undefined || meeting.started_at === null ? null : input.lengthSeconds;
       await sql`
         UPDATE crove_meetings.meeting
-        SET ended_at = ${length === null ? ctx.now : sql`LEAST(started_at + (${length}::int * interval '1 second'), ${ctx.now}::timestamptz)`}::timestamptz,
+        SET ended_at = CASE WHEN ${length}::int IS NULL THEN ${ctx.now}::timestamptz ELSE LEAST(started_at + (${length}::int * interval '1 second'), ${ctx.now}::timestamptz) END,
             recording_stop_reason = COALESCE(recording_stop_reason, ${input.reason ?? null}::text),
             updated_at = ${ctx.now}::timestamptz
         WHERE org_id = ${ctx.orgId}::uuid AND id = ${input.meetingId}::uuid AND ended_at IS NULL`.execute(ctx.trx);
