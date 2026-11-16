@@ -48,6 +48,7 @@ import {
 import type { z } from 'zod';
 import type { CompanyCandidates, ConversationAutoDraft, zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zTask } from '@crove/kernel-contract';
 import type { FollowupSource, MeetingBriefSource, QuoteSuggestSource, SuggestedSlots } from '@crove/mod-crm';
+import type { ProjectWeeklyStatusSource } from '@crove/mod-projects';
 import { sql } from 'kysely';
 import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, type BriefResult, type WeeklyFacts, type WeeklyResult } from '@crove/agent';
 import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type ConversationReader } from './conversations-ai.ts';
@@ -59,6 +60,7 @@ import { explainPayslip, flagMonth, prepareMonth, type PayrollAi, type PayrollRe
 import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
 import { crmFollowupAi, draftCrmFollowup } from './crm-followup-ai.ts';
 import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
+import { prepareProjectWeeklyStatus, projectWeeklyStatusAi } from './project-weekly-status-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import { askStatusOf, runLiveNotes, runMeetingAsk, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runTranscriptTranslation, transcriptTranslationStatusOf, translationStatusOf, type ModelPort } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems } from './stock-ai.ts';
@@ -431,6 +433,13 @@ export function createRpcHandler(
   // Dy's brief before a booking linked to a deal (#3115): the same reader and model, a budget of its own. It is told the deal's facts and, while the org allows AI on customers' words, the latest messages the
   // member may read; what it answers is a summary and 2 to 3 points that are refused when they hold a figure, a link or a name the facts do not hold. Computed when read; nothing is stored or sent.
   const meetingBriefCoworker = meetingBriefAi(conversationReader?.meetingBrief ? { meetingBrief: conversationReader.meetingBrief.bind(conversationReader) } : null, suggestionBudget());
+
+  // Vy's weekly status of one project (#2597): deterministic counts and task titles/comments in the member's own transaction
+  // (never reading notes), then one metered model call outside it; refused when any number outside input appears.
+  const projectWeeklyStatusCoworker = projectWeeklyStatusAi(
+    conversationReader?.projectWeeklyStatus ? { projectWeeklyStatus: conversationReader.projectWeeklyStatus.bind(conversationReader) } : null,
+    suggestionBudget(),
+  );
 
   const guard = async <T>(fn: () => Promise<T>): Promise<T> => {
     try {
@@ -3586,6 +3595,12 @@ export function createRpcHandler(
       list: os.projects.list.handler(projectsQuery('projects.project.list')),
       get: os.projects.get.handler(projectsQuery('projects.project.get')),
       board: os.projects.board.handler(projectsQuery('projects.board')),
+      weeklyStatus: os.projects.weeklyStatus.handler(({ context, input }) =>
+        inProjects(context, async (orgId, actor) => {
+          const source = await runtime.query<ProjectWeeklyStatusSource>('projects.weekly_status_source', { projectId: input.projectId }, { actor, orgId });
+          return prepareProjectWeeklyStatus(projectWeeklyStatusCoworker, orgId, actor.userId, source, input.language ?? 'vi');
+        }),
+      ),
       unassignedTasks: os.projects.unassignedTasks.handler(projectsQuery('projects.unassigned_tasks')),
       taskProjects: os.projects.taskProjects.handler(projectsQuery('projects.task_projects')),
       create: os.projects.create.handler(projectsCommand('projects.project.create')),

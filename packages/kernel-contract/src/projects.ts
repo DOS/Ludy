@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Projects and a task board on kernel tasks (issue #2591, plan docs/plan/projects.md section 4, ADR-0048).
 import { z } from 'zod';
-import { zId, zPositionStatus, zRole, zTaskStatus } from './schemas.ts';
+import { zId, zLocalDate, zPositionStatus, zRole, zTaskStatus } from './schemas.ts';
 
 export const PROJECT_NAME_MAX = 200;
 export const PROJECT_DESCRIPTION_MAX = 2000;
@@ -198,3 +198,77 @@ export const zProjectTaskProjectEntry = z.object({
   project: zProjectTaskRef,
 });
 export type ProjectTaskProjectEntry = z.infer<typeof zProjectTaskProjectEntry>;
+
+// Vy's weekly status of one project (projects P6, #2597): deterministic counts and task lists read from
+// crove_kernel.task and crove_kernel.task_comment only (never crove_notes), plus 3 to 5 plain sentences from Vy when
+// the model is on and passes every safety check. Ephemeral to the caller: nothing is stored or sent.
+export const PROJECT_WEEKLY_STATUS_STATES = [
+  'used',
+  'off',
+  'paused',
+  'budget',
+  'busy',
+  'refused',
+  'failed',
+  'empty',
+  'forbidden',
+] as const;
+export type ProjectWeeklyStatusState = (typeof PROJECT_WEEKLY_STATUS_STATES)[number];
+
+export const PROJECT_WEEKLY_STATUS_BUCKET_LIMIT = 20;
+
+export const zProjectWeeklyStatusInput = z.strictObject({
+  projectId: zId,
+  language: z.enum(['vi', 'en']).optional(),
+});
+export type ProjectWeeklyStatusInput = z.infer<typeof zProjectWeeklyStatusInput>;
+
+export const zProjectWeeklyStatusTask = z.strictObject({
+  id: zId,
+  title: z.string(),
+  status: zTaskStatus,
+  due: z.string().nullable(),
+  commentCount: z.number().int().nonnegative(),
+  latestComment: z.string().nullable(),
+});
+export type ProjectWeeklyStatusTask = z.infer<typeof zProjectWeeklyStatusTask>;
+
+export const zProjectWeeklyStatusCounts = z.strictObject({
+  totalVisible: z.number().int().nonnegative(),
+  doneThisWeek: z.number().int().nonnegative(),
+  overdue: z.number().int().nonnegative(),
+  waiting: z.number().int().nonnegative(),
+  dueNextWeek: z.number().int().nonnegative(),
+});
+export type ProjectWeeklyStatusCounts = z.infer<typeof zProjectWeeklyStatusCounts>;
+
+export const zProjectWeeklyStatusTasks = z.strictObject({
+  doneThisWeek: z.array(zProjectWeeklyStatusTask),
+  overdue: z.array(zProjectWeeklyStatusTask),
+  waiting: z.array(zProjectWeeklyStatusTask),
+  dueNextWeek: z.array(zProjectWeeklyStatusTask),
+});
+export type ProjectWeeklyStatusTasks = z.infer<typeof zProjectWeeklyStatusTasks>;
+
+export const zProjectWeeklyStatus = z.strictObject({
+  ai: z.enum(PROJECT_WEEKLY_STATUS_STATES),
+  project: z.strictObject({
+    id: zId,
+    name: z.string(),
+    status: zProjectStatus,
+  }),
+  window: z.strictObject({
+    from: zLocalDate,
+    to: zLocalDate,
+    nextFrom: zLocalDate,
+    nextTo: zLocalDate,
+    timeZone: z.string(),
+  }),
+  counts: zProjectWeeklyStatusCounts,
+  tasks: zProjectWeeklyStatusTasks,
+  hiddenByEntityCount: z.number().int().nonnegative(),
+  // Vy's 3 to 5 plain sentences: empty unless `ai` is 'used'.
+  sentences: z.array(z.string().max(400)).max(5),
+  truncated: z.boolean(),
+});
+export type ProjectWeeklyStatus = z.infer<typeof zProjectWeeklyStatus>;

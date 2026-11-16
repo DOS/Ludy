@@ -13,6 +13,16 @@ import { getConfig } from './auth.ts';
 
 export const projectsInstalled = (): boolean => getConfig().modules.includes('projects');
 
+export const PROJECT_WEEKLY_STATUS_QUERY_PREFIX = ['projects', 'weeklyStatus'] as const;
+
+export function projectWeeklyStatusQueryKey(
+  slug: string,
+  projectId: string,
+  language: 'vi' | 'en',
+): readonly ['projects', 'weeklyStatus', string, string, 'vi' | 'en'] {
+  return [...PROJECT_WEEKLY_STATUS_QUERY_PREFIX, slug, projectId, language];
+}
+
 export const PROJECT_BOARD_COLUMNS = ['todo', 'in_progress', 'waiting', 'in_review', 'done'] as const;
 export const PROJECT_STATUSES = ['active', 'on_hold', 'done', 'archived'] as const;
 export const PHONE_BREAKPOINT_PX = 768;

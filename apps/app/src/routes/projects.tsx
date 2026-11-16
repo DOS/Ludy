@@ -17,6 +17,7 @@ import { NavIcon } from '@crove/ui/components/nav-icon';
 import { ProjectIcon } from '@crove/ui/components/project-icon';
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { ProjectBoardView, type BoardColumnStatus } from '../components/project-board.tsx';
+import { ProjectWeeklyStatus } from '../components/project-weekly-status.tsx';
 import {
   AttachTaskDialog,
   CreateProjectDialog,
@@ -350,6 +351,8 @@ export function ProjectDetailPage() {
           </span>
         </div>
       </div>
+
+      <ProjectWeeklyStatus key={project.id} slug={slug} projectId={project.id} />
 
       {project.status === 'archived' && (
         <Alert className="border-border bg-muted/40">
