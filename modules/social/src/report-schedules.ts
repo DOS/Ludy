@@ -564,6 +564,8 @@ export async function sweepReportSchedules(deps: { runtime: Runtime; workerDb: D
   let ran = 0;
   for (const row of rows) {
     try {
+      // An app that is off for the org (ADR-0053) has nothing to do here: no call, no refusal row, no line in the log.
+      if (!(await deps.runtime.appOn(row.org_id, 'social'))) continue;
       const done = await deps.runtime.execute<{ ran: boolean }>('social.report_schedule.run', { scheduleId: row.schedule_id }, { actor: SWEEP_ACTOR, orgId: row.org_id });
       if (done.ran) ran += 1;
     } catch (error) {

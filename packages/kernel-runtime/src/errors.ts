@@ -24,6 +24,14 @@ export class DomainError extends Error {
   }
 }
 
+// The app (module) a refusal says is off for the org (ADR-0053: MODULE_OFF, the org switched it off or does not hold it), or null when the
+// error is anything else. A worker job, a sweep or a relay step that meets one skips its item instead of failing, retrying or logging it.
+export function moduleOffOf(error: unknown): string | null {
+  if (!(error instanceof DomainError) || error.code !== 'MODULE_OFF') return null;
+  const module = error.details?.module;
+  return typeof module === 'string' ? module : 'unknown';
+}
+
 const AGENT_REFUSALS = new Set([
   'AGENT_FORBIDDEN',
   'AGENT_CONTEXT_WORKER_ONLY',

@@ -21,6 +21,7 @@
 import { AdPlatformError, type AdTargeting, type AdTargetingResolution, type LaunchWriter } from '@crove/ad-platform';
 import { LAUNCH_STEP_PAUSED, type LaunchBegin, type LaunchRecorded, type LaunchResult, type LaunchWriterCaps } from '@crove/mod-ads';
 import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
+import { recordAfterCall } from './record-after-call.ts';
 
 const SYSTEM = { type: 'system' as const, component: 'ads.launch' };
 
@@ -109,7 +110,7 @@ const capsOf = (writers: Readonly<Record<string, LaunchWriter>>): LaunchWriterCa
 async function runStep(deps: AdsLaunchDeps, job: AdsLaunchJob, writer: LaunchWriter, work: Extract<LaunchBegin, { action: 'call' | 'reconcile' }>): Promise<{ next: boolean; ended: string }> {
   const options = { actor: SYSTEM, orgId: job.orgId };
   const record = (phase: 'call' | 'reconcile', result: LaunchResult) =>
-    deps.runtime.execute<LaunchRecorded>('ads.launch.record', { launchId: work.launchId, callKey: work.callKey, phase, result }, options);
+    recordAfterCall('ads.launch.record', () => deps.runtime.execute<LaunchRecorded>('ads.launch.record', { launchId: work.launchId, callKey: work.callKey, phase, result }, options));
   // The last create recorded ends the run as `paused` (objects created, paused), whatever the result of that step was called.
   const ended = (recorded: LaunchRecorded, why: string) => ({
     next: recorded.recorded && recorded.next === 'continue',
