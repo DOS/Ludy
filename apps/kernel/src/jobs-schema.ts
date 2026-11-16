@@ -114,7 +114,7 @@ export const QUEUES = {
   adsActivate: 'ads-activate',
   // Created by the calendar write-back queue migration (20261112090000): a booking's event made to match the member's connected calendar (#2124).
   calendarWriteback: 'kernel-calendar-writeback',
-  // Created by the eSign core migration (20270104010000): PDF inspection, sealing, overdue expiration, and OTP/token cleanup (#3323).
+  // Created by the eSign core migration (20270104050000): PDF inspection, sealing, overdue expiration, and OTP/token cleanup (#3323).
   signPdfInspect: 'sign-pdf-inspect',
   signPdfSeal: 'sign-pdf-seal',
   signExpireSweep: 'sign-expire-sweep',
