@@ -19,6 +19,7 @@ import {
   type AdsPlanIssue,
 } from '@crove/kernel-contract';
 import type { Translate } from '../i18n/runtime.ts';
+import { adProviderName, isSandboxProvider } from './ads.ts';
 import { fromUnits, toUnits } from './decimal.ts';
 import { monthLabel } from './period-lock.ts';
 
@@ -581,6 +582,15 @@ export function launchObjectStatusVariant(obj: AdsLaunchObjectView, launch: AdsL
     }
   }
   return launch.state === 'live' && obj.level !== 'creative' ? 'success' : 'outline';
+}
+
+// The line that says when Ludy last asked the platform about a launch's objects (#3419), and whether that read failed (then the states shown are the last known ones). null for a
+// launch never read: no line at all, never an empty label or an epoch. The platform is named from the account's provider; the sandbox and an unknown provider say "the ad platform".
+export function statesReadNote(launch: AdsLaunchView, t: Translate, dateTime: (value: string) => string): { text: string; failed: boolean } | null {
+  if (launch.statesReadAt === null || launch.statesReadOk === null) return null;
+  const platform = launch.provider === '' || isSandboxProvider(launch.provider) ? t('ads.campaigns.statesReadPlatform') : adProviderName(launch.provider);
+  const values = { platform, time: dateTime(launch.statesReadAt) };
+  return launch.statesReadOk ? { text: t('ads.campaigns.statesReadOk', values), failed: false } : { text: t('ads.campaigns.statesReadFailed', values), failed: true };
 }
 
 export function launchStateBadge(

@@ -55,7 +55,7 @@ Ludy is for one-person companies and SMEs in Vietnam. Every issue, plan and PR m
   - rebased on `origin/main` without conflict; a migration PR passes the migration order check;
   - every review thread answered (fix commit, or why not) and resolved;
   - a protected-path PR has its security review (the agent's, or while #95 is pending an independent one its line's PO runs: a fresh-context flagship-model reviewer, never the session that wrote the change);
-  - a PR that changes the shared core (the list in [docs/product-owner-config.md](docs/product-owner-config.md#shared-core-review)) also has the Platform PO's review of those files;
+  - a PR that changes the shared core (the list in [docs/product-owner-config.md](docs/product-owner-config.md#shared-core-review)) also has the Platform PO's review of those files, still valid while those files are unchanged; after 4 hours without one, a stand-in review by a fresh-context flagship reviewer, which the Platform PO checks after the merge (owner decision 2026-11-16);
   - an `## Acceptance` section (what a user will see change, evidence per acceptance item, review results, risk left; docs-only: the change and the docs check result), and the acceptance gate passed: the line PO's for its line's PRs, protected-path ones included, the team lead's for its other and its subagents' PRs, else the session's own.
 
   Then squash merge with the expected head SHA and remove the worktree.

@@ -27,6 +27,7 @@ import {
   planToForm,
   refusalText,
   reviewReasonText,
+  statesReadNote,
   startFromPost,
 } from '../src/lib/ads-campaigns.ts';
 
@@ -371,5 +372,37 @@ describe('the status the platform reports for an object a launch made (#3301)', 
     expect(launchObjectStatusVariant(object('PAUSED', null), live)).toBe('outline');
     expect(launchObjectStatusVariant(object(null, null), live)).toBe('success');
     expect(launchObjectStatusVariant(object(null, null, 'creative'), live)).toBe('outline');
+  });
+});
+
+describe('when Ludy last asked the platform (#3419)', () => {
+  const en = translatorFor('en');
+  const vi = translatorFor('vi');
+  const at = (value: string) => `<${value}>`;
+  const launchOf = (over: Partial<AdsLaunchView>) => ({ provider: 'meta_ads', statesReadAt: null, statesReadOk: null, ...over }) as AdsLaunchView;
+
+  it('is no line for a launch never read', () => {
+    expect(statesReadNote(launchOf({}), en, at)).toBeNull();
+    expect(statesReadNote(launchOf({ statesReadAt: null, statesReadOk: true }), en, at)).toBeNull();
+  });
+
+  it('names the platform from the provider and the time, in both languages', () => {
+    const ok = launchOf({ statesReadAt: '2026-11-15T03:04:00.000Z', statesReadOk: true });
+    expect(statesReadNote(ok, en, at)).toEqual({ text: 'Asked Meta at <2026-11-15T03:04:00.000Z>', failed: false });
+    expect(statesReadNote(ok, vi, at)).toEqual({ text: 'Đã hỏi Meta lúc <2026-11-15T03:04:00.000Z>', failed: false });
+  });
+
+  it('says a failed read and that the state shown is the last known one', () => {
+    const failed = launchOf({ statesReadAt: '2026-11-15T03:04:00.000Z', statesReadOk: false });
+    expect(statesReadNote(failed, en, at)).toEqual({ text: 'Could not ask Meta at <2026-11-15T03:04:00.000Z>; showing the last known state', failed: true });
+    expect(statesReadNote(failed, vi, at)?.text).toContain('đang hiện trạng thái đã biết gần nhất');
+  });
+
+  it('says "the ad platform" for the sandbox and for a launch with no provider, never the provider id', () => {
+    for (const provider of ['sandbox_ads', '']) {
+      const note = statesReadNote(launchOf({ provider, statesReadAt: '2026-11-15T03:04:00.000Z', statesReadOk: true }), en, at);
+      expect(note?.text).toBe('Asked the ad platform at <2026-11-15T03:04:00.000Z>');
+      expect(statesReadNote(launchOf({ provider, statesReadAt: '2026-11-15T03:04:00.000Z', statesReadOk: true }), vi, at)?.text).toContain('nền tảng quảng cáo');
+    }
   });
 });

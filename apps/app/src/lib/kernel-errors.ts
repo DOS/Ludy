@@ -437,6 +437,9 @@ export const KERNEL_ERROR_CODES = [
   'VIDEO_NOT_ENABLED',
   'MEDIA_KEY_SHREDDED',
   'MEDIA_KEY_UNAVAILABLE',
+  // A video uploaded as a meeting's audio (#3337): it has no sound, or taking the sound out ran out of time.
+  'NO_AUDIO_TRACK',
+  'MEDIA_EXTRACT_TIMEOUT',
   // The video player's ticket (#2703): one neutral wording for a ticket the stream refuses, and one for a ticket the app could not get.
   'VIDEO_TICKET_INVALID',
   'VIDEO_TICKET_UNAVAILABLE',
@@ -1250,6 +1253,8 @@ const LIBRARY_CODES: ReadonlySet<KernelErrorCode> = new Set([
   'MEDIA_KEY_SHREDDED',
   'MEDIA_KEY_UNAVAILABLE',
   'AUDIO_NOT_FOUND',
+  'NO_AUDIO_TRACK',
+  'MEDIA_EXTRACT_TIMEOUT',
   'HR_CONTRACT_INVALID',
 ]);
 

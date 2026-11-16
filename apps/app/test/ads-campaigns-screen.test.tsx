@@ -289,6 +289,9 @@ describe('a draft that is frozen', () => {
     finishedAt: null,
     windDown: null,
     objects: [],
+    provider: 'meta_ads',
+    statesReadAt: null,
+    statesReadOk: null,
     ...over,
   });
 
@@ -343,6 +346,33 @@ describe('a draft that is frozen', () => {
     expect(vi).toContain('nền tảng quảng cáo từ chối yêu cầu');
     expect(vi).toContain('Chạy lại');
     expect(vi).toContain('Dừng lần chạy này');
+  });
+
+  // When Ludy last asked the platform (#3419): one line under the objects, said as a failure (with the last known state) when that read did not work, and nothing for a launch never read.
+  it('says when Ludy last asked the platform about the objects, and that the state shown is the last known one after a failed read', () => {
+    const objects = [{ slot: 'ad_1', level: 'ad' as const, externalId: 'ad_404', name: 'x [ludy:0123456789]', effectiveStatus: 'PENDING_REVIEW', reviewReason: 'in_review' }];
+    const live = (over: Partial<NonNullable<AdsCampaignDraftView['launch']>>) => launch({ state: 'live', step: 'live', objects, ...over });
+    const read = render(builder({ draft: draft({ status: 'approved', launch: live({ statesReadAt: '2026-11-15T03:04:00.000Z', statesReadOk: true }) }) }));
+    expect(read).toContain('data-testid="campaign-launch-read"');
+    expect(read).toMatch(/Asked Meta at [^<]*2026/);
+    expect(read).not.toContain('last known state');
+    const failed = render(builder({ draft: draft({ status: 'approved', launch: live({ statesReadAt: '2026-11-15T03:04:00.000Z', statesReadOk: false }) }) }));
+    expect(failed).toMatch(/Could not ask Meta at [^<]*2026[^<]*; showing the last known state/);
+    const vi = render(builder({ draft: draft({ status: 'approved', launch: live({ statesReadAt: '2026-11-15T03:04:00.000Z', statesReadOk: false }) }) }), 'vi');
+    expect(vi).toContain('Không hỏi được Meta lúc');
+    expect(vi).toContain('đang hiện trạng thái đã biết gần nhất');
+    // The sandbox has no platform name of its own, so the line says "the ad platform".
+    const sandbox = render(builder({ draft: draft({ status: 'approved', launch: live({ provider: 'sandbox_ads', statesReadAt: '2026-11-15T03:04:00.000Z', statesReadOk: true }) }) }));
+    expect(sandbox).toMatch(/Asked the ad platform at /);
+    expect(sandbox).not.toContain('sandbox_ads');
+    // Never read: no line, no epoch, no empty label.
+    const never = render(builder({ draft: draft({ status: 'approved', launch: live({}) }) }));
+    expect(never).not.toContain('campaign-launch-read');
+    expect(never).not.toContain('Asked');
+    expect(never).not.toContain('1970');
+    // A stopped launch shows the line too, since its objects are still listed.
+    const stopped = render(builder({ draft: draft({ status: 'approved', launch: live({ state: 'stopped', statesReadAt: '2026-11-15T03:04:00.000Z', statesReadOk: true }) }) }));
+    expect(stopped).toContain('campaign-launch-read');
   });
 
   it('lists the objects created on the ad platform and shows whether they are active or paused', () => {
