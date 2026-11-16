@@ -713,7 +713,8 @@ export const zPdfEmbedCmsInput = z.strictObject({
   reason: z.string().trim().min(1).max(500).optional(),
   location: z.string().trim().min(1).max(200).optional(),
   signedAtIso: z.iso.datetime({ offset: true }),
-  fieldName: z.string().regex(/^[A-Za-z0-9_.-]{1,64}$/, 'invalid signature field name').optional(),
+  // ISO 32000-1 section 12.7.3.2 forbids '.' inside partial field name /T.
+  fieldName: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/, 'invalid signature field name').optional(),
   subFilter: z.enum(PDF_CMS_SUBFILTERS).optional(),
   placeholderBytes: z.number().int().min(64).max(EXTRACT_LIMITS.maxPdfCmsDerBytes).optional(),
   timestampTokenBase64: z.base64().min(1).max(MAX_TIMESTAMP_BASE64_CHARS).optional(),

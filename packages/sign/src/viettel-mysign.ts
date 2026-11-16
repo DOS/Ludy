@@ -200,6 +200,7 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
     }
     if (code === 'ip_not_allowed') return { ok: false, reason: 'ip_not_allowed' };
     if (code === 'api_not_enabled') return { ok: false, reason: 'api_not_enabled' };
+    if (res.status >= 400) return { ok: false, reason: 'unavailable' };
     const token =
       readText(pickCaseInsensitive(res.json, 'access_token')) ??
       readText(pickCaseInsensitive(pickCaseInsensitive(res.json, 'data'), 'access_token'));

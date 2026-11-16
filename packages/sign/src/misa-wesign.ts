@@ -246,6 +246,7 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
     if (code === 'InActiveAppID') return { ok: false, reason: 'api_not_enabled' };
     if (code === 'IpNotAllowed') return { ok: false, reason: 'ip_not_allowed' };
     if (okEnvelope === false) return { ok: false, reason: 'credentials' };
+    if (res.status >= 400) return { ok: false, reason: 'unavailable' };
 
     const data = pickCaseInsensitive(res.json, 'Data');
     // Open API returns both MISAID `accessToken` and eSign `remoteSigningAccessToken`; AuthorizationRM requires the latter.
@@ -474,7 +475,9 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
         const certsRes = await callAuthorized(secret, creds, 'POST', '/apis/RMeSign/GetListCertificate', {}, false);
         if (certsRes.status === 429 || certsRes.status >= 500) return 'unreachable';
         if (certsRes.status === 401 || certsRes.status === 403) return 'wrong_credentials';
-        if (!isRecord(certsRes.json) || extractMisaEnvelopeSuccess(certsRes.json) === false) return 'unreachable';
+        if (certsRes.status >= 400 || !isRecord(certsRes.json) || extractMisaEnvelopeSuccess(certsRes.json) === false) {
+          return 'unreachable';
+        }
         const records = extractMisaCertificates(certsRes.json);
         if (records.length === 0) return 'signing_needs_person';
         const activeRemote = records.filter((r) => !r.isUsbOnly && r.isActive);

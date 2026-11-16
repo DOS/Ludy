@@ -72,6 +72,7 @@ const OID_CONTENT_TYPE = new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x0
 const OID_MESSAGE_DIGEST = new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x04]);
 const OID_SIGNING_CERT = new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x10, 0x02, 0x0c]);
 const OID_SIGNING_CERT_V2 = new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x10, 0x02, 0x2f]);
+const OID_SIGNATURE_TIMESTAMP_TOKEN = new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x10, 0x02, 0x0e]);
 
 interface DerTlv {
   readonly tag: number;
@@ -225,6 +226,148 @@ function detectCmsSubFilterProfile(
 
   if (count === 0) return 'invalid_signed_data';
   return allCadesCompliant ? 'cades_signed_data' : 'non_cades_signed_data';
+}
+
+function encodeDerNode(tag: number, body: Uint8Array): Uint8Array {
+  const len = body.byteLength;
+  let header: Uint8Array;
+  if (len < 0x80) {
+    header = new Uint8Array([tag, len]);
+  } else {
+    const octets: number[] = [];
+    let rem = len;
+    while (rem > 0) {
+      octets.unshift(rem & 0xff);
+      rem = Math.floor(rem / 256);
+    }
+    header = new Uint8Array([tag, 0x80 | octets.length, ...octets]);
+  }
+  const out = new Uint8Array(header.byteLength + body.byteLength);
+  out.set(header, 0);
+  out.set(body, header.byteLength);
+  return out;
+}
+
+// Embeds an RFC 3161 TimeStampToken as SignerInfo.unsignedAttrs[1] id-aa-signatureTimeStampToken
+// (ETSI EN 319 142-1 PAdES-B-T) inside ContentInfo(SignedData) without mutating signedAttrs or signature bytes.
+function embedTimestampTokenInCmsUnsignedAttrs(
+  cmsDer: Uint8Array,
+  timestampTokenDer: Uint8Array,
+): Uint8Array {
+  const outer = readDerTlv(cmsDer, 0, cmsDer.byteLength);
+  if (!outer || outer.tag !== 0x30 || outer.end !== cmsDer.byteLength) {
+    throw new PdfSignError('Dấu thời gian RFC 3161 chỉ gắn được vào chữ ký số CMS SignedData');
+  }
+  const oidTlv = readDerTlv(cmsDer, outer.valueStart, outer.end);
+  if (!oidTlv || oidTlv.tag !== 0x06 || !bytesEqual(cmsDer, oidTlv.valueStart, oidTlv.end, ID_SIGNED_DATA_OID)) {
+    throw new PdfSignError('Dấu thời gian RFC 3161 chỉ gắn được vào chữ ký số CMS SignedData');
+  }
+  const contentWrap = readDerTlv(cmsDer, oidTlv.end, outer.end);
+  if (!contentWrap || contentWrap.tag !== 0xa0 || contentWrap.end !== outer.end) {
+    throw new PdfSignError('Chữ ký số CMS SignedData không đúng cấu trúc ASN.1 DER hợp lệ');
+  }
+  const signedData = readDerTlv(cmsDer, contentWrap.valueStart, contentWrap.end);
+  if (!signedData || signedData.tag !== 0x30 || signedData.end !== contentWrap.end) {
+    throw new PdfSignError('Chữ ký số CMS SignedData không đúng cấu trúc ASN.1 DER hợp lệ');
+  }
+  const sdVersion = readDerTlv(cmsDer, signedData.valueStart, signedData.end);
+  const digestAlgs = sdVersion ? readDerTlv(cmsDer, sdVersion.end, signedData.end) : null;
+  const encap = digestAlgs ? readDerTlv(cmsDer, digestAlgs.end, signedData.end) : null;
+  if (!sdVersion || !digestAlgs || !encap) {
+    throw new PdfSignError('Chữ ký số CMS SignedData không đúng cấu trúc ASN.1 DER hợp lệ');
+  }
+  let cursor = encap.end;
+  let next = readDerTlv(cmsDer, cursor, signedData.end);
+  if (next && next.tag === 0xa0) {
+    cursor = next.end;
+    next = readDerTlv(cmsDer, cursor, signedData.end);
+  }
+  if (next && next.tag === 0xa1) {
+    cursor = next.end;
+    next = readDerTlv(cmsDer, cursor, signedData.end);
+  }
+  if (!next || next.tag !== 0x31 || next.end !== signedData.end) {
+    throw new PdfSignError('Chữ ký số CMS SignedData không đúng cấu trúc ASN.1 DER hợp lệ');
+  }
+
+  const signerInfosOffset = cursor;
+  const firstSi = readDerTlv(cmsDer, next.valueStart, next.end);
+  if (!firstSi || firstSi.tag !== 0x30) {
+    throw new PdfSignError('Chữ ký số CMS SignedData thiếu SignerInfo');
+  }
+  const siVersion = readDerTlv(cmsDer, firstSi.valueStart, firstSi.end);
+  const sid = siVersion ? readDerTlv(cmsDer, siVersion.end, firstSi.end) : null;
+  const digAlg = sid ? readDerTlv(cmsDer, sid.end, firstSi.end) : null;
+  let postDigAlg = digAlg ? readDerTlv(cmsDer, digAlg.end, firstSi.end) : null;
+  if (!siVersion || !sid || !digAlg || !postDigAlg) {
+    throw new PdfSignError('SignerInfo trong CMS không đúng cấu trúc ASN.1 DER hợp lệ');
+  }
+  if (postDigAlg.tag === 0xa0) {
+    postDigAlg = readDerTlv(cmsDer, postDigAlg.end, firstSi.end);
+  }
+  if (!postDigAlg || postDigAlg.tag !== 0x30) {
+    throw new PdfSignError('SignerInfo trong CMS không đúng cấu trúc ASN.1 DER hợp lệ');
+  }
+  const sigVal = readDerTlv(cmsDer, postDigAlg.end, firstSi.end);
+  if (!sigVal || sigVal.tag !== 0x04) {
+    throw new PdfSignError('SignerInfo trong CMS không đúng cấu trúc ASN.1 DER hợp lệ');
+  }
+
+  const tsAttr = encodeDerNode(
+    0x30,
+    Buffer.concat([
+      encodeDerNode(0x06, OID_SIGNATURE_TIMESTAMP_TOKEN),
+      encodeDerNode(0x31, timestampTokenDer),
+    ]),
+  );
+  const existingUnsigned = sigVal.end < firstSi.end ? readDerTlv(cmsDer, sigVal.end, firstSi.end) : null;
+  const existingAttrs: Uint8Array[] = [];
+  if (existingUnsigned) {
+    if (existingUnsigned.tag !== 0xa1 || existingUnsigned.end !== firstSi.end) {
+      throw new PdfSignError('unsignedAttrs trong SignerInfo không đúng cấu trúc ASN.1 DER hợp lệ');
+    }
+    let attrCursor = existingUnsigned.valueStart;
+    while (attrCursor < existingUnsigned.end) {
+      const attrTlv = readDerTlv(cmsDer, attrCursor, existingUnsigned.end);
+      if (!attrTlv || attrTlv.tag !== 0x30) {
+        throw new PdfSignError('unsignedAttrs trong SignerInfo không đúng cấu trúc ASN.1 DER hợp lệ');
+      }
+      const attrType = readDerTlv(cmsDer, attrTlv.valueStart, attrTlv.end);
+      if (attrType && attrType.tag === 0x06 && bytesEqual(cmsDer, attrType.valueStart, attrType.end, OID_SIGNATURE_TIMESTAMP_TOKEN)) {
+        return cmsDer;
+      }
+      existingAttrs.push(cmsDer.subarray(attrCursor, attrTlv.end));
+      attrCursor = attrTlv.end;
+    }
+  }
+
+  const nextAttrs = [...existingAttrs, tsAttr].sort((a, b) => Buffer.compare(a, b));
+  const nextUnsignedAttrs = encodeDerNode(0xa1, Buffer.concat(nextAttrs));
+  const updatedFirstSi = encodeDerNode(
+    0x30,
+    Buffer.concat([cmsDer.subarray(firstSi.valueStart, sigVal.end), nextUnsignedAttrs]),
+  );
+
+  const otherSiList: Uint8Array[] = [];
+  let restCursor = firstSi.end;
+  while (restCursor < next.end) {
+    const otherSi = readDerTlv(cmsDer, restCursor, next.end);
+    if (!otherSi || otherSi.tag !== 0x30) {
+      throw new PdfSignError('SignerInfos trong CMS không đúng cấu trúc ASN.1 DER hợp lệ');
+    }
+    otherSiList.push(cmsDer.subarray(restCursor, otherSi.end));
+    restCursor = otherSi.end;
+  }
+  const sortedSignerInfos = [updatedFirstSi, ...otherSiList].sort((a, b) => Buffer.compare(a, b));
+  const rebuiltSignerInfos = encodeDerNode(0x31, Buffer.concat(sortedSignerInfos));
+  const rebuiltSignedData = encodeDerNode(
+    0x30,
+    Buffer.concat([cmsDer.subarray(signedData.valueStart, signerInfosOffset), rebuiltSignerInfos]),
+  );
+  return encodeDerNode(
+    0x30,
+    Buffer.concat([cmsDer.subarray(outer.valueStart, oidTlv.end), encodeDerNode(0xa0, rebuiltSignedData)]),
+  );
 }
 
 function serializePdfObject(obj: PDFObject): Buffer {
@@ -534,13 +677,19 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
     }
   }
 
-  if (input.placeholderBytes !== undefined && cmsDer.byteLength > input.placeholderBytes) {
+  const effectiveCmsDer = timestampTokenDer
+    ? embedTimestampTokenInCmsUnsignedAttrs(cmsDer, timestampTokenDer)
+    : cmsDer;
+  if (effectiveCmsDer.byteLength > EXTRACT_LIMITS.maxPdfCmsDerBytes) {
+    throw new PdfSignError('Kích thước chữ ký số CMS vượt quá giới hạn cho phép');
+  }
+  if (input.placeholderBytes !== undefined && effectiveCmsDer.byteLength > input.placeholderBytes) {
     throw new PdfSignError('Dữ liệu CMS vượt quá kích thước vùng chữ ký dự phòng');
   }
   const slotBytes =
     input.placeholderBytes ??
-    Math.max(DEFAULT_MIN_CMS_SLOT_BYTES, Math.ceil(cmsDer.byteLength / 512) * 512);
-  const cmsHex = Buffer.from(cmsDer).toString('hex');
+    Math.max(DEFAULT_MIN_CMS_SLOT_BYTES, Math.ceil(effectiveCmsDer.byteLength / 512) * 512);
+  const cmsHex = Buffer.from(effectiveCmsDer).toString('hex');
   const paddedCmsHex = cmsHex.padEnd(slotBytes * 2, '0');
 
   const rootRef = pdfDoc.context.trailerInfo.Root;
@@ -775,8 +924,9 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
   }
 
   // Append PAdES-LTV /DSS in a separate post-signature incremental update so ByteRange digest remains invariant.
+  // RFC 3161 signature timestamp tokens are embedded inside SignerInfo.unsignedAttrs above, so /DSS stores validation material (/OCSPs, /VRI).
   let outBytes: Uint8Array = signedBytes;
-  if (ocspResponsesDer.length > 0 || timestampTokenDer !== null) {
+  if (ocspResponsesDer.length > 0) {
     let dssObjCursor = update1NextPrevMaxObjNum + 1;
     const dssObjects: IncrementalObject[] = [];
 
@@ -787,27 +937,13 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
       ocspRefs.push(PDFRef.of(ocspObjNum, 0));
     }
 
-    let tsRef: PDFRef | null = null;
-    if (timestampTokenDer) {
-      const tsObjNum = dssObjCursor++;
-      dssObjects.push({ objNum: tsObjNum, gen: 0, body: buildDerStreamBody(timestampTokenDer) });
-      tsRef = PDFRef.of(tsObjNum, 0);
-    }
-
     // ETSI EN 319 142-1 §5.4.2.2: VRI key is uppercase hex SHA-1 of the full /Contents value (including zero padding).
-    // §5.4.2.3: TU and TS are mutually exclusive; omit TU whenever TS is present.
     const vriKey = createHash('sha1').update(Buffer.from(paddedCmsHex, 'hex')).digest('hex').toUpperCase();
     const vriEntry = PDFDict.withContext(pdfDoc.context);
-    if (ocspRefs.length > 0) {
-      const vriOcsp = PDFArray.withContext(pdfDoc.context);
-      for (const ref of ocspRefs) vriOcsp.push(ref);
-      vriEntry.set(PDFName.of('OCSP'), vriOcsp);
-    }
-    if (tsRef) {
-      vriEntry.set(PDFName.of('TS'), tsRef);
-    } else {
-      vriEntry.set(PDFName.of('TU'), PDFString.of(encodePdfDate(input.signedAtIso).slice(1, -1)));
-    }
+    const vriOcsp = PDFArray.withContext(pdfDoc.context);
+    for (const ref of ocspRefs) vriOcsp.push(ref);
+    vriEntry.set(PDFName.of('OCSP'), vriOcsp);
+    vriEntry.set(PDFName.of('TU'), PDFString.of(encodePdfDate(input.signedAtIso).slice(1, -1)));
 
     const existingDssRaw = catalogDict.get(PDFName.of('DSS'));
     let nextDss: PDFDict;

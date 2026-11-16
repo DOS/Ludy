@@ -424,9 +424,26 @@ describe('crove-extract pdf_embed_cms', () => {
     expect(res.signedSha256).toBe(sha256Hex(outBytes));
     const postDigest = sha256Hex(Buffer.concat([outBytes.subarray(b0, b1), outBytes.subarray(b2, b2 + b3)]));
     expect(postDigest).toBe(preDigest);
-    assertByteRangeAndCms(outBytes, res.byteRange, cmsDer, { allowTrailingUpdate: true });
+    // RFC 3161 timestamp token is embedded into SignerInfo.unsignedAttrs (id-aa-signatureTimeStampToken) inside /Contents.
+    const contentsHex1 = Buffer.from(outBytes.subarray(b1 + 1, b2 - 1)).toString('ascii');
+    expect(contentsHex1).toContain('060b2a864886f70d010910020e');
+    expect(contentsHex1).toContain(Buffer.from(tsDer).toString('hex'));
 
-    // Sequential second signature with OCSP-only LTV (no TS) merges into existing /DSS and emits /TU without /TS.
+    // Standalone timestampTokenBase64 without OCSP adds signature-time-stamp without creating a /DSS update.
+    const tsOnly = await parse(
+      'pdf_embed_cms',
+      encodePdfEmbedCmsInput({
+        ...commonBase,
+        cmsDerBase64: Buffer.from(cmsDer).toString('base64'),
+        timestampTokenBase64: Buffer.from(tsDer).toString('base64'),
+      }),
+    );
+    if (!tsOnly.ok || tsOnly.kind !== 'pdf_embed_cms') throw new Error('expected tsOnly ok');
+    const tsOnlyBytes = new Uint8Array(Buffer.from(tsOnly.pdfBase64, 'base64'));
+    expect(tsOnly.byteRange[2] + tsOnly.byteRange[3]).toBe(tsOnlyBytes.byteLength);
+    expect((await PDFDocument.load(tsOnlyBytes)).catalog.get(PDFName.of('DSS'))).toBeUndefined();
+
+    // Sequential second signature with OCSP LTV merges into existing /DSS and records /VRI/<sha1(paddedContents)>.
     const cmsDer2 = makeTestCmsDer('ltv-cms-2');
     const ocspDer2 = derSequence(new Uint8Array([0x0a, 0x01, 0x01]));
     const res2 = await parse(
@@ -448,10 +465,7 @@ describe('crove-extract pdf_embed_cms', () => {
     expect(dss.lookup(PDFName.of('Type'), PDFName).decodeText()).toBe('DSS');
     expect(dss.lookup(PDFName.of('OCSPs'), PDFArray).size()).toBe(2);
     const vri = dss.lookup(PDFName.of('VRI'), PDFDict);
-    const paddedBytes1 = Buffer.from(
-      Buffer.from(outBytes.subarray(res.byteRange[1] + 1, res.byteRange[2] - 1)).toString('ascii'),
-      'hex',
-    );
+    const paddedBytes1 = Buffer.from(contentsHex1, 'hex');
     const paddedBytes2 = Buffer.from(
       Buffer.from(outBytes2.subarray(res2.byteRange[1] + 1, res2.byteRange[2] - 1)).toString('ascii'),
       'hex',
@@ -460,9 +474,11 @@ describe('crove-extract pdf_embed_cms', () => {
     const expectedVriKey2 = createHash('sha1').update(paddedBytes2).digest('hex').toUpperCase();
     expect(expectedVriKey1).not.toBe(createHash('sha1').update(cmsDer).digest('hex').toUpperCase());
     const vriEntry1 = vri.lookup(PDFName.of(expectedVriKey1), PDFDict);
-    expect(vriEntry1.get(PDFName.of('TS'))).toBeDefined();
-    expect(vriEntry1.get(PDFName.of('TU'))).toBeUndefined();
+    expect(vriEntry1.get(PDFName.of('OCSP'))).toBeDefined();
+    expect(vriEntry1.get(PDFName.of('TU'))).toBeDefined();
+    expect(vriEntry1.get(PDFName.of('TS'))).toBeUndefined();
     const vriEntry2 = vri.lookup(PDFName.of(expectedVriKey2), PDFDict);
+    expect(vriEntry2.get(PDFName.of('OCSP'))).toBeDefined();
     expect(vriEntry2.get(PDFName.of('TU'))).toBeDefined();
     expect(vriEntry2.get(PDFName.of('TS'))).toBeUndefined();
     expect((await inspectPdf(outBytes2)).pageCount).toBe(1);
@@ -578,7 +594,12 @@ describe('crove-extract pdf_embed_cms', () => {
     );
     if (!ltvXrefRes.ok || ltvXrefRes.kind !== 'pdf_embed_cms') throw new Error('expected xref ltv ok');
     const ltvXrefBytes = new Uint8Array(Buffer.from(ltvXrefRes.pdfBase64, 'base64'));
-    assertByteRangeAndCms(ltvXrefBytes, ltvXrefRes.byteRange, cmsDer, { allowTrailingUpdate: true });
+    const xrefContentsHex = Buffer.from(
+      ltvXrefBytes.subarray(ltvXrefRes.byteRange[1] + 1, ltvXrefRes.byteRange[2] - 1),
+    ).toString('ascii');
+    expect(xrefContentsHex).toContain('060b2a864886f70d010910020e');
+    expect(xrefContentsHex).toContain(Buffer.from(tsDer).toString('hex'));
+    expect((await PDFDocument.load(ltvXrefBytes)).catalog.lookup(PDFName.of('DSS'), PDFDict)).toBeDefined();
     expect((await inspectPdf(ltvXrefBytes)).pageCount).toBe(sealed.pageCount);
   });
 
@@ -829,17 +850,26 @@ describe('crove-extract pdf_embed_cms', () => {
     ).toMatchObject({ ok: false, code: 'invalid' });
   });
 
-  it('checks nested AcroForm /Kids full dotted names for collisions and accepts 200-page pdf_seal output (201+ pages) while capping above maxPdfSignPages+maxPdfAuditCertPages', async () => {
+  it('checks nested AcroForm /Kids collisions, rejects dotted partial fieldName, and accepts 200-page pdf_seal output (201+ pages) up to limit', async () => {
     const nestedPdf = makeRawPdf([
       '<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [6 0 R] >> >>',
       '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
       '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
       '<< /Length 0 >>\nstream\n\nendstream',
       '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
-      '<< /T (Group) /Kids [7 0 R] >>',
-      '<< /Type /Annot /Subtype /Widget /FT /Sig /T (Signature1) /Rect [0 0 0 0] >>',
+      '<< /Kids [7 0 R] >>',
+      '<< /Type /Annot /Subtype /Widget /FT /Sig /T (PrimarySig) /Rect [0 0 0 0] >>',
     ]);
     const cmsDer = makeTestCmsDer('nested-kids-cms');
+    expect(() =>
+      encodePdfEmbedCmsInput({
+        pdfBase64: Buffer.from(nestedPdf).toString('base64'),
+        cmsDerBase64: Buffer.from(cmsDer).toString('base64'),
+        signerName: 'Dotted Check',
+        signedAtIso: '2026-11-16T13:14:00.000Z',
+        fieldName: 'Group.Signature2',
+      }),
+    ).toThrow();
     expect(
       await parse(
         'pdf_embed_cms',
@@ -848,7 +878,7 @@ describe('crove-extract pdf_embed_cms', () => {
           cmsDerBase64: Buffer.from(cmsDer).toString('base64'),
           signerName: 'Nested Check',
           signedAtIso: '2026-11-16T13:15:00.000Z',
-          fieldName: 'Group.Signature1',
+          fieldName: 'PrimarySig',
         }),
       ),
     ).toMatchObject({ ok: false, code: 'invalid' });
@@ -860,7 +890,7 @@ describe('crove-extract pdf_embed_cms', () => {
         cmsDerBase64: Buffer.from(cmsDer).toString('base64'),
         signerName: 'Nested Distinct',
         signedAtIso: '2026-11-16T13:16:00.000Z',
-        fieldName: 'Group.Signature2',
+        fieldName: 'SecondarySig',
       }),
     );
     expect(distinctNested.ok).toBe(true);

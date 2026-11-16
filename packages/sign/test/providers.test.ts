@@ -933,6 +933,26 @@ describe('MISA eSign / WeSign adapter (esignapp.misa.vn Open API recorded respon
         { idempotencyKey: 'k-misa-400', digestSha256: DIGEST, certRef: 'c1' },
       ),
     ).toMatchObject({ provider: 'misa_wesign', status: 'failed', errorCode: 'HTTP_400' });
+
+    // Non-auth HTTP 404 JSON on cert-list / login must return unreachable instead of signing_needs_person or wrong_credentials.
+    const notFoundJsonFetch = (loginPath?: string): typeof fetch => async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (loginPath && new URL(url).pathname === loginPath) {
+        return new Response(
+          JSON.stringify({ access_token: 'tok', expires_in: 3600, Success: true, Data: { remoteSigningAccessToken: 'tok' } }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      return new Response(JSON.stringify({ message: 'Not Found' }), {
+        status: 404,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+    expect(await getCaAdapter('vnpt_smartca', { fetch: notFoundJsonFetch() }).testConnection(VNPT_SECRET)).toBe('unreachable');
+    expect(await getCaAdapter('viettel_mysign', { fetch: notFoundJsonFetch() }).testConnection(VIETTEL_SECRET)).toBe('unreachable');
+    expect(await getCaAdapter('viettel_mysign', { fetch: notFoundJsonFetch('/vtss/service/ras/v1/login') }).testConnection(VIETTEL_SECRET)).toBe('unreachable');
+    expect(await getCaAdapter('misa_wesign', { fetch: notFoundJsonFetch() }).testConnection(MISA_SECRET)).toBe('unreachable');
+    expect(await getCaAdapter('misa_wesign', { fetch: notFoundJsonFetch('/api/auth/api/v1/auth/login-api') }).testConnection(MISA_SECRET)).toBe('unreachable');
   });
 
   it('detects 2FA, inactive app, 403 credentials error, USB-only certs, and auth failures without leaking secrets', async () => {

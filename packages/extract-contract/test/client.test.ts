@@ -423,6 +423,7 @@ describe('crove-extract client concurrency (#2119)', () => {
 
     expect(zPdfEmbedCmsInput.safeParse({ ...input, signerName: '   ' }).success).toBe(false);
     expect(zPdfEmbedCmsInput.safeParse({ ...input, fieldName: 'bad/name' }).success).toBe(false);
+    expect(zPdfEmbedCmsInput.safeParse({ ...input, fieldName: 'Group.Signature2' }).success).toBe(false);
     expect(zPdfEmbedCmsInput.safeParse({ ...input, placeholderBytes: 16 }).success).toBe(false);
     expect(zPdfEmbedCmsInput.safeParse({ ...input, extra: true }).success).toBe(false);
 
