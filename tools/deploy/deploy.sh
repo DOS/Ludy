@@ -319,8 +319,8 @@ smoke() {
   auth_url="$(smoke_auth_url "$base" 2>/dev/null)" || auth_url=''
   if smoke_env_has_no_proxy; then remote=1
   elif [ -z "${ENV_FILE:-}" ] && [ -n "$auth_url" ] && [ "$auth_url" != "$base/auth/v1" ] && [ "$(smoke_host "$auth_url")" != "$(smoke_host "$base")" ] &&
-    ! smoke_body "$base/auth/v1/health" ''; then
-    # Another host, and no proxy answering here: a remote identity provider. (The address only differing in case, scheme or a default port,
+    ! smoke_body "$base/auth/v1/health" 'GoTrue'; then
+    # Another host, and no proxy answering here (the app's own page answers 200 to any GET: the answer must be GoTrue's): a remote identity provider. (The address only differing in case, scheme or a default port,
     # or a proxy that answers, is the bundled Auth as before.)
     remote=1
   fi
@@ -1217,8 +1217,9 @@ auth_settings_probe() {
     err 'identity provider: AUTH_JWKS_URL does not answer 200 with a JSON Web Key Set that holds an EC or RSA key (a redirect is not followed)'
     ok=0
   fi
-  if probe_get "${auth_url%/}/health" "$headers" >/dev/null; then log 'identity provider: PUBLIC_AUTH_URL answers /health'; else
-    err 'identity provider: PUBLIC_AUTH_URL/health does not answer 200 (is it the Auth URL, ending /auth/v1, and the publishable key right? a redirect is not followed)'
+  # GoTrue's health answer says so: the app's own page (this API's address by mistake) also answers 200 to any GET.
+  if body="$(probe_get "${auth_url%/}/health" "$headers")" && [[ "$body" == *GoTrue* ]]; then log 'identity provider: PUBLIC_AUTH_URL answers /health'; else
+    err 'identity provider: PUBLIC_AUTH_URL/health does not answer 200 with the Auth service (is it the Auth URL, ending /auth/v1, and the publishable key right? a redirect is not followed)'
     ok=0
   fi
   rm -f "$headers"

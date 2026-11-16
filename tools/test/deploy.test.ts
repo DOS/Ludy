@@ -1521,6 +1521,9 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
         expect(poor.status, poor.out).toBe(1);
         expect(poor.out).toContain('JSON Web Key Set that holds an EC or RSA key');
       }
+      const page = deployIdp('v1.0.0', 'a', IDP, { STUB_IDP_HEALTH_HTML: '1' });
+      expect(page.status, page.out).toBe(1);
+      expect(page.out).toContain('does not answer 200 with the Auth service');
       const health = deployIdp('v1.0.0', 'a', IDP, { STUB_IDP_HEALTH_FAIL: '1' });
       expect(health.status, health.out).toBe(1);
       expect(health.out).toContain('PUBLIC_AUTH_URL/health does not answer');
@@ -1736,6 +1739,10 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       // means a remote provider, and the account step is skipped.
       const account = { SMOKE_EMAIL: 'smoke@example.test', SMOKE_PASSWORD: 'smoke-password-1', SMOKE_ORG: 'crove-smoke' };
       const pub = run(['smoke', 'https://crove.example.test'], { ...account, STUB_AUTH_URL: 'https://idp.example.com/auth/v1', STUB_NO_PROXY: '1' });
+      // The kernel with no proxy still answers 200 to a GET with its page: not the proxy.
+      const pubPage = run(['smoke', 'https://crove.example.test'], { ...account, STUB_AUTH_URL: 'https://idp.example.com/auth/v1', STUB_NO_PROXY: 'html' });
+      expect(pubPage.status, pubPage.out).toBe(0);
+      expect(pubPage.out).toContain('smoke skipped: /auth/v1/health');
       // (Another host, but a proxy that answers here, is still the bundled Auth: that is checked below.)
       expect(pub.status, pub.out).toBe(0);
       expect(pub.out).toContain('smoke skipped: /auth/v1/health');
