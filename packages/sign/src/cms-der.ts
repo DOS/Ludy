@@ -77,11 +77,11 @@ const derOid = (oid: Uint8Array) => derNode(0x06, oid);
 const derInt = (val: number) => derNode(0x02, new Uint8Array([val]));
 const derTagged0 = (inner: Uint8Array) => derNode(0xa0, inner);
 
-function readDerTlv(bytes: Uint8Array, offset: number): DerTlv | null {
-  if (offset < 0 || offset >= bytes.byteLength) return null;
+function readDerTlv(bytes: Uint8Array, offset: number, limit: number = bytes.byteLength): DerTlv | null {
+  if (offset < 0 || offset >= limit) return null;
   const tag = bytes[offset];
   const lenByte = bytes[offset + 1];
-  if (tag === undefined || lenByte === undefined || (tag & 0x1f) === 0x1f) return null;
+  if (tag === undefined || lenByte === undefined || (tag & 0x1f) === 0x1f || offset + 2 > limit) return null;
   let headerLen: number;
   let len: number;
   if (lenByte < 0x80) {
@@ -89,7 +89,7 @@ function readDerTlv(bytes: Uint8Array, offset: number): DerTlv | null {
     len = lenByte;
   } else {
     const octets = lenByte & 0x7f;
-    if (octets === 0 || octets > 4 || offset + 2 + octets > bytes.byteLength) return null;
+    if (octets === 0 || octets > 4 || offset + 2 + octets > limit) return null;
     if (bytes[offset + 2] === 0x00) return null;
     len = 0;
     for (let i = 0; i < octets; i += 1) {
@@ -102,7 +102,7 @@ function readDerTlv(bytes: Uint8Array, offset: number): DerTlv | null {
   }
   const valueStart = offset + headerLen;
   const valueEnd = valueStart + len;
-  if (valueEnd > bytes.byteLength) return null;
+  if (valueEnd > limit) return null;
   return { tag, offset, valueStart, valueEnd, tlvEnd: valueEnd };
 }
 
@@ -119,51 +119,51 @@ function inspectCmsSignedAttrs(bytes: Uint8Array, requireCadesAttributes: boolea
   if (!isCmsSignedDataDer(bytes)) return false;
   const outer = readDerTlv(bytes, 0);
   if (!outer) return false;
-  const oid = readDerTlv(bytes, outer.valueStart);
+  const oid = readDerTlv(bytes, outer.valueStart, outer.valueEnd);
   if (!oid) return false;
-  const contentWrapper = readDerTlv(bytes, oid.tlvEnd);
+  const contentWrapper = readDerTlv(bytes, oid.tlvEnd, outer.valueEnd);
   if (!contentWrapper || contentWrapper.tag !== 0xa0 || contentWrapper.tlvEnd !== outer.valueEnd) return false;
-  const signedData = readDerTlv(bytes, contentWrapper.valueStart);
+  const signedData = readDerTlv(bytes, contentWrapper.valueStart, contentWrapper.valueEnd);
   if (!signedData || signedData.tag !== 0x30 || signedData.tlvEnd !== contentWrapper.valueEnd) return false;
 
-  const version = readDerTlv(bytes, signedData.valueStart);
+  const version = readDerTlv(bytes, signedData.valueStart, signedData.valueEnd);
   if (!version || version.tag !== 0x02) return false;
-  const digestAlgs = readDerTlv(bytes, version.tlvEnd);
+  const digestAlgs = readDerTlv(bytes, version.tlvEnd, signedData.valueEnd);
   if (!digestAlgs || digestAlgs.tag !== 0x31) return false;
-  const encap = readDerTlv(bytes, digestAlgs.tlvEnd);
+  const encap = readDerTlv(bytes, digestAlgs.tlvEnd, signedData.valueEnd);
   if (!encap || encap.tag !== 0x30) return false;
 
   let pos = encap.tlvEnd;
-  let next = readDerTlv(bytes, pos);
+  let next = readDerTlv(bytes, pos, signedData.valueEnd);
   if (next && next.tag === 0xa0) {
     pos = next.tlvEnd;
-    next = readDerTlv(bytes, pos);
+    next = readDerTlv(bytes, pos, signedData.valueEnd);
   }
   if (next && next.tag === 0xa1) {
     pos = next.tlvEnd;
-    next = readDerTlv(bytes, pos);
+    next = readDerTlv(bytes, pos, signedData.valueEnd);
   }
   if (!next || next.tag !== 0x31 || next.tlvEnd !== signedData.valueEnd) return false;
 
   let siPos = next.valueStart;
   let signerCount = 0;
   while (siPos < next.valueEnd) {
-    const signerInfo = readDerTlv(bytes, siPos);
-    if (!signerInfo || signerInfo.tag !== 0x30 || signerInfo.tlvEnd > next.valueEnd) return false;
+    const signerInfo = readDerTlv(bytes, siPos, next.valueEnd);
+    if (!signerInfo || signerInfo.tag !== 0x30) return false;
     signerCount += 1;
 
-    const siVersion = readDerTlv(bytes, signerInfo.valueStart);
+    const siVersion = readDerTlv(bytes, signerInfo.valueStart, signerInfo.valueEnd);
     if (!siVersion || siVersion.tag !== 0x02) return false;
-    const sid = readDerTlv(bytes, siVersion.tlvEnd);
+    const sid = readDerTlv(bytes, siVersion.tlvEnd, signerInfo.valueEnd);
     if (!sid || (sid.tag !== 0x30 && sid.tag !== 0x80)) return false;
-    const siDigestAlg = readDerTlv(bytes, sid.tlvEnd);
+    const siDigestAlg = readDerTlv(bytes, sid.tlvEnd, signerInfo.valueEnd);
     if (!siDigestAlg || siDigestAlg.tag !== 0x30) return false;
-    const maybeAttrs = readDerTlv(bytes, siDigestAlg.tlvEnd);
+    const maybeAttrs = readDerTlv(bytes, siDigestAlg.tlvEnd, signerInfo.valueEnd);
     if (!maybeAttrs || maybeAttrs.tag !== 0xa0 || maybeAttrs.valueStart >= maybeAttrs.valueEnd) return false;
 
-    const siSigAlg = readDerTlv(bytes, maybeAttrs.tlvEnd);
+    const siSigAlg = readDerTlv(bytes, maybeAttrs.tlvEnd, signerInfo.valueEnd);
     if (!siSigAlg || siSigAlg.tag !== 0x30) return false;
-    const siSig = readDerTlv(bytes, siSigAlg.tlvEnd);
+    const siSig = readDerTlv(bytes, siSigAlg.tlvEnd, signerInfo.valueEnd);
     if (!siSig || siSig.tag !== 0x04 || siSig.valueStart >= siSig.valueEnd) return false;
 
     if (requireCadesAttributes) {
@@ -172,15 +172,15 @@ function inspectCmsSignedAttrs(bytes: Uint8Array, requireCadesAttributes: boolea
       let hasSigningCert = false;
       let attrPos = maybeAttrs.valueStart;
       while (attrPos < maybeAttrs.valueEnd) {
-        const attr = readDerTlv(bytes, attrPos);
-        if (!attr || attr.tag !== 0x30 || attr.tlvEnd > maybeAttrs.valueEnd) return false;
-        const attrType = readDerTlv(bytes, attr.valueStart);
+        const attr = readDerTlv(bytes, attrPos, maybeAttrs.valueEnd);
+        if (!attr || attr.tag !== 0x30) return false;
+        const attrType = readDerTlv(bytes, attr.valueStart, attr.valueEnd);
         if (!attrType || attrType.tag !== 0x06) return false;
-        const attrValues = readDerTlv(bytes, attrType.tlvEnd);
+        const attrValues = readDerTlv(bytes, attrType.tlvEnd, attr.valueEnd);
         if (!attrValues || attrValues.tag !== 0x31 || attrValues.valueStart >= attrValues.valueEnd || attrValues.tlvEnd !== attr.tlvEnd) {
           return false;
         }
-        const firstVal = readDerTlv(bytes, attrValues.valueStart);
+        const firstVal = readDerTlv(bytes, attrValues.valueStart, attrValues.valueEnd);
         if (!firstVal || firstVal.tlvEnd > attrValues.valueEnd) return false;
         const attrOid = bytes.subarray(attrType.valueStart, attrType.valueEnd);
         if (bytesEqual(attrOid, OID_CONTENT_TYPE) && firstVal.tag === 0x06) hasContentType = true;

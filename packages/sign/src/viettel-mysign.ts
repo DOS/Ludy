@@ -437,7 +437,7 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
           return 'unreachable';
         }
         if (listRes.status === 401 || listRes.status === 403) return 'wrong_credentials';
-        if (listRes.json === null || typeof listRes.json !== 'object') {
+        if (listRes.status >= 400 || listRes.json === null || typeof listRes.json !== 'object') {
           return 'unreachable';
         }
         const records = extractViettelCertificates(listRes.json);

@@ -400,6 +400,7 @@ export function createVnptSmartCaAdapter(options: CaAdapterOptions = {}): CaSign
         const upperCode = code?.toUpperCase();
         if (upperCode === 'IP_NOT_ALLOWED' || upperCode === 'INVALID_IP') return 'ip_not_allowed';
         if (upperCode === 'API_NOT_ENABLED' || upperCode === 'SERVICE_INACTIVE') return 'api_not_enabled';
+        if (res.status >= 400) return 'unreachable';
 
         const records = extractVnptCertificates(res.json);
         if (records.length === 0) return 'signing_needs_person';
