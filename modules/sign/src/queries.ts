@@ -3,8 +3,14 @@
 // All reads execute inside QueryContext with org_id isolation and never expose signing_token or signing_otp secrets.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { SIGN_ENVELOPE_STATUSES, SIGN_SOURCE_KINDS, type MemberRole } from '@crove/db';
-import { zId } from '@crove/kernel-contract';
+import {
+  SIGN_ENVELOPE_STATUSES,
+  SIGN_SOURCE_KINDS,
+  type MemberRole,
+  type SignEnvelopeStatus,
+  type SignSealStatus,
+} from '@crove/db';
+import { SIGN_BY_SOURCE_MAX, zId, type SignEnvelopeBySourceItem } from '@crove/kernel-contract';
 import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
 import type { SigningEventChainRow } from './events.ts';
 import { parseEventPayload, verifyEventChain } from './events.ts';
@@ -141,6 +147,135 @@ export const envelopeList = defineQuery({
             signed: counts?.signed ?? 0,
             waitingForMe: Boolean(envelopeActive && counts?.awaitingMe),
           },
+        };
+      }),
+    };
+  },
+});
+
+export interface SourceEnvelopeCandidate {
+  id: string;
+  title: string;
+  status: SignEnvelopeStatus;
+  source_id: string | null;
+  seal_status: SignSealStatus | null;
+  certificate_code: string | null;
+  completed_at: Date | string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+function envelopePriorityCompare(a: SourceEnvelopeCandidate, b: SourceEnvelopeCandidate): number {
+  const aVoided = a.status === 'voided' ? 1 : 0;
+  const bVoided = b.status === 'voided' ? 1 : 0;
+  if (aVoided !== bVoided) return aVoided - bVoided;
+  const createdDiff = new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+  if (createdDiff !== 0) return createdDiff;
+  const updatedDiff = new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+  if (updatedDiff !== 0) return updatedDiff;
+  return b.id < a.id ? -1 : b.id > a.id ? 1 : 0;
+}
+
+// Selects the latest non-voided envelope (or latest overall if only voided exist) per requested sourceId.
+export function selectLatestEnvelopesBySource<T extends SourceEnvelopeCandidate>(
+  rows: readonly T[],
+  orderedSourceIds: readonly string[],
+): T[] {
+  const bestBySource = new Map<string, T>();
+  for (const row of rows) {
+    if (!row.source_id) continue;
+    const current = bestBySource.get(row.source_id);
+    if (!current || envelopePriorityCompare(row, current) < 0) {
+      bestBySource.set(row.source_id, row);
+    }
+  }
+  const selected: T[] = [];
+  const seen = new Set<string>();
+  for (const sourceId of orderedSourceIds) {
+    if (seen.has(sourceId)) continue;
+    seen.add(sourceId);
+    const match = bestBySource.get(sourceId);
+    if (match) selected.push(match);
+  }
+  return selected;
+}
+
+export const envelopeBySource = defineQuery({
+  name: 'sign.envelope.by_source',
+  input: z.strictObject({
+    sourceKind: z.enum(SIGN_SOURCE_KINDS),
+    sourceIds: z.array(zId).min(1).max(SIGN_BY_SOURCE_MAX),
+  }),
+  access: READERS,
+  handler: async (ctx, input): Promise<{ items: SignEnvelopeBySourceItem[] }> => {
+    assertUser(ctx);
+    if (input.sourceKind === 'standalone') {
+      return { items: [] };
+    }
+    const uniqueSourceIds = [...new Set(input.sourceIds)];
+    const rows = await ctx.trx
+      .selectFrom('crove_sign.envelope')
+      .select([
+        'id',
+        'title',
+        'status',
+        'source_id',
+        'seal_status',
+        'certificate_code',
+        'completed_at',
+        'created_at',
+        'updated_at',
+      ])
+      .where('org_id', '=', ctx.orgId)
+      .where('source_kind', '=', input.sourceKind)
+      .where('source_id', 'is not', null)
+      .where('source_id', 'in', uniqueSourceIds)
+      .execute();
+
+    const selected = selectLatestEnvelopesBySource(rows, uniqueSourceIds);
+    if (selected.length === 0) {
+      return { items: [] };
+    }
+
+    const signerRows = await ctx.trx
+      .selectFrom('crove_sign.signer')
+      .select(['envelope_id', 'status'])
+      .where('org_id', '=', ctx.orgId)
+      .where(
+        'envelope_id',
+        'in',
+        selected.map((r) => r.id),
+      )
+      .where('signer_role', '!=', 'cc')
+      .execute();
+
+    const countsByEnvelope = new Map<string, { total: number; signed: number }>();
+    for (const signer of signerRows) {
+      let entry = countsByEnvelope.get(signer.envelope_id);
+      if (!entry) {
+        entry = { total: 0, signed: 0 };
+        countsByEnvelope.set(signer.envelope_id, entry);
+      }
+      entry.total += 1;
+      if (signer.status === 'signed') {
+        entry.signed += 1;
+      }
+    }
+
+    return {
+      items: selected.map((r) => {
+        const counts = countsByEnvelope.get(r.id);
+        return {
+          sourceId: r.source_id as string,
+          envelopeId: r.id,
+          title: r.title,
+          status: r.status,
+          sealStatus: r.seal_status,
+          certificateCode: r.certificate_code,
+          completedAt: isoOrNull(r.completed_at),
+          signerCount: counts?.total ?? 0,
+          signedCount: counts?.signed ?? 0,
+          updatedAt: new Date(r.updated_at).toISOString(),
         };
       }),
     };
@@ -610,4 +745,4 @@ export const envelopeSealJobData = defineQuery({
   },
 });
 
-export const signQueries = [envelopeList, envelopeGet, envelopeEvents, envelopeVerify, envelopeInspectJobData, envelopeSealJobData];
+export const signQueries = [envelopeList, envelopeBySource, envelopeGet, envelopeEvents, envelopeVerify, envelopeInspectJobData, envelopeSealJobData];

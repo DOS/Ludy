@@ -1524,6 +1524,14 @@ export const envelopeSealComplete = defineCommand({
         });
       }
     }
+    await ctx.emit('sign.envelope.completed', {
+      envelopeId: row.id,
+      sourceKind: row.source_kind,
+      sourceId: row.source_id,
+      sealedFileId: sealedFile.id,
+      sealedSha256: sealedFile.sha256,
+      certificateCode: input.certificateCode,
+    });
     ctx.audit({
       envelopeId: row.id,
       sealStatus: 'sealed',

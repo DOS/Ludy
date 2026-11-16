@@ -3916,6 +3916,21 @@ export const en = {
       deleteYes: 'Delete draft quote',
       revise: 'Make a revision',
     },
+    sign: {
+      send: 'Send for eSign',
+      envelopeTitle: 'Quote {label} - {party}',
+      signerRoleLabel: 'Customer',
+      openLabel: 'Open signing envelope: {title} ({status})',
+      status: {
+        draft: 'eSign draft',
+        sent: 'Awaiting signature',
+        in_progress: 'Awaiting signature',
+        completed: 'Signed',
+        declined: 'Declined',
+        voided: 'Voided',
+        expired: 'Expired',
+      },
+    },
     editor: {
       title: 'Draft quote',
       titleNumbered: 'Quote {number}',
