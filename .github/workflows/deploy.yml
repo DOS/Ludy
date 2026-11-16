@@ -9,10 +9,12 @@ name: deploy
 # smoke test and rolls back on failure. Until the environment has its secrets, the deploy job only says so and
 # passes.
 #
-# Opt-in (#2704): when the environment defines the identity provider settings (the variables AUTH_ISSUER, AUTH_JWKS_URL,
-# PUBLIC_AUTH_URL, PUBLIC_AUTH_ANON_KEY, AUTH_OAUTH_PROVIDERS, AUTH_HOSTED_LOGIN_URL, AUTH_HOSTED_LOGIN_TOKEN_URL and
-# AUTH_HOSTED_LOGIN_NAME, and the secret AUTH_ALLOWED_EMAILS), the deploy writes those lines into the host's env file
-# (docs/runbooks/pilot-sign-in-remote-idp.md, step 5). Without them the env file is never edited.
+# Opt-in (#2704): when the variable DEPLOY_IDP_ENVIRONMENT names the environment being deployed, the deploy writes the identity
+# provider settings (variables DEPLOY_IDP_AUTH_ISSUER, DEPLOY_IDP_AUTH_JWKS_URL, DEPLOY_IDP_PUBLIC_AUTH_URL,
+# DEPLOY_IDP_PUBLIC_AUTH_ANON_KEY, DEPLOY_IDP_AUTH_OAUTH_PROVIDERS, DEPLOY_IDP_AUTH_HOSTED_LOGIN_URL,
+# DEPLOY_IDP_AUTH_HOSTED_LOGIN_TOKEN_URL, DEPLOY_IDP_AUTH_HOSTED_LOGIN_NAME and the secret DEPLOY_IDP_AUTH_ALLOWED_EMAILS)
+# into the host's env file (docs/runbooks/pilot-sign-in-remote-idp.md, step 5). Define them in the environment only, never at
+# repository or organization level: those fall back into every environment. Without the opt-in the env file is never edited.
 
 on:
   push:
@@ -287,34 +289,48 @@ jobs:
           persist-credentials: false
           ref: ${{ needs.target.outputs.action == 'deploy' && needs.target.outputs.sha || github.sha }}
 
-      # The identity provider settings (#2704), when the environment defines any: written to a private file from the environment's
-      # variables and secret (as environment variables, never interpolated into the script), checked by the release's own
-      # deploy.sh, and sent with the release. It prints the names it set, never a value. deploy.sh on the host checks the file again and
-      # edits the env file; the file goes with the rest of the incoming directory when the run ends. A rollback sends nothing.
+      # The identity provider settings (#2704), when the variable DEPLOY_IDP_ENVIRONMENT names this environment: written to a private
+      # file from the DEPLOY_IDP_* variables and secret (as environment variables, never interpolated into the script), checked by the
+      # release's own deploy.sh, and sent with the release. It prints the names it set, never a value. deploy.sh on the host checks the
+      # file again and edits the env file; the file goes with the rest of the incoming directory when the run ends. A rollback sends
+      # nothing. The deploy-specific names and the opt-in keep a variable of the same name at repository or organization level (the
+      # kernel's own setting names, which another project may use) from reaching an environment that did not ask for it.
       - name: Prepare the identity provider settings
         id: idp
         if: steps.config.outputs.ready == 'true' && needs.target.outputs.action == 'deploy'
         env:
-          AUTH_ISSUER: ${{ vars.AUTH_ISSUER }}
-          AUTH_JWKS_URL: ${{ vars.AUTH_JWKS_URL }}
-          PUBLIC_AUTH_URL: ${{ vars.PUBLIC_AUTH_URL }}
-          PUBLIC_AUTH_ANON_KEY: ${{ vars.PUBLIC_AUTH_ANON_KEY }}
-          AUTH_OAUTH_PROVIDERS: ${{ vars.AUTH_OAUTH_PROVIDERS }}
-          AUTH_HOSTED_LOGIN_URL: ${{ vars.AUTH_HOSTED_LOGIN_URL }}
-          AUTH_HOSTED_LOGIN_TOKEN_URL: ${{ vars.AUTH_HOSTED_LOGIN_TOKEN_URL }}
-          AUTH_HOSTED_LOGIN_NAME: ${{ vars.AUTH_HOSTED_LOGIN_NAME }}
-          AUTH_ALLOWED_EMAILS: ${{ secrets.AUTH_ALLOWED_EMAILS }}
+          ENVIRONMENT: ${{ needs.target.outputs.environment }}
+          OPT_IN: ${{ vars.DEPLOY_IDP_ENVIRONMENT }}
+          DEPLOY_IDP_AUTH_ISSUER: ${{ vars.DEPLOY_IDP_AUTH_ISSUER }}
+          DEPLOY_IDP_AUTH_JWKS_URL: ${{ vars.DEPLOY_IDP_AUTH_JWKS_URL }}
+          DEPLOY_IDP_PUBLIC_AUTH_URL: ${{ vars.DEPLOY_IDP_PUBLIC_AUTH_URL }}
+          DEPLOY_IDP_PUBLIC_AUTH_ANON_KEY: ${{ vars.DEPLOY_IDP_PUBLIC_AUTH_ANON_KEY }}
+          DEPLOY_IDP_AUTH_OAUTH_PROVIDERS: ${{ vars.DEPLOY_IDP_AUTH_OAUTH_PROVIDERS }}
+          DEPLOY_IDP_AUTH_HOSTED_LOGIN_URL: ${{ vars.DEPLOY_IDP_AUTH_HOSTED_LOGIN_URL }}
+          DEPLOY_IDP_AUTH_HOSTED_LOGIN_TOKEN_URL: ${{ vars.DEPLOY_IDP_AUTH_HOSTED_LOGIN_TOKEN_URL }}
+          DEPLOY_IDP_AUTH_HOSTED_LOGIN_NAME: ${{ vars.DEPLOY_IDP_AUTH_HOSTED_LOGIN_NAME }}
+          DEPLOY_IDP_AUTH_ALLOWED_EMAILS: ${{ secrets.DEPLOY_IDP_AUTH_ALLOWED_EMAILS }}
         run: |
           set -euo pipefail
+          # The settings carry the kernel's own names (the lines of the env file) behind the DEPLOY_IDP_ prefix.
           names=(AUTH_ISSUER AUTH_JWKS_URL PUBLIC_AUTH_URL PUBLIC_AUTH_ANON_KEY AUTH_ALLOWED_EMAILS AUTH_OAUTH_PROVIDERS AUTH_HOSTED_LOGIN_URL AUTH_HOSTED_LOGIN_TOKEN_URL AUTH_HOSTED_LOGIN_NAME)
           given=()
           for name in "${names[@]}"; do
-            if [ -n "${!name}" ]; then given+=("$name"); fi
+            src="DEPLOY_IDP_$name"
+            if [ -n "${!src}" ]; then given+=("$name"); fi
           done
-          if ((${#given[@]} == 0)); then
+          if [ "$OPT_IN" != "$ENVIRONMENT" ]; then
             echo 'enabled=false' >> "$GITHUB_OUTPUT"
-            echo 'No identity provider settings in this environment: the host env file is left alone.'
+            if ((${#given[@]} > 0)); then
+              echo "::notice title=Identity provider settings ignored::DEPLOY_IDP_* settings are defined but DEPLOY_IDP_ENVIRONMENT is not '$ENVIRONMENT': the host env file is left alone. Define them in the environment only."
+            else
+              echo 'No identity provider settings opted in for this environment: the host env file is left alone.'
+            fi
             exit 0
+          fi
+          if ((${#given[@]} == 0)); then
+            echo "::error::DEPLOY_IDP_ENVIRONMENT is '$ENVIRONMENT' but no DEPLOY_IDP_* setting is defined"
+            exit 1
           fi
           dir="$RUNNER_TEMP/idp"
           install -m 700 -d "$dir"
@@ -322,9 +338,10 @@ jobs:
             umask 077
             : > "$dir/auth-settings.env"
             for name in "${given[@]}"; do
-              value="${!name}"
+              src="DEPLOY_IDP_$name"
+              value="${!src}"
               case "$value" in
-                *$'\n'* | *$'\r'*) echo "::error::$name must be one line"; exit 1 ;;
+                *$'\n'* | *$'\r'*) echo "::error::$src must be one line"; exit 1 ;;
               esac
               printf '%s=%s\n' "$name" "$value" >> "$dir/auth-settings.env"
             done
@@ -335,6 +352,8 @@ jobs:
           {
             echo 'enabled=true'
             echo "file=$dir/auth-settings.env"
+            # The Auth URL (public) the public smoke test must find in /api/config.
+            echo "auth_url=$DEPLOY_IDP_PUBLIC_AUTH_URL"
           } >> "$GITHUB_OUTPUT"
 
       - name: Upload the deploy script and the compose file
@@ -394,10 +413,9 @@ jobs:
           SMOKE_EMAIL: ${{ secrets.SMOKE_EMAIL }}
           SMOKE_PASSWORD: ${{ secrets.SMOKE_PASSWORD }}
           SMOKE_ORG: ${{ vars.SMOKE_ORG }}
-          # A remote identity provider has no /auth/v1 proxy on this host (#2704): when the environment defines AUTH_ISSUER (this run
-          # sets it up, or a rollback run leaves a host that has it), or the variable DEPLOY_REMOTE_AUTH=true says the host uses one
-          # that was set up by hand, the proxy checks and the smoke account are skipped.
-          SMOKE_REMOTE_AUTH: ${{ (steps.idp.outputs.enabled == 'true' || vars.AUTH_ISSUER != '' || vars.DEPLOY_REMOTE_AUTH == 'true') && '1' || '' }}
+          # A remote identity provider has no /auth/v1 proxy on this host (#2704): the smoke test reads that from the deployed
+          # /api/config, not from these settings. When this run wrote the settings it also demands the Auth URL it was given.
+          SMOKE_EXPECT_AUTH_URL: ${{ steps.idp.outputs.auth_url }}
         run: |
           if [ "$ACTION" = deploy ]; then bash tools/deploy/deploy.sh smoke "$PUBLIC_URL" "$BUILD"; else bash tools/deploy/deploy.sh smoke "$PUBLIC_URL"; fi
 

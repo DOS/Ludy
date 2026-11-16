@@ -70,6 +70,8 @@ READY_TIMEOUT="${CROVE_READY_TIMEOUT:-300}"
 WORKER_SETTLE="${CROVE_WORKER_SETTLE:-15}"
 # Release directories kept on the host (the current and previous ones are never removed).
 KEEP_RELEASES="${CROVE_KEEP_RELEASES:-5}"
+# Dated copies of the env file kept next to it (the newest, and the one a rollback needs).
+KEEP_ENV_BACKUPS="${CROVE_KEEP_ENV_BACKUPS:-5}"
 # Base URL of the smoke test on the host; default: the loopback port the API service publishes.
 SMOKE_URL="${CROVE_SMOKE_URL:-}"
 # Seconds the account step of the smoke test waits for the worker to turn its upload into a proposal.
@@ -258,12 +260,10 @@ smoke_account() {
   return "$rc"
 }
 
-# Whether Supabase Auth is a remote provider and the kernel has no /auth/v1 proxy (#2704): the env file sets AUTH_UPSTREAM_URL to
-# empty (the last assignment counts), or SMOKE_REMOTE_AUTH=1 says so (the workflow's public smoke test, which has no env file).
-# The proxy checks below then do not apply; the prober watches the provider.
-smoke_remote_auth() {
+# Whether the env file says there is no bundled /auth/v1 proxy (#2704): AUTH_UPSTREAM_URL is set to empty (the last assignment counts).
+# Only the host's own smoke test has an env file; the public one reads /api/config (smoke below).
+smoke_env_has_no_proxy() {
   local v
-  [ "${SMOKE_REMOTE_AUTH:-}" != 1 ] || return 0
   { [ -n "${ENV_FILE:-}" ] && [ -f "$ENV_FILE" ]; } || return 1
   v="$(sed -n -E 's/\r$//; s/^[[:space:]]*(export[[:space:]]+)?AUTH_UPSTREAM_URL[[:space:]]*[=:][[:space:]]*(.*)$/v=\2/p' "$ENV_FILE" | tail -n 1)"
   [ -n "$v" ] || return 1
@@ -272,12 +272,25 @@ smoke_remote_auth() {
   [ -z "$v" ]
 }
 
+# smoke_auth_url <base>: the authUrl /api/config of the running API reports (the address the app signs in at).
+smoke_auth_url() {
+  local body
+  body="$(smoke_get "$1/api/config")" || return 1
+  [[ "$body" =~ \"authUrl\":\"([^\"]*)\" ]] || return 1
+  printf '%s' "${BASH_REMATCH[1]}"
+}
+
+# The Auth URL the identity provider settings of this deploy name; set by do_deploy, or by the workflow's public smoke test through its
+# environment (SMOKE_EXPECT_AUTH_URL). When set, /api/config must report exactly that address, so settings that did not take (an old
+# container, a stale env line) fail the smoke test instead of passing on the proxy checks being skipped.
+SMOKE_EXPECT_AUTH_URL="${SMOKE_EXPECT_AUTH_URL:-}"
+
 # smoke <base url> [account] [build]: with "account" (the `smoke` command), the account step runs too when its settings
 # are there. The deploy's own smoke test on the host never runs it: the workflow's public smoke test does, and a
 # rollback must not depend on the smoke account, or a broken account would fail the rollback too. With a build id,
 # /version must report it (#892).
 smoke() {
-  local base="${1%/}" account="${2:-}" build="${3:-}" failed=0 remote=0
+  local base="${1%/}" account="${2:-}" build="${3:-}" failed=0 remote=0 auth_url=''
   smoke_check() {
     local name="$1"
     shift
@@ -293,7 +306,16 @@ smoke() {
     smoke_check "/version answers build $build with every migration applied" smoke_version "$base" "$build"
   fi
   smoke_check '/api/config answers' smoke_body "$base/api/config" '"authUrl"'
-  if smoke_remote_auth; then remote=1; fi
+  # A remote identity provider has no /auth/v1 proxy here. The host's smoke test knows it from the env file; the public one (no env file)
+  # from /api/config, whose authUrl is then not this API's own /auth/v1.
+  auth_url="$(smoke_auth_url "$base" 2>/dev/null)" || auth_url=''
+  if smoke_env_has_no_proxy; then remote=1
+  elif [ -z "${ENV_FILE:-}" ] && [ -n "$auth_url" ] && [ "$auth_url" != "$base/auth/v1" ]; then remote=1
+  fi
+  if [ -n "$SMOKE_EXPECT_AUTH_URL" ]; then
+    remote=1
+    smoke_check '/api/config names the configured Auth URL (PUBLIC_AUTH_URL)' test "$auth_url" = "$SMOKE_EXPECT_AUTH_URL"
+  fi
   # Supabase Auth through the kernel's /auth/v1 proxy, the way signing in goes. A remote provider has no proxy here.
   if ((remote)); then
     log 'smoke skipped: /auth/v1/health (Supabase Auth is a remote provider; the prober watches it)'
@@ -582,6 +604,12 @@ direction_to() {
   if [[ "$(release_field "$to" STAGED_AT)" < "$(release_field "$from" STAGED_AT)" ]]; then echo back; else echo forward; fi
 }
 
+# Whether the env file assigns a non-empty AUTH_ALLOWED_EMAILS (names a setting only; nothing of the file is printed).
+env_lists_allowed_emails() {
+  [ -n "${ENV_FILE:-}" ] && [ -f "$ENV_FILE" ] || return 1
+  grep -q -E '^[[:space:]]*(export[[:space:]]+)?AUTH_ALLOWED_EMAILS[[:space:]]*[=:][[:space:]]*[^[:space:]#]' "$ENV_FILE"
+}
+
 # Rolls the worker of the active release when it runs as its own service, and checks it stays up.
 roll_worker() {
   log 'rolling the worker'
@@ -589,7 +617,13 @@ roll_worker() {
   sleep "$WORKER_SETTLE"
   if ! dc ps --status running --services | grep -qx worker; then
     err 'the worker is not running'
-    dc logs --tail 50 worker >&2 || true
+    # Not while the env file lists who may sign in: a worker that refuses a bad entry names it in its log, and this output may be a public
+    # CI log (a secret is masked there only as a whole). The names are enough to find it on the host.
+    if env_lists_allowed_emails; then
+      err 'the worker log is not shown here because the env file sets AUTH_ALLOWED_EMAILS (read it on the host: docker compose logs worker)'
+    else
+      dc logs --tail 50 worker >&2 || true
+    fi
     return 1
   fi
 }
@@ -882,8 +916,10 @@ AUTH_SETTING_DROPPED=(AUTH_SIGNUP_POLICY AUTH_SIGNUP_ALLOWED_DOMAINS PROBER_AUTH
 AUTH_LINES=()
 
 # An https address of a host name (no IP address, no localhost), an optional port and a plain path: no user, query or fragment.
-AUTH_URL_RE='^https://(([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z][A-Za-z0-9-]{1,62})(:([0-9]{1,5}))?(/[A-Za-z0-9._~/-]*)?$'
-AUTH_DOMAIN_RE='([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z][A-Za-z0-9-]{1,62}'
+# (The last label starts with a letter and, like every label, does not end in a dash: the kernel's own rule, so an address that passes
+# here cannot stop the worker from booting.)
+AUTH_URL_RE='^https://(([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]([A-Za-z0-9-]{0,61}[A-Za-z0-9]))(:([0-9]{1,5}))?(/[A-Za-z0-9._~/-]*)?$'
+AUTH_DOMAIN_RE='([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]([A-Za-z0-9-]{0,61}[A-Za-z0-9])'
 # (A repetition count above 255 is refused by the regex library, so the length is checked apart.)
 AUTH_KEY_RE='^[A-Za-z0-9._-]+$'
 AUTH_PROVIDER_RE='^[a-z][a-z0-9_]{0,31}$'
@@ -891,7 +927,12 @@ AUTH_PROVIDER_RE='^[a-z][a-z0-9_]{0,31}$'
 auth_url_ok() {
   [ "${#1}" -le 2048 ] && [[ "$1" =~ $AUTH_URL_RE ]] || return 1
   [[ "$1" != *..* ]] || return 1
-  [ -z "${BASH_REMATCH[5]}" ] || ((10#${BASH_REMATCH[5]} >= 1 && 10#${BASH_REMATCH[5]} <= 65535))
+  # localhost and *.localhost are this machine, whatever the scheme.
+  local host="${1#https://}"
+  host="${host%%[/:]*}"
+  host="${host,,}"
+  [[ "$host" != localhost && "$host" != *.localhost ]] || return 1
+  [ -z "${BASH_REMATCH[6]}" ] || ((10#${BASH_REMATCH[6]} >= 1 && 10#${BASH_REMATCH[6]} <= 65535))
 }
 
 # The scheme and host (and port) of an address that passed auth_url_ok, in lower case.
@@ -1115,9 +1156,40 @@ undo_env_restore() {
   ENV_UNDO=''
 }
 
+# prune_env_backups: the dated copies of the env file next to it (apply_auth_settings) are kept for the newest KEEP_ENV_BACKUPS, and
+# the one the rollback record points to. They hold the old secrets, so they do not pile up.
+prune_env_backups() {
+  local keep f i n=0
+  local -a copies=()
+  keep="$(read_state env-backup | cut -d' ' -f2)"
+  for f in "$ENV_FILE".bak-[0-9]*Z-*; do
+    if [ -f "$f" ]; then copies+=("$f"); fi
+  done
+  # The time is in the name, so the glob lists them oldest first.
+  for ((i = ${#copies[@]} - 1; i >= 0; i--)); do
+    n=$((n + 1))
+    if ((n > KEEP_ENV_BACKUPS)) && [ "${copies[i]}" != "$keep" ]; then
+      log "removing old env file copy ${copies[i]}"
+      rm -f "${copies[i]}"
+    fi
+  done
+}
+
+# probe_get <url> [headers file]: prints the body of an answer 200 from an https address, with no redirect followed (a redirect could
+# leave https or reach another host) and no other scheme.
+probe_get() {
+  local url="$1" headers="${2:-}" out code
+  local -a args=(--silent --show-error --max-time 15 --proto "=https" --proto-redir "=https" --write-out '%{http_code}')
+  [ -z "$headers" ] || args+=(--header "@$headers")
+  out="$(curl "${args[@]}" "$url")" || return 1
+  code="${out: -3}"
+  [ "$code" = 200 ] || return 1
+  printf '%s' "${out%???}"
+}
+
 # auth_settings_probe: before anything changes, the provider answers: its keys (a JWKS with "keys") and its Auth URL's /health with the
 # publishable key. Well-formed but wrong values (the project URL without /auth/v1, a typo in the keys path) would otherwise pass every
-# check, boot, and lock everyone out. The key goes to curl in a header file, not as an argument.
+# check, boot, and lock everyone out. The key goes to curl in a header file, not as an argument (the two addresses are public).
 auth_settings_probe() {
   local headers keys_url="${AUTH_SET[AUTH_JWKS_URL]}" auth_url="${AUTH_SET[PUBLIC_AUTH_URL]}" body ok=1
   headers="$(mktemp "$(state_dir)/probe.XXXXXX")" || {
@@ -1125,12 +1197,12 @@ auth_settings_probe() {
     return 1
   }
   printf 'apikey: %s\n' "${AUTH_SET[PUBLIC_AUTH_ANON_KEY]}" >"$headers"
-  if body="$(smoke_get "$keys_url")" && [[ "$body" == *'"keys"'* ]]; then log 'identity provider: AUTH_JWKS_URL answers with keys'; else
-    err 'identity provider: AUTH_JWKS_URL does not answer with a JSON Web Key Set'
+  if body="$(probe_get "$keys_url")" && [[ "$body" == *'"keys"'* ]]; then log 'identity provider: AUTH_JWKS_URL answers with keys'; else
+    err 'identity provider: AUTH_JWKS_URL does not answer 200 with a JSON Web Key Set (a redirect is not followed)'
     ok=0
   fi
-  if smoke_api "$headers" "${auth_url%/}/health" >/dev/null; then log 'identity provider: PUBLIC_AUTH_URL answers /health'; else
-    err 'identity provider: PUBLIC_AUTH_URL/health does not answer (is it the Auth URL, ending /auth/v1, and the publishable key right?)'
+  if probe_get "${auth_url%/}/health" "$headers" >/dev/null; then log 'identity provider: PUBLIC_AUTH_URL answers /health'; else
+    err 'identity provider: PUBLIC_AUTH_URL/health does not answer 200 (is it the Auth URL, ending /auth/v1, and the publishable key right? a redirect is not followed)'
     ok=0
   fi
   rm -f "$headers"
@@ -1271,6 +1343,7 @@ recover() {
     record "$what failed, and so did putting the env file back"
     die "$EXIT_ROLLBACK_FAILED" "$what failed and the env file could not be put back: the instance needs an operator"
   fi
+  SMOKE_EXPECT_AUTH_URL=''
   if ! undo_env_restore; then
     record "$what failed, and so did putting the env file back"
     die "$EXIT_ROLLBACK_FAILED" "$what failed and the env file could not be put back: the instance needs an operator"
@@ -1339,8 +1412,11 @@ do_deploy() {
   # The identity provider settings are checked before anything is pulled or changed (#2704): a bad value stops the deploy here.
   if [ -n "$auth_settings" ]; then
     valid_path "$auth_settings" || die "$EXIT_USAGE" "--auth-settings must be an absolute path without spaces: '$auth_settings'"
-    auth_settings_load "$auth_settings" || die "$EXIT_USAGE" 'the identity provider settings are not valid (see above); nothing was changed'
-    # Read: the secret in it need not stay on the host.
+    # Read once and removed whatever the outcome: the secret in it need not stay on the host.
+    if ! auth_settings_load "$auth_settings"; then
+      rm -f "$auth_settings"
+      die "$EXIT_USAGE" 'the identity provider settings are not valid (see above); nothing was changed'
+    fi
     rm -f "$auth_settings"
   fi
   read_registry_password
@@ -1361,7 +1437,13 @@ do_deploy() {
   install_self
   current="$(read_state current)"
   log "deploying $release ($name); running now: ${current:-nothing}"
-  if [ -n "$auth_settings" ]; then log "identity provider settings given: $(auth_set_names)"; fi
+  if [ -n "$auth_settings" ]; then
+    log "identity provider settings given: $(auth_set_names)"
+    # The smoke test of this deploy must see the Auth URL it was given (and recover, for the release before, must not).
+    SMOKE_EXPECT_AUTH_URL="${AUTH_SET[PUBLIC_AUTH_URL]}"
+  else
+    SMOKE_EXPECT_AUTH_URL=''
+  fi
 
   # Stage the release (before anything changes, so a failure here leaves the running stack alone).
   mkdir -p "$dir"
@@ -1463,6 +1545,7 @@ do_deploy() {
   fi
   record "deploy $name ok image=$image extract=$extract media=$media$([ "$ENV_CHANGED" = 1 ] && echo ' env=changed')"
   prune_releases
+  if [ -n "$auth_settings" ]; then prune_env_backups; fi
   log "deployed $release ($name)"
 }
 

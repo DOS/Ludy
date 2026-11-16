@@ -103,7 +103,8 @@ case "$sub" in
       for s in ${STUB_RUNNING:-worker}; do echo "$s"; done
     fi
     ;;
-  up | logs) ;;
+  up) ;;
+  logs) [ -z "${STUB_WORKER_LOG:-}" ] || echo "$STUB_WORKER_LOG" ;;
   rm) [ -z "${STUB_RM_FAIL:-}" ] || { echo 'rm: stub failure' >&2; exit 1; } ;;
   *)
     echo "stub docker compose: unexpected $sub" >&2
