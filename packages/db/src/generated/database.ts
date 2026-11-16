@@ -3066,6 +3066,7 @@ export interface MeetingsMeetingTable {
   live_notes: ColumnType<boolean, boolean | undefined, NotGranted>;
   recording_stop_reason: string | null;
   summary_template: Generated<string>;
+  audio_used_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 /** crove_meetings.meeting_video */

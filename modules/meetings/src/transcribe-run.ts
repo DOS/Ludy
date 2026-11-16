@@ -16,7 +16,7 @@
 import { sql } from 'kysely';
 import { zTranscribeCancel, zTranscribeRunRef, zTranscribeStart, type TranscribeStatus } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
-import { lockMeetingMedia } from './media-record.ts';
+import { lockMeetingMedia, markAudioUsed } from './media-record.ts';
 import { vnDay } from './retention.ts';
 import { ROLES, openMeeting, userOf } from './transcript.ts';
 
@@ -88,6 +88,8 @@ export const transcriptStart = defineCommand({
     // The kernel's start checks vy.use, the org, module and agent kill switches, the global ai switch and the budget (AI_BUDGET_EXHAUSTED), and makes the
     // member's Vy and this run (a result row in status running, the subject this meeting).
     const started = await ctx.run<{ runId: string; resultId: string }>('kernel.member_vy.run.start', { feature: FEATURE, subjectType: 'meeting', subjectId: input.meetingId });
+    // The recording is in use from here on: a late complete upload no longer replaces a joined recording (#3187).
+    await markAudioUsed(ctx, input.meetingId);
     const agent = await ctx.trx
       .selectFrom('crove_kernel.agent')
       .select('id')

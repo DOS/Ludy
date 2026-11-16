@@ -177,7 +177,11 @@ suite('transcription as the recorder\'s own Vy (#2578, M4b)', () => {
     const meetingId = await seedMeeting('recorder');
     expect((await status('recorder', meetingId)).state).toBe('none');
     const before = providerCalls;
+    const usedAt = () => admin((c) => c.query<{ used: boolean }>('SELECT audio_used_at IS NOT NULL AS used FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2', [orgId, meetingId]));
+    expect((await usedAt()).rows[0]?.used).toBe(false);
     const { runId } = await start('recorder', meetingId);
+    // The start leaves its trace on the meeting (#3187): a joined recording is no longer replaced by a late complete upload.
+    expect((await usedAt()).rows[0]?.used).toBe(true);
     // The event for the worker carries ids only.
     const event = await admin((c) => c.query<{ payload: Record<string, unknown> }>(`SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'meetings.transcript.requested'`, [orgId]));
     expect(Object.keys(event.rows[0]?.payload ?? {}).sort()).toEqual(['agentId', 'meetingId', 'runId']);

@@ -66,6 +66,8 @@ export const meetingsManifest = defineModule({
           'consent_notice_version',
           // A code (tab_closed, mic_lost, ...), never text or personal data (A1, #3159).
           'recording_stop_reason',
+          // When a transcription or summary was started on the recording (#3187): a joined recording is replaced only while this is empty.
+          'audio_used_at',
           // A code (general, briefing, customer, supplier, one_on_one), never text (A4, #3162).
           'summary_template',
           'audio_retention_date',

@@ -70,7 +70,7 @@ export async function recordSealedMedia(ctx: CommandContext, p: RecordSealedMedi
       SELECT joined_from_pieces AS joined FROM crove_meetings.audio_segment WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid`.execute(ctx.trx);
     if (segments.length > 0) {
       if (p.joinedFromPieces || segments.some((row) => !row.joined)) throw new DomainError('MEDIA_ALREADY_RECORDED', 409, `This meeting already has its ${input.kind} recording`);
-      if (await joinedAudioInUse(ctx, meetingId, userId)) {
+      if (await joinedAudioInUse(ctx, meetingId)) {
         throw new DomainError('MEDIA_JOINED_IN_USE', 409, 'The recording joined from the live pieces was already used for a transcript or a summary, so the complete recording cannot replace it');
       }
       // The joined segment and its key go (the key by the recorder's own definer; the file row stays for the orphan sweep, which deletes the object first).
@@ -136,19 +136,20 @@ export async function recordSealedMedia(ctx: CommandContext, p: RecordSealedMedi
   return { fileId, liveChunksDiscarded, replaced };
 }
 
-// Whether anything was made from a meeting's audio: a transcription or a summary run of the recorder, or the transcript, minutes or action items those wrote (or the recorder
-// typed). The run records no link to a file, so any run of the meeting counts (a failed or cancelled one too), which is the safe side: the joined recording is replaced only
-// while nothing derives from it. Live notes are not counted: they come from the live pieces, not from the joined recording. The runs are read from the recorder's own
-// result rows directly, not through the kernel's query: that query is closed to an extension token, whose retry is the case this exists for. The feature names are
-// TRANSCRIBE_FEATURE and SUMMARY_FEATURE (not imported: transcribe-run.ts takes the media lock from here). A transcription start takes the same lock, so a run that
-// starts either commits before this reads or waits for the replacement and finds the new audio.
-async function joinedAudioInUse(ctx: CommandContext, meetingId: string, userId: string): Promise<boolean> {
+// Whether anything was made from a meeting's audio: a transcription or a summary was started on it (the start commands stamp meeting.audio_used_at under this same lock,
+// so a start either commits before this reads or waits for the replacement and finds the new audio), or the meeting holds a transcript, minutes or action items (typed
+// or written by a run). A failed or cancelled start counts too, which is the safe side: the joined recording is replaced only while nothing derives from it. Live notes
+// are not counted: they come from the live pieces, not from the joined recording. The recorder's Vy runs themselves are private rows this module does not read.
+async function joinedAudioInUse(ctx: CommandContext, meetingId: string): Promise<boolean> {
   const { rows } = await sql<{ used: boolean }>`
-    SELECT EXISTS (SELECT 1 FROM crove_kernel.member_vy_result
-                   WHERE org_id = ${ctx.orgId}::uuid AND member_user_id = ${userId}::uuid AND subject_type = 'meeting' AND subject_id = ${meetingId}::uuid
-                     AND feature IN ('meetings.transcribe', 'meetings.summary'))
+    SELECT EXISTS (SELECT 1 FROM crove_meetings.meeting WHERE org_id = ${ctx.orgId}::uuid AND id = ${meetingId}::uuid AND audio_used_at IS NOT NULL)
         OR EXISTS (SELECT 1 FROM crove_meetings.transcript_segment WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid)
         OR EXISTS (SELECT 1 FROM crove_meetings.meeting_result WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid)
         OR EXISTS (SELECT 1 FROM crove_meetings.action_item WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid) AS used`.execute(ctx.trx);
   return rows[0]?.used === true;
+}
+
+/** The trace a transcription or summary start leaves on the meeting (#3187), under the media lock the caller already holds. Set once: the first start wins. */
+export async function markAudioUsed(ctx: CommandContext, meetingId: string): Promise<void> {
+  await sql`UPDATE crove_meetings.meeting SET audio_used_at = COALESCE(audio_used_at, ${ctx.now}::timestamptz) WHERE org_id = ${ctx.orgId}::uuid AND id = ${meetingId}::uuid`.execute(ctx.trx);
 }
