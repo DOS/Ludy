@@ -60,7 +60,6 @@ const PK_EXCEPTIONS: Record<string, { pk: string; reason: string }> = {
   'crove_kernel.inbound_drop': { pk: 'org_id,address_id', reason: 'The drop counter of one inbound address (#37): the address is the key.' },
   'crove_kernel.notification_mute': { pk: 'org_id,user_id,kind', reason: 'A mute is a set membership of (user, notification kind).' },
   'crove_kernel.outbox_archive': { pk: 'org_id,day', reason: 'One archive batch per org and day.' },
-  'crove_kernel.outbox_held': { pk: 'seq', reason: 'The events that wait while an app is off, ordered by their sequence (ADR-0053, #3310); definer-only machinery.' },
   'crove_kernel.outbox_pending': { pk: 'seq', reason: 'The global outbox hand-off queue, ordered by its sequence; definer-only machinery.' },
   'crove_kernel.refusal_tally': { pk: 'org_id,window_start,actor_key,command,code', reason: 'A refusal counter per time window, actor, command and code.' },
   'crove_kernel.tenant': { pk: 'org_id', reason: 'The org itself: its id is org_id.' },
@@ -94,7 +93,6 @@ const EVENT_TRIGGER_EXCEPTIONS: Record<string, { shape: string; reason: string }
 // PR is merged. One key per line, sorted, with a trailing comma.
 const PENDING_EXCEPTIONS = new Set<string>([
   // 'crove_schema.table_name',
-  'crove_kernel.outbox_held',
 ]);
 
 type Rule = 'pk' | 'fk-shape' | 'fk-index' | 'timestamp' | 'money' | 'cross-module' | 'trigger' | 'event-trigger';
