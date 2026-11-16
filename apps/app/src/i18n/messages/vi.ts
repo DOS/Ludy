@@ -7802,6 +7802,7 @@ export const vi = {
     proposal: 'Đề xuất liên quan: {title}',
     openPost: 'Mở bài đăng',
     openMeeting: 'Mở cuộc họp đã sinh ra việc này',
+    openConversation: 'Mở hội thoại',
     meetingClosed: 'Bản ghi không mở được.',
     openProposal: 'Mở đề xuất',
     fromTodo: 'Một thành viên đã giao việc này từ danh sách việc riêng của họ.',
