@@ -300,6 +300,11 @@ suite('agent positions, tasks and wake-ups on PostgreSQL (ADR-0029 Phase 1)', ()
       await age(agentId);
       expect(await due(agentId)).toEqual([]);
       await expect(worker.execute('kernel.agent.run.start', { agentId }, { actor: SYSTEM, orgId })).resolves.toEqual({ runId: null, reason: 'module_disabled' });
+      // The system's own path wakes nobody either: a proposal event still makes the task (nothing is lost), but no wake-up goes out.
+      const { eventId } = await proposalCreated('Hóa đơn khi app tắt', []);
+      const wakesBefore = await wakeEvents();
+      await worker.execute('kernel.agent.dispatch_event', { eventId }, { actor: SYSTEM, orgId });
+      expect(await wakeEvents()).toBe(wakesBefore);
     } finally {
       await setApp(true);
     }

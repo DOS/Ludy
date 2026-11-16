@@ -661,6 +661,11 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
       expect(called.body?.result?.content?.[0]?.text).toContain('MODULE_OFF');
       expect(called.body?.result?.content?.[0]?.text).toContain('social');
       // The call is audited as refused, and the grant still reads the apps that are on.
+      const audited = await admin((client) => client.query(`SELECT detail ->> 'result' AS outcome FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.mcp.call' AND detail ->> 'tool' = 'ludy_social_posts_list' AND detail ->> 'result' = 'refused' LIMIT 1`, [orgId]));
+      expect(audited.rows[0]?.outcome).toBe('refused');
+      // The listing carries no internal field of the descriptor.
+      const raw = (await mcpModern(c.access, 'tools/list')).body?.result?.tools as Array<Record<string, unknown>>;
+      expect(raw.every((t) => !('module' in t))).toBe(true);
       const about = await mcpModern(c.access, 'tools/call', { name: 'ludy_about', arguments: {} }, 'ludy_about');
       expect(about.body?.result?.isError).toBe(false);
     } finally {

@@ -424,8 +424,15 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
       };
       const tools = toolsFor(runtime, actor, grant.orgId, draftBudget);
       // The tools of an app the org switched off (or does not hold) are not listed; a call into one still runs, and the runtime answers MODULE_OFF (ADR-0053, slice e).
-      const effective = new Set(await runtime.effectiveModules(grant.orgId));
-      const hidden = new Set(tools.filter((t) => t.module !== undefined && !effective.has(t.module)).map((t) => t.name));
+      // If the read fails the list is not trimmed (every call is still gated by the runtime itself), so one failed read does not take the whole endpoint down.
+      const effective = await runtime.effectiveModules(grant.orgId).then(
+        (list) => new Set(list),
+        (error) => {
+          logEvent('error', 'mcp effective modules failed', { grantId: claims.grantId, requestId, error: toDomainError(error).code });
+          return null;
+        },
+      );
+      const hidden = new Set(effective === null ? [] : tools.filter((t) => t.module !== undefined && !effective.has(t.module)).map((t) => t.name));
       const reply = await handleMcp({
         body,
         headers,

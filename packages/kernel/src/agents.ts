@@ -1460,14 +1460,8 @@ export const finishAgentRun = defineCommand({
     await ctx.trx.updateTable('crove_kernel.task').set({ checkout_run_id: null, lock_expires_at: null }).where('org_id', '=', ctx.orgId).where('checkout_run_id', '=', input.runId).execute();
     await ctx.trx.updateTable('crove_kernel.agent_wakeup').set({ status: 'done', updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('run_id', '=', input.runId).where('status', '=', 'claimed').execute();
     if (!run) return { finished: false };
-    const pending = await ctx.trx
-      .selectFrom('crove_kernel.agent_wakeup')
-      .select('id')
-      .where('org_id', '=', ctx.orgId)
-      .where('agent_id', '=', run.agent_id)
-      .where('status', '=', 'pending')
-      .executeTakeFirst();
-    if (pending) await ctx.emit('kernel.agent.wakeup_requested', { agentId: run.agent_id });
+    // A request that came in during the run wakes the agent again, unless its app is off for the org or the deployment (rewakePending).
+    await rewakePending(ctx, [run.agent_id]);
     ctx.audit({ run: input.runId, outcome: input.outcome });
     return { finished: true };
   },

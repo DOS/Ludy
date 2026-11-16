@@ -76,7 +76,7 @@ function metaOf(params: Record<string, unknown> | undefined): Record<string, unk
 export function toolList(tools: readonly ToolDescriptor[]): Array<Record<string, unknown>> {
   return [...tools]
     .sort((a, b) => (a.name < b.name ? -1 : 1))
-    .map(({ read: _read, rows: _rows, argsSchema: _argsSchema, ...descriptor }) => descriptor);
+    .map(({ read: _read, rows: _rows, argsSchema: _argsSchema, module: _module, ...descriptor }) => descriptor);
 }
 
 // What a tool answers: structured content and a short text form of it, for clients that read only text.
