@@ -128,13 +128,24 @@ describe('sanitizeCandidateTextForPrompt', () => {
 
   it('prevents partial-forbidden email/domain leakage and handles all CCCD/phone separator formats cleanly', () => {
     const partialEmailAndDomain = sanitizeCandidateTextForPrompt(
-      'Email: binh@secret.com, user@secret.com, site: binh.secret.com/cv, uk: portfolio.co.uk/cv',
-      ['binh', 'secret.com'],
+      'Email: binh@secret.com, user@secret.com, obfuscated: binh [at] example [dot] com, site: binh.secret.com/cv, uk: portfolio.co.uk/cv, domain: mysite [dot] com',
+      ['binh', 'secret.com', 'binh@example.com'],
     );
     expect(partialEmailAndDomain).not.toContain('@');
     expect(partialEmailAndDomain).not.toContain('secret.com');
+    expect(partialEmailAndDomain).not.toContain('example');
     expect(partialEmailAndDomain).not.toContain('user');
     expect(partialEmailAndDomain).not.toContain('portfolio.co.uk');
+    expect(partialEmailAndDomain).not.toContain('mysite');
+
+    const shortSalaries = sanitizeCandidateTextForPrompt(
+      'Expected 25k USD annually, Expected 20m VND, Expected $15k, Expected 18tr, 4 years Node.js 20.',
+    );
+    expect(shortSalaries).not.toContain('25k');
+    expect(shortSalaries).not.toContain('20m');
+    expect(shortSalaries).not.toContain('15k');
+    expect(shortSalaries).not.toContain('18tr');
+    expect(shortSalaries).toContain('4 years Node.js 20');
 
     const idsAndPhones = sanitizeCandidateTextForPrompt(
       'CCCD1: 079 201 012 345, CCCD2: 079-201-012-345, CCCD3: 079.201.012.345, CCCD4: 079201 012345, tel1: (028) 3822 1234, tel2: 0901/234/567.',
@@ -371,6 +382,36 @@ describe('reviewCandidateProfile', () => {
       },
     });
     expect(unavailableRes.ai).toEqual({ ok: false, reason: 'unavailable' });
+
+    // Counts full skill lists before prompt slicing at RECRUITING_SKILLS_MAX (20)
+    const manySkills = Array.from({ length: 21 }, (_, i) => `Skill-${i + 1}`);
+    let seenPrompt = '';
+    const manyRes = await reviewCandidateProfile(
+      sampleInput({
+        language: 'en',
+        matchedSkills: manySkills,
+        missingSkills: [],
+        skillsRequiredCount: 21,
+        notes: ['Email binh [at] example [dot] com, Expected 25k USD annually and Expected 20m VND.'],
+      }),
+      {
+        forbidden: ['binh@example.com'],
+        generate: async ({ prompt }) => {
+          seenPrompt = prompt;
+          return { output: null };
+        },
+      },
+    );
+    expect(manyRes.readiness.skillsMatchedCount).toBe(21);
+    expect(manyRes.readiness.skillsRequiredCount).toBe(21);
+    expect(manyRes.readiness.missingSkillsCount).toBe(0);
+    expect(manyRes.readiness.flags).not.toContain('skills_gap');
+    expect(seenPrompt).toContain('Skill match count: 21 of 21');
+    expect(seenPrompt).toContain('Skill-20');
+    expect(seenPrompt).not.toContain('Skill-21');
+    expect(seenPrompt).not.toContain('example');
+    expect(seenPrompt).not.toContain('25k');
+    expect(seenPrompt).not.toContain('20m');
   });
 });
 

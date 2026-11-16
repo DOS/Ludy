@@ -106,7 +106,8 @@ const UNTRUSTED_FENCE_TAG_RE = /\[\/?\s*UNTRUSTED_NOTES\s*\]/giu;
 const HAS_UNTRUSTED_FENCE_TAG_RE = /\[\/?\s*UNTRUSTED_NOTES\s*\]/iu;
 
 const EMAIL_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/giu;
-const OBFUSCATED_EMAIL_RE = /(?<![\p{L}\p{N}])[a-z0-9._%+-]+\s*(?:\(at\)|\[at\])\s*[a-z0-9.-]+\s*(?:\.|\[\.\]|\(dot\))\s*[a-z]{2,}(?![\p{L}\p{N}])/giu;
+const OBFUSCATED_EMAIL_RE =
+  /(?<![\p{L}\p{N}])[a-z0-9._%+-]+(?:\s*(?:\.|\[\.\]|\(\.\)|\[dot\]|\(dot\))\s*[a-z0-9_-]+)*\s*(?:@|\(at\)|\[at\])\s*[a-z0-9-]+(?:\s*(?:\.|\[\.\]|\(\.\)|\[dot\]|\(dot\)|\bdot\b)\s*[a-z0-9-]+)+(?![\p{L}\p{N}])/giu;
 const SCHEME_URL_RE = /(?:https?|ftp|hxxps?):\/\/[^\s<>()]+/giu;
 const WWW_URL_RE = /\bwww\.[^\s<>()]+/giu;
 const BARE_DOMAIN_TLD =
@@ -115,19 +116,26 @@ const BARE_DOMAIN_RE = new RegExp(
   `(?<![\\p{L}\\p{N}@._-])[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*(?:\\.(?:co|com|net|org|edu|gov)\\.[a-z]{2}|\\.(?:${BARE_DOMAIN_TLD}))(?![\\p{L}\\p{N}])(?:\\/[^\\s<>()]*)?`,
   'giu',
 );
+const OBFUSCATED_DOMAIN_RE = new RegExp(
+  `(?<![\\p{L}\\p{N}@._-])[a-z0-9-]+(?:\\s*(?:\\[\\.\\]|\\(\\.\\)|\\[dot\\]|\\(dot\\)|\\bdot\\b)\\s*[a-z0-9-]+)*\\s*(?:\\[\\.\\]|\\(\\.\\)|\\[dot\\]|\\(dot\\)|\\bdot\\b)\\s*(?:${BARE_DOMAIN_TLD})(?![\\p{L}\\p{N}])`,
+  'giu',
+);
+const OBFUSCATED_MARKER_RE = /\[(?:at|dot|\.)\]|\(\.\)/iu;
 const INTL_PHONE_RE = /(?<![\p{L}\p{N}])(?:\+|00)\d{1,3}(?:[\s.\-()/]?\d){7,12}(?![\p{L}\p{N}])/gu;
 const PAREN_PHONE_RE = /\(\s*0\d{1,3}\s*\)(?:[\s.\-/]?\d){6,9}(?![\p{L}\p{N}])/gu;
 const GROUPED_DIGITS_RE = /(?<![\p{L}\p{N}])\d{2,6}(?:[\s.\-/]\d{2,6}){1,4}(?![\p{L}\p{N}])/gu;
 const VN_ZERO_PHONE_RE = /(?<![\p{L}\p{N}])0(?:[\s.\-()/]?\d){8,10}(?![\p{L}\p{N}])/gu;
 const BARE_ID_OR_PHONE_RE = /(?<![\p{L}\p{N}])\d{9,12}(?![\p{L}\p{N}])/gu;
 const CURRENCY_RANGE_RE =
-  /(?<![\p{L}\p{N}])\d[\d.,]*(?:\s*[-–~]\s*\d[\d.,]*)?\s*(?:vnđ|vnd|đồng|dong|đ|usd|eur|sgd|jpy|triệu|trieu|tr|củ|cu)(?![\p{L}\p{N}])|(?:[$€£¥₫]|(?:usd|eur|vnd|vnđ)\b)\s*\d[\d.,]*(?:\s*[-–~]\s*(?:[$€£¥₫])?\s*\d[\d.,]*)?/giu;
+  /(?<![\p{L}\p{N}])\d[\d.,]*(?:\s*[kmb])?(?:\s*[-–~]\s*\d[\d.,]*(?:\s*[kmb])?)?\s*(?:vnđ|vnd|đồng|dong|đ|usd|eur|sgd|jpy|triệu|trieu|tr|củ|cu)(?![\p{L}\p{N}])|(?:[$€£¥₫]|(?:usd|eur|vnd|vnđ)\b)\s*\d[\d.,]*(?:\s*[kmb])?(?:\s*[-–~]\s*(?:[$€£¥₫])?\s*\d[\d.,]*(?:\s*[kmb])?)?/giu;
 const SALARY_CONTEXT_DIGITS_RE =
-  /((?:mức\s+lương|lương(?:\s+(?:kỳ\s+vọng|mong\s+muốn|hiện\s+tại|thỏa\s+thuận|cứng|net|gross))?|thu\s+nhập|ngân\s+sách|expected\s+(?:wage|salary|pay|comp(?:ensation)?)|salary|wage|budget|compensation)\s*(?::|từ|khoảng|tầm|is|of|around|about|=)?\s*)\d[\d.,]*(?:\s*[-–~]\s*\d[\d.,]*)*/giu;
+  /((?:mức\s+lương|lương(?:\s+(?:kỳ\s+vọng|mong\s+muốn|hiện\s+tại|thỏa\s+thuận|cứng|net|gross))?|thu\s+nhập|ngân\s+sách|expected\s+(?:wage|salary|pay|comp(?:ensation)?)|salary|wage|budget|compensation)\s*(?::|từ|khoảng|tầm|is|of|around|about|=)?\s*)\d[\d.,]*(?:\s*[kmb])?(?:\s*[-–~]\s*\d[\d.,]*(?:\s*[kmb])?)?/giu;
+const EXPECTED_SHORT_SALARY_RE =
+  /((?:expected|kỳ\s+vọng|mong\s+muốn)\s*(?::|khoảng|tầm|around|about|=)?\s*)\d[\d.,]*\s*(?:k|m|tr|triệu|trieu|củ|cu)(?![\p{L}\p{N}])/giu;
 const LARGE_SALARY_DIGITS_RE = /(?<![\p{L}\p{N}])(?:\d{1,3}(?:[.,]\d{3}){2,}|\d{7,8})(?![\p{L}\p{N}])/gu;
 
 const OUTPUT_MONETARY_AMOUNT_RE =
-  /(?<![\p{L}\p{N}])\d[\d.,]*\s*(?:vnđ|vnd|đồng|dong|đ|usd|eur|sgd|jpy|triệu|trieu|tr|nghìn|ngàn|tỷ|tỉ|[$€£¥₫])(?![\p{L}\p{N}])|[$€£¥₫]\s*\d[\d.,]*|(?:salary|wage|compensation|pay|budget|offer|mức\s+lương|lương|thu\s+nhập|ngân\s+sách)\s+(?:of|is|at|là|khoảng|tầm|:)?\s*\d[\d.,]*/iu;
+  /(?<![\p{L}\p{N}])\d[\d.,]*\s*(?:[kmb]\s*)?(?:vnđ|vnd|đồng|dong|đ|usd|eur|sgd|jpy|triệu|trieu|tr|nghìn|ngàn|tỷ|tỉ|[$€£¥₫])(?![\p{L}\p{N}])|[$€£¥₫]\s*\d[\d.,]*(?:\s*[kmb])?(?![\p{L}\p{N}])|(?:salary|wage|compensation|pay|budget|offer|mức\s+lương|lương|thu\s+nhập|ngân\s+sách)\s+(?:of|is|at|là|khoảng|tầm|:)?\s*\d[\d.,]*(?:\s*[kmb])?/iu;
 
 const AUTONOMOUS_DECISION_EN_RE =
   /(?<![\p{L}\p{N}])(?:(?:auto(?:matically)?|immediately)\s+(?:hire|hiring|reject|rejecting)|(?:must|should|shall|will|ought\s+to|needs?\s+to)\s+(?:be\s+)?(?:hired|rejected|declined|hire|reject)(?:\s+(?:now|immediately|this\s+candidate|c1))?|(?:proceed|move)\s+(?:with|to|straight\s+to)\s+(?:hiring|hire|rejecting|reject)|(?:hire|reject)\s+(?:immediately|now|this\s+candidate|c1|without\s+(?:an?\s+)?interview)|(?:extend|issue|send)\s+(?:an?\s+)?(?:job\s+)?offer\s+(?:now|immediately)|decision\s*:\s*(?:hire|reject)|(?:candidate|c1)\s+(?:is|was|are|were|has\s+been|have\s+been|got)\s+(?:hired|rejected|auto-hired|auto-rejected|approved\s+for\s+hire))(?![\p{L}\p{N}])/iu;
@@ -370,6 +378,7 @@ export function sanitizeCandidateTextForPrompt(text: string, forbidden: readonly
     .replace(SCHEME_URL_RE, REDACTED)
     .replace(WWW_URL_RE, REDACTED)
     .replace(BARE_DOMAIN_RE, REDACTED)
+    .replace(OBFUSCATED_DOMAIN_RE, REDACTED)
     .replace(INTL_PHONE_RE, REDACTED)
     .replace(PAREN_PHONE_RE, REDACTED)
     .replace(GROUPED_DIGITS_RE, (match) => {
@@ -380,6 +389,7 @@ export function sanitizeCandidateTextForPrompt(text: string, forbidden: readonly
     .replace(VN_ZERO_PHONE_RE, REDACTED)
     .replace(CURRENCY_RANGE_RE, REDACTED)
     .replace(SALARY_CONTEXT_DIGITS_RE, `$1${REDACTED}`)
+    .replace(EXPECTED_SHORT_SALARY_RE, `$1${REDACTED}`)
     .replace(LARGE_SALARY_DIGITS_RE, REDACTED);
 
   const orderedForbidden = [...forbidden]
@@ -394,12 +404,11 @@ export function sanitizeCandidateTextForPrompt(text: string, forbidden: readonly
   return cut(cleaned, RECRUITING_NOTE_MAX_CHARS);
 }
 
-function normalizeSkillList(skills: readonly string[] | undefined): string[] {
+function cleanSkillList(skills: readonly string[] | undefined): string[] {
   if (!skills || skills.length === 0) return [];
   return skills
     .map((s) => fenced(oneLine(s.replace(/\p{Cf}/gu, '').replace(UNTRUSTED_FENCE_TAG_RE, ' '))))
     .filter((s) => s !== '')
-    .slice(0, RECRUITING_SKILLS_MAX)
     .map((s) => cut(s, 80));
 }
 
@@ -409,16 +418,16 @@ function computeReadinessForBrief(input: RecruitingBriefInput): {
   missingSkills: string[];
   rawNotes: string[];
 } {
-  const matchedSkills = normalizeSkillList(input.matchedSkills);
-  const missingSkills = normalizeSkillList(input.missingSkills);
+  const allMatchedSkills = cleanSkillList(input.matchedSkills);
+  const allMissingSkills = cleanSkillList(input.missingSkills);
   const skillsRequiredCount =
-    input.skillsRequiredCount ?? (matchedSkills.length + missingSkills.length);
+    input.skillsRequiredCount ?? (allMatchedSkills.length + allMissingSkills.length);
   const rawNotes = (input.notes ?? []).filter((n) => n.trim() !== '').slice(0, RECRUITING_NOTES_MAX);
   const readiness = evaluateCandidateReadiness({
     stage: input.stage,
     roleTitle: input.openingTitle,
     yearsExperience: input.yearsExperience ?? null,
-    skillsMatchedCount: matchedSkills.length,
+    skillsMatchedCount: allMatchedSkills.length,
     skillsRequiredCount,
     hasNotes: rawNotes.length > 0,
     hasScheduledInterview: input.hasScheduledInterview ?? null,
@@ -428,7 +437,12 @@ function computeReadinessForBrief(input: RecruitingBriefInput): {
     agreedWage: input.agreedWage ?? null,
     startDate: input.startDate ?? null,
   });
-  return { readiness, matchedSkills, missingSkills, rawNotes };
+  return {
+    readiness,
+    matchedSkills: allMatchedSkills.slice(0, RECRUITING_SKILLS_MAX),
+    missingSkills: allMissingSkills.slice(0, RECRUITING_SKILLS_MAX),
+    rawNotes,
+  };
 }
 
 function buildPromptText(
@@ -482,7 +496,11 @@ export function recruitingBriefInstructions(language: 'vi' | 'en'): string {
 
 function hasRecruitingAddress(bareText: string): boolean {
   const withoutSafeFrameworks = bareText.replace(SAFE_JS_TECH_RE, ' ');
-  return hasAddress(withoutSafeFrameworks) || draftLinksOutside(bareText, []).length > 0;
+  return (
+    hasAddress(withoutSafeFrameworks) ||
+    OBFUSCATED_MARKER_RE.test(withoutSafeFrameworks) ||
+    draftLinksOutside(bareText, []).length > 0
+  );
 }
 
 function hasAutonomousHireRejectDirective(text: string): boolean {
