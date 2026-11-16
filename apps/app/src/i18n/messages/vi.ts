@@ -5153,6 +5153,15 @@ export const vi = {
       noMonths: 'Chưa tháng nào có chi phí để so với sổ sách.',
       unknownAccount: 'Tài khoản {code} không có trong hệ thống tài khoản của pháp nhân này, nên chưa so sánh được. Hãy chọn lại mã ở phần cài đặt.',
       failed: 'Chưa đọc được sổ sách để so sánh: {reason}',
+      documents: 'Chứng từ',
+      documentsChecking: 'Đang kiểm tra…',
+      documentCount: '{count, number} chứng từ',
+      documentMissing: 'Chưa có chứng từ',
+      documentUpload: 'Tải lên ở Hộp thư',
+      documentsFailed: 'Chưa đọc được chứng từ để kiểm tra từng tháng: {reason}',
+      documentsTooMany: 'Pháp nhân này có quá nhiều chứng từ trong các tháng này nên không kiểm tra từng tháng ở đây, và không tháng nào bị đánh dấu là thiếu. Hãy mở Chứng từ để xem.',
+      documentsHint:
+        'Đếm hóa đơn và biên lai đã ghi sổ của pháp nhân này, theo tháng của ngày chứng từ, có người bán mang tên như nền tảng. {brand} chỉ đếm: không viết chứng từ và không ghi bút toán.',
     },
     runs: {
       title: 'Lịch sử cập nhật gần đây',
