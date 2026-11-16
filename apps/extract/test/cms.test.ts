@@ -90,12 +90,20 @@ function assertByteRangeAndCms(
   outBytes: Uint8Array,
   byteRange: readonly [number, number, number, number],
   expectedCmsDer: Uint8Array,
+  options: { readonly allowTrailingUpdate?: boolean } = {},
 ): void {
   const [start, offset1, offset2, len2] = byteRange;
   expect(start).toBe(0);
   expect(offset1).toBeGreaterThan(0);
   expect(offset2).toBeGreaterThan(offset1 + 2);
-  expect(offset2 + len2).toBe(outBytes.byteLength);
+  if (options.allowTrailingUpdate) {
+    expect(offset2 + len2).toBeLessThanOrEqual(outBytes.byteLength);
+    expect(Buffer.from(outBytes.subarray(Math.max(0, offset2 + len2 - 12), offset2 + len2)).toString('ascii')).toContain(
+      '%%EOF',
+    );
+  } else {
+    expect(offset2 + len2).toBe(outBytes.byteLength);
+  }
 
   // ByteRange slices wrap the exact `<...>` /Contents hex string.
   expect(outBytes[offset1]).toBe(0x3c); // '<'
@@ -105,9 +113,9 @@ function assertByteRangeAndCms(
   const slice2 = outBytes.subarray(offset2, offset2 + len2);
   expect(slice1.byteLength).toBe(offset1);
   expect(slice2.byteLength).toBe(len2);
-  expect(slice1.byteLength + (offset2 - offset1) + slice2.byteLength).toBe(outBytes.byteLength);
+  expect(slice1.byteLength + (offset2 - offset1) + slice2.byteLength).toBe(offset2 + len2);
 
-  const rawText = Buffer.from(outBytes).toString('latin1');
+  const rawText = Buffer.from(outBytes.subarray(0, offset2 + len2)).toString('latin1');
   expect(rawText).toContain(`/ByteRange [0 ${offset1} ${offset2} ${len2}]`);
 
   const hexPayload = Buffer.from(outBytes.subarray(offset1 + 1, offset2 - 1)).toString('ascii');
@@ -282,35 +290,116 @@ describe('crove-extract pdf_embed_cms', () => {
     assertByteRangeAndCms(finalBytes, embedded.byteRange, signedCms);
   });
 
-  it('embeds optional PAdES-LTV DSS timestamp and OCSP metadata', async () => {
+  it('embeds optional PAdES-LTV DSS timestamp and OCSP in a post-signature revision without changing ByteRange digest and merges sequential DSS', async () => {
     const basePdf = makeCleanClassicPdf();
-    const cmsDer = makeTestCmsDer('ltv-cms');
+    const commonBase = {
+      pdfBase64: Buffer.from(basePdf).toString('base64'),
+      signerName: 'Phạm Minh Tuấn',
+      signedAtIso: '2026-11-16T11:00:00.000Z',
+      placeholderBytes: 4096,
+    } as const;
+
+    const prepared = await parse(
+      'pdf_embed_cms',
+      encodePdfEmbedCmsInput({
+        ...commonBase,
+        cmsDerBase64: Buffer.from(new Uint8Array([0x30, 0x00])).toString('base64'),
+      }),
+    );
+    if (!prepared.ok || prepared.kind !== 'pdf_embed_cms') throw new Error('expected prepare success');
+    const prepBytes = new Uint8Array(Buffer.from(prepared.pdfBase64, 'base64'));
+    const [b0, b1, b2, b3] = prepared.byteRange;
+    const preDigest = sha256Hex(Buffer.concat([prepBytes.subarray(b0, b1), prepBytes.subarray(b2, b2 + b3)]));
+
+    const cmsDer = makeTestCmsDer('ltv-cms-1');
     const tsDer = derSequence(new Uint8Array([0x02, 0x01, 0x01]));
     const ocspDer = derSequence(new Uint8Array([0x0a, 0x01, 0x00]));
 
     const res = await parse(
       'pdf_embed_cms',
       encodePdfEmbedCmsInput({
-        pdfBase64: Buffer.from(basePdf).toString('base64'),
+        ...commonBase,
         cmsDerBase64: Buffer.from(cmsDer).toString('base64'),
-        signerName: 'Phạm Minh Tuấn',
-        signedAtIso: '2026-11-16T11:00:00.000Z',
         timestampTokenBase64: Buffer.from(tsDer).toString('base64'),
         ocspResponsesBase64: [Buffer.from(ocspDer).toString('base64')],
       }),
     );
     if (!res.ok || res.kind !== 'pdf_embed_cms') throw new Error('expected LTV embed success');
+    expect(res.byteRange).toEqual(prepared.byteRange);
+
+    const outBytes = new Uint8Array(Buffer.from(res.pdfBase64, 'base64'));
+    expect(res.signedSha256).toBe(sha256Hex(outBytes));
+    const postDigest = sha256Hex(Buffer.concat([outBytes.subarray(b0, b1), outBytes.subarray(b2, b2 + b3)]));
+    expect(postDigest).toBe(preDigest);
+    assertByteRangeAndCms(outBytes, res.byteRange, cmsDer, { allowTrailingUpdate: true });
+
+    // Sequential second signature with LTV merges into existing /DSS rather than overwriting.
+    const cmsDer2 = makeTestCmsDer('ltv-cms-2');
+    const tsDer2 = derSequence(new Uint8Array([0x02, 0x01, 0x02]));
+    const ocspDer2 = derSequence(new Uint8Array([0x0a, 0x01, 0x01]));
+    const res2 = await parse(
+      'pdf_embed_cms',
+      encodePdfEmbedCmsInput({
+        pdfBase64: res.pdfBase64,
+        cmsDerBase64: Buffer.from(cmsDer2).toString('base64'),
+        signerName: 'Nguyễn Thị Lan',
+        signedAtIso: '2026-11-16T11:05:00.000Z',
+        timestampTokenBase64: Buffer.from(tsDer2).toString('base64'),
+        ocspResponsesBase64: [Buffer.from(ocspDer2).toString('base64')],
+      }),
+    );
+    if (!res2.ok || res2.kind !== 'pdf_embed_cms') throw new Error('expected second LTV embed success');
+    const outBytes2 = new Uint8Array(Buffer.from(res2.pdfBase64, 'base64'));
+    assertByteRangeAndCms(outBytes2, res2.byteRange, cmsDer2, { allowTrailingUpdate: true });
+
+    const doc = await PDFDocument.load(outBytes2);
+    const dss = doc.catalog.lookup(PDFName.of('DSS'), PDFDict);
+    expect(dss.lookup(PDFName.of('Type'), PDFName).decodeText()).toBe('DSS');
+    expect(dss.lookup(PDFName.of('OCSPs'), PDFArray).size()).toBe(2);
+    const vri = dss.lookup(PDFName.of('VRI'), PDFDict);
+    const expectedVriKey1 = createHash('sha1').update(cmsDer).digest('hex').toUpperCase();
+    const expectedVriKey2 = createHash('sha1').update(cmsDer2).digest('hex').toUpperCase();
+    expect(vri.get(PDFName.of(expectedVriKey1))).toBeDefined();
+    expect(vri.get(PDFName.of(expectedVriKey2))).toBeDefined();
+    expect((await inspectPdf(outBytes2)).pageCount).toBe(1);
+  });
+
+  it('preserves indirect /Fields array when /AcroForm is a direct dictionary in Catalog', async () => {
+    const stream = 'BT /F1 12 Tf 72 720 Td (Existing direct AcroForm) Tj ET';
+    const pdfDirectAcro = makeRawPdf([
+      '<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields 6 0 R >> >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+      `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+      '[7 0 R]',
+      '<< /Type /Annot /Subtype /Widget /FT /Tx /T (ExistingTextField) /Rect [0 0 100 20] >>',
+    ]);
+    const cmsDer = makeTestCmsDer('direct-acro-indirect-fields');
+    const res = await parse(
+      'pdf_embed_cms',
+      encodePdfEmbedCmsInput({
+        pdfBase64: Buffer.from(pdfDirectAcro).toString('base64'),
+        cmsDerBase64: Buffer.from(cmsDer).toString('base64'),
+        signerName: 'Hoàng Văn Đức',
+        signedAtIso: '2026-11-16T11:30:00.000Z',
+      }),
+    );
+    if (!res.ok || res.kind !== 'pdf_embed_cms') throw new Error('expected direct AcroForm embed success');
     const outBytes = new Uint8Array(Buffer.from(res.pdfBase64, 'base64'));
     assertByteRangeAndCms(outBytes, res.byteRange, cmsDer);
 
     const doc = await PDFDocument.load(outBytes);
-    const dss = doc.catalog.lookup(PDFName.of('DSS'), PDFDict);
-    expect(dss.lookup(PDFName.of('Type'), PDFName).decodeText()).toBe('DSS');
-    expect(dss.lookup(PDFName.of('OCSPs'), PDFArray).size()).toBe(1);
-    const vri = dss.lookup(PDFName.of('VRI'), PDFDict);
-    const expectedVriKey = createHash('sha1').update(cmsDer).digest('hex').toUpperCase();
-    expect(vri.get(PDFName.of(expectedVriKey))).toBeDefined();
-    expect((await inspectPdf(outBytes)).pageCount).toBe(1);
+    const acro = doc.catalog.lookup(PDFName.of('AcroForm'), PDFDict);
+    expect(acro.lookup(PDFName.of('SigFlags'), PDFNumber).asNumber()).toBe(3);
+    const fields = acro.lookup(PDFName.of('Fields'), PDFArray);
+    expect(fields.size()).toBe(2);
+    expect(doc.context.lookup(fields.get(0), PDFDict).lookup(PDFName.of('T'), PDFString).decodeText()).toBe(
+      'ExistingTextField',
+    );
+    expect(doc.context.lookup(fields.get(1), PDFDict).lookup(PDFName.of('T'), PDFString).decodeText()).toBe(
+      'Signature1',
+    );
   });
 
   it('rejects non-PDF, encrypted PDFs, active JS/actions, duplicate fieldName, and invalid/oversized CMS', async () => {
@@ -386,8 +475,13 @@ describe('crove-extract pdf_embed_cms', () => {
     const cleanPdf = makeCleanClassicPdf();
     const cleanPdfB64 = Buffer.from(cleanPdf).toString('base64');
 
-    // Non-DER / truncated DER CMS
-    for (const badCms of [Buffer.from('plain-text-not-der'), new Uint8Array([0x30, 0x10, 0x01])]) {
+    // Non-DER / truncated / non-canonical DER CMS
+    const nonCanonicalDer = new Uint8Array(3 + 0x80);
+    nonCanonicalDer[0] = 0x30;
+    nonCanonicalDer[1] = 0x82;
+    nonCanonicalDer[2] = 0x00;
+    nonCanonicalDer[3] = 0x80;
+    for (const badCms of [Buffer.from('plain-text-not-der'), new Uint8Array([0x30, 0x10, 0x01]), nonCanonicalDer]) {
       expect(
         await parse(
           'pdf_embed_cms',
@@ -399,6 +493,27 @@ describe('crove-extract pdf_embed_cms', () => {
         ),
       ).toMatchObject({ ok: false, code: 'invalid' });
     }
+
+    // Duplicate fieldName refusal
+    const firstNamed = await parse(
+      'pdf_embed_cms',
+      encodePdfEmbedCmsInput({
+        ...commonMeta,
+        pdfBase64: cleanPdfB64,
+        fieldName: 'PrimarySig',
+      }),
+    );
+    if (!firstNamed.ok || firstNamed.kind !== 'pdf_embed_cms') throw new Error('expected firstNamed ok');
+    expect(
+      await parse(
+        'pdf_embed_cms',
+        encodePdfEmbedCmsInput({
+          ...commonMeta,
+          pdfBase64: firstNamed.pdfBase64,
+          fieldName: 'PrimarySig',
+        }),
+      ),
+    ).toMatchObject({ ok: false, code: 'invalid' });
 
     // CMS exceeds placeholderBytes
     const bigCms = makeTestCmsDer('x'.repeat(120));
@@ -444,5 +559,5 @@ describe('crove-extract pdf_embed_cms', () => {
     expect(httpRes.status).toBe(200);
     const parsed = zExtractResponse.parse(await httpRes.json());
     expect(parsed).toEqual(sandboxed);
-  });
+  }, 20_000);
 });

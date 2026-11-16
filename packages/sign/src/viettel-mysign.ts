@@ -9,6 +9,7 @@ import {
   decodeDerSequenceBase64,
   isRecord,
   isUsbTokenMode,
+  normalizeExternalTxId,
   normalizePollQuery,
   optionalCredentialField,
   parseCredentialObject,
@@ -126,6 +127,13 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
     return { ok: true, token, ttlMs };
   }
 
+  function cacheToken(secretKey: string, token: string, ttlMs: number): void {
+    if (tokens.size >= 100 && !tokens.has(secretKey)) {
+      tokens.delete(tokens.keys().next().value as string);
+    }
+    tokens.set(secretKey, { token, expiresAtMs: now().getTime() + ttlMs });
+  }
+
   async function getToken(secretKey: string, creds: ViettelCredentials, forceFresh: boolean): Promise<string> {
     const cached = tokens.get(secretKey);
     const currentMs = now().getTime();
@@ -137,8 +145,7 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
     if (!result.ok) {
       throw new CaProviderError(result.reason === 'unavailable' ? 'unavailable' : 'credentials');
     }
-    if (tokens.size >= 100) tokens.delete(tokens.keys().next().value as string);
-    tokens.set(secretKey, { token: result.token, expiresAtMs: currentMs + result.ttlMs });
+    cacheToken(secretKey, result.token, result.ttlMs);
     return result.token;
   }
 
@@ -264,7 +271,7 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
           if (auth.reason === 'api_not_enabled') return 'api_not_enabled';
           return 'unreachable';
         }
-        tokens.set(sha256Hex(secret), { token: auth.token, expiresAtMs: now().getTime() + auth.ttlMs });
+        cacheToken(sha256Hex(secret), auth.token, auth.ttlMs);
         const listRes = await callAuthorized(
           secret,
           creds,
@@ -378,8 +385,7 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
 
     fetchSignedCms: async (secret: string, externalTxId: string): Promise<CaSignedCms> => {
       const creds = parseViettelCredentials(secret);
-      const txId = externalTxId.trim();
-      if (!txId) throw new CaProviderError('invalid_request', 'externalTxId is required');
+      const txId = normalizeExternalTxId(externalTxId);
       const { session, rawJson } = await queryStatus(secret, creds, { externalTxId: txId, idempotencyKey: null });
       if (session.status !== 'signed') {
         throw new CaProviderError('not_signed', 'Viettel MySign transaction is not signed');

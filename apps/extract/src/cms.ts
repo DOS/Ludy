@@ -49,7 +49,7 @@ function assertValidDerSequence(bytes: Uint8Array, label: string): void {
     return;
   }
   const octets = lenByte & 0x7f;
-  if (octets === 0 || octets > 4 || bytes.byteLength < 2 + octets) {
+  if (octets === 0 || octets > 4 || bytes.byteLength < 2 + octets || bytes[2] === 0x00) {
     throw new PdfSignError(`${label} không đúng cấu trúc ASN.1 DER hợp lệ`);
   }
   let declared = 0;
@@ -58,7 +58,7 @@ function assertValidDerSequence(bytes: Uint8Array, label: string): void {
     if (b === undefined) {
       throw new PdfSignError(`${label} không đúng cấu trúc ASN.1 DER hợp lệ`);
     }
-    declared = (declared << 8) | b;
+    declared = declared * 256 + b;
   }
   if (declared < 0x80 || bytes.byteLength !== 2 + octets + declared) {
     throw new PdfSignError(`${label} có độ dài DER không khớp`);
@@ -155,15 +155,19 @@ function groupContiguousObjectRuns<T extends { readonly objNum: number }>(
   return runs;
 }
 
+interface SignatureSlotWrite {
+  readonly objNum: number;
+  readonly headerBuf: Buffer;
+  readonly beforeContents: Buffer;
+  readonly contentsBuf: Buffer;
+  readonly afterContents: Buffer;
+}
+
 function buildIncrementalSuffix(options: {
   basePdfByteLength: number;
   needsLeadingNewline: boolean;
   objects: readonly IncrementalObject[];
-  sigObjNum: number;
-  sigHeaderBuf: Buffer;
-  sigBeforeContents: Buffer;
-  sigContentsBuf: Buffer;
-  sigAfterContents: Buffer;
+  signature?: SignatureSlotWrite;
   rootRef: PDFRef;
   infoRef: PDFRef | null;
   prevStartXrefOffset: number;
@@ -171,7 +175,9 @@ function buildIncrementalSuffix(options: {
   prevMaxObjNum: number;
 }): {
   readonly suffix: Buffer;
-  readonly byteRange: readonly [0, number, number, number];
+  readonly byteRange: readonly [0, number, number, number] | null;
+  readonly startXrefOffset: number;
+  readonly nextPrevMaxObjNum: number;
 } {
   const sorted = [...options.objects].sort((a, b) => a.objNum - b.objNum);
   const chunks: Buffer[] = [];
@@ -190,17 +196,17 @@ function buildIncrementalSuffix(options: {
   for (const obj of sorted) {
     const offset = options.basePdfByteLength + cursor;
     emitted.push({ objNum: obj.objNum, gen: obj.gen, offset });
-    if (obj.objNum === options.sigObjNum) {
-      chunks.push(options.sigHeaderBuf);
-      cursor += options.sigHeaderBuf.byteLength;
-      chunks.push(options.sigBeforeContents);
-      cursor += options.sigBeforeContents.byteLength;
+    if (options.signature && obj.objNum === options.signature.objNum) {
+      chunks.push(options.signature.headerBuf);
+      cursor += options.signature.headerBuf.byteLength;
+      chunks.push(options.signature.beforeContents);
+      cursor += options.signature.beforeContents.byteLength;
       ltAbsolute = options.basePdfByteLength + cursor;
-      chunks.push(options.sigContentsBuf);
-      cursor += options.sigContentsBuf.byteLength;
+      chunks.push(options.signature.contentsBuf);
+      cursor += options.signature.contentsBuf.byteLength;
       gtAbsolute = options.basePdfByteLength + cursor - 1;
-      chunks.push(options.sigAfterContents);
-      cursor += options.sigAfterContents.byteLength;
+      chunks.push(options.signature.afterContents);
+      cursor += options.signature.afterContents.byteLength;
       const endBuf = Buffer.from('\nendobj\n', 'ascii');
       chunks.push(endBuf);
       cursor += endBuf.byteLength;
@@ -217,9 +223,11 @@ function buildIncrementalSuffix(options: {
   const infoClause = options.infoRef
     ? ` /Info ${options.infoRef.objectNumber} ${options.infoRef.generationNumber} R`
     : '';
+  let nextPrevMaxObjNum: number;
 
   if (!options.isXrefStream) {
     const newSize = Math.max(options.prevMaxObjNum + 1, maxEmittedObjNum + 1);
+    nextPrevMaxObjNum = newSize - 1;
     const runs = groupContiguousObjectRuns(emitted);
     const lines: string[] = ['xref'];
     for (const run of runs) {
@@ -242,6 +250,7 @@ function buildIncrementalSuffix(options: {
   } else {
     const xrefObjNum = Math.max(options.prevMaxObjNum, maxEmittedObjNum) + 1;
     const newSize = xrefObjNum + 1;
+    nextPrevMaxObjNum = xrefObjNum;
     const allEntries = [...emitted, { objNum: xrefObjNum, gen: 0, offset: xrefAbsoluteOffset }];
     const runs = groupContiguousObjectRuns(allEntries);
     const indexPairs: number[] = [];
@@ -270,6 +279,14 @@ function buildIncrementalSuffix(options: {
   }
 
   const suffix = Buffer.concat(chunks);
+  if (!options.signature) {
+    return {
+      suffix,
+      byteRange: null,
+      startXrefOffset: xrefAbsoluteOffset,
+      nextPrevMaxObjNum,
+    };
+  }
   const totalBytes = options.basePdfByteLength + suffix.byteLength;
   const offset1 = ltAbsolute;
   const offset2 = gtAbsolute + 1;
@@ -277,6 +294,8 @@ function buildIncrementalSuffix(options: {
   return {
     suffix,
     byteRange: [0, offset1, offset2, len2],
+    startXrefOffset: xrefAbsoluteOffset,
+    nextPrevMaxObjNum,
   };
 }
 
@@ -401,6 +420,33 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
     });
   }
 
+  const appendWidgetToAcroDict = (nextAcro: PDFDict): void => {
+    const existingFieldsRaw = nextAcro.get(PDFName.of('Fields'));
+    if (existingFieldsRaw instanceof PDFRef) {
+      const existingFields = pdfDoc.context.lookupMaybe(existingFieldsRaw, PDFArray);
+      if (!existingFields) {
+        throw new PdfSignError('Trường /Fields của /AcroForm không hợp lệ');
+      }
+      const nextFields = existingFields.clone(pdfDoc.context);
+      nextFields.push(widgetRef);
+      incrementalObjects.push({
+        objNum: existingFieldsRaw.objectNumber,
+        gen: existingFieldsRaw.generationNumber,
+        body: serializePdfObject(nextFields),
+      });
+    } else if (existingFieldsRaw === undefined || existingFieldsRaw instanceof PDFArray) {
+      const nextFields =
+        existingFieldsRaw instanceof PDFArray
+          ? existingFieldsRaw.clone(pdfDoc.context)
+          : PDFArray.withContext(pdfDoc.context);
+      nextFields.push(widgetRef);
+      nextAcro.set(PDFName.of('Fields'), nextFields);
+    } else {
+      throw new PdfSignError('Trường /Fields của /AcroForm không hợp lệ');
+    }
+    nextAcro.set(PDFName.of('SigFlags'), PDFNumber.of(3));
+  };
+
   // Update or create /AcroForm with /SigFlags 3 (SignaturesExist | AppendOnly).
   let needCatalogUpdate = false;
   const nextCatalogDict = catalogDict.clone(pdfDoc.context);
@@ -421,28 +467,7 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
       throw new PdfSignError('Đối tượng /AcroForm của tài liệu PDF không hợp lệ');
     }
     const nextAcro = existingAcro.clone(pdfDoc.context);
-    const existingFieldsRaw = nextAcro.get(PDFName.of('Fields'));
-    if (existingFieldsRaw instanceof PDFRef) {
-      const existingFields = pdfDoc.context.lookupMaybe(existingFieldsRaw, PDFArray);
-      if (!existingFields) {
-        throw new PdfSignError('Trường /Fields của /AcroForm không hợp lệ');
-      }
-      const nextFields = existingFields.clone(pdfDoc.context);
-      nextFields.push(widgetRef);
-      incrementalObjects.push({
-        objNum: existingFieldsRaw.objectNumber,
-        gen: existingFieldsRaw.generationNumber,
-        body: serializePdfObject(nextFields),
-      });
-    } else {
-      const nextFields =
-        existingFieldsRaw instanceof PDFArray
-          ? existingFieldsRaw.clone(pdfDoc.context)
-          : PDFArray.withContext(pdfDoc.context);
-      nextFields.push(widgetRef);
-      nextAcro.set(PDFName.of('Fields'), nextFields);
-    }
-    nextAcro.set(PDFName.of('SigFlags'), PDFNumber.of(3));
+    appendWidgetToAcroDict(nextAcro);
     incrementalObjects.push({
       objNum: existingAcroRaw.objectNumber,
       gen: existingAcroRaw.generationNumber,
@@ -450,64 +475,11 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
     });
   } else if (existingAcroRaw instanceof PDFDict) {
     const nextAcro = existingAcroRaw.clone(pdfDoc.context);
-    const existingFieldsRaw = nextAcro.get(PDFName.of('Fields'));
-    const nextFields =
-      existingFieldsRaw instanceof PDFArray
-        ? existingFieldsRaw.clone(pdfDoc.context)
-        : PDFArray.withContext(pdfDoc.context);
-    nextFields.push(widgetRef);
-    nextAcro.set(PDFName.of('Fields'), nextFields);
-    nextAcro.set(PDFName.of('SigFlags'), PDFNumber.of(3));
+    appendWidgetToAcroDict(nextAcro);
     nextCatalogDict.set(PDFName.of('AcroForm'), nextAcro);
     needCatalogUpdate = true;
   } else {
     throw new PdfSignError('Đối tượng /AcroForm của tài liệu PDF không hợp lệ');
-  }
-
-  // Embed optional PAdES-LTV Document Security Store (/DSS) for OCSP / RFC 3161 timestamp artifacts.
-  if (ocspResponsesDer.length > 0 || timestampTokenDer !== null) {
-    const dssDict = PDFDict.withContext(pdfDoc.context);
-    dssDict.set(PDFName.of('Type'), PDFName.of('DSS'));
-
-    const ocspRefs: PDFRef[] = [];
-    for (const ocspDer of ocspResponsesDer) {
-      const ocspObjNum = nextObjNum++;
-      incrementalObjects.push({ objNum: ocspObjNum, gen: 0, body: buildDerStreamBody(ocspDer) });
-      ocspRefs.push(PDFRef.of(ocspObjNum, 0));
-    }
-    if (ocspRefs.length > 0) {
-      const ocspArr = PDFArray.withContext(pdfDoc.context);
-      for (const ref of ocspRefs) ocspArr.push(ref);
-      dssDict.set(PDFName.of('OCSPs'), ocspArr);
-    }
-
-    let tsRef: PDFRef | null = null;
-    if (timestampTokenDer) {
-      const tsObjNum = nextObjNum++;
-      incrementalObjects.push({ objNum: tsObjNum, gen: 0, body: buildDerStreamBody(timestampTokenDer) });
-      tsRef = PDFRef.of(tsObjNum, 0);
-    }
-
-    // ETSI EN 319 142-1 VRI dictionary key is uppercase hex SHA-1 of the CMS /Contents DER bytes.
-    const vriKey = createHash('sha1').update(cmsDer).digest('hex').toUpperCase();
-    const vriEntry = PDFDict.withContext(pdfDoc.context);
-    vriEntry.set(PDFName.of('TU'), PDFString.of(encodePdfDate(input.signedAtIso).slice(1, -1)));
-    if (ocspRefs.length > 0) {
-      const vriOcsp = PDFArray.withContext(pdfDoc.context);
-      for (const ref of ocspRefs) vriOcsp.push(ref);
-      vriEntry.set(PDFName.of('OCSP'), vriOcsp);
-    }
-    if (tsRef) {
-      vriEntry.set(PDFName.of('TS'), tsRef);
-    }
-    const vriMap = PDFDict.withContext(pdfDoc.context);
-    vriMap.set(PDFName.of(vriKey), vriEntry);
-    dssDict.set(PDFName.of('VRI'), vriMap);
-
-    const dssObjNum = nextObjNum++;
-    incrementalObjects.push({ objNum: dssObjNum, gen: 0, body: serializePdfObject(dssDict) });
-    nextCatalogDict.set(PDFName.of('DSS'), PDFRef.of(dssObjNum, 0));
-    needCatalogUpdate = true;
   }
 
   if (needCatalogUpdate) {
@@ -543,6 +515,8 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
   let b3 = 0;
   let finalSuffix: Buffer | null = null;
   let finalByteRange: readonly [0, number, number, number] | null = null;
+  let update1StartXrefOffset = prevStartXrefOffset;
+  let update1NextPrevMaxObjNum = maxObjNum;
 
   for (let pass = 0; pass < MAX_CONVERGENCE_PASSES; pass += 1) {
     const sigBeforeContents = Buffer.from(
@@ -553,21 +527,28 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
       basePdfByteLength: pdfBytes.byteLength,
       needsLeadingNewline,
       objects: incrementalObjects,
-      sigObjNum,
-      sigHeaderBuf,
-      sigBeforeContents,
-      sigContentsBuf,
-      sigAfterContents,
+      signature: {
+        objNum: sigObjNum,
+        headerBuf: sigHeaderBuf,
+        beforeContents: sigBeforeContents,
+        contentsBuf: sigContentsBuf,
+        afterContents: sigAfterContents,
+      },
       rootRef,
       infoRef,
       prevStartXrefOffset,
       isXrefStream,
       prevMaxObjNum: maxObjNum,
     });
+    if (!built.byteRange) {
+      throw new PdfSignError('Không tính được vị trí ByteRange cho chữ ký số PDF');
+    }
     const [, nextB1, nextB2, nextB3] = built.byteRange;
     if (nextB1 === b1 && nextB2 === b2 && nextB3 === b3) {
       finalSuffix = built.suffix;
       finalByteRange = built.byteRange;
+      update1StartXrefOffset = built.startXrefOffset;
+      update1NextPrevMaxObjNum = built.nextPrevMaxObjNum;
       break;
     }
     b1 = nextB1;
@@ -579,16 +560,156 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
     throw new PdfSignError('Không tính được vị trí ByteRange ổn định cho chữ ký số PDF');
   }
 
-  const outBytes = new Uint8Array(pdfBytes.byteLength + finalSuffix.byteLength);
-  outBytes.set(pdfBytes, 0);
-  outBytes.set(finalSuffix, pdfBytes.byteLength);
+  const signedBytes = new Uint8Array(pdfBytes.byteLength + finalSuffix.byteLength);
+  signedBytes.set(pdfBytes, 0);
+  signedBytes.set(finalSuffix, pdfBytes.byteLength);
 
   if (
-    outBytes[finalByteRange[1]] !== 0x3c ||
-    outBytes[finalByteRange[2] - 1] !== 0x3e ||
-    finalByteRange[2] + finalByteRange[3] !== outBytes.byteLength
+    signedBytes[finalByteRange[1]] !== 0x3c ||
+    signedBytes[finalByteRange[2] - 1] !== 0x3e ||
+    finalByteRange[2] + finalByteRange[3] !== signedBytes.byteLength
   ) {
     throw new PdfSignError('Vị trí ByteRange trong PDF không khớp nội dung /Contents');
+  }
+
+  // Append PAdES-LTV /DSS in a separate post-signature incremental update so ByteRange digest remains invariant.
+  let outBytes: Uint8Array = signedBytes;
+  if (ocspResponsesDer.length > 0 || timestampTokenDer !== null) {
+    let dssObjCursor = update1NextPrevMaxObjNum + 1;
+    const dssObjects: IncrementalObject[] = [];
+
+    const ocspRefs: PDFRef[] = [];
+    for (const ocspDer of ocspResponsesDer) {
+      const ocspObjNum = dssObjCursor++;
+      dssObjects.push({ objNum: ocspObjNum, gen: 0, body: buildDerStreamBody(ocspDer) });
+      ocspRefs.push(PDFRef.of(ocspObjNum, 0));
+    }
+
+    let tsRef: PDFRef | null = null;
+    if (timestampTokenDer) {
+      const tsObjNum = dssObjCursor++;
+      dssObjects.push({ objNum: tsObjNum, gen: 0, body: buildDerStreamBody(timestampTokenDer) });
+      tsRef = PDFRef.of(tsObjNum, 0);
+    }
+
+    // ETSI EN 319 142-1 VRI dictionary key is uppercase hex SHA-1 of the CMS /Contents DER bytes.
+    const vriKey = createHash('sha1').update(cmsDer).digest('hex').toUpperCase();
+    const vriEntry = PDFDict.withContext(pdfDoc.context);
+    vriEntry.set(PDFName.of('TU'), PDFString.of(encodePdfDate(input.signedAtIso).slice(1, -1)));
+    if (ocspRefs.length > 0) {
+      const vriOcsp = PDFArray.withContext(pdfDoc.context);
+      for (const ref of ocspRefs) vriOcsp.push(ref);
+      vriEntry.set(PDFName.of('OCSP'), vriOcsp);
+    }
+    if (tsRef) {
+      vriEntry.set(PDFName.of('TS'), tsRef);
+    }
+
+    const existingDssRaw = catalogDict.get(PDFName.of('DSS'));
+    let nextDss: PDFDict;
+    let dssRefForUpdate: PDFRef | null = null;
+    if (existingDssRaw === undefined) {
+      nextDss = PDFDict.withContext(pdfDoc.context);
+    } else if (existingDssRaw instanceof PDFRef) {
+      const existingDss = pdfDoc.context.lookupMaybe(existingDssRaw, PDFDict);
+      if (!existingDss) {
+        throw new PdfSignError('Đối tượng /DSS của tài liệu PDF không hợp lệ');
+      }
+      nextDss = existingDss.clone(pdfDoc.context);
+      dssRefForUpdate = existingDssRaw;
+    } else if (existingDssRaw instanceof PDFDict) {
+      nextDss = existingDssRaw.clone(pdfDoc.context);
+    } else {
+      throw new PdfSignError('Đối tượng /DSS của tài liệu PDF không hợp lệ');
+    }
+
+    nextDss.set(PDFName.of('Type'), PDFName.of('DSS'));
+
+    if (ocspRefs.length > 0) {
+      const existingOcspsRaw = nextDss.get(PDFName.of('OCSPs'));
+      if (existingOcspsRaw instanceof PDFRef) {
+        const existingOcsps = pdfDoc.context.lookupMaybe(existingOcspsRaw, PDFArray);
+        if (!existingOcsps) {
+          throw new PdfSignError('Danh sách /OCSPs trong /DSS không hợp lệ');
+        }
+        const nextOcsps = existingOcsps.clone(pdfDoc.context);
+        for (const ref of ocspRefs) nextOcsps.push(ref);
+        dssObjects.push({
+          objNum: existingOcspsRaw.objectNumber,
+          gen: existingOcspsRaw.generationNumber,
+          body: serializePdfObject(nextOcsps),
+        });
+      } else if (existingOcspsRaw === undefined || existingOcspsRaw instanceof PDFArray) {
+        const nextOcsps =
+          existingOcspsRaw instanceof PDFArray
+            ? existingOcspsRaw.clone(pdfDoc.context)
+            : PDFArray.withContext(pdfDoc.context);
+        for (const ref of ocspRefs) nextOcsps.push(ref);
+        nextDss.set(PDFName.of('OCSPs'), nextOcsps);
+      } else {
+        throw new PdfSignError('Danh sách /OCSPs trong /DSS không hợp lệ');
+      }
+    }
+
+    const existingVriRaw = nextDss.get(PDFName.of('VRI'));
+    if (existingVriRaw instanceof PDFRef) {
+      const existingVri = pdfDoc.context.lookupMaybe(existingVriRaw, PDFDict);
+      if (!existingVri) {
+        throw new PdfSignError('Từ điển /VRI trong /DSS không hợp lệ');
+      }
+      const nextVri = existingVri.clone(pdfDoc.context);
+      nextVri.set(PDFName.of(vriKey), vriEntry);
+      dssObjects.push({
+        objNum: existingVriRaw.objectNumber,
+        gen: existingVriRaw.generationNumber,
+        body: serializePdfObject(nextVri),
+      });
+    } else if (existingVriRaw === undefined || existingVriRaw instanceof PDFDict) {
+      const nextVri =
+        existingVriRaw instanceof PDFDict
+          ? existingVriRaw.clone(pdfDoc.context)
+          : PDFDict.withContext(pdfDoc.context);
+      nextVri.set(PDFName.of(vriKey), vriEntry);
+      nextDss.set(PDFName.of('VRI'), nextVri);
+    } else {
+      throw new PdfSignError('Từ điển /VRI trong /DSS không hợp lệ');
+    }
+
+    if (dssRefForUpdate !== null) {
+      dssObjects.push({
+        objNum: dssRefForUpdate.objectNumber,
+        gen: dssRefForUpdate.generationNumber,
+        body: serializePdfObject(nextDss),
+      });
+    } else {
+      const dssObjNum = dssObjCursor++;
+      dssObjects.push({ objNum: dssObjNum, gen: 0, body: serializePdfObject(nextDss) });
+      nextCatalogDict.set(PDFName.of('DSS'), PDFRef.of(dssObjNum, 0));
+      dssObjects.push({
+        objNum: rootRef.objectNumber,
+        gen: rootRef.generationNumber,
+        body: serializePdfObject(nextCatalogDict),
+      });
+    }
+
+    const signedNeedsNewline =
+      signedBytes.byteLength > 0 &&
+      signedBytes[signedBytes.byteLength - 1] !== 0x0a &&
+      signedBytes[signedBytes.byteLength - 1] !== 0x0d;
+    const update2 = buildIncrementalSuffix({
+      basePdfByteLength: signedBytes.byteLength,
+      needsLeadingNewline: signedNeedsNewline,
+      objects: dssObjects,
+      rootRef,
+      infoRef,
+      prevStartXrefOffset: update1StartXrefOffset,
+      isXrefStream,
+      prevMaxObjNum: update1NextPrevMaxObjNum,
+    });
+    const combined = new Uint8Array(signedBytes.byteLength + update2.suffix.byteLength);
+    combined.set(signedBytes, 0);
+    combined.set(update2.suffix, signedBytes.byteLength);
+    outBytes = combined;
   }
 
   if (outBytes.byteLength > EXTRACT_LIMITS.maxFileBytes) {

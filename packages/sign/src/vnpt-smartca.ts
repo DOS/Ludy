@@ -9,6 +9,7 @@ import {
   decodeDerSequenceBase64,
   isRecord,
   isUsbTokenMode,
+  normalizeExternalTxId,
   normalizePollQuery,
   optionalCredentialField,
   parseCredentialObject,
@@ -345,8 +346,7 @@ export function createVnptSmartCaAdapter(options: CaAdapterOptions = {}): CaSign
 
     fetchSignedCms: async (secret: string, externalTxId: string): Promise<CaSignedCms> => {
       const creds = parseVnptCredentials(secret);
-      const txId = externalTxId.trim();
-      if (!txId) throw new CaProviderError('invalid_request', 'externalTxId is required');
+      const txId = normalizeExternalTxId(externalTxId);
       const { session, rawJson } = await queryStatus(creds, txId, txId);
       if (session.status !== 'signed') {
         throw new CaProviderError('not_signed', 'VNPT SmartCA transaction is not signed');

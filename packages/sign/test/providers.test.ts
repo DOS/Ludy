@@ -10,6 +10,7 @@ import {
   assertSafeCaBaseUrl,
   buildSandboxCmsDer,
   getCaAdapter,
+  isValidDerSequence,
   type CaProviderId,
 } from '../src/index.ts';
 
@@ -101,6 +102,10 @@ describe('SSRF guard and host allowlists across remote CA adapters', () => {
       'https://169.254.169.254/latest/meta-data',
       'https://[::1]/api',
       'https://2130706433/api',
+      'https://127.0x1/api',
+      'https://0x7f.1/api',
+      'https://0177.0.0.1/api',
+      'https://12345/api',
       'https://localhost/api',
       'https://ca.internal/api',
       'https://service.local/api',
@@ -386,5 +391,44 @@ describe('MISA WeSign adapter (recorded responses)', () => {
       '/apis/RMeSign/GetListCertificate': [{ status: 200, body: { Success: true, Data: [{ CertSerial: 'U1', SignType: 'USB_TOKEN', KeyStatus: 'ACTIVE' }] } }],
     });
     expect(await getCaAdapter('misa_wesign', { fetch: usbCerts.fetchImpl }).testConnection(MISA_SECRET)).toBe('usb_token_unsupported');
+  });
+
+  it('rejects path-traversal identifiers, non-canonical DER lengths, and slow body-read timeouts', async () => {
+    const { fetchImpl, calls } = mockFetch({});
+    for (const provider of ['vnpt_smartca', 'viettel_mysign', 'misa_wesign'] as const) {
+      const adapter = getCaAdapter(provider, { fetch: fetchImpl });
+      const secret =
+        provider === 'vnpt_smartca' ? VNPT_SECRET : provider === 'viettel_mysign' ? VIETTEL_SECRET : MISA_SECRET;
+      for (const badId of ['..', '.', '../admin', 'tx/sub', 'tx?leak=1', 'tx#frag', 'a'.repeat(129)]) {
+        await expect(adapter.pollStatus(secret, badId)).rejects.toMatchObject({ kind: 'invalid_request' });
+        await expect(adapter.fetchSignedCms(secret, badId)).rejects.toMatchObject({ kind: 'invalid_request' });
+      }
+      await expect(adapter.pollStatus(secret, { idempotencyKey: '../escape' })).rejects.toMatchObject({
+        kind: 'invalid_request',
+      });
+    }
+    expect(calls).toHaveLength(0);
+
+    const nonCanonical = new Uint8Array(3 + 0x80);
+    nonCanonical[0] = 0x30;
+    nonCanonical[1] = 0x82;
+    nonCanonical[2] = 0x00;
+    nonCanonical[3] = 0x80;
+    expect(isValidDerSequence(nonCanonical)).toBe(false);
+
+    const slowBodyFetch: typeof fetch = async (_input, init) => {
+      const body = new ReadableStream({
+        start(controller) {
+          init?.signal?.addEventListener('abort', () => {
+            controller.error(init.signal?.reason ?? new Error('aborted'));
+          });
+        },
+      });
+      return new Response(body, { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    const timeoutAdapter = getCaAdapter('vnpt_smartca', { fetch: slowBodyFetch, timeoutMs: 25 });
+    await expect(timeoutAdapter.pollStatus(VNPT_SECRET, 'tx-slow-body')).rejects.toMatchObject({
+      kind: 'timeout',
+    });
   });
 });

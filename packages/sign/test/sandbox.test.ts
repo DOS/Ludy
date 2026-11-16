@@ -177,9 +177,11 @@ describe('CA provider registry and offline sandbox adapter', () => {
 
     const pA = adapter.initiateSign(SANDBOX_CA_SECRET, makeRequest('k-slow'));
     const pB = adapter.initiateSign(SANDBOX_CA_SECRET, makeRequest('k-slow'));
+    const pConflict = adapter.initiateSign(SANDBOX_CA_SECRET, makeRequest('k-slow', { digestSha256: DIGEST_B }));
     releaseSlow();
     const [resA, resB] = await Promise.all([pA, pB]);
     expect(resA).toEqual(resB);
+    await expect(pConflict).rejects.toMatchObject({ kind: 'idempotency_conflict' });
     expect(JSON.stringify(control.calls)).not.toContain(SANDBOX_CA_SECRET);
   });
 });

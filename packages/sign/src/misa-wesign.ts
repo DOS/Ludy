@@ -9,6 +9,7 @@ import {
   decodeDerSequenceBase64,
   isRecord,
   isUsbTokenMode,
+  normalizeExternalTxId,
   normalizePollQuery,
   optionalCredentialField,
   parseCredentialObject,
@@ -143,6 +144,13 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
     return { ok: false, reason: 'credentials' };
   }
 
+  function cacheToken(secretKey: string, token: string): void {
+    if (tokens.size >= 100 && !tokens.has(secretKey)) {
+      tokens.delete(tokens.keys().next().value as string);
+    }
+    tokens.set(secretKey, { token, expiresAtMs: now().getTime() + DEFAULT_TOKEN_TTL_MS });
+  }
+
   async function getToken(secretKey: string, creds: MisaWeSignCredentials, forceFresh: boolean): Promise<string> {
     const cached = tokens.get(secretKey);
     const currentMs = now().getTime();
@@ -154,8 +162,7 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
     if (!result.ok) {
       throw new CaProviderError(result.reason === 'unavailable' ? 'unavailable' : 'credentials');
     }
-    if (tokens.size >= 100) tokens.delete(tokens.keys().next().value as string);
-    tokens.set(secretKey, { token: result.token, expiresAtMs: currentMs + DEFAULT_TOKEN_TTL_MS });
+    cacheToken(secretKey, result.token);
     return result.token;
   }
 
@@ -286,7 +293,7 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
           if (auth.reason === 'credentials') return 'wrong_credentials';
           return 'unreachable';
         }
-        tokens.set(sha256Hex(secret), { token: auth.token, expiresAtMs: now().getTime() + DEFAULT_TOKEN_TTL_MS });
+        cacheToken(sha256Hex(secret), auth.token);
         const certsRes = await callAuthorized(secret, creds, 'POST', '/GetListCertificate', {}, false);
         if (certsRes.status === 429 || certsRes.status >= 500 || !isRecord(certsRes.json)) return 'unreachable';
         if (pickCaseInsensitive(certsRes.json, 'Success') !== true) return 'unreachable';
@@ -387,8 +394,7 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
 
     fetchSignedCms: async (secret: string, externalTxId: string): Promise<CaSignedCms> => {
       const creds = parseMisaCredentials(secret);
-      const txId = externalTxId.trim();
-      if (!txId) throw new CaProviderError('invalid_request', 'externalTxId is required');
+      const txId = normalizeExternalTxId(externalTxId);
       const { session, rawJson } = await queryStatus(secret, creds, { externalTxId: txId, idempotencyKey: null });
       if (session.status !== 'signed') {
         throw new CaProviderError('not_signed', 'MISA WeSign transaction is not signed');

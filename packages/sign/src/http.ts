@@ -10,6 +10,7 @@ import {
 } from './port.ts';
 
 export const DEFAULT_CA_TIMEOUT_MS = 15_000;
+const MAX_CA_RESPONSE_BYTES = 2 * 1024 * 1024;
 const SHA256_HEX_RE = /^[0-9a-fA-F]{64}$/;
 const STRICT_BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
 
@@ -57,7 +58,7 @@ export function isUsbTokenMode(value: unknown): boolean {
   return USB_TOKEN_MODE_TOKENS.some((token) => normalized.includes(token));
 }
 
-export function assertRemoteSigningAllowed(signingMode: unknown): void {
+function assertRemoteSigningAllowed(signingMode: unknown): void {
   if (signingMode === undefined || signingMode === null) return;
   if (typeof signingMode === 'string') {
     const normalized = signingMode.trim().toLowerCase();
@@ -99,9 +100,9 @@ export function isSafePublicFqdn(rawHost: string): boolean {
   if (labels.some((label) => !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))) {
     return false;
   }
-  // Guard against numeric/octal IPv4 lookalikes in final label.
+  // Real public DNS TLDs are alphabetic or punycode (`xn--...`), blocking numeric/hex/octal IPv4 lookalikes.
   const tld = labels[labels.length - 1] ?? '';
-  if (/^\d+$/.test(tld)) return false;
+  if (!/^(?:[a-z]{2,63}|xn--[a-z0-9-]{1,59})$/.test(tld)) return false;
   return true;
 }
 
@@ -184,26 +185,53 @@ export function validateInitiateRequest(request: CaInitiateRequest): {
   };
 }
 
+export function normalizeExternalTxId(externalTxId: string): string {
+  const trimmed = externalTxId.trim();
+  if (
+    trimmed.length === 0 ||
+    trimmed.length > 128 ||
+    trimmed === '.' ||
+    trimmed === '..' ||
+    /[\\/?#]/.test(trimmed)
+  ) {
+    throw new CaProviderError('invalid_request', 'externalTxId must be a safe 1..128 character identifier');
+  }
+  return trimmed;
+}
+
 export function normalizePollQuery(query: CaPollQuery | string): {
   externalTxId: string | null;
   idempotencyKey: string | null;
 } {
   if (typeof query === 'string') {
-    const trimmed = query.trim();
-    if (trimmed.length === 0 || trimmed.length > 128) {
-      throw new CaProviderError('invalid_request', 'externalTxId must be 1..128 characters');
-    }
-    return { externalTxId: trimmed, idempotencyKey: null };
+    return { externalTxId: normalizeExternalTxId(query), idempotencyKey: null };
   }
-  const externalTxId = typeof query.externalTxId === 'string' && query.externalTxId.trim() !== '' ? query.externalTxId.trim() : null;
-  const idempotencyKey = typeof query.idempotencyKey === 'string' && query.idempotencyKey.trim() !== '' ? query.idempotencyKey.trim() : null;
-  if (externalTxId === null && idempotencyKey === null) {
+  const externalTxId =
+    typeof query.externalTxId === 'string' && query.externalTxId.trim() !== ''
+      ? normalizeExternalTxId(query.externalTxId)
+      : null;
+  const rawKey =
+    typeof query.idempotencyKey === 'string' && query.idempotencyKey.trim() !== ''
+      ? query.idempotencyKey.trim()
+      : null;
+  if (externalTxId === null && rawKey === null) {
     throw new CaProviderError('invalid_request', 'pollStatus requires externalTxId or idempotencyKey');
   }
-  if ((externalTxId && externalTxId.length > 128) || (idempotencyKey && idempotencyKey.length > 128)) {
-    throw new CaProviderError('invalid_request', 'transaction lookup key exceeds 128 characters');
+  if (rawKey !== null && (rawKey.length > 128 || rawKey === '.' || rawKey === '..' || /[\\/?#]/.test(rawKey))) {
+    throw new CaProviderError('invalid_request', 'idempotencyKey must be a safe 1..128 character identifier');
   }
-  return { externalTxId, idempotencyKey };
+  return { externalTxId, idempotencyKey: rawKey };
+}
+
+export function hasUsbTokenCredentialFields(obj: Record<string, unknown>): boolean {
+  for (const key of ['signingMode', 'signMode', 'tokenType', 'mode']) {
+    if (obj[key] !== undefined && isUsbTokenMode(obj[key])) return true;
+  }
+  return (
+    obj.usbToken === true ||
+    (typeof obj.usbTokenSerial === 'string' && obj.usbTokenSerial.trim() !== '') ||
+    (typeof obj.tokenSerial === 'string' && obj.tokenSerial.trim() !== '')
+  );
 }
 
 export function parseCredentialObject(secret: string): Record<string, unknown> {
@@ -217,12 +245,7 @@ export function parseCredentialObject(secret: string): Record<string, unknown> {
     throw new CaProviderError('credentials');
   }
   const obj = raw as Record<string, unknown>;
-  for (const key of ['signingMode', 'signMode', 'tokenType', 'mode']) {
-    if (obj[key] !== undefined && isUsbTokenMode(obj[key])) {
-      throw new CaProviderError('usb_token_unsupported', 'client-PC USB/token signing mode is not supported on server workers');
-    }
-  }
-  if (obj.usbToken === true || (typeof obj.usbTokenSerial === 'string' && obj.usbTokenSerial.trim() !== '') || (typeof obj.tokenSerial === 'string' && obj.tokenSerial.trim() !== '')) {
+  if (hasUsbTokenCredentialFields(obj)) {
     throw new CaProviderError('usb_token_unsupported', 'client-PC USB/token signing mode is not supported on server workers');
   }
   return obj;
@@ -282,19 +305,44 @@ export function isValidDerSequence(bytes: Uint8Array): boolean {
   }
   const octets = lenByte & 0x7f;
   if (octets === 0 || octets > 4 || bytes.byteLength < 2 + octets) return false;
+  // Minimal canonical DER length encoding forbids leading zero length octets.
+  if (bytes[2] === 0x00) return false;
   let declared = 0;
   for (let i = 0; i < octets; i += 1) {
     const b = bytes[2 + i];
     if (b === undefined) return false;
     declared = (declared << 8) | b;
   }
-  if (declared < 0x80 && octets > 0) return false;
+  if (declared < 0x80) return false;
   return bytes.byteLength === 2 + octets + declared;
 }
 
 interface CaHttpResponse {
   status: number;
   json: unknown;
+}
+
+async function readResponseTextBounded(response: Response, write: boolean): Promise<string> {
+  const declared = Number(response.headers.get('content-length') ?? Number.NaN);
+  if (Number.isFinite(declared) && declared > MAX_CA_RESPONSE_BYTES) {
+    await response.body?.cancel().catch(() => {});
+    throw new CaProviderError(write ? 'lost_answer' : 'unavailable');
+  }
+  const reader = response.body?.getReader();
+  if (!reader) return response.text();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_CA_RESPONSE_BYTES) {
+      await reader.cancel().catch(() => {});
+      throw new CaProviderError(write ? 'lost_answer' : 'unavailable');
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks, total).toString('utf8');
 }
 
 export async function postCaJson(options: {
@@ -311,6 +359,7 @@ export async function postCaJson(options: {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(new CaProviderError('timeout')), options.timeoutMs);
   let response: Response;
+  let text: string;
   try {
     response = await options.fetchImpl(checkedUrl.toString(), {
       method: options.method ?? 'POST',
@@ -319,6 +368,7 @@ export async function postCaJson(options: {
       redirect: 'error',
       signal: controller.signal,
     });
+    text = await readResponseTextBounded(response, options.write);
   } catch (error) {
     if (error instanceof CaProviderError) throw error;
     if (controller.signal.aborted) {
@@ -327,13 +377,6 @@ export async function postCaJson(options: {
     throw new CaProviderError(options.write ? 'lost_answer' : 'unreachable');
   } finally {
     clearTimeout(timer);
-  }
-
-  let text: string;
-  try {
-    text = await response.text();
-  } catch {
-    throw new CaProviderError(options.write ? 'lost_answer' : 'unreachable');
   }
 
   let json: unknown = null;

@@ -4,9 +4,10 @@
 // idempotencyKey deduplication, and deterministic ASN.1 DER CMS SignedData payloads.
 import { createHash } from 'node:crypto';
 import {
-  isUsbTokenMode,
-  validateInitiateRequest,
+  hasUsbTokenCredentialFields,
+  normalizeExternalTxId,
   normalizePollQuery,
+  validateInitiateRequest,
 } from './http.ts';
 import {
   CaProviderError,
@@ -155,11 +156,7 @@ function classifySandboxSecret(secret: string): 'ok' | 'usb_token' | 'wrong' {
     try {
       const parsed = JSON.parse(trimmed) as unknown;
       if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-        const obj = parsed as Record<string, unknown>;
-        for (const key of ['signingMode', 'signMode', 'tokenType', 'mode']) {
-          if (obj[key] !== undefined && isUsbTokenMode(obj[key])) return 'usb_token';
-        }
-        if (obj.usbToken === true) return 'usb_token';
+        if (hasUsbTokenCredentialFields(parsed as Record<string, unknown>)) return 'usb_token';
       }
     } catch {
       return 'wrong';
@@ -178,7 +175,10 @@ export function createSandboxCaAdapter(options: SandboxCaOptions = {}): {
   const calls: string[] = [];
   const byKey = new Map<string, StoredSession>();
   const byTxId = new Map<string, StoredSession>();
-  const inflight = new Map<string, Promise<CaSignSession>>();
+  const inflight = new Map<
+    string,
+    { readonly digestSha256: string; readonly certRef: string; readonly promise: Promise<CaSignSession> }
+  >();
 
   const control: SandboxCaControl = {
     script: (...behaviors) => {
@@ -309,11 +309,23 @@ export function createSandboxCaAdapter(options: SandboxCaOptions = {}): {
       }
 
       const pendingRun = inflight.get(valid.idempotencyKey);
-      if (pendingRun) return pendingRun;
+      if (pendingRun) {
+        if (pendingRun.digestSha256 !== valid.digestSha256 || pendingRun.certRef !== valid.certRef) {
+          throw new CaProviderError(
+            'idempotency_conflict',
+            'idempotencyKey already in flight with different digest or certRef',
+          );
+        }
+        return pendingRun.promise;
+      }
 
       const behavior = queue.shift() ?? 'signed';
       const run = createSession(valid.idempotencyKey, valid.digestSha256, valid.certRef, behavior);
-      inflight.set(valid.idempotencyKey, run);
+      inflight.set(valid.idempotencyKey, {
+        digestSha256: valid.digestSha256,
+        certRef: valid.certRef,
+        promise: run,
+      });
       try {
         return await run;
       } finally {
@@ -346,8 +358,7 @@ export function createSandboxCaAdapter(options: SandboxCaOptions = {}): {
 
     fetchSignedCms: async (secret: string, externalTxId: string): Promise<CaSignedCms> => {
       assertSecret(secret);
-      const txId = externalTxId.trim();
-      if (!txId) throw new CaProviderError('invalid_request', 'externalTxId is required');
+      const txId = normalizeExternalTxId(externalTxId);
       calls.push(`fetchSignedCms:${txId}`);
 
       const stored = byTxId.get(txId);
