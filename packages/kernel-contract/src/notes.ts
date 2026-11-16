@@ -7,9 +7,9 @@ import { zId } from './schemas.ts';
 
 export const NOTE_VISIBILITIES = ['private', 'org'] as const;
 export type NoteVisibility = (typeof NOTE_VISIBILITIES)[number];
-// The records a note links to (notes.md §3.4): the kernel's parties and files, and finance's documents and journal
-// entries and crm's bookings (#1672), which another module owns and may be off; meetings come later (N10).
-export const NOTE_LINK_TARGETS = ['kernel.party', 'kernel.file', 'kernel.task', 'finance.purchase_document', 'finance.journal_entry', 'crm.booking', 'projects.project'] as const;
+// The records a note links to (notes.md §3.4): the kernel's parties, files and tasks, and targets owned by finance,
+// crm, projects (#1672, #2595) and meetings (#1679), which another module owns and may be off.
+export const NOTE_LINK_TARGETS = ['kernel.party', 'kernel.file', 'kernel.task', 'finance.purchase_document', 'finance.journal_entry', 'crm.booking', 'projects.project', 'meetings.meeting'] as const;
 export type NoteLinkTarget = (typeof NOTE_LINK_TARGETS)[number];
 // The lists of the notes screen (notes.md §3.10).
 export const NOTE_LIST_VIEWS = ['mine', 'shared', 'pinned', 'archived', 'trash'] as const;
@@ -51,6 +51,8 @@ export const zNoteUpdate = z.strictObject({ noteId: zId, revision: z.number().in
 export type NoteUpdateInput = z.input<typeof zNoteUpdate>;
 export const zNoteSetVisibility = z.strictObject({ noteId: zId, visibility: z.enum(NOTE_VISIBILITIES) });
 export const zNoteRef = z.strictObject({ noteId: zId });
+export const zNoteFromMeetingSummary = z.strictObject({ meetingId: zId, title: zTitle.optional() });
+export type NoteFromMeetingSummaryInput = z.input<typeof zNoteFromMeetingSummary>;
 export const zNoteLinkAdd = z.strictObject({ noteId: zId, targetType: z.enum(NOTE_LINK_TARGETS), targetId: zId });
 export const zNoteLinkRemove = z.strictObject({ linkId: zId });
 export const zNoteList = z.strictObject({

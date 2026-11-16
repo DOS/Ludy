@@ -12,12 +12,13 @@ export const NOTE_TARGET_QUERIES = {
   'finance.journal_entry': 'finance.journal.get',
   'crm.booking': 'crm.booking.get',
   'projects.project': 'projects.project.get',
+  'meetings.meeting': 'meetings.meeting.get',
 } as const satisfies Record<Exclude<NoteLinkTarget, 'kernel.party' | 'kernel.file' | 'kernel.task'>, string>;
 
 // What those queries answer for a record the caller cannot open: not there (or in a legal entity, or of a host, the
 // caller cannot see), or not for the caller's role. Any other refusal, a misspelled query name included, is a bug and
 // fails the read instead of showing every link as unavailable.
-const UNREADABLE = new Set(['DOCUMENT_NOT_FOUND', 'ENTRY_NOT_FOUND', 'BOOKING_NOT_FOUND', 'PROJECT_NOT_FOUND', 'FORBIDDEN']);
+const UNREADABLE = new Set(['DOCUMENT_NOT_FOUND', 'ENTRY_NOT_FOUND', 'BOOKING_NOT_FOUND', 'PROJECT_NOT_FOUND', 'MEETING_NOT_FOUND', 'FORBIDDEN']);
 
 const KERNEL_TABLES = {
   'kernel.party': 'crove_kernel.party',
@@ -35,8 +36,9 @@ export async function canOpen(ctx: QueryContext, targetType: NoteLinkTarget, tar
     return found !== undefined;
   }
   const moduleTarget = targetType as keyof typeof NOTE_TARGET_QUERIES;
+  const queryInput = moduleTarget === 'meetings.meeting' ? { meetingId: targetId } : { id: targetId };
   try {
-    const answer = await ctx.query(NOTE_TARGET_QUERIES[moduleTarget], { id: targetId });
+    const answer = await ctx.query(NOTE_TARGET_QUERIES[moduleTarget], queryInput);
     return answer.status === 'ok';
   } catch (error) {
     if (error instanceof DomainError && UNREADABLE.has(error.code)) return false;
