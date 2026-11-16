@@ -34,6 +34,7 @@ import { RepeatIcon } from '@crove/ui/components/repeat-icon';
 import { cn } from '@crove/ui/lib/utils';
 import { DateInput } from './date-input.tsx';
 import { TimeInput } from './time-input.tsx';
+import { UnansweredComments, UnansweredProvider } from './social-unanswered.tsx';
 import { ErrorText, Spinner } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -102,6 +103,9 @@ function channelLabel(item: CalendarItem, names: Map<string, string>): string {
   const name = names.get(item.v.connectionId);
   return name ? `${providerName(item.v.provider)} (${name})` : providerName(item.v.provider);
 }
+
+// No posts yet: a stable empty list, so the provider's read keeps its place while the calendar loads.
+const NO_POSTS: Post[] = [];
 
 const groupText = (group: CalendarGroup, empty: string) => excerpt((group.items[0] as CalendarItem).v.effective.body) || empty;
 
@@ -178,7 +182,7 @@ function Chip({
         {text}
       </span>
       <span className="block truncate text-subtle-foreground">
-        {channels} · {statuses}
+        {channels} · {statuses} <UnansweredComments postId={group.post.id} />
       </span>
     </>
   );
@@ -954,6 +958,7 @@ export function SocialCalendar({
   const openGroups = dayOpen ? (byDay.get(dayOpen) ?? []) : [];
 
   return (
+    <UnansweredProvider posts={posts.data ?? NO_POSTS}>
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="outline" size="sm" onClick={() => shift(-1)} aria-label={t('calendar.previous')}>
@@ -1272,5 +1277,6 @@ export function SocialCalendar({
         </DayDialog>
       )}
     </div>
+    </UnansweredProvider>
   );
 }
