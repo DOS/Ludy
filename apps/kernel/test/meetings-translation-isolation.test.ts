@@ -29,6 +29,7 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       'crove_kernel_org_purge_hr_leave.sql',
       'crove_kernel_org_purge_hr_departments.sql',
       'crove_kernel_org_purge_outbox_held.sql',
+      'crove_kernel_org_purge_hr_recruiting.sql',
     ]);
   });
 });

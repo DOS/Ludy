@@ -100,6 +100,14 @@ const ALLOWED: Record<string, Record<string, string>> = {
   'modules/social/src/digest.ts': { 'skipped <- skipped = 0': 'the count of digest mails that failed' },
   'modules/social/src/report-branding.ts': { 'name <- name = input.name ? input.name : null': "the org's own brand name on its reports (crove_social.report_branding.display_name, internal)" },
   'modules/social/src/report-schedules.ts': { 'recipients <- recipients.length': 'the count of recipients, never their addresses' },
+  // Not classified before crove_hr.candidate.notes (#3425) made the plural name `notes` one; every fact is a count or id of private notes, never text.
+  'packages/kernel/src/personal-data.ts': {
+    'private <- result.privateItems === null ? null : { authors: result.privateItems.length, notes: result.privateItems.reduce((n, p) => n + p.notes, 0), todos: result.privateItems.reduce((n, p) => n + p.todos, 0) }': 'counts of private items per author',
+    'notes <- result.privateItems.reduce((n, p) => n + p.notes, 0)': 'count of private notes matched',
+    "notes <- items(' ')": 'list of matched note id:revision pairs',
+    "event <- event = named.length > 0 ? await ctx.emit(' ', { authors: named.map((a) => ({ userId: a.authorUserId, notes: a.notes, todos: a.todos, meetings: a.meetings })) }) : null": 'the outbox notification event id holding author counts',
+    'notes <- privateRows.flatMap((r) => r.note_ids)': 'ids of deleted private notes',
+  },
 };
 
 // An expression with every auditValue(...) call cut out (blanked, so offsets keep).
