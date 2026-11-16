@@ -9,10 +9,10 @@ export const STATS = {
   queries: 415,
   migrations: 619,
   testCases: 12000,
-  invariantSuites: 164,
+  invariantSuites: 165,
   adrs: 39,
   languages: 2,
   coworkers: 4,
   mcpTools: 7,
-  typescriptLines: 720000,
+  typescriptLines: 730000,
 } as const;
