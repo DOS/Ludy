@@ -1,22 +1,19 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
--- Crove CRM (issue #3293, plan docs/plan/crm.md section 5 "Derived facts"): realtime hints for deals and contacts.
+-- Crove CRM (issue #3293, plan docs/plan/crm.md section 5 "Derived facts"): realtime hints for deals.
 -- Idempotent; applied files stay untouched.
 --
--- A deal board open in one browser never refreshed when another member moved a card, because no change of a deal or a
--- party sent anything on crove_stream. Now the stream_notify trigger (20261018140000, 20261107030000) sends
--- `<org_id> crm_deal <deal id>` and `<org_id> crm_party <party id>`: the id only, never a title, an amount or a name,
--- and to the streams of that org alone, which re-fetch through their normal authorized queries (RLS decides what a
--- viewer reads). Neither table is under le_scope, so neither hint names a legal entity. A stream of an org that has
--- the crm app off drops both types (apps/kernel/src/stream.ts, HINT_APPS).
+-- A deal board open in one browser never refreshed when another member moved a card, because no change of a deal
+-- sent anything on crove_stream. Now the stream_notify trigger (20261018140000, 20261107030000) sends
+-- `<org_id> crm_deal <deal id>`: the id only, never a title or an amount, and to the streams of that org alone, which
+-- re-fetch through their normal authorized queries (RLS decides what a viewer reads). The table is not under le_scope,
+-- so the hint names no legal entity. A stream of an org that has the crm app off drops it (apps/kernel/src/stream.ts,
+-- HINT_APPS).
 --
 -- crove_crm.deal      INSERT, UPDATE and DELETE (a deal is deleted for real by its command). A delete sends one hint per
 --                     org and statement, naming the first deleted id (as notes do, 20261107180000), so the org purge
 --                     does not write one NOTIFY per deal while it holds PostgreSQL's cluster-wide NOTIFY lock.
--- crove_kernel.party  INSERT, and an UPDATE that changes what the contact screens and deal cards show: the kind, name,
---                     tax code, address, email, phone, company link or duplicate mark, or the version (a screen sends
---                     it back with an edit, so a stale one would fail with a conflict). Finance writes the same table
---                     (a verified flag), which a contact screen does not show, so that sends nothing.
---                     No DELETE trigger: a party is deleted only by the org purge.
+-- The party's hints are in 20270105010100_crove_kernel_party_stream_hints.sql: the party table belongs to crove_kernel, and a
+-- migration changes the schema of its own module.
 SET LOCAL lock_timeout = '2s';
 
 -- One hint per org for a statement that deletes deals (the transition table `gone`).
@@ -50,13 +47,3 @@ DROP TRIGGER IF EXISTS stream_hint_delete ON crove_crm.deal;
 CREATE TRIGGER stream_hint_delete AFTER DELETE ON crove_crm.deal
   REFERENCING OLD TABLE AS gone
   FOR EACH STATEMENT EXECUTE FUNCTION crove_crm.stream_notify_deleted('crm_deal', 'id');
-
-DROP TRIGGER IF EXISTS stream_hint ON crove_kernel.party;
-CREATE TRIGGER stream_hint AFTER INSERT ON crove_kernel.party
-  FOR EACH ROW EXECUTE FUNCTION crove_kernel.stream_notify('crm_party', 'id');
-DROP TRIGGER IF EXISTS stream_hint_update ON crove_kernel.party;
-CREATE TRIGGER stream_hint_update AFTER UPDATE ON crove_kernel.party
-  FOR EACH ROW
-  WHEN ((OLD.kind, OLD.name, OLD.tax_code, OLD.address, OLD.email, OLD.phone, OLD.company_id, OLD.duplicate_of, OLD.version)
-        IS DISTINCT FROM (NEW.kind, NEW.name, NEW.tax_code, NEW.address, NEW.email, NEW.phone, NEW.company_id, NEW.duplicate_of, NEW.version))
-  EXECUTE FUNCTION crove_kernel.stream_notify('crm_party', 'id');
