@@ -427,8 +427,9 @@ export const publishBegin = defineCommand({
           SELECT paused_connection_version AS version FROM crove_social.post_variant WHERE org_id = ${ctx.orgId}::uuid AND id = ${v.id}::uuid`.execute(ctx.trx);
         const pausedAt = rows[0]?.version ?? null;
         if (connection?.status !== 'active' || (pausedAt !== null && pausedAt.getTime() === connection.updatedAt.getTime())) return none('paused');
-        // Due now: the post waited for the reconnect, which is not lateness (as the reconnect while a call was in flight, below, which also sets the retry time to now).
-        await move(ctx, v, { type: 'resume' }, { ...NO_ERROR, error_retry_at: ctx.now, paused_connection_version: null });
+        // Back to scheduled with its own time: a queue paused meanwhile still holds it (queuePaused reads a variant with no retry time), and one that waited over an hour
+        // fails at its next begin (HELD_TOO_LONG), for a person. A resume by the automatic token refresh is not a person's act, so it never sends an old post.
+        await move(ctx, v, { type: 'resume' }, { ...NO_ERROR, paused_connection_version: null });
         result = none('resumed');
         break;
       }

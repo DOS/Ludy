@@ -256,6 +256,26 @@ suite('social publishing hold on PostgreSQL (#946)', () => {
     expect(platform.sent).toHaveLength(1);
   });
 
+  it('a queued post that waited paused on its channel is held by a queue paused meanwhile, and fails for a person once the queue is on again over an hour late', async () => {
+    const o = await org();
+    const platform = new Counting();
+    const queued = await duePost(o, { queue: true, ago: '2 hours' });
+    const connectionId = (await admin(async (c) => (await c.query<{ id: string }>('SELECT channel_connection_id AS id FROM crove_social.post_variant WHERE id = $1', [queued.id])).rows[0]?.id)) as string;
+    // Paused on an expired channel, which was reconnected since (its recorded version differs); then an admin paused the queue.
+    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'paused', paused_connection_version = '2000-01-01T00:00:00Z' WHERE id = $1", [queued.id]));
+    const queue = (paused: boolean) => exec(o, 'social.queue.set', { connectionId, timeZone: 'Asia/Ho_Chi_Minh', slots: [{ weekday: 1, minute: 540 }], paused }, o.admin);
+    await queue(true);
+    expect(await run(o, queued.id, platform)).toEqual({ action: 'none', reason: 'resumed' });
+    expect(await run(o, queued.id, platform)).toEqual({ action: 'none', reason: 'queue_paused' });
+    expect(platform.sent).toHaveLength(0);
+    expect(await status(o, queued.postId)).toEqual({ status: 'scheduled', code: null });
+    // The queue on again, the post more than an hour past its slot: it waits for a person, and nothing was sent.
+    await queue(false);
+    expect(await run(o, queued.id, platform)).toEqual({ action: 'none', reason: 'too_late' });
+    expect(await status(o, queued.postId)).toEqual({ status: 'failed', code: HELD_TOO_LONG });
+    expect(platform.sent).toHaveLength(0);
+  });
+
   it('on release publishes the due posts exactly once, and leaves one more than an hour past its time to a person', async () => {
     const o = await org();
     const platform = new Counting();
