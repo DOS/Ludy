@@ -12,6 +12,7 @@ import {
   AD_OAUTH_PROVIDERS,
   AD_READ_OAUTH_PROVIDERS,
   AD_WRITE_OAUTH_PROVIDERS,
+  AD_PLATFORM_SELLER_NAMES,
   ADS_RANGES,
   NAMED_RESULT_KINDS,
   NO_WRITE_OFFER,
@@ -26,8 +27,12 @@ import {
   booksExpense,
   booksMonths,
   configureChanges,
+  documentCounts,
+  documentsRange,
   errorCode,
+  foldSellerName,
   expenseCodeProblem,
+  sellerIsPlatform,
   hasFigures,
   isAdOAuthProvider,
   isAdWriteOAuthProvider,
@@ -581,5 +586,69 @@ describe('the connection that can run ads (ADR-0043, W0b)', () => {
     expect(disconnectConfirmText(inEn, sandboxWrite('active'))).toBe(`${body} ${closes}`);
     expect(disconnectConfirmText(inVi, metaWrite('active'))).toContain(inVi('ads.settings.disconnectBody', { name }));
     expect(disconnectConfirmText(inVi, metaWrite('active'))).toContain(inVi('ads.write.platformNote'));
+  });
+});
+
+describe('the platform documents beside the books (slice D1)', () => {
+  it('names the sellers of Meta, Google and TikTok, and the sandbox, as a constant', () => {
+    expect(AD_PLATFORM_SELLER_NAMES.meta_ads).toEqual(['Meta Platforms', 'Facebook']);
+    expect(AD_PLATFORM_SELLER_NAMES.google_ads).toEqual(['Google']);
+    expect(AD_PLATFORM_SELLER_NAMES.tiktok_ads).toEqual(['TikTok']);
+    expect(AD_PLATFORM_SELLER_NAMES.metawrite_ads).toEqual(AD_PLATFORM_SELLER_NAMES.meta_ads);
+  });
+
+  it('sets Vietnamese marks, case and punctuation aside', () => {
+    expect(foldSellerName('  CÔNG TY Đỗ-Việt, Ltd. ')).toBe('cong ty do viet ltd');
+    expect(sellerIsPlatform('meta_ads', 'META PLATFORMS')).toBe(true);
+    expect(sellerIsPlatform('meta_ads', 'facebook')).toBe(true);
+    expect(sellerIsPlatform('google_ads', 'GOOGLE')).toBe(true);
+  });
+
+  it('matches a seller that only contains the name, on whole words', () => {
+    expect(sellerIsPlatform('meta_ads', 'Meta Platforms Ireland Limited')).toBe(true);
+    expect(sellerIsPlatform('meta_ads', 'Facebook Ireland Ltd.')).toBe(true);
+    expect(sellerIsPlatform('google_ads', 'Google Asia Pacific Pte. Ltd.')).toBe(true);
+    expect(sellerIsPlatform('tiktok_ads', 'TikTok Pte. Ltd.')).toBe(true);
+    expect(sellerIsPlatform('google_ads', 'Googlers Cafe')).toBe(false);
+    expect(sellerIsPlatform('meta_ads', 'Metallica Platforms')).toBe(false);
+    expect(sellerIsPlatform('meta_ads', 'Meta')).toBe(false);
+  });
+
+  it('matches only the names of the account’s own platform, and nothing for a platform without names', () => {
+    expect(sellerIsPlatform('google_ads', 'Meta Platforms')).toBe(false);
+    expect(sellerIsPlatform('unknown_ads', 'Google')).toBe(false);
+  });
+
+  it('asks for the days from the first day of the first month to the last day of the last', () => {
+    expect(documentsRange([])).toBeNull();
+    expect(documentsRange([{ month: '2026-09' }, { month: '2026-11' }])).toEqual({ from: '2026-09-01', to: '2026-11-30' });
+    expect(documentsRange([{ month: '2026-02' }])).toEqual({ from: '2026-02-01', to: '2026-02-28' });
+    expect(documentsRange([{ month: '2028-02' }])).toEqual({ from: '2028-02-01', to: '2028-02-29' });
+    expect(documentsRange([{ month: '2026-12' }])).toEqual({ from: '2026-12-01', to: '2026-12-31' });
+  });
+
+  it('counts the purchase documents of the platform by the month of their date, and not a voided one or a sale', () => {
+    const doc = (partyName: string, issueDate: string, over: Partial<{ direction: string; voided: unknown }> = {}) => ({
+      direction: 'purchase',
+      partyName,
+      issueDate,
+      voided: null,
+      ...over,
+    });
+    const counts = documentCounts(
+      [
+        doc('Google Asia Pacific Pte. Ltd.', '2026-09-30'),
+        doc('GOOGLE', '2026-09-02'),
+        doc('Google Asia Pacific Pte. Ltd.', '2026-11-01'),
+        doc('Google', '2026-10-05', { voided: { reversalEntryId: 'r', reason: 'x', voidedAt: '2026-10-06T00:00:00.000Z' } }),
+        doc('Google', '2026-10-07', { direction: 'sale' }),
+        doc('Công ty Văn phòng phẩm', '2026-10-08'),
+      ],
+      'google_ads',
+    );
+    expect([...counts.entries()]).toEqual([
+      ['2026-09', 2],
+      ['2026-11', 1],
+    ]);
   });
 });
