@@ -4757,6 +4757,9 @@ export const en = {
       launchRetryQueued: 'A retry is queued and will run shortly.',
       launchRetriedToast: 'Asked to run the launch again.',
       launchObjectsTitle: 'Created on the ad platform',
+      statesReadOk: 'Asked {platform} at {time}',
+      statesReadFailed: 'Could not ask {platform} at {time}; showing the last known state',
+      statesReadPlatform: 'the ad platform',
       objectLevel: { campaign: 'Campaign', ad_set: 'Ad set', creative: 'Creative', ad: 'Ad' },
       objectStatus: {
         active: 'Active',

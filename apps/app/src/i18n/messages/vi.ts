@@ -4755,6 +4755,9 @@ export const vi = {
       launchRetryQueued: 'Đã xếp hàng chạy lại, hệ thống sẽ chạy trong giây lát.',
       launchRetriedToast: 'Đã yêu cầu chạy lại lần chạy này.',
       launchObjectsTitle: 'Đã tạo trên nền tảng quảng cáo',
+      statesReadOk: 'Đã hỏi {platform} lúc {time}',
+      statesReadFailed: 'Không hỏi được {platform} lúc {time}; đang hiện trạng thái đã biết gần nhất',
+      statesReadPlatform: 'nền tảng quảng cáo',
       objectLevel: { campaign: 'Chiến dịch', ad_set: 'Nhóm quảng cáo', creative: 'Mẫu quảng cáo', ad: 'Quảng cáo' },
       objectStatus: {
         active: 'Đang bật',
