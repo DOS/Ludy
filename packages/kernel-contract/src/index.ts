@@ -76,6 +76,9 @@ export const MAX_SOCIAL_VIDEO_MS = 3 * 3600 * 1000;
 // Meeting audio and video (issue #2576, ADR-0047, meetings plan M2): audio up to 300 MB, video up to 2 GB.
 export const MAX_MEETING_AUDIO_BYTES = 300 * 1024 * 1024;
 export const MAX_MEETING_VIDEO_BYTES = 2 * 1024 * 1024 * 1024;
+// The longest meeting the server takes (plan §10: 2 hours; a test ties it to the media sandbox's limit). The in-app recorder stops at it,
+// so a recording that runs on is never refused at upload for its length.
+export const MAX_MEETING_SECONDS = 2 * 60 * 60;
 export const MEETING_AUDIO_TYPES = ['audio/ogg', 'audio/webm', 'audio/mp4', 'audio/mpeg', 'audio/wav', 'audio/x-m4a', 'audio/aac'];
 export const MEETING_VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/quicktime'];
 // import: a spreadsheet for a module's import (the tax portal's purchase list, #465). Stored with source 'import' and
@@ -116,6 +119,7 @@ export * from './hr.ts';
 export * from './hr-leave.ts';
 export * from './hr-payroll.ts';
 export * from './hr-declarations.ts';
+export * from './hr-recruiting.ts';
 export * from './hr-bank-template.ts';
 export * from './notes.ts';
 export * from './extension.ts';

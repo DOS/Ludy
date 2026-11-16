@@ -9,7 +9,9 @@
 //   would lose the outcome and a later retry could do the call twice.
 // - #3406 / #3323: the 2 eSign keeping commands (sign.envelope.expire_sweep, sign.org.cleanup) join the list so overdue envelopes expire and
 //   stale secrets or drafts are pruned under retention while Sign is off.
-// This file accepts all 4 sorted combinations of current, RECORDS, and SIGN_KEEPING so #3310 and #3323 can merge in either order; follow-up
+// - #3310 (C3c): the 3 Social takedown commands that are not records (social.remove.begin, schedule and watch) join the list, because a takedown
+//   stops the exposure of a post and must still go out, or be told about, while Social is off.
+// This file accepts every sorted combination of current, RECORDS, SIGN_KEEPING and TAKEDOWN so those PRs can merge in any order; follow-up
 // tests-only PRs make the list strict once those commands declare runsWhenOff (the runtime and module PRs cannot edit this base file).
 // Part of the invariant suite: CI runs this file from the base branch on protected-path PRs (AGENTS.md).
 import { describe, expect, it } from 'vitest';
@@ -39,7 +41,10 @@ describe('definitions that run while their app is off for an org (ADR-0053)', ()
   // The eSign keeping commands that run while Sign is off (#3323), joining in Slice 1a (step 0 before #3323 declares runsWhenOff).
   const SIGN_KEEPING = ['sign.envelope.expire_sweep', 'sign.org.cleanup'];
 
-  it('are exactly these commands, with or without external write records and eSign keeping commands (step 0)', () => {
+  // The Social takedown commands that run while Social is off (C3c): a takedown stops exposure, so it is never refused for an app that is off.
+  const TAKEDOWN = ['social.remove.begin', 'social.remove.schedule', 'social.remove.watch'];
+
+  it('are exactly these commands, with or without external write records, eSign keeping commands and the takedown commands (step 0)', () => {
     const current = [
       'ads.account.delete_history',
       'ads.account.disable_write',
@@ -75,12 +80,9 @@ describe('definitions that run while their app is off for an org (ADR-0053)', ()
       'social.review_link.revoke',
     ].sort();
     const got = named(commands);
-    expect([
-      current,
-      [...current, ...RECORDS].sort(),
-      [...current, ...SIGN_KEEPING].sort(),
-      [...current, ...RECORDS, ...SIGN_KEEPING].sort(),
-    ]).toContainEqual(got);
+    const groups = [RECORDS, SIGN_KEEPING, TAKEDOWN];
+    const accepted = Array.from({ length: 2 ** groups.length }, (_, mask) => [...current, ...groups.flatMap((g, i) => (mask & (1 << i) ? g : []))].sort());
+    expect(accepted).toContainEqual(got);
   });
 
   it('are exactly these queries', () => {

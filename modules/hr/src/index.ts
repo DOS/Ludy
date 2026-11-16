@@ -8,10 +8,12 @@ import { hrDeclarationCommands, hrDeclarationQueries } from './declaration-expor
 import { hrBankTemplateCommands, hrBankTemplateQueries } from './bank-template.ts';
 import { hrDepartmentCommands, hrDepartmentQueries } from './departments.ts';
 import { hrLeaveCommands, hrLeaveQueries } from './leave.ts';
+import { hrRecruitingCommands, hrRecruitingQueries } from './recruiting.ts';
 
 export * from './departments.ts';
 export * from './employees.ts';
 export * from './leave.ts';
+export * from './recruiting.ts';
 export * from './payroll-run.ts';
 export * from './payroll-posting.ts';
 export * from './declarations.ts';
@@ -21,6 +23,6 @@ export { declarationMonths, type HrLaborCheckFact, type HrLaborCheckSnapshot } f
 export { buildDeclarationWorkbook, amountCell } from './declaration-xlsx.ts';
 export { buildBankFileWorkbook } from './bank-file-xlsx.ts';
 
-export const hrCommands = [...hrDepartmentCommands, ...hrEmployeeCommands, ...hrPayrollCommands, ...hrPostingCommands, ...hrPaymentCommands, ...hrBankFileCommands, ...hrDeclarationCommands, ...hrBankTemplateCommands, ...hrLeaveCommands];
-export const hrQueries = [...hrDepartmentQueries, ...hrEmployeeQueries, ...hrPayrollQueries, ...hrPaymentQueries, ...hrBankFileQueries, ...hrDeclarationQueries, ...hrBankTemplateQueries, ...hrLeaveQueries];
+export const hrCommands = [...hrDepartmentCommands, ...hrEmployeeCommands, ...hrPayrollCommands, ...hrPostingCommands, ...hrPaymentCommands, ...hrBankFileCommands, ...hrDeclarationCommands, ...hrBankTemplateCommands, ...hrLeaveCommands, ...hrRecruitingCommands];
+export const hrQueries = [...hrDepartmentQueries, ...hrEmployeeQueries, ...hrPayrollQueries, ...hrPaymentQueries, ...hrBankFileQueries, ...hrDeclarationQueries, ...hrBankTemplateQueries, ...hrLeaveQueries, ...hrRecruitingQueries];
 export { hrManifest } from './manifest.ts';

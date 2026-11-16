@@ -198,7 +198,7 @@ describe('module screens against the router (#1652)', () => {
         ],
       ],
       // The HR app (#2530): the staff list, for owners and admins.
-      ['hr', [['people', ['hr/employees', 'hr/payroll', 'hr/declarations']]]],
+      ['hr', [['people', ['hr/employees', 'hr/recruiting', 'hr/payroll', 'hr/declarations']]]],
       // Ludy AI (#3225): the team's settings, the AI use and budgets (moved from the AI team screen) and the AI connections (moved from Settings).
       ['ai', [['ai', ['agents', 'ai-usage', 'ai-connections']]]],
     ]);
@@ -206,7 +206,7 @@ describe('module screens against the router (#1652)', () => {
     expect(BELL_ITEM && [BELL_ITEM.to, BELL_ITEM.label]).toEqual(['/o/$slug/notifications', 'alerts']);
     expect(ADMIN_ITEMS.map((i) => [i.to, i.label])).toEqual([['/o/$slug/settings', 'settings']]);
     expect(ALL_NAV.map((i) => i.label)).toEqual([
-      'overview', 'myWork', 'tasks', 'projects', 'notes', 'meetings', 'accountingOverview', 'documents', 'vouchers', 'bank', 'salesInvoices', 'customers', 'stock', 'vendors', 'journal', 'ledger', 'fixedAssets', 'tax', 'socialInbox', 'contacts', 'companies', 'deals', 'bookings', 'social', 'socialNotifications', 'ads', 'reports', 'employees', 'payroll', 'declarations', 'agents', 'aiUsage', 'aiConnections', 'alerts', 'settings', 'inbox', 'documentsAll', 'household', 'marketplace', 'portalList', 'paymentReminders', 'bankTemplates', 'adsCampaigns',
+      'overview', 'myWork', 'tasks', 'projects', 'notes', 'meetings', 'accountingOverview', 'documents', 'vouchers', 'bank', 'salesInvoices', 'customers', 'stock', 'vendors', 'journal', 'ledger', 'fixedAssets', 'tax', 'socialInbox', 'contacts', 'companies', 'deals', 'bookings', 'social', 'socialNotifications', 'ads', 'reports', 'employees', 'recruiting', 'payroll', 'declarations', 'agents', 'aiUsage', 'aiConnections', 'alerts', 'settings', 'inbox', 'documentsAll', 'household', 'marketplace', 'portalList', 'paymentReminders', 'bankTemplates', 'adsCampaigns',
     ]);
   });
 });

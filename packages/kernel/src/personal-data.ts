@@ -428,6 +428,10 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_hr.payroll_employee.birth_date': { kind: 'other', handling: 'erase', reason: "An employee's birth date; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
   'crove_hr.payroll_employee.bank_code': { kind: 'other', handling: 'erase', reason: "The code of the bank an employee is paid at (#2897); hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
   'crove_hr.payroll_dependent.display_name': { kind: 'name', handling: 'erase', reason: "A dependent's name; hr.payroll.employee.erase replaces it with a placeholder together with its employee's record" },
+  'crove_hr.candidate.display_name': { kind: 'name', handling: 'erase', reason: 'A job applicant name; erased by personal-data erasure or hr.recruiting.candidate.erase' },
+  'crove_hr.candidate.email': { kind: 'email', handling: 'erase', reason: 'A job applicant email; erased by personal-data erasure or hr.recruiting.candidate.erase' },
+  'crove_hr.candidate.phone': { kind: 'phone', handling: 'erase', reason: 'A job applicant phone number; erased by personal-data erasure or hr.recruiting.candidate.erase' },
+  'crove_hr.candidate.notes': { kind: 'free_text', handling: 'erase', reason: 'Recruiting notes for a candidate, which may mention personal details: cleared on direct erasure and mentions redacted on text match' },
   'crove_projects.project.name': { kind: 'free_text', handling: 'erase', reason: "A project's title, which may name a person: mentions are replaced with a redaction marker" },
   'crove_projects.project.description': { kind: 'free_text', handling: 'erase', reason: "A project's description, which may name a person: mentions are replaced with a redaction marker" },
   // eSign (#3323): draft signers are removed on erasure; sent, active, and executed signer records and append-only audit events stay for statutory verification; ephemeral email OTP rows erase via definer.
@@ -785,6 +789,7 @@ const SHORT_NUMBER_COLUMNS = new Set([
   'crove_kernel.task.description',
   'crove_projects.project.name',
   'crove_projects.project.description',
+  'crove_hr.candidate.notes',
 ]);
 // The meeting text columns the redaction of crove_meetings.personal_erase would change, left as they are for a short number (#3064).
 const SHORT_NUMBER_MEETING_COLUMNS = new Set([
@@ -1007,6 +1012,23 @@ export const personalDataErase = defineCommand({
       add('crove_crm.booking.email', Number(b.email));
       add('crove_crm.booking.phone', Number(b.phone));
       add('crove_crm.booking.note', Number(b.note));
+    }
+
+    // Recruiting candidates matched by their email or phone: their name, email, phone and notes are cleared (their stage and links stay).
+    const candidateMatch = sql<boolean>`(${match('email', 'c.email') ?? never} OR ${match('phone', 'c.phone') ?? never})`;
+    const { rows: candidates } = await sql<{ display_name: boolean; email: boolean; phone: boolean; notes: boolean }>`
+      UPDATE crove_hr.candidate c
+         SET display_name = ${ERASED_PARTY_NAME}, email = NULL, phone = NULL, notes = NULL,
+             erased_at = COALESCE(c.erased_at, ${ctx.now}), updated_at = ${ctx.now}
+        FROM crove_hr.candidate o
+       WHERE o.org_id = c.org_id AND o.id = c.id AND c.org_id = ${ctx.orgId}::uuid AND ${candidateMatch}
+       RETURNING o.display_name <> ${ERASED_PARTY_NAME} AS display_name, o.email IS NOT NULL AS email,
+                 o.phone IS NOT NULL AS phone, o.notes IS NOT NULL AS notes`.execute(ctx.trx);
+    for (const c of candidates) {
+      add('crove_hr.candidate.display_name', Number(c.display_name));
+      add('crove_hr.candidate.email', Number(c.email));
+      add('crove_hr.candidate.phone', Number(c.phone));
+      add('crove_hr.candidate.notes', Number(c.notes));
     }
 
     // Rows of a contact import not yet committed (#2229), matched by email, phone or tax code: deleted whole, for the row
@@ -1355,6 +1377,18 @@ export const personalDataErase = defineCommand({
          RETURNING ${freeTextMatch(probe, sql.ref('o.name'))} AS name, coalesce(${freeTextMatch(probe, sql.ref('o.description'))}, false) AS description`.execute(ctx.trx);
       add('crove_projects.project.name', projects.filter((p) => p.name).length);
       add('crove_projects.project.description', projects.filter((p) => p.description).length);
+
+      // Recruiting candidate notes that quote the person (#3425): replace mentions, bounded to 2000 chars.
+      const candidateNotes = freeTextMatch(probe, sql.ref('c.notes'));
+      const { rows: candidateNoteRows } = await sql<{ notes: boolean }>`
+        UPDATE crove_hr.candidate c
+           SET notes = CASE WHEN ${candidateNotes} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('c.notes'), REDACTED_MARK)}, 2000)
+                            ELSE c.notes END,
+               updated_at = ${ctx.now}
+          FROM crove_hr.candidate o
+         WHERE o.org_id = c.org_id AND o.id = c.id AND c.org_id = ${ctx.orgId}::uuid AND coalesce(${candidateNotes}, false)
+         RETURNING coalesce(${freeTextMatch(probe, sql.ref('o.notes'))}, false) AS notes`.execute(ctx.trx);
+      add('crove_hr.candidate.notes', candidateNoteRows.filter((r) => r.notes).length);
     }
 
     // What stays, with its reason: the finder's answer after the erasure (the cleared values no longer match).

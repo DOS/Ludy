@@ -4,6 +4,7 @@ import { auth } from './auth.ts';
 import { forgetInvite } from './invite.ts';
 import { forgetPushDevice } from './push.ts';
 import { forgetShare } from './social-share.ts';
+import { stopAndSave } from './recording-controller.ts';
 import { sessionIdFromToken } from './sessions.ts';
 import { signOutWithRevoke } from './sign-out.ts';
 
@@ -13,6 +14,9 @@ import { signOutWithRevoke } from './sign-out.ts';
 // invite page's "use another email" keeps it (keepInvite), to come back to the invite after signing in again. So is
 // a page shared into a draft and not yet opened (#1235), and this browser's push subscription (#1238).
 export async function signOut(options: { keepInvite?: boolean } = {}): Promise<void> {
+  // A recording in the app is stopped and saved first, like its Stop button (#3197): the microphone never runs on past the sign-out,
+  // and the upload still has the session it needs. If the upload fails the copy stays on the device and is offered again.
+  await stopAndSave({ quiet: true });
   if (!options.keepInvite) forgetInvite();
   forgetShare();
   await forgetPushDevice((endpoint) => client.social.notifications.push.unsubscribe({ endpoint }));

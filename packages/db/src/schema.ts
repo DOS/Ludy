@@ -1052,12 +1052,33 @@ export const HR_CONTRACT_FORMS = ['written', 'electronic', 'oral'] as const;
 export const HR_PROBATION_ROLE_TIERS = ['enterprise_manager', 'college_or_above', 'intermediate_technical', 'other'] as const;
 export const HR_REGIONS = ['I', 'II', 'III', 'IV'] as const;
 export const HR_PAY_FUNCTIONS = ['admin', 'sales', 'production', 'overhead', 'construction'] as const;
+export const HR_JOB_OPENING_STATUSES = ['open', 'closed'] as const;
+export const HR_CANDIDATE_STAGES = ['applied', 'screening', 'interview', 'offer', 'hired', 'rejected'] as const;
 // Departments per legal entity (#3412): optional team structure with default pay_function.
 export type HrDepartmentTable = Refine<
   G.HrDepartmentTable,
   {
     legal_entity_id: LegalEntityColumn;
     pay_function: Generated<(typeof HR_PAY_FUNCTIONS)[number]>;
+  },
+  'legal_entity_id'
+>;
+export type HrJobOpeningTable = Refine<
+  G.HrJobOpeningTable,
+  {
+    legal_entity_id: LegalEntityColumn;
+    contract_type: Generated<(typeof HR_CONTRACT_TYPES)[number]>;
+    region: Generated<(typeof HR_REGIONS)[number]>;
+    pay_function: Generated<(typeof HR_PAY_FUNCTIONS)[number]>;
+    status: Generated<(typeof HR_JOB_OPENING_STATUSES)[number]>;
+  },
+  'legal_entity_id'
+>;
+export type HrCandidateTable = Refine<
+  G.HrCandidateTable,
+  {
+    legal_entity_id: LegalEntityColumn;
+    stage: Generated<(typeof HR_CANDIDATE_STAGES)[number]>;
   },
   'legal_entity_id'
 >;
@@ -1259,7 +1280,9 @@ type Refined = Tables<{
   'crove_crm.sales_order': CrmSalesOrderTable;
   'crove_crm.sales_order_delivery': CrmSalesOrderDeliveryTable;
   'crove_crm.sales_order_line': CrmSalesOrderLineTable;
+  'crove_hr.candidate': HrCandidateTable;
   'crove_hr.department': HrDepartmentTable;
+  'crove_hr.job_opening': HrJobOpeningTable;
   'crove_hr.payroll_bank_template': HrPayrollBankTemplateTable;
   'crove_hr.payroll_employee': HrPayrollEmployeeTable;
   'crove_hr.payroll_employment': HrPayrollEmploymentTable;

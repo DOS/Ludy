@@ -102,7 +102,9 @@ export interface CroveFinanceSchema {
 }
 
 export interface CroveHrSchema {
+  'crove_hr.candidate': HrCandidateTable;
   'crove_hr.department': HrDepartmentTable;
+  'crove_hr.job_opening': HrJobOpeningTable;
   'crove_hr.payroll_bank_template': HrPayrollBankTemplateTable;
   'crove_hr.payroll_dependent': HrPayrollDependentTable;
   'crove_hr.payroll_employee': HrPayrollEmployeeTable;
@@ -1640,6 +1642,32 @@ export interface FinanceVendorAccountRuleTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
+/** crove_hr.candidate */
+export interface HrCandidateTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  opening_id: string | null;
+  display_name: string;
+  email: string | null;
+  phone: string | null;
+  stage: Generated<string>;
+  years_experience: number | null;
+  matched_skills: Generated<string[]>;
+  expected_wage: string | null;
+  agreed_wage: string | null;
+  planned_start_on: string | null;
+  notes: string | null;
+  interview_event_id: string | null;
+  interview_starts_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  interview_ends_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  hired_employee_id: string | null;
+  erased_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
 /** crove_hr.department */
 export interface HrDepartmentTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -1649,6 +1677,27 @@ export interface HrDepartmentTable {
   code: string | null;
   pay_function: Generated<string>;
   archived_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_hr.job_opening */
+export interface HrJobOpeningTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  department_id: string | null;
+  title: string;
+  department_name: string | null;
+  contract_type: Generated<string>;
+  region: Generated<string>;
+  pay_function: Generated<string>;
+  budget_min_wage: string | null;
+  budget_max_wage: string | null;
+  required_skills: Generated<string[]>;
+  status: Generated<string>;
+  closed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
