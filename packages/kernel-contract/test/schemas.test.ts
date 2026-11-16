@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_BULK_APPROVE, SOCIAL_REVIEW_CHECK_LABEL_MAX, contract, zBulkApproveItems, zLocalDate, zSocialReviewChecklistSet, zSocialSuggestion } from '../src/index.ts';
+import {
+  MAX_BULK_APPROVE,
+  SOCIAL_REVIEW_CHECK_LABEL_MAX,
+  contract,
+  zBulkApproveItems,
+  zHrOpeningAdd,
+  zHrOpeningEdit,
+  zLocalDate,
+  zSocialReviewChecklistSet,
+  zSocialSuggestion,
+} from '../src/index.ts';
 
 describe('zBulkApproveItems (#315)', () => {
   const item = (n: number) => ({ id: `0190a3c4-0000-7000-8000-${String(n).padStart(12, '0')}`, revision: 1 });
@@ -57,5 +67,20 @@ describe('zSocialSuggestion (#1236)', () => {
     expect(zSocialSuggestion.safeParse({ field: 'post', start: 3, end: 3, quote: '', text: 'ba' }).success).toBe(false);
     expect(zSocialSuggestion.safeParse({ field: 'post', start: 3, end: 6, quote: 'hai', text: 'hai' }).success).toBe(false);
     expect(zSocialSuggestion.safeParse({ field: 'title', start: 3, end: 6, quote: 'hai', text: 'ba' }).success).toBe(false);
+  });
+});
+
+describe('zHrOpeningAdd & zHrOpeningEdit budget range guard (#3425)', () => {
+  const id = '0190a3c4-0000-7000-8000-000000000001';
+
+  it('rejects non-numeric budget strings cleanly with Zod failure instead of throwing SyntaxError', () => {
+    const addBad = zHrOpeningAdd.safeParse({ title: 'Kế toán', budgetMinWage: '10000000', budgetMaxWage: 'abc' });
+    expect(addBad.success).toBe(false);
+
+    const editBad = zHrOpeningEdit.safeParse({ openingId: id, budgetMinWage: 'abc', budgetMaxWage: '20000000' });
+    expect(editBad.success).toBe(false);
+
+    expect(zHrOpeningAdd.safeParse({ title: 'Kế toán', budgetMinWage: '20000000', budgetMaxWage: '15000000' }).success).toBe(false);
+    expect(zHrOpeningAdd.safeParse({ title: 'Kế toán', budgetMinWage: '15000000', budgetMaxWage: '20000000' }).success).toBe(true);
   });
 });

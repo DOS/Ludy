@@ -96,6 +96,7 @@ import { AccountingOverviewPage } from './routes/accounting-overview.tsx';
 import { SalesInvoicesPage } from './routes/sales-invoices.tsx';
 import { HrBankTemplatesPage } from './routes/hr-bank-templates.tsx';
 import { HrEmployeesPage } from './routes/hr-employees.tsx';
+import { HrRecruitingPage } from './routes/hr-recruiting.tsx';
 import { HrDeclarationsPage } from './routes/hr-declarations.tsx';
 import { HrPayrollPage } from './routes/hr-payroll.tsx';
 import { HouseholdPage } from './routes/household.tsx';
@@ -103,6 +104,8 @@ import { MarketplaceBalancePage } from './routes/marketplace-balance.tsx';
 import { StockPage } from './routes/stock.tsx';
 import { VouchersPage } from './routes/vouchers.tsx';
 import { PublishHoldBanner } from './components/social-publish-hold.tsx';
+import { RecordingChip } from './components/recording-chip.tsx';
+import { RecordingHost } from './components/recording-host.tsx';
 import { VersionBanner } from './components/version-banner.tsx';
 import { FixedAssetsPage } from './routes/fixed-assets.tsx';
 
@@ -186,6 +189,9 @@ const rootRoute = createRootRoute({
     <>
       <VersionBanner />
       <Outlet />
+      {/* The recording bar and the recorder's host (#3197): a recording can run on any screen, so they live above the org layout. */}
+      <RecordingChip />
+      <RecordingHost />
     </>
   ),
   errorComponent: ErrorPage,
@@ -436,6 +442,8 @@ const householdRoute = createRoute({ getParentRoute: () => orgRoute, path: 'hous
 const marketplaceRoute = createRoute({ getParentRoute: () => orgRoute, path: 'marketplace', component: MarketplaceBalancePage });
 // The HR app's staff list (#2530), with the hr module: owners and admins only.
 const hrEmployeesRoute = createRoute({ getParentRoute: () => orgRoute, path: 'hr/employees', component: HrEmployeesPage });
+// Lightweight recruiting (#3425): job openings, candidate pipeline, calendar interviews, 1-click hire and Ly brief.
+const hrRecruitingRoute = createRoute({ getParentRoute: () => orgRoute, path: 'hr/recruiting', component: HrRecruitingPage });
 // The HR app's pay run (#2531): the months, the sheet, the approval and the payslips.
 const hrPayrollRoute = createRoute({ getParentRoute: () => orgRoute, path: 'hr/payroll', component: HrPayrollPage });
 // The HR app's declaration lists (#2533): the D02-LT, the quarterly and annual PIT data and the certificate data, to print, save as a PDF or download as xlsx.
@@ -647,7 +655,7 @@ const routeTree = rootRoute.addChildren([
   clientsRoute,
   oauthCallbackRoute,
   calendarOAuthCallbackRoute,
-  orgRoute.addChildren([orgIndexRoute, overviewRoute, accountingOverviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, paymentRemindersRoute, salesInvoicesRoute, stockRoute, householdRoute, marketplaceRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, bankMatchedRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialInboxRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, aiUsageRoute, aiConnectionsRoute, tasksRoute, taskDetailRoute, projectsRoute, projectDetailRoute, bookingsRoute, dealsRoute, contactsRoute, companiesRoute, contactImportRoute, crmRoute, crmBookingsRoute, crmDealsRoute, crmContactsRoute, crmContactImportRoute, notesRoute, myWorkRoute, hrEmployeesRoute, hrPayrollRoute, hrDeclarationsRoute, hrBankTemplatesRoute, meetingsRoute, meetingRecordRoute, meetingDetailRoute, adsRoute, adsCampaignsRoute, reportsRoute, settingsRoute, auditRoute, personalDataRoute, guideRoute]),
+  orgRoute.addChildren([orgIndexRoute, overviewRoute, accountingOverviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, paymentRemindersRoute, salesInvoicesRoute, stockRoute, householdRoute, marketplaceRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, bankMatchedRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialInboxRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, aiUsageRoute, aiConnectionsRoute, tasksRoute, taskDetailRoute, projectsRoute, projectDetailRoute, bookingsRoute, dealsRoute, contactsRoute, companiesRoute, contactImportRoute, crmRoute, crmBookingsRoute, crmDealsRoute, crmContactsRoute, crmContactImportRoute, notesRoute, myWorkRoute, hrEmployeesRoute, hrRecruitingRoute, hrPayrollRoute, hrDeclarationsRoute, hrBankTemplatesRoute, meetingsRoute, meetingRecordRoute, meetingDetailRoute, adsRoute, adsCampaignsRoute, reportsRoute, settingsRoute, auditRoute, personalDataRoute, guideRoute]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });
