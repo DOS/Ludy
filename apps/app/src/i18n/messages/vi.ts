@@ -3860,6 +3860,18 @@ export const vi = {
       cancel: 'Hủy',
       close: 'Đóng',
     },
+    dealOffer: {
+      title: 'Gợi ý của {sales} cho cơ hội',
+      badge: '{sales} gợi ý · bạn bấm mới thực hiện',
+      quotedReason: 'Báo giá {number} đã gửi cho khách mà cơ hội chưa ở bước báo giá.',
+      wonReason: 'Khách đã đồng ý báo giá {number} mà cơ hội vẫn đang mở.',
+      amountReason: 'Giá trị cơ hội đang là {amount}, còn tổng báo giá {number} là {total}.',
+      moveTo: 'Chuyển sang {stage}',
+      setAmount: 'Đặt giá trị cơ hội bằng tổng báo giá',
+      dismiss: 'Bỏ qua',
+      moved: 'Đã chuyển cơ hội sang "{stage}".',
+      amountSet: 'Đã đặt giá trị cơ hội là {amount}.',
+    },
     suggest: {
       title: 'Gợi ý của {sales}',
       button: 'Nhờ {sales} gợi ý dòng hàng',

@@ -16,6 +16,7 @@ import { NativeSelect } from '@crove/ui/components/native-select';
 import { Textarea } from '@crove/ui/components/textarea';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { DealOrders, QuoteDecision } from './deal-orders.tsx';
+import { QuoteDealOffers } from './quote-deal-offers.tsx';
 import { NewLink, QuoteLinks, QuoteSendPanel, QuoteSettingsForm, quoteLabel, refreshQuoteQueries } from './quote-send.tsx';
 import { ErrorText, Field } from './ui.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
@@ -468,6 +469,7 @@ export function DealQuotes({ deal, canEdit, onClose }: { deal: Deal; canEdit: bo
       </div>
       {settings && canManage && <QuoteSettingsForm onDone={() => setSettings(false)} />}
       {create.error && <ErrorText>{errorMessage(create.error)}</ErrorText>}
+      {quotes.data && <QuoteDealOffers dealId={deal.id} quotes={quotes.data} canEdit={canEdit} />}
       {quotes.error ? (
         <ErrorText>{errorMessage(quotes.error)}</ErrorText>
       ) : quotes.data?.length === 0 ? (
