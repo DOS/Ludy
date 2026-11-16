@@ -10,6 +10,7 @@ import { HR_DECLARATION_MAX_PEOPLE, HR_ERASED_NAME } from '@crove/kernel-contrac
 import { DomainError } from '@crove/kernel-runtime';
 import { isLaborContractKind, isValidCalendarDate, money, type LaborContractKind } from '@crove/l10n-vn';
 import {
+  DECLARATION_CONTRACT_LABELS,
   DECLARATION_NOT_SENT,
   DECLARATION_NOTICE,
   PLAN_ROWS_CONFIRMED,
@@ -112,13 +113,6 @@ export interface LaborRegisterDocument {
 // ---------------------------------------------------------------------------------------------------------------------
 // Labels and deterministic helpers
 // ---------------------------------------------------------------------------------------------------------------------
-
-const CONTRACT_LABEL: Readonly<Record<LaborRegisterContractKind, string>> = {
-  indefinite: 'Không xác định thời hạn',
-  fixed_term: 'Xác định thời hạn',
-  under_one_month: 'Dưới 1 tháng',
-  none: 'Không ký HĐLĐ',
-};
 
 const GENDER_LABEL: Readonly<Record<LaborRegisterGender, string>> = {
   male: 'Nam',
@@ -267,7 +261,7 @@ export function buildLaborRegister(input: LaborRegisterInput): LaborRegisterDocu
       qualification: erased ? '' : textOf(p.qualification),
       position: erased ? '' : textOf(p.position),
       startedOn: p.startedOn,
-      contractType: CONTRACT_LABEL[p.contractKind],
+      contractType: DECLARATION_CONTRACT_LABELS[p.contractKind],
       contractStartDate: textOf(optionalDateOf(p.contractStartDate)),
       contractEndDate: textOf(p.contractEndDate),
       baseWage: formatMoneyCell('lương hợp đồng', p.baseWage, p.employeeId),
@@ -437,7 +431,7 @@ export function build01PliReport(input: Report01PliInput): LaborRegisterDocument
       allowance: formatMoneyCell('phụ cấp lương', p.allowance, p.employeeId),
       otherAmounts: formatMoneyCell('khoản bổ sung khác', p.otherAmounts, p.employeeId),
       contractStartDate: textOf(optionalDateOf(p.contractStartDate)),
-      contractType: CONTRACT_LABEL[p.contractKind],
+      contractType: DECLARATION_CONTRACT_LABELS[p.contractKind],
       contractEndDate: textOf(p.contractEndDate),
       insuranceStartMonth: textOf(p.insuranceStartMonth),
       insuranceEndMonth: textOf(p.insuranceEndMonth),

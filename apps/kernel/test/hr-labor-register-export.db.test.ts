@@ -16,10 +16,10 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { HrDeclarationDocument, HrLaborCheckResult, HrRunSheet, HrRunWritten, HrWritten } from '@crove/kernel-contract';
+import type { HrDeclarationDocument, HrDepartmentWritten, HrLaborCheckResult, HrRunSheet, HrRunWritten, HrWritten } from '@crove/kernel-contract';
 import { CredentialVault, DomainError, Runtime, SUBJECT_WRAP_INFO, SubjectVault, parseVaultKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
 import { PAYROLL_RULES } from '@crove/l10n-vn';
-import { LABOR_REGISTER_ERASED_PLACEHOLDER, hrCommands, hrQueries } from '@crove/mod-hr';
+import { LABOR_REGISTER_ERASED_PLACEHOLDER, hrCommands, hrQueries, type HrLaborCheckSnapshot } from '@crove/mod-hr';
 import type { AuthUser } from '../src/auth.ts';
 import { ConcurrencyLimiter } from '../src/concurrency.ts';
 import { loadConfig } from '../src/config.ts';
@@ -1396,5 +1396,101 @@ suite('HR labor register and 01/PLI exports on PostgreSQL (#3372)', () => {
         expect.objectContaining({ employeeId: nextFixed.employeeId, code: 'final_fixed_term_renewal' }),
       ]),
     );
+  });
+
+  it('populates position from department and job_title in labor_register and 01pli, masks erased staff, and adds them to laborCheck forbidden (#3437)', async () => {
+    const tag = randomUUID().slice(0, 8);
+    const owner = await upsertIdentity(createDb(pool), { issuer: 'hrreg', subject: `deptpos-${tag}`, email: `deptpos-${tag}@hr.test`, name: null });
+    const { orgId, slug } = await createOrg(rt, asUser(owner), `Dept Pos Co ${tag}`);
+    const exec = <O>(userId: string, name: string, input: unknown = {}, actor: ReturnType<typeof asUser> | ReturnType<typeof asMfa> = asUser(userId)) =>
+      rt.execute<O>(name, input, { actor, orgId });
+    const query = <O>(userId: string, name: string, input: unknown = {}) => rt.query<O>(name, input, { actor: asUser(userId), orgId });
+
+    const { departmentId: salesDept } = await exec<HrDepartmentWritten>(owner, 'hr.department.add', { name: 'Kinh doanh Canary', code: 'KD', payFunction: 'sales' });
+    const { departmentId: erasedDept } = await exec<HrDepartmentWritten>(owner, 'hr.department.add', { name: 'Phòng Bí Mật Đã Xóa', code: 'BM', payFunction: 'admin' });
+
+    const both = await exec<HrWritten>(owner, 'hr.payroll.employee.add', {
+      displayName: 'Nguyễn Đủ Bộ Phận Canary',
+      birthDate: '1991-02-02',
+      address: '10 Lê Lợi, TP.HCM',
+      identityNumber: '000000000221',
+      insuranceNumber: '7309122111',
+      departmentId: salesDept,
+      jobTitle: 'Trưởng phòng',
+      employment: { effectiveFrom: '2026-01-01', contractType: 'indefinite', region: 'I', baseWage: '22000000' },
+    });
+    const titleOnly = await exec<HrWritten>(owner, 'hr.payroll.employee.add', {
+      displayName: 'Trần Chỉ Chức Danh Canary',
+      birthDate: '1992-03-03',
+      address: '20 Đồng Khởi, TP.HCM',
+      identityNumber: '000000000222',
+      insuranceNumber: '7309233222',
+      jobTitle: 'Kế toán viên',
+      employment: { effectiveFrom: '2026-02-01', contractType: 'fixed_term', region: 'I', baseWage: '15000000' },
+    });
+    const deptOnly = await exec<HrWritten>(owner, 'hr.payroll.employee.add', {
+      displayName: 'Lê Chỉ Phòng Ban Canary',
+      birthDate: '1993-04-04',
+      address: '30 Pasteur, TP.HCM',
+      identityNumber: '000000000223',
+      insuranceNumber: '7309344333',
+      departmentId: salesDept,
+      employment: { effectiveFrom: '2026-03-01', contractType: 'indefinite', region: 'I', baseWage: '14000000' },
+    });
+    const erased = await exec<HrWritten>(owner, 'hr.payroll.employee.add', {
+      displayName: 'Phạm Bị Xóa Bộ Phận Canary',
+      birthDate: '1986-05-05',
+      address: '99 Đường Xóa',
+      identityNumber: '000000000224',
+      insuranceNumber: '7308655444',
+      departmentId: erasedDept,
+      jobTitle: 'Chức Danh Bí Mật',
+      employment: { effectiveFrom: '2015-01-01', contractType: 'indefinite', region: 'I', baseWage: '12000000' },
+    });
+    await exec(owner, 'hr.payroll.employee.end', { employeeId: erased.employeeId, endedOn: '2016-01-01' });
+    await withAdmin((c) =>
+      c.query(`UPDATE crove_hr.payroll_employee SET ended_on = ((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - interval '10 years 1 day')::date WHERE id = $1`, [erased.employeeId]),
+    );
+    await exec(owner, 'hr.payroll.employee.erase', { employeeId: erased.employeeId }, asMfa(owner));
+
+    const regDoc = await rt.query<HrDeclarationDocument>('hr.payroll.declaration.get', { kind: 'labor_register', period: '2026-06-20' }, { actor: asMfa(owner), orgId });
+    const regRows = regDoc.sheets[0]?.rows ?? [];
+    expect(regRows.find((r) => r.name === 'Nguyễn Đủ Bộ Phận Canary')?.position).toBe('Trưởng phòng - Kinh doanh Canary');
+    expect(regRows.find((r) => r.name === 'Trần Chỉ Chức Danh Canary')?.position).toBe('Kế toán viên');
+    expect(regRows.find((r) => r.name === 'Lê Chỉ Phòng Ban Canary')?.position).toBe('Kinh doanh Canary');
+    expect(regRows.find((r) => r.name === LABOR_REGISTER_ERASED_PLACEHOLDER)?.position).toBe('');
+    expect(JSON.stringify(regDoc)).not.toContain('Phòng Bí Mật Đã Xóa');
+    expect(JSON.stringify(regDoc)).not.toContain('Chức Danh Bí Mật');
+
+    const pliDoc = await rt.query<HrDeclarationDocument>('hr.payroll.declaration.get', { kind: '01pli', period: '2026-H1' }, { actor: asMfa(owner), orgId });
+    const pliRows = pliDoc.sheets[1]?.rows ?? [];
+    expect(pliRows.find((r) => r.name === 'Nguyễn Đủ Bộ Phận Canary')?.position).toBe('Trưởng phòng - Kinh doanh Canary');
+    expect(pliRows.find((r) => r.name === 'Trần Chỉ Chức Danh Canary')?.position).toBe('Kế toán viên');
+    expect(pliRows.find((r) => r.name === 'Lê Chỉ Phòng Ban Canary')?.position).toBe('Kinh doanh Canary');
+
+    const checkSnap = await rt.query<HrLaborCheckSnapshot>('hr.payroll.labor_check.read', { kind: 'labor_register', period: '2026-06-20' }, { actor: asUser(owner), orgId });
+    expect(checkSnap.forbidden).toContain('Kinh doanh Canary');
+    expect(checkSnap.forbidden).toContain('Trưởng phòng');
+    expect(checkSnap.forbidden).toContain('Kế toán viên');
+    expect(checkSnap.forbidden).not.toContain('Phòng Bí Mật Đã Xóa');
+    expect(checkSnap.forbidden).not.toContain('Chức Danh Bí Mật');
+
+    const { postLaborCheck } = makeHttp({
+      orgId,
+      slug,
+      owner,
+      admin: owner,
+      member: owner,
+      viewer: owner,
+      anId: both.employeeId as string,
+      binhId: titleOnly.employeeId as string,
+      chiId: deptOnly.employeeId as string,
+      dungId: erased.employeeId as string,
+      exec,
+      query,
+    });
+    const checkHttp = await postLaborCheck(owner, { kind: 'labor_register', period: '2026-06-20', lang: 'vi' }, slug);
+    expect(checkHttp.status).toBe(200);
+    expect(checkHttp.body.counts.checked).toBe(4);
   });
 });
