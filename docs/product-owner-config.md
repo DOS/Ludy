@@ -281,14 +281,18 @@ line):
 Not shared core, so the line's PO reviews them alone (they stay protected
 paths, with the line PO's security review):
 - a line's own migrations, tables, grants on its own tables, module code and
-  its own invariant tests;
+  its own invariant tests, unless the change loosens a rule;
 - an invariant change that only tightens a rule (removes an allowance or a
   pending entry), or only adds a two-step pending entry for the line's own
-  tables, commands or send sites;
+  tables or commands;
 - the generated DB types.
 
-The Platform PO is a role, not a person (owner, 2026-11-16): any dedicated
-session that runs it on a flagship model with fresh context, and is neither the
+The Platform PO is a role, not a person. The owner, 2026-11-16, in the
+Meetings PO's chat: "Bản chất PO Platform cũng là 1 agent bình thường thôi
+[...] Cái quan trọng ở đây là có 1 agent có role dedicated để nó double check,
+review 1 lượt thôi" (the Platform PO is an ordinary agent too; what matters is
+one agent with a dedicated role that double-checks, reviewing once). So any
+dedicated session that runs it on a flagship model with fresh context, and is neither the
 PR's author nor the PR's own PO, may give the shared-core review. What matters
 is one independent second agent that checks those files once.
 
@@ -312,10 +316,6 @@ How to ask and how long to wait (owner decision 2026-11-16):
 
 The Platform PO answers on the PR with `## Shared-core review (Platform PO)`,
 naming the head it reviewed.
-
-Cost habits for every PO: rename a migration only right before merging; skip
-update-branch when the new commits on `main` touch none of the PR's files;
-run one fresh reviewer per protected PR.
 
 ## Sessions
 
