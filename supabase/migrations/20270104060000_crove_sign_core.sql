@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS crove_sign.signer (
   created_at timestamptz NOT NULL DEFAULT pg_catalog.now(),
   updated_at timestamptz NOT NULL DEFAULT pg_catalog.now(),
   PRIMARY KEY (org_id, id),
+  CONSTRAINT signer_org_envelope_id_uq UNIQUE (org_id, envelope_id, id),
   CONSTRAINT signer_email_required_check CHECK (email IS NOT NULL OR (delivery_mode = 'link' AND require_email_otp = false)),
   CONSTRAINT signer_envelope_fk FOREIGN KEY (org_id, envelope_id) REFERENCES crove_sign.envelope (org_id, id) ON DELETE CASCADE
 );
@@ -124,11 +125,12 @@ CREATE TABLE IF NOT EXISTS crove_sign.field (
   PRIMARY KEY (org_id, id),
   CONSTRAINT field_bounds_check CHECK (x_norm + w_norm <= 1.000000 AND y_norm + h_norm <= 1.000000),
   CONSTRAINT field_envelope_fk FOREIGN KEY (org_id, envelope_id) REFERENCES crove_sign.envelope (org_id, id) ON DELETE CASCADE,
-  CONSTRAINT field_signer_fk FOREIGN KEY (org_id, signer_id) REFERENCES crove_sign.signer (org_id, id) ON DELETE CASCADE
+  CONSTRAINT field_signer_fk FOREIGN KEY (org_id, envelope_id, signer_id) REFERENCES crove_sign.signer (org_id, envelope_id, id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS field_envelope_idx ON crove_sign.field (org_id, envelope_id, page_number, id);
 CREATE INDEX IF NOT EXISTS field_signer_idx ON crove_sign.field (org_id, signer_id);
+CREATE INDEX IF NOT EXISTS field_envelope_signer_idx ON crove_sign.field (org_id, envelope_id, signer_id);
 
 CREATE TABLE IF NOT EXISTS crove_sign.ai_analysis (
   org_id uuid NOT NULL,
@@ -393,8 +395,8 @@ CREATE OR REPLACE FUNCTION crove_sign.signer_guard() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   v_actor text := crove_kernel.ctx_actor_type();
-  v_env_id uuid := COALESCE(NEW.envelope_id, OLD.envelope_id);
-  v_org uuid := COALESCE(NEW.org_id, OLD.org_id);
+  v_env_id uuid := COALESCE(OLD.envelope_id, NEW.envelope_id);
+  v_org uuid := COALESCE(OLD.org_id, NEW.org_id);
   v_env_status text;
 BEGIN
   IF v_actor IS NULL OR v_actor = 'system' THEN
@@ -405,11 +407,26 @@ BEGIN
     RETURN NEW;
   END IF;
   SELECT e.status INTO v_env_status FROM crove_sign.envelope e WHERE e.org_id = v_org AND e.id = v_env_id FOR SHARE;
-  IF TG_OP = 'INSERT' OR TG_OP = 'DELETE' THEN
+  IF TG_OP = 'DELETE' THEN
     IF v_env_status IS DISTINCT FROM 'draft' THEN
       RAISE EXCEPTION 'ENVELOPE_FROZEN' USING ERRCODE = '42501', DETAIL = 'signers can only be added or removed while envelope is draft';
     END IF;
-    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+    RETURN OLD;
+  END IF;
+  IF TG_OP = 'INSERT' THEN
+    IF v_env_status IS DISTINCT FROM 'draft' THEN
+      RAISE EXCEPTION 'ENVELOPE_FROZEN' USING ERRCODE = '42501', DETAIL = 'signers can only be added or removed while envelope is draft';
+    END IF;
+    IF NEW.status <> 'waiting' THEN
+      RAISE EXCEPTION 'SIGNER_INVALID_TRANSITION' USING ERRCODE = '42501', DETAIL = 'new signers on a draft envelope must start in waiting status';
+    END IF;
+    IF NEW.token_last_reminded_at IS NOT NULL OR NEW.viewed_at IS NOT NULL OR NEW.signed_at IS NOT NULL
+       OR NEW.declined_at IS NOT NULL OR NEW.decline_reason IS NOT NULL OR NEW.otp_verified_at IS NOT NULL
+       OR NEW.signature_kind IS NOT NULL OR NEW.signature_typed_text IS NOT NULL
+       OR NEW.signer_user_agent IS NOT NULL OR NEW.signer_ip_hash IS NOT NULL
+       OR NEW.consent_accepted_at IS NOT NULL THEN
+      RAISE EXCEPTION 'SIGNER_SYSTEM_ONLY' USING ERRCODE = '42501', DETAIL = 'signing evidence columns are system-managed';
+    END IF;
     RETURN NEW;
   END IF;
   -- UPDATE by tenant user
@@ -426,9 +443,12 @@ BEGIN
     RAISE EXCEPTION 'SIGNER_SYSTEM_ONLY' USING ERRCODE = '42501', DETAIL = 'signing evidence columns are system-managed';
   END IF;
   IF v_env_status = 'draft' THEN
+    IF NEW.token_last_reminded_at IS DISTINCT FROM OLD.token_last_reminded_at THEN
+      RAISE EXCEPTION 'SIGNER_SYSTEM_ONLY' USING ERRCODE = '42501', DETAIL = 'reminder timestamp cannot be set while envelope is draft';
+    END IF;
     IF (NEW.routing_order, NEW.role_label, NEW.name, NEW.email, NEW.phone, NEW.delivery_mode, NEW.require_email_otp, NEW.status)
        IS DISTINCT FROM (OLD.routing_order, OLD.role_label, OLD.name, OLD.email, OLD.phone, OLD.delivery_mode, OLD.require_email_otp, OLD.status) THEN
-      IF NEW.status NOT IN ('waiting', 'pending') THEN
+      IF NEW.status <> 'waiting' THEN
         RAISE EXCEPTION 'SIGNER_INVALID_TRANSITION' USING ERRCODE = '42501';
       END IF;
     END IF;
@@ -466,8 +486,8 @@ CREATE OR REPLACE FUNCTION crove_sign.field_guard() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   v_actor text := crove_kernel.ctx_actor_type();
-  v_env_id uuid := COALESCE(NEW.envelope_id, OLD.envelope_id);
-  v_org uuid := COALESCE(NEW.org_id, OLD.org_id);
+  v_env_id uuid := COALESCE(OLD.envelope_id, NEW.envelope_id);
+  v_org uuid := COALESCE(OLD.org_id, NEW.org_id);
   v_env_status text;
 BEGIN
   IF v_actor IS NULL OR v_actor = 'system' THEN
@@ -479,6 +499,9 @@ BEGIN
   END IF;
   IF TG_OP = 'UPDATE' AND (pg_catalog.to_jsonb(OLD) - ARRAY['updated_at']) IS NOT DISTINCT FROM (pg_catalog.to_jsonb(NEW) - ARRAY['updated_at']) THEN
     RETURN NEW;
+  END IF;
+  IF TG_OP = 'UPDATE' AND (NEW.org_id, NEW.id, NEW.envelope_id, NEW.created_at) IS DISTINCT FROM (OLD.org_id, OLD.id, OLD.envelope_id, OLD.created_at) THEN
+    RAISE EXCEPTION 'FIELD_IMMUTABLE' USING ERRCODE = '42501';
   END IF;
   SELECT e.status INTO v_env_status FROM crove_sign.envelope e WHERE e.org_id = v_org AND e.id = v_env_id FOR SHARE;
   IF v_env_status IS DISTINCT FROM 'draft' THEN

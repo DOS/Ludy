@@ -591,12 +591,53 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
       runtime.execute('sign.envelope.update', { envelopeId, title: 'Blocked' }, { actor: asUser(member), orgId: org.orgId }),
     ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_DRAFT', status: 409 });
 
-    // Direct non-draft SQL UPDATE/DELETE refused by DB guard even inside tenant user context.
+    // Direct non-draft SQL UPDATE/DELETE and guard bypass attempts refused by DB guard even inside tenant user context.
     const guardClient = await pool.connect();
     try {
       await guardClient.query('BEGIN');
       await guardClient.query('SELECT crove_kernel.enter_context($1::uuid, $2::uuid)', [member.userId, org.orgId]);
-      await expect(guardClient.query('DELETE FROM crove_sign.envelope WHERE org_id = $1 AND id = $2', [org.orgId, envelopeId])).rejects.toThrow(/ENVELOPE_FROZEN/);
+      const expectGuardFailure = async (sqlText: string, params: unknown[], pattern: RegExp) => {
+        await guardClient.query('SAVEPOINT sign_guard');
+        await expect(guardClient.query(sqlText, params)).rejects.toThrow(pattern);
+        await guardClient.query('ROLLBACK TO SAVEPOINT sign_guard');
+        await guardClient.query('RELEASE SAVEPOINT sign_guard');
+      };
+      await expectGuardFailure('DELETE FROM crove_sign.envelope WHERE org_id = $1 AND id = $2', [org.orgId, envelopeId], /ENVELOPE_FROZEN/);
+      await expectGuardFailure(
+        'UPDATE crove_sign.field SET envelope_id = $1 WHERE org_id = $2 AND envelope_id = $3',
+        [badEnv.envelopeId, org.orgId, envelopeId],
+        /FIELD_IMMUTABLE/,
+      );
+      await expectGuardFailure(
+        "INSERT INTO crove_sign.field (org_id, envelope_id, signer_id, field_type, page_number, x_norm, y_norm, w_norm, h_norm) VALUES ($1, $2, $3, 'signature', 1, 0.1, 0.1, 0.2, 0.1)",
+        [org.orgId, badEnv.envelopeId, s1.signerId],
+        /field_signer_fk/,
+      );
+      await expectGuardFailure(
+        "INSERT INTO crove_sign.signer (org_id, envelope_id, role_label, name, delivery_mode, status) VALUES ($1, $2, 'Signer', 'Forged', 'link', 'pending')",
+        [org.orgId, badEnv.envelopeId],
+        /SIGNER_INVALID_TRANSITION/,
+      );
+      await expectGuardFailure(
+        "INSERT INTO crove_sign.signer (org_id, envelope_id, role_label, name, delivery_mode, status, signed_at, otp_verified_at, signature_kind, consent_accepted_at) VALUES ($1, $2, 'Signer', 'Forged', 'link', 'waiting', now(), now(), 'draw', now())",
+        [org.orgId, badEnv.envelopeId],
+        /SIGNER_SYSTEM_ONLY/,
+      );
+      const tempSigner = await guardClient.query<{ id: string }>(
+        "INSERT INTO crove_sign.signer (org_id, envelope_id, role_label, name, delivery_mode) VALUES ($1, $2, 'Signer', 'Draft Temp', 'link') RETURNING id",
+        [org.orgId, badEnv.envelopeId],
+      );
+      const tempSignerId = tempSigner.rows[0]!.id;
+      await expectGuardFailure(
+        "UPDATE crove_sign.signer SET status = 'pending' WHERE org_id = $1 AND id = $2",
+        [org.orgId, tempSignerId],
+        /SIGNER_INVALID_TRANSITION/,
+      );
+      await expectGuardFailure(
+        'UPDATE crove_sign.signer SET token_last_reminded_at = now() WHERE org_id = $1 AND id = $2',
+        [org.orgId, tempSignerId],
+        /SIGNER_SYSTEM_ONLY/,
+      );
     } finally {
       await guardClient.query('ROLLBACK').catch(() => {});
       guardClient.release();
