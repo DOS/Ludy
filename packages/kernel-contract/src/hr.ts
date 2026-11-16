@@ -9,6 +9,18 @@ import { vietnamToday } from './vietnam-time.ts';
 
 export const HR_CONTRACT_TYPES = ['indefinite', 'fixed_term', 'none'] as const;
 export type HrContractType = (typeof HR_CONTRACT_TYPES)[number];
+export const HR_CONTRACT_FORMS = ['written', 'electronic', 'oral'] as const;
+export type HrContractForm = (typeof HR_CONTRACT_FORMS)[number];
+export const HR_PROBATION_ROLE_TIERS = ['enterprise_manager', 'college_or_above', 'intermediate_technical', 'other'] as const;
+export type HrProbationRoleTier = (typeof HR_PROBATION_ROLE_TIERS)[number];
+export const HR_CONTRACT_ALERT_CODES = [
+  'contract_expired',
+  'contract_expiring_soon',
+  'probation_ending_soon',
+  'final_fixed_term_renewal',
+  'must_convert_to_indefinite',
+] as const;
+export type HrContractAlertCode = (typeof HR_CONTRACT_ALERT_CODES)[number];
 // The wage regions of Decree 74/2024 (the minimum wage by workplace).
 export const HR_REGIONS = ['I', 'II', 'III', 'IV'] as const;
 export type HrRegion = (typeof HR_REGIONS)[number];
@@ -49,6 +61,13 @@ export const zHrEmploymentTerms = z.strictObject({
   baseWage: zHrWage,
   // Administration unless said otherwise: the default every small business has.
   payFunction: z.enum(HR_PAY_FUNCTIONS).default('admin'),
+  contractForm: z.enum(HR_CONTRACT_FORMS).nullable().optional(),
+  termMonths: z.number().int().min(1).max(36).nullable().optional(),
+  contractEndOn: zLocalDate.nullable().optional(),
+  fixedTermSequence: z.number().int().min(1).max(2).nullable().optional(),
+  probationRoleTier: z.enum(HR_PROBATION_ROLE_TIERS).nullable().optional(),
+  probationEndOn: zLocalDate.nullable().optional(),
+  probationWage: zHrWage.nullable().optional(),
 });
 export type HrEmploymentTerms = z.infer<typeof zHrEmploymentTerms>;
 
@@ -125,7 +144,31 @@ export type HrEmployeeList = z.input<typeof zHrEmployeeList>;
 export const zHrWritten = z.object({ employeeId: zId.optional(), employmentId: zId.optional(), dependentId: zId.optional() });
 export type HrWritten = z.infer<typeof zHrWritten>;
 
-const zTerms = z.object({ id: zId, effectiveFrom: z.string(), contractType: z.enum(HR_CONTRACT_TYPES), region: z.enum(HR_REGIONS), baseWage: z.string(), payFunction: z.enum(HR_PAY_FUNCTIONS) });
+export const zHrContractAlert = z.object({
+  code: z.enum(HR_CONTRACT_ALERT_CODES),
+  severity: z.enum(['error', 'warning']),
+  targetDate: z.string().nullable(),
+  daysRemaining: z.number().int().nullable(),
+  message: z.string(),
+  cite: z.string(),
+});
+export type HrContractAlert = z.infer<typeof zHrContractAlert>;
+
+const zTerms = z.object({
+  id: zId,
+  effectiveFrom: z.string(),
+  contractType: z.enum(HR_CONTRACT_TYPES),
+  region: z.enum(HR_REGIONS),
+  baseWage: z.string(),
+  payFunction: z.enum(HR_PAY_FUNCTIONS),
+  contractForm: z.enum(HR_CONTRACT_FORMS).nullable(),
+  termMonths: z.number().int().nullable(),
+  contractEndOn: z.string().nullable(),
+  fixedTermSequence: z.number().int().nullable(),
+  probationRoleTier: z.enum(HR_PROBATION_ROLE_TIERS).nullable(),
+  probationEndOn: z.string().nullable(),
+  probationWage: z.string().nullable(),
+});
 export type HrEmploymentView = z.infer<typeof zTerms>;
 
 export const zHrEmployeeSummary = z.object({
@@ -138,6 +181,7 @@ export const zHrEmployeeSummary = z.object({
   current: zTerms.nullable(),
   hasIdentityNumber: z.boolean(),
   hasAccountNumber: z.boolean(),
+  contractAlerts: z.array(zHrContractAlert),
 });
 export type HrEmployeeSummary = z.infer<typeof zHrEmployeeSummary>;
 

@@ -6,6 +6,7 @@ import {
   calculateThirteenthMonthSalary,
   countCompletedCalendarMonths,
   checkLaborContractTerms,
+  deriveFixedTermEndDateIso,
   evaluateContractAlerts,
   isValidCalendarDate,
   parseIsoCalendarDate,
@@ -27,6 +28,12 @@ describe('pure Gregorian calendar date validation', () => {
     expect(isValidCalendarDate('2026-00-10')).toBe(false);
     expect(isValidCalendarDate('0000-01-01')).toBe(false);
     expect(parseIsoCalendarDate('2026-02-30')).toBeNull();
+
+    expect(deriveFixedTermEndDateIso('2026-01-01', 12)).toBe('2026-12-31');
+    expect(deriveFixedTermEndDateIso('2026-01-31', 1)).toBe('2026-02-27');
+    expect(deriveFixedTermEndDateIso('2024-02-29', 12)).toBe('2025-02-27');
+    expect(deriveFixedTermEndDateIso('2026-02-30', 12)).toBeNull();
+    expect(deriveFixedTermEndDateIso('2026-01-01', 37)).toBeNull();
   });
 });
 

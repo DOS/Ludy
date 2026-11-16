@@ -29,16 +29,20 @@ import {
   zHrEmploymentAdd,
   zHrFinalizationSet,
   zHrPayrollInputs,
+  type HrContractAlert,
+  type HrContractForm,
   type HrDependentView,
   type HrEmployee,
   type HrEmployeeErased,
   type HrEmployeeSeveranceResult,
   type HrEmployeeSummary,
+  type HrEmploymentTerms,
   type HrEmploymentView,
+  type HrProbationRoleTier,
   type HrWritten,
 } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
-import { calculateSeveranceAllowance, countCompletedCalendarMonths, isBankCode, money, sum, toMoney } from '@crove/l10n-vn';
+import { calculateSeveranceAllowance, checkLaborContractTerms, countCompletedCalendarMonths, deriveFixedTermEndDateIso, evaluateContractAlerts, isBankCode, money, sum, toMoney } from '@crove/l10n-vn';
 import { hrManifest } from './manifest.ts';
 import { isoDate as iso, monthEnd, previousMonth, termsInForceForMonth } from './payroll-dates.ts';
 
@@ -57,8 +61,130 @@ export const INSURANCE_PLACE = 'crove_hr.payroll_employee.insurance_number_seale
 export const subjectOf = (employeeId: string): string => `employee:${employeeId}`;
 
 const EMPLOYEE_COLUMNS = ['org_id', 'id', 'legal_entity_id', 'display_name', 'address', 'national_id_sealed', 'bank_account_sealed', 'bank_code', 'birth_date', 'tax_code_sealed', 'insurance_number_sealed', 'created_by', 'created_at', 'updated_at'] as const;
-const EMPLOYMENT_COLUMNS = ['org_id', 'id', 'legal_entity_id', 'employee_id', 'effective_from', 'contract_type', 'region', 'base_wage', 'pay_function', 'created_by', 'created_at'] as const;
+const EMPLOYMENT_COLUMNS = [
+  'org_id',
+  'id',
+  'legal_entity_id',
+  'employee_id',
+  'effective_from',
+  'contract_type',
+  'contract_form',
+  'term_months',
+  'contract_end_on',
+  'fixed_term_sequence',
+  'probation_role_tier',
+  'probation_end_on',
+  'probation_wage',
+  'region',
+  'base_wage',
+  'pay_function',
+  'created_by',
+  'created_at',
+] as const;
 const DEPENDENT_COLUMNS = ['org_id', 'id', 'legal_entity_id', 'employee_id', 'display_name', 'relation', 'registered_on', 'created_by', 'created_at'] as const;
+
+interface PreparedEmploymentRow {
+  effective_from: string;
+  contract_type: HrEmploymentTerms['contractType'];
+  contract_form: HrContractForm | null;
+  term_months: number | null;
+  contract_end_on: string | null;
+  fixed_term_sequence: number | null;
+  probation_role_tier: HrProbationRoleTier | null;
+  probation_end_on: string | null;
+  probation_wage: string | null;
+  region: HrEmploymentTerms['region'];
+  base_wage: string;
+  pay_function: HrEmploymentTerms['payFunction'];
+}
+
+function prepareEmploymentTerms(terms: HrEmploymentTerms): PreparedEmploymentRow {
+  const contractForm = terms.contractForm ?? null;
+  const termMonths = terms.termMonths ?? null;
+  const fixedTermSequence = terms.fixedTermSequence ?? null;
+  const probationRoleTier = terms.probationRoleTier ?? null;
+  const probationEndOn = terms.probationEndOn ?? null;
+  const probationWage = terms.probationWage ?? null;
+  const contractEndOn =
+    terms.contractEndOn ??
+    (terms.contractType === 'fixed_term' && termMonths !== null
+      ? deriveFixedTermEndDateIso(terms.effectiveFrom, termMonths)
+      : null);
+
+  const hasMetadata =
+    contractForm !== null ||
+    termMonths !== null ||
+    contractEndOn !== null ||
+    fixedTermSequence !== null ||
+    probationRoleTier !== null ||
+    probationEndOn !== null ||
+    probationWage !== null;
+
+  if (hasMetadata) {
+    const hasProbation = probationRoleTier !== null || probationEndOn !== null || probationWage !== null;
+    const check = checkLaborContractTerms({
+      contractKind: terms.contractType === 'none' ? 'under_one_month' : terms.contractType,
+      ...(contractForm !== null ? { form: contractForm } : {}),
+      startDate: terms.effectiveFrom,
+      endDate: contractEndOn,
+      termMonths,
+      fixedTermSequence,
+      contractWage: terms.baseWage,
+      probation: hasProbation
+        ? {
+            roleTier: probationRoleTier ?? '',
+            startDate: terms.effectiveFrom,
+            endDate: probationEndOn,
+            wage: probationWage,
+          }
+        : null,
+    });
+    const errorFindings = check.findings.filter((f) => f.severity === 'error');
+    if (terms.contractType !== 'fixed_term' && (termMonths !== null || fixedTermSequence !== null)) {
+      if (fixedTermSequence !== null && !errorFindings.some((f) => f.field === 'fixedTermSequence')) {
+        errorFindings.push({
+          code: 'invalid_fixed_term_sequence',
+          severity: 'error',
+          field: 'fixedTermSequence',
+          message: 'fixedTermSequence is only valid for fixed_term contracts.',
+          cite: 'Labor Code 2019 Art. 20(2)',
+        });
+      }
+      if (termMonths !== null && errorFindings.length === 0) {
+        errorFindings.push({
+          code: 'invalid_fixed_term_duration',
+          severity: 'error',
+          field: 'termMonths',
+          message: 'termMonths is only valid for fixed_term contracts.',
+          cite: 'Labor Code 2019 Art. 20(1)(b)',
+        });
+      }
+    }
+    if (errorFindings.length > 0) {
+      throw new DomainError(
+        'HR_CONTRACT_INVALID',
+        422,
+        'Thông tin hợp đồng hoặc thử việc chưa đáp ứng quy định của Bộ luật Lao động 2019',
+        { findings: errorFindings },
+      );
+    }
+  }
+
+  return {
+    effective_from: terms.effectiveFrom,
+    contract_type: terms.contractType,
+    contract_form: contractForm,
+    term_months: termMonths,
+    contract_end_on: contractEndOn,
+    fixed_term_sequence: fixedTermSequence,
+    probation_role_tier: probationRoleTier,
+    probation_end_on: probationEndOn,
+    probation_wage: probationWage,
+    region: terms.region,
+    base_wage: terms.baseWage,
+    pay_function: terms.payFunction,
+  };
+}
 
 const userOf = (actor: QueryContext['actor']): string => {
   if (actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
@@ -127,6 +253,7 @@ export const employeeAdd = defineCommand({
   handler: async (ctx, input): Promise<HrWritten> => {
     const userId = userOf(ctx.actor);
     requireKnownBank(input.bankCode);
+    const prepared = prepareEmploymentTerms(input.employment);
     const legalEntityId = await resolveEntity(ctx, input.legalEntityId);
     // The id first: the subject of the sealed values names it.
     const { rows } = await sql<{ id: string }>`SELECT crove_kernel.uuid_v7() AS id`.execute(ctx.trx);
@@ -156,18 +283,13 @@ export const employeeAdd = defineCommand({
         updated_at: ctx.now,
       })
       .execute();
-    const terms = input.employment;
     const employment = await ctx.trx
       .insertInto('crove_hr.payroll_employment')
       .values({
         org_id: ctx.orgId,
         legal_entity_id: legalEntityId,
         employee_id: employeeId,
-        effective_from: terms.effectiveFrom,
-        contract_type: terms.contractType,
-        region: terms.region,
-        base_wage: terms.baseWage,
-        pay_function: terms.payFunction,
+        ...prepared,
         created_by: userId,
         created_at: ctx.now,
       })
@@ -185,11 +307,18 @@ export const employeeAdd = defineCommand({
       hasTaxNumber: taxSealed !== null,
       hasInsuranceNo: insuranceSealed !== null,
       birth: auditValue(EMPLOYEE, 'birth_date', input.birthDate ?? null),
-      effectiveFrom: terms.effectiveFrom,
-      contractType: terms.contractType,
-      region: terms.region,
-      payFunction: terms.payFunction,
-      baseWage: auditValue(EMPLOYMENT, 'base_wage', terms.baseWage),
+      effectiveFrom: prepared.effective_from,
+      contractType: prepared.contract_type,
+      contractForm: prepared.contract_form,
+      termMonths: prepared.term_months,
+      contractEndOn: prepared.contract_end_on,
+      fixedTermSequence: prepared.fixed_term_sequence,
+      probationRoleTier: prepared.probation_role_tier,
+      probationEndOn: prepared.probation_end_on,
+      probationWage: auditValue(EMPLOYMENT, 'probation_wage', prepared.probation_wage),
+      region: prepared.region,
+      payFunction: prepared.pay_function,
+      baseWage: auditValue(EMPLOYMENT, 'base_wage', prepared.base_wage),
     });
     return { employeeId, employmentId: employment.id };
   },
@@ -317,17 +446,14 @@ export const employmentAdd = defineCommand({
     if (newest && input.effectiveFrom <= iso(newest.effective_from)) {
       throw new DomainError('HR_EMPLOYMENT_NOT_NEWER', 422, 'Ngày hiệu lực phải sau ngày hiệu lực của dòng gần nhất');
     }
+    const prepared = prepareEmploymentTerms(input);
     const row = await ctx.trx
       .insertInto('crove_hr.payroll_employment')
       .values({
         org_id: ctx.orgId,
         legal_entity_id: employee.legal_entity_id,
         employee_id: input.employeeId,
-        effective_from: input.effectiveFrom,
-        contract_type: input.contractType,
-        region: input.region,
-        base_wage: input.baseWage,
-        pay_function: input.payFunction,
+        ...prepared,
         created_by: userOf(ctx.actor),
         created_at: ctx.now,
       })
@@ -336,11 +462,18 @@ export const employmentAdd = defineCommand({
     ctx.audit({
       employeeId: input.employeeId,
       employmentId: row.id,
-      effectiveFrom: input.effectiveFrom,
-      contractType: input.contractType,
-      region: input.region,
-      payFunction: input.payFunction,
-      baseWage: auditValue(EMPLOYMENT, 'base_wage', input.baseWage),
+      effectiveFrom: prepared.effective_from,
+      contractType: prepared.contract_type,
+      contractForm: prepared.contract_form,
+      termMonths: prepared.term_months,
+      contractEndOn: prepared.contract_end_on,
+      fixedTermSequence: prepared.fixed_term_sequence,
+      probationRoleTier: prepared.probation_role_tier,
+      probationEndOn: prepared.probation_end_on,
+      probationWage: auditValue(EMPLOYMENT, 'probation_wage', prepared.probation_wage),
+      region: prepared.region,
+      payFunction: prepared.pay_function,
+      baseWage: auditValue(EMPLOYMENT, 'base_wage', prepared.base_wage),
     });
     return { employeeId: input.employeeId, employmentId: row.id };
   },
@@ -511,11 +644,35 @@ export const employeeErase = defineCommand({
 // Queries: every one sensitive (the audit row of the read is committed before it starts).
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
+const TERMS_SELECT_COLUMNS = [
+  'id',
+  'employee_id',
+  'effective_from',
+  'contract_type',
+  'contract_form',
+  'term_months',
+  'contract_end_on',
+  'fixed_term_sequence',
+  'probation_role_tier',
+  'probation_end_on',
+  'probation_wage',
+  'region',
+  'base_wage',
+  'pay_function',
+] as const;
+
 interface TermsRow {
   id: string;
   employee_id: string;
   effective_from: Date | string;
   contract_type: HrEmploymentView['contractType'];
+  contract_form: HrEmploymentView['contractForm'];
+  term_months: number | null;
+  contract_end_on: Date | string | null;
+  fixed_term_sequence: number | null;
+  probation_role_tier: HrEmploymentView['probationRoleTier'];
+  probation_end_on: Date | string | null;
+  probation_wage: string | null;
   region: HrEmploymentView['region'];
   base_wage: string;
   pay_function: HrEmploymentView['payFunction'];
@@ -528,7 +685,48 @@ const termsView = (r: TermsRow): HrEmploymentView => ({
   region: r.region,
   baseWage: r.base_wage,
   payFunction: r.pay_function,
+  contractForm: r.contract_form,
+  termMonths: r.term_months,
+  contractEndOn: r.contract_end_on === null ? null : iso(r.contract_end_on),
+  fixedTermSequence: r.fixed_term_sequence,
+  probationRoleTier: r.probation_role_tier,
+  probationEndOn: r.probation_end_on === null ? null : iso(r.probation_end_on),
+  probationWage: r.probation_wage,
 });
+
+function contractAlertsFor(status: 'active' | 'ended', current: HrEmploymentView | null, asOf: string): HrContractAlert[] {
+  if (status !== 'active' || current === null) return [];
+  if (
+    current.termMonths === null &&
+    current.contractEndOn === null &&
+    current.fixedTermSequence === null &&
+    current.probationEndOn === null
+  ) {
+    return [];
+  }
+  return evaluateContractAlerts(
+    {
+      contractKind: current.contractType === 'none' ? 'under_one_month' : current.contractType,
+      ...(current.contractForm !== null ? { form: current.contractForm } : {}),
+      startDate: current.effectiveFrom,
+      endDate: current.contractEndOn,
+      termMonths: current.termMonths,
+      fixedTermSequence: current.fixedTermSequence,
+      contractWage: current.baseWage,
+      ...(current.probationEndOn !== null
+        ? {
+            probation: {
+              roleTier: current.probationRoleTier ?? 'other',
+              startDate: current.effectiveFrom,
+              endDate: current.probationEndOn,
+              wage: current.probationWage,
+            },
+          }
+        : {}),
+    },
+    { asOf, noticeDays: 30 },
+  ).alerts;
+}
 
 // The terms in force on a day: the newest row that starts on or before it, in a list sorted newest first.
 const inForce = (terms: readonly HrEmploymentView[], day: string): HrEmploymentView | null => terms.find((t) => t.effectiveFrom <= day) ?? null;
@@ -564,7 +762,7 @@ export const employeeList = defineQuery({
     if (employees.length === 0) return [];
     const terms = await ctx.trx
       .selectFrom('crove_hr.payroll_employment')
-      .select(['id', 'employee_id', 'effective_from', 'contract_type', 'region', 'base_wage', 'pay_function'])
+      .select(TERMS_SELECT_COLUMNS)
       .where('org_id', '=', ctx.orgId)
       .where(
         'employee_id',
@@ -576,16 +774,20 @@ export const employeeList = defineQuery({
     const byEmployee = new Map<string, HrEmploymentView[]>();
     for (const t of terms) byEmployee.set(t.employee_id, [...(byEmployee.get(t.employee_id) ?? []), termsView(t as TermsRow)]);
     const today = vietnamDay(new Date());
-    return employees.map((e) => ({
-      id: e.id,
-      legalEntityId: e.legal_entity_id,
-      displayName: e.display_name,
-      status: e.status,
-      endedOn: e.ended_on === null ? null : iso(e.ended_on),
-      current: inForce(byEmployee.get(e.id) ?? [], today),
-      hasIdentityNumber: e.national_id_sealed !== null,
-      hasAccountNumber: e.bank_account_sealed !== null,
-    }));
+    return employees.map((e) => {
+      const current = inForce(byEmployee.get(e.id) ?? [], today);
+      return {
+        id: e.id,
+        legalEntityId: e.legal_entity_id,
+        displayName: e.display_name,
+        status: e.status,
+        endedOn: e.ended_on === null ? null : iso(e.ended_on),
+        current,
+        hasIdentityNumber: e.national_id_sealed !== null,
+        hasAccountNumber: e.bank_account_sealed !== null,
+        contractAlerts: contractAlertsFor(e.status, current, today),
+      };
+    });
   },
 });
 
@@ -606,7 +808,7 @@ export const employeeGet = defineQuery({
     const terms = (
       await ctx.trx
         .selectFrom('crove_hr.payroll_employment')
-        .select(['id', 'employee_id', 'effective_from', 'contract_type', 'region', 'base_wage', 'pay_function'])
+        .select(TERMS_SELECT_COLUMNS)
         .where('org_id', '=', ctx.orgId)
         .where('employee_id', '=', input.employeeId)
         .orderBy('effective_from', 'desc')
@@ -655,15 +857,18 @@ export const employeeGet = defineQuery({
       taxCode = take(e.tax_code_sealed !== null);
       insuranceNumber = take(e.insurance_number_sealed !== null);
     }
+    const today = vietnamDay(new Date());
+    const current = inForce(terms, today);
     return {
       id: e.id,
       legalEntityId: e.legal_entity_id,
       displayName: e.display_name,
       status: e.status,
       endedOn: e.ended_on === null ? null : iso(e.ended_on),
-      current: inForce(terms, vietnamDay(new Date())),
+      current,
       hasIdentityNumber: e.national_id_sealed !== null,
       hasAccountNumber: e.bank_account_sealed !== null,
+      contractAlerts: contractAlertsFor(e.status, current, today),
       address: e.address,
       identityNumber,
       accountNumber,
