@@ -39,7 +39,7 @@ import { checksByConcern, isAdsProposalKind, isEInvoiceIssueKind, nextAfterDecis
 import { useReviewShortcuts, type ReviewHandlers } from '../lib/review-shortcuts.ts';
 import { useScrollRoom } from '../lib/scroll-room.ts';
 import { pollEvery, useStreamLive } from '../lib/stream-hook.ts';
-import { installedModules } from '../lib/org-modules.ts';
+import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 
 const CHECK_TONE = { pass: 'success', warn: 'warning', fail: 'destructive' } as const;
 const CHECK_ICON = { pass: '✓', warn: '!', fail: '✕' } as const;
@@ -382,6 +382,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
     refetchInterval: (query) => (query.state.data?.extraction?.inFlight ? pollEvery(live, 2000) : false),
   });
   // The chart of accounts is the finance module's; without it (CROVE_MODULES) the screen does not ask for it.
+  useModulesVersion(); // the apps of the org can change while this screen is open
   const finance = installedModules().includes('finance');
   const accounts = useQuery({ ...orpc.accounts.list.queryOptions(), enabled: finance });
   // The audit log is for owners and admins (kernel.audit.list), so only they get the link to a decision's rows (#1445).

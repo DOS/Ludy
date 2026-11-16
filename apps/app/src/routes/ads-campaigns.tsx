@@ -21,7 +21,7 @@ import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { formFromPost, launchStateBadge, objectiveText, type CampaignsSearch, type PostStart } from '../lib/ads-campaigns.ts';
 import { getConfig } from '../lib/auth.ts';
-import { installedModules } from '../lib/org-modules.ts';
+import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 
 // While the AI coworker has a request open, the requests and the drafts are asked for again every few seconds; the worker answers within a minute or so,
 // and the server closes a request nobody answered after a quarter of an hour, so the screen stops asking for one that is older than that.
@@ -96,6 +96,7 @@ export function AdsCampaignsPage() {
   };
 
   const aiOn = config.aiEnabled;
+  useModulesVersion(); // the apps of the org can change while this screen is open
   const socialOn = installedModules().includes('social');
   const shown = (drafts.data ?? []).filter((d) => d.status !== 'discarded');
   const open = openDraft.data && openDraft.data.status !== 'discarded' ? openDraft.data : null;

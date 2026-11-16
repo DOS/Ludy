@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { Link } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
-import { installedModules } from '../lib/org-modules.ts';
+import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 
 export function NotesSubnav({ slug, active }: { slug: string; active: 'notes' | 'my-work' | 'meetings' }) {
   const t = useTranslations('nav');
   const tm = useTranslations('meetings');
+  useModulesVersion(); // the apps of the org can change while this screen is open
   const modules = installedModules();
   const meetingsOn = modules.includes('meetings');
   // Notes and My work belong to the notes module: with it left out their links would only send the user to the inbox.

@@ -16,7 +16,7 @@ import { Textarea } from '@crove/ui/components/textarea';
 import { ErrorText } from './ui.tsx';
 import { orpc } from '../lib/api.ts';
 import { putReplyHandoff } from '../lib/reply-handoff.ts';
-import { installedModules } from '../lib/org-modules.ts';
+import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 
 const ZALO = 'zalo_oa';
 // A customer with many Zalo threads is rare; the panel offers the latest few.
@@ -27,6 +27,7 @@ const FRESH = { staleTime: 30_000, refetchOnWindowFocus: true } as const;
 const WINDOW_POLL_MS = 60_000;
 
 const installed = (): boolean => {
+  useModulesVersion(); // the apps of the org can change while this screen is open
   const modules = installedModules();
   return modules.includes('crm') && modules.includes('social');
 };

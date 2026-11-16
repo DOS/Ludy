@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Outlet, useLocation, useNavigate, useParams } from '@tanstack/react-router';
+import { Outlet, useLocation, useNavigate, useParams, useRouter } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
 import { NavIcon } from '@crove/ui/components/nav-icon';
 import { NavDrawer, ShellNav } from '../components/app-nav.tsx';
@@ -14,7 +14,7 @@ import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
 import { orpc } from '../lib/api.ts';
 import { ALL_NAV, appOfPath, installedApps, type AppId, type NavItem } from '../lib/apps.ts';
 import { getConfig } from '../lib/auth.ts';
-import { effectiveModules, installedItems, screenInstalled } from '../lib/modules.ts';
+import { effectiveModules, installedItems } from '../lib/modules.ts';
 import { installedModules, setOrgModules, useModulesVersion } from '../lib/org-modules.ts';
 import { shellBadges } from '../lib/overview.ts';
 import { isPaletteShortcut, searchTerm } from '../lib/palette.ts';
@@ -43,7 +43,8 @@ function useSettled<T>(value: T, ms: number): T {
 export function OrgLayout() {
   // The org's own apps (ADR-0053, slice d): the router read them before this screen opened; the stream's org_apps hint, or this tab's own switch, makes this read them again, and a change
   // rebuilds the menus and remounts the screen so every "is this app installed" question below it answers again. A failed read leaves the deployment's list.
-  const orgApps = useQuery(orpc.org.apps.queryOptions());
+  const appsLive = useStreamLive();
+  const orgApps = useQuery({ ...orpc.org.apps.queryOptions(), refetchInterval: pollEvery(appsLive, 60_000, SAFETY_POLL_MS) });
   useEffect(() => {
     if (orgApps.data) setOrgModules(effectiveModules(getConfig().modules, orgApps.data.apps));
   }, [orgApps.data]);
@@ -65,10 +66,15 @@ export function OrgLayout() {
   useScrollRoom(phoneHeader, 'top');
   const { slug } = useParams({ strict: false }) as { slug: string };
   const navigate = useNavigate();
-  // A screen of an app that was just switched off goes to the overview, as one opened by address does (ADR-0053 section 3).
+  // A change of the apps runs the router's guards and renders the screen again (router.invalidate): a screen of an app that was just switched off goes to the overview, as one opened
+  // by address does (ADR-0053 section 3), and every other screen is rendered again with the new list, keeping what its user has typed. Not on the first render.
+  const router = useRouter();
+  const seenVersion = useRef(modulesVersion);
   useEffect(() => {
-    if (!screenInstalled(installedModules(), pathname)) void navigate({ to: '/o/$slug/overview', params: { slug } });
-  }, [modulesVersion, pathname, slug, navigate]);
+    if (seenVersion.current === modulesVersion) return;
+    seenVersion.current = modulesVersion;
+    void router.invalidate();
+  }, [modulesVersion, router]);
   const t = useTranslations('nav');
   const tc = useTranslations('common');
   const me = useQuery(orpc.me.get.queryOptions());
@@ -107,9 +113,9 @@ export function OrgLayout() {
   });
   const menuBadges = shellBadges({
     pending: pending.data?.length ?? 0,
-    attention: attention.data?.total ?? 0,
+    attention: socialOn ? (attention.data?.total ?? 0) : 0,
     failedJobs: failedJobs.data?.total ?? 0,
-    reviews: reviews.data?.total ?? 0,
+    reviews: socialOn ? (reviews.data?.total ?? 0) : 0,
   });
   // The member's unread notifications (#637), where Social runs.
   const notifications = useNotifications(socialOn);
@@ -173,7 +179,7 @@ export function OrgLayout() {
         label: t(item.label),
         run: () => void navigate({ to: item.to, params: { slug } }),
       })),
-      ...(reviews.data?.items ?? []).map((item) => ({
+      ...((socialOn ? reviews.data?.items : undefined) ?? []).map((item) => ({
         id: `social-review:${item.postId}`,
         group: 'proposals' as const,
         label: item.title || item.excerpt,
@@ -211,7 +217,7 @@ export function OrgLayout() {
       })),
       { id: 'sign-out', group: 'actions' as const, label: tc('signOut'), run: () => void signOut() },
     ],
-    [NAV, pending.data, reviews.data, me.data, slug, locale, theme, t, tp, tc, f, navigate, setLocale, setTheme],
+    [NAV, pending.data, reviews.data, socialOn, me.data, slug, locale, theme, t, tp, tc, f, navigate, setLocale, setTheme],
   );
   const foundEntries = useMemo<PaletteEntry[]>(() => {
     const settled = typed !== null && term === typed;
@@ -329,7 +335,7 @@ export function OrgLayout() {
         <main ref={main} id="main-content" tabIndex={-1} className="mx-auto w-full max-w-6xl px-4 py-6 outline-none md:px-8 md:py-8">
           <OrgLeftNotice />
           <ScreenTabs slug={slug} installed={NAV} badges={tabBadges} />
-          {me.isSuccess && !org ? <p className="text-sm text-destructive">{t('notMember')}</p> : <Outlet key={modulesVersion} />}
+          {me.isSuccess && !org ? <p className="text-sm text-destructive">{t('notMember')}</p> : <Outlet />}
         </main>
         <Toaster />
         <CommandPalette

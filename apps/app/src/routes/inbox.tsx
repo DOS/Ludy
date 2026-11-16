@@ -51,7 +51,7 @@ import {
   type InboxTab,
 } from '../lib/review.ts';
 import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
-import { installedModules } from '../lib/org-modules.ts';
+import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 
 // What the upload takes, and what a photo of a receipt is taken as.
 const PHOTO_ACCEPT = 'image/jpeg,image/png,image/webp';
@@ -370,6 +370,7 @@ export function InboxPage() {
   const selectable = bulkEnabled ? listed.filter((item) => bulkSelectable(item, REVERSAL_KIND)) : [];
   // Clean purchases grouped by vendor and learned rule (#2379), with the rules behind them of the entity chosen in the shell.
   const shellEntity = useChosenEntity();
+  useModulesVersion(); // the apps of the org can change while this screen is open
   const groupsOn = bulkEnabled && installedModules().includes('finance');
   const groups = groupsOn ? cleanGroups(listed, REVERSAL_KIND) : [];
   const groupRules = useQuery({ ...orpc.accountRules.list.queryOptions({ input: { legalEntityId: shellEntity.legalEntityId } }), enabled: groupsOn && groups.length > 0 && shellEntity.ready, staleTime: 30_000 });

@@ -36,22 +36,28 @@ const deployment$ = vi.hoisted(() => ({ modules: ['kernel', 'finance', 'social']
 vi.mock('../src/lib/auth.ts', () => ({ getConfig: () => ({ modules: deployment$.modules }) }));
 
 describe('the org modules store', () => {
-  it('stands on the deployment until the org answers, moves its version only on a change, and goes back to the deployment when cleared', async () => {
-    const { installedModules, setOrgModules } = await import('../src/lib/org-modules.ts');
-    const seen: string[][] = [];
+  it('stands on the deployment until the org answers, tells its listeners only of a real change, and goes back to the deployment when cleared', async () => {
+    const { installedModules, setOrgModules, subscribeOrgModules } = await import('../src/lib/org-modules.ts');
+    let calls = 0;
+    const stop = subscribeOrgModules(() => (calls += 1));
     expect(installedModules()).toEqual(['kernel', 'finance', 'social']);
-    // An answer that equals the deployment changes nothing.
+    // An answer with the deployment's modules, in any order, changes nothing.
     setOrgModules(['finance', 'kernel', 'social']);
-    seen.push(installedModules());
-    // Social switched off.
+    expect(calls).toBe(0);
+    // Social switched off: one change.
     setOrgModules(['finance', 'kernel']);
-    seen.push(installedModules());
-    // The same answer again.
-    setOrgModules(['finance', 'kernel']);
-    seen.push(installedModules());
-    expect(seen).toEqual([['finance', 'kernel', 'social'], ['finance', 'kernel'], ['finance', 'kernel']]);
-    // Entering another org clears it: the deployment's list stands.
+    expect(calls).toBe(1);
+    expect(installedModules()).toEqual(['finance', 'kernel']);
+    // The same answer again: none.
+    setOrgModules(['kernel', 'finance']);
+    expect(calls).toBe(1);
+    // Entering another org clears it: the deployment's list stands, which is a change from the answer.
     setOrgModules(null);
+    expect(calls).toBe(2);
     expect(installedModules()).toEqual(['kernel', 'finance', 'social']);
+    stop();
+    setOrgModules(['kernel']);
+    expect(calls).toBe(2);
+    setOrgModules(null);
   });
 });

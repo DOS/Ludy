@@ -7301,7 +7301,7 @@ export const vi = {
     hint: 'Chọn những ứng dụng công ty bạn dùng. Ứng dụng đã tắt biến mất khỏi menu, trang Hôm nay và những gì Vy nhắc tới. Dữ liệu vẫn được giữ nguyên, bật lại là có đủ.',
     readOnly: 'Chỉ chủ sở hữu hoặc quản trị viên đổi được.',
     switchLabel: 'Dùng ứng dụng {app}',
-    status: { on: 'Đang bật', off: 'Đã tắt', notInPlan: 'Chưa có trong gói' },
+    status: { on: 'Đang dùng', off: 'Đã tắt', notInPlan: 'Chưa có trong gói' },
     names: { finance: 'Tài chính', social: 'Social', ads: 'Quảng cáo', crm: 'CRM', notes: 'Ghi chú', hr: 'Nhân sự', meetings: 'Cuộc họp', projects: 'Dự án', sign: 'Ký số' },
     offTitle: 'Tắt ứng dụng {app}?',
     offBody: 'Ứng dụng {app} biến mất khỏi menu của mọi người trong công ty, các việc theo lịch của nó dừng lại, trang Hôm nay và Vy không nhắc tới nó nữa. Dữ liệu được giữ nguyên, bật lại là đủ.',

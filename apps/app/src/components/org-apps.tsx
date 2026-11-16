@@ -28,7 +28,7 @@ export function OrgAppsCard() {
   const set = useMutation(
     orpc.org.setApp.mutationOptions({
       // The shell reads the list again (the stream's hint does the same in other tabs), so the menus change at once.
-      onSettled: () => void queryClient.invalidateQueries({ queryKey: orpc.org.apps.key() }),
+      onSettled: () => queryClient.invalidateQueries({ queryKey: orpc.org.apps.key() }),
     }),
   );
   const nameOf = (id: string) => (isNamed(id) ? t(`names.${id}`) : id);
@@ -38,6 +38,7 @@ export function OrgAppsCard() {
   if (rows.length === 0) return null;
   const canChange = apps.data.canChange;
   const change = (module: string, enabled: boolean) => {
+    if (set.isPending) return;
     set.reset();
     set.mutate({ module, enabled });
   };
@@ -57,7 +58,8 @@ export function OrgAppsCard() {
                 <input
                   type="checkbox"
                   checked={app.enabled && app.entitled}
-                  disabled={!canChange || !app.entitled || set.isPending}
+                  disabled={!canChange || !app.entitled}
+                  aria-busy={set.isPending}
                   aria-label={t('switchLabel', { app: nameOf(app.id) })}
                   onChange={(e) => (e.target.checked ? change(app.id, true) : setAsking(app.id))}
                 />

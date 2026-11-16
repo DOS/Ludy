@@ -15,9 +15,10 @@ const listeners = new Set<() => void>();
 // Replaces what the store knows: the org's effective modules, or none (the deployment's stand). The version moves only when the answer changes,
 // so a refetch that finds the same apps remounts nothing.
 export function setOrgModules(modules: readonly string[] | null): void {
-  const before = installedModules().join(',');
+  const key = () => [...installedModules()].sort().join(',');
+  const before = key();
   state = modules !== null ? { modules: [...modules] } : null;
-  if (installedModules().join(',') === before) return;
+  if (key() === before) return;
   version += 1;
   for (const listener of listeners) listener();
 }
@@ -27,14 +28,13 @@ export function installedModules(): string[] {
   return state !== null ? [...state.modules] : getConfig().modules;
 }
 
-// A number that changes whenever installedModules() does, for the shell to rebuild its menus and remount its screen.
+// Calls `listener` whenever the set of apps changes; returns how to stop.
+export function subscribeOrgModules(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => void listeners.delete(listener);
+}
+
+// A number that changes whenever installedModules() does, for a screen to read the set again.
 export function useModulesVersion(): number {
-  return useSyncExternalStore(
-    (listener) => {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    () => version,
-    () => version,
-  );
+  return useSyncExternalStore(subscribeOrgModules, () => version, () => version);
 }

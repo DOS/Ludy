@@ -7307,7 +7307,7 @@ export const en = {
     hint: 'Choose the apps your company uses. An app that is off disappears from the menu, from Today and from what Vy mentions. Its data is kept as it is, and turning it back on brings everything back.',
     readOnly: 'Only an owner or an admin can change this.',
     switchLabel: 'Use the {app} app',
-    status: { on: 'On', off: 'Off', notInPlan: 'Not in your plan' },
+    status: { on: 'In use', off: 'Off', notInPlan: 'Not in your plan' },
     names: { finance: 'Finance', social: 'Social', ads: 'Ads', crm: 'CRM', notes: 'Notes', hr: 'HR', meetings: 'Meetings', projects: 'Projects', sign: 'Signing' },
     offTitle: 'Turn off {app}?',
     offBody: '{app} disappears from everyone\'s menu in the company, its scheduled work stops, and Today and Vy no longer mention it. Its data is kept as it is, and turning it back on brings everything back.',

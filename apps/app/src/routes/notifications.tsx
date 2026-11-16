@@ -13,7 +13,7 @@ import { TodayMailSetting } from '../components/today-mail-setting.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { isKnownKind, kindKey, notificationKinds, notificationTarget, periodParts, type KnownNotificationKind } from '../lib/notifications.ts';
 import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
-import { installedModules } from '../lib/org-modules.ts';
+import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 
 export type WorkNotification = Awaited<ReturnType<typeof client.notifications.list>>['items'][number];
 
@@ -82,6 +82,7 @@ function useLine() {
 
 function Settings({ muted }: { muted: readonly string[] }) {
   const t = useTranslations('notifications');
+  useModulesVersion(); // the apps of the org can change while this screen is open
   const kinds = notificationKinds(installedModules());
   const mute = useMutation({
     mutationFn: (v: { kind: KnownNotificationKind; muted: boolean }) => client.notifications.mute(v),

@@ -386,19 +386,28 @@ async function enterOrg(slug: string) {
     // Cached data belongs to one org; never show it under another.
     queryClient.clear();
     setCurrentOrg(slug);
-    setOrgModules(null);
+    appsLoadedFor = null;
   }
 }
 
-// The org's own apps (kernel.org.apps, ADR-0053 slice d): read before a screen opens so a menu or a screen never flashes for an app the org switched off. If the read
-// fails the deployment's list stands: the API gates every call itself, so a failed read costs a menu item that answers "not available", never a way in.
-async function loadOrgApps() {
+// The org's own apps (kernel.org.apps, ADR-0053 slice d): read before a screen opens, once for each org entered, so a menu or a screen never flashes for an app the org switched off.
+// Later navigations in the same org use the answer the store has and refresh it in the background (the stream's org_apps hint keeps it fresh too), so no screen change waits for the
+// network. If the read fails the deployment's list stands: the API gates every call itself, so a failed read costs a menu item that answers "not available", never a way in.
+let appsLoadedFor: string | null = null;
+async function readOrgApps(slug: string) {
   try {
     const answer = await queryClient.fetchQuery({ ...orpc.org.apps.queryOptions(), staleTime: 30_000, retry: false });
+    if (getCurrentOrg() !== slug) return;
     setOrgModules(effectiveModules(getConfig().modules, answer.apps));
+    appsLoadedFor = slug;
   } catch {
-    // The deployment's list stands.
+    // The first read of an org that fails leaves the deployment's list; one that fails later keeps the last answer.
+    if (appsLoadedFor !== slug) setOrgModules(null);
   }
+}
+async function loadOrgApps(slug: string) {
+  if (appsLoadedFor === slug) void readOrgApps(slug);
+  else await readOrgApps(slug);
 }
 
 // A screen of a module this deployment leaves out (CROVE_MODULES) sends you to the overview (ADR-0031 §3, #3225). The module of
@@ -414,7 +423,7 @@ export const orgRoute = createRoute({
   path: '/o/$slug',
   beforeLoad: async ({ params, matches }) => {
     await enterOrg(params.slug);
-    await loadOrgApps();
+    await loadOrgApps(params.slug);
     requireInstalledScreen(params.slug, matches);
   },
   component: OrgLayout,
@@ -552,6 +561,7 @@ const socialPlanPrintRoute = createRoute({
   path: '/o/$slug/print/social-plan',
   beforeLoad: async ({ params, matches }) => {
     await enterOrg(params.slug);
+    await loadOrgApps(params.slug);
     requireInstalledScreen(params.slug, matches);
   },
   validateSearch: parsePlanSearch,
@@ -618,6 +628,7 @@ const meetingMinutesRoute = createRoute({
   path: '/o/$slug/print/meeting-minutes/$id',
   beforeLoad: async ({ params, matches }) => {
     await enterOrg(params.slug);
+    await loadOrgApps(params.slug);
     requireInstalledScreen(params.slug, matches);
   },
   component: MeetingMinutesPage,

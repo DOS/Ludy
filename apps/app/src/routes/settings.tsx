@@ -34,7 +34,7 @@ import { useFormat } from '../i18n/provider.tsx';
 import { ROLES, roleChangeConfirmation, roleChangeKind, type Role, type RoleChangeKind } from '../lib/members.ts';
 import { asRoleKey, inviteRoleChoices } from '../lib/member-roles.ts';
 import { exportFileName, exportPhase, formatBytes, offboardErrorMessage, ownerRunFileComplete, slugConfirmed } from '../lib/offboarding.ts';
-import { installedModules } from '../lib/org-modules.ts';
+import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 
 interface MemberRow {
   userId: string;
@@ -1101,6 +1101,8 @@ function ContactEmailField({ email, canManage }: { email: string | null; canMana
 }
 
 export function SettingsPage() {
+  // Re-renders when the org's apps change, so the cards of an app that was switched off or on come and go (the shell does not remount this screen: its switches keep their focus).
+  useModulesVersion();
   const root = useTranslations();
   const t = useTranslations('settings');
   const org = useQuery(orpc.org.get.queryOptions());
