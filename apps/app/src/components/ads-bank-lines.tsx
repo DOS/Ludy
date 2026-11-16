@@ -23,7 +23,18 @@ interface MonthSpend {
   spend: string;
 }
 
-export function AdsBankLines({ account, slug, rows }: { account: Pick<AdAccountView, 'currency' | 'legalEntityId' | 'provider'>; slug: string; rows: readonly MonthSpend[] }) {
+export function AdsBankLines({
+  account,
+  slug,
+  rows,
+  shellEntityId,
+}: {
+  account: Pick<AdAccountView, 'currency' | 'legalEntityId' | 'provider'>;
+  slug: string;
+  rows: readonly MonthSpend[];
+  // The legal entity the shell has chosen: the bank screen opens on it, so a line is a link only when it is the account's own.
+  shellEntityId: string | undefined;
+}) {
   const t = useTranslations('ads');
   const f = useFormat();
   const headingId = useId();
@@ -36,6 +47,7 @@ export function AdsBankLines({ account, slug, rows }: { account: Pick<AdAccountV
   });
   if (!range) return null;
   const inDong = account.currency === 'VND';
+  const canOpen = shellEntityId === account.legalEntityId;
   // A full page may have left lines out, so no month is called empty from it.
   const truncated = lines.data !== undefined && lines.data.truncated;
   const months = lines.data ? new Map(bankLinesByMonth(lines.data.lines, account.provider).map((m) => [m.month, m])) : null;
@@ -72,8 +84,10 @@ export function AdsBankLines({ account, slug, rows }: { account: Pick<AdAccountV
                       <summary className="cursor-pointer">
                         <span className="font-medium">{monthLabel(row.month)}</span>
                         <span className="ml-2 text-muted-foreground">
-                          {t('bankLines.summary', { count: month.lines.length, paid: f.money(month.paid, 'VND') })}
-                          {inDong && ` ${t('bankLines.platform', { spend: f.money(row.spend, 'VND') })}`}
+                          {truncated
+                            ? t('bankLines.summaryPartial', { count: month.lines.length, paid: f.money(month.paid, 'VND') })
+                            : t('bankLines.summary', { count: month.lines.length, paid: f.money(month.paid, 'VND') })}
+                          {inDong && !truncated && ` ${t('bankLines.platform', { spend: f.money(row.spend, 'VND') })}`}
                         </span>
                       </summary>
                       <ul className="mt-2 space-y-1 border-l pl-4">
@@ -81,9 +95,13 @@ export function AdsBankLines({ account, slug, rows }: { account: Pick<AdAccountV
                           <li key={line.id} className="flex flex-wrap items-baseline gap-x-3">
                             <span className="tabular-nums text-muted-foreground">{f.date(line.date)}</span>
                             <span className="text-muted-foreground">{line.bankAccount}</span>
-                            <Link to="/o/$slug/bank" params={{ slug }} search={bankLineSearch(line)} className="text-link underline">
-                              {line.description}
-                            </Link>
+                            {canOpen ? (
+                              <Link to="/o/$slug/bank" params={{ slug }} search={bankLineSearch(line)} className="text-link underline">
+                                {line.description}
+                              </Link>
+                            ) : (
+                              <span>{line.description}</span>
+                            )}
                             <span className="ml-auto tabular-nums">{f.money(line.amount, 'VND')}</span>
                           </li>
                         ))}
@@ -95,6 +113,7 @@ export function AdsBankLines({ account, slug, rows }: { account: Pick<AdAccountV
             })}
           </ul>
           {!inDong && <p className="text-xs text-muted-foreground">{t('bankLines.foreignNote', { currency: account.currency ?? '' })}</p>}
+          {!canOpen && months.size > 0 && <p className="text-xs text-muted-foreground">{t('bankLines.otherEntity')}</p>}
           {truncated && (
             <p className="text-xs text-muted-foreground" role="status">
               {t('bankLines.tooMany', { count: BANK_PLATFORM_LINES_LIMIT })}

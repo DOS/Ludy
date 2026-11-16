@@ -1293,11 +1293,11 @@ describe('the books strip', () => {
     credit,
     closing: debit,
   });
-  const strip = (acc: Pick<AdAccountView, 'currency' | 'expenseAccountCode' | 'legalEntityId' | 'provider'>, seeds: Record<string, ReturnType<typeof ledger>> = {}, financeOn = true, list = months, todayMonth = '2026-11') => {
+  const strip = (acc: Pick<AdAccountView, 'currency' | 'expenseAccountCode' | 'legalEntityId' | 'provider'>, seeds: Record<string, ReturnType<typeof ledger>> = {}, financeOn = true, list = months, todayMonth = '2026-11', shellEntityId: string | undefined = acc.legalEntityId) => {
     for (const [period, data] of Object.entries(seeds)) {
       client.current.setQueryData(['ledger', 'account', { period, accountCode: acc.expenseAccountCode, legalEntityId: acc.legalEntityId }], data);
     }
-    return render(<AdsBooksStrip account={acc} slug="acme" months={list} todayMonth={todayMonth} financeOn={financeOn} />);
+    return render(<AdsBooksStrip account={acc} slug="acme" months={list} todayMonth={todayMonth} financeOn={financeOn} shellEntityId={shellEntityId} />);
   };
   const vnd = { currency: 'VND', expenseAccountCode: '6421', legalEntityId: 'e1', provider: 'sandbox_ads' };
 
@@ -1456,7 +1456,7 @@ describe('the books strip', () => {
     it('has the same words in Vietnamese and writes no tax figure', () => {
       seedDocuments([doc('Sandbox Ads', '2026-09-30')]);
       strip(vnd, seeded);
-      const html = render(<AdsBooksStrip account={vnd} slug="acme" months={months} todayMonth="2026-11" financeOn />, 'vi');
+      const html = render(<AdsBooksStrip account={vnd} slug="acme" months={months} todayMonth="2026-11" financeOn shellEntityId="e1" />, 'vi');
       expect(html).toContain(`>${viMessages.ads.books.documents}<`);
       expect(html).toContain('1 chứng từ');
       expect(html).toContain(`>${viMessages.ads.books.documentMissing}<`);
@@ -1509,6 +1509,30 @@ describe('the books strip', () => {
       expect(html).toContain('More than 500 lines name the platform');
     });
 
+    it('does not present the total of a cut-off page as the month’s: it says at least, and puts nothing beside the spend', () => {
+      seedLines([bankLine('b1', '2026-09-03', 'Sandbox Ads', '-500000'), bankLine('b2', '2026-09-04', 'Sandbox Ads', '-500000')], true);
+      const html = strip(vnd, seeded);
+      expect(html).toMatch(/2 lines found, at least[^<]*1[.,]000[.,]000 paid/);
+      expect(html).not.toContain('The platform reports');
+      expect(html).not.toMatch(/2 lines, paid/);
+      expect(html).toContain('total of the oldest month may be incomplete');
+    });
+
+    it('opens the bank screen on a line only when the shell has chosen the account’s own legal entity', () => {
+      seedLines([bankLine('b1', '2026-09-03', 'Sandbox Ads', '-500000')]);
+      const own = strip(vnd, seeded);
+      expect(own).toContain('href="/o/acme/bank"');
+      expect(own).not.toContain(en.ads.bankLines.otherEntity);
+      // Another entity chosen, or none chosen yet (the list is still loading): no link, the description stays.
+      const elsewhere = strip(vnd, seeded, true, months, '2026-11', 'e2');
+      const unchosen = render(<AdsBooksStrip account={vnd} slug="acme" months={months} todayMonth="2026-11" financeOn shellEntityId={undefined} />);
+      for (const other of [elsewhere, unchosen]) {
+        expect(other).not.toContain('href="/o/acme/bank"');
+        expect(other).toContain('>Sandbox Ads<');
+        expect(other).toContain(en.ads.bankLines.otherEntity);
+      }
+    });
+
     it('lists the lines of an account in dollars with their total in dong, and puts no figure beside them and shows no difference', () => {
       seedLines([bankLine('b1', '2026-09-03', 'Sandbox Ads', '-2500000')]);
       const html = strip({ ...vnd, currency: 'USD' }, seeded);
@@ -1537,7 +1561,7 @@ describe('the books strip', () => {
     it('has the same words in Vietnamese, in the same keys, and writes no tax figure', () => {
       seedLines([bankLine('b1', '2026-09-03', 'Sandbox Ads', '-2500000')]);
       strip(vnd, seeded);
-      const html = render(<AdsBooksStrip account={vnd} slug="acme" months={months} todayMonth="2026-11" financeOn />, 'vi');
+      const html = render(<AdsBooksStrip account={vnd} slug="acme" months={months} todayMonth="2026-11" financeOn shellEntityId="e1" />, 'vi');
       expect(html).toContain(`>${viMessages.ads.bankLines.title}<`);
       expect(html).toMatch(/1 dòng, đã trả[^<]*2[.,]500[.,]000/);
       expect(html).toContain(`>${viMessages.ads.bankLines.none}<`);

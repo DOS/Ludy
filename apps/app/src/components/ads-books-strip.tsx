@@ -135,8 +135,11 @@ export function AdsBooksStrip({
   months,
   todayMonth,
   financeOn,
+  shellEntityId,
 }: {
   account: Pick<AdAccountView, 'currency' | 'expenseAccountCode' | 'legalEntityId' | 'provider'>;
+  // The legal entity chosen in the shell (the bank screen opens on it).
+  shellEntityId: string | undefined;
   // The org's address, for the way to the Inbox.
   slug: string;
   months: readonly MonthSpend[];
@@ -163,7 +166,7 @@ export function AdsBooksStrip({
       ) : (
         <BooksTable account={account} slug={slug} code={code} rows={rows} todayMonth={todayMonth} />
       )}
-      {code !== null && rows.length > 0 && <AdsBankLines account={account} slug={slug} rows={rows} />}
+      {code !== null && rows.length > 0 && <AdsBankLines account={account} slug={slug} rows={rows} shellEntityId={shellEntityId} />}
     </section>
   );
 }
