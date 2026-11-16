@@ -268,10 +268,12 @@ describe('runMeetingsImport', () => {
 
     it('lets the guard talk to the adapter\'s hosts and CDN suffixes only', async () => {
       let allowed: ((host: string) => boolean) | undefined;
+      let firstHosts: readonly string[] | undefined;
       const { deps } = harness({
         adapters: { sandbox: remote() },
-        stream: (async (_url: string, _request: unknown, options: { hostAllowed?: (host: string) => boolean }) => {
+        stream: (async (_url: string, _request: unknown, options: { hostAllowed?: (host: string) => boolean; firstHosts?: readonly string[] }) => {
           allowed = options.hostAllowed;
+          firstHosts = options.firstHosts;
           return { url: _url, status: 200, headers: {}, body: (async function* () { yield new Uint8Array([1]); })(), destroy: () => undefined } as EgressStream;
         }) as unknown as NonNullable<MeetingsImportDeps['stream']>,
       });
@@ -281,6 +283,8 @@ describe('runMeetingsImport', () => {
       expect(allowed?.('cdn.example.test')).toBe(true);
       expect(allowed?.('evilcdn.example.test')).toBe(false);
       expect(allowed?.('files.example.test.evil.test')).toBe(false);
+      // The guard's own first-hop list is the adapter's exact hosts, with no suffix: the token cannot leave on the first request for a CDN host whatever this job's own check does.
+      expect(firstHosts).toEqual(['files.example.test']);
     });
   });
 
