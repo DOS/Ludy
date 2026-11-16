@@ -3,9 +3,9 @@
 // service, so memory is the member's own rows of crove_kernel.member_vy_memory, read and written only through the member's own commands, in the
 // member's own user context. Asking about anyone else is refused before a command is run, and the database would refuse it anyway (the
 // restrictive policy shows a member their own rows only). Knowledge has no declared queries yet: a feature that asks gets no passages.
-import { ASK_TIMEOUT_MS, AiBudgetExhaustedError, AskModelError, SUMMARY_TIMEOUT_MS, SummaryModelError, TranslationModelError, aiCost, generateMeetingAskText, generateMeetingSummaryText, generateMeetingTranslationText, withAiScope, type AiConfig, type AiMeter } from '@crove/agent';
-import { AskError, SummaryError, TranslationError, askAcrossMeetings, bindPorts, noKnowledge, privateText, revealPrivateText, enhanceNotes, summarizeMeeting, translateSummary, translateTranscriptChunk, planTranscriptChunks, chunkExpectedUsage, lineHash, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type Ports } from '@crove/agent/member-vy';
-import { ASK_ESTIMATE, ASK_HITS_MAX, zTranscriptTranslationResult, templateSections, type AskAnswer, type AskLines, type AskStatus, type LiveNotesDone, type LiveNotesInput, type MeetingSummaryTemplate, type Summarized, type Transcript, type TranscriptSource, type TranscriptStarted, type TranscriptTranslated, type TranscriptTranslationStatus, type Translated, type TranslationSource, type TranslationStatus } from '@crove/kernel-contract';
+import { ASK_TIMEOUT_MS, AiBudgetExhaustedError, AskModelError, SUMMARY_TIMEOUT_MS, SummaryModelError, TASKS_FROM_NOTE_TIMEOUT_MS, TasksFromNoteModelError, TranslationModelError, aiCost, generateMeetingAskText, generateMeetingSummaryText, generateMeetingTranslationText, generateTasksFromNoteText, withAiScope, type AiConfig, type AiMeter } from '@crove/agent';
+import { TASKS_FROM_NOTE_LIMITS, AskError, SummaryError, TasksFromNoteError, TranslationError, askAcrossMeetings, bindPorts, noKnowledge, privateText, proposeTasksFromNote, revealPrivateText, enhanceNotes, summarizeMeeting, translateSummary, translateTranscriptChunk, planTranscriptChunks, chunkExpectedUsage, lineHash, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type Ports } from '@crove/agent/member-vy';
+import { ASK_ESTIMATE, ASK_HITS_MAX, DEFAULT_TIME_ZONE, zTranscriptTranslationResult, zonedDate, templateSections, type AskAnswer, type AskLines, type AskStatus, type LiveNotesDone, type LiveNotesInput, type MeetingSummaryTemplate, type Note, type ProjectSeat, type ProjectTasksFromNoteInput, type ProjectTasksFromNoteResult, type ProjectTasksFromNoteStatus, type Summarized, type Transcript, type TranscriptSource, type TranscriptStarted, type TranscriptTranslated, type TranscriptTranslationStatus, type Translated, type TranslationSource, type TranslationStatus } from '@crove/kernel-contract';
 import { Decimal } from '@crove/l10n-vn';
 import { DomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import type { DraftBudget } from './ai-draft-limit.ts';
@@ -68,7 +68,9 @@ export function summaryModelPort(config: AiConfig, timeoutMs: number = SUMMARY_T
         ? generateMeetingTranslationText(config, prompt, timeoutMs)
         : prompt.feature === 'meetings.ask'
           ? generateMeetingAskText(config, prompt, Math.min(timeoutMs, ASK_TIMEOUT_MS))
-          : generateMeetingSummaryText(config, prompt, timeoutMs),
+          : prompt.feature === 'projects.tasks_from_note'
+            ? generateTasksFromNoteText(config, prompt, Math.min(timeoutMs, TASKS_FROM_NOTE_TIMEOUT_MS))
+            : generateMeetingSummaryText(config, prompt, timeoutMs),
   };
 }
 
@@ -82,6 +84,8 @@ function codeOf(error: unknown): string {
   if (error instanceof TranslationModelError) return error.kind === 'timeout' ? 'TRANSLATE_TIMEOUT' : 'TRANSLATE_FAILED';
   if (error instanceof AskError) return error.code;
   if (error instanceof AskModelError) return error.kind === 'timeout' ? 'ASK_TIMEOUT' : 'ASK_FAILED';
+  if (error instanceof TasksFromNoteError) return error.code;
+  if (error instanceof TasksFromNoteModelError) return error.kind === 'timeout' ? 'PROPOSAL_TIMEOUT' : 'PROPOSAL_FAILED';
   return 'SUMMARY_FAILED';
 }
 
@@ -89,6 +93,12 @@ function codeOf(error: unknown): string {
 function askCodeOf(error: unknown): string {
   const code = codeOf(error);
   return code === 'SUMMARY_FAILED' ? 'ASK_FAILED' : code;
+}
+
+function tasksFromNoteCodeOf(error: unknown): string {
+  if (error instanceof SummaryModelError && error.kind === 'timeout') return 'PROPOSAL_TIMEOUT';
+  const code = codeOf(error);
+  return code === 'SUMMARY_FAILED' ? 'PROPOSAL_FAILED' : code;
 }
 
 // A hard wall clock over the whole work, whatever the model port does: the member never waits longer.
@@ -613,6 +623,226 @@ export async function runTranscriptTranslation(deps: TranscriptTranslationDeps, 
     }
     const after = await deps.runtime.query<TranscriptTranslationStatus & { bytes: number }>('meetings.translation.transcript_status', { meetingId }, as);
     return { meetingId, runId, state: 'ready', errorCode: null, translated: kept, remaining: after.remaining };
+  } finally {
+    ticket.release();
+  }
+}
+
+export async function tasksFromNoteStatusOf(
+  deps: Pick<MeetingSummaryDeps, 'runtime' | 'model' | 'meter'>,
+  orgId: string,
+  actor: UserActor,
+): Promise<ProjectTasksFromNoteStatus> {
+  const status = await deps.runtime.query<ProjectTasksFromNoteStatus>('projects.tasks_from_note.status', {}, { actor, orgId });
+  if (status.available && (!deps.model || !deps.meter(actor))) {
+    return { available: false, reason: 'off', resetOn: null };
+  }
+  return status;
+}
+
+// Member-scoped Vy task proposal from a readable note into a writable project (#2598, ADR-0048, ADR-0049):
+// checks status (vy.use, kill switches, budget), starts a run via projects.tasks_from_note.start, calls model once
+// outside any transaction with nonce-tagged subject and allowed project-member seats only, stores sealed result in
+// member_vy_result (private_read = true), and returns sanitized proposals to the asking member only.
+export async function runProjectsTasksFromNote(
+  deps: MeetingSummaryDeps,
+  orgId: string,
+  actor: UserActor,
+  input: ProjectTasksFromNoteInput,
+): Promise<ProjectTasksFromNoteResult> {
+  const as = { actor, orgId };
+  const timeoutMs = deps.timeoutMs ?? TASKS_FROM_NOTE_TIMEOUT_MS;
+  const model = deps.model;
+  const meter = deps.meter(actor);
+
+  const status = await deps.runtime.query<ProjectTasksFromNoteStatus>('projects.tasks_from_note.status', {}, as);
+  if (!model || !meter || !status.available) {
+    if (!model || !meter || status.reason === 'off') {
+      throw new DomainError('AI_OFF', 422, 'Tính năng Vy đề xuất việc từ ghi chú chưa được bật');
+    }
+    if (status.reason === 'forbidden') {
+      throw new DomainError('VY_NOT_ALLOWED', 403, 'Bạn chưa được phép làm việc với Vy');
+    }
+    if (status.reason === 'paused') {
+      throw new DomainError('AI_PAUSED', 422, 'Vy đang tạm dừng theo lệnh dừng AI; bạn vẫn tạo việc thủ công bình thường');
+    }
+    throw new DomainError('AI_BUDGET_EXHAUSTED', 422, 'Ngân sách AI của dự án tháng này đã hết; bạn vẫn tạo việc thủ công bình thường');
+  }
+
+  const ticket = deps.budget.take(orgId, actor.userId);
+  if (!ticket.allowed) {
+    throw new DomainError('AI_BUSY', 429, 'Vy đang xử lý yêu cầu khác; vui lòng thử lại sau ít phút', {
+      retryAfterSeconds: ticket.retryAfterSeconds,
+    });
+  }
+
+  try {
+    // Pre-read project seats and readable note before starting a run so missing/in-trash/oversized inputs fail cleanly
+    // without stranding a 'running' ai_run or member_vy_result row.
+    const seatInfo = await deps.runtime.query<{ projectId: string; projectName: string; seats: ProjectSeat[] }>(
+      'projects.tasks_from_note.seats',
+      { projectId: input.projectId },
+      as,
+    );
+    const note = await deps.runtime.query<Note>('notes.note.get', { noteId: input.noteId }, as);
+    if (note.deletedAt !== null) {
+      throw new DomainError('NOTE_IN_TRASH', 409, 'Ghi chú đang ở thùng rác; hãy khôi phục trước');
+    }
+    if (`${note.title}\n${note.body}`.trim().length === 0) {
+      throw new DomainError('NOTE_EMPTY', 422, 'Ghi chú chưa có nội dung để đề xuất việc');
+    }
+    const sourceBytes = Buffer.byteLength(note.title, 'utf8') + Buffer.byteLength(note.body, 'utf8');
+    if (sourceBytes > TASKS_FROM_NOTE_LIMITS.sourceBytes) {
+      return {
+        state: 'failed',
+        runId: null,
+        projectId: input.projectId,
+        projectName: seatInfo.projectName,
+        seats: seatInfo.seats,
+        proposals: [],
+        dropped: 0,
+        errorCode: 'NOTE_TOO_LONG',
+        noteCanLink: note.mine && note.deletedAt === null,
+      };
+    }
+
+    let started: { runId: string; noteRevision: number; noteCanLink: boolean };
+    try {
+      started = await deps.runtime.execute<{ runId: string; noteRevision: number; noteCanLink: boolean }>(
+        'projects.tasks_from_note.start',
+        { noteId: input.noteId, projectId: input.projectId },
+        as,
+      );
+    } catch (error: unknown) {
+      if (error instanceof DomainError && (error.code === 'AI_BUDGET_EXHAUSTED' || error.code === 'VY_RUN_BUSY')) {
+        const errorCode = error.code === 'VY_RUN_BUSY' ? 'AI_BUSY' : error.code;
+        console.error(`[projects-tasks-from-note] run not started: ${errorCode}`);
+        return {
+          state: 'failed',
+          runId: null,
+          projectId: input.projectId,
+          projectName: seatInfo.projectName,
+          seats: seatInfo.seats,
+          proposals: [],
+          dropped: 0,
+          errorCode,
+          noteCanLink: note.mine && note.deletedAt === null,
+        };
+      }
+      throw error;
+    }
+
+    const runId = started.runId;
+
+    const fail = async (errorCode: string): Promise<ProjectTasksFromNoteResult> => {
+      try {
+        await deps.runtime.execute('kernel.member_vy.result.store', { runId, outcome: { status: 'failed', errorCode } }, as);
+      } catch (storeError: unknown) {
+        console.error(`[projects-tasks-from-note] failed result not stored: ${tasksFromNoteCodeOf(storeError)}`);
+      }
+      console.error(`[projects-tasks-from-note] run failed: ${errorCode}`);
+      return {
+        state: 'failed',
+        runId,
+        projectId: input.projectId,
+        projectName: seatInfo.projectName,
+        seats: seatInfo.seats,
+        proposals: [],
+        dropped: 0,
+        errorCode,
+        noteCanLink: started.noteCanLink,
+      };
+    };
+
+    const today = input.today ?? zonedDate(input.timeZone ?? DEFAULT_TIME_ZONE, Date.now());
+    const language = input.language ?? 'vi';
+
+    let result: Awaited<ReturnType<typeof proposeTasksFromNote>>;
+    try {
+      const ports: Ports = { model, memory: nothingToRemember, knowledge: noKnowledge };
+      const seatOptions = seatInfo.seats.map((s) => ({
+        positionId: s.id,
+        positionTitle: s.title,
+        holderName: s.holder?.type === 'user' ? (s.holder.displayName ?? s.holder.email) : null,
+      }));
+      result = await withDeadline(
+        withAiScope({ orgId, memberRunId: runId, meter }, () =>
+          proposeTasksFromNote(
+            {
+              projectName: seatInfo.projectName,
+              noteTitle: note.title,
+              noteBody: note.body,
+              today,
+              language,
+              seats: seatOptions,
+            },
+            bindPorts({ orgId, memberUserId: actor.userId }, ports),
+          ),
+        ),
+        timeoutMs,
+      );
+    } catch (error: unknown) {
+      return await fail(tasksFromNoteCodeOf(error));
+    }
+
+    // Store counts and project id only (same as meetings.ask): proposals return only to the asking caller and are never
+    // retained 30 days in member_vy_result without note-purge cleanup.
+    const body = JSON.stringify({
+      v: 1,
+      projectId: input.projectId,
+      proposals: result.proposals.length,
+      dropped: result.dropped,
+    });
+    let stored: { stored: boolean; status: 'ready' | 'failed' };
+    try {
+      stored = await deps.runtime.execute<{ stored: boolean; status: 'ready' | 'failed' }>(
+        'kernel.member_vy.result.store',
+        { runId, outcome: { status: 'ready', body, sourceRevision: started.noteRevision } },
+        as,
+      );
+    } catch (error: unknown) {
+      if (error instanceof DomainError && error.code === 'VY_RUN_NOT_LIVE') {
+        return {
+          state: 'failed',
+          runId,
+          projectId: input.projectId,
+          projectName: seatInfo.projectName,
+          seats: seatInfo.seats,
+          proposals: [],
+          dropped: 0,
+          errorCode: 'AI_STOPPED',
+          noteCanLink: started.noteCanLink,
+        };
+      }
+      return await fail(tasksFromNoteCodeOf(error));
+    }
+
+    if (stored.status === 'failed') {
+      console.error('[projects-tasks-from-note] run failed: AI_STOPPED');
+      return {
+        state: 'failed',
+        runId,
+        projectId: input.projectId,
+        projectName: seatInfo.projectName,
+        seats: seatInfo.seats,
+        proposals: [],
+        dropped: 0,
+        errorCode: 'AI_STOPPED',
+        noteCanLink: started.noteCanLink,
+      };
+    }
+
+    return {
+      state: 'ready',
+      runId,
+      projectId: input.projectId,
+      projectName: seatInfo.projectName,
+      seats: seatInfo.seats,
+      proposals: result.proposals,
+      dropped: result.dropped,
+      errorCode: null,
+      noteCanLink: started.noteCanLink,
+    };
   } finally {
     ticket.release();
   }

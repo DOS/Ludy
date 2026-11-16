@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Projects and a task board on kernel tasks (issue #2591, plan docs/plan/projects.md section 4, ADR-0048).
 import { z } from 'zod';
+import { DEFAULT_TIME_ZONE, zTimeZone } from './calendar.ts';
 import { zId, zLocalDate, zPositionStatus, zRole, zTaskStatus } from './schemas.ts';
 
 export const PROJECT_NAME_MAX = 200;
@@ -9,6 +10,8 @@ export const PROJECT_BOARD_LIMIT = 300;
 export const PROJECT_LIST_LIMIT = 200;
 export const PROJECT_UNASSIGNED_LIMIT = 100;
 export const PROJECT_TASK_MAP_LIMIT = 500;
+export const PROJECT_NOTE_PROPOSAL_MAX = 20;
+export const PROJECT_TASK_TITLE_MAX = 300;
 
 export const PROJECT_STATUSES = ['active', 'on_hold', 'done', 'archived'] as const;
 export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
@@ -272,3 +275,57 @@ export const zProjectWeeklyStatus = z.strictObject({
   truncated: z.boolean(),
 });
 export type ProjectWeeklyStatus = z.infer<typeof zProjectWeeklyStatus>;
+
+export const zProjectTasksFromNoteStatus = z.strictObject({
+  available: z.boolean(),
+  reason: z.enum(['off', 'forbidden', 'paused', 'budget']).nullable(),
+  resetOn: z.string().nullable(),
+});
+export type ProjectTasksFromNoteStatus = z.infer<typeof zProjectTasksFromNoteStatus>;
+
+export const zProjectProposedTask = z.strictObject({
+  title: z.string().trim().min(1).max(PROJECT_TASK_TITLE_MAX),
+  assigneePositionId: zId.nullable(),
+  dueOn: zLocalDate.nullable(),
+});
+export type ProjectProposedTask = z.infer<typeof zProjectProposedTask>;
+
+export const zProjectTasksFromNoteInput = z.strictObject({
+  noteId: zId,
+  projectId: zId,
+  timeZone: zTimeZone.default(DEFAULT_TIME_ZONE),
+  language: z.enum(['vi', 'en']).default('vi'),
+  today: zLocalDate.optional(),
+});
+export type ProjectTasksFromNoteInput = z.input<typeof zProjectTasksFromNoteInput>;
+
+export const zProjectTasksFromNoteResult = z.strictObject({
+  state: z.enum(['ready', 'failed']),
+  runId: zId.nullable(),
+  projectId: zId,
+  projectName: z.string(),
+  seats: z.array(zProjectSeat),
+  proposals: z.array(zProjectProposedTask).max(PROJECT_NOTE_PROPOSAL_MAX),
+  dropped: z.number().int().nonnegative(),
+  errorCode: z.string().nullable(),
+  noteCanLink: z.boolean(),
+});
+export type ProjectTasksFromNoteResult = z.infer<typeof zProjectTasksFromNoteResult>;
+
+export const zProjectTasksFromNoteConfirmInput = z.strictObject({
+  noteId: zId,
+  projectId: zId,
+  confirmed: z.literal(true),
+  timeZone: zTimeZone.default(DEFAULT_TIME_ZONE),
+  items: z.array(zProjectProposedTask).min(1).max(PROJECT_NOTE_PROPOSAL_MAX),
+});
+export type ProjectTasksFromNoteConfirmInput = z.input<typeof zProjectTasksFromNoteConfirmInput>;
+
+export const zProjectTasksFromNoteConfirmResult = z.strictObject({
+  projectId: zId,
+  noteId: zId,
+  createdCount: z.number().int().nonnegative(),
+  linkedCount: z.number().int().nonnegative(),
+  taskIds: z.array(zId),
+});
+export type ProjectTasksFromNoteConfirmResult = z.infer<typeof zProjectTasksFromNoteConfirmResult>;

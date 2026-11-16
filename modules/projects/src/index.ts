@@ -7,11 +7,18 @@ import {
   projectUnassignedTasks,
 } from './projects.ts';
 import { projectsToday } from './today.ts';
+import { tasksFromNoteSeats, tasksFromNoteStatus } from './tasks-from-note.ts';
 import { projectWeeklyStatusSource } from './weekly-status.ts';
 
 export { projectsManifest } from './manifest.ts';
 export { projectsToday } from './today.ts';
 export { projectWeeklyStatusSource, type ProjectWeeklyStatusSource } from './weekly-status.ts';
+export {
+  tasksFromNoteConfirm,
+  tasksFromNoteSeats,
+  tasksFromNoteStart,
+  tasksFromNoteStatus,
+} from './tasks-from-note.ts';
 export {
   projectArchive,
   projectBoard,
@@ -39,4 +46,6 @@ export const projectsQueries = [
   projectTaskProjects,
   projectsToday,
   projectWeeklyStatusSource,
+  tasksFromNoteStatus,
+  tasksFromNoteSeats,
 ];

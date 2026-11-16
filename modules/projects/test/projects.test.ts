@@ -25,7 +25,7 @@ describe('@crove/mod-projects (#2591)', () => {
     expect(projectsManifest.nav).toEqual(MODULE_SCREENS.projects.nav);
   });
 
-  it('exports all 10 commands and 7 queries with consistent module prefix', () => {
+  it('exports all 12 commands and 9 queries with consistent module prefix', () => {
     expect(projectsCommands.map((c) => c.name).sort()).toEqual([
       'projects.member.add',
       'projects.member.remove',
@@ -37,12 +37,16 @@ describe('@crove/mod-projects (#2591)', () => {
       'projects.task.add',
       'projects.task.create',
       'projects.task.remove',
+      'projects.tasks_from_note.confirm',
+      'projects.tasks_from_note.start',
     ]);
     expect(projectsQueries.map((q) => q.name).sort()).toEqual([
       'projects.board',
       'projects.project.get',
       'projects.project.list',
       'projects.task_projects',
+      'projects.tasks_from_note.seats',
+      'projects.tasks_from_note.status',
       'projects.today',
       'projects.unassigned_tasks',
       'projects.weekly_status_source',
@@ -50,7 +54,7 @@ describe('@crove/mod-projects (#2591)', () => {
     for (const command of projectsCommands) {
       expect(command.risk).toBe('R1');
       expect(command.sideEffect).toBe('internal');
-      if (command.name === 'projects.task.create') {
+      if (command.name === 'projects.task.create' || command.name.startsWith('projects.tasks_from_note.')) {
         expect(command.writes).toBeUndefined();
       } else {
         expect((command.writes ?? []).length).toBeGreaterThan(0);
