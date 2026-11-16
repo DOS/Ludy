@@ -10,6 +10,7 @@ import { AdPlatformError, SandboxAdStateReader, SandboxAdWriter, adStateReaders,
 
 const ACCOUNT = 'sbxads-0123456789abcdef';
 const SECRET = JSON.stringify({ accessToken: 'write-token' });
+const secretOf = () => sandboxWriteLogin({ externalAccountId: ACCOUNT, currency: 'VND' }).secret;
 
 describe('the state view', () => {
   it('has one method, frozen, and nothing of the source is reachable through it', () => {
@@ -99,6 +100,33 @@ describe('the state view', () => {
     expect(own.states).toHaveLength(2);
     expect(own.failed).toEqual([{ id: 'bad', level: 'ad', kind: 'unknown', code: 'ADAPTER_ERROR' }]);
     expect(JSON.stringify(own)).not.toContain('abc');
+  });
+
+  it('makes no further request once the caller\'s deadline has passed, and says the rest were not read', async () => {
+    const controller = new AbortController();
+    const asked: Array<[string, boolean | undefined]> = [];
+    const source: AdObjectStateSource = {
+      async readState(_s, o, signal) {
+        asked.push([o.id, signal?.aborted]);
+        if (o.id === 'first') controller.abort();
+        return { status: 'PAUSED', reason: null };
+      },
+    };
+    const result = await stateReaderOf(source).readStates('s', [
+      { level: 'campaign', id: 'first' },
+      { level: 'ad', id: 'second' },
+      { level: 'ad', id: 'third' },
+    ], controller.signal);
+    expect(asked).toEqual([['first', false]]);
+    expect(result.states).toHaveLength(1);
+    expect(result.failed).toEqual([
+      { id: 'second', level: 'ad', kind: 'transient', code: 'TIMEOUT' },
+      { id: 'third', level: 'ad', kind: 'transient', code: 'TIMEOUT' },
+    ]);
+    // The adapters refuse a read that was aborted before it began.
+    const writer = new SandboxAdWriter();
+    await expect(new SandboxAdStateReader(writer).readState(secretOf(), { level: 'ad', id: 'x' }, controller.signal)).rejects.toMatchObject({ kind: 'transient', code: 'TIMEOUT' });
+    await expect(new MetaAdStateReader({ appSecret: 's', fetch: async () => { throw new Error('no request'); } }).readState(SECRET, { level: 'ad', id: '120001' }, controller.signal)).rejects.toMatchObject({ kind: 'transient', code: 'TIMEOUT' });
   });
 
   it('asks about twelve objects at most', async () => {

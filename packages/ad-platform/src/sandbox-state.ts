@@ -14,8 +14,9 @@ export class SandboxAdStateReader implements AdObjectStateSource {
     this.writer = writer;
   }
 
-  async readState(secret: string, object: StateTarget): Promise<{ status: string; reason: string | null } | null> {
+  async readState(secret: string, object: StateTarget, signal?: AbortSignal): Promise<{ status: string; reason: string | null } | null> {
     this.writer.checkSecret(secret);
+    if (signal?.aborted) throw new AdPlatformError('transient', 'TIMEOUT');
     this.reads.push({ level: object.level, id: object.id });
     const fault = this.writer.takeFault(object.level, 'state');
     if (fault) throw fault.error ?? new AdPlatformError('transient', 'NETWORK');

@@ -93,9 +93,10 @@ export class MetaAdStateReader implements AdObjectStateSource {
     this.now = options.now ?? (() => new Date());
   }
 
-  async readState(secret: string, object: StateTarget): Promise<{ status: string; reason: string | null } | null> {
+  async readState(secret: string, object: StateTarget, signal?: AbortSignal): Promise<{ status: string; reason: string | null } | null> {
     const token = tokenOf(secret);
     if (!OBJECT_ID.test(object.id)) throw new AdPlatformError('bad_request', 'BAD_OBJECT');
+    if (signal?.aborted) throw new AdPlatformError('transient', 'TIMEOUT');
     const fields = FIELDS[object.level];
     if (!fields) throw new AdPlatformError('bad_request', 'LEVEL_NOT_READABLE');
     try {

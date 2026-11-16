@@ -48,20 +48,21 @@ export interface StateReadResult {
 // What an adapter implements: one object, one read. `null` is "the platform has no such object" (as opposed to a failure).
 export interface AdObjectStateSource {
   // A failure is an `AdPlatformError`.
-  readState(secret: string, object: StateTarget): Promise<{ status: string; reason: string | null } | null>;
+  // `signal` aborts the read when the caller's deadline passes: an adapter makes no new request once it is aborted.
+  readState(secret: string, object: StateTarget, signal?: AbortSignal): Promise<{ status: string; reason: string | null } | null>;
 }
 
 export interface AdStateReader {
-  // Reads each object once, in the order given, and stops early when the token is refused or the platform asks to wait (the rest are reported as failed with that kind).
-  // Never throws a platform error: each is in the result.
-  readStates(secret: string, objects: readonly StateTarget[]): Promise<StateReadResult>;
+  // Reads each object once, in the order given, and stops early when the token is refused or the platform asks to wait (the rest are reported as failed with that kind),
+  // or when `signal` aborts (the rest are failed with the code `TIMEOUT`). Never throws a platform error: each is in the result.
+  readStates(secret: string, objects: readonly StateTarget[], signal?: AbortSignal): Promise<StateReadResult>;
 }
 
 const codeOf = (error: unknown): { kind: AdPlatformErrorKind; code: string | null } =>
   error instanceof AdPlatformError ? { kind: error.kind, code: error.code && /^[A-Za-z0-9_.]{1,64}$/.test(error.code) ? error.code : null } : { kind: 'unknown', code: 'ADAPTER_ERROR' };
 
 // The procedure over the one call it needs. Exported for the view builder and its tests.
-export async function readStatesWith(source: AdObjectStateSource, secret: string, objects: readonly StateTarget[]): Promise<StateReadResult> {
+export async function readStatesWith(source: AdObjectStateSource, secret: string, objects: readonly StateTarget[], signal?: AbortSignal): Promise<StateReadResult> {
   const states: ObjectState[] = [];
   const failed: StateFailure[] = [];
   let tokenRefused = false;
@@ -80,8 +81,13 @@ export async function readStatesWith(source: AdObjectStateSource, secret: string
       failed.push({ id: object.id, level: object.level, kind: stopped, code: null });
       continue;
     }
+    // The caller's deadline passed: no further request is made, and the objects not read say so.
+    if (signal?.aborted) {
+      failed.push({ id: object.id, level: object.level, kind: 'transient', code: 'TIMEOUT' });
+      continue;
+    }
     try {
-      const answer = await source.readState(secret, { level: object.level, id: object.id });
+      const answer = await source.readState(secret, { level: object.level, id: object.id }, signal);
       if (answer === null) {
         states.push({ id: object.id, level: object.level, found: false });
       } else if (!STATUS.test(answer.status) || (answer.reason !== null && !REASON.test(answer.reason))) {
@@ -106,5 +112,5 @@ export async function readStatesWith(source: AdObjectStateSource, secret: string
 // The frozen view a state job is given of a source: `readStates` and not one call more. The deployment's map of these, by provider, is built next to the launch writers
 // (launch-writers.ts, `adStateReaders`).
 export function stateReaderOf(source: AdObjectStateSource): AdStateReader {
-  return Object.freeze({ readStates: (secret: string, objects: readonly StateTarget[]) => readStatesWith(source, secret, objects) });
+  return Object.freeze({ readStates: (secret: string, objects: readonly StateTarget[], signal?: AbortSignal) => readStatesWith(source, secret, objects, signal) });
 }

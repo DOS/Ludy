@@ -16,7 +16,7 @@ import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-
 
 const SYSTEM = { type: 'system' as const, component: 'ads.state' };
 // A launch's objects are a handful of one-object reads; the whole read is given up on after this long, and the launch keeps its last known state.
-const READ_TIMEOUT_MS = 120_000;
+export const READ_TIMEOUT_MS = 120_000;
 
 export interface AdsStateJob {
   orgId: string;
@@ -29,6 +29,8 @@ export interface AdsStateDeps {
   // Without one that can open a token (no credential key) nothing is read.
   broker: CredentialBroker;
   readers: Readonly<Record<string, AdStateReader>>;
+  // The deadline of one launch's read, in milliseconds (the tests' own).
+  timeoutMs?: number;
 }
 
 export interface AdsStateResult {
@@ -50,10 +52,15 @@ interface SealedChannelCredential {
 
 class Timeout extends Error {}
 
-function timed<T>(run: () => Promise<T>): Promise<T> {
+// Runs one read with a deadline: when it passes, the read is told to stop (its signal aborts, so the view makes no further request) and this gives up waiting.
+function timed<T>(run: (signal: AbortSignal) => Promise<T>, timeoutMs: number): Promise<T> {
+  const controller = new AbortController();
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Timeout('timeout')), READ_TIMEOUT_MS);
-    run().then(
+    const timer = setTimeout(() => {
+      controller.abort();
+      reject(new Timeout('timeout'));
+    }, timeoutMs);
+    run(controller.signal).then(
       (value) => {
         clearTimeout(timer);
         resolve(value);
@@ -121,7 +128,7 @@ export async function runAdsStateSync(deps: AdsStateDeps, job: AdsStateJob): Pro
     }
     let read: StateReadResult;
     try {
-      read = await timed(() => reader.readStates(secret as string, asked));
+      read = await timed((signal) => reader.readStates(secret as string, asked, signal), deps.timeoutMs ?? READ_TIMEOUT_MS);
     } catch (error) {
       read = { states: [], failed: allFailed(asked, 'transient', error instanceof Timeout ? 'TIMEOUT' : 'ADAPTER_ERROR'), tokenRefused: false, retryAt: null };
     }

@@ -73,6 +73,14 @@ describe('what may read the platform\'s object states (#3301)', () => {
     expect(block).toMatch(/try \{[\s\S]*runAdsSync\([\s\S]*\} finally \{[\s\S]*runAdsStateSync\(/);
     expect(block).not.toMatch(/adWriters|adPausers|adRevokers|adActivators/);
     expect(codeNaming(/\brunAdsStateSync\(/)).toEqual(['apps/kernel/src/ads-state.ts', 'apps/kernel/src/worker.ts']);
+    // The field of the deployment's channels is named in the WorkerDeps type and in this block, nowhere else in the worker, and in no other file but the kernel's own wiring.
+    const body = code('apps/kernel/src/worker.ts');
+    const cut = body.indexOf('boss.work<AdsSyncJob | { sweep: true }>(QUEUES.adsSync');
+    const cutEnd = body.indexOf('boss.schedule(QUEUES.adsSync');
+    const outside = (body.slice(0, cut) + body.slice(cutEnd)).split('\n').filter((l) => !/^\s*adStateReaders\?: Readonly<Record<string, AdStateReader>>;$/.test(l)).join('\n');
+    expect(outside).not.toMatch(/adStateReaders/);
+    expect(body.match(/adStateReaders\?: Readonly<Record<string, AdStateReader>>;/g)).toHaveLength(1);
+    expect(codeNaming(/\badStateReaders\b/)).toEqual(['apps/kernel/src/kernel.ts', 'apps/kernel/src/worker.ts', 'packages/ad-platform/src/launch-writers.ts']);
   });
 
   it('records the platform\'s answer as display fields of the launch\'s own objects, as the system, and touches nothing of the launch or the caps', () => {
@@ -80,6 +88,9 @@ describe('what may read the platform\'s object states (#3301)', () => {
     expect(commands).toMatch(/name: 'ads\.object\.sync_state',[\s\S]*?risk: 'R1',\s*sideEffect: 'internal',\s*access: 'system'/);
     expect(commands).toMatch(/name: 'ads\.object\.sync_target',[\s\S]*?access: 'system'/);
     expect(commands).toContain('requireSystem(ctx)');
+    // No raw SQL: every statement is built from the typed query builder, so what the platform sent can never reach a statement as text.
+    expect(commands).not.toMatch(/\bsql\b/);
+    expect(commands).not.toMatch(/from 'kysely'/);
     // The only table it updates is the object's, and only these columns; the launch, the caps and the ledger of commitments are never named for a write.
     const updates = [...commands.matchAll(/updateTable\('([^']+)'\)/g)].map((m) => m[1]);
     expect(updates).toEqual(['crove_ads.ad_object', 'crove_kernel.external_call']);
