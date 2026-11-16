@@ -61,7 +61,7 @@ const MACHINERY = new Set([
   'crove_kernel.oauth_state',
   'crove_kernel.inbound_drop',
   'crove_kernel.outbox_archive',
-  // #3310 (ADR-0053, C3b): the ids of events that wait while an app is off: reached only by definers of the worker, RLS enabled, no login role grant. Lands before its table (PENDING_TABLES).
+  // #3310 (ADR-0053, C3b): the ids of events that wait while an app is off: reached only by definers of the worker, RLS enabled, no login role grant.
   'crove_kernel.outbox_held',
   'crove_kernel.outbox_pending',
   'crove_kernel.refusal_tally',
@@ -103,7 +103,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_permission_override',
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',
-  'crove_kernel.outbox_held',
   'crove_meetings.live_line',
   'crove_meetings.meeting_link',
   'crove_notes.link',

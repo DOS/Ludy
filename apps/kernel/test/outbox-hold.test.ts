@@ -27,6 +27,8 @@ const KERNEL_OWN = new Set([
   'kernel.proposal.original_flagged',
   'kernel.agent.proposal_requested',
   'kernel.agent.proposal_approved',
+  // A Projects event the kernel's notification dispatch consumes (in KERNEL_NOTIFYING_EVENTS).
+  'projects.weekly_status.sent',
   'kernel.conversation.attachment_queued',
   'kernel.conversation.draft_queued',
   'kernel.conversation.hide_queued',
