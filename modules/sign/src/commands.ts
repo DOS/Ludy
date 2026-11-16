@@ -292,7 +292,7 @@ export const envelopeInspectComplete = defineCommand({
         envelopeId: row.id,
         status: row.status,
         inspectStatus: row.inspect_status,
-        skipped: true,
+        alreadyHandled: true,
         idempotent: row.inspect_status !== 'pending',
       });
       return { envelopeId: row.id, inspectStatus: row.inspect_status, pageCount: row.page_count };
