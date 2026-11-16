@@ -214,6 +214,13 @@ export function ProjectsPage() {
   );
 }
 
+export function countOtherProjectMembers(
+  members: ReadonlyArray<{ userId: string; onProject: boolean }>,
+  currentUserId: string | null,
+): number | undefined {
+  return currentUserId ? members.filter((m) => m.onProject && m.userId !== currentUserId).length : undefined;
+}
+
 export function ProjectDetailPage() {
   const { slug, id } = useParams({ strict: false }) as { slug: string; id: string };
   const t = useTranslations('projects');
@@ -302,7 +309,7 @@ export function ProjectDetailPage() {
   const board = boardQuery.data;
   const { project, seats, members, tasks, hiddenByEntityCount } = board;
   const currentUserId = me.data?.userId ?? null;
-  const otherMemberCount = currentUserId ? members.filter((m) => m.userId !== currentUserId).length : undefined;
+  const otherMemberCount = countOtherProjectMembers(members, currentUserId);
   const openCount = tasks.filter((item) => item.status !== 'done' && item.status !== 'cancelled').length;
   const doneCount = tasks.filter((item) => item.status === 'done').length;
   const pct = projectCompletionPct(openCount, doneCount);

@@ -19,6 +19,8 @@ import {
   PROJECT_WEEKLY_STATUS_NOTE_TAG,
   type NoteRecordPanel,
   type NoteWritten,
+  type PersonalDataErasure,
+  type PersonalDataResult,
   type ProjectWeeklyStatusSendMailResult,
 } from '@crove/kernel-contract';
 import { LocalDiskStore, Runtime } from '@crove/kernel-runtime';
@@ -42,13 +44,14 @@ const suite = ADMIN ? describe : describe.skip;
 
 function recordingMailer() {
   const sent: OutboundMail[] = [];
+  const batchPrefix = randomUUID().slice(0, 8);
   const mailer: MailProvider = {
     name: 'test',
     enabled: true,
     sendRetrySafety: 'never',
     async send(mail) {
       sent.push(mail);
-      return { status: 'accepted', providerMessageId: `em_${sent.length}` };
+      return { status: 'accepted', providerMessageId: `em_${batchPrefix}_${sent.length}` };
     },
   };
   return { mailer, sent };
@@ -582,5 +585,270 @@ suite('projects P6 share_note & send_mail (#2609)', () => {
     expect(auditSerialized).not.toContain(subjectSecret);
     expect(auditSerialized).not.toContain(summarySecret);
     expect(auditSerialized).not.toContain('555111');
+  });
+
+  it('skips entity-restricted project members when project holds tasks outside their le_scope (#2609)', async () => {
+    const owner = await newPerson('scope-owner');
+    const branchMember = await newPerson('scope-branch');
+    const orgWideMember = await newPerson('scope-orgwide');
+    const org = await createOrg(rt, asUser(owner.userId), 'Cong ty Phan quyen mail');
+    await inviteAndJoin(org.orgId, owner.userId, branchMember, 'member');
+    await inviteAndJoin(org.orgId, owner.userId, orgWideMember, 'member');
+
+    let defaultEntityId = '';
+    let branchEntityId = '';
+    let defaultTaskId = '';
+    let branchTaskId = '';
+    await admin(async (c) => {
+      defaultEntityId = (
+        await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [org.orgId])
+      ).rows[0]!.id;
+      branchEntityId = (
+        await c.query<{ id: string }>(
+          `INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by)
+           VALUES ($1, 'Chi nhanh Mien Trung', 'branch', $2) RETURNING id`,
+          [org.orgId, owner.userId],
+        )
+      ).rows[0]!.id;
+      await c.query(
+        `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by)
+         VALUES ($1, $2, 'external_accountant', $3, $4)`,
+        [org.orgId, branchMember.userId, branchEntityId, owner.userId],
+      );
+      defaultTaskId = (
+        await c.query<{ id: string }>(
+          `INSERT INTO crove_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
+           VALUES ($1, 'Viec tru so chinh', 'human', 'user', $2) RETURNING id`,
+          [org.orgId, defaultEntityId],
+        )
+      ).rows[0]!.id;
+      branchTaskId = (
+        await c.query<{ id: string }>(
+          `INSERT INTO crove_kernel.task (org_id, title, source, created_by_type, legal_entity_id)
+           VALUES ($1, 'Viec chi nhanh', 'human', 'user', $2) RETURNING id`,
+          [org.orgId, branchEntityId],
+        )
+      ).rows[0]!.id;
+    });
+
+    const { projectId: mixedProjectId } = await rt.execute<{ projectId: string }>(
+      'projects.project.create',
+      { name: 'Du an da phap nhan' },
+      { actor: asUser(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() },
+    );
+    await rt.execute('projects.member.add', { projectId: mixedProjectId, userId: branchMember.userId }, { actor: asUser(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() });
+    await rt.execute('projects.member.add', { projectId: mixedProjectId, userId: orgWideMember.userId }, { actor: asUser(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() });
+    await rt.execute('projects.task.add', { projectId: mixedProjectId, taskId: defaultTaskId }, { actor: asUser(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() });
+
+    const mixedRes = await rpc(
+      'full',
+      'projects/weeklyStatusSendMail',
+      owner,
+      {
+        projectId: mixedProjectId,
+        subject: 'Bao cao tuan: Du an da phap nhan',
+        summary: 'Tong hop tru so chinh.',
+        language: 'vi',
+        tainted: false,
+        confirmed: true,
+        idempotencyKey: randomUUID(),
+      },
+      org.slug,
+    );
+    expect(mixedRes.status, JSON.stringify(mixedRes.body)).toBe(200);
+    expect(mixedRes.body).toEqual({ sentCount: 1, skippedCount: 1 });
+
+    const mixedMails = await admin(async (c) =>
+      (
+        await c.query<{ to_address: string }>(
+          `SELECT to_address FROM crove_kernel.mail_message
+           WHERE org_id = $1 AND source = $2 AND source_id = $3`,
+          [org.orgId, PROJECT_WEEKLY_STATUS_MAIL_SOURCE, mixedProjectId],
+        )
+      ).rows,
+    );
+    expect(mixedMails.map((r) => r.to_address)).toEqual([orgWideMember.email]);
+
+    const { projectId: branchProjectId } = await rt.execute<{ projectId: string }>(
+      'projects.project.create',
+      { name: 'Du an chi nhanh' },
+      { actor: asUser(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() },
+    );
+    await rt.execute('projects.member.add', { projectId: branchProjectId, userId: branchMember.userId }, { actor: asUser(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() });
+    await rt.execute('projects.task.add', { projectId: branchProjectId, taskId: branchTaskId }, { actor: asUser(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() });
+
+    const branchRes = await rpc(
+      'full',
+      'projects/weeklyStatusSendMail',
+      owner,
+      {
+        projectId: branchProjectId,
+        subject: 'Bao cao tuan: Du an chi nhanh',
+        summary: 'Tien do chi nhanh on.',
+        language: 'vi',
+        tainted: false,
+        confirmed: true,
+        idempotencyKey: randomUUID(),
+      },
+      org.slug,
+    );
+    expect(branchRes.status, JSON.stringify(branchRes.body)).toBe(200);
+    expect(branchRes.body).toEqual({ sentCount: 1, skippedCount: 0 });
+  });
+
+  it('finds and erases project weekly status email copies under personal_data commands (#2609)', async () => {
+    const owner = await newPerson('pdpl-owner');
+    const recipient = await newPerson('pdpl-rcpt');
+    const org = await createOrg(rt, asUser(owner.userId), 'Cong ty PDPL');
+    await inviteAndJoin(org.orgId, owner.userId, recipient, 'member');
+
+    const { projectId: cleanProjectId } = await rt.execute<{ projectId: string }>(
+      'projects.project.create',
+      { name: 'Du an noi bo' },
+      { actor: asUser(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() },
+    );
+    await rt.execute('projects.member.add', { projectId: cleanProjectId, userId: recipient.userId }, { actor: asUser(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() });
+
+    const targetEmail = 'khach.pdpl@share.test';
+    await rt.execute<ProjectWeeklyStatusSendMailResult>(
+      'projects.weekly_status.send_mail',
+      {
+        projectId: cleanProjectId,
+        subject: `Bao cao tuan cho ${targetEmail} don 123456789`,
+        summary: 'Khach 0912345678 da duyet don 123456789.',
+        language: 'vi',
+        tainted: false,
+        confirmed: true,
+      },
+      { actor: asUser(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() },
+    );
+
+    const foundByEmail = await rt.execute<PersonalDataResult>(
+      'kernel.personal_data.find',
+      { value: targetEmail },
+      { actor: asUser(owner.userId), orgId: org.orgId },
+    );
+    expect(foundByEmail.matches.map((m) => m.column)).toContain('crove_kernel.mail_message.payload');
+
+    // Short numbers (8-9 digits, <10 digits) leave weekly status mails intact and list the kept reason.
+    const shortKept = await rt.execute<PersonalDataErasure>(
+      'kernel.personal_data.erase',
+      { value: '123456789' },
+      { actor: asMfa(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() },
+    );
+    expect(shortKept.kept).toContainEqual({
+      column: 'crove_kernel.mail_message.payload',
+      rows: 1,
+      reason: expect.stringContaining('fewer than 10 digits'),
+    });
+
+    // Erasing the email drops subject & payload on the queued mail so the worker will not send stale PII.
+    const erasedQueued = await rt.execute<PersonalDataErasure>(
+      'kernel.personal_data.erase',
+      { value: targetEmail },
+      { actor: asMfa(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() },
+    );
+    expect(erasedQueued.erased).toContainEqual({ column: 'crove_kernel.mail_message.payload', rows: 1 });
+    expect(erasedQueued.kept.filter((k) => k.column === 'crove_kernel.mail_message.payload')).toEqual([]);
+
+    const queuedRow = (
+      await admin((c) =>
+        c.query<{ id: string; subject: string | null; payload: unknown; to_address: string | null }>(
+          `SELECT id, subject, payload, to_address FROM crove_kernel.mail_message
+           WHERE org_id = $1 AND source = $2 AND source_id = $3`,
+          [org.orgId, PROJECT_WEEKLY_STATUS_MAIL_SOURCE, cleanProjectId],
+        ),
+      )
+    ).rows[0]!;
+    expect(queuedRow.subject).toBeNull();
+    expect(queuedRow.payload).toBeNull();
+    expect(queuedRow.to_address).toBe(recipient.email);
+
+    const { mailer, sent } = recordingMailer();
+    const jobAfterErase = await runMailJob(
+      {
+        runtime: workerRt,
+        mailer,
+        templates: MAIL_TEMPLATES,
+        publicUrl: 'https://app.example.test',
+        bounceDomain: null,
+        sleep: async () => {},
+      },
+      { orgId: org.orgId, messageId: queuedRow.id },
+    );
+    expect(jobAfterErase).toEqual({ action: 'recorded', outcome: 'failed', code: 'TEMPLATE_DATA' });
+    expect(sent).toHaveLength(0);
+    expect((await rt.execute<PersonalDataResult>('kernel.personal_data.find', { value: targetEmail }, { actor: asUser(owner.userId), orgId: org.orgId })).matches).toEqual([]);
+
+    // Delivered mails matched via the project's name also drop server-side payload & subject and report the kept delivery notice.
+    const projectEmail = 'khach.duan@share.test';
+    const { projectId: namedProjectId } = await rt.execute<{ projectId: string }>(
+      'projects.project.create',
+      { name: `Trien khai cho ${projectEmail}` },
+      { actor: asUser(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() },
+    );
+    await rt.execute('projects.member.add', { projectId: namedProjectId, userId: recipient.userId }, { actor: asUser(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() });
+    await rt.execute<ProjectWeeklyStatusSendMailResult>(
+      'projects.weekly_status.send_mail',
+      {
+        projectId: namedProjectId,
+        subject: 'Bao cao tuan du an',
+        summary: 'Tien do dung ke hoach.',
+        language: 'vi',
+        tainted: false,
+        confirmed: true,
+      },
+      { actor: asUser(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() },
+    );
+    const deliveredMailId = (
+      await admin((c) =>
+        c.query<{ id: string }>(
+          `SELECT id FROM crove_kernel.mail_message WHERE org_id = $1 AND source = $2 AND source_id = $3`,
+          [org.orgId, PROJECT_WEEKLY_STATUS_MAIL_SOURCE, namedProjectId],
+        ),
+      )
+    ).rows[0]!.id;
+    const deliveredJob = await runMailJob(
+      {
+        runtime: workerRt,
+        mailer,
+        templates: MAIL_TEMPLATES,
+        publicUrl: 'https://app.example.test',
+        bounceDomain: null,
+        sleep: async () => {},
+      },
+      { orgId: org.orgId, messageId: deliveredMailId },
+    );
+    expect(deliveredJob).toEqual({ action: 'recorded', outcome: 'sent', code: null });
+
+    const erasedDelivered = await rt.execute<PersonalDataErasure>(
+      'kernel.personal_data.erase',
+      { value: projectEmail },
+      { actor: asMfa(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() },
+    );
+    expect(erasedDelivered.erased).toEqual(
+      expect.arrayContaining([
+        { column: 'crove_kernel.mail_message.payload', rows: 1 },
+        { column: 'crove_projects.project.name', rows: 1 },
+      ]),
+    );
+    expect(erasedDelivered.kept).toContainEqual({
+      column: 'crove_kernel.mail_message.payload',
+      rows: 1,
+      reason: expect.stringContaining('cannot be recalled'),
+    });
+
+    const eraseAudit = (
+      await admin((c) =>
+        c.query<{ detail: unknown }>(
+          `SELECT detail FROM crove_kernel.audit_event
+           WHERE org_id = $1 AND command = 'kernel.personal_data.erase' AND outcome = 'ok'
+           ORDER BY id DESC LIMIT 1`,
+          [org.orgId],
+        ),
+      )
+    ).rows[0]!;
+    expect(eraseAudit.detail).toMatchObject({ project_weekly_mails: 1 });
+    expect(JSON.stringify(eraseAudit)).not.toContain(projectEmail);
   });
 });

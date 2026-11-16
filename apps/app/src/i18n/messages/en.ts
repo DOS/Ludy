@@ -2017,6 +2017,7 @@ export const en = {
     },
     private: 'Private',
     shared: 'Shared',
+    aiBadge: 'AI',
     pinnedBadge: 'Pinned',
     archivedBadge: 'Archived',
     trashBadge: 'In the trash',

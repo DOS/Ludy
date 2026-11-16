@@ -442,18 +442,63 @@ export const projectWeeklyStatusSendMail = defineCommand({
       SELECT pg_catalog.to_char((pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, 'YYYY-MM-DD') AS today_vn
     `.execute(ctx.trx);
     const org = await ctx.trx.selectFrom('crove_kernel.tenant').select(['slug', 'name']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
-    const memberRows = await ctx.trx
-      .selectFrom('crove_projects.project_member')
-      .select('user_id')
-      .where('org_id', '=', ctx.orgId)
-      .where('project_id', '=', project.id)
-      .where('user_id', '<>', userId)
-      .orderBy('user_id')
-      .execute();
+    // Filter out entity-restricted recipients who cannot read every legal entity represented in this project's visible tasks (#2609).
+    const { rows: recipientRows } = await sql<{ user_id: string; eligible: boolean }>`
+      SELECT
+        pm.user_id,
+        COALESCE(
+          m.user_id IS NOT NULL
+          AND (
+            m.role IN ('owner', 'admin')
+            OR EXISTS (
+              SELECT 1
+              FROM crove_kernel.role_assignment ra
+              WHERE ra.org_id = pm.org_id
+                AND ra.user_id = pm.user_id
+                AND ra.legal_entity_id IS NULL
+            )
+            OR (
+              '*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[])
+              AND NOT EXISTS (
+                SELECT 1
+                FROM crove_kernel.role_assignment ra
+                WHERE ra.org_id = pm.org_id
+                  AND ra.user_id = pm.user_id
+              )
+            )
+            OR NOT EXISTS (
+              SELECT 1
+              FROM crove_projects.project_task pt
+              JOIN crove_kernel.task t
+                ON t.org_id = pt.org_id
+               AND t.id = pt.task_id
+              WHERE pt.org_id = pm.org_id
+                AND pt.project_id = pm.project_id
+                AND t.legal_entity_id IS NOT NULL
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM crove_kernel.role_assignment ra
+                  WHERE ra.org_id = pm.org_id
+                    AND ra.user_id = pm.user_id
+                    AND ra.legal_entity_id = t.legal_entity_id
+                )
+            )
+          ),
+          false
+        ) AS eligible
+      FROM crove_projects.project_member pm
+      LEFT JOIN crove_kernel.tenant_member m
+        ON m.org_id = pm.org_id
+       AND m.user_id = pm.user_id
+      WHERE pm.org_id = ${ctx.orgId}::uuid
+        AND pm.project_id = ${project.id}::uuid
+        AND pm.user_id <> ${userId}::uuid
+      ORDER BY pm.user_id`.execute(ctx.trx);
 
     const win = buildWeeklyWindow(metaRows[0]?.today_vn ?? new Date().toISOString().slice(0, 10));
     const counts = await queryWeeklyCounts(ctx.trx, ctx.orgId, project.id, win.fromStartIso, win.nextStartIso, win.nextEndExclusiveIso);
-    const memberIds = memberRows.map((r) => r.user_id);
+    const memberIds = recipientRows.filter((r) => r.eligible).map((r) => r.user_id);
+    const skippedByScope = recipientRows.length - memberIds.length;
 
     const batchId = randomUUID();
     const payload = zProjectWeeklyStatusMailPayload.parse({
@@ -473,7 +518,7 @@ export const projectWeeklyStatusSendMail = defineCommand({
     });
 
     let sentCount = 0;
-    let skippedCount = 0;
+    let skippedCount = skippedByScope;
     if (memberIds.length > 0) {
       const queued = await ctx.run<{ sentCount: number; skippedCount: number; mailedUserIds: string[] }>('kernel.mail.members.queue', {
         userIds: memberIds,
@@ -484,7 +529,7 @@ export const projectWeeklyStatusSendMail = defineCommand({
         payload,
       });
       sentCount = queued.sentCount;
-      skippedCount = queued.skippedCount;
+      skippedCount += queued.skippedCount;
       if (queued.mailedUserIds.length > 0) {
         await ctx.emit('projects.weekly_status.sent', {
           projectId: project.id,
@@ -498,7 +543,8 @@ export const projectWeeklyStatusSendMail = defineCommand({
     ctx.audit({
       projectId: project.id,
       batchId,
-      memberCount: memberIds.length,
+      memberCount: recipientRows.length,
+      eligibleCount: memberIds.length,
       sentCount,
       skippedCount,
       language: input.language,

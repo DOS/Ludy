@@ -5,10 +5,12 @@
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
 import { useId, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type {
-  ProjectWeeklyStatus as ProjectWeeklyStatusData,
-  ProjectWeeklyStatusSendMailResult,
-  ProjectWeeklyStatusTask,
+import {
+  NOTE_TITLE_MAX,
+  PROJECT_WEEKLY_STATUS_SUMMARY_MAX,
+  type ProjectWeeklyStatus as ProjectWeeklyStatusData,
+  type ProjectWeeklyStatusSendMailResult,
+  type ProjectWeeklyStatusTask,
 } from '@crove/kernel-contract';
 import { Alert, AlertDescription } from '@crove/ui/components/alert';
 import { Badge } from '@crove/ui/components/badge';
@@ -33,6 +35,11 @@ export interface WeeklyStatusDraftState {
   aiUnedited: boolean;
 }
 
+function truncateByCodePoint(value: string, max: number): string {
+  const chars = Array.from(value);
+  return (chars.length <= max ? value : chars.slice(0, max).join('')).trim();
+}
+
 export function buildWeeklyStatusDraftSeed(
   data: ProjectWeeklyStatusData,
   formatDate: (value: string) => string,
@@ -54,11 +61,14 @@ export function buildWeeklyStatusDraftSeed(
   const to = formatDate(data.window.to);
   const nextFrom = formatDate(data.window.nextFrom);
   const nextTo = formatDate(data.window.nextTo);
-  const title = copy.defaultTitle({
-    project: data.project.name,
-    from,
-    to,
-  });
+  const title = truncateByCodePoint(
+    copy.defaultTitle({
+      project: data.project.name,
+      from,
+      to,
+    }),
+    NOTE_TITLE_MAX,
+  );
   if (data.ai === 'used' && data.sentences.length > 0) {
     return {
       title,
@@ -378,7 +388,11 @@ export function ProjectWeeklyStatus({
               });
             const trimmedTitle = currentDraft.title.trim();
             const trimmedBody = currentDraft.body.trim();
-            const canSubmit = trimmedTitle.length > 0 && trimmedBody.length > 0;
+            const canSubmit =
+              trimmedTitle.length > 0 &&
+              trimmedTitle.length <= NOTE_TITLE_MAX &&
+              trimmedBody.length > 0 &&
+              trimmedBody.length <= PROJECT_WEEKLY_STATUS_SUMMARY_MAX;
             const busy = shareNote.isPending || sendMail.isPending;
             const noOtherMembers = otherMemberCount === 0;
             const confirmMailDescription =
@@ -462,6 +476,7 @@ export function ProjectWeeklyStatus({
                       <Input
                         id={titleInputId}
                         value={currentDraft.title}
+                        maxLength={NOTE_TITLE_MAX}
                         onChange={(e) => {
                           setDraft({ ...currentDraft, title: e.target.value });
                           setShareResult(null);
@@ -482,6 +497,7 @@ export function ProjectWeeklyStatus({
                         id={bodyInputId}
                         rows={4}
                         value={currentDraft.body}
+                        maxLength={PROJECT_WEEKLY_STATUS_SUMMARY_MAX}
                         onChange={(e) => {
                           setDraft(updateWeeklyStatusDraftBody(currentDraft, e.target.value));
                           setShareResult(null);

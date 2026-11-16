@@ -90,5 +90,16 @@ describe('renderProjectWeeklyStatusMail (#2609)', () => {
         payload: { ...VALID_INPUT.payload, summary: '   ' },
       }),
     ).toThrow();
+    expect(() => renderProjectWeeklyStatusMail({ ...VALID_INPUT, subject: '  \r\n\t ' })).toThrow();
+    expect(() => renderProjectWeeklyStatusMail({ ...VALID_INPUT, subject: 'Title\u0000Injected' })).toThrow();
+    expect(() => renderProjectWeeklyStatusMail({ ...VALID_INPUT, subject: 'Title\u2028Injected' })).toThrow();
+  });
+
+  it('normalizes CR, LF, and TAB whitespace in mail subject instead of injecting header lines', () => {
+    const normalized = renderProjectWeeklyStatusMail({
+      ...VALID_INPUT,
+      subject: 'Bao cao\r\n\ttuan:\nRa mat Q4',
+    });
+    expect(normalized.subject).toBe('Bao cao tuan: Ra mat Q4');
   });
 });

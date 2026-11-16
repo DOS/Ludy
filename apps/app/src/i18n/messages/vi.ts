@@ -2015,6 +2015,7 @@ export const vi = {
     },
     private: 'Riêng tư',
     shared: 'Dùng chung',
+    aiBadge: 'AI',
     pinnedBadge: 'Đã ghim',
     archivedBadge: 'Đã lưu trữ',
     trashBadge: 'Trong thùng rác',

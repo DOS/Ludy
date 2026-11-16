@@ -68,8 +68,10 @@ const COPY: Record<'vi' | 'en', Copy> = {
 };
 
 export function renderProjectWeeklyStatusMail(input: MailTemplateInput): { subject: string; text: string; html: string } {
-  const subject = typeof input.subject === 'string' ? input.subject.trim() : '';
-  if (!subject) throw new Error('TEMPLATE_DATA: missing project weekly status subject');
+  const subject = typeof input.subject === 'string' ? input.subject.replace(/[\r\n\t]+/g, ' ').trim() : '';
+  if (!subject || /[\p{Cc}\p{Zl}\p{Zp}]/u.test(subject)) {
+    throw new Error('TEMPLATE_DATA: missing or invalid project weekly status subject');
+  }
   const data: ProjectWeeklyStatusMailPayload = zProjectWeeklyStatusMailPayload.parse(input.payload);
   const t = COPY[data.language];
   const root = input.publicUrl.replace(/\/$/, '');

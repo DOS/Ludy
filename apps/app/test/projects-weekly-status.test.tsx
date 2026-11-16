@@ -237,5 +237,12 @@ describe('ProjectWeeklyStatus component (#2597)', () => {
     const edited = updateWeeklyStatusDraftBody(seeded, 'Báo cáo đã được quản lý chỉnh sửa.');
     expect(edited.aiUnedited).toBe(false);
     expect(edited.body).toBe('Báo cáo đã được quản lý chỉnh sửa.');
+
+    const longNameData = fixture({ project: { id: PROJECT_ID, name: 'A'.repeat(200), status: 'active' } });
+    const longSeeded = buildWeeklyStatusDraftSeed(longNameData, (d) => d, {
+      defaultTitle: (v) => `Báo cáo tuần: ${v.project} (${v.from} - ${v.to})`,
+      deterministicBody: (v) => v.done,
+    });
+    expect(Array.from(longSeeded.title).length).toBeLessThanOrEqual(200);
   });
 });

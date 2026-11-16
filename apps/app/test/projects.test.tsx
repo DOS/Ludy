@@ -60,7 +60,7 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
 });
 
 const { ProjectBoardView } = await import('../src/components/project-board.tsx');
-const { ProjectsPage, ProjectDetailPage } = await import('../src/routes/projects.tsx');
+const { ProjectsPage, ProjectDetailPage, countOtherProjectMembers } = await import('../src/routes/projects.tsx');
 
 const wrap = (locale: 'vi' | 'en', node: ReactNode) => (
   <QueryClientProvider client={queryClientState.current}>
@@ -349,5 +349,75 @@ describe('projects SSR screens & board (#2591)', () => {
     const withoutNotesHtml = renderToStaticMarkup(wrap('vi', <ProjectDetailPage />));
     expect(withoutNotesHtml).not.toContain('data-testid="panel-todos"');
     authState.modules = ['projects', 'notes'];
+  });
+
+  it('excludes org members not assigned to the project from otherMemberCount and renders AI badge on tainted project notes (#2609)', () => {
+    expect(
+      countOtherProjectMembers(
+        [
+          { userId: 'u1', onProject: true },
+          { userId: 'u2', onProject: false },
+          { userId: 'u3', onProject: false },
+        ],
+        'u1',
+      ),
+    ).toBe(0);
+    expect(
+      countOtherProjectMembers(
+        [
+          { userId: 'u1', onProject: true },
+          { userId: 'u2', onProject: true },
+          { userId: 'u3', onProject: false },
+        ],
+        'u1',
+      ),
+    ).toBe(1);
+    expect(countOtherProjectMembers([{ userId: 'u2', onProject: true }], null)).toBeUndefined();
+
+    queryClientState.current.setQueryData(
+      ['notes', 'panel', { targetType: 'projects.project', targetId: '00000000-0000-4000-8000-000000000001' }],
+      {
+        pinned: [],
+        latest: [
+          {
+            id: '40000000-0000-4000-8000-000000000001',
+            authorUserId: 'u1',
+            mine: true,
+            visibility: 'org',
+            title: 'Báo cáo tuần từ AI',
+            tags: ['bao-cao-tuan'],
+            pinned: false,
+            tainted: true,
+            revision: 1,
+            createdAt: '2026-11-16T00:00:00.000Z',
+            updatedAt: '2026-11-16T00:00:00.000Z',
+            archivedAt: null,
+            deletedAt: null,
+          },
+          {
+            id: '40000000-0000-4000-8000-000000000002',
+            authorUserId: 'u1',
+            mine: true,
+            visibility: 'org',
+            title: 'Ghi chú thủ công',
+            tags: ['bao-cao-tuan'],
+            pinned: false,
+            tainted: false,
+            revision: 1,
+            createdAt: '2026-11-15T00:00:00.000Z',
+            updatedAt: '2026-11-15T00:00:00.000Z',
+            archivedAt: null,
+            deletedAt: null,
+          },
+        ],
+        todos: [],
+      },
+    );
+
+    const html = renderToStaticMarkup(wrap('vi', <ProjectDetailPage />));
+    expect(html).toContain('data-testid="note-ai-badge"');
+    expect(html).toContain('data-tainted="true"');
+    expect(html).toContain('data-tainted="false"');
+    expect(html).toContain('border-proposal');
   });
 });
