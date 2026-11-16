@@ -301,6 +301,19 @@ suite('HR annual leave ledger, unpaid-leave sync, and Ly anomaly (#3394)', () =>
       expect(aiOff.ai).toBe('off');
       expect(aiOff.items.some((i) => i.kind === 'annual_leave_exceeded' && i.facts.includes('1,5'))).toBe(true);
 
+      // A 2-decimal unpaid_leave entry such as '1.25' refuses instead of silently rounding to 1 decimal place.
+      await o.exec(o.owner, 'hr.payroll.leave.set', {
+        employeeId: emp.employeeId,
+        month: '2026-11',
+        kind: 'unpaid_leave',
+        days: '1.25',
+        approved: true,
+      });
+      await expect(o.exec(o.owner, 'hr.payroll.run.sync_leave', { runId: run.runId })).rejects.toMatchObject({
+        code: 'HR_LEAVE_DAYS_OUT_OF_RANGE',
+        status: 422,
+      });
+
       // Removing unpaid_leave and re-syncing resets unpaidLeaveDays back to '0'.
       await o.exec(o.owner, 'hr.payroll.leave.set', {
         employeeId: emp.employeeId,
@@ -326,7 +339,7 @@ suite('HR annual leave ledger, unpaid-leave sync, and Ly anomaly (#3394)', () =>
         { month: '2026-11', updatedLines: 0 },
         { month: '2026-11', updatedLines: 1 },
       ]);
-      expect(syncAudits.filter((a) => a.outcome !== 'ok')).toHaveLength(1);
+      expect(syncAudits.filter((a) => a.outcome !== 'ok')).toHaveLength(2);
     } finally {
       setRuleStatus('commentary');
     }

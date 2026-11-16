@@ -10398,7 +10398,7 @@ export const en = {
       HR_LEAVE_BEFORE_HIRE: 'The leave month cannot be earlier than the employee start month',
       HR_LEAVE_DAYS_EXCEEDS_MONTH: 'Leave days in a single month cannot exceed 31 days',
       HR_LEAVE_BALANCE_UNAVAILABLE: 'Unable to calculate the annual leave balance for the selected options',
-      HR_LEAVE_DAYS_OUT_OF_RANGE: 'Unpaid leave days exceed the payroll line range (0 to 99.9 days)',
+      HR_LEAVE_DAYS_OUT_OF_RANGE: 'Unpaid leave days synced to payroll support at most 1 decimal place and range from 0 to 99.9 days',
       HR_RUN_NOT_APPROVED: 'Only an approved pay run can be posted',
       HR_POSTING_OPEN: 'This pay run already has a posting proposal waiting for approval',
       HR_POSTING_DONE: 'This pay run is already posted',

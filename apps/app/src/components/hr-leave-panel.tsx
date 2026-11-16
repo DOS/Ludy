@@ -49,10 +49,7 @@ export function LeaveBalancePanel({ employeeId }: { employeeId: string }) {
     gcTime: 0,
   });
 
-  const refreshLeave = async () => {
-    await queryClient.invalidateQueries({ queryKey: orpc.hr.key() });
-    await q.refetch();
-  };
+  const refreshLeave = () => queryClient.invalidateQueries({ queryKey: orpc.hr.key() });
 
   const saveEntry = useMutation({
     mutationFn: () => client.hr.payroll.leave.set({ employeeId, month, kind, days, approved }),
@@ -81,6 +78,10 @@ export function LeaveBalancePanel({ employeeId }: { employeeId: string }) {
         onSubmit={(ev) => {
           ev.preventDefault();
           if (!yearValid) return;
+          if (yearInput === submittedAsk.year && categoryInput === submittedAsk.category) {
+            void q.refetch();
+            return;
+          }
           setSubmittedAsk({ employeeId, year: yearInput, category: categoryInput });
         }}
       >
@@ -260,7 +261,7 @@ export function LeaveBalancePanel({ employeeId }: { employeeId: string }) {
                       <Button
                         variant="ghost"
                         size="sm"
-                        loading={deleteEntry.isPending}
+                        loading={deleteEntry.isPending && deleteEntry.variables === entry.id}
                         onClick={() => deleteEntry.mutate(entry.id)}
                         data-testid="hr-leave-delete"
                       >

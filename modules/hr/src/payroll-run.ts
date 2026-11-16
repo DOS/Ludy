@@ -557,11 +557,16 @@ export const runApplyThirteenthMonth = defineCommand({
 });
 
 function formatSyncUnpaidDays(raw: string): string {
-  const rounded = money(raw).toDecimalPlaces(1);
-  if (rounded.isNegative() || rounded.greaterThan('99.9')) {
-    throw new DomainError('HR_LEAVE_DAYS_OUT_OF_RANGE', 422, 'Số ngày nghỉ không lương vượt quá phạm vi bảng lương (0 - 99,9 ngày)');
+  const exact = money(raw);
+  const normalized = exact.toFixed();
+  if (exact.isNegative() || exact.greaterThan('99.9') || !/^\d{1,2}(\.\d)?$/.test(normalized)) {
+    throw new DomainError(
+      'HR_LEAVE_DAYS_OUT_OF_RANGE',
+      422,
+      'Số ngày nghỉ không lương đồng bộ sang bảng lương chỉ hỗ trợ tối đa 1 chữ số thập phân (0 - 99,9 ngày)',
+    );
   }
-  return rounded.toFixed();
+  return normalized;
 }
 
 export const runSyncLeave = defineCommand({
@@ -1020,6 +1025,8 @@ export const runSheet = defineQuery({
         if (used?.contract_type === 'fixed_term' && l.status === 'refused' && parseInputs(l.inputs).contractTermMonths === null) flags.push('fixed_term_months_missing');
         if (first) {
           try {
+            // Stage 1 (#3394) does not persist a per-employee hazardous work category on payroll_employee / payroll_employment,
+            // so the pay run sheet evaluates annual_leave_exceeded against the statutory 12-day standard entitlement.
             const leaveBalance = calculateLeaveBalance(
               {
                 year: leaveYear,
