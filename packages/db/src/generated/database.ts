@@ -3189,7 +3189,7 @@ export interface NotesNoteTable {
   body: Generated<string>;
   tags: Generated<string[]>;
   pinned: Generated<boolean>;
-  tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
+  tainted: Generated<boolean>;
   search: ColumnType<string, string | undefined, NotGranted>;
   revision: Generated<number>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;

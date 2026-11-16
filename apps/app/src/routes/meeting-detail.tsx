@@ -16,6 +16,7 @@ import { MeetingResults, memberLabel } from '../components/meeting-results.tsx';
 import { MeetingLive } from '../components/meeting-live.tsx';
 import { MeetingNotes } from '../components/meeting-notes.tsx';
 import { MeetingTranscript } from '../components/meeting-transcript.tsx';
+import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { RecordingStoppedNote } from '../components/recording-stopped.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
@@ -35,6 +36,7 @@ const STATUS_VARIANTS: Record<string, 'default' | 'secondary' | 'outline' | 'des
 
 export function MeetingDetailPage() {
   const t = useTranslations('meetings');
+  const tn = useTranslations('notes');
   const f = useFormat();
   const navigate = useNavigate();
   const { slug, id } = useParams({ strict: false }) as { slug: string; id: string };
@@ -338,6 +340,8 @@ export function MeetingDetailPage() {
       {meeting.isRecorder && <MeetingNotes meetingId={id} />}
       <MeetingResults
         meetingId={id}
+        slug={slug}
+        visibility={meeting.visibility}
         readers={meeting.readers}
         template={meeting.summaryTemplate}
         title={meeting.title}
@@ -347,6 +351,16 @@ export function MeetingDetailPage() {
           </Link>
         }
       />
+
+      {notesInstalled() && (
+        <RecordNotesPanel
+          slug={slug}
+          target={{ targetType: 'meetings.meeting', targetId: meeting.id }}
+          headingId={`notes-meeting-${meeting.id}`}
+          label={tn('panel.toggleOf', { name: meeting.title })}
+          empty={tn('panel.emptyRecord')}
+        />
+      )}
 
       <div className="grid gap-6 md:grid-cols-2">
         {/* Consent Record Card */}

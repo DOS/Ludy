@@ -332,6 +332,7 @@ import {
 import {
   zNote,
   zNoteCreate,
+  zNoteFromMeetingSummary,
   zNoteLinkAdd,
   zNoteLinkRemove,
   zNoteLinkTarget,
@@ -1076,6 +1077,7 @@ export const contract = {
     search: oc.input(zNoteSearch).output(z.array(zNoteSummary)),
     panel: oc.input(zNoteLinkTarget).output(zNoteRecordPanelView),
     create: oc.input(zNoteCreate).output(zNoteWritten),
+    fromMeetingSummary: oc.input(zNoteFromMeetingSummary).output(zNoteWritten),
     update: oc.input(zNoteUpdate).output(zNoteWritten),
     setVisibility: oc.input(zNoteSetVisibility).output(zNoteWritten),
     pin: oc.input(zNoteRef).output(zNoteWritten),

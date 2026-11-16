@@ -245,6 +245,11 @@ function Editor({
     <article className="space-y-4" aria-labelledby="note-title">
       <div className="flex flex-wrap items-center gap-2">
         <VisibilityBadge note={note} />
+        {note.tainted && (
+          <Badge variant="proposal" data-testid="note-ai-badge">
+            {t('aiBadge')}
+          </Badge>
+        )}
         {note.pinned && <Badge variant="secondary">{t('pinnedBadge')}</Badge>}
         {note.archivedAt && <Badge variant="outline">{t('archivedBadge')}</Badge>}
         {inTrash && <Badge variant="destructive">{t('trashBadge')}</Badge>}
@@ -254,6 +259,12 @@ function Editor({
           {state === 'saving' ? t('saving') : state === 'saved' ? t('saved') : ''}
         </span>
       </div>
+
+      {note.tainted && (
+        <p role="note" data-testid="note-tainted-hint" className="rounded-md border border-proposal/30 bg-proposal/5 px-3 py-2 text-xs text-foreground">
+          {t('taintedHint')}
+        </p>
+      )}
 
       {editable ? (
         <>
@@ -646,6 +657,7 @@ export function NotesPage() {
                       <span className="block truncate font-medium text-foreground">{n.title}</span>
                       <span className="mt-1 flex flex-wrap items-center gap-1 text-xs text-subtle-foreground">
                         <VisibilityBadge note={n} />
+                        {n.tainted && <Badge variant="proposal">{t('aiBadge')}</Badge>}
                         {n.pinned && <Badge variant="secondary">{t('pinnedBadge')}</Badge>}
                         {f.date(n.updatedAt)}
                       </span>

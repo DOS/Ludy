@@ -56,6 +56,7 @@ import { suggestCompanies, type CompanyAi } from './contact-company-ai.ts';
 import { wordReminder, type ReminderAi } from './payment-reminder-ai.ts';
 import { wordFollowup, type FollowupAi } from './followup-ai.ts';
 import { minutesLink, postMinutesFromClick, saveMinutesChannel, type MinutesChatDeps } from './meeting-chat.ts';
+import { saveMeetingSummaryAsNote } from './notes-meeting-summary.ts';
 import { explainPayslip, flagMonth, prepareMonth, type PayrollAi, type PayrollReads } from './payroll-coworker-ai.ts';
 import { checkLaborReadiness, type LaborCheckAi, type LaborCheckPorts } from './labor-coworker-ai.ts';
 import { generateRecruitingBrief, type RecruitingBriefAi, type RecruitingBriefPorts } from './recruiting-coworker-ai.ts';
@@ -1053,6 +1054,9 @@ export function createRpcHandler(
       search: os.notes.search.handler(notesQuery('notes.note.search')),
       panel: os.notes.panel.handler(notesQuery('notes.record.panel')),
       create: os.notes.create.handler(notesCommand('notes.note.create')),
+      fromMeetingSummary: os.notes.fromMeetingSummary.handler(({ context, input }) =>
+        inNotes(context, (orgId, actor) => saveMeetingSummaryAsNote(runtime, orgId, actor, input)),
+      ),
       update: os.notes.update.handler(notesCommand('notes.note.update')),
       setVisibility: os.notes.setVisibility.handler(notesCommand('notes.note.set_visibility')),
       pin: os.notes.pin.handler(notesCommand('notes.note.pin')),

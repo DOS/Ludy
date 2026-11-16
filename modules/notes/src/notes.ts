@@ -11,6 +11,8 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 import {
   auditValue,
+  NOTE_BODY_MAX,
+  NOTE_TITLE_MAX,
   zNoteCreate,
   zNoteLinkAdd,
   zNoteLinkRemove,
@@ -20,6 +22,7 @@ import {
   zNoteSearch,
   zNoteSetVisibility,
   zNoteUpdate,
+  type MeetingDetail,
   type Note,
   type NoteLinkTarget,
   type NotePrivateCount,
@@ -190,19 +193,81 @@ export const noteUpdate = defineCommand({
     if (before.revision !== input.revision) {
       throw new DomainError('NOTE_REVISION_CONFLICT', 409, 'Ghi chú vừa được sửa ở nơi khác; hãy tải lại trước khi lưu', { revision: before.revision });
     }
+    const contentEdited = before.title !== input.title || before.body !== input.body;
+    const clearTaint = before.tainted && contentEdited;
     const changed = [
       ...(before.title !== input.title ? ['title'] : []),
       ...(before.body !== input.body ? ['body'] : []),
       ...(before.tags.join('\u0000') !== input.tags.join('\u0000') ? ['tags'] : []),
+      ...(clearTaint ? ['tainted'] : []),
     ];
     const row = await ctx.trx
       .updateTable('crove_notes.note')
-      .set({ title: input.title, body: input.body, tags: input.tags, revision: before.revision + 1, updated_at: ctx.now })
+      .set({
+        title: input.title,
+        body: input.body,
+        tags: input.tags,
+        ...(clearTaint ? { tainted: false } : {}),
+        revision: before.revision + 1,
+        updated_at: ctx.now,
+      })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.noteId)
       .returning(['id', 'revision'])
       .executeTakeFirstOrThrow();
     ctx.audit({ noteId: row.id, revision: row.revision, changed });
+    return written(row);
+  },
+});
+
+const zNoteFromMeetingSummaryCommand = z.strictObject({
+  meetingId: zNoteUpdate.shape.noteId,
+  title: zNoteUpdate.shape.title,
+  body: zNoteUpdate.shape.body,
+});
+
+// Saves a meeting's summary as a shared org note linked to the meeting (#1679, step N10). Always starts tainted until
+// the author edits its title or body. Sensitive summary text is read by the API handler via Runtime.query before calling
+// this command, since Runtime.lookup refuses sensitive queries inside a command transaction.
+export const noteFromMeetingSummary = defineCommand({
+  name: 'notes.note.from_meeting_summary',
+  input: zNoteFromMeetingSummaryCommand,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  handler: async (ctx, input): Promise<NoteWritten> => {
+    const userId = userOf(ctx.actor);
+    const meetingRes = await ctx.query<MeetingDetail>('meetings.meeting.get', { meetingId: input.meetingId });
+    if (meetingRes.status === 'not_installed') {
+      throw new DomainError('NOTES_MEETING_UNAVAILABLE', 400, 'Tính năng Biên bản cuộc họp đang tắt');
+    }
+    const title = input.title.trim().slice(0, NOTE_TITLE_MAX) || 'Tóm tắt cuộc họp';
+    const body = input.body.slice(0, NOTE_BODY_MAX);
+    const row = await ctx.trx
+      .insertInto('crove_notes.note')
+      .values({
+        org_id: ctx.orgId,
+        author_user_id: userId,
+        visibility: 'org',
+        title,
+        body,
+        tags: [],
+        tainted: true,
+        created_at: ctx.now,
+        updated_at: ctx.now,
+      })
+      .returning(['id', 'visibility', 'revision'])
+      .executeTakeFirstOrThrow();
+    const linkId = await addLink(ctx, row, userId, 'meetings.meeting', input.meetingId);
+    ctx.audit({
+      noteId: row.id,
+      visibility: row.visibility,
+      title: auditValue(NOTE, 'title', title),
+      tainted: true,
+      linkId,
+      targetType: 'meetings.meeting',
+      targetId: input.meetingId,
+    });
     return written(row);
   },
 });
@@ -436,5 +501,5 @@ export const privateCounts = defineQuery({
   },
 });
 
-export const noteCommands = [noteCreate, noteUpdate, noteSetVisibility, notePin, noteUnpin, noteArchive, noteRestore, noteDelete, linkAdd, linkRemove];
+export const noteCommands = [noteCreate, noteFromMeetingSummary, noteUpdate, noteSetVisibility, notePin, noteUnpin, noteArchive, noteRestore, noteDelete, linkAdd, linkRemove];
 export const noteQueries = [noteList, noteGet, noteSearch, recordPanel, privateCounts];
