@@ -270,7 +270,7 @@ import { zBookEntity, zLegalEntity, zLegalEntityInput } from './legal-entity.ts'
 import { zBuiltinRoleKey, zMemberRoles, zRoleAssignInput } from './roles.ts';
 import { zMeetingPlatformConnectionRef, zMeetingPlatformConnectionView, zMeetingPlatformRecordingRef, zMeetingPlatformRecordingView } from './meeting-platform.ts';
 import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCalendarEventView, zCalendarRange, zCalendarSlot, zCalendarSlotsQuery, zCalendarOAuthProvider, zMyCalendar, zWorkingHours } from './calendar.ts';
-import { zEInvoiceDraftFromOrder, zStockMoveFromOrderLine, zStockMoveFromOrderLineResult } from './finance-orders.ts';
+import { zEInvoiceDraftFromOrder, zOrderLineInvoiceStates, zOrderLineInvoiceStatesInput, zStockMoveFromOrderLine, zStockMoveFromOrderLineResult } from './finance-orders.ts';
 import { zQuoteAccept, zQuoteDecided, zQuoteDecline, zSalesOrder, zSalesOrderCancel, zSalesOrderDeliver, zSalesOrderDeliveryChanged, zSalesOrderHandoff, zSalesOrderListQuery, zSalesOrderPage, zSalesOrderRef, zSalesOrderSummary, zSalesOrderUndeliver } from './crm-sales-orders.ts';
 import { zFollowupDraftInput, zFollowupDrafted } from './crm-followup.ts';
 import { zMeetingBrief, zMeetingBriefInput } from './crm-meeting-brief.ts';
@@ -2261,6 +2261,9 @@ export const contract = {
       // the idempotency key replays the same draft. ORDER_PAYLOAD_MISMATCH, ORDER_LINE_UNKNOWN, ORDER_LINE_NOT_INVOICEABLE, ORDER_LINE_DISCOUNTED, ORDER_TOO_MANY_LINES, EINVOICE_TOTAL_TOO_LARGE (422),
       // ORDER_LINE_ALREADY_INVOICED and ORDER_NOTHING_TO_INVOICE (409), LEGAL_ENTITY_NOT_ALLOWED (403). Nothing is issued: issuing needs finance's approval.
       fromOrder: oc.input(zEInvoiceDraftFromOrder.extend({ idempotencyKey: zId })).output(zEInvoiceDraft),
+      // Which lines of these orders (1 to 50) a draft names, and whether it is issued (#3477): `draft` or `issued`, no other fact of the draft. Every role reads it, by the drafts' own row policy
+      // (a member limited to some legal entities sees only the drafts of theirs). A line no draft names is not listed. The screen is a hint: ORDER_LINE_ALREADY_INVOICED stays the server's refusal.
+      orderLines: oc.input(zOrderLineInvoiceStatesInput).output(zOrderLineInvoiceStates),
       // The request to issue a draft as the Inbox card shows it (#2502): the draft now, and whether it is still what was asked for. Owners, admins and members.
       issueRequest: oc.input(z.object({ proposalId: zId })).output(zEInvoiceIssueView),
       // The coworker's proposal for the form from a text a person typed (#2505): lines, the VAT rate the text states, and the buyer from the org's customers. Owners, admins and members. Read only;

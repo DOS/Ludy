@@ -28,6 +28,7 @@ import { ViewTabs, type ViewState } from '../components/view-tabs.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { EMPTY_DEAL_FILTER, astToDealFilter, dealFilterToAst, type DealFilterState } from '../lib/deal-filter.ts';
+import { showAllClosed } from '../lib/deal-board.ts';
 import { formatMoney } from '../lib/format.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
 
@@ -315,7 +316,16 @@ export function DealsPage() {
       <ViewTabs scope={SCOPE} filters={filters} sort={sort} onApply={applyView} />
       <DealFilterBar bar={bar} setBar={setBar} sort={sort} setSort={setSort} stages={stageList} members={members} />
       {view === 'board' ? (
-        <DealBoard members={members} canEdit={canEdit} filters={applied.all.length > 0 ? applied : undefined} />
+        <DealBoard
+          members={members}
+          canEdit={canEdit}
+          filters={applied.all.length > 0 ? applied : undefined}
+          onShowAll={(kind) => {
+            setBar(showAllClosed(kind));
+            setSort(null);
+            setView('list');
+          }}
+        />
       ) : deals.isPending || stages.isPending ? (
         <TableSkeleton columns={6} />
       ) : (deals.error || stages.error) && rows.length === 0 ? (
