@@ -129,9 +129,10 @@ export function QuoteDealOffers({ dealId, quotes, canEdit }: { dealId: string; q
               </div>
             </div>
           )}
-          {error && <ErrorText>{errorMessage(error)}</ErrorText>}
         </div>
       )}
+      {/* Outside the offers' box: a refusal that closes the deal reads it again and the offers go, but the person still sees that the click failed. */}
+      {error && <ErrorText>{errorMessage(error)}</ErrorText>}
     </>
   );
 }
