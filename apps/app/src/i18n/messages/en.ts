@@ -7804,6 +7804,7 @@ export const en = {
     proposal: 'Related proposal: {title}',
     openPost: 'Open post',
     openMeeting: 'Open the meeting this task came from',
+    openConversation: 'Open the conversation',
     meetingClosed: 'The meeting record cannot be opened.',
     openProposal: 'Open proposal',
     fromTodo: 'A member handed this task over from their own to-do list.',
