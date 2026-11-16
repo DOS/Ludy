@@ -71,6 +71,7 @@ import { runEInvoiceIssue, type EInvoiceIssueJob } from './einvoice-issue-job.ts
 import { runMarketplacePoll, type MarketplacePollJob } from './marketplace-poll-job.ts';
 import { runAdsLaunch, type AdsLaunchJob } from './ads-launch.ts';
 import { runAdsActivate, type AdsActivateJob } from './ads-activate.ts';
+import { runAdsStateSync } from './ads-state.ts';
 import { runAdsPause, type AdsPauseJob } from './ads-pause.ts';
 import { runAdsRevoke } from './ads-revoke.ts';
 import { ADS_DUE_PAGE, adsDue, pruneAdsRuns, runAdsSync, type AdsSyncJob } from './ads-sync.ts';
@@ -82,7 +83,7 @@ import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhoo
 import { runAdsDeletions } from './ads-deletion.ts';
 import type { BankFeedProvider } from '@crove/bank-feed';
 import type { EInvoiceProvider } from '@crove/einvoice';
-import type { AdActivator, AdPauser, AdPlatform, AdRevoker, LaunchWriter } from '@crove/ad-platform';
+import type { AdActivator, AdPauser, AdPlatform, AdRevoker, AdStateReader, LaunchWriter } from '@crove/ad-platform';
 
 const SOCIAL_PUBLISH_RETRY_LIMIT = 2;
 // The worker looks for due variants this often; a post goes out within this long of its time.
@@ -494,6 +495,9 @@ export interface WorkerDeps {
     // The calls of an ad platform that switch on what an approved launch made (#2296, W2-4b), by the provider id of the write connection: a frozen view with `activate` and
     // `readStatus`, never the writer. The activation job alone uses it, with the credential it opens.
     adActivators?: Readonly<Record<string, AdActivator>>;
+    // The read of what an ad platform says of the objects of a launch (#3301), by the provider id of the write connection: a frozen view with `readStates` and no other call,
+    // never the writer. The account's sync job alone uses it, with the credential it opens.
+    adStateReaders?: Readonly<Record<string, AdStateReader>>;
     // The outside calendar adapters this deployment offers (#2123), by OAuth provider id.
     calendars?: Readonly<Partial<Record<string, CalendarAdapter>>>;
     // The meeting platform adapters this deployment offers (C1, #3173), by provider id: the sandbox, then Google Meet, Zoom and Teams (C2 to C4).
@@ -1491,8 +1495,17 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         if (pruned > 0) console.log(`[ads] pruned ${pruned} old sync run(s)`);
         return;
       }
-      const done = await runAdsSync({ runtime: deps.runtime, broker: adsBroker, platforms: adPlatforms }, job.data);
-      console.log(`[ads] ${job.data.connectionId}: ${done.slices} slice(s), ${done.rows} row(s) stored`);
+      // The figures of the account, then what the platform says of the objects of its launches (#3301). The second never fails the first or the job: it records its own failures.
+      try {
+        const done = await runAdsSync({ runtime: deps.runtime, broker: adsBroker, platforms: adPlatforms }, job.data);
+        console.log(`[ads] ${job.data.connectionId}: ${done.slices} slice(s), ${done.rows} row(s) stored`);
+      } finally {
+        const adStateReaders = deps.channels?.adStateReaders;
+        if (adStateReaders && Object.keys(adStateReaders).length > 0) {
+          const states = await runAdsStateSync({ runtime: deps.runtime, broker: adsBroker, readers: adStateReaders }, job.data).catch(() => null);
+          if (states && states.launches > 0) console.log(`[ads-state] ${job.data.connectionId}: ${states.launches} launch(es) read, ${states.changed} object(s) changed, ${states.failed} failed read(s), ${states.ended}`);
+        }
+      }
     });
     await boss.schedule(QUEUES.adsSync, ADS_SYNC_CRON, { sweep: true }, { tz: RETENTION_TZ, missed: 'once' });
   } else {

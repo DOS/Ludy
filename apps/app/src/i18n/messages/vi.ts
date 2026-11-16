@@ -4284,7 +4284,28 @@ export const vi = {
       launchRetriedToast: 'Đã yêu cầu chạy lại lần chạy này.',
       launchObjectsTitle: 'Đã tạo trên nền tảng quảng cáo',
       objectLevel: { campaign: 'Chiến dịch', ad_set: 'Nhóm quảng cáo', creative: 'Mẫu quảng cáo', ad: 'Quảng cáo' },
-      objectStatus: { active: 'Đang bật', paused: 'Tạm dừng', archived: 'Đã lưu trữ' },
+      objectStatus: {
+        active: 'Đang bật',
+        paused: 'Tạm dừng',
+        archived: 'Đã lưu trữ',
+        pending_review: 'Đang chờ duyệt',
+        in_process: 'Đang xử lý',
+        preapproved: 'Đã duyệt trước',
+        disapproved: 'Bị từ chối',
+        with_issues: 'Có vấn đề',
+        campaign_paused: 'Chiến dịch đang tạm dừng',
+        adset_paused: 'Nhóm quảng cáo đang tạm dừng',
+        pending_billing_info: 'Chờ thông tin thanh toán',
+        deleted: 'Đã xoá trên nền tảng',
+      },
+      // Why a review stopped an object (a short code the sync stored, never the platform’s own sentence).
+      objectReason: {
+        in_review: 'nền tảng đang xem xét',
+        in_process: 'nền tảng đang xử lý',
+        deleted_at_platform: 'không còn trên nền tảng',
+        issue: 'mã vấn đề {code} của nền tảng',
+        feedback: 'lý do duyệt: {reason}',
+      },
       launchState: {
         queued: 'Đang chờ chạy',
         launching: 'Đang tạo',
@@ -11126,6 +11147,10 @@ export const vi = {
         begin: 'Nhận một lần chạy quảng cáo đã dừng để tạm dừng những gì nó đã tạo trên nền tảng',
         record: 'Ghi kết quả việc tạm dừng những gì một lần chạy quảng cáo đã dừng đã tạo',
         pending: 'Liệt kê các lần chạy quảng cáo đã dừng của một tài khoản mà quảng cáo chưa được tạm dừng hết',
+      },
+      object: {
+        sync_state: 'Ghi trạng thái duyệt mà nền tảng báo về các đối tượng quảng cáo của một lần chạy',
+        sync_target: 'Xem các lần chạy quảng cáo cần đọc trạng thái từ nền tảng',
       },
       launches: {
         prepare_unblock: 'Đề nghị mở lại các lần chạy quảng cáo',

@@ -45,6 +45,7 @@ import {
   issueText,
   launchObjectLevelText,
   launchObjectStatusText,
+  launchObjectStatusVariant,
   launchReasonText,
   maxSpendHint,
   maxSpendOf,
@@ -643,7 +644,7 @@ function LaunchObjectsList({ launch, title, root }: { launch: AdsLaunchView; tit
             <span>
               {launchObjectLevelText(o.level, root)}: <span className="font-medium text-foreground">{o.name}</span> ({o.externalId})
             </span>
-            <Badge variant={launch.state === 'live' && o.level !== 'creative' && (o.effectiveStatus === null || o.effectiveStatus.toLowerCase() === 'active') ? 'success' : 'outline'}>
+            <Badge variant={launchObjectStatusVariant(o, launch)}>
               {launchObjectStatusText(o, launch, root)}
             </Badge>
           </li>
