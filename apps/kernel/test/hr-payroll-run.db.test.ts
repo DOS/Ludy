@@ -775,15 +775,17 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
 
   it('(org export, #2676) streams the payroll tables to the owner with no plain number and no sealed text, and audits each read before it', async () => {
     const o = await exportOrg(true);
-    expect(OWNER_RUN_EXPORT_TABLE_NAMES).toEqual(['hr.payroll_employee', 'hr.payroll_employment', 'hr.payroll_dependent', 'hr.payroll_run', 'hr.payroll_line', 'hr.payroll_bank_template']);
+    expect(OWNER_RUN_EXPORT_TABLE_NAMES).toEqual(['hr.payroll_employee', 'hr.payroll_employment', 'hr.payroll_dependent', 'hr.payroll_run', 'hr.payroll_line', 'hr.payroll_bank_template', 'hr.job_opening', 'hr.candidate']);
     const employees = await read(rt, 'hr.payroll_employee', asUser(o.owner), o.orgId);
     const employments = await read(rt, 'hr.payroll_employment', asUser(o.owner), o.orgId);
     const dependents = await read(rt, 'hr.payroll_dependent', asUser(o.owner), o.orgId);
     const runs = await read(rt, 'hr.payroll_run', asUser(o.owner), o.orgId);
     const lines = await read(rt, 'hr.payroll_line', asUser(o.owner), o.orgId);
-    // No bank template was saved in this org: the table is served, and empty.
+    // No bank template or recruiting data was saved in this org: the tables are served, and empty.
     const templates = await read(rt, 'hr.payroll_bank_template', asUser(o.owner), o.orgId);
-    expect([employees.length, employments.length, dependents.length, runs.length, lines.length, templates.length]).toEqual([1, 1, 1, 1, 1, 0]);
+    const openings = await read(rt, 'hr.job_opening', asUser(o.owner), o.orgId);
+    const candidates = await read(rt, 'hr.candidate', asUser(o.owner), o.orgId);
+    expect([employees.length, employments.length, dependents.length, runs.length, lines.length, templates.length, openings.length, candidates.length]).toEqual([1, 1, 1, 1, 1, 0, 0, 0]);
     expect(runs[0]).toMatchObject({ month: '2026-06', status: 'draft' });
     expect(lines[0]).toMatchObject({ kind: 'pay', employee_id: employees[0]?.id });
     expect(employees[0]).toMatchObject({ display_name: EXPORT_NAME });
@@ -798,7 +800,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     const audits = await withAdmin(
       async (c) => (await c.query<{ outcome: string; detail: string; row: string }>(`SELECT outcome, detail::text AS detail, audit_event::text AS row FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.export.people' ORDER BY id`, [o.orgId])).rows,
     );
-    expect(audits.map((a) => a.outcome)).toEqual(['ok', 'ok', 'ok', 'ok', 'ok', 'ok']);
+    expect(audits.map((a) => a.outcome)).toEqual(['ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok']);
     // Each row names the table read (not personal data) and says the read was started.
     expect(audits.map((a) => (JSON.parse(a.detail) as { table: string }).table)).toEqual([...OWNER_RUN_EXPORT_TABLE_NAMES]);
     expect(JSON.parse(audits[0]?.detail ?? '{}')).toMatchObject({ read: 'sensitive', stage: 'before_read' });
@@ -869,7 +871,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
       const text = await ok.text();
       const all = text.trim().split('\n').map((l) => JSON.parse(l) as { org_id: string; _end?: boolean; rows?: number });
       // The last line says how many rows came before it, so a cut download cannot look whole.
-      const expected = table === 'hr.payroll_bank_template' ? 0 : 1;
+      const expected = table === 'hr.payroll_bank_template' || table === 'hr.job_opening' || table === 'hr.candidate' ? 0 : 1;
       expect(all.at(-1), table).toEqual({ _end: true, rows: expected });
       const rows = all.slice(0, -1);
       expect(rows.length, table).toBe(expected);

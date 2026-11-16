@@ -449,6 +449,9 @@ export const OWNER_RUN_EXPORT_TABLES = {
   'hr.payroll_line': { from: 'crove_hr.payroll_line', omit: [] },
   // The layouts of the bank's bulk-salary file (#2532): configuration (names, column keys and headers, a content text), no person's data.
   'hr.payroll_bank_template': { from: 'crove_hr.payroll_bank_template', omit: [] },
+  // Lightweight recruiting openings and candidates (#3425), readable by owners and admins only.
+  'hr.job_opening': { from: 'crove_hr.job_opening', omit: [] },
+  'hr.candidate': { from: 'crove_hr.candidate', omit: [] },
 } as const satisfies Record<string, { from: string; omit: readonly string[] }>;
 export type OwnerRunExportTable = keyof typeof OWNER_RUN_EXPORT_TABLES;
 export const OWNER_RUN_EXPORT_TABLE_NAMES = Object.keys(OWNER_RUN_EXPORT_TABLES) as [OwnerRunExportTable, ...OwnerRunExportTable[]];
