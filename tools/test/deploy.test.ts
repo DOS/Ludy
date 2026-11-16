@@ -2,7 +2,7 @@
 // the steps, the readiness gate, rollback on a failed smoke test, the state it records, and what it refuses.
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -1277,6 +1277,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
         ['an address with a semicolon', { ...IDP, AUTH_ALLOWED_EMAILS: 'owner@example.org;x@example.org' }, 'AUTH_ALLOWED_EMAILS'],
         ['an address with a dollar', { ...IDP, AUTH_ALLOWED_EMAILS: 'o$wner@example.org' }, 'AUTH_ALLOWED_EMAILS'],
         ['a bare @', { ...IDP, AUTH_ALLOWED_EMAILS: '@' }, 'AUTH_ALLOWED_EMAILS'],
+        ['an @domain entry over 254 characters', { ...IDP, AUTH_ALLOWED_EMAILS: `@${'a'.repeat(60)}.${'b'.repeat(60)}.${'c'.repeat(60)}.${'d'.repeat(60)}.${'e'.repeat(20)}.example` }, 'AUTH_ALLOWED_EMAILS'],
         ['an address whose last label ends in a dash (the kernel refuses it, and the worker would not boot)', { ...IDP, AUTH_ALLOWED_EMAILS: 'a@example.org,owner@gmail.com-' }, 'AUTH_ALLOWED_EMAILS'],
         ['a domain whose last label ends in a dash', { ...IDP, AUTH_ALLOWED_EMAILS: '@example.co-' }, 'AUTH_ALLOWED_EMAILS'],
         ['a domain with a label that ends in a dash', { ...IDP, AUTH_ALLOWED_EMAILS: '@bad-.example.com' }, 'AUTH_ALLOWED_EMAILS'],
@@ -1589,7 +1590,10 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       const argv = readFileSync(`${log}.argv`, 'utf8');
       expect(argv).toContain('--proto =https --proto-redir =https');
       expect(argv).not.toContain('--location');
-      expect(argv.split('\n').filter((l) => l.includes('idp.example.com')).every((l) => l.includes('--proto =https'))).toBe(true);
+      // Every request to the provider (by its parsed host, not a substring) carried the protocol limits and ignored ~/.curlrc.
+      const toProvider = argv.split('\n').filter((l) => l.split(' ').some((a) => a.startsWith('https://') && new URL(a).hostname === 'idp.example.com'));
+      expect(toProvider.length).toBeGreaterThan(0);
+      expect(toProvider.every((l) => l.startsWith('-q ') && l.includes('--proto =https'))).toBe(true);
     });
 
     it('does not demand the Auth URL of a caller\'s shell from a rollback', () => {
@@ -1661,6 +1665,25 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(elsewhere.status, elsewhere.out).toBe(2);
       expect(existsSync(`${root}/elsewhere.env`)).toBe(true);
       expect(calls()).toEqual([]);
+    });
+
+    it('removes only a regular settings file of the incoming directory: not through .., not a link', () => {
+      writeFileSync(`${dir}/.env`, BEFORE);
+      writeFileSync(`${dir}/docker-compose.yml`, 'name: crove\nservices: {}\n');
+      mkdirSync(`${dir}/.deploy/incoming/run`, { recursive: true });
+      const args = (file: string) => ['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', compose, '--auth-settings', file];
+      // The compose file reached with ..: read (and refused: not settings), never deleted.
+      const through = run(args(`${dir}/.deploy/incoming/../../docker-compose.yml`));
+      expect(through.status, through.out).toBe(2);
+      expect(existsSync(`${dir}/docker-compose.yml`)).toBe(true);
+      // A link named like the upload: the file it points to stays.
+      writeFileSync(`${root}/target.env`, 'POSTGRES_PASSWORD=x\n');
+      if (process.platform !== 'win32') {
+        symlinkSync(`${root}/target.env`, settingsPath());
+        const linked = run(args(settingsPath()));
+        expect(linked.status, linked.out).toBe(2);
+        expect(existsSync(`${root}/target.env`)).toBe(true);
+      }
     });
 
     it('counts the characters of the button words, not the bytes, whatever the locale of the SSH session', () => {

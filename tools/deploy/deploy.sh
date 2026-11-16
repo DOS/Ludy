@@ -975,7 +975,8 @@ auth_split() {
   local raw="${1//,/ }" max="$2"
   AUTH_ITEMS=()
   [ "${#1}" -le 4096 ] || return 1
-  read -r -a AUTH_ITEMS <<<"$raw" || true
+  # Through a pipe, not a here-string: an older bash writes a here-string to a temporary file, and the list may be the secret.
+  read -r -a AUTH_ITEMS < <(printf '%s\n' "$raw") || true
   ((${#AUTH_ITEMS[@]} > 0 && ${#AUTH_ITEMS[@]} <= max))
 }
 
@@ -984,8 +985,10 @@ auth_emails_ok() {
   local entry out=''
   auth_split "$1" 200 || return 1
   for entry in "${AUTH_ITEMS[@]}"; do
+    # (254 characters at most, as the kernel allows, for an @domain entry too.)
+    [ "${#entry}" -le 254 ] || return 1
     if [[ "$entry" =~ ^@${AUTH_DOMAIN_RE}$ ]]; then :
-    elif [[ "$entry" =~ ^[A-Za-z0-9][A-Za-z0-9._%+-]{0,63}@${AUTH_DOMAIN_RE}$ && "${entry%@*}" != *..* && ${#entry} -le 254 ]]; then :
+    elif [[ "$entry" =~ ^[A-Za-z0-9][A-Za-z0-9._%+-]{0,63}@${AUTH_DOMAIN_RE}$ && "${entry%@*}" != *..* ]]; then :
     else return 1
     fi
     out+="${out:+,}$entry"
@@ -1193,7 +1196,8 @@ prune_env_backups() {
 # leave https or reach another host) and no other scheme.
 probe_get() {
   local url="$1" headers="${2:-}" out code
-  local -a args=(--silent --show-error --max-time 15 --proto "=https" --proto-redir "=https" --write-out '%{http_code}')
+  # -q first: a ~/.curlrc of the host (a proxy, a redirect setting) is not read.
+  local -a args=(-q --silent --show-error --max-time 15 --proto "=https" --proto-redir "=https" --write-out '%{http_code}')
   [ -z "$headers" ] || args+=(--header "@$headers")
   out="$(curl "${args[@]}" "$url")" || return 1
   code="${out: -3}"
@@ -1436,8 +1440,9 @@ do_deploy() {
     fi
     # The file the workflow uploaded (in its private incoming directory) is read once and removed whatever the outcome: the secret in it
     # need not stay on the host. Any other file named here is read and left alone.
-    local incoming=0
-    case "$auth_settings" in "$DEPLOY_DIR"/.deploy/incoming/*) incoming=1 ;; esac
+    # (Only <dir>/.deploy/incoming/<run>/auth-settings.env, as a regular file that is not a link, with no `..` in the run's name.)
+    local incoming=0 under="${auth_settings#"$DEPLOY_DIR"/.deploy/incoming/}"
+    if [ "$under" != "$auth_settings" ] && [[ "$under" =~ ^[A-Za-z0-9_-][A-Za-z0-9._-]*/auth-settings\.env$ ]] && [ -f "$auth_settings" ] && [ ! -L "$auth_settings" ]; then incoming=1; fi
     if ! auth_settings_load "$auth_settings"; then
       if ((incoming)); then rm -f "$auth_settings"; fi
       die "$EXIT_USAGE" 'the identity provider settings are not valid (see above); nothing was changed'
