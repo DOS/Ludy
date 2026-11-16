@@ -204,9 +204,11 @@ const stopReasonOf = (meta: RecordingMeta): { stopReason?: RecordingStopReason }
 
 // The recording ended and no media reached the server: tell it, best effort, so the app's recording chip lets go at once (#3196). A stop the member asked
 // for carries no code; any other carries its code ('unknown' when nobody saw it end). Never throws: the server ignores it when a recording exists.
-async function reportEnded(client: Client, meta: RecordingMeta): Promise<void> {
+export async function reportEnded(client: Client, meta: RecordingMeta): Promise<void> {
   const reason = stopReasonForUpload(meta);
-  await client.recordingStopped({ meetingId: meta.meetingId, ...(reason ? { reason } : {}), lengthSeconds: Math.round(meta.elapsedMs / 1000) }).catch(() => undefined);
+  // The server takes at most a day (a longer one would be refused and the report lost).
+  const lengthSeconds = Math.min(24 * 3600, Math.max(0, Math.round(meta.elapsedMs / 1000)));
+  await client.recordingStopped({ meetingId: meta.meetingId, ...(reason ? { reason } : {}), lengthSeconds }).catch(() => undefined);
 }
 
 // The saved recording to the meeting; the device copy goes only after the server has it.

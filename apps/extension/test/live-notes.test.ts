@@ -5,7 +5,7 @@
 import type { ChunkStore, RecordingMeta } from '@crove/meeting-recorder';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LudyError, type Client } from '../src/api.ts';
-import { startCapture, type CaptureDeps, type CaptureParams } from '../src/capture-run.ts';
+import { reportEnded, startCapture, type CaptureDeps, type CaptureParams } from '../src/capture-run.ts';
 
 class FakeRecorder {
   static instances: FakeRecorder[] = [];
@@ -254,5 +254,16 @@ describe('ending a recording with no media', () => {
     const { createClient } = await import('../src/api.ts');
     await createClient('https://app.ludy.vn', 'crx_t', fetchImpl).recordingStopped({ meetingId: '11111111-1111-4111-8111-111111111111', reason: 'tab_closed', lengthSeconds: 42 });
     expect(seen).toEqual([{ url: 'https://app.ludy.vn/api/rpc/meetings/recordingStopped', body: JSON.stringify({ json: { meetingId: '11111111-1111-4111-8111-111111111111', reason: 'tab_closed', lengthSeconds: 42 } }) }]);
+  });
+
+  it('reports at most a day, and a stop the member did not ask for with its code (a discarded left-over copy too)', async () => {
+    const { client } = setup();
+    const meta = { id: 'r', scope: 'o', meetingId: 'm1', title: 'Họp', kind: 'audio' as const, mimeType: 'audio/webm', startedAt: 0, elapsedMs: 100 * 3600 * 1000, chunkCount: 1, updatedAt: 0, stopped: 'tab_closed' as const };
+    await reportEnded(client as unknown as Client, meta);
+    expect(client.recordingStopped).toHaveBeenCalledWith({ meetingId: 'm1', reason: 'tab_closed', lengthSeconds: 86_400 });
+    // Nobody saw it end (a closed tab, a crash): 'unknown'.
+    const { stopped: _stopped, ...unseen } = meta;
+    await reportEnded(client as unknown as Client, unseen);
+    expect(client.recordingStopped).toHaveBeenLastCalledWith(expect.objectContaining({ reason: 'unknown' }));
   });
 });

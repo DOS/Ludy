@@ -273,6 +273,8 @@ export const meetingMediaRecord = defineCommand({
         .set({ recording_stop_reason: input.stopReason, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.meetingId)
+        // Once: a reason a report already left (#3196) is kept.
+        .where('recording_stop_reason', 'is', null)
         .execute();
     }
 
