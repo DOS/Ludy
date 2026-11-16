@@ -7164,6 +7164,7 @@ export const en = {
       finance_payroll_flag: 'Putting each payroll anomaly in one sentence',
       finance_payroll_explain: 'Explaining a payslip from its stored components',
       finance_labor_check: 'Reviewing employee records and contracts before exporting the labor register or 01/PLI report',
+      hr_recruiting_brief: 'Summarizing a pseudonymized candidate profile and suggesting interview questions',
       today_brief: "Vy's daily brief on Home",
       today_weekly: "Vy's \"This week\" on Home",
       ads_campaign_draft: 'Drafting the content of an ad campaign',

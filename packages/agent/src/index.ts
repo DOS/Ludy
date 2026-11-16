@@ -19,6 +19,7 @@ export * from './marketplace-line.ts';
 export * from './payroll-match.ts';
 export * from './payroll-coworker.ts';
 export * from './labor-coworker.ts';
+export * from './recruiting-coworker.ts';
 export * from './meter.ts';
 export * from './proofread.ts';
 export * from './scheduling.ts';
