@@ -13,7 +13,19 @@ const off = (...apps: string[]): StreamScope => ({ ...ALL_ENTITIES, appsOff: new
 describe('hint types and their apps', () => {
   it('names an app for every hint type, and filters only apps other than the kernel', () => {
     for (const type of STREAM_HINT_TYPES) expect(typeof HINT_APPS[type], type).toBe('string');
-    expect([...STREAM_FILTERED_APPS].sort()).toEqual(['finance', 'notes', 'social']);
+    expect([...STREAM_FILTERED_APPS].sort()).toEqual(['crm', 'finance', 'notes', 'social']);
+  });
+
+  it('reads the crm hints as the id of the deal or the party alone: no entity, no recipient (#3293)', () => {
+    const id = randomUUID();
+    expect(HINT_APPS.crm_deal).toBe('crm');
+    expect(HINT_APPS.crm_party).toBe('crm');
+    expect(parseHint(`${ORG} crm_deal ${id}`)).toEqual({ orgId: ORG, hint: { type: 'crm_deal', id } });
+    expect(parseHint(`${ORG} crm_party ${id}`)).toEqual({ orgId: ORG, hint: { type: 'crm_party', id } });
+    // The entity types use a dot (crm.deal); the channel payload does not carry one, so it is no hint.
+    expect(parseHint(`${ORG} crm.deal ${id}`)).toBeNull();
+    // A deal or party hint never carries a note's `+shared`.
+    expect(parseHint(`${ORG} crm_deal ${id} @${USER}+shared`)).toBeNull();
   });
 
   it('reads the org_apps hint of the org with the org as its id, and no entity or recipient', () => {
@@ -42,6 +54,22 @@ describe('a stream of an org with an app off', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(types().sort()).toEqual(['extraction', 'file', 'proposal']);
     conn.finish();
+  });
+
+  it('drops the crm hints of an org with crm off and sends them when it is on (#3293)', async () => {
+    const { conn, types } = connection(off('crm'), async () => off('crm'));
+    conn.hint({ type: 'crm_deal', id: randomUUID() });
+    conn.hint({ type: 'crm_party', id: randomUUID() });
+    conn.hint({ type: 'file', id: randomUUID() });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(types()).toEqual(['file']);
+    conn.finish();
+    const on = connection(ALL_ENTITIES, async () => ALL_ENTITIES);
+    on.conn.hint({ type: 'crm_deal', id: randomUUID() });
+    on.conn.hint({ type: 'crm_party', id: randomUUID() });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(on.types()).toEqual(['crm_deal', 'crm_party']);
+    on.conn.finish();
   });
 
   it('sends every hint of an app that is on', async () => {

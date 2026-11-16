@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AiBudgetExhaustedError, InboxReader } from '@crove/agent';
 import type { HrLineView, HrPayslip, HrRunSheet, HrRunSummary } from '@crove/kernel-contract';
+import { DomainError } from '@crove/kernel-runtime';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { explainPayslip, flagMonth, payrollSource, prepareMonth, type PayrollAi, type PayrollReads } from '../src/payroll-coworker-ai.ts';
 
@@ -322,5 +323,28 @@ describe('explainPayslip', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const bad = setup({ explain: record(requests)({ text: 'Thực nhận 9.000.000 đồng.' }) });
     expect(await explainPayslip(bad.ai, r, ORG, USER, `line-${EMP_B}`, 'vi')).toEqual({ ai: 'failed', text: null });
+  });
+
+  it('calls reads.payslip for RBAC and audit even when AI is off, and propagates refusal errors', async () => {
+    const offAi: PayrollAi = { reader: null, budget: new DraftBudget() };
+    const baseReads = reads();
+    const payslipSpy = vi.fn(baseReads.payslip);
+    const authorizedReads: PayrollReads = { ...baseReads, payslip: payslipSpy };
+
+    const lineId = `line-${EMP_B}`;
+    expect(await explainPayslip(offAi, authorizedReads, ORG, USER, lineId, 'vi')).toEqual({ ai: 'off', text: null });
+    expect(payslipSpy).toHaveBeenCalledTimes(1);
+    expect(payslipSpy).toHaveBeenCalledWith(lineId);
+
+    const forbiddenReads: PayrollReads = {
+      ...baseReads,
+      payslip: vi.fn(async () => {
+        throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ hoặc quản trị viên mới xem được phiếu lương');
+      }),
+    };
+    await expect(explainPayslip(offAi, forbiddenReads, ORG, USER, lineId, 'vi')).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      status: 403,
+    });
   });
 });
