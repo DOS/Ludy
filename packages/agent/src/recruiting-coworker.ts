@@ -371,7 +371,7 @@ export function sanitizeCandidateTextForPrompt(text: string, forbidden: readonly
   cleaned = fenced(cleaned).replace(UNTRUSTED_FENCE_TAG_RE, REDACTED);
 
   // Scrub emails, URLs/domains, and grouped/bare IDs & phones BEFORE caller `forbidden` partial tokens
-  // so partial strings (e.g. "binh" inside "binh@secret.com" or "secret.com") never leave unredacted email/URL halves behind.
+  // so partial strings (e.g. "binh" inside "binh@secret.example.com" or "secret.example.com") never leave unredacted email/URL halves behind.
   cleaned = cleaned
     .replace(EMAIL_RE, REDACTED)
     .replace(OBFUSCATED_EMAIL_RE, REDACTED)

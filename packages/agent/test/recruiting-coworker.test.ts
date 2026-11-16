@@ -55,7 +55,7 @@ describe('sanitizeCandidateTextForPrompt', () => {
   it('redacts emails, URLs/domains, phone numbers, CMND/CCCD, and forbidden PII while keeping tech tokens', () => {
     const raw = [
       'Ứng viên Nguyễn Văn Bình (nguyen van binh)',
-      'email: test.user+hr@gmail.com hoặc foo (at) company [.] vn',
+      'email: test.user+hr@example.org hoặc foo (at) company [.] vn',
       'CV tại https://portfolio.example.com/cv và www.linkedin.com/in/abc hoặc github.io/binh',
       'SĐT +84 90 123 4567, 0901-234-567, +1 415 555 0199; CMND 123456789; CCCD 079 201 012 345.',
       'Kinh nghiệm Node.js và Next.js, ở tại 45 Nguyễn Huệ, Quận 1, TP.HCM.',
@@ -128,11 +128,11 @@ describe('sanitizeCandidateTextForPrompt', () => {
 
   it('prevents partial-forbidden email/domain leakage and handles all CCCD/phone separator formats cleanly', () => {
     const partialEmailAndDomain = sanitizeCandidateTextForPrompt(
-      'Email: binh@secret.com, user@secret.com, obfuscated: binh [at] example [dot] com, site: binh.secret.com/cv, uk: portfolio.co.uk/cv, domain: mysite [dot] com',
-      ['binh', 'secret.com', 'binh@example.com'],
+      'Email: binh@secret.example.com, user@secret.example.com, obfuscated: binh [at] example [dot] com, site: binh.secret.example.com/cv, uk: portfolio.co.uk/cv, domain: mysite [dot] com',
+      ['binh', 'secret.example.com', 'binh@example.com'],
     );
     expect(partialEmailAndDomain).not.toContain('@');
-    expect(partialEmailAndDomain).not.toContain('secret.com');
+    expect(partialEmailAndDomain).not.toContain('secret.example.com');
     expect(partialEmailAndDomain).not.toContain('example');
     expect(partialEmailAndDomain).not.toContain('user');
     expect(partialEmailAndDomain).not.toContain('portfolio.co.uk');
