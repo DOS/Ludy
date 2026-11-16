@@ -7,8 +7,6 @@ import { sql } from 'kysely';
 import type { MeetingMediaRecord } from '@crove/kernel-contract';
 import { DomainError, type CommandContext } from '@crove/kernel-runtime';
 import { readRetentionSettings, retentionDates } from './retention.ts';
-import { SUMMARY_FEATURE } from './summary-run.ts';
-import { TRANSCRIBE_FEATURE } from './transcribe-run.ts';
 
 const MEDIA_EXTENSIONS: Record<string, string> = {
   'audio/webm': 'webm',
@@ -72,7 +70,7 @@ export async function recordSealedMedia(ctx: CommandContext, p: RecordSealedMedi
       SELECT joined_from_pieces AS joined FROM crove_meetings.audio_segment WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid`.execute(ctx.trx);
     if (segments.length > 0) {
       if (p.joinedFromPieces || segments.some((row) => !row.joined)) throw new DomainError('MEDIA_ALREADY_RECORDED', 409, `This meeting already has its ${input.kind} recording`);
-      if (await joinedAudioInUse(ctx, meetingId)) {
+      if (await joinedAudioInUse(ctx, meetingId, userId)) {
         throw new DomainError('MEDIA_JOINED_IN_USE', 409, 'The recording joined from the live pieces was already used for a transcript or a summary, so the complete recording cannot replace it');
       }
       // The joined segment and its key go (the key by the recorder's own definer; the file row stays for the orphan sweep, which deletes the object first).
@@ -139,15 +137,17 @@ export async function recordSealedMedia(ctx: CommandContext, p: RecordSealedMedi
 }
 
 // Whether anything was made from a meeting's audio: a transcription or a summary run of the recorder, or the transcript, minutes or action items those wrote (or the recorder
-// typed). The run records no link to a file, so any run of the meeting counts, which is the safe side: the joined recording is replaced only while nothing derives from it.
-// Live notes are not counted: they come from the live pieces, not from the joined recording.
-async function joinedAudioInUse(ctx: CommandContext, meetingId: string): Promise<boolean> {
-  for (const feature of [TRANSCRIBE_FEATURE, SUMMARY_FEATURE]) {
-    const latest = await ctx.query<{ runId: string } | null>('kernel.member_vy.run.latest', { feature, subjectType: 'meeting', subjectId: meetingId });
-    if (latest.status === 'ok' && latest.value !== null) return true;
-  }
+// typed). The run records no link to a file, so any run of the meeting counts (a failed or cancelled one too), which is the safe side: the joined recording is replaced only
+// while nothing derives from it. Live notes are not counted: they come from the live pieces, not from the joined recording. The runs are read from the recorder's own
+// result rows directly, not through the kernel's query: that query is closed to an extension token, whose retry is the case this exists for. The feature names are
+// TRANSCRIBE_FEATURE and SUMMARY_FEATURE (not imported: transcribe-run.ts takes the media lock from here). A transcription start takes the same lock, so a run that
+// starts either commits before this reads or waits for the replacement and finds the new audio.
+async function joinedAudioInUse(ctx: CommandContext, meetingId: string, userId: string): Promise<boolean> {
   const { rows } = await sql<{ used: boolean }>`
-    SELECT EXISTS (SELECT 1 FROM crove_meetings.transcript_segment WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid)
+    SELECT EXISTS (SELECT 1 FROM crove_kernel.member_vy_result
+                   WHERE org_id = ${ctx.orgId}::uuid AND member_user_id = ${userId}::uuid AND subject_type = 'meeting' AND subject_id = ${meetingId}::uuid
+                     AND feature IN ('meetings.transcribe', 'meetings.summary'))
+        OR EXISTS (SELECT 1 FROM crove_meetings.transcript_segment WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid)
         OR EXISTS (SELECT 1 FROM crove_meetings.meeting_result WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid)
         OR EXISTS (SELECT 1 FROM crove_meetings.action_item WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid) AS used`.execute(ctx.trx);
   return rows[0]?.used === true;

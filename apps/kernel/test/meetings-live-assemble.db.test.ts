@@ -609,6 +609,40 @@ suite('meetings live pieces assembled on PostgreSQL (#3126)', () => {
     }
   });
 
+  it('refuses the replacement for a transcription run that is still running, and a transcription start waits for the media lock (#3187)', async () => {
+    const meetingId = await joinedMeeting();
+    const userId = userIds.get('recorder')!;
+    await admin(async (c) => {
+      await c.query('SET session_replication_role = replica');
+      const agentId = randomUUID();
+      const runId = randomUUID();
+      await c.query(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3) ON CONFLICT DO NOTHING`, [orgId, agentId, userId]);
+      await c.query(`INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, tainted, started_at, expires_at) VALUES ($1, $2, $3, 'meetings', 'running', true, now(), now() + interval '1 hour')`, [orgId, runId, agentId]);
+      await c.query(
+        `INSERT INTO crove_kernel.member_vy_result (org_id, id, member_user_id, run_id, feature, subject_type, subject_id, status, created_at, expires_at)
+         VALUES ($1, $2, $3, $4, 'meetings.transcribe', 'meeting', $5, 'running', now(), now() + interval '30 days')`,
+        [orgId, randomUUID(), userId, runId, meetingId],
+      );
+    });
+    expect(((await (await lateUpload(meetingId, 'while-running')).json()) as { code?: string }).code).toBe('MEDIA_JOINED_IN_USE');
+
+    // A transcription start takes the same lock a recording takes, so it cannot slip in between the check and the commit of a replacement.
+    const other = await joinedMeeting();
+    const holder = new pg.Client({ connectionString: adminUrl });
+    await holder.connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`meetings.live:${orgId}:${other}`]);
+      const start = rpc('meetings/transcript/start', 'recorder', { meetingId: other });
+      const settled = await Promise.race([start.then(() => 'answered'), new Promise((resolve) => setTimeout(() => resolve('waiting'), 600))]);
+      expect(settled).toBe('waiting');
+      await holder.query('COMMIT');
+      await start;
+    } finally {
+      await holder.end();
+    }
+  });
+
   it('marks the joins made before the flag existed from the audit trail, and no upload (#3187)', async () => {
     const joined = await joinedMeeting();
     const uploaded = await liveMeeting();

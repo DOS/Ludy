@@ -392,6 +392,41 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     expect(refused.status).toBe(404);
   });
 
+  it('lets the extension\'s retried upload replace a joined recording, and refuses it once a transcript exists (#3187)', async () => {
+    const { token } = await signedIn('recorder');
+    const created = await rpc('meetings/create', asToken(token), { title: 'Bản ghi ghép', consentMethod: 'told_at_start', visibility: 'attendees', keepVideo: false });
+    const meetingId = String(created.body.meetingId);
+    const send = async (seconds: string) => {
+      const form = new FormData();
+      form.set('kind', 'audio');
+      form.set('file', new Blob([webm()], { type: 'audio/webm' }), 'rec.webm');
+      form.set('lengthSeconds', seconds);
+      const response = await app.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'x-crove-org': slug }, body: form });
+      return { status: response.status, body: (await response.json()) as { code?: string } };
+    };
+    const segment = () => admin(async (c) => (await c.query<{ file_id: string; joined: boolean }>('SELECT file_id, joined_from_pieces AS joined FROM crove_meetings.audio_segment WHERE meeting_id = $1', [meetingId])).rows);
+    // The first recording stands as a joined one (as if the app had joined the live pieces).
+    expect((await send('30')).status).toBe(200);
+    const [joined] = await segment();
+    await admin(async (c) => void (await c.query('UPDATE crove_meetings.audio_segment SET joined_from_pieces = true WHERE meeting_id = $1', [meetingId])));
+    // The extension's retry of the complete recording, with its own token, replaces it.
+    expect((await send('60')).status).toBe(200);
+    const after = await segment();
+    expect(after).toHaveLength(1);
+    expect(after[0]).toMatchObject({ joined: false });
+    expect(after[0]!.file_id).not.toBe(joined!.file_id);
+    // An uploaded recording is not replaced.
+    expect(await send('61')).toMatchObject({ status: 409, body: { code: 'MEDIA_ALREADY_RECORDED' } });
+    // Joined again, but a transcript was made from it: the retry is refused and the joined recording stays.
+    await admin(async (c) => {
+      await c.query('UPDATE crove_meetings.audio_segment SET joined_from_pieces = true WHERE meeting_id = $1', [meetingId]);
+      await c.query(`INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, text) SELECT org_id, id, 0, 1, 'xin chào' FROM crove_meetings.meeting WHERE id = $1`, [meetingId]);
+    });
+    const keep = await segment();
+    expect(await send('62')).toMatchObject({ status: 409, body: { code: 'MEDIA_JOINED_IN_USE' } });
+    expect(await segment()).toEqual(keep);
+  });
+
   it('lists the member\'s devices without a hash and ends a disconnected device at once', async () => {
     const { token, tokenId } = await signedIn('recorder');
     const listed = await rpc('extension/tokens/list', await asBrowser('recorder'), {});

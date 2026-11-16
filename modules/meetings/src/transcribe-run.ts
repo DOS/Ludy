@@ -16,6 +16,7 @@
 import { sql } from 'kysely';
 import { zTranscribeCancel, zTranscribeRunRef, zTranscribeStart, type TranscribeStatus } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { lockMeetingMedia } from './media-record.ts';
 import { vnDay } from './retention.ts';
 import { ROLES, openMeeting, userOf } from './transcript.ts';
 
@@ -62,6 +63,9 @@ export const transcriptStart = defineCommand({
     const userId = userOf(ctx.actor);
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can start its transcription');
+    // The meeting's media lock, as a recording takes it (#3187): a late complete upload that replaces a joined recording checks, under the lock, that no run was started on
+    // the joined audio. A start either commits first and is seen there, or waits for the replacement and then finds the new audio.
+    await lockMeetingMedia(ctx, input.meetingId);
     if (!transcribeEnabled) throw new DomainError('TRANSCRIBE_OFF', 422, 'Transcription is not turned on here; the meeting works as it did');
     if (!transcribeBroker) throw new DomainError('TRANSCRIBE_NO_BROKER', 503, 'Transcription needs the deployment credential key (CREDENTIAL_KEY or CREDENTIAL_KEY_FILE); ask the operator');
     // The meeting row is held while the run is made, so a delete that races this start waits for it (and then removes the run through the trigger) instead of
