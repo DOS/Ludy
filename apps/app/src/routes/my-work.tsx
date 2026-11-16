@@ -373,6 +373,13 @@ function TodoEditor({ todo, onClose }: { todo: Todo; onClose: () => void }) {
   };
   return (
     <div className="mt-2 border-t pt-3" data-testid="todo-editor">
+      {todo.tainted && (
+        <div className="mb-2 flex items-center gap-2">
+          <Badge variant="proposal" title={t('taintedTodoHint')} data-testid="todo-editor-tainted-badge">
+            {t('proposalMark')}
+          </Badge>
+        </div>
+      )}
       <form onSubmit={submit} className="space-y-3" onKeyDown={(e) => e.key === 'Escape' && e.currentTarget.contains(e.target as Node) && onClose()}>
         <label className="block text-xs">
           <span className="text-subtle-foreground">{t('fieldTitle')}</span>
@@ -659,6 +666,11 @@ export function MyWorkPage() {
           </span>
         )}
         <TodoSourceBadge sourceNote={todo.sourceNote} slug={slug} />
+        {todo.tainted && (
+          <Badge variant="proposal" title={t('taintedTodoHint')} data-testid="todo-tainted-badge">
+            {t('proposalMark')}
+          </Badge>
+        )}
         <DueChip todo={todo} />
         {/* Handed over (#1674): the work is now the team's task, opened from here. */}
         {todo.status === 'handed_over' && todo.taskId && (

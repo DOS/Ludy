@@ -27,6 +27,7 @@ const baseSummaryRow = (id: string, sourceNoteId: string | null = null) => ({
   sort_key: 'V',
   source_note_id: sourceNoteId,
   task_id: null,
+  tainted: false,
   revision: 1,
   created_at: NOW,
   updated_at: NOW,

@@ -3,9 +3,10 @@
 // service, so memory is the member's own rows of crove_kernel.member_vy_memory, read and written only through the member's own commands, in the
 // member's own user context. Asking about anyone else is refused before a command is run, and the database would refuse it anyway (the
 // restrictive policy shows a member their own rows only). Knowledge has no declared queries yet: a feature that asks gets no passages.
-import { ASK_TIMEOUT_MS, AiBudgetExhaustedError, AskModelError, SUMMARY_TIMEOUT_MS, SummaryModelError, TASKS_FROM_NOTE_TIMEOUT_MS, TasksFromNoteModelError, TranslationModelError, aiCost, generateMeetingAskText, generateMeetingSummaryText, generateMeetingTranslationText, generateTasksFromNoteText, generateTasksFromSourceText, withAiScope, type AiConfig, type AiMeter } from '@crove/agent';
-import { TASKS_FROM_NOTE_LIMITS, AskError, SummaryError, TasksFromNoteError, TasksFromSourceError, TranslationError, askAcrossMeetings, bindPorts, noKnowledge, privateText, proposeTasksFromNote, proposeTasksFromSource, revealPrivateText, enhanceNotes, summarizeMeeting, translateSummary, translateTranscriptChunk, planTranscriptChunks, chunkExpectedUsage, lineHash, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type Ports, type TaskSourceKind } from '@crove/agent/member-vy';
-import { ASK_ESTIMATE, ASK_HITS_MAX, DEFAULT_TIME_ZONE, zTranscriptTranslationResult, zonedDate, templateSections, type AskAnswer, type AskLines, type AskStatus, type LiveNotesDone, type LiveNotesInput, type MeetingSummaryTemplate, type Note, type ProjectSeat, type ProjectTaskSourceType, type ProjectTasksFromNoteInput, type ProjectTasksFromNoteResult, type ProjectTasksFromNoteStatus, type ProjectTasksFromSourceInput, type ProjectTasksFromSourceResult, type ProjectTasksFromSourceStatus, type Summarized, type Transcript, type TranscriptSource, type TranscriptStarted, type TranscriptTranslated, type TranscriptTranslationStatus, type Translated, type TranslationSource, type TranslationStatus } from '@crove/kernel-contract';
+import { z } from 'zod';
+import { ASK_TIMEOUT_MS, AiBudgetExhaustedError, AiMeterMissingError, AskModelError, SUMMARY_TIMEOUT_MS, SummaryModelError, TASKS_FROM_NOTE_TIMEOUT_MS, TasksFromNoteModelError, TranslationModelError, aiCost, generateMeetingAskText, generateMeetingSummaryText, generateMeetingTranslationText, generateNoteSummaryText, generateTasksFromNoteText, generateTasksFromSourceText, generateTodoSuggestText, withAiScope, type AiConfig, type AiMeter } from '@crove/agent';
+import { NOTE_AI_LIMITS, NOTE_AI_TIMEOUT_MS, TASKS_FROM_NOTE_LIMITS, AskError, NoteAiError, NoteAiModelError, SummaryError, TasksFromNoteError, TasksFromSourceError, TranslationError, askAcrossMeetings, bindPorts, noKnowledge, privateText, proposeTasksFromNote, proposeTasksFromSource, revealPrivateText, enhanceNotes, suggestTodosFromNote, summarizeMeeting, summarizeNote, translateSummary, translateTranscriptChunk, planTranscriptChunks, chunkExpectedUsage, lineHash, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type Ports, type TaskSourceKind } from '@crove/agent/member-vy';
+import { ASK_ESTIMATE, ASK_HITS_MAX, DEFAULT_TIME_ZONE, zNoteTodoSuggestion, zTranscriptTranslationResult, zonedDate, templateSections, type AskAnswer, type AskLines, type AskStatus, type LiveNotesDone, type LiveNotesInput, type MeetingSummaryTemplate, type Note, type NoteSuggestTodosInput, type NoteSuggestTodosResult, type NoteSummarizeInput, type NoteSummarizeResult, type NoteVyResults, type NoteVyStatus, type ProjectSeat, type ProjectTaskSourceType, type ProjectTasksFromNoteInput, type ProjectTasksFromNoteResult, type ProjectTasksFromNoteStatus, type ProjectTasksFromSourceInput, type ProjectTasksFromSourceResult, type ProjectTasksFromSourceStatus, type Summarized, type Transcript, type TranscriptSource, type TranscriptStarted, type TranscriptTranslated, type TranscriptTranslationStatus, type Translated, type TranslationSource, type TranslationStatus } from '@crove/kernel-contract';
 import { readTasksFromSourceData, type SourceQueryFn } from '@crove/mod-projects';
 import { Decimal } from '@crove/l10n-vn';
 import { DomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
@@ -59,6 +60,51 @@ export interface MeetingSummaryDeps {
   timeoutMs?: number;
 }
 
+const NOTE_AI_MAX_SYSTEM_CHARS = 16_000;
+// Worst-case JSON.stringify expansion (\uXXXX 6x on 40_000 note chars) plus title and subject envelope.
+const NOTE_AI_MAX_PROMPT_CHARS = NOTE_AI_LIMITS.maxNoteChars * 6 + 4_000;
+
+async function invokeNoteAiModel(
+  prompt: { readonly system: string; readonly user: string },
+  call: (safePrompt: { system: string; user: string }, abortSignal: AbortSignal) => Promise<{
+    text: string;
+    usage: { inputTokens?: number | undefined; outputTokens?: number | undefined };
+  }>,
+  timeoutMs: number,
+): Promise<{ text: string; usage: { inputTokens: number; outputTokens: number } }> {
+  if (
+    prompt === null ||
+    typeof prompt !== 'object' ||
+    Array.isArray(prompt) ||
+    typeof prompt.system !== 'string' ||
+    prompt.system.length === 0 ||
+    prompt.system.length > NOTE_AI_MAX_SYSTEM_CHARS ||
+    typeof prompt.user !== 'string' ||
+    prompt.user.length === 0 ||
+    prompt.user.length > NOTE_AI_MAX_PROMPT_CHARS ||
+    !Number.isFinite(timeoutMs) ||
+    timeoutMs <= 0
+  ) {
+    throw new NoteAiModelError('failed');
+  }
+  const safePrompt = { system: prompt.system, user: prompt.user };
+  const signal = AbortSignal.timeout(Math.min(timeoutMs, NOTE_AI_TIMEOUT_MS));
+  try {
+    const result = await call(safePrompt, signal);
+    return {
+      text: result.text,
+      usage: { inputTokens: result.usage.inputTokens ?? 0, outputTokens: result.usage.outputTokens ?? 0 },
+    };
+  } catch (error: unknown) {
+    if (error instanceof AiBudgetExhaustedError || error instanceof AiMeterMissingError) throw error;
+    console.error('[note-ai-model] model call failed', error instanceof Error ? error.name : typeof error);
+    const isTimeout =
+      (error instanceof DOMException && error.name === 'TimeoutError') ||
+      (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError'));
+    throw new NoteAiModelError(isTimeout ? 'timeout' : 'failed');
+  }
+}
+
 // The built-in model port for the summary: the deployment's OpenAI-compatible endpoint, through the member's own meter (the call is metered inside it).
 export function summaryModelPort(config: AiConfig, timeoutMs: number = SUMMARY_TIMEOUT_MS): ModelPort {
   // A prompt names its own meter key when it is not the summary's: a translation counts under meetings.translate (#3184) and so never cuts off a summary, a transcription or live notes.
@@ -73,7 +119,11 @@ export function summaryModelPort(config: AiConfig, timeoutMs: number = SUMMARY_T
             ? generateTasksFromNoteText(config, prompt, Math.min(timeoutMs, TASKS_FROM_NOTE_TIMEOUT_MS))
             : prompt.feature === 'projects.tasks_from_source'
               ? generateTasksFromSourceText(config, prompt, Math.min(timeoutMs, TASKS_FROM_NOTE_TIMEOUT_MS))
-              : generateMeetingSummaryText(config, prompt, timeoutMs),
+              : prompt.feature === 'notes.summary'
+                ? invokeNoteAiModel(prompt, (safePrompt, signal) => generateNoteSummaryText(config, safePrompt, signal), timeoutMs)
+                : prompt.feature === 'notes.todo_suggest'
+                  ? invokeNoteAiModel(prompt, (safePrompt, signal) => generateTodoSuggestText(config, safePrompt, signal), timeoutMs)
+                  : generateMeetingSummaryText(config, prompt, timeoutMs),
   };
 }
 
@@ -90,6 +140,8 @@ function codeOf(error: unknown): string {
   if (error instanceof TasksFromNoteError) return error.code;
   if (error instanceof TasksFromSourceError) return error.code;
   if (error instanceof TasksFromNoteModelError) return error.kind === 'timeout' ? 'PROPOSAL_TIMEOUT' : 'PROPOSAL_FAILED';
+  if (error instanceof NoteAiError) return error.code;
+  if (error instanceof NoteAiModelError) return error.kind === 'timeout' ? 'NOTE_AI_TIMEOUT' : 'NOTE_AI_FAILED';
   return 'SUMMARY_FAILED';
 }
 
@@ -1058,4 +1110,418 @@ export async function runProjectsTasksFromSource(
   } finally {
     ticket.release();
   }
+}
+
+const zStoredNoteSummary = z.object({
+  summary: z.string(),
+  bullets: z.array(z.string()),
+  dropped: z.number().int(),
+});
+
+const zStoredTodoSuggest = z.object({
+  suggestions: z.array(zNoteTodoSuggestion),
+  dropped: z.number().int(),
+});
+
+function notesAiCodeOf(error: unknown): string {
+  if (error instanceof SummaryModelError && error.kind === 'timeout') return 'NOTE_AI_TIMEOUT';
+  const code = codeOf(error);
+  return code === 'SUMMARY_FAILED' ? 'NOTE_AI_FAILED' : code;
+}
+
+export async function notesVyStatusOf(
+  deps: Pick<MeetingSummaryDeps, 'runtime' | 'model' | 'meter'>,
+  orgId: string,
+  actor: UserActor,
+): Promise<NoteVyStatus> {
+  const status = await deps.runtime.query<NoteVyStatus>('notes.vy.status', {}, { actor, orgId });
+  if (status.available && (!deps.model || !deps.meter(actor))) {
+    return { available: false, reason: 'off', resetOn: null };
+  }
+  return status;
+}
+
+async function preflightNotesVy(
+  deps: MeetingSummaryDeps,
+  orgId: string,
+  actor: UserActor,
+  noteId: string,
+): Promise<{
+  as: { actor: UserActor; orgId: string };
+  model: ModelPort;
+  meter: AiMeter;
+  note: Note;
+  release: () => void;
+}> {
+  const as = { actor, orgId };
+  const model = deps.model;
+  const meter = deps.meter(actor);
+  const status = await notesVyStatusOf(deps, orgId, actor);
+  if (!model || !meter || !status.available) {
+    if (!model || !meter || status.reason === 'off') {
+      throw new DomainError('AI_OFF', 422, 'Tính năng Vy hỗ trợ ghi chú chưa được bật');
+    }
+    if (status.reason === 'forbidden') {
+      throw new DomainError('VY_NOT_ALLOWED', 403, 'Bạn chưa được phép làm việc với Vy');
+    }
+    if (status.reason === 'paused') {
+      throw new DomainError('AI_PAUSED', 422, 'Vy đang tạm dừng theo lệnh dừng AI; ghi chú và việc vẫn dùng bình thường');
+    }
+    throw new DomainError('AI_BUDGET_EXHAUSTED', 422, 'Ngân sách AI của Ghi chú tháng này đã hết');
+  }
+
+  const ticket = deps.budget.take(orgId, actor.userId);
+  if (!ticket.allowed) {
+    throw new DomainError('AI_BUSY', 429, 'Vy đang xử lý yêu cầu khác; vui lòng thử lại sau ít phút', {
+      retryAfterSeconds: ticket.retryAfterSeconds,
+    });
+  }
+
+  try {
+    const note = await deps.runtime.query<Note>('notes.note.get', { noteId }, as);
+    if (note.deletedAt !== null) {
+      throw new DomainError('NOTE_IN_TRASH', 409, 'Ghi chú đang ở thùng rác; hãy khôi phục trước');
+    }
+    const text = `${note.title}\n${note.body}`;
+    if (text.trim().length === 0) {
+      throw new DomainError('NOTE_EMPTY', 422, 'Ghi chú chưa có nội dung để Vy đọc');
+    }
+    if (text.length > NOTE_AI_LIMITS.maxNoteChars) {
+      throw new DomainError('NOTE_TOO_LONG', 422, 'Ghi chú quá dài cho một lượt chạy của Vy');
+    }
+    return { as, model, meter, note, release: ticket.release };
+  } catch (error) {
+    ticket.release();
+    throw error;
+  }
+}
+
+async function verifyNoteReadableForRun(
+  deps: Pick<MeetingSummaryDeps, 'runtime'>,
+  as: { actor: UserActor; orgId: string },
+  logPrefix: string,
+  runId: string,
+  noteId: string,
+): Promise<void> {
+  try {
+    const current = await deps.runtime.query<Note>('notes.note.get', { noteId }, as);
+    if (current.deletedAt !== null) {
+      throw new DomainError('NOTE_IN_TRASH', 409, 'Ghi chú đang ở thùng rác; hãy khôi phục trước');
+    }
+  } catch (error: unknown) {
+    const errorCode = error instanceof DomainError ? error.code : notesAiCodeOf(error);
+    try {
+      await deps.runtime.execute('kernel.member_vy.result.store', { runId, outcome: { status: 'failed', errorCode } }, as);
+    } catch (storeError: unknown) {
+      console.error(`[${logPrefix}] failed result not stored: ${notesAiCodeOf(storeError)}`);
+    }
+    throw error;
+  }
+}
+
+async function storeNotesVyReady(
+  deps: Pick<MeetingSummaryDeps, 'runtime'>,
+  as: { actor: UserActor; orgId: string },
+  logPrefix: string,
+  runId: string,
+  bodyJson: string,
+  sourceRevision: number,
+): Promise<string | null> {
+  let stored: { stored: boolean; status: 'ready' | 'failed' };
+  try {
+    stored = await deps.runtime.execute<{ stored: boolean; status: 'ready' | 'failed' }>(
+      'kernel.member_vy.result.store',
+      { runId, outcome: { status: 'ready', body: bodyJson, sourceRevision } },
+      as,
+    );
+  } catch (error: unknown) {
+    if (error instanceof DomainError && error.code === 'VY_RUN_NOT_LIVE') {
+      return 'AI_STOPPED';
+    }
+    throw error;
+  }
+  if (!stored.stored || stored.status === 'failed') {
+    console.error(`[${logPrefix}] run failed: AI_STOPPED`);
+    return 'AI_STOPPED';
+  }
+  return null;
+}
+
+export async function runNotesSummarize(
+  deps: MeetingSummaryDeps,
+  orgId: string,
+  actor: UserActor,
+  input: NoteSummarizeInput,
+): Promise<NoteSummarizeResult> {
+  const timeoutMs = deps.timeoutMs ?? NOTE_AI_TIMEOUT_MS;
+  const ctx = await preflightNotesVy(deps, orgId, actor, input.noteId);
+  try {
+    const started = await deps.runtime.execute<{ runId: string }>(
+      'kernel.member_vy.run.start',
+      { feature: 'notes.summary', subjectType: 'notes.note', subjectId: input.noteId },
+      ctx.as,
+    );
+    const runId = started.runId;
+    const ports = bindPorts(
+      { orgId, memberUserId: actor.userId },
+      { model: ctx.model, memory: nothingToRemember, knowledge: noKnowledge },
+    );
+    let bodyJson = '';
+    let parsed: { summary: string; bullets: string[]; dropped: number };
+    try {
+      const out = await withDeadline(
+        withAiScope({ orgId, memberRunId: runId, meter: ctx.meter }, () =>
+          summarizeNote(
+            {
+              noteTitle: ctx.note.title,
+              noteBody: ctx.note.body,
+              language: input.language ?? 'vi',
+            },
+            ports,
+          ),
+        ),
+        timeoutMs,
+      );
+      bodyJson = revealPrivateText(out.body);
+      parsed = out.parsed;
+    } catch (error: unknown) {
+      const errorCode = notesAiCodeOf(error);
+      try {
+        await deps.runtime.execute('kernel.member_vy.result.store', { runId, outcome: { status: 'failed', errorCode } }, ctx.as);
+      } catch (storeError: unknown) {
+        console.error(`[notes-summary] failed result not stored: ${notesAiCodeOf(storeError)}`);
+      }
+      console.error(`[notes-summary] run failed: ${errorCode}`);
+      return {
+        state: 'failed',
+        runId,
+        noteId: input.noteId,
+        noteRevision: ctx.note.revision,
+        stale: false,
+        summary: '',
+        bullets: [],
+        dropped: 0,
+        errorCode,
+      };
+    }
+
+    await verifyNoteReadableForRun(deps, ctx.as, 'notes-summary', runId, input.noteId);
+
+    const stoppedCode = await storeNotesVyReady(deps, ctx.as, 'notes-summary', runId, bodyJson, ctx.note.revision);
+    if (stoppedCode !== null) {
+      return {
+        state: 'failed',
+        runId,
+        noteId: input.noteId,
+        noteRevision: ctx.note.revision,
+        stale: false,
+        summary: '',
+        bullets: [],
+        dropped: 0,
+        errorCode: stoppedCode,
+      };
+    }
+
+    return {
+      state: 'ready',
+      runId,
+      noteId: input.noteId,
+      noteRevision: ctx.note.revision,
+      stale: false,
+      summary: parsed.summary,
+      bullets: parsed.bullets,
+      dropped: parsed.dropped,
+      errorCode: null,
+    };
+  } finally {
+    ctx.release();
+  }
+}
+
+export async function runNotesSuggestTodos(
+  deps: MeetingSummaryDeps,
+  orgId: string,
+  actor: UserActor,
+  input: NoteSuggestTodosInput,
+): Promise<NoteSuggestTodosResult> {
+  const timeoutMs = deps.timeoutMs ?? NOTE_AI_TIMEOUT_MS;
+  const ctx = await preflightNotesVy(deps, orgId, actor, input.noteId);
+  try {
+    const started = await deps.runtime.execute<{ runId: string }>(
+      'kernel.member_vy.run.start',
+      { feature: 'notes.todo_suggest', subjectType: 'notes.note', subjectId: input.noteId },
+      ctx.as,
+    );
+    const runId = started.runId;
+    const ports = bindPorts(
+      { orgId, memberUserId: actor.userId },
+      { model: ctx.model, memory: nothingToRemember, knowledge: noKnowledge },
+    );
+    const today = zonedDate(input.timeZone ?? DEFAULT_TIME_ZONE, Date.now());
+    let bodyJson = '';
+    let parsed: { suggestions: Array<{ title: string; details: string; dueOn: string | null }>; dropped: number };
+    try {
+      const out = await withDeadline(
+        withAiScope({ orgId, memberRunId: runId, meter: ctx.meter }, () =>
+          suggestTodosFromNote(
+            {
+              noteTitle: ctx.note.title,
+              noteBody: ctx.note.body,
+              today,
+              language: input.language ?? 'vi',
+            },
+            ports,
+          ),
+        ),
+        timeoutMs,
+      );
+      bodyJson = revealPrivateText(out.body);
+      parsed = out.parsed;
+    } catch (error: unknown) {
+      const errorCode = notesAiCodeOf(error);
+      try {
+        await deps.runtime.execute('kernel.member_vy.result.store', { runId, outcome: { status: 'failed', errorCode } }, ctx.as);
+      } catch (storeError: unknown) {
+        console.error(`[notes-todo-suggest] failed result not stored: ${notesAiCodeOf(storeError)}`);
+      }
+      console.error(`[notes-todo-suggest] run failed: ${errorCode}`);
+      return {
+        state: 'failed',
+        runId,
+        noteId: input.noteId,
+        noteRevision: ctx.note.revision,
+        stale: false,
+        suggestions: [],
+        dropped: 0,
+        errorCode,
+      };
+    }
+
+    await verifyNoteReadableForRun(deps, ctx.as, 'notes-todo-suggest', runId, input.noteId);
+
+    const stoppedCode = await storeNotesVyReady(deps, ctx.as, 'notes-todo-suggest', runId, bodyJson, ctx.note.revision);
+    if (stoppedCode !== null) {
+      return {
+        state: 'failed',
+        runId,
+        noteId: input.noteId,
+        noteRevision: ctx.note.revision,
+        stale: false,
+        suggestions: [],
+        dropped: 0,
+        errorCode: stoppedCode,
+      };
+    }
+
+    return {
+      state: 'ready',
+      runId,
+      noteId: input.noteId,
+      noteRevision: ctx.note.revision,
+      stale: false,
+      suggestions: parsed.suggestions,
+      dropped: parsed.dropped,
+      errorCode: null,
+    };
+  } finally {
+    ctx.release();
+  }
+}
+
+export async function readNotesVyResults(
+  deps: Pick<MeetingSummaryDeps, 'runtime'>,
+  orgId: string,
+  actor: UserActor,
+  noteId: string,
+): Promise<NoteVyResults> {
+  const as = { actor, orgId };
+  // Enforce caller readability via RLS BEFORE reading any stored member_vy_result (ADR-0049):
+  // if visibility/share was revoked or role demoted, notes.note.get throws NOTE_NOT_FOUND immediately.
+  const note = await deps.runtime.query<Note>('notes.note.get', { noteId }, as);
+  if (note.deletedAt !== null) {
+    return { noteId, summary: null, todoSuggest: null };
+  }
+
+  const readLatestReady = async (feature: 'notes.summary' | 'notes.todo_suggest') => {
+    const latest = await deps.runtime.query<{
+      runId: string;
+      state: 'running' | 'ready' | 'failed';
+      errorCode: string | null;
+      expiresAt: string;
+    } | null>('kernel.member_vy.run.latest', { feature, subjectType: 'notes.note', subjectId: noteId }, as);
+    if (!latest || latest.state !== 'ready' || Date.parse(latest.expiresAt) <= Date.now()) {
+      return null;
+    }
+    const stored = await deps.runtime.query<{
+      runId: string;
+      status: string;
+      sourceRevision: number | null;
+      body: string | null;
+      expiresAt: string;
+    }>('kernel.member_vy.result.get', { runId: latest.runId }, as);
+    if (stored.status !== 'ready' || stored.body === null || Date.parse(stored.expiresAt) <= Date.now()) {
+      return null;
+    }
+    return stored;
+  };
+
+  const summaryRow = await readLatestReady('notes.summary');
+  const todoRow = await readLatestReady('notes.todo_suggest');
+  let accepted = { summaryAccepted: false, todosAccepted: false };
+  if (summaryRow || todoRow) {
+    accepted = await deps.runtime.query<{ summaryAccepted: boolean; todosAccepted: boolean }>(
+      'notes.vy.accepted',
+      {
+        noteId,
+        ...(summaryRow ? { summaryRunId: summaryRow.runId } : {}),
+        ...(todoRow ? { todoRunId: todoRow.runId } : {}),
+      },
+      as,
+    );
+  }
+
+  let summary: NoteSummarizeResult | null = null;
+  if (summaryRow?.body && !accepted.summaryAccepted) {
+    try {
+      const parsed = zStoredNoteSummary.safeParse(JSON.parse(summaryRow.body) as unknown);
+      if (parsed.success) {
+        summary = {
+          state: 'ready',
+          runId: summaryRow.runId,
+          noteId,
+          noteRevision: summaryRow.sourceRevision ?? note.revision,
+          stale: summaryRow.sourceRevision !== null && summaryRow.sourceRevision !== note.revision,
+          summary: parsed.data.summary,
+          bullets: parsed.data.bullets,
+          dropped: parsed.data.dropped,
+          errorCode: null,
+        };
+      }
+    } catch {
+      summary = null;
+    }
+  }
+
+  let todoSuggest: NoteSuggestTodosResult | null = null;
+  if (todoRow?.body && !accepted.todosAccepted) {
+    try {
+      const parsed = zStoredTodoSuggest.safeParse(JSON.parse(todoRow.body) as unknown);
+      if (parsed.success) {
+        todoSuggest = {
+          state: 'ready',
+          runId: todoRow.runId,
+          noteId,
+          noteRevision: todoRow.sourceRevision ?? note.revision,
+          stale: todoRow.sourceRevision !== null && todoRow.sourceRevision !== note.revision,
+          suggestions: parsed.data.suggestions,
+          dropped: parsed.data.dropped,
+          errorCode: null,
+        };
+      }
+    } catch {
+      todoSuggest = null;
+    }
+  }
+
+  return { noteId, summary, todoSuggest };
 }

@@ -142,6 +142,11 @@ function PanelTodo({ todo, slug }: { todo: TodoSummary; slug: string }) {
         {todo.title}
       </Link>
       {todo.status === 'done' && <Badge variant="secondary">{t('panel.todoDone')}</Badge>}
+      {todo.tainted && (
+        <Badge variant="proposal" title={t('vy.taintedTodoHint')} data-testid="panel-todo-tainted-badge">
+          {t('vy.proposalMark')}
+        </Badge>
+      )}
       <Badge variant="outline" className="gap-1">
         <VisibilityIcon shared={false} className="size-3.5" />
         {t('panel.todoPrivateOnly')}
