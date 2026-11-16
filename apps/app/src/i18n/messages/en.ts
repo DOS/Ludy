@@ -2462,8 +2462,13 @@ export const en = {
     chip: {
       recording: 'Recording {time}',
       paused: 'Paused {time}',
+      stop: 'Stop',
     },
     record: {
+      starting: 'Getting ready…',
+      maxLength: 'Two hours recorded, the longest a meeting can be, so the recording stopped and is being uploaded.',
+      openMeeting: 'Open the meeting',
+      keepsGoing: 'You can move to other screens: the recording keeps going, and the "Recording" bar in the corner always has a Stop button. Closing or reloading the page asks first, because the microphone would stop.',
       open: 'Record in the app',
       title: 'Record a meeting',
       subtitle: 'Record with this device\'s microphone (and camera if you choose). The recording is saved on this device as it goes, so reloading the page does not lose it.',

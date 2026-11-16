@@ -7,6 +7,7 @@ import { NavDrawer, ShellNav } from '../components/app-nav.tsx';
 import { CommandPalette, type PaletteEntry } from '../components/command-palette.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { RecordingChip } from '../components/recording-chip.tsx';
+import { RecordingHost } from '../components/recording-host.tsx';
 import { ScreenTabs } from '../components/screen-tabs.tsx';
 import { Toaster } from '../components/toaster.tsx';
 import { Logo, OrgLeftNotice } from '../components/ui.tsx';
@@ -321,6 +322,7 @@ export function OrgLayout() {
           {me.isSuccess && !org ? <p className="text-sm text-destructive">{t('notMember')}</p> : <Outlet />}
         </main>
         <RecordingChip />
+        <RecordingHost />
         <Toaster />
         <CommandPalette
           entries={paletteEntries}

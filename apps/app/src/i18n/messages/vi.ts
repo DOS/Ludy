@@ -2460,8 +2460,13 @@ export const vi = {
     chip: {
       recording: 'Đang ghi {time}',
       paused: 'Đang tạm dừng {time}',
+      stop: 'Dừng',
     },
     record: {
+      starting: 'Đang chuẩn bị…',
+      maxLength: 'Đã ghi đủ 2 giờ, là độ dài tối đa của một cuộc họp, nên bản ghi đã dừng và đang được tải lên.',
+      openMeeting: 'Mở cuộc họp',
+      keepsGoing: 'Bạn có thể sang màn hình khác: bản ghi vẫn chạy, và thanh "Đang ghi" ở góc luôn có nút Dừng. Đóng hoặc tải lại trang thì trình duyệt sẽ hỏi trước, vì micro sẽ ngừng.',
       open: 'Ghi âm trong ứng dụng',
       title: 'Ghi âm cuộc họp',
       subtitle: 'Ghi bằng micro của thiết bị này (và camera nếu bạn chọn). Bản ghi được lưu ngay trên máy khi đang ghi, nên tải lại trang cũng không mất.',
