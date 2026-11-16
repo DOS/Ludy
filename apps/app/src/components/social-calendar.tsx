@@ -114,7 +114,7 @@ const groupText = (group: CalendarGroup, empty: string) => excerpt((group.items[
 // planned drafts by members too); true or false, picking (#1057), where a click ticks or unticks the chip's post for
 // the bulk bar instead. onPlan: the chip's menu, which opens the date editor for a planned draft (#1145) or the open
 // slots (#1158).
-function Chip({
+export function Chip({
   group,
   slug,
   names,

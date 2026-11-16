@@ -86,7 +86,7 @@ function ChannelChips({ post, names }: { post: Post; names: Map<string, string> 
   );
 }
 
-function PostRow({ post, slug, names, labels, right }: { post: Post; slug: string; names: Map<string, string>; labels: readonly SocialLabel[]; right?: string }) {
+export function PostRow({ post, slug, names, labels, right }: { post: Post; slug: string; names: Map<string, string>; labels: readonly SocialLabel[]; right?: string }) {
   const t = useTranslations('social');
   return (
     <Link
