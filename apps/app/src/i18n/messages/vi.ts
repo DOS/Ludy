@@ -1023,7 +1023,7 @@ export const vi = {
       colExistingBonus: 'Thưởng hiện có',
       colResultingBonus: 'Thưởng sau áp dụng',
       total: 'Tổng lương tháng 13 (các dòng đã chọn)',
-      apply: 'Áp dụng ({count} dòng)',
+      apply: 'Áp dụng ({count, number} dòng)',
       cancel: 'Đóng',
       invalidYear: 'Nhập năm hợp lệ từ 2020 đến 2100.',
       invalidWorkedMonths: 'Số tháng làm việc của mỗi dòng được chọn phải từ 0 đến 12 (tối đa 2 chữ số thập phân).',
