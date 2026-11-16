@@ -2021,11 +2021,14 @@ export function createHttpApp(deps: HttpDeps) {
     throw new DomainError('INVALID', 400, 'Mục đích tải lên không hợp lệ');
   }
 
-  // The purpose of an upload, for the org it is for: the Meetings media purposes are Meetings' own, so an org that switched Meetings off, or does not hold it,
-  // gets the answer of a purpose that is not installed (404, as when the deployment leaves Meetings out; ADR-0053). The grant a Meetings upload needs is a kernel command, which the app gate does not cover.
+  // The purpose of an upload, for the org it is for: Meetings and eSign upload purposes belong to their apps, so an org that switched that app off, or does not hold it,
+  // gets the answer of a purpose that is not installed (404, as when the deployment leaves the app out; ADR-0053). The grant an upload needs is a kernel command, which the app gate does not cover.
   async function uploadPurposeFor(value: unknown, orgId: string): Promise<UploadPurpose> {
     const purpose = uploadPurpose(value);
     if ((purpose === 'meeting_audio' || purpose === 'meeting_video') && !(await runtime.appOn(orgId, 'meetings', { fresh: true }).catch(() => true))) {
+      throw new DomainError('NOT_FOUND', 404, 'Mục đích tải lên không hợp lệ');
+    }
+    if (purpose === 'sign_document' && !(await runtime.appOn(orgId, 'sign', { fresh: true }).catch(() => true))) {
       throw new DomainError('NOT_FOUND', 404, 'Mục đích tải lên không hợp lệ');
     }
     return purpose;

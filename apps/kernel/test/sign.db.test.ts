@@ -389,6 +389,9 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     );
     const skippedInspect = await runSignPdfInspectJob({ workerDb, runtime: workerRuntime, store, extract: mockExtract() }, { orgId: org.orgId, envelopeId });
     expect(skippedInspect).toEqual({ status: 'skipped_app_off' });
+    const offUploadRes = await uploadFile(app, member, pdfFixture('app-off'), 'off.pdf', 'sign_document');
+    expect(offUploadRes.status).toBe(404);
+    expect(offUploadRes.body?.code).toBe('NOT_FOUND');
 
     await runtime.execute(
       'kernel.org.set_app',
