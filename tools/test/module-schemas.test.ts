@@ -76,7 +76,7 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
     why: "the recorder's own Vy reads the recorder's own recording through the audited kernel.member_vy.meeting_audio.open, which calls the definer crove_meetings.audio_for_member_vy (#2578): a run exists only after meetings.transcript.start (a meetings command, registered only when meetings is installed), and the definer refuses anything but that run's own meeting",
   },
   'packages/kernel/src/offboarding.ts': {
-    modules: ['ads', 'crm', 'finance', 'hr', 'notes', 'projects', 'social'],
+    modules: ['ads', 'crm', 'finance', 'hr', 'meetings', 'notes', 'projects', 'social'],
     why: 'the org export lists every table of every schema (its manifest needs a part per table): a module left out exports its old rows or none, and its data stays, as ADR-0031 says; hr is read only by the owner-run people export (#2676)',
   },
   'packages/kernel/src/parties.ts': {
