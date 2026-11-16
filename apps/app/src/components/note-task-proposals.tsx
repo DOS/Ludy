@@ -426,7 +426,7 @@ export function NoteTaskProposals({
                 {rows.map((row, idx) => (
                   <li
                     key={row.key}
-                    className={`flex flex-wrap items-center gap-2 rounded-md border border-border bg-background p-2 transition-opacity ${row.selected ? '' : 'opacity-60'}`}
+                    className={`flex flex-wrap items-center gap-2 rounded-md border border-dashed border-proposal/60 bg-background p-2 transition-opacity ${row.selected ? '' : 'opacity-60'}`}
                   >
                     <Checkbox
                       checked={row.selected}

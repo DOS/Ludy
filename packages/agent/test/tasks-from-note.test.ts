@@ -73,6 +73,10 @@ describe('isValidCalendarDate & noteSupportsDate', () => {
     expect(noteSupportsDate('Gửi báo cáo cuối tháng này', '2026-12-31', TODAY)).toBe(false);
     expect(noteSupportsDate('Gửi báo cáo cuối tháng sau', '2026-12-31', TODAY)).toBe(true);
     expect(noteSupportsDate('Chốt trước Nov 25', '2026-11-25', TODAY)).toBe(true);
+    expect(noteSupportsDate('Submit the report on 20 November, 2028', '2028-11-20', TODAY)).toBe(true);
+    expect(noteSupportsDate('Submit the report on 20 November, 2028', '2026-11-20', TODAY)).toBe(false);
+    expect(noteSupportsDate('Submit the report the day after tomorrow', '2026-11-18', TODAY)).toBe(true);
+    expect(noteSupportsDate('Submit the report the day after tomorrow', '2026-11-17', TODAY)).toBe(false);
     expect(noteSupportsDate('Chốt trước 2026-11-05', '2026-11-05', TODAY)).toBe(true);
     expect(noteSupportsDate('Chốt trước 2026-11-05', '2026-05-11', TODAY)).toBe(false);
     expect(noteSupportsDate('Chốt trước 2026-11-05', '2027-05-11', TODAY)).toBe(false);

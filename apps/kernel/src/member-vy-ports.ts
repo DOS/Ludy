@@ -797,7 +797,7 @@ export async function runProjectsTasksFromNote(
     try {
       stored = await deps.runtime.execute<{ stored: boolean; status: 'ready' | 'failed' }>(
         'kernel.member_vy.result.store',
-        { runId, outcome: { status: 'ready', body, sourceRevision: started.noteRevision } },
+        { runId, outcome: { status: 'ready', body, sourceRevision: note.revision } },
         as,
       );
     } catch (error: unknown) {

@@ -178,7 +178,7 @@ function explicitDateMatches(folded: string, year: number, month: number, day: n
     const m = MONTH_NAMES[match[1] ?? ''];
     if (m === month && Number(match[2]) === day && yearMatches(match[3])) return true;
   }
-  for (const match of folded.matchAll(/\b(\d{1,2})\s+([a-z]{3,9})(?:\s+(\d{4}))?\b/g)) {
+  for (const match of folded.matchAll(/\b(\d{1,2})\s+([a-z]{3,9})(?:,?\s+(\d{4}))?\b/g)) {
     const m = MONTH_NAMES[match[2] ?? ''];
     if (m === month && Number(match[1]) === day && yearMatches(match[3])) return true;
   }
@@ -198,16 +198,20 @@ export function noteSupportsDate(noteText: string, dueOn: string, today: string)
   if (!isValidCalendarDate(today)) return false;
   if ((containsPhrase(folded, 'hom nay') || containsPhrase(folded, 'today')) && dueOn === today) return true;
   if (
-    (containsPhrase(folded, 'ngay mai') ||
-      containsPhrase(folded, 'sang mai') ||
-      containsPhrase(folded, 'chieu mai') ||
-      containsPhrase(folded, 'toi mai') ||
-      containsPhrase(folded, 'tomorrow')) &&
-    dueOn === addDaysIso(today, 1)
+    (containsPhrase(folded, 'ngay kia') || containsPhrase(folded, 'ngay mot') || containsPhrase(folded, 'day after tomorrow')) &&
+    dueOn === addDaysIso(today, 2)
   ) {
     return true;
   }
-  if ((containsPhrase(folded, 'ngay kia') || containsPhrase(folded, 'ngay mot')) && dueOn === addDaysIso(today, 2)) {
+  const foldedTomorrow = folded.replace(/\bday after tomorrow\b/g, ' ');
+  if (
+    (containsPhrase(foldedTomorrow, 'ngay mai') ||
+      containsPhrase(foldedTomorrow, 'sang mai') ||
+      containsPhrase(foldedTomorrow, 'chieu mai') ||
+      containsPhrase(foldedTomorrow, 'toi mai') ||
+      containsPhrase(foldedTomorrow, 'tomorrow')) &&
+    dueOn === addDaysIso(today, 1)
+  ) {
     return true;
   }
 
