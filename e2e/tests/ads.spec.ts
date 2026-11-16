@@ -8,7 +8,7 @@
 // "disconnected" state with Refresh off. Nothing here posts to the books or changes a campaign: Ads only reads.
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { sql } from '../lib/db.ts';
+import { exec, sql } from '../lib/db.ts';
 import { createOrg, newEmail, signInNewUser } from '../lib/session.ts';
 
 // The rules of the layout walk (layout.spec.ts): WCAG 2.2 AA, then landmarks and heading order by id.
@@ -141,6 +141,35 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
     await expect(books.getByText('không sửa sổ sách và không đoán nguyên nhân', { exact: false })).toBeVisible();
     const rows = sql<{ expense_account_code: string | null }>(`SELECT a.expense_account_code FROM crove_ads.ad_account a JOIN crove_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug'`, { slug });
     expect(rows).toEqual([{ expense_account_code: '6421' }]);
+  });
+
+  await test.step('a month with spend and no invoice or receipt says so, and points to the Inbox (slice D1)', async () => {
+    await expect(books.getByRole('columnheader', { name: 'Chứng từ' })).toBeVisible();
+    await expect(books.getByRole('cell', { name: /Chưa có chứng từ/ })).toBeVisible();
+    await expect(books.getByRole('link', { name: 'Tải lên ở Hộp thư' })).toHaveAttribute('href', `/o/${slug}/inbox`);
+    await expect(books.getByText('chỉ đếm: không viết chứng từ và không ghi bút toán', { exact: false })).toBeVisible();
+  });
+
+  await test.step('a document from a seller named like the platform is counted for its month, and one for a month with no spend is not listed', async () => {
+    // A recorded purchase invoice of the sandbox platform dated today in the account's legal entity, and another dated
+    // two years back, in a month the account has no spend.
+    exec(
+      `WITH acc AS (
+         SELECT t.org_id, a.legal_entity_id FROM crove_ads.ad_account a JOIN crove_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug'
+       ), seller AS (
+         INSERT INTO crove_kernel.party (org_id, name, kind) SELECT org_id, 'Sandbox Ads Pte. Ltd.', 'organization' FROM acc RETURNING org_id, id
+       )
+       INSERT INTO crove_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id)
+       SELECT seller.org_id, seller.id, 'C26TAA', n.number, n.day, 'VND', 100000, 0, 100000, 'purchase', acc.legal_entity_id
+       FROM seller JOIN acc USING (org_id)
+       CROSS JOIN (VALUES ('1', (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date), ('2', ((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - interval '2 years')::date)) AS n(number, day)`,
+      { slug },
+    );
+    await page.reload();
+    await expect(books.getByRole('columnheader', { name: 'Chứng từ' })).toBeVisible();
+    await expect(books.getByRole('cell', { name: '1 chứng từ' })).toBeVisible();
+    await expect(books.getByRole('cell', { name: /Chưa có chứng từ/ })).toHaveCount(0);
+    await expect(books.getByRole('row')).toHaveCount(2);
   });
 
   await test.step('the screen passes an axe scan with data, at desktop and phone width, in both themes', async () => {

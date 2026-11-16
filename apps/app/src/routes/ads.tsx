@@ -833,6 +833,7 @@ function AccountPanel({
   role,
   entities,
   financeOn,
+  slug,
   reconnect,
   googleReconnect,
   onRequested,
@@ -843,6 +844,7 @@ function AccountPanel({
   role: string | undefined;
   entities: readonly LegalEntity[];
   financeOn: boolean;
+  slug: string;
   // Where a paused Meta account is connected again: the org's address, when the deployment has its Meta ads app (#2219).
   reconnect: { slug: string } | undefined;
   // Where a paused Google Ads account is connected again (#2220).
@@ -903,7 +905,7 @@ function AccountPanel({
               ) : (
                 <>
                   <Breakdowns summary={summary.data} currency={currency} />
-                  <AdsBooksStrip account={account} months={summary.data.months} todayMonth={todayIn(account.timeZone, now).slice(0, 7)} financeOn={financeOn} />
+                  <AdsBooksStrip account={account} slug={slug} months={summary.data.months} todayMonth={todayIn(account.timeZone, now).slice(0, 7)} financeOn={financeOn} />
                 </>
               )}
             </>
@@ -1020,6 +1022,7 @@ export function AdsPage() {
             role={role}
             entities={entities.data ?? []}
             financeOn={financeOn}
+            slug={slug}
             reconnect={metaOffered ? { slug } : undefined}
             googleReconnect={googleOffered ? { slug } : undefined}
             onRequested={() => setWatchUntil(Date.now() + REFRESH_WATCH_MS)}
