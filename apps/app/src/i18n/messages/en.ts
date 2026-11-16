@@ -3988,6 +3988,8 @@ export const en = {
       closeOn: 'Expected to close {date}',
       lostFor: 'Why "{title}" was lost (optional)',
       lastDays: 'Deals closed in the last {days} days',
+      showAll: 'Show all',
+      showAllLabel: 'Show all deals of the stage {stage} in the list',
       truncated: 'There are more deals than the cards shown; the list view shows them all.',
     },
     view: {
