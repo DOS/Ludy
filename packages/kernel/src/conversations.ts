@@ -43,6 +43,7 @@ import {
   zConversationDraftRequest,
   zConversationDraftSource,
   zConversationEraseConnection,
+  zConversationEraseChannel,
   zConversationEraseContact,
   zConversationGet,
   zConversationHistoryBegin,
@@ -106,6 +107,8 @@ import {
   type ConversationAttachmentView,
   type ConversationAutoDraft,
   type ConversationCounted,
+  type ConversationChannelCounts,
+  type ConversationChannelErased,
   type ConversationPostCounted,
   type ConversationErased,
   type ConversationPrivateReplied,
@@ -252,14 +255,17 @@ async function refuseWhileYoutubeQuotaSpent(ctx: Pick<QueryContext, 'trx' | 'org
   }
 }
 
-async function connectionOf(ctx: Pick<QueryContext, 'trx' | 'orgId'>, connectionId: string): Promise<ConnectionRow | null> {
-  const row = await ctx.trx
+// `lock`: the intake reads the connection under a key-share lock held to the end of its transaction (#3299). A disconnect holds the row for update,
+// so it waits for a notice in flight (which then commits its thread, to be erased by the "delete too" choice that follows), and a notice that starts
+// after the disconnect committed reads it as revoked and is ignored. Key-share locks do not block each other or ordinary updates of the row.
+async function connectionOf(ctx: Pick<QueryContext, 'trx' | 'orgId'>, connectionId: string, lock = false): Promise<ConnectionRow | null> {
+  let query = ctx.trx
     .selectFrom('crove_kernel.channel_connection')
     .select(['id', 'provider', 'status', 'display_name', 'updated_at'])
     .where('org_id', '=', ctx.orgId)
-    .where('id', '=', connectionId)
-    .executeTakeFirst();
-  return row ?? null;
+    .where('id', '=', connectionId);
+  if (lock) query = query.forKeyShare();
+  return (await query.executeTakeFirst()) ?? null;
 }
 
 // A provider's error code as stored on a message and a call row: only a code-shaped value (letters, digits and _ . : -, no space),
@@ -318,7 +324,7 @@ export const conversationIngest = defineCommand({
 async function ingestEvents(ctx: CommandContext, connectionId: string, inputEvents: readonly ConversationEvent[], businessConnectionId?: string): Promise<ConversationIngested> {
   const out: ConversationIngested = { stored: 0, duplicates: 0, ignored: 0 };
   const reserved: MailImageSlot[] = [];
-  const connection = await connectionOf(ctx, connectionId);
+  const connection = await connectionOf(ctx, connectionId, true);
   const rules = connection && connection.status === 'active' ? conversationRules(connection.provider) : null;
   if (!connection || !rules) {
     out.ignored = inputEvents.length;
@@ -2791,6 +2797,16 @@ export const conversationPurgeExpired = defineCommand({
   },
 });
 
+// The one path that erases a connection's conversations: every thread of the connection (with its messages, notes, read marks, drafts and
+// image rows, which go with their thread by foreign keys, and the answer mails' address, subject and body, which deleteThreads blanks), then
+// the identities left with no thread. Meta's data deletion callback (the worker, as the system) and a person's "delete too" choice (#3299)
+// both run it, so there is no second delete path. Idempotent: a second run finds nothing and returns zeros.
+async function eraseConnectionConversations(ctx: CommandContext, connectionId: string): Promise<{ threads: number; messages: number; identities: number }> {
+  const erased = await deleteThreads(ctx, sql`c.channel_connection_id = ${connectionId}::uuid`);
+  const identities = await deleteOrphanIdentities(ctx);
+  return { ...erased, identities };
+}
+
 // Erases every conversation of one connection of the org in context and the identities left with no thread (the worker, as the
 // system, on Meta's data deletion callback: the person who granted the connection asked for their data to go). Idempotent.
 export const conversationEraseConnection = defineCommand({
@@ -2801,10 +2817,52 @@ export const conversationEraseConnection = defineCommand({
   access: 'system',
   target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
   handler: async (ctx, input): Promise<ConversationPurged> => {
-    const erased = await deleteThreads(ctx, sql`c.channel_connection_id = ${input.connectionId}::uuid`);
-    const identities = await deleteOrphanIdentities(ctx);
-    ctx.audit({ connection_id: input.connectionId, threads: erased.threads, messages: erased.messages, identities });
-    return { ...erased, identities, more: false };
+    const erased = await eraseConnectionConversations(ctx, input.connectionId);
+    ctx.audit({ connection_id: input.connectionId, threads: erased.threads, messages: erased.messages, identities: erased.identities });
+    return { ...erased, more: false };
+  },
+});
+
+// What the "delete the conversations too" confirmation names (#3299): how many threads and messages of one connection the erasure would remove.
+// Counts only; owners and admins, who are the only ones who may erase.
+export const conversationChannelCounts = defineQuery({
+  name: 'kernel.conversation.channel_counts',
+  input: z.strictObject({ connectionId: zId }),
+  access: ADMINS,
+  handler: async (ctx, input): Promise<ConversationChannelCounts> => {
+    const { rows } = await sql<{ threads: string; messages: string }>`
+      SELECT (SELECT count(*) FROM crove_kernel.conversation c WHERE c.org_id = ${ctx.orgId}::uuid AND c.channel_connection_id = ${input.connectionId}::uuid)::text AS threads,
+             (SELECT count(*) FROM crove_kernel.conversation_message m WHERE m.org_id = ${ctx.orgId}::uuid AND m.channel_connection_id = ${input.connectionId}::uuid)::text AS messages`.execute(ctx.trx);
+    return { threads: Number(rows[0]?.threads ?? 0), messages: Number(rows[0]?.messages ?? 0) };
+  },
+});
+
+// A person's choice, when a channel is disconnected, to delete its conversations too (#3299). Owners and admins only, never the system and never
+// an agent, behind a fresh second factor (R3: it cannot be undone). It runs the same erase path as Meta's deletion callback. The channel must
+// be disconnected already: a disconnected connection takes in no new message (the intake reads it under a share lock, so a notice in flight when
+// the disconnect committed has finished by then and one after it is ignored), so nothing is written to the threads while they are erased. This
+// holds the connection's row too, so two runs of it take turns. Run again it finds nothing and returns zeros. Counts only in the audit row.
+export const conversationEraseChannel = defineCommand({
+  name: 'kernel.conversation.erase_channel',
+  input: zConversationEraseChannel,
+  risk: 'R3',
+  sideEffect: 'irreversible',
+  access: ADMINS,
+  target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
+  handler: async (ctx, input): Promise<ConversationChannelErased> => {
+    requireUser(ctx);
+    const connection = await ctx.trx
+      .selectFrom('crove_kernel.channel_connection')
+      .select('status')
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!connection) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
+    if (connection.status !== 'revoked') throw new DomainError('CHANNEL_NOT_DISCONNECTED', 409, 'Hãy ngắt kết nối kênh này trước khi xóa các cuộc trò chuyện của nó');
+    const erased = await eraseConnectionConversations(ctx, input.connectionId);
+    ctx.audit({ connection_id: input.connectionId, threads: erased.threads, messages: erased.messages, identities: erased.identities });
+    return erased;
   },
 });
 
@@ -3640,6 +3698,7 @@ export const conversationCommands = [
   conversationEraseContact,
   conversationPurgeExpired,
   conversationEraseConnection,
+  conversationEraseChannel,
   conversationHistoryBegin,
   conversationHistoryRecord,
   conversationProfileBegin,
@@ -3657,4 +3716,4 @@ export const conversationCommands = [
   conversationDraftRecord,
   conversationDraftDiscard,
 ];
-export const conversationQueries = [conversationTasks, conversationList, conversationIntentSource, conversationContactCandidates, conversationAvailability, conversationToday, conversationCounts, conversationPostCounts, conversationGet, conversationRetention, conversationAttachmentSource, conversationAttachmentGet, conversationSavedReplyList, conversationAutoDraft, conversationYoutubeComments, conversationDraftSource];
+export const conversationQueries = [conversationTasks, conversationList, conversationIntentSource, conversationContactCandidates, conversationAvailability, conversationToday, conversationCounts, conversationPostCounts, conversationGet, conversationRetention, conversationChannelCounts, conversationAttachmentSource, conversationAttachmentGet, conversationSavedReplyList, conversationAutoDraft, conversationYoutubeComments, conversationDraftSource];

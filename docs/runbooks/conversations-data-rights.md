@@ -24,6 +24,10 @@ A customer (or the org's own decision) asks for their messages to go:
 
 The generic erasure by phone or email (`kernel.personal_data.erase`) does not touch conversations: the name a platform gave is registered as kept with its record and goes through this command, the retention purge, Meta's callback or the org's offboarding.
 
+## 2b. Deleting a disconnected channel's conversations too (#3299)
+
+When an owner or admin disconnects a channel on the Channels screen, the box "Xóa cả cuộc trò chuyện" (unchecked) deletes that channel's conversations as well. Ticking it shows how many threads and messages will go; the button then disconnects the channel and runs `kernel.conversation.erase_channel` (R3: a fresh second factor; owners and admins only). It uses the same erase path as Meta's callback (`erase_connection`): the channel's threads with their messages, notes, read marks, drafts and image rows, the answer mails' address, subject and body blanked, the image blobs queued for the worker to delete, and the identities nothing names any more. A disconnect alone keeps everything. If the second factor step fails the channel stays disconnected with its conversations; disconnect again with the box ticked to retry (it is safe to repeat). The audit row has the connection id and counts only. As for every erasure, a copy in a backup goes with the backup's own retention.
+
 ## 3. Meta's data deletion callback: one URL for every Meta connection
 
 A Meta app has **one** "Data Deletion Request URL". Ludy serves one for all its Meta connections: `<PUBLIC_URL>/api/ads/meta/data-deletion` (the path keeps the name it had for Ads; renaming it would mean a second URL to register). One verified request fans out to both sides under **one confirmation code**:
