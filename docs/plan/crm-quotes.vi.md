@@ -9,7 +9,7 @@ Các bước dưới đây đã được xây theo đúng kế hoạch này. Kh�
 Hiện nay cơ hội trong Ludy dừng ở chỗ hóa đơn bắt đầu: người bán gõ báo giá bằng Word hoặc Zalo, rồi gõ lại lần nữa khi làm hóa đơn. Sau lát cắt này, một công ty một người hoặc đội nhỏ làm được trong Ludy Engage (nhóm Khách hàng & Bán hàng):
 
 1. **Tạo báo giá từ cơ hội** bằng một cú nhấp: khách và tên cơ hội đã điền sẵn; dòng hàng gõ tay, chép từ báo giá cũ, hoặc để Dy gợi ý từ cuộc trò chuyện; tổng tiền và VAT do mã tính, không do người gõ.
-2. **Gửi báo giá**, luôn do một người bấm gửi: dưới dạng đường dẫn trong cuộc trò chuyện Zalo hoặc Messenger của khách, hoặc qua email (kèm PDF của đúng bản đã gửi; nếu chưa tạo được PDF thì thư vẫn đi với đường dẫn và nói rõ là không có tệp), bằng tiếng Việt, có thông tin và logo của chính công ty.
+2. **Gửi báo giá**, luôn do một người bấm gửi: dưới dạng đường dẫn trong cuộc trò chuyện Zalo hoặc Messenger của khách, hoặc qua email (kèm PDF của đúng bản đã gửi; nếu chưa tạo được PDF thì thư vẫn đi với đường dẫn, và nội dung thư không nói là có kèm PDF), bằng tiếng Việt, có thông tin và logo của chính công ty.
 3. **Ghi nhận khách đồng ý hoặc từ chối**; khi đồng ý, **đơn bán** được tạo ngay trong cùng một cú nhấp.
 4. **Trên đơn đã xác nhận, bấm "Lập hóa đơn"**: Kế toán tạo bản nháp hóa đơn điện tử từ các dòng của đơn (cả đơn, hoặc từng dòng khi giao hàng từng phần), các dòng đã có sẵn, để không ai gõ một lần bán hai lần. Phát hành vẫn do Kế toán duyệt.
 5. **Đánh dấu một dòng đã giao**: kho chỉ trừ khi hàng rời đi, không trừ khi xác nhận đơn.
