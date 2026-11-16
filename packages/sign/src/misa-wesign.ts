@@ -488,15 +488,18 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
     creds: MisaWeSignCredentials,
     query: { externalTxId: string | null; idempotencyKey: string | null },
   ): Promise<{ session: CaSignSession; rawJson: unknown }> {
-    const lookupId = query.externalTxId ?? (query.idempotencyKey ? toMisaDocumentId(query.idempotencyKey) : null);
-    if (!lookupId) {
-      throw new CaProviderError('lost_answer', 'MISA WeSign requires transactionId to query signing status');
+    if (!query.externalTxId) {
+      // Published MISA eSign GET .../Signing/status/{transaction_id} requires server transactionId and does not support lookup by DocumentId/idempotencyKey.
+      throw new CaProviderError(
+        'lost_answer',
+        'MISA WeSign requires server transactionId or webhook callback to reconcile an interrupted initiateSign',
+      );
     }
     const res = await callAuthorized(
       secret,
       creds,
       'GET',
-      `/external/esrm/service/signing/api/v1/Signing/status/${encodeURIComponent(lookupId)}`,
+      `/external/esrm/service/signing/api/v1/Signing/status/${encodeURIComponent(query.externalTxId)}`,
       undefined,
       false,
     );
@@ -505,8 +508,7 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
     if (res.status >= 400 || !isRecord(res.json) || extractMisaEnvelopeSuccess(res.json) === false) {
       throw new CaProviderError('unavailable');
     }
-    const fallbackTx = query.externalTxId ?? lookupId;
-    const session = parseSession(res.json, query.idempotencyKey ?? fallbackTx, fallbackTx);
+    const session = parseSession(res.json, query.idempotencyKey ?? query.externalTxId, query.externalTxId);
     return { session, rawJson: res.json };
   }
 
@@ -610,7 +612,21 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
 
       const errorCode = readMisaErrorCode(res.json);
       if (res.status === 409 || errorCode === 'DuplicateRefID' || errorCode === 'TransactionExists') {
-        const reconciled = await queryStatus(secret, creds, { externalTxId: null, idempotencyKey: valid.idempotencyKey }).catch(() => {
+        const dataObj = pickCaseInsensitive(res.json, 'Data') ?? res.json;
+        const dupTxId =
+          readText(pickCaseInsensitive(dataObj, 'TransactionID')) ??
+          readText(pickCaseInsensitive(dataObj, 'SignID')) ??
+          readText(pickCaseInsensitive(res.json, 'transactionId'));
+        if (!dupTxId) {
+          throw new CaProviderError(
+            'lost_answer',
+            'MISA WeSign duplicate request response missing server transactionId',
+          );
+        }
+        const reconciled = await queryStatus(secret, creds, {
+          externalTxId: dupTxId,
+          idempotencyKey: valid.idempotencyKey,
+        }).catch(() => {
           throw new CaProviderError('lost_answer');
         });
         rememberCertRef(secretKey, reconciled.session.externalTxId, valid.certRef);

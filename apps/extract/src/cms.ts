@@ -488,6 +488,19 @@ interface SignatureSlotWrite {
   readonly afterContents: Buffer;
 }
 
+function pushUniqueIncrementalObject(
+  objects: IncrementalObject[],
+  seenObjNums: Set<number>,
+  obj: IncrementalObject,
+  errorMessage: string,
+): void {
+  if (seenObjNums.has(obj.objNum)) {
+    throw new PdfSignError(errorMessage);
+  }
+  seenObjNums.add(obj.objNum);
+  objects.push(obj);
+}
+
 function buildIncrementalSuffix(options: {
   basePdfByteLength: number;
   needsLeadingNewline: boolean;
@@ -505,6 +518,13 @@ function buildIncrementalSuffix(options: {
   readonly nextPrevMaxObjNum: number;
 } {
   const sorted = [...options.objects].sort((a, b) => a.objNum - b.objNum);
+  const seenObjNums = new Set<number>();
+  for (const obj of sorted) {
+    if (seenObjNums.has(obj.objNum)) {
+      throw new PdfSignError('Tệp PDF chứa tham chiếu đối tượng trùng lặp không hợp lệ');
+    }
+    seenObjNums.add(obj.objNum);
+  }
   const chunks: Buffer[] = [];
   let cursor = 0;
 
@@ -718,6 +738,20 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
   const firstPageRef = firstPage.ref;
   const firstPageDict = firstPage.node;
 
+  if (firstPageRef.objectNumber === rootRef.objectNumber) {
+    throw new PdfSignError('Đối tượng trang PDF bị trùng với /Root');
+  }
+  const pagesRaw = catalogDict.get(PDFName.of('Pages'));
+  const structuralRefs = new Set<number>([rootRef.objectNumber, firstPageRef.objectNumber]);
+  if (infoRef !== null) structuralRefs.add(infoRef.objectNumber);
+  if (pagesRaw instanceof PDFRef) structuralRefs.add(pagesRaw.objectNumber);
+
+  const existingAcroRaw = catalogDict.get(PDFName.of('AcroForm'));
+  const acroRefNum = existingAcroRaw instanceof PDFRef ? existingAcroRaw.objectNumber : null;
+  if (acroRefNum !== null && structuralRefs.has(acroRefNum)) {
+    throw new PdfSignError('Đối tượng /AcroForm của tài liệu PDF không hợp lệ');
+  }
+
   let nextObjNum = maxObjNum + 1;
   const sigObjNum = nextObjNum++;
   const widgetObjNum = nextObjNum++;
@@ -739,12 +773,25 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
   widgetDict.set(PDFName.of('Rect'), rect);
   widgetDict.set(PDFName.of('F'), PDFNumber.of(132));
 
-  const incrementalObjects: IncrementalObject[] = [
+  const update1Seen = new Set<number>();
+  const incrementalObjects: IncrementalObject[] = [];
+  pushUniqueIncrementalObject(
+    incrementalObjects,
+    update1Seen,
     { objNum: widgetObjNum, gen: 0, body: serializePdfObject(widgetDict) },
-  ];
+    'Tệp PDF chứa tham chiếu đối tượng trùng lặp',
+  );
   // Deduplicate updates when /Annots and /AcroForm /Fields point to the same indirect array ref.
   const modifiedIndirectArrays = new Map<string, { readonly ref: PDFRef; readonly array: PDFArray }>();
   const appendWidgetToIndirectArray = (arrRef: PDFRef, errorMessage: string): void => {
+    if (
+      structuralRefs.has(arrRef.objectNumber) ||
+      (acroRefNum !== null && arrRef.objectNumber === acroRefNum) ||
+      arrRef.objectNumber === widgetObjNum ||
+      arrRef.objectNumber === sigObjNum
+    ) {
+      throw new PdfSignError(errorMessage);
+    }
     const key = `${arrRef.objectNumber}:${arrRef.generationNumber}`;
     if (modifiedIndirectArrays.has(key)) return;
     const existing = pdfDoc.context.lookupMaybe(arrRef, PDFArray);
@@ -766,11 +813,16 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
       pageAnnotsRaw instanceof PDFArray ? pageAnnotsRaw.clone(pdfDoc.context) : PDFArray.withContext(pdfDoc.context);
     nextAnnots.push(widgetRef);
     nextPageDict.set(PDFName.of('Annots'), nextAnnots);
-    incrementalObjects.push({
-      objNum: firstPageRef.objectNumber,
-      gen: firstPageRef.generationNumber,
-      body: serializePdfObject(nextPageDict),
-    });
+    pushUniqueIncrementalObject(
+      incrementalObjects,
+      update1Seen,
+      {
+        objNum: firstPageRef.objectNumber,
+        gen: firstPageRef.generationNumber,
+        body: serializePdfObject(nextPageDict),
+      },
+      'Đối tượng trang PDF bị tham chiếu trùng lặp',
+    );
   }
 
   const appendWidgetToAcroDict = (nextAcro: PDFDict): void => {
@@ -792,17 +844,22 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
 
   // Update or create /AcroForm with /SigFlags 3 (SignaturesExist | AppendOnly).
   let needCatalogUpdate = false;
+  let newAcroObjNum: number | null = null;
   const nextCatalogDict = catalogDict.clone(pdfDoc.context);
-  const existingAcroRaw = catalogDict.get(PDFName.of('AcroForm'));
   if (existingAcroRaw === undefined) {
-    const acroObjNum = nextObjNum++;
+    newAcroObjNum = nextObjNum++;
     const acroDict = PDFDict.withContext(pdfDoc.context);
     const fieldsArr = PDFArray.withContext(pdfDoc.context);
     fieldsArr.push(widgetRef);
     acroDict.set(PDFName.of('Fields'), fieldsArr);
     acroDict.set(PDFName.of('SigFlags'), PDFNumber.of(3));
-    incrementalObjects.push({ objNum: acroObjNum, gen: 0, body: serializePdfObject(acroDict) });
-    nextCatalogDict.set(PDFName.of('AcroForm'), PDFRef.of(acroObjNum, 0));
+    pushUniqueIncrementalObject(
+      incrementalObjects,
+      update1Seen,
+      { objNum: newAcroObjNum, gen: 0, body: serializePdfObject(acroDict) },
+      'Đối tượng /AcroForm của tài liệu PDF bị trùng lặp',
+    );
+    nextCatalogDict.set(PDFName.of('AcroForm'), PDFRef.of(newAcroObjNum, 0));
     needCatalogUpdate = true;
   } else if (existingAcroRaw instanceof PDFRef) {
     const existingAcro = pdfDoc.context.lookupMaybe(existingAcroRaw, PDFDict);
@@ -811,11 +868,16 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
     }
     const nextAcro = existingAcro.clone(pdfDoc.context);
     appendWidgetToAcroDict(nextAcro);
-    incrementalObjects.push({
-      objNum: existingAcroRaw.objectNumber,
-      gen: existingAcroRaw.generationNumber,
-      body: serializePdfObject(nextAcro),
-    });
+    pushUniqueIncrementalObject(
+      incrementalObjects,
+      update1Seen,
+      {
+        objNum: existingAcroRaw.objectNumber,
+        gen: existingAcroRaw.generationNumber,
+        body: serializePdfObject(nextAcro),
+      },
+      'Đối tượng /AcroForm của tài liệu PDF bị tham chiếu trùng lặp',
+    );
   } else if (existingAcroRaw instanceof PDFDict) {
     const nextAcro = existingAcroRaw.clone(pdfDoc.context);
     appendWidgetToAcroDict(nextAcro);
@@ -826,23 +888,38 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
   }
 
   for (const { ref, array } of modifiedIndirectArrays.values()) {
-    incrementalObjects.push({
-      objNum: ref.objectNumber,
-      gen: ref.generationNumber,
-      body: serializePdfObject(array),
-    });
+    pushUniqueIncrementalObject(
+      incrementalObjects,
+      update1Seen,
+      {
+        objNum: ref.objectNumber,
+        gen: ref.generationNumber,
+        body: serializePdfObject(array),
+      },
+      'Danh sách /Annots hoặc /Fields bị tham chiếu trùng lặp',
+    );
   }
 
   if (needCatalogUpdate) {
-    incrementalObjects.push({
-      objNum: rootRef.objectNumber,
-      gen: rootRef.generationNumber,
-      body: serializePdfObject(nextCatalogDict),
-    });
+    pushUniqueIncrementalObject(
+      incrementalObjects,
+      update1Seen,
+      {
+        objNum: rootRef.objectNumber,
+        gen: rootRef.generationNumber,
+        body: serializePdfObject(nextCatalogDict),
+      },
+      'Đối tượng gốc /Root bị tham chiếu trùng lặp',
+    );
   }
 
   // Reserve a placeholder slot for sigObjNum; buildIncrementalSuffix writes its bytes directly.
-  incrementalObjects.push({ objNum: sigObjNum, gen: 0, body: Buffer.alloc(0) });
+  pushUniqueIncrementalObject(
+    incrementalObjects,
+    update1Seen,
+    { objNum: sigObjNum, gen: 0, body: Buffer.alloc(0) },
+    'Đối tượng chữ ký PDF bị tham chiếu trùng lặp',
+  );
 
   const subFilter = effectiveSubFilter;
   const metaParts = [
@@ -928,12 +1005,26 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
   let outBytes: Uint8Array = signedBytes;
   if (ocspResponsesDer.length > 0) {
     let dssObjCursor = update1NextPrevMaxObjNum + 1;
+    const forbiddenDssTargetNums = new Set<number>([
+      ...structuralRefs,
+      widgetObjNum,
+      sigObjNum,
+      ...(acroRefNum !== null ? [acroRefNum] : []),
+      ...(newAcroObjNum !== null ? [newAcroObjNum] : []),
+      ...[...modifiedIndirectArrays.values()].map((m) => m.ref.objectNumber),
+    ]);
+    const update2Seen = new Set<number>();
     const dssObjects: IncrementalObject[] = [];
 
     const ocspRefs: PDFRef[] = [];
     for (const ocspDer of ocspResponsesDer) {
       const ocspObjNum = dssObjCursor++;
-      dssObjects.push({ objNum: ocspObjNum, gen: 0, body: buildDerStreamBody(ocspDer) });
+      pushUniqueIncrementalObject(
+        dssObjects,
+        update2Seen,
+        { objNum: ocspObjNum, gen: 0, body: buildDerStreamBody(ocspDer) },
+        'Cấu trúc /DSS của tài liệu PDF chứa tham chiếu trùng lặp',
+      );
       ocspRefs.push(PDFRef.of(ocspObjNum, 0));
     }
 
@@ -951,6 +1042,9 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
     if (existingDssRaw === undefined) {
       nextDss = PDFDict.withContext(pdfDoc.context);
     } else if (existingDssRaw instanceof PDFRef) {
+      if (forbiddenDssTargetNums.has(existingDssRaw.objectNumber)) {
+        throw new PdfSignError('Đối tượng /DSS của tài liệu PDF không hợp lệ');
+      }
       const existingDss = pdfDoc.context.lookupMaybe(existingDssRaw, PDFDict);
       if (!existingDss) {
         throw new PdfSignError('Đối tượng /DSS của tài liệu PDF không hợp lệ');
@@ -969,9 +1063,8 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
       const existingOcspsRaw = nextDss.get(PDFName.of('OCSPs'));
       if (existingOcspsRaw instanceof PDFRef) {
         if (
-          dssRefForUpdate !== null &&
-          existingOcspsRaw.objectNumber === dssRefForUpdate.objectNumber &&
-          existingOcspsRaw.generationNumber === dssRefForUpdate.generationNumber
+          forbiddenDssTargetNums.has(existingOcspsRaw.objectNumber) ||
+          (dssRefForUpdate !== null && existingOcspsRaw.objectNumber === dssRefForUpdate.objectNumber)
         ) {
           throw new PdfSignError('Danh sách /OCSPs trong /DSS không hợp lệ');
         }
@@ -981,11 +1074,16 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
         }
         const nextOcsps = existingOcsps.clone(pdfDoc.context);
         for (const ref of ocspRefs) nextOcsps.push(ref);
-        dssObjects.push({
-          objNum: existingOcspsRaw.objectNumber,
-          gen: existingOcspsRaw.generationNumber,
-          body: serializePdfObject(nextOcsps),
-        });
+        pushUniqueIncrementalObject(
+          dssObjects,
+          update2Seen,
+          {
+            objNum: existingOcspsRaw.objectNumber,
+            gen: existingOcspsRaw.generationNumber,
+            body: serializePdfObject(nextOcsps),
+          },
+          'Danh sách /OCSPs trong /DSS bị tham chiếu trùng lặp',
+        );
       } else if (existingOcspsRaw === undefined || existingOcspsRaw instanceof PDFArray) {
         const nextOcsps =
           existingOcspsRaw instanceof PDFArray
@@ -1001,9 +1099,8 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
     const existingVriRaw = nextDss.get(PDFName.of('VRI'));
     if (existingVriRaw instanceof PDFRef) {
       if (
-        dssRefForUpdate !== null &&
-        existingVriRaw.objectNumber === dssRefForUpdate.objectNumber &&
-        existingVriRaw.generationNumber === dssRefForUpdate.generationNumber
+        forbiddenDssTargetNums.has(existingVriRaw.objectNumber) ||
+        (dssRefForUpdate !== null && existingVriRaw.objectNumber === dssRefForUpdate.objectNumber)
       ) {
         throw new PdfSignError('Từ điển /VRI trong /DSS không hợp lệ');
       }
@@ -1013,11 +1110,16 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
       }
       const nextVri = existingVri.clone(pdfDoc.context);
       nextVri.set(PDFName.of(vriKey), vriEntry);
-      dssObjects.push({
-        objNum: existingVriRaw.objectNumber,
-        gen: existingVriRaw.generationNumber,
-        body: serializePdfObject(nextVri),
-      });
+      pushUniqueIncrementalObject(
+        dssObjects,
+        update2Seen,
+        {
+          objNum: existingVriRaw.objectNumber,
+          gen: existingVriRaw.generationNumber,
+          body: serializePdfObject(nextVri),
+        },
+        'Từ điển /VRI trong /DSS bị tham chiếu trùng lặp',
+      );
     } else if (existingVriRaw === undefined || existingVriRaw instanceof PDFDict) {
       const nextVri =
         existingVriRaw instanceof PDFDict
@@ -1030,20 +1132,35 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
     }
 
     if (dssRefForUpdate !== null) {
-      dssObjects.push({
-        objNum: dssRefForUpdate.objectNumber,
-        gen: dssRefForUpdate.generationNumber,
-        body: serializePdfObject(nextDss),
-      });
+      pushUniqueIncrementalObject(
+        dssObjects,
+        update2Seen,
+        {
+          objNum: dssRefForUpdate.objectNumber,
+          gen: dssRefForUpdate.generationNumber,
+          body: serializePdfObject(nextDss),
+        },
+        'Đối tượng /DSS của tài liệu PDF bị tham chiếu trùng lặp',
+      );
     } else {
       const dssObjNum = dssObjCursor++;
-      dssObjects.push({ objNum: dssObjNum, gen: 0, body: serializePdfObject(nextDss) });
+      pushUniqueIncrementalObject(
+        dssObjects,
+        update2Seen,
+        { objNum: dssObjNum, gen: 0, body: serializePdfObject(nextDss) },
+        'Đối tượng /DSS của tài liệu PDF bị trùng lặp',
+      );
       nextCatalogDict.set(PDFName.of('DSS'), PDFRef.of(dssObjNum, 0));
-      dssObjects.push({
-        objNum: rootRef.objectNumber,
-        gen: rootRef.generationNumber,
-        body: serializePdfObject(nextCatalogDict),
-      });
+      pushUniqueIncrementalObject(
+        dssObjects,
+        update2Seen,
+        {
+          objNum: rootRef.objectNumber,
+          gen: rootRef.generationNumber,
+          body: serializePdfObject(nextCatalogDict),
+        },
+        'Đối tượng gốc /Root bị tham chiếu trùng lặp',
+      );
     }
 
     const signedNeedsNewline =

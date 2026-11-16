@@ -960,4 +960,49 @@ describe('crove-extract pdf_embed_cms', () => {
       ),
     ).toMatchObject({ ok: false, code: 'invalid' });
   });
+
+  it('rejects aliased or cyclic /AcroForm, /DSS, /VRI, and /OCSPs indirect refs without emitting duplicate objects', async () => {
+    const cmsDer = makeTestCmsDer('alias-reject');
+    const ocspDer = derSequence(new Uint8Array([0x0a, 0x01, 0x00]));
+
+    const makeAliasedPdf = (catalogExtra: string, pageExtra = '', extraObjs: readonly string[] = []) => {
+      const objects = [
+        `<< /Type /Catalog /Pages 2 0 R ${catalogExtra}>>`,
+        '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+        `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] ${pageExtra}>>`,
+        ...extraObjs,
+      ];
+      return makeRawPdf(objects);
+    };
+
+    const malformedVectors = [
+      // Direct /DSS whose /VRI points to rootRef (1 0 R).
+      makeAliasedPdf('/DSS << /VRI 1 0 R >>'),
+      // Indirect /DSS pointing to rootRef (1 0 R) or firstPageRef (3 0 R).
+      makeAliasedPdf('/DSS 1 0 R'),
+      makeAliasedPdf('/DSS 3 0 R'),
+      // Indirect /AcroForm aliasing firstPageRef (3 0 R).
+      makeAliasedPdf('/AcroForm 3 0 R'),
+      // Indirect /DSS /OCSPs aliasing /AcroForm /Fields (5 0 R).
+      makeAliasedPdf('/AcroForm 4 0 R /DSS << /Type /DSS /OCSPs 5 0 R >>', '', ['<< /Fields 5 0 R >>', '[]']),
+      // Indirect /DSS /OCSPs self-looping on /DSS (4 0 R).
+      makeAliasedPdf('/DSS 4 0 R', '', ['<< /Type /DSS /OCSPs 4 0 R /VRI << >> >>']),
+      // Indirect /DSS /OCSPs and /DSS /VRI sharing the same object ref (5 0 R).
+      makeAliasedPdf('/DSS << /Type /DSS /OCSPs 5 0 R /VRI 5 0 R >>', '', ['<< >>']),
+    ];
+
+    for (const badPdf of malformedVectors) {
+      const res = await parse(
+        'pdf_embed_cms',
+        encodePdfEmbedCmsInput({
+          pdfBase64: Buffer.from(badPdf).toString('base64'),
+          cmsDerBase64: Buffer.from(cmsDer).toString('base64'),
+          ocspResponsesBase64: [Buffer.from(ocspDer).toString('base64')],
+          signerName: 'Alias Reject',
+          signedAtIso: '2026-11-16T13:30:00.000Z',
+        }),
+      );
+      expect(res).toMatchObject({ ok: false, code: 'invalid' });
+    }
+  });
 });

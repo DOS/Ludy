@@ -534,15 +534,13 @@ describe('MISA eSign / WeSign adapter (esignapp.misa.vn Open API recorded respon
           status: 200,
           body: { transactionId: 'misa-tx-1' },
         },
-        { status: 200, body: { Success: false, ErrorCode: 'DuplicateRefID' } },
+        { status: 200, body: { Success: false, ErrorCode: 'DuplicateRefID', Data: { TransactionID: 'misa-tx-1' } } },
       ],
-      '/external/esrm/service/signing/api/v1/Signing/status/misa-req-1': [
+      '/external/esrm/service/signing/api/v1/Signing/status/misa-tx-1': [
         {
           status: 200,
           body: { transactionId: 'misa-tx-1', status: 'PENDING', errorCode: null, errorDescription: null, signatures: [] },
         },
-      ],
-      '/external/esrm/service/signing/api/v1/Signing/status/misa-tx-1': [
         {
           status: 200,
           body: {
@@ -603,16 +601,21 @@ describe('MISA eSign / WeSign adapter (esignapp.misa.vn Open API recorded respon
     expect(reqBody.Documents[0]?.DocumentName).toBe('contract.pdf');
     expect(reqBody.Documents[0]?.FileToSign).toBe(Buffer.from(DIGEST, 'hex').toString('base64'));
 
-    // DuplicateRefID reconciles via GET /external/esrm/service/signing/api/v1/Signing/status/{refId}.
+    // DuplicateRefID reconciles via GET /external/esrm/service/signing/api/v1/Signing/status/{transactionId} when server echoes transactionId.
     const reconciled = await adapter.initiateSign(MISA_SECRET, {
       idempotencyKey: 'misa-req-1',
       digestSha256: DIGEST,
       certRef: 'MISA-01',
     });
     expect(reconciled.externalTxId).toBe('misa-tx-1');
-    const reconcileCall = calls.find((c) => c.url.endsWith('/Signing/status/misa-req-1'));
+    const reconcileCall = calls.find((c) => c.url.endsWith('/Signing/status/misa-tx-1'));
     expect(reconcileCall?.method).toBe('GET');
     expect(reconcileCall?.headers.authorizationrm).toBe('Bearer misa-esign-token-1');
+
+    // Without server transactionId (lost_answer), MISA refuses to fabricate a DocumentId status path.
+    await expect(adapter.pollStatus(MISA_SECRET, { idempotencyKey: 'misa-req-1' })).rejects.toMatchObject({
+      kind: 'lost_answer',
+    });
 
     const cms = await adapter.fetchSignedCms(MISA_SECRET, 'misa-tx-1');
     expect(Buffer.from(cms.cmsDer).toString('base64')).toBe(SAMPLE_CMS_B64);
@@ -1036,6 +1039,9 @@ describe('MISA eSign / WeSign adapter (esignapp.misa.vn Open API recorded respon
         const docId = parsed.Documents[0]?.DocumentId ?? '';
         sentDocIds.push(docId);
         if (hashCallCount === 3) {
+          return Response.json({ status: { code: 400, error: true, errorCode: 'DuplicateRefID' }, data: { transactionId: 'tx-2' } });
+        }
+        if (hashCallCount === 4) {
           return Response.json({ status: { code: 400, error: true, errorCode: 'DuplicateRefID' }, data: null });
         }
         return Response.json({ transactionId: `tx-${hashCallCount}` });
@@ -1054,23 +1060,30 @@ describe('MISA eSign / WeSign adapter (esignapp.misa.vn Open API recorded respon
     expect(authHeaders[0]).toBe('Bearer tok-1');
     expect(authHeaders[1]).toBe('Bearer tok-2');
 
-    // Retry same >36-char keyA reconciles DuplicateRefID using exact derived DocumentId.
+    // Retry same >36-char keyA reconciles DuplicateRefID using server transactionId.
     const dup = await adapter.initiateSign(MISA_SECRET, { idempotencyKey: keyA, digestSha256: DIGEST, certRef: 'M1' });
     expect(dup.externalTxId).toBe('tx-2');
 
-    const second = await adapter.initiateSign(MISA_SECRET, { idempotencyKey: keyB, digestSha256: DIGEST, certRef: 'M1' });
-    expect(second.externalTxId).toBe('tx-4');
+    // DuplicateRefID without server transactionId throws lost_answer instead of querying DocumentId.
+    await expect(
+      adapter.initiateSign(MISA_SECRET, { idempotencyKey: keyA, digestSha256: DIGEST, certRef: 'M1' }),
+    ).rejects.toMatchObject({ kind: 'lost_answer' });
 
-    expect(sentDocIds).toHaveLength(3);
-    const [docA, docADup, docB] = sentDocIds;
+    const second = await adapter.initiateSign(MISA_SECRET, { idempotencyKey: keyB, digestSha256: DIGEST, certRef: 'M1' });
+    expect(second.externalTxId).toBe('tx-5');
+
+    expect(sentDocIds).toHaveLength(4);
+    const [docA, docADup, , docB] = sentDocIds;
     expect(docA?.length).toBeLessThanOrEqual(36);
     expect(docB?.length).toBeLessThanOrEqual(36);
     expect(docA).toBe(docADup);
     expect(docA).not.toBe(docB);
-    expect(statusPaths[0]).toBe(`/external/esrm/service/signing/api/v1/Signing/status/${docA}`);
+    expect(statusPaths).toEqual(['/external/esrm/service/signing/api/v1/Signing/status/tx-2']);
 
-    await adapter.pollStatus(MISA_SECRET, { idempotencyKey: keyA });
-    expect(statusPaths[1]).toBe(`/external/esrm/service/signing/api/v1/Signing/status/${docA}`);
+    await expect(adapter.pollStatus(MISA_SECRET, { idempotencyKey: keyA })).rejects.toMatchObject({
+      kind: 'lost_answer',
+    });
+    expect(statusPaths).toHaveLength(1);
   });
 
   it('rejects path-traversal identifiers consistently across initiateSign, pollStatus, and fetchSignedCms, plus non-canonical DER and body timeouts', async () => {
