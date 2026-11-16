@@ -246,7 +246,7 @@ export type RemoveWatch = { told: false; reason: 'not_published' | 'not_schedule
 // again from the post page. A person's own ask since (removed_by set) is left to them.
 export const removeWatch = defineCommand({
   name: 'social.remove.watch',
-  runsWhenOff: 'tells the owners that a takedown never got its answer, which must not stay silent while the app is off (ADR-0053)',
+  runsWhenOff: 'records that a takedown never got its answer, so the post page shows it, while the app is off (ADR-0053); the notice itself waits for the app',
   input: z.strictObject({ variantId: zId, after: z.string().min(1).max(300).nullable() }),
   risk: 'R1',
   sideEffect: 'internal',

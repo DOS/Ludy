@@ -234,7 +234,7 @@ suite('social publishing hold on PostgreSQL (#946)', () => {
     const recent = await duePost(o, { ago: '5 minutes' });
     const stale = await duePost(o, { ago: '2 hours' });
     const staleQueued = await duePost(o, { queue: true, ago: '90 minutes' });
-    // The sweep finds all three and the job begins each: the late ones fail without a call, the recent one goes out.
+    // The job begins each: the late ones fail without a call, the recent one goes out.
     for (const v of [stale, staleQueued]) expect(await run(o, v.id, platform)).toEqual({ action: 'none', reason: 'too_late' });
     expect(await run(o, recent.id, platform)).toMatchObject({ action: 'call' });
     for (const v of [stale, staleQueued]) expect(await status(o, v.postId)).toEqual({ status: 'failed', code: HELD_TOO_LONG });
@@ -245,6 +245,15 @@ suite('social publishing hold on PostgreSQL (#946)', () => {
     // Run again: they are failed, so nothing more happens and no second notice.
     expect(await run(o, stale.id, platform)).toMatchObject({ action: 'none' });
     expect(await admin(async (c) => (await c.query<{ n: string }>("SELECT count(*)::text AS n FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.failed'", [o.orgId])).rows[0]?.n)).toBe('2');
+  });
+
+  it('keeps a post going whose original time is old but whose retry time is recent: lateness is measured from the retry', async () => {
+    const o = await org();
+    const platform = new Counting();
+    const retried = await duePost(o, { ago: '3 hours' });
+    await admin((c) => c.query("UPDATE crove_social.post_variant SET error_retry_at = now() - interval '5 minutes' WHERE id = $1", [retried.id]));
+    expect(await run(o, retried.id, platform)).toMatchObject({ action: 'call' });
+    expect(platform.sent).toHaveLength(1);
   });
 
   it('on release publishes the due posts exactly once, and leaves one more than an hour past its time to a person', async () => {

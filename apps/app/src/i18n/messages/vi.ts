@@ -9826,7 +9826,7 @@ export const vi = {
       discordTagRequired: 'Diễn đàn Discord này bắt buộc mỗi bài phải có thẻ, nên chưa đăng gì. Hãy thêm ID của một thẻ trong diễn đàn, rồi đăng lại.',
       discordTagUnknown: 'Diễn đàn Discord này không có thẻ nào khớp với một trong các ID đã nhập, nên chưa đăng gì. Hãy kiểm tra lại ID thẻ, rồi đăng lại.',
       discordThreadUnknown: 'Discord không tìm thấy chủ đề có ID này trong kênh của webhook, nên chưa đăng gì. Hãy kiểm tra lại chủ đề, rồi đăng lại.',
-      heldTooLong: 'Bài chưa đăng vì tổ chức tạm dừng đăng bài đến quá giờ hẹn hơn một giờ. Hãy đăng ngay, sửa lại hoặc hủy bài trên kênh này.',
+      heldTooLong: 'Bài chưa đăng vì đã quá giờ hẹn hơn một giờ mà chưa lên (đăng bài bị tạm dừng, ứng dụng bị tắt hoặc việc đăng bị gián đoạn). Hãy đăng ngay, sửa lại hoặc hủy bài trên kênh này.',
     },
     reconnect: 'Kết nối lại kênh',
     retry: 'Đăng lại',
