@@ -96,6 +96,7 @@ export async function payrollSource(reads: PayrollReads, runId: string): Promise
       checks: {
         minimumWageFailed: l.flags.includes('check_minimum_wage'),
         deductionCapFailed: l.flags.includes('check_deduction_cap'),
+        overtimeCapFailed: l.checks.some((c) => c.id === 'overtime_cap' && !c.ok),
         netBelowMinimum: l.flags.includes('net_below_minimum'),
         insuredAboveCap: insuredAboveCap(l.breakdown),
         cashPaymentOverLimit: false,

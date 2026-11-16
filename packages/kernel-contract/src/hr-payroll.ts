@@ -28,7 +28,8 @@ export const HR_RECURRING_INPUTS = ['allowances', 'otherRegularPay', 'voluntaryP
 export const zHrMonth = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'YYYY-MM');
 // Days in whole or half units (unpaid leave, days not employed, the working days of the month) and hours of overtime: decimal strings, never JS numbers.
 export const zHrDays = z.string().regex(/^\d{1,2}(\.\d)?$/, 'days');
-const zHours = z.string().regex(/^\d{1,3}(\.\d{1,2})?$/, 'hours');
+export const zHrHours = z.string().regex(/^\d{1,3}(\.\d{1,2})?$/, 'hours');
+const zHrOvertimeEntry = z.strictObject({ dayKind: z.enum(HR_OVERTIME_DAY_KINDS), night: z.boolean(), hours: zHrHours });
 // A signed amount of an adjustment line.
 export const zHrSignedAmount = z.string().regex(/^-?\d{1,16}(\.\d{1,2})?$/, 'signed decimal string');
 const zLabel = z.string().trim().min(1).max(100);
@@ -46,8 +47,8 @@ export const zHrPayrollInputs = z.strictObject({
   // What changed this month.
   unpaidLeaveDays: zHrDays.default('0'),
   daysNotEmployed: zHrDays.default('0'),
-  overtime: z.array(z.strictObject({ dayKind: z.enum(HR_OVERTIME_DAY_KINDS), night: z.boolean(), hours: zHours })).max(30).default([]),
-  nightHours: zHours.default('0'),
+  overtime: z.array(zHrOvertimeEntry).max(30).default([]),
+  nightHours: zHrHours.default('0'),
   bonus: zHrWage.default('0'),
   advance: zHrWage.default('0'),
   deductions: z.array(z.strictObject({ label: zLabel, kind: z.enum(HR_DEDUCTION_KINDS), amount: zHrWage })).max(20).default([]),
@@ -64,8 +65,26 @@ export const zHrRunRecalculate = z.strictObject({ runId: zId, workingDays: zHrDa
 export type HrRunRecalculate = z.infer<typeof zHrRunRecalculate>;
 export const zHrLineInputsSet = z.strictObject({ lineId: zId, inputs: zHrPayrollInputs });
 export type HrLineInputsSet = z.input<typeof zHrLineInputsSet>;
+// Batch-update timekeeping fields on a draft run's pay lines while preserving allowances, bonuses, advances, deductions, and recurring terms.
+export const zHrRunImportTimekeeping = z.strictObject({
+  runId: zId,
+  rows: z
+    .array(
+      z.strictObject({
+        lineId: zId,
+        unpaidLeaveDays: zHrDays,
+        daysNotEmployed: zHrDays,
+        nightHours: zHrHours,
+        overtime: z.array(zHrOvertimeEntry).max(30).default([]),
+      }),
+    )
+    .min(1)
+    .max(200)
+    .refine((rows) => new Set(rows.map((r) => r.lineId)).size === rows.length, { message: 'duplicate lineId' }),
+});
+export type HrRunImportTimekeeping = z.input<typeof zHrRunImportTimekeeping>;
 // Approving is R3 (a fresh second factor). `fingerprint` is the one the sheet showed: if the figures have changed since, the approval is refused and the person looks again.
-// `acceptFlags` says the person has seen the lines whose checks failed (the minimum wage, the cap on deductions).
+// `acceptFlags` says the person has seen the lines whose checks failed (the minimum wage, the cap on deductions, the monthly overtime cap).
 export const zHrRunApprove = z.strictObject({ runId: zId, fingerprint: z.string().regex(/^[0-9a-f]{64}$/), acceptFlags: z.boolean().default(false) });
 export type HrRunApprove = z.input<typeof zHrRunApprove>;
 // The funds an insurance amount is split across (the same five a pay line's breakdown holds): the posting credits each group's payable account.
@@ -123,10 +142,10 @@ export type HrRunSummary = z.infer<typeof zHrRunSummary>;
 
 // What the calculator's check says (the minimum wage, the cap on deductions), and the flags the sheet raises beside the figures: a failed check, a refused month, a person hired
 // or leaving this month (their days not employed are typed by the person).
-export const HR_LINE_FLAGS = ['check_minimum_wage', 'check_deduction_cap', 'refused', 'new_hire', 'ends_this_month', 'fixed_term_months_missing', 'net_below_minimum'] as const;
+export const HR_LINE_FLAGS = ['check_minimum_wage', 'check_deduction_cap', 'check_overtime_cap', 'refused', 'new_hire', 'ends_this_month', 'fixed_term_months_missing', 'net_below_minimum'] as const;
 export type HrLineFlag = (typeof HR_LINE_FLAGS)[number];
 
-export const zHrCheck = z.object({ id: z.enum(['minimum_wage', 'deduction_cap']), ok: z.boolean(), actual: z.string(), limit: z.string() });
+export const zHrCheck = z.object({ id: z.enum(['minimum_wage', 'deduction_cap', 'overtime_cap']), ok: z.boolean(), actual: z.string(), limit: z.string() });
 export type HrCheck = z.infer<typeof zHrCheck>;
 
 export const zHrRuleRef = z.object({ id: z.string(), kind: z.string(), key: z.string(), effectiveFrom: z.string(), status: z.enum(['confirmed', 'commentary']) });
