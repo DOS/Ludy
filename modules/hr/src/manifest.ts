@@ -11,10 +11,12 @@ export const hrManifest = defineModule({
   dependsOn: ['kernel'],
   tables: {
     crove_hr: {
+      // Departments per legal entity (#3412): optional team structure with default pay_function. Org master data: internal.
+      department: columns(['org_id', 'id', 'legal_entity_id', 'name', 'code', 'pay_function', 'archived_at', 'created_by', 'created_at', 'updated_at']),
       // The layout of one bank's bulk-salary file (#2532): the columns, their headers and the content text. Configuration, no person's data: internal.
       payroll_bank_template: columns(['org_id', 'id', 'legal_entity_id', 'name', 'layout', 'created_by', 'created_at', 'updated_at']),
       payroll_dependent: columns(['org_id', 'id', 'legal_entity_id', 'employee_id', 'relation', 'registered_on', 'ended_on', 'created_by', 'created_at'], { display_name: 'pii' }),
-      payroll_employee: columns(['org_id', 'id', 'legal_entity_id', 'status', 'ended_on', 'erased_at', 'finalization_authorized_years', 'created_by', 'created_at', 'updated_at'], {
+      payroll_employee: columns(['org_id', 'id', 'legal_entity_id', 'department_id', 'job_title', 'status', 'ended_on', 'erased_at', 'finalization_authorized_years', 'created_by', 'created_at', 'updated_at'], {
         display_name: 'pii',
         // The code of the bank the person is paid at (#2897): a plain column (a bank's code alone identifies no one), read only by the audited sensitive paths, cleared by the erasure.
         bank_code: 'payment',
@@ -54,6 +56,8 @@ export const hrManifest = defineModule({
   // Its entities (#1656): the records its commands name as their audit target. The employment rows are written by the commands of their employee and are never a target; their
   // table is append-only with the purge-aware guard (a closing org's purge deletes them), not reject_mutation, which is what audit: append_only stands for.
   entities: [
+    // Departments per legal entity (#3412): edited and archived by commands, so it is their audit target.
+    { type: 'hr.department', table: 'department', legalEntityScoped: true, audit: 'command' },
     // The saved layout of a bank's bulk-salary file (#2893): edited and deleted by commands, so it is their audit target.
     { type: 'hr.payroll_bank_template', table: 'payroll_bank_template', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.payroll_dependent', table: 'payroll_dependent', legalEntityScoped: true, audit: 'command' },

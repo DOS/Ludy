@@ -102,6 +102,7 @@ export interface CroveFinanceSchema {
 }
 
 export interface CroveHrSchema {
+  'crove_hr.department': HrDepartmentTable;
   'crove_hr.payroll_bank_template': HrPayrollBankTemplateTable;
   'crove_hr.payroll_dependent': HrPayrollDependentTable;
   'crove_hr.payroll_employee': HrPayrollEmployeeTable;
@@ -1630,6 +1631,20 @@ export interface FinanceVendorAccountRuleTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
+/** crove_hr.department */
+export interface HrDepartmentTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  name: string;
+  code: string | null;
+  pay_function: Generated<string>;
+  archived_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
 /** crove_hr.payroll_bank_template */
 export interface HrPayrollBankTemplateTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -1676,6 +1691,8 @@ export interface HrPayrollEmployeeTable {
   insurance_number_sealed: string | null;
   finalization_authorized_years: Generated<number[]>;
   bank_code: string | null;
+  department_id: string | null;
+  job_title: string | null;
 }
 
 /** crove_hr.payroll_employment */

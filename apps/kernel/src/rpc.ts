@@ -922,6 +922,12 @@ export function createRpcHandler(
       export: os.org.export.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.org.export.get', {}, { actor, orgId }))),
     },
     hr: {
+      departments: {
+        list: os.hr.departments.list.handler(hrQuery('hr.department.list')),
+        add: os.hr.departments.add.handler(hrCommand('hr.department.add')),
+        edit: os.hr.departments.edit.handler(hrCommand('hr.department.edit')),
+        archive: os.hr.departments.archive.handler(hrCommand('hr.department.archive')),
+      },
       payroll: {
         employees: {
           list: os.hr.payroll.employees.list.handler(hrQuery('hr.payroll.employee.list')),

@@ -236,6 +236,7 @@ const unions = <const M extends Unions<M> & Readonly<Record<string, readonly str
 
 // schema.table.column -> the const array of schema.ts the column is refined to.
 const UNIONS = unions({
+  'crove_hr.department.pay_function': HR_PAY_FUNCTIONS,
   'crove_hr.payroll_employee.status': HR_EMPLOYEE_STATUSES,
   'crove_hr.payroll_employment.contract_type': HR_CONTRACT_TYPES,
   'crove_hr.payroll_employment.contract_form': HR_CONTRACT_FORMS,

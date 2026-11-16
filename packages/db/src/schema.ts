@@ -1052,6 +1052,15 @@ export const HR_CONTRACT_FORMS = ['written', 'electronic', 'oral'] as const;
 export const HR_PROBATION_ROLE_TIERS = ['enterprise_manager', 'college_or_above', 'intermediate_technical', 'other'] as const;
 export const HR_REGIONS = ['I', 'II', 'III', 'IV'] as const;
 export const HR_PAY_FUNCTIONS = ['admin', 'sales', 'production', 'overhead', 'construction'] as const;
+// Departments per legal entity (#3412): optional team structure with default pay_function.
+export type HrDepartmentTable = Refine<
+  G.HrDepartmentTable,
+  {
+    legal_entity_id: LegalEntityColumn;
+    pay_function: Generated<(typeof HR_PAY_FUNCTIONS)[number]>;
+  },
+  'legal_entity_id'
+>;
 // A bank template (#2532): the entity is filled by the trigger b_legal_entity (the one the writer names or the org's default); the layout is a JSON object checked by the database.
 export type HrPayrollBankTemplateTable = Refine<G.HrPayrollBankTemplateTable, { legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
 export type HrPayrollEmployeeTable = Refine<G.HrPayrollEmployeeTable, { status: Generated<(typeof HR_EMPLOYEE_STATUSES)[number]> }>;
@@ -1193,6 +1202,7 @@ type Refined = Tables<{
   'crove_crm.sales_order': CrmSalesOrderTable;
   'crove_crm.sales_order_delivery': CrmSalesOrderDeliveryTable;
   'crove_crm.sales_order_line': CrmSalesOrderLineTable;
+  'crove_hr.department': HrDepartmentTable;
   'crove_hr.payroll_bank_template': HrPayrollBankTemplateTable;
   'crove_hr.payroll_employee': HrPayrollEmployeeTable;
   'crove_hr.payroll_employment': HrPayrollEmploymentTable;
