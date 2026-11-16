@@ -1012,4 +1012,389 @@ suite('HR labor register and 01/PLI exports on PostgreSQL (#3372)', () => {
       expect.objectContaining({ employeeId: switchedToNone.employeeId, code: 'MISSING_INSURANCE_NUMBER' }),
     );
   });
+
+  it('excludes June 20 employment pay metadata when exporting June 10 after June payroll approval', async () => {
+    const tag = randomUUID().slice(0, 8);
+    const owner = await upsertIdentity(createDb(pool), { issuer: 'hrreg', subject: `histpay-${tag}`, email: `histpay-${tag}@hr.test`, name: null });
+    const { orgId } = await createOrg(rt, asUser(owner), `Hist Pay Meta Co ${tag}`);
+    const exec = <O>(userId: string, name: string, input: unknown = {}, actor: ReturnType<typeof asUser> | ReturnType<typeof asMfa> = asUser(userId)) =>
+      rt.execute<O>(name, input, { actor, orgId });
+    const query = <O>(userId: string, name: string, input: unknown = {}) => rt.query<O>(name, input, { actor: asUser(userId), orgId });
+
+    // Employee A: started 2026-05-01 with approved May allowance 500000, then switched to employment B on 2026-06-20 with approved June allowance 3000000 + otherRegularPay 900000.
+    const withMayBase = await exec<HrWritten>(owner, 'hr.payroll.employee.add', {
+      displayName: 'Trần Có Tháng Trước Canary',
+      birthDate: '1991-03-10',
+      address: '10 Nguyễn Du, Hà Nội',
+      identityNumber: '079100888800',
+      insuranceNumber: '7308001000',
+      employment: { effectiveFrom: '2026-05-01', contractType: 'fixed_term', region: 'I', baseWage: '12000000' },
+    });
+    // Employee B: started 2026-06-01 (no May run), then switched on 2026-06-20 with approved June allowance 4000000 + otherRegularPay 800000.
+    const juneOnly = await exec<HrWritten>(owner, 'hr.payroll.employee.add', {
+      displayName: 'Nguyễn Chỉ Tháng Sáu Canary',
+      birthDate: '1992-07-20',
+      address: '20 Trần Phú, Hà Nội',
+      identityNumber: '079200000111',
+      insuranceNumber: '7308002000',
+      employment: { effectiveFrom: '2026-06-01', contractType: 'fixed_term', region: 'I', baseWage: '10000000' },
+    });
+
+    setRuleStatus('confirmed');
+    try {
+      const mayRun = await exec<HrRunWritten>(owner, 'hr.payroll.run.open', { month: '2026-05' });
+      const mayBefore = await query<HrRunSheet>(owner, 'hr.payroll.run.sheet', { runId: mayRun.runId });
+      const mayLine = mayBefore.lines.find((l) => l.employeeId === withMayBase.employeeId)!;
+      await exec(owner, 'hr.payroll.line.inputs.set', {
+        lineId: mayLine.id,
+        inputs: {
+          ...mayLine.inputs,
+          contractTermMonths: 12,
+          allowances: [{ label: 'Phụ cấp đi lại', amount: '500000', type: 'other', namedInContract: false }],
+          otherRegularPay: '200000',
+        },
+      });
+      const mayAfter = await query<HrRunSheet>(owner, 'hr.payroll.run.sheet', { runId: mayRun.runId });
+      await exec(owner, 'hr.payroll.run.approve', { runId: mayRun.runId, fingerprint: mayAfter.fingerprint, acceptFlags: true }, asMfa(owner));
+
+      await exec(owner, 'hr.payroll.employment.add', {
+        employeeId: withMayBase.employeeId,
+        effectiveFrom: '2026-06-20',
+        contractType: 'fixed_term',
+        region: 'I',
+        baseWage: '18000000',
+      });
+      await exec(owner, 'hr.payroll.employment.add', {
+        employeeId: juneOnly.employeeId,
+        effectiveFrom: '2026-06-20',
+        contractType: 'fixed_term',
+        region: 'I',
+        baseWage: '15000000',
+      });
+
+      const junRun = await exec<HrRunWritten>(owner, 'hr.payroll.run.open', { month: '2026-06' });
+      const junBefore = await query<HrRunSheet>(owner, 'hr.payroll.run.sheet', { runId: junRun.runId });
+      const junLineA = junBefore.lines.find((l) => l.employeeId === withMayBase.employeeId)!;
+      await exec(owner, 'hr.payroll.line.inputs.set', {
+        lineId: junLineA.id,
+        inputs: {
+          ...junLineA.inputs,
+          contractTermMonths: 12,
+          allowances: [{ label: 'Phụ cấp chức vụ', amount: '3000000', type: 'other', namedInContract: true }],
+          otherRegularPay: '900000',
+        },
+      });
+      const junLineB = junBefore.lines.find((l) => l.employeeId === juneOnly.employeeId)!;
+      await exec(owner, 'hr.payroll.line.inputs.set', {
+        lineId: junLineB.id,
+        inputs: {
+          ...junLineB.inputs,
+          contractTermMonths: 6,
+          allowances: [{ label: 'Phụ cấp trách nhiệm', amount: '4000000', type: 'other', namedInContract: true }],
+          otherRegularPay: '800000',
+        },
+      });
+      const junAfter = await query<HrRunSheet>(owner, 'hr.payroll.run.sheet', { runId: junRun.runId });
+      await exec(owner, 'hr.payroll.run.approve', { runId: junRun.runId, fingerprint: junAfter.fingerprint, acceptFlags: true }, asMfa(owner));
+    } finally {
+      setRuleStatus('commentary');
+    }
+
+    const june10 = await rt.query<HrDeclarationDocument>('hr.payroll.declaration.get', { kind: 'labor_register', period: '2026-06-10' }, { actor: asMfa(owner), orgId });
+    const june10Rows = june10.sheets[0]?.rows ?? [];
+    expect(june10Rows.find((r) => r.name === 'Trần Có Tháng Trước Canary')).toMatchObject({
+      contractStartDate: '2026-05-01',
+      contractEndDate: '2027-04-30',
+      baseWage: '12000000.00',
+    });
+    expect(june10Rows.find((r) => r.name === 'Nguyễn Chỉ Tháng Sáu Canary')).toMatchObject({
+      contractStartDate: '2026-06-01',
+      contractEndDate: '2026-11-30',
+      baseWage: '10000000.00',
+    });
+
+    const june25 = await rt.query<HrDeclarationDocument>('hr.payroll.declaration.get', { kind: 'labor_register', period: '2026-06-25' }, { actor: asMfa(owner), orgId });
+    const june25Rows = june25.sheets[0]?.rows ?? [];
+    expect(june25Rows.find((r) => r.name === 'Trần Có Tháng Trước Canary')).toMatchObject({
+      baseWage: '18000000.00',
+    });
+    expect(june25Rows.find((r) => r.name === 'Nguyễn Chỉ Tháng Sáu Canary')).toMatchObject({
+      contractStartDate: '2026-06-01',
+      contractEndDate: '2026-11-30',
+      baseWage: '15000000.00',
+    });
+
+    const pliBeforeEnd = await rt.query<HrDeclarationDocument>('hr.payroll.declaration.get', { kind: '01pli', period: '2026-H1' }, { actor: asMfa(owner), orgId });
+    const pliBeforeRows = pliBeforeEnd.sheets[1]?.rows ?? [];
+    expect(pliBeforeRows.find((r) => r.name === 'Trần Có Tháng Trước Canary')).toMatchObject({
+      baseWage: '18000000.00',
+      allowance: '3000000.00',
+      otherAmounts: '900000.00',
+    });
+
+    await exec(owner, 'hr.payroll.employee.end', { employeeId: withMayBase.employeeId, endedOn: '2026-06-10' });
+    await exec(owner, 'hr.payroll.employee.end', { employeeId: juneOnly.employeeId, endedOn: '2026-06-10' });
+
+    const pliAfterEnd = await rt.query<HrDeclarationDocument>('hr.payroll.declaration.get', { kind: '01pli', period: '2026-H1' }, { actor: asMfa(owner), orgId });
+    const pliAfterRows = pliAfterEnd.sheets[1]?.rows ?? [];
+    expect(pliAfterRows.find((r) => r.name === 'Trần Có Tháng Trước Canary')).toMatchObject({
+      endedOn: '2026-06-10',
+      baseWage: '12000000.00',
+      allowance: '3000000.00',
+      otherAmounts: '900000.00',
+    });
+    expect(pliAfterRows.find((r) => r.name === 'Nguyễn Chỉ Tháng Sáu Canary')).toMatchObject({
+      endedOn: '2026-06-10',
+      baseWage: '10000000.00',
+      allowance: '4000000.00',
+      otherAmounts: '800000.00',
+    });
+  });
+
+  it('uses Stage 2b-3 contract and probation fields in export and laborCheck without payroll runs', async () => {
+    const tag = randomUUID().slice(0, 8);
+    const owner = await upsertIdentity(createDb(pool), { issuer: 'hrreg', subject: `stage2b3-${tag}`, email: `stage2b3-${tag}@hr.test`, name: null });
+    const { orgId, slug } = await createOrg(rt, asUser(owner), `Stage 2b3 Co ${tag}`);
+    const exec = <O>(userId: string, name: string, input: unknown = {}, actor: ReturnType<typeof asUser> | ReturnType<typeof asMfa> = asUser(userId)) =>
+      rt.execute<O>(name, input, { actor, orgId });
+    const query = <O>(userId: string, name: string, input: unknown = {}) => rt.query<O>(name, input, { actor: asUser(userId), orgId });
+
+    const fixedRenewal = await exec<HrWritten>(owner, 'hr.payroll.employee.add', {
+      displayName: 'Trần Gia Hạn Cuối Canary',
+      birthDate: '1991-01-10',
+      address: '10 Lê Lợi, TP.HCM',
+      identityNumber: '079191000001',
+      insuranceNumber: '7308001001',
+      employment: {
+        effectiveFrom: '2026-01-01',
+        contractType: 'fixed_term',
+        region: 'I',
+        baseWage: '12000000',
+        contractForm: 'written',
+        termMonths: 6,
+        fixedTermSequence: 2,
+      },
+    });
+    const probEnding = await exec<HrWritten>(owner, 'hr.payroll.employee.add', {
+      displayName: 'Nguyễn Sắp Hết Thử Việc Canary',
+      birthDate: '1995-04-20',
+      address: '20 Đồng Khởi, TP.HCM',
+      identityNumber: '079195000002',
+      insuranceNumber: '7308001002',
+      employment: {
+        effectiveFrom: '2026-05-01',
+        contractType: 'indefinite',
+        region: 'I',
+        baseWage: '10000000',
+        contractForm: 'written',
+        probationRoleTier: 'college_or_above',
+        probationEndOn: '2026-06-15',
+        probationWage: '8500000',
+      },
+    });
+    const explicitEnd = await exec<HrWritten>(owner, 'hr.payroll.employee.add', {
+      displayName: 'Lê Ngày Kết Thúc Riêng Canary',
+      birthDate: '1993-08-12',
+      address: '30 Pasteur, TP.HCM',
+      identityNumber: '079193000003',
+      insuranceNumber: '7308001003',
+      employment: {
+        effectiveFrom: '2026-03-01',
+        contractType: 'fixed_term',
+        region: 'I',
+        baseWage: '11000000',
+        contractForm: 'electronic',
+        contractEndOn: '2026-06-20',
+        fixedTermSequence: 1,
+      },
+    });
+
+    const regDoc = await rt.query<HrDeclarationDocument>('hr.payroll.declaration.get', { kind: 'labor_register', period: '2026-06-10' }, { actor: asMfa(owner), orgId });
+    const regRows = regDoc.sheets[0]?.rows ?? [];
+    expect(regRows.find((r) => r.name === 'Trần Gia Hạn Cuối Canary')).toMatchObject({
+      contractStartDate: '2026-01-01',
+      contractEndDate: '2026-06-30',
+    });
+    expect(regRows.find((r) => r.name === 'Lê Ngày Kết Thúc Riêng Canary')).toMatchObject({
+      contractStartDate: '2026-03-01',
+      contractEndDate: '2026-06-20',
+    });
+
+    const { postLaborCheck } = makeHttp({
+      orgId,
+      slug,
+      owner,
+      admin: owner,
+      member: owner,
+      viewer: owner,
+      anId: fixedRenewal.employeeId as string,
+      binhId: probEnding.employeeId as string,
+      chiId: explicitEnd.employeeId as string,
+      dungId: null,
+      exec,
+      query,
+    });
+    const checkRes = await postLaborCheck(owner, { kind: 'labor_register', period: '2026-06-10', lang: 'vi' }, slug);
+    expect(checkRes.status).toBe(200);
+    expect(checkRes.body.counts).toEqual({
+      checked: 3,
+      employeesMissingIdentity: 0,
+      employeesMissingInsuranceNumber: 0,
+      employeesMissingBirthDateOrAddress: 0,
+      unwrittenNoneContracts: 0,
+      contractAlerts: 4,
+    });
+    expect(checkRes.body.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ employeeId: fixedRenewal.employeeId, code: 'contract_expiring_soon' }),
+        expect.objectContaining({ employeeId: fixedRenewal.employeeId, code: 'final_fixed_term_renewal' }),
+        expect.objectContaining({ employeeId: probEnding.employeeId, code: 'probation_ending_soon' }),
+        expect.objectContaining({ employeeId: explicitEnd.employeeId, code: 'contract_expiring_soon' }),
+      ]),
+    );
+    expect(checkRes.body.findings.some((f: { code: string }) => f.code === 'MISSING_CONTRACT_TERM')).toBe(false);
+  });
+
+  it('preserves probation across amendments, anchors new fixed-term dates to effectiveFrom, and keeps saved termMonths on mid-term raises', async () => {
+    const tag = randomUUID().slice(0, 8);
+    const owner = await upsertIdentity(createDb(pool), { issuer: 'hrreg', subject: `amendfix-${tag}`, email: `amendfix-${tag}@hr.test`, name: null });
+    const { orgId, slug } = await createOrg(rt, asUser(owner), `Amend Fix Co ${tag}`);
+    const exec = <O>(userId: string, name: string, input: unknown = {}, actor: ReturnType<typeof asUser> | ReturnType<typeof asMfa> = asUser(userId)) =>
+      rt.execute<O>(name, input, { actor, orgId });
+    const query = <O>(userId: string, name: string, input: unknown = {}) => rt.query<O>(name, input, { actor: asUser(userId), orgId });
+
+    // 1) Subsequent fixed_term row with its own termMonths (without fixedTermSequence) must anchor contractStartDate to effectiveFrom instead of mixing prev start with new end.
+    const nextFixed = await exec<HrWritten>(owner, 'hr.payroll.employee.add', {
+      displayName: 'Trần Nối Hợp Đồng Canary',
+      birthDate: '1991-01-10',
+      address: '10 Lê Lợi, TP.HCM',
+      identityNumber: '999191100001',
+      insuranceNumber: '9998001001',
+      employment: {
+        effectiveFrom: '2026-01-01',
+        contractType: 'fixed_term',
+        region: 'I',
+        baseWage: '12000000',
+        termMonths: 6,
+      },
+    });
+    await exec(owner, 'hr.payroll.employment.add', {
+      employeeId: nextFixed.employeeId,
+      effectiveFrom: '2026-04-01',
+      contractType: 'fixed_term',
+      region: 'I',
+      baseWage: '13000000',
+      termMonths: 6,
+    });
+
+    // 2) Wage amendment on an indefinite contract without probation fields must preserve active probation from the initial row.
+    const keepProbation = await exec<HrWritten>(owner, 'hr.payroll.employee.add', {
+      displayName: 'Nguyễn Giữ Thử Việc Canary',
+      birthDate: '1995-04-20',
+      address: '20 Đồng Khởi, TP.HCM',
+      identityNumber: '999195100002',
+      insuranceNumber: '9998001002',
+      employment: {
+        effectiveFrom: '2026-05-01',
+        contractType: 'indefinite',
+        region: 'I',
+        baseWage: '10000000',
+        probationRoleTier: 'college_or_above',
+        probationEndOn: '2026-06-15',
+        probationWage: '8500000',
+      },
+    });
+    await exec(owner, 'hr.payroll.employment.add', {
+      employeeId: keepProbation.employeeId,
+      effectiveFrom: '2026-06-01',
+      contractType: 'indefinite',
+      region: 'I',
+      baseWage: '12000000',
+    });
+
+    // 3) Mid-term fixed_term raise with a differing approved pay-line contractTermMonths keeps prev saved (contractTermMonths=6, contractEndDate=2026-06-30).
+    const midTermRaise = await exec<HrWritten>(owner, 'hr.payroll.employee.add', {
+      displayName: 'Phạm Giữ Kỳ Hạn Canary',
+      birthDate: '1993-08-12',
+      address: '30 Pasteur, TP.HCM',
+      identityNumber: '999193100003',
+      insuranceNumber: '9998001003',
+      employment: {
+        effectiveFrom: '2026-01-01',
+        contractType: 'fixed_term',
+        region: 'I',
+        baseWage: '11000000',
+        termMonths: 6,
+        fixedTermSequence: 1,
+      },
+    });
+    await exec(owner, 'hr.payroll.employment.add', {
+      employeeId: midTermRaise.employeeId,
+      effectiveFrom: '2026-04-01',
+      contractType: 'fixed_term',
+      region: 'I',
+      baseWage: '15000000',
+    });
+
+    setRuleStatus('confirmed');
+    try {
+      const mayRun = await exec<HrRunWritten>(owner, 'hr.payroll.run.open', { month: '2026-05' });
+      const mayBefore = await query<HrRunSheet>(owner, 'hr.payroll.run.sheet', { runId: mayRun.runId });
+      const raiseLine = mayBefore.lines.find((l) => l.employeeId === midTermRaise.employeeId)!;
+      await exec(owner, 'hr.payroll.line.inputs.set', {
+        lineId: raiseLine.id,
+        inputs: { ...raiseLine.inputs, contractTermMonths: 12 },
+      });
+      const mayAfter = await query<HrRunSheet>(owner, 'hr.payroll.run.sheet', { runId: mayRun.runId });
+      await exec(owner, 'hr.payroll.run.approve', { runId: mayRun.runId, fingerprint: mayAfter.fingerprint, acceptFlags: true }, asMfa(owner));
+    } finally {
+      setRuleStatus('commentary');
+    }
+
+    const juneReg = await rt.query<HrDeclarationDocument>('hr.payroll.declaration.get', { kind: 'labor_register', period: '2026-06-10' }, { actor: asMfa(owner), orgId });
+    const juneRows = juneReg.sheets[0]?.rows ?? [];
+    expect(juneRows.find((r) => r.name === 'Phạm Giữ Kỳ Hạn Canary')).toMatchObject({
+      contractStartDate: '2026-01-01',
+      contractEndDate: '2026-06-30',
+    });
+
+    const septReg = await rt.query<HrDeclarationDocument>('hr.payroll.declaration.get', { kind: 'labor_register', period: '2026-09-20' }, { actor: asMfa(owner), orgId });
+    const septRows = septReg.sheets[0]?.rows ?? [];
+    expect(septRows.find((r) => r.name === 'Trần Nối Hợp Đồng Canary')).toMatchObject({
+      contractStartDate: '2026-04-01',
+      contractEndDate: '2026-09-30',
+    });
+
+    const { postLaborCheck } = makeHttp({
+      orgId,
+      slug,
+      owner,
+      admin: owner,
+      member: owner,
+      viewer: owner,
+      anId: nextFixed.employeeId as string,
+      binhId: keepProbation.employeeId as string,
+      chiId: midTermRaise.employeeId as string,
+      dungId: null,
+      exec,
+      query,
+    });
+    const juneCheck = await postLaborCheck(owner, { kind: 'labor_register', period: '2026-06-10', lang: 'vi' }, slug);
+    expect(juneCheck.status).toBe(200);
+    expect(juneCheck.body.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ employeeId: keepProbation.employeeId, code: 'probation_ending_soon' }),
+        expect.objectContaining({ employeeId: midTermRaise.employeeId, code: 'contract_expiring_soon' }),
+      ]),
+    );
+
+    const septCheck = await postLaborCheck(owner, { kind: 'labor_register', period: '2026-09-20', lang: 'vi' }, slug);
+    expect(septCheck.status).toBe(200);
+    expect(septCheck.body.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ employeeId: nextFixed.employeeId, code: 'contract_expiring_soon' }),
+        expect.objectContaining({ employeeId: nextFixed.employeeId, code: 'final_fixed_term_renewal' }),
+      ]),
+    );
+  });
 });

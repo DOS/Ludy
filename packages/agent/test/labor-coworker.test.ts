@@ -126,11 +126,11 @@ describe('pre-export labor compliance coworker (#3372)', () => {
       // Hallucinated number / count mismatch ("All 3 records missing identity" when checked=3, missingIdentity=1): AI summary allows zero unverified numbers.
       { summary: 'All 3 employee records are missing identity numbers.', notes: [{ id: 'N1', sentence: 'E1 chưa có hợp đồng lao động bằng văn bản.' }] },
       // Invalid / unknown alias E9:
-      { summary: 'Cần hoàn thiện hồ sơ nhân sự.', notes: [{ id: 'N1', sentence: 'E9 chưa có hợp đồng lao động bằng văn bản.' }] },
+      { summary: 'Cần bổ sung hồ sơ định danh, mã BHXH và rà soát thời hạn hợp đồng trước khi xuất bảng kê.', notes: [{ id: 'N1', sentence: 'E9 chưa có hợp đồng lao động bằng văn bản.' }] },
       // Cross-person alias swap (answering N1 which owns E1 using valid alias E2):
-      { summary: 'Cần hoàn thiện hồ sơ nhân sự.', notes: [{ id: 'N1', sentence: 'E2 thiếu số định danh.' }] },
+      { summary: 'Cần bổ sung hồ sơ định danh, mã BHXH và rà soát thời hạn hợp đồng trước khi xuất bảng kê.', notes: [{ id: 'N1', sentence: 'E2 thiếu số định danh.' }] },
       // Wrong finding category attribution (E1 only has unwrittenNoneContract, not missingIdentity):
-      { summary: 'Cần hoàn thiện hồ sơ nhân sự.', notes: [{ id: 'N1', sentence: 'E1 thiếu số định danh.' }] },
+      { summary: 'Cần bổ sung hồ sơ định danh, mã BHXH và rà soát thời hạn hợp đồng trước khi xuất bảng kê.', notes: [{ id: 'N1', sentence: 'E1 thiếu số định danh.' }] },
       // Link / URL:
       { summary: 'Xem thêm tại https://example.com trước khi xuất.', notes: [{ id: 'N1', sentence: 'E1 chưa có hợp đồng lao động bằng văn bản.' }] },
     ];
@@ -649,6 +649,7 @@ describe('pre-export labor compliance coworker (#3372)', () => {
       'Địa chỉ liên hệ của E1 đã được cập nhật.',
       'E1 updated address.',
       'E1 already supplemented contact address.',
+      "E1's address is available.",
     ]) {
       const refusedCompletionNote = await reviewLaborCompliance(onlyAddressMissing, {
         random: () => 0,
@@ -709,5 +710,730 @@ describe('pre-export labor compliance coworker (#3372)', () => {
     });
     expect(acceptedUnresolvedNote.ai).toEqual({ ok: true, reason: 'ok' });
     expect(acceptedUnresolvedNote.notes).toEqual(['Nguyễn Văn Địa Chỉ chưa cập nhật địa chỉ, cần bổ sung trước khi xuất.']);
+  });
+
+  it('flags active fixed_term records with null contractStartDate and non-null contractTermMonths and guards AI wording', async () => {
+    const missingStartDateInput: LaborComplianceInput = {
+      kind: 'labor_register',
+      period: '2026-06-30',
+      asOf: '2026-06-30',
+      language: 'en',
+      employees: [
+        {
+          employeeId: '00000000-0000-4000-8000-000000000041',
+          erased: false,
+          endedOn: null,
+          hasIdentityNumber: true,
+          hasInsuranceNumber: true,
+          hasBirthDate: true,
+          hasAddress: true,
+          contractKind: 'fixed_term',
+          contractStartDate: null,
+          contractTermMonths: 12,
+        },
+      ],
+    };
+
+    const deterministic = await reviewLaborCompliance(missingStartDateInput, { generate: null });
+    expect(deterministic.ai).toEqual({ ok: false, reason: 'off' });
+    expect(deterministic.counts.contractAlerts).toBe(1);
+    expect(deterministic.findings).toEqual([
+      {
+        employeeId: '00000000-0000-4000-8000-000000000041',
+        code: 'MISSING_CONTRACT_START_DATE',
+        fieldOrRule: 'contractStartDate',
+      },
+    ]);
+    expect(deterministic.notes).toEqual(['There are 1 labor contract term alert(s) to review for renewal or conversion.']);
+
+    const refused = await reviewLaborCompliance(missingStartDateInput, {
+      random: () => 0,
+      generate: async () => ({
+        output: {
+          summary: 'Missing contract start date must be verified before export.',
+          notes: [{ id: 'N1', sentence: "E1's contract start date is available." }],
+        },
+      }),
+    });
+    expect(refused.ai).toEqual({ ok: false, reason: 'refused' });
+    expect(refused.summary).toBeNull();
+
+    const accepted = await reviewLaborCompliance(missingStartDateInput, {
+      random: () => 0,
+      displayNames: new Map([['00000000-0000-4000-8000-000000000041', 'Le Van Khong Ngay']]),
+      generate: async () => ({
+        output: {
+          summary: 'Missing contract start date should be verified before export.',
+          notes: [{ id: 'N1', sentence: 'E1 is missing a contract start date.' }],
+        },
+      }),
+    });
+    expect(accepted.ai).toEqual({ ok: true, reason: 'ok' });
+    expect(accepted.notes).toEqual(['Le Van Khong Ngay is missing a contract start date.']);
+  });
+
+  it('refuses AI responses injecting forbidden employee or company names before alias restoration', async () => {
+    const cleanAndFlagged: LaborComplianceInput = {
+      kind: 'labor_register',
+      period: '2026-06-30',
+      asOf: '2026-06-30',
+      language: 'vi',
+      employees: [
+        {
+          employeeId: '00000000-0000-4000-8000-000000000051',
+          erased: false,
+          endedOn: null,
+          hasIdentityNumber: false,
+          hasInsuranceNumber: true,
+          hasBirthDate: true,
+          hasAddress: true,
+          contractKind: 'indefinite',
+          contractStartDate: '2025-01-01',
+          contractTermMonths: null,
+          fixedTermSequence: null,
+          insured: true,
+        },
+        {
+          employeeId: '00000000-0000-4000-8000-000000000052',
+          erased: false,
+          endedOn: null,
+          hasIdentityNumber: true,
+          hasInsuranceNumber: true,
+          hasBirthDate: true,
+          hasAddress: true,
+          contractKind: 'indefinite',
+          contractStartDate: '2025-01-01',
+          contractTermMonths: null,
+          fixedTermSequence: null,
+          insured: true,
+        },
+      ],
+    };
+
+    const noteLeak = await reviewLaborCompliance(cleanAndFlagged, {
+      random: () => 0,
+      forbidden: ['Nguyễn Văn An', 'Trần Văn Bình'],
+      displayNames: new Map([
+        ['00000000-0000-4000-8000-000000000051', 'Nguyễn Văn An'],
+        ['00000000-0000-4000-8000-000000000052', 'Trần Văn Bình'],
+      ]),
+      generate: async () => ({
+        output: {
+          summary: 'Cần bổ sung số định danh trước khi xuất bảng kê.',
+          notes: [{ id: 'N1', sentence: 'E1 và Trần Văn Bình thiếu số định danh.' }],
+        },
+      }),
+    });
+    expect(noteLeak.ai).toEqual({ ok: false, reason: 'refused' });
+    expect(noteLeak.summary).toBeNull();
+    expect(noteLeak.notes.join(' ')).not.toContain('Trần Văn Bình');
+
+    const summaryLeakFromDisplayNames = await reviewLaborCompliance(cleanAndFlagged, {
+      random: () => 0,
+      displayNames: new Map([
+        ['00000000-0000-4000-8000-000000000051', 'Nguyễn Văn An'],
+        ['00000000-0000-4000-8000-000000000052', 'Trần Văn Bình'],
+      ]),
+      generate: async () => ({
+        output: {
+          summary: 'Trần Văn Bình và hồ sơ thiếu số định danh cần rà soát.',
+          notes: [{ id: 'N1', sentence: 'E1 thiếu số định danh.' }],
+        },
+      }),
+    });
+    expect(summaryLeakFromDisplayNames.ai).toEqual({ ok: false, reason: 'refused' });
+    expect(summaryLeakFromDisplayNames.summary).toBeNull();
+  });
+
+  it('evaluates probation_ending_soon and explicit contractEndDate without MISSING_CONTRACT_TERM', async () => {
+    const probationAndExplicitEnd = await reviewLaborCompliance({
+      kind: 'labor_register',
+      period: '2026-06-10',
+      asOf: '2026-06-10',
+      language: 'vi',
+      employees: [
+        {
+          employeeId: '00000000-0000-4000-8000-000000000061',
+          erased: false,
+          endedOn: null,
+          hasIdentityNumber: true,
+          hasInsuranceNumber: true,
+          hasBirthDate: true,
+          hasAddress: true,
+          contractKind: 'indefinite',
+          contractStartDate: '2026-05-01',
+          contractEndDate: null,
+          contractTermMonths: null,
+          fixedTermSequence: null,
+          probation: {
+            roleTier: 'college_or_above',
+            startDate: '2026-05-01',
+            endDate: '2026-06-20',
+            wage: '8500000',
+          },
+          insured: true,
+        },
+        {
+          employeeId: '00000000-0000-4000-8000-000000000062',
+          erased: false,
+          endedOn: null,
+          hasIdentityNumber: true,
+          hasInsuranceNumber: true,
+          hasBirthDate: true,
+          hasAddress: true,
+          contractKind: 'fixed_term',
+          contractStartDate: '2026-03-01',
+          contractEndDate: '2026-06-25',
+          contractTermMonths: null,
+          fixedTermSequence: 1,
+          probation: null,
+          insured: true,
+        },
+        {
+          employeeId: '00000000-0000-4000-8000-000000000063',
+          erased: false,
+          endedOn: null,
+          hasIdentityNumber: true,
+          hasInsuranceNumber: false,
+          hasBirthDate: true,
+          hasAddress: true,
+          contractKind: 'none',
+          contractStartDate: null,
+          contractEndDate: null,
+          contractTermMonths: null,
+          fixedTermSequence: null,
+          probation: {
+            roleTier: 'other',
+            startDate: '2026-06-08',
+            endDate: '2026-06-13',
+            wage: '7000000',
+          },
+          insured: false,
+        },
+      ],
+    });
+
+    expect(probationAndExplicitEnd.counts).toEqual({
+      checked: 3,
+      employeesMissingIdentity: 0,
+      employeesMissingInsuranceNumber: 0,
+      employeesMissingBirthDateOrAddress: 0,
+      unwrittenNoneContracts: 1,
+      contractAlerts: 3,
+    });
+    expect(probationAndExplicitEnd.findings).toEqual([
+      {
+        employeeId: '00000000-0000-4000-8000-000000000061',
+        code: 'probation_ending_soon',
+        fieldOrRule: 'Labor Code 2019 Art. 27',
+      },
+      {
+        employeeId: '00000000-0000-4000-8000-000000000062',
+        code: 'contract_expiring_soon',
+        fieldOrRule: 'Labor Code 2019 Art. 20(2) & Art. 35/36',
+      },
+      {
+        employeeId: '00000000-0000-4000-8000-000000000063',
+        code: 'probation_ending_soon',
+        fieldOrRule: 'Labor Code 2019 Art. 27',
+      },
+      {
+        employeeId: '00000000-0000-4000-8000-000000000063',
+        code: 'UNWRITTEN_NONE_CONTRACT',
+        fieldOrRule: 'Labor Code 2019 Art. 14',
+      },
+    ]);
+
+    const acceptedProbationAi = await reviewLaborCompliance(
+      {
+        kind: 'labor_register',
+        period: '2026-06-10',
+        asOf: '2026-06-10',
+        language: 'vi',
+        employees: [
+          {
+            employeeId: '00000000-0000-4000-8000-000000000061',
+            erased: false,
+            endedOn: null,
+            hasIdentityNumber: true,
+            hasInsuranceNumber: true,
+            hasBirthDate: true,
+            hasAddress: true,
+            contractKind: 'indefinite',
+            contractStartDate: '2026-05-01',
+            contractEndDate: null,
+            contractTermMonths: null,
+            fixedTermSequence: null,
+            probation: {
+              roleTier: 'college_or_above',
+              startDate: '2026-05-01',
+              endDate: '2026-06-20',
+              wage: '8500000',
+            },
+            insured: true,
+          },
+        ],
+      },
+      {
+        random: () => 0,
+        displayNames: new Map([['00000000-0000-4000-8000-000000000061', 'Lê Thử Việc Canary']]),
+        generate: async () => ({
+          output: {
+            summary: 'Có nhân sự sắp kết thúc thử việc cần thông báo kết quả.',
+            notes: [{ id: 'N1', sentence: 'E1 sắp hết thời gian thử việc, cần thông báo kết quả đúng hạn.' }],
+          },
+        }),
+      },
+    );
+    expect(acceptedProbationAi.ai).toEqual({ ok: true, reason: 'ok' });
+    expect(acceptedProbationAi.notes).toEqual([
+      'Lê Thử Việc Canary sắp hết thời gian thử việc, cần thông báo kết quả đúng hạn.',
+    ]);
+  });
+
+  it('refuses unverified extra claims outside verified finding categories in both notes and summaries', async () => {
+    const onlyAddressMissing: LaborComplianceInput = {
+      kind: 'labor_register',
+      period: '2026-06-30',
+      asOf: '2026-06-30',
+      language: 'vi',
+      employees: [
+        {
+          employeeId: '00000000-0000-4000-8000-000000000071',
+          erased: false,
+          endedOn: null,
+          hasIdentityNumber: true,
+          hasInsuranceNumber: true,
+          hasBirthDate: true,
+          hasAddress: false,
+          contractKind: 'indefinite',
+          contractStartDate: '2025-01-01',
+          contractTermMonths: null,
+          insured: true,
+        },
+      ],
+    };
+
+    for (const unverifiedNote of [
+      'E1 thiếu địa chỉ và số tài khoản ngân hàng.',
+      'E1 thiếu địa chỉ và bằng cấp chuyên môn.',
+      'E1 thiếu địa chỉ và mã số thuế.',
+      'E1 thiếu địa chỉ email.',
+      'E1 is missing an address and bank account.',
+      'E1 lacks a contact address and tax code.',
+    ]) {
+      const refused = await reviewLaborCompliance(onlyAddressMissing, {
+        random: () => 0,
+        generate: async () => ({
+          output: {
+            summary: 'Cần bổ sung địa chỉ trước khi xuất.',
+            notes: [{ id: 'N1', sentence: unverifiedNote }],
+          },
+        }),
+      });
+      expect(refused.ai, unverifiedNote).toEqual({ ok: false, reason: 'refused' });
+      expect(refused.summary).toBeNull();
+      expect(refused.notes).toEqual(['1 hồ sơ thiếu ngày sinh hoặc địa chỉ liên hệ.']);
+    }
+
+    for (const unverifiedSummary of [
+      'Cần bổ sung địa chỉ và số tài khoản ngân hàng trước khi xuất.',
+      'Cần bổ sung địa chỉ và bằng cấp chuyên môn.',
+      'Cần cập nhật địa chỉ và giấy khám sức khỏe.',
+    ]) {
+      const refused = await reviewLaborCompliance(onlyAddressMissing, {
+        random: () => 0,
+        generate: async () => ({
+          output: {
+            summary: unverifiedSummary,
+            notes: [{ id: 'N1', sentence: 'E1 thiếu địa chỉ.' }],
+          },
+        }),
+      });
+      expect(refused.ai, unverifiedSummary).toEqual({ ok: false, reason: 'refused' });
+      expect(refused.summary).toBeNull();
+    }
+
+    // Even when BHXH is missing, unverified health insurance ("bảo hiểm y tế") must still be refused.
+    const missingAddressAndInsurance: LaborComplianceInput = {
+      ...onlyAddressMissing,
+      employees: [{ ...onlyAddressMissing.employees[0]!, hasInsuranceNumber: false }],
+    };
+    const refusedBhyt = await reviewLaborCompliance(missingAddressAndInsurance, {
+      random: () => 0,
+      generate: async () => ({
+        output: {
+          summary: 'Cần bổ sung địa chỉ và mã BHXH trước khi xuất.',
+          notes: [{ id: 'N1', sentence: 'E1 thiếu địa chỉ và bảo hiểm y tế.' }],
+        },
+      }),
+    });
+    expect(refusedBhyt.ai).toEqual({ ok: false, reason: 'refused' });
+    expect(refusedBhyt.summary).toBeNull();
+
+    // Natural possessive phrasings for verified claims stay accepted.
+    const acceptedNatural = await reviewLaborCompliance(onlyAddressMissing, {
+      random: () => 0,
+      displayNames: new Map([['00000000-0000-4000-8000-000000000071', 'Phạm Thị An']]),
+      generate: async () => ({
+        output: {
+          summary: 'Cần bổ sung địa chỉ liên hệ trước khi xuất.',
+          notes: [{ id: 'N1', sentence: "E1's contact address needs to be updated before export." }],
+        },
+      }),
+    });
+    expect(acceptedNatural.ai).toEqual({ ok: true, reason: 'ok' });
+    expect(acceptedNatural.notes).toEqual(["Phạm Thị An's contact address needs to be updated before export."]);
+
+    // Clean roster summaries cannot introduce unverified attributes either.
+    const cleanRoster: LaborComplianceInput = {
+      ...onlyAddressMissing,
+      employees: [{ ...onlyAddressMissing.employees[0]!, hasAddress: true }],
+    };
+    const refusedCleanExtra = await reviewLaborCompliance(cleanRoster, {
+      generate: async () => ({
+        output: { summary: 'Hồ sơ đã có đầy đủ số tài khoản ngân hàng.', notes: [] },
+      }),
+    });
+    expect(refusedCleanExtra.ai).toEqual({ ok: false, reason: 'refused' });
+    expect(refusedCleanExtra.summary).toBeNull();
+
+    for (const cleanDeficit of [
+      'Hồ sơ chưa hoàn chỉnh.',
+      'Hồ sơ chưa hoàn thiện.',
+      'Hồ sơ không đạt chuẩn.',
+      'Phải hoàn thiện hồ sơ trước khi xuất.',
+      'Hồ sơ chưa cập nhật trước khi xuất.',
+      'Records are not updated.',
+      'Records should be updated before export.',
+    ]) {
+      const refused = await reviewLaborCompliance(cleanRoster, {
+        generate: async () => ({ output: { summary: cleanDeficit, notes: [] } }),
+      });
+      expect(refused.ai, cleanDeficit).toEqual({ ok: false, reason: 'refused' });
+      expect(refused.summary).toBeNull();
+    }
+
+    for (const validClean of [
+      'Không có thiếu sót hay cảnh báo, hồ sơ sẵn sàng đối chiếu trước khi xuất.',
+      'Employee records appear complete with no missing fields or alerts.',
+    ]) {
+      const accepted = await reviewLaborCompliance(cleanRoster, {
+        generate: async () => ({ output: { summary: validClean, notes: [] } }),
+      });
+      expect(accepted.ai, validClean).toEqual({ ok: true, reason: 'ok' });
+    }
+  });
+
+  it('refuses negated-necessity denials and premature-export advice while accepting valid natural phrasings', async () => {
+    const baseEmp = {
+      employeeId: '00000000-0000-4000-8000-000000000081',
+      erased: false,
+      endedOn: null,
+      hasIdentityNumber: true,
+      hasInsuranceNumber: true,
+      hasBirthDate: true,
+      hasAddress: true,
+      contractKind: 'indefinite' as const,
+      contractStartDate: '2025-01-01',
+      contractTermMonths: null,
+      fixedTermSequence: null,
+      insured: true,
+    };
+    const mkInput = (patch: Partial<LaborComplianceInput['employees'][number]>): LaborComplianceInput => ({
+      kind: 'labor_register',
+      period: '2026-06-30',
+      asOf: '2026-06-30',
+      language: 'vi',
+      employees: [{ ...baseEmp, ...patch }],
+    });
+
+    const denialCases: Array<{
+      patch: Partial<LaborComplianceInput['employees'][number]>;
+      summary: string;
+      note: string;
+    }> = [
+      {
+        patch: { hasIdentityNumber: false },
+        summary: 'Cần bổ sung CCCD trước khi xuất.',
+        note: 'E1 không phải thiếu số định danh.',
+      },
+      {
+        patch: { hasIdentityNumber: false },
+        summary: 'Cần bổ sung CCCD trước khi xuất.',
+        note: 'E1 chưa cần phải cập nhật CCCD.',
+      },
+      {
+        patch: { hasInsuranceNumber: false },
+        summary: 'Cần bổ sung mã BHXH trước khi xuất.',
+        note: 'E1 không phải bổ sung mã BHXH.',
+      },
+      {
+        patch: { hasAddress: false },
+        summary: 'Cần bổ sung địa chỉ trước khi xuất.',
+        note: 'E1 chưa cần bổ sung địa chỉ.',
+      },
+      {
+        patch: { hasAddress: false },
+        summary: 'Chưa cần bổ sung địa chỉ khi xuất.',
+        note: 'E1 thiếu địa chỉ.',
+      },
+      {
+        patch: { hasAddress: false },
+        summary: 'Cần bổ sung địa chỉ trước khi xuất.',
+        note: 'E1 không cần phải bổ sung địa chỉ.',
+      },
+      {
+        patch: { hasAddress: false },
+        summary: 'Cần bổ sung địa chỉ trước khi xuất.',
+        note: 'E1 không phải bổ sung địa chỉ.',
+      },
+      {
+        patch: { hasAddress: false },
+        summary: 'Thiếu địa chỉ nhưng không cần hoàn thiện khi xuất.',
+        note: 'E1 thiếu địa chỉ.',
+      },
+      {
+        patch: { hasAddress: false },
+        summary: 'Address needs to be updated before export.',
+        note: 'No need to update E1 address.',
+      },
+      {
+        patch: { hasAddress: false },
+        summary: 'Address needs to be updated before export.',
+        note: 'E1 need not update address.',
+      },
+      {
+        patch: { hasAddress: false },
+        summary: 'Cần bổ sung địa chỉ, nên xuất sớm.',
+        note: 'E1 thiếu địa chỉ.',
+      },
+      {
+        patch: { contractKind: 'fixed_term', contractTermMonths: 12, fixedTermSequence: 3 },
+        summary: 'Hợp đồng vượt quá số lần gia hạn cần chuyển sang không xác định.',
+        note: 'E1 không cần phải chuyển sang hợp đồng không xác định.',
+      },
+    ];
+
+    for (const c of denialCases) {
+      const res = await reviewLaborCompliance(mkInput(c.patch), {
+        random: () => 0,
+        generate: async () => ({
+          output: { summary: c.summary, notes: [{ id: 'N1', sentence: c.note }] },
+        }),
+      });
+      expect(res.ai, `${c.summary} | ${c.note}`).toEqual({ ok: false, reason: 'refused' });
+    }
+
+    const acceptedCases: Array<{
+      patch: Partial<LaborComplianceInput['employees'][number]>;
+      summary: string;
+      note: string;
+    }> = [
+      {
+        patch: { contractKind: 'fixed_term', contractTermMonths: 12, fixedTermSequence: 2 },
+        summary: 'Cần theo dõi lần gia hạn cuối của hợp đồng.',
+        note: 'Hợp đồng của E1 là lần gia hạn cuối.',
+      },
+      {
+        patch: { contractKind: 'fixed_term', contractTermMonths: 12, fixedTermSequence: 3 },
+        summary: 'Contracts exceeding the renewal limit must convert to indefinite.',
+        note: 'E1 must convert to an indefinite contract.',
+      },
+      {
+        patch: {
+          probation: {
+            roleTier: 'college_or_above',
+            startDate: '2026-05-10',
+            endDate: '2026-07-05',
+            wage: '8500000',
+          },
+        },
+        summary: 'Probation periods ending soon should be reviewed before export.',
+        note: 'E1 sắp kết thúc thử việc, cần thông báo kết quả đúng hạn.',
+      },
+      {
+        patch: { contractKind: 'none', contractStartDate: null, insured: false },
+        summary: 'Employees without a written labor contract should be updated before export.',
+        note: 'E1 lacks a written labor contract.',
+      },
+      {
+        patch: { hasAddress: false },
+        summary: 'Employees missing address should update records before export.',
+        note: 'E1 is required to update address.',
+      },
+      {
+        patch: { hasAddress: false },
+        summary: 'Address needs to be updated before export.',
+        note: 'E1 does need to update address.',
+      },
+      {
+        patch: { hasIdentityNumber: false },
+        summary: 'Cần bổ sung CCCD trước khi xuất.',
+        note: 'E1 thiếu số căn cước công dân.',
+      },
+      {
+        patch: { hasInsuranceNumber: false },
+        summary: 'Cần bổ sung thông tin bảo hiểm xã hội.',
+        note: 'E1 thiếu số sổ BHXH.',
+      },
+    ];
+
+    for (const c of acceptedCases) {
+      const res = await reviewLaborCompliance(mkInput(c.patch), {
+        random: () => 0,
+        generate: async () => ({
+          output: { summary: c.summary, notes: [{ id: 'N1', sentence: c.note }] },
+        }),
+      });
+      expect(res.ai, `${c.summary} | ${c.note}`).toEqual({ ok: true, reason: 'ok' });
+    }
+  });
+
+  it('keeps probation/missing-term alerts isolated from renewal claims and avoids short VN name leak collisions', async () => {
+    const probationOnly: LaborComplianceInput = {
+      kind: 'labor_register',
+      period: '2026-06-10',
+      asOf: '2026-06-10',
+      language: 'vi',
+      employees: [
+        {
+          employeeId: '00000000-0000-4000-8000-000000000091',
+          erased: false,
+          endedOn: null,
+          hasIdentityNumber: true,
+          hasInsuranceNumber: true,
+          hasBirthDate: true,
+          hasAddress: true,
+          contractKind: 'indefinite',
+          contractStartDate: '2026-05-01',
+          contractTermMonths: null,
+          fixedTermSequence: null,
+          probation: {
+            roleTier: 'college_or_above',
+            startDate: '2026-05-01',
+            endDate: '2026-06-20',
+            wage: '8500000',
+          },
+          insured: true,
+        },
+      ],
+    };
+
+    for (const disallowedOnProbation of [
+      'E1 sắp kết thúc thử việc, cần theo dõi gia hạn hợp đồng.',
+      'E1 cần kiểm tra thời hạn hợp đồng và thử việc.',
+    ]) {
+      const refused = await reviewLaborCompliance(probationOnly, {
+        random: () => 0,
+        generate: async () => ({
+          output: {
+            summary: 'Có cảnh báo hợp đồng thử việc cần theo dõi.',
+            notes: [{ id: 'N1', sentence: disallowedOnProbation }],
+          },
+        }),
+      });
+      expect(refused.ai, disallowedOnProbation).toEqual({ ok: false, reason: 'refused' });
+    }
+
+    const acceptedProbationGeneric = await reviewLaborCompliance(probationOnly, {
+      random: () => 0,
+      generate: async () => ({
+        output: {
+          summary: 'Có cảnh báo hợp đồng thử việc cần theo dõi.',
+          notes: [{ id: 'N1', sentence: 'E1 có cảnh báo hợp đồng sắp kết thúc thử việc.' }],
+        },
+      }),
+    });
+    expect(acceptedProbationGeneric.ai).toEqual({ ok: true, reason: 'ok' });
+
+    const missingTermOnly: LaborComplianceInput = {
+      ...probationOnly,
+      employees: [
+        {
+          ...probationOnly.employees[0]!,
+          probation: null,
+          contractKind: 'fixed_term',
+          contractTermMonths: null,
+        },
+      ],
+    };
+    const refusedRenewalOnMissingTerm = await reviewLaborCompliance(missingTermOnly, {
+      random: () => 0,
+      generate: async () => ({
+        output: {
+          summary: 'Cần bổ sung số tháng hợp đồng trước khi xuất.',
+          notes: [{ id: 'N1', sentence: 'E1 thiếu số tháng hợp đồng, cần gia hạn hợp đồng.' }],
+        },
+      }),
+    });
+    expect(refusedRenewalOnMissingTerm.ai).toEqual({ ok: false, reason: 'refused' });
+
+    const allowedTermOnMissingTerm = await reviewLaborCompliance(missingTermOnly, {
+      random: () => 0,
+      generate: async () => ({
+        output: {
+          summary: 'Cần bổ sung thời hạn hợp đồng trước khi xuất.',
+          notes: [{ id: 'N1', sentence: 'E1 chưa ghi số tháng hợp đồng.' }],
+        },
+      }),
+    });
+    expect(allowedTermOnMissingTerm.ai).toEqual({ ok: true, reason: 'ok' });
+
+    const shortNameInput: LaborComplianceInput = {
+      kind: 'labor_register',
+      period: '2026-06-30',
+      asOf: '2026-06-30',
+      language: 'vi',
+      employees: [
+        {
+          employeeId: '00000000-0000-4000-8000-000000000095',
+          erased: false,
+          endedOn: null,
+          hasIdentityNumber: false,
+          hasInsuranceNumber: true,
+          hasBirthDate: false,
+          hasAddress: false,
+          contractKind: 'none',
+          contractStartDate: null,
+          contractTermMonths: null,
+          fixedTermSequence: null,
+          insured: false,
+        },
+      ],
+    };
+    const acceptedWithShortTokens = await reviewLaborCompliance(shortNameInput, {
+      random: () => 0,
+      forbidden: ['Anh', 'Chi', 'Sinh', 'Định', 'Minh', 'Labor', 'Check'],
+      displayNames: new Map([['00000000-0000-4000-8000-000000000095', 'Minh']]),
+      generate: async () => ({
+        output: {
+          summary: 'Cần bổ sung số định danh, chứng minh nhân dân, ngày sinh, địa chỉ và hợp đồng bằng văn bản.',
+          notes: [
+            {
+              id: 'N1',
+              sentence: 'E1 thiếu số định danh, chứng minh nhân dân, ngày sinh, địa chỉ và lacks a written labor contract.',
+            },
+          ],
+        },
+      }),
+    });
+    expect(acceptedWithShortTokens.ai).toEqual({ ok: true, reason: 'ok' });
+    expect(acceptedWithShortTokens.notes).toEqual([
+      'Minh thiếu số định danh, chứng minh nhân dân, ngày sinh, địa chỉ và lacks a written labor contract.',
+    ]);
+
+    const refusedActualShortLeak = await reviewLaborCompliance(shortNameInput, {
+      random: () => 0,
+      forbidden: ['Anh', 'Chi', 'Sinh', 'Định', 'Minh', 'Labor'],
+      displayNames: new Map([['00000000-0000-4000-8000-000000000095', 'Phạm Minh']]),
+      generate: async () => ({
+        output: {
+          summary: 'Cần bổ sung chứng minh nhân dân trước khi xuất.',
+          notes: [{ id: 'N1', sentence: 'E1 Chi thiếu chứng minh nhân dân.' }],
+        },
+      }),
+    });
+    expect(refusedActualShortLeak.ai).toEqual({ ok: false, reason: 'refused' });
   });
 });

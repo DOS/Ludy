@@ -13,7 +13,7 @@
 import { sql } from 'kysely';
 import type { MemberRole } from '@crove/db';
 import { HR_DECLARATION_MAX_PEOPLE, zHrDeclarationExport, zHrDeclarationQuery, zHrLaborCheckAsk, zHrLaborCheckAudit, type HrDeclarationDocument, type HrDeclarationExport, type HrDeclarationQuery, type HrLaborCheckAsk, type HrLaborCheckAudit, type HrLaborCheckKind } from '@crove/kernel-contract';
-import { deriveFixedTermEndDate, formatIsoCalendarDate, money, parseIsoCalendarDate, type LaborContractKind } from '@crove/l10n-vn';
+import { deriveFixedTermEndDate, formatIsoCalendarDate, money, parseIsoCalendarDate, type LaborContractKind, type ProbationRoleTier } from '@crove/l10n-vn';
 import { DomainError, defineCommand, defineQuery, hasFreshMfa, type QueryContext } from '@crove/kernel-runtime';
 import { buildAnnual, buildAnnualListing, buildCertificates, buildCertificatesListing, buildD02Lt, buildD02LtListing, buildQuarterly, buildQuarterlyListing, quarterMonths, type DeclarationBreakdown, type DeclarationLine, type DeclarationPerson } from './declarations.ts';
 import { build01PliReport, buildLaborRegister, parse01PliPeriod, type LaborRegisterPerson } from './labor-register.ts';
@@ -32,8 +32,15 @@ export interface HrLaborCheckFact {
   hasAddress: boolean;
   contractKind: LaborContractKind | 'none';
   contractStartDate: string | null;
+  contractEndDate: string | null;
   contractTermMonths: number | null;
   fixedTermSequence: number | null;
+  probation?: {
+    roleTier: ProbationRoleTier;
+    startDate: string;
+    endDate: string;
+    wage: string | null;
+  } | null;
   insured: boolean;
 }
 
@@ -77,17 +84,32 @@ type EmploymentRow = {
   effective_from: Date | string;
   contract_type: string;
   base_wage: string | number;
+  term_months?: number | null;
+  contract_end_on?: Date | string | null;
+  fixed_term_sequence?: number | null;
+  probation_role_tier?: string | null;
+  probation_end_on?: Date | string | null;
+  probation_wage?: string | number | null;
 };
 type LineMeta = { allowance: string | null; otherAmounts: string | null; contractTermMonths: number | null; insured: boolean | null };
 type PayMeta = { allowance: string | null; otherAmounts: string | null };
 type EmploymentLineTerms = { contractTermMonths: number | null; insured: boolean | null };
+type ProbationSnapshot = {
+  roleTier: ProbationRoleTier;
+  startDate: string;
+  endDate: string;
+  wage: string | null;
+};
 type EmploymentSnapshot = {
   startedOn: string;
   contractKind: LaborContractKind | 'none';
   contractStartDate: string | null;
+  contractEndDate: string | null;
+  hasSavedEndDate: boolean;
   contractDateUncertain: boolean;
   contractTermMonths: number | null;
   fixedTermSequence: number | null;
+  probation: ProbationSnapshot | null;
   insured: boolean | null;
   baseWage: string;
 };
@@ -194,6 +216,8 @@ async function loadApprovedLineFacts(
   employeeIds: readonly string[],
   cutoffMonth: string,
   maxMonthByEmployee: ReadonlyMap<string, string>,
+  eligibleEmploymentIds: ReadonlySet<string>,
+  disallowedNullMonthsByEmployee: ReadonlyMap<string, ReadonlySet<string>>,
 ): Promise<{
   payMetaByEmployee: Map<string, PayMeta>;
   termsByEmployment: Map<string, EmploymentLineTerms>;
@@ -229,6 +253,12 @@ async function loadApprovedLineFacts(
     if (!month) continue;
     const maxMonth = maxMonthByEmployee.get(line.employee_id) ?? cutoffMonth;
     if (month > maxMonth) continue;
+    // Never attribute pay metadata or contract terms from an employment row whose `effective_from` lies after the employee's cutoff date.
+    if (line.employment_id !== null) {
+      if (!eligibleEmploymentIds.has(line.employment_id)) continue;
+    } else if (disallowedNullMonthsByEmployee.get(line.employee_id)?.has(month)) {
+      continue;
+    }
     const meta = parseApprovedInputsMeta(line.inputs);
     const prevEmpMonth = bestEmployeeMonth.get(line.employee_id);
     if (prevEmpMonth === undefined || month > prevEmpMonth) {
@@ -252,6 +282,32 @@ async function loadApprovedLineFacts(
   return { payMetaByEmployee, termsByEmployment };
 }
 
+function deriveFixedEndIso(startDate: string, termMonths: number): string | null {
+  const parsed = parseIsoCalendarDate(startDate);
+  return parsed ? formatIsoCalendarDate(deriveFixedTermEndDate(parsed, termMonths)) : null;
+}
+
+function resolveFixedTermMetadata(
+  startDate: string,
+  savedTermMonths: number | null,
+  savedEndOn: string | null,
+  lineTermMonths: number | null | undefined,
+): { contractTermMonths: number | null; contractEndDate: string | null } {
+  const contractTermMonths = savedTermMonths ?? (savedEndOn !== null ? null : (lineTermMonths ?? null));
+  const contractEndDate = savedEndOn ?? (contractTermMonths !== null ? deriveFixedEndIso(startDate, contractTermMonths) : null);
+  return { contractTermMonths, contractEndDate };
+}
+
+function probationFromRow(row: EmploymentRow, eff: string): ProbationSnapshot | null {
+  if (row.probation_end_on === undefined || row.probation_end_on === null) return null;
+  return {
+    roleTier: (row.probation_role_tier ?? 'other') as ProbationRoleTier,
+    startDate: eff,
+    endDate: iso(row.probation_end_on),
+    wage: row.probation_wage !== undefined && row.probation_wage !== null ? String(row.probation_wage) : null,
+  };
+}
+
 function resolveEmploymentHistoryByCutoff(
   rows: readonly EmploymentRow[],
   cutoff: string,
@@ -266,84 +322,123 @@ function resolveEmploymentHistoryByCutoff(
     const prev = byEmployee.get(row.employee_id);
     const contractKind = row.contract_type as LaborContractKind | 'none';
     const rowTerms = termsByEmployment.get(row.id);
+    const savedTermMonths = row.term_months ?? null;
+    const savedEndOn = row.contract_end_on !== undefined && row.contract_end_on !== null ? iso(row.contract_end_on) : null;
+    const savedSequence = row.fixed_term_sequence ?? null;
+    const rowProbation = probationFromRow(row, eff);
 
     let contractStartDate: string | null;
+    let contractEndDate: string | null = null;
+    let hasSavedEndDate = savedEndOn !== null;
     let contractDateUncertain = false;
     let contractTermMonths: number | null;
     let fixedTermCount: number | null;
     let fixedTermSequence: number | null;
+    let probation: ProbationSnapshot | null;
     let insured: boolean | null;
 
     if (contractKind === 'none') {
+      const isAmendment = prev?.contractKind === 'none';
       contractStartDate = null;
+      contractEndDate =
+        savedEndOn !== null
+          ? savedEndOn
+          : isAmendment && prev.contractEndDate !== null && eff <= prev.contractEndDate
+            ? prev.contractEndDate
+            : null;
       contractTermMonths = null;
       fixedTermCount = prev ? prev.fixedTermCount : 0;
       fixedTermSequence = null;
-      insured = rowTerms !== undefined ? rowTerms.insured : prev?.contractKind === 'none' ? prev.insured : null;
+      probation = isAmendment && (prev.contractEndDate === null || eff <= prev.contractEndDate) ? (rowProbation ?? prev.probation) : rowProbation;
+      insured = rowTerms !== undefined ? rowTerms.insured : isAmendment ? prev.insured : null;
     } else if (!prev || prev.contractKind !== contractKind) {
       contractStartDate = eff;
       if (contractKind === 'indefinite') {
         contractTermMonths = null;
+        contractEndDate = null;
+        hasSavedEndDate = false;
         fixedTermCount = 0;
         fixedTermSequence = null;
       } else {
-        contractTermMonths = rowTerms?.contractTermMonths ?? null;
-        fixedTermCount = prev ? (prev.fixedTermCount === null ? null : prev.fixedTermCount + 1) : 1;
+        ({ contractTermMonths, contractEndDate } = resolveFixedTermMetadata(eff, savedTermMonths, savedEndOn, rowTerms?.contractTermMonths));
+        fixedTermCount = savedSequence ?? (prev ? (prev.fixedTermCount === null ? null : prev.fixedTermCount + 1) : 1);
         fixedTermSequence = fixedTermCount;
       }
+      probation = rowProbation;
       insured = rowTerms !== undefined ? rowTerms.insured : null;
     } else if (contractKind === 'indefinite') {
       // An indefinite contract never expires or renews; subsequent indefinite rows are wage/region amendments.
-      // When an approved pay line exists for this row, use its `insured` directly (null = contract-type default) rather than carrying over prev.insured.
+      // Preserve initial probation unless explicitly updated on the amendment, and let approved pay lines override `insured`.
       contractStartDate = prev.contractStartDate;
       contractTermMonths = null;
+      contractEndDate = null;
+      hasSavedEndDate = false;
       fixedTermCount = 0;
       fixedTermSequence = null;
+      probation = rowProbation ?? prev.probation;
       insured = rowTerms !== undefined ? rowTerms.insured : prev.insured;
-    } else if (prev.contractDateUncertain || prev.contractStartDate === null) {
-      // An earlier unverified `fixed_term -> fixed_term` boundary makes subsequent dates and sequence counts unverifiable until an indefinite contract.
-      contractStartDate = null;
-      contractDateUncertain = true;
-      contractTermMonths = null;
-      fixedTermCount = null;
-      fixedTermSequence = null;
-      insured = rowTerms !== undefined ? rowTerms.insured : prev.insured;
-    } else if (prev.contractTermMonths !== null) {
-      // Consecutive `fixed_term` rows stay in the same contract ONLY when an approved pay line on the prior row proves `eff <= endDate`.
-      const parsedPrevStart = parseIsoCalendarDate(prev.contractStartDate);
-      const prevEnd = parsedPrevStart ? formatIsoCalendarDate(deriveFixedTermEndDate(parsedPrevStart, prev.contractTermMonths)) : null;
-      const sameContract = prevEnd !== null && eff <= prevEnd;
-      if (sameContract) {
+    } else {
+      const hasRowTermOrDifferentEnd = savedTermMonths !== null || (savedEndOn !== null && savedEndOn !== prev.contractEndDate);
+      const explicitNewFixedTerm =
+        savedSequence !== null &&
+        ((prev.fixedTermCount !== null && savedSequence !== prev.fixedTermCount) ||
+          (prev.contractDateUncertain && (savedTermMonths !== null || savedEndOn !== null)));
+      if (!explicitNewFixedTerm && (prev.contractDateUncertain || prev.contractStartDate === null || prev.contractEndDate === null)) {
+        // Prior `fixed_term` row lacked stored contract end metadata or an approved term, so renewal vs mid-term raise cannot be verified unless `fixed_term_sequence` marks a new contract.
+        contractStartDate = null;
+        contractDateUncertain = true;
+        contractTermMonths = null;
+        contractEndDate = null;
+        hasSavedEndDate = false;
+        fixedTermCount = null;
+        fixedTermSequence = null;
+        probation = rowProbation ?? (!hasRowTermOrDifferentEnd ? prev.probation : null);
+        insured = rowTerms !== undefined ? rowTerms.insured : prev.insured;
+      } else if (
+        !explicitNewFixedTerm &&
+        !hasRowTermOrDifferentEnd &&
+        !prev.contractDateUncertain &&
+        prev.contractStartDate !== null &&
+        prev.contractEndDate !== null &&
+        eff <= prev.contractEndDate
+      ) {
+        // Mid-term amendment of the active fixed-term contract (no new duration or changed end date anchored at `eff`).
         contractStartDate = prev.contractStartDate;
-        contractTermMonths = rowTerms?.contractTermMonths ?? prev.contractTermMonths;
-        fixedTermCount = prev.fixedTermCount;
-        fixedTermSequence = prev.fixedTermSequence;
+        if (prev.hasSavedEndDate) {
+          contractTermMonths = prev.contractTermMonths;
+          contractEndDate = prev.contractEndDate;
+          hasSavedEndDate = true;
+        } else {
+          contractTermMonths = rowTerms?.contractTermMonths ?? prev.contractTermMonths;
+          contractEndDate = contractTermMonths !== null ? deriveFixedEndIso(prev.contractStartDate, contractTermMonths) : prev.contractEndDate;
+          hasSavedEndDate = false;
+        }
+        fixedTermCount = savedSequence ?? prev.fixedTermCount;
+        fixedTermSequence = fixedTermCount;
+        probation = rowProbation ?? prev.probation;
         insured = rowTerms !== undefined ? rowTerms.insured : prev.insured;
       } else {
+        // Either prior term ended before `eff`, `fixed_term_sequence` explicitly changed, or this row saves its own `(term_months, contract_end_on)` anchored at `eff`: keep the pair bound to `eff` and increment only when starting a new sequence.
         contractStartDate = eff;
-        contractTermMonths = rowTerms?.contractTermMonths ?? null;
-        fixedTermCount = prev.fixedTermCount === null ? null : prev.fixedTermCount + 1;
+        ({ contractTermMonths, contractEndDate } = resolveFixedTermMetadata(eff, savedTermMonths, savedEndOn, rowTerms?.contractTermMonths));
+        fixedTermCount = savedSequence ?? (prev.fixedTermCount === null ? null : prev.fixedTermCount + 1);
         fixedTermSequence = fixedTermCount;
+        probation = rowProbation;
         insured = rowTerms !== undefined ? rowTerms.insured : null;
       }
-    } else {
-      // Prior `fixed_term` row lacked an approved term, so whether this row started a renewal or a mid-term raise cannot be verified.
-      contractStartDate = null;
-      contractDateUncertain = true;
-      contractTermMonths = null;
-      fixedTermCount = null;
-      fixedTermSequence = null;
-      insured = rowTerms !== undefined ? rowTerms.insured : prev.insured;
     }
 
     byEmployee.set(row.employee_id, {
       startedOn: prev ? prev.startedOn : eff,
       contractKind,
       contractStartDate,
+      contractEndDate,
+      hasSavedEndDate,
       contractDateUncertain,
       contractTermMonths,
       fixedTermCount,
       fixedTermSequence,
+      probation,
       insured,
       baseWage: String(row.base_wage),
     });
@@ -354,7 +449,19 @@ function resolveEmploymentHistoryByCutoff(
 async function loadLaborCandidateEmployees(ctx: QueryContext, entityId: string): Promise<EmploymentRow[]> {
   return ctx.trx
     .selectFrom('crove_hr.payroll_employment')
-    .select(['id', 'employee_id', 'effective_from', 'contract_type', 'base_wage'])
+    .select([
+      'id',
+      'employee_id',
+      'effective_from',
+      'contract_type',
+      'base_wage',
+      'term_months',
+      'contract_end_on',
+      'fixed_term_sequence',
+      'probation_role_tier',
+      'probation_end_on',
+      'probation_wage',
+    ])
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', entityId)
     .orderBy('effective_from', 'asc')
@@ -422,8 +529,34 @@ async function prepareLaborPeriod<Row extends { id: string; ended_on: Date | str
     throw new DomainError('EXPORT_TOO_LARGE', 422, tooLargeMessage);
   }
   const includedIds = included.map((entry) => entry.row.id);
+  const includedIdSet = new Set(includedIds);
+  const eligibleEmploymentIds = new Set<string>();
+  const disallowedNullMonthsByEmployee = new Map<string, Set<string>>();
+  for (const empRow of employmentRows) {
+    if (!includedIdSet.has(empRow.employee_id)) continue;
+    const eff = iso(empRow.effective_from);
+    const empCutoff = effectiveCutoffByEmployee.get(empRow.employee_id) ?? cutoff;
+    if (eff <= empCutoff) {
+      eligibleEmploymentIds.add(empRow.id);
+    } else {
+      let months = disallowedNullMonthsByEmployee.get(empRow.employee_id);
+      if (!months) {
+        months = new Set<string>();
+        disallowedNullMonthsByEmployee.set(empRow.employee_id, months);
+      }
+      months.add(eff.slice(0, 7));
+    }
+  }
   const maxMonthByEmployee = new Map(includedIds.map((id) => [id, (effectiveCutoffByEmployee.get(id) ?? cutoff).slice(0, 7)]));
-  const { payMetaByEmployee, termsByEmployment } = await loadApprovedLineFacts(ctx, entityId, includedIds, cutoff.slice(0, 7), maxMonthByEmployee);
+  const { payMetaByEmployee, termsByEmployment } = await loadApprovedLineFacts(
+    ctx,
+    entityId,
+    includedIds,
+    cutoff.slice(0, 7),
+    maxMonthByEmployee,
+    eligibleEmploymentIds,
+    disallowedNullMonthsByEmployee,
+  );
   const employments = resolveEmploymentHistoryByCutoff(employmentRows, cutoff, termsByEmployment, effectiveCutoffByEmployee);
   return { cutoff, included, payMetaByEmployee, employments };
 }
@@ -470,11 +603,7 @@ export const declarationGet = defineQuery({
         const c = clear.get(row.id) ?? {};
         const terms = employments.get(row.id)!;
         const payMeta = payMetaByEmployee.get(row.id);
-        let contractEndDate: string | null = null;
-        if (!terms.contractDateUncertain && terms.contractKind === 'fixed_term' && terms.contractStartDate !== null && terms.contractTermMonths !== null) {
-          const parsedStart = parseIsoCalendarDate(terms.contractStartDate);
-          if (parsedStart) contractEndDate = formatIsoCalendarDate(deriveFixedTermEndDate(parsedStart, terms.contractTermMonths));
-        }
+        const contractEndDate = terms.contractDateUncertain ? null : terms.contractEndDate;
         return {
           employeeId: row.id,
           name: row.display_name,
@@ -687,8 +816,10 @@ export const laborCheckRead = defineQuery({
         hasAddress: !erased && typeof row.address === 'string' && row.address.trim() !== '',
         contractKind: terms.contractKind,
         contractStartDate: terms.contractStartDate,
+        contractEndDate: terms.contractDateUncertain ? null : terms.contractEndDate,
         contractTermMonths: terms.contractTermMonths,
         fixedTermSequence: terms.fixedTermSequence,
+        probation: terms.probation,
         insured: terms.insured ?? (terms.contractKind !== 'none'),
       };
     });

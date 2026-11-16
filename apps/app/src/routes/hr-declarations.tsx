@@ -28,6 +28,7 @@ const FINDING_CODE_KEYS = [
   'MISSING_ADDRESS',
   'UNWRITTEN_NONE_CONTRACT',
   'MISSING_CONTRACT_TERM',
+  'MISSING_CONTRACT_START_DATE',
   'contract_expired',
   'contract_expiring_soon',
   'must_convert_to_indefinite',
@@ -38,6 +39,20 @@ type FindingCodeKey = (typeof FINDING_CODE_KEYS)[number];
 const FINDING_CODE_SET: ReadonlySet<string> = new Set(FINDING_CODE_KEYS);
 function isFindingCodeKey(code: string): code is FindingCodeKey {
   return FINDING_CODE_SET.has(code);
+}
+
+const FINDING_FIELD_KEYS = [
+  'identityNumber',
+  'insuranceNumber',
+  'birthDate',
+  'address',
+  'contractTermMonths',
+  'contractStartDate',
+] as const;
+type FindingFieldKey = (typeof FINDING_FIELD_KEYS)[number];
+const FINDING_FIELD_SET: ReadonlySet<string> = new Set(FINDING_FIELD_KEYS);
+function isFindingFieldKey(value: string): value is FindingFieldKey {
+  return FINDING_FIELD_SET.has(value);
 }
 
 type Sheet = HrDeclarationDocument['sheets'][number];
@@ -279,10 +294,11 @@ export function HrDeclarationsPage() {
               <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
                 {shownCheck.findings.map((f, i) => {
                   const label = isFindingCodeKey(f.code) ? t(`lyFindingCodes.${f.code}`) : f.code;
+                  const detail = isFindingFieldKey(f.fieldOrRule) ? t(`lyFindingFields.${f.fieldOrRule}`) : f.fieldOrRule;
                   return (
                     <li key={`${f.employeeId}-${f.code}-${i}`}>
                       {f.employeeName ? `${f.employeeName}: ` : ''}
-                      {label} ({f.fieldOrRule})
+                      {label} ({detail})
                     </li>
                   );
                 })}

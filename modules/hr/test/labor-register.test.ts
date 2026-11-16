@@ -13,6 +13,7 @@ import {
   type DeclarationEmployer,
   type LaborRegisterPerson,
 } from '../src/index.ts';
+import { declarationGet, laborCheckRead } from '../src/declaration-export.ts';
 
 const employer: DeclarationEmployer = {
   name: 'Công ty TNHH Thử Nghiệm SME',
@@ -382,5 +383,433 @@ describe('HR_DECLARATION_MAX_PEOPLE cap & ExcelJS workbook output', () => {
     );
     expect(registerWb.worksheets[0]?.name).toBe('Sổ quản lý lao động');
     expect(String(registerWb.worksheets[0]?.getRow(3).getCell(1).value)).toContain('ludy-hr-labor-register/1');
+  });
+});
+
+describe('declarationGet and laborCheckRead cutoff attribution for same-month post-cutoff employments (#3372)', () => {
+  type Filter = { col: string; op: string; val: unknown };
+  const matchesFilters = (row: Record<string, unknown>, filters: readonly Filter[]): boolean =>
+    filters.every(({ col, op, val }) => {
+      const actual = row[col];
+      if (op === '=') return actual === val;
+      if (op === '<=') return typeof actual === 'string' && typeof val === 'string' && actual <= val;
+      if (op === 'in') return Array.isArray(val) && val.includes(actual);
+      return true;
+    });
+
+  const makeCtx = (tables: Record<string, Array<Record<string, unknown>>>) => {
+    const selectFrom = (table: string): unknown => {
+      const filters: Filter[] = [];
+      const orders: Array<{ col: string; dir: 'asc' | 'desc' }> = [];
+      const runRows = (): Array<Record<string, unknown>> => {
+        const filtered = (tables[table] ?? []).filter((r) => matchesFilters(r, filters));
+        if (orders.length === 0) return filtered;
+        return [...filtered].sort((a, b) => {
+          for (const { col, dir } of orders) {
+            const av = String(a[col] ?? '');
+            const bv = String(b[col] ?? '');
+            if (av !== bv) return dir === 'desc' ? bv.localeCompare(av) : av.localeCompare(bv);
+          }
+          return 0;
+        });
+      };
+      const q: unknown = new Proxy(
+        {},
+        {
+          get(_, prop) {
+            if (prop === 'where') {
+              return (col: string, op: string, val: unknown) => {
+                filters.push({ col, op, val });
+                return q;
+              };
+            }
+            if (prop === 'orderBy') {
+              return (col: string, dir: 'asc' | 'desc' = 'asc') => {
+                orders.push({ col, dir });
+                return q;
+              };
+            }
+            if (prop === 'execute') return async () => runRows();
+            if (prop === 'executeTakeFirst') return async () => runRows()[0];
+            return () => q;
+          },
+        },
+      );
+      return q;
+    };
+    return {
+      actor: { type: 'user', userId: 'owner-1', aal: 'aal2', sessionId: 's-1', mfaAt: Math.floor(Date.now() / 1000) },
+      orgId: 'org-1',
+      now: new Date('2026-06-30T00:00:00Z'),
+      trx: { selectFrom },
+      audit: () => {},
+      openMany: async (items: ReadonlyArray<{ sealed: string }>) => items.map((item) => item.sealed),
+    } as unknown as Parameters<typeof declarationGet.handler>[0];
+  };
+
+  it('excludes pay metadata and contract terms from employment rows effective after the employee cutoff', async () => {
+    const tables: Record<string, Array<Record<string, unknown>>> = {
+      'crove_kernel.legal_entity': [
+        { id: 'entity-1', org_id: 'org-1', name: employer.name, tax_code: employer.taxCode, is_default: true },
+      ],
+      'crove_hr.payroll_employee': [
+        {
+          id: 'emp-with-may',
+          org_id: 'org-1',
+          legal_entity_id: 'entity-1',
+          display_name: 'Trần Tháng Trước',
+          address: 'Hà Nội',
+          birth_date: '1991-03-10',
+          ended_on: null,
+          erased_at: null,
+          national_id_sealed: '001091000001',
+          tax_code_sealed: '8000000001',
+          insurance_number_sealed: '0123456781',
+        },
+        {
+          id: 'emp-june-only',
+          org_id: 'org-1',
+          legal_entity_id: 'entity-1',
+          display_name: 'Nguyễn Chỉ Tháng Sáu',
+          address: 'Hà Nội',
+          birth_date: '1992-07-20',
+          ended_on: null,
+          erased_at: null,
+          national_id_sealed: '001092000002',
+          tax_code_sealed: '8000000002',
+          insurance_number_sealed: '0123456782',
+        },
+        {
+          id: 'emp-null-legacy',
+          org_id: 'org-1',
+          legal_entity_id: 'entity-1',
+          display_name: 'Lê Dòng Cũ Null',
+          address: 'Hà Nội',
+          birth_date: '1993-08-15',
+          ended_on: null,
+          erased_at: null,
+          national_id_sealed: '001093000003',
+          tax_code_sealed: '8000000003',
+          insurance_number_sealed: '0123456783',
+        },
+      ],
+      'crove_hr.payroll_employment': [
+        { id: 'row-may-1', org_id: 'org-1', legal_entity_id: 'entity-1', employee_id: 'emp-with-may', effective_from: '2026-05-01', contract_type: 'fixed_term', base_wage: '12000000' },
+        { id: 'row-may-2', org_id: 'org-1', legal_entity_id: 'entity-1', employee_id: 'emp-with-may', effective_from: '2026-06-20', contract_type: 'fixed_term', base_wage: '18000000' },
+        { id: 'row-jun-1', org_id: 'org-1', legal_entity_id: 'entity-1', employee_id: 'emp-june-only', effective_from: '2026-06-01', contract_type: 'none', base_wage: '10000000' },
+        { id: 'row-jun-2', org_id: 'org-1', legal_entity_id: 'entity-1', employee_id: 'emp-june-only', effective_from: '2026-06-20', contract_type: 'fixed_term', base_wage: '15000000' },
+        { id: 'row-null-1', org_id: 'org-1', legal_entity_id: 'entity-1', employee_id: 'emp-null-legacy', effective_from: '2026-06-01', contract_type: 'fixed_term', base_wage: '11000000' },
+        { id: 'row-null-2', org_id: 'org-1', legal_entity_id: 'entity-1', employee_id: 'emp-null-legacy', effective_from: '2026-06-20', contract_type: 'fixed_term', base_wage: '14000000' },
+      ],
+      'crove_hr.payroll_run': [
+        { id: 'run-may', org_id: 'org-1', legal_entity_id: 'entity-1', status: 'approved', month: '2026-05' },
+        { id: 'run-jun', org_id: 'org-1', legal_entity_id: 'entity-1', status: 'approved', month: '2026-06' },
+      ],
+      'crove_hr.payroll_line': [
+        {
+          run_id: 'run-may',
+          org_id: 'org-1',
+          legal_entity_id: 'entity-1',
+          employee_id: 'emp-with-may',
+          employment_id: 'row-may-1',
+          kind: 'pay',
+          status: 'calculated',
+          inputs: { contractTermMonths: 12, allowances: [{ amount: '500000' }], otherRegularPay: '200000' },
+        },
+        {
+          run_id: 'run-jun',
+          org_id: 'org-1',
+          legal_entity_id: 'entity-1',
+          employee_id: 'emp-with-may',
+          employment_id: 'row-may-2',
+          kind: 'pay',
+          status: 'calculated',
+          inputs: { contractTermMonths: 6, allowances: [{ amount: '3000000' }], otherRegularPay: '900000' },
+        },
+        {
+          run_id: 'run-jun',
+          org_id: 'org-1',
+          legal_entity_id: 'entity-1',
+          employee_id: 'emp-june-only',
+          employment_id: 'row-jun-2',
+          kind: 'pay',
+          status: 'calculated',
+          inputs: { contractTermMonths: 6, allowances: [{ amount: '4000000' }], otherRegularPay: '800000' },
+        },
+        {
+          run_id: 'run-jun',
+          org_id: 'org-1',
+          legal_entity_id: 'entity-1',
+          employee_id: 'emp-null-legacy',
+          employment_id: null,
+          kind: 'pay',
+          status: 'calculated',
+          inputs: { allowances: [{ amount: '2500000' }], otherRegularPay: '600000' },
+        },
+      ],
+    };
+
+    const june10 = await declarationGet.handler(makeCtx(tables), { kind: 'labor_register', period: '2026-06-10' });
+    const june10Rows = june10.sheets[0]?.rows ?? [];
+    expect(june10Rows.find((r) => r.name === 'Trần Tháng Trước')).toMatchObject({
+      contractStartDate: '2026-05-01',
+      contractEndDate: '2027-04-30',
+      baseWage: '12000000.00',
+    });
+    expect(june10Rows.find((r) => r.name === 'Nguyễn Chỉ Tháng Sáu')).toMatchObject({
+      contractStartDate: '',
+      contractEndDate: '',
+      baseWage: '10000000.00',
+    });
+
+    const june25 = await declarationGet.handler(makeCtx(tables), { kind: 'labor_register', period: '2026-06-25' });
+    const june25Rows = june25.sheets[0]?.rows ?? [];
+    expect(june25Rows.find((r) => r.name === 'Trần Tháng Trước')).toMatchObject({
+      baseWage: '18000000.00',
+      contractStartDate: '2026-05-01',
+      contractEndDate: '2026-10-31',
+    });
+    expect(june25Rows.find((r) => r.name === 'Nguyễn Chỉ Tháng Sáu')).toMatchObject({
+      contractStartDate: '2026-06-20',
+      contractEndDate: '2026-12-19',
+      baseWage: '15000000.00',
+    });
+
+    const pliOpen = await declarationGet.handler(makeCtx(tables), { kind: '01pli', period: '2026-H1' });
+    const pliOpenRows = pliOpen.sheets[1]?.rows ?? [];
+    expect(pliOpenRows.find((r) => r.name === 'Trần Tháng Trước')).toMatchObject({
+      baseWage: '18000000.00',
+      allowance: '3000000.00',
+      otherAmounts: '900000.00',
+    });
+    expect(pliOpenRows.find((r) => r.name === 'Lê Dòng Cũ Null')).toMatchObject({
+      baseWage: '14000000.00',
+      allowance: '2500000.00',
+      otherAmounts: '600000.00',
+    });
+
+    for (const emp of tables['crove_hr.payroll_employee']!) {
+      emp.ended_on = '2026-06-10';
+    }
+    const pliEnded = await declarationGet.handler(makeCtx(tables), { kind: '01pli', period: '2026-H1' });
+    const pliEndedRows = pliEnded.sheets[1]?.rows ?? [];
+    expect(pliEndedRows.find((r) => r.name === 'Trần Tháng Trước')).toMatchObject({
+      endedOn: '2026-06-10',
+      baseWage: '12000000.00',
+      allowance: '500000.00',
+      otherAmounts: '200000.00',
+    });
+    expect(pliEndedRows.find((r) => r.name === 'Nguyễn Chỉ Tháng Sáu')).toMatchObject({
+      endedOn: '2026-06-10',
+      baseWage: '10000000.00',
+      allowance: '',
+      otherAmounts: '',
+    });
+    expect(pliEndedRows.find((r) => r.name === 'Lê Dòng Cũ Null')).toMatchObject({
+      endedOn: '2026-06-10',
+      baseWage: '11000000.00',
+      allowance: '',
+      otherAmounts: '',
+    });
+
+    const checkEnded = await laborCheckRead.handler(makeCtx(tables) as unknown as Parameters<typeof laborCheckRead.handler>[0], {
+      kind: '01pli',
+      period: '2026-H1',
+    });
+    const checkWithMay = checkEnded.employees.find((e) => e.employeeId === 'emp-with-may');
+    expect(checkWithMay).toMatchObject({ contractKind: 'fixed_term', contractStartDate: '2026-05-01', contractTermMonths: 12 });
+    const checkJuneOnly = checkEnded.employees.find((e) => e.employeeId === 'emp-june-only');
+    expect(checkJuneOnly).toMatchObject({ contractKind: 'none', contractStartDate: null, contractTermMonths: null });
+  });
+
+  it('prefers saved Stage 2b-3 contract and probation columns over payroll_line inputs and works without pay runs', async () => {
+    const tables: Record<string, Array<Record<string, unknown>>> = {
+      'crove_kernel.legal_entity': [
+        { id: 'entity-1', org_id: 'org-1', name: employer.name, tax_code: employer.taxCode, is_default: true },
+      ],
+      'crove_hr.payroll_employee': [
+        {
+          id: 'emp-saved-priority',
+          org_id: 'org-1',
+          legal_entity_id: 'entity-1',
+          display_name: 'Phạm Lưu Trữ Trước Canary',
+          address: 'Hà Nội',
+          birth_date: '1990-01-15',
+          ended_on: null,
+          erased_at: null,
+          national_id_sealed: '000000000101',
+          tax_code_sealed: '8000000101',
+          insurance_number_sealed: '0123456101',
+        },
+        {
+          id: 'emp-explicit-end',
+          org_id: 'org-1',
+          legal_entity_id: 'entity-1',
+          display_name: 'Đỗ Chỉ Ngày Kết Thúc Canary',
+          address: 'Hà Nội',
+          birth_date: '1992-05-20',
+          ended_on: null,
+          erased_at: null,
+          national_id_sealed: '000000000102',
+          tax_code_sealed: '8000000102',
+          insurance_number_sealed: '0123456102',
+        },
+        {
+          id: 'emp-probation',
+          org_id: 'org-1',
+          legal_entity_id: 'entity-1',
+          display_name: 'Lê Thử Việc Canary',
+          address: 'Hà Nội',
+          birth_date: '1995-09-09',
+          ended_on: null,
+          erased_at: null,
+          national_id_sealed: '000000000103',
+          tax_code_sealed: '8000000103',
+          insurance_number_sealed: '0123456103',
+        },
+        {
+          id: 'emp-uncertain-recovered',
+          org_id: 'org-1',
+          legal_entity_id: 'entity-1',
+          display_name: 'Vũ Gia Hạn Sau Thiếu Kỳ Canary',
+          address: 'Hà Nội',
+          birth_date: '1993-04-04',
+          ended_on: null,
+          erased_at: null,
+          national_id_sealed: '000000000104',
+          tax_code_sealed: '8000000104',
+          insurance_number_sealed: '0123456104',
+        },
+      ],
+      'crove_hr.payroll_employment': [
+        {
+          id: 'row-saved-1',
+          org_id: 'org-1',
+          legal_entity_id: 'entity-1',
+          employee_id: 'emp-saved-priority',
+          effective_from: '2026-01-01',
+          contract_type: 'fixed_term',
+          base_wage: '12000000',
+          term_months: 6,
+          contract_end_on: '2026-06-30',
+          fixed_term_sequence: 2,
+        },
+        {
+          id: 'row-saved-2',
+          org_id: 'org-1',
+          legal_entity_id: 'entity-1',
+          employee_id: 'emp-saved-priority',
+          effective_from: '2026-04-01',
+          contract_type: 'fixed_term',
+          base_wage: '14000000',
+        },
+        {
+          id: 'row-end-only',
+          org_id: 'org-1',
+          legal_entity_id: 'entity-1',
+          employee_id: 'emp-explicit-end',
+          effective_from: '2026-02-01',
+          contract_type: 'fixed_term',
+          base_wage: '11000000',
+          term_months: null,
+          contract_end_on: '2026-06-25',
+          fixed_term_sequence: 1,
+        },
+        {
+          id: 'row-prob',
+          org_id: 'org-1',
+          legal_entity_id: 'entity-1',
+          employee_id: 'emp-probation',
+          effective_from: '2026-05-01',
+          contract_type: 'indefinite',
+          base_wage: '10000000',
+          probation_role_tier: 'college_or_above',
+          probation_end_on: '2026-06-15',
+          probation_wage: '8500000',
+        },
+        {
+          id: 'row-rec-1',
+          org_id: 'org-1',
+          legal_entity_id: 'entity-1',
+          employee_id: 'emp-uncertain-recovered',
+          effective_from: '2025-01-01',
+          contract_type: 'fixed_term',
+          base_wage: '10000000',
+        },
+        {
+          id: 'row-rec-2',
+          org_id: 'org-1',
+          legal_entity_id: 'entity-1',
+          employee_id: 'emp-uncertain-recovered',
+          effective_from: '2026-01-01',
+          contract_type: 'fixed_term',
+          base_wage: '13000000',
+          term_months: 12,
+          contract_end_on: '2026-12-31',
+          fixed_term_sequence: 2,
+        },
+      ],
+      'crove_hr.payroll_run': [{ id: 'run-apr', org_id: 'org-1', legal_entity_id: 'entity-1', status: 'approved', month: '2026-04' }],
+      'crove_hr.payroll_line': [
+        {
+          run_id: 'run-apr',
+          org_id: 'org-1',
+          legal_entity_id: 'entity-1',
+          employee_id: 'emp-saved-priority',
+          employment_id: 'row-saved-1',
+          kind: 'pay',
+          status: 'calculated',
+          inputs: { contractTermMonths: 12, allowances: [], otherRegularPay: '0' },
+        },
+      ],
+    };
+
+    const doc = await declarationGet.handler(makeCtx(tables), { kind: 'labor_register', period: '2026-06-05' });
+    const rows = doc.sheets[0]?.rows ?? [];
+    expect(rows.find((r) => r.name === 'Phạm Lưu Trữ Trước Canary')).toMatchObject({
+      contractStartDate: '2026-01-01',
+      contractEndDate: '2026-06-30',
+      baseWage: '14000000.00',
+    });
+    expect(rows.find((r) => r.name === 'Đỗ Chỉ Ngày Kết Thúc Canary')).toMatchObject({
+      contractStartDate: '2026-02-01',
+      contractEndDate: '2026-06-25',
+    });
+    expect(rows.find((r) => r.name === 'Vũ Gia Hạn Sau Thiếu Kỳ Canary')).toMatchObject({
+      contractStartDate: '2026-01-01',
+      contractEndDate: '2026-12-31',
+    });
+
+    const check = await laborCheckRead.handler(makeCtx(tables) as unknown as Parameters<typeof laborCheckRead.handler>[0], {
+      kind: 'labor_register',
+      period: '2026-06-05',
+    });
+    expect(check.employees.find((e) => e.employeeId === 'emp-saved-priority')).toMatchObject({
+      contractStartDate: '2026-01-01',
+      contractEndDate: '2026-06-30',
+      contractTermMonths: 6,
+      fixedTermSequence: 2,
+    });
+    expect(check.employees.find((e) => e.employeeId === 'emp-explicit-end')).toMatchObject({
+      contractEndDate: '2026-06-25',
+      contractTermMonths: null,
+      fixedTermSequence: 1,
+    });
+    expect(check.employees.find((e) => e.employeeId === 'emp-probation')).toMatchObject({
+      contractKind: 'indefinite',
+      contractEndDate: null,
+      probation: {
+        roleTier: 'college_or_above',
+        startDate: '2026-05-01',
+        endDate: '2026-06-15',
+        wage: '8500000',
+      },
+    });
+    expect(check.employees.find((e) => e.employeeId === 'emp-uncertain-recovered')).toMatchObject({
+      contractStartDate: '2026-01-01',
+      contractEndDate: '2026-12-31',
+      contractTermMonths: 12,
+      fixedTermSequence: 2,
+    });
   });
 });
