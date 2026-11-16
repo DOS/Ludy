@@ -11914,6 +11914,7 @@ export const vi = {
         create_link: 'Tạo liên kết xem báo giá đã gửi',
         revoke_link: 'Thu hồi liên kết xem báo giá',
         mail_data: 'Tạo liên kết cho thư báo giá đang gửi',
+        mail_document: 'Đọc báo giá đã gửi để đính kèm bản PDF vào thư',
         defaults: 'Xem giá trị mặc định và giá cũ của khách khi lập báo giá',
         delete_draft: 'Xóa báo giá nháp',
         document: 'Đọc báo giá cùng thông tin bên bán và bên mua để làm PDF',
