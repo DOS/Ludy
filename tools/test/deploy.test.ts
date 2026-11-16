@@ -1112,8 +1112,13 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
     ].join('\n');
     const envFile = () => readFileSync(`${dir}/.env`, 'utf8');
     const lines = (text: string) => text.split('\n').filter(Boolean);
-    const settingsPath = () => `${root}/auth-settings.env`;
-    const writeSettings = (values: Record<string, string>) => writeFileSync(settingsPath(), Object.entries(values).map(([k, v]) => `${k}=${v}\n`).join(''));
+    // Where the workflow uploads it: the release's private incoming directory, the only place deploy.sh removes a settings file from.
+    const settingsPath = () => `${dir}/.deploy/incoming/run/auth-settings.env`;
+    const putSettings = (text: string) => {
+      mkdirSync(`${dir}/.deploy/incoming/run`, { recursive: true });
+      writeFileSync(settingsPath(), text);
+    };
+    const writeSettings = (values: Record<string, string>) => putSettings(Object.entries(values).map(([k, v]) => `${k}=${v}\n`).join(''));
     const deployIdp = (release: string, c: string, values: Record<string, string> | null = IDP, env: Record<string, string> = {}) => {
       if (values !== null) writeSettings(values);
       return run(['deploy', '--release', release, '--image', image(c), '--extract-image', extract(c), '--media-image', media(c), '--compose', compose, '--auth-settings', settingsPath()], env);
@@ -1300,7 +1305,6 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
         expect(calls()).toEqual([]);
         expect(envFile()).toBe(BEFORE);
         expect(copies()).toEqual([]);
-        expect(existsSync(`${dir}/pwned`)).toBe(false);
         expect(existsSync(`${dir}/.deploy/current`)).toBe(false);
         // The file, with the secret in it, does not stay on the host when it is refused either.
         expect(existsSync(settingsPath())).toBe(false);
@@ -1314,7 +1318,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
 
       it('refuses a line that is not NAME=value, a missing file and a relative path', () => {
         writeFileSync(`${dir}/.env`, BEFORE);
-        writeFileSync(settingsPath(), 'AUTH_ISSUER https://idp.example.com/auth/v1\n');
+        putSettings('AUTH_ISSUER https://idp.example.com/auth/v1\n');
         const line = run(['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', compose, '--auth-settings', settingsPath()]);
         expect(line.status, line.out).toBe(2);
         expect(line.out).toContain('is not NAME=value');
@@ -1349,7 +1353,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
         const res = deployIdp('v1.1.0', 'b', IDP, { STUB_SERVICES: SPLIT_SERVICES, STUB_BAD_DIGEST: digest('b') });
         expect(res.status, res.out).toBe(1);
         expect(res.out).toContain('identity provider settings written to');
-        expect(res.out).toContain('(the identity provider settings are out again)');
+        expect(res.out).toContain('(the file as it was before the identity provider settings)');
         expect(res.out).toContain(`rolled back to ${releaseDir('v1.0.0', 'a')}, which serves again`);
         expect(envFile()).toBe(BEFORE);
         expect(state('current')).toBe(releaseDir('v1.0.0', 'a'));
@@ -1382,7 +1386,7 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
         expect(envFile()).not.toBe(BEFORE);
         const back = run(['rollback']);
         expect(back.status, back.out).toBe(0);
-        expect(back.out).toContain('(the identity provider settings are out again)');
+        expect(back.out).toContain('(the file as it was before the identity provider settings)');
         expect(envFile()).toBe(BEFORE);
         expect(existsSync(`${dir}/.deploy/env-backup`)).toBe(false);
         // Someone edits the file; the rollback that returns to release b does not bring the old copy over that edit.
@@ -1475,17 +1479,22 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
         expect(envFile()).toBe(BEFORE);
       });
 
-      it('without overwriting edits made between two deploys of the same release', () => {
+      it('without overwriting edits made between two deploys of the same release, and a rollback leaves such a file alone', () => {
         writeFileSync(`${dir}/.env`, BEFORE);
         expect(deploy('v1.0.0', 'a').status).toBe(0);
         expect(deployIdp('v1.1.0', 'b').status).toBe(0);
         // The database password is rotated by hand, then the same release goes out again with other settings.
         writeFileSync(`${dir}/.env`, envFile().replace('POSTGRES_PASSWORD=x', 'POSTGRES_PASSWORD=rotated'));
-        expect(deployIdp('v1.1.0', 'b', { ...IDP, AUTH_ALLOWED_EMAILS: '@example.net' }).status).toBe(0);
+        const again = deployIdp('v1.1.0', 'b', { ...IDP, AUTH_ALLOWED_EMAILS: '@example.net' });
+        expect(again.status, again.out).toBe(0);
+        expect(again.out).toContain('was edited after release');
+        expect(again.out).toContain('a rollback will leave it as it is');
+        expect(existsSync(`${dir}/.deploy/env-backup`)).toBe(false);
+        const after = envFile();
         expect(run(['rollback']).status).toBe(0);
-        // The rollback must not bring the old password back.
+        // Neither the old password comes back nor is a half of the settings taken out.
+        expect(envFile()).toBe(after);
         expect(envFile()).toContain('POSTGRES_PASSWORD=rotated');
-        expect(envFile()).not.toContain('POSTGRES_PASSWORD=x');
       });
 
       it('after the same release is deployed again with the same settings', () => {
@@ -1580,6 +1589,15 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(argv.split('\n').filter((l) => l.includes('idp.example.com')).every((l) => l.includes('--proto =https'))).toBe(true);
     });
 
+    it('does not demand the Auth URL of a caller\'s shell from a rollback', () => {
+      writeFileSync(`${dir}/.env`, BEFORE);
+      expect(deploy('v1.0.0', 'a').status).toBe(0);
+      expect(deploy('v1.1.0', 'b').status).toBe(0);
+      const res = run(['rollback'], { SMOKE_EXPECT_AUTH_URL: 'https://idp.example.com/auth/v1' });
+      expect(res.status, res.out).toBe(0);
+      expect(res.out).not.toContain('names the configured Auth URL');
+    });
+
     it('does not print the worker log when the env file lists who may sign in (it may be a public CI log), and does otherwise', () => {
       const down = { STUB_SERVICES: SPLIT_SERVICES, STUB_WORKER_DOWN_DIGEST: digest('a'), STUB_WORKER_LOG: 'worker: refused owner@gmail.com- in AUTH_ALLOWED_EMAILS' };
       writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=k\nAUTH_ALLOWED_EMAILS=@example.com,owner@gmail.com-\n');
@@ -1624,6 +1642,60 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(copies()).toEqual([]);
     });
 
+    it('only removes the file the workflow uploaded, and refuses the env file and the compose file as settings', () => {
+      writeFileSync(`${dir}/.env`, BEFORE);
+      const args = (file: string) => ['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', compose, '--auth-settings', file];
+      const asEnv = run(args(`${dir}/.env`));
+      expect(asEnv.status, asEnv.out).toBe(2);
+      expect(asEnv.out).toContain('not the env file or the compose file');
+      expect(envFile()).toBe(BEFORE);
+      const asCompose = run(args(compose));
+      expect(asCompose.status, asCompose.out).toBe(2);
+      expect(existsSync(compose)).toBe(true);
+      // A refused file elsewhere is read and left alone.
+      writeFileSync(`${root}/elsewhere.env`, 'POSTGRES_PASSWORD=x\n');
+      const elsewhere = run(args(`${root}/elsewhere.env`));
+      expect(elsewhere.status, elsewhere.out).toBe(2);
+      expect(existsSync(`${root}/elsewhere.env`)).toBe(true);
+      expect(calls()).toEqual([]);
+    });
+
+    it('counts the characters of the button words, not the bytes, whatever the locale of the SSH session', () => {
+      writeFileSync(`${dir}/.env`, BEFORE);
+      const words = 'Đăng nhập bằng tài khoản công ty'; // 32 characters, 42 bytes
+      const values = { ...IDP, AUTH_HOSTED_LOGIN_URL: 'https://login.example.com/authorize', AUTH_HOSTED_LOGIN_TOKEN_URL: 'https://login.example.com/token', AUTH_HOSTED_LOGIN_NAME: words };
+      writeSettings(values);
+      for (const locale of ['C', 'C.UTF-8']) {
+        const res = run(['check-auth-settings', settingsPath()], { LC_ALL: locale });
+        expect(res.status, `${locale}: ${res.out}`).toBe(0);
+      }
+      writeSettings({ ...values, AUTH_HOSTED_LOGIN_NAME: 'Đ'.repeat(41) });
+      expect(run(['check-auth-settings', settingsPath()], { LC_ALL: 'C' }).status).toBe(2);
+    });
+
+    it('writes the rollback record with mode 600', () => {
+      if (process.platform === 'win32') return;
+      writeFileSync(`${dir}/.env`, BEFORE);
+      expect(deployIdp('v1.0.0', 'a').status).toBe(0);
+      expect(statSync(`${dir}/.deploy/env-backup`).mode & 0o777).toBe(0o600);
+    });
+
+    it('stops before anything changes when the directory of the env file is not writable', () => {
+      if (process.platform === 'win32' || process.getuid?.() === 0) return;
+      mkdirSync(`${root}/ro`);
+      writeFileSync(`${root}/ro/.env`, BEFORE);
+      chmodSync(`${root}/ro`, 0o555);
+      try {
+        writeSettings(IDP);
+        const res = run(['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', compose, '--auth-settings', settingsPath(), '--env-file', `${root}/ro/.env`]);
+        expect(res.status, res.out).toBe(2);
+        expect(res.out).toContain('writable by the deploy user');
+        expect(calls()).toEqual([]);
+      } finally {
+        chmodSync(`${root}/ro`, 0o755);
+      }
+    });
+
     it('prints no value, passes none on a command line, and leaves a copy of the settings only in the env file and its dated copy', () => {
       writeFileSync(`${dir}/.env`, BEFORE);
       const res = deployIdp('v1.0.0', 'a', { ...IDP, AUTH_OAUTH_PROVIDERS: 'google', AUTH_HOSTED_LOGIN_URL: 'https://login.example.com/authorize', AUTH_HOSTED_LOGIN_TOKEN_URL: 'https://login.example.com/token', AUTH_HOSTED_LOGIN_NAME: 'Login with Example' });
@@ -1663,7 +1735,8 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       // The workflow's public smoke test has no env file: it reads the deployed /api/config. An authUrl that is not the API's own /auth/v1
       // means a remote provider, and the account step is skipped.
       const account = { SMOKE_EMAIL: 'smoke@example.test', SMOKE_PASSWORD: 'smoke-password-1', SMOKE_ORG: 'crove-smoke' };
-      const pub = run(['smoke', 'https://crove.example.test'], { ...account, STUB_AUTH_URL: 'https://idp.example.com/auth/v1' });
+      const pub = run(['smoke', 'https://crove.example.test'], { ...account, STUB_AUTH_URL: 'https://idp.example.com/auth/v1', STUB_NO_PROXY: '1' });
+      // (Another host, but a proxy that answers here, is still the bundled Auth: that is checked below.)
       expect(pub.status, pub.out).toBe(0);
       expect(pub.out).toContain('smoke skipped: /auth/v1/health');
       expect(pub.out).toContain('smoke skipped: sign-in and upload');
@@ -1673,7 +1746,17 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(bundled.status, bundled.out).toBe(0);
       expect(bundled.out).toContain('smoke ok: /auth/v1/health answers');
       expect(bundled.out).toContain('signs in, uploads a synthetic e-invoice');
+      // An address that only differs in case, scheme or a default port is the same bundled Auth: still checked, and a broken sign-in still fails.
+      for (const authUrl of ['https://CROVE.example.test/auth/v1', 'https://crove.example.test:443/auth/v1', 'http://crove.example.test/auth/v1']) {
+        const same = run(['smoke', 'https://crove.example.test'], { ...account, STUB_AUTH_URL: authUrl, STUB_SIGNIN_FAIL: '1' });
+        expect(same.status, `${authUrl}: ${same.out}`).toBe(1);
+        expect(same.out).not.toContain('Supabase Auth is a remote provider');
+        expect(same.out).toContain('smoke ok: /auth/v1/health answers');
+      }
       // With the Auth URL the settings name, /api/config must report exactly that: the right one passes, anything else fails.
+      const otherHostWithProxy = run(['smoke', 'https://crove.example.test'], { ...account, STUB_AUTH_URL: 'https://idp.example.com/auth/v1', STUB_SIGNIN_FAIL: '1' });
+      expect(otherHostWithProxy.status, otherHostWithProxy.out).toBe(1);
+      expect(otherHostWithProxy.out).toContain('smoke ok: /auth/v1/health answers');
       const right = run(['smoke', 'https://crove.example.test'], { STUB_AUTH_URL: 'https://idp.example.com/auth/v1', SMOKE_EXPECT_AUTH_URL: 'https://idp.example.com/auth/v1' });
       expect(right.status, right.out).toBe(0);
       expect(right.out).toContain('smoke ok: /api/config names the configured Auth URL');

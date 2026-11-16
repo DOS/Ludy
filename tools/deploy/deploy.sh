@@ -280,6 +280,14 @@ smoke_auth_url() {
   printf '%s' "${BASH_REMATCH[1]}"
 }
 
+# smoke_host <address>: its host and port, lower case, without the scheme, a default port or the path.
+smoke_host() {
+  local rest="${1#*://}"
+  rest="${rest%%/*}"
+  rest="${rest,,}"
+  printf '%s' "${rest%:443}"
+}
+
 # The Auth URL the identity provider settings of this deploy name; set by do_deploy, or by the workflow's public smoke test through its
 # environment (SMOKE_EXPECT_AUTH_URL). When set, /api/config must report exactly that address, so settings that did not take (an old
 # container, a stale env line) fail the smoke test instead of passing on the proxy checks being skipped.
@@ -310,7 +318,11 @@ smoke() {
   # from /api/config, whose authUrl is then not this API's own /auth/v1.
   auth_url="$(smoke_auth_url "$base" 2>/dev/null)" || auth_url=''
   if smoke_env_has_no_proxy; then remote=1
-  elif [ -z "${ENV_FILE:-}" ] && [ -n "$auth_url" ] && [ "$auth_url" != "$base/auth/v1" ]; then remote=1
+  elif [ -z "${ENV_FILE:-}" ] && [ -n "$auth_url" ] && [ "$auth_url" != "$base/auth/v1" ] && [ "$(smoke_host "$auth_url")" != "$(smoke_host "$base")" ] &&
+    ! smoke_body "$base/auth/v1/health" ''; then
+    # Another host, and no proxy answering here: a remote identity provider. (The address only differing in case, scheme or a default port,
+    # or a proxy that answers, is the bundled Auth as before.)
+    remote=1
   fi
   if [ -n "$SMOKE_EXPECT_AUTH_URL" ]; then
     remote=1
@@ -946,8 +958,10 @@ auth_origin() {
 # A button label: at most 40 characters (the kernel's limit; bytes on a host without a UTF-8 locale), no control character, no quote, backslash, dollar, backtick,
 # `#`, `=` or other character a shell, a comment or compose's interpolation could act on, and no space at either end.
 auth_name_ok() {
-  local value="$1" bad=$'\'"\\$`#<>;&|(){}!*?~%=[]' i
-  [ -n "$value" ] && [ "${#value}" -le 40 ] || return 1
+  # Bytes, whatever the host's locale (an SSH session may have none): characters are the bytes that are not UTF-8 continuation bytes.
+  local LC_ALL=C value="$1" bad=$'\'"\\$`#<>;&|(){}!*?~%=[]' i chars
+  chars="${value//[$'\x80'-$'\xbf']/}"
+  [ -n "$value" ] && [ "${#chars}" -le 40 ] && [ "${#value}" -le 160 ] || return 1
   [[ ! "$value" =~ [[:cntrl:]] ]] || return 1
   [[ "$value" != [[:space:]]* && "$value" != *[[:space:]] ]] || return 1
   for ((i = 0; i < ${#bad}; i++)); do
@@ -1099,7 +1113,7 @@ env_digest() {
 restore_env() {
   [ "$ENV_CHANGED" = 1 ] || return 0
   if { cat "$ENV_BACKUP" >"$ENV_FILE" && cmp -s "$ENV_BACKUP" "$ENV_FILE"; }; then
-    log "restored $ENV_FILE from $ENV_BACKUP (the identity provider settings are out again)"
+    log "restored $ENV_FILE from $ENV_BACKUP (the file as it was before the identity provider settings)"
     ENV_CHANGED=0
     return 0
   fi
@@ -1147,7 +1161,7 @@ undo_env_restore() {
   [ -n "$ENV_UNDO" ] || return 0
   if { cat "$ENV_UNDO" >"$ENV_FILE" && cmp -s "$ENV_UNDO" "$ENV_FILE"; }; then
     log "put the identity provider settings back in $ENV_FILE (the rollback failed)"
-    write_state env-backup "$ENV_RECORD"
+    (umask 077; write_state env-backup "$ENV_RECORD")
     rm -f "$ENV_UNDO"
   else
     err "the rollback failed and the env file could not be put back as it was: the settings are in $ENV_UNDO (mode 600); copy that file over $ENV_FILE"
@@ -1415,12 +1429,19 @@ do_deploy() {
   # The identity provider settings are checked before anything is pulled or changed (#2704): a bad value stops the deploy here.
   if [ -n "$auth_settings" ]; then
     valid_path "$auth_settings" || die "$EXIT_USAGE" "--auth-settings must be an absolute path without spaces: '$auth_settings'"
-    # Read once and removed whatever the outcome: the secret in it need not stay on the host.
+    # Never the env file or the compose file by mistake (it would be read as settings, and removed below).
+    if [ "$auth_settings" -ef "${ENV_FILE:-$DEPLOY_DIR/.env}" ] || [ "$auth_settings" -ef "$compose" ]; then
+      die "$EXIT_USAGE" '--auth-settings is the settings file the workflow uploads, not the env file or the compose file; nothing was changed'
+    fi
+    # The file the workflow uploaded (in its private incoming directory) is read once and removed whatever the outcome: the secret in it
+    # need not stay on the host. Any other file named here is read and left alone.
+    local incoming=0
+    case "$auth_settings" in "$DEPLOY_DIR"/.deploy/incoming/*) incoming=1 ;; esac
     if ! auth_settings_load "$auth_settings"; then
-      rm -f "$auth_settings"
+      if ((incoming)); then rm -f "$auth_settings"; fi
       die "$EXIT_USAGE" 'the identity provider settings are not valid (see above); nothing was changed'
     fi
-    rm -f "$auth_settings"
+    if ((incoming)); then rm -f "$auth_settings"; fi
   fi
   read_registry_password
   preflight
@@ -1540,10 +1561,15 @@ do_deploy() {
     # (the earlier one would put the old values over them).
     local first_rel='' first_path='' first_digest=''
     read -r first_rel first_path first_digest < <(read_state env-backup) || true
-    if [ "$first_rel" = "$name" ] && [ "$first_digest" = "$ENV_PRE_DIGEST" ] && valid_path "$first_path" && [ -f "$first_path" ]; then
-      write_state env-backup "$name $first_path $ENV_WRITTEN_DIGEST"
+    if [ "$first_rel" != "$name" ]; then
+      (umask 077; write_state env-backup "$name $ENV_BACKUP $ENV_WRITTEN_DIGEST")
+    elif [ "$first_digest" = "$ENV_PRE_DIGEST" ] && valid_path "$first_path" && [ -f "$first_path" ]; then
+      (umask 077; write_state env-backup "$name $first_path $ENV_WRITTEN_DIGEST")
     else
-      write_state env-backup "$name $ENV_BACKUP $ENV_WRITTEN_DIGEST"
+      # Edited in between: neither copy can be put back without losing either those edits or the settings of the first deploy. A rollback
+      # leaves the file as it is, as it does for any edited file.
+      rm -f "$(state_dir)/env-backup"
+      log "$ENV_FILE was edited after release $name first wrote the identity provider settings: a rollback will leave it as it is (the copy from before them is $first_path)"
     fi
   elif [ "$(read_state env-backup | cut -d' ' -f1)" != "$name" ]; then
     rm -f "$(state_dir)/env-backup"
@@ -1555,6 +1581,8 @@ do_deploy() {
 }
 
 do_rollback() {
+  # A rollback goes back to settings without the remote provider: no Auth URL of a caller's shell is demanded of it.
+  SMOKE_EXPECT_AUTH_URL=''
   while (($# > 0)); do
     common_option "$@"
     ((OPT_SHIFT > 0)) || die "$EXIT_USAGE" "unknown option $1"
