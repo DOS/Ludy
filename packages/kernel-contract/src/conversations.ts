@@ -39,6 +39,8 @@ export const CONVERSATION_LIST_MAX = 100;
 export const CONVERSATION_SEARCH_MAX = 100;
 // The posts one list asks about at most (the post page lists the threads of all its channels).
 export const CONVERSATION_POSTS_MAX = 20;
+// The posts one post-count read asks about at most: a page of the post list or a month of the calendar.
+export const CONVERSATION_POST_COUNTS_MAX = 200;
 // A message shown in a list is cut to this many characters.
 export const CONVERSATION_PREVIEW_CHARS = 140;
 // A customer's image stored with its message (CV5c, #2357): at most this many a message, this many bytes each, and only these types (read
@@ -411,6 +413,16 @@ export const zConversationCounted = z.strictObject({
   unread: z.number().int(),
 });
 export type ConversationCounted = z.infer<typeof zConversationCounted>;
+
+// The comment threads still New (nobody has answered or resolved them) under each of the posts a screen shows (#3298): one grouped read for the whole
+// page of the post list or the calendar. Only a post with at least one is listed; a count carries no text and no name.
+export const zConversationPostCounts = z.strictObject({
+  posts: z.array(z.strictObject({ connectionId: zId, externalPostId: z.string().min(1).max(300) })).min(1).max(CONVERSATION_POST_COUNTS_MAX),
+});
+export const zConversationPostCounted = z.strictObject({
+  counts: z.array(z.strictObject({ connectionId: zId, externalPostId: z.string(), unanswered: z.number().int().min(1) })),
+});
+export type ConversationPostCounted = z.infer<typeof zConversationPostCounted>;
 
 export const zConversationGet = z.strictObject({ conversationId: zId });
 export const zConversationReply = z.strictObject({

@@ -13,6 +13,7 @@ export * from './saved-views.ts';
 export * from './today-mail.ts';
 export * from './today-weekly.ts';
 export * from './saved-view-filter.ts';
+export * from './task-filter.ts';
 export * from './extraction.ts';
 export * from './offboarding.ts';
 export * from './personal-data.ts';

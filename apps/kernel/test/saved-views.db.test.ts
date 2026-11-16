@@ -26,6 +26,8 @@ import {
   kernelQueries,
   memberIs,
   sortTerms,
+  taskFields,
+  taskSortColumns,
   textContains,
   upsertIdentity,
   valueIs,
@@ -427,10 +429,27 @@ suite('saved views on PostgreSQL (CRM K3, #2227)', () => {
       const r = await sql<{ name: string }>`SELECT p.name FROM sv_party p WHERE ${where} ORDER BY p.name COLLATE "C"`.execute(adminDb);
       return r.rows.map((x) => x.name);
     };
+    let taskOrg!: Org;
+    let POS1 = '';
+    let POS2 = '';
+    const tasks = async (filters: FilterAst, who = ctx, isOwner = false) => {
+      const where = filterCondition('kernel.task', filters, taskFields({ isOwner }), who);
+      const r = await sql<{ title: string }>`SELECT t.title FROM sv_task t WHERE t.org_id = ${taskOrg.orgId}::uuid AND ${where} ORDER BY t.title COLLATE "C"`.execute(adminDb);
+      return r.rows.map((x) => x.title);
+    };
     const all = (...conditions: FilterAst['all']): FilterAst => ({ v: 1, all: conditions });
 
     beforeAll(async () => {
+      taskOrg = await org();
+      POS1 = randomUUID();
+      POS2 = randomUUID();
       await admin(async (c) => {
+        await c.query(
+          `INSERT INTO crove_kernel.position (org_id, id, title, module, role_key, holder_user_id) VALUES
+            ($1, $2, 'Kế toán trưởng', 'finance', 'lead', $3),
+            ($1, $4, 'Chuyên viên', 'projects', 'member', $5)`,
+          [taskOrg.orgId, POS1, taskOrg.owner, POS2, taskOrg.lan],
+        );
         await c.query(`CREATE TABLE sv_deal (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), title text NOT NULL, stage_id uuid, status text, owner_id uuid, party_id uuid,
           amount numeric(20,2) NOT NULL, expected_close date, created_at timestamptz NOT NULL, closed_at timestamptz)`);
         await c.query(`INSERT INTO sv_deal (title, stage_id, status, owner_id, party_id, amount, expected_close, created_at, closed_at) VALUES
@@ -445,6 +464,14 @@ suite('saved views on PostgreSQL (CRM K3, #2227)', () => {
           ('Công ty Nguyễn', 'organization', 'kinhdoanh@example.com', '0912345678', '0101234567', '2026-11-09T00:00:00Z', true),
           ('Trần Văn B', 'person', NULL, '0903 000 000', NULL, '2026-10-01T00:00:00Z', false),
           ('Lê Thị C', 'person', '', '   ', '', '2026-11-10T01:00:00Z', false)`);
+        await c.query(`CREATE TABLE sv_task (org_id uuid NOT NULL, id uuid PRIMARY KEY DEFAULT gen_random_uuid(), title text NOT NULL, description text,
+          status text NOT NULL, assignee_position_id uuid, due timestamptz, tainted boolean NOT NULL, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL)`);
+        await c.query(`INSERT INTO sv_task (org_id, title, description, status, assignee_position_id, due, tainted, created_at, updated_at) VALUES
+          ($1, 'Báo cáo thuế Q4', 'Nộp tờ khai 50%', 'todo', $2, '2026-11-05T10:00:00Z', false, '2026-11-08T05:00:00Z', '2026-11-09T00:00:00Z'),
+          ($1, 'Chốt công nợ Trần', NULL, 'in_progress', $3, '2026-11-12T10:00:00Z', false, '2026-10-01T00:00:00Z', '2026-10-15T00:00:00Z'),
+          ($1, 'Đề xuất AI Nguyễn', 'Tạo bởi Vy', 'todo', NULL, NULL, true, '2026-11-10T04:00:00Z', '2026-11-10T04:30:00Z'),
+          ($1, 'Hoàn tất hóa đơn', NULL, 'done', $2, '2026-11-01T10:00:00Z', false, '2026-09-01T00:00:00Z', '2026-11-01T00:00:00Z'),
+          ($1, 'Đã hủy đơn hàng', NULL, 'cancelled', $3, '2026-12-31T10:00:00Z', true, '2026-08-01T00:00:00Z', '2026-09-01T00:00:00Z')`, [taskOrg.orgId, POS1, POS2]);
       });
     });
 
@@ -531,6 +558,32 @@ suite('saved views on PostgreSQL (CRM K3, #2227)', () => {
       expect(await parties(all({ field: 'created', op: 'within_last_days', value: 2 }))).toEqual(['Công ty Nguyễn', 'Lê Thị C']);
     });
 
+    it('matches tasks across every kernel.task operator', async () => {
+      expect(await tasks(all({ field: 'search', op: 'contains', value: '50%' }))).toEqual(['Báo cáo thuế Q4']);
+      expect(await tasks(all({ field: 'search', op: 'contains', value: 'nguyen' }))).toEqual(['Đề xuất AI Nguyễn']);
+      expect(await tasks(all({ field: 'status', op: 'is', value: 'in_progress' }))).toEqual(['Chốt công nợ Trần']);
+      expect(await tasks(all({ field: 'status', op: 'in', value: ['todo', 'cancelled'] }))).toEqual(['Báo cáo thuế Q4', 'Đã hủy đơn hàng', 'Đề xuất AI Nguyễn']);
+      expect(await tasks(all({ field: 'assignee', op: 'is', value: POS1 }))).toEqual(['Báo cáo thuế Q4', 'Hoàn tất hóa đơn']);
+      expect(await tasks(all({ field: 'assignee', op: 'is_me' }), { ...ctx, me: taskOrg.lan }, false)).toEqual(['Chốt công nợ Trần', 'Đã hủy đơn hàng']);
+      expect(await tasks(all({ field: 'assignee', op: 'is_me' }), { ...ctx, me: taskOrg.owner }, true)).toEqual(['Báo cáo thuế Q4', 'Hoàn tất hóa đơn', 'Đề xuất AI Nguyễn']);
+      expect(await tasks(all({ field: 'assignee', op: 'is_empty' }))).toEqual(['Đề xuất AI Nguyễn']);
+      expect(await tasks(all({ field: 'due', op: 'before', value: '2026-11-05' }))).toEqual(['Hoàn tất hóa đơn']);
+      expect(await tasks(all({ field: 'due', op: 'after', value: '2026-11-05' }))).toEqual(['Chốt công nợ Trần', 'Đã hủy đơn hàng']);
+      expect(await tasks(all({ field: 'due', op: 'overdue' }))).toEqual(['Báo cáo thuế Q4']);
+      expect(await tasks(all({ field: 'due', op: 'within_next_days', value: 2 }))).toEqual(['Chốt công nợ Trần']);
+      expect(await tasks(all({ field: 'due', op: 'is_empty' }))).toEqual(['Đề xuất AI Nguyễn']);
+      expect(await tasks(all({ field: 'tainted', op: 'is', value: true }))).toEqual(['Đã hủy đơn hàng', 'Đề xuất AI Nguyễn']);
+      expect(await tasks(all({ field: 'tainted', op: 'is', value: false }))).toEqual(['Báo cáo thuế Q4', 'Chốt công nợ Trần', 'Hoàn tất hóa đơn']);
+      expect(await tasks(all({ field: 'created', op: 'within_last_days', value: 1 }))).toEqual(['Đề xuất AI Nguyễn']);
+      const sortedTasks = async (sort: Parameters<typeof sortTerms>[1]) => {
+        const terms = sortTerms('kernel.task', sort, taskSortColumns(), sql`t.id`, { field: 'created', dir: 'desc' });
+        const r = await sql<{ title: string }>`SELECT t.title FROM sv_task t WHERE t.org_id = ${taskOrg.orgId}::uuid ORDER BY ${sql.join(terms, sql`, `)}`.execute(adminDb);
+        return r.rows.map((x) => x.title);
+      };
+      expect((await sortedTasks({ field: 'due', dir: 'asc' })).at(-1)).toBe('Đề xuất AI Nguyễn');
+      expect((await sortedTasks({ field: 'updated', dir: 'desc' }))[0]).toBe('Đề xuất AI Nguyễn');
+    });
+
     it('runs every operator of the registry in a case above', () => {
       // The cases the tests above run, as scope:field:op. A new operator in the registry fails here until it has a case.
       const covered = new Set([
@@ -541,6 +594,10 @@ suite('saved views on PostgreSQL (CRM K3, #2227)', () => {
         'crm.party:has_open_deal:is', 'crm.party:created:within_last_days',
         // The company of a person (#2438) filters through the party's company link, which this fixture has no column for: contacts.db.test.ts runs both.
         'crm.party:company:is', 'crm.party:company:is_empty',
+        'kernel.task:search:contains', 'kernel.task:status:is', 'kernel.task:status:in', 'kernel.task:assignee:is',
+        'kernel.task:assignee:is_me', 'kernel.task:assignee:is_empty', 'kernel.task:due:before', 'kernel.task:due:after',
+        'kernel.task:due:overdue', 'kernel.task:due:within_next_days', 'kernel.task:due:is_empty', 'kernel.task:tainted:is',
+        'kernel.task:created:within_last_days',
       ]);
       const registry = Object.entries(SAVED_VIEW_SCOPES).flatMap(([scope, spec]) =>
         Object.entries(spec.fields).flatMap(([field, f]) => Object.keys(f.ops).map((op) => `${scope}:${field}:${op}`)),

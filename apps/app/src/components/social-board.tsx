@@ -15,6 +15,7 @@ import { Button } from '@crove/ui/components/button';
 import { Checkbox } from '@crove/ui/components/checkbox';
 import { cn } from '@crove/ui/lib/utils';
 import { OpenComments } from './social-activity.tsx';
+import { UnansweredComments, UnansweredProvider } from './social-unanswered.tsx';
 import { PostLabels, type SocialLabel } from './social-labels.tsx';
 import { ErrorText } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -160,6 +161,7 @@ function Card({
             </Badge>
           ))}
         <OpenComments count={post.openComments} />
+        <UnansweredComments postId={post.id} />
       </div>
       {(assignee || post.dueAt) && (
         <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
@@ -282,6 +284,7 @@ export function SocialBoard({
 
   const doneText = (o: BoardOutcome) => (o.move === 'approve' && o.waiting > 0 ? t('board.done.waiting') : t(`board.done.${o.move}`));
   return (
+    <UnansweredProvider posts={posts}>
     <div className="space-y-3">
       {canWrite && (
         <p id={hintId} className="text-xs text-subtle-foreground">
@@ -379,5 +382,6 @@ export function SocialBoard({
         })}
       </div>
     </div>
+    </UnansweredProvider>
   );
 }
