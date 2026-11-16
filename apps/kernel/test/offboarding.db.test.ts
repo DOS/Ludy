@@ -268,6 +268,10 @@ suite('org offboarding on PostgreSQL (#38)', () => {
         "INSERT INTO crove_kernel.saved_view (org_id, user_id, scope, name, filters, shared) VALUES ($1, $2, 'finance.bills', 'Chờ duyệt', '{\"status\":\"pending\"}'::jsonb, false), ($1, $2, 'finance.bills', 'Cả nhóm', '{}'::jsonb, true)",
         [org.orgId, member.id],
       );
+      await seeder.query(
+        "INSERT INTO crove_social.saved_view (org_id, user_id, name, filters, shared) VALUES ($1, $2, 'Riêng', '{}'::jsonb, false), ($1, $2, 'Chung', '{}'::jsonb, true)",
+        [org.orgId, member.id],
+      );
       // A member's own notification and daily mail setting stay private to them: the export must not carry them.
       await seeder.query("INSERT INTO crove_kernel.notification_mute (org_id, user_id, kind) VALUES ($1, $2, 'finance.invoice')", [org.orgId, member.id]);
       await seeder.query("INSERT INTO crove_crm.pipeline_stage (org_id, name, kind, position) VALUES ($1, 'Đàm phán', 'open', 1)", [org.orgId]);
@@ -306,6 +310,8 @@ suite('org offboarding on PostgreSQL (#38)', () => {
     // Only the shared view is in the owner's copy: a member's private view and mutes are readable by that member alone.
     expect(await rowsOf('kernel.saved_view')).toEqual([expect.objectContaining({ name: 'Cả nhóm', shared: true })]);
     expect(EXPORT_TABLE_NAMES).not.toContain('kernel.notification_mute');
+    expect((await rowsOf('social.saved_view')).map((r) => r.name)).toEqual(['Chung']);
+
     expect(await rowsOf('crm.pipeline_stage')).toEqual([expect.objectContaining({ name: 'Đàm phán', kind: 'open' })]);
     // The household's profile is in the owner's copy, the representative's name included, and no other org's is.
     expect(await rowsOf('finance.household_profile')).toEqual([

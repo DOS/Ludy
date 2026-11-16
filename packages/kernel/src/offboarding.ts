@@ -165,7 +165,7 @@ export const EXPORT_TABLES = {
   'crm.import_row': { from: 'crove_crm.import_row', omit: [] },
   // Ads (#2217, ADR-0040): the org's ad accounts, the daily figures their platforms reported and the sync runs. They hold
   // no credential (that is crove_kernel.credential, which no export reads) and no personal data.
-  'ads.ad_account': { from: 'crove_ads.ad_account', omit: [] },
+  'ads.ad_account': { from: 'crove_ads.ad_account', omit: ['granted_by_hash', 'write_granted_by_hash'] },
   'ads.ad_spend_day': { from: 'crove_ads.ad_spend_day', omit: [] },
   'ads.ad_sync_run': { from: 'crove_ads.ad_sync_run', omit: [] },
   // Notes (#1671, ADR-0037 §6): the shared notes and their links, which the system context's row policies let the
@@ -192,6 +192,58 @@ export const EXPORT_TABLES = {
   'meetings.private_count': { from: 'crove_kernel.meeting_private_counts()', omit: [] },
   // The links (a party, a deal, a calendar event) of those shared meetings (L1, #2587): ids only, never of an attendees-only meeting.
   'meetings.link': { from: 'crove_kernel.meeting_link_export_rows()', omit: [] },
+  // The rest of the social module's own data (#3367): its calendar notes, goals, ideas and labels, the brand voice and the channel rules, comments and versions of posts, the review
+  // and report links with their feedback (the hash of a link's token is the visitor's credential and stays out), the bio pages and short links with their click counts, the
+  // external posts the org imported, and the daily snapshots of its accounts. What only one member reads (notifications, mutes, push subscriptions) and what is a cache or a log
+  // (fetched link previews and feed items, digest markers, report runs) is in NOT_EXPORTED; so are the sealed chat alert targets and the calendar feed token.
+  'social.account_snapshot': { from: 'crove_social.account_snapshot', omit: [] },
+  'social.banned_word': { from: 'crove_social.banned_word', omit: [] },
+  'social.bio_click': { from: 'crove_social.bio_click', omit: [] },
+  'social.bio_page': { from: 'crove_social.bio_page', omit: [] },
+  'social.brand_voice': { from: 'crove_social.brand_voice', omit: [] },
+  'social.calendar_note': { from: 'crove_social.calendar_note', omit: [] },
+  'social.channel_option': { from: 'crove_social.channel_option', omit: [] },
+  'social.channel_policy': { from: 'crove_social.channel_policy', omit: [] },
+  'social.channel_set': { from: 'crove_social.channel_set', omit: [] },
+  'social.chat_alert': { from: 'crove_social.chat_alert', omit: [] },
+  'social.external_import': { from: 'crove_social.external_import', omit: [] },
+  'social.external_post': { from: 'crove_social.external_post', omit: [] },
+  'social.feed': { from: 'crove_social.feed', omit: [] },
+  'social.goal': { from: 'crove_social.goal', omit: [] },
+  'social.idea': { from: 'crove_social.idea', omit: [] },
+  'social.idea_label': { from: 'crove_social.idea_label', omit: [] },
+  'social.label': { from: 'crove_social.label', omit: [] },
+  'social.media_archive': { from: 'crove_social.media_archive', omit: [] },
+  'social.media_attribution': { from: 'crove_social.media_attribution', omit: [] },
+  'social.media_tag': { from: 'crove_social.media_tag', omit: [] },
+  'social.post_label': { from: 'crove_social.post_label', omit: [] },
+  'social.post_version': { from: 'crove_social.post_version', omit: [] },
+  'social.publish_hold': { from: 'crove_social.publish_hold', omit: [] },
+  'social.report_branding': { from: 'crove_social.report_branding', omit: [] },
+  'social.report_schedule': { from: 'crove_social.report_schedule', omit: [] },
+  'social.review_check': { from: 'crove_social.review_check', omit: [] },
+  'social.review_feedback': { from: 'crove_social.review_feedback', omit: [] },
+  'social.review_link_post': { from: 'crove_social.review_link_post', omit: [] },
+  'social.short_link': { from: 'crove_social.short_link', omit: [] },
+  'social.short_link_click': { from: 'crove_social.short_link_click', omit: [] },
+  'social.snippet': { from: 'crove_social.snippet', omit: [] },
+  'social.watermark': { from: 'crove_social.watermark', omit: [] },
+  'social.post_comment': { from: 'crove_social.post_comment', omit: ['suggest_hash'] },
+  'social.report_link': { from: 'crove_social.report_link', omit: ['token_sha256'] },
+  'social.review_link': { from: 'crove_social.review_link', omit: ['token_sha256'] },
+  // Only the views a member shared: a private view is readable by its member alone (the snapshot's system context would see it, so the filter is here).
+  'social.saved_view': { from: '(SELECT v.* FROM crove_social.saved_view v WHERE v.shared)', omit: [] },
+  // Ads (#3367): the campaign drafts and requests, the launches with their state and wind-down, the flags, settings and spend caps, and the platform objects. The sealed tokens and
+  // the queue that revokes them stay out.
+  'ads.ad_campaign_draft': { from: 'crove_ads.ad_campaign_draft', omit: [] },
+  'ads.ad_campaign_request': { from: 'crove_ads.ad_campaign_request', omit: [] },
+  'ads.ad_flag_setting': { from: 'crove_ads.ad_flag_setting', omit: [] },
+  'ads.ad_launch': { from: 'crove_ads.ad_launch', omit: [] },
+  'ads.ad_object': { from: 'crove_ads.ad_object', omit: [] },
+  'ads.ad_org_setting': { from: 'crove_ads.ad_org_setting', omit: [] },
+  'ads.ad_spend_cap': { from: 'crove_ads.ad_spend_cap', omit: [] },
+  // Meetings (#3367): the chat channels' settings. A meeting's transcript, notes, results and the rest are readable by its attendees only, so only the meetings shared with the org are exported (meetings.meeting).
+  'meetings.chat_channel': { from: 'crove_meetings.chat_channel', omit: [] },
   // Each member's Vy (ADR-0049, #2822): per member how many private results and memory entries it holds (crove_kernel.member_vy_private_counts(), a definer that answers counts only, for the
   // worker's system context). Never a body: the results and the memory are sealed to their member, and a person who leaves is purged, so an export carries only that they existed.
   'kernel.member_vy_private_count': { from: 'crove_kernel.member_vy_private_counts()', omit: [] },
