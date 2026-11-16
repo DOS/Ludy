@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Projects list and board/list screens (/o/$slug/projects and /o/$slug/projects/$id, issue #2591, ADR-0048).
-import { useMutation, useQuery } from '@tanstack/react-query';
-import type { ProjectBoard, ProjectStatus, ProjectSummary, ProjectTaskCard } from '@crove/kernel-contract';
+import { createTanstackQueryUtils } from '@orpc/tanstack-query';
+import { hashKey, useMutation, useQuery } from '@tanstack/react-query';
+import type { FilterAst, ProjectBoard, ProjectStatus, ProjectSummary, ProjectTaskCard, SavedViewSort } from '@crove/kernel-contract';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
@@ -27,21 +28,42 @@ import {
   seatOptionLabel,
 } from '../components/project-task-dialog.tsx';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
+import { TaskFilterBar } from '../components/task-filter-bar.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader, PageSkeleton } from '../components/ui.tsx';
+import { ViewTabs, type ViewState } from '../components/view-tabs.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import type { TaskStatus } from '../lib/agents.ts';
-import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { clientForOrg, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import {
   PROJECT_STATUSES,
+  boardPlaceholderForProject,
+  commitBoardStatusMove,
+  createBoardMutationQueue,
   defaultProjectView,
   filterProjects,
   hasUnseatedTeamMembers,
   optimisticMoveTask,
+  optimisticReorderTask,
   projectCompletionPct,
   projectStatusVariant,
+  statusFilterIncludesCancelled,
+  type BoardOrderClient,
   type ProjectStatusFilter,
   type ProjectViewMode,
+  type TaskPlacement,
 } from '../lib/projects.ts';
+import { EMPTY_TASK_FILTER, astToTaskFilter, taskFilterToAst, type TaskFilterState } from '../lib/task-filter.ts';
+import { useDebounced } from '../lib/use-debounced.ts';
+
+export function boardOrderClientForOrg(
+  targetSlug: string,
+  createOrgClient: typeof clientForOrg = clientForOrg,
+): BoardOrderClient {
+  const scopedOrpc = createTanstackQueryUtils(createOrgClient(targetSlug));
+  return {
+    setTaskStatus: (input) => scopedOrpc.tasks.setStatus.call(input),
+    reorderTask: (input) => scopedOrpc.projects.reorderTask.call(input),
+  };
+}
 
 function statusFilterParam(filter: ProjectStatusFilter): ProjectStatus[] | undefined {
   if (filter === 'all') return undefined;
@@ -236,6 +258,23 @@ export function ProjectDetailPage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<ProjectTaskCard | null>(null);
   const [moveError, setMoveError] = useState<unknown>(null);
+  const [bar, setBar] = useState<TaskFilterState>(EMPTY_TASK_FILTER);
+  const [sort, setSort] = useState<SavedViewSort | null>(null);
+  const filters: FilterAst = taskFilterToAst(bar);
+  const searchTerm = useDebounced(bar.search.trim(), 300);
+  const applied: FilterAst = taskFilterToAst({ ...bar, search: searchTerm });
+  const applyView = ({ filters: next, sort: nextSort }: ViewState) => {
+    setBar(astToTaskFilter(next));
+    setSort(nextSort);
+  };
+  const boardQueueRef = useRef(createBoardMutationQueue());
+  const activeContextRef = useRef({ slug, id });
+  activeContextRef.current = { slug, id };
+
+  useEffect(() => {
+    setMoveError(null);
+    setEditingTask(null);
+  }, [slug, id]);
 
   useEffect(() => {
     const onResize = () => {
@@ -247,44 +286,50 @@ export function ProjectDetailPage() {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
+  const effectiveIncludeCancelled = includeCancelled || statusFilterIncludesCancelled(applied);
   const boardInput = {
     projectId: id,
     ...(positionId ? { positionId } : {}),
     ...(includeCancelled ? { includeCancelled: true } : {}),
+    ...(applied.all.length > 0 ? { filters: applied } : {}),
+    ...(sort ? { sort } : {}),
   };
   const boardQueryOptions = orpc.projects.board.queryOptions({ input: boardInput });
   const boardQuery = useQuery({
     ...boardQueryOptions,
+    placeholderData: (previous) => boardPlaceholderForProject(previous, id),
     // Task checkout releases are not pushed over SSE yet; poll only while an agent holds a lease.
     refetchInterval: (query) => (query.state.data?.tasks.some((item) => item.checkedOut) ? 5_000 : false),
   });
   const me = useQuery(orpc.me.get.queryOptions());
 
-  const setTaskStatus = useMutation({
-    mutationFn: (vars: { id: string; status: TaskStatus }) =>
-      orpc.tasks.setStatus.call({ id: vars.id, status: vars.status, idempotencyKey: crypto.randomUUID() }),
-    onMutate: async (vars) => {
-      setMoveError(null);
-      await queryClient.cancelQueries({ queryKey: boardQueryOptions.queryKey });
-      const previous = queryClient.getQueryData<ProjectBoard>(boardQueryOptions.queryKey);
-      if (previous) {
-        queryClient.setQueryData<ProjectBoard>(boardQueryOptions.queryKey, {
-          ...previous,
-          tasks: optimisticMoveTask(previous.tasks, vars.id, vars.status),
-        });
-      }
-      return { previous };
-    },
-    onError: (err, _vars, context) => {
-      if (context?.previous) {
-        queryClient.setQueryData<ProjectBoard>(boardQueryOptions.queryKey, context.previous);
-      }
-      setMoveError(err);
-    },
-    onSettled: () => {
-      refreshProjectQueries();
-    },
-  });
+  const enqueueBoardMutation = (
+    optimisticUpdate: (items: readonly ProjectTaskCard[]) => ProjectTaskCard[],
+    mutationFn: (orgClient: BoardOrderClient, markCommitted: () => void) => Promise<void>,
+  ) => {
+    const queryKey = boardQueryOptions.queryKey;
+    void boardQueueRef.current.enqueue({
+      slug,
+      projectId: id,
+      queryKey,
+      keyHash: hashKey(queryKey),
+      clientForOrg: boardOrderClientForOrg,
+      getBoard: (key) => queryClient.getQueryData<ProjectBoard>(key),
+      setBoard: (key, board) => {
+        queryClient.setQueryData<ProjectBoard>(key, board);
+      },
+      cancelQueries: (key) => {
+        void queryClient.cancelQueries({ queryKey: key });
+      },
+      refreshQueries: refreshProjectQueries,
+      isActiveContext: (capturedSlug, capturedProjectId) =>
+        activeContextRef.current.slug === capturedSlug && activeContextRef.current.id === capturedProjectId,
+      onStart: () => setMoveError(null),
+      onError: setMoveError,
+      optimisticUpdate,
+      mutationFn,
+    });
+  };
 
   const createTask = useMutation(
     orpc.projects.createTask.mutationOptions({
@@ -303,8 +348,10 @@ export function ProjectDetailPage() {
     setView(next);
   };
 
-  if (boardQuery.isPending) return <PageSkeleton />;
-  if (boardQuery.error) return <ErrorText>{errorMessage(boardQuery.error)}</ErrorText>;
+  if (!boardQuery.data) {
+    if (boardQuery.error) return <ErrorText>{errorMessage(boardQuery.error)}</ErrorText>;
+    return <PageSkeleton />;
+  }
 
   const board = boardQuery.data;
   const { project, seats, members, tasks, hiddenByEntityCount } = board;
@@ -452,6 +499,23 @@ export function ProjectDetailPage() {
       {board.truncated && (
         <p className="text-xs text-muted-foreground">{t('detail.truncated', { count: String(tasks.length) })}</p>
       )}
+
+      <div className="space-y-2">
+        <ViewTabs scope="kernel.task" filters={filters} sort={sort} onApply={applyView} />
+        <TaskFilterBar
+          idPrefix="project-tasks-filter"
+          bar={bar}
+          setBar={setBar}
+          sort={sort}
+          setSort={setSort}
+          positions={seats.map((seat) => ({
+            id: seat.id,
+            label: seatOptionLabel(seat, t('modals.aiSeatSuffix'), t('modals.openSeatSuffix')),
+          }))}
+        />
+      </div>
+
+      {boardQuery.error && <ErrorText>{errorMessage(boardQuery.error)}</ErrorText>}
       {moveError !== null && <ErrorText>{errorMessage(moveError)}</ErrorText>}
       {createTask.error && <ErrorText>{errorMessage(createTask.error)}</ErrorText>}
       {removeTask.error && <ErrorText>{errorMessage(removeTask.error)}</ErrorText>}
@@ -462,10 +526,36 @@ export function ProjectDetailPage() {
         tasks={tasks}
         seats={seats}
         canEdit={project.canWrite}
-        includeCancelled={includeCancelled}
+        includeCancelled={effectiveIncludeCancelled}
         creatingTask={createTask.isPending}
-        onMoveStatus={(taskId, nextStatus) => {
-          setTaskStatus.mutate({ id: taskId, status: nextStatus });
+        customSortActive={sort !== null}
+        onMoveStatus={(taskId, nextStatus, placement) => {
+          const capturedProjectId = project.id;
+          enqueueBoardMutation(
+            (items) => optimisticMoveTask(items, taskId, nextStatus, placement),
+            (orgClient, markCommitted) =>
+              commitBoardStatusMove(
+                orgClient,
+                { projectId: capturedProjectId, taskId, nextStatus, placement },
+                markCommitted,
+              ),
+          );
+        }}
+        onReorderTask={(taskId: string, placement: TaskPlacement) => {
+          const capturedProjectId = project.id;
+          enqueueBoardMutation(
+            (items) => optimisticReorderTask(items, taskId, placement),
+            async (orgClient, markCommitted) => {
+              await orgClient.reorderTask({
+                projectId: capturedProjectId,
+                taskId,
+                place: placement.place,
+                anchorId: placement.anchorId,
+                idempotencyKey: crypto.randomUUID(),
+              });
+              markCommitted();
+            },
+          );
         }}
         onCreateTask={(input: { title: string; assigneePositionId: string | null; due?: string; status: BoardColumnStatus }, done) => {
           createTask.mutate(

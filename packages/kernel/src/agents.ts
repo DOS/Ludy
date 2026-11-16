@@ -11,7 +11,18 @@
 import { randomUUID } from 'node:crypto';
 import { sql, type Transaction } from 'kysely';
 import { z } from 'zod';
-import { auditValue, defaultCoworkerName, tableWrite, zCheck, zId, type Check } from '@crove/kernel-contract';
+import {
+  auditValue,
+  defaultCoworkerName,
+  tableWrite,
+  vietnamToday,
+  zCheck,
+  zFilterAstShape,
+  zId,
+  zSavedViewSortShape,
+  type Check,
+  type FilterAst,
+} from '@crove/kernel-contract';
 import type { AgentScope, Database, MemberRole, TaskStatus } from '@crove/db';
 import {
   DomainError,
@@ -33,6 +44,8 @@ import { releaseWaitingFiles } from './ai-budget.ts';
 import { cancelMemberVyRuns } from './member-vy.ts';
 import { memberProfiles } from './profiles.ts';
 import { lockChartChanges, rerouteStrandedTasks } from './task-reroute.ts';
+import { filterCondition, sortTerms } from './saved-view-filter.ts';
+import { taskFields, taskSortColumns } from './task-filter.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const MEMBERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -1609,38 +1622,59 @@ export const TASK_LIST_LIMIT = 200;
 // the positions the user holds, plus the root tasks for an owner.
 export const taskList = defineQuery({
   name: 'kernel.task.list',
-  input: z.object({ positionId: zId.optional(), mine: z.boolean().optional(), status: z.array(zTaskStatus).max(6).optional() }),
+  input: z.object({
+    positionId: zId.optional(),
+    mine: z.boolean().optional(),
+    status: z.array(zTaskStatus).max(6).optional(),
+    filters: zFilterAstShape.optional(),
+    sort: zSavedViewSortShape.nullable().optional(),
+  }),
   access: ALL,
   agent: { roles: 'any' },
   handler: async (ctx, input) => {
     const order = ctx.agent ? 'asc' : 'desc';
     let query = ctx.trx
-      .selectFrom('crove_kernel.task')
-      .selectAll()
-      .where('org_id', '=', ctx.orgId)
-      .orderBy('created_at', order)
-      .orderBy('id', order)
+      .selectFrom('crove_kernel.task as t')
+      .selectAll('t')
+      .where('t.org_id', '=', ctx.orgId)
       .limit(TASK_LIST_LIMIT);
     if (ctx.agent) {
-      query = query.where('assignee_position_id', '=', ctx.agent.positionId);
-      if (!ctx.agent.tainted) query = query.where('tainted', '=', false);
+      query = query.where('t.assignee_position_id', '=', ctx.agent.positionId);
+      if (!ctx.agent.tainted) query = query.where('t.tainted', '=', false);
     } else if (input.positionId) {
-      query = query.where('assignee_position_id', '=', input.positionId);
+      query = query.where('t.assignee_position_id', '=', input.positionId);
     } else if (input.mine && ctx.actor.type === 'user') {
       const userId = ctx.actor.userId;
       const isOwner = ctx.role === 'owner';
       query = query.where((eb) =>
         eb.or([
           eb(
-            'assignee_position_id',
+            't.assignee_position_id',
             'in',
             eb.selectFrom('crove_kernel.position').select('id').where('org_id', '=', ctx.orgId).where('holder_user_id', '=', userId),
           ),
-          ...(isOwner ? [eb('assignee_position_id', 'is', null)] : []),
+          ...(isOwner ? [eb('t.assignee_position_id', 'is', null)] : []),
         ]),
       );
     }
-    if (input.status && input.status.length > 0) query = query.where('status', 'in', input.status);
+    if (input.status && input.status.length > 0) query = query.where('t.status', 'in', input.status);
+    if (input.filters !== undefined) {
+      const now = new Date();
+      const me = ctx.actor.type === 'user' ? ctx.actor.userId : null;
+      query = query.where(
+        filterCondition('kernel.task', input.filters as FilterAst, taskFields({ isOwner: ctx.role === 'owner' }), {
+          me,
+          today: vietnamToday(now),
+          now,
+        }),
+      );
+    }
+    if (input.sort !== undefined && input.sort !== null) {
+      const terms = sortTerms('kernel.task', input.sort, taskSortColumns(), sql`t.id`, { field: 'created', dir: order });
+      for (const term of terms) query = query.orderBy(term);
+    } else {
+      query = query.orderBy('t.created_at', order).orderBy('t.id', order);
+    }
     return { tasks: (await query.execute()).map(taskView) };
   },
 });

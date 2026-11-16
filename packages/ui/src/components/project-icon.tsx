@@ -2,7 +2,9 @@
 import { cn } from "cn"
 import {
   ArchiveIcon,
+  ArrowDownIcon,
   ArrowLeftIcon,
+  ArrowUpIcon,
   BotIcon,
   CalendarIcon,
   CheckIcon,
@@ -21,6 +23,8 @@ import {
 // Consistent 16px, stroke 1.5 icons for Projects screens (DESIGN.md §3.7).
 const PROJECT_ICONS = {
   archive: ArchiveIcon,
+  arrowDown: ArrowDownIcon,
+  arrowUp: ArrowUpIcon,
   back: ArrowLeftIcon,
   board: KanbanIcon,
   bot: BotIcon,
