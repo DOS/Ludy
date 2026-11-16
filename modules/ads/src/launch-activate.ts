@@ -154,6 +154,8 @@ function doneSlots(rows: readonly CallRow[]): Set<string> {
 
 export const adsActivateBegin = defineCommand({
   name: 'ads.activate.begin',
+  // Begins an activation (spend) that a switch-off must not overtake: it holds the tenant row, as the switch does (ADR-0053).
+  opensBusyWork: true,
   input: zActivateBeginInput,
   // The platform is called by the job, not here. It is the system's and R2 external, because an R3 command cannot run as the system: the authority to start spend is the
   // approval the launch already carries (stamped on the row, checked by the database in the move to live), and nothing here calls a platform without the checks above.
