@@ -7161,6 +7161,7 @@ export const vi = {
       finance_payroll_flag: 'Viết một câu cho mỗi điểm bất thường của bảng lương',
       finance_payroll_explain: 'Giải thích một phiếu lương từ các khoản đã lưu',
       finance_labor_check: 'Rà soát điều kiện hồ sơ lao động trước khi xuất sổ quản lý hoặc báo cáo 01/PLI',
+      hr_recruiting_brief: 'Tóm tắt hồ sơ ứng viên đã ẩn danh và gợi ý câu hỏi phỏng vấn',
       today_brief: 'Bản tin hằng ngày của Vy trên Tổng quan',
       today_weekly: 'Mục "Tuần này" của Vy trên Tổng quan',
       ads_campaign_draft: 'Soạn nội dung chiến dịch quảng cáo',
