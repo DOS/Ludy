@@ -34,7 +34,7 @@ vi.mock('../src/lib/api.ts', async () => {
 });
 
 const { ThirteenthMonthPanel, defaultThirteenthMonthYear } = await import('../src/components/hr-thirteenth-month-panel.tsx');
-const { SeveranceCalculatorPanel } = await import('../src/components/hr-severance-panel.tsx');
+const { SeveranceCalculatorPanel, buildSeveranceAsk } = await import('../src/components/hr-severance-panel.tsx');
 const { I18nProvider } = await import('../src/i18n/provider.tsx');
 const { setActiveLocale } = await import('../src/i18n/runtime.ts');
 
@@ -112,7 +112,7 @@ describe('13th-month and statutory severance UI panels (#3375)', () => {
 
     const htmlEn = renderThirteenth('2026-12', preview, 'en');
     expect(htmlEn).toContain('Prorated 13th-month salary');
-    expect(htmlEn).toContain('Apply (1 rows)');
+    expect(htmlEn).toContain('Apply (1 row)');
   });
 
   it('renders SeveranceCalculatorPanel for eligible and ineligible cases with read-only notice and citations', () => {
@@ -173,6 +173,13 @@ describe('13th-month and statutory severance UI panels (#3375)', () => {
     const htmlEn = renderSeverance(ineligible, 'en');
     expect(htmlEn).toContain('data-testid="hr-severance-ineligible"');
     expect(htmlEn).toContain('fewer than 12 months');
+
+    // Changing endedOn without a manual totalWorkedMonths override omits totalWorkedMonths so server re-derives tenure.
+    const askDateOnly = buildSeveranceAsk(EMP_ID, { endedOn: '2026-12-31' }, ineligible);
+    expect(askDateOnly.endedOn).toBe('2026-12-31');
+    expect(askDateOnly.totalWorkedMonths).toBeUndefined();
+    const askExplicitMonths = buildSeveranceAsk(EMP_ID, { endedOn: '2026-12-31', totalWorkedMonths: '14' }, ineligible);
+    expect(askExplicitMonths.totalWorkedMonths).toBe(14);
 
     expect(viMessages.hrPayroll.flag.severance_check).toBeTruthy();
     expect(en.hrPayroll.flag.severance_check).toBeTruthy();

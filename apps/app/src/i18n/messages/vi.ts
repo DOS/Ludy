@@ -1153,6 +1153,7 @@ export const vi = {
       paidAmount: 'Số tiền thực chi dự kiến (nếu có)',
       paidAmountPlaceholder: 'Để trống nếu chi đúng mức luật',
       endBeforeStart: 'Ngày nghỉ việc không thể trước ngày bắt đầu làm việc.',
+      invalidInputs: 'Kiểm tra lại ngày nghỉ việc, số tháng (0-1200) hoặc số tiền thực chi hợp lệ.',
       recalculateHint: 'Ngày nghỉ việc hoặc tổng số tháng đã thay đổi: bấm Tính lại để cập nhật tiền lương 6 tháng từ hồ sơ.',
       calculate: 'Tính lại',
       eligibleLabel: 'Điều kiện hưởng:',

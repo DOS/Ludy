@@ -239,7 +239,7 @@ export function ThirteenthMonthPanel({
               onClick={() => apply.mutate()}
               data-testid="hr-13th-month-apply"
             >
-              {t('thirteenthMonth.apply', { count: String(selectedRows.length) })}
+              {t('thirteenthMonth.apply', { count: selectedRows.length })}
             </Button>
             <Button variant="ghost" onClick={onClose}>
               {t('thirteenthMonth.cancel')}

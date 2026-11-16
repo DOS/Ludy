@@ -110,7 +110,8 @@ suite('HR 13th-month salary, statutory severance, and Ly severance_check (#3375)
 
   it('previews and applies prorated 13th-month salary in replace & add modes while preserving listRulesUsed approval and audit hygiene', async () => {
     setRuleStatus('commentary');
-    const o = await org();
+    try {
+      const o = await org();
     const empA = await o.hire('Nguyễn Thị Lan Canary', '2025-01-01', '12000000');
     const empB = await o.hire('Trần Văn Minh Canary', '2026-07-17', '24000000');
 
@@ -226,21 +227,23 @@ suite('HR 13th-month salary, statutory severance, and Ly severance_check (#3375)
         rows: [{ lineId: adj.lineId!, workedMonths: 12 }],
       }),
     ).rejects.toMatchObject({ code: 'HR_LINE_NOT_PAY' });
-    await expect(
-      o.exec(o.owner, 'hr.payroll.run.apply_thirteenth_month', {
-        runId: janRun.runId,
-        year: 2026,
-        mode: 'replace',
-        rows: [{ lineId: lineA.id, workedMonths: 12 }],
-      }),
-    ).rejects.toMatchObject({ code: 'HR_LINE_NOT_FOUND' });
-
-    setRuleStatus('commentary');
+      await expect(
+        o.exec(o.owner, 'hr.payroll.run.apply_thirteenth_month', {
+          runId: janRun.runId,
+          year: 2026,
+          mode: 'replace',
+          rows: [{ lineId: lineA.id, workedMonths: 12 }],
+        }),
+      ).rejects.toMatchObject({ code: 'HR_LINE_NOT_FOUND' });
+    } finally {
+      setRuleStatus('commentary');
+    }
   });
 
   it('computes statutory severance with derived 6-month wages, enforces <12 vs >=12 and erased refusals, and flags severance_check for Ly', async () => {
     setRuleStatus('confirmed');
-    const o = await org();
+    try {
+      const o = await org();
 
     // Emp C: hired 2025-01-01 at 10M, raised 2026-09-01 to 16M; approved Sep/Oct with namedInContract 2M (+ non-contract meal 730k excluded).
     const empC = await o.hire('Lê Thu Hà Canary', '2025-01-01', '10000000');
@@ -382,7 +385,9 @@ suite('HR 13th-month salary, statutory severance, and Ly severance_check (#3375)
     expect(sevSignals[0]?.facts).toContain('Lê Thu Hà Canary');
     expect(sevSignals[0]?.facts).toContain('12');
 
-    expect((await o.audits('hr.payroll.employee.severance')).length).toBeGreaterThanOrEqual(4);
-    setRuleStatus('commentary');
+      expect((await o.audits('hr.payroll.employee.severance')).length).toBeGreaterThanOrEqual(4);
+    } finally {
+      setRuleStatus('commentary');
+    }
   });
 });

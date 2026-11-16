@@ -24,7 +24,7 @@ const ONCE = { staleTime: Infinity, refetchOnWindowFocus: false, refetchOnReconn
 const INT_RE = /^\d{1,4}$/;
 const WAGE_RE = /^\d{1,16}(\.\d{1,2})?$/;
 
-interface DraftOverrides {
+export interface SeveranceDraftOverrides {
   endedOn?: string;
   terminationReason?: HrSeveranceTerminationReason;
   totalWorkedMonths?: string;
@@ -34,6 +34,32 @@ interface DraftOverrides {
 }
 
 const isValidIntText = (value: string) => INT_RE.test(value) && Number(value) <= 1200;
+
+export function buildSeveranceAsk(
+  employeeId: string,
+  draft: SeveranceDraftOverrides,
+  data?: Pick<HrEmployeeSeveranceResult, 'endedOn' | 'terminationReason' | 'unemploymentInsuredMonths' | 'priorSettledMonths' | 'paidAmount'>,
+  employeeEndedOn: string | null = null,
+): HrEmployeeSeveranceAsk {
+  const endedOn = draft.endedOn ?? data?.endedOn ?? employeeEndedOn ?? '';
+  const terminationReason = draft.terminationReason ?? data?.terminationReason ?? 'contract_expired';
+  const insuredText = draft.unemploymentInsuredMonths ?? (data ? String(data.unemploymentInsuredMonths) : '0');
+  const settledText = draft.priorSettledMonths ?? (data ? String(data.priorSettledMonths) : '0');
+  const paidText = draft.paidAmount ?? (data?.paidAmount ?? '');
+  const workedOverride =
+    draft.totalWorkedMonths !== undefined && draft.totalWorkedMonths !== ''
+      ? Number(draft.totalWorkedMonths)
+      : undefined;
+  return {
+    employeeId,
+    ...(endedOn !== '' ? { endedOn } : {}),
+    terminationReason,
+    ...(workedOverride !== undefined ? { totalWorkedMonths: workedOverride } : {}),
+    unemploymentInsuredMonths: Number(insuredText),
+    priorSettledMonths: Number(settledText),
+    ...(paidText !== '' ? { paidAmount: paidText } : {}),
+  };
+}
 
 export function SeveranceCalculatorPanel({
   employeeId,
@@ -45,7 +71,7 @@ export function SeveranceCalculatorPanel({
   const t = useTranslations('hrEmployees');
   const f = useFormat();
   const [submittedAsk, setSubmittedAsk] = useState<HrEmployeeSeveranceAsk>({ employeeId });
-  const [draft, setDraft] = useState<DraftOverrides>({});
+  const [draft, setDraft] = useState<SeveranceDraftOverrides>({});
 
   const q = useQuery({
     ...orpc.hr.payroll.employees.severance.queryOptions({ input: submittedAsk }),
@@ -92,15 +118,7 @@ export function SeveranceCalculatorPanel({
 
   const submit = () => {
     if (!formValid) return;
-    const nextAsk: HrEmployeeSeveranceAsk = {
-      employeeId,
-      endedOn,
-      terminationReason,
-      ...(totalWorkedText !== '' ? { totalWorkedMonths: Number(totalWorkedText) } : {}),
-      unemploymentInsuredMonths: Number(insuredText),
-      priorSettledMonths: Number(settledText),
-      ...(paidText !== '' ? { paidAmount: paidText } : {}),
-    };
+    const nextAsk = buildSeveranceAsk(employeeId, draft, data, employeeEndedOn);
     if (JSON.stringify(nextAsk) === JSON.stringify(submittedAsk)) {
       void q.refetch();
     } else {
@@ -154,7 +172,12 @@ export function SeveranceCalculatorPanel({
                 id={`sev-ended-${employeeId}`}
                 type="date"
                 value={endedOn}
-                onChange={(e) => setDraft((prev) => ({ ...prev, endedOn: e.target.value }))}
+                onChange={(e) =>
+                  setDraft((prev) => {
+                    const { totalWorkedMonths: _ignored, ...rest } = prev;
+                    return { ...rest, endedOn: e.target.value };
+                  })
+                }
                 data-testid="hr-severance-ended-on"
               />
             </div>
@@ -204,6 +227,7 @@ export function SeveranceCalculatorPanel({
           </div>
 
           {beforeHire && <ErrorText>{t('severance.endBeforeStart')}</ErrorText>}
+          {!beforeHire && !formValid && <ErrorText>{t('severance.invalidInputs')}</ErrorText>}
           {needsServerRefresh && formValid && (
             <p className="text-xs text-muted-foreground">{t('severance.recalculateHint')}</p>
           )}
