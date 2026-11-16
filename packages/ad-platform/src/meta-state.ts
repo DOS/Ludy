@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Meta's read of an object's state (issue #3301, plan docs/plan/ads-write.md section 4): `GET <object id>` with the fields `effective_status` and the review feedback. It is a
+// Meta's read of an object's state (issue #3301, plan docs/plan/ads-write.md section 4): `GET <object id>` with the fields `effective_status` and the review feedback (`ad_review_feedback` on an ad). It is a
 // separate class from the writer and the activator, built with the same options and bound to the Graph API host the same way, and it only ever sends a GET: nothing here can
 // change an object. The job never reaches it but through the frozen view of state-readers.ts.
 //
-// What Meta writes about a refusal is tainted text. The adapter keeps none of it: `review_feedback` (on an ad) and `issues_info` (on a campaign, an ad set and an ad) become a
+// What Meta writes about a refusal is tainted text. The adapter keeps none of it: `ad_review_feedback` (on an ad) and `issues_info` (on a campaign, an ad set and an ad) become a
 // short CODE of lower-case letters, digits and underscores (`issue_<error_code>`, or `feedback_<the reason's key>`), and a status Ludy waits on becomes `in_review` or
-// `in_process`. The screen words the codes it knows in the reader's language and shows any other as plain text. [U] The exact shape of `review_feedback` and `issues_info` is
+// `in_process`. The screen words the codes it knows in the reader's language and shows any other as plain text. [U] The exact shape of `ad_review_feedback` and `issues_info` is
 // written from Meta's documentation; the live check (W2-5) records what Meta really sends.
 import type { Fetch } from '@crove/channel';
 import { Graph, GraphError, META_DEFAULT_GRAPH_VERSION } from '@crove/channel';
@@ -21,7 +21,7 @@ const NO_SUCH_OBJECT_SUBCODE = 33;
 const FIELDS = {
   campaign: 'effective_status,issues_info',
   ad_set: 'effective_status,issues_info',
-  ad: 'effective_status,issues_info,review_feedback',
+  ad: 'effective_status,issues_info,ad_review_feedback',
 } as const;
 
 export interface MetaAdStateReaderOptions {
@@ -58,7 +58,7 @@ function issueCode(issues: unknown): string | null {
   return null;
 }
 
-// `review_feedback`: `{ <placement>: { <reason key>: <explanation> } }`. The first reason key in sorted order gives `feedback_<key>`; the explanation is never kept.
+// `ad_review_feedback`: `{ <placement>: { <reason key>: <explanation> } }`. The first reason key in sorted order gives `feedback_<key>`; the explanation is never kept.
 function feedbackCode(feedback: unknown): string | null {
   if (feedback === null || typeof feedback !== 'object' || Array.isArray(feedback)) return null;
   const keys: string[] = [];
@@ -74,8 +74,8 @@ function feedbackCode(feedback: unknown): string | null {
 
 // The reason shown with a status: what the platform says was wrong, or that Ludy is waiting on a review. A refusal (`DISAPPROVED`) names its feedback first; any other status
 // names the issue it carries first.
-export function metaReasonOf(status: string, answer: { issues_info?: unknown; review_feedback?: unknown }): string | null {
-  const feedback = feedbackCode(answer.review_feedback);
+export function metaReasonOf(status: string, answer: { issues_info?: unknown; ad_review_feedback?: unknown }): string | null {
+  const feedback = feedbackCode(answer.ad_review_feedback);
   const issue = issueCode(answer.issues_info);
   const found = status === 'DISAPPROVED' ? (feedback ?? issue) : (issue ?? feedback);
   if (found) return found;
@@ -99,7 +99,7 @@ export class MetaAdStateReader implements AdObjectStateSource {
     const fields = FIELDS[object.level];
     if (!fields) throw new AdPlatformError('bad_request', 'LEVEL_NOT_READABLE');
     try {
-      const answer = await this.graph.call<{ effective_status?: unknown; issues_info?: unknown; review_feedback?: unknown }>('GET', object.id, { token, params: { fields }, timeoutMs: CALL_TIMEOUT_MS });
+      const answer = await this.graph.call<{ effective_status?: unknown; issues_info?: unknown; ad_review_feedback?: unknown }>('GET', object.id, { token, params: { fields }, timeoutMs: CALL_TIMEOUT_MS });
       if (typeof answer.effective_status !== 'string') throw new AdPlatformError('unknown', 'NO_STATUS');
       return { status: answer.effective_status, reason: metaReasonOf(answer.effective_status, answer) };
     } catch (error) {

@@ -175,14 +175,14 @@ describe('the Meta read', () => {
     expect(await reader.readState(SECRET, { level: 'ad', id: '120003' })).toEqual({ status: 'PENDING_REVIEW', reason: 'in_review' });
     expect(calls.map((c) => c.method)).toEqual(['GET', 'GET', 'GET']);
     expect(calls.map((c) => c.url.pathname.split('/').pop())).toEqual(['120001', '120002', '120003']);
-    expect(calls.map((c) => c.url.searchParams.get('fields'))).toEqual(['effective_status,issues_info', 'effective_status,issues_info', 'effective_status,issues_info,review_feedback']);
+    expect(calls.map((c) => c.url.searchParams.get('fields'))).toEqual(['effective_status,issues_info', 'effective_status,issues_info', 'effective_status,issues_info,ad_review_feedback']);
     expect(calls.every((c) => (c.authorization ?? '').includes('write-token') && !c.url.search.includes('write-token'))).toBe(true);
   });
 
   it('turns a refusal\'s feedback and issues into short codes and keeps none of the platform\'s words', async () => {
     const feedback = { global: { 'Personal Attributes!': 'You may not say that about people. Read our policy.', 'Adult content': 'x' } };
     const { reader } = meta([
-      { body: { effective_status: 'DISAPPROVED', review_feedback: feedback, issues_info: [{ error_code: 1487079, error_summary: 'A sentence from Meta' }] } },
+      { body: { effective_status: 'DISAPPROVED', ad_review_feedback: feedback, issues_info: [{ error_code: 1487079, error_summary: 'A sentence from Meta' }] } },
       { body: { effective_status: 'WITH_ISSUES', issues_info: [{ error_code: 1359188, error_message: 'More words' }] } },
       { body: { effective_status: 'DISAPPROVED' } },
     ]);
@@ -192,11 +192,11 @@ describe('the Meta read', () => {
     expect(await reader.readState(SECRET, { level: 'ad', id: '3' })).toEqual({ status: 'DISAPPROVED', reason: null });
     expect(JSON.stringify(first)).not.toMatch(/sentence|policy|people|Meta/i);
     // The mapping itself: a refusal names its feedback first, any other status its issue first, a review in progress says so.
-    expect(metaReasonOf('DISAPPROVED', { issues_info: [{ error_code: 7 }], review_feedback: { global: { reason_a: 'x' } } })).toBe('feedback_reason_a');
-    expect(metaReasonOf('WITH_ISSUES', { issues_info: [{ error_code: 7 }], review_feedback: { global: { reason_a: 'x' } } })).toBe('issue_7');
+    expect(metaReasonOf('DISAPPROVED', { issues_info: [{ error_code: 7 }], ad_review_feedback: { global: { reason_a: 'x' } } })).toBe('feedback_reason_a');
+    expect(metaReasonOf('WITH_ISSUES', { issues_info: [{ error_code: 7 }], ad_review_feedback: { global: { reason_a: 'x' } } })).toBe('issue_7');
     expect(metaReasonOf('IN_PROCESS', {})).toBe('in_process');
-    expect(metaReasonOf('ACTIVE', { issues_info: 'nope', review_feedback: [] })).toBeNull();
-    expect(metaReasonOf('DISAPPROVED', { review_feedback: { global: { '***': 'x' } } })).toBeNull();
+    expect(metaReasonOf('ACTIVE', { issues_info: 'nope', ad_review_feedback: [] })).toBeNull();
+    expect(metaReasonOf('DISAPPROVED', { ad_review_feedback: { global: { '***': 'x' } } })).toBeNull();
   });
 
   it('says an object Meta does not have is gone, and maps a rate limit (BUC), a refused token, a 4xx and a network failure to their kinds', async () => {
