@@ -10,8 +10,14 @@ describe('the tables the owner export contains (#3201)', () => {
       a: { from: 'crove_a.plain' },
       b: { from: "(SELECT f.* FROM crove_a.filtered f WHERE f.source NOT IN ('x'))" },
       c: { from: 'crove_a.counts()' },
-    });
+    }, {});
     expect([...exported].sort()).toEqual(['crove_a.filtered', 'crove_a.plain']);
+  });
+
+  it('counts the owner-run tables as exported too, by their own map', () => {
+    const exported = exportedTables({ a: { from: 'crove_a.plain' } }, { b: { from: 'crove_hr.owner_run' } });
+    expect([...exported].sort()).toEqual(['crove_a.plain', 'crove_hr.owner_run']);
+    expect(exportedTables().has('crove_hr.payroll_employee')).toBe(true);
   });
 
   it('reads the real list: the household profile and the ledger are in, a machinery table is not', () => {
@@ -45,8 +51,8 @@ describe('export coverage problems (#3201)', () => {
     ]);
   });
 
-  it('checks the finance schema only, so another line decides its own tables', () => {
-    expect(COVERED_SCHEMAS).toEqual(['crove_finance']);
+  it('checks the covered schemas only, so a schema not added yet is left alone', () => {
+    expect(COVERED_SCHEMAS).toEqual(['crove_finance', 'crove_kernel']);
     expect(exportCoverageProblems(['crove_social.post', 'crove_finance.journal_line'], exported, {})).toEqual([]);
   });
 });

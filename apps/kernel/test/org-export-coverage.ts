@@ -3,24 +3,62 @@
 // or on NOT_EXPORTED with the reason (#3201). EXPORT_TABLES is a hand-kept list, so a table a migration adds would
 // otherwise be left out of the owner's copy of their data without anyone noticing. offboarding.db.test.ts reads the catalog of its
 // migrated database and fails on such a table; org-export-coverage.test.ts checks the reading and the messages on planted catalogs.
-import { EXPORT_TABLES } from '@crove/kernel';
+import { EXPORT_TABLES, OWNER_RUN_EXPORT_TABLES } from '@crove/kernel';
 
 // The schemas the check covers. Each line adds its own once it has decided, table by table, what its owners' copy holds; a table of another
 // schema the export does not read is not a failure here (the follow-up issue lists them).
-export const COVERED_SCHEMAS: readonly string[] = ['crove_finance'];
+export const COVERED_SCHEMAS: readonly string[] = ['crove_finance', 'crove_kernel'];
 
 // The tables the export leaves out, with why (docs/runbooks/org-offboarding.md says the same in its export list).
-export const NOT_EXPORTED: Readonly<Record<string, string>> = {};
+export const NOT_EXPORTED: Readonly<Record<string, string>> = {
+  // Credentials, tokens and keys: secrets, or useless outside this deployment.
+  'crove_kernel.credential': 'sealed channel connection tokens: a credential (the connection row is exported without them)',
+  'crove_kernel.calendar_credential': 'sealed calendar tokens: a credential',
+  'crove_kernel.meeting_platform_credential': 'sealed meeting platform tokens: a credential',
+  'crove_kernel.oauth_state': 'the state of a sign-in in flight: a short-lived credential',
+  'crove_kernel.extension_auth_code': 'a browser extension sign-in code (hash): a credential',
+  'crove_kernel.extension_token': 'a browser extension token (hash): a credential',
+  'crove_kernel.subject_key': "the org's wrapped subject keys (ADR-0017): key material, useless outside the deployment",
+  'crove_kernel.agent_grant': 'the access grants of AI clients: credential-bearing, readable only through definer functions, ended when the org closes',
+  'crove_kernel.agent_grant_wake': 'the wake-up webhooks of those grants, with their sealed secrets: credential-bearing, definer-only',
+  // Runtime machinery: recomputed, expiring or only meaningful while the org runs.
+  'crove_kernel.agent_wake_delivery': 'a wake-up delivery queue row: runtime machinery',
+  'crove_kernel.agent_wake_signal_seen': 'which wake-up signals were seen: runtime machinery',
+  'crove_kernel.agent_wakeup': 'agent wake-ups: runtime machinery (offboarding already says so)',
+  'crove_kernel.ai_run': 'agent run records with their cost and status: runtime machinery',
+  'crove_kernel.auth_session_org': "a member's session in the org: session record, not tenant data",
+  'crove_kernel.calendar_event_link': 'the sync state between a calendar event and its external copy (hash, attempts): recomputed by the next sync',
+  'crove_kernel.conversation_composing': 'who is typing in a conversation: expires in seconds',
+  'crove_kernel.conversation_read': 'read marks are per-member state (the conversation core comment says so)',
+  'crove_kernel.external_call': 'the ledger of calls to outside platforms (idempotency of outbound calls): runtime machinery, no personal data',
+  'crove_kernel.file_upload': 'an upload in flight (staging key, expiry): runtime machinery',
+  'crove_kernel.idempotency_key': 'idempotency keys and their stored responses: machinery',
+  'crove_kernel.inbound_address': 'inbound address tokens are secrets and permanent tombstones (#37)',
+  'crove_kernel.inbound_drop': 'drop counts of an inbound address: machinery',
+  'crove_kernel.meeting_platform_recording': "a meeting platform's recording list and staging keys: an import queue; the meeting it became is in meetings.meeting",
+  'crove_kernel.org_usage': 'the raw AI and usage metering rows the budget is computed from: machinery, not tenant records',
+  'crove_kernel.outbox_archive': 'the list of archived outbox days: machinery',
+  'crove_kernel.outbox_event': 'the outbox: machinery, archived by the retention job',
+  'crove_kernel.outbox_pending': 'the outbox delivery queue: machinery',
+  'crove_kernel.refusal_tally': 'refusal counters per window: rate-limit machinery',
+  'crove_kernel.usage_deferral': 'a deferred metering retry: machinery',
+  // Private to one member: the line's precedent exports counts only (kernel.member_vy_private_count).
+  'crove_kernel.member_vy_memory': "private to its member (ADR-0049): readable by that member alone, no owner, admin or system context reads it; the count is in kernel.member_vy_private_count",
+  'crove_kernel.member_vy_result': "private to its member (ADR-0049): readable by that member alone; the count is in kernel.member_vy_private_count",
+};
 
 const TABLE = /crove_[a-z0-9_]+\.[a-z0-9_]+(?!\w|\()/g;
 
-// Another line adding its schema to COVERED_SCHEMAS also checks how PEOPLE_EXPORT_TABLES (the hr tables an owner reads live) count: they are not in EXPORT_TABLES.
 // A table named only inside a subquery's WHERE would count as exported here; none does today.
 // The tables the export reads rows of: the tables named in each `from`, without the functions (`crove_notes.private_counts()`),
 // which answer counts or filtered rows and are not a table of their own.
-export function exportedTables(tables: Readonly<Record<string, { from: string }>> = EXPORT_TABLES): Set<string> {
+// The owner-run tables (OWNER_RUN_EXPORT_TABLES, the hr payroll tables an owner reads live) count as exported too: they are in the owner's copy, by another route.
+export function exportedTables(
+  tables: Readonly<Record<string, { from: string }>> = EXPORT_TABLES,
+  ownerRun: Readonly<Record<string, { from: string }>> = OWNER_RUN_EXPORT_TABLES,
+): Set<string> {
   const out = new Set<string>();
-  for (const { from } of Object.values(tables)) for (const m of from.matchAll(TABLE)) out.add(m[0]);
+  for (const { from } of [...Object.values(tables), ...Object.values(ownerRun)]) for (const m of from.matchAll(TABLE)) out.add(m[0]);
   return out;
 }
 
