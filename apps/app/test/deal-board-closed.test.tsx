@@ -56,15 +56,23 @@ function render(onShowAll: ((kind: 'won' | 'lost') => void) | undefined, locale:
   );
 }
 
-const column = (html: string, name: string) => html.slice(html.indexOf(`aria-label="${name}"`) - 400, html.indexOf(`aria-label="${name}"`));
+// The markup of one column: from its own <section> to the next one.
+const column = (html: string, name: string) => {
+  const sections = html.split('<section').filter((part) => part.includes(`aria-label="${name}"`));
+  expect(sections).toHaveLength(1);
+  return sections[0] as string;
+};
 
 describe('the closed columns of the deal board', () => {
   it('offer "Xem tất cả" in Thắng and Thua, each named by its stage, and none in an open column', () => {
     const html = render(() => undefined);
     expect(html.match(/>Xem tất cả</g)).toHaveLength(2);
-    expect(html).toContain('aria-label="Xem trong danh sách tất cả cơ hội ở giai đoạn Thắng"');
-    expect(html).toContain('aria-label="Xem trong danh sách tất cả cơ hội ở giai đoạn Thua"');
+    // The accessible name starts with the visible words (a voice-control user says "Xem tất cả").
+    expect(html).toContain('aria-label="Xem tất cả cơ hội ở giai đoạn Thắng trong danh sách"');
+    expect(html).toContain('aria-label="Xem tất cả cơ hội ở giai đoạn Thua trong danh sách"');
     expect(column(html, 'Mới')).not.toContain('Xem tất cả');
+    expect(column(html, 'Thắng')).toContain('>Xem tất cả<');
+    expect(column(html, 'Thua')).toContain('>Xem tất cả<');
     // The control sits beside the caption of the last days, and is a button a keyboard reaches.
     expect(html).toMatch(/Các cơ hội đóng trong 30 ngày qua<\/span><button type="button"/);
   });
