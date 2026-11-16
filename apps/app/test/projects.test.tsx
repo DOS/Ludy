@@ -10,7 +10,9 @@ import { catalog } from '../src/i18n/runtime.ts';
 import {
   boardColumns,
   boardPlaceholderForProject,
+  commitBoardStatusMove,
   createBoardBatchTracker,
+  createBoardMutationQueue,
   defaultProjectView,
   filterProjects,
   groupBoardTasks,
@@ -21,6 +23,7 @@ import {
   projectCompletionPct,
   sortBoardTasks,
   statusFilterIncludesCancelled,
+  type BoardOrderClient,
 } from '../src/lib/projects.ts';
 
 const authState = vi.hoisted(() => ({ modules: ['projects', 'notes'] as string[] }));
@@ -49,7 +52,7 @@ vi.mock('../src/lib/api.ts', async () => {
         return node([...path, prop]);
       },
     });
-  return { orpc: node([]), queryClient: queryClientState.current, errorMessage: String };
+  return { clientForOrg: () => node([]), orpc: node([]), queryClient: queryClientState.current, errorMessage: String };
 });
 
 vi.mock('@tanstack/react-router', async (importOriginal) => {
@@ -529,5 +532,192 @@ describe('projects SSR screens & board (#2591)', () => {
     expect(tracker.finish(filtered)).toEqual({ queryDrained: false });
     expect(tracker.rollbackOnFailure(unfiltered)).toBe(projectA);
     expect(tracker.finish(unfiltered)).toEqual({ queryDrained: true });
+  });
+
+  it('keeps committed cross-column status when placement reorder fails and binds queued moves to captured org slug (#2610)', async () => {
+    const baseBoard: ProjectBoard = {
+      project: {
+        id: '00000000-0000-4000-8000-000000000001',
+        name: 'Dự án A',
+        description: null,
+        status: 'active',
+        ownerUserId: 'u1',
+        ownerName: 'Minh',
+        canWrite: true,
+        canManage: true,
+        createdAt: '2026-11-10T00:00:00.000Z',
+        updatedAt: '2026-11-10T00:00:00.000Z',
+      },
+      members: [],
+      seats: [],
+      isTeamOrg: false,
+      viewerHasSeat: true,
+      tasks: [
+        card({ id: 't1', title: 'Task 1', status: 'todo' }),
+        card({ id: 't2', title: 'Task 2', status: 'done' }),
+      ],
+      totalVisible: 2,
+      hiddenByEntityCount: 0,
+      truncated: false,
+    };
+
+    // Cross-column drop: tasks.setStatus succeeds then projects.reorderTask fails -> do NOT revert cache back to todo.
+    const queue = createBoardMutationQueue();
+    let cached = baseBoard;
+    const setBoardCalls: ProjectBoard[] = [];
+    const errors: unknown[] = [];
+    let refreshed = 0;
+
+    await queue.enqueue({
+      slug: 'org-a',
+      projectId: baseBoard.project.id,
+      queryKey: ['projects', 'board', { projectId: baseBoard.project.id }],
+      keyHash: 'board-org-a',
+      clientForOrg: () => ({
+        tasks: { setStatus: () => Promise.resolve({}) },
+        projects: { reorderTask: () => Promise.reject(new Error('409 reorder conflict')) },
+      }),
+      getBoard: () => cached,
+      setBoard: (_key, next) => {
+        cached = next;
+        setBoardCalls.push(next);
+      },
+      cancelQueries: () => undefined,
+      refreshQueries: () => {
+        refreshed += 1;
+      },
+      isActiveContext: () => true,
+      onError: (err) => errors.push(err),
+      optimisticUpdate: (items) => optimisticMoveTask(items, 't1', 'done', { place: 'before', anchorId: 't2' }),
+      mutationFn: (orgClient, markCommitted) =>
+        commitBoardStatusMove(
+          orgClient,
+          { projectId: baseBoard.project.id, taskId: 't1', nextStatus: 'done', placement: { place: 'before', anchorId: 't2' } },
+          markCommitted,
+        ),
+    });
+
+    expect(setBoardCalls).toHaveLength(1);
+    expect(cached.tasks.find((t) => t.id === 't1')?.status).toBe('done');
+    expect(errors).toHaveLength(1);
+    expect(refreshed).toBe(1);
+
+    // If tasks.setStatus itself fails before committing, the pre-move todo snapshot IS restored cleanly.
+    cached = baseBoard;
+    const rollbackCalls: ProjectBoard[] = [];
+    await queue.enqueue({
+      slug: 'org-a',
+      projectId: baseBoard.project.id,
+      queryKey: ['projects', 'board', { projectId: baseBoard.project.id }],
+      keyHash: 'board-org-a-2',
+      clientForOrg: () => ({
+        tasks: { setStatus: () => Promise.reject(new Error('network down')) },
+        projects: { reorderTask: () => Promise.resolve({}) },
+      }),
+      getBoard: () => cached,
+      setBoard: (_key, next) => {
+        cached = next;
+        rollbackCalls.push(next);
+      },
+      cancelQueries: () => undefined,
+      refreshQueries: () => {
+        refreshed += 1;
+      },
+      isActiveContext: () => true,
+      onError: () => undefined,
+      optimisticUpdate: (items) => optimisticMoveTask(items, 't1', 'done', { place: 'before', anchorId: 't2' }),
+      mutationFn: (orgClient, markCommitted) =>
+        commitBoardStatusMove(
+          orgClient,
+          { projectId: baseBoard.project.id, taskId: 't1', nextStatus: 'done', placement: { place: 'before', anchorId: 't2' } },
+          markCommitted,
+        ),
+    });
+
+    expect(rollbackCalls).toHaveLength(2);
+    expect(cached.tasks.find((t) => t.id === 't1')?.status).toBe('todo');
+
+    // Queued moves capture the org slug at enqueue time and ignore later org switches.
+    const switchQueue = createBoardMutationQueue();
+    let activeSlug = 'org-a';
+    const seenClientSlugs: string[] = [];
+    const seenReorderCalls: Array<{ slug: string; taskId: string }> = [];
+    let releaseFirstMove!: () => void;
+    const firstMoveGate = new Promise<void>((resolve) => {
+      releaseFirstMove = resolve;
+    });
+    const makeOrgClient = (clientSlug: string): BoardOrderClient => {
+      seenClientSlugs.push(clientSlug);
+      return {
+        tasks: {
+          setStatus: async () => {
+            if (seenClientSlugs.length === 1) await firstMoveGate;
+          },
+        },
+        projects: {
+          reorderTask: (input) => {
+            seenReorderCalls.push({ slug: clientSlug, taskId: input.taskId });
+            return Promise.resolve({});
+          },
+        },
+      };
+    };
+
+    const p1 = switchQueue.enqueue({
+      slug: activeSlug,
+      projectId: baseBoard.project.id,
+      queryKey: ['projects', 'board', { projectId: baseBoard.project.id }],
+      keyHash: 'board-switch',
+      clientForOrg: makeOrgClient,
+      getBoard: () => cached,
+      setBoard: () => undefined,
+      cancelQueries: () => undefined,
+      refreshQueries: () => undefined,
+      isActiveContext: (s, pid) => s === activeSlug && pid === baseBoard.project.id,
+      onError: () => undefined,
+      optimisticUpdate: (items) => [...items],
+      mutationFn: (orgClient, markCommitted) =>
+        commitBoardStatusMove(
+          orgClient,
+          { projectId: baseBoard.project.id, taskId: 't1', nextStatus: 'done', placement: { place: 'before', anchorId: 't2' } },
+          markCommitted,
+        ),
+    });
+
+    const p2 = switchQueue.enqueue({
+      slug: activeSlug,
+      projectId: baseBoard.project.id,
+      queryKey: ['projects', 'board', { projectId: baseBoard.project.id }],
+      keyHash: 'board-switch',
+      clientForOrg: makeOrgClient,
+      getBoard: () => cached,
+      setBoard: () => undefined,
+      cancelQueries: () => undefined,
+      refreshQueries: () => undefined,
+      isActiveContext: (s, pid) => s === activeSlug && pid === baseBoard.project.id,
+      onError: () => undefined,
+      optimisticUpdate: (items) => [...items],
+      mutationFn: async (orgClient, markCommitted) => {
+        await orgClient.projects.reorderTask({
+          projectId: baseBoard.project.id,
+          taskId: 't2',
+          place: 'before',
+          anchorId: 't1',
+          idempotencyKey: 'k-2',
+        });
+        markCommitted();
+      },
+    });
+
+    // Switch active organization while move 1 is blocked and move 2 is still queued.
+    activeSlug = 'org-b';
+    releaseFirstMove();
+    await Promise.all([p1, p2]);
+
+    expect(seenClientSlugs).toEqual(['org-a', 'org-a']);
+    expect(seenReorderCalls).toEqual([
+      { slug: 'org-a', taskId: 't1' },
+      { slug: 'org-a', taskId: 't2' },
+    ]);
   });
 });

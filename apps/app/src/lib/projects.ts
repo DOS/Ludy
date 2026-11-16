@@ -247,3 +247,100 @@ export function createBoardBatchTracker<TKey>() {
     },
   };
 }
+
+export interface BoardOrderClient {
+  tasks: {
+    setStatus: (input: { id: string; status: TaskStatus; idempotencyKey: string }) => Promise<unknown>;
+  };
+  projects: {
+    reorderTask: (input: {
+      projectId: string;
+      taskId: string;
+      place: TaskPlacement['place'];
+      anchorId: string;
+      idempotencyKey: string;
+    }) => Promise<unknown>;
+  };
+}
+
+/**
+ * Runs a cross-column board drop, recording server commitment immediately after `tasks.setStatus`
+ * so a subsequent `projects.reorderTask` failure does not roll the card back to its old status (#2610).
+ */
+export async function commitBoardStatusMove(
+  orgClient: BoardOrderClient,
+  input: { projectId: string; taskId: string; nextStatus: TaskStatus; placement?: TaskPlacement | undefined },
+  markCommitted: () => void,
+  createKey: () => string = () => crypto.randomUUID(),
+): Promise<void> {
+  await orgClient.tasks.setStatus({ id: input.taskId, status: input.nextStatus, idempotencyKey: createKey() });
+  markCommitted();
+  if (input.placement) {
+    await orgClient.projects.reorderTask({
+      projectId: input.projectId,
+      taskId: input.taskId,
+      place: input.placement.place,
+      anchorId: input.placement.anchorId,
+      idempotencyKey: createKey(),
+    });
+  }
+}
+
+/** Serializes optimistic board mutations while binding each queued step to the slug that queued it (#2610). */
+export function createBoardMutationQueue() {
+  let queue: Promise<void> = Promise.resolve();
+  const tracker = createBoardBatchTracker<readonly unknown[]>();
+
+  return {
+    enqueue(opts: {
+      slug: string;
+      projectId: string;
+      queryKey: readonly unknown[];
+      keyHash: string;
+      clientForOrg: (slug: string) => BoardOrderClient;
+      getBoard: (key: readonly unknown[]) => ProjectBoard | undefined;
+      setBoard: (key: readonly unknown[], board: ProjectBoard) => void;
+      cancelQueries: (key: readonly unknown[]) => void;
+      refreshQueries: () => void;
+      isActiveContext: (slug: string, projectId: string) => boolean;
+      onStart?: () => void;
+      onError: (err: unknown) => void;
+      optimisticUpdate: (items: readonly ProjectTaskCard[]) => ProjectTaskCard[];
+      mutationFn: (orgClient: BoardOrderClient, markCommitted: () => void) => Promise<void>;
+    }): Promise<void> {
+      opts.onStart?.();
+      const snapshot = opts.getBoard(opts.queryKey);
+      const entry = tracker.begin(opts.keyHash, opts.queryKey, snapshot);
+      opts.cancelQueries(opts.queryKey);
+      if (snapshot) {
+        opts.setBoard(opts.queryKey, {
+          ...snapshot,
+          tasks: opts.optimisticUpdate(snapshot.tasks),
+        });
+      }
+      queue = queue
+        .catch(() => undefined)
+        .then(async () => {
+          const orgClient = opts.clientForOrg(opts.slug);
+          try {
+            await opts.mutationFn(orgClient, () => tracker.markSucceeded(entry));
+            tracker.markSucceeded(entry);
+          } catch (err) {
+            const rollback = tracker.rollbackOnFailure(entry);
+            if (rollback) {
+              opts.setBoard(entry.state.queryKey, rollback);
+            }
+            if (opts.isActiveContext(opts.slug, opts.projectId)) {
+              opts.onError(err);
+            }
+          } finally {
+            const { queryDrained } = tracker.finish(entry);
+            if (queryDrained) {
+              opts.refreshQueries();
+            }
+          }
+        });
+      return queue;
+    },
+  };
+}

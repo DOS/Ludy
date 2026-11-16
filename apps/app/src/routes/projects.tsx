@@ -31,11 +31,12 @@ import { TaskFilterBar } from '../components/task-filter-bar.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader, PageSkeleton } from '../components/ui.tsx';
 import { ViewTabs, type ViewState } from '../components/view-tabs.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { clientForOrg, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import {
   PROJECT_STATUSES,
   boardPlaceholderForProject,
-  createBoardBatchTracker,
+  commitBoardStatusMove,
+  createBoardMutationQueue,
   defaultProjectView,
   filterProjects,
   hasUnseatedTeamMembers,
@@ -44,6 +45,7 @@ import {
   projectCompletionPct,
   projectStatusVariant,
   statusFilterIncludesCancelled,
+  type BoardOrderClient,
   type ProjectStatusFilter,
   type ProjectViewMode,
   type TaskPlacement,
@@ -253,15 +255,14 @@ export function ProjectDetailPage() {
     setBar(astToTaskFilter(next));
     setSort(nextSort);
   };
-  const reorderQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const batchTrackerRef = useRef(createBoardBatchTracker<readonly unknown[]>());
-  const activeProjectIdRef = useRef(id);
-  activeProjectIdRef.current = id;
+  const boardQueueRef = useRef(createBoardMutationQueue());
+  const activeContextRef = useRef({ slug, id });
+  activeContextRef.current = { slug, id };
 
   useEffect(() => {
     setMoveError(null);
     setEditingTask(null);
-  }, [id]);
+  }, [slug, id]);
 
   useEffect(() => {
     const onResize = () => {
@@ -292,43 +293,30 @@ export function ProjectDetailPage() {
 
   const enqueueBoardMutation = (
     optimisticUpdate: (items: readonly ProjectTaskCard[]) => ProjectTaskCard[],
-    mutationFn: () => Promise<unknown>,
+    mutationFn: (orgClient: BoardOrderClient, markCommitted: () => void) => Promise<void>,
   ) => {
-    setMoveError(null);
-    const capturedProjectId = id;
     const queryKey = boardQueryOptions.queryKey;
-    const keyHash = hashKey(queryKey);
-    const tracker = batchTrackerRef.current;
-    const snapshot = queryClient.getQueryData<ProjectBoard>(queryKey);
-    const entry = tracker.begin(keyHash, queryKey, snapshot);
-    void queryClient.cancelQueries({ queryKey });
-    if (snapshot) {
-      queryClient.setQueryData<ProjectBoard>(queryKey, {
-        ...snapshot,
-        tasks: optimisticUpdate(snapshot.tasks),
-      });
-    }
-    reorderQueueRef.current = reorderQueueRef.current
-      .catch(() => undefined)
-      .then(async () => {
-        try {
-          await mutationFn();
-          tracker.markSucceeded(entry);
-        } catch (err) {
-          const rollback = tracker.rollbackOnFailure(entry);
-          if (rollback) {
-            queryClient.setQueryData<ProjectBoard>(entry.state.queryKey, rollback);
-          }
-          if (activeProjectIdRef.current === capturedProjectId) {
-            setMoveError(err);
-          }
-        } finally {
-          const { queryDrained } = tracker.finish(entry);
-          if (queryDrained) {
-            refreshProjectQueries();
-          }
-        }
-      });
+    void boardQueueRef.current.enqueue({
+      slug,
+      projectId: id,
+      queryKey,
+      keyHash: hashKey(queryKey),
+      clientForOrg,
+      getBoard: (key) => queryClient.getQueryData<ProjectBoard>(key),
+      setBoard: (key, board) => {
+        queryClient.setQueryData<ProjectBoard>(key, board);
+      },
+      cancelQueries: (key) => {
+        void queryClient.cancelQueries({ queryKey: key });
+      },
+      refreshQueries: refreshProjectQueries,
+      isActiveContext: (capturedSlug, capturedProjectId) =>
+        activeContextRef.current.slug === capturedSlug && activeContextRef.current.id === capturedProjectId,
+      onStart: () => setMoveError(null),
+      onError: setMoveError,
+      optimisticUpdate,
+      mutationFn,
+    });
   };
 
   const createTask = useMutation(
@@ -530,33 +518,31 @@ export function ProjectDetailPage() {
         creatingTask={createTask.isPending}
         customSortActive={sort !== null}
         onMoveStatus={(taskId, nextStatus, placement) => {
+          const capturedProjectId = project.id;
           enqueueBoardMutation(
             (items) => optimisticMoveTask(items, taskId, nextStatus, placement),
-            async () => {
-              await orpc.tasks.setStatus.call({ id: taskId, status: nextStatus, idempotencyKey: crypto.randomUUID() });
-              if (placement) {
-                await orpc.projects.reorderTask.call({
-                  projectId: project.id,
-                  taskId,
-                  place: placement.place,
-                  anchorId: placement.anchorId,
-                  idempotencyKey: crypto.randomUUID(),
-                });
-              }
-            },
+            (orgClient, markCommitted) =>
+              commitBoardStatusMove(
+                orgClient,
+                { projectId: capturedProjectId, taskId, nextStatus, placement },
+                markCommitted,
+              ),
           );
         }}
         onReorderTask={(taskId: string, placement: TaskPlacement) => {
+          const capturedProjectId = project.id;
           enqueueBoardMutation(
             (items) => optimisticReorderTask(items, taskId, placement),
-            () =>
-              orpc.projects.reorderTask.call({
-                projectId: project.id,
+            async (orgClient, markCommitted) => {
+              await orgClient.projects.reorderTask({
+                projectId: capturedProjectId,
                 taskId,
                 place: placement.place,
                 anchorId: placement.anchorId,
                 idempotencyKey: crypto.randomUUID(),
-              }),
+              });
+              markCommitted();
+            },
           );
         }}
         onCreateTask={(input: { title: string; assigneePositionId: string | null; due?: string; status: BoardColumnStatus }, done) => {

@@ -94,6 +94,31 @@ export function astToTaskFilter(ast: FilterAst): TaskFilterState {
 
 export const TASK_SORT_OPTIONS = SAVED_VIEW_SCOPES['kernel.task'].sortable.flatMap((field) => [`${field}:asc`, `${field}:desc`]);
 
+function withoutRestCondition(rest: readonly FilterCondition[], field: string, op: string | null): FilterCondition[] {
+  return op ? rest.filter((c) => !(c.field === field && c.op === op)) : [...rest];
+}
+
+export function selectTaskStatus(state: TaskFilterState, raw: string): TaskFilterState {
+  const status = (TASK_STATUSES.find((s) => s === raw) ?? '') as '' | TaskStatus;
+  return { ...state, status, rest: withoutRestCondition(state.rest, 'status', status ? 'is' : null) };
+}
+
+export function selectTaskAssignee(state: TaskFilterState, assignee: string): TaskFilterState {
+  const op = assignee === 'me' ? 'is_me' : assignee === 'none' ? 'is_empty' : UUID.test(assignee) ? 'is' : null;
+  return { ...state, assignee, rest: withoutRestCondition(state.rest, 'assignee', op) };
+}
+
+export function selectTaskDue(state: TaskFilterState, raw: string): TaskFilterState {
+  const due = (['overdue', 'soon', 'empty'] as const).find((d) => d === raw) ?? ('' satisfies TaskDueFilter);
+  const op = due === 'overdue' ? 'overdue' : due === 'soon' ? 'within_next_days' : due === 'empty' ? 'is_empty' : null;
+  return { ...state, due, rest: withoutRestCondition(state.rest, 'due', op) };
+}
+
+export function selectTaskTainted(state: TaskFilterState, raw: string): TaskFilterState {
+  const tainted = (['true', 'false'] as const).find((v) => v === raw) ?? ('' satisfies TaskTaintedFilter);
+  return { ...state, tainted, rest: withoutRestCondition(state.rest, 'tainted', tainted ? 'is' : null) };
+}
+
 export function taskSortValue(sort: SavedViewSort | null | undefined): string {
   return sort ? `${sort.field}:${sort.dir}` : '';
 }

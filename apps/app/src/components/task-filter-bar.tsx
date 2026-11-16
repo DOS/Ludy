@@ -7,17 +7,19 @@ import { Button } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
 import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { TASK_STATUSES, type TaskStatus } from '../lib/agents.ts';
+import { TASK_STATUSES } from '../lib/agents.ts';
 import {
   EMPTY_TASK_FILTER,
   TASK_SORT_OPTIONS,
+  selectTaskAssignee,
+  selectTaskDue,
+  selectTaskStatus,
+  selectTaskTainted,
   taskConditionLabel,
   taskFilterToAst,
   taskSortOfValue,
   taskSortValue,
-  type TaskDueFilter,
   type TaskFilterState,
-  type TaskTaintedFilter,
 } from '../lib/task-filter.ts';
 
 export interface TaskFilterPosition {
@@ -95,7 +97,7 @@ export function TaskFilterBar({
           `${idPrefix}-status`,
           t('filters.status'),
           bar.status,
-          (status) => setBar({ ...bar, status: (TASK_STATUSES.find((s) => s === status) ?? '') as '' | TaskStatus }),
+          (status) => setBar(selectTaskStatus(bar, status)),
           <>
             <NativeSelectOption value="">{t('filters.any')}</NativeSelectOption>
             {TASK_STATUSES.map((s) => (
@@ -110,7 +112,7 @@ export function TaskFilterBar({
           `${idPrefix}-assignee`,
           t('filters.assignee'),
           bar.assignee,
-          (assignee) => setBar({ ...bar, assignee }),
+          (assignee) => setBar(selectTaskAssignee(bar, assignee)),
           <>
             <NativeSelectOption value="">{t('filters.any')}</NativeSelectOption>
             <NativeSelectOption value="me">{t('filters.assigneeMe')}</NativeSelectOption>
@@ -133,14 +135,7 @@ export function TaskFilterBar({
           `${idPrefix}-due`,
           t('filters.due'),
           bar.due,
-          (due) => {
-            const nextDue = (['overdue', 'soon', 'empty'] as const).find((d) => d === due) ?? ('' satisfies TaskDueFilter);
-            const rest =
-              nextDue === 'soon'
-                ? bar.rest.filter((c) => !(c.field === 'due' && c.op === 'within_next_days'))
-                : bar.rest;
-            setBar({ ...bar, due: nextDue, rest });
-          },
+          (due) => setBar(selectTaskDue(bar, due)),
           <>
             <NativeSelectOption value="">{t('filters.any')}</NativeSelectOption>
             <NativeSelectOption value="overdue">{t('filters.dueOverdue')}</NativeSelectOption>
@@ -153,7 +148,7 @@ export function TaskFilterBar({
           `${idPrefix}-tainted`,
           t('filters.tainted'),
           bar.tainted,
-          (tainted) => setBar({ ...bar, tainted: (['true', 'false'] as const).find((v) => v === tainted) ?? ('' satisfies TaskTaintedFilter) }),
+          (tainted) => setBar(selectTaskTainted(bar, tainted)),
           <>
             <NativeSelectOption value="">{t('filters.any')}</NativeSelectOption>
             <NativeSelectOption value="true">{t('filters.taintedAi')}</NativeSelectOption>

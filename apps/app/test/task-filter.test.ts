@@ -10,6 +10,10 @@ import {
   EMPTY_TASK_FILTER,
   TASK_SOON_DAYS,
   astToTaskFilter,
+  selectTaskAssignee,
+  selectTaskDue,
+  selectTaskStatus,
+  selectTaskTainted,
   taskConditionLabel,
   taskFilterToAst,
   taskSortOfValue,
@@ -167,5 +171,53 @@ describe('task filter (kernel.task, #2610)', () => {
     expect(taskSortOfValue('updated:asc')).toEqual({ field: 'updated', dir: 'asc' });
     expect(taskSortOfValue('')).toBeNull();
     expect(taskSortOfValue('amount:desc')).toBeNull();
+  });
+
+  it('strips matching field+operator entries from rest when changing assignee, due, status, or tainted filters', () => {
+    const loaded = astToTaskFilter({
+      v: 1,
+      all: [
+        { field: 'assignee', op: 'is', value: POS_1 },
+        { field: 'assignee', op: 'is_me' },
+        { field: 'due', op: 'overdue' },
+        { field: 'due', op: 'is_empty' },
+        { field: 'due', op: 'within_next_days', value: 30 },
+        { field: 'due', op: 'before', value: '2026-12-31' },
+        { field: 'status', op: 'in', value: ['todo', 'waiting'] },
+      ],
+    });
+    expect(loaded.assignee).toBe(POS_1);
+    expect(loaded.due).toBe('overdue');
+    expect(loaded.rest.map((c) => `${c.field}:${c.op}`)).toEqual([
+      'assignee:is_me',
+      'due:is_empty',
+      'due:within_next_days',
+      'due:before',
+      'status:in',
+    ]);
+
+    const afterMe = selectTaskAssignee(loaded, 'me');
+    expect(filterIssues('kernel.task', taskFilterToAst(afterMe))).toEqual([]);
+    expect(afterMe.rest.some((c) => c.field === 'assignee' && c.op === 'is_me')).toBe(false);
+
+    const afterUuid = selectTaskAssignee({ ...afterMe, rest: [...afterMe.rest, { field: 'assignee', op: 'is', value: POS_2 }] }, POS_1);
+    expect(filterIssues('kernel.task', taskFilterToAst(afterUuid))).toEqual([]);
+
+    const afterNone = selectTaskAssignee({ ...afterUuid, rest: [...afterUuid.rest, { field: 'assignee', op: 'is_empty' }] }, 'none');
+    expect(filterIssues('kernel.task', taskFilterToAst(afterNone))).toEqual([]);
+
+    for (const nextDue of ['overdue', 'soon', 'empty'] as const) {
+      const updatedDue = selectTaskDue(afterNone, nextDue);
+      expect(filterIssues('kernel.task', taskFilterToAst(updatedDue))).toEqual([]);
+      // Unrelated range condition (`due:before`) stays preserved in `rest`.
+      expect(updatedDue.rest.some((c) => c.field === 'due' && c.op === 'before')).toBe(true);
+    }
+
+    const updatedStatus = selectTaskStatus({ ...loaded, rest: [{ field: 'status', op: 'is', value: 'todo' }, { field: 'status', op: 'in', value: ['waiting'] }] }, 'done');
+    expect(filterIssues('kernel.task', taskFilterToAst(updatedStatus))).toEqual([]);
+    expect(updatedStatus.rest).toEqual([{ field: 'status', op: 'in', value: ['waiting'] }]);
+
+    const updatedTainted = selectTaskTainted({ ...EMPTY_TASK_FILTER, rest: [{ field: 'tainted', op: 'is', value: false }] }, 'true');
+    expect(filterIssues('kernel.task', taskFilterToAst(updatedTainted))).toEqual([]);
   });
 });
