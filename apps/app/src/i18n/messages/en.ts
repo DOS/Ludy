@@ -2783,7 +2783,7 @@ export const en = {
         offer: 'The full recording of this meeting was not uploaded. You can join the recording from the {pieces} pieces sent during the meeting.',
         button: 'Join the recording from the live pieces',
         gaps: '{count} pieces are missing (numbers {list}): the recording has a gap there.',
-        lateUpload: 'If the full recording arrives late after you join, the joined one is kept and the late one is refused.',
+        lateUpload: 'If the full recording arrives late after you join, it replaces the joined one, as long as you have not transcribed or summarized the joined one. If you have, the joined one is kept and the late one is refused.',
         done: 'Joined {pieces} pieces into a recording of {length}. You can play it back and transcribe it as usual.',
         doneGaps: '{count} pieces were missing (numbers {list}), so the recording has a gap there.',
         reasons: {
@@ -11188,6 +11188,7 @@ export const en = {
       LIVE_PIECES_CHANGED: 'The pieces changed while they were being joined. Try again.',
       LIVE_PIECE_UNREADABLE: 'A piece could not be read from storage, so they cannot be joined yet. Tell your system administrator.',
       MEDIA_ALREADY_RECORDED: 'This meeting already has its recording; the one that arrived first is kept and the later one is refused.',
+      MEDIA_JOINED_IN_USE: 'The recording joined from the live pieces was already used for a transcript or a summary, so the complete recording that arrived late cannot replace it and is refused.',
       IMPORT_ONLY: 'This meeting holds only the recording imported from its meeting platform; no other audio can be added to it.',
       MEETING_PLATFORM_BUSY: 'A recording from this platform is still being imported. Wait for it to finish or fail, then disconnect.',
       MEETING_PLATFORM_NOT_ACTIVE: 'The connection to this meeting platform is no longer valid. Connect again.',

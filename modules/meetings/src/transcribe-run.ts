@@ -16,6 +16,7 @@
 import { sql } from 'kysely';
 import { zTranscribeCancel, zTranscribeRunRef, zTranscribeStart, type TranscribeStatus } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { lockMeetingMedia, markAudioUsed } from './media-record.ts';
 import { vnDay } from './retention.ts';
 import { ROLES, openMeeting, userOf } from './transcript.ts';
 
@@ -62,6 +63,9 @@ export const transcriptStart = defineCommand({
     const userId = userOf(ctx.actor);
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can start its transcription');
+    // The meeting's media lock, as a recording takes it (#3187): a late complete upload that replaces a joined recording checks, under the lock, that no run was started on
+    // the joined audio. A start either commits first and is seen there, or waits for the replacement and then finds the new audio.
+    await lockMeetingMedia(ctx, input.meetingId);
     if (!transcribeEnabled) throw new DomainError('TRANSCRIBE_OFF', 422, 'Transcription is not turned on here; the meeting works as it did');
     if (!transcribeBroker) throw new DomainError('TRANSCRIBE_NO_BROKER', 503, 'Transcription needs the deployment credential key (CREDENTIAL_KEY or CREDENTIAL_KEY_FILE); ask the operator');
     // The meeting row is held while the run is made, so a delete that races this start waits for it (and then removes the run through the trigger) instead of
@@ -84,6 +88,8 @@ export const transcriptStart = defineCommand({
     // The kernel's start checks vy.use, the org, module and agent kill switches, the global ai switch and the budget (AI_BUDGET_EXHAUSTED), and makes the
     // member's Vy and this run (a result row in status running, the subject this meeting).
     const started = await ctx.run<{ runId: string; resultId: string }>('kernel.member_vy.run.start', { feature: FEATURE, subjectType: 'meeting', subjectId: input.meetingId });
+    // The recording is in use from here on: a late complete upload no longer replaces a joined recording (#3187).
+    await markAudioUsed(ctx, input.meetingId);
     const agent = await ctx.trx
       .selectFrom('crove_kernel.agent')
       .select('id')

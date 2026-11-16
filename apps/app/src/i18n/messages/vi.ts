@@ -2781,7 +2781,7 @@ export const vi = {
         offer: 'Bản ghi đầy đủ của cuộc họp này chưa được tải lên. Bạn có thể ghép bản ghi từ {pieces} đoạn đã gửi trong lúc họp.',
         button: 'Ghép bản ghi từ các đoạn trực tiếp',
         gaps: 'Thiếu {count} đoạn (số {list}): chỗ đó trong bản ghi sẽ bị đứt quãng.',
-        lateUpload: 'Nếu bản ghi đầy đủ đến muộn sau khi bạn ghép, bản ghép được giữ và bản đến muộn bị từ chối.',
+        lateUpload: 'Nếu bản ghi đầy đủ đến muộn sau khi bạn ghép, nó sẽ thay bản ghép, miễn là bạn chưa chép lời hoặc tóm tắt từ bản ghép. Nếu đã làm, bản ghép được giữ và bản đến muộn bị từ chối.',
         done: 'Đã ghép {pieces} đoạn thành bản ghi dài {length}. Bạn có thể nghe lại và ghi lời như thường lệ.',
         doneGaps: 'Thiếu {count} đoạn (số {list}), nên bản ghi bị đứt quãng ở đó.',
         reasons: {
@@ -11173,6 +11173,7 @@ export const vi = {
       LIVE_PIECES_CHANGED: 'Các đoạn đã thay đổi trong lúc ghép. Hãy thử lại.',
       LIVE_PIECE_UNREADABLE: 'Không đọc được một đoạn từ kho lưu trữ nên chưa ghép được. Hãy báo người quản trị hệ thống.',
       MEDIA_ALREADY_RECORDED: 'Cuộc họp này đã có bản ghi rồi; bản ghi đến trước được giữ và bản đến sau bị từ chối.',
+      MEDIA_JOINED_IN_USE: 'Bản ghép từ các đoạn trực tiếp đã được dùng để chép lời hoặc tóm tắt, nên bản ghi đầy đủ đến muộn không thay được nó và bị từ chối.',
       IMPORT_ONLY: 'Cuộc họp này chỉ chứa bản ghi nhập từ nền tảng họp của nó; không thêm âm thanh khác vào được.',
       MEETING_PLATFORM_BUSY: 'Còn bản ghi đang được nhập từ nền tảng này. Hãy chờ nhập xong hoặc báo lỗi rồi hãy ngắt kết nối.',
       MEETING_PLATFORM_NOT_ACTIVE: 'Kết nối với nền tảng họp này đã hết hiệu lực. Hãy kết nối lại.',
