@@ -3701,6 +3701,13 @@ export function createRpcHandler(
         ),
       ),
       confirmTasksFromSource: os.projects.confirmTasksFromSource.handler(projectsCommand('projects.tasks_from_source.confirm')),
+      listTemplates: os.projects.listTemplates.handler(projectsQuery('projects.template.list')),
+      createTemplate: os.projects.createTemplate.handler(projectsCommand('projects.template.create')),
+      archiveTemplate: os.projects.archiveTemplate.handler(projectsCommand('projects.template.archive')),
+      createFromTemplate: os.projects.createFromTemplate.handler(projectsCommand('projects.project.create_from_template')),
+      getTaskRecurrence: os.projects.getTaskRecurrence.handler(projectsQuery('projects.task.recurrence.get')),
+      setTaskRecurrence: os.projects.setTaskRecurrence.handler(projectsCommand('projects.task.recurrence.set')),
+      clearTaskRecurrence: os.projects.clearTaskRecurrence.handler(projectsCommand('projects.task.recurrence.clear')),
     },
   });
 

@@ -24,6 +24,7 @@ import { ChatAlertSender } from './chat-alerts.ts';
 import { archiveSource, expandArchive, recordArchiveFailure, type ArchiveSource } from './archive.ts';
 import { backfillImageSizes, IMAGE_SIZE_SWEEP_MS } from './image-size-backfill.ts';
 import { EVIDENCE_HOLD_SWEEP_MS, runEvidenceHolds } from './evidence-hold.ts';
+import { PROJECTS_RECURRING_SWEEP_MS, sweepProjectsRecurring } from './projects-recurring-worker.ts';
 import { processInboundEmail, type InboundJob } from './inbound.ts';
 import { mailEventJob, processMailEvent, type MailEventJob, type MailEventRow } from './mail-events.ts';
 import { MAIL_BULK_GAP_MS, MAIL_BULK_QUEUE, MAIL_SEND_QUEUE, MAIL_SWEEP_MS, mailErrorCode, purgeMail, runMailJob, sweepMail, type MailJob, type MailQueueDeps } from './mail-queue.ts';
@@ -1962,6 +1963,25 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   const recurringTimer = deps.runtime.installed('social') ? setInterval(() => void recurringSweep(), RECURRING_SWEEP_MS) : null;
   void recurringSweep();
 
+  // Recurring project tasks (#2607): every 15 minutes, spawn the next due occurrence once the latest is closed.
+  let projectsRecurring = false;
+  const projectsRecurringSweep = async () => {
+    if (projectsRecurring || !deps.runtime.installed('projects')) return;
+    projectsRecurring = true;
+    try {
+      const made = await sweepProjectsRecurring({ runtime: deps.runtime, workerDb: deps.workerDb });
+      if (made > 0) console.log(`[projects-recurring] made ${made}`);
+    } catch (error) {
+      console.error('[projects-recurring] sweep', error instanceof Error ? error.name : 'error');
+    } finally {
+      projectsRecurring = false;
+    }
+  };
+  const projectsRecurringTimer = deps.runtime.installed('projects')
+    ? setInterval(() => void projectsRecurringSweep(), PROJECTS_RECURRING_SWEEP_MS)
+    : null;
+  void projectsRecurringSweep();
+
   // Review reminders (#703): every 15 minutes, the posts whose review has waited a day or whose time is close; then the
   // due date reminders of assigned posts (#1359), due within a day or overdue.
   let reminding = false;
@@ -2903,6 +2923,9 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               if (row.type === 'kernel.agent.wakeup_requested') {
                 return sendAgentWake(boss, row.org_id, String(row.payload.agentId));
               }
+              if (row.type === 'projects.recurring.advanced' && typeof row.payload.wakeAgentId === 'string') {
+                return sendAgentWake(boss, row.org_id, row.payload.wakeAgentId);
+              }
               if (Object.hasOwn(AGENT_PROPOSAL_COMMANDS, row.type)) {
                 return boss.send(QUEUES.agentProposal, { orgId: row.org_id, eventId: row.event_id, type: row.type }, {
                   singletonKey: jobKey(row.org_id, QUEUES.agentProposal, row.event_id),
@@ -3134,6 +3157,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     if (mailTimer) clearInterval(mailTimer);
     if (evergreenTimer) clearInterval(evergreenTimer);
     if (recurringTimer) clearInterval(recurringTimer);
+    if (projectsRecurringTimer) clearInterval(projectsRecurringTimer);
     if (reminderTimer) clearInterval(reminderTimer);
     if (queueLowTimer) clearInterval(queueLowTimer);
     if (digestTimer) clearInterval(digestTimer);

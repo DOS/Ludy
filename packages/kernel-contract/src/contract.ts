@@ -472,6 +472,8 @@ import {
   zProjectBoardInput,
   zProjectCandidateTask,
   zProjectCreate,
+  zProjectCreateFromTemplateFields,
+  zProjectCreateFromTemplateResult,
   zProjectDetail,
   zProjectListInput,
   zProjectListResult,
@@ -483,10 +485,19 @@ import {
   zProjectTaskMutate,
   zProjectTaskProjectEntry,
   zProjectTaskProjectsInput,
+  zProjectTaskRecurrenceClearInput,
+  zProjectTaskRecurrenceClearResult,
+  zProjectTaskRecurrenceGetInput,
+  zProjectTaskRecurrenceSetInput,
+  zProjectTaskRecurrenceView,
   zProjectTaskReorderFields,
   zProjectTaskReorderResult,
   distinctReorderTargets,
   REORDER_SAME_TASK_ISSUE,
+  validTemplateCreateFromSource,
+  validTemplateCreateSource,
+  TEMPLATE_CREATE_FROM_SOURCE_ISSUE,
+  TEMPLATE_CREATE_SOURCE_ISSUE,
   zProjectTasksFromNoteConfirmInput,
   zProjectTasksFromNoteConfirmResult,
   zProjectTasksFromNoteInput,
@@ -496,6 +507,12 @@ import {
   zProjectTasksFromSourceResult,
   zProjectTasksFromNoteResult,
   zProjectTasksFromNoteStatus,
+  zProjectTemplateArchiveInput,
+  zProjectTemplateArchiveResult,
+  zProjectTemplateCreateFields,
+  zProjectTemplateCreateResult,
+  zProjectTemplateListInput,
+  zProjectTemplateListResult,
   zProjectUpdate,
   zProjectWeeklyStatus,
   zProjectWeeklyStatusInput,
@@ -2818,6 +2835,27 @@ export const contract = {
     confirmTasksFromSource: oc
       .input(zProjectTasksFromSourceConfirmInput.extend({ idempotencyKey: zId }))
       .output(zProjectTasksFromSourceConfirmResult),
+    listTemplates: oc.input(zProjectTemplateListInput).output(zProjectTemplateListResult),
+    createTemplate: oc
+      .input(zProjectTemplateCreateFields.extend({ idempotencyKey: zId }).refine(validTemplateCreateSource, TEMPLATE_CREATE_SOURCE_ISSUE))
+      .output(zProjectTemplateCreateResult),
+    archiveTemplate: oc
+      .input(zProjectTemplateArchiveInput.extend({ idempotencyKey: zId }))
+      .output(zProjectTemplateArchiveResult),
+    createFromTemplate: oc
+      .input(
+        zProjectCreateFromTemplateFields
+          .extend({ idempotencyKey: zId })
+          .refine(validTemplateCreateFromSource, TEMPLATE_CREATE_FROM_SOURCE_ISSUE),
+      )
+      .output(zProjectCreateFromTemplateResult),
+    getTaskRecurrence: oc.input(zProjectTaskRecurrenceGetInput).output(zProjectTaskRecurrenceView.nullable()),
+    setTaskRecurrence: oc
+      .input(zProjectTaskRecurrenceSetInput.extend({ idempotencyKey: zId }))
+      .output(zProjectTaskRecurrenceView),
+    clearTaskRecurrence: oc
+      .input(zProjectTaskRecurrenceClearInput.extend({ idempotencyKey: zId }))
+      .output(zProjectTaskRecurrenceClearResult),
   },
 };
 

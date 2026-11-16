@@ -19,6 +19,7 @@ import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
 import { eligibleApprovers } from './approval.ts';
 import { uploaderEntity } from './extraction.ts';
+import { offAppsOf } from './org-apps.ts';
 import { PERSONAL_DATA_NOTICE_ITEMS } from './personal-data.ts';
 import { REROUTED_EVENT_TASKS } from './task-reroute.ts';
 
@@ -144,6 +145,7 @@ export const KERNEL_NOTIFYING_EVENTS = [
   'kernel.channel.expired',
   'kernel.proposal.original_flagged',
   'projects.weekly_status.sent',
+  'projects.recurring.advanced',
 ] as const;
 
 export const notificationDispatch = defineCommand({
@@ -206,7 +208,14 @@ export const notificationDispatch = defineCommand({
         return { sent };
       }
       case 'kernel.task.created':
-      case 'kernel.task.assigned': {
+      case 'kernel.task.assigned':
+      case 'projects.recurring.advanced': {
+        if (
+          event.type === 'projects.recurring.advanced' &&
+          (!ctx.installed('projects') || (await offAppsOf(ctx.trx, ctx.orgId)).includes('projects'))
+        ) {
+          return { sent: 0 };
+        }
         const e = z.object({ taskId: zId, positionId: zId.nullable().optional() }).safeParse(event.payload);
         if (!e.success) return { sent: 0 };
         const task = await ctx.trx
