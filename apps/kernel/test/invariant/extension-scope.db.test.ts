@@ -38,11 +38,12 @@ const REACHABLE = [
   'meetings.media.record:meetings',
   'meetings.meeting.create:meetings',
   'meetings.meeting.extension_status:meetings',
+  // Landed one step at a time and now all present, so each is pinned exactly like the rest: live notes' pieces (L4a-1, #3109, ADR-0052), the next-meetings read of B2
+  // (#3166, the `agenda` scope) and the report that a recording ended with no media (#3196).
+  'meetings.live.chunk:meetings',
+  'meetings.agenda.next:agenda',
+  'meetings.meeting.recording_stopped:meetings',
 ];
-
-// Reachable only once L4a-1 (#3109, ADR-0052) is on main, the next-meetings read of B2 (#3166, the `agenda` scope), and the recording-stopped report of #3196 (step 1 of 2, the feature follows):
-// the test accepts each either present or absent, so it holds before and after that change. Each is exactly the one name listed, under exactly the scope listed.
-const REACHABLE_WHEN_LANDED = ['meetings.live.chunk:meetings', 'meetings.agenda.next:agenda', 'meetings.meeting.recording_stopped:meetings'];
 
 const CREATE = { title: 'Họp tuần', consentMethod: 'told_at_start' as const, visibility: 'attendees' as const, language: 'vi' as const, keepVideo: false };
 
@@ -143,8 +144,7 @@ suite('the extension token past the HTTP edge: scope, standing and meetings (#25
       extension?: { scope: string };
     }>;
     const reachable = defs.filter((d) => d.extension !== undefined).map((d) => `${d.name}:${d.extension?.scope}`);
-    expect(reachable.filter((name) => !REACHABLE_WHEN_LANDED.includes(name)).sort()).toEqual([...REACHABLE].sort());
-    expect(reachable.filter((name) => REACHABLE_WHEN_LANDED.includes(name)).length).toBeLessThanOrEqual(REACHABLE_WHEN_LANDED.length);
+    expect(reachable.sort()).toEqual([...REACHABLE].sort());
     expect([...EXTENSION_SCOPES]).toEqual([...EXTENSION_SCOPE_IDS]);
   });
 
