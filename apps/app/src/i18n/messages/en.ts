@@ -5157,6 +5157,15 @@ export const en = {
       noMonths: 'No month has spend to compare with the books yet.',
       unknownAccount: 'Account {code} is not in the chart of accounts of this legal entity, so nothing can be compared. Choose the code again in the settings.',
       failed: 'The books could not be read for the comparison: {reason}',
+      documents: 'Documents',
+      documentsChecking: 'Checking…',
+      documentCount: '{count, plural, one {# document} other {# documents}}',
+      documentMissing: 'No document yet',
+      documentUpload: 'Upload in the Inbox',
+      documentsFailed: 'The documents could not be read to check each month: {reason}',
+      documentsTooMany: 'This legal entity has too many documents in these months to check each one here, so no month is marked as missing. Open Documents to look.',
+      documentsHint:
+        'Counts the invoices and receipts recorded in the books for this legal entity, by the month of their date, whose seller is named like the platform. {brand} only counts them: it never writes a document or posts an entry.',
     },
     runs: {
       title: 'Recent updates',
