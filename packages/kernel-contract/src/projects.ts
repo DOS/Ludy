@@ -283,10 +283,23 @@ export const zProjectTasksFromNoteStatus = z.strictObject({
 });
 export type ProjectTasksFromNoteStatus = z.infer<typeof zProjectTasksFromNoteStatus>;
 
+const REAL_CALENDAR_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+export function isRealCalendarDate(iso: string): boolean {
+  const m = REAL_CALENDAR_DATE_RE.exec(iso);
+  if (!m) return false;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  if (year < 2000 || year > 2100 || month < 1 || month > 12 || day < 1 || day > 31) return false;
+  const dt = new Date(Date.UTC(year, month - 1, day));
+  return dt.getUTCFullYear() === year && dt.getUTCMonth() === month - 1 && dt.getUTCDate() === day;
+}
+
 export const zProjectProposedTask = z.strictObject({
   title: z.string().trim().min(1).max(PROJECT_TASK_TITLE_MAX),
   assigneePositionId: zId.nullable(),
-  dueOn: zLocalDate.nullable(),
+  dueOn: zLocalDate.refine(isRealCalendarDate, 'Invalid calendar date').nullable(),
 });
 export type ProjectProposedTask = z.infer<typeof zProjectProposedTask>;
 

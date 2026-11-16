@@ -314,6 +314,17 @@ describe.skipIf(!ADMIN)('Projects P7 (#2598): Vy proposes tasks from a note (PG1
       ).rejects.toMatchObject({ code: 'VALIDATION' });
     }
 
+    // Confirming with an invalid calendar date (e.g. 2026-02-31) must be refused cleanly with VALIDATION (422).
+    await expect(
+      exec(org.orgId, alice.userId, 'projects.tasks_from_note.confirm', {
+        noteId,
+        projectId,
+        confirmed: true,
+        timeZone: 'Asia/Ho_Chi_Minh',
+        items: [{ title: 'Bad date', assigneePositionId: null, dueOn: '2026-02-31' }],
+      }),
+    ).rejects.toMatchObject({ code: 'VALIDATION', status: 422 });
+
     // Alice edits proposal 1, unticks proposal 2, and confirms items 0 & 2 into the project.
     const confirmRes = await exec<ProjectTasksFromNoteConfirmResult>(org.orgId, alice.userId, 'projects.tasks_from_note.confirm', {
       noteId,

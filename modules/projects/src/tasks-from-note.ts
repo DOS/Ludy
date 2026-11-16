@@ -316,7 +316,14 @@ export const tasksFromNoteConfirm = defineCommand({
 
     const createdIds: string[] = [];
     for (const item of input.items) {
-      const due = item.dueOn === null ? null : todoDueInstant(item.dueOn, '23:59', input.timeZone).toISOString();
+      let due: string | null = null;
+      if (item.dueOn !== null) {
+        const dueDate = todoDueInstant(item.dueOn, '23:59', input.timeZone);
+        if (Number.isNaN(dueDate.getTime())) {
+          throw new DomainError('VALIDATION', 422, 'Ngày đến hạn không hợp lệ');
+        }
+        due = dueDate.toISOString();
+      }
       const created = await ctx.run<{ taskId: string }>('kernel.task.create_from_note', {
         noteId: input.noteId,
         title: item.title,
