@@ -1418,6 +1418,7 @@ export const envelopeSealComplete = defineCommand({
 
 export const envelopeExpireSweep = defineCommand({
   name: 'sign.envelope.expire_sweep',
+  runsWhenOff: 'expires overdue signing envelopes and revokes active tokens while the app is off',
   input: z.strictObject({}),
   risk: 'R1',
   sideEffect: 'internal',
@@ -1487,6 +1488,7 @@ export const envelopeExpireSweep = defineCommand({
 
 export const orgCleanup = defineCommand({
   name: 'sign.org.cleanup',
+  runsWhenOff: 'prunes expired sign secrets and stale abandoned drafts under retention while the app is off',
   input: z.strictObject({
     draftRetentionDays: z.number().int().min(1).max(3650).default(DEFAULT_RETENTION_DAYS),
     secretRetentionDays: z.number().int().min(1).max(3650).default(DEFAULT_RETENTION_DAYS),
