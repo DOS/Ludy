@@ -26,14 +26,18 @@ const suite = ADMIN ? describe : describe.skip;
 const confirmedMaps = (): Record<string, MarketplacePostingMap> => {
   const base = MARKETPLACE_POSTING_MAPS.tt133 as MarketplacePostingMap;
   const c = <T extends { status: string }>(r: T): T => ({ ...r, status: 'confirmed' });
-  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c(base.feePayable), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld) } };
+  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c(base.feePayable), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitExpense: c(base.pitExpense), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense) } };
 };
 const notMarketplace = (name: string) => !name.startsWith('finance.marketplace_settlement.');
 
 interface SeedLine {
+  // The day the line's order was delivered; the first day of the period when absent, no order line (no delivery day) when null.
+  delivered?: string | null;
   sales: string;
   discount?: string;
   refund?: string;
+  // The tax the platform withheld on the line (a household seller's), '0' when absent.
+  tax?: string;
 }
 
 suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
@@ -79,15 +83,16 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
   async function seed(o: Org, platform: string, start: string, end: string, lines: SeedLine[], reversalOf: string | null = null): Promise<string> {
     const id = randomUUID();
     await withAdmin(async (c) => {
-      const net = lines.reduce((n, l) => n + Number(l.sales) - Number(l.discount ?? 0) - Number(l.refund ?? 0), 0);
+      const net = lines.reduce((n, l) => n + Number(l.sales) - Number(l.discount ?? 0) - Number(l.refund ?? 0) - Number(l.tax ?? 0), 0);
       await c.query('BEGIN');
       await c.query('INSERT INTO crove_finance.channel_settlement (org_id, id, platform, period_start, period_end, report_net, reversal_of) VALUES ($1, $2, $3, $4, $5, $6, $7)', [o.orgId, id, platform, start, end, reversalOf ? -net : net, reversalOf]);
       for (const [i, l] of lines.entries()) {
         const orderId = randomUUID();
         await c.query('INSERT INTO crove_finance.channel_order (org_id, id, platform, order_no) VALUES ($1, $2, $3, $4)', [o.orgId, orderId, platform, `MK${randomUUID().slice(0, 12)}`]);
+        if (l.delivered !== null) await c.query("INSERT INTO crove_finance.channel_order_line (org_id, order_id, line_key, quantity, stage, delivered_at) VALUES ($1, $2, 'L1', 1, 'completed', $3)", [o.orgId, orderId, l.delivered ?? start]);
         await c.query(
-          'INSERT INTO crove_finance.channel_settlement_line (org_id, id, settlement_id, order_id, line_key, sales, seller_discount, refund, net) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
-          [o.orgId, randomUUID(), id, orderId, `K${i}`, l.sales, l.discount ?? '0', l.refund ?? '0', Number(l.sales) - Number(l.discount ?? 0) - Number(l.refund ?? 0)],
+          'INSERT INTO crove_finance.channel_settlement_line (org_id, id, settlement_id, order_id, line_key, sales, seller_discount, refund, tax_withheld, net) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
+          [o.orgId, randomUUID(), id, orderId, `K${i}`, l.sales, l.discount ?? '0', l.refund ?? '0', l.tax ?? '0', Number(l.sales) - Number(l.discount ?? 0) - Number(l.refund ?? 0) - Number(l.tax ?? 0)],
         );
       }
       await c.query('COMMIT');
@@ -238,8 +243,8 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     await expect(ask(o, settlement)).rejects.toMatchObject({ code: 'MARKETPLACE_SETTLEMENT_POSTED', status: 409 });
     await expect(approve(o, second.proposalId)).rejects.toMatchObject({ code: 'MARKETPLACE_SETTLEMENT_POSTED', status: 409 });
     expect(await vouchersOf(o, settlement)).toHaveLength(1);
-    // The database holds it too: a second voucher for the settlement is refused whatever the command does.
-    await expect(rows(`INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, settlement_id) VALUES ($1, '2026-10-15', 'x', $2, $3)`, [o.orgId, first.proposalId, settlement])).rejects.toMatchObject({ code: '23505' });
+    // The database holds it too: a second voucher for the settlement and the month is refused whatever the command does.
+    await expect(rows(`INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, settlement_id, settlement_month) VALUES ($1, '2026-10-15', 'x', $2, $3, '2026-10-01')`, [o.orgId, first.proposalId, settlement])).rejects.toMatchObject({ code: '23505' });
   });
 
   it('refuses a stored proposal that differs from the settlement, however it got there', async () => {
@@ -264,6 +269,7 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     await withAdmin(async (c) => {
       const orderId = randomUUID();
       await c.query('INSERT INTO crove_finance.channel_order (org_id, id, platform, order_no) VALUES ($1, $2, $3, $4)', [o.orgId, orderId, 'shopee', `MK${randomUUID().slice(0, 12)}`]);
+      await c.query("INSERT INTO crove_finance.channel_order_line (org_id, order_id, line_key, quantity, stage, delivered_at) VALUES ($1, $2, 'L1', 1, 'completed', $3)", [o.orgId, orderId, '2026-10-02']);
       await c.query('INSERT INTO crove_finance.channel_settlement_line (org_id, id, settlement_id, order_id, line_key, sales, net) VALUES ($1, $2, $3, $4, $5, 1000, 1000)', [o.orgId, randomUUID(), settlement, orderId, 'KX']);
     });
     await expect(approve(o, proposalId)).rejects.toMatchObject({ code: 'MARKETPLACE_SETTLEMENT_MISMATCH' });
@@ -326,6 +332,136 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('pending');
     // The shipped map is unchanged by all of it.
     expect(MARKETPLACE_POSTING_MAPS.tt133?.status).toBe('commentary');
+  });
+
+  it('posts a settlement as one voucher per month of delivery, all by ONE proposal: the sale in the month it was delivered, a refund in the settlement\'s own month', async () => {
+    const o = await org();
+    const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [
+      { sales: '100000', discount: '10000', delivered: '2026-09-28' },
+      { sales: '200000', delivered: '2026-10-02', refund: '30000' },
+      { sales: '50000', delivered: '2026-10-09' },
+    ]);
+    // One proposal for the settlement: September (the sale of the first line) and October (the other two, less the refund of the second, dated on the settlement's last day).
+    const { proposalId } = await ask(o, settlement);
+    const stored = (await rows<{ payload: { date: string; total: string; sales: string; refund: string; months: { month: string; date: string; total: string }[]; lines: { account: string; memo: string }[] } }>('SELECT payload FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.payload;
+    expect(stored).toMatchObject({ date: '2026-10-15', total: '310000', sales: '350000', refund: '30000', months: [{ month: '2026-09', date: '2026-09-30', total: '90000' }, { month: '2026-10', date: '2026-10-15', total: '220000' }] });
+    // Every month's entry is on the proposal, each line's memo naming its month.
+    expect(stored?.lines).toHaveLength(4);
+    expect(stored?.lines.map((l) => l.memo.slice(-7))).toEqual(['2026-09', '2026-09', '2026-10', '2026-10']);
+    await approve(o, proposalId);
+    const vouchers = await rows<{ settlement_month: string; voucher_date: string; proposal_id: string }>('SELECT settlement_month::text, voucher_date::text, proposal_id FROM crove_finance.journal_voucher WHERE org_id = $1 AND settlement_id = $2 ORDER BY settlement_month', [o.orgId, settlement]);
+    expect(vouchers).toEqual([
+      { settlement_month: '2026-09-01', voucher_date: '2026-09-30', proposal_id: proposalId },
+      { settlement_month: '2026-10-01', voucher_date: '2026-10-15', proposal_id: proposalId },
+    ]);
+    // The settlement is posted in full: a second request is refused, and a closed month refuses the whole settlement, nothing partial.
+    await expect(ask(o, settlement)).rejects.toMatchObject({ code: 'MARKETPLACE_SETTLEMENT_POSTED', status: 409 });
+  });
+
+  it('refuses the whole settlement when any month is in a closed period, and posts none of them', async () => {
+    const o = await org();
+    const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', delivered: '2026-09-28' }, { sales: '200000', delivered: '2026-10-02' }]);
+    const { proposalId } = await ask(o, settlement);
+    await rt.execute('finance.period.lock', { month: '2026-09' }, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+    await expect(approve(o, proposalId)).rejects.toMatchObject({ code: 'PERIOD_LOCKED', status: 409 });
+    await expect(ask(o, settlement)).rejects.toMatchObject({ code: 'PERIOD_LOCKED', status: 409 });
+    expect(await vouchersOf(o, settlement)).toHaveLength(0);
+  });
+
+  it('waits for the delivery day: a sale with none makes the whole settlement wait, and nothing is dated by a guess', async () => {
+    const o = await org();
+    const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', delivered: '2026-10-02' }, { sales: '50000', delivered: null }, { sales: '20000', delivered: '2026-11-03' }]);
+    // Two lines wait: one has no order line at all, and one was delivered after the settlement's last day.
+    await expect(ask(o, settlement)).rejects.toMatchObject({ code: 'MARKETPLACE_SETTLEMENT_WAITING_DELIVERY', status: 422, details: { lines: 2 } });
+    // A line refunded at least as much as it sold needs no day.
+    const refunded = await seed(o, 'shopee', '2026-10-16', '2026-10-31', [{ sales: '100000', discount: '10000', refund: '95000', delivered: null }]);
+    const { proposalId } = await ask(o, refunded);
+    await approve(o, proposalId);
+    expect(await vouchersOf(o, refunded)).toHaveLength(1);
+  });
+
+  // A household seller: the default entity of the org is made a household with the given trades, and the rates of its trade are confirmed for the test (the shipped rows are commentary).
+  async function household(o: Org, trades: string[], rateStatus: 'confirmed' | 'commentary' = 'confirmed') {
+    await withAdmin(async (c) => {
+      await c.query("UPDATE crove_kernel.legal_entity SET kind = 'household' WHERE org_id = $1 AND id = $2", [o.orgId, o.entity]);
+      await c.query("INSERT INTO crove_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, pit_method, trades) VALUES ($1, $2, '2026-01-01', 2, 'percentage', $3::text[])", [o.orgId, o.entity, trades]);
+      await c.query("UPDATE crove_finance.household_trade_rate SET status = $1 WHERE trade = 'goods'", [rateStatus]);
+    });
+    const rate = (await rows<{ vat_percent: string; pit_percent: string }>("SELECT vat_percent, pit_percent FROM crove_finance.household_trade_rate WHERE trade = 'goods' AND effective_from <= '2026-10-15' ORDER BY effective_from DESC LIMIT 1", []))[0];
+    return { vat: Number(rate?.vat_percent), pit: Number(rate?.pit_percent) };
+  }
+  type Stored = { total: string; taxWithheld?: string; lines: { account: string; debit: string; credit: string }[] };
+  const proposalOf = async (id: string) => (await rows<{ payload: Stored }>('SELECT payload FROM crove_kernel.proposal WHERE id = $1', [id]))[0]?.payload as Stored;
+
+  it('credits the tax a platform withheld from a household to 3331 and 3335 in the month of the sale, split by the rate pair of its one trade, and nets to zero', async () => {
+    const o = await org();
+    const r = await household(o, ['goods']);
+    const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [
+      { sales: '1000000', delivered: '2026-09-28', tax: '15000' },
+      { sales: '2000000', delivered: '2026-10-02', tax: '30000' },
+    ]);
+    const { proposalId } = await ask(o, settlement);
+    const stored = await proposalOf(proposalId);
+    const credit = (a: string) => stored.lines.filter((l) => l.account === a).reduce((n, l) => n + Number(l.credit), 0);
+    const debit = (a: string) => stored.lines.filter((l) => l.account === a).reduce((n, l) => n + Number(l.debit), 0);
+    const vat = Math.round((45000 * r.vat) / (r.vat + r.pit));
+    // Both months carry their own tax lines; the two parts add up to what was withheld.
+    expect(credit('3331')).toBe(vat);
+    expect(credit('3335')).toBe(45000 - vat);
+    expect(debit('6422')).toBe(45000 - vat);
+    expect(debit('511')).toBe(vat);
+    await approve(o, proposalId);
+    // Posted: the org holds only this settlement's entries, so the ledger totals by account are exactly the proposal's, and the tax accounts net to what the payout will debit.
+    const posted = Object.fromEntries(
+      (await rows<{ account: string; d: string; c: string }>('SELECT account_code AS account, sum(debit)::bigint::text AS d, sum(credit)::bigint::text AS c FROM crove_finance.journal_line WHERE org_id = $1 GROUP BY 1', [o.orgId])).map((l) => [l.account, [Number(l.d), Number(l.c)]]),
+    );
+    expect(posted).toEqual({ '131': [3000000, 0], '511': [vat, 3000000], '3331': [0, vat], '6422': [45000 - vat, 0], '3335': [0, 45000 - vat] });
+  });
+
+  it('refuses a household whose rate row is not confirmed, or whose profile has no single trade, and posts nothing', async () => {
+    const o = await org();
+    await household(o, ['goods'], 'commentary');
+    const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '1000000', delivered: '2026-10-02', tax: '15000' }]);
+    await expect(ask(o, settlement)).rejects.toMatchObject({ code: 'MARKETPLACE_TAX_RATE_UNCONFIRMED', status: 409 });
+    const o2 = await org();
+    await household(o2, ['goods', 'services']);
+    const s2 = await seed(o2, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '1000000', delivered: '2026-10-02', tax: '15000' }]);
+    await expect(ask(o2, s2)).rejects.toMatchObject({ code: 'MARKETPLACE_SETTLEMENT_NOT_POSTABLE', status: 422 });
+    expect(await rows('SELECT 1 FROM crove_finance.journal_voucher WHERE org_id = ANY($1)', [[o.orgId, o2.orgId]])).toHaveLength(0);
+  });
+
+  it('refuses a household settlement whose withheld total is not whole dong, and posts nothing', async () => {
+    const o = await org();
+    await household(o, ['goods']);
+    const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '1000000', delivered: '2026-10-02', tax: '15000.5' }]);
+    await expect(ask(o, settlement)).rejects.toMatchObject({ code: 'MARKETPLACE_SETTLEMENT_NOT_POSTABLE', status: 422 });
+    expect(await rows('SELECT 1 FROM crove_finance.journal_voucher WHERE org_id = $1', [o.orgId])).toHaveLength(0);
+  });
+
+  it('refuses an entity of kind household that has no profile in force, rather than treating it as a company', async () => {
+    const o = await org();
+    await withAdmin((c) => c.query("UPDATE crove_kernel.legal_entity SET kind = 'household' WHERE org_id = $1 AND id = $2", [o.orgId, o.entity]));
+    const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '1000000', delivered: '2026-10-02', tax: '15000' }]);
+    await expect(ask(o, settlement)).rejects.toMatchObject({ code: 'MARKETPLACE_SETTLEMENT_NOT_POSTABLE', status: 422 });
+  });
+
+  it('posts no tax line for a seller that is no household, whatever the lines say was withheld', async () => {
+    const o = await org();
+    const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '1000000', delivered: '2026-10-02', tax: '15000' }]);
+    const stored = await proposalOf((await ask(o, settlement)).proposalId);
+    expect(stored.lines.map((l) => l.account)).toEqual(['131', '511']);
+  });
+
+  it('holds the month in the database: the first day of a month, one voucher per settlement and month, and a month only on a settlement voucher', async () => {
+    const o = await org();
+    const settlement = await seed(o, 'shopee', '2026-10-01', '2026-10-15', TWO);
+    const { proposalId } = await ask(o, settlement);
+    await approve(o, proposalId);
+    const insert = (settlementId: string | null, month: string | null) =>
+      rows(`INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, settlement_id, settlement_month) VALUES ($1, '2026-10-15', 'x', $2, $3, $4)`, [o.orgId, proposalId, settlementId, month]);
+    await expect(insert(settlement, '2026-10-02')).rejects.toMatchObject({ code: '23514' });
+    await expect(insert(null, '2026-10-01')).rejects.toMatchObject({ code: '23514' });
+    await expect(insert(settlement, '2026-10-01')).rejects.toMatchObject({ code: '23505' });
   });
 
   it('holds the one voucher per settlement and the voucher shape in the database', async () => {

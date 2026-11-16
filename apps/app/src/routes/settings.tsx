@@ -3,6 +3,7 @@ import { Link, useSearch } from '@tanstack/react-router';
 import { useId, useState, type FormEvent } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
 import { ExtensionDevices } from '../components/extension-devices.tsx';
+import { MeetingPlatforms } from '../components/meeting-platforms.tsx';
 import { OrgExtensionDevices } from '../components/org-extension-devices.tsx';
 import { MemberSessions, MySessions } from '../components/sessions.tsx';
 import { Badge } from '@crove/ui/components/badge';
@@ -1250,6 +1251,8 @@ export function SettingsPage() {
         <TwoFactorCard />
         {me.data && <MySessions userId={me.data.userId} />}
         {getConfig().modules.includes('meetings') && <ExtensionDevices />}
+        {/* The member's own meeting platform connections (C1, #3173): the recordings they hold are suggested on the Meetings tab. */}
+        {getConfig().modules.includes('meetings') && <MeetingPlatforms canConnect={org.data !== undefined && org.data.role !== 'viewer'} />}
         {/* The other members' extension devices (#2868), with the meetings module; owners and admins. */}
         {getConfig().modules.includes('meetings') && canManage && org.data && me.data && (org.data.role === 'owner' || org.data.role === 'admin') && (
           <OrgExtensionDevices key={`org-extension-devices:${org.data.slug}`} members={org.data.members} viewerRole={org.data.role} me={me.data.userId} />

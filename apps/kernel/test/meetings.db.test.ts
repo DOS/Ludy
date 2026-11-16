@@ -1454,4 +1454,219 @@ suite('meetings module database integration tests (#2576)', () => {
     // Back to standard: every method again.
     expect((await createWith('recorder', 'told_at_start', 'Said at the start again')).status).toBe(200);
   });
+
+  // Meetings C1 (#3173): a recording a meeting platform finished is imported through meetings.import.start, a worker's staged bytes and the media route's importId.
+  const IMPORT_NOTICE_VERSION = '2026-11-imp-v1';
+  const asUser = (name: string) => ({ type: 'user' as const, userId: userIds.get(name)!, aal: 'aal1' as const, sessionId: accounts.get(name)!.session });
+  const startImport = (who: string, input: Record<string, unknown>) =>
+    runtime.execute<{ meetingId: string }>('meetings.import.start', { consentMethod: 'platform_notice', consentNoticeVersion: IMPORT_NOTICE_VERSION, consentConfirmed: true, ...input }, { actor: asUser(who), orgId });
+  const refusedWith = (promise: Promise<unknown>) => promise.then(() => null, (error: unknown) => (error as { code?: string }).code ?? 'ERR');
+  // A suggested recording of a member's own connection, as the sweep leaves it (the table owner writes it: the sweep's definer needs the worker login).
+  async function suggest(who: string, over: { title?: string; startedAt?: string; sizeBytes?: number | null } = {}) {
+    const recordingId = randomUUID();
+    await admin(async (c) => {
+      const connection = await c.query<{ id: string }>(
+        `INSERT INTO crove_kernel.meeting_platform_connection (org_id, user_id, provider, external_account, display_name) VALUES ($1, $2, 'sandbox', $3, 'Sandbox') RETURNING id`,
+        [orgId, userIds.get(who), `${who}-${randomUUID()}@sandbox.test`],
+      );
+      await c.query(
+        `INSERT INTO crove_kernel.meeting_platform_recording (org_id, id, connection_id, user_id, external_id, title, started_at, size_bytes, has_audio)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)`,
+        [orgId, recordingId, connection.rows[0]!.id, userIds.get(who), randomUUID(), over.title ?? 'Họp khách hàng', over.startedAt ?? new Date(Date.now() - 90 * 86_400_000).toISOString(), over.sizeBytes === undefined ? 4096 : over.sizeBytes],
+      );
+    });
+    return recordingId;
+  }
+  const recordingRow = (id: string) =>
+    admin(async (c) => (await c.query<{ status: string; meeting_id: string | null; staging_key: string | null; error_code: string | null }>('SELECT status, meeting_id, staging_key, error_code FROM crove_kernel.meeting_platform_recording WHERE id = $1', [id])).rows[0]!);
+  // What the worker does: the bytes wait under the row's staging key and the row becomes staged.
+  async function stage(recordingId: string, bytes: Buffer = OGG) {
+    const row = await recordingRow(recordingId);
+    store.staged.set(row.staging_key!, bytes);
+    await admin((c) => c.query(`UPDATE crove_kernel.meeting_platform_recording SET status = 'staged', staged_at = now() WHERE id = $1`, [recordingId]));
+    return row.staging_key!;
+  }
+  const claimImport = async (who: string, meetingId: string, body: Record<string, unknown>) => {
+    const response = await app.request(`/api/meetings/${meetingId}/media`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${await token(who)}`, 'content-type': 'application/json', 'x-crove-org': slug },
+      body: JSON.stringify(body),
+    });
+    return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+  };
+
+  it('26. C1: importing makes the meeting with the platform-notice consent, counts the periods from today, links the row and audits ids only', async () => {
+    const recordingId = await suggest('recorder', { title: 'Họp khách hàng cũ' });
+    const { meetingId } = await startImport('recorder', { recordingId, language: 'vi', visibility: 'attendees', readerUserIds: [userIds.get('attendee')!] });
+    const meeting = await admin(async (c) =>
+      (await c.query<{ title: string; consent_method: string; consent_notice_version: string; keep_video: boolean; live_notes: boolean; ended_at: Date | null; started_old: boolean; audio_future: boolean; readers: string }>(
+        `SELECT title, consent_method, consent_notice_version, keep_video, live_notes, ended_at, started_at < now() - interval '60 days' AS started_old,
+                audio_retention_date > (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date AS audio_future,
+                (SELECT count(*) FROM crove_meetings.meeting_reader r WHERE r.meeting_id = m.id)::text AS readers
+         FROM crove_meetings.meeting m WHERE id = $1`,
+        [meetingId],
+      )).rows[0],
+    );
+    expect(meeting).toEqual({ title: 'Họp khách hàng cũ', consent_method: 'platform_notice', consent_notice_version: IMPORT_NOTICE_VERSION, keep_video: false, live_notes: false, ended_at: null, started_old: true, audio_future: true, readers: '1' });
+    const row = await recordingRow(recordingId);
+    expect(row).toMatchObject({ status: 'importing', meeting_id: meetingId, error_code: null });
+    expect(row.staging_key).toMatch(/^staging\/[0-9a-f]{64}$/);
+    // The audit row names the ids and the provider, never the title, the staging key or the platform's id.
+    const detail = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'meetings.import.start' AND detail->>'meetingId' = $1`, [meetingId])).rows[0]?.detail);
+    expect(detail).toMatchObject({ recordingId, meetingId, provider: 'sandbox', consentMethod: 'platform_notice' });
+    expect(JSON.stringify(detail)).not.toContain('Họp khách hàng');
+    expect(JSON.stringify(detail)).not.toContain('staging/');
+  });
+
+  it('27. C1: a title may be chosen, an untitled recording gets a plain name, and the import refuses another member\'s row, a second click, a wrong notice and an unconfirmed consent', async () => {
+    const chosen = await suggest('recorder');
+    const { meetingId } = await startImport('recorder', { recordingId: chosen, title: 'Tên do tôi đặt' });
+    expect((await admin(async (c) => (await c.query<{ title: string }>('SELECT title FROM crove_meetings.meeting WHERE id = $1', [meetingId])).rows[0]))?.title).toBe('Tên do tôi đặt');
+    const untitled = await suggest('recorder', { title: '' });
+    const made = await startImport('recorder', { recordingId: untitled, language: 'en' });
+    expect((await admin(async (c) => (await c.query<{ title: string }>('SELECT title FROM crove_meetings.meeting WHERE id = $1', [made.meetingId])).rows[0]))?.title).toBe('Imported meeting');
+
+    const before = await meetingCount();
+    const mine = await suggest('recorder');
+    // Another member's row is answered as absent, and nothing is made.
+    expect(await refusedWith(startImport('otherMember', { recordingId: mine }))).toBe('MEETING_PLATFORM_NOT_FOUND');
+    // A second click on a row that is already importing.
+    expect(await refusedWith(startImport('recorder', { recordingId: chosen }))).toBe('MEETING_PLATFORM_STATE');
+    // The only notice and consent this command accepts.
+    expect(await refusedWith(startImport('recorder', { recordingId: mine, consentNoticeVersion: '2026-11-v1' }))).not.toBeNull();
+    expect(await refusedWith(startImport('recorder', { recordingId: mine, consentConfirmed: false }))).not.toBeNull();
+    expect(await refusedWith(startImport('recorder', { recordingId: mine, consentMethod: 'told_at_start' }))).not.toBeNull();
+    expect(await meetingCount()).toBe(before);
+    expect((await recordingRow(mine)).status).toBe('suggested');
+    // A viewer cannot import.
+    expect(await refusedWith(startImport('viewer', { recordingId: mine }))).not.toBeNull();
+    // The method belongs to the import: a recording or an upload cannot claim it.
+    expect((await createWith('recorder', 'platform_notice', 'Pretend import')).status).toBe(400);
+  });
+
+  it('28. C1: a strict org refuses the platform notice as it refuses any unwritten method, and the row stays a suggestion', async () => {
+    const recordingId = await suggest('recorder');
+    expect((await rpc('meetings/consentPolicy/set', 'owner', { policy: 'strict' })).status).toBe(200);
+    try {
+      const before = await meetingCount();
+      expect(await refusedWith(startImport('recorder', { recordingId }))).toBe('CONSENT_METHOD_NOT_ALLOWED');
+      expect(await meetingCount()).toBe(before);
+      expect((await recordingRow(recordingId)).status).toBe('suggested');
+    } finally {
+      expect((await rpc('meetings/consentPolicy/set', 'owner', { policy: 'standard' })).status).toBe(200);
+    }
+    expect(await startImport('recorder', { recordingId })).toHaveProperty('meetingId');
+  });
+
+  it('29. C1: the staged bytes are claimed by importId, sealed and recorded like an upload; the row becomes imported and the meeting is ended', async () => {
+    const recordingId = await suggest('recorder');
+    const { meetingId } = await startImport('recorder', { recordingId });
+    const key = await stage(recordingId);
+    const done = await claimImport('recorder', meetingId, { importId: recordingId, kind: 'audio' });
+    expect(done.status).toBe(200);
+    expect(await recordingRow(recordingId)).toMatchObject({ status: 'imported', staging_key: null, error_code: null, meeting_id: meetingId });
+    expect(store.staged.has(key)).toBe(false);
+    const rows = await admin(async (c) => ({
+      segments: Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_meetings.audio_segment WHERE meeting_id = $1', [meetingId])).rows[0]?.n),
+      ended: (await c.query<{ e: boolean }>('SELECT ended_at IS NOT NULL AS e FROM crove_meetings.meeting WHERE id = $1', [meetingId])).rows[0]?.e,
+      sealed: Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_meetings.media_key WHERE meeting_id = $1', [meetingId])).rows[0]?.n),
+    }));
+    expect(rows).toEqual({ segments: 1, ended: true, sealed: 1 });
+    // The bytes are claimed once: the same row cannot be claimed again.
+    expect((await claimImport('recorder', meetingId, { importId: recordingId, kind: 'audio' })).status).toBeGreaterThanOrEqual(400);
+  });
+
+  it('30. C1: an importId of another member\'s row is 404 and leaves it staged; both ids, a video kind and a bad id are 400; a row not yet staged cannot be claimed', async () => {
+    const recordingId = await suggest('recorder');
+    const { meetingId } = await startImport('recorder', { recordingId });
+    // Not staged yet: the claim is refused and nothing changes.
+    expect((await claimImport('recorder', meetingId, { importId: recordingId, kind: 'audio' })).status).toBe(409);
+    await stage(recordingId);
+    // Another member records their own meeting and names the recorder's row.
+    const theirs = String((await rpc('meetings/create', 'otherMember', { title: 'Của tôi', consentMethod: 'told_at_start' })).body.meetingId);
+    expect((await claimImport('otherMember', theirs, { importId: recordingId, kind: 'audio' })).status).toBe(404);
+    expect((await recordingRow(recordingId)).status).toBe('staged');
+    // The route's own checks.
+    expect((await claimImport('recorder', meetingId, { importId: recordingId, uploadId: randomUUID(), kind: 'audio' })).status).toBe(400);
+    expect((await claimImport('recorder', meetingId, { kind: 'audio' })).status).toBe(400);
+    expect((await claimImport('recorder', meetingId, { importId: recordingId, kind: 'video' })).status).toBe(400);
+    expect((await claimImport('recorder', meetingId, { importId: 'not-a-uuid', kind: 'audio' })).status).toBe(400);
+    expect((await recordingRow(recordingId)).status).toBe('staged');
+  });
+
+  it('31. C1: a staged file that is no media fails the row with a short code and drops the bytes, and a request for another meeting is refused before the row moves', async () => {
+    const hostile = await suggest('recorder');
+    const { meetingId } = await startImport('recorder', { recordingId: hostile });
+    const hostileKey = await stage(hostile, Buffer.from('this is not audio at all, only text '.repeat(10)));
+    const refused = await claimImport('recorder', meetingId, { importId: hostile, kind: 'audio' });
+    expect(refused.status).toBe(400);
+    expect(await recordingRow(hostile)).toMatchObject({ status: 'failed', staging_key: null, error_code: 'invalid_media' });
+    expect(store.staged.has(hostileKey)).toBe(false);
+    // A failed row can be imported again, into a new meeting.
+    const again = await startImport('recorder', { recordingId: hostile });
+    expect(again.meetingId).not.toBe(meetingId);
+    expect(await recordingRow(hostile)).toMatchObject({ status: 'importing', meeting_id: again.meetingId });
+
+    // The row is linked to one meeting; claiming it on the recorder's other meeting is refused as not found BEFORE the row moves: it stays staged, with its bytes, for the right meeting.
+    const linked = await suggest('recorder');
+    const linkedMeeting = await startImport('recorder', { recordingId: linked });
+    const key = await stage(linked);
+    const other = String((await rpc('meetings/create', 'recorder', { title: 'Một cuộc họp khác', consentMethod: 'told_at_start' })).body.meetingId);
+    expect((await claimImport('recorder', other, { importId: linked, kind: 'audio' })).status).toBe(404);
+    expect(await recordingRow(linked)).toMatchObject({ status: 'staged', staging_key: key, meeting_id: linkedMeeting.meetingId });
+    expect(store.staged.has(key)).toBe(true);
+  });
+
+  it('32. C1: a meeting that is no import is untouched when its media is recorded', async () => {
+    const made = await rpc('meetings/create', 'recorder', { title: 'Not an import', consentMethod: 'told_at_start' });
+    expect((await uploadRaw(String(made.body.meetingId), '?kind=audio')).status).toBe(200);
+    const imported = await admin(async (c) => Number((await c.query<{ n: string }>(`SELECT count(*) AS n FROM crove_kernel.meeting_platform_recording WHERE meeting_id = $1`, [String(made.body.meetingId)])).rows[0]?.n));
+    expect(imported).toBe(0);
+  });
+
+  it('33. C1: a platform-notice meeting takes media only as the claimed import of its recorder: an upload, before or after, is refused IMPORT_ONLY and records nothing', async () => {
+    const segments = (meetingId: string) =>
+      admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_meetings.audio_segment WHERE meeting_id = $1', [meetingId])).rows[0]?.n));
+    const recordingId = await suggest('recorder');
+    const { meetingId } = await startImport('recorder', { recordingId });
+    // The recorder's own upload into the import's meeting, while the row is still importing.
+    const early = await uploadRaw(meetingId, '?kind=audio');
+    expect(early.status).toBe(403);
+    expect(((await early.json()) as { code?: string }).code).toBe('IMPORT_ONLY');
+    // Staged but not claimed: still an upload, still refused, and the staged bytes stay for the claim.
+    const key = await stage(recordingId);
+    expect((await uploadRaw(meetingId, '?kind=audio')).status).toBe(403);
+    expect(store.staged.has(key)).toBe(true);
+    expect(await segments(meetingId)).toBe(0);
+    // The claim of that meeting by the same member goes through ...
+    expect((await claimImport('recorder', meetingId, { importId: recordingId, kind: 'audio' })).status).toBe(200);
+    expect(await segments(meetingId)).toBe(1);
+    // ... and once imported the meeting takes no further media from an upload.
+    expect((await uploadRaw(meetingId, '?kind=audio')).status).toBe(403);
+    expect(await segments(meetingId)).toBe(1);
+  });
+
+  it('34. C1: the click goes through the API as meetings/importStart: it returns the meeting, the row is importing, a viewer and a strict org are refused with the command\'s code', async () => {
+    const body = { language: 'vi', visibility: 'attendees', consentMethod: 'platform_notice', consentNoticeVersion: IMPORT_NOTICE_VERSION, consentConfirmed: true };
+    const recordingId = await suggest('recorder');
+    const done = await rpc('meetings/importStart', 'recorder', { recordingId, ...body });
+    expect(done.status).toBe(200);
+    expect(done.body).toEqual({ meetingId: expect.any(String) });
+    expect(await recordingRow(recordingId)).toMatchObject({ status: 'importing', meeting_id: done.body.meetingId });
+    // The same input shape is checked at the edge: no consent tick, or another notice, is a 400 and nothing is made.
+    const other = await suggest('recorder');
+    expect((await rpc('meetings/importStart', 'recorder', { recordingId: other, ...body, consentConfirmed: false })).status).toBe(400);
+    expect((await rpc('meetings/importStart', 'recorder', { recordingId: other, ...body, consentNoticeVersion: '2026-11-v1' })).status).toBe(400);
+    expect((await rpc('meetings/importStart', 'viewer', { recordingId: other, ...body })).status).toBeGreaterThanOrEqual(400);
+    expect((await recordingRow(other)).status).toBe('suggested');
+    // A strict org answers CONSENT_METHOD_NOT_ALLOWED, which the app words before the click.
+    expect((await rpc('meetings/consentPolicy/set', 'owner', { policy: 'strict' })).status).toBe(200);
+    try {
+      const refused = await rpc('meetings/importStart', 'recorder', { recordingId: other, ...body });
+      expect(refused.status).toBe(422);
+      expect(refused.body.code).toBe('CONSENT_METHOD_NOT_ALLOWED');
+    } finally {
+      expect((await rpc('meetings/consentPolicy/set', 'owner', { policy: 'standard' })).status).toBe(200);
+    }
+  });
 });

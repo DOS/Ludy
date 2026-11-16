@@ -2601,6 +2601,8 @@ export function createHttpApp(deps: HttpDeps) {
       let wrapSubkey = null as Buffer | null;
       let stagingKeyToDelete: string | null = null;
       let releaseJsonVideo: (() => void) | null = null;
+      // The platform recording this request claimed (C1, #3173): any failure after the claim fails that row with a short code.
+      let claimedImportId: string | null = null;
 
       try {
         // The length of the recording is measured in crove-media after sealing, so without it nothing is read or stored (#2985).
@@ -2654,12 +2656,17 @@ export function createHttpApp(deps: HttpDeps) {
         if (contentTypeHeader.includes('application/json')) {
           const body = (await c.req.json().catch(() => null)) as {
             uploadId?: unknown;
+            importId?: unknown;
             kind?: unknown;
             lengthSeconds?: unknown;
             stopReason?: unknown;
           } | null;
-          if (!body || typeof body.uploadId !== 'string' || (body.kind !== 'audio' && body.kind !== 'video')) {
-            throw new DomainError('BAD_REQUEST', 400, 'uploadId and kind (audio|video) required');
+          // Exactly one of uploadId (a presigned upload) and importId (a recording a meeting platform finished, C1 #3173; audio only).
+          if (!body || (typeof body.uploadId === 'string') === (typeof body.importId === 'string') || (body.kind !== 'audio' && body.kind !== 'video')) {
+            throw new DomainError('BAD_REQUEST', 400, 'Exactly one of uploadId and importId, and kind (audio|video), required');
+          }
+          if (typeof body.importId === 'string' && (body.kind !== 'audio' || !UUID_TEXT.test(body.importId))) {
+            throw new DomainError('BAD_REQUEST', 400, 'importId must be a uuid and kind must be audio');
           }
           kind = body.kind;
           stopReason = readStopReason(body.stopReason);
@@ -2677,16 +2684,33 @@ export function createHttpApp(deps: HttpDeps) {
 
           await verifyRecorderAndKind(kind);
 
-          const claim = await runtime.execute<{ stagingKey: string; maxBytes: number; purpose?: string }>(
-            'kernel.file.upload.claim',
-            { uploadId: body.uploadId },
-            { actor: actorOf(user), orgId },
-          );
-          stagingKeyToDelete = claim.stagingKey;
+          let claim: { stagingKey: string; cap: number };
+          if (typeof body.importId === 'string') {
+            // The worker staged the bytes; this request takes them, then seals and records them like an upload (the row is the member's own: another's is answered as absent).
+            // The claim names this route's meeting, so a recording begun for another meeting is refused before the row moves (it never ends up claimed by a request it cannot serve).
+            const imported = await runtime.execute<{ stagingKey: string; meetingId: string }>(
+              'kernel.meeting_platform.import.claim',
+              { recordingId: body.importId, meetingId },
+              { actor: actorOf(user), orgId },
+            );
+            claimedImportId = body.importId;
+            stagingKeyToDelete = imported.stagingKey;
+            if (imported.meetingId !== meetingId) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy bản ghi này');
+            // The job already held the file to the same audio cap (MEETING_PLATFORM_IMPORT_MAX_BYTES); a later extraction of audio from a video can change its size, so the cap is the upload's own.
+            claim = { stagingKey: imported.stagingKey, cap: meetingMediaCap('audio') };
+          } else {
+            const uploaded = await runtime.execute<{ stagingKey: string; maxBytes: number; purpose?: string }>(
+              'kernel.file.upload.claim',
+              { uploadId: body.uploadId },
+              { actor: actorOf(user), orgId },
+            );
+            stagingKeyToDelete = uploaded.stagingKey;
 
-          const expectedPurpose = kind === 'audio' ? 'meeting_audio' : 'meeting_video';
-          if (claim.purpose !== expectedPurpose) {
-            throw new DomainError('INVALID_PURPOSE', 400, 'Mục đích tệp không khớp với lượt đăng ký tải lên');
+            const expectedPurpose = kind === 'audio' ? 'meeting_audio' : 'meeting_video';
+            if (uploaded.purpose !== expectedPurpose) {
+              throw new DomainError('INVALID_PURPOSE', 400, 'Mục đích tệp không khớp với lượt đăng ký tải lên');
+            }
+            claim = { stagingKey: uploaded.stagingKey, cap: Math.min(uploaded.maxBytes, meetingMediaCap(kind)) };
           }
 
           prepareKeys(kind);
@@ -2694,7 +2718,7 @@ export function createHttpApp(deps: HttpDeps) {
             if (error instanceof BlobNotFoundError) throw new DomainError('UPLOAD_MISSING', 409, 'Chưa nhận được tệp cho lượt tải lên này');
             throw error;
           };
-          const cap = Math.min(claim.maxBytes, meetingMediaCap(kind));
+          const cap = claim.cap;
           if (direct?.openStaged) {
             // Streamed from the bucket: the declared size is checked against the cap before a byte is read.
             const opened = await direct.openStaged(claim.stagingKey, cap).catch(missing);
@@ -2820,6 +2844,16 @@ export function createHttpApp(deps: HttpDeps) {
         }
 
         return c.json(result);
+      } catch (error) {
+        // A claimed platform recording that did not become the meeting's media fails with a short code the member can read (never the error's own text), best effort.
+        if (claimedImportId) {
+          const code = (error as { code?: unknown } | null)?.code;
+          const failure = code === 'FILE_TOO_LARGE' ? 'too_large' : code === 'MEDIA_TOO_LONG' ? 'too_long' : code === 'INVALID_MEDIA_CONTAINER' || code === 'MEDIA_PROBE_FAILED' || code === 'NO_FILE' ? 'invalid_media' : 'claim_failed';
+          await runtime
+            .execute('kernel.meeting_platform.import.claim_failed', { recordingId: claimedImportId, code: failure }, { actor: actorOf(user), orgId })
+            .catch((err) => console.error('[http] meeting import failure not recorded', err));
+        }
+        throw error;
       } finally {
         if (stagingKeyToDelete) {
           await store.delete(stagingKeyToDelete).catch((err) => console.error('[http] meeting staging deletion failed', err));

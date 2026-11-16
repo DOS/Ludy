@@ -67,11 +67,13 @@ import { setAddress, setContactEmail } from './org-address.ts';
 import { partyCommands } from './parties.ts';
 import { setTaxCode, setVatFilingPeriod } from './tax-code.ts';
 import { setApprovalPreset } from './approval-preset.ts';
+import { setAppCommand } from './org-apps.ts';
 import { legalEntityCommands } from './legal-entities.ts';
 import { numberingCommands } from './numbering.ts';
 import { cancelMemberVyRuns, memberVyCommands } from './member-vy.ts';
 import { roleCommands } from './roles.ts';
 import { calendarCommands } from './calendar.ts';
+import { meetingPlatformCommands } from './meeting-platform.ts';
 import { proposalReminderCommands } from './proposal-reminders.ts';
 import { PROPOSAL_PREPARERS, REQUESTABLE, preparedCoAuthors, preparedEntity, resubmitProposal, zPreparedProposal } from './proposal-resubmit.ts';
 import { aiBudgetCommands } from './ai-budget.ts';
@@ -900,6 +902,8 @@ export const approveProposal = defineCommand({
 export const BULK_ITEM_REFUSALS: ReadonlySet<string> = new Set([
   // The proposal (lockPendingProposal, refuseWhileReextracting): another org's id reads like one that does not exist.
   'NOT_FOUND',
+  // The proposal's command belongs to an app the org switched off or does not hold (ADR-0053): that item waits, the others go on.
+  'MODULE_OFF',
   'PROPOSAL_DECIDED',
   // A proposal that expired while the batch was prepared (#876).
   'PROPOSAL_EXPIRED',
@@ -1229,6 +1233,7 @@ const otherKernelCommands = [
   ...roleCommands,
   ...memberVyCommands,
   ...calendarCommands,
+  ...meetingPlatformCommands,
   setAddress,
   setContactEmail,
   queueContactMail,
@@ -1256,6 +1261,8 @@ export function buildKernelCommands(
     uploadBeginLimits?: UploadBeginLimits;
     inviteLimits?: InviteLimits;
     messageIdDomain?: string;
+    // The modules this build ships, so kernel.org.set_app refuses an app that does not exist (ADR-0053); absent: any well-formed id.
+    shippedModules?: readonly string[];
   } = {},
 ) {
   return [
@@ -1264,6 +1271,7 @@ export function buildKernelCommands(
       ? inviteCreateCommand(options.inviteLimits, { messageIdDomain: options.messageIdDomain })
       : createInvite,
     ...otherKernelCommands,
+    setAppCommand(options.shippedModules ? { shipped: options.shippedModules } : {}),
     options.uploadBeginLimits ? beginUploadCommand(options.uploadBeginLimits) : beginUpload,
     options.inboundRotateLimits ? inboundRotateCommand(options.inboundRotateLimits) : rotateInbound,
     options.inboundRotateLimits ? conversationAddressRotateCommand(options.inboundRotateLimits) : rotateConversationAddress,

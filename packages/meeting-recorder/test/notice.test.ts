@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The recording notice kit (Meetings A1, #3159): fixed text, a version, the meeting's language as the default.
 import { describe, expect, it } from 'vitest';
-import { beginRecording, isRecordingStopReason, noticeLanguageFor, noticeToCopy, otherNoticeLanguage, RECORDING_NOTICE, stopReasonForUpload, type ChunkStore, type RecordingMeta } from '../src/index.ts';
+import { beginRecording, isRecordingStopReason, noticeLanguageFor, noticeToCopy, otherNoticeLanguage, IMPORT_NOTICE, RECORDING_NOTICE, stopReasonForUpload, type ChunkStore, type RecordingMeta } from '../src/index.ts';
 
 describe('recording notice kit', () => {
   it('has a Vietnamese and an English text, a version, and says it awaits the lawyer (#2585)', () => {
@@ -25,8 +25,21 @@ describe('recording notice kit', () => {
     expect(noticeToCopy('en').version).toBe(RECORDING_NOTICE.version);
   });
 
-  it('has no em dash and no markup in either text', () => {
-    for (const text of Object.values(RECORDING_NOTICE.text)) {
+  it('has an import notice (C1, #3173): its own version, a draft, and the platform notice, the copy that stays and the own transcript in both languages', () => {
+    expect(IMPORT_NOTICE.version).not.toBe(RECORDING_NOTICE.version);
+    expect(IMPORT_NOTICE.version.length).toBeLessThanOrEqual(20);
+    expect(IMPORT_NOTICE.reviewed).toBe(false);
+    expect(IMPORT_NOTICE.reviewIssue).toBe(2585);
+    expect(IMPORT_NOTICE.text.vi).toContain('nền tảng họp');
+    expect(IMPORT_NOTICE.text.vi).toContain('không bao giờ xóa');
+    expect(IMPORT_NOTICE.text.vi).toContain('phiên âm');
+    expect(IMPORT_NOTICE.text.en).toContain('platform showed its own recording notice');
+    expect(IMPORT_NOTICE.text.en).toContain('never deletes');
+    expect(IMPORT_NOTICE.text.en).toContain('transcribes the audio on its own');
+  });
+
+  it('has no em dash and no markup in any text', () => {
+    for (const text of [...Object.values(RECORDING_NOTICE.text), ...Object.values(IMPORT_NOTICE.text)]) {
       expect(text).not.toMatch(/—|<|>/);
     }
   });

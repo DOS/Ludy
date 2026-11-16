@@ -59,6 +59,7 @@ export const bookingFeedCreate = defineCommand({
 
 export const bookingFeedRevoke = defineCommand({
   name: 'crm.booking_feed.revoke',
+  runsWhenOff: 'revokes a calendar feed link, so a leaked link can still be killed while the app is off',
   input: z.strictObject({}),
   risk: 'R1',
   sideEffect: 'internal',
@@ -73,6 +74,7 @@ export const bookingFeedRevoke = defineCommand({
 // alone. The definer also refuses a member who does not host at each fetch.
 export const bookingFeedRevokeForMember = defineCommand({
   name: 'crm.booking_feed.revoke_for_member',
+  runsWhenOff: 'revokes a leaving member\'s calendar feed while the app is off',
   input: z.strictObject({ eventId: zId }),
   risk: 'R1',
   sideEffect: 'internal',

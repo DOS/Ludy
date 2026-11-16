@@ -24,6 +24,8 @@ vi.mock('../src/lib/api.ts', async () => {
     });
   return { orpc: node([]), queryClient: client.current, errorMessage: String, uploadMeetingMedia: vi.fn(), sendLiveChunk: vi.fn() };
 });
+// The screen mounts the claim of an import's copied audio (C1, #3173), which asks whether the meetings module is installed.
+vi.mock('../src/lib/auth.ts', () => ({ getConfig: () => ({ modules: ['kernel', 'meetings'] }) }));
 vi.mock('@tanstack/react-router', async (importOriginal) => {
   const { createElement } = await import('react');
   return {

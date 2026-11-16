@@ -1,14 +1,15 @@
 // oRPC implementation of @crove/kernel-contract. Handlers only call the runtime (execute/query).
+import { randomBytes } from 'node:crypto';
 import { implement, ORPCError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
-import { CALENDAR_OAUTH_PROVIDERS, MARKETPLACE_PLATFORM_KEYS, canReadEventsWith, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@crove/kernel-contract';
+import { CALENDAR_OAUTH_PROVIDERS, MARKETPLACE_PLATFORM_KEYS, canReadEventsWith, meetingPlatformBinding, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@crove/kernel-contract';
 import { sandboxBankFeed } from '@crove/bank-feed';
 import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad-platform';
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@crove/einvoice';
 import type { McpWakeView, MeetingHookView, QuoteLinkCreated } from '@crove/kernel-contract';
 import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wake-setup.ts';
 import { makeHookSecret } from './meeting-hook-setup.ts';
-import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, PaymentReminderDraft, TodayList, WeeklyFigures } from '@crove/kernel-contract';
+import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, PaymentReminderDraft, TodayList, WeeklyFigures } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { weeklyAnswer } from './today-weekly.ts';
 import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
@@ -53,6 +54,7 @@ import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type C
 import { suggestCompanies, type CompanyAi } from './contact-company-ai.ts';
 import { wordReminder, type ReminderAi } from './payment-reminder-ai.ts';
 import { wordFollowup, type FollowupAi } from './followup-ai.ts';
+import { minutesLink, postMinutesFromClick, saveMinutesChannel, type MinutesChatDeps } from './meeting-chat.ts';
 import { explainPayslip, flagMonth, prepareMonth, type PayrollAi, type PayrollReads } from './payroll-coworker-ai.ts';
 import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
 import { crmFollowupAi, draftCrmFollowup } from './crm-followup-ai.ts';
@@ -265,8 +267,10 @@ function discordFailure(code: string | undefined): DomainError | null {
 const PROVIDER_LABELS: Record<string, string> = { sandbox: 'test channel', facebook_page: 'Facebook Page', instagram: 'Instagram', zalo_oa: 'Zalo Official Account (article)', tiktok: 'TikTok', youtube: 'YouTube', threads: 'Threads', linkedin: 'LinkedIn', x: 'X', bluesky: 'Bluesky', google_business: 'Google Business Profile', telegram: 'Telegram', mastodon: 'Mastodon', pinterest: 'Pinterest', discord: 'Discord', wordpress: 'WordPress (blog post)', linkedin_page: 'LinkedIn Page', whatsapp: 'WhatsApp' };
 
 export interface RpcChannels {
-  // Seals tokens before kernel.channel.connect stores them; never opens one in the API.
+  // Seals tokens before kernel.channel.connect stores them; never opens one in the API (a minutes channel's address included, B4: its worker job opens it).
   broker: CredentialBroker;
+  // Tests only: the save budget of the minutes channels' addresses.
+  minutes?: Pick<MinutesChatDeps, 'saves'>;
   // The offline sandbox channel is enabled (CHANNEL_SANDBOX).
   sandbox: boolean;
   // Tests only: how the wake-up receiver's name is looked up before it is accepted (the system resolver by default; the egress guard checks every send again).
@@ -535,6 +539,11 @@ export function createRpcHandler(
     if (!meetings) throw new ORPCError('NOT_FOUND', { status: 404, message: 'Mô-đun Cuộc họp chưa được bật' });
     return inOrg(context, fn);
   };
+  // The minutes channels' API half (meeting-chat.ts): the credential broker seals (never opens); the worker job kernel-meeting-chat opens and posts.
+  const minutesChat = (): MinutesChatDeps => {
+    if (!channels) throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
+    return { runtime, broker: channels.broker, publicUrl: channels.publicUrl ?? '', ...channels.minutes };
+  };
   const meetingsCommand =
     (name: string) =>
     <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
@@ -714,6 +723,8 @@ export function createRpcHandler(
         guard(() => createOrg(runtime, actorOf(context.user), input.name, input.idempotencyKey)),
       ),
       get: os.org.get.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.org.get', {}, { actor, orgId }))),
+      apps: os.org.apps.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.org.apps', {}, { actor, orgId }))),
+      setApp: os.org.setApp.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.org.set_app', input, { actor, orgId }))),
       // The org's overview (#1249): the figures the multi-client home screen reads for each org, for this one.
       overview: os.org.overview.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.org.overview', {}, { actor, orgId }))),
       setTaxCode: os.org.setTaxCode.handler(({ context, input }) =>
@@ -899,6 +910,7 @@ export function createRpcHandler(
           sheet: os.hr.payroll.runs.sheet.handler(hrQuery('hr.payroll.run.sheet')),
           open: os.hr.payroll.runs.open.handler(hrCommand('hr.payroll.run.open')),
           recalculate: os.hr.payroll.runs.recalculate.handler(hrCommand('hr.payroll.run.recalculate')),
+          importTimekeeping: os.hr.payroll.runs.importTimekeeping.handler(hrCommand('hr.payroll.run.import_timekeeping')),
           approve: os.hr.payroll.runs.approve.handler(hrCommand('hr.payroll.run.approve')),
         },
         // Where the posting and the payments of an approved month stand (#2532): finance reads its own books and the open proposals; owners and admins.
@@ -955,6 +967,7 @@ export function createRpcHandler(
       extensionStatus: os.meetings.extensionStatus.handler(meetingsQuery('meetings.meeting.extension_status')),
       recordingNow: os.meetings.recordingNow.handler(meetingsQuery('meetings.meeting.recording_now')),
       create: os.meetings.create.handler(meetingsCommand('meetings.meeting.create')),
+      importStart: os.meetings.importStart.handler(meetingsCommand('meetings.import.start')),
       setTemplate: os.meetings.setTemplate.handler(meetingsCommand('meetings.minutes.set_template')),
       delete: os.meetings.delete.handler(meetingsCommand('meetings.meeting.delete')),
       ownerDelete: os.meetings.ownerDelete.handler(meetingsCommand('meetings.meeting.owner_delete')),
@@ -982,6 +995,20 @@ export function createRpcHandler(
           const { idempotencyKey, ...rest } = input;
           return runtime.execute('meetings.followup.send', rest, { actor, orgId, idempotencyKey });
         })),
+      },
+      // Minutes to a Slack or Teams channel (B4, #3168). The API only seals the pasted address and queues the recorder's click; the worker job (kernel-meeting-chat) opens the sealed address and posts (ADR-0025).
+      chat: {
+        channels: os.meetings.chat.channels.handler(meetingsQuery('meetings.chat.channels')),
+        saveChannel: os.meetings.chat.saveChannel.handler(({ context, input }) => inMeetings(context, (orgId, actor) => saveMinutesChannel(minutesChat(), { orgId, orgSlug: context.orgSlug, actor }, input))),
+        removeChannel: os.meetings.chat.removeChannel.handler(meetingsCommand('meetings.chat.channel_remove')),
+        status: os.meetings.chat.status.handler(meetingsQuery('meetings.chat.status')),
+        preview: os.meetings.chat.preview.handler(({ context, input }) =>
+          inMeetings(context, async (orgId, actor) => {
+            const view = await runtime.query<ChatPreview>('meetings.chat.preview', input, { actor, orgId });
+            return { ...view, link: minutesLink(channels?.publicUrl ?? '', context.orgSlug, input.meetingId) };
+          }),
+        ),
+        post: os.meetings.chat.post.handler(({ context, input }) => inMeetings(context, (orgId, actor) => postMinutesFromClick(minutesChat(), { orgId, orgSlug: context.orgSlug, actor }, input))),
       },
       links: {
         add: os.meetings.links.add.handler(meetingsCommand('meetings.link.add')),
@@ -2325,6 +2352,37 @@ export function createRpcHandler(
         }),
       ),
     },
+    // Meeting platforms a member connects (meetings integrations C1, #3173): the member's own connections and recordings. Only the offline sandbox connects here; the real providers' OAuth
+    // steps are C2 to C4. The commands check the role and the owner again.
+    meetingPlatform: {
+      connections: os.meetingPlatform.connections.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.meeting_platform.connections', {}, { actor, orgId }))),
+      recordings: os.meetingPlatform.recordings.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.meeting_platform.recordings', {}, { actor, orgId }))),
+      refresh: os.meetingPlatform.refresh.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.meeting_platform.refresh', input, { actor, orgId }))),
+      dismiss: os.meetingPlatform.dismiss.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.meeting_platform.recording.dismiss', input, { actor, orgId }))),
+      disconnect: os.meetingPlatform.disconnect.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.meeting_platform.disconnect', input, { actor, orgId }))),
+      // A throwaway token is sealed for the sandbox account and dropped: the sandbox platform opens nothing, so the credential only has to exist. Connecting again is a reconnect of the same account.
+      connectSandbox: os.meetingPlatform.connectSandbox.handler(({ context }) =>
+        guard(async () => {
+          const { orgId, role } = await resolveMembership(runtime, context.user, context.orgSlug);
+          if (role === 'viewer') throw new DomainError('FORBIDDEN', 403, 'Người xem không kết nối được nền tảng họp');
+          if (!channels?.sandbox) throw new DomainError('CHANNEL_PROVIDER_DISABLED', 404, 'Kênh thử nghiệm (sandbox) chưa được bật');
+          // The token is sealed in the shape the job and the sweep open: JSON with an accessToken (the sandbox platform checks nothing, but the shape is the real one).
+          const sealed = channels.broker.seal(JSON.stringify({ accessToken: randomBytes(24).toString('hex') }), meetingPlatformBinding(orgId, 'sandbox', 'sandbox@local'));
+          return runtime.execute<{ connectionId: string; reconnected: boolean }>(
+            'kernel.meeting_platform.connect',
+            {
+              provider: 'sandbox',
+              externalAccount: 'sandbox@local',
+              displayName: 'Nền tảng họp thử nghiệm',
+              scopes: [],
+              expiresAt: null,
+              credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
+            },
+            { actor: actorOf(context.user), orgId },
+          );
+        }),
+      ),
+    },
     // Org-less: any signed-in user may look up a tax code before the org exists. Nothing is written, so no command.
     taxRegistry: {
       lookup: os.taxRegistry.lookup.handler(({ context, input }) =>
@@ -2542,6 +2600,8 @@ export function createRpcHandler(
       reopen: os.conversations.reopen.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.reopen', input, { actor, orgId }))),
       note: os.conversations.note.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.note', input, { actor, orgId }))),
       linkContact: os.conversations.linkContact.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.link_contact', input, { actor, orgId }))),
+      followUp: os.conversations.followUp.handler(({ context, input }) => keyed(context, 'kernel.conversation.follow_up', input)),
+      tasks: os.conversations.tasks.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.tasks', input, { actor, orgId }))),
       setIntent: os.conversations.setIntent.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.set_intent', input, { actor, orgId }))),
       // The Inbox's suggestions (CV3, #2306): the thread's text is read in the member's own transaction, then the model is called outside it, through the
       // AI meter. Nothing is stored; a model that is off, refused or failing leaves no suggestion and no error.

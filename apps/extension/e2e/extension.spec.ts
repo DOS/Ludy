@@ -134,6 +134,8 @@ test('the code exchange carries the extension\'s own Origin, which the kernel bi
   fake.requests.length = 0;
   fake.exchanges.length = 0;
   const page = await popup();
+  // The sign-in step says, before the button, that the browser and operating system name is sent (#3273).
+  await expect(page.locator('#sign-in-device-note')).toContainText('tên thiết bị');
   await page.evaluate(() => {
     const seen: { redirect: string } = { redirect: '' };
     (chrome.identity as { launchWebAuthFlow: unknown }).launchWebAuthFlow = async ({ url }: { url: string }) => {

@@ -68,6 +68,7 @@ export const EXCEPTIONS = [
       'apps/kernel/test/archive.db.test.ts',
       'apps/kernel/test/bank-statement-file.test.ts',
       'apps/kernel/test/finance-late-invoice.db.test.ts',
+      'apps/kernel/test/finance-marketplace-delivered.db.test.ts',
       'apps/kernel/test/finance-marketplace-income.db.test.ts',
       'apps/kernel/test/finance-marketplace-retention.db.test.ts',
       'apps/kernel/test/finance-marketplace.db.test.ts',

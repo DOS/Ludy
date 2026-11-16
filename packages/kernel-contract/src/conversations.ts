@@ -6,7 +6,7 @@
 // A platform's notice is turned by its adapter (@crove/channel) into the events below, which are the only thing the intake
 // command takes: the org comes from the stored connection, never from an event. Text in an event is tainted external text.
 import { z } from 'zod';
-import { zId } from './schemas.ts';
+import { zId, zTaskStatus } from './schemas.ts';
 
 export const CONVERSATION_KINDS = ['comment_thread', 'direct', 'email'] as const;
 export type ConversationKind = (typeof CONVERSATION_KINDS)[number];
@@ -443,6 +443,32 @@ export const zConversationAssign = z.strictObject({ conversationId: zId, assigne
 export const zConversationId = z.strictObject({ conversationId: zId });
 export const zConversationNoteAdd = z.strictObject({ conversationId: zId, body: z.string().trim().min(1).max(CONVERSATION_NOTE_MAX).refine(noNul, 'NUL character') });
 export const zConversationLinkContact = z.strictObject({ conversationId: zId, partyId: zId.nullable() });
+// "Create task" from a conversation (CV3, #3295, plan docs/plan/conversations.md section 4 point 2): a person's own title (never the customer's words, which a task
+// would show to every member), the seat that does it (none: the owner at the root of the chart) and a due date. The task links back to the thread.
+export const CONVERSATION_FOLLOW_UP_TITLE_MAX = 300;
+export const zConversationFollowUp = z.strictObject({
+  conversationId: zId,
+  title: z.string().trim().min(1).max(CONVERSATION_FOLLOW_UP_TITLE_MAX).refine(noNul, 'NUL character'),
+  assigneePositionId: zId.nullable(),
+  due: z.iso.datetime({ offset: true }).optional(),
+});
+export const zConversationFollowedUp = z.strictObject({ taskId: zId });
+export type ConversationFollowedUp = z.infer<typeof zConversationFollowedUp>;
+// The open tasks of one thread (any status but done and cancelled), the newest first, at most CONVERSATION_TASKS_MAX.
+export const CONVERSATION_TASKS_MAX = 20;
+export const zConversationTaskList = z.strictObject({
+  tasks: z.array(
+    z.strictObject({
+      id: zId,
+      title: z.string(),
+      status: zTaskStatus,
+      assigneePositionId: zId.nullable(),
+      due: z.string().nullable(),
+      createdAt: z.string(),
+    }),
+  ),
+});
+export type ConversationTaskList = z.infer<typeof zConversationTaskList>;
 // A person applies an intent to a thread, changes it, or clears it (null) (CV3, #2306).
 export const zConversationSetIntent = z.strictObject({ conversationId: zId, intent: zConversationIntent.nullable() });
 

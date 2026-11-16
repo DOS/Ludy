@@ -77,7 +77,13 @@ export const QUEUES = {
   // Created by the member minutes webhook migration (20270101060000): one delivery of a member's minutes webhook, and the sweep that hands deliveries over (meetings integrations A6, #3164).
   meetingHook: 'kernel-meeting-hook',
   meetingHookSweep: 'kernel-meeting-hook-sweep',
+  // Meeting platform recordings (meetings integrations C1, #3173): one download of a recording the member chose to import, and the sweep that hands them over, lists suggestions and expires.
+  meetingsImport: 'kernel-meeting-import',
+  meetingsImportSweep: 'kernel-meeting-import-sweep',
   // Created by the meetings transcription migration (20261202000000): one run of the recorder's Vy transcribing a meeting (#2578, M4b).
+  // Created by the minutes channels migration (20270101090000): one post of approved minutes to a Slack or Teams channel, and the sweep that hands posts over (meetings integrations B4, #3168).
+  meetingChat: 'kernel-meeting-chat',
+  meetingChatSweep: 'kernel-meeting-chat-sweep',
   meetingsTranscribe: 'meetings-transcribe',
   meetingsLiveNotes: 'meetings-live-notes',
   // Created by the bank feed sync migration (20261108100000): a bank feed connection's sync (ADR-0039, #2044).
@@ -189,6 +195,13 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   // The same, for a member's minutes webhook: the one request to the address the member set (through the signing helper of mcp-wake.ts, the egress guard), and a sweep that reaches nothing.
   [QUEUES.meetingHook]: ['tenant_url'],
   [QUEUES.meetingHookSweep]: 'none',
+  // The download goes to the platform's own hosts through the guarded stream (guardedStream), and the URL it fetches comes from the platform's answer (the adapter's prepareDownload), not from code: so it is declared as
+  // tenant_url as well as provider:channel (the adapter's hosts and CDN suffixes narrow it). The sweep lists recordings through the adapters.
+  [QUEUES.meetingsImport]: ['provider:channel', 'tenant_url'],
+  [QUEUES.meetingsImportSweep]: ['provider:channel'],
+  // The same, for the minutes posted to a Slack or Teams channel: the one request to the webhook address an owner or admin saved, through the egress guard (postMinutes of the channel adapters), and a sweep that reaches nothing.
+  [QUEUES.meetingChat]: ['provider:channel', 'tenant_url'],
+  [QUEUES.meetingChatSweep]: 'none',
   // The speech to text endpoint (packages/agent transcribeChunks), the only place the recorder's audio leaves the deployment.
   [QUEUES.meetingsTranscribe]: ['provider:ai'],
   [QUEUES.meetingsLiveNotes]: ['provider:ai'],
@@ -241,7 +254,7 @@ export function queueEgress(queue: string): JobEgress {
 // The pg-boss policy of each queue that is not 'standard'. kernel-agent-wake is 'stately' with the singleton key
 // <org>:<queue>:<agent> (job-keys.ts): at most one queued and one active job per agent, so wake-ups coalesce and an
 // agent runs once at a time (ADR-0029 section 5; the database also allows one running ai_run per agent).
-const QUEUE_POLICIES: Partial<Record<QueueName, 'stately'>> = { [QUEUES.agentWake]: 'stately', [QUEUES.adsSync]: 'stately', [QUEUES.mcpWake]: 'stately', [QUEUES.meetingHook]: 'stately' };
+const QUEUE_POLICIES: Partial<Record<QueueName, 'stately'>> = { [QUEUES.agentWake]: 'stately', [QUEUES.adsSync]: 'stately', [QUEUES.mcpWake]: 'stately', [QUEUES.meetingHook]: 'stately', [QUEUES.meetingChat]: 'stately', [QUEUES.meetingsImport]: 'stately' };
 
 // The dead letter queue's own options, as 20261103150000_crove_jobs_dead_letter.sql created it: a few retries, in case
 // the database or the command is briefly unavailable.

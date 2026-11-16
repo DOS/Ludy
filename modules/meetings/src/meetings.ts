@@ -15,6 +15,7 @@ import { translateCommands } from './translate.ts';
 import { translateRunCommands, translateRunQueries } from './translate-run.ts';
 import { askRunCommands, askRunQueries } from './ask.ts';
 import { agendaCommands, agendaQueries } from './agenda.ts';
+import { chatCommands, chatQueries } from './chat.ts';
 import { linkCommands, linkQueries } from './links.ts';
 import { hookCommands, hookQueries } from './hook.ts';
 import { liveNotesCommands } from './live-notes.ts';
@@ -22,6 +23,8 @@ import { liveRunCommands, liveRunQueries } from './live-run.ts';
 import { liveCommands } from './live.ts';
 import { liveAssembleCommands, liveAssembleQueries } from './live-assemble.ts';
 import { recordSealedMedia } from './media-record.ts';
+import { createMeetingRow } from './meeting-core.ts';
+import { importCommands } from './import.ts';
 import { dropFollowupPayloads } from './followup-erase.ts';
 import { followupCommands, followupQueries } from './followup.ts';
 import {
@@ -33,17 +36,13 @@ import {
   meetingConsentPolicySet,
   meetingSettingsGet,
   meetingSettingsSet,
-  readConsentPolicy,
   meetingShredReplay,
-  readRetentionSettings,
-  retentionDates,
   vnDay,
 } from './retention.ts';
 import {
   auditValue,
   MEETING_OWNER_LIST_PAGE,
   zMeetingCreate,
-  consentMethodAllowed,
   zMeetingExtensionStatus,
   zMeetingRecordingNow,
   zMeetingRecordingNowInput,
@@ -188,69 +187,22 @@ export const meetingCreate = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
     const extensionTokenId = ctx.actor.type === 'user' ? (ctx.actor.extension?.tokenId ?? null) : null;
-    // A strict org accepts only a written consent method (A2, #3160): the same refusal for an in-app recording, an extension recording and an
-    // upload, since all three make their meeting here. Nothing is created and no audio can follow. A policy changed later does not touch this one.
-    if (!consentMethodAllowed(await readConsentPolicy(ctx.trx, ctx.orgId), input.consentMethod)) {
-      throw new DomainError('CONSENT_METHOD_NOT_ALLOWED', 422, 'This organization accepts only a written consent method');
-    }
-    const meetingId = randomUUID();
-    const startedAt = ctx.now;
-    // The periods the org's settings give today, stamped on the meeting so the period the participants were told stays true (plan section 9).
-    const dates = retentionDates(startedAt, await readRetentionSettings(ctx.trx, ctx.orgId));
-
-    await ctx.trx
-      .insertInto('crove_meetings.meeting')
-      .values({
-        org_id: ctx.orgId,
-        id: meetingId,
-        recorder_user_id: userId,
-        visibility: input.visibility,
-        title: input.title,
-        language: input.language,
-        status: 'ready',
-        started_at: startedAt,
-        ended_at: null,
-        length_seconds: input.lengthSeconds ?? null,
-        keep_video: input.keepVideo,
-        live_notes: input.liveNotes,
-        summary_template: input.summaryTemplate,
-        consent_method: input.consentMethod,
-        consent_confirmed_by: userId,
-        consent_confirmed_at: startedAt,
-        consent_notice_version: input.consentNoticeVersion ?? CONSENT_NOTICE_VERSION,
-        audio_retention_date: dates.audio,
-        text_retention_date: dates.text,
-        extension_token_id: extensionTokenId,
-      })
-      .execute();
-
-    if (input.visibility === 'attendees' && input.readerUserIds && input.readerUserIds.length > 0) {
-      const uniqueReaderIds = Array.from(new Set(input.readerUserIds.filter((id) => id !== userId)));
-      if (uniqueReaderIds.length > 0) {
-        const validMembers = await ctx.trx
-          .selectFrom('crove_kernel.tenant_member')
-          .select(['user_id'])
-          .where('org_id', '=', ctx.orgId)
-          .where('user_id', 'in', uniqueReaderIds)
-          .where('role', 'in', ['owner', 'admin', 'member'])
-          .execute();
-        if (validMembers.length !== uniqueReaderIds.length) {
-          throw new DomainError('INVALID_READER', 400, 'All readers must be active non-viewer members of this organization');
-        }
-        for (const readerId of uniqueReaderIds) {
-          await ctx.trx
-            .insertInto('crove_meetings.meeting_reader')
-            .values({
-              org_id: ctx.orgId,
-              id: randomUUID(),
-              meeting_id: meetingId,
-              user_id: readerId,
-            })
-            .onConflict((oc) => oc.columns(['org_id', 'meeting_id', 'user_id']).doNothing())
-            .execute();
-        }
-      }
-    }
+    const meetingId = await createMeetingRow(ctx, {
+      userId,
+      title: input.title,
+      language: input.language,
+      visibility: input.visibility,
+      startedAt: ctx.now,
+      retentionFrom: ctx.now,
+      lengthSeconds: input.lengthSeconds ?? null,
+      keepVideo: input.keepVideo,
+      liveNotes: input.liveNotes,
+      summaryTemplate: input.summaryTemplate,
+      consentMethod: input.consentMethod,
+      consentNoticeVersion: input.consentNoticeVersion ?? CONSENT_NOTICE_VERSION,
+      readerUserIds: input.readerUserIds,
+      extensionTokenId,
+    });
 
     ctx.audit({
       meetingId,
@@ -328,6 +280,7 @@ export const meetingMediaRecord = defineCommand({
 
 export const meetingDelete = defineCommand({
   name: 'meetings.meeting.delete',
+  runsWhenOff: 'deletes a meeting and its recording, which the owner of the data may still do while the app is off',
   input: zMeetingRef,
   risk: 'R1',
   sideEffect: 'internal',
@@ -366,6 +319,7 @@ export const meetingDelete = defineCommand({
 
 export const meetingOwnerDelete = defineCommand({
   name: 'meetings.meeting.owner_delete',
+  runsWhenOff: 'deletes a meeting and its recording on the org owner\'s word while the app is off',
   input: zMeetingRef,
   risk: 'R3',
   sideEffect: 'internal',
@@ -526,6 +480,7 @@ export const meetingReaderRemove = defineCommand({
 // the one it read (the definer compares the key id and the wrapped bytes under the update). System actor only.
 export const meetingMediaKeyReseal = defineCommand({
   name: 'meetings.media_key.reseal',
+  runsWhenOff: 'rewraps the sealed recording keys under the current key while the app is off',
   input: zMeetingMediaKeyReseal,
   risk: 'R1',
   sideEffect: 'internal',
@@ -987,6 +942,7 @@ export const meetingsCommands = [
   ...translateRunCommands,
   ...askRunCommands,
   ...agendaCommands,
+  ...chatCommands,
   ...linkCommands,
   ...followupCommands,
   ...liveCommands,
@@ -994,6 +950,7 @@ export const meetingsCommands = [
   ...liveRunCommands,
   ...liveNotesCommands,
   ...hookCommands,
+  ...importCommands,
 ];
 
 export const meetingsQueries = [
@@ -1017,6 +974,7 @@ export const meetingsQueries = [
   ...translateRunQueries,
   ...askRunQueries,
   ...agendaQueries,
+  ...chatQueries,
   ...linkQueries,
   ...followupQueries,
   ...liveRunQueries,

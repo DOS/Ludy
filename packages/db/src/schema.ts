@@ -146,6 +146,19 @@ export type CalendarConnectionTable = Refine<
   }
 >;
 
+// Meeting platforms a member connects and the recordings they offer (meetings integrations C1, #3173). The recording rows are written by definers alone.
+export const MEETING_PLATFORM_PROVIDERS = ['sandbox', 'google_meet', 'zoom', 'microsoft_teams'] as const;
+export const MEETING_PLATFORM_CONNECTION_STATUSES = ['active', 'expired'] as const;
+export const MEETING_PLATFORM_RECORDING_STATUSES = ['suggested', 'importing', 'staged', 'claimed', 'imported', 'failed', 'dismissed'] as const;
+export type MeetingPlatformConnectionTable = Refine<
+  G.KernelMeetingPlatformConnectionTable,
+  {
+    provider: ColumnType<(typeof MEETING_PLATFORM_PROVIDERS)[number], (typeof MEETING_PLATFORM_PROVIDERS)[number], never>;
+    status: Generated<(typeof MEETING_PLATFORM_CONNECTION_STATUSES)[number]>;
+  }
+>;
+export type MeetingPlatformRecordingTable = Refine<G.KernelMeetingPlatformRecordingTable, { status: ColumnType<(typeof MEETING_PLATFORM_RECORDING_STATUSES)[number], never, never> }>;
+
 // The legal entities of an org (issue #1278): a company or other organization, a branch or other dependent unit, or a
 // household or individual business. One default per org, created with the org.
 export const LEGAL_ENTITY_KINDS = ['company', 'branch', 'household'] as const;
@@ -1062,7 +1075,7 @@ export const MEETING_LANGUAGES = ['vi', 'en'] as const;
 export type MeetingLanguage = (typeof MEETING_LANGUAGES)[number];
 export const MEETING_STATUSES = ['ready', 'processing', 'completed', 'error'] as const;
 export type MeetingStatus = (typeof MEETING_STATUSES)[number];
-export const MEETING_CONSENT_METHODS = ['told_at_start', 'in_invite', 'in_writing', 'in_call_chat'] as const;
+export const MEETING_CONSENT_METHODS = ['told_at_start', 'in_invite', 'in_writing', 'in_call_chat', 'platform_notice'] as const;
 export type MeetingConsentMethod = (typeof MEETING_CONSENT_METHODS)[number];
 // Why a recording stopped without the recorder's own click (A1, #3159): a code, never text.
 export const MEETING_RECORDING_STOP_REASONS = ['tab_closed', 'mic_lost', 'permission_lost', 'storage_full', 'left_screen', 'unknown'] as const;
@@ -1131,6 +1144,14 @@ export type MeetingsTranslationTable = Refine<
   }
 >;
 
+// The org's channels for minutes (meetings integrations B4, #3168): which service the webhook belongs to, and how far one click's post got.
+export const MEETING_CHAT_KINDS = ['slack', 'teams'] as const;
+export type MeetingChatKind = (typeof MEETING_CHAT_KINDS)[number];
+export const MEETING_CHAT_POST_STATES = ['queued', 'sent', 'failed', 'ambiguous', 'dropped'] as const;
+export type MeetingChatPostState = (typeof MEETING_CHAT_POST_STATES)[number];
+export type MeetingsChatChannelTable = Refine<G.MeetingsChatChannelTable, { kind: MeetingChatKind }>;
+export type MeetingsChatPostTable = Refine<G.MeetingsChatPostTable, { state: Generated<MeetingChatPostState> }>;
+
 type Refined = Tables<{
   'crove_ads.ad_account': AdsAdAccountTable;
   'crove_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
@@ -1159,6 +1180,8 @@ type Refined = Tables<{
   'crove_hr.payroll_line': HrPayrollLineTable;
   'crove_hr.payroll_run': HrPayrollRunTable;
   'crove_meetings.action_item': MeetingsActionItemTable;
+  'crove_meetings.chat_channel': MeetingsChatChannelTable;
+  'crove_meetings.chat_post': MeetingsChatPostTable;
   'crove_meetings.meeting': MeetingsMeetingTable;
   'crove_meetings.meeting_result': MeetingsMeetingResultTable;
   'crove_meetings.transcript_segment': MeetingsTranscriptSegmentTable;
@@ -1169,6 +1192,8 @@ type Refined = Tables<{
   'crove_kernel.calendar_connection': CalendarConnectionTable;
   'crove_kernel.calendar_event': CalendarEventTable;
   'crove_kernel.calendar_event_link': CalendarEventLinkTable;
+  'crove_kernel.meeting_platform_connection': MeetingPlatformConnectionTable;
+  'crove_kernel.meeting_platform_recording': MeetingPlatformRecordingTable;
   'crove_kernel.legal_entity': LegalEntityTable;
   'crove_kernel.number_series_policy': NumberSeriesPolicyTable;
   'crove_kernel.role': RoleTable;

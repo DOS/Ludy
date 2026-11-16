@@ -195,6 +195,31 @@ describe('prepareMonth and flagMonth', () => {
     expect(requests).toEqual([]);
   });
 
+  it('surfaces overtime_cap check failures as overtime_over_cap anomalies with AI off and AI on, without leaking names', async () => {
+    const otLine: HrLineView = {
+      ...line(EMP_B, NAME_B, '10450000', ['check_overtime_cap'], '1500000'),
+      checks: [{ id: 'overtime_cap', ok: false, actual: '45', limit: '40' }],
+    };
+    const otSheet: HrRunSheet = sheetOf('ot', '2026-08', [otLine]);
+    const r: PayrollReads = { ...reads(), sheet: async () => otSheet, runs: async () => [summary('ot', '2026-08')] };
+
+    const off = await flagMonth({ reader: null, budget: new DraftBudget() }, r, ORG, USER, 'ot', 'vi');
+    expect(off.ai).toBe('off');
+    expect(off.items).toHaveLength(1);
+    expect(off.items[0]?.kind).toBe('overtime_over_cap');
+    expect(off.items[0]?.facts).toContain(NAME_B);
+    expect(off.items[0]?.facts).toContain('40');
+    expect(off.items[0]?.text).toBeNull();
+
+    const requests: string[] = [];
+    const { ai } = setup({ flag: echoFlag(requests) });
+    const on = await flagMonth(ai, r, ORG, USER, 'ot', 'vi');
+    expect(on.ai).toBe('used');
+    expect(on.items[0]?.kind).toBe('overtime_over_cap');
+    expect(on.items[0]?.text).toContain(NAME_B);
+    for (const secret of SECRETS) expect(requests[0]).not.toContain(secret);
+  });
+
   it('still lists the findings when the run has more people than one prompt holds, with no model call', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const requests: string[] = [];

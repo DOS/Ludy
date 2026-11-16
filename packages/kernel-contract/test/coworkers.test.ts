@@ -15,12 +15,13 @@ describe('the roster', () => {
     for (const key of Object.values(COWORKER_BY_MODULE)) expect(COWORKER_KEYS).toContain(key);
     expect(Object.values(COWORKER_BY_MODULE)).not.toContain('gm');
     expect(Object.values(COWORKER_BY_MODULE)).not.toContain('system');
+    expect(COWORKER_BY_MODULE.hr).toBe('finance');
   });
 });
 
 describe('defaultCoworkerName', () => {
   it('is the name of the coworker of the module’s app, whatever the names are', () => {
-    expect(defaultCoworkerName('finance')).toBe(COWORKER_ROSTER.finance);
+    for (const module of ['finance', 'hr']) expect(defaultCoworkerName(module), module).toBe(COWORKER_ROSTER.finance);
     for (const module of ['crm', 'conversations']) expect(defaultCoworkerName(module), module).toBe(COWORKER_ROSTER.sales);
     for (const module of ['social', 'ads']) expect(defaultCoworkerName(module), module).toBe(COWORKER_ROSTER.marketing);
   });

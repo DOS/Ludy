@@ -148,6 +148,8 @@ export interface CroveKernelSchema {
   'crove_kernel.mail_message': KernelMailMessageTable;
   'crove_kernel.mail_suppression': KernelMailSuppressionTable;
   'crove_kernel.mcp_member_table': KernelMcpMemberTableTable;
+  'crove_kernel.meeting_platform_connection': KernelMeetingPlatformConnectionTable;
+  'crove_kernel.meeting_platform_recording': KernelMeetingPlatformRecordingTable;
   'crove_kernel.member_availability': KernelMemberAvailabilityTable;
   'crove_kernel.member_invite': KernelMemberInviteTable;
   'crove_kernel.member_permission_override': KernelMemberPermissionOverrideTable;
@@ -188,6 +190,8 @@ export interface CroveMeetingsSchema {
   'crove_meetings.action_item': MeetingsActionItemTable;
   'crove_meetings.audio_segment': MeetingsAudioSegmentTable;
   'crove_meetings.calendar_agenda': MeetingsCalendarAgendaTable;
+  'crove_meetings.chat_channel': MeetingsChatChannelTable;
+  'crove_meetings.chat_post': MeetingsChatPostTable;
   'crove_meetings.live_chunk': MeetingsLiveChunkTable;
   'crove_meetings.live_line': MeetingsLiveLineTable;
   'crove_meetings.meeting': MeetingsMeetingTable;
@@ -939,6 +943,7 @@ export interface FinanceChannelOrderLineTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   attempt: Generated<number>;
+  delivered_at: string | null;
 }
 
 /** crove_finance.channel_order */
@@ -1265,6 +1270,7 @@ export interface FinanceJournalVoucherTable {
   payout_settlement_id: ColumnType<string | null, string | null, NotGranted>;
   payout_bank_line_id: ColumnType<string | null, string | null, NotGranted>;
   fee_document_id: ColumnType<string | null, string | null, NotGranted>;
+  settlement_month: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_finance.legal_entity_books */
@@ -2322,6 +2328,46 @@ export interface KernelMcpMemberTableTable {
   adr: ColumnType<string, NotGranted, NotGranted>;
 }
 
+/** crove_kernel.meeting_platform_connection */
+export interface KernelMeetingPlatformConnectionTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  user_id: ColumnType<string, string, NotGranted>;
+  provider: ColumnType<string, string, NotGranted>;
+  external_account: ColumnType<string, string, NotGranted>;
+  display_name: string;
+  scopes: Generated<string[]>;
+  status: Generated<string>;
+  status_reason: string | null;
+  expires_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  last_synced_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  connected_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_kernel.meeting_platform_recording */
+export interface KernelMeetingPlatformRecordingTable {
+  org_id: ColumnType<string, NotGranted, NotGranted>;
+  id: ColumnType<string, NotGranted, NotGranted>;
+  connection_id: ColumnType<string, NotGranted, NotGranted>;
+  user_id: ColumnType<string, NotGranted, NotGranted>;
+  external_id: ColumnType<string, NotGranted, NotGranted>;
+  title: ColumnType<string, NotGranted, NotGranted>;
+  started_at: ColumnType<Date, NotGranted, NotGranted>;
+  length_seconds: ColumnType<number | null, NotGranted, NotGranted>;
+  size_bytes: ColumnType<string | null, NotGranted, NotGranted>;
+  has_audio: ColumnType<boolean, NotGranted, NotGranted>;
+  has_video: ColumnType<boolean, NotGranted, NotGranted>;
+  has_transcript: ColumnType<boolean, NotGranted, NotGranted>;
+  status: ColumnType<string, NotGranted, NotGranted>;
+  meeting_id: ColumnType<string | null, NotGranted, NotGranted>;
+  staging_key: ColumnType<string | null, NotGranted, NotGranted>;
+  staged_at: ColumnType<Date | null, NotGranted, NotGranted>;
+  error_code: ColumnType<string | null, NotGranted, NotGranted>;
+  created_at: ColumnType<Date, NotGranted, NotGranted>;
+  updated_at: ColumnType<Date, NotGranted, NotGranted>;
+}
+
 /** crove_kernel.member_availability */
 export interface KernelMemberAvailabilityTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -2759,6 +2805,8 @@ export interface KernelTenantTable {
   mcp_member_grants: Generated<boolean>;
   meeting_consent_policy: Generated<string>;
   meeting_hooks: Generated<boolean>;
+  apps_off: Generated<string[]>;
+  apps_version: Generated<number>;
 }
 
 /** crove_kernel.today_mail */
@@ -2833,6 +2881,37 @@ export interface MeetingsCalendarAgendaTable {
   invitee_count: ColumnType<number, NotGranted, NotGranted>;
   meeting_id: ColumnType<string | null, NotGranted, string | null>;
   updated_at: ColumnType<Date, NotGranted, NotGranted>;
+}
+
+/** crove_meetings.chat_channel */
+export interface MeetingsChatChannelTable {
+  org_id: string;
+  id: Generated<string>;
+  kind: string;
+  label: string;
+  host: string;
+  created_by: string;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_meetings.chat_post */
+export interface MeetingsChatPostTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  meeting_id: ColumnType<string, string, NotGranted>;
+  channel_id: ColumnType<string, string, NotGranted>;
+  user_id: ColumnType<string, string, NotGranted>;
+  facts_key: ColumnType<string, string, NotGranted>;
+  text_hash: ColumnType<string, string, NotGranted>;
+  state: ColumnType<string, string | undefined, NotGranted>;
+  attempts: ColumnType<number, number | undefined, NotGranted>;
+  http_status: ColumnType<number | null, number | null, NotGranted>;
+  code: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  handed_at: ColumnType<Date | null, Date | string | null, NotGranted>;
+  sending_at: ColumnType<Date | null, Date | string | null, NotGranted>;
+  settled_at: ColumnType<Date | null, Date | string | null, NotGranted>;
 }
 
 /** crove_meetings.live_chunk */

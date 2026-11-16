@@ -59,6 +59,35 @@ describe('payroll rule data', () => {
     expect(ruleInForce(PAYROLL_RULES, 'pit_brackets', 'resident_monthly', '2025-12-31')).toBeUndefined();
   });
 
+  it('holds dated annual_leave and overtime_caps rules from Labor Code 2019 (2021-01-01)', () => {
+    const leaveRule = ruleInForce(PAYROLL_RULES, 'annual_leave', 'default', '2026-08-01');
+    expect(leaveRule).toMatchObject({
+      id: 'annual_leave.default@2021-01-01',
+      status: 'commentary',
+      value: {
+        standardDaysPerYear: '12',
+        heavyDaysPerYear: '14',
+        specialHeavyDaysPerYear: '16',
+        seniorityYearsStep: 5,
+        seniorityExtraDays: '1',
+        halfMonthWorkingDaysRatio: '0.5',
+        approvedUnpaidMonthsAllowance: '1',
+      },
+    });
+    expect(leaveRule?.source.cite).toContain('Labor Code 2019');
+    expect(leaveRule?.source.cite).toContain('Decree 145/2020/ND-CP');
+    expect(ruleInForce(PAYROLL_RULES, 'annual_leave', 'default', '2020-12-31')).toBeUndefined();
+
+    const otCaps = ruleInForce(PAYROLL_RULES, 'overtime_caps', 'default', '2026-08-01');
+    expect(otCaps).toMatchObject({
+      id: 'overtime_caps.default@2021-01-01',
+      status: 'commentary',
+      value: { monthlyHours: '40', annualHours: '200' },
+    });
+    expect(otCaps?.source.cite).toContain('Art. 107');
+    expect(ruleInForce(PAYROLL_RULES, 'overtime_caps', 'default', '2020-12-31')).toBeUndefined();
+  });
+
   // The accountant (#2535) flips a row to `confirmed` in her pull request and adds its id to this list, which is the
   // one line that names what has been confirmed. Every other row stays commentary.
   const CONFIRMED_ROW_IDS: readonly string[] = [];

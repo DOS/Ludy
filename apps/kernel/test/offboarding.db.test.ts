@@ -18,6 +18,8 @@ import { createHttpApp } from '../src/http.ts';
 import { rebindExport, rebindExports } from '../src/export-rebind.ts';
 import { ExportSealer, exportAad } from '../src/export-seal.ts';
 import { runOrgExport, type OrgExportManifest } from '../src/org-export.ts';
+import { exportCoverageProblems, exportedTables } from './org-export-coverage.ts';
+import { readPurgeCatalog } from './org-purge-coverage.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -144,6 +146,20 @@ suite('org offboarding on PostgreSQL (#38)', () => {
     await admin.end();
   });
 
+  // Every crove_* table with an org_id is in the owner export or on NOT_EXPORTED with a reason (#3201): a table a migration adds and EXPORT_TABLES
+  // forgets fails here with its name. The reading and its messages are org-export-coverage.ts and org-export-coverage.test.ts.
+  it('has a rule for every table with an org_id', async () => {
+    const client = new pg.Client({ connectionString: adminUrl });
+    await client.connect();
+    try {
+      const catalog = await readPurgeCatalog(client);
+      expect(catalog.tables).toContain('crove_finance.household_profile');
+      expect(exportCoverageProblems(catalog.tables, exportedTables())).toEqual([]);
+    } finally {
+      await client.end();
+    }
+  });
+
   it('is owner-only R3 with a typed slug, and refusals change nothing', async () => {
     const { org, owner, member } = await orgWithMember('Công ty Từ chối');
     await expect(runtime.execute('kernel.org.offboard', { confirmSlug: org.slug }, { actor: asMfa(member.id), orgId: org.orgId })).rejects.toMatchObject({
@@ -242,6 +258,20 @@ suite('org offboarding on PostgreSQL (#38)', () => {
       .finally(() => reader.end());
     expect(stamped.rows[0]?.detail).toMatchObject({ rows: 1, workerInstance: expect.any(String) });
 
+    // A household business and its profile (#3201): the tax group, PIT method and the representative's name belong to the owner's copy of the books.
+    const householdId = randomUUID();
+    const seeder = new pg.Client({ connectionString: adminUrl });
+    await seeder.connect();
+    try {
+      await seeder.query("INSERT INTO crove_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, 'Hộ kinh doanh Nguyễn Văn A', 'household', $3)", [org.orgId, householdId, owner.id]);
+      await seeder.query(
+        "INSERT INTO crove_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, pit_method, trades, einvoice_registered, representative_name, created_by) VALUES ($1, $2, '2026-01-01', 2, 'percentage', ARRAY['goods'], false, 'Nguyễn Văn A', $3)",
+        [org.orgId, householdId, owner.id],
+      );
+    } finally {
+      await seeder.end();
+    }
+
     const generatedAt = new Date('2026-10-16T00:00:00Z');
     const record = await runOrgExport({ runtime: workerRuntime, store, sealer, retentionDays: 40 }, org.orgId, { now: () => generatedAt });
     // The tax portal's purchase lists are kept records (#465): an export carries them.
@@ -265,11 +295,17 @@ suite('org offboarding on PostgreSQL (#38)', () => {
     expect(() => sealer.open(store.blobs.get(record.parts[0]!.key)!, exportAad(other.org.orgId, record.parts[0]!), 'aes-256-gcm')).toThrow(/authentication/);
     const part = (table: string) => record.parts.find((p) => p.table === table)!;
     const rowsOf = async (table: string) => lines(decode(sealer.open(await store.get(part(table).key), exportAad(org.orgId, part(table)), 'aes-256-gcm')));
+    // The household's profile is in the owner's copy, the representative's name included, and no other org's is.
+    expect(await rowsOf('finance.household_profile')).toEqual([
+      expect.objectContaining({ legal_entity_id: householdId, effective_from: '2026-01-01', tax_group: 2, pit_method: 'percentage', representative_name: 'Nguyễn Văn A' }),
+    ]);
     // Secrets stay out.
     expect(await rowsOf('kernel.tenant')).toEqual([expect.not.objectContaining({ inbound_token: expect.anything() })]);
     expect((await rowsOf('kernel.member_invite')).every((r) => !('token_sha256' in r))).toBe(true);
     expect((await rowsOf('kernel.tenant_member')).map((r) => r.user_id).sort()).toEqual([owner.id, member.id].sort());
-    expect((await rowsOf('kernel.legal_entity')).map((r) => [r.name, r.is_default])).toEqual([[expect.any(String), true]]);
+    // The export cursor has no ORDER BY, so the two entities are compared without their order.
+    expect((await rowsOf('kernel.legal_entity')).map((r) => [r.name, r.is_default])).toEqual(expect.arrayContaining([[expect.any(String), true], ['Hộ kinh doanh Nguyễn Văn A', false]]));
+    expect(await rowsOf('kernel.legal_entity')).toHaveLength(2);
     expect((await rowsOf('kernel.audit_event')).some((r) => r.command === 'kernel.org.offboard')).toBe(true);
     expect((await rowsOf('kernel.audit_event')).find((r) => r.command_id === systemCommand)).toMatchObject({ actor_type: 'system', detail: { rows: 1 } });
     expect((await rowsOf('kernel.audit_event')).every((r) => !(r.detail && typeof r.detail === 'object' && 'workerInstance' in r.detail))).toBe(true);

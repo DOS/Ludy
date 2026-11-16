@@ -13,16 +13,17 @@ import { sql } from 'kysely';
 import { MARKETPLACE_FEE_CLEARING_COMMAND, zMarketplaceBalanceInput, type MarketplaceWorklist } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { defineQuery, type QueryContext } from '@crove/kernel-runtime';
-import { money, toMoney } from '@crove/l10n-vn';
+import { money, sum, toMoney } from '@crove/l10n-vn';
 import { bankLineStates } from './bank-match.ts';
-import { JOURNAL_VOUCHER_SOURCE } from './domain/journal-voucher.ts';
 import { balanceOf, invoiceCleared, invoicePayable, standingInvoiceEntry } from './marketplace-fee-clearing-record.ts';
 import { payoutOfBankLine } from './marketplace-payout-line.ts';
 import { requireConfirmedMarketplaceMap, MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from './marketplace-posting-map.ts';
+import { feeAccrualOffers } from './marketplace-fee-accrual.ts';
+import { halfReversedSettlements } from './marketplace-half-reversed.ts';
+import { postingsOf, settlementMonthsFor, settlementPosted } from './marketplace-settlement-months.ts';
 import { platformPartyName } from './marketplace-settlement-record.ts';
 import { booksOn } from './payroll-posting.ts';
 import { databaseToday } from './period-lock.ts';
-import { reversedSource } from './source-entry.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 type Maps = Readonly<Record<string, MarketplacePostingMap>>;
@@ -53,7 +54,9 @@ async function postingConfirmed(ctx: QueryContext, legalEntityId: string | undef
 }
 
 // The read over a set of account maps. A test passes its own with a confirmed map; the shipped one is made from MARKETPLACE_POSTING_MAPS (every row `commentary`, so the gate reads closed).
-export const createMarketplaceWorklist = (options: { maps?: Maps } = {}) =>
+// `feeClearing` lists the platforms' fee invoices that still have fees to clear on 1388: RETIRED (slice D, #2516; the payout debits fees to 331 and the invoice nets them by itself), so the shipped read
+// lists none; a test of the dormant logic passes `feeClearing: true` (deleting it is #3315).
+export const createMarketplaceWorklist = (options: { maps?: Maps; feeClearing?: boolean; today?: string | (() => string) } = {}) =>
   defineQuery({
     name: 'finance.marketplace.worklist',
     input: zMarketplaceBalanceInput,
@@ -63,19 +66,22 @@ export const createMarketplaceWorklist = (options: { maps?: Maps } = {}) =>
       const standing = sql`s.reversal_of IS NULL AND NOT EXISTS (SELECT 1 FROM crove_finance.channel_settlement r WHERE r.org_id = s.org_id AND r.legal_entity_id = s.legal_entity_id AND r.reversal_of = s.id)`;
       const feesAccount = MARKETPLACE_POSTING_MAPS.tt133?.feeAwaitingInvoice.code ?? '1388';
 
-      // Settlements that stand and have no posting voucher: the platform paid for them and the books do not say so yet.
-      const toPost = (
-        await sql<{ id: string; legal_entity_id: string; platform: string; period_start: string; period_end: string; net: string }>`
-          SELECT s.id, s.legal_entity_id, s.platform, s.period_start::text, s.period_end::text,
-                 coalesce((SELECT sum(l.sales - l.seller_discount - l.refund) FROM crove_finance.channel_settlement_line l WHERE l.org_id = s.org_id AND l.settlement_id = s.id), 0)::text AS net
+      // Settlements that stand and have no posting voucher: the platform paid for them and the books do not say so yet. A settlement posts as one voucher per month of delivery, all by ONE proposal
+      // (#2516 rework, slice C1), so it is one row with its months and the net of their entries (a settlement of zero net posts nothing and is not offered). A settlement with a sale that has no
+      // delivery day yet is one row that waits ("chờ ngày giao"), with no month and nothing to ask for.
+      const standingRows = (
+        await sql<{ id: string; legal_entity_id: string; platform: string; period_start: string; period_end: string }>`
+          SELECT s.id, s.legal_entity_id, s.platform, s.period_start::text, s.period_end::text
           FROM crove_finance.channel_settlement s
           WHERE s.org_id = ${ctx.orgId}::uuid AND ${entity} AND ${standing}
             AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_voucher v WHERE v.org_id = s.org_id AND v.settlement_id = s.id)
           ORDER BY s.period_end DESC, s.id LIMIT ${MAX_SETTLEMENTS}`.execute(ctx.trx)
       ).rows;
+      const monthsOf = await settlementMonthsFor(ctx, standingRows.map((s) => ({ id: s.id, periodEnd: s.period_end })));
       const settlements: MarketplaceWorklist['settlements'] = [];
-      // A zero net posts nothing (the command refuses it), so it is not offered.
-      for (const s of toPost.filter((x) => !money(x.net).isZero())) {
+      for (const s of standingRows) {
+        const m = monthsOf.get(s.id) ?? { months: [], waiting: 0 };
+        if (m.months.length === 0 && m.waiting === 0) continue;
         settlements.push({
           id: s.id,
           legalEntityId: s.legal_entity_id,
@@ -83,8 +89,10 @@ export const createMarketplaceWorklist = (options: { maps?: Maps } = {}) =>
           platformName: platformPartyName(s.platform),
           periodFrom: s.period_start,
           periodTo: s.period_end,
-          net: toMoney(money(s.net)),
-          proposalId: await pendingOf(ctx, 'finance.marketplace_settlement.record', 'settlementId', s.id),
+          months: m.waiting > 0 ? [] : m.months.map((x) => x.month),
+          net: m.waiting > 0 ? '0' : toMoney(sum(m.months.map((x) => x.net))),
+          waitingLines: m.waiting,
+          proposalId: m.waiting > 0 ? null : await pendingOf(ctx, 'finance.marketplace_settlement.record', 'settlementId', s.id),
         });
       }
 
@@ -96,13 +104,16 @@ export const createMarketplaceWorklist = (options: { maps?: Maps } = {}) =>
           FROM crove_finance.channel_settlement s
           JOIN crove_finance.channel_settlement_line l ON l.org_id = s.org_id AND l.settlement_id = s.id
           WHERE s.org_id = ${ctx.orgId}::uuid AND ${entity} AND ${standing}
-            AND EXISTS (SELECT 1 FROM crove_finance.journal_voucher v WHERE v.org_id = s.org_id AND v.settlement_id = s.id AND NOT ${reversedSource('v', JOURNAL_VOUCHER_SOURCE)})
+            AND EXISTS (SELECT 1 FROM crove_finance.journal_voucher v WHERE v.org_id = s.org_id AND v.settlement_id = s.id)
             AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_voucher p WHERE p.org_id = s.org_id AND p.payout_settlement_id = s.id)
           GROUP BY s.id, s.legal_entity_id, s.platform, s.period_start, s.period_end
-          ORDER BY s.period_end DESC, s.id LIMIT ${MAX_SETTLEMENTS}`.execute(ctx.trx)
+          ORDER BY s.period_end DESC, s.id LIMIT ${MAX_SETTLEMENTS * 4}`.execute(ctx.trx)
       ).rows;
+      // Posted: the settlement has its vouchers and none is reversed, the rule the payout command asks for too.
+      const postedPostings = await postingsOf(ctx, posted.map((p) => p.id));
+      const standingPosted = posted.filter((p) => settlementPosted(postedPostings.get(p.id) ?? [])).slice(0, MAX_SETTLEMENTS);
       // Only a settlement the payout command could post: a receivable to clear, money received, no unexplained adjustment.
-      const payable = posted.filter((p) => money(p.receivable).greaterThan(0) && money(p.received).greaterThan(0) && money(p.other).isZero());
+      const payable = standingPosted.filter((p) => money(p.receivable).greaterThan(0) && money(p.received).greaterThan(0) && money(p.other).isZero());
       const payouts: MarketplaceWorklist['payouts'] = [];
       for (const p of payable) {
         const lines = (
@@ -139,7 +150,7 @@ export const createMarketplaceWorklist = (options: { maps?: Maps } = {}) =>
         .where('m.org_id', '=', ctx.orgId);
       if (input.legalEntityId !== undefined) links = links.where('m.legal_entity_id', '=', input.legalEntityId);
       const invoices: MarketplaceWorklist['invoices'] = [];
-      for (const link of await links.orderBy('m.platform').execute()) {
+      for (const link of options.feeClearing === true ? await links.orderBy('m.platform').execute() : []) {
         const waiting = money((await balanceOf(ctx, link.legal_entity_id, link.party_id, feesAccount)).balance);
         if (!waiting.greaterThan(0)) continue;
         const docs = await ctx.trx
@@ -172,7 +183,24 @@ export const createMarketplaceWorklist = (options: { maps?: Maps } = {}) =>
         }
       }
 
-      return { postingConfirmed: await postingConfirmed(ctx, input.legalEntityId, options.maps ?? MARKETPLACE_POSTING_MAPS), settlements, payouts, invoices };
+      // Settlements with some month vouchers reversed and some standing (#3329): the accountant finishes the reversal, the payout first.
+      const halfReversed: MarketplaceWorklist['halfReversed'] = (await halfReversedSettlements(ctx, input.legalEntityId)).map((h) => ({
+        settlementId: h.id,
+        legalEntityId: h.legalEntityId,
+        platform: h.platform,
+        platformName: platformPartyName(h.platform),
+        periodFrom: h.periodFrom,
+        periodTo: h.periodTo,
+        standingMonths: h.standing,
+        reversedMonths: h.reversed,
+      }));
+
+      // The month-end accrual of the fees without an invoice, and the reversal of a standing one (slice F, option 2): a company's, never a household's. `options.today` is for a test.
+      const offers = await feeAccrualOffers(ctx, input.legalEntityId, (typeof options.today === 'function' ? options.today() : (options.today ?? (await databaseToday(ctx.trx)))), options.maps ?? MARKETPLACE_POSTING_MAPS, platformPartyName);
+      const accruals: MarketplaceWorklist['accruals'] = offers.accruals.map((a) => ({ ...a, platformName: platformPartyName(a.platform) }));
+      const accrualReversals: MarketplaceWorklist['accrualReversals'] = offers.reversals.map((r) => ({ ...r, platformName: platformPartyName(r.platform) }));
+
+      return { postingConfirmed: await postingConfirmed(ctx, input.legalEntityId, options.maps ?? MARKETPLACE_POSTING_MAPS), settlements, payouts, invoices, halfReversed, accruals, accrualReversals };
     },
   });
 

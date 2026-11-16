@@ -16,6 +16,7 @@ import { DateInput } from './date-input.tsx';
 import { ErrorText } from './ui.tsx';
 import { MeetingFollowup } from './meeting-followup.tsx';
 import { MeetingZalo } from './meeting-zalo.tsx';
+import { MeetingChatPost } from './meeting-chat.tsx';
 import { MeetingTranslation } from './meeting-translation.tsx';
 import { clock } from './meeting-transcript.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -352,6 +353,7 @@ export function MeetingResults({ meetingId, readers, template = 'general', title
         {isRecorder && title !== '' && (published || items.some((i) => i.stage === 'published')) && (
           <MeetingZalo meetingId={meetingId} title={title} summary={published?.summary ?? null} decisions={published?.decisions ?? []} items={items.filter((i) => i.stage === 'published')} />
         )}
+        {isRecorder && (published || items.some((i) => i.stage === 'published')) && <MeetingChatPost meetingId={meetingId} />}
         {isRecorder && <TemplatePicker meetingId={meetingId} template={template} />}
         {isRecorder && <VySummary meetingId={meetingId} hasModelDraft={(draft?.tainted ?? false) || items.some((i) => i.stage === 'draft' && i.tainted)} />}
         {isRecorder && (

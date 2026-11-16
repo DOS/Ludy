@@ -23,7 +23,7 @@ import {
 const CONFIG = { baseURL: 'http://localhost:1/v1', apiKey: null, model: 'test' };
 const zero = (): PayrollFigures => ({ base_wage: '0', allowances: '0', other_regular_pay: '0', overtime: '0', night_work: '0', bonus: '0', unpaid_reduction: '0', gross: '0', employee_insurance: '0', pit: '0', deductions: '0', net: '0' });
 const figures = (over: Partial<PayrollFigures>): PayrollFigures => ({ ...zero(), ...over });
-const quiet = { minimumWageFailed: false, deductionCapFailed: false, netBelowMinimum: false, insuredAboveCap: false, cashPaymentOverLimit: false };
+const quiet = { minimumWageFailed: false, deductionCapFailed: false, overtimeCapFailed: false, netBelowMinimum: false, insuredAboveCap: false, cashPaymentOverLimit: false };
 const calm = { startsInMonth: false, probationEndsInMonth: false, endsInMonth: false };
 
 // Values that must never reach a model, planted wherever a careless caller could put them.
@@ -91,17 +91,36 @@ describe('findAnomalies', () => {
         line('1', { figures: figures({ net: '12000000', gross: '13000000' }), previous: figures({ net: '8000000' }) }),
         line('2', { previous: null, checks: { ...quiet, netBelowMinimum: true }, figures: figures({ net: '3000000' }) }),
         line('3', { previous: null, checks: { ...quiet, deductionCapFailed: true }, figures: figures({ deductions: '4000000' }) }),
-        line('4', { previous: null, dependentsWithoutRegistration: 2 }),
-        line('5', { previous: null, checks: { ...quiet, insuredAboveCap: true } }),
-        line('6', { previous: null, checks: { ...quiet, cashPaymentOverLimit: true }, figures: figures({ net: '6500000' }) }),
+        line('4', { previous: null, checks: { ...quiet, overtimeCapFailed: true }, figures: figures({ overtime: '1500000' }) }),
+        line('5', { previous: null, dependentsWithoutRegistration: 2 }),
+        line('6', { previous: null, checks: { ...quiet, insuredAboveCap: true } }),
+        line('7', { previous: null, checks: { ...quiet, cashPaymentOverLimit: true }, figures: figures({ net: '6500000' }) }),
       ],
       { language: 'vi', blockingRules: 2 },
     );
     const anomalies = findAnomalies(sheet);
-    expect(anomalies.map((a) => a.kind)).toEqual(['pay_moved', 'net_below_minimum', 'deduction_over_cap', 'dependent_unregistered', 'insured_above_cap', 'cash_payment_over_limit', 'rule_blocks']);
+    expect(anomalies.map((a) => a.kind)).toEqual(['pay_moved', 'net_below_minimum', 'deduction_over_cap', 'overtime_over_cap', 'dependent_unregistered', 'insured_above_cap', 'cash_payment_over_limit', 'rule_blocks']);
     expect(anomalies[0]?.facts).toBe('E1: thực nhận 12.000.000 đồng, tháng trước 8.000.000 đồng; tăng 50%');
-    expect(anomalies[6]?.alias).toBeNull();
-    expect(anomalies.map((a) => a.id)).toEqual(['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7']);
+    expect(anomalies[3]?.facts).toBe('E4: tổng giờ làm thêm vượt mức 40 giờ/tháng theo quy định của Bộ luật Lao động; tiền làm thêm tháng này 1.500.000 đồng');
+    expect(anomalies[7]?.alias).toBeNull();
+    expect(anomalies.map((a) => a.id)).toEqual(['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8']);
+  });
+
+  it('formats overtime_over_cap cleanly in English and passes figure checks when grounded', () => {
+    const { sheet } = pseudo([line('1', { previous: null, checks: { ...quiet, overtimeCapFailed: true }, figures: figures({ overtime: '1500000' }) })], {
+      language: 'en',
+      blockingRules: 0,
+    });
+    const anomalies = findAnomalies(sheet);
+    expect(anomalies).toHaveLength(1);
+    expect(anomalies[0]?.kind).toBe('overtime_over_cap');
+    expect(anomalies[0]?.facts).toBe('E1: total overtime hours exceed the 40 hours/month cap of the Labor Code; overtime pay this month 1,500,000 dong');
+    const ok = checkFlagSentences(anomalies, { items: [{ id: 'A1', sentence: 'E1 exceeded the 40 hours/month overtime limit with 1,500,000 dong overtime pay.' }] });
+    expect(ok).toEqual({
+      kind: 'flags',
+      items: [{ id: 'A1', kind: 'overtime_over_cap', alias: 'E1', text: 'E1 exceeded the 40 hours/month overtime limit with 1,500,000 dong overtime pay.' }],
+      refused: 0,
+    });
   });
 
   it('finds nothing in a month that did not move by more than the threshold', () => {

@@ -455,6 +455,7 @@ export function retentionEnds(endedOn: string): string {
 // cannot be undone, so it asks for a fresh second factor first; subject_key_shred itself asserts an owner.
 export const employeeErase = defineCommand({
   name: 'hr.payroll.employee.erase',
+  runsWhenOff: 'erases an ended employee\'s personal data after the retention, which the owner may still do while the app is off',
   input: zHrEmployeeRef,
   risk: 'R3',
   sideEffect: 'irreversible',

@@ -53,6 +53,10 @@ import {
   zConversationList,
   zConversationMarkRead,
   zConversationNoteAdd,
+  zConversationFollowUp,
+  CONVERSATION_TASKS_MAX,
+  type ConversationFollowedUp,
+  type ConversationTaskList,
   zConversationPrivateReply,
   zConversationProfileApply,
   zConversationProfileBegin,
@@ -2157,6 +2161,61 @@ export const conversationNoteAdd = defineCommand({
   },
 });
 
+// "Create task" (CV3, #3295, plan docs/plan/conversations.md section 4 point 2): follow-up work is an ordinary kernel task that links back to the thread, so the
+// conversation stays New, Pending or Resolved on its own and the task lives in the org's task list. A person only: the thread is read and locked under
+// row-level security first (a private message the caller may not read is "not found"), then kernel.task.create_from_conversation makes the task with a
+// source_ref only kernel code sets. The task holds the title the person typed and nothing of the thread; the audit row holds ids, never a title.
+export const conversationFollowUp = defineCommand({
+  name: 'kernel.conversation.follow_up',
+  input: zConversationFollowUp,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  target: (input) => ({ type: 'kernel.conversation', id: input.conversationId }),
+  handler: async (ctx, input): Promise<ConversationFollowedUp> => {
+    requireUser(ctx);
+    const conversation = await lockConversation(ctx, input.conversationId);
+    const created = await ctx.run<{ taskId: string }>('kernel.task.create_from_conversation', {
+      conversationId: conversation.id,
+      title: input.title,
+      positionId: input.assigneePositionId,
+      due: input.due ?? null,
+    });
+    ctx.audit({ conversation_id: conversation.id, task_id: created.taskId });
+    return { taskId: created.taskId };
+  },
+});
+
+// The open tasks of one thread, for the contact panel: the tasks whose source_ref names it, any status but done and cancelled. Read by the thread's own rule
+// (a thread the caller may not read is "not found") and the tasks' own (every member reads tasks). Ids, status and dates; the title is the person's own text.
+export const conversationTasks = defineQuery({
+  name: 'kernel.conversation.tasks',
+  input: zConversationId,
+  access: ALL,
+  handler: async (ctx, input): Promise<ConversationTaskList> => {
+    const conversation = await ctx.trx
+      .selectFrom('crove_kernel.conversation')
+      .select('id')
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.conversationId)
+      .executeTakeFirst();
+    if (!conversation) throw notFound();
+    const rows = await ctx.trx
+      .selectFrom('crove_kernel.task')
+      .select(['id', 'title', 'status', 'assignee_position_id', 'due', 'created_at'])
+      .where('org_id', '=', ctx.orgId)
+      .where(sql<boolean>`source_ref @> ${JSON.stringify({ type: 'kernel.conversation', id: conversation.id })}::jsonb`)
+      .where('status', 'not in', ['done', 'cancelled'])
+      .orderBy('created_at', 'desc')
+      .orderBy('id', 'desc')
+      .limit(CONVERSATION_TASKS_MAX)
+      .execute();
+    return {
+      tasks: rows.map((t) => ({ id: t.id, title: t.title, status: t.status, assigneePositionId: t.assignee_position_id, due: t.due?.toISOString() ?? null, createdAt: t.created_at.toISOString() })),
+    };
+  },
+});
+
 export const conversationLinkContact = defineCommand({
   name: 'kernel.conversation.link_contact',
   input: zConversationLinkContact,
@@ -3549,6 +3608,7 @@ export const conversationCommands = [
   conversationReopen,
   conversationNoteAdd,
   conversationLinkContact,
+  conversationFollowUp,
   conversationSetIntent,
   conversationMarkRead,
   conversationComposing,
@@ -3575,4 +3635,4 @@ export const conversationCommands = [
   conversationDraftRecord,
   conversationDraftDiscard,
 ];
-export const conversationQueries = [conversationList, conversationIntentSource, conversationContactCandidates, conversationAvailability, conversationToday, conversationCounts, conversationGet, conversationRetention, conversationAttachmentSource, conversationAttachmentGet, conversationSavedReplyList, conversationAutoDraft, conversationYoutubeComments, conversationDraftSource];
+export const conversationQueries = [conversationTasks, conversationList, conversationIntentSource, conversationContactCandidates, conversationAvailability, conversationToday, conversationCounts, conversationGet, conversationRetention, conversationAttachmentSource, conversationAttachmentGet, conversationSavedReplyList, conversationAutoDraft, conversationYoutubeComments, conversationDraftSource];

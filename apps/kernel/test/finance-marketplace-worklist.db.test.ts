@@ -24,14 +24,16 @@ const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.
 const suite = ADMIN ? describe : describe.skip;
 
 // A copy of the shipped map with every row confirmed, for the runtime that posts.
-const confirmedMaps = (): Record<string, MarketplacePostingMap> => {
+const confirmedMaps = (feeCode = '331'): Record<string, MarketplacePostingMap> => {
   const base = MARKETPLACE_POSTING_MAPS.tt133 as MarketplacePostingMap;
   const c = <T extends { status: string }>(r: T): T => ({ ...r, status: 'confirmed' });
-  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c(base.feePayable), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld) } };
+  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c({ ...base.feePayable, code: feeCode }), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitExpense: c(base.pitExpense), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense) } };
 };
 const notMarketplace = (name: string) => !name.startsWith('finance.marketplace_settlement.') && !name.startsWith('finance.marketplace_payout.') && !name.startsWith('finance.marketplace_fee_clearing.');
 
 interface SeedLine {
+  // The day the line's order was delivered; the first day of the period when absent, no order line (no delivery day) when null.
+  delivered?: string | null;
   sales: string;
   discount?: string;
   refund?: string;
@@ -65,7 +67,7 @@ suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
   const rows = <T extends pg.QueryResultRow>(sql: string, params: unknown[] = []) => withAdmin(async (c) => (await c.query<T>(sql, params)).rows);
 
   // An org with an owner, an admin (who asks) and a member.
-  async function org(regime: 'tt133' | 'tt99' = 'tt133') {
+  async function org(regime: 'tt133' | 'tt99' = 'tt133', household = true) {
     const tag = randomUUID().slice(0, 8);
     const person = (name: string) => upsertIdentity(createDb(pool), { issuer: 'mktrecord', subject: `${name}-${tag}`, email: `${name}-${tag}@mkt.test`, name: null });
     const owner = await person('owner');
@@ -79,6 +81,14 @@ suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
       );
     }
     const entity = (await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))[0]?.id as string;
+    // A household seller of one line of business with its rates confirmed for the test: the withheld tax is split into VAT and PIT at the settlement's posting (slice C2) and the payout debits it.
+    if (household) {
+      await withAdmin(async (c) => {
+        await c.query("UPDATE crove_kernel.legal_entity SET kind = 'household' WHERE org_id = $1 AND id = $2", [orgId, entity]);
+        await c.query("INSERT INTO crove_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, pit_method, trades) VALUES ($1, $2, '2026-01-01', 2, 'percentage', ARRAY['goods']::text[])", [orgId, entity]);
+        await c.query("UPDATE crove_finance.household_trade_rate SET status = 'confirmed' WHERE trade = 'goods'");
+      });
+    }
     return { orgId, owner, admin, member, entity };
   }
   type Org = Awaited<ReturnType<typeof org>>;
@@ -93,6 +103,7 @@ suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
       for (const [i, l] of lines.entries()) {
         const orderId = randomUUID();
         await c.query('INSERT INTO crove_finance.channel_order (org_id, id, platform, order_no) VALUES ($1, $2, $3, $4)', [o.orgId, orderId, platform, `MK${randomUUID().slice(0, 12)}`]);
+        if (l.delivered !== null) await c.query("INSERT INTO crove_finance.channel_order_line (org_id, order_id, line_key, quantity, stage, delivered_at) VALUES ($1, $2, 'L1', 1, 'completed', $3)", [o.orgId, orderId, l.delivered ?? start]);
         await c.query(
           'INSERT INTO crove_finance.channel_settlement_line (org_id, id, settlement_id, order_id, line_key, sales, seller_discount, commission, service_fee, payment_fee, shipping, tax_withheld, refund, other, net) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)',
           [o.orgId, randomUUID(), id, orderId, `K${i}`, l.sales, l.discount ?? '0', l.commission ?? '0', l.service ?? '0', l.payment ?? '0', l.shipping ?? '0', l.tax ?? '0', l.refund ?? '0', l.other ?? '0', netOf(l)],
@@ -174,7 +185,7 @@ suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
   const worklist = (o: Org, runtime = rt, legalEntityId?: string) =>
     runtime.query<{
       postingConfirmed: boolean;
-      settlements: { id: string; platform: string; platformName: string; periodFrom: string; periodTo: string; net: string; proposalId: string | null }[];
+      settlements: { id: string; platform: string; platformName: string; periodFrom: string; periodTo: string; months: string[]; net: string; waitingLines: number; proposalId: string | null }[];
       payouts: { settlementId: string; received: string; proposalId: string | null; candidates: { id: string; date: string; amount: string; reference: string | null }[] }[];
       invoices: { documentId: string; clearable: string; invoice: string; proposalId: string | null }[];
     }>('finance.marketplace.worklist', legalEntityId === undefined ? {} : { legalEntityId }, { actor: asUser(o.owner), orgId: o.orgId });
@@ -195,10 +206,10 @@ suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
     pool = createPool({ connectionString: url.toString(), max: 6 });
     const base = { queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] };
     // The runtime that posts reads the worklist over a confirmed map; the shipped one reads it over the shipped (commentary) map.
-    const confirmedBase = { queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries.filter((q) => q.name !== 'finance.marketplace.worklist'), createMarketplaceWorklist({ maps: confirmedMaps() })] };
+    const confirmedBase = { queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries.filter((q) => q.name !== 'finance.marketplace.worklist'), createMarketplaceWorklist({ maps: confirmedMaps(), feeClearing: true })] };
     // The runtime that posts registers both marketplace command sets over a confirmed map; the other, the shipped sets.
     rt = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({
-      commands: [...kernelCommands, ...financeCommands.filter((c) => notMarketplace(c.name)), ...createMarketplaceSettlementCommands({ maps: confirmedMaps() }).commands, ...createMarketplacePayoutCommands({ maps: confirmedMaps() }).commands, ...createMarketplaceFeeClearingCommands({ maps: confirmedMaps() }).commands],
+      commands: [...kernelCommands, ...financeCommands.filter((c) => notMarketplace(c.name)), ...createMarketplaceSettlementCommands({ maps: confirmedMaps() }).commands, ...createMarketplacePayoutCommands({ maps: confirmedMaps('1388') }).commands, ...createMarketplaceFeeClearingCommands({ maps: confirmedMaps(), retired: false }).commands],
       ...confirmedBase,
     });
     rtShipped = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...financeCommands], ...base });
@@ -245,6 +256,27 @@ suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
     expect((await worklist(o)).settlements.map((s) => s.id)).toEqual([b]);
     // Another org sees none of it.
     expect((await worklist(await org())).settlements).toEqual([]);
+  });
+
+  it('lists a settlement once with its months of delivery, and one that waits for a delivery day with nothing to ask for', async () => {
+    const o = await org();
+    const two = await seed(o, 'shopee', '2026-10-01', '2026-10-15', [{ sales: '100000', delivered: '2026-09-28' }, { sales: '200000', delivered: '2026-10-02' }]);
+    const waits = await seed(o, 'tiktok_shop', '2026-10-01', '2026-10-15', [{ sales: '90000' }, { sales: '10000', delivered: null }, { sales: '5000', delivered: null }]);
+    const list = await worklist(o);
+    expect(list.settlements.map((s) => [s.id === two ? 'two' : s.id === waits ? 'waits' : 'other', s.months, s.net, s.waitingLines]).sort()).toEqual(
+      [['two', ['2026-09', '2026-10'], '300000', 0], ['waits', [], '0', 2]].sort(),
+    );
+    expect((await facts(o)).settlementsToPost).toBe(2);
+    // A pending proposal is carried on the row; a settlement that waits has none to carry.
+    const asked = await askSettlement(o, two);
+    expect((await worklist(o)).settlements.find((s) => s.id === two)?.proposalId).toBe(asked.proposalId);
+    await expect(askSettlement(o, waits)).rejects.toMatchObject({ code: 'MARKETPLACE_SETTLEMENT_WAITING_DELIVERY' });
+    // One approval posts both months: the row goes, the settlement is offered for its payout, and counts once there.
+    await approve(o, asked.proposalId);
+    expect((await worklist(o)).settlements.map((s) => s.id)).toEqual([waits]);
+    expect((await worklist(o)).payouts.map((p) => p.settlementId)).toContain(two);
+    expect((await facts(o)).payoutsToMatch).toBe(1);
+    expect((await facts(o)).settlementsToPost).toBe(1);
   });
 
   it('lists a posted settlement with the bank lines its payout may be, and drops it once its payout is posted', async () => {
