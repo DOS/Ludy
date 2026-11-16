@@ -34,6 +34,7 @@ import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import {
   ADS_RANGES,
   DEFAULT_ADS_RANGE,
+  connectionEndsSoon,
   FIRST_SYNC_POLL_LIMIT,
   FIRST_SYNC_POLL_MS,
   REFRESH_POLL_MS,
@@ -304,6 +305,7 @@ export function AdsEmpty({
 function SyncStatus({ account }: { account: AdAccountView }) {
   const t = useTranslations('ads');
   const f = useFormat();
+  const nowMs = useNowUntil(0);
   const active = account.connectionStatus === 'active';
   return (
     <div className="mt-3 space-y-1 text-sm">
@@ -327,6 +329,11 @@ function SyncStatus({ account }: { account: AdAccountView }) {
       {active && account.provider === 'google_ads' && account.connectionExpiresAt && (
         <p className="text-warning" role="status">
           {t('connectionExpiresSoon', { when: f.date(account.connectionExpiresAt) })}
+        </p>
+      )}
+      {connectionEndsSoon(account, nowMs) && account.connectionExpiresAt && (
+        <p className="text-warning" role="status">
+          {t('connectionEndsSoon', { when: f.date(account.connectionExpiresAt) })}
         </p>
       )}
       {account.connectionStatus !== 'active' && (
@@ -865,10 +872,12 @@ function AccountPanel({
   const days = adsRange(range, account.timeZone, now);
   const summary = useQuery({ ...orpc.ads.summary.queryOptions({ input: { adAccountId: account.id, from: days.from, to: days.to } }), enabled: ready });
   const currency = account.currency ?? '';
+  // An active connection that ends soon (a Meta token of 60 days): owners and admins reconnect it before it does, as for a paused one.
+  const endsSoon = connectionEndsSoon(account, now.getTime());
   return (
     <div className="space-y-8">
       <AccountHeader account={account} canRefresh={canRefresh} onRequested={onRequested} />
-      {reconnect && canManage && account.provider === 'meta_ads' && account.connectionStatus !== 'active' && account.pausedReason !== 'platform_deletion' && (
+      {reconnect && canManage && account.provider === 'meta_ads' && (account.connectionStatus !== 'active' || endsSoon) && account.pausedReason !== 'platform_deletion' && (
         <Card className="block p-4">
           <ConnectMeta slug={reconnect.slug} another reconnect />
         </Card>
@@ -878,7 +887,7 @@ function AccountPanel({
           <ConnectGoogle slug={googleReconnect.slug} another reconnect />
         </Card>
       )}
-      {account.connectionStatus !== 'active' && !canManage && account.pausedReason !== 'platform_deletion' && (
+      {(account.connectionStatus !== 'active' || endsSoon) && !canManage && account.pausedReason !== 'platform_deletion' && (
         <p className="text-sm text-muted-foreground" role="status">
           {t('paused.noReconnect')}
         </p>

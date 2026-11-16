@@ -28,7 +28,9 @@ import {
   booksDifference,
   booksExpense,
   booksMonths,
+  CONNECTION_WARN_MS,
   configureChanges,
+  connectionEndsSoon,
   documentCounts,
   documentsRange,
   errorCode,
@@ -687,5 +689,42 @@ describe('the bank and card lines that paid the platform (slice D2)', () => {
 
   it('opens the bank screen at the line’s account and month', () => {
     expect(bankLineSearch({ bankAccount: '1121', date: '2026-11-05' })).toEqual({ account: '1121', month: '2026-11' });
+  });
+});
+
+describe('the warning before a connection ends (#3476)', () => {
+  const NOW = Date.parse('2026-11-16T10:00:00.000Z');
+  const at = (ms: number) => new Date(NOW + ms).toISOString();
+  const acc = (over: Partial<Pick<AdAccountView, 'connectionStatus' | 'connectionExpiresAt' | 'provider'>> = {}) => ({
+    connectionStatus: 'active' as AdAccountView['connectionStatus'],
+    connectionExpiresAt: at(5 * 86_400_000) as string | null,
+    provider: 'meta_ads',
+    ...over,
+  });
+
+  it('warns 14 days ahead of the end, on the day itself and after it, and not before', () => {
+    expect(CONNECTION_WARN_MS).toBe(14 * 86_400_000);
+    expect(connectionEndsSoon(acc({ connectionExpiresAt: at(5 * 86_400_000) }), NOW)).toBe(true);
+    expect(connectionEndsSoon(acc({ connectionExpiresAt: at(CONNECTION_WARN_MS) }), NOW)).toBe(true);
+    expect(connectionEndsSoon(acc({ connectionExpiresAt: at(0) }), NOW)).toBe(true);
+    expect(connectionEndsSoon(acc({ connectionExpiresAt: at(-3_600_000) }), NOW)).toBe(true);
+    expect(connectionEndsSoon(acc({ connectionExpiresAt: at(CONNECTION_WARN_MS + 1) }), NOW)).toBe(false);
+    expect(connectionEndsSoon(acc({ connectionExpiresAt: at(40 * 86_400_000) }), NOW)).toBe(false);
+  });
+
+  it('says nothing for a connection with no end date, a bad date, a paused or closed one, or Google (which has its own words)', () => {
+    expect(connectionEndsSoon(acc({ connectionExpiresAt: null }), NOW)).toBe(false);
+    expect(connectionEndsSoon(acc({ connectionExpiresAt: 'not a date' }), NOW)).toBe(false);
+    for (const connectionStatus of ['expired', 'revoked', 'disconnected', 'error'] as const) {
+      expect(connectionEndsSoon(acc({ connectionStatus: connectionStatus as AdAccountView['connectionStatus'] }), NOW)).toBe(false);
+    }
+    expect(connectionEndsSoon(acc({ provider: 'google_ads' }), NOW)).toBe(false);
+  });
+
+  it('has the warning in both languages with the date in it', () => {
+    const inEn = translatorFor('en');
+    const inVi = translatorFor('vi');
+    expect(inEn('ads.connectionEndsSoon', { when: '30/11/2026' })).toContain('30/11/2026');
+    expect(inVi('ads.connectionEndsSoon', { when: '30/11/2026' })).toContain('30/11/2026');
   });
 });

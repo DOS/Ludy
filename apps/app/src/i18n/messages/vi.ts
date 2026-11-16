@@ -5052,6 +5052,7 @@ export const vi = {
     canRunAds: 'Chạy được quảng cáo: tài khoản này có một kết nối có thể thay đổi chiến dịch. Mỗi lần chạy vẫn cần người duyệt, và nằm trong hạn mức.',
     readOnly: 'Chỉ đọc: {brand} chỉ đọc báo cáo của tài khoản này.',
     googleReadOnly: 'Chỉ đọc trong {brand}: quyền adwords của Google gồm cả đọc và ghi ở phía Google, còn {brand} chỉ gọi các điểm đọc báo cáo (customers:listAccessibleCustomers và googleAds:searchStream).',
+    connectionEndsSoon: 'Kết nối với nền tảng quảng cáo hết hạn vào {when}. Hãy kết nối lại trước ngày đó để số liệu không bị dừng.',
     connectionExpiresSoon: 'Mã làm mới của kết nối này sẽ hết hạn vào {when} (màn hình cấp quyền Google Cloud ở chế độ Testing cấp mã 7 ngày). Hãy chuyển màn hình cấp quyền sang Production trong Google Cloud Console hoặc kết nối lại trước thời điểm đó để không bị gián đoạn cập nhật.',
     extraScopes: 'Kết nối của tài khoản này làm được nhiều hơn đọc báo cáo quảng cáo: mã truy cập còn giữ thêm quyền {list}. Ludy chỉ đọc; muốn bỏ các quyền thừa, hãy kết nối qua một ứng dụng Meta riêng cho quảng cáo.',
     accountLabel: 'Tài khoản quảng cáo',
