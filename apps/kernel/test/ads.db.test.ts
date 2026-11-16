@@ -2913,11 +2913,12 @@ suite('ads on PostgreSQL (#2217)', () => {
             it('shows when the platform was last asked, that a failed read says so, and nothing for a launch never read or for another launch\'s or org\'s row', async () => {
               const w = new SandboxAdWriter();
               const { launch, account, draft } = await launched('Hỏi lần cuối', w, true);
-              const other = await launched('Chưa hỏi bao giờ', w, true);
               // Never read: no time and no verdict, not an epoch.
               expect(await viewOf(account, draft.id)).toMatchObject({ provider: 'sandbox_ads', statesReadAt: null, statesReadOk: null });
-              expect(await viewOf(other.account, other.draft.id)).toMatchObject({ statesReadAt: null, statesReadOk: null });
-              // Another org's row under the same launch's key and a row of this org that is still `started` say nothing of this launch.
+              // Another launch's settled row in this org, another org's row under this launch's key and a row of this org that is still `started` say nothing of this launch.
+              const elsewhere = `ads.state:${randomUUID()}:29990101000000002`;
+              await row(`INSERT INTO crove_kernel.external_call (org_id, key, module, target, step, retry_safety) VALUES ($1, $2, 'ads', 'launch', 'state_read', 'safe')`, [orgId, elsewhere]);
+              await row(`UPDATE crove_kernel.external_call SET state = 'succeeded', finished_at = now() + interval '1 day', updated_at = now() WHERE org_id = $1 AND key = $2`, [orgId, elsewhere]);
               const foreign = `ads.state:${launch.id}:29990101000000000`;
               await row(`INSERT INTO crove_kernel.external_call (org_id, key, module, target, step, retry_safety) VALUES ($1, $2, 'ads', 'launch', 'state_read', 'safe')`, [otherOrgId, foreign]);
               await row(`UPDATE crove_kernel.external_call SET state = 'succeeded', finished_at = now() + interval '1 day', updated_at = now() WHERE org_id = $1 AND key = $2`, [otherOrgId, foreign]);
@@ -2926,16 +2927,15 @@ suite('ads on PostgreSQL (#2217)', () => {
               // A worked read: its time, and ok.
               const before = Date.now();
               expect(await stateSync(w, account)).toMatchObject({ launches: 1, failed: 0 });
-              expect(await stateSync(w, other.account)).toMatchObject({ launches: 1, failed: 0 });
               const worked = await viewOf(account, draft.id);
               expect(worked?.statesReadOk).toBe(true);
               const firstAt = Date.parse(worked?.statesReadAt as string);
               expect(firstAt).toBeGreaterThanOrEqual(before - 1000);
               expect(firstAt).toBeLessThanOrEqual(Date.now() + 1000);
-              // The time is the ledger row's own, and each launch has its own.
-              const ledger = (await stateCalls(launch.id)).filter((r) => r.state === 'succeeded');
-              expect(ledger).toHaveLength(1);
-              expect(await viewOf(other.account, other.draft.id)).toMatchObject({ statesReadOk: true });
+              // The time is the ledger row's own: one settled read so far.
+              const finishedAt = async () => (await row<{ state: string; at: Date }>(`SELECT state, finished_at AS at FROM crove_kernel.external_call WHERE org_id = $1 AND key LIKE $2 AND state IN ('succeeded', 'failed') ORDER BY finished_at DESC`, [orgId, `ads.state:${launch.id}:%`]));
+              expect(await finishedAt()).toHaveLength(1);
+              expect((await finishedAt())[0]?.at.getTime()).toBe(firstAt);
               // A read that failed (sandbox fault): the failure time, and the verdict false (the screen then says the state shown is the last known).
               const ad = w.objects.get(await idOf(launch.id, 'ad_1')) as NonNullable<ReturnType<SandboxAdWriter['objects']['get']>>;
               ad.effectiveStatus = 'DISAPPROVED';
@@ -2944,12 +2944,18 @@ suite('ads on PostgreSQL (#2217)', () => {
               expect(await stateSync(w, account)).toMatchObject({ failed: 1 });
               const failed = await viewOf(account, draft.id);
               expect(failed?.statesReadOk).toBe(false);
-              expect(Date.parse(failed?.statesReadAt as string)).toBeGreaterThan(firstAt);
+              const failedAt = Date.parse(failed?.statesReadAt as string);
+              expect(failedAt).toBeGreaterThan(firstAt);
+              expect((await finishedAt())[0]).toMatchObject({ state: 'failed' });
+              expect((await finishedAt())[0]?.at.getTime()).toBe(failedAt);
               // The platform's answer is no part of the view: no error text, no code.
               expect(JSON.stringify(failed)).not.toMatch(/NETWORK|transient|error/i);
               // The next read that works says ok again.
+              await new Promise((r) => setTimeout(r, 15));
               expect(await stateSync(w, account)).toMatchObject({ failed: 0 });
-              expect(await viewOf(account, draft.id)).toMatchObject({ statesReadOk: true });
+              const recovered = await viewOf(account, draft.id);
+              expect(recovered?.statesReadOk).toBe(true);
+              expect(Date.parse(recovered?.statesReadAt as string)).toBeGreaterThan(failedAt);
             });
 
             it('shows an object deleted at the platform, reads nothing for a launch whose write connection closed, and a provider without a reader is left alone', async () => {
