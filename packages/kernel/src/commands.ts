@@ -67,7 +67,7 @@ import { setAddress, setContactEmail } from './org-address.ts';
 import { partyCommands } from './parties.ts';
 import { setTaxCode, setVatFilingPeriod } from './tax-code.ts';
 import { setApprovalPreset } from './approval-preset.ts';
-import { setAppCommand } from './org-apps.ts';
+import { setAppCommand, type AppBusyProbe } from './org-apps.ts';
 import { legalEntityCommands } from './legal-entities.ts';
 import { numberingCommands } from './numbering.ts';
 import { cancelMemberVyRuns, memberVyCommands } from './member-vy.ts';
@@ -1263,6 +1263,8 @@ export function buildKernelCommands(
     messageIdDomain?: string;
     // The modules this build ships, so kernel.org.set_app refuses an app that does not exist (ADR-0053); absent: any well-formed id.
     shippedModules?: readonly string[];
+    // What each app is busy with, so switching it off can be refused while that work is open (ADR-0053, kernel.org.set_app).
+    appBusy?: Readonly<Record<string, AppBusyProbe>>;
   } = {},
 ) {
   return [
@@ -1271,7 +1273,7 @@ export function buildKernelCommands(
       ? inviteCreateCommand(options.inviteLimits, { messageIdDomain: options.messageIdDomain })
       : createInvite,
     ...otherKernelCommands,
-    setAppCommand(options.shippedModules ? { shipped: options.shippedModules } : {}),
+    setAppCommand({ ...(options.shippedModules ? { shipped: options.shippedModules } : {}), ...(options.appBusy ? { busy: options.appBusy } : {}) }),
     options.uploadBeginLimits ? beginUploadCommand(options.uploadBeginLimits) : beginUpload,
     options.inboundRotateLimits ? inboundRotateCommand(options.inboundRotateLimits) : rotateInbound,
     options.inboundRotateLimits ? conversationAddressRotateCommand(options.inboundRotateLimits) : rotateConversationAddress,

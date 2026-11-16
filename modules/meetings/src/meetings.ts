@@ -178,6 +178,8 @@ function toSummary(r: MeetingRow, readersCount: number, hasAudio: boolean, hasVi
 
 export const meetingCreate = defineCommand({
   name: 'meetings.meeting.create',
+  // Opens a recording the app's switch-off would cut short: it holds the tenant row, as the switch does (ADR-0053).
+  opensBusyWork: true,
   input: zMeetingCreate,
   risk: 'R1',
   sideEffect: 'internal',

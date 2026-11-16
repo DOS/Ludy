@@ -10352,6 +10352,7 @@ export const en = {
       ROLE_REVOKE_WIDENS_SCOPE: 'This is the last legal entity this member may see. Revoking it would let them see every entity; if they no longer work for the organization, remove them instead.',
       UNKNOWN_PRESET: 'There is no such approval rule.',
       APP_ALWAYS_ON: 'The core of the system is always on and cannot be turned off.',
+      APP_BUSY: 'This app has work that is not finished (a recording, an import or a running campaign), so it cannot be turned off yet. Wait for it to finish or stop it, then try again.',
       MODULE_OFF: 'This app is turned off for the company.',
       UNKNOWN_APP: 'There is no such app.',
       NO_CHIEF_ACCOUNTANT: 'Give a member the chief accountant role before choosing the rule where only the chief accountant approves postings.',
