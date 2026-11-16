@@ -10086,7 +10086,7 @@ export const en = {
       discordTagRequired: 'This Discord forum requires a tag on every post, so nothing was posted. Add the ID of one of its tags, then publish again.',
       discordTagUnknown: 'This Discord forum has no tag with one of the IDs given, so nothing was posted. Check the tag IDs, then publish again.',
       discordThreadUnknown: 'Discord found no thread with this ID in the webhook’s channel, so nothing was posted. Check the thread, then publish again.',
-      heldTooLong: 'Not published: the organization paused publishing until more than an hour past this post’s time. Publish it now, edit it or cancel it on this channel.',
+      heldTooLong: 'Not published: this post’s time passed more than an hour ago without it going out (publishing was paused, the app was switched off or publishing was down). Publish it now, edit it or cancel it on this channel.',
     },
     reconnect: 'Reconnect the channel',
     retry: 'Publish again',

@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { metered } from '@crove/agent';
 import { planTranscriptChunks, type ModelPort } from '@crove/agent/member-vy';
 import { createDb, createPool } from '@crove/db';
+import { enterUser } from './context-token.ts';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import type { TranscriptSource, TranscriptTranslated, TranscriptTranslationStatus, TranscriptTranslationView } from '@crove/kernel-contract';
@@ -422,6 +423,39 @@ suite("the member's Vy translating the transcript (E2, #3185)", () => {
     await exec('recorder', 'meetings.result.publish', { meetingId: mixed, confirmed: true });
     await sqlAdmin('DELETE FROM crove_meetings.meeting_result WHERE org_id = $1 AND meeting_id = $2', [orgId, mixed]);
     expect(await sqlAdmin("SELECT 1 FROM crove_meetings.translation WHERE org_id = $1 AND meeting_id = $2 AND kind = 'transcript'", [orgId, mixed]).then((r) => r.rowCount)).toBe(1);
+  }, 120_000);
+
+  it('no member\'s context can edit a published line, so no other member\'s translation can hold a corrected one; a draft is read, translated and corrected by its recorder alone (#3485)', async () => {
+    const meetingId = await seedMeeting();
+    const [line] = await seedLines(meetingId, 'published', ['Dòng công khai: giá 100.000.']);
+    await batch('attendee', meetingId);
+    await batch('recorder', meetingId);
+    expect(await sqlAdmin("SELECT 1 FROM crove_meetings.translation WHERE org_id = $1 AND meeting_id = $2 AND kind = 'transcript'", [orgId, meetingId]).then((r) => r.rowCount)).toBe(2);
+    // Every member's own context, the recorder's included: the update policy is for the recorder's drafts, so a published line is not theirs to change (0 rows, not an error).
+    const adminUrl2 = new URL(adminUrl);
+    adminUrl2.username = 'crove_app';
+    adminUrl2.password = 'test-app-pw';
+    for (const who of ['recorder', 'owner', 'admin', 'attendee', 'viewer']) {
+      const c = new pg.Client({ connectionString: adminUrl2.toString() });
+      await c.connect();
+      try {
+        await c.query('BEGIN');
+        await enterUser(c, users[who] as string, orgId);
+        const changed = await c.query('UPDATE crove_meetings.transcript_segment SET text = $1 WHERE org_id = $2 AND id = $3', ['Dòng đã sửa: giá 150.000.', orgId, line]);
+        expect(changed.rowCount, who).toBe(0);
+      } finally {
+        await c.query('ROLLBACK').catch(() => undefined);
+        await c.end();
+      }
+    }
+    expect((await sqlAdmin<{ text: string }>('SELECT text FROM crove_meetings.transcript_segment WHERE id = $1', [line])).rows[0]?.text).toBe('Dòng công khai: giá 100.000.');
+    // And the draft's translation is the recorder's alone (the draft is read by nobody else), so a corrected draft line leaves no other member's translation holding its old words.
+    const drafted = await seedMeeting();
+    const [draftLine] = await seedLines(drafted, 'draft', ['Bản nháp: giá 200.000.']);
+    await batch('recorder', drafted);
+    expect(await refuses(batch('attendee', drafted))).not.toBeNull();
+    await exec('recorder', 'meetings.transcript.correct', { segmentId: draftLine, text: 'Bản nháp: giá 250.000.' });
+    expect(await sqlAdmin('SELECT member_user_id FROM crove_meetings.translation WHERE org_id = $1 AND meeting_id = $2', [orgId, drafted]).then((r) => r.rows.map((x) => x.member_user_id))).toEqual([users.recorder]);
   }, 120_000);
 
   it('a member has one translation run at a time, can stop it, and the summary translation does not cut it off', async () => {

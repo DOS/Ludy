@@ -167,6 +167,25 @@ suite('removing a published post on PostgreSQL (#860)', () => {
     await expect(exec(o, 'social.variant.retry', { variantIds: [id] })).rejects.toMatchObject({ code: 'VARIANT_STATE' });
   });
 
+  it('still takes a post down, and still schedules and watches a planned takedown, while Social is switched off for the org (ADR-0053, C3c)', async () => {
+    const o = await org();
+    const sandbox = new SandboxPublisher();
+    const { postId, id, account } = await publishedPost(o, sandbox);
+    expect(await exec(o, 'social.variant.remove', { variantId: id, reason: 'Sai giá' })).toMatchObject({ queued: true });
+    await api.execute('kernel.org.set_app', { module: 'social', enabled: false }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+    // The app is off: a person's own call into it is refused.
+    await expect(exec(o, 'social.variant.remove', { variantId: id })).rejects.toMatchObject({ status: 404 });
+    // The ask made before still goes out: begin and record run, and the post comes down.
+    expect(await runRemoveJob(deps(sandbox), o.orgId, id, 'sandbox', null)).toEqual({ action: 'call', state: 'succeeded' });
+    expect(sandbox.posts(account)).toHaveLength(0);
+    // The planned takedown's schedule and watch are not refused either: they answer, nothing is due.
+    const system = { type: 'system' as const, component: 'social-remove-off-test' };
+    await expect(worker.execute('social.remove.schedule', { variantId: id }, { actor: system, orgId: o.orgId })).resolves.toMatchObject({ queued: false });
+    await expect(worker.execute('social.remove.watch', { variantId: id, after: null }, { actor: system, orgId: o.orgId })).resolves.toMatchObject({ told: false });
+    await api.execute('kernel.org.set_app', { module: 'social', enabled: true }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+    expect((await variant(o, postId)).status).toBe('removed');
+  });
+
   it('keeps the post up when the platform refuses, and asks again once per ask', async () => {
     const o = await org();
     const sandbox = new SandboxPublisher();

@@ -44,7 +44,7 @@ import {
   type VariantRow,
 } from './variants.ts';
 import { agentTaskOf } from './agent.ts';
-import { publishingHeld } from './publish-hold.ts';
+import { HELD_TOO_LONG, HELD_TOO_LONG_MS, publishingHeld } from './publish-hold.ts';
 import { refuseChannels } from './channel-access.ts';
 
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];
@@ -348,6 +348,14 @@ export const publishBegin = defineCommand({
           break;
         }
         if (await queuePaused(ctx, v)) return none('queue_paused');
+        // Too late to go out by itself (ADR-0053 section 4, C3c): its time passed more than an hour ago, while the org's Social was off, a hold was on or the worker was
+        // down. It fails with HELD_TOO_LONG and waits for a person (publish now, edit or cancel), as after a hold; the team is told as for any failed channel.
+        if (now - due.getTime() > HELD_TOO_LONG_MS) {
+          await move(ctx, v, { type: 'held_too_long' }, { ...NO_ERROR, error_code: HELD_TOO_LONG });
+          await ctx.emit('social.variant.failed', { post_id: post.id, variant_id: v.id });
+          result = none('too_late');
+          break;
+        }
         const connection = await connectionOf(ctx, v.channel_connection_id);
         if (connection?.status !== 'active') {
           // A disconnected channel never comes back (connecting the account again makes a new connection); an expired
@@ -419,6 +427,8 @@ export const publishBegin = defineCommand({
           SELECT paused_connection_version AS version FROM crove_social.post_variant WHERE org_id = ${ctx.orgId}::uuid AND id = ${v.id}::uuid`.execute(ctx.trx);
         const pausedAt = rows[0]?.version ?? null;
         if (connection?.status !== 'active' || (pausedAt !== null && pausedAt.getTime() === connection.updatedAt.getTime())) return none('paused');
+        // Back to scheduled with its own time: a queue paused meanwhile still holds it (queuePaused reads a variant with no retry time), and one that waited over an hour
+        // fails at its next begin (HELD_TOO_LONG), for a person. A resume by the automatic token refresh is not a person's act, so it never sends an old post.
         await move(ctx, v, { type: 'resume' }, { ...NO_ERROR, paused_connection_version: null });
         result = none('resumed');
         break;
