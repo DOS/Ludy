@@ -1054,6 +1054,15 @@ export const HR_REGIONS = ['I', 'II', 'III', 'IV'] as const;
 export const HR_PAY_FUNCTIONS = ['admin', 'sales', 'production', 'overhead', 'construction'] as const;
 export const HR_JOB_OPENING_STATUSES = ['open', 'closed'] as const;
 export const HR_CANDIDATE_STAGES = ['applied', 'screening', 'interview', 'offer', 'hired', 'rejected'] as const;
+// Departments per legal entity (#3412): optional team structure with default pay_function.
+export type HrDepartmentTable = Refine<
+  G.HrDepartmentTable,
+  {
+    legal_entity_id: LegalEntityColumn;
+    pay_function: Generated<(typeof HR_PAY_FUNCTIONS)[number]>;
+  },
+  'legal_entity_id'
+>;
 export type HrJobOpeningTable = Refine<
   G.HrJobOpeningTable,
   {
@@ -1091,6 +1100,13 @@ export type HrPayrollEmploymentTable = Refine<
 export const HR_RUN_STATUSES = ['draft', 'approved', 'paid', 'closed'] as const;
 export const HR_LINE_KINDS = ['pay', 'adjustment'] as const;
 export const HR_LINE_STATUSES = ['calculated', 'refused'] as const;
+export const HR_LEAVE_ENTRY_KINDS = ['opening_balance', 'annual_leave', 'personal_paid', 'unpaid_leave'] as const;
+export type HrLeaveEntryKind = (typeof HR_LEAVE_ENTRY_KINDS)[number];
+export type HrPayrollLeaveEntryTable = Refine<
+  G.HrPayrollLeaveEntryTable,
+  { kind: ColumnType<HrLeaveEntryKind, HrLeaveEntryKind, never>; legal_entity_id: LegalEntityColumn },
+  'legal_entity_id'
+>;
 export type HrPayrollRunTable = Refine<G.HrPayrollRunTable, { status: Generated<(typeof HR_RUN_STATUSES)[number]> }>;
 export type HrPayrollLineTable = Refine<
   G.HrPayrollLineTable,
@@ -1265,10 +1281,12 @@ type Refined = Tables<{
   'crove_crm.sales_order_delivery': CrmSalesOrderDeliveryTable;
   'crove_crm.sales_order_line': CrmSalesOrderLineTable;
   'crove_hr.candidate': HrCandidateTable;
+  'crove_hr.department': HrDepartmentTable;
   'crove_hr.job_opening': HrJobOpeningTable;
   'crove_hr.payroll_bank_template': HrPayrollBankTemplateTable;
   'crove_hr.payroll_employee': HrPayrollEmployeeTable;
   'crove_hr.payroll_employment': HrPayrollEmploymentTable;
+  'crove_hr.payroll_leave_entry': HrPayrollLeaveEntryTable;
   'crove_hr.payroll_line': HrPayrollLineTable;
   'crove_hr.payroll_run': HrPayrollRunTable;
   'crove_meetings.action_item': MeetingsActionItemTable;

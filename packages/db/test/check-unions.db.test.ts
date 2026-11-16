@@ -141,6 +141,7 @@ import {
   HR_PAY_FUNCTIONS,
   HR_PROBATION_ROLE_TIERS,
   HR_EMPLOYEE_STATUSES,
+  HR_LEAVE_ENTRY_KINDS,
   HR_LINE_KINDS,
   HR_LINE_STATUSES,
   HR_RUN_STATUSES,
@@ -251,6 +252,7 @@ const unions = <const M extends Unions<M> & Readonly<Record<string, readonly str
 // schema.table.column -> the const array of schema.ts the column is refined to.
 const UNIONS = unions({
   'crove_hr.candidate.stage': HR_CANDIDATE_STAGES,
+  'crove_hr.department.pay_function': HR_PAY_FUNCTIONS,
   'crove_hr.job_opening.contract_type': HR_CONTRACT_TYPES,
   'crove_hr.job_opening.pay_function': HR_PAY_FUNCTIONS,
   'crove_hr.job_opening.region': HR_REGIONS,
@@ -258,6 +260,7 @@ const UNIONS = unions({
   'crove_hr.payroll_employee.status': HR_EMPLOYEE_STATUSES,
   'crove_hr.payroll_employment.contract_type': HR_CONTRACT_TYPES,
   'crove_hr.payroll_employment.contract_form': HR_CONTRACT_FORMS,
+  'crove_hr.payroll_leave_entry.kind': HR_LEAVE_ENTRY_KINDS,
   'crove_hr.payroll_line.kind': HR_LINE_KINDS,
   'crove_hr.payroll_line.status': HR_LINE_STATUSES,
   'crove_hr.payroll_run.status': HR_RUN_STATUSES,

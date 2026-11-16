@@ -103,11 +103,13 @@ export interface CroveFinanceSchema {
 
 export interface CroveHrSchema {
   'crove_hr.candidate': HrCandidateTable;
+  'crove_hr.department': HrDepartmentTable;
   'crove_hr.job_opening': HrJobOpeningTable;
   'crove_hr.payroll_bank_template': HrPayrollBankTemplateTable;
   'crove_hr.payroll_dependent': HrPayrollDependentTable;
   'crove_hr.payroll_employee': HrPayrollEmployeeTable;
   'crove_hr.payroll_employment': HrPayrollEmploymentTable;
+  'crove_hr.payroll_leave_entry': HrPayrollLeaveEntryTable;
   'crove_hr.payroll_line': HrPayrollLineTable;
   'crove_hr.payroll_run': HrPayrollRunTable;
 }
@@ -1666,11 +1668,26 @@ export interface HrCandidateTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
+/** crove_hr.department */
+export interface HrDepartmentTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  name: string;
+  code: string | null;
+  pay_function: Generated<string>;
+  archived_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
 /** crove_hr.job_opening */
 export interface HrJobOpeningTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
   legal_entity_id: ColumnType<string, string, NotGranted>;
+  department_id: string | null;
   title: string;
   department_name: string | null;
   contract_type: Generated<string>;
@@ -1732,6 +1749,8 @@ export interface HrPayrollEmployeeTable {
   insurance_number_sealed: string | null;
   finalization_authorized_years: Generated<number[]>;
   bank_code: string | null;
+  department_id: string | null;
+  job_title: string | null;
 }
 
 /** crove_hr.payroll_employment */
@@ -1754,6 +1773,21 @@ export interface HrPayrollEmploymentTable {
   probation_role_tier: ColumnType<string | null, string | null, NotGranted>;
   probation_end_on: ColumnType<string | null, string | null, NotGranted>;
   probation_wage: ColumnType<string | null, string | null, NotGranted>;
+}
+
+/** crove_hr.payroll_leave_entry */
+export interface HrPayrollLeaveEntryTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  employee_id: ColumnType<string, string, NotGranted>;
+  month: ColumnType<string, string, NotGranted>;
+  kind: ColumnType<string, string, NotGranted>;
+  days: string;
+  approved: Generated<boolean>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_hr.payroll_line */

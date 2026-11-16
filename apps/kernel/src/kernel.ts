@@ -7,7 +7,7 @@ import type { Server } from 'node:http';
 import { configureUploadTimeouts } from './upload-timeouts.ts';
 import { memberMeter } from './ai-meter.ts';
 import { summaryModelPort, type ModelPort } from './member-vy-ports.ts';
-import { AdsCampaignWriter, ConversationWriter, InboxReader, InvoiceExtractor, SchedulingReader, SocialWriter, TodayWriter, WeeklyWriter, type InvoiceReader } from '@crove/agent';
+import { AdsCampaignWriter, ConversationWriter, InboxReader, InvoiceExtractor, SchedulingReader, SignAiReader, SocialWriter, TodayWriter, WeeklyWriter, type InvoiceReader } from '@crove/agent';
 import {
   BlueskyPublisher,
   TELEGRAM_HOOK_KEY_INFO,
@@ -85,9 +85,10 @@ import { notesCommands, notesManifest, notesQueries } from '@crove/mod-notes';
 import { projectsCommands, projectsManifest, projectsQueries } from '@crove/mod-projects';
 import { adsBusy, adsCommands, adsManifest, adsQueries } from '@crove/mod-ads';
 import { meetingsBusy, meetingsCommands, meetingsManifest, meetingsQueries, setSummaryEnabled, setTranscribeBroker, setTranscribeEnabled } from '@crove/mod-meetings';
-import { signCommands, signManifest, signQueries } from '@crove/mod-sign';
+import { signAiCommands, signAiQueries, signCommands, signManifest, signQueries } from '@crove/mod-sign';
 import { GoogleAdsConnector, MetaAdsConnector, MetaWriteConnector, adActivators, adLaunchWriters, adPausers, adPlatforms, adRevokers, adStateReaders, type AdActivator, type AdPauser, type AdPlatform, type AdRevoker, type AdStateReader, type LaunchWriter } from '@crove/ad-platform';
-import { createSandboxEInvoiceProvider, type EInvoiceProvider } from '@crove/einvoice';
+import { createMisaEInvoiceProvider, createSandboxEInvoiceProvider, misaBlockers, type EInvoiceProvider } from '@crove/einvoice';
+import { misaTransport } from './einvoice-transport.ts';
 import { createSandboxMarketplaceProvider, isMarketplaceAdapter, type MarketplaceProvider } from '@crove/mod-finance';
 import { createAuthenticator, type Authenticate } from './auth.ts';
 import { AVAILABLE_MODULES, appUrl, assertExportKey, assertSplitRoles, extractConcurrency, usageLimits, zaloMediaHostsOf, type Config, type ModuleId } from './config.ts';
@@ -174,6 +175,8 @@ export interface KernelAdapters {
   // The Inbox's suggested intent and likely contacts (CV3, #2306) through the same endpoint; null: no suggestion, the inbox as it is.
   // The model behind the recorder's Vy summary of a meeting (#2580); the route is on only with MEETINGS_SUMMARY=on as well.
   summaryModel?: ModelPort | null;
+  // Vy's eSign field placement and risky clause review (#3351); null runs manual signing without AI.
+  signAi?: Pick<SignAiReader, 'proposeFields' | 'summarizeRiskClauses'> | null;
   inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'followupWords' | 'overviewSentence' | 'payrollMatchSentence' | 'marketplaceLineSentence' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'crmFollowupWords' | 'meetingBrief' | 'projectWeeklyStatus' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain' | 'laborCheck'>>) | null;
   storage: BlobStore;
   // Outbound mail (member invites, issue #129); the default logs that nothing was sent.
@@ -276,7 +279,7 @@ export function moduleDefinitions(config: Config, billing: Billing = selfHostBil
     notes: () => ({ commands: notesCommands, queries: notesQueries }),
     meetings: () => ({ commands: meetingsCommands, queries: meetingsQueries }),
     projects: () => ({ commands: projectsCommands, queries: projectsQueries }),
-    sign: () => ({ commands: signCommands, queries: signQueries }),
+    sign: () => ({ commands: [...signCommands, ...signAiCommands], queries: [...signQueries, ...signAiQueries] }),
     hr: () => ({ commands: hrCommands, queries: hrQueries }),
   };
   const enabled = config.CROVE_MODULES.map((module) => all[module]());
@@ -414,10 +417,19 @@ export function metaConversationSecrets(config: Pick<Config, 'CHANNEL_META_APP_I
   return instagram ? { primary: instagram } : undefined;
 }
 
-// The e-invoice providers this deployment offers, by adapter id (ADR-0044 point 7): the offline sandbox when EINVOICE_SANDBOX is on. A real adapter is added here with
-// its own switch when it is built (#2503); until then no host is ever called.
-export function einvoiceProvidersOf(config: Pick<Config, 'EINVOICE_SANDBOX'>): Readonly<Record<string, EInvoiceProvider>> {
-  return config.EINVOICE_SANDBOX === 'true' ? { sandbox: createSandboxEInvoiceProvider().provider } : {};
+// The e-invoice providers this deployment offers, by adapter id (ADR-0044 point 7): the offline sandbox when EINVOICE_SANDBOX is on, and each real adapter EINVOICE_PROVIDERS names.
+// `misa` (#2503) is built but off: naming it is refused until the issues in MISA_GATES are done and written in the issue (misaBlockers), here and in loadConfig. An id this build
+// does not know is left out, so a typo offers nothing.
+export function einvoiceProvidersOf(config: Pick<Config, 'EINVOICE_SANDBOX' | 'EINVOICE_PROVIDERS'>, transport = misaTransport()): Readonly<Record<string, EInvoiceProvider>> {
+  const out: Record<string, EInvoiceProvider> = {};
+  if (config.EINVOICE_SANDBOX === 'true') out.sandbox = createSandboxEInvoiceProvider().provider;
+  for (const raw of config.EINVOICE_PROVIDERS.split(',')) {
+    if (raw.trim() !== 'misa') continue;
+    const blockers = misaBlockers();
+    if (blockers.length > 0) throw new Error(`EINVOICE_PROVIDERS=misa is refused until ${blockers.map((b) => `#${b.issue}`).join(' and ')} are done and written in issue #2503`);
+    out.misa = createMisaEInvoiceProvider({ transport });
+  }
+  return out;
 }
 
 // The marketplace providers this deployment offers, by adapter id (ADR-0045 point 7, #2519): the ones MARKETPLACE_PROVIDERS names. `sandbox` is the offline provider. A real adapter is
@@ -618,6 +630,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
     adsCampaignWriter: adapters.adsCampaignWriter ?? null,
     inboxReader: adapters.inboxReader ?? null,
     summaryModel: adapters.summaryModel ?? null,
+    signAi: adapters.signAi ?? null,
     storage: adapters.storage,
     mail: adapters.mail ?? createLogProvider(),
     broker: adapters.broker ?? noCredentialBroker,
@@ -978,6 +991,7 @@ export function defaultAdapters(config: Config): KernelAdapters {
     adsCampaignWriter: aiConfig ? new AdsCampaignWriter(aiConfig) : null,
     inboxReader: aiConfig ? new InboxReader(aiConfig) : null,
     summaryModel: aiConfig ? summaryModelPort(aiConfig) : null,
+    signAi: aiConfig ? new SignAiReader(aiConfig) : null,
     // API and worker build the same store from config; with STORAGE=s3 they share no volume (T7).
     storage: createBlobStore(config),
     // SMTP from SMTP_*; without SMTP_HOST, the log fallback.

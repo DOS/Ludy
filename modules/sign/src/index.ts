@@ -19,6 +19,21 @@ export {
 export { signManifest } from './manifest.ts';
 export { signQueries, type SignInspectJobData, type SignSealJobData } from './queries.ts';
 export {
+  clampAiBox,
+  sanitizeSignAiProposals,
+  signAiCommands,
+  signAiQueries,
+  signerRoleKeyOf,
+  type SanitizedAiAnalysisInput,
+  type SignAiAnalysisRecord,
+  type SignAiClauseSeverity,
+  type SignAiDeclaredSigner,
+  type SignAiExtractedPage,
+  type SignAiProposedField,
+  type SignAiRiskClause,
+  type SignAiSource,
+} from './ai.ts';
+export {
   buildCanonicalCertificateArtifact,
   buildPdfSealCertificate,
   buildPdfSealFields,

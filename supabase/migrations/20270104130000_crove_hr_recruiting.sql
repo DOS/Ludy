@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS crove_hr.job_opening (
   org_id uuid NOT NULL REFERENCES crove_kernel.tenant (org_id) ON DELETE CASCADE,
   id uuid NOT NULL DEFAULT crove_kernel.uuid_v7(),
   legal_entity_id uuid NOT NULL,
+  department_id uuid,
   title text NOT NULL CHECK (pg_catalog.length(pg_catalog.btrim(title)) BETWEEN 1 AND 160),
   department_name text CHECK (department_name IS NULL OR pg_catalog.length(pg_catalog.btrim(department_name)) BETWEEN 1 AND 120),
   contract_type text NOT NULL DEFAULT 'indefinite' CHECK (contract_type IN ('indefinite', 'fixed_term', 'none')),
@@ -22,12 +23,17 @@ CREATE TABLE IF NOT EXISTS crove_hr.job_opening (
   PRIMARY KEY (org_id, id),
   CONSTRAINT job_opening_entity_id_uq UNIQUE (org_id, legal_entity_id, id),
   CONSTRAINT job_opening_entity_fk FOREIGN KEY (org_id, legal_entity_id) REFERENCES crove_kernel.legal_entity (org_id, id),
+  CONSTRAINT job_opening_department_fk FOREIGN KEY (org_id, legal_entity_id, department_id) REFERENCES crove_hr.department (org_id, legal_entity_id, id),
   CONSTRAINT job_opening_budget_order CHECK (budget_min_wage IS NULL OR budget_max_wage IS NULL OR budget_max_wage >= budget_min_wage),
   CONSTRAINT job_opening_closed_consistent CHECK ((status = 'closed' AND closed_at IS NOT NULL) OR (status = 'open' AND closed_at IS NULL))
 );
 
 CREATE INDEX IF NOT EXISTS job_opening_org_entity_status_idx
   ON crove_hr.job_opening (org_id, legal_entity_id, status, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS job_opening_department_idx
+  ON crove_hr.job_opening (org_id, legal_entity_id, department_id)
+  WHERE department_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS crove_hr.candidate (
   org_id uuid NOT NULL REFERENCES crove_kernel.tenant (org_id) ON DELETE CASCADE,
@@ -81,7 +87,7 @@ CREATE INDEX IF NOT EXISTS candidate_hired_employee_idx
 
 SELECT crove_kernel.apply_tenant_rls('crove_hr.job_opening');
 REVOKE DELETE, UPDATE ON crove_hr.job_opening FROM crove_tenant;
-GRANT UPDATE (title, department_name, contract_type, region, pay_function, budget_min_wage, budget_max_wage, required_skills, status, closed_at, updated_at)
+GRANT UPDATE (department_id, title, department_name, contract_type, region, pay_function, budget_min_wage, budget_max_wage, required_skills, status, closed_at, updated_at)
   ON crove_hr.job_opening TO crove_tenant;
 
 DROP TRIGGER IF EXISTS b_legal_entity ON crove_hr.job_opening;

@@ -39,6 +39,7 @@ export * from './weekly.ts';
 export * from './project-weekly-status.ts';
 export * from './transcribe.ts';
 export * from './transcribe-eval.ts';
+export * from './sign-ai.ts';
 
 export interface AiConfig {
   baseURL: string;

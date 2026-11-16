@@ -273,6 +273,12 @@ import { zDealQuotesQuery, zQuote, zQuoteDefaults, zQuoteDefaultsQuery, zQuoteDe
 import { zBoard, zBoardQuery, zDeal, zDealCreate, zDealDeleted, zDealListQuery, zDealMove, zDealPage, zDealRef, zDealSetting, zDealSettingSet, zDealUpdate, zNextStepChanged, zNextStepDone, zNextStepListQuery, zNextStepPage, zNextStepSnooze, zPartyChoice, zPartyDealsQuery, zPartySearchQuery, zPipelineStage, zStageAdd, zStageRemove, zStageRename, zStageReorder } from './crm-deals.ts';
 import { zBookingCancel, zBookingDealChanged, zBookingDealLink, zBookingDealUnlink, zBookingItem, zBookingListQuery, zBookingMove, zBookingSuggestInput, zBookingSuggestion, zEventType, zEventTypeInput, zEventTypeSetActive, zEventTypeUpdate, zDealBookings, zDealBookingsQuery } from './crm.ts';
 import {
+  zHrDepartmentAdd,
+  zHrDepartmentEdit,
+  zHrDepartmentList,
+  zHrDepartmentRef,
+  zHrDepartmentView,
+  zHrDepartmentWritten,
   zHrDependentAdd,
   zHrDependentEnd,
   zHrEmployee,
@@ -291,6 +297,7 @@ import {
 } from './hr.ts';
 import { zPayrollSettlement, zPayrollSettlementRef, zHrCoworkerAsk, zHrCoworkerExplained, zHrCoworkerFlagged, zHrCoworkerPayslipAsk, zHrCoworkerPrepared, zHrLineAdjust, zHrLineInputsSet, zHrPayslip, zHrPaymentRequest, zHrPostingRequest, zHrPayslipRef, zHrRunApplyThirteenthMonth, zHrRunApprove, zHrRunImportTimekeeping, zHrRunList, zHrRunOpen, zHrRunRecalculate, zHrRunRef, zHrRunSheet, zHrRunSummary, zHrRunThirteenthMonthPreview, zHrRunWritten, zHrThirteenthMonthPreviewResult } from './hr-payroll.ts';
 import { zHrBankTemplate, zHrBankTemplateCreate, zHrBankTemplateEdit, zHrBankTemplateList, zHrBankTemplateRef, zHrBankTemplateWritten } from './hr-bank-template.ts';
+import { zHrLeaveBalanceAsk, zHrLeaveBalanceResult, zHrLeaveDelete, zHrLeaveSet, zHrLeaveWritten } from './hr-leave.ts';
 import { zHrLaborCheckAsk, zHrLaborCheckResult } from './hr-declarations.ts';
 import {
   zHrCandidateAdd,
@@ -910,6 +917,12 @@ export const contract = {
   // HR (#2530, payroll plan 6.1), when the deployment runs the hr module: owners and admins only. Every read is a sensitive query (its audit row is written before it reads), and the
   // identity number and the bank account number come back only from `get`, opened from their sealed form for the one employee asked for.
   hr: {
+    departments: {
+      list: oc.input(zHrDepartmentList).output(z.array(zHrDepartmentView)),
+      add: oc.input(zHrDepartmentAdd).output(zHrDepartmentWritten),
+      edit: oc.input(zHrDepartmentEdit).output(zHrDepartmentWritten),
+      archive: oc.input(zHrDepartmentRef).output(zHrDepartmentWritten),
+    },
     payroll: {
       employees: {
         list: oc.input(zHrEmployeeList).output(z.array(zHrEmployeeSummary)),
@@ -943,7 +956,14 @@ export const contract = {
         importTimekeeping: oc.input(zHrRunImportTimekeeping).output(zHrRunWritten),
         thirteenthMonthPreview: oc.input(zHrRunThirteenthMonthPreview).output(zHrThirteenthMonthPreviewResult),
         applyThirteenthMonth: oc.input(zHrRunApplyThirteenthMonth).output(zHrRunWritten),
+        syncLeave: oc.input(zHrRunRef).output(zHrRunWritten),
         approve: oc.input(zHrRunApprove).output(zHrRunWritten),
+      },
+      // Annual leave ledger and statutory leave balance (#3394, #2540 slice 1c-2): owners and admins only, sensitive query for balance.
+      leave: {
+        balance: oc.input(zHrLeaveBalanceAsk).output(zHrLeaveBalanceResult),
+        set: oc.input(zHrLeaveSet).output(zHrLeaveWritten),
+        delete: oc.input(zHrLeaveDelete).output(zHrLeaveWritten),
       },
       // Where the posting and the payments of an approved month stand, for its card (#2532): from the books and the open proposals, no person and no amount; owners and admins.
       settlement: oc.input(zPayrollSettlementRef).output(zPayrollSettlement),

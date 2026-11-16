@@ -442,6 +442,7 @@ export const exportSnapshot = defineQuery({
 // or agent actor can run. The sealed identity and bank account numbers are left out (they open only with the org's subject
 // keys, ADR-0017, and an owner reads them in the app). The pay runs and their lines (#2531) carry no identity or account number: figures, input labels and free text.
 export const OWNER_RUN_EXPORT_TABLES = {
+  'hr.department': { from: 'crove_hr.department', omit: [] },
   'hr.payroll_employee': { from: 'crove_hr.payroll_employee', omit: ['national_id_sealed', 'bank_account_sealed', 'tax_code_sealed', 'insurance_number_sealed'] },
   'hr.payroll_employment': { from: 'crove_hr.payroll_employment', omit: [] },
   'hr.payroll_dependent': { from: 'crove_hr.payroll_dependent', omit: [] },
@@ -449,6 +450,8 @@ export const OWNER_RUN_EXPORT_TABLES = {
   'hr.payroll_line': { from: 'crove_hr.payroll_line', omit: [] },
   // The layouts of the bank's bulk-salary file (#2532): configuration (names, column keys and headers, a content text), no person's data.
   'hr.payroll_bank_template': { from: 'crove_hr.payroll_bank_template', omit: [] },
+  // Monthly employee leave ledger (#3394, #2540): opening balances, annual leave, paid personal leave and unpaid leave days per employee and month.
+  'hr.payroll_leave_entry': { from: 'crove_hr.payroll_leave_entry', omit: [] },
   // Lightweight recruiting openings and candidates (#3425), readable by owners and admins only.
   'hr.job_opening': { from: 'crove_hr.job_opening', omit: [] },
   'hr.candidate': { from: 'crove_hr.candidate', omit: [] },

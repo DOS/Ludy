@@ -9,6 +9,9 @@ import { useTranslations } from 'use-intl';
 import {
   HR_CONTRACT_FORMS,
   HR_CONTRACT_TYPES,
+  HR_DEPARTMENT_CODE_MAX,
+  HR_DEPARTMENT_NAME_MAX,
+  HR_JOB_TITLE_MAX,
   HR_PAY_FUNCTIONS,
   HR_PROBATION_ROLE_TIERS,
   HR_REGIONS,
@@ -17,6 +20,7 @@ import {
   type HrContractAlert,
   type HrContractForm,
   type HrContractType,
+  type HrDepartmentView,
   type HrEmployeeSummary,
   type HrEmploymentTerms,
   type HrEmploymentView,
@@ -24,6 +28,7 @@ import {
   type HrProbationRoleTier,
   type HrRegion,
   type HrRelation,
+  type LegalEntity,
 } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -34,6 +39,7 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { bankByCode, checkLaborContractTerms, deriveFixedTermEndDateIso, type LaborContractFinding } from '@crove/l10n-vn';
 import { BankSelect } from '../components/bank-select.tsx';
+import { LeaveBalancePanel } from '../components/hr-leave-panel.tsx';
 import { SeveranceCalculatorPanel } from '../components/hr-severance-panel.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
@@ -386,9 +392,415 @@ export function TermsFields({
   );
 }
 
-export function AddForm({ onClose }: { onClose: () => void }) {
+export function applyDepartmentDefaultPayFunction(
+  terms: TermsState,
+  departmentId: string,
+  departments: readonly HrDepartmentView[],
+  manualOverride: boolean,
+): TermsState {
+  if (manualOverride) return terms;
+  const chosen = departments.find((d) => d.id === departmentId);
+  return { ...terms, payFunction: chosen ? chosen.payFunction : 'admin' };
+}
+
+export function resolveVisibleDepartmentFilter(
+  departmentFilter: string,
+  departments: readonly HrDepartmentView[],
+  deptLoaded: boolean,
+): string {
+  if (departmentFilter === '') return '';
+  if (deptLoaded && !departments.some((d) => d.id === departmentFilter)) return '';
+  return departmentFilter;
+}
+
+export function filterDepartmentsForEntity(
+  departments: readonly HrDepartmentView[],
+  legalEntityId?: string | null,
+): HrDepartmentView[] {
+  return departments.filter((d) => d.archivedAt === null && (!legalEntityId || d.legalEntityId === legalEntityId));
+}
+
+const deptCodeOk = (code: string): boolean => code.trim() === '' || /^[A-Za-z0-9._-]+$/.test(code.trim());
+
+export function DepartmentsSection({
+  departments,
+  entities,
+  showArchived,
+  onShowArchivedChange,
+  loading = false,
+  error = null,
+}: {
+  departments: readonly HrDepartmentView[];
+  entities?: readonly LegalEntity[];
+  showArchived: boolean;
+  onShowArchivedChange: (next: boolean) => void;
+  loading?: boolean;
+  error?: unknown;
+}) {
   const t = useTranslations('hrEmployees');
+  const f = useFormat();
+  const entityList = entities ?? [];
+  const defaultEntityId = entityList.find((x) => x.isDefault)?.id ?? entityList[0]?.id ?? '';
+  const entityNameById = new Map(entityList.map((e) => [e.id, e.name]));
+  const [adding, setAdding] = useState(false);
+  const [newLegalEntityId, setNewLegalEntityId] = useState('');
+  const [newName, setNewName] = useState('');
+  const [newCode, setNewCode] = useState('');
+  const [newPayFunction, setNewPayFunction] = useState<HrPayFunction>('admin');
+  const targetNewEntityId = newLegalEntityId || defaultEntityId;
+  const [editing, setEditing] = useState<{
+    id: string;
+    origName: string;
+    origCode: string;
+    origPayFunction: HrPayFunction;
+    name: string;
+    code: string;
+    payFunction: HrPayFunction;
+  } | null>(null);
+
+  const createDept = useMutation({
+    mutationFn: () =>
+      client.hr.departments.add({
+        ...(targetNewEntityId ? { legalEntityId: targetNewEntityId } : {}),
+        name: newName.trim(),
+        ...(newCode.trim() ? { code: newCode.trim() } : {}),
+        payFunction: newPayFunction,
+      }),
+    onSuccess: async () => {
+      await refresh();
+      setAdding(false);
+      setNewLegalEntityId('');
+      setNewName('');
+      setNewCode('');
+      setNewPayFunction('admin');
+    },
+  });
+
+  const updateDept = useMutation({
+    mutationFn: () => {
+      if (!editing) throw new Error('no editing department');
+      const trimmedName = editing.name.trim();
+      const trimmedCode = editing.code.trim();
+      return client.hr.departments.edit({
+        departmentId: editing.id,
+        ...(trimmedName !== editing.origName ? { name: trimmedName } : {}),
+        ...(trimmedCode !== editing.origCode ? { code: trimmedCode === '' ? null : trimmedCode } : {}),
+        ...(editing.payFunction !== editing.origPayFunction ? { payFunction: editing.payFunction } : {}),
+      });
+    },
+    onSuccess: async () => {
+      await refresh();
+      setEditing(null);
+    },
+  });
+
+  const archiveDept = useMutation({
+    mutationFn: (departmentId: string) => client.hr.departments.archive({ departmentId }),
+    onSuccess: async (_data, departmentId) => {
+      await refresh();
+      if (editing?.id === departmentId) setEditing(null);
+    },
+  });
+
+  const editChanged =
+    editing !== null &&
+    (editing.name.trim() !== editing.origName ||
+      editing.code.trim() !== editing.origCode ||
+      editing.payFunction !== editing.origPayFunction);
+
+  return (
+    <Card className="mb-6 block p-4" data-testid="hr-departments-card">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-base font-medium text-foreground">{t('departments.title')}</h2>
+          <p className="text-xs text-subtle-foreground">{t('departments.subtitle')}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-1 text-xs text-subtle-foreground">
+            <input
+              type="checkbox"
+              checked={showArchived}
+              onChange={(e) => onShowArchivedChange(e.target.checked)}
+              data-testid="hr-departments-show-archived"
+            />
+            {t('departments.showArchived')}
+          </label>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={adding}
+            onClick={() => {
+              setEditing(null);
+              setAdding(true);
+            }}
+            data-testid="hr-department-new"
+          >
+            {t('departments.new')}
+          </Button>
+        </div>
+      </div>
+
+      {adding && (
+        <div className="mt-4 grid gap-3 rounded-md border p-3 sm:grid-cols-3" data-testid="hr-department-add-form">
+          {entityList.length > 1 && (
+            <div className="space-y-1">
+              <Label htmlFor="hr-dept-add-legal-entity">{t('legalEntity')}</Label>
+              <NativeSelect
+                id="hr-dept-add-legal-entity"
+                value={targetNewEntityId}
+                onChange={(e) => setNewLegalEntityId(e.target.value)}
+                data-testid="hr-dept-add-legal-entity"
+              >
+                {entityList.map((entity) => (
+                  <NativeSelectOption key={entity.id} value={entity.id}>
+                    {entity.name}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </div>
+          )}
+          <div className="space-y-1">
+            <Label htmlFor="hr-dept-add-name">{t('departments.name')}</Label>
+            <Input
+              id="hr-dept-add-name"
+              value={newName}
+              maxLength={HR_DEPARTMENT_NAME_MAX}
+              onChange={(e) => setNewName(e.target.value)}
+              data-testid="hr-dept-add-name"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="hr-dept-add-code">{t('departments.code')}</Label>
+            <Input
+              id="hr-dept-add-code"
+              value={newCode}
+              maxLength={HR_DEPARTMENT_CODE_MAX}
+              onChange={(e) => setNewCode(e.target.value)}
+              data-testid="hr-dept-add-code"
+            />
+            <p className="text-xs text-subtle-foreground">{t('departments.codeHint')}</p>
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="hr-dept-add-function">{t('departments.defaultPayFunction')}</Label>
+            <NativeSelect
+              id="hr-dept-add-function"
+              value={newPayFunction}
+              onChange={(e) => setNewPayFunction(e.target.value as HrPayFunction)}
+              data-testid="hr-dept-add-pay-function"
+            >
+              {HR_PAY_FUNCTIONS.map((k) => (
+                <NativeSelectOption key={k} value={k}>
+                  {t(`payFunctions.${k}`)}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </div>
+          {createDept.error && (
+            <div className="sm:col-span-3">
+              <ErrorText>{errorMessage(createDept.error)}</ErrorText>
+            </div>
+          )}
+          <div className="flex flex-wrap gap-2 sm:col-span-3">
+            <Button
+              size="sm"
+              loading={createDept.isPending}
+              disabled={newName.trim() === '' || !deptCodeOk(newCode)}
+              onClick={() => createDept.mutate()}
+              data-testid="hr-dept-add-save"
+            >
+              {t('save')}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setAdding(false)}>
+              {t('cancel')}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {editing && (
+        <div className="mt-4 grid gap-3 rounded-md border p-3 sm:grid-cols-3" data-testid="hr-department-edit-form">
+          <div className="space-y-1">
+            <Label htmlFor="hr-dept-edit-name">{t('departments.name')}</Label>
+            <Input
+              id="hr-dept-edit-name"
+              value={editing.name}
+              maxLength={HR_DEPARTMENT_NAME_MAX}
+              onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+              data-testid="hr-dept-edit-name"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="hr-dept-edit-code">{t('departments.code')}</Label>
+            <Input
+              id="hr-dept-edit-code"
+              value={editing.code}
+              maxLength={HR_DEPARTMENT_CODE_MAX}
+              onChange={(e) => setEditing({ ...editing, code: e.target.value })}
+              data-testid="hr-dept-edit-code"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="hr-dept-edit-function">{t('departments.defaultPayFunction')}</Label>
+            <NativeSelect
+              id="hr-dept-edit-function"
+              value={editing.payFunction}
+              onChange={(e) => setEditing({ ...editing, payFunction: e.target.value as HrPayFunction })}
+              data-testid="hr-dept-edit-pay-function"
+            >
+              {HR_PAY_FUNCTIONS.map((k) => (
+                <NativeSelectOption key={k} value={k}>
+                  {t(`payFunctions.${k}`)}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </div>
+          {updateDept.error && (
+            <div className="sm:col-span-3">
+              <ErrorText>{errorMessage(updateDept.error)}</ErrorText>
+            </div>
+          )}
+          <div className="flex flex-wrap gap-2 sm:col-span-3">
+            <Button
+              size="sm"
+              loading={updateDept.isPending}
+              disabled={editing.name.trim() === '' || !deptCodeOk(editing.code) || !editChanged}
+              onClick={() => updateDept.mutate()}
+              data-testid="hr-dept-edit-save"
+            >
+              {t('save')}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>
+              {t('cancel')}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {archiveDept.error && <ErrorText>{errorMessage(archiveDept.error)}</ErrorText>}
+
+      {loading ? (
+        <div className="mt-3">
+          <TableSkeleton columns={5} />
+        </div>
+      ) : error ? (
+        <div className="mt-3">
+          <ErrorText>{errorMessage(error)}</ErrorText>
+        </div>
+      ) : departments.length === 0 ? (
+        <p className="mt-3 text-sm text-subtle-foreground" data-testid="hr-departments-empty">
+          {t('departments.emptyHint')}
+        </p>
+      ) : (
+        <div className="mt-3">
+          <DataTable
+            head={[
+              t('departments.name'),
+              t('departments.defaultPayFunction'),
+              t('departments.activeEmployees'),
+              t('departments.activeBaseWageTotal'),
+              '',
+            ]}
+            numeric={[2, 3]}
+          >
+            {departments.map((d) => (
+              <TableRow key={d.id} data-testid="hr-department-row">
+                <TableCell className="px-4 py-3">
+                  <span className="font-medium text-foreground">{d.name}</span>
+                  {entityList.length > 1 && entityNameById.has(d.legalEntityId) && (
+                    <Badge className="ml-2" variant="outline">
+                      {entityNameById.get(d.legalEntityId)}
+                    </Badge>
+                  )}
+                  {d.code && (
+                    <Badge className="ml-2" variant="outline">
+                      {d.code}
+                    </Badge>
+                  )}
+                  {d.archivedAt !== null && (
+                    <Badge className="ml-2" variant="secondary">
+                      {t('departments.archivedBadge')}
+                    </Badge>
+                  )}
+                </TableCell>
+                <TableCell className="px-4 py-3">{t(`payFunctions.${d.payFunction}`)}</TableCell>
+                <TableCell className={NUM} data-testid="hr-department-headcount">
+                  {d.activeEmployees}
+                </TableCell>
+                <TableCell className={NUM} data-testid="hr-department-wage-total">
+                  {f.money(d.activeBaseWageTotal, 'VND')}
+                </TableCell>
+                <TableCell className="px-4 py-3 text-right">
+                  {d.archivedAt === null && (
+                    <div className="flex justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setAdding(false);
+                          setEditing({
+                            id: d.id,
+                            origName: d.name,
+                            origCode: d.code ?? '',
+                            origPayFunction: d.payFunction,
+                            name: d.name,
+                            code: d.code ?? '',
+                            payFunction: d.payFunction,
+                          });
+                        }}
+                        data-testid="hr-department-edit"
+                      >
+                        {t('departments.edit')}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        loading={archiveDept.isPending && archiveDept.variables === d.id}
+                        onClick={() => archiveDept.mutate(d.id)}
+                        data-testid="hr-department-archive"
+                      >
+                        {t('departments.archive')}
+                      </Button>
+                    </div>
+                  )}
+                </TableCell>
+              </TableRow>
+            ))}
+          </DataTable>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+export function AddForm({
+  onClose,
+  departments,
+  entities,
+}: {
+  onClose: () => void;
+  departments?: readonly HrDepartmentView[];
+  entities?: readonly LegalEntity[];
+}) {
+  const t = useTranslations('hrEmployees');
+  const deptQuery = useQuery({
+    ...orpc.hr.departments.list.queryOptions({ input: { includeArchived: false } }),
+    ...ONCE,
+    enabled: departments === undefined,
+  });
+  const entitiesQuery = useQuery({
+    ...orpc.legalEntities.list.queryOptions(),
+    ...ONCE,
+    enabled: entities === undefined,
+  });
+  const entityList = entities ?? entitiesQuery.data ?? [];
+  const defaultEntityId = entityList.find((x) => x.isDefault)?.id ?? entityList[0]?.id ?? '';
+  const [legalEntityId, setLegalEntityId] = useState('');
+  const targetEntityId = legalEntityId || defaultEntityId;
+  const entityDepartments = filterDepartmentsForEntity(departments ?? deptQuery.data ?? [], targetEntityId || null);
   const [name, setName] = useState('');
+  const [departmentId, setDepartmentId] = useState('');
+  const [jobTitle, setJobTitle] = useState('');
+  const [payFunctionManual, setPayFunctionManual] = useState(false);
   const [address, setAddress] = useState('');
   const [identity, setIdentity] = useState('');
   const [account, setAccount] = useState('');
@@ -402,6 +814,9 @@ export function AddForm({ onClose }: { onClose: () => void }) {
     mutationFn: () =>
       client.hr.payroll.employees.add({
         displayName: name.trim(),
+        ...(targetEntityId ? { legalEntityId: targetEntityId } : {}),
+        ...(departmentId ? { departmentId } : {}),
+        ...(jobTitle.trim() ? { jobTitle: jobTitle.trim() } : {}),
         ...(address.trim() ? { address: address.trim() } : {}),
         ...(identity.trim() ? { identityNumber: identity.trim() } : {}),
         ...(account.trim() ? { accountNumber: account.trim() } : {}),
@@ -424,6 +839,57 @@ export function AddForm({ onClose }: { onClose: () => void }) {
         <div className="space-y-1">
           <Label htmlFor={`${id}-name`}>{t('name')}</Label>
           <Input id={`${id}-name`} value={name} maxLength={200} onChange={(e) => setName(e.target.value)} />
+        </div>
+        {entityList.length > 1 && (
+          <div className="space-y-1">
+            <Label htmlFor={`${id}-legal-entity`}>{t('legalEntity')}</Label>
+            <NativeSelect
+              id={`${id}-legal-entity`}
+              value={targetEntityId}
+              onChange={(e) => {
+                setLegalEntityId(e.target.value);
+                setDepartmentId('');
+                setTerms((prev) => applyDepartmentDefaultPayFunction(prev, '', [], payFunctionManual));
+              }}
+              data-testid="hr-add-legal-entity"
+            >
+              {entityList.map((entity) => (
+                <NativeSelectOption key={entity.id} value={entity.id}>
+                  {entity.name}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </div>
+        )}
+        <div className="space-y-1">
+          <Label htmlFor={`${id}-department`}>{t('departments.field')}</Label>
+          <NativeSelect
+            id={`${id}-department`}
+            value={departmentId}
+            onChange={(e) => {
+              const nextId = e.target.value;
+              setDepartmentId(nextId);
+              setTerms((prev) => applyDepartmentDefaultPayFunction(prev, nextId, entityDepartments, payFunctionManual));
+            }}
+            data-testid="hr-add-department"
+          >
+            <NativeSelectOption value="">{t('departments.unassigned')}</NativeSelectOption>
+            {entityDepartments.map((d) => (
+              <NativeSelectOption key={d.id} value={d.id}>
+                {d.code ? `${d.name} (${d.code})` : d.name}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor={`${id}-job-title`}>{t('jobTitle')}</Label>
+          <Input
+            id={`${id}-job-title`}
+            value={jobTitle}
+            maxLength={HR_JOB_TITLE_MAX}
+            onChange={(e) => setJobTitle(e.target.value)}
+            data-testid="hr-add-job-title"
+          />
         </div>
         <div className="space-y-1">
           <Label htmlFor={`${id}-address`}>{t('address')}</Label>
@@ -453,7 +919,14 @@ export function AddForm({ onClose }: { onClose: () => void }) {
           <Label htmlFor={`${id}-insurance`}>{t('insuranceNumber')}</Label>
           <Input id={`${id}-insurance`} value={insurance} inputMode="numeric" maxLength={12} autoComplete="off" onChange={(e) => setInsurance(e.target.value)} />
         </div>
-        <TermsFields id={id} value={terms} onChange={(patch) => setTerms((s) => ({ ...s, ...patch }))} />
+        <TermsFields
+          id={id}
+          value={terms}
+          onChange={(patch) => {
+            if (patch.payFunction !== undefined) setPayFunctionManual(true);
+            setTerms((s) => ({ ...s, ...patch }));
+          }}
+        />
       </div>
       <p className="mt-2 text-xs text-subtle-foreground">{t('sealedHint')}</p>
       {save.error && <ErrorText>{errorMessage(save.error)}</ErrorText>}
@@ -469,17 +942,36 @@ export function AddForm({ onClose }: { onClose: () => void }) {
   );
 }
 
-export function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boolean; onClose: () => void }) {
+export function Detail({ employeeId, owner, onClose, departments }: { employeeId: string; owner: boolean; onClose: () => void; departments?: readonly HrDepartmentView[] }) {
   const t = useTranslations('hrEmployees');
   const f = useFormat();
   // The opened numbers are not kept in the cache once the card closes (gcTime 0).
   const q = useQuery({ ...orpc.hr.payroll.employees.get.queryOptions({ input: { employeeId } }), ...ONCE, gcTime: 0 });
+  const deptQuery = useQuery({
+    ...orpc.hr.departments.list.queryOptions({ input: { includeArchived: false } }),
+    ...ONCE,
+    enabled: departments === undefined,
+  });
+  const activeDepartments = (departments ?? deptQuery.data ?? []).filter((d) => d.archivedAt === null);
   const [shown, setShown] = useState(false);
   const [terms, setTerms] = useState(blankTerms);
   const [dep, setDep] = useState<{ name: string; relation: HrRelation; registeredOn: string }>({ name: '', relation: 'child', registeredOn: vietnamToday() });
   const [endedOn, setEndedOn] = useState(vietnamToday());
-  const [edit, setEdit] = useState<{ name: string; address: string; identity: string; account: string; bank: string; birth: string; tax: string; insurance: string; clear: { address: boolean; identity: boolean; account: boolean; bank: boolean; tax: boolean; insurance: boolean } } | null>(null);
+  const [edit, setEdit] = useState<{
+    name: string;
+    departmentId: string;
+    jobTitle: string;
+    address: string;
+    identity: string;
+    account: string;
+    bank: string;
+    birth: string;
+    tax: string;
+    insurance: string;
+    clear: { department: boolean; jobTitle: boolean; address: boolean; identity: boolean; account: boolean; bank: boolean; tax: boolean; insurance: boolean };
+  } | null>(null);
   const [confirmErase, setConfirmErase] = useState(false);
+  const [leaveOpen, setLeaveOpen] = useState(false);
   const [severanceOpen, setSeveranceOpen] = useState(false);
   const run = <V,>(fn: (v: V) => Promise<unknown>, after?: () => void) => ({
     mutationFn: fn,
@@ -504,6 +996,8 @@ export function Detail({ employeeId, owner, onClose }: { employeeId: string; own
         client.hr.payroll.employees.edit({
           employeeId,
           ...(edit && edit.name.trim() ? { displayName: edit.name.trim() } : {}),
+          ...(edit && (edit.clear.department ? { departmentId: null } : edit.departmentId ? { departmentId: edit.departmentId } : {})),
+          ...(edit && (edit.clear.jobTitle ? { jobTitle: null } : edit.jobTitle.trim() ? { jobTitle: edit.jobTitle.trim() } : {})),
           // A field left empty is not changed; a ticked "clear" sends null, which removes the stored value.
           ...(edit && (edit.clear.address ? { address: null } : edit.address.trim() ? { address: edit.address.trim() } : {})),
           ...(edit && (edit.clear.identity ? { identityNumber: null } : edit.identity.trim() ? { identityNumber: edit.identity.trim() } : {})),
@@ -546,6 +1040,14 @@ export function Detail({ employeeId, owner, onClose }: { employeeId: string; own
         </p>
       ) : (
         <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+          <div>
+            <dt className="text-subtle-foreground">{t('departments.field')}</dt>
+            <dd data-testid="hr-employee-department">{e.departmentName ?? none}</dd>
+          </div>
+          <div>
+            <dt className="text-subtle-foreground">{t('jobTitle')}</dt>
+            <dd data-testid="hr-employee-job-title">{e.jobTitle ?? none}</dd>
+          </div>
           <div>
             <dt className="text-subtle-foreground">{t('address')}</dt>
             <dd>{e.address ?? none}</dd>
@@ -599,7 +1101,25 @@ export function Detail({ employeeId, owner, onClose }: { employeeId: string; own
       {!e.erased && (
         <div className="mt-3">
           {edit === null ? (
-            <Button variant="ghost" size="sm" onClick={() => setEdit({ name: '', address: '', identity: '', account: '', bank: '', birth: '', tax: '', insurance: '', clear: { address: false, identity: false, account: false, bank: false, tax: false, insurance: false } })}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                setEdit({
+                  name: '',
+                  departmentId: '',
+                  jobTitle: '',
+                  address: '',
+                  identity: '',
+                  account: '',
+                  bank: '',
+                  birth: '',
+                  tax: '',
+                  insurance: '',
+                  clear: { department: false, jobTitle: false, address: false, identity: false, account: false, bank: false, tax: false, insurance: false },
+                })
+              }
+            >
               {t('edit')}
             </Button>
           ) : (
@@ -609,6 +1129,55 @@ export function Detail({ employeeId, owner, onClose }: { employeeId: string; own
               <div className="space-y-1">
                 <Label htmlFor="hr-edit-name">{t('name')}</Label>
                 <Input id="hr-edit-name" value={edit.name} maxLength={200} placeholder={e.displayName} onChange={(ev) => setEdit({ ...edit, name: ev.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="hr-edit-department">{t('departments.field')}</Label>
+                <NativeSelect
+                  id="hr-edit-department"
+                  value={edit.departmentId}
+                  disabled={edit.clear.department}
+                  onChange={(ev) => setEdit({ ...edit, departmentId: ev.target.value })}
+                  data-testid="hr-edit-department"
+                >
+                  <NativeSelectOption value="">{t('departments.keepCurrent')}</NativeSelectOption>
+                  {filterDepartmentsForEntity(activeDepartments, e.legalEntityId).map((d) => (
+                    <NativeSelectOption key={d.id} value={d.id}>
+                      {d.code ? `${d.name} (${d.code})` : d.name}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+                {e.departmentId !== null && (
+                  <label className="flex items-center gap-1 text-xs text-subtle-foreground">
+                    <input
+                      type="checkbox"
+                      checked={edit.clear.department}
+                      onChange={(ev) => setEdit({ ...edit, clear: { ...edit.clear, department: ev.target.checked } })}
+                    />
+                    {t('clearStored')}
+                  </label>
+                )}
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="hr-edit-job-title">{t('jobTitle')}</Label>
+                <Input
+                  id="hr-edit-job-title"
+                  value={edit.jobTitle}
+                  maxLength={HR_JOB_TITLE_MAX}
+                  placeholder={e.jobTitle ?? undefined}
+                  disabled={edit.clear.jobTitle}
+                  onChange={(ev) => setEdit({ ...edit, jobTitle: ev.target.value })}
+                  data-testid="hr-edit-job-title"
+                />
+                {e.jobTitle !== null && (
+                  <label className="flex items-center gap-1 text-xs text-subtle-foreground">
+                    <input
+                      type="checkbox"
+                      checked={edit.clear.jobTitle}
+                      onChange={(ev) => setEdit({ ...edit, clear: { ...edit.clear, jobTitle: ev.target.checked } })}
+                    />
+                    {t('clearStored')}
+                  </label>
+                )}
               </div>
               <div className="space-y-1">
                 <Label htmlFor="hr-edit-address">{t('address')}</Label>
@@ -680,7 +1249,30 @@ export function Detail({ employeeId, owner, onClose }: { employeeId: string; own
               <div className="flex gap-2 sm:col-span-2">
                 <Button
                   loading={saveEdit.isPending}
-                  disabled={(!edit.clear.tax && !idNumberOk(edit.tax)) || (!edit.clear.insurance && !idNumberOk(edit.insurance)) || !(edit.name.trim() || edit.address.trim() || edit.identity.trim() || edit.account.trim() || edit.bank || edit.birth || edit.tax.trim() || edit.insurance.trim() || edit.clear.address || edit.clear.identity || edit.clear.account || edit.clear.bank || edit.clear.tax || edit.clear.insurance)}
+                  disabled={
+                    (!edit.clear.tax && !idNumberOk(edit.tax)) ||
+                    (!edit.clear.insurance && !idNumberOk(edit.insurance)) ||
+                    !(
+                      edit.name.trim() ||
+                      edit.departmentId ||
+                      edit.jobTitle.trim() ||
+                      edit.address.trim() ||
+                      edit.identity.trim() ||
+                      edit.account.trim() ||
+                      edit.bank ||
+                      edit.birth ||
+                      edit.tax.trim() ||
+                      edit.insurance.trim() ||
+                      edit.clear.department ||
+                      edit.clear.jobTitle ||
+                      edit.clear.address ||
+                      edit.clear.identity ||
+                      edit.clear.account ||
+                      edit.clear.bank ||
+                      edit.clear.tax ||
+                      edit.clear.insurance
+                    )
+                  }
                   onClick={() => saveEdit.mutate()}
                 >
                   {t('save')}
@@ -779,10 +1371,16 @@ export function Detail({ employeeId, owner, onClose }: { employeeId: string; own
       {(addDependent.error || endDependent.error) && <ErrorText>{errorMessage(addDependent.error ?? endDependent.error)}</ErrorText>}
 
       {!e.erased && (
-        <div className="mt-5 border-t pt-4">
-          <Button variant="outline" size="sm" onClick={() => setSeveranceOpen((v) => !v)} data-testid="hr-severance-toggle">
-            {t('severance.toggle')}
-          </Button>
+        <div className="mt-5 space-y-4 border-t pt-4">
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={() => setLeaveOpen((v) => !v)} data-testid="hr-leave-toggle">
+              {t('leave.toggle')}
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setSeveranceOpen((v) => !v)} data-testid="hr-severance-toggle">
+              {t('severance.toggle')}
+            </Button>
+          </div>
+          {leaveOpen && <LeaveBalancePanel employeeId={e.id} />}
           {severanceOpen && <SeveranceCalculatorPanel employeeId={e.id} employeeEndedOn={e.endedOn} />}
         </div>
       )}
@@ -838,7 +1436,27 @@ export function HrEmployeesPage() {
   const org = useQuery(orpc.org.get.queryOptions());
   const owner = org.data?.role === 'owner';
   const [showEnded, setShowEnded] = useState(false);
-  const list = useQuery({ ...orpc.hr.payroll.employees.list.queryOptions({ input: { status: showEnded ? 'all' : 'active', limit: 200 } }), ...ONCE });
+  const [showArchivedDepartments, setShowArchivedDepartments] = useState(false);
+  const [departmentFilter, setDepartmentFilter] = useState('');
+  const deptList = useQuery({
+    ...orpc.hr.departments.list.queryOptions({ input: { includeArchived: showArchivedDepartments } }),
+    ...ONCE,
+  });
+  const departments: readonly HrDepartmentView[] = deptList.data ?? [];
+  const activeDepartments = departments.filter((d) => d.archivedAt === null);
+  const entitiesQuery = useQuery({ ...orpc.legalEntities.list.queryOptions(), ...ONCE });
+  const entities: readonly LegalEntity[] = entitiesQuery.data ?? [];
+  const visibleDepartmentFilter = resolveVisibleDepartmentFilter(departmentFilter, departments, deptList.data !== undefined);
+  const list = useQuery({
+    ...orpc.hr.payroll.employees.list.queryOptions({
+      input: {
+        status: showEnded ? 'all' : 'active',
+        ...(visibleDepartmentFilter ? { departmentId: visibleDepartmentFilter } : {}),
+        limit: 200,
+      },
+    }),
+    ...ONCE,
+  });
   const [adding, setAdding] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
   const rows: readonly HrEmployeeSummary[] = list.data ?? [];
@@ -853,43 +1471,80 @@ export function HrEmployeesPage() {
           </Button>
         }
       />
-      {adding && <AddForm onClose={() => setAdding(false)} />}
-      {open && <Detail key={open} employeeId={open} owner={owner} onClose={() => setOpen(null)} />}
-      <div className="mb-2 flex items-center justify-end">
+      <DepartmentsSection
+        departments={departments}
+        entities={entities}
+        showArchived={showArchivedDepartments}
+        onShowArchivedChange={(next) => {
+          setShowArchivedDepartments(next);
+          if (!next && departmentFilter !== '' && !activeDepartments.some((d) => d.id === departmentFilter)) {
+            setDepartmentFilter('');
+          }
+        }}
+        loading={deptList.isPending}
+        error={deptList.error}
+      />
+      {adding && <AddForm departments={activeDepartments} entities={entities} onClose={() => setAdding(false)} />}
+      {open && <Detail key={open} employeeId={open} owner={owner} departments={activeDepartments} onClose={() => setOpen(null)} />}
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Label htmlFor="hr-emp-dept-filter" className="text-xs text-subtle-foreground">
+            {t('departments.filterLabel')}
+          </Label>
+          <NativeSelect
+            id="hr-emp-dept-filter"
+            value={visibleDepartmentFilter}
+            onChange={(e) => setDepartmentFilter(e.target.value)}
+            data-testid="hr-employee-dept-filter"
+          >
+            <NativeSelectOption value="">{t('departments.allDepartments')}</NativeSelectOption>
+            {departments.map((d) => (
+              <NativeSelectOption key={d.id} value={d.id}>
+                {d.archivedAt !== null ? `${d.name} (${t('departments.archivedBadge')})` : d.name}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </div>
         <label className="flex items-center gap-1 text-xs text-subtle-foreground">
           <input type="checkbox" checked={showEnded} onChange={(e) => setShowEnded(e.target.checked)} />
           {t('showEnded')}
         </label>
       </div>
       {list.isPending ? (
-        <TableSkeleton columns={5} />
+        <TableSkeleton columns={6} />
       ) : list.error ? (
         <ErrorText>{errorMessage(list.error)}</ErrorText>
       ) : rows.length === 0 ? (
         <Empty title={t('empty')} hint={t('emptyHint')} />
       ) : (
-        <DataTable head={[t('name'), t('contractType'), t('region'), t('baseWage'), '']} numeric={[3]}>
-          {rows.map((r) => (
-            <TableRow key={r.id} data-testid="hr-employee-row">
-              <TableCell className="px-4 py-3">
-                {r.displayName}
-                {r.status === 'ended' && (
-                  <Badge className="ml-2" variant="secondary">
-                    {t('ended')}
-                  </Badge>
-                )}
-                <ContractAlertBadges alerts={r.contractAlerts} />
-              </TableCell>
-              <TableCell className="px-4 py-3">{r.current ? t(`contracts.${r.current.contractType}`) : '-'}</TableCell>
-              <TableCell className="px-4 py-3">{r.current ? t('regionOption', { region: r.current.region }) : '-'}</TableCell>
-              <TableCell className={NUM}>{r.current ? f.money(r.current.baseWage, 'VND') : '-'}</TableCell>
-              <TableCell className="px-4 py-3 text-right">
-                <Button variant="ghost" size="sm" onClick={() => setOpen(r.id)} data-testid="hr-employee-open">
-                  {t('open')}
-                </Button>
-              </TableCell>
-            </TableRow>
-          ))}
+        <DataTable head={[t('name'), t('departmentAndTitle'), t('contractType'), t('region'), t('baseWage'), '']} numeric={[4]}>
+          {rows.map((r) => {
+            const deptLabel = [r.departmentName, r.jobTitle].filter(Boolean).join(' - ');
+            return (
+              <TableRow key={r.id} data-testid="hr-employee-row">
+                <TableCell className="px-4 py-3">
+                  {r.displayName}
+                  {r.status === 'ended' && (
+                    <Badge className="ml-2" variant="secondary">
+                      {t('ended')}
+                    </Badge>
+                  )}
+                  <ContractAlertBadges alerts={r.contractAlerts} />
+                </TableCell>
+                <TableCell className="px-4 py-3" data-testid="hr-employee-dept-cell">
+                  {deptLabel || '-'}
+                </TableCell>
+                <TableCell className="px-4 py-3">{r.current ? t(`contracts.${r.current.contractType}`) : '-'}</TableCell>
+                <TableCell className="px-4 py-3">{r.current ? t('regionOption', { region: r.current.region }) : '-'}</TableCell>
+                <TableCell className={NUM}>{r.current ? f.money(r.current.baseWage, 'VND') : '-'}</TableCell>
+                <TableCell className="px-4 py-3 text-right">
+                  <Button variant="ghost" size="sm" onClick={() => setOpen(r.id)} data-testid="hr-employee-open">
+                    {t('open')}
+                  </Button>
+                </TableCell>
+              </TableRow>
+            );
+          })}
         </DataTable>
       )}
     </>

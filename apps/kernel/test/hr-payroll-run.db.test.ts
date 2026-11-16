@@ -513,6 +513,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     const o = await org();
     const employee = await o.hire({ address: '12 Đường Canary, Quận 1', identityNumber: EXPORT_IDENTITY, accountNumber: EXPORT_ACCOUNT, birthDate: '1990-05-17', taxCode: EXPORT_TAX, insuranceNumber: EXPORT_INSURANCE }, WAGES[0], EXPORT_NAME);
     await o.exec(o.owner, 'hr.payroll.dependent.add', { employeeId: employee.employeeId, displayName: EXPORT_DEPENDENT, relation: 'child', registeredOn: '2026-02-01' });
+    await o.exec(o.owner, 'hr.payroll.leave.set', { employeeId: employee.employeeId, month: '2026-06', kind: 'annual_leave', days: '1', approved: true });
     await o.open('2026-06');
     if (closing) await rt.execute('kernel.org.offboard', { confirmSlug: o.slug }, { actor: asMfa(o.owner), orgId: o.orgId });
     return o;
@@ -775,17 +776,19 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
 
   it('(org export, #2676) streams the payroll tables to the owner with no plain number and no sealed text, and audits each read before it', async () => {
     const o = await exportOrg(true);
-    expect(OWNER_RUN_EXPORT_TABLE_NAMES).toEqual(['hr.payroll_employee', 'hr.payroll_employment', 'hr.payroll_dependent', 'hr.payroll_run', 'hr.payroll_line', 'hr.payroll_bank_template', 'hr.job_opening', 'hr.candidate']);
+    expect(OWNER_RUN_EXPORT_TABLE_NAMES).toEqual(['hr.department', 'hr.payroll_employee', 'hr.payroll_employment', 'hr.payroll_dependent', 'hr.payroll_run', 'hr.payroll_line', 'hr.payroll_bank_template', 'hr.payroll_leave_entry', 'hr.job_opening', 'hr.candidate']);
+    // No department, bank template, or recruiting data was saved in this org: those tables are served, and empty.
+    const departments = await read(rt, 'hr.department', asUser(o.owner), o.orgId);
     const employees = await read(rt, 'hr.payroll_employee', asUser(o.owner), o.orgId);
     const employments = await read(rt, 'hr.payroll_employment', asUser(o.owner), o.orgId);
     const dependents = await read(rt, 'hr.payroll_dependent', asUser(o.owner), o.orgId);
     const runs = await read(rt, 'hr.payroll_run', asUser(o.owner), o.orgId);
     const lines = await read(rt, 'hr.payroll_line', asUser(o.owner), o.orgId);
-    // No bank template or recruiting data was saved in this org: the tables are served, and empty.
     const templates = await read(rt, 'hr.payroll_bank_template', asUser(o.owner), o.orgId);
+    const leaveEntries = await read(rt, 'hr.payroll_leave_entry', asUser(o.owner), o.orgId);
     const openings = await read(rt, 'hr.job_opening', asUser(o.owner), o.orgId);
     const candidates = await read(rt, 'hr.candidate', asUser(o.owner), o.orgId);
-    expect([employees.length, employments.length, dependents.length, runs.length, lines.length, templates.length, openings.length, candidates.length]).toEqual([1, 1, 1, 1, 1, 0, 0, 0]);
+    expect([departments.length, employees.length, employments.length, dependents.length, runs.length, lines.length, templates.length, leaveEntries.length, openings.length, candidates.length]).toEqual([0, 1, 1, 1, 1, 1, 0, 1, 0, 0]);
     expect(runs[0]).toMatchObject({ month: '2026-06', status: 'draft' });
     expect(lines[0]).toMatchObject({ kind: 'pay', employee_id: employees[0]?.id });
     expect(employees[0]).toMatchObject({ display_name: EXPORT_NAME });
@@ -795,12 +798,13 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     expect(employees[0]).not.toHaveProperty('insurance_number_sealed');
     expect(employments[0]).toMatchObject({ contract_type: 'indefinite' });
     expect(dependents[0]).toMatchObject({ display_name: EXPORT_DEPENDENT });
-    const text = JSON.stringify([employees, employments, dependents, runs, lines]);
+    expect(leaveEntries[0]).toMatchObject({ employee_id: employees[0]?.id, month: '2026-06', kind: 'annual_leave' });
+    const text = JSON.stringify([employees, employments, dependents, runs, lines, leaveEntries]);
     for (const needle of [EXPORT_IDENTITY, EXPORT_IDENTITY_DIGITS, EXPORT_ACCOUNT, EXPORT_ACCOUNT_DIGITS, EXPORT_TAX, EXPORT_INSURANCE, 'crove:s1:']) expect(text, needle).not.toContain(needle);
     const audits = await withAdmin(
       async (c) => (await c.query<{ outcome: string; detail: string; row: string }>(`SELECT outcome, detail::text AS detail, audit_event::text AS row FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.export.people' ORDER BY id`, [o.orgId])).rows,
     );
-    expect(audits.map((a) => a.outcome)).toEqual(['ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok']);
+    expect(audits.map((a) => a.outcome)).toEqual(['ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok']);
     // Each row names the table read (not personal data) and says the read was started.
     expect(audits.map((a) => (JSON.parse(a.detail) as { table: string }).table)).toEqual([...OWNER_RUN_EXPORT_TABLE_NAMES]);
     expect(JSON.parse(audits[0]?.detail ?? '{}')).toMatchObject({ read: 'sensitive', stage: 'before_read' });
@@ -871,7 +875,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
       const text = await ok.text();
       const all = text.trim().split('\n').map((l) => JSON.parse(l) as { org_id: string; _end?: boolean; rows?: number });
       // The last line says how many rows came before it, so a cut download cannot look whole.
-      const expected = table === 'hr.payroll_bank_template' || table === 'hr.job_opening' || table === 'hr.candidate' ? 0 : 1;
+      const expected = table === 'hr.payroll_bank_template' || table === 'hr.department' || table === 'hr.job_opening' || table === 'hr.candidate' ? 0 : 1;
       expect(all.at(-1), table).toEqual({ _end: true, rows: expected });
       const rows = all.slice(0, -1);
       expect(rows.length, table).toBe(expected);

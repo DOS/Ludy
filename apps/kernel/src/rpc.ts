@@ -922,6 +922,12 @@ export function createRpcHandler(
       export: os.org.export.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.org.export.get', {}, { actor, orgId }))),
     },
     hr: {
+      departments: {
+        list: os.hr.departments.list.handler(hrQuery('hr.department.list')),
+        add: os.hr.departments.add.handler(hrCommand('hr.department.add')),
+        edit: os.hr.departments.edit.handler(hrCommand('hr.department.edit')),
+        archive: os.hr.departments.archive.handler(hrCommand('hr.department.archive')),
+      },
       payroll: {
         employees: {
           list: os.hr.payroll.employees.list.handler(hrQuery('hr.payroll.employee.list')),
@@ -955,7 +961,13 @@ export function createRpcHandler(
           importTimekeeping: os.hr.payroll.runs.importTimekeeping.handler(hrCommand('hr.payroll.run.import_timekeeping')),
           thirteenthMonthPreview: os.hr.payroll.runs.thirteenthMonthPreview.handler(hrQuery('hr.payroll.run.thirteenth_month_preview')),
           applyThirteenthMonth: os.hr.payroll.runs.applyThirteenthMonth.handler(hrCommand('hr.payroll.run.apply_thirteenth_month')),
+          syncLeave: os.hr.payroll.runs.syncLeave.handler(hrCommand('hr.payroll.run.sync_leave')),
           approve: os.hr.payroll.runs.approve.handler(hrCommand('hr.payroll.run.approve')),
+        },
+        leave: {
+          balance: os.hr.payroll.leave.balance.handler(hrQuery('hr.payroll.leave.balance')),
+          set: os.hr.payroll.leave.set.handler(hrCommand('hr.payroll.leave.set')),
+          delete: os.hr.payroll.leave.delete.handler(hrCommand('hr.payroll.leave.delete')),
         },
         // Where the posting and the payments of an approved month stand (#2532): finance reads its own books and the open proposals; owners and admins.
         settlement: os.hr.payroll.settlement.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.payroll.settlement', input, { actor, orgId }))),

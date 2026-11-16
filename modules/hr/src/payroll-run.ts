@@ -11,7 +11,7 @@
 // Audit facts carry ids, counts and field names, never an amount, a name or the fingerprint: audit rows reach the WORM archive, and a plain hash over a small run's inputs and figures
 // could be confirmed by guessing after the person is erased. The fingerprint lives in the run's own approval record, which the org purge deletes.
 import { createHash } from 'node:crypto';
-import { money, ruleInForce, sum, toMoney, calculatePayroll, calculateThirteenthMonthSalary, countCompletedCalendarMonths, listRulesUsed, PAYROLL_RULES, PayrollRefusedError, type PayrollCalculation, type PayrollEmployment, type PayrollMonthInputs, type RuleRef } from '@crove/l10n-vn';
+import { money, ruleInForce, sum, toMoney, calculateLeaveBalance, calculatePayroll, calculateThirteenthMonthSalary, countCompletedCalendarMonths, listRulesUsed, PAYROLL_RULES, PayrollRefusedError, type LeaveEntry, type PayrollCalculation, type PayrollEmployment, type PayrollMonthInputs, type RuleRef } from '@crove/l10n-vn';
 import type { MemberRole } from '@crove/db';
 import {
   HR_DEFAULT_WORKING_DAYS,
@@ -486,21 +486,25 @@ export const lineInputsSet = defineCommand({
   },
 });
 
-async function lockDraftLines(ctx: Ctx, runId: string, lineIds: readonly string[]) {
+async function lockDraftLines(ctx: Ctx, runId: string, lineIds?: readonly string[]) {
   const run = await loadRun(ctx, runId);
   if (run.status !== 'draft') throw notDraft();
+  if (lineIds !== undefined && lineIds.length === 0) {
+    return { payRun: run, locked: [], byLineId: new Map<string, { id: string; employee_id: string; kind: 'pay' | 'adjustment'; inputs: unknown }>(), people: new Map<string, Person>() };
+  }
   const locked = await ctx.trx
     .selectFrom('crove_hr.payroll_line')
     .select(['id', 'employee_id', 'kind', 'inputs'])
     .where('org_id', '=', ctx.orgId)
     .where('run_id', '=', run.id)
-    .where('id', 'in', [...lineIds])
+    .$if(lineIds !== undefined, (q) => q.where('id', 'in', [...(lineIds as readonly string[])]))
+    .$if(lineIds === undefined, (q) => q.where('kind', '=', 'pay'))
     .orderBy('id')
     .forUpdate()
     .execute();
   const byLineId = new Map(locked.map((l) => [l.id, l]));
   const people = new Map((await peopleOf(ctx, run.legal_entity_id, run.month)).map((p) => [p.employeeId, p]));
-  return { payRun: run, byLineId, people };
+  return { payRun: run, locked, byLineId, people };
 }
 
 function resolveDraftLineTarget(
@@ -587,6 +591,66 @@ export const runApplyThirteenthMonth = defineCommand({
     await applyBatchLineUpdates(ctx, payRun.id, updates);
     ctx.audit({ year: input.year, mode: input.mode, updatedLines: input.rows.length });
     return { runId: payRun.id, lines: input.rows.length };
+  },
+});
+
+function formatSyncUnpaidDays(raw: string): string {
+  const exact = money(raw);
+  const normalized = exact.toFixed();
+  if (exact.isNegative() || exact.greaterThan('99.9') || !/^\d{1,2}(\.\d)?$/.test(normalized)) {
+    throw new DomainError(
+      'HR_LEAVE_DAYS_OUT_OF_RANGE',
+      422,
+      'Số ngày nghỉ không lương đồng bộ sang bảng lương chỉ hỗ trợ tối đa 1 chữ số thập phân (0 - 99,9 ngày)',
+    );
+  }
+  return normalized;
+}
+
+export const runSyncLeave = defineCommand({
+  name: 'hr.payroll.run.sync_leave',
+  input: zHrRunRef,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MANAGERS,
+  permission: 'hr.payroll.run',
+  target: runTarget,
+  writes: [
+    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_line', [...LINE_UPDATE_COLUMNS]),
+    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_run', ['updated_at']),
+  ],
+  handler: async (ctx, input): Promise<HrRunWritten> => {
+    userOf(ctx.actor);
+    const { payRun, locked, byLineId, people } = await lockDraftLines(ctx, input.runId);
+    const employeeIds = [...new Set(locked.map((l) => l.employee_id))];
+    const entries =
+      employeeIds.length === 0
+        ? []
+        : await ctx.trx
+            .selectFrom('crove_hr.payroll_leave_entry')
+            .select(['employee_id', 'days'])
+            .where('org_id', '=', ctx.orgId)
+            .where('employee_id', 'in', employeeIds)
+            .where('month', '=', payRun.month)
+            .where('kind', '=', 'unpaid_leave')
+            .execute();
+    const unpaidByEmployee = new Map(entries.map((e) => [e.employee_id, formatSyncUnpaidDays(e.days)]));
+    const updates: { lineId: string; employmentId: string; inputs: HrPayrollInputs; figures: LineFigures }[] = [];
+    for (const row of locked) {
+      const { line, person, existing } = resolveDraftLineTarget(byLineId, people, row.id);
+      const nextUnpaidDays = unpaidByEmployee.get(line.employee_id) ?? '0';
+      if (existing.unpaidLeaveDays === nextUnpaidDays) continue;
+      const merged = zHrPayrollInputs.parse({ ...existing, unpaidLeaveDays: nextUnpaidDays });
+      updates.push({
+        lineId: line.id,
+        employmentId: person.terms.id,
+        inputs: merged,
+        figures: figuresOf(person, merged, payRun.month, payRun.working_days),
+      });
+    }
+    await applyBatchLineUpdates(ctx, payRun.id, updates);
+    ctx.audit({ month: payRun.month, updatedLines: updates.length });
+    return { runId: payRun.id, lines: updates.length };
   },
 });
 
@@ -953,6 +1017,24 @@ export const runSheet = defineQuery({
       : await ctx.trx.selectFrom('crove_hr.payroll_employment').select(['id', 'employee_id', 'effective_from', 'contract_type', 'contract_end_on', 'probation_end_on']).where('org_id', '=', ctx.orgId).where('employee_id', 'in', employeeIds).execute();
     const adjusted = [...new Set(lines.flatMap((l) => (l.adjusts_run_id ? [l.adjusts_run_id] : [])))];
     const adjustedRuns = adjusted.length === 0 ? [] : await ctx.trx.selectFrom('crove_hr.payroll_run').select(['id', 'month']).where('org_id', '=', ctx.orgId).where('id', 'in', adjusted).execute();
+    const leaveYear = run.month.slice(0, 4);
+    const leaveRows = employeeIds.length === 0
+      ? []
+      : await ctx.trx
+          .selectFrom('crove_hr.payroll_leave_entry')
+          .select(['employee_id', 'month', 'kind', 'days', 'approved'])
+          .where('org_id', '=', ctx.orgId)
+          .where('employee_id', 'in', employeeIds)
+          .where('month', '>=', `${leaveYear}-01`)
+          .where('month', '<=', run.month)
+          .execute();
+    const leaveByEmployee = new Map<string, LeaveEntry[]>();
+    for (const row of leaveRows) {
+      if (row.kind !== 'unpaid_leave' && !row.approved) continue;
+      const list = leaveByEmployee.get(row.employee_id) ?? [];
+      list.push({ kind: row.kind, month: row.month, days: row.days, approved: row.approved });
+      leaveByEmployee.set(row.employee_id, list);
+    }
     const start = monthStart(run.month);
     const end = monthEnd(run.month);
     const inMonth = (day: Date | string | null | undefined): boolean => {
@@ -966,6 +1048,7 @@ export const runSheet = defineQuery({
       const own = firstTerms.filter((t) => t.employee_id === l.employee_id).sort((a, b) => (iso(a.effective_from) < iso(b.effective_from) ? -1 : 1));
       const used = own.find((t) => t.id === l.employment_id);
       const flags: HrLineFlag[] = [];
+      let exceededAnnualDays: string | undefined;
       if (l.status === 'refused') flags.push('refused');
       if (checks.some((c) => c.id === 'minimum_wage' && !c.ok)) flags.push('check_minimum_wage');
       if (checks.some((c) => c.id === 'deduction_cap' && !c.ok)) flags.push('check_deduction_cap');
@@ -982,6 +1065,29 @@ export const runSheet = defineQuery({
           flags.push('severance_check');
         }
         if (used?.contract_type === 'fixed_term' && l.status === 'refused' && parseInputs(l.inputs).contractTermMonths === null) flags.push('fixed_term_months_missing');
+        if (first) {
+          try {
+            // Stage 1 (#3394) does not persist a per-employee hazardous work category on payroll_employee / payroll_employment,
+            // so the pay run sheet evaluates annual_leave_exceeded against the statutory 12-day standard entitlement.
+            const leaveBalance = calculateLeaveBalance(
+              {
+                year: leaveYear,
+                category: 'standard',
+                hireDate: iso(first.effective_from),
+                endedOn: employee?.ended_on ? iso(employee.ended_on) : null,
+                asOfMonth: run.month,
+                entries: leaveByEmployee.get(l.employee_id) ?? [],
+              },
+              PAYROLL_RULES,
+            );
+            if (money(leaveBalance.exceededAnnualDays).greaterThan(0)) {
+              flags.push('annual_leave_exceeded');
+              exceededAnnualDays = leaveBalance.exceededAnnualDays;
+            }
+          } catch (error) {
+            if (!(error instanceof PayrollRefusedError)) throw error;
+          }
+        }
       }
       return {
         id: l.id,
@@ -995,6 +1101,7 @@ export const runSheet = defineQuery({
         breakdown: (l.breakdown ?? null) as Record<string, unknown> | null,
         checks,
         flags,
+        ...(exceededAnnualDays !== undefined ? { exceededAnnualDays } : {}),
         note: l.note,
         adjustsMonth: l.adjusts_run_id ? (adjustedRuns.find((r) => r.id === l.adjusts_run_id)?.month ?? null) : null,
       };
@@ -1142,5 +1249,5 @@ export const runThirteenthMonthPreview = defineQuery({
   },
 });
 
-export const hrPayrollCommands = [runOpen, runRecalculate, lineInputsSet, runImportTimekeeping, runApplyThirteenthMonth, lineAdjust, runApprove];
+export const hrPayrollCommands = [runOpen, runRecalculate, lineInputsSet, runImportTimekeeping, runApplyThirteenthMonth, runSyncLeave, lineAdjust, runApprove];
 export const hrPayrollQueries = [runList, runSheet, linePayslip, runThirteenthMonthPreview];

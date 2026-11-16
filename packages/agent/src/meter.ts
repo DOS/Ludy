@@ -86,6 +86,10 @@ export const AI_FEATURES = {
   'projects.tasks_from_note': 'projects',
   // Ly's pseudonymized recruiting screening brief and interview focus questions (#3403 Stage 3 slice 3b-1 / #3413): reads alias C1, role facts, readiness flags, and scrubbed untrusted notes only; never decides hire or reject.
   'hr.recruiting_brief': 'hr',
+  // Vy (the general manager) proposing signing field placements on a draft eSign PDF (#3351): one call over page sizes, declared signer role keys and bounded page text per ask, the member waiting for it. A key of its own, so field proposals never cut off risky clause summaries or other AI features.
+  'sign.field_propose': 'sign',
+  // Vy (the general manager) summarizing risky clauses with exact verbatim quotes from a draft eSign PDF (#3351): one call over bounded page text per ask, the member waiting for it.
+  'sign.clause_summary': 'sign',
 } as const satisfies Record<string, string>;
 export type AiFeature = keyof typeof AI_FEATURES;
 export const AI_FEATURE_KEYS = Object.keys(AI_FEATURES) as AiFeature[];
