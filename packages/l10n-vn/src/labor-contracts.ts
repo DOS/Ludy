@@ -129,7 +129,7 @@ function addCalendarDays(date: CalendarDate, days: number): CalendarDate {
   return civilFromDayNumber(toCivilDayNumber(date) + days);
 }
 
-function formatIsoCalendarDate(date: CalendarDate): string {
+export function formatIsoCalendarDate(date: CalendarDate): string {
   const year = String(date.year).padStart(4, '0');
   const month = String(date.month).padStart(2, '0');
   const day = String(date.day).padStart(2, '0');
@@ -152,7 +152,7 @@ export function addCalendarMonths(date: CalendarDate, months: number): CalendarD
   return { year, month, day };
 }
 
-function deriveFixedTermEndDate(start: CalendarDate, termMonths: number): CalendarDate {
+export function deriveFixedTermEndDate(start: CalendarDate, termMonths: number): CalendarDate {
   return addCalendarDays(addCalendarMonths(start, termMonths), -1);
 }
 

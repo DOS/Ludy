@@ -57,6 +57,8 @@ import { wordReminder, type ReminderAi } from './payment-reminder-ai.ts';
 import { wordFollowup, type FollowupAi } from './followup-ai.ts';
 import { minutesLink, postMinutesFromClick, saveMinutesChannel, type MinutesChatDeps } from './meeting-chat.ts';
 import { explainPayslip, flagMonth, prepareMonth, type PayrollAi, type PayrollReads } from './payroll-coworker-ai.ts';
+import { checkLaborReadiness, type LaborCheckAi, type LaborCheckPorts } from './labor-coworker-ai.ts';
+import type { HrLaborCheckSnapshot } from '@crove/mod-hr';
 import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
 import { crmFollowupAi, draftCrmFollowup } from './crm-followup-ai.ts';
 import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
@@ -402,6 +404,10 @@ export function createRpcHandler(
       : null,
     budget: suggestionBudget(),
   };
+  const laborCheckAi: LaborCheckAi = {
+    reader: conversationReader?.laborCheck ? { laborCheck: conversationReader.laborCheck.bind(conversationReader) } : null,
+    budget: suggestionBudget(),
+  };
   // The finance coworker's wording of a payment reminder (#2488): the same reader and model, a budget of its own. It reads no customer text (the model is told the
   // notice level, the language and the sender's name), so the org's switch for AI on its customers' messages does not apply.
   const reminderAi: ReminderAi = { reader: conversationReader?.reminderWords ? { reminderWords: conversationReader.reminderWords.bind(conversationReader) } : null, budget: suggestionBudget() };
@@ -576,6 +582,10 @@ export function createRpcHandler(
     sheet: (runId) => runtime.query<HrRunSheet>('hr.payroll.run.sheet', { runId }, { actor, orgId }),
     runs: () => runtime.query<HrRunSummary[]>('hr.payroll.run.list', { limit: 120 }, { actor, orgId }),
     payslip: (lineId) => runtime.query<HrPayslip>('hr.payroll.line.payslip', { lineId }, { actor, orgId }),
+  });
+  const laborCheckPorts = (orgId: string, actor: UserActor): LaborCheckPorts => ({
+    read: (input) => runtime.query<HrLaborCheckSnapshot>('hr.payroll.labor_check.read', input, { actor, orgId }),
+    record: (kind, checked) => runtime.execute('hr.payroll.labor_check.audit', { kind, checked }, { actor, orgId }),
   });
   const hrQuery =
     (name: string) =>
@@ -927,6 +937,9 @@ export function createRpcHandler(
           edit: os.hr.payroll.bankTemplates.edit.handler(hrCommand('hr.payroll.bank_template.edit')),
           delete: os.hr.payroll.bankTemplates.delete.handler(hrCommand('hr.payroll.bank_template.delete')),
         },
+        laborCheck: os.hr.payroll.laborCheck.handler(({ context, input }) =>
+          inHr(context, (orgId, actor) => checkLaborReadiness(laborCheckAi, laborCheckPorts(orgId, actor), orgId, actor.userId, input)),
+        ),
         employments: { add: os.hr.payroll.employments.add.handler(hrCommand('hr.payroll.employment.add')) },
         dependents: {
           add: os.hr.payroll.dependents.add.handler(hrCommand('hr.payroll.dependent.add')),

@@ -1,7 +1,20 @@
 // The worker's crove-extract client: every answer is untrusted, so anything malformed, oversized, for the wrong
 // kind or late is refused with ExtractServiceError (retried by the job); file-caused failures come back typed.
 import { describe, expect, it } from 'vitest';
-import { EXTRACT_LIMITS, ExtractServiceError, createExtractClient, type ExtractClient } from '../src/index.ts';
+import {
+  EXTRACT_LIMITS,
+  ExtractServiceError,
+  PdfSealInputError,
+  createExtractClient,
+  decodePdfSealInput,
+  encodePdfSealInput,
+  maxRequestBytes,
+  zPdfInspectResult,
+  zPdfSealInput,
+  zPdfSealResult,
+  type ExtractClient,
+  type PdfSealInput,
+} from '../src/index.ts';
 
 const invoice = {
   source: 'einvoice_xml',
@@ -214,5 +227,176 @@ describe('crove-extract client concurrency (#2119)', () => {
 
   it('refuses a concurrency that is not a whole number of at least 1', () => {
     for (const concurrency of [0, -1, 1.5, Number.NaN]) expect(() => createExtractClient({ url: 'http://crove-extract:8090', concurrency })).toThrow(/concurrency/);
+  });
+
+  it('caps pdf_inspect at maxFileBytes and pdf_seal at maxPdfSealRequestBytes to absorb base64 growth', () => {
+    expect(maxRequestBytes('pdf_inspect')).toBe(EXTRACT_LIMITS.maxFileBytes);
+    expect(maxRequestBytes('pdf_seal')).toBe(EXTRACT_LIMITS.maxPdfSealRequestBytes);
+    expect(EXTRACT_LIMITS.maxPdfSealRequestBytes).toBeGreaterThan(Math.ceil(EXTRACT_LIMITS.maxFileBytes / 3) * 4);
+  });
+
+  it('validates pdf_inspect results strictly (page order, 64 KiB text cap, unknown keys)', () => {
+    const valid = zPdfInspectResult.safeParse({
+      ok: true,
+      kind: 'pdf_inspect',
+      pageCount: 2,
+      pages: [
+        { page: 1, widthPt: 595.28, heightPt: 841.89, rotation: 0, text: 'Trang 1' },
+        { page: 2, widthPt: 841.89, heightPt: 595.28, rotation: 90, text: 'Trang 2' },
+      ],
+    });
+    expect(valid.success).toBe(true);
+
+    const outOfOrder = zPdfInspectResult.safeParse({
+      ok: true,
+      kind: 'pdf_inspect',
+      pageCount: 2,
+      pages: [
+        { page: 2, widthPt: 595.28, heightPt: 841.89, rotation: 0, text: 'Trang 2' },
+        { page: 1, widthPt: 595.28, heightPt: 841.89, rotation: 0, text: 'Trang 1' },
+      ],
+    });
+    expect(outOfOrder.success).toBe(false);
+
+    const oversizedUtf8 = zPdfInspectResult.safeParse({
+      ok: true,
+      kind: 'pdf_inspect',
+      pageCount: 2,
+      pages: [
+        { page: 1, widthPt: 595.28, heightPt: 841.89, rotation: 0, text: 'đ'.repeat(20_000) },
+        { page: 2, widthPt: 595.28, heightPt: 841.89, rotation: 0, text: 'đ'.repeat(20_000) },
+      ],
+    });
+    expect(oversizedUtf8.success).toBe(false);
+
+    const extraKey = zPdfInspectResult.safeParse({
+      ok: true,
+      kind: 'pdf_inspect',
+      pageCount: 1,
+      pages: [{ page: 1, widthPt: 595, heightPt: 842, rotation: 0, text: 'ok', extra: true }],
+    });
+    expect(extraKey.success).toBe(false);
+  });
+
+  it('round-trips encodePdfSealInput and decodePdfSealInput and enforces input bounds', () => {
+    const sha = 'a'.repeat(64);
+    const input: PdfSealInput = {
+      pdfBase64: Buffer.from('%PDF-1.7\n').toString('base64'),
+      fields: [
+        { type: 'signature', page: 1, xNorm: 0.1, yNorm: 0.7, wNorm: 0.3, hNorm: 0.1, imagePngBase64: 'iVBORw0KGgo=' },
+        { type: 'initial', page: 1, xNorm: 0.5, yNorm: 0.7, wNorm: 0.15, hNorm: 0.08, text: 'NVA', fontSizePt: 12 },
+        { type: 'date', page: 1, xNorm: 0.1, yNorm: 0.85, wNorm: 0.25, hNorm: 0.05, text: '15/11/2026' },
+        { type: 'text', page: 1, xNorm: 0.4, yNorm: 0.85, wNorm: 0.4, hNorm: 0.05, text: 'Nguyễn Văn Ánh' },
+        { type: 'checkbox', page: 1, xNorm: 0.85, yNorm: 0.85, wNorm: 0.04, hNorm: 0.04, checked: true },
+      ],
+      certificate: {
+        certificateCode: 'CROVE-ESIGN-2026-0001',
+        envelopeTitle: 'Hợp đồng dịch vụ kế toán 2026',
+        sourceSha256: sha,
+        completedAtIso: '2026-11-15T10:30:00.000Z',
+        eventChainTipHash: 'b'.repeat(64),
+        signers: [
+          {
+            name: 'Nguyễn Văn Ánh',
+            roleLabel: 'Bên A - Giám đốc',
+            maskedEmail: 'n***@example.vn',
+            deliveryMode: 'email',
+            otpStatus: 'verified',
+            signedAtIso: '2026-11-15T10:29:00.000Z',
+            ipHashPrefix: 'deadbeef1234',
+            signatureKind: 'draw',
+          },
+          {
+            name: 'Trần Thị Bình',
+            roleLabel: 'Bên B',
+            maskedEmail: null,
+            deliveryMode: 'link',
+            otpStatus: 'not_required',
+            signedAtIso: '2026-11-15T10:30:00.000Z',
+            ipHashPrefix: null,
+          },
+        ],
+      },
+    };
+
+    const bytes = encodePdfSealInput(input);
+    const decoded = decodePdfSealInput(bytes);
+    expect(decoded).toEqual(input);
+
+    // Coordinate outside [0, 1] box
+    expect(
+      zPdfSealInput.safeParse({
+        ...input,
+        fields: [{ type: 'checkbox', page: 1, xNorm: 0.8, yNorm: 0.1, wNorm: 0.3, hNorm: 0.1, checked: true }],
+      }).success,
+    ).toBe(false);
+
+    // Initial field without image or text
+    expect(
+      zPdfSealInput.safeParse({
+        ...input,
+        fields: [{ type: 'initial', page: 1, xNorm: 0.1, yNorm: 0.1, wNorm: 0.1, hNorm: 0.1 }],
+      }).success,
+    ).toBe(false);
+
+    // Bad sha256
+    expect(
+      zPdfSealInput.safeParse({
+        ...input,
+        certificate: { ...input.certificate, sourceSha256: 'NOT_HEX' },
+      }).success,
+    ).toBe(false);
+
+    expect(() => decodePdfSealInput(new Uint8Array(0))).toThrow(PdfSealInputError);
+    expect(() => decodePdfSealInput(new TextEncoder().encode('{bad json'))).toThrow(PdfSealInputError);
+    expect(() => decodePdfSealInput(new TextEncoder().encode(JSON.stringify({ ...input, extra: 1 })))).toThrow(PdfSealInputError);
+    expect(() => decodePdfSealInput(new Uint8Array(EXTRACT_LIMITS.maxPdfSealRequestBytes + 1))).toThrow(PdfSealInputError);
+
+    // A 20 MiB raw PDF grows to ~26.7 MiB in base64 and still fits inside maxRequestBytes('pdf_seal').
+    const largePdfInput: PdfSealInput = {
+      ...input,
+      pdfBase64: Buffer.alloc(20 * 1024 * 1024, 0x25).toString('base64'),
+    };
+    const largeEncoded = encodePdfSealInput(largePdfInput);
+    expect(largeEncoded.byteLength).toBeGreaterThan(EXTRACT_LIMITS.maxFileBytes);
+    expect(largeEncoded.byteLength).toBeLessThanOrEqual(maxRequestBytes('pdf_seal'));
+    expect(decodePdfSealInput(largeEncoded).certificate.certificateCode).toBe(input.certificate.certificateCode);
+
+    expect(
+      zPdfSealResult.safeParse({
+        ok: true,
+        kind: 'pdf_seal',
+        sealedPdfBase64: Buffer.from('%PDF-1.7\n').toString('base64'),
+        pageCount: 2,
+      }).success,
+    ).toBe(true);
+
+    const maxCertTotalPages = EXTRACT_LIMITS.maxPdfSignPages + EXTRACT_LIMITS.maxPdfAuditCertPages;
+    expect(
+      zPdfSealResult.safeParse({
+        ok: true,
+        kind: 'pdf_seal',
+        sealedPdfBase64: Buffer.from('%PDF-1.7\n').toString('base64'),
+        pageCount: maxCertTotalPages,
+      }).success,
+    ).toBe(true);
+    expect(
+      zPdfSealResult.safeParse({
+        ok: true,
+        kind: 'pdf_seal',
+        sealedPdfBase64: Buffer.from('%PDF-1.7\n').toString('base64'),
+        pageCount: maxCertTotalPages + 1,
+      }).success,
+    ).toBe(false);
+
+    const maxPdfBase64Chars = Math.ceil(EXTRACT_LIMITS.maxFileBytes / 3) * 4;
+    expect(
+      zPdfSealResult.safeParse({
+        ok: true,
+        kind: 'pdf_seal',
+        sealedPdfBase64: 'A'.repeat(maxPdfBase64Chars + 4),
+        pageCount: 2,
+      }).success,
+    ).toBe(false);
   });
 });

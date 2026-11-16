@@ -5,7 +5,9 @@
 // kernel.org.set_app writes it (an owner or admin, R2, audited with the module, its new state and the new version);
 // the tenant_apps_guard and tenant_apps_requires_audit triggers refuse any other write. Nothing enforces the choice
 // yet: slices b (the runtime), c (worker and routes), e (Vy, Home, MCP) and d (the Settings screen) build on it.
+import { type Transaction } from 'kysely';
 import { z } from 'zod';
+import type { Database } from '@crove/db';
 import { zOrgApps, zOrgAppSet } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, entitledTo } from '@crove/kernel-runtime';
 
@@ -32,9 +34,13 @@ export interface OrgAppsOptions {
 
 export type OrgApps = z.infer<typeof zOrgApps>;
 
+// What an app says it is busy with for an org: a probe per app that has work a switch-off would cut short (recordings, spend). Each returns short reason codes, none
+// when the app can be switched off. The composition root hands them in from the modules, so the kernel names no module.
+export type AppBusyProbe = (trx: Transaction<Database>, orgId: string) => Promise<readonly string[]>;
+
 // The command. `shipped` is the build's module list; without one any well-formed id is accepted (tests that register
 // the kernel alone), and the database still holds the shape.
-export function setAppCommand(options: { shipped?: readonly string[] } = {}) {
+export function setAppCommand(options: { shipped?: readonly string[]; busy?: Readonly<Record<string, AppBusyProbe>> } = {}) {
   return defineCommand({
     name: 'kernel.org.set_app',
     input: zOrgAppSet,
@@ -55,6 +61,15 @@ export function setAppCommand(options: { shipped?: readonly string[] } = {}) {
         .executeTakeFirstOrThrow();
       const isOff = before.apps_off.includes(input.module);
       const changed = isOff === input.enabled;
+      // Turning an app off while its work is open would cut it short (a recording, running spend): refused, until the work is over. The commands that open such
+      // work declare opensBusyWork, so they hold this row too and a start and this switch never both succeed.
+      const probe = options.busy?.[input.module];
+      if (changed && !input.enabled && probe) {
+        const reasons = await probe(ctx.trx, ctx.orgId);
+        if (reasons.length > 0) {
+          throw new DomainError('APP_BUSY', 409, 'Ứng dụng này đang có việc chưa xong, nên chưa tắt được. Chờ việc xong hoặc dừng nó rồi tắt lại', { module: input.module, reasons: [...reasons] });
+        }
+      }
       let version = before.apps_version;
       if (changed) {
         const next = input.enabled ? before.apps_off.filter((m) => m !== input.module) : [...before.apps_off, input.module].sort();

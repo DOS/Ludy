@@ -95,6 +95,9 @@ const PENDING_TABLES = new Set<string>([
   'crove_finance.stock_move',
   'crove_finance.stock_period',
   'crove_finance.stock_period_item',
+  'crove_hr.candidate',
+  'crove_hr.department',
+  'crove_hr.job_opening',
   'crove_kernel.agent_grant',
   'crove_kernel.agent_wake_delivery',
   'crove_kernel.agent_wake_signal_seen',
@@ -151,6 +154,9 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
       `NOT EXISTS (SELECT 1 FROM crove_kernel.agent a WHERE a.org_id OPERATOR(pg_catalog.=) t.org_id AND a.id OPERATOR(pg_catalog.=) t.agent_id AND a.kind OPERATOR(pg_catalog.=) 'member_vy' AND a.member_user_id OPERATOR(pg_catalog.<>) '${m}'::uuid)`,
   ],
   // The tables below are not in the catalog and are keyed to a user (ctx_user_id), which member mode does not have: it reads none of their rows.
+  ['crove_hr.candidate', () => 'false'], // HR is for owners and admins in a user context (ADR-0046); an agent context reads none.
+  ['crove_hr.department', () => 'false'], // HR, as above.
+  ['crove_hr.job_opening', () => 'false'], // HR, as above.
   ['crove_hr.payroll_bank_template', () => 'false'], // HR is for owners and admins in a user context (ADR-0046); an agent context reads none.
   ['crove_hr.payroll_dependent', () => 'false'], // HR, as above.
   ['crove_hr.payroll_employee', () => 'false'], // HR, as above.
@@ -242,6 +248,10 @@ const MEMBER_VY_UNREACHED = new Map<string, ReadonlyArray<'update' | 'delete'>>(
 ]);
 const AUTHOR_ONLY = new Map<string, string>([
   // Payroll (ADR-0046 point 4, #2530) is read and written by an owner or admin of the org alone, in a user context: the system context sees and changes none of it. This entry proves only that; that no other person reaches it is the "is for owners and admins only" case for every crove_hr table (#2715).
+  // Departments and lightweight recruiting (#3403): owners and admins alone, as every crove_hr table.
+  ['crove_hr.candidate', 'false'],
+  ['crove_hr.department', 'false'],
+  ['crove_hr.job_opening', 'false'],
   // The bank bulk-salary layout an org sets once (#2532): owners and admins alone, like the pay it exports.
   ['crove_hr.payroll_bank_template', 'false'],
   ['crove_hr.payroll_dependent', 'false'],
@@ -406,6 +416,8 @@ const stockMonth = () => {
 };
 // A bank template (#2532) is unique per entity and name: each seeded one takes the next number.
 let bankTemplateSeq = 0;
+// A department (#3403) is unique per entity and name: each seeded one takes the next number.
+let hrDepartmentSeq = 0;
 // A pay run (#2531) is unique per entity and month: each seeded one takes the next month from January 2000.
 let payrollMonthSeq = 0;
 const payrollMonth = () => {
@@ -1633,6 +1645,19 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         row: { org_id: o.id, party_id: party, debit_account: '6422' },
       };
     },
+  },
+  // #3403 (Phase 7 Stage 3): recruiting candidates, departments and job openings (owners and admins only, AUTHOR_ONLY).
+  'crove_hr.candidate': {
+    update: { set: 'display_name = display_name' },
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), display_name: 'RLS matrix candidate' } }),
+  },
+  'crove_hr.department': {
+    update: { set: 'name = name' },
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), name: `RLS matrix ${hrDepartmentSeq++}` } }),
+  },
+  'crove_hr.job_opening': {
+    update: { set: 'title = title' },
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), title: 'RLS matrix opening' } }),
   },
   // #2532: the layout of one bank's bulk-salary file (columns in order with their headers, and the content text), in the entity's name (b_legal_entity). An entity keeps one template per bank, unique on (org, entity, name), so each seeded one takes its own name. The layout holds the six columns the file is made of (sequence, name, account, bank, amount, content), which the table's CHECK asks for. Owners and admins alone (AUTHOR_ONLY). Tenant roles update the name, the layout and the stamp only (never the entity or the creation); the probe assigns the name to itself.
   'crove_hr.payroll_bank_template': {

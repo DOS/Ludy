@@ -203,6 +203,8 @@ export const reasonOf = (code: string): string => code.toLowerCase().replace(/[^
 
 export const adsLaunchBegin = defineCommand({
   name: 'ads.launch.begin',
+  // Begins a call at the platform that a switch-off must not overtake: it holds the tenant row, as the switch does (ADR-0053).
+  opensBusyWork: true,
   input: z.strictObject({ launchId: zId, writers: z.array(zLaunchWriter).max(8) }),
   risk: 'R2',
   sideEffect: 'external',

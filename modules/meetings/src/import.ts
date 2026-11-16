@@ -48,6 +48,8 @@ async function readOwnRecording(trx: Trx, orgId: string, userId: string, recordi
 
 export const meetingImportStart = defineCommand({
   name: 'meetings.import.start',
+  // Opens an import the app's switch-off would cut short: it holds the tenant row, as the switch does (ADR-0053).
+  opensBusyWork: true,
   input: zMeetingImportStart,
   risk: 'R2',
   // The command itself makes no call. It queues the download of a recording from the platform the member connected, which the worker makes.
