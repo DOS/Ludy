@@ -645,8 +645,12 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
       expect(got.orders.map((x) => x.orderId).sort()).toEqual([first.orderId, second.orderId].sort());
       expect(linesOf(got, first.orderId)).toEqual([[1, 'draft']]);
       expect(linesOf(got, second.orderId)).toEqual([[2, 'draft']]);
-      // Ids and a number and a state only: nothing of the draft or the buyer.
-      expect(JSON.stringify(got)).not.toMatch(/Công ty Mua Thử|Hàng|9\d{3}/);
+      // Ids, a line number and a state only: nothing of the draft or the buyer. The keys are checked (a regex over the text could match the digits of a random id).
+      for (const order of got.orders) {
+        expect(Object.keys(order).sort()).toEqual(['lines', 'orderId']);
+        for (const line of order.lines) expect(Object.keys(line).sort()).toEqual(['lineNo', 'state']);
+      }
+      expect(JSON.stringify(got)).not.toMatch(/Công ty Mua Thử|Hàng/);
     });
 
     it("never counts another organisation's drafts, even for the same order id", async () => {
