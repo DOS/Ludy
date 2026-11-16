@@ -168,6 +168,13 @@ export function meetingItemOf(sourceRef: unknown): string | null {
   return type === 'meetings.action_item' && typeof id === 'string' && UUID.test(id) ? id : null;
 }
 
+/** The Inbox thread a task was made from (#3421, "Create task" in the Inbox: `source_ref` is `{type: 'kernel.conversation', id}`), or null. Only the id is read: the thread itself is asked of the Inbox, which answers a reader of it. */
+export function conversationOf(sourceRef: unknown): string | null {
+  if (typeof sourceRef !== 'object' || sourceRef === null) return null;
+  const { type, id } = sourceRef as { type?: unknown; id?: unknown };
+  return type === 'kernel.conversation' && typeof id === 'string' && UUID.test(id) ? id : null;
+}
+
 /** The YYYY-MM-DD day of a task's ISO due timestamp in `timeZone`, or '' when there is none (#2588). */
 export function taskDueDay(due: string | null | undefined, timeZone: string): string {
   if (!due) return '';
