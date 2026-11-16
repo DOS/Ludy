@@ -31,9 +31,9 @@ describe('TodayItem', () => {
     expect(typed.amount).toBe('1250000.50');
   });
 
-  it('knows the four kinds and the six apps', () => {
+  it('knows the four kinds and the seven apps', () => {
     expect([...TODAY_KINDS]).toEqual(['proposal', 'flag', 'message', 'deadline']);
-    expect([...TODAY_APPS]).toEqual(['finance', 'crm', 'notes', 'social', 'ads', 'conversations']);
+    expect([...TODAY_APPS]).toEqual(['finance', 'crm', 'notes', 'projects', 'social', 'ads', 'conversations']);
     for (const kind of TODAY_KINDS) expect(zTodayItem.safeParse(item({ kind })).success, kind).toBe(true);
     for (const app of TODAY_APPS) expect(zTodayItem.safeParse(item({ app })).success, app).toBe(true);
     expect(zTodayItem.safeParse(item({ kind: 'task' })).success).toBe(false);
@@ -168,6 +168,7 @@ describe('sortTodayItems', () => {
     expect(todayCoworkerKey('social')).toBe('marketing');
     expect(todayCoworkerKey('ads')).toBe('marketing');
     expect(todayCoworkerKey('notes')).toBe('gm');
+    expect(todayCoworkerKey('projects')).toBe('gm');
     // Every app has one of the four visible coworkers, never the hidden system one.
     for (const app of TODAY_APPS) expect(['gm', 'finance', 'sales', 'marketing']).toContain(todayCoworkerKey(app));
   });

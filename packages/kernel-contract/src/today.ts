@@ -13,7 +13,7 @@ export type TodayKind = (typeof TODAY_KINDS)[number];
 // The app whose read returned the item (`conversations` is the Service inbox of the conversation core, a code id that
 // stays whatever the app is called on screen). Each line's read returns only what the member could open there, so an app
 // the member cannot see, or one with no read yet, simply adds no items.
-export const TODAY_APPS = ['finance', 'crm', 'notes', 'social', 'ads', 'conversations'] as const;
+export const TODAY_APPS = ['finance', 'crm', 'notes', 'projects', 'social', 'ads', 'conversations'] as const;
 export type TodayApp = (typeof TODAY_APPS)[number];
 
 export const TODAY_SEVERITIES = ['info', 'warn', 'block'] as const;
@@ -100,7 +100,7 @@ export function sortTodayItems(items: readonly TodayItem[]): TodayItem[] {
 }
 
 // The AI coworker that raised an item (Vy plan C1a, issue #3265): the coworker of the item's app in COWORKER_BY_MODULE (finance Ly,
-// crm and conversations Dy, social and ads Uy), and Vy, the general manager, for an app with none of its own (Notes). Deterministic: no model.
+// crm and conversations Dy, social and ads Uy), and Vy, the general manager, for an app with none of its own (Notes, Projects). Deterministic: no model.
 export type TodayCoworkerKey = Exclude<CoworkerKey, 'system'>;
 export function todayCoworkerKey(app: TodayApp): TodayCoworkerKey {
   return Object.hasOwn(COWORKER_BY_MODULE, app) ? (COWORKER_BY_MODULE[app] as TodayCoworkerKey) : 'gm';

@@ -7,7 +7,7 @@ import { EXPORT_TABLES, OWNER_RUN_EXPORT_TABLES } from '@crove/kernel';
 
 // The schemas the check covers. Each line adds its own once it has decided, table by table, what its owners' copy holds; a table of another
 // schema the export does not read is not a failure here (the follow-up issue lists them).
-export const COVERED_SCHEMAS: readonly string[] = ['crove_finance', 'crove_kernel'];
+export const COVERED_SCHEMAS: readonly string[] = ['crove_finance', 'crove_kernel', 'crove_crm', 'crove_hr'];
 
 // The tables the export leaves out, with why (docs/runbooks/org-offboarding.md says the same in its export list).
 export const NOT_EXPORTED: Readonly<Record<string, string>> = {
@@ -27,6 +27,7 @@ export const NOT_EXPORTED: Readonly<Record<string, string>> = {
   'crove_kernel.today_mail': "private to its member: a member's own daily mail setting is readable by that member alone",
   'crove_kernel.calendar_connection': "private to its member: a member's own connected calendar account is readable by that member alone",
   'crove_kernel.meeting_platform_connection': "private to its member: a member's own connected meeting platform account is readable by that member alone",
+  'crove_crm.booking_feed': "a member's calendar feed token (hash): a credential",
   // Runtime machinery: recomputed, expiring or only meaningful while the org runs.
   'crove_kernel.agent_wake_delivery': 'a wake-up delivery queue row: runtime machinery',
   'crove_kernel.agent_wake_signal_seen': 'which wake-up signals were seen: runtime machinery',

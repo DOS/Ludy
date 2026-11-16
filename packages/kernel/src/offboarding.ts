@@ -147,6 +147,22 @@ export const EXPORT_TABLES = {
   'crm.event_type': { from: 'crove_crm.event_type', omit: [] },
   // Visitors' bookings (#1318); the request token's hash is the visitor's credential and stays out.
   'crm.booking': { from: 'crove_crm.booking', omit: ['request_token_sha256'] },
+  // The sales side of the crm module (#3367): the pipeline and its deals with their next steps, the quotes with their lines and settings, the sales orders with their lines and
+  // deliveries, and the contact imports with their rows. The hash of a quote's public link token is the visitor's credential and stays out.
+  'crm.pipeline_stage': { from: 'crove_crm.pipeline_stage', omit: [] },
+  'crm.deal': { from: 'crove_crm.deal', omit: [] },
+  'crm.deal_next_step': { from: 'crove_crm.deal_next_step', omit: [] },
+  'crm.deal_setting': { from: 'crove_crm.deal_setting', omit: [] },
+  'crm.quote': { from: 'crove_crm.quote', omit: [] },
+  'crm.quote_line': { from: 'crove_crm.quote_line', omit: [] },
+  'crm.quote_link': { from: 'crove_crm.quote_link', omit: ['token_sha256'] },
+  'crm.quote_setting': { from: 'crove_crm.quote_setting', omit: [] },
+  'crm.sales_order': { from: 'crove_crm.sales_order', omit: [] },
+  'crm.sales_order_line': { from: 'crove_crm.sales_order_line', omit: [] },
+  'crm.sales_order_delivery': { from: 'crove_crm.sales_order_delivery', omit: [] },
+  'crm.import_batch': { from: 'crove_crm.import_batch', omit: [] },
+  // Import rows are temporary staging (a commit, a cancel or the 7-day expiry deletes them): an org that offboards with a staged import carries that file's names and contacts in its copy.
+  'crm.import_row': { from: 'crove_crm.import_row', omit: [] },
   // Ads (#2217, ADR-0040): the org's ad accounts, the daily figures their platforms reported and the sync runs. They hold
   // no credential (that is crove_kernel.credential, which no export reads) and no personal data.
   'ads.ad_account': { from: 'crove_ads.ad_account', omit: [] },

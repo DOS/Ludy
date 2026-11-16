@@ -18,3 +18,4 @@ export {
   projectUnassignedTasks,
   projectUpdate,
 } from './projects.ts';
+export { projectsToday } from './today.ts';

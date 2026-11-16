@@ -20,6 +20,7 @@ import { splitQuoted } from '../lib/email-text.ts';
 import { channelsOfPosts, INBOX_PAGE_SIZE, inboxListInput, mergeConversationPages, nextConversationCursor } from '../lib/conversation-inbox.ts';
 import { client, errorMessage, fetchConversationImage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { appendQuoteMessage, canInsertQuoteLink } from '../lib/quote-reply.ts';
+import { takeReplyHandoff } from '../lib/reply-handoff.ts';
 import { StepUpPrompt } from './two-factor.tsx';
 import { DraftPanel, replyTextFor } from './conversation-drafts.tsx';
 import { IntentBadge, IntentBar } from './conversation-intent.tsx';
@@ -715,6 +716,17 @@ export function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail
     };
     window.addEventListener(REPLY_INSERT_EVENT, onInsert);
     return () => window.removeEventListener(REPLY_INSERT_EVENT, onInsert);
+  }, [id, kind, replyMax]);
+  // A text another screen left for this thread while the Inbox opened (Meetings "Gửi qua Zalo", #3169): taken once when this thread's box appears, and put in like an inserted
+  // message (read, edit, then Send; nothing is sent from here). It is dropped when it is old or was left for another thread (apps/app/src/lib/reply-handoff.ts).
+  useEffect(() => {
+    const left = takeReplyHandoff(id);
+    if (left === null || !canInsertQuoteLink(kind)) return;
+    const next = appendQuoteMessage(textNow.current, left, replyMax);
+    setInsertTooLong(!next.fits);
+    if (!next.fits) return;
+    setText(next.text);
+    setFrom({});
   }, [id, kind, replyMax]);
   const send = useMutation({
     mutationFn: () => client.conversations.reply({ conversationId: id, body: text.trim(), lastSeenSeq: seen, ...from }),
