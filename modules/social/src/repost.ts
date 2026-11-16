@@ -98,6 +98,7 @@ export const REPOST_STALE_MS = COMMENT_STALE_MS;
 // Stores what the platform answered; an answer for a key that is not a started call changes nothing.
 export const repostRecord = defineCommand({
   name: 'social.repost.record',
+  runsWhenOff: "records the platform's answer to a call already made, so its outcome is not lost when the app is switched off",
   input: z.strictObject({ variantId: zId, callKey: z.string().min(1).max(300), result: zRepostResult }),
   risk: 'R1',
   sideEffect: 'internal',

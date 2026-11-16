@@ -155,6 +155,7 @@ export type RemoveRecord = z.infer<typeof zRemoveResult>;
 // Stores what the platform answered for the remove call; an answer for a call that is not started changes nothing.
 export const removeRecord = defineCommand({
   name: 'social.remove.record',
+  runsWhenOff: "records the platform's answer to a call already made, so its outcome is not lost when the app is switched off",
   input: z.strictObject({ variantId: zId, callKey: z.string().min(1).max(300), result: zRemoveResult }),
   risk: 'R1',
   sideEffect: 'internal',

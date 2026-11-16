@@ -472,6 +472,7 @@ function retryDelay(attempt: number): number {
 
 export const publishRecord = defineCommand({
   name: 'social.publish.record',
+  runsWhenOff: "records the platform's answer to a call already made, so its outcome is not lost when the app is switched off",
   input: z.strictObject({
     variantId: zId,
     callKey: z.string().min(1).max(500),

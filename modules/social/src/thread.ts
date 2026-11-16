@@ -153,6 +153,7 @@ const zPartResult = z.discriminatedUnion('kind', [
 // variant's current publish changes nothing.
 export const threadRecord = defineCommand({
   name: 'social.thread.record',
+  runsWhenOff: "records the platform's answer to a call already made, so its outcome is not lost when the app is switched off",
   input: z.strictObject({ variantId: zId, callKey: z.string().min(1).max(300), result: zPartResult }),
   risk: 'R1',
   sideEffect: 'internal',
