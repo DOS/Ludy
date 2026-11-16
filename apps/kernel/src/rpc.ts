@@ -910,6 +910,7 @@ export function createRpcHandler(
           sheet: os.hr.payroll.runs.sheet.handler(hrQuery('hr.payroll.run.sheet')),
           open: os.hr.payroll.runs.open.handler(hrCommand('hr.payroll.run.open')),
           recalculate: os.hr.payroll.runs.recalculate.handler(hrCommand('hr.payroll.run.recalculate')),
+          importTimekeeping: os.hr.payroll.runs.importTimekeeping.handler(hrCommand('hr.payroll.run.import_timekeeping')),
           approve: os.hr.payroll.runs.approve.handler(hrCommand('hr.payroll.run.approve')),
         },
         // Where the posting and the payments of an approved month stand (#2532): finance reads its own books and the open proposals; owners and admins.
