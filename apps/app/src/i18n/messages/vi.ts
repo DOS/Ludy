@@ -3986,6 +3986,8 @@ export const vi = {
       closeOn: 'Dự kiến chốt {date}',
       lostFor: 'Lý do thua của "{title}" (không bắt buộc)',
       lastDays: 'Các cơ hội đóng trong {days} ngày qua',
+      showAll: 'Xem tất cả',
+      showAllLabel: 'Xem trong danh sách tất cả cơ hội ở giai đoạn {stage}',
       truncated: 'Còn nhiều cơ hội hơn số thẻ hiển thị; xem đủ ở dạng danh sách.',
     },
     view: {

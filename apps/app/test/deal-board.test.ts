@@ -2,7 +2,8 @@
 // The board's optimistic move (#2226): where a card sits once it is dropped, before the server answers.
 import { describe, expect, it } from 'vitest';
 import type { Board, Deal, PipelineStage } from '@crove/kernel-contract';
-import { moveCard } from '../src/lib/deal-board.ts';
+import { dealFilterToAst } from '../src/lib/deal-filter.ts';
+import { moveCard, showAllClosed } from '../src/lib/deal-board.ts';
 
 const stage = (id: string, kind: PipelineStage['kind'], position: number): PipelineStage => ({ id, name: id, kind, position });
 const deal = (id: string, stageId: string, stageKind: Deal['stageKind'] = 'open'): Deal => ({
@@ -65,5 +66,22 @@ describe('moveCard', () => {
     const moved = moveCard(b, b.columns[0]!.cards[0]!, { stageId: 'quote', beforeDealId: null });
     expect(moved.columns.map((c) => [c.count, c.total])).toEqual([[3, '3000000.00'], [1, '1000000.00'], [0, '0']]);
     expect(moveCard(b, b.columns[0]!.cards[0]!, { stageId: 'gone', beforeDealId: null })).toBe(b);
+  });
+});
+
+describe('"Xem tất cả" in a closed column (docs/plan/crm.md section 6)', () => {
+  it('shows the deals of that status of every date and nothing else narrows them', () => {
+    const won = showAllClosed('won');
+    expect(won.status).toBe('won');
+    expect(won).toMatchObject({ search: '', stage: '', owner: '', close: '', amountMin: '', amountMax: '', rest: [] });
+    expect(dealFilterToAst(won).all).toEqual([{ field: 'status', op: 'is', value: 'won' }]);
+    expect(dealFilterToAst(showAllClosed('lost')).all).toEqual([{ field: 'status', op: 'is', value: 'lost' }]);
+  });
+
+  it('gives a fresh state each time, so a later edit of the bar never changes the next one', () => {
+    const a = showAllClosed('won');
+    const b = showAllClosed('won');
+    expect(a).not.toBe(b);
+    expect(a.rest).not.toBe(b.rest);
   });
 });
