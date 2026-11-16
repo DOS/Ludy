@@ -4,6 +4,7 @@ import {
   PROBATION_CAPS,
   calculateSeveranceAllowance,
   calculateThirteenthMonthSalary,
+  countCompletedCalendarMonths,
   checkLaborContractTerms,
   evaluateContractAlerts,
   isValidCalendarDate,
@@ -513,6 +514,15 @@ describe('evaluateContractAlerts', () => {
 });
 
 describe('calculateSeveranceAllowance (Labor Code 2019 Art. 46 & Decree 145 Art. 8)', () => {
+  it('counts completed calendar months across boundaries without Date rollover bugs', () => {
+    expect(countCompletedCalendarMonths('2025-01-01', '2025-12-31')).toBe(12);
+    expect(countCompletedCalendarMonths('2025-01-15', '2026-01-14')).toBe(12);
+    expect(countCompletedCalendarMonths('2025-01-15', '2026-01-13')).toBe(11);
+    expect(countCompletedCalendarMonths('2025-11-01', '2026-11-30')).toBe(13);
+    expect(countCompletedCalendarMonths('2024-02-29', '2025-02-28')).toBe(12);
+    expect(countCompletedCalendarMonths('2026-06-01', '2026-05-31')).toBe(0);
+  });
+
   it('applies half-year rounding accurately across all month boundaries', () => {
     expect(roundSeveranceQualifyingYears(0)).toBe('0');
     expect(roundSeveranceQualifyingYears(1)).toBe('0.5');

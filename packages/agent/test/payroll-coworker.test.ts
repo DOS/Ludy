@@ -24,7 +24,7 @@ const CONFIG = { baseURL: 'http://localhost:1/v1', apiKey: null, model: 'test' }
 const zero = (): PayrollFigures => ({ base_wage: '0', allowances: '0', other_regular_pay: '0', overtime: '0', night_work: '0', bonus: '0', unpaid_reduction: '0', gross: '0', employee_insurance: '0', pit: '0', deductions: '0', net: '0' });
 const figures = (over: Partial<PayrollFigures>): PayrollFigures => ({ ...zero(), ...over });
 const quiet = { minimumWageFailed: false, deductionCapFailed: false, overtimeCapFailed: false, netBelowMinimum: false, insuredAboveCap: false, cashPaymentOverLimit: false };
-const calm = { startsInMonth: false, probationEndsInMonth: false, endsInMonth: false };
+const calm = { startsInMonth: false, probationEndsInMonth: false, endsInMonth: false, severanceCheckSuggested: false };
 
 // Values that must never reach a model, planted wherever a careless caller could put them.
 const PLANTED = ['Nguyễn Văn Thử', 'Nguyen Van Thu', '079201012345', '8012345678-001', '0123456789012', '12 Phố Huế, Hà Nội', 'VCB 1234 5678 9012'];
@@ -133,16 +133,17 @@ describe('findSignals', () => {
   it('finds a hire, a probation and a contract ending, recurring overtime and a changed regular component', () => {
     const { sheet } = pseudo(
       [
-        line('1', { previous: null, contract: { startsInMonth: true, probationEndsInMonth: false, endsInMonth: false } }),
-        line('2', { previous: null, contract: { startsInMonth: false, probationEndsInMonth: true, endsInMonth: true } }),
+        line('1', { previous: null, contract: { ...calm, startsInMonth: true } }),
+        line('2', { previous: null, contract: { ...calm, probationEndsInMonth: true, endsInMonth: true, severanceCheckSuggested: true } }),
         line('3', { previous: null, overtimeMonthsInRow: 3, figures: figures({ overtime: '1200000' }) }),
         line('4', { figures: figures({ allowances: '700000' }), previous: figures({ allowances: '500000' }) }),
       ],
       { language: 'en', blockingRules: 0 },
     );
     const signals = findSignals(sheet);
-    expect(signals.map((s) => [s.alias, s.kind])).toEqual([['E1', 'new_hire'], ['E2', 'probation_ends'], ['E2', 'contract_ends'], ['E3', 'recurring_overtime'], ['E4', 'component_changed']]);
-    expect(signals[4]?.facts).toBe('E4: Allowances 700,000 dong, last month 500,000 dong; up');
+    expect(signals.map((s) => [s.alias, s.kind])).toEqual([['E1', 'new_hire'], ['E2', 'probation_ends'], ['E2', 'contract_ends'], ['E2', 'severance_check'], ['E3', 'recurring_overtime'], ['E4', 'component_changed']]);
+    expect(signals[3]?.facts).toContain('12');
+    expect(signals[5]?.facts).toBe('E4: Allowances 700,000 dong, last month 500,000 dong; up');
   });
 });
 
@@ -216,7 +217,7 @@ describe('checkFlagSentences', () => {
 });
 
 describe('checkPrepareProposals', () => {
-  const { sheet } = pseudo([line('1', { contract: { startsInMonth: false, probationEndsInMonth: true, endsInMonth: false } })], { language: 'en', blockingRules: 0 });
+  const { sheet } = pseudo([line('1', { contract: { ...calm, probationEndsInMonth: true } })], { language: 'en', blockingRules: 0 });
   const signals = findSignals(sheet);
 
   it('keeps a proposal with its field and drops one that names another alias, an unknown id or a made-up figure', () => {
@@ -224,6 +225,18 @@ describe('checkPrepareProposals', () => {
     expect(checkPrepareProposals(signals, { items: [{ id: 'S1', field: 'none', note: 'E2 leaves probation.' }] })).toEqual({ kind: 'none', code: 'EMPTY' });
     expect(checkPrepareProposals(signals, { items: [{ id: 'S9', field: 'none', note: 'E1 leaves probation.' }] })).toEqual({ kind: 'none', code: 'EMPTY' });
     expect(checkPrepareProposals(signals, { items: [{ id: 'S1', field: 'bonus', note: 'E1 gets a bonus of 500000 dong.' }] })).toEqual({ kind: 'none', code: 'EMPTY' });
+  });
+
+  it('validates severance_check field allowlist and 12-month figure grounding in vi and en', () => {
+    const viSheet = pseudo([line('1', { previous: null, contract: { ...calm, severanceCheckSuggested: true } })], { language: 'vi', blockingRules: 0 }).sheet;
+    const viSignals = findSignals(viSheet);
+    expect(viSignals).toHaveLength(1);
+    expect(viSignals[0]?.facts).toContain('12');
+    expect(checkPrepareProposals(viSignals, { items: [{ id: 'S1', field: 'contract', note: 'E1 đã làm đủ 12 tháng, cần kiểm tra trợ cấp thôi việc.' }] })).toMatchObject({
+      kind: 'proposals',
+      items: [{ alias: 'E1', kind: 'severance_check', field: 'contract' }],
+    });
+    expect(checkPrepareProposals(viSignals, { items: [{ id: 'S1', field: 'overtime', note: 'E1 đã làm đủ 12 tháng.' }] })).toEqual({ kind: 'none', code: 'EMPTY' });
   });
 });
 
@@ -290,7 +303,7 @@ describe('PayrollCoworker', () => {
   };
   const { sheet } = pseudo(
     [
-      tainted('1', { figures: figures({ net: '12000000' }), previous: figures({ net: '8000000' }), contract: { startsInMonth: false, probationEndsInMonth: true, endsInMonth: false } }),
+      tainted('1', { figures: figures({ net: '12000000' }), previous: figures({ net: '8000000' }), contract: { ...calm, probationEndsInMonth: true } }),
       tainted('2', { dependentsWithoutRegistration: 1 }),
     ],
     { language: 'vi', blockingRules: 1 },

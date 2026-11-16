@@ -169,3 +169,70 @@ export const zHrEmployeeErased = z.object({
   kept: z.array(z.object({ what: z.string(), reason: z.string() })),
 });
 export type HrEmployeeErased = z.infer<typeof zHrEmployeeErased>;
+
+// Statutory severance and 13th-month rule citation metadata (matches LaborRuleRef in @crove/l10n-vn).
+export const zHrLaborRuleRef = z.object({
+  id: z.string(),
+  planRow: z.number().int(),
+  status: z.enum(['confirmed', 'commentary']),
+  confidence: z.enum(['primary', 'gov', 'commentary', 'unverified']),
+  cite: z.string(),
+});
+export type HrLaborRuleRef = z.infer<typeof zHrLaborRuleRef>;
+
+// Statutory severance termination & ineligibility codes (equal to SEVERANCE_TERMINATION_REASONS / SeveranceIneligibleReason in @crove/l10n-vn).
+export const HR_SEVERANCE_TERMINATION_REASONS = [
+  'contract_expired',
+  'task_completed',
+  'mutual_agreement',
+  'lawful_unilateral',
+  'other_eligible',
+  'retirement_pension',
+  'disciplinary_dismissal',
+  'unlawful_resignation',
+  'job_loss_redundancy',
+] as const;
+export type HrSeveranceTerminationReason = (typeof HR_SEVERANCE_TERMINATION_REASONS)[number];
+
+export const HR_SEVERANCE_INELIGIBLE_REASONS = [
+  'worked_under_12_months',
+  'retirement_pension',
+  'disciplinary_dismissal',
+  'unlawful_resignation',
+  'job_loss_redundancy',
+] as const;
+export type HrSeveranceIneligibleReason = (typeof HR_SEVERANCE_INELIGIBLE_REASONS)[number];
+
+export const zHrEmployeeSeveranceAsk = z.strictObject({
+  employeeId: zId,
+  endedOn: zLocalDate.optional(),
+  terminationReason: z.enum(HR_SEVERANCE_TERMINATION_REASONS).optional(),
+  totalWorkedMonths: z.number().int().min(0).max(1200).optional(),
+  unemploymentInsuredMonths: z.number().int().min(0).max(1200).optional(),
+  priorSettledMonths: z.number().int().min(0).max(1200).optional(),
+  paidAmount: zHrWage.optional(),
+});
+export type HrEmployeeSeveranceAsk = z.input<typeof zHrEmployeeSeveranceAsk>;
+
+export const zHrEmployeeSeveranceResult = z.object({
+  employeeId: zId,
+  status: z.enum(HR_STATUSES),
+  hireDate: z.string(),
+  endedOn: z.string(),
+  terminationReason: z.enum(HR_SEVERANCE_TERMINATION_REASONS),
+  totalWorkedMonths: z.number().int(),
+  unemploymentInsuredMonths: z.number().int(),
+  priorSettledMonths: z.number().int(),
+  sixMonthWages: z.array(z.string()),
+  qualifyingMonths: z.number().int(),
+  qualifyingYears: z.string(),
+  averageWage: z.string(),
+  eligible: z.boolean(),
+  reason: z.enum(HR_SEVERANCE_INELIGIBLE_REASONS).nullable(),
+  amount: z.string(),
+  paidAmount: z.string().nullable(),
+  pitExemptAmount: z.string(),
+  taxableExcess: z.string(),
+  rulesUsed: z.array(zHrLaborRuleRef),
+});
+export type HrEmployeeSeveranceResult = z.infer<typeof zHrEmployeeSeveranceResult>;

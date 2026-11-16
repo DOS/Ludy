@@ -283,11 +283,13 @@ import {
   zHrEmployeeErased,
   zHrEmployeeList,
   zHrEmployeeRef,
+  zHrEmployeeSeveranceAsk,
+  zHrEmployeeSeveranceResult,
   zHrEmployeeSummary,
   zHrEmploymentAdd,
   zHrWritten,
 } from './hr.ts';
-import { zPayrollSettlement, zPayrollSettlementRef, zHrCoworkerAsk, zHrCoworkerExplained, zHrCoworkerFlagged, zHrCoworkerPayslipAsk, zHrCoworkerPrepared, zHrLineAdjust, zHrLineInputsSet, zHrPayslip, zHrPaymentRequest, zHrPostingRequest, zHrPayslipRef, zHrRunApprove, zHrRunImportTimekeeping, zHrRunList, zHrRunOpen, zHrRunRecalculate, zHrRunRef, zHrRunSheet, zHrRunSummary, zHrRunWritten } from './hr-payroll.ts';
+import { zPayrollSettlement, zPayrollSettlementRef, zHrCoworkerAsk, zHrCoworkerExplained, zHrCoworkerFlagged, zHrCoworkerPayslipAsk, zHrCoworkerPrepared, zHrLineAdjust, zHrLineInputsSet, zHrPayslip, zHrPaymentRequest, zHrPostingRequest, zHrPayslipRef, zHrRunApplyThirteenthMonth, zHrRunApprove, zHrRunImportTimekeeping, zHrRunList, zHrRunOpen, zHrRunRecalculate, zHrRunRef, zHrRunSheet, zHrRunSummary, zHrRunThirteenthMonthPreview, zHrRunWritten, zHrThirteenthMonthPreviewResult } from './hr-payroll.ts';
 import { zHrBankTemplate, zHrBankTemplateCreate, zHrBankTemplateEdit, zHrBankTemplateList, zHrBankTemplateRef, zHrBankTemplateWritten } from './hr-bank-template.ts';
 import {
   zNote,
@@ -864,6 +866,7 @@ export const contract = {
         end: oc.input(zHrEmployeeEnd).output(zHrWritten),
         // An owner's erasure of an ended employee after the retention: shreds the person's key (R3).
         erase: oc.input(zHrEmployeeRef).output(zHrEmployeeErased),
+        severance: oc.input(zHrEmployeeSeveranceAsk).output(zHrEmployeeSeveranceResult),
       },
       // The saved layouts of the banks' bulk-salary files (#2893), owners and admins: list, create, edit and delete; the export applies one.
       bankTemplates: {
@@ -882,6 +885,8 @@ export const contract = {
         open: oc.input(zHrRunOpen).output(zHrRunWritten),
         recalculate: oc.input(zHrRunRecalculate).output(zHrRunWritten),
         importTimekeeping: oc.input(zHrRunImportTimekeeping).output(zHrRunWritten),
+        thirteenthMonthPreview: oc.input(zHrRunThirteenthMonthPreview).output(zHrThirteenthMonthPreviewResult),
+        applyThirteenthMonth: oc.input(zHrRunApplyThirteenthMonth).output(zHrRunWritten),
         approve: oc.input(zHrRunApprove).output(zHrRunWritten),
       },
       // Where the posting and the payments of an approved month stand, for its card (#2532): from the books and the open proposals, no person and no amount; owners and admins.
