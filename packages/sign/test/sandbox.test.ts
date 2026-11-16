@@ -74,6 +74,11 @@ describe('CA provider registry and offline sandbox adapter', () => {
     await expect(adapter.initiateSign(SANDBOX_CA_SECRET, makeRequest('bad-digest', { digestSha256: 'xyz' }))).rejects.toMatchObject({
       kind: 'invalid_request',
     });
+    for (const badKey of ['.', '..', 'dir/key', 'key?x=1', 'key#frag']) {
+      await expect(adapter.initiateSign(SANDBOX_CA_SECRET, makeRequest(badKey))).rejects.toMatchObject({
+        kind: 'invalid_request',
+      });
+    }
   });
 
   it('signs deterministically offline and produces valid DER CMS SignedData bytes', async () => {

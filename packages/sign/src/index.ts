@@ -18,6 +18,12 @@ export * from './sandbox.ts';
 export * from './vnpt-smartca.ts';
 export * from './viettel-mysign.ts';
 export * from './misa-wesign.ts';
+export {
+  assembleDetachedCmsSignedData,
+  decodeDerCertificate,
+  derCertToPem,
+  isCmsSignedDataDer,
+} from './cms-der.ts';
 export { assertSafeCaBaseUrl, assertSafeCaRequestUrl, isSafePublicFqdn, isValidDerSequence } from './http.ts';
 
 export function getCaAdapter(provider: CaProviderId, options: CaAdapterOptions = {}): CaSigningAdapter {

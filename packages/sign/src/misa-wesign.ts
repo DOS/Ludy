@@ -1,11 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// MISA WeSign (RMeSign Open API) remote signing adapter.
+// MISA eSign / WeSign remote signing adapter (Open API auth via esignapp.misa.vn + RMeSign signing endpoints).
 // Strictly enforces HTTPS + host allowlist (SSRF guard), rejects client-PC USB/token signing modes,
-// keeps credentials/tokens opaque in memory, and uses reconcile_only initiateSign safety.
+// keeps credentials and AuthorizationRM tokens opaque in memory, uses reconcile_only initiateSign safety,
+// and wraps raw signatures in RFC 5652 detached CMS SignedData when certificates are available.
+import {
+  decodeDerCertificate,
+  resolveCmsOrWrapRawSignature,
+} from './cms-der.ts';
 import {
   DEFAULT_CA_TIMEOUT_MS,
   assertSafeCaBaseUrl,
   assertSafeHostAllowlist,
+  decodeBase64Bytes,
   decodeDerSequenceBase64,
   isRecord,
   isUsbTokenMode,
@@ -16,7 +22,7 @@ import {
   pickCaseInsensitive,
   postCaJson,
   readText,
-  requireCredentialField,
+  setBoundedMap,
   sha256Hex,
   validateInitiateRequest,
 } from './http.ts';
@@ -32,32 +38,51 @@ import {
   type CaSigningAdapter,
 } from './port.ts';
 
-export const MISA_WESIGN_BASE_URL = 'https://developer.misa.vn/apis/RMeSign';
-export const MISA_WESIGN_HOSTS = ['developer.misa.vn', 'esignapi.misa.vn', 'testesignapi.misa.vn'] as const;
-export const MISA_WESIGN_CONNECT_FIELDS = ['appId', 'appSecret', 'username', 'password', 'taxCode'] as const;
+export const MISA_WESIGN_BASE_URL = 'https://esignapp.misa.vn';
+export const MISA_WESIGN_HOSTS = [
+  'esignapp.misa.vn',
+  'testesignapp.misa.vn',
+  'esignapi.misa.vn',
+  'testesignapi.misa.vn',
+  'developer.misa.vn',
+] as const;
+export const MISA_WESIGN_CONNECT_FIELDS = ['clientId', 'clientKey', 'username', 'password', 'taxCode'] as const;
 
 const DEFAULT_TOKEN_TTL_MS = 6 * 3_600_000;
 
 interface MisaWeSignCredentials {
-  appId: string;
-  appSecret: string;
+  clientId: string;
+  clientKey: string;
   username: string;
   password: string;
   taxCode?: string;
   baseUrl?: string;
 }
 
+interface MisaCertificateRecord {
+  readonly serial: string | null;
+  readonly isUsbOnly: boolean;
+  readonly isActive: boolean;
+  readonly chainDer: readonly Uint8Array[];
+}
+
 function parseMisaCredentials(secret: string): MisaWeSignCredentials {
   const obj = parseCredentialObject(secret);
-  const appId = requireCredentialField(obj, 'appId');
-  const appSecret = requireCredentialField(obj, 'appSecret');
-  const username = requireCredentialField(obj, 'username');
-  const password = requireCredentialField(obj, 'password');
+  const clientId = optionalCredentialField(obj, 'clientId') ?? optionalCredentialField(obj, 'appId');
+  const clientKey =
+    optionalCredentialField(obj, 'clientKey') ??
+    optionalCredentialField(obj, 'clientSecret') ??
+    optionalCredentialField(obj, 'appSecret');
+  const username = optionalCredentialField(obj, 'username');
+  const password = optionalCredentialField(obj, 'password');
+  if (!clientId || !clientKey || !username || !password) {
+    throw new CaProviderError('credentials');
+  }
   const taxCode = optionalCredentialField(obj, 'taxCode');
   const baseUrl = optionalCredentialField(obj, 'baseUrl');
   return {
-    appId,
-    appSecret,
+    clientId,
+    clientKey,
     username,
     password,
     ...(taxCode !== undefined ? { taxCode } : {}),
@@ -76,12 +101,45 @@ function mapMisaStatus(rawStatus: unknown): CaSignStatus | null {
   }
   const text = readText(rawStatus)?.toUpperCase();
   if (!text) return null;
-  if (['PENDING', 'WAITING', 'WAITINGAPPROVE', 'WAITING_APPROVE', 'PROCESSING'].includes(text)) return 'pending';
-  if (['SUCCESS', 'SIGNED', 'COMPLETED', 'COMPLETE'].includes(text)) return 'signed';
-  if (['REJECTED', 'USERREJECTED', 'USER_REJECTED', 'CANCELLED', 'DECLINED'].includes(text)) return 'rejected';
-  if (['EXPIRED', 'TIMEOUT'].includes(text)) return 'expired';
-  if (['FAILED', 'ERROR'].includes(text)) return 'failed';
+  if (['0', 'PENDING', 'WAITING', 'WAITINGAPPROVE', 'WAITING_APPROVE', 'PROCESSING'].includes(text)) return 'pending';
+  if (['1', 'SUCCESS', 'SIGNED', 'COMPLETED', 'COMPLETE'].includes(text)) return 'signed';
+  if (['2', 'REJECTED', 'USERREJECTED', 'USER_REJECTED', 'CANCELLED', 'DECLINED'].includes(text)) return 'rejected';
+  if (['3', 'EXPIRED', 'TIMEOUT'].includes(text)) return 'expired';
+  if (['4', 'FAILED', 'ERROR'].includes(text)) return 'failed';
   return null;
+}
+
+function extractMisaCertificates(json: unknown): MisaCertificateRecord[] {
+  const data = pickCaseInsensitive(json, 'Data');
+  const list = Array.isArray(data) ? data : [];
+  const out: MisaCertificateRecord[] = [];
+  for (const cert of list) {
+    if (!isRecord(cert)) continue;
+    const certType =
+      pickCaseInsensitive(cert, 'SignType') ??
+      pickCaseInsensitive(cert, 'TokenType') ??
+      pickCaseInsensitive(cert, 'DeviceType');
+    const isUsbOnly = certType !== undefined && isUsbTokenMode(certType);
+    const keyStatus = readText(pickCaseInsensitive(cert, 'KeyStatus'));
+    const isActive = keyStatus === null || keyStatus.toUpperCase() === 'ACTIVE';
+    const serial = readText(pickCaseInsensitive(cert, 'CertSerial'));
+    const chainDer: Uint8Array[] = [];
+    const leaf = decodeDerCertificate(
+      pickCaseInsensitive(cert, 'CertData') ??
+        pickCaseInsensitive(cert, 'Certificate') ??
+        pickCaseInsensitive(cert, 'CertBase64'),
+    );
+    if (leaf) chainDer.push(leaf);
+    const rawChain = pickCaseInsensitive(cert, 'CertificateChain');
+    if (Array.isArray(rawChain)) {
+      for (const item of rawChain) {
+        const parsed = decodeDerCertificate(item);
+        if (parsed) chainDer.push(parsed);
+      }
+    }
+    out.push({ serial, isUsbOnly, isActive, chainDer });
+  }
+  return out;
 }
 
 export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigningAdapter {
@@ -91,6 +149,16 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
   const allowedHosts = assertSafeHostAllowlist(options.allowedHosts ?? MISA_WESIGN_HOSTS);
   const defaultBaseUrl = assertSafeCaBaseUrl(options.baseUrl ?? MISA_WESIGN_BASE_URL, allowedHosts);
   const tokens = new Map<string, { token: string; expiresAtMs: number }>();
+  const txToCertRef = new Map<string, string>();
+  const certCache = new Map<string, readonly MisaCertificateRecord[]>();
+
+  function rememberCertRef(secretKey: string, txId: string, certRef: string): void {
+    setBoundedMap(txToCertRef, 500, `${secretKey}:${txId}`, certRef);
+  }
+
+  function cacheCerts(secretKey: string, certs: readonly MisaCertificateRecord[]): void {
+    setBoundedMap(certCache, 100, secretKey, certs);
+  }
 
   function resolveBaseUrl(creds: MisaWeSignCredentials): string {
     return creds.baseUrl ? assertSafeCaBaseUrl(creds.baseUrl, allowedHosts) : defaultBaseUrl;
@@ -99,21 +167,22 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
   async function login(
     creds: MisaWeSignCredentials,
   ): Promise<
-    | { ok: true; token: string }
+    | { ok: true; token: string; ttlMs: number }
     | { ok: false; reason: 'credentials' | 'two_step' | 'api_not_enabled' | 'ip_not_allowed' | 'unavailable' }
   > {
     const base = resolveBaseUrl(creds);
     const res = await postCaJson({
       fetchImpl,
-      url: `${base}/Login`,
+      url: `${base}/api/auth/api/v1/auth/login-api`,
       allowedHosts,
       headers: {
         'content-type': 'application/json',
         accept: 'application/json',
-        AppID: creds.appId,
-        AppSecret: creds.appSecret,
+        'x-clientId': creds.clientId,
+        'x-clientKey': creds.clientKey,
       },
       body: {
+        userName: creds.username,
         username: creds.username,
         password: creds.password,
         ...(creds.taxCode ? { taxCode: creds.taxCode } : {}),
@@ -135,8 +204,13 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
     const token =
       readText(data) ??
       readText(pickCaseInsensitive(data, 'AccessToken')) ??
-      readText(pickCaseInsensitive(data, 'Token'));
-    if (token) return { ok: true, token };
+      readText(pickCaseInsensitive(data, 'Token')) ??
+      readText(pickCaseInsensitive(res.json, 'AccessToken'));
+    if (token) {
+      const expiresInSec = Number(pickCaseInsensitive(data, 'ExpiresIn'));
+      const ttlMs = Number.isFinite(expiresInSec) && expiresInSec > 60 ? (expiresInSec - 30) * 1000 : DEFAULT_TOKEN_TTL_MS;
+      return { ok: true, token, ttlMs };
+    }
     const custom = pickCaseInsensitive(res.json, 'CustomData');
     if (pickCaseInsensitive(custom, 'Id') !== undefined || pickCaseInsensitive(data, 'RequireOtp') === true) {
       return { ok: false, reason: 'two_step' };
@@ -144,11 +218,8 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
     return { ok: false, reason: 'credentials' };
   }
 
-  function cacheToken(secretKey: string, token: string): void {
-    if (tokens.size >= 100 && !tokens.has(secretKey)) {
-      tokens.delete(tokens.keys().next().value as string);
-    }
-    tokens.set(secretKey, { token, expiresAtMs: now().getTime() + DEFAULT_TOKEN_TTL_MS });
+  function cacheToken(secretKey: string, token: string, ttlMs: number): void {
+    setBoundedMap(tokens, 100, secretKey, { token, expiresAtMs: now().getTime() + ttlMs });
   }
 
   async function getToken(secretKey: string, creds: MisaWeSignCredentials, forceFresh: boolean): Promise<string> {
@@ -162,7 +233,7 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
     if (!result.ok) {
       throw new CaProviderError(result.reason === 'unavailable' ? 'unavailable' : 'credentials');
     }
-    cacheToken(secretKey, result.token);
+    cacheToken(secretKey, result.token, result.ttlMs);
     return result.token;
   }
 
@@ -186,8 +257,9 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
         headers: {
           'content-type': 'application/json',
           accept: 'application/json',
-          AppID: creds.appId,
-          Authorization: `Bearer ${token}`,
+          'x-clientId': creds.clientId,
+          'x-clientKey': creds.clientKey,
+          AuthorizationRM: `Bearer ${token}`,
         },
         body,
         write,
@@ -202,6 +274,35 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
       return res;
     }
     throw new CaProviderError('credentials');
+  }
+
+  async function resolveCertificateChainDer(
+    secret: string,
+    secretKey: string,
+    creds: MisaWeSignCredentials,
+    txId: string,
+  ): Promise<readonly Uint8Array[] | null> {
+    const wantedSerial = txToCertRef.get(`${secretKey}:${txId}`);
+    const selectFrom = (list: readonly MisaCertificateRecord[]): readonly Uint8Array[] | null => {
+      if (list.length === 0) return null;
+      const match = wantedSerial
+        ? list.find((c) => !c.isUsbOnly && c.serial?.toLowerCase() === wantedSerial.toLowerCase())
+        : undefined;
+      const chosen = match ?? list.find((c) => !c.isUsbOnly && c.isActive && c.chainDer.length > 0);
+      return chosen && chosen.chainDer.length > 0 ? chosen.chainDer : null;
+    };
+    const cached = certCache.get(secretKey);
+    const hit = cached ? selectFrom(cached) : null;
+    if (hit) return hit;
+
+    const certsRes = await callAuthorized(secret, creds, 'POST', '/apis/RMeSign/GetListCertificate', {}, false);
+    if (certsRes.status === 429 || certsRes.status >= 500 || !isRecord(certsRes.json)) {
+      throw new CaProviderError('unavailable');
+    }
+    if (certsRes.status === 403) throw new CaProviderError('credentials');
+    const records = extractMisaCertificates(certsRes.json);
+    if (records.length > 0) cacheCerts(secretKey, records);
+    return selectFrom(records);
   }
 
   function parseSession(json: unknown, fallbackIdempotencyKey: string, fallbackTxId: string): CaSignSession {
@@ -236,15 +337,15 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
     creds: MisaWeSignCredentials,
     query: { externalTxId: string | null; idempotencyKey: string | null },
   ): Promise<{ session: CaSignSession; rawJson: unknown }> {
-    const params = new URLSearchParams();
-    if (query.externalTxId) params.set('transactionId', query.externalTxId);
-    if (query.idempotencyKey) params.set('refId', query.idempotencyKey);
     const res = await callAuthorized(
       secret,
       creds,
-      'GET',
-      `/GetSignStatusV3?${params.toString()}`,
-      undefined,
+      'POST',
+      '/apis/RMeSign/GetSignStatusV3',
+      {
+        ...(query.externalTxId ? { TransactionID: query.externalTxId } : {}),
+        ...(query.idempotencyKey ? { RefID: query.idempotencyKey } : {}),
+      },
       false,
     );
     if (res.status === 429) throw new CaProviderError('unavailable');
@@ -293,29 +394,19 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
           if (auth.reason === 'credentials') return 'wrong_credentials';
           return 'unreachable';
         }
-        cacheToken(sha256Hex(secret), auth.token);
-        const certsRes = await callAuthorized(secret, creds, 'POST', '/GetListCertificate', {}, false);
+        cacheToken(sha256Hex(secret), auth.token, auth.ttlMs);
+        const certsRes = await callAuthorized(secret, creds, 'POST', '/apis/RMeSign/GetListCertificate', {}, false);
         if (certsRes.status === 429 || certsRes.status >= 500 || !isRecord(certsRes.json)) return 'unreachable';
+        if (certsRes.status === 401 || certsRes.status === 403) return 'wrong_credentials';
         if (pickCaseInsensitive(certsRes.json, 'Success') !== true) return 'unreachable';
-        const data = pickCaseInsensitive(certsRes.json, 'Data');
-        const list = Array.isArray(data) ? data : [];
-        if (list.length === 0) return 'signing_needs_person';
-        let sawUsb = false;
-        const hasActiveRemote = list.some((cert) => {
-          if (!isRecord(cert)) return false;
-          const certType =
-            pickCaseInsensitive(cert, 'SignType') ??
-            pickCaseInsensitive(cert, 'TokenType') ??
-            pickCaseInsensitive(cert, 'DeviceType');
-          if (certType !== undefined && isUsbTokenMode(certType)) {
-            sawUsb = true;
-            return false;
-          }
-          const keyStatus = readText(pickCaseInsensitive(cert, 'KeyStatus'));
-          return keyStatus === null || keyStatus.toUpperCase() === 'ACTIVE';
-        });
-        if (hasActiveRemote) return 'works';
-        return sawUsb ? 'usb_token_unsupported' : 'signing_needs_person';
+        const records = extractMisaCertificates(certsRes.json);
+        if (records.length === 0) return 'signing_needs_person';
+        const activeRemote = records.filter((r) => !r.isUsbOnly && r.isActive);
+        if (activeRemote.length > 0) {
+          cacheCerts(sha256Hex(secret), activeRemote);
+          return 'works';
+        }
+        return records.some((r) => r.isUsbOnly) ? 'usb_token_unsupported' : 'signing_needs_person';
       } catch (error) {
         if (error instanceof CaProviderError) {
           if (error.kind === 'unsafe_url') throw error;
@@ -329,12 +420,13 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
     initiateSign: async (secret: string, request: CaInitiateRequest): Promise<CaSignSession> => {
       const creds = parseMisaCredentials(secret);
       const valid = validateInitiateRequest(request);
+      const secretKey = sha256Hex(secret);
       const hashBase64 = Buffer.from(valid.digestSha256, 'hex').toString('base64');
       const res = await callAuthorized(
         secret,
         creds,
         'POST',
-        '/SignHashV4',
+        '/apis/RMeSign/SignHashV4',
         {
           RefID: valid.idempotencyKey,
           CertSerial: valid.certRef,
@@ -356,6 +448,7 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
         const reconciled = await queryStatus(secret, creds, { externalTxId: null, idempotencyKey: valid.idempotencyKey }).catch(() => {
           throw new CaProviderError('lost_answer');
         });
+        rememberCertRef(secretKey, reconciled.session.externalTxId, valid.certRef);
         return reconciled.session;
       }
       if (res.status >= 400 || pickCaseInsensitive(res.json, 'Success') === false) {
@@ -371,6 +464,7 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
       const explicitStatus = mapMisaStatus(pickCaseInsensitive(data, 'Status'));
       const txId = readText(pickCaseInsensitive(data, 'TransactionID')) ?? readText(pickCaseInsensitive(data, 'SignID'));
       if (!explicitStatus && txId) {
+        rememberCertRef(secretKey, txId, valid.certRef);
         return {
           provider: 'misa_wesign',
           idempotencyKey: valid.idempotencyKey,
@@ -382,7 +476,9 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
           errorCode: null,
         };
       }
-      return parseSession(res.json, valid.idempotencyKey, valid.idempotencyKey);
+      const session = parseSession(res.json, valid.idempotencyKey, valid.idempotencyKey);
+      rememberCertRef(secretKey, session.externalTxId, valid.certRef);
+      return session;
     },
 
     pollStatus: async (secret: string, query: CaPollQuery | string): Promise<CaSignSession> => {
@@ -395,6 +491,7 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
     fetchSignedCms: async (secret: string, externalTxId: string): Promise<CaSignedCms> => {
       const creds = parseMisaCredentials(secret);
       const txId = normalizeExternalTxId(externalTxId);
+      const secretKey = sha256Hex(secret);
       const { session, rawJson } = await queryStatus(secret, creds, { externalTxId: txId, idempotencyKey: null });
       if (session.status !== 'signed') {
         throw new CaProviderError('not_signed', 'MISA WeSign transaction is not signed');
@@ -404,18 +501,32 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
         pickCaseInsensitive(data, 'CmsBase64') ??
         pickCaseInsensitive(data, 'Signature') ??
         pickCaseInsensitive(data, 'SignedData');
-      const cmsDer = decodeDerSequenceBase64(rawCms);
-      if (!cmsDer) {
-        throw new CaProviderError('unavailable', 'MISA WeSign response did not contain valid CMS DER bytes');
+      const sigBytes = decodeBase64Bytes(rawCms);
+      if (!sigBytes || sigBytes.byteLength === 0) {
+        throw new CaProviderError('unavailable', 'MISA WeSign response did not contain signature bytes');
       }
+
+      const rawChain = pickCaseInsensitive(data, 'CertificateChain');
+      const inlineChainDer = Array.isArray(rawChain)
+        ? rawChain.map(decodeDerCertificate).filter((v): v is Uint8Array => v !== null)
+        : [];
+      const inlineSingleCert = decodeDerCertificate(pickCaseInsensitive(data, 'CertData'));
+      if (inlineSingleCert && inlineChainDer.length === 0) {
+        inlineChainDer.push(inlineSingleCert);
+      }
+
+      const { cmsDer, certificateChainPem } = await resolveCmsOrWrapRawSignature({
+        providerLabel: 'MISA WeSign',
+        sigBytes,
+        rawChain,
+        inlineChainDer,
+        loadChainDer: () => resolveCertificateChainDer(secret, secretKey, creds, txId),
+      });
+
       const timestampTokenDer = decodeDerSequenceBase64(pickCaseInsensitive(data, 'TimestampToken'));
       const rawOcsps = pickCaseInsensitive(data, 'OcspResponses');
       const ocspResponsesDer = Array.isArray(rawOcsps)
         ? rawOcsps.map(decodeDerSequenceBase64).filter((v): v is Uint8Array => v !== null)
-        : [];
-      const rawChain = pickCaseInsensitive(data, 'CertificateChain');
-      const certificateChainPem = Array.isArray(rawChain)
-        ? rawChain.map(readText).filter((v): v is string => v !== null)
         : [];
       return {
         externalTxId: session.externalTxId,

@@ -47,6 +47,14 @@ export function sha256Hex(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex');
 }
 
+export function setBoundedMap<K, V>(map: Map<K, V>, maxEntries: number, key: K, value: V): void {
+  if (map.size >= maxEntries && !map.has(key)) {
+    const oldest = map.keys().next();
+    if (!oldest.done) map.delete(oldest.value);
+  }
+  map.set(key, value);
+}
+
 export function isUsbTokenMode(value: unknown): boolean {
   if (typeof value === 'boolean') return value;
   if (typeof value === 'number') return value === 1;
@@ -160,10 +168,7 @@ export function validateInitiateRequest(request: CaInitiateRequest): {
   signerReason?: string;
 } {
   assertRemoteSigningAllowed(request.signingMode);
-  const idempotencyKey = request.idempotencyKey.trim();
-  if (idempotencyKey.length === 0 || idempotencyKey.length > 128) {
-    throw new CaProviderError('invalid_request', 'idempotencyKey must be 1..128 characters');
-  }
+  const idempotencyKey = normalizeSafeIdentifier(request.idempotencyKey, 'idempotencyKey');
   const digestSha256 = request.digestSha256.trim().toLowerCase();
   if (!SHA256_HEX_RE.test(digestSha256)) {
     throw new CaProviderError('invalid_request', 'digestSha256 must be a 64-character hex SHA-256 digest');
@@ -185,8 +190,8 @@ export function validateInitiateRequest(request: CaInitiateRequest): {
   };
 }
 
-export function normalizeExternalTxId(externalTxId: string): string {
-  const trimmed = externalTxId.trim();
+function normalizeSafeIdentifier(raw: string, fieldName: string): string {
+  const trimmed = raw.trim();
   if (
     trimmed.length === 0 ||
     trimmed.length > 128 ||
@@ -194,9 +199,13 @@ export function normalizeExternalTxId(externalTxId: string): string {
     trimmed === '..' ||
     /[\\/?#]/.test(trimmed)
   ) {
-    throw new CaProviderError('invalid_request', 'externalTxId must be a safe 1..128 character identifier');
+    throw new CaProviderError('invalid_request', `${fieldName} must be a safe 1..128 character identifier`);
   }
   return trimmed;
+}
+
+export function normalizeExternalTxId(externalTxId: string): string {
+  return normalizeSafeIdentifier(externalTxId, 'externalTxId');
 }
 
 export function normalizePollQuery(query: CaPollQuery | string): {
@@ -210,27 +219,27 @@ export function normalizePollQuery(query: CaPollQuery | string): {
     typeof query.externalTxId === 'string' && query.externalTxId.trim() !== ''
       ? normalizeExternalTxId(query.externalTxId)
       : null;
-  const rawKey =
+  const idempotencyKey =
     typeof query.idempotencyKey === 'string' && query.idempotencyKey.trim() !== ''
-      ? query.idempotencyKey.trim()
+      ? normalizeSafeIdentifier(query.idempotencyKey, 'idempotencyKey')
       : null;
-  if (externalTxId === null && rawKey === null) {
+  if (externalTxId === null && idempotencyKey === null) {
     throw new CaProviderError('invalid_request', 'pollStatus requires externalTxId or idempotencyKey');
   }
-  if (rawKey !== null && (rawKey.length > 128 || rawKey === '.' || rawKey === '..' || /[\\/?#]/.test(rawKey))) {
-    throw new CaProviderError('invalid_request', 'idempotencyKey must be a safe 1..128 character identifier');
-  }
-  return { externalTxId, idempotencyKey: rawKey };
+  return { externalTxId, idempotencyKey };
 }
 
 export function hasUsbTokenCredentialFields(obj: Record<string, unknown>): boolean {
-  for (const key of ['signingMode', 'signMode', 'tokenType', 'mode']) {
+  for (const key of ['signingMode', 'signing_mode', 'signMode', 'sign_mode', 'tokenType', 'token_type', 'mode']) {
     if (obj[key] !== undefined && isUsbTokenMode(obj[key])) return true;
   }
   return (
     obj.usbToken === true ||
+    obj.usb_token === true ||
     (typeof obj.usbTokenSerial === 'string' && obj.usbTokenSerial.trim() !== '') ||
-    (typeof obj.tokenSerial === 'string' && obj.tokenSerial.trim() !== '')
+    (typeof obj.usb_token_serial === 'string' && obj.usb_token_serial.trim() !== '') ||
+    (typeof obj.tokenSerial === 'string' && obj.tokenSerial.trim() !== '') ||
+    (typeof obj.token_serial === 'string' && obj.token_serial.trim() !== '')
   );
 }
 
@@ -284,15 +293,19 @@ export function readText(value: unknown): string | null {
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
 }
 
-export function decodeDerSequenceBase64(value: unknown): Uint8Array | null {
+export function decodeBase64Bytes(value: unknown): Uint8Array | null {
   const text = readText(value);
   if (!text) return null;
   const compact = text.replace(/\s+/g, '');
   if (compact.length === 0 || compact.length % 4 !== 0 || !STRICT_BASE64_RE.test(compact)) {
     return null;
   }
-  const bytes = new Uint8Array(Buffer.from(compact, 'base64'));
-  if (!isValidDerSequence(bytes)) return null;
+  return new Uint8Array(Buffer.from(compact, 'base64'));
+}
+
+export function decodeDerSequenceBase64(value: unknown): Uint8Array | null {
+  const bytes = decodeBase64Bytes(value);
+  if (!bytes || !isValidDerSequence(bytes)) return null;
   return bytes;
 }
 
@@ -329,7 +342,13 @@ async function readResponseTextBounded(response: Response, write: boolean): Prom
     throw new CaProviderError(write ? 'lost_answer' : 'unavailable');
   }
   const reader = response.body?.getReader();
-  if (!reader) return response.text();
+  if (!reader) {
+    const text = await response.text();
+    if (Buffer.byteLength(text, 'utf8') > MAX_CA_RESPONSE_BYTES) {
+      throw new CaProviderError(write ? 'lost_answer' : 'unavailable');
+    }
+    return text;
+  }
   const chunks: Uint8Array[] = [];
   let total = 0;
   for (;;) {
@@ -370,10 +389,10 @@ export async function postCaJson(options: {
     });
     text = await readResponseTextBounded(response, options.write);
   } catch (error) {
-    if (error instanceof CaProviderError) throw error;
     if (controller.signal.aborted) {
       throw new CaProviderError(options.write ? 'lost_answer' : 'timeout');
     }
+    if (error instanceof CaProviderError) throw error;
     throw new CaProviderError(options.write ? 'lost_answer' : 'unreachable');
   } finally {
     clearTimeout(timer);

@@ -1,11 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// VNPT SmartCA remote signing adapter (RSSP Web API).
+// VNPT SmartCA remote signing adapter (Gateway Web API /sca/sp769 v1 async flow).
 // Strictly enforces HTTPS + host allowlist (SSRF guard), rejects client-PC USB/token signing modes,
-// keeps credentials opaque and absent from thrown errors/URLs, and uses reconcile_only initiateSign safety.
+// keeps credentials opaque and absent from thrown errors/URLs, stores server tran_code cleanly,
+// and assembles RFC 5652 detached CMS SignedData when signature_value returns a raw RSA digest signature.
+import {
+  decodeDerCertificate,
+  resolveCmsOrWrapRawSignature,
+} from './cms-der.ts';
 import {
   DEFAULT_CA_TIMEOUT_MS,
   assertSafeCaBaseUrl,
   assertSafeHostAllowlist,
+  decodeBase64Bytes,
   decodeDerSequenceBase64,
   isRecord,
   isUsbTokenMode,
@@ -17,6 +23,8 @@ import {
   postCaJson,
   readText,
   requireCredentialField,
+  setBoundedMap,
+  sha256Hex,
   validateInitiateRequest,
 } from './http.ts';
 import {
@@ -31,7 +39,7 @@ import {
   type CaSigningAdapter,
 } from './port.ts';
 
-export const VNPT_SMARTCA_BASE_URL = 'https://gwsca.vnpt.vn';
+export const VNPT_SMARTCA_BASE_URL = 'https://gwsca.vnpt.vn/sca/sp769';
 export const VNPT_SMARTCA_HOSTS = ['gwsca.vnpt.vn', 'rmgateway.vnptit.vn'] as const;
 export const VNPT_SMARTCA_CONNECT_FIELDS = ['spId', 'spPassword', 'userId', 'serialNumber'] as const;
 
@@ -41,6 +49,12 @@ interface VnptCredentials {
   userId: string;
   serialNumber?: string;
   baseUrl?: string;
+}
+
+interface VnptCertificateRecord {
+  readonly serialNumber: string | null;
+  readonly isUsbOnly: boolean;
+  readonly chainDer: readonly Uint8Array[];
 }
 
 function parseVnptCredentials(secret: string): VnptCredentials {
@@ -59,7 +73,15 @@ function parseVnptCredentials(secret: string): VnptCredentials {
   };
 }
 
-function mapVnptStatus(rawStatus: unknown): CaSignStatus | null {
+function formatVnptTimestamp(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return (
+    `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}` +
+    `${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}`
+  );
+}
+
+function mapVnptStatusToken(rawStatus: unknown): CaSignStatus | null {
   if (typeof rawStatus === 'number') {
     if (rawStatus === 0) return 'pending';
     if (rawStatus === 1) return 'signed';
@@ -70,18 +92,25 @@ function mapVnptStatus(rawStatus: unknown): CaSignStatus | null {
   }
   const text = readText(rawStatus)?.toUpperCase();
   if (!text) return null;
-  if (['PENDING', 'WAITING', 'WAITING_APPROVE', 'IN_PROGRESS', 'INIT'].includes(text)) return 'pending';
-  if (['SIGNED', 'SUCCESS', 'COMPLETED', 'COMPLETE', 'DONE'].includes(text)) return 'signed';
-  if (['REJECTED', 'USER_REJECTED', 'CANCELLED', 'CANCELED', 'DECLINED'].includes(text)) return 'rejected';
-  if (['EXPIRED', 'TIMEOUT', 'TIMED_OUT'].includes(text)) return 'expired';
-  if (['FAILED', 'ERROR'].includes(text)) return 'failed';
+  if (['PENDING', 'WAITING', 'WAITING_APPROVE', 'IN_PROGRESS', 'INIT', 'SIG_WAIT_FOR_USER_CONFIRM', 'WAIT_FOR_USER_CONFIRM'].includes(text)) {
+    return 'pending';
+  }
+  if (['SIGNED', 'COMPLETED', 'COMPLETE', 'DONE'].includes(text)) return 'signed';
+  if (['REJECTED', 'USER_REJECTED', 'CANCELLED', 'CANCELED', 'DECLINED', 'SIG_USER_DECLINED'].includes(text)) {
+    return 'rejected';
+  }
+  if (['EXPIRED', 'TIMEOUT', 'TIMED_OUT', 'SIG_EXPIRED'].includes(text)) return 'expired';
+  if (['FAILED', 'ERROR', 'SIG_FAILED'].includes(text)) return 'failed';
   return null;
 }
 
 function isVnptAuthError(code: string | null, status: number): boolean {
   if (status === 401 || status === 403) return true;
   const upper = code?.toUpperCase();
-  return upper !== undefined && ['AUTH_FAILED', 'INVALID_SP', 'INVALID_CREDENTIALS', 'UNAUTHORIZED', 'WRONG_PASSWORD'].includes(upper);
+  return (
+    upper !== undefined &&
+    ['401', 'SP_CREDENTIAL_INVALID', 'AUTH_FAILED', 'INVALID_SP', 'INVALID_CREDENTIALS', 'UNAUTHORIZED', 'WRONG_PASSWORD'].includes(upper)
+  );
 }
 
 function isVnptDuplicateError(code: string | null, status: number): boolean {
@@ -90,12 +119,53 @@ function isVnptDuplicateError(code: string | null, status: number): boolean {
   return upper !== undefined && ['TRANSACTION_EXISTS', 'DUPLICATE_TRANSACTION', 'DUPLICATE_TX_ID'].includes(upper);
 }
 
+function extractVnptCertificates(json: unknown): VnptCertificateRecord[] {
+  const data = pickCaseInsensitive(json, 'data') ?? json;
+  const list = Array.isArray(data)
+    ? data
+    : isRecord(data) && Array.isArray(pickCaseInsensitive(data, 'user_certificates'))
+      ? (pickCaseInsensitive(data, 'user_certificates') as unknown[])
+      : [];
+  const out: VnptCertificateRecord[] = [];
+  for (const item of list) {
+    if (!isRecord(item)) continue;
+    const tokenType =
+      pickCaseInsensitive(item, 'token_type') ??
+      pickCaseInsensitive(item, 'cert_type') ??
+      pickCaseInsensitive(item, 'device_type');
+    const isUsbOnly = tokenType !== undefined && isUsbTokenMode(tokenType);
+    const serialNumber = readText(pickCaseInsensitive(item, 'serial_number'));
+    const chainDer: Uint8Array[] = [];
+    const leaf = decodeDerCertificate(pickCaseInsensitive(item, 'cert_data'));
+    if (leaf) chainDer.push(leaf);
+    const chainData = pickCaseInsensitive(item, 'chain_data');
+    if (isRecord(chainData)) {
+      const caCert = decodeDerCertificate(pickCaseInsensitive(chainData, 'ca_cert'));
+      const rootCert = decodeDerCertificate(pickCaseInsensitive(chainData, 'root_cert'));
+      if (caCert) chainDer.push(caCert);
+      if (rootCert) chainDer.push(rootCert);
+    }
+    out.push({ serialNumber, isUsbOnly, chainDer });
+  }
+  return out;
+}
+
 export function createVnptSmartCaAdapter(options: CaAdapterOptions = {}): CaSigningAdapter {
   const fetchImpl = options.fetch ?? fetch;
   const now = options.now ?? (() => new Date());
   const timeoutMs = options.timeoutMs ?? DEFAULT_CA_TIMEOUT_MS;
   const allowedHosts = assertSafeHostAllowlist(options.allowedHosts ?? VNPT_SMARTCA_HOSTS);
   const defaultBaseUrl = assertSafeCaBaseUrl(options.baseUrl ?? VNPT_SMARTCA_BASE_URL, allowedHosts);
+  const txToCertRef = new Map<string, string>();
+  const certCache = new Map<string, readonly VnptCertificateRecord[]>();
+
+  function rememberCertRef(secretKey: string, txId: string, certRef: string): void {
+    setBoundedMap(txToCertRef, 500, `${secretKey}:${txId}`, certRef);
+  }
+
+  function cacheCerts(secretKey: string, certs: readonly VnptCertificateRecord[]): void {
+    setBoundedMap(certCache, 100, secretKey, certs);
+  }
 
   function resolveBaseUrl(creds: VnptCredentials): string {
     return creds.baseUrl ? assertSafeCaBaseUrl(creds.baseUrl, allowedHosts) : defaultBaseUrl;
@@ -120,37 +190,62 @@ export function createVnptSmartCaAdapter(options: CaAdapterOptions = {}): CaSign
   }
 
   function extractCode(json: unknown): string | null {
-    return (
-      readText(pickCaseInsensitive(json, 'message_code')) ??
-      readText(pickCaseInsensitive(json, 'error_code')) ??
-      readText(pickCaseInsensitive(json, 'status_code'))
-    );
+    const msgCode = readText(pickCaseInsensitive(json, 'message_code')) ?? readText(pickCaseInsensitive(json, 'error_code'));
+    if (msgCode) return msgCode;
+    const sc = pickCaseInsensitive(json, 'status_code');
+    if (typeof sc === 'number') return String(sc);
+    return readText(sc);
   }
 
   function extractData(json: unknown): unknown {
     return pickCaseInsensitive(json, 'data') ?? json;
   }
 
-  function parseSession(json: unknown, fallbackIdempotencyKey: string, fallbackTxId: string): CaSignSession {
-    const data = extractData(json);
-    const externalTxId =
-      readText(pickCaseInsensitive(data, 'tran_id')) ??
-      readText(pickCaseInsensitive(data, 'transaction_id')) ??
-      fallbackTxId;
-    if (!externalTxId) {
-      throw new CaProviderError('unavailable', 'missing transaction identifier in VNPT SmartCA response');
-    }
-    const status = mapVnptStatus(
+  function resolveVnptStatus(json: unknown, data: unknown, allowSuccessPending: boolean): CaSignStatus | null {
+    const explicit = mapVnptStatusToken(
       pickCaseInsensitive(data, 'status') ??
         pickCaseInsensitive(data, 'tran_status') ??
         pickCaseInsensitive(json, 'tran_status'),
     );
+    if (explicit) return explicit;
+
+    const rawMsg = readText(pickCaseInsensitive(json, 'message')) ?? readText(pickCaseInsensitive(json, 'message_code'));
+    const msgStatus = mapVnptStatusToken(rawMsg);
+    if (msgStatus) return msgStatus;
+
+    const signatures = pickCaseInsensitive(data, 'signatures');
+    const scNum = Number(pickCaseInsensitive(json, 'status_code'));
+    const upperMsg = rawMsg?.toUpperCase();
+    if (Array.isArray(signatures) && signatures.length > 0 && (Number.isNaN(scNum) || scNum === 200)) {
+      return 'signed';
+    }
+    if ((Number.isNaN(scNum) || scNum === 200) && upperMsg === 'SUCCESS') {
+      return allowSuccessPending ? 'pending' : null;
+    }
+    return null;
+  }
+
+  function parseSession(
+    json: unknown,
+    fallbackIdempotencyKey: string,
+    fallbackTxId: string,
+    allowSuccessPending: boolean,
+  ): CaSignSession {
+    const data = extractData(json);
+    const tranCode = readText(pickCaseInsensitive(data, 'tran_code')) ?? readText(pickCaseInsensitive(data, 'tran_id'));
+    const dataTxId = readText(pickCaseInsensitive(data, 'transaction_id'));
+    const externalTxId = tranCode ?? dataTxId ?? fallbackTxId;
+    if (!externalTxId) {
+      throw new CaProviderError('unavailable', 'missing transaction identifier in VNPT SmartCA response');
+    }
+    const status = resolveVnptStatus(json, data, allowSuccessPending);
     if (!status) {
       throw new CaProviderError('unavailable', 'unrecognized VNPT SmartCA transaction status');
     }
-    const challengeCode =
-      readText(pickCaseInsensitive(data, 'challenge_code')) ??
-      readText(pickCaseInsensitive(data, 'tran_code'));
+    const idempotencyKey =
+      readText(pickCaseInsensitive(data, 'request_id')) ??
+      (tranCode && dataTxId && tranCode !== dataTxId ? dataTxId : fallbackIdempotencyKey);
+    const challengeCode = readText(pickCaseInsensitive(data, 'challenge_code'));
     const expiresAt = readText(pickCaseInsensitive(data, 'expired_at')) ?? readText(pickCaseInsensitive(data, 'expires_at'));
     const signedAt =
       status === 'signed'
@@ -159,7 +254,7 @@ export function createVnptSmartCaAdapter(options: CaAdapterOptions = {}): CaSign
     const errorCode = status === 'signed' || status === 'pending' ? null : extractCode(json);
     return {
       provider: 'vnpt_smartca',
-      idempotencyKey: readText(pickCaseInsensitive(data, 'request_id')) ?? fallbackIdempotencyKey,
+      idempotencyKey,
       externalTxId,
       status,
       challengeCode,
@@ -167,6 +262,50 @@ export function createVnptSmartCaAdapter(options: CaAdapterOptions = {}): CaSign
       signedAt,
       errorCode,
     };
+  }
+
+  async function fetchCertificates(secretKey: string, creds: VnptCredentials, serialOverride?: string): Promise<VnptCertificateRecord[]> {
+    const res = await postVnpt(
+      creds,
+      '/v1/credentials/get_certificate',
+      {
+        sp_id: creds.spId,
+        sp_password: creds.spPassword,
+        user_id: creds.userId,
+        serial_number: serialOverride ?? creds.serialNumber ?? '',
+        transaction_id: `crove-cert-${now().getTime()}`,
+      },
+      false,
+    );
+    if (res.status === 429 || res.status >= 500 || !isRecord(res.json)) {
+      throw new CaProviderError('unavailable');
+    }
+    const code = extractCode(res.json);
+    if (isVnptAuthError(code, res.status)) throw new CaProviderError('credentials');
+    const records = extractVnptCertificates(res.json);
+    if (records.length > 0) cacheCerts(secretKey, records);
+    return records;
+  }
+
+  async function resolveCertificateChainDer(
+    secretKey: string,
+    creds: VnptCredentials,
+    txId: string,
+  ): Promise<readonly Uint8Array[] | null> {
+    const wantedSerial = txToCertRef.get(`${secretKey}:${txId}`) ?? creds.serialNumber;
+    const selectFrom = (list: readonly VnptCertificateRecord[]): readonly Uint8Array[] | null => {
+      if (list.length === 0) return null;
+      const match = wantedSerial
+        ? list.find((c) => !c.isUsbOnly && c.serialNumber?.toLowerCase() === wantedSerial.toLowerCase())
+        : undefined;
+      const chosen = match ?? list.find((c) => !c.isUsbOnly && c.chainDer.length > 0);
+      return chosen && chosen.chainDer.length > 0 ? chosen.chainDer : null;
+    };
+    const cached = certCache.get(secretKey);
+    const hit = cached ? selectFrom(cached) : null;
+    if (hit) return hit;
+    const fetched = await fetchCertificates(secretKey, creds, wantedSerial);
+    return selectFrom(fetched);
   }
 
   async function queryStatus(
@@ -192,7 +331,7 @@ export function createVnptSmartCaAdapter(options: CaAdapterOptions = {}): CaSign
     if (res.status >= 400 && pickCaseInsensitive(res.json, 'status_code') === undefined) {
       throw new CaProviderError('unavailable');
     }
-    const session = parseSession(res.json, idempotencyKey, lookupKey);
+    const session = parseSession(res.json, idempotencyKey, lookupKey, false);
     return { session, rawJson: res.json };
   }
 
@@ -242,22 +381,12 @@ export function createVnptSmartCaAdapter(options: CaAdapterOptions = {}): CaSign
         if (upperCode === 'IP_NOT_ALLOWED' || upperCode === 'INVALID_IP') return 'ip_not_allowed';
         if (upperCode === 'API_NOT_ENABLED' || upperCode === 'SERVICE_INACTIVE') return 'api_not_enabled';
 
-        const data = extractData(res.json);
-        const certs = Array.isArray(data)
-          ? data
-          : isRecord(data) && Array.isArray(pickCaseInsensitive(data, 'user_certificates'))
-            ? (pickCaseInsensitive(data, 'user_certificates') as unknown[])
-            : [];
-        if (certs.length === 0) return 'signing_needs_person';
-        const hasRemote = certs.some((cert) => {
-          if (!isRecord(cert)) return false;
-          const tokenType =
-            pickCaseInsensitive(cert, 'token_type') ??
-            pickCaseInsensitive(cert, 'cert_type') ??
-            pickCaseInsensitive(cert, 'device_type');
-          return tokenType === undefined || !isUsbTokenMode(tokenType);
-        });
-        return hasRemote ? 'works' : 'usb_token_unsupported';
+        const records = extractVnptCertificates(res.json);
+        if (records.length === 0) return 'signing_needs_person';
+        const remoteRecords = records.filter((r) => !r.isUsbOnly);
+        if (remoteRecords.length === 0) return 'usb_token_unsupported';
+        cacheCerts(sha256Hex(secret), remoteRecords);
+        return 'works';
       } catch (error) {
         if (error instanceof CaProviderError) {
           if (error.kind === 'unsafe_url') throw error;
@@ -271,26 +400,26 @@ export function createVnptSmartCaAdapter(options: CaAdapterOptions = {}): CaSign
     initiateSign: async (secret: string, request: CaInitiateRequest): Promise<CaSignSession> => {
       const creds = parseVnptCredentials(secret);
       const valid = validateInitiateRequest(request);
+      const secretKey = sha256Hex(secret);
       const res = await postVnpt(
         creds,
-        '/v2/signatures/sign',
+        '/v1/signatures/sign',
         {
           sp_id: creds.spId,
           sp_password: creds.spPassword,
           user_id: creds.userId,
           serial_number: valid.certRef,
           transaction_id: valid.idempotencyKey,
-          sign_type: 'hash',
-          ...(valid.signerReason ? { transaction_desc: valid.signerReason } : {}),
+          transaction_desc: valid.signerReason ?? valid.documentName ?? 'Remote signature',
           sign_files: [
             {
               doc_id: valid.idempotencyKey,
-              file_name: valid.documentName ?? 'document.pdf',
               data_to_be_signed: valid.digestSha256,
               file_type: 'pdf',
               sign_type: 'hash',
             },
           ],
+          time_stamp: formatVnptTimestamp(now()),
         },
         true,
       );
@@ -302,9 +431,10 @@ export function createVnptSmartCaAdapter(options: CaAdapterOptions = {}): CaSign
         const reconciled = await queryStatus(creds, valid.idempotencyKey, valid.idempotencyKey).catch(() => {
           throw new CaProviderError('lost_answer');
         });
+        rememberCertRef(secretKey, reconciled.session.externalTxId, valid.certRef);
         return reconciled.session;
       }
-      if (res.status >= 400) {
+      if (res.status >= 400 || (pickCaseInsensitive(res.json, 'status_code') !== undefined && Number(pickCaseInsensitive(res.json, 'status_code')) >= 400)) {
         return {
           provider: 'vnpt_smartca',
           idempotencyKey: valid.idempotencyKey,
@@ -314,26 +444,25 @@ export function createVnptSmartCaAdapter(options: CaAdapterOptions = {}): CaSign
         };
       }
       const data = extractData(res.json);
-      const explicitStatus = mapVnptStatus(
-        pickCaseInsensitive(data, 'status') ?? pickCaseInsensitive(data, 'tran_status'),
-      );
-      if (!explicitStatus && isRecord(data) && (pickCaseInsensitive(data, 'tran_id') || pickCaseInsensitive(data, 'transaction_id'))) {
-        // VNPT SmartCA initiate returns tran_id when queued for user phone confirmation.
-        return {
-          provider: 'vnpt_smartca',
-          idempotencyKey: valid.idempotencyKey,
-          externalTxId:
-            readText(pickCaseInsensitive(data, 'tran_id')) ??
-            readText(pickCaseInsensitive(data, 'transaction_id')) ??
-            valid.idempotencyKey,
-          status: 'pending',
-          challengeCode: readText(pickCaseInsensitive(data, 'challenge_code')),
-          expiresAt: readText(pickCaseInsensitive(data, 'expired_at')),
-          signedAt: null,
-          errorCode: null,
-        };
-      }
-      return parseSession(res.json, valid.idempotencyKey, valid.idempotencyKey);
+      const session =
+        !resolveVnptStatus(res.json, data, true) && isRecord(data) && (pickCaseInsensitive(data, 'tran_code') || pickCaseInsensitive(data, 'tran_id') || pickCaseInsensitive(data, 'transaction_id'))
+          ? {
+              provider: 'vnpt_smartca' as const,
+              idempotencyKey: valid.idempotencyKey,
+              externalTxId:
+                readText(pickCaseInsensitive(data, 'tran_code')) ??
+                readText(pickCaseInsensitive(data, 'tran_id')) ??
+                readText(pickCaseInsensitive(data, 'transaction_id')) ??
+                valid.idempotencyKey,
+              status: 'pending' as const,
+              challengeCode: readText(pickCaseInsensitive(data, 'challenge_code')),
+              expiresAt: readText(pickCaseInsensitive(data, 'expired_at')),
+              signedAt: null,
+              errorCode: null,
+            }
+          : parseSession(res.json, valid.idempotencyKey, valid.idempotencyKey, true);
+      rememberCertRef(secretKey, session.externalTxId, valid.certRef);
+      return session;
     },
 
     pollStatus: async (secret: string, query: CaPollQuery | string): Promise<CaSignSession> => {
@@ -347,6 +476,7 @@ export function createVnptSmartCaAdapter(options: CaAdapterOptions = {}): CaSign
     fetchSignedCms: async (secret: string, externalTxId: string): Promise<CaSignedCms> => {
       const creds = parseVnptCredentials(secret);
       const txId = normalizeExternalTxId(externalTxId);
+      const secretKey = sha256Hex(secret);
       const { session, rawJson } = await queryStatus(creds, txId, txId);
       if (session.status !== 'signed') {
         throw new CaProviderError('not_signed', 'VNPT SmartCA transaction is not signed');
@@ -354,27 +484,47 @@ export function createVnptSmartCaAdapter(options: CaAdapterOptions = {}): CaSign
       const data = extractData(rawJson);
       const sigList = pickCaseInsensitive(data, 'signatures');
       const firstSig = Array.isArray(sigList) && sigList.length > 0 ? sigList[0] : undefined;
-      const cmsB64 =
+      const sigRaw =
         pickCaseInsensitive(firstSig, 'signature_value') ??
         pickCaseInsensitive(firstSig, 'cms') ??
         pickCaseInsensitive(firstSig, 'signature') ??
         pickCaseInsensitive(data, 'signature_value') ??
         pickCaseInsensitive(data, 'signature');
-      const cmsDer = decodeDerSequenceBase64(cmsB64);
-      if (!cmsDer) {
-        throw new CaProviderError('unavailable', 'VNPT SmartCA response did not contain valid CMS DER bytes');
+      const sigBytes = decodeBase64Bytes(sigRaw);
+      if (!sigBytes || sigBytes.byteLength === 0) {
+        throw new CaProviderError('unavailable', 'VNPT SmartCA response did not contain signature bytes');
       }
+
+      const rawChain = pickCaseInsensitive(firstSig, 'certificate_chain') ?? pickCaseInsensitive(data, 'certificate_chain');
+      const inlineChainDer = Array.isArray(rawChain)
+        ? rawChain.map(decodeDerCertificate).filter((v): v is Uint8Array => v !== null)
+        : [];
+      const inlineSingleCert = decodeDerCertificate(
+        pickCaseInsensitive(firstSig, 'cert_data') ?? pickCaseInsensitive(data, 'cert_data'),
+      );
+      if (inlineSingleCert && inlineChainDer.length === 0) {
+        inlineChainDer.push(inlineSingleCert);
+      }
+
+      const { cmsDer, certificateChainPem } = await resolveCmsOrWrapRawSignature({
+        providerLabel: 'VNPT SmartCA',
+        sigBytes,
+        rawChain,
+        inlineChainDer,
+        loadChainDer: () => resolveCertificateChainDer(secretKey, creds, txId),
+      });
+
       const timestampTokenDer = decodeDerSequenceBase64(
-        pickCaseInsensitive(firstSig, 'timestamp_token') ?? pickCaseInsensitive(data, 'timestamp_token'),
+        pickCaseInsensitive(firstSig, 'timestamp_token') ??
+          pickCaseInsensitive(firstSig, 'timestamp_signature') ??
+          pickCaseInsensitive(data, 'timestamp_token') ??
+          pickCaseInsensitive(data, 'timestamp_signature'),
       );
       const rawOcsps = pickCaseInsensitive(firstSig, 'ocsp_responses') ?? pickCaseInsensitive(data, 'ocsp_responses');
       const ocspResponsesDer = Array.isArray(rawOcsps)
         ? rawOcsps.map(decodeDerSequenceBase64).filter((v): v is Uint8Array => v !== null)
         : [];
-      const rawChain = pickCaseInsensitive(firstSig, 'certificate_chain') ?? pickCaseInsensitive(data, 'certificate_chain');
-      const certificateChainPem = Array.isArray(rawChain)
-        ? rawChain.map(readText).filter((v): v is string => v !== null)
-        : [];
+
       return {
         externalTxId: session.externalTxId,
         cmsDer,

@@ -402,6 +402,82 @@ describe('crove-extract pdf_embed_cms', () => {
     );
   });
 
+  it('deduplicates updates when /Annots and /AcroForm /Fields share the same indirect array ref and supports LTV on XRef-stream PDFs', async () => {
+    const stream = 'BT /F1 12 Tf 72 720 Td (Shared Annots Fields array) Tj ET';
+    const sharedArrayPdf = makeRawPdf([
+      '<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields 6 0 R >> >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> /Annots 6 0 R >>',
+      `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+      '[7 0 R]',
+      '<< /Type /Annot /Subtype /Widget /FT /Tx /T (SharedWidget) /Rect [0 0 100 20] >>',
+    ]);
+    const cmsDer = makeTestCmsDer('shared-array-cms');
+    const sharedRes = await parse(
+      'pdf_embed_cms',
+      encodePdfEmbedCmsInput({
+        pdfBase64: Buffer.from(sharedArrayPdf).toString('base64'),
+        cmsDerBase64: Buffer.from(cmsDer).toString('base64'),
+        signerName: 'Ngô Minh Khoa',
+        signedAtIso: '2026-11-16T11:45:00.000Z',
+      }),
+    );
+    if (!sharedRes.ok || sharedRes.kind !== 'pdf_embed_cms') throw new Error('expected shared array embed ok');
+    const sharedBytes = new Uint8Array(Buffer.from(sharedRes.pdfBase64, 'base64'));
+    assertByteRangeAndCms(sharedBytes, sharedRes.byteRange, cmsDer);
+    expect((await inspectPdf(sharedBytes)).pageCount).toBe(1);
+    const sharedDoc = await PDFDocument.load(sharedBytes);
+    const sharedFields = sharedDoc.catalog.lookup(PDFName.of('AcroForm'), PDFDict).lookup(PDFName.of('Fields'), PDFArray);
+    expect(sharedFields.size()).toBe(2);
+
+    // LTV /DSS post-signature incremental update on XRef-stream pdf_seal output.
+    const basePdf = makeCleanClassicPdf();
+    const sealed = await parse(
+      'pdf_seal',
+      encodePdfSealInput({
+        pdfBase64: Buffer.from(basePdf).toString('base64'),
+        fields: [{ type: 'text', page: 1, xNorm: 0.1, yNorm: 0.2, wNorm: 0.4, hNorm: 0.1, text: 'Ok' }],
+        certificate: {
+          certificateCode: 'CS-4444-5555-6666',
+          envelopeTitle: 'XRef Stream LTV',
+          sourceSha256: sha256Hex(basePdf),
+          completedAtIso: '2026-11-16T09:00:00.000Z',
+          eventChainTipHash: 'd'.repeat(64),
+          signers: [
+            {
+              name: 'Lê Minh',
+              roleLabel: 'Bên A',
+              maskedEmail: 'l***@example.com',
+              deliveryMode: 'link',
+              otpStatus: 'not_required',
+              signedAtIso: '2026-11-16T09:00:00.000Z',
+              ipHashPrefix: '11223344',
+            },
+          ],
+        },
+      }),
+    );
+    if (!sealed.ok || sealed.kind !== 'pdf_seal') throw new Error('expected seal ok');
+    const tsDer = derSequence(new Uint8Array([0x02, 0x01, 0x09]));
+    const ocspDer = derSequence(new Uint8Array([0x0a, 0x01, 0x02]));
+    const ltvXrefRes = await parse(
+      'pdf_embed_cms',
+      encodePdfEmbedCmsInput({
+        pdfBase64: sealed.sealedPdfBase64,
+        cmsDerBase64: Buffer.from(cmsDer).toString('base64'),
+        signerName: 'Lê Minh',
+        signedAtIso: '2026-11-16T11:50:00.000Z',
+        timestampTokenBase64: Buffer.from(tsDer).toString('base64'),
+        ocspResponsesBase64: [Buffer.from(ocspDer).toString('base64')],
+      }),
+    );
+    if (!ltvXrefRes.ok || ltvXrefRes.kind !== 'pdf_embed_cms') throw new Error('expected xref ltv ok');
+    const ltvXrefBytes = new Uint8Array(Buffer.from(ltvXrefRes.pdfBase64, 'base64'));
+    assertByteRangeAndCms(ltvXrefBytes, ltvXrefRes.byteRange, cmsDer, { allowTrailingUpdate: true });
+    expect((await inspectPdf(ltvXrefBytes)).pageCount).toBe(sealed.pageCount);
+  });
+
   it('rejects non-PDF, encrypted PDFs, active JS/actions, duplicate fieldName, and invalid/oversized CMS', async () => {
     const validCmsB64 = Buffer.from(makeTestCmsDer()).toString('base64');
     const commonMeta = {

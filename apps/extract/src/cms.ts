@@ -392,21 +392,24 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
   const incrementalObjects: IncrementalObject[] = [
     { objNum: widgetObjNum, gen: 0, body: serializePdfObject(widgetDict) },
   ];
+  // Deduplicate updates when /Annots and /AcroForm /Fields point to the same indirect array ref.
+  const modifiedIndirectArrays = new Map<string, { readonly ref: PDFRef; readonly array: PDFArray }>();
+  const appendWidgetToIndirectArray = (arrRef: PDFRef, errorMessage: string): void => {
+    const key = `${arrRef.objectNumber}:${arrRef.generationNumber}`;
+    if (modifiedIndirectArrays.has(key)) return;
+    const existing = pdfDoc.context.lookupMaybe(arrRef, PDFArray);
+    if (!existing) {
+      throw new PdfSignError(errorMessage);
+    }
+    const next = existing.clone(pdfDoc.context);
+    next.push(widgetRef);
+    modifiedIndirectArrays.set(key, { ref: arrRef, array: next });
+  };
 
   // Attach the signature widget to page 1's /Annots (updating indirect /Annots if indirect, else page dict).
   const pageAnnotsRaw = firstPageDict.get(PDFName.of('Annots'));
   if (pageAnnotsRaw instanceof PDFRef) {
-    const existingAnnots = pdfDoc.context.lookupMaybe(pageAnnotsRaw, PDFArray);
-    if (!existingAnnots) {
-      throw new PdfSignError('Danh sách chú thích /Annots trên trang PDF không hợp lệ');
-    }
-    const nextAnnots = existingAnnots.clone(pdfDoc.context);
-    nextAnnots.push(widgetRef);
-    incrementalObjects.push({
-      objNum: pageAnnotsRaw.objectNumber,
-      gen: pageAnnotsRaw.generationNumber,
-      body: serializePdfObject(nextAnnots),
-    });
+    appendWidgetToIndirectArray(pageAnnotsRaw, 'Danh sách chú thích /Annots trên trang PDF không hợp lệ');
   } else {
     const nextPageDict = firstPageDict.clone(pdfDoc.context);
     const nextAnnots =
@@ -423,17 +426,7 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
   const appendWidgetToAcroDict = (nextAcro: PDFDict): void => {
     const existingFieldsRaw = nextAcro.get(PDFName.of('Fields'));
     if (existingFieldsRaw instanceof PDFRef) {
-      const existingFields = pdfDoc.context.lookupMaybe(existingFieldsRaw, PDFArray);
-      if (!existingFields) {
-        throw new PdfSignError('Trường /Fields của /AcroForm không hợp lệ');
-      }
-      const nextFields = existingFields.clone(pdfDoc.context);
-      nextFields.push(widgetRef);
-      incrementalObjects.push({
-        objNum: existingFieldsRaw.objectNumber,
-        gen: existingFieldsRaw.generationNumber,
-        body: serializePdfObject(nextFields),
-      });
+      appendWidgetToIndirectArray(existingFieldsRaw, 'Trường /Fields của /AcroForm không hợp lệ');
     } else if (existingFieldsRaw === undefined || existingFieldsRaw instanceof PDFArray) {
       const nextFields =
         existingFieldsRaw instanceof PDFArray
@@ -480,6 +473,14 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
     needCatalogUpdate = true;
   } else {
     throw new PdfSignError('Đối tượng /AcroForm của tài liệu PDF không hợp lệ');
+  }
+
+  for (const { ref, array } of modifiedIndirectArrays.values()) {
+    incrementalObjects.push({
+      objNum: ref.objectNumber,
+      gen: ref.generationNumber,
+      body: serializePdfObject(array),
+    });
   }
 
   if (needCatalogUpdate) {

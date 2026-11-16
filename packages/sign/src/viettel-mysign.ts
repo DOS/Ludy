@@ -1,11 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Viettel MySign (CloudCA RSSP) remote signing adapter.
-// Strictly enforces HTTPS + host allowlist (SSRF guard), rejects client-PC USB/token signing modes,
-// keeps credentials/bearer tokens opaque in memory, and uses reconcile_only initiateSign safety.
+// Viettel MySign remote signing adapter (VTSS Gateway /vtss/service/* async flow).
+// Matches published Viettel MySign v1/service endpoints, status codes ('1','4000','6000','4001','4002','4004','4005','13004','50000'),
+// strictly enforces HTTPS + host allowlist (SSRF guard), rejects client-PC USB/token signing modes,
+// keeps credentials/bearer tokens opaque, blocks blind re-initiate when transactionId was lost, and wraps raw signatures in CMS.
+import {
+  decodeDerCertificate,
+  resolveCmsOrWrapRawSignature,
+} from './cms-der.ts';
 import {
   DEFAULT_CA_TIMEOUT_MS,
   assertSafeCaBaseUrl,
   assertSafeHostAllowlist,
+  decodeBase64Bytes,
   decodeDerSequenceBase64,
   isRecord,
   isUsbTokenMode,
@@ -17,6 +23,7 @@ import {
   postCaJson,
   readText,
   requireCredentialField,
+  setBoundedMap,
   sha256Hex,
   validateInitiateRequest,
 } from './http.ts';
@@ -48,6 +55,13 @@ interface ViettelCredentials {
   baseUrl?: string;
 }
 
+interface ViettelCertRecord {
+  readonly credentialId: string | null;
+  readonly isUsbOnly: boolean;
+  readonly isActive: boolean;
+  readonly chainDer: readonly Uint8Array[];
+}
+
 function parseViettelCredentials(secret: string): ViettelCredentials {
   const obj = parseCredentialObject(secret);
   const clientId = requireCredentialField(obj, 'clientId');
@@ -64,23 +78,68 @@ function parseViettelCredentials(secret: string): ViettelCredentials {
   };
 }
 
+// Viettel MySign spec requires document_name / description to be Base64 of [A-Za-z0-9 _-] under 100 base64 chars.
+function encodeMySignDisplayLabel(raw: string | undefined, fallback: string): string {
+  const sanitized = (raw ?? fallback)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .replace(/[^A-Za-z0-9 _-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const safeText = (sanitized === '' ? fallback : sanitized).slice(0, 72);
+  return Buffer.from(safeText, 'utf8').toString('base64');
+}
+
 function mapViettelStatus(rawStatus: unknown): CaSignStatus | null {
-  if (typeof rawStatus === 'number') {
-    if (rawStatus === 0 || rawStatus === 1) return 'pending';
-    if (rawStatus === 2) return 'signed';
-    if (rawStatus === 3) return 'rejected';
-    if (rawStatus === 4) return 'expired';
-    if (rawStatus < 0 || rawStatus === 5) return 'failed';
-    return null;
-  }
-  const text = readText(rawStatus)?.toUpperCase();
+  const text = (typeof rawStatus === 'number' ? String(rawStatus) : readText(rawStatus))?.toUpperCase();
   if (!text) return null;
-  if (['PENDING', 'PROCESSING', 'WAITING', 'NEW', 'IN_PROGRESS'].includes(text)) return 'pending';
-  if (['COMPLETE', 'COMPLETED', 'SUCCESS', 'SIGNED'].includes(text)) return 'signed';
-  if (['REJECTED', 'DENIED', 'CANCELLED', 'CANCELED', 'USER_REJECTED'].includes(text)) return 'rejected';
-  if (['EXPIRED', 'TIMEOUT', 'TIMED_OUT'].includes(text)) return 'expired';
-  if (['FAILED', 'ERROR'].includes(text)) return 'failed';
+  if (['1', 'COMPLETE', 'COMPLETED', 'SUCCESS', 'SIGNED'].includes(text)) return 'signed';
+  if (['4000', '6000', 'PENDING', 'PROCESSING', 'WAITING', 'NEW', 'IN_PROGRESS'].includes(text)) return 'pending';
+  if (['4002', 'REJECTED', 'DENIED', 'CANCELLED', 'CANCELED', 'USER_REJECTED'].includes(text)) return 'rejected';
+  if (['4001', 'EXPIRED', 'TIMEOUT', 'TIMED_OUT'].includes(text)) return 'expired';
+  if (['4004', '4005', '13004', '50000', 'FAILED', 'ERROR'].includes(text)) return 'failed';
   return null;
+}
+
+function extractViettelCertificates(json: unknown): ViettelCertRecord[] {
+  const unwrapped = isRecord(json) ? (pickCaseInsensitive(json, 'data') ?? json) : json;
+  const list = Array.isArray(unwrapped)
+    ? unwrapped
+    : isRecord(unwrapped) && Array.isArray(pickCaseInsensitive(unwrapped, 'credentials'))
+      ? (pickCaseInsensitive(unwrapped, 'credentials') as unknown[])
+      : [];
+  const out: ViettelCertRecord[] = [];
+  for (const item of list) {
+    if (!isRecord(item)) continue;
+    const tokenType =
+      pickCaseInsensitive(item, 'tokenType') ??
+      pickCaseInsensitive(item, 'credentialType') ??
+      pickCaseInsensitive(item, 'signingMode');
+    const isUsbOnly = tokenType !== undefined && isUsbTokenMode(tokenType);
+    const credentialId =
+      readText(pickCaseInsensitive(item, 'credential_id')) ??
+      readText(pickCaseInsensitive(item, 'credentialID'));
+    const keyObj = pickCaseInsensitive(item, 'key');
+    const keyStatus = isRecord(keyObj) ? readText(pickCaseInsensitive(keyObj, 'status'))?.toUpperCase() : null;
+    const certObj = pickCaseInsensitive(item, 'cert');
+    const certStatus = isRecord(certObj) ? readText(pickCaseInsensitive(certObj, 'status'))?.toLowerCase() : null;
+    const isActive =
+      (keyStatus === null || keyStatus === 'ENABLED' || keyStatus === 'ACTIVE') &&
+      (certStatus === null || certStatus === 'valid' || certStatus === 'active');
+
+    const chainDer: Uint8Array[] = [];
+    const rawCerts = isRecord(certObj) ? pickCaseInsensitive(certObj, 'certificates') : undefined;
+    if (Array.isArray(rawCerts)) {
+      for (const rawCert of rawCerts) {
+        const parsed = decodeDerCertificate(rawCert);
+        if (parsed) chainDer.push(parsed);
+      }
+    }
+    out.push({ credentialId, isUsbOnly, isActive, chainDer });
+  }
+  return out;
 }
 
 export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSigningAdapter {
@@ -90,12 +149,24 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
   const allowedHosts = assertSafeHostAllowlist(options.allowedHosts ?? VIETTEL_MYSIGN_HOSTS);
   const defaultBaseUrl = assertSafeCaBaseUrl(options.baseUrl ?? VIETTEL_MYSIGN_BASE_URL, allowedHosts);
   const tokens = new Map<string, { token: string; expiresAtMs: number }>();
+  const txToCertRef = new Map<string, string>();
+  const certCache = new Map<string, readonly ViettelCertRecord[]>();
+
+  function rememberCertRef(secretKey: string, txId: string, certRef: string): void {
+    setBoundedMap(txToCertRef, 500, `${secretKey}:${txId}`, certRef);
+  }
+
+  function cacheCerts(secretKey: string, certs: readonly ViettelCertRecord[]): void {
+    setBoundedMap(certCache, 100, secretKey, certs);
+  }
 
   function resolveBaseUrl(creds: ViettelCredentials): string {
     return creds.baseUrl ? assertSafeCaBaseUrl(creds.baseUrl, allowedHosts) : defaultBaseUrl;
   }
 
-  async function login(creds: ViettelCredentials): Promise<{ ok: true; token: string; ttlMs: number } | { ok: false; reason: 'credentials' | 'api_not_enabled' | 'ip_not_allowed' | 'unavailable' }> {
+  async function login(
+    creds: ViettelCredentials,
+  ): Promise<{ ok: true; token: string; ttlMs: number } | { ok: false; reason: 'credentials' | 'api_not_enabled' | 'ip_not_allowed' | 'unavailable' }> {
     const base = resolveBaseUrl(creds);
     const res = await postCaJson({
       fetchImpl,
@@ -113,7 +184,7 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
     });
     if (res.status === 429 || res.status >= 500 || !isRecord(res.json)) return { ok: false, reason: 'unavailable' };
     const code = readText(pickCaseInsensitive(res.json, 'error')) ?? readText(pickCaseInsensitive(res.json, 'errorCode'));
-    if (res.status === 401 || res.status === 403 || code === 'invalid_client' || code === 'invalid_credentials') {
+    if (res.status === 401 || res.status === 403 || code === '59033' || code === 'invalid_client' || code === 'invalid_credentials') {
       return { ok: false, reason: 'credentials' };
     }
     if (code === 'ip_not_allowed') return { ok: false, reason: 'ip_not_allowed' };
@@ -128,10 +199,7 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
   }
 
   function cacheToken(secretKey: string, token: string, ttlMs: number): void {
-    if (tokens.size >= 100 && !tokens.has(secretKey)) {
-      tokens.delete(tokens.keys().next().value as string);
-    }
-    tokens.set(secretKey, { token, expiresAtMs: now().getTime() + ttlMs });
+    setBoundedMap(tokens, 100, secretKey, { token, expiresAtMs: now().getTime() + ttlMs });
   }
 
   async function getToken(secretKey: string, creds: ViettelCredentials, forceFresh: boolean): Promise<string> {
@@ -183,6 +251,53 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
     throw new CaProviderError('credentials');
   }
 
+  async function fetchCertificates(secret: string, creds: ViettelCredentials): Promise<ViettelCertRecord[]> {
+    const res = await callAuthorized(
+      secret,
+      creds,
+      '/vtss/service/certificates/info',
+      {
+        client_id: creds.clientId,
+        client_secret: creds.clientSecret,
+        profile_id: creds.profileId,
+        user_id: creds.userId,
+        certificates: 'chain',
+        certInfo: true,
+        authInfo: true,
+      },
+      false,
+    );
+    if (res.status === 429 || res.status >= 500 || (res.json === null || typeof res.json !== 'object')) {
+      throw new CaProviderError('unavailable');
+    }
+    if (res.status === 403) throw new CaProviderError('credentials');
+    const records = extractViettelCertificates(res.json);
+    if (records.length > 0) cacheCerts(sha256Hex(secret), records);
+    return records;
+  }
+
+  async function resolveCertificateChainDer(
+    secret: string,
+    secretKey: string,
+    creds: ViettelCredentials,
+    txId: string,
+  ): Promise<readonly Uint8Array[] | null> {
+    const wantedCredId = txToCertRef.get(`${secretKey}:${txId}`);
+    const selectFrom = (list: readonly ViettelCertRecord[]): readonly Uint8Array[] | null => {
+      if (list.length === 0) return null;
+      const match = wantedCredId
+        ? list.find((c) => !c.isUsbOnly && c.credentialId === wantedCredId)
+        : undefined;
+      const chosen = match ?? list.find((c) => !c.isUsbOnly && c.isActive && c.chainDer.length > 0) ?? list.find((c) => !c.isUsbOnly && c.chainDer.length > 0);
+      return chosen && chosen.chainDer.length > 0 ? chosen.chainDer : null;
+    };
+    const cached = certCache.get(secretKey);
+    const hit = cached ? selectFrom(cached) : null;
+    if (hit) return hit;
+    const fetched = await fetchCertificates(secret, creds);
+    return selectFrom(fetched);
+  }
+
   function parseSession(json: unknown, fallbackIdempotencyKey: string, fallbackTxId: string): CaSignSession {
     const data = pickCaseInsensitive(json, 'data') ?? json;
     const externalTxId =
@@ -209,7 +324,9 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
       errorCode:
         status === 'signed' || status === 'pending'
           ? null
-          : (readText(pickCaseInsensitive(json, 'errorCode')) ?? readText(pickCaseInsensitive(json, 'error'))),
+          : (readText(pickCaseInsensitive(data, 'error_code')) ??
+              readText(pickCaseInsensitive(json, 'errorCode')) ??
+              readText(pickCaseInsensitive(json, 'error'))),
     };
   }
 
@@ -218,22 +335,25 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
     creds: ViettelCredentials,
     query: { externalTxId: string | null; idempotencyKey: string | null },
   ): Promise<{ session: CaSignSession; rawJson: unknown }> {
+    if (!query.externalTxId) {
+      // Published Viettel MySign /vtss/service/requests/status requires server transactionId and does not support lookup by caller idempotencyKey.
+      throw new CaProviderError(
+        'lost_answer',
+        'Viettel MySign requires server transactionId or async callback to reconcile an interrupted initiateSign',
+      );
+    }
     const res = await callAuthorized(
       secret,
       creds,
-      '/vtss/service/ras/csc/v1/signatures/getStatus',
-      {
-        ...(query.externalTxId ? { transactionId: query.externalTxId } : {}),
-        ...(query.idempotencyKey ? { requestId: query.idempotencyKey } : {}),
-      },
+      '/vtss/service/requests/status',
+      { transactionId: query.externalTxId },
       false,
     );
     if (res.status === 429) throw new CaProviderError('unavailable');
     if (res.status >= 500 || !isRecord(res.json)) throw new CaProviderError('unavailable');
     if (res.status === 403) throw new CaProviderError('credentials');
     if (res.status >= 400) throw new CaProviderError('unavailable');
-    const fallbackTx = query.externalTxId ?? query.idempotencyKey ?? '';
-    const session = parseSession(res.json, query.idempotencyKey ?? fallbackTx, fallbackTx);
+    const session = parseSession(res.json, query.idempotencyKey ?? query.externalTxId, query.externalTxId);
     return { session, rawJson: res.json };
   }
 
@@ -275,32 +395,30 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
         const listRes = await callAuthorized(
           secret,
           creds,
-          '/vtss/service/ras/csc/v1/credentials/list',
-          { user_id: creds.userId, profile_id: creds.profileId },
+          '/vtss/service/certificates/info',
+          {
+            client_id: creds.clientId,
+            client_secret: creds.clientSecret,
+            profile_id: creds.profileId,
+            user_id: creds.userId,
+            certificates: 'chain',
+            certInfo: true,
+            authInfo: true,
+          },
           false,
         );
-        if (listRes.status === 429 || listRes.status >= 500 || !isRecord(listRes.json)) return 'unreachable';
+        if (listRes.status === 429 || listRes.status >= 500 || listRes.json === null || typeof listRes.json !== 'object') {
+          return 'unreachable';
+        }
         if (listRes.status === 401 || listRes.status === 403) return 'wrong_credentials';
-        const data = pickCaseInsensitive(listRes.json, 'data') ?? listRes.json;
-        const credsList =
-          (Array.isArray(pickCaseInsensitive(data, 'credentialIDs'))
-            ? (pickCaseInsensitive(data, 'credentialIDs') as unknown[])
-            : undefined) ??
-          (Array.isArray(pickCaseInsensitive(data, 'credentials'))
-            ? (pickCaseInsensitive(data, 'credentials') as unknown[])
-            : undefined) ??
-          (Array.isArray(data) ? data : []);
-        if (credsList.length === 0) return 'signing_needs_person';
-        const hasRemote = credsList.some((entry) => {
-          if (typeof entry === 'string') return true;
-          if (!isRecord(entry)) return false;
-          const tokenType =
-            pickCaseInsensitive(entry, 'tokenType') ??
-            pickCaseInsensitive(entry, 'credentialType') ??
-            pickCaseInsensitive(entry, 'signingMode');
-          return tokenType === undefined || !isUsbTokenMode(tokenType);
-        });
-        return hasRemote ? 'works' : 'usb_token_unsupported';
+        const records = extractViettelCertificates(listRes.json);
+        if (records.length === 0) return 'signing_needs_person';
+        const activeRemote = records.filter((r) => !r.isUsbOnly && r.isActive);
+        if (activeRemote.length > 0) {
+          cacheCerts(sha256Hex(secret), activeRemote);
+          return 'works';
+        }
+        return records.some((r) => !r.isUsbOnly) ? 'signing_needs_person' : 'usb_token_unsupported';
       } catch (error) {
         if (error instanceof CaProviderError) {
           if (error.kind === 'unsafe_url') throw error;
@@ -314,26 +432,30 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
     initiateSign: async (secret: string, request: CaInitiateRequest): Promise<CaSignSession> => {
       const creds = parseViettelCredentials(secret);
       const valid = validateInitiateRequest(request);
+      const secretKey = sha256Hex(secret);
       const hashBase64 = Buffer.from(valid.digestSha256, 'hex').toString('base64');
+      const encodedDocName = encodeMySignDisplayLabel(valid.documentName, 'Document');
+      const encodedDescription = encodeMySignDisplayLabel(valid.signerReason ?? valid.documentName, 'Document Sign');
       const res = await callAuthorized(
         secret,
         creds,
-        '/vtss/service/ras/csc/v1/signatures/signHash',
+        '/vtss/service/signHash',
         {
-          client_id: creds.clientId,
           credentialID: valid.certRef,
-          requestId: valid.idempotencyKey,
+          client_id: creds.clientId,
+          client_secret: creds.clientSecret,
           numSignatures: 1,
+          description: encodedDescription,
           documents: [
             {
               document_id: valid.idempotencyKey,
-              document_name: valid.documentName ?? 'document.pdf',
+              document_name: encodedDocName,
             },
           ],
           hash: [hashBase64],
           hashAlgo: SHA256_OID,
           signAlgo: RSA_OID,
-          async: 1,
+          async: 2,
         },
         true,
       );
@@ -342,9 +464,17 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
       if (res.status === 403) throw new CaProviderError('credentials');
       const errCode = readText(pickCaseInsensitive(res.json, 'errorCode')) ?? readText(pickCaseInsensitive(res.json, 'error'));
       if (res.status === 409 || errCode?.toUpperCase() === 'DUPLICATE_REQUEST' || errCode?.toUpperCase() === 'TRANSACTION_EXISTS') {
-        const reconciled = await queryStatus(secret, creds, { externalTxId: null, idempotencyKey: valid.idempotencyKey }).catch(() => {
+        const dataObj = pickCaseInsensitive(res.json, 'data') ?? res.json;
+        const dupTxId =
+          readText(pickCaseInsensitive(dataObj, 'transactionId')) ??
+          readText(pickCaseInsensitive(dataObj, 'transaction_id'));
+        if (!dupTxId) {
+          throw new CaProviderError('lost_answer', 'Viettel MySign duplicate request response missing server transactionId');
+        }
+        const reconciled = await queryStatus(secret, creds, { externalTxId: dupTxId, idempotencyKey: valid.idempotencyKey }).catch(() => {
           throw new CaProviderError('lost_answer');
         });
+        rememberCertRef(secretKey, reconciled.session.externalTxId, valid.certRef);
         return reconciled.session;
       }
       if (res.status >= 400) {
@@ -362,6 +492,7 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
         readText(pickCaseInsensitive(data, 'transactionId')) ??
         readText(pickCaseInsensitive(data, 'transaction_id'));
       if (!explicitStatus && txId) {
+        rememberCertRef(secretKey, txId, valid.certRef);
         return {
           provider: 'viettel_mysign',
           idempotencyKey: valid.idempotencyKey,
@@ -373,7 +504,9 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
           errorCode: null,
         };
       }
-      return parseSession(res.json, valid.idempotencyKey, valid.idempotencyKey);
+      const session = parseSession(res.json, valid.idempotencyKey, valid.idempotencyKey);
+      rememberCertRef(secretKey, session.externalTxId, valid.certRef);
+      return session;
     },
 
     pollStatus: async (secret: string, query: CaPollQuery | string): Promise<CaSignSession> => {
@@ -386,28 +519,39 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
     fetchSignedCms: async (secret: string, externalTxId: string): Promise<CaSignedCms> => {
       const creds = parseViettelCredentials(secret);
       const txId = normalizeExternalTxId(externalTxId);
+      const secretKey = sha256Hex(secret);
       const { session, rawJson } = await queryStatus(secret, creds, { externalTxId: txId, idempotencyKey: null });
       if (session.status !== 'signed') {
         throw new CaProviderError('not_signed', 'Viettel MySign transaction is not signed');
       }
       const data = pickCaseInsensitive(rawJson, 'data') ?? rawJson;
       const sigs = pickCaseInsensitive(data, 'signatures');
-      const rawCms =
+      const rawSigField =
         (Array.isArray(sigs) && sigs.length > 0 ? sigs[0] : undefined) ??
         pickCaseInsensitive(data, 'signature') ??
         pickCaseInsensitive(data, 'cms');
-      const cmsDer = decodeDerSequenceBase64(rawCms);
-      if (!cmsDer) {
-        throw new CaProviderError('unavailable', 'Viettel MySign response did not contain valid CMS DER bytes');
+      const sigBytes = decodeBase64Bytes(rawSigField);
+      if (!sigBytes || sigBytes.byteLength === 0) {
+        throw new CaProviderError('unavailable', 'Viettel MySign response did not contain signature bytes');
       }
+
+      const rawChain = pickCaseInsensitive(data, 'certificateChain');
+      const inlineChainDer = Array.isArray(rawChain)
+        ? rawChain.map(decodeDerCertificate).filter((v): v is Uint8Array => v !== null)
+        : [];
+
+      const { cmsDer, certificateChainPem } = await resolveCmsOrWrapRawSignature({
+        providerLabel: 'Viettel MySign',
+        sigBytes,
+        rawChain,
+        inlineChainDer,
+        loadChainDer: () => resolveCertificateChainDer(secret, secretKey, creds, txId),
+      });
+
       const timestampTokenDer = decodeDerSequenceBase64(pickCaseInsensitive(data, 'timestampToken'));
       const rawOcsps = pickCaseInsensitive(data, 'ocspResponses');
       const ocspResponsesDer = Array.isArray(rawOcsps)
         ? rawOcsps.map(decodeDerSequenceBase64).filter((v): v is Uint8Array => v !== null)
-        : [];
-      const rawChain = pickCaseInsensitive(data, 'certificateChain');
-      const certificateChainPem = Array.isArray(rawChain)
-        ? rawChain.map(readText).filter((v): v is string => v !== null)
         : [];
       return {
         externalTxId: session.externalTxId,
