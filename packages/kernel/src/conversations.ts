@@ -1785,7 +1785,10 @@ const zCallResult = z.discriminatedUnion('kind', [
 // Stores what the platform answered for a reply; an answer for a call that is no longer the message's current one changes
 // nothing.
 // A reply YouTube accepted cost 50 units of the project's day [O]: counted beside the connection's polling budget, so the screen shows what was spent.
+// The connection's row is locked only for a YouTube one, which has a quota to add to: a reply on any other channel must not hold a channel's row after
+// it holds a message's (a disconnect with erase holds the channel's and then deletes messages: the same two rows in the other order).
 async function countYoutubeReplyUnits(ctx: CommandContext, connectionId: string): Promise<void> {
+  if ((await youtubeQuotaRow(ctx, connectionId, false))?.provider !== 'youtube') return;
   const row = await youtubeQuotaRow(ctx, connectionId, true);
   if (row?.provider !== 'youtube') return;
   const q = youtubeQuotaNow({ resetAt: row.quota_reset_at, pollUnits: row.quota_poll_units, replyUnits: row.quota_reply_units, blockedUntil: row.quota_blocked_until }, ctx.now);
@@ -2838,10 +2841,13 @@ export const conversationChannelCounts = defineQuery({
 });
 
 // A person's choice, when a channel is disconnected, to delete its conversations too (#3299). Owners and admins only, never the system and never
-// an agent, behind a fresh second factor (R3: it cannot be undone). It runs the same erase path as Meta's deletion callback. The channel must
-// be disconnected already: a disconnected connection takes in no new message (the intake reads it under a share lock, so a notice in flight when
-// the disconnect committed has finished by then and one after it is ignored), so nothing is written to the threads while they are erased. This
-// holds the connection's row too, so two runs of it take turns. Run again it finds nothing and returns zeros. Counts only in the audit row.
+// an agent, behind a fresh second factor (R3: it cannot be undone), asked before anything changes. It runs the same erase path as Meta's
+// deletion callback. One transaction does both steps: a channel still connected is disconnected first (the same command the Channels screen's
+// plain disconnect runs, in this transaction, so a channel that cannot be disconnected, such as a Telegram bot that still receives chats, changes
+// nothing), then its conversations are erased; so the person never ends with a disconnected channel and a failed erase, and a retry is the same
+// call. A disconnected connection takes in no new message (the intake reads it under a key-share lock, so a notice in flight when the disconnect
+// takes the row finishes first, to be erased here, and one after it is ignored). Run again it finds nothing and returns zeros. Counts only in the
+// audit row.
 export const conversationEraseChannel = defineCommand({
   name: 'kernel.conversation.erase_channel',
   input: zConversationEraseChannel,
@@ -2859,7 +2865,7 @@ export const conversationEraseChannel = defineCommand({
       .forUpdate()
       .executeTakeFirst();
     if (!connection) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
-    if (connection.status !== 'revoked') throw new DomainError('CHANNEL_NOT_DISCONNECTED', 409, 'Hãy ngắt kết nối kênh này trước khi xóa các cuộc trò chuyện của nó');
+    if (connection.status !== 'revoked') await ctx.run('kernel.channel.disconnect', { connectionId: input.connectionId });
     const erased = await eraseConnectionConversations(ctx, input.connectionId);
     ctx.audit({ connection_id: input.connectionId, threads: erased.threads, messages: erased.messages, identities: erased.identities });
     return erased;

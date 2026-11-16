@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The disconnect confirmation of one channel (#3299): the state and the calls behind DisconnectView. With the choice off it is the disconnect
-// the screen always made. With it on it disconnects first (a disconnected channel takes in no new message), then erases the channel's
-// conversations by the kernel's person-only command, which asks for a fresh second factor; the step-up retry runs the same attempt again.
-// The disconnect is safe to run again (a revoked channel stays revoked), so a retry after a lost answer or a second factor is the whole call.
+// The disconnect confirmation of one channel (#3299): the state and the calls behind DisconnectView. With the choice off it is the plain disconnect
+// the screen always made. With it on, one call does both steps in one transaction (the kernel's person-only erase, which disconnects a channel that
+// is still connected and then erases its conversations), and it asks for a fresh second factor before anything changes: the channel stays as it was
+// while the prompt is open, a cancelled prompt changes nothing, and the retry after the second factor is the same call with the same key.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
@@ -18,15 +18,13 @@ export function ChannelDisconnectConfirm({ connectionId, onDone, onKeep }: { con
   const counts = useQuery({ ...orpc.conversations.channelCounts.queryOptions({ input: { connectionId } }), enabled: erase });
   const run = useMutation({
     mutationFn: async () => {
-      await client.channels.disconnect({ connectionId, idempotencyKey: crypto.randomUUID() });
       if (erase) await client.conversations.eraseChannel({ connectionId, confirm: true, idempotencyKey: attempt });
+      else await client.channels.disconnect({ connectionId, idempotencyKey: crypto.randomUUID() });
     },
     onSuccess: () => {
       onDone();
       void queryClient.invalidateQueries();
     },
-    // The channel is already disconnected when only the erasure failed: the screen shows it as such.
-    onError: () => void queryClient.invalidateQueries({ queryKey: orpc.channels.list.key() }),
   });
   const stepUp = isStepUpRequired(run.error);
   return (

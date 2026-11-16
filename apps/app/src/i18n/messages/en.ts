@@ -11582,7 +11582,6 @@ export const en = {
       SLOT_KEPT_FOR_LABEL: 'This time slot is kept for posts with a label of their own; add that label to the post or pick another slot',
       CHANNEL_NOT_FOUND: 'This connected channel was not found',
       CHANNEL_NOT_ACTIVE: 'This channel is no longer active; reconnect it',
-      CHANNEL_NOT_DISCONNECTED: 'Disconnect this channel before deleting its conversations',
       CHANNEL_OWNER_LEFT: 'The person who connected this channel can no longer manage it; reconnect it',
       CHAT_BUSY: 'Message receiving is being turned off; try again in a few seconds',
       CHAT_IS_ON: "Turn off receiving customers' messages first, so the webhook at Telegram is removed, then disconnect this channel",

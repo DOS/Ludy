@@ -166,7 +166,7 @@ suite('deleting a disconnected channel\'s conversations too on PostgreSQL (#3299
       expect(await count('conversation_identity', o)).toBe(1);
     });
 
-    it('lets an owner and an admin erase a disconnected channel, with a fresh second factor, and leaves another channel, another org and a shared identity alone', async () => {
+    it('lets an owner and an admin erase a channel in one step (disconnecting it first), with a fresh second factor, and leaves another channel, another org and a shared identity alone', async () => {
       const o = await org();
       const two = await secondChannel(o);
       const other = await org();
@@ -183,19 +183,22 @@ suite('deleting a disconnected channel\'s conversations too on PostgreSQL (#3299
       await rows("INSERT INTO crove_kernel.conversation_attachment (org_id, message_id, channel_connection_id, kind, source_url, storage_key) VALUES ($1, $2, $3, $4, 'https://x.test/a.png', $5)", [o.orgId, msg?.id, o.connectionId, msg?.kind, key]);
       expect(await count('conversation_attachment', o)).toBe(1);
       const before = { otherThreads: await threads(other), twoThreads: await threads(o, two.connectionId), otherMessages: await count('conversation_message', other) };
-      // A channel that is still connected is not erased, and nothing changed.
-      await expect(eraseAs(o, o.connectionId, asMfa(o.owner))).rejects.toMatchObject({ status: 409, code: 'CHANNEL_NOT_DISCONNECTED' });
-      expect(await threads(o, o.connectionId)).toEqual(['a-1', 'a-2']);
-      await disconnect(o, o.connectionId);
-      // A member, a viewer, an agent and the system are refused; an admin without a fresh second factor is asked for one.
+      // A member, a viewer, an agent and the system are refused; an admin without a fresh second factor is asked for one before anything changes.
+      const untouched = async () => {
+        expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.channel_connection WHERE id = $1', [o.connectionId]))[0]?.status).toBe('active');
+        expect(await threads(o, o.connectionId)).toEqual(['a-1', 'a-2']);
+      };
       for (const who of [o.lan, o.viewer]) await expect(eraseAs(o, o.connectionId, asMfa(who))).rejects.toMatchObject({ status: 403 });
       await expect(eraseAs(o, o.connectionId, { type: 'agent', agentId: randomUUID(), runId: randomUUID() })).rejects.toMatchObject({ status: 403 });
       await expect(worker.execute('kernel.conversation.erase_channel', { connectionId: o.connectionId, confirm: true }, { actor: { type: 'system', component: 'conversations' }, orgId: o.orgId, idempotencyKey: randomUUID() })).rejects.toMatchObject({ status: 403 });
       await expect(eraseAs(o, o.connectionId, asUser(o.admin))).rejects.toMatchObject({ code: 'STEP_UP_REQUIRED' });
-      expect(await threads(o, o.connectionId)).toEqual(['a-1', 'a-2']);
+      await untouched();
       // The admin with a fresh second factor erases: two threads, three messages, and the identity only this channel named.
       expect(await eraseAs(o, o.connectionId, asMfa(o.admin))).toEqual({ threads: 2, messages: 3, identities: 1 });
       expect(await threads(o, o.connectionId)).toEqual([]);
+      // The same transaction disconnected the channel (its own command, its own audit row) and dropped its token.
+      expect((await rows<{ status: string; status_reason: string }>('SELECT status, status_reason FROM crove_kernel.channel_connection WHERE id = $1', [o.connectionId]))[0]).toEqual({ status: 'revoked', status_reason: 'disconnected' });
+      expect(await rows("SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.channel.disconnect' AND outcome = 'ok'", [o.orgId])).toHaveLength(1);
       expect(await count('conversation_note', o)).toBe(0);
       expect(await count('conversation_attachment', o)).toBe(0);
       // The image's blob is queued for the worker to delete, in the same transaction as its row.
@@ -260,7 +263,7 @@ suite('deleting a disconnected channel\'s conversations too on PostgreSQL (#3299
       }
     });
 
-    it('takes turns with a notice in flight: a disconnect waits for the intake that holds the channel, and what that intake stored is erased by the next erase', async () => {
+    it('takes turns with a notice in flight: the erase waits for the intake that holds the channel and then erases what that intake stored', async () => {
       const o = await org();
       const holder = new pg.Client({ connectionString: adminUrl });
       await holder.connect();
@@ -269,31 +272,38 @@ suite('deleting a disconnected channel\'s conversations too on PostgreSQL (#3299
         await holder.query('BEGIN');
         await holder.query('SELECT id FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2 FOR KEY SHARE', [o.orgId, o.connectionId]);
         let done = false;
-        const pending = disconnect(o, o.connectionId).then(() => {
+        const pending = eraseAs(o, o.connectionId, asMfa(o.owner)).then((r) => {
           done = true;
+          return r;
         });
         await new Promise((r) => setTimeout(r, 600));
         expect(done).toBe(false);
-        // The intake commits its thread, then the disconnect goes through.
-        await holder.query(
-          `INSERT INTO crove_kernel.conversation_identity (org_id, provider, external_user_id, display_name) VALUES ($1, 'sandbox', 'u-late', 'Khách muộn')`,
-          [o.orgId],
-        );
+        // The intake commits its thread, then the erase goes through and removes it.
+        await holder.query(`INSERT INTO crove_kernel.conversation_identity (org_id, provider, external_user_id, display_name) VALUES ($1, 'sandbox', 'u-late', 'Khách muộn')`, [o.orgId]);
         await holder.query(
           `INSERT INTO crove_kernel.conversation (org_id, channel_connection_id, kind, external_thread_id, identity_id, status, opened_at, created_at, updated_at)
            SELECT $1, $2, 'comment_thread', 'late-1', i.id, 'new', now(), now(), now() FROM crove_kernel.conversation_identity i WHERE i.org_id = $1 AND i.external_user_id = 'u-late'`,
           [o.orgId, o.connectionId],
         );
         await holder.query('COMMIT');
-        await pending;
-        expect(done).toBe(true);
-        expect(await threads(o)).toEqual(['late-1']);
-        // The erase that follows removes what the intake stored before the disconnect.
-        expect(await eraseAs(o, o.connectionId, asMfa(o.owner))).toMatchObject({ threads: 1 });
+        expect(await pending).toMatchObject({ threads: 1, identities: 1 });
         expect(await threads(o)).toEqual([]);
       } finally {
         await holder.end();
       }
+    });
+
+    it('changes nothing when the channel cannot be disconnected (a Telegram bot that still receives chats), and erases an expired channel', async () => {
+      const o = await org();
+      await thread(o, 'p-1', 'Một', 'u-p1');
+      await rows("UPDATE crove_kernel.channel_connection SET chat_state = 'on', chat_hook = repeat('a', 43) WHERE id = $1", [o.connectionId]);
+      await expect(eraseAs(o, o.connectionId, asMfa(o.owner))).rejects.toMatchObject({ status: 409, code: 'CHAT_IS_ON' });
+      expect(await threads(o)).toEqual(['p-1']);
+      expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.channel_connection WHERE id = $1', [o.connectionId]))[0]?.status).toBe('active');
+      // A channel whose token was refused (expired) is disconnected and erased like any other.
+      await rows("UPDATE crove_kernel.channel_connection SET chat_state = 'off', chat_hook = NULL, chat_hook_next = NULL, status = 'expired', status_reason = 'token_refused' WHERE id = $1", [o.connectionId]);
+      expect(await eraseAs(o, o.connectionId, asMfa(o.owner))).toMatchObject({ threads: 1 });
+      expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.channel_connection WHERE id = $1', [o.connectionId]))[0]?.status).toBe('revoked');
     });
   });
 });
