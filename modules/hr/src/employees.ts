@@ -38,6 +38,7 @@ import {
   type HrEmployeeSummary,
   type HrEmploymentTerms,
   type HrEmploymentView,
+  type HrPayFunction,
   type HrProbationRoleTier,
   type HrWritten,
 } from '@crove/kernel-contract';
@@ -60,7 +61,7 @@ export const INSURANCE_PLACE = 'crove_hr.payroll_employee.insurance_number_seale
 // The subject every sealed value of one person is under: one key to shred.
 export const subjectOf = (employeeId: string): string => `employee:${employeeId}`;
 
-const EMPLOYEE_COLUMNS = ['org_id', 'id', 'legal_entity_id', 'display_name', 'address', 'national_id_sealed', 'bank_account_sealed', 'bank_code', 'birth_date', 'tax_code_sealed', 'insurance_number_sealed', 'created_by', 'created_at', 'updated_at'] as const;
+const EMPLOYEE_COLUMNS = ['org_id', 'id', 'legal_entity_id', 'department_id', 'job_title', 'display_name', 'address', 'national_id_sealed', 'bank_account_sealed', 'bank_code', 'birth_date', 'tax_code_sealed', 'insurance_number_sealed', 'created_by', 'created_at', 'updated_at'] as const;
 const EMPLOYMENT_COLUMNS = [
   'org_id',
   'id',
@@ -98,7 +99,9 @@ interface PreparedEmploymentRow {
   pay_function: HrEmploymentTerms['payFunction'];
 }
 
-function prepareEmploymentTerms(terms: HrEmploymentTerms): PreparedEmploymentRow {
+type EmploymentTermsInput = Omit<HrEmploymentTerms, 'payFunction'> & { payFunction?: HrPayFunction | undefined };
+
+function prepareEmploymentTerms(terms: EmploymentTermsInput, defaultPayFunction: HrPayFunction = 'admin'): PreparedEmploymentRow {
   const contractForm = terms.contractForm ?? null;
   const termMonths = terms.termMonths ?? null;
   const fixedTermSequence = terms.fixedTermSequence ?? null;
@@ -182,7 +185,7 @@ function prepareEmploymentTerms(terms: HrEmploymentTerms): PreparedEmploymentRow
     probation_wage: probationWage,
     region: terms.region,
     base_wage: terms.baseWage,
-    pay_function: terms.payFunction,
+    pay_function: terms.payFunction ?? defaultPayFunction,
   };
 }
 
@@ -217,7 +220,7 @@ function requireKnownBank(code: string | null | undefined): void {
 async function loadEmployee(ctx: Ctx, employeeId: string, options: { allowErased?: boolean } = {}) {
   const row = await ctx.trx
     .selectFrom('crove_hr.payroll_employee')
-    .select(['id', 'legal_entity_id', 'status', 'ended_on', 'erased_at'])
+    .select(['id', 'legal_entity_id', 'department_id', 'status', 'ended_on', 'erased_at'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', employeeId)
     .forUpdate()
@@ -225,6 +228,29 @@ async function loadEmployee(ctx: Ctx, employeeId: string, options: { allowErased
   if (!row) throw notFound();
   if (row.erased_at !== null && !options.allowErased) throw erasedError();
   return row;
+}
+
+async function resolveDepartment(
+  ctx: Pick<Ctx, 'trx' | 'orgId'>,
+  departmentId: string,
+  legalEntityId: string,
+  currentDepartmentId: string | null = null,
+): Promise<{ id: string; payFunction: HrPayFunction }> {
+  const dept = await ctx.trx
+    .selectFrom('crove_hr.department')
+    .select(['id', 'legal_entity_id', 'pay_function', 'archived_at'])
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', departmentId)
+    .forShare()
+    .executeTakeFirst();
+  if (!dept) throw new DomainError('HR_DEPARTMENT_NOT_FOUND', 404, 'Không tìm thấy phòng ban này');
+  if (dept.legal_entity_id !== legalEntityId) {
+    throw new DomainError('HR_DEPARTMENT_WRONG_ENTITY', 422, 'Phòng ban không thuộc pháp nhân của nhân viên');
+  }
+  if (dept.archived_at !== null && currentDepartmentId !== dept.id) {
+    throw new DomainError('HR_DEPARTMENT_ARCHIVED', 409, 'Phòng ban này đã ngừng sử dụng, không thể gán cho nhân viên');
+  }
+  return { id: dept.id, payFunction: dept.pay_function };
 }
 
 const requireActive = (employee: { status: string }): void => {
@@ -253,8 +279,9 @@ export const employeeAdd = defineCommand({
   handler: async (ctx, input): Promise<HrWritten> => {
     const userId = userOf(ctx.actor);
     requireKnownBank(input.bankCode);
-    const prepared = prepareEmploymentTerms(input.employment);
     const legalEntityId = await resolveEntity(ctx, input.legalEntityId);
+    const dept = input.departmentId === undefined ? null : await resolveDepartment(ctx, input.departmentId, legalEntityId);
+    const prepared = prepareEmploymentTerms(input.employment, dept?.payFunction ?? 'admin');
     // The id first: the subject of the sealed values names it.
     const { rows } = await sql<{ id: string }>`SELECT crove_kernel.uuid_v7() AS id`.execute(ctx.trx);
     const employeeId = rows[0]?.id;
@@ -270,6 +297,8 @@ export const employeeAdd = defineCommand({
         org_id: ctx.orgId,
         id: employeeId,
         legal_entity_id: legalEntityId,
+        department_id: dept?.id ?? null,
+        job_title: input.jobTitle ?? null,
         display_name: input.displayName,
         address: input.address ?? null,
         national_id_sealed: identity,
@@ -299,6 +328,8 @@ export const employeeAdd = defineCommand({
       employeeId,
       employmentId: employment.id,
       legalEntityId,
+      departmentId: dept?.id ?? null,
+      hasJobTitle: input.jobTitle !== undefined,
       name: auditValue(EMPLOYEE, 'display_name', input.displayName),
       address: auditValue(EMPLOYEE, 'address', input.address ?? null),
       hasIdentityNumber: identity !== null,
@@ -333,14 +364,23 @@ export const employeeEdit = defineCommand({
   access: MANAGERS,
   permission: 'hr.payroll.run',
   target: targetOf,
-  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['display_name', 'address', 'national_id_sealed', 'bank_account_sealed', 'bank_code', 'birth_date', 'tax_code_sealed', 'insurance_number_sealed', 'updated_at'])],
+  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['display_name', 'address', 'national_id_sealed', 'bank_account_sealed', 'bank_code', 'birth_date', 'tax_code_sealed', 'insurance_number_sealed', 'department_id', 'job_title', 'updated_at'])],
   handler: async (ctx, input): Promise<HrWritten> => {
     // A former employee's record is kept as it is for the retention: no change, and no clearing of the numbers, the name or the address; the owner's erasure is the way out. The one
     // exceptions are what a leaver still needs: for the declarations (#2533) the birth date, the tax code and the insurance number, and for paying what is still owed (a final month, a
     // refund) the account number and the bank (#2905); all audited like any edit. An erased person is refused by loadEmployee before this point.
     requireKnownBank(input.bankCode);
     const employee = await loadEmployee(ctx, input.employeeId);
-    if (employee.status !== 'active' && (input.displayName !== undefined || input.address !== undefined || input.identityNumber !== undefined)) requireActive(employee);
+    if (
+      employee.status !== 'active' &&
+      (input.displayName !== undefined ||
+        input.address !== undefined ||
+        input.identityNumber !== undefined ||
+        input.departmentId !== undefined ||
+        input.jobTitle !== undefined)
+    ) {
+      requireActive(employee);
+    }
     const subject = subjectOf(input.employeeId);
     const changed: string[] = [];
     const set: {
@@ -352,6 +392,8 @@ export const employeeEdit = defineCommand({
       birth_date?: string | null;
       tax_code_sealed?: string | null;
       insurance_number_sealed?: string | null;
+      department_id?: string | null;
+      job_title?: string | null;
       updated_at: Date;
     } = { updated_at: ctx.now };
     if (input.displayName !== undefined) {
@@ -385,6 +427,19 @@ export const employeeEdit = defineCommand({
     if (input.insuranceNumber !== undefined) {
       set.insurance_number_sealed = input.insuranceNumber === null ? null : await ctx.seal(subject, INSURANCE_PLACE, input.insuranceNumber);
       changed.push('insuranceNumber');
+    }
+    if (input.departmentId !== undefined) {
+      if (input.departmentId === null) {
+        set.department_id = null;
+      } else {
+        const dept = await resolveDepartment(ctx, input.departmentId, employee.legal_entity_id, employee.department_id);
+        set.department_id = dept.id;
+      }
+      changed.push('departmentId');
+    }
+    if (input.jobTitle !== undefined) {
+      set.job_title = input.jobTitle;
+      changed.push('jobTitle');
     }
     await ctx.trx.updateTable('crove_hr.payroll_employee').set(set).where('org_id', '=', ctx.orgId).where('id', '=', input.employeeId).execute();
     ctx.audit({ employeeId: input.employeeId, changed });
@@ -597,7 +652,7 @@ export const employeeErase = defineCommand({
   access: OWNERS,
   target: targetOf,
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['display_name', 'address', 'birth_date', 'bank_code', 'erased_at', 'updated_at']),
+    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['display_name', 'address', 'birth_date', 'bank_code', 'department_id', 'job_title', 'erased_at', 'updated_at']),
     tableWrite(hrManifest.tables, 'crove_hr', 'payroll_dependent', ['display_name']),
     // The person's key, deleted by crove_kernel.subject_key_shred.
     tableWrite(kernelManifest.tables, 'crove_kernel', 'subject_key', ['ref']),
@@ -621,7 +676,7 @@ export const employeeErase = defineCommand({
       .execute();
     await ctx.trx
       .updateTable('crove_hr.payroll_employee')
-      .set({ display_name: HR_ERASED_NAME, address: null, birth_date: null, bank_code: null, erased_at: ctx.now, updated_at: ctx.now })
+      .set({ display_name: HR_ERASED_NAME, address: null, birth_date: null, bank_code: null, department_id: null, job_title: null, erased_at: ctx.now, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.employeeId)
       .execute();
@@ -631,7 +686,7 @@ export const employeeErase = defineCommand({
     return {
       employeeId: input.employeeId,
       shreddedKeys,
-      cleared: ['name', 'address', 'birth date', 'bank', 'dependents names'],
+      cleared: ['name', 'address', 'birth date', 'bank', 'department', 'job title', 'dependents names'],
       kept: [
         { what: 'the identity number, the account number, the tax code and the insurance number', reason: 'They stay in their row, but the key that opens them is deleted: nobody can read them again' },
         { what: 'the employment terms and their wages', reason: 'Amounts that tie to no person once the name is gone; the books keep what accounting law requires' },
@@ -754,11 +809,25 @@ export const employeeList = defineQuery({
   sensitive: true,
   handler: async (ctx, input): Promise<HrEmployeeSummary[]> => {
     let q = ctx.trx
-      .selectFrom('crove_hr.payroll_employee')
-      .select(['id', 'legal_entity_id', 'display_name', 'status', 'ended_on', 'national_id_sealed', 'bank_account_sealed'])
-      .where('org_id', '=', ctx.orgId);
-    if (input.status !== 'all') q = q.where('status', '=', input.status);
-    const employees = await q.orderBy('display_name').orderBy('id').limit(input.limit).execute();
+      .selectFrom('crove_hr.payroll_employee as e')
+      .leftJoin('crove_hr.department as d', (join) => join.onRef('d.org_id', '=', 'e.org_id').onRef('d.id', '=', 'e.department_id'))
+      .select([
+        'e.id',
+        'e.legal_entity_id',
+        'e.display_name',
+        'e.department_id',
+        'd.name as department_name',
+        'e.job_title',
+        'e.status',
+        'e.ended_on',
+        'e.erased_at',
+        'e.national_id_sealed',
+        'e.bank_account_sealed',
+      ])
+      .where('e.org_id', '=', ctx.orgId);
+    if (input.status !== 'all') q = q.where('e.status', '=', input.status);
+    if (input.departmentId !== undefined) q = q.where('e.department_id', '=', input.departmentId);
+    const employees = await q.orderBy('e.display_name').orderBy('e.id').limit(input.limit).execute();
     if (employees.length === 0) return [];
     const terms = await ctx.trx
       .selectFrom('crove_hr.payroll_employment')
@@ -776,10 +845,14 @@ export const employeeList = defineQuery({
     const today = vietnamDay(new Date());
     return employees.map((e) => {
       const current = inForce(byEmployee.get(e.id) ?? [], today);
+      const erased = e.erased_at !== null;
       return {
         id: e.id,
         legalEntityId: e.legal_entity_id,
         displayName: e.display_name,
+        departmentId: erased ? null : e.department_id,
+        departmentName: erased ? null : (e.department_name ?? null),
+        jobTitle: erased ? null : e.job_title,
         status: e.status,
         endedOn: e.ended_on === null ? null : iso(e.ended_on),
         current,
@@ -799,10 +872,29 @@ export const employeeGet = defineQuery({
   target: (input: { employeeId: string }) => ({ type: 'hr.payroll_employee', id: input.employeeId }),
   handler: async (ctx, input): Promise<HrEmployee> => {
     const e = await ctx.trx
-      .selectFrom('crove_hr.payroll_employee')
-      .select(['id', 'legal_entity_id', 'display_name', 'address', 'status', 'ended_on', 'erased_at', 'national_id_sealed', 'bank_account_sealed', 'bank_code', 'birth_date', 'tax_code_sealed', 'insurance_number_sealed', 'finalization_authorized_years'])
-      .where('org_id', '=', ctx.orgId)
-      .where('id', '=', input.employeeId)
+      .selectFrom('crove_hr.payroll_employee as e')
+      .leftJoin('crove_hr.department as d', (join) => join.onRef('d.org_id', '=', 'e.org_id').onRef('d.id', '=', 'e.department_id'))
+      .select([
+        'e.id',
+        'e.legal_entity_id',
+        'e.display_name',
+        'e.department_id',
+        'd.name as department_name',
+        'e.job_title',
+        'e.address',
+        'e.status',
+        'e.ended_on',
+        'e.erased_at',
+        'e.national_id_sealed',
+        'e.bank_account_sealed',
+        'e.bank_code',
+        'e.birth_date',
+        'e.tax_code_sealed',
+        'e.insurance_number_sealed',
+        'e.finalization_authorized_years',
+      ])
+      .where('e.org_id', '=', ctx.orgId)
+      .where('e.id', '=', input.employeeId)
       .executeTakeFirst();
     if (!e) throw notFound();
     const terms = (
@@ -863,6 +955,9 @@ export const employeeGet = defineQuery({
       id: e.id,
       legalEntityId: e.legal_entity_id,
       displayName: e.display_name,
+      departmentId: erased ? null : e.department_id,
+      departmentName: erased ? null : (e.department_name ?? null),
+      jobTitle: erased ? null : e.job_title,
       status: e.status,
       endedOn: e.ended_on === null ? null : iso(e.ended_on),
       current,
