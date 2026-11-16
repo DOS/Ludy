@@ -968,6 +968,13 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
     if (ocspRefs.length > 0) {
       const existingOcspsRaw = nextDss.get(PDFName.of('OCSPs'));
       if (existingOcspsRaw instanceof PDFRef) {
+        if (
+          dssRefForUpdate !== null &&
+          existingOcspsRaw.objectNumber === dssRefForUpdate.objectNumber &&
+          existingOcspsRaw.generationNumber === dssRefForUpdate.generationNumber
+        ) {
+          throw new PdfSignError('Danh sách /OCSPs trong /DSS không hợp lệ');
+        }
         const existingOcsps = pdfDoc.context.lookupMaybe(existingOcspsRaw, PDFArray);
         if (!existingOcsps) {
           throw new PdfSignError('Danh sách /OCSPs trong /DSS không hợp lệ');
@@ -993,6 +1000,13 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
 
     const existingVriRaw = nextDss.get(PDFName.of('VRI'));
     if (existingVriRaw instanceof PDFRef) {
+      if (
+        dssRefForUpdate !== null &&
+        existingVriRaw.objectNumber === dssRefForUpdate.objectNumber &&
+        existingVriRaw.generationNumber === dssRefForUpdate.generationNumber
+      ) {
+        throw new PdfSignError('Từ điển /VRI trong /DSS không hợp lệ');
+      }
       const existingVri = pdfDoc.context.lookupMaybe(existingVriRaw, PDFDict);
       if (!existingVri) {
         throw new PdfSignError('Từ điển /VRI trong /DSS không hợp lệ');

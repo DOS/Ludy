@@ -165,6 +165,12 @@ function extractMisaCertificates(json: unknown): MisaCertificateRecord[] {
   return out;
 }
 
+function toMisaDocumentId(idempotencyKey: string): string {
+  return idempotencyKey.length <= 36
+    ? idempotencyKey
+    : sha256Hex(`misa-doc:${idempotencyKey}`).slice(0, 36);
+}
+
 function readMisaErrorCode(json: unknown): string | null {
   if (!isRecord(json)) return null;
   const statusObj = pickCaseInsensitive(json, 'status');
@@ -273,13 +279,20 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
 
     const data = pickCaseInsensitive(res.json, 'Data');
     // Open API returns both MISAID `accessToken` and eSign `remoteSigningAccessToken`; AuthorizationRM requires the latter.
-    const token =
+    const hasRemoteTokenField =
+      (isRecord(data) && pickCaseInsensitive(data, 'remoteSigningAccessToken') !== undefined) ||
+      pickCaseInsensitive(res.json, 'remoteSigningAccessToken') !== undefined;
+    const remoteToken =
       readText(pickCaseInsensitive(data, 'remoteSigningAccessToken')) ??
-      readText(pickCaseInsensitive(res.json, 'remoteSigningAccessToken')) ??
-      readText(data) ??
-      readText(pickCaseInsensitive(data, 'AccessToken')) ??
-      readText(pickCaseInsensitive(data, 'Token')) ??
-      readText(pickCaseInsensitive(res.json, 'AccessToken'));
+      readText(pickCaseInsensitive(res.json, 'remoteSigningAccessToken'));
+    const token =
+      remoteToken ??
+      (hasRemoteTokenField
+        ? null
+        : (readText(data) ??
+          readText(pickCaseInsensitive(data, 'AccessToken')) ??
+          readText(pickCaseInsensitive(data, 'Token')) ??
+          readText(pickCaseInsensitive(res.json, 'AccessToken'))));
     if (token) {
       const expiresInSec = Number(pickCaseInsensitive(data, 'ExpiresIn'));
       const ttlMs = Number.isFinite(expiresInSec) && expiresInSec > 60 ? (expiresInSec - 30) * 1000 : DEFAULT_TOKEN_TTL_MS;
@@ -344,7 +357,7 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
         url: `${base}${path}`,
         allowedHosts,
         headers: {
-          'content-type': 'application/json',
+          ...(method === 'POST' ? { 'content-type': 'application/json' } : {}),
           accept: 'application/json',
           'x-clientId': creds.clientId,
           'x-clientKey': creds.clientKey,
@@ -354,8 +367,16 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
         write,
         timeoutMs,
       });
-      const code = isRecord(res.json) ? readText(pickCaseInsensitive(res.json, 'ErrorCode')) : null;
-      if (res.status === 401 || code === 'TokenExpiredCode' || code === 'InvalidTokenCode' || code === 'UnAuthorize') {
+      const code = readMisaErrorCode(res.json);
+      const statusObj = isRecord(res.json) ? pickCaseInsensitive(res.json, 'status') : undefined;
+      const envelopeCode = isRecord(statusObj) ? Number(pickCaseInsensitive(statusObj, 'code')) : NaN;
+      if (
+        res.status === 401 ||
+        envelopeCode === 401 ||
+        code === 'TokenExpiredCode' ||
+        code === 'InvalidTokenCode' ||
+        code === 'UnAuthorize'
+      ) {
         tokens.delete(key);
         if (attempt === 0) continue;
         throw new CaProviderError('credentials');
@@ -467,7 +488,7 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
     creds: MisaWeSignCredentials,
     query: { externalTxId: string | null; idempotencyKey: string | null },
   ): Promise<{ session: CaSignSession; rawJson: unknown }> {
-    const lookupId = query.externalTxId ?? query.idempotencyKey;
+    const lookupId = query.externalTxId ?? (query.idempotencyKey ? toMisaDocumentId(query.idempotencyKey) : null);
     if (!lookupId) {
       throw new CaProviderError('lost_answer', 'MISA WeSign requires transactionId to query signing status');
     }
@@ -484,7 +505,7 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
     if (res.status >= 400 || !isRecord(res.json) || extractMisaEnvelopeSuccess(res.json) === false) {
       throw new CaProviderError('unavailable');
     }
-    const fallbackTx = query.externalTxId ?? query.idempotencyKey ?? '';
+    const fallbackTx = query.externalTxId ?? lookupId;
     const session = parseSession(res.json, query.idempotencyKey ?? fallbackTx, fallbackTx);
     return { session, rawJson: res.json };
   }
@@ -533,7 +554,7 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
         if (records.length === 0) return 'signing_needs_person';
         const activeRemote = records.filter((r) => !r.isUsbOnly && r.isActive);
         if (activeRemote.length > 0) {
-          cacheCerts(sha256Hex(secret), activeRemote);
+          cacheCerts(sha256Hex(secret), records.filter((r) => !r.isUsbOnly));
           return 'works';
         }
         return records.some((r) => r.isUsbOnly) ? 'usb_token_unsupported' : 'signing_needs_person';
@@ -563,7 +584,7 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
           CertAlias: valid.certRef,
           Documents: [
             {
-              DocumentId: valid.idempotencyKey.slice(0, 36),
+              DocumentId: toMisaDocumentId(valid.idempotencyKey),
               FileToSign: hashBase64,
               DocumentName: (valid.documentName ?? 'document.pdf').slice(0, 100),
             },
@@ -645,6 +666,8 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
         throw new CaProviderError('not_signed', 'MISA WeSign transaction is not signed');
       }
       const data = pickCaseInsensitive(rawJson, 'Data') ?? rawJson;
+      const sigs = pickCaseInsensitive(data, 'signatures');
+      const firstSig = Array.isArray(sigs) && isRecord(sigs[0]) ? sigs[0] : undefined;
       const rawCms = extractMisaSignatureField(data);
       const sigBytes = decodeBase64Bytes(rawCms);
       if (!sigBytes || sigBytes.byteLength === 0) {
@@ -652,19 +675,25 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
       }
 
       const inlineCertAlias =
+        readText(pickCaseInsensitive(firstSig, 'keyAlias')) ??
+        readText(pickCaseInsensitive(firstSig, 'CertAlias')) ??
         readText(pickCaseInsensitive(data, 'keyAlias')) ??
         readText(pickCaseInsensitive(data, 'CertAlias')) ??
         readText(pickCaseInsensitive(data, 'CertSerial')) ??
         readText(pickCaseInsensitive(rawJson, 'keyAlias')) ??
         readText(pickCaseInsensitive(rawJson, 'CertAlias'));
       const rawChain =
+        pickCaseInsensitive(firstSig, 'certiticateChain') ??
+        pickCaseInsensitive(firstSig, 'CertificateChain') ??
         pickCaseInsensitive(data, 'certiticateChain') ??
         pickCaseInsensitive(data, 'CertificateChain');
       const inlineChainDer = Array.isArray(rawChain)
         ? rawChain.map(decodeDerCertificate).filter((v): v is Uint8Array => v !== null)
         : [];
       const inlineSingleCert = decodeDerCertificate(
-        pickCaseInsensitive(data, 'CertData') ?? pickCaseInsensitive(data, 'certificate'),
+        pickCaseInsensitive(firstSig, 'certificate') ??
+          pickCaseInsensitive(data, 'CertData') ??
+          pickCaseInsensitive(data, 'certificate'),
       );
       if (inlineSingleCert && inlineChainDer.length === 0) {
         inlineChainDer.push(inlineSingleCert);
@@ -679,8 +708,11 @@ export function createMisaWeSignAdapter(options: CaAdapterOptions = {}): CaSigni
         loadChainDer: () => resolveCertificateChainDer(secret, secretKey, creds, txId, normalized.certRef ?? inlineCertAlias ?? undefined),
       });
 
-      const timestampTokenDer = decodeDerSequenceBase64(pickCaseInsensitive(data, 'TimestampToken'));
-      const rawOcsps = pickCaseInsensitive(data, 'OcspResponses');
+      const timestampTokenDer = decodeDerSequenceBase64(
+        pickCaseInsensitive(firstSig, 'TimestampToken') ?? pickCaseInsensitive(data, 'TimestampToken'),
+      );
+      const rawOcsps =
+        pickCaseInsensitive(firstSig, 'OcspResponses') ?? pickCaseInsensitive(data, 'OcspResponses');
       const ocspResponsesDer = Array.isArray(rawOcsps)
         ? rawOcsps.map(decodeDerSequenceBase64).filter((v): v is Uint8Array => v !== null)
         : [];

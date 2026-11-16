@@ -994,6 +994,83 @@ describe('MISA eSign / WeSign adapter (esignapp.misa.vn Open API recorded respon
       '/external/esrm/service/general/api/v1/Certificates/by-userId': [{ status: 200, body: [{ keyAlias: 'U1', SignType: 'USB_TOKEN', keyStatus: 'ACTIVE' }] }],
     });
     expect(await getCaAdapter('misa_wesign', { fetch: usbCerts.fetchImpl }).testConnection(MISA_SECRET)).toBe('usb_token_unsupported');
+
+    const missingRemoteToken = mockFetch({
+      '/api/auth/api/v1/auth/login-api': [
+        { status: 200, body: { status: { code: 200, error: false }, data: { accessToken: 'misaid-only-tok', remoteSigningAccessToken: null } } },
+      ],
+    });
+    expect(await getCaAdapter('misa_wesign', { fetch: missingRemoteToken.fetchImpl }).testConnection(MISA_SECRET)).toBe('wrong_credentials');
+    expect(missingRemoteToken.calls).toHaveLength(1);
+  });
+
+  it('derives collision-free MISA DocumentId for keys over 36 chars and refreshes on nested status.errorCode TokenExpiredCode', async () => {
+    const keyA = 'same-36-char-prefix-for-both-requests-A';
+    const keyB = 'same-36-char-prefix-for-both-requests-B';
+    let loginCount = 0;
+    const sentDocIds: string[] = [];
+    const statusPaths: string[] = [];
+    const authHeaders: string[] = [];
+    let hashCallCount = 0;
+
+    const customFetch: typeof fetch = async (input, init) => {
+      const url = String(input);
+      const path = new URL(url).pathname;
+      const headers = new Headers(init?.headers);
+      if (path.endsWith('/login-api')) {
+        loginCount += 1;
+        return Response.json({
+          status: { code: 200, error: false },
+          data: { remoteSigningAccessToken: `tok-${loginCount}`, user: { id: 'uid-long' } },
+        });
+      }
+      authHeaders.push(headers.get('authorizationrm') ?? '');
+      if (path.endsWith('/Signing/hash')) {
+        hashCallCount += 1;
+        if (hashCallCount === 1) {
+          return Response.json({ status: { code: 200, error: true, errorCode: 'TokenExpiredCode' }, data: null });
+        }
+        const parsed = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as {
+          Documents: Array<{ DocumentId: string }>;
+        };
+        const docId = parsed.Documents[0]?.DocumentId ?? '';
+        sentDocIds.push(docId);
+        if (hashCallCount === 3) {
+          return Response.json({ status: { code: 400, error: true, errorCode: 'DuplicateRefID' }, data: null });
+        }
+        return Response.json({ transactionId: `tx-${hashCallCount}` });
+      }
+      if (path.includes('/Signing/status/')) {
+        statusPaths.push(path);
+        return Response.json({ transactionId: 'tx-2', status: 'PENDING' });
+      }
+      return Response.json({}, { status: 404 });
+    };
+
+    const adapter = getCaAdapter('misa_wesign', { fetch: customFetch });
+    const first = await adapter.initiateSign(MISA_SECRET, { idempotencyKey: keyA, digestSha256: DIGEST, certRef: 'M1' });
+    expect(first.externalTxId).toBe('tx-2');
+    expect(loginCount).toBe(2);
+    expect(authHeaders[0]).toBe('Bearer tok-1');
+    expect(authHeaders[1]).toBe('Bearer tok-2');
+
+    // Retry same >36-char keyA reconciles DuplicateRefID using exact derived DocumentId.
+    const dup = await adapter.initiateSign(MISA_SECRET, { idempotencyKey: keyA, digestSha256: DIGEST, certRef: 'M1' });
+    expect(dup.externalTxId).toBe('tx-2');
+
+    const second = await adapter.initiateSign(MISA_SECRET, { idempotencyKey: keyB, digestSha256: DIGEST, certRef: 'M1' });
+    expect(second.externalTxId).toBe('tx-4');
+
+    expect(sentDocIds).toHaveLength(3);
+    const [docA, docADup, docB] = sentDocIds;
+    expect(docA?.length).toBeLessThanOrEqual(36);
+    expect(docB?.length).toBeLessThanOrEqual(36);
+    expect(docA).toBe(docADup);
+    expect(docA).not.toBe(docB);
+    expect(statusPaths[0]).toBe(`/external/esrm/service/signing/api/v1/Signing/status/${docA}`);
+
+    await adapter.pollStatus(MISA_SECRET, { idempotencyKey: keyA });
+    expect(statusPaths[1]).toBe(`/external/esrm/service/signing/api/v1/Signing/status/${docA}`);
   });
 
   it('rejects path-traversal identifiers consistently across initiateSign, pollStatus, and fetchSignedCms, plus non-canonical DER and body timeouts', async () => {
