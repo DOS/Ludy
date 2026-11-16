@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Outlet, useLocation, useNavigate, useParams } from '@tanstack/react-router';
+import { Outlet, useLocation, useNavigate, useParams, useRouter } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
 import { NavIcon } from '@crove/ui/components/nav-icon';
 import { NavDrawer, ShellNav } from '../components/app-nav.tsx';
@@ -14,7 +14,8 @@ import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
 import { orpc } from '../lib/api.ts';
 import { ALL_NAV, appOfPath, installedApps, type AppId, type NavItem } from '../lib/apps.ts';
 import { getConfig } from '../lib/auth.ts';
-import { installedItems } from '../lib/modules.ts';
+import { effectiveModules, installedItems } from '../lib/modules.ts';
+import { installedModules, setOrgModules, useModulesVersion } from '../lib/org-modules.ts';
 import { shellBadges } from '../lib/overview.ts';
 import { isPaletteShortcut, searchTerm } from '../lib/palette.ts';
 import { documentNumber } from '../lib/search.ts';
@@ -40,8 +41,16 @@ function useSettled<T>(value: T, ms: number): T {
 }
 
 export function OrgLayout() {
-  const allNav = useMemo(() => installedItems(getConfig().modules, ALL_NAV), []);
-  const allApps = useMemo(() => installedApps(getConfig().modules), []);
+  // The org's own apps (ADR-0053, slice d): the router read them before this screen opened; the stream's org_apps hint, or this tab's own switch, makes this read them again, and a change
+  // rebuilds the menus and remounts the screen so every "is this app installed" question below it answers again. A failed read leaves the deployment's list.
+  const appsLive = useStreamLive();
+  const orgApps = useQuery({ ...orpc.org.apps.queryOptions(), refetchInterval: pollEvery(appsLive, 60_000, SAFETY_POLL_MS) });
+  useEffect(() => {
+    if (orgApps.data) setOrgModules(effectiveModules(getConfig().modules, orgApps.data.apps));
+  }, [orgApps.data]);
+  const modulesVersion = useModulesVersion();
+  const allNav = useMemo(() => installedItems(installedModules(), ALL_NAV), [modulesVersion]); // oxlint-disable-line react-hooks/exhaustive-deps
+  const allApps = useMemo(() => installedApps(installedModules()), [modulesVersion]); // oxlint-disable-line react-hooks/exhaustive-deps
   // The app of the screen (#1528), from the URL so a deep link opens in its app; on the org's own screens (Settings,
   // the chart) the menu keeps the app last used.
   const { pathname } = useLocation();
@@ -57,6 +66,15 @@ export function OrgLayout() {
   useScrollRoom(phoneHeader, 'top');
   const { slug } = useParams({ strict: false }) as { slug: string };
   const navigate = useNavigate();
+  // A change of the apps runs the router's guards and renders the screen again (router.invalidate): a screen of an app that was just switched off goes to the overview, as one opened
+  // by address does (ADR-0053 section 3), and every other screen is rendered again with the new list, keeping what its user has typed. Not on the first render.
+  const router = useRouter();
+  const seenVersion = useRef(modulesVersion);
+  useEffect(() => {
+    if (seenVersion.current === modulesVersion) return;
+    seenVersion.current = modulesVersion;
+    void router.invalidate();
+  }, [modulesVersion, router]);
   const t = useTranslations('nav');
   const tc = useTranslations('common');
   const me = useQuery(orpc.me.get.queryOptions());
@@ -69,7 +87,7 @@ export function OrgLayout() {
   });
   // Social posts waiting for the viewer's review (#749) count on Social's menu item (#2234), not on the inbox. Asked of the modules, not of the
   // menu: the reports item (#2435) is the social module's but shows where crm or ads runs alone, and Social's reads answer not installed there.
-  const socialOn = getConfig().modules.includes('social');
+  const socialOn = installedModules().includes('social');
   const reviews = useQuery({ ...orpc.social.reviewInbox.queryOptions({ input: {} }), enabled: socialOn, refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS) });
   // And what needs a person there (#771): channels to reconnect, posts that did not go out.
   const attention = useQuery({ ...orpc.social.attentionInbox.queryOptions({ input: {} }), enabled: socialOn, refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS) });
@@ -95,9 +113,9 @@ export function OrgLayout() {
   });
   const menuBadges = shellBadges({
     pending: pending.data?.length ?? 0,
-    attention: attention.data?.total ?? 0,
+    attention: socialOn ? (attention.data?.total ?? 0) : 0,
     failedJobs: failedJobs.data?.total ?? 0,
-    reviews: reviews.data?.total ?? 0,
+    reviews: socialOn ? (reviews.data?.total ?? 0) : 0,
   });
   // The member's unread notifications (#637), where Social runs.
   const notifications = useNotifications(socialOn);
@@ -161,7 +179,7 @@ export function OrgLayout() {
         label: t(item.label),
         run: () => void navigate({ to: item.to, params: { slug } }),
       })),
-      ...(reviews.data?.items ?? []).map((item) => ({
+      ...((socialOn ? reviews.data?.items : undefined) ?? []).map((item) => ({
         id: `social-review:${item.postId}`,
         group: 'proposals' as const,
         label: item.title || item.excerpt,
@@ -199,7 +217,7 @@ export function OrgLayout() {
       })),
       { id: 'sign-out', group: 'actions' as const, label: tc('signOut'), run: () => void signOut() },
     ],
-    [NAV, pending.data, reviews.data, me.data, slug, locale, theme, t, tp, tc, f, navigate, setLocale, setTheme],
+    [NAV, pending.data, reviews.data, socialOn, me.data, slug, locale, theme, t, tp, tc, f, navigate, setLocale, setTheme],
   );
   const foundEntries = useMemo<PaletteEntry[]>(() => {
     const settled = typed !== null && term === typed;

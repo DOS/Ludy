@@ -65,6 +65,7 @@ import { disconnectConfirmText, hasOpenWriteConnection } from '../lib/ads-write.
 import { getConfig } from '../lib/auth.ts';
 import { monthLabel } from '../lib/period-lock.ts';
 import { toast } from '../lib/toast.ts';
+import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 
 type SandboxCurrency = (typeof ADS_SANDBOX_CURRENCIES)[number];
 
@@ -944,7 +945,8 @@ export function AdsPage() {
   const metaOffered = readOAuth.includes('meta_ads');
   const googleOffered = readOAuth.includes('google_ads');
   const writeOffer = adWriteOffer(config);
-  const financeOn = config.modules.includes('finance');
+  useModulesVersion(); // the apps of the org can change while this screen is open
+  const financeOn = installedModules().includes('finance');
   const me = useQuery(orpc.me.get.queryOptions());
   const role = me.data?.orgs.find((o) => o.slug === slug)?.role;
   const canManage = role === 'owner' || role === 'admin';

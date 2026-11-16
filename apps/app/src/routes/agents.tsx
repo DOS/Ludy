@@ -35,7 +35,7 @@ import {
   type LeScope,
 } from '../lib/agents.ts';
 import { errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
-import { getConfig } from '../lib/auth.ts';
+import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 
 type Chart = Awaited<ReturnType<typeof orpc.chart.get.call>>;
 type Position = Chart['positions'][number];
@@ -462,9 +462,12 @@ export function PositionNode({ node, ctx }: { node: ChartNode<Position>; ctx: Po
 function AddPosition({ positions, entities, entitiesReady }: { positions: Position[]; entities: Entity[]; entitiesReady: boolean }) {
   const t = useTranslations('agents');
   const moduleName = useModuleName();
-  const modules = getConfig().modules;
+  useModulesVersion(); // the apps of the org can change while this screen is open
+  const modules = installedModules();
   const [title, setTitle] = useState('');
   const [module, setModule] = useState(modules[0] ?? 'kernel');
+  // An app the org just switched off is no longer a choice: the form falls back to the first one that is on.
+  const chosenModule = modules.includes(module) ? module : (modules[0] ?? 'kernel');
   const [roleKey, setRoleKey] = useState('');
   const [reportsTo, setReportsTo] = useState('');
   // Until the owner picks, the org's default entity, which the server gives a new position anyway.
@@ -484,7 +487,7 @@ function AddPosition({ positions, entities, entitiesReady }: { positions: Positi
     event.preventDefault();
     if (!entitiesReady || (entities.length > 1 && !scopeReady(leScope))) return;
     create.mutate(
-      { title: title.trim(), module, roleKey: roleKey.trim(), reportsTo: reportsTo || null, ...(entities.length > 1 ? { leScope } : {}), idempotencyKey: key },
+      { title: title.trim(), module: chosenModule, roleKey: roleKey.trim(), reportsTo: reportsTo || null, ...(entities.length > 1 ? { leScope } : {}), idempotencyKey: key },
       cleared,
     );
   };
@@ -498,7 +501,7 @@ function AddPosition({ positions, entities, entitiesReady }: { positions: Positi
         </label>
         <label className="block text-xs">
           <span className="text-subtle-foreground">{t('positionModule')}</span>
-          <NativeSelect className="mt-1 w-full" value={module} disabled={locked} onChange={(e) => setModule(e.target.value)}>
+          <NativeSelect className="mt-1 w-full" value={chosenModule} disabled={locked} onChange={(e) => setModule(e.target.value)}>
             {modules.map((m) => (
               <NativeSelectOption key={m} value={m}>
                 {moduleName(m)}
@@ -730,9 +733,12 @@ type BudgetField = 'target' | 'limit' | 'warnPercent';
 function BudgetForm({ agents }: { agents: Agent[] }) {
   const t = useTranslations('agents');
   const moduleName = useModuleName();
-  const modules = getConfig().modules;
+  useModulesVersion(); // the apps of the org can change while this screen is open
+  const modules = installedModules();
   const [scope, setScope] = useState<(typeof SCOPES)[number]>('org');
   const [target, setTarget] = useState('*');
+  // A module target the org just switched off is no longer chosen: the select shows an empty choice until the owner picks one that is on.
+  const chosenTarget = scope === 'module' && !modules.includes(target) ? '' : target;
   const [limit, setLimit] = useState('');
   const [warnPercent, setWarnPercent] = useState('80');
   const [hardStop, setHardStop] = useState(true);
@@ -746,7 +752,7 @@ function BudgetForm({ agents }: { agents: Agent[] }) {
   const ids = useId();
   const idOf = (field: BudgetField) => `${ids}-${field}`;
   const fields = useFieldErrors<BudgetField>((field) =>
-    field === 'limit' ? (amountOk ? null : t('budgetAmountInvalid')) : field === 'warnPercent' ? (warnOk ? null : t('warnPercentInvalid')) : target ? null : t('budgetTargetMissing'),
+    field === 'limit' ? (amountOk ? null : t('budgetAmountInvalid')) : field === 'warnPercent' ? (warnOk ? null : t('warnPercentInvalid')) : chosenTarget ? null : t('budgetTargetMissing'),
   );
   const control = (field: BudgetField) => fieldControl(idOf(field), { error: Boolean(fields.of(field)) });
   const pickScope = (next: (typeof SCOPES)[number]) => {
@@ -766,7 +772,7 @@ function BudgetForm({ agents }: { agents: Agent[] }) {
             focusFirstInvalid(event.currentTarget);
             return;
           }
-          set.mutate({ scope, target, monthlyLimit: limit.trim(), warnPercent: warn, hardStop, idempotencyKey: crypto.randomUUID() });
+          set.mutate({ scope, target: chosenTarget, monthlyLimit: limit.trim(), warnPercent: warn, hardStop, idempotencyKey: crypto.randomUUID() });
         }}
       >
         <label className="block text-xs">
@@ -785,13 +791,14 @@ function BudgetForm({ agents }: { agents: Agent[] }) {
             <NativeSelect
               {...control('target')}
               className="mt-1 w-full"
-              value={target}
+              value={chosenTarget}
               onChange={(e) => {
                 setTarget(e.target.value);
                 fields.edit('target');
               }}
               disabled={scope === 'org' || locked}
             >
+              {chosenTarget === '' && <NativeSelectOption value="" disabled>{''}</NativeSelectOption>}
               {targets.map((o) => (
                 <NativeSelectOption key={o.value} value={o.value}>
                   {o.label}

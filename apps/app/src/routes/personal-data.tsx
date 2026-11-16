@@ -17,7 +17,7 @@ import { MeetingOwnerDeletion } from '../components/meeting-owner-deletion.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, PageSkeleton, TableSkeleton } from '../components/ui.tsx';
 import { errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
-import { getConfig } from '../lib/auth.ts';
+import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 
 const HANDLING_BADGE = { erase: 'warning', keep_legal: 'secondary', keep_org: 'secondary', keep_record: 'secondary' } as const;
 
@@ -34,6 +34,7 @@ function download(value: string, result: PersonalDataResult) {
 }
 
 export function PersonalDataPage() {
+  useModulesVersion(); // the apps of the org can change while this screen is open
   const t = useTranslations('personalData');
   const org = useQuery(orpc.org.get.queryOptions());
   const canRead = org.data?.role === 'owner' || org.data?.role === 'admin';
@@ -236,7 +237,7 @@ export function PersonalDataPage() {
         </>
       )}
       {/* A separate section: the owner's compliance deletion of meetings, which never shows a meeting's title or text. */}
-      {isOwner && getConfig().modules.includes('meetings') && <MeetingOwnerDeletion nameOf={nameOf} />}
+      {isOwner && installedModules().includes('meetings') && <MeetingOwnerDeletion nameOf={nameOf} />}
     </>
   );
 }

@@ -23,12 +23,12 @@ import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { OPEN_TASK_STATUSES } from '../lib/agents.ts';
 import { installedApps, type AppId } from '../lib/apps.ts';
-import { getConfig } from '../lib/auth.ts';
 import { deadlineTone } from '../lib/clients.ts';
 import { WAITING_LINKS, allCounted, gapsFromYear, waitingItems, type WaitingKey } from '../lib/overview.ts';
 import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
 import { entityToMark, markableEntities } from '../lib/tax-calendar.ts';
 import { useWorkNotifications } from './notifications.tsx';
+import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 
 
 // The icon of each card; where it opens is WAITING_LINKS (lib/overview.ts).
@@ -63,7 +63,8 @@ function AppCards({ slug, vat, vatLoaded, manager }: { slug: string; vat: { peri
   const t = useTranslations('overview.apps');
   const tn = useTranslations('nav');
   const periodLabel = usePeriodLabel();
-  const modules = getConfig().modules;
+  useModulesVersion(); // the apps of the org can change while this screen is open
+  const modules = installedModules();
   // The Engage app also holds Ads, so it can be installed with neither the social nor the crm module: its card counts posts and
   // bookings, which need them, so it shows only where one of the two runs.
   const apps = installedApps(modules).filter((a) => (a.id !== 'engage' || modules.includes('social') || modules.includes('crm')) && (a.id !== 'hr' || manager));
@@ -119,7 +120,7 @@ function AppCards({ slug, vat, vatLoaded, manager }: { slug: string; vat: { peri
           const to = id === 'engage' && !has('social') ? '/o/$slug/bookings' : (card?.to ?? app.home);
           const icon: NavIconName = card?.icon ?? OTHER_CARD_ICON[id as keyof typeof OTHER_CARD_ICON];
           return (
-            <li key={id}>
+            <li key={id} data-app-card={id}>
               <Card className="flex h-full flex-col gap-2 p-4">
                 <span className="flex items-center gap-2 text-sm font-medium text-foreground">
                   <NavIcon name={icon} className="text-muted-foreground" />
@@ -202,7 +203,8 @@ export function OverviewPage() {
   const f = useFormat();
   const periodLabel = usePeriodLabel();
   const { slug } = useParams({ strict: false }) as { slug: string };
-  const modules = getConfig().modules;
+  useModulesVersion(); // the apps of the org can change while this screen is open
+  const modules = installedModules();
   const financeOn = modules.includes('finance');
   const socialOn = modules.includes('social');
   const notesOn = modules.includes('notes');

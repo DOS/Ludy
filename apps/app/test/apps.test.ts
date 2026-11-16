@@ -90,7 +90,7 @@ describe('apps of the shell (#1528, #3225)', () => {
     }
     const layout = readFileSync(new URL('../src/routes/org-layout.tsx', import.meta.url), 'utf8');
     expect(layout).not.toMatch(/NAV\.some\(\(n\) => n\.module === 'social'\)/);
-    expect(layout).toContain("getConfig().modules.includes('social')");
+    expect(layout).toContain("installedModules().includes('social')");
   });
 
   it('keeps every screen in the palette, each name once', () => {

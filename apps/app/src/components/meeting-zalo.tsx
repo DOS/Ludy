@@ -15,8 +15,8 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { Textarea } from '@crove/ui/components/textarea';
 import { ErrorText } from './ui.tsx';
 import { orpc } from '../lib/api.ts';
-import { getConfig } from '../lib/auth.ts';
 import { putReplyHandoff } from '../lib/reply-handoff.ts';
+import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 
 const ZALO = 'zalo_oa';
 // A customer with many Zalo threads is rare; the panel offers the latest few.
@@ -27,7 +27,7 @@ const FRESH = { staleTime: 30_000, refetchOnWindowFocus: true } as const;
 const WINDOW_POLL_MS = 60_000;
 
 const installed = (): boolean => {
-  const modules = getConfig().modules;
+  const modules = installedModules();
   return modules.includes('crm') && modules.includes('social');
 };
 
@@ -61,11 +61,13 @@ export function MeetingZalo({
   decisions: readonly string[];
   items: readonly ActionItemView[];
 }) {
-  const links = useQuery({ ...orpc.meetings.links.list.queryOptions({ input: { meetingId } }), enabled: installed() });
+  useModulesVersion(); // the apps of the org can change while this screen is open
+  const on = installed();
+  const links = useQuery({ ...orpc.meetings.links.list.queryOptions({ input: { meetingId } }), enabled: on });
   const partyIds = (links.data ?? []).filter((l) => l.kind === 'party').map((l) => l.targetId);
   const lists = useQueries({ queries: partyIds.map((partyId) => ({ ...orpc.crm.contacts.conversations.queryOptions({ input: { partyId } }), ...FRESH, retry: false })) });
   const threads = zaloThreadsOf(lists.map((q) => q.data));
-  if (!installed() || threads.length === 0) return null;
+  if (!on || threads.length === 0) return null;
   return <ZaloPanel title={title} summary={summary} decisions={decisions} items={items} threads={threads} />;
 }
 
