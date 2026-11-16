@@ -264,7 +264,7 @@ export const meetingMediaRecord = defineCommand({
     // A recording that stopped without the recorder's click (A1, #3159): the reason code stays on the meeting, once (with the first media, which is also what
     // recordSealedMedia ends the meeting's recording on, #3205), so it can say "Ghi âm đã dừng lúc ...". A code, never text. The stop reason is this command's
     // alone: a recording joined from live pieces carries none.
-    if (meeting.ended_at === null && input.stopReason !== undefined && meeting.recording_stop_reason === null) {
+    if (meeting.ended_at === null && meeting.started_at !== null && input.stopReason !== undefined && meeting.recording_stop_reason === null) {
       await ctx.trx
         .updateTable('crove_meetings.meeting')
         .set({ recording_stop_reason: input.stopReason, updated_at: ctx.now })
