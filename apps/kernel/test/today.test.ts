@@ -39,13 +39,13 @@ const run = (reads: Reads, options: { reads?: readonly string[]; absent?: readon
   todayQuery({ coworkers: async () => NAMES, ...(options.reads ? { reads: options.reads } : {}) }).handler(contextOf(reads, options.absent, options.asked), {});
 
 describe('kernel.today', () => {
-  it('names the five reads the lines agreed to expose and the cross-app rule of the kernel', () => {
-    expect([...TODAY_READS]).toEqual(['finance.today', 'crm.today', 'social.today', 'ads.today', 'kernel.conversation.today', 'kernel.signals.deal_without_invoice', 'kernel.signals.receivable_with_open_deal', 'kernel.signals.supplier_bank_changed', 'kernel.signals.conversation_unanswered']);
+  it('names the six reads the lines agreed to expose and the cross-app rule of the kernel', () => {
+    expect([...TODAY_READS]).toEqual(['finance.today', 'crm.today', 'projects.today', 'social.today', 'ads.today', 'kernel.conversation.today', 'kernel.signals.deal_without_invoice', 'kernel.signals.receivable_with_open_deal', 'kernel.signals.supplier_bank_changed', 'kernel.signals.conversation_unanswered']);
   });
 
   it('shows nothing when no read is registered yet, and when the modules are off', async () => {
     expect(await run({})).toEqual({ items: [], coworkers: NAMES, dropped: 0, truncated: 0, failed: 0 });
-    expect(await run({}, { absent: ['finance', 'crm', 'social', 'ads'] })).toEqual({ items: [], coworkers: NAMES, dropped: 0, truncated: 0, failed: 0 });
+    expect(await run({}, { absent: ['finance', 'crm', 'projects', 'social', 'ads'] })).toEqual({ items: [], coworkers: NAMES, dropped: 0, truncated: 0, failed: 0 });
   });
 
   it('merges the reads that are registered, flags first, and skips the ones that are not', async () => {

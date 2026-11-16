@@ -251,6 +251,16 @@ export const vi = {
         unanswered: '{count, plural, other {# tin nhắn của khách}} đang chờ bạn trả lời',
         oneUnanswered: '{provider, select, facebook_page {Một khách trên Facebook} instagram {Một khách trên Instagram} zalo_oa {Một khách trên Zalo} telegram {Một khách trên Telegram} whatsapp {Một khách trên WhatsApp} other {Một khách}} đang chờ bạn trả lời',
       },
+      projects: {
+        taskOverdue: 'Một việc dự án của bạn đã quá hạn',
+        taskOverdueDays: 'Một việc dự án của bạn đã quá hạn {days, plural, other {# ngày}}',
+        taskDueToday: 'Một việc dự án của bạn đến hạn hôm nay',
+        ownerTaskOverdue: 'Một việc trong dự án bạn phụ trách đã quá hạn',
+        ownerTaskOverdueDays: 'Một việc trong dự án bạn phụ trách đã quá hạn {days, plural, other {# ngày}}',
+        vacantSeat: 'Một việc trong dự án bạn phụ trách đang giao cho vị trí trống',
+        waitingStuck: 'Một việc trong dự án bạn phụ trách đang chờ {days, plural, other {# ngày}} chưa có cập nhật',
+        more: '{count, plural, other {# việc dự án khác}} cần bạn xem',
+      },
       ads: {
         paceOrg:'Với tốc độ này, tổ chức sẽ vượt hạn mức chi tiêu tháng',
         paceAccount: 'Với tốc độ này, {account} sẽ vượt hạn mức chi tiêu tháng',
@@ -12468,6 +12478,7 @@ export const vi = {
         create: 'Tạo việc mới trong dự án',
         remove: 'Gỡ việc khỏi dự án',
       },
+      today: 'Xem việc dự án cần bạn hôm nay',
       unassigned_tasks: 'Xem các việc chưa thuộc dự án nào',
     },
     social: {
