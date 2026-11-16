@@ -51,8 +51,8 @@ describe('Settings Apps', () => {
     const html = render(true, [app('finance'), app('social'), app('crm')]);
     for (const id of ['finance', 'social', 'crm']) expect(html).toContain(`org-app-${id}`);
     expect(html).toContain(en.orgApps.hint.slice(0, 30));
-    expect(html.match(/checked=""/g)).toHaveLength(3);
-    expect(html).not.toContain('disabled=""');
+    expect(html.match(/aria-checked="true"/g)).toHaveLength(3);
+    expect(html).not.toContain('aria-disabled="true"');
     expect(html).not.toContain(en.orgApps.readOnly);
     expect(html).not.toContain('role="dialog"');
   });
@@ -61,13 +61,13 @@ describe('Settings Apps', () => {
     const html = render(true, [app('finance'), app('social', { enabled: false }), app('hr', { entitled: false })]);
     expect(html).toContain(en.orgApps.status.off);
     expect(html).toContain(en.orgApps.status.notInPlan);
-    expect(html.match(/checked=""/g)).toHaveLength(1);
-    expect(html.match(/disabled=""/g)).toHaveLength(1);
+    expect(html.match(/aria-checked="true"/g)).toHaveLength(1);
+    expect(html.match(/aria-disabled="true"/g)).toHaveLength(1);
   });
 
   it('shows a member the same list read-only, with who may change it', () => {
     const html = render(false, [app('finance'), app('social', { enabled: false })]);
-    expect(html.match(/disabled=""/g)).toHaveLength(2);
+    expect(html.match(/aria-disabled="true"/g)).toHaveLength(2);
     expect(html).toContain(en.orgApps.readOnly);
   });
 

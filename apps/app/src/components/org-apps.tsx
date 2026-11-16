@@ -8,6 +8,7 @@ import { useState } from 'react';
 import { useTranslations } from 'use-intl';
 import { Badge } from '@crove/ui/components/badge';
 import { Card } from '@crove/ui/components/card';
+import { Checkbox } from '@crove/ui/components/checkbox';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { ErrorText, RowsSkeleton } from './ui.tsx';
@@ -55,13 +56,13 @@ export function OrgAppsCard() {
           return (
             <li key={app.id} className="flex items-center justify-between gap-3 p-3 text-sm" data-testid={`org-app-${app.id}`}>
               <label className="flex min-w-0 items-center gap-2 text-foreground">
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={app.enabled && app.entitled}
-                  disabled={!canChange || !app.entitled}
-                  aria-busy={set.isPending}
+                  // Another row's change is under way: this one waits (its own stays enabled, so focus is not lost when the dialog closes).
+                  disabled={!canChange || !app.entitled || (set.isPending && set.variables?.module !== app.id)}
                   aria-label={t('switchLabel', { app: nameOf(app.id) })}
-                  onChange={(e) => (e.target.checked ? change(app.id, true) : setAsking(app.id))}
+                  aria-busy={set.isPending}
+                  onCheckedChange={(checked) => (checked ? change(app.id, true) : setAsking(app.id))}
                 />
                 <span className="font-medium">{nameOf(app.id)}</span>
               </label>

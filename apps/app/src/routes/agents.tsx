@@ -466,6 +466,8 @@ function AddPosition({ positions, entities, entitiesReady }: { positions: Positi
   const modules = installedModules();
   const [title, setTitle] = useState('');
   const [module, setModule] = useState(modules[0] ?? 'kernel');
+  // An app the org just switched off is no longer a choice: the form falls back to the first one that is on.
+  const chosenModule = modules.includes(module) ? module : (modules[0] ?? 'kernel');
   const [roleKey, setRoleKey] = useState('');
   const [reportsTo, setReportsTo] = useState('');
   // Until the owner picks, the org's default entity, which the server gives a new position anyway.
@@ -485,7 +487,7 @@ function AddPosition({ positions, entities, entitiesReady }: { positions: Positi
     event.preventDefault();
     if (!entitiesReady || (entities.length > 1 && !scopeReady(leScope))) return;
     create.mutate(
-      { title: title.trim(), module, roleKey: roleKey.trim(), reportsTo: reportsTo || null, ...(entities.length > 1 ? { leScope } : {}), idempotencyKey: key },
+      { title: title.trim(), module: chosenModule, roleKey: roleKey.trim(), reportsTo: reportsTo || null, ...(entities.length > 1 ? { leScope } : {}), idempotencyKey: key },
       cleared,
     );
   };
@@ -499,7 +501,7 @@ function AddPosition({ positions, entities, entitiesReady }: { positions: Positi
         </label>
         <label className="block text-xs">
           <span className="text-subtle-foreground">{t('positionModule')}</span>
-          <NativeSelect className="mt-1 w-full" value={module} disabled={locked} onChange={(e) => setModule(e.target.value)}>
+          <NativeSelect className="mt-1 w-full" value={chosenModule} disabled={locked} onChange={(e) => setModule(e.target.value)}>
             {modules.map((m) => (
               <NativeSelectOption key={m} value={m}>
                 {moduleName(m)}
@@ -748,7 +750,7 @@ function BudgetForm({ agents }: { agents: Agent[] }) {
   const ids = useId();
   const idOf = (field: BudgetField) => `${ids}-${field}`;
   const fields = useFieldErrors<BudgetField>((field) =>
-    field === 'limit' ? (amountOk ? null : t('budgetAmountInvalid')) : field === 'warnPercent' ? (warnOk ? null : t('warnPercentInvalid')) : target ? null : t('budgetTargetMissing'),
+    field === 'limit' ? (amountOk ? null : t('budgetAmountInvalid')) : field === 'warnPercent' ? (warnOk ? null : t('warnPercentInvalid')) : target && (scope !== 'module' || modules.includes(target)) ? null : t('budgetTargetMissing'),
   );
   const control = (field: BudgetField) => fieldControl(idOf(field), { error: Boolean(fields.of(field)) });
   const pickScope = (next: (typeof SCOPES)[number]) => {

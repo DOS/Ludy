@@ -314,7 +314,8 @@ export function InboxPage() {
   // The "Chưa phân loại" filter (#2091): only the pending proposals with a line no rule matched, with how many there are.
   const [unclassifiedOnly, setUnclassifiedOnly] = useState(false);
   const unclassifiedCount = countUnclassified(items.data ?? []);
-  const unclassifiedFilter = tab === 'pending' && unclassifiedOnly;
+  // The filter is Finance's: with Finance off its buttons are gone, so it must not go on hiding the proposals of the other apps.
+  const unclassifiedFilter = tab === 'pending' && unclassifiedOnly && installedModules().includes('finance');
   const listed = unclassifiedFilter ? (items.data ?? []).filter(hasUnclassifiedLines) : (items.data ?? []);
 
   // Many documents or ZIP archives at once, each file uploaded and followed on its own (#314).

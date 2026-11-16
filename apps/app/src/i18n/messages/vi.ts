@@ -7298,13 +7298,13 @@ export const vi = {
   // Settings "Ứng dụng" (ADR-0053, #3312): which apps the company uses.
   orgApps: {
     title: 'Ứng dụng',
-    hint: 'Chọn những ứng dụng công ty bạn dùng. Ứng dụng đã tắt biến mất khỏi menu, trang Hôm nay và những gì Vy nhắc tới. Dữ liệu vẫn được giữ nguyên, bật lại là có đủ.',
+    hint: 'Chọn những ứng dụng công ty bạn dùng. Ứng dụng đã tắt biến mất khỏi menu, trang Hôm nay và những gì Vy nhắc tới. Dữ liệu vẫn được giữ nguyên cho tới hết thời hạn lưu trữ bạn đã đặt (việc dọn dẹp hằng đêm vẫn chạy), bật lại là có đủ phần còn lưu.',
     readOnly: 'Chỉ chủ sở hữu hoặc quản trị viên đổi được.',
     switchLabel: 'Dùng ứng dụng {app}',
     status: { on: 'Đang dùng', off: 'Đã tắt', notInPlan: 'Chưa có trong gói' },
     names: { finance: 'Tài chính', social: 'Social', ads: 'Quảng cáo', crm: 'CRM', notes: 'Ghi chú', hr: 'Nhân sự', meetings: 'Cuộc họp', projects: 'Dự án', sign: 'Ký số' },
     offTitle: 'Tắt ứng dụng {app}?',
-    offBody: 'Ứng dụng {app} biến mất khỏi menu của mọi người trong công ty, các việc theo lịch của nó dừng lại, trang Hôm nay và Vy không nhắc tới nó nữa. Dữ liệu được giữ nguyên, bật lại là đủ.',
+    offBody: 'Ứng dụng {app} biến mất khỏi menu của mọi người trong công ty, các việc theo lịch của nó dừng lại, trang Hôm nay và Vy không nhắc tới nó nữa. Dữ liệu được giữ nguyên cho tới hết thời hạn lưu trữ bạn đã đặt (việc dọn dẹp hằng đêm vẫn chạy), bật lại là có đủ phần còn lưu.',
     offConfirm: 'Tắt ứng dụng',
     keep: 'Giữ nguyên',
     keeps: {
@@ -7312,7 +7312,7 @@ export const vi = {
       social: 'Các kênh đăng bài đã kết nối được giữ và tạm dừng. Bài đã hẹn giờ mà quá một giờ khi bạn bật lại sẽ chờ bạn duyệt, không tự đăng.',
       ads: 'Các tài khoản quảng cáo đã kết nối được giữ và tạm dừng.',
       crm: 'Trang đặt lịch công khai ngừng nhận khách cho tới khi bạn bật lại.',
-      meetings: 'Kết nối nền tảng họp được giữ và tạm dừng. Không tắt được khi đang ghi âm.',
+      meetings: 'Kết nối nền tảng họp được giữ và tạm dừng. Không tắt được khi đang ghi âm. Muốn xóa một cuộc họp theo yêu cầu, hãy bật lại ứng dụng trước.',
       other: 'Không có kết nối nào bị gỡ.',
     },
   },

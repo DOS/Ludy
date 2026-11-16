@@ -561,7 +561,7 @@ const socialPlanPrintRoute = createRoute({
   path: '/o/$slug/print/social-plan',
   beforeLoad: async ({ params, matches }) => {
     await enterOrg(params.slug);
-    await loadOrgApps(params.slug);
+    await readOrgApps(params.slug); // these routes do not mount the shell, so nothing else would send a switched-off screen away
     requireInstalledScreen(params.slug, matches);
   },
   validateSearch: parsePlanSearch,
@@ -628,7 +628,7 @@ const meetingMinutesRoute = createRoute({
   path: '/o/$slug/print/meeting-minutes/$id',
   beforeLoad: async ({ params, matches }) => {
     await enterOrg(params.slug);
-    await loadOrgApps(params.slug);
+    await readOrgApps(params.slug); // these routes do not mount the shell, so nothing else would send a switched-off screen away
     requireInstalledScreen(params.slug, matches);
   },
   component: MeetingMinutesPage,
