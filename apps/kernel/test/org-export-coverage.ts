@@ -6,7 +6,7 @@
 import { EXPORT_TABLES, OWNER_RUN_EXPORT_TABLES } from '@crove/kernel';
 
 // The schemas the check covers: every crove_* schema with org_id tables. A new schema is a failure until its tables are decided (exported or named below).
-export const COVERED_SCHEMAS: readonly string[] = ['crove_finance', 'crove_kernel', 'crove_crm', 'crove_hr', 'crove_meetings', 'crove_notes', 'crove_social', 'crove_ads', 'crove_projects'];
+export const COVERED_SCHEMAS: readonly string[] = ['crove_finance', 'crove_kernel', 'crove_crm', 'crove_hr', 'crove_meetings', 'crove_notes', 'crove_social', 'crove_ads', 'crove_projects', 'crove_sign'];
 
 // The tables the export leaves out, with why (docs/runbooks/org-offboarding.md says the same in its export list).
 export const NOT_EXPORTED: Readonly<Record<string, string>> = {
@@ -34,6 +34,8 @@ export const NOT_EXPORTED: Readonly<Record<string, string>> = {
   'crove_meetings.chat_channel_target': 'the sealed address of a meeting chat channel: a credential',
   'crove_meetings.media_key': "the wrapped keys of a meeting's recording: key material",
   'crove_meetings.member_hook': "a member's own webhook with its sealed secret: a credential, private to its member",
+  'crove_sign.signing_token': 'signing link token hashes: credentials',
+  'crove_sign.signing_otp': 'email signing OTP hashes: short-lived credentials',
   // Private to one member by row security (no owner or admin path), or readable only through the meeting's recorder and reader checks.
   'crove_social.notification': "private to its member: a member's own social notifications are readable by that member alone",
   'crove_social.notification_mail_off': "private to its member: a member's own mail preference",

@@ -1,0 +1,22 @@
+{
+  "name": "@crove/mod-sign",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "description": "eSign module: envelopes, signers, fields, hash-chained events and PDF sealing (plan docs/plan/esign.md)",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@crove/db": "workspace:*",
+    "@crove/extract-contract": "workspace:*",
+    "@crove/kernel-contract": "workspace:*",
+    "@crove/kernel-runtime": "workspace:*",
+    "kysely": "catalog:",
+    "zod": "catalog:"
+  }
+}

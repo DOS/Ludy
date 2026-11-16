@@ -214,6 +214,12 @@ export const PROJECTS_SCREENS = {
   nav: [{ app: 'teamwork', group: 'work', path: 'projects', label: 'projects' }],
 } as const satisfies ModuleScreens;
 
+// eSign screens arrive in Slice 1c; Slice 1a registers the module manifest with no routes or nav items yet.
+export const SIGN_SCREENS = {
+  routes: [],
+  nav: [],
+} as const satisfies ModuleScreens;
+
 export const MODULE_SCREENS = {
   kernel: KERNEL_SCREENS,
   finance: FINANCE_SCREENS,
@@ -224,4 +230,5 @@ export const MODULE_SCREENS = {
   notes: NOTES_SCREENS,
   meetings: MEETINGS_SCREENS,
   projects: PROJECTS_SCREENS,
+  sign: SIGN_SCREENS,
 } as const;

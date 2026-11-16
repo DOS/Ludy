@@ -327,6 +327,9 @@ export interface CommandDef<I = unknown, O = unknown> {
   // command's module. Absent: the command's name. A proposal an agent asks for always takes its kind from here,
   // never from what the agent's run prepared (#435).
   proposalKind?: string;
+  // One-time credential results (for example raw signing tokens whose hashes alone belong in storage) cannot be
+  // replayed from crove_kernel.idempotency_key.response: callers must omit idempotencyKey.
+  noIdempotency?: true;
   handler: (ctx: CommandContext, input: I) => Promise<O>;
 }
 
@@ -772,6 +775,7 @@ export const NEVER_RECOVERED: ReadonlySet<string> = new Set([
   'LEASE_LOST',
   'KILL_SWITCH_ON',
   'IDEMPOTENCY_MISMATCH',
+  'IDEMPOTENCY_UNSUPPORTED',
   'CONTEXT_REENTRY',
   'BUDGET_EXHAUSTED',
   'ORG_CLOSED',
@@ -1836,6 +1840,12 @@ export class Runtime {
         }
         const editor = this.proposalEditor();
         if (editor) throw new Error(`command ${c.name}: ${editor.name} is already the proposal editor`);
+      }
+      if (c.noIdempotency !== undefined && c.noIdempotency !== true) {
+        throw new Error(`command ${c.name}: noIdempotency must be true when declared`);
+      }
+      if (c.noIdempotency && c.bootstrap) {
+        throw new Error(`command ${c.name}: an org-less bootstrap command cannot declare noIdempotency`);
       }
       this.#commands.set(c.name, c as CommandDef<unknown, unknown>);
       this.#contactOrPayment.set(c.name, contactOrPayment === null || contactOrPayment.length > 0);
@@ -3075,6 +3085,9 @@ export class Runtime {
         this.requireStepUp(def, actor);
         await this.requireLiveSession(def, actor);
 
+        if (idempotencyKey !== undefined && def.noIdempotency) {
+          throw new DomainError('IDEMPOTENCY_UNSUPPORTED', 400, 'Lệnh này trả về mã bí mật dùng một lần nên không hỗ trợ khóa chống lặp');
+        }
         if (idempotencyKey) {
           const key = actorKey(actor);
           const requestHash = this.inputHashOf(actor, name, canonical);

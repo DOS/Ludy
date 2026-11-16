@@ -251,6 +251,12 @@ export const EXPORT_TABLES = {
   'projects.project': { from: 'crove_projects.project', omit: [] },
   'projects.project_member': { from: 'crove_projects.project_member', omit: [] },
   'projects.project_task': { from: 'crove_projects.project_task', omit: [] },
+  // eSign (#3323): envelopes, signers (omitting deployment-keyed signer_ip_hash), fields, AI analysis summaries and hash-chained signing events (ip_hash retained because event_hash commits to it); bearer token and OTP machinery tables stay out.
+  'sign.envelope': { from: 'crove_sign.envelope', omit: [] },
+  'sign.signer': { from: 'crove_sign.signer', omit: ['signer_ip_hash'] },
+  'sign.field': { from: 'crove_sign.field', omit: [] },
+  'sign.ai_analysis': { from: 'crove_sign.ai_analysis', omit: [] },
+  'sign.signing_event': { from: 'crove_sign.signing_event', omit: [] },
 } as const satisfies Record<string, { from: string; omit: readonly string[] }>;
 
 export type ExportTable = keyof typeof EXPORT_TABLES;

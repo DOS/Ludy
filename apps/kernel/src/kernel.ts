@@ -85,6 +85,7 @@ import { notesCommands, notesManifest, notesQueries } from '@crove/mod-notes';
 import { projectsCommands, projectsManifest, projectsQueries } from '@crove/mod-projects';
 import { adsBusy, adsCommands, adsManifest, adsQueries } from '@crove/mod-ads';
 import { meetingsBusy, meetingsCommands, meetingsManifest, meetingsQueries, setSummaryEnabled, setTranscribeBroker, setTranscribeEnabled } from '@crove/mod-meetings';
+import { signCommands, signManifest, signQueries } from '@crove/mod-sign';
 import { GoogleAdsConnector, MetaAdsConnector, MetaWriteConnector, adActivators, adLaunchWriters, adPausers, adPlatforms, adRevokers, adStateReaders, type AdActivator, type AdPauser, type AdPlatform, type AdRevoker, type AdStateReader, type LaunchWriter } from '@crove/ad-platform';
 import { createSandboxEInvoiceProvider, type EInvoiceProvider } from '@crove/einvoice';
 import { createSandboxMarketplaceProvider, isMarketplaceAdapter, type MarketplaceProvider } from '@crove/mod-finance';
@@ -275,6 +276,7 @@ export function moduleDefinitions(config: Config, billing: Billing = selfHostBil
     notes: () => ({ commands: notesCommands, queries: notesQueries }),
     meetings: () => ({ commands: meetingsCommands, queries: meetingsQueries }),
     projects: () => ({ commands: projectsCommands, queries: projectsQueries }),
+    sign: () => ({ commands: signCommands, queries: signQueries }),
     hr: () => ({ commands: hrCommands, queries: hrQueries }),
   };
   const enabled = config.CROVE_MODULES.map((module) => all[module]());
@@ -301,6 +303,7 @@ const MODULE_MANIFESTS: Record<ModuleId, ModuleManifest> = {
   notes: notesManifest,
   meetings: meetingsManifest,
   projects: projectsManifest,
+  sign: signManifest,
   hr: hrManifest,
 };
 
