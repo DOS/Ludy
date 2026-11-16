@@ -6,6 +6,7 @@
 import {
   decodeDerCertificate,
   resolveCmsOrWrapRawSignature,
+  selectRemoteCertificateChain,
 } from './cms-der.ts';
 import {
   DEFAULT_CA_TIMEOUT_MS,
@@ -15,7 +16,7 @@ import {
   decodeDerSequenceBase64,
   isRecord,
   isUsbTokenMode,
-  normalizeExternalTxId,
+  normalizeFetchCmsQuery,
   normalizePollQuery,
   optionalCredentialField,
   parseCredentialObject,
@@ -31,6 +32,7 @@ import {
   CaProviderError,
   type CaAdapterOptions,
   type CaConnectionState,
+  type CaFetchCmsQuery,
   type CaInitiateRequest,
   type CaPollQuery,
   type CaSignSession,
@@ -281,21 +283,34 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
     secretKey: string,
     creds: ViettelCredentials,
     txId: string,
-  ): Promise<readonly Uint8Array[] | null> {
-    const wantedCredId = txToCertRef.get(`${secretKey}:${txId}`);
-    const selectFrom = (list: readonly ViettelCertRecord[]): readonly Uint8Array[] | null => {
-      if (list.length === 0) return null;
-      const match = wantedCredId
-        ? list.find((c) => !c.isUsbOnly && c.credentialId === wantedCredId)
-        : undefined;
-      const chosen = match ?? list.find((c) => !c.isUsbOnly && c.isActive && c.chainDer.length > 0) ?? list.find((c) => !c.isUsbOnly && c.chainDer.length > 0);
-      return chosen && chosen.chainDer.length > 0 ? chosen.chainDer : null;
-    };
+    explicitCertRef?: string,
+  ): Promise<readonly Uint8Array[]> {
+    const wantedCredId = explicitCertRef ?? txToCertRef.get(`${secretKey}:${txId}`);
+    const toSelectionRecords = (list: readonly ViettelCertRecord[]) =>
+      list.map((c) => ({
+        certRef: c.credentialId,
+        isUsbOnly: c.isUsbOnly,
+        isActive: c.isActive,
+        chainDer: c.chainDer,
+      }));
     const cached = certCache.get(secretKey);
-    const hit = cached ? selectFrom(cached) : null;
-    if (hit) return hit;
+    if (cached && cached.length > 0) {
+      try {
+        return selectRemoteCertificateChain({
+          providerLabel: 'Viettel MySign',
+          records: toSelectionRecords(cached),
+          ...(wantedCredId !== undefined ? { wantedCertRef: wantedCredId } : {}),
+        });
+      } catch (err) {
+        if (!wantedCredId) throw err;
+      }
+    }
     const fetched = await fetchCertificates(secret, creds);
-    return selectFrom(fetched);
+    return selectRemoteCertificateChain({
+      providerLabel: 'Viettel MySign',
+      records: toSelectionRecords(fetched),
+      ...(wantedCredId !== undefined ? { wantedCertRef: wantedCredId } : {}),
+    });
   }
 
   function parseSession(json: unknown, fallbackIdempotencyKey: string, fallbackTxId: string): CaSignSession {
@@ -487,7 +502,9 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
         };
       }
       const data = pickCaseInsensitive(res.json, 'data') ?? res.json;
-      const explicitStatus = mapViettelStatus(pickCaseInsensitive(data, 'status'));
+      const explicitStatus = mapViettelStatus(
+        pickCaseInsensitive(data, 'status') ?? pickCaseInsensitive(data, 'transactionStatus'),
+      );
       const txId =
         readText(pickCaseInsensitive(data, 'transactionId')) ??
         readText(pickCaseInsensitive(data, 'transaction_id'));
@@ -504,7 +521,7 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
           errorCode: null,
         };
       }
-      const session = parseSession(res.json, valid.idempotencyKey, valid.idempotencyKey);
+      const session = parseSession(res.json, valid.idempotencyKey, txId ?? '');
       rememberCertRef(secretKey, session.externalTxId, valid.certRef);
       return session;
     },
@@ -516,9 +533,10 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
       return session;
     },
 
-    fetchSignedCms: async (secret: string, externalTxId: string): Promise<CaSignedCms> => {
+    fetchSignedCms: async (secret: string, query: CaFetchCmsQuery | string): Promise<CaSignedCms> => {
       const creds = parseViettelCredentials(secret);
-      const txId = normalizeExternalTxId(externalTxId);
+      const normalized = normalizeFetchCmsQuery(query);
+      const txId = normalized.externalTxId;
       const secretKey = sha256Hex(secret);
       const { session, rawJson } = await queryStatus(secret, creds, { externalTxId: txId, idempotencyKey: null });
       if (session.status !== 'signed') {
@@ -535,17 +553,21 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
         throw new CaProviderError('unavailable', 'Viettel MySign response did not contain signature bytes');
       }
 
+      const inlineCredId =
+        readText(pickCaseInsensitive(data, 'credentialID')) ??
+        readText(pickCaseInsensitive(data, 'credential_id'));
       const rawChain = pickCaseInsensitive(data, 'certificateChain');
       const inlineChainDer = Array.isArray(rawChain)
         ? rawChain.map(decodeDerCertificate).filter((v): v is Uint8Array => v !== null)
         : [];
 
-      const { cmsDer, certificateChainPem } = await resolveCmsOrWrapRawSignature({
+      const { cmsDer, subFilter, certificateChainPem } = await resolveCmsOrWrapRawSignature({
         providerLabel: 'Viettel MySign',
         sigBytes,
         rawChain,
         inlineChainDer,
-        loadChainDer: () => resolveCertificateChainDer(secret, secretKey, creds, txId),
+        ...(normalized.signedAttrsDer !== undefined ? { signedAttrsDer: normalized.signedAttrsDer } : {}),
+        loadChainDer: () => resolveCertificateChainDer(secret, secretKey, creds, txId, normalized.certRef ?? inlineCredId ?? undefined),
       });
 
       const timestampTokenDer = decodeDerSequenceBase64(pickCaseInsensitive(data, 'timestampToken'));
@@ -556,6 +578,7 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
       return {
         externalTxId: session.externalTxId,
         cmsDer,
+        subFilter,
         certificateChainPem,
         timestampTokenDer,
         ocspResponsesDer,

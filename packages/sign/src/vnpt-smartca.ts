@@ -6,6 +6,7 @@
 import {
   decodeDerCertificate,
   resolveCmsOrWrapRawSignature,
+  selectRemoteCertificateChain,
 } from './cms-der.ts';
 import {
   DEFAULT_CA_TIMEOUT_MS,
@@ -15,7 +16,7 @@ import {
   decodeDerSequenceBase64,
   isRecord,
   isUsbTokenMode,
-  normalizeExternalTxId,
+  normalizeFetchCmsQuery,
   normalizePollQuery,
   optionalCredentialField,
   parseCredentialObject,
@@ -31,6 +32,7 @@ import {
   CaProviderError,
   type CaAdapterOptions,
   type CaConnectionState,
+  type CaFetchCmsQuery,
   type CaInitiateRequest,
   type CaPollQuery,
   type CaSignSession,
@@ -291,21 +293,34 @@ export function createVnptSmartCaAdapter(options: CaAdapterOptions = {}): CaSign
     secretKey: string,
     creds: VnptCredentials,
     txId: string,
-  ): Promise<readonly Uint8Array[] | null> {
-    const wantedSerial = txToCertRef.get(`${secretKey}:${txId}`) ?? creds.serialNumber;
-    const selectFrom = (list: readonly VnptCertificateRecord[]): readonly Uint8Array[] | null => {
-      if (list.length === 0) return null;
-      const match = wantedSerial
-        ? list.find((c) => !c.isUsbOnly && c.serialNumber?.toLowerCase() === wantedSerial.toLowerCase())
-        : undefined;
-      const chosen = match ?? list.find((c) => !c.isUsbOnly && c.chainDer.length > 0);
-      return chosen && chosen.chainDer.length > 0 ? chosen.chainDer : null;
-    };
+    explicitCertRef?: string,
+  ): Promise<readonly Uint8Array[]> {
+    const wantedSerial = explicitCertRef ?? txToCertRef.get(`${secretKey}:${txId}`) ?? creds.serialNumber;
+    const toSelectionRecords = (list: readonly VnptCertificateRecord[]) =>
+      list.map((r) => ({
+        certRef: r.serialNumber,
+        isUsbOnly: r.isUsbOnly,
+        isActive: true,
+        chainDer: r.chainDer,
+      }));
     const cached = certCache.get(secretKey);
-    const hit = cached ? selectFrom(cached) : null;
-    if (hit) return hit;
+    if (cached && cached.length > 0) {
+      try {
+        return selectRemoteCertificateChain({
+          providerLabel: 'VNPT SmartCA',
+          records: toSelectionRecords(cached),
+          ...(wantedSerial !== undefined ? { wantedCertRef: wantedSerial } : {}),
+        });
+      } catch (err) {
+        if (!wantedSerial) throw err;
+      }
+    }
     const fetched = await fetchCertificates(secretKey, creds, wantedSerial);
-    return selectFrom(fetched);
+    return selectRemoteCertificateChain({
+      providerLabel: 'VNPT SmartCA',
+      records: toSelectionRecords(fetched),
+      ...(wantedSerial !== undefined ? { wantedCertRef: wantedSerial } : {}),
+    });
   }
 
   async function queryStatus(
@@ -473,9 +488,10 @@ export function createVnptSmartCaAdapter(options: CaAdapterOptions = {}): CaSign
       return session;
     },
 
-    fetchSignedCms: async (secret: string, externalTxId: string): Promise<CaSignedCms> => {
+    fetchSignedCms: async (secret: string, query: CaFetchCmsQuery | string): Promise<CaSignedCms> => {
       const creds = parseVnptCredentials(secret);
-      const txId = normalizeExternalTxId(externalTxId);
+      const normalized = normalizeFetchCmsQuery(query);
+      const txId = normalized.externalTxId;
       const secretKey = sha256Hex(secret);
       const { session, rawJson } = await queryStatus(creds, txId, txId);
       if (session.status !== 'signed') {
@@ -495,6 +511,9 @@ export function createVnptSmartCaAdapter(options: CaAdapterOptions = {}): CaSign
         throw new CaProviderError('unavailable', 'VNPT SmartCA response did not contain signature bytes');
       }
 
+      const inlineSerial =
+        readText(pickCaseInsensitive(firstSig, 'serial_number')) ??
+        readText(pickCaseInsensitive(data, 'serial_number'));
       const rawChain = pickCaseInsensitive(firstSig, 'certificate_chain') ?? pickCaseInsensitive(data, 'certificate_chain');
       const inlineChainDer = Array.isArray(rawChain)
         ? rawChain.map(decodeDerCertificate).filter((v): v is Uint8Array => v !== null)
@@ -506,12 +525,13 @@ export function createVnptSmartCaAdapter(options: CaAdapterOptions = {}): CaSign
         inlineChainDer.push(inlineSingleCert);
       }
 
-      const { cmsDer, certificateChainPem } = await resolveCmsOrWrapRawSignature({
+      const { cmsDer, subFilter, certificateChainPem } = await resolveCmsOrWrapRawSignature({
         providerLabel: 'VNPT SmartCA',
         sigBytes,
         rawChain,
         inlineChainDer,
-        loadChainDer: () => resolveCertificateChainDer(secretKey, creds, txId),
+        ...(normalized.signedAttrsDer !== undefined ? { signedAttrsDer: normalized.signedAttrsDer } : {}),
+        loadChainDer: () => resolveCertificateChainDer(secretKey, creds, txId, normalized.certRef ?? inlineSerial ?? undefined),
       });
 
       const timestampTokenDer = decodeDerSequenceBase64(
@@ -528,6 +548,7 @@ export function createVnptSmartCaAdapter(options: CaAdapterOptions = {}): CaSign
       return {
         externalTxId: session.externalTxId,
         cmsDer,
+        subFilter,
         certificateChainPem,
         timestampTokenDer,
         ocspResponsesDer,

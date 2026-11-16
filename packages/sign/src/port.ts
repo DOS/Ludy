@@ -54,6 +54,12 @@ export interface CaPollQuery {
   idempotencyKey?: string | null;
 }
 
+export interface CaFetchCmsQuery {
+  externalTxId: string;
+  certRef?: string;
+  signedAttrsDer?: Uint8Array;
+}
+
 export interface CaSignSession {
   provider: CaProviderId;
   idempotencyKey: string;
@@ -68,6 +74,7 @@ export interface CaSignSession {
 export interface CaSignedCms {
   externalTxId: string;
   cmsDer: Uint8Array;
+  subFilter?: 'adbe.pkcs7.detached' | 'ETSI.CAdES.detached';
   certificateChainPem?: readonly string[];
   timestampTokenDer?: Uint8Array | null;
   ocspResponsesDer?: readonly Uint8Array[];
@@ -115,5 +122,5 @@ export interface CaSigningAdapter {
   testConnection(secret: string): Promise<CaConnectionState>;
   initiateSign(secret: string, request: CaInitiateRequest): Promise<CaSignSession>;
   pollStatus(secret: string, query: CaPollQuery | string): Promise<CaSignSession>;
-  fetchSignedCms(secret: string, externalTxId: string): Promise<CaSignedCms>;
+  fetchSignedCms(secret: string, query: CaFetchCmsQuery | string): Promise<CaSignedCms>;
 }

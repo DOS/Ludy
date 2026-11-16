@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { isIP } from 'node:net';
 import {
   CaProviderError,
+  type CaFetchCmsQuery,
   type CaInitiateRequest,
   type CaPollQuery,
 } from './port.ts';
@@ -227,6 +228,33 @@ export function normalizePollQuery(query: CaPollQuery | string): {
     throw new CaProviderError('invalid_request', 'pollStatus requires externalTxId or idempotencyKey');
   }
   return { externalTxId, idempotencyKey };
+}
+
+export function normalizeFetchCmsQuery(query: CaFetchCmsQuery | string): {
+  externalTxId: string;
+  certRef?: string;
+  signedAttrsDer?: Uint8Array;
+} {
+  if (typeof query === 'string') {
+    return { externalTxId: normalizeExternalTxId(query) };
+  }
+  const externalTxId = normalizeExternalTxId(query.externalTxId);
+  const certRef =
+    typeof query.certRef === 'string' && query.certRef.trim() !== ''
+      ? query.certRef.trim().slice(0, 256)
+      : undefined;
+  let signedAttrsDer: Uint8Array | undefined;
+  if (query.signedAttrsDer !== undefined) {
+    if (query.signedAttrsDer.byteLength < 4 || query.signedAttrsDer[0] !== 0xa0) {
+      throw new CaProviderError('invalid_request', 'signedAttrsDer must be a valid [0] IMPLICIT SignedAttributes DER TLV');
+    }
+    signedAttrsDer = query.signedAttrsDer;
+  }
+  return {
+    externalTxId,
+    ...(certRef !== undefined ? { certRef } : {}),
+    ...(signedAttrsDer !== undefined ? { signedAttrsDer } : {}),
+  };
 }
 
 export function hasUsbTokenCredentialFields(obj: Record<string, unknown>): boolean {

@@ -5,13 +5,14 @@
 import { createHash } from 'node:crypto';
 import {
   hasUsbTokenCredentialFields,
-  normalizeExternalTxId,
+  normalizeFetchCmsQuery,
   normalizePollQuery,
   validateInitiateRequest,
 } from './http.ts';
 import {
   CaProviderError,
   type CaConnectionState,
+  type CaFetchCmsQuery,
   type CaInitiateRequest,
   type CaPollQuery,
   type CaSignSession,
@@ -356,9 +357,9 @@ export function createSandboxCaAdapter(options: SandboxCaOptions = {}): {
       return toSession(stored);
     },
 
-    fetchSignedCms: async (secret: string, externalTxId: string): Promise<CaSignedCms> => {
+    fetchSignedCms: async (secret: string, query: CaFetchCmsQuery | string): Promise<CaSignedCms> => {
       assertSecret(secret);
-      const txId = normalizeExternalTxId(externalTxId);
+      const { externalTxId: txId } = normalizeFetchCmsQuery(query);
       calls.push(`fetchSignedCms:${txId}`);
 
       const stored = byTxId.get(txId);
@@ -371,6 +372,7 @@ export function createSandboxCaAdapter(options: SandboxCaOptions = {}): {
       return {
         externalTxId: stored.externalTxId,
         cmsDer: new Uint8Array(stored.cmsDer),
+        subFilter: 'ETSI.CAdES.detached',
         certificateChainPem: [],
         timestampTokenDer: null,
         ocspResponsesDer: [],

@@ -65,6 +65,132 @@ function assertValidDerSequence(bytes: Uint8Array, label: string): void {
   }
 }
 
+const ID_SIGNED_DATA_OID = new Uint8Array([
+  0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x02,
+]);
+
+interface DerTlv {
+  readonly tag: number;
+  readonly valueStart: number;
+  readonly end: number;
+}
+
+function readDerTlv(bytes: Uint8Array, offset: number, limit: number): DerTlv | null {
+  if (offset + 2 > limit) return null;
+  const tag = bytes[offset];
+  const lenByte = bytes[offset + 1];
+  if (tag === undefined || lenByte === undefined) return null;
+  if ((tag & 0x1f) === 0x1f) return null;
+
+  let valueStart = offset + 2;
+  let valueLen = 0;
+  if (lenByte < 0x80) {
+    valueLen = lenByte;
+  } else {
+    const octets = lenByte & 0x7f;
+    if (octets === 0 || octets > 4 || offset + 2 + octets > limit || bytes[offset + 2] === 0x00) {
+      return null;
+    }
+    for (let i = 0; i < octets; i += 1) {
+      const b = bytes[offset + 2 + i];
+      if (b === undefined) return null;
+      valueLen = valueLen * 256 + b;
+    }
+    if (valueLen < 0x80) return null;
+    valueStart = offset + 2 + octets;
+  }
+  const end = valueStart + valueLen;
+  if (end > limit) return null;
+  return { tag, valueStart, end };
+}
+
+function bytesEqual(a: Uint8Array, start: number, end: number, expected: Uint8Array): boolean {
+  if (end - start !== expected.byteLength) return false;
+  for (let i = 0; i < expected.byteLength; i += 1) {
+    if (a[start + i] !== expected[i]) return false;
+  }
+  return true;
+}
+
+function detectCmsSignedAttrsState(
+  bytes: Uint8Array,
+): 'has_signed_attrs' | 'no_signed_attrs' | 'not_signed_data' | 'invalid_signed_data' {
+  const outer = readDerTlv(bytes, 0, bytes.byteLength);
+  if (!outer || outer.tag !== 0x30 || outer.end !== bytes.byteLength) return 'not_signed_data';
+
+  const oidTlv = readDerTlv(bytes, outer.valueStart, outer.end);
+  if (!oidTlv || oidTlv.tag !== 0x06) return 'not_signed_data';
+  if (!bytesEqual(bytes, oidTlv.valueStart, oidTlv.end, ID_SIGNED_DATA_OID)) {
+    return 'not_signed_data';
+  }
+
+  const contentWrap = readDerTlv(bytes, oidTlv.end, outer.end);
+  if (!contentWrap || contentWrap.tag !== 0xa0 || contentWrap.end !== outer.end) {
+    return 'invalid_signed_data';
+  }
+  const signedData = readDerTlv(bytes, contentWrap.valueStart, contentWrap.end);
+  if (!signedData || signedData.tag !== 0x30 || signedData.end !== contentWrap.end) {
+    return 'invalid_signed_data';
+  }
+
+  const sdVersion = readDerTlv(bytes, signedData.valueStart, signedData.end);
+  if (!sdVersion || sdVersion.tag !== 0x02) return 'invalid_signed_data';
+  const digestAlgs = readDerTlv(bytes, sdVersion.end, signedData.end);
+  if (!digestAlgs || digestAlgs.tag !== 0x31) return 'invalid_signed_data';
+  const encap = readDerTlv(bytes, digestAlgs.end, signedData.end);
+  if (!encap || encap.tag !== 0x30) return 'invalid_signed_data';
+
+  let cursor = encap.end;
+  let next = readDerTlv(bytes, cursor, signedData.end);
+  if (next && next.tag === 0xa0) {
+    cursor = next.end;
+    next = readDerTlv(bytes, cursor, signedData.end);
+  }
+  if (next && next.tag === 0xa1) {
+    cursor = next.end;
+    next = readDerTlv(bytes, cursor, signedData.end);
+  }
+  if (!next || next.tag !== 0x31 || next.end !== signedData.end) {
+    return 'invalid_signed_data';
+  }
+
+  let siCursor = next.valueStart;
+  let count = 0;
+  let allHaveSignedAttrs = true;
+  while (siCursor < next.end) {
+    const si = readDerTlv(bytes, siCursor, next.end);
+    if (!si || si.tag !== 0x30) return 'invalid_signed_data';
+    count += 1;
+
+    const siVersion = readDerTlv(bytes, si.valueStart, si.end);
+    if (!siVersion || siVersion.tag !== 0x02) return 'invalid_signed_data';
+    const sid = readDerTlv(bytes, siVersion.end, si.end);
+    if (!sid || (sid.tag !== 0x30 && sid.tag !== 0x80)) return 'invalid_signed_data';
+    const digAlg = readDerTlv(bytes, sid.end, si.end);
+    if (!digAlg || digAlg.tag !== 0x30) return 'invalid_signed_data';
+
+    const maybeAttrs = readDerTlv(bytes, digAlg.end, si.end);
+    if (!maybeAttrs) return 'invalid_signed_data';
+    let sigAlg: DerTlv | null = maybeAttrs;
+    if (maybeAttrs.tag === 0xa0) {
+      if (maybeAttrs.end === maybeAttrs.valueStart) {
+        allHaveSignedAttrs = false;
+      }
+      sigAlg = readDerTlv(bytes, maybeAttrs.end, si.end);
+    } else {
+      allHaveSignedAttrs = false;
+    }
+    if (!sigAlg || sigAlg.tag !== 0x30) return 'invalid_signed_data';
+    const sigVal = readDerTlv(bytes, sigAlg.end, si.end);
+    if (!sigVal || sigVal.tag !== 0x04) return 'invalid_signed_data';
+
+    siCursor = si.end;
+  }
+
+  if (count === 0) return 'invalid_signed_data';
+  return allHaveSignedAttrs ? 'has_signed_attrs' : 'no_signed_attrs';
+}
+
 function serializePdfObject(obj: PDFObject): Buffer {
   const size = obj.sizeInBytes();
   const buf = Buffer.alloc(size);
@@ -310,6 +436,18 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
     throw new PdfSignError('Kích thước chữ ký số CMS vượt quá giới hạn cho phép');
   }
   assertValidDerSequence(cmsDer, 'Chữ ký số CMS');
+  const cmsSignedAttrsState = detectCmsSignedAttrsState(cmsDer);
+  if (cmsSignedAttrsState === 'invalid_signed_data') {
+    throw new PdfSignError('Chữ ký số CMS SignedData không đúng cấu trúc ASN.1 DER hợp lệ');
+  }
+  if (cmsSignedAttrsState === 'no_signed_attrs' && input.subFilter === 'ETSI.CAdES.detached') {
+    throw new PdfSignError(
+      'Chữ ký số CMS không chứa signedAttrs nên không hợp lệ với ETSI.CAdES.detached; hãy dùng adbe.pkcs7.detached',
+    );
+  }
+  const effectiveSubFilter =
+    input.subFilter ??
+    (cmsSignedAttrsState === 'no_signed_attrs' ? 'adbe.pkcs7.detached' : 'ETSI.CAdES.detached');
 
   const timestampTokenDer = input.timestampTokenBase64
     ? decodeStrictBase64(input.timestampTokenBase64, 'Dấu thời gian RFC 3161')
@@ -494,7 +632,7 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
   // Reserve a placeholder slot for sigObjNum; buildIncrementalSuffix writes its bytes directly.
   incrementalObjects.push({ objNum: sigObjNum, gen: 0, body: Buffer.alloc(0) });
 
-  const subFilter = input.subFilter ?? 'ETSI.CAdES.detached';
+  const subFilter = effectiveSubFilter;
   const metaParts = [
     `/Name ${encodePdfTextString(input.signerName)}`,
     `/M ${encodePdfDate(input.signedAtIso)}`,

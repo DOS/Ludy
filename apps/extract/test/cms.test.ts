@@ -46,6 +46,45 @@ function derSequence(payload: Uint8Array): Uint8Array {
   return out;
 }
 
+function derTag(tag: number, ...parts: readonly Uint8Array[]): Uint8Array {
+  let total = 0;
+  for (const part of parts) total += part.byteLength;
+  const len = encodeDerLength(total);
+  const out = new Uint8Array(1 + len.byteLength + total);
+  out[0] = tag;
+  out.set(len, 1);
+  let pos = 1 + len.byteLength;
+  for (const part of parts) {
+    out.set(part, pos);
+    pos += part.byteLength;
+  }
+  return out;
+}
+
+function makeContentInfoSignedDataDer(withSignedAttrs: boolean): Uint8Array {
+  const oidSignedData = derTag(0x06, new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x02]));
+  const oidData = derTag(0x06, new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x01]));
+  const oidSha256 = derTag(0x06, new Uint8Array([0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01]));
+  const algSha256 = derTag(0x30, oidSha256, derTag(0x05));
+  const sid = derTag(0x30, derTag(0x30), derTag(0x02, new Uint8Array([0x01])));
+  const siFields = [
+    derTag(0x02, new Uint8Array([0x01])),
+    sid,
+    algSha256,
+    ...(withSignedAttrs ? [derTag(0xa0, derTag(0x30, derTag(0x05)))] : []),
+    algSha256,
+    derTag(0x04, new Uint8Array(64).fill(0xab)),
+  ];
+  const signedData = derTag(
+    0x30,
+    derTag(0x02, new Uint8Array([0x01])),
+    derTag(0x31, algSha256),
+    derTag(0x30, oidData),
+    derTag(0x31, derTag(0x30, ...siFields)),
+  );
+  return derTag(0x30, oidSignedData, derTag(0xa0, signedData));
+}
+
 function makeTestCmsDer(marker = 'test-cms-signature-payload'): Uint8Array {
   const inner = new TextEncoder().encode(marker);
   const octet = new Uint8Array(2 + inner.byteLength);
@@ -636,4 +675,75 @@ describe('crove-extract pdf_embed_cms', () => {
     const parsed = zExtractResponse.parse(await httpRes.json());
     expect(parsed).toEqual(sandboxed);
   }, 20_000);
+
+  it('defaults CMS SignedData without signedAttrs to adbe.pkcs7.detached, enforces ETSI.CAdES.detached signedAttrs, and rejects broken SignedData', async () => {
+    const cleanPdfB64 = Buffer.from(makeCleanClassicPdf()).toString('base64');
+    const cmsNoAttrs = makeContentInfoSignedDataDer(false);
+    const cmsWithAttrs = makeContentInfoSignedDataDer(true);
+
+    const noAttrsAuto = await parse(
+      'pdf_embed_cms',
+      encodePdfEmbedCmsInput({
+        pdfBase64: cleanPdfB64,
+        cmsDerBase64: Buffer.from(cmsNoAttrs).toString('base64'),
+        signerName: 'Ký số trực tiếp',
+        signedAtIso: '2026-11-16T13:00:00.000Z',
+      }),
+    );
+    expect(noAttrsAuto.ok).toBe(true);
+    if (!noAttrsAuto.ok || noAttrsAuto.kind !== 'pdf_embed_cms') throw new Error('expected pkcs7 auto ok');
+    const noAttrsDoc = await PDFDocument.load(Buffer.from(noAttrsAuto.pdfBase64, 'base64'));
+    const noAttrsFields = noAttrsDoc.catalog.lookup(PDFName.of('AcroForm'), PDFDict).lookup(PDFName.of('Fields'), PDFArray);
+    const noAttrsSig = noAttrsDoc.context.lookup(noAttrsFields.get(0), PDFDict).lookup(PDFName.of('V'), PDFDict);
+    expect(noAttrsSig.lookup(PDFName.of('SubFilter'), PDFName).decodeText()).toBe('adbe.pkcs7.detached');
+
+    // Explicit ETSI.CAdES.detached must fail when SignedData lacks signedAttrs.
+    expect(
+      await parse(
+        'pdf_embed_cms',
+        encodePdfEmbedCmsInput({
+          pdfBase64: cleanPdfB64,
+          cmsDerBase64: Buffer.from(cmsNoAttrs).toString('base64'),
+          signerName: 'Ký số trực tiếp',
+          signedAtIso: '2026-11-16T13:00:00.000Z',
+          subFilter: 'ETSI.CAdES.detached',
+        }),
+      ),
+    ).toMatchObject({ ok: false, code: 'invalid' });
+
+    // Real SignedData WITH signedAttrs defaults to ETSI.CAdES.detached.
+    const withAttrsRes = await parse(
+      'pdf_embed_cms',
+      encodePdfEmbedCmsInput({
+        pdfBase64: cleanPdfB64,
+        cmsDerBase64: Buffer.from(cmsWithAttrs).toString('base64'),
+        signerName: 'Ký số CAdES',
+        signedAtIso: '2026-11-16T13:05:00.000Z',
+      }),
+    );
+    expect(withAttrsRes.ok).toBe(true);
+    if (!withAttrsRes.ok || withAttrsRes.kind !== 'pdf_embed_cms') throw new Error('expected cades ok');
+    const cadesDoc = await PDFDocument.load(Buffer.from(withAttrsRes.pdfBase64, 'base64'));
+    const cadesFields = cadesDoc.catalog.lookup(PDFName.of('AcroForm'), PDFDict).lookup(PDFName.of('Fields'), PDFArray);
+    const cadesSig = cadesDoc.context.lookup(cadesFields.get(0), PDFDict).lookup(PDFName.of('V'), PDFDict);
+    expect(cadesSig.lookup(PDFName.of('SubFilter'), PDFName).decodeText()).toBe('ETSI.CAdES.detached');
+
+    // ContentInfo(id-signedData) with truncated/malformed SignedData inner structure is refused.
+    const brokenSignedData = derTag(
+      0x30,
+      derTag(0x06, new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x02])),
+      derTag(0xa0, derTag(0x30, derTag(0x02, new Uint8Array([0x01])))),
+    );
+    expect(
+      await parse(
+        'pdf_embed_cms',
+        encodePdfEmbedCmsInput({
+          pdfBase64: cleanPdfB64,
+          cmsDerBase64: Buffer.from(brokenSignedData).toString('base64'),
+          signerName: 'Broken CMS',
+          signedAtIso: '2026-11-16T13:10:00.000Z',
+        }),
+      ),
+    ).toMatchObject({ ok: false, code: 'invalid' });
+  });
 });

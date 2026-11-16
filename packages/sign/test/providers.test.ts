@@ -2,7 +2,7 @@
 // Recorded-response unit tests matching official VNPT SmartCA (/sca/sp769), Viettel MySign (/vtss/service),
 // and MISA eSign (esignapp.misa.vn Open API) protocols, raw-signature to RFC 5652 CMS assembly,
 // SSRF/host-allowlist validation, USB-token mode rejection, reconcile_only behavior, and secret isolation.
-import { createSign, generateKeyPairSync, X509Certificate } from 'node:crypto';
+import { createSign, createVerify, generateKeyPairSync, X509Certificate, type KeyObject } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
   CaProviderError,
@@ -11,9 +11,11 @@ import {
   VNPT_SMARTCA_HOSTS,
   assertSafeCaBaseUrl,
   buildSandboxCmsDer,
+  cmsHasSignedAttrs,
   getCaAdapter,
   isCmsSignedDataDer,
   isValidDerSequence,
+  prepareCadesSignedAttrs,
   type CaProviderId,
 } from '../src/index.ts';
 
@@ -43,12 +45,16 @@ function derTlv(tag: number, ...parts: readonly Uint8Array[]): Uint8Array {
   return out;
 }
 
-function createTestRsaCertAndRawSig(payload: Uint8Array): { certB64: string; rawSigB64: string } {
+function createTestRsaIdentity(cn = 'Crove Test CA'): {
+  certDer: Uint8Array;
+  certB64: string;
+  privateKey: KeyObject;
+} {
   const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const spkiDer = new Uint8Array(publicKey.export({ type: 'spki', format: 'der' }));
   const oidSha256Rsa = derTlv(0x06, new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b]));
   const sigAlg = derTlv(0x30, oidSha256Rsa, derTlv(0x05));
-  const cnAttr = derTlv(0x30, derTlv(0x06, new Uint8Array([0x55, 0x04, 0x03])), derTlv(0x0c, Buffer.from('Crove Test CA', 'utf8')));
+  const cnAttr = derTlv(0x30, derTlv(0x06, new Uint8Array([0x55, 0x04, 0x03])), derTlv(0x0c, Buffer.from(cn, 'utf8')));
   const name = derTlv(0x30, derTlv(0x31, cnAttr));
   const validity = derTlv(
     0x30,
@@ -69,9 +75,14 @@ function createTestRsaCertAndRawSig(payload: Uint8Array): { certB64: string; raw
   const bitString = derTlv(0x03, new Uint8Array([0x00]), certSig);
   const certDer = derTlv(0x30, tbs, sigAlg, bitString);
   new X509Certificate(certDer);
+  return { certDer, certB64: Buffer.from(certDer).toString('base64'), privateKey };
+}
+
+function createTestRsaCertAndRawSig(payload: Uint8Array): { certB64: string; rawSigB64: string } {
+  const { certB64, privateKey } = createTestRsaIdentity();
   const rawSig = new Uint8Array(createSign('RSA-SHA256').update(payload).sign(privateKey));
   return {
-    certB64: Buffer.from(certDer).toString('base64'),
+    certB64,
     rawSigB64: Buffer.from(rawSig).toString('base64'),
   };
 }
@@ -484,21 +495,70 @@ describe('Viettel MySign adapter (official /vtss/service/* recorded responses)',
 });
 
 describe('MISA eSign / WeSign adapter (esignapp.misa.vn Open API recorded responses)', () => {
-  it('authenticates at /api/auth/api/v1/auth/login-api with x-clientId/x-clientKey, passes AuthorizationRM, reconciles DuplicateRefID, and reads CMS DER', async () => {
+  it('authenticates at /api/auth/api/v1/auth/login-api preferring remoteSigningAccessToken, signs at /external/esrm/.../Signing/hash, reconciles DuplicateRefID via GET status, and reads/wraps signatures', async () => {
     const { fetchImpl, calls } = mockFetch({
       '/api/auth/api/v1/auth/login-api': [
-        { status: 200, body: { Success: true, Data: { AccessToken: 'misa-token-1' } } },
+        {
+          status: 200,
+          body: {
+            Success: true,
+            Data: {
+              accessToken: 'misaid-token-do-not-send',
+              remoteSigningAccessToken: 'misa-esign-token-1',
+              userInfo: { userId: 'misa-uid-99' },
+            },
+          },
+        },
       ],
       '/apis/RMeSign/GetListCertificate': [
-        { status: 200, body: { Success: true, Data: [{ CertSerial: 'MISA-01', SignType: 'RemoteSigning', KeyStatus: 'ACTIVE', CertData: TEST_CERT_B64 }] } },
+        {
+          status: 200,
+          body: {
+            Success: true,
+            Data: [{ CertAlias: 'MISA-01', SignType: 'RemoteSigning', KeyStatus: 'ACTIVE', CertData: TEST_CERT_B64 }],
+          },
+        },
       ],
-      '/apis/RMeSign/SignHashV4': [
-        { status: 200, body: { Success: true, Data: { TransactionID: 'misa-tx-1', Status: 0, ChallengeCode: '8822' } } },
+      '/external/esrm/service/signing/api/v1/Signing/hash': [
+        {
+          status: 200,
+          body: { status: { code: 200 }, data: { transactionId: 'misa-tx-1', status: 'PENDING', challengeCode: '8822' } },
+        },
         { status: 200, body: { Success: false, ErrorCode: 'DuplicateRefID' } },
       ],
-      '/apis/RMeSign/GetSignStatusV3': [
-        { status: 200, body: { Success: true, Data: { TransactionID: 'misa-tx-1', RefID: 'misa-req-1', Status: 0 } } },
-        { status: 200, body: { Success: true, Data: { TransactionID: 'misa-tx-1', RefID: 'misa-req-1', Status: 1, CmsBase64: SAMPLE_CMS_B64 } } },
+      '/external/esrm/service/signing/api/v1/Signing/status/misa-req-1': [
+        {
+          status: 200,
+          body: { status: { code: 200 }, data: { transactionId: 'misa-tx-1', refId: 'misa-req-1', status: 'PENDING' } },
+        },
+      ],
+      '/external/esrm/service/signing/api/v1/Signing/status/misa-tx-1': [
+        {
+          status: 200,
+          body: {
+            status: { code: 200 },
+            data: {
+              transactionId: 'misa-tx-1',
+              status: 'SUCCESS',
+              CertAlias: 'MISA-01',
+              signatures: [{ documentId: 'misa-req-1', signature: SAMPLE_CMS_B64 }],
+              TimestampToken: SAMPLE_TS_B64,
+              OcspResponses: [SAMPLE_OCSP_B64],
+            },
+          },
+        },
+        {
+          status: 200,
+          body: {
+            status: { code: 200 },
+            data: {
+              transactionId: 'misa-tx-1',
+              status: 'SUCCESS',
+              CertAlias: 'MISA-01',
+              signatures: [{ documentId: 'misa-req-1', signature: RAW_RSA_SIG_B64 }],
+            },
+          },
+        },
       ],
     });
 
@@ -510,7 +570,8 @@ describe('MISA eSign / WeSign adapter (esignapp.misa.vn Open API recorded respon
     expect(calls[0]?.url).toBe('https://esignapp.misa.vn/api/auth/api/v1/auth/login-api');
     expect(calls[0]?.headers['x-clientid']).toBe('misa-client-01');
     expect(calls[0]?.headers['x-clientkey']).toBe('misa-top-secret-key');
-    expect(calls[1]?.headers.authorizationrm).toBe('Bearer misa-token-1');
+    expect(calls[1]?.headers.authorizationrm).toBe('Bearer misa-esign-token-1');
+    expect(calls[1]?.headers.authorizationrm).not.toContain('misaid-token-do-not-send');
 
     const init = await adapter.initiateSign(MISA_SECRET, {
       idempotencyKey: 'misa-req-1',
@@ -518,25 +579,204 @@ describe('MISA eSign / WeSign adapter (esignapp.misa.vn Open API recorded respon
       certRef: 'MISA-01',
     });
     expect(init).toMatchObject({ provider: 'misa_wesign', externalTxId: 'misa-tx-1', status: 'pending' });
-    const reqBody = JSON.parse(calls.find((c) => c.url.endsWith('/SignHashV4'))?.body ?? '{}') as { SignType: string; RefID: string };
-    expect(reqBody.SignType).toBe('RemoteSigning');
-    expect(reqBody.RefID).toBe('misa-req-1');
+    const reqBody = JSON.parse(
+      calls.find((c) => c.url.endsWith('/external/esrm/service/signing/api/v1/Signing/hash'))?.body ?? '{}',
+    ) as {
+      UserId: string;
+      CertAlias: string;
+      RefId: string;
+      Documents: Array<{ DocumentId: string; Hash: string; HashAlgorithm: string }>;
+    };
+    expect(reqBody.UserId).toBe('misa-uid-99');
+    expect(reqBody.CertAlias).toBe('MISA-01');
+    expect(reqBody.RefId).toBe('misa-req-1');
+    expect(reqBody.Documents).toHaveLength(1);
+    expect(reqBody.Documents[0]?.HashAlgorithm).toBe('SHA256');
+    expect(reqBody.Documents[0]?.Hash).toBe(Buffer.from(DIGEST, 'hex').toString('base64'));
 
-    // DuplicateRefID reconciles via POST GetSignStatusV3.
+    // DuplicateRefID reconciles via GET /external/esrm/service/signing/api/v1/Signing/status/{refId}.
     const reconciled = await adapter.initiateSign(MISA_SECRET, {
       idempotencyKey: 'misa-req-1',
       digestSha256: DIGEST,
       certRef: 'MISA-01',
     });
     expect(reconciled.externalTxId).toBe('misa-tx-1');
+    const reconcileCall = calls.find((c) => c.url.endsWith('/Signing/status/misa-req-1'));
+    expect(reconcileCall?.method).toBe('GET');
+    expect(reconcileCall?.headers.authorizationrm).toBe('Bearer misa-esign-token-1');
 
     const cms = await adapter.fetchSignedCms(MISA_SECRET, 'misa-tx-1');
     expect(Buffer.from(cms.cmsDer).toString('base64')).toBe(SAMPLE_CMS_B64);
+    expect(cms.subFilter).toBe('ETSI.CAdES.detached');
+    expect(cmsHasSignedAttrs(cms.cmsDer)).toBe(true);
+    expect(cms.timestampTokenDer).not.toBeNull();
+    expect(cms.ocspResponsesDer).toHaveLength(1);
+
+    const wrappedRawCms = await adapter.fetchSignedCms(MISA_SECRET, 'misa-tx-1');
+    expect(isCmsSignedDataDer(wrappedRawCms.cmsDer)).toBe(true);
+    expect(wrappedRawCms.subFilter).toBe('adbe.pkcs7.detached');
+    expect(cmsHasSignedAttrs(wrappedRawCms.cmsDer)).toBe(false);
 
     for (const call of calls) {
       expect(call.url).not.toContain('misa-top-secret-password');
       expect(call.url).not.toContain('misa-top-secret-key');
     }
+  });
+
+  it('requires explicit certRef on restarted adapters with multiple active certs and wraps CAdES-BES signedAttrs', async () => {
+    const idA = createTestRsaIdentity('Signer A');
+    const idB = createTestRsaIdentity('Signer B');
+    const rawSigB = new Uint8Array(createSign('RSA-SHA256').update(Buffer.from(DIGEST, 'hex')).sign(idB.privateKey));
+    const rawSigBB64 = Buffer.from(rawSigB).toString('base64');
+
+    // Fresh restarted Viettel MySign adapter with 2 active certs and no local initiateSign cache.
+    const vtMock = mockFetch({
+      '/vtss/service/ras/v1/login': [{ status: 200, body: { access_token: 'vt-tok-multi', expires_in: 3600 } }],
+      '/vtss/service/certificates/info': [
+        {
+          status: 200,
+          body: [
+            { credential_id: 'cert-A', key: { status: 'ENABLED' }, cert: { status: 'valid', certificates: [idA.certB64] } },
+            { credential_id: 'cert-B', key: { status: 'ENABLED' }, cert: { status: 'valid', certificates: [idB.certB64] } },
+          ],
+        },
+      ],
+      '/vtss/service/requests/status': [
+        { status: 200, body: { transactionStatus: '1', signatures: [rawSigBB64] } },
+        { status: 200, body: { transactionStatus: '1', signatures: [rawSigBB64] } },
+      ],
+    });
+    const vtRestarted = getCaAdapter('viettel_mysign', { fetch: vtMock.fetchImpl });
+    await expect(vtRestarted.fetchSignedCms(VIETTEL_SECRET, 'vt-restart-1')).rejects.toMatchObject({
+      kind: 'unavailable',
+    });
+    const requireLeafCert = (chain: readonly string[] | undefined): X509Certificate => {
+      const pem = chain?.[0];
+      if (!pem) throw new Error('expected non-empty certificateChainPem');
+      return new X509Certificate(pem);
+    };
+
+    const vtSelected = await vtRestarted.fetchSignedCms(VIETTEL_SECRET, {
+      externalTxId: 'vt-restart-1',
+      certRef: 'cert-B',
+    });
+    expect(vtSelected.subFilter).toBe('adbe.pkcs7.detached');
+    expect(cmsHasSignedAttrs(vtSelected.cmsDer)).toBe(false);
+    expect(vtSelected.certificateChainPem).toHaveLength(1);
+    const vtLeafCert = requireLeafCert(vtSelected.certificateChainPem);
+    expect(vtLeafCert.subject).toContain('Signer B');
+    expect(
+      createVerify('RSA-SHA256')
+        .update(Buffer.from(DIGEST, 'hex'))
+        .verify(vtLeafCert.publicKey, rawSigB),
+    ).toBe(true);
+
+    // Same ambiguous-cert safeguard on restarted VNPT SmartCA and MISA WeSign adapters.
+    const vnptMock = mockFetch({
+      '/sca/sp769/v1/credentials/get_certificate': [
+        {
+          status: 200,
+          body: {
+            status_code: 200,
+            message: 'Success',
+            data: {
+              user_certificates: [
+                { serial_number: 'vnpt-A', cert_data: idA.certB64 },
+                { serial_number: 'vnpt-B', cert_data: idB.certB64 },
+              ],
+            },
+          },
+        },
+      ],
+      '/sca/sp769/v1/signatures/sign/vnpt-restart-1/status': [
+        { status: 200, body: { status_code: 200, data: { tran_code: 'vnpt-restart-1', tran_status: 1, signatures: [{ signature_value: rawSigBB64 }] } } },
+        { status: 200, body: { status_code: 200, data: { tran_code: 'vnpt-restart-1', tran_status: 1, signatures: [{ signature_value: rawSigBB64 }] } } },
+      ],
+    });
+    const vnptRestarted = getCaAdapter('vnpt_smartca', { fetch: vnptMock.fetchImpl });
+    await expect(vnptRestarted.fetchSignedCms(VNPT_SECRET, 'vnpt-restart-1')).rejects.toMatchObject({
+      kind: 'unavailable',
+    });
+    const vnptSelected = await vnptRestarted.fetchSignedCms(VNPT_SECRET, {
+      externalTxId: 'vnpt-restart-1',
+      certRef: 'vnpt-B',
+    });
+    expect(requireLeafCert(vnptSelected.certificateChainPem).subject).toContain('Signer B');
+
+    const misaMock = mockFetch({
+      '/api/auth/api/v1/auth/login-api': [
+        { status: 200, body: { Success: true, Data: { remoteSigningAccessToken: 'misa-tok-multi' } } },
+      ],
+      '/apis/RMeSign/GetListCertificate': [
+        {
+          status: 200,
+          body: {
+            Success: true,
+            Data: [
+              { CertAlias: 'misa-A', SignType: 'RemoteSigning', KeyStatus: 'ACTIVE', CertData: idA.certB64 },
+              { CertAlias: 'misa-B', SignType: 'RemoteSigning', KeyStatus: 'ACTIVE', CertData: idB.certB64 },
+            ],
+          },
+        },
+      ],
+      '/external/esrm/service/signing/api/v1/Signing/status/misa-restart-1': [
+        { status: 200, body: { status: { code: 200 }, data: { transactionId: 'misa-restart-1', status: 'SUCCESS', signatures: [{ signature: rawSigBB64 }] } } },
+        { status: 200, body: { status: { code: 200 }, data: { transactionId: 'misa-restart-1', status: 'SUCCESS', signatures: [{ signature: rawSigBB64 }] } } },
+      ],
+    });
+    const misaRestarted = getCaAdapter('misa_wesign', { fetch: misaMock.fetchImpl });
+    await expect(misaRestarted.fetchSignedCms(MISA_SECRET, 'misa-restart-1')).rejects.toMatchObject({
+      kind: 'unavailable',
+    });
+    const misaSelected = await misaRestarted.fetchSignedCms(MISA_SECRET, {
+      externalTxId: 'misa-restart-1',
+      certRef: 'misa-B',
+    });
+    expect(requireLeafCert(misaSelected.certificateChainPem).subject).toContain('Signer B');
+
+    // CAdES-BES signedAttrs path: CA signs signedAttrsSetSha256 and fetchSignedCms produces ETSI.CAdES.detached.
+    const prepared = prepareCadesSignedAttrs({
+      digestSha256: DIGEST,
+      certificateChainDer: [idB.certDer],
+      signingTime: new Date('2026-11-16T10:00:00.000Z'),
+    });
+    const canonicalSetDer = new Uint8Array([0x31, ...prepared.signedAttrsDer.subarray(1)]);
+    const cadesRawSig = new Uint8Array(createSign('RSA-SHA256').update(canonicalSetDer).sign(idB.privateKey));
+    const misaCadesMock = mockFetch({
+      '/api/auth/api/v1/auth/login-api': [
+        { status: 200, body: { Success: true, Data: { remoteSigningAccessToken: 'misa-tok-cades' } } },
+      ],
+      '/apis/RMeSign/GetListCertificate': [
+        { status: 200, body: { Success: true, Data: [{ CertAlias: 'misa-B', SignType: 'RemoteSigning', KeyStatus: 'ACTIVE', CertData: idB.certB64 }] } },
+      ],
+      '/external/esrm/service/signing/api/v1/Signing/status/misa-cades-1': [
+        {
+          status: 200,
+          body: {
+            status: { code: 200 },
+            data: {
+              transactionId: 'misa-cades-1',
+              status: 'SUCCESS',
+              signatures: [{ signature: Buffer.from(cadesRawSig).toString('base64') }],
+            },
+          },
+        },
+      ],
+    });
+    const misaCades = getCaAdapter('misa_wesign', { fetch: misaCadesMock.fetchImpl });
+    const cadesCms = await misaCades.fetchSignedCms(MISA_SECRET, {
+      externalTxId: 'misa-cades-1',
+      certRef: 'misa-B',
+      signedAttrsDer: prepared.signedAttrsDer,
+    });
+    expect(cadesCms.subFilter).toBe('ETSI.CAdES.detached');
+    expect(isCmsSignedDataDer(cadesCms.cmsDer)).toBe(true);
+    expect(cmsHasSignedAttrs(cadesCms.cmsDer)).toBe(true);
+    expect(
+      createVerify('RSA-SHA256')
+        .update(canonicalSetDer)
+        .verify(requireLeafCert(cadesCms.certificateChainPem).publicKey, cadesRawSig),
+    ).toBe(true);
   });
 
   it('detects 2FA, inactive app, 403 credentials error, USB-only certs, and auth failures without leaking secrets', async () => {
