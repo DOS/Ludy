@@ -3431,6 +3431,10 @@ export const vi = {
       settings: 'Giai đoạn',
     },
     followUp: 'Cần theo dõi',
+    duplicate: {
+      hint: 'Liên hệ này đã được đánh dấu trùng với {name}.',
+      move: 'Chuyển cơ hội sang {name}',
+    },
     nextSteps: {
       title: 'Việc tiếp theo',
       hint: 'Những cơ hội lâu không có thay đổi hoặc đã quá ngày dự kiến chốt hiện ở đây, để người phụ trách quyết định bước tiếp theo. Sửa, chuyển giai đoạn hoặc đóng cơ hội thì việc tự đóng.',

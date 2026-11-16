@@ -134,6 +134,9 @@ export interface Row {
   follow_up_id: string | null;
   follow_up_reason: string | null;
   follow_up_since: Date | string | null;
+  // The party the deal's party was marked a duplicate of, the end of the chain (CRM-15, #3294).
+  keep_party_id: string | null;
+  keep_party_name: string | null;
 }
 
 // Owners and admins delete any deal, a member the ones they made (the delete command enforces it).
@@ -156,10 +159,14 @@ export function view(r: Row, canDelete: boolean): Deal {
     version: r.version,
     canDelete,
     followUp: r.follow_up_id === null ? null : { id: r.follow_up_id, reason: r.follow_up_reason as DealNextStepReason, sinceOn: day(r.follow_up_since) ?? '' },
+    partyDuplicateOf: r.keep_party_id === null ? null : { id: r.keep_party_id, name: r.keep_party_name ?? '' },
     createdAt: iso(r.created_at),
     updatedAt: iso(r.updated_at),
   };
 }
+
+// How far a duplicate chain is followed: the kernel refuses to mark a party a duplicate of a duplicate, so a chain only grows when the kept party is marked later.
+const DUPLICATE_CHAIN_MAX = 10;
 
 export function base(ctx: Reader) {
   return ctx.trx
@@ -170,7 +177,19 @@ export function base(ctx: Reader) {
     .leftJoin('crove_crm.deal_next_step as n', (j) =>
       j.onRef('n.org_id', '=', 'd.org_id').onRef('n.deal_id', '=', 'd.id').on('n.status', '=', 'open').on(sql<boolean>`(n.snoozed_until IS NULL OR n.snoozed_until <= now())`),
     )
-    .select([...COLUMNS, 'p.name as party_name', 's.kind as stage_kind', 'n.id as follow_up_id', 'n.reason as follow_up_reason', 'n.since_on as follow_up_since'])
+    // The party the deal's party was marked a duplicate of: follow duplicate_of to the end of the chain (one row, none for a party that is not a duplicate), inside the org.
+    .leftJoin(
+      sql`LATERAL (
+        WITH RECURSIVE chain(id, name, duplicate_of, depth) AS (
+          SELECT x.id, x.name, x.duplicate_of, 1 FROM crove_kernel.party x WHERE x.org_id = d.org_id AND x.id = p.duplicate_of
+          UNION ALL
+          SELECT y.id, y.name, y.duplicate_of, c.depth + 1 FROM chain c JOIN crove_kernel.party y ON y.org_id = d.org_id AND y.id = c.duplicate_of WHERE c.depth < ${sql.lit(DUPLICATE_CHAIN_MAX)}
+        )
+        SELECT id, name FROM chain ORDER BY depth DESC LIMIT 1
+      )`.as('k'),
+      (j) => j.on(sql<boolean>`true`),
+    )
+    .select([...COLUMNS, 'p.name as party_name', 's.kind as stage_kind', 'n.id as follow_up_id', 'n.reason as follow_up_reason', 'n.since_on as follow_up_since', sql<string | null>`k.id`.as('keep_party_id'), sql<string | null>`k.name`.as('keep_party_name')])
     .where('d.org_id', '=', ctx.orgId);
 }
 
