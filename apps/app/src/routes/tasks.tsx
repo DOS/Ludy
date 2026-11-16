@@ -16,13 +16,14 @@ import { TableCell, TableRow } from '@crove/ui/components/table';
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { Textarea } from '@crove/ui/components/textarea';
 import { DateInput } from '../components/date-input.tsx';
+import { meetingsInstalled } from '../components/linked-meetings.tsx';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
 import { TaskConversationLink } from '../components/task-conversation-link.tsx';
 import { TaskFilterBar } from '../components/task-filter-bar.tsx';
 import { DataTable, Empty, ErrorText, FieldError, ListSkeleton, PageHeader, PageSkeleton, fieldControl } from '../components/ui.tsx';
 import { ViewTabs, type ViewState } from '../components/view-tabs.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { OPEN_TASK_STATUSES, TASK_LIST_LIMIT, TASK_STATUSES, agentPermissions, conversationOf, fromTodo, meetingItemOf, socialPostOf, taskDueDay, taskDueFromDay, type TaskFilter, type TaskStatus, type TasksSearch } from '../lib/agents.ts';
+import { OPEN_TASK_STATUSES, TASK_LIST_LIMIT, TASK_STATUSES, agentPermissions, conversationOf, fromTodo, meetingItemOf, meetingSourceOf, socialPostOf, taskDueDay, taskDueFromDay, type TaskFilter, type TaskStatus, type TasksSearch } from '../lib/agents.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { isModuleOff } from '../lib/errors.ts';
 import { browserTimeZone } from '../lib/my-work.ts';
@@ -469,6 +470,7 @@ export function TaskDetailPage() {
   const { task, comments, proposal } = detail.data;
   const postId = socialPostOf(task.sourceRef);
   const meetingItemId = meetingItemOf(task.sourceRef);
+  const directMeetingId = meetingSourceOf(task.sourceRef);
   const conversationId = conversationOf(task.sourceRef);
   const members = org.data?.members ?? [];
   const authorName = (c: (typeof comments)[number]) =>
@@ -537,6 +539,7 @@ export function TaskDetailPage() {
           </p>
         )}
         {meetingItemId && <MeetingLink itemId={meetingItemId} slug={slug} />}
+        {directMeetingId && <DirectMeetingLink meetingId={directMeetingId} slug={slug} />}
         {conversationId && <TaskConversationLink conversationId={conversationId} slug={slug} />}
         {perms.tasks && (
           <label className="block w-56 text-xs">
@@ -632,6 +635,24 @@ function MeetingLink({ itemId, slug }: { itemId: string; slug: string }) {
     <p className="text-sm">
       <Link to="/o/$slug/meetings/$id" params={{ slug, id: source.data.meetingId }} className="text-link underline">
         {t('openMeeting')}
+      </Link>
+    </p>
+  );
+}
+
+/** Provenance link for tasks proposed directly from a meeting (#2608): opens /meetings/$id only when readable; neutral fallback otherwise. */
+export function DirectMeetingLink({ meetingId, slug }: { meetingId: string; slug: string }) {
+  const t = useTranslations('tasks');
+  const installed = meetingsInstalled();
+  const detail = useQuery({ ...orpc.meetings.get.queryOptions({ input: { meetingId } }), enabled: installed, retry: false });
+  if (!installed) return <p className="text-sm text-muted-foreground" data-testid="task-provenance-closed">{t('meetingClosed')}</p>;
+  if (detail.isPending) return null;
+  if (detail.error) return <p className="text-sm text-muted-foreground" data-testid="task-provenance-closed">{t('meetingClosed')}</p>;
+  const title = detail.data.title.trim();
+  return (
+    <p className="text-sm" data-testid="task-provenance-meeting">
+      <Link to="/o/$slug/meetings/$id" params={{ slug, id: meetingId }} className="text-link underline">
+        {title ? t('openMeetingNamed', { title }) : t('openMeeting')}
       </Link>
     </p>
   );

@@ -12,7 +12,7 @@ import { createClient, LudyError } from './api.ts';
 import { CONSENT_METHODS, consentBlocker } from './consent.ts';
 import { LOST_KEY, readLost, RECORDING_KEY, type LostState, type RecordingState, type StartReply, type StopReply } from './messages.ts';
 import { formatClock, createIndexedDbChunkStore, noticeToCopy, otherNoticeLanguage, RECORDING_NOTICE, type RecordingMeta, type RecordingNoticeLanguage } from '@crove/meeting-recorder';
-import { uploadSaved } from './capture-run.ts';
+import { reportEnded, uploadSaved } from './capture-run.ts';
 
 const root = document.getElementById('root') as HTMLElement;
 const area = chrome.storage.local;
@@ -367,7 +367,8 @@ async function pendingView(state: State, orgId: string, token: string): Promise<
           notice = done.ok ? T.uploaded : T.uploadFailed;
           await render();
         })() }, T.retry),
-        h('button', { onclick: () => void store.remove(meta.id).then(render) }, T.discard),
+        // Discarding a left-over copy ends that meeting's recording too (best effort), so the app's recording chip lets go (#3196).
+        h('button', { onclick: () => void reportEnded(client, meta).then(() => store.remove(meta.id)).then(render) }, T.discard),
       )),
   ];
 }

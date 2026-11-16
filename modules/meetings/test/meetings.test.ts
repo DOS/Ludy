@@ -70,6 +70,7 @@ describe('meetings commands and queries construction', () => {
     expect(names).toEqual([
       'meetings.meeting.create',
       'meetings.media.record',
+      'meetings.meeting.recording_stopped',
       'meetings.meeting.delete',
       'meetings.meeting.owner_delete',
       'meetings.meeting.owner_list',

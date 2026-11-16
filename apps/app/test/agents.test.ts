@@ -5,12 +5,14 @@ import {
   budgetUsage,
   chartTree,
   conversationOf,
+  conversationSummaryTitle,
   defaultScope,
   holderCandidates,
   isBudgetAmount,
   isEveryEntity,
-  scopeNames,
   meetingItemOf,
+  meetingSourceOf,
+  scopeNames,
   socialPostOf,
   taskDueDay,
   taskDueFromDay,
@@ -129,6 +131,40 @@ describe('conversationOf', () => {
     expect(conversationOf(null)).toBeNull();
     expect(conversationOf(undefined)).toBeNull();
     expect(conversationOf('kernel.conversation')).toBeNull();
+  });
+});
+
+describe('meetingSourceOf & conversationSummaryTitle', () => {
+  it('extracts meeting UUIDs from sourceRef cleanly', () => {
+    const id = '0198a0b4-3c5d-7e6f-8a9b-0c1d2e3f4a5b';
+    expect(meetingSourceOf({ type: 'meetings.meeting', id })).toBe(id);
+    expect(meetingSourceOf({ type: 'meetings.action_item', id })).toBeNull();
+    expect(meetingSourceOf({ type: 'meetings.meeting', id: 'bad' })).toBeNull();
+    expect(meetingSourceOf(null)).toBeNull();
+  });
+
+  it('picks conversation display label from subject, displayName, partyName, or channel', () => {
+    expect(
+      conversationSummaryTitle({
+        subject: 'Invoice #99',
+        contact: { displayName: 'Khách A', partyName: 'Công ty A' },
+        channel: { displayName: 'Mail' },
+      }),
+    ).toBe('Invoice #99');
+    expect(
+      conversationSummaryTitle({
+        subject: null,
+        contact: { displayName: null, partyName: 'Công ty B' },
+        channel: { displayName: 'Zalo OA' },
+      }),
+    ).toBe('Công ty B');
+    expect(
+      conversationSummaryTitle({
+        subject: null,
+        contact: { displayName: null, partyName: null },
+        channel: { displayName: 'Facebook Page' },
+      }),
+    ).toBe('Facebook Page');
   });
 });
 

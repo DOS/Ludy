@@ -25,7 +25,7 @@ describe('@crove/mod-projects (#2591)', () => {
     expect(projectsManifest.nav).toEqual(MODULE_SCREENS.projects.nav);
   });
 
-  it('exports all 15 commands and 9 queries with consistent module prefix', () => {
+  it('exports all 17 commands and 11 queries with consistent module prefix', () => {
     expect(projectsCommands.map((c) => c.name).sort()).toEqual([
       'projects.member.add',
       'projects.member.remove',
@@ -40,6 +40,8 @@ describe('@crove/mod-projects (#2591)', () => {
       'projects.task.reorder',
       'projects.tasks_from_note.confirm',
       'projects.tasks_from_note.start',
+      'projects.tasks_from_source.confirm',
+      'projects.tasks_from_source.start',
       'projects.weekly_status.send_mail',
       'projects.weekly_status.share_note',
     ]);
@@ -50,6 +52,8 @@ describe('@crove/mod-projects (#2591)', () => {
       'projects.task_projects',
       'projects.tasks_from_note.seats',
       'projects.tasks_from_note.status',
+      'projects.tasks_from_source.seats',
+      'projects.tasks_from_source.status',
       'projects.today',
       'projects.unassigned_tasks',
       'projects.weekly_status_source',
@@ -65,6 +69,7 @@ describe('@crove/mod-projects (#2591)', () => {
       if (
         command.name === 'projects.task.create' ||
         command.name.startsWith('projects.tasks_from_note.') ||
+        command.name.startsWith('projects.tasks_from_source.') ||
         command.name.startsWith('projects.weekly_status.')
       ) {
         expect(command.writes).toBeUndefined();

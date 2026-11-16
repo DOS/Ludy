@@ -830,6 +830,47 @@ export const createTaskFromNote = defineCommand({
   },
 });
 
+// Tasks confirmed from Vy's note, meeting, or conversation proposals (#2608, ADR-0048, ADR-0049): projects module runs
+// this inside its atomic batch confirmation command (ctx.run). Every created task keeps the validated source_ref and
+// stays `tainted: true` because its proposed wording started from a caller-readable source and a model run.
+// No RPC route exposes this directly.
+export const createTaskFromSource = defineCommand({
+  name: 'kernel.task.create_from_source',
+  input: z.strictObject({
+    sourceType: z.enum(['notes.note', 'meetings.meeting', 'kernel.conversation']),
+    sourceId: zId,
+    title: zTaskTitle,
+    positionId: zId.nullable(),
+    due: z.iso.datetime({ offset: true }).nullable(),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MEMBERS,
+  handler: async (ctx, input) => {
+    requireUser(ctx);
+    if (input.sourceType === 'kernel.conversation') {
+      // Re-check conversation RLS so private/direct/restricted threads cannot be linked by a non-reader.
+      const thread = await ctx.trx
+        .selectFrom('crove_kernel.conversation')
+        .select('id')
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.sourceId)
+        .executeTakeFirst();
+      if (!thread) throw new DomainError('CONVERSATION_NOT_FOUND', 404, 'Không tìm thấy hội thoại này');
+    }
+    const created = await insertHumanTask(ctx, {
+      title: input.title,
+      description: null,
+      assigneePositionId: input.positionId,
+      due: input.due,
+      sourceRef: { type: input.sourceType, id: input.sourceId },
+      tainted: true,
+    });
+    ctx.audit({ taskId: created.taskId, sourceType: input.sourceType, sourceId: input.sourceId, positionId: input.positionId });
+    return created;
+  },
+});
+
 // A person edits a task's title, description, due date or seat (projects plan docs/plan/projects.md step P1, #2588).
 // Refused while an agent's run holds a live lease on the task (TASK_CHECKED_OUT), when the new seat is archived
 // (POSITION_ARCHIVED) or when the new seat's holder cannot read the task's legal entity (OUTSIDE_LEGAL_ENTITY).
@@ -2218,6 +2259,7 @@ export const agentCommands = [
   createTaskFromMeeting,
   createTaskFromConversation,
   createTaskFromNote,
+  createTaskFromSource,
   updateTask,
   checkoutTask,
   commentTask,

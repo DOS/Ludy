@@ -61,6 +61,9 @@ export interface Client {
   // One piece of the audio of a live-notes meeting; throws LudyError with the HTTP status (the live sender retries or gives up by it).
   sendLiveChunk(input: { meetingId: string; seq: number; lengthSeconds: number; blob: Blob }): Promise<void>;
   // `stopReason`: the recording stopped without the member's click (A1, #3159); the server keeps the code on the meeting.
+  // The recording ended and no media will reach the server (nothing saved, the upload failed, the capture failed to start): the meeting gets its end time
+  // and the code, once, so the app's recording chip lets go (#3196). The server ignores it when the meeting already has a recording; callers never fail on it.
+  recordingStopped(input: { meetingId: string; reason?: RecordingStopReason; lengthSeconds?: number }): Promise<void>;
   uploadMedia(input: { meetingId: string; kind: 'audio' | 'video'; file: File; lengthSeconds: number; uploads: 'presigned' | 'direct'; stopReason?: RecordingStopReason }): Promise<Uploaded>;
 }
 
@@ -116,6 +119,9 @@ export function createClient(address: string, token: string | null, fetchImpl: F
       const base = blob.type.split(';')[0]!.trim();
       const type = /^audio\/[\w.+-]+$/.test(base) ? base : 'application/octet-stream';
       await call(`/api/meetings/${encodeURIComponent(meetingId)}/live-chunk?${query.toString()}`, { method: 'POST', headers: { 'content-type': type }, body: blob });
+    },
+    async recordingStopped({ meetingId, reason, lengthSeconds }) {
+      await call('/api/rpc/meetings/recordingStopped', json({ json: { meetingId, ...(reason ? { reason } : {}), ...(lengthSeconds !== undefined ? { lengthSeconds } : {}) } }));
     },
     async uploadMedia({ meetingId, kind, file, lengthSeconds, uploads, stopReason }) {
       const purpose = kind === 'audio' ? 'meeting_audio' : 'meeting_video';

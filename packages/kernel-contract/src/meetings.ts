@@ -243,6 +243,18 @@ export const zMeetingMediaRecord = zMeetingRef.extend({
 });
 export type MeetingMediaRecord = z.infer<typeof zMeetingMediaRecord>;
 
+// A recording that ended with no media reaching the server (#3196): the extension reports it so the header chip lets go at once, not after
+// RECORDING_NOW_WINDOW_HOURS. Codes and a length only. `reason` is absent for the member's own stop (nothing was saved), a code for a stop they
+// did not ask for. `lengthSeconds` is what the recorder's own clock counted; the end time is the start plus it, never later than now.
+export const zMeetingRecordingStopped = zMeetingRef.extend({
+  reason: zRecordingStopReason.optional(),
+  lengthSeconds: z.number().int().min(0).max(24 * 3600).optional(),
+});
+export type MeetingRecordingStopped = z.infer<typeof zMeetingRecordingStopped>;
+// `ended` is false when nothing changed: the meeting already had a recording or an end time (the call is a no-op then, and safe to repeat).
+export const zMeetingRecordingStoppedDone = z.strictObject({ meetingId: zId, ended: z.boolean() });
+export type MeetingRecordingStoppedDone = z.infer<typeof zMeetingRecordingStoppedDone>;
+
 // One piece of about 15 seconds of the recording, sent while the meeting is recorded (ADR-0052 L4a, issue #3109). The upload route seals it under its own
 // data key and stores the ciphertext; this command only records it. The pieces are consecutive slices of one MediaRecorder stream, so in order they make
 // the recording; the final upload stays the authoritative audio and replaces them. lengthSeconds is what the recorder's clock says, never measured.

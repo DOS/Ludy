@@ -18,6 +18,7 @@ import { NavIcon } from '@crove/ui/components/nav-icon';
 import { ProjectIcon } from '@crove/ui/components/project-icon';
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { ProjectBoardView, type BoardColumnStatus } from '../components/project-board.tsx';
+import { ProjectTasksFromSourceDialog } from '../components/project-tasks-from-source-dialog.tsx';
 import { ProjectWeeklyStatus } from '../components/project-weekly-status.tsx';
 import {
   AttachTaskDialog,
@@ -255,6 +256,7 @@ export function ProjectDetailPage() {
   const [positionId, setPositionId] = useState<string>('');
   const [includeCancelled, setIncludeCancelled] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
+  const [proposeSourceOpen, setProposeSourceOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<ProjectTaskCard | null>(null);
   const [moveError, setMoveError] = useState<unknown>(null);
@@ -379,6 +381,16 @@ export function ProjectDetailPage() {
           subtitle={project.description ?? undefined}
           actions={
             <div className="flex flex-wrap items-center gap-2">
+              {project.canWrite && project.status !== 'archived' && (
+                <Button
+                  variant="outline"
+                  onClick={() => setProposeSourceOpen(true)}
+                  data-testid="propose-tasks-from-source-button"
+                >
+                  <ProjectIcon name="bot" />
+                  {t('detail.proposeFromSource')}
+                </Button>
+              )}
               {project.canWrite && (
                 <Button variant="outline" onClick={() => setAttachOpen(true)} data-testid="attach-task-button">
                   <ProjectIcon name="link" />
@@ -594,6 +606,14 @@ export function ProjectDetailPage() {
         open={attachOpen}
         onOpenChange={setAttachOpen}
         projectId={project.id}
+        disabled={!project.canWrite}
+      />
+      <ProjectTasksFromSourceDialog
+        open={proposeSourceOpen}
+        onOpenChange={setProposeSourceOpen}
+        slug={slug}
+        projectId={project.id}
+        projectName={project.name}
         disabled={!project.canWrite}
       />
       <EditProjectTaskDialog

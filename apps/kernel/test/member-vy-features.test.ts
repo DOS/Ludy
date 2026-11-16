@@ -17,6 +17,7 @@ describe('member-Vy features (kernel side)', () => {
       'meetings.translate': { module: 'meetings', expiryMinutes: 30 },
       'meetings.ask': { module: 'meetings', expiryMinutes: 30 },
       'projects.tasks_from_note': { module: 'projects', expiryMinutes: 30 },
+      'projects.tasks_from_source': { module: 'projects', expiryMinutes: 30 },
     });
   });
 });

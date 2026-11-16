@@ -392,6 +392,76 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     expect(refused.status).toBe(404);
   });
 
+  it('lets the token report that its recording ended with no media: once, codes only, and never over a recording or another meeting (#3196)', async () => {
+    const { token } = await signedIn('recorder');
+    const make = async (title: string) => String((await rpc('meetings/create', asToken(token), { title, consentMethod: 'told_at_start', visibility: 'attendees', keepVideo: false })).body.meetingId);
+    const row = (id: string) =>
+      admin(async (c) => (await c.query<{ ended: boolean; secs: number | null; reason: string | null; touched: string }>(
+        `SELECT ended_at IS NOT NULL AS ended, extract(epoch FROM ended_at - started_at)::int AS secs, recording_stop_reason AS reason, updated_at::text AS touched FROM crove_meetings.meeting WHERE id = $1`, [id])).rows[0]!);
+    const chip = async () => (await rpc('meetings/recordingNow', await asBrowser('recorder'), {})).body.recording as { meetingId: string } | null;
+    const stopped = (headers: Record<string, string>, input: Record<string, unknown>) => rpc('meetings/recordingStopped', headers, input);
+
+    // A silent stop: the chip lists the meeting until the token reports it, then lets go at once.
+    const silent = await make('Dừng im lặng');
+    // Started ten minutes ago: the end time is the start plus the reported length, never later than now.
+    const back = (id: string) => admin(async (c) => void (await c.query(`UPDATE crove_meetings.meeting SET started_at = now() - interval '10 minutes' WHERE id = $1`, [id])));
+    await back(silent);
+    expect(await chip()).toMatchObject({ meetingId: silent });
+    expect(await stopped(asToken(token), { meetingId: silent, reason: 'mic_lost', lengthSeconds: 90 })).toMatchObject({ status: 200, body: { meetingId: silent, ended: true } });
+    expect(await chip()).toBeNull();
+    const first = await row(silent);
+    expect(first).toMatchObject({ ended: true, secs: 90, reason: 'mic_lost' });
+    // The audit row holds ids and codes only (the token's id is stamped on every extension audit row).
+    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'meetings.meeting.recording_stopped' AND target_id = $1`, [silent])).rows);
+    expect(audit).toHaveLength(1);
+    expect(audit[0]!.detail).toEqual({ meetingId: silent, changed: true, reason: 'mic_lost', extensionToken: expect.any(String) });
+    // A second call, even with other words, changes nothing.
+    expect(await stopped(asToken(token), { meetingId: silent, reason: 'tab_closed', lengthSeconds: 5 })).toMatchObject({ status: 200, body: { ended: false } });
+    expect(await row(silent)).toEqual(first);
+
+    // The member's own stop with nothing saved: an end time and no stop code.
+    const own = await make('Tự dừng');
+    await back(own);
+    expect(await stopped(asToken(token), { meetingId: own, lengthSeconds: 30 })).toMatchObject({ body: { ended: true } });
+    expect(await row(own)).toMatchObject({ ended: true, secs: 30, reason: null });
+
+    // A meeting that already has its recording keeps what the upload set: the report is a no-op.
+    const recorded = await make('Đã có bản ghi');
+    const file = new FormData();
+    file.set('kind', 'audio');
+    file.set('file', new Blob([webm()], { type: 'audio/webm' }), 'rec.webm');
+    file.set('lengthSeconds', '60');
+    expect((await app.request(`/api/meetings/${recorded}/media`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'x-crove-org': slug }, body: file })).status).toBe(200);
+    const uploaded = await row(recorded);
+    expect(uploaded.ended).toBe(true);
+    expect(await stopped(asToken(token), { meetingId: recorded, reason: 'unknown', lengthSeconds: 1 })).toMatchObject({ body: { ended: false } });
+    expect(await row(recorded)).toEqual(uploaded);
+
+    // A meeting with a recording but no end time (a row from before the end time was set with every recording) is not ended by the report either.
+    const legacy = await make('Bản ghi cũ');
+    const again = new FormData();
+    again.set('kind', 'audio');
+    again.set('file', new Blob([webm()], { type: 'audio/webm' }), 'rec.webm');
+    again.set('lengthSeconds', '60');
+    expect((await app.request(`/api/meetings/${legacy}/media`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'x-crove-org': slug }, body: again })).status).toBe(200);
+    await admin(async (c) => void (await c.query('UPDATE crove_meetings.meeting SET ended_at = NULL WHERE id = $1', [legacy])));
+    expect(await stopped(asToken(token), { meetingId: legacy, lengthSeconds: 1 })).toMatchObject({ body: { ended: false } });
+    expect((await row(legacy)).ended).toBe(false);
+
+    // Not another member's meeting (403 for one the org may see, whose recorder is not the token's member; a private one is not seen at all), not one made in the app (404: not this token's), not an unknown one,
+    // and not a reason outside the list.
+    const owners = await rpc('meetings/create', await asBrowser('owner'), { title: 'Của chủ tổ chức', consentMethod: 'told_at_start', visibility: 'org', keepVideo: false });
+    expect(owners.status).toBe(200);
+    expect((await stopped(asToken(token), { meetingId: String(owners.body.meetingId) })).status).toBe(403);
+    const inApp = await rpc('meetings/create', await asBrowser('recorder'), { title: 'Trong ứng dụng', consentMethod: 'told_at_start', visibility: 'attendees', keepVideo: false });
+    expect((await stopped(asToken(token), { meetingId: String(inApp.body.meetingId) })).status).toBe(404);
+    expect((await stopped(asToken(token), { meetingId: randomUUID() })).status).toBe(404);
+    expect((await stopped(asToken(token), { meetingId: silent, reason: 'because' })).status).toBe(400);
+    expect((await row(String(inApp.body.meetingId))).ended).toBe(false);
+    // The viewer's token (a viewer cannot connect an extension at all) and a browser session of a viewer are refused as ever.
+    expect((await stopped(await asBrowser('viewer'), { meetingId: silent })).status).toBe(403);
+  });
+
   it('lists the member\'s devices without a hash and ends a disconnected device at once', async () => {
     const { token, tokenId } = await signedIn('recorder');
     const listed = await rpc('extension/tokens/list', await asBrowser('recorder'), {});
