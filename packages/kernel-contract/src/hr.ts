@@ -51,8 +51,57 @@ export const zHrTaxCode = z.string().trim().regex(/^(\d{10}|\d{12})$/, 'tax code
 export const zHrInsuranceNumber = z.string().trim().regex(/^(\d{10}|\d{12})$/, 'insurance number: 10 or 12 digits');
 // A birth date from 1900-01-01 to today (Vietnam).
 export const zHrBirthDate = zLocalDate.refine((v) => v >= '1900-01-01' && v <= vietnamToday(), 'birth date between 1900-01-01 and today');
+const noNul = (value: string): boolean => !value.includes('\u0000');
+export const HR_DEPARTMENT_NAME_MAX = 120;
+export const HR_DEPARTMENT_CODE_MAX = 32;
+export const HR_JOB_TITLE_MAX = 160;
 const zName = z.string().trim().min(1).max(200);
 const zAddress = z.string().trim().min(1).max(500);
+export const zHrDepartmentName = z.string().trim().min(1).max(HR_DEPARTMENT_NAME_MAX).refine(noNul, 'no NUL character');
+export const zHrDepartmentCode = z.string().trim().min(1).max(HR_DEPARTMENT_CODE_MAX).regex(/^[A-Za-z0-9._-]+$/, 'department code');
+export const zHrJobTitle = z.string().trim().min(1).max(HR_JOB_TITLE_MAX).refine(noNul, 'no NUL character');
+
+export const zHrDepartmentList = z.strictObject({
+  legalEntityId: zId.optional(),
+  includeArchived: z.boolean().default(false),
+});
+export type HrDepartmentList = z.input<typeof zHrDepartmentList>;
+
+export const zHrDepartmentAdd = z.strictObject({
+  legalEntityId: zId.optional(),
+  name: zHrDepartmentName,
+  code: zHrDepartmentCode.optional(),
+  payFunction: z.enum(HR_PAY_FUNCTIONS).default('admin'),
+});
+export type HrDepartmentAdd = z.input<typeof zHrDepartmentAdd>;
+
+export const zHrDepartmentEdit = z
+  .strictObject({
+    departmentId: zId,
+    name: zHrDepartmentName.optional(),
+    code: zHrDepartmentCode.nullable().optional(),
+    payFunction: z.enum(HR_PAY_FUNCTIONS).optional(),
+  })
+  .refine((v) => v.name !== undefined || v.code !== undefined || v.payFunction !== undefined, 'at least one field');
+export type HrDepartmentEdit = z.infer<typeof zHrDepartmentEdit>;
+
+export const zHrDepartmentRef = z.strictObject({ departmentId: zId });
+export type HrDepartmentRef = z.infer<typeof zHrDepartmentRef>;
+
+export const zHrDepartmentWritten = z.strictObject({ departmentId: zId });
+export type HrDepartmentWritten = z.infer<typeof zHrDepartmentWritten>;
+
+export const zHrDepartmentView = z.strictObject({
+  id: zId,
+  legalEntityId: zId,
+  name: z.string(),
+  code: z.string().nullable(),
+  payFunction: z.enum(HR_PAY_FUNCTIONS),
+  archivedAt: z.string().nullable(),
+  activeEmployees: z.number().int().nonnegative(),
+  activeBaseWageTotal: z.string(),
+});
+export type HrDepartmentView = z.infer<typeof zHrDepartmentView>;
 
 export const zHrEmploymentTerms = z.strictObject({
   effectiveFrom: zLocalDate,
@@ -71,6 +120,12 @@ export const zHrEmploymentTerms = z.strictObject({
 });
 export type HrEmploymentTerms = z.infer<typeof zHrEmploymentTerms>;
 
+// Initial employment on employee.add keeps payFunction optional so assigning a department can default it when omitted.
+export const zHrEmployeeInitialEmployment = zHrEmploymentTerms.extend({
+  payFunction: z.enum(HR_PAY_FUNCTIONS).optional(),
+});
+export type HrEmployeeInitialEmployment = z.infer<typeof zHrEmployeeInitialEmployment>;
+
 // A new employee with the first terms. The legal entity is the org's default one when none is named.
 // The code of the bank a person is paid at (#2897): 2 to 12 capital letters or digits, a code of the list kept as data in @crove/l10n-vn (VN_BANKS). The shape is checked here and in the database;
 // that the code is in the list is checked by the command, so this package needs no copy of the list.
@@ -86,7 +141,9 @@ export const zHrEmployeeAdd = z.strictObject({
   taxCode: zHrTaxCode.optional(),
   insuranceNumber: zHrInsuranceNumber.optional(),
   legalEntityId: zId.optional(),
-  employment: zHrEmploymentTerms,
+  departmentId: zId.optional(),
+  jobTitle: zHrJobTitle.optional(),
+  employment: zHrEmployeeInitialEmployment,
 });
 export type HrEmployeeAdd = z.infer<typeof zHrEmployeeAdd>;
 
@@ -102,6 +159,8 @@ export const zHrEmployeeEdit = z
     birthDate: zHrBirthDate.nullable().optional(),
     taxCode: zHrTaxCode.nullable().optional(),
     insuranceNumber: zHrInsuranceNumber.nullable().optional(),
+    departmentId: zId.nullable().optional(),
+    jobTitle: zHrJobTitle.nullable().optional(),
   })
   .refine(
     (v) =>
@@ -112,7 +171,9 @@ export const zHrEmployeeEdit = z
       v.bankCode !== undefined ||
       v.birthDate !== undefined ||
       v.taxCode !== undefined ||
-      v.insuranceNumber !== undefined,
+      v.insuranceNumber !== undefined ||
+      v.departmentId !== undefined ||
+      v.jobTitle !== undefined,
     'at least one field',
   );
 export type HrEmployeeEdit = z.infer<typeof zHrEmployeeEdit>;
@@ -137,7 +198,11 @@ export type HrDependentEnd = z.infer<typeof zHrDependentEnd>;
 export const zHrEmployeeRef = z.strictObject({ employeeId: zId });
 export type HrEmployeeRef = z.infer<typeof zHrEmployeeRef>;
 
-export const zHrEmployeeList = z.strictObject({ status: z.enum(['active', 'ended', 'all']).default('active'), limit: z.number().int().min(1).max(500).default(200) });
+export const zHrEmployeeList = z.strictObject({
+  status: z.enum(['active', 'ended', 'all']).default('active'),
+  departmentId: zId.optional(),
+  limit: z.number().int().min(1).max(500).default(200),
+});
 export type HrEmployeeList = z.input<typeof zHrEmployeeList>;
 
 // What a command returns: ids, never a value (idempotency rows keep results).
@@ -175,6 +240,9 @@ export const zHrEmployeeSummary = z.object({
   id: zId,
   legalEntityId: zId,
   displayName: z.string(),
+  departmentId: zId.nullable(),
+  departmentName: z.string().nullable(),
+  jobTitle: z.string().nullable(),
   status: z.enum(HR_STATUSES),
   endedOn: z.string().nullable(),
   // The terms in force today: the newest row that starts on or before today, or null when the first starts later.
