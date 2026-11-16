@@ -77,10 +77,16 @@ const MACHINERY = new Set([
   'crove_meetings.chat_channel_target',
   // #3168: the message of a queued post to a minutes channel, kept only while the post is queued and deleted when it settles: reached only by definers, no login role grant.
   'crove_meetings.chat_post_body',
+  // #3510 (eSign Slice 2): org-level encrypted CA provider credentials (secret_envelope):
+  // reached only by definers with RLS enabled and zero login role grants. Land before its table (PENDING_TABLES).
+  'crove_sign.ca_connection',
   // #3330 / #3323 (eSign): single-use hashed access tokens (token_sha256) and short-lived email OTP hashes (otp_sha256):
   // reached only by definers with RLS enabled and zero login role grants. Land before their tables (PENDING_TABLES).
   'crove_sign.signing_otp',
   'crove_sign.signing_token',
+  // #3510 (eSign Slice 2): hashed template direct link capability tokens (token_sha256):
+  // reached only by definers with RLS enabled and zero login role grants. Land before its table (PENDING_TABLES).
+  'crove_sign.template_direct_link',
   'crove_social.chat_alert_target',
 ]);
 // Tables whose row factory (and MACHINERY entry, for definer-only tables) lands on main before the table itself. CI
@@ -107,6 +113,12 @@ const PENDING_TABLES = new Set<string>([
   'crove_meetings.meeting_link',
   'crove_notes.link',
   'crove_notes.note',
+  'crove_sign.ca_connection',
+  'crove_sign.ca_signing_request',
+  'crove_sign.template',
+  'crove_sign.template_direct_link',
+  'crove_sign.template_field',
+  'crove_sign.template_role',
 ]);
 // Tables whose rows belong to one member (ADR-0037, notes plan §3.6 and step N1): unlike saved_view and notification,
 // the system context reads only what the value's predicate selects (over alias t, operators schema-qualified so a
@@ -670,6 +682,47 @@ const signTokenRow = (org: string, envelopeId: string, signerId: string, created
   token_sha256: hex64(),
   expires_at: new Date(Date.now() + 86_400_000).toISOString(),
   created_by: createdBy,
+});
+// eSign Slice 2 (docs/plan/esign.md section 2.2, #3510): parent rows for crove_sign.* template and CA factories.
+// One ca_connection per org is seeded first as admin (ca_connection is MACHINERY with zero login role grants, so
+// ca_signing_request reuses that seeded id instead of inserting a MACHINERY row inside login-role insert controls).
+const signCaConnectionOf = new Map<string, string>();
+const signCaConnectionRow = (o: { id: string; owner: string }) => ({
+  org_id: o.id,
+  id: randomUUID(),
+  provider: 'sandbox',
+  label: 'RLS matrix sandbox CA',
+  status: 'active',
+  key_id: 'rls-matrix',
+  secret_envelope: '\\x00',
+  created_by: o.owner,
+});
+const signTemplateRow = (o: { id: string; owner: string; file: string }) => {
+  const sha256 = hex64();
+  return {
+    org_id: o.id,
+    id: randomUUID(),
+    title: 'RLS matrix template',
+    routing_mode: 'parallel',
+    source_file_id: o.file,
+    source_storage_key: `org/${o.id}/${sha256}`,
+    source_generation: '1',
+    source_sha256: sha256,
+    inspect_status: 'passed',
+    status: 'active',
+    created_by: o.owner,
+  };
+};
+const signTemplateRoleRow = (org: string, templateId: string) => ({
+  org_id: org,
+  id: randomUUID(),
+  template_id: templateId,
+  role_key: 'r1',
+  signer_role: 'signer',
+  role_label: 'Signer',
+  routing_order: 1,
+  delivery_mode: 'link',
+  require_email_otp: 'false',
 });
 const journalEntry = (org: string, id: string): Row => ({
   table: 'crove_finance.journal_entry',
@@ -2839,6 +2892,47 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // Definer-only machinery (eSign Slice 2c, #3510): org-level remote CA credentials with encrypted secret_envelope.
+  'crove_sign.ca_connection': {
+    make: (o) => {
+      const row = signCaConnectionRow(o);
+      if (!signCaConnectionOf.has(o.id)) signCaConnectionOf.set(o.id, row.id);
+      return { row };
+    },
+  },
+  // eSign Slice 2c (#3510): asynchronous external CA signing transaction log bound to an envelope, signer, and CA connection.
+  'crove_sign.ca_signing_request': {
+    make: (o) => {
+      const envelope = signEnvelopeRow(o);
+      const signer = signSignerRow(o.id, envelope.id);
+      let caConnectionId = signCaConnectionOf.get(o.id);
+      const setup: Row[] = [
+        { table: 'crove_sign.envelope', values: envelope },
+        { table: 'crove_sign.signer', values: signer },
+      ];
+      if (!caConnectionId) {
+        const caConnection = signCaConnectionRow(o);
+        caConnectionId = caConnection.id;
+        signCaConnectionOf.set(o.id, caConnectionId);
+        setup.push({ table: 'crove_sign.ca_connection', values: caConnection });
+      }
+      return {
+        setup,
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          envelope_id: envelope.id,
+          signer_id: signer.id,
+          ca_connection_id: caConnectionId,
+          provider: 'sandbox',
+          idempotency_key: randomUUID(),
+          digest_sha256: hex64(),
+          status: 'pending',
+          retry_safety: 'reconcile_only',
+        },
+      };
+    },
+  },
   // eSign Slice 1 (#3330 / #3323): a signing packet whose source_file_id is a logical ref to crove_kernel.file (no cross-module FK).
   'crove_sign.envelope': { make: (o) => ({ row: signEnvelopeRow(o) }) },
   // eSign Slice 1 (#3330 / #3323): placed signature/input field on a PDF page assigned to one signer.
@@ -2935,6 +3029,61 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           { table: 'crove_sign.signer', values: signer },
         ],
         row: signTokenRow(o.id, envelope.id, signer.id, o.owner),
+      };
+    },
+  },
+  // eSign Slice 2a (#3510): reusable signing template whose source_file_id is a logical ref to crove_kernel.file.
+  'crove_sign.template': { make: (o) => ({ row: signTemplateRow(o) }) },
+  // Definer-only machinery (eSign Slice 2a, #3510): hashed capability tokens (token_sha256) for public self-service template links.
+  'crove_sign.template_direct_link': {
+    make: (o) => {
+      const template = signTemplateRow(o);
+      return {
+        setup: [{ table: 'crove_sign.template', values: template }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          template_id: template.id,
+          token_sha256: hex64(),
+          enabled: 'true',
+          created_by: o.owner,
+        },
+      };
+    },
+  },
+  // eSign Slice 2a (#3510): normalized PDF field placeholder tied to a template and one template role.
+  'crove_sign.template_field': {
+    make: (o) => {
+      const template = signTemplateRow(o);
+      const templateRole = signTemplateRoleRow(o.id, template.id);
+      return {
+        setup: [
+          { table: 'crove_sign.template', values: template },
+          { table: 'crove_sign.template_role', values: templateRole },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          template_id: template.id,
+          template_role_id: templateRole.id,
+          field_type: 'signature',
+          page_number: 1,
+          x_norm: '0.100000',
+          y_norm: '0.100000',
+          w_norm: '0.300000',
+          h_norm: '0.080000',
+          required: 'true',
+        },
+      };
+    },
+  },
+  // eSign Slice 2a (#3510): reusable signer role preset on a template.
+  'crove_sign.template_role': {
+    make: (o) => {
+      const template = signTemplateRow(o);
+      return {
+        setup: [{ table: 'crove_sign.template', values: template }],
+        row: signTemplateRoleRow(o.id, template.id),
       };
     },
   },
