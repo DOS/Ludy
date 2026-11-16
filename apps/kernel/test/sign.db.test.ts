@@ -820,6 +820,53 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
       { actor: asUser(member), orgId: org.orgId },
     );
 
+    // Draft envelopes for PDPL find & erase verification (same email as expired signer + phone-only signer).
+    const draftPdplEnv = await runtime.execute<{ envelopeId: string }>(
+      'sign.envelope.create',
+      { title: 'Draft PDPL Erasure', sourceFileId },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    await runSignPdfInspectJob({ workerDb, runtime: workerRuntime, store, extract: mockExtract() }, { orgId: org.orgId, envelopeId: draftPdplEnv.envelopeId });
+    const draftEraseSigner = await runtime.execute<{ signerId: string }>(
+      'sign.signer.add',
+      {
+        envelopeId: draftPdplEnv.envelopeId,
+        signerRole: 'signer',
+        name: 'Draft Erase',
+        email: 'signer-erase@sign.test',
+        phone: '+84 900 000 001',
+        deliveryMode: 'email',
+        requireEmailOtp: true,
+      },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    const draftCoSigner = await runtime.execute<{ signerId: string }>(
+      'sign.signer.add',
+      { envelopeId: draftPdplEnv.envelopeId, signerRole: 'signer', name: 'Keep CoSigner', email: 'co-signer@sign.test' },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    await runtime.execute(
+      'sign.field.set',
+      {
+        envelopeId: draftPdplEnv.envelopeId,
+        fields: [
+          { signerId: draftEraseSigner.signerId, fieldType: 'signature', pageNumber: 1, xNorm: 0.1, yNorm: 0.2, wNorm: 0.2, hNorm: 0.1 },
+          { signerId: draftCoSigner.signerId, fieldType: 'signature', pageNumber: 1, xNorm: 0.5, yNorm: 0.2, wNorm: 0.2, hNorm: 0.1 },
+        ],
+      },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    const draftPhoneEnv = await runtime.execute<{ envelopeId: string }>(
+      'sign.envelope.create',
+      { title: 'Draft Phone PDPL', sourceFileId },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    const draftPhoneSigner = await runtime.execute<{ signerId: string }>(
+      'sign.signer.add',
+      { envelopeId: draftPhoneEnv.envelopeId, signerRole: 'signer', name: 'Phone Draft', phone: '0999888777' },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+
     // 2. Old stale draft (>90 days) + old token + old OTP for cleanup sweep, plus fresh OTP for PDPL erase + ai_analysis row for purge.
     const staleDraft = await runtime.execute<{ envelopeId: string }>(
       'sign.envelope.create',
@@ -910,15 +957,50 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
       { value: 'signer-erase@sign.test' },
       { actor: asUser(owner), orgId: org.orgId },
     );
-    expect(found.matches.some((m) => m.column === 'crove_sign.signer.email')).toBe(true);
+    const emailMatches = found.matches.filter((m) => m.column === 'crove_sign.signer.email');
+    expect(emailMatches.find((m) => m.rowId === draftEraseSigner.signerId)?.handling).toBe('erase');
+    expect(emailMatches.find((m) => m.rowId === expSigner.signerId)?.handling).toBe('keep_record');
 
     const erased = await runtime.execute<PersonalDataErasure>(
       'kernel.personal_data.erase',
       { value: 'signer-erase@sign.test' },
       { actor: asMfa(owner), orgId: org.orgId, idempotencyKey: randomUUID() },
     );
-    expect(erased.erased).toEqual(expect.arrayContaining([{ column: 'crove_sign.signing_otp.email', rows: 1 }]));
-    expect(erased.kept.some((k) => k.column === 'crove_sign.signer.email')).toBe(true);
+    expect(erased.erased).toEqual(
+      expect.arrayContaining([
+        { column: 'crove_sign.signing_otp.email', rows: 1 },
+        { column: 'crove_sign.signer.name', rows: 1 },
+        { column: 'crove_sign.signer.email', rows: 1 },
+        { column: 'crove_sign.signer.phone', rows: 1 },
+      ]),
+    );
+    expect(erased.kept).toContainEqual(expect.objectContaining({ column: 'crove_sign.signer.email', rows: 1 }));
+    const draftAfterErase = await admin(async (c) => ({
+      erasedSigner: (await c.query('SELECT id FROM crove_sign.signer WHERE org_id = $1 AND id = $2', [org.orgId, draftEraseSigner.signerId])).rows,
+      erasedField: (await c.query('SELECT id FROM crove_sign.field WHERE org_id = $1 AND signer_id = $2', [org.orgId, draftEraseSigner.signerId])).rows,
+      coSigner: (await c.query('SELECT id FROM crove_sign.signer WHERE org_id = $1 AND id = $2', [org.orgId, draftCoSigner.signerId])).rows,
+      coField: (await c.query('SELECT id FROM crove_sign.field WHERE org_id = $1 AND signer_id = $2', [org.orgId, draftCoSigner.signerId])).rows,
+    }));
+    expect(draftAfterErase.erasedSigner).toHaveLength(0);
+    expect(draftAfterErase.erasedField).toHaveLength(0);
+    expect(draftAfterErase.coSigner).toHaveLength(1);
+    expect(draftAfterErase.coField).toHaveLength(1);
+
+    const erasedPhone = await runtime.execute<PersonalDataErasure>(
+      'kernel.personal_data.erase',
+      { value: '+84 999 888 777' },
+      { actor: asMfa(owner), orgId: org.orgId, idempotencyKey: randomUUID() },
+    );
+    expect(erasedPhone.erased).toEqual(
+      expect.arrayContaining([
+        { column: 'crove_sign.signer.name', rows: 1 },
+        { column: 'crove_sign.signer.phone', rows: 1 },
+      ]),
+    );
+    const phoneSignerLeft = await admin(async (c) =>
+      (await c.query('SELECT id FROM crove_sign.signer WHERE org_id = $1 AND id = $2', [org.orgId, draftPhoneSigner.signerId])).rows,
+    );
+    expect(phoneSignerLeft).toHaveLength(0);
 
     // Insert another OTP row so orgPurge exercises all 7 crove_sign tables simultaneously.
     await admin(async (c) => {
@@ -995,6 +1077,32 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     }));
     expect(voidedRows.env).toEqual({ status: 'voided', void_reason: 'Cancelled before send' });
     expect(voidedRows.signer).toEqual({ status: 'voided' });
+
+    // Stale inspect job / inspect_complete ignores voided drafts cleanly without rewriting status or appending events.
+    const voidedInspect = await runSignPdfInspectJob(
+      { workerDb, runtime: workerRuntime, store, extract: mockExtract() },
+      { orgId: regOrgId, envelopeId: draftEnv.envelopeId },
+    );
+    expect(voidedInspect.status).toBe('skipped_not_pending');
+    const directVoidedInspect = await workerRuntime.execute<{ inspectStatus: string; pageCount: number | null }>(
+      'sign.envelope.inspect_complete',
+      {
+        envelopeId: draftEnv.envelopeId,
+        outcome: 'passed',
+        pageCount: 1,
+        pageDimensions: [{ page: 1, widthPt: 595, heightPt: 842, rotation: 0 }],
+      },
+      { actor: SIGN_ACTOR, orgId: regOrgId },
+    );
+    expect(directVoidedInspect).toEqual({
+      envelopeId: draftEnv.envelopeId,
+      inspectStatus: 'pending',
+      pageCount: null,
+    });
+    const voidedEvents = await admin(async (c) =>
+      (await c.query<{ event_type: string }>('SELECT event_type FROM crove_sign.signing_event WHERE org_id = $1 AND envelope_id = $2 ORDER BY seq ASC', [regOrgId, draftEnv.envelopeId])).rows,
+    );
+    expect(voidedEvents.map((e) => e.event_type)).not.toContain('document_inspected');
 
     // 2. Inspect error longer than 500 chars is clamped by sign-worker and satisfies DB CHECK.
     const failEnv = await runtime.execute<{ envelopeId: string }>(
@@ -1161,6 +1269,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     const offInspectIds: string[] = [];
     const offRecovered = await sweepSignPendingWork({
       workerDb,
+      appOn: (id) => workerRuntime.appOn(id, 'sign', { fresh: true }),
       orgId: regOrgId,
       olderThan: new Date(Date.now() + 5_000),
       enqueueInspect: async (_orgId, envId) => {
@@ -1172,9 +1281,19 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     expect(offInspectIds).toEqual([]);
 
     await runtime.execute('kernel.org.set_app', { module: 'sign', enabled: true }, { actor: asUser(owner), orgId: regOrgId, idempotencyKey: randomUUID() });
+    const entitlementOffRecovered = await sweepSignPendingWork({
+      workerDb,
+      appOn: async () => false,
+      orgId: regOrgId,
+      olderThan: new Date(Date.now() + 5_000),
+      enqueueInspect: async () => {},
+      enqueueSeal: async () => {},
+    });
+    expect(entitlementOffRecovered).toEqual({ inspect: 0, seal: 0 });
     const onInspectIds: string[] = [];
     const onRecovered = await sweepSignPendingWork({
       workerDb,
+      appOn: (id) => workerRuntime.appOn(id, 'sign', { fresh: true }),
       orgId: regOrgId,
       olderThan: new Date(Date.now() + 5_000),
       enqueueInspect: async (_orgId, envId) => {

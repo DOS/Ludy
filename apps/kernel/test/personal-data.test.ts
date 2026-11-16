@@ -188,5 +188,7 @@ describe('personal-data registry: sign (#3323)', () => {
     expect(nonToken.filter((key) => !(key in PERSONAL_DATA_COLUMNS) && !(key in PERSONAL_DATA_PENDING))).toEqual([]);
     expect(entries['crove_sign.signing_otp.email']).toMatchObject({ kind: 'email', handling: 'erase', machinery: true });
     expect(entries['crove_sign.signer.email']).toMatchObject({ kind: 'email', handling: 'keep_record' });
+    expect(entries['crove_sign.signer.phone']).toMatchObject({ kind: 'phone', handling: 'keep_record' });
+    expect(entries['crove_sign.signer.email']?.reason).toContain('draft envelope is erased');
   });
 });

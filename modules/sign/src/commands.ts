@@ -287,8 +287,14 @@ export const envelopeInspectComplete = defineCommand({
   handler: async (ctx, input) => {
     assertSystem(ctx);
     const row = await lockEnvelope(ctx, input.envelopeId);
-    if (row.inspect_status !== 'pending') {
-      ctx.audit({ envelopeId: row.id, inspectStatus: row.inspect_status, idempotent: true });
+    if (row.status !== 'draft' || row.inspect_status !== 'pending') {
+      ctx.audit({
+        envelopeId: row.id,
+        status: row.status,
+        inspectStatus: row.inspect_status,
+        skipped: true,
+        idempotent: row.inspect_status !== 'pending',
+      });
       return { envelopeId: row.id, inspectStatus: row.inspect_status, pageCount: row.page_count };
     }
     if (input.outcome === 'passed') {

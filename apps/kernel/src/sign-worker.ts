@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Worker handlers and scheduled sweeps for @crove/mod-sign (#3323, ADR-0053).
-// Inspect and seal jobs check crove_kernel.org_app_on(orgId, 'sign') (ADR-0053 'work'); expiry and cleanup sweeps
-// run across all active orgs (ADR-0053 'keeping') so sent envelopes expire and stale secrets prune when disabled.
+// Inspect and seal jobs check runtime.appOn(orgId, 'sign', { fresh: true }) (ADR-0053 'work'); expiry and
+// cleanup sweeps run across all active orgs (ADR-0053 'keeping') so sent envelopes expire and stale secrets prune when disabled.
 import { sql } from 'kysely';
 import type { Db } from '@crove/db';
 import { EXTRACT_LIMITS, INPUT_ERROR_CODES, type ExtractClient } from '@crove/extract-contract';
@@ -46,13 +46,6 @@ export interface SignWorkerDeps {
 
 export type SignSweepDeps = Pick<SignWorkerDeps, 'workerDb' | 'runtime'>;
 
-async function isSignAppEnabled(db: Db, orgId: string): Promise<boolean> {
-  const { rows } = await sql<{ enabled: boolean }>`
-    SELECT crove_kernel.org_app_on(${orgId}::uuid, 'sign') AS enabled
-  `.execute(db);
-  return rows[0]?.enabled === true;
-}
-
 function safeArtifactBase(title: string): string {
   const cleaned = title
     .replace(/[^a-zA-Z0-9._-]+/g, '-')
@@ -65,7 +58,7 @@ export async function runSignPdfInspectJob(
   deps: SignWorkerDeps,
   job: SignEnvelopeJob,
 ): Promise<{ status: 'skipped_app_off' | 'skipped_not_pending' | 'passed' | 'failed'; pageCount?: number }> {
-  if (!(await isSignAppEnabled(deps.workerDb, job.orgId))) {
+  if (!(await deps.runtime.appOn(job.orgId, 'sign', { fresh: true }))) {
     return { status: 'skipped_app_off' };
   }
 
@@ -75,7 +68,7 @@ export async function runSignPdfInspectJob(
     { envelopeId: job.envelopeId },
     options,
   );
-  if (!data || data.inspectStatus !== 'pending') {
+  if (!data || data.status !== 'draft' || data.inspectStatus !== 'pending') {
     return { status: 'skipped_not_pending' };
   }
 
@@ -133,7 +126,7 @@ export async function runSignPdfSealJob(
   deps: SignWorkerDeps,
   job: SignEnvelopeJob,
 ): Promise<{ status: 'skipped_app_off' | 'skipped' | 'sealed' | 'failed'; certificateCode?: string }> {
-  if (!(await isSignAppEnabled(deps.workerDb, job.orgId))) {
+  if (!(await deps.runtime.appOn(job.orgId, 'sign', { fresh: true }))) {
     return { status: 'skipped_app_off' };
   }
 
@@ -365,6 +358,7 @@ export async function sweepSignCleanup(deps: SignSweepDeps): Promise<{
 
 export interface SignPendingWorkDeps {
   workerDb: Db;
+  appOn?: (orgId: string) => Promise<boolean>;
   enqueueInspect: (orgId: string, envelopeId: string) => Promise<void>;
   enqueueSeal: (orgId: string, envelopeId: string) => Promise<void>;
   orgId?: string;
@@ -377,9 +371,19 @@ export async function sweepSignPendingWork(deps: SignPendingWorkDeps): Promise<{
     SELECT work_kind, org_id, envelope_id
     FROM crove_sign.work_recovery_candidates(${olderThan}::timestamptz, ${SWEEP_ORG_BATCH}, ${deps.orgId ?? null}::uuid)
   `.execute(deps.workerDb);
+  const enabledCache = new Map<string, boolean>();
+  const isEnabled = async (orgId: string) => {
+    if (!deps.appOn) return true;
+    const cached = enabledCache.get(orgId);
+    if (cached !== undefined) return cached;
+    const enabled = await deps.appOn(orgId);
+    enabledCache.set(orgId, enabled);
+    return enabled;
+  };
   let inspect = 0;
   let seal = 0;
   for (const row of rows) {
+    if (!(await isEnabled(row.org_id))) continue;
     if (row.work_kind === 'inspect') {
       await deps.enqueueInspect(row.org_id, row.envelope_id);
       inspect += 1;

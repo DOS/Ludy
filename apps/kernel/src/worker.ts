@@ -1314,6 +1314,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       if (expired > 0) console.log(`[sign-expire-sweep] expired ${expired} envelope(s)`);
       const recovered = await sweepSignPendingWork({
         workerDb: deps.workerDb,
+        appOn: (orgId) => deps.runtime.appOn(orgId, 'sign', { fresh: true }),
         enqueueInspect: (orgId, envelopeId) => enqueueSignInspect(boss, orgId, envelopeId),
         enqueueSeal: (orgId, envelopeId) => enqueueSignSeal(boss, orgId, envelopeId),
       });
@@ -2630,6 +2631,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               if (sign && row.type === 'kernel.org.apps_changed' && row.payload.module === 'sign' && row.payload.enabled === true) {
                 await sweepSignPendingWork({
                   workerDb: deps.workerDb,
+                  appOn: (orgId) => deps.runtime.appOn(orgId, 'sign', { fresh: true }),
                   orgId: row.org_id,
                   olderThan: new Date(),
                   enqueueInspect: (orgId, envelopeId) => enqueueSignInspect(boss, orgId, envelopeId),
