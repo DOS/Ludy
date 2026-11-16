@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { DEFAULT_TIME_ZONE, zTimeZone } from './calendar.ts';
 import { NOTE_TITLE_MAX } from './notes.ts';
 import { zFilterAstShape, zSavedViewSortShape } from './saved-view.ts';
-import { zId, zLocalDate, zPositionStatus, zRole, zTaskStatus } from './schemas.ts';
+import { zId, zLocalDate, zPositionStatus, zRole, zTaskChecklist, zTaskChecklistStepView, zTaskStatus } from './schemas.ts';
 
 export const PROJECT_NAME_MAX = 200;
 export const PROJECT_DESCRIPTION_MAX = 2000;
@@ -91,6 +91,7 @@ export const zProjectTaskCreate = z.strictObject({
   assigneePositionId: zId.nullable(),
   due: z.iso.datetime().optional(),
   status: z.enum(BOARD_TASK_STATUSES).optional(),
+  checklist: zTaskChecklist.optional(),
 });
 export type ProjectTaskCreateInput = z.infer<typeof zProjectTaskCreate>;
 
@@ -155,6 +156,7 @@ export const zProjectTaskCard = z.object({
   status: zTaskStatus,
   assigneePositionId: zId.nullable(),
   due: z.string().nullable(),
+  checklist: z.array(zTaskChecklistStepView),
   tainted: z.boolean(),
   checkedOut: z.boolean(),
   commentCount: z.number().int().nonnegative(),
