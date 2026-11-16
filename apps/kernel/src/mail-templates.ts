@@ -8,6 +8,7 @@ import { FOLLOWUP_MAIL_TEMPLATE, followupMailTemplate } from './followup-mail.ts
 import { MISSING_INVOICE_TEMPLATE, missingInvoiceMailTemplate } from './missing-invoice-mail.ts';
 import { notificationMailTemplate } from './notification-mail.ts';
 import { PAYMENT_REMINDER_TEMPLATE, paymentReminderMailTemplate } from './payment-reminder-mail.ts';
+import { projectWeeklyStatusMailTemplate } from './project-weekly-status-mail.ts';
 import { proposalReminderMailTemplate } from './proposal-reminder-mail.ts';
 import { QUOTE_MAIL_TEMPLATE, quoteMailTemplate } from './quote-mail.ts';
 import { reportMailTemplate } from './report-mail.ts';
@@ -39,4 +40,6 @@ export const MAIL_TEMPLATES: MailTemplates = {
   [QUOTE_MAIL_TEMPLATE]: quoteMailTemplate,
   // The follow-up of a meeting, sent by the recorder's click with the published summary (L3, #2590).
   [FOLLOWUP_MAIL_TEMPLATE]: followupMailTemplate,
+  // A project's weekly status shared by email to project members (#2609).
+  'projects.weekly_status': projectWeeklyStatusMailTemplate,
 };

@@ -2,19 +2,47 @@
 // Deterministic facts query for Vy's weekly status of one project (projects P6, #2597): reads only
 // crove_projects.project, crove_projects.project_task, crove_kernel.task (under caller le_scope RLS), and
 // crove_kernel.task_comment. Never reads crove_notes and never writes or persists anything.
+import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
+import type { MemberRole } from '@crove/db';
 import {
   PROJECT_WEEKLY_STATUS_BUCKET_LIMIT,
+  PROJECT_WEEKLY_STATUS_MAIL_SOURCE,
+  PROJECT_WEEKLY_STATUS_MAIL_TEMPLATE,
+  PROJECT_WEEKLY_STATUS_NOTE_TAG,
   VIETNAM_TIME_ZONE,
   zId,
+  zProjectWeeklyStatusMailPayload,
+  zProjectWeeklyStatusSendMailInput,
+  zProjectWeeklyStatusShareNoteInput,
   type ProjectStatus,
   type ProjectWeeklyStatusCounts,
+  type ProjectWeeklyStatusSendMailResult,
   type ProjectWeeklyStatusTask,
   type ProjectWeeklyStatusTasks,
 } from '@crove/kernel-contract';
-import { defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { z } from 'zod';
 import { READERS, loadProject, userOf } from './projects.ts';
+
+const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
+const projectTarget = (input: { projectId: string }) => ({ type: 'projects.project', id: input.projectId });
+
+function canManageProject(role: MemberRole | null, userId: string, ownerUserId: string | null): boolean {
+  return role === 'owner' || role === 'admin' || (role !== null && role !== 'viewer' && ownerUserId === userId);
+}
+
+function assertCanManage(ctx: CommandContext, ownerUserId: string | null, userId: string): void {
+  if (!canManageProject(ctx.role, userId, ownerUserId)) {
+    throw new DomainError('FORBIDDEN', 403, 'Chỉ người phụ trách dự án, quản trị viên hoặc chủ sở hữu mới thực hiện được việc này');
+  }
+}
+
+function assertNotArchived(status: ProjectStatus): void {
+  if (status === 'archived') {
+    throw new DomainError('PROJECT_ARCHIVED', 409, 'Dự án đã lưu trữ nên không thể chỉnh sửa');
+  }
+}
 
 export interface ProjectWeeklyStatusSource {
   project: {
@@ -48,6 +76,108 @@ interface RawBucketTaskRow {
 function shiftCalendarDay(day: string, deltaDays: number): string {
   const ms = Date.parse(`${day}T00:00:00.000Z`);
   return new Date(ms + deltaDays * 86_400_000).toISOString().slice(0, 10);
+}
+
+interface WeeklyWindow {
+  from: string;
+  to: string;
+  nextFrom: string;
+  nextTo: string;
+  fromStartIso: string;
+  nextStartIso: string;
+  nextEndExclusiveIso: string;
+}
+
+function buildWeeklyWindow(todayVn: string): WeeklyWindow {
+  const from = shiftCalendarDay(todayVn, -6);
+  const to = todayVn;
+  const nextFrom = shiftCalendarDay(todayVn, 1);
+  const nextTo = shiftCalendarDay(todayVn, 7);
+  return {
+    from,
+    to,
+    nextFrom,
+    nextTo,
+    fromStartIso: `${from}T00:00:00+07:00`,
+    nextStartIso: `${nextFrom}T00:00:00+07:00`,
+    nextEndExclusiveIso: `${shiftCalendarDay(todayVn, 8)}T00:00:00+07:00`,
+  };
+}
+
+async function queryWeeklyCounts(
+  trx: QueryContext['trx'],
+  orgId: string,
+  projectId: string,
+  fromStartIso: string,
+  nextStartIso: string,
+  nextEndExclusiveIso: string,
+): Promise<ProjectWeeklyStatusCounts> {
+  const { rows: countRows } = await sql<{
+    total_visible: string;
+    done_this_week: string;
+    overdue: string;
+    waiting: string;
+    due_next_week: string;
+  }>`
+    WITH done_events AS MATERIALIZED (
+      SELECT
+        CASE
+          WHEN e.command = 'kernel.task.set_status' THEN e.target_id
+          ELSE (e.detail ->> 'task')::uuid
+        END AS task_id,
+        pg_catalog.max(e.occurred_at) AS done_at
+      FROM crove_kernel.audit_event e
+      WHERE e.org_id = ${orgId}::uuid
+        AND e.occurred_at >= ${fromStartIso}::timestamptz
+        AND e.occurred_at <= pg_catalog.now()
+        AND e.outcome = 'ok'
+        AND (
+          (e.command = 'kernel.task.set_status' AND e.target_type = 'kernel.task' AND e.target_id IS NOT NULL AND e.detail ->> 'status' = 'done')
+          OR (
+            e.command = 'kernel.task.approve_proposal'
+            AND pg_catalog.jsonb_typeof(e.detail) = 'object'
+            AND (e.detail ->> 'task') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          )
+        )
+      GROUP BY 1
+    )
+    SELECT
+      pg_catalog.count(*)::text AS total_visible,
+      pg_catalog.count(*) FILTER (
+        WHERE t.status = 'done'
+          AND de.done_at IS NOT NULL
+      )::text AS done_this_week,
+      pg_catalog.count(*) FILTER (
+        WHERE t.status NOT IN ('done', 'cancelled')
+          AND t.due IS NOT NULL
+          AND t.due < pg_catalog.now()
+      )::text AS overdue,
+      pg_catalog.count(*) FILTER (
+        WHERE t.status = 'waiting'
+      )::text AS waiting,
+      pg_catalog.count(*) FILTER (
+        WHERE t.status NOT IN ('done', 'cancelled')
+          AND t.due IS NOT NULL
+          AND t.due >= ${nextStartIso}::timestamptz
+          AND t.due < ${nextEndExclusiveIso}::timestamptz
+      )::text AS due_next_week
+    FROM crove_projects.project_task pt
+    JOIN crove_kernel.task t
+      ON t.org_id = pt.org_id AND t.id = pt.task_id
+    LEFT JOIN done_events de
+      ON de.task_id = t.id
+    WHERE pt.org_id = ${orgId}::uuid
+      AND pt.project_id = ${projectId}::uuid
+      AND t.status <> 'cancelled'`.execute(trx);
+
+  const c = countRows[0];
+  return {
+    totalVisible: Number(c?.total_visible ?? 0),
+    doneThisWeek: Number(c?.done_this_week ?? 0),
+    overdue: Number(c?.overdue ?? 0),
+    waiting: Number(c?.waiting ?? 0),
+    dueNextWeek: Number(c?.due_next_week ?? 0),
+  };
 }
 
 function oneLineComment(body: string, max = 160): string | null {
@@ -100,14 +230,9 @@ export const projectWeeklyStatusSource = defineQuery({
         crove_kernel.ai_budget_exhausted(${ctx.orgId}::uuid, 'projects', NULL::uuid) AS budget_spent`.execute(ctx.trx);
 
     const meta = metaRows[0];
-    const todayVn = meta?.today_vn ?? new Date().toISOString().slice(0, 10);
-    const from = shiftCalendarDay(todayVn, -6);
-    const to = todayVn;
-    const nextFrom = shiftCalendarDay(todayVn, 1);
-    const nextTo = shiftCalendarDay(todayVn, 7);
-    const fromStartIso = `${from}T00:00:00+07:00`;
-    const nextStartIso = `${nextFrom}T00:00:00+07:00`;
-    const nextEndExclusiveIso = `${shiftCalendarDay(todayVn, 8)}T00:00:00+07:00`;
+    const { from, to, nextFrom, nextTo, fromStartIso, nextStartIso, nextEndExclusiveIso } = buildWeeklyWindow(
+      meta?.today_vn ?? new Date().toISOString().slice(0, 10),
+    );
 
     const aiAllowed = ctx.role !== 'viewer';
     const aiStopped = meta?.ai_stopped === true;
@@ -129,72 +254,7 @@ export const projectWeeklyStatusSource = defineQuery({
     // `doneThisWeek` counts tasks currently in status = 'done' whose latest transition to 'done' in
     // crove_kernel.audit_event occurred within the 7-day window (using audit_event_time_idx), so editing
     // title/due/assignee on a task finished last month via kernel.task.update does not pull it into this week.
-    const { rows: countRows } = await sql<{
-      total_visible: string;
-      done_this_week: string;
-      overdue: string;
-      waiting: string;
-      due_next_week: string;
-    }>`
-      WITH done_events AS MATERIALIZED (
-        SELECT
-          CASE
-            WHEN e.command = 'kernel.task.set_status' THEN e.target_id
-            ELSE (e.detail ->> 'task')::uuid
-          END AS task_id,
-          pg_catalog.max(e.occurred_at) AS done_at
-        FROM crove_kernel.audit_event e
-        WHERE e.org_id = ${ctx.orgId}::uuid
-          AND e.occurred_at >= ${fromStartIso}::timestamptz
-          AND e.occurred_at <= pg_catalog.now()
-          AND e.outcome = 'ok'
-          AND (
-            (e.command = 'kernel.task.set_status' AND e.target_type = 'kernel.task' AND e.target_id IS NOT NULL AND e.detail ->> 'status' = 'done')
-            OR (
-              e.command = 'kernel.task.approve_proposal'
-              AND pg_catalog.jsonb_typeof(e.detail) = 'object'
-              AND (e.detail ->> 'task') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-            )
-          )
-        GROUP BY 1
-      )
-      SELECT
-        pg_catalog.count(*)::text AS total_visible,
-        pg_catalog.count(*) FILTER (
-          WHERE t.status = 'done'
-            AND de.done_at IS NOT NULL
-        )::text AS done_this_week,
-        pg_catalog.count(*) FILTER (
-          WHERE t.status NOT IN ('done', 'cancelled')
-            AND t.due IS NOT NULL
-            AND t.due < pg_catalog.now()
-        )::text AS overdue,
-        pg_catalog.count(*) FILTER (
-          WHERE t.status = 'waiting'
-        )::text AS waiting,
-        pg_catalog.count(*) FILTER (
-          WHERE t.status NOT IN ('done', 'cancelled')
-            AND t.due IS NOT NULL
-            AND t.due >= ${nextStartIso}::timestamptz
-            AND t.due < ${nextEndExclusiveIso}::timestamptz
-        )::text AS due_next_week
-      FROM crove_projects.project_task pt
-      JOIN crove_kernel.task t
-        ON t.org_id = pt.org_id AND t.id = pt.task_id
-      LEFT JOIN done_events de
-        ON de.task_id = t.id
-      WHERE pt.org_id = ${ctx.orgId}::uuid
-        AND pt.project_id = ${project.id}::uuid
-        AND t.status <> 'cancelled'`.execute(ctx.trx);
-
-    const c = countRows[0];
-    const counts: ProjectWeeklyStatusCounts = {
-      totalVisible: Number(c?.total_visible ?? 0),
-      doneThisWeek: Number(c?.done_this_week ?? 0),
-      overdue: Number(c?.overdue ?? 0),
-      waiting: Number(c?.waiting ?? 0),
-      dueNextWeek: Number(c?.due_next_week ?? 0),
-    };
+    const counts = await queryWeeklyCounts(ctx.trx, ctx.orgId, project.id, fromStartIso, nextStartIso, nextEndExclusiveIso);
 
     const [doneRes, overdueRes, waitingRes, dueNextWeekRes] = await Promise.all([
       counts.doneThisWeek > 0
@@ -323,5 +383,127 @@ export const projectWeeklyStatusSource = defineQuery({
       aiStopped,
       aiBudgetSpent,
     };
+  },
+});
+
+export const projectWeeklyStatusShareNote = defineCommand({
+  name: 'projects.weekly_status.share_note',
+  input: zProjectWeeklyStatusShareNoteInput,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  target: projectTarget,
+  handler: async (ctx, input): Promise<{ noteId: string; revision: number }> => {
+    const userId = userOf(ctx.actor);
+    const project = await loadProject(ctx.trx, ctx.orgId, input.projectId, false);
+    assertCanManage(ctx, project.owner_user_id, userId);
+    assertNotArchived(project.status);
+    if (!ctx.installed('notes')) {
+      throw new DomainError('MODULE_OFF', 404, 'Ứng dụng notes chưa được bật cho công ty này', { module: 'notes' });
+    }
+    const note = await ctx.run<{ noteId: string; revision: number }>('notes.note.create', {
+      title: input.title,
+      body: input.body,
+      tags: [PROJECT_WEEKLY_STATUS_NOTE_TAG],
+      visibility: 'org',
+      tainted: Boolean(input.tainted),
+      link: { targetType: 'projects.project', targetId: project.id },
+    });
+    await ctx.emit('projects.weekly_status.shared_note', {
+      projectId: project.id,
+      noteId: note.noteId,
+    });
+    await ctx.activity('projects.project', project.id, 'projects.weekly_status.shared_note', 'Chia sẻ báo cáo tuần vào ghi chú dự án');
+    // Ids and taint only: notes.note.create already records redacted title via auditValue(NOTE, 'title', ...).
+    ctx.audit({
+      projectId: project.id,
+      noteId: note.noteId,
+      revision: note.revision,
+      tainted: Boolean(input.tainted),
+    });
+    return { noteId: note.noteId, revision: note.revision };
+  },
+});
+
+export const projectWeeklyStatusSendMail = defineCommand({
+  name: 'projects.weekly_status.send_mail',
+  input: zProjectWeeklyStatusSendMailInput,
+  risk: 'R2',
+  sideEffect: 'external',
+  access: WRITERS,
+  target: projectTarget,
+  handler: async (ctx, input): Promise<ProjectWeeklyStatusSendMailResult> => {
+    const userId = userOf(ctx.actor);
+    const project = await loadProject(ctx.trx, ctx.orgId, input.projectId, false);
+    assertCanManage(ctx, project.owner_user_id, userId);
+    assertNotArchived(project.status);
+
+    const { rows: metaRows } = await sql<{ today_vn: string }>`
+      SELECT pg_catalog.to_char((pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, 'YYYY-MM-DD') AS today_vn
+    `.execute(ctx.trx);
+    const org = await ctx.trx.selectFrom('crove_kernel.tenant').select(['slug', 'name']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+    const memberRows = await ctx.trx
+      .selectFrom('crove_projects.project_member')
+      .select('user_id')
+      .where('org_id', '=', ctx.orgId)
+      .where('project_id', '=', project.id)
+      .where('user_id', '<>', userId)
+      .orderBy('user_id')
+      .execute();
+
+    const win = buildWeeklyWindow(metaRows[0]?.today_vn ?? new Date().toISOString().slice(0, 10));
+    const counts = await queryWeeklyCounts(ctx.trx, ctx.orgId, project.id, win.fromStartIso, win.nextStartIso, win.nextEndExclusiveIso);
+    const memberIds = memberRows.map((r) => r.user_id);
+
+    const batchId = randomUUID();
+    const payload = zProjectWeeklyStatusMailPayload.parse({
+      batchId,
+      projectId: project.id,
+      projectName: project.name,
+      orgName: org.name.trim() || org.slug,
+      projectPath: `/o/${org.slug}/projects/${project.id}`,
+      from: win.from,
+      to: win.to,
+      nextFrom: win.nextFrom,
+      nextTo: win.nextTo,
+      counts,
+      summary: input.summary,
+      language: input.language,
+      aiGenerated: Boolean(input.tainted),
+    });
+
+    let sentCount = 0;
+    let skippedCount = 0;
+    if (memberIds.length > 0) {
+      const queued = await ctx.run<{ sentCount: number; skippedCount: number; mailedUserIds: string[] }>('kernel.mail.members.queue', {
+        userIds: memberIds,
+        source: PROJECT_WEEKLY_STATUS_MAIL_SOURCE,
+        sourceId: project.id,
+        templateKey: PROJECT_WEEKLY_STATUS_MAIL_TEMPLATE,
+        subject: input.subject,
+        payload,
+      });
+      sentCount = queued.sentCount;
+      skippedCount = queued.skippedCount;
+      if (queued.mailedUserIds.length > 0) {
+        await ctx.emit('projects.weekly_status.sent', {
+          projectId: project.id,
+          userIds: queued.mailedUserIds,
+        });
+      }
+    }
+
+    await ctx.activity('projects.project', project.id, 'projects.weekly_status.sent_mail', 'Gửi báo cáo tuần qua email cho thành viên dự án');
+    // Counts and ids only: no address and no free-text subject or summary in audit rows.
+    ctx.audit({
+      projectId: project.id,
+      batchId,
+      memberCount: memberIds.length,
+      sentCount,
+      skippedCount,
+      language: input.language,
+      tainted: Boolean(input.tainted),
+    });
+    return { sentCount, skippedCount };
   },
 });

@@ -23,7 +23,12 @@ vi.mock('../src/lib/api.ts', async () => {
   };
 });
 
-const { ProjectWeeklyStatus, projectWeeklyStatusQueryKey } = await import('../src/components/project-weekly-status.tsx');
+const {
+  ProjectWeeklyStatus,
+  buildWeeklyStatusDraftSeed,
+  projectWeeklyStatusQueryKey,
+  updateWeeklyStatusDraftBody,
+} = await import('../src/components/project-weekly-status.tsx');
 const { refreshProjectQueries } = await import('../src/components/project-task-dialog.tsx');
 
 const PROJECT_ID = '11111111-1111-4111-8111-111111111111';
@@ -62,10 +67,20 @@ function fixture(overrides: Partial<ProjectWeeklyStatusData> = {}): ProjectWeekl
 function renderCard({
   locale = 'vi',
   defaultOpen = true,
+  defaultComposerOpen = false,
+  canManage = false,
+  projectStatus,
+  otherMemberCount,
+  notesEnabled,
   data,
 }: {
   locale?: 'vi' | 'en';
   defaultOpen?: boolean;
+  defaultComposerOpen?: boolean;
+  canManage?: boolean;
+  projectStatus?: string;
+  otherMemberCount?: number;
+  notesEnabled?: boolean;
   data?: ProjectWeeklyStatusData;
 }): string {
   const qc = queryHolder.current;
@@ -78,7 +93,16 @@ function renderCard({
     <I18nProvider>
       <QueryClientProvider client={qc}>
         <IntlProvider locale={locale} messages={catalog(locale) as never}>
-          <ProjectWeeklyStatus slug="acme" projectId={PROJECT_ID} defaultOpen={defaultOpen} />
+          <ProjectWeeklyStatus
+            slug="acme"
+            projectId={PROJECT_ID}
+            defaultOpen={defaultOpen}
+            defaultComposerOpen={defaultComposerOpen}
+            canManage={canManage}
+            projectStatus={projectStatus}
+            otherMemberCount={otherMemberCount}
+            notesEnabled={notesEnabled}
+          />
         </IntlProvider>
       </QueryClientProvider>
     </I18nProvider>,
@@ -146,5 +170,72 @@ describe('ProjectWeeklyStatus component (#2597)', () => {
 
     refreshProjectQueries();
     expect(qc.getQueryState(key)?.isInvalidated).toBe(true);
+  });
+
+  it('hides share/send controls for non-managers and archived projects, and renders manager composer with AI vs deterministic state (#2609)', () => {
+    const aiData = fixture({ ai: 'used', sentences: ['Tuần này chốt bảng giá đúng hạn.'] });
+
+    const nonManagerHtml = renderCard({ locale: 'vi', data: aiData });
+    expect(nonManagerHtml).not.toContain('data-testid="project-weekly-status-share-section"');
+
+    const archivedHtml = renderCard({
+      locale: 'vi',
+      data: aiData,
+      projectStatus: 'archived',
+      canManage: true,
+      defaultComposerOpen: true,
+      notesEnabled: true,
+    });
+    expect(archivedHtml).not.toContain('data-testid="project-weekly-status-share-section"');
+
+    const aiManagerHtml = renderCard({
+      locale: 'vi',
+      data: aiData,
+      canManage: true,
+      otherMemberCount: 2,
+      notesEnabled: true,
+      defaultComposerOpen: true,
+    });
+    expect(aiManagerHtml).toContain('data-testid="project-weekly-status-composer"');
+    expect(aiManagerHtml).toContain('data-ai-unedited="true"');
+    expect(aiManagerHtml).toContain('border-proposal/60');
+    expect(aiManagerHtml).toContain('data-testid="project-weekly-status-composer-ai-badge"');
+    expect(aiManagerHtml).toContain('Chia sẻ vào ghi chú dự án');
+    expect(aiManagerHtml).toContain('Gửi email cho thành viên dự án');
+
+    const aiOffData = fixture({ ai: 'off', sentences: [] });
+    const aiOffHtml = renderCard({
+      locale: 'vi',
+      data: aiOffData,
+      canManage: true,
+      otherMemberCount: 2,
+      notesEnabled: true,
+      defaultComposerOpen: true,
+    });
+    expect(aiOffHtml).toContain('data-ai-unedited="false"');
+    expect(aiOffHtml).not.toContain('border-proposal/60');
+    expect(aiOffHtml).not.toContain('data-testid="project-weekly-status-composer-ai-badge"');
+    expect(aiOffHtml).toContain('hoàn thành 2 việc, quá hạn 1 việc, đang chờ 1 việc');
+
+    const soloHtml = renderCard({
+      locale: 'vi',
+      data: aiData,
+      canManage: true,
+      otherMemberCount: 0,
+      notesEnabled: false,
+      defaultComposerOpen: true,
+    });
+    expect(soloHtml).toContain('data-testid="project-weekly-status-no-other-members"');
+    expect(soloHtml).toContain('data-testid="project-weekly-status-notes-off"');
+
+    const seeded = buildWeeklyStatusDraftSeed(aiData, (d) => d, {
+      defaultTitle: (v) => `${v.project} (${v.from} - ${v.to})`,
+      deterministicBody: (v) => `${v.done}/${v.overdue}/${v.waiting}/${v.nextDue}`,
+    });
+    expect(seeded.aiUnedited).toBe(true);
+    expect(seeded.body).toBe('Tuần này chốt bảng giá đúng hạn.');
+    const edited = updateWeeklyStatusDraftBody(seeded, 'Báo cáo đã được quản lý chỉnh sửa.');
+    expect(edited.aiUnedited).toBe(false);
+    expect(edited.body).toBe('Báo cáo đã được quản lý chỉnh sửa.');
   });
 });

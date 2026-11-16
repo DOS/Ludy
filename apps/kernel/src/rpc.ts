@@ -3628,6 +3628,8 @@ export function createRpcHandler(
           return prepareProjectWeeklyStatus(projectWeeklyStatusCoworker, orgId, actor.userId, source, input.language ?? 'vi');
         }),
       ),
+      weeklyStatusShareNote: os.projects.weeklyStatusShareNote.handler(projectsCommand('projects.weekly_status.share_note')),
+      weeklyStatusSendMail: os.projects.weeklyStatusSendMail.handler(projectsCommand('projects.weekly_status.send_mail')),
       unassignedTasks: os.projects.unassignedTasks.handler(projectsQuery('projects.unassigned_tasks')),
       taskProjects: os.projects.taskProjects.handler(projectsQuery('projects.task_projects')),
       create: os.projects.create.handler(projectsCommand('projects.project.create')),

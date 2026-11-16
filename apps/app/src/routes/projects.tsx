@@ -251,6 +251,7 @@ export function ProjectDetailPage() {
     // Task checkout releases are not pushed over SSE yet; poll only while an agent holds a lease.
     refetchInterval: (query) => (query.state.data?.tasks.some((item) => item.checkedOut) ? 5_000 : false),
   });
+  const me = useQuery(orpc.me.get.queryOptions());
 
   const setTaskStatus = useMutation({
     mutationFn: (vars: { id: string; status: TaskStatus }) =>
@@ -300,6 +301,8 @@ export function ProjectDetailPage() {
 
   const board = boardQuery.data;
   const { project, seats, members, tasks, hiddenByEntityCount } = board;
+  const currentUserId = me.data?.userId ?? null;
+  const otherMemberCount = currentUserId ? members.filter((m) => m.userId !== currentUserId).length : undefined;
   const openCount = tasks.filter((item) => item.status !== 'done' && item.status !== 'cancelled').length;
   const doneCount = tasks.filter((item) => item.status === 'done').length;
   const pct = projectCompletionPct(openCount, doneCount);
@@ -352,7 +355,14 @@ export function ProjectDetailPage() {
         </div>
       </div>
 
-      <ProjectWeeklyStatus key={project.id} slug={slug} projectId={project.id} />
+      <ProjectWeeklyStatus
+        key={project.id}
+        slug={slug}
+        projectId={project.id}
+        projectStatus={project.status}
+        canManage={project.canManage}
+        otherMemberCount={otherMemberCount}
+      />
 
       {project.status === 'archived' && (
         <Alert className="border-border bg-muted/40">

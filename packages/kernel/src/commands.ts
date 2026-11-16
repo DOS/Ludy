@@ -54,7 +54,7 @@ import { extractionCommands, legalEntityMoveRefused, readAgainIn, refuseWhileRee
 import { ingestFileRow, zIngestFile } from './files.ts';
 import { createOrgCommand, myOrgs, orgCreateCommand, type OrgCreateLimits, type OrgSummary } from './identity.ts';
 import { acceptInvite, createInvite, inviteCreateCommand, revokeInvite, type InviteLimits } from './invites.ts';
-import { mailCommands, queueContactMail } from './mail.ts';
+import { mailCommands, queueContactMail, queueMemberMail } from './mail.ts';
 import { auditLogCommands } from './audit-log.ts';
 import { personalDataCommands } from './personal-data.ts';
 import { notificationCommands } from './notifications.ts';
@@ -1237,6 +1237,7 @@ const otherKernelCommands = [
   setAddress,
   setContactEmail,
   queueContactMail,
+  queueMemberMail,
   ...partyCommands,
   ...mailCommands,
   ...proposalReminderCommands,
