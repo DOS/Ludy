@@ -13,7 +13,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
+import { buildKernelCommands, createOrg, kernelQueries, upsertIdentity } from '@crove/kernel';
 import { todayCoworkerKey, zTodayItems, type TodayItem, type TodayList } from '@crove/kernel-contract';
 import { Runtime } from '@crove/kernel-runtime';
 import { financeCommands } from '@crove/mod-finance';
@@ -103,9 +103,16 @@ suite('projects.today on PostgreSQL (#2596)', () => {
 
     pool = createPool({ connectionString: appUrl.toString(), max: 4 });
     db = createDb(pool);
+    const shipped = ['kernel', 'projects', 'finance'] as const;
     rt = new Runtime(db, { manifests: TEST_MANIFESTS, stepUp: 'required' }).register({
-      commands: [...kernelCommands, ...projectsCommands, ...financeCommands],
-      queries: [...kernelQueries({ inboundDomain: null }), ...projectsQueries],
+      commands: [...buildKernelCommands({ shippedModules: shipped }), ...projectsCommands, ...financeCommands],
+      queries: [
+        ...kernelQueries({
+          inboundDomain: null,
+          apps: { shipped, deployment: shipped, entitlements: async () => ['full'] },
+        }),
+        ...projectsQueries,
+      ],
     });
   }, 120_000);
 
@@ -447,14 +454,13 @@ suite('projects.today on PostgreSQL (#2596)', () => {
     // Cross-org isolation: otherOrg sees nothing.
     expect(await todayAt(otherOrg.orgId, otherOrgOwner.userId)).toEqual([]);
 
-    // Removing the project owner sets owner_user_id = NULL and vacates projOwnerSeat; orgOwner inherits the flags.
+    // Removing the project owner sets owner_user_id = NULL and vacates projOwnerSeat; orgOwner inherits one item per task.
     await execMfa(org.orgId, orgOwner.userId, 'kernel.member.remove', { userId: projOwner.userId });
     const inheritedItems = zTodayItems.parse(await todayAt(org.orgId, orgOwner.userId));
     expect(inheritedItems.map((i) => `${i.id}:${i.title.key}`)).toEqual([
       `overdue:${coworkerOverdueId}:projects.ownerTaskOverdueDays`,
       `overdue:${bothOverdueId}:projects.ownerTaskOverdue`,
       `waiting:${stuckWaitingId}:projects.waitingStuck`,
-      `vacant:${bothOverdueId}:projects.vacantSeat`,
       `vacant:${vacantTaskId}:projects.vacantSeat`,
     ]);
   });
@@ -568,5 +574,76 @@ suite('projects.today on PostgreSQL (#2596)', () => {
     // Demoting scopedMember (still project owner and seat holder) to viewer suppresses all actionable alerts.
     await execMfa(org.orgId, owner.userId, 'kernel.member.change_role', { userId: scopedMember.userId, role: 'viewer' });
     expect(await todayAt(org.orgId, scopedMember.userId)).toEqual([]);
+  });
+
+  it('filters non-actionable rows before LIMIT and respects ADR-0053 per-org app enablement', async () => {
+    const owner = await person('limit-owner');
+    const coworker = await person('limit-coworker');
+    const org = await createOrg(rt, asUser(owner.userId), 'Projects LIMIT & Gate Org');
+    await inviteAndJoin(org.orgId, owner.userId, coworker, 'member');
+
+    const { positionId: coworkerSeat } = await execMfa<{ positionId: string }>(org.orgId, owner.userId, 'kernel.position.create', {
+      title: 'Kỹ thuật',
+      module: 'crm',
+      roleKey: 'crm.sales',
+    });
+    await execMfa(org.orgId, owner.userId, 'kernel.position.assign', {
+      id: coworkerSeat,
+      holder: { type: 'user', userId: coworker.userId },
+    });
+    const { projectId } = await exec<{ projectId: string }>(org.orgId, owner.userId, 'projects.project.create', {
+      name: 'Dự án lớn',
+      ownerUserId: owner.userId,
+    });
+
+    // Insert 505 tasks assigned to coworkerSeat that are due LATER today (not overdue, not owner's seat)
+    // plus 1 stuck waiting task with due IS NULL; SQL filtering + priority ordering must still surface the stuck task.
+    const dueLaterToday = new Date(NOW_MS + 2 * 3_600_000);
+    const stuckUpdatedAt = new Date(NOW_MS - 4 * DAY_MS);
+    let stuckWaitingId = '';
+    await withAdmin(async (c) => {
+      const inserted = await c.query<{ id: string }>(
+        `WITH batch AS (
+           INSERT INTO crove_kernel.task (org_id, title, assignee_position_id, status, due, source, created_by_type)
+           SELECT $1, 'Việc đồng nghiệp hôm nay #' || gs, $2, 'todo', $3, 'human', 'user'
+           FROM generate_series(1, 505) AS gs
+           RETURNING org_id, id
+         )
+         INSERT INTO crove_projects.project_task (org_id, project_id, task_id)
+         SELECT org_id, $4, id FROM batch`,
+        [org.orgId, coworkerSeat, dueLaterToday, projectId],
+      );
+      void inserted;
+      stuckWaitingId = (
+        await c.query<{ id: string }>(
+          `INSERT INTO crove_kernel.task (org_id, title, assignee_position_id, status, due, source, created_by_type, updated_at)
+           VALUES ($1, 'Việc kẹt không hạn', $2, 'waiting', NULL, 'human', 'user', $3) RETURNING id`,
+          [org.orgId, coworkerSeat, stuckUpdatedAt],
+        )
+      ).rows[0]?.id as string;
+      await c.query('INSERT INTO crove_projects.project_task (org_id, project_id, task_id) VALUES ($1, $2, $3)', [
+        org.orgId,
+        projectId,
+        stuckWaitingId,
+      ]);
+    });
+
+    const itemsBeforeGate = zTodayItems.parse(await todayAt(org.orgId, owner.userId));
+    expect(itemsBeforeGate.map((i) => i.id)).toEqual([`waiting:${stuckWaitingId}`]);
+
+    // Turning projects off refuses direct projects.today with MODULE_OFF and omits projects from kernel.today.
+    await exec(org.orgId, owner.userId, 'kernel.org.set_app', { module: 'projects', enabled: false });
+    await expect(todayAt(org.orgId, owner.userId)).rejects.toMatchObject({
+      code: 'MODULE_OFF',
+      status: 404,
+      details: { module: 'projects' },
+    });
+    const homeWhileOff = await rt.query<TodayList>('kernel.today', {}, { actor: asUser(owner.userId), orgId: org.orgId });
+    expect(homeWhileOff.failed).toBe(0);
+    expect(homeWhileOff.items.filter((i) => i.app === 'projects')).toEqual([]);
+
+    await exec(org.orgId, owner.userId, 'kernel.org.set_app', { module: 'projects', enabled: true });
+    const itemsAfterReEnable = zTodayItems.parse(await todayAt(org.orgId, owner.userId));
+    expect(itemsAfterReEnable.map((i) => i.id)).toEqual([`waiting:${stuckWaitingId}`]);
   });
 });

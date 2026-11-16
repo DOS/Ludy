@@ -268,16 +268,76 @@ describe('projects.today pure projection (#2596)', () => {
     expect(projectsTodayItemsOf(viewerRows, { userId: ME, role: 'viewer', now: NOW })).toEqual([]);
   });
 
-  it('caps output at TODAY_ITEMS_MAX with a trailing projects.more overflow item', () => {
-    const rows = Array.from({ length: TODAY_ITEMS_MAX + 5 }, (_, idx) =>
+  it('emits at most one highest-urgency item per task and caps at TODAY_ITEMS_MAX with exact task count in projects.more', () => {
+    const late = new Date(NOW.getTime() - 2 * 86_400_000);
+    const waiting4Days = new Date(NOW.getTime() - 4 * 86_400_000);
+    const dueTonightVn = new Date('2026-11-10T16:30:00.000Z'); // 23:30+07:00
+
+    // A single task meeting all flag conditions yields one item (overdue > waiting > vacant > dueToday).
+    const multiFlagItems = projectsTodayItemsOf(
+      [
+        row({
+          taskId: taskId(1),
+          ownerUserId: ME,
+          status: 'waiting',
+          due: late,
+          updatedAt: waiting4Days,
+          assigneePositionId: SEAT_VACANT,
+          holderUserId: null,
+          holderAgentId: null,
+        }),
+        row({
+          taskId: taskId(2),
+          ownerUserId: ME,
+          status: 'waiting',
+          due: dueTonightVn,
+          updatedAt: waiting4Days,
+          assigneePositionId: SEAT_VACANT,
+          holderUserId: null,
+          holderAgentId: null,
+        }),
+        // Duplicate taskId across two projects emits once.
+        row({ taskId: taskId(3), projectId: '0190c4a1-0000-7000-8000-000000000101', ownerUserId: ME, due: late }),
+        row({ taskId: taskId(3), projectId: '0190c4a1-0000-7000-8000-000000000102', ownerUserId: ME, due: late }),
+      ],
+      { userId: ME, role: 'member', now: NOW },
+    );
+    expect(multiFlagItems.map((i) => i.id)).toEqual([
+      `overdue:${taskId(1)}`,
+      `overdue:${taskId(3)}`,
+      `waiting:${taskId(2)}`,
+    ]);
+
+    // 100 multi-flag tasks must stay 100 items without overflowing into a spurious projects.more row.
+    const hundredMultiFlag = Array.from({ length: 100 }, (_, idx) =>
       row({
         taskId: taskId(idx + 1),
         ownerUserId: ME,
+        status: 'waiting',
         due: new Date(NOW.getTime() - (idx + 1) * 3_600_000),
+        updatedAt: waiting4Days,
+        assigneePositionId: SEAT_VACANT,
+        holderUserId: null,
+        holderAgentId: null,
+      }),
+    );
+    expect(projectsTodayItemsOf(hundredMultiFlag, { userId: ME, role: 'member', now: NOW })).toHaveLength(100);
+
+    // TODAY_ITEMS_MAX + 5 multi-flag tasks still report exactly 6 remaining tasks in projects.more.
+    const overflowRows = Array.from({ length: TODAY_ITEMS_MAX + 5 }, (_, idx) =>
+      row({
+        taskId: taskId(idx + 1),
+        ownerUserId: ME,
+        status: 'waiting',
+        due: new Date(NOW.getTime() - (idx + 1) * 3_600_000),
+        updatedAt: waiting4Days,
+        assigneePositionId: SEAT_VACANT,
+        holderUserId: null,
+        holderAgentId: null,
       }),
     );
 
-    const items = projectsTodayItemsOf(rows, { userId: ME, role: 'member', now: NOW });
+    const items = projectsTodayItemsOf(overflowRows, { userId: ME, role: 'member', now: NOW });
     expect(items).toHaveLength(TODAY_ITEMS_MAX);
     expect(items.at(-1)).toEqual({
       kind: 'flag',

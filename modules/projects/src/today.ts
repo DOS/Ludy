@@ -35,6 +35,7 @@ interface PrioritizedItem {
   priority: number;
   sortMs: number;
   taskId: string;
+  projectId: string;
   item: TodayItem;
 }
 
@@ -57,7 +58,7 @@ function overdueTitle(isMine: boolean, overdueDays: number): TodayTitle {
 
 /**
  * Pure projection of visible active-project open task rows into Home TodayItems for one actor.
- * Flags appear in urgency order (overdue -> waiting stuck -> vacant seat), followed by deadlines due today.
+ * Each task emits at most one item for its highest-urgency signal (overdue -> waiting stuck -> vacant seat -> due today).
  * Viewers cannot manage projects or update task state, so they receive no actionable items.
  */
 export function projectsTodayItemsOf(
@@ -90,46 +91,43 @@ export function projectsTodayItemsOf(
     const updatedMs = toDate(row.updatedAt).getTime();
     const createdMs = toDate(row.createdAt).getTime();
 
-    if (dueDate !== null && dueMs !== null) {
-      if (dueMs < nowMs) {
-        const overdueDays = Math.floor((nowMs - dueMs) / DAY_MS);
-        prioritized.push({
-          priority: 0,
-          sortMs: dueMs,
-          taskId: row.taskId,
-          item: {
-            kind: 'flag',
-            app: 'projects',
-            id: `overdue:${row.taskId}`,
-            title: overdueTitle(isMine, overdueDays),
-            severity: 'warn',
-            dueAt: dueDate.toISOString(),
-            href,
-          },
-        });
-      } else if (isMine && vietnamToday(dueDate) === todayVn) {
-        prioritized.push({
-          priority: 3,
-          sortMs: dueMs,
-          taskId: row.taskId,
-          item: {
-            kind: 'deadline',
-            app: 'projects',
-            id: `due:${row.taskId}`,
-            title: { key: 'projects.taskDueToday', params: {} },
-            dueAt: dueDate.toISOString(),
-            href,
-          },
-        });
-      }
-    }
+    const isOverdue = dueDate !== null && dueMs !== null && dueMs < nowMs;
+    const isWaitingStuck =
+      isProjectOwner && row.status === 'waiting' && !Number.isNaN(updatedMs) && updatedMs <= stuckCutoffMs;
+    // An unassigned root task (assignee_position_id IS NULL) or archived seat is not a vacant seat.
+    const isVacant =
+      isProjectOwner &&
+      row.assigneePositionId !== null &&
+      row.positionStatus !== 'archived' &&
+      row.holderUserId === null &&
+      row.holderAgentId === null;
+    const isDueToday =
+      isMine && dueDate !== null && dueMs !== null && dueMs >= nowMs && vietnamToday(dueDate) === todayVn;
 
-    if (isProjectOwner && row.status === 'waiting' && !Number.isNaN(updatedMs) && updatedMs <= stuckCutoffMs) {
+    if (isOverdue) {
+      const overdueDays = Math.floor((nowMs - dueMs) / DAY_MS);
+      prioritized.push({
+        priority: 0,
+        sortMs: dueMs,
+        taskId: row.taskId,
+        projectId: row.projectId,
+        item: {
+          kind: 'flag',
+          app: 'projects',
+          id: `overdue:${row.taskId}`,
+          title: overdueTitle(isMine, overdueDays),
+          severity: 'warn',
+          dueAt: dueDate.toISOString(),
+          href,
+        },
+      });
+    } else if (isWaitingStuck) {
       const waitingDays = Math.floor((nowMs - updatedMs) / DAY_MS);
       prioritized.push({
         priority: 1,
         sortMs: updatedMs,
         taskId: row.taskId,
+        projectId: row.projectId,
         item: {
           kind: 'flag',
           app: 'projects',
@@ -139,26 +137,33 @@ export function projectsTodayItemsOf(
           href,
         },
       });
-    }
-
-    // An unassigned root task (assignee_position_id IS NULL) or archived seat is not a vacant seat.
-    if (
-      isProjectOwner &&
-      row.assigneePositionId !== null &&
-      row.positionStatus !== 'archived' &&
-      row.holderUserId === null &&
-      row.holderAgentId === null
-    ) {
+    } else if (isVacant) {
       prioritized.push({
         priority: 2,
         sortMs: dueMs ?? (Number.isNaN(createdMs) ? 0 : createdMs),
         taskId: row.taskId,
+        projectId: row.projectId,
         item: {
           kind: 'flag',
           app: 'projects',
           id: `vacant:${row.taskId}`,
           title: { key: 'projects.vacantSeat', params: {} },
           severity: 'warn',
+          href,
+        },
+      });
+    } else if (isDueToday) {
+      prioritized.push({
+        priority: 3,
+        sortMs: dueMs,
+        taskId: row.taskId,
+        projectId: row.projectId,
+        item: {
+          kind: 'deadline',
+          app: 'projects',
+          id: `due:${row.taskId}`,
+          title: { key: 'projects.taskDueToday', params: {} },
+          dueAt: dueDate.toISOString(),
           href,
         },
       });
@@ -170,16 +175,25 @@ export function projectsTodayItemsOf(
       a.priority - b.priority ||
       a.sortMs - b.sortMs ||
       byText(a.taskId, b.taskId) ||
+      byText(a.projectId, b.projectId) ||
       byText(a.item.id, b.item.id),
   );
 
-  if (prioritized.length <= TODAY_ITEMS_MAX) {
-    return zTodayItems.parse(prioritized.map((entry) => entry.item));
+  const deduped: TodayItem[] = [];
+  const seenTasks = new Set<string>();
+  for (const entry of prioritized) {
+    if (seenTasks.has(entry.taskId)) continue;
+    seenTasks.add(entry.taskId);
+    deduped.push(entry.item);
+  }
+
+  if (deduped.length <= TODAY_ITEMS_MAX) {
+    return zTodayItems.parse(deduped);
   }
 
   const headCount = TODAY_ITEMS_MAX - 1;
-  const overflow = prioritized.length - headCount;
-  const head = prioritized.slice(0, headCount).map((entry) => entry.item);
+  const overflow = deduped.length - headCount;
+  const head = deduped.slice(0, headCount);
   return zTodayItems.parse([
     ...head,
     {
@@ -208,6 +222,22 @@ export const projectsToday = defineQuery({
     const vnTomorrowStart = new Date(Date.parse(`${todayVn}T00:00:00.000+07:00`) + DAY_MS);
     const stuckCutoff = new Date(now.getTime() - STUCK_WAITING_DAYS * DAY_MS);
 
+    // Build exact SQL predicates matching projectsTodayItemsOf so non-actionable rows (such as another person's
+    // tasks due later today) never enter the window and lower-priority items cannot push overdue or stuck flags past LIMIT.
+    const isMySeatExpr = sql<boolean>`t.assignee_position_id IS NOT NULL AND pos.holder_user_id = ${userId} AND pos.status IS DISTINCT FROM 'archived'`;
+    const isMineExpr = isOwner
+      ? sql<boolean>`((${isMySeatExpr}) OR t.assignee_position_id IS NULL)`
+      : isMySeatExpr;
+    const isProjectOwnerExpr = isOwner
+      ? sql<boolean>`(p.owner_user_id = ${userId} OR p.owner_user_id IS NULL)`
+      : sql<boolean>`p.owner_user_id = ${userId}`;
+    const isVacantSeatExpr = sql<boolean>`t.assignee_position_id IS NOT NULL AND pos.holder_user_id IS NULL AND pos.holder_agent_id IS NULL AND pos.status IS DISTINCT FROM 'archived'`;
+
+    const isOverdueExpr = sql<boolean>`t.due IS NOT NULL AND t.due < ${now} AND ((${isMineExpr}) OR (${isProjectOwnerExpr}))`;
+    const isWaitingStuckExpr = sql<boolean>`(${isProjectOwnerExpr}) AND t.status = 'waiting' AND t.updated_at <= ${stuckCutoff}`;
+    const isVacantItemExpr = sql<boolean>`(${isProjectOwnerExpr}) AND (${isVacantSeatExpr})`;
+    const isDueTodayExpr = sql<boolean>`(${isMineExpr}) AND t.due IS NOT NULL AND t.due >= ${now} AND t.due < ${vnTomorrowStart}`;
+
     const rows = await ctx.trx
       .selectFrom('crove_projects.project_task as pt')
       .innerJoin('crove_projects.project as p', (join) =>
@@ -235,31 +265,25 @@ export const projectsToday = defineQuery({
       .where('pt.org_id', '=', ctx.orgId)
       .where('p.status', '=', 'active')
       .where('t.status', 'not in', ['done', 'cancelled'])
-      .where((eb) =>
-        eb.or([
-          eb('p.owner_user_id', '=', userId),
-          eb.and([eb('pos.holder_user_id', '=', userId), eb('pos.status', '<>', 'archived')]),
-          ...(isOwner
-            ? [eb('p.owner_user_id', 'is', null), eb('t.assignee_position_id', 'is', null)]
-            : []),
-        ]),
+      .where(sql<boolean>`((${isOverdueExpr}) OR (${isWaitingStuckExpr}) OR (${isVacantItemExpr}) OR (${isDueTodayExpr}))`)
+      .orderBy(
+        sql`CASE
+          WHEN ${isOverdueExpr} THEN 0
+          WHEN ${isWaitingStuckExpr} THEN 1
+          WHEN ${isVacantItemExpr} THEN 2
+          ELSE 3
+        END ASC`,
       )
-      .where((eb) =>
-        eb.or([
-          eb.and([eb('t.due', 'is not', null), eb('t.due', '<', vnTomorrowStart)]),
-          eb.and([eb('t.status', '=', 'waiting'), eb('t.updated_at', '<=', stuckCutoff)]),
-          eb.and([
-            eb('t.assignee_position_id', 'is not', null),
-            eb('pos.holder_user_id', 'is', null),
-            eb('pos.holder_agent_id', 'is', null),
-            eb('pos.status', '<>', 'archived'),
-          ]),
-        ]),
+      .orderBy(
+        sql`CASE
+          WHEN ${isOverdueExpr} THEN t.due
+          WHEN ${isWaitingStuckExpr} THEN t.updated_at
+          WHEN ${isVacantItemExpr} THEN COALESCE(t.due, t.created_at)
+          ELSE t.due
+        END ASC`,
       )
-      .orderBy(sql`t.due ASC NULLS LAST`)
-      .orderBy('t.updated_at', 'asc')
-      .orderBy('t.created_at', 'asc')
       .orderBy('t.id', 'asc')
+      .orderBy('pt.project_id', 'asc')
       .limit(PROJECT_TODAY_ROW_LIMIT)
       .execute();
 
