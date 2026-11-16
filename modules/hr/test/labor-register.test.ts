@@ -388,9 +388,13 @@ describe('HR_DECLARATION_MAX_PEOPLE cap & ExcelJS workbook output', () => {
 
 describe('declarationGet and laborCheckRead cutoff attribution for same-month post-cutoff employments (#3372)', () => {
   type Filter = { col: string; op: string; val: unknown };
+  const colName = (col: string): string => {
+    const dot = col.indexOf('.');
+    return dot >= 0 ? col.slice(dot + 1) : col;
+  };
   const matchesFilters = (row: Record<string, unknown>, filters: readonly Filter[]): boolean =>
     filters.every(({ col, op, val }) => {
-      const actual = row[col];
+      const actual = row[colName(col)];
       if (op === '=') return actual === val;
       if (op === '<=') return typeof actual === 'string' && typeof val === 'string' && actual <= val;
       if (op === 'in') return Array.isArray(val) && val.includes(actual);
@@ -399,15 +403,24 @@ describe('declarationGet and laborCheckRead cutoff attribution for same-month po
 
   const makeCtx = (tables: Record<string, Array<Record<string, unknown>>>) => {
     const selectFrom = (table: string): unknown => {
+      const baseTable = table.split(/\s+as\s+/i)[0]!;
       const filters: Filter[] = [];
       const orders: Array<{ col: string; dir: 'asc' | 'desc' }> = [];
+      let joinDepartments = false;
       const runRows = (): Array<Record<string, unknown>> => {
-        const filtered = (tables[table] ?? []).filter((r) => matchesFilters(r, filters));
+        const depts = tables['crove_hr.department'] ?? [];
+        const base = (tables[baseTable] ?? []).map((r) => {
+          if (!joinDepartments) return r;
+          const dept = depts.find((d) => d.org_id === r.org_id && d.id === r.department_id);
+          return { ...r, department_name: dept?.name ?? null };
+        });
+        const filtered = base.filter((r) => matchesFilters(r, filters));
         if (orders.length === 0) return filtered;
         return [...filtered].sort((a, b) => {
           for (const { col, dir } of orders) {
-            const av = String(a[col] ?? '');
-            const bv = String(b[col] ?? '');
+            const key = colName(col);
+            const av = String(a[key] ?? '');
+            const bv = String(b[key] ?? '');
             if (av !== bv) return dir === 'desc' ? bv.localeCompare(av) : av.localeCompare(bv);
           }
           return 0;
@@ -417,6 +430,12 @@ describe('declarationGet and laborCheckRead cutoff attribution for same-month po
         {},
         {
           get(_, prop) {
+            if (prop === 'leftJoin') {
+              return (joined: string) => {
+                if (joined.startsWith('crove_hr.department')) joinDepartments = true;
+                return q;
+              };
+            }
             if (prop === 'where') {
               return (col: string, op: string, val: unknown) => {
                 filters.push({ col, op, val });
@@ -811,5 +830,168 @@ describe('declarationGet and laborCheckRead cutoff attribution for same-month po
       contractTermMonths: 12,
       fixedTermSequence: 2,
     });
+  });
+
+  it('populates position/workplace/contractType in declarationGet, masks erased employees, and adds job_title + department to laborCheckRead forbidden (#3437)', async () => {
+    const funds = ['retirement_death', 'sickness_maternity', 'work_accident', 'health', 'unemployment'].map((fund) => ({
+      fund,
+      wage: '15000000',
+      employee: '0',
+      employer: '0',
+    }));
+    const breakdown = {
+      insurance: { suspended: null, funds },
+      tax: {
+        mode: 'progressive',
+        exemptMealCash: '0',
+        exemptOvertime: '0',
+        exemptNightWork: '0',
+        personalDeduction: '15500000',
+        dependentDeduction: '0',
+        pensionDeduction: '0',
+        assessableIncome: '0',
+      },
+    };
+    const tables: Record<string, Array<Record<string, unknown>>> = {
+      'crove_kernel.legal_entity': [
+        { id: 'entity-1', org_id: 'org-1', name: employer.name, tax_code: employer.taxCode, is_default: true },
+      ],
+      'crove_hr.department': [
+        { id: 'dept-sales', org_id: 'org-1', legal_entity_id: 'entity-1', name: 'Phòng Kinh doanh Canary' },
+        { id: 'dept-secret', org_id: 'org-1', legal_entity_id: 'entity-1', name: 'Phòng Đã Xóa Bí Mật' },
+      ],
+      'crove_hr.payroll_employee': [
+        {
+          id: 'emp-full',
+          org_id: 'org-1',
+          legal_entity_id: 'entity-1',
+          display_name: 'Nguyễn Văn Đủ Canary',
+          address: '10 Nguyễn Huệ',
+          birth_date: '1991-05-10',
+          department_id: 'dept-sales',
+          job_title: 'Trưởng nhóm Bán hàng',
+          ended_on: null,
+          erased_at: null,
+          national_id_sealed: '000000000201',
+          tax_code_sealed: null,
+          insurance_number_sealed: '7309100101',
+          finalization_authorized_years: [],
+        },
+        {
+          id: 'emp-title-only',
+          org_id: 'org-1',
+          legal_entity_id: 'entity-1',
+          display_name: 'Trần Chỉ Chức Danh Canary',
+          address: '20 Lê Lợi',
+          birth_date: '1993-02-14',
+          department_id: null,
+          job_title: 'Thủ quỹ',
+          ended_on: null,
+          erased_at: null,
+          national_id_sealed: '000000000202',
+          tax_code_sealed: null,
+          insurance_number_sealed: '7309300102',
+          finalization_authorized_years: [],
+        },
+        {
+          id: 'emp-dept-only',
+          org_id: 'org-1',
+          legal_entity_id: 'entity-1',
+          display_name: 'Lê Chỉ Phòng Ban Canary',
+          address: '30 Pasteur',
+          birth_date: '1994-09-01',
+          department_id: 'dept-sales',
+          job_title: null,
+          ended_on: null,
+          erased_at: null,
+          national_id_sealed: null,
+          tax_code_sealed: null,
+          insurance_number_sealed: null,
+          finalization_authorized_years: [],
+        },
+        {
+          id: 'emp-erased',
+          org_id: 'org-1',
+          legal_entity_id: 'entity-1',
+          display_name: 'Đã xóa theo yêu cầu',
+          address: null,
+          birth_date: null,
+          // Simulate leftover non-null fields in row to verify handler masks strictly when erased_at !== null.
+          department_id: 'dept-secret',
+          job_title: 'Giám đốc Bí Mật',
+          ended_on: null,
+          erased_at: '2026-08-01T00:00:00Z',
+          national_id_sealed: null,
+          tax_code_sealed: null,
+          insurance_number_sealed: null,
+          finalization_authorized_years: [],
+        },
+      ],
+      'crove_hr.payroll_employment': [
+        { id: 'e1-1', org_id: 'org-1', legal_entity_id: 'entity-1', employee_id: 'emp-full', effective_from: '2026-01-01', contract_type: 'fixed_term', base_wage: '15000000' },
+        { id: 'e1-2', org_id: 'org-1', legal_entity_id: 'entity-1', employee_id: 'emp-full', effective_from: '2026-07-01', contract_type: 'indefinite', base_wage: '15000000' },
+        { id: 'e2-1', org_id: 'org-1', legal_entity_id: 'entity-1', employee_id: 'emp-title-only', effective_from: '2026-08-10', contract_type: 'fixed_term', base_wage: '12000000' },
+        { id: 'e3-1', org_id: 'org-1', legal_entity_id: 'entity-1', employee_id: 'emp-dept-only', effective_from: '2026-05-01', contract_type: 'none', base_wage: '8000000' },
+        { id: 'e4-1', org_id: 'org-1', legal_entity_id: 'entity-1', employee_id: 'emp-erased', effective_from: '2026-01-01', contract_type: 'indefinite', base_wage: '20000000' },
+      ],
+      'crove_hr.payroll_run': [
+        { id: 'run-jul', org_id: 'org-1', legal_entity_id: 'entity-1', status: 'approved', month: '2026-07' },
+        { id: 'run-aug', org_id: 'org-1', legal_entity_id: 'entity-1', status: 'approved', month: '2026-08' },
+      ],
+      'crove_hr.payroll_line': [
+        { run_id: 'run-jul', org_id: 'org-1', legal_entity_id: 'entity-1', employee_id: 'emp-full', employment_id: 'e1-2', kind: 'pay', status: 'calculated', gross: '12000000', employee_insurance: '0', employer_insurance: '0', union_fee: '0', taxable_income: '12000000', pit: '0', breakdown: { ...breakdown, insurance: { suspended: null, funds: funds.map((f) => ({ ...f, wage: '12000000' })) } }, inputs: {} },
+        { run_id: 'run-aug', org_id: 'org-1', legal_entity_id: 'entity-1', employee_id: 'emp-full', employment_id: 'e1-2', kind: 'pay', status: 'calculated', gross: '15000000', employee_insurance: '0', employer_insurance: '0', union_fee: '0', taxable_income: '15000000', pit: '0', breakdown, inputs: {} },
+        { run_id: 'run-aug', org_id: 'org-1', legal_entity_id: 'entity-1', employee_id: 'emp-title-only', employment_id: 'e2-1', kind: 'pay', status: 'calculated', gross: '12000000', employee_insurance: '0', employer_insurance: '0', union_fee: '0', taxable_income: '12000000', pit: '0', breakdown, inputs: {} },
+        { run_id: 'run-jul', org_id: 'org-1', legal_entity_id: 'entity-1', employee_id: 'emp-erased', employment_id: 'e4-1', kind: 'pay', status: 'calculated', gross: '18000000', employee_insurance: '0', employer_insurance: '0', union_fee: '0', taxable_income: '18000000', pit: '0', breakdown: { ...breakdown, insurance: { suspended: null, funds: funds.map((f) => ({ ...f, wage: '18000000' })) } }, inputs: {} },
+        { run_id: 'run-aug', org_id: 'org-1', legal_entity_id: 'entity-1', employee_id: 'emp-erased', employment_id: 'e4-1', kind: 'pay', status: 'calculated', gross: '20000000', employee_insurance: '0', employer_insurance: '0', union_fee: '0', taxable_income: '20000000', pit: '0', breakdown, inputs: {} },
+      ],
+    };
+
+    const reg = await declarationGet.handler(makeCtx(tables), { kind: 'labor_register', period: '2026-08-15' });
+    const regRows = reg.sheets[0]?.rows ?? [];
+    expect(regRows.find((r) => r.name === 'Nguyễn Văn Đủ Canary')?.position).toBe('Trưởng nhóm Bán hàng - Phòng Kinh doanh Canary');
+    expect(regRows.find((r) => r.name === 'Trần Chỉ Chức Danh Canary')?.position).toBe('Thủ quỹ');
+    expect(regRows.find((r) => r.name === 'Lê Chỉ Phòng Ban Canary')?.position).toBe('Phòng Kinh doanh Canary');
+    expect(regRows.find((r) => r.name === LABOR_REGISTER_ERASED_PLACEHOLDER)?.position).toBe('');
+    expect(JSON.stringify(reg)).not.toContain('Giám đốc Bí Mật');
+    expect(JSON.stringify(reg)).not.toContain('Phòng Đã Xóa Bí Mật');
+
+    const pli = await declarationGet.handler(makeCtx(tables), { kind: '01pli', period: '2026-H2' });
+    const pliRows = pli.sheets[1]?.rows ?? [];
+    expect(pliRows.find((r) => r.name === 'Nguyễn Văn Đủ Canary')?.position).toBe('Trưởng nhóm Bán hàng - Phòng Kinh doanh Canary');
+    expect(pliRows.find((r) => r.name === LABOR_REGISTER_ERASED_PLACEHOLDER)?.position).toBe('');
+
+    const d02 = await declarationGet.handler(makeCtx(tables), { kind: 'd02lt', period: '2026-08' });
+    expect(d02.layout.version).toBe('ludy-hr-d02lt/2');
+    const d02Rows = d02.sheets[0]?.rows ?? [];
+    expect(d02Rows.find((r) => r.name === 'Nguyễn Văn Đủ Canary')).toMatchObject({
+      movement: 'Điều chỉnh mức đóng',
+      position: 'Trưởng nhóm Bán hàng',
+      workplace: 'Phòng Kinh doanh Canary',
+      contractType: 'Không xác định thời hạn',
+    });
+    expect(d02Rows.find((r) => r.name === 'Trần Chỉ Chức Danh Canary')).toMatchObject({
+      movement: 'Tăng lao động',
+      position: 'Thủ quỹ',
+      workplace: '',
+      contractType: 'Xác định thời hạn',
+    });
+    expect(d02Rows.find((r) => r.name === 'Đã xóa theo yêu cầu')).toMatchObject({
+      position: '',
+      workplace: '',
+      contractType: '',
+    });
+    expect(JSON.stringify(d02)).not.toContain('Giám đốc Bí Mật');
+    expect(JSON.stringify(d02)).not.toContain('Phòng Đã Xóa Bí Mật');
+
+    const check = await laborCheckRead.handler(makeCtx(tables) as unknown as Parameters<typeof laborCheckRead.handler>[0], {
+      kind: 'labor_register',
+      period: '2026-08-15',
+    });
+    expect(check.forbidden).toContain('Trưởng nhóm Bán hàng');
+    expect(check.forbidden).toContain('Thủ quỹ');
+    expect(check.forbidden).toContain('Phòng Kinh doanh Canary');
+    expect(check.forbidden).not.toContain('Giám đốc Bí Mật');
+    expect(check.forbidden).not.toContain('Phòng Đã Xóa Bí Mật');
   });
 });

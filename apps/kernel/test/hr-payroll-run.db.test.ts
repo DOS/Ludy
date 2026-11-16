@@ -599,7 +599,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     const { o, get } = await declarationOrg();
     const d02 = await get(o.owner, 'd02lt', '2026-08');
     expect(d02.sheets[0]?.rows.map((r) => [r.name, r.movement, r.effectiveOn])).toEqual([[NAMES[1], 'Giảm lao động', '2026-08-15']]);
-    expect(d02.layout.version).toBe('ludy-hr-d02lt/1');
+    expect(d02.layout.version).toBe('ludy-hr-d02lt/2');
     const july = await get(o.owner, 'd02lt', '2026-07');
     expect(july.sheets[0]?.rows).toEqual([]);
     const annual = await get(o.owner, 'qtt', '2026');
@@ -612,6 +612,117 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     // Only An (35M) and Chi (30M) are withheld; Chi authorized the payer to finalize, so An alone gets a certificate and Chi is listed as not given one. Bình (9M) and the 12M person owe no tax.
     expect(certificates.sheets[0]?.rows.map((r) => r.name)).toEqual([NAMES[0]]);
     expect(certificates.sheets[1]?.rows.map((r) => r.name)).toEqual([NAMES[2]]);
+  });
+
+  it('(declarations, #3437) populates D02-LT position, workplace, and effective-dated contractType from PostgreSQL and masks erased staff', async () => {
+    setRuleStatus('confirmed');
+    try {
+      const o = await org();
+      const salesDept = (await o.exec<{ departmentId: string }>(o.owner, 'hr.department.add', { name: 'Kinh doanh Canary', code: 'KD', payFunction: 'sales' })).departmentId;
+      const secretDept = (await o.exec<{ departmentId: string }>(o.owner, 'hr.department.add', { name: 'Phòng Bí Mật Erasure', code: 'BM', payFunction: 'admin' })).departmentId;
+
+      // 1) Existing employee starting fixed_term in 2026-01-01, converted to indefinite on 2026-08-01 with raise -> D02-LT 2026-08 adjust uses indefinite.
+      const raised = await o.exec<HrWritten>(o.owner, 'hr.payroll.employee.add', {
+        displayName: 'Nguyễn Điều Chỉnh Canary',
+        birthDate: '1991-04-12',
+        identityNumber: '000000000211',
+        insuranceNumber: '7309111222',
+        departmentId: salesDept,
+        jobTitle: 'Trưởng nhóm Kinh doanh',
+        employment: { effectiveFrom: '2026-01-01', contractType: 'fixed_term', region: 'I', baseWage: '10000000' },
+      });
+      await o.exec(o.owner, 'hr.payroll.employment.add', {
+        employeeId: raised.employeeId,
+        effectiveFrom: '2026-08-01',
+        contractType: 'indefinite',
+        region: 'I',
+        baseWage: '14000000',
+      });
+
+      // 2) Employee without department or jobTitle who increases in 2026-08 -> position/workplace are '' cleanly.
+      await o.exec<HrWritten>(o.owner, 'hr.payroll.employee.add', {
+        displayName: 'Trần Mới Không Phòng Ban Canary',
+        birthDate: '1994-06-20',
+        identityNumber: '000000000212',
+        insuranceNumber: '7309433444',
+        employment: { effectiveFrom: '2026-08-05', contractType: 'fixed_term', region: 'I', baseWage: '12000000' },
+      });
+
+      // 3) Employee assigned to secretDept + jobTitle who adjusts in 2026-08, then is ended and erased after retention -> D02-LT must mask position, workplace, and contractType.
+      const erasedEmp = await o.exec<HrWritten>(o.owner, 'hr.payroll.employee.add', {
+        displayName: 'Phạm Bị Xóa D02 Canary',
+        birthDate: '1987-01-05',
+        identityNumber: '000000000213',
+        insuranceNumber: '7308755666',
+        departmentId: secretDept,
+        jobTitle: 'Chức Danh Bí Mật',
+        employment: { effectiveFrom: '2026-01-01', contractType: 'fixed_term', region: 'I', baseWage: '11000000' },
+      });
+
+      const julRun = await o.open('2026-07');
+      const julSheetBefore = await o.sheet(julRun.runId);
+      for (const l of julSheetBefore.lines) {
+        await o.exec(o.owner, 'hr.payroll.line.inputs.set', { lineId: l.id, inputs: { ...l.inputs, contractTermMonths: 12 } });
+      }
+      await o.approve(julRun.runId, (await o.sheet(julRun.runId)).fingerprint, { acceptFlags: true });
+
+      // Give erasedEmp an August wage raise so they appear as an adjustment in 2026-08 before erasure.
+      await o.exec(o.owner, 'hr.payroll.employment.add', {
+        employeeId: erasedEmp.employeeId,
+        effectiveFrom: '2026-08-01',
+        contractType: 'indefinite',
+        region: 'I',
+        baseWage: '15000000',
+      });
+
+      const augRun = await o.open('2026-08');
+      const augSheetBefore = await o.sheet(augRun.runId);
+      const bareLine = augSheetBefore.lines.find((l) => l.employeeName === 'Trần Mới Không Phòng Ban Canary')!;
+      await o.exec(o.owner, 'hr.payroll.line.inputs.set', { lineId: bareLine.id, inputs: { ...bareLine.inputs, contractTermMonths: 12 } });
+      await o.approve(augRun.runId, (await o.sheet(augRun.runId)).fingerprint, { acceptFlags: true });
+
+      // End and erase erasedEmp after backdating retention (> 10 years ago).
+      await o.exec(o.owner, 'hr.payroll.employee.end', { employeeId: erasedEmp.employeeId, endedOn: '2026-08-20' });
+      await withAdmin((c) =>
+        c.query(`UPDATE crove_hr.payroll_employee SET ended_on = ((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - interval '10 years 1 day')::date WHERE id = $1`, [erasedEmp.employeeId]),
+      );
+      await o.exec(o.owner, 'hr.payroll.employee.erase', { employeeId: erasedEmp.employeeId }, asMfa(o.owner));
+
+      const d02 = await rt.query<HrDeclarationDocument>('hr.payroll.declaration.get', { kind: 'd02lt', period: '2026-08' }, { actor: asMfa(o.owner), orgId: o.orgId });
+      expect(d02.layout.version).toBe('ludy-hr-d02lt/2');
+      expect(d02.notes[0]).toBe('Nơi đăng ký khám chữa bệnh ban đầu chưa được lưu trong Ludy: nhập tay khi khai.');
+      const colKeys = d02.sheets[0]?.columns.map((c) => c.key) ?? [];
+      expect(colKeys.slice(colKeys.indexOf('insuranceNumber') + 1, colKeys.indexOf('effectiveOn'))).toEqual(['position', 'workplace', 'contractType']);
+
+      const rows = d02.sheets[0]?.rows ?? [];
+      expect(rows.find((r) => r.name === 'Nguyễn Điều Chỉnh Canary')).toMatchObject({
+        movement: 'Điều chỉnh mức đóng',
+        position: 'Trưởng nhóm Kinh doanh',
+        workplace: 'Kinh doanh Canary',
+        contractType: 'Không xác định thời hạn',
+        effectiveOn: '2026-08-01',
+      });
+      expect(rows.find((r) => r.name === 'Trần Mới Không Phòng Ban Canary')).toMatchObject({
+        movement: 'Tăng lao động',
+        position: '',
+        workplace: '',
+        contractType: 'Xác định thời hạn',
+        effectiveOn: '2026-08-05',
+      });
+      const erasedRow = rows.find((r) => r.name === 'Đã xóa theo yêu cầu');
+      expect(erasedRow).toMatchObject({
+        movement: 'Điều chỉnh mức đóng',
+        position: '',
+        workplace: '',
+        contractType: '',
+      });
+      const body = JSON.stringify(d02);
+      expect(body).not.toContain('Phòng Bí Mật Erasure');
+      expect(body).not.toContain('Chức Danh Bí Mật');
+      expect(body).not.toContain('Phạm Bị Xóa D02 Canary');
+    } finally {
+      setRuleStatus('commentary');
+    }
   });
 
   it('(declarations, #2533) is a sensitive query owners and admins only: audited before the read, with no identifier in any audit row', async () => {
