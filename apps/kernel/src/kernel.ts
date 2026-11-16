@@ -743,6 +743,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           store,
           authenticate,
           pool,
+          billing: resolved.billing,
           // The meetings media route seals and opens with the same broker as the worker's reseal pass. The 'none' broker
           // is left out so the route keeps its own fallback (createCredentialBroker(config)).
           ...(resolved.broker.id !== 'none' ? { broker: resolved.broker } : {}),
