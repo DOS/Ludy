@@ -182,7 +182,10 @@ function Chip({
         {text}
       </span>
       <span className="block truncate text-subtle-foreground">
-        {channels} · {statuses} <UnansweredComments postId={group.post.id} />
+        {channels} · {statuses}
+      </span>
+      <span className="block">
+        <UnansweredComments postId={group.post.id} />
       </span>
     </>
   );

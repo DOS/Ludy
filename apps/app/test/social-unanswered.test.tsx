@@ -28,7 +28,7 @@ vi.mock('../src/lib/api.ts', async () => {
   return { orpc: node([]), queryClient: client.current };
 });
 
-const { UnansweredComments, UnansweredProvider, postRefsOf, unansweredByPost } = await import('../src/components/social-unanswered.tsx');
+const { UnansweredComments, UnansweredProvider, postRefsOf, readsOf, unansweredByPost } = await import('../src/components/social-unanswered.tsx');
 
 const C1 = '10000000-0000-4000-8000-000000000001';
 const C2 = '10000000-0000-4000-8000-000000000002';
@@ -50,9 +50,12 @@ describe('postRefsOf and unansweredByPost (#3298)', () => {
     expect(postRefsOf([])).toEqual([]);
   });
 
-  it('keeps a read within what the kernel allows', () => {
-    const many = Array.from({ length: CONVERSATION_POST_COUNTS_MAX + 30 }, (_, i) => ({ id: `p${i}`, variants: [variant(C1, `fb-${i}`)] }));
-    expect(postRefsOf(many)).toHaveLength(CONVERSATION_POST_COUNTS_MAX);
+  it('splits a big screen into reads the kernel takes, never cutting posts off', () => {
+    const many = Array.from({ length: CONVERSATION_POST_COUNTS_MAX * 2 + 30 }, (_, i) => ({ id: `p${i}`, variants: [variant(C1, `fb-${i}`)] }));
+    const reads = readsOf(postRefsOf(many));
+    expect(reads.map((r) => r.length)).toEqual([CONVERSATION_POST_COUNTS_MAX, CONVERSATION_POST_COUNTS_MAX, 30]);
+    expect(reads.flat()).toHaveLength(many.length);
+    expect(readsOf([])).toEqual([]);
   });
 
   it("sums a post's channels, and leaves out a post with none", () => {

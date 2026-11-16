@@ -3,7 +3,7 @@
 // whole screen (`kernel.conversation.post_counts` asks for every published post shown at once, never one query a row); the provider hands each row its own number.
 // The number is the reader's own (the database shows a member only the threads of the channels they may use); it carries no text and no name. When the read fails
 // (conversations unavailable, a role that may not read) the rows show nothing, and the screen is as it was.
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQueries } from '@tanstack/react-query';
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
 import { Badge } from '@crove/ui/components/badge';
@@ -25,7 +25,7 @@ export interface PostRef {
 
 const key = (r: PostRef): string => `${r.connectionId}\n${r.externalPostId}`;
 
-/** The platform posts the comments sit under: each published channel of the posts shown, once, at most one read's worth (#3298). */
+/** The platform posts the comments sit under: each published channel of the posts shown, once (#3298). */
 export function postRefsOf(posts: readonly CountedPost[]): PostRef[] {
   const refs = new Map<string, PostRef>();
   for (const p of posts) {
@@ -35,7 +35,14 @@ export function postRefsOf(posts: readonly CountedPost[]): PostRef[] {
       refs.set(key(ref), ref);
     }
   }
-  return [...refs.values()].slice(0, CONVERSATION_POST_COUNTS_MAX);
+  return [...refs.values()];
+}
+
+/** The refs in reads of at most what the kernel takes at once: a screen of up to 200 posts on several channels is a few reads, never a silent cut. */
+export function readsOf(refs: readonly PostRef[]): PostRef[][] {
+  const reads: PostRef[][] = [];
+  for (let i = 0; i < refs.length; i += CONVERSATION_POST_COUNTS_MAX) reads.push(refs.slice(i, i + CONVERSATION_POST_COUNTS_MAX));
+  return reads;
 }
 
 /** Each post's number of unanswered threads: the sum over its published channels; a post with none is left out (#3298). */
@@ -60,14 +67,20 @@ export function unansweredByPost(posts: readonly CountedPost[], counts: Readonly
 const Unanswered = createContext<ReadonlyMap<string, number>>(new Map());
 
 export function UnansweredProvider({ posts, children }: { posts: readonly CountedPost[]; children: ReactNode }) {
-  const refs = useMemo(() => postRefsOf(posts), [posts]);
-  const counts = useQuery({
-    ...orpc.conversations.postCounts.queryOptions({ input: { posts: refs } }),
-    enabled: refs.length > 0,
-    retry: false,
-    refetchInterval: REFRESH_MS,
+  const reads = useMemo(() => readsOf(postRefsOf(posts)), [posts]);
+  // keepPreviousData: a page or month change asks again, and the badges stay until the new numbers come instead of blinking out.
+  const answers = useQueries({
+    queries: reads.map((refs) => ({
+      ...orpc.conversations.postCounts.queryOptions({ input: { posts: refs } }),
+      retry: false,
+      refetchInterval: REFRESH_MS,
+      placeholderData: keepPreviousData,
+    })),
   });
-  const byPost = useMemo(() => (counts.data ? unansweredByPost(posts, counts.data.counts) : new Map<string, number>()), [posts, counts.data]);
+  // A read that failed shows nothing, even when an earlier answer is still held: a number out of date for as long as the connection is down is worse than none.
+  // The answers array is new on every render; what changed is told by when each read last brought data and whether it failed.
+  const fresh = answers.map((a) => `${a.dataUpdatedAt}${a.isError ? 'x' : ''}`).join(',');
+  const byPost = useMemo(() => unansweredByPost(posts, answers.flatMap((a) => (a.isError ? [] : (a.data?.counts ?? [])))), [posts, fresh]); // eslint-disable-line react-hooks/exhaustive-deps
   return <Unanswered.Provider value={byPost}>{children}</Unanswered.Provider>;
 }
 
