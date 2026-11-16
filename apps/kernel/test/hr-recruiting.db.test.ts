@@ -287,7 +287,7 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
     expect(oldStatus).toBe('cancelled');
     expect(rescheduled.eventId).not.toBe(scheduled.eventId);
 
-    // Move to offer with agreed wage & start date, then 1-click hire atomically.
+    // Move to offer with agreed wage & start date, then verify fixed_term requires termMonths or contractEndOn before inserting employee.
     await o.exec(o.admin, 'hr.recruiting.candidate.move_stage', {
       candidateId: candidate.candidateId,
       toStage: 'offer',
@@ -295,8 +295,19 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
       plannedStartOn: '2026-12-01',
     });
 
+    await expect(
+      o.exec(o.admin, 'hr.recruiting.candidate.hire', {
+        candidateId: candidate.candidateId,
+      }),
+    ).rejects.toMatchObject({ code: 'HR_CONTRACT_INVALID', status: 422 });
+    const empCountBeforeTerm = await withAdmin(async (c) =>
+      Number((await c.query<{ n: string }>(`SELECT count(*) AS n FROM crove_hr.payroll_employee WHERE org_id = $1`, [o.orgId])).rows[0]?.n ?? 0),
+    );
+    expect(empCountBeforeTerm).toBe(0);
+
     const hired = await o.exec<HrCandidateHireResult>(o.admin, 'hr.recruiting.candidate.hire', {
       candidateId: candidate.candidateId,
+      termMonths: 12,
     });
     expect(hired.stage).toBe('hired');
 
@@ -310,12 +321,45 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
         expect.objectContaining({
           effectiveFrom: '2026-12-01',
           contractType: 'fixed_term',
+          termMonths: 12,
+          contractEndOn: '2027-11-30',
           region: 'II',
           payFunction: 'admin',
           baseWage: '19500000.00',
         }),
       ],
     });
+
+    // Cancelled linked calendar event does NOT count as hasScheduledInterview in views, Ly brief, move_stage, or hire.
+    const compInterview = await o.exec<HrCandidateInterviewScheduled>(o.admin, 'hr.recruiting.candidate.schedule_interview', {
+      candidateId: competitor.candidateId,
+      startsAt: chosenSlot.startIso,
+      endsAt: chosenSlot.endIso,
+    });
+    await o.exec(o.admin, 'kernel.calendar.event.cancel', { eventId: compInterview.eventId });
+    const compAfterCancel = await o.query<HrCandidateView>(o.admin, 'hr.recruiting.candidate.get', { candidateId: competitor.candidateId });
+    expect(compAfterCancel.interviewEventId).toBeNull();
+    expect(compAfterCancel.interviewStartsAt).toBeNull();
+    const compBriefRead = await o.query<{ input: { hasScheduledInterview: boolean } }>(o.admin, 'hr.recruiting.brief.read', {
+      candidateId: competitor.candidateId,
+      lang: 'vi',
+    });
+    expect(compBriefRead.input.hasScheduledInterview).toBe(false);
+    await o.exec(o.admin, 'hr.recruiting.candidate.move_stage', {
+      candidateId: competitor.candidateId,
+      toStage: 'offer',
+      agreedWage: '16000000',
+      plannedStartOn: '2026-12-01',
+    });
+    const compMoveDetail = await withAdmin(async (c) =>
+      (
+        await c.query<{ detail: { warnings?: string[] } }>(
+          `SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'hr.recruiting.candidate.move_stage' AND target_id = $2 ORDER BY id DESC LIMIT 1`,
+          [o.orgId, competitor.candidateId],
+        )
+      ).rows[0]?.detail,
+    );
+    expect(compMoveDetail?.warnings).toContain('missing_interview_before_offer');
 
     // Cannot hire the same candidate twice or transition away from terminal 'hired' stage.
     await expect(

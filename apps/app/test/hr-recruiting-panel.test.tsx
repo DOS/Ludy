@@ -54,6 +54,7 @@ const {
   RecruitingBriefPanel,
   buildHireDefaults,
   formatLocalDateTimeInput,
+  mergeHireDraft,
   parseSkillsInput,
 } = await import('../src/routes/hr-recruiting.tsx');
 const { I18nProvider } = await import('../src/i18n/provider.tsx');
@@ -216,9 +217,66 @@ describe('HR recruiting UI (#3425)', () => {
     const hireHtml = wrap(<HireCandidatePanel candidate={sampleCandidate} opening={sampleOpening} departments={[sampleDepartment]} />, 'en');
     expect(hireHtml).toContain('19000000');
     expect(hireHtml).toContain('2026-12-01');
+    expect(hireHtml).toContain('hr-hire-term-months');
+    expect(hireHtml).toContain('hr-hire-contract-end');
+    expect(hireHtml).toContain('hr-hire-fixed-term-hint');
+    expect(hireHtml).toMatch(/disabled=""[^>]*data-testid="hr-candidate-hire"|data-testid="hr-candidate-hire"[^>]*disabled/);
     expect(hireHtml.replaceAll('&amp;', '&')).toContain(en.hrRecruiting.hire.submit);
 
-    const lyHtml = wrap(<RecruitingBriefPanel candidateId={CANDIDATE_ID} />, 'vi');
+    const indefiniteOpening: HrOpeningView = { ...sampleOpening, contractType: 'indefinite' };
+    const indefiniteHireHtml = wrap(<HireCandidatePanel candidate={sampleCandidate} opening={indefiniteOpening} departments={[sampleDepartment]} />, 'en');
+    expect(indefiniteHireHtml).not.toContain('hr-hire-term-months');
+    expect(indefiniteHireHtml).not.toContain('hr-hire-fixed-term-hint');
+
+    const lyHtml = wrap(<RecruitingBriefPanel candidateId={CANDIDATE_ID} candidateVersion={NOW_ISO} />, 'vi');
     expect(lyHtml).toContain(viMessages.hrRecruiting.ly.run);
+  });
+
+  it('syncs late-arriving opening/department defaults while preserving dirty user edits in HireCandidatePanel', () => {
+    const initialFromEmpty = {
+      effectiveFrom: '2026-12-01',
+      baseWage: '19000000',
+      contractType: 'indefinite' as const,
+      region: 'I' as const,
+      payFunction: 'admin' as const,
+      departmentId: '',
+      jobTitle: 'Kế toán tổng hợp',
+      termMonths: '',
+      contractEndOn: '',
+      allowDirectHire: false,
+    };
+
+    // No dirty fields yet: late-arriving opening + department populate untouched defaults.
+    const arrivedDefaults = buildHireDefaults(sampleCandidate, sampleOpening);
+    const afterLoad = mergeHireDraft(initialFromEmpty, new Set(), arrivedDefaults);
+    expect(afterLoad).toMatchObject({
+      contractType: 'fixed_term',
+      region: 'II',
+      payFunction: 'admin',
+      departmentId: DEPT_ID,
+      jobTitle: 'Kế toán tổng hợp',
+    });
+
+    // User edits baseWage and departmentId manually; opening then switches -> dirty fields stay intact while untouched ones update.
+    const dirtyFields = new Set<'baseWage' | 'departmentId'>(['baseWage', 'departmentId']);
+    const userEdited = { ...afterLoad, baseWage: '21500000', departmentId: '', termMonths: '12' };
+    const newOpening: HrOpeningView = {
+      ...sampleOpening,
+      title: 'Kế toán trưởng',
+      contractType: 'indefinite',
+      region: 'III',
+      payFunction: 'overhead',
+    };
+    const nextDefaults = buildHireDefaults(sampleCandidate, newOpening);
+    const synced = mergeHireDraft(userEdited, dirtyFields, nextDefaults);
+    expect(synced).toMatchObject({
+      baseWage: '21500000',
+      departmentId: '',
+      termMonths: '12',
+      contractType: 'indefinite',
+      region: 'III',
+      payFunction: 'overhead',
+      jobTitle: 'Kế toán trưởng',
+    });
   });
 });

@@ -3,7 +3,7 @@
 // job openings, candidate pipeline, calendar interview scheduling without candidate PII in calendar titles,
 // 1-click hire to payroll employee + initial employment, R3 candidate erasure, and Ly pseudonymized screening brief.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
 import {
   HR_CANDIDATE_STAGES,
@@ -57,6 +57,21 @@ export function parseSkillsInput(raw: string): string[] {
   return out;
 }
 
+export type HireFormDraft = {
+  effectiveFrom: string;
+  baseWage: string;
+  contractType: HrContractType;
+  region: HrRegion;
+  payFunction: HrPayFunction;
+  departmentId: string;
+  jobTitle: string;
+  termMonths: string;
+  contractEndOn: string;
+  allowDirectHire: boolean;
+};
+
+export type HireDraftField = keyof HireFormDraft;
+
 export function buildHireDefaults(candidate: HrCandidateView, opening: HrOpeningView | null | undefined) {
   return {
     effectiveFrom: candidate.plannedStartOn ?? vietnamToday(),
@@ -66,6 +81,25 @@ export function buildHireDefaults(candidate: HrCandidateView, opening: HrOpening
     payFunction: (opening?.payFunction ?? 'admin') as HrPayFunction,
     departmentId: opening?.departmentId ?? candidate.departmentId ?? '',
     jobTitle: opening?.title ?? candidate.openingTitle ?? '',
+  };
+}
+
+export function mergeHireDraft(
+  current: HireFormDraft,
+  dirtyFields: ReadonlySet<HireDraftField>,
+  nextDefaults: Omit<HireFormDraft, 'termMonths' | 'contractEndOn' | 'allowDirectHire'>,
+): HireFormDraft {
+  return {
+    effectiveFrom: dirtyFields.has('effectiveFrom') ? current.effectiveFrom : nextDefaults.effectiveFrom,
+    baseWage: dirtyFields.has('baseWage') ? current.baseWage : nextDefaults.baseWage,
+    contractType: dirtyFields.has('contractType') ? current.contractType : nextDefaults.contractType,
+    region: dirtyFields.has('region') ? current.region : nextDefaults.region,
+    payFunction: dirtyFields.has('payFunction') ? current.payFunction : nextDefaults.payFunction,
+    departmentId: dirtyFields.has('departmentId') ? current.departmentId : nextDefaults.departmentId,
+    jobTitle: dirtyFields.has('jobTitle') ? current.jobTitle : nextDefaults.jobTitle,
+    termMonths: current.termMonths,
+    contractEndOn: current.contractEndOn,
+    allowDirectHire: current.allowDirectHire,
   };
 }
 
@@ -415,16 +449,39 @@ export function CandidateForm({
   );
 }
 
-export function RecruitingBriefPanel({ candidateId }: { candidateId: string }) {
+export function RecruitingBriefPanel({
+  candidateId,
+  candidateVersion = '',
+}: {
+  candidateId: string;
+  candidateVersion?: string;
+}) {
   const t = useTranslations('hrRecruiting');
   const locale = useLocale();
   const lang = locale === 'en' ? 'en' : 'vi';
-  const [brief, setBrief] = useState<HrRecruitingBriefResult | null>(null);
+  const versionKey = `${candidateId}:${lang}:${candidateVersion}`;
+  const currentVersionRef = useRef(versionKey);
+  currentVersionRef.current = versionKey;
+  const [briefState, setBriefState] = useState<{ key: string; result: HrRecruitingBriefResult } | null>(null);
+  const [errorKey, setErrorKey] = useState<string | null>(null);
 
   const ask = useMutation({
-    mutationFn: () => client.hr.recruiting.brief({ candidateId, lang }),
-    onSuccess: (res) => setBrief(res),
+    mutationFn: async (requestedKey: string) => {
+      const result = await client.hr.recruiting.brief({ candidateId, lang });
+      return { requestedKey, result };
+    },
+    onSuccess: ({ requestedKey, result }) => {
+      if (requestedKey !== currentVersionRef.current) return;
+      setErrorKey(null);
+      setBriefState({ key: requestedKey, result });
+    },
+    onError: (_err, requestedKey) => {
+      if (requestedKey === currentVersionRef.current) setErrorKey(requestedKey);
+    },
   });
+
+  const brief = briefState?.key === versionKey ? briefState.result : null;
+  const showError = Boolean(ask.error) && errorKey === versionKey;
 
   return (
     <section className="mt-4 border-t pt-4" data-testid="hr-recruiting-ly-panel">
@@ -433,11 +490,11 @@ export function RecruitingBriefPanel({ candidateId }: { candidateId: string }) {
           <h3 className="text-sm font-medium text-foreground">{t('ly.title')}</h3>
           <p className="text-xs text-subtle-foreground">{t('ly.subtitle')}</p>
         </div>
-        <Button size="sm" variant="outline" loading={ask.isPending} onClick={() => ask.mutate()} data-testid="hr-recruiting-ly-brief">
+        <Button size="sm" variant="outline" loading={ask.isPending} onClick={() => ask.mutate(versionKey)} data-testid="hr-recruiting-ly-brief">
           {t('ly.run')}
         </Button>
       </div>
-      {ask.error && <ErrorText>{errorMessage(ask.error)}</ErrorText>}
+      {showError && ask.error && <ErrorText>{errorMessage(ask.error)}</ErrorText>}
       {brief && (
         <div className="mt-3 space-y-2 rounded-md border bg-muted/20 p-3 text-sm" data-testid="hr-recruiting-ly-result">
           <div className="flex flex-wrap gap-2">
@@ -625,32 +682,79 @@ export function HireCandidatePanel({
   departments: readonly HrDepartmentView[];
 }) {
   const t = useTranslations('hrRecruiting');
-  const defaults = buildHireDefaults(candidate, opening);
   const entityDepartments = departments.filter((d) => d.archivedAt === null && d.legalEntityId === candidate.legalEntityId);
-  const initialDepartmentId = entityDepartments.some((d) => d.id === defaults.departmentId) ? defaults.departmentId : '';
-  const [effectiveFrom, setEffectiveFrom] = useState(defaults.effectiveFrom);
-  const [baseWage, setBaseWage] = useState(defaults.baseWage);
-  const [contractType, setContractType] = useState<HrContractType>(defaults.contractType);
-  const [region, setRegion] = useState<HrRegion>(defaults.region);
-  const [payFunction, setPayFunction] = useState<HrPayFunction>(defaults.payFunction);
-  const [departmentId, setDepartmentId] = useState(initialDepartmentId);
-  const [jobTitle, setJobTitle] = useState(defaults.jobTitle);
-  const [allowDirectHire, setAllowDirectHire] = useState(false);
+  const rawDefaults = buildHireDefaults(candidate, opening);
+  const defaultDepartmentId = entityDepartments.some((d) => d.id === rawDefaults.departmentId) ? rawDefaults.departmentId : '';
+  const initialDraft: HireFormDraft = {
+    ...rawDefaults,
+    departmentId: defaultDepartmentId,
+    termMonths: '',
+    contractEndOn: '',
+    allowDirectHire: false,
+  };
+
+  const candidateIdRef = useRef(candidate.id);
+  const dirtyRef = useRef(new Set<HireDraftField>());
+  const [draft, setDraft] = useState<HireFormDraft>(initialDraft);
+
+  useEffect(() => {
+    const nextDefaults = {
+      effectiveFrom: rawDefaults.effectiveFrom,
+      baseWage: rawDefaults.baseWage,
+      contractType: rawDefaults.contractType,
+      region: rawDefaults.region,
+      payFunction: rawDefaults.payFunction,
+      departmentId: defaultDepartmentId,
+      jobTitle: rawDefaults.jobTitle,
+    };
+    if (candidateIdRef.current !== candidate.id) {
+      candidateIdRef.current = candidate.id;
+      dirtyRef.current.clear();
+      setDraft({ ...nextDefaults, termMonths: '', contractEndOn: '', allowDirectHire: false });
+      return;
+    }
+    setDraft((prev) => mergeHireDraft(prev, dirtyRef.current, nextDefaults));
+  }, [
+    candidate.id,
+    candidate.openingId,
+    rawDefaults.effectiveFrom,
+    rawDefaults.baseWage,
+    rawDefaults.contractType,
+    rawDefaults.region,
+    rawDefaults.payFunction,
+    defaultDepartmentId,
+    rawDefaults.jobTitle,
+  ]);
+
+  const updateField = <K extends HireDraftField>(field: K, value: HireFormDraft[K]) => {
+    dirtyRef.current.add(field);
+    setDraft((prev) => ({ ...prev, [field]: value }));
+  };
 
   const needsOverride = candidate.stage !== 'offer' && candidate.stage !== 'hired';
+  const trimmedTermMonths = draft.termMonths.trim();
+  const parsedTermMonths = trimmedTermMonths === '' ? null : Number(trimmedTermMonths);
+  const termMonthsValid =
+    parsedTermMonths === null || (Number.isInteger(parsedTermMonths) && parsedTermMonths >= 1 && parsedTermMonths <= 36);
+  const fixedTermMissing = draft.contractType === 'fixed_term' && parsedTermMonths === null && draft.contractEndOn === '';
+  const fixedTermEndBeforeStart =
+    draft.contractType === 'fixed_term' && draft.contractEndOn !== '' && draft.effectiveFrom !== '' && draft.contractEndOn < draft.effectiveFrom;
+  const fixedTermValid = draft.contractType !== 'fixed_term' || (termMonthsValid && !fixedTermMissing && !fixedTermEndBeforeStart);
 
   const hire = useMutation({
     mutationFn: () =>
       client.hr.recruiting.candidates.hire({
         candidateId: candidate.id,
-        effectiveFrom,
-        baseWage: baseWage.trim(),
-        contractType,
-        region,
-        payFunction,
-        ...(departmentId ? { departmentId } : { departmentId: null }),
-        ...(jobTitle.trim() ? { jobTitle: jobTitle.trim() } : { jobTitle: null }),
-        allowDirectHire,
+        effectiveFrom: draft.effectiveFrom,
+        baseWage: draft.baseWage.trim(),
+        contractType: draft.contractType,
+        region: draft.region,
+        payFunction: draft.payFunction,
+        ...(draft.contractType === 'fixed_term' && parsedTermMonths !== null ? { termMonths: parsedTermMonths } : {}),
+        ...(draft.contractType === 'fixed_term' && draft.contractEndOn ? { contractEndOn: draft.contractEndOn } : {}),
+        ...(draft.departmentId ? { departmentId: draft.departmentId } : { departmentId: null }),
+        ...(draft.jobTitle.trim() ? { jobTitle: draft.jobTitle.trim() } : { jobTitle: null }),
+        allowDirectHire: draft.allowDirectHire,
       }),
     onSuccess: async () => {
       await refresh();
@@ -666,7 +770,8 @@ export function HireCandidatePanel({
   }
   if (candidate.stage === 'rejected' || candidate.erasedAt !== null) return null;
 
-  const canSubmit = effectiveFrom.trim() !== '' && WAGE_RE.test(baseWage.trim()) && (!needsOverride || allowDirectHire);
+  const canSubmit =
+    draft.effectiveFrom.trim() !== '' && WAGE_RE.test(draft.baseWage.trim()) && fixedTermValid && (!needsOverride || draft.allowDirectHire);
 
   return (
     <section className="mt-4 border-t pt-4" data-testid="hr-hire-panel">
@@ -674,19 +779,19 @@ export function HireCandidatePanel({
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <div className="space-y-1">
           <Label htmlFor="hr-hire-date">{t('fields.plannedStartOn')}</Label>
-          <Input id="hr-hire-date" type="date" value={effectiveFrom} onChange={(e) => setEffectiveFrom(e.target.value)} />
+          <Input id="hr-hire-date" type="date" value={draft.effectiveFrom} onChange={(e) => updateField('effectiveFrom', e.target.value)} />
         </div>
         <div className="space-y-1">
           <Label htmlFor="hr-hire-wage">{t('fields.agreedWage')}</Label>
-          <Input id="hr-hire-wage" inputMode="numeric" value={baseWage} onChange={(e) => setBaseWage(e.target.value)} />
+          <Input id="hr-hire-wage" inputMode="numeric" value={draft.baseWage} onChange={(e) => updateField('baseWage', e.target.value)} />
         </div>
         <div className="space-y-1">
           <Label htmlFor="hr-hire-title">{t('fields.jobTitle')}</Label>
-          <Input id="hr-hire-title" maxLength={160} value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} />
+          <Input id="hr-hire-title" maxLength={160} value={draft.jobTitle} onChange={(e) => updateField('jobTitle', e.target.value)} />
         </div>
         <div className="space-y-1">
           <Label htmlFor="hr-hire-contract">{t('fields.contractType')}</Label>
-          <NativeSelect id="hr-hire-contract" value={contractType} onChange={(e) => setContractType(e.target.value as HrContractType)}>
+          <NativeSelect id="hr-hire-contract" value={draft.contractType} onChange={(e) => updateField('contractType', e.target.value as HrContractType)}>
             {HR_CONTRACT_TYPES.map((ct) => (
               <NativeSelectOption key={ct} value={ct}>
                 {t(`contracts.${ct}`)}
@@ -694,9 +799,33 @@ export function HireCandidatePanel({
             ))}
           </NativeSelect>
         </div>
+        {draft.contractType === 'fixed_term' && (
+          <>
+            <div className="space-y-1">
+              <Label htmlFor="hr-hire-term-months">{t('fields.termMonths')}</Label>
+              <Input
+                id="hr-hire-term-months"
+                data-testid="hr-hire-term-months"
+                inputMode="numeric"
+                value={draft.termMonths}
+                onChange={(e) => updateField('termMonths', e.target.value.replace(/\D/g, ''))}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="hr-hire-contract-end">{t('fields.contractEndOn')}</Label>
+              <Input
+                id="hr-hire-contract-end"
+                data-testid="hr-hire-contract-end"
+                type="date"
+                value={draft.contractEndOn}
+                onChange={(e) => updateField('contractEndOn', e.target.value)}
+              />
+            </div>
+          </>
+        )}
         <div className="space-y-1">
           <Label htmlFor="hr-hire-region">{t('fields.region')}</Label>
-          <NativeSelect id="hr-hire-region" value={region} onChange={(e) => setRegion(e.target.value as HrRegion)}>
+          <NativeSelect id="hr-hire-region" value={draft.region} onChange={(e) => updateField('region', e.target.value as HrRegion)}>
             {HR_REGIONS.map((r) => (
               <NativeSelectOption key={r} value={r}>
                 {t('regionOption', { region: r })}
@@ -706,7 +835,7 @@ export function HireCandidatePanel({
         </div>
         <div className="space-y-1">
           <Label htmlFor="hr-hire-payfn">{t('fields.payFunction')}</Label>
-          <NativeSelect id="hr-hire-payfn" value={payFunction} onChange={(e) => setPayFunction(e.target.value as HrPayFunction)}>
+          <NativeSelect id="hr-hire-payfn" value={draft.payFunction} onChange={(e) => updateField('payFunction', e.target.value as HrPayFunction)}>
             {HR_PAY_FUNCTIONS.map((pf) => (
               <NativeSelectOption key={pf} value={pf}>
                 {t(`payFunctions.${pf}`)}
@@ -717,7 +846,7 @@ export function HireCandidatePanel({
         {entityDepartments.length > 0 && (
           <div className="space-y-1">
             <Label htmlFor="hr-hire-dept">{t('fields.department')}</Label>
-            <NativeSelect id="hr-hire-dept" value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
+            <NativeSelect id="hr-hire-dept" value={draft.departmentId} onChange={(e) => updateField('departmentId', e.target.value)}>
               <NativeSelectOption value="">{t('fields.noDepartment')}</NativeSelectOption>
               {entityDepartments.map((d) => (
                 <NativeSelectOption key={d.id} value={d.id}>
@@ -728,9 +857,16 @@ export function HireCandidatePanel({
           </div>
         )}
       </div>
+      {draft.contractType === 'fixed_term' && !termMonthsValid && <ErrorText>{t('hire.fixedTermRangeError')}</ErrorText>}
+      {fixedTermEndBeforeStart && <ErrorText>{t('hire.fixedTermEndBeforeStart')}</ErrorText>}
+      {fixedTermMissing && (
+        <p className="mt-2 text-xs text-subtle-foreground" data-testid="hr-hire-fixed-term-hint">
+          {t('hire.fixedTermHint')}
+        </p>
+      )}
       {needsOverride && (
         <label className="mt-3 flex items-center gap-2 text-xs text-subtle-foreground">
-          <input type="checkbox" checked={allowDirectHire} onChange={(e) => setAllowDirectHire(e.target.checked)} />
+          <input type="checkbox" checked={draft.allowDirectHire} onChange={(e) => updateField('allowDirectHire', e.target.checked)} />
           {t('hire.allowDirect')}
         </label>
       )}
@@ -888,8 +1024,11 @@ export function CandidateDetailPanel({
       {candidate.erasedAt === null && (
         <>
           <InterviewSchedulePanel key={`${candidate.id}-${candidate.interviewStartsAt ?? 'none'}`} candidate={candidate} />
-          <RecruitingBriefPanel candidateId={candidate.id} />
-          <HireCandidatePanel key={`${candidate.id}-${candidate.stage}-${candidate.agreedWage ?? ''}-${candidate.plannedStartOn ?? ''}`} candidate={candidate} opening={opening} departments={departments} />
+          <RecruitingBriefPanel
+            candidateId={candidate.id}
+            candidateVersion={`${candidate.updatedAt}:${candidate.openingId ?? ''}:${candidate.interviewEventId ?? ''}:${opening?.updatedAt ?? ''}:${candidate.openingTitle ?? ''}:${candidate.departmentName ?? ''}`}
+          />
+          <HireCandidatePanel key={candidate.id} candidate={candidate} opening={opening} departments={departments} />
         </>
       )}
 
@@ -1004,6 +1143,7 @@ export function HrRecruitingPage() {
             {t('showClosedOpenings')}
           </label>
         </div>
+        {toggleOpening.error && <ErrorText>{errorMessage(toggleOpening.error)}</ErrorText>}
         {openingsQuery.isPending ? (
           <TableSkeleton columns={5} />
         ) : openingsQuery.error ? (

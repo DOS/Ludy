@@ -108,7 +108,10 @@ export const zHrOpeningAdd = z
     requiredSkills: zSkills.default([]),
   })
   .refine(
-    (v) => !v.budgetMinWage || !v.budgetMaxWage || wageToCents(v.budgetMaxWage) >= wageToCents(v.budgetMinWage),
+    (v) =>
+      !zHrWage.safeParse(v.budgetMinWage).success ||
+      !zHrWage.safeParse(v.budgetMaxWage).success ||
+      wageToCents(v.budgetMaxWage as string) >= wageToCents(v.budgetMinWage as string),
     { message: 'budgetMaxWage must be greater than or equal to budgetMinWage', path: ['budgetMaxWage'] },
   );
 export type HrOpeningAdd = z.input<typeof zHrOpeningAdd>;
@@ -127,7 +130,10 @@ export const zHrOpeningEdit = z
     requiredSkills: zSkills.optional(),
   })
   .refine(
-    (v) => !v.budgetMinWage || !v.budgetMaxWage || wageToCents(v.budgetMaxWage) >= wageToCents(v.budgetMinWage),
+    (v) =>
+      !zHrWage.safeParse(v.budgetMinWage).success ||
+      !zHrWage.safeParse(v.budgetMaxWage).success ||
+      wageToCents(v.budgetMaxWage as string) >= wageToCents(v.budgetMinWage as string),
     { message: 'budgetMaxWage must be greater than or equal to budgetMinWage', path: ['budgetMaxWage'] },
   );
 export type HrOpeningEdit = z.input<typeof zHrOpeningEdit>;

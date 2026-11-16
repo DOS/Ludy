@@ -1214,6 +1214,8 @@ export const en = {
       stage: 'Stage',
       interview: 'Interview',
       jobTitle: 'Job title on hire',
+      termMonths: 'Term (months)',
+      contractEndOn: 'Contract end date',
     },
     pipeline: {
       moveTo: 'Move stage',
@@ -1268,6 +1270,9 @@ export const en = {
       submit: 'Hire & create employee record',
       allowDirect: 'Allow direct hire without going through Offer stage',
       completed: 'Created employee record and initial employment contract (employee ID: {employeeId}).',
+      fixedTermHint: 'Fixed-term contracts require a term in months (1-36) or a contract end date.',
+      fixedTermRangeError: 'Fixed-term duration must be between 1 and 36 months.',
+      fixedTermEndBeforeStart: 'Contract end date cannot be earlier than the start date.',
     },
     erase: {
       action: 'Erase candidate personal data (PDPL)',

@@ -1212,6 +1212,8 @@ export const vi = {
       stage: 'Giai đoạn',
       interview: 'Lịch phỏng vấn',
       jobTitle: 'Chức danh khi nhận việc',
+      termMonths: 'Thời hạn HĐ (tháng)',
+      contractEndOn: 'Ngày hết hạn hợp đồng',
     },
     pipeline: {
       moveTo: 'Chuyển giai đoạn',
@@ -1266,6 +1268,9 @@ export const vi = {
       submit: 'Nhận việc & tạo hồ sơ nhân viên',
       allowDirect: 'Xác nhận nhận việc trực tiếp không qua bước Đề nghị nhận việc',
       completed: 'Đã tạo hồ sơ nhân viên và dòng hợp đồng đầu tiên (mã nhân viên: {employeeId}).',
+      fixedTermHint: 'Hợp đồng xác định thời hạn cần nhập thời hạn (1-36 tháng) hoặc ngày hết hạn hợp đồng.',
+      fixedTermRangeError: 'Thời hạn hợp đồng xác định thời hạn phải từ 1 đến 36 tháng.',
+      fixedTermEndBeforeStart: 'Ngày hết hạn hợp đồng phải sau hoặc bằng ngày bắt đầu làm việc.',
     },
     erase: {
       action: 'Xóa dữ liệu cá nhân ứng viên (PDPL)',

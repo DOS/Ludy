@@ -192,6 +192,18 @@ const openingNotFound = () => new DomainError('HR_OPENING_NOT_FOUND', 404, 'Khô
 const candidateNotFound = () => new DomainError('HR_CANDIDATE_NOT_FOUND', 404, 'Không tìm thấy ứng viên này');
 const candidateErased = () => new DomainError('HR_CANDIDATE_ERASED', 409, 'Hồ sơ ứng viên này đã được xóa theo yêu cầu');
 
+async function hasActiveInterview(ctx: Pick<CommandContext, 'trx' | 'orgId'>, interviewEventId: string | null): Promise<boolean> {
+  if (!interviewEventId) return false;
+  const row = await ctx.trx
+    .selectFrom('crove_kernel.calendar_event')
+    .select('id')
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', interviewEventId)
+    .where('status', '=', 'active')
+    .executeTakeFirst();
+  return Boolean(row);
+}
+
 async function lockOpening(ctx: CommandContext, openingId: string) {
   const row = await ctx.trx
     .selectFrom('crove_hr.job_opening')
@@ -355,7 +367,7 @@ function toCandidateView(r: {
   agreed_wage: string | null;
   planned_start_on: Date | string | null;
   notes: string | null;
-  interview_event_id: string | null;
+  active_interview_event_id: string | null;
   interview_starts_at: Date | string | null;
   interview_ends_at: Date | string | null;
   hired_employee_id: string | null;
@@ -364,6 +376,7 @@ function toCandidateView(r: {
   updated_at: Date | string;
 }): HrCandidateView {
   const erased = r.erased_at !== null;
+  const hasActive = r.active_interview_event_id !== null;
   return {
     id: r.id,
     legalEntityId: r.legal_entity_id,
@@ -381,9 +394,9 @@ function toCandidateView(r: {
     agreedWage: r.agreed_wage,
     plannedStartOn: isoDateNullable(r.planned_start_on),
     notes: erased ? null : r.notes,
-    interviewEventId: r.interview_event_id,
-    interviewStartsAt: isoInstantNullable(r.interview_starts_at),
-    interviewEndsAt: isoInstantNullable(r.interview_ends_at),
+    interviewEventId: r.active_interview_event_id,
+    interviewStartsAt: hasActive ? isoInstantNullable(r.interview_starts_at) : null,
+    interviewEndsAt: hasActive ? isoInstantNullable(r.interview_ends_at) : null,
     hiredEmployeeId: r.hired_employee_id,
     erasedAt: isoInstantNullable(r.erased_at),
     createdAt: isoInstant(r.created_at),
@@ -400,6 +413,9 @@ export const candidateList = defineQuery({
     let q = ctx.trx
       .selectFrom('crove_hr.candidate as c')
       .leftJoin('crove_hr.job_opening as o', (join) => join.onRef('o.org_id', '=', 'c.org_id').onRef('o.id', '=', 'c.opening_id'))
+      .leftJoin('crove_kernel.calendar_event as e', (join) =>
+        join.onRef('e.org_id', '=', 'c.org_id').onRef('e.id', '=', 'c.interview_event_id').on('e.status', '=', 'active'),
+      )
       .select([
         'c.id',
         'c.legal_entity_id',
@@ -417,7 +433,7 @@ export const candidateList = defineQuery({
         'c.agreed_wage',
         'c.planned_start_on',
         'c.notes',
-        'c.interview_event_id',
+        'e.id as active_interview_event_id',
         'c.interview_starts_at',
         'c.interview_ends_at',
         'c.hired_employee_id',
@@ -443,6 +459,9 @@ export const candidateGet = defineQuery({
     const row = await ctx.trx
       .selectFrom('crove_hr.candidate as c')
       .leftJoin('crove_hr.job_opening as o', (join) => join.onRef('o.org_id', '=', 'c.org_id').onRef('o.id', '=', 'c.opening_id'))
+      .leftJoin('crove_kernel.calendar_event as e', (join) =>
+        join.onRef('e.org_id', '=', 'c.org_id').onRef('e.id', '=', 'c.interview_event_id').on('e.status', '=', 'active'),
+      )
       .select([
         'c.id',
         'c.legal_entity_id',
@@ -460,7 +479,7 @@ export const candidateGet = defineQuery({
         'c.agreed_wage',
         'c.planned_start_on',
         'c.notes',
-        'c.interview_event_id',
+        'e.id as active_interview_event_id',
         'c.interview_starts_at',
         'c.interview_ends_at',
         'c.hired_employee_id',
@@ -524,6 +543,9 @@ export const recruitingBriefRead = defineQuery({
     const row = await ctx.trx
       .selectFrom('crove_hr.candidate as c')
       .leftJoin('crove_hr.job_opening as o', (join) => join.onRef('o.org_id', '=', 'c.org_id').onRef('o.id', '=', 'c.opening_id'))
+      .leftJoin('crove_kernel.calendar_event as e', (join) =>
+        join.onRef('e.org_id', '=', 'c.org_id').onRef('e.id', '=', 'c.interview_event_id').on('e.status', '=', 'active'),
+      )
       .select([
         'c.id',
         'c.display_name',
@@ -536,7 +558,7 @@ export const recruitingBriefRead = defineQuery({
         'c.agreed_wage',
         'c.planned_start_on',
         'c.notes',
-        'c.interview_event_id',
+        'e.id as active_interview_event_id',
         'c.erased_at',
         'o.title as opening_title',
         'o.department_name as opening_department_name',
@@ -590,7 +612,7 @@ export const recruitingBriefRead = defineQuery({
         budgetMaxWage: row.opening_budget_max_wage ?? null,
         agreedWage: row.agreed_wage,
         startDate: isoDateNullable(row.planned_start_on),
-        hasScheduledInterview: row.interview_event_id !== null,
+        hasScheduledInterview: row.active_interview_event_id !== null,
         notes,
       },
       forbidden: [...forbiddenSet],
@@ -919,7 +941,7 @@ export const candidateMoveStage = defineCommand({
     const transition = checkCandidateTransition({
       from: existing.stage,
       to: input.toStage,
-      hasScheduledInterview: existing.interview_event_id !== null,
+      hasScheduledInterview: await hasActiveInterview(ctx, existing.interview_event_id),
       agreedWage: nextAgreedWage,
       startDate: nextPlannedStart,
       allowReopen: input.allowReopen,
@@ -1112,6 +1134,7 @@ export const candidateHire = defineCommand({
           .select(['id', 'department_id', 'title', 'contract_type', 'region', 'pay_function'])
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', existing.opening_id)
+          .forShare()
           .executeTakeFirst()
       : undefined;
 
@@ -1120,7 +1143,7 @@ export const candidateHire = defineCommand({
     const transition = checkCandidateTransition({
       from: existing.stage,
       to: 'hired',
-      hasScheduledInterview: existing.interview_event_id !== null,
+      hasScheduledInterview: await hasActiveInterview(ctx, existing.interview_event_id),
       agreedWage: baseWage,
       startDate: effectiveFrom,
       allowDirectHire: input.allowDirectHire,
@@ -1136,6 +1159,18 @@ export const candidateHire = defineCommand({
     const region = input.region ?? (opening?.region as HrRegion | undefined) ?? 'I';
     const payFunction = input.payFunction ?? defaultPayFunction;
     const jobTitle = input.jobTitle !== undefined ? input.jobTitle : (opening?.title ?? null);
+
+    if (
+      contractType === 'fixed_term' &&
+      (input.termMonths === undefined || input.termMonths === null) &&
+      (input.contractEndOn === undefined || input.contractEndOn === null)
+    ) {
+      throw new DomainError(
+        'HR_CONTRACT_INVALID',
+        422,
+        'Hợp đồng xác định thời hạn cần nhập thời hạn (tháng) hoặc ngày hết hạn hợp đồng',
+      );
+    }
 
     const prepared = prepareEmploymentTerms(
       {
