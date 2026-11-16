@@ -863,22 +863,32 @@ GRANT EXECUTE ON FUNCTION crove_sign.personal_erase_otp(text) TO crove_tenant;
 CREATE OR REPLACE FUNCTION crove_sign.work_recovery_candidates(
   p_older_than timestamptz,
   p_limit integer DEFAULT 100,
-  p_org_id uuid DEFAULT NULL
+  p_org_id uuid DEFAULT NULL,
+  p_after_updated_at timestamptz DEFAULT NULL,
+  p_after_org_id uuid DEFAULT NULL,
+  p_after_envelope_id uuid DEFAULT NULL
 )
-RETURNS TABLE(work_kind text, org_id uuid, envelope_id uuid)
+RETURNS TABLE(work_kind text, org_id uuid, envelope_id uuid, updated_at timestamptz)
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = pg_catalog, pg_temp
 AS $$
 DECLARE
   v_limit integer := LEAST(GREATEST(COALESCE(p_limit, 100), 1), 500);
+  v_has_cursor boolean := p_after_updated_at IS NOT NULL
+    AND p_after_org_id IS NOT NULL
+    AND p_after_envelope_id IS NOT NULL;
 BEGIN
   IF NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER') THEN
     RAISE EXCEPTION 'SIGN_RECOVERY_WORKER_ONLY' USING ERRCODE = '42501';
   END IF;
+  IF (p_after_updated_at IS NULL) <> (p_after_org_id IS NULL)
+     OR (p_after_updated_at IS NULL) <> (p_after_envelope_id IS NULL) THEN
+    RAISE EXCEPTION 'SIGN_RECOVERY_INVALID_CURSOR' USING ERRCODE = '22023';
+  END IF;
 
   RETURN QUERY
-  SELECT q.work_kind, q.org_id, q.envelope_id
+  SELECT q.work_kind, q.org_id, q.envelope_id, q.updated_at
   FROM (
     SELECT 'inspect'::text AS work_kind, e.org_id, e.id AS envelope_id, e.updated_at
     FROM crove_sign.envelope e
@@ -889,6 +899,7 @@ BEGIN
       AND e.status = 'draft'
       AND e.inspect_status = 'pending'
       AND e.updated_at <= p_older_than
+      AND (NOT v_has_cursor OR (e.updated_at, e.org_id, e.id) > (p_after_updated_at, p_after_org_id, p_after_envelope_id))
     UNION ALL
     SELECT 'seal'::text AS work_kind, e.org_id, e.id AS envelope_id, e.updated_at
     FROM crove_sign.envelope e
@@ -899,19 +910,20 @@ BEGIN
       AND e.status = 'completed'
       AND e.seal_status IS NULL
       AND e.updated_at <= p_older_than
+      AND (NOT v_has_cursor OR (e.updated_at, e.org_id, e.id) > (p_after_updated_at, p_after_org_id, p_after_envelope_id))
   ) q
-  ORDER BY q.updated_at ASC, q.envelope_id ASC
+  ORDER BY q.updated_at ASC, q.org_id ASC, q.envelope_id ASC
   LIMIT v_limit;
 END $$;
 
-REVOKE ALL ON FUNCTION crove_sign.work_recovery_candidates(timestamptz, integer, uuid) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
-GRANT EXECUTE ON FUNCTION crove_sign.work_recovery_candidates(timestamptz, integer, uuid) TO crove_worker;
+REVOKE ALL ON FUNCTION crove_sign.work_recovery_candidates(timestamptz, integer, uuid, timestamptz, uuid, uuid) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+GRANT EXECUTE ON FUNCTION crove_sign.work_recovery_candidates(timestamptz, integer, uuid, timestamptz, uuid, uuid) TO crove_worker;
 
 -- ---------------------------------------------------------------------------
 -- 7. Queues
 -- ---------------------------------------------------------------------------
-SELECT crove_jobs.create_queue('sign-pdf-inspect', '{"policy":"standard","deadLetter":"kernel-job.dlq"}'::jsonb);
-SELECT crove_jobs.create_queue('sign-pdf-seal', '{"policy":"standard","deadLetter":"kernel-job.dlq"}'::jsonb);
+SELECT crove_jobs.create_queue('sign-pdf-inspect', '{"policy":"exclusive","deadLetter":"kernel-job.dlq"}'::jsonb);
+SELECT crove_jobs.create_queue('sign-pdf-seal', '{"policy":"exclusive","deadLetter":"kernel-job.dlq"}'::jsonb);
 SELECT crove_jobs.create_queue('sign-expire-sweep', '{"policy":"standard","deadLetter":"kernel-job.dlq"}'::jsonb);
 SELECT crove_jobs.create_queue('sign-cleanup', '{"policy":"standard","deadLetter":"kernel-job.dlq"}'::jsonb);
 

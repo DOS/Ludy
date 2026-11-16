@@ -4,6 +4,7 @@
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
+import { sql } from 'kysely';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@crove/db';
@@ -1344,6 +1345,55 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     });
     expect(onRecovered.inspect).toBeGreaterThanOrEqual(1);
     expect(onInspectIds).toContain(pendingEnv.envelopeId);
+
+    // Unentitled org rows sorted earlier across page boundaries do not starve entitled orgs (#3323).
+    const createdBlocked = await rpc('org/create', owner, { name: 'Sign Unentitled Org', idempotencyKey: randomUUID() }, null);
+    expect(createdBlocked.status).toBe(200);
+    const blockedOrgId = String(createdBlocked.body.orgId);
+    const blockedSlug = String(createdBlocked.body.slug);
+    const blockedUpload = await uploadFile(app, owner, pdfFixture('blocked-org'), 'blocked.pdf', 'sign_document', 'application/pdf', blockedSlug);
+    expect(blockedUpload.status).toBe(200);
+    const blockedFileId = ((blockedUpload.body?.files as Array<{ fileId: string }>) ?? [])[0]!.fileId;
+    const blockedEnv1 = await runtime.execute<{ envelopeId: string }>(
+      'sign.envelope.create',
+      { title: 'Blocked Older 1', sourceFileId: blockedFileId },
+      { actor: asUser(owner), orgId: blockedOrgId },
+    );
+    const blockedEnv2 = await runtime.execute<{ envelopeId: string }>(
+      'sign.envelope.create',
+      { title: 'Blocked Older 2', sourceFileId: blockedFileId },
+      { actor: asUser(owner), orgId: blockedOrgId },
+    );
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(
+        "UPDATE crove_sign.envelope SET updated_at = '2026-01-01T00:00:00.123456Z' WHERE org_id = $1 AND id = ANY($2::uuid[])",
+        [blockedOrgId, [blockedEnv1.envelopeId, blockedEnv2.envelopeId]],
+      );
+      await c.query('COMMIT');
+    });
+    const pagedInspectIds: string[] = [];
+    let appOnCalls = 0;
+    const pagedRecovered = await sweepSignPendingWork({
+      workerDb,
+      batchSize: 1,
+      appOn: async (id) => {
+        appOnCalls += 1;
+        return id === regOrgId;
+      },
+      olderThan: new Date(Date.now() + 5_000),
+      enqueueInspect: async (_orgId, envId) => {
+        pagedInspectIds.push(envId);
+      },
+      enqueueSeal: async () => {},
+    });
+    expect(pagedRecovered).toEqual({ inspect: 1, seal: 0 });
+    expect(pagedInspectIds).toEqual([pendingEnv.envelopeId]);
+    expect(appOnCalls).toBe(2);
+    await expect(
+      sql`SELECT 1 FROM crove_sign.work_recovery_candidates(now(), 10, NULL, now(), NULL, NULL)`.execute(workerDb),
+    ).rejects.toMatchObject({ code: '22023' });
 
     // 7. Inbound email attaching a colliding sign_document PDF keeps the sign source as duplicate without failing valid attachments.
     const invoicePdf = pdfFixture('inbound-invoice');

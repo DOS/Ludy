@@ -356,6 +356,40 @@ export async function sweepSignCleanup(deps: SignSweepDeps): Promise<{
   return totals;
 }
 
+const MAX_RECOVERY_PAGES = 100;
+
+interface RecoveryCursor {
+  updatedAt: string;
+  orgId: string;
+  envelopeId: string;
+}
+
+async function fetchSignRecoveryPage(
+  workerDb: Db,
+  olderThan: Date,
+  batchSize: number,
+  orgId: string | null,
+  after: RecoveryCursor | null,
+) {
+  const { rows } = await sql<{
+    work_kind: 'inspect' | 'seal';
+    org_id: string;
+    envelope_id: string;
+    updated_at_cursor: string;
+  }>`
+    SELECT work_kind, org_id, envelope_id, updated_at::text AS updated_at_cursor
+    FROM crove_sign.work_recovery_candidates(
+      ${olderThan}::timestamptz,
+      ${batchSize},
+      ${orgId}::uuid,
+      ${after?.updatedAt ?? null}::timestamptz,
+      ${after?.orgId ?? null}::uuid,
+      ${after?.envelopeId ?? null}::uuid
+    )
+  `.execute(workerDb);
+  return rows;
+}
+
 export interface SignPendingWorkDeps {
   workerDb: Db;
   appOn?: (orgId: string) => Promise<boolean>;
@@ -363,14 +397,14 @@ export interface SignPendingWorkDeps {
   enqueueSeal: (orgId: string, envelopeId: string) => Promise<void>;
   orgId?: string;
   olderThan?: Date;
+  batchSize?: number;
+  maxPages?: number;
 }
 
 export async function sweepSignPendingWork(deps: SignPendingWorkDeps): Promise<{ inspect: number; seal: number }> {
   const olderThan = deps.olderThan ?? new Date(Date.now() - 60_000);
-  const { rows } = await sql<{ work_kind: 'inspect' | 'seal'; org_id: string; envelope_id: string }>`
-    SELECT work_kind, org_id, envelope_id
-    FROM crove_sign.work_recovery_candidates(${olderThan}::timestamptz, ${SWEEP_ORG_BATCH}, ${deps.orgId ?? null}::uuid)
-  `.execute(deps.workerDb);
+  const batchSize = Math.min(Math.max(Math.trunc(deps.batchSize ?? SWEEP_ORG_BATCH), 1), 500);
+  const maxPages = Math.max(Math.trunc(deps.maxPages ?? MAX_RECOVERY_PAGES), 1);
   const enabledCache = new Map<string, boolean>();
   const isEnabled = async (orgId: string) => {
     if (!deps.appOn) return true;
@@ -382,15 +416,22 @@ export async function sweepSignPendingWork(deps: SignPendingWorkDeps): Promise<{
   };
   let inspect = 0;
   let seal = 0;
-  for (const row of rows) {
-    if (!(await isEnabled(row.org_id))) continue;
-    if (row.work_kind === 'inspect') {
-      await deps.enqueueInspect(row.org_id, row.envelope_id);
-      inspect += 1;
-    } else {
-      await deps.enqueueSeal(row.org_id, row.envelope_id);
-      seal += 1;
+  let after: RecoveryCursor | null = null;
+  for (let page = 0; page < maxPages; page += 1) {
+    const rows = await fetchSignRecoveryPage(deps.workerDb, olderThan, batchSize, deps.orgId ?? null, after);
+    for (const row of rows) {
+      if (!(await isEnabled(row.org_id))) continue;
+      if (row.work_kind === 'inspect') {
+        await deps.enqueueInspect(row.org_id, row.envelope_id);
+        inspect += 1;
+      } else {
+        await deps.enqueueSeal(row.org_id, row.envelope_id);
+        seal += 1;
+      }
     }
+    const last = rows.at(-1);
+    if (!last || rows.length < batchSize) break;
+    after = { updatedAt: last.updated_at_cursor, orgId: last.org_id, envelopeId: last.envelope_id };
   }
   return { inspect, seal };
 }
