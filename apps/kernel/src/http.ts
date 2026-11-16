@@ -201,6 +201,7 @@ import {
   StreamConnection,
   newTicket,
   streamScopeOf,
+  STREAM_FILTERED_APPS,
   ticketActor,
   ticketHash,
   wellFormedTicket,
@@ -1498,7 +1499,15 @@ export function createHttpApp(deps: HttpDeps) {
       // The stream's access line names the org the ticket was issued for (#2175).
       setLogContext({ orgId });
       // The check also answers the legal-entity scope the stream's hints are filtered by (#1692).
-      const check = () => runtime.query(STREAM_CHECK_QUERY, {}, { actor, orgId }).then(streamScopeOf);
+      // And the apps the org has off now (ADR-0053): a stream does not push the hints of an app that is off, and re-reads this on every check. A check that cannot
+      // tell leaves the filter out, as the app's own calls into an off app are refused by the runtime anyway.
+      const check = async () => {
+        const scope = streamScopeOf(await runtime.query(STREAM_CHECK_QUERY, {}, { actor, orgId }));
+        const on = await runtime.effectiveModules(orgId).catch(() => null);
+        if (on === null) return scope;
+        const appsOff = new Set(STREAM_FILTERED_APPS.filter((app) => !on.includes(app)));
+        return appsOff.size === 0 ? scope : { ...scope, appsOff };
+      };
       let scope: StreamScope;
       try {
         scope = await check();
@@ -1859,6 +1868,8 @@ export function createHttpApp(deps: HttpDeps) {
       // Only features this deployment runs: a scope of a module that is left out is not offered.
       if (input.scopes.includes('meetings') && !runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
       const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      // An org that switched Meetings off, or does not hold it, is not offered its scope either (ADR-0053).
+      if (input.scopes.includes('meetings') && !(await runtime.appOn(orgId, 'meetings', { fresh: true }).catch(() => true))) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
       const code = newExtensionCode();
       const issued = await runtime.execute<{ expiresInSeconds: number }>(
         'kernel.extension.code.issue',
@@ -1872,17 +1883,19 @@ export function createHttpApp(deps: HttpDeps) {
   });
 
   // What the extension shell asks right after sign-in: whose token this is and which features this deployment runs.
-  // Answered from the verified token alone, with no tenant data. A browser session has no use for it.
-  app.get('/api/extension/me', (c) => {
+  // Answered from the verified token and the org's app switch, with no tenant data: Meetings is a feature of the extension only while the org has it on
+  // (ADR-0053). A browser session has no use for it.
+  app.get('/api/extension/me', async (c) => {
     c.header('cache-control', 'no-store');
     const { extension } = c.get('user');
     if (!extension) return problem(c, new DomainError('FORBIDDEN', 403, 'Đường này chỉ dành cho tiện ích Ludy', { rule: 'extension_only' }));
+    const meetingsOn = runtime.installed('meetings') && (await runtime.appOn(extension.orgId, 'meetings', { fresh: true }).catch(() => true));
     return c.json({
       tokenId: extension.tokenId,
       orgId: extension.orgId,
       scopes: extension.scopes,
       expiresAt: extension.expiresAt,
-      features: { meetings: extension.scopes.includes('meetings') && runtime.installed('meetings'), agenda: extension.scopes.includes('agenda') && runtime.installed('meetings') },
+      features: { meetings: extension.scopes.includes('meetings') && meetingsOn, agenda: extension.scopes.includes('agenda') && meetingsOn },
     });
   });
 
@@ -1992,6 +2005,16 @@ export function createHttpApp(deps: HttpDeps) {
     throw new DomainError('INVALID', 400, 'Mục đích tải lên không hợp lệ');
   }
 
+  // The purpose of an upload, for the org it is for: the Meetings media purposes are Meetings' own, so an org that switched Meetings off, or does not hold it,
+  // gets the answer of a purpose that does not exist (ADR-0053). The grant a Meetings upload needs is a kernel command, which the app gate does not cover.
+  async function uploadPurposeFor(value: unknown, orgId: string): Promise<UploadPurpose> {
+    const purpose = uploadPurpose(value);
+    if ((purpose === 'meeting_audio' || purpose === 'meeting_video') && !(await runtime.appOn(orgId, 'meetings', { fresh: true }).catch(() => true))) {
+      throw new DomainError('NOT_FOUND', 404, 'Mục đích tải lên không hợp lệ');
+    }
+    return purpose;
+  }
+
   async function uploader(c: Context<{ Variables: { user: AuthUser } }>) {
     const user = c.get('user');
     // An extension token's one org is its own; its member's role is checked by the command that records the file, and by
@@ -2035,7 +2058,7 @@ export function createHttpApp(deps: HttpDeps) {
       const { user, orgId } = who;
       const body = await c.req.parseBody({ all: true });
       const files = ([] as unknown[]).concat(body.file ?? []).filter((f): f is File => f instanceof File);
-      const purpose = uploadPurpose(body.purpose);
+      const purpose = await uploadPurposeFor(body.purpose, orgId);
       if (purpose === 'meeting_audio' || purpose === 'meeting_video') {
         throw new DomainError('STAGED_UPLOAD_REQUIRED', 400, 'Tệp phương tiện cuộc họp phải tải lên qua cơ chế phân đoạn (POST /api/files/uploads)');
       }
@@ -2073,12 +2096,12 @@ export function createHttpApp(deps: HttpDeps) {
       if (!direct) throw noDirect();
       const { user, orgId } = await uploader(c);
       const input = (await c.req.json().catch(() => null)) as { purpose?: unknown } | null;
-      const grant = await runtime.execute<{ uploadId: string; stagingKey: string; maxBytes: number }>('kernel.file.upload.begin', { purpose: uploadPurpose(input?.purpose) }, {
+      const purpose = await uploadPurposeFor(input?.purpose, orgId);
+      const grant = await runtime.execute<{ uploadId: string; stagingKey: string; maxBytes: number }>('kernel.file.upload.begin', { purpose }, {
         actor: actorOf(user),
         orgId,
       });
       // A meeting's media grant is no larger than crove-media takes (#2989): a recording over it is refused here, before the browser sends it to the bucket.
-      const purpose = uploadPurpose(input?.purpose);
       const grantBytes = purpose === 'meeting_audio' || purpose === 'meeting_video' ? Math.min(grant.maxBytes, meetingMediaCap(purpose === 'meeting_video' ? 'video' : 'audio')) : grant.maxBytes;
       const form = await direct.presignUpload(grant.stagingKey, grantBytes);
       c.header('cache-control', 'private, no-store');
@@ -2099,7 +2122,7 @@ export function createHttpApp(deps: HttpDeps) {
       if (!direct) throw noDirect();
       const { user, orgId } = await uploader(c);
       const input = (await c.req.json().catch(() => null)) as { filename?: unknown; purpose?: unknown; legalEntityId?: unknown } | null;
-      const purpose = uploadPurpose(input?.purpose);
+      const purpose = await uploadPurposeFor(input?.purpose, orgId);
       const legalEntityId = uploadEntity(input?.legalEntityId);
       const filename = typeof input?.filename === 'string' && input.filename.trim() ? input.filename.slice(0, 255) : 'chung-tu';
       const release = completes.tryAcquire(user.userId);

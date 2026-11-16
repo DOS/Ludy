@@ -69,6 +69,29 @@ const SHARED_HINT_TYPES: ReadonlySet<StreamHintType> = new Set<StreamHintType>([
 // fails it until its type is added here.
 export const ENTITY_HINT_TYPES: ReadonlySet<StreamHintType> = new Set<StreamHintType>(['journal_entry', 'document', 'extraction', 'notification', 'proposal']);
 
+// The app each hint type belongs to (ADR-0053): a stream of an org that switched the app off, or does not hold it, hears nothing of its entities. file, extraction,
+// proposal and notification are the kernel's, and org_apps tells every stream that the apps changed. A type missing here fails the build (the Record is total).
+export const HINT_APPS: Readonly<Record<StreamHintType, string>> = {
+  proposal: 'kernel',
+  file: 'kernel',
+  extraction: 'kernel',
+  journal_entry: 'finance',
+  document: 'finance',
+  social_post: 'social',
+  social_notification: 'social',
+  notification: 'kernel',
+  note: 'notes',
+  todo: 'notes',
+  org_apps: 'kernel',
+};
+// The apps whose hints a stream filters: the ones with entities on the stream.
+export const STREAM_FILTERED_APPS: readonly string[] = [...new Set(Object.values(HINT_APPS).filter((app) => app !== 'kernel'))];
+
+// Whether the stream's scope says the app of this hint type is off for the org.
+export function appOffFor(scope: StreamScope, type: StreamHintType): boolean {
+  return scope.appsOff?.has(HINT_APPS[type]) === true;
+}
+
 // Whether a hint of this type may go on with this entity (undefined: none named): a type of ENTITY_HINT_TYPES needs one.
 export function entityNamed(type: StreamHintType, legalEntityId: string | undefined): boolean {
   return legalEntityId !== undefined || !ENTITY_HINT_TYPES.has(type);
@@ -117,7 +140,8 @@ export function parseHint(payload: string): ParsedHint | null {
 
 // The legal entities a stream may hear about: every entity of the org, or exactly these (none for an empty set); and
 // whether it may hear about other members' shared notes (absent: it may not).
-export type StreamScope = ({ all: true } | { all: false; entities: ReadonlySet<string> }) & { sharedNotes?: boolean };
+// appsOff: the apps (of STREAM_FILTERED_APPS) the org does not have on now, so a stream does not push their hints; absent: none is off.
+export type StreamScope = ({ all: true } | { all: false; entities: ReadonlySet<string> }) & { sharedNotes?: boolean; appsOff?: ReadonlySet<string> };
 export const ALL_ENTITIES: StreamScope = { all: true };
 
 // The scope a kernel.stream.check result grants (packages/kernel/src/queries.ts: `legalEntities` is '*' or a list of
@@ -540,8 +564,11 @@ export class StreamConnection implements HubSubscriber {
   // app's poll covers it.
   hint(hint: StreamHint, legalEntityId?: string, userId?: string, shared = false): void {
     if (this.closed) return;
+    if (appOffFor(this.scope, hint.type)) return;
     if (!forRecipient(this.scope, this.userId, hint.type, userId, shared)) return;
     if (!entityNamed(hint.type, legalEntityId)) return;
+    // The apps changed: check again before this hint goes out, so the filter above is the new set when the app reads kernel.org.apps.
+    if (hint.type === 'org_apps') this.sinceCheck = this.recheckEvery;
     if (!inScope(this.scope, legalEntityId)) return;
     if (!this.resyncPending) {
       // Keyed by the entity too: an extraction hint carries its file's id, and two readings of one file may belong to
@@ -583,6 +610,7 @@ export class StreamConnection implements HubSubscriber {
       }
       const [key, held] = this.pending.entries().next().value as [string, HeldHint];
       this.pending.delete(key);
+      if (appOffFor(this.scope, held.hint.type)) continue;
       if (!inScope(this.scope, held.legalEntityId)) continue;
       if (!forRecipient(this.scope, this.userId, held.hint.type, held.userId, held.shared)) continue;
       this.sinceCheck++;
