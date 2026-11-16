@@ -249,28 +249,72 @@ suite('parked events of an app that is off (ADR-0053, C3b)', () => {
     await expect(workerPool.query("SELECT * FROM crove_kernel.outbox_held_expire($1::uuid, current_date, 30)", [a])).rejects.toMatchObject({ code: '22023' });
   });
 
-  it('runs one org\'s release and its day purge one after the other', async () => {
+  it('runs one org\'s release, expiry and day purge one after the other, and a purge that follows a release keeps the released event', async () => {
     const a = orgs[0] as string;
     await admin((c) => c.query('DELETE FROM crove_kernel.outbox_pending'));
-    await oldEvent(a, '2017-07-07', true);
-    const holder = new pg.Client({ connectionString: adminUrl });
-    await holder.connect();
-    try {
-      await holder.query('BEGIN');
-      await holder.query("SELECT pg_advisory_xact_lock(hashtextextended('crove_kernel.outbox:' || $1::text, 0))", [a]);
-      let released = false;
-      const release = workerPool.query("SELECT crove_kernel.outbox_release($1::uuid, 'social', 10)", [a]).then(() => {
-        released = true;
-      });
-      await new Promise((resolve) => setTimeout(resolve, 400));
-      expect(released).toBe(false);
-      await holder.query('COMMIT');
-      await release;
-      expect(released).toBe(true);
-    } finally {
-      await holder.end();
+    const day = '2017-07-07';
+    await oldEvent(a, day, true);
+    await admin((c) => c.query("INSERT INTO crove_kernel.outbox_archive (org_id, day, object_key, sha256, row_count) VALUES ($1, $2, 'k', $3, 1) ON CONFLICT DO NOTHING", [a, day, 'b'.repeat(64)]));
+    // Each of the three calls waits while another transaction holds the org's lock, and goes on when it ends: they take the same one.
+    const calls: Array<[string, string]> = [
+      ['outbox_release', "SELECT crove_kernel.outbox_release($1::uuid, 'social', 10)"],
+      ['outbox_held_expire', `SELECT * FROM crove_kernel.outbox_held_expire($1::uuid, '${day}', 30)`],
+      ['outbox_archive_purge', `SELECT crove_kernel.outbox_archive_purge($1::uuid, '${day}', 30)`],
+    ];
+    for (const [name, query] of calls) {
+      const holder = new pg.Client({ connectionString: adminUrl });
+      await holder.connect();
+      try {
+        await holder.query('BEGIN');
+        await holder.query("SELECT pg_advisory_xact_lock(hashtextextended('crove_kernel.outbox:' || $1::text, 0))", [a]);
+        let done = false;
+        const run = workerPool.query(query, [a]).then(() => {
+          done = true;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        expect(done, `${name} waits for the org's lock`).toBe(false);
+        await holder.query('COMMIT');
+        await run;
+        expect(done).toBe(true);
+      } finally {
+        await holder.end();
+      }
     }
     await admin((c) => c.query('DELETE FROM crove_kernel.outbox_pending'));
+    await admin((c) => c.query('DELETE FROM crove_kernel.outbox_held'));
+    await admin((c) => c.query('DELETE FROM crove_kernel.outbox_archive WHERE org_id = $1 AND day = $2', [a, day]));
+    // A released old event is pending again: the day's purge defers it and the event stays.
+    const released = await oldEvent(a, '2016-06-06', true);
+    expect(await releaseHeld(workerDb, async () => true)).toMatchObject({ released: 1 });
+    expect(await archiveOutbox(workerDb, store())).toMatchObject({ deferred: 1 });
+    expect(await pending()).toEqual([released]);
+    expect(await admin(async (c) => (await c.query('SELECT 1 FROM crove_kernel.outbox_event WHERE org_id = $1 AND id = $2', [a, released])).rowCount)).toBe(1);
+    await admin((c) => c.query('DELETE FROM crove_kernel.outbox_pending'));
+    expect(await archiveOutbox(workerDb, store())).toMatchObject({ purged: 1, deferred: 0 });
+  });
+
+  it('leaves a pair whose release fails for the next sweep, without holding back the pairs after it', async () => {
+    const [a, b] = orgs as [string, string];
+    await admin((c) => c.query('DELETE FROM crove_kernel.outbox_pending'));
+    await admin((c) => c.query('DELETE FROM crove_kernel.outbox_held'));
+    const ea = await emit(a, 'social.post.submitted');
+    const eb = await emit(b, 'social.post.submitted');
+    await batch(new Set([`${a}:social`, `${b}:social`]));
+    const [first, second] = [a, b].sort() as [string, string];
+    // The app answer fails the way a database error would for the first pair only.
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const flaky = async (org: string) => {
+        if (org === first) throw new Error('read failed');
+        return true;
+      };
+      expect(await releaseHeld(workerDb, flaky)).toMatchObject({ released: 1, waiting: 1, pairs: 2 });
+      expect(await pending()).toEqual([second === a ? ea : eb]);
+    } finally {
+      err.mockRestore();
+    }
+    await admin((c) => c.query('DELETE FROM crove_kernel.outbox_pending'));
+    await admin((c) => c.query('DELETE FROM crove_kernel.outbox_held'));
   });
 
   it('goes on across sweeps from where the last one stopped, wrapping to the start at the end, so no pair is left behind a page cap', async () => {

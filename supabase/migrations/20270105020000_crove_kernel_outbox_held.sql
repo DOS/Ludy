@@ -15,7 +15,9 @@ SET LOCAL lock_timeout = '2s';
 
 CREATE TABLE IF NOT EXISTS crove_kernel.outbox_held (
   id bigint GENERATED ALWAYS AS IDENTITY,
-  org_id uuid NOT NULL REFERENCES crove_kernel.tenant (org_id) ON DELETE CASCADE,
+  -- No foreign key to the tenant, as outbox_pending has none: the relay parks inside its claim transaction, and an FK check would take the tenant row's key-share lock there,
+  -- which org_purge (tenant row FOR UPDATE, then outbox_pending) could turn into a stall of the relay for every org. org_purge deletes the org's rows.
+  org_id uuid NOT NULL,
   event_id uuid NOT NULL,
   module text NOT NULL CHECK (module ~ '^[a-z][a-z0-9_]{0,31}$'),
   held_at timestamptz NOT NULL DEFAULT pg_catalog.now(),

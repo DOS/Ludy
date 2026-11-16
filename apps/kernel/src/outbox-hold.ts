@@ -104,7 +104,7 @@ export interface SweepCursor {
 type AppOn = (orgId: string, app: string) => Promise<boolean>;
 
 // Puts one org and app's parked events back on the outbox when the app is on. Answers how many went back and whether the pair is still waiting.
-async function releasePair(db: Db, appOn: AppOn, pair: { org_id: string; module: string; waiting: string }): Promise<{ released: number; waiting: number }> {
+async function releasePair(db: Db, appOn: AppOn, pair: { org_id: string; module: string; waiting: string }, maxBatches = Infinity): Promise<{ released: number; waiting: number }> {
   let on = false;
   try {
     on = await appOn(pair.org_id, pair.module);
@@ -113,13 +113,14 @@ async function releasePair(db: Db, appOn: AppOn, pair: { org_id: string; module:
   }
   if (!on) return { released: 0, waiting: Number(pair.waiting) };
   let released = 0;
-  for (;;) {
+  for (let batch = 0; batch < maxBatches; batch++) {
     const { rows } = await sql<{ n: number }>`SELECT crove_kernel.outbox_release(${pair.org_id}::uuid, ${pair.module}::text, ${RELEASE_BATCH}::int) AS n`.execute(db);
     const n = rows[0]?.n ?? 0;
     released += n;
-    if (n < RELEASE_BATCH) break;
+    if (n < RELEASE_BATCH) return { released, waiting: 0 };
   }
-  return { released, waiting: 0 };
+  // Batches left for the held sweep.
+  return { released, waiting: Number(pair.waiting) - released };
 }
 
 /**
@@ -144,7 +145,11 @@ export async function releaseHeld(
       SELECT org_id, module, waiting FROM crove_kernel.outbox_hold_pairs(${pageSize}::int, ${after?.org ?? null}::uuid, ${after?.module ?? null}::text)`.execute(db);
     for (const pair of pairs) {
       seen += 1;
-      const done = await releasePair(db, appOn, pair);
+      // A pair that fails (a database error) is left for the next sweep and does not hold back the pairs after it.
+      const done = await releasePair(db, appOn, pair).catch((error: unknown) => {
+        console.error(`[relay] held release of org ${pair.org_id} ${pair.module}`, error);
+        return { released: 0, waiting: Number(pair.waiting) };
+      });
       released += done.released;
       waiting += done.waiting;
     }
@@ -166,7 +171,8 @@ export async function releaseHeldOfOrg(db: Db, appOn: AppOn, orgId: string): Pro
     SELECT org_id, module, waiting FROM crove_kernel.outbox_hold_pairs(${PAIRS_PER_PAGE}::int, ${orgId}::uuid, ${''}::text)`.execute(db);
   for (const pair of pairs) {
     if (pair.org_id !== orgId) break;
-    released += (await releasePair(db, appOn, pair)).released;
+    // One batch per app: the relay step is a transaction that sits idle meanwhile, so the rest of a long backlog is the held sweep's.
+    released += (await releasePair(db, appOn, pair, 1)).released;
   }
   return released;
 }
