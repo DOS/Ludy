@@ -4286,7 +4286,28 @@ export const en = {
       launchRetriedToast: 'Asked to run the launch again.',
       launchObjectsTitle: 'Created on the ad platform',
       objectLevel: { campaign: 'Campaign', ad_set: 'Ad set', creative: 'Creative', ad: 'Ad' },
-      objectStatus: { active: 'Active', paused: 'Paused', archived: 'Archived' },
+      objectStatus: {
+        active: 'Active',
+        paused: 'Paused',
+        archived: 'Archived',
+        pending_review: 'In review',
+        in_process: 'Processing',
+        preapproved: 'Pre-approved',
+        disapproved: 'Rejected',
+        with_issues: 'With issues',
+        campaign_paused: 'Campaign is paused',
+        adset_paused: 'Ad set is paused',
+        pending_billing_info: 'Waiting for billing info',
+        deleted: 'Deleted on the platform',
+      },
+      // Why a review stopped an object (a short code the sync stored, never the platform’s own sentence).
+      objectReason: {
+        in_review: 'the platform is reviewing it',
+        in_process: 'the platform is processing it',
+        deleted_at_platform: 'no longer on the platform',
+        issue: 'platform issue code {code}',
+        feedback: 'review reason: {reason}',
+      },
       launchState: {
         queued: 'Queued',
         launching: 'Launching',
@@ -11129,6 +11150,10 @@ export const en = {
         begin: 'Claim a stopped ad launch to pause what it made at the platform',
         record: 'Record the result of pausing what a stopped ad launch made',
         pending: 'List the stopped ad launches of an account that are not paused yet',
+      },
+      object: {
+        sync_state: 'Record the review state the platform reports for the ad objects of a launch',
+        sync_target: 'See which ad launches have objects to read from the platform',
       },
       launches: {
         prepare_unblock: 'Ask to open ad launches again',
