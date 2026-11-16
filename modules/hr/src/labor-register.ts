@@ -69,6 +69,8 @@ export interface LaborRegisterPerson {
   workerGroup?: LaborRegisterWorkerGroup | null;
   contractKind: LaborRegisterContractKind;
   contractStartDate?: string | null;
+  /** Allows omitting `contractStartDate` on verified exports when prior fixed-term pay history is incomplete. */
+  contractDateUncertain?: boolean;
   contractEndDate?: string | null;
   startedOn: string;
   endedOn?: string | null;
@@ -177,7 +179,7 @@ function validatePersons(persons: readonly LaborRegisterPerson[]): void {
     }
     const contractStartDate = optionalDateOf(p.contractStartDate);
     assertDate('startedOn', p.startedOn, true, p.employeeId);
-    assertDate('contractStartDate', p.contractStartDate, p.contractKind !== 'none', p.employeeId);
+    assertDate('contractStartDate', p.contractStartDate, p.contractKind !== 'none' && p.contractDateUncertain !== true, p.employeeId);
     assertDate('endedOn', p.endedOn, false, p.employeeId);
     assertDate('contractEndDate', p.contractEndDate, false, p.employeeId);
     if (!p.erased) {
@@ -391,6 +393,7 @@ export function build01PliReport(input: Report01PliInput): LaborRegisterDocument
   let fixedTermCount = 0;
   let underOneMonthCount = 0;
   let femaleCount = 0;
+  let activeMissingGenderCount = 0;
   let insuredCount = 0;
   let erasedCount = 0;
   let missingInsuranceNoCount = 0;
@@ -414,7 +417,10 @@ export function build01PliReport(input: Report01PliInput): LaborRegisterDocument
       if (p.contractKind === 'indefinite') indefiniteCount += 1;
       else if (p.contractKind === 'fixed_term') fixedTermCount += 1;
       else underOneMonthCount += 1;
-      if (!erased && p.gender === 'female') femaleCount += 1;
+      if (!erased) {
+        if (p.gender === 'female') femaleCount += 1;
+        else if (!p.gender) activeMissingGenderCount += 1;
+      }
       if (p.insured === true) insuredCount += 1;
     }
 
@@ -456,7 +462,7 @@ export function build01PliReport(input: Report01PliInput): LaborRegisterDocument
       { item: 'Cuối kỳ: Hợp đồng không xác định thời hạn', value: String(indefiniteCount) },
       { item: 'Cuối kỳ: Hợp đồng xác định thời hạn', value: String(fixedTermCount) },
       { item: 'Cuối kỳ: Hợp đồng dưới 1 tháng hoặc không ký HĐLĐ', value: String(underOneMonthCount) },
-      { item: 'Cuối kỳ: Lao động nữ (không gồm hồ sơ đã xóa)', value: String(femaleCount) },
+      { item: 'Cuối kỳ: Lao động nữ (không gồm hồ sơ đã xóa)', value: activeMissingGenderCount > 0 ? 'Chưa có dữ liệu' : String(femaleCount) },
       { item: 'Cuối kỳ: Tham gia BHXH bắt buộc', value: String(insuredCount) },
     ],
   };
@@ -474,6 +480,9 @@ export function build01PliReport(input: Report01PliInput): LaborRegisterDocument
   ];
   if (erasedCount > 0) {
     notes.push(`${erasedCount} hồ sơ đã xóa theo yêu cầu được che bằng nhãn ${LABOR_REGISTER_ERASED_PLACEHOLDER} và để trống thông tin định danh cá nhân; số lượng tổng hợp vẫn phản ánh lịch sử sử dụng lao động trong kỳ.`);
+  }
+  if (activeMissingGenderCount > 0) {
+    notes.push('Chưa đủ dữ liệu giới tính trong hồ sơ nhân sự để tự động tổng hợp chỉ tiêu lao động nữ cuối kỳ; tự đối chiếu trước khi nộp.');
   }
   if (missingInsuranceNoCount > 0) {
     notes.push(`${missingInsuranceNoCount} người lao động chưa có mã số BHXH trong danh sách chi tiết: bổ sung trước khi nộp báo cáo.`);
