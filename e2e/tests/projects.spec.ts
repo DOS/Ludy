@@ -134,7 +134,7 @@ test('solo owner creates a project, adds 5 tasks, drags one to Done, works keybo
     const saveForm = page.getByRole('form', { name: 'Lưu thành chế độ xem' });
     await saveForm.getByLabel('Tên chế độ xem').fill('Việc đang làm');
     await saveForm.getByRole('button', { name: 'Lưu', exact: true }).click();
-    await expect(page.getByRole('tab', { name: 'Việc đang làm' })).toBeVisible();
+    await expect(page.getByRole('tab', { name: 'Việc đang làm' })).toHaveAttribute('aria-selected', 'true');
 
     await page.getByTestId('task-filter-tainted').selectOption('true');
     await expect(cards).toHaveCount(0);

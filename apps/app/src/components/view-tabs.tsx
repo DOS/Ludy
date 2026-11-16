@@ -39,7 +39,7 @@ export function ViewTabs({ scope, filters, sort, onApply }: { scope: string; fil
   const [activeId, setActiveId] = useState<string | null>(null);
   const active = list.find((v) => v.id === activeId) ?? null;
   // The picked view is gone (deleted here or by its owner): the screen leaves its filter too, not only the tab.
-  const gone = activeId !== null && views.isSuccess && active === null;
+  const gone = activeId !== null && views.isSuccess && !views.isFetching && active === null;
   useEffect(() => {
     if (!gone) return;
     setActiveId(null);
@@ -66,9 +66,13 @@ export function ViewTabs({ scope, filters, sort, onApply }: { scope: string; fil
   };
   const create = useMutation({
     mutationFn: (input: { name: string; shared: boolean }) => client.savedViews.save({ scope, name: input.name, filters, sort, shared: input.shared }),
-    onSuccess: ({ viewId }, input) => {
+    onSuccess: async ({ viewId }, input) => {
+      // Wait for the refreshed list before selecting the new tab so `gone` never sees a stale cache without `viewId` and wipes filters.
+      await refresh();
       setActiveId(viewId);
-      done(t('saved', { name: input.name }));
+      setMode('none');
+      setName('');
+      setNotice(t('saved', { name: input.name }));
     },
   });
   const update = useMutation({
