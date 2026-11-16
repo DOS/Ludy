@@ -179,6 +179,29 @@ describe('the app-level recorder', () => {
     expect(getLocalRecording()).toBeNull();
   });
 
+  it('two starts at the same moment make one recording', async () => {
+    const store = memoryStore();
+    await Promise.all([startRecording(input(store)), startRecording(input(store))]);
+    expect(api.create).toHaveBeenCalledTimes(1);
+    expect(getRecorderSnapshot().phase).toBe('recording');
+  });
+
+  it('a start with other details makes its own meeting, not the one a failed start left behind', async () => {
+    api.create.mockClear();
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia: async () => ({ getTracks: () => [track], getAudioTracks: () => [track] }) } });
+    const broken = { ...memoryStore(), put: () => Promise.reject(new Error('full')) };
+    await startRecording(input(broken));
+    expect(getRecorderSnapshot().phase).toBe('idle');
+    await startRecording({ ...input(memoryStore()), title: 'Họp khác' });
+    expect(api.create).toHaveBeenCalledTimes(2);
+  });
+
+  it('Stop while the browser already ended the recorder does not throw', async () => {
+    await startRecording(input(memoryStore()));
+    if (FakeRecorder.last) FakeRecorder.last.state = 'inactive';
+    expect(() => stop()).not.toThrow();
+  });
+
   it('a second start while one runs does nothing, and subscribers hear each change', async () => {
     const seen: string[] = [];
     const off = subscribeRecorder(() => seen.push(getRecorderSnapshot().phase));

@@ -85,6 +85,8 @@ let live: Live | null = null;
 let title = '';
 // The meeting created for the current start, reused if a later local step fails, so a retry makes no second meeting.
 let createdMeetingId: string | null = null;
+// What that meeting was made for: a start with other details (another title, org or consent) makes its own.
+let createdFor = '';
 let linkedMeetingId: string | null = null;
 // Recordings this tab wrote: shown in the recovery list at once; another tab's only once its heartbeat is stale.
 const ownIds = new Set<string>();
@@ -214,6 +216,12 @@ export async function startRecording(input: StartInput): Promise<void> {
       }),
     createMeeting: async () => {
       // The meeting row stores who confirmed the notice and how; the server refuses media for a meeting without it.
+      const key = JSON.stringify([scope, title, input.language, input.visibility, input.summaryTemplate, input.consentMethod, withVideo, input.liveNotes]);
+      if (createdFor !== key) {
+        createdMeetingId = null;
+        linkedMeetingId = null;
+        createdFor = key;
+      }
       createdMeetingId ??= (
         await orpc.meetings.create.call({
           title,
@@ -349,7 +357,8 @@ export function stop(): void {
   void l.writer.markStopped('user');
   // The live recorder stops first; its last piece is taken in onStopped before the devices are released.
   void l.liveCapture?.halt();
-  l.recorder.stop();
+  // A recorder the browser or the device already ended (its stop event is still being handled) is not stopped twice.
+  if (l.recorder.state !== 'inactive') l.recorder.stop();
 }
 
 // The browser fires the last chunk before `stop`: wait for every write, then upload what the device holds.
@@ -393,6 +402,7 @@ export async function uploadRecording(store: ChunkStore, slug: string, meta: Rec
     // Uploaded: the device copy is cleared at once.
     await store.remove(meta.id);
     await queryClient.invalidateQueries({ queryKey: orpc.meetings.key() });
+    patch({ error: null });
     const message = translate(partial ? 'record.uploadedPartial' : 'record.uploaded');
     const onRecordScreen = typeof window === 'undefined' || RECORD_PATH.test(window.location.pathname);
     if (navigateToMeeting && (!justStopped || stoppedOnRecordScreen) && onRecordScreen) {
@@ -416,10 +426,12 @@ export async function uploadRecording(store: ChunkStore, slug: string, meta: Rec
 
 // Used by tests to start from a clean controller.
 export function resetRecorderForTests(): void {
+  if (live) live.recorder.onstop = null;
   releaseDevices(live, true);
   live = null;
   createdMeetingId = null;
   linkedMeetingId = null;
+  createdFor = '';
   ownIds.clear();
   title = '';
   state = IDLE;

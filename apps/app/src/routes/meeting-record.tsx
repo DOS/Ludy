@@ -81,6 +81,8 @@ export function MeetingRecordPage() {
   const unmounted = useRef(false);
   useEffect(() => {
     unmounted.current = false;
+    // A message from an earlier recording (stopped early, upload failed) was shown when it happened; it does not wait here for the next visit.
+    if (getRecorderSnapshot().phase === 'idle') clearRecorderError();
     return () => {
       unmounted.current = true;
     };
