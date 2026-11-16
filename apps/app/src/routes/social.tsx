@@ -17,6 +17,7 @@ import { MediaTagEditor, TagFilter, Thumb, sizeLabel, useLibrary, type LibraryIt
 import { PEXELS_URL, StockCredit, StockPhotoSearch, pexelsHref, useStockPhotosEnabled } from '../components/social-stock-photos.tsx';
 import { SocialBoard } from '../components/social-board.tsx';
 import { OpenComments } from '../components/social-activity.tsx';
+import { UnansweredComments, UnansweredProvider } from '../components/social-unanswered.tsx';
 import { useChannelScope } from '../components/social-channel-access.tsx';
 import { SocialCalendar } from '../components/social-calendar.tsx';
 import { SavedViews } from '../components/social-saved-views.tsx';
@@ -85,7 +86,7 @@ function ChannelChips({ post, names }: { post: Post; names: Map<string, string> 
   );
 }
 
-function PostRow({ post, slug, names, labels, right }: { post: Post; slug: string; names: Map<string, string>; labels: readonly SocialLabel[]; right?: string }) {
+export function PostRow({ post, slug, names, labels, right }: { post: Post; slug: string; names: Map<string, string>; labels: readonly SocialLabel[]; right?: string }) {
   const t = useTranslations('social');
   return (
     <Link
@@ -100,6 +101,7 @@ function PostRow({ post, slug, names, labels, right }: { post: Post; slug: strin
       </div>
       <div className="flex shrink-0 items-center gap-2">
         <OpenComments count={post.openComments} />
+        <UnansweredComments postId={post.id} />
         {isOverdue(post, Date.now()) && <Badge variant="destructive">{t('assign.overdue')}</Badge>}
         {right && <span className="text-xs text-subtle-foreground tabular-nums">{right}</span>}
       </div>
@@ -1026,6 +1028,7 @@ export function SocialPage() {
                 ) : rows.length === 0 ? (
                   <Empty title={filtered ? t('filters.noMatch') : t(`empty.${id}`)} />
                 ) : (
+                  <UnansweredProvider posts={rows}>
                   <div className="space-y-2">
                     {listActions.length > 0 && (
                       <>
@@ -1047,6 +1050,7 @@ export function SocialPage() {
                       </div>
                     ))}
                   </div>
+                  </UnansweredProvider>
                 )}
                 {list.hasNextPage && (
                   <div className="mt-4 flex justify-center">

@@ -9968,6 +9968,8 @@ export const en = {
     saveFirst: 'Save your changes before submitting',
     submit: 'Submit for review',
     openComments: '{count, plural, one {# open comment} other {# open comments}}',
+    // Platform comments nobody has answered yet, on a post's row, card and calendar chip (#3298).
+    unansweredComments: '{count, plural, one {# unanswered comment} other {# unanswered comments}}',
     submitOpenComments: 'This post has {count, plural, one {# internal comment} other {# internal comments}} not resolved yet. You can still submit it, but it is worth going through them first.',
     changedElsewhere: 'This post was just edited elsewhere. Your changes are not saved; loading the latest drops them.',
     loadLatest: 'Load the latest',
@@ -12544,6 +12546,7 @@ export const en = {
         set_intent: 'Apply, change or clear the intent of a conversation',
         follow_up: 'Create a task from a conversation',
         tasks: 'See the open tasks of a conversation',
+        post_counts: 'Count the unanswered comments under the posts on screen',
         signals_unanswered: 'Read which customers have waited for an answer, by id and since when (no message text)',
         intent_source: 'Read the customer’s words to suggest an intent',
         contact_candidates: 'Find contacts this customer may be',

@@ -35,6 +35,8 @@ import {
   zConversationAttachmentSource,
   zConversationCounted,
   zConversationCounts,
+  zConversationPostCounted,
+  zConversationPostCounts,
   zConversationDraftDiscard,
   zConversationDraftEnqueue,
   zConversationDraftRecord,
@@ -104,6 +106,7 @@ import {
   type ConversationAttachmentView,
   type ConversationAutoDraft,
   type ConversationCounted,
+  type ConversationPostCounted,
   type ConversationErased,
   type ConversationPrivateReplied,
   type ConversationPurged,
@@ -1130,6 +1133,25 @@ export const conversationCounts = defineQuery({
       counted.unread += Number(row.unread);
     }
     return zConversationCounted.parse(counted);
+  },
+});
+
+// The comment threads still New under each of a screen's posts (#3298, plan docs/plan/conversations.md section 11), one grouped count for the page of the post list or
+// the calendar. Read by the thread's own rule (the database's policy shows a member only the threads of the channels they may use), so a post's number is the caller's
+// own; only a post with at least one is listed, and nothing but ids and a number leaves.
+export const conversationPostCounts = defineQuery({
+  name: 'kernel.conversation.post_counts',
+  input: zConversationPostCounts,
+  access: ALL,
+  handler: async (ctx, input): Promise<ConversationPostCounted> => {
+    const pairs = [...new Map(input.posts.map((p) => [`${p.connectionId}\n${p.externalPostId}`, p])).values()];
+    const { rows } = await sql<{ connection_id: string; external_post_id: string; n: string }>`
+      SELECT c.channel_connection_id AS connection_id, c.external_post_id, count(*)::text AS n
+      FROM crove_kernel.conversation c
+      WHERE c.org_id = ${ctx.orgId}::uuid AND c.kind = 'comment_thread' AND c.status = 'new'
+        AND (c.channel_connection_id, c.external_post_id) IN (${sql.join(pairs.map((p) => sql`(${p.connectionId}::uuid, ${p.externalPostId})`), sql`, `)})
+      GROUP BY c.channel_connection_id, c.external_post_id`.execute(ctx.trx);
+    return zConversationPostCounted.parse({ counts: rows.map((r) => ({ connectionId: r.connection_id, externalPostId: r.external_post_id, unanswered: Number(r.n) })) });
   },
 });
 
@@ -3635,4 +3657,4 @@ export const conversationCommands = [
   conversationDraftRecord,
   conversationDraftDiscard,
 ];
-export const conversationQueries = [conversationTasks, conversationList, conversationIntentSource, conversationContactCandidates, conversationAvailability, conversationToday, conversationCounts, conversationGet, conversationRetention, conversationAttachmentSource, conversationAttachmentGet, conversationSavedReplyList, conversationAutoDraft, conversationYoutubeComments, conversationDraftSource];
+export const conversationQueries = [conversationTasks, conversationList, conversationIntentSource, conversationContactCandidates, conversationAvailability, conversationToday, conversationCounts, conversationPostCounts, conversationGet, conversationRetention, conversationAttachmentSource, conversationAttachmentGet, conversationSavedReplyList, conversationAutoDraft, conversationYoutubeComments, conversationDraftSource];

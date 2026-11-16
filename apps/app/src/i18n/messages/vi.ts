@@ -9965,6 +9965,8 @@ export const vi = {
     saveFirst: 'Lưu thay đổi trước khi gửi duyệt',
     submit: 'Gửi duyệt',
     openComments: '{count, number} bình luận chưa xử lý',
+    // Platform comments nobody has answered yet, on a post's row, card and calendar chip (#3298).
+    unansweredComments: '{count, number} bình luận chưa trả lời',
     submitOpenComments: 'Bài còn {count, number} bình luận nội bộ chưa xử lý. Bạn vẫn gửi duyệt được, nhưng nên xem lại các góp ý này trước.',
     changedElsewhere: 'Bài vừa được sửa ở nơi khác. Thay đổi của bạn chưa lưu; tải bản mới sẽ bỏ chúng.',
     loadLatest: 'Tải bản mới',
@@ -12541,6 +12543,7 @@ export const vi = {
         set_intent: 'Gán, đổi hoặc bỏ ý định của một hội thoại',
         follow_up: 'Tạo việc từ một hội thoại',
         tasks: 'Xem các việc đang mở của một hội thoại',
+        post_counts: 'Đếm bình luận chưa trả lời dưới các bài đăng đang xem',
         signals_unanswered: 'Xem khách nào nhắn lâu chưa được trả lời, theo mã và thời điểm (không có nội dung tin nhắn)',
         intent_source: 'Đọc lời khách để gợi ý ý định',
         contact_candidates: 'Tìm liên hệ có thể là khách này',

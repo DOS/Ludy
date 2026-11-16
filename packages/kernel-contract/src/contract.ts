@@ -207,6 +207,8 @@ import {
   zConversationAssign,
   zConversationCounted,
   zConversationCounts,
+  zConversationPostCounted,
+  zConversationPostCounts,
   zConversationDetail,
   zConversationGet,
   zConversationHide,
@@ -2058,6 +2060,8 @@ export const contract = {
   conversations: {
     list: oc.input(zConversationList).output(zConversationListed),
     counts: oc.input(zConversationCounts).output(zConversationCounted),
+    // The comment threads still New under each of the posts a screen shows, in one read (#3298).
+    postCounts: oc.input(zConversationPostCounts).output(zConversationPostCounted),
     get: oc.input(zConversationGet).output(zConversationDetail),
     reply: oc.input(zConversationReply).output(zConversationReplied),
     replyPrivately: oc.input(zConversationPrivateReply).output(zConversationPrivateReplied),
