@@ -11914,6 +11914,7 @@ export const en = {
         create_link: 'Make a link to view a sent quote',
         revoke_link: 'Revoke a quote link',
         mail_data: 'Make the link of a quote mail being sent',
+        mail_document: 'Read a sent quote to attach its PDF to the mail',
         defaults: "See the org's defaults and a customer's earlier prices for a quote",
         delete_draft: 'Delete a draft quote',
         document: 'Read a quote with the seller and buyer for its PDF',
