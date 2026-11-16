@@ -498,68 +498,67 @@ describe('Viettel MySign adapter (official /vtss/service/* recorded responses)',
 });
 
 describe('MISA eSign / WeSign adapter (esignapp.misa.vn Open API recorded responses)', () => {
-  it('authenticates at /api/auth/api/v1/auth/login-api preferring remoteSigningAccessToken, signs at /external/esrm/.../Signing/hash, reconciles DuplicateRefID via GET status, and reads/wraps signatures', async () => {
+  it('authenticates at /api/auth/api/v1/auth/login-api preferring remoteSigningAccessToken, lists certs via GET .../by-userId, signs at /external/esrm/.../Signing/hash, reconciles DuplicateRefID via GET status, and reads/wraps signatures', async () => {
     const { fetchImpl, calls } = mockFetch({
       '/api/auth/api/v1/auth/login-api': [
         {
           status: 200,
           body: {
-            Success: true,
-            Data: {
+            status: { code: 200, error: false },
+            data: {
               accessToken: 'misaid-token-do-not-send',
               remoteSigningAccessToken: 'misa-esign-token-1',
-              userInfo: { userId: 'misa-uid-99' },
+              expiresIn: 3600,
+              user: { id: 'misa-uid-99', username: 'misa-signer@example.com' },
             },
           },
         },
       ],
-      '/apis/RMeSign/GetListCertificate': [
+      '/external/esrm/service/general/api/v1/Certificates/by-userId': [
         {
           status: 200,
-          body: {
-            Success: true,
-            Data: [{ CertAlias: 'MISA-01', SignType: 'RemoteSigning', KeyStatus: 'ACTIVE', CertData: TEST_CERT_B64 }],
-          },
+          body: [
+            {
+              userId: 'misa-uid-99',
+              keyAlias: 'MISA-01',
+              keyStatus: 'ACTIVE',
+              certStatus: 'ACTIVE',
+              certificate: TEST_CERT_B64,
+              certiticateChain: [TEST_CERT_B64],
+            },
+          ],
         },
       ],
       '/external/esrm/service/signing/api/v1/Signing/hash': [
         {
           status: 200,
-          body: { status: { code: 200 }, data: { transactionId: 'misa-tx-1', status: 'PENDING', challengeCode: '8822' } },
+          body: { transactionId: 'misa-tx-1' },
         },
         { status: 200, body: { Success: false, ErrorCode: 'DuplicateRefID' } },
       ],
       '/external/esrm/service/signing/api/v1/Signing/status/misa-req-1': [
         {
           status: 200,
-          body: { status: { code: 200 }, data: { transactionId: 'misa-tx-1', refId: 'misa-req-1', status: 'PENDING' } },
+          body: { transactionId: 'misa-tx-1', status: 'PENDING', errorCode: null, errorDescription: null, signatures: [] },
         },
       ],
       '/external/esrm/service/signing/api/v1/Signing/status/misa-tx-1': [
         {
           status: 200,
           body: {
-            status: { code: 200 },
-            data: {
-              transactionId: 'misa-tx-1',
-              status: 'SUCCESS',
-              CertAlias: 'MISA-01',
-              signatures: [{ documentId: 'misa-req-1', signature: SAMPLE_CMS_B64 }],
-              TimestampToken: SAMPLE_TS_B64,
-              OcspResponses: [SAMPLE_OCSP_B64],
-            },
+            status: 'SUCCESS',
+            keyAlias: 'MISA-01',
+            signatures: [{ documentId: 'misa-req-1', signature: SAMPLE_CMS_B64 }],
+            TimestampToken: SAMPLE_TS_B64,
+            OcspResponses: [SAMPLE_OCSP_B64],
           },
         },
         {
           status: 200,
           body: {
-            status: { code: 200 },
-            data: {
-              transactionId: 'misa-tx-1',
-              status: 'SUCCESS',
-              CertAlias: 'MISA-01',
-              signatures: [{ documentId: 'misa-req-1', signature: RAW_RSA_SIG_B64 }],
-            },
+            status: 'SUCCESS',
+            keyAlias: 'MISA-01',
+            signatures: [{ documentId: 'misa-req-1', signature: RAW_RSA_SIG_B64 }],
           },
         },
       ],
@@ -573,6 +572,10 @@ describe('MISA eSign / WeSign adapter (esignapp.misa.vn Open API recorded respon
     expect(calls[0]?.url).toBe('https://esignapp.misa.vn/api/auth/api/v1/auth/login-api');
     expect(calls[0]?.headers['x-clientid']).toBe('misa-client-01');
     expect(calls[0]?.headers['x-clientkey']).toBe('misa-top-secret-key');
+    expect(calls[1]?.method).toBe('GET');
+    expect(calls[1]?.url).toBe(
+      'https://esignapp.misa.vn/external/esrm/service/general/api/v1/Certificates/by-userId',
+    );
     expect(calls[1]?.headers.authorizationrm).toBe('Bearer misa-esign-token-1');
     expect(calls[1]?.headers.authorizationrm).not.toContain('misaid-token-do-not-send');
 
@@ -580,22 +583,25 @@ describe('MISA eSign / WeSign adapter (esignapp.misa.vn Open API recorded respon
       idempotencyKey: 'misa-req-1',
       digestSha256: DIGEST,
       certRef: 'MISA-01',
+      documentName: 'contract.pdf',
+      signerReason: 'Approve contract',
     });
     expect(init).toMatchObject({ provider: 'misa_wesign', externalTxId: 'misa-tx-1', status: 'pending' });
     const reqBody = JSON.parse(
       calls.find((c) => c.url.endsWith('/external/esrm/service/signing/api/v1/Signing/hash'))?.body ?? '{}',
     ) as {
+      DataToBeDisplayed: string;
       UserId: string;
       CertAlias: string;
-      RefId: string;
-      Documents: Array<{ DocumentId: string; Hash: string; HashAlgorithm: string }>;
+      Documents: Array<{ DocumentId: string; DocumentName: string; FileToSign: string }>;
     };
     expect(reqBody.UserId).toBe('misa-uid-99');
     expect(reqBody.CertAlias).toBe('MISA-01');
-    expect(reqBody.RefId).toBe('misa-req-1');
+    expect(reqBody.DataToBeDisplayed).toBe('Approve contract');
     expect(reqBody.Documents).toHaveLength(1);
-    expect(reqBody.Documents[0]?.HashAlgorithm).toBe('SHA256');
-    expect(reqBody.Documents[0]?.Hash).toBe(Buffer.from(DIGEST, 'hex').toString('base64'));
+    expect(reqBody.Documents[0]?.DocumentId).toBe('misa-req-1');
+    expect(reqBody.Documents[0]?.DocumentName).toBe('contract.pdf');
+    expect(reqBody.Documents[0]?.FileToSign).toBe(Buffer.from(DIGEST, 'hex').toString('base64'));
 
     // DuplicateRefID reconciles via GET /external/esrm/service/signing/api/v1/Signing/status/{refId}.
     const reconciled = await adapter.initiateSign(MISA_SECRET, {
@@ -708,23 +714,27 @@ describe('MISA eSign / WeSign adapter (esignapp.misa.vn Open API recorded respon
 
     const misaMock = mockFetch({
       '/api/auth/api/v1/auth/login-api': [
-        { status: 200, body: { Success: true, Data: { remoteSigningAccessToken: 'misa-tok-multi' } } },
+        { status: 200, body: { status: { code: 200, error: false }, data: { remoteSigningAccessToken: 'misa-tok-multi', user: { id: 'misa-uid-m1' } } } },
       ],
-      '/apis/RMeSign/GetListCertificate': [
+      '/external/esrm/service/general/api/v1/Certificates/by-userId': [
         {
           status: 200,
-          body: {
-            Success: true,
-            Data: [
-              { CertAlias: 'misa-A', SignType: 'RemoteSigning', KeyStatus: 'ACTIVE', CertData: idA.certB64 },
-              { CertAlias: 'misa-B', SignType: 'RemoteSigning', KeyStatus: 'ACTIVE', CertData: idB.certB64 },
-            ],
-          },
+          body: [
+            { userId: 'misa-uid-m1', keyAlias: 'misa-A', keyStatus: 'ACTIVE', certStatus: 'ACTIVE', certificate: idA.certB64 },
+            {
+              userId: 'misa-uid-m1',
+              keyAlias: 'misa-B',
+              keyStatus: 'ACTIVE',
+              certStatus: 'ACTIVE',
+              certificate: idB.certB64,
+              certiticateChain: [idB.certB64, idA.certB64],
+            },
+          ],
         },
       ],
       '/external/esrm/service/signing/api/v1/Signing/status/misa-restart-1': [
-        { status: 200, body: { status: { code: 200 }, data: { transactionId: 'misa-restart-1', status: 'SUCCESS', signatures: [{ signature: rawSigBB64 }] } } },
-        { status: 200, body: { status: { code: 200 }, data: { transactionId: 'misa-restart-1', status: 'SUCCESS', signatures: [{ signature: rawSigBB64 }] } } },
+        { status: 200, body: { transactionId: 'misa-restart-1', status: 'SUCCESS', signatures: [{ signature: rawSigBB64 }] } },
+        { status: 200, body: { transactionId: 'misa-restart-1', status: 'SUCCESS', signatures: [{ signature: rawSigBB64 }] } },
       ],
     });
     const misaRestarted = getCaAdapter('misa_wesign', { fetch: misaMock.fetchImpl });
@@ -736,26 +746,24 @@ describe('MISA eSign / WeSign adapter (esignapp.misa.vn Open API recorded respon
       certRef: 'misa-B',
     });
     expect(requireLeafCert(misaSelected.certificateChainPem).subject).toContain('Signer B');
+    expect(misaSelected.certificateChainPem).toHaveLength(2);
 
     // Explicit certRef lookup must still recover an inactive/rotated signing certificate.
     const misaRotatedMock = mockFetch({
       '/api/auth/api/v1/auth/login-api': [
-        { status: 200, body: { Success: true, Data: { remoteSigningAccessToken: 'misa-tok-rot' } } },
+        { status: 200, body: { status: { code: 200, error: false }, data: { remoteSigningAccessToken: 'misa-tok-rot', user: { id: 'misa-uid-r1' } } } },
       ],
-      '/apis/RMeSign/GetListCertificate': [
+      '/external/esrm/service/general/api/v1/Certificates/by-userId': [
         {
           status: 200,
-          body: {
-            Success: true,
-            Data: [
-              { CertAlias: 'misa-A', SignType: 'RemoteSigning', KeyStatus: 'EXPIRED', CertData: idA.certB64 },
-              { CertAlias: 'misa-B', SignType: 'RemoteSigning', KeyStatus: 'ACTIVE', CertData: idB.certB64 },
-            ],
-          },
+          body: [
+            { userId: 'misa-uid-r1', keyAlias: 'misa-A', keyStatus: 'EXPIRED', certStatus: 'INACTIVE', certificate: idA.certB64 },
+            { userId: 'misa-uid-r1', keyAlias: 'misa-B', keyStatus: 'ACTIVE', certStatus: 'ACTIVE', certificate: idB.certB64 },
+          ],
         },
       ],
       '/external/esrm/service/signing/api/v1/Signing/status/misa-rot-1': [
-        { status: 200, body: { status: { code: 200 }, data: { transactionId: 'misa-rot-1', status: 'SUCCESS', signatures: [{ signature: rawSigBB64 }] } } },
+        { status: 200, body: { transactionId: 'misa-rot-1', status: 'SUCCESS', signatures: [{ signature: rawSigBB64 }] } },
       ],
     });
     const misaRotated = await getCaAdapter('misa_wesign', { fetch: misaRotatedMock.fetchImpl }).fetchSignedCms(MISA_SECRET, {
@@ -780,21 +788,21 @@ describe('MISA eSign / WeSign adapter (esignapp.misa.vn Open API recorded respon
     const cadesRawSig = new Uint8Array(createSign('RSA-SHA256').update(canonicalSetDer).sign(idB.privateKey));
     const misaCadesMock = mockFetch({
       '/api/auth/api/v1/auth/login-api': [
-        { status: 200, body: { Success: true, Data: { remoteSigningAccessToken: 'misa-tok-cades' } } },
+        { status: 200, body: { status: { code: 200, error: false }, data: { remoteSigningAccessToken: 'misa-tok-cades', user: { id: 'misa-uid-c1' } } } },
       ],
-      '/apis/RMeSign/GetListCertificate': [
-        { status: 200, body: { Success: true, Data: [{ CertAlias: 'misa-B', SignType: 'RemoteSigning', KeyStatus: 'ACTIVE', CertData: idB.certB64 }] } },
+      '/external/esrm/service/general/api/v1/Certificates/by-userId': [
+        {
+          status: 200,
+          body: [{ userId: 'misa-uid-c1', keyAlias: 'misa-B', keyStatus: 'ACTIVE', certificate: idB.certB64 }],
+        },
       ],
       '/external/esrm/service/signing/api/v1/Signing/status/misa-cades-1': [
         {
           status: 200,
           body: {
-            status: { code: 200 },
-            data: {
-              transactionId: 'misa-cades-1',
-              status: 'SUCCESS',
-              signatures: [{ signature: Buffer.from(cadesRawSig).toString('base64') }],
-            },
+            transactionId: 'misa-cades-1',
+            status: 'SUCCESS',
+            signatures: [{ signature: Buffer.from(cadesRawSig).toString('base64') }],
           },
         },
       ],
@@ -955,11 +963,20 @@ describe('MISA eSign / WeSign adapter (esignapp.misa.vn Open API recorded respon
     expect(await getCaAdapter('misa_wesign', { fetch: notFoundJsonFetch('/api/auth/api/v1/auth/login-api') }).testConnection(MISA_SECRET)).toBe('unreachable');
   });
 
-  it('detects 2FA, inactive app, 403 credentials error, USB-only certs, and auth failures without leaking secrets', async () => {
+  it('detects 2FA (errorCode 122), inactive app, 403 credentials error, USB-only certs, and auth failures without leaking secrets', async () => {
     const twoStep = mockFetch({
-      '/api/auth/api/v1/auth/login-api': [{ status: 200, body: { Success: true, Data: null, CustomData: { Id: 'otp-user' } } }],
+      '/api/auth/api/v1/auth/login-api': [
+        { status: 400, body: { status: { code: 400, error: true, errorCode: 122 }, data: null } },
+      ],
     });
     expect(await getCaAdapter('misa_wesign', { fetch: twoStep.fetchImpl }).testConnection(MISA_SECRET)).toBe('signing_needs_person');
+
+    const twoStepOkStatus = mockFetch({
+      '/api/auth/api/v1/auth/login-api': [
+        { status: 200, body: { status: { code: 400, error: true, errorCode: 122 }, data: null } },
+      ],
+    });
+    expect(await getCaAdapter('misa_wesign', { fetch: twoStepOkStatus.fetchImpl }).testConnection(MISA_SECRET)).toBe('signing_needs_person');
 
     const inactive = mockFetch({
       '/api/auth/api/v1/auth/login-api': [{ status: 200, body: { Success: false, ErrorCode: 'InActiveAppID' } }],
@@ -967,14 +984,14 @@ describe('MISA eSign / WeSign adapter (esignapp.misa.vn Open API recorded respon
     expect(await getCaAdapter('misa_wesign', { fetch: inactive.fetchImpl }).testConnection(MISA_SECRET)).toBe('api_not_enabled');
 
     const forbiddenCerts = mockFetch({
-      '/api/auth/api/v1/auth/login-api': [{ status: 200, body: { Success: true, Data: 'tok' } }],
-      '/apis/RMeSign/GetListCertificate': [{ status: 403, body: { Success: false, ErrorCode: 'UnAuthorize' } }],
+      '/api/auth/api/v1/auth/login-api': [{ status: 200, body: { status: { code: 200, error: false }, data: { remoteSigningAccessToken: 'tok', user: { id: 'u1' } } } }],
+      '/external/esrm/service/general/api/v1/Certificates/by-userId': [{ status: 403, body: { errorCode: 'UnAuthorize' } }],
     });
     expect(await getCaAdapter('misa_wesign', { fetch: forbiddenCerts.fetchImpl }).testConnection(MISA_SECRET)).toBe('wrong_credentials');
 
     const usbCerts = mockFetch({
-      '/api/auth/api/v1/auth/login-api': [{ status: 200, body: { Success: true, Data: 'tok' } }],
-      '/apis/RMeSign/GetListCertificate': [{ status: 200, body: { Success: true, Data: [{ CertSerial: 'U1', SignType: 'USB_TOKEN', KeyStatus: 'ACTIVE' }] } }],
+      '/api/auth/api/v1/auth/login-api': [{ status: 200, body: { status: { code: 200, error: false }, data: { remoteSigningAccessToken: 'tok', user: { id: 'u1' } } } }],
+      '/external/esrm/service/general/api/v1/Certificates/by-userId': [{ status: 200, body: [{ keyAlias: 'U1', SignType: 'USB_TOKEN', keyStatus: 'ACTIVE' }] }],
     });
     expect(await getCaAdapter('misa_wesign', { fetch: usbCerts.fetchImpl }).testConnection(MISA_SECRET)).toBe('usb_token_unsupported');
   });
