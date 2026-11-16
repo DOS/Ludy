@@ -25,6 +25,8 @@ export interface NotesExportWords {
 }
 
 const line = (label: string, value: string) => `- ${label}: ${value}`;
+const formatLinks = (label: string, links: { targetType: string; targetId: string }[]) =>
+  line(label, links.map((l) => `${l.targetType} ${l.targetId}`).join(', '));
 // A title or a step on one line, so a line break in it never starts a heading or an item of its own.
 const flat = (text: string) => text.replace(/\s+/g, ' ').trim();
 
@@ -40,7 +42,7 @@ export function notesMarkdown(data: NotesExport, w: NotesExportWords): string {
     if (n.archivedAt) out.push(line(w.archived, n.archivedAt));
     if (n.deletedAt) out.push(line(w.trashed, n.deletedAt));
     out.push(line(w.created, n.createdAt), line(w.updated, n.updatedAt));
-    if (n.links.length > 0) out.push(line(w.links, n.links.map((l) => `${l.targetType} ${l.targetId}`).join(', ')));
+    if (n.links.length > 0) out.push(formatLinks(w.links, n.links));
     if (n.body.trim()) out.push('', n.body.trimEnd());
   }
   out.push('', `## ${w.todos} (${data.todos.length})`);
@@ -52,6 +54,7 @@ export function notesMarkdown(data: NotesExport, w: NotesExportWords): string {
     if (t.doneAt) out.push(line(w.done, t.doneAt));
     if (t.deletedAt) out.push(line(w.trashed, t.deletedAt));
     out.push(line(w.created, t.createdAt), line(w.updated, t.updatedAt));
+    if (t.links.length > 0) out.push(formatLinks(w.links, t.links));
     if (t.details.trim()) out.push('', t.details.trimEnd());
     if (t.checklist.length > 0) out.push('', ...t.checklist.map((s) => `- [${s.done ? 'x' : ' '}] ${flat(s.text)}`));
   }

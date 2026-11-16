@@ -111,6 +111,19 @@ describe('invalidateHint', () => {
     expect(stale()).toEqual(['socialNotifications']);
   });
 
+  it('todo: invalidates to-do lists and linked record notes panels (#2595)', async () => {
+    const qc = new QueryClient();
+    const todos = orpc.notes.todos.list.queryKey({ input: { view: 'open', limit: 20 } });
+    const panel = orpc.notes.panel.queryKey({ input: { targetType: 'kernel.task', targetId: P1 } });
+    const note = orpc.notes.get.queryKey({ input: { noteId: P2 } });
+    const seed = (key: QueryKey) => qc.setQueryData(key, {});
+    for (const key of [todos, panel, note]) seed(key);
+    await invalidateHint(qc, { type: 'todo', id: '0190a000-0000-7000-8000-0000000000a1' });
+    expect(qc.getQueryState(todos)?.isInvalidated).toBe(true);
+    expect(qc.getQueryState(panel)?.isInvalidated).toBe(true);
+    expect(qc.getQueryState(note)?.isInvalidated).toBe(false);
+  });
+
   it('never touches unrelated queries', async () => {
     const { qc, stale } = seeded();
     await invalidateHint(qc, { type: 'proposal', id: '0190a000-0000-7000-8000-0000000000aa' });
