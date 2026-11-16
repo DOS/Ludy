@@ -69,18 +69,26 @@ const CLASSES: Record<string, { app: string; gate: Gate; why: string }> = {
   '/api/sign/verify': { app: 'sign', gate: 'pending', why: '#3324' },
 };
 
-// The paths of the two lists of route-coverage.test.ts: a key at the start of a line inside `const PUBLIC` or `const PENDING`.
-function publicPaths(): string[] {
+// The paths of the two lists of route-coverage.test.ts: a key at the start of a line inside `const PUBLIC` or `const PENDING`. A line at the key indent that
+// is not a single-quoted path key (a double-quoted or computed key) would escape classification, so it fails here instead.
+function publicLists(): { paths: string[]; pending: string[] } {
   const source = readFileSync(new URL('./route-coverage.test.ts', import.meta.url), 'utf8');
-  const paths: string[] = [];
+  const lists: Record<string, string[]> = { PUBLIC: [], PENDING: [] };
   for (const name of ['PUBLIC', 'PENDING']) {
     const start = source.indexOf(`const ${name}: Record<string, string> = {`);
     expect(start, name).toBeGreaterThan(-1);
     const end = source.indexOf('\n};', start);
-    for (const m of source.slice(start, end).matchAll(/^ {2}'(\/[^']*)':/gm)) paths.push(m[1] as string);
+    const lines = source.slice(start, end).split('\n').slice(1);
+    const stray = lines.filter((line) => /^ {2}\S/.test(line) && !/^ {2}'\/[^']*':/.test(line));
+    expect(stray, `${name}: a key this test cannot read`).toEqual([]);
+    for (const line of lines) {
+      const m = /^ {2}'(\/[^']*)':/.exec(line);
+      if (m) (lists[name] as string[]).push(m[1] as string);
+    }
   }
-  return paths;
+  return { paths: [...(lists.PUBLIC as string[]), ...(lists.PENDING as string[])], pending: lists.PENDING as string[] };
 }
+const publicPaths = () => publicLists().paths;
 
 describe('public routes against the per-org app gate (ADR-0053, slice c C2)', () => {
   it('classes every public route, so a new one must say whether it belongs to an app and where its gate is', () => {
@@ -94,10 +102,14 @@ describe('public routes against the per-org app gate (ADR-0053, slice c C2)', ()
     expect(Object.keys(CLASSES).filter((p) => !paths.has(p))).toEqual([]);
   });
 
-  it('gates every route of Social, CRM and Finance in SQL or by dropping, never leaves one as kernel', () => {
+  it('gates every route of Social, CRM and Finance in SQL or by dropping, and keeps kernel and pending classes honest', () => {
+    const { pending } = publicLists();
     for (const [path, c] of Object.entries(CLASSES)) {
       if (['social', 'crm', 'social+crm', 'finance'].includes(c.app)) expect(['sql', 'dropped'], path).toContain(c.gate);
-      if (c.app === 'kernel') expect(c.gate, path).toBe('kernel');
+      // The kernel class belongs to the kernel app and the kernel app to the kernel class: an app's route cannot be filed as kernel.
+      expect(c.gate === 'kernel', `${path}: kernel gate and kernel app go together`).toBe(c.app === 'kernel');
+      // 'pending' stands only for a route that is still in route-coverage's PENDING list (not in the code yet).
+      expect(c.gate === 'pending', `${path}: pending only for a PENDING path`).toBe(pending.includes(path));
       expect(c.why.length, path).toBeGreaterThan(3);
     }
   });
