@@ -251,6 +251,7 @@ export const projectsToday = defineQuery({
         join.onRef('pos.org_id', '=', 't.org_id').onRef('pos.id', '=', 't.assignee_position_id'),
       )
       .where('pt.org_id', '=', ctx.orgId)
+      .where('p.is_template', '=', false)
       .where('p.status', '=', 'active')
       .where('t.status', 'not in', ['done', 'cancelled'])
       .where(sql<boolean>`((${isOverdueExpr}) OR (${isWaitingStuckExpr}) OR (${isVacantItemExpr}) OR (${isDueTodayExpr}))`);

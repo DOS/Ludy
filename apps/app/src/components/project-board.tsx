@@ -26,6 +26,7 @@ import {
   type TaskPlacement,
 } from '../lib/projects.ts';
 import { seatOptionLabel } from './project-task-dialog.tsx';
+import { formatRecurrenceBadgeLabel } from './task-recurrence-control.tsx';
 
 export type BoardColumnStatus = 'todo' | 'in_progress' | 'waiting' | 'in_review' | 'done';
 
@@ -246,6 +247,12 @@ function TaskMetaBadges({
         <Badge variant={overdue ? 'destructive' : 'outline'} className="h-5 gap-1 px-1.5 text-[11px] tabular-nums">
           <ProjectIcon name="calendar" className="size-3" />
           <span>{overdue ? `${t('task.overdue')} · ${f.date(task.due)}` : f.date(task.due)}</span>
+        </Badge>
+      )}
+      {task.recurrence && (
+        <Badge variant="outline" className="h-5 gap-1 px-1.5 text-[11px]" data-testid="task-recurrence-badge">
+          <ProjectIcon name="repeat" className="size-3" />
+          <span>{formatRecurrenceBadgeLabel(task.recurrence, t)}</span>
         </Badge>
       )}
       {task.tainted && (
@@ -734,6 +741,12 @@ export function ProjectBoardView({
                           <Badge variant="brand" className="h-5 gap-1 px-1.5 text-[11px]" title={t('task.checkedOutLocked')}>
                             <ProjectIcon name="bot" className="size-3" />
                             <span>{t('task.checkedOut')}</span>
+                          </Badge>
+                        )}
+                        {task.recurrence && (
+                          <Badge variant="outline" className="h-5 gap-1 px-1.5 text-[11px]" data-testid="task-recurrence-badge">
+                            <ProjectIcon name="repeat" className="size-3" />
+                            <span>{formatRecurrenceBadgeLabel(task.recurrence, t)}</span>
                           </Badge>
                         )}
                       </div>

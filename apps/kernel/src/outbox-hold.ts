@@ -30,8 +30,12 @@ export const NEVER_HELD_EVENTS: ReadonlySet<string> = new Set([
 const TIME_BOUND_EVENTS: ReadonlySet<string> = new Set(['social.comment.retry_requested', 'social.thread.retry_requested', 'social.variant.edit_requested']);
 
 // The events of an app that finds its own pending work again when it is switched on: Sign's inspection and sealing are queued by its own sweep on `kernel.org.apps_changed`
-// (the worker's relay step for that event), so its events are not parked.
-export const SELF_RECOVERING_EVENTS: ReadonlySet<string> = new Set(['sign.envelope.inspect_queued', 'sign.envelope.seal_queued']);
+// (the worker's relay step for that event), and Projects recurring task wake-ups live in `crove_kernel.agent_wakeup` which the agent sweep recovers automatically.
+export const SELF_RECOVERING_EVENTS: ReadonlySet<string> = new Set([
+  'projects.recurring.advanced',
+  'sign.envelope.inspect_queued',
+  'sign.envelope.seal_queued',
+]);
 
 // The kernel events whose consumer is an app's job: the extraction of an uploaded file is Finance's, so a file stored while Finance is off is read when it is back.
 const KERNEL_EVENT_APPS: Readonly<Record<string, string>> = {

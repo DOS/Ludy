@@ -2,7 +2,7 @@
 // the steps, the readiness gate, rollback on a failed smoke test, the state it records, and what it refuses.
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -1081,6 +1081,719 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
         expect(res.out).toContain("SMOKE_ORG must be the smoke org's slug");
         expect(read('signin')).toBe('');
       });
+    });
+  });
+  // #2704: the pilot's identity provider settings. With --auth-settings the deploy edits the host's env file (step 5 of
+  // docs/runbooks/pilot-sign-in-remote-idp.md) after a dated private copy, and puts the copy back when the deploy fails or the
+  // release is rolled back. Every value in these tests is made up (example.com, example.org).
+  describe('identity provider settings (#2704)', () => {
+    const IDP: Record<string, string> = {
+      AUTH_ISSUER: 'https://idp.example.com/auth/v1',
+      AUTH_JWKS_URL: 'https://idp.example.com/auth/v1/.well-known/jwks.json',
+      PUBLIC_AUTH_URL: 'https://idp.example.com/auth/v1',
+      PUBLIC_AUTH_ANON_KEY: 'sb_publishable_TESTKEYabcdef0123456789',
+      AUTH_ALLOWED_EMAILS: '@example.com,owner@example.org',
+    };
+    // What a stale pilot env file holds before: the bundled Supabase Auth, an invite-only sign-up policy and its prober.
+    const BEFORE = [
+      'POSTGRES_PASSWORD=x',
+      'CROVE_CONTEXT_TOKEN_KEY=already-here',
+      '# kept comment: AUTH_SIGNUP_POLICY=open',
+      'AUTH_JWT_SECRET=keep-this-secret',
+      'AUTH_ISSUER=crove-auth',
+      'AUTH_SESSION_CHECK=db',
+      'export AUTH_UPSTREAM_URL=http://auth:9999',
+      'AUTH_SIGNUP_POLICY=invite_only',
+      'AUTH_SIGNUP_ALLOWED_DOMAINS=example.net',
+      'PROBER_AUTH_URL=http://crove:8080/auth/v1',
+      'AUTH_OAUTH_PROVIDERS=github',
+      'PUBLIC_URL=https://api.example.com',
+      '',
+    ].join('\n');
+    const envFile = () => readFileSync(`${dir}/.env`, 'utf8');
+    const lines = (text: string) => text.split('\n').filter(Boolean);
+    // Where the workflow uploads it: the release's private incoming directory, the only place deploy.sh removes a settings file from.
+    const settingsPath = () => `${dir}/.deploy/incoming/run/auth-settings.env`;
+    const putSettings = (text: string) => {
+      mkdirSync(`${dir}/.deploy/incoming/run`, { recursive: true });
+      writeFileSync(settingsPath(), text);
+    };
+    const writeSettings = (values: Record<string, string>) => putSettings(Object.entries(values).map(([k, v]) => `${k}=${v}\n`).join(''));
+    const deployIdp = (release: string, c: string, values: Record<string, string> | null = IDP, env: Record<string, string> = {}) => {
+      if (values !== null) writeSettings(values);
+      return run(['deploy', '--release', release, '--image', image(c), '--extract-image', extract(c), '--media-image', media(c), '--compose', compose, '--auth-settings', settingsPath()], env);
+    };
+    const copies = () => readdirSync(dir).filter((f) => f.startsWith('.env.bak-'));
+    const everyFile = (d: string): string[] =>
+      readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? everyFile(`${d}/${e.name}`) : [`${d}/${e.name}`]));
+    const SPLIT_SERVICES = 'db migrate auth auth-grants crove-extract api worker prober';
+
+    it('leaves the env file alone without --auth-settings', () => {
+      writeFileSync(`${dir}/.env`, BEFORE);
+      const res = deploy('v1.0.0', 'a');
+      expect(res.status, res.out).toBe(0);
+      expect(envFile()).toBe(BEFORE);
+      expect(copies()).toEqual([]);
+      expect(res.out).not.toContain('identity provider');
+      expect(existsSync(`${dir}/.deploy/env-backup`)).toBe(false);
+      // The proxy check still runs when the host keeps the bundled Supabase Auth.
+      expect(res.out).toContain('smoke ok: /auth/v1/health answers (Supabase Auth through the proxy)');
+    });
+
+    it('sets exactly the lines of the runbook, removes the three, keeps every other line, and keeps a private dated copy', () => {
+      writeFileSync(`${dir}/.env`, BEFORE);
+      chmodSync(`${dir}/.env`, 0o600);
+      const res = deployIdp('v1.0.0', 'a', IDP, { STUB_SERVICES: SPLIT_SERVICES });
+      expect(res.status, res.out).toBe(0);
+      expect(lines(envFile())).toEqual([
+        'POSTGRES_PASSWORD=x',
+        'CROVE_CONTEXT_TOKEN_KEY=already-here',
+        '# kept comment: AUTH_SIGNUP_POLICY=open',
+        'AUTH_JWT_SECRET=keep-this-secret',
+        'PUBLIC_URL=https://api.example.com',
+        ...Object.entries(IDP).map(([k, v]) => `${k}=${v}`),
+        'AUTH_SESSION_CHECK=jwt',
+        'AUTH_UPSTREAM_URL=',
+      ]);
+      // The copy next to the env file: the old content, mode 600; the env file keeps its mode.
+      expect(copies()).toHaveLength(1);
+      expect(readFileSync(`${dir}/${copies()[0]}`, 'utf8')).toBe(BEFORE);
+      if (process.platform !== 'win32') {
+        expect(statSync(`${dir}/${copies()[0]}`).mode & 0o777).toBe(0o600);
+        expect(statSync(`${dir}/.env`).mode & 0o777).toBe(0o600);
+      }
+      expect(state('env-backup')).toMatch(new RegExp(`^${releaseDir('v1.0.0', 'a')} ${dir}/${copies()[0]} [0-9a-f]{64}$`));
+      // Written after the migration and before the services are recreated with it.
+      const c = calls();
+      expect(indexOf(c, 'run --rm --no-TTY --no-deps migrate')).toBeGreaterThanOrEqual(0);
+      expect(res.out).toContain('identity provider settings written to');
+      expect(res.out).toContain('set: AUTH_ISSUER AUTH_JWKS_URL PUBLIC_AUTH_URL PUBLIC_AUTH_ANON_KEY AUTH_ALLOWED_EMAILS AUTH_SESSION_CHECK AUTH_UPSTREAM_URL; removed: AUTH_SIGNUP_POLICY AUTH_SIGNUP_ALLOWED_DOMAINS PROBER_AUTH_URL');
+      expect(indexOf(res.out.split('\n'), 'identity provider settings written')).toBeLessThan(indexOf(res.out.split('\n'), 'rolling the worker'));
+      expect(indexOf(c, 'compose up --detach --no-build --no-deps worker')).toBeGreaterThan(indexOf(c, 'run --rm --no-TTY --no-deps migrate'));
+      // The services were recreated (worker, API, prober) and the smoke test skipped the proxy check, which a remote provider has none of.
+      expect(c.some((l) => l.endsWith('--wait-timeout 600 prober'))).toBe(true);
+      expect(res.out).toContain('smoke skipped: /auth/v1/health');
+      expect(res.out).not.toContain('smoke failed');
+      // The provider was asked before anything changed (its keys and its /health); the host's own proxy was not.
+      expect(res.out).toContain('identity provider: AUTH_JWKS_URL answers with an ES256 or RS256 key');
+      expect(readFileSync(log, 'utf8')).not.toContain('curl http://127.0.0.1:18080/auth/v1/health');
+      // The settings file is removed once read.
+      expect(existsSync(settingsPath())).toBe(false);
+    });
+
+    it('writes the optional settings, quotes the button words, and takes an optional line out when the environment no longer defines it', () => {
+      writeFileSync(`${dir}/.env`, BEFORE);
+      const full = {
+        ...IDP,
+        AUTH_OAUTH_PROVIDERS: 'google, github',
+        AUTH_HOSTED_LOGIN_URL: 'https://login.example.com/authorize',
+        AUTH_HOSTED_LOGIN_TOKEN_URL: 'https://login.example.com/token',
+        AUTH_HOSTED_LOGIN_NAME: 'Login with Ví dụ',
+      };
+      const res = deployIdp('v1.0.0', 'a', full);
+      expect(res.status, res.out).toBe(0);
+      const env = lines(envFile());
+      expect(env).toContain('AUTH_OAUTH_PROVIDERS=google,github');
+      expect(env).toContain('AUTH_HOSTED_LOGIN_URL=https://login.example.com/authorize');
+      expect(env).toContain('AUTH_HOSTED_LOGIN_TOKEN_URL=https://login.example.com/token');
+      expect(env).toContain("AUTH_HOSTED_LOGIN_NAME='Login with Ví dụ'");
+      expect(env.filter((l) => l.startsWith('AUTH_OAUTH_PROVIDERS='))).toHaveLength(1);
+      // The settings are the environment's: without the buttons and the hosted login, those lines leave the file.
+      const second = deployIdp('v1.1.0', 'b', IDP);
+      expect(second.status, second.out).toBe(0);
+      expect(lines(envFile()).some((l) => l.startsWith('AUTH_OAUTH_PROVIDERS=') || l.startsWith('AUTH_HOSTED_LOGIN'))).toBe(false);
+    });
+
+    it('does nothing, and makes no copy, when the env file already has exactly these settings', () => {
+      writeFileSync(`${dir}/.env`, BEFORE);
+      expect(deployIdp('v1.0.0', 'a').status).toBe(0);
+      const done = envFile();
+      expect(copies()).toHaveLength(1);
+      const res = deployIdp('v1.1.0', 'b');
+      expect(res.status, res.out).toBe(0);
+      expect(res.out).toContain('already in');
+      expect(envFile()).toBe(done);
+      expect(copies()).toHaveLength(1);
+      // This deploy changed nothing, so a rollback from it does not touch the file.
+      expect(existsSync(`${dir}/.deploy/env-backup`)).toBe(false);
+      const back = run(['rollback']);
+      expect(back.status, back.out).toBe(0);
+      expect(envFile()).toBe(done);
+    });
+
+    it('keeps Windows line breaks: the added lines get them too', () => {
+      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\r\nCROVE_CONTEXT_TOKEN_KEY=already-here\r\nAUTH_SIGNUP_POLICY=invite_only\r\n');
+      expect(deployIdp('v1.0.0', 'a').status).toBe(0);
+      const text = envFile();
+      expect(text.split('\n').filter(Boolean).every((l) => l.endsWith('\r'))).toBe(true);
+      expect(text).toContain('AUTH_UPSTREAM_URL=\r\n');
+      expect(text).not.toContain('AUTH_SIGNUP_POLICY');
+    });
+
+    it('does not take a commented-out line, another setting with a longer name or a value for an assignment', () => {
+      const before = '# AUTH_ISSUER=old\nAUTH_ISSUER_EXTRA=keep\nSOME=AUTH_SIGNUP_POLICY=x\nCROVE_CONTEXT_TOKEN_KEY=already-here\n  AUTH_SIGNUP_POLICY : allowlist\n';
+      writeFileSync(`${dir}/.env`, before);
+      expect(deployIdp('v1.0.0', 'a').status).toBe(0);
+      const env = lines(envFile());
+      expect(env.slice(0, 3)).toEqual(['# AUTH_ISSUER=old', 'AUTH_ISSUER_EXTRA=keep', 'SOME=AUTH_SIGNUP_POLICY=x']);
+      expect(env.some((l) => l.includes('allowlist'))).toBe(false);
+    });
+
+    describe('checks every value before the host is touched', () => {
+      const bad: Array<[string, Record<string, string>, string]> = [
+        ['an http issuer', { ...IDP, AUTH_ISSUER: 'http://idp.example.com/auth/v1' }, 'AUTH_ISSUER'],
+        ['an issuer with a command substitution', { ...IDP, AUTH_ISSUER: 'https://idp.example.com/$(touch pwned)' }, 'AUTH_ISSUER'],
+        ['an issuer with a backtick', { ...IDP, AUTH_ISSUER: 'https://idp.example.com/`touch pwned`' }, 'AUTH_ISSUER'],
+        ['an issuer with a query', { ...IDP, AUTH_ISSUER: 'https://idp.example.com/auth/v1?x=1' }, 'AUTH_ISSUER'],
+        ['an issuer with a fragment', { ...IDP, AUTH_ISSUER: 'https://idp.example.com/auth/v1#frag' }, 'AUTH_ISSUER'],
+        ['an issuer with a user', { ...IDP, AUTH_ISSUER: 'https://user@idp.example.com/auth/v1' }, 'AUTH_ISSUER'],
+        ['an issuer with a quote', { ...IDP, AUTH_ISSUER: 'https://idp.example.com/a"b' }, 'AUTH_ISSUER'],
+        ['an issuer that is an IP address', { ...IDP, AUTH_ISSUER: 'https://127.0.0.1/auth/v1', AUTH_JWKS_URL: 'https://127.0.0.1/keys' }, 'AUTH_ISSUER'],
+        ['an issuer on localhost', { ...IDP, AUTH_ISSUER: 'https://localhost/auth/v1', AUTH_JWKS_URL: 'https://localhost/keys' }, 'AUTH_ISSUER'],
+        ['a port out of range', { ...IDP, PUBLIC_AUTH_URL: 'https://idp.example.com:99999/auth/v1' }, 'PUBLIC_AUTH_URL'],
+        ['a path with ..', { ...IDP, AUTH_JWKS_URL: 'https://idp.example.com/../keys' }, 'AUTH_JWKS_URL'],
+        ['keys on another origin than the issuer', { ...IDP, AUTH_JWKS_URL: 'https://keys.example.net/auth/v1/.well-known/jwks.json' }, 'same origin'],
+        ['a key with a space', { ...IDP, PUBLIC_AUTH_ANON_KEY: 'sb_publishable_ with space 1234' }, 'PUBLIC_AUTH_ANON_KEY'],
+        ['a key with a semicolon', { ...IDP, PUBLIC_AUTH_ANON_KEY: 'sb_publishable_1234567890;rm' }, 'PUBLIC_AUTH_ANON_KEY'],
+        ['a key that is too short', { ...IDP, PUBLIC_AUTH_ANON_KEY: 'short' }, 'PUBLIC_AUTH_ANON_KEY'],
+        ['an upper-case provider id', { ...IDP, AUTH_OAUTH_PROVIDERS: 'Google' }, 'AUTH_OAUTH_PROVIDERS'],
+        ['a provider id with a dash', { ...IDP, AUTH_OAUTH_PROVIDERS: 'go-ogle' }, 'AUTH_OAUTH_PROVIDERS'],
+        ['a provider id with a semicolon', { ...IDP, AUTH_OAUTH_PROVIDERS: 'google;github' }, 'AUTH_OAUTH_PROVIDERS'],
+        ['thirteen providers', { ...IDP, AUTH_OAUTH_PROVIDERS: 'a,b,c,d,e,f,g,h,i,j,k,l,m' }, 'AUTH_OAUTH_PROVIDERS'],
+        ['a hosted login page without its token endpoint', { ...IDP, AUTH_HOSTED_LOGIN_URL: 'https://login.example.com/authorize' }, 'both AUTH_HOSTED_LOGIN_URL'],
+        ['a hosted token endpoint without its page', { ...IDP, AUTH_HOSTED_LOGIN_TOKEN_URL: 'https://login.example.com/token' }, 'both AUTH_HOSTED_LOGIN_URL'],
+        ['hosted login words without the hosted login', { ...IDP, AUTH_HOSTED_LOGIN_NAME: 'Login' }, 'AUTH_HOSTED_LOGIN_NAME needs'],
+        ['an http hosted login', { ...IDP, AUTH_HOSTED_LOGIN_URL: 'http://login.example.com/a', AUTH_HOSTED_LOGIN_TOKEN_URL: 'https://login.example.com/token' }, 'AUTH_HOSTED_LOGIN_URL'],
+        ...['a$HOME', 'a`id`', "it's", 'say "hi"', 'a\\b', 'a#b', 'a=b', 'a;b', 'a&b', 'a|b', 'a<b', '<b>', ' lead', 'trail ', 'a(b)', 'a{b}', 'a*b', 'a~b', 'a%b', 'a[b]', 'a!b'].map(
+          (name): [string, Record<string, string>, string] => [
+            `hosted login words ${JSON.stringify(name)}`,
+            { ...IDP, AUTH_HOSTED_LOGIN_URL: 'https://login.example.com/authorize', AUTH_HOSTED_LOGIN_TOKEN_URL: 'https://login.example.com/token', AUTH_HOSTED_LOGIN_NAME: name },
+            'AUTH_HOSTED_LOGIN_NAME',
+          ],
+        ),
+        ['hosted login words over 40 characters (the kernel refuses them at boot)', { ...IDP, AUTH_HOSTED_LOGIN_URL: 'https://login.example.com/a', AUTH_HOSTED_LOGIN_TOKEN_URL: 'https://login.example.com/t', AUTH_HOSTED_LOGIN_NAME: 'x'.repeat(41) }, 'AUTH_HOSTED_LOGIN_NAME'],
+        ['an address with a space inside', { ...IDP, AUTH_ALLOWED_EMAILS: 'own er@example.org' }, 'AUTH_ALLOWED_EMAILS'],
+        ['an address with no domain dot', { ...IDP, AUTH_ALLOWED_EMAILS: 'owner@example' }, 'AUTH_ALLOWED_EMAILS'],
+        ['an address with a semicolon', { ...IDP, AUTH_ALLOWED_EMAILS: 'owner@example.org;x@example.org' }, 'AUTH_ALLOWED_EMAILS'],
+        ['an address with a dollar', { ...IDP, AUTH_ALLOWED_EMAILS: 'o$wner@example.org' }, 'AUTH_ALLOWED_EMAILS'],
+        ['a bare @', { ...IDP, AUTH_ALLOWED_EMAILS: '@' }, 'AUTH_ALLOWED_EMAILS'],
+        ['an @domain entry over 254 characters', { ...IDP, AUTH_ALLOWED_EMAILS: `@${'a'.repeat(60)}.${'b'.repeat(60)}.${'c'.repeat(60)}.${'d'.repeat(60)}.${'e'.repeat(20)}.example` }, 'AUTH_ALLOWED_EMAILS'],
+        ['an address whose last label ends in a dash (the kernel refuses it, and the worker would not boot)', { ...IDP, AUTH_ALLOWED_EMAILS: 'a@example.org,owner@gmail.com-' }, 'AUTH_ALLOWED_EMAILS'],
+        ['a domain whose last label ends in a dash', { ...IDP, AUTH_ALLOWED_EMAILS: '@example.co-' }, 'AUTH_ALLOWED_EMAILS'],
+        ['a domain with a label that ends in a dash', { ...IDP, AUTH_ALLOWED_EMAILS: '@bad-.example.com' }, 'AUTH_ALLOWED_EMAILS'],
+        ['a domain whose last label starts with a digit', { ...IDP, AUTH_ALLOWED_EMAILS: '@example.1com' }, 'AUTH_ALLOWED_EMAILS'],
+        ['an issuer whose last label ends in a dash', { ...IDP, AUTH_ISSUER: 'https://idp.example.co-/auth/v1', AUTH_JWKS_URL: 'https://idp.example.co-/keys' }, 'AUTH_ISSUER'],
+        ['an issuer on a .localhost name', { ...IDP, AUTH_ISSUER: 'https://idp.localhost/auth/v1', AUTH_JWKS_URL: 'https://idp.localhost/keys' }, 'AUTH_ISSUER'],
+        ['an Auth URL on a .localhost name', { ...IDP, PUBLIC_AUTH_URL: 'https://app.example.LOCALHOST/auth/v1' }, 'PUBLIC_AUTH_URL'],
+        ['a list of only commas', { ...IDP, AUTH_ALLOWED_EMAILS: ',' }, 'AUTH_ALLOWED_EMAILS'],
+        ['a line break smuggling a second assignment', { ...IDP, AUTH_ISSUER: 'https://idp.example.com/auth/v1\nAUTH_JWT_SECRET=evil' }, 'unknown identity provider setting AUTH_JWT_SECRET'],
+        ['a line break smuggling a known name twice', { ...IDP, AUTH_ISSUER: 'https://idp.example.com/auth/v1\nAUTH_ALLOWED_EMAILS=@evil.example' }, 'given twice'],
+        ['a carriage return', { ...IDP, AUTH_ISSUER: 'https://idp.example.com/auth/v1\r' }, 'AUTH_ISSUER'],
+        ['a setting of another name', { ...IDP, AUTH_JWT_SECRET: 'x'.repeat(20) }, 'unknown identity provider setting AUTH_JWT_SECRET'],
+        ['COMPOSE_FILE', { ...IDP, COMPOSE_FILE: 'docker-compose.yml' }, 'unknown identity provider setting COMPOSE_FILE'],
+        ['a missing issuer', Object.fromEntries(Object.entries(IDP).filter(([k]) => k !== 'AUTH_ISSUER')), 'AUTH_ISSUER is required'],
+        ['a missing key', Object.fromEntries(Object.entries(IDP).filter(([k]) => k !== 'PUBLIC_AUTH_ANON_KEY')), 'PUBLIC_AUTH_ANON_KEY is required'],
+        ['no allowed addresses', Object.fromEntries(Object.entries(IDP).filter(([k]) => k !== 'AUTH_ALLOWED_EMAILS')), 'AUTH_ALLOWED_EMAILS is required'],
+      ];
+
+      it.each(bad)('refuses %s: exit 2, nothing pulled or changed, no value in the message', (_name, values, message) => {
+        writeFileSync(`${dir}/.env`, BEFORE);
+        const res = deployIdp('v1.0.0', 'a', values);
+        expect(res.status, res.out).toBe(2);
+        expect(res.out).toContain(message);
+        expect(res.out).toContain('nothing was changed');
+        // Nothing ran: no pull, no compose call, no copy, no new env file, no state.
+        expect(calls()).toEqual([]);
+        expect(envFile()).toBe(BEFORE);
+        expect(copies()).toEqual([]);
+        expect(existsSync(`${dir}/.deploy/current`)).toBe(false);
+        // The file, with the secret in it, does not stay on the host when it is refused either.
+        expect(existsSync(settingsPath())).toBe(false);
+        // The message names the setting, never what it was given.
+        for (const [k, v] of Object.entries(values)) {
+          if (v.length >= 6 && !['AUTH_ISSUER', 'AUTH_JWKS_URL', 'PUBLIC_AUTH_URL'].includes(k)) expect(res.out.includes(v), `${k}'s value is in the output`).toBe(false);
+        }
+        expect(res.out).not.toContain('owner@example.org');
+        expect(res.out).not.toContain('sb_publishable_');
+      });
+
+      it('refuses a line that is not NAME=value, a missing file and a relative path', () => {
+        writeFileSync(`${dir}/.env`, BEFORE);
+        putSettings('AUTH_ISSUER https://idp.example.com/auth/v1\n');
+        const line = run(['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', compose, '--auth-settings', settingsPath()]);
+        expect(line.status, line.out).toBe(2);
+        expect(line.out).toContain('is not NAME=value');
+        const missing = run(['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', compose, '--auth-settings', `${root}/nope.env`]);
+        expect(missing.status, missing.out).toBe(2);
+        expect(missing.out).toContain('not readable');
+        const relative = run(['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', compose, '--auth-settings', 'auth-settings.env']);
+        expect(relative.status, relative.out).toBe(2);
+        expect(relative.out).toContain('--auth-settings must be an absolute path');
+        expect(envFile()).toBe(BEFORE);
+        expect(calls()).toEqual([]);
+      });
+
+      it('check-auth-settings accepts the settings and names them, without a value', () => {
+        writeSettings(IDP);
+        const ok = run(['check-auth-settings', settingsPath()]);
+        expect(ok.status, ok.out).toBe(0);
+        expect(ok.out).toContain('they set: AUTH_ISSUER AUTH_JWKS_URL PUBLIC_AUTH_URL PUBLIC_AUTH_ANON_KEY AUTH_ALLOWED_EMAILS AUTH_SESSION_CHECK AUTH_UPSTREAM_URL');
+        expect(ok.out).not.toContain('example');
+        writeSettings({ ...IDP, AUTH_ISSUER: 'http://idp.example.com' });
+        const refused = run(['check-auth-settings', settingsPath()]);
+        expect(refused.status).toBe(2);
+        expect(refused.out).toContain('AUTH_ISSUER must be an https address');
+      });
+    });
+
+    describe('puts the dated copy back', () => {
+      it('when the release does not become ready: the env file is as it was, and the release before runs again', () => {
+        writeFileSync(`${dir}/.env`, BEFORE);
+        expect(deploy('v1.0.0', 'a', { STUB_SERVICES: SPLIT_SERVICES }).status).toBe(0);
+        expect(envFile()).toBe(BEFORE);
+        const res = deployIdp('v1.1.0', 'b', IDP, { STUB_SERVICES: SPLIT_SERVICES, STUB_BAD_DIGEST: digest('b') });
+        expect(res.status, res.out).toBe(1);
+        expect(res.out).toContain('identity provider settings written to');
+        expect(res.out).toContain('(the file as it was before the identity provider settings)');
+        expect(res.out).toContain(`rolled back to ${releaseDir('v1.0.0', 'a')}, which serves again`);
+        expect(envFile()).toBe(BEFORE);
+        expect(state('current')).toBe(releaseDir('v1.0.0', 'a'));
+        expect(existsSync(`${dir}/.deploy/env-backup`)).toBe(false);
+        // The restore comes before the old release's services are recreated.
+        expect(res.out.indexOf('restored')).toBeLessThan(res.out.indexOf(`rolling back to ${releaseDir('v1.0.0', 'a')}`));
+      });
+
+      it('when the smoke test fails', () => {
+        writeFileSync(`${dir}/.env`, BEFORE);
+        expect(deploy('v1.0.0', 'a').status).toBe(0);
+        const res = deployIdp('v1.1.0', 'b', IDP, { STUB_NO_BUNDLE_DIGEST: digest('b') });
+        expect(res.status, res.out).toBe(1);
+        expect(res.out).toContain('smoke failed: /login loads the app shell and its script bundle');
+        expect(envFile()).toBe(BEFORE);
+      });
+
+      it('on a first deploy that fails, where there is no release to go back to', () => {
+        writeFileSync(`${dir}/.env`, BEFORE);
+        const res = deployIdp('v1.0.0', 'a', IDP, { STUB_BAD_DIGEST: digest('a') });
+        expect(res.status, res.out).toBe(1);
+        expect(res.out).toContain('there is no earlier release to roll back to');
+        expect(envFile()).toBe(BEFORE);
+      });
+
+      it('on a manual rollback from the release that wrote it, and not again on the next one', () => {
+        writeFileSync(`${dir}/.env`, BEFORE);
+        expect(deploy('v1.0.0', 'a').status).toBe(0);
+        expect(deployIdp('v1.1.0', 'b').status).toBe(0);
+        expect(envFile()).not.toBe(BEFORE);
+        const back = run(['rollback']);
+        expect(back.status, back.out).toBe(0);
+        expect(back.out).toContain('(the file as it was before the identity provider settings)');
+        expect(envFile()).toBe(BEFORE);
+        expect(existsSync(`${dir}/.deploy/env-backup`)).toBe(false);
+        // Someone edits the file; the rollback that returns to release b does not bring the old copy over that edit.
+        writeFileSync(`${dir}/.env`, `${BEFORE}EDITED=1\n`);
+        const forward = run(['rollback']);
+        expect(forward.status, forward.out).toBe(0);
+        expect(envFile()).toBe(`${BEFORE}EDITED=1\n`);
+      });
+
+      it('and a deploy without settings after one with them clears the record, so a rollback leaves the file alone', () => {
+        writeFileSync(`${dir}/.env`, BEFORE);
+        expect(deployIdp('v1.0.0', 'a').status).toBe(0);
+        const written = envFile();
+        expect(deploy('v1.1.0', 'b').status).toBe(0);
+        expect(existsSync(`${dir}/.deploy/env-backup`)).toBe(false);
+        expect(run(['rollback']).status).toBe(0);
+        expect(envFile()).toBe(written);
+      });
+
+      it('stops before anything changes when the env file or its directory is not writable', () => {
+        if (process.platform === 'win32' || process.getuid?.() === 0) return; // a read-only file is still writable to root
+        writeFileSync(`${dir}/.env`, BEFORE);
+        chmodSync(`${dir}/.env`, 0o444);
+        try {
+          const res = deployIdp('v1.0.0', 'a');
+          expect(res.status, res.out).toBe(2);
+          expect(res.out).toContain('writable by the deploy user');
+          expect(res.out).toContain('nothing was changed');
+          expect(calls()).toEqual([]);
+          expect(copies()).toEqual([]);
+        } finally {
+          chmodSync(`${dir}/.env`, 0o600);
+        }
+        expect(envFile()).toBe(BEFORE);
+      });
+
+      it('when the compose files do not load with the new settings', () => {
+        writeFileSync(`${dir}/.env`, BEFORE);
+        expect(deploy('v1.0.0', 'a').status).toBe(0);
+        const res = deployIdp('v1.1.0', 'b', IDP, { STUB_CONFIG_FAIL_IF_ENV_HAS: 'AUTH_SESSION_CHECK=jwt' });
+        expect(res.status, res.out).toBe(1);
+        expect(res.out).toContain('do not load with the identity provider settings; the env file was put back');
+        expect(envFile()).toBe(BEFORE);
+        expect(state('current')).toBe(releaseDir('v1.0.0', 'a'));
+        expect(running()).toContain(image('a'));
+      });
+
+      it('but never over edits made since: a rotated password stays, and the message says so', () => {
+        writeFileSync(`${dir}/.env`, BEFORE);
+        expect(deploy('v1.0.0', 'a').status).toBe(0);
+        expect(deployIdp('v1.1.0', 'b').status).toBe(0);
+        const edited = `${envFile()}SMTP_PASSWORD=new\n`.replace('POSTGRES_PASSWORD=x', 'POSTGRES_PASSWORD=rotated');
+        writeFileSync(`${dir}/.env`, edited);
+        const back = run(['rollback']);
+        expect(back.status, back.out).toBe(0);
+        expect(back.out).toContain('was edited after release');
+        expect(back.out).toContain('is left as it is');
+        expect(envFile()).toBe(edited);
+        expect(existsSync(`${dir}/.deploy/env-backup`)).toBe(false);
+      });
+
+      it('and goes back to the settings when the rollback itself fails', () => {
+        writeFileSync(`${dir}/.env`, BEFORE);
+        expect(deploy('v1.0.0', 'a').status).toBe(0);
+        expect(deployIdp('v1.1.0', 'b').status).toBe(0);
+        const written = envFile();
+        const res = run(['rollback'], { STUB_BAD_DIGEST: digest('a') });
+        expect(res.status, res.out).toBe(1);
+        expect(res.out).toContain(`rolled back to ${releaseDir('v1.1.0', 'b')}, which serves again`);
+        // Release b serves again with the settings it was deployed with, and a later rollback still knows how to take them out.
+        expect(envFile()).toBe(written);
+        expect(res.out).toContain('put the identity provider settings back');
+        expect(state('env-backup')).toContain(releaseDir('v1.1.0', 'b'));
+        expect(copies()).toHaveLength(1);
+        const again = run(['rollback']);
+        expect(again.status, again.out).toBe(0);
+        expect(envFile()).toBe(BEFORE);
+        // No copy of the file as it was is left once a rollback worked.
+        expect(copies()).toHaveLength(1);
+      });
+
+      it('to the copy from before the first deploy of a release that is deployed again with other settings', () => {
+        writeFileSync(`${dir}/.env`, BEFORE);
+        expect(deploy('v1.0.0', 'a').status).toBe(0);
+        expect(deployIdp('v1.1.0', 'b').status).toBe(0);
+        const other = deployIdp('v1.1.0', 'b', { ...IDP, AUTH_ALLOWED_EMAILS: '@example.net' });
+        expect(other.status, other.out).toBe(0);
+        expect(envFile()).toContain('AUTH_ALLOWED_EMAILS=@example.net');
+        expect(run(['rollback']).status).toBe(0);
+        expect(envFile()).toBe(BEFORE);
+      });
+
+      it('without overwriting edits made between two deploys of the same release, and a rollback leaves such a file alone', () => {
+        writeFileSync(`${dir}/.env`, BEFORE);
+        expect(deploy('v1.0.0', 'a').status).toBe(0);
+        expect(deployIdp('v1.1.0', 'b').status).toBe(0);
+        // The database password is rotated by hand, then the same release goes out again with other settings.
+        writeFileSync(`${dir}/.env`, envFile().replace('POSTGRES_PASSWORD=x', 'POSTGRES_PASSWORD=rotated'));
+        const again = deployIdp('v1.1.0', 'b', { ...IDP, AUTH_ALLOWED_EMAILS: '@example.net' });
+        expect(again.status, again.out).toBe(0);
+        expect(again.out).toContain('was edited after release');
+        expect(again.out).toContain('a rollback will leave it as it is');
+        expect(existsSync(`${dir}/.deploy/env-backup`)).toBe(false);
+        const after = envFile();
+        expect(run(['rollback']).status).toBe(0);
+        // Neither the old password comes back nor is a half of the settings taken out.
+        expect(envFile()).toBe(after);
+        expect(envFile()).toContain('POSTGRES_PASSWORD=rotated');
+      });
+
+      it('after the same release is deployed again with the same settings', () => {
+        writeFileSync(`${dir}/.env`, BEFORE);
+        expect(deploy('v1.0.0', 'a').status).toBe(0);
+        expect(deployIdp('v1.1.0', 'b').status).toBe(0);
+        const again = deployIdp('v1.1.0', 'b');
+        expect(again.status, again.out).toBe(0);
+        expect(again.out).toContain('already in');
+        expect(state('env-backup')).toContain(releaseDir('v1.1.0', 'b'));
+        expect(run(['rollback']).status).toBe(0);
+        expect(envFile()).toBe(BEFORE);
+      });
+    });
+
+    it('stops before anything changes when the provider does not answer as the settings say', () => {
+      writeFileSync(`${dir}/.env`, BEFORE);
+      const keys = deployIdp('v1.0.0', 'a', IDP, { STUB_JWKS_FAIL: '1' });
+      expect(keys.status, keys.out).toBe(1);
+      expect(keys.out).toContain('AUTH_JWKS_URL does not answer 200 with a JSON Web Key Set');
+      expect(keys.out).not.toContain('answers with');
+      for (const env of [{ STUB_JWKS_EMPTY: '1' }, { STUB_JWKS_OCT: '1' }]) {
+        const poor = deployIdp('v1.0.0', 'a', IDP, env);
+        expect(poor.status, poor.out).toBe(1);
+        expect(poor.out).toContain('JSON Web Key Set that holds an EC or RSA key');
+      }
+      const page = deployIdp('v1.0.0', 'a', IDP, { STUB_IDP_HEALTH_HTML: '1' });
+      expect(page.status, page.out).toBe(1);
+      expect(page.out).toContain('does not answer 200 with the Auth service');
+      const health = deployIdp('v1.0.0', 'a', IDP, { STUB_IDP_HEALTH_FAIL: '1' });
+      expect(health.status, health.out).toBe(1);
+      expect(health.out).toContain('PUBLIC_AUTH_URL/health does not answer');
+      for (const res of [keys, health]) expect(res.out).toContain('nothing was changed');
+      expect(calls()).toEqual([]);
+      expect(envFile()).toBe(BEFORE);
+      expect(copies()).toEqual([]);
+      // The publishable key went in a header file, not on a command line.
+      expect(readFileSync(`${log}.argv`, 'utf8')).not.toContain('sb_publishable_');
+      expect(readFileSync(`${log}.argv`, 'utf8')).toContain('--header @');
+    });
+
+    it('accepts what the kernel accepts: spaces between addresses, a local part ending in a dash, an explicit :443, 40 characters of words', () => {
+      writeFileSync(`${dir}/.env`, BEFORE);
+      const values = {
+        ...IDP,
+        AUTH_ALLOWED_EMAILS: 'a-@example.com  b%c@example.org, @example.net',
+        AUTH_JWKS_URL: 'https://idp.example.com:443/auth/v1/.well-known/jwks.json',
+        AUTH_HOSTED_LOGIN_URL: 'https://login.example.com/authorize',
+        AUTH_HOSTED_LOGIN_TOKEN_URL: 'https://login.example.com/token',
+        AUTH_HOSTED_LOGIN_NAME: 'x'.repeat(40),
+      };
+      const res = deployIdp('v1.0.0', 'a', values);
+      expect(res.status, res.out).toBe(0);
+      expect(envFile()).toContain('AUTH_ALLOWED_EMAILS=a-@example.com,b%c@example.org,@example.net\n');
+    });
+
+    it('puts no setting on the command line of any process it runs', () => {
+      const shims = ['cat', 'cmp', 'mktemp', 'rm', 'sed', 'grep', 'tr', 'head', 'tail', 'mv', 'cp', 'mkdir', 'date', 'wc', 'cut', 'sha256sum', 'cksum'];
+      for (const name of shims) {
+        const real = spawnSync('bash', ['-c', `command -v ${name}`], { encoding: 'utf8' }).stdout.trim();
+        if (real === '') continue;
+        writeFileSync(`${root}/bin/${name}`, `#!/bin/sh\nprintf '%s %s\\n' "${name}" "$*" >>"$STUB_LOG.shim-argv"\nexec ${real} "$@"\n`);
+        chmodSync(`${root}/bin/${name}`, 0o755);
+      }
+      writeFileSync(`${dir}/.env`, BEFORE);
+      const res = deployIdp('v1.0.0', 'a');
+      expect(res.status, res.out).toBe(0);
+      const argv = readFileSync(`${log}.shim-argv`, 'utf8');
+      // The shims did see the run: an empty log would prove nothing.
+      expect(argv).toContain('mktemp ');
+      expect(argv).toContain('cmp ');
+      for (const secret of ['owner@example.org', '@example.com', 'sb_publishable_TESTKEY']) expect(argv.includes(secret), `${secret} is on a command line`).toBe(false);
+    });
+
+    it('stops, and puts the file back, when /api/config does not report the Auth URL it was given', () => {
+      writeFileSync(`${dir}/.env`, BEFORE);
+      expect(deploy('v1.0.0', 'a').status).toBe(0);
+      const res = deployIdp('v1.1.0', 'b', IDP, { STUB_AUTH_URL: 'https://other.example.com/auth/v1' });
+      expect(res.status, res.out).toBe(1);
+      expect(res.out).toContain('smoke failed: /api/config names the configured Auth URL');
+      expect(res.out).not.toContain('other.example.com');
+      expect(envFile()).toBe(BEFORE);
+    });
+
+    it('probes the provider over https only, without following a redirect', () => {
+      writeFileSync(`${dir}/.env`, BEFORE);
+      const res = deployIdp('v1.0.0', 'a', IDP, { STUB_IDP_REDIRECT: '1' });
+      expect(res.status, res.out).toBe(1);
+      expect(res.out).toContain('PUBLIC_AUTH_URL/health does not answer 200');
+      expect(res.out).toContain('nothing was changed');
+      expect(envFile()).toBe(BEFORE);
+      const argv = readFileSync(`${log}.argv`, 'utf8');
+      expect(argv).toContain('--proto =https --proto-redir =https');
+      expect(argv).not.toContain('--location');
+      // Every request to the provider (by its parsed host, not a substring) carried the protocol limits and ignored ~/.curlrc.
+      const toProvider = argv.split('\n').filter((l) => l.split(' ').some((a) => a.startsWith('https://') && new URL(a).hostname === 'idp.example.com'));
+      expect(toProvider.length).toBeGreaterThan(0);
+      expect(toProvider.every((l) => l.startsWith('-q ') && l.includes('--proto =https'))).toBe(true);
+    });
+
+    it('does not demand the Auth URL of a caller\'s shell from a rollback', () => {
+      writeFileSync(`${dir}/.env`, BEFORE);
+      expect(deploy('v1.0.0', 'a').status).toBe(0);
+      expect(deploy('v1.1.0', 'b').status).toBe(0);
+      const res = run(['rollback'], { SMOKE_EXPECT_AUTH_URL: 'https://idp.example.com/auth/v1' });
+      expect(res.status, res.out).toBe(0);
+      expect(res.out).not.toContain('names the configured Auth URL');
+    });
+
+    it('does not print the worker log when the env file lists who may sign in (it may be a public CI log), and does otherwise', () => {
+      const down = { STUB_SERVICES: SPLIT_SERVICES, STUB_WORKER_DOWN_DIGEST: digest('a'), STUB_WORKER_LOG: 'worker: refused owner@gmail.com- in AUTH_ALLOWED_EMAILS' };
+      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=k\nAUTH_ALLOWED_EMAILS=@example.com,owner@gmail.com-\n');
+      const hidden = deploy('v1.0.0', 'a', down);
+      expect(hidden.status, hidden.out).toBe(1);
+      expect(hidden.out).toContain('the worker is not running');
+      expect(hidden.out).toContain('the worker log is not shown here');
+      expect(hidden.out).not.toContain('owner@gmail.com-');
+      // An empty value, a commented-out line and another setting that starts with the name are not a list.
+      for (const line of ['AUTH_ALLOWED_EMAILS=\n', '# AUTH_ALLOWED_EMAILS=@example.com\n', 'AUTH_ALLOWED_EMAILS_X=@example.com\n']) {
+        writeFileSync(`${dir}/.env`, `POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=k\n${line}`);
+        const shown = deploy('v1.0.0', 'a', down);
+        expect(shown.out, line).toContain('worker: refused owner@gmail.com-');
+      }
+    });
+
+    it('keeps the newest dated copies and the one a rollback needs, and removes the rest', () => {
+      writeFileSync(`${dir}/.env`, BEFORE);
+      expect(deploy('v1.0.0', 'a').status).toBe(0);
+      expect(deployIdp('v1.1.0', 'b').status).toBe(0);
+      const needed = readFileSync(`${dir}/.deploy/env-backup`, 'utf8').split(' ')[1] ?? '';
+      expect(existsSync(needed)).toBe(true);
+      // Older copies from earlier runs, and the same release deployed again with other settings: the copy before its first deploy stays the one needed.
+      for (let n = 0; n < 7; n++) writeFileSync(`${dir}/.env.bak-2026010${n + 1}T000000Z-abcdef`, 'old\n', { mode: 0o600 });
+      for (let n = 0; n < 3; n++) expect(deployIdp('v1.1.0', 'b', { ...IDP, AUTH_ALLOWED_EMAILS: `@example${n}.net` }).status).toBe(0);
+      expect(readFileSync(`${dir}/.deploy/env-backup`, 'utf8').split(' ')[1]).toBe(needed);
+      expect(existsSync(needed)).toBe(true);
+      expect(copies().length).toBeLessThanOrEqual(6);
+      // The seven made-up ones are the oldest, so the newest of them are the only ones to survive beside the real copies.
+      expect(existsSync(`${dir}/.env.bak-20260101T000000Z-abcdef`)).toBe(false);
+      // And the rollback still restores the file as it was before the first deploy of release b.
+      expect(run(['rollback']).status).toBe(0);
+      expect(envFile()).toBe(BEFORE);
+    });
+
+    it('never touches the env file when the migration fails', () => {
+      writeFileSync(`${dir}/.env`, BEFORE);
+      const res = deployIdp('v1.0.0', 'a', IDP, { STUB_MIGRATE_EXIT: '1' });
+      expect(res.status, res.out).toBe(1);
+      expect(res.out).toContain('migrations failed');
+      expect(envFile()).toBe(BEFORE);
+      expect(copies()).toEqual([]);
+    });
+
+    it('only removes the file the workflow uploaded, and refuses the env file and the compose file as settings', () => {
+      writeFileSync(`${dir}/.env`, BEFORE);
+      const args = (file: string) => ['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', compose, '--auth-settings', file];
+      const asEnv = run(args(`${dir}/.env`));
+      expect(asEnv.status, asEnv.out).toBe(2);
+      expect(asEnv.out).toContain('not the env file or the compose file');
+      expect(envFile()).toBe(BEFORE);
+      const asCompose = run(args(compose));
+      expect(asCompose.status, asCompose.out).toBe(2);
+      expect(existsSync(compose)).toBe(true);
+      // A refused file elsewhere is read and left alone.
+      writeFileSync(`${root}/elsewhere.env`, 'POSTGRES_PASSWORD=x\n');
+      const elsewhere = run(args(`${root}/elsewhere.env`));
+      expect(elsewhere.status, elsewhere.out).toBe(2);
+      expect(existsSync(`${root}/elsewhere.env`)).toBe(true);
+      expect(calls()).toEqual([]);
+    });
+
+    it('removes only a regular settings file of the incoming directory: not through .., not a link', () => {
+      writeFileSync(`${dir}/.env`, BEFORE);
+      writeFileSync(`${dir}/docker-compose.yml`, 'name: crove\nservices: {}\n');
+      mkdirSync(`${dir}/.deploy/incoming/run`, { recursive: true });
+      const args = (file: string) => ['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', compose, '--auth-settings', file];
+      // The compose file reached with ..: read (and refused: not settings), never deleted.
+      const through = run(args(`${dir}/.deploy/incoming/../../docker-compose.yml`));
+      expect(through.status, through.out).toBe(2);
+      expect(existsSync(`${dir}/docker-compose.yml`)).toBe(true);
+      // A link named like the upload: the file it points to stays.
+      writeFileSync(`${root}/target.env`, 'POSTGRES_PASSWORD=x\n');
+      if (process.platform !== 'win32') {
+        symlinkSync(`${root}/target.env`, settingsPath());
+        const linked = run(args(settingsPath()));
+        expect(linked.status, linked.out).toBe(2);
+        expect(existsSync(`${root}/target.env`)).toBe(true);
+      }
+    });
+
+    it('counts the characters of the button words, not the bytes, whatever the locale of the SSH session', () => {
+      writeFileSync(`${dir}/.env`, BEFORE);
+      const words = 'Đăng nhập bằng tài khoản công ty'; // 32 characters, 42 bytes
+      const values = { ...IDP, AUTH_HOSTED_LOGIN_URL: 'https://login.example.com/authorize', AUTH_HOSTED_LOGIN_TOKEN_URL: 'https://login.example.com/token', AUTH_HOSTED_LOGIN_NAME: words };
+      writeSettings(values);
+      for (const locale of ['C', 'C.UTF-8']) {
+        const res = run(['check-auth-settings', settingsPath()], { LC_ALL: locale });
+        expect(res.status, `${locale}: ${res.out}`).toBe(0);
+      }
+      writeSettings({ ...values, AUTH_HOSTED_LOGIN_NAME: 'Đ'.repeat(41) });
+      expect(run(['check-auth-settings', settingsPath()], { LC_ALL: 'C' }).status).toBe(2);
+    });
+
+    it('writes the rollback record with mode 600', () => {
+      if (process.platform === 'win32') return;
+      writeFileSync(`${dir}/.env`, BEFORE);
+      expect(deployIdp('v1.0.0', 'a').status).toBe(0);
+      expect(statSync(`${dir}/.deploy/env-backup`).mode & 0o777).toBe(0o600);
+    });
+
+    it('stops before anything changes when the directory of the env file is not writable', () => {
+      if (process.platform === 'win32' || process.getuid?.() === 0) return;
+      mkdirSync(`${root}/ro`);
+      writeFileSync(`${root}/ro/.env`, BEFORE);
+      chmodSync(`${root}/ro`, 0o555);
+      try {
+        writeSettings(IDP);
+        const res = run(['deploy', '--release', 'v1.0.0', '--image', image('a'), '--extract-image', extract('a'), '--media-image', media('a'), '--compose', compose, '--auth-settings', settingsPath(), '--env-file', `${root}/ro/.env`]);
+        expect(res.status, res.out).toBe(2);
+        expect(res.out).toContain('writable by the deploy user');
+        expect(calls()).toEqual([]);
+      } finally {
+        chmodSync(`${root}/ro`, 0o755);
+      }
+    });
+
+    it('prints no value, passes none on a command line, and leaves a copy of the settings only in the env file and its dated copy', () => {
+      writeFileSync(`${dir}/.env`, BEFORE);
+      const res = deployIdp('v1.0.0', 'a', { ...IDP, AUTH_OAUTH_PROVIDERS: 'google', AUTH_HOSTED_LOGIN_URL: 'https://login.example.com/authorize', AUTH_HOSTED_LOGIN_TOKEN_URL: 'https://login.example.com/token', AUTH_HOSTED_LOGIN_NAME: 'Login with Example' });
+      expect(res.status, res.out).toBe(0);
+      const places: Record<string, string> = {
+        'the deploy log': res.out,
+        'the stub docker calls': readFileSync(log, 'utf8'),
+        'the stub curl calls': readFileSync(`${log}.argv`, 'utf8'),
+        'the compose files of each call': readFileSync(`${log}.files`, 'utf8'),
+      };
+      for (const f of everyFile(dir)) if (f !== `${dir}/.env` && !copies().some((c) => f === `${dir}/${c}`) && !f.endsWith('/.deploy/env-backup')) places[f] = readFileSync(f, 'utf8');
+      for (const [place, text] of Object.entries(places)) {
+        for (const secret of ['owner@example.org', '@example.com', 'sb_publishable_TESTKEY', 'Login with Example']) {
+          expect(text.includes(secret), `${secret} is in ${place}`).toBe(false);
+        }
+      }
+      // The list of names the log gives holds only names.
+      expect(res.out).toContain('identity provider settings given: AUTH_ISSUER');
+    });
+
+    it('skips the proxy checks of the smoke test when the env file has no bundled proxy, however the line is written, and not otherwise', () => {
+      const smoked = (line: string, extra: Record<string, string> = {}) => {
+        writeFileSync(`${dir}/.env`, `POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=k\n${line}`);
+        rmSync(log, { force: true });
+        return deploy('v1.0.0', 'a', extra);
+      };
+      for (const line of ['AUTH_UPSTREAM_URL=\n', 'export AUTH_UPSTREAM_URL =\n', 'AUTH_UPSTREAM_URL=""\n', "AUTH_UPSTREAM_URL='' # none\n", 'AUTH_UPSTREAM_URL=http://auth:9999\nAUTH_UPSTREAM_URL=\n']) {
+        const res = smoked(line);
+        expect(res.status, `${line}: ${res.out}`).toBe(0);
+        expect(res.out, line).toContain('smoke skipped: /auth/v1/health');
+      }
+      for (const line of ['', 'AUTH_UPSTREAM_URL=http://auth:9999\n', 'AUTH_UPSTREAM_URL=\nAUTH_UPSTREAM_URL=http://auth:9999\n', '# AUTH_UPSTREAM_URL=\n', 'AUTH_UPSTREAM_URL_X=\n']) {
+        const res = smoked(line);
+        expect(res.status, `${line}: ${res.out}`).toBe(0);
+        expect(res.out, line).toContain('smoke ok: /auth/v1/health answers');
+      }
+      // The workflow's public smoke test has no env file: it reads the deployed /api/config. An authUrl that is not the API's own /auth/v1
+      // means a remote provider, and the account step is skipped.
+      const account = { SMOKE_EMAIL: 'smoke@example.test', SMOKE_PASSWORD: 'smoke-password-1', SMOKE_ORG: 'crove-smoke' };
+      const pub = run(['smoke', 'https://crove.example.test'], { ...account, STUB_AUTH_URL: 'https://idp.example.com/auth/v1', STUB_NO_PROXY: '1' });
+      // The kernel with no proxy still answers 200 to a GET with its page: not the proxy.
+      const pubPage = run(['smoke', 'https://crove.example.test'], { ...account, STUB_AUTH_URL: 'https://idp.example.com/auth/v1', STUB_NO_PROXY: 'html' });
+      expect(pubPage.status, pubPage.out).toBe(0);
+      expect(pubPage.out).toContain('smoke skipped: /auth/v1/health');
+      // (Another host, but a proxy that answers here, is still the bundled Auth: that is checked below.)
+      expect(pub.status, pub.out).toBe(0);
+      expect(pub.out).toContain('smoke skipped: /auth/v1/health');
+      expect(pub.out).toContain('smoke skipped: sign-in and upload');
+      expect(readFileSync(`${log}.argv`, 'utf8')).not.toContain('/auth/v1/token');
+      // The bundled proxy, announced at the address asked, is still checked, account step included.
+      const bundled = run(['smoke', 'https://crove.example.test'], account);
+      expect(bundled.status, bundled.out).toBe(0);
+      expect(bundled.out).toContain('smoke ok: /auth/v1/health answers');
+      expect(bundled.out).toContain('signs in, uploads a synthetic e-invoice');
+      // An address that only differs in case, scheme or a default port is the same bundled Auth: still checked, and a broken sign-in still fails.
+      for (const authUrl of ['https://CROVE.example.test/auth/v1', 'https://crove.example.test:443/auth/v1', 'http://crove.example.test/auth/v1']) {
+        const same = run(['smoke', 'https://crove.example.test'], { ...account, STUB_AUTH_URL: authUrl, STUB_SIGNIN_FAIL: '1' });
+        expect(same.status, `${authUrl}: ${same.out}`).toBe(1);
+        expect(same.out).not.toContain('Supabase Auth is a remote provider');
+        expect(same.out).toContain('smoke ok: /auth/v1/health answers');
+      }
+      // With the Auth URL the settings name, /api/config must report exactly that: the right one passes, anything else fails.
+      const otherHostWithProxy = run(['smoke', 'https://crove.example.test'], { ...account, STUB_AUTH_URL: 'https://idp.example.com/auth/v1', STUB_SIGNIN_FAIL: '1' });
+      expect(otherHostWithProxy.status, otherHostWithProxy.out).toBe(1);
+      expect(otherHostWithProxy.out).toContain('smoke ok: /auth/v1/health answers');
+      const right = run(['smoke', 'https://crove.example.test'], { STUB_AUTH_URL: 'https://idp.example.com/auth/v1', SMOKE_EXPECT_AUTH_URL: 'https://idp.example.com/auth/v1' });
+      expect(right.status, right.out).toBe(0);
+      expect(right.out).toContain('smoke ok: /api/config names the configured Auth URL');
+      const stale = run(['smoke', 'https://crove.example.test'], { SMOKE_EXPECT_AUTH_URL: 'https://idp.example.com/auth/v1' });
+      expect(stale.status).toBe(1);
+      expect(stale.out).toContain('smoke failed: /api/config names the configured Auth URL');
+      expect(stale.out).not.toContain('idp.example.com');
     });
   });
 });

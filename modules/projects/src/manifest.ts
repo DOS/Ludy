@@ -10,11 +10,24 @@ export const projectsManifest = defineModule({
   tables: {
     crove_projects: {
       project: columns(
-        ['org_id', 'id', 'owner_user_id', 'status', 'created_by', 'created_at', 'updated_at'],
-        { name: 'pii', description: 'pii' },
+        ['org_id', 'id', 'owner_user_id', 'status', 'is_template', 'created_by', 'created_at', 'updated_at'],
+        { name: 'pii', description: 'pii', template_tasks: 'pii' },
       ),
       project_member: columns(['org_id', 'id', 'project_id', 'user_id', 'created_at']),
-      project_task: columns(['org_id', 'id', 'project_id', 'task_id', 'sort_key', 'added_by', 'created_at']),
+      project_task: columns([
+        'org_id',
+        'id',
+        'project_id',
+        'task_id',
+        'sort_key',
+        'recurrence',
+        'recurrence_count',
+        'recurrence_last_due',
+        'recurrence_next_at',
+        'recurrence_source_task_id',
+        'added_by',
+        'created_at',
+      ]),
     },
   },
   // Access comes from the base role (every member and viewer reads; owners, admins and members create projects and add
