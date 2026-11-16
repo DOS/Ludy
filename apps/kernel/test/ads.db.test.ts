@@ -12,7 +12,7 @@ import { SignJWT } from 'jose';
 import { sql } from 'kysely';
 import pg from 'pg';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { AdPlatformError, MetaAdsPlatform, SandboxAdWriter, adActivators, adLaunchWriters, adPausers, adPlatforms, launchWriterOf, platformUserHash, revokerOf, sandboxWriteLogin, type AdPlatform, type LaunchWriter, type sandboxAdPlatform } from '@crove/ad-platform';
+import { AdPlatformError, MetaAdsPlatform, SandboxAdWriter, adActivators, adLaunchWriters, adPausers, adPlatforms, adStateReaders, launchWriterOf, platformUserHash, revokerOf, sandboxWriteLogin, type AdPlatform, type AdStateReader, type LaunchWriter, type sandboxAdPlatform } from '@crove/ad-platform';
 import { ConnectorError, type Fetch, type OAuthConnector } from '@crove/channel';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
@@ -23,6 +23,7 @@ import { addDays, addMonths, adsCommands, adsQueries, todayIn } from '@crove/mod
 import { createAuthenticator } from '../src/auth.ts';
 import { acceptAdsDeletion, adsDeletionStatus, runAdsDeletions } from '../src/ads-deletion.ts';
 import { runAdsActivate } from '../src/ads-activate.ts';
+import { runAdsStateSync } from '../src/ads-state.ts';
 import { runAdsLaunch } from '../src/ads-launch.ts';
 import { runAdsPause } from '../src/ads-pause.ts';
 import { runAdsRevoke } from '../src/ads-revoke.ts';
@@ -2804,6 +2805,144 @@ suite('ads on PostgreSQL (#2217)', () => {
               expect((await activations(other.launch.id)).map((a) => [a.step, a.state])).toEqual([['activate_ad_1', 'started']]);
               expect((await stopAs(owner, other.launch.id)).status).toBe(200);
               expect(await pauseRun(other.launch.id)).toEqual({ ran: false, ended: 'activation_in_flight' });
+            });
+          });
+
+          describe('the platform\'s object states (#3301)', () => {
+            const readerOf = (w: SandboxAdWriter) => adStateReaders({ sandbox: w });
+            const stateSync = async (w: SandboxAdWriter, account: string, readers: Readonly<Record<string, AdStateReader>> = readerOf(w)) => {
+              const read = (await row<{ id: string }>(`SELECT channel_connection_id AS id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, account]))[0]?.id as string;
+              return runAdsStateSync({ runtime: worker, broker: vault, readers }, { orgId, connectionId: read });
+            };
+            // A launch whose objects are created, paused and (when asked) switched on, as the activation job leaves them.
+            const launched = async (name: string, w: SandboxAdWriter, activate = false) => {
+              const made = await queued(name, { startOn: inDays(0), endOn: inDays(6), variants: [variant(1), variant(2)] });
+              expect(await run(w, made.launch.id)).toMatchObject({ ended: 'paused' });
+              if (activate) expect(await runAdsActivate({ runtime: worker, broker: vault, activators: adActivators({ sandbox: w }) }, { orgId, launchId: made.launch.id })).toMatchObject({ ended: 'live' });
+              return made;
+            };
+            const shown = async (id: string) => (await row<{ slot: string; effective_status: string | null; review_reason: string | null; last_seen_at: Date | null; updated_at: Date }>(`SELECT slot, effective_status, review_reason, last_seen_at, updated_at FROM crove_ads.ad_object WHERE org_id = $1 AND launch_id = $2`, [orgId, id])).sort((a, b) => ORDER.indexOf(a.slot) - ORDER.indexOf(b.slot));
+            const idOf = async (id: string, slot: string) => ((await objectsOf(id)).find((o) => o.slot === slot) as { external_id: string }).external_id;
+            const stateCalls = (id: string) => row<{ key: string; state: string; calls: number; error_kind: string | null; error_code: string | null; step: string }>(`SELECT key, state, calls, error_kind, error_code, step FROM crove_kernel.external_call WHERE org_id = $1 AND key LIKE $2 ORDER BY key DESC`, [orgId, `ads.state:${id}:%`]);
+            const launchRow = async (id: string) => (await row<Record<string, unknown>>(`SELECT * FROM crove_ads.ad_launch WHERE org_id = $1 AND id = $2`, [orgId, id]))[0];
+
+            it('shows a launched ad moving to review, active and rejected with its reason, within one run each, and a creative stays without a status', async () => {
+              const w = new SandboxAdWriter();
+              const { launch, account } = await launched('Đọc trạng thái', w, true);
+              const ad = w.objects.get(await idOf(launch.id, 'ad_1')) as NonNullable<ReturnType<SandboxAdWriter['objects']['get']>>;
+              expect((await shown(launch.id)).every((o) => o.effective_status === null && o.last_seen_at === null)).toBe(true);
+              ad.effectiveStatus = 'PENDING_REVIEW';
+              ad.reviewReason = 'in_review';
+              expect(await stateSync(w, account)).toMatchObject({ launches: 1, changed: 4, failed: 0, ended: 'done' });
+              const first = await shown(launch.id);
+              expect(first.find((o) => o.slot === 'ad_1')).toMatchObject({ effective_status: 'PENDING_REVIEW', review_reason: 'in_review' });
+              expect(first.filter((o) => o.slot !== 'ad_1' && !o.slot.startsWith('creative')).map((o) => [o.slot, o.effective_status, o.review_reason])).toEqual([['campaign', 'ACTIVE', null], ['ad_set', 'ACTIVE', null], ['ad_2', 'ACTIVE', null]]);
+              // A creative has no status of its own at the platform: it is not asked about.
+              expect(first.filter((o) => o.slot.startsWith('creative')).every((o) => o.effective_status === null)).toBe(true);
+              ad.effectiveStatus = 'ACTIVE';
+              ad.reviewReason = null;
+              expect(await stateSync(w, account)).toMatchObject({ changed: 1 });
+              expect((await shown(launch.id)).find((o) => o.slot === 'ad_1')).toMatchObject({ effective_status: 'ACTIVE', review_reason: null });
+              ad.effectiveStatus = 'DISAPPROVED';
+              ad.reviewReason = 'feedback_personal_attributes';
+              expect(await stateSync(w, account)).toMatchObject({ changed: 1 });
+              expect((await shown(launch.id)).find((o) => o.slot === 'ad_1')).toMatchObject({ effective_status: 'DISAPPROVED', review_reason: 'feedback_personal_attributes' });
+              // The screen's own query carries them (the launch view the builder renders).
+              const views = await ok('ads/campaignDrafts', owner, { adAccountId: account });
+              expect(JSON.stringify(views)).toContain('feedback_personal_attributes');
+            });
+
+            it('writes nothing when the platform gives the same answer again, and never moves the launch, its commitment or the caps', async () => {
+              const w = new SandboxAdWriter();
+              const { launch, account } = await launched('Cùng một câu trả lời', w, true);
+              expect(await stateSync(w, account)).toMatchObject({ changed: 4 });
+              const objectsBefore = JSON.stringify(await shown(launch.id));
+              const launchBefore = JSON.stringify(await launchRow(launch.id));
+              const capsBefore = JSON.stringify(await row(`SELECT * FROM crove_ads.ad_spend_cap WHERE org_id = $1 ORDER BY id`, [orgId]));
+              expect(await stateSync(w, account)).toMatchObject({ launches: 1, changed: 0, failed: 0 });
+              expect(JSON.stringify(await shown(launch.id))).toBe(objectsBefore);
+              // Even a status the platform makes alarming leaves the launch's own columns and the caps as they were.
+              const campaign = w.objects.get(await idOf(launch.id, 'campaign')) as NonNullable<ReturnType<SandboxAdWriter['objects']['get']>>;
+              campaign.effectiveStatus = 'WITH_ISSUES';
+              campaign.reviewReason = 'issue_1487';
+              expect(await stateSync(w, account)).toMatchObject({ changed: 1 });
+              expect(JSON.stringify(await launchRow(launch.id))).toBe(launchBefore);
+              expect(JSON.stringify(await row(`SELECT * FROM crove_ads.ad_spend_cap WHERE org_id = $1 ORDER BY id`, [orgId]))).toBe(capsBefore);
+              expect(await launchNow(launch.id)).toMatchObject({ state: 'live', step: 'live', commit_until: inDays(6) });
+              // One row of the kernel's ledger per read, and no word of what the platform answered.
+              const rows = await stateCalls(launch.id);
+              expect(rows).toHaveLength(3);
+              expect(rows.every((r) => r.step === 'state_read' && r.state === 'succeeded' && r.calls === 1 && r.error_kind === null && r.error_code === null)).toBe(true);
+            });
+
+            it('leaves the last known state and records a failed read when the platform is down, the token is refused or it asks to wait, without erroring the launch', async () => {
+              const w = new SandboxAdWriter();
+              const { launch, account } = await launched('Nền tảng lỗi', w, true);
+              expect(await stateSync(w, account)).toMatchObject({ changed: 4 });
+              const known = JSON.stringify(await shown(launch.id));
+              const ad = w.objects.get(await idOf(launch.id, 'ad_1')) as NonNullable<ReturnType<SandboxAdWriter['objects']['get']>>;
+              ad.effectiveStatus = 'DISAPPROVED';
+              ad.reviewReason = 'feedback_x';
+              // The platform is unreachable for the ad: the others are still read, the ad keeps what it had, and the read is a failed row.
+              w.inject({ level: 'ad', when: 'state' });
+              expect(await stateSync(w, account)).toMatchObject({ launches: 1, changed: 0, failed: 1, ended: 'done' });
+              expect(JSON.stringify(await shown(launch.id))).toBe(known);
+              expect((await stateCalls(launch.id))[0]).toMatchObject({ state: 'failed', error_kind: 'transient', error_code: 'NETWORK' });
+              expect(await launchNow(launch.id)).toMatchObject({ state: 'live', step: 'live' });
+              // A revoked token refuses everything.
+              w.inject({ level: 'campaign', when: 'state', error: new AdPlatformError('token_expired', '190') });
+              expect(await stateSync(w, account)).toMatchObject({ changed: 0, failed: 1, ended: 'token_refused' });
+              expect((await stateCalls(launch.id))[0]).toMatchObject({ state: 'failed', error_kind: 'token_expired', error_code: '190' });
+              // A rate limit (the platform's own time to wait) stops the run and is not asked again now.
+              w.inject({ level: 'campaign', when: 'state', error: new AdPlatformError('rate_limited', '80004', new Date(Date.now() + 3_600_000)) });
+              expect(await stateSync(w, account)).toMatchObject({ changed: 0, failed: 1, ended: 'rate_limited' });
+              expect((await stateCalls(launch.id))[0]).toMatchObject({ state: 'failed', error_kind: 'rate_limited', error_code: '80004' });
+              expect(JSON.stringify(await shown(launch.id))).toBe(known);
+              // The next run that can ask brings the answer in.
+              expect(await stateSync(w, account)).toMatchObject({ changed: 1, failed: 0 });
+              expect((await stateCalls(launch.id))[0]).toMatchObject({ state: 'succeeded', error_kind: null, error_code: null });
+              expect(await launchNow(launch.id)).toMatchObject({ state: 'live' });
+            });
+
+            it('shows an object deleted at the platform, reads nothing for a launch whose write connection closed, and a provider without a reader is left alone', async () => {
+              const w = new SandboxAdWriter();
+              const { launch, account } = await launched('Bị xoá trên nền tảng', w, true);
+              w.objects.get(await idOf(launch.id, 'ad_2'))!.deleted = true;
+              expect(await stateSync(w, account)).toMatchObject({ changed: 4 });
+              expect((await shown(launch.id)).find((o) => o.slot === 'ad_2')).toMatchObject({ effective_status: 'DELETED', review_reason: 'deleted_at_platform' });
+              expect(await stateSync(w, account, {})).toMatchObject({ launches: 0, ended: 'no_reader' });
+              const closing = (await row<{ id: string }>(`SELECT write_connection_id AS id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, account]))[0];
+              await api.execute('kernel.channel.disconnect', { connectionId: closing?.id }, { actor: asOwner(), orgId });
+              // The connection is closed: there is nothing to read with, and the last known state stays.
+              const before = JSON.stringify(await shown(launch.id));
+              expect(await stateSync(w, account)).toMatchObject({ launches: 0 });
+              expect(JSON.stringify(await shown(launch.id))).toBe(before);
+            });
+
+            it('is the system\'s alone: a member, an owner and an agent are refused, and the platform\'s words never reach a row or an audit entry', async () => {
+              const w = new SandboxAdWriter();
+              const { launch, account } = await launched('Chỉ hệ thống', w, true);
+              const input = { launchId: launch.id, states: [{ id: await idOf(launch.id, 'ad_1'), level: 'ad', found: true, status: 'DISAPPROVED', reason: 'in_review' }], failed: [] };
+              const asMember = { type: 'user' as const, userId: member.userId, aal: 'aal1' as const, sessionId: member.session };
+              for (const actor of [asMember, asOwner(), { type: 'agent' as const, agentId: randomUUID(), runId: randomUUID() }]) {
+                await expect(api.execute('ads.object.sync_state', input, { actor, orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+              }
+              expect((await shown(launch.id)).every((o) => o.effective_status === null)).toBe(true);
+              // What the platform sends is checked again at the command: a sentence, a lower-case status and a reason that is not a code are refused whole.
+              const sys = { actor: { type: 'system' as const, component: 'ads.state' }, orgId };
+              const ad = await idOf(launch.id, 'ad_1');
+              for (const bad of [
+                { id: ad, level: 'ad', found: true, status: 'Disapproved', reason: null },
+                { id: ad, level: 'ad', found: true, status: 'DISAPPROVED', reason: 'Your ad <b>broke</b> a policy.' },
+                { id: ad, level: 'creative', found: true, status: 'PAUSED', reason: null },
+              ]) await expect(worker.execute('ads.object.sync_state', { launchId: launch.id, states: [bad], failed: [] }, sys)).rejects.toMatchObject({ code: 'VALIDATION' });
+              // An id the launch has no record of is counted and ignored: nothing is created from what a platform says.
+              expect(await worker.execute('ads.object.sync_state', { launchId: launch.id, states: [{ id: 'foreign-1', level: 'ad', found: true, status: 'PAUSED', reason: null }], failed: [] }, sys)).toMatchObject({ recorded: true, changed: 0, unknown: 1 });
+              expect(await worker.execute('ads.object.sync_state', { launchId: randomUUID(), states: [], failed: [] }, sys)).toEqual({ recorded: false, reason: 'not_found' });
+              await stateSync(w, account);
+              const stored = JSON.stringify([await stateCalls(launch.id), await row(`SELECT command, outcome, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'ads.object.sync_state'`, [orgId])]);
+              expect(stored).toContain('ads.object.sync_state');
+              expect(stored).not.toMatch(/accessToken|secret|envelope|sandboxwrite_ads:/i);
             });
           });
         });

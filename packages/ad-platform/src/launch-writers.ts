@@ -8,9 +8,12 @@ import { activatorOf, type AdActivator } from './activators.ts';
 import { MetaAdActivator } from './meta-activate.ts';
 import { META_WRITE_PROVIDER } from './meta-write-connector.ts';
 import { MetaAdWriter } from './meta-write.ts';
+import { MetaAdStateReader } from './meta-state.ts';
 import { pauserOf, type AdPauser } from './pausers.ts';
 import { SandboxAdActivator } from './sandbox-activate.ts';
+import { SandboxAdStateReader } from './sandbox-state.ts';
 import { sandboxAdWriter, type SandboxAdWriter } from './sandbox-write.ts';
+import { stateReaderOf, type AdStateReader } from './state-readers.ts';
 import type { AdWriter } from './writer.ts';
 
 export type LaunchWriter = Pick<AdWriter, 'capabilities' | 'verify' | 'resolveTargeting' | 'createCampaign' | 'createAdSet' | 'createCreative' | 'createAd' | 'findByTag'>;
@@ -81,4 +84,20 @@ export function adActivators(options: LaunchWritersOptions): Readonly<Record<str
     activators[META_WRITE_PROVIDER] = activatorOf(new MetaAdActivator({ appSecret: options.meta.writeAppSecret, ...(graphVersion ? { graphVersion } : {}) }));
   }
   return Object.freeze(activators);
+}
+
+// The state readers of a deployment (#3301), by the provider id of the write connection they work with: the frozen view the state job is given (state-readers.ts), which reads
+// what the platform says of the objects of a launch and nothing else. Built with the same switches as the writer (the sandbox; Meta's only where ADS_LIVE_LAUNCH is on, with the
+// secret of the same write app). A provider without one has no entry: its objects keep the last state they had. The map is frozen too.
+export function adStateReaders(options: LaunchWritersOptions): Readonly<Record<string, AdStateReader>> {
+  const readers: Record<string, AdStateReader> = {};
+  if (options.sandbox) {
+    const sandbox = options.sandbox === true ? sandboxAdWriter : options.sandbox;
+    readers[sandbox.provider] = stateReaderOf(new SandboxAdStateReader(sandbox));
+  }
+  if (options.meta) {
+    const graphVersion = options.meta.graphVersion;
+    readers[META_WRITE_PROVIDER] = stateReaderOf(new MetaAdStateReader({ appSecret: options.meta.writeAppSecret, ...(graphVersion ? { graphVersion } : {}) }));
+  }
+  return Object.freeze(readers);
 }
