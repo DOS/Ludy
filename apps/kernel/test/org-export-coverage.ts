@@ -80,6 +80,7 @@ export const NOT_EXPORTED: Readonly<Record<string, string>> = {
   'crove_kernel.meeting_platform_recording': "a meeting platform's recording list and staging keys: an import queue; the meeting it became is in meetings.meeting",
   'crove_kernel.org_usage': 'the raw AI and usage metering rows the budget is computed from: machinery, not tenant records',
   'crove_kernel.outbox_archive': 'the list of archived outbox days: machinery',
+  'crove_kernel.outbox_held': 'the ids of events that wait while an app is off (ADR-0053): machinery',
   'crove_kernel.outbox_event': 'the outbox: machinery, archived by the retention job',
   'crove_kernel.outbox_pending': 'the outbox delivery queue: machinery',
   'crove_kernel.refusal_tally': 'refusal counters per window: rate-limit machinery',

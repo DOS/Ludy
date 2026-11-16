@@ -2,18 +2,18 @@
 // The events of an app that is off wait, and flow when it is back on (ADR-0053 section 4, slice c C3b). The relay claims an event and queues its jobs in one
 // transaction; for an org whose app is off those jobs would be refused and ended quietly, and the event lost. So the relay parks such an event
 // (crove_kernel.outbox_hold) instead of queueing anything, and the held sweep puts the parked events back on the outbox, oldest first, once the app is on again
-// (the choice and the entitlement, asked here in TypeScript). An event parked for longer than HOLD_TTL_DAYS is dropped.
+// (the choice and the entitlement, asked here in TypeScript). There is no expiry: an event that nothing finds again is held, not dropped (ADR-0053 section 4).
 import { sql, type Transaction } from 'kysely';
 import type { Database } from '@crove/db';
 
 type Db = Pick<Transaction<Database>, 'executeQuery'> & { getExecutor: Transaction<Database>['getExecutor'] };
 
-/** How long a parked event waits before it is dropped: an alert or a reminder older than that is no use. */
-export const HOLD_TTL_DAYS = 14;
 /** How often the worker looks for parked events whose app is on again. */
 export const HELD_SWEEP_MS = 10_000;
 const RELEASE_BATCH = 500;
-const PAIRS_PER_SWEEP = 200;
+const PAIRS_PER_PAGE = 200;
+// A sweep looks at no more pairs than this, so one pass stays short; the next pass starts from the first page again.
+const MAX_PAIR_PAGES = 25;
 
 // The events that keep a duty while their app is off, or that must reach their consumer whatever the switch says: never parked (the keeping events of ADR-0053, and
 // the takedown of a published post, which stops exposure: its consumer declares runsWhenOff in C3c).
@@ -23,6 +23,10 @@ export const NEVER_HELD_EVENTS: ReadonlySet<string> = new Set([
   'kernel.member.role_changed',
   'social.variant.remove_requested',
 ]);
+
+// The events that act in public at the time they are handled, which a person asked for then: a retry of a comment or a thread, an edit of a published post. Run days later
+// they would post or change something nobody expects any more, so they are dropped when the app is off (ADR-0053: time-sensitive work never runs late on its own), not parked.
+const TIME_BOUND_EVENTS: ReadonlySet<string> = new Set(['social.comment.retry_requested', 'social.thread.retry_requested', 'social.variant.edit_requested']);
 
 // The kernel events whose consumer is an app's job: the extraction of an uploaded file is Finance's, so a file stored while Finance is off is read when it is back.
 const KERNEL_EVENT_APPS: Readonly<Record<string, string>> = {
@@ -36,7 +40,7 @@ const HOLDING_PREFIXES: Readonly<Record<string, string>> = { 'finance.': 'financ
 
 /** The app whose events wait while it is off, for this event type, or null when the event is never parked. */
 export function heldAppOf(type: string): string | null {
-  if (NEVER_HELD_EVENTS.has(type)) return null;
+  if (NEVER_HELD_EVENTS.has(type) || TIME_BOUND_EVENTS.has(type)) return null;
   const kernel = KERNEL_EVENT_APPS[type];
   if (kernel) return kernel;
   for (const [prefix, app] of Object.entries(HOLDING_PREFIXES)) if (type.startsWith(prefix)) return app;
@@ -58,19 +62,18 @@ export async function planHolds<R extends HeldRow>(
   appOn: (orgId: string, app: string) => Promise<boolean>,
   installed: (app: string) => boolean,
 ): Promise<{ held: Array<{ row: R; app: string }>; rest: R[] }> {
-  const answers = new Map<string, Promise<boolean>>();
-  const on = (orgId: string, app: string) => {
-    const key = `${orgId}:${app}`;
-    let answer = answers.get(key);
-    if (!answer) answer = appOn(orgId, app).catch(() => true);
-    answers.set(key, answer);
-    return answer;
-  };
+  // Each distinct org and app is read once, all at the same time: a slow read of the billing port delays the batch by one timeout, not by one for every org.
+  const pairs = new Map<string, { org: string; app: string }>();
+  for (const row of rows) {
+    const app = heldAppOf(row.type);
+    if (app !== null && installed(app)) pairs.set(`${row.org_id}:${app}`, { org: row.org_id, app });
+  }
+  const answers = new Map(await Promise.all([...pairs].map(async ([key, p]) => [key, await appOn(p.org, p.app).catch(() => true)] as const)));
   const held: Array<{ row: R; app: string }> = [];
   const rest: R[] = [];
   for (const row of rows) {
     const app = heldAppOf(row.type);
-    if (app !== null && installed(app) && !(await on(row.org_id, app))) held.push({ row, app });
+    if (app !== null && installed(app) && answers.get(`${row.org_id}:${app}`) === false) held.push({ row, app });
     else rest.push(row);
   }
   return { held, rest };
@@ -89,33 +92,44 @@ export async function holdEvents(trx: Db, held: ReadonlyArray<{ row: HeldRow; ap
 }
 
 /**
- * The held sweep: for each org and app with parked events, puts them back on the outbox (oldest first, in batches) once the app is on; drops the ones older than the
- * expiry. Returns what it did. A pair whose app is still off is left as it is; a failed read of the app leaves it too (the next sweep asks again).
+ * The held sweep: for each org and app with parked events (active orgs, in key order, a bounded number of pages), puts them back on the outbox once the app is on, oldest
+ * first in batches. Returns what it did and how many events wait in all (of the pairs it looked at). A pair whose app is still off is left as it is; a failed read of the
+ * app leaves it too (the next sweep asks again).
  */
 export async function releaseHeld(
   db: Db,
   appOn: (orgId: string, app: string) => Promise<boolean>,
-): Promise<{ released: number; expired: number }> {
+): Promise<{ released: number; waiting: number; pairs: number }> {
   let released = 0;
-  let expired = 0;
-  const { rows: gone } = await sql<{ n: number }>`SELECT crove_kernel.outbox_hold_expire(${HOLD_TTL_DAYS}::int) AS n`.execute(db as never);
-  expired += gone[0]?.n ?? 0;
-  const { rows: pairs } = await sql<{ org_id: string; module: string }>`SELECT org_id, module FROM crove_kernel.outbox_hold_pairs(${PAIRS_PER_SWEEP}::int)`.execute(db as never);
-  for (const pair of pairs) {
-    let on = false;
-    try {
-      on = await appOn(pair.org_id, pair.module);
-    } catch {
-      continue;
+  let waiting = 0;
+  let seen = 0;
+  let after = null as { org: string; module: string } | null;
+  for (let page = 0; page < MAX_PAIR_PAGES; page++) {
+    const { rows: pairs } = await sql<{ org_id: string; module: string; waiting: string }>`
+      SELECT org_id, module, waiting FROM crove_kernel.outbox_hold_pairs(${PAIRS_PER_PAGE}::int, ${after?.org ?? null}::uuid, ${after?.module ?? null}::text)`.execute(db as never);
+    for (const pair of pairs) {
+      seen += 1;
+      let on = false;
+      try {
+        on = await appOn(pair.org_id, pair.module);
+      } catch {
+        waiting += Number(pair.waiting);
+        continue;
+      }
+      if (!on) {
+        waiting += Number(pair.waiting);
+        continue;
+      }
+      for (;;) {
+        const { rows } = await sql<{ n: number }>`SELECT crove_kernel.outbox_release(${pair.org_id}::uuid, ${pair.module}::text, ${RELEASE_BATCH}::int) AS n`.execute(db as never);
+        const n = rows[0]?.n ?? 0;
+        released += n;
+        if (n < RELEASE_BATCH) break;
+      }
     }
-    if (!on) continue;
-    for (;;) {
-      const { rows } = await sql<{ released: number; expired: number }>`
-        SELECT released, expired FROM crove_kernel.outbox_release(${pair.org_id}::uuid, ${pair.module}::text, ${RELEASE_BATCH}::int, ${HOLD_TTL_DAYS}::int)`.execute(db as never);
-      released += rows[0]?.released ?? 0;
-      expired += rows[0]?.expired ?? 0;
-      if ((rows[0]?.released ?? 0) < RELEASE_BATCH) break;
-    }
+    const last = pairs.at(-1);
+    if (!last || pairs.length < PAIRS_PER_PAGE) break;
+    after = { org: last.org_id, module: last.module };
   }
-  return { released, expired };
+  return { released, waiting, pairs: seen };
 }

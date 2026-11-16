@@ -17,7 +17,7 @@ export const KEPT: Readonly<Record<string, string>> = {
   'crove_kernel.audit_event': 'proof of who did what to the books; append-only, kept with the ledger',
   'crove_kernel.outbox_event': 'archived, then deleted by the daily retention job 30 days after each event (#997)',
   'crove_kernel.outbox_archive': 'the list of archived outbox days (#997); no personal data',
-  'crove_kernel.outbox_held': 'the ids of events that wait while an app is off (ADR-0053); no personal data, dropped after 14 days by the worker, and the events are the outbox_event rows above',
+  'crove_kernel.outbox_held': 'the ids of events that wait while an app is off (ADR-0053); no personal data, put back on the outbox by the worker when the app is on, and the events are the outbox_event rows above',
   'crove_kernel.org_usage': 'usage counts; no personal data',
   'crove_kernel.external_call': 'the ledger of calls to social platforms; no personal data',
   'crove_kernel.inbound_address': 'inbound addresses are permanent tombstones (#37)',

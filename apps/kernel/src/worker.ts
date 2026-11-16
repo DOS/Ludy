@@ -2385,8 +2385,11 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     running = true;
     try {
       for (;;) {
+        // How many events the claim took, parked ones included: a full claim means more may wait, whatever the batch parked.
+        let claimedCount = 0;
         const sent = await relayBatch(deps.workerDb, boss, async (trx) => {
           const { rows: claimed } = await sql<OutboxRow>`SELECT * FROM crove_kernel.outbox_claim(100)`.execute(trx);
+          claimedCount = claimed.length;
           // The events of an app that is off for the org wait (ADR-0053, C3b): they leave the outbox with this claim and are parked in the same transaction, with no job
           // queued; the held sweep puts them back once the app is on. One fresh read per org and app for the batch.
           const plan = await planHolds(claimed, (orgId, app) => deps.runtime.appOn(orgId, app, { fresh: true }), (app) => deps.runtime.installed(app));
@@ -2828,7 +2831,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
             }),
           );
         });
-        if (sent < 100) break;
+        if (Math.max(sent, claimedCount) < 100) break;
       }
       for (;;) {
         const sent = await relayBatch(deps.workerDb, boss, async (trx) => {
@@ -2990,12 +2993,15 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   const pressureTimer = setInterval(() => void pressureCheck(), BACK_PRESSURE_CHECK_MS);
   // The held sweep (ADR-0053, C3b): the events parked while their app was off go back on the outbox once it is on, oldest first; one sweep at a time, none after stop.
   let releasing = false;
+  let lastWaiting = 0;
   const heldSweep = async () => {
     if (releasing || stopped) return;
     releasing = true;
     try {
       const done = await releaseHeld(deps.workerDb, (orgId, app) => deps.runtime.appOn(orgId, app, { fresh: true }));
-      if (done.released > 0 || done.expired > 0) console.log(`[relay] held events: ${done.released} put back, ${done.expired} dropped as too old`);
+      // The number that wait is how an app left off for good shows: logged when it changes what is waiting, and when events go back.
+      if (done.released > 0 || done.waiting !== lastWaiting) console.log(`[relay] held events: ${done.released} put back, ${done.waiting} still wait (${done.pairs} org and app pairs)`);
+      lastWaiting = done.waiting;
     } catch (error) {
       console.error('[relay] held sweep', error);
     } finally {

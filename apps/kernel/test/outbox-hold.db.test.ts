@@ -99,7 +99,7 @@ suite('parked events of an app that is off (ADR-0053, C3b)', () => {
     const [a, b] = orgs as [string, string];
     const e1 = await emit(a, 'social.post.submitted');
     const k1 = await emit(a, 'kernel.org.export_requested');
-    const e2 = await emit(a, 'social.comment.retry_requested');
+    const e2 = await emit(a, 'social.channel_option.requested');
     const other = await emit(b, 'social.post.submitted');
     const plan = await batch(new Set([`${a}:social`]));
     // The claim took all four; org A's two Social events wait and the kernel event and org B's go on.
@@ -109,13 +109,13 @@ suite('parked events of an app that is off (ADR-0053, C3b)', () => {
     expect(await held(a)).toEqual([e1, e2]);
     expect(await held(b)).toEqual([]);
 
-    // Still off: the sweep leaves them.
-    expect(await releaseHeld(workerDb, async () => false)).toEqual({ released: 0, expired: 0 });
+    // Still off: the sweep leaves them, and counts them.
+    expect(await releaseHeld(workerDb, async () => false)).toEqual({ released: 0, waiting: 2, pairs: 1 });
     expect(await held(a)).toEqual([e1, e2]);
     // Another org's app coming on does not move org A's events.
-    expect(await releaseHeld(workerDb, async (org) => org === b)).toEqual({ released: 0, expired: 0 });
+    expect(await releaseHeld(workerDb, async (org) => org === b)).toEqual({ released: 0, waiting: 2, pairs: 1 });
     // On: back on the outbox, oldest first, and parked no more.
-    expect(await releaseHeld(workerDb, async () => true)).toEqual({ released: 2, expired: 0 });
+    expect(await releaseHeld(workerDb, async () => true)).toEqual({ released: 2, waiting: 0, pairs: 1 });
     expect(await held(a)).toEqual([]);
     expect(await pending()).toEqual([e1, e2]);
     // The relay claims them like any other, and with the app on they are not parked again.
@@ -124,24 +124,63 @@ suite('parked events of an app that is off (ADR-0053, C3b)', () => {
     expect(again.rest.map((r) => r.event_id)).toEqual([e1, e2]);
   });
 
-  it('parks an event once, whatever the claim does twice, and drops a parked event older than the expiry instead of releasing it', async () => {
+  it('parks an event once, never drops a parked event however old, and leaves an org that is not active alone', async () => {
     const a = orgs[0] as string;
     const old = await emit(a, 'social.post.submitted');
     const fresh = await emit(a, 'social.post.submitted');
-    const off = new Set([`${a}:social`]);
-    const plan = await batch(off);
+    const plan = await batch(new Set([`${a}:social`]));
     await workerDb.transaction().execute((trx) => holdEvents(trx, plan.held));
     expect(await held(a)).toEqual([old, fresh]);
-    await admin((c) => c.query("UPDATE crove_kernel.outbox_held SET held_at = now() - interval '15 days' WHERE event_id = $1", [old]));
-    expect(await releaseHeld(workerDb, async () => false)).toEqual({ released: 0, expired: 1 });
-    expect(await held(a)).toEqual([fresh]);
-    expect(await releaseHeld(workerDb, async () => true)).toEqual({ released: 1, expired: 0 });
-    expect(await pending()).toEqual([fresh]);
+    // A year old and still waiting: there is no expiry.
+    await admin((c) => c.query("UPDATE crove_kernel.outbox_held SET held_at = now() - interval '365 days' WHERE event_id = $1", [old]));
+    expect(await releaseHeld(workerDb, async () => false)).toMatchObject({ released: 0, waiting: 2 });
+    expect(await held(a)).toEqual([old, fresh]);
+    // An org that is closed is neither listed nor released, whatever the app says.
+    await admin((c) => c.query("UPDATE crove_kernel.tenant SET status = 'closed' WHERE org_id = $1", [a]));
+    expect(await releaseHeld(workerDb, async () => true)).toEqual({ released: 0, waiting: 0, pairs: 0 });
+    expect(await held(a)).toEqual([old, fresh]);
+    await admin((c) => c.query("UPDATE crove_kernel.tenant SET status = 'active' WHERE org_id = $1", [a]));
+    expect(await releaseHeld(workerDb, async () => true)).toMatchObject({ released: 2 });
+    expect(await pending()).toEqual([old, fresh]);
     await admin((c) => c.query('DELETE FROM crove_kernel.outbox_pending'));
   });
 
+  it('pages through every pair with parked events, so a pair whose app stays off does not hold back the ones after it', async () => {
+    const [a, b] = orgs as [string, string];
+    const ea = await emit(a, 'social.post.submitted');
+    const eb = await emit(b, 'social.post.submitted');
+    const plan = await batch(new Set([`${a}:social`, `${b}:social`]));
+    expect(plan.held).toHaveLength(2);
+    // Only the org that sorts last is on: its events are released whichever order the pairs come in.
+    const [first, last] = [a, b].sort() as [string, string];
+    expect(await releaseHeld(workerDb, async (org) => org === last)).toEqual({ released: 1, waiting: 1, pairs: 2 });
+    expect(await pending()).toEqual([last === a ? ea : eb]);
+    expect(await held(first)).toEqual([first === a ? ea : eb]);
+    await admin((c) => c.query('DELETE FROM crove_kernel.outbox_pending'));
+    await admin((c) => c.query('DELETE FROM crove_kernel.outbox_held'));
+  });
+
+  it('keeps the retention job from archiving away the day of a parked event, and lets it once it is released', async () => {
+    const a = orgs[0] as string;
+    const id = await emit(a, 'social.post.submitted');
+    await batch(new Set([`${a}:social`]));
+    const day = '2020-01-01';
+    // An event of an old day, archived: the purge answers -1 while the event waits, as for one that waits for the relay.
+    await admin(async (c) => {
+      await c.query("ALTER TABLE crove_kernel.outbox_event DISABLE TRIGGER USER");
+      await c.query("UPDATE crove_kernel.outbox_event SET created_at = '2020-01-01T10:00:00Z' WHERE org_id = $1 AND id = $2", [a, id]);
+      await c.query("ALTER TABLE crove_kernel.outbox_event ENABLE TRIGGER USER");
+      await c.query("INSERT INTO crove_kernel.outbox_archive (org_id, day, object_key, sha256, row_count) VALUES ($1, $2, 'k', $3, 1)", [a, day, 'a'.repeat(64)]);
+    });
+    const purge = () => workerDb.transaction().execute(async (trx) => (await sql<{ n: number }>`SELECT crove_kernel.outbox_archive_purge(${a}::uuid, ${day}::date, 30) AS n`.execute(trx)).rows[0]?.n);
+    expect(await purge()).toBe(-1);
+    await releaseHeld(workerDb, async () => true);
+    await admin((c) => c.query('DELETE FROM crove_kernel.outbox_pending'));
+    expect(await purge()).toBe(1);
+  });
+
   it('lets only the worker run the definers, and refuses a malformed call', async () => {
-    const fns = ['crove_kernel.outbox_hold(uuid[], uuid[], text[])', 'crove_kernel.outbox_hold_pairs(integer)', 'crove_kernel.outbox_release(uuid, text, integer, integer)', 'crove_kernel.outbox_hold_expire(integer)'];
+    const fns = ['crove_kernel.outbox_hold(uuid[], uuid[], text[])', 'crove_kernel.outbox_hold_pairs(integer, uuid, text)', 'crove_kernel.outbox_release(uuid, text, integer)'];
     const grantees = await admin(async (c) =>
       (
         await c.query<{ fn: string; grantees: string[] }>(
@@ -153,10 +192,11 @@ suite('parked events of an app that is off (ADR-0053, C3b)', () => {
       ).rows,
     );
     for (const g of grantees) expect(g.grantees, g.fn).toEqual(['crove_worker']);
-    await expect(appPool.query("SELECT crove_kernel.outbox_hold_pairs(10)")).rejects.toMatchObject({ code: '42501' });
+    await expect(appPool.query('SELECT * FROM crove_kernel.outbox_hold_pairs(10, NULL, NULL)')).rejects.toMatchObject({ code: '42501' });
     await expect(workerPool.query('SELECT crove_kernel.outbox_hold(ARRAY[]::uuid[], ARRAY[gen_random_uuid()], ARRAY[]::text[])')).rejects.toMatchObject({ code: '22023' });
-    await expect(workerPool.query('SELECT * FROM crove_kernel.outbox_release(NULL, NULL, 10, 14)')).rejects.toMatchObject({ code: '22023' });
-    // The table itself is no login role's.
+    await expect(workerPool.query('SELECT crove_kernel.outbox_release(NULL, NULL, 10)')).rejects.toMatchObject({ code: '22023' });
+    await expect(workerPool.query('SELECT * FROM crove_kernel.outbox_hold_pairs(10, gen_random_uuid(), NULL)')).rejects.toMatchObject({ code: '22023' });
+    // The table itself is no login role's, and agents may not write it.
     await expect(workerPool.query('SELECT * FROM crove_kernel.outbox_held')).rejects.toMatchObject({ code: '42501' });
     await expect(appPool.query('SELECT * FROM crove_kernel.outbox_held')).rejects.toMatchObject({ code: '42501' });
   });

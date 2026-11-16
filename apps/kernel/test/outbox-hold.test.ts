@@ -6,6 +6,25 @@ import { describe, expect, it } from 'vitest';
 import { NEVER_HELD_EVENTS, heldAppOf, planHolds } from '../src/outbox-hold.ts';
 import { KEEPING_EVENT_COMMANDS } from '../src/worker.ts';
 
+// The kernel's own events the relay names, each consumed by a kernel job or command (conversations, sign-out, export, agents). A new kernel event must be added here, or
+// to the parked ones in heldAppOf when an app's job consumes it (as the two file events are Finance's extraction).
+const KERNEL_OWN = new Set([
+  'kernel.agent.wakeup_requested',
+  'kernel.channel.chat_queued',
+  'kernel.channel.connected',
+  'kernel.conversation.attachment_queued',
+  'kernel.conversation.draft_queued',
+  'kernel.conversation.hide_queued',
+  'kernel.conversation.reply_queued',
+  'kernel.conversation.sync_queued',
+  'kernel.member.removed',
+  'kernel.member.role_changed',
+  'kernel.org.export_requested',
+  'kernel.proposal.created',
+  'kernel.session.revoked',
+]);
+// The public acts a person asked for at the time, dropped when the app is off.
+const TIME_BOUND = new Set(['social.comment.retry_requested', 'social.thread.retry_requested', 'social.variant.edit_requested']);
 const ORG_A = '01900000-0000-7000-8000-00000000000a';
 const ORG_B = '01900000-0000-7000-8000-00000000000b';
 const row = (org_id: string, type: string, n = 1) => ({ org_id, type, event_id: `01900000-0000-7000-8000-0000000000${String(n).padStart(2, '0')}` });
@@ -13,7 +32,7 @@ const row = (org_id: string, type: string, n = 1) => ({ org_id, type, event_id: 
 describe('which events wait', () => {
   it('parks the events of Finance, Social, CRM and Ads, and the file events whose consumer is Finance', () => {
     expect(heldAppOf('social.post.submitted')).toBe('social');
-    expect(heldAppOf('social.comment.retry_requested')).toBe('social');
+    expect(heldAppOf('social.channel_option.requested')).toBe('social');
     expect(heldAppOf('crm.booking.requested')).toBe('crm');
     expect(heldAppOf('finance.archive_requested')).toBe('finance');
     expect(heldAppOf('ads.launch.queued')).toBe('ads');
@@ -21,7 +40,7 @@ describe('which events wait', () => {
     expect(heldAppOf('kernel.file.reextract_requested')).toBe('finance');
   });
 
-  it('never parks the keeping events, a takedown, a kernel event or a Meetings event (bound to its time)', () => {
+  it('never parks the keeping events, a takedown, a kernel event, a Meetings event (bound to its time) or a public act a person asked for then', () => {
     for (const type of Object.keys(KEEPING_EVENT_COMMANDS)) expect(heldAppOf(type), type).toBeNull();
     for (const type of NEVER_HELD_EVENTS) expect(heldAppOf(type), type).toBeNull();
     expect(heldAppOf('social.variant.remove_requested')).toBeNull();
@@ -29,6 +48,8 @@ describe('which events wait', () => {
     expect(heldAppOf('kernel.org.export_requested')).toBeNull();
     expect(heldAppOf('meetings.transcript.requested')).toBeNull();
     expect(heldAppOf('meetings.live_notes.requested')).toBeNull();
+    // A retry of a comment or a thread and an edit of a published post would act in public days late: dropped, not parked.
+    for (const type of ['social.comment.retry_requested', 'social.thread.retry_requested', 'social.variant.edit_requested']) expect(heldAppOf(type), type).toBeNull();
   });
 
   it('classes every event type the relay names in worker.ts, so a new app consumer must say whether its events wait', () => {
@@ -39,8 +60,8 @@ describe('which events wait', () => {
     for (const type of types) {
       const app = heldAppOf(type);
       if (app !== null) continue;
-      // Not parked: the keeping and never-held events, Meetings' time-bound ones, and the kernel's own.
-      if (NEVER_HELD_EVENTS.has(type) || type.startsWith('meetings.') || type.startsWith('kernel.')) continue;
+      // Not parked: the keeping and never-held events, the time-bound public acts, Meetings' time-bound ones, and the kernel's own, which are listed.
+      if (NEVER_HELD_EVENTS.has(type) || type.startsWith('meetings.') || TIME_BOUND.has(type) || KERNEL_OWN.has(type)) continue;
       unclassed.push(type);
     }
     expect(unclassed, 'an event of an app that is neither parked nor listed as never parked').toEqual([]);
@@ -56,7 +77,7 @@ describe('the plan of one relay batch', () => {
       asked.push(`${org.slice(-1)}:${app}`);
       return !(org === ORG_A && app === 'social');
     };
-    const rows = [row(ORG_A, 'social.post.submitted', 1), row(ORG_A, 'social.comment.retry_requested', 2), row(ORG_B, 'social.post.submitted', 3), row(ORG_A, 'finance.archive_requested', 4), row(ORG_A, 'kernel.org.export_requested', 5), row(ORG_A, 'ads.pause.queued', 6)];
+    const rows = [row(ORG_A, 'social.post.submitted', 1), row(ORG_A, 'social.channel_option.requested', 2), row(ORG_B, 'social.post.submitted', 3), row(ORG_A, 'finance.archive_requested', 4), row(ORG_A, 'kernel.org.export_requested', 5), row(ORG_A, 'ads.pause.queued', 6)];
     const plan = await planHolds(rows, appOn, () => true);
     expect(plan.held.map((h) => [h.row.event_id.slice(-2), h.app])).toEqual([['01', 'social'], ['02', 'social']]);
     expect(plan.rest.map((r) => r.event_id.slice(-2))).toEqual(['03', '04', '05', '06']);
@@ -68,5 +89,16 @@ describe('the plan of one relay batch', () => {
     const rows = [row(ORG_A, 'social.post.submitted', 1)];
     expect((await planHolds(rows, async () => false, () => false)).held).toEqual([]);
     expect((await planHolds(rows, async () => { throw new Error('connection lost'); }, () => true)).held).toEqual([]);
+  });
+
+  it('wires the plan into the relay: parked rows get no step, and the drain loop counts the whole claim', () => {
+    const source = readFileSync(new URL('../src/worker.ts', import.meta.url), 'utf8');
+    const claim = source.slice(source.indexOf('SELECT * FROM crove_kernel.outbox_claim(100)'), source.indexOf('SELECT * FROM crove_kernel.inbound_claim(100)'));
+    expect(claim).toContain('const rows = plan.rest;');
+    expect(claim).toContain('await holdEvents(trx, plan.held)');
+    // The pre-plan list is used for the plan alone: a step built from it would queue a parked event too.
+    expect([...claim.matchAll(/\bclaimed\b/g)].length).toBeLessThanOrEqual(3);
+    expect(claim).not.toMatch(/claimed\.map/);
+    expect(source).toContain('Math.max(sent, claimedCount) < 100');
   });
 });
