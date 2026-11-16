@@ -23,7 +23,7 @@ import {
 const CONFIG = { baseURL: 'http://localhost:1/v1', apiKey: null, model: 'test' };
 const zero = (): PayrollFigures => ({ base_wage: '0', allowances: '0', other_regular_pay: '0', overtime: '0', night_work: '0', bonus: '0', unpaid_reduction: '0', gross: '0', employee_insurance: '0', pit: '0', deductions: '0', net: '0' });
 const figures = (over: Partial<PayrollFigures>): PayrollFigures => ({ ...zero(), ...over });
-const quiet = { minimumWageFailed: false, deductionCapFailed: false, overtimeCapFailed: false, netBelowMinimum: false, insuredAboveCap: false, cashPaymentOverLimit: false };
+const quiet = { minimumWageFailed: false, deductionCapFailed: false, overtimeCapFailed: false, netBelowMinimum: false, insuredAboveCap: false, cashPaymentOverLimit: false, annualLeaveExceeded: false };
 const calm = { startsInMonth: false, probationEndsInMonth: false, endsInMonth: false, severanceCheckSuggested: false };
 
 // Values that must never reach a model, planted wherever a careless caller could put them.
@@ -119,6 +119,23 @@ describe('findAnomalies', () => {
     expect(ok).toEqual({
       kind: 'flags',
       items: [{ id: 'A1', kind: 'overtime_over_cap', alias: 'E1', text: 'E1 exceeded the 40 hours/month overtime limit with 1,500,000 dong overtime pay.' }],
+      refused: 0,
+    });
+  });
+
+  it('formats annual_leave_exceeded in English and passes figure checks when grounded', () => {
+    const { sheet } = pseudo([line('1', { previous: null, exceededAnnualDays: '1.5', checks: { ...quiet, annualLeaveExceeded: true } })], {
+      language: 'en',
+      blockingRules: 0,
+    });
+    const anomalies = findAnomalies(sheet);
+    expect(anomalies).toHaveLength(1);
+    expect(anomalies[0]?.kind).toBe('annual_leave_exceeded');
+    expect(anomalies[0]?.facts).toBe('E1: annual leave taken exceeds statutory entitlement by 1.5 day(s)');
+    const ok = checkFlagSentences(anomalies, { items: [{ id: 'A1', sentence: 'E1 took 1.5 annual leave day(s) over the statutory entitlement.' }] });
+    expect(ok).toEqual({
+      kind: 'flags',
+      items: [{ id: 'A1', kind: 'annual_leave_exceeded', alias: 'E1', text: 'E1 took 1.5 annual leave day(s) over the statutory entitlement.' }],
       refused: 0,
     });
   });
