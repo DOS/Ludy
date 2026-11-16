@@ -2562,6 +2562,7 @@ export function createRpcHandler(
       list: os.inbox.list.handler(({ context, input }) =>
         inOrg(context, (orgId, actor) => runtime.query('kernel.inbox.list', input, { actor, orgId })),
       ),
+      hidden: os.inbox.hidden.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.inbox.hidden', {}, { actor, orgId }))),
       get: os.inbox.get.handler(({ context, input }) =>
         inOrg(context, (orgId, actor) => runtime.query('kernel.inbox.get', input, { actor, orgId })),
       ),

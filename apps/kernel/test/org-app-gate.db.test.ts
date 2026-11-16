@@ -256,12 +256,26 @@ suite('the per-org app gate of the runtime (ADR-0053, slice b)', () => {
       }
     });
     const requested = await o.exec<{ proposalId: string }>(rt, 'kernel.proposal.request', o.member, { command: 'finance.journal.reverse', input: { entryId, entryDate: '2026-10-15', reason: 'Ghi nhầm' } });
+    // Home asks each app for its lines through ctx.query: the pending proposal is a Finance line while Finance is on, and Home says nothing of Finance while it is off (slice e).
+    const todayApps = async (user: string) => (await o.query<{ items: Array<{ app: string }> }>(rt, 'kernel.today', user)).items.map((i) => i.app);
+    expect(await todayApps(o.owner)).toContain('finance');
     await o.setApp('finance', false);
+    expect(await todayApps(o.owner)).not.toContain('finance');
     const approve = () => rt.execute('kernel.proposal.approve', { id: requested.proposalId, revision: 1 }, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
     await expect(approve()).rejects.toMatchObject({ code: 'MODULE_OFF', status: 404, details: { module: 'finance' } });
     const state = async () => withAdmin(async (c) => (await c.query<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE id = $1', [requested.proposalId])).rows[0]?.status);
     expect(await state()).toBe('pending');
+    // Slice e (#3311): the Inbox leaves the proposal out of its list and says so with one count, for every member who could read it; the proposal itself is untouched.
+    const listed = async (user: string) => (await o.query<Array<{ id: string }>>(rt, 'kernel.inbox.list', user)).map((i) => i.id);
+    const hidden = (user: string) => o.query<{ count: number }>(rt, 'kernel.inbox.hidden', user);
+    expect(await listed(o.owner)).not.toContain(requested.proposalId);
+    expect(await listed(o.member)).not.toContain(requested.proposalId);
+    expect(await hidden(o.owner)).toEqual({ count: 1 });
+    expect(await hidden(o.member)).toEqual({ count: 1 });
     await o.setApp('finance', true);
+    expect(await todayApps(o.owner)).toContain('finance');
+    expect(await listed(o.owner)).toContain(requested.proposalId);
+    expect(await hidden(o.owner)).toEqual({ count: 0 });
     await expect(approve()).resolves.toMatchObject({ journalEntryId: expect.any(String) });
     expect(await state()).toBe('executed');
   });

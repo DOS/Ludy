@@ -42,6 +42,7 @@ import { kernelManifest } from './manifest.ts';
 import { preparedEntity } from './proposal-resubmit.ts';
 import { releaseWaitingFiles } from './ai-budget.ts';
 import { cancelMemberVyRuns } from './member-vy.ts';
+import { offAppsOf } from './org-apps.ts';
 import { memberProfiles } from './profiles.ts';
 import { lockChartChanges, rerouteStrandedTasks } from './task-reroute.ts';
 import { filterCondition, sortTerms } from './saved-view-filter.ts';
@@ -174,7 +175,8 @@ async function stopAgentRuns(trx: Trx, orgId: string, agentIds: string[], reason
 // one queued and one active job per agent, so repeats cost nothing, and a pending row whose run was refused earlier
 // (daily cap, kill switch, budget) is picked up again. A tainted task makes the wake-up, and so the run that claims
 // it, tainted. An agent of a module this deployment does not enable (CROVE_MODULES) keeps its pending request but is
-// not woken: no run starts until the module is enabled again, when the sweep finds the request.
+// not woken: no run starts until the module is enabled again, when the sweep finds the request. The same for an app the org switched
+// off (ADR-0053, slice e): the task and the pending request are kept, nothing wakes, and no event is lost.
 async function requestWakeup(ctx: CommandContext, positionId: string | null, reason: { taskId: string; why: string }, tainted: boolean, depth: number) {
   if (!positionId) return null;
   const holder = await ctx.trx
@@ -197,7 +199,7 @@ async function requestWakeup(ctx: CommandContext, positionId: string | null, rea
       tainted = w.tainted OR EXCLUDED.tainted,
       request_depth = GREATEST(w.request_depth, EXCLUDED.request_depth),
       updated_at = pg_catalog.now()`.execute(ctx.trx);
-  if (ctx.installed(holder.module)) await ctx.emit('kernel.agent.wakeup_requested', { agentId: holder.id });
+  if (ctx.installed(holder.module) && !(await offAppsOf(ctx.trx, ctx.orgId)).includes(holder.module)) await ctx.emit('kernel.agent.wakeup_requested', { agentId: holder.id });
   return holder.id;
 }
 
@@ -213,8 +215,9 @@ async function rewakePending(ctx: CommandContext, agentIds?: string[]): Promise<
     .where('w.org_id', '=', ctx.orgId)
     .where('w.status', '=', 'pending');
   if (agentIds) query = query.where('w.agent_id', 'in', agentIds);
+  const off = await offAppsOf(ctx.trx, ctx.orgId);
   for (const row of await query.execute()) {
-    if (ctx.installed(row.module)) await ctx.emit('kernel.agent.wakeup_requested', { agentId: row.agent_id });
+    if (ctx.installed(row.module) && !off.includes(row.module)) await ctx.emit('kernel.agent.wakeup_requested', { agentId: row.agent_id });
   }
 }
 
@@ -1404,7 +1407,7 @@ export const startAgentRun = defineCommand({
       return { runId: null, reason };
     };
     if (agent.status !== 'active' || !position || position.role_key !== agent.template_role_key) return done('not_runnable');
-    if (!ctx.installed(agent.template_module)) return done('module_disabled');
+    if (!ctx.installed(agent.template_module) || (await offAppsOf(ctx.trx, ctx.orgId)).includes(agent.template_module)) return done('module_disabled');
     const { rows: gates } = await sql<{ killed: boolean; spent: boolean; today: number }>`
       SELECT
         EXISTS (SELECT 1 FROM crove_kernel.kill_switch k WHERE k.org_id = ${ctx.orgId}::uuid AND k.released_at IS NULL
@@ -1498,14 +1501,8 @@ export const finishAgentRun = defineCommand({
     await ctx.trx.updateTable('crove_kernel.task').set({ checkout_run_id: null, lock_expires_at: null }).where('org_id', '=', ctx.orgId).where('checkout_run_id', '=', input.runId).execute();
     await ctx.trx.updateTable('crove_kernel.agent_wakeup').set({ status: 'done', updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('run_id', '=', input.runId).where('status', '=', 'claimed').execute();
     if (!run) return { finished: false };
-    const pending = await ctx.trx
-      .selectFrom('crove_kernel.agent_wakeup')
-      .select('id')
-      .where('org_id', '=', ctx.orgId)
-      .where('agent_id', '=', run.agent_id)
-      .where('status', '=', 'pending')
-      .executeTakeFirst();
-    if (pending) await ctx.emit('kernel.agent.wakeup_requested', { agentId: run.agent_id });
+    // A request that came in during the run wakes the agent again, unless its app is off for the org or the deployment (rewakePending).
+    await rewakePending(ctx, [run.agent_id]);
     ctx.audit({ run: input.runId, outcome: input.outcome });
     return { finished: true };
   },

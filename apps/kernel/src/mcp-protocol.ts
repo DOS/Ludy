@@ -45,6 +45,9 @@ export interface ToolDescriptor {
     | { readOnlyHint: false; destructiveHint: false; idempotentHint: false; openWorldHint: false };
   // What the tool accepts, checked here before anything runs: strict (an unknown key is refused), so a client cannot smuggle a field a query does not declare.
   argsSchema: z.ZodType<Record<string, unknown>>;
+  // The app the tool reads or writes (ADR-0053, slice e); none for a kernel tool, which is never off. A tool of an app the org switched off is left out of the list and
+  // answers MODULE_OFF as an error result.
+  module?: string;
   // The kernel query (or, for the one write tool, the command) it runs and what it answers; the endpoint runs it as the grant, never as the person's own click.
   read: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
   // How many rows of business data an answer carries, charged against the grant's daily row budget. Zero for a tool that reads none.
@@ -73,7 +76,7 @@ function metaOf(params: Record<string, unknown> | undefined): Record<string, unk
 export function toolList(tools: readonly ToolDescriptor[]): Array<Record<string, unknown>> {
   return [...tools]
     .sort((a, b) => (a.name < b.name ? -1 : 1))
-    .map(({ read: _read, rows: _rows, argsSchema: _argsSchema, ...descriptor }) => descriptor);
+    .map(({ read: _read, rows: _rows, argsSchema: _argsSchema, module: _module, ...descriptor }) => descriptor);
 }
 
 // What a tool answers: structured content and a short text form of it, for clients that read only text.
@@ -85,11 +88,14 @@ export interface HandleInput {
   body: unknown;
   headers: McpHeaders;
   tools: readonly ToolDescriptor[];
+  // The names of tools left out of tools/list: those of an app the org switched off. They stay callable so the call answers why (MODULE_OFF).
+  hidden?: ReadonlySet<string>;
   serverVersion: string;
   // Runs one tool call after the endpoint's own checks; throws what the kernel throws.
   callTool: (tool: ToolDescriptor, args: Record<string, unknown>) => Promise<Record<string, unknown>>;
   // Describes an error thrown while running a tool as a JSON-RPC error body (never the thrown message of an unexpected error).
-  describeError: (error: unknown) => { code: number; message: string };
+  // `toolError` makes the failure a tool result with isError (the tool ran and could not do it, which the model may read), not a JSON-RPC error.
+  describeError: (error: unknown) => { code: number; message: string; toolError?: boolean };
 }
 
 // One request, as the 2026-07-28 transport and the two legacy revisions it still serves allow. A batch (a JSON array) is not supported by any of
@@ -170,7 +176,7 @@ export async function handleMcp(input: HandleInput): Promise<McpReply> {
       };
     case 'tools/list':
       // The list of a grant: the tools its scopes allow, the same for every connection of that grant, so a tool the grant may not run is not listed. Cached for a minute.
-      return { kind: 'json', status: 200, body: rpcResult(id, { ...(modern ? { resultType: 'complete', ttlMs: 60_000, cacheScope: 'private' } : {}), tools: toolList(input.tools) }) };
+      return { kind: 'json', status: 200, body: rpcResult(id, { ...(modern ? { resultType: 'complete', ttlMs: 60_000, cacheScope: 'private' } : {}), tools: toolList(input.tools.filter((t) => !input.hidden?.has(t.name))) }) };
     case 'tools/call': {
       const name = typeof request.params?.name === 'string' ? request.params.name : null;
       const tool = input.tools.find((t) => t.name === name);
@@ -189,6 +195,9 @@ export async function handleMcp(input: HandleInput): Promise<McpReply> {
         return { kind: 'json', status: 200, body: rpcResult(id, toolResult(modern, await input.callTool(tool, parsed.data))) };
       } catch (error) {
         const described = input.describeError(error);
+        if (described.toolError) {
+          return { kind: 'json', status: 200, body: rpcResult(id, { ...(modern ? { resultType: 'complete' } : {}), content: [{ type: 'text', text: described.message }], isError: true }) };
+        }
         return { kind: 'json', status: 200, body: rpcError(id, described.code, described.message) };
       }
     }

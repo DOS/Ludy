@@ -19,6 +19,7 @@ import { ORIGINAL_NEEDED_KIND, tableWrite, vietnamToday, zId, zLookupHint, type 
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
 import { kernelManifest } from './manifest.ts';
+import { offAppsOf, proposalOfApp } from './org-apps.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 export const DEAD_LETTERED = 'kernel.job.dead_lettered';
@@ -255,6 +256,8 @@ export const originalsList = defineQuery({
   access: ALL,
   handler: async (ctx): Promise<{ items: OriginalNeededItem[]; total: number }> => {
     if (ctx.actor.type !== 'user' || ctx.role === 'viewer') return { items: [], total: 0 };
+    // These items belong to Finance: while the org has it off they are not listed (and counted by kernel.inbox.hidden), and wait with their own rows (ADR-0053, slice e).
+    if ((await offAppsOf(ctx.trx, ctx.orgId)).includes('finance')) return { items: [], total: 0 };
     const open = ctx.trx.selectFrom('crove_kernel.inbox_item').where('org_id', '=', ctx.orgId).where('kind', '=', ORIGINAL_NEEDED_KIND).where('dismissed_at', 'is', null);
     const rows = await open.select(['id', 'detail', 'raised_at']).orderBy('raised_at', 'desc').orderBy('id', 'desc').limit(ORIGINAL_ITEMS_MAX).execute();
     const { total } = await open.select((eb) => eb.fn.countAll<string>().as('total')).executeTakeFirstOrThrow();
@@ -269,5 +272,38 @@ export const originalsList = defineQuery({
   },
 });
 
+// How many waiting things the Inbox leaves out because their app is switched off for the org (ADR-0053 section 4, slice e): the pending proposals whose command belongs to an app that is off, and
+// Finance's open original-needed items while Finance is off. The Inbox shows one line with the number ("N việc đang chờ ở ứng dụng đã tắt"); the things keep their own expiry and cannot be approved
+// (the runtime answers MODULE_OFF for the command they would run). A member sees the count of what they could have seen: the proposal read is under the same row security as the list.
+export const inboxHidden = defineQuery({
+  name: 'kernel.inbox.hidden',
+  input: z.object({}),
+  access: ALL,
+  handler: async (ctx): Promise<{ count: number }> => {
+    if (ctx.actor.type !== 'user') return { count: 0 };
+    const off = await offAppsOf(ctx.trx, ctx.orgId);
+    if (off.length === 0) return { count: 0 };
+    const { n } = await ctx.trx
+      .selectFrom('crove_kernel.proposal')
+      .select((eb) => eb.fn.countAll<string>().as('n'))
+      .where('org_id', '=', ctx.orgId)
+      .where('status', '=', 'pending')
+      .where(proposalOfApp(off))
+      .executeTakeFirstOrThrow();
+    let count = Number(n);
+    if (off.includes('finance') && ctx.role !== 'viewer') {
+      const { total } = await ctx.trx
+        .selectFrom('crove_kernel.inbox_item')
+        .select((eb) => eb.fn.countAll<string>().as('total'))
+        .where('org_id', '=', ctx.orgId)
+        .where('kind', '=', ORIGINAL_NEEDED_KIND)
+        .where('dismissed_at', 'is', null)
+        .executeTakeFirstOrThrow();
+      count += Number(total);
+    }
+    return { count };
+  },
+});
+
 export const inboxItemCommands = [jobDeadLetter, inboxDismiss, inboxPrune, originalDismiss];
-export const inboxItemQueries = [inboxRaised, originalsList];
+export const inboxItemQueries = [inboxRaised, originalsList, inboxHidden];
