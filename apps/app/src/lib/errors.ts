@@ -89,6 +89,13 @@ export function isStepUpRequired(error: unknown): boolean {
   return (error as { code?: string } | null)?.code === 'STEP_UP_REQUIRED';
 }
 
+// Per-org disabled module refusal (ADR-0053): MODULE_OFF 404 carrying optional `data.module`.
+export function isModuleOff(error: unknown, module?: string): boolean {
+  const e = error as { code?: string; data?: { module?: unknown } } | null;
+  if (e?.code !== 'MODULE_OFF') return false;
+  return module === undefined || e.data?.module === module;
+}
+
 export function isUnauthenticated(error: unknown): boolean {
   const e = error as { status?: number; code?: string } | null;
   if (isMfaRequired(error) || isOrgAccessRevoked(error)) return false;

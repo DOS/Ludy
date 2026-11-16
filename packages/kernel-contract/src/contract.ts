@@ -441,6 +441,8 @@ import {
   zProjectStatus,
   zProjectTaskCreate,
   zProjectTaskMutate,
+  zProjectTaskProjectEntry,
+  zProjectTaskProjectsInput,
   zProjectUpdate,
 } from './projects.ts';
 import { zFollowupDraft, zFollowupSendCall, zFollowupSent, zFollowupWording, zFollowupWordingAsk } from './meeting-followup.ts';
@@ -2663,6 +2665,7 @@ export const contract = {
     get: oc.input(z.strictObject({ id: zId })).output(zProjectDetail),
     board: oc.input(zProjectBoardInput).output(zProjectBoard),
     unassignedTasks: oc.input(z.strictObject({})).output(z.array(zProjectCandidateTask)),
+    taskProjects: oc.input(zProjectTaskProjectsInput).output(z.array(zProjectTaskProjectEntry)),
     create: oc.input(zProjectCreate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId })),
     update: oc.input(zProjectUpdate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId })),
     setStatus: oc.input(zProjectSetStatus.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, status: zProjectStatus })),

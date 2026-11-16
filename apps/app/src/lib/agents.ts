@@ -139,8 +139,11 @@ export const OPEN_TASK_STATUSES: readonly TaskStatus[] = ['todo', 'in_progress',
 export const TASK_FILTERS = ['open', 'mine', 'all'] as const;
 export type TaskFilter = (typeof TASK_FILTERS)[number];
 
-// ?filter= of the tasks screen (#1513), left out for the open tasks.
-const zTasksSearch = z.object({ filter: z.enum(TASK_FILTERS).optional().catch(undefined) });
+// ?filter= and ?project= of the tasks screen (#1513, #2593), left out for the defaults.
+const zTasksSearch = z.object({
+  filter: z.enum(TASK_FILTERS).optional().catch(undefined),
+  project: z.union([z.uuid().transform((v) => v.toLowerCase()), z.literal('none')]).optional().catch(undefined),
+});
 export type TasksSearch = Defined<z.output<typeof zTasksSearch>>;
 export const parseTasksSearch = (search: Record<string, unknown>): TasksSearch => readSearch(zTasksSearch, search);
 

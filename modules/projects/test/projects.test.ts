@@ -25,7 +25,7 @@ describe('@crove/mod-projects (#2591)', () => {
     expect(projectsManifest.nav).toEqual(MODULE_SCREENS.projects.nav);
   });
 
-  it('exports all 10 commands and 5 queries with consistent module prefix', () => {
+  it('exports all 10 commands and 6 queries with consistent module prefix', () => {
     expect(projectsCommands.map((c) => c.name).sort()).toEqual([
       'projects.member.add',
       'projects.member.remove',
@@ -42,6 +42,7 @@ describe('@crove/mod-projects (#2591)', () => {
       'projects.board',
       'projects.project.get',
       'projects.project.list',
+      'projects.task_projects',
       'projects.today',
       'projects.unassigned_tasks',
     ]);

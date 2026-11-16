@@ -9,6 +9,7 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import {
+  PROJECT_TASK_MAP_LIMIT,
   auditValue,
   taskStanding,
   todoAutoReminder,
@@ -29,6 +30,7 @@ import {
   zTodoUpdate,
   type MyWork,
   type MyWorkTask,
+  type ProjectTaskProjectEntry,
   type Todo,
   type TodoCount,
   type TodoHandedOver,
@@ -562,21 +564,41 @@ export const myWork = defineQuery({
   input: zMyWorkInput,
   access: READERS,
   handler: async (ctx, input): Promise<MyWork> => {
-    userOf(ctx.actor);
-    const rows = await ctx.trx
-      .selectFrom('crove_notes.todo')
-      .select(SUMMARY)
-      .where('org_id', '=', ctx.orgId)
-      .where('deleted_at', 'is', null)
-      .where('status', '=', 'open')
-      .orderBy('sort_key')
-      .orderBy('id')
-      .limit(MY_WORK_LIMIT)
-      .execute();
-    const found = await ctx.query<{ tasks: KernelTask[] }>('kernel.task.list', { mine: true, status: [...OPEN_TASK_STATUSES] });
+    const userId = userOf(ctx.actor);
+    const [rows, found, memberCountRow, ownSeatRow] = await Promise.all([
+      ctx.trx
+        .selectFrom('crove_notes.todo')
+        .select(SUMMARY)
+        .where('org_id', '=', ctx.orgId)
+        .where('deleted_at', 'is', null)
+        .where('status', '=', 'open')
+        .orderBy('sort_key')
+        .orderBy('id')
+        .limit(MY_WORK_LIMIT)
+        .execute(),
+      ctx.query<{ tasks: KernelTask[] }>('kernel.task.list', { mine: true, status: [...OPEN_TASK_STATUSES] }),
+      ctx.trx
+        .selectFrom('crove_kernel.tenant_member')
+        .select((eb) => eb.fn.countAll<string>().as('n'))
+        .where('org_id', '=', ctx.orgId)
+        .executeTakeFirstOrThrow(),
+      ctx.trx
+        .selectFrom('crove_kernel.position')
+        .select('id')
+        .where('org_id', '=', ctx.orgId)
+        .where('holder_user_id', '=', userId)
+        .where('status', '<>', 'archived')
+        .limit(1)
+        .executeTakeFirst(),
+    ]);
     const now = new Date();
     const listed = found.status === 'ok' ? found.value.tasks : [];
-    const tasks: MyWorkTask[] = listed
+    const projectLookup = await ctx.query<ProjectTaskProjectEntry[]>('projects.task_projects', {
+      taskIds: listed.slice(0, PROJECT_TASK_MAP_LIMIT).map((t) => t.id),
+    });
+    const projectsAvailable = projectLookup.status === 'ok';
+    const projectByTask = new Map(projectLookup.status === 'ok' ? projectLookup.value.map((entry) => [entry.taskId, entry.project]) : []);
+    const allTasks: MyWorkTask[] = listed
       .map((t) => ({
         id: t.id,
         title: t.title,
@@ -584,11 +606,27 @@ export const myWork = defineQuery({
         positionId: t.assigneePositionId,
         due: t.due,
         tainted: t.tainted,
+        project: projectByTask.get(t.id) ?? null,
         ...taskStanding(t.due === null ? null : new Date(t.due), input.timeZone, now),
       }))
       .sort((a, b) => (a.due === b.due ? 0 : a.due === null ? 1 : b.due === null ? -1 : a.due < b.due ? -1 : 1));
+    const filteredTasks =
+      input.projectId === undefined
+        ? allTasks
+        : input.projectId === 'none'
+          ? allTasks.filter((t) => t.project === null)
+          : allTasks.filter((t) => t.project?.id === input.projectId);
+    const todos = input.projectId === undefined ? rows.map((r) => summary(r, now)) : [];
+    const isTeamOrg = Number(memberCountRow.n) > 1;
+    const noSeatHint = isTeamOrg && ownSeatRow === undefined && ctx.role !== 'owner' && ctx.role !== 'viewer';
     // A full page from the kernel says the screen may miss older tasks.
-    return { todos: rows.map((r) => summary(r, now)), tasks, tasksTruncated: listed.length >= KERNEL_TASK_LIST_LIMIT };
+    return {
+      todos,
+      tasks: filteredTasks,
+      tasksTruncated: listed.length >= KERNEL_TASK_LIST_LIMIT,
+      projectsAvailable,
+      noSeatHint,
+    };
   },
 });
 
