@@ -395,7 +395,7 @@ export const projectWeeklyStatusShareNote = defineCommand({
   target: projectTarget,
   handler: async (ctx, input): Promise<{ noteId: string; revision: number }> => {
     const userId = userOf(ctx.actor);
-    const project = await loadProject(ctx.trx, ctx.orgId, input.projectId, false);
+    const project = await loadProject(ctx.trx, ctx.orgId, input.projectId, true);
     assertCanManage(ctx, project.owner_user_id, userId);
     assertNotArchived(project.status);
     if (!ctx.installed('notes')) {
@@ -434,7 +434,9 @@ export const projectWeeklyStatusSendMail = defineCommand({
   target: projectTarget,
   handler: async (ctx, input): Promise<ProjectWeeklyStatusSendMailResult> => {
     const userId = userOf(ctx.actor);
-    const project = await loadProject(ctx.trx, ctx.orgId, input.projectId, false);
+    // Lock crove_projects.project FOR UPDATE before reading recipients and counts so concurrent
+    // projects.task.add/remove or member changes serialize behind this send (#2609).
+    const project = await loadProject(ctx.trx, ctx.orgId, input.projectId, true);
     assertCanManage(ctx, project.owner_user_id, userId);
     assertNotArchived(project.status);
 
@@ -443,6 +445,8 @@ export const projectWeeklyStatusSendMail = defineCommand({
     `.execute(ctx.trx);
     const org = await ctx.trx.selectFrom('crove_kernel.tenant').select(['slug', 'name']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
     // Filter out entity-restricted recipients who cannot read every legal entity represented in this project's visible tasks (#2609).
+    // Under role_assignment_scope RLS, an entity-scoped caller cannot read another member's assignments in other entities, so
+    // branch 3 conservatively requires '*' = ANY(ctx_le_scope()) when the recipient has zero visible assignments (matching agents.ts:1045).
     const { rows: recipientRows } = await sql<{ user_id: string; eligible: boolean }>`
       SELECT
         pm.user_id,
