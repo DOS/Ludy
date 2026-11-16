@@ -157,6 +157,7 @@ export const noteCreate = defineCommand({
         title: input.title,
         body: input.body,
         tags: input.tags,
+        tainted: input.tainted ?? false,
         created_at: ctx.now,
         updated_at: ctx.now,
       })
@@ -168,6 +169,7 @@ export const noteCreate = defineCommand({
       visibility: row.visibility,
       title: auditValue(NOTE, 'title', input.title),
       tags: auditValue(NOTE, 'tags', input.tags.length > 0 ? input.tags : null),
+      ...(input.tainted !== undefined ? { tainted: input.tainted } : {}),
       ...(input.link ? { linkId, ...linkTargetFact(row.visibility, input.link.targetType, input.link.targetId) } : {}),
     });
     return written(row);

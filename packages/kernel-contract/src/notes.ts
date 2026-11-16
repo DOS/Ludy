@@ -42,6 +42,7 @@ export const zNoteCreate = z.strictObject({
   body: zBody.default(''),
   tags: zTags.default([]),
   visibility: z.enum(NOTE_VISIBILITIES).default('private'),
+  tainted: z.boolean().optional(),
   link: zNoteLinkTarget.optional(),
 });
 export type NoteCreateInput = z.input<typeof zNoteCreate>;

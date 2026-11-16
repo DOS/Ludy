@@ -2,6 +2,7 @@
 // Projects and a task board on kernel tasks (issue #2591, plan docs/plan/projects.md section 4, ADR-0048).
 import { z } from 'zod';
 import { DEFAULT_TIME_ZONE, zTimeZone } from './calendar.ts';
+import { NOTE_TITLE_MAX } from './notes.ts';
 import { zId, zLocalDate, zPositionStatus, zRole, zTaskStatus } from './schemas.ts';
 
 export const PROJECT_NAME_MAX = 200;
@@ -275,6 +276,65 @@ export const zProjectWeeklyStatus = z.strictObject({
   truncated: z.boolean(),
 });
 export type ProjectWeeklyStatus = z.infer<typeof zProjectWeeklyStatus>;
+
+export const PROJECT_WEEKLY_STATUS_NOTE_TAG = 'bao-cao-tuan';
+export const PROJECT_WEEKLY_STATUS_MAIL_SOURCE = 'projects.weekly_status.send_mail';
+export const PROJECT_WEEKLY_STATUS_MAIL_TEMPLATE = 'projects.weekly_status';
+export const PROJECT_WEEKLY_STATUS_SUMMARY_MAX = 4000;
+
+const zOneLineText = (max: number) =>
+  z
+    .string()
+    .trim()
+    .min(1)
+    .max(max)
+    .refine((v) => !/[\p{Cc}\p{Zl}\p{Zp}]/u.test(v), 'one line');
+
+// Share a project's weekly status as an org-visible note linked to the project (#2609).
+export const zProjectWeeklyStatusShareNoteInput = z.strictObject({
+  projectId: zId,
+  title: zOneLineText(NOTE_TITLE_MAX),
+  body: z.string().trim().min(1).max(PROJECT_WEEKLY_STATUS_SUMMARY_MAX),
+  // True only when the body comes unedited from Vy's weekly status generator.
+  tainted: z.boolean().default(false),
+});
+export type ProjectWeeklyStatusShareNoteInput = z.input<typeof zProjectWeeklyStatusShareNoteInput>;
+
+// Email a project's weekly status to the project's other members on explicit confirmation (#2609).
+export const zProjectWeeklyStatusSendMailInput = z.strictObject({
+  projectId: zId,
+  subject: zOneLineText(NOTE_TITLE_MAX),
+  summary: z.string().trim().min(1).max(PROJECT_WEEKLY_STATUS_SUMMARY_MAX),
+  language: z.enum(['vi', 'en']).default('vi'),
+  tainted: z.boolean().default(false),
+  confirmed: z.literal(true),
+});
+export type ProjectWeeklyStatusSendMailInput = z.input<typeof zProjectWeeklyStatusSendMailInput>;
+
+export const zProjectWeeklyStatusSendMailResult = z.strictObject({
+  sentCount: z.number().int().nonnegative(),
+  skippedCount: z.number().int().nonnegative(),
+});
+export type ProjectWeeklyStatusSendMailResult = z.infer<typeof zProjectWeeklyStatusSendMailResult>;
+
+const PROJECT_PATH_PATTERN = /^\/o\/[a-z0-9][a-z0-9-]{0,62}\/projects\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export const zProjectWeeklyStatusMailPayload = z.strictObject({
+  batchId: zId,
+  projectId: zId,
+  projectName: z.string().trim().min(1).max(PROJECT_NAME_MAX),
+  orgName: z.string().trim().min(1).max(200),
+  projectPath: z.string().trim().regex(PROJECT_PATH_PATTERN),
+  from: zLocalDate,
+  to: zLocalDate,
+  nextFrom: zLocalDate,
+  nextTo: zLocalDate,
+  counts: zProjectWeeklyStatusCounts,
+  summary: z.string().trim().min(1).max(PROJECT_WEEKLY_STATUS_SUMMARY_MAX),
+  language: z.enum(['vi', 'en']),
+  aiGenerated: z.boolean(),
+});
+export type ProjectWeeklyStatusMailPayload = z.infer<typeof zProjectWeeklyStatusMailPayload>;
 
 export const zProjectTasksFromNoteStatus = z.strictObject({
   available: z.boolean(),
