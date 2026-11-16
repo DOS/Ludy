@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Projects list and board/list screens (/o/$slug/projects and /o/$slug/projects/$id, issue #2591, ADR-0048).
-import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
+import { hashKey, useMutation, useQuery } from '@tanstack/react-query';
 import type { FilterAst, ProjectBoard, ProjectStatus, ProjectSummary, ProjectTaskCard, SavedViewSort } from '@crove/kernel-contract';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
@@ -34,6 +34,8 @@ import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import {
   PROJECT_STATUSES,
+  boardPlaceholderForProject,
+  createBoardBatchTracker,
   defaultProjectView,
   filterProjects,
   hasUnseatedTeamMembers,
@@ -252,8 +254,14 @@ export function ProjectDetailPage() {
     setSort(nextSort);
   };
   const reorderQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const pendingReordersRef = useRef(0);
-  const rollbackBoardRef = useRef<ProjectBoard | undefined>(undefined);
+  const batchTrackerRef = useRef(createBoardBatchTracker<readonly unknown[]>());
+  const activeProjectIdRef = useRef(id);
+  activeProjectIdRef.current = id;
+
+  useEffect(() => {
+    setMoveError(null);
+    setEditingTask(null);
+  }, [id]);
 
   useEffect(() => {
     const onResize = () => {
@@ -276,7 +284,7 @@ export function ProjectDetailPage() {
   const boardQueryOptions = orpc.projects.board.queryOptions({ input: boardInput });
   const boardQuery = useQuery({
     ...boardQueryOptions,
-    placeholderData: keepPreviousData,
+    placeholderData: (previous) => boardPlaceholderForProject(previous, id),
     // Task checkout releases are not pushed over SSE yet; poll only while an agent holds a lease.
     refetchInterval: (query) => (query.state.data?.tasks.some((item) => item.checkedOut) ? 5_000 : false),
   });
@@ -287,16 +295,17 @@ export function ProjectDetailPage() {
     mutationFn: () => Promise<unknown>,
   ) => {
     setMoveError(null);
-    if (pendingReordersRef.current === 0) {
-      rollbackBoardRef.current = queryClient.getQueryData<ProjectBoard>(boardQueryOptions.queryKey);
-    }
-    pendingReordersRef.current += 1;
-    void queryClient.cancelQueries({ queryKey: boardQueryOptions.queryKey });
-    const previous = queryClient.getQueryData<ProjectBoard>(boardQueryOptions.queryKey);
-    if (previous) {
-      queryClient.setQueryData<ProjectBoard>(boardQueryOptions.queryKey, {
-        ...previous,
-        tasks: optimisticUpdate(previous.tasks),
+    const capturedProjectId = id;
+    const queryKey = boardQueryOptions.queryKey;
+    const keyHash = hashKey(queryKey);
+    const tracker = batchTrackerRef.current;
+    const snapshot = queryClient.getQueryData<ProjectBoard>(queryKey);
+    const entry = tracker.begin(keyHash, queryKey, snapshot);
+    void queryClient.cancelQueries({ queryKey });
+    if (snapshot) {
+      queryClient.setQueryData<ProjectBoard>(queryKey, {
+        ...snapshot,
+        tasks: optimisticUpdate(snapshot.tasks),
       });
     }
     reorderQueueRef.current = reorderQueueRef.current
@@ -304,15 +313,18 @@ export function ProjectDetailPage() {
       .then(async () => {
         try {
           await mutationFn();
+          tracker.markSucceeded(entry);
         } catch (err) {
-          if (pendingReordersRef.current === 1 && rollbackBoardRef.current) {
-            queryClient.setQueryData<ProjectBoard>(boardQueryOptions.queryKey, rollbackBoardRef.current);
+          const rollback = tracker.rollbackOnFailure(entry);
+          if (rollback) {
+            queryClient.setQueryData<ProjectBoard>(entry.state.queryKey, rollback);
           }
-          setMoveError(err);
+          if (activeProjectIdRef.current === capturedProjectId) {
+            setMoveError(err);
+          }
         } finally {
-          pendingReordersRef.current -= 1;
-          if (pendingReordersRef.current === 0) {
-            rollbackBoardRef.current = undefined;
+          const { queryDrained } = tracker.finish(entry);
+          if (queryDrained) {
             refreshProjectQueries();
           }
         }

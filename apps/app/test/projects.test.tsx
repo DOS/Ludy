@@ -9,6 +9,8 @@ import type { ProjectBoard, ProjectListResult, ProjectSeat, ProjectTaskCard } fr
 import { catalog } from '../src/i18n/runtime.ts';
 import {
   boardColumns,
+  boardPlaceholderForProject,
+  createBoardBatchTracker,
   defaultProjectView,
   filterProjects,
   groupBoardTasks,
@@ -462,5 +464,70 @@ describe('projects SSR screens & board (#2591)', () => {
     expect(html).toContain('data-tainted="true"');
     expect(html).toContain('data-tainted="false"');
     expect(html).toContain('border-proposal');
+  });
+
+  it('scopes board placeholder and queued rollback snapshots to the matching project and queryKey (#2610)', () => {
+    const projectA: ProjectBoard = {
+      project: {
+        id: '00000000-0000-4000-8000-00000000000a',
+        name: 'Dự án A',
+        description: null,
+        status: 'active',
+        ownerUserId: 'u1',
+        ownerName: 'Minh',
+        canWrite: true,
+        canManage: true,
+        createdAt: '2026-11-10T00:00:00.000Z',
+        updatedAt: '2026-11-10T00:00:00.000Z',
+      },
+      members: [],
+      seats: [],
+      isTeamOrg: false,
+      viewerHasSeat: true,
+      tasks: [card({ id: 't1', title: 'Task A' })],
+      totalVisible: 1,
+      hiddenByEntityCount: 0,
+      truncated: false,
+    };
+    const projectB: ProjectBoard = {
+      ...projectA,
+      project: { ...projectA.project, id: '00000000-0000-4000-8000-00000000000b', name: 'Dự án B' },
+      tasks: [card({ id: 't2', title: 'Task B' })],
+    };
+
+    expect(boardPlaceholderForProject(projectA, projectA.project.id)).toBe(projectA);
+    expect(boardPlaceholderForProject(projectA, projectB.project.id)).toBeUndefined();
+    expect(boardPlaceholderForProject(undefined, projectB.project.id)).toBeUndefined();
+
+    // Navigating to an uncached project does not display cached tasks from another project.
+    queryClientState.current.clear();
+    queryClientState.current.setQueryData(['projects', 'board', { projectId: projectB.project.id }], projectB);
+    const uncachedHtml = renderToStaticMarkup(wrap('vi', <ProjectDetailPage />));
+    expect(uncachedHtml).not.toContain('Dự án B');
+    expect(uncachedHtml).not.toContain('Task B');
+
+    const tracker = createBoardBatchTracker<readonly string[]>();
+
+    // Single failure on a key restores the pre-batch snapshot for that key.
+    const single = tracker.begin('k1', ['k1'], projectA);
+    expect(tracker.rollbackOnFailure(single)).toBe(projectA);
+    expect(tracker.finish(single)).toEqual({ queryDrained: true });
+
+    // An earlier committed mutation in the same batch suppresses pre-batch snapshot restore so drain refresh reconciles.
+    const first = tracker.begin('k1', ['k1'], projectA);
+    const second = tracker.begin('k1', ['k1'], projectB);
+    expect(second.state.rollback).toBe(projectA);
+    tracker.markSucceeded(first);
+    expect(tracker.finish(first)).toEqual({ queryDrained: false });
+    expect(tracker.rollbackOnFailure(second)).toBeUndefined();
+    expect(tracker.finish(second)).toEqual({ queryDrained: true });
+
+    // Different filter queryKeys track snapshots independently without cross-contaminating.
+    const unfiltered = tracker.begin('k-all', ['k-all'], projectA);
+    const filtered = tracker.begin('k-todo', ['k-todo'], projectB);
+    expect(tracker.rollbackOnFailure(filtered)).toBe(projectB);
+    expect(tracker.finish(filtered)).toEqual({ queryDrained: false });
+    expect(tracker.rollbackOnFailure(unfiltered)).toBe(projectA);
+    expect(tracker.finish(unfiltered)).toEqual({ queryDrained: true });
   });
 });

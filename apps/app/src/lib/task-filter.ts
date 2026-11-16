@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The filter bar of Tasks and Project boards as a Filter AST of the `kernel.task` scope (#2610), and back.
 // No browser or API imports, so it is unit tested directly.
+import type { useTranslations } from 'use-intl';
 import { SAVED_VIEW_SCOPES, type FilterAst, type FilterCondition, type SavedViewSort } from '@crove/kernel-contract';
 import { TASK_STATUSES, type TaskStatus } from './agents.ts';
 
@@ -52,6 +53,7 @@ export function taskFilterToAst(state: TaskFilterState): FilterAst {
 
 export function astToTaskFilter(ast: FilterAst): TaskFilterState {
   const state: TaskFilterState = { ...EMPTY_TASK_FILTER, rest: [] };
+  const hasStatusIs = ast.all.some((c) => c.field === 'status' && c.op === 'is');
   for (const c of ast.all) {
     const onlyStatus =
       c.op === 'in' &&
@@ -67,7 +69,7 @@ export function astToTaskFilter(ast: FilterAst): TaskFilterState {
         : null;
     if (c.field === 'search' && c.op === 'contains' && typeof c.value === 'string' && state.search === '') {
       state.search = c.value;
-    } else if (c.field === 'status' && state.status === '' && (isStatus !== null || onlyStatus !== null)) {
+    } else if (c.field === 'status' && state.status === '' && (isStatus !== null || (!hasStatusIs && onlyStatus !== null))) {
       state.status = isStatus ?? onlyStatus ?? '';
     } else if (c.field === 'assignee' && state.assignee === '' && c.op === 'is_me') {
       state.assignee = 'me';
@@ -101,7 +103,57 @@ export function taskSortOfValue(value: string): SavedViewSort | null {
   return field && (dir === 'asc' || dir === 'desc') && TASK_SORT_OPTIONS.includes(value) ? { field, dir } : null;
 }
 
-export function taskConditionLabel(c: FilterCondition): string {
-  const spec = (SAVED_VIEW_SCOPES['kernel.task'].fields as Record<string, { label: string }>)[c.field];
-  return `${spec?.label ?? c.field}: ${c.op}${c.value === undefined ? '' : ` ${Array.isArray(c.value) ? c.value.join(', ') : String(c.value)}`}`;
+export type TaskFilterTranslator = ReturnType<typeof useTranslations<'tasks'>>;
+
+function localizedStatus(value: unknown, t: TaskFilterTranslator): string {
+  const s = String(value);
+  return (TASK_STATUSES as readonly string[]).includes(s) ? t(`status.${s as TaskStatus}`) : s;
+}
+
+function localizedField(field: string, t: TaskFilterTranslator): string {
+  if (field === 'search') return t('filters.search');
+  if (field === 'status') return t('filters.status');
+  if (field === 'assignee') return t('filters.assignee');
+  if (field === 'due') return t('filters.due');
+  if (field === 'tainted') return t('filters.tainted');
+  if (field === 'created') return t('colCreated');
+  return (SAVED_VIEW_SCOPES['kernel.task'].fields as Record<string, { label: string }>)[field]?.label ?? field;
+}
+
+export function taskConditionLabel(
+  c: FilterCondition,
+  t: TaskFilterTranslator,
+  positions: readonly { id: string; label: string }[] = [],
+): string {
+  if (c.field === 'created' && c.op === 'within_last_days') {
+    return t('filters.condCreatedWithinLastDays', { days: String(Number(c.value) || 0) });
+  }
+  if (c.field === 'due') {
+    if (c.op === 'before') return t('filters.condDueBefore', { date: String(c.value ?? '') });
+    if (c.op === 'after') return t('filters.condDueAfter', { date: String(c.value ?? '') });
+    if (c.op === 'overdue') return `${t('filters.due')}: ${t('filters.dueOverdue')}`;
+    if (c.op === 'within_next_days') return t('filters.condDueWithinNextDays', { days: String(Number(c.value) || 0) });
+    if (c.op === 'is_empty') return `${t('filters.due')}: ${t('filters.dueEmpty')}`;
+  }
+  if (c.field === 'status' && (c.op === 'is' || c.op === 'in')) {
+    const list = Array.isArray(c.value) ? c.value : [c.value];
+    return t('filters.condStatusIn', { values: list.map((v) => localizedStatus(v, t)).join(', ') });
+  }
+  if (c.field === 'assignee') {
+    if (c.op === 'is_me') return `${t('filters.assignee')}: ${t('filters.assigneeMe')}`;
+    if (c.op === 'is_empty') return `${t('filters.assignee')}: ${t('filters.assigneeNone')}`;
+    if (c.op === 'is') {
+      const id = String(c.value ?? '');
+      const label = positions.find((p) => p.id === id)?.label ?? id;
+      return t('filters.condAssigneeIs', { value: label });
+    }
+  }
+  if (c.field === 'tainted' && c.op === 'is' && typeof c.value === 'boolean') {
+    return `${t('filters.tainted')}: ${c.value ? t('filters.taintedAi') : t('filters.taintedHuman')}`;
+  }
+  if (c.field === 'search' && c.op === 'contains') {
+    return t('filters.condSearchContains', { value: String(c.value ?? '') });
+  }
+  const value = Array.isArray(c.value) ? c.value.map(String).join(', ') : c.value === undefined ? '' : String(c.value);
+  return t('filters.condGeneric', { field: localizedField(c.field, t), value: value || c.op });
 }

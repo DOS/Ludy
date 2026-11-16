@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { filterIssues } from '@crove/kernel-contract';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { IntlProvider, createTranslator } from 'use-intl';
 import { describe, expect, it } from 'vitest';
+import { TaskFilterBar } from '../src/components/task-filter-bar.tsx';
+import { catalog } from '../src/i18n/runtime.ts';
 import {
   EMPTY_TASK_FILTER,
   TASK_SOON_DAYS,
@@ -77,7 +82,82 @@ describe('task filter (kernel.task, #2610)', () => {
     });
     expect(single).toMatchObject({ status: 'done', assignee: POS_2, due: 'soon', rest: [] });
     expect(astToTaskFilter({ v: 1, all: [{ field: 'due', op: 'within_next_days', value: 30 }] }).rest).toHaveLength(1);
-    expect(taskConditionLabel({ field: 'created', op: 'within_last_days', value: 14 })).toContain('14');
+
+    // Preserve single-item `status:in` in `rest` when `status:is` is also present so round-tripping never duplicates `status:is`.
+    const bothStatusOps = astToTaskFilter({
+      v: 1,
+      all: [
+        { field: 'status', op: 'in', value: ['todo'] },
+        { field: 'status', op: 'is', value: 'waiting' },
+      ],
+    });
+    expect(bothStatusOps.status).toBe('waiting');
+    expect(bothStatusOps.rest).toEqual([{ field: 'status', op: 'in', value: ['todo'] }]);
+    expect(filterIssues('kernel.task', taskFilterToAst(bothStatusOps))).toEqual([]);
+
+    const enMessages = catalog('en');
+    const viCatalog = catalog('vi');
+    const tEn = createTranslator({ locale: 'en', messages: enMessages, namespace: 'tasks' });
+    const tVi = createTranslator({ locale: 'vi', messages: viCatalog, namespace: 'tasks' });
+    const positions = [{ id: POS_1, label: 'Kế toán trưởng' }];
+
+    expect(taskConditionLabel({ field: 'created', op: 'within_last_days', value: 14 }, tEn, positions)).toBe(
+      'Created in the last 14 days',
+    );
+    expect(taskConditionLabel({ field: 'created', op: 'within_last_days', value: 14 }, tVi, positions)).toBe(
+      'Tạo trong 14 ngày gần đây',
+    );
+    expect(taskConditionLabel({ field: 'due', op: 'before', value: '2026-12-31' }, tEn, positions)).toBe(
+      'Due before 2026-12-31',
+    );
+    expect(taskConditionLabel({ field: 'due', op: 'before', value: '2026-12-31' }, tVi, positions)).toBe(
+      'Hạn trước 2026-12-31',
+    );
+    expect(taskConditionLabel({ field: 'due', op: 'after', value: '2026-01-01' }, tEn, positions)).toBe(
+      'Due after 2026-01-01',
+    );
+    expect(taskConditionLabel({ field: 'due', op: 'within_next_days', value: 30 }, tEn, positions)).toBe(
+      'Due in the next 30 days',
+    );
+    expect(taskConditionLabel({ field: 'status', op: 'in', value: ['todo', 'waiting'] }, tVi, positions)).toBe(
+      'Trạng thái: Cần làm, Đang chờ',
+    );
+    expect(taskConditionLabel({ field: 'assignee', op: 'is', value: POS_1 }, tEn, positions)).toBe(
+      'Assignee: Kế toán trưởng',
+    );
+    expect(taskConditionLabel({ field: 'tainted', op: 'is', value: true }, tEn, positions)).toBe(
+      'Content trust: Unverified external content',
+    );
+    expect(taskConditionLabel({ field: 'tainted', op: 'is', value: false }, tVi, positions)).toBe(
+      'Nguồn nội dung: Không phải nội dung bên ngoài',
+    );
+
+    const htmlEn = renderToStaticMarkup(
+      createElement(IntlProvider, {
+        locale: 'en',
+        timeZone: 'Asia/Ho_Chi_Minh',
+        messages: enMessages,
+        children: createElement(TaskFilterBar, {
+          bar: {
+            ...EMPTY_TASK_FILTER,
+            rest: [
+              { field: 'created', op: 'within_last_days', value: 14 },
+              { field: 'due', op: 'before', value: '2026-12-31' },
+            ],
+          },
+          setBar: () => undefined,
+          sort: null,
+          setSort: () => undefined,
+          positions,
+        }),
+      }),
+    );
+    expect(htmlEn).toContain('Unverified external content');
+    expect(htmlEn).toContain('Not tainted');
+    expect(htmlEn).toContain('Created in the last 14 days');
+    expect(htmlEn).toContain('aria-label="Remove filter Created in the last 14 days"');
+    expect(htmlEn).not.toContain('within_last_days');
+    expect(htmlEn).not.toContain('AI proposed');
   });
 
   it('reads and writes task sort options cleanly', () => {

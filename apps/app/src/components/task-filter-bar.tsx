@@ -184,19 +184,22 @@ export function TaskFilterBar({
       </div>
       {bar.rest.length > 0 && (
         <ul className="mb-3 flex flex-wrap gap-2" aria-label={t('filters.other')}>
-          {bar.rest.map((c, i) => (
-            <li key={`${c.field}:${c.op}:${i}`} className="flex items-center gap-1 rounded-full border px-3 py-1 text-xs text-muted-foreground">
-              {taskConditionLabel(c)}
-              <Button
-                variant="ghost"
-                size="sm"
-                aria-label={t('filters.remove', { condition: taskConditionLabel(c) })}
-                onClick={() => setBar({ ...bar, rest: bar.rest.filter((_, j) => j !== i) })}
-              >
-                ×
-              </Button>
-            </li>
-          ))}
+          {bar.rest.map((c, i) => {
+            const label = taskConditionLabel(c, t, positions);
+            return (
+              <li key={`${c.field}:${c.op}:${i}`} className="flex items-center gap-1 rounded-full border px-3 py-1 text-xs text-muted-foreground">
+                <span>{label}</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-label={t('filters.remove', { condition: label })}
+                  onClick={() => setBar({ ...bar, rest: bar.rest.filter((_, j) => j !== i) })}
+                >
+                  ×
+                </Button>
+              </li>
+            );
+          })}
         </ul>
       )}
     </>

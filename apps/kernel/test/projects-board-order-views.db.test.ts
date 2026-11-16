@@ -208,7 +208,7 @@ suite('project board ordering and kernel.task saved views on PostgreSQL (#2610)'
     ]);
     expect(await boardTitles(null)).toEqual(['T4 NoDue', 'T3 Late', 'T2 Mid', 'T1 Early', 'T5 AddedLater']);
 
-    // Force > REBALANCE_AT (60) sequential midpoint insertions into the T4..T3 gap so rebalance triggers cleanly.
+    // Force 60 (REBALANCE_AT + 12) sequential midpoint insertions past REBALANCE_AT (48) into the T4..T3 gap so rebalance triggers cleanly.
     let frontId = tNoDue;
     let secondId = tLate;
     for (let i = 0; i < REBALANCE_AT + 12; i++) {

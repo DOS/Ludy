@@ -193,3 +193,57 @@ export function filterTasksByProject<T extends { id: string }>(
   if (projectFilter === 'none') return tasks.filter((task) => !projectByTask.has(task.id));
   return tasks.filter((task) => projectByTask.get(task.id)?.id === projectFilter);
 }
+
+// Reuse cached board placeholder only within the same project so route transitions show the skeleton immediately (#2610).
+export function boardPlaceholderForProject(previous: ProjectBoard | undefined, projectId: string): ProjectBoard | undefined {
+  return previous?.project.id === projectId ? previous : undefined;
+}
+
+export interface BoardBatchState<TKey> {
+  queryKey: TKey;
+  pending: number;
+  anySucceeded: boolean;
+  rollback: ProjectBoard | undefined;
+}
+
+export interface BoardBatchEntry<TKey> {
+  keyHash: string;
+  state: BoardBatchState<TKey>;
+}
+
+/** Tracks optimistic rollback snapshots per serialized queryKey across queued board mutations (#2610). */
+export function createBoardBatchTracker<TKey>() {
+  const batches = new Map<string, BoardBatchState<TKey>>();
+  let totalPending = 0;
+
+  return {
+    begin(keyHash: string, queryKey: TKey, snapshot: ProjectBoard | undefined): BoardBatchEntry<TKey> {
+      let state = batches.get(keyHash);
+      if (!state) {
+        state = { queryKey, pending: 0, anySucceeded: false, rollback: snapshot };
+        batches.set(keyHash, state);
+      }
+      state.pending += 1;
+      totalPending += 1;
+      return { keyHash, state };
+    },
+    markSucceeded(entry: BoardBatchEntry<TKey>): void {
+      entry.state.anySucceeded = true;
+    },
+    // Restore the pre-batch snapshot only when the last pending call on this key failed and nothing in the batch succeeded.
+    rollbackOnFailure(entry: BoardBatchEntry<TKey>): ProjectBoard | undefined {
+      if (entry.state.pending === 1 && !entry.state.anySucceeded) {
+        return entry.state.rollback;
+      }
+      return undefined;
+    },
+    finish(entry: BoardBatchEntry<TKey>): { queryDrained: boolean } {
+      entry.state.pending -= 1;
+      totalPending -= 1;
+      if (entry.state.pending <= 0) {
+        batches.delete(entry.keyHash);
+      }
+      return { queryDrained: totalPending <= 0 };
+    },
+  };
+}
