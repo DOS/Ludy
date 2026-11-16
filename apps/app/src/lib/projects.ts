@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Client-side ordering, filtering and view helpers for Projects (issue #2591, ADR-0048, plan §9 P2).
-import type { ProjectBoard, ProjectStatus, ProjectSummary, ProjectTaskCard } from '@crove/kernel-contract';
+import type {
+  ProjectBoard,
+  ProjectStatus,
+  ProjectSummary,
+  ProjectTaskCard,
+  ProjectTaskProjectEntry,
+  ProjectTaskRef,
+} from '@crove/kernel-contract';
 import type { TaskStatus } from './agents.ts';
 import { getConfig } from './auth.ts';
 
@@ -108,4 +115,34 @@ export function taskStatusVariant(status: TaskStatus): 'brand' | 'success' | 'wa
   if (status === 'waiting' || status === 'in_review') return 'warning';
   if (status === 'cancelled') return 'outline';
   return 'secondary';
+}
+
+export function taskProjectMap(entries: readonly ProjectTaskProjectEntry[]): Map<string, ProjectTaskRef> {
+  return new Map(entries.map((entry) => [entry.taskId, entry.project]));
+}
+
+export function taskProjectOptions(
+  projects: readonly Pick<ProjectSummary, 'id' | 'name'>[],
+  entries: readonly ProjectTaskProjectEntry[],
+): ProjectTaskRef[] {
+  const byId = new Map<string, string>();
+  for (const p of projects) {
+    if (!byId.has(p.id)) byId.set(p.id, p.name);
+  }
+  for (const entry of entries) {
+    if (!byId.has(entry.project.id)) byId.set(entry.project.id, entry.project.name);
+  }
+  return [...byId.entries()]
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+}
+
+export function filterTasksByProject<T extends { id: string }>(
+  tasks: readonly T[],
+  projectByTask: ReadonlyMap<string, ProjectTaskRef>,
+  projectFilter: string,
+): T[] {
+  if (!projectFilter) return [...tasks];
+  if (projectFilter === 'none') return tasks.filter((task) => !projectByTask.has(task.id));
+  return tasks.filter((task) => projectByTask.get(task.id)?.id === projectFilter);
 }

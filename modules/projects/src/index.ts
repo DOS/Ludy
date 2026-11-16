@@ -14,6 +14,7 @@ export {
   projectsQueries,
   projectTaskAdd,
   projectTaskCreate,
+  projectTaskProjects,
   projectTaskRemove,
   projectUnassignedTasks,
   projectUpdate,

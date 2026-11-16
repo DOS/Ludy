@@ -18,6 +18,7 @@ import {
   zProjectSetStatus,
   zProjectTaskCreate,
   zProjectTaskMutate,
+  zProjectTaskProjectsInput,
   zProjectUpdate,
   type ProjectBoard,
   type ProjectCandidateTask,
@@ -29,6 +30,7 @@ import {
   type ProjectStatus,
   type ProjectSummary,
   type ProjectTaskCard,
+  type ProjectTaskProjectEntry,
 } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
@@ -955,6 +957,32 @@ export const projectUnassignedTasks = defineQuery({
   },
 });
 
+export const projectTaskProjects = defineQuery({
+  name: 'projects.task_projects',
+  input: zProjectTaskProjectsInput,
+  access: READERS,
+  handler: async (ctx, input): Promise<ProjectTaskProjectEntry[]> => {
+    userOf(ctx.actor);
+    const taskIds = [...new Set(input.taskIds)];
+    if (taskIds.length === 0) return [];
+    // Join crove_kernel.task so le_scope RLS filters out tasks outside the caller's legal entities.
+    const { rows } = await sql<{ task_id: string; project_id: string; project_name: string }>`
+      SELECT pt.task_id, p.id AS project_id, p.name AS project_name
+        FROM crove_projects.project_task pt
+        JOIN crove_projects.project p
+          ON p.org_id = pt.org_id AND p.id = pt.project_id
+        JOIN crove_kernel.task t
+          ON t.org_id = pt.org_id AND t.id = pt.task_id
+       WHERE pt.org_id = ${ctx.orgId}::uuid
+         AND pt.task_id = ANY(${taskIds}::uuid[])`.execute(ctx.trx);
+
+    return rows.map((r) => ({
+      taskId: r.task_id,
+      project: { id: r.project_id, name: r.project_name },
+    }));
+  },
+});
+
 export const projectsCommands = [
   projectCreate,
   projectUpdate,
@@ -968,4 +996,4 @@ export const projectsCommands = [
   projectTaskCreate,
 ];
 
-export const projectsQueries = [projectList, projectGet, projectBoard, projectUnassignedTasks, projectsToday];
+export const projectsQueries = [projectList, projectGet, projectBoard, projectUnassignedTasks, projectTaskProjects, projectsToday];

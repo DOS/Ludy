@@ -3,12 +3,14 @@
 // (an email, a run that read one) is marked, so nobody acts on it unchecked.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
-import { useState, type FormEvent } from 'react';
+import { useMemo, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
+import { PROJECT_TASK_MAP_LIMIT } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
 import { Input } from '@crove/ui/components/input';
+import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
@@ -19,7 +21,10 @@ import { DataTable, Empty, ErrorText, FieldError, ListSkeleton, PageHeader, Page
 import { useFormat } from '../i18n/provider.tsx';
 import { OPEN_TASK_STATUSES, TASK_LIST_LIMIT, TASK_STATUSES, agentPermissions, fromTodo, meetingItemOf, socialPostOf, taskDueDay, taskDueFromDay, type TaskFilter, type TaskStatus, type TasksSearch } from '../lib/agents.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { isModuleOff } from '../lib/errors.ts';
 import { browserTimeZone } from '../lib/my-work.ts';
+import { filterTasksByProject, projectsInstalled, taskProjectMap, taskProjectOptions } from '../lib/projects.ts';
+import { withSearch } from '../lib/search.ts';
 
 type Chart = Awaited<ReturnType<typeof orpc.chart.get.call>>;
 
@@ -107,57 +112,181 @@ export function TasksPage() {
   const { slug } = useParams({ strict: false }) as { slug: string };
   const t = useTranslations('tasks');
   const f = useFormat();
-  // The tab lives in the address (#1513), left out for the open tasks.
+  // The tab and project filter live in the address (#1513, #2593), left out for the defaults.
   const search: TasksSearch = useSearch({ strict: false });
   const navigate = useNavigate();
   const filter: TaskFilter = search.filter ?? 'open';
-  const setFilter = (next: TaskFilter) => void navigate({ to: '/o/$slug/tasks', params: { slug }, search: next === 'open' ? {} : { filter: next } });
+  const setFilter = (next: TaskFilter) =>
+    void navigate({
+      to: '/o/$slug/tasks',
+      params: { slug },
+      search: withSearch(search, { filter: next === 'open' ? undefined : next }),
+    });
   const org = useQuery(orpc.org.get.queryOptions());
   const chart = useQuery(orpc.chart.get.queryOptions());
   const input = filter === 'mine' ? { mine: true } : filter === 'open' ? { status: [...OPEN_TASK_STATUSES] } : {};
   const tasks = useQuery(orpc.tasks.list.queryOptions({ input }));
   const perms = agentPermissions(org.data?.role);
 
+  const hasProjectsModule = projectsInstalled();
+  const projectsQuery = useQuery({
+    ...orpc.projects.list.queryOptions({ input: {} }),
+    enabled: hasProjectsModule,
+    retry: (count, error) => !isModuleOff(error) && count < 1,
+  });
+  const taskIds = useMemo(() => (tasks.data ?? []).slice(0, PROJECT_TASK_MAP_LIMIT).map((task) => task.id), [tasks.data]);
+  const taskProjectsQuery = useQuery({
+    ...orpc.projects.taskProjects.queryOptions({ input: { taskIds } }),
+    enabled: hasProjectsModule && !isModuleOff(projectsQuery.error) && taskIds.length > 0,
+    retry: (count, error) => !isModuleOff(error) && count < 1,
+  });
+  const projectsActive = hasProjectsModule && !isModuleOff(projectsQuery.error) && !isModuleOff(taskProjectsQuery.error);
+  const projectsListError = projectsActive ? projectsQuery.error : null;
+  const taskProjectsError = projectsActive && taskIds.length > 0 ? taskProjectsQuery.error : null;
+  const taskProjectsPending = projectsActive && taskIds.length > 0 && taskProjectsQuery.isPending;
+  const projectByTask = useMemo(() => taskProjectMap(taskProjectsQuery.data ?? []), [taskProjectsQuery.data]);
+  const projectOptions = useMemo(
+    () => (projectsActive ? taskProjectOptions(projectsQuery.data?.projects ?? [], taskProjectsQuery.data ?? []) : []),
+    [projectsActive, projectsQuery.data?.projects, taskProjectsQuery.data],
+  );
+  const projectFilter = projectsActive ? (search.project ?? '') : '';
+  const projectFilterUnlisted = projectFilter !== '' && projectFilter !== 'none' && !projectOptions.some((p) => p.id === projectFilter);
+  const setProjectFilter = (next: string) =>
+    void navigate({
+      to: '/o/$slug/tasks',
+      params: { slug },
+      search: withSearch(search, { project: next === '' ? undefined : (next as TasksSearch['project']) }),
+    });
+  const waitingProjectFilter = projectFilter !== '' && taskProjectsPending;
+  const projectFilterError = projectFilter !== '' ? taskProjectsError : null;
+  const visibleTasks = useMemo(
+    () => (projectsActive ? filterTasksByProject(tasks.data ?? [], projectByTask, projectFilter) : (tasks.data ?? [])),
+    [projectsActive, tasks.data, projectByTask, projectFilter],
+  );
+
   return (
     <div>
       <PageHeader title={t('title')} subtitle={t('subtitle')} />
       {perms.tasks && <NewTask chart={chart.data} />}
-      <Tabs value={filter} onValueChange={(value) => setFilter(value as TaskFilter)} className="mb-4">
-        <TabsList>
-          <TabsTrigger value="open">{t('filterOpen')}</TabsTrigger>
-          <TabsTrigger value="mine">{t('filterMine')}</TabsTrigger>
-          <TabsTrigger value="all">{t('filterAll')}</TabsTrigger>
-        </TabsList>
-      </Tabs>
-      {tasks.isPending ? (
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <Tabs value={filter} onValueChange={(value) => setFilter(value as TaskFilter)}>
+          <TabsList>
+            <TabsTrigger value="open">{t('filterOpen')}</TabsTrigger>
+            <TabsTrigger value="mine">{t('filterMine')}</TabsTrigger>
+            <TabsTrigger value="all">{t('filterAll')}</TabsTrigger>
+          </TabsList>
+        </Tabs>
+        {projectsActive && (
+          <div className="flex min-w-44 items-center gap-2">
+            <Label htmlFor="tasks-project-filter" className="sr-only">
+              {t('projectFilter')}
+            </Label>
+            <NativeSelect
+              id="tasks-project-filter"
+              aria-label={t('projectFilter')}
+              data-testid="tasks-project-filter"
+              value={projectFilter}
+              onChange={(e) => setProjectFilter(e.target.value)}
+              className="h-9 w-full text-xs sm:h-8"
+            >
+              <NativeSelectOption value="">{t('allProjects')}</NativeSelectOption>
+              {projectFilterUnlisted && <NativeSelectOption value={projectFilter}>{t('selectedProject')}</NativeSelectOption>}
+              {projectOptions.map((project) => (
+                <NativeSelectOption key={project.id} value={project.id}>
+                  {project.name}
+                </NativeSelectOption>
+              ))}
+              <NativeSelectOption value="none">{t('noProject')}</NativeSelectOption>
+            </NativeSelect>
+          </div>
+        )}
+      </div>
+      {tasks.isPending || waitingProjectFilter ? (
         <ListSkeleton />
       ) : tasks.error ? (
         <ErrorText>{errorMessage(tasks.error)}</ErrorText>
+      ) : projectFilterError ? (
+        <ErrorText>{errorMessage(projectFilterError)}</ErrorText>
       ) : tasks.data.length === 0 ? (
-        <Empty title={t('empty')} hint={t(filter === 'mine' ? 'emptyMineHint' : 'emptyHint')} />
+        <>
+          {projectsListError && (
+            <div className="mb-2">
+              <ErrorText>{errorMessage(projectsListError)}</ErrorText>
+            </div>
+          )}
+          <Empty title={t('empty')} hint={t(filter === 'mine' ? 'emptyMineHint' : 'emptyHint')} />
+        </>
+      ) : visibleTasks.length === 0 ? (
+        <>
+          {(projectsListError || taskProjectsError) && (
+            <div className="mb-2 space-y-1">
+              {projectsListError && <ErrorText>{errorMessage(projectsListError)}</ErrorText>}
+              {taskProjectsError && <ErrorText>{errorMessage(taskProjectsError)}</ErrorText>}
+            </div>
+          )}
+          {tasks.data.length >= TASK_LIST_LIMIT && <p className="mb-2 text-xs text-muted-foreground">{t('truncated', { count: String(TASK_LIST_LIMIT) })}</p>}
+          <Empty title={t('emptyProjectFilter')} hint={t('emptyProjectFilterHint')} />
+        </>
       ) : (
         <>
+          {(projectsListError || taskProjectsError) && (
+            <div className="mb-2 space-y-1">
+              {projectsListError && <ErrorText>{errorMessage(projectsListError)}</ErrorText>}
+              {taskProjectsError && <ErrorText>{errorMessage(taskProjectsError)}</ErrorText>}
+            </div>
+          )}
           {tasks.data.length >= TASK_LIST_LIMIT && <p className="mb-2 text-xs text-muted-foreground">{t('truncated', { count: String(TASK_LIST_LIMIT) })}</p>}
-          <DataTable head={[t('colTitle'), t('colAssignee'), t('colStatus'), t('colCreated')]}>
-            {tasks.data.map((task) => (
-              <TableRow key={task.id} data-testid="task-row">
-                <TableCell className="px-4">
-                  <Link to="/o/$slug/tasks/$id" params={{ slug, id: task.id }} className="font-medium text-link hover:underline">
-                    {task.title}
-                  </Link>
-                  {task.tainted && (
-                    <Badge variant="warning" className="ml-2" title={t('taintedHint')}>
-                      {t('tainted')}
-                    </Badge>
+          <DataTable
+            head={
+              projectsActive
+                ? [t('colTitle'), t('colProject'), t('colAssignee'), t('colStatus'), t('colCreated')]
+                : [t('colTitle'), t('colAssignee'), t('colStatus'), t('colCreated')]
+            }
+          >
+            {visibleTasks.map((task) => {
+              const project = projectsActive ? projectByTask.get(task.id) : undefined;
+              return (
+                <TableRow key={task.id} data-testid="task-row">
+                  <TableCell className="px-4">
+                    <Link to="/o/$slug/tasks/$id" params={{ slug, id: task.id }} className="font-medium text-link hover:underline">
+                      {task.title}
+                    </Link>
+                    {task.tainted && (
+                      <Badge variant="warning" className="ml-2" title={t('taintedHint')}>
+                        {t('tainted')}
+                      </Badge>
+                    )}
+                  </TableCell>
+                  {projectsActive && (
+                    <TableCell className="px-4" data-testid="task-project-cell">
+                      {project ? (
+                        <Link
+                          to="/o/$slug/projects/$id"
+                          params={{ slug, id: project.id }}
+                          data-testid="task-project-chip"
+                          className="inline-flex max-w-44 rounded-full focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                        >
+                          <Badge variant="outline" className="max-w-full hover:bg-muted">
+                            <span className="truncate">{project.name}</span>
+                          </Badge>
+                        </Link>
+                      ) : taskProjectsPending || taskProjectsError ? (
+                        <span className="text-xs text-subtle-foreground" aria-hidden="true">
+                          ...
+                        </span>
+                      ) : (
+                        <span className="text-xs text-subtle-foreground">-</span>
+                      )}
+                    </TableCell>
                   )}
-                </TableCell>
-                <TableCell className="px-4 text-sm text-muted-foreground">{positionTitle(chart.data, task.assigneePositionId, t('rootAssignee'), t('unknownPosition'))}</TableCell>
-                <TableCell className="px-4">
-                  <Badge variant={statusVariant(task.status)}>{t(`status.${task.status}`)}</Badge>
-                </TableCell>
-                <TableCell className="px-4 text-xs text-muted-foreground">{f.dateTime(task.createdAt)}</TableCell>
-              </TableRow>
-            ))}
+                  <TableCell className="px-4 text-sm text-muted-foreground">{positionTitle(chart.data, task.assigneePositionId, t('rootAssignee'), t('unknownPosition'))}</TableCell>
+                  <TableCell className="px-4">
+                    <Badge variant={statusVariant(task.status)}>{t(`status.${task.status}`)}</Badge>
+                  </TableCell>
+                  <TableCell className="px-4 text-xs text-muted-foreground">{f.dateTime(task.createdAt)}</TableCell>
+                </TableRow>
+              );
+            })}
           </DataTable>
         </>
       )}

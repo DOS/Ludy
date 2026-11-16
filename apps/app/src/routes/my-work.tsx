@@ -9,12 +9,14 @@ import { Link, useParams } from '@tanstack/react-router';
 import { useEffect, useMemo, useRef, useState, type FormEvent, type RefObject } from 'react';
 import { useTranslations } from 'use-intl';
 import type { MyWorkTask, NoteLinkTargetInput, Todo, TodoListView, TodoStep, TodoSummary } from '@crove/kernel-contract';
+import { Alert, AlertDescription } from '@crove/ui/components/alert';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
 import { Checkbox } from '@crove/ui/components/checkbox';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@crove/ui/components/dialog';
 import { Input } from '@crove/ui/components/input';
+import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { Textarea } from '@crove/ui/components/textarea';
@@ -27,9 +29,10 @@ import { NotesSubnav } from '../components/notes-subnav.tsx';
 import { refreshProjectQueries } from '../components/project-task-dialog.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, clientForOrg, errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { isModuleOff } from '../lib/errors.ts';
 import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
 import { toast } from '../lib/toast.ts';
-import { browserTimeZone, groupTodos, handOverDescription, moveTarget, myWorkShortcut, stepSelection, type MyWorkAction } from '../lib/my-work.ts';
+import { browserTimeZone, filterMyWork, groupTodos, handOverDescription, moveTarget, myWorkProjects, myWorkShortcut, stepSelection, type MyWorkAction } from '../lib/my-work.ts';
 import { projectsInstalled } from '../lib/projects.ts';
 
 const refresh = () => void queryClient.invalidateQueries({ queryKey: orpc.notes.todos.key() });
@@ -80,7 +83,12 @@ function HandOverDialog({ todo, disabled, onDone }: { todo: Todo; disabled: bool
   const [open, setOpen] = useState(false);
   const [positionId, setPositionId] = useState('');
   const [projectId, setProjectId] = useState('');
-  const projects = useQuery({ ...orpc.projects.list.queryOptions({ input: {} }), enabled: open && hasProjects });
+  const projects = useQuery({
+    ...orpc.projects.list.queryOptions({ input: {} }),
+    enabled: open && hasProjects,
+    retry: (count, error) => !isModuleOff(error) && count < 1,
+  });
+  const projectsActive = hasProjects && !isModuleOff(projects.error);
   const activeProjects = (projects.data?.projects ?? []).filter((p) => p.status !== 'archived');
   const [title, setTitle] = useState(todo.title);
   const [description, setDescription] = useState(() => handOverDescription(todo));
@@ -143,7 +151,7 @@ function HandOverDialog({ todo, disabled, onDone }: { todo: Todo; disabled: bool
               ))}
             </NativeSelect>
           </label>
-          {hasProjects && (
+          {projectsActive && (
             <label className="block text-xs">
               <span className="text-subtle-foreground">{t('handOverProject')}</span>
               <NativeSelect className="mt-1 w-full" value={projectId} onChange={(e) => setProjectId(e.target.value)} data-testid="hand-over-project">
@@ -168,7 +176,7 @@ function HandOverDialog({ todo, disabled, onDone }: { todo: Todo; disabled: bool
             {todo.dueOn === null ? t('handOverNoDue') : t('handOverDue', { due: todo.dueTime ? t('dueAt', { day: f.date(todo.dueOn), time: todo.dueTime }) : f.date(todo.dueOn) })}
           </p>
           {chart.data && positions.length === 0 && <p className="text-xs text-subtle-foreground">{t('handOverNoPositions')}</p>}
-          {hasProjects && projects.error && <ErrorText>{errorMessage(projects.error)}</ErrorText>}
+          {projectsActive && projects.error && <ErrorText>{errorMessage(projects.error)}</ErrorText>}
           {handOver.error && <ErrorText>{errorMessage(handOver.error)}</ErrorText>}
           <DialogFooter>
             <DialogClose render={<Button type="button" variant="outline" />}>{common('cancel')}</DialogClose>
@@ -188,7 +196,7 @@ function positionTitle(chart: Chart | undefined, id: string | null, root: string
 }
 
 // A team task of a position the member holds (#1674): read here, worked on the task's own page.
-function TaskRow({ task, slug, chart }: { task: MyWorkTask; slug: string; chart: Chart | undefined }) {
+function TaskRow({ task, slug, chart, projectsActive }: { task: MyWorkTask; slug: string; chart: Chart | undefined; projectsActive: boolean }) {
   const t = useTranslations('myWork');
   const tt = useTranslations('tasks');
   const f = useFormat();
@@ -198,6 +206,18 @@ function TaskRow({ task, slug, chart }: { task: MyWorkTask; slug: string; chart:
       <Link to="/o/$slug/tasks/$id" params={{ slug, id: task.id }} className="min-w-0 flex-1 truncate text-sm text-link hover:underline">
         {task.title}
       </Link>
+      {projectsActive && task.project && (
+        <Link
+          to="/o/$slug/projects/$id"
+          params={{ slug, id: task.project.id }}
+          data-testid="my-work-task-project"
+          className="inline-flex max-w-44 rounded-full focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+        >
+          <Badge variant="outline" className="max-w-full hover:bg-muted">
+            <span className="truncate">{task.project.name}</span>
+          </Badge>
+        </Link>
+      )}
       {task.tainted && (
         <Badge variant="warning" title={tt('taintedHint')}>
           {tt('tainted')}
@@ -463,6 +483,7 @@ export function MyWorkPage() {
   const common = useTranslations('common');
   const f = useFormat();
   const [view, setView] = useState<TodoListView>('open');
+  const [projectFilter, setProjectFilter] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const quickAdd = useRef<HTMLInputElement>(null);
@@ -476,9 +497,18 @@ export function MyWorkPage() {
   const chart = useQuery({ ...orpc.chart.get.queryOptions(), enabled: (work.data?.tasks.length ?? 0) > 0 });
   const todos = useMemo(() => (view === 'open' ? (work.data?.todos ?? []) : (closed.data ?? [])), [view, work.data, closed.data]);
   const tasks = useMemo(() => (view === 'open' ? (work.data?.tasks ?? []) : []), [view, work.data]);
-  const groups = useMemo(() => (view === 'open' ? groupTodos(todos, tasks) : []), [view, todos, tasks]);
+  const projectsActive = projectsInstalled() && work.data?.projectsAvailable !== false;
+  const projectOptions = useMemo(() => (projectsActive ? myWorkProjects(tasks) : []), [projectsActive, tasks]);
+  const effectiveProjectFilter =
+    projectsActive && projectOptions.length > 0 && (projectFilter === 'none' || projectOptions.some((p) => p.id === projectFilter)) ? projectFilter : '';
+  const filtered = useMemo(
+    () => (view === 'open' ? filterMyWork(todos, tasks, effectiveProjectFilter) : { todos, tasks }),
+    [view, todos, tasks, effectiveProjectFilter],
+  );
+  const groups = useMemo(() => (view === 'open' ? groupTodos(filtered.todos, filtered.tasks) : []), [view, filtered.todos, filtered.tasks]);
   // The order J and K walk: as the screen shows the rows.
   const order = useMemo(() => (view === 'open' ? groups.flatMap((g) => g.items.map((i) => i.id)) : todos.map((i) => i.id)), [view, groups, todos]);
+  const visibleSelected = selected && order.includes(selected) ? selected : null;
 
   const act = useMutation({
     // A completion carries the to-do's title as shown when it was asked for: by the answer, the list may have moved on.
@@ -513,10 +543,10 @@ export function MyWorkPage() {
   useEffect(() => {
     shortcuts.current = {
       new: () => quickAdd.current?.focus(),
-      next: () => setSelected(stepSelection(order, selected, 1)),
-      previous: () => setSelected(stepSelection(order, selected, -1)),
-      ...(selected && view === 'open' ? { done: () => act.mutate({ what: 'complete', todoId: selected, title: todos.find((x) => x.id === selected)?.title ?? '' }) } : {}),
-      ...(selected && view === 'open' ? { edit: () => setEditing(selected) } : {}),
+      next: () => setSelected(stepSelection(order, visibleSelected, 1)),
+      previous: () => setSelected(stepSelection(order, visibleSelected, -1)),
+      ...(visibleSelected && view === 'open' ? { done: () => act.mutate({ what: 'complete', todoId: visibleSelected, title: filtered.todos.find((x) => x.id === visibleSelected)?.title ?? '' }) } : {}),
+      ...(visibleSelected && view === 'open' ? { edit: () => setEditing(visibleSelected) } : {}),
     };
   });
   useEffect(() => {
@@ -532,8 +562,8 @@ export function MyWorkPage() {
   }, []);
   // The selected row stays in view as J and K move it.
   useEffect(() => {
-    if (selected) document.querySelector(`[data-todo-id="${selected}"]`)?.scrollIntoView({ block: 'nearest' });
-  }, [selected]);
+    if (visibleSelected) document.querySelector(`[data-todo-id="${visibleSelected}"]`)?.scrollIntoView({ block: 'nearest' });
+  }, [visibleSelected]);
 
   const row = (todo: TodoSummary, group: readonly TodoSummary[]) => {
     const up = view === 'open' ? moveTarget(group, todo.id, 'up') : null;
@@ -543,8 +573,8 @@ export function MyWorkPage() {
         key={todo.id}
         data-todo-id={todo.id}
         data-testid="todo-row"
-        aria-current={selected === todo.id ? 'true' : undefined}
-        className={cn('flex flex-wrap items-center gap-3 px-4 py-2', selected === todo.id && 'bg-primary/5 ring-1 ring-primary/40 ring-inset')}
+        aria-current={visibleSelected === todo.id ? 'true' : undefined}
+        className={cn('flex flex-wrap items-center gap-3 px-4 py-2', visibleSelected === todo.id && 'bg-primary/5 ring-1 ring-primary/40 ring-inset')}
       >
         {(view === 'open' || view === 'done') && (todo.status === 'open' || todo.status === 'done') ? (
           <Checkbox
@@ -611,26 +641,80 @@ export function MyWorkPage() {
       <PageHeader title={t('title')} subtitle={t('subtitle')} />
       <NotesSubnav slug={slug} active="my-work" />
       <QuickAdd inputRef={quickAdd} />
-      <Tabs
-        value={view}
-        onValueChange={(value) => {
-          setView(value as TodoListView);
-          setSelected(null);
-          setEditing(null);
-        }}
-      >
-        <TabsList>
-          <TabsTrigger value="open">{t('viewOpen')}</TabsTrigger>
-          <TabsTrigger value="done">{t('viewDone')}</TabsTrigger>
-          <TabsTrigger value="trash">{t('viewTrash')}</TabsTrigger>
-        </TabsList>
-      </Tabs>
+      {view === 'open' && work.data?.noSeatHint && (
+        <Alert className="border-border bg-muted/35" data-testid="my-work-no-seat-hint">
+          <AlertDescription className="flex flex-wrap items-center justify-between gap-2 text-xs text-foreground">
+            <span>{t('noSeatHint')}</span>
+            <Link
+              to="/o/$slug/agents"
+              params={{ slug }}
+              className="rounded font-medium text-link hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+            >
+              {t('openOrgChart')}
+            </Link>
+          </AlertDescription>
+        </Alert>
+      )}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Tabs
+          value={view}
+          onValueChange={(value) => {
+            setView(value as TodoListView);
+            setSelected(null);
+            setEditing(null);
+          }}
+        >
+          <TabsList>
+            <TabsTrigger value="open">{t('viewOpen')}</TabsTrigger>
+            <TabsTrigger value="done">{t('viewDone')}</TabsTrigger>
+            <TabsTrigger value="trash">{t('viewTrash')}</TabsTrigger>
+          </TabsList>
+        </Tabs>
+        {view === 'open' && projectsActive && projectOptions.length > 0 && (
+          <div className="flex min-w-44 items-center gap-2">
+            <Label htmlFor="my-work-project-filter" className="sr-only">
+              {t('projectFilter')}
+            </Label>
+            <NativeSelect
+              id="my-work-project-filter"
+              aria-label={t('projectFilter')}
+              data-testid="my-work-project-filter"
+              value={effectiveProjectFilter}
+              onChange={(e) => {
+                setProjectFilter(e.target.value);
+                setSelected(null);
+                setEditing(null);
+              }}
+              className="h-9 w-full text-xs sm:h-8"
+            >
+              <NativeSelectOption value="">{t('allProjects')}</NativeSelectOption>
+              {projectOptions.map((project) => (
+                <NativeSelectOption key={project.id} value={project.id}>
+                  {project.name}
+                </NativeSelectOption>
+              ))}
+              <NativeSelectOption value="none">{t('noProject')}</NativeSelectOption>
+            </NativeSelect>
+          </div>
+        )}
+      </div>
       {list.isPending ? (
         <ListSkeleton />
       ) : list.error ? (
         <ErrorText>{errorMessage(list.error)}</ErrorText>
-      ) : todos.length === 0 && tasks.length === 0 ? (
-        <Empty title={t(view === 'open' ? 'empty' : view === 'done' ? 'emptyDone' : 'emptyTrash')} hint={view === 'open' ? t('emptyHint') : undefined} />
+      ) : filtered.todos.length === 0 && filtered.tasks.length === 0 ? (
+        <Empty
+          title={
+            view === 'open'
+              ? effectiveProjectFilter
+                ? t('emptyProjectFilter')
+                : t('empty')
+              : view === 'done'
+                ? t('emptyDone')
+                : t('emptyTrash')
+          }
+          hint={view === 'open' ? (effectiveProjectFilter ? t('emptyProjectFilterHint') : t('emptyHint')) : undefined}
+        />
       ) : view === 'open' ? (
         groups.map((g) => (
           <section key={g.id} aria-labelledby={`todo-group-${g.id}`} data-testid={`todo-group-${g.id}`}>
@@ -641,7 +725,7 @@ export function MyWorkPage() {
               <ul className="divide-y">
                 {g.items.map((todo) => row(todo, g.items))}
                 {g.tasks.map((task) => (
-                  <TaskRow key={task.id} task={task} slug={slug} chart={chart.data} />
+                  <TaskRow key={task.id} task={task} slug={slug} chart={chart.data} projectsActive={projectsActive} />
                 ))}
               </ul>
             </Card>
@@ -652,7 +736,7 @@ export function MyWorkPage() {
           <ul className="divide-y">{todos.map((todo) => row(todo, todos))}</ul>
         </Card>
       )}
-      {todos.length >= LIST_LIMIT && <p className="text-xs text-subtle-foreground">{t('truncated', { count: String(LIST_LIMIT) })}</p>}
+      {(!effectiveProjectFilter || view !== 'open') && todos.length >= LIST_LIMIT && <p className="text-xs text-subtle-foreground">{t('truncated', { count: String(LIST_LIMIT) })}</p>}
       {view === 'open' && work.data?.tasksTruncated && (
         <p className="text-xs text-subtle-foreground">
           {t('tasksTruncated')}{' '}
