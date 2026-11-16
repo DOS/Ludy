@@ -11,6 +11,7 @@ import { z } from 'zod';
 import {
   PROJECT_TASK_MAP_LIMIT,
   auditValue,
+  countTaskChecklistSteps,
   taskStanding,
   todoAutoReminder,
   todoDueInstant,
@@ -31,6 +32,7 @@ import {
   type MyWork,
   type MyWorkTask,
   type ProjectTaskProjectEntry,
+  type TaskChecklistStep,
   type Todo,
   type TodoCount,
   type TodoHandedOver,
@@ -553,6 +555,7 @@ interface KernelTask {
   status: string;
   assigneePositionId: string | null;
   due: string | null;
+  checklist?: readonly TaskChecklistStep[];
   tainted: boolean;
 }
 
@@ -606,6 +609,7 @@ export const myWork = defineQuery({
         positionId: t.assigneePositionId,
         due: t.due,
         tainted: t.tainted,
+        ...(t.checklist !== undefined ? { steps: countTaskChecklistSteps(t.checklist) } : {}),
         project: projectByTask.get(t.id) ?? null,
         ...taskStanding(t.due === null ? null : new Date(t.due), input.timeZone, now),
       }))

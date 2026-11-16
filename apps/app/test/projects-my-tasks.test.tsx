@@ -260,6 +260,7 @@ describe('TasksPage P3 SSR (#2593)', () => {
           tainted: false,
           createdByType: 'user',
           due: null,
+          checklist: [],
           createdAt: '2026-11-10T01:00:00.000Z',
         },
         {
@@ -275,6 +276,7 @@ describe('TasksPage P3 SSR (#2593)', () => {
           tainted: false,
           createdByType: 'user',
           due: null,
+          checklist: [],
           createdAt: '2026-11-10T02:00:00.000Z',
         },
       ],
@@ -434,6 +436,7 @@ describe('TasksPage P3 SSR (#2593)', () => {
       tainted: false,
       createdByType: 'user' as const,
       due: null,
+      checklist: [],
       createdAt: '2026-11-10T01:00:00.000Z',
     }));
     queryClientState.current.setQueryData(['tasks', 'list', { status: ['todo', 'in_progress', 'waiting', 'in_review'] }], manyTasks);
@@ -465,6 +468,7 @@ describe('TasksPage P3 SSR (#2593)', () => {
       tainted: false,
       createdByType: 'user' as const,
       due: null,
+      checklist: [],
       createdAt: '2026-11-10T01:00:00.000Z',
     }));
     queryClientState.current.setQueryData(['tasks', 'list', { status: ['todo', 'in_progress', 'waiting', 'in_review'] }], oversizedTasks);

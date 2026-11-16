@@ -84,6 +84,7 @@ const card = (over: Partial<ProjectTaskCard>): ProjectTaskCard => ({
   status: 'todo',
   assigneePositionId: null,
   due: null,
+  checklist: [],
   tainted: false,
   checkedOut: false,
   commentCount: 0,

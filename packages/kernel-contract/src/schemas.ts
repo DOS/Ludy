@@ -1447,6 +1447,48 @@ export const zAiUsageReport = z.object({
 });
 export type AiUsageReport = z.infer<typeof zAiUsageReport>;
 
+export const TASK_CHECKLIST_STEPS_MAX = 50;
+export const TASK_CHECKLIST_STEP_MAX = 300;
+export const zTaskChecklistStep = z.strictObject({
+  text: z.string().trim().min(1).max(TASK_CHECKLIST_STEP_MAX),
+  done: z.boolean(),
+});
+export type TaskChecklistStep = z.infer<typeof zTaskChecklistStep>;
+export const zTaskChecklist = z.array(zTaskChecklistStep).max(TASK_CHECKLIST_STEPS_MAX);
+export const zTaskChecklistStepView = z.object({ text: z.string(), done: z.boolean() });
+
+/** Parses a stored task checklist jsonb column into clean step objects. */
+export function parseTaskChecklist(raw: unknown): TaskChecklistStep[] {
+  if (!Array.isArray(raw)) return [];
+  const steps: TaskChecklistStep[] = [];
+  for (const item of raw) {
+    if (
+      typeof item === 'object' &&
+      item !== null &&
+      typeof (item as { text?: unknown }).text === 'string' &&
+      typeof (item as { done?: unknown }).done === 'boolean'
+    ) {
+      steps.push({ text: (item as { text: string }).text, done: (item as { done: boolean }).done });
+    }
+  }
+  return steps;
+}
+
+/** Serializes task checklist steps with only { text, done } keys for jsonb writes. */
+export function serializeTaskChecklist(steps: readonly TaskChecklistStep[]): string {
+  return JSON.stringify(steps.map((s) => ({ text: s.text, done: s.done })));
+}
+
+/** Counts completed and total steps in a stored or parsed task checklist. */
+export function countTaskChecklistSteps(raw: unknown): { done: number; total: number } {
+  const steps = parseTaskChecklist(raw);
+  let done = 0;
+  for (const step of steps) {
+    if (step.done) done += 1;
+  }
+  return { done, total: steps.length };
+}
+
 export const zTask = z.object({
   id: zId,
   title: z.string(),
@@ -1461,6 +1503,7 @@ export const zTask = z.object({
   tainted: z.boolean(),
   createdByType: z.string(),
   due: z.string().nullable(),
+  checklist: z.array(zTaskChecklistStepView),
   createdAt: z.string(),
 });
 

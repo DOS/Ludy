@@ -2851,6 +2851,7 @@ export interface KernelTaskTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   legal_entity_id: string | null;
   pending_draft: ColumnType<unknown, string | null | undefined, string | null>;
+  checklist: ColumnType<unknown, string | undefined, string>;
 }
 
 /** crove_kernel.tax_obligation_done */

@@ -10,6 +10,7 @@ import {
   auditValue,
   keyBetween,
   normalizeFilter,
+  parseTaskChecklist,
   spreadKeys,
   tableWrite,
   vietnamToday,
@@ -721,6 +722,7 @@ export const projectTaskCreate = defineCommand({
       ...(input.description !== undefined ? { description: input.description } : {}),
       assigneePositionId: input.assigneePositionId,
       ...(input.due !== undefined ? { due: input.due } : {}),
+      ...(input.checklist !== undefined ? { checklist: input.checklist } : {}),
     });
 
     if (input.status !== undefined && input.status !== 'todo') {
@@ -1004,6 +1006,7 @@ export const projectBoard = defineQuery({
         't.status',
         't.assignee_position_id',
         't.due',
+        't.checklist',
         't.tainted',
         't.created_at',
         'pt.created_at as added_at',
@@ -1075,6 +1078,7 @@ export const projectBoard = defineQuery({
       status: t.status as TaskStatus,
       assigneePositionId: t.assignee_position_id,
       due: t.due === null ? null : new Date(t.due).toISOString(),
+      checklist: parseTaskChecklist(t.checklist),
       tainted: t.tainted,
       checkedOut: Boolean(t.checked_out),
       commentCount: commentCounts.get(t.id) ?? 0,

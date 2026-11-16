@@ -23,6 +23,7 @@ import {
   zModuleId,
   zPositionStatus,
   zTask,
+  zTaskChecklist,
   zTaskDetail,
   zTaskStatus,
   zAccountCode,
@@ -2763,6 +2764,7 @@ export const contract = {
           description: z.string().max(10000).optional(),
           assigneePositionId: zId.nullable(),
           due: z.iso.datetime().optional(),
+          checklist: zTaskChecklist.optional(),
           idempotencyKey: zId,
         }),
       )
@@ -2775,6 +2777,7 @@ export const contract = {
           description: z.string().max(10000).nullable().optional(),
           assigneePositionId: zId.nullable().optional(),
           due: z.iso.datetime().nullable().optional(),
+          checklist: zTaskChecklist.optional(),
           idempotencyKey: zId,
         }),
       )

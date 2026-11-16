@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Modals for Projects screens: project creation, settings & team management, attaching existing tasks, and editing tasks (#2591).
 import { useMutation, useQuery } from '@tanstack/react-query';
-import type { ProjectBoard, ProjectCandidateTask, ProjectDetail, ProjectSeat, ProjectStatus, ProjectTaskCard } from '@crove/kernel-contract';
+import { serializeTaskChecklist, type ProjectBoard, type ProjectCandidateTask, type ProjectDetail, type ProjectSeat, type ProjectStatus, type ProjectTaskCard, type TaskChecklistStep } from '@crove/kernel-contract';
 import { Link } from '@tanstack/react-router';
 import { useEffect, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
@@ -17,6 +17,7 @@ import { ProjectIcon } from '@crove/ui/components/project-icon';
 import { Textarea } from '@crove/ui/components/textarea';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { DateInput } from './date-input.tsx';
+import { TaskChecklistEditor, hasBlankChecklistStep, normalizeChecklistSteps } from './task-checklist.tsx';
 import { ErrorText, FieldError, RowsSkeleton, fieldControl } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { taskDueDay, taskDueFromDay } from '../lib/agents.ts';
@@ -303,7 +304,9 @@ export function EditProjectTaskDialog({
   const [description, setDescription] = useState('');
   const [assignee, setAssignee] = useState('');
   const [dueOn, setDueOn] = useState('');
+  const [checklist, setChecklist] = useState<TaskChecklistStep[]>([]);
   const [titleError, setTitleError] = useState(false);
+  const [stepError, setStepError] = useState(false);
   const [idemKey, setIdemKey] = useState(() => crypto.randomUUID());
 
   const update = useMutation(orpc.tasks.update.mutationOptions());
@@ -314,7 +317,9 @@ export function EditProjectTaskDialog({
       setDescription(task.description ?? '');
       setAssignee(task.assigneePositionId ?? '');
       setDueOn(taskDueDay(task.due, tz));
+      setChecklist((task.checklist ?? []).map((s) => ({ ...s })));
       setTitleError(false);
+      setStepError(false);
       setIdemKey(crypto.randomUUID());
       update.reset();
     }
@@ -334,6 +339,10 @@ export function EditProjectTaskDialog({
       setTitleError(true);
       return;
     }
+    if (hasBlankChecklistStep(checklist)) {
+      setStepError(true);
+      return;
+    }
     if (!e.currentTarget.checkValidity()) {
       e.currentTarget.reportValidity();
       return;
@@ -341,11 +350,14 @@ export function EditProjectTaskDialog({
     const nextDesc = description.trim() ? description.trim() : null;
     const nextAssignee = assignee || null;
     const initialDueOn = taskDueDay(task.due, tz);
+    const nextChecklist = normalizeChecklistSteps(checklist);
+    const checklistChanged = serializeTaskChecklist(nextChecklist) !== serializeTaskChecklist(task.checklist ?? []);
     const patch = {
       ...(nextTitle !== task.title ? { title: nextTitle } : {}),
       ...(description !== (task.description ?? '') ? { description: nextDesc } : {}),
       ...(nextAssignee !== task.assigneePositionId ? { assigneePositionId: nextAssignee } : {}),
       ...(dueOn !== initialDueOn ? { due: taskDueFromDay(dueOn, tz) } : {}),
+      ...(checklistChanged ? { checklist: nextChecklist } : {}),
     };
     if (Object.keys(patch).length === 0) {
       onOpenChange(false);
@@ -439,6 +451,17 @@ export function EditProjectTaskDialog({
               onChange={(e) => setDescription(e.target.value)}
             />
           </div>
+          <TaskChecklistEditor
+            idPrefix={`edit-project-task-${task.id}`}
+            disabled={task.checkedOut}
+            label={t('modals.taskChecklistLabel')}
+            value={checklist}
+            stepError={stepError}
+            onChange={(next) => {
+              setChecklist(next);
+              if (stepError && !hasBlankChecklistStep(next)) setStepError(false);
+            }}
+          />
           {update.error && <ErrorText>{errorMessage(update.error)}</ErrorText>}
           <DialogFooter>
             <DialogClose render={<Button type="button" variant="outline" />}>{tc('cancel')}</DialogClose>

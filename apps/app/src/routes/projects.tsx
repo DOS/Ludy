@@ -2,7 +2,7 @@
 // Projects list and board/list screens (/o/$slug/projects and /o/$slug/projects/$id, issue #2591, ADR-0048).
 import { createTanstackQueryUtils } from '@orpc/tanstack-query';
 import { hashKey, useMutation, useQuery } from '@tanstack/react-query';
-import type { FilterAst, ProjectBoard, ProjectStatus, ProjectSummary, ProjectTaskCard, SavedViewSort } from '@crove/kernel-contract';
+import type { FilterAst, ProjectBoard, ProjectStatus, ProjectSummary, ProjectTaskCard, SavedViewSort, TaskChecklistStep } from '@crove/kernel-contract';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
@@ -569,13 +569,14 @@ export function ProjectDetailPage() {
             },
           );
         }}
-        onCreateTask={(input: { title: string; assigneePositionId: string | null; due?: string; status: BoardColumnStatus }, done) => {
+        onCreateTask={(input: { title: string; assigneePositionId: string | null; due?: string; checklist?: TaskChecklistStep[]; status: BoardColumnStatus }, done) => {
           createTask.mutate(
             {
               projectId: project.id,
               title: input.title,
               assigneePositionId: input.assigneePositionId,
               ...(input.due ? { due: input.due } : {}),
+              ...(input.checklist?.length ? { checklist: input.checklist } : {}),
               status: input.status,
               idempotencyKey: crypto.randomUUID(),
             },
