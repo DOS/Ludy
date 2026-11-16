@@ -737,6 +737,8 @@ function BudgetForm({ agents }: { agents: Agent[] }) {
   const modules = installedModules();
   const [scope, setScope] = useState<(typeof SCOPES)[number]>('org');
   const [target, setTarget] = useState('*');
+  // A module target the org just switched off is no longer chosen: the select shows an empty choice until the owner picks one that is on.
+  const chosenTarget = scope === 'module' && !modules.includes(target) ? '' : target;
   const [limit, setLimit] = useState('');
   const [warnPercent, setWarnPercent] = useState('80');
   const [hardStop, setHardStop] = useState(true);
@@ -750,7 +752,7 @@ function BudgetForm({ agents }: { agents: Agent[] }) {
   const ids = useId();
   const idOf = (field: BudgetField) => `${ids}-${field}`;
   const fields = useFieldErrors<BudgetField>((field) =>
-    field === 'limit' ? (amountOk ? null : t('budgetAmountInvalid')) : field === 'warnPercent' ? (warnOk ? null : t('warnPercentInvalid')) : target && (scope !== 'module' || modules.includes(target)) ? null : t('budgetTargetMissing'),
+    field === 'limit' ? (amountOk ? null : t('budgetAmountInvalid')) : field === 'warnPercent' ? (warnOk ? null : t('warnPercentInvalid')) : chosenTarget ? null : t('budgetTargetMissing'),
   );
   const control = (field: BudgetField) => fieldControl(idOf(field), { error: Boolean(fields.of(field)) });
   const pickScope = (next: (typeof SCOPES)[number]) => {
@@ -770,7 +772,7 @@ function BudgetForm({ agents }: { agents: Agent[] }) {
             focusFirstInvalid(event.currentTarget);
             return;
           }
-          set.mutate({ scope, target, monthlyLimit: limit.trim(), warnPercent: warn, hardStop, idempotencyKey: crypto.randomUUID() });
+          set.mutate({ scope, target: chosenTarget, monthlyLimit: limit.trim(), warnPercent: warn, hardStop, idempotencyKey: crypto.randomUUID() });
         }}
       >
         <label className="block text-xs">
@@ -789,13 +791,14 @@ function BudgetForm({ agents }: { agents: Agent[] }) {
             <NativeSelect
               {...control('target')}
               className="mt-1 w-full"
-              value={target}
+              value={chosenTarget}
               onChange={(e) => {
                 setTarget(e.target.value);
                 fields.edit('target');
               }}
               disabled={scope === 'org' || locked}
             >
+              {chosenTarget === '' && <NativeSelectOption value="" disabled>{''}</NativeSelectOption>}
               {targets.map((o) => (
                 <NativeSelectOption key={o.value} value={o.value}>
                   {o.label}

@@ -62,7 +62,12 @@ export function OrgAppsCard() {
                   disabled={!canChange || !app.entitled || (set.isPending && set.variables?.module !== app.id)}
                   aria-label={t('switchLabel', { app: nameOf(app.id) })}
                   aria-busy={set.isPending}
-                  onCheckedChange={(checked) => (checked ? change(app.id, true) : setAsking(app.id))}
+                  onCheckedChange={(checked) => {
+                    // A change is under way: this row takes no second one (and opens no second confirmation).
+                    if (set.isPending) return;
+                    if (checked) change(app.id, true);
+                    else setAsking(app.id);
+                  }}
                 />
                 <span className="font-medium">{nameOf(app.id)}</span>
               </label>

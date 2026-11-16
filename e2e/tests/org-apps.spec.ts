@@ -40,9 +40,9 @@ test('an owner switches Social off and on again from Settings', async ({ page })
   await expect(page.getByTestId('org-app-social').getByText('Đang dùng')).toBeVisible();
   await page.goto(`/o/${slug}/social`);
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/social`));
-  // The screen is there, not a loading or an error state: Engage is back in the menu and the screen's own page is not the overview.
+  // The screen is there, not a loading or an error state: Engage is back in the menu and the Social page shows its own subtitle.
   await expect(page.getByRole('complementary').getByRole('list', { name: 'Ứng dụng' }).getByRole('link', { name: 'Engage' })).toBeVisible();
-  await expect(page.getByRole('main')).toBeVisible();
+  await expect(page.getByRole('main').getByText('Soạn một lần, chỉnh theo từng kênh')).toBeVisible();
 });
 
 // Another open tab of the same company follows within seconds, through the stream: a screen of the app that was switched off goes to the overview.
