@@ -11130,6 +11130,10 @@ export const vi = {
         record: 'Ghi kết quả việc tạm dừng những gì một lần chạy quảng cáo đã dừng đã tạo',
         pending: 'Liệt kê các lần chạy quảng cáo đã dừng của một tài khoản mà quảng cáo chưa được tạm dừng hết',
       },
+      object: {
+        sync_state: 'Ghi trạng thái duyệt mà nền tảng báo về các đối tượng quảng cáo của một lần chạy',
+        sync_target: 'Xem các lần chạy quảng cáo cần đọc trạng thái từ nền tảng',
+      },
       launches: {
         prepare_unblock: 'Đề nghị mở lại các lần chạy quảng cáo',
         unblock: 'Mở lại các lần chạy quảng cáo (đề nghị đã duyệt)',

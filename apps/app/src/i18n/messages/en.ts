@@ -11133,6 +11133,10 @@ export const en = {
         record: 'Record the result of pausing what a stopped ad launch made',
         pending: 'List the stopped ad launches of an account that are not paused yet',
       },
+      object: {
+        sync_state: 'Record the review state the platform reports for the ad objects of a launch',
+        sync_target: 'See which ad launches have objects to read from the platform',
+      },
       launches: {
         prepare_unblock: 'Ask to open ad launches again',
         unblock: 'Open ad launches again (an approved request)',

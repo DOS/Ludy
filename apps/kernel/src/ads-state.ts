@@ -128,7 +128,8 @@ export async function runAdsStateSync(deps: AdsStateDeps, job: AdsStateJob): Pro
     if (read.failed.length > 0) result.failed += 1;
     await record(launch.launchId, read);
     // A refused token refuses every other launch's read, and a platform that asked to wait is not asked again now: the rest are left to the next run.
-    if (read.tokenRefused || read.retryAt !== null) {
+    const limited = read.retryAt !== null || read.failed.some((f) => f.kind === 'rate_limited');
+    if (read.tokenRefused || limited) {
       result.ended = read.tokenRefused ? 'token_refused' : 'rate_limited';
       break;
     }
