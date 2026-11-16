@@ -81,6 +81,42 @@ describe('handleMcp', () => {
   });
 });
 
+describe('tools of an app the org switched off (ADR-0053, slice e)', () => {
+  const social: ToolDescriptor = { ...tool, name: 'ludy_social_posts_list', module: 'social' };
+  it('leaves a hidden tool out of tools/list but keeps it callable, and shows a toolError as an isError result, not a JSON-RPC error', async () => {
+    const hidden = new Set(['ludy_social_posts_list']);
+    const listed = json(await handleMcp(input({ tools: [tool, social], hidden })));
+    expect(listed.body.result.tools.map((t: { name: string }) => t.name)).toEqual(['ludy_about']);
+    const call = handleMcp(
+      input({
+        body: { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'ludy_social_posts_list' } },
+        tools: [tool, social],
+        hidden,
+        callTool: async () => {
+          throw new Error('off');
+        },
+        describeError: () => ({ code: -32603, message: 'MODULE_OFF: the social app is switched off', toolError: true }),
+      }),
+    );
+    const reply = json(await call);
+    expect(reply.body.error).toBeUndefined();
+    expect(reply.body.result).toMatchObject({ isError: true, content: [{ type: 'text', text: 'MODULE_OFF: the social app is switched off' }] });
+    const modern = json(
+      await handleMcp(
+        input({
+          body: { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'ludy_about', _meta: { 'io.modelcontextprotocol/protocolVersion': '2026-07-28' } } },
+          headers: { protocolVersion: '2026-07-28', method: 'tools/call', name: 'ludy_about' },
+          callTool: async () => {
+            throw new Error('off');
+          },
+          describeError: () => ({ code: -32603, message: 'x', toolError: true }),
+        }),
+      ),
+    );
+    expect(modern.body.result).toMatchObject({ resultType: 'complete', isError: true });
+  });
+});
+
 describe('the OAUTH_SERVER settings', () => {
   const base = { DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'unit-test-jwt-secret-0123456789abcdef', AUTH_ISSUER: 'crove-auth' };
   const jwk = JSON.stringify({ keys: [{ kty: 'EC', crv: 'P-256', x: 'x', y: 'y', d: 'd', kid: 'k1' }] });

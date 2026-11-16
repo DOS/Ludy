@@ -639,6 +639,38 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
   // ADR-0032 acceptance test 2: the official MCP TypeScript client, not our own fetch calls. The client discovers the resource and the authorization server
   // from the 401 challenge, registers itself (DCR), sends the person to the authorization URL, takes the code back and then speaks 2025-11-25 (the newest
   // revision this SDK knows), with no session id. The consent step is the test's, in place of the person's browser.
+  // ADR-0053, slice e (#3311): an app the org switched off leaves the tool list, and a call into it answers MODULE_OFF as an error result the model can read; the grant stays authorized.
+  it('leaves the tools of an app the org switched off out of tools/list and answers a call into one with MODULE_OFF as isError, until it is switched back on', async () => {
+    const c = await connect();
+    const ownerId = (await admin((client) => client.query(`SELECT user_id FROM crove_kernel.tenant_member WHERE org_id = $1 AND role = 'owner'`, [orgId]))).rows[0].user_id as string;
+    const owner = { type: 'user' as const, userId: ownerId, aal: 'aal2' as const, sessionId: '7e1c2b4a-5d6f-4a8b-9c0d-1e2f3a4b5c6d', mfaAt: Math.floor(Date.now() / 1000) };
+    const setApp = (enabled: boolean) => sharedRuntime.execute('kernel.org.set_app', { module: 'social', enabled }, { actor: owner, orgId, idempotencyKey: randomUUID() });
+    const names = async () => (((await mcpModern(c.access, 'tools/list')).body?.result?.tools ?? []) as Array<{ name: string }>).map((t) => t.name);
+    expect(await names()).toEqual(expect.arrayContaining(['ludy_social_posts_list', 'ludy_social_review_queue']));
+    await setApp(false);
+    try {
+      const listed = await names();
+      expect(listed).not.toContain('ludy_social_posts_list');
+      expect(listed).not.toContain('ludy_social_review_queue');
+      // The other tools are untouched.
+      expect(listed).toEqual(expect.arrayContaining(['ludy_about', 'ludy_parties_list', 'ludy_invoices_list', 'ludy_signals']));
+      const called = await mcpModern(c.access, 'tools/call', { name: 'ludy_social_posts_list', arguments: {} }, 'ludy_social_posts_list');
+      expect(called.status).toBe(200);
+      expect(called.body?.error).toBeUndefined();
+      expect(called.body?.result?.isError).toBe(true);
+      expect(called.body?.result?.content?.[0]?.text).toContain('MODULE_OFF');
+      expect(called.body?.result?.content?.[0]?.text).toContain('social');
+      // The call is audited as refused, and the grant still reads the apps that are on.
+      const about = await mcpModern(c.access, 'tools/call', { name: 'ludy_about', arguments: {} }, 'ludy_about');
+      expect(about.body?.result?.isError).toBe(false);
+    } finally {
+      await setApp(true);
+    }
+    expect(await names()).toEqual(expect.arrayContaining(['ludy_social_posts_list', 'ludy_social_review_queue']));
+    const back = await mcpModern(c.access, 'tools/call', { name: 'ludy_social_posts_list', arguments: {} }, 'ludy_social_posts_list');
+    expect(back.body?.result?.isError).toBe(false);
+  });
+
   it('works with the official MCP TypeScript SDK client: discovery, registration, consent, token, tools/list and a tool call', async () => {
     const callback = 'http://127.0.0.1:39998/callback';
     let info: { client_id: string } | undefined;

@@ -279,6 +279,35 @@ suite('agent positions, tasks and wake-ups on PostgreSQL (ADR-0029 Phase 1)', ()
     expect(tasksAfter).toEqual(tasksBefore);
   });
 
+  // ADR-0053, slice e (#3311): the coworker of an app the org switched off does not wake; its request and its task are kept, and it wakes again when the app is back on.
+  it('wakes no agent of an app the org switched off, keeps its request and task, and wakes it again when the app is on', async () => {
+    const { agentId, positionId } = await app.execute<{ agentId: string; positionId: string }>(
+      'kernel.agent.template.install',
+      { templateKey: 'finance.chief_accountant', displayName: 'Kế toán trưởng tắt app' },
+      { actor: asMfa(owner), orgId },
+    );
+    const wakeEvents = async () =>
+      admin(async (c) => (await c.query<{ n: number }>(`SELECT count(*)::int AS n FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.agent.wakeup_requested'`, [orgId])).rows[0]?.n);
+    const setApp = (enabled: boolean) => app.execute('kernel.org.set_app', { module: 'finance', enabled }, { actor: asMfa(owner), orgId });
+    await setApp(false);
+    try {
+      const before = await wakeEvents();
+      await app.execute('kernel.task.create', { title: 'Không đánh thức vì app tắt', assigneePositionId: positionId }, { actor: asUser(owner), orgId });
+      // The request is pending, but no wake-up event went out, the sweep leaves it out and a run does not start.
+      expect(await wakeEvents()).toBe(before);
+      const pending = await admin(async (c) => (await c.query(`SELECT status FROM crove_kernel.agent_wakeup WHERE agent_id = $1 AND status = 'pending'`, [agentId])).rows);
+      expect(pending).toEqual([{ status: 'pending' }]);
+      await age(agentId);
+      expect(await due(agentId)).toEqual([]);
+      await expect(worker.execute('kernel.agent.run.start', { agentId }, { actor: SYSTEM, orgId })).resolves.toEqual({ runId: null, reason: 'module_disabled' });
+    } finally {
+      await setApp(true);
+    }
+    // Back on: the same pending request is found by the sweep.
+    await age(agentId);
+    expect(await due(agentId)).toEqual([{ org_id: orgId, agent_id: agentId }]);
+  });
+
   it('runs one run per agent at a time and pauses an agent at once', async () => {
     const { agentId, positionId } = await app.execute<{ agentId: string; positionId: string }>(
       'kernel.agent.template.install',

@@ -118,6 +118,21 @@ function failedWork(queue: string): FailedWork {
   return 'other';
 }
 
+// The one line for what waits in an app the company switched off (ADR-0053, slice e): hidden from the list, kept with its own expiry, and not approvable
+// until the app is on again. Shown only when there is something.
+function HiddenByApps() {
+  const t = useTranslations('inbox');
+  const live = useStreamLive();
+  const hidden = useQuery({ ...orpc.inbox.hidden.queryOptions({ input: {} }), refetchInterval: pollEvery(live, 60_000, SAFETY_POLL_MS) });
+  const count = hidden.data?.count ?? 0;
+  if (count === 0) return null;
+  return (
+    <p data-hidden-apps className="text-sm text-muted-foreground">
+      {t('hiddenApps', { count: String(count) })}
+    </p>
+  );
+}
+
 // Background work of the org that failed after its last retry (#1720), for owners and admins (the list is empty for
 // others): each stays until someone dismisses it. It names the kind of work, when and the job's number, never what
 // the job carried; the operator finds the rest by that number.
@@ -557,6 +572,7 @@ export function InboxPage() {
         </div>
       )}
 
+      {tab === 'pending' && <HiddenByApps />}
       <IntakePanel intake={intake} />
       {config.modules.includes('finance') && <StagedMarketplace canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} refetchMs={pollEvery(live, 30_000, SAFETY_POLL_MS)} />}
       {config.modules.includes('finance') && <StagedMarketplaceIncome canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} refetchMs={pollEvery(live, 30_000, SAFETY_POLL_MS)} />}

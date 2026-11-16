@@ -6588,6 +6588,8 @@ export const en = {
     },
     emptyPending: 'No proposals waiting for approval',
     emptyPendingHint: 'Upload an invoice to get started.',
+    // One line for what waits in an app the company switched off (ADR-0053): it stays where it is and cannot be approved until the app is on.
+    hiddenApps: '{count} waiting in an app that is switched off',
     emptyOther: 'Nothing here yet',
     guideLink: 'Read the quick guide: upload, approve, export (in Vietnamese)',
     columns: {
@@ -12697,6 +12699,7 @@ export const en = {
       inbox: {
         dismiss: 'Dismiss an Inbox item',
         get: 'Read a Document inbox item',
+        hidden: 'Count what waits in an app that is switched off',
         list: 'List the Document inbox',
         original_dismiss: 'Dismiss a mail that needs the original invoice',
         originals: 'List the mails that need the original invoice',

@@ -28,7 +28,7 @@ import { DomainError, defineQuery } from '@crove/kernel-runtime';
 import { EDITOR_ROLES, decideApproval, proposalEditable } from './approval.ts';
 import { MAX_EXTRACTION_VERSIONS, executedButVoided, latestExtraction, voidedProposals } from './extraction.ts';
 import { archiveQueries } from './archives.ts';
-import { orgAppsQuery, type OrgAppsOptions } from './org-apps.ts';
+import { offAppsOf, orgAppsQuery, proposalOfApp, type OrgAppsOptions } from './org-apps.ts';
 import { fileStatuses, seesEveryEntity as unscoped } from './file-status.ts';
 import { agentQueries } from './agents.ts';
 import { channelQueries } from './channels.ts';
@@ -313,6 +313,9 @@ export const inboxList = defineQuery({
       .where('org_id', '=', ctx.orgId)
       .orderBy('created_at', 'desc')
       .limit(200);
+    // The proposals of an app the org turned off are left out (ADR-0053 section 4): they keep their own expiry, cannot be approved (MODULE_OFF) and are counted by kernel.inbox.hidden.
+    const off = await offAppsOf(ctx.trx, ctx.orgId);
+    if (off.length > 0) query = query.where(sql<boolean>`NOT (${proposalOfApp(off)})`);
     if (input.status) query = query.where('status', '=', input.status);
     const rows = await query.execute();
     // The posted ones whose recorded document a reversal voided (#165), asked of the finance module once for the page

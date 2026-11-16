@@ -6584,6 +6584,7 @@ export const vi = {
     },
     emptyPending: 'Không có đề xuất nào chờ duyệt',
     emptyPendingHint: 'Tải hóa đơn lên để bắt đầu.',
+    hiddenApps: '{count} việc đang chờ ở ứng dụng đã tắt',
     emptyOther: 'Chưa có mục nào',
     guideLink: 'Xem hướng dẫn nhanh: tải lên, duyệt, xuất Excel',
     columns: {
@@ -12694,6 +12695,7 @@ export const vi = {
       inbox: {
         dismiss: 'Ẩn một mục trong Chứng từ chờ duyệt',
         get: 'Xem một mục trong Chứng từ chờ duyệt',
+        hidden: 'Đếm những việc đang chờ ở ứng dụng đã tắt',
         list: 'Xem danh sách chứng từ chờ duyệt',
         original_dismiss: 'Bỏ qua một thư cần hóa đơn gốc',
         originals: 'Xem các thư cần hóa đơn gốc',

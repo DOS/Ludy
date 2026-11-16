@@ -1839,6 +1839,8 @@ export const contract = {
   },
   inbox: {
     list: oc.input(z.object({ status: zProposalStatus.optional() })).output(z.array(zInboxItem)),
+    // How many waiting things the list leaves out because their app is switched off for the org (ADR-0053, slice e).
+    hidden: oc.input(z.object({})).output(z.object({ count: z.number().int().nonnegative() })),
     get: oc.input(z.object({ id: zId })).output(zInboxDetail),
     // Every member who can open the proposal (issue #672): what happened to it, its file and the records it touched.
     timeline: oc.input(z.object({ id: zId })).output(zTimeline),
