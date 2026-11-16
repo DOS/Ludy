@@ -52,7 +52,7 @@ describe('export coverage problems (#3201)', () => {
   });
 
   it('fails a schema with org_id tables that is not covered, so a new schema cannot be forgotten', () => {
-    expect(COVERED_SCHEMAS).toEqual(['crove_finance', 'crove_kernel', 'crove_crm', 'crove_hr', 'crove_meetings', 'crove_notes', 'crove_social', 'crove_ads', 'crove_projects']);
+    expect(COVERED_SCHEMAS).toEqual(['crove_finance', 'crove_kernel', 'crove_crm', 'crove_hr', 'crove_meetings', 'crove_notes', 'crove_social', 'crove_ads', 'crove_projects', 'crove_sign']);
     expect(exportCoverageProblems(['crove_newline.thing', 'crove_finance.journal_line'], exported, {})).toEqual([
       'crove_newline has tables with org_id, but is not in COVERED_SCHEMAS (apps/kernel/test/org-export-coverage.ts): add it once its tables are in EXPORT_TABLES or on NOT_EXPORTED with a reason',
     ]);

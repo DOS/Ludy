@@ -9,5 +9,6 @@ import { notesManifest } from '@crove/mod-notes';
 import { socialManifest } from '@crove/mod-social';
 import { meetingsManifest } from '@crove/mod-meetings';
 import { projectsManifest } from '@crove/mod-projects';
+import { signManifest } from '@crove/mod-sign';
 
-export const TEST_MANIFESTS: readonly ManifestTables[] = [kernelManifest, financeManifest, socialManifest, crmManifest, notesManifest, hrManifest, meetingsManifest, projectsManifest].map((m) => m.tables);
+export const TEST_MANIFESTS: readonly ManifestTables[] = [kernelManifest, financeManifest, socialManifest, crmManifest, notesManifest, hrManifest, meetingsManifest, projectsManifest, signManifest].map((m) => m.tables);

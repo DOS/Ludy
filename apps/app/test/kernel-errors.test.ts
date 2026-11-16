@@ -86,6 +86,10 @@ const NOT_SHOWN: Record<string, string> = {
   NOT_STREAMED: 'bug',
   INVALID_STORAGE_KEY: 'bug',
   INVALID_GENERATION: 'bug',
+  IDEMPOTENCY_UNSUPPORTED: 'bug',
+  // eSign worker (#3323): sign.envelope.seal_complete is access: 'system' only.
+  SIGN_INVALID_SEALED_FILE: 'sign worker',
+  SIGN_INVALID_CERTIFICATE_FILE: 'sign worker',
   // A restore re-recording an export that is not the org's newest one (#1726): only the worker's restore receives it.
   EXPORT_REBIND_MISMATCH: 'bug',
   // An export record racing another of the org (#1867): the worker records again.

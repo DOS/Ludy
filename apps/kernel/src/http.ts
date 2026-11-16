@@ -1940,6 +1940,11 @@ export function createHttpApp(deps: HttpDeps) {
       if (type !== 'application/zip') throw new DomainError('UNSUPPORTED_TYPE', 415, `${name}: chỉ nhận tệp Excel dạng .xlsx`);
       if (bytes.byteLength > MAX_IMPORT_BYTES) throw new DomainError('TOO_LARGE', 413, `${name} vượt quá 10 MB`);
       type = XLSX_CONTENT_TYPE;
+    } else if (purpose === 'sign_document') {
+      if (type !== 'application/pdf') {
+        throw new DomainError('UNSUPPORTED_TYPE', 415, `${name}: tài liệu ký điện tử chỉ nhận tệp PDF`);
+      }
+      if (bytes.byteLength > MAX_UPLOAD_BYTES) throw new DomainError('TOO_LARGE', 413, `${name} vượt quá 25 MB`);
     } else if (video) {
       if (bytes.byteLength > MAX_SOCIAL_VIDEO_BYTES) throw new DomainError('TOO_LARGE', 413, `${name} vượt quá 100 MB`);
       const ms = videoDurationMs(bytes);
@@ -1971,7 +1976,7 @@ export function createHttpApp(deps: HttpDeps) {
         sha256,
         storageKey,
         generation,
-        source: purpose === 'social' ? 'social' : purpose === 'import' ? 'import' : 'upload',
+        source: purpose === 'social' ? 'social' : purpose === 'import' ? 'import' : purpose === 'sign_document' ? 'sign_document' : 'upload',
         ...(durationMs === undefined ? {} : { durationMs }),
         ...(size ? { imageWidth: size.width, imageHeight: size.height } : {}),
         // A document only: the entity it is booked in (#1764), which the command checks the uploader sees.
@@ -2009,14 +2014,21 @@ export function createHttpApp(deps: HttpDeps) {
       if (!runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mục đích tải lên không hợp lệ');
       return value;
     }
+    if (value === 'sign_document') {
+      if (!runtime.installed('sign')) throw new DomainError('NOT_FOUND', 404, 'Mục đích tải lên không hợp lệ');
+      return value;
+    }
     throw new DomainError('INVALID', 400, 'Mục đích tải lên không hợp lệ');
   }
 
-  // The purpose of an upload, for the org it is for: the Meetings media purposes are Meetings' own, so an org that switched Meetings off, or does not hold it,
-  // gets the answer of a purpose that is not installed (404, as when the deployment leaves Meetings out; ADR-0053). The grant a Meetings upload needs is a kernel command, which the app gate does not cover.
+  // The purpose of an upload, for the org it is for: Meetings and eSign upload purposes belong to their apps, so an org that switched that app off, or does not hold it,
+  // gets the answer of a purpose that is not installed (404, as when the deployment leaves the app out; ADR-0053). The grant an upload needs is a kernel command, which the app gate does not cover.
   async function uploadPurposeFor(value: unknown, orgId: string): Promise<UploadPurpose> {
     const purpose = uploadPurpose(value);
     if ((purpose === 'meeting_audio' || purpose === 'meeting_video') && !(await runtime.appOn(orgId, 'meetings', { fresh: true }).catch(() => true))) {
+      throw new DomainError('NOT_FOUND', 404, 'Mục đích tải lên không hợp lệ');
+    }
+    if (purpose === 'sign_document' && !(await runtime.appOn(orgId, 'sign', { fresh: true }).catch(() => true))) {
       throw new DomainError('NOT_FOUND', 404, 'Mục đích tải lên không hợp lệ');
     }
     return purpose;
