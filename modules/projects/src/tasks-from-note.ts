@@ -8,6 +8,7 @@ import {
   DEFAULT_TIME_ZONE,
   todoDueInstant,
   zId,
+  zProjectProposedTask,
   zProjectTasksFromNoteConfirmInput,
   type Note,
   type ProjectSeat,
@@ -16,24 +17,24 @@ import {
   type ProjectTasksFromNoteStatus,
 } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 
-const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
+export const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const ALL_MEMBERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const MODULE = 'projects';
 
-function userOf(actor: QueryContext['actor']): string {
+export function userOf(actor: QueryContext['actor']): string {
   if (actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ thành viên mới thực hiện được việc này');
   return actor.userId;
 }
 
-interface ProjectRow {
+export interface ProjectRow {
   id: string;
   name: string;
   status: ProjectStatus;
 }
 
-async function loadProject(trx: QueryContext['trx'], orgId: string, projectId: string, lock: boolean): Promise<ProjectRow> {
+export async function loadProject(trx: QueryContext['trx'], orgId: string, projectId: string, lock: boolean): Promise<ProjectRow> {
   let query = trx
     .selectFrom('crove_projects.project')
     .select(['id', 'name', 'status'])
@@ -45,7 +46,7 @@ async function loadProject(trx: QueryContext['trx'], orgId: string, projectId: s
   return { id: row.id, name: row.name, status: row.status as ProjectStatus };
 }
 
-function assertNotArchived(row: ProjectRow): void {
+export function assertNotArchived(row: ProjectRow): void {
   if (row.status === 'archived') {
     throw new DomainError('PROJECT_ARCHIVED', 409, 'Dự án này đã được lưu trữ, không thể thêm việc mới');
   }
@@ -73,7 +74,7 @@ async function activeProjectMemberSeatIds(trx: QueryContext['trx'], orgId: strin
   return positions.map((p) => p.id);
 }
 
-async function assertSeatsAllowed(
+export async function assertSeatsAllowed(
   trx: QueryContext['trx'],
   orgId: string,
   projectId: string,
@@ -92,7 +93,7 @@ async function assertSeatsAllowed(
   }
 }
 
-async function loadReadableNote(ctx: QueryContext, noteId: string): Promise<Note> {
+export async function loadReadableNote(ctx: QueryContext, noteId: string): Promise<Note> {
   if (!ctx.installed('notes')) {
     throw new DomainError('MODULE_OFF', 404, 'Ứng dụng notes chưa được bật cho công ty này', { module: 'notes' });
   }
@@ -119,17 +120,17 @@ async function memberProfilesMap(trx: QueryContext['trx'], userIds: readonly str
   return map;
 }
 
-// Pure availability check for asking Vy to propose project tasks from a note: checks notes app availability,
-// viewer/member role, vy.use, org/module/agent/global kill switches, and projects AI budget.
-export const tasksFromNoteStatus = defineQuery({
-  name: 'projects.tasks_from_note.status',
-  input: z.strictObject({}),
-  access: ALL_MEMBERS,
-  handler: async (ctx): Promise<ProjectTasksFromNoteStatus> => {
-    const userId = userOf(ctx.actor);
-    if (ctx.role === null || ctx.role === 'viewer') {
-      return { available: false, reason: 'forbidden', resetOn: null };
-    }
+// Shared availability check for asking Vy to propose project tasks: checks viewer/member role, optional notes app,
+// vy.use, org/module/agent/global kill switches, and projects AI budget.
+export async function checkProjectsVyAccess(
+  ctx: QueryContext,
+  options: { requireNotes: boolean },
+): Promise<ProjectTasksFromNoteStatus> {
+  const userId = userOf(ctx.actor);
+  if (ctx.role === null || ctx.role === 'viewer') {
+    return { available: false, reason: 'forbidden', resetOn: null };
+  }
+  if (options.requireNotes) {
     if (!ctx.installed('notes')) {
       return { available: false, reason: 'off', resetOn: null };
     }
@@ -144,52 +145,188 @@ export const tasksFromNoteStatus = defineQuery({
       }
       throw error;
     }
+  }
 
-    const allowed = await sql<{ ok: boolean }>`SELECT crove_kernel.ctx_vy_use() AS ok`.execute(ctx.trx);
-    if (allowed.rows[0]?.ok !== true) {
-      return { available: false, reason: 'forbidden', resetOn: null };
-    }
+  const allowed = await sql<{ ok: boolean }>`SELECT crove_kernel.ctx_vy_use() AS ok`.execute(ctx.trx);
+  if (allowed.rows[0]?.ok !== true) {
+    return { available: false, reason: 'forbidden', resetOn: null };
+  }
 
-    const agentRow = await ctx.trx
-      .selectFrom('crove_kernel.agent')
-      .select(['id', 'status'])
-      .where('org_id', '=', ctx.orgId)
-      .where('kind', '=', 'member_vy')
-      .where('member_user_id', '=', userId)
-      .executeTakeFirst();
-    if (agentRow && agentRow.status !== 'active') {
-      return { available: false, reason: 'forbidden', resetOn: null };
-    }
-    const agentId = agentRow?.id ?? null;
+  const agentRow = await ctx.trx
+    .selectFrom('crove_kernel.agent')
+    .select(['id', 'status'])
+    .where('org_id', '=', ctx.orgId)
+    .where('kind', '=', 'member_vy')
+    .where('member_user_id', '=', userId)
+    .executeTakeFirst();
+  if (agentRow && agentRow.status !== 'active') {
+    return { available: false, reason: 'forbidden', resetOn: null };
+  }
+  const agentId = agentRow?.id ?? null;
 
-    const stopped = await sql<{ stopped: boolean }>`
-      SELECT crove_kernel.global_kill_switch_on('ai') OR EXISTS (
-        SELECT 1 FROM crove_kernel.kill_switch k
-         WHERE k.org_id = ${ctx.orgId}::uuid
-           AND k.released_at IS NULL
-           AND (
-             k.scope = 'org'
-             OR (k.scope = 'module' AND k.target = ${MODULE})
-             OR (${agentId}::uuid IS NOT NULL AND k.scope = 'agent' AND k.target = ${agentId}::text)
-           )
-      ) AS stopped`.execute(ctx.trx);
-    if (stopped.rows[0]?.stopped === true) {
-      return { available: false, reason: 'paused', resetOn: null };
-    }
+  const stopped = await sql<{ stopped: boolean }>`
+    SELECT crove_kernel.global_kill_switch_on('ai') OR EXISTS (
+      SELECT 1 FROM crove_kernel.kill_switch k
+       WHERE k.org_id = ${ctx.orgId}::uuid
+         AND k.released_at IS NULL
+         AND (
+           k.scope = 'org'
+           OR (k.scope = 'module' AND k.target = ${MODULE})
+           OR (${agentId}::uuid IS NOT NULL AND k.scope = 'agent' AND k.target = ${agentId}::text)
+         )
+    ) AS stopped`.execute(ctx.trx);
+  if (stopped.rows[0]?.stopped === true) {
+    return { available: false, reason: 'paused', resetOn: null };
+  }
 
-    const budget = await sql<{ spent: boolean; reset_on: string }>`
-      SELECT crove_kernel.ai_budget_exhausted(${ctx.orgId}::uuid, ${MODULE}, ${agentId}::uuid) AS spent,
-             pg_catalog.to_char(
-               (pg_catalog.date_trunc('month', pg_catalog.now() AT TIME ZONE ${DEFAULT_TIME_ZONE}) + pg_catalog.make_interval(months => 1))::date,
-               'YYYY-MM-DD'
-             ) AS reset_on`
-      .execute(ctx.trx);
-    if (budget.rows[0]?.spent === true) {
-      return { available: false, reason: 'budget', resetOn: budget.rows[0].reset_on ?? null };
-    }
+  const budget = await sql<{ spent: boolean; reset_on: string }>`
+    SELECT crove_kernel.ai_budget_exhausted(${ctx.orgId}::uuid, ${MODULE}, ${agentId}::uuid) AS spent,
+           pg_catalog.to_char(
+             (pg_catalog.date_trunc('month', pg_catalog.now() AT TIME ZONE ${DEFAULT_TIME_ZONE}) + pg_catalog.make_interval(months => 1))::date,
+             'YYYY-MM-DD'
+           ) AS reset_on`
+    .execute(ctx.trx);
+  if (budget.rows[0]?.spent === true) {
+    return { available: false, reason: 'budget', resetOn: budget.rows[0].reset_on ?? null };
+  }
 
-    return { available: true, reason: null, resetOn: null };
+  return { available: true, reason: null, resetOn: null };
+}
+
+export async function queryProjectSeats(
+  ctx: QueryContext,
+  projectId: string,
+): Promise<{ projectId: string; projectName: string; seats: ProjectSeat[] }> {
+  userOf(ctx.actor);
+  const project = await loadProject(ctx.trx, ctx.orgId, projectId, false);
+  assertNotArchived(project);
+
+  const members = await ctx.trx
+    .selectFrom('crove_projects.project_member')
+    .select('user_id')
+    .where('org_id', '=', ctx.orgId)
+    .where('project_id', '=', project.id)
+    .execute();
+  const memberIds = members.map((m) => m.user_id);
+  if (memberIds.length === 0) {
+    return { projectId: project.id, projectName: project.name, seats: [] };
+  }
+
+  const positions = await ctx.trx
+    .selectFrom('crove_kernel.position')
+    .select(['id', 'title', 'status', 'holder_user_id'])
+    .where('org_id', '=', ctx.orgId)
+    .where('status', '=', 'active')
+    .where('holder_user_id', 'in', memberIds)
+    .orderBy('title', 'asc')
+    .orderBy('id', 'asc')
+    .execute();
+
+  const holderIds = positions.map((p) => p.holder_user_id).filter((id): id is string => id !== null);
+  const profiles = await memberProfilesMap(ctx.trx, holderIds);
+
+  const seats: ProjectSeat[] = positions.map((p) => {
+    const uid = p.holder_user_id!;
+    const prof = profiles.get(uid);
+    return {
+      id: p.id,
+      title: p.title,
+      status: 'active',
+      onProject: true,
+      holder: {
+        type: 'user',
+        userId: uid,
+        displayName: prof?.displayName ?? null,
+        email: prof?.email ?? null,
+      },
+    };
+  });
+
+  return { projectId: project.id, projectName: project.name, seats };
+}
+
+export type ProposedTaskConfirmItem = z.infer<typeof zProjectProposedTask>;
+
+// Runs the shared atomic batch confirmation sequence: locks referenced positions in canonical UUID order,
+// invokes createTask per item, locks crove_projects.project (uniform lock ordering), re-validates seats,
+// attaches tasks to crove_projects.project_task, emits events and records activity.
+export async function createAndAttachConfirmedTasks(
+  ctx: CommandContext,
+  userId: string,
+  params: {
+    projectId: string;
+    timeZone: string;
+    items: readonly ProposedTaskConfirmItem[];
+    via: string;
+    activityAction: string;
+    activitySummary: (count: number) => string;
+    createTask: (item: ProposedTaskConfirmItem, due: string | null) => Promise<{ taskId: string }>;
   },
+): Promise<{ project: ProjectRow; createdIds: string[] }> {
+  const requestedSeats = [...new Set(params.items.map((item) => item.assigneePositionId).filter((id): id is string => id !== null))].sort();
+  if (requestedSeats.length > 0) {
+    // Lock all referenced positions in canonical UUID order before looping task creation to prevent deadlocks.
+    await sql<{ id: string }>`
+      SELECT id
+        FROM crove_kernel.position
+       WHERE org_id = ${ctx.orgId}::uuid
+         AND id = ANY(${requestedSeats}::uuid[])
+       ORDER BY id ASC
+         FOR UPDATE`.execute(ctx.trx);
+
+    await assertSeatsAllowed(ctx.trx, ctx.orgId, params.projectId, requestedSeats);
+  }
+
+  const createdIds: string[] = [];
+  for (const item of params.items) {
+    let due: string | null = null;
+    if (item.dueOn !== null) {
+      const dueDate = todoDueInstant(item.dueOn, '23:59', params.timeZone);
+      if (Number.isNaN(dueDate.getTime())) {
+        throw new DomainError('VALIDATION', 422, 'Ngày đến hạn không hợp lệ');
+      }
+      due = dueDate.toISOString();
+    }
+    const created = await params.createTask(item, due);
+    createdIds.push(created.taskId);
+  }
+
+  // Lock crove_projects.project after kernel task creation (which locks crove_kernel.position) for uniform lock ordering,
+  // then re-validate seats under the project lock so concurrent projects.member.remove cannot leave a removed member assigned.
+  const project = await loadProject(ctx.trx, ctx.orgId, params.projectId, true);
+  assertNotArchived(project);
+  await assertSeatsAllowed(ctx.trx, ctx.orgId, project.id, requestedSeats);
+
+  if (createdIds.length > 0) {
+    await ctx.trx
+      .insertInto('crove_projects.project_task')
+      .values(
+        createdIds.map((taskId) => ({
+          org_id: ctx.orgId,
+          project_id: project.id,
+          task_id: taskId,
+          added_by: userId,
+          created_at: ctx.now,
+        })),
+      )
+      .execute();
+
+    for (const taskId of createdIds) {
+      await ctx.emit('projects.task.created', { projectId: project.id, taskId, via: params.via });
+    }
+    await ctx.activity('projects.project', project.id, params.activityAction, params.activitySummary(createdIds.length));
+  }
+
+  return { project, createdIds };
+}
+
+// Pure availability check for asking Vy to propose project tasks from a note: checks notes app availability,
+// viewer/member role, vy.use, org/module/agent/global kill switches, and projects AI budget.
+export const tasksFromNoteStatus = defineQuery({
+  name: 'projects.tasks_from_note.status',
+  input: z.strictObject({}),
+  access: ALL_MEMBERS,
+  handler: (ctx): Promise<ProjectTasksFromNoteStatus> => checkProjectsVyAccess(ctx, { requireNotes: true }),
 });
 
 // Active seats held exclusively by users who belong to the target project (crove_projects.project_member).
@@ -197,54 +334,8 @@ export const tasksFromNoteSeats = defineQuery({
   name: 'projects.tasks_from_note.seats',
   input: z.strictObject({ projectId: zId }),
   access: WRITERS,
-  handler: async (ctx, input): Promise<{ projectId: string; projectName: string; seats: ProjectSeat[] }> => {
-    userOf(ctx.actor);
-    const project = await loadProject(ctx.trx, ctx.orgId, input.projectId, false);
-    assertNotArchived(project);
-
-    const members = await ctx.trx
-      .selectFrom('crove_projects.project_member')
-      .select('user_id')
-      .where('org_id', '=', ctx.orgId)
-      .where('project_id', '=', project.id)
-      .execute();
-    const memberIds = members.map((m) => m.user_id);
-    if (memberIds.length === 0) {
-      return { projectId: project.id, projectName: project.name, seats: [] };
-    }
-
-    const positions = await ctx.trx
-      .selectFrom('crove_kernel.position')
-      .select(['id', 'title', 'status', 'holder_user_id'])
-      .where('org_id', '=', ctx.orgId)
-      .where('status', '=', 'active')
-      .where('holder_user_id', 'in', memberIds)
-      .orderBy('title', 'asc')
-      .orderBy('id', 'asc')
-      .execute();
-
-    const holderIds = positions.map((p) => p.holder_user_id).filter((id): id is string => id !== null);
-    const profiles = await memberProfilesMap(ctx.trx, holderIds);
-
-    const seats: ProjectSeat[] = positions.map((p) => {
-      const uid = p.holder_user_id!;
-      const prof = profiles.get(uid);
-      return {
-        id: p.id,
-        title: p.title,
-        status: 'active',
-        onProject: true,
-        holder: {
-          type: 'user',
-          userId: uid,
-          displayName: prof?.displayName ?? null,
-          email: prof?.email ?? null,
-        },
-      };
-    });
-
-    return { projectId: project.id, projectName: project.name, seats };
-  },
+  handler: (ctx, input): Promise<{ projectId: string; projectName: string; seats: ProjectSeat[] }> =>
+    queryProjectSeats(ctx, input.projectId),
 });
 
 // Validates note readability + target project and starts one member-scoped Vy run under kernel.member_vy.run.start.
@@ -300,64 +391,21 @@ export const tasksFromNoteConfirm = defineCommand({
     assertNotArchived(preview);
     const note = await loadReadableNote(ctx, input.noteId);
 
-    const requestedSeats = [...new Set(input.items.map((item) => item.assigneePositionId).filter((id): id is string => id !== null))].sort();
-    if (requestedSeats.length > 0) {
-      // Lock all referenced positions in canonical UUID order before looping kernel.task.create_from_note to prevent deadlocks.
-      await sql<{ id: string }>`
-        SELECT id
-          FROM crove_kernel.position
-         WHERE org_id = ${ctx.orgId}::uuid
-           AND id = ANY(${requestedSeats}::uuid[])
-         ORDER BY id ASC
-           FOR UPDATE`.execute(ctx.trx);
-
-      await assertSeatsAllowed(ctx.trx, ctx.orgId, preview.id, requestedSeats);
-    }
-
-    const createdIds: string[] = [];
-    for (const item of input.items) {
-      let due: string | null = null;
-      if (item.dueOn !== null) {
-        const dueDate = todoDueInstant(item.dueOn, '23:59', input.timeZone);
-        if (Number.isNaN(dueDate.getTime())) {
-          throw new DomainError('VALIDATION', 422, 'Ngày đến hạn không hợp lệ');
-        }
-        due = dueDate.toISOString();
-      }
-      const created = await ctx.run<{ taskId: string }>('kernel.task.create_from_note', {
-        noteId: input.noteId,
-        title: item.title,
-        positionId: item.assigneePositionId,
-        due,
-      });
-      createdIds.push(created.taskId);
-    }
-
-    // Lock crove_projects.project after kernel.task.create_from_note (which locks crove_kernel.position) for uniform lock ordering,
-    // then re-validate seats under the project lock so concurrent projects.member.remove cannot leave a removed member assigned.
-    const project = await loadProject(ctx.trx, ctx.orgId, input.projectId, true);
-    assertNotArchived(project);
-    await assertSeatsAllowed(ctx.trx, ctx.orgId, project.id, requestedSeats);
-
-    if (createdIds.length > 0) {
-      await ctx.trx
-        .insertInto('crove_projects.project_task')
-        .values(
-          createdIds.map((taskId) => ({
-            org_id: ctx.orgId,
-            project_id: project.id,
-            task_id: taskId,
-            added_by: userId,
-            created_at: ctx.now,
-          })),
-        )
-        .execute();
-
-      for (const taskId of createdIds) {
-        await ctx.emit('projects.task.created', { projectId: project.id, taskId, via: 'notes.note' });
-      }
-      await ctx.activity('projects.project', project.id, 'projects.tasks_from_note.confirmed', `Thêm ${createdIds.length} việc vào dự án từ ghi chú`);
-    }
+    const { project, createdIds } = await createAndAttachConfirmedTasks(ctx, userId, {
+      projectId: input.projectId,
+      timeZone: input.timeZone,
+      items: input.items,
+      via: 'notes.note',
+      activityAction: 'projects.tasks_from_note.confirmed',
+      activitySummary: (count) => `Thêm ${count} việc vào dự án từ ghi chú`,
+      createTask: (item, due) =>
+        ctx.run<{ taskId: string }>('kernel.task.create_from_note', {
+          noteId: input.noteId,
+          title: item.title,
+          positionId: item.assigneePositionId,
+          due,
+        }),
+    });
 
     let linkedCount = 0;
     if (note.mine && note.deletedAt === null) {

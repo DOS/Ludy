@@ -168,6 +168,26 @@ suite('taking a post down at a set time on PostgreSQL (#861)', () => {
     expect(await requested(o, id)).toHaveLength(1);
   });
 
+  it('still asks, runs and watches a planned takedown while Social is switched off for the org (ADR-0053, C3c)', async () => {
+    const o = await org();
+    const sandbox = new SandboxPublisher();
+    const lost = await publishedPost(o, sandbox, { removeAt: inVietnam(Date.now() - 60_000), publishedAgoMs: 3_600_000 });
+    const gone = await publishedPost(o, sandbox, { removeAt: inVietnam(Date.now() - 60_000), publishedAgoMs: 3_600_000 });
+    await api.execute('kernel.org.set_app', { module: 'social', enabled: false }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+    // The sweep asks for both takedowns although the app is off, as the schedule command no longer is refused.
+    expect(await sweep()).toBeGreaterThanOrEqual(2);
+    expect(await requested(o, lost.id)).toHaveLength(1);
+    expect(await requested(o, gone.id)).toHaveLength(1);
+    // One's job runs and the post comes down; the other's job never ran, and the watch records that once the ask is stale.
+    expect(await runRemoveJob({ runtime: worker, broker: vault, publishers: { sandbox }, callTimeoutMs: 2_000 }, o.orgId, gone.id, 'sandbox', null)).toEqual({ action: 'call', state: 'succeeded' });
+    await admin((c) => c.query("UPDATE crove_social.post_variant SET remove_requested_at = now() - interval '11 minutes' WHERE id = $1", [lost.id]));
+    expect(await runRemoveWatch({ runtime: worker }, o.orgId, lost.id, null)).toEqual({ told: true, code: 'REMOVE_NOT_RUN' });
+    // Back on, the post screen shows both outcomes (a person's read is refused while the app is off).
+    await api.execute('kernel.org.set_app', { module: 'social', enabled: true }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+    expect(await variant(o, gone.postId)).toMatchObject({ status: 'removed' });
+    expect(await variant(o, lost.postId)).toMatchObject({ status: 'published', removal: { state: 'failed', code: 'REMOVE_NOT_RUN' } });
+  });
+
   it('takes a Bluesky post set for 22:00 down then, against recorded XRPC answers', async () => {
     const o = await org();
     const DID = 'did:plc:abc123def456ghi789jkl012';
