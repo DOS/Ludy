@@ -52,7 +52,7 @@ import { einvoiceJobCommands } from './einvoice-job.ts';
 export { EINVOICE_DUE_PAGE, einvoiceDue } from './einvoice-job.ts';
 import { stockCommands, stockQueries } from './stock.ts';
 import { stockLineCommands, stockLineQueries } from './stock-lines.ts';
-import { orderHandoffCommands } from './order-handoff.ts';
+import { orderHandoffCommands, orderHandoffQueries } from './order-handoff.ts';
 import { marketplaceSettlementCommands } from './marketplace-settlement-record.ts';
 import { marketplacePayoutCommands } from './marketplace-payout-record.ts';
 import { marketplaceFeeClearingCommands } from './marketplace-fee-clearing-record.ts';
@@ -248,6 +248,7 @@ export const financeQueries = [
   ...collectionSettingQueries,
   ...paymentReminderQueries,
   ...einvoiceQueries,
+  ...orderHandoffQueries,
   ...einvoiceConnectionQueries,
   ...marketplaceConnectionQueries,
   ...einvoiceIssueQueries,

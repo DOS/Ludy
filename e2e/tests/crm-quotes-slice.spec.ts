@@ -105,6 +105,11 @@ test('a deal becomes a quote, is sent by link, opens on the public page, is acce
     await expect(orders.getByTestId('order-invoice')).toBeEnabled();
     await orders.getByTestId('order-invoice').click();
     await expect(orders.getByTestId('order-invoice-done')).toContainText('Đã tạo bản nháp hóa đơn');
+    // The order screen then reads the draft from Kế toán (#3477): the line says "Đã lập nháp", no line is left for the button, and cancel is off with its reason.
+    await expect(orders.getByTestId('order-invoice-line')).toContainText('Đã lập nháp');
+    await expect(orders.getByTestId('order-invoice')).toHaveCount(0);
+    await expect(orders.getByTestId('order-cancel-open')).toBeDisabled();
+    await expect(orders.getByTestId('order-cancel-blocked')).toContainText('nút hủy đang tắt');
   });
 
   await test.step('after the acceptance the coworker offers "Thắng"; the order was made either way, and one click moves the deal (#3420)', async () => {

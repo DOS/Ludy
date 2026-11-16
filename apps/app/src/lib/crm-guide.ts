@@ -7,7 +7,7 @@ import { brandName, withBrand } from '../i18n/brand.ts';
 import { vi } from '../i18n/messages/vi.ts';
 
 export interface CrmGuideStep {
-  id: 'crm-contacts' | 'crm-import' | 'crm-deals' | 'crm-quotes';
+  id: 'crm-contacts' | 'crm-import' | 'crm-deals' | 'crm-quotes' | 'crm-quote-order';
   title: string;
   items: readonly string[];
 }
@@ -63,6 +63,22 @@ const CRM_GUIDE: readonly CrmGuideStep[] = [
       `Bấm ${q(vi.quotes.editor.save)} để lưu bản nháp. Hai người cùng sửa một báo giá: người lưu sau được báo là báo giá vừa được người khác sửa.`,
       'Báo giá đã gửi mà 5 ngày chưa có trả lời, hoặc còn hiệu lực từ 3 ngày trở xuống, sẽ thành một việc cần theo dõi cho người phụ trách cơ hội, hiện ở mục việc tiếp theo của Cơ hội và ở Trang chủ.',
       `Mở ${q(vi.reports.title)} rồi chọn thẻ ${q(vi.reports.tabs.quotes)} để xem số báo giá đã gửi, đã chấp nhận, bị từ chối và đang chờ, kèm giá trị, theo khoảng thời gian bạn chọn.`,
+    ],
+  },
+  {
+    id: 'crm-quote-order',
+    title: 'Bước 5. Gửi báo giá, ghi nhận trả lời, đơn hàng và hóa đơn',
+    items: [
+      `Báo giá đã lưu có khung ${q(vi.quotes.send.title)} ngay dưới trình soạn. Chọn ${q(vi.quotes.send.viaLink)} rồi bấm ${q(vi.quotes.send.sendLink)}, hoặc chọn ${q(vi.quotes.send.viaEmail)} rồi bấm ${q(vi.quotes.send.sendEmail)}. Việc gửi luôn do bạn bấm; không có gì được gửi đi tự động.`,
+      `Gửi bằng liên kết: liên kết chỉ hiện một lần, hãy bấm ${q(vi.quotes.send.copyMessage)} rồi dán vào Zalo hay Messenger. Trong Hộp thư, ở cuộc trò chuyện của khách, bạn cũng chèn được báo giá vào ô trả lời bằng ${q(vi.quotes.send.replyInsert)}, rồi tự bấm gửi. Khách xem không cần đăng nhập và in được. Lần đầu khách mở, bạn thấy ngày giờ ngay trên báo giá.`,
+      `Gửi bằng email: thư có liên kết và kèm bản PDF của báo giá đúng như đã gửi. Nếu chưa tạo được bản PDF thì thư vẫn đi với liên kết, và nội dung thư không nói là có kèm PDF. Bấm ${q(vi.quotes.row.pdf)} ở dòng báo giá nếu muốn tự tải PDF về. Chủ sở hữu và quản trị viên điền điện thoại, email, ghi chú chuyển khoản và logo ở ${q(vi.quotes.settings.open)}. Các thông tin này và logo được chụp lại lúc bạn gửi, nên đổi sau không làm đổi báo giá đã gửi.`,
+      `Báo giá đã gửi thì không sửa được, vì đó là bản khách đã nhận. Muốn đổi, bấm ${q(vi.quotes.row.revise)}; khi gửi bản mới, bản cũ thành ${q(vi.quotes.status.superseded)} và liên kết cũ không còn mở được. Bạn cũng thu hồi được một liên kết bằng ${q(vi.quotes.send.revoke)}.`,
+      `Khi khách trả lời, bạn ghi lại. Bấm ${q(vi.quotes.decision.accept)}, chọn khách đồng ý bằng cách nào và ngày nào, rồi bấm ${q(vi.quotes.decision.acceptYes)}. Hoặc bấm ${q(vi.quotes.decision.decline)} và ghi lý do nếu muốn. Khách không tự bấm đồng ý trên liên kết: luôn do một người ghi nhận.`,
+      `Sau khi báo giá được gửi hoặc được chấp nhận, đầu thẻ báo giá của cơ hội có thể hiện các gợi ý như chuyển cơ hội sang giai đoạn ${q('Báo giá')} hoặc ${q('Thắng')}, hay ${q(vi.quotes.dealOffer.setAmount)}. Đây là luật cố định, không gọi mô hình AI. Mỗi gợi ý chỉ chạy khi bạn bấm, hoặc bạn bấm ${q(vi.quotes.dealOffer.dismiss)}; cơ hội không tự đổi.`,
+      `Ghi nhận khách đồng ý thì có ngay một đơn hàng, hiện ở mục ${q(vi.quotes.orders.title)}, là bản sao đúng như báo giá đã gửi. Lúc này chưa có hóa đơn nào và kho chưa động đến.`,
+      `Nếu mô-đun Kế toán chạy, bấm ${q(vi.quotes.orders.invoice)} trên đơn để Kế toán lập bản nháp hóa đơn từ các dòng của đơn; một dòng không bị lập hai lần. Dòng có giảm giá chưa vào được hóa đơn và được nêu tên. Rồi bấm ${q(vi.quotes.orders.invoiceOpen)} để xem lại; việc phát hành vẫn do Kế toán duyệt. Mỗi dòng hàng của đơn cho biết nó đang ở đâu: ${q(vi.quotes.orders.invoiceState.none)}, ${q(vi.quotes.orders.invoiceState.draft)} hay ${q(vi.quotes.orders.invoiceState.issued)}. Lập một phần thì nút nêu các dòng còn lại và ẩn đi khi hết dòng.`,
+      `Khi hàng đi, bấm ${q(vi.quotes.orders.delivery.open)} rồi ${q(vi.quotes.orders.delivery.mark)} ở từng dòng hàng. Kho chỉ trừ lúc này, không trừ lúc xác nhận đơn; dòng dịch vụ không trừ kho. Dòng báo ${q(vi.quotes.orders.delivery.stockPending)} thì bấm ${q(vi.quotes.orders.delivery.stockRecord)} hoặc ${q(vi.quotes.orders.delivery.stockRetry)}, an toàn khi bấm lại. Nếu hàng chưa có tên trong kho, bấm ${q(vi.quotes.orders.delivery.stockTeach)}. Giao nhầm thì bấm ${q(vi.quotes.orders.delivery.takeBack)}.`,
+      `Chỉ hủy đơn bằng ${q(vi.quotes.orders.cancelOrder)} khi chưa lập hóa đơn hay giao hàng cho đơn đó. Đơn có dòng đã lập nháp hoặc đã phát hành thì nút hủy tắt và màn hình nói lý do; đơn đã giao mà chưa hoàn giao thì hệ thống từ chối việc hủy; đơn đã hủy không lập hóa đơn được.`,
     ],
   },
 ];

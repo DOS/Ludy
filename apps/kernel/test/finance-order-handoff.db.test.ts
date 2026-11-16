@@ -596,4 +596,98 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
       expect((await documentLines(o, posted.documentId)).every((l) => l.source_kind === null)).toBe(true);
     });
   });
+  // The order screen's per-line label and cancel hint (#3477): which lines a draft holds, and whether it is issued. A read only, by the tables' own policies.
+  describe('finance.einvoice_draft.order_lines', () => {
+    type States = { orders: Array<{ orderId: string; lines: Array<{ lineNo: number; state: string }> }> };
+    const states = (o: Org, orderIds: string[], user = o.owner) => query<States>(o, 'finance.einvoice_draft.order_lines', { orderIds }, user);
+    const linesOf = (r: States, orderId: string) => r.orders.find((x) => x.orderId === orderId)?.lines.map((l) => [l.lineNo, l.state]);
+
+    it('lists only the lines a draft holds: draft until it is issued, then issued, and an open line is not listed', async () => {
+      const o = await org();
+      await addSeries(o);
+      const handoff = handoffOf(o.entity, [{ description: 'Hàng A' }, { description: 'Hàng B' }, { description: 'Hàng C' }]);
+      expect((await states(o, [handoff.orderId])).orders).toEqual([]);
+      const one = await draftFrom(o, handoff, [1, 2]);
+      expect(linesOf(await states(o, [handoff.orderId]), handoff.orderId)).toEqual([[1, 'draft'], [2, 'draft']]);
+      await issue(o, one.id, '9101');
+      const two = await draftFrom(o, handoff);
+      expect(two.lines.map((l) => l.description)).toEqual(['Hàng C']);
+      expect(linesOf(await states(o, [handoff.orderId]), handoff.orderId)).toEqual([[1, 'issued'], [2, 'issued'], [3, 'draft']]);
+    });
+
+    it('reads submitting, pending and a rejected draft as a draft, a deleted draft frees its lines, and only issued is issued', async () => {
+      const o = await org();
+      await addSeries(o);
+      const handoff = handoffOf(o.entity, [{ description: 'Hàng A' }, { description: 'Hàng B' }, { description: 'Hàng C' }]);
+      const a = await draftFrom(o, handoff, [1]);
+      const b = await draftFrom(o, handoff, [2]);
+      const c = await draftFrom(o, handoff, [3]);
+      await toSubmitting(o, a.id);
+      await asJob(o, [["UPDATE crove_finance.einvoice_draft SET state = 'pending', provider_ref = 'sbx-p' WHERE org_id = $1 AND id = $2", [o.orgId, a.id]]]);
+      await toSubmitting(o, b.id);
+      await asJob(o, [["UPDATE crove_finance.einvoice_draft SET state = 'rejected', provider_ref = 'sbx-r', error_code = 'INVALID_DATA' WHERE org_id = $1 AND id = $2", [o.orgId, b.id]]]);
+      expect(linesOf(await states(o, [handoff.orderId]), handoff.orderId)).toEqual([[1, 'draft'], [2, 'draft'], [3, 'draft']]);
+      await execute(o, 'finance.einvoice_draft.delete', { draftId: c.id });
+      expect(linesOf(await states(o, [handoff.orderId]), handoff.orderId)).toEqual([[1, 'draft'], [2, 'draft']]);
+      await asJob(o, [["UPDATE crove_finance.einvoice_draft SET state = 'issued', issued_number = '9102', issued_at = pg_catalog.now() WHERE org_id = $1 AND id = $2", [o.orgId, a.id]]]);
+      expect(linesOf(await states(o, [handoff.orderId]), handoff.orderId)).toEqual([[1, 'issued'], [2, 'draft']]);
+    });
+
+    it('answers many orders in one read, asks a repeated id once, and lists no order without a draft', async () => {
+      const o = await org();
+      await addSeries(o);
+      const first = handoffOf(o.entity, [{ description: 'Hàng A' }]);
+      const second = handoffOf(o.entity, [{ description: 'Hàng B' }, { description: 'Hàng C' }]);
+      const bare = handoffOf(o.entity, [{ description: 'Hàng D' }]);
+      await draftFrom(o, first);
+      await draftFrom(o, second, [2]);
+      const got = await states(o, [first.orderId, second.orderId, bare.orderId, first.orderId, randomUUID()]);
+      expect(got.orders.map((x) => x.orderId).sort()).toEqual([first.orderId, second.orderId].sort());
+      expect(linesOf(got, first.orderId)).toEqual([[1, 'draft']]);
+      expect(linesOf(got, second.orderId)).toEqual([[2, 'draft']]);
+      // Ids and a number and a state only: nothing of the draft or the buyer.
+      expect(JSON.stringify(got)).not.toMatch(/Công ty Mua Thử|Hàng|9\d{3}/);
+    });
+
+    it("never counts another organisation's drafts, even for the same order id", async () => {
+      const a = await org();
+      const b = await org();
+      await addSeries(a);
+      await addSeries(b);
+      const handoff = handoffOf(a.entity, [{ description: 'Hàng A' }]);
+      await draftFrom(a, handoff);
+      expect(linesOf(await states(a, [handoff.orderId]), handoff.orderId)).toEqual([[1, 'draft']]);
+      expect((await states(b, [handoff.orderId])).orders).toEqual([]);
+      // A forged hand-off of the same order id in the other organisation holds its own line, and each side sees only its own.
+      const forged = { ...handoffOf(b.entity, [{ description: 'Hàng X' }, { description: 'Hàng Y' }]), orderId: handoff.orderId };
+      await draftFrom(b, forged);
+      expect(linesOf(await states(a, [handoff.orderId]), handoff.orderId)).toEqual([[1, 'draft']]);
+      expect(linesOf(await states(b, [handoff.orderId]), handoff.orderId)).toEqual([[1, 'draft'], [2, 'draft']]);
+    });
+
+    it("shows a member limited to another legal entity none of this entity's drafts, and every role may read", async () => {
+      const o = await org();
+      await addSeries(o);
+      const branch = (
+        await rows<{ id: string }>("INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh Huế', 'branch', $2) RETURNING id", [o.orgId, o.owner])
+      )[0]?.id as string;
+      const limited = await identity('limited');
+      await admin(async (c) => {
+        await c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, limited]);
+        await c.query("INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [o.orgId, limited, branch, o.owner]);
+      });
+      const handoff = handoffOf(o.entity, [{ description: 'Hàng A' }]);
+      await draftFrom(o, handoff);
+      for (const user of [o.owner, o.admin, o.member, o.viewer]) expect(linesOf(await states(o, [handoff.orderId], user), handoff.orderId)).toEqual([[1, 'draft']]);
+      expect((await states(o, [handoff.orderId], limited)).orders).toEqual([]);
+    });
+
+    it('takes 1 to 50 ids, ids only', async () => {
+      const o = await org();
+      await refused(states(o, []), 'VALIDATION');
+      await refused(states(o, Array.from({ length: 51 }, () => randomUUID())), 'VALIDATION');
+      await refused(query(o, 'finance.einvoice_draft.order_lines', { orderIds: ['not-an-id'] }), 'VALIDATION');
+      expect((await states(o, Array.from({ length: 50 }, () => randomUUID()))).orders).toEqual([]);
+    });
+  });
 });

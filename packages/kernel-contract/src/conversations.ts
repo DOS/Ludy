@@ -710,6 +710,14 @@ export const zConversationPurgeExpired = z.strictObject({ limit: z.number().int(
 export const zConversationPurged = z.strictObject({ threads: z.number().int(), messages: z.number().int(), identities: z.number().int(), more: z.boolean() });
 export type ConversationPurged = z.infer<typeof zConversationPurged>;
 export const zConversationEraseConnection = z.strictObject({ connectionId: zId });
+// A person's choice to delete a disconnected channel's conversations too (#3299): owners and admins, behind a confirmation that names the
+// counts and a fresh second factor. The channel must be disconnected first. The answer is the counts the erasure removed.
+export const zConversationEraseChannel = z.strictObject({ connectionId: zId, confirm: z.literal(true) });
+export const zConversationChannelErased = z.strictObject({ threads: z.number().int(), messages: z.number().int(), identities: z.number().int() });
+export type ConversationChannelErased = z.infer<typeof zConversationChannelErased>;
+// What the dialog's confirmation names: the threads and messages of one connection that the erasure would remove (counts only).
+export const zConversationChannelCounts = z.strictObject({ threads: z.number().int(), messages: z.number().int() });
+export type ConversationChannelCounts = z.infer<typeof zConversationChannelCounts>;
 
 // The "you are replying" marker (CV3, #2306): a member typing a reply marks the thread for 60 seconds; a mark is written at most once in 20 seconds
 // per thread and member, and the screens read it with their poll. A sweep drops the expired ones.

@@ -31,3 +31,20 @@ export type StockMoveFromOrderLine = z.input<typeof zStockMoveFromOrderLine>;
 export const ORDER_STOCK_STATUSES = ['moved', 'already_moved', 'returned', 'already_returned', 'service'] as const;
 export const zStockMoveFromOrderLineResult = z.strictObject({ status: z.enum(ORDER_STOCK_STATUSES), moveId: zId.nullable() });
 export type StockMoveFromOrderLineResult = z.infer<typeof zStockMoveFromOrderLineResult>;
+
+// The state of each order line on the e-invoice drafts of Kế toán (#3477, ADR-0050): the order screen's per-line label and the reason a drafted order is not cancelled from there.
+// `draft`: a draft that has not become an invoice holds the line (draft, submitting, pending, rejected, failed); `issued`: the draft is issued. A line no draft names is not listed (the
+// screen reads it as "none"). Asked by order ids, never listed: it cannot walk the drafts or reconcile every order with every draft (ADR-0050 "Left out").
+export const ORDER_LINE_INVOICE_ORDERS_MAX = 50;
+export const ORDER_LINE_INVOICE_STATES = ['draft', 'issued'] as const;
+export type OrderLineInvoiceState = (typeof ORDER_LINE_INVOICE_STATES)[number];
+export const zOrderLineInvoiceStatesInput = z.strictObject({ orderIds: z.array(zId).min(1).max(ORDER_LINE_INVOICE_ORDERS_MAX) });
+export const zOrderLineInvoiceStates = z.strictObject({
+  orders: z.array(
+    z.strictObject({
+      orderId: zId,
+      lines: z.array(z.strictObject({ lineNo: z.number().int().min(1), state: z.enum(ORDER_LINE_INVOICE_STATES) })),
+    }),
+  ),
+});
+export type OrderLineInvoiceStates = z.infer<typeof zOrderLineInvoiceStates>;

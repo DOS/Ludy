@@ -291,7 +291,7 @@ export interface MeetingTranslationDeps extends MeetingSummaryDeps {
 export function translationEstimate(bytes: number, price: MeetingTranslationDeps['price']): NonNullable<TranslationStatus['estimate']> {
   const inputTokens = Math.ceil(bytes / 2.5) + 250;
   const outputTokens = Math.ceil(bytes / 2.5) + 50;
-  const priced = price !== undefined && (Number(price.inputPerMTok) > 0 || Number(price.outputPerMTok) > 0);
+  const priced = price !== undefined && (isPositivePrice(price.inputPerMTok) || isPositivePrice(price.outputPerMTok));
   return { inputTokens, outputTokens, cost: priced ? aiCost([{ inputTokens, outputTokens }], price) : null };
 }
 
@@ -390,7 +390,7 @@ export interface MeetingAskDeps extends MeetingSummaryDeps {
 
 // What one question is expected to use, before the click: a fixed figure (the lines are not read until the member asks). An estimate, not a promise.
 export function askEstimate(price: MeetingAskDeps['price']): NonNullable<AskStatus['estimate']> {
-  const priced = price !== undefined && (Number(price.inputPerMTok) > 0 || Number(price.outputPerMTok) > 0);
+  const priced = price !== undefined && (isPositivePrice(price.inputPerMTok) || isPositivePrice(price.outputPerMTok));
   return { ...ASK_ESTIMATE, cost: priced ? aiCost([ASK_ESTIMATE], price) : null };
 }
 

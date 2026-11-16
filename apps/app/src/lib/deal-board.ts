@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The deal board's pure part (#2226): where a card sits once it is dropped, before the server answers.
 import type { Board, Deal } from '@crove/kernel-contract';
+import { EMPTY_DEAL_FILTER, type DealFilterState } from './deal-filter.ts';
 
 export interface Drop {
   stageId: string;
@@ -23,4 +24,11 @@ export function moveCard(board: Board, deal: Deal, drop: Drop): Board {
       return { ...c, cards };
     }),
   };
+}
+
+// What "Xem tất cả" in a closed column shows (docs/plan/crm.md section 6, "Won and Lost show the last 30 days, with a link
+// to the list for all"): the list of the deals of that status of every date. The rest of the bar is cleared, so no other
+// condition (a stage, an owner, a search) leaves a closed deal out of "all".
+export function showAllClosed(kind: 'won' | 'lost'): DealFilterState {
+  return { ...EMPTY_DEAL_FILTER, rest: [], status: kind };
 }
