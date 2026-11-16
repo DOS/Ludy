@@ -111,13 +111,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_meetings.meeting_link',
   'crove_notes.link',
   'crove_notes.note',
-  'crove_sign.ai_analysis',
-  'crove_sign.envelope',
-  'crove_sign.field',
-  'crove_sign.signer',
-  'crove_sign.signing_event',
-  'crove_sign.signing_otp',
-  'crove_sign.signing_token',
 ]);
 // Tables whose rows belong to one member (ADR-0037, notes plan §3.6 and step N1): unlike saved_view and notification,
 // the system context reads only what the value's predicate selects (over alias t, operators schema-qualified so a

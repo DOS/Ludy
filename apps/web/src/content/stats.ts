@@ -3,16 +3,16 @@
 // `--check` fails when it is out of date. Large counts are rounded down (test cases to the thousand, lines to the ten thousand), so the page
 // never claims more than the repository holds; the README's "How these numbers are counted" says how each one is taken.
 export const STATS = {
-  modules: 7,
-  operations: 931,
-  commands: 602,
-  queries: 329,
-  migrations: 535,
-  testCases: 10000,
-  invariantSuites: 136,
-  adrs: 36,
+  modules: 9,
+  operations: 1133,
+  commands: 718,
+  queries: 415,
+  migrations: 619,
+  testCases: 12000,
+  invariantSuites: 164,
+  adrs: 39,
   languages: 2,
   coworkers: 4,
-  mcpTools: 3,
-  typescriptLines: 580000,
+  mcpTools: 7,
+  typescriptLines: 720000,
 } as const;

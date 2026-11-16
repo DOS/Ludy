@@ -53,6 +53,7 @@ import { MEETINGS_IMPORT_SWEEP_CRON, MEETINGS_IMPORT_SWEEP_EXPIRE_SECONDS, runMe
 import { CHAT_JOB_EXPIRE_SECONDS, CHAT_RETRY_DELAY_SECONDS, CHAT_RETRY_LIMIT, runMeetingChat, type ChatJob } from './meeting-chat-job.ts';
 import { MEETING_CHAT_SWEEP_CRON, MEETING_CHAT_SWEEP_EXPIRE_SECONDS, runMeetingChatSweep } from './meeting-chat-sweep.ts';
 import { NOTES_REMIND_CRON, NOTES_TRASH_CRON, NOTES_TRASH_TZ, queueNotesMemberPurge, runNotesMemberPurge, sweepNotesFormerMembers, sweepNotesReminders, sweepNotesTrash, type NotesMemberPurgeJob } from './notes-worker.ts';
+import { SIGN_CLEANUP_CRON, SIGN_EXPIRE_SWEEP_CRON, SIGN_JOB_RETRY_LIMIT, runSignPdfInspectJob, runSignPdfSealJob, sweepSignCleanup, sweepSignExpire, sweepSignPendingWork, type SignEnvelopeJob } from './sign-worker.ts';
 import { PERIOD_BALANCE_VERIFY_CRON, runPeriodBalanceReconciliation } from './period-balance.ts';
 import { runYearArchive } from './year-archive.ts';
 import {
@@ -389,6 +390,32 @@ export function sendExtractJob(boss: JobSender, row: OutboxRow, priority: number
     return boss.send(QUEUES.extract, { orgId: row.org_id, fileId, version } satisfies ExtractJob, { ...options, singletonKey: jobKey(row.org_id, QUEUES.extract, `${fileId}:${version}`) });
   }
   return boss.send(QUEUES.extract, { orgId: row.org_id, fileId } satisfies ExtractJob, { ...options, singletonKey: jobKey(row.org_id, QUEUES.extract, fileId) });
+}
+
+async function enqueueSignInspect(boss: JobSender, orgId: string, envelopeId: string): Promise<void> {
+  await boss.send(
+    QUEUES.signPdfInspect,
+    { orgId, envelopeId } satisfies SignEnvelopeJob,
+    {
+      singletonKey: jobKey(orgId, QUEUES.signPdfInspect, envelopeId),
+      retryLimit: SIGN_JOB_RETRY_LIMIT,
+      retryDelay: 20,
+      retryBackoff: true,
+    },
+  );
+}
+
+async function enqueueSignSeal(boss: JobSender, orgId: string, envelopeId: string): Promise<void> {
+  await boss.send(
+    QUEUES.signPdfSeal,
+    { orgId, envelopeId } satisfies SignEnvelopeJob,
+    {
+      singletonKey: jobKey(orgId, QUEUES.signPdfSeal, envelopeId),
+      retryLimit: SIGN_JOB_RETRY_LIMIT,
+      retryDelay: 20,
+      retryBackoff: true,
+    },
+  );
 }
 
 // The daily pull of every bank feed (ADR-0039), early morning in Vietnam; a sync retries a few times, then dead-letters.
@@ -761,6 +788,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   const social = deps.runtime.installed('social');
   const crm = deps.runtime.installed('crm');
   const notes = deps.runtime.installed('notes');
+  const sign = deps.runtime.installed('sign');
   const ads = deps.runtime.installed('ads');
   // A cron job of a module left out (#1471): a schedule a run with the module saved stays in pg-boss, which would queue
   // ticks nobody works and the prober would report as stuck. So it is taken off, and the ticks it queued (no data) go.
@@ -1247,6 +1275,64 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     // The member purges stay queued (they carry whose notes to purge) for when notes is installed again.
     await dropCron(QUEUES.notesTrash);
     await dropCron(QUEUES.notesRemind);
+  }
+
+  // eSign (#3323, ADR-0053): PDF inspect and PDF seal are module work gated on org_app_on(orgId, 'sign'); expiry and
+  // stale secret cleanup sweeps run across all active orgs regardless of whether the org turned Sign off.
+  if (sign) {
+    const signConcurrency = extractWorkers(deps.extract);
+    await boss.work<SignEnvelopeJob>(
+      QUEUES.signPdfInspect,
+      { batchSize: 1, localConcurrency: signConcurrency, pollingIntervalSeconds: EXTRACT_POLL_SECONDS },
+      async ([job]) => {
+        if (!job) return;
+        const done = await runSignPdfInspectJob(
+          { workerDb: deps.workerDb, runtime: deps.runtime, store: deps.store, extract: deps.extract },
+          job.data,
+        );
+        if (done.status !== 'skipped_not_pending') {
+          console.log(`[sign-inspect] ${job.data.envelopeId.slice(0, 8)}: ${done.status}`);
+        }
+      },
+    );
+    await boss.work<SignEnvelopeJob>(
+      QUEUES.signPdfSeal,
+      { batchSize: 1, localConcurrency: signConcurrency, pollingIntervalSeconds: EXTRACT_POLL_SECONDS },
+      async ([job]) => {
+        if (!job) return;
+        const done = await runSignPdfSealJob(
+          { workerDb: deps.workerDb, runtime: deps.runtime, store: deps.store, extract: deps.extract },
+          job.data,
+        );
+        if (done.status !== 'skipped') {
+          console.log(`[sign-seal] ${job.data.envelopeId.slice(0, 8)}: ${done.status}`);
+        }
+      },
+    );
+    await boss.work(QUEUES.signExpireSweep, { batchSize: 1 }, async () => {
+      const expired = await sweepSignExpire({ workerDb: deps.workerDb, runtime: deps.runtime });
+      if (expired > 0) console.log(`[sign-expire-sweep] expired ${expired} envelope(s)`);
+      const recovered = await sweepSignPendingWork({
+        workerDb: deps.workerDb,
+        appOn: (orgId) => deps.runtime.appOn(orgId, 'sign', { fresh: true }),
+        enqueueInspect: (orgId, envelopeId) => enqueueSignInspect(boss, orgId, envelopeId),
+        enqueueSeal: (orgId, envelopeId) => enqueueSignSeal(boss, orgId, envelopeId),
+      });
+      if (recovered.inspect > 0 || recovered.seal > 0) {
+        console.log(`[sign-work-recovery] re-queued inspect=${recovered.inspect} seal=${recovered.seal}`);
+      }
+    });
+    await boss.schedule(QUEUES.signExpireSweep, SIGN_EXPIRE_SWEEP_CRON, null, { tz: RETENTION_TZ, missed: 'once' });
+    await boss.work(QUEUES.signCleanup, { batchSize: 1 }, async () => {
+      const res = await sweepSignCleanup({ workerDb: deps.workerDb, runtime: deps.runtime });
+      if (res.otps + res.tokens + res.drafts > 0) {
+        console.log(`[sign-cleanup] orgs=${res.orgs} otps=${res.otps} tokens=${res.tokens} drafts=${res.drafts}`);
+      }
+    });
+    await boss.schedule(QUEUES.signCleanup, SIGN_CLEANUP_CRON, null, { tz: RETENTION_TZ, missed: 'once' });
+  } else {
+    await dropCron(QUEUES.signExpireSweep);
+    await dropCron(QUEUES.signCleanup);
   }
 
   // Vy working for one member (ADR-0049, #2822), kernel-level and independent of the Notes module: once a day the expired results, then the data of
@@ -2536,6 +2622,22 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               }
               // A member who left (#1671): their private notes are removed 30 days later, beside the rest.
               if (notes) await queueNotesMemberPurge(boss, row);
+              if (sign && row.type === 'sign.envelope.inspect_queued') {
+                await enqueueSignInspect(boss, row.org_id, String(row.payload.envelopeId));
+              }
+              if (sign && row.type === 'sign.envelope.seal_queued') {
+                await enqueueSignSeal(boss, row.org_id, String(row.payload.envelopeId));
+              }
+              if (sign && row.type === 'kernel.org.apps_changed' && row.payload.module === 'sign' && row.payload.enabled === true) {
+                await sweepSignPendingWork({
+                  workerDb: deps.workerDb,
+                  appOn: (orgId) => deps.runtime.appOn(orgId, 'sign', { fresh: true }),
+                  orgId: row.org_id,
+                  olderThan: new Date(),
+                  enqueueInspect: (orgId, envelopeId) => enqueueSignInspect(boss, orgId, envelopeId),
+                  enqueueSeal: (orgId, envelopeId) => enqueueSignSeal(boss, orgId, envelopeId),
+                });
+              }
               // A bank feed connected, or an account of one mapped (ADR-0039, #2044): its sync lists the accounts and
               // pulls the mapped ones.
               if (

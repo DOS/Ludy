@@ -1,13 +1,14 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
--- Crove kernel (issue #3394, #2540 slice 1c-2): the org purge also deletes employee leave ledger entries
--- (crove_hr.payroll_leave_entry), ahead of the employees (crove_hr.payroll_employee) they reference. Idempotent; applied files stay untouched.
--- This is the body of 20270103050000 (the newest, with projects) with one change: crove_hr.payroll_leave_entry
--- joins v_kernel_first right before crove_hr.payroll_employee. Its signature, owner, grants and every other list and step are unchanged.
+-- Crove kernel (issue #3394, #2540 slice 1c-2): update crove_kernel.org_purge to also delete crove_hr.payroll_leave_entry
+-- ahead of crove_hr.payroll_employee (based on 20270104080000_crove_kernel_org_purge_sign.sql, #3323). Idempotent; applied files stay untouched.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_kernel.org_purge(p_min_days integer)
-RETURNS TABLE (outcome text, counts jsonb, blob_keys text[])
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+ RETURNS TABLE(outcome text, counts jsonb, blob_keys text[])
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path = pg_catalog, pg_temp
+AS $$
 DECLARE
   v_org uuid := crove_kernel.ctx_org_id();
   v_refusal text;
@@ -31,6 +32,7 @@ DECLARE
   v_conversation_keys text[];
   -- Rows of these tables are deleted whole, in this order (children before the rows they reference).
   v_kernel_first text[] := ARRAY[
+    'crove_sign.signing_otp', 'crove_sign.signing_token', 'crove_sign.ai_analysis', 'crove_sign.field', 'crove_sign.signer', 'crove_sign.envelope',
     'crove_kernel.member_vy_memory', 'crove_kernel.member_vy_result',
     'crove_hr.payroll_bank_template', 'crove_hr.payroll_dependent', 'crove_hr.payroll_leave_entry', 'crove_hr.payroll_employee',
     'crove_meetings.chat_post_body', 'crove_meetings.chat_post', 'crove_meetings.chat_channel_target', 'crove_meetings.chat_channel', 'crove_meetings.calendar_agenda', 'crove_meetings.hook_delivery', 'crove_meetings.member_hook', 'crove_meetings.translation', 'crove_meetings.meeting_note', 'crove_meetings.media_key', 'crove_meetings.action_item', 'crove_meetings.meeting_result', 'crove_meetings.transcript_segment', 'crove_meetings.live_line', 'crove_meetings.live_chunk', 'crove_meetings.audio_segment', 'crove_meetings.meeting_video', 'crove_meetings.meeting_reader', 'crove_meetings.meeting',
@@ -61,20 +63,13 @@ DECLARE
     'crove_social.review_link_post', 'crove_social.review_link', 'crove_social.short_link_click',
     'crove_social.short_link', 'crove_social.snippet', 'crove_social.watermark', 'crove_social.report_branding', 'crove_social.goal', 'crove_social.banned_word', 'crove_social.external_import', 'crove_social.external_post', 'crove_social.review_check', 'crove_social.digest_week', 'crove_social.channel_option', 'crove_social.media_attribution', 'crove_social.push_subscription', 'crove_social.saved_view', 'crove_social.media_archive'];
 BEGIN
-  -- Also refuses a definer owner or another role reached through a mistaken grant: only the worker login, in the
-  -- sealed system context of the org it purges (execute() of kernel.org.purge).
   IF NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER') THEN
     RAISE EXCEPTION 'ORG_PURGE_WORKER_ONLY' USING ERRCODE = '42501';
   END IF;
   IF v_org IS NULL OR crove_kernel.ctx_actor_type() IS DISTINCT FROM 'system' THEN
     RAISE EXCEPTION 'ORG_PURGE_SYSTEM_CONTEXT' USING ERRCODE = '42501';
   END IF;
-  -- The write fence: every other transaction inside an offboarding org holds this lock shared (enter_context,
-  -- enter_system_context), so taking it exclusive waits for those in flight and holds new ones back until the purge
-  -- commits; they then see the org closed and are refused. Taken before the tenant row, so an in-flight transaction
-  -- that updates the tenant row cannot deadlock with the purge. This transaction's own shared hold does not conflict.
   PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('kernel.org.purge:' || v_org::text, 0));
-  -- Serializes purges of one org and holds the status still while the map runs.
   PERFORM 1 FROM crove_kernel.tenant t WHERE t.org_id = v_org FOR UPDATE;
   v_refusal := crove_kernel.org_purge_refusal(v_org, p_min_days);
   IF v_refusal IS NOT NULL THEN
@@ -83,10 +78,6 @@ BEGIN
     RETURN;
   END IF;
 
-  -- The append-only working rows (#1032): task comments and Social post approvals. Their append_only_row trigger
-  -- (purge_append_only_guard) lets a DELETE through only from this function, for the org it purges, under this
-  -- transaction-local mark, cleared again right after. Deleted first, so the tasks, positions, agents, runs, variants,
-  -- posts and channel connections they referenced are no longer pinned and go with the rest of the map.
   PERFORM pg_catalog.set_config('crove.org_purge', v_org::text, true);
   DELETE FROM crove_kernel.task_comment c WHERE c.org_id = v_org;
   GET DIAGNOSTICS v_n = ROW_COUNT;
@@ -94,9 +85,9 @@ BEGIN
   DELETE FROM crove_social.post_approval a WHERE a.org_id = v_org;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deleted := v_deleted || pg_catalog.jsonb_build_object('crove_social.post_approval', v_n);
-  -- The sales e-invoice drafts (#2500): the guards of the draft and its lines let a DELETE of a draft that has left `draft` through only from this function, under
-  -- the same mark. Lines first. The series are deleted with the first list below.
-  -- The signed XML of an issued sales invoice stays with the books: read here, before the drafts that name it are deleted below.
+  DELETE FROM crove_sign.signing_event se WHERE se.org_id = v_org;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  v_deleted := v_deleted || pg_catalog.jsonb_build_object('crove_sign.signing_event', v_n);
   v_keep_signed_file := ARRAY(SELECT d.signed_file_id FROM crove_finance.einvoice_draft d WHERE d.org_id = v_org AND d.signed_file_id IS NOT NULL);
   DELETE FROM crove_finance.einvoice_draft_line l WHERE l.org_id = v_org;
   GET DIAGNOSTICS v_n = ROW_COUNT;
@@ -104,21 +95,17 @@ BEGIN
   DELETE FROM crove_finance.einvoice_draft d WHERE d.org_id = v_org;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deleted := v_deleted || pg_catalog.jsonb_build_object('crove_finance.einvoice_draft', v_n);
-  -- The pay runs (#2531): frozen once approved, deleted under the same mark, lines first, before the employments and employees they name.
   DELETE FROM crove_hr.payroll_line l WHERE l.org_id = v_org;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deleted := v_deleted || pg_catalog.jsonb_build_object('crove_hr.payroll_line', v_n);
   DELETE FROM crove_hr.payroll_run r WHERE r.org_id = v_org;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deleted := v_deleted || pg_catalog.jsonb_build_object('crove_hr.payroll_run', v_n);
-  -- The payroll employments (#2530): append-only like the task comments, deleted under the same mark, before the employees they name.
   DELETE FROM crove_hr.payroll_employment e WHERE e.org_id = v_org;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deleted := v_deleted || pg_catalog.jsonb_build_object('crove_hr.payroll_employment', v_n);
   PERFORM pg_catalog.set_config('crove.org_purge', '', true);
 
-  -- The proposals behind kept books: the approval and four-eyes trail of booked entries (purchase documents, cash and
-  -- journal vouchers, and reversals, whose entry names the proposal).
   v_keep_proposal := ARRAY(
     SELECT d.proposal_id FROM crove_finance.purchase_document d WHERE d.org_id = v_org AND d.proposal_id IS NOT NULL
     UNION
@@ -129,7 +116,6 @@ BEGIN
     SELECT e.source_id FROM crove_finance.journal_entry e
     WHERE e.org_id = v_org AND e.source_type = 'kernel.proposal' AND e.source_id IS NOT NULL);
 
-  -- Rows that append-only rows and kept proposals reference, with what they reference in turn.
   v_keep_task := ARRAY(
     WITH RECURSIVE k(id) AS (
       SELECT c.task_id FROM crove_kernel.task_comment c WHERE c.org_id = v_org
@@ -177,7 +163,6 @@ BEGIN
     UNION
     SELECT c.party_id FROM crove_finance.cash_voucher c WHERE c.org_id = v_org AND c.party_id IS NOT NULL
     UNION
-    -- Ledger lines name parties without a foreign key (sales, opening balances, bank matching on 131 and 331).
     SELECT l.party_id FROM crove_finance.journal_line l WHERE l.org_id = v_org AND l.party_id IS NOT NULL);
   v_keep_file := ARRAY(
     SELECT d.source_file_id FROM crove_finance.purchase_document d WHERE d.org_id = v_org AND d.source_file_id IS NOT NULL
@@ -189,8 +174,6 @@ BEGIN
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deleted := v_deleted || pg_catalog.jsonb_build_object('crove_kernel.proposal', v_n);
 
-  -- The blobs of the customers' stored images, read before their rows go (the delete trigger queues them too, so a failure to delete one
-  -- here leaves it to the worker).
   v_conversation_keys := ARRAY(
     SELECT a.storage_key FROM crove_kernel.conversation_attachment a
     WHERE a.org_id = v_org AND a.state = 'stored' AND a.storage_key LIKE 'conversation/' || v_org::text || '/%' ORDER BY 1);
@@ -201,13 +184,11 @@ BEGIN
     v_deleted := v_deleted || pg_catalog.jsonb_build_object(v_t, v_n);
   END LOOP;
 
-  -- The items of stock (#2512): those no stock move names go with the aliases above; the moves are kept with the books, and so are the items they name.
   DELETE FROM crove_finance.stock_item i
   WHERE i.org_id = v_org AND NOT EXISTS (SELECT 1 FROM crove_finance.stock_move m WHERE m.org_id = v_org AND m.item_id = i.id);
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deleted := v_deleted || pg_catalog.jsonb_build_object('crove_finance.stock_item', v_n);
 
-  -- Social: the posts and variants no approval pins, then the channel connections no kept variant uses.
   DELETE FROM crove_social.post_variant v WHERE v.org_id = v_org AND v.id <> ALL (v_keep_variant);
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deleted := v_deleted || pg_catalog.jsonb_build_object('crove_social.post_variant', v_n);
@@ -218,8 +199,6 @@ BEGIN
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deleted := v_deleted || pg_catalog.jsonb_build_object('crove_kernel.channel_connection', v_n);
 
-  -- The sealed copies of closed ads tokens and the revoke state (#2296), after every credential and connection of the org is gone: the ads hold made a
-  -- copy for each ads credential the deletes above dropped, and those go too. The seal first, since it references the obligation.
   DELETE FROM crove_ads.ad_token_seal s WHERE s.org_id = v_org;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deleted := v_deleted || pg_catalog.jsonb_build_object('crove_ads.ad_token_seal', v_n);
@@ -227,7 +206,6 @@ BEGIN
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deleted := v_deleted || pg_catalog.jsonb_build_object('crove_ads.ad_token_revoke', v_n);
 
-  -- The org chart and its work, but what a task comment pins.
   DELETE FROM crove_kernel.task t WHERE t.org_id = v_org AND t.id <> ALL (v_keep_task);
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deleted := v_deleted || pg_catalog.jsonb_build_object('crove_kernel.task', v_n);
@@ -241,12 +219,10 @@ BEGIN
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deleted := v_deleted || pg_catalog.jsonb_build_object('crove_kernel.agent', v_n);
 
-  -- Members last among the org chart: a kept position's holder becomes NULL (ON DELETE SET NULL).
   DELETE FROM crove_kernel.tenant_member m WHERE m.org_id = v_org;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deleted := v_deleted || pg_catalog.jsonb_build_object('crove_kernel.tenant_member', v_n);
 
-  -- Parties: those a kept voucher names are anonymized, the rest deleted.
   UPDATE crove_kernel.party p SET duplicate_of = NULL
   WHERE p.org_id = v_org AND p.id = ANY (v_keep_party) AND p.duplicate_of IS NOT NULL;
   UPDATE crove_kernel.party p SET address = NULL, email = NULL, phone = NULL, verified_by = NULL
@@ -257,9 +233,6 @@ BEGIN
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deleted := v_deleted || pg_catalog.jsonb_build_object('crove_kernel.party', v_n);
 
-  -- Files: those the books reference stay. The blobs of the others go, unless a kept row has the same content. Only
-  -- keys under the org's own documents prefix are returned (the content-address check is NOT VALID for old rows), so
-  -- no archive/ or export/ key, nor another org's, can ever be deleted from here.
   WITH gone AS (
     DELETE FROM crove_kernel.file f WHERE f.org_id = v_org AND f.id <> ALL (v_keep_file) RETURNING f.storage_key
   )
