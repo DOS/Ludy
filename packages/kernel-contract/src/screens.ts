@@ -193,9 +193,10 @@ const ADS_SCREENS = {
 // every query enforce; the item is hidden from everyone else by the app's role check.
 const HR_SCREENS = {
   // The bank templates of the salary file are the second tab of Bảng lương (#3225).
-  routes: [{ path: 'hr/employees' }, { path: 'hr/payroll' }, { path: 'hr/declarations' }, { path: 'hr/bank-templates', find: 'bankTemplates' }],
+  routes: [{ path: 'hr/employees' }, { path: 'hr/recruiting' }, { path: 'hr/payroll' }, { path: 'hr/declarations' }, { path: 'hr/bank-templates', find: 'bankTemplates' }],
   nav: [
     { app: 'hr', group: 'people', path: 'hr/employees', label: 'employees' },
+    { app: 'hr', group: 'people', path: 'hr/recruiting', label: 'recruiting' },
     { app: 'hr', group: 'people', path: 'hr/payroll', label: 'payroll' },
     { app: 'hr', group: 'people', path: 'hr/declarations', label: 'declarations' },
   ],

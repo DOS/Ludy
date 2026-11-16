@@ -300,6 +300,30 @@ import { zHrBankTemplate, zHrBankTemplateCreate, zHrBankTemplateEdit, zHrBankTem
 import { zHrLeaveBalanceAsk, zHrLeaveBalanceResult, zHrLeaveDelete, zHrLeaveSet, zHrLeaveWritten } from './hr-leave.ts';
 import { zHrLaborCheckAsk, zHrLaborCheckResult } from './hr-declarations.ts';
 import {
+  zHrCandidateAdd,
+  zHrCandidateEdit,
+  zHrCandidateEraseResult,
+  zHrCandidateHire,
+  zHrCandidateHireResult,
+  zHrCandidateInterviewScheduled,
+  zHrCandidateList,
+  zHrCandidateMoveStage,
+  zHrCandidateRef,
+  zHrCandidateScheduleInterview,
+  zHrCandidateView,
+  zHrCandidateWritten,
+  zHrInterviewSlotsAsk,
+  zHrInterviewSlotsResult,
+  zHrOpeningAdd,
+  zHrOpeningClose,
+  zHrOpeningEdit,
+  zHrOpeningList,
+  zHrOpeningView,
+  zHrOpeningWritten,
+  zHrRecruitingBriefAsk,
+  zHrRecruitingBriefResult,
+} from './hr-recruiting.ts';
+import {
   zNote,
   zNoteCreate,
   zNoteLinkAdd,
@@ -957,6 +981,28 @@ export const contract = {
         flag: oc.input(zHrCoworkerAsk).output(zHrCoworkerFlagged),
         explain: oc.input(zHrCoworkerPayslipAsk).output(zHrCoworkerExplained),
       },
+    },
+    // Lightweight recruiting (#3425, Stage 3 slice 3b-2): openings, candidate pipeline, calendar interviews,
+    // 1-click hire to payroll employee + initial employment, and Ly pseudonymized screening brief.
+    recruiting: {
+      openings: {
+        list: oc.input(zHrOpeningList).output(z.array(zHrOpeningView)),
+        add: oc.input(zHrOpeningAdd).output(zHrOpeningWritten),
+        edit: oc.input(zHrOpeningEdit).output(zHrOpeningWritten),
+        close: oc.input(zHrOpeningClose).output(zHrOpeningWritten),
+      },
+      candidates: {
+        list: oc.input(zHrCandidateList).output(z.array(zHrCandidateView)),
+        get: oc.input(zHrCandidateRef).output(zHrCandidateView),
+        add: oc.input(zHrCandidateAdd).output(zHrCandidateWritten),
+        edit: oc.input(zHrCandidateEdit).output(zHrCandidateWritten),
+        moveStage: oc.input(zHrCandidateMoveStage).output(zHrCandidateWritten),
+        scheduleInterview: oc.input(zHrCandidateScheduleInterview).output(zHrCandidateInterviewScheduled),
+        hire: oc.input(zHrCandidateHire).output(zHrCandidateHireResult),
+        erase: oc.input(zHrCandidateRef).output(zHrCandidateEraseResult),
+      },
+      interviewSlots: oc.input(zHrInterviewSlotsAsk).output(zHrInterviewSlotsResult),
+      brief: oc.input(zHrRecruitingBriefAsk).output(zHrRecruitingBriefResult),
     },
   },
   // Members' notes (#1671, ADR-0037), when the deployment runs the notes module: private to their author or shared with
