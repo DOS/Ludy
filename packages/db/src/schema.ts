@@ -215,14 +215,14 @@ export type PartyTable = Refine<
 // keeps UPDATE only to lock the row (SELECT ... FOR UPDATE), so no column has an update type here.
 // social: an image uploaded for a Social post (#372); import: a spreadsheet for a module's import (#465). Neither is
 // extracted or shown in the Inbox. meeting_audio and meeting_video: encrypted meeting recordings (#2576).
-export const FILE_SOURCES = ['upload', 'email', 'social', 'import', 'meeting_audio', 'meeting_video'] as const;
+export const FILE_SOURCES = ['upload', 'email', 'social', 'import', 'meeting_audio', 'meeting_video', 'sign_document', 'sign_sealed', 'sign_certificate'] as const;
 type Frozen<T> = ColumnType<SelectType<T>, InsertType<T>, G.NotGranted>;
 export type FileTable = Refine<
   G.KernelFileTable,
   { [K in Exclude<keyof G.KernelFileTable, 'source'>]: Frozen<G.KernelFileTable[K]> } & { source: Frozen<(typeof FILE_SOURCES)[number]> }
 >;
 
-export const FILE_UPLOAD_PURPOSES = ['document', 'social', 'import', 'meeting_audio', 'meeting_video'] as const;
+export const FILE_UPLOAD_PURPOSES = ['document', 'social', 'import', 'meeting_audio', 'meeting_video', 'sign_document'] as const;
 export type FileUploadPurpose = (typeof FILE_UPLOAD_PURPOSES)[number];
 export type FileUploadTable = Refine<G.KernelFileUploadTable, { purpose: Generated<FileUploadPurpose> }>;
 
@@ -1070,6 +1070,13 @@ export type HrPayrollEmploymentTable = Refine<
 export const HR_RUN_STATUSES = ['draft', 'approved', 'paid', 'closed'] as const;
 export const HR_LINE_KINDS = ['pay', 'adjustment'] as const;
 export const HR_LINE_STATUSES = ['calculated', 'refused'] as const;
+export const HR_LEAVE_ENTRY_KINDS = ['opening_balance', 'annual_leave', 'personal_paid', 'unpaid_leave'] as const;
+export type HrLeaveEntryKind = (typeof HR_LEAVE_ENTRY_KINDS)[number];
+export type HrPayrollLeaveEntryTable = Refine<
+  G.HrPayrollLeaveEntryTable,
+  { kind: ColumnType<HrLeaveEntryKind, HrLeaveEntryKind, never>; legal_entity_id: LegalEntityColumn },
+  'legal_entity_id'
+>;
 export type HrPayrollRunTable = Refine<G.HrPayrollRunTable, { status: Generated<(typeof HR_RUN_STATUSES)[number]> }>;
 export type HrPayrollLineTable = Refine<
   G.HrPayrollLineTable,
@@ -1171,6 +1178,56 @@ export type ProjectsProjectTable = Refine<
   }
 >;
 
+// Electronic signatures (Sign, #3323): envelope workflow, signers, fields, AI analysis, and hash-chained events.
+export const SIGN_ENVELOPE_STATUSES = ['draft', 'sent', 'in_progress', 'completed', 'declined', 'voided', 'expired'] as const;
+export type SignEnvelopeStatus = (typeof SIGN_ENVELOPE_STATUSES)[number];
+export const SIGN_ROUTING_MODES = ['parallel', 'sequential'] as const;
+export type SignRoutingMode = (typeof SIGN_ROUTING_MODES)[number];
+export const SIGN_SOURCE_KINDS = ['standalone', 'crm_quote', 'crm_order', 'hr_contract'] as const;
+export type SignSourceKind = (typeof SIGN_SOURCE_KINDS)[number];
+export const SIGN_INSPECT_STATUSES = ['pending', 'passed', 'failed'] as const;
+export type SignInspectStatus = (typeof SIGN_INSPECT_STATUSES)[number];
+export const SIGN_SEAL_STATUSES = ['pending', 'sealed', 'failed'] as const;
+export type SignSealStatus = (typeof SIGN_SEAL_STATUSES)[number];
+export const SIGN_SIGNER_ROLES = ['signer', 'approver', 'cc'] as const;
+export type SignSignerRole = (typeof SIGN_SIGNER_ROLES)[number];
+export const SIGN_DELIVERY_MODES = ['link', 'email'] as const;
+export type SignDeliveryMode = (typeof SIGN_DELIVERY_MODES)[number];
+export const SIGN_SIGNER_STATUSES = ['waiting', 'pending', 'viewed', 'signed', 'declined', 'voided', 'expired'] as const;
+export type SignSignerStatus = (typeof SIGN_SIGNER_STATUSES)[number];
+export const SIGN_SIGNATURE_KINDS = ['draw', 'type'] as const;
+export type SignSignatureKind = (typeof SIGN_SIGNATURE_KINDS)[number];
+export const SIGN_FIELD_TYPES = ['signature', 'initials', 'date', 'text', 'checkbox'] as const;
+export type SignFieldType = (typeof SIGN_FIELD_TYPES)[number];
+export const SIGN_AI_ANALYSIS_STATUSES = ['pending', 'completed', 'failed'] as const;
+export type SignAiAnalysisStatus = (typeof SIGN_AI_ANALYSIS_STATUSES)[number];
+export const SIGN_ACTOR_TYPES = ['user', 'signer', 'system', 'ai'] as const;
+export type SignActorType = (typeof SIGN_ACTOR_TYPES)[number];
+
+export type SignEnvelopeTable = Refine<
+  G.SignEnvelopeTable,
+  {
+    status: Generated<SignEnvelopeStatus>;
+    routing_mode: Generated<SignRoutingMode>;
+    source_kind: Generated<SignSourceKind>;
+    inspect_status: Generated<SignInspectStatus>;
+    seal_status: SignSealStatus | null;
+  }
+>;
+
+export type SignSignerTable = Refine<
+  G.SignSignerTable,
+  {
+    signer_role: Generated<SignSignerRole>;
+    delivery_mode: Generated<SignDeliveryMode>;
+    status: Generated<SignSignerStatus>;
+    signature_kind: SignSignatureKind | null;
+  }
+>;
+
+export type SignFieldTable = Refine<G.SignFieldTable, { field_type: SignFieldType }>;
+export type SignAiAnalysisTable = Refine<G.SignAiAnalysisTable, { status: Generated<SignAiAnalysisStatus> }>;
+export type SignSigningEventTable = Refine<G.SignSigningEventTable, { actor_type: SignActorType }>;
 type Refined = Tables<{
   'crove_ads.ad_account': AdsAdAccountTable;
   'crove_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
@@ -1196,6 +1253,7 @@ type Refined = Tables<{
   'crove_hr.payroll_bank_template': HrPayrollBankTemplateTable;
   'crove_hr.payroll_employee': HrPayrollEmployeeTable;
   'crove_hr.payroll_employment': HrPayrollEmploymentTable;
+  'crove_hr.payroll_leave_entry': HrPayrollLeaveEntryTable;
   'crove_hr.payroll_line': HrPayrollLineTable;
   'crove_hr.payroll_run': HrPayrollRunTable;
   'crove_meetings.action_item': MeetingsActionItemTable;
@@ -1209,6 +1267,11 @@ type Refined = Tables<{
   'crove_notes.note': NotesNoteTable;
   'crove_notes.todo': NotesTodoTable;
   'crove_projects.project': ProjectsProjectTable;
+  'crove_sign.ai_analysis': SignAiAnalysisTable;
+  'crove_sign.envelope': SignEnvelopeTable;
+  'crove_sign.field': SignFieldTable;
+  'crove_sign.signer': SignSignerTable;
+  'crove_sign.signing_event': SignSigningEventTable;
   'crove_kernel.calendar_connection': CalendarConnectionTable;
   'crove_kernel.calendar_event': CalendarEventTable;
   'crove_kernel.calendar_event_link': CalendarEventLinkTable;

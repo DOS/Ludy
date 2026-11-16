@@ -251,6 +251,12 @@ export const EXPORT_TABLES = {
   'projects.project': { from: 'crove_projects.project', omit: [] },
   'projects.project_member': { from: 'crove_projects.project_member', omit: [] },
   'projects.project_task': { from: 'crove_projects.project_task', omit: [] },
+  // eSign (#3323): envelopes, signers (omitting deployment-keyed signer_ip_hash), fields, AI analysis summaries and hash-chained signing events (ip_hash retained because event_hash commits to it); bearer token and OTP machinery tables stay out.
+  'sign.envelope': { from: 'crove_sign.envelope', omit: [] },
+  'sign.signer': { from: 'crove_sign.signer', omit: ['signer_ip_hash'] },
+  'sign.field': { from: 'crove_sign.field', omit: [] },
+  'sign.ai_analysis': { from: 'crove_sign.ai_analysis', omit: [] },
+  'sign.signing_event': { from: 'crove_sign.signing_event', omit: [] },
 } as const satisfies Record<string, { from: string; omit: readonly string[] }>;
 
 export type ExportTable = keyof typeof EXPORT_TABLES;
@@ -443,6 +449,8 @@ export const OWNER_RUN_EXPORT_TABLES = {
   'hr.payroll_line': { from: 'crove_hr.payroll_line', omit: [] },
   // The layouts of the bank's bulk-salary file (#2532): configuration (names, column keys and headers, a content text), no person's data.
   'hr.payroll_bank_template': { from: 'crove_hr.payroll_bank_template', omit: [] },
+  // Monthly employee leave ledger (#3394, #2540): opening balances, annual leave, paid personal leave and unpaid leave days per employee and month.
+  'hr.payroll_leave_entry': { from: 'crove_hr.payroll_leave_entry', omit: [] },
 } as const satisfies Record<string, { from: string; omit: readonly string[] }>;
 export type OwnerRunExportTable = keyof typeof OWNER_RUN_EXPORT_TABLES;
 export const OWNER_RUN_EXPORT_TABLE_NAMES = Object.keys(OWNER_RUN_EXPORT_TABLES) as [OwnerRunExportTable, ...OwnerRunExportTable[]];

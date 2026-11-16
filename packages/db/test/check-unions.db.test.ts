@@ -139,6 +139,7 @@ import {
   HR_PAY_FUNCTIONS,
   HR_PROBATION_ROLE_TIERS,
   HR_EMPLOYEE_STATUSES,
+  HR_LEAVE_ENTRY_KINDS,
   HR_LINE_KINDS,
   HR_LINE_STATUSES,
   HR_RUN_STATUSES,
@@ -207,12 +208,24 @@ import {
   VAT_FILING_PERIODS,
   VAT_RETURN_FILED_SOURCES,
   VAT_RETURN_FILED_STATUSES,
+  SIGN_ENVELOPE_STATUSES,
+  SIGN_ROUTING_MODES,
+  SIGN_SOURCE_KINDS,
+  SIGN_INSPECT_STATUSES,
+  SIGN_SEAL_STATUSES,
+  SIGN_SIGNER_ROLES,
+  SIGN_DELIVERY_MODES,
+  SIGN_SIGNER_STATUSES,
+  SIGN_SIGNATURE_KINDS,
+  SIGN_FIELD_TYPES,
+  SIGN_AI_ANALYSIS_STATUSES,
+  SIGN_ACTOR_TYPES,
   type Database,
 } from '../src/schema.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
-const SCHEMAS = ['crove_kernel', 'crove_finance', 'crove_social', 'crove_crm', 'crove_notes', 'crove_ads', 'crove_hr', 'crove_meetings', 'crove_projects'];
+const SCHEMAS = ['crove_kernel', 'crove_finance', 'crove_social', 'crove_crm', 'crove_notes', 'crove_ads', 'crove_hr', 'crove_meetings', 'crove_projects', 'crove_sign'];
 const suite = ADMIN ? describe : describe.skip;
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
@@ -239,6 +252,7 @@ const UNIONS = unions({
   'crove_hr.payroll_employee.status': HR_EMPLOYEE_STATUSES,
   'crove_hr.payroll_employment.contract_type': HR_CONTRACT_TYPES,
   'crove_hr.payroll_employment.contract_form': HR_CONTRACT_FORMS,
+  'crove_hr.payroll_leave_entry.kind': HR_LEAVE_ENTRY_KINDS,
   'crove_hr.payroll_line.kind': HR_LINE_KINDS,
   'crove_hr.payroll_line.status': HR_LINE_STATUSES,
   'crove_hr.payroll_run.status': HR_RUN_STATUSES,
@@ -308,6 +322,18 @@ const UNIONS = unions({
   'crove_notes.note.visibility': NOTE_VISIBILITIES,
   'crove_notes.todo.status': TODO_STATUSES,
   'crove_projects.project.status': PROJECT_STATUSES,
+  'crove_sign.envelope.status': SIGN_ENVELOPE_STATUSES,
+  'crove_sign.envelope.routing_mode': SIGN_ROUTING_MODES,
+  'crove_sign.envelope.source_kind': SIGN_SOURCE_KINDS,
+  'crove_sign.envelope.inspect_status': SIGN_INSPECT_STATUSES,
+  'crove_sign.envelope.seal_status': SIGN_SEAL_STATUSES,
+  'crove_sign.signer.signer_role': SIGN_SIGNER_ROLES,
+  'crove_sign.signer.delivery_mode': SIGN_DELIVERY_MODES,
+  'crove_sign.signer.status': SIGN_SIGNER_STATUSES,
+  'crove_sign.signer.signature_kind': SIGN_SIGNATURE_KINDS,
+  'crove_sign.field.field_type': SIGN_FIELD_TYPES,
+  'crove_sign.ai_analysis.status': SIGN_AI_ANALYSIS_STATUSES,
+  'crove_sign.signing_event.actor_type': SIGN_ACTOR_TYPES,
   'crove_kernel.agent.max_risk': AGENT_RISKS,
   'crove_kernel.agent.runtime': AGENT_RUNTIMES,
   'crove_kernel.agent.kind': AGENT_KINDS,

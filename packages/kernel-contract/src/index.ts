@@ -79,7 +79,8 @@ export const MEETING_AUDIO_TYPES = ['audio/ogg', 'audio/webm', 'audio/mp4', 'aud
 export const MEETING_VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/quicktime'];
 // import: a spreadsheet for a module's import (the tax portal's purchase list, #465). Stored with source 'import' and
 // never read as a document; the module that imports it has it read in the parsing sandbox.
-export const UPLOAD_PURPOSES = ['document', 'social', 'import', 'meeting_audio', 'meeting_video'] as const;
+// sign_document: a PDF contract uploaded for eSign (#3323), stored with source 'sign_document' and never sent to Finance extraction.
+export const UPLOAD_PURPOSES = ['document', 'social', 'import', 'meeting_audio', 'meeting_video', 'sign_document'] as const;
 // An import spreadsheet is an .xlsx workbook (a ZIP container) of at most this size.
 export const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
 export const XLSX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -111,6 +112,7 @@ export * from './brand.ts';
 export * from './calendar.ts';
 export * from './crm.ts';
 export * from './hr.ts';
+export * from './hr-leave.ts';
 export * from './hr-payroll.ts';
 export * from './hr-declarations.ts';
 export * from './hr-bank-template.ts';

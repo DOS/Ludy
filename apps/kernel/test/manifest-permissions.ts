@@ -14,6 +14,7 @@ import { notesManifest } from '@crove/mod-notes';
 import { projectsManifest } from '@crove/mod-projects';
 import { socialManifest } from '@crove/mod-social';
 import { meetingsManifest } from '@crove/mod-meetings';
+import { signManifest } from '@crove/mod-sign';
 import { loadConfig } from '../src/config.ts';
 import { moduleDefinitions } from '../src/kernel.ts';
 import { orgPurgeCommand } from '../src/org-purge.ts';
@@ -36,6 +37,7 @@ export const MODULE_MANIFESTS: Manifests = {
   notes: { manifest: notesManifest, file: 'modules/notes/src/manifest.ts' },
   meetings: { manifest: meetingsManifest, file: 'modules/meetings/src/manifest.ts' },
   projects: { manifest: projectsManifest, file: 'modules/projects/src/manifest.ts' },
+  sign: { manifest: signManifest, file: 'modules/sign/src/manifest.ts' },
   hr: { manifest: hrManifest, file: 'modules/hr/src/manifest.ts' },
 };
 
