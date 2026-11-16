@@ -102,9 +102,11 @@ const OID_SIGNED_DATA = [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x02] a
 const OID_DATA = [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x01] as const;
 const OID_SHA256 = [0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01] as const;
 const OID_RSA = [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01] as const;
+const OID_CONTENT_TYPE = [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x03] as const;
 const OID_MESSAGE_DIGEST = [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x04] as const;
+const OID_SIGNING_CERT_V2 = [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x10, 0x02, 0x2f] as const;
 
-// Builds a deterministic ASN.1 DER CMS ContentInfo(SignedData) structure embedding the 32-byte digest.
+// Builds a deterministic ASN.1 DER CMS ContentInfo(SignedData) structure with CAdES-BES signedAttrs.
 export function buildSandboxCmsDer(digestSha256: string, externalTxId: string, certRef: string): Uint8Array {
   const digestBytes = new Uint8Array(Buffer.from(digestSha256, 'hex'));
   const signatureBytes = new Uint8Array(
@@ -119,20 +121,22 @@ export function buildSandboxCmsDer(digestSha256: string, externalTxId: string, c
   );
   // Ensure positive ASN.1 integer high bit is clear.
   serialBytes[0] = (serialBytes[0] ?? 0) & 0x7f;
-  const issuerAndSerial = derSeq(
-    derSeq(
-      derSet(
-        derSeq(
-          derOid([0x55, 0x04, 0x03]),
-          derNode(0x0c, new TextEncoder().encode('Crove Sandbox CA')),
-        ),
+  const issuerName = derSeq(
+    derSet(
+      derSeq(
+        derOid([0x55, 0x04, 0x03]),
+        derNode(0x0c, new TextEncoder().encode('Crove Sandbox CA')),
       ),
     ),
-    derNode(0x02, serialBytes),
   );
-  const signedAttrs = derTagged0(
-    derSeq(derOid(OID_MESSAGE_DIGEST), derSet(derOctet(digestBytes))),
-  );
+  const issuerAndSerial = derSeq(issuerName, derNode(0x02, serialBytes));
+  const certHash = new Uint8Array(createHash('sha256').update(`sandbox-cert:${certRef}`).digest());
+  const contentTypeAttr = derSeq(derOid(OID_CONTENT_TYPE), derSet(derOid(OID_DATA)));
+  const messageDigestAttr = derSeq(derOid(OID_MESSAGE_DIGEST), derSet(derOctet(digestBytes)));
+  const essCertIdV2 = derSeq(derOctet(certHash), derSeq(derSeq(derNode(0xa4, issuerName)), derNode(0x02, serialBytes)));
+  const signingCertV2Attr = derSeq(derOid(OID_SIGNING_CERT_V2), derSet(derSeq(derSeq(essCertIdV2))));
+  const sortedAttrs = [contentTypeAttr, messageDigestAttr, signingCertV2Attr].sort((a, b) => Buffer.compare(a, b));
+  const signedAttrs = derTagged0(concatBytes(sortedAttrs));
   const signerInfo = derSeq(
     derInt(1),
     issuerAndSerial,

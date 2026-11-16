@@ -61,17 +61,39 @@ function derTag(tag: number, ...parts: readonly Uint8Array[]): Uint8Array {
   return out;
 }
 
-function makeContentInfoSignedDataDer(withSignedAttrs: boolean): Uint8Array {
+function makeContentInfoSignedDataDer(
+  mode: 'none' | 'plain_pkcs7' | 'cades',
+  marker = 'test-cms',
+): Uint8Array {
   const oidSignedData = derTag(0x06, new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x02]));
   const oidData = derTag(0x06, new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x01]));
   const oidSha256 = derTag(0x06, new Uint8Array([0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01]));
+  const oidContentType = derTag(0x06, new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x03]));
+  const oidMessageDigest = derTag(0x06, new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x04]));
+  const oidSigningCertV2 = derTag(0x06, new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x10, 0x02, 0x2f]));
   const algSha256 = derTag(0x30, oidSha256, derTag(0x05));
   const sid = derTag(0x30, derTag(0x30), derTag(0x02, new Uint8Array([0x01])));
+  const markerDigest = new Uint8Array(createHash('sha256').update(marker).digest());
+  const contentTypeAttr = derTag(0x30, oidContentType, derTag(0x31, oidData));
+  const messageDigestAttr = derTag(0x30, oidMessageDigest, derTag(0x31, derTag(0x04, markerDigest)));
+  const essCertIdV2 = derTag(0x30, derTag(0x04, markerDigest));
+  const signingCertV2Attr = derTag(0x30, oidSigningCertV2, derTag(0x31, derTag(0x30, derTag(0x30, essCertIdV2))));
+  const attrs =
+    mode === 'none'
+      ? []
+      : [
+          derTag(
+            0xa0,
+            ...[contentTypeAttr, messageDigestAttr, ...(mode === 'cades' ? [signingCertV2Attr] : [])].sort((a, b) =>
+              Buffer.compare(a, b),
+            ),
+          ),
+        ];
   const siFields = [
     derTag(0x02, new Uint8Array([0x01])),
     sid,
     algSha256,
-    ...(withSignedAttrs ? [derTag(0xa0, derTag(0x30, derTag(0x05)))] : []),
+    ...attrs,
     algSha256,
     derTag(0x04, new Uint8Array(64).fill(0xab)),
   ];
@@ -86,12 +108,7 @@ function makeContentInfoSignedDataDer(withSignedAttrs: boolean): Uint8Array {
 }
 
 function makeTestCmsDer(marker = 'test-cms-signature-payload'): Uint8Array {
-  const inner = new TextEncoder().encode(marker);
-  const octet = new Uint8Array(2 + inner.byteLength);
-  octet[0] = 0x04;
-  octet[1] = inner.byteLength;
-  octet.set(inner, 2);
-  return derSequence(octet);
+  return makeContentInfoSignedDataDer('cades', marker);
 }
 
 function makeRawPdf(objects: string[], trailerExtra = ''): Uint8Array {
@@ -285,7 +302,7 @@ describe('crove-extract pdf_embed_cms', () => {
     expect(inspected.pageCount).toBe(sealed.pageCount);
   });
 
-  it('produces identical ByteRange digest in two-step prepare and embed flow', async () => {
+  it('produces identical ByteRange digest in two-step prepare and embed flow for both CAdES and non-signedAttrs PKCS#7', async () => {
     const basePdf = makeCleanClassicPdf();
     const baseInput = {
       pdfBase64: Buffer.from(basePdf).toString('base64'),
@@ -293,6 +310,7 @@ describe('crove-extract pdf_embed_cms', () => {
       reason: 'Ký số xác nhận',
       location: 'Hà Nội',
       signedAtIso: '2026-11-16T10:00:00.000Z',
+      subFilter: 'ETSI.CAdES.detached',
       placeholderBytes: 8192,
     } as const;
 
@@ -327,6 +345,41 @@ describe('crove-extract pdf_embed_cms', () => {
     );
     expect(postDigest).toBe(preDigest);
     assertByteRangeAndCms(finalBytes, embedded.byteRange, signedCms);
+
+    // Non-signedAttrs CMS flow: subFilter is fixed upfront to adbe.pkcs7.detached so prepare and embed digests match.
+    const pkcs7Input = {
+      ...baseInput,
+      subFilter: 'adbe.pkcs7.detached',
+    } as const;
+    const prepPkcs7 = await parse(
+      'pdf_embed_cms',
+      encodePdfEmbedCmsInput({
+        ...pkcs7Input,
+        cmsDerBase64: Buffer.from(new Uint8Array([0x30, 0x00])).toString('base64'),
+      }),
+    );
+    if (!prepPkcs7.ok || prepPkcs7.kind !== 'pdf_embed_cms') throw new Error('expected pkcs7 prepare ok');
+    const prepPkcs7Bytes = new Uint8Array(Buffer.from(prepPkcs7.pdfBase64, 'base64'));
+    const [pb0, pb1, pb2, pb3] = prepPkcs7.byteRange;
+    const prePkcs7Digest = sha256Hex(
+      Buffer.concat([prepPkcs7Bytes.subarray(pb0, pb1), prepPkcs7Bytes.subarray(pb2, pb2 + pb3)]),
+    );
+    const noAttrsCms = makeContentInfoSignedDataDer('none', `pkcs7:${prePkcs7Digest}`);
+    const embedPkcs7 = await parse(
+      'pdf_embed_cms',
+      encodePdfEmbedCmsInput({
+        ...pkcs7Input,
+        cmsDerBase64: Buffer.from(noAttrsCms).toString('base64'),
+      }),
+    );
+    if (!embedPkcs7.ok || embedPkcs7.kind !== 'pdf_embed_cms') throw new Error('expected pkcs7 embed ok');
+    expect(embedPkcs7.byteRange).toEqual(prepPkcs7.byteRange);
+    const finalPkcs7Bytes = new Uint8Array(Buffer.from(embedPkcs7.pdfBase64, 'base64'));
+    const postPkcs7Digest = sha256Hex(
+      Buffer.concat([finalPkcs7Bytes.subarray(pb0, pb1), finalPkcs7Bytes.subarray(pb2, pb2 + pb3)]),
+    );
+    expect(postPkcs7Digest).toBe(prePkcs7Digest);
+    assertByteRangeAndCms(finalPkcs7Bytes, embedPkcs7.byteRange, noAttrsCms);
   });
 
   it('embeds optional PAdES-LTV DSS timestamp and OCSP in a post-signature revision without changing ByteRange digest and merges sequential DSS', async () => {
@@ -335,6 +388,7 @@ describe('crove-extract pdf_embed_cms', () => {
       pdfBase64: Buffer.from(basePdf).toString('base64'),
       signerName: 'Phạm Minh Tuấn',
       signedAtIso: '2026-11-16T11:00:00.000Z',
+      subFilter: 'ETSI.CAdES.detached',
       placeholderBytes: 4096,
     } as const;
 
@@ -676,47 +730,64 @@ describe('crove-extract pdf_embed_cms', () => {
     expect(parsed).toEqual(sandboxed);
   }, 20_000);
 
-  it('defaults CMS SignedData without signedAttrs to adbe.pkcs7.detached, enforces ETSI.CAdES.detached signedAttrs, and rejects broken SignedData', async () => {
+  it('requires explicit subFilter for placeholders, rejects non-CAdES SignedData as ETSI.CAdES.detached, and rejects broken SignedData', async () => {
     const cleanPdfB64 = Buffer.from(makeCleanClassicPdf()).toString('base64');
-    const cmsNoAttrs = makeContentInfoSignedDataDer(false);
-    const cmsWithAttrs = makeContentInfoSignedDataDer(true);
+    const cmsNoAttrs = makeContentInfoSignedDataDer('none');
+    const cmsPlainPkcs7 = makeContentInfoSignedDataDer('plain_pkcs7');
+    const cmsCades = makeContentInfoSignedDataDer('cades');
 
-    const noAttrsAuto = await parse(
-      'pdf_embed_cms',
-      encodePdfEmbedCmsInput({
-        pdfBase64: cleanPdfB64,
-        cmsDerBase64: Buffer.from(cmsNoAttrs).toString('base64'),
-        signerName: 'Ký số trực tiếp',
-        signedAtIso: '2026-11-16T13:00:00.000Z',
-      }),
-    );
-    expect(noAttrsAuto.ok).toBe(true);
-    if (!noAttrsAuto.ok || noAttrsAuto.kind !== 'pdf_embed_cms') throw new Error('expected pkcs7 auto ok');
-    const noAttrsDoc = await PDFDocument.load(Buffer.from(noAttrsAuto.pdfBase64, 'base64'));
-    const noAttrsFields = noAttrsDoc.catalog.lookup(PDFName.of('AcroForm'), PDFDict).lookup(PDFName.of('Fields'), PDFArray);
-    const noAttrsSig = noAttrsDoc.context.lookup(noAttrsFields.get(0), PDFDict).lookup(PDFName.of('V'), PDFDict);
-    expect(noAttrsSig.lookup(PDFName.of('SubFilter'), PDFName).decodeText()).toBe('adbe.pkcs7.detached');
-
-    // Explicit ETSI.CAdES.detached must fail when SignedData lacks signedAttrs.
+    // Placeholder 30 00 without subFilter is refused so two-step flows cannot silently switch SubFilter.
     expect(
       await parse(
         'pdf_embed_cms',
         encodePdfEmbedCmsInput({
           pdfBase64: cleanPdfB64,
-          cmsDerBase64: Buffer.from(cmsNoAttrs).toString('base64'),
-          signerName: 'Ký số trực tiếp',
-          signedAtIso: '2026-11-16T13:00:00.000Z',
-          subFilter: 'ETSI.CAdES.detached',
+          cmsDerBase64: Buffer.from(new Uint8Array([0x30, 0x00])).toString('base64'),
+          signerName: 'Placeholder check',
+          signedAtIso: '2026-11-16T12:55:00.000Z',
+          placeholderBytes: 4096,
         }),
       ),
     ).toMatchObject({ ok: false, code: 'invalid' });
 
-    // Real SignedData WITH signedAttrs defaults to ETSI.CAdES.detached.
+    for (const nonCadesCms of [cmsNoAttrs, cmsPlainPkcs7]) {
+      const autoRes = await parse(
+        'pdf_embed_cms',
+        encodePdfEmbedCmsInput({
+          pdfBase64: cleanPdfB64,
+          cmsDerBase64: Buffer.from(nonCadesCms).toString('base64'),
+          signerName: 'Ký số trực tiếp',
+          signedAtIso: '2026-11-16T13:00:00.000Z',
+        }),
+      );
+      expect(autoRes.ok).toBe(true);
+      if (!autoRes.ok || autoRes.kind !== 'pdf_embed_cms') throw new Error('expected pkcs7 auto ok');
+      const doc = await PDFDocument.load(Buffer.from(autoRes.pdfBase64, 'base64'));
+      const fields = doc.catalog.lookup(PDFName.of('AcroForm'), PDFDict).lookup(PDFName.of('Fields'), PDFArray);
+      const sig = doc.context.lookup(fields.get(0), PDFDict).lookup(PDFName.of('V'), PDFDict);
+      expect(sig.lookup(PDFName.of('SubFilter'), PDFName).decodeText()).toBe('adbe.pkcs7.detached');
+
+      // Explicit ETSI.CAdES.detached must fail when SignedData lacks mandatory CAdES signingCertificate/V2.
+      expect(
+        await parse(
+          'pdf_embed_cms',
+          encodePdfEmbedCmsInput({
+            pdfBase64: cleanPdfB64,
+            cmsDerBase64: Buffer.from(nonCadesCms).toString('base64'),
+            signerName: 'Ký số trực tiếp',
+            signedAtIso: '2026-11-16T13:00:00.000Z',
+            subFilter: 'ETSI.CAdES.detached',
+          }),
+        ),
+      ).toMatchObject({ ok: false, code: 'invalid' });
+    }
+
+    // Real CAdES SignedData (contentType + messageDigest + signingCertificateV2) defaults to ETSI.CAdES.detached.
     const withAttrsRes = await parse(
       'pdf_embed_cms',
       encodePdfEmbedCmsInput({
         pdfBase64: cleanPdfB64,
-        cmsDerBase64: Buffer.from(cmsWithAttrs).toString('base64'),
+        cmsDerBase64: Buffer.from(cmsCades).toString('base64'),
         signerName: 'Ký số CAdES',
         signedAtIso: '2026-11-16T13:05:00.000Z',
       }),

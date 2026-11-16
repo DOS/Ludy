@@ -9,8 +9,10 @@ import {
   MISA_WESIGN_HOSTS,
   VIETTEL_MYSIGN_HOSTS,
   VNPT_SMARTCA_HOSTS,
+  assembleDetachedCmsSignedData,
   assertSafeCaBaseUrl,
   buildSandboxCmsDer,
+  cmsHasCadesSignedAttrs,
   cmsHasSignedAttrs,
   getCaAdapter,
   isCmsSignedDataDer,
@@ -772,11 +774,70 @@ describe('MISA eSign / WeSign adapter (esignapp.misa.vn Open API recorded respon
     expect(cadesCms.subFilter).toBe('ETSI.CAdES.detached');
     expect(isCmsSignedDataDer(cadesCms.cmsDer)).toBe(true);
     expect(cmsHasSignedAttrs(cadesCms.cmsDer)).toBe(true);
+    expect(cmsHasCadesSignedAttrs(cadesCms.cmsDer)).toBe(true);
     expect(
       createVerify('RSA-SHA256')
         .update(canonicalSetDer)
         .verify(requireLeafCert(cadesCms.certificateChainPem).publicKey, cadesRawSig),
     ).toBe(true);
+
+    // Non-CAdES PKCS#7 CMS with contentType + messageDigest ONLY (missing signingCertificate/V2) must stay adbe.pkcs7.detached.
+    const plainContentType = derTlv(
+      0x30,
+      derTlv(0x06, new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x03])),
+      derTlv(0x31, derTlv(0x06, new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x01]))),
+    );
+    const plainDigestAttr = derTlv(
+      0x30,
+      derTlv(0x06, new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x04])),
+      derTlv(0x31, derTlv(0x04, Buffer.from(DIGEST, 'hex'))),
+    );
+    const plainSignedAttrsDer = derTlv(
+      0xa0,
+      ...[plainContentType, plainDigestAttr].sort((a, b) => Buffer.compare(a, b)),
+    );
+    const plainPkcs7Cms = assembleDetachedCmsSignedData({
+      rawSignature: cadesRawSig,
+      certificateChainDer: [idB.certDer],
+      signedAttrsDer: plainSignedAttrsDer,
+    });
+    if (!plainPkcs7Cms) throw new Error('expected plainPkcs7Cms');
+    expect(cmsHasSignedAttrs(plainPkcs7Cms)).toBe(true);
+    expect(cmsHasCadesSignedAttrs(plainPkcs7Cms)).toBe(false);
+    const misaPlainMock = mockFetch({
+      '/api/auth/api/v1/auth/login-api': [
+        { status: 200, body: { Success: true, Data: { remoteSigningAccessToken: 'misa-tok-plain' } } },
+      ],
+      '/external/esrm/service/signing/api/v1/Signing/status/misa-plain-1': [
+        {
+          status: 200,
+          body: {
+            status: { code: 200 },
+            data: {
+              transactionId: 'misa-plain-1',
+              status: 'SUCCESS',
+              signatures: [{ signature: Buffer.from(plainPkcs7Cms).toString('base64') }],
+            },
+          },
+        },
+      ],
+    });
+    const plainResult = await getCaAdapter('misa_wesign', { fetch: misaPlainMock.fetchImpl }).fetchSignedCms(
+      MISA_SECRET,
+      'misa-plain-1',
+    );
+    expect(plainResult.subFilter).toBe('adbe.pkcs7.detached');
+
+    // Viettel HTTP 200 carrying non-zero errorCode without explicit status must map to failed rather than pending.
+    const vtErrMock = mockFetch({
+      '/vtss/service/ras/v1/login': [{ status: 200, body: { access_token: 'vt-tok-err', expires_in: 3600 } }],
+      '/vtss/service/signHash': [{ status: 200, body: { errorCode: '4004', transactionId: 'vt-tx-err' } }],
+    });
+    const vtErrSession = await getCaAdapter('viettel_mysign', { fetch: vtErrMock.fetchImpl }).initiateSign(
+      VIETTEL_SECRET,
+      { idempotencyKey: 'vt-req-err', digestSha256: DIGEST, certRef: 'cert-A' },
+    );
+    expect(vtErrSession).toMatchObject({ provider: 'viettel_mysign', status: 'failed', errorCode: '4004' });
   });
 
   it('detects 2FA, inactive app, 403 credentials error, USB-only certs, and auth failures without leaking secrets', async () => {
@@ -809,7 +870,7 @@ describe('MISA eSign / WeSign adapter (esignapp.misa.vn Open API recorded respon
       const adapter = getCaAdapter(provider, { fetch: fetchImpl });
       const secret =
         provider === 'vnpt_smartca' ? VNPT_SECRET : provider === 'viettel_mysign' ? VIETTEL_SECRET : MISA_SECRET;
-      for (const badId of ['..', '.', '../admin', 'tx/sub', 'tx?leak=1', 'tx#frag', 'a'.repeat(129)]) {
+      for (const badId of ['..', '.', '../admin', 'tx/sub', 'tx?leak=1', 'tx#frag', 'tx%2fenc', 'tx space', 'a'.repeat(129)]) {
         await expect(
           adapter.initiateSign(secret, { idempotencyKey: badId, digestSha256: DIGEST, certRef: 'c1' }),
         ).rejects.toMatchObject({ kind: 'invalid_request' });

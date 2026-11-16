@@ -68,6 +68,10 @@ function assertValidDerSequence(bytes: Uint8Array, label: string): void {
 const ID_SIGNED_DATA_OID = new Uint8Array([
   0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x02,
 ]);
+const OID_CONTENT_TYPE = new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x03]);
+const OID_MESSAGE_DIGEST = new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x04]);
+const OID_SIGNING_CERT = new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x10, 0x02, 0x0c]);
+const OID_SIGNING_CERT_V2 = new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x10, 0x02, 0x2f]);
 
 interface DerTlv {
   readonly tag: number;
@@ -112,9 +116,9 @@ function bytesEqual(a: Uint8Array, start: number, end: number, expected: Uint8Ar
   return true;
 }
 
-function detectCmsSignedAttrsState(
+function detectCmsSubFilterProfile(
   bytes: Uint8Array,
-): 'has_signed_attrs' | 'no_signed_attrs' | 'not_signed_data' | 'invalid_signed_data' {
+): 'cades_signed_data' | 'non_cades_signed_data' | 'not_signed_data' | 'invalid_signed_data' {
   const outer = readDerTlv(bytes, 0, bytes.byteLength);
   if (!outer || outer.tag !== 0x30 || outer.end !== bytes.byteLength) return 'not_signed_data';
 
@@ -156,7 +160,7 @@ function detectCmsSignedAttrsState(
 
   let siCursor = next.valueStart;
   let count = 0;
-  let allHaveSignedAttrs = true;
+  let allCadesCompliant = true;
   while (siCursor < next.end) {
     const si = readDerTlv(bytes, siCursor, next.end);
     if (!si || si.tag !== 0x30) return 'invalid_signed_data';
@@ -174,11 +178,43 @@ function detectCmsSignedAttrsState(
     let sigAlg: DerTlv | null = maybeAttrs;
     if (maybeAttrs.tag === 0xa0) {
       if (maybeAttrs.end === maybeAttrs.valueStart) {
-        allHaveSignedAttrs = false;
+        allCadesCompliant = false;
+      } else {
+        let hasContentType = false;
+        let hasMessageDigest = false;
+        let hasSigningCert = false;
+        let attrPos = maybeAttrs.valueStart;
+        while (attrPos < maybeAttrs.end) {
+          const attr = readDerTlv(bytes, attrPos, maybeAttrs.end);
+          if (!attr || attr.tag !== 0x30) return 'invalid_signed_data';
+          const attrType = readDerTlv(bytes, attr.valueStart, attr.end);
+          if (!attrType || attrType.tag !== 0x06) return 'invalid_signed_data';
+          const attrValues = readDerTlv(bytes, attrType.end, attr.end);
+          if (!attrValues || attrValues.tag !== 0x31 || attrValues.valueStart >= attrValues.end || attrValues.end !== attr.end) {
+            return 'invalid_signed_data';
+          }
+          const firstVal = readDerTlv(bytes, attrValues.valueStart, attrValues.end);
+          if (!firstVal) return 'invalid_signed_data';
+          if (bytesEqual(bytes, attrType.valueStart, attrType.end, OID_CONTENT_TYPE) && firstVal.tag === 0x06) {
+            hasContentType = true;
+          } else if (bytesEqual(bytes, attrType.valueStart, attrType.end, OID_MESSAGE_DIGEST) && firstVal.tag === 0x04) {
+            hasMessageDigest = true;
+          } else if (
+            (bytesEqual(bytes, attrType.valueStart, attrType.end, OID_SIGNING_CERT) ||
+              bytesEqual(bytes, attrType.valueStart, attrType.end, OID_SIGNING_CERT_V2)) &&
+            firstVal.tag === 0x30
+          ) {
+            hasSigningCert = true;
+          }
+          attrPos = attr.end;
+        }
+        if (!hasContentType || !hasMessageDigest || !hasSigningCert) {
+          allCadesCompliant = false;
+        }
       }
       sigAlg = readDerTlv(bytes, maybeAttrs.end, si.end);
     } else {
-      allHaveSignedAttrs = false;
+      allCadesCompliant = false;
     }
     if (!sigAlg || sigAlg.tag !== 0x30) return 'invalid_signed_data';
     const sigVal = readDerTlv(bytes, sigAlg.end, si.end);
@@ -188,7 +224,7 @@ function detectCmsSignedAttrsState(
   }
 
   if (count === 0) return 'invalid_signed_data';
-  return allHaveSignedAttrs ? 'has_signed_attrs' : 'no_signed_attrs';
+  return allCadesCompliant ? 'cades_signed_data' : 'non_cades_signed_data';
 }
 
 function serializePdfObject(obj: PDFObject): Buffer {
@@ -436,18 +472,23 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
     throw new PdfSignError('Kích thước chữ ký số CMS vượt quá giới hạn cho phép');
   }
   assertValidDerSequence(cmsDer, 'Chữ ký số CMS');
-  const cmsSignedAttrsState = detectCmsSignedAttrsState(cmsDer);
-  if (cmsSignedAttrsState === 'invalid_signed_data') {
+  const cmsProfile = detectCmsSubFilterProfile(cmsDer);
+  if (cmsProfile === 'invalid_signed_data') {
     throw new PdfSignError('Chữ ký số CMS SignedData không đúng cấu trúc ASN.1 DER hợp lệ');
   }
-  if (cmsSignedAttrsState === 'no_signed_attrs' && input.subFilter === 'ETSI.CAdES.detached') {
+  if (cmsProfile === 'non_cades_signed_data' && input.subFilter === 'ETSI.CAdES.detached') {
     throw new PdfSignError(
-      'Chữ ký số CMS không chứa signedAttrs nên không hợp lệ với ETSI.CAdES.detached; hãy dùng adbe.pkcs7.detached',
+      'Chữ ký số CMS không đủ thuộc tính CAdES bắt buộc cho ETSI.CAdES.detached; hãy dùng adbe.pkcs7.detached',
+    );
+  }
+  if (cmsProfile === 'not_signed_data' && input.subFilter === undefined) {
+    throw new PdfSignError(
+      'Cần chỉ định rõ subFilter (ETSI.CAdES.detached hoặc adbe.pkcs7.detached) khi nhúng dữ liệu giữ chỗ không phải CMS SignedData',
     );
   }
   const effectiveSubFilter =
     input.subFilter ??
-    (cmsSignedAttrsState === 'no_signed_attrs' ? 'adbe.pkcs7.detached' : 'ETSI.CAdES.detached');
+    (cmsProfile === 'cades_signed_data' ? 'ETSI.CAdES.detached' : 'adbe.pkcs7.detached');
 
   const timestampTokenDer = input.timestampTokenBase64
     ? decodeStrictBase64(input.timestampTokenBase64, 'Dấu thời gian RFC 3161')

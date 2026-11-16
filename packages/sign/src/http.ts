@@ -193,12 +193,17 @@ export function validateInitiateRequest(request: CaInitiateRequest): {
 
 function normalizeSafeIdentifier(raw: string, fieldName: string): string {
   const trimmed = raw.trim();
+  let hasUnsafeChar = /[%\\/?#]/.test(trimmed);
+  for (let i = 0; !hasUnsafeChar && i < trimmed.length; i += 1) {
+    const code = trimmed.charCodeAt(i);
+    if (code <= 0x20 || code === 0x7f) hasUnsafeChar = true;
+  }
   if (
     trimmed.length === 0 ||
     trimmed.length > 128 ||
     trimmed === '.' ||
     trimmed === '..' ||
-    /[\\/?#]/.test(trimmed)
+    hasUnsafeChar
   ) {
     throw new CaProviderError('invalid_request', `${fieldName} must be a safe 1..128 character identifier`);
   }
@@ -352,7 +357,7 @@ export function isValidDerSequence(bytes: Uint8Array): boolean {
   for (let i = 0; i < octets; i += 1) {
     const b = bytes[2 + i];
     if (b === undefined) return false;
-    declared = (declared << 8) | b;
+    declared = declared * 256 + b;
   }
   if (declared < 0x80) return false;
   return bytes.byteLength === 2 + octets + declared;

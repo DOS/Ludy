@@ -20,6 +20,7 @@ export * from './viettel-mysign.ts';
 export * from './misa-wesign.ts';
 export {
   assembleDetachedCmsSignedData,
+  cmsHasCadesSignedAttrs,
   cmsHasSignedAttrs,
   decodeDerCertificate,
   derCertToPem,

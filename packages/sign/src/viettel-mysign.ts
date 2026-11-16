@@ -502,12 +502,26 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
         };
       }
       const data = pickCaseInsensitive(res.json, 'data') ?? res.json;
+      const bodyErrCode =
+        errCode ??
+        readText(pickCaseInsensitive(data, 'error_code')) ??
+        readText(pickCaseInsensitive(data, 'errorCode'));
+      const hasBodyError = bodyErrCode !== null && !['0', '200', 'SUCCESS'].includes(bodyErrCode.toUpperCase());
       const explicitStatus = mapViettelStatus(
         pickCaseInsensitive(data, 'status') ?? pickCaseInsensitive(data, 'transactionStatus'),
       );
       const txId =
         readText(pickCaseInsensitive(data, 'transactionId')) ??
         readText(pickCaseInsensitive(data, 'transaction_id'));
+      if (hasBodyError && !explicitStatus) {
+        return {
+          provider: 'viettel_mysign',
+          idempotencyKey: valid.idempotencyKey,
+          externalTxId: txId ?? valid.idempotencyKey,
+          status: 'failed',
+          errorCode: bodyErrCode,
+        };
+      }
       if (!explicitStatus && txId) {
         rememberCertRef(secretKey, txId, valid.certRef);
         return {

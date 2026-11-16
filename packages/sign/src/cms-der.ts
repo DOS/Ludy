@@ -19,6 +19,7 @@ const OID_ECDSA_SHA256 = new Uint8Array([0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x0
 const OID_CONTENT_TYPE = new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x03]);
 const OID_MESSAGE_DIGEST = new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x04]);
 const OID_SIGNING_TIME = new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x05]);
+const OID_SIGNING_CERT = new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x10, 0x02, 0x0c]);
 const OID_SIGNING_CERT_V2 = new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x10, 0x02, 0x2f]);
 const SHA256_HEX_RE = /^[0-9a-fA-F]{64}$/;
 
@@ -114,7 +115,7 @@ export function isCmsSignedDataDer(bytes: Uint8Array): boolean {
   return bytesEqual(bytes.subarray(first.valueStart, first.valueEnd), OID_SIGNED_DATA);
 }
 
-export function cmsHasSignedAttrs(bytes: Uint8Array): boolean {
+function inspectCmsSignedAttrs(bytes: Uint8Array, requireCadesAttributes: boolean): boolean {
   if (!isCmsSignedDataDer(bytes)) return false;
   const outer = readDerTlv(bytes, 0);
   if (!outer) return false;
@@ -143,16 +144,60 @@ export function cmsHasSignedAttrs(bytes: Uint8Array): boolean {
     next = readDerTlv(bytes, pos);
   }
   if (!next || next.tag !== 0x31 || next.tlvEnd > signedData.valueEnd) return false;
-  const signerInfo = readDerTlv(bytes, next.valueStart);
-  if (!signerInfo || signerInfo.tag !== 0x30) return false;
-  const siVersion = readDerTlv(bytes, signerInfo.valueStart);
-  if (!siVersion || siVersion.tag !== 0x02) return false;
-  const sid = readDerTlv(bytes, siVersion.tlvEnd);
-  if (!sid) return false;
-  const siDigestAlg = readDerTlv(bytes, sid.tlvEnd);
-  if (!siDigestAlg || siDigestAlg.tag !== 0x30) return false;
-  const maybeAttrs = readDerTlv(bytes, siDigestAlg.tlvEnd);
-  return maybeAttrs !== null && maybeAttrs.tag === 0xa0;
+
+  let siPos = next.valueStart;
+  let signerCount = 0;
+  while (siPos < next.valueEnd) {
+    const signerInfo = readDerTlv(bytes, siPos);
+    if (!signerInfo || signerInfo.tag !== 0x30 || signerInfo.tlvEnd > next.valueEnd) return false;
+    signerCount += 1;
+
+    const siVersion = readDerTlv(bytes, signerInfo.valueStart);
+    if (!siVersion || siVersion.tag !== 0x02) return false;
+    const sid = readDerTlv(bytes, siVersion.tlvEnd);
+    if (!sid || (sid.tag !== 0x30 && sid.tag !== 0x80)) return false;
+    const siDigestAlg = readDerTlv(bytes, sid.tlvEnd);
+    if (!siDigestAlg || siDigestAlg.tag !== 0x30) return false;
+    const maybeAttrs = readDerTlv(bytes, siDigestAlg.tlvEnd);
+    if (!maybeAttrs || maybeAttrs.tag !== 0xa0 || maybeAttrs.valueStart >= maybeAttrs.valueEnd) return false;
+
+    if (requireCadesAttributes) {
+      let hasContentType = false;
+      let hasMessageDigest = false;
+      let hasSigningCert = false;
+      let attrPos = maybeAttrs.valueStart;
+      while (attrPos < maybeAttrs.valueEnd) {
+        const attr = readDerTlv(bytes, attrPos);
+        if (!attr || attr.tag !== 0x30 || attr.tlvEnd > maybeAttrs.valueEnd) return false;
+        const attrType = readDerTlv(bytes, attr.valueStart);
+        if (!attrType || attrType.tag !== 0x06) return false;
+        const attrValues = readDerTlv(bytes, attrType.tlvEnd);
+        if (!attrValues || attrValues.tag !== 0x31 || attrValues.valueStart >= attrValues.valueEnd || attrValues.tlvEnd !== attr.tlvEnd) {
+          return false;
+        }
+        const firstVal = readDerTlv(bytes, attrValues.valueStart);
+        if (!firstVal || firstVal.tlvEnd > attrValues.valueEnd) return false;
+        const attrOid = bytes.subarray(attrType.valueStart, attrType.valueEnd);
+        if (bytesEqual(attrOid, OID_CONTENT_TYPE) && firstVal.tag === 0x06) hasContentType = true;
+        else if (bytesEqual(attrOid, OID_MESSAGE_DIGEST) && firstVal.tag === 0x04) hasMessageDigest = true;
+        else if ((bytesEqual(attrOid, OID_SIGNING_CERT) || bytesEqual(attrOid, OID_SIGNING_CERT_V2)) && firstVal.tag === 0x30) {
+          hasSigningCert = true;
+        }
+        attrPos = attr.tlvEnd;
+      }
+      if (!hasContentType || !hasMessageDigest || !hasSigningCert) return false;
+    }
+    siPos = signerInfo.tlvEnd;
+  }
+  return signerCount > 0;
+}
+
+export function cmsHasSignedAttrs(bytes: Uint8Array): boolean {
+  return inspectCmsSignedAttrs(bytes, false);
+}
+
+export function cmsHasCadesSignedAttrs(bytes: Uint8Array): boolean {
+  return inspectCmsSignedAttrs(bytes, true);
 }
 
 export function decodeDerCertificate(value: unknown): Uint8Array | null {
@@ -334,7 +379,8 @@ export function assembleDetachedCmsSignedData(options: {
         sigAlg,
         derNode(0x04, rawSignature),
       );
-  const certsField = derNode(0xa0, concatBytes(...certificateChainDer));
+  const sortedCerts = [...certificateChainDer].sort((a, b) => Buffer.compare(a, b));
+  const certsField = derNode(0xa0, concatBytes(...sortedCerts));
   const signedData = derSeq(
     derInt(1),
     derSet(sha256Alg),
@@ -402,7 +448,7 @@ export async function resolveCmsOrWrapRawSignature(options: {
           : [];
     return {
       cmsDer: sigBytes,
-      subFilter: cmsHasSignedAttrs(sigBytes) ? 'ETSI.CAdES.detached' : 'adbe.pkcs7.detached',
+      subFilter: cmsHasCadesSignedAttrs(sigBytes) ? 'ETSI.CAdES.detached' : 'adbe.pkcs7.detached',
       certificateChainPem,
     };
   }
@@ -417,7 +463,7 @@ export async function resolveCmsOrWrapRawSignature(options: {
   }
   return {
     cmsDer: assembled,
-    subFilter: cmsHasSignedAttrs(assembled) ? 'ETSI.CAdES.detached' : 'adbe.pkcs7.detached',
+    subFilter: cmsHasCadesSignedAttrs(assembled) ? 'ETSI.CAdES.detached' : 'adbe.pkcs7.detached',
     certificateChainPem: chainDer.map(derCertToPem),
   };
 }
