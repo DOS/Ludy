@@ -348,6 +348,8 @@ describe('projects SSR screens & board (#2591)', () => {
           group: 'week',
           overdue: false,
           steps: { done: 0, total: 0 },
+          sourceNoteId: null,
+          sourceNote: null,
           taskId: null,
           revision: 1,
           createdAt: '2026-11-10T00:00:00.000Z',

@@ -138,7 +138,7 @@ export const TODO_REMIND_BEFORE_MINUTES = 30;
 export const zTodoReminder = z.union([z.enum(['auto', 'off']), z.strictObject({ at: z.iso.datetime({ offset: true }) })]);
 export type TodoReminder = z.infer<typeof zTodoReminder>;
 
-// A new to-do: the title, and optionally its details, steps and due day and time, in the caller's time zone.
+// A new to-do: the title, and optionally its details, steps, due day and time, and source note, in the caller's time zone.
 export const zTodoCreate = z
   .strictObject({
     title: zTodoTitle,
@@ -149,6 +149,7 @@ export const zTodoCreate = z
     timeZone: zTimeZone.default(DEFAULT_TIME_ZONE),
     reminder: zTodoReminder.default('auto'),
     link: zNoteLinkTarget.optional(),
+    sourceNoteId: zId.optional(),
   })
   .refine(dueTimeNeedsDay, DUE_TIME_NEEDS_DAY);
 export type TodoCreateInput = z.input<typeof zTodoCreate>;
@@ -187,6 +188,15 @@ export type TodoListInput = z.input<typeof zTodoList>;
 export const zTodoWritten = z.object({ todoId: z.string(), revision: z.number().int() });
 export type TodoWritten = z.infer<typeof zTodoWritten>;
 
+// The source note a to-do was made from (notes.md step N7): available says the caller can read the non-trashed
+// note now; false when it is trashed or another member's private note (never leaking its title).
+export const zTodoSourceNote = z.object({
+  id: z.string(),
+  title: z.string().nullable(),
+  available: z.boolean(),
+});
+export type TodoSourceNote = z.infer<typeof zTodoSourceNote>;
+
 // A to-do in a list, in the owner's order. `dueTime` is the due time on the wall clock of `timeZone`; `group` is the
 // My work group of an open to-do (null otherwise), and `overdue` says its day, or its time today, has passed.
 export const zTodoSummary = z.object({
@@ -202,6 +212,8 @@ export const zTodoSummary = z.object({
   group: z.enum(TODO_DUE_GROUPS).nullable(),
   overdue: z.boolean(),
   steps: z.object({ done: z.number().int(), total: z.number().int() }),
+  sourceNoteId: z.string().nullable(),
+  sourceNote: zTodoSourceNote.nullable(),
   taskId: z.string().nullable(),
   revision: z.number().int(),
   createdAt: z.string(),

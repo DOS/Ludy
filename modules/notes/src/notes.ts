@@ -32,7 +32,7 @@ import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { insertRecordLink, loadEnrichedLinks, NOTE_TARGET_QUERIES } from './links.ts';
 import { notesManifest } from './manifest.ts';
-import { TODO_SUMMARY_COLUMNS, todoSummaryRow } from './todos.ts';
+import { TODO_SUMMARY_COLUMNS, loadSourceNotes, todoSummaryRow } from './todos.ts';
 
 export { NOTE_TARGET_QUERIES };
 
@@ -414,11 +414,12 @@ export const recordPanel = defineQuery({
       .orderBy('t.id')
       .limit(PANEL_TODOS)
       .execute();
+    const sourceNotes = await loadSourceNotes(ctx, todoRows);
     const now = new Date();
     return {
       pinned: pinned.map((r) => summary(r, userId)),
       latest: latest.map((r) => summary(r, userId)),
-      todos: todoRows.map((r) => todoSummaryRow(r, now)),
+      todos: todoRows.map((r) => todoSummaryRow(r, now, sourceNotes)),
     };
   },
 });

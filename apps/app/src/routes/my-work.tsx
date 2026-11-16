@@ -8,7 +8,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useEffect, useMemo, useRef, useState, type FormEvent, type RefObject } from 'react';
 import { useTranslations } from 'use-intl';
-import type { MyWorkTask, NoteLinkTargetInput, Todo, TodoListView, TodoStep, TodoSummary } from '@crove/kernel-contract';
+import type { MyWorkTask, NoteLinkTargetInput, Todo, TodoListView, TodoSourceNote, TodoStep, TodoSummary } from '@crove/kernel-contract';
 import { Alert, AlertDescription } from '@crove/ui/components/alert';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -68,6 +68,53 @@ function DueChip({ todo }: { todo: TodoSummary }) {
       {todo.overdue && <span className="sr-only">{t('overdue')}: </span>}
       {label}
     </Badge>
+  );
+}
+
+/** Back-link chip in a My work row to the note a to-do was created from (step N7, #1676). */
+export function TodoSourceBadge({ sourceNote, slug }: { sourceNote: TodoSourceNote | null | undefined; slug: string }) {
+  const t = useTranslations('myWork');
+  if (!sourceNote) return null;
+  if (sourceNote.available) {
+    return (
+      <Link
+        to="/o/$slug/notes"
+        params={{ slug }}
+        search={{ note: sourceNote.id }}
+        data-testid="todo-source-note"
+        aria-label={t('openSourceNote', { title: sourceNote.title ?? '' })}
+        className="inline-flex max-w-44 rounded-full focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+      >
+        <Badge variant="outline" className="max-w-full hover:bg-muted">
+          <span className="truncate">{t('sourceNoteBadge', { title: sourceNote.title ?? '' })}</span>
+        </Badge>
+      </Link>
+    );
+  }
+  return (
+    <Badge variant="outline" className="text-subtle-foreground" data-testid="todo-source-note-unavailable">
+      {t('sourceNoteUnavailable')}
+    </Badge>
+  );
+}
+
+/** Back-link section in the to-do detail editor to its source note (step N7, #1676). */
+export function TodoSourceDetail({ sourceNote, slug }: { sourceNote: TodoSourceNote | null | undefined; slug: string }) {
+  const t = useTranslations('myWork');
+  if (!sourceNote) return null;
+  return (
+    <section className="space-y-1 text-sm" data-testid="todo-editor-source-note">
+      <h3 className="text-xs font-medium text-muted-foreground">{t('sourceNote')}</h3>
+      {sourceNote.available ? (
+        <Link to="/o/$slug/notes" params={{ slug }} search={{ note: sourceNote.id }} data-testid="todo-detail-source-note" className="inline-block text-link hover:underline">
+          {sourceNote.title ?? ''}
+        </Link>
+      ) : (
+        <span className="text-subtle-foreground" data-testid="todo-detail-source-note-unavailable">
+          {t('sourceNoteUnavailable')}
+        </span>
+      )}
+    </section>
   );
 }
 
@@ -408,6 +455,7 @@ function TodoEditor({ todo, onClose }: { todo: Todo; onClose: () => void }) {
             </span>
           </span>
         </label>
+        <TodoSourceDetail sourceNote={todo.sourceNote} slug={slug} />
         <NoteLinks
           links={todo.links}
           slug={slug}
@@ -610,6 +658,7 @@ export function MyWorkPage() {
             {todo.steps.done}/{todo.steps.total}
           </span>
         )}
+        <TodoSourceBadge sourceNote={todo.sourceNote} slug={slug} />
         <DueChip todo={todo} />
         {/* Handed over (#1674): the work is now the team's task, opened from here. */}
         {todo.status === 'handed_over' && todo.taskId && (

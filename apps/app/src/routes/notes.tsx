@@ -26,9 +26,10 @@ import { Markdown } from '../lib/markdown.tsx';
 import { applyFormat, shortcutFormat, type MarkdownFormat } from '../lib/markdown-edit.ts';
 import { createAutosaver, type Autosaver, type NoteValues, type SaveState } from '../lib/note-autosave.ts';
 import { notesMarkdown, saveText } from '../lib/notes-export.ts';
+import { browserTimeZone } from '../lib/my-work.ts';
 import { projectsInstalled } from '../lib/projects.ts';
 import { toast } from '../lib/toast.ts';
-import { listOfNote, looksLikePassword, parseTags, tagCounts, type NotesSearch } from '../lib/notes.ts';
+import { extractNoteTodoTitle, listOfNote, looksLikePassword, parseTags, tagCounts, type NotesSearch } from '../lib/notes.ts';
 
 const SAVE_AFTER_MS = 800;
 const isConflict = (error: unknown) => (error as { code?: string } | null)?.code === 'NOTE_REVISION_CONFLICT';
@@ -85,6 +86,8 @@ function Editor({
   const [state, setState] = useState<SaveState>('idle');
   const [saveError, setSaveError] = useState<unknown>(null);
   const [confirmShare, setConfirmShare] = useState(false);
+  const [todoCreatedTitle, setTodoCreatedTitle] = useState<string | null>(null);
+  const [todoLineError, setTodoLineError] = useState<string | null>(null);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   // Bound to the note's org: a save that runs as the editor closes, after the user switched org, still goes to its own.
   const api = useRef(clientForOrg(slug)).current;
@@ -106,6 +109,7 @@ function Editor({
   const mayManage = writer && (note.mine || (note.visibility === 'org' && manager));
   const inTrash = note.deletedAt !== null;
   const editable = note.mine && writer && !inTrash;
+  const canMakeTodo = writer && !inTrash;
 
   // A change made elsewhere (another tab, the stream's refetch) replaces the text while nothing waits to save.
   useEffect(() => {
@@ -209,6 +213,33 @@ function Editor({
     mutationFn: (linkId: string) => api.notes.linkRemove({ linkId }),
     onSuccess: () => void refreshNotes(),
   });
+  // Converts a note line or selection into a private personal to-do (notes plan step N7, #1676).
+  const makeTodo = useMutation({
+    mutationFn: (title: string) => api.notes.todos.create({ title, timeZone: browserTimeZone(), sourceNoteId: note.id }),
+    onMutate: () => {
+      setTodoCreatedTitle(null);
+      setTodoLineError(null);
+    },
+    onSuccess: (_done, title) => {
+      setTodoCreatedTitle(title);
+      void queryClient.invalidateQueries({ queryKey: orpc.notes.todos.key() });
+    },
+  });
+  const makeTodoFromLine = (title: string) => {
+    if (!title || makeTodo.isPending) return;
+    makeTodo.mutate(title);
+  };
+  const makeTodoFromSelection = () => {
+    const el = bodyRef.current;
+    const title = extractNoteTodoTitle(values.body, el?.selectionStart ?? 0, el?.selectionEnd ?? 0);
+    if (!title) {
+      makeTodo.reset();
+      setTodoCreatedTitle(null);
+      setTodoLineError(t('makeTodoEmpty'));
+      return;
+    }
+    makeTodo.mutate(title);
+  };
 
   return (
     <article className="space-y-4" aria-labelledby="note-title">
@@ -240,11 +271,21 @@ function Editor({
           </div>
           {preview ? (
             <div className="min-h-40 rounded-md border px-3 py-2">
-              {values.body.trim() === '' ? <p className="text-sm text-subtle-foreground">{t('emptyBody')}</p> : <Markdown text={values.body} />}
+              {values.body.trim() === '' ? (
+                <p className="text-sm text-subtle-foreground">{t('emptyBody')}</p>
+              ) : (
+                <Markdown
+                  text={values.body}
+                  onMakeTodo={canMakeTodo ? makeTodoFromLine : undefined}
+                  makeTodoLabel={t('makeTodo')}
+                  makeTodoAriaLabel={(line) => t('makeTodoOf', { line })}
+                  makeTodoDisabled={makeTodo.isPending}
+                />
+              )}
             </div>
           ) : (
             <>
-              <div role="group" aria-label={t('toolbar.label')} className="flex flex-wrap gap-1">
+              <div role="group" aria-label={t('toolbar.label')} className="flex flex-wrap items-center gap-1">
                 {FORMATS.map(({ format: kind, key, aria }) => (
                   <Button
                     key={kind}
@@ -259,6 +300,21 @@ function Editor({
                     {t(`toolbar.${kind}`)}
                   </Button>
                 ))}
+                {canMakeTodo && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="ml-auto"
+                    loading={makeTodo.isPending}
+                    disabled={makeTodo.isPending}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={makeTodoFromSelection}
+                    data-testid="note-make-todo"
+                  >
+                    {t('makeTodo')}
+                  </Button>
+                )}
               </div>
               <label htmlFor="note-body" className="sr-only">
                 {t('bodyLabel')}
@@ -301,11 +357,32 @@ function Editor({
           <h2 id="note-title" className="text-lg font-semibold text-foreground">
             {note.title}
           </h2>
-          {note.body.trim() === '' ? <p className="text-sm text-subtle-foreground">{t('emptyBody')}</p> : <Markdown text={note.body} />}
+          {note.body.trim() === '' ? (
+            <p className="text-sm text-subtle-foreground">{t('emptyBody')}</p>
+          ) : (
+            <Markdown
+              text={note.body}
+              onMakeTodo={canMakeTodo ? makeTodoFromLine : undefined}
+              makeTodoLabel={t('makeTodo')}
+              makeTodoAriaLabel={(line) => t('makeTodoOf', { line })}
+              makeTodoDisabled={makeTodo.isPending}
+            />
+          )}
           <TagChips tags={note.tags} onTag={onTag} />
           {!note.mine && <p className="text-xs text-subtle-foreground">{t('readOnly')}</p>}
         </>
       )}
+
+      {todoCreatedTitle && (
+        <p role="status" data-testid="note-todo-created" className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm text-foreground">
+          <span>{t('todoCreated', { title: todoCreatedTitle })}</span>
+          <Link to="/o/$slug/my-work" params={{ slug }} className="text-link underline">
+            {t('openMyWork')}
+          </Link>
+        </p>
+      )}
+      {todoLineError && <ErrorText>{todoLineError}</ErrorText>}
+      {makeTodo.error && <ErrorText>{errorMessage(makeTodo.error)}</ErrorText>}
 
       <NoteLinks
         links={note.links}
