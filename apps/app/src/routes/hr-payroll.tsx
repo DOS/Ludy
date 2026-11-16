@@ -718,6 +718,7 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
   });
   const syncLeave = useMutation({
     mutationFn: () => client.hr.payroll.runs.syncLeave({ runId }),
+    onMutate: () => setEditing(null),
     onSuccess: async () => {
       setAccept(false);
       setEditing(null);
@@ -742,7 +743,14 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
         <div className="flex flex-wrap items-center gap-2">
           {draft && hasPayLines && (
             <>
-              <Button variant="outline" size="sm" loading={syncLeave.isPending} onClick={() => syncLeave.mutate()} data-testid="hr-sync-leave">
+              <Button
+                variant="outline"
+                size="sm"
+                loading={syncLeave.isPending}
+                disabled={editing !== null}
+                onClick={() => syncLeave.mutate()}
+                data-testid="hr-sync-leave"
+              >
                 {t('syncLeave')}
               </Button>
               <Button variant="outline" size="sm" onClick={() => setThirteenthOpen((v) => !v)} data-testid="hr-13th-month-toggle">
@@ -858,7 +866,7 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
                       </Button>
                     )}
                     {draft && l.kind === 'pay' && editing !== l.id && (
-                      <Button variant="outline" size="sm" onClick={() => setEditing(l.id)} data-testid="hr-inputs-open">
+                      <Button variant="outline" size="sm" disabled={syncLeave.isPending} onClick={() => setEditing(l.id)} data-testid="hr-inputs-open">
                         {t('editInputs')}
                       </Button>
                     )}

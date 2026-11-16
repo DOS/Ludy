@@ -26,6 +26,10 @@ const ONCE = { staleTime: Infinity, refetchOnWindowFocus: false, refetchOnReconn
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const DAYS_RE = /^\d{1,3}(\.\d{1,2})?$/;
 
+export function normalizeLeaveDaysInput(raw: string): string {
+  return raw.replace(/,/g, '.').replace(/[^\d.]/g, '');
+}
+
 export function LeaveBalancePanel({ employeeId }: { employeeId: string }) {
   const t = useTranslations('hrEmployees');
   const f = useFormat();
@@ -219,7 +223,7 @@ export function LeaveBalancePanel({ employeeId }: { employeeId: string }) {
                   className="w-24"
                   inputMode="decimal"
                   value={days}
-                  onChange={(ev) => setDays(ev.target.value.replace(/[^\d.]/g, ''))}
+                  onChange={(ev) => setDays(normalizeLeaveDaysInput(ev.target.value))}
                   data-testid="hr-leave-days"
                 />
               </div>

@@ -445,6 +445,11 @@ import {
   zProjectTaskMutate,
   zProjectTaskProjectEntry,
   zProjectTaskProjectsInput,
+  zProjectTasksFromNoteConfirmInput,
+  zProjectTasksFromNoteConfirmResult,
+  zProjectTasksFromNoteInput,
+  zProjectTasksFromNoteResult,
+  zProjectTasksFromNoteStatus,
   zProjectUpdate,
   zProjectWeeklyStatus,
   zProjectWeeklyStatusInput,
@@ -2690,6 +2695,11 @@ export const contract = {
     addTask: oc.input(zProjectTaskMutate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, taskId: zId, added: z.boolean() })),
     removeTask: oc.input(zProjectTaskMutate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, taskId: zId, removed: z.boolean() })),
     createTask: oc.input(zProjectTaskCreate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, taskId: zId })),
+    tasksFromNoteStatus: oc.input(z.strictObject({})).output(zProjectTasksFromNoteStatus),
+    proposeTasksFromNote: oc.input(zProjectTasksFromNoteInput).output(zProjectTasksFromNoteResult),
+    confirmTasksFromNote: oc
+      .input(zProjectTasksFromNoteConfirmInput.extend({ idempotencyKey: zId }))
+      .output(zProjectTasksFromNoteConfirmResult),
   },
 };
 

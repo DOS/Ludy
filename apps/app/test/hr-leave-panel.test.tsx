@@ -33,7 +33,7 @@ vi.mock('../src/lib/api.ts', async () => {
   };
 });
 
-const { LeaveBalancePanel } = await import('../src/components/hr-leave-panel.tsx');
+const { LeaveBalancePanel, normalizeLeaveDaysInput } = await import('../src/components/hr-leave-panel.tsx');
 const { I18nProvider } = await import('../src/i18n/provider.tsx');
 const { setActiveLocale } = await import('../src/i18n/runtime.ts');
 
@@ -118,5 +118,13 @@ describe('Annual leave ledger panel and pay-run leave copy (#3394)', () => {
     expect(en.commands.hr.payroll.leave.balance.length).toBeGreaterThan(0);
     expect(viMessages.commands.hr.payroll.run.sync_leave.length).toBeGreaterThan(0);
     expect(en.commands.hr.payroll.run.sync_leave.length).toBeGreaterThan(0);
+  });
+
+  it('normalizes comma decimals and keeps malformed multi-separator inputs invalid', () => {
+    expect(normalizeLeaveDaysInput('1,5')).toBe('1.5');
+    expect(normalizeLeaveDaysInput('1.25')).toBe('1.25');
+    const multi = normalizeLeaveDaysInput('1,5,2');
+    expect(multi).toBe('1.5.2');
+    expect(/^\d{1,3}(\.\d{1,2})?$/.test(multi)).toBe(false);
   });
 });
