@@ -78,4 +78,33 @@ describe('a stream of an org with an app off', () => {
     expect(types().slice(-2)).toEqual(['org_apps', 'social_post']);
     conn.finish();
   });
+  it('runs one more check when the apps change while a check is already running, before the hint goes out', async () => {
+    let scope: StreamScope = ALL_ENTITIES;
+    const answers: Array<() => void> = [];
+    const check = vi.fn(
+      () =>
+        new Promise<StreamScope>((resolve) => {
+          const read = scope;
+          answers.push(() => resolve(read));
+        }),
+    );
+    const { conn, types } = connection(ALL_ENTITIES, check);
+    // A re-check is under way and has read the apps; then the owner switches Social off and the hint arrives.
+    void conn.recheck();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(check).toHaveBeenCalledTimes(1);
+    scope = off('social');
+    conn.hint({ type: 'org_apps', id: ORG });
+    answers[0]?.();
+    await vi.advanceTimersByTimeAsync(0);
+    // The first answer is the old set: a second check follows and nothing is sent yet.
+    expect(check).toHaveBeenCalledTimes(2);
+    expect(types()).toEqual([]);
+    answers[1]?.();
+    await vi.advanceTimersByTimeAsync(0);
+    conn.hint({ type: 'social_post', id: randomUUID() });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(types()).toEqual(['org_apps']);
+    conn.finish();
+  });
 });

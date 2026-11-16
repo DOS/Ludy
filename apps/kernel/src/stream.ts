@@ -518,6 +518,7 @@ export class StreamConnection implements HubSubscriber {
   private resyncPending = false;
   private sinceCheck = 0;
   private checking = false;
+  private recheckAgain = false;
   private closed = false;
   private flushQueued = false;
   private readonly timers: NodeJS.Timeout[] = [];
@@ -568,7 +569,11 @@ export class StreamConnection implements HubSubscriber {
     if (!forRecipient(this.scope, this.userId, hint.type, userId, shared)) return;
     if (!entityNamed(hint.type, legalEntityId)) return;
     // The apps changed: check again before this hint goes out, so the filter above is the new set when the app reads kernel.org.apps.
-    if (hint.type === 'org_apps') this.sinceCheck = this.recheckEvery;
+    if (hint.type === 'org_apps') {
+      this.sinceCheck = this.recheckEvery;
+      // A check already running may have read the apps before the switch committed: it is followed by one more before anything is sent.
+      if (this.checking) this.recheckAgain = true;
+    }
     if (!inScope(this.scope, legalEntityId)) return;
     if (!this.resyncPending) {
       // Keyed by the entity too: an extraction hint carries its file's id, and two readings of one file may belong to
@@ -647,6 +652,12 @@ export class StreamConnection implements HubSubscriber {
     }
     if (scope) this.scope = scope;
     this.checking = false;
+    // The apps changed while this check ran: ask again, and let the hints wait for that answer.
+    if (this.recheckAgain && !this.closed) {
+      this.recheckAgain = false;
+      void this.recheck();
+      return;
+    }
     this.sinceCheck = 0;
     this.flush();
   }

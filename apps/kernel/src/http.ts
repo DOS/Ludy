@@ -1505,7 +1505,8 @@ export function createHttpApp(deps: HttpDeps) {
         const scope = streamScopeOf(await runtime.query(STREAM_CHECK_QUERY, {}, { actor, orgId }));
         const on = await runtime.effectiveModules(orgId).catch(() => null);
         if (on === null) return scope;
-        const appsOff = new Set(STREAM_FILTERED_APPS.filter((app) => !on.includes(app)));
+        // An app this deployment does not run is not "off": nothing writes its rows, and a runtime without it (a kernel-only one) is not filtering.
+        const appsOff = new Set(STREAM_FILTERED_APPS.filter((app) => runtime.installed(app) && !on.includes(app)));
         return appsOff.size === 0 ? scope : { ...scope, appsOff };
       };
       let scope: StreamScope;
