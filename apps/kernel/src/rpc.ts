@@ -46,7 +46,7 @@ import {
   type OrgSummary,
 } from '@crove/kernel';
 import type { z } from 'zod';
-import type { CompanyCandidates, ConversationAutoDraft, zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zTask } from '@crove/kernel-contract';
+import type { CompanyCandidates, ConversationAutoDraft, zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zSignEnvelopeDetail, zTask } from '@crove/kernel-contract';
 import type { FollowupSource, MeetingBriefSource, QuoteSuggestSource, SuggestedSlots } from '@crove/mod-crm';
 import type { ProjectWeeklyStatusSource } from '@crove/mod-projects';
 import { sql } from 'kysely';
@@ -65,6 +65,7 @@ import { crmFollowupAi, draftCrmFollowup } from './crm-followup-ai.ts';
 import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
 import { prepareProjectWeeklyStatus, projectWeeklyStatusAi } from './project-weekly-status-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
+import { proposeEnvelopeAnalysis, signAi, type SignAi } from './sign-ai.ts';
 import { askStatusOf, runLiveNotes, runMeetingAsk, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems } from './stock-ai.ts';
 import { MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
@@ -374,6 +375,8 @@ export function createRpcHandler(
   summaryModel: ModelPort | null = null,
   // The deployment's AI prices (AI_PRICE_*), for the cost a translation shows before the click.
   aiPrice?: { inputPerMTok: string; outputPerMTok: string },
+  // Vy's eSign field placement and risky clause review (#3351): unset runs manual signing with AI off.
+  signAiReader: SignAi['reader'] = null,
 ) {
   const os = implement(contract).$context<RpcContext>();
   // Vy's brief on Home has its own rate limit and one-at-a-time lock, so opening Home never makes a reply or post draft wait.
@@ -453,6 +456,7 @@ export function createRpcHandler(
     conversationReader?.projectWeeklyStatus ? { projectWeeklyStatus: conversationReader.projectWeeklyStatus.bind(conversationReader) } : null,
     suggestionBudget(),
   );
+  const signCoworker = signAi(signAiReader ?? null, new DraftBudget({ perUserPerMinute: 4, perOrgPerMinute: 20 }));
 
   const guard = async <T>(fn: () => Promise<T>): Promise<T> => {
     try {
@@ -619,6 +623,34 @@ export function createRpcHandler(
     (name: string) =>
     <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
       inProjects(context, (orgId, actor) => runtime.query<O>(name, input, { actor, orgId }));
+
+  // The eSign module (#3323, #3325, #3351): answers 404 when the deployment leaves it out, and send / create_link omit idempotency.
+  const sign = runtime.installed('sign');
+  const inSign = async <T>(context: RpcContext, fn: (orgId: string, actor: UserActor) => Promise<T>) => {
+    if (!sign) throw new ORPCError('NOT_FOUND', { status: 404, message: 'Mô-đun Ký kết chưa được bật' });
+    return inOrg(context, fn);
+  };
+  const signCommand =
+    (name: string) =>
+    <O, I extends { idempotencyKey?: string | undefined } = { idempotencyKey?: string | undefined }>({
+      context,
+      input,
+    }: {
+      context: RpcContext;
+      input: I;
+    }): Promise<O> =>
+      inSign(context, (orgId, actor) => {
+        const { idempotencyKey, ...rest } = input;
+        return runtime.execute<O>(name, rest, { actor, orgId, ...(idempotencyKey ? { idempotencyKey } : {}) });
+      });
+  const signNoIdempotencyCommand =
+    (name: string) =>
+    <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
+      inSign(context, (orgId, actor) => runtime.execute<O>(name, input, { actor, orgId }));
+  const signQuery =
+    (name: string) =>
+    <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
+      inSign(context, (orgId, actor) => runtime.query<O>(name, input, { actor, orgId }));
 
   // The ads module (#2217): its procedures answer 404 when the deployment leaves it out, as the notes module's do.
   const ads = runtime.installed('ads');
@@ -3701,6 +3733,57 @@ export function createRpcHandler(
         ),
       ),
       confirmTasksFromSource: os.projects.confirmTasksFromSource.handler(projectsCommand('projects.tasks_from_source.confirm')),
+    },
+    sign: {
+      envelope: {
+        list: os.sign.envelope.list.handler(signQuery('sign.envelope.list')),
+        get: os.sign.envelope.get.handler(({ context, input }) =>
+          inSign(context, async (orgId, actor) => {
+            type SignEnvelopeDetail = z.infer<typeof zSignEnvelopeDetail>;
+            const detail = await runtime.query<SignEnvelopeDetail>('sign.envelope.get', input, { actor, orgId });
+            return {
+              ...detail,
+              envelope: {
+                ...detail.envelope,
+                pageDimensions: Array.isArray(detail.envelope.pageDimensions) ? detail.envelope.pageDimensions : null,
+              },
+            };
+          }),
+        ),
+        events: os.sign.envelope.events.handler(signQuery('sign.envelope.events')),
+        verify: os.sign.envelope.verify.handler(signQuery('sign.envelope.verify')),
+        create: os.sign.envelope.create.handler(signCommand('sign.envelope.create')),
+        update: os.sign.envelope.update.handler(signCommand('sign.envelope.update')),
+        send: os.sign.envelope.send.handler(signNoIdempotencyCommand('sign.envelope.send')),
+        remind: os.sign.envelope.remind.handler(signCommand('sign.envelope.remind')),
+        void: os.sign.envelope.void.handler(signCommand('sign.envelope.void')),
+      },
+      signer: {
+        add: os.sign.signer.add.handler(signCommand('sign.signer.add')),
+        remove: os.sign.signer.remove.handler(signCommand('sign.signer.remove')),
+        reorder: os.sign.signer.reorder.handler(signCommand('sign.signer.reorder')),
+        create_link: os.sign.signer.create_link.handler(signNoIdempotencyCommand('sign.signer.create_link')),
+      },
+      field: {
+        set: os.sign.field.set.handler(signCommand('sign.field.set')),
+      },
+      ai: {
+        analyze: os.sign.ai.analyze.handler(({ context, input }) =>
+          inSign(context, (orgId, actor) =>
+            proposeEnvelopeAnalysis({
+              ai: signCoworker,
+              runtime,
+              orgId,
+              actor,
+              envelopeId: input.envelopeId,
+              ...(input.pages ? { pages: input.pages } : {}),
+              meter: 'runtime',
+              ...(aiPrice ? { meterOptions: { price: aiPrice } } : {}),
+            }),
+          ),
+        ),
+        get: os.sign.ai.get.handler(signQuery('sign.ai_analysis.get')),
+      },
     },
   });
 
