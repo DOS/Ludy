@@ -87,7 +87,8 @@ import { adsBusy, adsCommands, adsManifest, adsQueries } from '@crove/mod-ads';
 import { meetingsBusy, meetingsCommands, meetingsManifest, meetingsQueries, setSummaryEnabled, setTranscribeBroker, setTranscribeEnabled } from '@crove/mod-meetings';
 import { signCommands, signManifest, signQueries } from '@crove/mod-sign';
 import { GoogleAdsConnector, MetaAdsConnector, MetaWriteConnector, adActivators, adLaunchWriters, adPausers, adPlatforms, adRevokers, adStateReaders, type AdActivator, type AdPauser, type AdPlatform, type AdRevoker, type AdStateReader, type LaunchWriter } from '@crove/ad-platform';
-import { createSandboxEInvoiceProvider, type EInvoiceProvider } from '@crove/einvoice';
+import { createMisaEInvoiceProvider, createSandboxEInvoiceProvider, misaBlockers, type EInvoiceProvider } from '@crove/einvoice';
+import { misaTransport } from './einvoice-transport.ts';
 import { createSandboxMarketplaceProvider, isMarketplaceAdapter, type MarketplaceProvider } from '@crove/mod-finance';
 import { createAuthenticator, type Authenticate } from './auth.ts';
 import { AVAILABLE_MODULES, appUrl, assertExportKey, assertSplitRoles, extractConcurrency, usageLimits, zaloMediaHostsOf, type Config, type ModuleId } from './config.ts';
@@ -414,10 +415,19 @@ export function metaConversationSecrets(config: Pick<Config, 'CHANNEL_META_APP_I
   return instagram ? { primary: instagram } : undefined;
 }
 
-// The e-invoice providers this deployment offers, by adapter id (ADR-0044 point 7): the offline sandbox when EINVOICE_SANDBOX is on. A real adapter is added here with
-// its own switch when it is built (#2503); until then no host is ever called.
-export function einvoiceProvidersOf(config: Pick<Config, 'EINVOICE_SANDBOX'>): Readonly<Record<string, EInvoiceProvider>> {
-  return config.EINVOICE_SANDBOX === 'true' ? { sandbox: createSandboxEInvoiceProvider().provider } : {};
+// The e-invoice providers this deployment offers, by adapter id (ADR-0044 point 7): the offline sandbox when EINVOICE_SANDBOX is on, and each real adapter EINVOICE_PROVIDERS names.
+// `misa` (#2503) is built but off: naming it is refused until the issues in MISA_GATES are done and written in the issue (misaBlockers), here and in loadConfig. An id this build
+// does not know is left out, so a typo offers nothing.
+export function einvoiceProvidersOf(config: Pick<Config, 'EINVOICE_SANDBOX' | 'EINVOICE_PROVIDERS'>, transport = misaTransport()): Readonly<Record<string, EInvoiceProvider>> {
+  const out: Record<string, EInvoiceProvider> = {};
+  if (config.EINVOICE_SANDBOX === 'true') out.sandbox = createSandboxEInvoiceProvider().provider;
+  for (const raw of config.EINVOICE_PROVIDERS.split(',')) {
+    if (raw.trim() !== 'misa') continue;
+    const blockers = misaBlockers();
+    if (blockers.length > 0) throw new Error(`EINVOICE_PROVIDERS=misa is refused until ${blockers.map((b) => `#${b.issue}`).join(' and ')} are done and written in issue #2503`);
+    out.misa = createMisaEInvoiceProvider({ transport });
+  }
+  return out;
 }
 
 // The marketplace providers this deployment offers, by adapter id (ADR-0045 point 7, #2519): the ones MARKETPLACE_PROVIDERS names. `sandbox` is the offline provider. A real adapter is

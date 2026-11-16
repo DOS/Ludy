@@ -30,7 +30,8 @@ describe('the offline e-invoice provider', () => {
   it('is a provider id, has no host and no cancel', () => {
     const { provider } = createSandboxEInvoiceProvider();
     expect(isEInvoiceProvider('sandbox')).toBe(true);
-    expect(isEInvoiceProvider('misa')).toBe(false);
+    expect(isEInvoiceProvider('misa')).toBe(true);
+    expect(isEInvoiceProvider('nonesuch')).toBe(false);
     expect(provider.hosts).toEqual([]);
     expect(provider.capabilities.cancel).toBe(false);
     expect(Object.keys(provider)).not.toContain('cancel');
