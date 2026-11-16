@@ -13,7 +13,7 @@ import { z } from 'zod';
 // number above the lines and the lines come back read, cells as text, and the worker checks them again.
 // marketplace_orders: a Shopee, TikTok Shop or Lazada order report as .xlsx or CSV (#2515); only an allow-list of columns comes back (order, line, dates, status, SKU, product, quantity,
 // amounts): the buyer's columns are never read, so they never leave the sandbox.
-export const EXTRACT_KINDS = ['einvoice_xml', 'pdf_text', 'mime', 'zip', 'portal_invoice_list', 'dsn', 'html_meta', 'feed', 'bank_statement', 'marketplace_orders', 'marketplace_income'] as const;
+export const EXTRACT_KINDS = ['einvoice_xml', 'pdf_text', 'pdf_inspect', 'pdf_seal', 'mime', 'zip', 'portal_invoice_list', 'dsn', 'html_meta', 'feed', 'bank_statement', 'marketplace_orders', 'marketplace_income'] as const;
 export type ExtractKind = (typeof EXTRACT_KINDS)[number];
 export const zExtractKind = z.enum(EXTRACT_KINDS);
 
@@ -79,6 +79,15 @@ export const EXTRACT_LIMITS = {
   // A marketplace income report (#2516): the same file size, with one line per order paid (at most this many) in the first few sheets of the workbook.
   maxIncomeLines: 20_000,
   maxIncomeSheets: 8,
+  // eSign PDF inspection and sealing (#3331, docs/plan/esign.md section 4.2).
+  maxPdfSignPages: 200,
+  maxPdfAuditCertPages: 25,
+  maxPdfInspectTextBytes: 64 * 1024,
+  maxPdfSealFields: 500,
+  maxPdfSealSigners: 50,
+  maxSignatureImageBytes: 256 * 1024,
+  // Base64-encoded 25 MiB PDF plus signature fields and certificate fits within 40 MiB.
+  maxPdfSealRequestBytes: 40 * MiB,
 } as const;
 
 // Why the sandbox did not return an entry of an archive. The whole archive is refused instead (as invalid) when an
@@ -89,6 +98,7 @@ export type ArchiveRejection = (typeof ARCHIVE_REJECTIONS)[number];
 
 export function maxRequestBytes(kind: ExtractKind): number {
   if (kind === 'mime' || kind === 'dsn') return EXTRACT_LIMITS.maxEmailBytes;
+  if (kind === 'pdf_seal') return EXTRACT_LIMITS.maxPdfSealRequestBytes;
   if (kind === 'portal_invoice_list') return EXTRACT_LIMITS.maxPortalListBytes;
   if (kind === 'bank_statement') return EXTRACT_LIMITS.maxStatementBytes;
   if (kind === 'marketplace_orders' || kind === 'marketplace_income') return EXTRACT_LIMITS.maxOrderReportBytes;
@@ -481,6 +491,190 @@ export const zExtractedMarketplaceIncome = z.strictObject({
 });
 export type ExtractedMarketplaceIncome = z.infer<typeof zExtractedMarketplaceIncome>;
 
+const MAX_PDF_BASE64_CHARS = Math.ceil(EXTRACT_LIMITS.maxFileBytes / 3) * 4;
+const MAX_SIGNATURE_PNG_BASE64_CHARS = Math.ceil(EXTRACT_LIMITS.maxSignatureImageBytes / 3) * 4;
+const zSha256Hex = z.string().regex(/^[0-9a-f]{64}$/, 'lowercase 64-char sha256 hex');
+const utf8ByteLength = (text: string): number => new TextEncoder().encode(text).byteLength;
+
+export const zPdfInspectPage = z.strictObject({
+  page: z.number().int().min(1).max(EXTRACT_LIMITS.maxPdfSignPages),
+  widthPt: z.number().finite().positive().max(20_000),
+  heightPt: z.number().finite().positive().max(20_000),
+  rotation: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)]),
+  text: z.string().max(EXTRACT_LIMITS.maxPdfInspectTextBytes),
+});
+export type PdfInspectPage = z.infer<typeof zPdfInspectPage>;
+
+export const zPdfInspectResult = z
+  .strictObject({
+    ok: z.literal(true),
+    kind: z.literal('pdf_inspect'),
+    pageCount: z.number().int().min(1).max(EXTRACT_LIMITS.maxPdfSignPages),
+    pages: z.array(zPdfInspectPage).min(1).max(EXTRACT_LIMITS.maxPdfSignPages),
+  })
+  .superRefine((value, ctx) => {
+    if (value.pages.length !== value.pageCount) {
+      ctx.addIssue({ code: 'custom', path: ['pages'], message: 'pages length must equal pageCount' });
+    }
+    let totalBytes = 0;
+    for (let i = 0; i < value.pages.length; i++) {
+      const entry = value.pages[i];
+      if (!entry) continue;
+      if (entry.page !== i + 1) {
+        ctx.addIssue({ code: 'custom', path: ['pages', i, 'page'], message: `page ${i + 1} must be numbered sequentially` });
+      }
+      totalBytes += utf8ByteLength(entry.text);
+    }
+    if (totalBytes > EXTRACT_LIMITS.maxPdfInspectTextBytes) {
+      ctx.addIssue({ code: 'custom', path: ['pages'], message: `total extracted text exceeds ${EXTRACT_LIMITS.maxPdfInspectTextBytes} bytes` });
+    }
+  });
+export type PdfInspectResult = z.infer<typeof zPdfInspectResult>;
+
+export const PDF_SEAL_FIELD_TYPES = ['signature', 'initial', 'date', 'text', 'checkbox'] as const;
+export type PdfSealFieldType = (typeof PDF_SEAL_FIELD_TYPES)[number];
+
+const zNormalizedBox = {
+  page: z.number().int().min(1).max(EXTRACT_LIMITS.maxPdfSignPages),
+  xNorm: z.number().finite().min(0).lt(1),
+  yNorm: z.number().finite().min(0).lt(1),
+  wNorm: z.number().finite().gt(0).lte(1),
+  hNorm: z.number().finite().gt(0).lte(1),
+};
+
+const zPdfSealFieldVariant = z.discriminatedUnion('type', [
+  z.strictObject({
+    type: z.literal('signature'),
+    ...zNormalizedBox,
+    imagePngBase64: z.base64().min(1).max(MAX_SIGNATURE_PNG_BASE64_CHARS),
+  }),
+  z.strictObject({
+    type: z.literal('initial'),
+    ...zNormalizedBox,
+    imagePngBase64: z.base64().min(1).max(MAX_SIGNATURE_PNG_BASE64_CHARS).optional(),
+    text: z.string().max(EXTRACT_LIMITS.maxStringChars).optional(),
+    fontSizePt: z.number().finite().min(6).max(36).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('date'),
+    ...zNormalizedBox,
+    text: z.string().max(EXTRACT_LIMITS.maxStringChars),
+    fontSizePt: z.number().finite().min(6).max(36).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('text'),
+    ...zNormalizedBox,
+    text: z.string().max(EXTRACT_LIMITS.maxStringChars),
+    fontSizePt: z.number().finite().min(6).max(36).optional(),
+  }),
+  z.strictObject({
+    type: z.literal('checkbox'),
+    ...zNormalizedBox,
+    checked: z.boolean(),
+  }),
+]);
+
+export const zPdfSealField = zPdfSealFieldVariant.superRefine((field, ctx) => {
+  if (field.xNorm + field.wNorm > 1.000001) {
+    ctx.addIssue({ code: 'custom', path: ['wNorm'], message: 'xNorm + wNorm must be <= 1' });
+  }
+  if (field.yNorm + field.hNorm > 1.000001) {
+    ctx.addIssue({ code: 'custom', path: ['hNorm'], message: 'yNorm + hNorm must be <= 1' });
+  }
+  if (field.type === 'initial' && field.imagePngBase64 === undefined && field.text === undefined) {
+    ctx.addIssue({ code: 'custom', path: ['imagePngBase64'], message: 'initial field requires imagePngBase64 or text' });
+  }
+});
+export type PdfSealField = z.infer<typeof zPdfSealField>;
+
+export const PDF_SEAL_OTP_STATUSES = ['not_required', 'verified', 'unverified'] as const;
+export type PdfSealOtpStatus = (typeof PDF_SEAL_OTP_STATUSES)[number];
+
+export const zPdfSealCertificateSigner = z.strictObject({
+  name: z.string().min(1).max(200),
+  roleLabel: z.string().min(1).max(100),
+  maskedEmail: z.string().min(1).max(200).nullable(),
+  deliveryMode: z.enum(['link', 'email']),
+  otpStatus: z.enum(PDF_SEAL_OTP_STATUSES),
+  signedAtIso: z.iso.datetime({ offset: true }),
+  ipHashPrefix: z
+    .string()
+    .regex(/^[0-9a-f]{8,64}$/, 'lowercase hex ip hash prefix')
+    .nullable(),
+  signatureKind: z.enum(['draw', 'type']).optional(),
+});
+export type PdfSealCertificateSigner = z.infer<typeof zPdfSealCertificateSigner>;
+
+export const zPdfSealCertificate = z.strictObject({
+  certificateCode: z.string().min(1).max(64),
+  envelopeTitle: z.string().min(1).max(300),
+  sourceSha256: zSha256Hex,
+  completedAtIso: z.iso.datetime({ offset: true }),
+  eventChainTipHash: zSha256Hex,
+  signers: z.array(zPdfSealCertificateSigner).min(1).max(EXTRACT_LIMITS.maxPdfSealSigners),
+});
+export type PdfSealCertificate = z.infer<typeof zPdfSealCertificate>;
+
+export const zPdfSealInput = z.strictObject({
+  pdfBase64: z.base64().min(1).max(MAX_PDF_BASE64_CHARS),
+  fields: z.array(zPdfSealField).max(EXTRACT_LIMITS.maxPdfSealFields),
+  certificate: zPdfSealCertificate,
+});
+export type PdfSealInput = z.infer<typeof zPdfSealInput>;
+
+export const zPdfSealResult = z.strictObject({
+  ok: z.literal(true),
+  kind: z.literal('pdf_seal'),
+  sealedPdfBase64: z.base64().min(1).max(MAX_PDF_BASE64_CHARS),
+  pageCount: z.number().int().min(1).max(EXTRACT_LIMITS.maxPdfSignPages + EXTRACT_LIMITS.maxPdfAuditCertPages),
+});
+export type PdfSealResult = z.infer<typeof zPdfSealResult>;
+
+export class PdfSealInputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PdfSealInputError';
+  }
+}
+
+function formatSealIssues(issues: readonly z.core.$ZodIssue[]): string {
+  return issues
+    .slice(0, 5)
+    .map((issue) => `${issue.path.join('.') || 'input'}: ${issue.message}`)
+    .join('; ')
+    .slice(0, EXTRACT_LIMITS.maxErrorChars);
+}
+
+export function encodePdfSealInput(input: PdfSealInput): Uint8Array {
+  const parsed = zPdfSealInput.safeParse(input);
+  if (!parsed.success) throw new PdfSealInputError(`invalid pdf_seal input: ${formatSealIssues(parsed.error.issues)}`);
+  const encoded = new TextEncoder().encode(JSON.stringify(parsed.data));
+  if (encoded.byteLength > maxRequestBytes('pdf_seal')) {
+    throw new PdfSealInputError('pdf_seal input is larger than allowed');
+  }
+  return encoded;
+}
+
+export function decodePdfSealInput(bytes: Uint8Array): PdfSealInput {
+  if (bytes.byteLength === 0) throw new PdfSealInputError('pdf_seal input is empty');
+  if (bytes.byteLength > maxRequestBytes('pdf_seal')) throw new PdfSealInputError('pdf_seal input is larger than allowed');
+  let text: string;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    throw new PdfSealInputError('pdf_seal input is not valid UTF-8');
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    throw new PdfSealInputError('pdf_seal input is not valid JSON');
+  }
+  const parsed = zPdfSealInput.safeParse(raw);
+  if (!parsed.success) throw new PdfSealInputError(`invalid pdf_seal input: ${formatSealIssues(parsed.error.issues)}`);
+  return parsed.data;
+}
+
 export const zExtractFailure = z.strictObject({
   ok: z.literal(false),
   code: z.enum(EXTRACT_ERROR_CODES),
@@ -496,6 +690,8 @@ export const zExtractSuccess = z.discriminatedUnion('kind', [
     text: z.string().max(EXTRACT_LIMITS.maxTextChars),
     pages: z.number().int().min(0).max(EXTRACT_LIMITS.maxPages),
   }),
+  zPdfInspectResult,
+  zPdfSealResult,
   z.strictObject({ ok: z.literal(true), kind: z.literal('mime'), email: zExtractedEmail }),
   z.strictObject({ ok: z.literal(true), kind: z.literal('zip'), archive: zExtractedArchive }),
   z.strictObject({ ok: z.literal(true), kind: z.literal('portal_invoice_list'), list: zExtractedPortalList }),
