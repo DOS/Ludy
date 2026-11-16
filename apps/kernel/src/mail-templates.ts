@@ -12,6 +12,7 @@ import { projectWeeklyStatusMailTemplate } from './project-weekly-status-mail.ts
 import { proposalReminderMailTemplate } from './proposal-reminder-mail.ts';
 import { QUOTE_MAIL_TEMPLATE, quoteMailTemplate } from './quote-mail.ts';
 import { reportMailTemplate } from './report-mail.ts';
+import { signMailTemplates } from './sign-mail.ts';
 import { todayMailTemplate } from './today-mail.ts';
 import { usageDeferredMailTemplate } from './usage-deferred-mail.ts';
 
@@ -42,4 +43,6 @@ export const MAIL_TEMPLATES: MailTemplates = {
   [FOLLOWUP_MAIL_TEMPLATE]: followupMailTemplate,
   // A project's weekly status shared by email to project members (#2609).
   'projects.weekly_status': projectWeeklyStatusMailTemplate,
+  // Public eSign invitation, reminder, OTP verification, and completed document notifications (#3324).
+  ...signMailTemplates,
 };
