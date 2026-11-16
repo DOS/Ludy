@@ -21,6 +21,12 @@ export const NOT_EXPORTED: Readonly<Record<string, string>> = {
   'crove_kernel.subject_key': "the org's wrapped subject keys (ADR-0017): key material, useless outside the deployment",
   'crove_kernel.agent_grant': 'the access grants of AI clients: credential-bearing, readable only through definer functions, ended when the org closes',
   'crove_kernel.agent_grant_wake': 'the wake-up webhooks of those grants, with their sealed secrets: credential-bearing, definer-only',
+  // Private to one member by row security (no owner or admin path): the snapshot reads as the system context, which would give the owner what the app never shows them.
+  'crove_kernel.notification': "private to its member: a member's own notifications are readable by that member alone",
+  'crove_kernel.notification_mute': "private to its member: a member's own mutes are readable by that member alone",
+  'crove_kernel.today_mail': "private to its member: a member's own daily mail setting is readable by that member alone",
+  'crove_kernel.calendar_connection': "private to its member: a member's own connected calendar account is readable by that member alone",
+  'crove_kernel.meeting_platform_connection': "private to its member: a member's own connected meeting platform account is readable by that member alone",
   // Runtime machinery: recomputed, expiring or only meaningful while the org runs.
   'crove_kernel.agent_wake_delivery': 'a wake-up delivery queue row: runtime machinery',
   'crove_kernel.agent_wake_signal_seen': 'which wake-up signals were seen: runtime machinery',

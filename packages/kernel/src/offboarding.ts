@@ -65,8 +65,9 @@ export const EXPORT_TABLES = {
   'kernel.mail_suppression': { from: 'crove_kernel.mail_suppression', omit: [] },
   'kernel.mail_event': { from: 'crove_kernel.mail_event', omit: [] },
   // What the org's people decided and set up in the kernel (#3367): budgets and kill switches, how long a proposal waits, the tax profile and the filings marked done,
-  // the voucher number series with every allocation and void, which legal entity a record belongs to, the members' saved views, availability, permission overrides,
-  // notifications and mutes, the Inbox, the daily mail setting, and the connected calendar and meeting platform accounts (their tokens are in credential tables that stay out).
+  // the voucher number series with every allocation and void, which legal entity a record belongs to, the views members shared, availability, permission overrides and the Inbox.
+  // What row security keeps to one member (notifications and their mutes, the daily mail setting, a member's own calendar and meeting platform accounts, private views)
+  // is not here: the snapshot reads as the system context, which would hand the owner what the app never shows them.
   'kernel.budget_policy': { from: 'crove_kernel.budget_policy', omit: [] },
   'kernel.kill_switch': { from: 'crove_kernel.kill_switch', omit: [] },
   'kernel.proposal_policy': { from: 'crove_kernel.proposal_policy', omit: [] },
@@ -77,15 +78,11 @@ export const EXPORT_TABLES = {
   'kernel.number_series_policy': { from: 'crove_kernel.number_series_policy', omit: [] },
   'kernel.number_void': { from: 'crove_kernel.number_void', omit: [] },
   'kernel.record_le': { from: 'crove_kernel.record_le', omit: [] },
-  'kernel.saved_view': { from: 'crove_kernel.saved_view', omit: [] },
+  // Only the views a member shared: a private view is readable by its member alone (the snapshot's system context would see it, so the filter is here, not in RLS).
+  'kernel.saved_view': { from: '(SELECT v.* FROM crove_kernel.saved_view v WHERE v.shared)', omit: [] },
   'kernel.member_availability': { from: 'crove_kernel.member_availability', omit: [] },
   'kernel.member_permission_override': { from: 'crove_kernel.member_permission_override', omit: [] },
-  'kernel.notification': { from: 'crove_kernel.notification', omit: [] },
-  'kernel.notification_mute': { from: 'crove_kernel.notification_mute', omit: [] },
   'kernel.inbox_item': { from: 'crove_kernel.inbox_item', omit: [] },
-  'kernel.today_mail': { from: 'crove_kernel.today_mail', omit: [] },
-  'kernel.calendar_connection': { from: 'crove_kernel.calendar_connection', omit: [] },
-  'kernel.meeting_platform_connection': { from: 'crove_kernel.meeting_platform_connection', omit: [] },
   'finance.purchase_document': { from: 'crove_finance.purchase_document', omit: ['search'] },
   'finance.purchase_line': { from: 'crove_finance.purchase_line', omit: [] },
   // The invoice's own VAT table by rate (#685).

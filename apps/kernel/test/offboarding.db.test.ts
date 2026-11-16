@@ -263,8 +263,13 @@ suite('org offboarding on PostgreSQL (#38)', () => {
     const seeder = new pg.Client({ connectionString: adminUrl });
     await seeder.connect();
     try {
-      // A member's private saved view (#3367): the snapshot reads as the system actor, which sees every member's rows of a per-member table, so the owner's copy holds it.
-      await seeder.query("INSERT INTO crove_kernel.saved_view (org_id, user_id, scope, name, filters, shared) VALUES ($1, $2, 'finance.bills', 'Chờ duyệt', '{\"status\":\"pending\"}'::jsonb, false)", [org.orgId, member.id]);
+      // A member's private and shared saved views (#3367): the snapshot reads as the system actor, which sees every member's rows, so the export itself keeps the private one out.
+      await seeder.query(
+        "INSERT INTO crove_kernel.saved_view (org_id, user_id, scope, name, filters, shared) VALUES ($1, $2, 'finance.bills', 'Chờ duyệt', '{\"status\":\"pending\"}'::jsonb, false), ($1, $2, 'finance.bills', 'Cả nhóm', '{}'::jsonb, true)",
+        [org.orgId, member.id],
+      );
+      // A member's own notification and daily mail setting stay private to them: the export must not carry them.
+      await seeder.query("INSERT INTO crove_kernel.notification_mute (org_id, user_id, kind) VALUES ($1, $2, 'finance.invoice')", [org.orgId, member.id]);
       await seeder.query("INSERT INTO crove_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, 'Hộ kinh doanh Nguyễn Văn A', 'household', $3)", [org.orgId, householdId, owner.id]);
       await seeder.query(
         "INSERT INTO crove_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, pit_method, trades, einvoice_registered, representative_name, created_by) VALUES ($1, $2, '2026-01-01', 2, 'percentage', ARRAY['goods'], false, 'Nguyễn Văn A', $3)",
@@ -297,7 +302,9 @@ suite('org offboarding on PostgreSQL (#38)', () => {
     expect(() => sealer.open(store.blobs.get(record.parts[0]!.key)!, exportAad(other.org.orgId, record.parts[0]!), 'aes-256-gcm')).toThrow(/authentication/);
     const part = (table: string) => record.parts.find((p) => p.table === table)!;
     const rowsOf = async (table: string) => lines(decode(sealer.open(await store.get(part(table).key), exportAad(org.orgId, part(table)), 'aes-256-gcm')));
-    expect(await rowsOf('kernel.saved_view')).toEqual([expect.objectContaining({ user_id: member.id, scope: 'finance.bills', name: 'Chờ duyệt', shared: false })]);
+    // Only the shared view is in the owner's copy: a member's private view and mutes are readable by that member alone.
+    expect(await rowsOf('kernel.saved_view')).toEqual([expect.objectContaining({ name: 'Cả nhóm', shared: true })]);
+    expect(EXPORT_TABLE_NAMES).not.toContain('kernel.notification_mute');
     // The household's profile is in the owner's copy, the representative's name included, and no other org's is.
     expect(await rowsOf('finance.household_profile')).toEqual([
       expect.objectContaining({ legal_entity_id: householdId, effective_from: '2026-01-01', tax_group: 2, pit_method: 'percentage', representative_name: 'Nguyễn Văn A' }),
