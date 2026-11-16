@@ -12,13 +12,14 @@
 SET LOCAL lock_timeout = '2s';
 
 CREATE TABLE IF NOT EXISTS crove_kernel.outbox_held (
-  seq bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  seq bigint GENERATED ALWAYS AS IDENTITY,
   org_id uuid NOT NULL REFERENCES crove_kernel.tenant (org_id) ON DELETE CASCADE,
   event_id uuid NOT NULL,
   module text NOT NULL CHECK (module ~ '^[a-z][a-z0-9_]{0,31}$'),
   held_at timestamptz NOT NULL DEFAULT pg_catalog.now(),
   -- Also the lookup of one org's parked events of one app, which is how the release reads them.
-  CONSTRAINT outbox_held_event_uq UNIQUE (org_id, module, event_id)
+  CONSTRAINT outbox_held_event_uq UNIQUE (org_id, module, event_id),
+  PRIMARY KEY (org_id, seq)
 );
 DO $$ DECLARE n int := 0; BEGIN LOOP BEGIN PERFORM set_config('lock_timeout', '2s', true); ALTER TABLE crove_kernel.outbox_held ENABLE ROW LEVEL SECURITY; EXIT; EXCEPTION WHEN lock_not_available THEN n := n + 1; IF n >= 15 THEN RAISE; END IF; PERFORM pg_sleep(1 + random()); END; END LOOP; END $$;
 REVOKE ALL ON crove_kernel.outbox_held FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
@@ -71,7 +72,7 @@ BEGIN
   END IF;
   WITH taken AS (
     DELETE FROM crove_kernel.outbox_held h
-    WHERE h.seq IN (SELECT q.seq FROM crove_kernel.outbox_held q WHERE q.org_id = p_org AND q.module = p_module ORDER BY q.seq LIMIT p_limit FOR UPDATE SKIP LOCKED)
+    WHERE h.org_id = p_org AND h.seq IN (SELECT q.seq FROM crove_kernel.outbox_held q WHERE q.org_id = p_org AND q.module = p_module ORDER BY q.seq LIMIT p_limit FOR UPDATE SKIP LOCKED)
     RETURNING h.seq, h.org_id, h.event_id
   ), moved AS (
     INSERT INTO crove_kernel.outbox_pending (org_id, event_id) SELECT t.org_id, t.event_id FROM taken t ORDER BY t.seq RETURNING 1

@@ -3,10 +3,10 @@
 // transaction; for an org whose app is off those jobs would be refused and ended quietly, and the event lost. So the relay parks such an event
 // (crove_kernel.outbox_hold) instead of queueing anything, and the held sweep puts the parked events back on the outbox, oldest first, once the app is on again
 // (the choice and the entitlement, asked here in TypeScript). There is no expiry: an event that nothing finds again is held, not dropped (ADR-0053 section 4).
-import { sql, type Transaction } from 'kysely';
+import { sql, type Kysely, type Transaction } from 'kysely';
 import type { Database } from '@crove/db';
 
-type Db = Pick<Transaction<Database>, 'executeQuery'> & { getExecutor: Transaction<Database>['getExecutor'] };
+type Db = Transaction<Database> | Kysely<Database>;
 
 /** How often the worker looks for parked events whose app is on again. */
 export const HELD_SWEEP_MS = 10_000;
@@ -68,7 +68,7 @@ export async function planHolds<R extends HeldRow>(
     const app = heldAppOf(row.type);
     if (app !== null && installed(app)) pairs.set(`${row.org_id}:${app}`, { org: row.org_id, app });
   }
-  const answers = new Map(await Promise.all([...pairs].map(async ([key, p]) => [key, await appOn(p.org, p.app).catch(() => true)] as const)));
+  const answers = new Map(await Promise.all([...pairs].map(async ([key, p]) => [key, await Promise.resolve().then(() => appOn(p.org, p.app)).catch(() => true)] as const)));
   const held: Array<{ row: R; app: string }> = [];
   const rest: R[] = [];
   for (const row of rows) {
@@ -85,7 +85,7 @@ export async function holdEvents(trx: Db, held: ReadonlyArray<{ row: HeldRow; ap
   for (let i = 0; i < held.length; i += 1000) {
     const batch = held.slice(i, i + 1000);
     const { rows } = await sql<{ n: number }>`
-      SELECT crove_kernel.outbox_hold(${batch.map((h) => h.row.org_id)}::uuid[], ${batch.map((h) => h.row.event_id)}::uuid[], ${batch.map((h) => h.app)}::text[]) AS n`.execute(trx as never);
+      SELECT crove_kernel.outbox_hold(${batch.map((h) => h.row.org_id)}::uuid[], ${batch.map((h) => h.row.event_id)}::uuid[], ${batch.map((h) => h.app)}::text[]) AS n`.execute(trx);
     parked += rows[0]?.n ?? 0;
   }
   return parked;
@@ -106,7 +106,7 @@ export async function releaseHeld(
   let after = null as { org: string; module: string } | null;
   for (let page = 0; page < MAX_PAIR_PAGES; page++) {
     const { rows: pairs } = await sql<{ org_id: string; module: string; waiting: string }>`
-      SELECT org_id, module, waiting FROM crove_kernel.outbox_hold_pairs(${PAIRS_PER_PAGE}::int, ${after?.org ?? null}::uuid, ${after?.module ?? null}::text)`.execute(db as never);
+      SELECT org_id, module, waiting FROM crove_kernel.outbox_hold_pairs(${PAIRS_PER_PAGE}::int, ${after?.org ?? null}::uuid, ${after?.module ?? null}::text)`.execute(db);
     for (const pair of pairs) {
       seen += 1;
       let on = false;
@@ -121,7 +121,7 @@ export async function releaseHeld(
         continue;
       }
       for (;;) {
-        const { rows } = await sql<{ n: number }>`SELECT crove_kernel.outbox_release(${pair.org_id}::uuid, ${pair.module}::text, ${RELEASE_BATCH}::int) AS n`.execute(db as never);
+        const { rows } = await sql<{ n: number }>`SELECT crove_kernel.outbox_release(${pair.org_id}::uuid, ${pair.module}::text, ${RELEASE_BATCH}::int) AS n`.execute(db);
         const n = rows[0]?.n ?? 0;
         released += n;
         if (n < RELEASE_BATCH) break;
