@@ -619,7 +619,7 @@ suite('meetings live pieces assembled on PostgreSQL (#3126)', () => {
     expect((await lateUpload(uploaded, 'plain-upload')).status).toBe(200);
     // As a segment from before the column was: not flagged. The migration's own statement then marks it.
     await rows('UPDATE crove_meetings.audio_segment SET joined_from_pieces = false WHERE meeting_id = $1', [joined]);
-    const sqlText = readFileSync(`${MIGRATIONS}/20270105070000_crove_meetings_audio_segment_joined.sql`, 'utf8');
+    const sqlText = readFileSync(`${MIGRATIONS}/20270105080000_crove_meetings_audio_segment_joined.sql`, 'utf8');
     const backfill = /\nUPDATE crove_meetings\.audio_segment[\s\S]*?;\n/.exec(sqlText)![0];
     await rows(backfill);
     expect((await segmentOf(joined)).joined).toBe(true);
