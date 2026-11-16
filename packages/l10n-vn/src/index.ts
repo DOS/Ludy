@@ -12,3 +12,4 @@ export * from './payroll/index.ts';
 export * from './line-totals.ts';
 export * from './banks.ts';
 export * from './labor-contracts.ts';
+export * from './recruiting.ts';

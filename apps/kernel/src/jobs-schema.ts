@@ -114,6 +114,11 @@ export const QUEUES = {
   adsActivate: 'ads-activate',
   // Created by the calendar write-back queue migration (20261112090000): a booking's event made to match the member's connected calendar (#2124).
   calendarWriteback: 'kernel-calendar-writeback',
+  // Created by the eSign core migration (20270104060000): PDF inspection, sealing, overdue expiration, and OTP/token cleanup (#3323).
+  signPdfInspect: 'sign-pdf-inspect',
+  signPdfSeal: 'sign-pdf-seal',
+  signExpireSweep: 'sign-expire-sweep',
+  signCleanup: 'sign-cleanup',
   // Created by the dead letter migration (20261103150000): every other queue's dead letters (#1720, dead-letter.ts).
   deadLetter: 'kernel-job.dlq',
 } as const;
@@ -236,6 +241,11 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   [QUEUES.adsActivate]: ['provider:ad_platform'],
   // The calendar adapters (channels.calendars): the provider's events are written through them.
   [QUEUES.calendarWriteback]: ['provider:channel'],
+  // eSign jobs talk only to the internal crove-extract service or the database, never to an external origin (#3323).
+  [QUEUES.signPdfInspect]: 'none',
+  [QUEUES.signPdfSeal]: 'none',
+  [QUEUES.signExpireSweep]: 'none',
+  [QUEUES.signCleanup]: 'none',
   [QUEUES.deadLetter]: 'none',
 };
 
@@ -253,8 +263,18 @@ export function queueEgress(queue: string): JobEgress {
 
 // The pg-boss policy of each queue that is not 'standard'. kernel-agent-wake is 'stately' with the singleton key
 // <org>:<queue>:<agent> (job-keys.ts): at most one queued and one active job per agent, so wake-ups coalesce and an
-// agent runs once at a time (ADR-0029 section 5; the database also allows one running ai_run per agent).
-const QUEUE_POLICIES: Partial<Record<QueueName, 'stately'>> = { [QUEUES.agentWake]: 'stately', [QUEUES.adsSync]: 'stately', [QUEUES.mcpWake]: 'stately', [QUEUES.meetingHook]: 'stately', [QUEUES.meetingChat]: 'stately', [QUEUES.meetingsImport]: 'stately' };
+// agent runs once at a time (ADR-0029 section 5; the database also allows one running ai_run per agent). sign-pdf-inspect
+// and sign-pdf-seal are 'exclusive': strictly one queued, retrying, or active job per envelope (#3323).
+const QUEUE_POLICIES: Partial<Record<QueueName, 'stately' | 'exclusive'>> = {
+  [QUEUES.agentWake]: 'stately',
+  [QUEUES.adsSync]: 'stately',
+  [QUEUES.mcpWake]: 'stately',
+  [QUEUES.meetingHook]: 'stately',
+  [QUEUES.meetingChat]: 'stately',
+  [QUEUES.meetingsImport]: 'stately',
+  [QUEUES.signPdfInspect]: 'exclusive',
+  [QUEUES.signPdfSeal]: 'exclusive',
+};
 
 // The dead letter queue's own options, as 20261103150000_crove_jobs_dead_letter.sql created it: a few retries, in case
 // the database or the command is briefly unavailable.

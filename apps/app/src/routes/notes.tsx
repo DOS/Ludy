@@ -16,6 +16,7 @@ import { Input } from '@crove/ui/components/input';
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { Textarea } from '@crove/ui/components/textarea';
 import { NoteLinks, RecordLinkAdder } from '../components/note-links.tsx';
+import { NoteTaskProposals } from '../components/note-task-proposals.tsx';
 import { NotesSubnav } from '../components/notes-subnav.tsx';
 import { VisibilityBadge, refreshNotes } from '../components/notes-panel.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader, Spinner } from '../components/ui.tsx';
@@ -25,6 +26,7 @@ import { Markdown } from '../lib/markdown.tsx';
 import { applyFormat, shortcutFormat, type MarkdownFormat } from '../lib/markdown-edit.ts';
 import { createAutosaver, type Autosaver, type NoteValues, type SaveState } from '../lib/note-autosave.ts';
 import { notesMarkdown, saveText } from '../lib/notes-export.ts';
+import { projectsInstalled } from '../lib/projects.ts';
 import { toast } from '../lib/toast.ts';
 import { listOfNote, looksLikePassword, parseTags, tagCounts, type NotesSearch } from '../lib/notes.ts';
 
@@ -319,6 +321,25 @@ function Editor({
           adding={linkAdd.isPending}
           error={linkAdd.error}
           onClearError={() => linkAdd.reset()}
+        />
+      )}
+
+      {projectsInstalled() && writer && !inTrash && (
+        <NoteTaskProposals
+          slug={slug}
+          note={editable ? { ...note, title: values.title, body: values.body } : note}
+          beforePropose={
+            editable
+              ? async () => {
+                  await saver.settle();
+                  return !saver.dirty();
+                }
+              : undefined
+          }
+          saveBlocked={editable && (state === 'conflict' || state === 'error')}
+          onCreated={() => {
+            void refreshNotes();
+          }}
         />
       )}
 

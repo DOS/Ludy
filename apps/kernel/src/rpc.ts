@@ -64,7 +64,7 @@ import { crmFollowupAi, draftCrmFollowup } from './crm-followup-ai.ts';
 import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
 import { prepareProjectWeeklyStatus, projectWeeklyStatusAi } from './project-weekly-status-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
-import { askStatusOf, runLiveNotes, runMeetingAsk, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runTranscriptTranslation, transcriptTranslationStatusOf, translationStatusOf, type ModelPort } from './member-vy-ports.ts';
+import { askStatusOf, runLiveNotes, runMeetingAsk, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runProjectsTasksFromNote, runTranscriptTranslation, tasksFromNoteStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems } from './stock-ai.ts';
 import { MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
@@ -388,6 +388,8 @@ export function createRpcHandler(
   const transcriptTranslations = new DraftBudget({ perUserPerMinute: 20, perOrgPerMinute: 60 });
   // A question across meetings (A3, #3161) is one model call over at most 40 lines and any member may ask: its own budget, apart from the summaries' and the translations'.
   const asks = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
+  // Proposing project tasks from a note (#2598): one call per click, own budget so it does not contend with meetings.
+  const noteTaskProposals = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
   const suggestionBudget = () => new DraftBudget({ perUserPerMinute: 12, perOrgPerMinute: 60 });
   const conversationAi: ConversationAi = { reader: conversationReader ?? null, intentBudget: suggestionBudget(), contactBudget: suggestionBudget(), cache: new IntentCache() };
   // The sales coworker's guess at the company a person works at (#2438) has a budget of its own, and the same reader and model.
@@ -3626,6 +3628,15 @@ export function createRpcHandler(
       addTask: os.projects.addTask.handler(projectsCommand('projects.task.add')),
       removeTask: os.projects.removeTask.handler(projectsCommand('projects.task.remove')),
       createTask: os.projects.createTask.handler(projectsCommand('projects.task.create')),
+      tasksFromNoteStatus: os.projects.tasksFromNoteStatus.handler(({ context }) =>
+        inProjects(context, (orgId, actor) => tasksFromNoteStatusOf({ runtime, model: summaryModel, meter: aiMeter ?? (() => null) }, orgId, actor)),
+      ),
+      proposeTasksFromNote: os.projects.proposeTasksFromNote.handler(({ context, input }) =>
+        inProjects(context, (orgId, actor) =>
+          runProjectsTasksFromNote({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: noteTaskProposals }, orgId, actor, input),
+        ),
+      ),
+      confirmTasksFromNote: os.projects.confirmTasksFromNote.handler(projectsCommand('projects.tasks_from_note.confirm')),
     },
   });
 
