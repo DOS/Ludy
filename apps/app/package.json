@@ -24,6 +24,7 @@
     "@tanstack/react-router": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
+    "unpdf": "catalog:",
     "use-intl": "catalog:",
     "zod": "catalog:"
   },

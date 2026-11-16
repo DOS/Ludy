@@ -215,10 +215,14 @@ export const PROJECTS_SCREENS = {
   nav: [{ app: 'teamwork', group: 'work', path: 'projects', label: 'projects' }],
 } as const satisfies ModuleScreens;
 
-// eSign screens arrive in Slice 1c; Slice 1a registers the module manifest with no routes or nav items yet.
+// eSign (docs/plan/esign.md, #3325): Ky ket / eSign app in the switcher plus public signing link /-/sign.
 export const SIGN_SCREENS = {
-  routes: [],
-  nav: [],
+  routes: [{ path: 'sign/envelopes' }, { path: 'sign/envelopes/$id', app: 'sign' }, { path: 'sign/verify' }],
+  outside: [{ path: '/-/sign', public: true }],
+  nav: [
+    { app: 'sign', group: 'sign', path: 'sign/envelopes', label: 'signEnvelopes' },
+    { app: 'sign', group: 'sign', path: 'sign/verify', label: 'signVerify' },
+  ],
 } as const satisfies ModuleScreens;
 
 export const MODULE_SCREENS = {

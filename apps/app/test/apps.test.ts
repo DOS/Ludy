@@ -20,6 +20,7 @@ describe('apps of the shell (#1528, #3225)', () => {
     for (const path of ['tasks', 'tasks/0190-abc', 'projects', 'projects/0190-abc', 'my-work', 'notes', 'meetings']) expect(appOfPath(`/o/acme/${path}`), path).toBe('teamwork');
     for (const path of ['agents', 'ai-usage', 'ai-connections']) expect(appOfPath(`/o/acme/${path}`), path).toBe('ai');
     expect(appOfPath('/o/acme/hr/employees')).toBe('hr');
+    for (const path of ['sign/envelopes', 'sign/envelopes/0190-abc', 'sign/verify']) expect(appOfPath(`/o/acme/${path}`), path).toBe('sign');
     expect(appOfPath('/o/acme/social')).toBe('engage');
     expect(appOfPath('/o/acme/social/channels')).toBe('engage');
     // The CRM's screens are in the Engage app (#2435).
@@ -51,7 +52,7 @@ describe('apps of the shell (#1528, #3225)', () => {
   });
 
   it('puts the apps in the order of the switcher, and the overview, the bell and Settings around them', () => {
-    expect(installedApps(['kernel', 'finance', 'social', 'crm', 'hr', 'notes', 'meetings', 'projects']).map((a) => a.id)).toEqual(['teamwork', 'finance', 'engage', 'hr', 'ai']);
+    expect(installedApps(['kernel', 'finance', 'social', 'crm', 'hr', 'sign', 'notes', 'meetings', 'projects']).map((a) => a.id)).toEqual(['teamwork', 'finance', 'engage', 'hr', 'sign', 'ai']);
     expect(TOP_ITEMS.map((i) => i.to)).toEqual(['/o/$slug/overview']);
     expect(BELL_ITEM?.to).toBe('/o/$slug/notifications');
     expect(ADMIN_ITEMS.map((i) => i.to)).toEqual(['/o/$slug/settings']);

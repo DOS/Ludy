@@ -109,6 +109,11 @@ import { RecordingChip } from './components/recording-chip.tsx';
 import { RecordingHost } from './components/recording-host.tsx';
 import { VersionBanner } from './components/version-banner.tsx';
 import { FixedAssetsPage } from './routes/fixed-assets.tsx';
+import { SignCeremonyPage } from './routes/sign-ceremony.tsx';
+import { SignEnvelopeDetailPage } from './routes/sign-envelope-detail.tsx';
+import { SignEnvelopesPage } from './routes/sign-envelopes.tsx';
+import { SignVerifyPage } from './routes/sign-verify.tsx';
+import { SIGN_PAGE_PATH } from './lib/sign-hash.ts';
 
 async function requireSession() {
   if (!(await accessToken())) throw redirect({ to: '/login' });
@@ -266,6 +271,14 @@ const quoteDocumentRoute = createRoute({
   path: '/-/quote',
   beforeLoad: ({ matches }) => requireInstalledOutside(matches),
   component: QuoteDocumentPage,
+});
+
+// Public signing ceremony (#3325): /-/sign#<token>, no account. Token stays strictly in the URL hash fragment.
+const signCeremonyRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: SIGN_PAGE_PATH,
+  beforeLoad: ({ matches }) => requireInstalledOutside(matches),
+  component: SignCeremonyPage,
 });
 
 // Accept links are /-/invite#<token>. The token is moved from the address bar to storage before the sign-in
@@ -643,6 +656,10 @@ const reportsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'report
 const taskDetailRoute = createRoute({ getParentRoute: () => orgRoute, path: 'tasks/$id', component: TaskDetailPage });
 const projectsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'projects', component: ProjectsPage });
 const projectDetailRoute = createRoute({ getParentRoute: () => orgRoute, path: 'projects/$id', component: ProjectDetailPage });
+// eSign Slice 1c (#3325): envelopes, field placer + Vy overlays, and offline SHA-256 verifier.
+const signEnvelopesRoute = createRoute({ getParentRoute: () => orgRoute, path: 'sign/envelopes', component: SignEnvelopesPage });
+const signEnvelopeDetailRoute = createRoute({ getParentRoute: () => orgRoute, path: 'sign/envelopes/$id', component: SignEnvelopeDetailPage });
+const signVerifyRoute = createRoute({ getParentRoute: () => orgRoute, path: 'sign/verify', component: SignVerifyPage });
 
 // The CRM screens joined the Engage app (#2435) and kept their addresses. The `crm/...` addresses that docs/plan/crm.md wrote for them (the
 // rail's CRM app once opened on its bookings) open the screen itself, with the search it had.
@@ -668,6 +685,7 @@ const routeTree = rootRoute.addChildren([
   bookingRoute,
   reportRoute,
   quoteDocumentRoute,
+  signCeremonyRoute,
   shareRoute,
   socialPlanPrintRoute,
   meetingMinutesRoute,
@@ -680,7 +698,7 @@ const routeTree = rootRoute.addChildren([
   clientsRoute,
   oauthCallbackRoute,
   calendarOAuthCallbackRoute,
-  orgRoute.addChildren([orgIndexRoute, overviewRoute, accountingOverviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, paymentRemindersRoute, salesInvoicesRoute, stockRoute, householdRoute, marketplaceRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, bankMatchedRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialInboxRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, aiUsageRoute, aiConnectionsRoute, tasksRoute, taskDetailRoute, projectsRoute, projectDetailRoute, bookingsRoute, dealsRoute, contactsRoute, companiesRoute, contactImportRoute, crmRoute, crmBookingsRoute, crmDealsRoute, crmContactsRoute, crmContactImportRoute, notesRoute, myWorkRoute, hrEmployeesRoute, hrRecruitingRoute, hrPayrollRoute, hrDeclarationsRoute, hrBankTemplatesRoute, meetingsRoute, meetingRecordRoute, meetingDetailRoute, adsRoute, adsCampaignsRoute, reportsRoute, settingsRoute, auditRoute, personalDataRoute, guideRoute]),
+  orgRoute.addChildren([orgIndexRoute, overviewRoute, accountingOverviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, paymentRemindersRoute, salesInvoicesRoute, stockRoute, householdRoute, marketplaceRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, bankMatchedRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialInboxRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, aiUsageRoute, aiConnectionsRoute, tasksRoute, taskDetailRoute, projectsRoute, projectDetailRoute, signEnvelopesRoute, signEnvelopeDetailRoute, signVerifyRoute, bookingsRoute, dealsRoute, contactsRoute, companiesRoute, contactImportRoute, crmRoute, crmBookingsRoute, crmDealsRoute, crmContactsRoute, crmContactImportRoute, notesRoute, myWorkRoute, hrEmployeesRoute, hrRecruitingRoute, hrPayrollRoute, hrDeclarationsRoute, hrBankTemplatesRoute, meetingsRoute, meetingRecordRoute, meetingDetailRoute, adsRoute, adsCampaignsRoute, reportsRoute, settingsRoute, auditRoute, personalDataRoute, guideRoute]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });
