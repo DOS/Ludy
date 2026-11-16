@@ -2,7 +2,7 @@
 // Browser-carried handoff from an Engage quote to Ludy eSign (#3512, ADR-0050, docs/plan/esign.md Slice 2b).
 // Strictly gated on both deployment installation and per-org enablement/entitlement (ADR-0053): when 'sign' is off,
 // zero sign.* queries run and no eSign UI controls render. Engage never writes crove_sign tables directly.
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
@@ -42,6 +42,7 @@ export interface QuoteSignSource {
   expired: boolean;
   dealTitle: string;
   partyName: string;
+  sentAt?: string | null;
   updatedAt?: string;
   buyerName?: string | null;
   buyerEmail?: string | null;
@@ -52,6 +53,7 @@ export interface QuoteSignHandoffProps {
   canEdit: boolean;
   envelope?: SignEnvelopeBySourceItem | null;
   envelopeLoading?: boolean;
+  unfinishedEnvelopeId?: string | null;
   signEnabled?: boolean;
   onCreated?: (envelopeId: string) => void;
 }
@@ -89,28 +91,42 @@ export function signEnvelopePollMs(items: readonly SignEnvelopeBySourceItem[] | 
   return false;
 }
 
-// Draft quotes remain editable via crm.quotes.save under the same quote ID, so a draft modified
-// after an eSign envelope's creation timestamp can no longer be treated as matching that envelope.
+// Draft quotes remain editable via crm.quotes.save under the same quote ID, and crm.quotes.send
+// later transitions that same quote ID to 'sent' (setting sentAt and freezing its content).
+// An envelope is stale whenever a draft changed after envelope creation OR a non-draft quote
+// was sent after that envelope was created from an earlier draft.
 export function isDraftSignEnvelopeStale(
-  quote: Pick<QuoteSignSource, 'status' | 'updatedAt'>,
+  quote: Pick<QuoteSignSource, 'status' | 'updatedAt' | 'sentAt'>,
   envelope: Pick<SignEnvelopeBySourceItem, 'status' | 'createdAt'> | null | undefined,
 ): boolean {
   if (!envelope || RETRYABLE_ENVELOPE_STATUSES.has(envelope.status)) return false;
-  if (quote.status !== 'draft' || !quote.updatedAt) return false;
-  const quoteUpdatedMs = Date.parse(quote.updatedAt);
   const envelopeCreatedMs = Date.parse(envelope.createdAt);
-  return Number.isFinite(quoteUpdatedMs) && Number.isFinite(envelopeCreatedMs) && quoteUpdatedMs > envelopeCreatedMs;
+  if (!Number.isFinite(envelopeCreatedMs)) return false;
+  if (quote.status === 'draft') {
+    if (!quote.updatedAt) return false;
+    const quoteUpdatedMs = Date.parse(quote.updatedAt);
+    return Number.isFinite(quoteUpdatedMs) && quoteUpdatedMs > envelopeCreatedMs;
+  }
+  if (quote.sentAt) {
+    const quoteSentMs = Date.parse(quote.sentAt);
+    return Number.isFinite(quoteSentMs) && quoteSentMs > envelopeCreatedMs;
+  }
+  return false;
 }
 
 export function canStartQuoteSignHandoff(
-  quote: Pick<QuoteSignSource, 'status' | 'expired' | 'updatedAt'>,
-  envelope: Pick<SignEnvelopeBySourceItem, 'status' | 'createdAt'> | null | undefined,
+  quote: Pick<QuoteSignSource, 'status' | 'expired' | 'updatedAt' | 'sentAt'>,
+  envelope: Pick<SignEnvelopeBySourceItem, 'envelopeId' | 'status' | 'createdAt'> | null | undefined,
+  unfinishedEnvelopeId: string | null = null,
 ): boolean {
   if (!HANDOFF_ELIGIBLE_QUOTE_STATUSES.has(quote.status) || quote.expired === true) {
     return false;
   }
   if (!envelope) return true;
   if (isDraftSignEnvelopeStale(quote, envelope)) return true;
+  if (unfinishedEnvelopeId !== null && envelope.envelopeId === unfinishedEnvelopeId && envelope.status === 'draft') {
+    return true;
+  }
   return RETRYABLE_ENVELOPE_STATUSES.has(envelope.status);
 }
 
@@ -244,24 +260,34 @@ function QuoteSignHandoffView({
   canEdit,
   envelope,
   envelopeLoading,
+  unfinishedEnvelopeId: externalUnfinishedId,
   onCreated,
 }: {
   quote: QuoteSignSource;
   canEdit: boolean;
   envelope: SignEnvelopeBySourceItem | null;
   envelopeLoading: boolean;
+  unfinishedEnvelopeId?: string | null;
   onCreated?: (envelopeId: string) => void;
 }) {
   const t = useTranslations('quotes.sign');
   const { slug = '' } = useParams({ strict: false }) as { slug?: string };
   const navigate = useNavigate();
   const stale = isDraftSignEnvelopeStale(quote, envelope);
-  const attemptKey = `${quote.id}:${envelope?.envelopeId ?? 'none'}:${quote.updatedAt ?? ''}`;
+  // Keyed on quote identity + edit timestamp (not envelopeId) so a mid-handoff failure after
+  // envelope creation keeps the created envelopeId and retry button alive across by_source refetch.
+  const attemptKey = `${quote.id}:${quote.updatedAt ?? ''}`;
   const attemptRef = useRef<{ key: string; attempt: QuoteSignHandoffAttempt } | null>(null);
+  const [unfinished, setUnfinished] = useState<{ key: string; envelopeId: string } | null>(null);
 
   const handoff = useMutation({
     mutationFn: () => {
-      if (attemptRef.current?.key !== attemptKey) {
+      const staleCachedAttempt =
+        attemptRef.current?.key !== attemptKey ||
+        (envelope !== null &&
+          RETRYABLE_ENVELOPE_STATUSES.has(envelope.status) &&
+          attemptRef.current.attempt.envelopeId === envelope.envelopeId);
+      if (staleCachedAttempt || !attemptRef.current) {
         attemptRef.current = { key: attemptKey, attempt: createQuoteSignHandoffAttempt() };
       }
       const label = quote.number ? quoteLabel(quote) : quote.dealTitle;
@@ -277,10 +303,19 @@ function QuoteSignHandoffView({
     },
     onSuccess: () => {
       attemptRef.current = null;
+      setUnfinished(null);
+    },
+    onError: () => {
+      const createdId = attemptRef.current?.attempt.envelopeId;
+      if (createdId && !attemptRef.current?.attempt.signerAdded) {
+        setUnfinished({ key: attemptKey, envelopeId: createdId });
+      }
     },
   });
 
-  const showButton = canEdit && !envelopeLoading && canStartQuoteSignHandoff(quote, envelope);
+  const unfinishedEnvelopeId =
+    externalUnfinishedId ?? (unfinished?.key === attemptKey ? unfinished.envelopeId : null);
+  const showButton = canEdit && !envelopeLoading && canStartQuoteSignHandoff(quote, envelope, unfinishedEnvelopeId);
   const statusText = envelope ? t(stale ? 'status.stale' : `status.${envelope.status}`) : null;
 
   return (
@@ -324,11 +359,13 @@ function QuoteSignHandoffOwn({
   quote,
   canEdit,
   envelopeLoading,
+  unfinishedEnvelopeId,
   onCreated,
 }: {
   quote: QuoteSignSource;
   canEdit: boolean;
   envelopeLoading?: boolean;
+  unfinishedEnvelopeId?: string | null;
   onCreated?: (envelopeId: string) => void;
 }) {
   const ownQuery = useQuery({
@@ -345,6 +382,7 @@ function QuoteSignHandoffOwn({
       canEdit={canEdit}
       envelope={envelope}
       envelopeLoading={envelopeLoading ?? (ownQuery.isPending || ownQuery.isError)}
+      {...(unfinishedEnvelopeId !== undefined ? { unfinishedEnvelopeId } : {})}
       {...(onCreated ? { onCreated } : {})}
     />
   );
@@ -361,6 +399,7 @@ export function QuoteSignHandoff(props: QuoteSignHandoffProps) {
         canEdit={props.canEdit}
         envelope={props.envelope}
         envelopeLoading={props.envelopeLoading ?? false}
+        {...(props.unfinishedEnvelopeId !== undefined ? { unfinishedEnvelopeId: props.unfinishedEnvelopeId } : {})}
         {...(props.onCreated ? { onCreated: props.onCreated } : {})}
       />
     );
@@ -370,6 +409,7 @@ export function QuoteSignHandoff(props: QuoteSignHandoffProps) {
       quote={props.quote}
       canEdit={props.canEdit}
       {...(props.envelopeLoading !== undefined ? { envelopeLoading: props.envelopeLoading } : {})}
+      {...(props.unfinishedEnvelopeId !== undefined ? { unfinishedEnvelopeId: props.unfinishedEnvelopeId } : {})}
       {...(props.onCreated ? { onCreated: props.onCreated } : {})}
     />
   );

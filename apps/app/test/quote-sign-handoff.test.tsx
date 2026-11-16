@@ -532,18 +532,31 @@ describe('Engage quote -> eSign handoff (#3512)', () => {
     expect(signEnvelopePollMs([envItem('q1', { status: 'completed', sealStatus: 'pending' })])).toBe(5_000);
   });
 
-  it('flags edited drafts as stale so updated quotes never show a false Signed badge, and chunks >50 quotes', () => {
+  it('flags edited drafts and quotes sent after draft eSign as stale, allows unfinished retry on draft envelopes, and chunks >50 quotes', () => {
     const editedDraft = quoteSummary(1, {
       status: 'draft',
       number: null,
+      sentAt: null,
       updatedAt: '2026-11-16T02:00:00.000Z',
     });
-    const acceptedUpdated = quoteSummary(2, {
+    const sentAfterDraftEnvelope = quoteSummary(2, {
+      status: 'sent',
+      sentAt: '2026-11-16T03:00:00.000Z',
+      updatedAt: '2026-11-16T03:00:00.000Z',
+    });
+    const acceptedUpdated = quoteSummary(3, {
       status: 'accepted',
+      sentAt: '2026-11-15T12:00:00.000Z',
       updatedAt: '2026-11-16T02:00:00.000Z',
     });
-    const staleCompletedEnv = envItem(editedDraft.id, {
-      envelopeId: 'env-stale',
+    const staleDraftEnv = envItem(editedDraft.id, {
+      envelopeId: 'env-stale-draft',
+      status: 'completed',
+      sealStatus: 'sealed',
+      createdAt: '2026-11-16T01:00:00.000Z',
+    });
+    const staleSentEnv = envItem(sentAfterDraftEnvelope.id, {
+      envelopeId: 'env-stale-sent',
       status: 'completed',
       sealStatus: 'sealed',
       createdAt: '2026-11-16T01:00:00.000Z',
@@ -555,19 +568,48 @@ describe('Engage quote -> eSign handoff (#3512)', () => {
       createdAt: '2026-11-16T01:00:00.000Z',
     });
 
-    expect(isDraftSignEnvelopeStale(editedDraft, staleCompletedEnv)).toBe(true);
+    expect(isDraftSignEnvelopeStale(editedDraft, staleDraftEnv)).toBe(true);
+    expect(isDraftSignEnvelopeStale(sentAfterDraftEnvelope, staleSentEnv)).toBe(true);
     expect(isDraftSignEnvelopeStale(acceptedUpdated, validCompletedEnv)).toBe(false);
-    expect(canStartQuoteSignHandoff(editedDraft, staleCompletedEnv)).toBe(true);
+    expect(canStartQuoteSignHandoff(editedDraft, staleDraftEnv)).toBe(true);
+    expect(canStartQuoteSignHandoff(sentAfterDraftEnvelope, staleSentEnv)).toBe(true);
     expect(canStartQuoteSignHandoff(acceptedUpdated, validCompletedEnv)).toBe(false);
 
     const staleHtml = renderDealQuotes({
-      quotes: [editedDraft, acceptedUpdated],
-      envelopes: [staleCompletedEnv, validCompletedEnv],
+      quotes: [editedDraft, sentAfterDraftEnvelope, acceptedUpdated],
+      envelopes: [staleDraftEnv, staleSentEnv, validCompletedEnv],
     });
-    expect(staleHtml).toContain('data-status="stale"');
+    expect(staleHtml.split('data-status="stale"').length - 1).toBe(2);
     expect(staleHtml).toContain('Báo giá đã sửa sau khi tạo ký');
-    // Only the edited draft renders a send button (accepted quote with valid envelope does not).
-    expect(staleHtml.split('data-testid="quote-send-esign"').length - 1).toBe(1);
+    // Edited draft + sent-after-draft-eSign both allow creating a fresh envelope; valid accepted quote does not.
+    expect(staleHtml.split('data-testid="quote-send-esign"').length - 1).toBe(2);
+
+    // Unfinished mid-handoff recovery: when signer.add failed after envelope.create returned a draft envelope,
+    // by_source returns that draft envelope while unfinishedEnvelopeId keeps the retry button rendered.
+    const qRetry = quoteSummary(4, { status: 'sent', sentAt: '2026-11-15T12:00:00.000Z' });
+    const draftAfterCreate = envItem(qRetry.id, {
+      envelopeId: 'env-unfinished-draft',
+      status: 'draft',
+      createdAt: '2026-11-16T01:00:00.000Z',
+    });
+    expect(canStartQuoteSignHandoff(qRetry, draftAfterCreate, draftAfterCreate.envelopeId)).toBe(true);
+    expect(canStartQuoteSignHandoff(qRetry, draftAfterCreate, null)).toBe(false);
+    setActiveLocale('vi');
+    const retryHtml = renderToStaticMarkup(
+      <QueryClientProvider client={state.client}>
+        <I18nProvider>
+          <QuoteSignHandoff
+            quote={qRetry}
+            envelope={draftAfterCreate}
+            unfinishedEnvelopeId={draftAfterCreate.envelopeId}
+            canEdit={true}
+            signEnabled={true}
+          />
+        </I18nProvider>
+      </QueryClientProvider>,
+    );
+    expect(retryHtml).toContain('Nháp ký');
+    expect(retryHtml).toContain('data-testid="quote-send-esign"');
 
     // > 50 quotes: chunks into [50, 5] and keeps eSign controls active on quote #55.
     const manyQuotes = Array.from({ length: 55 }, (_, i) => quoteSummary(i + 1));
