@@ -453,7 +453,8 @@ export const salesOrderHandoff = defineQuery({
 // ---------------------------------------------------------------------------------------------------------------
 
 // A confirmed order is cancelled with a reason, once. What Kế toán has made from it (a draft) is read from Kế toán and cannot be checked here (no module reads the other's
-// tables, ADR-0050 "Consequences"): the Orders screen disables the action for an order it last read a draft for, and a draft is only a draft until finance issues it. An order
+// tables, ADR-0050 "Consequences"): the Orders screen disables the action while Kế toán says a line of the order is on a draft or issued (`einvoice.drafts.orderLines`, #3477), and a
+// draft is only a draft until finance issues it. That is a hint on the screen, not a rule: this command still cancels such an order (open point A7 of ADR-0050 stays open). An order
 // with a delivery that was not taken back is refused here (and by the database guard).
 export const salesOrderCancel = defineCommand({
   name: 'crm.sales_order.cancel',
