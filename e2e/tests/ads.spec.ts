@@ -200,6 +200,20 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
     await expect(lines.getByText('Chưa có dòng ngân hàng hay thẻ nào').first()).toBeVisible();
   });
 
+  await test.step('a connection that ends in a few days says so, with the date, ahead of the end (#3476)', async () => {
+    await expect(page.getByText('Kết nối với nền tảng quảng cáo hết hạn vào')).toHaveCount(0);
+    // The sandbox platform has no token life of its own; a Meta connection records about 60 days, so set 5 days ahead as the superuser.
+    exec(
+      `UPDATE crove_kernel.channel_connection c SET expires_at = now() + interval '5 days'
+       FROM crove_ads.ad_account a JOIN crove_kernel.tenant t ON t.org_id = a.org_id
+       WHERE c.org_id = a.org_id AND c.id = a.channel_connection_id AND t.slug = :'slug'`,
+      { slug },
+    );
+    await page.reload();
+    await expect(page.getByText('Kết nối với nền tảng quảng cáo hết hạn vào')).toBeVisible();
+    await expect(page.getByText('Hãy kết nối lại trước ngày đó để số liệu không bị dừng.')).toBeVisible();
+  });
+
   await test.step('the screen passes an axe scan with data, at desktop and phone width, in both themes', async () => {
     expect(await problemsOf(page, page.url())).toEqual([]);
     await page.setViewportSize({ width: 1280, height: 720 });

@@ -5056,6 +5056,7 @@ export const en = {
     canRunAds: 'Can run ads: this account has a connection that can change campaigns. Every launch still needs a person to approve it, within the caps.',
     readOnly: 'Read only: {brand} only reads this account’s reports.',
     googleReadOnly: 'Read only in {brand}: Google’s adwords scope grants read and write on Google’s side, and {brand} calls only the read endpoints (customers:listAccessibleCustomers and googleAds:searchStream).',
+    connectionEndsSoon: 'The connection to the ad platform ends on {when}. Reconnect before then so the figures keep coming.',
     connectionExpiresSoon: 'The refresh token of this connection expires on {when} (a Google Cloud consent screen in Testing mode issues 7-day tokens). Publish the consent screen in Google Cloud Console or reconnect before then so updates do not stop.',
     extraScopes: 'The connection of this account can do more than read ad reports: its token also holds {list}. Ludy only reads; to remove the extra permissions, connect through a Meta app of its own for ads.',
     accountLabel: 'Ad account',
