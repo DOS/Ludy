@@ -25,7 +25,7 @@ describe('@crove/mod-projects (#2591)', () => {
     expect(projectsManifest.nav).toEqual(MODULE_SCREENS.projects.nav);
   });
 
-  it('exports all 12 commands and 9 queries with consistent module prefix', () => {
+  it('exports all 14 commands and 9 queries with consistent module prefix', () => {
     expect(projectsCommands.map((c) => c.name).sort()).toEqual([
       'projects.member.add',
       'projects.member.remove',
@@ -39,6 +39,8 @@ describe('@crove/mod-projects (#2591)', () => {
       'projects.task.remove',
       'projects.tasks_from_note.confirm',
       'projects.tasks_from_note.start',
+      'projects.weekly_status.send_mail',
+      'projects.weekly_status.share_note',
     ]);
     expect(projectsQueries.map((q) => q.name).sort()).toEqual([
       'projects.board',
@@ -52,9 +54,18 @@ describe('@crove/mod-projects (#2591)', () => {
       'projects.weekly_status_source',
     ]);
     for (const command of projectsCommands) {
-      expect(command.risk).toBe('R1');
-      expect(command.sideEffect).toBe('internal');
-      if (command.name === 'projects.task.create' || command.name.startsWith('projects.tasks_from_note.')) {
+      if (command.name === 'projects.weekly_status.send_mail') {
+        expect(command.risk).toBe('R2');
+        expect(command.sideEffect).toBe('external');
+      } else {
+        expect(command.risk).toBe('R1');
+        expect(command.sideEffect).toBe('internal');
+      }
+      if (
+        command.name === 'projects.task.create' ||
+        command.name.startsWith('projects.tasks_from_note.') ||
+        command.name.startsWith('projects.weekly_status.')
+      ) {
         expect(command.writes).toBeUndefined();
       } else {
         expect((command.writes ?? []).length).toBeGreaterThan(0);

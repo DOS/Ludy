@@ -16,7 +16,18 @@
 // - not_personal: the name matches the pattern but the column holds no data about a person.
 import { sql, type RawBuilder } from 'kysely';
 import type { MemberRole } from '@crove/db';
-import { FOLLOWUP_MAIL_SOURCE, NOTE_BODY_MAX, NOTE_TITLE_MAX, PROJECT_DESCRIPTION_MAX, PROJECT_NAME_MAX, zPersonalDataQuery, type PersonalDataErasure, type PersonalDataNotice, type PersonalDataResult } from '@crove/kernel-contract';
+import {
+  FOLLOWUP_MAIL_SOURCE,
+  NOTE_BODY_MAX,
+  NOTE_TITLE_MAX,
+  PROJECT_DESCRIPTION_MAX,
+  PROJECT_NAME_MAX,
+  PROJECT_WEEKLY_STATUS_MAIL_SOURCE,
+  zPersonalDataQuery,
+  type PersonalDataErasure,
+  type PersonalDataNotice,
+  type PersonalDataResult,
+} from '@crove/kernel-contract';
 import { DomainError, defineCommand, type QueryContext } from '@crove/kernel-runtime';
 
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];
@@ -642,6 +653,26 @@ async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: 
       matches.push({ column: key, handling, reason, rowId: typeof row.id === 'string' ? row.id : null, row });
     }
   }
+  // Project weekly status mails (#2609): summary and subject are free text typed by a manager or seeded by AI; search both for personal data.
+  const weeklyMails = await sql<{ id: string; org_id: string; source: string; source_id: string | null; status: string; subject: string | null; created_at: Date }>`
+    SELECT m.id, m.org_id, m.source, m.source_id, m.status, m.subject, m.created_at
+      FROM crove_kernel.mail_message m
+     WHERE m.org_id = ${orgId}::uuid
+       AND m.source = ${PROJECT_WEEKLY_STATUS_MAIL_SOURCE}
+       AND (m.payload IS NOT NULL OR m.subject IS NOT NULL)
+       AND (${freeTextMatch(probe, sql.ref('m.subject'))} OR ${freeTextMatch(probe, sql.ref('m.payload'))})
+     ORDER BY m.created_at DESC, m.id
+     LIMIT ${PERSONAL_DATA_ROW_LIMIT + 1}`.execute(trx);
+  if (weeklyMails.rows.length > PERSONAL_DATA_ROW_LIMIT) truncated = true;
+  for (const row of weeklyMails.rows.slice(0, PERSONAL_DATA_ROW_LIMIT)) {
+    matches.push({
+      column: 'crove_kernel.mail_message.payload',
+      handling: 'erase',
+      reason: PROJECT_WEEKLY_MAIL_REASON,
+      rowId: row.id,
+      row,
+    });
+  }
   const privateItems = privateCounts
     ? (
         await sql<{ author_user_id: string; notes: string; todos: string }>`
@@ -724,6 +755,12 @@ export const FOLLOWUP_MAIL_SKIPPED_REASON =
   'The follow-up mails of this organization were too many to search in time, so their own text was not searched (the mails of meetings whose rows changed were still handled): erase again, or ask support, before relying on this erasure for follow-up mails';
 export const FOLLOWUP_MAIL_DELIVERED_REASON =
   'Follow-up mails of a meeting that were already handed to their recipients (delivered, or possibly delivered) cannot be recalled: the erasure dropped the copy of the text that Crove holds, not the copies in the recipients\' mailboxes';
+export const PROJECT_WEEKLY_MAIL_REASON =
+  "Text or subject of a project's weekly status email (#2609); erased by dropping the mail's payload and subject (the keyed recipient hash stays so suppressions still hold)";
+export const PROJECT_WEEKLY_MAIL_SHORT_NUMBER_REASON =
+  'Project weekly status mails whose text holds a number of fewer than 10 digits: such a number may as well be a date, task count or figure, and dropping a mail cannot be undone, so the erasure leaves these mails as they are; check them and tell the person, or ask for a longer value';
+export const PROJECT_WEEKLY_MAIL_DELIVERED_REASON =
+  'Project weekly status mails that were already handed to their recipients (delivered, or possibly delivered) cannot be recalled: the erasure dropped the copy of the text that Crove holds, not the copies in the recipients\' mailboxes';
 export const MEMBER_VY_RESULT_REASON =
   "Answers of each member's Vy (the row count is all of the organization's, not this person's) are held privately for that member and cannot be read here; they expire on their own (at most 31 days) and are never sent anywhere";
 export function meetingMediaReason(kind: 'audio' | 'video', dates: readonly string[], hidden: number): string {
@@ -1190,6 +1227,8 @@ export const personalDataErase = defineCommand({
     // answers the same retryable PERSONAL_DATA_BUSY as a deadlock in the scan (the whole erasure rolls back, nothing is half done). Only the count reaches the audit row.
     let followupMails = 0;
     let followupDelivered = 0;
+    let projectWeeklyMails = 0;
+    let projectWeeklyDelivered = 0;
     for (const r of redaction ?? []) {
       if (Number(r.lines) + Number(r.results) + Number(r.items) + Number(r.titles) === 0) continue;
       const { rows: lock } = await sql<{ ok: boolean }>`SELECT pg_catalog.pg_try_advisory_xact_lock(pg_catalog.hashtextextended(${`meetings.followup:${ctx.orgId}:${r.meeting_id}`}, 0)) AS ok`.execute(ctx.trx);
@@ -1287,6 +1326,36 @@ export const personalDataErase = defineCommand({
       add('crove_kernel.task.title', tasks.filter((t) => t.title).length);
       add('crove_kernel.task.description', tasks.filter((t) => t.description).length);
 
+      // Take the exclusive advisory lock paired with projects.weekly_status.send_mail's shared lock before dropping weekly mails and redacting projects:
+      // a concurrent send_mail either committed before this lock or sees redacted project text after it; if one is mid-flight, fail fast with PERSONAL_DATA_BUSY.
+      const { rows: mailLock } = await sql<{ ok: boolean }>`
+        SELECT pg_catalog.pg_try_advisory_xact_lock(pg_catalog.hashtextextended(${`projects.weekly_mail:${ctx.orgId}`}, 0)) AS ok`.execute(ctx.trx);
+      if (mailLock[0]?.ok !== true) {
+        throw new DomainError('PERSONAL_DATA_BUSY', 409, 'Một báo cáo tuần dự án đang được gửi cùng lúc; hãy thử lại sau ít phút');
+      }
+      // Project weekly status mails that quote the person directly or belong to a project whose name or description quoted them (#2609):
+      // drop payload and subject before redacting crove_projects.project so source_id matches still see unredacted project text.
+      const { rows: droppedWeekly } = await sql<{ status: string }>`
+        UPDATE crove_kernel.mail_message m
+           SET payload = NULL, subject = NULL
+         WHERE m.org_id = ${ctx.orgId}::uuid
+           AND m.source = ${PROJECT_WEEKLY_STATUS_MAIL_SOURCE}
+           AND (m.payload IS NOT NULL OR m.subject IS NOT NULL)
+           AND (
+             ${freeTextMatch(probe, sql.ref('m.subject'))}
+             OR ${freeTextMatch(probe, sql.ref('m.payload'))}
+             OR EXISTS (
+               SELECT 1
+                 FROM crove_projects.project p
+                WHERE p.org_id = m.org_id
+                  AND p.id = m.source_id
+                  AND (${freeTextMatch(probe, sql.ref('p.name'))} OR ${freeTextMatch(probe, sql.ref('p.description'))})
+             )
+           )
+         RETURNING m.status`.execute(ctx.trx);
+      projectWeeklyMails = droppedWeekly.length;
+      projectWeeklyDelivered = droppedWeekly.filter((m) => DELIVERED_MAIL_STATUSES.includes(m.status)).length;
+      add('crove_kernel.mail_message.payload', projectWeeklyMails);
       // Projects that quote the person (#2591): replace mentions in name and description, bounded to column limits.
       const projectName = freeTextMatch(probe, sql.ref('p.name'));
       const projectDescription = freeTextMatch(probe, sql.ref('p.description'));
@@ -1334,7 +1403,9 @@ export const personalDataErase = defineCommand({
           ? ACTIVITY_SHORT_NUMBER_REASON
           : SHORT_NUMBER_MEETING_COLUMNS.has(m.column)
             ? MEETING_TEXT_SHORT_NUMBER_REASON
-            : m.reason;
+            : m.column === 'crove_kernel.mail_message.payload'
+              ? PROJECT_WEEKLY_MAIL_SHORT_NUMBER_REASON
+              : m.reason;
       const group = `${m.column}\n${reason}`;
       const k = kept.get(group) ?? { column: m.column, rows: 0, reason };
       k.rows += 1;
@@ -1370,6 +1441,13 @@ export const personalDataErase = defineCommand({
     if (followupShort > 0) kept.set('crove_meetings.followup_mail.short', { column: 'crove_meetings.followup_mail', rows: followupShort, reason: FOLLOWUP_MAIL_SHORT_NUMBER_REASON });
     if (followupHidden > 0) kept.set('crove_meetings.followup_mail', { column: 'crove_meetings.followup_mail', rows: followupHidden, reason: FOLLOWUP_MAIL_HIDDEN_REASON });
     if (followupDelivered > 0) kept.set('crove_kernel.mail_message.payload', { column: 'crove_kernel.mail_message.payload', rows: followupDelivered, reason: FOLLOWUP_MAIL_DELIVERED_REASON });
+    if (projectWeeklyDelivered > 0) {
+      kept.set('crove_kernel.mail_message.payload.projects', {
+        column: 'crove_kernel.mail_message.payload',
+        rows: projectWeeklyDelivered,
+        reason: PROJECT_WEEKLY_MAIL_DELIVERED_REASON,
+      });
+    }
     // The voices of the meetings that held the value stay until their retention dates: a voice cannot be edited out. The owner deletes a meeting at once with meetings.meeting.owner_delete.
     if (mediaOf.some((m) => m.audio)) kept.set('crove_meetings.audio', { column: 'crove_meetings.audio', rows: media.audio.length + media.audioHidden, reason: meetingMediaReason('audio', media.audio, media.audioHidden) });
     if (mediaOf.some((m) => m.video)) kept.set('crove_meetings.video', { column: 'crove_meetings.video', rows: media.video.length + media.videoHidden, reason: meetingMediaReason('video', media.video, media.videoHidden) });
@@ -1391,7 +1469,7 @@ export const personalDataErase = defineCommand({
       kept: [...kept.values()].map((k) => ({ column: k.column, rows: k.rows, reason: k.reason })),
     };
     // Counts and ids only: the value and the text never reach the audit log.
-    ctx.audit({ kind: probe.kind, erased: Object.fromEntries(erased), kept: Object.fromEntries(keptRows), kept_parties: keptParties, follow_up_mails: followupMails, private_deleted: { notes: privateRows.flatMap((r) => r.note_ids), todos: privateRows.flatMap((r) => r.todo_ids) } });
+    ctx.audit({ kind: probe.kind, erased: Object.fromEntries(erased), kept: Object.fromEntries(keptRows), kept_parties: keptParties, follow_up_mails: followupMails, project_weekly_mails: projectWeeklyMails, private_deleted: { notes: privateRows.flatMap((r) => r.note_ids), todos: privateRows.flatMap((r) => r.todo_ids) } });
     return result;
   },
 });

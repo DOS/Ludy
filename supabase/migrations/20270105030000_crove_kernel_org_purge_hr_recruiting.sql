@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- Crove HR (issue #3425, Part of #3403 Stage 3 slice 3b-2): update crove_kernel.org_purge to delete recruiting tables
 -- (crove_hr.candidate, crove_hr.job_opening) before crove_hr.payroll_employee, crove_hr.department, and crove_kernel.calendar_event.
--- Based on 20270104120000_crove_kernel_org_purge_hr_departments.sql, keeping every crove_sign.*, leave, and department entry intact.
+-- Based on 20270105030000_crove_kernel_org_purge_outbox_held.sql, keeping every crove_sign.*, leave, department, and outbox_held entry intact.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_kernel.org_purge(p_min_days integer)
@@ -46,7 +46,7 @@ DECLARE
     'crove_kernel.inbound_message', 'crove_kernel.notification', 'crove_kernel.notification_mute', 'crove_kernel.inbox_item',
     'crove_kernel.mail_event', 'crove_kernel.mail_suppression', 'crove_kernel.mail_message',
     'crove_kernel.member_invite', 'crove_kernel.auth_session_org', 'crove_kernel.inbound_drop',
-    'crove_kernel.idempotency_key', 'crove_kernel.extension_token', 'crove_kernel.extension_auth_code', 'crove_kernel.agent_wake_delivery', 'crove_kernel.agent_wake_signal_seen', 'crove_kernel.agent_grant_wake', 'crove_kernel.agent_grant', 'crove_kernel.oauth_state', 'crove_kernel.outbox_pending',
+    'crove_kernel.idempotency_key', 'crove_kernel.extension_token', 'crove_kernel.extension_auth_code', 'crove_kernel.agent_wake_delivery', 'crove_kernel.agent_wake_signal_seen', 'crove_kernel.agent_grant_wake', 'crove_kernel.agent_grant', 'crove_kernel.oauth_state', 'crove_kernel.outbox_pending', 'crove_kernel.outbox_held',
     'crove_kernel.proposal_policy', 'crove_kernel.refusal_tally', 'crove_kernel.tax_obligation_done',
     'crove_kernel.tax_profile', 'crove_kernel.usage_deferral', 'crove_kernel.file_upload', 'crove_kernel.record_le',
     'crove_kernel.budget_policy', 'crove_kernel.kill_switch', 'crove_kernel.credential', 'crove_kernel.subject_key', 'crove_kernel.calendar_credential',

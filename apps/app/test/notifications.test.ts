@@ -10,12 +10,13 @@ describe('notificationKinds', () => {
     expect(notificationKinds(['finance'])).toEqual(['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_assigned', 'kernel.task_rerouted', 'kernel.original_flagged', 'kernel.ai_budget', 'kernel.conversation_new', 'finance.bank_attention', 'finance.portal_attention', 'finance.period_closing']);
     expect(notificationKinds(['social'])).toEqual(['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_assigned', 'kernel.task_rerouted', 'kernel.original_flagged', 'kernel.ai_budget', 'kernel.conversation_new']);
     expect(notificationKinds(['notes'])).toEqual(['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_assigned', 'kernel.task_rerouted', 'kernel.original_flagged', 'kernel.ai_budget', 'kernel.conversation_new', 'notes.todo_due']);
+    expect(notificationKinds(['projects'])).toEqual(['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_assigned', 'kernel.task_rerouted', 'kernel.original_flagged', 'kernel.ai_budget', 'kernel.conversation_new', 'projects.weekly_status']);
     // An ad account's paused connection is a kind of the Ads module (#2219).
     expect(notificationKinds(['ads'])).toEqual(['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_assigned', 'kernel.task_rerouted', 'kernel.original_flagged', 'kernel.ai_budget', 'kernel.conversation_new', 'kernel.channel_expired']);
   });
 
   it('has a label for every kind in both languages', () => {
-    for (const kind of notificationKinds(['finance', 'notes', 'ads'])) {
+    for (const kind of notificationKinds(['finance', 'notes', 'ads', 'projects'])) {
       expect(vi.notifications.kinds[kindKey(kind)], kind).toBeTruthy();
       expect(en.notifications.kinds[kindKey(kind)], kind).toBeTruthy();
     }
@@ -40,6 +41,8 @@ describe('notificationTarget', () => {
     expect(notificationTarget({ kind: 'finance.portal_attention', subjectId: id, detail: { direction: 'sale' } })).toEqual({ to: 'portal', sale: true });
     expect(notificationTarget({ kind: 'finance.period_closing', subjectId: null, detail: {} })).toEqual({ to: 'ledger' });
     expect(notificationTarget({ kind: 'notes.todo_due', subjectId: id, detail: {} })).toEqual({ to: 'myWork' });
+    expect(notificationTarget({ kind: 'projects.weekly_status', subjectId: id, detail: {} })).toEqual({ to: 'project', id });
+    expect(notificationTarget({ kind: 'projects.weekly_status', subjectId: null, detail: {} })).toEqual({ to: 'projects' });
     expect(notificationTarget({ kind: 'kernel.channel_expired', subjectId: id, detail: { provider: 'meta_ads' } })).toEqual({ to: 'ads' });
     expect(notificationTarget({ kind: 'later.kind', subjectId: null, detail: {} })).toBeNull();
   });

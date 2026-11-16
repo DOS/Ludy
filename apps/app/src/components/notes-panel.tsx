@@ -52,10 +52,23 @@ function PanelNote({ note, slug, mayPin }: { note: NoteSummary; slug: string; ma
     onSuccess: refreshNotes,
   });
   return (
-    <li className="flex flex-wrap items-center gap-2 px-4 py-3 text-sm" data-testid="note-item">
+    <li
+      className={
+        note.tainted
+          ? 'flex flex-wrap items-center gap-2 border-l-2 border-proposal bg-proposal/5 px-4 py-3 text-sm'
+          : 'flex flex-wrap items-center gap-2 px-4 py-3 text-sm'
+      }
+      data-testid="note-item"
+      data-tainted={note.tainted ? 'true' : 'false'}
+    >
       <Link to="/o/$slug/notes" params={{ slug }} search={{ note: note.id }} className="min-w-0 flex-1 truncate font-medium text-foreground hover:underline">
         {note.title}
       </Link>
+      {note.tainted && (
+        <Badge variant="proposal" data-testid="note-ai-badge">
+          {t('aiBadge')}
+        </Badge>
+      )}
       {note.pinned && <Badge variant="secondary">{t('pinnedBadge')}</Badge>}
       <VisibilityBadge note={note} />
       <span className="text-xs text-subtle-foreground">{f.date(note.updatedAt)}</span>
