@@ -4755,6 +4755,9 @@ export const vi = {
       launchRetryQueued: 'Đã xếp hàng chạy lại, hệ thống sẽ chạy trong giây lát.',
       launchRetriedToast: 'Đã yêu cầu chạy lại lần chạy này.',
       launchObjectsTitle: 'Đã tạo trên nền tảng quảng cáo',
+      statesReadOk: 'Đã hỏi {platform} lúc {time}',
+      statesReadFailed: 'Không hỏi được {platform} lúc {time}; đang hiện trạng thái đã biết gần nhất',
+      statesReadPlatform: 'nền tảng quảng cáo',
       objectLevel: { campaign: 'Chiến dịch', ad_set: 'Nhóm quảng cáo', creative: 'Mẫu quảng cáo', ad: 'Quảng cáo' },
       objectStatus: {
         active: 'Đang bật',
@@ -11911,6 +11914,7 @@ export const vi = {
         create_link: 'Tạo liên kết xem báo giá đã gửi',
         revoke_link: 'Thu hồi liên kết xem báo giá',
         mail_data: 'Tạo liên kết cho thư báo giá đang gửi',
+        mail_document: 'Đọc báo giá đã gửi để đính kèm bản PDF vào thư',
         defaults: 'Xem giá trị mặc định và giá cũ của khách khi lập báo giá',
         delete_draft: 'Xóa báo giá nháp',
         document: 'Đọc báo giá cùng thông tin bên bán và bên mua để làm PDF',

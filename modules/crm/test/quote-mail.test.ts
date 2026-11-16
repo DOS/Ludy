@@ -15,6 +15,19 @@ describe('renderQuoteMail', () => {
     expect(mail.replyTo).toBe('inbox@in.example.test');
   });
 
+  it('says the PDF is attached only when it is (#3418), and keeps the link either way', () => {
+    const base = { publicUrl: 'https://app.example.test', replyTo: null, token: TOKEN };
+    const without = renderQuoteMail(data, base);
+    expect(without.text).toContain('có thể in hoặc lưu thành PDF');
+    expect(without.text).not.toContain('đính kèm');
+    expect(without.html).not.toContain('đính kèm');
+    const attached = renderQuoteMail(data, { ...base, pdfAttached: true });
+    expect(attached.text).toContain('Bản PDF của báo giá được đính kèm trong thư này.');
+    expect(attached.html).toContain('Bản PDF của báo giá được đính kèm trong thư này.');
+    expect(attached.text).toContain(`https://app.example.test/-/quote#${TOKEN}`);
+    expect(attached.html).toContain(`href="https://app.example.test/-/quote#${TOKEN}"`);
+  });
+
   it('names a revision and drops a trailing slash of the address', () => {
     const mail = renderQuoteMail({ ...data, revision: 2 }, { publicUrl: 'https://app.example.test/', replyTo: null, token: TOKEN });
     expect(mail.text).toContain('BG-2026-0007-R2');

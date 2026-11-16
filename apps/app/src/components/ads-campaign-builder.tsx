@@ -52,6 +52,7 @@ import {
   objectiveText,
   planToForm,
   problemText,
+  statesReadNote,
   type AdsGender,
   type AiField,
   type CampaignForm,
@@ -634,7 +635,9 @@ function LaunchNote({ draft, canManage }: { draft: AdsCampaignDraftView; canMana
 }
 
 function LaunchObjectsList({ launch, title, root }: { launch: AdsLaunchView; title: string; root: Translate }) {
+  const f = useFormat();
   if (launch.objects.length === 0) return null;
+  const read = statesReadNote(launch, root, (value) => f.dateTime(value));
   return (
     <div className="mt-2 space-y-1">
       <p className="text-xs font-medium text-foreground">{title}</p>
@@ -650,6 +653,11 @@ function LaunchObjectsList({ launch, title, root }: { launch: AdsLaunchView; tit
           </li>
         ))}
       </ul>
+      {read && (
+        <p className={read.failed ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'} data-testid="campaign-launch-read">
+          {read.text}
+        </p>
+      )}
     </div>
   );
 }

@@ -4757,6 +4757,9 @@ export const en = {
       launchRetryQueued: 'A retry is queued and will run shortly.',
       launchRetriedToast: 'Asked to run the launch again.',
       launchObjectsTitle: 'Created on the ad platform',
+      statesReadOk: 'Asked {platform} at {time}',
+      statesReadFailed: 'Could not ask {platform} at {time}; showing the last known state',
+      statesReadPlatform: 'the ad platform',
       objectLevel: { campaign: 'Campaign', ad_set: 'Ad set', creative: 'Creative', ad: 'Ad' },
       objectStatus: {
         active: 'Active',
@@ -11914,6 +11917,7 @@ export const en = {
         create_link: 'Make a link to view a sent quote',
         revoke_link: 'Revoke a quote link',
         mail_data: 'Make the link of a quote mail being sent',
+        mail_document: 'Read a sent quote to attach its PDF to the mail',
         defaults: "See the org's defaults and a customer's earlier prices for a quote",
         delete_draft: 'Delete a draft quote',
         document: 'Read a quote with the seller and buyer for its PDF',
