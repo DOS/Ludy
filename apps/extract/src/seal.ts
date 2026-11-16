@@ -2223,12 +2223,14 @@ function parseActiveXrefChain(
   readonly entries: Map<number, ActiveXrefEntry>;
   readonly rootRef: PDFRef;
   readonly xrefSections: ReadonlyArray<XrefStreamSectionInfo>;
+  readonly tailSize: number;
 } {
   const emptyContext = PDFContext.create();
   const entries = new Map<number, ActiveXrefEntry>();
   const visitedOffsets = new Set<number>();
   const xrefSections: XrefStreamSectionInfo[] = [];
   let rootRef: PDFRef | null = null;
+  let tailSize = 0;
   let currentOffset: number | null = startXrefOffset;
   let sectionIdx = 0;
 
@@ -2261,9 +2263,12 @@ function parseActiveXrefChain(
     if (getRawDictEntryByDecodedName(trailerDict, 'XRefStm', nameEscapes)) {
       throw new PdfSignError('Không hỗ trợ bảng tham chiếu lai /XRefStm');
     }
-    getRawDictEntryByDecodedName(trailerDict, 'Size', nameEscapes);
+    const sizeRaw = getRawDictEntryByDecodedName(trailerDict, 'Size', nameEscapes)?.raw;
 
     if (sectionIdx === 0) {
+      if (sizeRaw instanceof PDFNumber && Number.isSafeInteger(sizeRaw.asNumber()) && sizeRaw.asNumber() > 0) {
+        tailSize = sizeRaw.asNumber();
+      }
       const rootObj = getRawDictEntryByDecodedName(trailerDict, 'Root', nameEscapes)?.raw;
       if (!(rootObj instanceof PDFRef)) {
         throw new PdfSignError('Trailer PDF thiếu tham chiếu /Root hợp lệ');
@@ -2306,7 +2311,7 @@ function parseActiveXrefChain(
     }
   }
 
-  return { entries, rootRef, xrefSections };
+  return { entries, rootRef, xrefSections, tailSize };
 }
 
 function decodeObjectStreamEntries(stm: PDFRawStream, nameEscapes: RawPdfNameEscapes): DecodedObjStmInfo {
@@ -2635,15 +2640,22 @@ function arePdfObjectsStructurallyEqual(a: PDFObject | undefined, b: PDFObject |
   return false;
 }
 
+export interface ValidatedPdfForUpdate {
+  readonly pdfDoc: PDFDocument;
+  readonly prevStartXrefOffset: number;
+  readonly isXrefStream: boolean;
+  readonly maxObjNum: number;
+}
+
 function verifyPdfCrossReferenceConsistency(
   bytes: Uint8Array,
   pdfDoc: PDFDocument,
   nameEscapes: RawPdfNameEscapes,
   externalLengthLookup?: PdfLengthResolver,
-): void {
+): { readonly prevStartXrefOffset: number; readonly isXrefStream: boolean; readonly maxObjNum: number } {
   const raw = Buffer.from(bytes).toString('latin1');
   const { startXrefOffset, eofOffset } = parseTailStartXref(raw);
-  const { entries, rootRef } = parseActiveXrefChain(bytes, raw, startXrefOffset, eofOffset, nameEscapes);
+  const { entries, rootRef, xrefSections, tailSize } = parseActiveXrefChain(bytes, raw, startXrefOffset, eofOffset, nameEscapes);
 
   const loadedRoot = pdfDoc.context.trailerInfo.Root;
   if (
@@ -2812,9 +2824,19 @@ function verifyPdfCrossReferenceConsistency(
       }
     }
   }
+
+  let maxObjNum = Math.max(pdfDoc.context.largestObjectNumber, tailSize > 0 ? tailSize - 1 : 0);
+  for (const objNum of entries.keys()) {
+    if (objNum > maxObjNum) maxObjNum = objNum;
+  }
+  return {
+    prevStartXrefOffset: startXrefOffset,
+    isXrefStream: xrefSections.some((sec) => sec.offset === startXrefOffset),
+    maxObjNum,
+  };
 }
 
-async function loadValidatedPdf(bytes: Uint8Array): Promise<PDFDocument> {
+async function loadValidatedPdfInternal(bytes: Uint8Array): Promise<ValidatedPdfForUpdate> {
   if (bytes.byteLength > EXTRACT_LIMITS.maxFileBytes) {
     throw new PdfSignError('Tệp PDF vượt quá dung lượng cho phép');
   }
@@ -2840,7 +2862,7 @@ async function loadValidatedPdf(bytes: Uint8Array): Promise<PDFDocument> {
     ? inspectRawPdfSyntax(bytes, lengthResolver)
     : nameEscapes;
 
-  verifyPdfCrossReferenceConsistency(bytes, pdfDoc, resolvedNameEscapes, lengthResolver);
+  const xrefMeta = verifyPdfCrossReferenceConsistency(bytes, pdfDoc, resolvedNameEscapes, lengthResolver);
   scanPdfObjectGraph(pdfDoc, resolvedNameEscapes);
   normalizeAllPdfNames(pdfDoc, resolvedNameEscapes);
   validatePageContentsAndXObjectsGraphicsBalance(
@@ -2857,7 +2879,21 @@ async function loadValidatedPdf(bytes: Uint8Array): Promise<PDFDocument> {
   for (const page of pages) {
     getPageMetrics(pdfDoc, page);
   }
-  return pdfDoc;
+  return {
+    pdfDoc,
+    prevStartXrefOffset: xrefMeta.prevStartXrefOffset,
+    isXrefStream: xrefMeta.isXrefStream,
+    maxObjNum: xrefMeta.maxObjNum,
+  };
+}
+
+async function loadValidatedPdf(bytes: Uint8Array): Promise<PDFDocument> {
+  const validated = await loadValidatedPdfInternal(bytes);
+  return validated.pdfDoc;
+}
+
+export async function loadValidatedPdfForIncrementalUpdate(bytes: Uint8Array): Promise<ValidatedPdfForUpdate> {
+  return loadValidatedPdfInternal(bytes);
 }
 
 function normalizeExtractedText(raw: string): string {
@@ -2996,7 +3032,7 @@ export async function inspectPdf(bytes: Uint8Array): Promise<PdfInspectResult> {
   }
 }
 
-function decodeStrictBase64(value: string, label: string): Uint8Array {
+export function decodeStrictBase64(value: string, label: string): Uint8Array {
   if (value.length === 0 || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) {
     throw new PdfSignError(`${label} không đúng mã base64 hợp lệ`);
   }

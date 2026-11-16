@@ -4,15 +4,21 @@ import { describe, expect, it } from 'vitest';
 import {
   EXTRACT_LIMITS,
   ExtractServiceError,
+  PdfEmbedCmsInputError,
   PdfSealInputError,
   createExtractClient,
+  decodePdfEmbedCmsInput,
   decodePdfSealInput,
+  encodePdfEmbedCmsInput,
   encodePdfSealInput,
   maxRequestBytes,
+  zPdfEmbedCmsInput,
+  zPdfEmbedCmsResult,
   zPdfInspectResult,
   zPdfSealInput,
   zPdfSealResult,
   type ExtractClient,
+  type PdfEmbedCmsInput,
   type PdfSealInput,
 } from '../src/index.ts';
 
@@ -396,6 +402,53 @@ describe('crove-extract client concurrency (#2119)', () => {
         kind: 'pdf_seal',
         sealedPdfBase64: 'A'.repeat(maxPdfBase64Chars + 4),
         pageCount: 2,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('validates pdf_embed_cms limits, input round-trip, and result ByteRange bounds', () => {
+    expect(maxRequestBytes('pdf_embed_cms')).toBe(EXTRACT_LIMITS.maxPdfEmbedCmsRequestBytes);
+    const input: PdfEmbedCmsInput = {
+      pdfBase64: Buffer.from('%PDF-1.4\n').toString('base64'),
+      cmsDerBase64: Buffer.from(new Uint8Array([0x30, 0x03, 0x02, 0x01, 0x01])).toString('base64'),
+      signerName: 'Nguyễn Văn Ánh',
+      reason: 'Ký hợp đồng dịch vụ',
+      location: 'Hà Nội',
+      signedAtIso: '2026-11-16T10:00:00.000Z',
+      subFilter: 'ETSI.CAdES.detached',
+      placeholderBytes: 8192,
+    };
+    const encoded = encodePdfEmbedCmsInput(input);
+    expect(decodePdfEmbedCmsInput(encoded)).toEqual(input);
+
+    expect(zPdfEmbedCmsInput.safeParse({ ...input, signerName: '   ' }).success).toBe(false);
+    expect(zPdfEmbedCmsInput.safeParse({ ...input, fieldName: 'bad/name' }).success).toBe(false);
+    expect(zPdfEmbedCmsInput.safeParse({ ...input, placeholderBytes: 16 }).success).toBe(false);
+    expect(zPdfEmbedCmsInput.safeParse({ ...input, extra: true }).success).toBe(false);
+
+    expect(() => decodePdfEmbedCmsInput(new Uint8Array(0))).toThrow(PdfEmbedCmsInputError);
+    expect(() => decodePdfEmbedCmsInput(new TextEncoder().encode('{bad'))).toThrow(PdfEmbedCmsInputError);
+    expect(() => decodePdfEmbedCmsInput(new Uint8Array(EXTRACT_LIMITS.maxPdfEmbedCmsRequestBytes + 1))).toThrow(
+      PdfEmbedCmsInputError,
+    );
+
+    expect(
+      zPdfEmbedCmsResult.safeParse({
+        ok: true,
+        kind: 'pdf_embed_cms',
+        pdfBase64: Buffer.from('%PDF-1.4\n').toString('base64'),
+        signedSha256: 'a'.repeat(64),
+        byteRange: [0, 200, 1200, 300],
+      }).success,
+    ).toBe(true);
+
+    expect(
+      zPdfEmbedCmsResult.safeParse({
+        ok: true,
+        kind: 'pdf_embed_cms',
+        pdfBase64: Buffer.from('%PDF-1.4\n').toString('base64'),
+        signedSha256: 'a'.repeat(64),
+        byteRange: [0, 1200, 1200, 300],
       }).success,
     ).toBe(false);
   });

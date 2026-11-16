@@ -13,7 +13,7 @@ import { z } from 'zod';
 // number above the lines and the lines come back read, cells as text, and the worker checks them again.
 // marketplace_orders: a Shopee, TikTok Shop or Lazada order report as .xlsx or CSV (#2515); only an allow-list of columns comes back (order, line, dates, status, SKU, product, quantity,
 // amounts): the buyer's columns are never read, so they never leave the sandbox.
-export const EXTRACT_KINDS = ['einvoice_xml', 'pdf_text', 'pdf_inspect', 'pdf_seal', 'mime', 'zip', 'portal_invoice_list', 'dsn', 'html_meta', 'feed', 'bank_statement', 'marketplace_orders', 'marketplace_income'] as const;
+export const EXTRACT_KINDS = ['einvoice_xml', 'pdf_text', 'pdf_inspect', 'pdf_seal', 'pdf_embed_cms', 'mime', 'zip', 'portal_invoice_list', 'dsn', 'html_meta', 'feed', 'bank_statement', 'marketplace_orders', 'marketplace_income'] as const;
 export type ExtractKind = (typeof EXTRACT_KINDS)[number];
 export const zExtractKind = z.enum(EXTRACT_KINDS);
 
@@ -88,6 +88,12 @@ export const EXTRACT_LIMITS = {
   maxSignatureImageBytes: 256 * 1024,
   // Base64-encoded 25 MiB PDF plus signature fields and certificate fits within 40 MiB.
   maxPdfSealRequestBytes: 40 * MiB,
+  // eSign PAdES CMS embedding (#3511).
+  maxPdfCmsDerBytes: 512 * 1024,
+  maxPdfCmsTimestampBytes: 64 * 1024,
+  maxPdfCmsOcspBytes: 64 * 1024,
+  maxPdfCmsOcspResponses: 16,
+  maxPdfEmbedCmsRequestBytes: 40 * MiB,
 } as const;
 
 // Why the sandbox did not return an entry of an archive. The whole archive is refused instead (as invalid) when an
@@ -99,6 +105,7 @@ export type ArchiveRejection = (typeof ARCHIVE_REJECTIONS)[number];
 export function maxRequestBytes(kind: ExtractKind): number {
   if (kind === 'mime' || kind === 'dsn') return EXTRACT_LIMITS.maxEmailBytes;
   if (kind === 'pdf_seal') return EXTRACT_LIMITS.maxPdfSealRequestBytes;
+  if (kind === 'pdf_embed_cms') return EXTRACT_LIMITS.maxPdfEmbedCmsRequestBytes;
   if (kind === 'portal_invoice_list') return EXTRACT_LIMITS.maxPortalListBytes;
   if (kind === 'bank_statement') return EXTRACT_LIMITS.maxStatementBytes;
   if (kind === 'marketplace_orders' || kind === 'marketplace_income') return EXTRACT_LIMITS.maxOrderReportBytes;
@@ -493,6 +500,9 @@ export type ExtractedMarketplaceIncome = z.infer<typeof zExtractedMarketplaceInc
 
 const MAX_PDF_BASE64_CHARS = Math.ceil(EXTRACT_LIMITS.maxFileBytes / 3) * 4;
 const MAX_SIGNATURE_PNG_BASE64_CHARS = Math.ceil(EXTRACT_LIMITS.maxSignatureImageBytes / 3) * 4;
+const MAX_CMS_DER_BASE64_CHARS = Math.ceil(EXTRACT_LIMITS.maxPdfCmsDerBytes / 3) * 4;
+const MAX_TIMESTAMP_BASE64_CHARS = Math.ceil(EXTRACT_LIMITS.maxPdfCmsTimestampBytes / 3) * 4;
+const MAX_OCSP_BASE64_CHARS = Math.ceil(EXTRACT_LIMITS.maxPdfCmsOcspBytes / 3) * 4;
 const zSha256Hex = z.string().regex(/^[0-9a-f]{64}$/, 'lowercase 64-char sha256 hex');
 const utf8ByteLength = (text: string): number => new TextEncoder().encode(text).byteLength;
 
@@ -637,7 +647,7 @@ export class PdfSealInputError extends Error {
   }
 }
 
-function formatSealIssues(issues: readonly z.core.$ZodIssue[]): string {
+function formatZodIssues(issues: readonly z.core.$ZodIssue[]): string {
   return issues
     .slice(0, 5)
     .map((issue) => `${issue.path.join('.') || 'input'}: ${issue.message}`)
@@ -645,34 +655,105 @@ function formatSealIssues(issues: readonly z.core.$ZodIssue[]): string {
     .slice(0, EXTRACT_LIMITS.maxErrorChars);
 }
 
-export function encodePdfSealInput(input: PdfSealInput): Uint8Array {
-  const parsed = zPdfSealInput.safeParse(input);
-  if (!parsed.success) throw new PdfSealInputError(`invalid pdf_seal input: ${formatSealIssues(parsed.error.issues)}`);
+function encodeJsonContractInput<T>(
+  kind: 'pdf_seal' | 'pdf_embed_cms',
+  schema: z.ZodType<T>,
+  input: T,
+  createError: (message: string) => Error,
+): Uint8Array {
+  const parsed = schema.safeParse(input);
+  if (!parsed.success) throw createError(`invalid ${kind} input: ${formatZodIssues(parsed.error.issues)}`);
   const encoded = new TextEncoder().encode(JSON.stringify(parsed.data));
-  if (encoded.byteLength > maxRequestBytes('pdf_seal')) {
-    throw new PdfSealInputError('pdf_seal input is larger than allowed');
+  if (encoded.byteLength > maxRequestBytes(kind)) {
+    throw createError(`${kind} input is larger than allowed`);
   }
   return encoded;
 }
 
-export function decodePdfSealInput(bytes: Uint8Array): PdfSealInput {
-  if (bytes.byteLength === 0) throw new PdfSealInputError('pdf_seal input is empty');
-  if (bytes.byteLength > maxRequestBytes('pdf_seal')) throw new PdfSealInputError('pdf_seal input is larger than allowed');
+function decodeJsonContractInput<T>(
+  kind: 'pdf_seal' | 'pdf_embed_cms',
+  schema: z.ZodType<T>,
+  bytes: Uint8Array,
+  createError: (message: string) => Error,
+): T {
+  if (bytes.byteLength === 0) throw createError(`${kind} input is empty`);
+  if (bytes.byteLength > maxRequestBytes(kind)) throw createError(`${kind} input is larger than allowed`);
   let text: string;
   try {
     text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } catch {
-    throw new PdfSealInputError('pdf_seal input is not valid UTF-8');
+    throw createError(`${kind} input is not valid UTF-8`);
   }
   let raw: unknown;
   try {
     raw = JSON.parse(text);
   } catch {
-    throw new PdfSealInputError('pdf_seal input is not valid JSON');
+    throw createError(`${kind} input is not valid JSON`);
   }
-  const parsed = zPdfSealInput.safeParse(raw);
-  if (!parsed.success) throw new PdfSealInputError(`invalid pdf_seal input: ${formatSealIssues(parsed.error.issues)}`);
+  const parsed = schema.safeParse(raw);
+  if (!parsed.success) throw createError(`invalid ${kind} input: ${formatZodIssues(parsed.error.issues)}`);
   return parsed.data;
+}
+
+export function encodePdfSealInput(input: PdfSealInput): Uint8Array {
+  return encodeJsonContractInput('pdf_seal', zPdfSealInput, input, (msg) => new PdfSealInputError(msg));
+}
+
+export function decodePdfSealInput(bytes: Uint8Array): PdfSealInput {
+  return decodeJsonContractInput('pdf_seal', zPdfSealInput, bytes, (msg) => new PdfSealInputError(msg));
+}
+
+export const PDF_CMS_SUBFILTERS = ['ETSI.CAdES.detached', 'adbe.pkcs7.detached'] as const;
+export type PdfCmsSubFilter = (typeof PDF_CMS_SUBFILTERS)[number];
+
+export const zPdfEmbedCmsInput = z.strictObject({
+  pdfBase64: z.base64().min(1).max(MAX_PDF_BASE64_CHARS),
+  cmsDerBase64: z.base64().min(1).max(MAX_CMS_DER_BASE64_CHARS),
+  signerName: z.string().trim().min(1).max(200),
+  reason: z.string().trim().min(1).max(500).optional(),
+  location: z.string().trim().min(1).max(200).optional(),
+  signedAtIso: z.iso.datetime({ offset: true }),
+  fieldName: z.string().regex(/^[A-Za-z0-9_.-]{1,64}$/, 'invalid signature field name').optional(),
+  subFilter: z.enum(PDF_CMS_SUBFILTERS).optional(),
+  placeholderBytes: z.number().int().min(64).max(EXTRACT_LIMITS.maxPdfCmsDerBytes).optional(),
+  timestampTokenBase64: z.base64().min(1).max(MAX_TIMESTAMP_BASE64_CHARS).optional(),
+  ocspResponsesBase64: z.array(z.base64().min(1).max(MAX_OCSP_BASE64_CHARS)).max(EXTRACT_LIMITS.maxPdfCmsOcspResponses).optional(),
+});
+export type PdfEmbedCmsInput = z.infer<typeof zPdfEmbedCmsInput>;
+
+export const zPdfEmbedCmsResult = z
+  .strictObject({
+    ok: z.literal(true),
+    kind: z.literal('pdf_embed_cms'),
+    pdfBase64: z.base64().min(1).max(MAX_PDF_BASE64_CHARS),
+    signedSha256: zSha256Hex,
+    byteRange: z.tuple([
+      z.literal(0),
+      z.number().int().positive(),
+      z.number().int().positive(),
+      z.number().int().positive(),
+    ]),
+  })
+  .superRefine((value, ctx) => {
+    if (value.byteRange[2] <= value.byteRange[1] + 2) {
+      ctx.addIssue({ code: 'custom', path: ['byteRange'], message: 'byteRange[2] must follow byteRange[1]' });
+    }
+  });
+export type PdfEmbedCmsResult = z.infer<typeof zPdfEmbedCmsResult>;
+
+export class PdfEmbedCmsInputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PdfEmbedCmsInputError';
+  }
+}
+
+export function encodePdfEmbedCmsInput(input: PdfEmbedCmsInput): Uint8Array {
+  return encodeJsonContractInput('pdf_embed_cms', zPdfEmbedCmsInput, input, (msg) => new PdfEmbedCmsInputError(msg));
+}
+
+export function decodePdfEmbedCmsInput(bytes: Uint8Array): PdfEmbedCmsInput {
+  return decodeJsonContractInput('pdf_embed_cms', zPdfEmbedCmsInput, bytes, (msg) => new PdfEmbedCmsInputError(msg));
 }
 
 export const zExtractFailure = z.strictObject({
@@ -692,6 +773,7 @@ export const zExtractSuccess = z.discriminatedUnion('kind', [
   }),
   zPdfInspectResult,
   zPdfSealResult,
+  zPdfEmbedCmsResult,
   z.strictObject({ ok: z.literal(true), kind: z.literal('mime'), email: zExtractedEmail }),
   z.strictObject({ ok: z.literal(true), kind: z.literal('zip'), archive: zExtractedArchive }),
   z.strictObject({ ok: z.literal(true), kind: z.literal('portal_invoice_list'), list: zExtractedPortalList }),
