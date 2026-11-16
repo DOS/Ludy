@@ -12958,6 +12958,7 @@ export const en = {
         get: 'Get meeting details',
         list: 'List meetings',
         recording_now: 'See the meeting the extension is recording',
+        recording_stopped: 'Report that a recording ended with no media',
         media_meta: 'Read meeting media metadata',
         owner_delete: 'Compliance delete meeting',
         owner_list: 'List meetings for compliance deletion (no content)',

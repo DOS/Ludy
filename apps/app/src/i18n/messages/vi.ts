@@ -12955,6 +12955,7 @@ export const vi = {
         get: 'Xem thông tin cuộc họp',
         list: 'Xem danh sách cuộc họp',
         recording_now: 'Xem cuộc họp tiện ích đang ghi',
+        recording_stopped: 'Báo dừng ghi âm khi không có bản ghi nào được lưu',
         media_meta: 'Đọc siêu dữ liệu phương tiện cuộc họp',
         owner_delete: 'Xóa cuộc họp theo yêu cầu tuân thủ',
         owner_list: 'Xem danh sách cuộc họp để xóa tuân thủ (không có nội dung)',
