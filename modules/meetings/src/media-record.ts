@@ -104,5 +104,11 @@ export async function recordSealedMedia(ctx: CommandContext, p: RecordSealedMedi
   // A recording imported from a meeting platform (C1, #3173) is done once its media is recorded: the definer moves a claimed recording of this meeting and member to imported, and does nothing
   // for a meeting that is no import.
   await sql`SELECT crove_kernel.meeting_platform_recording_imported(${meetingId}::uuid)`.execute(ctx.trx);
+  // Every recording that reaches the server ends its meeting's recording, whether it came as an upload or was joined from live pieces (#3205): ended_at is set
+  // once (the first media wins), the start plus what was recorded and never later than now. That is also what takes the meeting out of the app's recording chip.
+  await sql`
+    UPDATE crove_meetings.meeting
+    SET ended_at = LEAST(started_at + (${input.lengthSeconds}::int * interval '1 second'), ${ctx.now}::timestamptz), updated_at = ${ctx.now}::timestamptz
+    WHERE org_id = ${ctx.orgId}::uuid AND id = ${meetingId}::uuid AND ended_at IS NULL AND started_at IS NOT NULL`.execute(ctx.trx);
   return { fileId, liveChunksDiscarded };
 }

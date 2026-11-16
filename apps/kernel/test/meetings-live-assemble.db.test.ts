@@ -323,6 +323,24 @@ suite('meetings live pieces assembled on PostgreSQL (#3126)', () => {
     expect((await click('recorder', meetingId)).body.code).toBe('MEDIA_ALREADY_RECORDED');
   });
 
+  it('ends the meeting\'s recording when it joins, like an upload does: ended_at is the start plus the length, no stop reason, and the recording chip lets go (#3205)', async () => {
+    const meetingId = await liveMeeting();
+    // Made with the extension (stamped as the extension scope does): the chip reads these from the server.
+    await rows('UPDATE crove_meetings.meeting SET extension_token_id = $1 WHERE id = $2', [randomUUID(), meetingId]);
+    await sendAll(meetingId, [0, 1], 'end');
+    await windowPassed(meetingId);
+    sandbox.seconds = 61;
+    expect((await rows<{ ended: boolean }>('SELECT ended_at IS NOT NULL AS ended FROM crove_meetings.meeting WHERE id = $1', [meetingId]))[0]!.ended).toBe(false);
+    expect((await click('recorder', meetingId)).status).toBe(200);
+    const meeting = (await rows<{ gap: number; reason: string | null }>('SELECT extract(epoch FROM ended_at - started_at)::int AS gap, recording_stop_reason AS reason FROM crove_meetings.meeting WHERE id = $1', [meetingId]))[0]!;
+    expect(meeting).toEqual({ gap: 61, reason: null });
+    // As if it had started a minute ago: the chip would list it, but for its end time.
+    await rows("UPDATE crove_meetings.meeting SET started_at = now() - interval '1 minute', ended_at = now() WHERE id = $1", [meetingId]);
+    expect((await rpc('meetings/recordingNow', 'recorder', {})).body.recording).toBeNull();
+    await rows('UPDATE crove_meetings.meeting SET ended_at = NULL WHERE id = $1', [meetingId]);
+    expect((await rpc('meetings/recordingNow', 'recorder', {})).body.recording).toMatchObject({ meetingId });
+  });
+
   it('reports a gap in the pieces and still joins what there is', async () => {
     const meetingId = await liveMeeting();
     await sendAll(meetingId, [0, 1, 3, 4], 'gap');
