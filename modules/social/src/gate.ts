@@ -101,6 +101,7 @@ const zGateResult = z.discriminatedUnion('kind', [
 // nothing. The variant itself is never touched: it stays published whatever the gate's answer.
 export const gateRecord = defineCommand({
   name: 'social.gate.record',
+  runsWhenOff: "records the platform's answer to a call already made, so its outcome is not lost when the app is switched off",
   input: z.strictObject({ variantId: zId, callKey: z.string().min(1).max(300), result: zGateResult }),
   risk: 'R1',
   sideEffect: 'internal',

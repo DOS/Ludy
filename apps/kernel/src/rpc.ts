@@ -48,6 +48,7 @@ import {
 import type { z } from 'zod';
 import type { CompanyCandidates, ConversationAutoDraft, zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zTask } from '@crove/kernel-contract';
 import type { FollowupSource, MeetingBriefSource, QuoteSuggestSource, SuggestedSlots } from '@crove/mod-crm';
+import type { ProjectWeeklyStatusSource } from '@crove/mod-projects';
 import { sql } from 'kysely';
 import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, type BriefResult, type WeeklyFacts, type WeeklyResult } from '@crove/agent';
 import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type ConversationReader } from './conversations-ai.ts';
@@ -56,11 +57,15 @@ import { wordReminder, type ReminderAi } from './payment-reminder-ai.ts';
 import { wordFollowup, type FollowupAi } from './followup-ai.ts';
 import { minutesLink, postMinutesFromClick, saveMinutesChannel, type MinutesChatDeps } from './meeting-chat.ts';
 import { explainPayslip, flagMonth, prepareMonth, type PayrollAi, type PayrollReads } from './payroll-coworker-ai.ts';
+import { checkLaborReadiness, type LaborCheckAi, type LaborCheckPorts } from './labor-coworker-ai.ts';
+import { generateRecruitingBrief, type RecruitingBriefAi, type RecruitingBriefPorts } from './recruiting-coworker-ai.ts';
+import type { HrLaborCheckSnapshot, HrRecruitingBriefSnapshot } from '@crove/mod-hr';
 import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
 import { crmFollowupAi, draftCrmFollowup } from './crm-followup-ai.ts';
 import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
+import { prepareProjectWeeklyStatus, projectWeeklyStatusAi } from './project-weekly-status-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
-import { askStatusOf, runLiveNotes, runMeetingAsk, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runTranscriptTranslation, transcriptTranslationStatusOf, translationStatusOf, type ModelPort } from './member-vy-ports.ts';
+import { askStatusOf, runLiveNotes, runMeetingAsk, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runProjectsTasksFromNote, runTranscriptTranslation, tasksFromNoteStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems } from './stock-ai.ts';
 import { MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
@@ -384,6 +389,8 @@ export function createRpcHandler(
   const transcriptTranslations = new DraftBudget({ perUserPerMinute: 20, perOrgPerMinute: 60 });
   // A question across meetings (A3, #3161) is one model call over at most 40 lines and any member may ask: its own budget, apart from the summaries' and the translations'.
   const asks = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
+  // Proposing project tasks from a note (#2598): one call per click, own budget so it does not contend with meetings.
+  const noteTaskProposals = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
   const suggestionBudget = () => new DraftBudget({ perUserPerMinute: 12, perOrgPerMinute: 60 });
   const conversationAi: ConversationAi = { reader: conversationReader ?? null, intentBudget: suggestionBudget(), contactBudget: suggestionBudget(), cache: new IntentCache() };
   // The sales coworker's guess at the company a person works at (#2438) has a budget of its own, and the same reader and model.
@@ -398,6 +405,14 @@ export function createRpcHandler(
     reader: conversationReader?.payrollPrepare && conversationReader.payrollFlag && conversationReader.payrollExplain
       ? { payrollPrepare: conversationReader.payrollPrepare.bind(conversationReader), payrollFlag: conversationReader.payrollFlag.bind(conversationReader), payrollExplain: conversationReader.payrollExplain.bind(conversationReader) }
       : null,
+    budget: suggestionBudget(),
+  };
+  const laborCheckAi: LaborCheckAi = {
+    reader: conversationReader?.laborCheck ? { laborCheck: conversationReader.laborCheck.bind(conversationReader) } : null,
+    budget: suggestionBudget(),
+  };
+  const recruitingBriefAi: RecruitingBriefAi = {
+    reader: conversationReader?.recruitingBrief ? { recruitingBrief: conversationReader.recruitingBrief.bind(conversationReader) } : null,
     budget: suggestionBudget(),
   };
   // The finance coworker's wording of a payment reminder (#2488): the same reader and model, a budget of its own. It reads no customer text (the model is told the
@@ -431,6 +446,13 @@ export function createRpcHandler(
   // Dy's brief before a booking linked to a deal (#3115): the same reader and model, a budget of its own. It is told the deal's facts and, while the org allows AI on customers' words, the latest messages the
   // member may read; what it answers is a summary and 2 to 3 points that are refused when they hold a figure, a link or a name the facts do not hold. Computed when read; nothing is stored or sent.
   const meetingBriefCoworker = meetingBriefAi(conversationReader?.meetingBrief ? { meetingBrief: conversationReader.meetingBrief.bind(conversationReader) } : null, suggestionBudget());
+
+  // Vy's weekly status of one project (#2597): deterministic counts and task titles/comments in the member's own transaction
+  // (never reading notes), then one metered model call outside it; refused when any number outside input appears.
+  const projectWeeklyStatusCoworker = projectWeeklyStatusAi(
+    conversationReader?.projectWeeklyStatus ? { projectWeeklyStatus: conversationReader.projectWeeklyStatus.bind(conversationReader) } : null,
+    suggestionBudget(),
+  );
 
   const guard = async <T>(fn: () => Promise<T>): Promise<T> => {
     try {
@@ -568,10 +590,35 @@ export function createRpcHandler(
     runs: () => runtime.query<HrRunSummary[]>('hr.payroll.run.list', { limit: 120 }, { actor, orgId }),
     payslip: (lineId) => runtime.query<HrPayslip>('hr.payroll.line.payslip', { lineId }, { actor, orgId }),
   });
+  const laborCheckPorts = (orgId: string, actor: UserActor): LaborCheckPorts => ({
+    read: (input) => runtime.query<HrLaborCheckSnapshot>('hr.payroll.labor_check.read', input, { actor, orgId }),
+    record: (kind, checked) => runtime.execute('hr.payroll.labor_check.audit', { kind, checked }, { actor, orgId }),
+  });
+  const recruitingBriefPorts = (orgId: string, actor: UserActor): RecruitingBriefPorts => ({
+    read: (candidateId, lang) => runtime.query<HrRecruitingBriefSnapshot>('hr.recruiting.brief.read', { candidateId, lang }, { actor, orgId }),
+    record: (candidateId, aiReason) => runtime.execute('hr.recruiting.brief.audit', { candidateId, aiReason }, { actor, orgId }),
+  });
   const hrQuery =
     (name: string) =>
     <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
       inHr(context, (orgId, actor) => runtime.query<O>(name, input, { actor, orgId }));
+  // The projects module (#2591): its procedures answer 404 when the deployment leaves it out.
+  const projects = runtime.installed('projects');
+  const inProjects = async <T>(context: RpcContext, fn: (orgId: string, actor: UserActor) => Promise<T>) => {
+    if (!projects) throw new ORPCError('NOT_FOUND', { status: 404, message: 'Mô-đun Dự án chưa được bật' });
+    return inOrg(context, fn);
+  };
+  const projectsCommand =
+    (name: string) =>
+    <O, I extends { idempotencyKey: string } = { idempotencyKey: string }>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
+      inProjects(context, (orgId, actor) => {
+        const { idempotencyKey, ...rest } = input;
+        return runtime.execute<O>(name, rest, { actor, orgId, idempotencyKey });
+      });
+  const projectsQuery =
+    (name: string) =>
+    <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
+      inProjects(context, (orgId, actor) => runtime.query<O>(name, input, { actor, orgId }));
 
   // The ads module (#2217): its procedures answer 404 when the deployment leaves it out, as the notes module's do.
   const ads = runtime.installed('ads');
@@ -884,6 +931,12 @@ export function createRpcHandler(
       export: os.org.export.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.org.export.get', {}, { actor, orgId }))),
     },
     hr: {
+      departments: {
+        list: os.hr.departments.list.handler(hrQuery('hr.department.list')),
+        add: os.hr.departments.add.handler(hrCommand('hr.department.add')),
+        edit: os.hr.departments.edit.handler(hrCommand('hr.department.edit')),
+        archive: os.hr.departments.archive.handler(hrCommand('hr.department.archive')),
+      },
       payroll: {
         employees: {
           list: os.hr.payroll.employees.list.handler(hrQuery('hr.payroll.employee.list')),
@@ -893,6 +946,7 @@ export function createRpcHandler(
           finalization: os.hr.payroll.employees.finalization.handler(hrCommand('hr.payroll.employee.finalization.set')),
           end: os.hr.payroll.employees.end.handler(hrCommand('hr.payroll.employee.end')),
           erase: os.hr.payroll.employees.erase.handler(hrCommand('hr.payroll.employee.erase')),
+          severance: os.hr.payroll.employees.severance.handler(hrQuery('hr.payroll.employee.severance')),
         },
         bankTemplates: {
           list: os.hr.payroll.bankTemplates.list.handler(hrQuery('hr.payroll.bank_template.list')),
@@ -900,6 +954,9 @@ export function createRpcHandler(
           edit: os.hr.payroll.bankTemplates.edit.handler(hrCommand('hr.payroll.bank_template.edit')),
           delete: os.hr.payroll.bankTemplates.delete.handler(hrCommand('hr.payroll.bank_template.delete')),
         },
+        laborCheck: os.hr.payroll.laborCheck.handler(({ context, input }) =>
+          inHr(context, (orgId, actor) => checkLaborReadiness(laborCheckAi, laborCheckPorts(orgId, actor), orgId, actor.userId, input)),
+        ),
         employments: { add: os.hr.payroll.employments.add.handler(hrCommand('hr.payroll.employment.add')) },
         dependents: {
           add: os.hr.payroll.dependents.add.handler(hrCommand('hr.payroll.dependent.add')),
@@ -910,7 +967,16 @@ export function createRpcHandler(
           sheet: os.hr.payroll.runs.sheet.handler(hrQuery('hr.payroll.run.sheet')),
           open: os.hr.payroll.runs.open.handler(hrCommand('hr.payroll.run.open')),
           recalculate: os.hr.payroll.runs.recalculate.handler(hrCommand('hr.payroll.run.recalculate')),
+          importTimekeeping: os.hr.payroll.runs.importTimekeeping.handler(hrCommand('hr.payroll.run.import_timekeeping')),
+          thirteenthMonthPreview: os.hr.payroll.runs.thirteenthMonthPreview.handler(hrQuery('hr.payroll.run.thirteenth_month_preview')),
+          applyThirteenthMonth: os.hr.payroll.runs.applyThirteenthMonth.handler(hrCommand('hr.payroll.run.apply_thirteenth_month')),
+          syncLeave: os.hr.payroll.runs.syncLeave.handler(hrCommand('hr.payroll.run.sync_leave')),
           approve: os.hr.payroll.runs.approve.handler(hrCommand('hr.payroll.run.approve')),
+        },
+        leave: {
+          balance: os.hr.payroll.leave.balance.handler(hrQuery('hr.payroll.leave.balance')),
+          set: os.hr.payroll.leave.set.handler(hrCommand('hr.payroll.leave.set')),
+          delete: os.hr.payroll.leave.delete.handler(hrCommand('hr.payroll.leave.delete')),
         },
         // Where the posting and the payments of an approved month stand (#2532): finance reads its own books and the open proposals; owners and admins.
         settlement: os.hr.payroll.settlement.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.payroll.settlement', input, { actor, orgId }))),
@@ -925,6 +991,28 @@ export function createRpcHandler(
           flag: os.hr.payroll.coworker.flag.handler(({ context, input }) => inHr(context, (orgId, actor) => flagMonth(payrollAi, payrollReads(orgId, actor), orgId, actor.userId, input.runId, input.lang ?? 'vi'))),
           explain: os.hr.payroll.coworker.explain.handler(({ context, input }) => inHr(context, (orgId, actor) => explainPayslip(payrollAi, payrollReads(orgId, actor), orgId, actor.userId, input.lineId, input.lang ?? 'vi'))),
         },
+      },
+      recruiting: {
+        openings: {
+          list: os.hr.recruiting.openings.list.handler(hrQuery('hr.recruiting.opening.list')),
+          add: os.hr.recruiting.openings.add.handler(hrCommand('hr.recruiting.opening.add')),
+          edit: os.hr.recruiting.openings.edit.handler(hrCommand('hr.recruiting.opening.edit')),
+          close: os.hr.recruiting.openings.close.handler(hrCommand('hr.recruiting.opening.close')),
+        },
+        candidates: {
+          list: os.hr.recruiting.candidates.list.handler(hrQuery('hr.recruiting.candidate.list')),
+          get: os.hr.recruiting.candidates.get.handler(hrQuery('hr.recruiting.candidate.get')),
+          add: os.hr.recruiting.candidates.add.handler(hrCommand('hr.recruiting.candidate.add')),
+          edit: os.hr.recruiting.candidates.edit.handler(hrCommand('hr.recruiting.candidate.edit')),
+          moveStage: os.hr.recruiting.candidates.moveStage.handler(hrCommand('hr.recruiting.candidate.move_stage')),
+          scheduleInterview: os.hr.recruiting.candidates.scheduleInterview.handler(hrCommand('hr.recruiting.candidate.schedule_interview')),
+          hire: os.hr.recruiting.candidates.hire.handler(hrCommand('hr.recruiting.candidate.hire')),
+          erase: os.hr.recruiting.candidates.erase.handler(hrCommand('hr.recruiting.candidate.erase')),
+        },
+        interviewSlots: os.hr.recruiting.interviewSlots.handler(hrQuery('hr.recruiting.interview_slots')),
+        brief: os.hr.recruiting.brief.handler(({ context, input }) =>
+          inHr(context, (orgId, actor) => generateRecruitingBrief(recruitingBriefAi, recruitingBriefPorts(orgId, actor), orgId, actor.userId, input)),
+        ),
       },
     },
     notes: {
@@ -955,6 +1043,8 @@ export function createRpcHandler(
         reorder: os.notes.todos.reorder.handler(notesCommand('notes.todo.reorder')),
         delete: os.notes.todos.delete.handler(notesCommand('notes.todo.delete')),
         restore: os.notes.todos.restore.handler(notesCommand('notes.todo.restore')),
+        linkAdd: os.notes.todos.linkAdd.handler(notesCommand('notes.todo.link_add')),
+        linkRemove: os.notes.todos.linkRemove.handler(notesCommand('notes.todo.link_remove')),
         handOver: os.notes.todos.handOver.handler(notesCommand('notes.todo.hand_over')),
         myWork: os.notes.todos.myWork.handler(notesQuery('notes.my_work')),
         counts: os.notes.todos.counts.handler(notesQuery('notes.todo.counts')),
@@ -3493,6 +3583,7 @@ export function createRpcHandler(
           }
         }),
       ),
+      committed: os.ads.committed.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.query('ads.committed', input, { actor, orgId }))),
       writeState: os.ads.writeState.handler(({ context }) => inAds(context, (orgId, actor) => runtime.query('ads.write.state', {}, { actor, orgId }))),
       // Asking for a change that opens the way to spend: a proposal in the Inbox, approved there (kernel.proposal.request).
       requestChange: os.ads.requestChange.handler(({ context, input }) =>
@@ -3557,6 +3648,40 @@ export function createRpcHandler(
       update: os.tasks.update.handler(({ context, input }) => keyed(context, 'kernel.task.update', input)),
       comment: os.tasks.comment.handler(({ context, input }) => keyed(context, 'kernel.task.comment', input)),
       setStatus: os.tasks.setStatus.handler(({ context, input }) => keyed(context, 'kernel.task.set_status', input)),
+    },
+    projects: {
+      list: os.projects.list.handler(projectsQuery('projects.project.list')),
+      get: os.projects.get.handler(projectsQuery('projects.project.get')),
+      board: os.projects.board.handler(projectsQuery('projects.board')),
+      weeklyStatus: os.projects.weeklyStatus.handler(({ context, input }) =>
+        inProjects(context, async (orgId, actor) => {
+          const source = await runtime.query<ProjectWeeklyStatusSource>('projects.weekly_status_source', { projectId: input.projectId }, { actor, orgId });
+          return prepareProjectWeeklyStatus(projectWeeklyStatusCoworker, orgId, actor.userId, source, input.language ?? 'vi');
+        }),
+      ),
+      weeklyStatusShareNote: os.projects.weeklyStatusShareNote.handler(projectsCommand('projects.weekly_status.share_note')),
+      weeklyStatusSendMail: os.projects.weeklyStatusSendMail.handler(projectsCommand('projects.weekly_status.send_mail')),
+      unassignedTasks: os.projects.unassignedTasks.handler(projectsQuery('projects.unassigned_tasks')),
+      taskProjects: os.projects.taskProjects.handler(projectsQuery('projects.task_projects')),
+      create: os.projects.create.handler(projectsCommand('projects.project.create')),
+      update: os.projects.update.handler(projectsCommand('projects.project.update')),
+      setStatus: os.projects.setStatus.handler(projectsCommand('projects.project.set_status')),
+      archive: os.projects.archive.handler(projectsCommand('projects.project.archive')),
+      setOwner: os.projects.setOwner.handler(projectsCommand('projects.project.set_owner')),
+      addMember: os.projects.addMember.handler(projectsCommand('projects.member.add')),
+      removeMember: os.projects.removeMember.handler(projectsCommand('projects.member.remove')),
+      addTask: os.projects.addTask.handler(projectsCommand('projects.task.add')),
+      removeTask: os.projects.removeTask.handler(projectsCommand('projects.task.remove')),
+      createTask: os.projects.createTask.handler(projectsCommand('projects.task.create')),
+      tasksFromNoteStatus: os.projects.tasksFromNoteStatus.handler(({ context }) =>
+        inProjects(context, (orgId, actor) => tasksFromNoteStatusOf({ runtime, model: summaryModel, meter: aiMeter ?? (() => null) }, orgId, actor)),
+      ),
+      proposeTasksFromNote: os.projects.proposeTasksFromNote.handler(({ context, input }) =>
+        inProjects(context, (orgId, actor) =>
+          runProjectsTasksFromNote({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: noteTaskProposals }, orgId, actor, input),
+        ),
+      ),
+      confirmTasksFromNote: os.projects.confirmTasksFromNote.handler(projectsCommand('projects.tasks_from_note.confirm')),
     },
   });
 

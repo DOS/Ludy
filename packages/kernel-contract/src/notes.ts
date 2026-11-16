@@ -9,7 +9,7 @@ export const NOTE_VISIBILITIES = ['private', 'org'] as const;
 export type NoteVisibility = (typeof NOTE_VISIBILITIES)[number];
 // The records a note links to (notes.md §3.4): the kernel's parties and files, and finance's documents and journal
 // entries and crm's bookings (#1672), which another module owns and may be off; meetings come later (N10).
-export const NOTE_LINK_TARGETS = ['kernel.party', 'kernel.file', 'finance.purchase_document', 'finance.journal_entry', 'crm.booking'] as const;
+export const NOTE_LINK_TARGETS = ['kernel.party', 'kernel.file', 'kernel.task', 'finance.purchase_document', 'finance.journal_entry', 'crm.booking', 'projects.project'] as const;
 export type NoteLinkTarget = (typeof NOTE_LINK_TARGETS)[number];
 // The lists of the notes screen (notes.md §3.10).
 export const NOTE_LIST_VIEWS = ['mine', 'shared', 'pinned', 'archived', 'trash'] as const;
@@ -42,6 +42,7 @@ export const zNoteCreate = z.strictObject({
   body: zBody.default(''),
   tags: zTags.default([]),
   visibility: z.enum(NOTE_VISIBILITIES).default('private'),
+  tainted: z.boolean().optional(),
   link: zNoteLinkTarget.optional(),
 });
 export type NoteCreateInput = z.input<typeof zNoteCreate>;
@@ -91,10 +92,6 @@ export type NoteLink = z.infer<typeof zNoteLinkView>;
 
 export const zNote = zNoteSummary.extend({ body: z.string(), links: z.array(zNoteLinkView) });
 export type Note = z.infer<typeof zNote>;
-
-// A record's panel: its pinned notes, then the latest others (notes.md §3.10).
-export const zNoteRecordPanelView = z.object({ pinned: z.array(zNoteSummary), latest: z.array(zNoteSummary) });
-export type NoteRecordPanel = z.infer<typeof zNoteRecordPanelView>;
 
 // How many private notes a member has, for an owner or admin before removing them (ADR-0037 §4). No text.
 export const zNotePrivateCount = z.object({ userId: z.string(), notes: z.number().int() });
@@ -151,6 +148,7 @@ export const zTodoCreate = z
     dueTime: zTime.nullable().default(null),
     timeZone: zTimeZone.default(DEFAULT_TIME_ZONE),
     reminder: zTodoReminder.default('auto'),
+    link: zNoteLinkTarget.optional(),
   })
   .refine(dueTimeNeedsDay, DUE_TIME_NEEDS_DAY);
 export type TodoCreateInput = z.input<typeof zTodoCreate>;
@@ -212,8 +210,24 @@ export const zTodoSummary = z.object({
   deletedAt: z.string().nullable(),
 });
 export type TodoSummary = z.infer<typeof zTodoSummary>;
-export const zTodo = zTodoSummary.extend({ details: z.string(), checklist: z.array(z.object({ text: z.string(), done: z.boolean() })) });
+export const zTodo = zTodoSummary.extend({
+  details: z.string(),
+  checklist: z.array(z.object({ text: z.string(), done: z.boolean() })),
+  links: z.array(zNoteLinkView),
+});
 export type Todo = z.infer<typeof zTodo>;
+
+// A record's panel: its pinned notes, the latest others, and the viewer's own linked private to-dos (notes.md §3.4, §3.10).
+export const zNoteRecordPanelView = z.object({
+  pinned: z.array(zNoteSummary),
+  latest: z.array(zNoteSummary),
+  todos: z.array(zTodoSummary),
+});
+export type NoteRecordPanel = z.infer<typeof zNoteRecordPanelView>;
+
+export const zTodoLinkAdd = z.strictObject({ todoId: zId, targetType: z.enum(NOTE_LINK_TARGETS), targetId: zId });
+export const zTodoLinkRemove = z.strictObject({ linkId: zId });
+export const zTodoLinkWritten = z.object({ todoId: z.string(), linkId: z.string() });
 
 // How many to-dos each member has, for an owner or admin before removing them (ADR-0037 §4). No text.
 export const zTodoCount = z.object({ userId: z.string(), todos: z.number().int() });
@@ -228,15 +242,24 @@ export const zTodoHandOver = z.strictObject({
   positionId: zId,
   title: zTodoTitle,
   description: zTodoDetails,
+  projectId: zId.optional(),
 });
 export type TodoHandOverInput = z.input<typeof zTodoHandOver>;
 export const zTodoHandedOver = zTodoWritten.extend({ taskId: z.string() });
 export type TodoHandedOver = z.infer<typeof zTodoHandedOver>;
 
-// "Việc của tôi" (notes.md §3.10, step N5): my open to-dos and the open tasks of the positions I hold, the tasks
-// grouped by their due day in the member's time zone.
-export const zMyWorkInput = z.strictObject({ timeZone: zTimeZone.default(DEFAULT_TIME_ZONE) });
+// "Việc của tôi" (notes.md §3.10, step N5; projects.md §4.3, step P3): my open to-dos and the open tasks of the
+// positions I hold, with each task's project when the projects module is active, grouped by due day in the member's time zone.
+export const zMyWorkInput = z.strictObject({
+  timeZone: zTimeZone.default(DEFAULT_TIME_ZONE),
+  projectId: z.union([zId, z.literal('none')]).optional(),
+});
 export type MyWorkInput = z.input<typeof zMyWorkInput>;
+export const zMyWorkTaskProject = z.object({
+  id: z.string(),
+  name: z.string(),
+});
+export type MyWorkTaskProject = z.infer<typeof zMyWorkTaskProject>;
 export const zMyWorkTask = z.object({
   id: z.string(),
   title: z.string(),
@@ -246,10 +269,19 @@ export const zMyWorkTask = z.object({
   group: z.enum(TODO_DUE_GROUPS),
   overdue: z.boolean(),
   tainted: z.boolean(),
+  project: zMyWorkTaskProject.nullable(),
 });
 export type MyWorkTask = z.infer<typeof zMyWorkTask>;
 // tasksTruncated: the kernel's task list was full, so older tasks of my positions may be missing.
-export const zMyWork = z.object({ todos: z.array(zTodoSummary), tasks: z.array(zMyWorkTask), tasksTruncated: z.boolean() });
+// projectsAvailable: projects module is installed and enabled for this org.
+// noSeatHint: member (non-owner, non-viewer) holds no active seat in a multi-member org.
+export const zMyWork = z.object({
+  todos: z.array(zTodoSummary),
+  tasks: z.array(zMyWorkTask),
+  tasksTruncated: z.boolean(),
+  projectsAvailable: z.boolean(),
+  noSeatHint: z.boolean(),
+});
 export type MyWork = z.infer<typeof zMyWork>;
 
 const DAY_MS = 86_400_000;
@@ -336,6 +368,7 @@ export const zNotesExport = z.object({
       // The note it was made from and the team task it was handed over as, when there are.
       sourceNoteId: z.string().nullable(),
       taskId: z.string().nullable(),
+      links: z.array(z.object({ targetType: z.string(), targetId: z.string() })),
     }),
   ),
   truncated: z.boolean(),

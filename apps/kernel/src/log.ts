@@ -168,6 +168,25 @@ export function parseLogFormat(value: string | undefined): LogFormat {
   throw new Error('LOG_FORMAT must be json or text');
 }
 
+// The module an error says is off for the org (a DomainError MODULE_OFF, ADR-0053), or null. Read by shape: this file stays free of imports.
+function moduleOffOf(error: unknown): string | null {
+  // Only a DomainError: a provider's error body can carry any code (GraphError copies it), and must not end a job quietly.
+  if (typeof error !== 'object' || error === null || (error as { name?: unknown }).name !== 'DomainError' || (error as { code?: unknown }).code !== 'MODULE_OFF') return null;
+  const module = (error as { details?: { module?: unknown } }).details?.module;
+  return typeof module === 'string' ? module : 'unknown';
+}
+
+// One line a minute per queue and module for the jobs that ended because their app is off (ids only, never the payload).
+const skippedJobLines = new Map<string, number>();
+function noteSkippedJob(queue: string, module: string, orgId: string | undefined): void {
+  const key = `${queue}:${module}`;
+  const now = Date.now();
+  if (now - (skippedJobLines.get(key) ?? 0) < 60_000) return;
+  skippedJobLines.set(key, now);
+  // A warning, not info: a billing port that wrongly answers [] would end every job of every app this way, and this line is the only signal.
+  console.warn(`[jobs] ${queue} skipped: ${module} is off${orgId ? ` for org ${orgId.slice(0, 8)}` : ''}`);
+}
+
 interface WorkerLike {
   work: unknown;
 }
@@ -177,7 +196,7 @@ type WorkFunction = (name: string, ...rest: unknown[]) => Promise<string>;
  * Wraps `boss.work` so each job's handler runs in a log context: the queue, the job's id (when it comes one at a time) and
  * the org its payload names. Call it once, right after creating the queue client, before any `work` registration.
  */
-export function withJobLogContext(boss: WorkerLike): void {
+export function withJobLogContext(boss: WorkerLike, options: { loudQueues?: ReadonlySet<string>; loudOnRetryQueues?: ReadonlySet<string> } = {}): void {
   const original = (boss.work as WorkFunction).bind(boss);
   (boss as { work: WorkFunction }).work = (name, ...rest) => {
     const handler = rest.at(-1);
@@ -191,7 +210,17 @@ export function withJobLogContext(boss: WorkerLike): void {
         () => {
           // A rejection is logged here, while the job's ids are on the line (pg-boss reports it later, outside this
           // context), and then rethrown so pg-boss still records the failed job and retries it.
-          const failed = (error: unknown): never => {
+          const failed = (error: unknown): never | undefined => {
+            // An app that is off for the org (ADR-0053, MODULE_OFF) is its state, not a failure: the job ends, no retry, no dead letter, no stack
+            // trace. One line a minute per queue and module says so (ids only, never the payload).
+            const off = moduleOffOf(error);
+            // A retry of a job whose earlier attempt failed (a record refused after the platform call, which the first attempt rethrew loudly) is loud too: its
+            // begin is refused with MODULE_OFF, and ending that quietly would leave the one failed attempt as the only trace. Needs the queue's work() to ask for metadata.
+            const retried = single && options.loudOnRetryQueues?.has(name) === true && Number((first as { retryCount?: unknown } | undefined)?.retryCount ?? 0) > 0;
+            if (off !== null && !options.loudQueues?.has(name) && !retried) {
+              noteSkippedJob(name, off, orgId);
+              return undefined;
+            }
             console.error(`[jobs] ${name} handler failed`, error);
             throw error;
           };

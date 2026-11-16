@@ -22,6 +22,8 @@ export type EditableFields = Omit<EditableParty, 'duplicates'>;
 export const refreshParties = () => {
   void queryClient.invalidateQueries({ queryKey: orpc.parties.key() });
   void queryClient.invalidateQueries({ queryKey: orpc.crm.contacts.key() });
+  // The deal form's customer search reads the parties too: a contact just added must be found by it.
+  void queryClient.invalidateQueries({ queryKey: orpc.crm.parties.key() });
 };
 
 // A party's name and contact details, edited in a row under it by owners, admins and members. The version read goes

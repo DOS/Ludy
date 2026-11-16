@@ -9,13 +9,14 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { NOTE_BODY_MAX, NOTE_LIST_VIEWS, type Note, type NoteListView } from '@crove/kernel-contract';
+import { NOTE_BODY_MAX, NOTE_LIST_VIEWS, type Note, type NoteLinkTargetInput, type NoteListView } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { Textarea } from '@crove/ui/components/textarea';
-import { NoteLinks } from '../components/note-links.tsx';
+import { NoteLinks, RecordLinkAdder } from '../components/note-links.tsx';
+import { NoteTaskProposals } from '../components/note-task-proposals.tsx';
 import { NotesSubnav } from '../components/notes-subnav.tsx';
 import { VisibilityBadge, refreshNotes } from '../components/notes-panel.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader, Spinner } from '../components/ui.tsx';
@@ -25,6 +26,7 @@ import { Markdown } from '../lib/markdown.tsx';
 import { applyFormat, shortcutFormat, type MarkdownFormat } from '../lib/markdown-edit.ts';
 import { createAutosaver, type Autosaver, type NoteValues, type SaveState } from '../lib/note-autosave.ts';
 import { notesMarkdown, saveText } from '../lib/notes-export.ts';
+import { projectsInstalled } from '../lib/projects.ts';
 import { toast } from '../lib/toast.ts';
 import { listOfNote, looksLikePassword, parseTags, tagCounts, type NotesSearch } from '../lib/notes.ts';
 
@@ -199,6 +201,14 @@ function Editor({
     },
   });
   const blocked = act.isPending || state === 'saving';
+  const linkAdd = useMutation({
+    mutationFn: (target: NoteLinkTargetInput) => api.notes.linkAdd({ noteId: note.id, ...target }),
+    onSuccess: () => void refreshNotes(),
+  });
+  const linkRemove = useMutation({
+    mutationFn: (linkId: string) => api.notes.linkRemove({ linkId }),
+    onSuccess: () => void refreshNotes(),
+  });
 
   return (
     <article className="space-y-4" aria-labelledby="note-title">
@@ -297,7 +307,41 @@ function Editor({
         </>
       )}
 
-      <NoteLinks links={note.links} slug={slug} />
+      <NoteLinks
+        links={note.links}
+        slug={slug}
+        onRemove={editable ? (linkId) => linkRemove.mutate(linkId) : undefined}
+        removingId={linkRemove.isPending ? linkRemove.variables : undefined}
+      />
+      {linkRemove.error && <ErrorText>{errorMessage(linkRemove.error)}</ErrorText>}
+      {editable && (
+        <RecordLinkAdder
+          existingLinks={note.links}
+          onAdd={(target) => linkAdd.mutateAsync(target)}
+          adding={linkAdd.isPending}
+          error={linkAdd.error}
+          onClearError={() => linkAdd.reset()}
+        />
+      )}
+
+      {projectsInstalled() && writer && !inTrash && (
+        <NoteTaskProposals
+          slug={slug}
+          note={editable ? { ...note, title: values.title, body: values.body } : note}
+          beforePropose={
+            editable
+              ? async () => {
+                  await saver.settle();
+                  return !saver.dirty();
+                }
+              : undefined
+          }
+          saveBlocked={editable && (state === 'conflict' || state === 'error')}
+          onCreated={() => {
+            void refreshNotes();
+          }}
+        />
+      )}
 
       {state === 'conflict' && (
         <div className="flex flex-wrap items-center gap-2" role="alert">

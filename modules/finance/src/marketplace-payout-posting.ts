@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The proposed entry of a platform's payout (#2516, ADR-0045 point 6, plan docs/plan/stock-and-marketplaces.md section 8.4, "The payout"), as pure functions over decimal strings, built from the
-// lines of a stored settlement and nothing else: ONE entry per settlement, Dr cash (the bank account of the transfer) for the money received, Dr 1388 for the platform's fees (their invoice has
-// not come, so they wait there until the fee e-invoice clears them, a later slice), Dr 333 for the tax the platform withheld and settled for the seller, Cr 131 (the platform) for what the settlement
+// lines of a stored settlement and nothing else: ONE entry per settlement, Dr cash (the bank account of the transfer) for the money received, Dr 331 (the platform's party) for the platform's fees
+// (route b of the AI consensus 2026-11-15, A1: the fee invoice, Cr 331, nets them), Dr 3331 and Dr 3335 for the VAT and the PIT the platform withheld, Cr 131 (the platform) for what the settlement
 // posted there: sales minus the seller discounts minus the refunds (marketplace-settlement-posting.ts). The three debits add up to the credit only when the lines carry no other adjustment, so a
 // settlement with one is refused, never balanced by a guessed line: the accountant explains it first.
 // Nothing posts until the accountant has confirmed the account map (requireConfirmedMarketplaceMap).
@@ -35,6 +35,9 @@ export interface PayoutProposalInput {
   // The ledger account of the bank account that received the transfer (the bank line's own account).
   cashAccount: string;
   lines: readonly PayoutPostingLine[];
+  // The VAT and the PIT the settlement's vouchers credited to 3331 and 3335 (slice C2), read from the books: the payout debits exactly these, so the two accounts net to zero, and their sum must be the
+  // withheld tax of the lines. Null when the settlement credited none (a seller that is no household): any withheld tax is then refused, never booked to a guessed account.
+  taxSplit: { vat: string; pit: string } | null;
 }
 
 export interface PayoutProposal {
@@ -54,7 +57,7 @@ const POSITIVE = /^\d+(\.\d{1,4})?$/;
 const SIGNED = /^-?\d+(\.\d{1,4})?$/;
 
 // The lines of the entry, from the map's accounts. Nothing is checked about the status here: payoutProposal is the gated entry point.
-function payoutProposalLines(input: PayoutProposalInput, map: Pick<MarketplacePostingMap, 'receivable' | 'feeAwaitingInvoice' | 'taxWithheld'>) {
+function payoutProposalLines(input: PayoutProposalInput, map: Pick<MarketplacePostingMap, 'receivable' | 'feePayable' | 'vatPayable' | 'pitPayable'>) {
   // Each amount is a decimal string of at most four places; only `other` and `net` may be negative (the table's own checks), so a negative sale or fee must not inflate what is collected.
   for (const l of input.lines) {
     for (const [key, v] of Object.entries(l)) {
@@ -70,24 +73,31 @@ function payoutProposalLines(input: PayoutProposalInput, map: Pick<MarketplacePo
   if (!receivable.greaterThan(0)) throw bad('Kỳ đối soát này không để lại khoản phải thu của sàn nên không có khoản sàn trả để ghi', { reason: 'NO_RECEIVABLE' });
   const fees = total((l) => l.commission).plus(total((l) => l.serviceFee)).plus(total((l) => l.paymentFee)).plus(total((l) => l.shipping));
   const tax = total((l) => l.taxWithheld);
+  const split = input.taxSplit;
+  for (const v of split ? [split.vat, split.pit] : []) if (typeof v !== 'string' || !POSITIVE.test(v)) throw bad('Số thuế đã ghi có khi ghi sổ kỳ đối soát không hợp lệ', { amount: String(v) });
+  const taxPosted = split ? money(split.vat).plus(money(split.pit)) : money('0');
+  if (!taxPosted.equals(tax)) {
+    throw bad('Thuế sàn đã khấu trừ không khớp số thuế đã ghi có khi ghi sổ kỳ đối soát; kế toán xử lý trước khi ghi khoản sàn trả', { reason: 'TAX_SPLIT', taxWithheld: toMoney(tax), posted: toMoney(taxPosted) });
+  }
   const received = total((l) => l.net);
   if (!received.greaterThan(0)) throw bad('Kỳ đối soát này không có tiền sàn trả về tài khoản ngân hàng', { reason: 'NO_CASH' });
   // The columns of every line add up to its net (a database check), so the split is exact: received + fees + tax = the receivable. A mismatch here is a stored row the checks should have refused.
   if (!received.plus(fees).plus(tax).equals(receivable)) throw bad('Các cột của kỳ đối soát không cộng ra số tiền ròng; không ghi sổ', { reason: 'SPLIT' });
   const memo = `${input.platform} ${input.periodFrom} đến ${input.periodTo}`;
   const lines: ProposedJournalLine[] = [{ account: input.cashAccount, debit: toMoney(received), credit: '0', partyId: null, memo }];
-  if (fees.greaterThan(0)) lines.push({ account: map.feeAwaitingInvoice.code, debit: toMoney(fees), credit: '0', partyId: input.partyId, memo });
-  if (tax.greaterThan(0)) lines.push({ account: map.taxWithheld.code, debit: toMoney(tax), credit: '0', partyId: null, memo });
+  if (fees.greaterThan(0)) lines.push({ account: map.feePayable.code, debit: toMoney(fees), credit: '0', partyId: input.partyId, memo });
+  if (split && money(split.vat).greaterThan(0)) lines.push({ account: map.vatPayable.code, debit: toMoney(money(split.vat)), credit: '0', partyId: null, memo });
+  if (split && money(split.pit).greaterThan(0)) lines.push({ account: map.pitPayable.code, debit: toMoney(money(split.pit)), credit: '0', partyId: null, memo });
   lines.push({ account: map.receivable.code, debit: '0', credit: toMoney(receivable), partyId: input.partyId, memo });
   return { lines, receivable: toMoney(receivable), received: toMoney(received), fees: toMoney(fees), tax: toMoney(tax) };
 }
 
 // The gated proposal: the map of the regime must be confirmed, there must be a receivable to clear and money received, and the entry must pass the journal voucher's own shape checks. The party of the
-// 131 and 1388 lines may still be null here (the caller reads it from the platform's link), so that one problem is not raised for it; the party link is checked when the entry is recorded.
+// 131 and 331 lines may still be null here (the caller reads it from the platform's link), so that one problem is not raised for it; the party link is checked when the entry is recorded.
 export function payoutProposal(input: PayoutProposalInput, maps?: Readonly<Record<string, MarketplacePostingMap>>): PayoutProposal {
   const map = requireConfirmedMarketplaceMap(input.regime, maps);
   const built = payoutProposalLines(input, map);
-  const needing = new Set([map.receivable.code, map.feeAwaitingInvoice.code]);
+  const needing = new Set([map.receivable.code, map.feePayable.code]);
   const problems = journalVoucherProblems(built.lines.map((l) => ({ ...l, partyId: l.partyId ?? (needing.has(l.account) ? 'pending' : null) })));
   if (problems.length > 0) throw new DomainError('MARKETPLACE_PAYOUT_NOT_POSTABLE', 422, 'Bút toán của khoản sàn trả không hợp lệ', { problems });
   return {

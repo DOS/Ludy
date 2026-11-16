@@ -265,4 +265,19 @@ suite('social client review links on PostgreSQL (#589)', () => {
     expect(await media(token)).toBeNull();
     expect(await file(token, shown.id)).toBeNull();
   });
+
+  it('shows nothing through the link while Social is off for the org, and the post again once it is on (ADR-0053, C2)', async () => {
+    const o = await org();
+    const postId = await draft(o);
+    const { token } = await exec<{ token: string }>(o, o.owner, 'social.review_link.create', { postId, days: 3 });
+    const setApp = (enabled: boolean) => rt.execute('kernel.org.set_app', { module: 'social', enabled }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+    expect(await view(token)).not.toBeNull();
+    await setApp(false);
+    expect(await view(token)).toBeNull();
+    // A client's answer is refused too, as for a revoked link: nothing is written.
+    const answer = async () => (await pool.query<{ done: unknown }>("SELECT crove_social.review_feedback_add($1, 'Khách', 'approved', NULL) AS done", [token])).rows[0]?.done ?? null;
+    expect(await answer()).toBeNull();
+    await setApp(true);
+    expect(await view(token)).not.toBeNull();
+  });
 });

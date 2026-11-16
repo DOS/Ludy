@@ -24,10 +24,10 @@ const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.
 const suite = ADMIN ? describe : describe.skip;
 
 // A copy of the shipped map with every row confirmed, for the runtime that posts.
-const confirmedMaps = (): Record<string, MarketplacePostingMap> => {
+const confirmedMaps = (feeCode = '331'): Record<string, MarketplacePostingMap> => {
   const base = MARKETPLACE_POSTING_MAPS.tt133 as MarketplacePostingMap;
   const c = <T extends { status: string }>(r: T): T => ({ ...r, status: 'confirmed' });
-  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c(base.feePayable), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld) } };
+  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c({ ...base.feePayable, code: feeCode }), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitExpense: c(base.pitExpense), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense) } };
 };
 const notMarketplace = (name: string) => !name.startsWith('finance.marketplace_settlement.') && !name.startsWith('finance.marketplace_payout.') && !name.startsWith('finance.marketplace_fee_clearing.');
 
@@ -67,7 +67,7 @@ suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
   const rows = <T extends pg.QueryResultRow>(sql: string, params: unknown[] = []) => withAdmin(async (c) => (await c.query<T>(sql, params)).rows);
 
   // An org with an owner, an admin (who asks) and a member.
-  async function org(regime: 'tt133' | 'tt99' = 'tt133') {
+  async function org(regime: 'tt133' | 'tt99' = 'tt133', household = true) {
     const tag = randomUUID().slice(0, 8);
     const person = (name: string) => upsertIdentity(createDb(pool), { issuer: 'mktrecord', subject: `${name}-${tag}`, email: `${name}-${tag}@mkt.test`, name: null });
     const owner = await person('owner');
@@ -81,6 +81,14 @@ suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
       );
     }
     const entity = (await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))[0]?.id as string;
+    // A household seller of one line of business with its rates confirmed for the test: the withheld tax is split into VAT and PIT at the settlement's posting (slice C2) and the payout debits it.
+    if (household) {
+      await withAdmin(async (c) => {
+        await c.query("UPDATE crove_kernel.legal_entity SET kind = 'household' WHERE org_id = $1 AND id = $2", [orgId, entity]);
+        await c.query("INSERT INTO crove_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, pit_method, trades) VALUES ($1, $2, '2026-01-01', 2, 'percentage', ARRAY['goods']::text[])", [orgId, entity]);
+        await c.query("UPDATE crove_finance.household_trade_rate SET status = 'confirmed' WHERE trade = 'goods'");
+      });
+    }
     return { orgId, owner, admin, member, entity };
   }
   type Org = Awaited<ReturnType<typeof org>>;
@@ -198,10 +206,10 @@ suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
     pool = createPool({ connectionString: url.toString(), max: 6 });
     const base = { queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] };
     // The runtime that posts reads the worklist over a confirmed map; the shipped one reads it over the shipped (commentary) map.
-    const confirmedBase = { queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries.filter((q) => q.name !== 'finance.marketplace.worklist'), createMarketplaceWorklist({ maps: confirmedMaps() })] };
+    const confirmedBase = { queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries.filter((q) => q.name !== 'finance.marketplace.worklist'), createMarketplaceWorklist({ maps: confirmedMaps(), feeClearing: true })] };
     // The runtime that posts registers both marketplace command sets over a confirmed map; the other, the shipped sets.
     rt = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({
-      commands: [...kernelCommands, ...financeCommands.filter((c) => notMarketplace(c.name)), ...createMarketplaceSettlementCommands({ maps: confirmedMaps() }).commands, ...createMarketplacePayoutCommands({ maps: confirmedMaps() }).commands, ...createMarketplaceFeeClearingCommands({ maps: confirmedMaps() }).commands],
+      commands: [...kernelCommands, ...financeCommands.filter((c) => notMarketplace(c.name)), ...createMarketplaceSettlementCommands({ maps: confirmedMaps() }).commands, ...createMarketplacePayoutCommands({ maps: confirmedMaps('1388') }).commands, ...createMarketplaceFeeClearingCommands({ maps: confirmedMaps(), retired: false }).commands],
       ...confirmedBase,
     });
     rtShipped = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...financeCommands], ...base });

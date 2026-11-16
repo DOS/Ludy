@@ -45,6 +45,7 @@ import {
   issueText,
   launchObjectLevelText,
   launchObjectStatusText,
+  launchObjectStatusVariant,
   launchReasonText,
   maxSpendHint,
   maxSpendOf,
@@ -75,6 +76,8 @@ export const refreshCampaigns = () =>
     queryClient.invalidateQueries({ queryKey: orpc.ads.campaignDrafts.key() }),
     queryClient.invalidateQueries({ queryKey: orpc.ads.campaignDraft.key() }),
     queryClient.invalidateQueries({ queryKey: orpc.ads.campaignRequests.key() }),
+    // A launch cancelled, stopped or retried changes what is committed this month.
+    queryClient.invalidateQueries({ queryKey: orpc.ads.committed.key() }),
   ]);
 
 // What the form was loaded from: the revision the next save is made from (a draft saved since is refused as stale), the plan the form is compared with
@@ -641,7 +644,7 @@ function LaunchObjectsList({ launch, title, root }: { launch: AdsLaunchView; tit
             <span>
               {launchObjectLevelText(o.level, root)}: <span className="font-medium text-foreground">{o.name}</span> ({o.externalId})
             </span>
-            <Badge variant={launch.state === 'live' && o.level !== 'creative' && (o.effectiveStatus === null || o.effectiveStatus.toLowerCase() === 'active') ? 'success' : 'outline'}>
+            <Badge variant={launchObjectStatusVariant(o, launch)}>
               {launchObjectStatusText(o, launch, root)}
             </Badge>
           </li>

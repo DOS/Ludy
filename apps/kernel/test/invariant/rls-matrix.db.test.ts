@@ -61,6 +61,8 @@ const MACHINERY = new Set([
   'crove_kernel.oauth_state',
   'crove_kernel.inbound_drop',
   'crove_kernel.outbox_archive',
+  // #3310 (ADR-0053, C3b): the ids of events that wait while an app is off: reached only by definers of the worker, RLS enabled, no login role grant.
+  'crove_kernel.outbox_held',
   'crove_kernel.outbox_pending',
   'crove_kernel.refusal_tally',
   // The wrapped data key of one person as an org knows them (ADR-0017, #2640): definer-only, like crove_kernel.credential.
@@ -75,6 +77,10 @@ const MACHINERY = new Set([
   'crove_meetings.chat_channel_target',
   // #3168: the message of a queued post to a minutes channel, kept only while the post is queued and deleted when it settles: reached only by definers, no login role grant.
   'crove_meetings.chat_post_body',
+  // #3330 / #3323 (eSign): single-use hashed access tokens (token_sha256) and short-lived email OTP hashes (otp_sha256):
+  // reached only by definers with RLS enabled and zero login role grants. Land before their tables (PENDING_TABLES).
+  'crove_sign.signing_otp',
+  'crove_sign.signing_token',
   'crove_social.chat_alert_target',
 ]);
 // Tables whose row factory (and MACHINERY entry, for definer-only tables) lands on main before the table itself. CI
@@ -101,9 +107,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_meetings.meeting_link',
   'crove_notes.link',
   'crove_notes.note',
-  'crove_projects.project',
-  'crove_projects.project_member',
-  'crove_projects.project_task',
 ]);
 // Tables whose rows belong to one member (ADR-0037, notes plan §3.6 and step N1): unlike saved_view and notification,
 // the system context reads only what the value's predicate selects (over alias t, operators schema-qualified so a
@@ -143,10 +146,14 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
       `NOT EXISTS (SELECT 1 FROM crove_kernel.agent a WHERE a.org_id OPERATOR(pg_catalog.=) t.org_id AND a.id OPERATOR(pg_catalog.=) t.agent_id AND a.kind OPERATOR(pg_catalog.=) 'member_vy' AND a.member_user_id OPERATOR(pg_catalog.<>) '${m}'::uuid)`,
   ],
   // The tables below are not in the catalog and are keyed to a user (ctx_user_id), which member mode does not have: it reads none of their rows.
+  ['crove_hr.candidate', () => 'false'], // HR is for owners and admins in a user context (ADR-0046); an agent context reads none.
+  ['crove_hr.department', () => 'false'], // HR, as above.
+  ['crove_hr.job_opening', () => 'false'], // HR, as above.
   ['crove_hr.payroll_bank_template', () => 'false'], // HR is for owners and admins in a user context (ADR-0046); an agent context reads none.
   ['crove_hr.payroll_dependent', () => 'false'], // HR, as above.
   ['crove_hr.payroll_employee', () => 'false'], // HR, as above.
   ['crove_hr.payroll_employment', () => 'false'], // HR, as above.
+  ['crove_hr.payroll_leave_entry', () => 'false'], // HR, as above.
   ['crove_hr.payroll_line', () => 'false'], // HR, as above.
   ['crove_hr.payroll_run', () => 'false'], // HR, as above.
   ['crove_kernel.calendar_connection', () => 'false'], // A member's own connection.
@@ -233,11 +240,16 @@ const MEMBER_VY_UNREACHED = new Map<string, ReadonlyArray<'update' | 'delete'>>(
 ]);
 const AUTHOR_ONLY = new Map<string, string>([
   // Payroll (ADR-0046 point 4, #2530) is read and written by an owner or admin of the org alone, in a user context: the system context sees and changes none of it. This entry proves only that; that no other person reaches it is the "is for owners and admins only" case for every crove_hr table (#2715).
+  // Departments and lightweight recruiting (#3403): owners and admins alone, as every crove_hr table.
+  ['crove_hr.candidate', 'false'],
+  ['crove_hr.department', 'false'],
+  ['crove_hr.job_opening', 'false'],
   // The bank bulk-salary layout an org sets once (#2532): owners and admins alone, like the pay it exports.
   ['crove_hr.payroll_bank_template', 'false'],
   ['crove_hr.payroll_dependent', 'false'],
   ['crove_hr.payroll_employee', 'false'],
   ['crove_hr.payroll_employment', 'false'],
+  ['crove_hr.payroll_leave_entry', 'false'],
   // The pay runs and their lines (#2531): owners and admins alone, as the people they pay.
   ['crove_hr.payroll_line', 'false'],
   ['crove_hr.payroll_run', 'false'],
@@ -325,6 +337,8 @@ const APPEND_ONLY = new Set<string>([
   'crove_finance.channel_settlement_line',
   // The household profile of an entity (#2517): a change of tax group, method or trades is a new row from its effective date, never an edit of an earlier one.
   'crove_finance.household_profile',
+  // #3330 / #3323 (eSign): hash-chained signing ledger per envelope (SELECT and INSERT only; no runtime role holds UPDATE or DELETE).
+  'crove_sign.signing_event',
 ]);
 const PRIVILEGE_DENIED = /permission denied for (table|relation)/;
 
@@ -394,6 +408,8 @@ const stockMonth = () => {
 };
 // A bank template (#2532) is unique per entity and name: each seeded one takes the next number.
 let bankTemplateSeq = 0;
+// A department (#3403) is unique per entity and name: each seeded one takes the next number.
+let hrDepartmentSeq = 0;
 // A pay run (#2531) is unique per entity and month: each seeded one takes the next month from January 2000.
 let payrollMonthSeq = 0;
 const payrollMonth = () => {
@@ -615,6 +631,45 @@ const projectsProjectRow = (o: { id: string; owner: string }) => ({
   name: `RLS matrix project ${tag()}`,
   owner_user_id: o.owner,
   status: 'active',
+});
+// eSign Slice 1 (docs/plan/esign.md section 2.1, #3330 / #3323): parent rows for crove_sign.* factories.
+const signEnvelopeRow = (o: { id: string; owner: string; file: string }) => {
+  const sha256 = hex64();
+  return {
+    org_id: o.id,
+    id: randomUUID(),
+    title: 'RLS matrix envelope',
+    status: 'draft',
+    routing_mode: 'parallel',
+    source_kind: 'standalone',
+    source_file_id: o.file,
+    source_storage_key: `org/${o.id}/${sha256}`,
+    source_generation: '1',
+    source_sha256: sha256,
+    inspect_status: 'pending',
+    created_by: o.owner,
+  };
+};
+const signSignerRow = (org: string, envelopeId: string) => ({
+  org_id: org,
+  id: randomUUID(),
+  envelope_id: envelopeId,
+  routing_order: 1,
+  role_label: 'Signer',
+  name: 'RLS matrix signer',
+  email: 'signer@rls.test',
+  delivery_mode: 'link',
+  require_email_otp: 'false',
+  status: 'waiting',
+});
+const signTokenRow = (org: string, envelopeId: string, signerId: string, createdBy: string) => ({
+  org_id: org,
+  id: randomUUID(),
+  envelope_id: envelopeId,
+  signer_id: signerId,
+  token_sha256: hex64(),
+  expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+  created_by: createdBy,
 });
 const journalEntry = (org: string, id: string): Row => ({
   table: 'crove_finance.journal_entry',
@@ -1583,6 +1638,19 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // #3403 (Phase 7 Stage 3): recruiting candidates, departments and job openings (owners and admins only, AUTHOR_ONLY).
+  'crove_hr.candidate': {
+    update: { set: 'display_name = display_name' },
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), display_name: 'RLS matrix candidate' } }),
+  },
+  'crove_hr.department': {
+    update: { set: 'name = name' },
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), name: `RLS matrix ${hrDepartmentSeq++}` } }),
+  },
+  'crove_hr.job_opening': {
+    update: { set: 'title = title' },
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), title: 'RLS matrix opening' } }),
+  },
   // #2532: the layout of one bank's bulk-salary file (columns in order with their headers, and the content text), in the entity's name (b_legal_entity). An entity keeps one template per bank, unique on (org, entity, name), so each seeded one takes its own name. The layout holds the six columns the file is made of (sequence, name, account, bank, amount, content), which the table's CHECK asks for. Owners and admins alone (AUTHOR_ONLY). Tenant roles update the name, the layout and the stamp only (never the entity or the creation); the probe assigns the name to itself.
   'crove_hr.payroll_bank_template': {
     update: { set: 'name = name' },
@@ -1629,6 +1697,17 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       return {
         setup: [{ table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: employee, display_name: 'RLS matrix' } }],
         row: { org_id: o.id, id: randomUUID(), employee_id: employee, effective_from: '2026-11-01', contract_type: 'indefinite', region: 'I', base_wage: '10000000' },
+      };
+    },
+  },
+  // #2540: monthly leave or timekeeping entry for one employee (owners and admins only, AUTHOR_ONLY).
+  'crove_hr.payroll_leave_entry': {
+    update: { set: 'updated_at = updated_at' },
+    make: (o) => {
+      const employee = randomUUID();
+      return {
+        setup: [{ table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: employee, display_name: 'RLS matrix' } }],
+        row: { org_id: o.id, id: randomUUID(), employee_id: employee, month: payrollMonth(), kind: 'annual_leave', days: '1' },
       };
     },
   },
@@ -2276,6 +2355,8 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     make: (o) => ({ row: { org_id: o.id, day: '2020-01-01', object_key: `outbox/v1/${o.id}/2020-01-01.jsonl`, sha256: 'a'.repeat(64), row_count: 1 } }),
   },
   'crove_kernel.outbox_event': { make: (o) => ({ row: { org_id: o.id, id: randomUUID(), type: 'rls.matrix', payload: '{}' } }) },
+  // #3310 (ADR-0053, C3b): an event that waits while its app is off; definer-only machinery.
+  'crove_kernel.outbox_held': { make: (o) => ({ row: { org_id: o.id, event_id: randomUUID(), module: 'social' } }) },
   'crove_kernel.outbox_pending': { make: (o) => ({ row: { org_id: o.id, event_id: randomUUID() } }) },
   'crove_kernel.party': { make: (o) => ({ row: { org_id: o.id, id: randomUUID(), name: 'RLS matrix party' } }) },
   'crove_kernel.proposal': {
@@ -2737,6 +2818,123 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           { table: 'crove_kernel.task', values: task },
         ],
         row: { org_id: o.id, id: randomUUID(), project_id: project.id, task_id: task.id },
+      };
+    },
+  },
+  // eSign Slice 1 (docs/plan/esign.md section 2.1, #3330 / #3323): Vy's tainted field proposals and clause summaries, tied to an envelope.
+  'crove_sign.ai_analysis': {
+    make: (o) => {
+      const envelope = signEnvelopeRow(o);
+      return {
+        setup: [{ table: 'crove_sign.envelope', values: envelope }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          envelope_id: envelope.id,
+          source_sha256: envelope.source_sha256,
+          status: 'pending',
+          proposed_fields_json: '[]',
+          prompt_version: 'v1',
+        },
+      };
+    },
+  },
+  // eSign Slice 1 (#3330 / #3323): a signing packet whose source_file_id is a logical ref to crove_kernel.file (no cross-module FK).
+  'crove_sign.envelope': { make: (o) => ({ row: signEnvelopeRow(o) }) },
+  // eSign Slice 1 (#3330 / #3323): placed signature/input field on a PDF page assigned to one signer.
+  'crove_sign.field': {
+    make: (o) => {
+      const envelope = signEnvelopeRow(o);
+      const signer = signSignerRow(o.id, envelope.id);
+      return {
+        setup: [
+          { table: 'crove_sign.envelope', values: envelope },
+          { table: 'crove_sign.signer', values: signer },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          envelope_id: envelope.id,
+          signer_id: signer.id,
+          field_type: 'signature',
+          page_number: 1,
+          x_norm: '0.100000',
+          y_norm: '0.100000',
+          w_norm: '0.300000',
+          h_norm: '0.080000',
+          required: 'true',
+          proposed_by_ai: 'false',
+        },
+      };
+    },
+  },
+  // eSign Slice 1 (#3330 / #3323): recipient required to sign an envelope.
+  'crove_sign.signer': {
+    make: (o) => {
+      const envelope = signEnvelopeRow(o);
+      return {
+        setup: [{ table: 'crove_sign.envelope', values: envelope }],
+        row: signSignerRow(o.id, envelope.id),
+      };
+    },
+  },
+  // eSign Slice 1 (#3330 / #3323): append-only, hash-chained audit event per envelope (unique seq per envelope).
+  'crove_sign.signing_event': {
+    make: (o) => {
+      const envelope = signEnvelopeRow(o);
+      return {
+        setup: [{ table: 'crove_sign.envelope', values: envelope }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          envelope_id: envelope.id,
+          seq: 1,
+          event_type: 'envelope_created',
+          actor_type: 'user',
+          actor_label: 'RLS matrix owner',
+          document_sha256: envelope.source_sha256,
+          event_hash: hex64(),
+          payload_json: '{}',
+        },
+      };
+    },
+  },
+  // Definer-only machinery (#3330 / #3323): short-lived hashed email OTP records bound to a signer and signing token.
+  'crove_sign.signing_otp': {
+    make: (o) => {
+      const envelope = signEnvelopeRow(o);
+      const signer = signSignerRow(o.id, envelope.id);
+      const token = signTokenRow(o.id, envelope.id, signer.id, o.owner);
+      return {
+        setup: [
+          { table: 'crove_sign.envelope', values: envelope },
+          { table: 'crove_sign.signer', values: signer },
+          { table: 'crove_sign.signing_token', values: token },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          signer_id: signer.id,
+          signing_token_id: token.id,
+          email: 'signer@rls.test',
+          otp_sha256: hex64(),
+          expires_at: new Date(Date.now() + 600_000).toISOString(),
+          attempts: 0,
+        },
+      };
+    },
+  },
+  // Definer-only machinery (#3330 / #3323): hashed single-use access capabilities backing /-/sign#<token>.
+  'crove_sign.signing_token': {
+    make: (o) => {
+      const envelope = signEnvelopeRow(o);
+      const signer = signSignerRow(o.id, envelope.id);
+      return {
+        setup: [
+          { table: 'crove_sign.envelope', values: envelope },
+          { table: 'crove_sign.signer', values: signer },
+        ],
+        row: signTokenRow(o.id, envelope.id, signer.id, o.owner),
       };
     },
   },

@@ -9,6 +9,7 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import {
+  PROJECT_TASK_MAP_LIMIT,
   auditValue,
   taskStanding,
   todoAutoReminder,
@@ -21,12 +22,15 @@ import {
   keyBetween,
   spreadKeys,
   zTodoHandOver,
+  zTodoLinkAdd,
+  zTodoLinkRemove,
   zTodoList,
   zTodoRef,
   zTodoReorder,
   zTodoUpdate,
   type MyWork,
   type MyWorkTask,
+  type ProjectTaskProjectEntry,
   type Todo,
   type TodoCount,
   type TodoHandedOver,
@@ -38,6 +42,7 @@ import {
 } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { insertRecordLink, loadEnrichedLinks } from './links.ts';
 import { notesManifest } from './manifest.ts';
 
 // Owners, admins and members keep to-dos; viewers write none (notes.md §3.5). They run the reads, where the row
@@ -47,7 +52,7 @@ const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 const TODO = notesManifest.tables.crove_notes.todo;
 
-const SUMMARY = [
+export const TODO_SUMMARY_COLUMNS = [
   'id',
   'title',
   'checklist',
@@ -64,6 +69,7 @@ const SUMMARY = [
   'done_at',
   'deleted_at',
 ] as const;
+const SUMMARY = TODO_SUMMARY_COLUMNS;
 
 interface SummaryRow {
   id: string;
@@ -86,7 +92,7 @@ interface SummaryRow {
 const iso = (d: Date | string | null): string | null => (d === null ? null : new Date(d).toISOString());
 const steps = (checklist: unknown): TodoStep[] => (Array.isArray(checklist) ? (checklist as TodoStep[]) : []);
 
-function summary(r: SummaryRow, now: Date): TodoSummary {
+export function todoSummaryRow(r: SummaryRow, now: Date): TodoSummary {
   const dueAt = r.due_at === null ? null : new Date(r.due_at);
   const list = steps(r.checklist);
   const standing = r.status === 'open' && r.deleted_at === null ? todoStanding({ dueOn: r.due_on, dueAt, timeZone: r.time_zone }, now) : null;
@@ -110,6 +116,7 @@ function summary(r: SummaryRow, now: Date): TodoSummary {
     deletedAt: iso(r.deleted_at),
   };
 }
+const summary = todoSummaryRow;
 
 function userOf(actor: QueryContext['actor']): string {
   if (actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
@@ -235,6 +242,7 @@ export const todoCreate = defineCommand({
       })
       .returning(['id', 'revision'])
       .executeTakeFirstOrThrow();
+    if (input.link) await insertRecordLink(ctx, { kind: 'todo', id: row.id }, userId, input.link.targetType, input.link.targetId);
     ctx.audit({
       todoId: row.id,
       title: auditValue(TODO, 'title', input.title),
@@ -245,6 +253,7 @@ export const todoCreate = defineCommand({
       timeZone: input.timeZone,
       reminder: reminderKind(input.reminder),
       remindAt: remind.at?.toISOString() ?? null,
+      ...(input.link ? { target: 'private' as const } : {}),
     });
     return written(row);
   },
@@ -411,6 +420,9 @@ export const todoHandOver = defineCommand({
     assertNotInTrash(before);
     if (before.revision !== input.revision) throw revisionConflict(before.revision);
     if (before.status !== 'open') throw new DomainError('TODO_NOT_CHANGEABLE', 409, 'Chỉ giao được việc chưa xong');
+    if (input.projectId !== undefined && !ctx.installed('projects')) {
+      throw new DomainError('PROJECT_NOT_FOUND', 404, 'Mô-đun Dự án chưa được bật');
+    }
     const { tainted } = await ctx.trx
       .selectFrom('crove_notes.todo')
       .select('tainted')
@@ -426,6 +438,9 @@ export const todoHandOver = defineCommand({
       due: taskDue(before)?.toISOString() ?? null,
       tainted,
     });
+    if (input.projectId !== undefined) {
+      await ctx.run('projects.task.add', { projectId: input.projectId, taskId });
+    }
     const row = await ctx.trx
       .updateTable('crove_notes.todo')
       .set({ status: 'handed_over', task_id: taskId, revision: before.revision + 1, updated_at: ctx.now })
@@ -438,11 +453,58 @@ export const todoHandOver = defineCommand({
       revision: row.revision,
       taskId,
       positionId: input.positionId,
+      ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
       title: auditValue(TODO, 'title', input.title),
       description: auditValue(TODO, 'details', description),
     });
     await ctx.emit('notes.todo.handed_over', { todoId: row.id, taskId });
     return { ...written(row), taskId };
+  },
+});
+
+async function touchTodo(ctx: CommandContext, todoId: string): Promise<void> {
+  await ctx.trx.updateTable('crove_notes.todo').set({ updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', todoId).execute();
+}
+
+export const todoLinkAdd = defineCommand({
+  name: 'notes.todo.link_add',
+  input: zTodoLinkAdd,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  target,
+  handler: async (ctx, input): Promise<{ todoId: string; linkId: string }> => {
+    const userId = userOf(ctx.actor);
+    const row = await load(ctx, input.todoId, true);
+    assertNotInTrash(row);
+    const linkId = await insertRecordLink(ctx, { kind: 'todo', id: row.id }, userId, input.targetType, input.targetId);
+    await touchTodo(ctx, row.id);
+    // ADR-0037 §3: a private to-do's audit row never names which record it links to.
+    ctx.audit({ todoId: row.id, linkId, target: 'private' as const });
+    return { todoId: row.id, linkId };
+  },
+});
+
+export const todoLinkRemove = defineCommand({
+  name: 'notes.todo.link_remove',
+  input: zTodoLinkRemove,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  handler: async (ctx, input): Promise<{ todoId: string; linkId: string }> => {
+    userOf(ctx.actor);
+    const link = await ctx.trx
+      .selectFrom('crove_notes.link')
+      .select(['todo_id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.linkId)
+      .executeTakeFirst();
+    if (!link || link.todo_id === null) throw new DomainError('NOTE_LINK_NOT_FOUND', 404, 'Không tìm thấy liên kết này');
+    await load(ctx, link.todo_id, true);
+    await ctx.trx.deleteFrom('crove_notes.link').where('org_id', '=', ctx.orgId).where('id', '=', input.linkId).execute();
+    await touchTodo(ctx, link.todo_id);
+    ctx.audit({ todoId: link.todo_id, linkId: input.linkId, target: 'private' as const });
+    return { todoId: link.todo_id, linkId: input.linkId };
   },
 });
 
@@ -473,7 +535,8 @@ export const todoGet = defineQuery({
   handler: async (ctx, input): Promise<Todo> => {
     userOf(ctx.actor);
     const row = await load(ctx, input.todoId, false);
-    return { ...summary(row, new Date()), details: row.details ?? '', checklist: steps(row.checklist).map((s) => ({ text: s.text, done: s.done })) };
+    const links = await loadEnrichedLinks(ctx, { kind: 'todo', id: row.id });
+    return { ...summary(row, new Date()), details: row.details ?? '', checklist: steps(row.checklist).map((s) => ({ text: s.text, done: s.done })), links };
   },
 });
 
@@ -501,21 +564,41 @@ export const myWork = defineQuery({
   input: zMyWorkInput,
   access: READERS,
   handler: async (ctx, input): Promise<MyWork> => {
-    userOf(ctx.actor);
-    const rows = await ctx.trx
-      .selectFrom('crove_notes.todo')
-      .select(SUMMARY)
-      .where('org_id', '=', ctx.orgId)
-      .where('deleted_at', 'is', null)
-      .where('status', '=', 'open')
-      .orderBy('sort_key')
-      .orderBy('id')
-      .limit(MY_WORK_LIMIT)
-      .execute();
-    const found = await ctx.query<{ tasks: KernelTask[] }>('kernel.task.list', { mine: true, status: [...OPEN_TASK_STATUSES] });
+    const userId = userOf(ctx.actor);
+    const [rows, found, memberCountRow, ownSeatRow] = await Promise.all([
+      ctx.trx
+        .selectFrom('crove_notes.todo')
+        .select(SUMMARY)
+        .where('org_id', '=', ctx.orgId)
+        .where('deleted_at', 'is', null)
+        .where('status', '=', 'open')
+        .orderBy('sort_key')
+        .orderBy('id')
+        .limit(MY_WORK_LIMIT)
+        .execute(),
+      ctx.query<{ tasks: KernelTask[] }>('kernel.task.list', { mine: true, status: [...OPEN_TASK_STATUSES] }),
+      ctx.trx
+        .selectFrom('crove_kernel.tenant_member')
+        .select((eb) => eb.fn.countAll<string>().as('n'))
+        .where('org_id', '=', ctx.orgId)
+        .executeTakeFirstOrThrow(),
+      ctx.trx
+        .selectFrom('crove_kernel.position')
+        .select('id')
+        .where('org_id', '=', ctx.orgId)
+        .where('holder_user_id', '=', userId)
+        .where('status', '<>', 'archived')
+        .limit(1)
+        .executeTakeFirst(),
+    ]);
     const now = new Date();
     const listed = found.status === 'ok' ? found.value.tasks : [];
-    const tasks: MyWorkTask[] = listed
+    const projectLookup = await ctx.query<ProjectTaskProjectEntry[]>('projects.task_projects', {
+      taskIds: listed.slice(0, PROJECT_TASK_MAP_LIMIT).map((t) => t.id),
+    });
+    const projectsAvailable = projectLookup.status === 'ok';
+    const projectByTask = new Map(projectLookup.status === 'ok' ? projectLookup.value.map((entry) => [entry.taskId, entry.project]) : []);
+    const allTasks: MyWorkTask[] = listed
       .map((t) => ({
         id: t.id,
         title: t.title,
@@ -523,11 +606,27 @@ export const myWork = defineQuery({
         positionId: t.assigneePositionId,
         due: t.due,
         tainted: t.tainted,
+        project: projectByTask.get(t.id) ?? null,
         ...taskStanding(t.due === null ? null : new Date(t.due), input.timeZone, now),
       }))
       .sort((a, b) => (a.due === b.due ? 0 : a.due === null ? 1 : b.due === null ? -1 : a.due < b.due ? -1 : 1));
+    const filteredTasks =
+      input.projectId === undefined
+        ? allTasks
+        : input.projectId === 'none'
+          ? allTasks.filter((t) => t.project === null)
+          : allTasks.filter((t) => t.project?.id === input.projectId);
+    const todos = input.projectId === undefined ? rows.map((r) => summary(r, now)) : [];
+    const isTeamOrg = Number(memberCountRow.n) > 1;
+    const noSeatHint = isTeamOrg && ownSeatRow === undefined && ctx.role !== 'owner' && ctx.role !== 'viewer';
     // A full page from the kernel says the screen may miss older tasks.
-    return { todos: rows.map((r) => summary(r, now)), tasks, tasksTruncated: listed.length >= KERNEL_TASK_LIST_LIMIT };
+    return {
+      todos,
+      tasks: filteredTasks,
+      tasksTruncated: listed.length >= KERNEL_TASK_LIST_LIMIT,
+      projectsAvailable,
+      noSeatHint,
+    };
   },
 });
 
@@ -543,7 +642,7 @@ export const todoCounts = defineQuery({
   },
 });
 
-export const todoCommands = [todoCreate, todoUpdate, todoComplete, todoReopen, todoReorder, todoDelete, todoRestore, todoHandOver];
+export const todoCommands = [todoCreate, todoUpdate, todoComplete, todoReopen, todoReorder, todoDelete, todoRestore, todoHandOver, todoLinkAdd, todoLinkRemove];
 export const todoQueries = [todoList, todoGet, todoCounts];
 // My work reads to-dos and the kernel's tasks, so it is the module's, not the to-do list's.
 export const myWorkQueries = [myWork];

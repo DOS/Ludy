@@ -349,6 +349,7 @@ export const adsLaunchesUnblock = defineCommand({
 
 export const adsWriteDisable = defineCommand({
   name: 'ads.write.disable',
+  runsWhenOff: 'turns off the right to change ads, so spend control can still be taken back while the app is off',
   // `sharedApp`: the deployment's write Meta app is the read ads app or the Pages app (the API says so, from its config); false means an
   // app of its own, where no reading token can hold the permission. Left out, the close fails safe.
   input: z.strictObject({ sharedApp: z.boolean().optional() }),
@@ -384,6 +385,7 @@ export const adsWriteDisable = defineCommand({
 
 export const adsAccountDisableWrite = defineCommand({
   name: 'ads.account.disable_write',
+  runsWhenOff: 'turns off the right to change one ad account, so spend control can still be taken back while the app is off',
   input: z.strictObject({ adAccountId: zId }),
   risk: 'R2',
   sideEffect: 'external',
@@ -409,6 +411,7 @@ export const adsAccountDisableWrite = defineCommand({
 
 export const adsPauseAll = defineCommand({
   name: 'ads.pause_all',
+  runsWhenOff: 'stops every running ad of the org on the owner\'s word, which an org that lost the app must still be able to do',
   input: z.strictObject({}),
   // The kill switch: it only stops spend, so it needs no proposal and no second factor, and speed is the point.
   risk: 'R2',
@@ -433,6 +436,7 @@ export const adsPauseAll = defineCommand({
 
 export const adsCapLower = defineCommand({
   name: 'ads.cap.lower',
+  runsWhenOff: 'lowers a spending cap, which only reduces spend and stays possible while the app is off',
   input: zAdsCapLower,
   // A lower cap only reduces what may be spent, so it needs no proposal and no second factor: the owner's, in the cap's own
   // currency, and only below the cap in force.

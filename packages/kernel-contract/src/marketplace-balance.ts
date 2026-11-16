@@ -10,7 +10,7 @@ export type MarketplaceBalanceInput = z.infer<typeof zMarketplaceBalanceInput>;
 
 // One platform of one legal entity. `salesPosted` is what settlement entries debited to 131 for the platform (a reversed entry takes its amount back), `paidOut` what the platform's payouts
 // cleared on 131, the whole credit (which also covers the fees and the tax the platform kept, so it is not the cash received; a reversed payout takes its amount back), `awaitingPayout` the difference, which is the platform's balance on 131: what the platform still owes the seller. `feesAwaitingInvoice`
-// is the platform's balance on 1388: fees the platform kept at a payout whose invoice has not come yet. All four are zero until the entries that post them exist (the settlement and the payout
+// is the platform's debit balance on 331: fees the platform kept at a payout whose invoice has not come yet (the invoice credits 331 and nets them). All four are zero until the entries that post them exist (the settlement and the payout
 // slices of #2516), so a platform with a link and no entries shows zeros, never an error.
 export const zMarketplaceBalanceRow = z.object({
   legalEntityId: zId,
@@ -36,6 +36,8 @@ export const zMarketplaceFacts = z.strictObject({
   // The stored settlements that are posted and standing and have no payout voucher yet (the platform's transfer is not recorded). Shown by code beside the other facts; the coworker's sentence is
   // not told it (see packages/agent marketplace-line.ts: a fourth count needs its own cue words in the sentence checks).
   payoutsToMatch: z.number().int().min(0),
+  // The stored settlements that are half reversed (#3329): some month vouchers reversed and some still standing. Shown by code beside the other facts; the coworker's sentence is not told it.
+  settlementsHalfReversed: z.number().int().min(0),
   awaitingPayout: zMoney,
   feesAwaitingInvoice: zMoney,
 });
@@ -100,10 +102,54 @@ export const zMarketplaceInvoiceToClear = z.object({
   proposalId: zId.nullable(),
 });
 export type MarketplaceInvoiceToClear = z.infer<typeof zMarketplaceInvoiceToClear>;
+// A settlement that is half reversed (#3329): some of its month vouchers are reversed and some still stand. `standingMonths` is how many are left to reverse ("đảo dở: còn N tháng chưa đảo"), which the
+// accountant does one by one (the payout, if any, first); the settlement's payout stays refused meanwhile.
+export const zMarketplaceHalfReversed = z.object({
+  settlementId: zId,
+  legalEntityId: zId,
+  platform: z.string(),
+  platformName: z.string(),
+  periodFrom: zLocalDate,
+  periodTo: zLocalDate,
+  standingMonths: z.number().int().min(1),
+  reversedMonths: z.number().int().min(1),
+});
+export type MarketplaceHalfReversed = z.infer<typeof zMarketplaceHalfReversed>;
+// The month-end accrual of the fees a platform kept whose invoice has not come (#2516 slice F, option 2): `amount` is the platform's debit balance on 331 at the end of `month`, read from the ledger when the
+// list is read; `description` is the voucher's text with its stable key (the title says "Trích trước phí sàn tháng MM/YYYY, ước tính"). The screen asks for an ordinary general journal voucher Dr
+// `expenseAccount` / Cr `accruedAccount` of that amount dated `date`; a person approves the lines.
+export const zMarketplaceFeeAccrual = z.object({
+  legalEntityId: zId,
+  platform: z.string(),
+  platformName: z.string(),
+  month: zMonth,
+  date: zLocalDate,
+  amount: zMoney,
+  expenseAccount: z.string(),
+  accruedAccount: z.string(),
+  description: z.string(),
+  proposalId: zId.nullable(),
+});
+export type MarketplaceFeeAccrual = z.infer<typeof zMarketplaceFeeAccrual>;
+// The reversal of a standing accrual, offered from the first day of the month after it (`reverseOn`): the screen asks for the generic `finance.journal.reverse` of `entryId`.
+export const zMarketplaceFeeAccrualReversal = z.object({
+  legalEntityId: zId,
+  platform: z.string(),
+  platformName: z.string(),
+  month: zMonth,
+  entryId: zId,
+  amount: zMoney,
+  reverseOn: zLocalDate,
+  proposalId: zId.nullable(),
+});
+export type MarketplaceFeeAccrualReversal = z.infer<typeof zMarketplaceFeeAccrualReversal>;
 export const zMarketplaceWorklist = z.object({
   postingConfirmed: z.boolean(),
   settlements: z.array(zMarketplaceSettlementToPost),
   payouts: z.array(zMarketplacePayoutToMatch),
   invoices: z.array(zMarketplaceInvoiceToClear),
+  halfReversed: z.array(zMarketplaceHalfReversed),
+  accruals: z.array(zMarketplaceFeeAccrual),
+  accrualReversals: z.array(zMarketplaceFeeAccrualReversal),
 });
 export type MarketplaceWorklist = z.infer<typeof zMarketplaceWorklist>;

@@ -218,6 +218,7 @@ async function sealedOf(ctx: QueryContext, row: { id: string; kind: ChatAlertTar
 // and CHAT_ALERT_OWNER_LEFT.
 export const chatAlertTarget = defineQuery({
   name: 'social.chat_alert.target',
+  runsWhenOff: 'reads the sealed alert targets for the key reseal that runs while the app is off',
   input: z.strictObject({ alertId: zId.optional() }),
   access: 'system',
   handler: async (ctx, input): Promise<SealedChatAlert> => {
@@ -233,6 +234,7 @@ export const chatAlertTarget = defineQuery({
 // stored envelope is still the one it read (its key id and SHA-256), which the definer checks under a row lock.
 export const chatAlertReseal = defineCommand({
   name: 'social.chat_alert.reseal',
+  runsWhenOff: 'rewraps the sealed alert targets under the current key while the app is off',
   input: z.strictObject({ alertId: zId, fromKeyId: zKeyId, fromEnvelopeSha256: z.string().regex(/^[0-9a-f]{64}$/), keyId: zKeyId, envelope: zEnvelope }),
   risk: 'R1',
   sideEffect: 'internal',

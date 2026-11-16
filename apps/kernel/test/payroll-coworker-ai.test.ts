@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AiBudgetExhaustedError, InboxReader } from '@crove/agent';
 import type { HrLineView, HrPayslip, HrRunSheet, HrRunSummary } from '@crove/kernel-contract';
+import { DomainError } from '@crove/kernel-runtime';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { explainPayslip, flagMonth, payrollSource, prepareMonth, type PayrollAi, type PayrollReads } from '../src/payroll-coworker-ai.ts';
 
@@ -195,6 +196,108 @@ describe('prepareMonth and flagMonth', () => {
     expect(requests).toEqual([]);
   });
 
+  it('surfaces overtime_cap check failures as overtime_over_cap anomalies with AI off and AI on, without leaking names', async () => {
+    const otLine: HrLineView = {
+      ...line(EMP_B, NAME_B, '10450000', ['check_overtime_cap'], '1500000'),
+      checks: [{ id: 'overtime_cap', ok: false, actual: '45', limit: '40' }],
+    };
+    const otSheet: HrRunSheet = sheetOf('ot', '2026-08', [otLine]);
+    const r: PayrollReads = { ...reads(), sheet: async () => otSheet, runs: async () => [summary('ot', '2026-08')] };
+
+    const off = await flagMonth({ reader: null, budget: new DraftBudget() }, r, ORG, USER, 'ot', 'vi');
+    expect(off.ai).toBe('off');
+    expect(off.items).toHaveLength(1);
+    expect(off.items[0]?.kind).toBe('overtime_over_cap');
+    expect(off.items[0]?.facts).toContain(NAME_B);
+    expect(off.items[0]?.facts).toContain('40');
+    expect(off.items[0]?.text).toBeNull();
+
+    const requests: string[] = [];
+    const { ai } = setup({ flag: echoFlag(requests) });
+    const on = await flagMonth(ai, r, ORG, USER, 'ot', 'vi');
+    expect(on.ai).toBe('used');
+    expect(on.items[0]?.kind).toBe('overtime_over_cap');
+    expect(on.items[0]?.text).toContain(NAME_B);
+    for (const secret of SECRETS) expect(requests[0]).not.toContain(secret);
+  });
+
+  it('surfaces annual_leave_exceeded as a deterministic anomaly when AI is off and on without leaking PII', async () => {
+    const leaveLine: HrLineView = {
+      ...line(EMP_B, NAME_B, '8950000', ['annual_leave_exceeded']),
+      exceededAnnualDays: '2',
+    };
+    const leaveSheet: HrRunSheet = sheetOf('lv', '2026-11', [leaveLine]);
+    const r: PayrollReads = { ...reads(), sheet: async () => leaveSheet, runs: async () => [summary('lv', '2026-11')] };
+
+    const off = await flagMonth({ reader: null, budget: new DraftBudget() }, r, ORG, USER, 'lv', 'vi');
+    expect(off.ai).toBe('off');
+    expect(off.items).toHaveLength(1);
+    expect(off.items[0]?.kind).toBe('annual_leave_exceeded');
+    expect(off.items[0]?.facts).toContain(NAME_B);
+    expect(off.items[0]?.facts).toContain('2');
+    expect(off.items[0]?.text).toBeNull();
+
+    const requests: string[] = [];
+    const { ai } = setup({ flag: echoFlag(requests) });
+    const on = await flagMonth(ai, r, ORG, USER, 'lv', 'vi');
+    expect(on.ai).toBe('used');
+    expect(on.items[0]?.kind).toBe('annual_leave_exceeded');
+    expect(on.items[0]?.text).toContain(NAME_B);
+    for (const secret of SECRETS) expect(requests[0]).not.toContain(secret);
+    expect(requests[0]).not.toMatch(/2026-\d{2}/);
+  });
+
+  it('surfaces severance_check flag as a deterministic prepare signal in vi and en without leaking names or dates', async () => {
+    const sevLine = line(EMP_B, NAME_B, '8950000', ['ends_this_month', 'severance_check']);
+    const sevSheet: HrRunSheet = sheetOf('sev', '2026-11', [sevLine]);
+    const r: PayrollReads = { ...reads(), sheet: async () => sevSheet, runs: async () => [summary('sev', '2026-11')] };
+
+    const offVi = await prepareMonth({ reader: null, budget: new DraftBudget() }, r, ORG, USER, 'sev', 'vi');
+    expect(offVi.ai).toBe('off');
+    expect(offVi.items.map((i) => i.kind)).toEqual(['contract_ends', 'severance_check']);
+    expect(offVi.items[1]?.facts).toContain(NAME_B);
+    expect(offVi.items[1]?.facts).toContain('12');
+    expect(offVi.items[1]?.text).toBeNull();
+
+    const offEn = await prepareMonth({ reader: null, budget: new DraftBudget() }, r, ORG, USER, 'sev', 'en');
+    expect(offEn.ai).toBe('off');
+    expect(offEn.items.map((i) => i.kind)).toEqual(['contract_ends', 'severance_check']);
+    expect(offEn.items[1]?.facts).toContain(NAME_B);
+    expect(offEn.items[1]?.facts).toContain('12');
+
+    const requests: string[] = [];
+    const { ai } = setup({ prepare: echoPrepare(requests) });
+    const on = await prepareMonth(ai, r, ORG, USER, 'sev', 'vi');
+    expect(on.ai).toBe('used');
+    expect(on.items.find((i) => i.kind === 'severance_check')?.text).toContain(NAME_B);
+    for (const secret of SECRETS) expect(requests[0]).not.toContain(secret);
+    expect(requests[0]).not.toMatch(/2026-\d{2}/);
+  });
+
+  it('surfaces probation_ends_this_month flag as probationEndsInMonth and probation_ends signal without leaking names or dates', async () => {
+    const probLine = line(EMP_B, NAME_B, '8950000', ['probation_ends_this_month']);
+    const probSheet: HrRunSheet = sheetOf('prob', '2026-11', [probLine]);
+    const r: PayrollReads = { ...reads(), sheet: async () => probSheet, runs: async () => [summary('prob', '2026-11')] };
+
+    const src = await payrollSource(r, 'prob');
+    expect(src.lines[0]?.contract.probationEndsInMonth).toBe(true);
+
+    const offVi = await prepareMonth({ reader: null, budget: new DraftBudget() }, r, ORG, USER, 'prob', 'vi');
+    expect(offVi.ai).toBe('off');
+    expect(offVi.items.map((i) => i.kind)).toEqual(['probation_ends']);
+    expect(offVi.items[0]?.facts).toContain(NAME_B);
+    expect(offVi.items[0]?.text).toBeNull();
+
+    const requests: string[] = [];
+    const { ai } = setup({ prepare: echoPrepare(requests) });
+    const on = await prepareMonth(ai, r, ORG, USER, 'prob', 'en');
+    expect(on.ai).toBe('used');
+    expect(on.items.map((i) => i.kind)).toEqual(['probation_ends']);
+    expect(on.items[0]?.text).toContain(NAME_B);
+    for (const secret of SECRETS) expect(requests[0]).not.toContain(secret);
+    expect(requests[0]).not.toMatch(/2026-\d{2}/);
+  });
+
   it('still lists the findings when the run has more people than one prompt holds, with no model call', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const requests: string[] = [];
@@ -220,5 +323,28 @@ describe('explainPayslip', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const bad = setup({ explain: record(requests)({ text: 'Thực nhận 9.000.000 đồng.' }) });
     expect(await explainPayslip(bad.ai, r, ORG, USER, `line-${EMP_B}`, 'vi')).toEqual({ ai: 'failed', text: null });
+  });
+
+  it('calls reads.payslip for RBAC and audit even when AI is off, and propagates refusal errors', async () => {
+    const offAi: PayrollAi = { reader: null, budget: new DraftBudget() };
+    const baseReads = reads();
+    const payslipSpy = vi.fn(baseReads.payslip);
+    const authorizedReads: PayrollReads = { ...baseReads, payslip: payslipSpy };
+
+    const lineId = `line-${EMP_B}`;
+    expect(await explainPayslip(offAi, authorizedReads, ORG, USER, lineId, 'vi')).toEqual({ ai: 'off', text: null });
+    expect(payslipSpy).toHaveBeenCalledTimes(1);
+    expect(payslipSpy).toHaveBeenCalledWith(lineId);
+
+    const forbiddenReads: PayrollReads = {
+      ...baseReads,
+      payslip: vi.fn(async () => {
+        throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ hoặc quản trị viên mới xem được phiếu lương');
+      }),
+    };
+    await expect(explainPayslip(offAi, forbiddenReads, ORG, USER, lineId, 'vi')).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      status: 403,
+    });
   });
 });

@@ -158,6 +158,8 @@ export async function sweepPeriodClosing(deps: { runtime: Runtime; workerDb: Db;
     for (const row of rows) {
       if (!closingPeriod((row.vat_filing_period as VatFilingPeriod | null) ?? null, row.locked_through, deps.today)) continue;
       try {
+        // An app that is off for the org (ADR-0053) has nothing to do here: no call, no refusal row, no line in the log.
+        if (!(await deps.runtime.appOn(row.org_id, 'finance'))) continue;
         const done = await deps.runtime.execute<{ sent: number }>('finance.period.closing_remind', { today: deps.today }, { actor: ACTOR, orgId: row.org_id });
         sent += done.sent;
       } catch (error) {

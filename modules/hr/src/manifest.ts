@@ -11,10 +11,19 @@ export const hrManifest = defineModule({
   dependsOn: ['kernel'],
   tables: {
     crove_hr: {
+      // Lightweight recruiting candidates (#3425): readable by owners and admins only, with applicant PII and wage notes classified.
+      candidate: columns(
+        ['org_id', 'id', 'legal_entity_id', 'opening_id', 'stage', 'years_experience', 'matched_skills', 'planned_start_on', 'interview_event_id', 'interview_starts_at', 'interview_ends_at', 'hired_employee_id', 'erased_at', 'created_by', 'created_at', 'updated_at'],
+        { display_name: 'pii', email: 'contact', phone: 'contact', notes: 'pii', expected_wage: 'sensitive', agreed_wage: 'sensitive' },
+      ),
+      // Departments per legal entity (#3412): optional team structure with default pay_function. Org master data: internal.
+      department: columns(['org_id', 'id', 'legal_entity_id', 'name', 'code', 'pay_function', 'archived_at', 'created_by', 'created_at', 'updated_at']),
+      // Lightweight recruiting job openings (#3425): role requirements and pay bands per legal entity, readable by owners and admins only.
+      job_opening: columns(['org_id', 'id', 'legal_entity_id', 'department_id', 'title', 'department_name', 'contract_type', 'region', 'pay_function', 'budget_min_wage', 'budget_max_wage', 'required_skills', 'status', 'closed_at', 'created_by', 'created_at', 'updated_at']),
       // The layout of one bank's bulk-salary file (#2532): the columns, their headers and the content text. Configuration, no person's data: internal.
       payroll_bank_template: columns(['org_id', 'id', 'legal_entity_id', 'name', 'layout', 'created_by', 'created_at', 'updated_at']),
       payroll_dependent: columns(['org_id', 'id', 'legal_entity_id', 'employee_id', 'relation', 'registered_on', 'ended_on', 'created_by', 'created_at'], { display_name: 'pii' }),
-      payroll_employee: columns(['org_id', 'id', 'legal_entity_id', 'status', 'ended_on', 'erased_at', 'finalization_authorized_years', 'created_by', 'created_at', 'updated_at'], {
+      payroll_employee: columns(['org_id', 'id', 'legal_entity_id', 'department_id', 'job_title', 'status', 'ended_on', 'erased_at', 'finalization_authorized_years', 'created_by', 'created_at', 'updated_at'], {
         display_name: 'pii',
         // The code of the bank the person is paid at (#2897): a plain column (a bank's code alone identifies no one), read only by the audited sensitive paths, cleared by the erasure.
         bank_code: 'payment',
@@ -26,7 +35,12 @@ export const hrManifest = defineModule({
         national_id_sealed: 'national_id',
         bank_account_sealed: 'payment',
       }),
-      payroll_employment: columns(['org_id', 'id', 'legal_entity_id', 'employee_id', 'effective_from', 'contract_type', 'region', 'pay_function', 'created_by', 'created_at'], { base_wage: 'sensitive' }),
+      payroll_employment: columns(
+        ['org_id', 'id', 'legal_entity_id', 'employee_id', 'effective_from', 'contract_type', 'contract_form', 'term_months', 'contract_end_on', 'fixed_term_sequence', 'probation_role_tier', 'probation_end_on', 'region', 'pay_function', 'created_by', 'created_at'],
+        { base_wage: 'sensitive', probation_wage: 'sensitive' },
+      ),
+      // Monthly employee leave ledger (#3394, #2540 slice 1c-2): opening balance, annual leave, personal paid leave, unpaid leave. Internal metadata columns like payroll_run.working_days; raw days are omitted from audit facts.
+      payroll_leave_entry: columns(['org_id', 'id', 'legal_entity_id', 'employee_id', 'month', 'kind', 'days', 'approved', 'created_by', 'created_at', 'updated_at']),
       // The pay run (#2531): one month of one legal entity, and a line per person. The wage figures, the month's inputs and the breakdown are sensitive like the wage they come from; the
       // approval record holds the totals, so it is too. The ids, the status and the dates are internal.
       payroll_line: columns(['org_id', 'id', 'legal_entity_id', 'run_id', 'employee_id', 'employment_id', 'kind', 'status', 'checks', 'rules_used', 'refusal', 'adjusts_run_id', 'note', 'created_by', 'created_at', 'updated_at'], {
@@ -51,10 +65,16 @@ export const hrManifest = defineModule({
   // Its entities (#1656): the records its commands name as their audit target. The employment rows are written by the commands of their employee and are never a target; their
   // table is append-only with the purge-aware guard (a closing org's purge deletes them), not reject_mutation, which is what audit: append_only stands for.
   entities: [
+    // Lightweight recruiting candidates and job openings (#3425): edited by owners and admins, audited as commands.
+    { type: 'hr.candidate', table: 'candidate', legalEntityScoped: true, audit: 'command' },
+    // Departments per legal entity (#3412): edited and archived by commands, so it is their audit target.
+    { type: 'hr.department', table: 'department', legalEntityScoped: true, audit: 'command' },
+    { type: 'hr.job_opening', table: 'job_opening', legalEntityScoped: true, audit: 'command' },
     // The saved layout of a bank's bulk-salary file (#2893): edited and deleted by commands, so it is their audit target.
     { type: 'hr.payroll_bank_template', table: 'payroll_bank_template', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.payroll_dependent', table: 'payroll_dependent', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.payroll_employee', table: 'payroll_employee', legalEntityScoped: true, audit: 'command' },
+    { type: 'hr.payroll_leave_entry', table: 'payroll_leave_entry', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.payroll_line', table: 'payroll_line', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.payroll_run', table: 'payroll_run', legalEntityScoped: true, audit: 'command' },
   ],

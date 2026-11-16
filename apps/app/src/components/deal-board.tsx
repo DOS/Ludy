@@ -12,7 +12,7 @@ import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect } from '@crove/ui/components/native-select';
-import { DealForm, refreshDeals, type Member } from './deal-form.tsx';
+import { DealForm, DealPartyDuplicate, refreshDeals, type Member } from './deal-form.tsx';
 import { DealBookings } from './booking-deal.tsx';
 import { DealQuotes } from './deal-quotes.tsx';
 import { Empty, ErrorText, Field } from './ui.tsx';
@@ -82,6 +82,7 @@ function Card({
         </Badge>
       )}
       <p className="text-xs text-muted-foreground">{deal.partyName}</p>
+      <DealPartyDuplicate deal={deal} canEdit={canEdit} />
       <p className="mt-1 tabular-nums">{formatMoney(deal.amount, locale, deal.currency)}</p>
       {deal.expectedClose && <p className={`text-xs ${overdue ? 'text-destructive' : 'text-muted-foreground'}`}>{t('board.closeOn', { date: deal.expectedClose })}</p>}
       {deal.lostReason && <p className="text-xs text-muted-foreground">{t('lostReason', { reason: deal.lostReason })}</p>}

@@ -172,6 +172,7 @@ export function audienceOf(sections: readonly SocialReportSection[] | null | und
 
 export const reportLinkRevoke = defineCommand({
   name: 'social.report_link.revoke',
+  runsWhenOff: 'revokes a client report link, so a leaked link can still be killed while the app is off',
   input: z.strictObject({ linkId: zId }),
   risk: 'R1',
   sideEffect: 'internal',

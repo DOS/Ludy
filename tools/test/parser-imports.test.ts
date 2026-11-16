@@ -270,7 +270,7 @@ describe('parsers stay in crove-extract', () => {
 
   it('crove-extract does hold the parsers, so the walk would find them', () => {
     const { parsers } = productionTree(join(ROOT, 'apps/extract'));
-    // xml-crypto and @xmldom/xmldom verify e-invoice signatures (#674).
-    expect(parsers.map((chain) => chain.split(' > ').pop()).sort()).toEqual(['@xmldom/xmldom', 'fast-xml-parser', 'postal-mime', 'unpdf', 'xml-crypto']);
+    // xml-crypto and @xmldom/xmldom verify e-invoice signatures (#674); pdf-lib inspects and seals eSign PDFs (#3331).
+    expect(parsers.map((chain) => chain.split(' > ').pop()).sort()).toEqual(['@xmldom/xmldom', 'fast-xml-parser', 'pdf-lib', 'postal-mime', 'unpdf', 'xml-crypto']);
   });
 });

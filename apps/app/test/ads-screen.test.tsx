@@ -10,12 +10,12 @@ import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AdAccountView, AdsChange, AdsSummary, AdsWriteState, LegalEntity } from '@crove/kernel-contract';
+import type { AdAccountView, AdsChange, AdsCommitted, AdsSummary, AdsWriteState, LegalEntity } from '@crove/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { I18nProvider } from '../src/i18n/provider.tsx';
 import { catalog, setActiveLocale, translatorFor } from '../src/i18n/runtime.ts';
-import { adsChangeLine, adsChangeText } from '../src/lib/ads-change.ts';
+import { ADS_PREVIEW_CHARS, ADS_PREVIEW_LINES, adsChangeLine, adsChangePlan, adsChangeText, clampText, visibleBidi, type AdsPlanFormat } from '../src/lib/ads-change.ts';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
 
@@ -53,6 +53,7 @@ vi.mock('../src/lib/api.ts', async () => {
 });
 
 const { AdsBooksStrip } = await import('../src/components/ads-books-strip.tsx');
+const { AdsCommittedStrip } = await import('../src/components/ads-committed.tsx');
 const { AccountHeader, AdsEmpty, AdsSettingsCard, Breakdowns, ConnectGoogle, ConnectMeta, Totals } = await import('../src/routes/ads.tsx');
 const { AdsWeeklyNoteCard } = await import('../src/components/ads-weekly-note.tsx');
 const { AdsWriteCard, CapForm, isCapAmount } = await import('../src/components/ads-write.tsx');
@@ -454,6 +455,40 @@ describe('running ads: the stops, the requests, the switches and the caps (#2294
     expect(accounts.split(`>${en.ads.write.accountRequest}<`)).toHaveLength(2);
   });
 
+  it('puts the whole plan of a waiting campaign launch behind an expander in the list, and none behind the other requests (#3296)', () => {
+    const launch: AdsChange = {
+      change: 'campaign_launch',
+      draftId: 'd1',
+      adAccountId: 'a1',
+      adAccountName: 'Shop',
+      amount: '700000',
+      currency: 'VND',
+      days: 7,
+      origin: 'human',
+      aiFields: [],
+      plan: {
+        name: 'Cà phê Mộc',
+        objective: 'messenger',
+        dailyBudget: '100000',
+        startOn: '2027-01-02',
+        endOn: '2027-01-08',
+        targeting: { locations: [{ country: 'VN' }], ageMin: 20, ageMax: 45, gender: 'all', interests: [] },
+        linkUrl: null,
+        pageConnectionId: null,
+        sourcePostId: null,
+        mediaFileId: null,
+        variants: [{ headline: 'Chi nhánh mới', primaryText: 'Ghé quán nhé.', callToAction: 'send_message' }],
+      },
+    };
+    const html = card(stateOf({ pending: [waiting('p1', launch), waiting('p2', { change: 'launches_unblock' })] }), 'owner');
+    expect(html.split('data-testid="ads-pending-plan"')).toHaveLength(2);
+    expect(html).toContain(`>${en.ads.change.plan.showPlan}<`);
+    expect(html).toContain('aria-label="Show the whole plan of “Cà phê Mộc”"');
+    expect(html).toContain(`>${en.ads.change.plan.audience}<`);
+    expect(html).toContain('Ghé quán nhé.');
+    expect(html).toContain('A conversation with your Facebook Page');
+  });
+
   it('lists the requests waiting for approval, one line each, with the cap and its earlier value, and a link to each Inbox item', () => {
     const pending = [
       waiting('p1', { change: 'write_enable' }),
@@ -831,6 +866,215 @@ describe('the Inbox card of a request about running ads (#2294)', () => {
     expect(html).toContain(`>${viMessages.inboxDetail.adsOpenScreen}<`);
     expect(html).toContain(`>${viMessages.inboxDetail.adsChange}<`);
     expect(html).toContain(`>${viMessages.ads.change.launchesUnblock}<`);
+  });
+});
+
+// The whole plan on the approval card (#3296): every field from the stored plan, the texts as text, the longest cut with an expander.
+describe('the whole launch plan on the approval card (#3296)', () => {
+  const fmt: AdsPlanFormat = { money: (amount, currency) => `${amount} ${currency}`, date: (day) => day, country: (code) => (code === 'VN' ? 'Vietnam' : code) };
+  type Launch = Extract<AdsChange, { change: 'campaign_launch' }>;
+  const launch = (over: Partial<Launch['plan']> = {}, rest: Partial<Launch> = {}): Launch => ({
+    change: 'campaign_launch',
+    draftId: 'd1',
+    adAccountId: 'a1',
+    adAccountName: 'Shop',
+    amount: '700000',
+    currency: 'VND',
+    days: 7,
+    origin: 'human',
+    aiFields: [],
+    plan: {
+      name: 'Cà phê Mộc',
+      objective: 'engagement',
+      dailyBudget: '100000',
+      startOn: '2027-01-02',
+      endOn: '2027-01-08',
+      targeting: { locations: [{ country: 'VN', region: 'Hà Nội' }, { country: 'US' }], ageMin: 20, ageMax: 45, gender: 'female', interests: ['cà phê', 'bánh ngọt'] },
+      linkUrl: 'https://example.com/khai-truong',
+      pageConnectionId: null,
+      sourcePostId: null,
+      mediaFileId: null,
+      variants: [
+        { headline: 'Chi nhánh mới', primaryText: 'Ghé quán nhé.', callToAction: 'shop_now' },
+        { headline: 'Giảm giá', primaryText: 'Hôm nay.', callToAction: 'no_button' },
+      ],
+      ...over,
+    },
+    ...rest,
+  });
+
+  it('is only there for a campaign launch', () => {
+    const inEn = translatorFor('en');
+    expect(adsChangePlan({ change: 'write_enable' }, inEn, fmt)).toBeNull();
+    expect(adsChangePlan({ change: 'launches_unblock' }, inEn, fmt)).toBeNull();
+    expect(adsChangePlan({ change: 'account_enable', adAccountId: 'a1', adAccountName: 'Shop' }, inEn, fmt)).toBeNull();
+  });
+
+  it('reads the amount, the objective, the dates, the audience, the placements and each ad, in English', () => {
+    const view = adsChangePlan(launch(), translatorFor('en'), fmt)!;
+    expect(view.amount).toBe('700000 VND');
+    expect(view.spend).toBe('7 days, 100000 VND a day.');
+    expect(view.objective).toBe('Engagement');
+    expect(view.schedule).toBe('2027-01-02 to 2027-01-08, both days included.');
+    expect(view.audience).toEqual({ locations: 'Hà Nội, Vietnam; US', age: '20 to 45', gender: 'Women', interests: 'cà phê, bánh ngọt' });
+    expect(view.placements).toBe('Automatic: the platform chooses.');
+    expect(view.destination).toEqual({ shown: 'https://example.com/khai-truong', full: null });
+    expect(view.ads).toEqual([
+      { headline: { shown: 'Chi nhánh mới', full: null }, primaryText: { shown: 'Ghé quán nhé.', full: null }, button: 'Shop now' },
+      { headline: { shown: 'Giảm giá', full: null }, primaryText: { shown: 'Hôm nay.', full: null }, button: 'No button' },
+    ]);
+  });
+
+  it('reads the same plan in Vietnamese', () => {
+    const view = adsChangePlan(launch({ objective: 'traffic', targeting: { locations: [{ country: 'VN' }], ageMin: 18, ageMax: 65, gender: 'male', interests: [] } }), translatorFor('vi'), fmt)!;
+    expect(view.objective).toBe('Lượt truy cập');
+    expect(view.spend).toBe('7 ngày, mỗi ngày 100000 VND.');
+    expect(view.schedule).toBe('Từ 2027-01-02 đến 2027-01-08, tính cả hai ngày.');
+    expect(view.audience.age).toBe('Từ 18 đến 65');
+    expect(view.audience.gender).toBe('Nam');
+    expect(view.placements).toBe('Tự động: nền tảng chọn.');
+  });
+
+  it('says so when there is no interest, no region and no link (a Messenger plan), and when the audience is everyone', () => {
+    const inEn = translatorFor('en');
+    const view = adsChangePlan(launch({ objective: 'messenger', linkUrl: null, targeting: { locations: [{ country: 'VN' }], ageMin: 18, ageMax: 65, gender: 'all', interests: [] } }), inEn, fmt)!;
+    expect(view.audience).toEqual({ locations: 'Vietnam', age: '18 to 65', gender: 'All', interests: 'None chosen' });
+    expect(view.destination).toEqual({ shown: 'A conversation with your Facebook Page', full: null });
+    expect(view.objective).toBe('Messages');
+    const inVi = adsChangePlan(launch({ linkUrl: null, targeting: { locations: [{ country: 'VN' }], ageMin: 18, ageMax: 65, gender: 'all', interests: [] } }), translatorFor('vi'), fmt)!;
+    expect(inVi.audience.interests).toBe('Không chọn');
+    expect(inVi.destination.shown).toBe('Cuộc trò chuyện với Trang Facebook của bạn');
+  });
+
+  it('keeps the words of the plan the same keys in both languages', () => {
+    expect(Object.keys(viMessages.ads.change.plan).sort()).toEqual(Object.keys(en.ads.change.plan).sort());
+  });
+
+  it('cuts a long text with the whole kept for the expander, never mid-character, and leaves a short one alone', () => {
+    expect(clampText('Ghé quán nhé.')).toEqual({ shown: 'Ghé quán nhé.', full: null });
+    const long = 'x'.repeat(ADS_PREVIEW_CHARS + 50);
+    const cut = clampText(long);
+    expect(cut.full).toBe(long);
+    expect(cut.shown).toBe(`${'x'.repeat(ADS_PREVIEW_CHARS)}…`);
+    // A text of exactly the limit is not cut; an emoji (two UTF-16 units) is one character.
+    expect(clampText('y'.repeat(ADS_PREVIEW_CHARS)).full).toBeNull();
+    const emoji = clampText('😀'.repeat(ADS_PREVIEW_CHARS + 1));
+    expect(emoji.shown).toBe(`${'😀'.repeat(ADS_PREVIEW_CHARS)}…`);
+    expect(emoji.full).toBe('😀'.repeat(ADS_PREVIEW_CHARS + 1));
+  });
+
+  it('cuts a text of many short lines at the line limit, so a preview stays short', () => {
+    const many = Array.from({ length: 40 }, (_, i) => `dòng ${i}`).join('\n');
+    const cut = clampText(many);
+    expect(cut.full).toBe(many);
+    expect(cut.shown.split('\n')).toHaveLength(ADS_PREVIEW_LINES);
+    expect(cut.shown.endsWith('\u2026')).toBe(true);
+    expect(clampText('một\nhai\nba\nbốn').full).toBeNull();
+    expect(clampText('\n'.repeat(200)).shown.split('\n').length).toBeLessThanOrEqual(ADS_PREVIEW_LINES);
+  });
+
+  it('shows the invisible characters as codes too, and leaves the joiners that emoji need', () => {
+    expect(visibleBidi('a\u200Bb\u2060c\uFEFFd\u00ADe\u2028f')).toBe('a\u27e8U+200B\u27e9b\u27e8U+2060\u27e9c\u27e8U+FEFF\u27e9d\u27e8U+00AD\u27e9e\u27e8U+2028\u27e9f');
+    expect(visibleBidi('x\u{E0067}y')).toBe('x\u27e8U+E0067\u27e9y');
+    expect(visibleBidi('👨\u200D👩')).toBe('👨\u200D👩');
+  });
+
+  it('shows the characters that reorder text as visible codes instead of applying them', () => {
+    expect(visibleBidi('a‮b‬c‏d⁦e')).toBe('a⟨U+202E⟩b⟨U+202C⟩c⟨U+200F⟩d⟨U+2066⟩e');
+    expect(visibleBidi('plain')).toBe('plain');
+    const view = adsChangePlan(launch({ variants: [{ headline: 'Sale‮3202', primaryText: 'ok‏', callToAction: 'learn_more' }] }), translatorFor('en'), fmt)!;
+    expect(view.ads[0]!.headline.shown).toBe('Sale⟨U+202E⟩' + '3202');
+    expect(view.ads[0]!.primaryText.shown).toBe('ok⟨U+200F⟩');
+    // The title of the card says the name the same way.
+    expect(adsChangeText(launch({ name: 'A‮b' }), translatorFor('en'), fmt.money).title).toContain('A⟨U+202E⟩b');
+  });
+});
+
+describe('the Inbox card of a campaign launch (#3296)', () => {
+  const hostile = '<script>alert(1)</script><img src=x onerror=alert(2)> ' + 'dài '.repeat(100) + '‮';
+  const change = (over: Record<string, unknown> = {}): AdsChange => ({
+    change: 'campaign_launch',
+    draftId: 'd1',
+    adAccountId: 'a1',
+    adAccountName: 'Shop',
+    amount: '700000',
+    currency: 'VND',
+    days: 7,
+    origin: 'ai',
+    aiFields: ['targeting', 'variants'],
+    plan: {
+      name: 'Cà phê Mộc',
+      objective: 'traffic',
+      dailyBudget: '100000',
+      startOn: '2027-01-02',
+      endOn: '2027-01-08',
+      targeting: { locations: [{ country: 'VN' }], ageMin: 20, ageMax: 45, gender: 'all', interests: ['cà phê'] },
+      linkUrl: 'https://example.com/khai-truong',
+      pageConnectionId: null,
+      sourcePostId: null,
+      mediaFileId: null,
+      variants: [{ headline: 'Chi nhánh mới', primaryText: hostile, callToAction: 'learn_more' }],
+    },
+    ...over,
+  } as AdsChange);
+  const card = (c: AdsChange, locale: 'en' | 'vi' = 'en') => {
+    client.current.setQueryData(['ads', 'proposal', { id: 'p1' }], { change: c });
+    return render(<AdsProposalCard id="p1" title="t" slug="shop" />, locale);
+  };
+
+  it('lists the objective, the dates, the audience, the placements and each ad text, with the largest amount first and loudest', () => {
+    const html = card(change());
+    expect(html).toContain(`>${en.ads.change.plan.title}<`);
+    for (const label of ['objective', 'schedule', 'location', 'age', 'gender', 'interests', 'placements', 'destination']) {
+      expect(html, label).toContain(`>${en.ads.change.plan[label as 'objective']}<`);
+    }
+    expect(html).toContain('>Traffic<');
+    expect(html).toContain('Chi nhánh mới');
+    expect(html).toContain('https://example.com/khai-truong');
+    expect(html).toContain('>Button: Learn more<');
+    // The amount is the first thing in the card and the biggest type on it.
+    const amountAt = html.indexOf('data-testid="ads-plan-amount"');
+    expect(amountAt).toBeGreaterThan(-1);
+    expect(amountAt).toBeLessThan(html.indexOf('Approve the plan of the campaign'));
+    expect(amountAt).toBeLessThan(html.indexOf('data-testid="ads-plan"'));
+    expect(html).toMatch(/text-2xl font-bold[^>]*>[^<]*700,000/);
+    // The AI coworker's marker is still there, from the stored fields: the card computes nothing.
+    expect(html).toContain('Drafted by the AI coworker: the audience, the texts.');
+  });
+
+  it('shows hostile ad text as text: escaped, cut with an expander, its direction controls visible, the link not a link', () => {
+    const html = card(change());
+    expect(html).not.toContain('<script');
+    expect(html).not.toContain('<img');
+    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(html).not.toContain('‮');
+    expect(html).toContain('⟨U+202E⟩');
+    expect(html).toContain('<details');
+    expect(html).toContain(`>${en.ads.change.plan.showAll}<`);
+    expect(html).not.toContain('href="https://example.com');
+    // The part before the expander is cut; the whole is behind it.
+    const shown = html.split('<details')[0]!;
+    expect(shown).not.toContain('⟨U+202E⟩');
+  });
+
+  it('has no expander for texts that fit', () => {
+    const html = card(change({ plan: { ...(change() as Extract<AdsChange, { change: 'campaign_launch' }>).plan, variants: [{ headline: 'Ngắn', primaryText: 'Gọn.', callToAction: 'sign_up' }] } }));
+    expect(html).not.toContain('<details');
+    expect(html).toContain('Gọn.');
+  });
+
+  it('speaks Vietnamese to a reader of Vietnamese', () => {
+    const html = card(change(), 'vi');
+    expect(html).toContain(`>${viMessages.ads.change.plan.title}<`);
+    expect(html).toContain(`>${viMessages.ads.change.plan.maxSpend}<`);
+    expect(html).toContain(`>${viMessages.ads.change.plan.placements}<`);
+    expect(html).toContain(viMessages.ads.change.plan.placementsAutomatic);
+  });
+
+  it('adds no plan to a change that has none', () => {
+    const html = card({ change: 'write_enable' });
+    expect(html).not.toContain('data-testid="ads-plan"');
+    expect(html).not.toContain('ads-plan-amount');
   });
 });
 
@@ -1215,3 +1459,69 @@ describe('Google Ads connection, short refresh-token warning, and 7-day comparis
   });
 });
 
+
+describe('the committed spend of the month next to the actual spend (#3297)', () => {
+  const state = (writeEnabled: boolean): AdsWriteState => ({ writeEnabled, launchesBlocked: false, updatedAt: null, caps: [], pending: [], tokenRevokes: [] });
+  const line = (over: Partial<AdsCommitted['org']> = {}): AdsCommitted['org'] => ({ committed: '700000', cap: null, left: null, ...over });
+  const data = (over: Partial<AdsCommitted> = {}): AdsCommitted => ({ adAccountId: 'a1', month: '2026-11', currency: 'VND', hasCap: true, capCurrencyMismatch: false, account: line(), org: line(), ...over });
+  const strip = (committed: AdsCommitted | null, writeEnabled = true, locale: 'en' | 'vi' = 'en', acct = account()) => {
+    client.current.setQueryData(['ads', 'writeState'], state(writeEnabled));
+    client.current.removeQueries({ queryKey: ['ads', 'committed'] });
+    if (committed) client.current.setQueryData(['ads', 'committed', { adAccountId: 'a1', month: '2026-11' }], committed);
+    return render(<AdsCommittedStrip account={acct} month="2026-11" />, locale);
+  };
+
+  it('shows what is committed, the monthly cap and what is left, exactly, with the month', () => {
+    const html = strip(data({ account: line({ cap: '1000000', left: '300000' }), org: line() }));
+    expect(html).toContain(en.ads.committed.title);
+    expect(html).toContain('11/2026');
+    expect(html).toContain(en.ads.committed.committed);
+    expect(html).toContain(en.ads.committed.cap);
+    expect(html).toContain(en.ads.committed.left);
+    expect(html).toContain('700,000');
+    expect(html).toContain('1,000,000');
+    expect(html).toContain('300,000');
+    // The org's line adds nothing here (the same launches), so it is not drawn twice.
+    expect(html).not.toContain(en.ads.committed.scopeOrg);
+  });
+
+  it('adds the org line when the org has a cap or counts launches of other accounts', () => {
+    const html = strip(data({ account: line(), org: line({ committed: '910000', cap: '2000000', left: '1090000' }) }));
+    expect(html).toContain(en.ads.committed.scopeAccount);
+    expect(html).toContain(en.ads.committed.scopeOrg);
+    expect(html).toContain('1,090,000');
+    expect(html).toContain(en.ads.committed.noMonthlyCap);
+  });
+
+  it('says it is over, not a negative room, when a cap was lowered under what is committed', () => {
+    const html = strip(data({ account: line({ cap: '500000', left: '-200000' }), org: line({ cap: '500000', left: '-200000' }) }));
+    expect(html).toContain(en.ads.committed.over);
+    expect(html).not.toContain(`>${en.ads.committed.left}<`);
+    expect(html).not.toContain('-200');
+    expect(html).toContain('200,000');
+  });
+
+  it('says no cap is set and that launches are refused until one is, in both languages', () => {
+    const none = data({ hasCap: false, account: line({ committed: '0' }), org: line({ committed: '0' }) });
+    const html = strip(none);
+    expect(html).toContain(en.ads.committed.noCap);
+    expect(html).not.toContain(en.ads.committed.cap);
+    const vn = strip(none, true, 'vi');
+    expect(vn).toContain(viMessages.ads.committed.noCap);
+    expect(viMessages.ads.committed.noCap).toContain('Chưa đặt hạn mức');
+    expect(viMessages.ads.committed.title).toBe('Đã cam kết tháng này');
+  });
+
+  it('says a cap in another currency blocks launches, in both languages, instead of a missing cap', () => {
+    const html = strip(data({ hasCap: false, capCurrencyMismatch: true }));
+    expect(html).toContain('ads-committed-cap-currency');
+    expect(html).not.toContain(en.ads.committed.noCap);
+    expect(html).toContain('VND');
+    expect(strip(data({ hasCap: false, capCurrencyMismatch: true }), true, 'vi')).toContain('khác với VND');
+  });
+
+  it('is hidden while running ads is off, and for an account whose currency is not read yet', () => {
+    expect(strip(data(), false)).toBe('');
+    expect(strip(data(), true, 'en', account({ currency: null }))).toBe('');
+  });
+});

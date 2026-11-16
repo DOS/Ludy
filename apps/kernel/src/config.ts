@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { EXTRACT_TIMING } from '@crove/extract-contract';
+import { misaBlockers } from '@crove/einvoice';
 import { zExtensionId } from '@crove/kernel-contract';
 import type { UsageLimits } from '@crove/kernel';
 import { parseAllowedEmails } from './auth-access.ts';
@@ -26,7 +27,7 @@ const optional = z
 
 // Modules this build ships (plan Decision 12, ADR-0031). kernel is always on; the others are on unless CROVE_MODULES
 // leaves them out.
-export const AVAILABLE_MODULES = ['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings'] as const;
+export const AVAILABLE_MODULES = ['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign'] as const;
 export type ModuleId = (typeof AVAILABLE_MODULES)[number];
 
 // CROVE_MODULES: a comma-separated list such as `finance`. Unset or empty enables every available module; kernel is
@@ -381,6 +382,12 @@ const schema = z.object({
   // The offline sandbox e-invoice provider (ADR-0044, #2500, #2502): series and drafts are made, and invoices issued, without any provider account. Left out, it is on for a
   // local PUBLIC_URL and off for a public one; set to true on a public deployment that runs the finance module it is refused, since what it issues is read into a sale of the books.
   EINVOICE_SANDBOX: optional.pipe(z.enum(['true', 'false']).optional()),
+  // The real e-invoice adapters this deployment offers (#2503), a comma-separated list of adapter ids; `misa` is MISA meInvoice. Off by default, and naming `misa` is refused
+  // until the issues its gates name (MISA_GATES in @crove/einvoice) are done and written in issue #2503. The offline sandbox has its own switch, EINVOICE_SANDBOX.
+  EINVOICE_PROVIDERS: z
+    .string()
+    .default('')
+    .refine((value) => value.split(',').every((id) => id.trim() === '' || /^[a-z][a-z0-9_]{0,21}$/.test(id.trim())), 'a comma-separated list of adapter ids'),
   // The marketplace adapters this deployment offers (#2519), a comma-separated list of adapter ids; `sandbox` is the offline provider, which serves a few recorded orders for each platform
   // without any seller account. Off unless asked for here (`docker compose up` asks for it), so a deployment shows no marketplace connection until it has an adapter. What an adapter
   // reads is only staged, in the Inbox, for a member to confirm; nothing is written until they do.
@@ -764,6 +771,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // Same rule as EINVOICE_SANDBOX: compose passes it through empty, so a public URL never inherits a sandbox default.
     ADS_SANDBOX: raw.ADS_SANDBOX ?? (isLocalUrl(raw.PUBLIC_URL) ? 'true' : 'false'),
   };
+  // #2503: the MISA adapter is built and off. This is the same refusal as einvoiceProvidersOf's, said at start so a deployment never boots with it half on.
+  if (config.EINVOICE_PROVIDERS.split(',').some((id) => id.trim() === 'misa') && misaBlockers().length > 0) {
+    throw new Error(`EINVOICE_PROVIDERS=misa is refused until ${misaBlockers().map((b) => `#${b.issue}`).join(' and ')} are done and written in issue #2503: leave misa out of EINVOICE_PROVIDERS`);
+  }
   if (!config.AUTH_JWT_SECRET && !config.AUTH_JWKS_URL) {
     throw new Error('set AUTH_JWT_SECRET (self-hosted Supabase Auth) or AUTH_JWKS_URL (hosted Supabase Auth)');
   }

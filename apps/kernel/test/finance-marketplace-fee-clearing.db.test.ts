@@ -25,10 +25,10 @@ const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.
 const suite = ADMIN ? describe : describe.skip;
 
 // A copy of the shipped map with every row confirmed, for the runtime that posts.
-const confirmedMaps = (): Record<string, MarketplacePostingMap> => {
+const confirmedMaps = (feeCode = '331'): Record<string, MarketplacePostingMap> => {
   const base = MARKETPLACE_POSTING_MAPS.tt133 as MarketplacePostingMap;
   const c = <T extends { status: string }>(r: T): T => ({ ...r, status: 'confirmed' });
-  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c(base.feePayable), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld) } };
+  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c({ ...base.feePayable, code: feeCode }), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitExpense: c(base.pitExpense), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense) } };
 };
 const notMarketplace = (name: string) => !name.startsWith('finance.marketplace_settlement.') && !name.startsWith('finance.marketplace_payout.') && !name.startsWith('finance.marketplace_fee_clearing.');
 
@@ -66,7 +66,7 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
   const rows = <T extends pg.QueryResultRow>(sql: string, params: unknown[] = []) => withAdmin(async (c) => (await c.query<T>(sql, params)).rows);
 
   // An org with an owner, an admin (who asks) and a member.
-  async function org(regime: 'tt133' | 'tt99' = 'tt133') {
+  async function org(regime: 'tt133' | 'tt99' = 'tt133', household = true) {
     const tag = randomUUID().slice(0, 8);
     const person = (name: string) => upsertIdentity(createDb(pool), { issuer: 'mktrecord', subject: `${name}-${tag}`, email: `${name}-${tag}@mkt.test`, name: null });
     const owner = await person('owner');
@@ -80,6 +80,14 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
       );
     }
     const entity = (await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))[0]?.id as string;
+    // A household seller of one line of business with its rates confirmed for the test: the withheld tax is split into VAT and PIT at the settlement's posting (slice C2) and the payout debits it.
+    if (household) {
+      await withAdmin(async (c) => {
+        await c.query("UPDATE crove_kernel.legal_entity SET kind = 'household' WHERE org_id = $1 AND id = $2", [orgId, entity]);
+        await c.query("INSERT INTO crove_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, pit_method, trades) VALUES ($1, $2, '2026-01-01', 2, 'percentage', ARRAY['goods']::text[])", [orgId, entity]);
+        await c.query("UPDATE crove_finance.household_trade_rate SET status = 'confirmed' WHERE trade = 'goods'");
+      });
+    }
     return { orgId, owner, admin, member, entity };
   }
   type Org = Awaited<ReturnType<typeof org>>;
@@ -131,7 +139,6 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
       [o.orgId, entryId],
     );
   const partyOf = async (o: Org, platform: string) => (await rows<{ party_id: string }>('SELECT party_id FROM crove_finance.marketplace_party WHERE org_id = $1 AND legal_entity_id = $2 AND platform = $3', [o.orgId, o.entity, platform]))[0]?.party_id;
-  const balance = (o: Org) => rt.query<{ rows: { platform: string; salesPosted: string; paidOut: string; awaitingPayout: string; feesAwaitingInvoice: string }[] }>('finance.marketplace.balance', {}, { actor: asUser(o.owner), orgId: o.orgId });
 
   // Two orders: sales 100 000 + 250 000, seller discounts 5 000 + 10 000 (the settlement posts Dr 131 335 000); fees 10 000 + 18 000, withheld tax 3 000: money received 85 000 + 219 000 = 304 000.
   const PAID: SeedLine[] = [
@@ -182,7 +189,9 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
     await approve(base.o, (await ask(base.o, base.settlement, base.line)).proposalId);
     return { ...base, party: (await partyOf(base.o, 'shopee')) as string };
   }
-  const fees1388 = async (o: Org) => (await balance(o)).rows[0]?.feesAwaitingInvoice;
+  // The dormant clearing logic works on 1388 (fees waiting for their invoice before the payout moved them to 331); the Sàn read now looks at 331, so this reads the ledger on 1388 itself.
+  const fees1388 = async (o: Org) =>
+    (await rows<{ waiting: string }>("SELECT coalesce(sum(debit) - sum(credit), 0)::bigint::text AS waiting FROM crove_finance.journal_line WHERE org_id = $1 AND account_code = '1388'", [o.orgId]))[0]?.waiting;
 
   beforeAll(async () => {
     const rootDb = new pg.Client({ connectionString: ADMIN });
@@ -200,7 +209,7 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
     const base = { queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] };
     // The runtime that posts registers both marketplace command sets over a confirmed map; the other, the shipped sets.
     rt = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({
-      commands: [...kernelCommands, ...financeCommands.filter((c) => notMarketplace(c.name)), ...createMarketplaceSettlementCommands({ maps: confirmedMaps() }).commands, ...createMarketplacePayoutCommands({ maps: confirmedMaps() }).commands, ...createMarketplaceFeeClearingCommands({ maps: confirmedMaps() }).commands],
+      commands: [...kernelCommands, ...financeCommands.filter((c) => notMarketplace(c.name)), ...createMarketplaceSettlementCommands({ maps: confirmedMaps() }).commands, ...createMarketplacePayoutCommands({ maps: confirmedMaps('1388') }).commands, ...createMarketplaceFeeClearingCommands({ maps: confirmedMaps(), retired: false }).commands],
       ...base,
     });
     rtShipped = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...financeCommands], ...base });
@@ -347,13 +356,14 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
     await expect(approve(o, proposalId, o.owner)).resolves.toMatchObject({ voucherId: expect.any(String) });
   });
 
-  it('refuses both the request and the approval with 409 while the shipped map is unconfirmed, and writes nothing', async () => {
+  it('is retired in the shipped set: both the request and the approval are refused with 409 (MARKETPLACE_FEE_CLEARING_RETIRED), whatever the map, and nothing is written', async () => {
     expect(MARKETPLACE_POSTING_MAPS.tt133?.status).toBe('commentary');
     const { o, party } = await paid();
     const doc = await invoice(o, party);
-    await expect(askFee(o, doc, o.admin, rtShipped)).rejects.toMatchObject({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
+    await expect(askFee(o, doc, o.admin, rtShipped)).rejects.toMatchObject({ code: 'MARKETPLACE_FEE_CLEARING_RETIRED', status: 409 });
+    // A proposal written while the dormant logic was on (here by the test's own runtime) cannot be approved by the shipped set either.
     const { proposalId } = await askFee(o, doc);
-    await expect(approve(o, proposalId, o.owner, rtShipped)).rejects.toMatchObject({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
+    await expect(approve(o, proposalId, o.owner, rtShipped)).rejects.toMatchObject({ code: 'MARKETPLACE_FEE_CLEARING_RETIRED', status: 409 });
     expect(await clearingsOf(o, doc)).toHaveLength(0);
     expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('pending');
     expect(MARKETPLACE_POSTING_MAPS.tt133?.status).toBe('commentary');

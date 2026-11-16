@@ -80,6 +80,8 @@ turn on `sprint_review` with `line_scopes`.
 | AI Meeting Notes | `line:meetings` | `8c4c0494` | AI Meeting Notes Product Owner |
 | Platform (the shared backend core: kernel, database, tenancy, authentication and sessions, the command runtime, the WORM archive; Vy, the AI general manager; architecture and ADRs; security reviews; CI, deploy and operations) | `line:platform` | `3d3f0729` | `Platform Product Owner` (the coordinator session; titled `0: Điều phối` until 2026-11-14) |
 | eSign (Ludy Ký kết: electronic signatures, envelopes, templates, audit certificates, `modules/sign`) | `line:esign` | `none` | `eSign Product Owner` |
+| HRM (Ludy Nhân sự: payroll, employees, employments, dependents, attendance, leave balances, declarations, HR AI coworker Ly, `modules/hr`) | `line:hrm` | `5130d418` | `HRM Product Owner` |
+| Projects & Notes (Cộng tác: projects, task board and list, notes, personal to-dos, My work, `modules/projects`, `modules/notes`) | `line:projects` | `d8c18cec` | `Projects & Notes Product Owner` |
 
 - Social is not paused. Decision D5 was answered by JOY on 2026-10-17 as
   "no for Social" (backlog review, Decision 17), and JOY confirmed on
@@ -142,6 +144,12 @@ turn on `sprint_review` with `line_scopes`.
   - Slice 1 ships self-contained Documenso-style electronic signatures (draw/type signature, optional email OTP via ADR-0034, tamper-evident SHA-256 PDF sealing, independent audit certificate) running 100% locally on `docker compose up` with zero external provider accounts; Vietnamese public CAs (`VNPT SmartCA`, `Viettel MySign`, `MISA WeSign`) sit behind a pluggable adapter in Slice 2.
   - Standalone per-org toggleable app `Ký kết` / `eSign` (`'sign'`, ADR-0031, ADR-0053); `Vy` (`gm`) proposes signature/date/text fields and summarizes risky clauses via the `packages/agent` AI budget meter (core works with AI off; humans approve every placement and send).
   - Public signing uses fragment links `/-/sign#<token>` (`Referrer-Policy: no-referrer`, single-use replay rejection, optional email OTP, and no mandatory third-party CAPTCHA per `#203`); templates and Engage quote / HR contract handoffs stay in Slice 2; `Product Line` board option stays `none` so existing option ids are not mutated.
+- Owner decisions 2026-11-15 (HRM PO chat, popup, https://github.com/DOS/Ludy/issues/1210#issuecomment-6897161133):
+  - `"Vậy mày làm PO line HRM đi"` (`HRM Product Owner`): split HRM onto its own line (`line:hrm`, Project #8 `Product Line` option `5130d418`, preserving all six prior option ids; `#2749` stays on `line:accounting`).
+  - Reopen the 3-stage SME HRM roadmap in strict order, moving Stage 1 and Stage 2 into `M3 Paid pilot` (`priority:P2`) while Stage 3 stays in Phase 7 (`when wedge customers pull for it`): Stage 1 (`#2540`: lightweight monthly timekeeping inputs and annual leave balances feeding `hr.payroll.run.*` runs) -> Stage 2 (`#2541`: labor contract tracking, the labor management register and `01/PLI` report data, 13th-month salary, and severance allowance calculation; job-loss allowance and foreign/piece-rate items wait beyond Stage 2, and HTKK tax XML stays gated on `#2536`) -> Stage 3 (Phase 7 HRM departments and lightweight recruiting in `docs/plan/crove-os-kernel.md`).
+  - `"Nhân sự thì Ly đi"`: name `Ly` (`hr: 'finance'` in `COWORKER_BY_MODULE`) as the HR AI coworker (`ADR-0046` addendum item 4, merged in `#3327`).
+  - Enable `Ludy Nhân sự` (`hr`) by default on Ludy Cloud for every org as the approved product default (`#2538`, merged in `#3327`, combined with the `2026-11-08` salary visibility rule; `tools/deploy/compose.pilot.yml` still defaults `CROVE_MODULES` to `finance`, so changing live pilot `CROVE_MODULES` requires a separate Production runbook and owner approval; `#2536` stays open for lawyer PDPL, retention and HTKK XSD answers).
+- Owner decisions 2026-11-16 (Projects & Notes PO chat, https://github.com/DOS/Ludy/issues/1210#issuecomment-6898310263): Projects, Notes, and Personal To-do list (`modules/projects`, `modules/notes`, matching the `#3225` Cộng tác app group) belong to one independent end-to-end PO line: `Projects & Notes` (`line:projects`, option `d8c18cec`, preserving all existing option ids). `AI Meeting Notes` stays on `line:meetings`, CRM stays folded into `Ludy Engage` (`#2435`), and `line:frontend` stays on shared UI / `apps/app` shell / `apps/web` (the legacy `line:notes-crm` row remains above for historical references).
 
 ## Issue fields
 
@@ -275,8 +283,11 @@ it reviewed, and repeats it if those files change again.
 
 ## Sessions
 
-- sub_sessions_normal: 1 (JOY caps the repository at 3 sub-sessions at
-  once, across every line; owner decision 2026-10-31)
+- sub_sessions_normal: 3 (JOY instruction 2026-11-16 in Projects & Notes PO
+  chat: "Tạo tối đa được 3 phiên conn mà, sao mày tạo có 1 vậy"; each PO
+  keeps up to 3 concurrent sub-sessions running when independent tasks are
+  ready, matching `sub_sessions_max: 3`, while Engage keeps its 2026-11-08
+  4-sub-session exception; updates the 2026-10-31 default of 1)
 - sub_sessions_max: 3 (JOY clarification 2026-11-15: "Tao thấ mới có 2 phiên
   con thôi mà. Tối đa 3 phiên con + 1 PO", up to 3 active sub-sessions + 1 PO
   session; Engage keeps its 2026-11-08 4-sub-session exception)

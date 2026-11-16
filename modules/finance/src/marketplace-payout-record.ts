@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The posting of a platform's payout (issue #2516, ADR-0045 point 6, plan docs/plan/stock-and-marketplaces.md section 8.4, "The payout"; Accounting PO decision 2026-11-13): ONE general journal voucher
-// per settlement, Dr cash (the bank account of the transfer) for the money received, Dr 1388 for the platform's fees, Dr 333 for the tax the platform withheld, Cr 131 (the platform) for what the
+// per settlement, Dr cash (the bank account of the transfer) for the money received, Dr 331 for the platform's fees, Dr 3331 and Dr 3335 for the tax the platform withheld, Cr 131 (the platform) for what the
 // settlement posted there. The entry is built by payoutProposal (marketplace-payout-posting.ts) from the stored lines of the settlement; the bank line only has to be money in, equal to the net the
 // settlement paid, and free, and nothing is built or posted until the accountant has confirmed the account map (requireConfirmedMarketplaceMap, #2520):
 // - finance.marketplace_payout.prepare (R1, internal): the preparer of kernel.proposal.request for `finance.marketplace_payout.record`. The request carries the settlement and the bank line alone.
@@ -9,7 +9,7 @@
 // - finance.marketplace_payout.record (R3): runs only through kernel.proposal.approve. It builds the entry again from the stored lines, in the approver's context, and refuses a stored proposal that
 //   differs from it. Then, in the same transaction, it records the voucher with the settlement and the bank line on it (one voucher per settlement and one per line: unique indexes hold it,
 //   20261231150000) and posts its entry. The database checks at commit that the proposal has such a voucher (crove_finance.ledger_effect_recorded, 20261231160000).
-// The 131 and 1388 lines name the platform's party, the one the settlement's posting created (the Sàn read of #3096 matches lines by it). The commands are made by createMarketplacePayoutCommands so a
+// The 131 and 331 lines name the platform's party, the one the settlement's posting created (the Sàn read of #3096 matches lines by it). The commands are made by createMarketplacePayoutCommands so a
 // test registers a set with a confirmed map; the shipped set uses MARKETPLACE_POSTING_MAPS, every row `commentary`, so it refuses. No model call is made: everything here is deterministic over stored facts.
 import { sql } from 'kysely';
 import { z } from 'zod';
@@ -23,7 +23,7 @@ import { journalVoucherTitle } from './domain/journal-voucher.ts';
 import { checkJournalVoucherLines, postJournalVoucher } from './journal-voucher.ts';
 import { payoutOfBankLine } from './marketplace-payout-line.ts';
 import { payoutProposal, type PayoutProposal } from './marketplace-payout-posting.ts';
-import { postingsOf, settlementPosted } from './marketplace-settlement-months.ts';
+import { postedSettlementTax, postingsOf, settlementPosted } from './marketplace-settlement-months.ts';
 import { requireConfirmedMarketplaceMap, MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from './marketplace-posting-map.ts';
 import { platformPartyName } from './marketplace-settlement-record.ts';
 import { booksOn } from './payroll-posting.ts';
@@ -52,7 +52,8 @@ interface Built {
   date: string;
   proposal: PayoutProposal;
   receivable: string;
-  feeAwaiting: string;
+  // The account of the platform's fees (331), the line that names the platform's party beside 131.
+  feePayable: string;
   party: { id: string; name: string; taxCode: string | null };
 }
 
@@ -128,9 +129,12 @@ async function buildPayout(ctx: QueryContext, maps: Maps, settlementId: string, 
     .where('m.platform', '=', settlement.platform)
     .executeTakeFirst();
   if (!link) throw notPostable('Không tìm thấy đối tượng của sàn mà kỳ đối soát đã tạo khi ghi sổ', { reason: 'PARTY' });
+  // The tax the settlement's vouchers credited to 3331 and 3335 (a household seller): the payout debits exactly that, or none when it credited none.
+  const taxPosted = await postedSettlementTax(ctx, settlement.id, map.vatPayable.code, map.pitPayable.code);
   const proposal = payoutProposal(
     {
       regime: map.regime,
+      taxSplit: money(taxPosted.vat).plus(money(taxPosted.pit)).isZero() ? null : taxPosted,
       platform: platformPartyName(settlement.platform),
       periodFrom,
       periodTo,
@@ -167,12 +171,12 @@ async function buildPayout(ctx: QueryContext, maps: Maps, settlementId: string, 
     date: line.date,
     proposal,
     receivable: map.receivable.code,
-    feeAwaiting: map.feeAwaitingInvoice.code,
+    feePayable: map.feePayable.code,
     party: { id: link.id, name: link.name, taxCode: link.tax_code },
   };
 }
 
-// The proposal of a built payout: lines as the voucher holds them, the 131 and 1388 lines naming the platform's party.
+// The proposal of a built payout: lines as the voucher holds them, the 131 and 331 lines naming the platform's party.
 function proposalPayload(built: Built): MarketplacePayoutProposal {
   const { proposal } = built;
   return zMarketplacePayoutProposal.parse({
@@ -180,7 +184,7 @@ function proposalPayload(built: Built): MarketplacePayoutProposal {
     description: proposal.description,
     lines: proposal.lines.map((l) => ({
       account: l.account,
-      party: l.account === built.receivable || l.account === built.feeAwaiting ? { id: built.party.id, name: built.party.name, taxCode: built.party.taxCode } : null,
+      party: l.account === built.receivable || l.account === built.feePayable ? { id: built.party.id, name: built.party.name, taxCode: built.party.taxCode } : null,
       debit: l.debit,
       credit: l.credit,
       memo: l.memo,

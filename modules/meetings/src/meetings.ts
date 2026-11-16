@@ -178,6 +178,8 @@ function toSummary(r: MeetingRow, readersCount: number, hasAudio: boolean, hasVi
 
 export const meetingCreate = defineCommand({
   name: 'meetings.meeting.create',
+  // Opens a recording the app's switch-off would cut short: it holds the tenant row, as the switch does (ADR-0053).
+  opensBusyWork: true,
   input: zMeetingCreate,
   risk: 'R1',
   sideEffect: 'internal',
@@ -259,15 +261,13 @@ export const meetingMediaRecord = defineCommand({
 
     const { fileId, liveChunksDiscarded } = await recordSealedMedia(ctx, { userId, meetingId: input.meetingId, audioRetentionDay: meeting.audio_retention_day, input });
 
-    // A recording that stopped without the recorder's click (A1, #3159): the reason code and the stop time (the start plus what was
-    // recorded, never later than now) stay on the meeting, once, so it can say "Ghi âm đã dừng lúc ...". A code, never text.
-    // Every recording that reaches the server ends its meeting's recording: ended_at is set once (the first media wins), which is also what
-    // takes the meeting out of the app's recording chip.
-    if (meeting.ended_at === null && meeting.started_at !== null) {
-      const endedAt = new Date(Math.min(new Date(meeting.started_at).getTime() + input.lengthSeconds * 1000, ctx.now.getTime()));
+    // A recording that stopped without the recorder's click (A1, #3159): the reason code stays on the meeting, once (with the first media, which is also what
+    // recordSealedMedia ends the meeting's recording on, #3205), so it can say "Ghi âm đã dừng lúc ...". A code, never text. The stop reason is this command's
+    // alone: a recording joined from live pieces carries none.
+    if (meeting.ended_at === null && meeting.started_at !== null && input.stopReason !== undefined && meeting.recording_stop_reason === null) {
       await ctx.trx
         .updateTable('crove_meetings.meeting')
-        .set({ ended_at: endedAt, updated_at: ctx.now, ...(input.stopReason !== undefined && meeting.recording_stop_reason === null ? { recording_stop_reason: input.stopReason } : {}) })
+        .set({ recording_stop_reason: input.stopReason, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.meetingId)
         .execute();
@@ -280,6 +280,7 @@ export const meetingMediaRecord = defineCommand({
 
 export const meetingDelete = defineCommand({
   name: 'meetings.meeting.delete',
+  runsWhenOff: 'deletes a meeting and its recording, which the owner of the data may still do while the app is off',
   input: zMeetingRef,
   risk: 'R1',
   sideEffect: 'internal',
@@ -318,6 +319,7 @@ export const meetingDelete = defineCommand({
 
 export const meetingOwnerDelete = defineCommand({
   name: 'meetings.meeting.owner_delete',
+  runsWhenOff: 'deletes a meeting and its recording on the org owner\'s word while the app is off',
   input: zMeetingRef,
   risk: 'R3',
   sideEffect: 'internal',
@@ -478,6 +480,7 @@ export const meetingReaderRemove = defineCommand({
 // the one it read (the definer compares the key id and the wrapped bytes under the update). System actor only.
 export const meetingMediaKeyReseal = defineCommand({
   name: 'meetings.media_key.reseal',
+  runsWhenOff: 'rewraps the sealed recording keys under the current key while the app is off',
   input: zMeetingMediaKeyReseal,
   risk: 'R1',
   sideEffect: 'internal',

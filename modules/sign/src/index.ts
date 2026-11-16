@@ -1,0 +1,72 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Public entrypoint of @crove/mod-sign (#3323).
+export { signCommands, type IssuedSigningLink } from './commands.ts';
+export {
+  SIGN_EVENT_TYPES,
+  appendSigningEvent,
+  canonicalJson,
+  computeSigningEventHash,
+  parseEventPayload,
+  sha256Hex,
+  verifyEventChain,
+  type AppendSigningEventInput,
+  type AppendedSigningEvent,
+  type SignEventType,
+  type SigningEventChainRow,
+  type SigningEventHashInput,
+  type VerifyEventChainResult,
+} from './events.ts';
+export { signManifest } from './manifest.ts';
+export { validateSignaturePngBase64, type ValidatedSignaturePng } from './png.ts';
+export {
+  cleanUserAgent as sanitizeSignUserAgent,
+  normalizePageDimensions as normalizeSignPageDimensions,
+} from './public-commands.ts';
+export { signQueries, type SignInspectJobData, type SignSealJobData } from './queries.ts';
+export {
+  clampAiBox,
+  sanitizeSignAiProposals,
+  signAiCommands,
+  signAiQueries,
+  signerRoleKeyOf,
+  type SanitizedAiAnalysisInput,
+  type SignAiAnalysisRecord,
+  type SignAiClauseSeverity,
+  type SignAiDeclaredSigner,
+  type SignAiExtractedPage,
+  type SignAiProposedField,
+  type SignAiRiskClause,
+  type SignAiSource,
+} from './ai.ts';
+export {
+  SIGN_COMPLETED_MAIL_SOURCE,
+  SIGN_COMPLETED_MAIL_TEMPLATE,
+  SIGN_INVITE_MAIL_SOURCE,
+  SIGN_INVITE_MAIL_TEMPLATE,
+  SIGN_OTP_MAIL_SOURCE,
+  SIGN_OTP_MAIL_TEMPLATE,
+  SIGN_REMIND_MAIL_SOURCE,
+  SIGN_REMIND_MAIL_TEMPLATE,
+  renderSignCompletedMail,
+  renderSignInviteMail,
+  renderSignOtpMail,
+  zSignCompletedMailPayload,
+  zSignInviteMailPayload,
+  zSignOtpMailPayload,
+  type RenderedSignMail,
+} from './sign-mail.ts';
+export {
+  buildCanonicalCertificateArtifact,
+  buildPdfSealCertificate,
+  buildPdfSealFields,
+  buildPdfSealInputBytes,
+  buildPdfSealSigners,
+  generateCertificateCode,
+  generateRawSigningToken,
+  hashSigningToken,
+  maskEmail,
+  type CanonicalCertificateArtifactInput,
+  type CanonicalCertificateEvent,
+  type SignFieldForSeal,
+  type SignSignerForSeal,
+} from './sealing.ts';

@@ -93,6 +93,10 @@ export async function archiveOutbox(workerDb: Db, store: ArchiveStore, keepDays 
       if (!(await archiveOutboxDay(workerDb, store, orgId, day))) continue;
       result.archived += 1;
     }
+    // Events that waited while their app was off are past the keep period by now: they go with their day (the archive holds them). How many per app is logged, never what they say.
+    const { rows: expired } = await sql<{ module: string; expired: string }>`
+      SELECT module, expired FROM crove_kernel.outbox_held_expire(${orgId}::uuid, ${day}::date, ${keepDays}::int)`.execute(workerDb);
+    for (const e of expired) console.warn(`[outbox-retention] org ${orgId} ${day}: ${e.expired} parked events of ${e.module} dropped after the keep period`);
     const { rows } = await sql<{ n: number }>`
       SELECT crove_kernel.outbox_archive_purge(${orgId}::uuid, ${day}::date, ${keepDays}::int) AS n`.execute(workerDb);
     const n = rows[0]?.n ?? 0;
