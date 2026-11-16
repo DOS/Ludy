@@ -3,6 +3,7 @@
 import { z } from 'zod';
 import { DEFAULT_TIME_ZONE, zTimeZone } from './calendar.ts';
 import { NOTE_TITLE_MAX } from './notes.ts';
+import { zFilterAstShape, zSavedViewSortShape } from './saved-view.ts';
 import { zId, zLocalDate, zPositionStatus, zRole, zTaskStatus } from './schemas.ts';
 
 export const PROJECT_NAME_MAX = 200;
@@ -64,6 +65,24 @@ export const zProjectTaskMutate = z.strictObject({
   projectId: zId,
   taskId: zId,
 });
+
+export const zProjectTaskReorderFields = z.strictObject({
+  projectId: zId,
+  taskId: zId,
+  place: z.enum(['before', 'after']),
+  anchorId: zId,
+});
+export const distinctReorderTargets = (v: { taskId: string; anchorId: string }): boolean => v.taskId !== v.anchorId;
+export const REORDER_SAME_TASK_ISSUE = { message: 'A task is not moved next to itself', path: ['anchorId'] };
+
+export const zProjectTaskReorder = zProjectTaskReorderFields.refine(distinctReorderTargets, REORDER_SAME_TASK_ISSUE);
+export type ProjectTaskReorderInput = z.infer<typeof zProjectTaskReorder>;
+
+export const zProjectTaskReorderResult = z.object({
+  projectId: zId,
+  taskId: zId,
+});
+export type ProjectTaskReorderResult = z.infer<typeof zProjectTaskReorderResult>;
 
 export const zProjectTaskCreate = z.strictObject({
   projectId: zId,
@@ -160,6 +179,8 @@ export const zProjectBoardInput = z.strictObject({
   positionId: z.union([zId, z.literal('root')]).optional(),
   status: z.array(zTaskStatus).max(6).optional(),
   includeCancelled: z.boolean().optional(),
+  filters: zFilterAstShape.optional(),
+  sort: zSavedViewSortShape.nullable().optional(),
 });
 export type ProjectBoardInput = z.infer<typeof zProjectBoardInput>;
 

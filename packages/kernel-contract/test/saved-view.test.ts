@@ -17,9 +17,10 @@ const ID = '0192a2b0-7c1e-7000-8000-000000000001';
 const ast = (...all: FilterAst['all']): FilterAst => ({ v: 1, all });
 
 describe('saved view registry', () => {
-  it('knows the deal and the contact scope, and no other', () => {
-    expect(Object.keys(SAVED_VIEW_SCOPES).sort()).toEqual(['crm.deal', 'crm.party']);
+  it('knows the deal, contact and task scopes, and no other', () => {
+    expect(Object.keys(SAVED_VIEW_SCOPES).sort()).toEqual(['crm.deal', 'crm.party', 'kernel.task']);
     expect(isSavedViewScope('crm.deal')).toBe(true);
+    expect(isSavedViewScope('kernel.task')).toBe(true);
     expect(isSavedViewScope('crm.nothing')).toBe(false);
     // Prototype names are not scopes, fields or operators.
     expect(isSavedViewScope('constructor')).toBe(false);
@@ -68,6 +69,33 @@ describe('saved view registry', () => {
         ),
       ),
     ).toEqual([]);
+    expect(
+      filterIssues(
+        'kernel.task',
+        ast(
+          { field: 'search', op: 'contains', value: 'thuế' },
+          { field: 'status', op: 'is', value: 'in_progress' },
+          { field: 'status', op: 'in', value: ['todo', 'waiting'] },
+          { field: 'assignee', op: 'is', value: ID },
+          { field: 'assignee', op: 'is_me' },
+          { field: 'assignee', op: 'is_empty' },
+          { field: 'tainted', op: 'is', value: true },
+          { field: 'created', op: 'within_last_days', value: 14 },
+        ),
+      ),
+    ).toEqual([]);
+    expect(
+      filterIssues(
+        'kernel.task',
+        ast(
+          { field: 'due', op: 'before', value: '2026-12-31' },
+          { field: 'due', op: 'after', value: '2026-01-01' },
+          { field: 'due', op: 'overdue' },
+          { field: 'due', op: 'within_next_days', value: 7 },
+          { field: 'due', op: 'is_empty' },
+        ),
+      ),
+    ).toEqual([]);
   });
 
   it('refuses an unknown field or operator, a value of the wrong kind, and a repeated condition', () => {
@@ -97,6 +125,11 @@ describe('saved view registry', () => {
     ).toEqual([{ path: 'filters.all.1', code: 'duplicate' }]);
     // Another scope.
     expect(filterIssues('crm.nothing', ast())).toEqual([{ path: 'scope', code: 'unknown_scope' }]);
+    // Task-specific validations.
+    expect(filterIssues('kernel.task', ast({ field: 'status', op: 'is', value: 'open' })).map((i) => i.code)).toEqual(['bad_value']);
+    expect(filterIssues('kernel.task', ast({ field: 'status', op: 'in', value: [] })).map((i) => i.code)).toEqual(['bad_value']);
+    expect(filterIssues('kernel.task', ast({ field: 'tainted', op: 'is', value: 'yes' })).map((i) => i.code)).toEqual(['bad_value']);
+    expect(filterIssues('kernel.task', ast({ field: 'stage', op: 'in', value: [ID] })).map((i) => i.code)).toEqual(['unknown_field']);
   });
 
   it('checks a sort against the scope’s sortable fields', () => {
@@ -104,6 +137,11 @@ describe('saved view registry', () => {
     expect(sortIssues('crm.deal', { field: 'expected_close', dir: 'asc' })).toEqual([]);
     expect(sortIssues('crm.deal', { field: 'title', dir: 'asc' })).toEqual([{ path: 'sort.field', code: 'unknown_sort_field' }]);
     expect(sortIssues('crm.party', { field: 'amount', dir: 'desc' })).toEqual([{ path: 'sort.field', code: 'unknown_sort_field' }]);
+    expect(sortIssues('kernel.task', { field: 'due', dir: 'asc' })).toEqual([]);
+    expect(sortIssues('kernel.task', { field: 'created', dir: 'desc' })).toEqual([]);
+    expect(sortIssues('kernel.task', { field: 'updated', dir: 'desc' })).toEqual([]);
+    expect(sortIssues('kernel.task', { field: 'title', dir: 'asc' })).toEqual([]);
+    expect(sortIssues('kernel.task', { field: 'amount', dir: 'asc' })).toEqual([{ path: 'sort.field', code: 'unknown_sort_field' }]);
   });
 
   it('stores values as their schema reads them, and nothing else', () => {

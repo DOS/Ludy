@@ -96,8 +96,9 @@ export function textContains(texts: ReadonlyArray<Expression<unknown>>): FieldCo
 export const idIn = (column: Expression<unknown>): FieldCondition => (_op, value) => sql<boolean>`${column} = ANY (${value as string[]}::uuid[])`;
 export const idIs = (column: Expression<unknown>): FieldCondition => (_op, value) => sql<boolean>`${column} = ${value as string}::uuid`;
 
-// Is this value (a deal's status, a contact's kind), the value being one of the registry's fixed names.
+// Is this value (a deal's status, a contact's kind), or one of a list of fixed text values (task statuses).
 export const valueIs = (column: Expression<unknown>): FieldCondition => (_op, value) => sql<boolean>`${column} = ${value as string}`;
+export const valueIn = (column: Expression<unknown>): FieldCondition => (_op, value) => sql<boolean>`${column} = ANY (${value as string[]}::text[])`;
 
 // A member field: is that member, is the asker ("is me"; nobody when the asker is not a member), or has none.
 export function memberIs(column: Expression<unknown>): FieldCondition {

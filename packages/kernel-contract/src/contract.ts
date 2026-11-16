@@ -202,11 +202,13 @@ import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts
 import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
 import { zFinanceOverview, zFinanceOverviewExplainAsk, zFinanceOverviewInput, zOverviewExplanation } from './finance-overview.ts';
 import { zImportBatch, zImportCommit, zImportCommitted, zImportPreview, zImportPreviewQuery, zImportRef, zImportStage } from './contact-import.ts';
-import { zSavedView, zSavedViewDelete, zSavedViewList, zSavedViewRename, zSavedViewSaveShape, zSavedViewSetShared } from './saved-view.ts';
+import { zFilterAstShape, zSavedView, zSavedViewDelete, zSavedViewList, zSavedViewRename, zSavedViewSaveShape, zSavedViewSetShared, zSavedViewSortShape } from './saved-view.ts';
 import {
   zConversationAssign,
   zConversationCounted,
   zConversationCounts,
+  zConversationPostCounted,
+  zConversationPostCounts,
   zConversationDetail,
   zConversationGet,
   zConversationHide,
@@ -475,6 +477,10 @@ import {
   zProjectTaskMutate,
   zProjectTaskProjectEntry,
   zProjectTaskProjectsInput,
+  zProjectTaskReorderFields,
+  zProjectTaskReorderResult,
+  distinctReorderTargets,
+  REORDER_SAME_TASK_ISSUE,
   zProjectTasksFromNoteConfirmInput,
   zProjectTasksFromNoteConfirmResult,
   zProjectTasksFromNoteInput,
@@ -2058,6 +2064,8 @@ export const contract = {
   conversations: {
     list: oc.input(zConversationList).output(zConversationListed),
     counts: oc.input(zConversationCounts).output(zConversationCounted),
+    // The comment threads still New under each of the posts a screen shows, in one read (#3298).
+    postCounts: oc.input(zConversationPostCounts).output(zConversationPostCounted),
     get: oc.input(zConversationGet).output(zConversationDetail),
     reply: oc.input(zConversationReply).output(zConversationReplied),
     replyPrivately: oc.input(zConversationPrivateReply).output(zConversationPrivateReplied),
@@ -2716,7 +2724,17 @@ export const contract = {
   // Work given to positions, held by members or agents (ADR-0029). Every member reads; owners, admins and members
   // create, comment and change status.
   tasks: {
-    list: oc.input(z.object({ positionId: zId.optional(), mine: z.boolean().optional(), status: z.array(zTaskStatus).max(6).optional() })).output(z.array(zTask)),
+    list: oc
+      .input(
+        z.object({
+          positionId: zId.optional(),
+          mine: z.boolean().optional(),
+          status: z.array(zTaskStatus).max(6).optional(),
+          filters: zFilterAstShape.optional(),
+          sort: zSavedViewSortShape.nullable().optional(),
+        }),
+      )
+      .output(z.array(zTask)),
     get: oc.input(z.object({ id: zId })).output(zTaskDetail),
     create: oc
       .input(
@@ -2763,6 +2781,9 @@ export const contract = {
     removeMember: oc.input(zProjectMemberMutate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, userId: zId, removed: z.boolean() })),
     addTask: oc.input(zProjectTaskMutate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, taskId: zId, added: z.boolean() })),
     removeTask: oc.input(zProjectTaskMutate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, taskId: zId, removed: z.boolean() })),
+    reorderTask: oc
+      .input(zProjectTaskReorderFields.extend({ idempotencyKey: zId }).refine(distinctReorderTargets, REORDER_SAME_TASK_ISSUE))
+      .output(zProjectTaskReorderResult),
     createTask: oc.input(zProjectTaskCreate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, taskId: zId })),
     tasksFromNoteStatus: oc.input(z.strictObject({})).output(zProjectTasksFromNoteStatus),
     proposeTasksFromNote: oc.input(zProjectTasksFromNoteInput).output(zProjectTasksFromNoteResult),

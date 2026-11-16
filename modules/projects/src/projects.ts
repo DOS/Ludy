@@ -6,8 +6,13 @@ import {
   PROJECT_BOARD_LIMIT,
   PROJECT_LIST_LIMIT,
   PROJECT_UNASSIGNED_LIMIT,
+  REBALANCE_AT,
   auditValue,
+  keyBetween,
+  normalizeFilter,
+  spreadKeys,
   tableWrite,
+  vietnamToday,
   zId,
   zProjectArchive,
   zProjectBoardInput,
@@ -19,7 +24,9 @@ import {
   zProjectTaskCreate,
   zProjectTaskMutate,
   zProjectTaskProjectsInput,
+  zProjectTaskReorder,
   zProjectUpdate,
+  type FilterAst,
   type ProjectBoard,
   type ProjectCandidateTask,
   type ProjectDetail,
@@ -31,7 +38,9 @@ import {
   type ProjectSummary,
   type ProjectTaskCard,
   type ProjectTaskProjectEntry,
+  type ProjectTaskReorderResult,
 } from '@crove/kernel-contract';
+import { filterCondition, sortTerms, taskFields, taskSortColumns } from '@crove/kernel';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { projectsManifest } from './manifest.ts';
@@ -549,6 +558,148 @@ export const projectTaskRemove = defineCommand({
   },
 });
 
+interface ProjectOrderRow {
+  task_id: string;
+  sort_key: string | null;
+}
+
+async function rebalanceProjectTasks(ctx: CommandContext, projectId: string, rows: ReadonlyArray<{ task_id: string }>): Promise<Map<string, string>> {
+  const keys = spreadKeys(rows.length);
+  const taskIds = rows.map((r) => r.task_id);
+  if (taskIds.length > 0) {
+    await sql`UPDATE crove_projects.project_task AS pt SET sort_key = v.key
+      FROM unnest(${taskIds}::uuid[], ${keys}::text[]) AS v(task_id, key)
+      WHERE pt.org_id = ${ctx.orgId}::uuid
+        AND pt.project_id = ${projectId}::uuid
+        AND pt.task_id = v.task_id`.execute(ctx.trx);
+  }
+  return new Map(taskIds.map((id, i) => [id, keys[i] as string]));
+}
+
+async function ensureRemainingSortKeys(ctx: CommandContext, projectId: string, rows: Array<ProjectOrderRow>): Promise<void> {
+  const firstNull = rows.findIndex((r) => r.sort_key === null);
+  if (firstNull < 0) return;
+  if (firstNull === 0) {
+    const fresh = await rebalanceProjectTasks(ctx, projectId, rows);
+    for (const r of rows) r.sort_key = fresh.get(r.task_id) ?? null;
+    return;
+  }
+  const beforeFirstNull = rows[firstNull - 1];
+  let prev: string | null = beforeFirstNull ? beforeFirstNull.sort_key : null;
+  const filledIds: string[] = [];
+  const filledKeys: string[] = [];
+  let overflow = false;
+  for (let i = firstNull; i < rows.length; i++) {
+    const r = rows[i];
+    if (!r) continue;
+    if (r.sort_key !== null) {
+      overflow = true;
+      break;
+    }
+    const next = keyBetween(prev, null);
+    if (next.length > REBALANCE_AT) {
+      overflow = true;
+      break;
+    }
+    filledIds.push(r.task_id);
+    filledKeys.push(next);
+    prev = next;
+  }
+  if (overflow) {
+    const fresh = await rebalanceProjectTasks(ctx, projectId, rows);
+    for (const r of rows) r.sort_key = fresh.get(r.task_id) ?? null;
+    return;
+  }
+  await sql`UPDATE crove_projects.project_task AS pt SET sort_key = v.key
+    FROM unnest(${filledIds}::uuid[], ${filledKeys}::text[]) AS v(task_id, key)
+    WHERE pt.org_id = ${ctx.orgId}::uuid
+      AND pt.project_id = ${projectId}::uuid
+      AND pt.task_id = v.task_id`.execute(ctx.trx);
+  for (let i = 0; i < filledIds.length; i++) {
+    const targetRow = rows[firstNull + i];
+    const key = filledKeys[i];
+    if (targetRow && key !== undefined) targetRow.sort_key = key;
+  }
+}
+
+async function placeProjectTaskBetween(
+  ctx: CommandContext,
+  projectId: string,
+  rows: Array<ProjectOrderRow>,
+  lo: number,
+  hi: number,
+): Promise<string> {
+  await ensureRemainingSortKeys(ctx, projectId, rows);
+  const keyAt = (i: number) => (i < 0 || i >= rows.length ? null : (rows[i]?.sort_key ?? null));
+  const a = keyAt(lo);
+  const b = keyAt(hi);
+  if (a === null || b === null || a < b) {
+    const key = keyBetween(a, b);
+    if (key.length <= REBALANCE_AT && (a === null || a < key) && (b === null || key < b)) return key;
+  }
+  const fresh = await rebalanceProjectTasks(ctx, projectId, rows);
+  const freshAt = (i: number) => {
+    if (i < 0 || i >= rows.length) return null;
+    const item = rows[i];
+    return item ? (fresh.get(item.task_id) ?? null) : null;
+  };
+  return keyBetween(freshAt(lo), freshAt(hi));
+}
+
+export const projectTaskReorder = defineCommand({
+  name: 'projects.task.reorder',
+  input: zProjectTaskReorder,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  writes: [tableWrite(TABLES, 'crove_projects', 'project_task', ['sort_key'])],
+  target: projectTarget,
+  handler: async (ctx, input): Promise<ProjectTaskReorderResult> => {
+    userOf(ctx.actor);
+    const row = await loadProject(ctx.trx, ctx.orgId, input.projectId, true);
+    assertNotArchived(row);
+
+    const visibleTasks = await ctx.trx
+      .selectFrom('crove_kernel.task')
+      .select('id')
+      .where('org_id', '=', ctx.orgId)
+      .where('id', 'in', [input.taskId, input.anchorId])
+      .execute();
+    if (visibleTasks.length !== 2) throw taskNotFound();
+
+    const { rows: allRows } = await sql<ProjectOrderRow>`
+      SELECT pt.task_id, pt.sort_key
+        FROM crove_projects.project_task pt
+        LEFT JOIN crove_kernel.task t
+          ON t.org_id = pt.org_id AND t.id = pt.task_id
+       WHERE pt.org_id = ${ctx.orgId}::uuid
+         AND pt.project_id = ${row.id}::uuid
+       ORDER BY pt.sort_key ASC NULLS LAST, t.due ASC NULLS LAST, t.created_at ASC, pt.task_id ASC, pt.created_at ASC`.execute(ctx.trx);
+
+    if (!allRows.some((r) => r.task_id === input.taskId) || !allRows.some((r) => r.task_id === input.anchorId)) {
+      throw taskNotFound();
+    }
+
+    const remaining = allRows.filter((r) => r.task_id !== input.taskId);
+    const at = remaining.findIndex((r) => r.task_id === input.anchorId);
+    const nextKey =
+      input.place === 'before'
+        ? await placeProjectTaskBetween(ctx, row.id, remaining, at - 1, at)
+        : await placeProjectTaskBetween(ctx, row.id, remaining, at, at + 1);
+
+    await ctx.trx
+      .updateTable('crove_projects.project_task')
+      .set({ sort_key: nextKey })
+      .where('org_id', '=', ctx.orgId)
+      .where('project_id', '=', row.id)
+      .where('task_id', '=', input.taskId)
+      .execute();
+
+    ctx.audit({ projectId: row.id, taskId: input.taskId, anchorId: input.anchorId, place: input.place });
+    return { projectId: row.id, taskId: input.taskId };
+  },
+});
+
 export const projectTaskCreate = defineCommand({
   name: 'projects.task.create',
   input: zProjectTaskCreate,
@@ -823,6 +974,22 @@ export const projectBoard = defineQuery({
       updatedAt: new Date(row.updated_at).toISOString(),
     };
 
+    const now = new Date();
+    const filterExpr =
+      input.filters !== undefined
+        ? filterCondition('kernel.task', input.filters as FilterAst, taskFields({ isOwner: ctx.role === 'owner' }), {
+            me: userId,
+            today: vietnamToday(now),
+            now,
+          })
+        : null;
+    const hasStatusFilter =
+      input.filters !== undefined && normalizeFilter('kernel.task', input.filters as FilterAst).all.some((c) => c.field === 'status');
+    const orderTerms =
+      input.sort !== undefined && input.sort !== null
+        ? sortTerms('kernel.task', input.sort, taskSortColumns(), sql`t.id`, { field: 'created', dir: 'asc' })
+        : null;
+
     if (input.status !== undefined && input.status.length === 0) {
       return { project, members, seats, isTeamOrg, viewerHasSeat, tasks: [], totalVisible: 0, hiddenByEntityCount, truncated: false };
     }
@@ -863,17 +1030,27 @@ export const projectBoard = defineQuery({
     if (input.status !== undefined) {
       taskQuery = taskQuery.where('t.status', 'in', input.status);
       countQuery = countQuery.where('t.status', 'in', input.status);
-    } else if (!input.includeCancelled) {
+    } else if (!input.includeCancelled && !hasStatusFilter) {
       taskQuery = taskQuery.where('t.status', '<>', 'cancelled');
       countQuery = countQuery.where('t.status', '<>', 'cancelled');
     }
 
-    const rawTasks = await taskQuery
-      .orderBy(sql`t.due ASC NULLS LAST`)
-      .orderBy('t.created_at', 'asc')
-      .orderBy('t.id', 'asc')
-      .limit(PROJECT_BOARD_LIMIT + 1)
-      .execute();
+    if (filterExpr) {
+      taskQuery = taskQuery.where(filterExpr);
+      countQuery = countQuery.where(filterExpr);
+    }
+
+    if (orderTerms) {
+      for (const term of orderTerms) taskQuery = taskQuery.orderBy(term);
+    } else {
+      taskQuery = taskQuery
+        .orderBy(sql`pt.sort_key ASC NULLS LAST`)
+        .orderBy(sql`t.due ASC NULLS LAST`)
+        .orderBy('t.created_at', 'asc')
+        .orderBy('t.id', 'asc');
+    }
+
+    const rawTasks = await taskQuery.limit(PROJECT_BOARD_LIMIT + 1).execute();
 
     const truncated = rawTasks.length > PROJECT_BOARD_LIMIT;
     const page = truncated ? rawTasks.slice(0, PROJECT_BOARD_LIMIT) : rawTasks;
@@ -993,6 +1170,7 @@ export const projectsCommands = [
   projectMemberRemove,
   projectTaskAdd,
   projectTaskRemove,
+  projectTaskReorder,
   projectTaskCreate,
   tasksFromNoteStart,
   tasksFromNoteConfirm,

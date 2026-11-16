@@ -34,6 +34,7 @@ import { RepeatIcon } from '@crove/ui/components/repeat-icon';
 import { cn } from '@crove/ui/lib/utils';
 import { DateInput } from './date-input.tsx';
 import { TimeInput } from './time-input.tsx';
+import { UnansweredComments, UnansweredProvider } from './social-unanswered.tsx';
 import { ErrorText, Spinner } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -103,6 +104,9 @@ function channelLabel(item: CalendarItem, names: Map<string, string>): string {
   return name ? `${providerName(item.v.provider)} (${name})` : providerName(item.v.provider);
 }
 
+// No posts yet: a stable empty list, so the provider's read keeps its place while the calendar loads.
+const NO_POSTS: Post[] = [];
+
 const groupText = (group: CalendarGroup, empty: string) => excerpt((group.items[0] as CalendarItem).v.effective.body) || empty;
 
 // One chip per post and minute (#1220): the time, the channel (or how many), the statuses in words and the text.
@@ -110,7 +114,7 @@ const groupText = (group: CalendarGroup, empty: string) => excerpt((group.items[
 // planned drafts by members too); true or false, picking (#1057), where a click ticks or unticks the chip's post for
 // the bulk bar instead. onPlan: the chip's menu, which opens the date editor for a planned draft (#1145) or the open
 // slots (#1158).
-function Chip({
+export function Chip({
   group,
   slug,
   names,
@@ -179,6 +183,9 @@ function Chip({
       </span>
       <span className="block truncate text-subtle-foreground">
         {channels} · {statuses}
+      </span>
+      <span className="block">
+        <UnansweredComments postId={group.post.id} />
       </span>
     </>
   );
@@ -954,6 +961,7 @@ export function SocialCalendar({
   const openGroups = dayOpen ? (byDay.get(dayOpen) ?? []) : [];
 
   return (
+    <UnansweredProvider posts={posts.data ?? NO_POSTS}>
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="outline" size="sm" onClick={() => shift(-1)} aria-label={t('calendar.previous')}>
@@ -1272,5 +1280,6 @@ export function SocialCalendar({
         </DayDialog>
       )}
     </div>
+    </UnansweredProvider>
   );
 }

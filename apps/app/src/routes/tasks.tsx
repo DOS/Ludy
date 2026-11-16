@@ -1,11 +1,11 @@
 // Tasks (ADR-0029, issue #258): work given to positions of the chart, held by members or AI agents. Every member
 // reads them; owners, admins and members give work, comment and change status. A task made from untrusted content
 // (an email, a run that read one) is marked, so nobody acts on it unchecked.
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useMemo, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { PROJECT_TASK_MAP_LIMIT } from '@crove/kernel-contract';
+import { PROJECT_TASK_MAP_LIMIT, type FilterAst, type SavedViewSort } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
@@ -18,7 +18,9 @@ import { Textarea } from '@crove/ui/components/textarea';
 import { DateInput } from '../components/date-input.tsx';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
 import { TaskConversationLink } from '../components/task-conversation-link.tsx';
+import { TaskFilterBar } from '../components/task-filter-bar.tsx';
 import { DataTable, Empty, ErrorText, FieldError, ListSkeleton, PageHeader, PageSkeleton, fieldControl } from '../components/ui.tsx';
+import { ViewTabs, type ViewState } from '../components/view-tabs.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { OPEN_TASK_STATUSES, TASK_LIST_LIMIT, TASK_STATUSES, agentPermissions, conversationOf, fromTodo, meetingItemOf, socialPostOf, taskDueDay, taskDueFromDay, type TaskFilter, type TaskStatus, type TasksSearch } from '../lib/agents.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -26,6 +28,8 @@ import { isModuleOff } from '../lib/errors.ts';
 import { browserTimeZone } from '../lib/my-work.ts';
 import { filterTasksByProject, projectsInstalled, taskProjectMap, taskProjectOptions } from '../lib/projects.ts';
 import { withSearch } from '../lib/search.ts';
+import { EMPTY_TASK_FILTER, astToTaskFilter, taskFilterToAst, type TaskFilterState } from '../lib/task-filter.ts';
+import { useDebounced } from '../lib/use-debounced.ts';
 
 type Chart = Awaited<ReturnType<typeof orpc.chart.get.call>>;
 
@@ -123,10 +127,25 @@ export function TasksPage() {
       params: { slug },
       search: withSearch(search, { filter: next === 'open' ? undefined : next }),
     });
+  const [bar, setBar] = useState<TaskFilterState>(EMPTY_TASK_FILTER);
+  const [sort, setSort] = useState<SavedViewSort | null>(null);
+  const filters: FilterAst = taskFilterToAst(bar);
+  const searchTerm = useDebounced(bar.search.trim(), 300);
+  const applied: FilterAst = taskFilterToAst({ ...bar, search: searchTerm });
+  const viewed = applied.all.length > 0 || sort !== null;
+  const applyView = ({ filters: next, sort: nextSort }: ViewState) => {
+    setBar(astToTaskFilter(next));
+    setSort(nextSort);
+  };
   const org = useQuery(orpc.org.get.queryOptions());
   const chart = useQuery(orpc.chart.get.queryOptions());
-  const input = filter === 'mine' ? { mine: true } : filter === 'open' ? { status: [...OPEN_TASK_STATUSES] } : {};
-  const tasks = useQuery(orpc.tasks.list.queryOptions({ input }));
+  const baseInput = filter === 'mine' ? { mine: true } : filter === 'open' ? { status: [...OPEN_TASK_STATUSES] } : {};
+  const baseWithoutStatusOverride = filter === 'open' && applied.all.some((c) => c.field === 'status') ? {} : baseInput;
+  const input = viewed ? { ...baseWithoutStatusOverride, filters: applied, ...(sort ? { sort } : {}) } : baseInput;
+  const tasks = useQuery({
+    ...orpc.tasks.list.queryOptions({ input }),
+    placeholderData: keepPreviousData,
+  });
   const perms = agentPermissions(org.data?.role);
 
   const hasProjectsModule = projectsInstalled();
@@ -201,6 +220,17 @@ export function TasksPage() {
             </NativeSelect>
           </div>
         )}
+      </div>
+      <div className="mb-3 space-y-2">
+        <ViewTabs scope="kernel.task" filters={filters} sort={sort} onApply={applyView} />
+        <TaskFilterBar
+          idPrefix="tasks-filter"
+          bar={bar}
+          setBar={setBar}
+          sort={sort}
+          setSort={setSort}
+          positions={(chart.data?.positions ?? []).map((p) => ({ id: p.id, label: p.title }))}
+        />
       </div>
       {tasks.isPending || waitingProjectFilter ? (
         <ListSkeleton />
