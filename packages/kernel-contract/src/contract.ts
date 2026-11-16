@@ -390,6 +390,8 @@ import {
   zMeetingConsentPolicy,
   zMeetingConsentPolicyGet,
   zMeetingExtensionStatus,
+  zMeetingRecordingStopped,
+  zMeetingRecordingStoppedDone,
   zMeetingRecordingNow,
   zMeetingRecordingNowInput,
   zMeetingSettingsGet,
@@ -1058,6 +1060,8 @@ export const contract = {
     setTemplate: oc.input(zMeetingTemplateSet).output(zMeetingTemplateSetDone),
     // The status of a meeting the calling extension token created, and nothing of its content (issue #2582).
     extensionStatus: oc.input(zMeetingRef).output(zMeetingExtensionStatus),
+    // The extension reports that a recording of its own token ended with no media reaching the server, so the app's recording chip lets go (#3196).
+    recordingStopped: oc.input(zMeetingRecordingStopped).output(zMeetingRecordingStoppedDone),
     // The calling member's meeting the extension is recording right now, for the app's recording chip (A1, #3159).
     recordingNow: oc.input(zMeetingRecordingNowInput).output(zMeetingRecordingNow),
     delete: oc.input(zMeetingRef).output(zMeetingDeleted),

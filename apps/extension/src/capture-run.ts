@@ -87,6 +87,8 @@ export async function startCapture(params: CaptureParams, deps: CaptureDeps = br
     lost = reason;
     for (const listener of lostListeners) listener(reason);
   };
+  // The meeting made for this start, if one was: a capture that fails after it leaves a meeting nobody records into (#3196).
+  let createdMeetingId: string | null = null;
   const prepared = await prepareCapture<MediaStream & { getTracks(): MediaStreamTrack[] }, MediaRecorder>({
     openStore: async () => void (await deps.store.list(params.orgId)),
     async getStream() {
@@ -111,7 +113,10 @@ export async function startCapture(params: CaptureParams, deps: CaptureDeps = br
       // A video track exists only when the plan asked the tab for one.
       return new MediaStream([...mix.stream.getAudioTracks(), ...(plan.kind === 'video' ? tab.getVideoTracks() : [])]);
     },
-    createMeeting: async () => (await client.createMeeting({ title: params.title, keepVideo: params.keepVideo, consentMethod: params.consentMethod, consentNoticeVersion: RECORDING_NOTICE.version, liveNotes: params.liveNotes })).meetingId,
+    createMeeting: async () => {
+      createdMeetingId = (await client.createMeeting({ title: params.title, keepVideo: params.keepVideo, consentMethod: params.consentMethod, consentNoticeVersion: RECORDING_NOTICE.version, liveNotes: params.liveNotes })).meetingId;
+      return createdMeetingId;
+    },
     makeRecorder: (stream) => new MediaRecorder(stream, plan.mimeType ? { mimeType: plan.mimeType } : undefined),
     async begin(meetingId, recorder) {
       return beginRecording(deps.store, {
@@ -129,6 +134,8 @@ export async function startCapture(params: CaptureParams, deps: CaptureDeps = br
   });
   if (prepared.status !== 'ready') {
     for (const cleanup of cleanups) cleanup();
+    // The meeting was made but the recorder never started: its recording ended (best effort, so the app's chip never waits for it).
+    if (createdMeetingId !== null) await client.recordingStopped({ meetingId: createdMeetingId, reason: 'unknown', lengthSeconds: 0 }).catch(() => undefined);
     if (prepared.status === 'failed' && prepared.reason === 'setup' && prepared.error instanceof LudyError && prepared.error.code === 'CONSENT_METHOD_NOT_ALLOWED') return { ok: false, reason: 'consentPolicy' };
     return { ok: false, reason: prepared.status === 'aborted' ? 'setup' : prepared.reason };
   }
@@ -195,18 +202,28 @@ const stopReasonOf = (meta: RecordingMeta): { stopReason?: RecordingStopReason }
   return stopReason ? { stopReason } : {};
 };
 
+// The recording ended and no media reached the server: tell it, best effort, so the app's recording chip lets go at once (#3196). A stop the member asked
+// for carries no code; any other carries its code ('unknown' when nobody saw it end). Never throws: the server ignores it when a recording exists.
+async function reportEnded(client: Client, meta: RecordingMeta): Promise<void> {
+  const reason = stopReasonForUpload(meta);
+  await client.recordingStopped({ meetingId: meta.meetingId, ...(reason ? { reason } : {}), lengthSeconds: Math.round(meta.elapsedMs / 1000) }).catch(() => undefined);
+}
+
 // The saved recording to the meeting; the device copy goes only after the server has it.
 export async function uploadSaved(deps: Pick<CaptureDeps, 'store'>, client: Client, uploads: 'presigned' | 'direct', meta: RecordingMeta): Promise<{ ok: true } | { ok: false; message: string }> {
   try {
     const recording = await assembleRecording(deps.store, meta);
     if (!recording) {
       await deps.store.remove(meta.id);
+      await reportEnded(client, meta);
       return { ok: false, message: 'Không có âm thanh nào được lưu' };
     }
     await client.uploadMedia({ meetingId: meta.meetingId, kind: meta.kind, file: recording.file, lengthSeconds: recording.lengthSeconds, uploads, ...stopReasonOf(meta) });
     await deps.store.remove(meta.id);
     return { ok: true };
   } catch (error) {
+    // The copy stays on the device for a retry, but the recording itself is over.
+    await reportEnded(client, meta);
     return { ok: false, message: error instanceof Error ? error.message : 'Không tải lên được' };
   }
 }

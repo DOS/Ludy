@@ -102,6 +102,7 @@ function setup(sendLiveChunk: Client['sendLiveChunk'] = () => Promise.resolve())
       calls.push('final upload');
       return Promise.resolve({ fileId: 'f' });
     }),
+    recordingStopped: vi.fn((_input: Parameters<Client['recordingStopped']>[0]) => Promise.resolve()),
   };
   const deps: CaptureDeps = {
     store: memoryStore(),
@@ -189,5 +190,69 @@ describe('live notes in the offscreen capture', () => {
     const stopped = await started.running.stop();
     expect(stopped.uploaded).toBe(true);
     expect(client.sendLiveChunk).not.toHaveBeenCalled();
+  });
+});
+
+// A recording that ends with no media reaching the server tells the server, so the app's recording chip lets go (#3196).
+describe('ending a recording with no media', () => {
+  const started = async (deps: CaptureDeps) => {
+    const result = await startCapture(params(false), deps);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('did not start');
+    return result.running;
+  };
+
+  it('reports the end when nothing was saved, with no code for the member\'s own stop', async () => {
+    const { client, deps } = setup();
+    const running = await started({ ...deps, store: { ...memoryStore(), chunks: () => Promise.resolve([]) } });
+    const stopped = await running.stop();
+    expect(stopped.uploaded).toBe(false);
+    expect(client.uploadMedia).not.toHaveBeenCalled();
+    expect(client.recordingStopped).toHaveBeenCalledTimes(1);
+    expect(client.recordingStopped).toHaveBeenCalledWith({ meetingId: 'm1', lengthSeconds: expect.any(Number) });
+  });
+
+  it('reports the end with the code when the upload fails, and the copy stays on the device for a retry', async () => {
+    const { client, deps } = setup();
+    client.uploadMedia.mockImplementationOnce(() => Promise.reject(new LudyError('OFFLINE', 0, 'offline')));
+    const running = await started(deps);
+    FakeRecorder.instances[0]!.piece('five seconds');
+    const stopped = await running.stop('mic_lost');
+    expect(stopped.uploaded).toBe(false);
+    expect(client.recordingStopped).toHaveBeenCalledWith({ meetingId: 'm1', reason: 'mic_lost', lengthSeconds: expect.any(Number) });
+    expect(await deps.store.list('o')).toHaveLength(1);
+  });
+
+  it('says nothing when the upload worked: the media ended the recording', async () => {
+    const { client, deps } = setup();
+    const running = await started(deps);
+    FakeRecorder.instances[0]!.piece('five seconds');
+    expect((await running.stop()).uploaded).toBe(true);
+    expect(client.recordingStopped).not.toHaveBeenCalled();
+  });
+
+  it('reports the end when the capture fails after the meeting was made', async () => {
+    const { client, deps } = setup();
+    const result = await startCapture(params(false), { ...deps, store: { ...memoryStore(), put: () => Promise.reject(new Error('device full')) } });
+    expect(result).toEqual({ ok: false, reason: 'setup' });
+    expect(client.recordingStopped).toHaveBeenCalledWith({ meetingId: 'm1', reason: 'unknown', lengthSeconds: 0 });
+  });
+
+  it('never fails the stop because the report failed', async () => {
+    const { client, deps } = setup();
+    client.recordingStopped.mockImplementation(() => Promise.reject(new LudyError('OFFLINE', 0, 'offline')));
+    const running = await started({ ...deps, store: { ...memoryStore(), chunks: () => Promise.resolve([]) } });
+    await expect(running.stop()).resolves.toMatchObject({ uploaded: false, message: 'Không có âm thanh nào được lưu' });
+  });
+
+  it('sends the report to the one route and only the codes and ids', async () => {
+    const seen: Array<{ url: string; body: string }> = [];
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      seen.push({ url: String(url), body: String(init.body) });
+      return new Response('{}', { status: 200 });
+    }) as unknown as Parameters<typeof import('../src/api.ts').createClient>[2];
+    const { createClient } = await import('../src/api.ts');
+    await createClient('https://app.ludy.vn', 'crx_t', fetchImpl).recordingStopped({ meetingId: '11111111-1111-4111-8111-111111111111', reason: 'tab_closed', lengthSeconds: 42 });
+    expect(seen).toEqual([{ url: 'https://app.ludy.vn/api/rpc/meetings/recordingStopped', body: JSON.stringify({ json: { meetingId: '11111111-1111-4111-8111-111111111111', reason: 'tab_closed', lengthSeconds: 42 } }) }]);
   });
 });
