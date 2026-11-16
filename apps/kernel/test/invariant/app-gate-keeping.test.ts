@@ -3,10 +3,14 @@
 // exact list, so a new one is a visible, reviewed addition (a change to this protected file and its security review), never a quiet one made in
 // a module. Each is a keeping duty (retention, shredding, erasure, a leaver's links, the reseal of a sealed key) or a command that only stops
 // spend, revokes a link or deletes, or a read for one, of an app; none is of kernel, which the gate never refuses.
-// Step 0 of two for slice (c) (#3310): the 11 commands that RECORD the outcome of an irreversible call a job already made (Social publish, comment,
-// thread, remove, edit, pin, playlist, repost, auto-reply and gate; the minutes webhook post) join the list, because a switch-off between the call and its record would lose the outcome and
-// a later retry could do the call twice. This file accepts BOTH the list as it is on main and that list with the 11 added; a tests-only PR makes it
-// strict once the commands declare runsWhenOff (the runtime and module PR cannot edit this base file).
+// Step 0 of two for slice (c) (#3310) and eSign Slice 1a (#3406 / #3323):
+// - #3310: the 11 commands that RECORD the outcome of an irreversible call a job already made (Social publish, comment, thread, remove, edit,
+//   pin, playlist, repost, auto-reply and gate; the minutes webhook post) join the list, because a switch-off between the call and its record
+//   would lose the outcome and a later retry could do the call twice.
+// - #3406 / #3323: the 2 eSign keeping commands (sign.envelope.expire_sweep, sign.org.cleanup) join the list so overdue envelopes expire and
+//   stale secrets or drafts are pruned under retention while Sign is off.
+// This file accepts all 4 sorted combinations of current, RECORDS, and SIGN_KEEPING so #3310 and #3323 can merge in either order; follow-up
+// tests-only PRs make the list strict once those commands declare runsWhenOff (the runtime and module PRs cannot edit this base file).
 // Part of the invariant suite: CI runs this file from the base branch on protected-path PRs (AGENTS.md).
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../../src/config.ts';
@@ -32,7 +36,10 @@ describe('definitions that run while their app is off for an org (ADR-0053)', ()
     'social.thread.record',
   ];
 
-  it('are exactly these commands, with or without the records of external writes (step 0)', () => {
+  // The eSign keeping commands that run while Sign is off (#3323), joining in Slice 1a (step 0 before #3323 declares runsWhenOff).
+  const SIGN_KEEPING = ['sign.envelope.expire_sweep', 'sign.org.cleanup'];
+
+  it('are exactly these commands, with or without external write records and eSign keeping commands (step 0)', () => {
     const current = [
       'ads.account.delete_history',
       'ads.account.disable_write',
@@ -68,7 +75,12 @@ describe('definitions that run while their app is off for an org (ADR-0053)', ()
       'social.review_link.revoke',
     ].sort();
     const got = named(commands);
-    expect([current, [...current, ...RECORDS].sort()]).toContainEqual(got);
+    expect([
+      current,
+      [...current, ...RECORDS].sort(),
+      [...current, ...SIGN_KEEPING].sort(),
+      [...current, ...RECORDS, ...SIGN_KEEPING].sort(),
+    ]).toContainEqual(got);
   });
 
   it('are exactly these queries', () => {
