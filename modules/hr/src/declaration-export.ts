@@ -15,7 +15,7 @@ import type { MemberRole } from '@crove/db';
 import { HR_DECLARATION_MAX_PEOPLE, zHrDeclarationExport, zHrDeclarationQuery, zHrLaborCheckAsk, zHrLaborCheckAudit, type HrDeclarationDocument, type HrDeclarationExport, type HrDeclarationQuery, type HrLaborCheckAsk, type HrLaborCheckAudit, type HrLaborCheckKind } from '@crove/kernel-contract';
 import { deriveFixedTermEndDate, formatIsoCalendarDate, money, parseIsoCalendarDate, type LaborContractKind, type ProbationRoleTier } from '@crove/l10n-vn';
 import { DomainError, defineCommand, defineQuery, hasFreshMfa, type QueryContext } from '@crove/kernel-runtime';
-import { buildAnnual, buildAnnualListing, buildCertificates, buildCertificatesListing, buildD02Lt, buildD02LtListing, buildQuarterly, buildQuarterlyListing, quarterMonths, type DeclarationBreakdown, type DeclarationLine, type DeclarationPerson } from './declarations.ts';
+import { buildAnnual, buildAnnualListing, buildCertificates, buildCertificatesListing, buildD02Lt, buildD02LtListing, buildQuarterly, buildQuarterlyListing, quarterMonths, type DeclarationBreakdown, type DeclarationContractTerm, type DeclarationContractType, type DeclarationLine, type DeclarationPerson } from './declarations.ts';
 import { build01PliReport, buildLaborRegister, parse01PliPeriod, type LaborRegisterPerson } from './labor-register.ts';
 import { IDENTITY_PLACE, INSURANCE_PLACE, TAX_CODE_PLACE, subjectOf } from './employees.ts';
 
@@ -54,6 +54,10 @@ export interface HrLaborCheckSnapshot {
 }
 
 const iso = (value: Date | string): string => (typeof value === 'string' ? value : value.toISOString().slice(0, 10));
+function formatLaborRegisterPosition(jobTitle: string | null | undefined, departmentName: string | null | undefined): string | null {
+  const parts = [jobTitle, departmentName].filter((v): v is string => typeof v === 'string' && v.trim() !== '');
+  return parts.length > 0 ? parts.join(' - ') : null;
+}
 const previousMonth = (month: string): string => {
   const [year, m] = month.split('-').map(Number) as [number, number];
   const d = new Date(Date.UTC(year, m - 2, 1));
@@ -580,10 +584,23 @@ export const declarationGet = defineQuery({
 
     if (input.kind === 'labor_register' || input.kind === '01pli') {
       const rows = await ctx.trx
-        .selectFrom('crove_hr.payroll_employee')
-        .select(['id', 'display_name', 'address', 'birth_date', 'ended_on', 'erased_at', 'national_id_sealed', 'tax_code_sealed', 'insurance_number_sealed'])
-        .where('org_id', '=', ctx.orgId)
-        .where('legal_entity_id', '=', entity.id)
+        .selectFrom('crove_hr.payroll_employee as e')
+        .leftJoin('crove_hr.department as d', (join) => join.onRef('d.org_id', '=', 'e.org_id').onRef('d.id', '=', 'e.department_id'))
+        .select([
+          'e.id',
+          'e.display_name',
+          'e.address',
+          'e.birth_date',
+          'e.job_title',
+          'd.name as department_name',
+          'e.ended_on',
+          'e.erased_at',
+          'e.national_id_sealed',
+          'e.tax_code_sealed',
+          'e.insurance_number_sealed',
+        ])
+        .where('e.org_id', '=', ctx.orgId)
+        .where('e.legal_entity_id', '=', entity.id)
         .execute();
       const { included, payMetaByEmployee, employments } = await prepareLaborPeriod(
         ctx,
@@ -604,12 +621,14 @@ export const declarationGet = defineQuery({
         const terms = employments.get(row.id)!;
         const payMeta = payMetaByEmployee.get(row.id);
         const contractEndDate = terms.contractDateUncertain ? null : terms.contractEndDate;
+        const erased = row.erased_at !== null;
         return {
           employeeId: row.id,
           name: row.display_name,
-          erased: row.erased_at !== null,
-          birthDate: row.erased_at === null && row.birth_date !== null ? iso(row.birth_date) : null,
-          address: row.erased_at === null ? row.address : null,
+          erased,
+          birthDate: !erased && row.birth_date !== null ? iso(row.birth_date) : null,
+          address: !erased ? row.address : null,
+          position: erased ? null : formatLaborRegisterPosition(row.job_title, row.department_name),
           identityNumber: c.identityNumber ?? null,
           taxCode: c.taxCode ?? null,
           insuranceNumber: c.insuranceNumber ?? null,
@@ -623,7 +642,7 @@ export const declarationGet = defineQuery({
           allowance: payMeta?.allowance ?? null,
           otherAmounts: payMeta?.otherAmounts ?? null,
           insured: terms.insured ?? (terms.contractKind !== 'none'),
-          ...(terms.contractDateUncertain && row.erased_at === null
+          ...(terms.contractDateUncertain && !erased
             ? { note: 'Chưa đủ kỳ lương đã duyệt để xác định ngày bắt đầu/kết thúc hợp đồng xác định thời hạn.' }
             : {}),
         };
@@ -682,32 +701,65 @@ export const declarationGet = defineQuery({
     const employees = ids.length === 0
       ? []
       : await ctx.trx
-          .selectFrom('crove_hr.payroll_employee')
-          .select(['id', 'display_name', 'birth_date', 'ended_on', 'erased_at', 'national_id_sealed', 'tax_code_sealed', 'insurance_number_sealed', 'finalization_authorized_years'])
-          .where('org_id', '=', ctx.orgId)
-          .where('legal_entity_id', '=', entity.id)
-          .where('id', 'in', ids)
+          .selectFrom('crove_hr.payroll_employee as e')
+          .leftJoin('crove_hr.department as d', (join) => join.onRef('d.org_id', '=', 'e.org_id').onRef('d.id', '=', 'e.department_id'))
+          .select([
+            'e.id',
+            'e.display_name',
+            'e.birth_date',
+            'e.job_title',
+            'd.name as department_name',
+            'e.ended_on',
+            'e.erased_at',
+            'e.national_id_sealed',
+            'e.tax_code_sealed',
+            'e.insurance_number_sealed',
+            'e.finalization_authorized_years',
+          ])
+          .where('e.org_id', '=', ctx.orgId)
+          .where('e.legal_entity_id', '=', entity.id)
+          .where('e.id', 'in', ids)
           .execute();
     if (employees.length !== ids.length) throw new DomainError('HR_EMPLOYEE_NOT_FOUND', 409, 'Một dòng lương nêu một nhân viên không còn trong danh sách');
-    const starts = ids.length === 0
+    const employmentRows = ids.length === 0
       ? []
-      : await ctx.trx.selectFrom('crove_hr.payroll_employment').select(['employee_id', 'effective_from']).where('org_id', '=', ctx.orgId).where('employee_id', 'in', ids).orderBy('effective_from', 'asc').execute();
+      : await ctx.trx
+          .selectFrom('crove_hr.payroll_employment')
+          .select(['employee_id', 'effective_from', 'contract_type'])
+          .where('org_id', '=', ctx.orgId)
+          .where('legal_entity_id', '=', entity.id)
+          .where('employee_id', 'in', ids)
+          .orderBy('effective_from', 'asc')
+          .orderBy('created_at', 'asc')
+          .orderBy('id', 'asc')
+          .execute();
     const startedOn = new Map<string, string>();
-    for (const s of starts) if (!startedOn.has(s.employee_id)) startedOn.set(s.employee_id, iso(s.effective_from));
+    const contractsByEmployee = new Map<string, DeclarationContractTerm[]>();
+    for (const row of employmentRows) {
+      const eff = iso(row.effective_from);
+      if (!startedOn.has(row.employee_id)) startedOn.set(row.employee_id, eff);
+      const list = contractsByEmployee.get(row.employee_id) ?? [];
+      list.push({ effectiveFrom: eff, contractType: row.contract_type as DeclarationContractType });
+      contractsByEmployee.set(row.employee_id, list);
+    }
 
     // What a form prints is all that is opened (the sealed values of a person are opened only when the form shows them): the D02-LT shows the identity number and the social insurance number, and
     // only of the people it lists (a change that month, worked out first from data that is not sealed); the tax forms show the identity number and the tax code. One batch, after the audit row.
     const personsOf = (clear: ReadonlyMap<string, Clear>): DeclarationPerson[] =>
       employees.map((e) => {
         const c = clear.get(e.id) ?? {};
+        const erased = e.erased_at !== null;
         // Since 2025-07-01 the tax code is in most cases the identity number: a person with no tax code of their own is listed under the identity number, and the document says so.
         return {
           employeeId: e.id,
           name: e.display_name,
-          birthDate: e.erased_at === null && e.birth_date !== null ? iso(e.birth_date) : null,
+          birthDate: !erased && e.birth_date !== null ? iso(e.birth_date) : null,
           taxCode: c.taxCode ?? c.identityNumber ?? null,
           insuranceNumber: c.insuranceNumber ?? null,
           identityNumber: c.identityNumber ?? null,
+          position: erased ? null : (e.job_title ?? null),
+          workplace: erased ? null : (e.department_name ?? null),
+          contracts: erased ? [] : (contractsByEmployee.get(e.id) ?? []),
           startedOn: startedOn.get(e.id) ?? '1900-01-01',
           endedOn: e.ended_on === null ? null : iso(e.ended_on),
           finalizationAuthorizedYears: [...e.finalization_authorized_years],
@@ -771,19 +823,22 @@ export const laborCheckRead = defineQuery({
   handler: async (ctx, input: HrLaborCheckAsk): Promise<HrLaborCheckSnapshot> => {
     const entity = await resolveLegalEntity(ctx, input.legalEntityId);
     const rows = await ctx.trx
-      .selectFrom('crove_hr.payroll_employee')
+      .selectFrom('crove_hr.payroll_employee as e')
+      .leftJoin('crove_hr.department as d', (join) => join.onRef('d.org_id', '=', 'e.org_id').onRef('d.id', '=', 'e.department_id'))
       .select([
-        'id',
-        'display_name',
-        'address',
-        'birth_date',
-        'ended_on',
-        'erased_at',
-        sql<boolean>`national_id_sealed IS NOT NULL`.as('has_national_id'),
-        sql<boolean>`insurance_number_sealed IS NOT NULL`.as('has_insurance_number'),
+        'e.id',
+        'e.display_name',
+        'e.address',
+        'e.birth_date',
+        'e.job_title',
+        'd.name as department_name',
+        'e.ended_on',
+        'e.erased_at',
+        sql<boolean>`e.national_id_sealed IS NOT NULL`.as('has_national_id'),
+        sql<boolean>`e.insurance_number_sealed IS NOT NULL`.as('has_insurance_number'),
       ])
-      .where('org_id', '=', ctx.orgId)
-      .where('legal_entity_id', '=', entity.id)
+      .where('e.org_id', '=', ctx.orgId)
+      .where('e.legal_entity_id', '=', entity.id)
       .execute();
     const { cutoff, included, employments } = await prepareLaborPeriod(
       ctx,
@@ -805,6 +860,8 @@ export const laborCheckRead = defineQuery({
           names.push({ employeeId: row.id, displayName: row.display_name });
         }
         if (row.address && row.address.trim() !== '') forbidden.add(row.address);
+        if (row.job_title && row.job_title.trim() !== '') forbidden.add(row.job_title);
+        if (row.department_name && row.department_name.trim() !== '') forbidden.add(row.department_name);
       }
       return {
         employeeId: row.id,
