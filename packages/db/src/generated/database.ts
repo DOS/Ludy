@@ -2967,6 +2967,7 @@ export interface MeetingsAudioSegmentTable {
   start_offset_seconds: ColumnType<number, number | undefined, NotGranted>;
   length_seconds: ColumnType<number, number, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  joined_from_pieces: ColumnType<boolean, boolean | undefined, NotGranted>;
 }
 
 /** crove_meetings.calendar_agenda */
@@ -3114,6 +3115,7 @@ export interface MeetingsMeetingTable {
   live_notes: ColumnType<boolean, boolean | undefined, NotGranted>;
   recording_stop_reason: string | null;
   summary_template: Generated<string>;
+  audio_used_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 /** crove_meetings.meeting_video */

@@ -305,6 +305,17 @@ suite('the owner compliance list of meetings (#2703)', () => {
     }
   });
 
+  it('only the meeting\'s recorder can stamp audio_used_at: the one column grant sits under the recorder-only update policy (#3187)', async () => {
+    const id = meetingIds[1]!;
+    const stamp = (c: pg.Client) => c.query('UPDATE crove_meetings.meeting SET audio_used_at = now() WHERE id = $1', [id]).then((r) => r.rowCount);
+    expect(await asUserContext(userIds.get('recorder')!, orgId, stamp)).toBe(1);
+    // The meeting is readable by the whole org, yet nobody else changes a row of it, the owner and the admin included.
+    for (const name of ['owner', 'admin', 'member', 'viewer']) expect(await asUserContext(userIds.get(name)!, orgId, stamp), name).toBe(0);
+    // And no other column came with it: the recorder cannot change who recorded or when the audio is kept to.
+    const other = (c: pg.Client) => c.query('UPDATE crove_meetings.meeting SET recorder_user_id = recorder_user_id WHERE id = $1', [id]);
+    expect(await outcome(asUserContext(userIds.get('recorder')!, orgId, other))).toMatchObject({ ok: false, code: '42501' });
+  });
+
   it('the definer answers a user-context owner of the context org only, and no text column', async () => {
     const call = (org: string) => (c: pg.Client) => c.query(`SELECT * FROM crove_meetings.meeting_owner_list_page($1::uuid, 200, NULL, NULL)`, [org]);
     for (const name of ['admin', 'member', 'viewer']) {

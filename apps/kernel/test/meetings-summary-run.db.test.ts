@@ -285,6 +285,14 @@ suite('the recorder\'s Vy summary route (#2580, M6 part B2)', () => {
     expect((await runMeetingSummary(deps(), orgId, asUser('recorder'), meetingId)).state).toBe('ready');
   });
 
+  it('a summary start stamps the meeting\'s recording as used, so a joined one is no longer replaced by a late upload (#3187)', async () => {
+    const meetingId = await seedMeeting('recorder');
+    const used = () => admin((c) => c.query<{ used: boolean }>('SELECT audio_used_at IS NOT NULL AS used FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2', [orgId, meetingId]));
+    expect((await used()).rows[0]?.used).toBe(false);
+    await exec('recorder', 'meetings.summary.start', { meetingId });
+    expect((await used()).rows[0]?.used).toBe(true);
+  });
+
   it('is rate limited per member, one at a time', async () => {
     const meetingId = await seedMeeting('recorder');
     const budget = new DraftBudget({ perUserPerMinute: 1, perOrgPerMinute: 100 });

@@ -19,6 +19,8 @@ export const meetingsManifest = defineModule({
         'segment_order',
         'start_offset_seconds',
         'length_seconds',
+        // True for a recording joined from the live pieces, which a late complete upload may replace (#3187).
+        'joined_from_pieces',
         'created_at',
       ]),
       // A member's own Google Calendar meetings, read to suggest "record this meeting" (B1, #3165): title, start, end, time zone, a join address and the number of invitees, never an invitee address, a description or an attachment. Read by the member alone.
@@ -64,6 +66,8 @@ export const meetingsManifest = defineModule({
           'consent_notice_version',
           // A code (tab_closed, mic_lost, ...), never text or personal data (A1, #3159).
           'recording_stop_reason',
+          // When a transcription or summary was started on the recording (#3187): a joined recording is replaced only while this is empty.
+          'audio_used_at',
           // A code (general, briefing, customer, supplier, one_on_one), never text (A4, #3162).
           'summary_template',
           'audio_retention_date',
