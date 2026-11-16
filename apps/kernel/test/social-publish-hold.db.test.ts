@@ -228,6 +228,54 @@ suite('social publishing hold on PostgreSQL (#946)', () => {
     await exec(o, 'social.publishing.release', {});
   });
 
+  it('never publishes a post more than an hour past its time, whatever kept it: it fails for a person (HELD_TOO_LONG) and the team is told (ADR-0053, C3c)', async () => {
+    const o = await org();
+    const platform = new Counting();
+    const recent = await duePost(o, { ago: '5 minutes' });
+    const stale = await duePost(o, { ago: '2 hours' });
+    const staleQueued = await duePost(o, { queue: true, ago: '90 minutes' });
+    // The job begins each: the late ones fail without a call, the recent one goes out.
+    for (const v of [stale, staleQueued]) expect(await run(o, v.id, platform)).toEqual({ action: 'none', reason: 'too_late' });
+    expect(await run(o, recent.id, platform)).toMatchObject({ action: 'call' });
+    for (const v of [stale, staleQueued]) expect(await status(o, v.postId)).toEqual({ status: 'failed', code: HELD_TOO_LONG });
+    // Only the recent one reached the platform.
+    expect(platform.sent).toHaveLength(1);
+    const failedEvents = await admin(async (c) => (await c.query<{ n: string }>("SELECT count(*)::text AS n FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.failed'", [o.orgId])).rows[0]?.n);
+    expect(failedEvents).toBe('2');
+    // Run again: they are failed, so nothing more happens and no second notice.
+    expect(await run(o, stale.id, platform)).toMatchObject({ action: 'none' });
+    expect(await admin(async (c) => (await c.query<{ n: string }>("SELECT count(*)::text AS n FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.failed'", [o.orgId])).rows[0]?.n)).toBe('2');
+  });
+
+  it('keeps a post going whose original time is old but whose retry time is recent: lateness is measured from the retry', async () => {
+    const o = await org();
+    const platform = new Counting();
+    const retried = await duePost(o, { ago: '3 hours' });
+    await admin((c) => c.query("UPDATE crove_social.post_variant SET error_retry_at = now() - interval '5 minutes' WHERE id = $1", [retried.id]));
+    expect(await run(o, retried.id, platform)).toMatchObject({ action: 'call' });
+    expect(platform.sent).toHaveLength(1);
+  });
+
+  it('a queued post that waited paused on its channel is held by a queue paused meanwhile, and fails for a person once the queue is on again over an hour late', async () => {
+    const o = await org();
+    const platform = new Counting();
+    const queued = await duePost(o, { queue: true, ago: '2 hours' });
+    const connectionId = (await admin(async (c) => (await c.query<{ id: string }>('SELECT channel_connection_id AS id FROM crove_social.post_variant WHERE id = $1', [queued.id])).rows[0]?.id)) as string;
+    // Paused on an expired channel, which was reconnected since (its recorded version differs); then an admin paused the queue.
+    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'paused', paused_connection_version = '2000-01-01T00:00:00Z' WHERE id = $1", [queued.id]));
+    const queue = (paused: boolean) => exec(o, 'social.queue.set', { connectionId, timeZone: 'Asia/Ho_Chi_Minh', slots: [{ weekday: 1, minute: 540 }], paused }, o.admin);
+    await queue(true);
+    expect(await run(o, queued.id, platform)).toEqual({ action: 'none', reason: 'resumed' });
+    expect(await run(o, queued.id, platform)).toEqual({ action: 'none', reason: 'queue_paused' });
+    expect(platform.sent).toHaveLength(0);
+    expect(await status(o, queued.postId)).toEqual({ status: 'scheduled', code: null });
+    // The queue on again, the post more than an hour past its slot: it waits for a person, and nothing was sent.
+    await queue(false);
+    expect(await run(o, queued.id, platform)).toEqual({ action: 'none', reason: 'too_late' });
+    expect(await status(o, queued.postId)).toEqual({ status: 'failed', code: HELD_TOO_LONG });
+    expect(platform.sent).toHaveLength(0);
+  });
+
   it('on release publishes the due posts exactly once, and leaves one more than an hour past its time to a person', async () => {
     const o = await org();
     const platform = new Counting();
