@@ -3863,6 +3863,18 @@ export const en = {
       cancel: 'Cancel',
       close: 'Close',
     },
+    dealOffer: {
+      title: "{sales}'s suggestions for the deal",
+      badge: '{sales} suggests · nothing happens until you click',
+      quotedReason: 'Quote {number} was sent to the customer, but the deal is not at the quote stage yet.',
+      wonReason: 'The customer accepted quote {number}, but the deal is still open.',
+      amountReason: "The deal's value is {amount}, while the total of quote {number} is {total}.",
+      moveTo: 'Move to {stage}',
+      setAmount: 'Set the deal value to the quote total',
+      dismiss: 'Dismiss',
+      moved: 'The deal was moved to "{stage}".',
+      amountSet: 'The deal value is now {amount}.',
+    },
     suggest: {
       title: 'Suggestions from {sales}',
       button: 'Ask {sales} to suggest lines',
