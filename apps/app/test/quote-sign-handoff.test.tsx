@@ -27,6 +27,9 @@ const state = vi.hoisted(() => ({
   orgAppsQueryExecuted: 0,
   failCreateOnce: false,
   failSignerOnce: false,
+  currentOrg: 'acme' as string | null,
+  switchOrgOnPdfFetch: null as string | null,
+  pinnedOrgs: [] as Array<{ step: string; org: string | null | undefined }>,
 }));
 
 vi.mock('../src/lib/auth.ts', () => ({
@@ -87,11 +90,12 @@ vi.mock('../src/lib/api.ts', async () => {
         return node([...path, prop]);
       },
     });
-  const rpcClient = {
+  const makeRpcClient = (pinnedOrg: string | null) => ({
     sign: {
       envelope: {
         create: async (input: unknown) => {
           state.calls.push({ step: 'create', args: input });
+          state.pinnedOrgs.push({ step: 'create', org: pinnedOrg });
           if (state.failCreateOnce) {
             state.failCreateOnce = false;
             throw new Error('network lost');
@@ -107,6 +111,7 @@ vi.mock('../src/lib/api.ts', async () => {
       signer: {
         add: async (input: unknown) => {
           state.calls.push({ step: 'addSigner', args: input });
+          state.pinnedOrgs.push({ step: 'addSigner', org: pinnedOrg });
           if (state.failSignerOnce) {
             state.failSignerOnce = false;
             throw new Error('signer network lost');
@@ -125,18 +130,26 @@ vi.mock('../src/lib/api.ts', async () => {
       quotes: {
         get: async (input: unknown) => {
           state.calls.push({ step: 'getQuote', args: input });
+          state.pinnedOrgs.push({ step: 'getQuote', org: pinnedOrg });
           return { buyer: state.quoteDetailBuyer };
         },
       },
     },
-  };
+  });
   return {
     orpc: node([]),
-    client: rpcClient,
+    client: makeRpcClient(null),
+    clientForOrg: (slug: string) => makeRpcClient(slug),
+    getCurrentOrg: () => state.currentOrg,
     queryClient: state.client,
     errorMessage: (e: unknown) => String(e),
-    apiFetch: async (path: string) => {
+    apiFetch: async (path: string, init?: { orgSlug?: string | null }) => {
       state.calls.push({ step: 'pdfFetch', args: path });
+      state.pinnedOrgs.push({ step: 'pdfFetch', org: init?.orgSlug });
+      if (state.switchOrgOnPdfFetch) {
+        state.currentOrg = state.switchOrgOnPdfFetch;
+        state.switchOrgOnPdfFetch = null;
+      }
       return {
         blob: async () => new Blob([state.pdfBytes], { type: 'application/pdf' }),
       };
@@ -145,11 +158,12 @@ vi.mock('../src/lib/api.ts', async () => {
 });
 
 vi.mock('../src/lib/sign-api.ts', () => ({
-  uploadSignPdf: async (file: File) => {
+  uploadSignPdf: async (file: File, orgSlug?: string | null) => {
     state.calls.push({
       step: 'uploadSignPdf',
       args: { name: file.name, type: file.type, size: file.size },
     });
+    state.pinnedOrgs.push({ step: 'uploadSignPdf', org: orgSlug });
     return { fileId: state.uploadedFileId };
   },
 }));
@@ -264,6 +278,9 @@ describe('Engage quote -> eSign handoff (#3512)', () => {
     state.orgAppsQueryExecuted = 0;
     state.failCreateOnce = false;
     state.failSignerOnce = false;
+    state.currentOrg = 'acme';
+    state.switchOrgOnPdfFetch = null;
+    state.pinnedOrgs.length = 0;
     state.modules = ['crm', 'sign'];
     state.quoteDetailBuyer = {
       name: 'Nguyen Van Buyer',
@@ -636,5 +653,55 @@ describe('Engage quote -> eSign handoff (#3512)', () => {
     expect((state.signQueryAsked[1] as { sourceIds: string[] }).sourceIds).toHaveLength(5);
     expect(manyHtml).toContain('href="/o/acme/sign/envelopes/env-55"');
     expect(manyHtml.split('data-testid="quote-send-esign"').length - 1).toBe(55);
+  });
+
+  it('pins the starting org across all requests and aborts before upload/create if active org switches mid-flight', async () => {
+    const navigated: unknown[] = [];
+    const createdIds: string[] = [];
+    const invalidateSpy = vi.spyOn(state.client, 'invalidateQueries');
+    const q = quoteSummary(5, { buyerName: 'Org A Buyer', buyerEmail: 'buyer@example.com' });
+
+    // Normal flow pins slug across pdfFetch, uploadSignPdf, create, and addSigner.
+    state.currentOrg = 'org-a';
+    await performQuoteSignHandoff({
+      quote: q,
+      slug: 'org-a',
+      envelopeTitle: 'Quote A',
+      signerRoleLabel: 'Khach hang',
+      navigate: (opts) => navigated.push(opts),
+      onCreated: (id) => createdIds.push(id),
+    });
+    expect(state.pinnedOrgs).toEqual([
+      { step: 'pdfFetch', org: 'org-a' },
+      { step: 'uploadSignPdf', org: 'org-a' },
+      { step: 'create', org: 'org-a' },
+      { step: 'addSigner', org: 'org-a' },
+    ]);
+
+    // Switching active org from org-a to org-b mid-flight aborts before upload/create/navigate/invalidation.
+    state.calls.length = 0;
+    state.pinnedOrgs.length = 0;
+    navigated.length = 0;
+    createdIds.length = 0;
+    invalidateSpy.mockClear();
+    state.currentOrg = 'org-a';
+    state.switchOrgOnPdfFetch = 'org-b';
+
+    await expect(
+      performQuoteSignHandoff({
+        quote: q,
+        slug: 'org-a',
+        envelopeTitle: 'Quote A',
+        signerRoleLabel: 'Khach hang',
+        navigate: (opts) => navigated.push(opts),
+        onCreated: (id) => createdIds.push(id),
+      }),
+    ).rejects.toThrow('Organization changed');
+
+    expect(state.calls.map((c) => c.step)).toEqual(['pdfFetch']);
+    expect(state.pinnedOrgs).toEqual([{ step: 'pdfFetch', org: 'org-a' }]);
+    expect(navigated).toEqual([]);
+    expect(createdIds).toEqual([]);
+    expect(invalidateSpy).not.toHaveBeenCalled();
   });
 });

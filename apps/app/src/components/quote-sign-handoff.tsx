@@ -12,7 +12,7 @@ import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { quoteLabel } from './quote-send.tsx';
 import { ErrorText } from './ui.tsx';
-import { apiFetch, client, errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { apiFetch, client, clientForOrg, errorMessage, getCurrentOrg, orpc, queryClient } from '../lib/api.ts';
 import { getConfig } from '../lib/auth.ts';
 import { uploadSignPdf } from '../lib/sign-api.ts';
 import type { SignEnvelopeStatus } from '../lib/sign-fields.ts';
@@ -130,7 +130,10 @@ export function canStartQuoteSignHandoff(
   return RETRYABLE_ENVELOPE_STATUSES.has(envelope.status);
 }
 
-async function resolveQuoteBuyer(quote: QuoteSignSource): Promise<{ name: string; email: string | null }> {
+async function resolveQuoteBuyer(
+  quote: QuoteSignSource,
+  rpc: Pick<typeof client, 'crm'> = client,
+): Promise<{ name: string; email: string | null }> {
   let buyerName = quote.buyerName ?? null;
   let buyerEmail = quote.buyerEmail ?? null;
 
@@ -141,7 +144,7 @@ async function resolveQuoteBuyer(quote: QuoteSignSource): Promise<{ name: string
       buyerName = cached.buyer.name;
       buyerEmail = cached.buyer.email;
     } else if (quote.status !== 'draft') {
-      const getQuote = client.crm?.quotes?.get;
+      const getQuote = rpc.crm?.quotes?.get;
       if (typeof getQuote === 'function') {
         const detail = await getQuote({ quoteId: quote.id }).catch(() => null);
         if (detail?.buyer) {
@@ -159,6 +162,7 @@ async function resolveQuoteBuyer(quote: QuoteSignSource): Promise<{ name: string
 }
 
 export interface QuoteSignHandoffAttempt {
+  orgSlug?: string | null;
   envelopeTitle?: string;
   sourceFileId?: string;
   envelopeCreateKey: string;
@@ -206,6 +210,22 @@ export interface QuoteSignHandoffDeps {
   onCreated?: (envelopeId: string) => void;
 }
 
+function currentActiveOrg(): string | null {
+  return typeof getCurrentOrg === 'function' ? getCurrentOrg() : null;
+}
+
+function isSameOrgActive(pinnedOrg: string | null): boolean {
+  if (!pinnedOrg) return true;
+  const live = currentActiveOrg();
+  return live === null || live === pinnedOrg;
+}
+
+function assertSameOrgActive(pinnedOrg: string | null): void {
+  if (!isSameOrgActive(pinnedOrg)) {
+    throw new Error('Organization changed while preparing eSign envelope');
+  }
+}
+
 export async function performQuoteSignHandoff({
   quote,
   slug,
@@ -215,25 +235,39 @@ export async function performQuoteSignHandoff({
   attempt: givenAttempt,
   onCreated,
 }: QuoteSignHandoffDeps): Promise<string> {
+  const pinnedOrg = slug || currentActiveOrg() || null;
+  assertSameOrgActive(pinnedOrg);
   const attempt = givenAttempt ?? createQuoteSignHandoffAttempt();
+  if (attempt.orgSlug && pinnedOrg && attempt.orgSlug !== pinnedOrg) {
+    throw new Error('Organization changed while preparing eSign envelope');
+  }
+  attempt.orgSlug ??= pinnedOrg;
+  const orgClient = pinnedOrg && typeof clientForOrg === 'function' ? clientForOrg(pinnedOrg) : client;
   attempt.envelopeTitle ??= envelopeTitle.trim().slice(0, 300);
 
   if (!attempt.sourceFileId) {
-    const response = await apiFetch(`/api/crm/quotes/${encodeURIComponent(quote.id)}/pdf`);
+    const response = await apiFetch(
+      `/api/crm/quotes/${encodeURIComponent(quote.id)}/pdf`,
+      pinnedOrg ? { orgSlug: pinnedOrg } : undefined,
+    );
+    assertSameOrgActive(pinnedOrg);
     const blob = await response.blob();
+    assertSameOrgActive(pinnedOrg);
     const baseLabel = quote.number ? quoteLabel(quote) : `bao-gia-${quote.id.slice(0, 8)}`;
     const filename = `${baseLabel.replace(/[^A-Za-z0-9_.-]+/g, '-')}.pdf`;
     const pdfFile = new File([blob], filename, { type: 'application/pdf' });
-    const uploaded = await uploadSignPdf(pdfFile);
+    const uploaded = await uploadSignPdf(pdfFile, pinnedOrg ?? undefined);
+    assertSameOrgActive(pinnedOrg);
     attempt.sourceFileId = uploaded.fileId;
   }
 
   let attemptedCreateOrSigner = false;
   try {
     if (!attempt.envelopeId) {
+      assertSameOrgActive(pinnedOrg);
       attemptedCreateOrSigner = true;
       attempt.pendingCreate = true;
-      const created = await client.sign.envelope.create({
+      const created = await orgClient.sign.envelope.create({
         title: attempt.envelopeTitle,
         sourceKind: 'crm_quote',
         sourceId: quote.id,
@@ -245,10 +279,12 @@ export async function performQuoteSignHandoff({
     }
 
     if (!attempt.signerAdded) {
+      assertSameOrgActive(pinnedOrg);
       attemptedCreateOrSigner = true;
-      const buyer = await resolveQuoteBuyer(quote);
+      const buyer = await resolveQuoteBuyer(quote, orgClient);
+      assertSameOrgActive(pinnedOrg);
       if (buyer.name) {
-        await client.sign.signer.add({
+        await orgClient.sign.signer.add({
           envelopeId: attempt.envelopeId,
           routingOrder: 1,
           signerRole: 'signer',
@@ -263,7 +299,7 @@ export async function performQuoteSignHandoff({
       attempt.signerAdded = true;
     }
   } finally {
-    if (attemptedCreateOrSigner) {
+    if (attemptedCreateOrSigner && isSameOrgActive(pinnedOrg)) {
       await queryClient.invalidateQueries({ queryKey: orpc.sign.envelope.by_source.key() });
       await queryClient.invalidateQueries({ queryKey: ['sign', 'envelopes'] });
       if (attempt.envelopeId) {
@@ -272,6 +308,7 @@ export async function performQuoteSignHandoff({
     }
   }
 
+  assertSameOrgActive(pinnedOrg);
   const envelopeId = attempt.envelopeId;
   if (slug) {
     await navigate({ to: '/o/$slug/sign/envelopes/$id', params: { slug, id: envelopeId } });
