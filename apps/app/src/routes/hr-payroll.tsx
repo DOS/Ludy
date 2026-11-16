@@ -749,6 +749,7 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
           lines={s.lines}
           onImported={async () => {
             setAccept(false);
+            setEditing(null);
             await refresh();
           }}
           onClose={() => setImporting(false)}

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useMutation } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import type { HrLineView } from '@crove/kernel-contract';
+import type { TimekeepingIssue } from '@crove/l10n-vn';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
@@ -24,6 +25,43 @@ const STATUS_VARIANT: Record<TimekeepingMatchStatus, 'success' | 'secondary' | '
 
 const NUM = 'px-4 py-3 text-right tabular-nums';
 
+function issueText(t: ReturnType<typeof useTranslations<'hrPayroll'>>, issue: TimekeepingIssue): string {
+  const row = String(issue.rowNumber ?? 0);
+  const column = issue.header ?? issue.column ?? '';
+  const value = issue.value ?? '';
+  const employee = issue.employeeKey ?? issue.value ?? '';
+  switch (issue.code) {
+    case 'empty_input':
+      return t('timekeeping.issues.empty_input');
+    case 'unclosed_quote':
+      return t('timekeeping.issues.unclosed_quote', { row });
+    case 'malformed_quote':
+      return t('timekeeping.issues.malformed_quote', { row });
+    case 'missing_header':
+      return t('timekeeping.issues.missing_header');
+    case 'missing_employee_column':
+      return t('timekeeping.issues.missing_employee_column');
+    case 'missing_timekeeping_columns':
+      return t('timekeeping.issues.missing_timekeeping_columns');
+    case 'missing_employee_key':
+      return t('timekeeping.issues.missing_employee_key', { row });
+    case 'invalid_number':
+      return t('timekeeping.issues.invalid_number', { row, column, value });
+    case 'negative_number':
+      return t('timekeeping.issues.negative_number', { row, column, value });
+    case 'extra_columns':
+      return t('timekeeping.issues.extra_columns', { row, value });
+    case 'duplicate_employee':
+      return t('timekeeping.issues.duplicate_employee', { row, employee });
+    case 'duplicate_header_column':
+      return t('timekeeping.issues.duplicate_header_column', { column });
+    case 'incompatible_column_unit':
+      return t('timekeeping.issues.incompatible_column_unit', { row, column });
+    case 'overtime_cap_exceeded':
+      return t('timekeeping.issues.overtime_cap_exceeded', { row, employee, actual: value, limit: issue.limit ?? '40' });
+  }
+}
+
 export function TimekeepingImportPanel({
   runId,
   month,
@@ -41,6 +79,7 @@ export function TimekeepingImportPanel({
 }) {
   const t = useTranslations('hrPayroll');
   const [raw, setRaw] = useState(initialText);
+  const revRef = useRef(0);
   const preview = raw.trim() === '' ? null : buildTimekeepingPreview(raw, month, lines);
 
   const apply = useMutation({
@@ -50,6 +89,7 @@ export function TimekeepingImportPanel({
     },
     onSuccess: async () => {
       await onImported();
+      revRef.current += 1;
       setRaw('');
       onClose();
     },
@@ -57,7 +97,9 @@ export function TimekeepingImportPanel({
 
   const pickFile = async (file: File | undefined) => {
     if (!file) return;
-    setRaw(await file.text());
+    const rev = ++revRef.current;
+    const text = await file.text();
+    if (revRef.current === rev) setRaw(text);
   };
 
   return (
@@ -87,7 +129,10 @@ export function TimekeepingImportPanel({
             rows={5}
             value={raw}
             placeholder={t('timekeeping.placeholder')}
-            onChange={(e) => setRaw(e.target.value)}
+            onChange={(e) => {
+              revRef.current += 1;
+              setRaw(e.target.value);
+            }}
             data-testid="hr-timekeeping-text"
           />
         </div>
@@ -109,11 +154,11 @@ export function TimekeepingImportPanel({
           {preview.duplicateTargetCount > 0 && <ErrorText>{t('timekeeping.duplicateTargetError')}</ErrorText>}
           {preview.invalidValueCount > 0 && <ErrorText>{t('timekeeping.invalidValuesError')}</ErrorText>}
           {preview.errors.map((issue, idx) => (
-            <ErrorText key={`${issue.code}-${idx}`}>{issue.message}</ErrorText>
+            <ErrorText key={`${issue.code}-${idx}`}>{issueText(t, issue)}</ErrorText>
           ))}
           {preview.warnings.map((issue, idx) => (
             <p key={`${issue.code}-${idx}`} className="text-xs text-warning" data-testid="hr-timekeeping-warning">
-              {issue.message}
+              {issueText(t, issue)}
             </p>
           ))}
           {preview.rows.length > 0 && (

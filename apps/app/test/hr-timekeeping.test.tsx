@@ -177,9 +177,16 @@ describe('HR timekeeping matching and preview (#3371)', () => {
     const okHtml = renderPanel({ initialText: otSheet, locale: 'vi' });
     expect(okHtml).toContain('data-testid="hr-timekeeping-preview"');
     expect(okHtml).toContain('data-testid="hr-timekeeping-warning"');
+    expect(okHtml).toContain('vượt mức 40 giờ/tháng');
     expect(okHtml).toContain('&gt;40h');
     expect(okHtml).toContain('Áp dụng (1 dòng)');
     expect(okHtml).not.toMatch(/disabled=""[^>]*data-testid="hr-timekeeping-apply"|data-testid="hr-timekeeping-apply"[^>]*disabled=""/);
+
+    const okEnHtml = renderPanel({ initialText: otSheet, locale: 'en' });
+    expect(okEnHtml).toContain('exceeds 40h cap');
+
+    const badHtml = renderPanel({ initialText: 'Họ tên\tNghỉ không lương\nNguyễn Thị Hằng\tabc', locale: 'vi' });
+    expect(badHtml).toContain('không phải số thập phân hợp lệ');
 
     expect(viMessages.hrPayroll.flag.check_overtime_cap).toBeTruthy();
     expect(en.hrPayroll.flag.check_overtime_cap).toBeTruthy();
