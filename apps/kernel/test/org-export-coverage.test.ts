@@ -52,7 +52,7 @@ describe('export coverage problems (#3201)', () => {
   });
 
   it('checks the covered schemas only, so a schema not added yet is left alone', () => {
-    expect(COVERED_SCHEMAS).toEqual(['crove_finance', 'crove_kernel']);
+    expect(COVERED_SCHEMAS).toEqual(['crove_finance', 'crove_kernel', 'crove_crm', 'crove_hr']);
     expect(exportCoverageProblems(['crove_social.post', 'crove_finance.journal_line'], exported, {})).toEqual([]);
   });
 });
