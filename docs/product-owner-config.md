@@ -287,6 +287,11 @@ paths, with the line PO's security review):
   tables, commands or send sites;
 - the generated DB types.
 
+The Platform PO is a role, not a person (owner, 2026-11-16): any dedicated
+session that runs it on a flagship model with fresh context, and is neither the
+PR's author nor the PR's own PO, may give the shared-core review. What matters
+is one independent second agent that checks those files once.
+
 How to ask and how long to wait (owner decision 2026-11-16):
 - The PR's PO adds the label `shared-core` and comments on the PR
   `Request: Shared-core review (Platform PO)` with the head SHA and the
