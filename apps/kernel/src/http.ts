@@ -1501,12 +1501,18 @@ export function createHttpApp(deps: HttpDeps) {
       // The check also answers the legal-entity scope the stream's hints are filtered by (#1692).
       // And the apps the org has off now (ADR-0053): a stream does not push the hints of an app that is off, and re-reads this on every check. A check that cannot
       // tell leaves the filter out, as the app's own calls into an off app are refused by the runtime anyway.
+      // The apps off at the last check that could read them: a read that fails keeps that filter in force (it never widens a stream), and logs the error's class.
+      let lastAppsOff: ReadonlySet<string> | null = null;
       const check = async () => {
         const scope = streamScopeOf(await runtime.query(STREAM_CHECK_QUERY, {}, { actor, orgId }));
-        const on = await runtime.effectiveModules(orgId).catch(() => null);
-        if (on === null) return scope;
+        const on = await runtime.effectiveModules(orgId).catch((error: unknown) => {
+          console.warn(`[stream] the apps of org ${orgId.slice(0, 8)} could not be read: ${error instanceof Error ? error.name : typeof error}`);
+          return null;
+        });
+        if (on === null) return lastAppsOff && lastAppsOff.size > 0 ? { ...scope, appsOff: lastAppsOff } : scope;
         // An app this deployment does not run is not "off": nothing writes its rows, and a runtime without it (a kernel-only one) is not filtering.
         const appsOff = new Set(STREAM_FILTERED_APPS.filter((app) => runtime.installed(app) && !on.includes(app)));
+        lastAppsOff = appsOff;
         return appsOff.size === 0 ? scope : { ...scope, appsOff };
       };
       let scope: StreamScope;
@@ -2007,7 +2013,7 @@ export function createHttpApp(deps: HttpDeps) {
   }
 
   // The purpose of an upload, for the org it is for: the Meetings media purposes are Meetings' own, so an org that switched Meetings off, or does not hold it,
-  // gets the answer of a purpose that does not exist (ADR-0053). The grant a Meetings upload needs is a kernel command, which the app gate does not cover.
+  // gets the answer of a purpose that is not installed (404, as when the deployment leaves Meetings out; ADR-0053). The grant a Meetings upload needs is a kernel command, which the app gate does not cover.
   async function uploadPurposeFor(value: unknown, orgId: string): Promise<UploadPurpose> {
     const purpose = uploadPurpose(value);
     if ((purpose === 'meeting_audio' || purpose === 'meeting_video') && !(await runtime.appOn(orgId, 'meetings', { fresh: true }).catch(() => true))) {

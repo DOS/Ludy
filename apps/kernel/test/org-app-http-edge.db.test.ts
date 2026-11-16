@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The HTTP edge and the stream trigger of the per-org app switch (ADR-0053, slice c C2b), on PostgreSQL 17: switching an app off sends the org_apps hint on the
-// stream channel, the Meetings upload purposes answer as a purpose that does not exist while Meetings is off, and the extension is offered no Meetings
+// stream channel, the Meetings upload purposes answer as a purpose that is not installed (404) while Meetings is off, and the extension is offered no Meetings
 // feature or scope. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -100,7 +100,7 @@ suite('the HTTP edge and the stream of the per-org app switch (ADR-0053, C2b)', 
     }
   });
 
-  it('answers a Meetings upload purpose as one that does not exist while Meetings is off, and as before once it is on', async () => {
+  it('answers a Meetings upload purpose as not installed (404) while Meetings is off, and as before once it is on', async () => {
     const post = (purpose: string) =>
       http.request('/api/files', { method: 'POST', headers: { authorization: 'Bearer t', [ORG_HEADER]: slug }, body: (() => { const f = new FormData(); f.set('purpose', purpose); return f; })() });
     // On: the purpose is known, so this route refuses it for another reason (the media goes through the staged upload).
