@@ -165,4 +165,26 @@ suite('social link-in-bio page on PostgreSQL (#707)', () => {
     // The API role cannot write clicks; only the definer does.
     await expect(pool.query("INSERT INTO crove_social.bio_click (org_id, page_id, target, day) SELECT org_id, id, 'button:0', current_date FROM crove_social.bio_page")).rejects.toMatchObject({ code: '42501' });
   });
+
+  it('answers as an unknown page while Social is off for the org, and as before once it is on (ADR-0053, C2)', async () => {
+    const o = await org();
+    const conn = await connection(o.orgId, o.owner);
+    const image = await socialFile(o.orgId, o.owner);
+    const { postId } = await exec<{ postId: string }>(o, o.owner, 'social.post.create', { body: 'Bánh mới', linkUrl: 'https://tiembanh.example/moi', media: [{ fileId: image }], channels: [{ connectionId: conn }] });
+    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'published', published_at = now(), external_url = 'https://social.example/p/1' WHERE post_id = $1", [postId]));
+    const avatar = await socialFile(o.orgId, o.owner);
+    await save(o, o.owner, { slug: 'bio-tat', title: 'Tiệm', avatarFileId: avatar, buttons: [{ label: 'Website', url: 'https://tiembanh.example/' }], showPosts: true, published: true });
+    const setApp = (enabled: boolean) => rt.execute('kernel.org.set_app', { module: 'social', enabled }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+    expect(await bioView(rt, 'bio-tat')).not.toBeNull();
+    await setApp(false);
+    // The same answers as for a slug that never existed, and no click is counted.
+    expect(await bioView(rt, 'bio-tat')).toEqual(await bioView(rt, 'khong-co-trang-nay'));
+    expect(await bioGo(rt, 'bio-tat', 'button:0', 'Mozilla/5.0')).toBeNull();
+    expect(await fileOf('bio-tat', avatar)).toEqual([]);
+    await setApp(true);
+    expect(await bioView(rt, 'bio-tat')).not.toBeNull();
+    expect(await bioGo(rt, 'bio-tat', 'button:0', 'Mozilla/5.0')).toBe('https://tiembanh.example/');
+    expect((await fileOf('bio-tat', avatar)).length).toBe(1);
+    expect((await page(o, o.viewer))?.clicks).toEqual({ 'button:0': 1 });
+  });
 });
