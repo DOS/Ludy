@@ -976,6 +976,8 @@ export function createRpcHandler(
         reorder: os.notes.todos.reorder.handler(notesCommand('notes.todo.reorder')),
         delete: os.notes.todos.delete.handler(notesCommand('notes.todo.delete')),
         restore: os.notes.todos.restore.handler(notesCommand('notes.todo.restore')),
+        linkAdd: os.notes.todos.linkAdd.handler(notesCommand('notes.todo.link_add')),
+        linkRemove: os.notes.todos.linkRemove.handler(notesCommand('notes.todo.link_remove')),
         handOver: os.notes.todos.handOver.handler(notesCommand('notes.todo.hand_over')),
         myWork: os.notes.todos.myWork.handler(notesQuery('notes.my_work')),
         counts: os.notes.todos.counts.handler(notesQuery('notes.todo.counts')),

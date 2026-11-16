@@ -14,6 +14,7 @@ import { TableCell, TableRow } from '@crove/ui/components/table';
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { Textarea } from '@crove/ui/components/textarea';
 import { DateInput } from '../components/date-input.tsx';
+import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
 import { DataTable, Empty, ErrorText, FieldError, ListSkeleton, PageHeader, PageSkeleton, fieldControl } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { OPEN_TASK_STATUSES, TASK_LIST_LIMIT, TASK_STATUSES, agentPermissions, fromTodo, meetingItemOf, socialPostOf, taskDueDay, taskDueFromDay, type TaskFilter, type TaskStatus, type TasksSearch } from '../lib/agents.ts';
@@ -271,6 +272,7 @@ export function TaskDetailPage() {
   const { slug, id } = useParams({ strict: false }) as { slug: string; id: string };
   const t = useTranslations('tasks');
   const ta = useTranslations('agents');
+  const tn = useTranslations('notes');
   const f = useFormat();
   const org = useQuery(orpc.org.get.queryOptions());
   const chart = useQuery(orpc.chart.get.queryOptions());
@@ -444,6 +446,15 @@ export function TaskDetailPage() {
           </div>
         )}
       </section>
+      {notesInstalled() && (
+        <RecordNotesPanel
+          slug={slug}
+          target={{ targetType: 'kernel.task', targetId: task.id }}
+          headingId={`notes-task-${task.id}`}
+          label={tn('panel.toggleOf', { name: task.title })}
+          empty={tn('panel.emptyRecord')}
+        />
+      )}
     </div>
   );
 }

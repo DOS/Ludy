@@ -76,23 +76,33 @@ export const notesExportMine = defineQuery({
             .orderBy('id')
             .execute();
 
-    const ids = notes.map((n) => n.id);
+    const noteIdsList = notes.map((n) => n.id);
+    const todoIdsList = todos.map((t) => t.id);
     const links =
-      ids.length === 0
+      noteIdsList.length === 0 && todoIdsList.length === 0
         ? []
         : await ctx.trx
             .selectFrom('crove_notes.link')
-            .select(['note_id', 'target_type', 'target_id'])
+            .select(['note_id', 'todo_id', 'target_type', 'target_id'])
             .where('org_id', '=', ctx.orgId)
-            .where('note_id', 'in', ids)
+            .where((eb) => {
+              const clauses = [];
+              if (noteIdsList.length > 0) clauses.push(eb('note_id', 'in', noteIdsList));
+              if (todoIdsList.length > 0) clauses.push(eb('todo_id', 'in', todoIdsList));
+              return eb.or(clauses);
+            })
             .orderBy('created_at')
             .orderBy('id')
             .execute();
-    const linksOf = new Map<string, { targetType: string; targetId: string }[]>();
+    const noteLinksOf = new Map<string, { targetType: string; targetId: string }[]>();
+    const todoLinksOf = new Map<string, { targetType: string; targetId: string }[]>();
     for (const l of links) {
-      const list = linksOf.get(l.note_id) ?? [];
+      const targetMap = l.note_id !== null ? noteLinksOf : todoLinksOf;
+      const ownerId = l.note_id ?? l.todo_id;
+      if (ownerId === null) continue;
+      const list = targetMap.get(ownerId) ?? [];
       list.push({ targetType: l.target_type, targetId: l.target_id });
-      linksOf.set(l.note_id, list);
+      targetMap.set(ownerId, list);
     }
     return {
       exportedAt: new Date().toISOString(),
@@ -107,7 +117,7 @@ export const notesExportMine = defineQuery({
         updatedAt: new Date(n.updated_at).toISOString(),
         archivedAt: iso(n.archived_at),
         deletedAt: iso(n.deleted_at),
-        links: linksOf.get(n.id) ?? [],
+        links: noteLinksOf.get(n.id) ?? [],
       })),
       todos: todos.map((t) => ({
         id: t.id,
@@ -125,6 +135,7 @@ export const notesExportMine = defineQuery({
         deletedAt: iso(t.deleted_at),
         sourceNoteId: t.source_note_id,
         taskId: t.task_id,
+        links: todoLinksOf.get(t.id) ?? [],
       })),
       truncated: noteKeep.length < noteIds.length || todoKeep.length < todoIds.length,
     };

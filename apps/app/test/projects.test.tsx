@@ -19,6 +19,12 @@ import {
   sortBoardTasks,
 } from '../src/lib/projects.ts';
 
+const authState = vi.hoisted(() => ({ modules: ['projects', 'notes'] as string[] }));
+
+vi.mock('../src/lib/auth.ts', () => ({
+  getConfig: () => ({ modules: authState.modules }),
+}));
+
 const queryClientState = vi.hoisted(() => ({ current: null as unknown as QueryClient }));
 
 vi.mock('../src/lib/api.ts', async () => {
@@ -302,6 +308,33 @@ describe('projects SSR screens & board (#2591)', () => {
       boardData,
     );
 
+    queryClientState.current.setQueryData(['notes', 'panel', { targetType: 'projects.project', targetId: '00000000-0000-4000-8000-000000000001' }], {
+      pinned: [],
+      latest: [],
+      todos: [
+        {
+          id: 'todo-1',
+          title: 'Check vendor contract',
+          status: 'open',
+          position: 1,
+          dueOn: '2026-11-20',
+          dueAt: '2026-11-20T16:59:59.000Z',
+          dueTime: null,
+          timeZone: 'Asia/Ho_Chi_Minh',
+          remindAt: null,
+          group: 'week',
+          overdue: false,
+          steps: { done: 0, total: 0 },
+          taskId: null,
+          revision: 1,
+          createdAt: '2026-11-10T00:00:00.000Z',
+          updatedAt: '2026-11-10T00:00:00.000Z',
+          doneAt: null,
+          deletedAt: null,
+        },
+      ],
+    });
+
     const detailHtml = renderToStaticMarkup(wrap('vi', <ProjectDetailPage />));
     expect(detailHtml).toContain('data-testid="hidden-entity-banner"');
     expect(detailHtml).toContain('2');
@@ -309,5 +342,12 @@ describe('projects SSR screens & board (#2591)', () => {
     expect(detailHtml).toContain('data-testid="view-toggle-board"');
     expect(detailHtml).toContain('data-testid="view-toggle-list"');
     expect(detailHtml).toContain('Kiểm kho chi nhánh HN');
+    expect(detailHtml).toContain('data-testid="panel-todos"');
+    expect(detailHtml).toContain('Check vendor contract');
+
+    authState.modules = ['projects'];
+    const withoutNotesHtml = renderToStaticMarkup(wrap('vi', <ProjectDetailPage />));
+    expect(withoutNotesHtml).not.toContain('data-testid="panel-todos"');
+    authState.modules = ['projects', 'notes'];
   });
 });

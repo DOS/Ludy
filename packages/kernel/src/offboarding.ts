@@ -34,7 +34,7 @@ export const EXPORT_TABLES = {
   'kernel.proposal': { from: 'crove_kernel.proposal', omit: [] },
   'kernel.activity': { from: 'crove_kernel.activity', omit: [] },
   'kernel.audit_event': { from: 'crove_kernel.audit_event', omit: [] },
-  // The org chart and its work (ADR-0029). Runs, wake-ups, budgets and kill switches are machinery and stay out.
+  // The org chart and its work (ADR-0029). Runs and wake-ups are machinery and stay out; the budgets and kill switches the org's people set are exported further down (#3367).
   'kernel.position': { from: 'crove_kernel.position', omit: [] },
   'kernel.agent': { from: 'crove_kernel.agent', omit: [] },
   'kernel.task': { from: 'crove_kernel.task', omit: [] },
@@ -64,6 +64,25 @@ export const EXPORT_TABLES = {
   'kernel.mail_message': { from: 'crove_kernel.mail_message', omit: [] },
   'kernel.mail_suppression': { from: 'crove_kernel.mail_suppression', omit: [] },
   'kernel.mail_event': { from: 'crove_kernel.mail_event', omit: [] },
+  // What the org's people decided and set up in the kernel (#3367): budgets and kill switches, how long a proposal waits, the tax profile and the filings marked done,
+  // the voucher number series with every allocation and void, which legal entity a record belongs to, the views members shared, availability, permission overrides and the Inbox.
+  // What row security keeps to one member (notifications and their mutes, the daily mail setting, a member's own calendar and meeting platform accounts, private views)
+  // is not here: the snapshot reads as the system context, which would hand the owner what the app never shows them.
+  'kernel.budget_policy': { from: 'crove_kernel.budget_policy', omit: [] },
+  'kernel.kill_switch': { from: 'crove_kernel.kill_switch', omit: [] },
+  'kernel.proposal_policy': { from: 'crove_kernel.proposal_policy', omit: [] },
+  'kernel.tax_profile': { from: 'crove_kernel.tax_profile', omit: [] },
+  'kernel.tax_obligation_done': { from: 'crove_kernel.tax_obligation_done', omit: [] },
+  'kernel.number_series': { from: 'crove_kernel.number_series', omit: [] },
+  'kernel.number_allocation': { from: 'crove_kernel.number_allocation', omit: [] },
+  'kernel.number_series_policy': { from: 'crove_kernel.number_series_policy', omit: [] },
+  'kernel.number_void': { from: 'crove_kernel.number_void', omit: [] },
+  'kernel.record_le': { from: 'crove_kernel.record_le', omit: [] },
+  // Only the views a member shared: a private view is readable by its member alone (the snapshot's system context would see it, so the filter is here, not in RLS).
+  'kernel.saved_view': { from: '(SELECT v.* FROM crove_kernel.saved_view v WHERE v.shared)', omit: [] },
+  'kernel.member_availability': { from: 'crove_kernel.member_availability', omit: [] },
+  'kernel.member_permission_override': { from: 'crove_kernel.member_permission_override', omit: [] },
+  'kernel.inbox_item': { from: 'crove_kernel.inbox_item', omit: [] },
   'finance.purchase_document': { from: 'crove_finance.purchase_document', omit: ['search'] },
   'finance.purchase_line': { from: 'crove_finance.purchase_line', omit: [] },
   // The invoice's own VAT table by rate (#685).

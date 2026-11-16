@@ -25,6 +25,7 @@ import {
   refreshProjectQueries,
   seatOptionLabel,
 } from '../components/project-task-dialog.tsx';
+import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader, PageSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import type { TaskStatus } from '../lib/agents.ts';
@@ -215,6 +216,7 @@ export function ProjectsPage() {
 export function ProjectDetailPage() {
   const { slug, id } = useParams({ strict: false }) as { slug: string; id: string };
   const t = useTranslations('projects');
+  const tn = useTranslations('notes');
 
   const userPickedView = useRef(false);
   const [view, setView] = useState<ProjectViewMode>(() =>
@@ -467,6 +469,16 @@ export function ProjectDetailPage() {
           });
         }}
       />
+
+      {notesInstalled() && (
+        <RecordNotesPanel
+          slug={slug}
+          target={{ targetType: 'projects.project', targetId: project.id }}
+          headingId={`notes-project-${project.id}`}
+          label={tn('panel.toggleOf', { name: project.name })}
+          empty={tn('panel.emptyRecord')}
+        />
+      )}
 
       <AttachTaskDialog
         open={attachOpen}

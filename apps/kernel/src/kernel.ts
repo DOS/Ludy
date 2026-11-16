@@ -85,7 +85,7 @@ import { notesCommands, notesManifest, notesQueries } from '@crove/mod-notes';
 import { projectsCommands, projectsManifest, projectsQueries } from '@crove/mod-projects';
 import { adsCommands, adsManifest, adsQueries } from '@crove/mod-ads';
 import { meetingsCommands, meetingsManifest, meetingsQueries, setSummaryEnabled, setTranscribeBroker, setTranscribeEnabled } from '@crove/mod-meetings';
-import { GoogleAdsConnector, MetaAdsConnector, MetaWriteConnector, adActivators, adLaunchWriters, adPausers, adPlatforms, adRevokers, type AdActivator, type AdPauser, type AdPlatform, type AdRevoker, type LaunchWriter } from '@crove/ad-platform';
+import { GoogleAdsConnector, MetaAdsConnector, MetaWriteConnector, adActivators, adLaunchWriters, adPausers, adPlatforms, adRevokers, adStateReaders, type AdActivator, type AdPauser, type AdPlatform, type AdRevoker, type AdStateReader, type LaunchWriter } from '@crove/ad-platform';
 import { createSandboxEInvoiceProvider, type EInvoiceProvider } from '@crove/einvoice';
 import { createSandboxMarketplaceProvider, isMarketplaceAdapter, type MarketplaceProvider } from '@crove/mod-finance';
 import { createAuthenticator, type Authenticate } from './auth.ts';
@@ -487,6 +487,17 @@ export function adActivatorsOf(config: Pick<Config, 'ADS_SANDBOX' | 'ADS_LIVE_LA
   });
 }
 
+// The state readers the worker is given (#3301), by provider: the frozen view of `readStates` and nothing else, apart from the writers, built with the same providers and the same
+// switch as them (the offline sandbox's when ADS_SANDBOX is on; Meta's only where ADS_LIVE_LAUNCH is on, since without it nothing was ever launched there).
+export function adStateReadersOf(config: Pick<Config, 'ADS_SANDBOX' | 'ADS_LIVE_LAUNCH' | 'CHANNEL_META_ADS_WRITE_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION'>): Readonly<Record<string, AdStateReader>> {
+  return adStateReaders({
+    sandbox: config.ADS_SANDBOX === 'true',
+    ...(config.ADS_LIVE_LAUNCH === 'true' && config.CHANNEL_META_ADS_WRITE_APP_SECRET
+      ? { meta: { writeAppSecret: config.CHANNEL_META_ADS_WRITE_APP_SECRET, ...(config.CHANNEL_META_GRAPH_VERSION ? { graphVersion: config.CHANNEL_META_GRAPH_VERSION } : {}) } }
+      : {}),
+  });
+}
+
 export function channelConnectors(config: Omit<ChannelConfig, 'CHANNEL_SANDBOX'>): Partial<Record<string, OAuthConnector>> {
   const connectors: Partial<Record<string, OAuthConnector>> = {};
   if (config.CHANNEL_META_APP_ID && config.CHANNEL_META_APP_SECRET) {
@@ -797,7 +808,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             exportSealer: exportSealer(config),
             exportRetentionDays: config.EXPORT_RETENTION_DAYS,
             evidenceLockDays: config.EVIDENCE_LOCK_DAYS,
-            channels: { broker: resolved.broker, einvoiceProviders: einvoiceProvidersOf(config), marketplaceProviders: marketplaceProvidersOf(config), conversationHistory: config.CHANNEL_ZALO_HISTORY === 'true', facebookHistory: config.CHANNEL_FACEBOOK_HISTORY === 'true', threadsHistory: config.CHANNEL_THREADS_HISTORY === 'true', youtubeHistory: config.CHANNEL_YOUTUBE_HISTORY === 'true', conversationMediaHosts: zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS), conversationMediaHostsBy: { whatsapp: zaloMediaHostsOf(config.CHANNEL_WHATSAPP_MEDIA_HOSTS) }, conversationAdapters: channelConversationAdapters(config), publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), meetingPlatforms: meetingPlatformAdapters({ sandbox: config.CHANNEL_SANDBOX === 'true' }), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), adPlatforms: adPlatformsOf(config), adRevokers: adRevokersOf(config), adWriters: adWritersOf(config), adPausers: adPausersOf(config), adActivators: adActivatorsOf(config) },
+            channels: { broker: resolved.broker, einvoiceProviders: einvoiceProvidersOf(config), marketplaceProviders: marketplaceProvidersOf(config), conversationHistory: config.CHANNEL_ZALO_HISTORY === 'true', facebookHistory: config.CHANNEL_FACEBOOK_HISTORY === 'true', threadsHistory: config.CHANNEL_THREADS_HISTORY === 'true', youtubeHistory: config.CHANNEL_YOUTUBE_HISTORY === 'true', conversationMediaHosts: zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS), conversationMediaHostsBy: { whatsapp: zaloMediaHostsOf(config.CHANNEL_WHATSAPP_MEDIA_HOSTS) }, conversationAdapters: channelConversationAdapters(config), publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), meetingPlatforms: meetingPlatformAdapters({ sandbox: config.CHANNEL_SANDBOX === 'true' }), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), adPlatforms: adPlatformsOf(config), adRevokers: adRevokersOf(config), adWriters: adWritersOf(config), adPausers: adPausersOf(config), adActivators: adActivatorsOf(config), adStateReaders: adStateReadersOf(config) },
             publicUrl: config.PUBLIC_URL,
             appUrl: appUrl(config),
             brand: config.BRAND_NAME,
