@@ -48,6 +48,13 @@ import {
   type EInvoiceDraftResult,
 } from './einvoice-draft.ts';
 import { checkQuoteLines, quoteSuggestInstructions, quoteSuggestPrompt, type QuoteModelOutput, type QuoteSuggestRequest, type QuoteSuggestResult } from './quote-lines.ts';
+import {
+  checkProjectWeeklyStatus,
+  projectWeeklyStatusInstructions,
+  projectWeeklyStatusPrompt,
+  type ProjectWeeklyStatusFacts,
+  type ProjectWeeklyStatusResult,
+} from './project-weekly-status.ts';
 
 // The labels a person can apply to a conversation (the same five as the database's check and the contract's list; a test compares the three).
 export const INTENTS = ['question', 'order_or_price', 'complaint', 'invoice_request', 'spam'] as const;
@@ -103,6 +110,10 @@ const zMeetingBriefOut = z.object({
   points: z.array(z.string()).describe('Two or three short points to raise in the meeting, each one plain sentence, using only the facts given'),
 });
 export type MeetingBriefGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMeetingBriefOut> | null; usage?: AiUsage }>;
+const zProjectWeeklyStatusOut = z.object({
+  sentences: z.array(z.string()).describe('3 to 5 plain sentences summarizing the project week, citing only numbers and facts given'),
+});
+export type ProjectWeeklyStatusGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zProjectWeeklyStatusOut> | null; usage?: AiUsage }>;
 export type CrmFollowupGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zReminderOut> | null; usage?: AiUsage }>;
 export type ReminderGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zReminderOut> | null; usage?: AiUsage }>;
 const zOverviewOut = z.object({
@@ -222,10 +233,11 @@ export class InboxReader {
   private readonly generateReorder: ReorderGenerator;
   private readonly generateEInvoiceDraft: EInvoiceDraftGenerator;
   private readonly generateQuoteLines: QuoteLinesGenerator;
+  private readonly generateProjectWeeklyStatus: ProjectWeeklyStatusGenerator;
   private readonly payroll: PayrollCoworker;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
-  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; payrollMatch?: PayrollMatchGenerator; marketplaceLine?: MarketplaceLineGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
+  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; payrollMatch?: PayrollMatchGenerator; marketplaceLine?: MarketplaceLineGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
     this.payroll = new PayrollCoworker(config, generators.payroll);
     const timeoutMs = config.timeoutMs ?? 60_000;
     this.generateIntents =
@@ -337,6 +349,14 @@ export class InboxReader {
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('crm.quote_suggest', () =>
           generateText({ model: chatModel(config), output: Output.object({ schema: zQuoteLinesOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateProjectWeeklyStatus =
+      generators.projectWeeklyStatus ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('projects.weekly_status', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zProjectWeeklyStatusOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
@@ -513,5 +533,17 @@ export class InboxReader {
     const { output, usage } = await this.generateQuoteLines({ system: quoteSuggestInstructions(), prompt: quoteSuggestPrompt(request) });
     if (usage) onUsage?.(usage);
     return checkQuoteLines(request, output as QuoteModelOutput | null);
+  }
+
+  /** Vy's weekly status summary for one project (#2597): 3 to 5 plain sentences from deterministic counts and task
+   * titles/comments only (never notes). Refused via summaryNumbersOutside when any number outside input appears. */
+  async projectWeeklyStatus(facts: ProjectWeeklyStatusFacts, onUsage?: (usage: AiUsage) => void): Promise<ProjectWeeklyStatusResult> {
+    if (facts.counts.totalVisible === 0) return { kind: 'none', code: 'EMPTY' };
+    const { output, usage } = await this.generateProjectWeeklyStatus({
+      system: projectWeeklyStatusInstructions(facts.language),
+      prompt: projectWeeklyStatusPrompt(facts),
+    });
+    if (usage) onUsage?.(usage);
+    return checkProjectWeeklyStatus(facts, output);
   }
 }
