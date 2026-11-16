@@ -40,8 +40,10 @@ BEGIN
      OR pg_catalog.cardinality(p_orgs) > 1000 THEN
     RAISE EXCEPTION 'OUTBOX_HOLD_INPUT_INVALID' USING ERRCODE = '22023';
   END IF;
+  -- Only events that exist: a marker of an event that is not in outbox_event would never be released to anything.
   INSERT INTO crove_kernel.outbox_held (org_id, event_id, module)
   SELECT t.o, t.e, t.m FROM ROWS FROM (pg_catalog.unnest(p_orgs), pg_catalog.unnest(p_events), pg_catalog.unnest(p_modules)) AS t (o, e, m)
+  JOIN crove_kernel.outbox_event ev ON ev.org_id = t.o AND ev.id = t.e
   ON CONFLICT (org_id, module, event_id) DO NOTHING;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   RETURN v_n;

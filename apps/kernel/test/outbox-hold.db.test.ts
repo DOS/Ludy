@@ -138,6 +138,9 @@ suite('parked events of an app that is off (ADR-0053, C3b)', () => {
     const plan = await batch(new Set([`${a}:social`]));
     await workerDb.transaction().execute((trx) => holdEvents(trx, plan.held));
     expect(await held(a)).toEqual([old, fresh]);
+    // An event id that is not in the outbox is not parked.
+    const ghost = await workerPool.query<{ n: number }>("SELECT crove_kernel.outbox_hold(ARRAY[$1]::uuid[], ARRAY[gen_random_uuid()], ARRAY['social']) AS n", [a]);
+    expect(ghost.rows[0]?.n).toBe(0);
     // A year old and still waiting: the sweep does not expire it (the retention job does, with its day).
     await admin((c) => c.query("UPDATE crove_kernel.outbox_held SET held_at = now() - interval '365 days' WHERE event_id = $1", [old]));
     expect(await releaseHeld(workerDb, async () => false)).toMatchObject({ released: 0, waiting: 2 });
