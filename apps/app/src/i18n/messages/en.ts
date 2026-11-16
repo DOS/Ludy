@@ -13182,6 +13182,7 @@ export const en = {
         hold: 'Pause all publishing',
         hold_get: 'Read the publishing pause',
         release: 'Resume publishing',
+        resume: 'Catch up after the app is switched on',
       },
       push: {
         devices: 'List push devices',

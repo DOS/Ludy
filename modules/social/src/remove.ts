@@ -11,7 +11,7 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 import { zId } from '@crove/kernel-contract';
 import type { Db, MemberRole } from '@crove/db';
-import { DomainError, defineCommand, moduleOffOf, type CommandContext, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import { DomainError, defineCommand, type CommandContext, type Runtime, type SystemActor } from '@crove/kernel-runtime';
 import { REMOVE_READY, isProvider, removeAtFit, removeAtOf, removeWindowMs } from './domain/channels.ts';
 import { callRevision, publishCallKey } from './domain/publish.ts';
 import { COMMENT_STALE_MS, type CommentCall } from './comments.ts';
@@ -115,6 +115,7 @@ export const variantRemove = defineCommand({
 // Decides whether the worker makes the remove call now, and records the call as started first.
 export const removeBegin = defineCommand({
   name: 'social.remove.begin',
+  runsWhenOff: 'a takedown asked before the app was switched off still goes out: removing a post stops its exposure (ADR-0053)',
   // after: the last remove call the ask saw (null: none was made).
   input: z.strictObject({ variantId: zId, provider: z.string().min(1).max(32), after: z.string().min(1).max(300).nullable() }),
   // Commits the provider call as started; the worker then makes it, an effect outside Crove (#1578).
@@ -207,6 +208,7 @@ export function removeDue(provider: string, settings: Readonly<Record<string, un
 // lock; once anyone asked (a person, or this before), it asks nothing more: a failed or unclear removal waits for a person.
 export const removeSchedule = defineCommand({
   name: 'social.remove.schedule',
+  runsWhenOff: 'a planned takedown still comes down on time while the app is off: removing a post stops its exposure (ADR-0053)',
   input: z.strictObject({ variantId: zId }),
   // Its event queues the remove job, which takes the post down on the platform (plan §4.7: a job with egress
   // derives R2; #1662). A system command, so the worker runs it as before.
@@ -244,6 +246,7 @@ export type RemoveWatch = { told: false; reason: 'not_published' | 'not_schedule
 // again from the post page. A person's own ask since (removed_by set) is left to them.
 export const removeWatch = defineCommand({
   name: 'social.remove.watch',
+  runsWhenOff: 'tells the owners that a takedown never got its answer, which must not stay silent while the app is off (ADR-0053)',
   input: z.strictObject({ variantId: zId, after: z.string().min(1).max(300).nullable() }),
   risk: 'R1',
   sideEffect: 'internal',
@@ -321,8 +324,6 @@ export async function sweepRemovals(deps: { runtime: Runtime; workerDb: Db }, pr
       const done = await deps.runtime.execute<{ queued: boolean }>('social.remove.schedule', { variantId: row.variant_id }, { actor: SWEEP_ACTOR, orgId: row.org_id });
       if (done.queued) queued += 1;
     } catch (error) {
-      // Social off: a planned takedown is exposure-stopping and joins runsWhenOff in C3 (ADR-0053); until then it is refused quietly, row by row.
-      if (moduleOffOf(error) !== null) continue;
       console.warn(`[social-remove] planned removal of variant ${row.variant_id.slice(0, 8)}: ${error instanceof DomainError ? error.code : error instanceof Error ? error.name : 'error'}`);
     }
   }

@@ -228,6 +228,31 @@ suite('social publishing hold on PostgreSQL (#946)', () => {
     await exec(o, 'social.publishing.release', {});
   });
 
+  it('after Social is switched back on, fails the posts more than an hour past their time for a person and leaves the others, and only the system runs it (ADR-0053, C3c)', async () => {
+    const o = await org();
+    const platform = new Counting();
+    const recent = await duePost(o, { ago: '5 minutes' });
+    const stale = await duePost(o, { ago: '2 hours' });
+    const staleQueued = await duePost(o, { queue: true, ago: '90 minutes' });
+    await expect(exec(o, 'social.publishing.resume', {}, o.admin)).rejects.toThrow();
+    expect(await worker.execute('social.publishing.resume', {}, { actor: system, orgId: o.orgId })).toEqual({ heldTooLong: 2, held: false });
+    for (const v of [stale, staleQueued]) expect(await status(o, v.postId)).toEqual({ status: 'failed', code: HELD_TOO_LONG });
+    expect(await status(o, recent.postId)).toEqual({ status: 'scheduled', code: null });
+    // Once only; the late ones are not due for a sweep any more, and the recent one goes out.
+    expect(await worker.execute('social.publishing.resume', {}, { actor: system, orgId: o.orgId })).toEqual({ heldTooLong: 0, held: false });
+    await sweep(platform, [o]);
+    expect(await run(o, recent.id, platform)).toEqual({ action: 'none', reason: 'published' });
+    expect(platform.sent).toHaveLength(1);
+    const audited = await admin(async (c) => (await c.query<{ detail: { held_too_long: number } }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'social.publishing.resume' ORDER BY occurred_at, id", [o.orgId])).rows.map((r) => r.detail.held_too_long).filter((n) => n !== undefined));
+    expect(audited).toEqual([2]);
+    // A hold that is live keeps it for its own release: nothing fails now.
+    const late = await duePost(o, { ago: '3 hours' });
+    await exec(o, 'social.publishing.hold', { reason: 'Tạm dừng' }, o.admin);
+    expect(await worker.execute('social.publishing.resume', {}, { actor: system, orgId: o.orgId })).toEqual({ heldTooLong: 0, held: true });
+    expect(await status(o, late.postId)).toEqual({ status: 'scheduled', code: null });
+    expect(await exec(o, 'social.publishing.release', {}, o.admin)).toEqual({ released: true, heldTooLong: 1 });
+  });
+
   it('on release publishes the due posts exactly once, and leaves one more than an hour past its time to a person', async () => {
     const o = await org();
     const platform = new Counting();

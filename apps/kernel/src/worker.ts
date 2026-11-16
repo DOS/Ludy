@@ -2650,6 +2650,10 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                   enqueueSeal: (orgId, envelopeId) => enqueueSignSeal(boss, orgId, envelopeId),
                 });
               }
+              // Social switched back on (ADR-0053 section 4, C3c): the scheduled posts that fell due more than an hour before wait for a person (HELD_TOO_LONG) instead of going out late.
+              if (social && row.type === 'kernel.org.apps_changed' && row.payload.module === 'social' && row.payload.enabled === true) {
+                await deps.runtime.execute('social.publishing.resume', {}, { actor: { type: 'system', component: 'social.resume' }, orgId: row.org_id });
+              }
               // An app switched on (ADR-0053, C3b): the events parked while it was off go back on the outbox now, not when the held sweep comes round. A failure here is the sweep's to
               // retry, so it never fails the relay step.
               if (row.type === 'kernel.org.apps_changed' && row.payload.enabled === true) {
