@@ -3338,6 +3338,9 @@ export function createRpcHandler(
       lines: os.bank.lines.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.bank.lines', input, { actor, orgId })),
       ),
+      platformLines: os.bank.platformLines.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.query('finance.bank.platform_lines', input, { actor, orgId })),
+      ),
       lineVoucher: os.bank.lineVoucher.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.bank.line_voucher', input, { actor, orgId })),
       ),

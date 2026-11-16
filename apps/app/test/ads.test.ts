@@ -21,6 +21,8 @@ import {
   adReadOAuthProviders,
   adWriteOAuthProviders,
   adWriteOffer,
+  bankLineSearch,
+  bankLinesByMonth,
   adsRange,
   awaitsFirstSync,
   booksDifference,
@@ -650,5 +652,40 @@ describe('the platform documents beside the books (slice D1)', () => {
       ['2026-09', 2],
       ['2026-11', 1],
     ]);
+  });
+});
+
+describe('the bank and card lines that paid the platform (slice D2)', () => {
+  const l = (id: string, date: string, description: string, amount: string, bankAccount = '1121') => ({ id, bankAccount, date, description, amount });
+
+  it('groups the platform’s lines by month, newest month first, and totals what went out', () => {
+    const months = bankLinesByMonth(
+      [
+        l('1', '2026-11-05', 'GOOGLE ADS 4567', '-500000'),
+        l('2', '2026-09-30', 'Google Asia Pacific', '-1500000.5'),
+        l('3', '2026-11-20', 'Google Ads', '-250000'),
+        l('4', '2026-09-02', 'Google Ads', '-1000000'),
+      ],
+      'google_ads',
+    );
+    expect(months.map((m) => [m.month, m.paid, m.lines.map((x) => x.id)])).toEqual([
+      ['2026-11', '750000', ['1', '3']],
+      ['2026-09', '2500000.5', ['2', '4']],
+    ]);
+  });
+
+  it('nets a refund against what went out, exactly', () => {
+    const [month] = bankLinesByMonth([l('1', '2026-11-05', 'Google Ads', '-500000.10'), l('2', '2026-11-09', 'Google Ads refund', '100000.05')], 'google_ads');
+    expect(month?.paid).toBe('400000.05');
+  });
+
+  it('leaves out a line that does not name the platform, as whole words, and every line of a platform without names', () => {
+    expect(bankLinesByMonth([l('1', '2026-11-05', 'Googlers Cafe', '-45000'), l('2', '2026-11-06', 'Tien dien', '-900000')], 'google_ads')).toEqual([]);
+    expect(bankLinesByMonth([l('1', '2026-11-05', 'Google Ads', '-500000')], 'unknown_ads')).toEqual([]);
+    expect(bankLinesByMonth([], 'google_ads')).toEqual([]);
+  });
+
+  it('opens the bank screen at the line’s account and month', () => {
+    expect(bankLineSearch({ bankAccount: '1121', date: '2026-11-05' })).toEqual({ account: '1121', month: '2026-11' });
   });
 });

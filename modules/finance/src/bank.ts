@@ -11,6 +11,7 @@
 //   `ref:<reference>` stays as ADR-0021 fixed it (so a transaction seen from a feed and in a file is one line, whichever
 //   date format each prints), the amount and date are compared on top of it, and a line that disagrees is stored
 //   keyless and flagged (ambiguous), as a line "to look at" is, instead of being dropped. Statements and feed pulls alike.
+// - finance.bank.platform_lines: the lines of all accounts of an entity whose description names a platform (Ads, slice D2).
 // - finance.bank.lines: the stored lines of one account for a month, quarter or year, each with what became of it
 //   (stage 2a, bank-match.ts: open, proposed as a voucher, or settled by one).
 // - finance.bank.ingest (ADR-0039, #2044): the lines a bank feed reports, sent by the worker, checked and stored on the
@@ -20,14 +21,17 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 import type { MemberRole } from '@crove/db';
 import {
+  BANK_PLATFORM_LINES_LIMIT,
   zBankFeedIngest,
   zBankStatementImport,
   type BankFeedIngest,
   zId,
   zLedgerPeriod,
+  zLocalDate,
   type BankImportPreview,
   type BankImportResult,
   type BankLines,
+  type BankPlatformLines,
   type BankStatementImport,
 } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
@@ -350,5 +354,48 @@ export const bankLines = defineQuery({
       };
     });
     return { bankAccount: input.bankAccount, from: period.from, to: period.to, lines, moneyIn: moneyIn.toFixed(), moneyOut: moneyOut.toFixed() };
+  },
+});
+
+// The lines of every bank and card account of one legal entity in a range whose description holds one of the terms as
+// whole words, with marks and case set aside as the search folds them (crove_kernel.search_fold): what Ads lays beside a
+// month's spend (slice D2, plan docs/plan/ads.md section 6). Read only, and the same rows `finance.bank.lines` shows, so
+// the row policy and the legal entity scope decide what is seen.
+export const bankPlatformLines = defineQuery({
+  name: 'finance.bank.platform_lines',
+  input: z.object({ from: zLocalDate, to: zLocalDate, terms: z.array(z.string().min(2).max(60)).min(1).max(8), legalEntityId: zId.optional() }),
+  access: ALL,
+  handler: async (ctx, input): Promise<BankPlatformLines> => {
+    const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
+    // A folded description is words of a-z and 0-9 apart by one space, so padded with spaces a term is found only as whole words.
+    const named = sql<boolean>`pg_catalog.strpos(' ' || crove_kernel.search_fold(l.description) || ' ', ' ' || crove_kernel.search_fold(t.term) || ' ') > 0`;
+    const rows = await ctx.trx
+      .selectFrom('crove_finance.bank_line as l')
+      .select(['l.id', 'l.bank_account', 'l.value_date', 'l.description', 'l.amount'])
+      .where('l.org_id', '=', ctx.orgId)
+      .where('l.legal_entity_id', '=', legalEntityId)
+      .where('l.value_date', '>=', input.from)
+      .where('l.value_date', '<=', input.to)
+      .where(sql<boolean>`EXISTS (SELECT 1 FROM pg_catalog.unnest(${input.terms}::text[]) AS t (term) WHERE crove_kernel.search_fold(t.term) <> '' AND ${named})`)
+      .orderBy('l.value_date', 'desc')
+      .orderBy('l.import_id')
+      .orderBy('l.position')
+      .limit(BANK_PLATFORM_LINES_LIMIT + 1)
+      .execute();
+    const kept = rows.slice(0, BANK_PLATFORM_LINES_LIMIT);
+    const states = await bankLineStates(ctx, kept.map((r) => r.id));
+    return {
+      from: input.from,
+      to: input.to,
+      lines: kept.map((r) => ({
+        id: r.id,
+        bankAccount: r.bank_account,
+        date: r.value_date,
+        description: r.description,
+        amount: new Decimal(r.amount).toFixed(),
+        state: states.get(r.id) ?? { status: 'open' as const },
+      })),
+      truncated: rows.length > BANK_PLATFORM_LINES_LIMIT,
+    };
   },
 });
