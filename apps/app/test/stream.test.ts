@@ -65,6 +65,8 @@ function seeded() {
     dealGet: orpc.crm.deals.get.queryKey({ input: { dealId: DEAL } }),
     dealGetOther: orpc.crm.deals.get.queryKey({ input: { dealId: DEAL2 } }),
     dealsOfContact: orpc.crm.deals.byParty.queryKey({ input: { partyId: CONTACT } }),
+    companyPeople: [...orpc.crm.contacts.key(), 'company-people', CONTACT2],
+    nextSteps: orpc.crm.nextSteps.list.queryKey({ input: {} }),
     dealsOfOtherContact: orpc.crm.deals.byParty.queryKey({ input: { partyId: CONTACT2 } }),
     contactList: orpc.crm.contacts.list.infiniteKey({ input: () => ({}), initialPageParam: undefined }),
     contactSearch: orpc.crm.parties.search.queryKey({ input: { q: 'abc', limit: 5 } }),
@@ -141,13 +143,13 @@ describe('invalidateHint', () => {
   it('crm_deal: the deal board and list, that deal, the contacts\' deals and the contacts list (#3293)', async () => {
     const { qc, stale } = seeded();
     await invalidateHint(qc, { type: 'crm_deal', id: DEAL });
-    expect(stale()).toEqual(['contactList', 'dealBoard', 'dealGet', 'dealList', 'dealsOfContact', 'dealsOfOtherContact']);
+    expect(stale()).toEqual(['contactList', 'contactTimeline', 'dealBoard', 'dealGet', 'dealList', 'dealsOfContact', 'dealsOfOtherContact', 'nextSteps', 'otherTimeline']);
   });
 
   it('crm_party: the contacts, the deal cards, and that contact\'s own panels only (#3293)', async () => {
     const { qc, stale } = seeded();
     await invalidateHint(qc, { type: 'crm_party', id: CONTACT });
-    expect(stale()).toEqual(['contactList', 'contactSearch', 'contactTimeline', 'dealBoard', 'dealList', 'dealsOfContact']);
+    expect(stale()).toEqual(['companyPeople', 'contactList', 'contactSearch', 'contactTimeline', 'dealBoard', 'dealGet', 'dealGetOther', 'dealList', 'dealsOfContact']);
   });
 
   it('crm hints leave the finance vendors and customers, Social and the apps list alone', async () => {

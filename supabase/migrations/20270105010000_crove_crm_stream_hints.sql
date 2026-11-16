@@ -13,8 +13,9 @@
 --                     org and statement, naming the first deleted id (as notes do, 20261107180000), so the org purge
 --                     does not write one NOTIFY per deal while it holds PostgreSQL's cluster-wide NOTIFY lock.
 -- crove_kernel.party  INSERT, and an UPDATE that changes what the contact screens and deal cards show: the kind, name,
---                     tax code, address, email, phone, company link or duplicate mark. Finance writes the same table
---                     (a verified flag, a version bump), which a contact screen does not show, so those send nothing.
+--                     tax code, address, email, phone, company link or duplicate mark, or the version (a screen sends
+--                     it back with an edit, so a stale one would fail with a conflict). Finance writes the same table
+--                     (a verified flag), which a contact screen does not show, so that sends nothing.
 --                     No DELETE trigger: a party is deleted only by the org purge.
 SET LOCAL lock_timeout = '2s';
 
@@ -56,6 +57,6 @@ CREATE TRIGGER stream_hint AFTER INSERT ON crove_kernel.party
 DROP TRIGGER IF EXISTS stream_hint_update ON crove_kernel.party;
 CREATE TRIGGER stream_hint_update AFTER UPDATE ON crove_kernel.party
   FOR EACH ROW
-  WHEN ((OLD.kind, OLD.name, OLD.tax_code, OLD.address, OLD.email, OLD.phone, OLD.company_id, OLD.duplicate_of)
-        IS DISTINCT FROM (NEW.kind, NEW.name, NEW.tax_code, NEW.address, NEW.email, NEW.phone, NEW.company_id, NEW.duplicate_of))
+  WHEN ((OLD.kind, OLD.name, OLD.tax_code, OLD.address, OLD.email, OLD.phone, OLD.company_id, OLD.duplicate_of, OLD.version)
+        IS DISTINCT FROM (NEW.kind, NEW.name, NEW.tax_code, NEW.address, NEW.email, NEW.phone, NEW.company_id, NEW.duplicate_of, NEW.version))
   EXECUTE FUNCTION crove_kernel.stream_notify('crm_party', 'id');

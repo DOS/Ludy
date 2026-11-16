@@ -166,9 +166,13 @@ suite('stream hints of deals and contacts (#3293)', () => {
     });
     expect(changed).toEqual(Array(3).fill(`${orgId} crm_party ${partyId}`));
 
-    // A rewrite of the same values, a version bump and a verification are not what a contact screen shows.
+    // A new version is one (a screen sends it back with an edit).
+    const bumped = await hintsOf((c) => c.query(`UPDATE crove_kernel.party SET version = version + 1 WHERE org_id = $1 AND id = $2`, [orgId, partyId]));
+    expect(bumped).toEqual([`${orgId} crm_party ${partyId}`]);
+
+    // A rewrite of the same values and a verification are not what a contact screen shows.
     const quiet = await hintsOf(async (c) => {
-      await c.query(`UPDATE crove_kernel.party SET name = 'Tên mới', email = 'moi@khach.test', version = version + 1 WHERE org_id = $1 AND id = $2`, [orgId, partyId]);
+      await c.query(`UPDATE crove_kernel.party SET name = 'Tên mới', email = 'moi@khach.test' WHERE org_id = $1 AND id = $2`, [orgId, partyId]);
       await c.query(`UPDATE crove_kernel.party SET verified_at = now() WHERE org_id = $1 AND id = $2`, [orgId, partyId]);
     });
     expect(quiet).toEqual([]);
