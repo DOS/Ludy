@@ -18,7 +18,7 @@ import { createHttpApp } from '../src/http.ts';
 import { rebindExport, rebindExports } from '../src/export-rebind.ts';
 import { ExportSealer, exportAad } from '../src/export-seal.ts';
 import { runOrgExport, type OrgExportManifest } from '../src/org-export.ts';
-import { exportCoverageProblems, exportedTables } from './org-export-coverage.ts';
+import { exportCoverageProblems, exportedTables, omitProblems } from './org-export-coverage.ts';
 import { readPurgeCatalog } from './org-purge-coverage.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -155,6 +155,13 @@ suite('org offboarding on PostgreSQL (#38)', () => {
       const catalog = await readPurgeCatalog(client);
       expect(catalog.tables).toContain('crove_finance.household_profile');
       expect(exportCoverageProblems(catalog.tables, exportedTables())).toEqual([]);
+      // Every name an entry omits is a real column of its table: `jsonb - text[]` ignores an unknown key, so a typo would export the secret.
+      const found = await client.query<{ tbl: string; col: string }>(
+        "SELECT table_schema || '.' || table_name AS tbl, column_name AS col FROM information_schema.columns WHERE table_schema LIKE 'crove\\_%'",
+      );
+      const columns = new Map<string, Set<string>>();
+      for (const r of found.rows) columns.set(r.tbl, (columns.get(r.tbl) ?? new Set<string>()).add(r.col));
+      expect(omitProblems(columns)).toEqual([]);
     } finally {
       await client.end();
     }
@@ -311,7 +318,6 @@ suite('org offboarding on PostgreSQL (#38)', () => {
     expect(await rowsOf('kernel.saved_view')).toEqual([expect.objectContaining({ name: 'Cả nhóm', shared: true })]);
     expect(EXPORT_TABLE_NAMES).not.toContain('kernel.notification_mute');
     expect((await rowsOf('social.saved_view')).map((r) => r.name)).toEqual(['Chung']);
-
     expect(await rowsOf('crm.pipeline_stage')).toEqual([expect.objectContaining({ name: 'Đàm phán', kind: 'open' })]);
     // The household's profile is in the owner's copy, the representative's name included, and no other org's is.
     expect(await rowsOf('finance.household_profile')).toEqual([

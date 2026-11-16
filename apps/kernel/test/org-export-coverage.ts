@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Every table of a covered schema (the finance line's, COVERED_SCHEMAS) with an org_id column is in the owner export (EXPORT_TABLES, packages/kernel/src/offboarding.ts)
+// Every table of a covered schema (every crove_* schema, COVERED_SCHEMAS) with an org_id column is in the owner export (EXPORT_TABLES, packages/kernel/src/offboarding.ts)
 // or on NOT_EXPORTED with the reason (#3201). EXPORT_TABLES is a hand-kept list, so a table a migration adds would
 // otherwise be left out of the owner's copy of their data without anyone noticing. offboarding.db.test.ts reads the catalog of its
 // migrated database and fails on such a table; org-export-coverage.test.ts checks the reading and the messages on planted catalogs.
@@ -29,7 +29,6 @@ export const NOT_EXPORTED: Readonly<Record<string, string>> = {
   'crove_crm.booking_feed': "a member's calendar feed token (hash): a credential",
   // Credentials: sealed or hashed, useless outside this deployment.
   'crove_ads.ad_token_seal': 'sealed ad platform tokens: a credential',
-  'crove_ads.ad_token_revoke': 'the queue that revokes platform tokens, with the keyed hash of the grantor: machinery',
   'crove_social.calendar_feed': "a calendar feed's token (hash): a credential, the row says nothing without it",
   'crove_social.chat_alert_target': 'the sealed address of a chat alert: a credential',
   'crove_meetings.chat_channel_target': 'the sealed address of a meeting chat channel: a credential',
@@ -64,6 +63,7 @@ export const NOT_EXPORTED: Readonly<Record<string, string>> = {
   'crove_social.link_preview': 'a cache of fetched link previews',
   'crove_social.report_schedule_run': 'a log of scheduled report runs: machinery',
   // Runtime machinery: recomputed, expiring or only meaningful while the org runs.
+  'crove_ads.ad_token_revoke': 'the queue that revokes platform tokens, with the keyed hash of the grantor: machinery',
   'crove_kernel.agent_wake_delivery': 'a wake-up delivery queue row: runtime machinery',
   'crove_kernel.agent_wake_signal_seen': 'which wake-up signals were seen: runtime machinery',
   'crove_kernel.agent_wakeup': 'agent wake-ups: runtime machinery (offboarding already says so)',
@@ -121,6 +121,27 @@ export function exportCoverageProblems(catalogTables: readonly string[], exporte
   for (const table of Object.keys(notExported).sort()) {
     if (!catalog.has(table)) problems.push(`${table} is on NOT_EXPORTED but is no covered crove_* table with org_id: remove it from NOT_EXPORTED`);
     else if (exported.has(table)) problems.push(`${table} is on NOT_EXPORTED but the export contains it: remove it from NOT_EXPORTED`);
+  }
+  return problems;
+}
+
+// Every name an entry omits is a column of the table it reads: `jsonb - text[]` ignores an unknown key, so a misspelled omit would export the column it meant to keep out. `columns` maps
+// each crove_* table to its column names (the DB test reads them from information_schema). An entry that reads a function, not a table, is skipped.
+export function omitProblems(
+  columns: ReadonlyMap<string, ReadonlySet<string>>,
+  tables: Readonly<Record<string, { from: string; omit: readonly string[] }>> = EXPORT_TABLES,
+  ownerRun: Readonly<Record<string, { from: string; omit: readonly string[] }>> = OWNER_RUN_EXPORT_TABLES,
+): string[] {
+  const problems: string[] = [];
+  for (const [name, spec] of [...Object.entries(tables), ...Object.entries(ownerRun)]) {
+    const table = spec.from.match(new RegExp(TABLE.source))?.[0];
+    if (!table || spec.omit.length === 0) continue;
+    const have = columns.get(table);
+    if (!have) {
+      problems.push(`${name} reads ${table}, which has no columns in the catalog`);
+      continue;
+    }
+    for (const column of spec.omit) if (!have.has(column)) problems.push(`${name} omits ${column}, which is no column of ${table}`);
   }
   return problems;
 }

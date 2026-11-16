@@ -164,7 +164,8 @@ export const EXPORT_TABLES = {
   // Import rows are temporary staging (a commit, a cancel or the 7-day expiry deletes them): an org that offboards with a staged import carries that file's names and contacts in its copy.
   'crm.import_row': { from: 'crove_crm.import_row', omit: [] },
   // Ads (#2217, ADR-0040): the org's ad accounts, the daily figures their platforms reported and the sync runs. They hold
-  // no credential (that is crove_kernel.credential, which no export reads) and no personal data.
+  // no credential (that is crove_kernel.credential, which no export reads) and no personal data; the keyed hashes of the Meta user who granted a connection (granted_by_hash, write_granted_by_hash) are
+  // the deployment's, not the org's, and stay out.
   'ads.ad_account': { from: 'crove_ads.ad_account', omit: ['granted_by_hash', 'write_granted_by_hash'] },
   'ads.ad_spend_day': { from: 'crove_ads.ad_spend_day', omit: [] },
   'ads.ad_sync_run': { from: 'crove_ads.ad_sync_run', omit: [] },
