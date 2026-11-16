@@ -40,9 +40,9 @@ const REACHABLE = [
   'meetings.meeting.extension_status:meetings',
 ];
 
-// Reachable only once L4a-1 (#3109, ADR-0052) is on main, and the next-meetings read of B2 (#3166, the `agenda` scope): the test accepts each either present or absent, so it holds before and
-// after that change. Each is exactly the one name listed, under exactly the scope listed.
-const REACHABLE_WHEN_LANDED = ['meetings.live.chunk:meetings', 'meetings.agenda.next:agenda'];
+// Reachable only once L4a-1 (#3109, ADR-0052) is on main, the next-meetings read of B2 (#3166, the `agenda` scope), and the recording-stopped report of #3196 (step 1 of 2, the feature follows):
+// the test accepts each either present or absent, so it holds before and after that change. Each is exactly the one name listed, under exactly the scope listed.
+const REACHABLE_WHEN_LANDED = ['meetings.live.chunk:meetings', 'meetings.agenda.next:agenda', 'meetings.meeting.recording_stopped:meetings'];
 
 const CREATE = { title: 'Họp tuần', consentMethod: 'told_at_start' as const, visibility: 'attendees' as const, language: 'vi' as const, keepVideo: false };
 
