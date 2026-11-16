@@ -8,6 +8,11 @@ name: deploy
 # digest; tools/deploy/deploy.sh on the host migrates, rolls the worker before the API, waits for /readyz, runs the
 # smoke test and rolls back on failure. Until the environment has its secrets, the deploy job only says so and
 # passes.
+#
+# Opt-in (#2704): when the environment defines the identity provider settings (the variables AUTH_ISSUER, AUTH_JWKS_URL,
+# PUBLIC_AUTH_URL, PUBLIC_AUTH_ANON_KEY, AUTH_OAUTH_PROVIDERS, AUTH_HOSTED_LOGIN_URL, AUTH_HOSTED_LOGIN_TOKEN_URL and
+# AUTH_HOSTED_LOGIN_NAME, and the secret AUTH_ALLOWED_EMAILS), the deploy writes those lines into the host's env file
+# (docs/runbooks/pilot-sign-in-remote-idp.md, step 5). Without them the env file is never edited.
 
 on:
   push:
@@ -282,18 +287,72 @@ jobs:
           persist-credentials: false
           ref: ${{ needs.target.outputs.action == 'deploy' && needs.target.outputs.sha || github.sha }}
 
+      # The identity provider settings (#2704), when the environment defines any: written to a private file from the environment's
+      # variables and secret (as environment variables, never interpolated into the script), checked by the release's own
+      # deploy.sh, and sent with the release. It prints the names it set, never a value. deploy.sh on the host checks the file again and
+      # edits the env file; the file goes with the rest of the incoming directory when the run ends. A rollback sends nothing.
+      - name: Prepare the identity provider settings
+        id: idp
+        if: steps.config.outputs.ready == 'true' && needs.target.outputs.action == 'deploy'
+        env:
+          AUTH_ISSUER: ${{ vars.AUTH_ISSUER }}
+          AUTH_JWKS_URL: ${{ vars.AUTH_JWKS_URL }}
+          PUBLIC_AUTH_URL: ${{ vars.PUBLIC_AUTH_URL }}
+          PUBLIC_AUTH_ANON_KEY: ${{ vars.PUBLIC_AUTH_ANON_KEY }}
+          AUTH_OAUTH_PROVIDERS: ${{ vars.AUTH_OAUTH_PROVIDERS }}
+          AUTH_HOSTED_LOGIN_URL: ${{ vars.AUTH_HOSTED_LOGIN_URL }}
+          AUTH_HOSTED_LOGIN_TOKEN_URL: ${{ vars.AUTH_HOSTED_LOGIN_TOKEN_URL }}
+          AUTH_HOSTED_LOGIN_NAME: ${{ vars.AUTH_HOSTED_LOGIN_NAME }}
+          AUTH_ALLOWED_EMAILS: ${{ secrets.AUTH_ALLOWED_EMAILS }}
+        run: |
+          set -euo pipefail
+          names=(AUTH_ISSUER AUTH_JWKS_URL PUBLIC_AUTH_URL PUBLIC_AUTH_ANON_KEY AUTH_ALLOWED_EMAILS AUTH_OAUTH_PROVIDERS AUTH_HOSTED_LOGIN_URL AUTH_HOSTED_LOGIN_TOKEN_URL AUTH_HOSTED_LOGIN_NAME)
+          given=()
+          for name in "${names[@]}"; do
+            if [ -n "${!name}" ]; then given+=("$name"); fi
+          done
+          if ((${#given[@]} == 0)); then
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+            echo 'No identity provider settings in this environment: the host env file is left alone.'
+            exit 0
+          fi
+          dir="$RUNNER_TEMP/idp"
+          install -m 700 -d "$dir"
+          (
+            umask 077
+            : > "$dir/auth-settings.env"
+            for name in "${given[@]}"; do
+              value="${!name}"
+              case "$value" in
+                *$'\n'* | *$'\r'*) echo "::error::$name must be one line"; exit 1 ;;
+              esac
+              printf '%s=%s\n' "$name" "$value" >> "$dir/auth-settings.env"
+            done
+          )
+          # Names only: a failed check names the setting, not its value.
+          bash tools/deploy/deploy.sh check-auth-settings "$dir/auth-settings.env"
+          echo "Settings given: ${given[*]}" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo 'enabled=true'
+            echo "file=$dir/auth-settings.env"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Upload the deploy script and the compose file
         if: steps.config.outputs.ready == 'true'
         env:
           SSH_CONFIG: ${{ steps.config.outputs.ssh_config }}
           REMOTE: ${{ steps.config.outputs.remote }}
+          IDP_FILE: ${{ steps.idp.outputs.file }}
         run: |
           set -euo pipefail
           # compose.pilot.yml travels with the release (#2133): deploy.sh stages it from the directory of the compose file.
           # A release from before the file existed has none to send.
           files=(deploy.sh)
           if [ -f tools/deploy/compose.pilot.yml ]; then files+=(compose.pilot.yml); fi
-          tar -cf - -C tools/deploy "${files[@]}" -C "$GITHUB_WORKSPACE" docker-compose.yml \
+          # The identity provider settings (private, #2704) travel in the same private directory.
+          extra=()
+          if [ -n "$IDP_FILE" ]; then extra=(-C "$(dirname "$IDP_FILE")" auth-settings.env); fi
+          tar -cf - -C tools/deploy "${files[@]}" -C "$GITHUB_WORKSPACE" docker-compose.yml "${extra[@]}" \
             | ssh -F "$SSH_CONFIG" crove-target "umask 077 && mkdir -p '$REMOTE' && tar -xf - -C '$REMOTE'"
 
       - name: Deploy, or roll back, on the host
@@ -306,6 +365,7 @@ jobs:
           ENV_FILE: ${{ steps.config.outputs.env_file }}
           GH_TOKEN: ${{ github.token }}
           ACTOR: ${{ github.actor }}
+          IDP_ENABLED: ${{ steps.idp.outputs.enabled }}
         run: |
           set -euo pipefail
           [[ "$ACTOR" =~ ^[A-Za-z0-9._-]+(\[bot\])?$ ]] || { echo '::error::unexpected actor name'; exit 1; }
@@ -316,8 +376,11 @@ jobs:
           else
             [[ "$IMAGE" =~ ^[a-z0-9./_:-]+@sha256:[0-9a-f]{64}$ && "$EXTRACT" =~ ^[a-z0-9./_:-]+@sha256:[0-9a-f]{64}$ && "$MEDIA" =~ ^[a-z0-9./_:-]+@sha256:[0-9a-f]{64}$ ]] || { echo '::error::image digests missing'; exit 1; }
             [[ "$BUILD" =~ ^[0-9a-f]{40}$ ]] || { echo '::error::the release commit is missing'; exit 1; }
+            # The settings file is on the host (sent above); deploy.sh edits the env file only when it is given.
+            settings=''
+            if [ "$IDP_ENABLED" = true ]; then settings=" --auth-settings '$REMOTE/auth-settings.env'"; fi
             printf '%s\n' "$GH_TOKEN" | ssh -F "$SSH_CONFIG" crove-target \
-              "bash '$REMOTE/deploy.sh' deploy $registry --release '$RELEASE' --image '$IMAGE' --extract-image '$EXTRACT' --media-image '$MEDIA' --build '$BUILD' --compose '$REMOTE/docker-compose.yml'"
+              "bash '$REMOTE/deploy.sh' deploy $registry --release '$RELEASE' --image '$IMAGE' --extract-image '$EXTRACT' --media-image '$MEDIA' --build '$BUILD' --compose '$REMOTE/docker-compose.yml'$settings"
           fi
 
       # The same checks through the public URL: DNS, TLS and the reverse proxy. Optional (DEPLOY_PUBLIC_URL). With the
@@ -331,6 +394,9 @@ jobs:
           SMOKE_EMAIL: ${{ secrets.SMOKE_EMAIL }}
           SMOKE_PASSWORD: ${{ secrets.SMOKE_PASSWORD }}
           SMOKE_ORG: ${{ vars.SMOKE_ORG }}
+          # A remote identity provider has no /auth/v1 proxy on this host (#2704): when this run set it up, or the variable
+          # DEPLOY_REMOTE_AUTH=true says the host already uses one, the proxy checks and the smoke account are skipped.
+          SMOKE_REMOTE_AUTH: ${{ (steps.idp.outputs.enabled == 'true' || vars.DEPLOY_REMOTE_AUTH == 'true') && '1' || '' }}
         run: |
           if [ "$ACTION" = deploy ]; then bash tools/deploy/deploy.sh smoke "$PUBLIC_URL" "$BUILD"; else bash tools/deploy/deploy.sh smoke "$PUBLIC_URL"; fi
 
@@ -354,9 +420,11 @@ jobs:
         env:
           HOST_OUTCOME: ${{ steps.host.outcome }}
           SMOKE_OUTCOME: ${{ steps.public-smoke.outcome }}
+          IDP_ENABLED: ${{ steps.idp.outputs.enabled }}
         run: |
           {
             echo "- $ACTION on the host: $HOST_OUTCOME"
+            if [ "$IDP_ENABLED" = true ]; then echo '- identity provider settings: given to the deploy (the host log names what changed)'; fi
             echo "- public smoke test: ${SMOKE_OUTCOME:-not run (no DEPLOY_PUBLIC_URL)}"
             if [ "$ACTION" = deploy ]; then echo "- release: $RELEASE"; fi
           } >> "$GITHUB_STEP_SUMMARY"
@@ -368,7 +436,7 @@ jobs:
           REMOTE: ${{ steps.config.outputs.remote }}
         run: |
           ssh -F "$SSH_CONFIG" crove-target "rm -rf '$REMOTE'" < /dev/null || true
-          rm -rf "$(dirname "$SSH_CONFIG")"
+          rm -rf "$(dirname "$SSH_CONFIG")" "$RUNNER_TEMP/idp"
 
   # The partner's release notes (#691; plan §7 rule 6): one line per PR, from the "Release note (vi):" line of its body
   # (tools/release-notes.mjs). Written to the summary on every v* tag; published as the tag's GitHub Release only once

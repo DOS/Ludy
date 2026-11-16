@@ -60,6 +60,31 @@ Two security changes wait for a step on the pilot host (#3282, owner decision 20
 - Reading it: idempotency rows live 7 days, so the count falls to 0 within a week of a release that keys every row (#1742). **#1882 merges only after a deploy log shows `plain idempotency rows: 0`**; a number above 0 means the retention purge has not removed the old rows yet: do not merge, and deploy again later. Only `deploy` prints the count, a rollback does not; to get a fresh one, deploy the release that runs again.
 - Nothing to roll back: the count changes nothing.
 
+## Identity provider settings in the deploy (#2704)
+
+Opt-in. A pilot that signs in at a remote identity provider (Supabase Auth, [pilot-sign-in-remote-idp.md](pilot-sign-in-remote-idp.md)) needs a few lines in the host's env file. No agent has a shell on the host, so the deploy can write them: when the GitHub environment defines the settings below, the workflow checks them, sends them to the host with the release, and `deploy.sh deploy --auth-settings <file>` edits the env file. With none of them defined the env file is never edited (apart from the context token key) and nothing below applies.
+
+| Name | Kind | Value |
+|---|---|---|
+| `AUTH_ISSUER`, `AUTH_JWKS_URL`, `PUBLIC_AUTH_URL`, `PUBLIC_AUTH_ANON_KEY` | variable | the provider's token issuer, its JWKS address, its Auth URL and its publishable key (public values). All four, and `AUTH_ALLOWED_EMAILS`, are required once any setting is defined |
+| `AUTH_ALLOWED_EMAILS` | **secret** | who may use the deployment: addresses and `@domain` entries, comma separated (addresses are private, so it is a secret) |
+| `AUTH_OAUTH_PROVIDERS` | variable | optional: provider ids for the sign-in buttons, comma separated |
+| `AUTH_HOSTED_LOGIN_URL`, `AUTH_HOSTED_LOGIN_TOKEN_URL`, `AUTH_HOSTED_LOGIN_NAME` | variable | optional: the hosted sign-in page and token endpoint (both or neither) and the button's words (only with them) |
+| `DEPLOY_REMOTE_AUTH` | variable | optional, `true`: the host already uses a remote provider set up by hand (the manual path of the runbook), so the public smoke test skips the proxy checks too. Not needed when the deploy writes the settings |
+
+**What it does to the env file.**
+
+- Sets the lines it was given, plus `AUTH_SESSION_CHECK=jwt` and an empty `AUTH_UPSTREAM_URL=` (no bundled proxy).
+- Removes every assignment of those names and of `AUTH_SIGNUP_POLICY`, `AUTH_SIGNUP_ALLOWED_DOMAINS` and `PROBER_AUTH_URL`. The optional settings the environment does not define leave the file too: the environment is the truth.
+- Leaves every other line alone, `AUTH_JWT_SECRET` and comments included. It writes into the file itself (the inode, owner and mode stay), after the migration and right before the services are recreated, so the worker, the API and the prober start with the new settings.
+- Before writing, it keeps a dated copy next to the file (`<env file>.bak-<UTC time>-<random>`, mode 600; it holds the old secrets, so clean it up when it is no longer needed). A deploy that finds the file already holding exactly these settings writes nothing and makes no copy.
+
+**Checks before the host is touched.** The workflow and `deploy.sh` (again, on the host) refuse the deploy, with exit 2 and the name of the setting (never its value), unless: every address is `https` with a host name (no IP address or `localhost`), a plain path and no query, fragment or user; the issuer and the JWKS address have the same origin; the publishable key is 16 to 2048 characters of letters, digits, `.`, `-` and `_`; every provider id is `[a-z][a-z0-9_]{0,31}` (at most 12); every allowed entry is an address or `@domain` (at most 200); the two hosted-login addresses come together; and the button's words are at most 120 bytes with no quote, backslash, `$`, backtick, `#`, `=` or other character a shell or a dotenv file could act on. A value with a line break, or a name this list does not have, is refused too, so a value cannot add a line of its own. The settings never travel on a command line: they go in a mode 600 file in the release's private incoming directory, which the run removes at its end.
+
+**Rollback.** When the deploy fails after the file was written (the release does not become ready, the smoke test fails) the dated copy is put back before the release before runs again, and the log says `restored ... (the identity provider settings are out again)`. `deploy.sh rollback`, which the workflow runs after a failed public smoke test, does the same when the release it leaves is the one that wrote the settings; a deploy that changed nothing in the file, or a later deploy without settings, leaves nothing to restore. If the copy cannot be put back, the exit code is 3 and the message names the copy: copy it over the env file by hand.
+
+**The smoke test with a remote provider.** The kernel then has no `/auth/v1` proxy, so the smoke test skips `/auth/v1/health` and the smoke account's sign-in (the log says `smoke skipped`) and the prober watches the provider instead. `/readyz`, `/version`, `/api/config` and the sign-in page are still checked.
+
 ## What the smoke test checks
 
 `deploy.sh smoke <base url> [build id]` (it needs only bash and curl, so you can run it from any machine):
@@ -173,6 +198,7 @@ Create the environment (`pilot`, later `beta`) under Settings, Environments. A r
 | `DEPLOY_ENV_FILE` | variable | no | env file on the host, default `<DEPLOY_DIR>/.env` |
 | `DEPLOY_PUBLIC_URL` | variable | no | the public origin, for example `https://crove.example.com`, for the smoke test through the proxy |
 | `DEPLOY_REQUIRED_CHECKS` | variable | no | check runs that must be green on the commit, one per line |
+| `AUTH_ISSUER`, `AUTH_JWKS_URL`, `PUBLIC_AUTH_URL`, `PUBLIC_AUTH_ANON_KEY`, `AUTH_ALLOWED_EMAILS` (secret), `AUTH_OAUTH_PROVIDERS`, `AUTH_HOSTED_LOGIN_*`, `DEPLOY_REMOTE_AUTH` | variable (one secret) | no | the pilot's remote identity provider (section "Identity provider settings in the deploy"); defined together or not at all |
 | `SMOKE_EMAIL`, `SMOKE_PASSWORD` | secret | no | the smoke account (section "Smoke account"); without them the public smoke test does not sign in |
 | `SMOKE_ORG` | variable | with the two above | the smoke org's slug |
 
