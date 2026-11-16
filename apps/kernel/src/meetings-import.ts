@@ -52,7 +52,8 @@ export interface MeetingsImportDeps {
   media?: { extractAudio(video: Uint8Array): Promise<Uint8Array> } | null;
   // Tests only: the guarded transfer and its options.
   stream?: typeof guardedStream;
-  streamOptions?: Partial<EgressStreamOptions>;
+  // Tests only (timeouts, a local server): never the security fields, so no caller of the seam can undo the first-host list or the per-hop allowlist.
+  streamOptions?: Partial<Omit<EgressStreamOptions, 'firstHosts' | 'hostAllowed'>>;
 }
 
 interface SealedCredential {
@@ -117,6 +118,8 @@ async function fetchBytes(deps: MeetingsImportDeps, download: MeetingPlatformDow
       timeoutMs: DOWNLOAD_TIMEOUT_MS,
       maxBytes: MEETING_PLATFORM_IMPORT_MAX_BYTES,
       httpsOnly: true,
+      // The guard refuses a first request outside the adapter's exact hosts (the check above stays as the first line); the suffixes below are for redirect hops only.
+      firstHosts: download.hosts,
       redirectHeaders: 'same-host',
       hostAllowed: (host) => hosts.has(host) || suffixes.some((suffix) => host === suffix.replace(/^\./, '') || host.endsWith(suffix.startsWith('.') ? suffix : `.${suffix}`)),
       ...deps.streamOptions,

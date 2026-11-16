@@ -156,6 +156,12 @@ export const zAdsLaunchView = z.object({
   windDown: z.object({ state: z.enum(['pending', 'done', 'gave_up']), code: z.string().nullable() }).nullable(),
   // The objects this launch has created on the ad platform so far, in creation order.
   objects: z.array(zAdsLaunchObjectView),
+  // The provider id of the launch's ad account (`meta_ads`, `sandbox_ads`), so the screen can name the platform it asked.
+  provider: z.string(),
+  // When Ludy last asked the platform for the states of these objects (#3419): the newest settled read of this launch, whether it worked or not; null for a launch never read.
+  statesReadAt: z.string().nullable(),
+  // Whether that last read worked; false says the states shown are the last known ones. null for a launch never read. Never carries the platform's own words.
+  statesReadOk: z.boolean().nullable(),
 });
 export type AdsLaunchView = z.infer<typeof zAdsLaunchView>;
 export const zAdsLaunchCancelCall = z.strictObject({ launchId: zId, idempotencyKey: zId });

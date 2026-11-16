@@ -14,7 +14,7 @@ export const projectsManifest = defineModule({
         { name: 'pii', description: 'pii' },
       ),
       project_member: columns(['org_id', 'id', 'project_id', 'user_id', 'created_at']),
-      project_task: columns(['org_id', 'id', 'project_id', 'task_id', 'added_by', 'created_at']),
+      project_task: columns(['org_id', 'id', 'project_id', 'task_id', 'sort_key', 'added_by', 'created_at']),
     },
   },
   // Access comes from the base role (every member and viewer reads; owners, admins and members create projects and add

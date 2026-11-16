@@ -12,6 +12,7 @@ import {
   AD_OAUTH_PROVIDERS,
   AD_READ_OAUTH_PROVIDERS,
   AD_WRITE_OAUTH_PROVIDERS,
+  AD_PLATFORM_SELLER_NAMES,
   ADS_RANGES,
   NAMED_RESULT_KINDS,
   NO_WRITE_OFFER,
@@ -20,14 +21,20 @@ import {
   adReadOAuthProviders,
   adWriteOAuthProviders,
   adWriteOffer,
+  bankLineSearch,
+  bankLinesByMonth,
   adsRange,
   awaitsFirstSync,
   booksDifference,
   booksExpense,
   booksMonths,
   configureChanges,
+  documentCounts,
+  documentsRange,
   errorCode,
+  foldSellerName,
   expenseCodeProblem,
+  sellerIsPlatform,
   hasFigures,
   isAdOAuthProvider,
   isAdWriteOAuthProvider,
@@ -581,5 +588,104 @@ describe('the connection that can run ads (ADR-0043, W0b)', () => {
     expect(disconnectConfirmText(inEn, sandboxWrite('active'))).toBe(`${body} ${closes}`);
     expect(disconnectConfirmText(inVi, metaWrite('active'))).toContain(inVi('ads.settings.disconnectBody', { name }));
     expect(disconnectConfirmText(inVi, metaWrite('active'))).toContain(inVi('ads.write.platformNote'));
+  });
+});
+
+describe('the platform documents beside the books (slice D1)', () => {
+  it('names the sellers of Meta, Google and TikTok, and the sandbox, as a constant', () => {
+    expect(AD_PLATFORM_SELLER_NAMES.meta_ads).toEqual(['Meta Platforms', 'Facebook']);
+    expect(AD_PLATFORM_SELLER_NAMES.google_ads).toEqual(['Google']);
+    expect(AD_PLATFORM_SELLER_NAMES.tiktok_ads).toEqual(['TikTok']);
+    expect(AD_PLATFORM_SELLER_NAMES.metawrite_ads).toEqual(AD_PLATFORM_SELLER_NAMES.meta_ads);
+  });
+
+  it('sets Vietnamese marks, case and punctuation aside', () => {
+    expect(foldSellerName('  CÔNG TY Đỗ-Việt, Ltd. ')).toBe('cong ty do viet ltd');
+    expect(sellerIsPlatform('meta_ads', 'META PLATFORMS')).toBe(true);
+    expect(sellerIsPlatform('meta_ads', 'facebook')).toBe(true);
+    expect(sellerIsPlatform('google_ads', 'GOOGLE')).toBe(true);
+  });
+
+  it('matches a seller that only contains the name, on whole words', () => {
+    expect(sellerIsPlatform('meta_ads', 'Meta Platforms Ireland Limited')).toBe(true);
+    expect(sellerIsPlatform('meta_ads', 'Facebook Ireland Ltd.')).toBe(true);
+    expect(sellerIsPlatform('google_ads', 'Google Asia Pacific Pte. Ltd.')).toBe(true);
+    expect(sellerIsPlatform('tiktok_ads', 'TikTok Pte. Ltd.')).toBe(true);
+    expect(sellerIsPlatform('google_ads', 'Googlers Cafe')).toBe(false);
+    expect(sellerIsPlatform('meta_ads', 'Metallica Platforms')).toBe(false);
+    expect(sellerIsPlatform('meta_ads', 'Meta')).toBe(false);
+  });
+
+  it('matches only the names of the account’s own platform, and nothing for a platform without names', () => {
+    expect(sellerIsPlatform('google_ads', 'Meta Platforms')).toBe(false);
+    expect(sellerIsPlatform('unknown_ads', 'Google')).toBe(false);
+  });
+
+  it('asks for the days from the first day of the first month to the last day of the last', () => {
+    expect(documentsRange([])).toBeNull();
+    expect(documentsRange([{ month: '2026-09' }, { month: '2026-11' }])).toEqual({ from: '2026-09-01', to: '2026-11-30' });
+    expect(documentsRange([{ month: '2026-02' }])).toEqual({ from: '2026-02-01', to: '2026-02-28' });
+    expect(documentsRange([{ month: '2028-02' }])).toEqual({ from: '2028-02-01', to: '2028-02-29' });
+    expect(documentsRange([{ month: '2026-12' }])).toEqual({ from: '2026-12-01', to: '2026-12-31' });
+  });
+
+  it('counts the purchase documents of the platform by the month of their date, and not a voided one or a sale', () => {
+    const doc = (partyName: string, issueDate: string, over: Partial<{ direction: string; voided: unknown }> = {}) => ({
+      direction: 'purchase',
+      partyName,
+      issueDate,
+      voided: null,
+      ...over,
+    });
+    const counts = documentCounts(
+      [
+        doc('Google Asia Pacific Pte. Ltd.', '2026-09-30'),
+        doc('GOOGLE', '2026-09-02'),
+        doc('Google Asia Pacific Pte. Ltd.', '2026-11-01'),
+        doc('Google', '2026-10-05', { voided: { reversalEntryId: 'r', reason: 'x', voidedAt: '2026-10-06T00:00:00.000Z' } }),
+        doc('Google', '2026-10-07', { direction: 'sale' }),
+        doc('Công ty Văn phòng phẩm', '2026-10-08'),
+      ],
+      'google_ads',
+    );
+    expect([...counts.entries()]).toEqual([
+      ['2026-09', 2],
+      ['2026-11', 1],
+    ]);
+  });
+});
+
+describe('the bank and card lines that paid the platform (slice D2)', () => {
+  const l = (id: string, date: string, description: string, amount: string, bankAccount = '1121') => ({ id, bankAccount, date, description, amount });
+
+  it('groups the platform’s lines by month, newest month first, and totals what went out', () => {
+    const months = bankLinesByMonth(
+      [
+        l('1', '2026-11-05', 'GOOGLE ADS 4567', '-500000'),
+        l('2', '2026-09-30', 'Google Asia Pacific', '-1500000.5'),
+        l('3', '2026-11-20', 'Google Ads', '-250000'),
+        l('4', '2026-09-02', 'Google Ads', '-1000000'),
+      ],
+      'google_ads',
+    );
+    expect(months.map((m) => [m.month, m.paid, m.lines.map((x) => x.id)])).toEqual([
+      ['2026-11', '750000', ['1', '3']],
+      ['2026-09', '2500000.5', ['2', '4']],
+    ]);
+  });
+
+  it('nets a refund against what went out, exactly', () => {
+    const [month] = bankLinesByMonth([l('1', '2026-11-05', 'Google Ads', '-500000.10'), l('2', '2026-11-09', 'Google Ads refund', '100000.05')], 'google_ads');
+    expect(month?.paid).toBe('400000.05');
+  });
+
+  it('leaves out a line that does not name the platform, as whole words, and every line of a platform without names', () => {
+    expect(bankLinesByMonth([l('1', '2026-11-05', 'Googlers Cafe', '-45000'), l('2', '2026-11-06', 'Tien dien', '-900000')], 'google_ads')).toEqual([]);
+    expect(bankLinesByMonth([l('1', '2026-11-05', 'Google Ads', '-500000')], 'unknown_ads')).toEqual([]);
+    expect(bankLinesByMonth([], 'google_ads')).toEqual([]);
+  });
+
+  it('opens the bank screen at the line’s account and month', () => {
+    expect(bankLineSearch({ bankAccount: '1121', date: '2026-11-05' })).toEqual({ account: '1121', month: '2026-11' });
   });
 });

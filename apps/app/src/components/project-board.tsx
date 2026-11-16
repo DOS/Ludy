@@ -20,9 +20,9 @@ import {
   boardColumns,
   groupBoardTasks,
   isTaskOverdue,
-  sortBoardTasks,
   taskStatusVariant,
   type ProjectViewMode,
+  type TaskPlacement,
 } from '../lib/projects.ts';
 import { seatOptionLabel } from './project-task-dialog.tsx';
 
@@ -241,14 +241,48 @@ function TaskMetaBadges({
   );
 }
 
+function focusSiblingAfterBoundaryMove(button: HTMLButtonElement, direction: 'up' | 'down'): void {
+  const sibling = direction === 'up' ? button.nextElementSibling : button.previousElementSibling;
+  if (sibling instanceof HTMLButtonElement) {
+    requestAnimationFrame(() => sibling.focus());
+  }
+}
+
+function dropPlaceForCard(
+  e: DragEvent<HTMLElement>,
+  sameColumn: boolean,
+  draggingIndex: number,
+  targetIndex: number,
+): 'before' | 'after' {
+  const rect = e.currentTarget.getBoundingClientRect();
+  const ratio = rect.height > 0 ? (e.clientY - rect.top) / rect.height : 0.5;
+  if (ratio < 0.35) return 'before';
+  if (ratio > 0.65) return 'after';
+  if (sameColumn && draggingIndex >= 0 && targetIndex >= 0) {
+    return draggingIndex > targetIndex ? 'before' : 'after';
+  }
+  return ratio < 0.5 ? 'before' : 'after';
+}
+
 function TaskBoardCard({
   slug,
   task,
   seats,
   canEdit,
   dragging,
+  dropEdge,
+  canMoveUp,
+  canMoveDown,
+  isSecondInColumn,
+  isSecondToLastInColumn,
+  customSortActive,
+  showReorder,
   onDragStart,
   onDragEnd,
+  onDragOverCard,
+  onDropOnCard,
+  onMoveUp,
+  onMoveDown,
   onMoveStatus,
   onEdit,
   onRemove,
@@ -258,8 +292,19 @@ function TaskBoardCard({
   seats: readonly ProjectSeat[];
   canEdit: boolean;
   dragging: boolean;
+  dropEdge: 'before' | 'after' | null;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+  isSecondInColumn: boolean;
+  isSecondToLastInColumn: boolean;
+  customSortActive: boolean;
+  showReorder: boolean;
   onDragStart: () => void;
   onDragEnd: () => void;
+  onDragOverCard: (e: DragEvent<HTMLLIElement>) => void;
+  onDropOnCard: (e: DragEvent<HTMLLIElement>) => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
   onMoveStatus: (taskId: string, nextStatus: TaskStatus) => void;
   onEdit: (task: ProjectTaskCard) => void;
   onRemove: (task: ProjectTaskCard) => void;
@@ -267,6 +312,12 @@ function TaskBoardCard({
   const t = useTranslations('projects');
   const tt = useTranslations('tasks');
   const draggable = canEdit && !task.checkedOut;
+  const dropRing =
+    dropEdge === 'before'
+      ? 'border-t-2 border-t-primary ring-1 ring-primary/25'
+      : dropEdge === 'after'
+        ? 'border-b-2 border-b-primary ring-1 ring-primary/25'
+        : '';
 
   return (
     <li
@@ -281,9 +332,11 @@ function TaskBoardCard({
         onDragStart();
       }}
       onDragEnd={onDragEnd}
+      onDragOver={onDragOverCard}
+      onDrop={onDropOnCard}
       className={`group rounded-lg border border-border bg-card p-3 transition-colors hover:border-foreground/25 ${
         draggable ? 'cursor-grab active:cursor-grabbing' : ''
-      } ${dragging ? 'opacity-40' : ''}`}
+      } ${dragging ? 'opacity-40' : ''} ${dropRing}`}
     >
       <div className="flex items-start justify-between gap-2">
         <Link
@@ -296,6 +349,38 @@ function TaskBoardCard({
         </Link>
         {canEdit && (
           <div className="flex shrink-0 items-center gap-0.5">
+            {showReorder && (
+              <>
+                <button
+                  type="button"
+                  disabled={!canMoveUp}
+                  onClick={(e) => {
+                    if (isSecondInColumn) focusSiblingAfterBoundaryMove(e.currentTarget, 'up');
+                    onMoveUp();
+                  }}
+                  aria-label={t('task.moveUpOf', { title: task.title })}
+                  title={customSortActive ? t('task.reorderDisabledBySort') : t('task.moveUp')}
+                  data-testid="move-task-up"
+                  className="grid size-7 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:pointer-events-none disabled:opacity-40"
+                >
+                  <ProjectIcon name="arrowUp" className="size-3.5" />
+                </button>
+                <button
+                  type="button"
+                  disabled={!canMoveDown}
+                  onClick={(e) => {
+                    if (isSecondToLastInColumn) focusSiblingAfterBoundaryMove(e.currentTarget, 'down');
+                    onMoveDown();
+                  }}
+                  aria-label={t('task.moveDownOf', { title: task.title })}
+                  title={customSortActive ? t('task.reorderDisabledBySort') : t('task.moveDown')}
+                  data-testid="move-task-down"
+                  className="grid size-7 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:pointer-events-none disabled:opacity-40"
+                >
+                  <ProjectIcon name="arrowDown" className="size-3.5" />
+                </button>
+              </>
+            )}
             <button
               type="button"
               onClick={() => onEdit(task)}
@@ -349,7 +434,9 @@ export function ProjectBoardView({
   canEdit,
   includeCancelled,
   creatingTask,
+  customSortActive = false,
   onMoveStatus,
+  onReorderTask,
   onCreateTask,
   onEditTask,
   onRemoveTask,
@@ -361,7 +448,9 @@ export function ProjectBoardView({
   canEdit: boolean;
   includeCancelled: boolean;
   creatingTask: boolean;
-  onMoveStatus: (taskId: string, nextStatus: TaskStatus) => void;
+  customSortActive?: boolean;
+  onMoveStatus: (taskId: string, nextStatus: TaskStatus, placement?: TaskPlacement) => void;
+  onReorderTask?: (taskId: string, placement: TaskPlacement) => void;
   onCreateTask: (input: { title: string; assigneePositionId: string | null; due?: string; status: BoardColumnStatus }, done: () => void) => void;
   onEditTask: (task: ProjectTaskCard) => void;
   onRemoveTask: (taskId: string) => void;
@@ -372,21 +461,78 @@ export function ProjectBoardView({
 
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [overStatus, setOverStatus] = useState<TaskStatus | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ anchorId: string; place: 'before' | 'after' } | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<ProjectTaskCard | null>(null);
 
   const columns = boardColumns(includeCancelled);
   const grouped = groupBoardTasks(tasks, includeCancelled);
-  const listTasks = sortBoardTasks(includeCancelled ? tasks : tasks.filter((item) => item.status !== 'cancelled'));
+  const listTasks = includeCancelled ? tasks : tasks.filter((item) => item.status !== 'cancelled');
+  const showReorder = canEdit && onReorderTask !== undefined;
+
+  const clearDrag = () => {
+    setDraggingId(null);
+    setOverStatus(null);
+    setDropTarget(null);
+  };
 
   const handleDropOnColumn = (e: DragEvent<HTMLElement>, targetStatus: TaskStatus) => {
     e.preventDefault();
     const droppedId = e.dataTransfer.getData('text/plain') || draggingId;
-    setDraggingId(null);
-    setOverStatus(null);
+    clearDrag();
     if (!canEdit || !droppedId) return;
     const task = tasks.find((item) => item.id === droppedId);
-    if (!task || task.checkedOut || task.status === targetStatus) return;
+    if (!task) return;
+    if (task.status === targetStatus) {
+      if (!customSortActive && onReorderTask) {
+        const items = grouped[targetStatus];
+        const last = items[items.length - 1];
+        if (last && last.id !== droppedId) {
+          onReorderTask(droppedId, { place: 'after', anchorId: last.id });
+        }
+      }
+      return;
+    }
+    if (task.checkedOut) return;
     onMoveStatus(droppedId, targetStatus);
+  };
+
+  const handleDragOverCard = (e: DragEvent<HTMLLIElement>, targetTask: ProjectTaskCard, targetIndex: number) => {
+    if (!canEdit || !draggingId || draggingId === targetTask.id) return;
+    const draggingTask = tasks.find((item) => item.id === draggingId);
+    if (!draggingTask) return;
+    const sameColumn = draggingTask.status === targetTask.status;
+    if (sameColumn && (customSortActive || !onReorderTask)) return;
+    if (!sameColumn && draggingTask.checkedOut) return;
+    const columnItems = grouped[targetTask.status];
+    const draggingIndex = sameColumn ? columnItems.findIndex((item) => item.id === draggingId) : -1;
+    const place = dropPlaceForCard(e, sameColumn, draggingIndex, targetIndex);
+    e.preventDefault();
+    e.stopPropagation();
+    setOverStatus((cur) => (cur === targetTask.status ? cur : targetTask.status));
+    setDropTarget((cur) => (cur?.anchorId === targetTask.id && cur.place === place ? cur : { anchorId: targetTask.id, place }));
+  };
+
+  const handleDropOnCard = (e: DragEvent<HTMLLIElement>, targetTask: ProjectTaskCard, targetIndex: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const droppedId = e.dataTransfer.getData('text/plain') || draggingId;
+    clearDrag();
+    if (!canEdit || !droppedId || droppedId === targetTask.id) return;
+    const droppedTask = tasks.find((item) => item.id === droppedId);
+    if (!droppedTask) return;
+    const sameColumn = droppedTask.status === targetTask.status;
+    const columnItems = grouped[targetTask.status];
+    const draggingIndex = sameColumn ? columnItems.findIndex((item) => item.id === droppedId) : -1;
+    const place = dropPlaceForCard(e, sameColumn, draggingIndex, targetIndex);
+    if (sameColumn) {
+      if (customSortActive || !onReorderTask) return;
+      if (place === 'before' && columnItems[targetIndex - 1]?.id === droppedId) return;
+      if (place === 'after' && columnItems[targetIndex + 1]?.id === droppedId) return;
+      onReorderTask(droppedId, { place, anchorId: targetTask.id });
+      return;
+    }
+    if (droppedTask.checkedOut) return;
+    onMoveStatus(droppedId, targetTask.status, !customSortActive && onReorderTask ? { place, anchorId: targetTask.id } : undefined);
   };
 
   return (
@@ -406,6 +552,12 @@ export function ProjectBoardView({
             setConfirmRemove(null);
           }}
         />
+      )}
+
+      {canEdit && customSortActive && (
+        <p className="text-xs text-muted-foreground" data-testid="reorder-disabled-hint">
+          {t('task.reorderDisabledHint')}
+        </p>
       )}
 
       {view === 'board' ? (
@@ -430,6 +582,7 @@ export function ProjectBoardView({
                   if (!canEdit) return;
                   e.preventDefault();
                   setOverStatus((cur) => (cur === status ? cur : status));
+                  setDropTarget((cur) => (cur ? null : cur));
                 }}
                 onDragLeave={(e) => {
                   if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
@@ -459,24 +612,44 @@ export function ProjectBoardView({
                       {t('board.emptyColumn')}
                     </li>
                   ) : (
-                    items.map((task) => (
-                      <TaskBoardCard
-                        key={task.id}
-                        slug={slug}
-                        task={task}
-                        seats={seats}
-                        canEdit={canEdit}
-                        dragging={draggingId === task.id}
-                        onDragStart={() => setDraggingId(task.id)}
-                        onDragEnd={() => {
-                          setDraggingId(null);
-                          setOverStatus(null);
-                        }}
-                        onMoveStatus={onMoveStatus}
-                        onEdit={onEditTask}
-                        onRemove={setConfirmRemove}
-                      />
-                    ))
+                    items.map((task, idx) => {
+                      const prev = idx > 0 ? items[idx - 1] : undefined;
+                      const next = idx < items.length - 1 ? items[idx + 1] : undefined;
+                      return (
+                        <TaskBoardCard
+                          key={task.id}
+                          slug={slug}
+                          task={task}
+                          seats={seats}
+                          canEdit={canEdit}
+                          dragging={draggingId === task.id}
+                          dropEdge={dropTarget?.anchorId === task.id ? dropTarget.place : null}
+                          canMoveUp={!customSortActive && prev !== undefined}
+                          canMoveDown={!customSortActive && next !== undefined}
+                          isSecondInColumn={idx === 1}
+                          isSecondToLastInColumn={idx === items.length - 2}
+                          customSortActive={customSortActive}
+                          showReorder={showReorder}
+                          onDragStart={() => setDraggingId(task.id)}
+                          onDragEnd={clearDrag}
+                          onDragOverCard={(e) => handleDragOverCard(e, task, idx)}
+                          onDropOnCard={(e) => handleDropOnCard(e, task, idx)}
+                          onMoveUp={() => {
+                            if (!customSortActive && onReorderTask && prev) {
+                              onReorderTask(task.id, { place: 'before', anchorId: prev.id });
+                            }
+                          }}
+                          onMoveDown={() => {
+                            if (!customSortActive && onReorderTask && next) {
+                              onReorderTask(task.id, { place: 'after', anchorId: next.id });
+                            }
+                          }}
+                          onMoveStatus={(taskId, nextStatus) => onMoveStatus(taskId, nextStatus)}
+                          onEdit={onEditTask}
+                          onRemove={setConfirmRemove}
+                        />
+                      );
+                    })
                   )}
                 </ul>
 
@@ -501,9 +674,11 @@ export function ProjectBoardView({
             <Empty title={t('detail.emptyBoard')} hint={t('detail.emptyBoardHint')} />
           ) : (
             <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">
-              {listTasks.map((task) => {
+              {listTasks.map((task, idx) => {
                 const seat = seatDisplay(task.assigneePositionId, seats, tt('rootAssignee'), tt('unknownPosition'));
                 const overdue = isTaskOverdue(task);
+                const prev = idx > 0 ? listTasks[idx - 1] : undefined;
+                const next = idx < listTasks.length - 1 ? listTasks[idx + 1] : undefined;
                 return (
                   <li
                     key={task.id}
@@ -573,6 +748,44 @@ export function ProjectBoardView({
                       )}
                       {canEdit && (
                         <div className="flex items-center gap-1">
+                          {showReorder && (
+                            <>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                disabled={customSortActive || prev === undefined}
+                                aria-label={t('task.moveUpOf', { title: task.title })}
+                                title={customSortActive ? t('task.reorderDisabledBySort') : t('task.moveUp')}
+                                data-testid="move-task-up"
+                                onClick={(e) => {
+                                  if (!customSortActive && onReorderTask && prev) {
+                                    if (idx === 1) focusSiblingAfterBoundaryMove(e.currentTarget, 'up');
+                                    onReorderTask(task.id, { place: 'before', anchorId: prev.id });
+                                  }
+                                }}
+                              >
+                                <ProjectIcon name="arrowUp" />
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                disabled={customSortActive || next === undefined}
+                                aria-label={t('task.moveDownOf', { title: task.title })}
+                                title={customSortActive ? t('task.reorderDisabledBySort') : t('task.moveDown')}
+                                data-testid="move-task-down"
+                                onClick={(e) => {
+                                  if (!customSortActive && onReorderTask && next) {
+                                    if (idx === listTasks.length - 2) focusSiblingAfterBoundaryMove(e.currentTarget, 'down');
+                                    onReorderTask(task.id, { place: 'after', anchorId: next.id });
+                                  }
+                                }}
+                              >
+                                <ProjectIcon name="arrowDown" />
+                              </Button>
+                            </>
+                          )}
                           <Button
                             type="button"
                             size="sm"

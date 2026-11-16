@@ -100,11 +100,84 @@ test('solo owner creates a project, adds 5 tasks, drags one to Done, works keybo
     await expect(todoCol.locator('[data-testid="project-task-card"]')).toHaveCount(3);
   });
 
+  await test.step('reorder tasks within column by keyboard and drag-and-drop, and persist across reload (#2610)', async () => {
+    const todoCol = page.locator('[data-testid="project-column"][data-status="todo"]');
+    const titlesInTodo = async () =>
+      todoCol.locator('[data-testid="project-task-card"] a').allTextContents();
+
+    await expect.poll(titlesInTodo).toEqual(['Việc dự án 3', 'Việc dự án 4', 'Việc dự án 5']);
+
+    // Keyboard Move Up moves Việc dự án 5 before Việc dự án 4.
+    const moveUp5 = todoCol.getByRole('button', { name: 'Đưa Việc dự án 5 lên trên' });
+    await moveUp5.focus();
+    await page.keyboard.press('Enter');
+    await expect.poll(titlesInTodo).toEqual(['Việc dự án 3', 'Việc dự án 5', 'Việc dự án 4']);
+
+    // Drag Việc dự án 4 onto Việc dự án 3 to place it at the top of the column.
+    const card4 = todoCol.locator('[data-testid="project-task-card"]', { hasText: 'Việc dự án 4' });
+    const card3 = todoCol.locator('[data-testid="project-task-card"]', { hasText: 'Việc dự án 3' });
+    await card4.dragTo(card3);
+    await expect.poll(titlesInTodo).toEqual(['Việc dự án 4', 'Việc dự án 3', 'Việc dự án 5']);
+
+    await page.reload();
+    await page.waitForLoadState('networkidle');
+    await expect.poll(titlesInTodo).toEqual(['Việc dự án 4', 'Việc dự án 3', 'Việc dự án 5']);
+  });
+
+  await test.step('saved view (kernel.task) filters on project board and /tasks including tainted filter (#2610)', async () => {
+    const cards = page.locator('[data-testid="project-task-card"]');
+    await page.getByTestId('task-filter-status').selectOption('in_progress');
+    await expect(cards).toHaveCount(1);
+    await expect(cards.first()).toContainText('Việc dự án 2');
+
+    await page.getByRole('button', { name: 'Lưu thành chế độ xem' }).click();
+    const saveForm = page.getByRole('form', { name: 'Lưu thành chế độ xem' });
+    await saveForm.getByLabel('Tên chế độ xem').fill('Việc đang làm');
+    await saveForm.getByRole('button', { name: 'Lưu', exact: true }).click();
+    await expect(page.getByRole('tab', { name: 'Việc đang làm' })).toHaveAttribute('aria-selected', 'true');
+
+    await page.getByTestId('task-filter-tainted').selectOption('true');
+    await expect(cards).toHaveCount(0);
+
+    const viewTabs = page.getByRole('tablist', { name: 'Chế độ xem đã lưu' });
+    await viewTabs.getByRole('tab', { name: 'Tất cả' }).click();
+    await expect(cards).toHaveCount(5);
+
+    // Reload to ensure cache is cold, then select the saved view and confirm tab selection + controls remain mounted, plus search focus persists.
+    await page.reload();
+    await page.waitForLoadState('networkidle');
+    await viewTabs.getByRole('tab', { name: 'Việc đang làm' }).click();
+    await expect(cards).toHaveCount(1);
+    await expect(viewTabs.getByRole('tab', { name: 'Việc đang làm' })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('button', { name: 'Đổi tên' })).toBeVisible();
+    await viewTabs.getByRole('tab', { name: 'Tất cả' }).click();
+    await expect(cards).toHaveCount(5);
+    const searchBox = page.getByTestId('task-filter-search');
+    await searchBox.focus();
+    await searchBox.fill('Việc dự án 4');
+    await expect(cards).toHaveCount(1);
+    await expect(searchBox).toBeFocused();
+    await page.getByTestId('task-filter-clear').click();
+    await expect(cards).toHaveCount(5);
+
+    // The same saved view appears and filters the org-wide /tasks workspace.
+    await page.goto(`/o/${slug}/tasks`);
+    await page.waitForLoadState('networkidle');
+    await expect(viewTabs.getByRole('tab', { name: 'Việc đang làm' })).toBeVisible();
+    await viewTabs.getByRole('tab', { name: 'Việc đang làm' }).click();
+    const taskRows = page.getByTestId('task-row');
+    await expect(taskRows).toHaveCount(1);
+    await expect(taskRows.first()).toContainText('Việc dự án 2');
+    await viewTabs.getByRole('tab', { name: 'Tất cả' }).click();
+    await expect(taskRows).toHaveCount(4);
+  });
+
   await test.step('360px phone defaults to List view with zero horizontal scroll and passes light/dark axe scan', async () => {
     await page.setViewportSize({ width: 360, height: 780 });
     const problems: string[] = [];
     for (const theme of ['light', 'dark'] as const) {
       problems.push(...(await auditScreen(page, `/o/${slug}/projects`, theme)));
+      problems.push(...(await auditScreen(page, `/o/${slug}/tasks`, theme)));
       problems.push(...(await auditScreen(page, projectUrl, theme)));
       await expect(page.getByTestId('project-list')).toBeVisible();
       await expect(page.getByTestId('project-board')).toHaveCount(0);

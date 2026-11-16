@@ -3253,6 +3253,7 @@ export interface ProjectsProjectTaskTable {
   task_id: string;
   added_by: string | null;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  sort_key: string | null;
 }
 
 /** crove_sign.ai_analysis */

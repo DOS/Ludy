@@ -12,6 +12,7 @@
 import { z } from 'zod';
 import { zId } from '@crove/kernel-contract';
 import { defineCommand, defineQuery } from '@crove/kernel-runtime';
+import { stateReadKeyPrefix } from './launch-ledger.ts';
 import { requireSystem } from './launch-run.ts';
 
 // The levels whose own status is read, as `STATE_LEVELS` of the platform package names them (a creative has none of its own).
@@ -125,7 +126,7 @@ export interface ObjectSynced {
 }
 
 // The key of a read in the kernel's ledger: the launch and the moment of the read (to the millisecond), so each read is a row of its own (a finished row never changes).
-export const stateReadKey = (launchId: string, now: Date): string => `ads.state:${launchId}:${now.toISOString().replace(/[^0-9]/g, '')}`;
+export const stateReadKey = (launchId: string, now: Date): string => `${stateReadKeyPrefix(launchId)}${now.toISOString().replace(/[^0-9]/g, '')}`;
 
 export const adsObjectSyncState = defineCommand({
   name: 'ads.object.sync_state',

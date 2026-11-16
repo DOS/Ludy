@@ -402,10 +402,14 @@ export function MeetingsPage() {
               <Input
                 id="meeting-audio"
                 type="file"
-                accept="audio/*,.mp3,.m4a,.wav,.aac,.ogg,.webm,.opus"
+                accept="audio/*,video/*,.mp3,.m4a,.wav,.aac,.ogg,.webm,.opus,.mp4,.mov,.m4v"
+                aria-describedby="meeting-audio-hint"
                 onChange={(e) => setAudioFile(e.target.files?.[0] ?? null)}
                 disabled={uploadedKinds.includes('audio')}
               />
+              <p id="meeting-audio-hint" className="text-xs text-muted-foreground">
+                {t('form.audioFileVideoHint')}
+              </p>
             </div>
 
             <div className="space-y-2">

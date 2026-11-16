@@ -320,6 +320,47 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     expect(to.rows[0]!.n).toBe('1');
   });
 
+  it('attaches the sent quote\'s PDF to its mail: the bytes of the download, the same on a retry, a live letterhead for an old quote, and only the system may ask (#3418)', async () => {
+    const o = await org();
+    const party = await o.party('Công ty Bí mật ABC', 'mua@khach.test');
+    const deal = await o.newDeal(party);
+    const draft = await o.readyDraft(deal.id, [item({ description: 'Gói tư vấn đặc biệt XYZ', unitPrice: '7770001' })]);
+    const { quote } = await o.send(o.member, draft, 'email');
+    const row = (await admin((c) => c.query<{ subject: string; payload: Record<string, unknown> }>("SELECT subject, payload FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'crm.quote.send' AND source_id = $2", [o.orgId, quote.id]))).rows[0]!;
+    const execute = <T>(command: string, input: unknown) => worker.execute<T>(command, input, { actor: SYSTEM, orgId: o.orgId });
+    const mail = () => quoteMailTemplate.render({ messageId: randomUUID(), subject: row.subject, payload: row.payload, publicUrl: 'https://app.example.test/', inboundAddress: null, brand: 'Ludy', execute });
+    const first = await mail();
+    expect(first?.attachments).toHaveLength(1);
+    const file = first!.attachments![0]!;
+    expect(file).toMatchObject({ filename: `bao-gia-${quote.number}.pdf`, contentType: 'application/pdf' });
+    // The bytes are the download's: the writer's output for the document a member reads.
+    const document = await o.query<QuotePdfDocument>(o.viewer, 'crm.quote.document', { quoteId: quote.id });
+    expect(Buffer.from(file.content as Uint8Array).equals(Buffer.from(renderQuotePdf(document)))).toBe(true);
+    expect(first!.text).toContain('đính kèm');
+    // A retry after an unknown outcome makes a new link but carries the same bytes.
+    const again = await mail();
+    expect(Buffer.from(again!.attachments![0]!.content as Uint8Array).equals(Buffer.from(file.content as Uint8Array))).toBe(true);
+    // A quote sent before the seller snapshot existed still renders, with the live letterhead as the page does.
+    await admin((c) => c.query('UPDATE crove_crm.quote SET seller_name = NULL, seller_tax_code = NULL, seller_address = NULL, seller_phone = NULL, seller_email = NULL, seller_bank_note = NULL WHERE org_id = $1 AND id = $2', [o.orgId, quote.id]));
+    const old = await mail();
+    expect(old?.attachments).toHaveLength(1);
+    const oldDocument = await o.query<QuotePdfDocument>(o.viewer, 'crm.quote.document', { quoteId: quote.id });
+    expect(Buffer.from(old!.attachments![0]!.content as Uint8Array).equals(Buffer.from(renderQuotePdf(oldDocument)))).toBe(true);
+    // Nobody but the system may ask for the document.
+    for (const who of [o.member, o.owner]) {
+      await expect(rt.execute('crm.quote.mail_document', { quoteId: quote.id }, { actor: asUser(who), orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
+    }
+    // No audit row, activity or mail data holds a price, a name or a line.
+    const audit = await admin((c) => c.query("SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'crm.quote.mail_document'", [o.orgId]));
+    const text = JSON.stringify(audit.rows) + JSON.stringify(row.payload);
+    for (const secret of ['Bí mật', '7770001', 'XYZ', 'mua@khach.test']) expect(text, secret).not.toContain(secret);
+    // A quote replaced meanwhile has no document, and so no mail.
+    const revised = await o.exec<Quote>(o.member, 'crm.quote.revise', { quoteId: quote.id });
+    await o.send(o.member, await o.exec<Quote>(o.member, 'crm.quote.save', { quoteId: revised.id, version: revised.version, lines: [item({ quantity: '5' })] }), 'link');
+    expect(await execute('crm.quote.mail_document', { quoteId: quote.id })).toBeNull();
+    expect(await mail()).toBeNull();
+  });
+
   it('replaces a sent quote by its revision: the same number, the older one superseded and its links revoked', async () => {
     const o = await org();
     const deal = await o.newDeal(await o.party('Công ty ABC'));

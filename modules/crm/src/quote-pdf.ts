@@ -4,7 +4,7 @@
 // for `crm.quote.get`. The bytes are made from this by `renderQuotePdf`, in the HTTP route for the download and later by the mail template of Q2.
 //
 // `loadQuoteDocument(ctx, quoteId)` gives a `QuoteDocument`; `renderQuotePdf(document)` is a pure function of its input.
-import { defineQuery } from '@crove/kernel-runtime';
+import { defineCommand, defineQuery } from '@crove/kernel-runtime';
 import { vietnamToday, zQuoteRef } from '@crove/kernel-contract';
 import { loadQuote, logoFileOf, type QuoteLogoFile, type Reader } from './quotes.ts';
 import type { QuoteDocument, QuoteParty } from './pdf/quote-document.ts';
@@ -81,3 +81,21 @@ export const quoteDocument = defineQuery({
 });
 
 export const quotePdfQueries = [quoteDocument];
+
+// The document of a quote whose mail is being sent now (#3418, Q3's exit "the PDF attached to the email"): the mail template asks for it as the system, in the org's context, because no
+// member is signed in then. Only the quote that is still the current sent one has a document here (a replaced or decided quote gets none, as it gets no link from `crm.quote.mail_data`);
+// what comes back is the sent quote as the download route reads it (the frozen seller, buyer, logo reference and lines), returned to the worker and kept nowhere: no audit row, no event.
+export const quoteMailDocument = defineCommand({
+  name: 'crm.quote.mail_document',
+  input: zQuoteRef,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  handler: async (ctx, input): Promise<QuoteDocumentData | null> => {
+    const row = await ctx.trx.selectFrom('crove_crm.quote').select('status').where('org_id', '=', ctx.orgId).where('id', '=', input.quoteId).forShare().executeTakeFirst();
+    if (!row || row.status !== 'sent') return null;
+    return loadQuoteDocument(ctx, input.quoteId);
+  },
+});
+
+export const quotePdfCommands = [quoteMailDocument];

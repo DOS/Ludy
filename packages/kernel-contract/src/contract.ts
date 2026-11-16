@@ -202,11 +202,13 @@ import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts
 import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
 import { zFinanceOverview, zFinanceOverviewExplainAsk, zFinanceOverviewInput, zOverviewExplanation } from './finance-overview.ts';
 import { zImportBatch, zImportCommit, zImportCommitted, zImportPreview, zImportPreviewQuery, zImportRef, zImportStage } from './contact-import.ts';
-import { zSavedView, zSavedViewDelete, zSavedViewList, zSavedViewRename, zSavedViewSaveShape, zSavedViewSetShared } from './saved-view.ts';
+import { zFilterAstShape, zSavedView, zSavedViewDelete, zSavedViewList, zSavedViewRename, zSavedViewSaveShape, zSavedViewSetShared, zSavedViewSortShape } from './saved-view.ts';
 import {
   zConversationAssign,
   zConversationCounted,
   zConversationCounts,
+  zConversationPostCounted,
+  zConversationPostCounts,
   zConversationDetail,
   zConversationGet,
   zConversationHide,
@@ -475,6 +477,10 @@ import {
   zProjectTaskMutate,
   zProjectTaskProjectEntry,
   zProjectTaskProjectsInput,
+  zProjectTaskReorderFields,
+  zProjectTaskReorderResult,
+  distinctReorderTargets,
+  REORDER_SAME_TASK_ISSUE,
   zProjectTasksFromNoteConfirmInput,
   zProjectTasksFromNoteConfirmResult,
   zProjectTasksFromNoteInput,
@@ -497,7 +503,7 @@ import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, z
 import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsFlag, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsCapLowerCall, zAdsCommitted, zAdsCommittedInput, zAdsChangeRequest, zAdsFlagSettingCall, zAdsFlagSettings, zAdsProposalView, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView, zAdsWeeklyNote, zAdsWriteState } from './ads.ts';
 import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView, zAdsCampaignRequestAsked, zAdsCampaignRequestCall, zAdsCampaignRequestView, zAdsLaunchCancelCall, zAdsLaunchRetryCall, zAdsLaunchStopCall } from './ads-campaign.ts';
 import { zHouseholdProfileGet, zHouseholdS1a, zHouseholdS1aGet, zHouseholdProfileSet, zHouseholdProfileView, zHouseholdRules, zHouseholdRulesGet } from './household.ts';
-import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankPayrollExplainAsk, zBankPayrollExplanation, zBankPayrollMatch, zBankStatementImport, zStatementLines } from './bank-statement.ts';
+import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankPayrollExplainAsk, zBankPayrollExplanation, zBankPayrollMatch, zBankPlatformLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
 import { zAuditCursor, zAuditExport, zAuditFilter, zAuditPage } from './audit.ts';
@@ -2058,6 +2064,8 @@ export const contract = {
   conversations: {
     list: oc.input(zConversationList).output(zConversationListed),
     counts: oc.input(zConversationCounts).output(zConversationCounted),
+    // The comment threads still New under each of the posts a screen shows, in one read (#3298).
+    postCounts: oc.input(zConversationPostCounts).output(zConversationPostCounted),
     get: oc.input(zConversationGet).output(zConversationDetail),
     reply: oc.input(zConversationReply).output(zConversationReplied),
     replyPrivately: oc.input(zConversationPrivateReply).output(zConversationPrivateReplied),
@@ -2497,6 +2505,12 @@ export const contract = {
     // STATEMENT_NOT_STAGED (409) once it was decided or read again.
     statementLines: oc.input(z.object({ fileId: zId })).output(zStatementLines),
     lines: oc.input(z.object({ bankAccount: zAccountCode, period: zLedgerPeriod, legalEntityId: zId.optional() })).output(zBankLines),
+    // The statement lines of all of a legal entity's bank and card accounts in a range whose description holds one of `terms`
+    // as whole words (marks and case set aside), newest first, at most BANK_PLATFORM_LINES_LIMIT (`truncated` says more
+    // exist): what Ads shows beside a month's spend (slice D2). Read only; owners, admins, members and viewers, as `lines`.
+    platformLines: oc
+      .input(z.object({ from: zLocalDate, to: zLocalDate, terms: z.array(z.string().min(2).max(60)).min(1).max(8), legalEntityId: zId.optional() }))
+      .output(zBankPlatformLines),
     // The báo Có or báo Nợ a line makes and the party it is probably about (#326, stage 2a), for the voucher form; the
     // voucher itself is asked for with inbox.request (finance.voucher.record, bankLineId set). Owners, admins and
     // members, who may ask for vouchers.
@@ -2710,7 +2724,17 @@ export const contract = {
   // Work given to positions, held by members or agents (ADR-0029). Every member reads; owners, admins and members
   // create, comment and change status.
   tasks: {
-    list: oc.input(z.object({ positionId: zId.optional(), mine: z.boolean().optional(), status: z.array(zTaskStatus).max(6).optional() })).output(z.array(zTask)),
+    list: oc
+      .input(
+        z.object({
+          positionId: zId.optional(),
+          mine: z.boolean().optional(),
+          status: z.array(zTaskStatus).max(6).optional(),
+          filters: zFilterAstShape.optional(),
+          sort: zSavedViewSortShape.nullable().optional(),
+        }),
+      )
+      .output(z.array(zTask)),
     get: oc.input(z.object({ id: zId })).output(zTaskDetail),
     create: oc
       .input(
@@ -2757,6 +2781,9 @@ export const contract = {
     removeMember: oc.input(zProjectMemberMutate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, userId: zId, removed: z.boolean() })),
     addTask: oc.input(zProjectTaskMutate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, taskId: zId, added: z.boolean() })),
     removeTask: oc.input(zProjectTaskMutate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, taskId: zId, removed: z.boolean() })),
+    reorderTask: oc
+      .input(zProjectTaskReorderFields.extend({ idempotencyKey: zId }).refine(distinctReorderTargets, REORDER_SAME_TASK_ISSUE))
+      .output(zProjectTaskReorderResult),
     createTask: oc.input(zProjectTaskCreate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, taskId: zId })),
     tasksFromNoteStatus: oc.input(z.strictObject({})).output(zProjectTasksFromNoteStatus),
     proposeTasksFromNote: oc.input(zProjectTasksFromNoteInput).output(zProjectTasksFromNoteResult),

@@ -201,7 +201,12 @@ const launchSelect = (db: Db['trx']) =>
   ]);
 type LaunchRow = Awaited<ReturnType<ReturnType<typeof launchSelect>['execute']>>[number];
 
-export function launchView(row: LaunchRow, objects: AdsLaunchObjectView[] = []): AdsLaunchView {
+// When Ludy last asked the platform about a launch's objects, and whether that read worked (#3419).
+export type StatesRead = { at: string; ok: boolean };
+// A state read's key in the kernel's ledger starts with the launch it read (`ads.state:<launch>:<time>`, written by `ads.object.sync_state`).
+export const stateReadKeyPrefix = (launchId: string): string => `ads.state:${launchId}:`;
+
+export function launchView(row: LaunchRow, objects: AdsLaunchObjectView[] = [], provider = '', read: StatesRead | null = null): AdsLaunchView {
   return {
     id: row.id,
     draftId: row.draft_id,
@@ -224,6 +229,9 @@ export function launchView(row: LaunchRow, objects: AdsLaunchObjectView[] = []):
     // them by hand there. null for a launch that is not stopped.
     windDown: row.state === 'stopped' ? { state: row.wound_down_at ? 'done' : row.wind_down_code ? 'gave_up' : 'pending', code: row.wind_down_code } : null,
     objects,
+    provider,
+    statesReadAt: read ? read.at : null,
+    statesReadOk: read ? read.ok : null,
   };
 }
 
@@ -253,7 +261,27 @@ export async function launchesOfDrafts(ctx: Db, draftIds: readonly string[]): Pr
     });
     objectsByLaunch.set(o.launch_id, list);
   }
-  for (const row of rows) out.set(row.draft_id, launchView(row, objectsByLaunch.get(row.id) ?? []));
+  // The provider of each launch's ad account, and the newest settled state read of each launch in the kernel's ledger (a `started` row is a read not yet settled and says nothing). Both
+  // come from this org's own rows under RLS; a read's key names its launch (`ads.state:<launch>:<time>`), so no other launch's row can match.
+  const accounts = await ctx.trx.selectFrom('crove_ads.ad_account').select(['id', 'provider']).where('org_id', '=', ctx.orgId).where('id', 'in', [...new Set(rows.map((r) => r.ad_account_id))]).execute();
+  const providerOf = new Map(accounts.map((a) => [a.id, a.provider]));
+  // One row per launch, reduced in SQL (the ledger gets a row per read and has no prune yet): the newest settled one. The key holds the launch id after `ads.state:` (10 characters).
+  const launchOfKey = sql<string>`substring(key from 11 for 36)`;
+  const reads = await ctx.trx
+    .selectFrom('crove_kernel.external_call')
+    .select([launchOfKey.as('launch_id'), 'state', 'finished_at'])
+    .distinctOn(launchOfKey)
+    .where('org_id', '=', ctx.orgId)
+    .where('module', '=', 'ads')
+    .where('step', '=', 'state_read')
+    .where('state', 'in', ['succeeded', 'failed'])
+    .where(sql<boolean>`key like any (${rows.map((r) => `${stateReadKeyPrefix(r.id)}%`)}::text[])`)
+    .orderBy(launchOfKey)
+    .orderBy('finished_at', 'desc')
+    .execute();
+  const readOf = new Map<string, StatesRead>();
+  for (const r of reads) if (r.finished_at) readOf.set(r.launch_id, { at: r.finished_at.toISOString(), ok: r.state === 'succeeded' });
+  for (const row of rows) out.set(row.draft_id, launchView(row, objectsByLaunch.get(row.id) ?? [], providerOf.get(row.ad_account_id) ?? '', readOf.get(row.id) ?? null));
   return out;
 }
 
