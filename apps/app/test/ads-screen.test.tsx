@@ -1598,6 +1598,24 @@ describe('Google Ads connection, short refresh-token warning, and 7-day comparis
     expect(metaWithExpiry).not.toContain('Testing mode issues 7-day tokens');
   });
 
+  it('warns before a Meta connection ends, with the date, and says nothing for one that ends later, for Google, or for a paused account (#3476)', () => {
+    const inDays = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString();
+    const soon = render(<AccountHeader account={account({ provider: 'meta_ads', connectionExpiresAt: inDays(5) })} canRefresh onRequested={() => undefined} />);
+    expect(soon).toContain('The connection to the ad platform ends on');
+    expect(soon).toContain('Reconnect before then so the figures keep coming.');
+    expect(soon).not.toContain('Testing mode issues 7-day tokens');
+    expect(render(<AccountHeader account={account({ provider: 'meta_ads', connectionExpiresAt: inDays(40) })} canRefresh onRequested={() => undefined} />)).not.toContain('The connection to the ad platform ends on');
+    expect(render(<AccountHeader account={account({ provider: 'meta_ads', connectionExpiresAt: null })} canRefresh onRequested={() => undefined} />)).not.toContain('The connection to the ad platform ends on');
+    // Google keeps its own words, and a paused account says its own state instead.
+    const google = render(<AccountHeader account={account({ provider: 'google_ads', connectionExpiresAt: inDays(5) })} canRefresh onRequested={() => undefined} />);
+    expect(google).toContain('Testing mode issues 7-day tokens');
+    expect(google).not.toContain('The connection to the ad platform ends on');
+    expect(render(<AccountHeader account={account({ provider: 'meta_ads', connectionStatus: 'expired', connectionExpiresAt: inDays(5) })} canRefresh onRequested={() => undefined} />)).not.toContain('The connection to the ad platform ends on');
+    // The same words in Vietnamese.
+    const vi = render(<AccountHeader account={account({ provider: 'meta_ads', connectionExpiresAt: inDays(5) })} canRefresh onRequested={() => undefined} />, 'vi');
+    expect(vi).toContain('Kết nối với nền tảng quảng cáo hết hạn vào');
+  });
+
   it('renders Uy’s 7-day side-by-side comparison note across Meta and Google when seeded, and nothing when empty', () => {
     client.current.setQueryData(['ads', 'weeklyNote'], []);
     expect(render(<AdsWeeklyNoteCard />)).toBe('');

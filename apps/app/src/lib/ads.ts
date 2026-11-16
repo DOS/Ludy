@@ -361,6 +361,19 @@ export function isCalmRefusal(error: unknown): boolean {
 export const syncHeld = (account: Pick<AdAccountView, 'nextRunAt'>, nowMs: number): boolean =>
   account.nextRunAt !== null && Date.parse(account.nextRunAt) > nowMs;
 
+// How long before a connection's recorded end the Ads screen says so (as the Social channels do). A Meta ad connection is a
+// long-lived token of about 60 days with no refresh, so without it the account is paused when the day comes and the figures stop.
+export const CONNECTION_WARN_MS = 14 * 86_400_000;
+
+// Whether an active connection ends within the warning time (or already has, before the sweep marked it): it records an end
+// date and the platform is not Google, whose Testing-mode token has its own words. A paused or closed account says its own
+// state instead.
+export function connectionEndsSoon(account: Pick<AdAccountView, 'connectionStatus' | 'connectionExpiresAt' | 'provider'>, nowMs: number): boolean {
+  if (account.connectionStatus !== 'active' || account.provider === 'google_ads' || account.connectionExpiresAt === null) return false;
+  const ends = Date.parse(account.connectionExpiresAt);
+  return Number.isFinite(ends) && ends - nowMs <= CONNECTION_WARN_MS;
+}
+
 // Formats a signed decimal money change (`spendDelta`, `cprDelta`) with `+` for an increase, `-` for a decrease, and no sign for zero.
 export function signedMoney(amount: string, formatMoney: (value: string) => string): string {
   if (amount.startsWith('-')) return `-${formatMoney(amount.slice(1))}`;

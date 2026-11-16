@@ -239,6 +239,9 @@ import {
   zConversationRetention,
   zConversationRetentionSet,
   zConversationEraseContact,
+  zConversationEraseChannel,
+  zConversationChannelErased,
+  zConversationChannelCounts,
   zConversationErased,
   zConversationSandboxComment,
   zConversationSandboxQueued,
@@ -2102,6 +2105,10 @@ export const contract = {
     retention: oc.input(z.strictObject({})).output(zConversationRetention),
     setRetention: oc.input(zConversationRetentionSet).output(zConversationRetention),
     eraseContact: oc.input(zConversationEraseContact.extend({ idempotencyKey: zId })).output(zConversationErased),
+    // Deleting a disconnected channel's conversations too (#3299): the counts the confirmation names, then the erasure (owners and admins, a fresh
+    // second factor; the channel must be disconnected first).
+    channelCounts: oc.input(z.strictObject({ connectionId: zId })).output(zConversationChannelCounts),
+    eraseChannel: oc.input(zConversationEraseChannel.extend({ idempotencyKey: zId })).output(zConversationChannelErased),
     // Vy's drafts (CV8, #2310): a member asks for one ("Vy soạn": the draft arrives in the thread's detail within seconds, written by the worker) or sets
     // one aside; owners and admins switch the drafting of new conversations on or off (a customer's message goes to the AI endpoint for it).
     draftRequest: oc.input(zConversationDraftRequest).output(z.object({ draftId: zId, queued: z.boolean() })),

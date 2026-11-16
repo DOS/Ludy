@@ -18,6 +18,7 @@ import { VoiceEditor } from '../components/social-brand-voice.tsx';
 import { WatermarkCard } from '../components/social-watermark.tsx';
 import { ReportBrandingCard } from '../components/social-report-branding.tsx';
 import { ChatAlertCard } from '../components/social-chat-alert.tsx';
+import { ChannelDisconnectConfirm } from '../components/social-channel-disconnect.tsx';
 import { ShareCard } from '../components/social-share.tsx';
 import { PublishHoldCard } from '../components/social-publish-hold.tsx';
 import { BannedWordsCard } from '../components/social-banned-words.tsx';
@@ -551,13 +552,6 @@ export function SocialChannelsPage() {
     }
   };
   const canReconnect = (c: Channel) => isAdmin && c.status !== 'revoked' && (c.provider === 'bluesky' ? blueskyOn : c.provider === 'telegram' ? telegramOn : c.provider === 'whatsapp' ? whatsappOn : c.provider === 'mastodon' ? mastodonOn : c.provider === 'discord' ? discordOn : c.provider === 'wordpress' ? wordpressOn : oauth.includes(c.provider as OAuthProvider));
-  const disconnect = useMutation({
-    mutationFn: (connectionId: string) => client.channels.disconnect({ connectionId, idempotencyKey: crypto.randomUUID() }),
-    onSuccess: () => {
-      setConfirming(null);
-      void queryClient.invalidateQueries();
-    },
-  });
 
   return (
     <>
@@ -679,23 +673,14 @@ export function SocialChannelsPage() {
                       ) : null
                     )}
                   </div>
-                  {isAdmin &&
-                    (confirming === c.id ? (
-                      <div className="flex gap-2">
-                        <Button variant="destructive" size="sm" disabled={disconnect.isPending} onClick={() => disconnect.mutate(c.id)}>
-                          {t('confirmDisconnect')}
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => setConfirming(null)}>
-                          {t('keep')}
-                        </Button>
-                      </div>
-                    ) : (
-                      <Button variant="ghost" size="sm" onClick={() => setConfirming(c.id)}>
-                        {t('disconnect')}
-                      </Button>
-                    ))}
+                  {isAdmin && confirming !== c.id && (
+                    <Button variant="ghost" size="sm" onClick={() => setConfirming(c.id)}>
+                      {t('disconnect')}
+                    </Button>
+                  )}
                 </div>
-                {confirming === c.id && <p className="text-xs text-muted-foreground">{t('disconnectHint')}</p>}
+                {/* The confirmation, with the choice to delete the channel's conversations too (#3299), for owners and admins. */}
+                {isAdmin && confirming === c.id && <ChannelDisconnectConfirm connectionId={c.id} onDone={() => setConfirming(null)} onKeep={() => setConfirming(null)} />}
                 {/* A messaging-only channel (WhatsApp, #3131) has no queue, voice, signature or review policy: its card is its name, state and disconnect. */}
                 {!isMessagingOnly(c.provider) && (
                   <>
@@ -718,7 +703,6 @@ export function SocialChannelsPage() {
               </Card>
             ))
           )}
-          {disconnect.error && <ErrorText>{errorMessage(disconnect.error)}</ErrorText>}
         </div>
         <Card className="block h-fit space-y-4 p-4">
           <p className="text-sm font-medium text-foreground">{t('connectTitle')}</p>
