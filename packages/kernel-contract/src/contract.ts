@@ -518,6 +518,36 @@ import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
 import { zAuditCursor, zAuditExport, zAuditFilter, zAuditPage } from './audit.ts';
 import { zPersonalDataErasure, zPersonalDataNotice, zPersonalDataQuery, zPersonalDataResult } from './personal-data.ts';
+import {
+  zSignAiAnalysisRecord,
+  zSignAiAnalyzeInput,
+  zSignAiAnalyzeResult,
+  zSignEnvelopeCreateInput,
+  zSignEnvelopeCreateResult,
+  zSignEnvelopeDetail,
+  zSignEnvelopeEventsResult,
+  zSignEnvelopeListInput,
+  zSignEnvelopeListResult,
+  zSignEnvelopeRemindInput,
+  zSignEnvelopeRemindResult,
+  zSignEnvelopeSendInput,
+  zSignEnvelopeSendResult,
+  zSignEnvelopeUpdateInput,
+  zSignEnvelopeUpdateResult,
+  zSignEnvelopeVerifyResult,
+  zSignEnvelopeVoidInput,
+  zSignEnvelopeVoidResult,
+  zSignFieldSetInput,
+  zSignFieldSetResult,
+  zSignSignerAddInput,
+  zSignSignerAddResult,
+  zSignSignerCreateLinkInput,
+  zSignSignerCreateLinkResult,
+  zSignSignerRemoveInput,
+  zSignSignerRemoveResult,
+  zSignSignerReorderInput,
+  zSignSignerReorderResult,
+} from './sign.ts';
 
 // Proposal reminders (issue #676): days before the approvers are reminded and before the owners are told; and expiry
 // (#876): days after which a proposal still pending expires. Expiry needs the escalation and comes after it.
@@ -2818,6 +2848,33 @@ export const contract = {
     confirmTasksFromSource: oc
       .input(zProjectTasksFromSourceConfirmInput.extend({ idempotencyKey: zId }))
       .output(zProjectTasksFromSourceConfirmResult),
+  },
+  // Electronic signatures (docs/plan/esign.md, #3325). Off-switchable via CROVE_MODULES and org_app_on.
+  sign: {
+    envelope: {
+      list: oc.input(zSignEnvelopeListInput).output(zSignEnvelopeListResult),
+      get: oc.input(z.strictObject({ envelopeId: zId })).output(zSignEnvelopeDetail),
+      events: oc.input(z.strictObject({ envelopeId: zId })).output(zSignEnvelopeEventsResult),
+      verify: oc.input(z.strictObject({ envelopeId: zId })).output(zSignEnvelopeVerifyResult),
+      create: oc.input(zSignEnvelopeCreateInput).output(zSignEnvelopeCreateResult),
+      update: oc.input(zSignEnvelopeUpdateInput).output(zSignEnvelopeUpdateResult),
+      send: oc.input(zSignEnvelopeSendInput).output(zSignEnvelopeSendResult),
+      remind: oc.input(zSignEnvelopeRemindInput).output(zSignEnvelopeRemindResult),
+      void: oc.input(zSignEnvelopeVoidInput).output(zSignEnvelopeVoidResult),
+    },
+    signer: {
+      add: oc.input(zSignSignerAddInput).output(zSignSignerAddResult),
+      remove: oc.input(zSignSignerRemoveInput).output(zSignSignerRemoveResult),
+      reorder: oc.input(zSignSignerReorderInput).output(zSignSignerReorderResult),
+      create_link: oc.input(zSignSignerCreateLinkInput).output(zSignSignerCreateLinkResult),
+    },
+    field: {
+      set: oc.input(zSignFieldSetInput).output(zSignFieldSetResult),
+    },
+    ai: {
+      analyze: oc.input(zSignAiAnalyzeInput).output(zSignAiAnalyzeResult),
+      get: oc.input(z.strictObject({ envelopeId: zId })).output(zSignAiAnalysisRecord.nullable()),
+    },
   },
 };
 

@@ -41,7 +41,7 @@ const TARGET = {
   bankLines: { icon: 'bank' },
 } as const satisfies Record<WaitingKey, { icon: NavIconName }>;
 
-// The cards that open a fixed screen; the others (Cộng tác, Ludy AI) open where their switcher entry goes.
+// The cards that open a fixed screen; the others (Cộng tác, Ký kết, Ludy AI) open where their switcher entry goes.
 const APP_CARD = {
   // Tài chính opens on its Tổng quan (#2631).
   finance: { to: '/o/$slug/accounting', icon: 'appAccounting' },
@@ -50,7 +50,7 @@ const APP_CARD = {
   // The HR app opens on its staff list (#2530); its card has no figure, since a count of employees is a payroll read.
   hr: { to: '/o/$slug/hr/employees', icon: 'appHr' },
 } as const satisfies Partial<Record<AppId, { to: string; icon: NavIconName }>>;
-const OTHER_CARD_ICON = { teamwork: 'appTeamwork', ai: 'appAi' } as const satisfies Partial<Record<AppId, NavIconName>>;
+const OTHER_CARD_ICON = { teamwork: 'appTeamwork', sign: 'journal', ai: 'appAi' } as const satisfies Partial<Record<AppId, NavIconName>>;
 
 const HOUR_MS = 60 * 60 * 1000;
 const WEEK_MS = 7 * 24 * HOUR_MS;
@@ -93,7 +93,7 @@ function AppCards({ slug, vat, vatLoaded, manager }: { slug: string; vat: { peri
   };
   // The key figures of an app's card: one for the accounting, and for Engage one for each of its modules that runs.
   const figures = (id: AppId): Figure[] => {
-    if (id === 'teamwork' || id === 'ai' || id === 'hr') return [];
+    if (id === 'teamwork' || id === 'ai' || id === 'hr' || id === 'sign') return [];
     if (id === 'finance') {
       if (!vatLoaded) return [{ key: 'vat', value: null, label: '' }];
       if (!vat) return [{ key: 'vat', value: '-', label: t('accounting.noPeriod') }];

@@ -429,6 +429,9 @@ importers:
       react-dom:
         specifier: 'catalog:'
         version: 19.3.0(react@19.3.0)
+      unpdf:
+        specifier: 'catalog:'
+        version: 1.8.1
       use-intl:
         specifier: 'catalog:'
         version: 4.14.9(@types/react@19.3.0)(react@19.3.0)

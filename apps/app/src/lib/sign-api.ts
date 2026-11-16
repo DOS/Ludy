@@ -1,0 +1,498 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Typed eSign API client aligned with #3323 core commands/queries, #3324 public ceremony routes, and #3351 Vy AI (#3325).
+import { client, fetchFile, uploadFiles } from './api.ts';
+import { apiUrl } from './api-base.ts';
+import type {
+  SignDeliveryMode,
+  SignEnvelopeStatus,
+  SignFieldType,
+  SignInspectStatus,
+  SignRoutingMode,
+  SignSealStatus,
+  SignSignerRole,
+  SignSignerStatus,
+} from './sign-fields.ts';
+
+export interface SignEnvelopeSummary {
+  id: string;
+  title: string;
+  status: SignEnvelopeStatus;
+  routingMode: SignRoutingMode;
+  sourceKind: string;
+  sourceId: string | null;
+  sourceFileId: string;
+  inspectStatus: SignInspectStatus;
+  sealStatus: SignSealStatus | null;
+  certificateCode: string | null;
+  pageCount: number | null;
+  expiresAt: string | null;
+  sentAt: string | null;
+  completedAt: string | null;
+  voidedAt: string | null;
+  expiredAt: string | null;
+  version: number;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+  signerSummary: {
+    total: number;
+    signed: number;
+    waitingForMe: boolean;
+  };
+}
+
+export interface SignSignerRecord {
+  id: string;
+  routingOrder: number;
+  signerRole: SignSignerRole;
+  roleLabel: string | null;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  deliveryMode: SignDeliveryMode;
+  requireEmailOtp: boolean;
+  status: SignSignerStatus;
+  tokenLastRemindedAt: string | null;
+  viewedAt: string | null;
+  signedAt: string | null;
+  declinedAt: string | null;
+  declineReason: string | null;
+  otpVerifiedAt: string | null;
+  signatureKind: string | null;
+  consentAcceptedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SignFieldRecord {
+  id: string;
+  signerId: string;
+  fieldType: SignFieldType;
+  pageNumber: number;
+  xNorm: number;
+  yNorm: number;
+  wNorm: number;
+  hNorm: number;
+  label: string | null;
+  required: boolean;
+  proposedByAi: boolean;
+  fontSizePt: number | null;
+  valueText: string | null;
+  valueChecked: boolean | null;
+  filledAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SignProposedField {
+  proposalId: string;
+  signerId: string;
+  signerRoleKey?: string;
+  fieldType: SignFieldType;
+  pageNumber: number;
+  xNorm: number;
+  yNorm: number;
+  wNorm: number;
+  hNorm: number;
+  label: string | null;
+  required: boolean;
+  confidence?: number | null;
+  proposedByAi?: true;
+}
+
+export interface SignRiskClause {
+  clauseId: string;
+  title: string;
+  severity: 'low' | 'medium' | 'high';
+  pageNumber: number | null;
+  quote: string;
+  explanation: string;
+}
+
+export interface SignAiAnalysis {
+  status: 'pending' | 'idle' | 'running' | 'completed' | 'failed' | 'disabled' | 'budget_exhausted';
+  summaryText: string | null;
+  riskLevel: 'low' | 'medium' | 'high' | null;
+  proposedFields: readonly SignProposedField[];
+  riskClauses: readonly SignRiskClause[];
+  errorMessage?: string | null;
+  completedAt?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+// Normalizes both #3351 SignAiAnalysisRecord and optional envelope detail/mock shapes cleanly.
+export function normalizeAiAnalysis(raw: unknown): SignAiAnalysis | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  const aiOutcome = typeof obj.ai === 'string' ? obj.ai : null;
+  const hasAnalysisObj = Boolean(obj.analysis && typeof obj.analysis === 'object');
+  const source = (hasAnalysisObj ? obj.analysis : obj) as Record<string, unknown>;
+  const rawFields = Array.isArray(source.proposedFields)
+    ? source.proposedFields
+    : Array.isArray(obj.proposedFields)
+      ? obj.proposedFields
+      : [];
+  const proposedFields: SignProposedField[] = rawFields.map((item, idx) => {
+    const f = (item ?? {}) as Record<string, unknown>;
+    const signerId = String(f.signerId ?? '');
+    const fieldType = (f.fieldType as SignFieldType) ?? 'signature';
+    const pageNumber = Number(f.pageNumber ?? 1);
+    return {
+      proposalId: typeof f.proposalId === 'string' && f.proposalId ? f.proposalId : `prop-${idx}-${signerId}-${pageNumber}-${fieldType}`,
+      signerId,
+      ...(typeof f.signerRoleKey === 'string' ? { signerRoleKey: f.signerRoleKey } : {}),
+      fieldType,
+      pageNumber,
+      xNorm: Number(f.xNorm ?? 0),
+      yNorm: Number(f.yNorm ?? 0),
+      wNorm: Number(f.wNorm ?? 0.2),
+      hNorm: Number(f.hNorm ?? 0.08),
+      label: typeof f.label === 'string' ? f.label : null,
+      required: typeof f.required === 'boolean' ? f.required : true,
+      confidence: typeof f.confidence === 'number' ? f.confidence : null,
+      proposedByAi: true,
+    };
+  });
+  const rawClauses = Array.isArray(source.riskClauses)
+    ? source.riskClauses
+    : Array.isArray(source.flaggedClauses)
+      ? source.flaggedClauses
+      : Array.isArray(obj.riskClauses)
+        ? obj.riskClauses
+        : [];
+  const riskClauses: SignRiskClause[] = rawClauses.map((item, idx) => {
+    const c = (item ?? {}) as Record<string, unknown>;
+    const severity = (c.severity ?? c.riskLevel ?? 'low') as 'low' | 'medium' | 'high';
+    const pageRaw = c.pageNumber;
+    const pageNumber = typeof pageRaw === 'number' && Number.isFinite(pageRaw) ? pageRaw : null;
+    return {
+      clauseId: typeof c.clauseId === 'string' && c.clauseId ? c.clauseId : `clause-${idx}-${pageNumber ?? 'x'}`,
+      title: String(c.title ?? ''),
+      severity,
+      pageNumber,
+      quote: String(c.quote ?? c.quoteExcerpt ?? ''),
+      explanation: String(c.explanation ?? c.note ?? ''),
+    };
+  });
+  const highestRisk: 'low' | 'medium' | 'high' | null =
+    (source.riskLevel as 'low' | 'medium' | 'high' | null | undefined) ??
+    (riskClauses.some((c) => c.severity === 'high')
+      ? 'high'
+      : riskClauses.some((c) => c.severity === 'medium')
+        ? 'medium'
+        : riskClauses.length > 0
+          ? 'low'
+          : null);
+  const summaryRaw = source.summaryText ?? source.summary ?? obj.summaryText ?? null;
+  const isDirectFailure =
+    !hasAnalysisObj &&
+    (aiOutcome === 'not_ready' || aiOutcome === 'not_draft' || aiOutcome === 'no_text' || aiOutcome === 'failed');
+  const statusRaw: SignAiAnalysis['status'] =
+    aiOutcome === 'off'
+      ? 'disabled'
+      : aiOutcome === 'budget'
+        ? 'budget_exhausted'
+        : !hasAnalysisObj && aiOutcome === 'busy'
+          ? 'running'
+          : isDirectFailure
+            ? 'failed'
+            : ((source.status as SignAiAnalysis['status'] | undefined) ?? 'completed');
+  const errorMessage =
+    !hasAnalysisObj && aiOutcome === 'busy'
+      ? 'SIGN_AI_BUSY'
+      : isDirectFailure
+        ? aiOutcome
+        : typeof source.errorMessage === 'string'
+          ? source.errorMessage
+          : null;
+  return {
+    status: statusRaw,
+    summaryText: typeof summaryRaw === 'string' ? summaryRaw : null,
+    riskLevel: highestRisk,
+    proposedFields,
+    riskClauses,
+    errorMessage,
+    completedAt: typeof source.completedAt === 'string' ? source.completedAt : null,
+    createdAt: typeof source.createdAt === 'string' ? source.createdAt : null,
+    updatedAt: typeof source.updatedAt === 'string' ? source.updatedAt : null,
+  };
+}
+
+export interface PublicSignField {
+  id: string;
+  fieldType: SignFieldType;
+  pageNumber: number;
+  xNorm: number;
+  yNorm: number;
+  wNorm: number;
+  hNorm: number;
+  label: string | null;
+  required: boolean;
+  fontSizePt?: number | null;
+}
+
+export type PublicSignViewState =
+  | {
+      state: 'ready';
+      orgName: string;
+      title: string;
+      message: string | null;
+      signerName: string;
+      roleLabel: string;
+      signerRole: SignSignerRole;
+      expiresAt: string;
+      pageCount: number;
+      pageDimensions?: Array<{ pageNumber: number; widthPt: number; heightPt: number }>;
+      requireEmailOtp?: boolean;
+      otpVerified?: boolean;
+      fields: readonly PublicSignField[];
+    }
+  | {
+      state: 'otp_required';
+      orgName: string;
+      title: string;
+      maskedEmail: string | null;
+    }
+  | {
+      state: 'waiting_turn';
+      title: string;
+      order: number;
+    }
+  | {
+      state: 'already_completed' | 'declined' | 'expired' | 'voided';
+      title: string;
+      status: string;
+    };
+
+export interface PublicFieldSubmission {
+  fieldId: string;
+  signaturePngBase64?: string;
+  valueText?: string;
+  valueChecked?: boolean;
+}
+
+export interface PublicCertificateVerifyResponse {
+  matched: boolean;
+  envelopeTitle?: string;
+  envelopeStatus?: string;
+  certificateCode?: string;
+  sealedSha256?: string;
+  completedAt?: string;
+  signerCount?: number;
+  eventCount?: number;
+}
+
+export async function uploadSignPdf(file: File): Promise<{ fileId: string }> {
+  const result = await uploadFiles([file], 'sign_document');
+  const uploaded = result.files[0];
+  if (!uploaded) throw new Error('UPLOAD_FAILED');
+  return { fileId: uploaded.fileId };
+}
+
+export async function downloadSignFile(fileId: string): Promise<Blob> {
+  return fetchFile(fileId);
+}
+
+export async function downloadSignPdfBytes(fileId: string): Promise<Uint8Array> {
+  const blob = await fetchFile(fileId);
+  const buffer = await blob.arrayBuffer();
+  return new Uint8Array(buffer);
+}
+
+export const signApi = {
+  listEnvelopes: (input: { status?: SignEnvelopeStatus; limit?: number } = {}) => client.sign.envelope.list(input),
+  getEnvelope: (envelopeId: string) => client.sign.envelope.get({ envelopeId }),
+  getEnvelopeEvents: (envelopeId: string) => client.sign.envelope.events({ envelopeId }),
+  verifyEnvelope: (envelopeId: string) => client.sign.envelope.verify({ envelopeId }),
+  createEnvelope: (input: { title: string; subject?: string; message?: string; routingMode: SignRoutingMode; sourceFileId: string }) =>
+    client.sign.envelope.create({ ...input, sourceKind: 'standalone', idempotencyKey: crypto.randomUUID() }),
+  updateEnvelope: (input: {
+    envelopeId: string;
+    expectedVersion?: number;
+    title?: string;
+    subject?: string | null;
+    message?: string | null;
+    routingMode?: SignRoutingMode;
+  }) => client.sign.envelope.update({ ...input, idempotencyKey: crypto.randomUUID() }),
+  sendEnvelope: (envelopeId: string) => client.sign.envelope.send({ envelopeId }),
+  remindEnvelope: (envelopeId: string, signerId?: string) =>
+    client.sign.envelope.remind({ envelopeId, ...(signerId ? { signerId } : {}), idempotencyKey: crypto.randomUUID() }),
+  voidEnvelope: (envelopeId: string, reason?: string) =>
+    client.sign.envelope.void({ envelopeId, ...(reason ? { reason } : {}), idempotencyKey: crypto.randomUUID() }),
+  addSigner: (input: {
+    envelopeId: string;
+    routingOrder?: number;
+    signerRole: SignSignerRole;
+    roleLabel?: string;
+    name: string;
+    email?: string;
+    phone?: string;
+    deliveryMode: SignDeliveryMode;
+    requireEmailOtp: boolean;
+  }) => client.sign.signer.add({ ...input, idempotencyKey: crypto.randomUUID() }),
+  removeSigner: (envelopeId: string, signerId: string) =>
+    client.sign.signer.remove({ envelopeId, signerId, idempotencyKey: crypto.randomUUID() }),
+  reorderSigners: (envelopeId: string, orders: Array<{ signerId: string; routingOrder: number }>) =>
+    client.sign.signer.reorder({ envelopeId, orders, idempotencyKey: crypto.randomUUID() }),
+  createSignerLink: (envelopeId: string, signerId: string, expiresInHours?: number) =>
+    client.sign.signer.create_link({ envelopeId, signerId, ...(expiresInHours ? { expiresInHours } : {}) }),
+  setFields: (
+    envelopeId: string,
+    fields: Array<{
+      signerId: string;
+      fieldType: SignFieldType;
+      pageNumber: number;
+      xNorm: number;
+      yNorm: number;
+      wNorm: number;
+      hNorm: number;
+      label?: string;
+      required: boolean;
+      proposedByAi: boolean;
+      fontSizePt?: number;
+    }>,
+  ) => client.sign.field.set({ envelopeId, fields, idempotencyKey: crypto.randomUUID() }),
+  analyzeAi: async (
+    envelopeId: string,
+    pages?: ReadonlyArray<{ page: number; text: string }>,
+  ): Promise<SignAiAnalysis | null> => {
+    const res = await client.sign.ai.analyze({
+      envelopeId,
+      ...(pages && pages.length > 0 ? { pages: [...pages] } : {}),
+    });
+    return normalizeAiAnalysis(res);
+  },
+  getAiAnalysis: async (envelopeId: string): Promise<SignAiAnalysis | null> => {
+    return normalizeAiAnalysis(await client.sign.ai.get({ envelopeId }));
+  },
+};
+
+export class PublicSignError extends Error {
+  readonly status: number;
+  readonly code: string;
+
+  constructor(status: number, code: string, message?: string) {
+    super(message ?? code);
+    this.status = status;
+    this.code = code;
+  }
+}
+
+async function postPublicResponse(path: string, body: unknown): Promise<Response> {
+  return fetch(apiUrl(path), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+    credentials: 'omit',
+    referrerPolicy: 'no-referrer',
+  });
+}
+
+async function postPublicJson<T>(path: string, body: unknown): Promise<T> {
+  const response = await postPublicResponse(path, body);
+  if (!response.ok) {
+    const data = (await response.json().catch(() => ({}))) as { code?: string; message?: string };
+    throw new PublicSignError(response.status, data.code ?? 'SIGN_LINK_INVALID', data.message);
+  }
+  return (await response.json()) as T;
+}
+
+function normalizePublicField(raw: Record<string, unknown>): PublicSignField {
+  return {
+    id: String(raw.id ?? ''),
+    fieldType: (raw.fieldType as SignFieldType) ?? 'signature',
+    pageNumber: Number(raw.pageNumber ?? 1),
+    xNorm: Number(raw.xNorm ?? 0),
+    yNorm: Number(raw.yNorm ?? 0),
+    wNorm: Number(raw.wNorm ?? 0.2),
+    hNorm: Number(raw.hNorm ?? 0.08),
+    label: typeof raw.label === 'string' ? raw.label : null,
+    required: typeof raw.required === 'boolean' ? raw.required : true,
+    fontSizePt: typeof raw.fontSizePt === 'number' ? raw.fontSizePt : null,
+  };
+}
+
+// Public signing ceremony endpoints: token sits exclusively inside JSON POST bodies.
+export const publicSignApi = {
+  view: async (token: string): Promise<PublicSignViewState> => {
+    const raw = await postPublicJson<Record<string, unknown>>('/api/sign/view', { token });
+    if (raw.state === 'ready') {
+      const legacySigner = (raw.signer && typeof raw.signer === 'object' ? raw.signer : null) as Record<string, unknown> | null;
+      const rawFields = Array.isArray(raw.fields) ? (raw.fields as Array<Record<string, unknown>>) : [];
+      return {
+        state: 'ready',
+        orgName: typeof raw.orgName === 'string' ? raw.orgName : '',
+        title: String(raw.title ?? ''),
+        message: typeof raw.message === 'string' ? raw.message : null,
+        signerName: typeof raw.signerName === 'string' ? raw.signerName : String(legacySigner?.name ?? ''),
+        roleLabel: typeof raw.roleLabel === 'string' ? raw.roleLabel : String(legacySigner?.roleLabel ?? ''),
+        signerRole: ((raw.signerRole ?? legacySigner?.signerRole ?? 'signer') as SignSignerRole),
+        expiresAt: typeof raw.expiresAt === 'string' ? raw.expiresAt : '',
+        pageCount: Number(raw.pageCount ?? 1),
+        ...(Array.isArray(raw.pageDimensions) ? { pageDimensions: raw.pageDimensions as Array<{ pageNumber: number; widthPt: number; heightPt: number }> } : {}),
+        ...(typeof raw.requireEmailOtp === 'boolean' ? { requireEmailOtp: raw.requireEmailOtp } : {}),
+        ...(typeof raw.otpVerified === 'boolean' ? { otpVerified: raw.otpVerified } : {}),
+        fields: rawFields.map(normalizePublicField),
+      };
+    }
+    return raw as unknown as PublicSignViewState;
+  },
+
+  pdf: async (token: string): Promise<Uint8Array> => {
+    const response = await postPublicResponse('/api/sign/pdf', { token });
+    if (!response.ok) {
+      const data = (await response.json().catch(() => ({}))) as { code?: string; message?: string };
+      throw new PublicSignError(response.status, data.code ?? 'SIGN_PDF_UNAVAILABLE', data.message);
+    }
+    const buffer = await response.arrayBuffer();
+    return new Uint8Array(buffer);
+  },
+
+  requestOtp: (token: string) =>
+    postPublicJson<{ sent: boolean; expiresInMinutes?: number; maskedEmail?: string | null }>('/api/sign/otp/request', { token }),
+
+  verifyOtp: (token: string, otpCode: string) =>
+    postPublicJson<{ ok: boolean; locked: boolean; attemptsRemaining: number; expired?: boolean; notReady?: boolean }>('/api/sign/otp/verify', {
+      token,
+      code: otpCode,
+    }),
+
+  submit: (input: {
+    token: string;
+    consentAccepted: true;
+    signatureKind?: 'draw' | 'type';
+    signatureTypedText?: string;
+    fields: readonly PublicFieldSubmission[];
+  }) =>
+    postPublicJson<{
+      signerId: string;
+      signerStatus: 'signed';
+      envelopeStatus: 'sent' | 'in_progress' | 'completed';
+      completed: boolean;
+      signedAt: string;
+    }>('/api/sign/submit', input),
+
+  decline: (input: { token: string; reason: string }) =>
+    postPublicJson<{ signerId: string; signerStatus: 'declined'; envelopeStatus: 'declined'; declinedAt: string }>(
+      '/api/sign/decline',
+      input,
+    ),
+
+  verifyPublic: async (input: { certificateCode: string; fileSha256: string }): Promise<PublicCertificateVerifyResponse> => {
+    const response = await postPublicResponse('/api/sign/verify', input);
+    // Public verify returns an opaque 404 across hash mismatch, unknown code, and MODULE_OFF.
+    if (response.status === 404) {
+      return { matched: false, certificateCode: input.certificateCode };
+    }
+    if (!response.ok) {
+      const data = (await response.json().catch(() => ({}))) as { code?: string; message?: string };
+      throw new PublicSignError(response.status, data.code ?? 'VERIFY_FAILED', data.message);
+    }
+    const payload = (await response.json()) as PublicCertificateVerifyResponse;
+    return {
+      ...payload,
+      certificateCode: payload.certificateCode ?? input.certificateCode,
+    };
+  },
+};
