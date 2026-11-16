@@ -20,11 +20,13 @@ const state = vi.hoisted(() => ({
     name: 'Nguyen Van Buyer',
     taxCode: null,
     address: null,
-    email: 'buyer@congty.vn',
+    email: 'buyer@example.com',
   } as { name: string; taxCode: string | null; address: string | null; email: string | null } | null,
   signQueryAsked: [] as unknown[],
   signQueryExecuted: [] as unknown[],
   orgAppsQueryExecuted: 0,
+  failCreateOnce: false,
+  failSignerOnce: false,
 }));
 
 vi.mock('../src/lib/auth.ts', () => ({
@@ -89,6 +91,10 @@ vi.mock('../src/lib/api.ts', async () => {
       envelope: {
         create: async (input: unknown) => {
           state.calls.push({ step: 'create', args: input });
+          if (state.failCreateOnce) {
+            state.failCreateOnce = false;
+            throw new Error('network lost');
+          }
           return {
             envelopeId: state.createdEnvelopeId,
             status: 'draft',
@@ -100,6 +106,10 @@ vi.mock('../src/lib/api.ts', async () => {
       signer: {
         add: async (input: unknown) => {
           state.calls.push({ step: 'addSigner', args: input });
+          if (state.failSignerOnce) {
+            state.failSignerOnce = false;
+            throw new Error('signer network lost');
+          }
           return {
             envelopeId: state.createdEnvelopeId,
             signerId: state.createdSignerId,
@@ -144,9 +154,13 @@ vi.mock('../src/lib/sign-api.ts', () => ({
 }));
 
 const { DealQuotes } = await import('../src/components/deal-quotes.tsx');
-const { QuoteSignHandoff, canStartQuoteSignHandoff, performQuoteSignHandoff } = await import(
-  '../src/components/quote-sign-handoff.tsx'
-);
+const {
+  QuoteSignHandoff,
+  canStartQuoteSignHandoff,
+  createQuoteSignHandoffAttempt,
+  performQuoteSignHandoff,
+  signEnvelopePollMs,
+} = await import('../src/components/quote-sign-handoff.tsx');
 
 const DEAL = {
   id: '00000000-0000-4000-8000-000000000010',
@@ -238,12 +252,14 @@ describe('Engage quote -> eSign handoff (#3512)', () => {
     state.signQueryAsked.length = 0;
     state.signQueryExecuted.length = 0;
     state.orgAppsQueryExecuted = 0;
+    state.failCreateOnce = false;
+    state.failSignerOnce = false;
     state.modules = ['crm', 'sign'];
     state.quoteDetailBuyer = {
       name: 'Nguyen Van Buyer',
       taxCode: null,
       address: null,
-      email: 'buyer@congty.vn',
+      email: 'buyer@example.com',
     };
   });
 
@@ -364,7 +380,7 @@ describe('Engage quote -> eSign handoff (#3512)', () => {
     const invalidateSpy = vi.spyOn(state.client, 'invalidateQueries');
     const qWithEmail = quoteSummary(1, {
       buyerName: 'Cong ty TNHH Khach Hang',
-      buyerEmail: 'khach@example.vn',
+      buyerEmail: 'khach@example.com',
     });
 
     const envelopeId = await performQuoteSignHandoff({
@@ -397,7 +413,7 @@ describe('Engage quote -> eSign handoff (#3512)', () => {
       signerRole: 'signer',
       roleLabel: 'Khach hang',
       name: 'Cong ty TNHH Khach Hang',
-      email: 'khach@example.vn',
+      email: 'khach@example.com',
       deliveryMode: 'email',
       requireEmailOtp: false,
     });
@@ -439,8 +455,71 @@ describe('Engage quote -> eSign handoff (#3512)', () => {
     expect(state.calls.map((c) => c.step)).toEqual(['pdfFetch', 'uploadSignPdf', 'create', 'getQuote', 'addSigner']);
     expect(state.calls[4]!.args).toMatchObject({
       name: 'Nguyen Van Buyer',
-      email: 'buyer@congty.vn',
+      email: 'buyer@example.com',
       deliveryMode: 'email',
     });
+  });
+
+  it('reuses sourceFileId, idempotencyKey, and created envelopeId across retries and polls only while live', async () => {
+    const q = quoteSummary(4, { buyerName: 'Buyer Retry', buyerEmail: 'buyer@example.com' });
+    const attempt = createQuoteSignHandoffAttempt();
+    const navigated: unknown[] = [];
+
+    state.failCreateOnce = true;
+    await expect(
+      performQuoteSignHandoff({
+        quote: q,
+        slug: 'acme',
+        envelopeTitle: 'Retry Envelope',
+        signerRoleLabel: 'Khach hang',
+        navigate: (opts) => navigated.push(opts),
+        attempt,
+      }),
+    ).rejects.toThrow('network lost');
+
+    state.failSignerOnce = true;
+    await expect(
+      performQuoteSignHandoff({
+        quote: q,
+        slug: 'acme',
+        envelopeTitle: 'Retry Envelope',
+        signerRoleLabel: 'Khach hang',
+        navigate: (opts) => navigated.push(opts),
+        attempt,
+      }),
+    ).rejects.toThrow('signer network lost');
+
+    const finalId = await performQuoteSignHandoff({
+      quote: q,
+      slug: 'acme',
+      envelopeTitle: 'Retry Envelope',
+      signerRoleLabel: 'Khach hang',
+      navigate: (opts) => navigated.push(opts),
+      attempt,
+    });
+
+    expect(finalId).toBe(state.createdEnvelopeId);
+    expect(state.calls.map((c) => c.step)).toEqual([
+      'pdfFetch',
+      'uploadSignPdf',
+      'create',
+      'create',
+      'addSigner',
+      'addSigner',
+    ]);
+    const create1 = state.calls[2]!.args as { idempotencyKey: string; sourceFileId: string };
+    const create2 = state.calls[3]!.args as { idempotencyKey: string; sourceFileId: string };
+    expect(create2.idempotencyKey).toBe(create1.idempotencyKey);
+    expect(create2.sourceFileId).toBe(create1.sourceFileId);
+    const signer1 = state.calls[4]!.args as { idempotencyKey: string };
+    const signer2 = state.calls[5]!.args as { idempotencyKey: string };
+    expect(signer2.idempotencyKey).toBe(signer1.idempotencyKey);
+
+    expect(signEnvelopePollMs(undefined)).toBe(false);
+    expect(signEnvelopePollMs([])).toBe(false);
+    expect(signEnvelopePollMs([envItem('q1', { status: 'completed', sealStatus: 'sealed' })])).toBe(false);
+    expect(signEnvelopePollMs([envItem('q1', { status: 'voided' }), envItem('q2', { status: 'declined' })])).toBe(false);
+    expect(signEnvelopePollMs([envItem('q1', { status: 'sent' })])).toBe(15_000);
+    expect(signEnvelopePollMs([envItem('q1', { status: 'completed', sealStatus: 'pending' })])).toBe(5_000);
   });
 });

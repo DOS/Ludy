@@ -2,6 +2,7 @@
 // Browser-carried handoff from an Engage quote to Ludy eSign (#3512, ADR-0050, docs/plan/esign.md Slice 2b).
 // Strictly gated on both deployment installation and per-org enablement/entitlement (ADR-0053): when 'sign' is off,
 // zero sign.* queries run and no eSign UI controls render. Engage never writes crove_sign tables directly.
+import { useRef } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
@@ -73,6 +74,20 @@ export function useSignAppEnabled(active = true): boolean {
   return orgApps.data?.apps.find((app) => app.id === 'sign')?.effective === true;
 }
 
+const ACTIVE_ENVELOPE_POLL_MS = 15_000;
+const SEALING_ENVELOPE_POLL_MS = 5_000;
+
+export function signEnvelopePollMs(items: readonly SignEnvelopeBySourceItem[] | undefined): number | false {
+  if (!items || items.length === 0) return false;
+  if (items.some((e) => e.status === 'completed' && (e.sealStatus === null || e.sealStatus === 'pending'))) {
+    return SEALING_ENVELOPE_POLL_MS;
+  }
+  if (items.some((e) => e.status === 'draft' || e.status === 'sent' || e.status === 'in_progress')) {
+    return ACTIVE_ENVELOPE_POLL_MS;
+  }
+  return false;
+}
+
 export function canStartQuoteSignHandoff(
   quote: Pick<QuoteSignSource, 'status' | 'expired'>,
   envelope: Pick<SignEnvelopeBySourceItem, 'status'> | null | undefined,
@@ -112,12 +127,29 @@ async function resolveQuoteBuyer(quote: QuoteSignSource): Promise<{ name: string
   return { name, email };
 }
 
+export interface QuoteSignHandoffAttempt {
+  envelopeTitle?: string;
+  sourceFileId?: string;
+  envelopeCreateKey: string;
+  envelopeId?: string;
+  signerAddKey: string;
+  signerAdded?: boolean;
+}
+
+export function createQuoteSignHandoffAttempt(): QuoteSignHandoffAttempt {
+  return {
+    envelopeCreateKey: crypto.randomUUID(),
+    signerAddKey: crypto.randomUUID(),
+  };
+}
+
 export interface QuoteSignHandoffDeps {
   quote: QuoteSignSource;
   slug: string;
   envelopeTitle: string;
   signerRoleLabel: string;
   navigate: (opts: { to: '/o/$slug/sign/envelopes/$id'; params: { slug: string; id: string } }) => unknown;
+  attempt?: QuoteSignHandoffAttempt;
   onCreated?: (envelopeId: string) => void;
 }
 
@@ -127,48 +159,69 @@ export async function performQuoteSignHandoff({
   envelopeTitle,
   signerRoleLabel,
   navigate,
+  attempt: givenAttempt,
   onCreated,
 }: QuoteSignHandoffDeps): Promise<string> {
-  const response = await apiFetch(`/api/crm/quotes/${encodeURIComponent(quote.id)}/pdf`);
-  const blob = await response.blob();
-  const baseLabel = quote.number ? quoteLabel(quote) : `bao-gia-${quote.id.slice(0, 8)}`;
-  const filename = `${baseLabel.replace(/[^A-Za-z0-9_.-]+/g, '-')}.pdf`;
-  const pdfFile = new File([blob], filename, { type: 'application/pdf' });
+  const attempt = givenAttempt ?? createQuoteSignHandoffAttempt();
+  attempt.envelopeTitle ??= envelopeTitle.trim().slice(0, 300);
 
-  const uploaded = await uploadSignPdf(pdfFile);
-  const created = await client.sign.envelope.create({
-    title: envelopeTitle.trim().slice(0, 300),
-    sourceKind: 'crm_quote',
-    sourceId: quote.id,
-    sourceFileId: uploaded.fileId,
-    idempotencyKey: crypto.randomUUID(),
-  });
+  if (!attempt.sourceFileId) {
+    const response = await apiFetch(`/api/crm/quotes/${encodeURIComponent(quote.id)}/pdf`);
+    const blob = await response.blob();
+    const baseLabel = quote.number ? quoteLabel(quote) : `bao-gia-${quote.id.slice(0, 8)}`;
+    const filename = `${baseLabel.replace(/[^A-Za-z0-9_.-]+/g, '-')}.pdf`;
+    const pdfFile = new File([blob], filename, { type: 'application/pdf' });
+    const uploaded = await uploadSignPdf(pdfFile);
+    attempt.sourceFileId = uploaded.fileId;
+  }
 
+  let attemptedCreateOrSigner = false;
   try {
-    const buyer = await resolveQuoteBuyer(quote);
-    if (buyer.name) {
-      await client.sign.signer.add({
-        envelopeId: created.envelopeId,
-        routingOrder: 1,
-        signerRole: 'signer',
-        roleLabel: signerRoleLabel,
-        name: buyer.name,
-        ...(buyer.email ? { email: buyer.email } : {}),
-        deliveryMode: buyer.email ? 'email' : 'link',
-        requireEmailOtp: false,
-        idempotencyKey: crypto.randomUUID(),
+    if (!attempt.envelopeId) {
+      attemptedCreateOrSigner = true;
+      const created = await client.sign.envelope.create({
+        title: attempt.envelopeTitle,
+        sourceKind: 'crm_quote',
+        sourceId: quote.id,
+        sourceFileId: attempt.sourceFileId,
+        idempotencyKey: attempt.envelopeCreateKey,
       });
+      attempt.envelopeId = created.envelopeId;
+    }
+
+    if (!attempt.signerAdded) {
+      attemptedCreateOrSigner = true;
+      const buyer = await resolveQuoteBuyer(quote);
+      if (buyer.name) {
+        await client.sign.signer.add({
+          envelopeId: attempt.envelopeId,
+          routingOrder: 1,
+          signerRole: 'signer',
+          roleLabel: signerRoleLabel,
+          name: buyer.name,
+          ...(buyer.email ? { email: buyer.email } : {}),
+          deliveryMode: buyer.email ? 'email' : 'link',
+          requireEmailOtp: false,
+          idempotencyKey: attempt.signerAddKey,
+        });
+      }
+      attempt.signerAdded = true;
     }
   } finally {
-    await queryClient.invalidateQueries({ queryKey: orpc.sign.envelope.by_source.key() });
-    await queryClient.invalidateQueries({ queryKey: ['sign', 'envelopes'] });
-    onCreated?.(created.envelopeId);
+    if (attemptedCreateOrSigner) {
+      await queryClient.invalidateQueries({ queryKey: orpc.sign.envelope.by_source.key() });
+      await queryClient.invalidateQueries({ queryKey: ['sign', 'envelopes'] });
+      if (attempt.envelopeId) {
+        onCreated?.(attempt.envelopeId);
+      }
+    }
   }
 
+  const envelopeId = attempt.envelopeId;
   if (slug) {
-    await navigate({ to: '/o/$slug/sign/envelopes/$id', params: { slug, id: created.envelopeId } });
+    await navigate({ to: '/o/$slug/sign/envelopes/$id', params: { slug, id: envelopeId } });
   }
-  return created.envelopeId;
+  return envelopeId;
 }
 
 function QuoteSignHandoffView({
@@ -187,9 +240,14 @@ function QuoteSignHandoffView({
   const t = useTranslations('quotes.sign');
   const { slug = '' } = useParams({ strict: false }) as { slug?: string };
   const navigate = useNavigate();
+  const attemptKey = `${quote.id}:${envelope?.envelopeId ?? 'none'}`;
+  const attemptRef = useRef<{ key: string; attempt: QuoteSignHandoffAttempt } | null>(null);
 
   const handoff = useMutation({
     mutationFn: () => {
+      if (attemptRef.current?.key !== attemptKey) {
+        attemptRef.current = { key: attemptKey, attempt: createQuoteSignHandoffAttempt() };
+      }
       const label = quote.number ? quoteLabel(quote) : quote.dealTitle;
       return performQuoteSignHandoff({
         quote,
@@ -197,8 +255,12 @@ function QuoteSignHandoffView({
         envelopeTitle: t('envelopeTitle', { label, party: quote.partyName }),
         signerRoleLabel: t('signerRoleLabel'),
         navigate: (opts) => navigate(opts),
+        attempt: attemptRef.current.attempt,
         ...(onCreated ? { onCreated } : {}),
       });
+    },
+    onSuccess: () => {
+      attemptRef.current = null;
     },
   });
 
@@ -225,7 +287,9 @@ function QuoteSignHandoffView({
           size="sm"
           variant="outline"
           loading={handoff.isPending}
-          onClick={() => handoff.mutate()}
+          onClick={() => {
+            if (!handoff.isPending) handoff.mutate();
+          }}
           data-testid="quote-send-esign"
         >
           {t('send')}
@@ -256,6 +320,7 @@ function QuoteSignHandoffOwn({
       input: { sourceKind: 'crm_quote', sourceIds: [quote.id] },
     }),
     retry: false,
+    refetchInterval: (query) => signEnvelopePollMs(query.state.data?.items),
   });
   const envelope = ownQuery.data?.items.find((item) => item.sourceId === quote.id) ?? null;
   return (
@@ -263,7 +328,7 @@ function QuoteSignHandoffOwn({
       quote={quote}
       canEdit={canEdit}
       envelope={envelope}
-      envelopeLoading={envelopeLoading ?? ownQuery.isPending}
+      envelopeLoading={envelopeLoading ?? (ownQuery.isPending || ownQuery.isError)}
       {...(onCreated ? { onCreated } : {})}
     />
   );

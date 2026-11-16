@@ -34,7 +34,7 @@ import { ConfirmDialog } from './confirm-dialog.tsx';
 import { DealOrders, QuoteDecision } from './deal-orders.tsx';
 import { QuoteDealOffers } from './quote-deal-offers.tsx';
 import { NewLink, QuoteLinks, QuoteSendPanel, QuoteSettingsForm, quoteLabel, refreshQuoteQueries } from './quote-send.tsx';
-import { QuoteSignHandoff, useSignAppEnabled } from './quote-sign-handoff.tsx';
+import { QuoteSignHandoff, signEnvelopePollMs, useSignAppEnabled } from './quote-sign-handoff.tsx';
 import { ErrorText, Field } from './ui.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { apiFetch, client, errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -483,6 +483,7 @@ export function DealQuotes({ deal, canEdit, onClose }: { deal: Deal; canEdit: bo
     ...orpc.sign.envelope.by_source.queryOptions({ input: { sourceKind: 'crm_quote', sourceIds: signQuoteIds } }),
     enabled: signEnabled && signQuoteIds.length > 0,
     retry: false,
+    refetchInterval: (query) => (signEnabled ? signEnvelopePollMs(query.state.data?.items) : false),
   });
   const signEnvelopeByQuote = new Map((signEnvelopes.data?.items ?? []).map((item) => [item.sourceId, item] as const));
   const opened = useQuery({ ...orpc.crm.quotes.get.queryOptions({ input: { quoteId: openId ?? '' } }), enabled: openId !== null });
