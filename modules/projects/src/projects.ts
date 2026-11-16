@@ -35,6 +35,7 @@ import {
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { projectsManifest } from './manifest.ts';
+import { tasksFromNoteConfirm, tasksFromNoteStart } from './tasks-from-note.ts';
 
 export const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -993,4 +994,6 @@ export const projectsCommands = [
   projectTaskAdd,
   projectTaskRemove,
   projectTaskCreate,
+  tasksFromNoteStart,
+  tasksFromNoteConfirm,
 ];

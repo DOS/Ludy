@@ -784,6 +784,36 @@ export const createTaskFromConversation = defineCommand({
   },
 });
 
+// Tasks confirmed from Vy's note proposals (projects plan docs/plan/projects.md step P7, #2598): projects module runs
+// this inside its atomic batch confirmation command (ctx.run). Every created task keeps source_ref `notes.note` and
+// stays `tainted: true` because its proposed wording started from a private note and a model run (ADR-0029, ADR-0048).
+// No RPC route exposes this directly.
+export const createTaskFromNote = defineCommand({
+  name: 'kernel.task.create_from_note',
+  input: z.strictObject({
+    noteId: zId,
+    title: zTaskTitle,
+    positionId: zId.nullable(),
+    due: z.iso.datetime({ offset: true }).nullable(),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MEMBERS,
+  handler: async (ctx, input) => {
+    requireUser(ctx);
+    const created = await insertHumanTask(ctx, {
+      title: input.title,
+      description: null,
+      assigneePositionId: input.positionId,
+      due: input.due,
+      sourceRef: { type: 'notes.note', id: input.noteId },
+      tainted: true,
+    });
+    ctx.audit({ taskId: created.taskId, noteId: input.noteId, positionId: input.positionId });
+    return created;
+  },
+});
+
 // A person edits a task's title, description, due date or seat (projects plan docs/plan/projects.md step P1, #2588).
 // Refused while an agent's run holds a live lease on the task (TASK_CHECKED_OUT), when the new seat is archived
 // (POSITION_ARCHIVED) or when the new seat's holder cannot read the task's legal entity (OUTSIDE_LEGAL_ENTITY).
@@ -2156,6 +2186,7 @@ export const agentCommands = [
   createTaskFromTodo,
   createTaskFromMeeting,
   createTaskFromConversation,
+  createTaskFromNote,
   updateTask,
   checkoutTask,
   commentTask,
