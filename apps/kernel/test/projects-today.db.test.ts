@@ -14,7 +14,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { buildKernelCommands, createOrg, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { todayCoworkerKey, zTodayItems, type TodayItem, type TodayList } from '@crove/kernel-contract';
+import { TODAY_ITEMS_MAX, todayCoworkerKey, zTodayItems, type TodayItem, type TodayList } from '@crove/kernel-contract';
 import { Runtime } from '@crove/kernel-runtime';
 import { financeCommands } from '@crove/mod-finance';
 import { projectsCommands, projectsQueries } from '@crove/mod-projects';
@@ -645,5 +645,25 @@ suite('projects.today on PostgreSQL (#2596)', () => {
     await exec(org.orgId, owner.userId, 'kernel.org.set_app', { module: 'projects', enabled: true });
     const itemsAfterReEnable = zTodayItems.parse(await todayAt(org.orgId, owner.userId));
     expect(itemsAfterReEnable.map((i) => i.id)).toEqual([`waiting:${stuckWaitingId}`]);
+
+    // Turn the 505 non-overdue coworker tasks overdue (506 actionable tasks total > LIMIT 500)
+    // and verify projects.more counts all 506 tasks rather than truncating to 500 - 199.
+    await withAdmin((c) =>
+      c.query(`UPDATE crove_kernel.task SET due = $2 WHERE org_id = $1 AND status = 'todo'`, [
+        org.orgId,
+        new Date(NOW_MS - DAY_MS),
+      ]),
+    );
+    const overflowItems = zTodayItems.parse(await todayAt(org.orgId, owner.userId));
+    expect(overflowItems).toHaveLength(TODAY_ITEMS_MAX);
+    expect(overflowItems.at(-1)).toEqual({
+      kind: 'flag',
+      app: 'projects',
+      id: 'more',
+      title: { key: 'projects.more', params: { count: 506 - (TODAY_ITEMS_MAX - 1) } },
+      count: 506 - (TODAY_ITEMS_MAX - 1),
+      severity: 'warn',
+      href: '/projects',
+    });
   });
 });

@@ -63,7 +63,7 @@ function overdueTitle(isMine: boolean, overdueDays: number): TodayTitle {
  */
 export function projectsTodayItemsOf(
   rows: readonly ProjectTodayRow[],
-  options: { userId: string; role: MemberRole | null; now: Date },
+  options: { userId: string; role: MemberRole | null; now: Date; totalCount?: number | undefined },
 ): TodayItem[] {
   const { userId, role, now } = options;
   if (role === null || role === 'viewer') return [];
@@ -187,13 +187,14 @@ export function projectsTodayItemsOf(
     deduped.push(entry.item);
   }
 
-  if (deduped.length <= TODAY_ITEMS_MAX) {
+  const totalCount = Math.max(deduped.length, options.totalCount ?? 0);
+  if (totalCount <= TODAY_ITEMS_MAX) {
     return zTodayItems.parse(deduped);
   }
 
   const headCount = TODAY_ITEMS_MAX - 1;
-  const overflow = deduped.length - headCount;
   const head = deduped.slice(0, headCount);
+  const overflow = totalCount - head.length;
   return zTodayItems.parse([
     ...head,
     {
@@ -238,7 +239,7 @@ export const projectsToday = defineQuery({
     const isVacantItemExpr = sql<boolean>`(${isProjectOwnerExpr}) AND (${isVacantSeatExpr})`;
     const isDueTodayExpr = sql<boolean>`(${isMineExpr}) AND t.due IS NOT NULL AND t.due >= ${now} AND t.due < ${vnTomorrowStart}`;
 
-    const rows = await ctx.trx
+    const base = ctx.trx
       .selectFrom('crove_projects.project_task as pt')
       .innerJoin('crove_projects.project as p', (join) =>
         join.onRef('p.org_id', '=', 'pt.org_id').onRef('p.id', '=', 'pt.project_id'),
@@ -249,6 +250,12 @@ export const projectsToday = defineQuery({
       .leftJoin('crove_kernel.position as pos', (join) =>
         join.onRef('pos.org_id', '=', 't.org_id').onRef('pos.id', '=', 't.assignee_position_id'),
       )
+      .where('pt.org_id', '=', ctx.orgId)
+      .where('p.status', '=', 'active')
+      .where('t.status', 'not in', ['done', 'cancelled'])
+      .where(sql<boolean>`((${isOverdueExpr}) OR (${isWaitingStuckExpr}) OR (${isVacantItemExpr}) OR (${isDueTodayExpr}))`);
+
+    const rows = await base
       .select([
         't.id as taskId',
         'pt.project_id as projectId',
@@ -262,10 +269,6 @@ export const projectsToday = defineQuery({
         'pos.holder_agent_id as holderAgentId',
         'pos.status as positionStatus',
       ])
-      .where('pt.org_id', '=', ctx.orgId)
-      .where('p.status', '=', 'active')
-      .where('t.status', 'not in', ['done', 'cancelled'])
-      .where(sql<boolean>`((${isOverdueExpr}) OR (${isWaitingStuckExpr}) OR (${isVacantItemExpr}) OR (${isDueTodayExpr}))`)
       .orderBy(
         sql`CASE
           WHEN ${isOverdueExpr} THEN 0
@@ -287,6 +290,17 @@ export const projectsToday = defineQuery({
       .limit(PROJECT_TODAY_ROW_LIMIT)
       .execute();
 
-    return projectsTodayItemsOf(rows, { userId, role: ctx.role, now });
+    let totalCount: number | undefined;
+    if (rows.length === PROJECT_TODAY_ROW_LIMIT) {
+      const countRow = await base.select(sql<string>`count(DISTINCT t.id)::text`.as('total')).executeTakeFirst();
+      totalCount = Number(countRow?.total ?? rows.length);
+    }
+
+    return projectsTodayItemsOf(rows, {
+      userId,
+      role: ctx.role,
+      now,
+      ...(totalCount === undefined ? {} : { totalCount }),
+    });
   },
 });

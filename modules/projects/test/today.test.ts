@@ -349,5 +349,23 @@ describe('projects.today pure projection (#2596)', () => {
       href: '/projects',
     });
     expect(zTodayItems.safeParse(items).success).toBe(true);
+
+    // When SQL caps candidate rows at 500 out of 600 matching tasks, totalCount drives the true remaining count (600 - 199 = 401).
+    const cappedItems = projectsTodayItemsOf(overflowRows, {
+      userId: ME,
+      role: 'member',
+      now: NOW,
+      totalCount: 600,
+    });
+    expect(cappedItems).toHaveLength(TODAY_ITEMS_MAX);
+    expect(cappedItems.at(-1)).toEqual({
+      kind: 'flag',
+      app: 'projects',
+      id: 'more',
+      title: { key: 'projects.more', params: { count: 600 - (TODAY_ITEMS_MAX - 1) } },
+      count: 600 - (TODAY_ITEMS_MAX - 1),
+      severity: 'warn',
+      href: '/projects',
+    });
   });
 });
