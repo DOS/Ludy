@@ -271,6 +271,7 @@ describe('task checklist UI (#2606)', () => {
       wrap(
         <EditProjectTaskDialog
           slug="demo-org"
+          projectId="30000000-0000-4000-8000-000000000001"
           task={makeCard({ checklist: [{ text: 'Bước hộp thoại', done: false }] })}
           seats={[]}
           open={false}

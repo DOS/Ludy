@@ -12,6 +12,7 @@ import { Card } from '@crove/ui/components/card';
 import { Input } from '@crove/ui/components/input';
 import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+import { ProjectIcon } from '@crove/ui/components/project-icon';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { Textarea } from '@crove/ui/components/textarea';
@@ -27,6 +28,7 @@ import {
 } from '../components/task-checklist.tsx';
 import { TaskConversationLink } from '../components/task-conversation-link.tsx';
 import { TaskFilterBar } from '../components/task-filter-bar.tsx';
+import { TaskRecurrenceControl, formatRecurrenceBadgeLabel } from '../components/task-recurrence-control.tsx';
 import { DataTable, Empty, ErrorText, FieldError, ListSkeleton, PageHeader, PageSkeleton, fieldControl } from '../components/ui.tsx';
 import { ViewTabs, type ViewState } from '../components/view-tabs.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -489,10 +491,16 @@ export function TaskDetailPage() {
   const t = useTranslations('tasks');
   const ta = useTranslations('agents');
   const tn = useTranslations('notes');
+  const tp = useTranslations('projects');
   const f = useFormat();
   const org = useQuery(orpc.org.get.queryOptions());
   const chart = useQuery(orpc.chart.get.queryOptions());
   const detail = useQuery(orpc.tasks.get.queryOptions({ input: { id } }));
+  const recurrenceQuery = useQuery({
+    ...orpc.projects.getTaskRecurrence.queryOptions({ input: { taskId: id } }),
+    enabled: projectsInstalled(),
+    retry: false,
+  });
   const perms = agentPermissions(org.data?.role);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const editing = editingTaskId === id;
@@ -523,6 +531,7 @@ export function TaskDetailPage() {
     );
   }
   const { task, comments, proposal } = detail.data;
+  const projectRecurrence = recurrenceQuery.data ?? null;
   const postId = socialPostOf(task.sourceRef);
   const meetingItemId = meetingItemOf(task.sourceRef);
   const directMeetingId = meetingSourceOf(task.sourceRef);
@@ -568,6 +577,12 @@ export function TaskDetailPage() {
             </Badge>
           )}
           <TaskChecklistBadge steps={task.checklist ?? []} />
+          {projectRecurrence?.recurrence && (
+            <Badge variant="outline" className="gap-1" data-testid="task-recurrence-badge">
+              <ProjectIcon name="repeat" className="size-3" />
+              <span>{formatRecurrenceBadgeLabel(projectRecurrence.recurrence, tp)}</span>
+            </Badge>
+          )}
           <span className="text-xs text-muted-foreground">{f.dateTime(task.createdAt)}</span>
         </div>
         {task.tainted && <p className="text-sm text-warning">{t('taintedHint')}</p>}
@@ -617,6 +632,16 @@ export function TaskDetailPage() {
         )}
         {setStatus.error && <ErrorText>{errorMessage(setStatus.error)}</ErrorText>}
       </Card>
+
+      {projectRecurrence && (
+        <TaskRecurrenceControl
+          projectId={projectRecurrence.projectId}
+          taskId={task.id}
+          canEdit={perms.tasks && !task.checkedOut}
+          view={projectRecurrence}
+          onUpdated={refresh}
+        />
+      )}
 
       <section>
         <h2 className="mb-3 text-sm font-semibold text-foreground">{t('comments')}</h2>

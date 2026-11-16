@@ -19,6 +19,7 @@ import { ProjectIcon } from '@crove/ui/components/project-icon';
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { ProjectBoardView, type BoardColumnStatus } from '../components/project-board.tsx';
 import { ProjectTasksFromSourceDialog } from '../components/project-tasks-from-source-dialog.tsx';
+import { ProjectTemplateDialog } from '../components/project-template-dialog.tsx';
 import { ProjectWeeklyStatus } from '../components/project-weekly-status.tsx';
 import {
   AttachTaskDialog,
@@ -147,6 +148,7 @@ export function ProjectsPage() {
   const [statusFilter, setStatusFilter] = useState<ProjectStatusFilter>('open');
   const [search, setSearch] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
+  const [templateOpen, setTemplateOpen] = useState(false);
 
   const statuses = statusFilterParam(statusFilter);
   const query = useQuery(orpc.projects.list.queryOptions({ input: statuses ? { status: statuses } : {} }));
@@ -162,10 +164,16 @@ export function ProjectsPage() {
         subtitle={t('subtitle')}
         actions={
           canWrite ? (
-            <Button onClick={() => setCreateOpen(true)} data-testid="new-project-button">
-              <ProjectIcon name="plus" />
-              {t('newProject')}
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="outline" onClick={() => setTemplateOpen(true)} data-testid="create-from-template-button">
+                <ProjectIcon name="template" />
+                {t('createFromTemplate')}
+              </Button>
+              <Button onClick={() => setCreateOpen(true)} data-testid="new-project-button">
+                <ProjectIcon name="plus" />
+                {t('newProject')}
+              </Button>
+            </div>
           ) : undefined
         }
       />
@@ -173,6 +181,15 @@ export function ProjectsPage() {
       <CreateProjectDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
+        onCreated={(projectId) => {
+          void navigate({ to: '/o/$slug/projects/$id', params: { slug, id: projectId } });
+        }}
+      />
+
+      <ProjectTemplateDialog
+        mode="create"
+        open={templateOpen}
+        onOpenChange={setTemplateOpen}
         onCreated={(projectId) => {
           void navigate({ to: '/o/$slug/projects/$id', params: { slug, id: projectId } });
         }}
@@ -257,6 +274,7 @@ export function ProjectDetailPage() {
   const [includeCancelled, setIncludeCancelled] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
   const [proposeSourceOpen, setProposeSourceOpen] = useState(false);
+  const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<ProjectTaskCard | null>(null);
   const [moveError, setMoveError] = useState<unknown>(null);
@@ -395,6 +413,12 @@ export function ProjectDetailPage() {
                 <Button variant="outline" onClick={() => setAttachOpen(true)} data-testid="attach-task-button">
                   <ProjectIcon name="link" />
                   {t('detail.addExisting')}
+                </Button>
+              )}
+              {project.canWrite && (
+                <Button variant="outline" onClick={() => setSaveTemplateOpen(true)} data-testid="save-as-template-button">
+                  <ProjectIcon name="template" />
+                  {t('detail.saveAsTemplate')}
                 </Button>
               )}
               <Button variant="outline" onClick={() => setSettingsOpen(true)} data-testid="project-settings-button">
@@ -619,12 +643,22 @@ export function ProjectDetailPage() {
       />
       <EditProjectTaskDialog
         slug={slug}
-        task={editingTask}
+        projectId={project.id}
+        canWrite={project.canWrite}
+        task={editingTask ? (board.tasks.find((item) => item.id === editingTask.id) ?? editingTask) : null}
         seats={seats}
         open={editingTask !== null}
         onOpenChange={(next) => {
           if (!next) setEditingTask(null);
         }}
+      />
+      <ProjectTemplateDialog
+        mode="save"
+        open={saveTemplateOpen}
+        onOpenChange={setSaveTemplateOpen}
+        projectId={project.id}
+        initialName={project.name}
+        initialDescription={project.description}
       />
       <ProjectSettingsDialog
         open={settingsOpen}

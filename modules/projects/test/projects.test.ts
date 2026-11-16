@@ -15,9 +15,12 @@ describe('@crove/mod-projects (#2591)', () => {
     ]);
     expect(projectsManifest.tables.crove_projects.project.name).toBe('pii');
     expect(projectsManifest.tables.crove_projects.project.description).toBe('pii');
+    expect(projectsManifest.tables.crove_projects.project.template_tasks).toBe('pii');
+    expect(projectsManifest.tables.crove_projects.project.is_template).toBe('internal');
     expect(projectsManifest.tables.crove_projects.project.owner_user_id).toBe('internal');
     expect(projectsManifest.tables.crove_projects.project_member.user_id).toBe('internal');
     expect(projectsManifest.tables.crove_projects.project_task.task_id).toBe('internal');
+    expect(projectsManifest.tables.crove_projects.project_task.recurrence).toBe('internal');
     expect(projectsManifest.entities).toEqual([
       { type: 'projects.project', table: 'project', legalEntityScoped: false, audit: 'command' },
     ]);
@@ -25,23 +28,29 @@ describe('@crove/mod-projects (#2591)', () => {
     expect(projectsManifest.nav).toEqual(MODULE_SCREENS.projects.nav);
   });
 
-  it('exports all 17 commands and 11 queries with consistent module prefix', () => {
+  it('exports all 23 commands and 13 queries with consistent module prefix', () => {
     expect(projectsCommands.map((c) => c.name).sort()).toEqual([
       'projects.member.add',
       'projects.member.remove',
       'projects.project.archive',
       'projects.project.create',
+      'projects.project.create_from_template',
       'projects.project.set_owner',
       'projects.project.set_status',
       'projects.project.update',
+      'projects.recurring.advance',
       'projects.task.add',
       'projects.task.create',
+      'projects.task.recurrence.clear',
+      'projects.task.recurrence.set',
       'projects.task.remove',
       'projects.task.reorder',
       'projects.tasks_from_note.confirm',
       'projects.tasks_from_note.start',
       'projects.tasks_from_source.confirm',
       'projects.tasks_from_source.start',
+      'projects.template.archive',
+      'projects.template.create',
       'projects.weekly_status.send_mail',
       'projects.weekly_status.share_note',
     ]);
@@ -49,11 +58,13 @@ describe('@crove/mod-projects (#2591)', () => {
       'projects.board',
       'projects.project.get',
       'projects.project.list',
+      'projects.task.recurrence.get',
       'projects.task_projects',
       'projects.tasks_from_note.seats',
       'projects.tasks_from_note.status',
       'projects.tasks_from_source.seats',
       'projects.tasks_from_source.status',
+      'projects.template.list',
       'projects.today',
       'projects.unassigned_tasks',
       'projects.weekly_status_source',
@@ -68,6 +79,8 @@ describe('@crove/mod-projects (#2591)', () => {
       }
       if (
         command.name === 'projects.task.create' ||
+        command.name === 'projects.project.create_from_template' ||
+        command.name === 'projects.recurring.advance' ||
         command.name.startsWith('projects.tasks_from_note.') ||
         command.name.startsWith('projects.tasks_from_source.') ||
         command.name.startsWith('projects.weekly_status.')

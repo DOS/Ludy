@@ -890,6 +890,36 @@ export const createTaskFromSource = defineCommand({
   },
 });
 
+// Tasks instantiated from a project template (#2607): projects module calls this via ctx.run inside
+// projects.project.create_from_template. Preserves `tainted: true` from AI-proposed tasks stored in custom template
+// snapshots while firing the standard kernel.task.created notification. No RPC route exposes this directly.
+export const createTaskFromTemplate = defineCommand({
+  name: 'kernel.task.create_from_template',
+  input: z.strictObject({
+    templateId: zId.nullable(),
+    title: zTaskTitle,
+    description: z.string().max(10000).nullable(),
+    due: z.iso.datetime({ offset: true }).nullable(),
+    tainted: z.boolean(),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MEMBERS,
+  handler: async (ctx, input) => {
+    requireUser(ctx);
+    const created = await insertHumanTask(ctx, {
+      title: input.title,
+      description: input.description,
+      assigneePositionId: null,
+      due: input.due,
+      sourceRef: input.templateId ? { type: 'projects.project', id: input.templateId } : null,
+      tainted: input.tainted,
+    });
+    ctx.audit({ taskId: created.taskId, templateId: input.templateId, tainted: input.tainted });
+    return created;
+  },
+});
+
 // A person edits a task's title, description, due date or seat (projects plan docs/plan/projects.md step P1, #2588).
 // Refused while an agent's run holds a live lease on the task (TASK_CHECKED_OUT), when the new seat is archived
 // (POSITION_ARCHIVED) or when the new seat's holder cannot read the task's legal entity (OUTSIDE_LEGAL_ENTITY).
@@ -2289,6 +2319,7 @@ export const agentCommands = [
   createTaskFromConversation,
   createTaskFromNote,
   createTaskFromSource,
+  createTaskFromTemplate,
   updateTask,
   checkoutTask,
   commentTask,

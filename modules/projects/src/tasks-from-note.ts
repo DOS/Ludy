@@ -39,7 +39,8 @@ export async function loadProject(trx: QueryContext['trx'], orgId: string, proje
     .selectFrom('crove_projects.project')
     .select(['id', 'name', 'status'])
     .where('org_id', '=', orgId)
-    .where('id', '=', projectId);
+    .where('id', '=', projectId)
+    .where('is_template', '=', false);
   if (lock) query = query.forUpdate();
   const row = await query.executeTakeFirst();
   if (!row) throw new DomainError('PROJECT_NOT_FOUND', 404, 'Không tìm thấy dự án này');
