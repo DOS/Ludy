@@ -93,7 +93,9 @@ export type UploadPurpose = (typeof UPLOAD_PURPOSES)[number];
 // change.
 // org_apps: the org's owner switched an app on or off (ADR-0053); its id is the org's. Every stream of the org gets it, and re-checks first, so the apps it
 // filters by are the new ones; the app then reads kernel.org.apps again.
-export const STREAM_HINT_TYPES = ['proposal', 'file', 'extraction', 'journal_entry', 'document', 'social_post', 'social_notification', 'notification', 'note', 'todo', 'org_apps'] as const;
+// crm_deal and crm_party (#3293, crm.md section 5): a deal, or a party's contact details, changed; the deal board, the deals list and the contact panels read again. The id only,
+// as every hint. The names use an underscore, not the dot of the entity types (crm.deal), because the channel payload carries no dot (social_post is the same).
+export const STREAM_HINT_TYPES = ['proposal', 'file', 'extraction', 'journal_entry', 'document', 'social_post', 'social_notification', 'notification', 'note', 'todo', 'org_apps', 'crm_deal', 'crm_party'] as const;
 export type StreamHintType = (typeof STREAM_HINT_TYPES)[number];
 export interface StreamHint {
   type: StreamHintType;
