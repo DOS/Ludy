@@ -3731,7 +3731,7 @@ export const en = {
       invoiceLines: 'Invoice by line',
       invoiceLine: 'Line {no}: {description}',
       invoiceState: { none: 'Not invoiced yet', draft: 'Draft made', issued: 'Issued' },
-      invoiceOpenLines: '"Lập hóa đơn" will invoice line {lines}.',
+      invoiceOpenLines: '"Create invoice" will invoice line {lines}.',
       cancelBlocked: 'This order has a line on a draft or issued invoice, so cancelling is switched off. Deal with the invoice in Kế toán first.',
       invoiceOpen: 'Open Sales invoices',
       cancelOrder: 'Cancel order',

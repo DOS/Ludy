@@ -9,7 +9,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { ORDER_LINE_INVOICE_ORDERS_MAX, QUOTE_ACCEPTED_VIA, SALES_ORDER_REASON_MAX, vietnamToday, type QuoteAcceptedVia, type QuoteSummary, type SalesOrder, type SalesOrderSummary } from '@crove/kernel-contract';
+import { ORDER_LINE_INVOICE_ORDERS_MAX, QUOTE_ACCEPTED_VIA, SALES_ORDER_REASON_MAX, vietnamToday, type QuoteAcceptedVia, type QuoteSummary, type SalesOrder, type SalesOrderHandoff, type SalesOrderSummary } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
@@ -306,12 +306,20 @@ export function DeliveryPanel({ orderId, canEdit }: { orderId: string; canEdit: 
 function useInvoiceDraft(order: SalesOrderSummary, enabled: boolean, held: ReadonlyMap<number, 'draft' | 'issued'> | undefined) {
   const read = useQuery({ ...orpc.crm.salesOrders.handoff.queryOptions({ input: { orderId: order.id } }), enabled });
   const attempt = useRef<KeyHolder | null>(null);
+  // What the last call sent while its answer is unknown (the connection dropped): a click again sends exactly that with the same key, so the server replays the draft it made instead of
+  // the screen counting the lines that draft now holds as taken and refusing. A definite refusal from the server drops it, and the next click reads everything fresh.
+  const sent = useRef<{ handoff: SalesOrderHandoff; lineNos?: number[] } | null>(null);
   const plan = invoicePlan(read.data?.lines ?? [], new Set(held?.keys()));
   const skipped = plan.skipped;
   const allSkipped = allDiscounted(plan);
   const hidden = nothingLeft(plan);
   const invoice = useMutation({
     mutationFn: async () => {
+      if (sent.current !== null && attempt.current !== null) {
+        const again = sent.current;
+        const draft = await client.einvoice.drafts.fromOrder({ ...again, idempotencyKey: attempt.current.key });
+        return { draft, skipped: invoicePlan(again.handoff.lines).skipped };
+      }
       const handoff = await client.crm.salesOrders.handoff({ orderId: order.id });
       // The lines a draft holds, read fresh at the click; if the read fails the click goes on and the server decides.
       const fresh = await client.einvoice.drafts.orderLines({ orderIds: [order.id] }).catch(() => null);
@@ -319,17 +327,25 @@ function useInvoiceDraft(order: SalesOrderSummary, enabled: boolean, held: Reado
       const input = invoiceInput(handoff, heldNow);
       if (input === null) throw new ApiError(heldNow.size > 0 ? 'ORDER_NOTHING_TO_INVOICE' : 'ORDER_LINE_DISCOUNTED', 409, null);
       attempt.current = keyFor(attempt.current, JSON.stringify(input));
+      sent.current = input;
       const draft = await client.einvoice.drafts.fromOrder({ ...input, idempotencyKey: attempt.current.key });
       // The lines left out are those of this handoff, not of the preview, which may be old or not loaded.
       return { draft, skipped: invoicePlan(handoff.lines, heldNow).skipped };
     },
     onSuccess: () => {
       attempt.current = null;
+      sent.current = null;
       void queryClient.invalidateQueries({ queryKey: orpc.einvoice.drafts.key() });
     },
-    // A refusal (the order changed, a line was already invoiced) leaves the reading stale: read the order again.
-    onError: () => {
+    // A refusal (the order changed, a line was already invoiced) leaves both readings stale: read the order and what Kế toán holds on it again. Only a refusal from the server ends the
+    // attempt; a dropped connection keeps it, so the next click replays it.
+    onError: (error) => {
+      if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429) {
+        attempt.current = null;
+        sent.current = null;
+      }
       void queryClient.invalidateQueries({ queryKey: orpc.crm.salesOrders.key() });
+      void queryClient.invalidateQueries({ queryKey: orpc.einvoice.drafts.key() });
     },
   });
   return { invoice, skipped, allSkipped, hidden, open: plan.open, partial: plan.claimed.length > 0 || plan.skipped.length > 0 };
@@ -420,7 +436,7 @@ function OrderRow({ order, canEdit, held }: { order: SalesOrderSummary; canEdit:
             disabled={cancelBlocked}
             aria-describedby={cancelBlocked ? `order-cancel-blocked-${order.id}` : undefined}
             onClick={() => setCancelling((v) => !v)}
-            aria-expanded={cancelling}
+            aria-expanded={cancelling && !cancelBlocked}
             data-testid="order-cancel-open"
           >
             {t('cancelOrder')}
@@ -452,8 +468,10 @@ export function DealOrders({ dealId, canEdit }: { dealId: string; canEdit: boole
     enabled: confirmedIds.length > 0 && financeInstalled(),
     retry: false,
   });
+  const asked = new Set(confirmedIds);
   const heldOf = (orderId: string): ReadonlyMap<number, 'draft' | 'issued'> | undefined => {
-    if (!states.data) return undefined;
+    // An order that was not asked (beyond the read's 50) is unknown, never "no draft".
+    if (!states.data || !asked.has(orderId)) return undefined;
     return new Map((states.data.orders.find((x) => x.orderId === orderId)?.lines ?? []).map((l) => [l.lineNo, l.state] as const));
   };
   return (

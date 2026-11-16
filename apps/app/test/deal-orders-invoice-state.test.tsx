@@ -5,6 +5,7 @@
 import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ORDER_LINE_INVOICE_ORDERS_MAX } from '@crove/kernel-contract';
 import { I18nProvider } from '../src/i18n/provider.tsx';
 import { setActiveLocale } from '../src/i18n/runtime.ts';
 
@@ -59,8 +60,8 @@ const summary = (id: string, status: string) => ({ id, number: 'DH-2026-0001', s
 
 type Held = Array<{ lineNo: number; state: 'draft' | 'issued' }>;
 
-function render(options: { held?: Held | null; canEdit?: boolean; modules?: string[]; lines?: typeof LINES; orders?: ReturnType<typeof summary>[] } = {}): string {
-  setActiveLocale('vi');
+function render(options: { held?: Held | null; canEdit?: boolean; modules?: string[]; lines?: typeof LINES; orders?: ReturnType<typeof summary>[]; locale?: 'vi' | 'en' } = {}): string {
+  setActiveLocale(options.locale ?? 'vi');
   config.modules = options.modules ?? ['finance'];
   client.asked.length = 0;
   const qc = client.current;
@@ -150,5 +151,23 @@ describe('the order screen: the invoice state of each line (#3477)', () => {
     expect(html).not.toContain('Chưa lập hóa đơn');
     expect(cancelButton(html)).not.toContain('disabled');
     expect(html).toContain('data-testid="order-invoice"');
+  });
+
+  it('names the English button in English, and the Vietnamese one in Vietnamese', () => {
+    const held = [{ lineNo: 1, state: 'draft' as const }, { lineNo: 2, state: 'draft' as const }];
+    const en = render({ held, locale: 'en' });
+    expect(en).toContain('&quot;Create invoice&quot; will invoice line 3.');
+    expect(en).toContain('Draft made');
+    expect(en).not.toContain('Lập hóa đơn');
+    expect(render({ held })).toContain('Bấm &quot;Lập hóa đơn&quot; sẽ lập cho dòng 3.');
+  });
+
+  it('asks about at most 50 orders and says nothing, and keeps cancel on, for an order that was not asked', () => {
+    const many = Array.from({ length: ORDER_LINE_INVOICE_ORDERS_MAX + 1 }, (_, i) => summary(`00000000-0000-4000-8000-${String(100 + i).padStart(12, '0')}`, 'confirmed'));
+    const html = render({ held: [], orders: many });
+    expect((client.asked[0] as { orderIds: string[] }).orderIds).toHaveLength(ORDER_LINE_INVOICE_ORDERS_MAX);
+    // Three goods lines on each of the 50 orders asked; the 51st has no label at all.
+    expect(count(html, 'data-testid="order-invoice-line"')).toBe(ORDER_LINE_INVOICE_ORDERS_MAX * 3);
+    expect(count(html, 'data-testid="order-row"')).toBe(ORDER_LINE_INVOICE_ORDERS_MAX + 1);
   });
 });
