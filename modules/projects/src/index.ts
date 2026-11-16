@@ -39,6 +39,7 @@ export {
   projectTaskCreate,
   projectTaskProjects,
   projectTaskRemove,
+  projectTaskReorder,
   projectUnassignedTasks,
   projectUpdate,
 } from './projects.ts';

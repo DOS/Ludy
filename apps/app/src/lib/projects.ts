@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Client-side ordering, filtering and view helpers for Projects (issue #2591, ADR-0048, plan §9 P2).
 import type {
+  FilterAst,
   ProjectBoard,
   ProjectStatus,
   ProjectSummary,
@@ -57,6 +58,11 @@ export function sortBoardTasks<T extends Pick<ProjectTaskCard, 'due' | 'createdA
   return [...tasks].sort(compareBoardTasks);
 }
 
+export interface TaskPlacement {
+  place: 'before' | 'after';
+  anchorId: string;
+}
+
 export function groupBoardTasks(tasks: readonly ProjectTaskCard[], includeCancelled: boolean): Record<TaskStatus, ProjectTaskCard[]> {
   const columns: Record<TaskStatus, ProjectTaskCard[]> = {
     todo: [],
@@ -66,15 +72,46 @@ export function groupBoardTasks(tasks: readonly ProjectTaskCard[], includeCancel
     done: [],
     cancelled: [],
   };
-  for (const task of sortBoardTasks(tasks)) {
+  for (const task of tasks) {
     if (task.status === 'cancelled' && !includeCancelled) continue;
     columns[task.status].push(task);
   }
   return columns;
 }
 
-export function optimisticMoveTask(tasks: readonly ProjectTaskCard[], taskId: string, nextStatus: TaskStatus): ProjectTaskCard[] {
-  return sortBoardTasks(tasks.map((task) => (task.id === taskId ? { ...task, status: nextStatus } : task)));
+export function optimisticReorderTask(
+  tasks: readonly ProjectTaskCard[],
+  taskId: string,
+  placement: TaskPlacement,
+): ProjectTaskCard[] {
+  if (taskId === placement.anchorId) return [...tasks];
+  const moving = tasks.find((t) => t.id === taskId);
+  if (!moving) return [...tasks];
+  const without = tasks.filter((t) => t.id !== taskId);
+  const anchorIndex = without.findIndex((t) => t.id === placement.anchorId);
+  if (anchorIndex < 0) return [...tasks];
+  const insertAt = placement.place === 'before' ? anchorIndex : anchorIndex + 1;
+  without.splice(insertAt, 0, moving);
+  return without;
+}
+
+export function optimisticMoveTask(
+  tasks: readonly ProjectTaskCard[],
+  taskId: string,
+  nextStatus: TaskStatus,
+  placement?: TaskPlacement,
+): ProjectTaskCard[] {
+  const moved = tasks.map((task) => (task.id === taskId ? { ...task, status: nextStatus } : task));
+  return placement ? optimisticReorderTask(moved, taskId, placement) : moved;
+}
+
+export function statusFilterIncludesCancelled(ast: FilterAst): boolean {
+  return ast.all.some(
+    (c) =>
+      c.field === 'status' &&
+      ((c.op === 'is' && c.value === 'cancelled') ||
+        (c.op === 'in' && Array.isArray(c.value) && c.value.includes('cancelled'))),
+  );
 }
 
 export function isTaskOverdue(task: Pick<ProjectTaskCard, 'due' | 'status'>, nowMs = Date.now()): boolean {

@@ -3676,6 +3676,7 @@ export function createRpcHandler(
       removeMember: os.projects.removeMember.handler(projectsCommand('projects.member.remove')),
       addTask: os.projects.addTask.handler(projectsCommand('projects.task.add')),
       removeTask: os.projects.removeTask.handler(projectsCommand('projects.task.remove')),
+      reorderTask: os.projects.reorderTask.handler(projectsCommand('projects.task.reorder')),
       createTask: os.projects.createTask.handler(projectsCommand('projects.task.create')),
       tasksFromNoteStatus: os.projects.tasksFromNoteStatus.handler(({ context }) =>
         inProjects(context, (orgId, actor) => tasksFromNoteStatusOf({ runtime, model: summaryModel, meter: aiMeter ?? (() => null) }, orgId, actor)),

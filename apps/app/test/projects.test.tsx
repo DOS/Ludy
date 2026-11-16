@@ -15,8 +15,10 @@ import {
   hasUnseatedTeamMembers,
   isTaskOverdue,
   optimisticMoveTask,
+  optimisticReorderTask,
   projectCompletionPct,
   sortBoardTasks,
+  statusFilterIncludesCancelled,
 } from '../src/lib/projects.ts';
 
 const authState = vi.hoisted(() => ({ modules: ['projects', 'notes'] as string[] }));
@@ -117,14 +119,29 @@ describe('projects helpers (#2591)', () => {
     expect(sorted.map((t) => t.id)).toEqual(['d', 'c', 'b', 'a']);
   });
 
-  it('groups into status columns, omits cancelled unless asked, and moves optimistically', () => {
-    const todo = card({ id: 't1', status: 'todo' });
-    const cancelled = card({ id: 't2', status: 'cancelled' });
-    expect(groupBoardTasks([todo, cancelled], false).cancelled).toEqual([]);
-    expect(groupBoardTasks([todo, cancelled], true).cancelled).toHaveLength(1);
+  it('groups into status columns preserving manual order, omits cancelled unless asked, and moves/reorders optimistically', () => {
+    const tFirst = card({ id: 't1', status: 'todo', due: '2026-11-25T00:00:00.000Z' });
+    const tSecond = card({ id: 't2', status: 'todo', due: '2026-11-01T00:00:00.000Z' });
+    const cancelled = card({ id: 't3', status: 'cancelled' });
 
-    const moved = optimisticMoveTask([todo, cancelled], 't1', 'done');
+    // Preserves input order (server sort_key or saved-view sort) instead of overriding with due date.
+    expect(groupBoardTasks([tFirst, tSecond, cancelled], false).todo.map((t) => t.id)).toEqual(['t1', 't2']);
+    expect(groupBoardTasks([tFirst, tSecond, cancelled], false).cancelled).toEqual([]);
+    expect(groupBoardTasks([tFirst, tSecond, cancelled], true).cancelled).toHaveLength(1);
+
+    const moved = optimisticMoveTask([tFirst, cancelled], 't1', 'done');
     expect(moved.find((t) => t.id === 't1')?.status).toBe('done');
+
+    expect(optimisticReorderTask([tFirst, tSecond], 't2', { place: 'before', anchorId: 't1' }).map((t) => t.id)).toEqual(['t2', 't1']);
+    expect(optimisticReorderTask([tFirst, tSecond], 't1', { place: 'after', anchorId: 't2' }).map((t) => t.id)).toEqual(['t2', 't1']);
+
+    const movedAndPlaced = optimisticMoveTask([tFirst, tSecond, cancelled], 't3', 'todo', { place: 'before', anchorId: 't2' });
+    expect(movedAndPlaced.find((t) => t.id === 't3')?.status).toBe('todo');
+    expect(movedAndPlaced.map((t) => t.id)).toEqual(['t1', 't3', 't2']);
+
+    expect(statusFilterIncludesCancelled({ v: 1, all: [{ field: 'status', op: 'is', value: 'cancelled' }] })).toBe(true);
+    expect(statusFilterIncludesCancelled({ v: 1, all: [{ field: 'status', op: 'in', value: ['todo', 'cancelled'] }] })).toBe(true);
+    expect(statusFilterIncludesCancelled({ v: 1, all: [{ field: 'status', op: 'is', value: 'todo' }] })).toBe(false);
   });
 
   it('detects overdue only for non-done/non-cancelled tasks past due date, and computes completion %', () => {
@@ -341,9 +358,35 @@ describe('projects SSR screens & board (#2591)', () => {
     expect(detailHtml).toContain('data-testid="seat-hint-banner"');
     expect(detailHtml).toContain('data-testid="view-toggle-board"');
     expect(detailHtml).toContain('data-testid="view-toggle-list"');
+    expect(detailHtml).toContain('data-testid="task-filter-tainted"');
+    expect(detailHtml).toContain('data-testid="task-filter-sort"');
+    expect(detailHtml).toContain('data-testid="move-task-up"');
+    expect(detailHtml).toContain('data-testid="move-task-down"');
     expect(detailHtml).toContain('Kiểm kho chi nhánh HN');
     expect(detailHtml).toContain('data-testid="panel-todos"');
     expect(detailHtml).toContain('Check vendor contract');
+
+    const customSortHtml = renderToStaticMarkup(
+      wrap(
+        'vi',
+        <ProjectBoardView
+          slug="demo-org"
+          view="board"
+          tasks={[card({ id: 't1' }), card({ id: 't2' })]}
+          seats={[]}
+          canEdit
+          includeCancelled={false}
+          creatingTask={false}
+          customSortActive
+          onMoveStatus={() => undefined}
+          onReorderTask={() => undefined}
+          onCreateTask={() => undefined}
+          onEditTask={() => undefined}
+          onRemoveTask={() => undefined}
+        />,
+      ),
+    );
+    expect(customSortHtml).toContain('data-testid="reorder-disabled-hint"');
 
     authState.modules = ['projects'];
     const withoutNotesHtml = renderToStaticMarkup(wrap('vi', <ProjectDetailPage />));
