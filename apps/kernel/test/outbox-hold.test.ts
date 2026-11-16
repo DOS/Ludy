@@ -3,7 +3,7 @@
 // types from worker.ts: an event of an app that is not classed here fails it, so a new consumer must say whether its events wait.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { NEVER_HELD_EVENTS, heldAppOf, planHolds } from '../src/outbox-hold.ts';
+import { NEVER_HELD_EVENTS, SELF_RECOVERING_EVENTS, heldAppOf, planHolds } from '../src/outbox-hold.ts';
 import { KEEPING_EVENT_COMMANDS } from '../src/worker.ts';
 
 // The kernel's own events the relay names, each consumed by a kernel job or command (conversations, sign-out, export, agents). A new kernel event must be added here, or
@@ -18,6 +18,8 @@ const KERNEL_OWN = new Set([
   'kernel.conversation.reply_queued',
   'kernel.conversation.sync_queued',
   'kernel.member.removed',
+  // Sign's own recovery runs on it (the worker's relay step for a switch-on).
+  'kernel.org.apps_changed',
   'kernel.member.role_changed',
   'kernel.org.export_requested',
   'kernel.proposal.created',
@@ -61,7 +63,7 @@ describe('which events wait', () => {
       const app = heldAppOf(type);
       if (app !== null) continue;
       // Not parked: the keeping and never-held events, the time-bound public acts, Meetings' time-bound ones, and the kernel's own, which are listed.
-      if (NEVER_HELD_EVENTS.has(type) || type.startsWith('meetings.') || TIME_BOUND.has(type) || KERNEL_OWN.has(type)) continue;
+      if (NEVER_HELD_EVENTS.has(type) || SELF_RECOVERING_EVENTS.has(type) || type.startsWith('meetings.') || TIME_BOUND.has(type) || KERNEL_OWN.has(type)) continue;
       unclassed.push(type);
     }
     expect(unclassed, 'an event of an app that is neither parked nor listed as never parked').toEqual([]);

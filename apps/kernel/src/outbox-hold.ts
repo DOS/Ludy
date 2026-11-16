@@ -28,6 +28,10 @@ export const NEVER_HELD_EVENTS: ReadonlySet<string> = new Set([
 // they would post or change something nobody expects any more, so they are dropped when the app is off (ADR-0053: time-sensitive work never runs late on its own), not parked.
 const TIME_BOUND_EVENTS: ReadonlySet<string> = new Set(['social.comment.retry_requested', 'social.thread.retry_requested', 'social.variant.edit_requested']);
 
+// The events of an app that finds its own pending work again when it is switched on: Sign's inspection and sealing are queued by its own sweep on `kernel.org.apps_changed`
+// (the worker's relay step for that event), so its events are not parked.
+export const SELF_RECOVERING_EVENTS: ReadonlySet<string> = new Set(['sign.envelope.inspect_queued', 'sign.envelope.seal_queued']);
+
 // The kernel events whose consumer is an app's job: the extraction of an uploaded file is Finance's, so a file stored while Finance is off is read when it is back.
 const KERNEL_EVENT_APPS: Readonly<Record<string, string>> = {
   'kernel.file.ingested': 'finance',
@@ -40,7 +44,7 @@ const HOLDING_PREFIXES: Readonly<Record<string, string>> = { 'finance.': 'financ
 
 /** The app whose events wait while it is off, for this event type, or null when the event is never parked. */
 export function heldAppOf(type: string): string | null {
-  if (NEVER_HELD_EVENTS.has(type) || TIME_BOUND_EVENTS.has(type)) return null;
+  if (NEVER_HELD_EVENTS.has(type) || TIME_BOUND_EVENTS.has(type) || SELF_RECOVERING_EVENTS.has(type)) return null;
   const kernel = KERNEL_EVENT_APPS[type];
   if (kernel) return kernel;
   for (const [prefix, app] of Object.entries(HOLDING_PREFIXES)) if (type.startsWith(prefix)) return app;

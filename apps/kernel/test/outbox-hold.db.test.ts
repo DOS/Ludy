@@ -46,7 +46,7 @@ suite('parked events of an app that is off (ADR-0053, C3b)', () => {
     return id;
   }
   const pending = () => admin(async (c) => (await c.query<{ event_id: string }>('SELECT event_id FROM crove_kernel.outbox_pending ORDER BY seq')).rows.map((r) => r.event_id));
-  const held = (org: string) => admin(async (c) => (await c.query<{ event_id: string }>('SELECT event_id FROM crove_kernel.outbox_held WHERE org_id = $1 ORDER BY seq', [org])).rows.map((r) => r.event_id));
+  const held = (org: string) => admin(async (c) => (await c.query<{ event_id: string }>('SELECT event_id FROM crove_kernel.outbox_held WHERE org_id = $1 ORDER BY id', [org])).rows.map((r) => r.event_id));
 
   // One relay batch as the worker runs it: the claim, the plan, the parking, on one transaction.
   const batch = (off: ReadonlySet<string>) =>
