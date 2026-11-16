@@ -3511,6 +3511,10 @@ export const en = {
       settings: 'Stages',
     },
     followUp: 'Needs follow-up',
+    duplicate: {
+      hint: 'This contact was marked a duplicate of {name}.',
+      move: 'Move the deal to {name}',
+    },
     nextSteps: {
       title: 'Next steps',
       hint: 'Deals nobody changed for a while, or that are past their expected close, show up here so the owner can decide what comes next. Editing, moving or closing the deal closes the step.',
