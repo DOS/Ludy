@@ -392,19 +392,71 @@ suite('the member\'s Vy translating the summary (E1, #3184)', () => {
     expect(await refuses(exec('attendee', 'meetings.translation.copy_result', { meetingId: a, runId: done.runId }))).toBe('TRANSLATION_RESULT_NOT_FOUND');
   });
 
-  it('reads as stale when the original changed since: an edited item of a draft, a rewritten published summary', async () => {
+  it('is dropped when the original changes in place, every member\'s: an edited item of a draft, a rewritten published summary (#3204)', async () => {
     const meetingId = await seedPublished();
     await seedDraft(meetingId);
     await translate('recorder', meetingId, 'draft');
     expect((await get('recorder', meetingId)).translations[0]).toMatchObject({ stage: 'draft', stale: false });
     const item = await sqlAdmin<{ id: string }>(`SELECT id FROM crove_meetings.action_item WHERE org_id = $1 AND meeting_id = $2 AND stage = 'draft'`, [orgId, meetingId]);
     await exec('recorder', 'meetings.action_item.edit', { itemId: item.rows[0]?.id, title: 'Gọi khách B trước thứ ba' });
-    expect((await get('recorder', meetingId)).translations[0]).toMatchObject({ stage: 'draft', stale: true });
-    // A published row changed in place (not by a new publish) is the same.
+    expect((await get('recorder', meetingId)).translations).toEqual([]);
+    // A published row changed in place (not by a new publish) is the same, for the reader who translated it.
     const pub = await seedPublished();
     await translate('attendee', pub, 'published');
     await sqlAdmin(`UPDATE crove_meetings.meeting_result SET summary = 'Tóm tắt đã sửa' WHERE org_id = $1 AND meeting_id = $2 AND stage = 'published'`, [orgId, pub]);
-    expect((await get('attendee', pub)).translations[0]).toMatchObject({ stale: true });
+    expect((await get('attendee', pub)).translations).toEqual([]);
+    expect(await stored(pub)).toEqual([]);
+  });
+
+  describe('an in-place edit of the translated text drops the other members\' translations too (#3204)', () => {
+    const NAME = 'Nguyễn Văn Bình';
+    const holders = (meetingId: string) => sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM crove_meetings.translation WHERE org_id = $1 AND meeting_id = $2 AND body::text ILIKE '%Bình%'`, [orgId, meetingId]);
+
+    it('an edit that removes a person\'s name leaves no member\'s translation holding it', async () => {
+      const meetingId = await seedPublished({ summary: `${NAME} sẽ gửi báo giá cho khách A trước thứ sáu.` });
+      await translate('attendee', meetingId, 'published');
+      await translate('recorder', meetingId, 'published');
+      expect(Number((await holders(meetingId)).rows[0]?.n)).toBe(2);
+      // The edit is the recorder's (the command or SQL): the attendee's translation is another member's.
+      await sqlAdmin(`UPDATE crove_meetings.meeting_result SET summary = 'Một người sẽ gửi báo giá cho khách A trước thứ sáu.' WHERE org_id = $1 AND meeting_id = $2 AND stage = 'published'`, [orgId, meetingId]);
+      expect(Number((await holders(meetingId)).rows[0]?.n)).toBe(0);
+      expect(await stored(meetingId)).toEqual([]);
+      expect((await get('attendee', meetingId)).translations).toEqual([]);
+    });
+
+    it('a changed decision or a changed item title drops them; the edit of the draft leaves the published one\'s alone', async () => {
+      const meetingId = await seedPublished();
+      await seedDraft(meetingId);
+      await translate('attendee', meetingId, 'published');
+      await translate('recorder', meetingId, 'published');
+      await translate('recorder', meetingId, 'draft');
+      expect((await stored(meetingId)).map((r) => r.source_stage)).toEqual(['draft', 'published', 'published']);
+      // The draft's decisions: only the draft's translation goes.
+      await sqlAdmin(`UPDATE crove_meetings.meeting_result SET decisions = '["Đã đổi quyết định"]'::jsonb WHERE org_id = $1 AND meeting_id = $2 AND stage = 'draft'`, [orgId, meetingId]);
+      expect((await stored(meetingId)).map((r) => r.source_stage)).toEqual(['published', 'published']);
+      // A published item's title: both published translations go.
+      await sqlAdmin(`UPDATE crove_meetings.action_item SET title = 'Việc đã đổi tên' WHERE org_id = $1 AND meeting_id = $2 AND stage = 'published'`, [orgId, meetingId]);
+      expect(await stored(meetingId)).toEqual([]);
+    });
+
+    it('an update that changes none of the translated words drops nothing: the taint, who and when, and the same text written again', async () => {
+      const meetingId = await seedPublished();
+      await translate('attendee', meetingId, 'published');
+      await sqlAdmin(`UPDATE crove_meetings.meeting_result SET tainted = tainted, updated_at = now(), summary = summary, decisions = decisions WHERE org_id = $1 AND meeting_id = $2 AND stage = 'published'`, [orgId, meetingId]);
+      await sqlAdmin(`UPDATE crove_meetings.action_item SET who_drafted = 'Linh', when_drafted = 'thứ hai', title = title WHERE org_id = $1 AND meeting_id = $2 AND stage = 'published'`, [orgId, meetingId]);
+      expect(await stored(meetingId)).toHaveLength(1);
+      expect((await get('attendee', meetingId)).translations[0]).toMatchObject({ stage: 'published', stale: false });
+    });
+
+    it('goes through the recorder\'s own command too: a rewritten draft summary and an edited draft item drop the draft translations only', async () => {
+      const meetingId = await seedPublished();
+      await seedDraft(meetingId);
+      await translate('recorder', meetingId, 'draft');
+      await translate('recorder', meetingId, 'published');
+      const item = await sqlAdmin<{ id: string }>(`SELECT id FROM crove_meetings.action_item WHERE org_id = $1 AND meeting_id = $2 AND stage = 'draft'`, [orgId, meetingId]);
+      await exec('recorder', 'meetings.action_item.edit', { itemId: item.rows[0]?.id, title: 'Gọi khách B trước thứ tư' });
+      expect((await stored(meetingId)).map((r) => r.source_stage)).toEqual(['published']);
+    });
   });
 
   describe('a translation goes with the text it translated', () => {
