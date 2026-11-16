@@ -1110,6 +1110,7 @@ undo_env_restore() {
     rm -f "$ENV_UNDO"
   else
     err "the rollback failed and the env file could not be put back as it was: the settings are in $ENV_UNDO (mode 600); copy that file over $ENV_FILE"
+    return 1
   fi
   ENV_UNDO=''
 }
@@ -1270,7 +1271,10 @@ recover() {
     record "$what failed, and so did putting the env file back"
     die "$EXIT_ROLLBACK_FAILED" "$what failed and the env file could not be put back: the instance needs an operator"
   fi
-  undo_env_restore
+  if ! undo_env_restore; then
+    record "$what failed, and so did putting the env file back"
+    die "$EXIT_ROLLBACK_FAILED" "$what failed and the env file could not be put back: the instance needs an operator"
+  fi
   if [ -z "$target" ]; then
     record "$what failed, nothing to roll back to"
     die "$EXIT_FAILED" "$what failed and there is no earlier release to roll back to; the failed release is left as it is"
@@ -1446,7 +1450,14 @@ do_deploy() {
   # A rollback from this release puts the env file back only when this deploy is the one that changed it.
   # (A deploy of the same release again, that changed nothing, keeps the record: that release is still the one that wrote them.)
   if [ "$ENV_CHANGED" = 1 ]; then
-    write_state env-backup "$name $ENV_BACKUP $ENV_WRITTEN_DIGEST"
+    # The same release deployed again with other settings keeps the copy from before its first deploy: that is the one a rollback needs.
+    local first_rel='' first_path=''
+    read -r first_rel first_path _ < <(read_state env-backup) || true
+    if [ "$first_rel" = "$name" ] && valid_path "$first_path" && [ -f "$first_path" ]; then
+      write_state env-backup "$name $first_path $ENV_WRITTEN_DIGEST"
+    else
+      write_state env-backup "$name $ENV_BACKUP $ENV_WRITTEN_DIGEST"
+    fi
   elif [ "$(read_state env-backup | cut -d' ' -f1)" != "$name" ]; then
     rm -f "$(state_dir)/env-backup"
   fi

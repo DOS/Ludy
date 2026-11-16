@@ -1455,6 +1455,17 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
         expect(copies()).toHaveLength(1);
       });
 
+      it('to the copy from before the first deploy of a release that is deployed again with other settings', () => {
+        writeFileSync(`${dir}/.env`, BEFORE);
+        expect(deploy('v1.0.0', 'a').status).toBe(0);
+        expect(deployIdp('v1.1.0', 'b').status).toBe(0);
+        const other = deployIdp('v1.1.0', 'b', { ...IDP, AUTH_ALLOWED_EMAILS: '@example.net' });
+        expect(other.status, other.out).toBe(0);
+        expect(envFile()).toContain('AUTH_ALLOWED_EMAILS=@example.net');
+        expect(run(['rollback']).status).toBe(0);
+        expect(envFile()).toBe(BEFORE);
+      });
+
       it('after the same release is deployed again with the same settings', () => {
         writeFileSync(`${dir}/.env`, BEFORE);
         expect(deploy('v1.0.0', 'a').status).toBe(0);
