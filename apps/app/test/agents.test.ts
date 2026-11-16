@@ -4,6 +4,7 @@ import {
   agentPermissions,
   budgetUsage,
   chartTree,
+  conversationOf,
   defaultScope,
   holderCandidates,
   isBudgetAmount,
@@ -111,6 +112,23 @@ describe('meetingItemOf', () => {
     expect(meetingItemOf({ type: 'meetings.action_item', id: 'not-a-uuid' })).toBeNull();
     expect(meetingItemOf(null)).toBeNull();
     expect(meetingItemOf('x')).toBeNull();
+  });
+});
+
+describe('conversationOf', () => {
+  it('reads the Inbox thread id of a task made from a conversation (#3421), and nothing else', () => {
+    const id = '0198a0b4-3c5d-7e6f-8a9b-0c1d2e3f4a5b';
+    expect(conversationOf({ type: 'kernel.conversation', id })).toBe(id);
+    expect(conversationOf({ type: 'kernel.conversation', id, extra: 1 })).toBe(id);
+    expect(conversationOf({ type: 'social.post', id })).toBeNull();
+    expect(conversationOf({ type: 'kernel.conversation.reply', id })).toBeNull();
+    expect(conversationOf({ type: 'kernel.conversation', id: 'not-a-uuid' })).toBeNull();
+    expect(conversationOf({ type: 'kernel.conversation', id: 7 })).toBeNull();
+    expect(conversationOf({ type: 'kernel.conversation' })).toBeNull();
+    expect(conversationOf({})).toBeNull();
+    expect(conversationOf(null)).toBeNull();
+    expect(conversationOf(undefined)).toBeNull();
+    expect(conversationOf('kernel.conversation')).toBeNull();
   });
 });
 
