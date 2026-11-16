@@ -9,8 +9,8 @@ import { useTranslations } from 'use-intl';
 import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { orpc } from '../lib/api.ts';
-import { getConfig } from '../lib/auth.ts';
 import { chooseEntity, isEntityPath, keepEntity, useKeptEntity, type VisibleEntity } from '../lib/legal-entity-choice.ts';
+import { installedModules } from '../lib/org-modules.ts';
 
 const NONE: readonly VisibleEntity[] = [];
 
@@ -18,7 +18,7 @@ const NONE: readonly VisibleEntity[] = [];
 // default first. Without the finance module there are no books, so nothing to choose between.
 // settled is false while the list is still loading.
 function useVisibleEntities(): { entities: readonly VisibleEntity[]; settled: boolean } {
-  const finance = getConfig().modules.includes('finance');
+  const finance = installedModules().includes('finance');
   const entities = useQuery({ ...orpc.bookEntities.list.queryOptions(), enabled: finance, staleTime: 60_000 });
   return { entities: entities.data ?? NONE, settled: !finance || !entities.isPending };
 }

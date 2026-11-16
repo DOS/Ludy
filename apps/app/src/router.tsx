@@ -5,7 +5,8 @@ import { ScreenTitle } from './components/ui.tsx';
 import { errorMessage, getCurrentOrg, isUnauthenticated, orpc, queryClient, setCurrentOrg } from './lib/api.ts';
 import { accessToken, auth, getConfig, needsSecondFactor, needsSecondFactorNow } from './lib/auth.ts';
 import { landingFor } from './lib/clients.ts';
-import { outsideInstalled, screenInstalled } from './lib/modules.ts';
+import { effectiveModules, outsideInstalled, screenInstalled } from './lib/modules.ts';
+import { installedModules, setOrgModules } from './lib/org-modules.ts';
 import { pendingInvite, rememberInvite, takeTokenFromHash } from './lib/invite.ts';
 import { CONNECT_PATH, parseConnectRequest, pendingConnect, rememberConnect } from './lib/extension-connect.ts';
 import { signOut } from './lib/session-actions.ts';
@@ -385,6 +386,18 @@ async function enterOrg(slug: string) {
     // Cached data belongs to one org; never show it under another.
     queryClient.clear();
     setCurrentOrg(slug);
+    setOrgModules(null);
+  }
+}
+
+// The org's own apps (kernel.org.apps, ADR-0053 slice d): read before a screen opens so a menu or a screen never flashes for an app the org switched off. If the read
+// fails the deployment's list stands: the API gates every call itself, so a failed read costs a menu item that answers "not available", never a way in.
+async function loadOrgApps() {
+  try {
+    const answer = await queryClient.fetchQuery({ ...orpc.org.apps.queryOptions(), staleTime: 30_000, retry: false });
+    setOrgModules(effectiveModules(getConfig().modules, answer.apps));
+  } catch {
+    // The deployment's list stands.
   }
 }
 
@@ -393,7 +406,7 @@ async function enterOrg(slug: string) {
 // is the matched route's own path ('/o/$slug/journal' for /o/acme/JOURNAL), not the address as typed.
 function requireInstalledScreen(slug: string, matches: readonly { fullPath: unknown }[]) {
   const screen = matches.at(-1)?.fullPath;
-  if (typeof screen === 'string' && !screenInstalled(getConfig().modules, screen)) throw redirect({ to: '/o/$slug/overview', params: { slug } });
+  if (typeof screen === 'string' && !screenInstalled(installedModules(), screen)) throw redirect({ to: '/o/$slug/overview', params: { slug } });
 }
 
 export const orgRoute = createRoute({
@@ -401,6 +414,7 @@ export const orgRoute = createRoute({
   path: '/o/$slug',
   beforeLoad: async ({ params, matches }) => {
     await enterOrg(params.slug);
+    await loadOrgApps();
     requireInstalledScreen(params.slug, matches);
   },
   component: OrgLayout,

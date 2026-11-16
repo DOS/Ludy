@@ -11,9 +11,9 @@ import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx
 import { useFormat } from '../i18n/provider.tsx';
 import { TodayMailSetting } from '../components/today-mail-setting.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { getConfig } from '../lib/auth.ts';
 import { isKnownKind, kindKey, notificationKinds, notificationTarget, periodParts, type KnownNotificationKind } from '../lib/notifications.ts';
 import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
+import { installedModules } from '../lib/org-modules.ts';
 
 export type WorkNotification = Awaited<ReturnType<typeof client.notifications.list>>['items'][number];
 
@@ -82,7 +82,7 @@ function useLine() {
 
 function Settings({ muted }: { muted: readonly string[] }) {
   const t = useTranslations('notifications');
-  const kinds = notificationKinds(getConfig().modules);
+  const kinds = notificationKinds(installedModules());
   const mute = useMutation({
     mutationFn: (v: { kind: KnownNotificationKind; muted: boolean }) => client.notifications.mute(v),
     onSettled: refresh,

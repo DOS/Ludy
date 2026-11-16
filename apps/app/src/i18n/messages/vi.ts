@@ -7295,6 +7295,27 @@ export const vi = {
     allowDraft: 'Cho phép “{client}” đọc dữ liệu và soạn bản nháp bài Social của tổ chức {org}',
     limitsDraft: 'Ứng dụng làm việc với quyền của bạn trong tổ chức này: đọc, và chỉ tạo được bản nháp bài Social chờ một người duyệt. Chủ sở hữu hay quản trị viên có thể ngắt ngay ở Cài đặt.',
   },
+  // Settings "Ứng dụng" (ADR-0053, #3312): which apps the company uses.
+  orgApps: {
+    title: 'Ứng dụng',
+    hint: 'Chọn những ứng dụng công ty bạn dùng. Ứng dụng đã tắt biến mất khỏi menu, trang Hôm nay và những gì Vy nhắc tới. Dữ liệu vẫn được giữ nguyên, bật lại là có đủ.',
+    readOnly: 'Chỉ chủ sở hữu hoặc quản trị viên đổi được.',
+    switchLabel: 'Dùng ứng dụng {app}',
+    status: { on: 'Đang bật', off: 'Đã tắt', notInPlan: 'Chưa có trong gói' },
+    names: { finance: 'Tài chính', social: 'Social', ads: 'Quảng cáo', crm: 'CRM', notes: 'Ghi chú', hr: 'Nhân sự', meetings: 'Cuộc họp', projects: 'Dự án', sign: 'Ký số' },
+    offTitle: 'Tắt ứng dụng {app}?',
+    offBody: 'Ứng dụng {app} biến mất khỏi menu của mọi người trong công ty, các việc theo lịch của nó dừng lại, trang Hôm nay và Vy không nhắc tới nó nữa. Dữ liệu được giữ nguyên, bật lại là đủ.',
+    offConfirm: 'Tắt ứng dụng',
+    keep: 'Giữ nguyên',
+    keeps: {
+      finance: 'Kết nối ngân hàng được giữ và tạm dừng.',
+      social: 'Các kênh đăng bài đã kết nối được giữ và tạm dừng. Bài đã hẹn giờ mà quá một giờ khi bạn bật lại sẽ chờ bạn duyệt, không tự đăng.',
+      ads: 'Các tài khoản quảng cáo đã kết nối được giữ và tạm dừng.',
+      crm: 'Trang đặt lịch công khai ngừng nhận khách cho tới khi bạn bật lại.',
+      meetings: 'Kết nối nền tảng họp được giữ và tạm dừng. Không tắt được khi đang ghi âm.',
+      other: 'Không có kết nối nào bị gỡ.',
+    },
+  },
   orgMcpGrants: {
     memberKind: 'Kết nối riêng',
     wakeHostOnly: 'Có tin đánh thức gửi tới {host}. Chỉ người đã kết nối mới đổi được; ngắt kết nối để dừng.',

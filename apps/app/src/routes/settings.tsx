@@ -4,6 +4,7 @@ import { useId, useState, type FormEvent } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
 import { ExtensionDevices } from '../components/extension-devices.tsx';
 import { MeetingPlatforms } from '../components/meeting-platforms.tsx';
+import { OrgAppsCard } from '../components/org-apps.tsx';
 import { OrgExtensionDevices } from '../components/org-extension-devices.tsx';
 import { MemberSessions, MySessions } from '../components/sessions.tsx';
 import { Badge } from '@crove/ui/components/badge';
@@ -33,6 +34,7 @@ import { useFormat } from '../i18n/provider.tsx';
 import { ROLES, roleChangeConfirmation, roleChangeKind, type Role, type RoleChangeKind } from '../lib/members.ts';
 import { asRoleKey, inviteRoleChoices } from '../lib/member-roles.ts';
 import { exportFileName, exportPhase, formatBytes, offboardErrorMessage, ownerRunFileComplete, slugConfirmed } from '../lib/offboarding.ts';
+import { installedModules } from '../lib/org-modules.ts';
 
 interface MemberRow {
   userId: string;
@@ -1150,16 +1152,16 @@ export function SettingsPage() {
               <dd className="font-mono text-foreground">{org.data?.slug}</dd>
             </div>
             {/* Keyed by org too: a value typed in one org must not stay in the form when the page shows another. */}
-            {getConfig().modules.includes('finance') && (
+            {installedModules().includes('finance') && (
               <TaxCodeField key={`tax-code:${org.data?.slug}:${org.data?.taxCode ?? ''}`} taxCode={org.data?.taxCode ?? null} canManage={canManage} />
             )}
-            {getConfig().modules.includes('finance') && <VatFilingPeriodField period={org.data?.vatFilingPeriod ?? null} canManage={canManage} />}
-            {getConfig().modules.includes('finance') && <TaxCalendarField key={`tax-calendar:${org.data?.slug}`} canManage={canManage} />}
+            {installedModules().includes('finance') && <VatFilingPeriodField period={org.data?.vatFilingPeriod ?? null} canManage={canManage} />}
+            {installedModules().includes('finance') && <TaxCalendarField key={`tax-calendar:${org.data?.slug}`} canManage={canManage} />}
             <AddressField key={`address:${org.data?.slug}:${org.data?.address ?? ''}`} address={org.data?.address ?? null} canManage={canManage} />
-            {getConfig().modules.includes('finance') && (
+            {installedModules().includes('finance') && (
               <ContactEmailField key={`contact-email:${org.data?.slug}:${org.data?.contactEmail ?? ''}`} email={org.data?.contactEmail ?? null} canManage={canManage} />
             )}
-            {getConfig().modules.includes('finance') && <ProposalRemindersField key={`proposal-reminders:${org.data?.slug}`} canManage={canManage} />}
+            {installedModules().includes('finance') && <ProposalRemindersField key={`proposal-reminders:${org.data?.slug}`} canManage={canManage} />}
             <div>
               <dt className="text-subtle-foreground">{t('inboundAddress')}</dt>
               <dd className="break-all font-mono text-foreground">{org.data?.inboundAddress ?? t('inboundOff')}</dd>
@@ -1225,36 +1227,38 @@ export function SettingsPage() {
             </>
           )}
         </Card>
+        {/* Which apps the company uses (ADR-0053, #3312): every member sees the list, owners and admins switch it. */}
+        {org.data && <OrgAppsCard key={`org-apps:${org.data.slug}`} />}
         {/* Who approves the ledger's proposals (#1425), with the finance module; every member sees it, owners switch it. */}
-        {getConfig().modules.includes('finance') && org.data && (
+        {installedModules().includes('finance') && org.data && (
           <ApprovalPresetCard key={`approval-preset:${org.data.slug}:${org.data.approvalPreset}`} preset={org.data.approvalPreset} isOwner={isOwner} />
         )}
         {/* The member's own working hours and days off (#1313). */}
         {org.data && <WorkingHoursCard key={`working-hours:${org.data.slug}`} canEdit={org.data.role !== 'viewer'} />}
         {/* The booking pages' event types (#1314), with the crm module. */}
-        {getConfig().modules.includes('crm') && org.data && me.data && (
+        {installedModules().includes('crm') && org.data && me.data && (
           <EventTypesCard key={`event-types:${org.data.slug}`} members={org.data.members} me={me.data.userId} role={org.data.role} />
         )}
         {/* The legal entities the books are kept for (#1278), with the finance module; owners and admins only. */}
-        {getConfig().modules.includes('finance') && canManage && <LegalEntitiesCard key={`legal-entities:${org.data?.slug}`} />}
+        {installedModules().includes('finance') && canManage && <LegalEntitiesCard key={`legal-entities:${org.data?.slug}`} />}
         {/* The numbers of the bank accounts (#2183): how a statement file finds its account without a bank feed; owners and admins. */}
-        {getConfig().modules.includes('finance') && canManage && <BankAccountNumbersCard key={`bank-account-numbers:${org.data?.slug}`} canManage={canManage} />}
+        {installedModules().includes('finance') && canManage && <BankAccountNumbersCard key={`bank-account-numbers:${org.data?.slug}`} canManage={canManage} />}
         {/* Tích hợp (Integrations), with the finance module: the bank feed (ADR-0039, #2099) and the e-invoice provider (ADR-0044, #2501), each only where the deployment offers one or the org has one connected. */}
-        {getConfig().modules.includes('finance') && org.data && <IntegrationsSection key={`integrations:${org.data.slug}`} role={org.data.role} orgSlug={org.data.slug} />}
+        {installedModules().includes('finance') && org.data && <IntegrationsSection key={`integrations:${org.data.slug}`} role={org.data.role} orgSlug={org.data.slug} />}
         {/* The chart of accounts belongs to the finance module (#319). */}
-        {getConfig().modules.includes('finance') && <ChartOfAccountsCard canManage={canManage} />}
+        {installedModules().includes('finance') && <ChartOfAccountsCard canManage={canManage} />}
         {/* The MISA codes of stock purchases (#1398), for the goods purchase export. */}
-        {getConfig().modules.includes('finance') && <MisaGoodsCodesCard key={`misa-goods:${org.data?.slug}`} canManage={canManage} />}
+        {installedModules().includes('finance') && <MisaGoodsCodesCard key={`misa-goods:${org.data?.slug}`} canManage={canManage} />}
         {/* The account rules learned from approvals, and keyword rules (#1399). */}
-        {getConfig().modules.includes('finance') && org.data && <AccountRulesCard key={`account-rules:${org.data.slug}`} canManage={canManage} />}
-        {getConfig().modules.includes('finance') && org.data && <BankPartyRulesCard key={`bank-party-rules:${org.data.slug}`} canManage={canManage} />}
+        {installedModules().includes('finance') && org.data && <AccountRulesCard key={`account-rules:${org.data.slug}`} canManage={canManage} />}
+        {installedModules().includes('finance') && org.data && <BankPartyRulesCard key={`bank-party-rules:${org.data.slug}`} canManage={canManage} />}
         <TwoFactorCard />
         {me.data && <MySessions userId={me.data.userId} />}
-        {getConfig().modules.includes('meetings') && <ExtensionDevices />}
+        {installedModules().includes('meetings') && <ExtensionDevices />}
         {/* The member's own meeting platform connections (C1, #3173): the recordings they hold are suggested on the Meetings tab. */}
-        {getConfig().modules.includes('meetings') && <MeetingPlatforms canConnect={org.data !== undefined && org.data.role !== 'viewer'} />}
+        {installedModules().includes('meetings') && <MeetingPlatforms canConnect={org.data !== undefined && org.data.role !== 'viewer'} />}
         {/* The other members' extension devices (#2868), with the meetings module; owners and admins. */}
-        {getConfig().modules.includes('meetings') && canManage && org.data && me.data && (org.data.role === 'owner' || org.data.role === 'admin') && (
+        {installedModules().includes('meetings') && canManage && org.data && me.data && (org.data.role === 'owner' || org.data.role === 'admin') && (
           <OrgExtensionDevices key={`org-extension-devices:${org.data.slug}`} members={org.data.members} viewerRole={org.data.role} me={me.data.userId} />
         )}
         {isOwner && org.data && <Offboarding name={org.data.name} slug={org.data.slug} />}

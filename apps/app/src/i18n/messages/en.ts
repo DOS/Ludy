@@ -7301,6 +7301,27 @@ export const en = {
     allowDraft: 'Allow “{client}” to read the data of {org} and write Social post drafts',
     limitsDraft: 'The app works with your rights in this organization: it reads, and can only create Social post drafts that wait for a person to review. An owner or admin can cut it off at once in Settings.',
   },
+  // Settings "Apps" (ADR-0053, #3312): which apps the company uses.
+  orgApps: {
+    title: 'Apps',
+    hint: 'Choose the apps your company uses. An app that is off disappears from the menu, from Today and from what Vy mentions. Its data is kept as it is, and turning it back on brings everything back.',
+    readOnly: 'Only an owner or an admin can change this.',
+    switchLabel: 'Use the {app} app',
+    status: { on: 'On', off: 'Off', notInPlan: 'Not in your plan' },
+    names: { finance: 'Finance', social: 'Social', ads: 'Ads', crm: 'CRM', notes: 'Notes', hr: 'HR', meetings: 'Meetings', projects: 'Projects', sign: 'Signing' },
+    offTitle: 'Turn off {app}?',
+    offBody: '{app} disappears from everyone\'s menu in the company, its scheduled work stops, and Today and Vy no longer mention it. Its data is kept as it is, and turning it back on brings everything back.',
+    offConfirm: 'Turn off',
+    keep: 'Keep it on',
+    keeps: {
+      finance: 'Bank connections are kept and paused.',
+      social: 'Connected channels are kept and paused. A post that was scheduled and is more than an hour late when you turn it back on waits for your review instead of going out.',
+      ads: 'Connected ad accounts are kept and paused.',
+      crm: 'The public booking page stops taking visitors until you turn it back on.',
+      meetings: 'Meeting platform connections are kept and paused. It cannot be turned off while a recording is running.',
+      other: 'No connection is removed.',
+    },
+  },
   orgMcpGrants: {
     memberKind: 'Personal connection',
     wakeHostOnly: 'A wake-up message goes to {host}. Only the person who connected can change it; disconnect to stop it.',

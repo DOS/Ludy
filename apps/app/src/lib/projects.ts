@@ -10,9 +10,9 @@ import type {
   ProjectTaskRef,
 } from '@crove/kernel-contract';
 import type { TaskStatus } from './agents.ts';
-import { getConfig } from './auth.ts';
+import { installedModules } from './org-modules.ts';
 
-export const projectsInstalled = (): boolean => getConfig().modules.includes('projects');
+export const projectsInstalled = (): boolean => installedModules().includes('projects');
 
 export const PROJECT_WEEKLY_STATUS_QUERY_PREFIX = ['projects', 'weeklyStatus'] as const;
 

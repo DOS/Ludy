@@ -35,7 +35,7 @@ import {
   type LeScope,
 } from '../lib/agents.ts';
 import { errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
-import { getConfig } from '../lib/auth.ts';
+import { installedModules } from '../lib/org-modules.ts';
 
 type Chart = Awaited<ReturnType<typeof orpc.chart.get.call>>;
 type Position = Chart['positions'][number];
@@ -462,7 +462,7 @@ export function PositionNode({ node, ctx }: { node: ChartNode<Position>; ctx: Po
 function AddPosition({ positions, entities, entitiesReady }: { positions: Position[]; entities: Entity[]; entitiesReady: boolean }) {
   const t = useTranslations('agents');
   const moduleName = useModuleName();
-  const modules = getConfig().modules;
+  const modules = installedModules();
   const [title, setTitle] = useState('');
   const [module, setModule] = useState(modules[0] ?? 'kernel');
   const [roleKey, setRoleKey] = useState('');
@@ -730,7 +730,7 @@ type BudgetField = 'target' | 'limit' | 'warnPercent';
 function BudgetForm({ agents }: { agents: Agent[] }) {
   const t = useTranslations('agents');
   const moduleName = useModuleName();
-  const modules = getConfig().modules;
+  const modules = installedModules();
   const [scope, setScope] = useState<(typeof SCOPES)[number]>('org');
   const [target, setTarget] = useState('*');
   const [limit, setLimit] = useState('');

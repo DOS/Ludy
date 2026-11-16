@@ -14,7 +14,8 @@ import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
 import { orpc } from '../lib/api.ts';
 import { ALL_NAV, appOfPath, installedApps, type AppId, type NavItem } from '../lib/apps.ts';
 import { getConfig } from '../lib/auth.ts';
-import { installedItems } from '../lib/modules.ts';
+import { effectiveModules, installedItems, screenInstalled } from '../lib/modules.ts';
+import { installedModules, setOrgModules, useModulesVersion } from '../lib/org-modules.ts';
 import { shellBadges } from '../lib/overview.ts';
 import { isPaletteShortcut, searchTerm } from '../lib/palette.ts';
 import { documentNumber } from '../lib/search.ts';
@@ -40,8 +41,15 @@ function useSettled<T>(value: T, ms: number): T {
 }
 
 export function OrgLayout() {
-  const allNav = useMemo(() => installedItems(getConfig().modules, ALL_NAV), []);
-  const allApps = useMemo(() => installedApps(getConfig().modules), []);
+  // The org's own apps (ADR-0053, slice d): the router read them before this screen opened; the stream's org_apps hint, or this tab's own switch, makes this read them again, and a change
+  // rebuilds the menus and remounts the screen so every "is this app installed" question below it answers again. A failed read leaves the deployment's list.
+  const orgApps = useQuery(orpc.org.apps.queryOptions());
+  useEffect(() => {
+    if (orgApps.data) setOrgModules(effectiveModules(getConfig().modules, orgApps.data.apps));
+  }, [orgApps.data]);
+  const modulesVersion = useModulesVersion();
+  const allNav = useMemo(() => installedItems(installedModules(), ALL_NAV), [modulesVersion]); // oxlint-disable-line react-hooks/exhaustive-deps
+  const allApps = useMemo(() => installedApps(installedModules()), [modulesVersion]); // oxlint-disable-line react-hooks/exhaustive-deps
   // The app of the screen (#1528), from the URL so a deep link opens in its app; on the org's own screens (Settings,
   // the chart) the menu keeps the app last used.
   const { pathname } = useLocation();
@@ -57,6 +65,10 @@ export function OrgLayout() {
   useScrollRoom(phoneHeader, 'top');
   const { slug } = useParams({ strict: false }) as { slug: string };
   const navigate = useNavigate();
+  // A screen of an app that was just switched off goes to the overview, as one opened by address does (ADR-0053 section 3).
+  useEffect(() => {
+    if (!screenInstalled(installedModules(), pathname)) void navigate({ to: '/o/$slug/overview', params: { slug } });
+  }, [modulesVersion, pathname, slug, navigate]);
   const t = useTranslations('nav');
   const tc = useTranslations('common');
   const me = useQuery(orpc.me.get.queryOptions());
@@ -69,7 +81,7 @@ export function OrgLayout() {
   });
   // Social posts waiting for the viewer's review (#749) count on Social's menu item (#2234), not on the inbox. Asked of the modules, not of the
   // menu: the reports item (#2435) is the social module's but shows where crm or ads runs alone, and Social's reads answer not installed there.
-  const socialOn = getConfig().modules.includes('social');
+  const socialOn = installedModules().includes('social');
   const reviews = useQuery({ ...orpc.social.reviewInbox.queryOptions({ input: {} }), enabled: socialOn, refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS) });
   // And what needs a person there (#771): channels to reconnect, posts that did not go out.
   const attention = useQuery({ ...orpc.social.attentionInbox.queryOptions({ input: {} }), enabled: socialOn, refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS) });
@@ -317,7 +329,7 @@ export function OrgLayout() {
         <main ref={main} id="main-content" tabIndex={-1} className="mx-auto w-full max-w-6xl px-4 py-6 outline-none md:px-8 md:py-8">
           <OrgLeftNotice />
           <ScreenTabs slug={slug} installed={NAV} badges={tabBadges} />
-          {me.isSuccess && !org ? <p className="text-sm text-destructive">{t('notMember')}</p> : <Outlet />}
+          {me.isSuccess && !org ? <p className="text-sm text-destructive">{t('notMember')}</p> : <Outlet key={modulesVersion} />}
         </main>
         <Toaster />
         <CommandPalette

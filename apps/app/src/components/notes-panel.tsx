@@ -16,13 +16,13 @@ import { Textarea } from '@crove/ui/components/textarea';
 import { VisibilityIcon } from '@crove/ui/components/visibility-icon';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { getConfig } from '../lib/auth.ts';
 import { browserTimeZone } from '../lib/my-work.ts';
 import { ErrorText, Spinner } from './ui.tsx';
+import { installedModules } from '../lib/org-modules.ts';
 
 const LATEST = 3;
 
-export const notesInstalled = () => getConfig().modules.includes('notes');
+export const notesInstalled = () => installedModules().includes('notes');
 export const refreshNotes = () => queryClient.invalidateQueries({ queryKey: orpc.notes.key() });
 
 // The word beside the lock, always shown (notes plan §3.10).
