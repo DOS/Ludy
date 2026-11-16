@@ -124,10 +124,8 @@ describe('the quote mail carries the quote as a PDF (#3418)', () => {
     expect(logged).not.toMatch(/ABC|3\.300|Dịch vụ|BG-/);
   });
 
-  it('sends the link alone when the quote has no document (it is no longer the current sent one)', async () => {
-    const mail = await quoteMailTemplate.render(input({ execute: executeWith(() => null) }));
-    expect(mail?.attachments).toBeUndefined();
-    expect(mail?.text).toContain(`quote#${TOKEN}`);
+  it('sends no mail when the quote has no document: a revision was sent between the link and the document', async () => {
+    expect(await quoteMailTemplate.render(input({ execute: executeWith(() => null) }))).toBeNull();
   });
 
   it('still sends no mail for a quote that was replaced meanwhile (no link), and asks for no document then', async () => {

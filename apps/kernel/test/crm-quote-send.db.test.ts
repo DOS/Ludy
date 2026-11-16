@@ -347,7 +347,9 @@ suite('crm quote send on PostgreSQL (#2694)', () => {
     const oldDocument = await o.query<QuotePdfDocument>(o.viewer, 'crm.quote.document', { quoteId: quote.id });
     expect(Buffer.from(old!.attachments![0]!.content as Uint8Array).equals(Buffer.from(renderQuotePdf(oldDocument)))).toBe(true);
     // Nobody but the system may ask for the document.
-    await expect(rt.execute('crm.quote.mail_document', { quoteId: quote.id }, { actor: asUser(o.member), orgId: o.orgId })).rejects.toBeTruthy();
+    for (const who of [o.member, o.owner]) {
+      await expect(rt.execute('crm.quote.mail_document', { quoteId: quote.id }, { actor: asUser(who), orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
+    }
     // No audit row, activity or mail data holds a price, a name or a line.
     const audit = await admin((c) => c.query("SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'crm.quote.mail_document'", [o.orgId]));
     const text = JSON.stringify(audit.rows) + JSON.stringify(row.payload);

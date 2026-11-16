@@ -6,7 +6,9 @@
 // the mail still goes out with the link only, and the failure is logged as a short code.
 import type { MailAttachment } from '@crove/mail';
 import { QUOTE_MAIL_TEMPLATE, readLogoImage, renderQuoteMail, renderQuotePdf, zQuoteMail, type QuoteDocumentData } from '@crove/mod-crm';
+import { BlobIntegrityError } from '@crove/kernel-runtime';
 import type { MailTemplate, MailTemplateInput } from './mail-queue.ts';
+import { opsAlert } from './ops-alert.ts';
 import { readLogoFile } from './quote-link.ts';
 
 export { QUOTE_MAIL_TEMPLATE };
@@ -17,20 +19,22 @@ export function quotePdfFilename(number: string | null, revision: number): strin
   return `bao-gia-${named || 'bao-gia'}${revision > 1 ? `-R${revision}` : ''}.pdf`;
 }
 
-// The PDF of a sent quote for its mail, or null when it cannot be made: the document is read in the org's system context (`crm.quote.mail_document`), the letterhead's logo from the
-// store (left out when it cannot be read, as the download does), and the bytes by the same pure writer as the download route. Nothing here throws: the mail goes with the link alone.
-async function quotePdfAttachment(input: MailTemplateInput, quoteId: string): Promise<MailAttachment | null> {
+// The PDF of a sent quote for its mail: the document is read in the org's system context (`crm.quote.mail_document`), the letterhead's logo from the
+// store (left out when it cannot be read, as the download does), and the bytes by the same pure writer as the download route. 'gone' means the quote is no longer the current sent one (a revision was sent between the link and the document):
+// the mail is not sent, as for a replaced quote. Any other failure gives null and the mail goes with the link alone; nothing here throws.
+async function quotePdfAttachment(input: MailTemplateInput, quoteId: string): Promise<MailAttachment | null | 'gone'> {
   try {
     const data = await input.execute<QuoteDocumentData | null>('crm.quote.mail_document', { quoteId });
-    if (!data) return null;
+    if (!data) return 'gone';
     const { logoFile, ...document } = data;
     let logo = null;
     if (logoFile && input.store) {
       try {
         const file = await readLogoFile(input.store, logoFile);
         logo = file ? readLogoImage(file.bytes, file.contentType) : null;
-      } catch {
-        // A logo that cannot be read leaves the letterhead without it; the PDF is still made.
+      } catch (error) {
+        // A logo that cannot be read leaves the letterhead without it and the PDF is still made; a file that does not match its recorded hash is an alert, as in the download route.
+        if (error instanceof BlobIntegrityError) opsAlert('[quote-mail] ALERT evidence integrity: a stored file does not match its recorded sha256', error);
       }
     }
     const content = renderQuotePdf({ ...document, logo });
@@ -51,6 +55,7 @@ export const quoteMailTemplate: MailTemplate = {
     const { token } = await input.execute<{ token: string | null }>('crm.quote.mail_data', { quoteId: parsed.quoteId });
     if (!token) return null;
     const pdf = await quotePdfAttachment(input, parsed.quoteId);
+    if (pdf === 'gone') return null;
     const body = renderQuoteMail(parsed, { publicUrl: input.publicUrl, replyTo: input.conversationAddress ?? null, brand: input.brand, token, pdfAttached: pdf !== null });
     return { subject: input.subject, ...body, ...(pdf ? { attachments: [pdf] } : {}) };
   },
