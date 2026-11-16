@@ -1736,7 +1736,7 @@ suite('ads on PostgreSQL (#2217)', () => {
           const month = inDays(2).slice(0, 7);
           // The org's caps are in dong; an account that reports in another currency has no cap in force.
           await admin((c) => c.query(`UPDATE crove_ads.ad_account SET currency = 'USD' WHERE org_id = $1 AND id = $2`, [orgId, account]));
-          expect((await callAs(owner, 'ads/committed', { adAccountId: account, month })).body).toMatchObject({ currency: 'USD', hasCap: false, account: { committed: '0', cap: null, left: null }, org: { committed: '0', cap: null, left: null } });
+          expect((await callAs(owner, 'ads/committed', { adAccountId: account, month })).body).toMatchObject({ currency: 'USD', hasCap: false, capCurrencyMismatch: true, account: { committed: '0', cap: null, left: null }, org: { committed: '0', cap: null, left: null } });
           await admin((c) => c.query(`UPDATE crove_ads.ad_account SET currency = 'VND' WHERE org_id = $1 AND id = $2`, [orgId, account]));
         });
 

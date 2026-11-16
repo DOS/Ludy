@@ -48,7 +48,8 @@ function Row({ row, currency }: { row: CommittedRow; currency: string }) {
 
 function CommittedBody({ account, month }: { account: Pick<AdAccountView, 'id' | 'currency'>; month: string }) {
   const t = useTranslations('ads.committed');
-  const committed = useQuery(orpc.ads.committed.queryOptions({ input: { adAccountId: account.id, month } }));
+  // Read again every minute: a stop's pause at the platform finishes in the background, and only then does the commitment drop.
+  const committed = useQuery({ ...orpc.ads.committed.queryOptions({ input: { adAccountId: account.id, month } }), refetchInterval: 60_000 });
   if (committed.isPending) return <CardSkeleton />;
   if (committed.isError) {
     return (
@@ -64,9 +65,9 @@ function CommittedBody({ account, month }: { account: Pick<AdAccountView, 'id' |
   const currency = committed.data.currency;
   return (
     <Card className="block space-y-4 p-4" data-testid="ads-committed">
-      {view.kind === 'noCap' ? (
-        <p className="text-sm text-foreground" role="status" data-testid="ads-committed-no-cap">
-          {t('noCap')}
+      {view.kind === 'noCap' || view.kind === 'capCurrency' ? (
+        <p className="text-sm text-foreground" role="status" data-testid={view.kind === 'noCap' ? 'ads-committed-no-cap' : 'ads-committed-cap-currency'}>
+          {t(view.kind === 'noCap' ? 'noCap' : 'capCurrency', { currency })}
         </p>
       ) : (
         view.rows.map((row) => <Row key={row.scope} row={row} currency={currency} />)

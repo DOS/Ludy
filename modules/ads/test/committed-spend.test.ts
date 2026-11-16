@@ -24,6 +24,7 @@ describe('the committed spend of a month', () => {
       month: '2026-11',
       currency: 'VND',
       hasCap: true,
+      capCurrencyMismatch: false,
       account: { committed: '700000', cap: null, left: null },
       org: { committed: '700000', cap: '1000000', left: '300000' },
     });
@@ -45,8 +46,17 @@ describe('the committed spend of a month', () => {
   it('leaves a cap of another account or another currency out, and a launch of another currency uncounted', () => {
     const view = spend([live({ currency: 'USD' })], [monthly('900000', { scope: 'account', adAccountId: B }), monthly('50', { currency: 'USD' })]);
     expect(view.hasCap).toBe(false);
+    // The USD cap and the account's USD launches are not this account's VND ones; the org's USD cap would make a VND plan refuse (`cap_currency`).
+    expect(view.capCurrencyMismatch).toBe(true);
     expect(view.account).toEqual({ committed: '0', cap: null, left: null });
     expect(view.org).toEqual({ committed: '0', cap: null, left: null });
+  });
+
+  it('flags a cap in another currency beside a usable one, since the plan check refuses every launch against it', () => {
+    const view = spend([live()], [monthly('1000000'), daily('5000', { currency: 'USD' })]);
+    expect(view).toMatchObject({ hasCap: true, capCurrencyMismatch: true });
+    // A cap of another account is not this account's mismatch.
+    expect(spend([], [monthly('50', { scope: 'account', adAccountId: B, currency: 'USD' })]).capCurrencyMismatch).toBe(false);
   });
 
   it('has no cap at all until one is set, and a daily cap alone is a cap (one is enough) with no monthly line', () => {

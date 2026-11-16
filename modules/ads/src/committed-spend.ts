@@ -33,6 +33,8 @@ export function committedSpend(input: { month: string; adAccountId: string; curr
     month: input.month,
     currency: input.currency,
     hasCap: applies.length > 0,
+    // The caps that would apply by scope but are in another currency: the plan check refuses a launch against them (`cap_currency`), whatever else is set.
+    capCurrencyMismatch: input.caps.some((c) => c.currency !== input.currency && (c.scope === 'org' || c.adAccountId === input.adAccountId)),
     account: line(input.commitments, applies, 'account', shared),
     org: line(input.commitments, applies, 'org', shared),
   };

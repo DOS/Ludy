@@ -21,6 +21,8 @@ export interface CommittedRow {
 export type CommittedView =
   // No cap of any kind in force in the currency: every launch is refused until the owner or an admin sets one.
   | { kind: 'noCap'; committed: string }
+  // A cap in another currency than the account's: every launch is refused until the caps match (the currency is what must change, not a missing cap).
+  | { kind: 'capCurrency'; committed: string }
   | { kind: 'rows'; rows: CommittedRow[] };
 
 const row = (scope: CommittedRow['scope'], line: AdsCommittedLine): CommittedRow => {
@@ -30,6 +32,7 @@ const row = (scope: CommittedRow['scope'], line: AdsCommittedLine): CommittedRow
 
 // The account's own line always; the org's only when it says something more (an org cap, or launches of other accounts that the org's cap counts).
 export function committedView(data: AdsCommitted): CommittedView {
+  if (data.capCurrencyMismatch) return { kind: 'capCurrency', committed: data.account.committed };
   if (!data.hasCap) return { kind: 'noCap', committed: data.account.committed };
   const rows = [row('account', data.account)];
   if (data.org.cap !== null || data.org.committed !== data.account.committed) rows.push(row('org', data.org));

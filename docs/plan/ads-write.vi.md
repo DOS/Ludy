@@ -55,7 +55,7 @@ Nhắm theo vị trí, độ tuổi, giới tính, ngôn ngữ, sở thích và 
 
 ## Sổ kế toán
 
-Chi tiêu vẫn vào sổ qua chứng từ như cũ; Ads không ghi sổ. Ludy chỉ thêm con số **chi tiêu đã cam kết** (số tiền các kế hoạch đang chạy hoặc đã lên lịch còn có thể tiêu trong tháng) cạnh chi tiêu thực tế.
+Chi tiêu vẫn vào sổ qua chứng từ như cũ; Ads không ghi sổ. Ludy chỉ thêm con số **chi tiêu đã cam kết** (số tiền các kế hoạch đang chạy hoặc đã lên lịch còn có thể tiêu trong tháng) cạnh chi tiêu thực tế. **Đã làm (#3297):** truy vấn `ads.committed` (chủ sở hữu và quản trị viên, chỉ đọc, không gọi mô hình) trả về, cho một tài khoản và một tháng theo lịch của tài khoản, số các lần chạy còn cam kết đang giữ trong tháng (đúng phép cộng dùng để kiểm hạn mức tháng), hạn mức tháng đang có và số còn lại, cho tài khoản và cho cả tổ chức, dưới dạng chuỗi số thập phân. Màn Quảng cáo hiện số này dưới phần tổng khi đã bật chạy quảng cáo; hạn mức bị hạ thấp hơn số cam kết thì ghi "vượt hạn mức"; chưa đặt hạn mức nào thì ghi rõ và nói chưa chiến dịch nào được chạy.
 
 ## Việc chỉ JOY làm được (Meta)
 

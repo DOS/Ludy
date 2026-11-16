@@ -6,7 +6,7 @@ import type { AdsCommitted } from '@crove/kernel-contract';
 import { committedView, isBelowZero } from '../src/lib/ads-committed.ts';
 
 const line = (over: Partial<AdsCommitted['org']> = {}): AdsCommitted['org'] => ({ committed: '700000', cap: null, left: null, ...over });
-const data = (over: Partial<AdsCommitted> = {}): AdsCommitted => ({ adAccountId: 'a1', month: '2026-11', currency: 'VND', hasCap: true, account: line(), org: line(), ...over });
+const data = (over: Partial<AdsCommitted> = {}): AdsCommitted => ({ adAccountId: 'a1', month: '2026-11', currency: 'VND', hasCap: true, capCurrencyMismatch: false, account: line(), org: line(), ...over });
 
 describe('isBelowZero', () => {
   it('reads the sign, and not "-0.00"', () => {
@@ -21,6 +21,11 @@ describe('isBelowZero', () => {
 describe('committedView', () => {
   it('is the no-cap state when no cap is in force', () => {
     expect(committedView(data({ hasCap: false, account: line({ committed: '0' }) }))).toEqual({ kind: 'noCap', committed: '0' });
+  });
+
+  it('says the currency is wrong, not that a cap is missing, when a cap is in another currency', () => {
+    expect(committedView(data({ hasCap: false, capCurrencyMismatch: true }))).toEqual({ kind: 'capCurrency', committed: '700000' });
+    expect(committedView(data({ hasCap: true, capCurrencyMismatch: true, account: line({ cap: '1000000', left: '300000' }) })).kind).toBe('capCurrency');
   });
 
   it('draws the account line alone when the org adds nothing', () => {

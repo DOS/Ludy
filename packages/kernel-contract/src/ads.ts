@@ -262,6 +262,8 @@ export const zAdsCommitted = z.object({
   month: z.string(),
   currency: zCurrency,
   hasCap: z.boolean(),
+  // A cap of the org or of this account is in another currency than the account's: local validation refuses every launch (`cap_currency`) until they match.
+  capCurrencyMismatch: z.boolean(),
   account: zAdsCommittedLine,
   org: zAdsCommittedLine,
 });

@@ -1463,7 +1463,7 @@ describe('Google Ads connection, short refresh-token warning, and 7-day comparis
 describe('the committed spend of the month next to the actual spend (#3297)', () => {
   const state = (writeEnabled: boolean): AdsWriteState => ({ writeEnabled, launchesBlocked: false, updatedAt: null, caps: [], pending: [], tokenRevokes: [] });
   const line = (over: Partial<AdsCommitted['org']> = {}): AdsCommitted['org'] => ({ committed: '700000', cap: null, left: null, ...over });
-  const data = (over: Partial<AdsCommitted> = {}): AdsCommitted => ({ adAccountId: 'a1', month: '2026-11', currency: 'VND', hasCap: true, account: line(), org: line(), ...over });
+  const data = (over: Partial<AdsCommitted> = {}): AdsCommitted => ({ adAccountId: 'a1', month: '2026-11', currency: 'VND', hasCap: true, capCurrencyMismatch: false, account: line(), org: line(), ...over });
   const strip = (committed: AdsCommitted | null, writeEnabled = true, locale: 'en' | 'vi' = 'en', acct = account()) => {
     client.current.setQueryData(['ads', 'writeState'], state(writeEnabled));
     client.current.removeQueries({ queryKey: ['ads', 'committed'] });
@@ -1510,6 +1510,14 @@ describe('the committed spend of the month next to the actual spend (#3297)', ()
     expect(vn).toContain(viMessages.ads.committed.noCap);
     expect(viMessages.ads.committed.noCap).toContain('Chưa đặt hạn mức');
     expect(viMessages.ads.committed.title).toBe('Đã cam kết tháng này');
+  });
+
+  it('says a cap in another currency blocks launches, in both languages, instead of a missing cap', () => {
+    const html = strip(data({ hasCap: false, capCurrencyMismatch: true }));
+    expect(html).toContain('ads-committed-cap-currency');
+    expect(html).not.toContain(en.ads.committed.noCap);
+    expect(html).toContain('VND');
+    expect(strip(data({ hasCap: false, capCurrencyMismatch: true }), true, 'vi')).toContain('khác với VND');
   });
 
   it('is hidden while running ads is off, and for an account whose currency is not read yet', () => {
