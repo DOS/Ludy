@@ -252,4 +252,19 @@ suite('social calendar feed on PostgreSQL (#862)', () => {
       await w.end();
     }
   });
+
+  it('opens nothing while Social is off for the org, and the same feed once it is on (ADR-0053, C2)', async () => {
+    const o = await org();
+    const { token } = await exec<{ token: string }>(o, o.admin, 'social.calendar_feed.create');
+    const setApp = (enabled: boolean) => rt.execute('kernel.org.set_app', { module: 'social', enabled }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+    expect(await calendarFeed(rt, token)).toMatchObject({ slug: o.slug });
+    await setApp(false);
+    expect(await calendarFeed(rt, token)).toBeNull();
+    const res = await http().request(`/cal/${token}.ics`);
+    const unknown = await http().request(`/cal/${'A'.repeat(43)}.ics`);
+    expect(res.status).toBe(unknown.status);
+    expect(await res.text()).toBe(await unknown.text());
+    await setApp(true);
+    expect(await calendarFeed(rt, token)).toMatchObject({ slug: o.slug });
+  });
 });

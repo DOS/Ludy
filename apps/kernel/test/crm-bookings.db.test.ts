@@ -479,4 +479,15 @@ suite('the public booking page on PostgreSQL (#1318)', () => {
     const events = await admin((c) => c.query("SELECT count(*)::int AS n FROM crove_kernel.calendar_event WHERE org_id = $1 AND kind = 'booking' AND status = 'active'", [o.orgId]));
     expect(events.rows[0]?.n).toBe(1);
   });
+
+  it('answers as an unknown type while CRM is off for the org, and as before once it is on (ADR-0053, C2)', async () => {
+    const o = await org();
+    const day = bookableDay();
+    const setApp = (enabled: boolean) => app.execute('kernel.org.set_app', { module: 'crm', enabled }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+    expect(await bookingView(app, o.slug, 'tu-van', dayRange(day))).not.toBeNull();
+    await setApp(false);
+    expect(await bookingView(app, o.slug, 'tu-van', dayRange(day))).toBeNull();
+    await setApp(true);
+    expect(await bookingView(app, o.slug, 'tu-van', dayRange(day))).not.toBeNull();
+  });
 });

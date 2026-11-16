@@ -3587,6 +3587,7 @@ export function createRpcHandler(
       get: os.projects.get.handler(projectsQuery('projects.project.get')),
       board: os.projects.board.handler(projectsQuery('projects.board')),
       unassignedTasks: os.projects.unassignedTasks.handler(projectsQuery('projects.unassigned_tasks')),
+      taskProjects: os.projects.taskProjects.handler(projectsQuery('projects.task_projects')),
       create: os.projects.create.handler(projectsCommand('projects.project.create')),
       update: os.projects.update.handler(projectsCommand('projects.project.update')),
       setStatus: os.projects.setStatus.handler(projectsCommand('projects.project.set_status')),

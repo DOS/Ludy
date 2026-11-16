@@ -8,6 +8,7 @@ export const PROJECT_DESCRIPTION_MAX = 2000;
 export const PROJECT_BOARD_LIMIT = 300;
 export const PROJECT_LIST_LIMIT = 200;
 export const PROJECT_UNASSIGNED_LIMIT = 100;
+export const PROJECT_TASK_MAP_LIMIT = 500;
 
 export const PROJECT_STATUSES = ['active', 'on_hold', 'done', 'archived'] as const;
 export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
@@ -180,3 +181,20 @@ export const zProjectCandidateTask = z.object({
   createdAt: z.string(),
 });
 export type ProjectCandidateTask = z.infer<typeof zProjectCandidateTask>;
+
+export const zProjectTaskRef = z.object({
+  id: zId,
+  name: z.string(),
+});
+export type ProjectTaskRef = z.infer<typeof zProjectTaskRef>;
+
+export const zProjectTaskProjectsInput = z.strictObject({
+  taskIds: z.array(zId).max(PROJECT_TASK_MAP_LIMIT),
+});
+export type ProjectTaskProjectsInput = z.infer<typeof zProjectTaskProjectsInput>;
+
+export const zProjectTaskProjectEntry = z.object({
+  taskId: zId,
+  project: zProjectTaskRef,
+});
+export type ProjectTaskProjectEntry = z.infer<typeof zProjectTaskProjectEntry>;

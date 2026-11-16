@@ -247,10 +247,18 @@ export type TodoHandOverInput = z.input<typeof zTodoHandOver>;
 export const zTodoHandedOver = zTodoWritten.extend({ taskId: z.string() });
 export type TodoHandedOver = z.infer<typeof zTodoHandedOver>;
 
-// "Việc của tôi" (notes.md §3.10, step N5): my open to-dos and the open tasks of the positions I hold, the tasks
-// grouped by their due day in the member's time zone.
-export const zMyWorkInput = z.strictObject({ timeZone: zTimeZone.default(DEFAULT_TIME_ZONE) });
+// "Việc của tôi" (notes.md §3.10, step N5; projects.md §4.3, step P3): my open to-dos and the open tasks of the
+// positions I hold, with each task's project when the projects module is active, grouped by due day in the member's time zone.
+export const zMyWorkInput = z.strictObject({
+  timeZone: zTimeZone.default(DEFAULT_TIME_ZONE),
+  projectId: z.union([zId, z.literal('none')]).optional(),
+});
 export type MyWorkInput = z.input<typeof zMyWorkInput>;
+export const zMyWorkTaskProject = z.object({
+  id: z.string(),
+  name: z.string(),
+});
+export type MyWorkTaskProject = z.infer<typeof zMyWorkTaskProject>;
 export const zMyWorkTask = z.object({
   id: z.string(),
   title: z.string(),
@@ -260,10 +268,19 @@ export const zMyWorkTask = z.object({
   group: z.enum(TODO_DUE_GROUPS),
   overdue: z.boolean(),
   tainted: z.boolean(),
+  project: zMyWorkTaskProject.nullable(),
 });
 export type MyWorkTask = z.infer<typeof zMyWorkTask>;
 // tasksTruncated: the kernel's task list was full, so older tasks of my positions may be missing.
-export const zMyWork = z.object({ todos: z.array(zTodoSummary), tasks: z.array(zMyWorkTask), tasksTruncated: z.boolean() });
+// projectsAvailable: projects module is installed and enabled for this org.
+// noSeatHint: member (non-owner, non-viewer) holds no active seat in a multi-member org.
+export const zMyWork = z.object({
+  todos: z.array(zTodoSummary),
+  tasks: z.array(zMyWorkTask),
+  tasksTruncated: z.boolean(),
+  projectsAvailable: z.boolean(),
+  noSeatHint: z.boolean(),
+});
 export type MyWork = z.infer<typeof zMyWork>;
 
 const DAY_MS = 86_400_000;
