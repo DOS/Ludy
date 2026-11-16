@@ -70,6 +70,7 @@ function wageToCents(raw: string): bigint {
 export const zHrOpeningView = z.strictObject({
   id: zId,
   legalEntityId: zId,
+  departmentId: zId.nullable(),
   title: z.string(),
   departmentName: z.string().nullable(),
   contractType: z.enum(HR_CONTRACT_TYPES),
@@ -96,11 +97,12 @@ export type HrOpeningList = z.input<typeof zHrOpeningList>;
 export const zHrOpeningAdd = z
   .strictObject({
     legalEntityId: zId.optional(),
+    departmentId: zId.nullable().optional(),
     title: z.string().trim().min(1).max(160),
     departmentName: z.string().trim().min(1).max(120).nullable().optional(),
     contractType: z.enum(HR_CONTRACT_TYPES).default('indefinite'),
     region: z.enum(HR_REGIONS).default('I'),
-    payFunction: z.enum(HR_PAY_FUNCTIONS).default('admin'),
+    payFunction: z.enum(HR_PAY_FUNCTIONS).optional(),
     budgetMinWage: zHrWage.nullable().optional(),
     budgetMaxWage: zHrWage.nullable().optional(),
     requiredSkills: zSkills.default([]),
@@ -114,6 +116,7 @@ export type HrOpeningAdd = z.input<typeof zHrOpeningAdd>;
 export const zHrOpeningEdit = z
   .strictObject({
     openingId: zId,
+    departmentId: zId.nullable().optional(),
     title: z.string().trim().min(1).max(160).optional(),
     departmentName: z.string().trim().min(1).max(120).nullable().optional(),
     contractType: z.enum(HR_CONTRACT_TYPES).optional(),
@@ -147,6 +150,7 @@ export const zHrCandidateView = z.strictObject({
   legalEntityId: zId,
   openingId: zId.nullable(),
   openingTitle: z.string().nullable(),
+  departmentId: zId.nullable(),
   departmentName: z.string().nullable(),
   displayName: z.string(),
   email: z.string().nullable(),
@@ -278,6 +282,8 @@ export type HrCandidateInterviewScheduled = z.infer<typeof zHrCandidateInterview
 
 export const zHrCandidateHire = z.strictObject({
   candidateId: zId,
+  departmentId: zId.nullable().optional(),
+  jobTitle: z.string().trim().min(1).max(160).nullable().optional(),
   effectiveFrom: zLocalDate.optional(),
   contractType: z.enum(HR_CONTRACT_TYPES).optional(),
   region: z.enum(HR_REGIONS).optional(),
@@ -314,6 +320,12 @@ export const zHrRecruitingBriefAsk = z.strictObject({
   lang: z.enum(['vi', 'en']).default('vi'),
 });
 export type HrRecruitingBriefAsk = z.input<typeof zHrRecruitingBriefAsk>;
+
+export const zHrRecruitingBriefAudit = z.strictObject({
+  candidateId: zId,
+  aiReason: z.enum(HR_RECRUITING_BRIEF_REASONS),
+});
+export type HrRecruitingBriefAudit = z.infer<typeof zHrRecruitingBriefAudit>;
 
 export const zHrRecruitingFocusQuestion = z.strictObject({
   code: z.enum(HR_INTERVIEW_FOCUS_CODES),

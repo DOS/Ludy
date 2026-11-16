@@ -47,11 +47,11 @@ import { calculateSeveranceAllowance, checkLaborContractTerms, countCompletedCal
 import { hrManifest } from './manifest.ts';
 import { isoDate as iso, monthEnd, previousMonth, termsInForceForMonth } from './payroll-dates.ts';
 
-const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
-const OWNERS: readonly MemberRole[] = ['owner'];
-const EMPLOYEE = hrManifest.tables.crove_hr.payroll_employee;
+export const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
+export const OWNERS: readonly MemberRole[] = ['owner'];
+export const EMPLOYEE = hrManifest.tables.crove_hr.payroll_employee;
 const DEPENDENT = hrManifest.tables.crove_hr.payroll_dependent;
-const EMPLOYMENT = hrManifest.tables.crove_hr.payroll_employment;
+export const EMPLOYMENT = hrManifest.tables.crove_hr.payroll_employment;
 
 // Where the sealed values are stored: a value opens only at the place it was sealed for (ctx.open), so a sealed text copied to another column never reads.
 export const IDENTITY_PLACE = 'crove_hr.payroll_employee.national_id_sealed';
@@ -61,8 +61,8 @@ export const INSURANCE_PLACE = 'crove_hr.payroll_employee.insurance_number_seale
 // The subject every sealed value of one person is under: one key to shred.
 export const subjectOf = (employeeId: string): string => `employee:${employeeId}`;
 
-const EMPLOYEE_COLUMNS = ['org_id', 'id', 'legal_entity_id', 'department_id', 'job_title', 'display_name', 'address', 'national_id_sealed', 'bank_account_sealed', 'bank_code', 'birth_date', 'tax_code_sealed', 'insurance_number_sealed', 'created_by', 'created_at', 'updated_at'] as const;
-const EMPLOYMENT_COLUMNS = [
+export const EMPLOYEE_COLUMNS = ['org_id', 'id', 'legal_entity_id', 'department_id', 'job_title', 'display_name', 'address', 'national_id_sealed', 'bank_account_sealed', 'bank_code', 'birth_date', 'tax_code_sealed', 'insurance_number_sealed', 'created_by', 'created_at', 'updated_at'] as const;
+export const EMPLOYMENT_COLUMNS = [
   'org_id',
   'id',
   'legal_entity_id',
@@ -101,7 +101,7 @@ interface PreparedEmploymentRow {
 
 type EmploymentTermsInput = Omit<HrEmploymentTerms, 'payFunction'> & { payFunction?: HrPayFunction | undefined };
 
-function prepareEmploymentTerms(terms: EmploymentTermsInput, defaultPayFunction: HrPayFunction = 'admin'): PreparedEmploymentRow {
+export function prepareEmploymentTerms(terms: EmploymentTermsInput, defaultPayFunction: HrPayFunction = 'admin'): PreparedEmploymentRow {
   const contractForm = terms.contractForm ?? null;
   const termMonths = terms.termMonths ?? null;
   const fixedTermSequence = terms.fixedTermSequence ?? null;
@@ -189,7 +189,7 @@ function prepareEmploymentTerms(terms: EmploymentTermsInput, defaultPayFunction:
   };
 }
 
-const userOf = (actor: QueryContext['actor']): string => {
+export const userOf = (actor: QueryContext['actor']): string => {
   if (actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
   return actor.userId;
 };
@@ -230,15 +230,15 @@ async function loadEmployee(ctx: Ctx, employeeId: string, options: { allowErased
   return row;
 }
 
-async function resolveDepartment(
+export async function resolveDepartment(
   ctx: Pick<Ctx, 'trx' | 'orgId'>,
   departmentId: string,
   legalEntityId: string,
   currentDepartmentId: string | null = null,
-): Promise<{ id: string; payFunction: HrPayFunction }> {
+): Promise<{ id: string; name: string; payFunction: HrPayFunction }> {
   const dept = await ctx.trx
     .selectFrom('crove_hr.department')
-    .select(['id', 'legal_entity_id', 'pay_function', 'archived_at'])
+    .select(['id', 'legal_entity_id', 'name', 'pay_function', 'archived_at'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', departmentId)
     .forShare()
@@ -250,7 +250,7 @@ async function resolveDepartment(
   if (dept.archived_at !== null && currentDepartmentId !== dept.id) {
     throw new DomainError('HR_DEPARTMENT_ARCHIVED', 409, 'Phòng ban này đã ngừng sử dụng, không thể gán cho nhân viên');
   }
-  return { id: dept.id, payFunction: dept.pay_function };
+  return { id: dept.id, name: dept.name, payFunction: dept.pay_function };
 }
 
 const requireActive = (employee: { status: string }): void => {
