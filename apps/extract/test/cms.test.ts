@@ -828,4 +828,106 @@ describe('crove-extract pdf_embed_cms', () => {
       ),
     ).toMatchObject({ ok: false, code: 'invalid' });
   });
+
+  it('checks nested AcroForm /Kids full dotted names for collisions and accepts 200-page pdf_seal output (201+ pages) while capping above maxPdfSignPages+maxPdfAuditCertPages', async () => {
+    const nestedPdf = makeRawPdf([
+      '<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [6 0 R] >> >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+      '<< /Length 0 >>\nstream\n\nendstream',
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+      '<< /T (Group) /Kids [7 0 R] >>',
+      '<< /Type /Annot /Subtype /Widget /FT /Sig /T (Signature1) /Rect [0 0 0 0] >>',
+    ]);
+    const cmsDer = makeTestCmsDer('nested-kids-cms');
+    expect(
+      await parse(
+        'pdf_embed_cms',
+        encodePdfEmbedCmsInput({
+          pdfBase64: Buffer.from(nestedPdf).toString('base64'),
+          cmsDerBase64: Buffer.from(cmsDer).toString('base64'),
+          signerName: 'Nested Check',
+          signedAtIso: '2026-11-16T13:15:00.000Z',
+          fieldName: 'Group.Signature1',
+        }),
+      ),
+    ).toMatchObject({ ok: false, code: 'invalid' });
+
+    const distinctNested = await parse(
+      'pdf_embed_cms',
+      encodePdfEmbedCmsInput({
+        pdfBase64: Buffer.from(nestedPdf).toString('base64'),
+        cmsDerBase64: Buffer.from(cmsDer).toString('base64'),
+        signerName: 'Nested Distinct',
+        signedAtIso: '2026-11-16T13:16:00.000Z',
+        fieldName: 'Group.Signature2',
+      }),
+    );
+    expect(distinctNested.ok).toBe(true);
+
+    // A 200-page PDF sealed into 201 pages embeds cleanly, while > maxPdfSignPages + maxPdfAuditCertPages is refused.
+    const doc200 = await PDFDocument.create();
+    for (let i = 0; i < EXTRACT_LIMITS.maxPdfSignPages; i += 1) {
+      doc200.addPage([595, 842]);
+    }
+    const bytes200 = new Uint8Array(await doc200.save({ useObjectStreams: false }));
+    const sealed201 = await parse(
+      'pdf_seal',
+      encodePdfSealInput({
+        pdfBase64: Buffer.from(bytes200).toString('base64'),
+        fields: [{ type: 'text', page: 1, xNorm: 0.1, yNorm: 0.2, wNorm: 0.3, hNorm: 0.1, text: 'Page 1' }],
+        certificate: {
+          certificateCode: 'CS-2001-2002-2003',
+          envelopeTitle: '200 Page Contract',
+          sourceSha256: sha256Hex(bytes200),
+          completedAtIso: '2026-11-16T13:20:00.000Z',
+          eventChainTipHash: 'd'.repeat(64),
+          signers: [
+            {
+              name: 'Nguyễn Văn Hai',
+              roleLabel: 'Bên A',
+              maskedEmail: 'n***@example.vn',
+              deliveryMode: 'link',
+              otpStatus: 'not_required',
+              signedAtIso: '2026-11-16T13:20:00.000Z',
+              ipHashPrefix: 'abcd1234',
+            },
+          ],
+        },
+      }),
+    );
+    if (!sealed201.ok || sealed201.kind !== 'pdf_seal') throw new Error('expected 200-page seal ok');
+    expect(sealed201.pageCount).toBe(EXTRACT_LIMITS.maxPdfSignPages + 1);
+
+    const embedded201 = await parse(
+      'pdf_embed_cms',
+      encodePdfEmbedCmsInput({
+        pdfBase64: sealed201.sealedPdfBase64,
+        cmsDerBase64: Buffer.from(cmsDer).toString('base64'),
+        signerName: 'Nguyễn Văn Hai',
+        signedAtIso: '2026-11-16T13:21:00.000Z',
+      }),
+    );
+    expect(embedded201.ok).toBe(true);
+    if (!embedded201.ok || embedded201.kind !== 'pdf_embed_cms') throw new Error('expected 201-page cms embed ok');
+    assertByteRangeAndCms(new Uint8Array(Buffer.from(embedded201.pdfBase64, 'base64')), embedded201.byteRange, cmsDer);
+
+    const docOverLimit = await PDFDocument.create();
+    const overLimitCount = EXTRACT_LIMITS.maxPdfSignPages + EXTRACT_LIMITS.maxPdfAuditCertPages + 1;
+    for (let i = 0; i < overLimitCount; i += 1) {
+      docOverLimit.addPage([595, 842]);
+    }
+    const bytesOver = new Uint8Array(await docOverLimit.save({ useObjectStreams: false }));
+    expect(
+      await parse(
+        'pdf_embed_cms',
+        encodePdfEmbedCmsInput({
+          pdfBase64: Buffer.from(bytesOver).toString('base64'),
+          cmsDerBase64: Buffer.from(cmsDer).toString('base64'),
+          signerName: 'Over Limit',
+          signedAtIso: '2026-11-16T13:22:00.000Z',
+        }),
+      ),
+    ).toMatchObject({ ok: false, code: 'invalid' });
+  });
 });

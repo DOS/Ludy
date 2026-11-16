@@ -2836,7 +2836,10 @@ function verifyPdfCrossReferenceConsistency(
   };
 }
 
-async function loadValidatedPdfInternal(bytes: Uint8Array): Promise<ValidatedPdfForUpdate> {
+async function loadValidatedPdfInternal(
+  bytes: Uint8Array,
+  maxPages: number = EXTRACT_LIMITS.maxPdfSignPages,
+): Promise<ValidatedPdfForUpdate> {
   if (bytes.byteLength > EXTRACT_LIMITS.maxFileBytes) {
     throw new PdfSignError('Tệp PDF vượt quá dung lượng cho phép');
   }
@@ -2873,8 +2876,8 @@ async function loadValidatedPdfInternal(bytes: Uint8Array): Promise<ValidatedPdf
   );
 
   const pages = pdfDoc.getPages();
-  if (pages.length < 1 || pages.length > EXTRACT_LIMITS.maxPdfSignPages) {
-    throw new PdfSignError(`Số trang PDF phải từ 1 đến ${EXTRACT_LIMITS.maxPdfSignPages}`);
+  if (pages.length < 1 || pages.length > maxPages) {
+    throw new PdfSignError(`Số trang PDF phải từ 1 đến ${maxPages}`);
   }
   for (const page of pages) {
     getPageMetrics(pdfDoc, page);
@@ -2892,8 +2895,11 @@ async function loadValidatedPdf(bytes: Uint8Array): Promise<PDFDocument> {
   return validated.pdfDoc;
 }
 
-export async function loadValidatedPdfForIncrementalUpdate(bytes: Uint8Array): Promise<ValidatedPdfForUpdate> {
-  return loadValidatedPdfInternal(bytes);
+export async function loadValidatedPdfForIncrementalUpdate(
+  bytes: Uint8Array,
+  options?: { readonly maxPages?: number },
+): Promise<ValidatedPdfForUpdate> {
+  return loadValidatedPdfInternal(bytes, options?.maxPages ?? EXTRACT_LIMITS.maxPdfSignPages);
 }
 
 function normalizeExtractedText(raw: string): string {

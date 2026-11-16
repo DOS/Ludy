@@ -737,6 +737,33 @@ describe('MISA eSign / WeSign adapter (esignapp.misa.vn Open API recorded respon
     });
     expect(requireLeafCert(misaSelected.certificateChainPem).subject).toContain('Signer B');
 
+    // Explicit certRef lookup must still recover an inactive/rotated signing certificate.
+    const misaRotatedMock = mockFetch({
+      '/api/auth/api/v1/auth/login-api': [
+        { status: 200, body: { Success: true, Data: { remoteSigningAccessToken: 'misa-tok-rot' } } },
+      ],
+      '/apis/RMeSign/GetListCertificate': [
+        {
+          status: 200,
+          body: {
+            Success: true,
+            Data: [
+              { CertAlias: 'misa-A', SignType: 'RemoteSigning', KeyStatus: 'EXPIRED', CertData: idA.certB64 },
+              { CertAlias: 'misa-B', SignType: 'RemoteSigning', KeyStatus: 'ACTIVE', CertData: idB.certB64 },
+            ],
+          },
+        },
+      ],
+      '/external/esrm/service/signing/api/v1/Signing/status/misa-rot-1': [
+        { status: 200, body: { status: { code: 200 }, data: { transactionId: 'misa-rot-1', status: 'SUCCESS', signatures: [{ signature: rawSigBB64 }] } } },
+      ],
+    });
+    const misaRotated = await getCaAdapter('misa_wesign', { fetch: misaRotatedMock.fetchImpl }).fetchSignedCms(MISA_SECRET, {
+      externalTxId: 'misa-rot-1',
+      certRef: 'misa-A',
+    });
+    expect(requireLeafCert(misaRotated.certificateChainPem).subject).toContain('Signer A');
+
     // PAdES baseline signedAttrs path (ETSI EN 319 142-1 s6.3 Table 1 forbids signing-time inside CMS).
     const prepared = preparePadesSignedAttrs({
       digestSha256: DIGEST,

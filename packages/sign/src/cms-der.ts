@@ -446,19 +446,21 @@ export function selectRemoteCertificateChain(options: {
   readonly wantedCertRef?: string;
 }): readonly Uint8Array[] {
   const { providerLabel, records, wantedCertRef } = options;
-  const activeRemote = records.filter((r) => !r.isUsbOnly && r.isActive && r.chainDer.length > 0);
-  const eligible = activeRemote.length > 0 ? activeRemote : records.filter((r) => !r.isUsbOnly && r.chainDer.length > 0);
-  if (eligible.length === 0) {
+  const remoteWithChain = records.filter((r) => !r.isUsbOnly && r.chainDer.length > 0);
+  if (remoteWithChain.length === 0) {
     throw new CaProviderError('unavailable', `${providerLabel} did not return a usable remote signing certificate`);
   }
   if (wantedCertRef !== undefined && wantedCertRef.trim() !== '') {
     const wanted = wantedCertRef.trim().toLowerCase();
-    const match = eligible.find((r) => r.certRef?.toLowerCase() === wanted);
+    const matches = remoteWithChain.filter((r) => r.certRef?.toLowerCase() === wanted);
+    const match = matches.find((r) => r.isActive) ?? matches[0];
     if (!match) {
       throw new CaProviderError('unavailable', `${providerLabel} certificate matching transaction was not found`);
     }
     return match.chainDer;
   }
+  const activeRemote = remoteWithChain.filter((r) => r.isActive);
+  const eligible = activeRemote.length > 0 ? activeRemote : remoteWithChain;
   if (eligible.length > 1) {
     throw new CaProviderError(
       'unavailable',

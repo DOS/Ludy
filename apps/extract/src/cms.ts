@@ -288,16 +288,36 @@ function collectExistingFieldNames(
   const fieldsRaw = acro.get(PDFName.of('Fields'));
   const fields = fieldsRaw instanceof PDFRef ? lookup(fieldsRaw) : fieldsRaw;
   if (!(fields instanceof PDFArray)) return names;
-  for (let i = 0; i < fields.size(); i += 1) {
-    const item = fields.get(i);
-    const dict = item instanceof PDFRef ? lookup(item) : item;
-    if (!(dict instanceof PDFDict)) continue;
-    const tRaw = dict.get(PDFName.of('T'));
-    const tVal = tRaw instanceof PDFRef ? lookup(tRaw) : tRaw;
-    if (tVal instanceof PDFString || tVal instanceof PDFHexString) {
-      names.add(tVal.decodeText());
+  const visited = new Set<string>();
+  const walk = (arr: PDFArray, parentFullName: string, depth: number): void => {
+    if (depth > 32) return;
+    for (let i = 0; i < arr.size(); i += 1) {
+      const item = arr.get(i);
+      if (item instanceof PDFRef) {
+        const refKey = `${item.objectNumber}:${item.generationNumber}`;
+        if (visited.has(refKey)) continue;
+        visited.add(refKey);
+      }
+      const dict = item instanceof PDFRef ? lookup(item) : item;
+      if (!(dict instanceof PDFDict)) continue;
+      const tRaw = dict.get(PDFName.of('T'));
+      const tVal = tRaw instanceof PDFRef ? lookup(tRaw) : tRaw;
+      const partName = tVal instanceof PDFString || tVal instanceof PDFHexString ? tVal.decodeText() : null;
+      const fullName =
+        partName !== null && partName !== ''
+          ? parentFullName !== ''
+            ? `${parentFullName}.${partName}`
+            : partName
+          : parentFullName;
+      if (fullName !== '') names.add(fullName);
+      const kidsRaw = dict.get(PDFName.of('Kids'));
+      const kids = kidsRaw instanceof PDFRef ? lookup(kidsRaw) : kidsRaw;
+      if (kids instanceof PDFArray) {
+        walk(kids, fullName, depth + 1);
+      }
     }
-  }
+  };
+  walk(fields, '', 0);
   return names;
 }
 
@@ -464,7 +484,9 @@ function buildIncrementalSuffix(options: {
 export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult> {
   const input = decodePdfEmbedCmsInput(bytes);
   const pdfBytes = decodeStrictBase64(input.pdfBase64, 'Tài liệu PDF');
-  const validated = await loadValidatedPdfForIncrementalUpdate(pdfBytes);
+  const validated = await loadValidatedPdfForIncrementalUpdate(pdfBytes, {
+    maxPages: EXTRACT_LIMITS.maxPdfSignPages + EXTRACT_LIMITS.maxPdfAuditCertPages,
+  });
   const { pdfDoc, prevStartXrefOffset, isXrefStream, maxObjNum } = validated;
 
   const cmsDer = decodeStrictBase64(input.cmsDerBase64, 'Chữ ký số CMS');
