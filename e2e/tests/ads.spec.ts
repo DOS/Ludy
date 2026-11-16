@@ -195,7 +195,8 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
     await page.reload();
     await expect(lines.getByText(/^1 dòng, đã trả/)).toHaveCount(1);
     await lines.getByText(/^1 dòng, đã trả/).click();
-    await expect(lines.getByRole('link', { name: 'THE VISA SANDBOX ADS 0042' })).toHaveAttribute('href', new RegExp(`/o/${slug}/bank\\?account=1121&month=\\d{4}-\\d{2}$`));
+    // The router writes a digits-only account in quotes (account=%221121%22), which the bank screen reads back as the string.
+    await expect(lines.getByRole('link', { name: 'THE VISA SANDBOX ADS 0042' })).toHaveAttribute('href', new RegExp(`/o/${slug}/bank\\?account=(%22)?1121(%22)?&month=\\d{4}-\\d{2}$`));
     await expect(lines.getByText('Chưa có dòng ngân hàng hay thẻ nào').first()).toBeVisible();
   });
 
