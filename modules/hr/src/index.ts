@@ -13,7 +13,7 @@ export * from './payroll-posting.ts';
 export * from './declarations.ts';
 export * from './labor-register.ts';
 export * from './bank-template.ts';
-export { declarationMonths } from './declaration-export.ts';
+export { declarationMonths, type HrLaborCheckFact, type HrLaborCheckSnapshot } from './declaration-export.ts';
 export { buildDeclarationWorkbook, amountCell } from './declaration-xlsx.ts';
 export { buildBankFileWorkbook } from './bank-file-xlsx.ts';
 
