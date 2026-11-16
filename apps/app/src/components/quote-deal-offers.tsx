@@ -29,7 +29,7 @@ export function QuoteDealOffers({ dealId, quotes, canEdit }: { dealId: string; q
   const { locale } = useLocaleSetting();
   const id = useId();
   // The deal is read fresh (the row or card that opened this tab holds the deal as it was then), so each click carries the version the person is looking at.
-  const deal = useQuery({ ...orpc.crm.deals.get.queryOptions({ input: { dealId } }), enabled: canEdit });
+  const deal = useQuery({ ...orpc.crm.deals.get.queryOptions({ input: { dealId } }), enabled: canEdit, refetchOnMount: 'always' as const });
   const stages = useQuery({ ...orpc.crm.pipeline.stages.queryOptions({ input: {} }), enabled: canEdit });
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set());
   // What the last clicks did, said once: the offer itself is gone by then.
@@ -72,7 +72,18 @@ export function QuoteDealOffers({ dealId, quotes, canEdit }: { dealId: string; q
                 {showMove.to === 'won' ? t('wonReason', { number: label(showMove.quoteId) }) : t('quotedReason', { number: label(showMove.quoteId) })}
               </p>
               <div className="flex flex-wrap gap-1">
-                <Button type="button" size="sm" variant="outline" loading={move.isPending} disabled={update.isPending} aria-describedby={`${id}-move`} onClick={() => move.mutate({ dealId: current.id, version: current.version, stageId: showMove.stage.id }, { onSuccess: () => setDone((d) => ({ ...d, stage: showMove.stage.name })) })}>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  loading={move.isPending}
+                  disabled={update.isPending || deal.isFetching}
+                  aria-describedby={`${id}-move`}
+                  onClick={() => {
+                    update.reset();
+                    move.mutate({ dealId: current.id, version: current.version, stageId: showMove.stage.id }, { onSuccess: () => setDone((d) => ({ ...d, stage: showMove.stage.name })) });
+                  }}
+                >
                   {t('moveTo', { stage: showMove.stage.name })}
                 </Button>
                 <Button type="button" size="sm" variant="ghost" aria-describedby={`${id}-move`} onClick={() => dismiss(moveKey)}>
@@ -92,9 +103,10 @@ export function QuoteDealOffers({ dealId, quotes, canEdit }: { dealId: string; q
                   size="sm"
                   variant="outline"
                   loading={update.isPending}
-                  disabled={move.isPending}
+                  disabled={move.isPending || deal.isFetching}
                   aria-describedby={`${id}-amount`}
-                  onClick={() =>
+                  onClick={() => {
+                    move.reset();
                     update.mutate(
                       {
                         dealId: current.id,
@@ -106,8 +118,8 @@ export function QuoteDealOffers({ dealId, quotes, canEdit }: { dealId: string; q
                         ownerUserId: current.ownerUserId,
                       },
                       { onSuccess: (saved) => setDone((d) => ({ ...d, amount: saved.amount })) },
-                    )
-                  }
+                    );
+                  }}
                 >
                   {t('setAmount')}
                 </Button>
