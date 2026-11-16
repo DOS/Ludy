@@ -50,7 +50,7 @@ export const GROUP_ORDER: Partial<Record<AppId, readonly AppGroupId[]>> = { enga
 // The items of an app in the order its menu shows them, by path, when the modules do not give it (Cộng tác: the member's own work first, then the team's; Tài chính: the overview and
 // the documents first). An item not listed comes after the listed ones, in the order of the manifests.
 export const ITEM_ORDER: Partial<Record<AppId, readonly string[]>> = {
-  teamwork: ['my-work', 'tasks', 'notes', 'meetings'],
+  teamwork: ['my-work', 'tasks', 'projects', 'notes', 'meetings'],
   finance: ['accounting', 'inbox', 'vouchers', 'bank', 'sales-invoices', 'customers', 'stock', 'vendors', 'journal', 'ledger', 'fixed-assets', 'vat'],
   ai: ['agents', 'ai-usage', 'ai-connections'],
 };

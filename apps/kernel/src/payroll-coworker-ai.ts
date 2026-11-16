@@ -90,7 +90,12 @@ export async function payrollSource(reads: PayrollReads, runId: string): Promise
       employeeId: l.employeeId,
       figures,
       previous,
-      contract: { startsInMonth: l.flags.includes('new_hire'), probationEndsInMonth: false, endsInMonth: l.flags.includes('ends_this_month') },
+      contract: {
+        startsInMonth: l.flags.includes('new_hire'),
+        probationEndsInMonth: false,
+        endsInMonth: l.flags.includes('ends_this_month'),
+        severanceCheckSuggested: l.flags.includes('severance_check'),
+      },
       overtimeMonthsInRow: streak,
       dependentsWithoutRegistration: 0,
       checks: {

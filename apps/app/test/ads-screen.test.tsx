@@ -10,7 +10,7 @@ import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AdAccountView, AdsChange, AdsSummary, AdsWriteState, LegalEntity } from '@crove/kernel-contract';
+import type { AdAccountView, AdsChange, AdsCommitted, AdsSummary, AdsWriteState, LegalEntity } from '@crove/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { I18nProvider } from '../src/i18n/provider.tsx';
@@ -53,6 +53,7 @@ vi.mock('../src/lib/api.ts', async () => {
 });
 
 const { AdsBooksStrip } = await import('../src/components/ads-books-strip.tsx');
+const { AdsCommittedStrip } = await import('../src/components/ads-committed.tsx');
 const { AccountHeader, AdsEmpty, AdsSettingsCard, Breakdowns, ConnectGoogle, ConnectMeta, Totals } = await import('../src/routes/ads.tsx');
 const { AdsWeeklyNoteCard } = await import('../src/components/ads-weekly-note.tsx');
 const { AdsWriteCard, CapForm, isCapAmount } = await import('../src/components/ads-write.tsx');
@@ -1458,3 +1459,69 @@ describe('Google Ads connection, short refresh-token warning, and 7-day comparis
   });
 });
 
+
+describe('the committed spend of the month next to the actual spend (#3297)', () => {
+  const state = (writeEnabled: boolean): AdsWriteState => ({ writeEnabled, launchesBlocked: false, updatedAt: null, caps: [], pending: [], tokenRevokes: [] });
+  const line = (over: Partial<AdsCommitted['org']> = {}): AdsCommitted['org'] => ({ committed: '700000', cap: null, left: null, ...over });
+  const data = (over: Partial<AdsCommitted> = {}): AdsCommitted => ({ adAccountId: 'a1', month: '2026-11', currency: 'VND', hasCap: true, capCurrencyMismatch: false, account: line(), org: line(), ...over });
+  const strip = (committed: AdsCommitted | null, writeEnabled = true, locale: 'en' | 'vi' = 'en', acct = account()) => {
+    client.current.setQueryData(['ads', 'writeState'], state(writeEnabled));
+    client.current.removeQueries({ queryKey: ['ads', 'committed'] });
+    if (committed) client.current.setQueryData(['ads', 'committed', { adAccountId: 'a1', month: '2026-11' }], committed);
+    return render(<AdsCommittedStrip account={acct} month="2026-11" />, locale);
+  };
+
+  it('shows what is committed, the monthly cap and what is left, exactly, with the month', () => {
+    const html = strip(data({ account: line({ cap: '1000000', left: '300000' }), org: line() }));
+    expect(html).toContain(en.ads.committed.title);
+    expect(html).toContain('11/2026');
+    expect(html).toContain(en.ads.committed.committed);
+    expect(html).toContain(en.ads.committed.cap);
+    expect(html).toContain(en.ads.committed.left);
+    expect(html).toContain('700,000');
+    expect(html).toContain('1,000,000');
+    expect(html).toContain('300,000');
+    // The org's line adds nothing here (the same launches), so it is not drawn twice.
+    expect(html).not.toContain(en.ads.committed.scopeOrg);
+  });
+
+  it('adds the org line when the org has a cap or counts launches of other accounts', () => {
+    const html = strip(data({ account: line(), org: line({ committed: '910000', cap: '2000000', left: '1090000' }) }));
+    expect(html).toContain(en.ads.committed.scopeAccount);
+    expect(html).toContain(en.ads.committed.scopeOrg);
+    expect(html).toContain('1,090,000');
+    expect(html).toContain(en.ads.committed.noMonthlyCap);
+  });
+
+  it('says it is over, not a negative room, when a cap was lowered under what is committed', () => {
+    const html = strip(data({ account: line({ cap: '500000', left: '-200000' }), org: line({ cap: '500000', left: '-200000' }) }));
+    expect(html).toContain(en.ads.committed.over);
+    expect(html).not.toContain(`>${en.ads.committed.left}<`);
+    expect(html).not.toContain('-200');
+    expect(html).toContain('200,000');
+  });
+
+  it('says no cap is set and that launches are refused until one is, in both languages', () => {
+    const none = data({ hasCap: false, account: line({ committed: '0' }), org: line({ committed: '0' }) });
+    const html = strip(none);
+    expect(html).toContain(en.ads.committed.noCap);
+    expect(html).not.toContain(en.ads.committed.cap);
+    const vn = strip(none, true, 'vi');
+    expect(vn).toContain(viMessages.ads.committed.noCap);
+    expect(viMessages.ads.committed.noCap).toContain('Chưa đặt hạn mức');
+    expect(viMessages.ads.committed.title).toBe('Đã cam kết tháng này');
+  });
+
+  it('says a cap in another currency blocks launches, in both languages, instead of a missing cap', () => {
+    const html = strip(data({ hasCap: false, capCurrencyMismatch: true }));
+    expect(html).toContain('ads-committed-cap-currency');
+    expect(html).not.toContain(en.ads.committed.noCap);
+    expect(html).toContain('VND');
+    expect(strip(data({ hasCap: false, capCurrencyMismatch: true }), true, 'vi')).toContain('khác với VND');
+  });
+
+  it('is hidden while running ads is off, and for an account whose currency is not read yet', () => {
+    expect(strip(data(), false)).toBe('');
+    expect(strip(data(), true, 'en', account({ currency: null }))).toBe('');
+  });
+});

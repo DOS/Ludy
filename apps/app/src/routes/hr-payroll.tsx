@@ -18,6 +18,7 @@ import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { BankSelect } from '../components/bank-select.tsx';
+import { ThirteenthMonthPanel } from '../components/hr-thirteenth-month-panel.tsx';
 import { TimekeepingImportPanel } from '../components/hr-timekeeping-panel.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
@@ -704,6 +705,7 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
   const [payslip, setPayslip] = useState<string | null>(null);
   const [adjusting, setAdjusting] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [thirteenthOpen, setThirteenthOpen] = useState(false);
   const [accept, setAccept] = useState(false);
   const [days, setDays] = useState('');
   const recalc = useMutation({
@@ -731,9 +733,14 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {draft && hasPayLines && (
-            <Button variant="outline" size="sm" onClick={() => setImporting((v) => !v)} data-testid="hr-timekeeping-toggle">
-              {t('timekeeping.toggle')}
-            </Button>
+            <>
+              <Button variant="outline" size="sm" onClick={() => setThirteenthOpen((v) => !v)} data-testid="hr-13th-month-toggle">
+                {t('thirteenthMonth.toggle')}
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setImporting((v) => !v)} data-testid="hr-timekeeping-toggle">
+                {t('timekeeping.toggle')}
+              </Button>
+            </>
           )}
           <Button variant="ghost" onClick={onBack}>
             {t('back')}
@@ -742,6 +749,18 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
       </div>
       {s.blocking.length > 0 && <BlockingRules rules={s.blocking} />}
       {draft && s.lines.length > 0 && <MonthCoworker runId={runId} />}
+      {draft && hasPayLines && thirteenthOpen && (
+        <ThirteenthMonthPanel
+          runId={runId}
+          month={s.run.month}
+          onApplied={async () => {
+            setAccept(false);
+            setEditing(null);
+            await refresh();
+          }}
+          onClose={() => setThirteenthOpen(false)}
+        />
+      )}
       {draft && hasPayLines && importing && (
         <TimekeepingImportPanel
           runId={runId}

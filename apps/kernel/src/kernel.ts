@@ -82,6 +82,7 @@ import { socialAgentPrograms, socialCommands, socialManifest, socialOverviewCont
 import { crmAgentPrograms, crmCommands, crmManifest, crmQueries } from '@crove/mod-crm';
 import { hrCommands, hrManifest, hrQueries } from '@crove/mod-hr';
 import { notesCommands, notesManifest, notesQueries } from '@crove/mod-notes';
+import { projectsCommands, projectsManifest, projectsQueries } from '@crove/mod-projects';
 import { adsCommands, adsManifest, adsQueries } from '@crove/mod-ads';
 import { meetingsCommands, meetingsManifest, meetingsQueries, setSummaryEnabled, setTranscribeBroker, setTranscribeEnabled } from '@crove/mod-meetings';
 import { GoogleAdsConnector, MetaAdsConnector, MetaWriteConnector, adActivators, adLaunchWriters, adPausers, adPlatforms, adRevokers, type AdActivator, type AdPauser, type AdPlatform, type AdRevoker, type LaunchWriter } from '@crove/ad-platform';
@@ -272,6 +273,7 @@ export function moduleDefinitions(config: Config, billing: Billing = selfHostBil
     crm: () => ({ commands: crmCommands, queries: crmQueries }),
     notes: () => ({ commands: notesCommands, queries: notesQueries }),
     meetings: () => ({ commands: meetingsCommands, queries: meetingsQueries }),
+    projects: () => ({ commands: projectsCommands, queries: projectsQueries }),
     hr: () => ({ commands: hrCommands, queries: hrQueries }),
   };
   const enabled = config.CROVE_MODULES.map((module) => all[module]());
@@ -297,6 +299,7 @@ const MODULE_MANIFESTS: Record<ModuleId, ModuleManifest> = {
   crm: crmManifest,
   notes: notesManifest,
   meetings: meetingsManifest,
+  projects: projectsManifest,
   hr: hrManifest,
 };
 

@@ -5,6 +5,7 @@ import { PERSONAL_DATA_COLUMNS, PERSONAL_DATA_PENDING, PERSONAL_DATA_SCHEMAS, SE
 import { hrManifest } from '@crove/mod-hr';
 import { meetingsManifest } from '@crove/mod-meetings';
 import { notesManifest } from '@crove/mod-notes';
+import { projectsManifest } from '@crove/mod-projects';
 
 const entries = PERSONAL_DATA_COLUMNS as Record<string, PersonalDataColumn>;
 
@@ -141,6 +142,25 @@ describe('personal-data registry: payroll people (#2530)', () => {
     expect(Object.keys(SEALED_COLUMNS).sort()).toEqual(['crove_hr.payroll_employee.bank_account_sealed', 'crove_hr.payroll_employee.insurance_number_sealed', 'crove_hr.payroll_employee.national_id_sealed', 'crove_hr.payroll_employee.tax_code_sealed']);
     for (const key of ['crove_hr.payroll_employee.display_name', 'crove_hr.payroll_employee.address', 'crove_hr.payroll_dependent.display_name']) {
       expect(entries[key]?.handling, key).toBe('erase');
+    }
+  });
+});
+
+describe('personal-data registry: projects (#2591)', () => {
+  const personal = Object.entries(projectsManifest.tables.crove_projects).flatMap(([table, cols]) =>
+    Object.entries(cols as Record<string, string>)
+      .filter(([, cls]) => cls === 'pii' || cls === 'national_id' || cls === 'payment' || cls === 'contact')
+      .map(([column]) => `crove_projects.${table}.${column}`),
+  );
+
+  it('scans crove_projects for columns named like personal data', () => {
+    expect(PERSONAL_DATA_SCHEMAS).toContain('crove_projects');
+  });
+
+  it('registers every personal-data column of crove_projects for erasure', () => {
+    expect(personal.length).toBe(2);
+    for (const key of personal) {
+      expect(entries[key]).toMatchObject({ kind: 'free_text', handling: 'erase' });
     }
   });
 });

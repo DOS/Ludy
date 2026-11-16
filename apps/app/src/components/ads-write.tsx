@@ -36,6 +36,7 @@ const refresh = () =>
     queryClient.invalidateQueries({ queryKey: orpc.ads.writeState.key() }),
     queryClient.invalidateQueries({ queryKey: orpc.ads.accounts.key() }),
     queryClient.invalidateQueries({ queryKey: orpc.ads.flags.key() }),
+    queryClient.invalidateQueries({ queryKey: orpc.ads.committed.key() }),
   ]);
 
 // A decimal the server will accept as a cap: above zero, at most two decimals (the sandbox and Meta report in whole units and
@@ -235,7 +236,7 @@ function PendingRow({ p, slug }: { p: AdsWriteState['pending'][number]; slug: st
   );
 }
 
-function useWriteState() {
+export function useWriteState() {
   return useQuery({ ...orpc.ads.writeState.queryOptions(), refetchInterval: (query) => (query.state.data?.tokenRevokes.some((r) => r.state === 'pending') ? 60_000 : false) });
 }
 
