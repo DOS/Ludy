@@ -9,6 +9,7 @@ import { RECORDING_NOW_WINDOW_HOURS } from '@crove/kernel-contract';
 
 /** The reasons Meetings is busy for the org, as short codes (none: it can be switched off). */
 export async function meetingsBusy(trx: Transaction<Database>, orgId: string): Promise<string[]> {
-  const { rows } = await sql<{ reasons: string[] }>`SELECT crove_meetings.org_busy_reasons(${orgId}::uuid, ${RECORDING_NOW_WINDOW_HOURS}::int) AS reasons`.execute(trx);
-  return rows[0]?.reasons ?? [];
+  const { rows } = await sql<{ recording: boolean; import: boolean }>`SELECT recording, import FROM crove_meetings.org_busy_reasons(${orgId}::uuid, ${RECORDING_NOW_WINDOW_HOURS}::int)`.execute(trx);
+  const busy = rows[0];
+  return [...(busy?.recording ? ['recording'] : []), ...(busy?.import ? ['import'] : [])];
 }
