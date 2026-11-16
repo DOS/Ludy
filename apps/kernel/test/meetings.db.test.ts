@@ -24,7 +24,8 @@ import { resealCredentials } from '../src/credential-reseal.ts';
 import { loadConfig } from '../src/config.ts';
 import { ConcurrencyLimiter } from '../src/concurrency.ts';
 import { createHttpApp, type HttpDeps } from '../src/http.ts';
-import { fakeMediaMeasurer } from './fake-media.ts';
+import { fakeAudioExtractor, fakeMediaMeasurer } from './fake-media.ts';
+import { mediaAudioExtractorFor } from '../src/meetings-extract.ts';
 import { mediaMeasurerFor } from '../src/meetings-measure.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -1668,5 +1669,140 @@ suite('meetings module database integration tests (#2576)', () => {
     } finally {
       expect((await rpc('meetings/consentPolicy/set', 'owner', { policy: 'standard' })).status).toBe(200);
     }
+  });
+  it('35. #3337: a video uploaded with extract=audio keeps only the extracted Opus, whatever the shape of the upload', async () => {
+    const mp4 = Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x18]), Buffer.from('ftypmp42'), Buffer.from('video frames '.repeat(300))]);
+    const opus = Buffer.concat([Buffer.from([0x4f, 0x67, 0x67, 0x53, 0x00, 0x02]), Buffer.from('extracted opus '.repeat(20))]);
+    const headers = async (extra: Record<string, string> = {}) => ({ authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug, ...extra });
+    const newMeeting = async (title: string) => String((await rpc('meetings/create', 'recorder', { title, visibility: 'attendees', keepVideo: true, consentMethod: 'told_at_start' })).body.meetingId);
+    const count = async (table: 'audio_segment' | 'meeting_video', meetingId: string) =>
+      admin(async (c) => Number((await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_meetings.${table} WHERE meeting_id = $1`, [meetingId])).rows[0]!.n));
+    const raw = (target: ReturnType<typeof createHttpApp>, meetingId: string, query: string, body: Buffer, type = 'video/mp4') =>
+      headers({ 'content-type': type, 'content-length': String(body.length) }).then((h) => target.request(`/api/meetings/${meetingId}/media${query}`, { method: 'POST', headers: h, body: new Uint8Array(body) }));
+    const objectsBefore = store.storage.size;
+
+    // The raw body: the video is read by the extractor, and only the Opus is sealed, recorded and played back.
+    const extractor = fakeAudioExtractor(opus);
+    const withExtractor = createHttpApp({ ...deps, mediaExtractor: extractor });
+    const meetingId = await newMeeting('Video as audio');
+    const up = await raw(withExtractor, meetingId, '?kind=audio&extract=audio', mp4);
+    expect(up.status).toBe(200);
+    expect(extractor.calls).toBe(1);
+    expect(extractor.read[0]!.equals(mp4)).toBe(true);
+    // One object in the store (the Opus sealed as the audio), the temporary sealed video is gone, and no video row exists.
+    expect(store.storage.size).toBe(objectsBefore + 1);
+    expect(await count('meeting_video', meetingId)).toBe(0);
+    const rows = await admin(async (c) => (await c.query<{ length_seconds: number; content_type: string }>('SELECT s.length_seconds, f.content_type FROM crove_meetings.audio_segment s JOIN crove_kernel.file f ON f.org_id = s.org_id AND f.id = s.file_id WHERE s.meeting_id = $1', [meetingId])).rows);
+    expect(rows).toEqual([{ length_seconds: 1800, content_type: 'audio/ogg' }]);
+    const played = await withExtractor.request(`/api/meetings/${meetingId}/audio`, { headers: await headers() });
+    expect(played.status).toBe(200);
+    expect(played.headers.get('content-type')).toContain('audio/ogg');
+    const playedBytes = Buffer.from(await played.arrayBuffer());
+    expect(playedBytes.equals(opus)).toBe(true);
+    expect(playedBytes.equals(mp4)).toBe(false);
+
+    // A video with no audio track: 422 NO_AUDIO_TRACK and nothing stored.
+    const silentId = await newMeeting('Silent video');
+    const silent = await raw(createHttpApp({ ...deps, mediaExtractor: fakeAudioExtractor(opus, { fail: new DomainError('NO_AUDIO_TRACK', 422, 'The video has no audio track') }) }), silentId, '?kind=audio&extract=audio', mp4);
+    expect(silent.status).toBe(422);
+    expect(((await silent.json()) as { code?: string }).code).toBe('NO_AUDIO_TRACK');
+    expect(store.storage.size).toBe(objectsBefore + 1);
+    expect(await count('audio_segment', silentId)).toBe(0);
+
+    // Without crove-media: refused before one byte of the body is read.
+    let pulled = false;
+    const unconfigured = createHttpApp({ ...deps, mediaExtractor: mediaAudioExtractorFor(undefined) });
+    const unset = await unconfigured.request(`/api/meetings/${silentId}/media?kind=audio&extract=audio`, {
+      method: 'POST',
+      headers: await headers({ 'content-type': 'video/mp4', 'content-length': String(mp4.length) }),
+      body: new ReadableStream<Uint8Array>({ pull: () => void (pulled = true) }, { highWaterMark: 0 }),
+      duplex: 'half',
+    } as RequestInit);
+    expect(unset.status).toBe(503);
+    expect(((await unset.json()) as { code?: string }).code).toBe('MEDIA_PROBE_UNAVAILABLE');
+    expect(pulled).toBe(false);
+
+    // The flag is only for kind audio, and not for a platform import claim.
+    expect((await raw(withExtractor, silentId, '?kind=video&extract=audio', mp4)).status).toBe(400);
+    expect((await raw(withExtractor, silentId, '?kind=audio&extract=video', mp4)).status).toBe(400);
+    const jsonPost = async (query: string, body: unknown) => withExtractor.request(`/api/meetings/${silentId}/media${query}`, { method: 'POST', headers: await headers({ 'content-type': 'application/json' }), body: JSON.stringify(body) });
+    expect((await jsonPost('?extract=audio', { uploadId: randomUUID(), kind: 'video' })).status).toBe(400);
+    expect((await jsonPost('?extract=audio', { importId: randomUUID(), kind: 'audio' })).status).toBe(400);
+    const form400 = new FormData();
+    form400.append('kind', 'video');
+    form400.append('extract', 'audio');
+    form400.append('file', new Blob([new Uint8Array(mp4)], { type: 'video/mp4' }), 'm.mp4');
+    expect((await withExtractor.request(`/api/meetings/${silentId}/media`, { method: 'POST', headers: await headers(), body: form400 })).status).toBe(400);
+
+    // The input cap is the video cap: a declared length over it is refused before the body is read; a file that is no video container is refused and stores nothing.
+    pulled = false;
+    const huge = await withExtractor.request(`/api/meetings/${silentId}/media?kind=audio&extract=audio`, {
+      method: 'POST',
+      headers: await headers({ 'content-type': 'video/mp4', 'content-length': String(3 * 1024 * 1024 * 1024) }),
+      body: new ReadableStream<Uint8Array>({ pull: () => void (pulled = true) }, { highWaterMark: 0 }),
+      duplex: 'half',
+    } as RequestInit);
+    expect(huge.status).toBe(413);
+    expect(pulled).toBe(false);
+    const callsBefore = extractor.calls;
+    const notVideo = await raw(withExtractor, silentId, '?kind=audio&extract=audio', Buffer.concat([Buffer.from('OggS'), Buffer.alloc(200, 1)]), 'audio/ogg');
+    expect(notVideo.status).toBe(400);
+    expect(((await notVideo.json()) as { code?: string }).code).toBe('INVALID_MEDIA_CONTAINER');
+    expect(extractor.calls).toBe(callsBefore);
+    expect(store.storage.size).toBe(objectsBefore + 1);
+
+    // The extraction takes the same slot as a video upload: a second concurrent video-sized transfer is busy.
+    const videoUploads = new ConcurrencyLimiter({ total: 1, perKey: 1 });
+    const held = videoUploads.tryAcquire('another-transfer');
+    expect(held).not.toBeNull();
+    const busyApp = createHttpApp({ ...deps, mediaExtractor: extractor, videoUploads });
+    const busy = await raw(busyApp, silentId, '?kind=audio&extract=audio', mp4);
+    expect(busy.status).toBe(503);
+    expect(busy.headers.get('retry-after')).not.toBeNull();
+    held!();
+    const freed = await raw(busyApp, silentId, '?kind=audio&extract=audio', mp4);
+    expect(freed.status).toBe(200);
+    await vi.waitFor(() => expect(videoUploads.inUse).toBe(0));
+    expect(store.storage.size).toBe(objectsBefore + 2);
+
+    // The JSON shape: a staged upload (granted for video, which is how the app stages a video it extracts) is read from the store and goes the same way.
+    const stagedId = await newMeeting('Staged video as audio');
+    const uploadId = randomUUID();
+    const stagingKey = `staging/${randomBytes(32).toString('hex')}`;
+    store.staged.set(stagingKey, mp4);
+    await admin(async (c) => {
+      await c.query(
+        `INSERT INTO crove_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
+         VALUES ($1, $2, $3, $4, $5, 'meeting_video', now(), now() + interval '5 minutes')`,
+        [orgId, uploadId, stagingKey, userIds.get('recorder'), 10_000_000],
+      );
+    });
+    const staged = await withExtractor.request(`/api/meetings/${stagedId}/media?extract=audio`, { method: 'POST', headers: await headers({ 'content-type': 'application/json' }), body: JSON.stringify({ uploadId, kind: 'audio' }) });
+    expect(staged.status).toBe(200);
+    expect(store.staged.has(stagingKey)).toBe(false);
+    expect(extractor.read.at(-1)!.equals(mp4)).toBe(true);
+    expect(await count('meeting_video', stagedId)).toBe(0);
+    expect(store.storage.size).toBe(objectsBefore + 3);
+
+    // The multipart shape: the flag as a form field.
+    const formId = await newMeeting('Form video as audio');
+    const form = new FormData();
+    form.append('kind', 'audio');
+    form.append('extract', 'audio');
+    form.append('file', new Blob([new Uint8Array(mp4)], { type: 'video/mp4' }), 'zoom.mp4');
+    const multipart = await withExtractor.request(`/api/meetings/${formId}/media`, { method: 'POST', headers: await headers(), body: form });
+    expect(multipart.status).toBe(200);
+    expect(extractor.read.at(-1)!.equals(mp4)).toBe(true);
+    expect(await count('meeting_video', formId)).toBe(0);
+    expect(store.storage.size).toBe(objectsBefore + 4);
+    // Without crove-media the form is refused too (after its parse), and stores nothing.
+    const formId2 = await newMeeting('Form video, no sandbox');
+    const form2 = new FormData();
+    form2.append('kind', 'audio');
+    form2.append('extract', 'audio');
+    form2.append('file', new Blob([new Uint8Array(mp4)], { type: 'video/mp4' }), 'zoom.mp4');
+    const unsetForm = await unconfigured.request(`/api/meetings/${formId2}/media`, { method: 'POST', headers: await headers(), body: form2 });
+    expect(unsetForm.status).toBe(503);
+    expect(store.storage.size).toBe(objectsBefore + 4);
   });
 });
