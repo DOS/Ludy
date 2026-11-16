@@ -6,7 +6,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
@@ -76,6 +76,18 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
     timeZone: 'Asia/Ho_Chi_Minh',
     joinUrl: null,
     invitees: 2,
+    ...over,
+  });
+  // An event placed on today's Vietnam calendar day, at a given hour of it (the list is "today's meetings only, Vietnam time"): it is on that day whatever the time of day the test runs,
+  // which an event a few minutes from now is not in the half hour before Vietnamese midnight (#3339, #3333).
+  const vnDayStartMs = (now = Date.now()) => {
+    const vn = new Date(now + 7 * 3_600_000);
+    return Date.UTC(vn.getUTCFullYear(), vn.getUTCMonth(), vn.getUTCDate()) - 7 * 3_600_000;
+  };
+  const todayAt = (id: string, hour: number, over: Record<string, unknown> = {}) => ({
+    ...event(id, 0),
+    startsAt: new Date(vnDayStartMs() + hour * 3_600_000).toISOString(),
+    endsAt: new Date(vnDayStartMs() + (hour + 1) * 3_600_000).toISOString(),
     ...over,
   });
   const sweep = (connectionId: string, events: unknown[], fromMinutes = -24 * 60) => worker.execute<{ written: number }>('meetings.agenda.replace', { connectionId, from: iso(fromMinutes), events }, { actor: SYSTEM, orgId });
@@ -228,8 +240,10 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
   it('is read by its member alone: another member, an owner, an admin and the system context see none, and a non-member is refused', async () => {
     const c = await connection('lan');
     await on('lan', c);
-    await sweep(c, [event('private-1', 30)]);
+    await sweep(c, [todayAt('private-1', 10)]);
     expect(await query<number>('lan', 'test.agenda.rows')).toBeGreaterThan(0);
+    // The member's own list shows it, so the others' empty lists below are not empty for want of a day match.
+    expect((await query<AgendaList>('lan', 'meetings.agenda.list')).events.map((e) => e.title)).toEqual(['Họp private-1']);
     for (const who of ['nam', 'owner', 'admin']) expect(await query<number>(who, 'test.agenda.rows'), who).toBe(0);
     expect(await refuses(query<number>('outsider', 'test.agenda.rows'))).not.toBeNull();
     expect(await worker.query<number>('test.agenda.system_rows', {}, { actor: SYSTEM, orgId })).toBe(0);
@@ -267,7 +281,7 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
   it('hides the rows of a connection on its way out or whose grant lost the switch, before anything deletes them', async () => {
     const c = await connection('lan');
     await on('lan', c);
-    await sweep(c, [event('a', 30)]);
+    await sweep(c, [todayAt('a', 10)]);
     expect((await query<AgendaList>('lan', 'meetings.agenda.list')).events.length).toBeGreaterThan(0);
     await sqlAdmin("UPDATE crove_kernel.calendar_connection SET status = 'disconnecting' WHERE id = $1", [c]);
     expect((await query<AgendaList>('lan', 'meetings.agenda.list')).events.filter((e) => e.title === 'Họp a')).toEqual([]);
@@ -289,6 +303,25 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
     await sweep(c, [ev('late', at(15), at(16)), ev('early', at(8), at(9)), ev('tomorrow', at(30), at(31)), ev('yesterday', at(-5), at(-4))], -48 * 60);
     const list = await query<AgendaList>('nam', 'meetings.agenda.list');
     expect(list.events.map((e) => e.title)).toEqual(['Họp early', 'Họp late']);
+  });
+
+  it('lists the day by Vietnam time at the end of that day too: at 23:45 an event 30 minutes away is tomorrow\'s, and one earlier today is still listed (#3339, #3333)', async () => {
+    const c = await connection('nam');
+    await on('nam', c);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      // 23:45 on today's Vietnam day.
+      const base = vnDayStartMs();
+      vi.setSystemTime(new Date(base + 23.75 * 3_600_000));
+      const soon = { ...event('soon', 30), startsAt: new Date(base + 24.25 * 3_600_000).toISOString(), endsAt: new Date(base + 25.25 * 3_600_000).toISOString() };
+      await sweep(c, [todayAt('morning', 9), soon], -24 * 60);
+      expect((await query<AgendaList>('nam', 'meetings.agenda.list')).events.map((e) => e.title)).toEqual(['Họp morning']);
+      // Just after midnight the same two swap days: the morning one is yesterday's, the other is today's.
+      vi.setSystemTime(new Date(base + 24.1 * 3_600_000));
+      expect((await query<AgendaList>('nam', 'meetings.agenda.list')).events.map((e) => e.title)).toEqual(['Họp soon']);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('suggests the one event a recording overlaps within 15 minutes, and none when two do or none does; a linked meeting shows its event', async () => {

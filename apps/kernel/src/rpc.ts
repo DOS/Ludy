@@ -2678,6 +2678,7 @@ export function createRpcHandler(
     conversations: {
       list: os.conversations.list.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.list', input, { actor, orgId }))),
       counts: os.conversations.counts.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.counts', input, { actor, orgId }))),
+      postCounts: os.conversations.postCounts.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.post_counts', input, { actor, orgId }))),
       get: os.conversations.get.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.get', input, { actor, orgId }))),
       reply: os.conversations.reply.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.reply', input, { actor, orgId }))),
       replyPrivately: os.conversations.replyPrivately.handler(({ context, input }) =>
@@ -3339,6 +3340,9 @@ export function createRpcHandler(
       lines: os.bank.lines.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.bank.lines', input, { actor, orgId })),
       ),
+      platformLines: os.bank.platformLines.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.query('finance.bank.platform_lines', input, { actor, orgId })),
+      ),
       lineVoucher: os.bank.lineVoucher.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.bank.line_voucher', input, { actor, orgId })),
       ),
@@ -3673,6 +3677,7 @@ export function createRpcHandler(
       removeMember: os.projects.removeMember.handler(projectsCommand('projects.member.remove')),
       addTask: os.projects.addTask.handler(projectsCommand('projects.task.add')),
       removeTask: os.projects.removeTask.handler(projectsCommand('projects.task.remove')),
+      reorderTask: os.projects.reorderTask.handler(projectsCommand('projects.task.reorder')),
       createTask: os.projects.createTask.handler(projectsCommand('projects.task.create')),
       tasksFromNoteStatus: os.projects.tasksFromNoteStatus.handler(({ context }) =>
         inProjects(context, (orgId, actor) => tasksFromNoteStatusOf({ runtime, model: summaryModel, meter: aiMeter ?? (() => null) }, orgId, actor)),

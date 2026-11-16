@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Contract checks for project task-map limits and schemas (#2593).
 import { describe, expect, it } from 'vitest';
+import { contract } from '../src/contract.ts';
 import {
   PROJECT_TASK_MAP_LIMIT,
   isRealCalendarDate,
+  zProjectBoardInput,
   zProjectProposedTask,
   zProjectTaskProjectsInput,
+  zProjectTaskReorder,
   zProjectTasksFromNoteConfirmInput,
 } from '../src/projects.ts';
 
@@ -50,5 +53,54 @@ describe('zProjectProposedTask & confirm date check (#2598)', () => {
         items: [{ title: 'Bad date', assigneePositionId: null, dueOn: '2026-02-31' }],
       }).success,
     ).toBe(false);
+  });
+});
+
+describe('zProjectTaskReorder & zProjectBoardInput (#2610)', () => {
+  it('validates reorder input and rejects moving a task next to itself', async () => {
+    expect(
+      zProjectTaskReorder.safeParse({
+        projectId: taskId(1),
+        taskId: taskId(2),
+        place: 'before',
+        anchorId: taskId(3),
+      }).success,
+    ).toBe(true);
+    expect(
+      zProjectTaskReorder.safeParse({
+        projectId: taskId(1),
+        taskId: taskId(2),
+        place: 'after',
+        anchorId: taskId(2),
+      }).success,
+    ).toBe(false);
+    expect(
+      zProjectTaskReorder.safeParse({
+        projectId: taskId(1),
+        taskId: taskId(2),
+        place: 'top',
+        anchorId: taskId(3),
+      }).success,
+    ).toBe(false);
+    expect(
+      await contract.projects.reorderTask['~orpc'].inputSchema?.['~standard'].validate({
+        projectId: taskId(1),
+        taskId: taskId(2),
+        place: 'after',
+        anchorId: taskId(2),
+        idempotencyKey: taskId(9),
+      }),
+    ).toMatchObject({ issues: expect.any(Array) });
+  });
+
+  it('accepts optional saved-view filters and sort on board queries', () => {
+    expect(
+      zProjectBoardInput.safeParse({
+        projectId: taskId(1),
+        filters: { v: 1, all: [{ field: 'tainted', op: 'is', value: true }] },
+        sort: { field: 'due', dir: 'asc' },
+      }).success,
+    ).toBe(true);
+    expect(zProjectBoardInput.safeParse({ projectId: taskId(1), sort: null }).success).toBe(true);
   });
 });

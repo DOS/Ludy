@@ -199,6 +199,27 @@ export const zBankLines = z.object({
 });
 export type BankLines = z.infer<typeof zBankLines>;
 
+// The most lines finance.bank.platform_lines returns for a range; a fuller answer says `truncated`.
+export const BANK_PLATFORM_LINES_LIMIT = 500;
+// The statement lines of all of a legal entity's bank and card accounts in a range whose description names one of the
+// given names (an ad platform's, slice D2 of Ads), newest first: the line, the account it is on and what became of it.
+export const zBankPlatformLines = z.object({
+  from: zLocalDate,
+  to: zLocalDate,
+  lines: z.array(
+    z.object({
+      id: zId,
+      bankAccount: z.string(),
+      date: zLocalDate,
+      description: z.string(),
+      amount: zMoney,
+      state: zBankLineState,
+    }),
+  ),
+  truncated: z.boolean(),
+});
+export type BankPlatformLines = z.infer<typeof zBankPlatformLines>;
+
 export const zBankLineCandidate = z.object({
   party: z.object({ id: zId, name: z.string(), taxCode: z.string().nullable() }),
   reason: z.enum(BANK_MATCH_REASONS),

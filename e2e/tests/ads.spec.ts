@@ -180,6 +180,26 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
     await expect(books.getByRole('cell', { name: /Chưa có chứng từ/ }).first()).toBeVisible();
   });
 
+  await test.step('the bank and card lines that paid the platform are listed under the months, and a month with none says so (slice D2)', async () => {
+    const lines = page.getByRole('group', { name: 'Dòng ngân hàng và thẻ đã trả cho nền tảng' });
+    await expect(lines).toBeVisible();
+    await expect(lines.getByText('Chưa có dòng ngân hàng hay thẻ nào').first()).toBeVisible();
+    await expect(lines.getByText(/\d+ dòng, đã trả/)).toHaveCount(0);
+    // A statement line on a bank account of the entity naming the platform, dated today, written as the superuser like the other seeds.
+    exec(
+      `INSERT INTO crove_finance.bank_line (org_id, bank_account, import_id, position, value_date, description, amount, legal_entity_id)
+       SELECT t.org_id, '1121', gen_random_uuid(), 1, (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, 'THE VISA SANDBOX ADS 0042', -300000, a.legal_entity_id
+       FROM crove_ads.ad_account a JOIN crove_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug'`,
+      { slug },
+    );
+    await page.reload();
+    await expect(lines.getByText(/^1 dòng, đã trả/)).toHaveCount(1);
+    await lines.getByText(/^1 dòng, đã trả/).click();
+    // The router writes a digits-only account in quotes (account=%221121%22), which the bank screen reads back as the string.
+    await expect(lines.getByRole('link', { name: 'THE VISA SANDBOX ADS 0042' })).toHaveAttribute('href', new RegExp(`/o/${slug}/bank\\?account=(%22)?1121(%22)?&month=\\d{4}-\\d{2}$`));
+    await expect(lines.getByText('Chưa có dòng ngân hàng hay thẻ nào').first()).toBeVisible();
+  });
+
   await test.step('the screen passes an axe scan with data, at desktop and phone width, in both themes', async () => {
     expect(await problemsOf(page, page.url())).toEqual([]);
     await page.setViewportSize({ width: 1280, height: 720 });

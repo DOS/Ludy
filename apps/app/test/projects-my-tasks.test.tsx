@@ -476,5 +476,11 @@ describe('TasksPage P3 SSR (#2593)', () => {
     const lastTaskProjectInput = queryClientState.taskProjectQueries.at(-1);
     expect(lastTaskProjectInput?.taskIds).toHaveLength(PROJECT_TASK_MAP_LIMIT);
     expect(zProjectTaskProjectsInput.safeParse(lastTaskProjectInput).success).toBe(true);
+
+    const tasksFilterHtml = renderToStaticMarkup(wrap('vi', <TasksPage />));
+    expect(tasksFilterHtml).toContain('data-testid="task-filter-search"');
+    expect(tasksFilterHtml).toContain('data-testid="task-filter-tainted"');
+    expect(tasksFilterHtml).toContain('data-testid="task-filter-sort"');
+    expect(tasksFilterHtml).toContain(catalog('vi').savedViews.all);
   });
 });

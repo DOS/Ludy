@@ -21,6 +21,7 @@ import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { AdsBooksStrip } from '../components/ads-books-strip.tsx';
+import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { AdsFlagSettingsCard } from '../components/ads-flag-settings.tsx';
 import { AdsCommittedStrip } from '../components/ads-committed.tsx';
 import { AdsFlagsCard } from '../components/ads-flags.tsx';
@@ -854,6 +855,8 @@ function AccountPanel({
   const t = useTranslations('ads');
   const canManage = role === 'owner' || role === 'admin';
   const canRefresh = canManage || role === 'member';
+  // The legal entity chosen in the shell: the bank screen a line of the books strip links to opens on it.
+  const shellEntityId = useChosenEntity().legalEntityId;
   useRefetchOnRun(account);
   const ready = hasFigures(account);
   // The window moves on with the clock, an hour at a time, so a tab left open does not read yesterday's month.
@@ -905,7 +908,7 @@ function AccountPanel({
               ) : (
                 <>
                   <Breakdowns summary={summary.data} currency={currency} />
-                  <AdsBooksStrip account={account} slug={slug} months={summary.data.months} todayMonth={todayIn(account.timeZone, now).slice(0, 7)} financeOn={financeOn} />
+                  <AdsBooksStrip account={account} slug={slug} months={summary.data.months} todayMonth={todayIn(account.timeZone, now).slice(0, 7)} financeOn={financeOn} shellEntityId={shellEntityId} />
                 </>
               )}
             </>

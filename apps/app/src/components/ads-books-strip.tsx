@@ -6,13 +6,15 @@
 // never explained away. The Ads query and the Finance query are two calls composed here (plan section 7.1): the ads
 // module reads no finance table. Beside each month, a count of the recorded purchase documents (invoices, receipts) that
 // name the platform as seller (slice D1, from finance.documents.list), and for a month with spend and none, the words
-// "no document yet" with the way to the Inbox. Counts only, never an amount, a tax figure or a document written.
+// "no document yet" with the way to the Inbox. Counts only, never an amount, a tax figure or a document written. Under it,
+// the bank and card lines that paid the platform (slice D2, ads-bank-lines.tsx).
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useId } from 'react';
 import { useTranslations } from 'use-intl';
 import type { AdAccountView } from '@crove/kernel-contract';
 import { TableCell, TableRow } from '@crove/ui/components/table';
+import { AdsBankLines } from './ads-bank-lines.tsx';
 import { DataTable, TableSkeleton } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
@@ -133,8 +135,11 @@ export function AdsBooksStrip({
   months,
   todayMonth,
   financeOn,
+  shellEntityId,
 }: {
   account: Pick<AdAccountView, 'currency' | 'expenseAccountCode' | 'legalEntityId' | 'provider'>;
+  // The legal entity chosen in the shell (the bank screen opens on it).
+  shellEntityId: string | undefined;
   // The org's address, for the way to the Inbox.
   slug: string;
   months: readonly MonthSpend[];
@@ -161,6 +166,7 @@ export function AdsBooksStrip({
       ) : (
         <BooksTable account={account} slug={slug} code={code} rows={rows} todayMonth={todayMonth} />
       )}
+      {code !== null && rows.length > 0 && <AdsBankLines account={account} slug={slug} rows={rows} shellEntityId={shellEntityId} />}
     </section>
   );
 }
