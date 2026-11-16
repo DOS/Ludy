@@ -162,16 +162,38 @@ export interface QuoteSignHandoffAttempt {
   envelopeTitle?: string;
   sourceFileId?: string;
   envelopeCreateKey: string;
+  pendingCreate?: boolean;
+  priorEnvelopeId?: string | null;
   envelopeId?: string;
   signerAddKey: string;
   signerAdded?: boolean;
 }
 
-export function createQuoteSignHandoffAttempt(): QuoteSignHandoffAttempt {
+export function createQuoteSignHandoffAttempt(priorEnvelopeId: string | null = null): QuoteSignHandoffAttempt {
   return {
     envelopeCreateKey: crypto.randomUUID(),
     signerAddKey: crypto.randomUUID(),
+    priorEnvelopeId,
   };
+}
+
+export function resolveUnfinishedEnvelopeId(
+  unfinished: { key: string; envelopeId: string | null; pendingCreate: boolean; priorEnvelopeId: string | null } | null,
+  attemptKey: string,
+  envelope: Pick<SignEnvelopeBySourceItem, 'envelopeId' | 'status' | 'signerCount'> | null | undefined,
+): string | null {
+  if (!unfinished || unfinished.key !== attemptKey) return null;
+  if (unfinished.envelopeId) return unfinished.envelopeId;
+  if (
+    unfinished.pendingCreate &&
+    envelope &&
+    envelope.envelopeId !== unfinished.priorEnvelopeId &&
+    envelope.status === 'draft' &&
+    envelope.signerCount === 0
+  ) {
+    return envelope.envelopeId;
+  }
+  return null;
 }
 
 export interface QuoteSignHandoffDeps {
@@ -210,6 +232,7 @@ export async function performQuoteSignHandoff({
   try {
     if (!attempt.envelopeId) {
       attemptedCreateOrSigner = true;
+      attempt.pendingCreate = true;
       const created = await client.sign.envelope.create({
         title: attempt.envelopeTitle,
         sourceKind: 'crm_quote',
@@ -218,6 +241,7 @@ export async function performQuoteSignHandoff({
         idempotencyKey: attempt.envelopeCreateKey,
       });
       attempt.envelopeId = created.envelopeId;
+      attempt.pendingCreate = false;
     }
 
     if (!attempt.signerAdded) {
@@ -278,7 +302,12 @@ function QuoteSignHandoffView({
   // envelope creation keeps the created envelopeId and retry button alive across by_source refetch.
   const attemptKey = `${quote.id}:${quote.updatedAt ?? ''}`;
   const attemptRef = useRef<{ key: string; attempt: QuoteSignHandoffAttempt } | null>(null);
-  const [unfinished, setUnfinished] = useState<{ key: string; envelopeId: string } | null>(null);
+  const [unfinished, setUnfinished] = useState<{
+    key: string;
+    envelopeId: string | null;
+    pendingCreate: boolean;
+    priorEnvelopeId: string | null;
+  } | null>(null);
 
   const handoff = useMutation({
     mutationFn: () => {
@@ -288,7 +317,10 @@ function QuoteSignHandoffView({
           RETRYABLE_ENVELOPE_STATUSES.has(envelope.status) &&
           attemptRef.current.attempt.envelopeId === envelope.envelopeId);
       if (staleCachedAttempt || !attemptRef.current) {
-        attemptRef.current = { key: attemptKey, attempt: createQuoteSignHandoffAttempt() };
+        attemptRef.current = {
+          key: attemptKey,
+          attempt: createQuoteSignHandoffAttempt(envelope?.envelopeId ?? null),
+        };
       }
       const label = quote.number ? quoteLabel(quote) : quote.dealTitle;
       return performQuoteSignHandoff({
@@ -306,15 +338,20 @@ function QuoteSignHandoffView({
       setUnfinished(null);
     },
     onError: () => {
-      const createdId = attemptRef.current?.attempt.envelopeId;
-      if (createdId && !attemptRef.current?.attempt.signerAdded) {
-        setUnfinished({ key: attemptKey, envelopeId: createdId });
+      const cur = attemptRef.current?.attempt;
+      if (cur && !cur.signerAdded && (cur.envelopeId || cur.pendingCreate)) {
+        setUnfinished({
+          key: attemptKey,
+          envelopeId: cur.envelopeId ?? null,
+          pendingCreate: Boolean(cur.pendingCreate),
+          priorEnvelopeId: cur.priorEnvelopeId ?? null,
+        });
       }
     },
   });
 
   const unfinishedEnvelopeId =
-    externalUnfinishedId ?? (unfinished?.key === attemptKey ? unfinished.envelopeId : null);
+    externalUnfinishedId ?? resolveUnfinishedEnvelopeId(unfinished, attemptKey, envelope);
   const showButton = canEdit && !envelopeLoading && canStartQuoteSignHandoff(quote, envelope, unfinishedEnvelopeId);
   const statusText = envelope ? t(stale ? 'status.stale' : `status.${envelope.status}`) : null;
 

@@ -161,6 +161,7 @@ const {
   createQuoteSignHandoffAttempt,
   isDraftSignEnvelopeStale,
   performQuoteSignHandoff,
+  resolveUnfinishedEnvelopeId,
   signEnvelopePollMs,
 } = await import('../src/components/quote-sign-handoff.tsx');
 
@@ -584,15 +585,27 @@ describe('Engage quote -> eSign handoff (#3512)', () => {
     // Edited draft + sent-after-draft-eSign both allow creating a fresh envelope; valid accepted quote does not.
     expect(staleHtml.split('data-testid="quote-send-esign"').length - 1).toBe(2);
 
-    // Unfinished mid-handoff recovery: when signer.add failed after envelope.create returned a draft envelope,
-    // by_source returns that draft envelope while unfinishedEnvelopeId keeps the retry button rendered.
+    // Unfinished mid-handoff recovery: both when signer.add failed after envelope.create returned
+    // an envelopeId AND when envelope.create's HTTP response was lost after server commit (pendingCreate).
     const qRetry = quoteSummary(4, { status: 'sent', sentAt: '2026-11-15T12:00:00.000Z' });
     const draftAfterCreate = envItem(qRetry.id, {
       envelopeId: 'env-unfinished-draft',
       status: 'draft',
+      signerCount: 0,
       createdAt: '2026-11-16T01:00:00.000Z',
     });
-    expect(canStartQuoteSignHandoff(qRetry, draftAfterCreate, draftAfterCreate.envelopeId)).toBe(true);
+    const pendingCreateResolvedId = resolveUnfinishedEnvelopeId(
+      {
+        key: `${qRetry.id}:${qRetry.updatedAt}`,
+        envelopeId: null,
+        pendingCreate: true,
+        priorEnvelopeId: null,
+      },
+      `${qRetry.id}:${qRetry.updatedAt}`,
+      draftAfterCreate,
+    );
+    expect(pendingCreateResolvedId).toBe(draftAfterCreate.envelopeId);
+    expect(canStartQuoteSignHandoff(qRetry, draftAfterCreate, pendingCreateResolvedId)).toBe(true);
     expect(canStartQuoteSignHandoff(qRetry, draftAfterCreate, null)).toBe(false);
     setActiveLocale('vi');
     const retryHtml = renderToStaticMarkup(
