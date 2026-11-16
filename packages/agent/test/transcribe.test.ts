@@ -527,10 +527,26 @@ describe('the term list (#3499)', () => {
     for (const term of kept) expect(Array.from(term).length).toBeLessThanOrEqual(TERM_CHARS_MAX);
   });
 
+  it('removes invisible text and sees through look-alike characters, and pins the exact limits', () => {
+    // Zero width, word joiner, a C1 control and Unicode tag characters (invisible text) are removed; a name that was only those is gone.
+    const tags = String.fromCodePoint(0xe0069, 0xe0067, 0xe006e);
+    expect(normalizeTerms(['La\u200bn', 'Ha\u2060 Na', `Minh${tags}`, 'Tu\u0085an', `${tags}\u200b`])).toEqual(['Lan', 'Ha Na', 'Minh', 'Tuan']);
+    // A fullwidth "@" or "." is the character it imitates.
+    expect(normalizeTerms(['lan\uff20example.vn', 'ｗｗｗ\uff0eexample\uff0evn', 'ｈｔｔｐｓ：／／example'])).toEqual([]);
+    // Four digits are allowed, five are not; exactly 40 characters are allowed, 41 are not.
+    expect(normalizeTerms(['Phòng 1234', 'Phòng 12345', 'A'.repeat(40), 'A'.repeat(41)])).toEqual(['Phòng 1234', 'A'.repeat(40)]);
+    // 1,000 characters in all: 23 names of 40 characters and one of 34 make 966 + 34 = 1000 with the separators and fit exactly; one character more does not.
+    const full = [...Array.from({ length: 23 }, (_, i) => `${'N'.repeat(37)}${String(i).padStart(3, '0')}`), 'M'.repeat(34)];
+    expect(normalizeTerms(full).join(', ').length).toBe(1000);
+    expect(normalizeTerms(full)).toHaveLength(24);
+    expect(normalizeTerms([...full.slice(0, 23), 'M'.repeat(35)])).toHaveLength(23);
+  });
+
   it('sends the names as the prompt field in the transcription mode, and no prompt field without names', async () => {
     const withNames = fakeProvider([{ body: { text: '' } }]);
     await run(withNames.config, { ...chunk(0), terms: ['Nguyễn Văn A', 'Công ty ABC', '0912 345 678', 'lan@example.vn'] });
-    expect(withNames.seen[0]!.fields.prompt).toBe('Nguyễn Văn A, Công ty ABC');
+    // The most important name (the first) goes last: such servers keep the end of a long prompt.
+    expect(withNames.seen[0]!.fields.prompt).toBe('Công ty ABC, Nguyễn Văn A');
     expect(Object.keys(withNames.seen[0]!.fields).sort()).toEqual(['language', 'model', 'prompt', 'response_format', 'temperature']);
     // Nothing usable left after cleaning: the request is what it was.
     for (const terms of [undefined, [], ['0912 345 678', 'lan@example.vn']] as const) {

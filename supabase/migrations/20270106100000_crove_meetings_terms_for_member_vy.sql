@@ -67,7 +67,8 @@ BEGIN
       OR (k.kind = 'person' AND c.kind = 'organization' AND c.id = k.company_id)
     )
   )
-  SELECT n.term FROM names n WHERE n.term IS NOT NULL ORDER BY n.rank, n.sort_key LIMIT 200;
+  -- 'Đã xóa theo yêu cầu' is ERASED_PARTY_NAME (packages/kernel/src/personal-data.ts), the name an erased party keeps: not a name to spell.
+  SELECT n.term FROM names n WHERE n.term IS NOT NULL AND n.term <> 'Đã xóa theo yêu cầu' ORDER BY n.rank, n.sort_key LIMIT 200;
 END;
 $$;
 REVOKE ALL ON FUNCTION crove_meetings.terms_for_member_vy(uuid, uuid) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;

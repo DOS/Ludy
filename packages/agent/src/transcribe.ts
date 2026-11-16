@@ -109,9 +109,10 @@ export const TERMS_CHARS_MAX = 1000;
 // A term holding this many digits is a phone number, a tax code or an amount that sits in a name field, never a name.
 const TERM_DIGITS_MAX = 4;
 
-// The names a provider may be sent for one meeting, from names a person typed (so hostile until proven otherwise): trimmed, control characters, bidirectional overrides
-// and newlines gone, one space between words, in Unicode form C, each kept once whatever its case, in the order given, up to the limits above. Left out: anything that is not a
-// string, empty text, a term past TERM_CHARS_MAX, a term with no letter, a term that looks like an email address or a web address, and a term with more than TERM_DIGITS_MAX digits.
+// The names a provider may be sent for one meeting, from names a person typed (so hostile until proven otherwise): trimmed, control and format characters (bidirectional
+// overrides, zero width and tag characters included) and newlines gone, one space between words, in Unicode form C, each kept once whatever its case, in the order given, up to the limits above. Left out: anything that is not a
+// string, empty text, a term past TERM_CHARS_MAX, a term with no letter, a term that looks like an email address or a web address, and a term with more than TERM_DIGITS_MAX digits
+// (a heuristic for a number typed into a name field: the guarantee that no phone number, tax code or amount is sent is the columns the kernel reads, which hold names).
 // What is left is still text a person wrote, so it travels as data (see the two modes below), never as an instruction.
 export function normalizeTerms(raw: readonly unknown[] | null | undefined): string[] {
   const out: string[] = [];
@@ -121,9 +122,12 @@ export function normalizeTerms(raw: readonly unknown[] | null | undefined): stri
     if (typeof item !== 'string') continue;
     // A long string is refused before it is looked at: 10,000 characters of name is never a name.
     if (item.length > TERM_CHARS_MAX * 4) continue;
-    const term = tidy(item).normalize('NFC');
+    // Beyond the controls tidy drops: the format characters (zero width, bidirectional marks, the Unicode tag characters that can hide text) and the C1 controls.
+    const term = tidy(item).replace(/[\p{Cf}\p{Cc}]/gu, '').replace(/\s+/g, ' ').trim().normalize('NFC');
     if (term === '' || Array.from(term).length > TERM_CHARS_MAX) continue;
-    if (!/\p{L}/u.test(term) || term.includes('@') || /:\/\/|www\./i.test(term)) continue;
+    // The address checks look at the compatibility form, so a fullwidth "＠" or "．" is seen as the character it imitates.
+    const folded = term.normalize('NFKC');
+    if (!/\p{L}/u.test(term) || folded.includes('@') || /:\/\/|www\./i.test(folded)) continue;
     if ((term.match(/\p{Nd}/gu) ?? []).length > TERM_DIGITS_MAX) continue;
     const key = term.toLocaleLowerCase('vi');
     if (seen.has(key)) continue;
@@ -261,7 +265,7 @@ export function withoutTrailingSlashes(address: string): string {
 const EXTENSIONS: Record<string, string> = { 'audio/ogg': 'ogg', 'audio/opus': 'opus', 'audio/webm': 'webm', 'audio/mpeg': 'mp3', 'audio/mp4': 'm4a', 'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/flac': 'flac' };
 
 // The file name the provider is sent (ADR-0047 point 5): `audio.<extension of the type>`, never a name from the meeting, the
-// recorder or the file. The provider gets the audio and the language hint, nothing else.
+// recorder or the file. The provider gets the audio, the language hint and, only when there are names to send, the term list (#3499); never a file name of its own.
 export function neutralFileName(mimeType: string): string {
   return `audio.${EXTENSIONS[mimeType.split(';')[0]!.trim().toLowerCase()] ?? 'bin'}`;
 }
@@ -399,7 +403,8 @@ async function transcribeAudio(config: TranscribeConfig, input: TranscribeInput)
   form.set('response_format', 'verbose_json');
   form.set('temperature', '0');
   // The prompt field is the names and nothing else, set only when there are some.
-  if (terms.length > 0) form.set('prompt', terms.join(', '));
+  // Whisper-class servers keep the last part of a long prompt, so the most important names (the recorder's and the attendees', first in the list) go last.
+  if (terms.length > 0) form.set('prompt', [...terms].reverse().join(', '));
   const raw = await postJson(config, `${base}/audio/transcriptions`, form, {});
   return { segments: parseTranscription(raw, options), usage };
 }
