@@ -147,25 +147,6 @@ export const publishingRelease = defineCommand({
   },
 });
 
-// Social switched back on (ADR-0053 section 4, C3c): scheduled variants whose time passed more than an hour before are not published by the next sweep, as a release of
-// a hold does not publish them. They fail with HELD_TOO_LONG, where a person publishes one now, edits it or cancels it. The worker's relay runs it for
-// `kernel.org.apps_changed` (Social, enabled). With a hold live it does nothing: the hold's release fails them then. A variant in a paused queue is left to its queue.
-export const publishingResume = defineCommand({
-  name: 'social.publishing.resume',
-  input: z.strictObject({}),
-  risk: 'R1',
-  sideEffect: 'internal',
-  access: 'system',
-  handler: async (ctx): Promise<{ heldTooLong: number; held: boolean }> => {
-    if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới thực hiện được việc này');
-    await lockHolds(ctx);
-    if (await liveHold(ctx.trx, ctx.orgId)) return { heldTooLong: 0, held: true };
-    const heldTooLong = await failStale(ctx);
-    if (heldTooLong > 0) ctx.audit({ held_too_long: heldTooLong, resumed: true });
-    return { heldTooLong, held: false };
-  },
-});
-
 export interface PublishHoldView {
   held: boolean;
   hold: { id: string; reason: string; heldBy: string; heldByName: string | null; heldAt: string } | null;
@@ -187,5 +168,5 @@ export const publishingHoldGet = defineQuery({
   },
 });
 
-export const publishHoldCommands = [publishingHold, publishingRelease, publishingResume];
+export const publishHoldCommands = [publishingHold, publishingRelease];
 export const publishHoldQueries = [publishingHoldGet];

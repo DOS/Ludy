@@ -13179,7 +13179,6 @@ export const vi = {
         hold: 'Tạm dừng mọi bài đăng',
         hold_get: 'Xem tình trạng tạm dừng đăng',
         release: 'Tiếp tục đăng bài',
-        resume: 'Xử lý bài trễ giờ khi bật lại ứng dụng',
       },
       push: {
         devices: 'Xem thiết bị nhận thông báo',
