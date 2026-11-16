@@ -35,9 +35,8 @@ import {
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { projectsManifest } from './manifest.ts';
-import { projectsToday } from './today.ts';
 
-const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
+export const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 
 const TABLES = projectsManifest.tables;
@@ -63,7 +62,7 @@ interface MemberProfile {
   email: string | null;
 }
 
-function userOf(actor: QueryContext['actor']): string {
+export function userOf(actor: QueryContext['actor']): string {
   if (actor.type !== 'user') {
     throw new DomainError('FORBIDDEN', 403, 'Chỉ thành viên mới thực hiện được việc này');
   }
@@ -101,7 +100,7 @@ function assertNotArchived(row: ProjectRow): void {
   }
 }
 
-async function loadProject(trx: Trx, orgId: string, projectId: string, lock: boolean): Promise<ProjectRow> {
+export async function loadProject(trx: Trx, orgId: string, projectId: string, lock: boolean): Promise<ProjectRow> {
   let q = trx
     .selectFrom('crove_projects.project')
     .select(['id', 'name', 'description', 'owner_user_id', 'status', 'created_by', 'created_at', 'updated_at'])
@@ -995,5 +994,3 @@ export const projectsCommands = [
   projectTaskRemove,
   projectTaskCreate,
 ];
-
-export const projectsQueries = [projectList, projectGet, projectBoard, projectUnassignedTasks, projectTaskProjects, projectsToday];

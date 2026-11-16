@@ -33,6 +33,7 @@ export * from './translation-model.ts';
 export * from './ask-model.ts';
 export * from './today.ts';
 export * from './weekly.ts';
+export * from './project-weekly-status.ts';
 export * from './transcribe.ts';
 export * from './transcribe-eval.ts';
 
