@@ -23,4 +23,5 @@ export const MEMBER_VY_FEATURE_TABLE = {
   // member's own search found, the member waiting for it. Its own key, so it never cuts off a transcription, a summary, a translation or live notes (#3029); the run's result row holds counts only.
   'meetings.ask': { module: 'meetings', expiryMinutes: 30 },
   'projects.tasks_from_note': { module: 'projects', expiryMinutes: 30 },
+  'projects.tasks_from_source': { module: 'projects', expiryMinutes: 30 },
 } as const;

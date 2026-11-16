@@ -262,7 +262,7 @@ export const meetingMediaRecord = defineCommand({
       throw new DomainError('INVALID_STORAGE_KEY', 400, 'Storage key must match org and sha256');
     }
 
-    const { fileId, liveChunksDiscarded } = await recordSealedMedia(ctx, { userId, meetingId: input.meetingId, audioRetentionDay: meeting.audio_retention_day, input });
+    const { fileId, liveChunksDiscarded, replaced } = await recordSealedMedia(ctx, { userId, meetingId: input.meetingId, audioRetentionDay: meeting.audio_retention_day, joinedFromPieces: false, input });
 
     // A recording that stopped without the recorder's click (A1, #3159): the reason code stays on the meeting, once (with the first media, which is also what
     // recordSealedMedia ends the meeting's recording on, #3205), so it can say "Ghi âm đã dừng lúc ...". A code, never text. The stop reason is this command's
@@ -278,7 +278,7 @@ export const meetingMediaRecord = defineCommand({
         .execute();
     }
 
-    ctx.audit({ meetingId: input.meetingId, kind: input.kind, fileId, ...(input.stopReason !== undefined ? { stopReason: input.stopReason } : {}), ...(liveChunksDiscarded > 0 ? { liveChunksDiscarded } : {}) });
+    ctx.audit({ meetingId: input.meetingId, kind: input.kind, fileId, ...(input.stopReason !== undefined ? { stopReason: input.stopReason } : {}), ...(liveChunksDiscarded > 0 ? { liveChunksDiscarded } : {}), ...(replaced ? { replacedJoined: true } : {}) });
     return { fileId };
   },
 });

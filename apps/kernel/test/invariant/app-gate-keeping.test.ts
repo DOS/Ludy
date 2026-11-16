@@ -3,16 +3,10 @@
 // exact list, so a new one is a visible, reviewed addition (a change to this protected file and its security review), never a quiet one made in
 // a module. Each is a keeping duty (retention, shredding, erasure, a leaver's links, the reseal of a sealed key) or a command that only stops
 // spend, revokes a link or deletes, or a read for one, of an app; none is of kernel, which the gate never refuses.
-// Step 0 of two for slice (c) (#3310) and eSign Slice 1a (#3406 / #3323):
-// - #3310: the 11 commands that RECORD the outcome of an irreversible call a job already made (Social publish, comment, thread, remove, edit,
-//   pin, playlist, repost, auto-reply and gate; the minutes webhook post) join the list, because a switch-off between the call and its record
-//   would lose the outcome and a later retry could do the call twice.
-// - #3406 / #3323: the 2 eSign keeping commands (sign.envelope.expire_sweep, sign.org.cleanup) join the list so overdue envelopes expire and
-//   stale secrets or drafts are pruned under retention while Sign is off.
-// - #3310 (C3c): the 3 Social takedown commands that are not records (social.remove.begin, schedule and watch) join the list, because a takedown
-//   stops the exposure of a post and must still go out, or be told about, while Social is off.
-// This file accepts every sorted combination of current, RECORDS, SIGN_KEEPING and TAKEDOWN so those PRs can merge in any order; follow-up
-// tests-only PRs make the list strict once those commands declare runsWhenOff (the runtime and module PRs cannot edit this base file).
+// The list is strict: the 11 commands that RECORD the outcome of an irreversible call a job already made (#3310; a switch-off between the call
+// and its record would lose the outcome and a later retry could do the call twice), the 2 eSign keeping commands (#3406 / #3323), and the 3
+// Social takedown commands (#3310, C3c) that are not records: a takedown stops the exposure of a post, so it still goes out while Social is off
+// (the record of an outcome is kept, and the notice of a failed one waits for the app, #3456).
 // Part of the invariant suite: CI runs this file from the base branch on protected-path PRs (AGENTS.md).
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../../src/config.ts';
@@ -23,7 +17,7 @@ const { commands, queries } = moduleDefinitions(config);
 const named = (defs: readonly { name: string; runsWhenOff?: string }[]) => defs.filter((d) => d.runsWhenOff !== undefined).map((d) => d.name).sort();
 
 describe('definitions that run while their app is off for an org (ADR-0053)', () => {
-  // The commands that record the outcome of an external write already made, which join the list in slice (c).
+  // The commands that record the outcome of an external write already made (slice c).
   const RECORDS = [
     'meetings.hook.record',
     'social.auto_reply.record',
@@ -38,13 +32,13 @@ describe('definitions that run while their app is off for an org (ADR-0053)', ()
     'social.thread.record',
   ];
 
-  // The eSign keeping commands that run while Sign is off (#3323), joining in Slice 1a (step 0 before #3323 declares runsWhenOff).
+  // The eSign keeping commands that run while Sign is off (#3323).
   const SIGN_KEEPING = ['sign.envelope.expire_sweep', 'sign.org.cleanup'];
 
   // The Social takedown commands that run while Social is off (C3c): a takedown stops exposure, so it is never refused for an app that is off.
   const TAKEDOWN = ['social.remove.begin', 'social.remove.schedule', 'social.remove.watch'];
 
-  it('are exactly these commands, with or without external write records, eSign keeping commands and the takedown commands (step 0)', () => {
+  it('are exactly these commands', () => {
     const current = [
       'ads.account.delete_history',
       'ads.account.disable_write',
@@ -79,10 +73,7 @@ describe('definitions that run while their app is off for an org (ADR-0053)', ()
       'social.report_link.revoke',
       'social.review_link.revoke',
     ].sort();
-    const got = named(commands);
-    const groups = [RECORDS, SIGN_KEEPING, TAKEDOWN];
-    const accepted = Array.from({ length: 2 ** groups.length }, (_, mask) => [...current, ...groups.flatMap((g, i) => (mask & (1 << i) ? g : []))].sort());
-    expect(accepted).toContainEqual(got);
+    expect(named(commands)).toEqual([...current, ...RECORDS, ...SIGN_KEEPING, ...TAKEDOWN].sort());
   });
 
   it('are exactly these queries', () => {

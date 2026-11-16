@@ -3,9 +3,10 @@
 // service, so memory is the member's own rows of crove_kernel.member_vy_memory, read and written only through the member's own commands, in the
 // member's own user context. Asking about anyone else is refused before a command is run, and the database would refuse it anyway (the
 // restrictive policy shows a member their own rows only). Knowledge has no declared queries yet: a feature that asks gets no passages.
-import { ASK_TIMEOUT_MS, AiBudgetExhaustedError, AskModelError, SUMMARY_TIMEOUT_MS, SummaryModelError, TASKS_FROM_NOTE_TIMEOUT_MS, TasksFromNoteModelError, TranslationModelError, aiCost, generateMeetingAskText, generateMeetingSummaryText, generateMeetingTranslationText, generateTasksFromNoteText, withAiScope, type AiConfig, type AiMeter } from '@crove/agent';
-import { TASKS_FROM_NOTE_LIMITS, AskError, SummaryError, TasksFromNoteError, TranslationError, askAcrossMeetings, bindPorts, noKnowledge, privateText, proposeTasksFromNote, revealPrivateText, enhanceNotes, summarizeMeeting, translateSummary, translateTranscriptChunk, planTranscriptChunks, chunkExpectedUsage, lineHash, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type Ports } from '@crove/agent/member-vy';
-import { ASK_ESTIMATE, ASK_HITS_MAX, DEFAULT_TIME_ZONE, zTranscriptTranslationResult, zonedDate, templateSections, type AskAnswer, type AskLines, type AskStatus, type LiveNotesDone, type LiveNotesInput, type MeetingSummaryTemplate, type Note, type ProjectSeat, type ProjectTasksFromNoteInput, type ProjectTasksFromNoteResult, type ProjectTasksFromNoteStatus, type Summarized, type Transcript, type TranscriptSource, type TranscriptStarted, type TranscriptTranslated, type TranscriptTranslationStatus, type Translated, type TranslationSource, type TranslationStatus } from '@crove/kernel-contract';
+import { ASK_TIMEOUT_MS, AiBudgetExhaustedError, AskModelError, SUMMARY_TIMEOUT_MS, SummaryModelError, TASKS_FROM_NOTE_TIMEOUT_MS, TasksFromNoteModelError, TranslationModelError, aiCost, generateMeetingAskText, generateMeetingSummaryText, generateMeetingTranslationText, generateTasksFromNoteText, generateTasksFromSourceText, withAiScope, type AiConfig, type AiMeter } from '@crove/agent';
+import { TASKS_FROM_NOTE_LIMITS, AskError, SummaryError, TasksFromNoteError, TasksFromSourceError, TranslationError, askAcrossMeetings, bindPorts, noKnowledge, privateText, proposeTasksFromNote, proposeTasksFromSource, revealPrivateText, enhanceNotes, summarizeMeeting, translateSummary, translateTranscriptChunk, planTranscriptChunks, chunkExpectedUsage, lineHash, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type Ports, type TaskSourceKind } from '@crove/agent/member-vy';
+import { ASK_ESTIMATE, ASK_HITS_MAX, DEFAULT_TIME_ZONE, zTranscriptTranslationResult, zonedDate, templateSections, type AskAnswer, type AskLines, type AskStatus, type LiveNotesDone, type LiveNotesInput, type MeetingSummaryTemplate, type Note, type ProjectSeat, type ProjectTaskSourceType, type ProjectTasksFromNoteInput, type ProjectTasksFromNoteResult, type ProjectTasksFromNoteStatus, type ProjectTasksFromSourceInput, type ProjectTasksFromSourceResult, type ProjectTasksFromSourceStatus, type Summarized, type Transcript, type TranscriptSource, type TranscriptStarted, type TranscriptTranslated, type TranscriptTranslationStatus, type Translated, type TranslationSource, type TranslationStatus } from '@crove/kernel-contract';
+import { readTasksFromSourceData, type SourceQueryFn } from '@crove/mod-projects';
 import { Decimal } from '@crove/l10n-vn';
 import { DomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import type { DraftBudget } from './ai-draft-limit.ts';
@@ -70,7 +71,9 @@ export function summaryModelPort(config: AiConfig, timeoutMs: number = SUMMARY_T
           ? generateMeetingAskText(config, prompt, Math.min(timeoutMs, ASK_TIMEOUT_MS))
           : prompt.feature === 'projects.tasks_from_note'
             ? generateTasksFromNoteText(config, prompt, Math.min(timeoutMs, TASKS_FROM_NOTE_TIMEOUT_MS))
-            : generateMeetingSummaryText(config, prompt, timeoutMs),
+            : prompt.feature === 'projects.tasks_from_source'
+              ? generateTasksFromSourceText(config, prompt, Math.min(timeoutMs, TASKS_FROM_NOTE_TIMEOUT_MS))
+              : generateMeetingSummaryText(config, prompt, timeoutMs),
   };
 }
 
@@ -85,6 +88,7 @@ function codeOf(error: unknown): string {
   if (error instanceof AskError) return error.code;
   if (error instanceof AskModelError) return error.kind === 'timeout' ? 'ASK_TIMEOUT' : 'ASK_FAILED';
   if (error instanceof TasksFromNoteError) return error.code;
+  if (error instanceof TasksFromSourceError) return error.code;
   if (error instanceof TasksFromNoteModelError) return error.kind === 'timeout' ? 'PROPOSAL_TIMEOUT' : 'PROPOSAL_FAILED';
   return 'SUMMARY_FAILED';
 }
@@ -96,6 +100,7 @@ function askCodeOf(error: unknown): string {
 }
 
 function tasksFromNoteCodeOf(error: unknown): string {
+  if (error instanceof DomainError) return error.code;
   if (error instanceof SummaryModelError && error.kind === 'timeout') return 'PROPOSAL_TIMEOUT';
   const code = codeOf(error);
   return code === 'SUMMARY_FAILED' ? 'PROPOSAL_FAILED' : code;
@@ -628,37 +633,50 @@ export async function runTranscriptTranslation(deps: TranscriptTranslationDeps, 
   }
 }
 
-export async function tasksFromNoteStatusOf(
+async function proposalStatusOf(
   deps: Pick<MeetingSummaryDeps, 'runtime' | 'model' | 'meter'>,
+  queryName: string,
   orgId: string,
   actor: UserActor,
 ): Promise<ProjectTasksFromNoteStatus> {
-  const status = await deps.runtime.query<ProjectTasksFromNoteStatus>('projects.tasks_from_note.status', {}, { actor, orgId });
+  const status = await deps.runtime.query<ProjectTasksFromNoteStatus>(queryName, {}, { actor, orgId });
   if (status.available && (!deps.model || !deps.meter(actor))) {
     return { available: false, reason: 'off', resetOn: null };
   }
   return status;
 }
 
-// Member-scoped Vy task proposal from a readable note into a writable project (#2598, ADR-0048, ADR-0049):
-// checks status (vy.use, kill switches, budget), starts a run via projects.tasks_from_note.start, calls model once
-// outside any transaction with nonce-tagged subject and allowed project-member seats only, stores sealed result in
-// member_vy_result (private_read = true), and returns sanitized proposals to the asking member only.
-export async function runProjectsTasksFromNote(
+export function tasksFromNoteStatusOf(
+  deps: Pick<MeetingSummaryDeps, 'runtime' | 'model' | 'meter'>,
+  orgId: string,
+  actor: UserActor,
+): Promise<ProjectTasksFromNoteStatus> {
+  return proposalStatusOf(deps, 'projects.tasks_from_note.status', orgId, actor);
+}
+
+export function tasksFromSourceStatusOf(
+  deps: Pick<MeetingSummaryDeps, 'runtime' | 'model' | 'meter'>,
+  orgId: string,
+  actor: UserActor,
+): Promise<ProjectTasksFromSourceStatus> {
+  return proposalStatusOf(deps, 'projects.tasks_from_source.status', orgId, actor);
+}
+
+async function assertProposalReady(
   deps: MeetingSummaryDeps,
   orgId: string,
   actor: UserActor,
-  input: ProjectTasksFromNoteInput,
-): Promise<ProjectTasksFromNoteResult> {
+  statusQuery: string,
+) {
   const as = { actor, orgId };
   const timeoutMs = deps.timeoutMs ?? TASKS_FROM_NOTE_TIMEOUT_MS;
   const model = deps.model;
   const meter = deps.meter(actor);
 
-  const status = await deps.runtime.query<ProjectTasksFromNoteStatus>('projects.tasks_from_note.status', {}, as);
+  const status = await deps.runtime.query<ProjectTasksFromNoteStatus>(statusQuery, {}, as);
   if (!model || !meter || !status.available) {
     if (!model || !meter || status.reason === 'off') {
-      throw new DomainError('AI_OFF', 422, 'Tính năng Vy đề xuất việc từ ghi chú chưa được bật');
+      throw new DomainError('AI_OFF', 422, 'Tính năng Vy đề xuất việc chưa được bật');
     }
     if (status.reason === 'forbidden') {
       throw new DomainError('VY_NOT_ALLOWED', 403, 'Bạn chưa được phép làm việc với Vy');
@@ -675,6 +693,133 @@ export async function runProjectsTasksFromNote(
       retryAfterSeconds: ticket.retryAfterSeconds,
     });
   }
+
+  return { as, timeoutMs, model, meter, ticket };
+}
+
+type ProposalRunOutcome = {
+  state: 'ready' | 'failed';
+  runId: string;
+  proposals: Awaited<ReturnType<typeof proposeTasksFromNote>>['proposals'];
+  dropped: number;
+  errorCode: string | null;
+};
+
+async function executeAndStoreProposalRun(params: {
+  runtime: Runtime;
+  as: { actor: UserActor; orgId: string };
+  runId: string;
+  timeoutMs: number;
+  meter: AiMeter;
+  logPrefix: string;
+  auditMeta: Record<string, unknown>;
+  sourceRevision: number;
+  runModel: () => Promise<Awaited<ReturnType<typeof proposeTasksFromNote>>>;
+  verifyBeforeReturn?: () => Promise<void>;
+}): Promise<ProposalRunOutcome> {
+  const fail = async (errorCode: string): Promise<ProposalRunOutcome> => {
+    try {
+      await params.runtime.execute(
+        'kernel.member_vy.result.store',
+        { runId: params.runId, outcome: { status: 'failed', errorCode } },
+        params.as,
+      );
+    } catch (storeError: unknown) {
+      console.error(`${params.logPrefix} failed result not stored: ${tasksFromNoteCodeOf(storeError)}`);
+    }
+    console.error(`${params.logPrefix} run failed: ${errorCode}`);
+    return { state: 'failed', runId: params.runId, proposals: [], dropped: 0, errorCode };
+  };
+
+  let result: Awaited<ReturnType<typeof proposeTasksFromNote>>;
+  try {
+    result = await withDeadline(
+      withAiScope({ orgId: params.as.orgId, memberRunId: params.runId, meter: params.meter }, params.runModel),
+      params.timeoutMs,
+    );
+    // Re-verify caller access and source liveness before storing/returning any proposal in case the source was deleted or revoked mid-run.
+    if (params.verifyBeforeReturn) {
+      await params.verifyBeforeReturn();
+    }
+  } catch (error: unknown) {
+    return await fail(tasksFromNoteCodeOf(error));
+  }
+
+  // Store counts and identifiers only (never source text or proposed titles) in member_vy_result.
+  const body = JSON.stringify({
+    v: 1,
+    ...params.auditMeta,
+    proposals: result.proposals.length,
+    dropped: result.dropped,
+  });
+  let stored: { stored: boolean; status: 'ready' | 'failed' };
+  try {
+    stored = await params.runtime.execute<{ stored: boolean; status: 'ready' | 'failed' }>(
+      'kernel.member_vy.result.store',
+      { runId: params.runId, outcome: { status: 'ready', body, sourceRevision: params.sourceRevision } },
+      params.as,
+    );
+  } catch (error: unknown) {
+    if (error instanceof DomainError && error.code === 'VY_RUN_NOT_LIVE') {
+      return { state: 'failed', runId: params.runId, proposals: [], dropped: 0, errorCode: 'AI_STOPPED' };
+    }
+    return await fail(tasksFromNoteCodeOf(error));
+  }
+
+  if (stored.status === 'failed') {
+    console.error(`${params.logPrefix} run failed: AI_STOPPED`);
+    return { state: 'failed', runId: params.runId, proposals: [], dropped: 0, errorCode: 'AI_STOPPED' };
+  }
+
+  return { state: 'ready', runId: params.runId, proposals: result.proposals, dropped: result.dropped, errorCode: null };
+}
+
+function runtimeQueryFn(runtime: Runtime, as: { actor: UserActor; orgId: string }): SourceQueryFn {
+  return async <T>(name: string, input: Record<string, unknown>) => {
+    // Check deployment-level module registration (CROVE_MODULES) before Runtime.query to avoid QUERY_NOT_FOUND.
+    if (name.startsWith('notes.') && !runtime.installed('notes')) return { status: 'not_installed' as const };
+    if (name.startsWith('meetings.') && !runtime.installed('meetings')) return { status: 'not_installed' as const };
+    try {
+      return { status: 'ok' as const, value: await runtime.query<T>(name, input, as) };
+    } catch (error: unknown) {
+      if (error instanceof DomainError && error.code === 'MODULE_OFF') {
+        return { status: 'not_installed' as const };
+      }
+      throw error;
+    }
+  };
+}
+
+function seatOptionsOf(seats: readonly ProjectSeat[]) {
+  return seats.map((s) => ({
+    positionId: s.id,
+    positionTitle: s.title,
+    holderName: s.holder?.type === 'user' ? (s.holder.displayName ?? s.holder.email) : null,
+  }));
+}
+
+const SOURCE_KIND_MAP: Record<ProjectTaskSourceType, TaskSourceKind> = {
+  'notes.note': 'note',
+  'meetings.meeting': 'meeting',
+  'kernel.conversation': 'conversation',
+};
+
+// Member-scoped Vy task proposal from a readable note into a writable project (#2598, ADR-0048, ADR-0049):
+// checks status (vy.use, kill switches, budget), starts a run via projects.tasks_from_note.start, calls model once
+// outside any transaction with nonce-tagged subject and allowed project-member seats only, stores sealed result in
+// member_vy_result (private_read = true), and returns sanitized proposals to the asking member only.
+export async function runProjectsTasksFromNote(
+  deps: MeetingSummaryDeps,
+  orgId: string,
+  actor: UserActor,
+  input: ProjectTasksFromNoteInput,
+): Promise<ProjectTasksFromNoteResult> {
+  const { as, timeoutMs, model, meter, ticket } = await assertProposalReady(
+    deps,
+    orgId,
+    actor,
+    'projects.tasks_from_note.status',
+  );
 
   try {
     // Pre-read project seats and readable note before starting a run so missing/in-trash/oversized inputs fail cleanly
@@ -732,116 +877,183 @@ export async function runProjectsTasksFromNote(
       throw error;
     }
 
-    const runId = started.runId;
-
-    const fail = async (errorCode: string): Promise<ProjectTasksFromNoteResult> => {
-      try {
-        await deps.runtime.execute('kernel.member_vy.result.store', { runId, outcome: { status: 'failed', errorCode } }, as);
-      } catch (storeError: unknown) {
-        console.error(`[projects-tasks-from-note] failed result not stored: ${tasksFromNoteCodeOf(storeError)}`);
-      }
-      console.error(`[projects-tasks-from-note] run failed: ${errorCode}`);
-      return {
-        state: 'failed',
-        runId,
-        projectId: input.projectId,
-        projectName: seatInfo.projectName,
-        seats: seatInfo.seats,
-        proposals: [],
-        dropped: 0,
-        errorCode,
-        noteCanLink: started.noteCanLink,
-      };
-    };
-
     const today = input.today ?? zonedDate(input.timeZone ?? DEFAULT_TIME_ZONE, Date.now());
     const language = input.language ?? 'vi';
+    const ports: Ports = { model, memory: nothingToRemember, knowledge: noKnowledge };
 
-    let result: Awaited<ReturnType<typeof proposeTasksFromNote>>;
-    try {
-      const ports: Ports = { model, memory: nothingToRemember, knowledge: noKnowledge };
-      const seatOptions = seatInfo.seats.map((s) => ({
-        positionId: s.id,
-        positionTitle: s.title,
-        holderName: s.holder?.type === 'user' ? (s.holder.displayName ?? s.holder.email) : null,
-      }));
-      result = await withDeadline(
-        withAiScope({ orgId, memberRunId: runId, meter }, () =>
-          proposeTasksFromNote(
-            {
-              projectName: seatInfo.projectName,
-              noteTitle: note.title,
-              noteBody: note.body,
-              today,
-              language,
-              seats: seatOptions,
-            },
-            bindPorts({ orgId, memberUserId: actor.userId }, ports),
-          ),
+    const outcome = await executeAndStoreProposalRun({
+      runtime: deps.runtime,
+      as,
+      runId: started.runId,
+      timeoutMs,
+      meter,
+      logPrefix: '[projects-tasks-from-note]',
+      auditMeta: { projectId: input.projectId },
+      sourceRevision: note.revision,
+      runModel: () =>
+        proposeTasksFromNote(
+          {
+            projectName: seatInfo.projectName,
+            noteTitle: note.title,
+            noteBody: note.body,
+            today,
+            language,
+            seats: seatOptionsOf(seatInfo.seats),
+          },
+          bindPorts({ orgId, memberUserId: actor.userId }, ports),
         ),
-        timeoutMs,
-      );
-    } catch (error: unknown) {
-      return await fail(tasksFromNoteCodeOf(error));
-    }
-
-    // Store counts and project id only (same as meetings.ask): proposals return only to the asking caller and are never
-    // retained 30 days in member_vy_result without note-purge cleanup.
-    const body = JSON.stringify({
-      v: 1,
-      projectId: input.projectId,
-      proposals: result.proposals.length,
-      dropped: result.dropped,
+      verifyBeforeReturn: async () => {
+        await deps.runtime.query('projects.tasks_from_note.seats', { projectId: input.projectId }, as);
+        const currentNote = await deps.runtime.query<Note>('notes.note.get', { noteId: input.noteId }, as);
+        if (currentNote.deletedAt !== null) {
+          throw new DomainError('NOTE_IN_TRASH', 409, 'Ghi chú đang ở thùng rác; hãy khôi phục trước');
+        }
+      },
     });
-    let stored: { stored: boolean; status: 'ready' | 'failed' };
-    try {
-      stored = await deps.runtime.execute<{ stored: boolean; status: 'ready' | 'failed' }>(
-        'kernel.member_vy.result.store',
-        { runId, outcome: { status: 'ready', body, sourceRevision: note.revision } },
-        as,
-      );
-    } catch (error: unknown) {
-      if (error instanceof DomainError && error.code === 'VY_RUN_NOT_LIVE') {
-        return {
-          state: 'failed',
-          runId,
-          projectId: input.projectId,
-          projectName: seatInfo.projectName,
-          seats: seatInfo.seats,
-          proposals: [],
-          dropped: 0,
-          errorCode: 'AI_STOPPED',
-          noteCanLink: started.noteCanLink,
-        };
-      }
-      return await fail(tasksFromNoteCodeOf(error));
-    }
-
-    if (stored.status === 'failed') {
-      console.error('[projects-tasks-from-note] run failed: AI_STOPPED');
-      return {
-        state: 'failed',
-        runId,
-        projectId: input.projectId,
-        projectName: seatInfo.projectName,
-        seats: seatInfo.seats,
-        proposals: [],
-        dropped: 0,
-        errorCode: 'AI_STOPPED',
-        noteCanLink: started.noteCanLink,
-      };
-    }
 
     return {
-      state: 'ready',
-      runId,
+      ...outcome,
       projectId: input.projectId,
       projectName: seatInfo.projectName,
       seats: seatInfo.seats,
-      proposals: result.proposals,
-      dropped: result.dropped,
-      errorCode: null,
       noteCanLink: started.noteCanLink,
+    };
+  } finally {
+    ticket.release();
+  }
+}
+
+// Member-scoped Vy task proposal from a readable note, meeting, or conversation (#2608, ADR-0048, ADR-0049).
+export async function runProjectsTasksFromSource(
+  deps: MeetingSummaryDeps,
+  orgId: string,
+  actor: UserActor,
+  input: ProjectTasksFromSourceInput,
+): Promise<ProjectTasksFromSourceResult> {
+  const { as, timeoutMs, model, meter, ticket } = await assertProposalReady(
+    deps,
+    orgId,
+    actor,
+    'projects.tasks_from_source.status',
+  );
+
+  try {
+    const seatInfo = await deps.runtime.query<{ projectId: string; projectName: string; seats: ProjectSeat[] }>(
+      'projects.tasks_from_source.seats',
+      { projectId: input.projectId },
+      as,
+    );
+    const source = await readTasksFromSourceData(runtimeQueryFn(deps.runtime, as), {
+      sourceType: input.sourceType,
+      sourceId: input.sourceId,
+      includeContent: true,
+    });
+
+    const sourceBytes = Buffer.byteLength(source.sourceTitle, 'utf8') + Buffer.byteLength(source.sourceBody, 'utf8');
+    if (sourceBytes > TASKS_FROM_NOTE_LIMITS.sourceBytes) {
+      return {
+        state: 'failed',
+        runId: null,
+        projectId: input.projectId,
+        projectName: seatInfo.projectName,
+        sourceType: input.sourceType,
+        sourceId: input.sourceId,
+        sourceTitle: source.sourceTitle,
+        seats: seatInfo.seats,
+        proposals: [],
+        dropped: 0,
+        errorCode: 'SOURCE_TOO_LONG',
+        sourceCanLink: source.sourceCanLink,
+      };
+    }
+
+    let started: { runId: string; sourceRevision: number; sourceCanLink: boolean };
+    try {
+      started = await deps.runtime.execute<{ runId: string; sourceRevision: number; sourceCanLink: boolean }>(
+        'projects.tasks_from_source.start',
+        { projectId: input.projectId, sourceType: input.sourceType, sourceId: input.sourceId },
+        as,
+      );
+    } catch (error: unknown) {
+      if (error instanceof DomainError && (error.code === 'AI_BUDGET_EXHAUSTED' || error.code === 'VY_RUN_BUSY')) {
+        const errorCode = error.code === 'VY_RUN_BUSY' ? 'AI_BUSY' : error.code;
+        console.error(`[projects-tasks-from-source] run not started: ${errorCode}`);
+        return {
+          state: 'failed',
+          runId: null,
+          projectId: input.projectId,
+          projectName: seatInfo.projectName,
+          sourceType: input.sourceType,
+          sourceId: input.sourceId,
+          sourceTitle: source.sourceTitle,
+          seats: seatInfo.seats,
+          proposals: [],
+          dropped: 0,
+          errorCode,
+          sourceCanLink: source.sourceCanLink,
+        };
+      }
+      throw error;
+    }
+
+    const timeZone = input.timeZone ?? DEFAULT_TIME_ZONE;
+    const anchorMs = source.anchorAt ? Date.parse(source.anchorAt) : Number.NaN;
+    const today = input.today ?? zonedDate(timeZone, Number.isNaN(anchorMs) ? Date.now() : anchorMs);
+    const segments = source.segments.map((seg) => {
+      if (input.today !== undefined) {
+        return { text: seg.text, today: input.today };
+      }
+      const segMs = seg.anchorAt ? Date.parse(seg.anchorAt) : Number.NaN;
+      return {
+        text: seg.text,
+        today: Number.isNaN(segMs) ? today : zonedDate(timeZone, segMs),
+      };
+    });
+    const language = input.language ?? 'vi';
+    const ports: Ports = { model, memory: nothingToRemember, knowledge: noKnowledge };
+
+    const outcome = await executeAndStoreProposalRun({
+      runtime: deps.runtime,
+      as,
+      runId: started.runId,
+      timeoutMs,
+      meter,
+      logPrefix: '[projects-tasks-from-source]',
+      auditMeta: { projectId: input.projectId, sourceType: input.sourceType, sourceId: input.sourceId },
+      sourceRevision: started.sourceRevision,
+      runModel: () =>
+        proposeTasksFromSource(
+          {
+            sourceKind: SOURCE_KIND_MAP[input.sourceType],
+            projectName: seatInfo.projectName,
+            sourceTitle: source.sourceTitle,
+            sourceBody: source.sourceBody,
+            today,
+            segments,
+            language,
+            seats: seatOptionsOf(seatInfo.seats),
+          },
+          bindPorts({ orgId, memberUserId: actor.userId }, ports),
+        ),
+      verifyBeforeReturn: async () => {
+        await deps.runtime.query('projects.tasks_from_source.seats', { projectId: input.projectId }, as);
+        await readTasksFromSourceData(runtimeQueryFn(deps.runtime, as), {
+          sourceType: input.sourceType,
+          sourceId: input.sourceId,
+          includeContent: false,
+        });
+      },
+    });
+
+    return {
+      ...outcome,
+      projectId: input.projectId,
+      projectName: seatInfo.projectName,
+      sourceType: input.sourceType,
+      sourceId: input.sourceId,
+      sourceTitle: source.sourceTitle,
+      seats: seatInfo.seats,
+      sourceCanLink: started.sourceCanLink,
     };
   } finally {
     ticket.release();

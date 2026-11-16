@@ -191,6 +191,7 @@ export const liveAssembleRecord = defineCommand({
       userId,
       meetingId: input.meetingId,
       audioRetentionDay: facts.audioDay,
+      joinedFromPieces: true,
       input: { kind: 'audio', ...input },
     });
     // The numbers no piece holds and the ones the route left out (their key or file is gone): the recording has a gap at each.

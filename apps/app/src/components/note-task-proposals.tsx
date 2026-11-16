@@ -65,6 +65,24 @@ export function noteProposalErrorKey(code: string | null | undefined): KnownProp
   return (KNOWN_ERRORS as readonly string[]).includes(code) ? (code as (typeof KNOWN_ERRORS)[number]) : 'default';
 }
 
+const SOURCE_EXTRA_ERRORS = [
+  'SOURCE_EMPTY',
+  'SOURCE_TOO_LONG',
+  'MEETING_NOT_FOUND',
+  'CONVERSATION_NOT_FOUND',
+  'MODULE_OFF',
+] as const;
+
+export type KnownSourceProposalErrorKey = KnownProposalErrorKey | (typeof SOURCE_EXTRA_ERRORS)[number];
+
+export function sourceProposalErrorKey(code: string | null | undefined): KnownSourceProposalErrorKey {
+  if (!code) return 'default';
+  if ((SOURCE_EXTRA_ERRORS as readonly string[]).includes(code)) {
+    return code as (typeof SOURCE_EXTRA_ERRORS)[number];
+  }
+  return noteProposalErrorKey(code);
+}
+
 export function isModuleOffError(error: unknown): boolean {
   return (error as { code?: string } | null)?.code === 'MODULE_OFF';
 }
@@ -99,6 +117,15 @@ export interface BatchIdempotencyState {
   key: string;
 }
 
+export function resolveSignatureIdempotencyKey(
+  current: BatchIdempotencyState | null,
+  signature: string,
+  createKey: () => string = () => crypto.randomUUID(),
+): BatchIdempotencyState {
+  if (current && current.signature === signature) return current;
+  return { signature, key: createKey() };
+}
+
 export function resolveBatchIdempotencyKey(
   current: BatchIdempotencyState | null,
   noteId: string,
@@ -106,12 +133,10 @@ export function resolveBatchIdempotencyKey(
   items: readonly ProjectProposedTask[],
   createKey: () => string = () => crypto.randomUUID(),
 ): BatchIdempotencyState {
-  const signature = JSON.stringify({ noteId, projectId, items });
-  if (current && current.signature === signature) return current;
-  return { signature, key: createKey() };
+  return resolveSignatureIdempotencyKey(current, JSON.stringify({ noteId, projectId, items }), createKey);
 }
 
-function browserTimeZone(): string {
+export function browserTimeZone(): string {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || DEFAULT_TIME_ZONE;
   } catch {
@@ -119,7 +144,7 @@ function browserTimeZone(): string {
   }
 }
 
-function seatLabel(seat: ProjectSeat): string {
+export function seatLabel(seat: ProjectSeat): string {
   const holderName =
     seat.holder?.type === 'user'
       ? (seat.holder.displayName ?? seat.holder.email)
