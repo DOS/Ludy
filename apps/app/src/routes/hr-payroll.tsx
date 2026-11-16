@@ -716,6 +716,14 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
     mutationFn: (fingerprint: string) => client.hr.payroll.runs.approve({ runId, fingerprint, acceptFlags: accept }),
     onSuccess: refresh,
   });
+  const syncLeave = useMutation({
+    mutationFn: () => client.hr.payroll.runs.syncLeave({ runId }),
+    onSuccess: async () => {
+      setAccept(false);
+      setEditing(null);
+      await refresh();
+    },
+  });
   if (q.isPending) return <TableSkeleton columns={7} />;
   if (q.error) return <ErrorText>{errorMessage(q.error)}</ErrorText>;
   const s = q.data;
@@ -734,6 +742,9 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
         <div className="flex flex-wrap items-center gap-2">
           {draft && hasPayLines && (
             <>
+              <Button variant="outline" size="sm" loading={syncLeave.isPending} onClick={() => syncLeave.mutate()} data-testid="hr-sync-leave">
+                {t('syncLeave')}
+              </Button>
               <Button variant="outline" size="sm" onClick={() => setThirteenthOpen((v) => !v)} data-testid="hr-13th-month-toggle">
                 {t('thirteenthMonth.toggle')}
               </Button>
@@ -774,6 +785,7 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
           onClose={() => setImporting(false)}
         />
       )}
+      {syncLeave.error && <ErrorText>{errorMessage(syncLeave.error)}</ErrorText>}
       {draft && s.obstacles.includes('refused_lines') && <ErrorText>{t('refusedLines')}</ErrorText>}
       {payslip && <Payslip key={payslip} lineId={payslip} onClose={() => setPayslip(null)} />}
       {adjusting && <AdjustForm sheet={s} approvedRuns={approvedRuns} onClose={() => setAdjusting(false)} />}
@@ -834,6 +846,11 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
                     </p>
                   ))}
                   {l.refusal && <p className="mt-2 text-xs text-destructive">{l.refusal}</p>}
+                  {l.exceededAnnualDays && (
+                    <p className="mt-2 text-xs text-muted-foreground" data-testid="hr-annual-leave-exceeded">
+                      {t('annualLeaveExceededDetail', { days: l.exceededAnnualDays })}
+                    </p>
+                  )}
                   <div className="mt-3 flex flex-wrap gap-2">
                     {l.kind === 'pay' && l.status === 'calculated' && (
                       <Button variant="outline" size="sm" onClick={() => setPayslip(l.id)} data-testid="hr-payslip-open">

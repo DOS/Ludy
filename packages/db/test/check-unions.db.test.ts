@@ -137,6 +137,7 @@ import {
   HR_CONTRACT_TYPES,
   HR_PAY_FUNCTIONS,
   HR_EMPLOYEE_STATUSES,
+  HR_LEAVE_ENTRY_KINDS,
   HR_LINE_KINDS,
   HR_LINE_STATUSES,
   HR_RUN_STATUSES,
@@ -236,6 +237,7 @@ const unions = <const M extends Unions<M> & Readonly<Record<string, readonly str
 const UNIONS = unions({
   'crove_hr.payroll_employee.status': HR_EMPLOYEE_STATUSES,
   'crove_hr.payroll_employment.contract_type': HR_CONTRACT_TYPES,
+  'crove_hr.payroll_leave_entry.kind': HR_LEAVE_ENTRY_KINDS,
   'crove_hr.payroll_line.kind': HR_LINE_KINDS,
   'crove_hr.payroll_line.status': HR_LINE_STATUSES,
   'crove_hr.payroll_run.status': HR_RUN_STATUSES,

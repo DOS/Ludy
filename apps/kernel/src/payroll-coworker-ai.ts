@@ -86,6 +86,7 @@ export async function payrollSource(reads: PayrollReads, runId: string): Promise
     const previous = before.get(l.employeeId) ?? null;
     const overtime = (f: { overtime: string } | null | undefined) => f !== null && f !== undefined && new Decimal(f.overtime).greaterThan(0);
     const streak = overtime(figures) ? 1 + (overtime(previous) ? 1 + (overtime(beforeThat.get(l.employeeId)) ? 1 : 0) : 0) : 0;
+    const annualLeaveExceeded = l.flags.includes('annual_leave_exceeded');
     return {
       employeeId: l.employeeId,
       figures,
@@ -98,6 +99,7 @@ export async function payrollSource(reads: PayrollReads, runId: string): Promise
       },
       overtimeMonthsInRow: streak,
       dependentsWithoutRegistration: 0,
+      exceededAnnualDays: annualLeaveExceeded && typeof l.exceededAnnualDays === 'string' ? l.exceededAnnualDays : '0',
       checks: {
         minimumWageFailed: l.flags.includes('check_minimum_wage'),
         deductionCapFailed: l.flags.includes('check_deduction_cap'),
@@ -105,6 +107,7 @@ export async function payrollSource(reads: PayrollReads, runId: string): Promise
         netBelowMinimum: l.flags.includes('net_below_minimum'),
         insuredAboveCap: insuredAboveCap(l.breakdown),
         cashPaymentOverLimit: false,
+        annualLeaveExceeded,
       },
     };
   });

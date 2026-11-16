@@ -220,6 +220,32 @@ describe('prepareMonth and flagMonth', () => {
     for (const secret of SECRETS) expect(requests[0]).not.toContain(secret);
   });
 
+  it('surfaces annual_leave_exceeded as a deterministic anomaly when AI is off and on without leaking PII', async () => {
+    const leaveLine: HrLineView = {
+      ...line(EMP_B, NAME_B, '8950000', ['annual_leave_exceeded']),
+      exceededAnnualDays: '2',
+    };
+    const leaveSheet: HrRunSheet = sheetOf('lv', '2026-11', [leaveLine]);
+    const r: PayrollReads = { ...reads(), sheet: async () => leaveSheet, runs: async () => [summary('lv', '2026-11')] };
+
+    const off = await flagMonth({ reader: null, budget: new DraftBudget() }, r, ORG, USER, 'lv', 'vi');
+    expect(off.ai).toBe('off');
+    expect(off.items).toHaveLength(1);
+    expect(off.items[0]?.kind).toBe('annual_leave_exceeded');
+    expect(off.items[0]?.facts).toContain(NAME_B);
+    expect(off.items[0]?.facts).toContain('2');
+    expect(off.items[0]?.text).toBeNull();
+
+    const requests: string[] = [];
+    const { ai } = setup({ flag: echoFlag(requests) });
+    const on = await flagMonth(ai, r, ORG, USER, 'lv', 'vi');
+    expect(on.ai).toBe('used');
+    expect(on.items[0]?.kind).toBe('annual_leave_exceeded');
+    expect(on.items[0]?.text).toContain(NAME_B);
+    for (const secret of SECRETS) expect(requests[0]).not.toContain(secret);
+    expect(requests[0]).not.toMatch(/2026-\d{2}/);
+  });
+
   it('surfaces severance_check flag as a deterministic prepare signal in vi and en without leaking names or dates', async () => {
     const sevLine = line(EMP_B, NAME_B, '8950000', ['ends_this_month', 'severance_check']);
     const sevSheet: HrRunSheet = sheetOf('sev', '2026-11', [sevLine]);
