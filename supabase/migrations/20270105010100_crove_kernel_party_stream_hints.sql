@@ -11,6 +11,11 @@
 -- email, phone, company link or duplicate mark, or the version (a screen sends it back with an edit, so a stale one would
 -- fail with a conflict). Finance writes the same table (a verified flag), which a contact screen does not show, so that
 -- sends nothing. No DELETE trigger: a party is deleted only by the org purge.
+--
+-- These hints are row level and not bounded: the org purge's party updates (the duplicate_of reset, the erase of the
+-- contact fields, and company_id set to NULL by its foreign key) and a contact import (up to 2000 parties) each send one
+-- crm_party hint per row, as does a member's removal for the deals' owner_user_id on the deal trigger. Bounding them
+-- (a statement trigger sending one hint per org, as notes do) is tracked in #3423; this change does not redesign the trigger.
 SET LOCAL lock_timeout = '2s';
 
 DROP TRIGGER IF EXISTS stream_hint ON crove_kernel.party;

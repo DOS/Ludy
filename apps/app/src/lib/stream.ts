@@ -97,7 +97,7 @@ export function hintMatches(hint: StreamHint, query: Query): boolean {
       return path === 'crm.deals.get' && options?.input?.dealId === id;
     }
     // A party's contact details changed (#3293): the contacts list and the contact pickers, the deal cards, list and details, which show the contact's name, and that contact's own panels.
-      // crm.contacts alone is the key of the people of a company and of a person's company suggestions, which sit under the contacts' own key (company-link.tsx).
+    // crm.contacts alone is the key of the people of a company and of a person's company suggestions, which sit under the contacts' own key (company-link.tsx).
     case 'crm_party': {
       if (path === 'crm.contacts' || path === 'crm.contacts.list' || path === 'crm.parties.search' || path === 'crm.deals.board' || path === 'crm.deals.list' || path === 'crm.deals.get') return true;
       const options = query.queryKey[1] as { input?: { partyId?: unknown } } | undefined;
