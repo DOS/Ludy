@@ -247,6 +247,7 @@ export const zSignEnvelopeBySourceItem = z.strictObject({
   completedAt: z.string().nullable(),
   signerCount: z.number().int().min(0),
   signedCount: z.number().int().min(0),
+  createdAt: z.string(),
   updatedAt: z.string(),
 });
 export type SignEnvelopeBySourceItem = z.infer<typeof zSignEnvelopeBySourceItem>;

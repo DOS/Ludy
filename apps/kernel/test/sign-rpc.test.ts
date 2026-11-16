@@ -135,6 +135,7 @@ function createSignTestApp(options: { signInstalled: boolean; signAi?: SignAiRea
               completedAt: null,
               signerCount: 1,
               signedCount: 0,
+              createdAt: '2026-11-16T01:00:00.000Z',
               updatedAt: '2026-11-16T01:05:00.000Z',
             },
           ],

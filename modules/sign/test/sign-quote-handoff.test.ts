@@ -258,6 +258,7 @@ describe('sign.envelope.by_source (#3512)', () => {
         completedAt: null,
         signerCount: 2,
         signedCount: 1,
+        createdAt: '2026-11-16T01:00:00.000Z',
         updatedAt: '2026-11-16T02:00:00.000Z',
       },
       {
@@ -270,6 +271,7 @@ describe('sign.envelope.by_source (#3512)', () => {
         completedAt: '2026-11-16T04:00:00.000Z',
         signerCount: 1,
         signedCount: 1,
+        createdAt: '2026-11-16T01:00:00.000Z',
         updatedAt: '2026-11-16T04:05:00.000Z',
       },
     ]);

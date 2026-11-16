@@ -68,7 +68,8 @@ vi.mock('../src/lib/api.ts', async () => {
               state.signQueryAsked.push(args?.input);
             }
             return {
-              queryKey: path,
+              queryKey:
+                joined === 'sign.envelope.by_source' && args?.input !== undefined ? [...path, args.input] : path,
               queryFn: () => {
                 if (joined === 'sign.envelope.by_source') {
                   state.signQueryExecuted.push(args?.input);
@@ -158,6 +159,7 @@ const {
   QuoteSignHandoff,
   canStartQuoteSignHandoff,
   createQuoteSignHandoffAttempt,
+  isDraftSignEnvelopeStale,
   performQuoteSignHandoff,
   signEnvelopePollMs,
 } = await import('../src/components/quote-sign-handoff.tsx');
@@ -204,6 +206,7 @@ const envItem = (quoteId: string, over: Partial<SignEnvelopeBySourceItem> = {}):
   completedAt: null,
   signerCount: 1,
   signedCount: 0,
+  createdAt: '2026-11-16T01:00:00.000Z',
   updatedAt: '2026-11-16T01:00:00.000Z',
   ...over,
 });
@@ -234,7 +237,13 @@ function renderDealQuotes(opts: {
     });
   }
   if (opts.envelopes !== null) {
-    qc.setQueryData(['sign', 'envelope', 'by_source'], { items: opts.envelopes ?? [] });
+    for (let i = 0; i < quotes.length; i += SIGN_BY_SOURCE_MAX) {
+      const chunk = quotes.slice(i, i + SIGN_BY_SOURCE_MAX).map((q) => q.id);
+      const chunkSet = new Set(chunk);
+      qc.setQueryData(['sign', 'envelope', 'by_source', { sourceKind: 'crm_quote', sourceIds: chunk }], {
+        items: (opts.envelopes ?? []).filter((e) => chunkSet.has(e.sourceId)),
+      });
+    }
   }
   return renderToStaticMarkup(
     <QueryClientProvider client={qc}>
@@ -521,5 +530,56 @@ describe('Engage quote -> eSign handoff (#3512)', () => {
     expect(signEnvelopePollMs([envItem('q1', { status: 'voided' }), envItem('q2', { status: 'declined' })])).toBe(false);
     expect(signEnvelopePollMs([envItem('q1', { status: 'sent' })])).toBe(15_000);
     expect(signEnvelopePollMs([envItem('q1', { status: 'completed', sealStatus: 'pending' })])).toBe(5_000);
+  });
+
+  it('flags edited drafts as stale so updated quotes never show a false Signed badge, and chunks >50 quotes', () => {
+    const editedDraft = quoteSummary(1, {
+      status: 'draft',
+      number: null,
+      updatedAt: '2026-11-16T02:00:00.000Z',
+    });
+    const acceptedUpdated = quoteSummary(2, {
+      status: 'accepted',
+      updatedAt: '2026-11-16T02:00:00.000Z',
+    });
+    const staleCompletedEnv = envItem(editedDraft.id, {
+      envelopeId: 'env-stale',
+      status: 'completed',
+      sealStatus: 'sealed',
+      createdAt: '2026-11-16T01:00:00.000Z',
+    });
+    const validCompletedEnv = envItem(acceptedUpdated.id, {
+      envelopeId: 'env-valid',
+      status: 'completed',
+      sealStatus: 'sealed',
+      createdAt: '2026-11-16T01:00:00.000Z',
+    });
+
+    expect(isDraftSignEnvelopeStale(editedDraft, staleCompletedEnv)).toBe(true);
+    expect(isDraftSignEnvelopeStale(acceptedUpdated, validCompletedEnv)).toBe(false);
+    expect(canStartQuoteSignHandoff(editedDraft, staleCompletedEnv)).toBe(true);
+    expect(canStartQuoteSignHandoff(acceptedUpdated, validCompletedEnv)).toBe(false);
+
+    const staleHtml = renderDealQuotes({
+      quotes: [editedDraft, acceptedUpdated],
+      envelopes: [staleCompletedEnv, validCompletedEnv],
+    });
+    expect(staleHtml).toContain('data-status="stale"');
+    expect(staleHtml).toContain('Báo giá đã sửa sau khi tạo ký');
+    // Only the edited draft renders a send button (accepted quote with valid envelope does not).
+    expect(staleHtml.split('data-testid="quote-send-esign"').length - 1).toBe(1);
+
+    // > 50 quotes: chunks into [50, 5] and keeps eSign controls active on quote #55.
+    const manyQuotes = Array.from({ length: 55 }, (_, i) => quoteSummary(i + 1));
+    const lastQuote = manyQuotes[54]!;
+    const manyHtml = renderDealQuotes({
+      quotes: manyQuotes,
+      envelopes: [envItem(lastQuote.id, { envelopeId: 'env-55', status: 'declined' })],
+    });
+    expect(state.signQueryAsked).toHaveLength(2);
+    expect((state.signQueryAsked[0] as { sourceIds: string[] }).sourceIds).toHaveLength(50);
+    expect((state.signQueryAsked[1] as { sourceIds: string[] }).sourceIds).toHaveLength(5);
+    expect(manyHtml).toContain('href="/o/acme/sign/envelopes/env-55"');
+    expect(manyHtml.split('data-testid="quote-send-esign"').length - 1).toBe(55);
   });
 });

@@ -3929,6 +3929,7 @@ export const en = {
         declined: 'Declined',
         voided: 'Voided',
         expired: 'Expired',
+        stale: 'Quote edited after eSign',
       },
     },
     editor: {

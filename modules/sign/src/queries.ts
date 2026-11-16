@@ -275,6 +275,7 @@ export const envelopeBySource = defineQuery({
           completedAt: isoOrNull(r.completed_at),
           signerCount: counts?.total ?? 0,
           signedCount: counts?.signed ?? 0,
+          createdAt: new Date(r.created_at).toISOString(),
           updatedAt: new Date(r.updated_at).toISOString(),
         };
       }),

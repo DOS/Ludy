@@ -3927,6 +3927,7 @@ export const vi = {
         declined: 'Bị từ chối',
         voided: 'Đã hủy ký',
         expired: 'Hết hạn',
+        stale: 'Báo giá đã sửa sau khi tạo ký',
       },
     },
     editor: {

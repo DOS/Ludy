@@ -4,7 +4,7 @@
 // the way the server computes them, and saves. Nothing here sends a quote: sending is a later step, and a person always does it. The core works with AI
 // off. The sales coworker's suggested lines (#2698) are a read the person asks for: each comes marked as the coworker's, with its price empty when no source
 // holds one, and a person uses or drops it; a used line is only a line in this editor until the person saves.
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import {
@@ -477,15 +477,28 @@ export function DealQuotes({ deal, canEdit, onClose }: { deal: Deal; canEdit: bo
   const org = useQuery(orpc.org.get.queryOptions());
   const canManage = org.data?.role === 'owner' || org.data?.role === 'admin';
   const signEnabled = useSignAppEnabled();
-  const signQuoteIds = (quotes.data ?? []).map((q) => q.id).slice(0, SIGN_BY_SOURCE_MAX);
-  const signAsked = new Set(signQuoteIds);
-  const signEnvelopes = useQuery({
-    ...orpc.sign.envelope.by_source.queryOptions({ input: { sourceKind: 'crm_quote', sourceIds: signQuoteIds } }),
-    enabled: signEnabled && signQuoteIds.length > 0,
-    retry: false,
-    refetchInterval: (query) => (signEnabled ? signEnvelopePollMs(query.state.data?.items) : false),
+  const signQuoteIds = (quotes.data ?? []).map((q) => q.id);
+  const signIdChunks: string[][] = [];
+  for (let i = 0; i < signQuoteIds.length; i += SIGN_BY_SOURCE_MAX) {
+    signIdChunks.push(signQuoteIds.slice(i, i + SIGN_BY_SOURCE_MAX));
+  }
+  const signEnvelopeQueries = useQueries({
+    queries: signIdChunks.map((chunk) => ({
+      ...orpc.sign.envelope.by_source.queryOptions({ input: { sourceKind: 'crm_quote', sourceIds: chunk } }),
+      enabled: signEnabled && chunk.length > 0,
+      retry: false,
+      refetchInterval: (query: { state: { data: { items: SignEnvelopeBySourceItem[] } | undefined } }) =>
+        signEnabled ? signEnvelopePollMs(query.state.data?.items) : false,
+    })),
   });
-  const signEnvelopeByQuote = new Map((signEnvelopes.data?.items ?? []).map((item) => [item.sourceId, item] as const));
+  const signEnvelopesPending = signEnvelopeQueries.some((q) => q.isPending);
+  const signEnvelopesError = signEnvelopeQueries.some((q) => q.isError);
+  const signEnvelopeByQuote = new Map<string, SignEnvelopeBySourceItem>();
+  for (const query of signEnvelopeQueries) {
+    for (const item of query.data?.items ?? []) {
+      signEnvelopeByQuote.set(item.sourceId, item);
+    }
+  }
   const opened = useQuery({ ...orpc.crm.quotes.get.queryOptions({ input: { quoteId: openId ?? '' } }), enabled: openId !== null });
   const create = useMutation(
     orpc.crm.quotes.save.mutationOptions({
@@ -531,9 +544,9 @@ export function DealQuotes({ deal, canEdit, onClose }: { deal: Deal; canEdit: bo
               key={q.id}
               quote={q}
               canEdit={canEdit}
-              signEnabled={signEnabled && signAsked.has(q.id)}
-              signEnvelope={signEnvelopes.isPending || !signAsked.has(q.id) ? null : (signEnvelopeByQuote.get(q.id) ?? null)}
-              signLoading={signEnvelopes.isPending || signEnvelopes.isError}
+              signEnabled={signEnabled}
+              signEnvelope={signEnvelopesPending ? null : (signEnvelopeByQuote.get(q.id) ?? null)}
+              signLoading={signEnvelopesPending || signEnvelopesError}
               onOpen={() => setOpenId(q.id)}
             />
           ))}

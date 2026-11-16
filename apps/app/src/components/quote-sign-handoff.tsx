@@ -42,6 +42,7 @@ export interface QuoteSignSource {
   expired: boolean;
   dealTitle: string;
   partyName: string;
+  updatedAt?: string;
   buyerName?: string | null;
   buyerEmail?: string | null;
 }
@@ -88,14 +89,28 @@ export function signEnvelopePollMs(items: readonly SignEnvelopeBySourceItem[] | 
   return false;
 }
 
+// Draft quotes remain editable via crm.quotes.save under the same quote ID, so a draft modified
+// after an eSign envelope's creation timestamp can no longer be treated as matching that envelope.
+export function isDraftSignEnvelopeStale(
+  quote: Pick<QuoteSignSource, 'status' | 'updatedAt'>,
+  envelope: Pick<SignEnvelopeBySourceItem, 'status' | 'createdAt'> | null | undefined,
+): boolean {
+  if (!envelope || RETRYABLE_ENVELOPE_STATUSES.has(envelope.status)) return false;
+  if (quote.status !== 'draft' || !quote.updatedAt) return false;
+  const quoteUpdatedMs = Date.parse(quote.updatedAt);
+  const envelopeCreatedMs = Date.parse(envelope.createdAt);
+  return Number.isFinite(quoteUpdatedMs) && Number.isFinite(envelopeCreatedMs) && quoteUpdatedMs > envelopeCreatedMs;
+}
+
 export function canStartQuoteSignHandoff(
-  quote: Pick<QuoteSignSource, 'status' | 'expired'>,
-  envelope: Pick<SignEnvelopeBySourceItem, 'status'> | null | undefined,
+  quote: Pick<QuoteSignSource, 'status' | 'expired' | 'updatedAt'>,
+  envelope: Pick<SignEnvelopeBySourceItem, 'status' | 'createdAt'> | null | undefined,
 ): boolean {
   if (!HANDOFF_ELIGIBLE_QUOTE_STATUSES.has(quote.status) || quote.expired === true) {
     return false;
   }
   if (!envelope) return true;
+  if (isDraftSignEnvelopeStale(quote, envelope)) return true;
   return RETRYABLE_ENVELOPE_STATUSES.has(envelope.status);
 }
 
@@ -240,7 +255,8 @@ function QuoteSignHandoffView({
   const t = useTranslations('quotes.sign');
   const { slug = '' } = useParams({ strict: false }) as { slug?: string };
   const navigate = useNavigate();
-  const attemptKey = `${quote.id}:${envelope?.envelopeId ?? 'none'}`;
+  const stale = isDraftSignEnvelopeStale(quote, envelope);
+  const attemptKey = `${quote.id}:${envelope?.envelopeId ?? 'none'}:${quote.updatedAt ?? ''}`;
   const attemptRef = useRef<{ key: string; attempt: QuoteSignHandoffAttempt } | null>(null);
 
   const handoff = useMutation({
@@ -265,7 +281,7 @@ function QuoteSignHandoffView({
   });
 
   const showButton = canEdit && !envelopeLoading && canStartQuoteSignHandoff(quote, envelope);
-  const statusText = envelope ? t(`status.${envelope.status}`) : null;
+  const statusText = envelope ? t(stale ? 'status.stale' : `status.${envelope.status}`) : null;
 
   return (
     <>
@@ -276,9 +292,9 @@ function QuoteSignHandoffView({
           aria-label={t('openLabel', { title: envelope.title, status: statusText })}
           className="inline-flex items-center rounded-4xl focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
           data-testid="quote-sign-status"
-          data-status={envelope.status}
+          data-status={stale ? 'stale' : envelope.status}
         >
-          <Badge variant={SIGN_STATUS_BADGE_VARIANT[envelope.status]}>{statusText}</Badge>
+          <Badge variant={stale ? 'warning' : SIGN_STATUS_BADGE_VARIANT[envelope.status]}>{statusText}</Badge>
         </Link>
       )}
       {showButton && (
