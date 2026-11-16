@@ -423,3 +423,56 @@ export const zProjectTasksFromNoteConfirmResult = z.strictObject({
   taskIds: z.array(zId),
 });
 export type ProjectTasksFromNoteConfirmResult = z.infer<typeof zProjectTasksFromNoteConfirmResult>;
+
+// Multi-source task proposals (#2608): notes, meetings, and conversations on one project board.
+export const PROJECT_TASK_SOURCE_TYPES = ['notes.note', 'meetings.meeting', 'kernel.conversation'] as const;
+export type ProjectTaskSourceType = (typeof PROJECT_TASK_SOURCE_TYPES)[number];
+export const zProjectTaskSourceType = z.enum(PROJECT_TASK_SOURCE_TYPES);
+
+export type ProjectTasksFromSourceStatus = ProjectTasksFromNoteStatus;
+
+export const zProjectTasksFromSourceInput = z.strictObject({
+  projectId: zId,
+  sourceType: zProjectTaskSourceType,
+  sourceId: zId,
+  timeZone: zTimeZone.default(DEFAULT_TIME_ZONE),
+  language: z.enum(['vi', 'en']).default('vi'),
+  today: zLocalDate.optional(),
+});
+export type ProjectTasksFromSourceInput = z.input<typeof zProjectTasksFromSourceInput>;
+
+export const zProjectTasksFromSourceResult = z.strictObject({
+  state: z.enum(['ready', 'failed']),
+  runId: zId.nullable(),
+  projectId: zId,
+  projectName: z.string(),
+  sourceType: zProjectTaskSourceType,
+  sourceId: zId,
+  sourceTitle: z.string(),
+  seats: z.array(zProjectSeat),
+  proposals: z.array(zProjectProposedTask).max(PROJECT_NOTE_PROPOSAL_MAX),
+  dropped: z.number().int().nonnegative(),
+  errorCode: z.string().nullable(),
+  sourceCanLink: z.boolean(),
+});
+export type ProjectTasksFromSourceResult = z.infer<typeof zProjectTasksFromSourceResult>;
+
+export const zProjectTasksFromSourceConfirmInput = z.strictObject({
+  projectId: zId,
+  sourceType: zProjectTaskSourceType,
+  sourceId: zId,
+  confirmed: z.literal(true),
+  timeZone: zTimeZone.default(DEFAULT_TIME_ZONE),
+  items: z.array(zProjectProposedTask).min(1).max(PROJECT_NOTE_PROPOSAL_MAX),
+});
+export type ProjectTasksFromSourceConfirmInput = z.input<typeof zProjectTasksFromSourceConfirmInput>;
+
+export const zProjectTasksFromSourceConfirmResult = z.strictObject({
+  projectId: zId,
+  sourceType: zProjectTaskSourceType,
+  sourceId: zId,
+  createdCount: z.number().int().nonnegative(),
+  linkedCount: z.number().int().nonnegative(),
+  taskIds: z.array(zId),
+});
+export type ProjectTasksFromSourceConfirmResult = z.infer<typeof zProjectTasksFromSourceConfirmResult>;

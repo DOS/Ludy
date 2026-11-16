@@ -487,6 +487,10 @@ import {
   zProjectTasksFromNoteConfirmInput,
   zProjectTasksFromNoteConfirmResult,
   zProjectTasksFromNoteInput,
+  zProjectTasksFromSourceConfirmInput,
+  zProjectTasksFromSourceConfirmResult,
+  zProjectTasksFromSourceInput,
+  zProjectTasksFromSourceResult,
   zProjectTasksFromNoteResult,
   zProjectTasksFromNoteStatus,
   zProjectUpdate,
@@ -2800,6 +2804,11 @@ export const contract = {
     confirmTasksFromNote: oc
       .input(zProjectTasksFromNoteConfirmInput.extend({ idempotencyKey: zId }))
       .output(zProjectTasksFromNoteConfirmResult),
+    tasksFromSourceStatus: oc.input(z.strictObject({})).output(zProjectTasksFromNoteStatus),
+    proposeTasksFromSource: oc.input(zProjectTasksFromSourceInput).output(zProjectTasksFromSourceResult),
+    confirmTasksFromSource: oc
+      .input(zProjectTasksFromSourceConfirmInput.extend({ idempotencyKey: zId }))
+      .output(zProjectTasksFromSourceConfirmResult),
   },
 };
 
