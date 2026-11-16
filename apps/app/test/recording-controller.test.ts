@@ -22,7 +22,7 @@ vi.mock('../src/lib/api.ts', () => ({
 const toasts = vi.hoisted(() => [] as Array<{ message: string; tone: string }>);
 vi.mock('../src/lib/toast.ts', () => ({ toast: (message: string, tone: string) => void toasts.push({ message, tone }) }));
 
-const { getRecorderSnapshot, pauseOrResume, resetRecorderForTests, setRecorderNavigator, startRecording, stop, subscribeRecorder } = await import('../src/lib/recording-controller.ts');
+const { getRecorderSnapshot, pauseOrResume, recordingLeftItsOrg, resetRecorderForTests, setRecorderNavigator, startRecording, stop, stopAndSave, subscribeRecorder } = await import('../src/lib/recording-controller.ts');
 const { getLocalRecording } = await import('../src/lib/recording-indicator.ts');
 
 function memoryStore(): ChunkStore {
@@ -210,5 +210,67 @@ describe('the app-level recorder', () => {
     off();
     expect(seen).toEqual(['starting', 'recording']);
     expect(api.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('stopAndSave (sign-out, another org) stops, uploads and answers when it is saved, with nothing said or opened', async () => {
+    const open = vi.fn();
+    setRecorderNavigator(open);
+    await startRecording(input(memoryStore()));
+    let saved = false;
+    const leaving = stopAndSave({ quiet: true }).then(() => void (saved = true));
+    expect(getRecorderSnapshot().phase).toBe('uploading');
+    expect(saved).toBe(false);
+    await vi.advanceTimersByTimeAsync(0);
+    await flush();
+    await leaving;
+    expect(api.upload).toHaveBeenCalledTimes(1);
+    expect(track.stopped).toBe(true);
+    expect(getRecorderSnapshot().phase).toBe('idle');
+    expect(open).not.toHaveBeenCalled();
+    expect(toasts).toHaveLength(0);
+    // Quiet is for that one leaving: the next recording speaks again.
+    await startRecording(input(memoryStore()));
+    stop();
+    await vi.advanceTimersByTimeAsync(0);
+    await flush();
+    expect(toasts.at(-1)?.tone).toBe('success');
+  });
+
+  it('stopAndSave with nothing running answers at once', async () => {
+    await expect(stopAndSave({ quiet: true })).resolves.toBeUndefined();
+  });
+
+  it('stopAndSave gives up a start still waiting for the microphone and releases it', async () => {
+    let grant: (stream: unknown) => void = () => undefined;
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia: () => new Promise((resolve) => void (grant = resolve)) } });
+    const starting = startRecording(input(memoryStore()));
+    expect(getRecorderSnapshot().phase).toBe('starting');
+    await flush();
+    const leaving = stopAndSave({ quiet: true });
+    grant({ getTracks: () => [track], getAudioTracks: () => [track] });
+    await starting;
+    await leaving;
+    expect(getRecorderSnapshot().phase).toBe('idle');
+    expect(track.stopped).toBe(true);
+    expect(FakeRecorder.last?.state ?? 'inactive').not.toBe('recording');
+  });
+
+  it('stopAndSave does not wait for ever on an upload that hangs', async () => {
+    api.upload.mockImplementationOnce(() => new Promise(() => undefined));
+    await startRecording(input(memoryStore()));
+    const leaving = stopAndSave({ quiet: true });
+    await vi.advanceTimersByTimeAsync(61_000);
+    await expect(leaving).resolves.toBeUndefined();
+  });
+
+  it('an org switch ends a recording of the other org, and nothing else does', () => {
+    const running = { slug: 'acme', phase: 'recording' as const };
+    expect(recordingLeftItsOrg('acme', running)).toBe(false);
+    expect(recordingLeftItsOrg('other', running)).toBe(true);
+    expect(recordingLeftItsOrg('other', { slug: 'acme', phase: 'paused' })).toBe(true);
+    // Outside any org (the org list, the account screens) the recording goes on, with the bar.
+    expect(recordingLeftItsOrg(undefined, running)).toBe(false);
+    expect(recordingLeftItsOrg('other', { slug: 'acme', phase: 'uploading' })).toBe(false);
+    expect(recordingLeftItsOrg('other', { slug: null, phase: 'idle' })).toBe(false);
   });
 });

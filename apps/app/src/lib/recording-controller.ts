@@ -35,6 +35,8 @@ export interface RecorderSnapshot {
   // The recording being uploaded (a recovered one or the one just stopped).
   busyId: string | null;
   withVideo: boolean;
+  // The org the running recording belongs to; null when none runs.
+  slug: string | null;
   // Only while a recording with video runs: the recorder screen shows it as a preview.
   stream: MediaStream | null;
 }
@@ -74,7 +76,9 @@ type WakeLockApi = { request(type: 'screen'): Promise<{ release(): Promise<void>
 const requestWakeLock = async (): Promise<{ release(): Promise<void> } | null> =>
   (await (navigator as Navigator & { wakeLock?: WakeLockApi }).wakeLock?.request('screen').catch(() => null)) ?? null;
 
-const IDLE: RecorderSnapshot = { phase: 'idle', error: null, busyId: null, withVideo: false, stream: null };
+const IDLE: RecorderSnapshot = { phase: 'idle', error: null, busyId: null, withVideo: false, slug: null, stream: null };
+// The longest a sign-out or an org switch waits for the recording to be saved; the copy stays on the device if the upload is still running.
+const SAVE_WAIT_MS = 60_000;
 const MAX_MS = MAX_MEETING_SECONDS * 1000;
 const RECORD_PATH = /\/meetings\/record\/?$/;
 
@@ -92,6 +96,10 @@ let linkedMeetingId: string | null = null;
 const ownIds = new Set<string>();
 // Whether Stop was pressed on the recorder screen (where the finished upload opens the meeting) or elsewhere (a toast with a button).
 let stoppedOnRecordScreen = true;
+// Set while the member is leaving (sign-out): the finished upload says nothing and goes nowhere, the member is on the way out.
+let quiet = false;
+// Set to give up a start that is still waiting for the microphone or the meeting.
+let abortStart = false;
 let ticker: ReturnType<typeof setInterval> | null = null;
 let tick = 0;
 let translate: Translate = (key) => key;
@@ -206,7 +214,8 @@ export async function startRecording(input: StartInput): Promise<void> {
   const { store, scope, slug, withVideo } = input;
   const kind: RecordingKind = withVideo ? 'video' : 'audio';
   title = input.title.trim();
-  patch({ phase: 'starting', error: null, withVideo });
+  abortStart = false;
+  patch({ phase: 'starting', error: null, withVideo, slug });
   const result = await prepareCapture<MediaStream, MediaRecorder>({
     openStore: async () => void (await store.list(scope)),
     getStream: () =>
@@ -274,16 +283,17 @@ export async function startRecording(input: StartInput): Promise<void> {
       return writer;
     },
     wakeLock: requestWakeLock,
-    // The recorder no longer belongs to a screen: leaving it does not abort a start.
-    unmounted: () => false,
+    // Leaving the recorder screen does not abort a start; only stopAndSave (sign-out, another org) does.
+    unmounted: () => abortStart,
   });
   if (result.status === 'aborted') {
-    patch({ phase: 'idle' });
+    patch({ phase: 'idle', slug: null });
     return;
   }
   if (result.status === 'failed') {
     patch({
       phase: 'idle',
+      slug: null,
       error: result.reason === 'store' ? translate('record.unsupported') : result.reason === 'device' ? translate(withVideo ? 'record.deviceDeniedVideo' : 'record.deviceDenied') : errorMessage(result.error),
     });
     return;
@@ -326,7 +336,7 @@ export async function startRecording(input: StartInput): Promise<void> {
     patch({ phase: 'recording', stream: withVideo ? stream : null });
   } catch (err) {
     releaseDevices(l, true);
-    patch({ phase: 'idle', error: errorMessage(err), stream: null });
+    patch({ phase: 'idle', slug: null, error: errorMessage(err), stream: null });
   }
 }
 
@@ -381,7 +391,7 @@ async function onStopped(l: Live): Promise<void> {
     });
     patch({ error: message });
     // The member may be on another screen now.
-    toast(message, 'error');
+    if (!quiet) toast(message, 'error');
     stoppedOnRecordScreen = false;
   }
   // The live pieces are refused once the final recording is stored: they finish (or give up) first, then the upload.
@@ -405,7 +415,9 @@ export async function uploadRecording(store: ChunkStore, slug: string, meta: Rec
     patch({ error: null });
     const message = translate(partial ? 'record.uploadedPartial' : 'record.uploaded');
     const onRecordScreen = typeof window === 'undefined' || RECORD_PATH.test(window.location.pathname);
-    if (navigateToMeeting && (!justStopped || stoppedOnRecordScreen) && onRecordScreen) {
+    if (quiet) {
+      // Leaving: nothing to say here, and nowhere to go.
+    } else if (navigateToMeeting && (!justStopped || stoppedOnRecordScreen) && onRecordScreen) {
       toast(message, 'success');
       navigateToMeeting(slug, meta.meetingId);
     } else {
@@ -417,11 +429,38 @@ export async function uploadRecording(store: ChunkStore, slug: string, meta: Rec
     // The copy stays on the device, and the screen offers the upload again.
     const message = `${translate('record.uploadFailed')} ${errorMessage(err)}`;
     patch({ error: message });
-    if (justStopped) toast(message, 'error');
+    if (justStopped && !quiet) toast(message, 'error');
     return false;
   } finally {
-    patch({ busyId: null, ...(justStopped ? { phase: 'idle' as const } : {}) });
+    patch({ busyId: null, ...(justStopped ? { phase: 'idle' as const, slug: null } : {}) });
+    if (justStopped) quiet = false;
   }
+}
+
+// True when the org now open is not the one a running recording belongs to (an org switch): the recording then ends and is saved.
+export const recordingLeftItsOrg = (openSlug: string | undefined, snapshot: Pick<RecorderSnapshot, 'slug' | 'phase'>): boolean =>
+  openSlug !== undefined && snapshot.slug !== null && snapshot.slug !== openSlug && snapshot.phase !== 'uploading' && snapshot.phase !== 'idle';
+
+// Stops what runs and saves it, like the Stop button, and answers once the upload has finished (or failed: the copy stays on the
+// device and the recorder screen offers it again). A sign-out or a switch to another org calls this first, so the microphone never
+// runs on past the person's leaving. A start still waiting for the microphone is given up. Waits at most SAVE_WAIT_MS.
+export async function stopAndSave(options: { quiet?: boolean } = {}): Promise<void> {
+  if (state.phase === 'idle') return;
+  if (options.quiet) quiet = true;
+  if (state.phase === 'starting') abortStart = true;
+  else if (state.phase === 'recording' || state.phase === 'paused') stop();
+  await new Promise<void>((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      off();
+      resolve();
+    };
+    const timer = setTimeout(done, SAVE_WAIT_MS);
+    const off = subscribeRecorder(() => {
+      if (state.phase === 'idle') done();
+    });
+    if (state.phase === 'idle') done();
+  });
 }
 
 // Used by tests to start from a clean controller.
@@ -432,6 +471,8 @@ export function resetRecorderForTests(): void {
   createdMeetingId = null;
   linkedMeetingId = null;
   createdFor = '';
+  quiet = false;
+  abortStart = false;
   ownIds.clear();
   title = '';
   state = IDLE;

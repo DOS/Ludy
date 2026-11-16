@@ -103,6 +103,8 @@ import { MarketplaceBalancePage } from './routes/marketplace-balance.tsx';
 import { StockPage } from './routes/stock.tsx';
 import { VouchersPage } from './routes/vouchers.tsx';
 import { PublishHoldBanner } from './components/social-publish-hold.tsx';
+import { RecordingChip } from './components/recording-chip.tsx';
+import { RecordingHost } from './components/recording-host.tsx';
 import { VersionBanner } from './components/version-banner.tsx';
 import { FixedAssetsPage } from './routes/fixed-assets.tsx';
 
@@ -186,6 +188,9 @@ const rootRoute = createRootRoute({
     <>
       <VersionBanner />
       <Outlet />
+      {/* The recording bar and the recorder's host (#3197): a recording can run on any screen, so they live above the org layout. */}
+      <RecordingChip />
+      <RecordingHost />
     </>
   ),
   errorComponent: ErrorPage,

@@ -2461,6 +2461,7 @@ export const vi = {
       recording: 'Đang ghi {time}',
       paused: 'Đang tạm dừng {time}',
       stop: 'Dừng',
+      saving: 'Đang lưu bản ghi…',
     },
     record: {
       starting: 'Đang chuẩn bị…',

@@ -2463,6 +2463,7 @@ export const en = {
       recording: 'Recording {time}',
       paused: 'Paused {time}',
       stop: 'Stop',
+      saving: 'Saving the recording…',
     },
     record: {
       starting: 'Getting ready…',

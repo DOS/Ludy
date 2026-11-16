@@ -9,6 +9,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import { useTranslations } from 'use-intl';
 import { formatClock } from '@crove/meeting-recorder';
 import { orpc } from '../lib/api.ts';
+import { getRecorderSnapshot, subscribeRecorder } from '../lib/recording-controller.ts';
 import { getLocalRecording, subscribeLocalRecording } from '../lib/recording-indicator.ts';
 
 const POLL_MS = 15_000;
@@ -17,6 +18,7 @@ export function RecordingChip() {
   const t = useTranslations('meetings');
   const { slug } = useParams({ strict: false }) as { slug?: string };
   const local = useSyncExternalStore(subscribeLocalRecording, getLocalRecording, getLocalRecording);
+  const saving = useSyncExternalStore(subscribeRecorder, getRecorderSnapshot, getRecorderSnapshot).phase === 'uploading';
   // The extension's recording is read from the server; the app's own is known here, so no question is asked while it runs.
   // An org without the meetings module answers with an error: no chip, no retry storm.
   const remote = useQuery({
@@ -34,15 +36,25 @@ export function RecordingChip() {
     return () => clearInterval(timer);
   }, [active]);
 
-  if (!slug) return null;
+  // Stopped and being saved (the Stop button, the maximum length, a sign-out or an org switch): say so while the upload runs, wherever the member is.
+  if (saving && local === null) {
+    return (
+      <div role="status" data-testid="recording-saving" className="fixed top-14 right-3 z-40 flex items-center gap-2 rounded-full border border-border bg-background px-3 py-1 text-xs font-medium text-foreground shadow-sm md:top-3">
+        <span className="inline-block size-2 animate-pulse rounded-full bg-muted-foreground" aria-hidden="true" />
+        <span>{t('chip.saving')}</span>
+      </div>
+    );
+  }
   if (local) {
+    const orgSlug = local.slug ?? slug;
+    if (!orgSlug) return null;
     return (
       <div
         data-testid="recording-chip"
         data-source="app"
         className="fixed top-14 right-3 z-40 flex items-center gap-2 rounded-full border border-destructive/40 bg-background py-1 pr-1 pl-3 text-xs font-medium text-foreground shadow-sm md:top-3"
       >
-        <Link to="/o/$slug/meetings/record" params={{ slug: local.slug ?? slug }} className="flex items-center gap-2">
+        <Link to="/o/$slug/meetings/record" params={{ slug: orgSlug }} className="flex items-center gap-2">
           <span className={`inline-block size-2 rounded-full ${local.paused ? 'bg-muted-foreground' : 'animate-pulse bg-destructive'}`} aria-hidden="true" />
           <span>{t(local.paused ? 'chip.paused' : 'chip.recording', { time: formatClock(local.elapsedMs()) })}</span>
         </Link>
@@ -54,6 +66,8 @@ export function RecordingChip() {
       </div>
     );
   }
+  // The extension's recording is looked up per org: outside one there is nothing to ask.
+  if (!slug) return null;
   const recording = remote.data?.recording;
   if (!recording) return null;
   return (
