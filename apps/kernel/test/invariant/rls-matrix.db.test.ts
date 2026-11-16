@@ -61,6 +61,8 @@ const MACHINERY = new Set([
   'crove_kernel.oauth_state',
   'crove_kernel.inbound_drop',
   'crove_kernel.outbox_archive',
+  // #3310 (ADR-0053, C3b): the ids of events that wait while an app is off: reached only by definers of the worker, RLS enabled, no login role grant. Lands before its table (PENDING_TABLES).
+  'crove_kernel.outbox_held',
   'crove_kernel.outbox_pending',
   'crove_kernel.refusal_tally',
   // The wrapped data key of one person as an org knows them (ADR-0017, #2640): definer-only, like crove_kernel.credential.
@@ -102,6 +104,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_permission_override',
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',
+  'crove_kernel.outbox_held',
   'crove_meetings.live_line',
   'crove_meetings.meeting_link',
   'crove_notes.link',
@@ -2339,6 +2342,8 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     make: (o) => ({ row: { org_id: o.id, day: '2020-01-01', object_key: `outbox/v1/${o.id}/2020-01-01.jsonl`, sha256: 'a'.repeat(64), row_count: 1 } }),
   },
   'crove_kernel.outbox_event': { make: (o) => ({ row: { org_id: o.id, id: randomUUID(), type: 'rls.matrix', payload: '{}' } }) },
+  // #3310 (ADR-0053, C3b): an event that waits while its app is off; definer-only machinery.
+  'crove_kernel.outbox_held': { make: (o) => ({ row: { org_id: o.id, event_id: randomUUID(), module: 'social' } }) },
   'crove_kernel.outbox_pending': { make: (o) => ({ row: { org_id: o.id, event_id: randomUUID() } }) },
   'crove_kernel.party': { make: (o) => ({ row: { org_id: o.id, id: randomUUID(), name: 'RLS matrix party' } }) },
   'crove_kernel.proposal': {
