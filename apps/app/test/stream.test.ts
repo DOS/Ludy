@@ -27,6 +27,10 @@ const ENTRY = '0190a000-0000-7000-8000-0000000000e1';
 const DOC = '0190a000-0000-7000-8000-0000000000d1';
 
 const SOCIAL = '0190a000-0000-7000-8000-0000000000c1';
+const DEAL = '0190a000-0000-7000-8000-0000000000b1';
+const DEAL2 = '0190a000-0000-7000-8000-0000000000b2';
+const CONTACT = '0190a000-0000-7000-8000-0000000000a5';
+const CONTACT2 = '0190a000-0000-7000-8000-0000000000a6';
 
 function seeded() {
   const qc = new QueryClient();
@@ -56,6 +60,16 @@ function seeded() {
     socialQueue: orpc.social.queues.get.queryKey({ input: { connectionId: '0190a000-0000-7000-8000-0000000000c3' } }),
     socialSlots: orpc.social.queues.openSlots.queryKey({ input: { connectionId: '0190a000-0000-7000-8000-0000000000c3', from: '2026-10-23T00:00:00.000Z', to: '2026-10-30T00:00:00.000Z' } }),
     socialNotifications: orpc.social.notifications.list.queryKey({ input: {} }),
+    dealBoard: orpc.crm.deals.board.queryKey({ input: {} }),
+    dealList: orpc.crm.deals.list.infiniteKey({ input: () => ({}), initialPageParam: undefined }),
+    dealGet: orpc.crm.deals.get.queryKey({ input: { dealId: DEAL } }),
+    dealGetOther: orpc.crm.deals.get.queryKey({ input: { dealId: DEAL2 } }),
+    dealsOfContact: orpc.crm.deals.byParty.queryKey({ input: { partyId: CONTACT } }),
+    dealsOfOtherContact: orpc.crm.deals.byParty.queryKey({ input: { partyId: CONTACT2 } }),
+    contactList: orpc.crm.contacts.list.infiniteKey({ input: () => ({}), initialPageParam: undefined }),
+    contactSearch: orpc.crm.parties.search.queryKey({ input: { q: 'abc', limit: 5 } }),
+    contactTimeline: orpc.parties.timeline.queryKey({ input: { partyId: CONTACT } }),
+    otherTimeline: orpc.parties.timeline.queryKey({ input: { partyId: CONTACT2 } }),
   };
   // Partial records: invalidateHint reads only the ids, so the seeds skip the rest of each response's shape.
   const seed = (key: QueryKey, data: unknown) => qc.setQueryData(key, data);
@@ -124,6 +138,40 @@ describe('invalidateHint', () => {
     expect(qc.getQueryState(note)?.isInvalidated).toBe(false);
   });
 
+  it('crm_deal: the deal board and list, that deal, the contacts\' deals and the contacts list (#3293)', async () => {
+    const { qc, stale } = seeded();
+    await invalidateHint(qc, { type: 'crm_deal', id: DEAL });
+    expect(stale()).toEqual(['contactList', 'dealBoard', 'dealGet', 'dealList', 'dealsOfContact', 'dealsOfOtherContact']);
+  });
+
+  it('crm_party: the contacts, the deal cards, and that contact\'s own panels only (#3293)', async () => {
+    const { qc, stale } = seeded();
+    await invalidateHint(qc, { type: 'crm_party', id: CONTACT });
+    expect(stale()).toEqual(['contactList', 'contactSearch', 'contactTimeline', 'dealBoard', 'dealList', 'dealsOfContact']);
+  });
+
+  it('crm hints leave the finance vendors and customers, Social and the apps list alone', async () => {
+    for (const type of ['crm_deal', 'crm_party'] as const) {
+      const { qc, stale } = seeded();
+      await invalidateHint(qc, { type, id: DEAL });
+      for (const name of ['parties', 'customers', 'socialList', 'socialPost', 'inboxPending', 'journal', 'documents', 'me', 'org']) expect(stale(), `${type} ${name}`).not.toContain(name);
+    }
+  });
+
+  it('with crm off no crm query is cached, so a crm hint refreshes nothing and fetches nothing (#3293)', async () => {
+    // An org without the crm app shows no CRM screen: its cache holds the other apps' queries only (the server drops the hints of an app that is off as well).
+    const qc = new QueryClient();
+    const finance: QueryKey = orpc.documents.list.queryKey({ input: {} });
+    const social: QueryKey = orpc.social.posts.list.queryKey({ input: {} });
+    qc.setQueryData(finance, {});
+    qc.setQueryData(social, {});
+    await invalidateHint(qc, { type: 'crm_deal', id: DEAL });
+    await invalidateHint(qc, { type: 'crm_party', id: CONTACT });
+    expect(qc.getQueryCache().getAll().map((q) => q.queryKey)).toEqual([finance, social]);
+    expect(qc.getQueryState(finance)?.isInvalidated).toBe(false);
+    expect(qc.getQueryState(social)?.isInvalidated).toBe(false);
+  });
+
   it('never touches unrelated queries', async () => {
     const { qc, stale } = seeded();
     await invalidateHint(qc, { type: 'proposal', id: '0190a000-0000-7000-8000-0000000000aa' });
@@ -134,6 +182,13 @@ describe('invalidateHint', () => {
 });
 
 describe('event parsing', () => {
+  it('accepts the crm hint types with a uuid id only (#3293)', () => {
+    expect(parseHintEvent(JSON.stringify({ type: 'crm_deal', id: DEAL }))).toEqual({ type: 'crm_deal', id: DEAL });
+    expect(parseHintEvent(JSON.stringify({ type: 'crm_party', id: CONTACT }))).toEqual({ type: 'crm_party', id: CONTACT });
+    expect(parseHintEvent(JSON.stringify({ type: 'crm.deal', id: DEAL }))).toBeNull();
+    expect(parseHintEvent(JSON.stringify({ type: 'crm_deal', id: 'not-a-uuid' }))).toBeNull();
+  });
+
   it('accepts a known type with a uuid id only', () => {
     expect(parseHintEvent(JSON.stringify({ type: 'proposal', id: P1 }))).toEqual({ type: 'proposal', id: P1 });
     expect(parseHintEvent(JSON.stringify({ type: 'proposal', id: P1, extra: 1 }))).toEqual({ type: 'proposal', id: P1 });

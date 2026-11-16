@@ -83,6 +83,8 @@ export const HINT_APPS: Readonly<Record<StreamHintType, string>> = {
   note: 'notes',
   todo: 'notes',
   org_apps: 'kernel',
+  crm_deal: 'crm',
+  crm_party: 'crm',
 };
 // The apps whose hints a stream filters: the ones with entities on the stream.
 export const STREAM_FILTERED_APPS: readonly string[] = [...new Set(Object.values(HINT_APPS).filter((app) => app !== 'kernel'))];
