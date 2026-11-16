@@ -73,6 +73,25 @@ async function activeProjectMemberSeatIds(trx: QueryContext['trx'], orgId: strin
   return positions.map((p) => p.id);
 }
 
+async function assertSeatsAllowed(
+  trx: QueryContext['trx'],
+  orgId: string,
+  projectId: string,
+  requestedSeats: readonly string[],
+): Promise<void> {
+  if (requestedSeats.length === 0) return;
+  const allowedSeatSet = new Set(await activeProjectMemberSeatIds(trx, orgId, projectId));
+  for (const seatId of requestedSeats) {
+    if (!allowedSeatSet.has(seatId)) {
+      throw new DomainError(
+        'VALIDATION',
+        422,
+        'Người được giao phải là thành viên đang giữ vị trí hoạt động trong dự án này',
+      );
+    }
+  }
+}
+
 async function loadReadableNote(ctx: QueryContext, noteId: string): Promise<Note> {
   if (!ctx.installed('notes')) {
     throw new DomainError('MODULE_OFF', 404, 'Ứng dụng notes chưa được bật cho công ty này', { module: 'notes' });
@@ -133,11 +152,14 @@ export const tasksFromNoteStatus = defineQuery({
 
     const agentRow = await ctx.trx
       .selectFrom('crove_kernel.agent')
-      .select('id')
+      .select(['id', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('kind', '=', 'member_vy')
       .where('member_user_id', '=', userId)
       .executeTakeFirst();
+    if (agentRow && agentRow.status !== 'active') {
+      return { available: false, reason: 'forbidden', resetOn: null };
+    }
     const agentId = agentRow?.id ?? null;
 
     const stopped = await sql<{ stopped: boolean }>`
@@ -289,16 +311,7 @@ export const tasksFromNoteConfirm = defineCommand({
          ORDER BY id ASC
            FOR UPDATE`.execute(ctx.trx);
 
-      const allowedSeatSet = new Set(await activeProjectMemberSeatIds(ctx.trx, ctx.orgId, preview.id));
-      for (const seatId of requestedSeats) {
-        if (!allowedSeatSet.has(seatId)) {
-          throw new DomainError(
-            'VALIDATION',
-            422,
-            'Người được giao phải là thành viên đang giữ vị trí hoạt động trong dự án này',
-          );
-        }
-      }
+      await assertSeatsAllowed(ctx.trx, ctx.orgId, preview.id, requestedSeats);
     }
 
     const createdIds: string[] = [];
@@ -313,9 +326,11 @@ export const tasksFromNoteConfirm = defineCommand({
       createdIds.push(created.taskId);
     }
 
-    // Lock crove_projects.project after kernel.task.create_from_note (which locks crove_kernel.position) for uniform lock ordering.
+    // Lock crove_projects.project after kernel.task.create_from_note (which locks crove_kernel.position) for uniform lock ordering,
+    // then re-validate seats under the project lock so concurrent projects.member.remove cannot leave a removed member assigned.
     const project = await loadProject(ctx.trx, ctx.orgId, input.projectId, true);
     assertNotArchived(project);
+    await assertSeatsAllowed(ctx.trx, ctx.orgId, project.id, requestedSeats);
 
     if (createdIds.length > 0) {
       await ctx.trx

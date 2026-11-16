@@ -531,6 +531,21 @@ describe.skipIf(!ADMIN)('Projects P7 (#2598): Vy proposes tasks from a note (PG1
       runProjectsTasksFromNote(deps(), org.orgId, asUser(bob.userId), { noteId: sharedNoteId, projectId }),
     ).rejects.toMatchObject({ code: 'VY_NOT_ALLOWED' });
 
+    // Pausing Alice's member_vy agent marks status forbidden without calling model.
+    await execMfa(org.orgId, owner.userId, 'kernel.agent.update', { id: aliceVyAgentId, status: 'paused' });
+    try {
+      expect(await tasksFromNoteStatusOf(deps(), org.orgId, asUser(alice.userId))).toEqual({
+        available: false,
+        reason: 'forbidden',
+        resetOn: null,
+      });
+      await expect(
+        runProjectsTasksFromNote(deps(), org.orgId, asUser(alice.userId), { noteId: sharedNoteId, projectId }),
+      ).rejects.toMatchObject({ code: 'VY_NOT_ALLOWED' });
+    } finally {
+      await execMfa(org.orgId, owner.userId, 'kernel.agent.update', { id: aliceVyAgentId, status: 'active' });
+    }
+
     expect(calls).toBe(callsBefore);
 
     // ADR-0053: switching projects off refuses status, propose, and confirm with MODULE_OFF (projects).
