@@ -156,6 +156,15 @@ function deriveFixedTermEndDate(start: CalendarDate, termMonths: number): Calend
   return addCalendarDays(addCalendarMonths(start, termMonths), -1);
 }
 
+/** Derives the inclusive end date (`YYYY-MM-DD`) for a 1..36 month fixed-term contract starting on `startDate`. */
+export function deriveFixedTermEndDateIso(startDate: string, termMonths: number): string | null {
+  const start = parseIsoCalendarDate(startDate);
+  if (start === null || !Number.isInteger(termMonths) || termMonths < 1 || termMonths > FIXED_TERM_MAX_MONTHS) {
+    return null;
+  }
+  return formatIsoCalendarDate(deriveFixedTermEndDate(start, termMonths));
+}
+
 function requireIsoCalendarDate(label: string, value: string): CalendarDate {
   const parsed = parseIsoCalendarDate(value);
   if (parsed === null) throw new Error(`Invalid ${label} calendar date: ${value}`);
