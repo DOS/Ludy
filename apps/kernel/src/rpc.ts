@@ -1054,6 +1054,7 @@ export function createRpcHandler(
       list: os.meetings.list.handler(meetingsQuery('meetings.meeting.list')),
       get: os.meetings.get.handler(meetingsQuery('meetings.meeting.get')),
       extensionStatus: os.meetings.extensionStatus.handler(meetingsQuery('meetings.meeting.extension_status')),
+      recordingStopped: os.meetings.recordingStopped.handler(meetingsCommand('meetings.meeting.recording_stopped')),
       recordingNow: os.meetings.recordingNow.handler(meetingsQuery('meetings.meeting.recording_now')),
       create: os.meetings.create.handler(meetingsCommand('meetings.meeting.create')),
       importStart: os.meetings.importStart.handler(meetingsCommand('meetings.import.start')),

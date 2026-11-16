@@ -22,7 +22,7 @@ import { liveNotesCommands } from './live-notes.ts';
 import { liveRunCommands, liveRunQueries } from './live-run.ts';
 import { liveCommands } from './live.ts';
 import { liveAssembleCommands, liveAssembleQueries } from './live-assemble.ts';
-import { recordSealedMedia } from './media-record.ts';
+import { lockMeetingMedia, recordSealedMedia } from './media-record.ts';
 import { createMeetingRow } from './meeting-core.ts';
 import { importCommands } from './import.ts';
 import { dropFollowupPayloads } from './followup-erase.ts';
@@ -52,6 +52,8 @@ import {
   zMeetingMediaKeyReseal,
   zMeetingMediaMeta,
   zMeetingMediaRecord,
+  zMeetingRecordingStopped,
+  zMeetingRecordingStoppedDone,
   zMeetingOwnerListInput,
   zMeetingReaderAdd,
   zMeetingReaderRemove,
@@ -59,6 +61,7 @@ import {
   type ConsentMethod,
   type MeetingDetail,
   type MeetingExtensionStatus,
+  type MeetingRecordingStoppedDone,
   type RecordingStopReason,
   type MeetingLanguage,
   type MeetingSummaryTemplate,
@@ -270,11 +273,61 @@ export const meetingMediaRecord = defineCommand({
         .set({ recording_stop_reason: input.stopReason, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.meetingId)
+        // Once: a reason a report already left (#3196) is kept.
+        .where('recording_stop_reason', 'is', null)
         .execute();
     }
 
     ctx.audit({ meetingId: input.meetingId, kind: input.kind, fileId, ...(input.stopReason !== undefined ? { stopReason: input.stopReason } : {}), ...(liveChunksDiscarded > 0 ? { liveChunksDiscarded } : {}) });
     return { fileId };
+  },
+});
+
+// A recording ended and no media will reach the server (#3196): the extension stopped with nothing saved, the upload never arrived, or the
+// capture failed to start after the meeting was made. It sets the meeting's end time and, for a stop the member did not ask for, the stop code,
+// once, so the app's recording chip lets go at once instead of after its window. Codes and a length only, in the input and the audit.
+// A no-op (and `ended: false`) once the meeting has any recording or an end time, so a late or repeated call changes nothing.
+export const meetingRecordingStopped = defineCommand({
+  name: 'meetings.meeting.recording_stopped',
+  input: zMeetingRecordingStopped,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  // The extension's meetings scope reports the end of a meeting its own token created, and no other (#3196).
+  extension: { scope: 'meetings' },
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx, input): Promise<MeetingRecordingStoppedDone> => {
+    const userId = userOf(ctx.actor);
+    const meeting = await ctx.trx
+      .selectFrom('crove_meetings.meeting')
+      .select(['recorder_user_id', 'extension_token_id', 'started_at', 'ended_at', 'recording_stop_reason'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.meetingId)
+      .executeTakeFirst();
+    if (!meeting) throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
+    if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder may end its recording');
+    // An extension token reaches only the meetings it created: any other is answered as one that does not exist.
+    if (ctx.actor.type === 'user' && ctx.actor.extension && meeting.extension_token_id !== ctx.actor.extension.tokenId) {
+      throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
+    }
+    // The media lock first, so a recording being stored at this moment either commits before the checks below or waits for this transaction.
+    await lockMeetingMedia(ctx, input.meetingId);
+    const { rows: held } = await sql<{ recorded: boolean; ended: boolean }>`
+      SELECT EXISTS (SELECT 1 FROM crove_meetings.audio_segment WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${input.meetingId}::uuid)
+          OR EXISTS (SELECT 1 FROM crove_meetings.meeting_video WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${input.meetingId}::uuid) AS recorded,
+             (SELECT ended_at IS NOT NULL FROM crove_meetings.meeting WHERE org_id = ${ctx.orgId}::uuid AND id = ${input.meetingId}::uuid) AS ended`.execute(ctx.trx);
+    const changed = held[0]?.recorded !== true && held[0]?.ended !== true;
+    if (changed) {
+      const length = input.lengthSeconds === undefined || meeting.started_at === null ? null : input.lengthSeconds;
+      await sql`
+        UPDATE crove_meetings.meeting
+        SET ended_at = CASE WHEN ${length}::int IS NULL THEN ${ctx.now}::timestamptz ELSE LEAST(started_at + (${length}::int * interval '1 second'), ${ctx.now}::timestamptz) END,
+            recording_stop_reason = COALESCE(recording_stop_reason, ${input.reason ?? null}::text),
+            updated_at = ${ctx.now}::timestamptz
+        WHERE org_id = ${ctx.orgId}::uuid AND id = ${input.meetingId}::uuid AND ended_at IS NULL`.execute(ctx.trx);
+    }
+    ctx.audit({ meetingId: input.meetingId, changed, ...(input.reason !== undefined ? { reason: input.reason } : {}) });
+    return zMeetingRecordingStoppedDone.parse({ meetingId: input.meetingId, ended: changed });
   },
 });
 
@@ -919,6 +972,7 @@ export const meetingMediaMeta = defineQuery({
 export const meetingsCommands = [
   meetingCreate,
   meetingMediaRecord,
+  meetingRecordingStopped,
   meetingDelete,
   meetingOwnerDelete,
   meetingOwnerList,
