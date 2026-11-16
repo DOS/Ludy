@@ -8,6 +8,7 @@ import { client, orpc, queryClient } from '../lib/api.ts';
 import { accessToken, auth } from '../lib/auth.ts';
 import { forgetInvite } from '../lib/invite.ts';
 import { forgetPushDevice } from '../lib/push.ts';
+import { stopAndSave } from '../lib/recording-controller.ts';
 import {
   describeUserAgent,
   otherActiveSessionIds,
@@ -27,7 +28,10 @@ import { ErrorText, RowsSkeleton } from './ui.tsx';
 // This browser's push subscription goes first (#1238), as with the menu's sign-out.
 function signOutHere(): void {
   forgetInvite();
-  void forgetPushDevice((endpoint) => client.social.notifications.push.unsubscribe({ endpoint })).finally(() => void auth().signOut({ scope: 'local' }));
+  // A recording in the app is saved first (#3197), then this tab signs out.
+  void stopAndSave({ quiet: true })
+    .then(() => forgetPushDevice((endpoint) => client.social.notifications.push.unsubscribe({ endpoint })))
+    .finally(() => void auth().signOut({ scope: 'local' }));
 }
 
 function useCurrentSessionId() {

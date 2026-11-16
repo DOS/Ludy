@@ -59,8 +59,29 @@ test('a recording survives a reload, is recovered from the device and uploaded, 
     expect(meetings).toEqual([{ consent_method: 'told_at_start' }]);
   });
 
-  await test.step('reload mid-recording: the saved part is still on the device', async () => {
+  await test.step('moving to another screen does not stop the recording, and the bar there has a Stop button (#3197)', async () => {
+    const before = (await deviceCopy(page)).chunkCount;
+    // An in-app link (no page load): the recorder screen unmounts, the recording goes on.
+    await page.getByRole('link', { name: 'Quay lại danh sách' }).click();
+    await expect(page).toHaveURL(new RegExp(`/o/${slug}/meetings$`));
+    const bar = page.getByTestId('recording-chip');
+    await expect(bar).toContainText('Đang ghi');
+    await expect(bar.getByRole('button', { name: 'Dừng' })).toBeVisible();
+    await expect.poll(async () => (await deviceCopy(page)).chunkCount, { timeout: 40_000 }).toBeGreaterThan(before);
+    // The bar leads back to the recorder screen, which shows the same running recording.
+    await bar.getByRole('link').click();
+    await expect(page.getByRole('status').filter({ hasText: 'Đang ghi' })).toBeVisible();
+  });
+
+  await test.step('reload mid-recording: the page asks first, and the saved part is still on the device', async () => {
+    // Closing or reloading would stop the microphone, so the browser is asked to confirm (beforeunload).
+    let asked = false;
+    page.once('dialog', (dialog) => {
+      asked = dialog.type() === 'beforeunload';
+      void dialog.accept();
+    });
     await page.reload();
+    expect(asked).toBe(true);
     await expect(page.getByRole('button', { name: 'Bắt đầu ghi' })).toBeVisible();
     expect((await deviceCopy(page)).chunks).toBeGreaterThanOrEqual(3);
   });
