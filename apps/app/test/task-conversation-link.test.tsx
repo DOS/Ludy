@@ -34,9 +34,9 @@ const render = (locale: 'vi' | 'en', node: ReactNode) =>
 describe('TaskConversationLink (#3421)', () => {
   it('links to the Inbox with the thread selected, in Vietnamese and English', () => {
     authState.modules = ['kernel', 'social'];
-    const vi = render('vi', <TaskConversationLink conversationId={ID} slug="demo-org" />);
-    expect(vi).toContain(`href="/o/demo-org/social/inbox?c=${ID}"`);
-    expect(vi).toContain('Mở hội thoại');
+    const viHtml = render('vi', <TaskConversationLink conversationId={ID} slug="demo-org" />);
+    expect(viHtml).toContain(`href="/o/demo-org/social/inbox?c=${ID}"`);
+    expect(viHtml).toContain('Mở hội thoại');
     const en = render('en', <TaskConversationLink conversationId={ID} slug="demo-org" />);
     expect(en).toContain('Open the conversation');
   });
