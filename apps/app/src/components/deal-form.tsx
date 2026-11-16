@@ -20,6 +20,8 @@ import { normalizeAmount } from '../lib/vouchers.ts';
 export const refreshDeals = () => {
   void queryClient.invalidateQueries({ queryKey: orpc.crm.deals.list.key() });
   void queryClient.invalidateQueries({ queryKey: orpc.crm.deals.board.key() });
+  // The deal read by id (the offers on the quotes tab, #3420) follows a move or an edit made from the board, the list or the form.
+  void queryClient.invalidateQueries({ queryKey: orpc.crm.deals.get.key() });
   void queryClient.invalidateQueries({ queryKey: orpc.crm.deals.conversations.key() });
   // A deal added from a contact's panel shows in that panel, and the contact lists count their open deals.
   void queryClient.invalidateQueries({ queryKey: orpc.crm.deals.byParty.key() });

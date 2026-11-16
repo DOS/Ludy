@@ -63,6 +63,19 @@ test('a deal becomes a quote, is sent by link, opens on the public page, is acce
     expect(scan.violations.filter((v) => v.impact === 'serious' || v.impact === 'critical').map((v) => `${v.impact} ${v.id}`)).toEqual([]);
   });
 
+  await test.step('the coworker offers to move the deal to "Báo giá" and to set its amount to the quote total; each is one click (#3420)', async () => {
+    const offers = page.getByTestId('quote-deal-offers');
+    await expect(offers).toContainText('Chuyển sang Báo giá');
+    await expect(offers).toContainText('Đặt giá trị cơ hội bằng tổng báo giá');
+    // Nothing moved by itself: the deal still holds its own amount until the click.
+    await offers.getByRole('button', { name: 'Chuyển sang Báo giá' }).click();
+    await expect(page.getByTestId('quote-deal-offer-done')).toContainText('Đã chuyển cơ hội sang "Báo giá"');
+    await expect(offers.getByTestId('quote-deal-offer-move')).toHaveCount(0);
+    await offers.getByRole('button', { name: 'Đặt giá trị cơ hội bằng tổng báo giá' }).click();
+    await expect(page.getByTestId('quote-deal-offer-done')).toContainText('1.650.000');
+    await expect(page.getByTestId('quote-deal-offers')).toHaveCount(0);
+  });
+
   await test.step('the link opens the quote on a public page with no sign-in', async () => {
     const stranger = await browser.newContext();
     try {
@@ -92,6 +105,17 @@ test('a deal becomes a quote, is sent by link, opens on the public page, is acce
     await expect(orders.getByTestId('order-invoice')).toBeEnabled();
     await orders.getByTestId('order-invoice').click();
     await expect(orders.getByTestId('order-invoice-done')).toContainText('Đã tạo bản nháp hóa đơn');
+  });
+
+  await test.step('after the acceptance the coworker offers "Thắng"; the order was made either way, and one click moves the deal (#3420)', async () => {
+    const offers = page.getByTestId('quote-deal-offers');
+    await expect(offers).toContainText('Khách đã đồng ý báo giá');
+    // The amount already equals the quote total, so only the move is offered.
+    await expect(offers).not.toContainText('Đặt giá trị cơ hội bằng tổng báo giá');
+    await offers.getByRole('button', { name: 'Chuyển sang Thắng' }).click();
+    await expect(page.getByTestId('quote-deal-offer-done')).toContainText('Đã chuyển cơ hội sang "Thắng"');
+    await expect(page.getByTestId('quote-deal-offers')).toHaveCount(0);
+    await expect(page.getByTestId('deal-orders').getByTestId('order-row')).toHaveCount(1);
   });
 
   await test.step('a second acceptance is not offered, and the Báo giá report counts the accepted quote', async () => {
