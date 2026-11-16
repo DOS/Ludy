@@ -75,6 +75,7 @@ import { runAdsStateSync } from './ads-state.ts';
 import { runAdsPause, type AdsPauseJob } from './ads-pause.ts';
 import { runAdsRevoke } from './ads-revoke.ts';
 import { ADS_DUE_PAGE, adsDue, pruneAdsRuns, runAdsSync, type AdsSyncJob } from './ads-sync.ts';
+import { HELD_SWEEP_MS, holdEvents, planHolds, releaseHeld } from './outbox-hold.ts';
 import { failUnaskable, runAdsCampaignDraft, sweepAdsCampaignRequests, type AdsCampaignDraftJob } from './ads-worker.ts';
 import { failUndraftable, requestDueConversationDrafts, sweepConversationComposing, sweepConversationDrafts, runConversationDraft, type ConversationDraftJob, dueConversationAttachments, dueConversationSync, failChatHook, failUnsendable, requestConversationAttachments, requestConversationSync, purgeExpiredConversations, runConversationAttachment, runConversationDeletions, runConversationIntake, runConversationJob, runConversationSync, runTelegramChatHook, sweepConversationBlobs, sweepStaleReplies, type ConversationAttachmentJob, type ConversationChatJob, type ConversationJob, type ConversationSyncJob } from './conversations-worker.ts';
 import { runLiveCheck } from './calendar-live.ts';
@@ -2385,7 +2386,15 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     try {
       for (;;) {
         const sent = await relayBatch(deps.workerDb, boss, async (trx) => {
-          const { rows } = await sql<OutboxRow>`SELECT * FROM crove_kernel.outbox_claim(100)`.execute(trx);
+          const { rows: claimed } = await sql<OutboxRow>`SELECT * FROM crove_kernel.outbox_claim(100)`.execute(trx);
+          // The events of an app that is off for the org wait (ADR-0053, C3b): they leave the outbox with this claim and are parked in the same transaction, with no job
+          // queued; the held sweep puts them back once the app is on. One fresh read per org and app for the batch.
+          const plan = await planHolds(claimed, (orgId, app) => deps.runtime.appOn(orgId, app, { fresh: true }), (app) => deps.runtime.installed(app));
+          if (plan.held.length > 0) {
+            await holdEvents(trx, plan.held);
+            for (const key of new Set(plan.held.map((h) => `${h.row.org_id.slice(0, 8)}:${h.app}`))) console.warn(`[relay] events of org ${key.split(':')[0]} wait: ${key.split(':')[1]} is off`);
+          }
+          const rows = plan.rest;
           const priorities = finance ? await extractPriorities(trx, rows) : new Map<OutboxRow, number>();
           // A failed send rolls back the claim and the batch is relayed again. Each row's step gets `boss` on the claim's
           // transaction (relayBatch, #1705), shadowing the worker's own on purpose, so every job it sends rolls back with
@@ -2979,6 +2988,21 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     }
   };
   const pressureTimer = setInterval(() => void pressureCheck(), BACK_PRESSURE_CHECK_MS);
+  // The held sweep (ADR-0053, C3b): the events parked while their app was off go back on the outbox once it is on, oldest first; one sweep at a time, none after stop.
+  let releasing = false;
+  const heldSweep = async () => {
+    if (releasing || stopped) return;
+    releasing = true;
+    try {
+      const done = await releaseHeld(deps.workerDb, (orgId, app) => deps.runtime.appOn(orgId, app, { fresh: true }));
+      if (done.released > 0 || done.expired > 0) console.log(`[relay] held events: ${done.released} put back, ${done.expired} dropped as too old`);
+    } catch (error) {
+      console.error('[relay] held sweep', error);
+    } finally {
+      releasing = false;
+    }
+  };
+  const heldTimer = setInterval(() => void heldSweep(), HELD_SWEEP_MS);
   console.log('[worker] started');
 
   return async () => {
@@ -2990,6 +3014,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     // drain below: a job still running is not queued, and the drain may take the whole stop grace period.
     const lastBeat = heartbeat([]);
     clearInterval(pressureTimer);
+    clearInterval(heldTimer);
     if (socialTimer) clearInterval(socialTimer);
     if (removeTimer) clearInterval(removeTimer);
     if (mailTimer) clearInterval(mailTimer);
