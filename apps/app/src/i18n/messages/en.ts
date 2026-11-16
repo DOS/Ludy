@@ -11988,6 +11988,7 @@ export const en = {
         matched: 'List matched bank statement lines',
         open_lines: 'List unmatched bank statement lines',
         payroll_match: 'List the payroll payments a money-out statement line may be',
+        platform_lines: 'List the statement lines that name an ad platform',
         preview: 'Preview a bank statement',
         statement_confirm: 'Import a bank statement read from a file (sent by email or dropped in the Inbox)',
         statement_lines: 'See the lines of a bank statement read from a file before importing it',

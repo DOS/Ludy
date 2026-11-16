@@ -11985,6 +11985,7 @@ export const vi = {
         matched: 'Xem các dòng sao kê đã khớp chứng từ',
         open_lines: 'Xem các dòng sao kê chưa đối chiếu',
         payroll_match: 'Xem khoản chi lương mà một dòng sao kê chi ra có thể là',
+        platform_lines: 'Xem các dòng sao kê mang tên một nền tảng quảng cáo',
         preview: 'Xem trước sao kê ngân hàng',
         statement_confirm: 'Nhập sao kê ngân hàng đã đọc từ tệp (thư gửi đến hoặc tải vào Chứng từ chờ duyệt)',
         statement_lines: 'Xem các dòng của sao kê ngân hàng đọc từ tệp trước khi nhập',
