@@ -58,7 +58,7 @@ Rút ra:
 
 Làm thêm sau các bước trên, đều đã vào `main`: Dy soạn lời nhắc cho báo giá chưa được trả lời (#3101, PR #3107); sau khi gửi hoặc ghi nhận khách đồng ý, đầu thẻ báo giá của cơ hội gợi ý chuyển cơ hội sang giai đoạn "Báo giá" hoặc "Thắng" và đặt giá trị cơ hội bằng tổng báo giá, mỗi gợi ý chỉ chạy khi người dùng bấm (#3420, PR #3464, luật cố định, không gọi mô hình AI).
 
-Tình hình xây (2026-11-16): cả sáu bước và phần Kế toán đều đã có trong `main`. Còn lại, đã có issue riêng: màn đơn hàng chưa cho thấy từng dòng đã lập hóa đơn hay chưa, và chưa tắt nút hủy khi đơn có dòng đã lập nháp (#3477, cần một câu đọc mới của Kế toán, đang chờ PO Kế toán xác nhận hình dạng). Điểm A7 (hủy đơn đúng lúc có người lập hóa đơn) vẫn mở; #3477 chỉ làm nhẹ bớt, không đóng nó.
+Tình hình xây (2026-11-16): cả sáu bước và phần Kế toán đều đã có trong `main`. Màn đơn hàng cho thấy từng dòng đã lập hóa đơn hay chưa ("Chưa lập hóa đơn", "Đã lập nháp", "Đã phát hành"), nút "Lập hóa đơn" nêu các dòng còn lại và ẩn khi hết dòng, và nút hủy tắt khi đơn đã có dòng lập nháp hoặc phát hành (#3477, PR #3487, đọc một câu mới của Kế toán, không cần migration). Đó chỉ là gợi ý trên màn hình: máy chủ vẫn từ chối lập hóa đơn một dòng hai lần, và điểm A7 (máy chủ từ chối hủy đơn đã lập nháp) vẫn mở.
 
 Chưa làm, để Icebox (P3) trừ khi anh mở lại: khách tự đồng ý trên đường dẫn, ngưỡng chiết khấu cần người duyệt, ngôn ngữ thứ hai, dòng tùy chọn, chọn hàng từ danh mục kho, giao một phần số lượng của dòng, chứng từ giao hàng và vận chuyển, một cú nhấp "xác nhận và lập hóa đơn", mã QR hoặc link thanh toán trên báo giá.
 
