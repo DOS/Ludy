@@ -90,7 +90,9 @@ export type UploadPurpose = (typeof UPLOAD_PURPOSES)[number];
 // both a recorded and a voided purchase document. note is a member's note (#1671), private or shared, and todo a
 // member's own to-do (#1673): every open app of the org gets its id, and only those its policies let read it see a
 // change.
-export const STREAM_HINT_TYPES = ['proposal', 'file', 'extraction', 'journal_entry', 'document', 'social_post', 'social_notification', 'notification', 'note', 'todo'] as const;
+// org_apps: the org's owner switched an app on or off (ADR-0053); its id is the org's. Every stream of the org gets it, and re-checks first, so the apps it
+// filters by are the new ones; the app then reads kernel.org.apps again.
+export const STREAM_HINT_TYPES = ['proposal', 'file', 'extraction', 'journal_entry', 'document', 'social_post', 'social_notification', 'notification', 'note', 'todo', 'org_apps'] as const;
 export type StreamHintType = (typeof STREAM_HINT_TYPES)[number];
 export interface StreamHint {
   type: StreamHintType;
