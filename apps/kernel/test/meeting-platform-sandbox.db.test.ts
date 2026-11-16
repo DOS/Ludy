@@ -14,7 +14,7 @@ import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { kernelCommands, kernelQueries } from '@crove/kernel';
 import { meetingPlatformBinding, type MeetingPlatformRecordingView } from '@crove/kernel-contract';
 import { SandboxMeetingPlatform } from '@crove/channel';
-import { CredentialVault, DomainError, Runtime, defineCommand, parseVaultKey, type BlobStore } from '@crove/kernel-runtime';
+import { CredentialVault, DomainError, Runtime, defineCommand, defineQuery, parseVaultKey, type BlobStore } from '@crove/kernel-runtime';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
@@ -31,6 +31,8 @@ const suite = ADMIN ? describe : describe.skip;
 const SYSTEM = { type: 'system' as const, component: 'meeting-platform-sandbox-test' };
 
 // The member's click ("Nhập") belongs to the meetings module's command; the test stands in for it with the same definer call.
+// The Meetings app is installed here (a definition of its module), so the worker's per-org check (ADR-0053) finds it on for every org.
+const meetingsInstalled = defineQuery({ name: 'meetings.test_installed', input: z.object({}), access: ['owner'], handler: async () => 'on' });
 const begin = defineCommand({
   name: 'test.mp.begin',
   input: z.strictObject({ recordingId: z.string(), meetingId: z.string(), stagingKey: z.string() }),
@@ -116,7 +118,7 @@ suite('the sandbox meeting platform from the HTTP rpc to the staged bytes (meeti
     pools.push(pool, workerPool);
     const db = createDb(pool);
     workerDb = createDb(workerPool);
-    const defs = { commands: [...kernelCommands, begin], queries: kernelQueries({ inboundDomain: null }) };
+    const defs = { commands: [...kernelCommands, begin], queries: [...kernelQueries({ inboundDomain: null }), meetingsInstalled] };
     api = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' }).register(defs);
     worker = new Runtime(workerDb, { manifests: TEST_MANIFESTS }).register(defs);
     clicker = new Runtime(db, { manifests: TEST_MANIFESTS }).register(defs);

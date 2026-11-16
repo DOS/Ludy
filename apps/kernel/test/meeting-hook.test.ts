@@ -101,6 +101,7 @@ describe('the secret', () => {
 function stubRuntime(options: { delivery: MeetingHookDeliveryRow | null; target: MeetingHookTargetRow | null }) {
   const executed: Array<{ name: string; input: Record<string, unknown> }> = [];
   const runtime = {
+    appOn: async () => true,
     query: async (name: string) => (name === 'meetings.hook.delivery' ? options.delivery : name === 'meetings.hook.target' ? options.target : null),
     execute: async (name: string, input: Record<string, unknown>) => {
       executed.push({ name, input });
@@ -247,6 +248,7 @@ describe('the sweep', () => {
         executed.push({ name, input, orgId: ctx.orgId });
         return {};
       },
+      appOn: async () => true,
     } as unknown as Runtime;
     // The part of a kysely database a raw `sql` query touches: its executor, which answers with the rows.
     const workerDb = { getExecutor: () => ({ transformQuery: (n: unknown) => n, compileQuery: () => ({ query: {}, sql: '', parameters: [] }), executeQuery: async () => ({ rows }) }) } as never;

@@ -11,7 +11,7 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 import { zId } from '@crove/kernel-contract';
 import type { Db, MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import { DomainError, defineCommand, moduleOffOf, type CommandContext, type Runtime, type SystemActor } from '@crove/kernel-runtime';
 import { REMOVE_READY, isProvider, removeAtFit, removeAtOf, removeWindowMs } from './domain/channels.ts';
 import { callRevision, publishCallKey } from './domain/publish.ts';
 import { COMMENT_STALE_MS, type CommentCall } from './comments.ts';
@@ -155,6 +155,7 @@ export type RemoveRecord = z.infer<typeof zRemoveResult>;
 // Stores what the platform answered for the remove call; an answer for a call that is not started changes nothing.
 export const removeRecord = defineCommand({
   name: 'social.remove.record',
+  runsWhenOff: "records the platform's answer to a call already made, so its outcome is not lost when the app is switched off",
   input: z.strictObject({ variantId: zId, callKey: z.string().min(1).max(300), result: zRemoveResult }),
   risk: 'R1',
   sideEffect: 'internal',
@@ -320,6 +321,8 @@ export async function sweepRemovals(deps: { runtime: Runtime; workerDb: Db }, pr
       const done = await deps.runtime.execute<{ queued: boolean }>('social.remove.schedule', { variantId: row.variant_id }, { actor: SWEEP_ACTOR, orgId: row.org_id });
       if (done.queued) queued += 1;
     } catch (error) {
+      // Social off: a planned takedown is exposure-stopping and joins runsWhenOff in C3 (ADR-0053); until then it is refused quietly, row by row.
+      if (moduleOffOf(error) !== null) continue;
       console.warn(`[social-remove] planned removal of variant ${row.variant_id.slice(0, 8)}: ${error instanceof DomainError ? error.code : error instanceof Error ? error.name : 'error'}`);
     }
   }
