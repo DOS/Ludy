@@ -56,12 +56,15 @@ suite('the series nudge (#3542)', () => {
     ]);
     return id;
   }
-  async function calendarEvent(who: string, startMinutes: number, series: string | null): Promise<void> {
+  async function calendarEvent(who: string, startMinutes: number, series: string | null, over: { connectionId?: string; startsAt?: string } = {}): Promise<string> {
+    const connectionId = over.connectionId ?? (await connection(who));
+    const startsAt = over.startsAt ?? iso(startMinutes);
     await sqlAdmin(
       `INSERT INTO crove_meetings.calendar_agenda (org_id, connection_id, user_id, external_id, title, starts_at, ends_at, time_zone, series_id)
        VALUES ($1, $2, $3, $4, 'Họp giao ban', $5, $6, 'Asia/Ho_Chi_Minh', $7)`,
-      [orgId, await connection(who), users[who], randomUUID(), iso(startMinutes), iso(startMinutes + 60), series],
+      [orgId, connectionId, users[who], randomUUID(), startsAt, new Date(new Date(startsAt).getTime() + 3_600_000).toISOString(), series],
     );
+    return connectionId;
   }
   // A meeting recorded by `rec`, started `startMinutes` from now, read by `readers`, in `series`.
   async function meeting(startMinutes: number, readers: string[], series: string | null, title = 'Giao ban tuần trước'): Promise<string> {
@@ -161,8 +164,8 @@ suite('the series nudge (#3542)', () => {
     expect(got[0]).toMatchObject({ subject_id: earlier, detail: { count: '2' } });
     // A count and ids only: no title of the meeting or of an item.
     expect(JSON.stringify(got[0])).not.toMatch(/Alpha|Beta|hợp đồng|báo giá/);
-    // The same pass again, and a replayed command, write nothing more.
-    expect(await sweep()).toMatchObject({ sent: 0 });
+    // The same pass again finds nothing left to send (the definer leaves out what was told), and writes nothing more.
+    expect(await sweep()).toEqual({ found: 0, sent: 0, failures: 0 });
     expect(await notices('lan')).toHaveLength(1);
     // Nam has items but no such event in their own calendar, so is not told.
     expect(await notices('nam')).toHaveLength(0);
@@ -187,7 +190,7 @@ suite('the series nudge (#3542)', () => {
     await item(read, 'Chưa ai nhận');
     await item(read, 'Việc nháp', { task: 'todo', stage: 'draft' });
     await calendarEvent('lan', 15, series);
-    // Nam's item sits in the later meeting of the series, which Nam did not read: the earlier one they read has none of theirs.
+    // Nam has an open item in a meeting of the series they did not read (they read none): no notice, and no hint of it.
     const unread = await meeting(-100, ['lan'], series);
     await item(unread, 'Việc của Nam', { task: 'todo', parsed: 'nam' });
     await calendarEvent('nam', 15, series);
@@ -215,9 +218,63 @@ suite('the series nudge (#3542)', () => {
     await calendarEvent('nam', 15, series);
     await sqlAdmin('INSERT INTO crove_kernel.notification_mute (org_id, user_id, kind) VALUES ($1, $2, $3)', [orgId, users.lan, KIND]);
     await sqlAdmin('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [orgId, users.nam]);
-    expect(await sweep()).toMatchObject({ sent: 0, failures: 0 });
+    // A muted kind or a former member is not even listed, so it cannot push the others past the limit.
+    expect(await sweep()).toEqual({ found: 0, sent: 0, failures: 0 });
     expect(await notices()).toHaveLength(0);
     await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, users.nam]);
+  });
+
+  it('goes on with the rest on the next pass when a pass hits its limit, never listing what was told again', async () => {
+    const series = randomUUID();
+    const earlier = await meeting(-300, ['lan', 'nam', 'other'], series);
+    for (const who of ['lan', 'nam', 'other']) {
+      await item(earlier, `Việc của ${who}`, { task: 'todo', parsed: who });
+      await calendarEvent(who, 15, series);
+    }
+    const limited = () => runMeetingsSeriesNudgeSweep({ runtime: worker, workerDb, perPass: 1 });
+    expect(await limited()).toEqual({ found: 1, sent: 1, failures: 0 });
+    expect(await limited()).toEqual({ found: 1, sent: 1, failures: 0 });
+    expect(await limited()).toEqual({ found: 1, sent: 1, failures: 0 });
+    expect(await limited()).toEqual({ found: 0, sent: 0, failures: 0 });
+    expect(await notices()).toHaveLength(3);
+  });
+
+  it('tells a person once for an event in two of their calendars, and again for none when the occurrence moves a little', async () => {
+    const series = randomUUID();
+    const earlier = await meeting(-300, ['lan'], series);
+    await item(earlier, 'Việc mở', { task: 'todo' });
+    const shared = await calendarEvent('lan', 20, series);
+    await calendarEvent('lan', 20, series);
+    // The same start in a second row of the same connection stands for the same event in a second calendar.
+    await calendarEvent('lan', 20, series, { connectionId: shared, startsAt: iso(20) });
+    expect(await sweep()).toMatchObject({ found: 1, sent: 1 });
+    // The occurrence moves by 10 minutes and the cache follows: the same notice, not a second.
+    await sqlAdmin(`UPDATE crove_meetings.calendar_agenda SET starts_at = starts_at + interval '10 minutes', ends_at = ends_at + interval '10 minutes' WHERE org_id = $1`, [orgId]);
+    expect(await sweep()).toMatchObject({ sent: 0 });
+    expect(await notices('lan')).toHaveLength(1);
+  });
+
+  it('does not nudge from a calendar that is no longer connected or for an org that turned Meetings off', async () => {
+    const series = randomUUID();
+    const earlier = await meeting(-300, ['lan', 'nam'], series);
+    await item(earlier, 'Việc của Lan', { task: 'todo', parsed: 'lan' });
+    await item(earlier, 'Việc của Nam', { task: 'todo', parsed: 'nam' });
+    const lanConnection = await calendarEvent('lan', 15, series);
+    await calendarEvent('nam', 15, series);
+    // The token was refused: the cache stays, but it may be stale (an occurrence cancelled since).
+    await sqlAdmin(`UPDATE crove_kernel.calendar_connection SET status = 'expired' WHERE org_id = $1 AND id = $2`, [orgId, lanConnection]);
+    expect(await sweep()).toMatchObject({ found: 1, sent: 1 });
+    expect(await notices('lan')).toHaveLength(0);
+    expect(await notices('nam')).toHaveLength(1);
+    // Meetings off for the org: the definer lists nothing at all.
+    await sqlAdmin('DELETE FROM crove_kernel.notification WHERE org_id = $1', [orgId]);
+    await sqlAdmin(`UPDATE crove_kernel.tenant SET apps_off = ARRAY['meetings'] WHERE org_id = $1`, [orgId]);
+    try {
+      expect(await sweep()).toEqual({ found: 0, sent: 0, failures: 0 });
+    } finally {
+      await sqlAdmin(`UPDATE crove_kernel.tenant SET apps_off = '{}' WHERE org_id = $1`, [orgId]);
+    }
+    expect(await notices()).toHaveLength(0);
   });
 
   it('checks what the job was told again: a stale nudge writes nothing, and only the system context can ask', async () => {

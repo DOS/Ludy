@@ -1,4 +1,4 @@
-// In-app notifications of the kernel, finance and notes (#671): the kinds the settings list, what an item opens, and how
+// In-app notifications of the kernel, finance, notes, projects and meetings (#671): the kinds the settings list, what an item opens, and how
 // a VAT period reads. Social's are apart (lib/social-notifications.ts, #637). No React imports, so it is unit tested.
 
 // The kinds a member can turn off, by module, in the order the settings list them.

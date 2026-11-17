@@ -149,7 +149,7 @@ export const seriesSet = defineCommand({
 // The notification kind of the nudge; members turn it off like any kind (#671). Its detail holds the count only.
 export const SERIES_OPEN_ITEMS = 'meetings.series_open_items';
 
-// One nudge the sweep found: a notice for one member, once per series and start time of the next meeting (the notice's key, so a replayed job or a second pass writes nothing). The job's ids are
+// One nudge the sweep found: a notice for one member, once per series and day of the next meeting (the notice's key, so a replayed job or a second pass writes nothing). The job's ids are
 // not trusted: crove_meetings.series_nudges_due derives the row again for this member, series and start (the event in their own calendar, the previous meeting they read, the open items that are
 // theirs now), and a nudge that is no longer due (the event moved, the items done or given to someone else since the sweep) writes nothing.
 export const seriesNudge = defineCommand({
@@ -165,14 +165,13 @@ export const seriesNudge = defineCommand({
       SELECT previous_meeting_id, open_count
       FROM crove_meetings.series_nudges_due(1::int, ${ctx.orgId}::uuid, ${input.userId}::uuid, ${input.seriesId}::uuid, ${startsAt}::timestamptz)`.execute(ctx.trx);
     const due = rows[0];
-    if (!due) {
-      ctx.audit({ seriesId: input.seriesId, startsAt, sent: 0, current: false });
-      return { sent: 0 };
-    }
+    // Nothing due any more (done since the sweep, already told, muted): nothing is written, not even an audit row.
+    if (!due) return { sent: 0 };
     const sent = await notifyMembers(ctx, {
       kind: SERIES_OPEN_ITEMS,
       users: [input.userId],
-      key: `series:${input.seriesId}:${startsAt}`,
+      // The series and the Vietnam day of the start (the same text crove_meetings.series_nudges_due leaves out): an occurrence moved by minutes is one notice.
+      key: `series:${input.seriesId}:${vnDay(new Date(startsAt))}`,
       subject: { type: 'meetings.meeting', id: due.previous_meeting_id },
       detail: { count: String(due.open_count) },
       legalEntityId: await uploaderEntity(ctx, input.userId),
