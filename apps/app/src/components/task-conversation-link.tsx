@@ -4,9 +4,9 @@
 // never confirms that the thread exists. Without the Social module (Engage) there is no Inbox to open and the link is not shown.
 import { Link } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
-import { getConfig } from '../lib/auth.ts';
+import { installedModules } from '../lib/org-modules.ts';
 
-export const conversationInboxInstalled = (): boolean => getConfig().modules.includes('social');
+export const conversationInboxInstalled = (): boolean => installedModules().includes('social');
 
 export function TaskConversationLink({ conversationId, slug }: { conversationId: string; slug: string }) {
   const t = useTranslations('tasks');

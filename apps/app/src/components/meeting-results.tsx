@@ -3,15 +3,17 @@
 // see, and one click shares them with the meeting's readers; a reader sees what was shared and makes a team task from an item: they confirm the title, pick the
 // date and the seat. Nothing here needs AI; the work Vy does for this screen arrives in a later step and lands in these same drafts.
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { Link } from '@tanstack/react-router';
 import { useState, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
-import { MEETING_SUMMARY_TEMPLATES, templateSections, textToSections, type ActionItemView, type MeetingSummaryTemplate } from '@crove/kernel-contract';
+import { MEETING_SUMMARY_TEMPLATES, templateSections, textToSections, type ActionItemView, type MeetingSummaryTemplate, type MeetingVisibility } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { Textarea } from '@crove/ui/components/textarea';
+import { ConfirmDialog } from './confirm-dialog.tsx';
 import { DateInput } from './date-input.tsx';
 import { ErrorText } from './ui.tsx';
 import { MeetingFollowup } from './meeting-followup.tsx';
@@ -19,6 +21,7 @@ import { MeetingZalo } from './meeting-zalo.tsx';
 import { MeetingChatPost } from './meeting-chat.tsx';
 import { MeetingTranslation } from './meeting-translation.tsx';
 import { clock } from './meeting-transcript.tsx';
+import { notesInstalled } from './notes-panel.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 
 // A member as people read them: the name, else the email, else a plain fallback; never an id.
@@ -311,9 +314,95 @@ function VySummary({ meetingId, hasModelDraft }: { meetingId: string; hasModelDr
   );
 }
 
+function hasNotesModule(): boolean {
+  try {
+    return notesInstalled();
+  } catch {
+    return false;
+  }
+}
+
+function SaveSummaryAsNote({
+  meetingId,
+  visibility,
+  slug,
+}: {
+  meetingId: string;
+  visibility: MeetingVisibility | undefined;
+  slug: string | undefined;
+}) {
+  const t = useTranslations('meetings.results');
+  const [savedNoteId, setSavedNoteId] = useState<string | null>(null);
+  const save = useMutation({
+    mutationFn: () => orpc.notes.fromMeetingSummary.call({ meetingId }),
+    onSuccess: (done) => {
+      setSavedNoteId(done.noteId);
+      void queryClient.invalidateQueries({ queryKey: orpc.notes.key() });
+    },
+  });
+  return (
+    <div className="space-y-2 border-t pt-3" data-testid="save-summary-as-note-box">
+      {visibility !== 'org' ? (
+        <ConfirmDialog
+          render={<Button type="button" size="sm" variant="outline" loading={save.isPending} data-testid="save-summary-as-note" />}
+          disabled={save.isPending}
+          title={t('saveAsNoteConfirmTitle')}
+          description={t('saveAsNoteConfirmDesc')}
+          confirm={t('saveAsNoteConfirmAction')}
+          onConfirm={() => save.mutate()}
+        >
+          {t('saveAsNote')}
+        </ConfirmDialog>
+      ) : (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          loading={save.isPending}
+          disabled={save.isPending}
+          onClick={() => save.mutate()}
+          data-testid="save-summary-as-note"
+        >
+          {t('saveAsNote')}
+        </Button>
+      )}
+      {save.error && <ErrorText>{errorMessage(save.error)}</ErrorText>}
+      {savedNoteId !== null && (
+        <p role="status" className="text-xs text-muted-foreground" data-testid="saved-summary-note">
+          {t('savedAsNote')}
+          {slug ? (
+            <>
+              {' '}
+              <Link to="/o/$slug/notes" params={{ slug }} search={{ note: savedNoteId }} className="text-link underline">
+                {t('openSavedNote')}
+              </Link>
+            </>
+          ) : null}
+        </p>
+      )}
+    </div>
+  );
+}
+
 // `template` is the meeting's minutes template (A4, #3162); `minutesLink` is the "Xem biên bản" link the page puts beside the title (it knows the route; this panel does not); `title` is
 // the meeting's title, for the heading of the text "Gửi qua Zalo" prepares (B5, #3169).
-export function MeetingResults({ meetingId, readers, template = 'general', title = '', minutesLink }: { meetingId: string; readers: readonly string[]; template?: MeetingSummaryTemplate; title?: string; minutesLink?: ReactNode }) {
+export function MeetingResults({
+  meetingId,
+  readers,
+  template = 'general',
+  title = '',
+  visibility,
+  slug,
+  minutesLink,
+}: {
+  meetingId: string;
+  readers: readonly string[];
+  template?: MeetingSummaryTemplate;
+  title?: string;
+  visibility?: MeetingVisibility;
+  slug?: string;
+  minutesLink?: ReactNode;
+}) {
   const t = useTranslations('meetings.results');
   const query = useQuery({ ...orpc.meetings.results.get.queryOptions({ input: { meetingId } }), ...READ_ONCE });
   const publish = useMutation({ mutationFn: () => orpc.meetings.results.publish.call({ meetingId, confirmed: true }), onSuccess: refresh });
@@ -326,6 +415,15 @@ export function MeetingResults({ meetingId, readers, template = 'general', title
   // A reader with nothing shared sees no panel at all.
   if (!isRecorder && !published && items.length === 0) return null;
   const hasDraft = draft !== null || items.some((i) => i.stage === 'draft');
+  const hasPublishedSummary =
+    published !== null && (published.summary.trim() !== '' || published.decisions.some((d) => d.trim() !== ''));
+  const hasDraftSummary =
+    isRecorder &&
+    published === null &&
+    draft !== null &&
+    !draft.tainted &&
+    (draft.summary.trim() !== '' || draft.decisions.some((d) => d.trim() !== ''));
+  const canSaveAsNote = hasNotesModule() && (hasPublishedSummary || hasDraftSummary);
   // What Vy wrote and the recorder has not read: the draft is not shared until they confirm it (or rewrite it).
   // The rows on the screen that Vy wrote: the review names exactly these, so a row copied in another tab after this one loaded keeps its mark.
   const unreadIds = [...(draft?.tainted ? [draft.id] : []), ...items.filter((i) => i.stage === 'draft' && i.tainted).map((i) => i.id)];
@@ -348,6 +446,7 @@ export function MeetingResults({ meetingId, readers, template = 'general', title
             <MeetingTranslation meetingId={meetingId} stage="published" original={{ summary: published.summary, decisions: published.decisions, items: items.filter((i) => i.stage === 'published') }} />
           </section>
         )}
+        {canSaveAsNote && <SaveSummaryAsNote key={meetingId} meetingId={meetingId} visibility={visibility} slug={slug} />}
         {isRecorder && (published || items.some((i) => i.stage === 'published')) && <MeetingFollowup meetingId={meetingId} />}
         {/* B5 (#3169): only a published result can be offered to a customer, and only the lines the recorder ticks; the draft is never read here. */}
         {isRecorder && title !== '' && (published || items.some((i) => i.stage === 'published')) && (

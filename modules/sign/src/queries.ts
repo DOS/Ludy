@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Read queries and cryptographic envelope verification for eSign Slice 1a (#3323).
 // All reads execute inside QueryContext with org_id isolation and never expose signing_token or signing_otp secrets.
+import { sql } from 'kysely';
 import { z } from 'zod';
 import { SIGN_ENVELOPE_STATUSES, SIGN_SOURCE_KINDS, type MemberRole } from '@crove/db';
 import { zId } from '@crove/kernel-contract';
@@ -64,30 +65,84 @@ export const envelopeList = defineQuery({
     if (input.status !== undefined) q = q.where('status', '=', input.status);
     if (input.sourceKind !== undefined) q = q.where('source_kind', '=', input.sourceKind);
     const rows = await q.orderBy('created_at', 'desc').orderBy('id', 'desc').limit(input.limit).execute();
+    if (rows.length === 0) {
+      return { items: [] };
+    }
+
+    const actorUserId = ctx.actor.type === 'user' ? ctx.actor.userId : null;
+    let actorEmail: string | null = null;
+    if (actorUserId !== null) {
+      const { rows: profileRows } = await sql<{ email: string | null }>`
+        SELECT email FROM crove_kernel.member_profiles(${[actorUserId]}::uuid[])
+      `.execute(ctx.trx);
+      actorEmail = profileRows[0]?.email?.trim().toLowerCase() ?? null;
+    }
+
+    const signerRows = await ctx.trx
+      .selectFrom('crove_sign.signer')
+      .select(['envelope_id', 'status', 'email'])
+      .where('org_id', '=', ctx.orgId)
+      .where(
+        'envelope_id',
+        'in',
+        rows.map((r) => r.id),
+      )
+      .where('signer_role', '!=', 'cc')
+      .execute();
+
+    const summaryByEnvelope = new Map<string, { total: number; signed: number; awaitingMe: boolean }>();
+    for (const signer of signerRows) {
+      let entry = summaryByEnvelope.get(signer.envelope_id);
+      if (!entry) {
+        entry = { total: 0, signed: 0, awaitingMe: false };
+        summaryByEnvelope.set(signer.envelope_id, entry);
+      }
+      entry.total += 1;
+      if (signer.status === 'signed') {
+        entry.signed += 1;
+      }
+      if (
+        actorEmail !== null &&
+        (signer.status === 'pending' || signer.status === 'viewed') &&
+        signer.email !== null &&
+        signer.email.trim().toLowerCase() === actorEmail
+      ) {
+        entry.awaitingMe = true;
+      }
+    }
 
     return {
-      items: rows.map((r) => ({
-        id: r.id,
-        title: r.title,
-        status: r.status,
-        routingMode: r.routing_mode,
-        sourceKind: r.source_kind,
-        sourceId: r.source_id,
-        sourceFileId: r.source_file_id,
-        inspectStatus: r.inspect_status,
-        sealStatus: r.seal_status,
-        certificateCode: r.certificate_code,
-        pageCount: r.page_count,
-        expiresAt: isoOrNull(r.expires_at),
-        sentAt: isoOrNull(r.sent_at),
-        completedAt: isoOrNull(r.completed_at),
-        voidedAt: isoOrNull(r.voided_at),
-        expiredAt: isoOrNull(r.expired_at),
-        version: r.version,
-        createdBy: r.created_by,
-        createdAt: new Date(r.created_at).toISOString(),
-        updatedAt: new Date(r.updated_at).toISOString(),
-      })),
+      items: rows.map((r) => {
+        const counts = summaryByEnvelope.get(r.id);
+        const envelopeActive = r.status === 'sent' || r.status === 'in_progress';
+        return {
+          id: r.id,
+          title: r.title,
+          status: r.status,
+          routingMode: r.routing_mode,
+          sourceKind: r.source_kind,
+          sourceId: r.source_id,
+          sourceFileId: r.source_file_id,
+          inspectStatus: r.inspect_status,
+          sealStatus: r.seal_status,
+          certificateCode: r.certificate_code,
+          pageCount: r.page_count,
+          expiresAt: isoOrNull(r.expires_at),
+          sentAt: isoOrNull(r.sent_at),
+          completedAt: isoOrNull(r.completed_at),
+          voidedAt: isoOrNull(r.voided_at),
+          expiredAt: isoOrNull(r.expired_at),
+          version: r.version,
+          createdBy: r.created_by,
+          createdAt: new Date(r.created_at).toISOString(),
+          updatedAt: new Date(r.updated_at).toISOString(),
+          signerSummary: {
+            total: counts?.total ?? 0,
+            signed: counts?.signed ?? 0,
+            waitingForMe: Boolean(envelopeActive && counts?.awaitingMe),
+          },
+        };
+      }),
     };
   },
 });

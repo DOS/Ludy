@@ -22,6 +22,8 @@ import {
   NOTE_TITLE_MAX,
   PROJECT_DESCRIPTION_MAX,
   PROJECT_NAME_MAX,
+  PROJECT_TASK_TITLE_MAX,
+  PROJECT_TEMPLATE_TASK_DESCRIPTION_MAX,
   PROJECT_WEEKLY_STATUS_MAIL_SOURCE,
   zPersonalDataQuery,
   type PersonalDataErasure,
@@ -63,6 +65,8 @@ export interface PersonalDataColumn {
   machinery?: true;
   // A text[] column searched as its items joined by a space, as crove_notes.private_matches reads a note's tags.
   list?: true;
+  // A jsonb array of { text, done } steps searched by joining each step's text, keeping adjacent numbers separate.
+  jsonbSteps?: true;
 }
 
 // Keyed by schema.table.column.
@@ -280,6 +284,12 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: "A task's description, which may quote a person's email or phone; the value is replaced inside it",
   },
+  'crove_kernel.task.checklist': {
+    kind: 'free_text',
+    handling: 'erase',
+    jsonbSteps: true,
+    reason: "A task's checklist steps, which may quote a person's email or phone; each matching step text is redacted in place",
+  },
   'crove_finance.bank_line.description': {
     kind: 'free_text',
     handling: 'keep_legal',
@@ -434,6 +444,11 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_hr.candidate.notes': { kind: 'free_text', handling: 'erase', reason: 'Recruiting notes for a candidate, which may mention personal details: cleared on direct erasure and mentions redacted on text match' },
   'crove_projects.project.name': { kind: 'free_text', handling: 'erase', reason: "A project's title, which may name a person: mentions are replaced with a redaction marker" },
   'crove_projects.project.description': { kind: 'free_text', handling: 'erase', reason: "A project's description, which may name a person: mentions are replaced with a redaction marker" },
+  'crove_projects.project.template_tasks': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'Template task titles and descriptions in a project template, which may mention a person: mentions are replaced with a redaction marker',
+  },
   // eSign (#3323): draft signers are removed on erasure; sent, active, and executed signer records and append-only audit events stay for statutory verification; ephemeral email OTP rows erase via definer.
   'crove_sign.signer.name': {
     kind: 'name',
@@ -534,6 +549,67 @@ export function freeTextRedact(probe: Probe, column: RawBuilder<unknown>, mark: 
   return sql<string>`crove_kernel.text_redact(${column}::text, ${probe.kind}, ${probeValue(probe)}, ${mark})`;
 }
 
+const templateTasksMatch = (probe: Probe, column: RawBuilder<unknown>): RawBuilder<boolean> => sql<boolean>`
+  EXISTS (
+    SELECT 1
+      FROM pg_catalog.jsonb_array_elements(${column}) AS item
+     WHERE ${freeTextMatch(probe, sql`item ->> 'title'`)}
+        OR (pg_catalog.jsonb_typeof(item -> 'description') = 'string'
+            AND ${freeTextMatch(probe, sql`item ->> 'description'`)})
+  )`;
+
+const templateTasksRedact = (probe: Probe, column: RawBuilder<unknown>, mark: string): RawBuilder<unknown> => sql`
+  COALESCE(
+    (
+      SELECT pg_catalog.jsonb_agg(
+        pg_catalog.jsonb_strip_nulls(
+          pg_catalog.jsonb_build_object(
+            'title',
+            COALESCE(
+              NULLIF(pg_catalog.btrim(pg_catalog.left(
+                CASE
+                  WHEN ${freeTextMatch(probe, sql`elem.item ->> 'title'`)}
+                    THEN ${freeTextRedact(probe, sql`elem.item ->> 'title'`, mark)}
+                  ELSE elem.item ->> 'title'
+                END,
+                ${PROJECT_TASK_TITLE_MAX}::int
+              )), ''),
+              ${mark}
+            ),
+            'description',
+            CASE
+              WHEN pg_catalog.jsonb_typeof(elem.item -> 'description') = 'string' THEN
+                pg_catalog.left(
+                  CASE
+                    WHEN ${freeTextMatch(probe, sql`elem.item ->> 'description'`)}
+                      THEN ${freeTextRedact(probe, sql`elem.item ->> 'description'`, mark)}
+                    ELSE elem.item ->> 'description'
+                  END,
+                  ${PROJECT_TEMPLATE_TASK_DESCRIPTION_MAX}::int
+                )
+              ELSE NULL
+            END,
+            'dueOffsetDays',
+            CASE
+              WHEN pg_catalog.jsonb_typeof(elem.item -> 'dueOffsetDays') = 'number'
+                THEN elem.item -> 'dueOffsetDays'
+              ELSE NULL
+            END,
+            'tainted',
+            CASE
+              WHEN pg_catalog.jsonb_typeof(elem.item -> 'tainted') = 'boolean'
+                THEN elem.item -> 'tainted'
+              ELSE NULL
+            END
+          )
+        )
+        ORDER BY elem.ord
+      )
+      FROM pg_catalog.jsonb_array_elements(${column}) WITH ORDINALITY AS elem(item, ord)
+    ),
+    '[]'::jsonb
+  )`;
+
 const probeValue = (probe: Probe): string => (probe.kind === 'email' ? probe.email : probe.digits);
 
 // The columns a probe is compared with, and how. Phone numbers match with or without Vietnam's +84. Free text is
@@ -622,7 +698,12 @@ async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: 
     if (entry.machinery) continue;
     const [schema, table, column] = key.split('.') as [string, string, string];
     const ref = sql.ref(`t.${column}`);
-    const match = columnMatch(entry.kind, probe, entry.list ? sql`pg_catalog.array_to_string(${ref}, ' ')` : ref);
+    const expr = entry.list
+      ? sql`pg_catalog.array_to_string(${ref}, ' ')`
+      : entry.jsonbSteps
+        ? sql`(SELECT coalesce(pg_catalog.string_agg(s.step ->> 'text', ' | '), '') FROM pg_catalog.jsonb_array_elements(${ref}) AS s(step))`
+        : ref;
+    const match = key === 'crove_projects.project.template_tasks' ? templateTasksMatch(probe, ref) : columnMatch(entry.kind, probe, expr);
     if (!match) continue;
     // Row security already hides other members' private notes; the finder's own private ones are counted below too,
     // not listed, so every author's are reported alike.
@@ -787,8 +868,10 @@ const SHORT_NUMBER_COLUMNS = new Set([
   'crove_kernel.activity.summary',
   'crove_kernel.task.title',
   'crove_kernel.task.description',
+  'crove_kernel.task.checklist',
   'crove_projects.project.name',
   'crove_projects.project.description',
+  'crove_projects.project.template_tasks',
   'crove_hr.candidate.notes',
 ]);
 // The meeting text columns the redaction of crove_meetings.personal_erase would change, left as they are for a short number (#3064).
@@ -1315,16 +1398,42 @@ export const personalDataErase = defineCommand({
       // is needed. The lengths stay within the columns' limits, in case the mark is longer than a short address.
       const title = freeTextMatch(probe, sql.ref('t.title'));
       const description = freeTextMatch(probe, sql.ref('t.description'));
-      const { rows: tasks } = await sql<{ title: boolean; description: boolean }>`
+      const checklistStepText = sql`s.step ->> 'text'`;
+      const checklistStepMatch = freeTextMatch(probe, checklistStepText);
+      const checklist = sql`EXISTS (SELECT 1 FROM pg_catalog.jsonb_array_elements(t.checklist) AS s(step) WHERE ${checklistStepMatch})`;
+      const oldChecklist = sql`EXISTS (SELECT 1 FROM pg_catalog.jsonb_array_elements(o.checklist) AS s(step) WHERE ${checklistStepMatch})`;
+      const checklistStepRedact = sql`coalesce(
+        nullif(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, checklistStepText, REDACTED_MARK)}, 300)), ''),
+        ${REDACTED_MARK}
+      )`;
+      const { rows: tasks } = await sql<{ title: boolean; description: boolean; checklist: boolean }>`
         UPDATE crove_kernel.task t
            SET title = CASE WHEN ${title} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('t.title'), REDACTED_MARK)}, 300) ELSE t.title END,
                description = CASE WHEN ${description} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('t.description'), REDACTED_MARK)}, 10000)
-                                  ELSE t.description END
+                                  ELSE t.description END,
+               checklist = CASE WHEN ${checklist}
+                                THEN coalesce((
+                                  SELECT pg_catalog.jsonb_agg(
+                                    pg_catalog.jsonb_build_object(
+                                      'text',
+                                      CASE WHEN ${checklistStepMatch} THEN ${checklistStepRedact} ELSE s.step ->> 'text' END,
+                                      'done',
+                                      (s.step -> 'done')
+                                    )
+                                    ORDER BY s.ord
+                                  )
+                                  FROM pg_catalog.jsonb_array_elements(t.checklist) WITH ORDINALITY AS s(step, ord)
+                                ), '[]'::jsonb)
+                                ELSE t.checklist END
           FROM crove_kernel.task o
-         WHERE o.org_id = t.org_id AND o.id = t.id AND t.org_id = ${ctx.orgId}::uuid AND (${title} OR coalesce(${description}, false))
-         RETURNING ${freeTextMatch(probe, sql.ref('o.title'))} AS title, coalesce(${freeTextMatch(probe, sql.ref('o.description'))}, false) AS description`.execute(ctx.trx);
+         WHERE o.org_id = t.org_id AND o.id = t.id AND t.org_id = ${ctx.orgId}::uuid
+           AND (${title} OR coalesce(${description}, false) OR ${checklist})
+         RETURNING ${freeTextMatch(probe, sql.ref('o.title'))} AS title,
+                   coalesce(${freeTextMatch(probe, sql.ref('o.description'))}, false) AS description,
+                   ${oldChecklist} AS checklist`.execute(ctx.trx);
       add('crove_kernel.task.title', tasks.filter((t) => t.title).length);
       add('crove_kernel.task.description', tasks.filter((t) => t.description).length);
+      add('crove_kernel.task.checklist', tasks.filter((t) => t.checklist).length);
 
       // Take the exclusive advisory lock paired with projects.weekly_status.send_mail's shared lock before dropping weekly mails and redacting projects:
       // a concurrent send_mail either committed before this lock or sees redacted project text after it; if one is mid-flight, fail fast with PERSONAL_DATA_BUSY.
@@ -1356,10 +1465,11 @@ export const personalDataErase = defineCommand({
       projectWeeklyMails = droppedWeekly.length;
       projectWeeklyDelivered = droppedWeekly.filter((m) => DELIVERED_MAIL_STATUSES.includes(m.status)).length;
       add('crove_kernel.mail_message.payload', projectWeeklyMails);
-      // Projects that quote the person (#2591): replace mentions in name and description, bounded to column limits.
+      // Projects and project templates that quote the person (#2591, #2607): replace mentions in name, description, and template_tasks, bounded to column limits.
       const projectName = freeTextMatch(probe, sql.ref('p.name'));
       const projectDescription = freeTextMatch(probe, sql.ref('p.description'));
-      const { rows: projects } = await sql<{ name: boolean; description: boolean }>`
+      const projectTemplateTasks = templateTasksMatch(probe, sql.ref('p.template_tasks'));
+      const { rows: projects } = await sql<{ name: boolean; description: boolean; template_tasks: boolean }>`
         UPDATE crove_projects.project p
            SET name = CASE
                         WHEN ${projectName}
@@ -1371,12 +1481,15 @@ export const personalDataErase = defineCommand({
                       END,
                description = CASE WHEN ${projectDescription} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('p.description'), REDACTED_MARK)}, ${PROJECT_DESCRIPTION_MAX}::int)
                                   ELSE p.description END,
+               template_tasks = CASE WHEN ${projectTemplateTasks} THEN ${templateTasksRedact(probe, sql.ref('p.template_tasks'), REDACTED_MARK)}
+                                     ELSE p.template_tasks END,
                updated_at = ${ctx.now}
           FROM crove_projects.project o
-         WHERE o.org_id = p.org_id AND o.id = p.id AND p.org_id = ${ctx.orgId}::uuid AND (${projectName} OR coalesce(${projectDescription}, false))
-         RETURNING ${freeTextMatch(probe, sql.ref('o.name'))} AS name, coalesce(${freeTextMatch(probe, sql.ref('o.description'))}, false) AS description`.execute(ctx.trx);
+         WHERE o.org_id = p.org_id AND o.id = p.id AND p.org_id = ${ctx.orgId}::uuid AND (${projectName} OR coalesce(${projectDescription}, false) OR ${projectTemplateTasks})
+         RETURNING ${freeTextMatch(probe, sql.ref('o.name'))} AS name, coalesce(${freeTextMatch(probe, sql.ref('o.description'))}, false) AS description, ${templateTasksMatch(probe, sql.ref('o.template_tasks'))} AS template_tasks`.execute(ctx.trx);
       add('crove_projects.project.name', projects.filter((p) => p.name).length);
       add('crove_projects.project.description', projects.filter((p) => p.description).length);
+      add('crove_projects.project.template_tasks', projects.filter((p) => p.template_tasks).length);
 
       // Recruiting candidate notes that quote the person (#3425): replace mentions, bounded to 2000 chars.
       const candidateNotes = freeTextMatch(probe, sql.ref('c.notes'));

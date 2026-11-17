@@ -6,15 +6,20 @@
 #
 #   deploy.sh deploy --release <id> --image <repo@sha256:...> --extract-image <repo@sha256:...>
 #                    --media-image <repo@sha256:...> --compose <file>
-#                    [--build <id>] [--dir <dir>] [--env-file <file>] [--registry <host> --registry-user <user>
-#                    --registry-password-stdin]
+#                    [--build <id>] [--auth-settings <file>] [--dir <dir>] [--env-file <file>] [--registry <host>
+#                    --registry-user <user> --registry-password-stdin]
 #   deploy.sh rollback [--dir <dir>] [--env-file <file>]
 #   deploy.sh status   [--dir <dir>]
 #   deploy.sh smoke <base url> [build id]
+#   deploy.sh check-auth-settings <file>
 #
 # compose.pilot.yml (the pilot's split API and worker, #2133) is taken from the directory of the --compose file and
 # staged with the release; the host chooses the layout by listing it in COMPOSE_FILE of the env file. A --compose file
 # with no sibling falls back to the copy on the host, or stops before pulling when there is none.
+#
+# --auth-settings (#2704, "The pilot's identity provider settings" below): writes the pilot's remote identity provider settings
+# into the env file, after a dated private copy of it, and puts that copy back when the deploy fails or the release is
+# rolled back. Without it the env file is never edited (apart from the context token key).
 #
 # Smoke: the checks a user needs to sign in (health, readiness, config, Supabase Auth, the sign-in page), and, with
 # SMOKE_EMAIL, SMOKE_PASSWORD and SMOKE_ORG set, an account step that signs in and uploads one synthetic e-invoice
@@ -65,6 +70,8 @@ READY_TIMEOUT="${CROVE_READY_TIMEOUT:-300}"
 WORKER_SETTLE="${CROVE_WORKER_SETTLE:-15}"
 # Release directories kept on the host (the current and previous ones are never removed).
 KEEP_RELEASES="${CROVE_KEEP_RELEASES:-5}"
+# Dated copies of the env file kept next to it (the newest, and the one a rollback needs).
+KEEP_ENV_BACKUPS="${CROVE_KEEP_ENV_BACKUPS:-5}"
 # Base URL of the smoke test on the host; default: the loopback port the API service publishes.
 SMOKE_URL="${CROVE_SMOKE_URL:-}"
 # Seconds the account step of the smoke test waits for the worker to turn its upload into a proposal.
@@ -253,12 +260,45 @@ smoke_account() {
   return "$rc"
 }
 
+# Whether the env file says there is no bundled /auth/v1 proxy (#2704): AUTH_UPSTREAM_URL is set to empty (the last assignment counts).
+# Only the host's own smoke test has an env file; the public one reads /api/config (smoke below).
+smoke_env_has_no_proxy() {
+  local v
+  { [ -n "${ENV_FILE:-}" ] && [ -f "$ENV_FILE" ]; } || return 1
+  v="$(sed -n -E 's/\r$//; s/^[[:space:]]*(export[[:space:]]+)?AUTH_UPSTREAM_URL[[:space:]]*[=:][[:space:]]*(.*)$/v=\2/p' "$ENV_FILE" | tail -n 1)"
+  [ -n "$v" ] || return 1
+  v="${v#v=}"
+  v="$(sed -E 's/^(""|'"''"')[[:space:]]*(#.*)?$//; s/[[:space:]]+#.*$//; s/[[:space:]]+$//' <<<"$v")"
+  [ -z "$v" ]
+}
+
+# smoke_auth_url <base>: the authUrl /api/config of the running API reports (the address the app signs in at).
+smoke_auth_url() {
+  local body
+  body="$(smoke_get "$1/api/config")" || return 1
+  [[ "$body" =~ \"authUrl\":\"([^\"]*)\" ]] || return 1
+  printf '%s' "${BASH_REMATCH[1]}"
+}
+
+# smoke_host <address>: its host and port, lower case, without the scheme, a default port or the path.
+smoke_host() {
+  local rest="${1#*://}"
+  rest="${rest%%/*}"
+  rest="${rest,,}"
+  printf '%s' "${rest%:443}"
+}
+
+# The Auth URL the identity provider settings of this deploy name; set by do_deploy, or by the workflow's public smoke test through its
+# environment (SMOKE_EXPECT_AUTH_URL). When set, /api/config must report exactly that address, so settings that did not take (an old
+# container, a stale env line) fail the smoke test instead of passing on the proxy checks being skipped.
+SMOKE_EXPECT_AUTH_URL="${SMOKE_EXPECT_AUTH_URL:-}"
+
 # smoke <base url> [account] [build]: with "account" (the `smoke` command), the account step runs too when its settings
 # are there. The deploy's own smoke test on the host never runs it: the workflow's public smoke test does, and a
 # rollback must not depend on the smoke account, or a broken account would fail the rollback too. With a build id,
 # /version must report it (#892).
 smoke() {
-  local base="${1%/}" account="${2:-}" build="${3:-}" failed=0
+  local base="${1%/}" account="${2:-}" build="${3:-}" failed=0 remote=0 auth_url=''
   smoke_check() {
     local name="$1"
     shift
@@ -274,10 +314,30 @@ smoke() {
     smoke_check "/version answers build $build with every migration applied" smoke_version "$base" "$build"
   fi
   smoke_check '/api/config answers' smoke_body "$base/api/config" '"authUrl"'
-  # Supabase Auth through the kernel's /auth/v1 proxy, the way signing in goes.
-  smoke_check '/auth/v1/health answers (Supabase Auth through the proxy)' smoke_body "$base/auth/v1/health" ''
+  # A remote identity provider has no /auth/v1 proxy here. The host's smoke test knows it from the env file; the public one (no env file)
+  # from /api/config, whose authUrl is then not this API's own /auth/v1.
+  auth_url="$(smoke_auth_url "$base" 2>/dev/null)" || auth_url=''
+  if smoke_env_has_no_proxy; then remote=1
+  elif [ -z "${ENV_FILE:-}" ] && [ -n "$auth_url" ] && [ "$auth_url" != "$base/auth/v1" ] && [ "$(smoke_host "$auth_url")" != "$(smoke_host "$base")" ] &&
+    ! smoke_body "$base/auth/v1/health" 'GoTrue'; then
+    # Another host, and no proxy answering here (the app's own page answers 200 to any GET: the answer must be GoTrue's): a remote identity provider. (The address only differing in case, scheme or a default port,
+    # or a proxy that answers, is the bundled Auth as before.)
+    remote=1
+  fi
+  if [ -n "$SMOKE_EXPECT_AUTH_URL" ]; then
+    remote=1
+    smoke_check '/api/config names the configured Auth URL (PUBLIC_AUTH_URL)' test "$auth_url" = "$SMOKE_EXPECT_AUTH_URL"
+  fi
+  # Supabase Auth through the kernel's /auth/v1 proxy, the way signing in goes. A remote provider has no proxy here.
+  if ((remote)); then
+    log 'smoke skipped: /auth/v1/health (Supabase Auth is a remote provider; the prober watches it)'
+  else
+    smoke_check '/auth/v1/health answers (Supabase Auth through the proxy)' smoke_body "$base/auth/v1/health" ''
+  fi
   smoke_check '/login loads the app shell and its script bundle' smoke_login "$base"
-  if [ "$account" = account ]; then
+  if [ "$account" = account ] && ((remote)); then
+    log 'smoke skipped: sign-in and upload (the smoke account signs in through the proxy, which a remote provider does not have)'
+  elif [ "$account" = account ]; then
     if [ -n "${SMOKE_EMAIL:-}" ] && [ -n "${SMOKE_PASSWORD:-}" ]; then
       smoke_check "signs in, uploads a synthetic e-invoice to org ${SMOKE_ORG:-?} and gets a proposal" smoke_account "$base"
     else
@@ -338,13 +398,19 @@ cleanup() {
     if [ -n "${KEY_TMP:-}" ]; then rm -f "$KEY_TMP"; fi
     if [ -n "${KEY_BAK:-}" ]; then rm -f "$KEY_BAK"; fi
   fi
+  # The new env file of the identity provider settings holds them. Stopped while the env file itself is being overwritten, the
+  # dated copy is the way back: kept, and named.
+  if [ "${ENV_WRITING:-0}" = 1 ]; then
+    err "stopped while writing the identity provider settings into $ENV_FILE: the file may be incomplete. The old file is at ${ENV_BACKUP:-?} (mode 600): copy it over $ENV_FILE"
+  fi
+  if [ -n "${AUTH_TMP:-}" ]; then rm -f "$AUTH_TMP"; fi
   release_lock
 }
 
 # What runs in a deploy or rollback, for the history log when it is stopped.
 CURRENT_WORK=''
 on_signal() {
-  record "${CURRENT_WORK:-run} interrupted by a signal; check the stack (deploy.sh status, docker compose ps)"
+  record "${CURRENT_WORK:-run} interrupted by a signal; check the stack (deploy.sh status, docker compose ps)$([ "${ENV_CHANGED:-0}" = 1 ] && echo "; the env file was replaced, the dated copy is $ENV_BACKUP")"
   err 'interrupted; the stack may be half rolled'
   exit 143
 }
@@ -550,6 +616,12 @@ direction_to() {
   if [[ "$(release_field "$to" STAGED_AT)" < "$(release_field "$from" STAGED_AT)" ]]; then echo back; else echo forward; fi
 }
 
+# Whether the env file assigns a non-empty AUTH_ALLOWED_EMAILS (names a setting only; nothing of the file is printed).
+env_lists_allowed_emails() {
+  [ -n "${ENV_FILE:-}" ] && [ -f "$ENV_FILE" ] || return 1
+  grep -q -E '^[[:space:]]*(export[[:space:]]+)?AUTH_ALLOWED_EMAILS[[:space:]]*[=:][[:space:]]*[^[:space:]#]' "$ENV_FILE"
+}
+
 # Rolls the worker of the active release when it runs as its own service, and checks it stays up.
 roll_worker() {
   log 'rolling the worker'
@@ -557,7 +629,13 @@ roll_worker() {
   sleep "$WORKER_SETTLE"
   if ! dc ps --status running --services | grep -qx worker; then
     err 'the worker is not running'
-    dc logs --tail 50 worker >&2 || true
+    # Not while the env file lists who may sign in: a worker that refuses a bad entry names it in its log, and this output may be a public
+    # CI log (a secret is masked there only as a whole). The names are enough to find it on the host.
+    if env_lists_allowed_emails; then
+      err 'the worker log is not shown here because the env file sets AUTH_ALLOWED_EMAILS (read it on the host: docker compose logs worker)'
+    else
+      dc logs --tail 50 worker >&2 || true
+    fi
     return 1
   fi
 }
@@ -829,6 +907,427 @@ count_plain_idempotency_rows() {
   return 0
 }
 
+# ---------------------------------------------------------------------------------------------------------------
+# The pilot's identity provider settings (#2704, docs/runbooks/pilot-sign-in-remote-idp.md, steps 1 and 5). Opt-in: a deploy
+# given --auth-settings <file> writes exactly those lines into the host's env file, so no one needs a shell on the host. The
+# workflow builds the file from the GitHub environment's variables and secret and uploads it with the release; this script
+# checks it again (it is the one that edits the host). Without the option nothing here runs.
+#
+# The file holds NAME=value lines, no quotes, one per name, from AUTH_SETTING_NAMES. Every value is checked against a short
+# allow-list of characters, so a value can neither start another line nor reach a shell, compose's interpolation or a
+# comment; a value that fails is named in the error, never shown. What goes into the env file: the lines of the file that have
+# a value, AUTH_SESSION_CHECK=jwt and an empty AUTH_UPSTREAM_URL (no bundled proxy). What leaves it: every assignment of
+# those names and of AUTH_SIGNUP_POLICY, AUTH_SIGNUP_ALLOWED_DOMAINS and PROBER_AUTH_URL (the kernel refuses a sign-up policy that
+# needs the bundled proxy; the prober then follows PUBLIC_AUTH_URL). Every other line stays as it is, AUTH_JWT_SECRET included.
+
+AUTH_SETTING_NAMES=(AUTH_ISSUER AUTH_JWKS_URL PUBLIC_AUTH_URL PUBLIC_AUTH_ANON_KEY AUTH_ALLOWED_EMAILS AUTH_OAUTH_PROVIDERS AUTH_HOSTED_LOGIN_URL AUTH_HOSTED_LOGIN_TOKEN_URL AUTH_HOSTED_LOGIN_NAME)
+AUTH_SETTING_REQUIRED=(AUTH_ISSUER AUTH_JWKS_URL PUBLIC_AUTH_URL PUBLIC_AUTH_ANON_KEY AUTH_ALLOWED_EMAILS)
+AUTH_SETTING_DROPPED=(AUTH_SIGNUP_POLICY AUTH_SIGNUP_ALLOWED_DOMAINS PROBER_AUTH_URL)
+# The result of auth_settings_load: the values by name (an associative array, declared there so that the other commands, smoke
+# included, still load under bash 3), and the lines to write.
+AUTH_LINES=()
+
+# An https address of a host name (no IP address, no localhost), an optional port and a plain path: no user, query or fragment.
+# (The last label starts with a letter and, like every label, does not end in a dash: the kernel's own rule, so an address that passes
+# here cannot stop the worker from booting.)
+AUTH_URL_RE='^https://(([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]([A-Za-z0-9-]{0,61}[A-Za-z0-9]))(:([0-9]{1,5}))?(/[A-Za-z0-9._~/-]*)?$'
+AUTH_DOMAIN_RE='([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]([A-Za-z0-9-]{0,61}[A-Za-z0-9])'
+# (A repetition count above 255 is refused by the regex library, so the length is checked apart.)
+AUTH_KEY_RE='^[A-Za-z0-9._-]+$'
+AUTH_PROVIDER_RE='^[a-z][a-z0-9_]{0,31}$'
+
+auth_url_ok() {
+  [ "${#1}" -le 2048 ] && [[ "$1" =~ $AUTH_URL_RE ]] || return 1
+  [[ "$1" != *..* ]] || return 1
+  # localhost and *.localhost are this machine, whatever the scheme.
+  local host="${1#https://}"
+  host="${host%%[/:]*}"
+  host="${host,,}"
+  [[ "$host" != localhost && "$host" != *.localhost ]] || return 1
+  [ -z "${BASH_REMATCH[6]}" ] || ((10#${BASH_REMATCH[6]} >= 1 && 10#${BASH_REMATCH[6]} <= 65535))
+}
+
+# The scheme and host (and port) of an address that passed auth_url_ok, in lower case.
+auth_origin() {
+  local hostpart="${1#https://}" origin
+  origin="https://${hostpart%%/*}"
+  origin="${origin,,}"
+  printf '%s' "${origin%:443}"
+}
+
+# A button label: at most 40 characters (the kernel's limit; bytes on a host without a UTF-8 locale), no control character, no quote, backslash, dollar, backtick,
+# `#`, `=` or other character a shell, a comment or compose's interpolation could act on, and no space at either end.
+auth_name_ok() {
+  # Bytes, whatever the host's locale (an SSH session may have none): characters are the bytes that are not UTF-8 continuation bytes.
+  local LC_ALL=C value="$1" bad=$'\'"\\$`#<>;&|(){}!*?~%=[]' i chars
+  chars="${value//[$'\x80'-$'\xbf']/}"
+  [ -n "$value" ] && [ "${#chars}" -le 40 ] && [ "${#value}" -le 160 ] || return 1
+  [[ ! "$value" =~ [[:cntrl:]] ]] || return 1
+  [[ "$value" != [[:space:]]* && "$value" != *[[:space:]] ]] || return 1
+  for ((i = 0; i < ${#bad}; i++)); do
+    [[ "$value" != *"${bad:i:1}"* ]] || return 1
+  done
+}
+
+# Splits a list into AUTH_ITEMS on commas and white space, as the kernel does: at least one item and at most $2.
+AUTH_ITEMS=()
+auth_split() {
+  local raw="${1//,/ }" max="$2"
+  AUTH_ITEMS=()
+  [ "${#1}" -le 4096 ] || return 1
+  # Through a pipe, not a here-string: an older bash writes a here-string to a temporary file, and the list may be the secret.
+  read -r -a AUTH_ITEMS < <(printf '%s\n' "$raw") || true
+  ((${#AUTH_ITEMS[@]} > 0 && ${#AUTH_ITEMS[@]} <= max))
+}
+
+# Addresses and @domain entries, comma separated; on success the list without spaces is AUTH_SET[AUTH_ALLOWED_EMAILS].
+auth_emails_ok() {
+  local entry out=''
+  auth_split "$1" 200 || return 1
+  for entry in "${AUTH_ITEMS[@]}"; do
+    # (254 characters at most, as the kernel allows, for an @domain entry too.)
+    [ "${#entry}" -le 254 ] || return 1
+    if [[ "$entry" =~ ^@${AUTH_DOMAIN_RE}$ ]]; then :
+    elif [[ "$entry" =~ ^[A-Za-z0-9][A-Za-z0-9._%+-]{0,63}@${AUTH_DOMAIN_RE}$ && "${entry%@*}" != *..* ]]; then :
+    else return 1
+    fi
+    out+="${out:+,}$entry"
+  done
+  AUTH_SET[AUTH_ALLOWED_EMAILS]="$out"
+}
+
+auth_providers_ok() {
+  local entry out=''
+  auth_split "$1" 12 || return 1
+  for entry in "${AUTH_ITEMS[@]}"; do
+    [[ "$entry" =~ $AUTH_PROVIDER_RE ]] || return 1
+    out+="${out:+,}$entry"
+  done
+  AUTH_SET[AUTH_OAUTH_PROVIDERS]="$out"
+}
+
+# auth_settings_load <file>: checks the file and builds AUTH_LINES. Prints the names that fail, never a value. Returns 1 when
+# anything fails (every failure is reported, not only the first).
+auth_settings_load() {
+  local file="$1" line key value name known bad=0
+  declare -gA AUTH_SET=()
+  AUTH_LINES=()
+  if ! [ -f "$file" ] || ! [ -r "$file" ]; then
+    err "the identity provider settings file is not readable: $file"
+    return 1
+  fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -n "$line" ] || continue
+    if ! [[ "$line" =~ ^([A-Z][A-Z0-9_]{0,63})=(.*)$ ]]; then
+      err 'a line of the identity provider settings is not NAME=value'
+      bad=1
+      continue
+    fi
+    key="${BASH_REMATCH[1]}"
+    value="${BASH_REMATCH[2]}"
+    known=0
+    for name in "${AUTH_SETTING_NAMES[@]}"; do
+      if [ "$name" = "$key" ]; then known=1; fi
+    done
+    if ((known == 0)); then
+      err "unknown identity provider setting $key"
+      bad=1
+    elif [ -n "${AUTH_SET[$key]+x}" ]; then
+      err "identity provider setting $key is given twice"
+      bad=1
+    else
+      AUTH_SET[$key]="$value"
+    fi
+  done <"$file"
+  ((bad == 0)) || return 1
+
+  for name in "${AUTH_SETTING_REQUIRED[@]}"; do
+    if [ -z "${AUTH_SET[$name]:-}" ]; then
+      err "$name is required when any identity provider setting is given"
+      bad=1
+    fi
+  done
+  for name in AUTH_ISSUER AUTH_JWKS_URL PUBLIC_AUTH_URL AUTH_HOSTED_LOGIN_URL AUTH_HOSTED_LOGIN_TOKEN_URL; do
+    if [ -n "${AUTH_SET[$name]:-}" ] && ! auth_url_ok "${AUTH_SET[$name]}"; then
+      err "$name must be an https address of a host name, with a plain path and no query, fragment or user"
+      bad=1
+      AUTH_SET[$name]=''
+    fi
+  done
+  # The provider's keys are served from its own origin: an issuer that names one origin and keys from another is a typo or a swap.
+  if [ -n "${AUTH_SET[AUTH_ISSUER]:-}" ] && [ -n "${AUTH_SET[AUTH_JWKS_URL]:-}" ] && [ "$(auth_origin "${AUTH_SET[AUTH_ISSUER]}")" != "$(auth_origin "${AUTH_SET[AUTH_JWKS_URL]}")" ]; then
+    err 'AUTH_ISSUER and AUTH_JWKS_URL must have the same origin'
+    bad=1
+  fi
+  if [ -n "${AUTH_SET[PUBLIC_AUTH_ANON_KEY]:-}" ] && { [ "${#AUTH_SET[PUBLIC_AUTH_ANON_KEY]}" -lt 16 ] || [ "${#AUTH_SET[PUBLIC_AUTH_ANON_KEY]}" -gt 2048 ] || ! [[ "${AUTH_SET[PUBLIC_AUTH_ANON_KEY]}" =~ $AUTH_KEY_RE ]]; }; then
+    err 'PUBLIC_AUTH_ANON_KEY must be 16 to 2048 characters of letters, digits, dot, dash and underscore'
+    bad=1
+  fi
+  if [ -n "${AUTH_SET[AUTH_ALLOWED_EMAILS]:-}" ] && ! auth_emails_ok "${AUTH_SET[AUTH_ALLOWED_EMAILS]}"; then
+    err 'AUTH_ALLOWED_EMAILS must be at most 200 email addresses or @domain entries, comma separated'
+    bad=1
+  fi
+  if [ -n "${AUTH_SET[AUTH_OAUTH_PROVIDERS]:-}" ] && ! auth_providers_ok "${AUTH_SET[AUTH_OAUTH_PROVIDERS]}"; then
+    err 'AUTH_OAUTH_PROVIDERS must be at most 12 provider ids of lower-case letters, digits and _, comma separated'
+    bad=1
+  fi
+  if [ -n "${AUTH_SET[AUTH_HOSTED_LOGIN_URL]:-}" ] || [ -n "${AUTH_SET[AUTH_HOSTED_LOGIN_TOKEN_URL]:-}" ]; then
+    if [ -z "${AUTH_SET[AUTH_HOSTED_LOGIN_URL]:-}" ] || [ -z "${AUTH_SET[AUTH_HOSTED_LOGIN_TOKEN_URL]:-}" ]; then
+      err 'set both AUTH_HOSTED_LOGIN_URL and AUTH_HOSTED_LOGIN_TOKEN_URL, or neither'
+      bad=1
+    fi
+  elif [ -n "${AUTH_SET[AUTH_HOSTED_LOGIN_NAME]:-}" ]; then
+    err 'AUTH_HOSTED_LOGIN_NAME needs AUTH_HOSTED_LOGIN_URL and AUTH_HOSTED_LOGIN_TOKEN_URL'
+    bad=1
+  fi
+  if [ -n "${AUTH_SET[AUTH_HOSTED_LOGIN_NAME]:-}" ] && ! auth_name_ok "${AUTH_SET[AUTH_HOSTED_LOGIN_NAME]}"; then
+    err 'AUTH_HOSTED_LOGIN_NAME must be at most 40 characters of plain text: no quote, backslash, dollar, backtick, #, = or other shell or dotenv character'
+    bad=1
+  fi
+  ((bad == 0)) || return 1
+
+  for name in "${AUTH_SETTING_NAMES[@]}"; do
+    value="${AUTH_SET[$name]:-}"
+    [ -n "$value" ] || continue
+    # The only value that may hold a space is the label, and it is single quoted (it holds no single quote).
+    if [ "$name" = AUTH_HOSTED_LOGIN_NAME ]; then AUTH_LINES+=("$name='$value'"); else AUTH_LINES+=("$name=$value"); fi
+  done
+  AUTH_LINES+=('AUTH_SESSION_CHECK=jwt' 'AUTH_UPSTREAM_URL=')
+}
+
+# The names a settings file would set, for the log.
+auth_set_names() {
+  local line out=''
+  for line in "${AUTH_LINES[@]}"; do out+="${out:+ }${line%%=*}"; done
+  printf '%s' "$out"
+}
+
+# The dated copy of the env file, and whether this run replaced the file. Set by apply_auth_settings; restore_env puts the copy back.
+ENV_BACKUP='' ENV_CHANGED=0 ENV_WRITING=0 AUTH_TMP='' ENV_WRITTEN_DIGEST='' ENV_UNDO='' ENV_RECORD='' ENV_PRE_DIGEST=''
+
+# env_digest <file>: a checksum of the file's content, read from stdin so that nothing of it is an argument. It tells a rollback whether
+# the env file is still what the deploy wrote.
+env_digest() {
+  if command -v sha256sum >/dev/null; then sha256sum <"$1" | cut -d' ' -f1; else cksum <"$1" | tr ' ' '-'; fi
+}
+
+# restore_env: puts the copy made by apply_auth_settings back over the env file (into the file itself, so its owner, mode and inode stay).
+# Nothing to do when this run changed nothing. Returns 1 when the copy could not be put back; its path is in the message.
+restore_env() {
+  [ "$ENV_CHANGED" = 1 ] || return 0
+  if { cat "$ENV_BACKUP" >"$ENV_FILE" && cmp -s "$ENV_BACKUP" "$ENV_FILE"; }; then
+    log "restored $ENV_FILE from $ENV_BACKUP (the file as it was before the identity provider settings)"
+    ENV_CHANGED=0
+    return 0
+  fi
+  err "putting $ENV_FILE back from $ENV_BACKUP failed: copy that file (mode 600) over the env file by hand"
+  return 1
+}
+
+# restore_env_of <release>: a rollback from a release whose deploy replaced the env file puts the dated copy back first, so the older
+# release runs with the settings it ran with. A deploy that left the file alone (or an older one) leaves no record for it. Only a file
+# that is still what that deploy wrote is replaced: edits made since (a rotated password, a new setting) are never overwritten, and the
+# message says so. The file as it is now is kept in ENV_UNDO until the rollback has worked, so a rollback that fails (recover) puts it back.
+restore_env_of() {
+  local rel='' path='' digest='' stamp
+  read -r rel path digest < <(read_state env-backup) || true
+  [ -n "$rel" ] && [ "$rel" = "$1" ] || return 0
+  ENV_RECORD="$rel $path $digest"
+  rm -f "$(state_dir)/env-backup"
+  if ! { valid_path "$path" && [ -f "$path" ]; }; then
+    err "the dated copy of the env file that release $rel replaced is gone; the env file stays as it is"
+    return 0
+  fi
+  if [ -z "$digest" ] || [ "$(env_digest "$ENV_FILE")" != "$digest" ]; then
+    err "$ENV_FILE was edited after release $rel wrote the identity provider settings, so it is left as it is (the copy from before them is $path; take what you need from it by hand)"
+    return 0
+  fi
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  ENV_UNDO="$(mktemp "$ENV_FILE.bak-$stamp-XXXXXX")" || {
+    err "cannot keep a copy of $ENV_FILE before putting the old settings back; the env file stays as it is"
+    ENV_UNDO=''
+    return 0
+  }
+  if ! { cat "$ENV_FILE" >"$ENV_UNDO" && cmp -s "$ENV_FILE" "$ENV_UNDO"; }; then
+    err "cannot keep a copy of $ENV_FILE before putting the old settings back; the env file stays as it is"
+    rm -f "$ENV_UNDO"
+    ENV_UNDO=''
+    return 0
+  fi
+  ENV_BACKUP="$path"
+  ENV_CHANGED=1
+  restore_env || die "$EXIT_ROLLBACK_FAILED" "the env file could not be put back from $path: the instance needs an operator (the file as it was is $ENV_UNDO)"
+}
+
+# undo_env_restore: a rollback that failed goes back to the release it left, with the settings that release ran with.
+undo_env_restore() {
+  [ -n "$ENV_UNDO" ] || return 0
+  if { cat "$ENV_UNDO" >"$ENV_FILE" && cmp -s "$ENV_UNDO" "$ENV_FILE"; }; then
+    log "put the identity provider settings back in $ENV_FILE (the rollback failed)"
+    (umask 077; write_state env-backup "$ENV_RECORD")
+    rm -f "$ENV_UNDO"
+  else
+    err "the rollback failed and the env file could not be put back as it was: the settings are in $ENV_UNDO (mode 600); copy that file over $ENV_FILE"
+    return 1
+  fi
+  ENV_UNDO=''
+}
+
+# prune_env_backups: the dated copies of the env file next to it (apply_auth_settings) are kept for the newest KEEP_ENV_BACKUPS, and
+# the one the rollback record points to. They hold the old secrets, so they do not pile up.
+prune_env_backups() {
+  local keep f i n=0
+  local -a copies=()
+  keep="$(read_state env-backup | cut -d' ' -f2)"
+  for f in "$ENV_FILE".bak-[0-9]*Z-*; do
+    if [ -f "$f" ]; then copies+=("$f"); fi
+  done
+  # The time is in the name, so the glob lists them oldest first.
+  for ((i = ${#copies[@]} - 1; i >= 0; i--)); do
+    n=$((n + 1))
+    if ((n > KEEP_ENV_BACKUPS)) && [ "${copies[i]}" != "$keep" ]; then
+      log "removing old env file copy ${copies[i]}"
+      rm -f "${copies[i]}"
+    fi
+  done
+}
+
+# probe_get <url> [headers file]: prints the body of an answer 200 from an https address, with no redirect followed (a redirect could
+# leave https or reach another host) and no other scheme.
+probe_get() {
+  local url="$1" headers="${2:-}" out code
+  # -q first: a ~/.curlrc of the host (a proxy, a redirect setting) is not read.
+  local -a args=(-q --silent --show-error --max-time 15 --proto "=https" --proto-redir "=https" --write-out '%{http_code}')
+  [ -z "$headers" ] || args+=(--header "@$headers")
+  out="$(curl "${args[@]}" "$url")" || return 1
+  code="${out: -3}"
+  [ "$code" = 200 ] || return 1
+  printf '%s' "${out%???}"
+}
+
+# auth_settings_probe: before anything changes, the provider answers: its keys (a JWKS with "keys") and its Auth URL's /health with the
+# publishable key. Well-formed but wrong values (the project URL without /auth/v1, a typo in the keys path) would otherwise pass every
+# check, boot, and lock everyone out. The key goes to curl in a header file, not as an argument (the two addresses are public).
+auth_settings_probe() {
+  local headers keys_url="${AUTH_SET[AUTH_JWKS_URL]}" auth_url="${AUTH_SET[PUBLIC_AUTH_URL]}" body ok=1
+  headers="$(mktemp "$(state_dir)/probe.XXXXXX")" || {
+    err 'cannot make a temporary file to check the identity provider'
+    return 1
+  }
+  printf 'apikey: %s\n' "${AUTH_SET[PUBLIC_AUTH_ANON_KEY]}" >"$headers"
+  # At least one key, and one the kernel verifies with (ES256 or RS256: an EC or RSA key); a set with no key, or with shared (oct) keys only,
+  # would boot and then refuse every token.
+  if body="$(probe_get "$keys_url")" && [[ "$body" =~ \"keys\"[[:space:]]*:[[:space:]]*\[[[:space:]]*\{ ]] && [[ "$body" =~ \"kty\"[[:space:]]*:[[:space:]]*\"(EC|RSA)\" ]]; then log 'identity provider: AUTH_JWKS_URL answers with an ES256 or RS256 key'; else
+    err 'identity provider: AUTH_JWKS_URL does not answer 200 with a JSON Web Key Set that holds an EC or RSA key (a redirect is not followed)'
+    ok=0
+  fi
+  # GoTrue's health answer says so: the app's own page (this API's address by mistake) also answers 200 to any GET.
+  if body="$(probe_get "${auth_url%/}/health" "$headers")" && [[ "$body" == *GoTrue* ]]; then log 'identity provider: PUBLIC_AUTH_URL answers /health'; else
+    err 'identity provider: PUBLIC_AUTH_URL/health does not answer 200 with the Auth service (is it the Auth URL, ending /auth/v1, and the publishable key right? a redirect is not followed)'
+    ok=0
+  fi
+  rm -f "$headers"
+  ((ok))
+}
+
+# apply_auth_settings: writes AUTH_LINES into the env file as described above, after keeping a dated copy next to it (mode 600).
+# Returns 0 (done, or the file already had exactly these settings: then no copy is made), 1 (nothing changed) or 2 (the write
+# failed and the file could not be put back: the copy is kept and named).
+apply_auth_settings() {
+  # Never traced: a `set -x` of a caller would print the values.
+  { set +x; } 2>/dev/null
+  local line key kept=0 cr='' lines stamp removed='' name found
+  local -A managed=() dropped=()
+  local -a gone=() written=()
+  AUTH_TMP="$(mktemp "$(state_dir)/env-auth.XXXXXX")" || {
+    err 'cannot make a temporary file for the identity provider settings; the env file was not touched'
+    AUTH_TMP=''
+    return 1
+  }
+  for key in "${AUTH_SETTING_NAMES[@]}" AUTH_SESSION_CHECK AUTH_UPSTREAM_URL "${AUTH_SETTING_DROPPED[@]}"; do managed[$key]=1; done
+  for key in "${AUTH_SETTING_DROPPED[@]}"; do dropped[$key]=1; done
+  {
+    while IFS= read -r line || [ -n "$line" ]; do
+      if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*[=:] ]]; then
+        key="${BASH_REMATCH[2]}"
+        if [ -n "${managed[$key]:-}" ]; then
+          if [ -n "${dropped[$key]:-}" ]; then gone+=("$key"); fi
+          continue
+        fi
+      fi
+      if [ "${line: -1}" = $'\r' ]; then cr=$'\r'; fi
+      printf '%s\n' "$line"
+      kept=$((kept + 1))
+    done <"$ENV_FILE"
+    # Lines added to a file with Windows line breaks get them too.
+    for line in "${AUTH_LINES[@]}"; do printf '%s%s\n' "$line" "$cr"; done
+  } >"$AUTH_TMP" || {
+    err 'writing the new env file failed (is the disk full?); the env file was not touched'
+    return 1
+  }
+  lines=$(($(wc -l <"$AUTH_TMP")))
+  if [ "$lines" != $((kept + ${#AUTH_LINES[@]})) ]; then
+    err 'the new env file is incomplete (is the disk full?); the env file was not touched'
+    return 1
+  fi
+  # With builtins only: a settings line (the allowed addresses are a secret) is never an argument of another process.
+  mapfile -t written <"$AUTH_TMP"
+  for line in "${AUTH_LINES[@]}"; do
+    found=0
+    for key in "${written[@]}"; do
+      if [ "$key" = "$line$cr" ]; then
+        found=1
+        break
+      fi
+    done
+    if ((found == 0)); then
+      err 'the new env file is incomplete; the env file was not touched'
+      return 1
+    fi
+  done
+  if cmp -s "$AUTH_TMP" "$ENV_FILE"; then
+    log "identity provider settings already in $ENV_FILE: nothing to write"
+    return 0
+  fi
+
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  ENV_PRE_DIGEST="$(env_digest "$ENV_FILE")"
+  ENV_BACKUP="$(mktemp "$ENV_FILE.bak-$stamp-XXXXXX")" || {
+    err "cannot keep a dated copy of $ENV_FILE next to it (mode 600); the env file was not touched"
+    ENV_BACKUP=''
+    return 1
+  }
+  if ! { cat "$ENV_FILE" >"$ENV_BACKUP" && cmp -s "$ENV_FILE" "$ENV_BACKUP"; }; then
+    err "cannot keep a dated copy of $ENV_FILE next to it; the env file was not touched"
+    rm -f "$ENV_BACKUP"
+    ENV_BACKUP=''
+    return 1
+  fi
+  # Into the file itself, not a rename: the owner, the mode and the inode of the env file stay. A write that fails or is cut off
+  # is put back from the copy; if that fails too, the copy is kept and named.
+  ENV_WRITING=1
+  if ! { cat "$AUTH_TMP" >"$ENV_FILE" && cmp -s "$AUTH_TMP" "$ENV_FILE"; }; then
+    ENV_CHANGED=1
+    if restore_env; then
+      ENV_WRITING=0
+      err "writing the identity provider settings into $ENV_FILE failed; the file was put back as it was"
+      return 1
+    fi
+    ENV_WRITING=0
+    ENV_CHANGED=0
+    return 2
+  fi
+  ENV_WRITING=0
+  ENV_CHANGED=1
+  ENV_WRITTEN_DIGEST="$(env_digest "$ENV_FILE")"
+  rm -f "$AUTH_TMP"
+  AUTH_TMP=''
+  # Names only, never a value.
+  for name in "${gone[@]+"${gone[@]}"}"; do
+    case " $removed " in *" $name "*) ;; *) removed+="${removed:+ }$name" ;; esac
+  done
+  log "identity provider settings written to $ENV_FILE; set: $(auth_set_names); removed: ${removed:-none}; the previous file is $ENV_BACKUP (mode 600)"
+}
 
 # Installs this script on the host for manual rollbacks (when it is not already that copy).
 install_self() {
@@ -861,6 +1360,16 @@ prune_releases() {
 # its build needs against the failed one (direction_to). Exit 1 when it is serving again, 3 when not.
 recover() {
   local target="$1" what="$2" failed="$3"
+  # The identity provider settings of this deploy go out first, so the older release runs with the env file it ran with.
+  if ! restore_env; then
+    record "$what failed, and so did putting the env file back"
+    die "$EXIT_ROLLBACK_FAILED" "$what failed and the env file could not be put back: the instance needs an operator"
+  fi
+  SMOKE_EXPECT_AUTH_URL=''
+  if ! undo_env_restore; then
+    record "$what failed, and so did putting the env file back"
+    die "$EXIT_ROLLBACK_FAILED" "$what failed and the env file could not be put back: the instance needs an operator"
+  fi
   if [ -z "$target" ]; then
     record "$what failed, nothing to roll back to"
     die "$EXIT_FAILED" "$what failed and there is no earlier release to roll back to; the failed release is left as it is"
@@ -899,7 +1408,7 @@ read_registry_password() {
 }
 
 do_deploy() {
-  local release="" image="" extract="" media="" compose="" build="" build_given=0
+  local release="" image="" extract="" media="" compose="" build="" build_given=0 auth_settings=""
   while (($# > 0)); do
     case "$1" in
       --release) release="${2:-}"; shift 2 ;;
@@ -908,6 +1417,7 @@ do_deploy() {
       --media-image) media="${2:-}"; shift 2 ;;
       --compose) compose="${2:-}"; shift 2 ;;
       --build) build="${2:-}"; build_given=1; shift 2 ;;
+      --auth-settings) auth_settings="${2:-}"; shift 2 ;;
       *)
         common_option "$@"
         ((OPT_SHIFT > 0)) || die "$EXIT_USAGE" "unknown option $1"
@@ -921,8 +1431,31 @@ do_deploy() {
   valid_image "$media" || die "$EXIT_USAGE" "--media-image must be pinned by digest (name@sha256:...): '$media'"
   [ -f "$compose" ] || die "$EXIT_USAGE" "--compose file not found: '$compose'"
   ((build_given == 0)) || valid_build "$build" || die "$EXIT_USAGE" "--build must match [A-Za-z0-9._-]{1,64}: '$build'"
+  # The identity provider settings are checked before anything is pulled or changed (#2704): a bad value stops the deploy here.
+  if [ -n "$auth_settings" ]; then
+    valid_path "$auth_settings" || die "$EXIT_USAGE" "--auth-settings must be an absolute path without spaces: '$auth_settings'"
+    # Never the env file or the compose file by mistake (it would be read as settings, and removed below).
+    if [ "$auth_settings" -ef "${ENV_FILE:-$DEPLOY_DIR/.env}" ] || [ "$auth_settings" -ef "$compose" ]; then
+      die "$EXIT_USAGE" '--auth-settings is the settings file the workflow uploads, not the env file or the compose file; nothing was changed'
+    fi
+    # The file the workflow uploaded (in its private incoming directory) is read once and removed whatever the outcome: the secret in it
+    # need not stay on the host. Any other file named here is read and left alone.
+    # (Only <dir>/.deploy/incoming/<run>/auth-settings.env, as a regular file that is not a link, with no `..` in the run's name.)
+    local incoming=0 under="${auth_settings#"$DEPLOY_DIR"/.deploy/incoming/}"
+    if [ "$under" != "$auth_settings" ] && [[ "$under" =~ ^[A-Za-z0-9_-][A-Za-z0-9._-]*/auth-settings\.env$ ]] && [ -f "$auth_settings" ] && [ ! -L "$auth_settings" ]; then incoming=1; fi
+    if ! auth_settings_load "$auth_settings"; then
+      if ((incoming)); then rm -f "$auth_settings"; fi
+      die "$EXIT_USAGE" 'the identity provider settings are not valid (see above); nothing was changed'
+    fi
+    if ((incoming)); then rm -f "$auth_settings"; fi
+  fi
   read_registry_password
   preflight
+  if [ -n "$auth_settings" ]; then
+    # Found out now: a write that fails halfway is the one thing that can leave the env file broken.
+    { [ -w "$ENV_FILE" ] && [ -w "$(dirname "$ENV_FILE")" ]; } || die "$EXIT_USAGE" "the identity provider settings need $ENV_FILE and its directory writable by the deploy user (the dated copy goes next to it); nothing was changed"
+    auth_settings_probe || die "$EXIT_FAILED" 'the identity provider does not answer as these settings say; nothing was changed'
+  fi
   context_token_key_preflight
   acquire_lock
 
@@ -934,6 +1467,13 @@ do_deploy() {
   install_self
   current="$(read_state current)"
   log "deploying $release ($name); running now: ${current:-nothing}"
+  if [ -n "$auth_settings" ]; then
+    log "identity provider settings given: $(auth_set_names)"
+    # The smoke test of this deploy must see the Auth URL it was given (and recover, for the release before, must not).
+    SMOKE_EXPECT_AUTH_URL="${AUTH_SET[PUBLIC_AUTH_URL]}"
+  else
+    SMOKE_EXPECT_AUTH_URL=''
+  fi
 
   # Stage the release (before anything changes, so a failure here leaves the running stack alone).
   mkdir -p "$dir"
@@ -984,6 +1524,33 @@ do_deploy() {
     die "$EXIT_FAILED" "migrations failed; the services were not changed${current:+ ($current still runs)}. Fix forward with a new migration"
   fi
 
+  # The identity provider settings go into the env file now, after the migration (forward only, it needs none of them) and right
+  # before the services are recreated with them. Anything that fails from here puts the dated copy back (recover).
+  if [ -n "$auth_settings" ]; then
+    local applied=0
+    apply_auth_settings || applied=$?
+    if ((applied == 2)); then
+      if [ -n "$current" ]; then activate "$current"; fi
+      record "deploy $name failed: identity provider settings, and the env file could not be put back"
+      die "$EXIT_ROLLBACK_FAILED" "writing the identity provider settings failed and the env file could not be put back: the instance needs an operator"
+    fi
+    if ((applied != 0)); then
+      if [ -n "$current" ]; then activate "$current"; fi
+      record "deploy $name failed: identity provider settings"
+      die "$EXIT_FAILED" "the identity provider settings could not be written into $ENV_FILE; the services were not changed${current:+ ($current still runs)}"
+    fi
+    if ! dc config --quiet; then
+      if ! restore_env; then
+        if [ -n "$current" ]; then activate "$current"; fi
+        record "deploy $name failed: compose config with the identity provider settings, and the env file could not be put back"
+        die "$EXIT_ROLLBACK_FAILED" 'the compose files do not load with the identity provider settings and the env file could not be put back: the instance needs an operator'
+      fi
+      if [ -n "$current" ]; then activate "$current"; fi
+      record "deploy $name failed: compose config with the identity provider settings"
+      die "$EXIT_FAILED" 'the compose files do not load with the identity provider settings; the env file was put back and nothing running was changed'
+    fi
+  fi
+
   if ! roll_services "$(direction_to "$name" "$current")"; then
     recover "$current" "deploy $name" "$name"
   fi
@@ -992,12 +1559,36 @@ do_deploy() {
     if [ -n "$current" ]; then write_state previous "$current"; fi
     write_state current "$name"
   fi
-  record "deploy $name ok image=$image extract=$extract media=$media"
+  # A rollback from this release puts the env file back only when this deploy is the one that changed it.
+  # (A deploy of the same release again, that changed nothing, keeps the record: that release is still the one that wrote them.)
+  if [ "$ENV_CHANGED" = 1 ]; then
+    # The same release deployed again with other settings keeps the copy from before its first deploy: that is the one a rollback needs.
+    # Only while the file is still what that first deploy wrote: edits made since are in the new copy, which is then the one a rollback restores
+    # (the earlier one would put the old values over them).
+    local first_rel='' first_path='' first_digest=''
+    read -r first_rel first_path first_digest < <(read_state env-backup) || true
+    if [ "$first_rel" != "$name" ]; then
+      (umask 077; write_state env-backup "$name $ENV_BACKUP $ENV_WRITTEN_DIGEST")
+    elif [ "$first_digest" = "$ENV_PRE_DIGEST" ] && valid_path "$first_path" && [ -f "$first_path" ]; then
+      (umask 077; write_state env-backup "$name $first_path $ENV_WRITTEN_DIGEST")
+    else
+      # Edited in between: neither copy can be put back without losing either those edits or the settings of the first deploy. A rollback
+      # leaves the file as it is, as it does for any edited file.
+      rm -f "$(state_dir)/env-backup"
+      log "$ENV_FILE was edited after release $name first wrote the identity provider settings: a rollback will leave it as it is (the copy from before them is $first_path)"
+    fi
+  elif [ "$(read_state env-backup | cut -d' ' -f1)" != "$name" ]; then
+    rm -f "$(state_dir)/env-backup"
+  fi
+  record "deploy $name ok image=$image extract=$extract media=$media$([ "$ENV_CHANGED" = 1 ] && echo ' env=changed')"
   prune_releases
+  if [ -n "$auth_settings" ]; then prune_env_backups; fi
   log "deployed $release ($name)"
 }
 
 do_rollback() {
+  # A rollback goes back to settings without the remote provider: no Auth URL of a caller's shell is demanded of it.
+  SMOKE_EXPECT_AUTH_URL=''
   while (($# > 0)); do
     common_option "$@"
     ((OPT_SHIFT > 0)) || die "$EXIT_USAGE" "unknown option $1"
@@ -1014,6 +1605,7 @@ do_rollback() {
   [ -n "$previous" ] || die "$EXIT_USAGE" 'no previous release is recorded; deploy a release instead'
   [ -f "$DEPLOY_DIR/releases/$previous/release.env" ] || die "$EXIT_USAGE" "the previous release $previous is no longer on the host"
   log "rolling back from ${current:-nothing} to $previous (images and compose files only; the schema stays)"
+  restore_env_of "$current"
   # The images are normally still on the host. Pull them again (by digest, so nothing else can arrive) in case
   # they were pruned; without registry credentials a private image that is gone cannot come back.
   if ! pull_images "$(release_field "$previous" IMAGE)" "$(release_field "$previous" EXTRACT_IMAGE)" "$(release_field "$previous" MEDIA_IMAGE)" "$REGISTRY" "$REGISTRY_USER" "$REGISTRY_PASSWORD"; then
@@ -1027,6 +1619,8 @@ do_rollback() {
   # Swap, so a second rollback returns to the release just left.
   write_state previous "$current"
   write_state current "$previous"
+  # The settings it put back worked: the copy of the file as it was is no longer needed.
+  if [ -n "$ENV_UNDO" ]; then rm -f "$ENV_UNDO"; ENV_UNDO=''; fi
   record "rollback to $previous ok"
   log "rolled back to $previous"
 }
@@ -1050,6 +1644,11 @@ main() {
     deploy) do_deploy "$@" ;;
     rollback) do_rollback "$@" ;;
     status) do_status "$@" ;;
+    check-auth-settings)
+      [ -n "${1:-}" ] || die "$EXIT_USAGE" 'usage: deploy.sh check-auth-settings <file>'
+      auth_settings_load "$1" || die "$EXIT_USAGE" 'the identity provider settings are not valid (see above)'
+      log "identity provider settings ok; they set: $(auth_set_names)"
+      ;;
     smoke)
       [ -n "${1:-}" ] || die "$EXIT_USAGE" 'usage: deploy.sh smoke <base url> [build id]'
       [ -z "${2:-}" ] || valid_build "$2" || die "$EXIT_USAGE" "the build id must match [A-Za-z0-9._-]{1,64}: '$2'"

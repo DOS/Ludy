@@ -10,6 +10,7 @@ import type { NoteLink, NoteLinkTargetInput } from '@crove/kernel-contract';
 import { Button } from '@crove/ui/components/button';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { errorMessage, orpc } from '../lib/api.ts';
+import { meetingsInstalled } from './linked-meetings.tsx';
 import { projectsInstalled } from '../lib/projects.ts';
 import { ErrorText } from './ui.tsx';
 
@@ -21,9 +22,10 @@ const KIND = {
   'crm.booking': 'booking',
   'kernel.task': 'task',
   'projects.project': 'project',
+  'meetings.meeting': 'meeting',
 } as const satisfies Record<NoteLink['targetType'], string>;
 
-type LinkableType = 'kernel.task' | 'projects.project';
+type LinkableType = 'kernel.task' | 'projects.project' | 'meetings.meeting';
 
 function Open({ link, slug, children }: { link: NoteLink; slug: string; children: string }) {
   const className = 'text-link hover:underline';
@@ -58,6 +60,13 @@ function Open({ link, slug, children }: { link: NoteLink; slug: string; children
   if (link.targetType === 'projects.project') {
     return (
       <Link to="/o/$slug/projects/$id" params={{ slug, id: link.targetId }} className={className}>
+        {children}
+      </Link>
+    );
+  }
+  if (link.targetType === 'meetings.meeting') {
+    return (
+      <Link to="/o/$slug/meetings/$id" params={{ slug, id: link.targetId }} className={className}>
         {children}
       </Link>
     );
@@ -124,18 +133,21 @@ export function RecordLinkAdder({
   adding = false,
   error,
   onClearError,
+  defaultOpen = false,
 }: {
   existingLinks: NoteLink[];
   onAdd: (target: NoteLinkTargetInput) => Promise<unknown> | unknown;
   adding?: boolean;
   error?: unknown;
   onClearError?: (() => void) | undefined;
+  defaultOpen?: boolean | undefined;
 }) {
   const t = useTranslations('notes.links');
   const common = useTranslations('common');
   const id = useId();
   const hasProjects = projectsInstalled();
-  const [open, setOpen] = useState(false);
+  const hasMeetings = meetingsInstalled();
+  const [open, setOpen] = useState(defaultOpen);
   const [targetType, setTargetType] = useState<LinkableType>('kernel.task');
   const [targetId, setTargetId] = useState('');
 
@@ -147,17 +159,35 @@ export function RecordLinkAdder({
     ...orpc.projects.list.queryOptions({ input: {} }),
     enabled: open && hasProjects && targetType === 'projects.project',
   });
+  const meetings = useQuery({
+    ...orpc.meetings.list.queryOptions({ input: { limit: 100 } }),
+    enabled: open && hasMeetings && targetType === 'meetings.meeting',
+  });
 
   const alreadyLinked = new Set(existingLinks.filter((l) => l.targetType === targetType).map((l) => l.targetId));
   const options =
     targetType === 'kernel.task'
       ? (tasks.data ?? []).filter((item) => !alreadyLinked.has(item.id)).map((item) => ({ id: item.id, label: item.title }))
-      : (projects.data?.projects ?? [])
-          .filter((item) => item.status !== 'archived' && !alreadyLinked.has(item.id))
-          .map((item) => ({ id: item.id, label: item.name }));
+      : targetType === 'projects.project'
+        ? (projects.data?.projects ?? [])
+            .filter((item) => item.status !== 'archived' && !alreadyLinked.has(item.id))
+            .map((item) => ({ id: item.id, label: item.name }))
+        : (meetings.data ?? [])
+            .filter((item) => !alreadyLinked.has(item.id))
+            .map((item) => ({ id: item.id, label: item.title }));
 
-  const loading = targetType === 'kernel.task' ? tasks.isPending : projects.isPending;
-  const loadError = targetType === 'kernel.task' ? tasks.error : projects.error;
+  const loading =
+    targetType === 'kernel.task'
+      ? tasks.isPending
+      : targetType === 'projects.project'
+        ? projects.isPending
+        : meetings.isPending;
+  const loadError =
+    targetType === 'kernel.task'
+      ? tasks.error
+      : targetType === 'projects.project'
+        ? projects.error
+        : meetings.error;
 
   if (!open) {
     return (
@@ -207,6 +237,7 @@ export function RecordLinkAdder({
           >
             <NativeSelectOption value="kernel.task">{t('types.task')}</NativeSelectOption>
             {hasProjects && <NativeSelectOption value="projects.project">{t('types.project')}</NativeSelectOption>}
+            {hasMeetings && <NativeSelectOption value="meetings.meeting">{t('types.meeting')}</NativeSelectOption>}
           </NativeSelect>
         </label>
         <label htmlFor={`${id}-record`} className="block text-xs">

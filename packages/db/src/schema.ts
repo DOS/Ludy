@@ -946,9 +946,9 @@ export type CrmBookingTable = Refine<
 >;
 
 // The notes module (issue #1671, ADR-0037): a note is private to its author or shared with the org, and links to a
-// party, a file, a purchase document, a journal entry or a booking (#1672).
+// party, a file, a purchase document, a journal entry, a booking, a task, a project or a meeting (#1672, #2595, #1679).
 export const NOTE_VISIBILITIES = ['private', 'org'] as const;
-export const NOTE_LINK_TARGET_TYPES = ['kernel.party', 'kernel.file', 'kernel.task', 'finance.purchase_document', 'finance.journal_entry', 'crm.booking', 'projects.project'] as const;
+export const NOTE_LINK_TARGET_TYPES = ['kernel.party', 'kernel.file', 'kernel.task', 'finance.purchase_document', 'finance.journal_entry', 'crm.booking', 'projects.project', 'meetings.meeting'] as const;
 export type NotesNoteTable = Refine<G.NotesNoteTable, { visibility: Generated<(typeof NOTE_VISIBILITIES)[number]> }>;
 export type NotesLinkTable = Refine<G.NotesLinkTable, { target_type: (typeof NOTE_LINK_TARGET_TYPES)[number] }>;
 // A member's own to-do (#1673): open, done, handed over to a position (N5) or cancelled.

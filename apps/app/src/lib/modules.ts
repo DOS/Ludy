@@ -73,3 +73,17 @@ export function outsideInstalled(installed: readonly string[], fullPath: string)
   const module = moduleOfOutsideRoute(fullPath);
   return module === null || module === 'kernel' || installed.includes(module);
 }
+
+// What kernel.org.apps says of one app (ADR-0053, slice d).
+export interface OrgAppRow {
+  readonly id: string;
+  readonly effective: boolean;
+}
+
+// The effective set from kernel.org.apps: the deployment's modules, minus the ones the answer says are not effective for the org. A module the
+// answer does not list (kernel, or one the build does not offer a switch for) stays as the deployment has it. Sorted, kernel always in.
+export function effectiveModules(deployment: readonly string[], apps: readonly OrgAppRow[]): string[] {
+  const off = new Set(apps.filter((a) => !a.effective).map((a) => a.id));
+  const kept = deployment.filter((m) => m === 'kernel' || !off.has(m));
+  return [...new Set(['kernel', ...kept])].sort();
+}

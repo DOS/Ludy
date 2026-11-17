@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { DEFAULT_TIME_ZONE, zTimeZone } from './calendar.ts';
 import { NOTE_TITLE_MAX } from './notes.ts';
 import { zFilterAstShape, zSavedViewSortShape } from './saved-view.ts';
-import { zId, zLocalDate, zPositionStatus, zRole, zTaskStatus } from './schemas.ts';
+import { zId, zLocalDate, zPositionStatus, zRole, zTaskChecklist, zTaskChecklistStepView, zTaskStatus } from './schemas.ts';
 
 export const PROJECT_NAME_MAX = 200;
 export const PROJECT_DESCRIPTION_MAX = 2000;
@@ -14,6 +14,53 @@ export const PROJECT_UNASSIGNED_LIMIT = 100;
 export const PROJECT_TASK_MAP_LIMIT = 500;
 export const PROJECT_NOTE_PROPOSAL_MAX = 20;
 export const PROJECT_TASK_TITLE_MAX = 300;
+export const PROJECT_TEMPLATE_TASKS_MAX = 50;
+export const PROJECT_TEMPLATE_TASK_DESCRIPTION_MAX = 2000;
+export const PROJECT_TEMPLATE_TASK_DUE_OFFSET_MAX = 365;
+export const PROJECT_TASK_RECURRENCE_INTERVAL_MAX = 12;
+export const PROJECT_TASK_RECURRENCE_TIMES_MAX = 500;
+
+export const BUILTIN_PROJECT_TEMPLATE_KEYS = ['monthly-close', 'client-onboarding', 'campaign-launch'] as const;
+export type BuiltinProjectTemplateKey = (typeof BUILTIN_PROJECT_TEMPLATE_KEYS)[number];
+export const zBuiltinProjectTemplateKey = z.enum(BUILTIN_PROJECT_TEMPLATE_KEYS);
+
+export const PROJECT_TASK_RECURRENCE_CADENCES = ['weekly', 'monthly'] as const;
+export type ProjectTaskRecurrenceCadence = (typeof PROJECT_TASK_RECURRENCE_CADENCES)[number];
+
+export const zProjectTaskRecurrence = z
+  .strictObject({
+    cadence: z.enum(PROJECT_TASK_RECURRENCE_CADENCES),
+    interval: z.number().int().min(1).max(PROJECT_TASK_RECURRENCE_INTERVAL_MAX),
+    weekday: z.number().int().min(0).max(6).nullable().optional(),
+    monthDay: z
+      .number()
+      .int()
+      .refine((v) => v === -1 || (v >= 1 && v <= 28), 'monthDay must be 1..28 or -1')
+      .nullable()
+      .optional(),
+    timeZone: zTimeZone.default(DEFAULT_TIME_ZONE),
+    until: zLocalDate.nullable().optional(),
+    times: z.number().int().min(1).max(PROJECT_TASK_RECURRENCE_TIMES_MAX).nullable().optional(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.cadence === 'weekly') {
+      if (v.weekday === undefined || v.weekday === null) {
+        ctx.addIssue({ code: 'custom', path: ['weekday'], message: 'weekday is required for weekly cadence' });
+      }
+      if (v.monthDay !== undefined && v.monthDay !== null) {
+        ctx.addIssue({ code: 'custom', path: ['monthDay'], message: 'monthDay is only allowed for monthly cadence' });
+      }
+    } else {
+      if (v.monthDay === undefined || v.monthDay === null) {
+        ctx.addIssue({ code: 'custom', path: ['monthDay'], message: 'monthDay is required for monthly cadence' });
+      }
+      if (v.weekday !== undefined && v.weekday !== null) {
+        ctx.addIssue({ code: 'custom', path: ['weekday'], message: 'weekday is only allowed for weekly cadence' });
+      }
+    }
+  });
+export type ProjectTaskRecurrence = z.infer<typeof zProjectTaskRecurrence>;
+export type ProjectTaskRecurrenceInput = z.input<typeof zProjectTaskRecurrence>;
 
 export const PROJECT_STATUSES = ['active', 'on_hold', 'done', 'archived'] as const;
 export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
@@ -91,6 +138,7 @@ export const zProjectTaskCreate = z.strictObject({
   assigneePositionId: zId.nullable(),
   due: z.iso.datetime().optional(),
   status: z.enum(BOARD_TASK_STATUSES).optional(),
+  checklist: zTaskChecklist.optional(),
 });
 export type ProjectTaskCreateInput = z.infer<typeof zProjectTaskCreate>;
 
@@ -155,11 +203,17 @@ export const zProjectTaskCard = z.object({
   status: zTaskStatus,
   assigneePositionId: zId.nullable(),
   due: z.string().nullable(),
+  checklist: z.array(zTaskChecklistStepView),
   tainted: z.boolean(),
   checkedOut: z.boolean(),
   commentCount: z.number().int().nonnegative(),
   createdAt: z.string(),
   addedAt: z.string(),
+  recurrence: zProjectTaskRecurrence.nullable().optional(),
+  recurrenceCount: z.number().int().nonnegative().optional(),
+  recurrenceLastDue: zLocalDate.nullable().optional(),
+  recurrenceNextAt: z.string().nullable().optional(),
+  recurrenceSourceTaskId: zId.nullable().optional(),
 });
 export type ProjectTaskCard = z.infer<typeof zProjectTaskCard>;
 
@@ -476,3 +530,147 @@ export const zProjectTasksFromSourceConfirmResult = z.strictObject({
   taskIds: z.array(zId),
 });
 export type ProjectTasksFromSourceConfirmResult = z.infer<typeof zProjectTasksFromSourceConfirmResult>;
+
+// Project templates and recurring project tasks (#2607).
+export const zProjectTemplateTaskInputItem = z.strictObject({
+  title: z.string().trim().min(1).max(PROJECT_TASK_TITLE_MAX),
+  description: z.string().trim().max(PROJECT_TEMPLATE_TASK_DESCRIPTION_MAX).nullable().optional(),
+  dueOffsetDays: z.number().int().min(0).max(PROJECT_TEMPLATE_TASK_DUE_OFFSET_MAX).nullable().optional(),
+});
+export const zProjectTemplateTaskItem = zProjectTemplateTaskInputItem.extend({
+  tainted: z.boolean().optional(),
+});
+export type ProjectTemplateTaskItem = z.infer<typeof zProjectTemplateTaskItem>;
+
+export const zProjectTemplateSummary = z.object({
+  id: z.string(),
+  source: z.enum(['builtin', 'custom']),
+  builtinKey: zBuiltinProjectTemplateKey.nullable(),
+  name: z.string(),
+  description: z.string().nullable(),
+  status: zProjectStatus,
+  tasks: z.array(zProjectTemplateTaskItem),
+  taskCount: z.number().int().nonnegative(),
+  canManage: z.boolean(),
+  createdAt: z.string().nullable(),
+  updatedAt: z.string().nullable(),
+});
+export type ProjectTemplateSummary = z.infer<typeof zProjectTemplateSummary>;
+
+export const zProjectTemplateListInput = z.strictObject({
+  language: z.enum(['vi', 'en']).optional(),
+  includeArchived: z.boolean().optional(),
+});
+export type ProjectTemplateListInput = z.infer<typeof zProjectTemplateListInput>;
+
+export const zProjectTemplateListResult = z.object({
+  templates: z.array(zProjectTemplateSummary),
+  canWrite: z.boolean(),
+});
+export type ProjectTemplateListResult = z.infer<typeof zProjectTemplateListResult>;
+
+export const zProjectTemplateCreateFields = z.strictObject({
+  name: zProjectName,
+  description: zProjectDescription.nullable().optional(),
+  sourceProjectId: zId.optional(),
+  tasks: z.array(zProjectTemplateTaskInputItem).max(PROJECT_TEMPLATE_TASKS_MAX).optional(),
+  timeZone: zTimeZone.default(DEFAULT_TIME_ZONE),
+});
+export const validTemplateCreateSource = (v: {
+  sourceProjectId?: string | undefined;
+  tasks?: unknown[] | undefined;
+}): boolean => (v.sourceProjectId !== undefined) !== (v.tasks !== undefined);
+export const TEMPLATE_CREATE_SOURCE_ISSUE = {
+  message: 'Provide either sourceProjectId or tasks, not both',
+  path: ['tasks'],
+};
+export const zProjectTemplateCreateInput = zProjectTemplateCreateFields.refine(
+  validTemplateCreateSource,
+  TEMPLATE_CREATE_SOURCE_ISSUE,
+);
+export type ProjectTemplateCreateInput = z.input<typeof zProjectTemplateCreateInput>;
+
+export const zProjectTemplateCreateResult = z.object({
+  templateId: zId,
+  taskCount: z.number().int().nonnegative(),
+});
+export type ProjectTemplateCreateResult = z.infer<typeof zProjectTemplateCreateResult>;
+
+export const zProjectTemplateArchiveInput = z.strictObject({
+  templateId: zId,
+});
+export type ProjectTemplateArchiveInput = z.infer<typeof zProjectTemplateArchiveInput>;
+
+export const zProjectTemplateArchiveResult = z.object({
+  templateId: zId,
+  status: z.literal('archived'),
+});
+export type ProjectTemplateArchiveResult = z.infer<typeof zProjectTemplateArchiveResult>;
+
+export const zProjectCreateFromTemplateFields = z.strictObject({
+  templateId: zId.optional(),
+  builtinKey: zBuiltinProjectTemplateKey.optional(),
+  name: zProjectName.optional(),
+  description: zProjectDescription.nullable().optional(),
+  startDate: zLocalDate.optional(),
+  timeZone: zTimeZone.default(DEFAULT_TIME_ZONE),
+  language: z.enum(['vi', 'en']).default('vi'),
+  ownerUserId: zId.optional(),
+  memberUserIds: z.array(zId).max(200).optional(),
+});
+export const validTemplateCreateFromSource = (v: {
+  templateId?: string | undefined;
+  builtinKey?: string | undefined;
+}): boolean => (v.templateId !== undefined) !== (v.builtinKey !== undefined);
+export const TEMPLATE_CREATE_FROM_SOURCE_ISSUE = {
+  message: 'Provide either templateId or builtinKey, not both',
+  path: ['templateId'],
+};
+export const zProjectCreateFromTemplateInput = zProjectCreateFromTemplateFields.refine(
+  validTemplateCreateFromSource,
+  TEMPLATE_CREATE_FROM_SOURCE_ISSUE,
+);
+export type ProjectCreateFromTemplateInput = z.input<typeof zProjectCreateFromTemplateInput>;
+
+export const zProjectCreateFromTemplateResult = z.object({
+  projectId: zId,
+  taskIds: z.array(zId),
+});
+export type ProjectCreateFromTemplateResult = z.infer<typeof zProjectCreateFromTemplateResult>;
+
+export const zProjectTaskRecurrenceSetInput = z.strictObject({
+  projectId: zId,
+  taskId: zId,
+  recurrence: zProjectTaskRecurrence,
+});
+export type ProjectTaskRecurrenceSetInput = z.input<typeof zProjectTaskRecurrenceSetInput>;
+
+export const zProjectTaskRecurrenceClearInput = z.strictObject({
+  projectId: zId,
+  taskId: zId,
+});
+export type ProjectTaskRecurrenceClearInput = z.infer<typeof zProjectTaskRecurrenceClearInput>;
+
+export const zProjectTaskRecurrenceGetInput = z.strictObject({
+  taskId: zId,
+});
+export type ProjectTaskRecurrenceGetInput = z.infer<typeof zProjectTaskRecurrenceGetInput>;
+
+export const zProjectTaskRecurrenceView = z.object({
+  projectId: zId,
+  taskId: zId,
+  recurrence: zProjectTaskRecurrence.nullable(),
+  recurrenceCount: z.number().int().nonnegative(),
+  recurrenceLastDue: zLocalDate.nullable(),
+  recurrenceNextAt: z.string().nullable(),
+  recurrenceSourceTaskId: zId.nullable(),
+});
+export type ProjectTaskRecurrenceView = z.infer<typeof zProjectTaskRecurrenceView>;
+
+export const zProjectTaskRecurrenceClearResult = z.object({
+  projectId: zId,
+  taskId: zId,
+  cleared: z.boolean(),
+});
+export type ProjectTaskRecurrenceClearResult = z.infer<typeof zProjectTaskRecurrenceClearResult>;
+

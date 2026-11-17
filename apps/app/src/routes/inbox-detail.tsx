@@ -23,7 +23,6 @@ import { CardSkeleton, DocumentSkeleton, ErrorText, ListSkeleton, PageHeader, Pr
 import { accountLabel, pickableAccounts } from '../lib/accounts.ts';
 import { errorMessage, fetchFile, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { AttachedOriginalsCard } from '../components/attached-originals-card.tsx';
-import { getConfig } from '../lib/auth.ts';
 import { PROPOSAL_STATUS_VARIANT } from '../lib/status.ts';
 import { isZeroAmount, linesBalance, previewPurchaseJournal, previewSalesJournal } from '../lib/decimal.ts';
 import { nextDay, postingDateAllowed } from '../lib/period-lock.ts';
@@ -40,6 +39,7 @@ import { checksByConcern, isAdsProposalKind, isEInvoiceIssueKind, nextAfterDecis
 import { useReviewShortcuts, type ReviewHandlers } from '../lib/review-shortcuts.ts';
 import { useScrollRoom } from '../lib/scroll-room.ts';
 import { pollEvery, useStreamLive } from '../lib/stream-hook.ts';
+import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 
 const CHECK_TONE = { pass: 'success', warn: 'warning', fail: 'destructive' } as const;
 const CHECK_ICON = { pass: '✓', warn: '!', fail: '✕' } as const;
@@ -382,7 +382,8 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
     refetchInterval: (query) => (query.state.data?.extraction?.inFlight ? pollEvery(live, 2000) : false),
   });
   // The chart of accounts is the finance module's; without it (CROVE_MODULES) the screen does not ask for it.
-  const finance = getConfig().modules.includes('finance');
+  useModulesVersion(); // the apps of the org can change while this screen is open
+  const finance = installedModules().includes('finance');
   const accounts = useQuery({ ...orpc.accounts.list.queryOptions(), enabled: finance });
   // The audit log is for owners and admins (kernel.audit.list), so only they get the link to a decision's rows (#1445).
   const org = useQuery(orpc.org.get.queryOptions());
@@ -1212,7 +1213,7 @@ function ProposalTimeline({ id, documentId }: { id: string; documentId: string |
   const t = useTranslations('inboxDetail');
   const f = useFormat();
   const timeline = useQuery(orpc.inbox.timeline.queryOptions({ input: { id } }));
-  const exports = useQuery({ ...orpc.documents.exports.queryOptions({ input: { documentId: documentId ?? '' } }), enabled: documentId !== null && getConfig().modules.includes('finance') });
+  const exports = useQuery({ ...orpc.documents.exports.queryOptions({ input: { documentId: documentId ?? '' } }), enabled: documentId !== null && installedModules().includes('finance') });
   const range = (from: string | null, to: string | null) =>
     from && to ? t('exportRange', { from: f.date(from), to: f.date(to) }) : from ? t('exportFrom', { from: f.date(from) }) : to ? t('exportTo', { to: f.date(to) }) : t('exportAll');
   const items = [

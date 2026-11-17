@@ -107,6 +107,7 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
   'apps/kernel/src/feeds.ts': { modules: ['social'], why: 'the RSS feed sweep, timed only when social is installed (worker.ts)' },
   'apps/kernel/src/missing-invoice-mail.ts': { modules: ['finance'], why: 'the missing invoice reminders, timed only when finance is installed (worker.ts)' },
   'apps/kernel/src/notes-worker.ts': { modules: ['notes'], why: 'the notes jobs, worked and scheduled only when notes is installed (worker.ts)' },
+  'apps/kernel/src/projects-recurring-worker.ts': { modules: ['projects'], why: 'the recurring project task sweep (crove_projects.recurring_tasks_due), worked and scheduled only when projects is installed (worker.ts)' },
   'apps/kernel/src/sign-worker.ts': { modules: ['sign'], why: 'the eSign PDF inspect/seal workers and sweeps, worked and scheduled only when sign is installed (worker.ts)' },
   'apps/kernel/src/period-balance.ts': { modules: ['finance'], why: 'the period balance reconciliation, worked and scheduled only when finance is installed (worker.ts)' },
   'apps/kernel/src/quote-link.ts': { modules: ['crm'], why: 'the public quote page route (the definer crove_crm.quote_link_view), registered only when crm is installed (http.ts)' },

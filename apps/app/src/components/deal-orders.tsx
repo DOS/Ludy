@@ -19,13 +19,13 @@ import { ErrorText, Field } from './ui.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { keyFor, type KeyHolder } from '../lib/ads.ts';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { getConfig } from '../lib/auth.ts';
 import { ApiError } from '../lib/errors.ts';
 import { allDiscounted, invoiceInput, invoicePlan, lineStateOf, nothingLeft } from '../lib/order-handoff.ts';
 import { formatDate, formatMoney } from '../lib/format.ts';
+import { installedModules } from '../lib/org-modules.ts';
 
 // Kế toán's commands exist only where its module runs; a business without it sees the order screen as before, with no invoice or stock button.
-const financeInstalled = () => getConfig().modules.includes('finance');
+const financeInstalled = () => installedModules().includes('finance');
 const errorCode = (e: unknown): string | null => (typeof e === 'object' && e !== null && 'code' in e && typeof e.code === 'string' ? e.code : null);
 
 const refreshOrderQueries = () => {

@@ -1,5 +1,5 @@
 // The notes screens' small rules (issue #1671, plan docs/plan/notes.md §3.9 and §3.10).
-import { NOTE_TAGS_MAX, NOTE_TAG_MAX, NOTE_LIST_VIEWS, type NoteListView } from '@crove/kernel-contract';
+import { NOTE_TAGS_MAX, NOTE_TAG_MAX, NOTE_LIST_VIEWS, TODO_TITLE_MAX, type NoteListView } from '@crove/kernel-contract';
 
 // Tags as typed, separated by commas: trimmed, lower case, each once, as many as a note keeps.
 export function parseTags(input: string): string[] {
@@ -76,5 +76,39 @@ export function tagCounts(notes: ReadonlyArray<{ tags: readonly string[] }>, lim
     .map(([tag, count]) => ({ tag, count }))
     .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag, 'vi'))
     .slice(0, limit);
+}
+
+// Same inline Markdown syntax as lib/markdown.tsx, stripped cleanly when turning a note line into a private to-do (#1676).
+export const INLINE_MARKDOWN =
+  /\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\(((?:[^()\s]|\([^()\s]*\))+)\)|(?<![\p{L}\p{N}])_([^_]+)_(?![\p{L}\p{N}])|\*(\S(?:[^*]*\S)?)\*/gu;
+const BLOCK_PREFIX = /^\s*(?:#{1,3}\s+|>\s*|[-*+]\s+(?:\[[ xX]\]\s+)?|\d+[.)]\s+)/;
+
+/** Turns a note line or selection into plain to-do title text, trimmed and clamped to TODO_TITLE_MAX. */
+export function cleanNoteLineText(raw: string): string {
+  const lines = raw
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) =>
+      line
+        .replace(BLOCK_PREFIX, '')
+        .replace(INLINE_MARKDOWN, (_, bold, code, link, _url, under, star) => String(bold ?? code ?? link ?? under ?? star ?? ''))
+        .replace(/\s+/g, ' ')
+        .trim(),
+    )
+    .filter((line) => line !== '');
+  return lines.join(' ').trim().slice(0, TODO_TITLE_MAX).trim();
+}
+
+/** Extracts a to-do title from the active selection in a note editor, or the line at the cursor when collapsed. */
+export function extractNoteTodoTitle(body: string, start: number, end: number): string {
+  const len = body.length;
+  const a = Math.max(0, Math.min(start, len));
+  const b = Math.max(0, Math.min(end, len));
+  const lo = Math.min(a, b);
+  const hi = Math.max(a, b);
+  if (lo !== hi) return cleanNoteLineText(body.slice(lo, hi));
+  const from = lo === 0 ? 0 : body.lastIndexOf('\n', lo - 1) + 1;
+  const next = body.indexOf('\n', lo);
+  return cleanNoteLineText(body.slice(from, next === -1 ? len : next));
 }
 

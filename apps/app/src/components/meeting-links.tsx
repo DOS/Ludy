@@ -12,11 +12,11 @@ import { Input } from '@crove/ui/components/input';
 import { Label } from '@crove/ui/components/label';
 import { NativeSelect } from '@crove/ui/components/native-select';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { getConfig } from '../lib/auth.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
 import { ErrorText } from './ui.tsx';
+import { installedModules } from '../lib/org-modules.ts';
 
-const crmInstalled = (): boolean => getConfig().modules.includes('crm');
+const crmInstalled = (): boolean => installedModules().includes('crm');
 const refresh = () => queryClient.invalidateQueries({ queryKey: orpc.meetings.links.key() });
 
 function DealName({ dealId, fallback }: { dealId: string; fallback: string }) {

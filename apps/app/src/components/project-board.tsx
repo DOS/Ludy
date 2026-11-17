@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Kanban board and responsive compact list view for a project (#2591, ADR-0048).
-import type { ProjectSeat, ProjectTaskCard } from '@crove/kernel-contract';
+import type { ProjectSeat, ProjectTaskCard, TaskChecklistStep } from '@crove/kernel-contract';
 import { Link } from '@tanstack/react-router';
 import { useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent } from 'react';
 import { useTranslations } from 'use-intl';
@@ -12,6 +12,7 @@ import { NavIcon } from '@crove/ui/components/nav-icon';
 import { ProjectIcon } from '@crove/ui/components/project-icon';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { DateInput } from './date-input.tsx';
+import { TaskChecklistBadge, TaskChecklistEditor, hasBlankChecklistStep, normalizeChecklistSteps } from './task-checklist.tsx';
 import { Empty } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { TASK_STATUSES, taskDueFromDay, type TaskStatus } from '../lib/agents.ts';
@@ -25,6 +26,7 @@ import {
   type TaskPlacement,
 } from '../lib/projects.ts';
 import { seatOptionLabel } from './project-task-dialog.tsx';
+import { formatRecurrenceBadgeLabel } from './task-recurrence-control.tsx';
 
 export type BoardColumnStatus = 'todo' | 'in_progress' | 'waiting' | 'in_review' | 'done';
 
@@ -66,7 +68,7 @@ function QuickAddTask({
   status: BoardColumnStatus;
   seats: readonly ProjectSeat[];
   busy: boolean;
-  onCreate: (input: { title: string; assigneePositionId: string | null; due?: string; status: BoardColumnStatus }, done: () => void) => void;
+  onCreate: (input: { title: string; assigneePositionId: string | null; due?: string; checklist?: TaskChecklistStep[]; status: BoardColumnStatus }, done: () => void) => void;
 }) {
   const t = useTranslations('projects');
   const tt = useTranslations('tasks');
@@ -74,6 +76,9 @@ function QuickAddTask({
   const [title, setTitle] = useState('');
   const [assignee, setAssignee] = useState('');
   const [dueOn, setDueOn] = useState('');
+  const [checklist, setChecklist] = useState<TaskChecklistStep[]>([]);
+  const [stepError, setStepError] = useState(false);
+  const [resetCount, setResetCount] = useState(0);
   const [showMore, setShowMore] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
 
@@ -82,6 +87,9 @@ function QuickAddTask({
     setTitle('');
     setAssignee('');
     setDueOn('');
+    setChecklist([]);
+    setStepError(false);
+    setResetCount((n) => n + 1);
     setShowMore(false);
     requestAnimationFrame(() => triggerRef.current?.focus());
   };
@@ -90,18 +98,28 @@ function QuickAddTask({
     e.preventDefault();
     const trimmed = title.trim();
     if (!trimmed || busy) return;
+    if (hasBlankChecklistStep(checklist)) {
+      setShowMore(true);
+      setStepError(true);
+      return;
+    }
     const due = taskDueFromDay(dueOn, browserTimeZone());
+    const nextChecklist = normalizeChecklistSteps(checklist);
     onCreate(
       {
         title: trimmed,
         assigneePositionId: assignee || null,
         ...(due ? { due } : {}),
+        ...(nextChecklist.length > 0 ? { checklist: nextChecklist } : {}),
         status,
       },
       () => {
         setTitle('');
         setDueOn('');
         setAssignee('');
+        setChecklist([]);
+        setStepError(false);
+        setResetCount((n) => n + 1);
         setOpen(false);
         setShowMore(false);
       },
@@ -170,6 +188,17 @@ function QuickAddTask({
             aria-label={t('board.quickAddDue')}
             className="text-xs"
           />
+          <TaskChecklistEditor
+            key={resetCount}
+            idPrefix={`quick-add-${status}`}
+            label={t('modals.taskChecklistLabel')}
+            value={checklist}
+            stepError={stepError}
+            onChange={(next) => {
+              setChecklist(next);
+              if (stepError && !hasBlankChecklistStep(next)) setStepError(false);
+            }}
+          />
         </div>
       )}
       <div className="flex flex-wrap items-center justify-between gap-1.5">
@@ -220,6 +249,12 @@ function TaskMetaBadges({
           <span>{overdue ? `${t('task.overdue')} · ${f.date(task.due)}` : f.date(task.due)}</span>
         </Badge>
       )}
+      {task.recurrence && (
+        <Badge variant="outline" className="h-5 gap-1 px-1.5 text-[11px]" data-testid="task-recurrence-badge">
+          <ProjectIcon name="repeat" className="size-3" />
+          <span>{formatRecurrenceBadgeLabel(task.recurrence, t)}</span>
+        </Badge>
+      )}
       {task.tainted && (
         <Badge variant="warning" className="h-5 px-1.5 text-[11px]" title={t('task.taintedHint')}>
           {t('task.tainted')}
@@ -231,6 +266,7 @@ function TaskMetaBadges({
           <span>{t('task.checkedOut')}</span>
         </Badge>
       )}
+      <TaskChecklistBadge steps={task.checklist ?? []} />
       {task.commentCount > 0 && (
         <span className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground">
           <NavIcon name="comments" className="size-3" />
@@ -451,7 +487,7 @@ export function ProjectBoardView({
   customSortActive?: boolean;
   onMoveStatus: (taskId: string, nextStatus: TaskStatus, placement?: TaskPlacement) => void;
   onReorderTask?: (taskId: string, placement: TaskPlacement) => void;
-  onCreateTask: (input: { title: string; assigneePositionId: string | null; due?: string; status: BoardColumnStatus }, done: () => void) => void;
+  onCreateTask: (input: { title: string; assigneePositionId: string | null; due?: string; checklist?: TaskChecklistStep[]; status: BoardColumnStatus }, done: () => void) => void;
   onEditTask: (task: ProjectTaskCard) => void;
   onRemoveTask: (taskId: string) => void;
 }) {
@@ -707,6 +743,12 @@ export function ProjectBoardView({
                             <span>{t('task.checkedOut')}</span>
                           </Badge>
                         )}
+                        {task.recurrence && (
+                          <Badge variant="outline" className="h-5 gap-1 px-1.5 text-[11px]" data-testid="task-recurrence-badge">
+                            <ProjectIcon name="repeat" className="size-3" />
+                            <span>{formatRecurrenceBadgeLabel(task.recurrence, t)}</span>
+                          </Badge>
+                        )}
                       </div>
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                         <span className="inline-flex items-center gap-1">
@@ -719,6 +761,7 @@ export function ProjectBoardView({
                             <span>{overdue ? `${t('task.overdue')} · ${f.date(task.due)}` : f.date(task.due)}</span>
                           </span>
                         )}
+                        <TaskChecklistBadge steps={task.checklist ?? []} className="inline-flex items-center gap-1 tabular-nums" />
                         {task.commentCount > 0 && (
                           <span className="inline-flex items-center gap-1 tabular-nums">
                             <NavIcon name="comments" className="size-3.5" />

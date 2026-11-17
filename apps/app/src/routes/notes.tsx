@@ -17,6 +17,7 @@ import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { Textarea } from '@crove/ui/components/textarea';
 import { NoteLinks, RecordLinkAdder } from '../components/note-links.tsx';
 import { NoteTaskProposals } from '../components/note-task-proposals.tsx';
+import { NoteVyPanel } from '../components/note-vy-panel.tsx';
 import { NotesSubnav } from '../components/notes-subnav.tsx';
 import { VisibilityBadge, refreshNotes } from '../components/notes-panel.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader, Spinner } from '../components/ui.tsx';
@@ -26,9 +27,10 @@ import { Markdown } from '../lib/markdown.tsx';
 import { applyFormat, shortcutFormat, type MarkdownFormat } from '../lib/markdown-edit.ts';
 import { createAutosaver, type Autosaver, type NoteValues, type SaveState } from '../lib/note-autosave.ts';
 import { notesMarkdown, saveText } from '../lib/notes-export.ts';
+import { browserTimeZone } from '../lib/my-work.ts';
 import { projectsInstalled } from '../lib/projects.ts';
 import { toast } from '../lib/toast.ts';
-import { listOfNote, looksLikePassword, parseTags, tagCounts, type NotesSearch } from '../lib/notes.ts';
+import { extractNoteTodoTitle, listOfNote, looksLikePassword, parseTags, tagCounts, type NotesSearch } from '../lib/notes.ts';
 
 const SAVE_AFTER_MS = 800;
 const isConflict = (error: unknown) => (error as { code?: string } | null)?.code === 'NOTE_REVISION_CONFLICT';
@@ -85,6 +87,11 @@ function Editor({
   const [state, setState] = useState<SaveState>('idle');
   const [saveError, setSaveError] = useState<unknown>(null);
   const [confirmShare, setConfirmShare] = useState(false);
+  const [todoCreatedTitle, setTodoCreatedTitle] = useState<string | null>(null);
+  const [todoLineError, setTodoLineError] = useState<string | null>(null);
+  const [applyingSummary, setApplyingSummary] = useState(false);
+  const [summarySyncError, setSummarySyncError] = useState(false);
+  const locked = applyingSummary || summarySyncError;
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   // Bound to the note's org: a save that runs as the editor closes, after the user switched org, still goes to its own.
   const api = useRef(clientForOrg(slug)).current;
@@ -106,12 +113,14 @@ function Editor({
   const mayManage = writer && (note.mine || (note.visibility === 'org' && manager));
   const inTrash = note.deletedAt !== null;
   const editable = note.mine && writer && !inTrash;
+  const canMakeTodo = writer && !inTrash;
 
   // A change made elsewhere (another tab, the stream's refetch) replaces the text while nothing waits to save.
   useEffect(() => {
     if (saver.dirty() || saver.busy() || note.revision === saver.revision()) return;
     saver.reset(note.revision);
     setValues(valuesOf(note));
+    setSummarySyncError(false);
   }, [note, saver]);
   // Leaving the note (another note, the list, another screen) or the page saves what waits.
   useEffect(() => {
@@ -132,12 +141,14 @@ function Editor({
   }, [saver]);
 
   const edit = (patch: Partial<NoteValues>) => {
+    if (locked) return;
     const next = { ...values, ...patch };
     setValues(next);
     saver.edit(next);
   };
   // The toolbar and its shortcuts (#1739): Markdown at the cursor, the selection kept where the member expects it.
   const format = (kind: MarkdownFormat) => {
+    if (locked) return;
     const el = bodyRef.current;
     if (!el) return;
     const next = applyFormat({ value: values.body, start: el.selectionStart, end: el.selectionEnd }, kind);
@@ -154,6 +165,7 @@ function Editor({
     const fresh = await queryClient.fetchQuery({ ...orpc.notes.get.queryOptions({ input: { noteId: note.id } }), staleTime: 0 });
     saver.reset(fresh.revision);
     setValues(valuesOf(fresh));
+    setSummarySyncError(false);
   };
 
   const act = useMutation({
@@ -200,7 +212,7 @@ function Editor({
       }
     },
   });
-  const blocked = act.isPending || state === 'saving';
+  const blocked = act.isPending || state === 'saving' || locked;
   const linkAdd = useMutation({
     mutationFn: (target: NoteLinkTargetInput) => api.notes.linkAdd({ noteId: note.id, ...target }),
     onSuccess: () => void refreshNotes(),
@@ -209,11 +221,43 @@ function Editor({
     mutationFn: (linkId: string) => api.notes.linkRemove({ linkId }),
     onSuccess: () => void refreshNotes(),
   });
+  // Converts a note line or selection into a private personal to-do (notes plan step N7, #1676).
+  const makeTodo = useMutation({
+    mutationFn: (title: string) => api.notes.todos.create({ title, timeZone: browserTimeZone(), sourceNoteId: note.id }),
+    onMutate: () => {
+      setTodoCreatedTitle(null);
+      setTodoLineError(null);
+    },
+    onSuccess: (_done, title) => {
+      setTodoCreatedTitle(title);
+      void queryClient.invalidateQueries({ queryKey: orpc.notes.todos.key() });
+    },
+  });
+  const makeTodoFromLine = (title: string) => {
+    if (!title || makeTodo.isPending) return;
+    makeTodo.mutate(title);
+  };
+  const makeTodoFromSelection = () => {
+    const el = bodyRef.current;
+    const title = extractNoteTodoTitle(values.body, el?.selectionStart ?? 0, el?.selectionEnd ?? 0);
+    if (!title) {
+      makeTodo.reset();
+      setTodoCreatedTitle(null);
+      setTodoLineError(t('makeTodoEmpty'));
+      return;
+    }
+    makeTodo.mutate(title);
+  };
 
   return (
     <article className="space-y-4" aria-labelledby="note-title">
       <div className="flex flex-wrap items-center gap-2">
         <VisibilityBadge note={note} />
+        {note.tainted && (
+          <Badge variant="proposal" title={t('taintedHint')} data-testid="note-ai-badge">
+            {t('aiBadge')}
+          </Badge>
+        )}
         {note.pinned && <Badge variant="secondary">{t('pinnedBadge')}</Badge>}
         {note.archivedAt && <Badge variant="outline">{t('archivedBadge')}</Badge>}
         {inTrash && <Badge variant="destructive">{t('trashBadge')}</Badge>}
@@ -224,12 +268,18 @@ function Editor({
         </span>
       </div>
 
+      {note.tainted && (
+        <p role="note" data-testid="note-tainted-hint" className="rounded-md border border-proposal/30 bg-proposal/5 px-3 py-2 text-xs text-foreground">
+          {t('taintedHint')}
+        </p>
+      )}
+
       {editable ? (
         <>
           <label htmlFor="note-title" className="sr-only">
             {t('titleLabel')}
           </label>
-          <Input id="note-title" value={values.title} maxLength={200} autoFocus={focusTitle} onChange={(e) => edit({ title: e.target.value })} className="text-base font-semibold" />
+          <Input id="note-title" value={values.title} maxLength={200} disabled={locked} autoFocus={focusTitle} onChange={(e) => edit({ title: e.target.value })} className="text-base font-semibold" />
           <div className="flex items-center gap-2">
             <Button variant={preview ? 'ghost' : 'outline'} size="sm" onClick={() => setPreview(false)} aria-pressed={!preview}>
               {t('write')}
@@ -240,16 +290,27 @@ function Editor({
           </div>
           {preview ? (
             <div className="min-h-40 rounded-md border px-3 py-2">
-              {values.body.trim() === '' ? <p className="text-sm text-subtle-foreground">{t('emptyBody')}</p> : <Markdown text={values.body} />}
+              {values.body.trim() === '' ? (
+                <p className="text-sm text-subtle-foreground">{t('emptyBody')}</p>
+              ) : (
+                <Markdown
+                  text={values.body}
+                  onMakeTodo={canMakeTodo ? makeTodoFromLine : undefined}
+                  makeTodoLabel={t('makeTodo')}
+                  makeTodoAriaLabel={(line) => t('makeTodoOf', { line })}
+                  makeTodoDisabled={makeTodo.isPending}
+                />
+              )}
             </div>
           ) : (
             <>
-              <div role="group" aria-label={t('toolbar.label')} className="flex flex-wrap gap-1">
+              <div role="group" aria-label={t('toolbar.label')} className="flex flex-wrap items-center gap-1">
                 {FORMATS.map(({ format: kind, key, aria }) => (
                   <Button
                     key={kind}
                     variant="ghost"
                     size="sm"
+                    disabled={locked}
                     // Keeps the textarea's selection: the button takes no focus from it.
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => format(kind)}
@@ -259,6 +320,21 @@ function Editor({
                     {t(`toolbar.${kind}`)}
                   </Button>
                 ))}
+                {canMakeTodo && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="ml-auto"
+                    loading={makeTodo.isPending}
+                    disabled={makeTodo.isPending}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={makeTodoFromSelection}
+                    data-testid="note-make-todo"
+                  >
+                    {t('makeTodo')}
+                  </Button>
+                )}
               </div>
               <label htmlFor="note-body" className="sr-only">
                 {t('bodyLabel')}
@@ -269,8 +345,10 @@ function Editor({
                 value={values.body}
                 rows={14}
                 maxLength={NOTE_BODY_MAX}
+                disabled={locked}
                 onChange={(e) => edit({ body: e.target.value })}
                 onKeyDown={(e) => {
+                  if (locked) return;
                   const kind = shortcutFormat({ ...e, code: e.code, isComposing: e.nativeEvent.isComposing });
                   if (!kind) return;
                   e.preventDefault();
@@ -292,7 +370,7 @@ function Editor({
             <label htmlFor="note-tags" className="text-xs font-medium text-muted-foreground">
               {t('tagsLabel')}
             </label>
-            <Input id="note-tags" value={values.tags} onChange={(e) => edit({ tags: e.target.value })} placeholder={t('tagsHint')} />
+            <Input id="note-tags" value={values.tags} disabled={locked} onChange={(e) => edit({ tags: e.target.value })} placeholder={t('tagsHint')} />
             <TagChips tags={note.tags} onTag={onTag} />
           </div>
         </>
@@ -301,26 +379,76 @@ function Editor({
           <h2 id="note-title" className="text-lg font-semibold text-foreground">
             {note.title}
           </h2>
-          {note.body.trim() === '' ? <p className="text-sm text-subtle-foreground">{t('emptyBody')}</p> : <Markdown text={note.body} />}
+          {note.body.trim() === '' ? (
+            <p className="text-sm text-subtle-foreground">{t('emptyBody')}</p>
+          ) : (
+            <Markdown
+              text={note.body}
+              onMakeTodo={canMakeTodo ? makeTodoFromLine : undefined}
+              makeTodoLabel={t('makeTodo')}
+              makeTodoAriaLabel={(line) => t('makeTodoOf', { line })}
+              makeTodoDisabled={makeTodo.isPending}
+            />
+          )}
           <TagChips tags={note.tags} onTag={onTag} />
           {!note.mine && <p className="text-xs text-subtle-foreground">{t('readOnly')}</p>}
         </>
       )}
 
+      {todoCreatedTitle && (
+        <p role="status" data-testid="note-todo-created" className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm text-foreground">
+          <span>{t('todoCreated', { title: todoCreatedTitle })}</span>
+          <Link to="/o/$slug/my-work" params={{ slug }} className="text-link underline">
+            {t('openMyWork')}
+          </Link>
+        </p>
+      )}
+      {todoLineError && <ErrorText>{todoLineError}</ErrorText>}
+      {makeTodo.error && <ErrorText>{errorMessage(makeTodo.error)}</ErrorText>}
+
       <NoteLinks
         links={note.links}
         slug={slug}
-        onRemove={editable ? (linkId) => linkRemove.mutate(linkId) : undefined}
+        onRemove={editable && !locked ? (linkId) => linkRemove.mutate(linkId) : undefined}
         removingId={linkRemove.isPending ? linkRemove.variables : undefined}
       />
       {linkRemove.error && <ErrorText>{errorMessage(linkRemove.error)}</ErrorText>}
-      {editable && (
+      {editable && !locked && (
         <RecordLinkAdder
           existingLinks={note.links}
           onAdd={(target) => linkAdd.mutateAsync(target)}
           adding={linkAdd.isPending}
           error={linkAdd.error}
           onClearError={() => linkAdd.reset()}
+        />
+      )}
+
+      {role !== undefined && !inTrash && (
+        <NoteVyPanel
+          key={note.id}
+          slug={slug}
+          note={editable ? { ...note, title: values.title, body: values.body } : note}
+          canWrite={writer}
+          currentRevision={editable ? () => saver.revision() : undefined}
+          beforeRun={
+            editable
+              ? async () => {
+                  await saver.settle();
+                  return !saver.dirty();
+                }
+              : undefined
+          }
+          saveBlocked={editable && (state === 'conflict' || state === 'error' || summarySyncError)}
+          onSummaryApplyingChange={setApplyingSummary}
+          onSummaryAccepted={async () => {
+            try {
+              await reload();
+              await refreshNotes();
+            } catch {
+              setSummarySyncError(true);
+              void refreshNotes();
+            }
+          }}
         />
       )}
 
@@ -336,13 +464,21 @@ function Editor({
                 }
               : undefined
           }
-          saveBlocked={editable && (state === 'conflict' || state === 'error')}
+          saveBlocked={editable && (state === 'conflict' || state === 'error' || summarySyncError)}
           onCreated={() => {
             void refreshNotes();
           }}
         />
       )}
 
+      {summarySyncError && (
+        <div className="flex flex-wrap items-center gap-2" role="alert" data-testid="note-vy-sync-error">
+          <ErrorText>{t('vy.syncReloadError')}</ErrorText>
+          <Button size="sm" variant="outline" onClick={() => void reload().catch(() => {})}>
+            {t('reload')}
+          </Button>
+        </div>
+      )}
       {state === 'conflict' && (
         <div className="flex flex-wrap items-center gap-2" role="alert">
           <ErrorText>{t('conflict')}</ErrorText>
@@ -569,6 +705,7 @@ export function NotesPage() {
                       <span className="block truncate font-medium text-foreground">{n.title}</span>
                       <span className="mt-1 flex flex-wrap items-center gap-1 text-xs text-subtle-foreground">
                         <VisibilityBadge note={n} />
+                        {n.tainted && <Badge variant="proposal">{t('aiBadge')}</Badge>}
                         {n.pinned && <Badge variant="secondary">{t('pinnedBadge')}</Badge>}
                         {f.date(n.updatedAt)}
                       </span>

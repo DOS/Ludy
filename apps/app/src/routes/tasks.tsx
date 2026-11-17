@@ -5,21 +5,30 @@ import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useMemo, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { PROJECT_TASK_MAP_LIMIT, type FilterAst, type SavedViewSort } from '@crove/kernel-contract';
+import { PROJECT_TASK_MAP_LIMIT, serializeTaskChecklist, type FilterAst, type SavedViewSort, type TaskChecklistStep } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
 import { Input } from '@crove/ui/components/input';
 import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+import { ProjectIcon } from '@crove/ui/components/project-icon';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { Textarea } from '@crove/ui/components/textarea';
 import { DateInput } from '../components/date-input.tsx';
 import { meetingsInstalled } from '../components/linked-meetings.tsx';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
+import {
+  TaskChecklistBadge,
+  TaskChecklistEditor,
+  TaskChecklistSection,
+  hasBlankChecklistStep,
+  normalizeChecklistSteps,
+} from '../components/task-checklist.tsx';
 import { TaskConversationLink } from '../components/task-conversation-link.tsx';
 import { TaskFilterBar } from '../components/task-filter-bar.tsx';
+import { TaskRecurrenceControl, formatRecurrenceBadgeLabel } from '../components/task-recurrence-control.tsx';
 import { DataTable, Empty, ErrorText, FieldError, ListSkeleton, PageHeader, PageSkeleton, fieldControl } from '../components/ui.tsx';
 import { ViewTabs, type ViewState } from '../components/view-tabs.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -54,18 +63,26 @@ function NewTask({ chart }: { chart: Chart | undefined }) {
   const [description, setDescription] = useState('');
   const [assignee, setAssignee] = useState('');
   const [dueOn, setDueOn] = useState('');
+  const [checklist, setChecklist] = useState<TaskChecklistStep[]>([]);
+  const [stepError, setStepError] = useState(false);
   const [key, setKey] = useState(() => crypto.randomUUID());
   const create = useMutation(orpc.tasks.create.mutationOptions({ onSuccess: refresh }));
   const positions = (chart?.positions ?? []).filter((p) => p.status !== 'archived');
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    if (hasBlankChecklistStep(checklist)) {
+      setStepError(true);
+      return;
+    }
     const due = taskDueFromDay(dueOn, browserTimeZone());
+    const nextChecklist = normalizeChecklistSteps(checklist);
     create.mutate(
       {
         title: title.trim(),
         ...(description.trim() ? { description: description.trim() } : {}),
         assigneePositionId: assignee || null,
         ...(due ? { due } : {}),
+        ...(nextChecklist.length > 0 ? { checklist: nextChecklist } : {}),
         idempotencyKey: key,
       },
       {
@@ -73,6 +90,8 @@ function NewTask({ chart }: { chart: Chart | undefined }) {
           setTitle('');
           setDescription('');
           setDueOn('');
+          setChecklist([]);
+          setStepError(false);
           setKey(crypto.randomUUID());
         },
       },
@@ -104,6 +123,18 @@ function NewTask({ chart }: { chart: Chart | undefined }) {
         <span className="text-subtle-foreground">{t('newDescription')}</span>
         <Input maxLength={10000} value={description} onChange={(e) => setDescription(e.target.value)} className="mt-1" />
       </label>
+      <div className="md:col-span-6">
+        <TaskChecklistEditor
+          key={key}
+          idPrefix="new-task"
+          value={checklist}
+          stepError={stepError}
+          onChange={(next) => {
+            setChecklist(next);
+            if (stepError && !hasBlankChecklistStep(next)) setStepError(false);
+          }}
+        />
+      </div>
       <div className="flex items-center gap-2 md:col-span-6">
         <Button loading={create.isPending} type="submit">
           {t('create')}
@@ -283,6 +314,12 @@ export function TasksPage() {
                     <Link to="/o/$slug/tasks/$id" params={{ slug, id: task.id }} className="font-medium text-link hover:underline">
                       {task.title}
                     </Link>
+                    {(task.checklist?.length ?? 0) > 0 && (
+                      <TaskChecklistBadge
+                        steps={task.checklist ?? []}
+                        className="ml-2 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground"
+                      />
+                    )}
                     {task.tainted && (
                       <Badge variant="warning" className="ml-2" title={t('taintedHint')}>
                         {t('tainted')}
@@ -337,6 +374,8 @@ function EditTaskForm({ task, chart, onDone }: { task: TaskDetail; chart: Chart 
   const [description, setDescription] = useState(task.description ?? '');
   const [assignee, setAssignee] = useState(task.assigneePositionId ?? '');
   const [dueOn, setDueOn] = useState(() => taskDueDay(task.due, tz));
+  const [checklist, setChecklist] = useState<TaskChecklistStep[]>(() => (task.checklist ?? []).map((s) => ({ ...s })));
+  const [stepError, setStepError] = useState(false);
   const [key, setKey] = useState(() => crypto.randomUUID());
   const update = useMutation(orpc.tasks.update.mutationOptions({ onSuccess: refresh }));
   const positions = (chart?.positions ?? []).filter((p) => p.status !== 'archived' || p.id === task.assigneePositionId);
@@ -348,14 +387,21 @@ function EditTaskForm({ task, chart, onDone }: { task: TaskDetail; chart: Chart 
       setTitleError(true);
       return;
     }
+    if (hasBlankChecklistStep(checklist)) {
+      setStepError(true);
+      return;
+    }
     const nextDescription = description.trim() ? description.trim() : null;
     const nextAssignee = assignee || null;
     const initialDueOn = taskDueDay(initial.due, tz);
+    const nextChecklist = normalizeChecklistSteps(checklist);
+    const checklistChanged = serializeTaskChecklist(nextChecklist) !== serializeTaskChecklist(initial.checklist ?? []);
     const patch = {
       ...(nextTitle !== initial.title ? { title: nextTitle } : {}),
       ...(description !== (initial.description ?? '') ? { description: nextDescription } : {}),
       ...(nextAssignee !== initial.assigneePositionId ? { assigneePositionId: nextAssignee } : {}),
       ...(dueOn !== initialDueOn ? { due: taskDueFromDay(dueOn, tz) } : {}),
+      ...(checklistChanged ? { checklist: nextChecklist } : {}),
     };
     if (Object.keys(patch).length === 0) {
       onDone();
@@ -416,6 +462,17 @@ function EditTaskForm({ task, chart, onDone }: { task: TaskDetail; chart: Chart 
         <span className="text-subtle-foreground">{t('description')}</span>
         <Textarea rows={3} maxLength={10000} value={description} onChange={(e) => setDescription(e.target.value)} className="mt-1" />
       </label>
+      <div className="md:col-span-6">
+        <TaskChecklistEditor
+          idPrefix={`edit-task-${task.id}`}
+          value={checklist}
+          stepError={stepError}
+          onChange={(next) => {
+            setChecklist(next);
+            if (stepError && !hasBlankChecklistStep(next)) setStepError(false);
+          }}
+        />
+      </div>
       <div className="flex items-center gap-2 md:col-span-6">
         <Button loading={update.isPending} type="submit">
           {t('save')}
@@ -434,10 +491,16 @@ export function TaskDetailPage() {
   const t = useTranslations('tasks');
   const ta = useTranslations('agents');
   const tn = useTranslations('notes');
+  const tp = useTranslations('projects');
   const f = useFormat();
   const org = useQuery(orpc.org.get.queryOptions());
   const chart = useQuery(orpc.chart.get.queryOptions());
   const detail = useQuery(orpc.tasks.get.queryOptions({ input: { id } }));
+  const recurrenceQuery = useQuery({
+    ...orpc.projects.getTaskRecurrence.queryOptions({ input: { taskId: id } }),
+    enabled: projectsInstalled(),
+    retry: false,
+  });
   const perms = agentPermissions(org.data?.role);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const editing = editingTaskId === id;
@@ -468,6 +531,7 @@ export function TaskDetailPage() {
     );
   }
   const { task, comments, proposal } = detail.data;
+  const projectRecurrence = recurrenceQuery.data ?? null;
   const postId = socialPostOf(task.sourceRef);
   const meetingItemId = meetingItemOf(task.sourceRef);
   const directMeetingId = meetingSourceOf(task.sourceRef);
@@ -512,6 +576,13 @@ export function TaskDetailPage() {
               {t('dueLabel')}: {f.date(task.due)}
             </Badge>
           )}
+          <TaskChecklistBadge steps={task.checklist ?? []} />
+          {projectRecurrence?.recurrence && (
+            <Badge variant="outline" className="gap-1" data-testid="task-recurrence-badge">
+              <ProjectIcon name="repeat" className="size-3" />
+              <span>{formatRecurrenceBadgeLabel(projectRecurrence.recurrence, tp)}</span>
+            </Badge>
+          )}
           <span className="text-xs text-muted-foreground">{f.dateTime(task.createdAt)}</span>
         </div>
         {task.tainted && <p className="text-sm text-warning">{t('taintedHint')}</p>}
@@ -519,6 +590,7 @@ export function TaskDetailPage() {
           <p className="text-xs text-subtle-foreground">{t('description')}</p>
           <p className="text-sm whitespace-pre-wrap text-foreground">{task.description ?? t('noDescription')}</p>
         </div>
+        <TaskChecklistSection key={task.id} taskId={task.id} checklist={task.checklist ?? []} checkedOut={task.checkedOut} readOnly={!perms.tasks || editing} />
         {proposal && (
           <p className="text-sm text-muted-foreground">
             {t('proposal', { title: proposal.title })}{' '}
@@ -560,6 +632,16 @@ export function TaskDetailPage() {
         )}
         {setStatus.error && <ErrorText>{errorMessage(setStatus.error)}</ErrorText>}
       </Card>
+
+      {projectRecurrence && (
+        <TaskRecurrenceControl
+          projectId={projectRecurrence.projectId}
+          taskId={task.id}
+          canEdit={perms.tasks && !task.checkedOut}
+          view={projectRecurrence}
+          onUpdated={refresh}
+        />
+      )}
 
       <section>
         <h2 className="mb-3 text-sm font-semibold text-foreground">{t('comments')}</h2>

@@ -8,10 +8,10 @@ import type { MeetingLinkKind } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
-import { getConfig } from '../lib/auth.ts';
 import { ErrorText } from './ui.tsx';
+import { installedModules } from '../lib/org-modules.ts';
 
-export const meetingsInstalled = (): boolean => getConfig().modules.includes('meetings');
+export const meetingsInstalled = (): boolean => installedModules().includes('meetings');
 
 export function LinkedMeetings({ kind, targetId }: { kind: Exclude<MeetingLinkKind, 'calendar_event'>; targetId: string }) {
   const t = useTranslations('meetings');
