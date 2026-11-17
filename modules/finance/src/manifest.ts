@@ -35,6 +35,7 @@ export const financeManifest = defineModule({
       household_expense_group_map: columns(['expense_group', 'account_prefix', 'effective_from', 'source', 'status']),
       household_form_version: columns(['book', 'version', 'effective_from', 'name', 'pit_methods', 'source', 'status']),
       household_profile: columns(['org_id', 'id', 'legal_entity_id', 'effective_from', 'tax_group', 'pit_method', 'trades', 'einvoice_registered', 'created_by', 'created_at'], { representative_name: 'pii' }),
+      household_return_form_version: columns(['form', 'version', 'effective_from', 'name', 'pit_methods', 'source', 'status']),
       household_threshold: columns(['code', 'effective_from', 'amount', 'source', 'status']),
       household_trade_rate: columns(['trade', 'effective_from', 'vat_percent', 'pit_percent', 'source', 'status']),
       input_vat_check: columns(['org_id', 'id', 'document_id', 'outcome', 'voucher_id', 'note', 'marked_by', 'created_at', 'legal_entity_id']),

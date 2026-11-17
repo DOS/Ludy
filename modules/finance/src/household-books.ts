@@ -7,7 +7,7 @@
 // - finance.household.export: the audit row of an Excel download of a book (R0; the period, the book and the number of rows, never the rows).
 // Amounts are decimal strings added with decimal.js, never JS numbers.
 import { z } from 'zod';
-import { zHouseholdBook, zId, zLedgerPeriod, zHouseholdS1aGet, type HouseholdBookRule, type HouseholdS1a } from '@crove/kernel-contract';
+import { zHouseholdBook, zHouseholdReturnForm, zId, zLedgerPeriod, zHouseholdS1aGet, type HouseholdBookRule, type HouseholdS1a } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
 import { sum, toMoney } from '@crove/l10n-vn';
@@ -94,7 +94,7 @@ export const householdS1a = defineQuery({
 // Records one Excel download of a household book after the workbook is built: no row, no download. It changes nothing; the audit row names the entity, the book, the period and the count.
 export const householdExport = defineCommand({
   name: 'finance.household.export',
-  input: z.object({ legalEntityId: zId, book: zHouseholdBook, period: zLedgerPeriod, rows: z.number().int().min(0).max(HOUSEHOLD_S1A_ROW_LIMIT) }),
+  input: z.object({ legalEntityId: zId, book: z.union([zHouseholdBook, zHouseholdReturnForm]), period: zLedgerPeriod, rows: z.number().int().min(0).max(HOUSEHOLD_S1A_ROW_LIMIT) }),
   risk: 'R0',
   sideEffect: 'none',
   access: ALL,
