@@ -85,10 +85,19 @@ Ludy is for one-person companies and SMEs in Vietnam. Every issue, plan and PR m
 - **A red job:** read the job summary, or the PR's error annotations and the "Report the failed tests" log (#498). It means the PR's code breaks an invariant as `main` defines it: fix the code, never the test in the same PR. Changing an invariant on purpose is an owner decision, said in the PR: once the owner approves it in the coordinator's chat, the coordinator merges over the red check after the security review (the owner never merges), or it lands in two steps with a test that accepts both behaviors first. Fix the reviewer's blocking findings before merge.
 - A PR editing `protected.yml` or `tools/ci/` runs its own edited workflow: the reviewer and the session check it with extra care.
 
+## Local resources (owner order 2026-11-17)
+
+Many agents share the owner's one machine, which he also uses himself. Keep local work light; CI's runners are the machines for full runs.
+- **No full suite locally.** Never run the whole `pnpm typecheck`, `pnpm test` or `pnpm test:db`, or Playwright, on this machine. Run the packages you changed (`pnpm --filter <package> typecheck`) and the test files you touched (`pnpm vitest run <files>`), then push and let CI run everything. CI green on the PR's head is the evidence the merge bar asks for.
+- **One local Postgres for everyone:** the container `ludy-pg17-shared` (`postgres:17`, `127.0.0.1:55432`, `CROVE_TEST_ADMIN_URL=postgresql://postgres:postgres@127.0.0.1:55432/postgres`). Each test file makes its own throwaway database. Start it only if it is missing; never start a Postgres of your own.
+- **At most one local `docker compose` stack on the machine**, shared. Check UI against the pilot or that stack.
+- **Stop what you start:** no `tsc --watch`, dev server, test watcher or container left running after your step. One heavy command at a time per session.
+- Deeper or cloud-environment testing runs in CI, or on a test VM the owner approves; never on the pilot host.
+
 ## Commands
 
 Detail: [docs/contributing.md](docs/contributing.md#commands).
-- `pnpm install` · `pnpm lint` · `pnpm typecheck` (tests included; cover a new package's tests) · `pnpm test` · `pnpm test:db` (needs `CROVE_TEST_ADMIN_URL`)
+- `pnpm install` · `pnpm lint` · `pnpm typecheck` (tests included; cover a new package's tests) · `pnpm test` · `pnpm test:db` (needs `CROVE_TEST_ADMIN_URL`). Locally, run them per package or per file only (Local resources above); the full runs are CI's.
 - `pnpm db:migrate` applies the migrations. `pnpm db:types` regenerates `packages/db/src/generated/database.ts`: run and commit it after a migration that changes a table `crove_tenant` reads or its grants; refine columns in `packages/db/src/schema.ts`, never the generated file.
 - `pnpm db:vendor:pgboss` after a pg-boss upgrade. `docker compose up --build` runs the stack on http://localhost:8080. `pnpm test:e2e` needs `pnpm --filter @crove/e2e stack:up`, or both `E2E_BASE_URL` and `E2E_COMPOSE_PROJECT` for your own stack.
 - A shared dev PostgreSQL failing T17 on `t100_test_runner_*` roles: [clean up](docs/contributing.md#leftover-test-roles-on-a-shared-dev-postgresql).
