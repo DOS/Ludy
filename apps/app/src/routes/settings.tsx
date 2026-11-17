@@ -31,7 +31,6 @@ import { MemberPrivateNotes, usePrivateNotes } from '../components/notes-panel.t
 import { CardSkeleton, ErrorText, FieldError, fieldControl, fieldHintId, focusFirstInvalid, isEmailAddress, PageHeader, PageSkeleton, RowsSkeleton, Spinner, useFieldErrors } from '../components/ui.tsx';
 import { apiFetch, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { BOOKING_EVENT_TYPES_ID, BOOKING_SETTINGS_ID } from '../lib/booking.ts';
-import { scrollBehavior } from '../lib/media.ts';
 import { getConfig } from '../lib/auth.ts';
 import { useFormat } from '../i18n/provider.tsx';
 import { ROLES, roleChangeConfirmation, roleChangeKind, type Role, type RoleChangeKind } from '../lib/members.ts';
@@ -1111,15 +1110,29 @@ export function SettingsPage() {
   const org = useQuery(orpc.org.get.queryOptions());
   const me = useQuery(orpc.me.get.queryOptions());
   const search: { invite?: string } = useSearch({ strict: false });
-  // "Cài đặt lịch hẹn" on Lịch hẹn links to the working hours and event types (#3643): the cards exist once the org is read, so the jump waits for it.
-  const orgLoaded = org.data !== undefined;
+  // "Cài đặt lịch hẹn" and "Tạo loại lịch hẹn" on Lịch hẹn link to a card of this page (#3643). The cards come in as the reads answer (the org, the member, then the
+  // cards above grow with their own lists), so the jump waits for the card, then keeps the card at the top while the page settles, and lets go at the first touch,
+  // wheel or key of the person, or after five seconds.
+  const bookingAnchorReady = org.data !== undefined && me.data !== undefined;
   useEffect(() => {
     const id = [BOOKING_SETTINGS_ID, BOOKING_EVENT_TYPES_ID].find((candidate) => window.location.hash === `#${candidate}`);
-    if (!orgLoaded || !id) return;
-    const card = document.getElementById(id);
-    card?.scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
-    card?.focus({ preventScroll: true });
-  }, [orgLoaded]);
+    const first = id ? document.getElementById(id) : null;
+    if (!bookingAnchorReady || !id || !first) return;
+    const align = () => document.getElementById(id)?.scrollIntoView({ block: 'start' });
+    align();
+    first.focus({ preventScroll: true });
+    const observer = new ResizeObserver(align);
+    if (first.parentElement) observer.observe(first.parentElement);
+    const events = ['wheel', 'touchmove', 'keydown', 'mousedown'] as const;
+    const stop = () => {
+      observer.disconnect();
+      clearTimeout(timer);
+      for (const type of events) window.removeEventListener(type, stop);
+    };
+    const timer = setTimeout(stop, 5000);
+    for (const type of events) window.addEventListener(type, stop, { passive: true });
+    return stop;
+  }, [bookingAnchorReady]);
   // Role assignments (#1279): owners and admins see who holds which role; owners give and take them back.
   const managesMembers = org.data?.role === 'owner' || org.data?.role === 'admin';
   const memberRoles = useQuery({ ...orpc.org.memberRoles.queryOptions(), enabled: managesMembers });
