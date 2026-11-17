@@ -94,6 +94,9 @@ const MAI_BEFORE_GUARDS = ['khuyến', 'khuyên', 'hoa', 'mỉa', 'anh', 'chị'
 const MAI_AFTER_GUARDS = ['mối', 'sau', 'một', 'phục'] as const;
 
 const URL_RE = /(?:https?:\/\/|ftp:\/\/|mailto:|www\.)[^\s<>"{}|\\^`]+/gi;
+const EMAIL_RE = /[\p{L}\p{N}\p{M}._%+-]+@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+/giu;
+const FILE_OR_DOMAIN_RE =
+  /(?:^|(?<=[\s([,"'/]))[\p{L}\p{N}\p{M}_-]+(?:[.-][\p{L}\p{N}\p{M}_-]+)*\.(?:[a-z][a-z0-9]{1,5}|PDF|DOCX?|XLSX?|PPTX?|CSV|TXT|MD|JSON|XML|PNG|JPE?G|GIF|SVG|ZIP|RAR|TAR|GZ)(?=$|[\s.,;:!?)\]"'])/gu;
 const PRIORITY_RE = /(?:^|(?<=[\s([,]))!p([1-4])(?=$|[\s.,;:!?)\]])/gi;
 const TAG_RE = /(?:^|(?<=[\s([,]))#(?=[0-9_-]*\p{L})([\p{L}\p{N}\p{M}][\p{L}\p{N}\p{M}_-]{0,39})(?=$|[\s.,;:!?)\]])/gu;
 const LIST_QUOTED_RE = /(?:^|(?<=[\s([,]))\/"([^"\n]{1,60})"(?=$|[\s.,;:!?)\]])/gu;
@@ -231,6 +234,11 @@ function findProtectedUrlSpans(input: string): Span[] {
       raw = raw.slice(0, -1);
     }
     if (raw.length > 0) spans.push({ start, end: start + raw.length });
+  }
+  for (const re of [EMAIL_RE, FILE_OR_DOMAIN_RE]) {
+    for (const m of input.matchAll(re)) {
+      if (m[0].length > 0) spans.push({ start: m.index, end: m.index + m[0].length });
+    }
   }
   return spans;
 }
@@ -1037,8 +1045,17 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
   }
 
   timeCandidates.sort((a, b) => a.start - b.start || b.end - a.end);
+  const dedupedTimeCandidates: typeof timeCandidates = [];
+  for (const cand of timeCandidates) {
+    const prev = dedupedTimeCandidates[dedupedTimeCandidates.length - 1];
+    if (prev && cand.start < prev.end) continue;
+    dedupedTimeCandidates.push(cand);
+  }
 
-  const isDurationClock = (cand: { start: number; end: number; hasAmPm: boolean }, period: DayPeriod | undefined): boolean => {
+  const isDurationClock = (
+    cand: { start: number; end: number; hour: number; hasAmPm: boolean },
+    period: DayPeriod | undefined,
+  ): boolean => {
     const afterWord = findAdjacentWordAfter(input, words, cand.end, occupied);
     if (afterWord && vnMatch(afterWord, 'nữa')) return true;
 
@@ -1049,8 +1066,10 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     if (vnMatch(prevWord, 'dài') && prevPrev && vnMatch(prevPrev, 'kéo')) return true;
     if (vnMatch(prevWord, 'sau')) {
       if (prevPrev && vnMatchAny(prevPrev, ['tuần', 'ngày', 'hôm', 'tháng', 'năm'])) return false;
-      const usesGioWord = /(?:giờ|gio|giơ|o\u031b)/iu.test(input.slice(cand.start, cand.end));
-      if (usesGioWord && !period && !cand.hasAmPm) return true;
+      const candSlice = input.slice(cand.start, cand.end);
+      const usesGioWord = /(?:giờ|gio|giơ|o\u031b)/iu.test(candSlice);
+      const hasColon = candSlice.includes(':');
+      if (!period && !cand.hasAmPm && !hasColon && (usesGioWord || (cand.hour >= 1 && cand.hour <= 12))) return true;
     }
     return false;
   };
@@ -1061,8 +1080,8 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     return /^(?:-|\u2013|\u2014|to|till|until|den|toi|->|~)$/u.test(foldedBetween);
   };
 
-  for (let idx = 0; idx < timeCandidates.length; idx++) {
-    const tc = timeCandidates[idx];
+  for (let idx = 0; idx < dedupedTimeCandidates.length; idx++) {
+    const tc = dedupedTimeCandidates[idx];
     if (!tc || !isAvailable(tc)) continue;
     let start = tc.start;
     let end = tc.end;
@@ -1085,11 +1104,11 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
 
     if (isDurationClock(tc, period)) continue;
 
-    // Skip time ranges ("từ 9h đến 10h", "9h - 11h") intact rather than stripping only half or both into orphaned text.
+    // Skip time ranges ("từ 9h đến 10h", "9h - 11h", "9:00am - 11:00am") intact rather than stripping only one side.
     let rangeEndIdx = idx;
     let cursorEnd = end;
-    while (rangeEndIdx + 1 < timeCandidates.length) {
-      const nextTc = timeCandidates[rangeEndIdx + 1];
+    while (rangeEndIdx + 1 < dedupedTimeCandidates.length) {
+      const nextTc = dedupedTimeCandidates[rangeEndIdx + 1];
       if (!nextTc || !isAvailable(nextTc) || !isRangeBetweenClocks(cursorEnd, nextTc.start)) break;
       rangeEndIdx += 1;
       cursorEnd = nextTc.end;

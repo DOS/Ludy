@@ -563,5 +563,38 @@ describe('parseTodoQuickAdd (#3556)', () => {
     expect(multiClock.dueTime).toBe('09:00');
     expect(multiClock.tokens.filter((t) => t.kind === 'time')).toHaveLength(1);
     expect(multiClock.title).toBe('Họp 10h');
+
+    // Emails and filenames never leak inner date words/weekdays
+    const emailInput = parseTodoQuickAdd('Gửi báo cáo cho mai@example.com', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(emailInput.title).toBe('Gửi báo cáo cho mai@example.com');
+    expect(emailInput.dueOn).toBeNull();
+    expect(emailInput.tokens).toEqual([]);
+
+    const emailWithDate = parseTodoQuickAdd('Gửi báo cáo cho mai@example.com ngày mai 9h', {
+      now: TUE_MORNING,
+      timeZone: VN_TZ,
+    });
+    expect(emailWithDate.title).toBe('Gửi báo cáo cho mai@example.com');
+    expect(emailWithDate.dueOn).toBe('2026-11-18');
+    expect(emailWithDate.dueTime).toBe('09:00');
+
+    const fileInput = parseTodoQuickAdd('Xem file t6.pdf', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(fileInput.title).toBe('Xem file t6.pdf');
+    expect(fileInput.dueOn).toBeNull();
+
+    // Colon+AM/PM time ranges deduplicate overlapping matches cleanly
+    const colonAmPmRange = parseTodoQuickAdd('Meeting 9:00am - 11:00am tomorrow', {
+      now: TUE_MORNING,
+      timeZone: VN_TZ,
+    });
+    expect(colonAmPmRange.title).toBe('Meeting 9:00am - 11:00am');
+    expect(colonAmPmRange.dueOn).toBe('2026-11-18');
+    expect(colonAmPmRange.dueTime).toBeNull();
+
+    // Short duration form ("sau 2h") stays intact without becoming 02:00 tomorrow
+    const shortDurSau = parseTodoQuickAdd('Gọi khách sau 2h', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(shortDurSau.title).toBe('Gọi khách sau 2h');
+    expect(shortDurSau.dueOn).toBeNull();
+    expect(shortDurSau.dueTime).toBeNull();
   });
 });
