@@ -13628,6 +13628,7 @@ export const en = {
         },
       },
       import: {
+        discard_empty: 'Remove the empty meeting a failed import left behind',
         start: 'Import a recording a meeting platform finished as a meeting',
       },
       live: {

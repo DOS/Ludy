@@ -384,6 +384,8 @@ import {
 import {
   zMeetingCreate,
   zMeetingCreated,
+  zMeetingImportDiscarded,
+  zMeetingImportDiscardEmpty,
   zMeetingImportStart,
   zMeetingDeleted,
   zMeetingOwnerList,
@@ -1184,6 +1186,8 @@ export const contract = {
     create: oc.input(zMeetingCreate).output(zMeetingCreated),
     // The click on "Nhập" for a recording a meeting platform finished (C1, #3173): makes the meeting with its consent record and starts the download. The app then claims the staged bytes through the media route.
     importStart: oc.input(zMeetingImportStart).output(zMeetingCreated),
+    // The app calls it after a failed import is dismissed and before its platform connection is disconnected: the empty meeting of the failed try goes (#3587).
+    importDiscardEmpty: oc.input(zMeetingImportDiscardEmpty).output(zMeetingImportDiscarded),
     // The recorder picks the minutes template of their meeting (A4, #3162).
     setTemplate: oc.input(zMeetingTemplateSet).output(zMeetingTemplateSetDone),
     // The status of a meeting the calling extension token created, and nothing of its content (issue #2582).

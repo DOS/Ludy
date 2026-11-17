@@ -139,6 +139,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.hook.queued',
       'meetings.hook.record',
       'meetings.import.start',
+      'meetings.import.discard_empty',
     ]);
 
     expect(meetingMediaRecord.name).toBe('meetings.media.record');

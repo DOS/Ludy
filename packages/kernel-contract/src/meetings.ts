@@ -152,6 +152,15 @@ export const zMeetingImportStart = z.strictObject({
 });
 export type MeetingImportStart = z.infer<typeof zMeetingImportStart>;
 
+// The clean-up after a failed import is dismissed, or before the platform connection that held it is disconnected (#3587): the empty meeting a failed try left in the member's list goes, by the same
+// rule as a retry (the importer's own, never edited, holding nothing). Exactly one of the two: one recording, or every failed or dismissed recording of one connection.
+export const zMeetingImportDiscardEmpty = z
+  .strictObject({ recordingId: zId.optional(), connectionId: zId.optional() })
+  .refine((v) => (v.recordingId === undefined) !== (v.connectionId === undefined), { message: 'Exactly one of recordingId and connectionId' });
+export type MeetingImportDiscardEmpty = z.infer<typeof zMeetingImportDiscardEmpty>;
+export const zMeetingImportDiscarded = z.strictObject({ removed: z.number().int().min(0) });
+export type MeetingImportDiscarded = z.infer<typeof zMeetingImportDiscarded>;
+
 export const zMeetingCreated = z.strictObject({
   meetingId: zId,
 });
