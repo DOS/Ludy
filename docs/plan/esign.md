@@ -1,6 +1,6 @@
 # Ludy eSign Plan (`sign`)
 
-- **Status:** Draft plan (2026-11-15)
+- **Status:** Draft plan (2026-11-15; Slice 2 decisions updated 2026-11-17)
 - **Epic:** https://github.com/DOS/Ludy/issues/3318
 - **Plan Issue:** https://github.com/DOS/Ludy/issues/3319
 - **Milestone / Priority:** `M3 Paid pilot` / `priority:P2`
@@ -12,6 +12,13 @@
 1. **Signature model (Slice 1 vs Slice 2):** Slice 1 ships self-contained, Documenso-style electronic signatures (draw or type signature, optional email OTP via [ADR-0034](../adr/0034-outbound-email.md), tamper-evident SHA-256 PDF sealing, and an independent audit certificate) running 100% locally on `docker compose up` with zero external provider accounts or API keys. Vietnamese public Certificate Authorities (VNPT SmartCA, Viettel MySign, MISA WeSign) sit behind a pluggable provider boundary in Slice 2.
 2. **App shell and AI coworker:** Ludy eSign is its own toggleable app (`Ky ket` in Vietnamese / `eSign` in English, stored with `Ký kết` in UI copy) in the app switcher under per-org module enablement ([ADR-0031](../adr/0031-module-enablement.md), [ADR-0053](../adr/0053-per-org-app-enablement.md)). **Vy** (`gm`, Ludy's cross-app coworker and assistant per [DESIGN.md](../../DESIGN.md) section 1.1) reads uploaded PDFs, proposes signature/initial/date/text field placements, and summarizes key or risky clauses through the `packages/agent` budget meter. Core signing works identically when AI is off, and a human explicitly reviews fields and triggers every send.
 3. **Slice 1 boundary:** Upload PDF, place fields (with Vy proposals), send signing links via copyable Zalo/chat URL or transactional email for 1 or N signers (parallel or sequential routing), complete signing on a public mobile-friendly page (`/-/sign#<token>`, `Referrer-Policy: no-referrer`, single-use replay rejection, optional email OTP, and **no mandatory third-party CAPTCHA** per Decision `#203`), and export the sealed PDF + audit certificate stored via [ADR-0013](../adr/0013-evidence-storage-and-integrity.md). Reusable templates and Engage quote ([ADR-0050](../adr/0050-quote-acceptance-sales-order-and-accounting-handoff.md)) / HR labor contract handoffs are deferred to Slice 2.
+
+### Slice 2 Decisions (JOY, 2026-11-17)
+
+1. **A1 - Direct Signing Links (`/-/sign/d#<token>`) on 1-signer templates:** Orgs can enable a shareable public direct signing link `/-/sign/d#<token>` on a 1-signer template (`crove_sign.template_direct_link`, `MACHINERY` table storing `token_sha256` only; zero plaintext token stored). Recipients open `/-/sign/d#<token>` to load template metadata (`POST /api/sign/direct/view`) and the template PDF (`POST /api/sign/direct/pdf`), optionally verify a 6-digit email OTP (`POST /api/sign/direct/otp/request`, `POST /api/sign/direct/otp/verify`), and start a self-service signing session (`POST /api/sign/direct/start`) that materializes an envelope + signer from the template and returns a single-use submit token without storing any plaintext token. Protected by per-IP and per-token/email rate limits, `org_app_on(org_id, 'sign')` + entitlement opaque `404`, `Referrer-Policy: no-referrer`, and zero mandatory CAPTCHA (`#203`).
+2. **A2 - Template Roles (`Signer` / `Approver` / `CC`), Dedicated Approval UI & Sealed Email Attachments:** Templates and envelopes support three distinct recipient role kinds (`signer_role IN ('signer', 'approver', 'cc')`): `Signer` (requires signature/input fields), `Approver` (dedicated lightweight approval ceremony UI to approve or decline without drawing a signature), and `CC` (view-only recipient notified upon completion with zero fields or signing turn). Upon completion, [ADR-0034](../adr/0034-outbound-email.md) notification emails attach the SHA-256 sealed PDF and Audit Certificate PDF when within a strict attachment size cap, falling back cleanly to portal download links when oversized.
+3. **A3 - Deterministic PDF Text Tags (`crove-extract`) & Matching Audit Certificate Page Size:** Support deterministic placeholder text tags embedded inside uploaded PDFs (`{{signature, r1}}`, `{{date, r1}}`, `{{text, r1}}`, mapped to template/signer roles such as `r1`), parsed strictly inside the isolated `crove-extract` sandbox ([ADR-0018](../adr/0018-untrusted-content.md)) with 100% AI-off parity (zero LLM calls needed). Additionally, `crove-extract` `pdf_seal` sizes the appended Audit Certificate summary page to match the dimensions of the document's last page rather than hardcoding A4.
+4. **A4 - Strict Visibility on `hr_contract` Envelopes (`source_kind = 'hr_contract'`):** Envelopes linked to HR labor contracts (`source_kind = 'hr_contract'`) enforce strict visibility limited to `owner`, `admin`, and the envelope's `created_by` creator across list/detail queries, commands, and file download gates, aligning with Ludy's salary/HR confidentiality boundary so other members with `sign` access cannot view or download another employee's HR contract envelope.
 
 ---
 
@@ -202,9 +209,10 @@ Append-only, hash-chained audit ledger per envelope (in addition to kernel `crov
 
 ### 2.2 Slice 2 Reserved Tables (Documented Now, Migrated in Slice 2)
 
-- `crove_sign.template`, `crove_sign.template_role`, `crove_sign.template_field`: reusable layouts cloning roles + normalized fields into `crove_sign.envelope`.
-- `crove_sign.ca_connection`: org-level remote CA credentials (`provider IN ('vnpt_smartca', 'viettel_mysign', 'misa_wesign')`, encrypted secrets via `crove_kernel` secret envelope).
-- `crove_sign.ca_signing_request`: asynchronous external CA transaction log (`idempotency_key`, `external_tx_id`, `status`, `retry_safety = 'reconcile_only'`, modeled after `@crove/einvoice`).
+- `crove_sign.template`, `crove_sign.template_role` (`signer_role IN ('signer', 'approver', 'cc')` per `A2`), `crove_sign.template_field`: reusable layouts cloning roles + normalized fields (including coordinates populated deterministically from `{{signature, r1}}` / `{{date, r1}}` / `{{text, r1}}` PDF text tags in `crove-extract` per `A3`) into `crove_sign.envelope`.
+- `crove_sign.template_direct_link` (`MACHINERY`): definer-only capability token table backing 1-signer public direct signing links `/-/sign/d#<token>` (`A1`). Stores `token_sha256` (zero plaintext token stored), `template_id`, `enabled`, and `created_by` under RLS with zero runtime login role grants (reached strictly through `SECURITY DEFINER` resolvers/commands, matching `signing_token` and `signing_otp`).
+- `crove_sign.ca_connection` (`MACHINERY`): org-level remote CA credentials (`provider IN ('sandbox', 'vnpt_smartca', 'viettel_mysign', 'misa_wesign')`, encrypted secrets via `crove_kernel` secret envelope; zero runtime login role grants, reached only via definers).
+- `crove_sign.ca_signing_request`: asynchronous external CA transaction log (`provider IN ('sandbox', 'vnpt_smartca', 'viettel_mysign', 'misa_wesign')`, `idempotency_key`, `external_tx_id`, `status`, `retry_safety = 'reconcile_only'`, modeled after `@crove/einvoice`).
 
 ### 2.3 Data Classification, PDPL & Purge Rules
 
@@ -301,7 +309,7 @@ Repository tests (`tools/test/parser-imports.test.ts` and `apps/kernel/test/cont
    - Rejects encrypted/password-protected PDFs in Slice 1, checks `%PDF-1.` magic bytes, rejects/strips active JavaScript (`/JS`, `/JavaScript`, `/AA`, `/OpenAction`, `/Launch`, `/RichMedia`), enforces `pageCount <= 200`, extracts authoritative `[widthPt, heightPt, rotation]` per page, and returns bounded per-page text (`max ~64 KB` structured summary input) for Vy.
 2. **`pdf_seal` (`EXTRACT_KINDS` in `packages/extract-contract` + `apps/extract/`):**
    - When the final signer completes, the kernel reads verified original PDF bytes (`readVerified` confirming `source_sha256`) + validated PNG signature assets (each strictly verified PNG magic bytes, <= 256 KB, no SVG/XML) + normalized field values + canonical signer/event audit summary, and posts them to `crove-extract`.
-   - `crove-extract` uses `pdf-lib` + embedded `Be Vietnam Pro` subset fonts (supporting full Vietnamese Unicode diacritics) to flatten signatures, dates, initials, checkboxes, and text directly into page content streams, strips interactive AcroForm fields/scripts, appends a branded **Audit Certificate Summary Page** (`Chung nhan ky ket dien tu`) containing `certificate_code`, `source_sha256`, signer list, UTC+7 timestamps, OTP/email verification flags, and `signing_event` chain tip hash, and returns the sealed PDF bytes (strictly bounded <= `EXTRACT_LIMITS.maxFileBytes`).
+   - `crove-extract` uses `pdf-lib` + embedded `Be Vietnam Pro` subset fonts (supporting full Vietnamese Unicode diacritics) to flatten signatures, dates, initials, checkboxes, and text directly into page content streams, strips interactive AcroForm fields/scripts, appends a branded **Audit Certificate Summary Page** (`Chung nhan ky ket dien tu`, matching the last document page dimensions per Slice 2 `A3`) containing `certificate_code`, `source_sha256`, signer list, UTC+7 timestamps, OTP/email verification flags, and `signing_event` chain tip hash, and returns the sealed PDF bytes (strictly bounded <= `EXTRACT_LIMITS.maxFileBytes`). Deterministic text tag parsing (`{{signature, r1}}`, `{{date, r1}}`, `{{text, r1}}`, `A3`) also runs strictly inside `crove-extract` (`pdf_inspect` / template parse) with zero LLM dependencies.
    - Kernel computes `sealed_sha256`, writes the sealed PDF via create-only `ADR-0013` store (`source = 'sign_sealed'`), and also writes a canonical machine-verifiable `certificate.json` (plus standalone certificate PDF generated either by `crove-extract` or a zero-dependency pure PDF writer modeled on `modules/crm/src/pdf/writer.ts`) under `source = 'sign_certificate'`.
 3. **Browser `.wasm` constraint (`image-check.mjs`):**
    - `apps/kernel/test/container/image-check.mjs` inspects the built tree including `apps/app/dist` for binary files including `.wasm`. Therefore the field placer & viewer in `apps/app` MUST render PDF pages using pure-JS `pdfjs-dist` (with `isEvalSupported: false`, `enableScripting: false`, and **zero `.wasm` asset files** copied into `apps/app/dist`, e.g., excluding `pdfjs-dist/wasm/` decoders; if an exotic CMYK/JBIG2 JPEG2000 PDF requires unsupported decoding, `pdf_inspect` flags it cleanly or Slice 1c validates pure-JS rendering in CI `image-check.mjs`).
@@ -310,7 +318,7 @@ Repository tests (`tools/test/parser-imports.test.ts` and `apps/kernel/test/cont
 
 - **Slice 1 independent verification:** anyone holding `contract-signed.pdf` and `certificate.json` (or `certificate_code`) can verify integrity completely offline (`sha256sum contract-signed.pdf` == `sealed_sha256`) or locally in Ludy's **Verify Document** screen using browser Web Crypto (`crypto.subtle.digest('SHA-256', arrayBuffer)`), ensuring zero document bytes leave the user's device.
 - **Slice 2 pluggable CA boundary (`packages/sign` modeled on `packages/einvoice`):**
-  - Interface `CaSigningAdapter`: `provider: 'vnpt_smartca' | 'viettel_mysign' | 'misa_wesign'`, `initiateSign(digestSha256, certRef, idempotencyKey)`, `pollStatus(externalTxId)`, `fetchSignedCmsOrLtv(externalTxId)`, with `retrySafety: 'reconcile_only'` so network failures never double-charge or double-sign.
+  - Interface `CaSigningAdapter`: `provider: 'sandbox' | 'vnpt_smartca' | 'viettel_mysign' | 'misa_wesign'`, `initiateSign(digestSha256, certRef, idempotencyKey)`, `pollStatus(externalTxId)`, `fetchSignedCmsOrLtv(externalTxId)`, with `retrySafety: 'reconcile_only'` so network failures never double-charge or double-sign (`'sandbox'` runs 100% offline locally on `docker compose up`).
   - Because `crove-extract` remains `QUEUE_EGRESS: 'none'`, the kernel executes external HTTPS CA calls via guarded provider egress, receives back the detached CMS/PKCS#7 signature bytes, and sends `{ originalPdf, cmsSignatureBytes, ocspOrTimestampToken }` to `crove-extract` (`pdf_embed_cms`) to assemble a standards-compliant PAdES-LTV PDF without placing CA SDKs inside kernel or `crove-extract` network paths.
 - **`[commentary]` Legal Weight Note (Lawyer `#62`):**
   - Under Vietnam Law on Electronic Transactions `20/2023/QH15` and Decree `23/2025/ND-CP`, Slice 1 electronic signatures (`chu ky dien tu`) coupled with audit logs, email OTP, and SHA-256 sealing suit commercial B2B contracts where parties agree on electronic authentication, whereas documents legally mandated to carry certified public digital signatures (`chu ky so cong cong`, e.g., VAT e-invoices, tax/social insurance filings, specific regulated deeds) must wait for Slice 2 CA integration.
@@ -382,7 +390,7 @@ Per [DESIGN.md](../../DESIGN.md) section 1.1 and `packages/kernel-contract/src/c
   - `/sign/envelopes` (`Hồ sơ ký` / `Envelopes`) - default workspace list view
   - `/sign/verify` (`Kiểm tra tệp` / `Verify PDF`) - drag/drop offline SHA-256 verification tool
   - *(Slice 2)* `/sign/templates` (`Mẫu tài liệu` / `Templates`)
-- Register `{ path: '/-/sign', public: true }` in `outside` screens (`packages/kernel-contract/src/screens.ts`) + React router (`apps/app/src/router.tsx`).
+- Register `{ path: '/-/sign', public: true }` (and `{ path: '/-/sign/d', public: true }` in Slice 2a `A1`) in `outside` screens (`packages/kernel-contract/src/screens.ts`) + React router (`apps/app/src/router.tsx`).
 
 ### 7.2 Core Screens & Visual Tokens
 
@@ -395,11 +403,11 @@ All screens follow [DESIGN.md](../../DESIGN.md) OKLCH semantic tokens (`primary`
    - **Left rail (280px):** Signer list with distinct color chips per signer, sequential order selector (`#1`, `#2`, ...), delivery mode toggle (`Link Zalo/Chat` vs `Email`), Email OTP toggle, plus **Vy Clause Summary card** highlighting risks (`warning` / `destructive` chips clickable to jump to that PDF page).
    - **Center canvas:** crisp pure-JS PDF page viewer with keyboard & drag-drop placement (`Chữ ký`, `Ký nháy`, `Ngày ký`, `Văn bản`, `Đánh dấu`). Unapplied Vy suggestions display in `proposal` dashed borders with `"Đề xuất - Kéo hoặc bấm Áp dụng"`.
    - **Header bar:** primary human confirmation button `"Gửi yêu cầu ký"` opening a concise summary dialog (signers, delivery channels, OTP status) before locking the draft.
-3. **Public Signing Ceremony (`/-/sign#<token>`):**
+3. **Public Signing Ceremony (`/-/sign#<token>`, plus Slice 2a `A1` `/-/sign/d#<token>` & `A2` `Approver` UI):**
    - Mobile-first (`375px`+ responsive) chrome-free layout so recipients opening links inside Zalo in-app browser or mobile Safari/Chrome can read comfortably and sign in under 30 seconds.
    - If `require_email_otp = true`: clean 6-digit OTP verification card first (`"Xác thực email trước khi xem tài liệu"`, masked email shown, `"Gửi lại mã"` with countdown). Document stays hidden until OTP passes.
    - Top sticky bar: document title, `"Còn 2 ô cần hoàn tất"` jump-to-next-field pill button, `"Từ chối ký"` secondary action, and `"Hoàn tất ký"` primary action enabled only once required fields + consent checkbox (`"Tôi đồng ý giao dịch và ký kết tài liệu này bằng phương thức điện tử"`) are filled.
-   - Signature modal: two clean tabs (**Vẽ tay** using smooth touch/mouse canvas; **Gõ tên** rendering Vietnamese `Be Vietnam Pro` / signature styles into sanitized PNG).
+   - Signature modal: two clean tabs (**Vẽ tay** using smooth touch/mouse canvas; **Gõ tên** rendering Vietnamese `Be Vietnam Pro` / signature styles into sanitized PNG). Recipients with `Signer` role fill fields and draw/type a signature; Slice 2a `Approver` recipients (`A2`) use a dedicated lightweight approval UI (approve or decline without drawing).
 4. **Sealed Evidence & Verify Screen (`/sign/envelopes/:id` sealed tab & `/sign/verify`):**
    - Download buttons for **Original PDF**, **Sealed PDF + Certificate Summary**, and **Certificate JSON**, alongside copyable `source_sha256`, `sealed_sha256`, and `certificate_code` in `JetBrains Mono`.
    - `/sign/verify`: drop any PDF to compute SHA-256 locally in browser and match against `certificate_code` / certificate JSON, showing `success` (`"Toàn vẹn - khớp bản niêm phong gốc"`) or `destructive` (`"Không khớp - tệp đã thay đổi"`).
@@ -471,21 +479,25 @@ All slices are sized as standalone, end-to-end PRs under Milestone **`M3 Paid pi
   - `apps/app/package.json` *(protected path if adding `pdfjs-dist`)*, `apps/app/src/lib/{apps,modules,sign-hash}.ts`, `apps/app/src/router.tsx`, `apps/app/src/i18n/messages/{vi,en}.ts`, `apps/app/src/routes/sign-*.tsx`, `apps/app/src/components/sign/*`
   - `packages/e2e/tests/sign.spec.ts`.
 
-### Slice 2: Reusable Templates, Engage/HR Handoffs & Pluggable Vietnamese CA Adapter
+### Slice 2: Reusable Templates, Direct Links, Engage/HR Handoffs & Pluggable Vietnamese CA Adapter
 
-Derived into three focused Slice 2 issues (after Slice 1a-1c land cleanly):
+Derived into focused Slice 2 issues (after Slice 1a-1c land cleanly and incorporating 2026-11-17 owner decisions `A1`-`A4`):
 
-1. **Slice 2a - Reusable Templates (`M3 Paid pilot` / `priority:P2`):**
-   - **Title:** `feat(sign): add reusable eSign templates and role presets`
-   - **Scope:** `crove_sign.template`, `template_role`, `template_field` migration + CRUD + one-click envelope instantiation + `/sign/templates` UI.
-   - **Files:** `supabase/migrations/*`, `modules/sign/src/templates.ts`, `apps/app/src/routes/sign-templates.tsx`. *(Protected: migration)*
+1. **Slice 2a - Reusable Templates, Direct Signing Links (`A1`), Roles/Attachments (`A2`) & Deterministic PDF Text Tags (`A3`) (`M3 Paid pilot` / `priority:P2`):**
+   - **Title:** `feat(sign): add reusable eSign templates, direct signing links, role kinds, and PDF tag parser`
+   - **Scope:**
+     - `crove_sign.template`, `template_role` (`Signer` / `Approver` / `CC` per `A2`), `template_field`, and `template_direct_link` (`MACHINERY` per `A1`) migration + CRUD + one-click envelope instantiation + `/sign/templates` UI.
+     - Public direct signing link flow `/-/sign/d#<token>` on 1-signer templates (`POST /api/sign/direct/{view,pdf,otp/request,otp/verify,start}`, pre-registered in `route-coverage.test.ts` `PENDING` and `app-gate-routes.test.ts` `pending` under `#3525`), IP + email/token rate limits, optional email OTP, `org_app_on` + entitlement opaque `404`, single-use submit token returned without storing plaintext token (`A1`).
+     - Dedicated lightweight `Approver` ceremony UI without drawing, `CC` completion copy, and size-capped SHA-256 sealed PDF + Audit Certificate email attachments via [ADR-0034](../adr/0034-outbound-email.md) (`A2`).
+     - Deterministic PDF text tag parser (`{{signature, r1}}`, `{{date, r1}}`, `{{text, r1}}`) inside `crove-extract` with 100% AI-off parity, and Audit Certificate summary page sized to match the document's last page (`A3`).
+   - **Files:** `supabase/migrations/*` *(protected)*, `apps/kernel/src/http.ts` *(protected)*, `apps/kernel/test/invariant/{route-coverage,app-gate-routes}.test.ts` *(protected)*, `apps/extract/src/{parse,seal}.ts` *(protected)*, `modules/sign/src/{templates,direct,sign-mail}.ts`, `apps/app/src/routes/sign-{templates,direct}.tsx`.
 
-2. **Slice 2b - Engage Quote & HR Labor Contract Handoffs (`M3 Paid pilot` / `priority:P2`):**
+2. **Slice 2b - Engage Quote & HR Labor Contract Handoffs + Strict HR Visibility (`A4`) (`M3 Paid pilot` / `priority:P2`):**
    - **Title:** `feat(sign): hand off Engage quotes and HR contracts to Ludy eSign`
-   - **Scope:** [ADR-0050](../adr/0050-quote-acceptance-sales-order-and-accounting-handoff.md) browser-carried handoff + `source_kind = 'crm_quote' | 'hr_contract'` & `source_id` tracking + outbox event `sign.envelope.completed` so Finance/Engage/HR mark documents `"Đã ký kết"` with a link to the sealed PDF without cross-module hard FKs.
-   - **Files:** `modules/crm/src/quotes.ts`, `modules/hr/src/contracts.ts` (or contract service), `modules/sign/src/handoff.ts`, `apps/app/src/routes/crm-*.tsx`, `apps/app/src/routes/hr-*.tsx`.
+   - **Scope:** [ADR-0050](../adr/0050-quote-acceptance-sales-order-and-accounting-handoff.md) browser-carried handoff + `source_kind = 'crm_quote' | 'hr_contract'` & `source_id` tracking + outbox event `sign.envelope.completed` so Finance/Engage/HR mark documents `"Đã ký kết"` with a link to the sealed PDF without cross-module hard FKs, plus strict `owner` / `admin` / `created_by` visibility enforcement on `source_kind = 'hr_contract'` envelopes across queries, commands, and downloads (`A4`).
+   - **Files:** `modules/crm/src/quotes.ts`, `modules/hr/src/contracts.ts` (or contract service), `modules/sign/src/{handoff,queries,commands}.ts`, `apps/app/src/routes/crm-*.tsx`, `apps/app/src/routes/hr-*.tsx`.
 
 3. **Slice 2c - Pluggable Vietnamese Public CA Adapter & Legal Compliance Sign-off (`M3 Paid pilot` / `priority:P2`):**
-   - **Title:** `feat(sign): add pluggable Vietnam CA adapter (VNPT SmartCA, Viettel MySign, MISA WeSign)`
-   - **Scope:** New package `packages/sign` (interface `CaSigningAdapter`, `reconcile_only` async callback/polling flow matching `@crove/einvoice`, encrypted org credentials, PAdES-LTV CMS assembly in `crove-extract` `pdf_embed_cms`), UI provider setup, and `[commentary]` **owner-action legal gate (`#62`)** validating Law `20/2023/QH15` / Decree `23/2025/ND-CP` & PDPL `91/2025/QH15` consent wording before enabling external CA signing for pilot tenants.
-   - **Files:** `packages/sign/package.json` *(protected)*, `packages/sign/src/{index,adapter,vnpt-smartca,viettel-mysign,misa-wesign}.ts`, `supabase/migrations/*` *(protected)*, `apps/extract/src/seal.ts`, `modules/sign/src/ca.ts`, `apps/app/src/routes/sign-settings.tsx`.
+   - **Title:** `feat(sign): add pluggable Vietnam CA adapter (sandbox, VNPT SmartCA, Viettel MySign, MISA WeSign)`
+   - **Scope:** Package `packages/sign` (`CA_PROVIDERS = ['sandbox', 'vnpt_smartca', 'viettel_mysign', 'misa_wesign']`, interface `CaSigningAdapter`, `reconcile_only` async callback/polling flow matching `@crove/einvoice`, offline `sandbox` adapter, encrypted org credentials in `crove_sign.ca_connection` `MACHINERY`, `crove_sign.ca_signing_request`, PAdES-LTV CMS assembly in `crove-extract` `pdf_embed_cms`), UI provider setup, and `[commentary]` **owner-action legal gate (`#62`)** validating Law `20/2023/QH15` / Decree `23/2025/ND-CP` & PDPL `91/2025/QH15` consent wording before enabling external CA signing for pilot tenants.
+   - **Files:** `packages/sign/package.json` *(protected)*, `packages/sign/src/{index,adapter,sandbox,vnpt-smartca,viettel-mysign,misa-wesign}.ts`, `supabase/migrations/*` *(protected)*, `apps/extract/src/{cms,seal}.ts`, `modules/sign/src/ca.ts`, `apps/app/src/routes/sign-settings.tsx`.
