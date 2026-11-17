@@ -140,8 +140,8 @@ suite('the S2c-HKD revenue and expense detail of a household business (#2517 sli
     await entry(o, '2026-09-05', 'Bán hàng', [['111', 5000000, 0], ['511', 0, 5000000]]);
     await entry(o, '2026-09-06', 'Mua hàng về bán', [['632', 3000000, 0], ['111', 0, 3000000]], { invoice: { series: 'AA', number: '0001', total: 3000000 } });
     await entry(o, '2026-09-20', 'Chi phí quản lý', [['642', 400000, 0], ['111', 0, 400000]]);
-    // No row of the map covers 641: it shows apart, never in a guessed group.
-    await entry(o, '2026-09-22', 'Thuê mặt bằng', [['641', 700000, 0], ['111', 0, 700000]]);
+    // No row of the map covers 821: it shows apart, never in a guessed group.
+    await entry(o, '2026-09-22', 'Thuế thu nhập', [['821', 700000, 0], ['111', 0, 700000]]);
     await entry(o, '2026-08-31', 'Chi tháng trước', [['632', 111000, 0], ['111', 0, 111000]]);
     await entry(o, '2026-10-01', 'Chi tháng sau', [['632', 222000, 0], ['111', 0, 222000]]);
     await entry(o, '2026-09-14', 'Chi của công ty', [['632', 999000, 0], ['111', 0, 999000]], { entity: o.company });
@@ -153,7 +153,7 @@ suite('the S2c-HKD revenue and expense detail of a household business (#2517 sli
     expect(book.expenseRows.map((r) => [r.date, r.reference, r.accountCode, r.group, r.amount])).toEqual([
       ['2026-09-06', 'AA-0001', '632', 'materials_goods', '3000000'],
       ['2026-09-20', null, '642', 'other', '400000'],
-      ['2026-09-22', null, '641', null, '700000'],
+      ['2026-09-22', null, '821', null, '700000'],
     ]);
     expect(book.groups.map((g) => [g.group, g.amount])).toEqual([
       ['materials_goods', '3000000'],
@@ -169,9 +169,9 @@ suite('the S2c-HKD revenue and expense detail of a household business (#2517 sli
     expect(book.income).toBeNull();
     // The totals are the ledger's own: revenue is 511's movement, and the expense is the net of the accounts' lines.
     expect(book.revenue).toBe(String(-(await ledgerNet(o, '2026-09', '511'))));
-    expect(book.expenseTotal).toBe(String((await ledgerNet(o, '2026-09', '632')) + (await ledgerNet(o, '2026-09', '642')) + (await ledgerNet(o, '2026-09', '641'))));
+    expect(book.expenseTotal).toBe(String((await ledgerNet(o, '2026-09', '632')) + (await ledgerNet(o, '2026-09', '642')) + (await ledgerNet(o, '2026-09', '821'))));
     expect(sum([...book.groups.map((g) => g.amount), book.unmapped])).toBe(Number(book.expenseTotal));
-    // The map rows in use are still `commentary`, and so is the layout: the book is given and says so (641 rests on no row).
+    // The map rows in use are still `commentary`, and so is the layout: the book is given and says so (821 rests on no row).
     expect(book.commentary).toBe(true);
     expect(book.unconfirmed.map((u) => [u.kind, u.key])).toEqual([['form', expect.stringContaining('S2c')], ['group', '632'], ['group', '642']]);
   });
@@ -196,8 +196,8 @@ suite('the S2c-HKD revenue and expense detail of a household business (#2517 sli
   it('holds the income back for any unmapped line, even when two unrelated unmapped lines cancel each other', async () => {
     const o = await org();
     await setProfile(o);
-    await entry(o, '2026-09-05', 'Chi 641', [['641', 100000, 0], ['111', 0, 100000]]);
-    await entry(o, '2026-09-06', 'Hoàn chi 641', [['111', 100000, 0], ['641', 0, 100000]]);
+    await entry(o, '2026-09-05', 'Chi 821', [['821', 100000, 0], ['111', 0, 100000]]);
+    await entry(o, '2026-09-06', 'Hoàn chi 821', [['111', 100000, 0], ['821', 0, 100000]]);
     const book = await s2c(o, '2026-09');
     expect(book.unmapped).toBe('0');
     expect(book.unmappedGross).toBe('200000');
