@@ -3,8 +3,10 @@
 //
 // - The member presses "Nhập" on a suggestion. meetings.import.start is the one command behind it: it creates the meeting with its consent record (the platform showed its own notice to everyone
 //   and the importer confirms it) through the same core as meetings.meeting.create, then links the recording and queues the download (crove_kernel.meeting_platform_recording_begin).
-//   A retry of a failed recording first removes the meeting its earlier try made, when that meeting is the importer's own and nothing at all hangs off it (#3288): no audio, video, transcript, minutes,
-//   items, notes, link or calendar link (a translation needs a transcript or minutes, so it is covered). A meeting that holds anything is kept, so a retry never takes a thing a person made.
+//   A retry of a failed recording first removes the meeting its earlier try made, when that meeting is the importer's own, was never edited since the import made it, and nothing of Meetings' own
+//   hangs off it (#3288): no audio, video, transcript, minutes, items, note, link or calendar link (a translation needs a transcript or minutes, so it is covered). One that holds anything, or was
+//   edited (a title, readers, a series), is kept. The meeting row is locked first, so a note or a link another tab adds meanwhile waits for the retry and is seen, never lost to the delete's cascade.
+//   A note of the Notes module or a task of Projects that points at the meeting has no foreign key to it and survives the delete (the meeting is gone, its pointer stays).
 // - It does no network I/O itself. The queued download is made by the worker's import job, which is why the command declares an external effect, like meetings.hook.set: the job
 //   (`kernel-meeting-import-sweep handler`, apps/kernel/test/invariant/job-egress.test.ts) is justified by this command.
 // - The bytes then wait in staging; the member's own request claims, seals and records them through POST /api/meetings/:id/media, so the sealing code is the one an upload uses.
@@ -48,9 +50,19 @@ async function readOwnRecording(trx: Trx, orgId: string, userId: string, recordi
     .executeTakeFirst();
 }
 
-// Whether a meeting is the importer's own and holds nothing yet: the empty meeting a failed try left behind. Read as the importer, so row security shows what they may see of it (they record it,
-// so every row of it), and a meeting that is not theirs or not there is not "empty" for them.
+// Whether a meeting is the importer's own, unedited and holds nothing yet: the empty meeting a failed try left behind. Read as the importer, so row security shows what they may see of it (they
+// record it, so every row of it), and a meeting that is not theirs or not there is not "empty" for them. The row is locked for the rest of the transaction first: a child row (a note, a link, an
+// agenda link) takes a key-share lock on it, so one added in another tab waits until this command ends instead of slipping in between the check and the delete.
 async function isEmptyOwnMeeting(trx: Trx, orgId: string, userId: string, meetingId: string): Promise<boolean> {
+  const row = await trx
+    .selectFrom('crove_meetings.meeting')
+    .select(['recorder_user_id', 'created_at', 'updated_at'])
+    .where('org_id', '=', orgId)
+    .where('id', '=', meetingId)
+    .forUpdate()
+    .executeTakeFirst();
+  // Made by the import and never changed since: the title, the readers, the visibility and the series are still what the import set, so nothing the member did to it is lost.
+  if (!row || row.recorder_user_id !== userId || new Date(row.updated_at).getTime() !== new Date(row.created_at).getTime()) return false;
   const { rows } = await sql<{ empty: boolean }>`
     SELECT EXISTS (
       SELECT 1 FROM crove_meetings.meeting m

@@ -1406,7 +1406,7 @@ suite('meetings module database integration tests (#2576)', () => {
 
   // Meetings A2 (#3160): the org setting "consent required before recording".
   const createWith = (who: string, consentMethod: string, title: string) => rpc('meetings/create', who, { title, consentMethod });
-  const meetingCount = async () => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_meetings.meeting')).rows[0]?.n));
+  const meetingCount = async () => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_meetings.meeting WHERE org_id = $1', [orgId])).rows[0]?.n));
 
   it('24. A2: the consent policy is standard by default, every member reads it, only an owner or admin changes it, and the audit holds codes only', async () => {
     expect((await rpc('meetings/consentPolicy/get', 'recorder', {})).body).toEqual({ policy: 'standard' });
@@ -1639,6 +1639,40 @@ suite('meetings module database integration tests (#2576)', () => {
     await admin((c) => c.query(`UPDATE crove_kernel.meeting_platform_recording SET status = 'failed', meeting_id = $2, error_code = 'timeout' WHERE id = $1`, [pointing, theirs]));
     await startImport('recorder', { recordingId: pointing });
     expect(await meetingExists(theirs)).toBe(true);
+    // A meeting the member edited since the import made it (a new title) is kept, and so is one that holds a link to a party.
+    const edited = await suggest('recorder');
+    const editedFirst = await startImport('recorder', { recordingId: edited });
+    await admin((c) => c.query(`UPDATE crove_meetings.meeting SET title = 'Tên tôi sửa', updated_at = created_at + interval '1 second' WHERE id = $1`, [editedFirst.meetingId]));
+    await fail(edited);
+    await startImport('recorder', { recordingId: edited });
+    expect(await meetingExists(editedFirst.meetingId)).toBe(true);
+    const linked = await suggest('recorder');
+    const linkedFirst = await startImport('recorder', { recordingId: linked });
+    await admin(async (c) => {
+      const party = await c.query<{ id: string }>(`INSERT INTO crove_kernel.party (org_id, name, kind) VALUES ($1, 'Công ty liên kết', 'organization') RETURNING id`, [orgId]);
+      await c.query('INSERT INTO crove_meetings.meeting_link (org_id, meeting_id, party_id, created_by) VALUES ($1, $2, $3, $4)', [orgId, linkedFirst.meetingId, party.rows[0]!.id, userIds.get('recorder')]);
+    });
+    await fail(linked);
+    await startImport('recorder', { recordingId: linked });
+    expect(await meetingExists(linkedFirst.meetingId)).toBe(true);
+    // A failed row whose meeting is already gone goes straight to a new meeting, with no error.
+    const gone = await suggest('recorder');
+    const goneFirst = await startImport('recorder', { recordingId: gone });
+    await fail(gone);
+    await admin((c) => c.query('DELETE FROM crove_meetings.meeting WHERE id = $1', [goneFirst.meetingId]));
+    const goneAgain = await startImport('recorder', { recordingId: gone });
+    expect(await recordingRow(gone)).toMatchObject({ status: 'importing', meeting_id: goneAgain.meetingId });
+    // The removal of an empty meeting is audited as the recorder's own delete, and the import's audit row names the meeting it replaced.
+    const retried = await suggest('recorder');
+    const retriedFirst = await startImport('recorder', { recordingId: retried });
+    await fail(retried);
+    const retriedSecond = await startImport('recorder', { recordingId: retried });
+    const audit = await admin(async (c) => ({
+      deleted: (await c.query(`SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.meeting.delete' AND target_id = $2 AND outcome = 'ok'`, [orgId, retriedFirst.meetingId])).rowCount,
+      detail: (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'meetings.import.start' AND detail->>'meetingId' = $1`, [retriedSecond.meetingId])).rows[0]?.detail,
+    }));
+    expect(audit.deleted).toBe(1);
+    expect(audit.detail).toMatchObject({ meetingId: retriedSecond.meetingId, replacedMeetingId: retriedFirst.meetingId });
     // A recording that is importing is not retried at all, and its meeting stays.
     const live = await suggest('recorder');
     const liveMeeting = await startImport('recorder', { recordingId: live });
