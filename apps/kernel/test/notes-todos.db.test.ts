@@ -404,10 +404,31 @@ suite('personal to-dos on PostgreSQL (#1673)', () => {
     expect(auditText).not.toContain('Cuối tuần');
     expect(auditText).not.toContain('khan-cap');
 
-    // 7. Deleting the list returns its todos back to Inbox safely, and trash_empty purges aged trashed lists.
+    // 7. Deleting the list returns its todos back to Inbox safely, concurrent completion + list delete never deadlocks, and trash_empty purges aged trashed lists.
     await o.exec<TodoListWritten>(o.mine, 'notes.todo_list.delete', { listId: list.id });
     expect((await o.query<TodoListsResponse>(o.mine, 'notes.todo_list.list')).lists).toEqual([]);
     expect(await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: p1Todo.todoId })).toMatchObject({ listId: null, sectionId: null, revision: 2 });
+
+    const concurrentList = await o.exec<TodoListWritten>(o.mine, 'notes.todo_list.create', {
+      name: 'Danh sách đồng thời',
+      color: null,
+      sections: [{ id: 'sec-conc', name: 'Mục đồng thời' }],
+    });
+    const concurrentTodo = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Hoàn thành song song xóa danh sách',
+      listId: concurrentList.listId,
+      sectionId: 'sec-conc',
+    });
+    await Promise.all([
+      o.exec(o.mine, 'notes.todo.complete', { todoId: concurrentTodo.todoId }),
+      o.exec(o.mine, 'notes.todo_list.delete', { listId: concurrentList.listId }),
+    ]);
+    expect(await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: concurrentTodo.todoId })).toMatchObject({
+      status: 'done',
+      listId: null,
+      sectionId: null,
+    });
+
     await admin((c) => c.query(`UPDATE crove_notes.todo_list SET deleted_at = now() - interval '31 days' WHERE id = $1`, [list.id]));
     expect(await worker.execute('notes.trash.empty', {}, { actor: SYSTEM, orgId: o.orgId })).toEqual({ removed: 1 });
   });

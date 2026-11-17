@@ -209,20 +209,20 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  SELECT l.owner_user_id, l.deleted_at, l.sections
-    INTO v_owner, v_deleted, v_sections
-    FROM crove_notes.todo_list l
-   WHERE l.org_id = NEW.org_id
-     AND l.id = NEW.list_id
-     FOR SHARE;
-
-  IF NOT FOUND OR v_owner IS DISTINCT FROM NEW.owner_user_id THEN
-    RAISE EXCEPTION 'todo list is not accessible for this to-do' USING ERRCODE = '42501';
-  END IF;
-
   IF TG_OP = 'INSERT'
      OR NEW.list_id IS DISTINCT FROM OLD.list_id
-     OR NEW.section_id IS DISTINCT FROM OLD.section_id THEN
+     OR NEW.section_id IS DISTINCT FROM OLD.section_id
+     OR NEW.owner_user_id IS DISTINCT FROM OLD.owner_user_id THEN
+    SELECT l.owner_user_id, l.deleted_at, l.sections
+      INTO v_owner, v_deleted, v_sections
+      FROM crove_notes.todo_list l
+     WHERE l.org_id = NEW.org_id
+       AND l.id = NEW.list_id
+       FOR SHARE;
+
+    IF NOT FOUND OR v_owner IS DISTINCT FROM NEW.owner_user_id THEN
+      RAISE EXCEPTION 'todo list is not accessible for this to-do' USING ERRCODE = '42501';
+    END IF;
     IF v_deleted IS NOT NULL THEN
       RAISE EXCEPTION 'todo list is not accessible for this to-do' USING ERRCODE = '42501';
     END IF;
