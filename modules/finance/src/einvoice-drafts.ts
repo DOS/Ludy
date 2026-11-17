@@ -132,6 +132,7 @@ function buildDraft(row: DraftRow, lineRows: readonly LineRow[], today: string):
     seriesId: row.series_id,
     buyer: { kind: row.buyer_kind, taxCode: row.buyer_tax_code, name: row.buyer_name, address: row.buyer_address, email: row.buyer_email },
     lines: lines.map((l) => ({ description: l.description, unit: l.unit, quantity: l.quantity, unitPrice: l.unitPrice, vatRate: l.vatRate })),
+    adjustment: row.correction_kind === 'adjustment',
   };
   const computed: ComputedDraft = { lines: lines.map((l) => ({ ...l })), subtotal: plain(row.subtotal), vatAmount: plain(row.vat_amount), total: plain(row.total) };
   return {
@@ -154,6 +155,10 @@ function buildDraft(row: DraftRow, lineRows: readonly LineRow[], today: string):
     issues: checkDraft(input, computed, today),
     issuedNumber: row.issued_number,
     errorCode: row.error_code,
+    correction:
+      row.correction_kind === 'adjustment' || row.correction_kind === 'replacement'
+        ? { kind: row.correction_kind, originalDraftId: row.original_draft_id as string, reasonCode: row.reason_code as string, agreementFileId: row.agreement_file_id }
+        : null,
   };
 }
 

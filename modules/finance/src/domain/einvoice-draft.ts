@@ -34,6 +34,8 @@ export interface DraftInput {
   seriesId: string | null;
   buyer: DraftBuyerInput;
   lines: readonly DraftLineInput[];
+  // An adjusting invoice (#2504): a unit price may be negative (a decrease) and no price may be zero, since each line is a difference.
+  adjustment?: boolean;
 }
 
 export interface ComputedLine extends DraftLineInput {
@@ -79,6 +81,7 @@ export function isLateSale(saleDate: string | null, invoiceDate: string): boolea
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DECIMAL = /^\d{1,12}(\.\d{1,6})?$/;
+const SIGNED_DECIMAL = /^-?\d{1,12}(\.\d{1,6})?$/;
 const MAX_TOTAL_DIGITS = 15;
 
 // The checks. `today` is the date of the day (YYYY-MM-DD) in the org's calendar. A draft that fails any is saved all the same and
@@ -124,7 +127,7 @@ export function checkDraft(input: DraftInput, computed: ComputedDraft, today: st
     const at = (key: string) => `lines.${index + 1}.${key}`;
     if (!line.description.trim()) add(at('description'), 'LINE_DESCRIPTION_REQUIRED');
     if (!DECIMAL.test(line.quantity) || money(line.quantity).lessThanOrEqualTo(0)) add(at('quantity'), 'LINE_QUANTITY_INVALID');
-    if (!DECIMAL.test(line.unitPrice)) add(at('unitPrice'), 'LINE_PRICE_INVALID');
+    if (input.adjustment ? !SIGNED_DECIMAL.test(line.unitPrice) || money(line.unitPrice).isZero() : !DECIMAL.test(line.unitPrice)) add(at('unitPrice'), 'LINE_PRICE_INVALID');
     if (normalizeVatRate(line.vatRate) === null) add(at('vatRate'), 'LINE_VAT_RATE_INVALID');
   });
   if (money(computed.total).abs().toFixed(0).length > MAX_TOTAL_DIGITS) add('total', 'TOTAL_TOO_LARGE');
