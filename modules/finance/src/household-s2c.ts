@@ -31,7 +31,7 @@ export const householdS2c = defineQuery({
     const revenueRows = householdSalesRows(w.ledger.lines, w.from);
     const revenue = toMoney(sum(revenueRows.map((r) => r.amount)));
 
-    // The expense lines: every journal line of the entity on a class 6 or 8 account in the book's days.
+    // The expense lines (a closing entry to 911, if one exists, shows as a negative row, the same net effect as on 511 in S1a): every journal line of the entity on a class 6 or 8 account in the book's days.
     const all = await periodLinesOf(ctx, input.period, w.entity);
     const mapRows = await ctx.trx
       .selectFrom('crove_finance.household_expense_group_map')
