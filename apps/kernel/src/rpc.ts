@@ -2965,6 +2965,7 @@ export function createRpcHandler(
       rules: os.household.rules.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.rules', input ?? {}, { actor, orgId }))),
       s1a: os.household.s1a.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.s1a', input, { actor, orgId }))),
       cnkd: os.household.cnkd.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.cnkd', input, { actor, orgId }))),
+      s2a: os.household.s2a.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.s2a', input, { actor, orgId }))),
     },
     einvoice: {
       status: os.einvoice.status.handler(async () => ({ sandbox: Boolean(einvoiceProviderOf('sandbox')) })),
