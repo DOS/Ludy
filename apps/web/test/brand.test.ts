@@ -10,6 +10,8 @@ import { engageEn } from '../src/content/engage-en';
 import { engageVi } from '../src/content/engage-vi';
 import { esignEn } from '../src/content/esign-en';
 import { esignVi } from '../src/content/esign-vi';
+import { hrmEn } from '../src/content/hrm-en';
+import { hrmVi } from '../src/content/hrm-vi';
 import { privacyEn } from '../src/content/privacy-en';
 import { privacyVi } from '../src/content/privacy-vi';
 import { teamworkEn } from '../src/content/teamwork-en';
@@ -66,6 +68,8 @@ describe('brand on the landing page (#1683)', () => {
       ['engageEn', engageEn],
       ['esignVi', esignVi],
       ['esignEn', esignEn],
+      ['hrmVi', hrmVi],
+      ['hrmEn', hrmEn],
       ['teamworkVi', teamworkVi],
       ['teamworkEn', teamworkEn],
       ['privacyVi', privacyVi],
@@ -160,9 +164,21 @@ describe('brand on the landing page (#1683)', () => {
     expect(en.modules.social.name).toBe('Ludy Engage');
   });
 
-  it('names the products after the regrouped app shell (#3235, #3536)', () => {
-    expect([vi.modules.notes.name, vi.modules.finance.name, vi.modules.social.name, vi.modules.sign.name]).toEqual(['Ludy Cộng tác', 'Ludy Tài chính', 'Ludy Engage', 'Ludy eSign']);
-    expect([en.modules.notes.name, en.modules.finance.name, en.modules.social.name, en.modules.sign.name]).toEqual(['Ludy Teamwork', 'Ludy Finance', 'Ludy Engage', 'Ludy eSign']);
+  it('names the products after the regrouped app shell (#3235, #3536, #3550)', () => {
+    expect([vi.modules.notes.name, vi.modules.finance.name, vi.modules.social.name, vi.modules.hr.name, vi.modules.sign.name]).toEqual([
+      'Ludy Cộng tác',
+      'Ludy Tài chính',
+      'Ludy Engage',
+      'Ludy Nhân sự',
+      'Ludy eSign',
+    ]);
+    expect([en.modules.notes.name, en.modules.finance.name, en.modules.social.name, en.modules.hr.name, en.modules.sign.name]).toEqual([
+      'Ludy Teamwork',
+      'Ludy Finance',
+      'Ludy Engage',
+      'Ludy HR',
+      'Ludy eSign',
+    ]);
     expect(vi.appCards.items.map((item) => [item.name, item.agent])).toEqual([
       ['Ludy Cộng tác', N.gm],
       ['Ludy Tài chính', N.finance],

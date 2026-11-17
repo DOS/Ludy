@@ -241,9 +241,9 @@ export const en: Dictionary = {
       {
         key: 'hr',
         name: 'Ludy HR',
-        body: `Employee records, salary file templates, draft payroll runs and declaration lists. ${N.finance} reviews payroll changes; approving a pay run waits until an accountant confirms the statutory rules.`,
+        body: `Employee records, departments, labor contracts, timekeeping and annual leave, monthly payroll, declaration lists and lightweight recruiting. ${N.finance} flags pay changes, contract alerts and candidate briefs; approving a pay run waits until an accountant confirms the statutory rules.`,
         agent: N.finance,
-        page: '',
+        page: 'hr',
       },
       {
         key: 'sign',
@@ -572,6 +572,18 @@ export const en: Dictionary = {
       pickedLabel: 'Picked',
       booked: { title: 'New booking', who: 'Gạo Sạch Miền Tây Co., Ltd.', when: '14:00, Tue 20/10/2026', state: 'Confirmed' },
       suggest: `A client writes "is Tuesday afternoon OK?": ${N.sales} suggests 14:00 or 15:30, and Hoa checks and sends the reply.`,
+    },
+    hr: {
+      name: 'Ludy HR',
+      body: 'Per-person encrypted employee records, optional departments, labor contracts, timekeeping and annual leave, monthly payroll, labor register exports and lightweight recruiting in one app restricted to owners and admins.',
+      points: [
+        'Per-person sealed identity, tax, social insurance and bank account numbers, optional departments, labor contract and probation tracking, and exports for the Labor Management Register and 01/PLI report (.xlsx, .json)',
+        'Monthly timekeeping imported from .xlsx, .csv or .tsv or edited on the pay run, 40-hour monthly overtime cap checks, and annual leave balances with 5-year seniority accrual',
+        'Monthly pay runs with social, health and unemployment insurance, progressive or 10% flat PIT, prorated 13th-month pay and Article 46 severance; built-in per-bank salary files, D02-LT, 05/KK-TNCN, 05/QTT-TNCN sheets and four-eyes aggregate journal handoff to Ludy Finance without exposing individual pay',
+        `Lightweight recruiting (openings, candidate pipeline with or without an opening, PII-free calendar interview titles, one-click hire and PDPL candidate erasure), plus metered checks from ${N.finance}`,
+      ],
+      soonLabel: 'Coming soon',
+      soon: 'Unlocking live pay-run approval and payroll voucher posting once our partner accountant confirms the statutory rule rows; official HTKK tax XML export and payslip email delivery after legal review of PDPL retention and HTKK schemas',
     },
     sign: {
       name: 'Ludy eSign',
