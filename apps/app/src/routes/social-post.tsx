@@ -61,7 +61,7 @@ import { getConfig } from '../lib/auth.ts';
 import { clearDraft, loadDraft, saveDraft, type StoredDraft } from '../lib/social-draft.ts';
 import { readShareFragment } from '../lib/social-share.ts';
 import { canMoveToFront } from '../lib/social-queue-order.ts';
-import { defaultPostTime, effectiveWhen, futureInstant, queueReady, type QueueState, type WhenMode } from '../lib/social-when.ts';
+import { dayMonth, defaultPostTime, effectiveWhen, futureInstant, queueReady, type QueueState, type WhenMode } from '../lib/social-when.ts';
 import { reelCounts, STORY_METRICS } from '../lib/social-insights.ts';
 import { WatchTimeItems } from '../components/social-reel-metrics.tsx';
 import { EngagementRateItem } from '../components/social-engagement-rate.tsx';
@@ -2824,7 +2824,6 @@ export function SocialComposePage() {
   const whyId = 'compose-why';
   const why = chosen.length === 0 ? t('whyPickChannel') : blocking ? t('whyBlocking') : null;
   const publishWhy = oneStep && when === 'time' && !chosenTime ? t('whyPickTime') : null;
-  const dayMonth = (iso: string) => new Intl.DateTimeFormat(locale, { day: '2-digit', month: '2-digit' }).format(new Date(iso));
   if (channels.isLoading || signatureRows.isPending) return <Spinner />;
   return (
     <MediaReplace.Provider value={fixEverywhere}>
@@ -2846,7 +2845,7 @@ export function SocialComposePage() {
             {oneStep && when !== 'draft' && (
               <Button size="lg" disabled={chosen.length === 0 || blocking || create.isPending || (when === 'time' && !chosenTime)} aria-describedby={why || publishWhy ? whyId : undefined} onClick={() => create.mutate('publish')} title={t('publishNowHint')}>
                 {create.isPending && create.variables === 'publish' ? <Spinner className="text-current" /> : null}
-                {when === 'queue' ? t('publishInQueue') : chosenTime ? t('publishAt', { time: f.time(chosenTime), date: dayMonth(chosenTime) }) : t('publishNow')}
+                {when === 'queue' ? t('publishInQueue') : chosenTime ? t('publishAt', { time: f.time(chosenTime), date: dayMonth(chosenTime, locale) }) : t('publishNow')}
               </Button>
             )}
           </>

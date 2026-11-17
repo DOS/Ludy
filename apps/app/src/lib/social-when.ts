@@ -33,6 +33,14 @@ export function effectiveWhen(choice: WhenMode | null, ready: boolean): WhenMode
   return ready ? 'queue' : 'time';
 }
 
+// The day and month of an instant for a button ("18/11"), in the viewer's time zone. Written out, not left to Intl: the
+// Vietnamese locale gives "18-11".
+export function dayMonth(iso: string, locale: string): string {
+  const d = new Date(iso);
+  if (locale === 'vi') return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+  return new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'short' }).format(d);
+}
+
 // An ISO instant from a datetime-local text, only when it is still ahead of `now`.
 export function futureInstant(iso: string | null, now: number): string | null {
   if (iso === null) return null;

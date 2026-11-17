@@ -8,7 +8,7 @@ import { I18nProvider } from '../src/i18n/provider.tsx';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi } from '../src/i18n/messages/vi.ts';
 import { setActiveLocale } from '../src/i18n/runtime.ts';
-import { defaultPostTime, effectiveWhen, futureInstant, queueReady } from '../src/lib/social-when.ts';
+import { dayMonth, defaultPostTime, effectiveWhen, futureInstant, queueReady } from '../src/lib/social-when.ts';
 
 const render = (node: React.ReactNode, locale: 'vi' | 'en' = 'vi') => {
   setActiveLocale(locale);
@@ -46,6 +46,13 @@ describe('the time a new post goes out is chosen (#3653)', () => {
     expect(effectiveWhen('time', true)).toBe('time');
     expect(effectiveWhen('draft', true)).toBe('draft');
     expect(effectiveWhen('draft', false)).toBe('draft');
+  });
+
+  it('writes the day and month of the button as 18/11 in Vietnamese, whatever Intl gives for the locale', () => {
+    const at = new Date(2026, 10, 8, 9, 0).toISOString();
+    expect(dayMonth(at, 'vi')).toBe('08/11');
+    expect(dayMonth(new Date(2026, 10, 18, 9, 0).toISOString(), 'vi')).toBe('18/11');
+    expect(dayMonth(new Date(2026, 10, 18, 9, 0).toISOString(), 'en')).toMatch(/Nov/);
   });
 
   it('sends a time only while it is ahead', () => {
