@@ -7,6 +7,7 @@ import { Link } from '@tanstack/react-router';
 import { useState, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
 import type { AdAccountView } from '@crove/kernel-contract';
+import { buttonVariants } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
 import { NativeSelect } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
@@ -234,7 +235,15 @@ export function PostsPanel({ slug }: { slug: string }) {
       ) : !data ? (
         <CardSkeleton />
       ) : data.posts === 0 ? (
-        <Empty title={t('empty')} hint={t('emptyHint')} />
+        <Empty
+          title={t('empty')}
+          hint={t('emptyHint')}
+          action={
+            <Link to="/o/$slug/social/new" params={{ slug }} className={buttonVariants({ size: 'lg' })}>
+              {ts('compose')}
+            </Link>
+          }
+        />
       ) : (
         <Card className="block p-4">
           <dl className="grid grid-cols-2 gap-4 sm:grid-cols-5">

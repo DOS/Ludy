@@ -700,6 +700,36 @@ test('puts the connect card first on a phone and folds the general settings belo
   await expect(page.getByRole('button', { name: /Cài đặt chung/ })).toHaveAttribute('aria-expanded', 'true');
 });
 
+test('opens Posts on the post waiting for review, and the schedule tab shows an action when empty (#3654)', async ({ page }) => {
+  await signInNewUser(page, newEmail('social-default-tab'));
+  const slug = await createOrg(page, 'Công ty Mở Đúng Tab');
+  await connectSandbox(page, 'Trang Mở Đúng Tab');
+  // Nothing waits yet: the schedule is the first view, and its empty state offers to write a post.
+  await page.goto(`/o/${slug}/social`);
+  await expect(page.getByRole('heading', { name: 'Bài đăng', exact: true })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Lịch đăng' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByText('Chưa có bài nào lên lịch', { exact: true })).toBeVisible();
+  await expect(page.getByText(/4 tuần/)).toHaveCount(0);
+  await expect(page.getByRole('main').getByRole('link', { name: 'Soạn bài' }).last()).toBeVisible();
+  // A post goes to review: Posts now opens on it, with no tab in the address.
+  await page.getByRole('link', { name: 'Soạn bài' }).first().click();
+  await page.getByLabel('Nội dung chung').fill('Bài đang chờ duyệt ở tab đầu');
+  await page.getByRole('button', { name: 'Lưu và gửi duyệt' }).click();
+  await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
+  await page.goto(`/o/${slug}/social`);
+  await expect(page.getByRole('tab', { name: /Cần duyệt/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByText('Bài đang chờ duyệt ở tab đầu')).toBeVisible();
+  // The schedule is one click away and stays chosen across a reload.
+  await page.getByRole('tab', { name: 'Lịch đăng' }).click();
+  await expect(page).toHaveURL(/tab=upcoming/);
+  await page.reload();
+  await expect(page.getByRole('tab', { name: 'Lịch đăng' })).toHaveAttribute('aria-selected', 'true');
+  // An empty list has its action: drafts offer to write a post.
+  await page.getByRole('tab', { name: 'Bản nháp' }).click();
+  await expect(page.getByText('Chưa có bản nháp')).toBeVisible();
+  await expect(page.getByRole('main').getByRole('link', { name: 'Soạn bài' }).last()).toBeVisible();
+});
+
 test('posts a Story of one image, with no text, in a phone frame (#644)', async ({ page }) => {
   await signInNewUser(page, newEmail('social-story'));
   await createOrg(page, 'Công ty Tin');
