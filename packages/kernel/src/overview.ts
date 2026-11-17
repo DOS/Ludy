@@ -21,6 +21,7 @@ import { nextVatDeadline, vietnamToday, type TaxDueView, type VatDeadline, type 
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineQuery, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { fileStatuses } from './file-status.ts';
+import { offAppsOf, proposalOfApp } from './org-apps.ts';
 import { sessionOrgs } from './commands.ts';
 import { taxDuesOf } from './tax-calendar.ts';
 import type { OrgSummary } from './identity.ts';
@@ -75,12 +76,15 @@ export function orgOverviewQuery(options: { now?: () => Date; contributions?: re
     access: ALL,
     handler: async (ctx): Promise<OrgOverview> => {
       const tenant = await ctx.trx.selectFrom('crove_kernel.tenant').select('vat_filing_period').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
-      const pending = await ctx.trx
+      // Not the proposals of an app the org turned off: the Inbox does not list them, and this count links to it (ADR-0053, slice e).
+      const off = await offAppsOf(ctx.trx, ctx.orgId);
+      let pendingQuery = ctx.trx
         .selectFrom('crove_kernel.proposal')
         .select(sql<string>`count(*)`.as('n'))
         .where('org_id', '=', ctx.orgId)
-        .where('status', '=', 'pending')
-        .executeTakeFirstOrThrow();
+        .where('status', '=', 'pending');
+      if (off.length > 0) pendingQuery = pendingQuery.where(sql<boolean>`NOT (${proposalOfApp(off)})`);
+      const pending = await pendingQuery.executeTakeFirstOrThrow();
       const files = await fileStatuses(ctx, { recent: RECENT_FILES });
       const last = await ctx.trx
         .selectFrom('crove_kernel.activity')

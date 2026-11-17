@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Public entrypoint of @crove/mod-sign (#3323).
-export { signCommands, type IssuedSigningLink } from './commands.ts';
+export {
+  DEFAULT_OTP_RETENTION_HOURS,
+  DEFAULT_RETENTION_DAYS,
+  signCommands,
+  type IssuedSigningLink,
+} from './commands.ts';
 export {
   SIGN_EVENT_TYPES,
   appendSigningEvent,

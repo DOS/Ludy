@@ -286,6 +286,20 @@ suite('the daily brief mail on PostgreSQL (#2406)', () => {
     expect((await mails(o)).length).toBe(1);
   });
 
+  // ADR-0053, slice e (#3311): the Inbox does not list the proposals of an app the company switched off, so the morning mail does not count them either.
+  it('leaves the pending proposals of an app the company switched off out of the count', async () => {
+    const o = await org();
+    await optIn(o, [o.owner]);
+    await proposal(o, [o.owner]);
+    await notify(o, o.owner, 1);
+    const mfa = { type: 'user' as const, userId: o.owner, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) };
+    await rt.execute('kernel.org.set_app', { module: 'finance', enabled: false }, { actor: mfa, orgId: o.orgId, idempotencyKey: randomUUID() });
+    await sendAt(o, MORNING);
+    const queued = await mails(o);
+    expect(queued).toHaveLength(1);
+    expect(queued[0]?.payload).toMatchObject({ counts: { proposals: 0, notifications: 1, messages: 0 } });
+  });
+
   it('counts the proposals and notifications of a member limited to one legal entity only for that entity', async () => {
     const o = await org();
     const [home, branch] = await admin(async (c) => {

@@ -20,6 +20,7 @@ import { zTodayMailSet, type TodayMailSetting } from '@crove/kernel-contract';
 import type { Db, MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type Runtime, type SystemActor } from '@crove/kernel-runtime';
 import { upstreamAuth } from './invites.ts';
+import { offAppsOf } from './org-apps.ts';
 import { createMailMessage } from './mail.ts';
 import { APPROVAL_WAITING, NOTIFICATION_UNREAD_CAP } from './notifications.ts';
 
@@ -110,6 +111,8 @@ async function vietnamNow(ctx: CommandContext): Promise<{ day: string; minute: n
 //                   held by a role), a viewer none (a viewer cannot answer).
 async function countsFor(ctx: CommandContext, members: ReadonlyArray<{ user_id: string; role: string }>): Promise<Map<string, TodayMailCounts>> {
   const out = new Map<string, TodayMailCounts>();
+  // The proposals of an app the org switched off are not counted: the Inbox does not list them (ADR-0053, slice e).
+  const off = await offAppsOf(ctx.trx, ctx.orgId);
   for (const m of members) {
     // The legal entities the member reads, as enter_context seals them (roles migration): owners and admins, a member with an org-wide
     // assignment and a member with none read every entity; any other member only the entities of their assignments. Proposals and
@@ -123,7 +126,7 @@ async function countsFor(ctx: CommandContext, members: ReadonlyArray<{ user_id: 
     const proposals = await sql<{ n: number }>`
       SELECT count(*)::int AS n FROM crove_kernel.proposal p
       WHERE p.org_id = ${ctx.orgId}::uuid AND p.status = 'pending' AND ${m.role !== 'viewer'}::boolean AND p.eligible_approvers @> ARRAY[${m.user_id}::uuid]
-        AND ${inScope('p.legal_entity_id')}`.execute(ctx.trx);
+        AND NOT (pg_catalog.split_part(p.command, '.', 1) = ANY (${off}::text[])) AND ${inScope('p.legal_entity_id')}`.execute(ctx.trx);
     const notifications = await sql<{ n: number }>`
       SELECT count(*)::int AS n FROM (
         SELECT 1 FROM crove_kernel.notification n

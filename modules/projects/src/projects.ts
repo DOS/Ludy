@@ -10,6 +10,7 @@ import {
   auditValue,
   keyBetween,
   normalizeFilter,
+  parseTaskChecklist,
   spreadKeys,
   tableWrite,
   vietnamToday,
@@ -41,138 +42,34 @@ import {
   type ProjectTaskReorderResult,
 } from '@crove/kernel-contract';
 import { filterCondition, sortTerms, taskFields, taskSortColumns } from '@crove/kernel';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
 import { projectsManifest } from './manifest.ts';
+import { parseStoredRecurrence } from './recurring.ts';
+import {
+  READERS,
+  WRITERS,
+  assertCanManage,
+  assertNotArchived,
+  assertOrgMembers,
+  canManageProject,
+  canWriteProject,
+  descriptionOf,
+  loadOrgMembers,
+  loadProject,
+  memberProfilesMap,
+  ownerDisplayName,
+  taskNotFound,
+  userOf,
+} from './shared.ts';
 import { tasksFromNoteConfirm, tasksFromNoteStart } from './tasks-from-note.ts';
 
-export const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
-const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
+export { READERS, loadProject, userOf };
 
 const TABLES = projectsManifest.tables;
 const PROJECT = TABLES.crove_projects.project;
 
-type Trx = QueryContext['trx'];
 type TaskStatus = ProjectTaskCard['status'];
 type SeatStatus = ProjectSeat['status'];
-
-interface ProjectRow {
-  id: string;
-  name: string;
-  description: string | null;
-  owner_user_id: string | null;
-  status: ProjectStatus;
-  created_by: string | null;
-  created_at: Date | string;
-  updated_at: Date | string;
-}
-
-interface MemberProfile {
-  displayName: string | null;
-  email: string | null;
-}
-
-export function userOf(actor: QueryContext['actor']): string {
-  if (actor.type !== 'user') {
-    throw new DomainError('FORBIDDEN', 403, 'Chỉ thành viên mới thực hiện được việc này');
-  }
-  return actor.userId;
-}
-
-const projectNotFound = () => new DomainError('PROJECT_NOT_FOUND', 404, 'Không tìm thấy dự án này');
-const taskNotFound = () => new DomainError('TASK_NOT_FOUND', 404, 'Không tìm thấy việc hoặc bạn không có quyền xem đơn vị của việc này');
-
-function descriptionOf(value: string | null | undefined): string | null {
-  if (value === undefined || value === null) return null;
-  const trimmed = value.trim();
-  return trimmed === '' ? null : trimmed;
-}
-
-function canManageProject(role: MemberRole | null, userId: string, ownerUserId: string | null): boolean {
-  if (role === 'owner' || role === 'admin') return true;
-  if (role !== null && role !== 'viewer' && ownerUserId !== null && ownerUserId === userId) return true;
-  return false;
-}
-
-function canWriteProject(role: MemberRole | null, status: ProjectStatus): boolean {
-  return role !== null && role !== 'viewer' && status !== 'archived';
-}
-
-function assertCanManage(ctx: CommandContext, row: ProjectRow, userId: string): void {
-  if (!canManageProject(ctx.role, userId, row.owner_user_id)) {
-    throw new DomainError('FORBIDDEN', 403, 'Chỉ người phụ trách dự án, quản trị viên hoặc chủ sở hữu mới thực hiện được việc này');
-  }
-}
-
-function assertNotArchived(row: ProjectRow): void {
-  if (row.status === 'archived') {
-    throw new DomainError('PROJECT_ARCHIVED', 409, 'Dự án đã lưu trữ nên không thể chỉnh sửa');
-  }
-}
-
-export async function loadProject(trx: Trx, orgId: string, projectId: string, lock: boolean): Promise<ProjectRow> {
-  let q = trx
-    .selectFrom('crove_projects.project')
-    .select(['id', 'name', 'description', 'owner_user_id', 'status', 'created_by', 'created_at', 'updated_at'])
-    .where('org_id', '=', orgId)
-    .where('id', '=', projectId);
-  if (lock) q = q.forUpdate();
-  const row = await q.executeTakeFirst();
-  if (!row) throw projectNotFound();
-  return { ...row, status: row.status as ProjectStatus };
-}
-
-async function memberProfilesMap(trx: Trx, userIds: readonly string[]): Promise<Map<string, MemberProfile>> {
-  const unique = [...new Set(userIds)];
-  const map = new Map<string, MemberProfile>();
-  if (unique.length === 0) return map;
-  const { rows } = await sql<{ user_id: string; email: string; display_name: string | null }>`
-    SELECT user_id, email, display_name
-      FROM crove_kernel.member_profiles(${unique}::uuid[])`.execute(trx);
-  for (const r of rows) {
-    map.set(r.user_id, { displayName: r.display_name, email: r.email });
-  }
-  return map;
-}
-
-async function loadOrgMembers(trx: Trx, orgId: string): Promise<Array<{ userId: string; role: MemberRole }>> {
-  const rows = await trx
-    .selectFrom('crove_kernel.tenant_member')
-    .select(['user_id', 'role'])
-    .where('org_id', '=', orgId)
-    .orderBy('created_at', 'asc')
-    .orderBy('user_id', 'asc')
-    .execute();
-  return rows.map((r) => ({ userId: r.user_id, role: r.role as MemberRole }));
-}
-
-async function assertOrgMembers(trx: Trx, orgId: string, userIds: readonly string[]): Promise<Map<string, MemberRole>> {
-  const unique = [...new Set(userIds)];
-  const map = new Map<string, MemberRole>();
-  if (unique.length === 0) return map;
-  const rows = await trx
-    .selectFrom('crove_kernel.tenant_member')
-    .select(['user_id', 'role'])
-    .where('org_id', '=', orgId)
-    .where('user_id', 'in', unique)
-    .execute();
-  for (const r of rows) {
-    map.set(r.user_id, r.role as MemberRole);
-  }
-  for (const id of unique) {
-    if (!map.has(id)) {
-      throw new DomainError('PROJECT_MEMBER_NOT_FOUND', 404, 'Thành viên không thuộc tổ chức này');
-    }
-  }
-  return map;
-}
-
-function ownerDisplayName(profiles: ReadonlyMap<string, MemberProfile>, ownerUserId: string | null): string | null {
-  if (ownerUserId === null) return null;
-  const profile = profiles.get(ownerUserId);
-  if (!profile) return null;
-  return profile.displayName ?? profile.email ?? null;
-}
 
 const projectTarget = (input: { projectId: string }) => ({ type: 'projects.project', id: input.projectId });
 
@@ -721,6 +618,7 @@ export const projectTaskCreate = defineCommand({
       ...(input.description !== undefined ? { description: input.description } : {}),
       assigneePositionId: input.assigneePositionId,
       ...(input.due !== undefined ? { due: input.due } : {}),
+      ...(input.checklist !== undefined ? { checklist: input.checklist } : {}),
     });
 
     if (input.status !== undefined && input.status !== 'todo') {
@@ -767,7 +665,8 @@ export const projectList = defineQuery({
     let q = ctx.trx
       .selectFrom('crove_projects.project as p')
       .select(['p.id', 'p.name', 'p.description', 'p.owner_user_id', 'p.status', 'p.created_at', 'p.updated_at'])
-      .where('p.org_id', '=', ctx.orgId);
+      .where('p.org_id', '=', ctx.orgId)
+      .where('p.is_template', '=', false);
 
     if (input.status !== undefined) {
       q = q.where('p.status', 'in', input.status);
@@ -1004,9 +903,15 @@ export const projectBoard = defineQuery({
         't.status',
         't.assignee_position_id',
         't.due',
+        't.checklist',
         't.tainted',
         't.created_at',
         'pt.created_at as added_at',
+        'pt.recurrence',
+        'pt.recurrence_count',
+        'pt.recurrence_last_due',
+        'pt.recurrence_next_at',
+        'pt.recurrence_source_task_id',
         sql<boolean>`(t.checkout_run_id IS NOT NULL AND t.lock_expires_at > pg_catalog.now())`.as('checked_out'),
       ])
       .where('pt.org_id', '=', ctx.orgId)
@@ -1075,11 +980,17 @@ export const projectBoard = defineQuery({
       status: t.status as TaskStatus,
       assigneePositionId: t.assignee_position_id,
       due: t.due === null ? null : new Date(t.due).toISOString(),
+      checklist: parseTaskChecklist(t.checklist),
       tainted: t.tainted,
       checkedOut: Boolean(t.checked_out),
       commentCount: commentCounts.get(t.id) ?? 0,
       createdAt: new Date(t.created_at).toISOString(),
       addedAt: new Date(t.added_at).toISOString(),
+      recurrence: parseStoredRecurrence(t.recurrence),
+      recurrenceCount: t.recurrence_count,
+      recurrenceLastDue: t.recurrence_last_due,
+      recurrenceNextAt: t.recurrence_next_at === null ? null : new Date(t.recurrence_next_at).toISOString(),
+      recurrenceSourceTaskId: t.recurrence_source_task_id,
     }));
 
     return {
@@ -1151,6 +1062,7 @@ export const projectTaskProjects = defineQuery({
         JOIN crove_kernel.task t
           ON t.org_id = pt.org_id AND t.id = pt.task_id
        WHERE pt.org_id = ${ctx.orgId}::uuid
+         AND NOT p.is_template
          AND pt.task_id = ANY(${taskIds}::uuid[])`.execute(ctx.trx);
 
     return rows.map((r) => ({

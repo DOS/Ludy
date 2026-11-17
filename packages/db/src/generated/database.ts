@@ -2851,6 +2851,7 @@ export interface KernelTaskTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   legal_entity_id: string | null;
   pending_draft: ColumnType<unknown, string | null | undefined, string | null>;
+  checklist: ColumnType<unknown, string | undefined, string>;
 }
 
 /** crove_kernel.tax_obligation_done */
@@ -3188,13 +3189,14 @@ export interface NotesNoteTable {
   body: Generated<string>;
   tags: Generated<string[]>;
   pinned: Generated<boolean>;
-  tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
+  tainted: Generated<boolean>;
   search: ColumnType<string, string | undefined, NotGranted>;
   revision: Generated<number>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   archived_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   deleted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  summary_run_ids: Generated<string[]>;
 }
 
 /** crove_notes.todo */
@@ -3221,6 +3223,8 @@ export interface NotesTodoTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   done_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   deleted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  source_run_id: ColumnType<string | null, string | null, NotGranted>;
+  source_run_seq: ColumnType<number | null, number | null, NotGranted>;
 }
 
 /** crove_projects.project_member */
@@ -3243,6 +3247,8 @@ export interface ProjectsProjectTable {
   created_by: string | null;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  is_template: Generated<boolean>;
+  template_tasks: ColumnType<unknown, string | undefined, string>;
 }
 
 /** crove_projects.project_task */
@@ -3254,6 +3260,11 @@ export interface ProjectsProjectTaskTable {
   added_by: string | null;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   sort_key: string | null;
+  recurrence: ColumnType<unknown, string | null | undefined, string | null>;
+  recurrence_count: Generated<number>;
+  recurrence_last_due: string | null;
+  recurrence_next_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  recurrence_source_task_id: string | null;
 }
 
 /** crove_sign.ai_analysis */

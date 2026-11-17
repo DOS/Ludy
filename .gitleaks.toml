@@ -16,6 +16,14 @@ useDefault = true
 description = "the public hint of a minutes-webhook secret (whk_ and 8 hex digits)"
 regexes = ['''whk_[0-9a-f]{8}''']
 
+# Made-up publishable keys of the deploy tests (#2704, tools/test/deploy.test.ts): the settings the deploy writes into a host's env file are
+# tried with these invented values, including refused ones ("... with space ...", "...;rm"). They belong to no project. This matches
+# the start of exactly those three strings (whichever part of one a rule takes for the secret), whatever the file or commit (the scan
+# reads the branch's whole history), and no other sb_publishable_ key.
+[[allowlists]]
+description = "made-up publishable keys of the deploy tests"
+regexes = ['''sb_publishable_(?:TESTKEY|1234567890| with space 1234)''']
+
 [[rules]]
 id = "g1-supabase-project-url"
 description = "Supabase project URL or DB host (G1)"

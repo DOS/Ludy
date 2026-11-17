@@ -85,7 +85,7 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
   },
   'packages/kernel/src/personal-data.ts': {
     modules: ['crm', 'finance', 'hr', 'meetings', 'notes', 'projects', 'sign', 'social'],
-    why: 'the personal-data registry, find and erase: an erasure reaches data an earlier install of the module left, whatever is installed now; private notes and to-dos are counted through crove_notes.private_matches (#1678); the payroll people (#2530) are registered here and their sealed columns listed; the meeting columns (#2579) are registered, and erased by deleting the meeting; project names and descriptions (#2591) are redacted in place; draft crove_sign.signer rows are deleted on erasure while eSign OTP emails are erased via crove_sign.personal_erase_otp (#3323)',
+    why: 'the personal-data registry, find and erase: an erasure reaches data an earlier install of the module left, whatever is installed now; private notes and to-dos are counted through crove_notes.private_matches (#1678); the payroll people (#2530) are registered here and their sealed columns listed; the meeting columns (#2579) are registered, and erased by deleting the meeting; project names and descriptions (#2591) are redacted in place; unsealed crove_sign.signer rows are deleted on erasure via crove_sign.personal_erase_unsealed_signers (#3427) while eSign OTP emails are erased via crove_sign.personal_erase_otp (#3323)',
   },
   'apps/kernel/src/meta-deletion.ts': { modules: ['ads'], why: "Meta's one data deletion callback fans a verified request out to the Ads side (crove_ads.deletion_request) as well as to the conversations (CV6, #2305): the Ads definers are called only for a secret the deployment holds for the Ads app" },
   'apps/kernel/src/ads-deletion.ts': { modules: ['ads'], why: "Meta's data deletion callback of the Ads connection: its signed request, the status page, and the worker's erasure of the accounts a request names, only when ads is installed (http.ts, worker.ts)" },
@@ -107,6 +107,7 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
   'apps/kernel/src/feeds.ts': { modules: ['social'], why: 'the RSS feed sweep, timed only when social is installed (worker.ts)' },
   'apps/kernel/src/missing-invoice-mail.ts': { modules: ['finance'], why: 'the missing invoice reminders, timed only when finance is installed (worker.ts)' },
   'apps/kernel/src/notes-worker.ts': { modules: ['notes'], why: 'the notes jobs, worked and scheduled only when notes is installed (worker.ts)' },
+  'apps/kernel/src/projects-recurring-worker.ts': { modules: ['projects'], why: 'the recurring project task sweep (crove_projects.recurring_tasks_due), worked and scheduled only when projects is installed (worker.ts)' },
   'apps/kernel/src/sign-worker.ts': { modules: ['sign'], why: 'the eSign PDF inspect/seal workers and sweeps, worked and scheduled only when sign is installed (worker.ts)' },
   'apps/kernel/src/period-balance.ts': { modules: ['finance'], why: 'the period balance reconciliation, worked and scheduled only when finance is installed (worker.ts)' },
   'apps/kernel/src/quote-link.ts': { modules: ['crm'], why: 'the public quote page route (the definer crove_crm.quote_link_view), registered only when crm is installed (http.ts)' },

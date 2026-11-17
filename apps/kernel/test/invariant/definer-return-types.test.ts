@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The rule for what a crove_meetings SECURITY DEFINER function may return (issue #2575, ADR-0047) and its one locked exception (owner decision of 2026-11-15, meetings integrations A6, #3164, extended by one function for B4, #3168),
-// tried without a database: every other function that returns text still fails, the five named ones pass only with their named columns and exact types (B4, #3168, added chat_post_get the same day), and `body` is returned by hook_delivery_get and chat_post_get alone.
+// The rule for what a crove_meetings SECURITY DEFINER function may return (issue #2575, ADR-0047) and its one locked exception (owner decision of 2026-11-15, meetings integrations A6, #3164, extended by one function for B4, #3168, and by one for #3499),
+// tried without a database: every other function that returns text still fails, the six named ones pass only with their named columns and exact types (B4, #3168, added chat_post_get the same day; #3499 added terms_for_member_vy), and `body` is returned by hook_delivery_get and chat_post_get alone.
 import { describe, expect, it } from 'vitest';
 import { BODY_FUNCTIONS, HOOK_DEFINER_EXECUTORS, HOOK_DEFINER_TEXT, validateDefinerReturnType } from './fixtures/definer-return-types.ts';
 
@@ -21,12 +21,13 @@ describe('what a crove_meetings definer may return', () => {
     }
   });
 
-  it('allows exactly the five named functions their named columns of the named types, and nothing more', () => {
+  it('allows exactly the six named functions their named columns of the named types, and nothing more', () => {
     expect(ok('TABLE(id uuid, url text, fields text[], enabled boolean, paused_reason text, secret_hint text, previous_until timestamp with time zone, failing_since timestamp with time zone, consecutive_failures integer, last_delivery_at timestamp with time zone, last_status text, created_at timestamp with time zone)', 'hook_get')).toBe(true);
     expect(ok('TABLE(hook_id uuid, fields text[])', 'hook_for_publish')).toBe(true);
     expect(ok('TABLE(id uuid, hook_id uuid, type text, body jsonb, status text, attempts integer)', 'hook_delivery_get')).toBe(true);
     expect(ok('TABLE(url text, secret_sealed jsonb, previous_sealed jsonb, user_id uuid)', 'hook_target')).toBe(true);
     expect(ok('TABLE(id uuid, channel_id uuid, kind text, status text, body jsonb, attempts integer)', 'chat_post_get')).toBe(true);
+    expect(ok('TABLE(term text)', 'terms_for_member_vy')).toBe(true);
     // A column that is not on the function's list, in any type.
     for (const [name, type] of [
       ['hook_get', 'TABLE(id uuid, url text, title text)'],
@@ -41,6 +42,9 @@ describe('what a crove_meetings definer may return', () => {
       ['chat_post_get', 'TABLE(id uuid, url text)'],
       ['chat_post_get', 'TABLE(id uuid, title text)'],
       ['chat_post_get', 'TABLE(id uuid, sealed jsonb)'],
+      ['terms_for_member_vy', 'TABLE(term text, title text)'],
+      ['terms_for_member_vy', 'TABLE(name text)'],
+      ['terms_for_member_vy', 'TABLE(term text, body jsonb)'],
     ] as const) expect(ok(type, name), `${name} ${type}`).toBe(false);
     // The right column with another type.
     for (const [name, type] of [
@@ -51,6 +55,8 @@ describe('what a crove_meetings definer may return', () => {
       ['chat_post_get', 'TABLE(id uuid, body text)'],
       ['chat_post_get', 'TABLE(id uuid, kind jsonb)'],
       ['chat_post_get', 'TABLE(id uuid, status text[])'],
+      ['terms_for_member_vy', 'TABLE(term jsonb)'],
+      ['terms_for_member_vy', 'TABLE(term text[])'],
     ] as const) expect(ok(type, name), `${name} ${type}`).toBe(false);
     // A scalar return of text is no exception for them either, and a name that is only similar gets nothing.
     expect(ok('text', 'hook_get')).toBe(false);
@@ -65,9 +71,9 @@ describe('what a crove_meetings definer may return', () => {
     expect(validateDefinerReturnType('TABLE(id uuid, body jsonb)', 'chat_post_get').ok).toBe(true);
   });
 
-  it('pins the executors of the five to one login role each, and no more functions than these five', () => {
-    expect(Object.keys(HOOK_DEFINER_TEXT).sort()).toEqual(['chat_post_get', 'hook_delivery_get', 'hook_for_publish', 'hook_get', 'hook_target']);
-    expect(HOOK_DEFINER_EXECUTORS).toEqual({ hook_get: ['crove_app'], hook_for_publish: ['crove_app'], hook_delivery_get: ['crove_worker'], hook_target: ['crove_worker'], chat_post_get: ['crove_worker'] });
+  it('pins the executors of the six to one login role each, and no more functions than these six', () => {
+    expect(Object.keys(HOOK_DEFINER_TEXT).sort()).toEqual(['chat_post_get', 'hook_delivery_get', 'hook_for_publish', 'hook_get', 'hook_target', 'terms_for_member_vy']);
+    expect(HOOK_DEFINER_EXECUTORS).toEqual({ hook_get: ['crove_app'], hook_for_publish: ['crove_app'], hook_delivery_get: ['crove_worker'], hook_target: ['crove_worker'], chat_post_get: ['crove_worker'], terms_for_member_vy: ['crove_worker'] });
     expect(Object.keys(HOOK_DEFINER_EXECUTORS).sort()).toEqual(Object.keys(HOOK_DEFINER_TEXT).sort());
   });
 });

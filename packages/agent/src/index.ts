@@ -34,6 +34,7 @@ export * from './summary-model.ts';
 export * from './translation-model.ts';
 export * from './ask-model.ts';
 export * from './tasks-from-note-model.ts';
+export * from './note-ai-model.ts';
 export * from './today.ts';
 export * from './weekly.ts';
 export * from './project-weekly-status.ts';

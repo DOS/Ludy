@@ -210,6 +210,7 @@ import { shortLinkTarget, SHORT_LINK_HITS_PER_MINUTE } from './short-link.ts';
 import { ORG_SLUG, attachmentDisposition } from './attachment.ts';
 import type { AiMeter } from '@crove/agent';
 import type { ModelPort } from './member-vy-ports.ts';
+import type { SignAi } from './sign-ai.ts';
 import { createRpcHandler, resolveMembership, resolveOrg, type BookingReader, type RpcChannels, type SocialDrafter } from './rpc.ts';
 import type { ConversationReader } from './conversations-ai.ts';
 import type { TaxCodeLookup } from './tax-lookup.ts';
@@ -386,6 +387,8 @@ export interface HttpDeps {
   conversationReader?: ConversationReader;
   // The recorder's Vy summarizing a meeting (#2580, M6 part B2); unset: the summary is off.
   summaryModel?: ModelPort | null;
+  // Vy's eSign field placement and risky clause review (#3351); unset: manual signing with AI off.
+  signAi?: SignAi['reader'];
   // The deployment's AI prices (AI_PRICE_*), for the cost a translation shows before the click (#3184); unset: no figure.
   aiPrice?: { inputPerMTok: string; outputPerMTok: string };
   // The public tax registry lookup for onboarding (issue #324); unset: off (TAX_CODE_LOOKUP_URL).
@@ -614,7 +617,7 @@ export function createHttpApp(deps: HttpDeps) {
   const app = new Hono<{ Variables: { user: AuthUser } }>();
   // One drafts budget (#386) for the API: a person's own drafts and the MCP draft tool of an AI app take their turns from the same counters and the same one-at-a-time rule.
   const drafts = new DraftBudget();
-  const rpc = createRpcHandler(runtime, deps.mailer ? createInviteMailSender(deps.mailer, appUrl(config), {}, config.INBOUND_DOMAIN && config.INBOUND_SECRET ? config.INBOUND_DOMAIN : null, config.BRAND_NAME) : undefined, deps.channels, deps.socialWriter, deps.taxLookup, drafts, undefined, deps.portalSync, deps.bookingReader, deps.aiMeter, deps.aiEnabled, deps.conversationReader, deps.summaryModel ?? null, deps.aiPrice);
+  const rpc = createRpcHandler(runtime, deps.mailer ? createInviteMailSender(deps.mailer, appUrl(config), {}, config.INBOUND_DOMAIN && config.INBOUND_SECRET ? config.INBOUND_DOMAIN : null, config.BRAND_NAME) : undefined, deps.channels, deps.socialWriter, deps.taxLookup, drafts, undefined, deps.portalSync, deps.bookingReader, deps.aiMeter, deps.aiEnabled, deps.conversationReader, deps.summaryModel ?? null, deps.aiPrice, deps.signAi ?? null);
   const perMinute = config.API_RATE_LIMIT_PER_MINUTE;
   const limiter = deps.rateLimiter !== undefined ? deps.rateLimiter : perMinute > 0 ? new RateLimiter({ perMinute }) : null;
 

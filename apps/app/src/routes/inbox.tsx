@@ -51,6 +51,7 @@ import {
   type InboxTab,
 } from '../lib/review.ts';
 import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
+import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 
 // What the upload takes, and what a photo of a receipt is taken as.
 const PHOTO_ACCEPT = 'image/jpeg,image/png,image/webp';
@@ -116,6 +117,21 @@ function failedWork(queue: string): FailedWork {
   if (queue.startsWith('crm-booking')) return 'booking';
   if (queue.startsWith('kernel-agent-')) return 'agent';
   return 'other';
+}
+
+// The one line for what waits in an app the company switched off (ADR-0053, slice e): hidden from the list, kept with its own expiry, and not approvable
+// until the app is on again. Shown only when there is something.
+function HiddenByApps() {
+  const t = useTranslations('inbox');
+  const live = useStreamLive();
+  const hidden = useQuery({ ...orpc.inbox.hidden.queryOptions({ input: {} }), refetchInterval: pollEvery(live, 60_000, SAFETY_POLL_MS) });
+  const count = hidden.data?.count ?? 0;
+  if (count === 0) return null;
+  return (
+    <p data-hidden-apps className="text-sm text-muted-foreground">
+      {t('hiddenApps', { count: String(count) })}
+    </p>
+  );
 }
 
 // Background work of the org that failed after its last retry (#1720), for owners and admins (the list is empty for
@@ -298,7 +314,8 @@ export function InboxPage() {
   // The "Chưa phân loại" filter (#2091): only the pending proposals with a line no rule matched, with how many there are.
   const [unclassifiedOnly, setUnclassifiedOnly] = useState(false);
   const unclassifiedCount = countUnclassified(items.data ?? []);
-  const unclassifiedFilter = tab === 'pending' && unclassifiedOnly;
+  // The filter is Finance's: with Finance off its buttons are gone, so it must not go on hiding the proposals of the other apps.
+  const unclassifiedFilter = tab === 'pending' && unclassifiedOnly && installedModules().includes('finance');
   const listed = unclassifiedFilter ? (items.data ?? []).filter(hasUnclassifiedLines) : (items.data ?? []);
 
   // Many documents or ZIP archives at once, each file uploaded and followed on its own (#314).
@@ -354,7 +371,8 @@ export function InboxPage() {
   const selectable = bulkEnabled ? listed.filter((item) => bulkSelectable(item, REVERSAL_KIND)) : [];
   // Clean purchases grouped by vendor and learned rule (#2379), with the rules behind them of the entity chosen in the shell.
   const shellEntity = useChosenEntity();
-  const groupsOn = bulkEnabled && config.modules.includes('finance');
+  useModulesVersion(); // the apps of the org can change while this screen is open
+  const groupsOn = bulkEnabled && installedModules().includes('finance');
   const groups = groupsOn ? cleanGroups(listed, REVERSAL_KIND) : [];
   const groupRules = useQuery({ ...orpc.accountRules.list.queryOptions({ input: { legalEntityId: shellEntity.legalEntityId } }), enabled: groupsOn && groups.length > 0 && shellEntity.ready, staleTime: 30_000 });
   const chosen = selectable.filter((item) => selected.has(item.id));
@@ -557,15 +575,16 @@ export function InboxPage() {
         </div>
       )}
 
+      {tab === 'pending' && <HiddenByApps />}
       <IntakePanel intake={intake} />
-      {config.modules.includes('finance') && <StagedMarketplace canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} refetchMs={pollEvery(live, 30_000, SAFETY_POLL_MS)} />}
-      {config.modules.includes('finance') && <StagedMarketplaceIncome canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} refetchMs={pollEvery(live, 30_000, SAFETY_POLL_MS)} />}
-      {config.modules.includes('finance') && <StagedStatements canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} refetchMs={pollEvery(live, 30_000, SAFETY_POLL_MS)} />}
+      {installedModules().includes('finance') && <StagedMarketplace canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} refetchMs={pollEvery(live, 30_000, SAFETY_POLL_MS)} />}
+      {installedModules().includes('finance') && <StagedMarketplaceIncome canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} refetchMs={pollEvery(live, 30_000, SAFETY_POLL_MS)} />}
+      {installedModules().includes('finance') && <StagedStatements canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} refetchMs={pollEvery(live, 30_000, SAFETY_POLL_MS)} />}
       {(org.data?.role === 'owner' || org.data?.role === 'admin') && <FailedJobs />}
-      {config.modules.includes('finance') && (org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member') && <OriginalsNeeded />}
-      {config.modules.includes('finance') && <OpenBankLines slug={slug} />}
-      {config.modules.includes('social') && <SocialAttention slug={slug} />}
-      {config.modules.includes('social') && (org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member') && <SocialMails slug={slug} />}
+      {installedModules().includes('finance') && (org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member') && <OriginalsNeeded />}
+      {installedModules().includes('finance') && <OpenBankLines slug={slug} />}
+      {installedModules().includes('social') && <SocialAttention slug={slug} />}
+      {installedModules().includes('social') && (org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member') && <SocialMails slug={slug} />}
 
       {(files.data?.length ?? 0) > 0 && (
         <div className="mt-6">
@@ -720,7 +739,7 @@ export function InboxPage() {
             <p className="w-full text-xs text-subtle-foreground">{t('bulk.hint')}</p>
           </div>
         )}
-        {tab === 'pending' && config.modules.includes('finance') && (
+        {tab === 'pending' && installedModules().includes('finance') && (
           <div className="mb-3 flex flex-wrap items-center gap-2" role="group" aria-label={t('filter.label')}>
             <Button variant={unclassifiedOnly ? 'outline' : 'secondary'} size="sm" aria-pressed={!unclassifiedOnly} onClick={() => setUnclassifiedOnly(false)}>
               {t('filter.all', { count: items.data?.length ?? 0 })}
@@ -744,7 +763,7 @@ export function InboxPage() {
             title={unclassifiedFilter ? t('filter.unclassifiedEmpty') : tab === 'pending' ? t('emptyPending') : t('emptyOther')}
             hint={tab === 'pending' && !unclassifiedFilter ? t('emptyPendingHint') : undefined}
             action={
-              tab === 'pending' && config.modules.includes('finance') ? (
+              tab === 'pending' && installedModules().includes('finance') ? (
                 <Link to="/o/$slug/guide" params={{ slug }} className="text-sm text-link hover:underline">
                   {t('guideLink')}
                 </Link>

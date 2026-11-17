@@ -15,9 +15,40 @@ import {
   tasksFromSourceStatus,
 } from './tasks-from-source.ts';
 import { projectWeeklyStatusSendMail, projectWeeklyStatusShareNote, projectWeeklyStatusSource } from './weekly-status.ts';
+import {
+  projectRecurringAdvance,
+  projectTaskRecurrenceClear,
+  projectTaskRecurrenceGet,
+  projectTaskRecurrenceSet,
+} from './recurring.ts';
+import {
+  projectCreateFromTemplate,
+  projectTemplateArchive,
+  projectTemplateCreate,
+  projectTemplateList,
+} from './templates.ts';
 
 export { projectsManifest } from './manifest.ts';
 export { projectsToday } from './today.ts';
+export {
+  addLocalDays,
+  daysBetweenLocalDates,
+  daysInMonth,
+  nextProjectRecurrenceDate,
+  parseStoredRecurrence,
+  projectRecurringAdvance,
+  projectTaskRecurrenceClear,
+  projectTaskRecurrenceGet,
+  projectTaskRecurrenceSet,
+  type ProjectRecurringAdvanceResult,
+} from './recurring.ts';
+export {
+  projectCreateFromTemplate,
+  projectTemplateArchive,
+  projectTemplateCreate,
+  projectTemplateList,
+  starterProjectTemplates,
+} from './templates.ts';
 export {
   projectWeeklyStatusSendMail,
   projectWeeklyStatusShareNote,
@@ -68,6 +99,12 @@ export const projectsCommands = [
   projectWeeklyStatusSendMail,
   tasksFromSourceStart,
   tasksFromSourceConfirm,
+  projectTemplateCreate,
+  projectTemplateArchive,
+  projectCreateFromTemplate,
+  projectTaskRecurrenceSet,
+  projectTaskRecurrenceClear,
+  projectRecurringAdvance,
 ];
 
 export const projectsQueries = [
@@ -82,4 +119,6 @@ export const projectsQueries = [
   tasksFromNoteSeats,
   tasksFromSourceStatus,
   tasksFromSourceSeats,
+  projectTemplateList,
+  projectTaskRecurrenceGet,
 ];

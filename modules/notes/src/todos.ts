@@ -11,6 +11,7 @@ import { z } from 'zod';
 import {
   PROJECT_TASK_MAP_LIMIT,
   auditValue,
+  countTaskChecklistSteps,
   taskStanding,
   todoAutoReminder,
   todoDueInstant,
@@ -31,10 +32,12 @@ import {
   type MyWork,
   type MyWorkTask,
   type ProjectTaskProjectEntry,
+  type TaskChecklistStep,
   type Todo,
   type TodoCount,
   type TodoHandedOver,
   type TodoReminder,
+  type TodoSourceNote,
   type TodoStatus,
   type TodoStep,
   type TodoSummary,
@@ -62,7 +65,9 @@ export const TODO_SUMMARY_COLUMNS = [
   'time_zone',
   'remind_at',
   'sort_key',
+  'source_note_id',
   'task_id',
+  'tainted',
   'revision',
   'created_at',
   'updated_at',
@@ -81,7 +86,9 @@ interface SummaryRow {
   time_zone: string;
   remind_at: Date | string | null;
   sort_key: string;
+  source_note_id: string | null;
   task_id: string | null;
+  tainted: boolean;
   revision: number;
   created_at: Date | string;
   updated_at: Date | string;
@@ -92,7 +99,32 @@ interface SummaryRow {
 const iso = (d: Date | string | null): string | null => (d === null ? null : new Date(d).toISOString());
 const steps = (checklist: unknown): TodoStep[] => (Array.isArray(checklist) ? (checklist as TodoStep[]) : []);
 
-export function todoSummaryRow(r: SummaryRow, now: Date): TodoSummary {
+// Batch-reads distinct source notes under the caller's own RLS (non-trashed only): returns { id, title, available: true }
+// when readable, and { id, title: null, available: false } when unreadable or trashed (never leaking its title).
+export async function loadSourceNotes(
+  ctx: Pick<QueryContext, 'trx' | 'orgId'>,
+  rows: ReadonlyArray<Pick<SummaryRow, 'source_note_id'>>,
+): Promise<Map<string, TodoSourceNote>> {
+  const ids = [...new Set(rows.map((r) => r.source_note_id).filter((id): id is string => id !== null))];
+  const map = new Map<string, TodoSourceNote>();
+  if (ids.length === 0) return map;
+  const readable = await ctx.trx
+    .selectFrom('crove_notes.note')
+    .select(['id', 'title'])
+    .where('org_id', '=', ctx.orgId)
+    .where('id', 'in', ids)
+    .where('deleted_at', 'is', null)
+    .execute();
+  for (const note of readable) {
+    map.set(note.id, { id: note.id, title: note.title, available: true });
+  }
+  for (const id of ids) {
+    if (!map.has(id)) map.set(id, { id, title: null, available: false });
+  }
+  return map;
+}
+
+export function todoSummaryRow(r: SummaryRow, now: Date, sourceNotes?: ReadonlyMap<string, TodoSourceNote>): TodoSummary {
   const dueAt = r.due_at === null ? null : new Date(r.due_at);
   const list = steps(r.checklist);
   const standing = r.status === 'open' && r.deleted_at === null ? todoStanding({ dueOn: r.due_on, dueAt, timeZone: r.time_zone }, now) : null;
@@ -108,7 +140,10 @@ export function todoSummaryRow(r: SummaryRow, now: Date): TodoSummary {
     group: standing?.group ?? null,
     overdue: standing?.overdue ?? false,
     steps: { done: list.filter((s) => s.done).length, total: list.length },
+    sourceNoteId: r.source_note_id,
+    sourceNote: r.source_note_id === null ? null : (sourceNotes?.get(r.source_note_id) ?? { id: r.source_note_id, title: null, available: false }),
     taskId: r.task_id,
+    tainted: r.tainted,
     revision: r.revision,
     createdAt: new Date(r.created_at).toISOString(),
     updatedAt: new Date(r.updated_at).toISOString(),
@@ -141,7 +176,7 @@ function assertNotInTrash(row: SummaryRow): void {
 }
 
 // The due day and time as stored: the time becomes an instant on that day in the to-do's time zone.
-function due(input: { dueOn: string | null; dueTime: string | null; timeZone: string }): { due_on: string | null; due_at: Date | null; time_zone: string } {
+export function due(input: { dueOn: string | null; dueTime: string | null; timeZone: string }): { due_on: string | null; due_at: Date | null; time_zone: string } {
   return {
     due_on: input.dueOn,
     due_at: input.dueOn !== null && input.dueTime !== null ? todoDueInstant(input.dueOn, input.dueTime, input.timeZone) : null,
@@ -152,7 +187,7 @@ function due(input: { dueOn: string | null; dueTime: string | null; timeZone: st
 // When the reminder is due (notes.md §3.8), and whether it counts as passed: an automatic time already past (a to-do
 // written for today after 8:00) is kept, so it still reads as automatic and follows a moved due day, but marked passed,
 // so it is not sent at once; a picked time must be ahead.
-function remindAt(reminder: TodoReminder, at: { due_on: string | null; due_at: Date | null; time_zone: string }, now: Date): { at: Date | null; passed: boolean } {
+export function remindAt(reminder: TodoReminder, at: { due_on: string | null; due_at: Date | null; time_zone: string }, now: Date): { at: Date | null; passed: boolean } {
   if (reminder === 'off') return { at: null, passed: false };
   if (reminder === 'auto') {
     const auto = todoAutoReminder({ dueOn: at.due_on, dueAt: at.due_at, timeZone: at.time_zone });
@@ -170,14 +205,14 @@ const reminderPassed = (now: Date) => sql<Date | null>`CASE WHEN remind_at <= ${
 const reminderKind = (reminder: TodoReminder) => (typeof reminder === 'string' ? reminder : 'custom');
 
 // The text as stored: empty details are none, and the steps are JSON for the jsonb column.
-const detailsOf = (details: string): string | null => (details.trim() === '' ? null : details);
+export const detailsOf = (details: string): string | null => (details.trim() === '' ? null : details);
 const checklistOf = (checklist: readonly TodoStep[]): string => JSON.stringify(checklist.map((s) => ({ text: s.text, done: s.done })));
 
 const written = (row: Pick<SummaryRow, 'id' | 'revision'>): TodoWritten => ({ todoId: row.id, revision: row.revision });
 const target = (input: { todoId: string }) => ({ type: 'notes.todo', id: input.todoId });
 
 // The caller's keys in order, ties by id; the moved to-do itself left out.
-async function ownKeys(ctx: CommandContext, except: string | null): Promise<Array<{ id: string; sort_key: string }>> {
+export async function ownKeys(ctx: CommandContext, except: string | null): Promise<Array<{ id: string; sort_key: string }>> {
   let q = ctx.trx.selectFrom('crove_notes.todo').select(['id', 'sort_key']).where('org_id', '=', ctx.orgId);
   if (except !== null) q = q.where('id', '<>', except);
   return q.orderBy('sort_key').orderBy('id').execute();
@@ -198,7 +233,7 @@ async function rebalance(ctx: CommandContext, rows: ReadonlyArray<{ id: string }
 
 // A key between two neighbors of the caller's list (by index in `rows`, -1 or rows.length for an end), giving the list
 // fresh keys first when the two are equal or the new key would grow long.
-async function placeBetween(ctx: CommandContext, rows: Array<{ id: string; sort_key: string }>, lo: number, hi: number): Promise<string> {
+export async function placeBetween(ctx: CommandContext, rows: Array<{ id: string; sort_key: string }>, lo: number, hi: number): Promise<string> {
   const keyAt = (i: number) => (i < 0 || i >= rows.length ? null : (rows[i] as { sort_key: string }).sort_key);
   const a = keyAt(lo);
   const b = keyAt(hi);
@@ -220,6 +255,20 @@ export const todoCreate = defineCommand({
   access: WRITERS,
   handler: async (ctx, input): Promise<TodoWritten> => {
     const userId = userOf(ctx.actor);
+    let sourceTainted = false;
+    if (input.sourceNoteId !== undefined) {
+      // Checked under caller RLS with deleted_at IS NULL: missing, trashed, or private to another member all answer
+      // identically with 404 NOTE_NOT_FOUND (no existence oracle). Inherit server-side taint so AI note content stays tainted.
+      const sourceNote = await ctx.trx
+        .selectFrom('crove_notes.note')
+        .select(['id', 'tainted'])
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.sourceNoteId)
+        .where('deleted_at', 'is', null)
+        .executeTakeFirst();
+      if (!sourceNote) throw new DomainError('NOTE_NOT_FOUND', 404, 'Không tìm thấy ghi chú này');
+      sourceTainted = sourceNote.tainted;
+    }
     // A new to-do goes first in the caller's list.
     const rows = await ownKeys(ctx, null);
     const sortKey = await placeBetween(ctx, rows, -1, 0);
@@ -237,6 +286,8 @@ export const todoCreate = defineCommand({
         remind_at: remind.at,
         reminded_at: remind.passed ? ctx.now : null,
         sort_key: sortKey,
+        source_note_id: input.sourceNoteId ?? null,
+        tainted: sourceTainted,
         created_at: ctx.now,
         updated_at: ctx.now,
       })
@@ -253,6 +304,8 @@ export const todoCreate = defineCommand({
       timeZone: input.timeZone,
       reminder: reminderKind(input.reminder),
       remindAt: remind.at?.toISOString() ?? null,
+      ...(input.sourceNoteId !== undefined ? { sourceNoteId: input.sourceNoteId } : {}),
+      ...(sourceTainted ? { tainted: true } : {}),
       ...(input.link ? { target: 'private' as const } : {}),
     });
     return written(row);
@@ -523,8 +576,9 @@ export const todoList = defineQuery({
       q = input.view === 'open' ? q.where('status', '=', 'open').orderBy('sort_key') : q.where('status', '<>', 'open').orderBy(sql`coalesce(done_at, updated_at)`, 'desc');
     }
     const rows = await q.orderBy('id').limit(input.limit).execute();
+    const sourceNotes = await loadSourceNotes(ctx, rows);
     const now = new Date();
-    return rows.map((r) => summary(r, now));
+    return rows.map((r) => summary(r, now, sourceNotes));
   },
 });
 
@@ -535,8 +589,8 @@ export const todoGet = defineQuery({
   handler: async (ctx, input): Promise<Todo> => {
     userOf(ctx.actor);
     const row = await load(ctx, input.todoId, false);
-    const links = await loadEnrichedLinks(ctx, { kind: 'todo', id: row.id });
-    return { ...summary(row, new Date()), details: row.details ?? '', checklist: steps(row.checklist).map((s) => ({ text: s.text, done: s.done })), links };
+    const [links, sourceNotes] = await Promise.all([loadEnrichedLinks(ctx, { kind: 'todo', id: row.id }), loadSourceNotes(ctx, [row])]);
+    return { ...summary(row, new Date(), sourceNotes), details: row.details ?? '', checklist: steps(row.checklist).map((s) => ({ text: s.text, done: s.done })), links };
   },
 });
 
@@ -553,6 +607,7 @@ interface KernelTask {
   status: string;
   assigneePositionId: string | null;
   due: string | null;
+  checklist?: readonly TaskChecklistStep[];
   tainted: boolean;
 }
 
@@ -606,6 +661,7 @@ export const myWork = defineQuery({
         positionId: t.assigneePositionId,
         due: t.due,
         tainted: t.tainted,
+        ...(t.checklist !== undefined ? { steps: countTaskChecklistSteps(t.checklist) } : {}),
         project: projectByTask.get(t.id) ?? null,
         ...taskStanding(t.due === null ? null : new Date(t.due), input.timeZone, now),
       }))
@@ -616,7 +672,8 @@ export const myWork = defineQuery({
         : input.projectId === 'none'
           ? allTasks.filter((t) => t.project === null)
           : allTasks.filter((t) => t.project?.id === input.projectId);
-    const todos = input.projectId === undefined ? rows.map((r) => summary(r, now)) : [];
+    const sourceNotes = input.projectId === undefined ? await loadSourceNotes(ctx, rows) : undefined;
+    const todos = input.projectId === undefined ? rows.map((r) => summary(r, now, sourceNotes)) : [];
     const isTeamOrg = Number(memberCountRow.n) > 1;
     const noSeatHint = isTeamOrg && ownSeatRow === undefined && ctx.role !== 'owner' && ctx.role !== 'viewer';
     // A full page from the kernel says the screen may miss older tasks.

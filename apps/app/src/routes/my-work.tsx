@@ -8,7 +8,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useEffect, useMemo, useRef, useState, type FormEvent, type RefObject } from 'react';
 import { useTranslations } from 'use-intl';
-import type { MyWorkTask, NoteLinkTargetInput, Todo, TodoListView, TodoStep, TodoSummary } from '@crove/kernel-contract';
+import type { MyWorkTask, NoteLinkTargetInput, Todo, TodoListView, TodoSourceNote, TodoStep, TodoSummary } from '@crove/kernel-contract';
 import { Alert, AlertDescription } from '@crove/ui/components/alert';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -27,6 +27,7 @@ import { TimeInput } from '../components/time-input.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { NotesSubnav } from '../components/notes-subnav.tsx';
 import { refreshProjectQueries } from '../components/project-task-dialog.tsx';
+import { TaskChecklistBadge } from '../components/task-checklist.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, clientForOrg, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { isModuleOff } from '../lib/errors.ts';
@@ -67,6 +68,53 @@ function DueChip({ todo }: { todo: TodoSummary }) {
       {todo.overdue && <span className="sr-only">{t('overdue')}: </span>}
       {label}
     </Badge>
+  );
+}
+
+/** Back-link chip in a My work row to the note a to-do was created from (step N7, #1676). */
+export function TodoSourceBadge({ sourceNote, slug }: { sourceNote: TodoSourceNote | null | undefined; slug: string }) {
+  const t = useTranslations('myWork');
+  if (!sourceNote) return null;
+  if (sourceNote.available) {
+    return (
+      <Link
+        to="/o/$slug/notes"
+        params={{ slug }}
+        search={{ note: sourceNote.id }}
+        data-testid="todo-source-note"
+        aria-label={t('openSourceNote', { title: sourceNote.title ?? '' })}
+        className="inline-flex max-w-44 rounded-full focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+      >
+        <Badge variant="outline" className="max-w-full hover:bg-muted">
+          <span className="truncate">{t('sourceNoteBadge', { title: sourceNote.title ?? '' })}</span>
+        </Badge>
+      </Link>
+    );
+  }
+  return (
+    <Badge variant="outline" className="text-subtle-foreground" data-testid="todo-source-note-unavailable">
+      {t('sourceNoteUnavailable')}
+    </Badge>
+  );
+}
+
+/** Back-link section in the to-do detail editor to its source note (step N7, #1676). */
+export function TodoSourceDetail({ sourceNote, slug }: { sourceNote: TodoSourceNote | null | undefined; slug: string }) {
+  const t = useTranslations('myWork');
+  if (!sourceNote) return null;
+  return (
+    <section className="space-y-1 text-sm" data-testid="todo-editor-source-note">
+      <h3 className="text-xs font-medium text-muted-foreground">{t('sourceNote')}</h3>
+      {sourceNote.available ? (
+        <Link to="/o/$slug/notes" params={{ slug }} search={{ note: sourceNote.id }} data-testid="todo-detail-source-note" className="inline-block text-link hover:underline">
+          {sourceNote.title ?? ''}
+        </Link>
+      ) : (
+        <span className="text-subtle-foreground" data-testid="todo-detail-source-note-unavailable">
+          {t('sourceNoteUnavailable')}
+        </span>
+      )}
+    </section>
   );
 }
 
@@ -224,6 +272,12 @@ function TaskRow({ task, slug, chart, projectsActive }: { task: MyWorkTask; slug
         </Badge>
       )}
       <span className="text-xs text-subtle-foreground">{positionTitle(chart, task.positionId, tt('rootAssignee'), tt('unknownPosition'))}</span>
+      {task.steps && task.steps.total > 0 && (
+        <TaskChecklistBadge
+          steps={task.steps}
+          label={t('stepsDone', { done: String(task.steps.done), total: String(task.steps.total) })}
+        />
+      )}
       {task.due && (
         <Badge variant={task.overdue ? 'destructive' : 'outline'}>
           {task.overdue && <span className="sr-only">{t('overdue')}: </span>}
@@ -319,6 +373,13 @@ function TodoEditor({ todo, onClose }: { todo: Todo; onClose: () => void }) {
   };
   return (
     <div className="mt-2 border-t pt-3" data-testid="todo-editor">
+      {todo.tainted && (
+        <div className="mb-2 flex items-center gap-2">
+          <Badge variant="proposal" title={t('taintedTodoHint')} data-testid="todo-editor-tainted-badge">
+            {t('proposalMark')}
+          </Badge>
+        </div>
+      )}
       <form onSubmit={submit} className="space-y-3" onKeyDown={(e) => e.key === 'Escape' && e.currentTarget.contains(e.target as Node) && onClose()}>
         <label className="block text-xs">
           <span className="text-subtle-foreground">{t('fieldTitle')}</span>
@@ -401,6 +462,7 @@ function TodoEditor({ todo, onClose }: { todo: Todo; onClose: () => void }) {
             </span>
           </span>
         </label>
+        <TodoSourceDetail sourceNote={todo.sourceNote} slug={slug} />
         <NoteLinks
           links={todo.links}
           slug={slug}
@@ -602,6 +664,12 @@ export function MyWorkPage() {
           <span className="text-xs text-subtle-foreground" aria-label={t('stepsDone', { done: String(todo.steps.done), total: String(todo.steps.total) })}>
             {todo.steps.done}/{todo.steps.total}
           </span>
+        )}
+        <TodoSourceBadge sourceNote={todo.sourceNote} slug={slug} />
+        {todo.tainted && (
+          <Badge variant="proposal" title={t('taintedTodoHint')} data-testid="todo-tainted-badge">
+            {t('proposalMark')}
+          </Badge>
         )}
         <DueChip todo={todo} />
         {/* Handed over (#1674): the work is now the team's task, opened from here. */}

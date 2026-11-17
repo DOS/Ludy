@@ -11,18 +11,28 @@
 # The account step of the smoke test (#690): every command line goes to $STUB_LOG.argv, so a test can check that no
 # secret is on one; the sign-in body read from stdin goes to $STUB_LOG.signin, the uploaded file to
 # $STUB_LOG.upload, an RPC body to $STUB_LOG.rpc. STUB_SIGNIN_FAIL refuses the sign-in, STUB_FILE_STATUS sets the
-# uploaded file's status (default proposed), STUB_REJECT_FAIL fails the rejection.
+# uploaded file's status (default proposed), STUB_REJECT_FAIL fails the rejection. A remote identity provider (#2704): its
+# keys at .../.well-known/jwks.json (STUB_JWKS_FAIL: 404, STUB_JWKS_EMPTY, STUB_JWKS_OCT) and its https .../auth/v1/health (STUB_IDP_HEALTH_FAIL: 404, or
+# STUB_IDP_REDIRECT: 301). STUB_IDP_HEALTH_HTML: the Auth URL is this API's address by mistake (its page answers). STUB_NO_PROXY: this deployment has no /auth/v1 proxy (404 anywhere but at https://idp.*). /api/config reports authUrl as <base>/auth/v1, or STUB_AUTH_URL.
 set -euo pipefail
 
 printf '%s\n' "$*" >>"$STUB_LOG.argv"
-out='' url='' headers='' data='' form=''
+out='' url='' headers='' data='' form='' wout='' fail=0
 while (($# > 0)); do
   case "$1" in
     --output)
       out="$2"
       shift 2
       ;;
-    --max-time | --request)
+    --fail)
+      fail=1
+      shift
+      ;;
+    --max-time | --request | --proto | --proto-redir)
+      shift 2
+      ;;
+    --write-out)
+      wout="$2"
       shift 2
       ;;
     --header)
@@ -65,8 +75,29 @@ case "$url" in
     if [ -n "${STUB_MIGRATION_MISSING:-}" ]; then missing='["20990101000000_crove_kernel_next.sql"]'; fi
     body="{\"build\":\"$build\",\"migrationsMissing\":$missing}"
     ;;
-  */api/config) body='{"authUrl":"http://127.0.0.1:18080/auth/v1","modules":[]}' ;;
-  */auth/v1/health) body='{"name":"GoTrue"}' ;;
+  */api/config)
+    # What the running API reports: the PUBLIC_AUTH_URL of the host's env file when it has one (the settings of #2704), else the
+    # bundled proxy under the address asked; STUB_AUTH_URL overrides both.
+    configured="$(sed -n 's/^PUBLIC_AUTH_URL=//p' "$STUB_DEPLOY_DIR/.env" 2>/dev/null | tail -n 1 | tr -d '\r')"
+    body="{\"authUrl\":\"${STUB_AUTH_URL:-${configured:-${url%/api/config}/auth/v1}}\",\"modules\":[]}"
+    ;;
+  */auth/v1/health)
+    # A remote identity provider's address (https://...) answers unless STUB_IDP_HEALTH_FAIL; the key travels in a header file.
+    # The kernel with no proxy: a 404, or (STUB_NO_PROXY=html) the app's own page, which answers 200 to any GET.
+    if [ "${STUB_NO_PROXY:-}" = html ] && [[ "$url" != https://idp.* ]]; then body='<div id="root"></div>'
+    elif [ -n "${STUB_NO_PROXY:-}" ] && [[ "$url" != https://idp.* ]]; then status=404 body='{}'
+    elif [ -n "${STUB_IDP_HEALTH_HTML:-}" ] && [[ "$url" == https://* ]]; then body='<div id="root"></div>'
+    elif [ -n "${STUB_IDP_REDIRECT:-}" ] && [[ "$url" == https://* ]]; then status=301 body=''
+    elif [ -n "${STUB_IDP_HEALTH_FAIL:-}" ] && [[ "$url" == https://* ]]; then status=404 body='{}'
+    else body='{"name":"GoTrue"}'; fi
+    ;;
+  */.well-known/jwks.json)
+    # A key of an asymmetric family by default; STUB_JWKS_EMPTY: no key; STUB_JWKS_OCT: a shared key only.
+    if [ -n "${STUB_JWKS_FAIL:-}" ]; then status=404 body='{}'
+    elif [ -n "${STUB_JWKS_EMPTY:-}" ]; then body='{"keys":[]}'
+    elif [ -n "${STUB_JWKS_OCT:-}" ]; then body='{"keys":[{"kty":"oct","kid":"k1"}]}'
+    else body='{"keys":[{"kty":"EC","crv":"P-256","alg":"ES256","kid":"k1"}]}'; fi
+    ;;
   */login)
     if [ -n "${STUB_NO_BUNDLE:-}" ] || { [ -n "${STUB_NO_BUNDLE_DIGEST:-}" ] && [[ "$running" == *"$STUB_NO_BUNDLE_DIGEST"* ]]; }; then
       body='<div id="root"></div>'
@@ -105,6 +136,8 @@ case "$url" in
 esac
 
 if [ -n "$out" ]; then printf '%s' "$body" >"$out"; else printf '%s' "$body"; fi
-# curl --fail exits 22 on an HTTP error.
-if ((status >= 400)); then exit 22; fi
+# --write-out '%{http_code}': the status follows the body, as curl prints it.
+if [ "$wout" = '%{http_code}' ]; then printf '%s' "$status"; fi
+# curl --fail exits 22 on an HTTP error; without it the exit status is 0 (the caller reads the code it asked for with --write-out).
+if ((status >= 400 && fail)); then exit 22; fi
 exit 0

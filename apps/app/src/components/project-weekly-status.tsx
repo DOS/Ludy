@@ -24,10 +24,10 @@ import { Textarea } from '@crove/ui/components/textarea';
 import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
 import { taskDueDay } from '../lib/agents.ts';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { getConfig } from '../lib/auth.ts';
 import { projectWeeklyStatusQueryKey } from '../lib/projects.ts';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { ErrorText } from './ui.tsx';
+import { installedModules } from '../lib/org-modules.ts';
 
 export interface WeeklyStatusDraftState {
   title: string;
@@ -102,7 +102,7 @@ export function updateWeeklyStatusDraftBody(draft: WeeklyStatusDraftState, body:
 
 function isNotesModuleEnabled(): boolean {
   try {
-    return getConfig().modules.includes('notes');
+    return installedModules().includes('notes');
   } catch {
     return true;
   }

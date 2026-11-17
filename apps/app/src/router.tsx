@@ -5,7 +5,8 @@ import { ScreenTitle } from './components/ui.tsx';
 import { errorMessage, getCurrentOrg, isUnauthenticated, orpc, queryClient, setCurrentOrg } from './lib/api.ts';
 import { accessToken, auth, getConfig, needsSecondFactor, needsSecondFactorNow } from './lib/auth.ts';
 import { landingFor } from './lib/clients.ts';
-import { outsideInstalled, screenInstalled } from './lib/modules.ts';
+import { effectiveModules, outsideInstalled, screenInstalled } from './lib/modules.ts';
+import { installedModules, setOrgModules } from './lib/org-modules.ts';
 import { pendingInvite, rememberInvite, takeTokenFromHash } from './lib/invite.ts';
 import { CONNECT_PATH, parseConnectRequest, pendingConnect, rememberConnect } from './lib/extension-connect.ts';
 import { signOut } from './lib/session-actions.ts';
@@ -108,6 +109,11 @@ import { RecordingChip } from './components/recording-chip.tsx';
 import { RecordingHost } from './components/recording-host.tsx';
 import { VersionBanner } from './components/version-banner.tsx';
 import { FixedAssetsPage } from './routes/fixed-assets.tsx';
+import { SignCeremonyPage } from './routes/sign-ceremony.tsx';
+import { SignEnvelopeDetailPage } from './routes/sign-envelope-detail.tsx';
+import { SignEnvelopesPage } from './routes/sign-envelopes.tsx';
+import { SignVerifyPage } from './routes/sign-verify.tsx';
+import { SIGN_PAGE_PATH } from './lib/sign-hash.ts';
 
 async function requireSession() {
   if (!(await accessToken())) throw redirect({ to: '/login' });
@@ -267,6 +273,14 @@ const quoteDocumentRoute = createRoute({
   component: QuoteDocumentPage,
 });
 
+// Public signing ceremony (#3325): /-/sign#<token>, no account. Token stays strictly in the URL hash fragment.
+const signCeremonyRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: SIGN_PAGE_PATH,
+  beforeLoad: ({ matches }) => requireInstalledOutside(matches),
+  component: SignCeremonyPage,
+});
+
 // Accept links are /-/invite#<token>. The token is moved from the address bar to storage before the sign-in
 // check, so it survives the detour through /login (and email confirmation after signing up).
 const inviteRoute = createRoute({
@@ -385,7 +399,28 @@ async function enterOrg(slug: string) {
     // Cached data belongs to one org; never show it under another.
     queryClient.clear();
     setCurrentOrg(slug);
+    appsLoadedFor = null;
   }
+}
+
+// The org's own apps (kernel.org.apps, ADR-0053 slice d): read before a screen opens, once for each org entered, so a menu or a screen never flashes for an app the org switched off.
+// Later navigations in the same org use the answer the store has and refresh it in the background (the stream's org_apps hint keeps it fresh too), so no screen change waits for the
+// network. If the read fails the deployment's list stands: the API gates every call itself, so a failed read costs a menu item that answers "not available", never a way in.
+let appsLoadedFor: string | null = null;
+async function readOrgApps(slug: string) {
+  try {
+    const answer = await queryClient.fetchQuery({ ...orpc.org.apps.queryOptions(), staleTime: 30_000, retry: false });
+    if (getCurrentOrg() !== slug) return;
+    setOrgModules(effectiveModules(getConfig().modules, answer.apps));
+    appsLoadedFor = slug;
+  } catch {
+    // The first read of an org that fails leaves the deployment's list; one that fails later keeps the last answer.
+    if (appsLoadedFor !== slug) setOrgModules(null);
+  }
+}
+async function loadOrgApps(slug: string) {
+  if (appsLoadedFor === slug) void readOrgApps(slug);
+  else await readOrgApps(slug);
 }
 
 // A screen of a module this deployment leaves out (CROVE_MODULES) sends you to the overview (ADR-0031 §3, #3225). The module of
@@ -393,7 +428,7 @@ async function enterOrg(slug: string) {
 // is the matched route's own path ('/o/$slug/journal' for /o/acme/JOURNAL), not the address as typed.
 function requireInstalledScreen(slug: string, matches: readonly { fullPath: unknown }[]) {
   const screen = matches.at(-1)?.fullPath;
-  if (typeof screen === 'string' && !screenInstalled(getConfig().modules, screen)) throw redirect({ to: '/o/$slug/overview', params: { slug } });
+  if (typeof screen === 'string' && !screenInstalled(installedModules(), screen)) throw redirect({ to: '/o/$slug/overview', params: { slug } });
 }
 
 export const orgRoute = createRoute({
@@ -401,6 +436,7 @@ export const orgRoute = createRoute({
   path: '/o/$slug',
   beforeLoad: async ({ params, matches }) => {
     await enterOrg(params.slug);
+    await loadOrgApps(params.slug);
     requireInstalledScreen(params.slug, matches);
   },
   component: OrgLayout,
@@ -538,6 +574,7 @@ const socialPlanPrintRoute = createRoute({
   path: '/o/$slug/print/social-plan',
   beforeLoad: async ({ params, matches }) => {
     await enterOrg(params.slug);
+    await readOrgApps(params.slug); // these routes do not mount the shell, so nothing else would send a switched-off screen away
     requireInstalledScreen(params.slug, matches);
   },
   validateSearch: parsePlanSearch,
@@ -604,6 +641,7 @@ const meetingMinutesRoute = createRoute({
   path: '/o/$slug/print/meeting-minutes/$id',
   beforeLoad: async ({ params, matches }) => {
     await enterOrg(params.slug);
+    await readOrgApps(params.slug); // these routes do not mount the shell, so nothing else would send a switched-off screen away
     requireInstalledScreen(params.slug, matches);
   },
   component: MeetingMinutesPage,
@@ -618,6 +656,10 @@ const reportsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'report
 const taskDetailRoute = createRoute({ getParentRoute: () => orgRoute, path: 'tasks/$id', component: TaskDetailPage });
 const projectsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'projects', component: ProjectsPage });
 const projectDetailRoute = createRoute({ getParentRoute: () => orgRoute, path: 'projects/$id', component: ProjectDetailPage });
+// eSign Slice 1c (#3325): envelopes, field placer + Vy overlays, and offline SHA-256 verifier.
+const signEnvelopesRoute = createRoute({ getParentRoute: () => orgRoute, path: 'sign/envelopes', component: SignEnvelopesPage });
+const signEnvelopeDetailRoute = createRoute({ getParentRoute: () => orgRoute, path: 'sign/envelopes/$id', component: SignEnvelopeDetailPage });
+const signVerifyRoute = createRoute({ getParentRoute: () => orgRoute, path: 'sign/verify', component: SignVerifyPage });
 
 // The CRM screens joined the Engage app (#2435) and kept their addresses. The `crm/...` addresses that docs/plan/crm.md wrote for them (the
 // rail's CRM app once opened on its bookings) open the screen itself, with the search it had.
@@ -643,6 +685,7 @@ const routeTree = rootRoute.addChildren([
   bookingRoute,
   reportRoute,
   quoteDocumentRoute,
+  signCeremonyRoute,
   shareRoute,
   socialPlanPrintRoute,
   meetingMinutesRoute,
@@ -655,7 +698,7 @@ const routeTree = rootRoute.addChildren([
   clientsRoute,
   oauthCallbackRoute,
   calendarOAuthCallbackRoute,
-  orgRoute.addChildren([orgIndexRoute, overviewRoute, accountingOverviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, paymentRemindersRoute, salesInvoicesRoute, stockRoute, householdRoute, marketplaceRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, bankMatchedRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialInboxRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, aiUsageRoute, aiConnectionsRoute, tasksRoute, taskDetailRoute, projectsRoute, projectDetailRoute, bookingsRoute, dealsRoute, contactsRoute, companiesRoute, contactImportRoute, crmRoute, crmBookingsRoute, crmDealsRoute, crmContactsRoute, crmContactImportRoute, notesRoute, myWorkRoute, hrEmployeesRoute, hrRecruitingRoute, hrPayrollRoute, hrDeclarationsRoute, hrBankTemplatesRoute, meetingsRoute, meetingRecordRoute, meetingDetailRoute, adsRoute, adsCampaignsRoute, reportsRoute, settingsRoute, auditRoute, personalDataRoute, guideRoute]),
+  orgRoute.addChildren([orgIndexRoute, overviewRoute, accountingOverviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, paymentRemindersRoute, salesInvoicesRoute, stockRoute, householdRoute, marketplaceRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, bankMatchedRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialInboxRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, aiUsageRoute, aiConnectionsRoute, tasksRoute, taskDetailRoute, projectsRoute, projectDetailRoute, signEnvelopesRoute, signEnvelopeDetailRoute, signVerifyRoute, bookingsRoute, dealsRoute, contactsRoute, companiesRoute, contactImportRoute, crmRoute, crmBookingsRoute, crmDealsRoute, crmContactsRoute, crmContactImportRoute, notesRoute, myWorkRoute, hrEmployeesRoute, hrRecruitingRoute, hrPayrollRoute, hrDeclarationsRoute, hrBankTemplatesRoute, meetingsRoute, meetingRecordRoute, meetingDetailRoute, adsRoute, adsCampaignsRoute, reportsRoute, settingsRoute, auditRoute, personalDataRoute, guideRoute]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });

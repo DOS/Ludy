@@ -93,6 +93,8 @@ describe('to-do due days', () => {
     expect(zTodoCreate.safeParse({ title: 'x', timeZone: 'Mars/Olympus' }).success).toBe(false);
     expect(zTodoCreate.parse({ title: '  x  ' })).toEqual({ title: 'x', details: '', checklist: [], dueOn: null, dueTime: null, timeZone: 'Asia/Ho_Chi_Minh', reminder: 'auto' });
     const id = '018f0000-0000-7000-8000-000000000001';
+    expect(zTodoCreate.parse({ title: 'Từ ghi chú', sourceNoteId: id }).sourceNoteId).toBe(id);
+    expect(zTodoCreate.safeParse({ title: 'Từ ghi chú', sourceNoteId: 'not-a-uuid' }).success).toBe(false);
     expect(zTodoReorder.safeParse({ todoId: id, place: 'before', anchorId: id }).success).toBe(false);
   });
 });

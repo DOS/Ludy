@@ -38,9 +38,9 @@ const item = (module: ModuleId, screens: ModuleScreens, nav: { path: string; lab
   return { to: `/o/$slug/${nav.path}` as NavItem['to'], label: nav.label as NavLabel, module, ...(modules ? { modules } : {}) };
 };
 
-// The apps in the order of the switcher (#3225): Cộng tác, Tài chính, Engage, Nhân sự, Ludy AI. The overview is not an app: it is the first entry of the switcher, the notifications are
+// The apps in the order of the switcher (#3225): Cộng tác, Tài chính, Engage, Nhân sự, Ký kết, Ludy AI. The overview is not an app: it is the first entry of the switcher, the notifications are
 // the bell and Settings is at the foot.
-export const APP_ORDER: readonly AppId[] = ['teamwork', 'finance', 'engage', 'hr', 'ai'];
+export const APP_ORDER: readonly AppId[] = ['teamwork', 'finance', 'engage', 'hr', 'sign', 'ai'];
 
 // The groups of an app whose modules do not give the order: the Engage app's four groups come from three modules (#2435), so by
 // the order their items first appear Marketing would come before CRM; Tài chính's groups come from the kernel and finance. Every other app keeps the order
@@ -52,6 +52,7 @@ export const GROUP_ORDER: Partial<Record<AppId, readonly AppGroupId[]>> = { enga
 export const ITEM_ORDER: Partial<Record<AppId, readonly string[]>> = {
   teamwork: ['my-work', 'tasks', 'projects', 'notes', 'meetings'],
   finance: ['accounting', 'inbox', 'vouchers', 'bank', 'sales-invoices', 'customers', 'stock', 'vendors', 'journal', 'ledger', 'fixed-assets', 'vat'],
+  sign: ['sign/envelopes', 'sign/verify'],
   ai: ['agents', 'ai-usage', 'ai-connections'],
 };
 

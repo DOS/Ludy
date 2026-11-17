@@ -1,0 +1,1061 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Envelope detail, pure-JS PDF field placer, Vy AI proposal overlays, send confirmation, and audit evidence (#3325).
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { Link, useParams } from '@tanstack/react-router';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslations } from 'use-intl';
+import { Alert, AlertDescription } from '@crove/ui/components/alert';
+import { Badge } from '@crove/ui/components/badge';
+import { Button, buttonVariants } from '@crove/ui/components/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@crove/ui/components/card';
+import { Checkbox } from '@crove/ui/components/checkbox';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@crove/ui/components/dialog';
+import { Input } from '@crove/ui/components/input';
+import { Label } from '@crove/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+import { FieldOverlayLayer } from '../components/sign/field-placer.tsx';
+import { PdfCanvasViewer } from '../components/sign/pdf-canvas-viewer.tsx';
+import { SignerPanel, type AddSignerFormInput } from '../components/sign/signer-panel.tsx';
+import { VyClausePanel } from '../components/sign/vy-clause-panel.tsx';
+import { ConfirmDialog } from '../components/confirm-dialog.tsx';
+import { ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
+import { useFormat } from '../i18n/provider.tsx';
+import { errorMessage, queryClient } from '../lib/api.ts';
+import {
+  downloadSignFile,
+  downloadSignPdfBytes,
+  normalizeAiAnalysis,
+  signApi,
+  type SignAiAnalysis,
+  type SignFieldRecord,
+  type SignProposedField,
+  type SignSignerRecord,
+} from '../lib/sign-api.ts';
+import {
+  SIGN_FIELD_TYPES,
+  checkSendReadiness,
+  clampFieldBox,
+  createPlacedFieldBox,
+  nudgeFieldBox,
+  resizeFieldBox,
+  type DraftFieldPlacement,
+  type NormalizedBox,
+  type SignFieldType,
+  type SignRoutingMode,
+} from '../lib/sign-fields.ts';
+import { buildSigningUrl, copyTextToClipboard } from '../lib/sign-hash.ts';
+import { extractPdfPagesText } from '../lib/sign-pdf.ts';
+import { toast } from '../lib/toast.ts';
+
+function toDraftPlacements(fields: readonly SignFieldRecord[]): DraftFieldPlacement[] {
+  return fields.map((f) => ({
+    localId: f.id,
+    signerId: f.signerId,
+    fieldType: f.fieldType,
+    pageNumber: f.pageNumber,
+    xNorm: f.xNorm,
+    yNorm: f.yNorm,
+    wNorm: f.wNorm,
+    hNorm: f.hNorm,
+    label: f.label,
+    required: f.required,
+    proposedByAi: f.proposedByAi,
+    fontSizePt: f.fontSizePt,
+  }));
+}
+
+function triggerDownload(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+export function filterPendingProposalsForSigners(
+  proposals: readonly SignProposedField[],
+  signers: readonly SignSignerRecord[],
+  dismissedProposalIds: readonly string[],
+): SignProposedField[] {
+  const assignableIds = new Set(signers.filter((s) => s.signerRole !== 'cc').map((s) => s.id));
+  const dismissed = new Set(dismissedProposalIds);
+  return proposals.filter((p) => assignableIds.has(p.signerId) && !dismissed.has(p.proposalId));
+}
+
+export function SignEnvelopeDetailPage() {
+  const t = useTranslations('sign');
+  const common = useTranslations('common');
+  const f = useFormat();
+  const { slug = '', id = '' } = useParams({ strict: false }) as { slug?: string; id?: string };
+
+  const [pageNumber, setPageNumber] = useState(1);
+  const [scale, setScale] = useState(1.0);
+  const [detectedPages, setDetectedPages] = useState<number | null>(null);
+  const [activeSignerId, setActiveSignerId] = useState<string | null>(null);
+  const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
+  const [draftFields, setDraftFields] = useState<DraftFieldPlacement[]>([]);
+  const [fieldsDirty, setFieldsDirty] = useState(false);
+  const [metaDirty, setMetaDirty] = useState(false);
+  const fieldsEditRevRef = useRef(0);
+  const metaEditRevRef = useRef(0);
+  const pendingActiveSignerIdRef = useRef<string | null>(null);
+  const [dismissedProposalIds, setDismissedProposalIds] = useState<string[]>([]);
+  const [aiAnalysisOverride, setAiAnalysisOverride] = useState<SignAiAnalysis | null>(null);
+
+  const [titleInput, setTitleInput] = useState('');
+  const [subjectInput, setSubjectInput] = useState('');
+  const [messageInput, setMessageInput] = useState('');
+  const [sendDialogOpen, setSendDialogOpen] = useState(false);
+  const [voidDialogOpen, setVoidDialogOpen] = useState(false);
+  const [voidReason, setVoidReason] = useState('');
+  const [mintedLinks, setMintedLinks] = useState<Array<{ signerId: string; url: string }>>([]);
+
+  const detailQuery = useQuery({
+    queryKey: ['sign', 'envelope', id],
+    queryFn: () => signApi.getEnvelope(id),
+    enabled: Boolean(id),
+    refetchInterval: (query) => {
+      const env = query.state.data?.envelope;
+      if (!env) return false;
+      if (env.inspectStatus === 'pending') return 3000;
+      if (env.status === 'completed' && (env.sealStatus === null || env.sealStatus === 'pending')) return 3000;
+      if (env.status === 'sent' || env.status === 'in_progress') return 8000;
+      return false;
+    },
+  });
+
+  const envelope = detailQuery.data?.envelope ?? null;
+  const signers = useMemo(() => detailQuery.data?.signers ?? [], [detailQuery.data?.signers]);
+  const assignableSigners = useMemo(() => signers.filter((s) => s.signerRole !== 'cc'), [signers]);
+  const isDraft = envelope?.status === 'draft';
+
+  useEffect(() => {
+    fieldsEditRevRef.current = 0;
+    metaEditRevRef.current = 0;
+    pendingActiveSignerIdRef.current = null;
+    setFieldsDirty(false);
+    setMetaDirty(false);
+    setSelectedFieldId(null);
+    setDismissedProposalIds([]);
+    setAiAnalysisOverride(null);
+    setDetectedPages(null);
+    setPageNumber(1);
+  }, [id]);
+
+  useEffect(() => {
+    if (!detailQuery.data || fieldsDirty) return;
+    setDraftFields(toDraftPlacements(detailQuery.data.fields));
+  }, [detailQuery.data, fieldsDirty]);
+
+  useEffect(() => {
+    if (!detailQuery.data || metaDirty) return;
+    setTitleInput(detailQuery.data.envelope.title);
+    setSubjectInput(detailQuery.data.envelope.subject ?? '');
+    setMessageInput(detailQuery.data.envelope.message ?? '');
+  }, [detailQuery.data, metaDirty]);
+
+  useEffect(() => {
+    const pendingId = pendingActiveSignerIdRef.current;
+    if (pendingId) {
+      if (assignableSigners.some((s) => s.id === pendingId)) {
+        pendingActiveSignerIdRef.current = null;
+        setActiveSignerId(pendingId);
+      }
+      return;
+    }
+    if (assignableSigners.length === 0) {
+      setActiveSignerId(null);
+      return;
+    }
+    if (!activeSignerId || !assignableSigners.some((s) => s.id === activeSignerId)) {
+      setActiveSignerId(assignableSigners[0]!.id);
+    }
+  }, [assignableSigners, activeSignerId]);
+
+  const pdfFileId = envelope?.sealedFileId ?? envelope?.sourceFileId ?? null;
+  const pdfQuery = useQuery({
+    queryKey: ['sign', 'pdf', pdfFileId],
+    queryFn: () => downloadSignPdfBytes(pdfFileId!),
+    enabled: Boolean(pdfFileId),
+    staleTime: 5 * 60_000,
+  });
+
+  const aiQuery = useQuery({
+    queryKey: ['sign', 'ai', id],
+    queryFn: () => signApi.getAiAnalysis(id),
+    enabled: Boolean(id),
+  });
+
+  const eventsQuery = useQuery({
+    queryKey: ['sign', 'events', id, envelope?.version ?? 0],
+    queryFn: () => signApi.getEnvelopeEvents(id),
+    enabled: Boolean(id) && envelope !== null && envelope.status !== 'draft',
+  });
+
+  const verifyQuery = useQuery({
+    queryKey: ['sign', 'verify', id, envelope?.version ?? 0, envelope?.sealStatus ?? 'none'],
+    queryFn: () => signApi.verifyEnvelope(id),
+    enabled: Boolean(id) && envelope !== null && envelope.status !== 'draft',
+  });
+
+  const invalidateAll = async () => {
+    await queryClient.invalidateQueries({ queryKey: ['sign', 'envelope', id] });
+    await queryClient.invalidateQueries({ queryKey: ['sign', 'envelopes'] });
+    await queryClient.invalidateQueries({ queryKey: ['sign', 'events', id] });
+    await queryClient.invalidateQueries({ queryKey: ['sign', 'verify', id] });
+  };
+
+  const saveFieldsMutation = useMutation({
+    mutationFn: async (fieldsToSave: readonly DraftFieldPlacement[]) => {
+      const revision = fieldsEditRevRef.current;
+      const result = await signApi.setFields(
+        id,
+        fieldsToSave.map((fItem) => ({
+          signerId: fItem.signerId,
+          fieldType: fItem.fieldType,
+          pageNumber: fItem.pageNumber,
+          xNorm: fItem.xNorm,
+          yNorm: fItem.yNorm,
+          wNorm: fItem.wNorm,
+          hNorm: fItem.hNorm,
+          ...(fItem.label?.trim() ? { label: fItem.label.trim() } : {}),
+          required: fItem.required,
+          proposedByAi: fItem.proposedByAi,
+          ...(fItem.fontSizePt ? { fontSizePt: fItem.fontSizePt } : {}),
+        })),
+      );
+      return { result, revision };
+    },
+    onSuccess: async ({ revision }) => {
+      toast(t('actions.fieldsSavedToast'));
+      await invalidateAll();
+      if (fieldsEditRevRef.current === revision) {
+        setFieldsDirty(false);
+      }
+    },
+    onError: (err) => toast(errorMessage(err), 'error'),
+  });
+
+  const markMetaDirty = () => {
+    metaEditRevRef.current += 1;
+    setMetaDirty(true);
+  };
+
+  const buildMetadataPayload = (fallbackTitle: string) => ({
+    title: titleInput.trim() || fallbackTitle,
+    subject: subjectInput.trim() || null,
+    message: messageInput.trim() || null,
+  });
+
+  const updateMetaMutation = useMutation({
+    mutationFn: async (input: { routingMode?: SignRoutingMode; title?: string; subject?: string | null; message?: string | null }) => {
+      const metaRevision = metaEditRevRef.current;
+      const hasTextMeta = 'title' in input || 'subject' in input || 'message' in input;
+      const result = await signApi.updateEnvelope({
+        envelopeId: id,
+        ...(envelope ? { expectedVersion: envelope.version } : {}),
+        ...input,
+      });
+      return { result, metaRevision, hasTextMeta };
+    },
+    onSuccess: async ({ metaRevision, hasTextMeta }) => {
+      toast(t('draftSavedToast'));
+      await invalidateAll();
+      if (hasTextMeta && metaEditRevRef.current === metaRevision) {
+        setMetaDirty(false);
+      }
+    },
+    onError: (err) => toast(errorMessage(err), 'error'),
+  });
+
+  const analyzeMutation = useMutation({
+    mutationFn: async () => {
+      const rawPdf = pdfQuery.data ?? (pdfFileId ? await downloadSignPdfBytes(pdfFileId) : null);
+      let pages: Array<{ page: number; text: string }> | undefined;
+      if (rawPdf) {
+        try {
+          const extracted = await extractPdfPagesText(rawPdf);
+          if (extracted.length > 0) pages = extracted;
+        } catch {
+          // Fall back cleanly if client PDF text extraction fails on a malformed file.
+        }
+      }
+      return signApi.analyzeAi(id, pages);
+    },
+    onSuccess: (res) => {
+      if (res) {
+        setAiAnalysisOverride(res);
+        setDismissedProposalIds([]);
+      }
+    },
+    onError: (err) => toast(errorMessage(err), 'error'),
+  });
+
+  const sendMutation = useMutation({
+    mutationFn: async () => {
+      if (metaDirty) {
+        await updateMetaMutation.mutateAsync(buildMetadataPayload(envelope?.title ?? ''));
+      }
+      if (fieldsDirty) {
+        await saveFieldsMutation.mutateAsync(draftFields);
+      }
+      return signApi.sendEnvelope(id);
+    },
+    onSuccess: async (res) => {
+      setSendDialogOpen(false);
+      toast(t('sendConfirm.sentToast'));
+      setMintedLinks(res.links.map((item) => ({ signerId: item.signerId, url: buildSigningUrl(item.token) })));
+      await invalidateAll();
+    },
+    onError: (err) => toast(errorMessage(err), 'error'),
+  });
+
+  const voidMutation = useMutation({
+    mutationFn: (reason: string) => signApi.voidEnvelope(id, reason.trim() || undefined),
+    onSuccess: async () => {
+      setVoidDialogOpen(false);
+      setVoidReason('');
+      toast(t('voidDialog.voidedToast'));
+      await invalidateAll();
+    },
+    onError: (err) => toast(errorMessage(err), 'error'),
+  });
+
+  const effectiveAi = useMemo(
+    () => normalizeAiAnalysis(aiAnalysisOverride ?? aiQuery.data ?? null),
+    [aiAnalysisOverride, aiQuery.data],
+  );
+  const pendingProposals = useMemo(
+    () => filterPendingProposalsForSigners(effectiveAi?.proposedFields ?? [], signers, dismissedProposalIds),
+    [effectiveAi, signers, dismissedProposalIds],
+  );
+
+  const effectivePageCount = Math.max(1, envelope?.pageCount ?? detectedPages ?? 1);
+  const selectedField = draftFields.find((item) => item.localId === selectedFieldId) ?? null;
+
+  const readinessIssue = envelope
+    ? checkSendReadiness({
+        inspectStatus: envelope.inspectStatus,
+        signers,
+        fields: draftFields,
+      })
+    : 'NOT_INSPECTED';
+
+  const updateDraftFields = (updater: (prev: DraftFieldPlacement[]) => DraftFieldPlacement[]) => {
+    fieldsEditRevRef.current += 1;
+    setDraftFields(updater);
+    setFieldsDirty(true);
+  };
+
+  const resolveProposalSignerId = (proposedSignerId: string): string =>
+    assignableSigners.some((s) => s.id === proposedSignerId) ? proposedSignerId : '';
+
+  const handleAddField = (fieldType: SignFieldType, coords?: { pageNumber: number; xCenterNorm: number; yCenterNorm: number }) => {
+    if (!isDraft || !activeSignerId) return;
+    const targetPage = coords?.pageNumber ?? pageNumber;
+    const existingOnPageCount = draftFields.filter((item) => item.pageNumber === targetPage).length;
+    const box = createPlacedFieldBox({
+      fieldType,
+      ...(coords ? { xCenterNorm: coords.xCenterNorm, yCenterNorm: coords.yCenterNorm } : {}),
+      existingOnPageCount,
+    });
+    const localId = `draft-${globalThis.crypto.randomUUID()}`;
+    updateDraftFields((prev) => [
+      ...prev,
+      {
+        localId,
+        signerId: activeSignerId,
+        fieldType,
+        pageNumber: targetPage,
+        ...box,
+        label: null,
+        required: true,
+        proposedByAi: false,
+      },
+    ]);
+    setSelectedFieldId(localId);
+  };
+
+  const handleUpdateFieldBox = (localId: string, nextBox: NormalizedBox) => {
+    updateDraftFields((prev) =>
+      prev.map((item) => (item.localId === localId ? { ...item, ...clampFieldBox(nextBox) } : item)),
+    );
+  };
+
+  const handleDeleteField = (localId: string) => {
+    updateDraftFields((prev) => prev.filter((item) => item.localId !== localId));
+    if (selectedFieldId === localId) setSelectedFieldId(null);
+  };
+
+  const handleApplyProposal = (proposal: SignProposedField, adjustedBox?: NormalizedBox) => {
+    if (!isDraft) return;
+    const signerId = resolveProposalSignerId(proposal.signerId);
+    if (!signerId) return;
+    const box = clampFieldBox(adjustedBox ?? proposal);
+    const localId = `prop-${globalThis.crypto.randomUUID()}`;
+    updateDraftFields((prev) => [
+      ...prev,
+      {
+        localId,
+        signerId,
+        fieldType: proposal.fieldType,
+        pageNumber: Math.min(effectivePageCount, Math.max(1, proposal.pageNumber)),
+        ...box,
+        label: proposal.label,
+        required: proposal.required,
+        proposedByAi: true,
+      },
+    ]);
+    setDismissedProposalIds((prev) => [...prev, proposal.proposalId]);
+    setSelectedFieldId(localId);
+  };
+
+  const handleApplyAllProposals = () => {
+    if (!isDraft || pendingProposals.length === 0) return;
+    const nextFields: DraftFieldPlacement[] = [];
+    const appliedIds: string[] = [];
+    for (const proposal of pendingProposals) {
+      const signerId = resolveProposalSignerId(proposal.signerId);
+      if (!signerId) continue;
+      const box = clampFieldBox(proposal);
+      nextFields.push({
+        localId: `prop-${globalThis.crypto.randomUUID()}`,
+        signerId,
+        fieldType: proposal.fieldType,
+        pageNumber: Math.min(effectivePageCount, Math.max(1, proposal.pageNumber)),
+        ...box,
+        label: proposal.label,
+        required: proposal.required,
+        proposedByAi: true,
+      });
+      appliedIds.push(proposal.proposalId);
+    }
+    if (nextFields.length === 0) return;
+    updateDraftFields((prev) => [...prev, ...nextFields]);
+    setDismissedProposalIds((prev) => [...prev, ...appliedIds]);
+  };
+
+  const handleAddSigner = async (input: AddSignerFormInput) => {
+    let addedSignerId: string | null = null;
+    try {
+      const nextRoutingOrder = signers.reduce((max, signer) => Math.max(max, signer.routingOrder), 0) + 1;
+      const res = await signApi.addSigner({
+        envelopeId: id,
+        routingOrder: nextRoutingOrder,
+        ...input,
+      });
+      if (input.signerRole !== 'cc') {
+        addedSignerId = res.signerId;
+        pendingActiveSignerIdRef.current = addedSignerId;
+      }
+      await invalidateAll();
+      if (addedSignerId && pendingActiveSignerIdRef.current === addedSignerId) {
+        setActiveSignerId(addedSignerId);
+      }
+    } catch (err) {
+      if (addedSignerId && pendingActiveSignerIdRef.current === addedSignerId) {
+        pendingActiveSignerIdRef.current = null;
+      }
+      toast(errorMessage(err), 'error');
+      throw err;
+    }
+  };
+
+  const handleRemoveSigner = async (signerId: string) => {
+    if (pendingActiveSignerIdRef.current === signerId) {
+      pendingActiveSignerIdRef.current = null;
+    }
+    try {
+      await signApi.removeSigner(id, signerId);
+      setDraftFields((prev) => prev.filter((item) => item.signerId !== signerId));
+      await invalidateAll();
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  };
+
+  const handleMoveSigner = async (signerId: string, direction: -1 | 1) => {
+    const idx = signers.findIndex((s) => s.id === signerId);
+    const swapIdx = idx + direction;
+    if (idx === -1 || swapIdx < 0 || swapIdx >= signers.length) return;
+    const reordered = [...signers];
+    const current = reordered[idx]!;
+    reordered[idx] = reordered[swapIdx]!;
+    reordered[swapIdx] = current;
+    try {
+      await signApi.reorderSigners(
+        id,
+        reordered.map((s, orderIdx) => ({ signerId: s.id, routingOrder: orderIdx + 1 })),
+      );
+      await invalidateAll();
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  };
+
+  const handleCopyZaloLink = async (signerId: string) => {
+    try {
+      const minted = await signApi.createSignerLink(id, signerId);
+      const url = buildSigningUrl(minted.token);
+      setMintedLinks((prev) => [...prev.filter((item) => item.signerId !== signerId), { signerId, url }]);
+      if (await copyTextToClipboard(url)) {
+        toast(t('actions.linkCopiedToast'));
+      }
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  };
+
+  const handleRemindSigner = async (signerId: string) => {
+    try {
+      await signApi.remindEnvelope(id, signerId);
+      toast(t('actions.remindedToast'));
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  };
+
+  const handleDownload = async (fileId: string | null, filename: string) => {
+    if (!fileId) return;
+    try {
+      const blob = await downloadSignFile(fileId);
+      triggerDownload(blob, filename);
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  };
+
+  const copyDigest = async (value: string) => {
+    if (await copyTextToClipboard(value)) {
+      toast(t('evidence.copiedToast'));
+    }
+  };
+
+  if (detailQuery.isLoading) return <ListSkeleton rows={5} />;
+  if (detailQuery.isError) return <ErrorText>{errorMessage(detailQuery.error)}</ErrorText>;
+  if (!envelope) return null;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Link to="/o/$slug/sign/envelopes" params={{ slug }} className={buttonVariants({ variant: 'ghost', size: 'sm' })}>
+          {t('actions.backToList')}
+        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="outline">{t(`statuses.${envelope.status}`)}</Badge>
+          <Badge variant="secondary">{t(`inspectStatuses.${envelope.inspectStatus}`)}</Badge>
+          {envelope.sealStatus || envelope.status === 'completed' ? (
+            <Badge variant="secondary">{t(`sealStatuses.${envelope.sealStatus ?? 'pending'}`)}</Badge>
+          ) : null}
+        </div>
+      </div>
+
+      <PageHeader
+        title={envelope.title}
+        subtitle={`${t(`routing.${envelope.routingMode}`)} - ${t('fieldsCount', { count: String(draftFields.length) })}`}
+        actions={
+          <div className="flex flex-wrap gap-2">
+            {isDraft ? (
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={!fieldsDirty}
+                  loading={saveFieldsMutation.isPending}
+                  onClick={() => saveFieldsMutation.mutate(draftFields)}
+                  data-testid="sign-save-fields-btn"
+                >
+                  {t('actions.saveFields')}
+                </Button>
+                <Button
+                  type="button"
+                  disabled={readinessIssue !== null}
+                  onClick={() => setSendDialogOpen(true)}
+                  data-testid="sign-send-open-btn"
+                >
+                  {t('actions.send')}
+                </Button>
+              </>
+            ) : null}
+            {envelope.status === 'sent' || envelope.status === 'in_progress' ? (
+              <Button type="button" variant="destructive" onClick={() => setVoidDialogOpen(true)}>
+                {t('actions.void')}
+              </Button>
+            ) : null}
+          </div>
+        }
+      />
+
+      {envelope.inspectStatus === 'pending' ? (
+        <Alert>
+          <AlertDescription>{t('inspectPendingBanner')}</AlertDescription>
+        </Alert>
+      ) : null}
+      {envelope.inspectStatus === 'failed' ? <ErrorText>{t('inspectFailedBanner')}</ErrorText> : null}
+      {envelope.status === 'completed' && (envelope.sealStatus === null || envelope.sealStatus === 'pending') ? (
+        <Alert>
+          <AlertDescription>{t('sealPendingBanner')}</AlertDescription>
+        </Alert>
+      ) : null}
+      {envelope.status === 'completed' && envelope.sealStatus === 'failed' ? (
+        <ErrorText>{t('sealFailedBanner')}</ErrorText>
+      ) : null}
+      {isDraft && readinessIssue ? (
+        <p className="text-xs text-muted-foreground" data-testid="sign-readiness-hint">
+          {t(`sendConfirm.readyHints.${readinessIssue}`)}
+        </p>
+      ) : null}
+
+      {mintedLinks.length > 0 ? (
+        <Card data-testid="minted-zalo-links-card">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">{t('actions.copyZalo')}</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {mintedLinks.map((entry) => {
+              const signerName = signers.find((s) => s.id === entry.signerId)?.name ?? entry.signerId;
+              return (
+                <div key={entry.signerId} className="flex flex-wrap items-center gap-2">
+                  <Label htmlFor={`zalo-link-input-${entry.signerId}`} className="min-w-28 text-xs font-medium">
+                    {signerName}
+                  </Label>
+                  <Input
+                    id={`zalo-link-input-${entry.signerId}`}
+                    readOnly
+                    value={entry.url}
+                    className="min-w-0 flex-1 font-mono text-xs"
+                    data-testid={`zalo-link-input-${entry.signerId}`}
+                  />
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)_300px]">
+        <div className="space-y-4">
+          <SignerPanel
+            envelopeStatus={envelope.status}
+            routingMode={envelope.routingMode}
+            signers={signers}
+            activeSignerId={activeSignerId}
+            busy={updateMetaMutation.isPending}
+            onSelectSigner={(signerId) => {
+              pendingActiveSignerIdRef.current = null;
+              setActiveSignerId(signerId);
+            }}
+            onChangeRoutingMode={(mode) => updateMetaMutation.mutate({ routingMode: mode })}
+            onAddSigner={handleAddSigner}
+            onRemoveSigner={handleRemoveSigner}
+            onMoveSigner={handleMoveSigner}
+            onCopyZaloLink={handleCopyZaloLink}
+            onRemindSigner={handleRemindSigner}
+          />
+
+          {isDraft ? (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">{t('saveMetadata')}</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2.5">
+                <div className="space-y-1">
+                  <Label htmlFor="env-title-input" className="text-xs">
+                    {t('titleLabel')}
+                  </Label>
+                  <Input
+                    id="env-title-input"
+                    value={titleInput}
+                    onChange={(e) => {
+                      setTitleInput(e.target.value);
+                      markMetaDirty();
+                    }}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="env-subject-input" className="text-xs">
+                    {t('subjectLabel')}
+                  </Label>
+                  <Input
+                    id="env-subject-input"
+                    value={subjectInput}
+                    onChange={(e) => {
+                      setSubjectInput(e.target.value);
+                      markMetaDirty();
+                    }}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="env-message-input" className="text-xs">
+                    {t('messageLabel')}
+                  </Label>
+                  <Input
+                    id="env-message-input"
+                    value={messageInput}
+                    onChange={(e) => {
+                      setMessageInput(e.target.value);
+                      markMetaDirty();
+                    }}
+                  />
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="w-full"
+                  loading={updateMetaMutation.isPending}
+                  onClick={() => updateMetaMutation.mutate(buildMetadataPayload(envelope.title))}
+                >
+                  {t('saveMetadata')}
+                </Button>
+              </CardContent>
+            </Card>
+          ) : null}
+        </div>
+
+        <div className="min-w-0 space-y-3">
+          {isDraft ? (
+            <Card>
+              <CardContent className="space-y-2 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-foreground">{t('fields.paletteTitle')}</span>
+                  {activeSignerId ? (
+                    <span className="text-xs text-muted-foreground">
+                      {t('fields.assignTo', { name: signers.find((s) => s.id === activeSignerId)?.name ?? '' })}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-warning">{t('fields.addSignerFirst')}</span>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-1.5" data-testid="field-palette">
+                  {SIGN_FIELD_TYPES.map((fieldType) => (
+                    <Button
+                      key={fieldType}
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={!activeSignerId}
+                      onClick={() => handleAddField(fieldType)}
+                      data-testid={`palette-add-${fieldType}`}
+                    >
+                      + {t(`fields.types.${fieldType}`)}
+                    </Button>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
+
+          <PdfCanvasViewer
+            pdfBytes={pdfQuery.data ?? null}
+            pageNumber={pageNumber}
+            pageCount={effectivePageCount}
+            scale={scale}
+            onPageChange={setPageNumber}
+            onScaleChange={setScale}
+            onPageCountDetected={setDetectedPages}
+            renderOverlay={(page) => (
+              <FieldOverlayLayer
+                pageNumber={page}
+                fields={draftFields}
+                proposals={isDraft ? pendingProposals : []}
+                signers={signers}
+                selectedFieldId={selectedFieldId}
+                editable={isDraft}
+                onSelectField={setSelectedFieldId}
+                onUpdateFieldBox={handleUpdateFieldBox}
+                onDeleteField={handleDeleteField}
+                onApplyProposal={handleApplyProposal}
+                onDismissProposal={(pid) => setDismissedProposalIds((prev) => [...prev, pid])}
+              />
+            )}
+          />
+        </div>
+
+        <div className="space-y-4">
+          <VyClausePanel
+            aiAnalysis={effectiveAi}
+            pendingProposals={pendingProposals}
+            editable={isDraft}
+            analyzing={analyzeMutation.isPending}
+            onAnalyze={() => analyzeMutation.mutate()}
+            onJumpToPage={(targetPage) => setPageNumber(Math.min(effectivePageCount, Math.max(1, targetPage)))}
+            onApplyAllProposals={handleApplyAllProposals}
+          />
+
+          {isDraft && selectedField ? (
+            <Card data-testid="field-inspector-card">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">{t('fields.selectedLabel')}</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 text-xs">
+                <div className="space-y-1">
+                  <Label htmlFor="field-assignee-select" className="text-xs">
+                    {t('fields.assignedSignerSelect')}
+                  </Label>
+                  <NativeSelect
+                    id="field-assignee-select"
+                    value={selectedField.signerId}
+                    className="w-full"
+                    onChange={(e) => {
+                      const nextSignerId = e.target.value;
+                      updateDraftFields((prev) =>
+                        prev.map((item) => (item.localId === selectedField.localId ? { ...item, signerId: nextSignerId } : item)),
+                      );
+                    }}
+                  >
+                    {signers
+                      .filter((s) => s.signerRole !== 'cc' || s.id === selectedField.signerId)
+                      .map((s) => (
+                        <NativeSelectOption key={s.id} value={s.id}>
+                          {s.name}
+                        </NativeSelectOption>
+                      ))}
+                  </NativeSelect>
+                </div>
+
+                <div className="space-y-1">
+                  <Label htmlFor="field-label-input" className="text-xs">
+                    {t('fields.fieldLabelInput')}
+                  </Label>
+                  <Input
+                    id="field-label-input"
+                    value={selectedField.label ?? ''}
+                    onChange={(e) => {
+                      const nextLabel = e.target.value;
+                      updateDraftFields((prev) =>
+                        prev.map((item) =>
+                          item.localId === selectedField.localId ? { ...item, label: nextLabel || null } : item,
+                        ),
+                      );
+                    }}
+                  />
+                </div>
+
+                <label htmlFor="field-required-checkbox" className="flex cursor-pointer items-center gap-2">
+                  <Checkbox
+                    id="field-required-checkbox"
+                    checked={selectedField.required}
+                    onCheckedChange={(checked) => {
+                      updateDraftFields((prev) =>
+                        prev.map((item) =>
+                          item.localId === selectedField.localId ? { ...item, required: Boolean(checked) } : item,
+                        ),
+                      );
+                    }}
+                  />
+                  <span>{t('fields.requiredToggle')}</span>
+                </label>
+
+                <p className="text-muted-foreground">{t('fields.nudgeHint')}</p>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleUpdateFieldBox(selectedField.localId, nudgeFieldBox(selectedField, -0.02, 0))}
+                  >
+                    {t('fields.moveLeft')}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleUpdateFieldBox(selectedField.localId, nudgeFieldBox(selectedField, 0.02, 0))}
+                  >
+                    {t('fields.moveRight')}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleUpdateFieldBox(selectedField.localId, nudgeFieldBox(selectedField, 0, -0.02))}
+                  >
+                    {t('fields.moveUp')}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleUpdateFieldBox(selectedField.localId, nudgeFieldBox(selectedField, 0, 0.02))}
+                  >
+                    {t('fields.moveDown')}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleUpdateFieldBox(selectedField.localId, resizeFieldBox(selectedField, 0.02, 0))}
+                  >
+                    {t('fields.wider')}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleUpdateFieldBox(selectedField.localId, resizeFieldBox(selectedField, -0.02, 0))}
+                  >
+                    {t('fields.narrower')}
+                  </Button>
+                </div>
+
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="destructive"
+                  className="w-full"
+                  onClick={() => handleDeleteField(selectedField.localId)}
+                >
+                  {t('fields.deleteField')}
+                </Button>
+              </CardContent>
+            </Card>
+          ) : null}
+
+          {!isDraft ? (
+            <Card data-testid="sign-evidence-card">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">{t('evidence.title')}</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 text-xs">
+                {verifyQuery.data ? (
+                  <Badge variant={verifyQuery.data.valid ? 'success' : 'destructive'}>
+                    {verifyQuery.data.valid
+                      ? t('evidence.chainValid', { count: String(verifyQuery.data.eventChain.count) })
+                      : t('evidence.chainInvalid')}
+                  </Badge>
+                ) : null}
+
+                {envelope.certificateCode ? (
+                  <div className="space-y-1">
+                    <span className="block text-muted-foreground">{t('evidence.certificateCode')}</span>
+                    <div className="flex items-center justify-between gap-2 rounded bg-muted/50 px-2 py-1 font-mono">
+                      <span>{envelope.certificateCode}</span>
+                      <Button type="button" size="sm" variant="ghost" onClick={() => void copyDigest(envelope.certificateCode!)}>
+                        {t('evidence.copyDigest')}
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="space-y-1">
+                  <span className="block text-muted-foreground">{t('evidence.sourceSha256')}</span>
+                  <div className="flex items-center justify-between gap-2 rounded bg-muted/50 px-2 py-1 font-mono">
+                    <span className="truncate">{envelope.sourceSha256}</span>
+                    <Button type="button" size="sm" variant="ghost" onClick={() => void copyDigest(envelope.sourceSha256)}>
+                      {t('evidence.copyDigest')}
+                    </Button>
+                  </div>
+                </div>
+
+                {envelope.sealedSha256 ? (
+                  <div className="space-y-1">
+                    <span className="block text-muted-foreground">{t('evidence.sealedSha256')}</span>
+                    <div className="flex items-center justify-between gap-2 rounded bg-muted/50 px-2 py-1 font-mono">
+                      <span className="truncate">{envelope.sealedSha256}</span>
+                      <Button type="button" size="sm" variant="ghost" onClick={() => void copyDigest(envelope.sealedSha256!)}>
+                        {t('evidence.copyDigest')}
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="flex flex-col gap-1.5 pt-1">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void handleDownload(envelope.sourceFileId, `${envelope.id}-source.pdf`)}
+                  >
+                    {t('actions.downloadOriginal')}
+                  </Button>
+                  {envelope.sealedFileId ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void handleDownload(envelope.sealedFileId, `${envelope.certificateCode ?? envelope.id}-sealed.pdf`)}
+                    >
+                      {t('actions.downloadSealed')}
+                    </Button>
+                  ) : null}
+                  {envelope.certificateFileId ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        void handleDownload(envelope.certificateFileId, `${envelope.certificateCode ?? envelope.id}-certificate.json`)
+                      }
+                    >
+                      {t('actions.downloadCertificate')}
+                    </Button>
+                  ) : null}
+                </div>
+
+                {eventsQuery.data?.events.length ? (
+                  <div className="space-y-1.5 border-t pt-2">
+                    <p className="font-medium text-foreground">{t('evidence.eventsHeading')}</p>
+                    <ul className="max-h-60 space-y-1.5 overflow-y-auto">
+                      {eventsQuery.data.events.map((ev) => (
+                        <li key={ev.id} className="rounded border bg-card px-2 py-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-mono text-[11px] font-medium">{ev.eventType}</span>
+                            <span className="text-[11px] text-muted-foreground">#{ev.seq}</span>
+                          </div>
+                          <div className="mt-0.5 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                            <span className="truncate">{ev.actorLabel ?? ev.actorType}</span>
+                            <span>{f.dateTime(ev.occurredAt)}</span>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
+          ) : null}
+        </div>
+      </div>
+
+      <ConfirmDialog
+        open={sendDialogOpen}
+        onOpenChange={setSendDialogOpen}
+        title={t('sendConfirm.title')}
+        description={t('sendConfirm.description', {
+          title: titleInput.trim() || envelope.title,
+          signers: String(signers.length),
+          routing: t(`routing.${envelope.routingMode}`),
+        })}
+        confirm={t('sendConfirm.confirm')}
+        onConfirm={() => {
+          if (!sendMutation.isPending) void sendMutation.mutate();
+        }}
+      />
+
+      <Dialog open={voidDialogOpen} onOpenChange={setVoidDialogOpen}>
+        <DialogContent className="sm:max-w-md" variant="destructive" closeLabel={common('close')}>
+          <DialogHeader>
+            <DialogTitle>{t('voidDialog.title')}</DialogTitle>
+            <DialogDescription>{t('voidDialog.description')}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <Label htmlFor="void-reason-input">{t('voidDialog.reasonLabel')}</Label>
+            <Input id="void-reason-input" value={voidReason} onChange={(e) => setVoidReason(e.target.value)} />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setVoidDialogOpen(false)}>
+              {common('cancel')}
+            </Button>
+            <Button type="button" variant="destructive" loading={voidMutation.isPending} onClick={() => voidMutation.mutate(voidReason)}>
+              {t('voidDialog.confirm')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

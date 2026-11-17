@@ -22,8 +22,8 @@ import { useFormat } from '../i18n/provider.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { applyPrevious } from '../lib/invoice-copy.ts';
 import { appendSource, bookingDay, bookingSourceText, dealSourceText } from '../lib/invoice-crm-source.ts';
-import { getConfig } from '../lib/auth.ts';
 import { client, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
+import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 
 const NUM = 'px-4 py-3 text-right tabular-nums';
 const VAT_RATES = ['0%', '5%', '8%', '10%', 'KCT', 'KKKNT'] as const;
@@ -166,7 +166,8 @@ function PreviousInvoice({ date, legalEntityId, onCopy, onPicked }: { date: stri
 function CrmSource({ onAdd }: { onAdd: (sentence: string) => void }) {
   const t = useTranslations('salesInvoices.ai.crm');
   const f = useFormat();
-  const installed = getConfig().modules.includes('crm');
+  useModulesVersion(); // the apps of the org can change while this screen is open
+  const installed = installedModules().includes('crm');
   const deals = useQuery({ ...orpc.crm.deals.list.queryOptions({ input: { status: 'open', limit: 50 } }), enabled: installed, retry: false });
   const bookings = useQuery({ ...orpc.crm.bookings.list.queryOptions({ input: { scope: 'mine', period: 'past' } }), enabled: installed, retry: false });
   const dealItems = deals.data?.items ?? [];

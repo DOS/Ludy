@@ -23,6 +23,7 @@ import {
   zModuleId,
   zPositionStatus,
   zTask,
+  zTaskChecklist,
   zTaskDetail,
   zTaskStatus,
   zAccountCode,
@@ -330,7 +331,9 @@ import {
 } from './hr-recruiting.ts';
 import {
   zNote,
+  zNoteAcceptSummary,
   zNoteCreate,
+  zNoteFromMeetingSummary,
   zNoteLinkAdd,
   zNoteLinkRemove,
   zNoteLinkTarget,
@@ -341,13 +344,21 @@ import {
   zNoteRef,
   zNoteSearch,
   zNoteSetVisibility,
+  zNoteSuggestTodosInput,
+  zNoteSuggestTodosResult,
+  zNoteSummarizeInput,
+  zNoteSummarizeResult,
   zNoteSummary,
   zNoteUpdate,
+  zNoteVyResults,
+  zNoteVyStatus,
   zNoteWritten,
   zNotesExport,
   zMyWork,
   zMyWorkInput,
   zTodo,
+  zTodoAcceptSuggestions,
+  zTodoAcceptSuggestionsResult,
   zTodoCount,
   zTodoCreate,
   zTodoHandOver,
@@ -471,6 +482,8 @@ import {
   zProjectBoardInput,
   zProjectCandidateTask,
   zProjectCreate,
+  zProjectCreateFromTemplateFields,
+  zProjectCreateFromTemplateResult,
   zProjectDetail,
   zProjectListInput,
   zProjectListResult,
@@ -482,10 +495,19 @@ import {
   zProjectTaskMutate,
   zProjectTaskProjectEntry,
   zProjectTaskProjectsInput,
+  zProjectTaskRecurrenceClearInput,
+  zProjectTaskRecurrenceClearResult,
+  zProjectTaskRecurrenceGetInput,
+  zProjectTaskRecurrenceSetInput,
+  zProjectTaskRecurrenceView,
   zProjectTaskReorderFields,
   zProjectTaskReorderResult,
   distinctReorderTargets,
   REORDER_SAME_TASK_ISSUE,
+  validTemplateCreateFromSource,
+  validTemplateCreateSource,
+  TEMPLATE_CREATE_FROM_SOURCE_ISSUE,
+  TEMPLATE_CREATE_SOURCE_ISSUE,
   zProjectTasksFromNoteConfirmInput,
   zProjectTasksFromNoteConfirmResult,
   zProjectTasksFromNoteInput,
@@ -495,6 +517,12 @@ import {
   zProjectTasksFromSourceResult,
   zProjectTasksFromNoteResult,
   zProjectTasksFromNoteStatus,
+  zProjectTemplateArchiveInput,
+  zProjectTemplateArchiveResult,
+  zProjectTemplateCreateFields,
+  zProjectTemplateCreateResult,
+  zProjectTemplateListInput,
+  zProjectTemplateListResult,
   zProjectUpdate,
   zProjectWeeklyStatus,
   zProjectWeeklyStatusInput,
@@ -517,6 +545,36 @@ import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
 import { zAuditCursor, zAuditExport, zAuditFilter, zAuditPage } from './audit.ts';
 import { zPersonalDataErasure, zPersonalDataNotice, zPersonalDataQuery, zPersonalDataResult } from './personal-data.ts';
+import {
+  zSignAiAnalysisRecord,
+  zSignAiAnalyzeInput,
+  zSignAiAnalyzeResult,
+  zSignEnvelopeCreateInput,
+  zSignEnvelopeCreateResult,
+  zSignEnvelopeDetail,
+  zSignEnvelopeEventsResult,
+  zSignEnvelopeListInput,
+  zSignEnvelopeListResult,
+  zSignEnvelopeRemindInput,
+  zSignEnvelopeRemindResult,
+  zSignEnvelopeSendInput,
+  zSignEnvelopeSendResult,
+  zSignEnvelopeUpdateInput,
+  zSignEnvelopeUpdateResult,
+  zSignEnvelopeVerifyResult,
+  zSignEnvelopeVoidInput,
+  zSignEnvelopeVoidResult,
+  zSignFieldSetInput,
+  zSignFieldSetResult,
+  zSignSignerAddInput,
+  zSignSignerAddResult,
+  zSignSignerCreateLinkInput,
+  zSignSignerCreateLinkResult,
+  zSignSignerRemoveInput,
+  zSignSignerRemoveResult,
+  zSignSignerReorderInput,
+  zSignSignerReorderResult,
+} from './sign.ts';
 
 // Proposal reminders (issue #676): days before the approvers are reminded and before the owners are told; and expiry
 // (#876): days after which a proposal still pending expires. Expiry needs the escalation and comes after it.
@@ -1028,6 +1086,7 @@ export const contract = {
     search: oc.input(zNoteSearch).output(z.array(zNoteSummary)),
     panel: oc.input(zNoteLinkTarget).output(zNoteRecordPanelView),
     create: oc.input(zNoteCreate).output(zNoteWritten),
+    fromMeetingSummary: oc.input(zNoteFromMeetingSummary).output(zNoteWritten),
     update: oc.input(zNoteUpdate).output(zNoteWritten),
     setVisibility: oc.input(zNoteSetVisibility).output(zNoteWritten),
     pin: oc.input(zNoteRef).output(zNoteWritten),
@@ -1041,11 +1100,18 @@ export const contract = {
     privateCounts: oc.input(z.strictObject({})).output(z.array(zNotePrivateCount)),
     // The caller's own notes and to-dos, whole, for their download (#1678): never anyone else's.
     exportMine: oc.input(z.strictObject({})).output(zNotesExport),
+    // Member-scoped Vy for Notes (N8, #1677, ADR-0049): status, interactive summary & to-do suggestion, latest private results, author summary acceptance.
+    vyStatus: oc.input(z.strictObject({})).output(zNoteVyStatus),
+    summarize: oc.input(zNoteSummarizeInput).output(zNoteSummarizeResult),
+    suggestTodos: oc.input(zNoteSuggestTodosInput).output(zNoteSuggestTodosResult),
+    vyResults: oc.input(zNoteRef).output(zNoteVyResults),
+    acceptSummary: oc.input(zNoteAcceptSummary).output(zNoteWritten),
     // The caller's own to-dos (#1673), which nobody else reads: not another member, an owner or an admin.
     todos: {
       list: oc.input(zTodoList).output(z.array(zTodoSummary)),
       get: oc.input(zTodoRef).output(zTodo),
       create: oc.input(zTodoCreate).output(zTodoWritten),
+      acceptSuggestions: oc.input(zTodoAcceptSuggestions).output(zTodoAcceptSuggestionsResult),
       update: oc.input(zTodoUpdate).output(zTodoWritten),
       complete: oc.input(zTodoRef).output(zTodoWritten),
       reopen: oc.input(zTodoRef).output(zTodoWritten),
@@ -1847,6 +1913,8 @@ export const contract = {
   },
   inbox: {
     list: oc.input(z.object({ status: zProposalStatus.optional() })).output(z.array(zInboxItem)),
+    // How many waiting things the list leaves out because their app is switched off for the org (ADR-0053, slice e).
+    hidden: oc.input(z.object({})).output(z.object({ count: z.number().int().nonnegative() })),
     get: oc.input(z.object({ id: zId })).output(zInboxDetail),
     // Every member who can open the proposal (issue #672): what happened to it, its file and the records it touched.
     timeline: oc.input(z.object({ id: zId })).output(zTimeline),
@@ -2761,6 +2829,7 @@ export const contract = {
           description: z.string().max(10000).optional(),
           assigneePositionId: zId.nullable(),
           due: z.iso.datetime().optional(),
+          checklist: zTaskChecklist.optional(),
           idempotencyKey: zId,
         }),
       )
@@ -2773,6 +2842,7 @@ export const contract = {
           description: z.string().max(10000).nullable().optional(),
           assigneePositionId: zId.nullable().optional(),
           due: z.iso.datetime().nullable().optional(),
+          checklist: zTaskChecklist.optional(),
           idempotencyKey: zId,
         }),
       )
@@ -2813,6 +2883,54 @@ export const contract = {
     confirmTasksFromSource: oc
       .input(zProjectTasksFromSourceConfirmInput.extend({ idempotencyKey: zId }))
       .output(zProjectTasksFromSourceConfirmResult),
+    listTemplates: oc.input(zProjectTemplateListInput).output(zProjectTemplateListResult),
+    createTemplate: oc
+      .input(zProjectTemplateCreateFields.extend({ idempotencyKey: zId }).refine(validTemplateCreateSource, TEMPLATE_CREATE_SOURCE_ISSUE))
+      .output(zProjectTemplateCreateResult),
+    archiveTemplate: oc
+      .input(zProjectTemplateArchiveInput.extend({ idempotencyKey: zId }))
+      .output(zProjectTemplateArchiveResult),
+    createFromTemplate: oc
+      .input(
+        zProjectCreateFromTemplateFields
+          .extend({ idempotencyKey: zId })
+          .refine(validTemplateCreateFromSource, TEMPLATE_CREATE_FROM_SOURCE_ISSUE),
+      )
+      .output(zProjectCreateFromTemplateResult),
+    getTaskRecurrence: oc.input(zProjectTaskRecurrenceGetInput).output(zProjectTaskRecurrenceView.nullable()),
+    setTaskRecurrence: oc
+      .input(zProjectTaskRecurrenceSetInput.extend({ idempotencyKey: zId }))
+      .output(zProjectTaskRecurrenceView),
+    clearTaskRecurrence: oc
+      .input(zProjectTaskRecurrenceClearInput.extend({ idempotencyKey: zId }))
+      .output(zProjectTaskRecurrenceClearResult),
+  },
+  // Electronic signatures (docs/plan/esign.md, #3325). Off-switchable via CROVE_MODULES and org_app_on.
+  sign: {
+    envelope: {
+      list: oc.input(zSignEnvelopeListInput).output(zSignEnvelopeListResult),
+      get: oc.input(z.strictObject({ envelopeId: zId })).output(zSignEnvelopeDetail),
+      events: oc.input(z.strictObject({ envelopeId: zId })).output(zSignEnvelopeEventsResult),
+      verify: oc.input(z.strictObject({ envelopeId: zId })).output(zSignEnvelopeVerifyResult),
+      create: oc.input(zSignEnvelopeCreateInput).output(zSignEnvelopeCreateResult),
+      update: oc.input(zSignEnvelopeUpdateInput).output(zSignEnvelopeUpdateResult),
+      send: oc.input(zSignEnvelopeSendInput).output(zSignEnvelopeSendResult),
+      remind: oc.input(zSignEnvelopeRemindInput).output(zSignEnvelopeRemindResult),
+      void: oc.input(zSignEnvelopeVoidInput).output(zSignEnvelopeVoidResult),
+    },
+    signer: {
+      add: oc.input(zSignSignerAddInput).output(zSignSignerAddResult),
+      remove: oc.input(zSignSignerRemoveInput).output(zSignSignerRemoveResult),
+      reorder: oc.input(zSignSignerReorderInput).output(zSignSignerReorderResult),
+      create_link: oc.input(zSignSignerCreateLinkInput).output(zSignSignerCreateLinkResult),
+    },
+    field: {
+      set: oc.input(zSignFieldSetInput).output(zSignFieldSetResult),
+    },
+    ai: {
+      analyze: oc.input(zSignAiAnalyzeInput).output(zSignAiAnalyzeResult),
+      get: oc.input(z.strictObject({ envelopeId: zId })).output(zSignAiAnalysisRecord.nullable()),
+    },
   },
 };
 

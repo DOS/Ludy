@@ -9,6 +9,7 @@ import { crmGuide } from '../lib/crm-guide.ts';
 import { firmGuide } from '../lib/firm-guide.ts';
 import { quickGuide } from '../lib/quick-guide.ts';
 import { supportLink } from '../lib/support.ts';
+import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 
 // The one-page quick guide (issue #310), then the guide for an accounting firm (#661). Their steps are Vietnamese in
 // every interface language (see quick-guide.ts and firm-guide.ts).
@@ -18,7 +19,8 @@ export function GuidePage() {
   const back = useTranslations('inboxDetail');
   const hasSupport = supportLink(getConfig().supportUrl) !== null;
   // The CRM guide (#2231) only where the crm module is on.
-  const hasCrm = getConfig().modules.includes('crm');
+  useModulesVersion(); // the apps of the org can change while this screen is open
+  const hasCrm = installedModules().includes('crm');
 
   return (
     <>

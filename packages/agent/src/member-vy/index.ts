@@ -9,5 +9,6 @@ export * from './meeting-translation.ts';
 export * from './meeting-ask.ts';
 export * from './tasks-from-note.ts';
 export * from './tasks-from-source.ts';
+export * from './note-ai.ts';
 export * from './ports.ts';
 export * from './run-feature.ts';

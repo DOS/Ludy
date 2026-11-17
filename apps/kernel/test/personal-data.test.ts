@@ -159,7 +159,7 @@ describe('personal-data registry: projects (#2591)', () => {
   });
 
   it('registers every personal-data column of crove_projects for erasure', () => {
-    expect(personal.length).toBe(2);
+    expect(personal.length).toBe(3);
     for (const key of personal) {
       expect(entries[key]).toMatchObject({ kind: 'free_text', handling: 'erase' });
     }
@@ -189,6 +189,6 @@ describe('personal-data registry: sign (#3323)', () => {
     expect(entries['crove_sign.signing_otp.email']).toMatchObject({ kind: 'email', handling: 'erase', machinery: true });
     expect(entries['crove_sign.signer.email']).toMatchObject({ kind: 'email', handling: 'keep_record' });
     expect(entries['crove_sign.signer.phone']).toMatchObject({ kind: 'phone', handling: 'keep_record' });
-    expect(entries['crove_sign.signer.email']?.reason).toContain('draft envelope is erased');
+    expect(entries['crove_sign.signer.email']?.reason).toContain('unsealed envelope is erased');
   });
 });
