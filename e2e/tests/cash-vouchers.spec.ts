@@ -20,7 +20,11 @@ test('enter a bank debit note, approve it and find it numbered in the books', as
     await expect(page.getByRole('heading', { name: 'Thu chi' })).toBeVisible();
     await expect(page.getByText('Chưa có chứng từ thu chi nào được ghi sổ.')).toBeVisible();
     await page.getByRole('button', { name: 'Lập chứng từ' }).click();
-    await page.getByLabel('Loại chứng từ').first().selectOption('bank_debit');
+    // The form opens in a panel over the list, not above it (#3607); the first field is the party.
+    const panel = page.getByRole('dialog', { name: 'Lập chứng từ' });
+    await expect(panel).toBeVisible();
+    await expect(panel.getByLabel('Đối tượng')).toBeFocused();
+    await panel.getByLabel('Loại chứng từ').selectOption('bank_debit');
     await page.getByLabel('Ngày chứng từ').fill('2026-10-15');
     await page.getByLabel('Tài khoản ngân hàng').selectOption('1121');
     await page.getByLabel('Lý do chi').fill('Phí chuyển khoản tháng 10');
@@ -57,6 +61,23 @@ test('enter a bank debit note, approve it and find it numbered in the books', as
     await expect(row).toContainText('Đã ghi sổ');
     await row.getByRole('link', { name: 'Xem bút toán' }).click();
     await expect(page.getByText('BN00001 Phí chuyển khoản tháng 10')).toBeVisible();
+  });
+
+  await test.step('the same voucher typed again shows it looks like BN00001, before it is sent', async () => {
+    await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Thu chi' }).click();
+    await page.getByRole('button', { name: 'Lập chứng từ' }).click();
+    const panel = page.getByRole('dialog', { name: 'Lập chứng từ' });
+    await panel.getByLabel('Loại chứng từ').selectOption('bank_debit');
+    await panel.getByLabel('Ngày chứng từ').fill('2026-10-15');
+    await panel.getByLabel('Số tiền dòng 1').fill('22.000');
+    await expect(panel.getByText(/Có vẻ trùng với phiếu BN00001/)).toBeVisible();
+    // Another amount is not a duplicate; Escape closes the panel and focus goes back to the button that opened it.
+    await panel.getByLabel('Số tiền dòng 1').fill('23.000');
+    await expect(panel.getByText(/Có vẻ trùng với phiếu/)).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(panel).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Lập chứng từ' })).toBeFocused();
   });
 
   await test.step('the MISA exports download from the cash and bank screen: the bank note only in the báo Nợ file', async () => {

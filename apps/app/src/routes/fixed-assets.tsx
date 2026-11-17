@@ -6,12 +6,12 @@ import type { FixedAsset } from '@crove/kernel-contract';
 import { Alert, AlertDescription } from '@crove/ui/components/alert';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { AmountInput } from '../components/amount-input.tsx';
 import { DateInput } from '../components/date-input.tsx';
+import { DuplicateHint, FormPanel } from '../components/form-panel.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { DataTable, Empty, ErrorText, FieldError, fieldControl, fieldErrorId, focusFirstInvalid, PageHeader, TableSkeleton, useFieldErrors } from '../components/ui.tsx';
 import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
@@ -20,6 +20,7 @@ import { apiFetch, errorMessage, getCurrentOrg, orpc, queryClient } from '../lib
 import { exportQuery } from '../lib/legal-entity-choice.ts';
 import {
   defaultAccounts,
+  findDuplicateAsset,
   FIXED_ASSET_FORM_FIELDS,
   fixedAssetFieldProblem,
   fixedAssetInput,
@@ -38,7 +39,7 @@ import { canEnterVoucher } from '../lib/vouchers.ts';
 // from the register as a general journal voucher that an owner or admin approves in the Inbox (R3, four-eyes, fresh
 // MFA).
 
-function AssetFormCard({ onClose }: { onClose: () => void }) {
+function AssetFormPanel({ onClose }: { onClose: () => void }) {
   const root = useTranslations();
   const t = useTranslations('fixedAssets');
   const { locale } = useLocaleSetting();
@@ -55,6 +56,10 @@ function AssetFormCard({ onClose }: { onClose: () => void }) {
   const create = useMutation(orpc.fixedAssets.create.mutationOptions({ onSuccess: () => void queryClient.invalidateQueries() }));
   // Entered in the register of the entity chosen in the shell (#1280).
   const entity = useChosenEntity();
+  // The register as it is, read for the duplicate hint (the screen reads the same list, so this is one request).
+  const register = useQuery({ ...orpc.fixedAssets.list.queryOptions({ input: { legalEntityId: entity.legalEntityId } }), enabled: entity.ready });
+  // The accounts (the usual ones for the kind are filled in) open on request: most entries never change them.
+  const [details, setDetails] = useState(false);
   const set = (patch: Partial<FixedAssetForm>) => setForm((f) => ({ ...f, ...patch }));
   // Each problem sits under its field, checked on leaving it and on submit (DESIGN.md §4.2, #2004); the accounts' sits
   // under the last account field and names all three. The kernel checks again.
@@ -67,6 +72,8 @@ function AssetFormCard({ onClose }: { onClose: () => void }) {
     fields.edit(field);
   };
   const accountsInvalid = Boolean(fields.of('accounts'));
+  const detailsOpen = details || accountsInvalid;
+  const duplicate = findDuplicateAsset(register.data ?? [], form.name, form.cost);
   const account = { 'aria-invalid': accountsInvalid || undefined, 'aria-describedby': accountsInvalid ? fieldErrorId(idOf('accounts')) : undefined };
   const accountInput = (key: 'assetAccount' | 'accumulatedAccount' | 'expenseAccount') => (
     <Input
@@ -80,84 +87,131 @@ function AssetFormCard({ onClose }: { onClose: () => void }) {
 
   if (create.data) {
     return (
-      <Alert className="mb-6">
-        <AlertDescription>
-          {t('created')}{' '}
-          <Button variant="link" className="h-auto p-0" onClick={onClose}>
+      <FormPanel
+        title={t('newTitle')}
+        onClose={onClose}
+        footer={
+          <Button type="button" onClick={onClose}>
             {root('common.close')}
           </Button>
-        </AlertDescription>
-      </Alert>
+        }
+      >
+        <Alert>
+          <AlertDescription>{t('created')}</AlertDescription>
+        </Alert>
+      </FormPanel>
     );
   }
 
   return (
-    <Card className="mb-6 block p-4">
-      <form
-        className="space-y-4"
-        aria-label={t('newTitle')}
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (!fields.checkAll(FIXED_ASSET_FORM_FIELDS)) {
-            focusFirstInvalid(event.currentTarget);
-            return;
-          }
-          if (!entity.ready) return;
-          create.mutate({ ...fixedAssetInput(form), legalEntityId: entity.legalEntityId, idempotencyKey });
-        }}
-      >
-        <div>
-          <h2 className="text-sm font-semibold">{t('newTitle')}</h2>
-          <p className="mt-1 text-xs text-subtle-foreground">{t('newIntro')}</p>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="block text-xs">
-            <span className="text-subtle-foreground">{t('kind')}</span>
-            <NativeSelect
+    <FormPanel
+      title={t('newTitle')}
+      description={t('newIntro')}
+      busy={create.isPending}
+      onClose={onClose}
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!fields.checkAll(FIXED_ASSET_FORM_FIELDS)) {
+          focusFirstInvalid(event.currentTarget);
+          return;
+        }
+        if (!entity.ready) return;
+        create.mutate({ ...fixedAssetInput(form), legalEntityId: entity.legalEntityId, idempotencyKey });
+      }}
+      footer={
+        <>
+          <Button type="button" variant="ghost" onClick={onClose} disabled={create.isPending}>
+            {root('common.cancel')}
+          </Button>
+          <Button loading={create.isPending} type="submit">
+            {t('add')}
+          </Button>
+        </>
+      }
+    >
+      <div className="text-xs">
+        <label className="block">
+          <span className="text-subtle-foreground">{t('name')}</span>
+          <Input
+            {...control('name')}
+            className="mt-1"
+            value={form.name}
+            maxLength={500}
+            onChange={(e) => edited('name', { name: e.target.value })}
+            onBlur={(e) => fields.blur('name', e.target.value)}
+            placeholder={t('namePlaceholder')}
+          />
+        </label>
+        <FieldError id={idOf('name')} className="mt-1">
+          {fields.of('name')}
+        </FieldError>
+      </div>
+      <div className="text-xs">
+        <label className="block">
+          <span className="text-subtle-foreground">{t('cost')}</span>
+          <AmountInput
+            {...control('cost')}
+            className="mt-1 text-right tabular-nums"
+            value={form.cost}
+            onChange={(cost) => edited('cost', { cost })}
+            onBlur={(e) => fields.blur('cost', e.target.value)}
+            placeholder={groupAmount('36000000', locale)}
+          />
+        </label>
+        <FieldError id={idOf('cost')} className="mt-1">
+          {fields.of('cost')}
+        </FieldError>
+      </div>
+      <DuplicateHint testId="asset-duplicate">{duplicate && t('duplicate', { name: duplicate.name })}</DuplicateHint>
+      <label className="block text-xs">
+        <span className="text-subtle-foreground">{t('kind')}</span>
+        <NativeSelect
+          className="mt-1 w-full"
+          value={form.kind}
+          onChange={(e) => {
+            const kind = e.target.value as FixedAssetKind;
+            edited('accounts', { kind, ...defaultAccounts(kind) });
+          }}
+        >
+          <NativeSelectOption value="fixed_asset">{t('kinds.fixed_asset')}</NativeSelectOption>
+          <NativeSelectOption value="prepaid_cost">{t('kinds.prepaid_cost')}</NativeSelectOption>
+        </NativeSelect>
+      </label>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="text-xs">
+          <label className="block">
+            <span className="text-subtle-foreground">{t('startMonth')}</span>
+            <DateInput
+              kind="month"
+              {...control('startMonth')}
               className="mt-1 w-full"
-              value={form.kind}
-              onChange={(e) => {
-                const kind = e.target.value as FixedAssetKind;
-                edited('accounts', { kind, ...defaultAccounts(kind) });
-              }}
-            >
-              <NativeSelectOption value="fixed_asset">{t('kinds.fixed_asset')}</NativeSelectOption>
-              <NativeSelectOption value="prepaid_cost">{t('kinds.prepaid_cost')}</NativeSelectOption>
-            </NativeSelect>
+              value={form.startMonth}
+              onChange={(startMonth) => edited('startMonth', { startMonth })}
+            />
           </label>
-          <div className="text-xs">
-            <label className="block">
-              <span className="text-subtle-foreground">{t('name')}</span>
-              <Input
-                {...control('name')}
-                className="mt-1"
-                value={form.name}
-                maxLength={500}
-                onChange={(e) => edited('name', { name: e.target.value })}
-                onBlur={(e) => fields.blur('name', e.target.value)}
-                placeholder={t('namePlaceholder')}
-              />
-            </label>
-            <FieldError id={idOf('name')} className="mt-1">
-              {fields.of('name')}
-            </FieldError>
-          </div>
-          <div className="text-xs">
-            <label className="block">
-              <span className="text-subtle-foreground">{t('cost')}</span>
-              <AmountInput
-                {...control('cost')}
-                className="mt-1 text-right tabular-nums"
-                value={form.cost}
-                onChange={(cost) => edited('cost', { cost })}
-                onBlur={(e) => fields.blur('cost', e.target.value)}
-                placeholder={groupAmount('36000000', locale)}
-              />
-            </label>
-            <FieldError id={idOf('cost')} className="mt-1">
-              {fields.of('cost')}
-            </FieldError>
-          </div>
+          <FieldError id={idOf('startMonth')} className="mt-1">
+            {fields.of('startMonth')}
+          </FieldError>
+        </div>
+        <div className="text-xs">
+          <label className="block">
+            <span className="text-subtle-foreground">{t('months')}</span>
+            <Input
+              {...control('months')}
+              className="mt-1"
+              inputMode="numeric"
+              value={form.months}
+              onChange={(e) => edited('months', { months: e.target.value })}
+              onBlur={(e) => fields.blur('months', e.target.value)}
+            />
+          </label>
+          <FieldError id={idOf('months')} className="mt-1">
+            {fields.of('months')}
+          </FieldError>
+        </div>
+      </div>
+      {detailsOpen ? (
+        <div className="space-y-4">
           <label className="block text-xs">
             <span className="text-subtle-foreground">{t('assetAccount')}</span>
             {accountInput('assetAccount')}
@@ -177,53 +231,20 @@ function AssetFormCard({ onClose }: { onClose: () => void }) {
               {fields.of('accounts')}
             </FieldError>
           </div>
-          <div className="text-xs">
-            <label className="block">
-              <span className="text-subtle-foreground">{t('startMonth')}</span>
-              <DateInput
-                kind="month"
-                {...control('startMonth')}
-                className="mt-1 w-full"
-                value={form.startMonth}
-                onChange={(startMonth) => edited('startMonth', { startMonth })}
-              />
-            </label>
-            <FieldError id={idOf('startMonth')} className="mt-1">
-              {fields.of('startMonth')}
-            </FieldError>
-          </div>
-          <div className="text-xs">
-            <label className="block">
-              <span className="text-subtle-foreground">{t('months')}</span>
-              <Input
-                {...control('months')}
-                className="mt-1"
-                inputMode="numeric"
-                value={form.months}
-                onChange={(e) => edited('months', { months: e.target.value })}
-                onBlur={(e) => fields.blur('months', e.target.value)}
-              />
-            </label>
-            <FieldError id={idOf('months')} className="mt-1">
-              {fields.of('months')}
-            </FieldError>
-          </div>
         </div>
-        {create.error && <ErrorText>{errorMessage(create.error)}</ErrorText>}
-        <div className="flex gap-2">
-          <Button loading={create.isPending} type="submit">
-            {t('add')}
-          </Button>
-          <Button type="button" variant="ghost" onClick={onClose} disabled={create.isPending}>
-            {root('common.cancel')}
+      ) : (
+        <div>
+          <Button type="button" variant="ghost" size="sm" onClick={() => setDetails(true)}>
+            {t('moreDetails')}
           </Button>
         </div>
-      </form>
-    </Card>
+      )}
+      {create.error && <ErrorText>{errorMessage(create.error)}</ErrorText>}
+    </FormPanel>
   );
 }
 
-function DepreciationCard({ slug, onClose }: { slug: string; onClose: () => void }) {
+function DepreciationPanel({ slug, onClose }: { slug: string; onClose: () => void }) {
   const root = useTranslations();
   const t = useTranslations('fixedAssets');
   const months = recentMonths(previousMonth(localToday()));
@@ -235,57 +256,65 @@ function DepreciationCard({ slug, onClose }: { slug: string; onClose: () => void
 
   if (request.data) {
     return (
-      <Alert className="mb-6">
-        <AlertDescription>
-          {t('depreciationCreated', { month: monthLabel(month) })}{' '}
-          <Link to="/o/$slug/inbox/$id" params={{ slug, id: request.data.proposalId }} className="text-link underline">
-            {t('viewProposal')}
-          </Link>
-        </AlertDescription>
-      </Alert>
+      <FormPanel
+        title={t('depreciationTitle')}
+        onClose={onClose}
+        footer={
+          <Button type="button" onClick={onClose}>
+            {root('common.close')}
+          </Button>
+        }
+      >
+        <Alert>
+          <AlertDescription>
+            {t('depreciationCreated', { month: monthLabel(month) })}{' '}
+            <Link to="/o/$slug/inbox/$id" params={{ slug, id: request.data.proposalId }} className="text-link underline">
+              {t('viewProposal')}
+            </Link>
+          </AlertDescription>
+        </Alert>
+      </FormPanel>
     );
   }
 
   return (
-    <Card className="mb-6 block p-4">
-      <form
-        className="space-y-4"
-        aria-label={t('depreciationTitle')}
-        onSubmit={(event) => {
-          event.preventDefault();
-          request.mutate({ command: 'finance.depreciation.record', idempotencyKey, input: { month, legalEntityId: entity.legalEntityId } });
-        }}
-      >
-        <div>
-          <h2 className="text-sm font-semibold">{t('depreciationTitle')}</h2>
-          <p className="mt-1 text-xs text-subtle-foreground">{t('depreciationIntro')}</p>
-        </div>
-        <label className="block text-xs">
-          <span className="text-subtle-foreground">{t('month')}</span>
-          <NativeSelect className="mt-1 w-36" value={month} onChange={(e) => setMonth(e.target.value)} disabled={request.isPending}>
-            {months.map((m) => (
-              <NativeSelectOption key={m} value={m}>
-                {monthLabel(m)}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
-        </label>
-        {request.error && <ErrorText>{errorMessage(request.error)}</ErrorText>}
-        <div className="flex gap-2">
-          <Button loading={request.isPending} type="submit" disabled={request.isPending || !entity.ready}>
-            {t('depreciationSubmit')}
-          </Button>
+    <FormPanel
+      title={t('depreciationTitle')}
+      description={t('depreciationIntro')}
+      busy={request.isPending}
+      onClose={onClose}
+      onSubmit={(event) => {
+        event.preventDefault();
+        request.mutate({ command: 'finance.depreciation.record', idempotencyKey, input: { month, legalEntityId: entity.legalEntityId } });
+      }}
+      footer={
+        <>
           <Button type="button" variant="ghost" onClick={onClose} disabled={request.isPending}>
             {root('common.cancel')}
           </Button>
-        </div>
-      </form>
-    </Card>
+          <Button loading={request.isPending} type="submit" disabled={request.isPending || !entity.ready}>
+            {t('depreciationSubmit')}
+          </Button>
+        </>
+      }
+    >
+      <label className="block text-xs">
+        <span className="text-subtle-foreground">{t('month')}</span>
+        <NativeSelect className="mt-1 w-full" value={month} onChange={(e) => setMonth(e.target.value)} disabled={request.isPending}>
+          {months.map((m) => (
+            <NativeSelectOption key={m} value={m}>
+              {monthLabel(m)}
+            </NativeSelectOption>
+          ))}
+        </NativeSelect>
+      </label>
+      {request.error && <ErrorText>{errorMessage(request.error)}</ErrorText>}
+    </FormPanel>
   );
 }
 
 // Stops a schedule early (disposed of, written off): the month given is the last that still counts.
-function EndForm({ asset, onClose }: { asset: FixedAsset; onClose: () => void }) {
+function EndPanel({ asset, onClose }: { asset: FixedAsset; onClose: () => void }) {
   const root = useTranslations();
   const t = useTranslations('fixedAssets');
   const [month, setMonth] = useState(asset.lastPostedMonth ?? previousMonth(localToday()));
@@ -293,31 +322,36 @@ function EndForm({ asset, onClose }: { asset: FixedAsset; onClose: () => void })
   const [idempotencyKey] = useState(() => crypto.randomUUID());
   const end = useMutation(orpc.fixedAssets.end.mutationOptions({ onSuccess: () => void queryClient.invalidateQueries() }));
   return (
-    <form
-      className="mt-3 flex flex-wrap items-end gap-3"
-      aria-label={t('endTitle', { name: asset.name })}
+    <FormPanel
+      title={t('endTitle', { name: asset.name })}
+      busy={end.isPending}
+      onClose={onClose}
       onSubmit={(event) => {
         event.preventDefault();
         if (reason.trim() === '') return;
         end.mutate({ assetId: asset.id, month, reason: reason.trim(), idempotencyKey }, { onSuccess: onClose });
       }}
+      footer={
+        <>
+          <Button type="button" variant="ghost" onClick={onClose} disabled={end.isPending}>
+            {root('common.cancel')}
+          </Button>
+          <Button loading={end.isPending} type="submit" disabled={end.isPending || reason.trim() === ''}>
+            {t('end')}
+          </Button>
+        </>
+      }
     >
-      <label className="text-xs">
+      <label className="block text-xs">
         <span className="text-subtle-foreground">{t('endMonth')}</span>
-        <DateInput kind="month" className="mt-1 w-40" value={month} onChange={setMonth} />
+        <DateInput kind="month" className="mt-1 w-full" value={month} onChange={setMonth} />
       </label>
-      <label className="grow text-xs">
+      <label className="block text-xs">
         <span className="text-subtle-foreground">{t('endReason')}</span>
         <Input className="mt-1" value={reason} maxLength={500} onChange={(e) => setReason(e.target.value)} placeholder={t('endReasonPlaceholder')} />
       </label>
-      <Button loading={end.isPending} type="submit" size="sm" disabled={end.isPending || reason.trim() === ''}>
-        {t('end')}
-      </Button>
-      <Button type="button" size="sm" variant="ghost" onClick={onClose} disabled={end.isPending}>
-        {root('common.cancel')}
-      </Button>
       {end.error && <ErrorText>{errorMessage(end.error)}</ErrorText>}
-    </form>
+    </FormPanel>
   );
 }
 
@@ -334,6 +368,7 @@ export function FixedAssetsPage() {
   const [ending, setEnding] = useState<string | null>(null);
   const canEnter = canEnterVoucher(org.data?.role);
   const rows = assets.data ?? [];
+  const endingAsset = rows.find((a) => a.id === ending) ?? null;
 
   const exportXlsx = useMutation({
     mutationFn: async () => {
@@ -354,12 +389,12 @@ export function FixedAssetsPage() {
         subtitle={t('subtitle')}
         actions={
           <div className="flex flex-wrap gap-2">
-            {canEnter && !adding && (
+            {canEnter && (
               <Button size="lg" variant="outline" onClick={() => setAdding(true)}>
                 {t('new')}
               </Button>
             )}
-            {canEnter && !depreciating && (
+            {canEnter && (
               <Button size="lg" variant="outline" onClick={() => setDepreciating(true)} disabled={rows.length === 0} title={rows.length === 0 ? t('needsAsset') : undefined}>
                 {t('depreciate')}
               </Button>
@@ -371,8 +406,9 @@ export function FixedAssetsPage() {
         }
       />
       {exportXlsx.error && <ErrorText>{errorMessage(exportXlsx.error)}</ErrorText>}
-      {adding && <AssetFormCard onClose={() => setAdding(false)} />}
-      {depreciating && <DepreciationCard slug={slug} onClose={() => setDepreciating(false)} />}
+      {adding && <AssetFormPanel onClose={() => setAdding(false)} />}
+      {depreciating && <DepreciationPanel slug={slug} onClose={() => setDepreciating(false)} />}
+      {endingAsset && <EndPanel key={endingAsset.id} asset={endingAsset} onClose={() => setEnding(null)} />}
       {assets.isPending ? (
         <TableSkeleton columns={5} />
       ) : assets.error ? (
@@ -383,7 +419,7 @@ export function FixedAssetsPage() {
           title={t('empty')}
           hint={t('emptyHint')}
           action={
-            canEnter && !adding ? (
+            canEnter ? (
               <Button variant="outline" onClick={() => setAdding(true)}>
                 {t('new')}
               </Button>
@@ -401,12 +437,11 @@ export function FixedAssetsPage() {
                   {a.ended && <Badge variant="secondary">{t('ended', { month: monthLabel(a.ended.month) })}</Badge>}
                 </div>
                 {a.ended && <div className="mt-1 text-xs text-subtle-foreground">{a.ended.reason}</div>}
-                {canEnter && !a.ended && ending !== a.id && (
+                {canEnter && !a.ended && (
                   <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setEnding(a.id)}>
                     {t('end')}
                   </Button>
                 )}
-                {ending === a.id && <EndForm asset={a} onClose={() => setEnding(null)} />}
               </TableCell>
               <TableCell className="px-4 py-3 font-mono text-xs text-muted-foreground">
                 {[a.assetAccount, a.accumulatedAccount, a.expenseAccount].filter(Boolean).join(' · ')}

@@ -1,7 +1,7 @@
 // The register form (#919): its defaults per kind, its checks and the input it sends, and the months offered for a
 // depreciation.
 import { describe, expect, it } from 'vitest';
-import { defaultAccounts, FIXED_ASSET_FORM_FIELDS, fixedAssetFieldProblem, fixedAssetFormProblem, fixedAssetInput, monthLabel, previousMonth, recentMonths, type FixedAssetForm } from '../src/lib/fixed-assets.ts';
+import { defaultAccounts, findDuplicateAsset, FIXED_ASSET_FORM_FIELDS, fixedAssetFieldProblem, fixedAssetFormProblem, fixedAssetInput, monthLabel, previousMonth, recentMonths, type FixedAssetForm } from '../src/lib/fixed-assets.ts';
 
 const form = (over: Partial<FixedAssetForm> = {}): FixedAssetForm => ({
   kind: 'fixed_asset',
@@ -49,5 +49,27 @@ describe('the fixed asset form', () => {
     expect(previousMonth('2027-01-05')).toBe('2026-12');
     expect(recentMonths('2027-02', 3)).toEqual(['2027-02', '2027-01', '2026-12']);
     expect(monthLabel('2026-09')).toBe('09/2026');
+  });
+});
+
+// The hint shown while an entry is typed (#3607): the same name and cost as one in the register.
+describe('the duplicate asset hint', () => {
+  const asset = (patch: Record<string, unknown> = {}) => ({ name: 'Máy in văn phòng', cost: '12000000.0000', ended: null as unknown, ...patch });
+
+  it('finds the asset with the same name and cost, ignoring case, spaces and the spelling of the amount', () => {
+    expect(findDuplicateAsset([asset()], 'máy in văn phòng ', '12.000.000')).not.toBeNull();
+    expect(findDuplicateAsset([asset({ cost: '12000000' })], 'Máy in văn phòng', '12000000')).not.toBeNull();
+  });
+
+  it('finds nothing when the name or the cost differs, or the asset was stopped', () => {
+    expect(findDuplicateAsset([asset()], 'Máy in màu', '12.000.000')).toBeNull();
+    expect(findDuplicateAsset([asset()], 'Máy in văn phòng', '12.000.001')).toBeNull();
+    expect(findDuplicateAsset([asset({ ended: { month: '2026-10', reason: 'Thanh lý' } })], 'Máy in văn phòng', '12.000.000')).toBeNull();
+  });
+
+  it('says nothing before there is a name and a cost', () => {
+    expect(findDuplicateAsset([asset()], '', '12.000.000')).toBeNull();
+    expect(findDuplicateAsset([asset()], 'Máy in văn phòng', '')).toBeNull();
+    expect(findDuplicateAsset([asset()], 'Máy in văn phòng', '0')).toBeNull();
   });
 });
