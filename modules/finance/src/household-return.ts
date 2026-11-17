@@ -17,6 +17,7 @@ import type { MemberRole } from '@crove/db';
 import { DomainError, defineQuery } from '@crove/kernel-runtime';
 import { money, sum, toMoney } from '@crove/l10n-vn';
 import { pickInForce } from './domain/household-rules.ts';
+import { taxOn } from './domain/household-tax.ts';
 import { householdProfileView } from './household.ts';
 import { accountLedgerOf } from './ledger-reports.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
@@ -26,13 +27,6 @@ const SALES_ACCOUNT = '511';
 const FORM = '01/CNKD';
 
 const notRequired = () => new DomainError('HOUSEHOLD_RETURN_NOT_REQUIRED', 422, 'Hộ kinh doanh này không phải kê khai tờ khai 01/CNKD theo quý trong kỳ đã chọn');
-
-// Revenue times a percentage, rounded to a whole dong; a quarter with net returns owes nothing (it never goes negative).
-function taxOn(revenue: string, percent: string): string {
-  const base = money(revenue);
-  if (base.lte(0)) return '0';
-  return toMoney(base.times(money(percent)).div(100).toDecimalPlaces(0));
-}
 
 const nonNegative = (value: ReturnType<typeof money>) => (value.lt(0) ? money(0) : value);
 
