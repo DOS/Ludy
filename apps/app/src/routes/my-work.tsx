@@ -374,7 +374,12 @@ function TodoEditor({ todo, lists, onClose }: { todo: Todo; lists: readonly Todo
   useEffect(() => titleRef.current?.focus(), []);
   const selectedList = lists.find((l) => l.id === listId);
   const availableSections = selectedList?.sections ?? [];
-  const parsedTags = parseTags(tagsInput);
+  const parsedTags = parseTags(
+    tagsInput
+      .split(',')
+      .map((tag) => tag.trim().replace(/^#+/, ''))
+      .join(','),
+  );
   // A change not saved yet: the hand-over waits for it, so it never hands over a to-do other than the one shown.
   const dirty =
     title !== todo.title ||
@@ -1240,6 +1245,12 @@ export function MyWorkPage() {
   };
 
   const hasFilters = tagFilter !== '' || priorityFilter !== null || effectiveProjectFilter !== '';
+  const clearFilters = () => {
+    setTagFilter('');
+    setPriorityFilter(null);
+    setProjectFilter('');
+    setSelected(null);
+  };
 
   return (
     <div className="space-y-4">
@@ -1341,7 +1352,7 @@ export function MyWorkPage() {
               </Button>
             </div>
           )}
-          <QuickAdd inputRef={quickAdd} listId={activeList ? activeList.id : null} />
+          <QuickAdd inputRef={quickAdd} listId={activeList ? activeList.id : null} label={activeList ? t('quickAddInList', { name: activeList.name }) : undefined} />
           {view === 'open' && effectiveListFilter === 'all' && work.data?.noSeatHint && (
             <Alert className="border-border bg-muted/35" data-testid="my-work-no-seat-hint">
               <AlertDescription className="flex flex-wrap items-center justify-between gap-2 text-xs text-foreground">
@@ -1441,6 +1452,11 @@ export function MyWorkPage() {
                   </NativeSelect>
                 </div>
               )}
+              {hasFilters && (
+                <Button type="button" size="sm" variant="ghost" data-testid="clear-filters-button" onClick={clearFilters} className="h-9 px-2 text-xs sm:h-8">
+                  {t('clearFilters')}
+                </Button>
+              )}
             </div>
           </div>
           {tagChips.length > 0 && (
@@ -1478,6 +1494,13 @@ export function MyWorkPage() {
               <Empty
                 title={hasFilters ? t('emptyFiltered') : t('emptyList')}
                 hint={hasFilters ? t('emptyFilteredHint') : t('emptyListHint')}
+                action={
+                  hasFilters ? (
+                    <Button type="button" size="sm" variant="outline" onClick={clearFilters}>
+                      {t('clearFilters')}
+                    </Button>
+                  ) : undefined
+                }
               />
             ) : (
               sectionGroups.map((sec) => (
@@ -1512,9 +1535,11 @@ export function MyWorkPage() {
                     : hasFilters
                       ? t('emptyFiltered')
                       : t('empty')
-                  : view === 'done'
-                    ? t('emptyDone')
-                    : t('emptyTrash')
+                  : hasFilters
+                    ? t('emptyFiltered')
+                    : view === 'done'
+                      ? t('emptyDone')
+                      : t('emptyTrash')
               }
               hint={
                 view === 'open'
@@ -1523,7 +1548,16 @@ export function MyWorkPage() {
                     : hasFilters
                       ? t('emptyFilteredHint')
                       : t('emptyHint')
-                  : undefined
+                  : hasFilters
+                    ? t('emptyFilteredHint')
+                    : undefined
+              }
+              action={
+                hasFilters ? (
+                  <Button type="button" size="sm" variant="outline" onClick={clearFilters}>
+                    {t('clearFilters')}
+                  </Button>
+                ) : undefined
               }
             />
           ) : view === 'open' ? (

@@ -317,6 +317,9 @@ suite('personal to-dos on PostgreSQL (#1673)', () => {
     await expect(
       o.exec(o.mine, 'notes.todo.create', { title: 'Sai mục', listId: list.id, sectionId: 'khong-ton-tai' }),
     ).rejects.toMatchObject({ code: 'TODO_SECTION_NOT_FOUND', status: 400 });
+    await expect(
+      o.exec(o.mine, 'notes.todo.update', { todoId: inboxTodo.todoId, revision: 1, sectionId: 'sec-cuoi' }),
+    ).rejects.toMatchObject({ code: 'TODO_SECTION_NOT_FOUND', status: 400 });
 
     // Privacy: another member, owner, admin, viewer get 404/empty and cannot attach todos or edit lists.
     for (const caller of [o.other, o.owner, o.admin, o.viewer]) {
@@ -363,12 +366,20 @@ suite('personal to-dos on PostgreSQL (#1673)', () => {
       sections: [{ id: 'sec-cuoi', name: 'Cuối tuần (gấp)' }],
     });
     const clearedSectionTodo = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: p3Todo.todoId });
-    expect(clearedSectionTodo).toMatchObject({ listId: list.id, sectionId: null });
+    expect(clearedSectionTodo).toMatchObject({ listId: list.id, sectionId: null, revision: 2 });
 
-    // 6. Export includes priority, tags, listId, sectionId; audit facts hold zero PII text.
+    // 6. Export includes priority, tags, listId, sectionId, and todoLists; audit facts hold zero PII text.
     const exported = await o.query<NotesExport>(o.mine, 'notes.mine.export');
     const expP1 = exported.todos.find((t) => t.id === p1Todo.todoId);
     expect(expP1).toMatchObject({ priority: 1, tags: ['thue', 'khan-cap'], listId: list.id, sectionId: 'sec-cuoi' });
+    expect(exported.todoLists).toEqual([
+      expect.objectContaining({
+        id: list.id,
+        name: 'Thuế đã cập nhật',
+        color: 'emerald',
+        sections: [{ id: 'sec-cuoi', name: 'Cuối tuần (gấp)' }],
+      }),
+    ]);
     const auditText = await admin(async (c) =>
       JSON.stringify(
         (
@@ -386,7 +397,7 @@ suite('personal to-dos on PostgreSQL (#1673)', () => {
     // 7. Deleting the list returns its todos back to Inbox safely, and trash_empty purges aged trashed lists.
     await o.exec<TodoListWritten>(o.mine, 'notes.todo_list.delete', { listId: list.id });
     expect((await o.query<TodoListsResponse>(o.mine, 'notes.todo_list.list')).lists).toEqual([]);
-    expect(await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: p1Todo.todoId })).toMatchObject({ listId: null, sectionId: null });
+    expect(await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: p1Todo.todoId })).toMatchObject({ listId: null, sectionId: null, revision: 2 });
     await admin((c) => c.query(`UPDATE crove_notes.todo_list SET deleted_at = now() - interval '31 days' WHERE id = $1`, [list.id]));
     expect(await worker.execute('notes.trash.empty', {}, { actor: SYSTEM, orgId: o.orgId })).toEqual({ removed: 1 });
   });

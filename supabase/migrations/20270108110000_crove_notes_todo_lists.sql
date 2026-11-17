@@ -213,7 +213,8 @@ BEGIN
     INTO v_owner, v_deleted, v_sections
     FROM crove_notes.todo_list l
    WHERE l.org_id = NEW.org_id
-     AND l.id = NEW.list_id;
+     AND l.id = NEW.list_id
+     FOR SHARE;
 
   IF NOT FOUND OR v_owner IS DISTINCT FROM NEW.owner_user_id THEN
     RAISE EXCEPTION 'todo list is not accessible for this to-do' USING ERRCODE = '42501';

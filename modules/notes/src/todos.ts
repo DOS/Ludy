@@ -195,10 +195,10 @@ const listLimitReached = () => new DomainError('TODO_LIST_LIMIT_REACHED', 422, '
 
 const listTarget = (input: { listId: string }) => ({ type: 'notes.todo_list', id: input.listId });
 const listWritten = (row: { id: string; revision: number }): TodoListWritten => ({ listId: row.id, revision: row.revision });
-const listColorOf = (raw: string | null): TodoListColor | null =>
+export const listColorOf = (raw: string | null): TodoListColor | null =>
   raw !== null && (TODO_LIST_COLORS as readonly string[]).includes(raw) ? (raw as TodoListColor) : null;
 
-function parseSections(raw: unknown): TodoListSection[] {
+export function parseSections(raw: unknown): TodoListSection[] {
   if (!Array.isArray(raw)) return [];
   const out: TodoListSection[] = [];
   for (const item of raw) {
@@ -220,18 +220,25 @@ function normalizeSections(inputs: ReadonlyArray<TodoListSectionInput>): TodoLis
 }
 
 // Verify personal list readability/liveness under caller RLS and section_id membership (no existence oracle).
-async function validateTodoListAndSection(ctx: Pick<CommandContext, 'trx' | 'orgId'>, listId: string | null, sectionId: string | null): Promise<void> {
+// Takes FOR SHARE when called during a write so concurrent todo_list.update/delete cannot race past it.
+async function validateTodoListAndSection(
+  ctx: Pick<CommandContext, 'trx' | 'orgId'>,
+  listId: string | null,
+  sectionId: string | null,
+  lockShare = false,
+): Promise<void> {
   if (listId === null) {
     if (sectionId !== null) throw sectionNotFound();
     return;
   }
-  const list = await ctx.trx
+  let q = ctx.trx
     .selectFrom('crove_notes.todo_list')
     .select(['id', 'sections'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', listId)
-    .where('deleted_at', 'is', null)
-    .executeTakeFirst();
+    .where('deleted_at', 'is', null);
+  if (lockShare) q = q.forShare();
+  const list = await q.executeTakeFirst();
   if (!list) throw listNotFound();
   if (sectionId !== null && !parseSections(list.sections).some((s) => s.id === sectionId)) {
     throw sectionNotFound();
@@ -345,7 +352,7 @@ export const todoCreate = defineCommand({
       if (!sourceNote) throw new DomainError('NOTE_NOT_FOUND', 404, 'Không tìm thấy ghi chú này');
       sourceTainted = sourceNote.tainted;
     }
-    await validateTodoListAndSection(ctx, input.listId, input.sectionId);
+    await validateTodoListAndSection(ctx, input.listId, input.sectionId, true);
     // A new to-do goes first in the caller's list.
     const rows = await ownKeys(ctx, null);
     const sortKey = await placeBetween(ctx, rows, -1, 0);
@@ -406,6 +413,23 @@ export const todoUpdate = defineCommand({
   target,
   handler: async (ctx, input): Promise<TodoWritten> => {
     userOf(ctx.actor);
+    // Lock target todo_list FOR SHARE before locking the todo row so global lock order matches todoListUpdate/todoListDelete.
+    if (input.listId !== undefined || input.sectionId !== undefined) {
+      let lockListId: string | null = input.listId ?? null;
+      if (input.listId === undefined) {
+        const peek = await ctx.trx
+          .selectFrom('crove_notes.todo')
+          .select('list_id')
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', input.todoId)
+          .executeTakeFirst();
+        if (!peek) throw notFound();
+        lockListId = peek.list_id;
+      }
+      if (lockListId !== null) {
+        await validateTodoListAndSection(ctx, lockListId, null, true);
+      }
+    }
     const before = await load(ctx, input.todoId, true);
     assertNotInTrash(before);
     if (before.revision !== input.revision) throw revisionConflict(before.revision);
@@ -416,9 +440,15 @@ export const todoUpdate = defineCommand({
     const nextTags = input.tags ?? before.tags;
     const nextListId = input.listId !== undefined ? input.listId : before.list_id;
     const listChanged = nextListId !== before.list_id;
-    const nextSectionId = nextListId === null ? null : input.sectionId !== undefined ? input.sectionId : listChanged ? null : before.section_id;
+    const nextSectionId =
+      input.sectionId !== undefined
+        ? input.sectionId
+        : listChanged || nextListId === null
+          ? null
+          : before.section_id;
+    if (nextListId === null && nextSectionId !== null) throw sectionNotFound();
     if (listChanged || nextSectionId !== before.section_id) {
-      await validateTodoListAndSection(ctx, nextListId, nextSectionId);
+      await validateTodoListAndSection(ctx, nextListId, nextSectionId, true);
     }
     const beforeDueAt = before.due_at === null ? null : new Date(before.due_at).getTime();
     const dueMoved = before.due_on !== next.due_on || beforeDueAt !== (next.due_at?.getTime() ?? null) || before.time_zone !== next.time_zone;
@@ -955,7 +985,7 @@ export const todoListUpdate = defineCommand({
     if (removedIds.length > 0) {
       await ctx.trx
         .updateTable('crove_notes.todo')
-        .set({ section_id: null, updated_at: ctx.now })
+        .set({ section_id: null, revision: sql`revision + 1`, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('list_id', '=', input.listId)
         .where('section_id', 'in', removedIds)
@@ -1008,10 +1038,10 @@ export const todoListDelete = defineCommand({
       .forUpdate()
       .executeTakeFirst();
     if (!before || before.deleted_at !== null) throw listNotFound();
-    // Move all to-dos of this list back to Inbox before soft-deleting the list.
+    // Move all to-dos of this list back to Inbox before soft-deleting the list, bumping revision so open editors stay in sync.
     await ctx.trx
       .updateTable('crove_notes.todo')
-      .set({ list_id: null, section_id: null, updated_at: ctx.now })
+      .set({ list_id: null, section_id: null, revision: sql`revision + 1`, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('list_id', '=', input.listId)
       .execute();

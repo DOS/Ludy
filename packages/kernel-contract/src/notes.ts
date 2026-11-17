@@ -502,6 +502,18 @@ export const zNotesExport = z.object({
       links: z.array(z.object({ targetType: z.string(), targetId: z.string() })),
     }),
   ),
+  todoLists: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      color: z.enum(TODO_LIST_COLORS).nullable(),
+      sections: z.array(zTodoListSection),
+      sortKey: z.string(),
+      createdAt: z.string(),
+      updatedAt: z.string(),
+      deletedAt: z.string().nullable(),
+    }),
+  ),
   truncated: z.boolean(),
 });
 export type NotesExport = z.infer<typeof zNotesExport>;
