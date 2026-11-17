@@ -6,9 +6,10 @@
 //   stored) and what is not given a trade yet is `unassigned`, which holds the totals back: the code never guesses a split. VAT and PIT are revenue times the percentage in force on the quarter's last
 //   day, each rounded to a whole dong, and the exempt band of the year is not deducted because that rule is unconfirmed (#2520). The tax the platforms already withheld is the sum of the stored
 //   settlements whose period ends in the quarter, reversed ones and reversals left out: it is not posted to the ledger yet (#2516), so it comes from the settlement record.
-// - The worksheet is `commentary` while any row behind it (the form, a percentage) is not confirmed by the accountant; `forExport` then refuses (HOUSEHOLD_RULES_UNCONFIRMED), and so it does while
-//   revenue is unassigned. Refused too for an entity with no profile in the quarter, a household that files no return (group 1), the income method (a later slice), and a profile that changes inside
-//   the quarter (the quarter cannot be asked for in parts).
+// - The worksheet is `commentary` while any row behind it (the form, a percentage) is not confirmed by the accountant (owner's direction of 2026-11-17: build on the working answers while the accountant
+//   reviews, #2520). It is still given, with `commentary` and the list of unconfirmed rows, so the screen and the Excel file label every figure "Số liệu tạm, kế toán chưa xác nhận tỷ lệ"; the label goes
+//   when the rows are confirmed, with no code change. `forExport` still refuses while revenue is unassigned. Refused too for an entity with no profile in the quarter, a household that files no
+//   return (group 1), the income method (a later slice), and a profile that changes inside the quarter (the quarter cannot be asked for in parts).
 // Amounts are decimal strings through decimal.js, never JS numbers.
 import type { HouseholdCnkd, HouseholdCnkdLine } from '@crove/kernel-contract';
 import { HOUSEHOLD_TRADES, zHouseholdCnkd, zHouseholdCnkdGet } from '@crove/kernel-contract';
@@ -159,10 +160,7 @@ export const householdCnkd = defineQuery({
       if (rate.status !== 'confirmed') unconfirmed.push({ kind: 'rate', key: t, effectiveFrom: rate.effective_from });
     }
     const commentary = unconfirmed.length > 0;
-    if (input.forExport) {
-      if (commentary) throw new DomainError('HOUSEHOLD_RULES_UNCONFIRMED', 422, 'Biểu mẫu hoặc tỷ lệ thuế còn chờ kế toán xác nhận nên chưa xuất được tờ khai ra Excel', { unconfirmed });
-      if (!totals) throw invalid('Chưa chia hết doanh thu theo ngành nghề nên chưa xuất được tờ khai');
-    }
+    if (input.forExport && !totals) throw invalid('Chưa chia hết doanh thu theo ngành nghề nên chưa xuất được tờ khai');
 
     const entityRow = await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', entity).executeTakeFirstOrThrow();
     return zHouseholdCnkd.parse({

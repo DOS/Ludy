@@ -4616,7 +4616,8 @@ export const en = {
     cnkdTitle: '01/CNKD: quarterly return worksheet',
     cnkdHint: 'Revenue by trade from the ledger, VAT and personal income tax by the percentages in force, less the tax the platforms already withheld. Use it to fill in the return.',
     cnkdNotice: 'This is a worksheet. {brand} does not file the return and does not send anything to the tax authority: you or your accountant file it on the tax portal or eTax Mobile.',
-    cnkdDraft: 'These figures are a draft: the following rules are still waiting for the accountant to check them, so the Excel file is not offered yet.',
+    cnkdDraft: 'These figures are provisional: the following rules are still waiting for the accountant to check them. You can still read them and download the Excel file; every figure and the file say they are provisional.',
+    cnkdProvisional: 'Provisional figures: the accountant has not confirmed the percentages yet',
     cnkdUnconfirmedForm: 'The form {key}, from {date}',
     cnkdUnconfirmedRate: 'The percentages for {trade}, from {date}',
     cnkdFile: '01-cnkd-{period}-{org}.xlsx',
@@ -11724,7 +11725,6 @@ export const en = {
       HOUSEHOLD_RETURN_PROFILE_CHANGED: 'The household profile changes inside this quarter, so the quarterly worksheet cannot be made; ask the accountant',
       HOUSEHOLD_RATE_MISSING: 'There is no tax percentage for one of the trades in the profile',
       HOUSEHOLD_SPLIT_INVALID: 'The split of revenue by trade does not fit: each trade once, none negative, together no more than the ledger revenue, and nothing to split for a single trade',
-      HOUSEHOLD_RULES_UNCONFIRMED: 'The form or the tax percentages are still waiting for the accountant, so the Excel file is not available yet',
 
       NOTE_NOT_FOUND: 'This note was not found.',
       NOTE_AUTHOR_ONLY: 'Only the author can do this; owners and admins may also pin, archive or delete a shared note.',

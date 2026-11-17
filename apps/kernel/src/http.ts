@@ -3772,8 +3772,8 @@ export function createHttpApp(deps: HttpDeps) {
     });
 
     // The 01/CNKD quarterly return worksheet of a household business (#2518), ?legalEntityId=<household>&year=2026&quarter=3 and, for a household with several trades, &split=goods:1000000,services:600000.
-    // The query checks the year and quarter, the roles, the profile and the split, and refuses (422) while a row behind the figures is still unconfirmed or revenue is unassigned (forExport), so the
-    // file only ever holds whole, confirmed figures. The audit row is recorded before the file is sent. A worksheet: Ludy files nothing.
+    // The query checks the year and quarter, the roles, the profile and the split, and refuses (422) while revenue is unassigned (forExport), so the file only ever holds whole figures. While a row
+    // behind the figures is still unconfirmed the file is given and every figure in it carries the provisional label (#2518). The audit row is recorded before the file is sent. A worksheet: Ludy files nothing.
     app.get('/api/export/household-cnkd.xlsx', async (c) => {
       try {
         const user = c.get('user');

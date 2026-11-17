@@ -4614,7 +4614,8 @@ export const vi = {
     cnkdTitle: '01/CNKD: bảng tính tờ khai theo quý',
     cnkdHint: 'Doanh thu theo ngành nghề lấy từ sổ cái, thuế GTGT và thuế thu nhập cá nhân theo tỷ lệ đang áp dụng, trừ thuế sàn đã khấu trừ. Dùng để điền tờ khai.',
     cnkdNotice: 'Đây là bảng tính. {brand} không nộp tờ khai và không gửi gì cho cơ quan thuế: bạn hoặc kế toán nộp trên cổng thuế hoặc eTax Mobile.',
-    cnkdDraft: 'Các số này là bản nháp: những quy tắc dưới đây còn chờ kế toán đối chiếu nên chưa cho tải file Excel.',
+    cnkdDraft: 'Các số này là số liệu tạm: những quy tắc dưới đây còn chờ kế toán đối chiếu. Bạn vẫn xem và tải file Excel được, mỗi con số và file đều ghi rõ là số liệu tạm.',
+    cnkdProvisional: 'Số liệu tạm, kế toán chưa xác nhận tỷ lệ',
     cnkdUnconfirmedForm: 'Mẫu {key}, có hiệu lực từ {date}',
     cnkdUnconfirmedRate: 'Tỷ lệ thuế của ngành {trade}, từ {date}',
     cnkdFile: 'to-khai-01-cnkd-{period}-{org}.xlsx',
@@ -11723,7 +11724,6 @@ export const vi = {
       HOUSEHOLD_RETURN_PROFILE_CHANGED: 'Hồ sơ hộ kinh doanh đổi trong quý này nên chưa lập được bảng tính theo quý; hãy nhờ kế toán',
       HOUSEHOLD_RATE_MISSING: 'Chưa có tỷ lệ thuế cho một ngành nghề trong hồ sơ',
       HOUSEHOLD_SPLIT_INVALID: 'Cách chia doanh thu theo ngành nghề chưa hợp lệ: mỗi ngành một lần, không âm, tổng không vượt doanh thu trên sổ cái, và hộ chỉ có một ngành thì không cần chia',
-      HOUSEHOLD_RULES_UNCONFIRMED: 'Mẫu tờ khai hoặc tỷ lệ thuế còn chờ kế toán xác nhận nên chưa tải được file Excel',
 
       NOTE_NOT_FOUND: 'Không tìm thấy ghi chú này',
       NOTE_AUTHOR_ONLY: 'Chỉ người viết ghi chú mới làm được việc này; với ghi chú dùng chung, chủ sở hữu và quản trị viên được ghim, lưu trữ hoặc xóa',

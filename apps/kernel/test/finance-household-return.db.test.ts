@@ -186,15 +186,19 @@ suite('the 01/CNKD return worksheet of a household business (#2518)', () => {
     for (const who of [o.admin, o.member, o.viewer]) expect((await cnkd(o, 3, {}, o.household, who)).revenue).toBe('1600000');
   });
 
-  it('refuses the Excel ask while a row behind the figures is commentary, and allows it once a later dated row confirms them', async () => {
+  it('gives the Excel ask while a row behind the figures is commentary (the figures are labelled provisional), and drops the label once a later dated row confirms them (#2518)', async () => {
     const o = await org();
     await percentage(o);
     await entry(o.household, o.orgId, '2026-08-12', 'Bán hàng', [['111', 600000, 0], ['511', 0, 600000]]);
     await entry(o.household, o.orgId, '2026-11-12', 'Bán hàng', [['111', 400000, 0], ['511', 0, 400000]]);
-    await expect(cnkd(o, 3, { forExport: true })).rejects.toMatchObject({ code: 'HOUSEHOLD_RULES_UNCONFIRMED' });
+    // Not refused: the answer says it is provisional and names the rows still waiting, and its totals are whole.
+    const q3 = await cnkd(o, 3, { forExport: true });
+    expect(q3.commentary).toBe(true);
+    expect(q3.unconfirmed.length).toBeGreaterThan(0);
+    expect(q3.totals).not.toBeNull();
     await confirmFromQ4();
-    // Q3 keeps the rows it was made under; Q4 sees the confirmed ones.
-    await expect(cnkd(o, 3, { forExport: true })).rejects.toMatchObject({ code: 'HOUSEHOLD_RULES_UNCONFIRMED' });
+    // Q3 keeps the rows it was made under (still provisional); Q4 sees the confirmed ones.
+    expect((await cnkd(o, 3, { forExport: true })).commentary).toBe(true);
     const q4 = await cnkd(o, 4, { forExport: true });
     expect(q4).toMatchObject({ commentary: false, unconfirmed: [], form: { version: '2026.2', status: 'confirmed' } });
     expect(q4.totals).toEqual({ revenue: '400000', vat: '4000', pit: '2000', tax: '6000' });

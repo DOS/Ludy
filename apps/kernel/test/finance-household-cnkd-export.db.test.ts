@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The 01/CNKD worksheet's Excel download (#2518) through the HTTP route a user calls, on PostgreSQL 17: a household on the percentage method whose rows the accountant confirmed gets the file with its
 // exact figures and one audit row (the entity, the form, the quarter, the number of trade lines); a household with several trades is asked for the split (422) and gets the file with it; a household whose
-// rows are still `commentary` gets neither a file nor an audit row (HOUSEHOLD_RULES_UNCONFIRMED). The cells are covered by the workbook unit tests and the figures by finance-household-return.db.test.ts; here
+// rows are still `commentary` gets the file too, labelled provisional in its cells (#2518, owner's direction of 2026-11-17), and its audit row. The cells and the label are covered by the workbook unit tests and the figures by finance-household-return.db.test.ts; here
 // the route, the roles and the audit row. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -176,14 +176,13 @@ suite('the 01/CNKD worksheet download (#2518)', () => {
     expect(await audits()).toHaveLength(before);
   });
 
-  it('answers no file and writes no audit row while a row behind the figures is still commentary', async () => {
+  it('answers the file and writes its audit row while a row behind the figures is still commentary (its cells say the figures are provisional)', async () => {
     const before = (await audits()).length;
     const response = await download(`legalEntityId=${unconfirmed}&year=2026&quarter=3`);
-    expect(response.status).toBe(422);
-    expect(response.headers.get('content-type')).not.toBe(XLSX);
-    expect(response.headers.get('content-disposition')).toBeNull();
-    expect(await response.json()).toMatchObject({ code: 'HOUSEHOLD_RULES_UNCONFIRMED' });
-    expect(await audits()).toHaveLength(before);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe(XLSX);
+    expect(Buffer.from(await response.arrayBuffer()).subarray(0, 2).toString()).toBe('PK');
+    expect((await audits()).slice(before)).toEqual([{ book: '01/CNKD', legalEntityId: unconfirmed, period: '2026-Q3', rows: 1 }]);
   });
 
   it('refuses a year or quarter that is not one, and an entity that is not a household', async () => {

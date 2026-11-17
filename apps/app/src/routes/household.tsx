@@ -129,7 +129,8 @@ function S1aBook({ entityId }: { entityId: string }) {
 const MONEY_INPUT = /^\d{1,16}(\.\d{1,4})?$/;
 
 // The quarterly worksheet 01/CNKD (#2518): a household with one trade has all revenue on it; with several it types the split, which the screen keeps for the ask only and the server never stores.
-// The figures are a draft while a row behind them is unconfirmed (the Excel stays off), and totals wait for every dong of revenue to have a trade.
+// While a row behind the figures is unconfirmed (#2520) every figure that depends on it carries "Số liệu tạm, kế toán chưa xác nhận tỷ lệ" and the Excel file says the same; the label goes when the rows are
+// confirmed, with no code change. Totals wait for every dong of revenue to have a trade.
 function CnkdReturn({ entityId, trades }: { entityId: string; trades: readonly string[] }) {
   const t = useTranslations('household');
   const f = useFormat();
@@ -159,6 +160,12 @@ function CnkdReturn({ entityId, trades }: { entityId: string; trades: readonly s
     },
   });
   const data = sheet.data;
+  // The label under a figure that depends on the rows still waiting for the accountant; nothing once they are confirmed.
+  const provisional = data?.commentary ? (
+    <span className="block text-xs text-muted-foreground" data-testid="household-cnkd-provisional">
+      {t('cnkdProvisional')}
+    </span>
+  ) : null;
   return (
     <Card className="mb-6 block p-4" data-testid="household-cnkd">
       <h2 className="text-sm font-semibold text-foreground">{t('cnkdTitle')}</h2>
@@ -176,7 +183,7 @@ function CnkdReturn({ entityId, trades }: { entityId: string; trades: readonly s
             ))}
           </NativeSelect>
         </div>
-        <Button variant="outline" loading={download.isPending} disabled={!data || data.commentary || data.totals === null} onClick={() => download.mutate()} data-testid="household-cnkd-download">
+        <Button variant="outline" loading={download.isPending} disabled={!data || data.totals === null} onClick={() => download.mutate()} data-testid="household-cnkd-download">
           {t('download')}
         </Button>
       </div>
@@ -223,7 +230,10 @@ function CnkdReturn({ entityId, trades }: { entityId: string; trades: readonly s
           <DataTable numeric={[1, 2, 3, 4, 5]} head={[t('cnkdColumns.trade'), t('cnkdColumns.revenue'), t('cnkdColumns.vatPercent'), t('cnkdColumns.vat'), t('cnkdColumns.pitPercent'), t('cnkdColumns.pit')]}>
             {data.lines.map((l) => (
               <TableRow key={l.trade}>
-                <TableCell className="px-4 py-3 text-foreground">{t(`tradeNames.${l.trade}`)}</TableCell>
+                <TableCell className="px-4 py-3 text-foreground">
+                  {t(`tradeNames.${l.trade}`)}
+                  {provisional}
+                </TableCell>
                 <TableCell className="px-4 py-3 text-right tabular-nums">{f.money(l.revenue)}</TableCell>
                 <TableCell className="px-4 py-3 text-right tabular-nums">{l.vatPercent}</TableCell>
                 <TableCell className="px-4 py-3 text-right tabular-nums">{f.money(l.vat)}</TableCell>
@@ -241,6 +251,7 @@ function CnkdReturn({ entityId, trades }: { entityId: string; trades: readonly s
               <dt className="text-subtle-foreground">{t('cnkdTotalTax')}</dt>
               <dd className="tabular-nums" data-testid="household-cnkd-tax">
                 {f.money(data.totals.tax)}
+                {provisional}
               </dd>
               <dt className="text-subtle-foreground">{t('cnkdWithheld')}</dt>
               <dd className="tabular-nums" data-testid="household-cnkd-withheld">
@@ -249,11 +260,15 @@ function CnkdReturn({ entityId, trades }: { entityId: string; trades: readonly s
               <dt className="font-medium text-foreground">{t('cnkdDue')}</dt>
               <dd className="font-medium tabular-nums" data-testid="household-cnkd-due">
                 {f.money(data.due ?? '0')}
+                {provisional}
               </dd>
               {data.overpaid && data.overpaid !== '0' && (
                 <>
                   <dt className="text-subtle-foreground">{t('cnkdOverpaid')}</dt>
-                  <dd className="tabular-nums">{f.money(data.overpaid)}</dd>
+                  <dd className="tabular-nums">
+                    {f.money(data.overpaid)}
+                    {provisional}
+                  </dd>
                 </>
               )}
             </dl>

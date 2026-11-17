@@ -4,6 +4,7 @@
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
 import type { HouseholdCnkd, HouseholdS1a } from '@crove/kernel-contract';
+import { HOUSEHOLD_PROVISIONAL_LABEL } from '@crove/kernel-contract';
 import { buildCnkdWorkbook, buildS1aWorkbook } from '../src/household-export.ts';
 
 const book = (over: Partial<HouseholdS1a> = {}): HouseholdS1a => ({
@@ -133,6 +134,46 @@ describe('the 01/CNKD worksheet workbook', () => {
     expect(rows.get('Cộng thuế đã khấu trừ')?.getCell(2).value).toBe(4200);
     expect(rows.get('Số thuế còn phải nộp')?.getCell(2).value).toBe(52800);
     expect(rows.has('Số thuế đã khấu trừ vượt số phải nộp')).toBe(false);
+  });
+
+  it('carries no label once every row is confirmed', async () => {
+    const sheet = await cnkdSheet(sheetData());
+    expect(texts(sheet).some((t) => t.toLowerCase().includes('số liệu tạm'))).toBe(false);
+    expect(sheet.getRow(8).getCell(7).value).toBeNull();
+  });
+
+  it('says on top that the figures are provisional, lists the rows still waiting, and labels every figure that depends on them while a row is commentary (#2518)', async () => {
+    const sheet = await cnkdSheet(
+      sheetData({
+        commentary: true,
+        form: { form: '01/CNKD', version: '2026.1', name: 'Tờ khai thuế đối với hộ kinh doanh (01/CNKD)', status: 'commentary' },
+        unconfirmed: [
+          { kind: 'form', key: '01/CNKD 2026.1', effectiveFrom: '2026-01-01' },
+          { kind: 'rate', key: 'goods', effectiveFrom: '2026-01-01' },
+        ],
+        overpaid: '3500',
+        due: '0',
+      }),
+    );
+    const all = texts(sheet);
+    // On top, the label in capitals, then the rows that wait for the accountant; the file still says Ludy files nothing.
+    expect(HOUSEHOLD_PROVISIONAL_LABEL).toBe('Số liệu tạm, kế toán chưa xác nhận tỷ lệ');
+    expect(all).toContain(HOUSEHOLD_PROVISIONAL_LABEL.toUpperCase());
+    expect(all).toContain('  Chưa xác nhận: mẫu 01/CNKD 2026.1, hiệu lực từ 01/01/2026');
+    expect(all).toContain('  Chưa xác nhận: tỷ lệ thuế của ngành "Phân phối, cung cấp hàng hóa", từ 01/01/2026');
+    expect(all.some((t) => t.includes('Ludy không nộp tờ khai'))).toBe(true);
+    // The label sits in the note column of each figure that depends on a rule, and not on the tax the platforms withheld (a settlement fact).
+    const rows = new Map<string, ExcelJS.Row>();
+    sheet.eachRow((row) => rows.set(String(row.getCell(1).value), row));
+    const note = (label: string) => rows.get(label)?.getCell(7).value;
+    expect(note('Ngành nghề')).toBe('Ghi chú');
+    for (const label of ['Phân phối, cung cấp hàng hóa', 'Dịch vụ', 'Cộng', 'Tổng thuế GTGT và TNCN theo tỷ lệ', 'Số thuế còn phải nộp', 'Số thuế đã khấu trừ vượt số phải nộp']) {
+      expect(note(label), label).toBe(HOUSEHOLD_PROVISIONAL_LABEL);
+    }
+    expect(note('  shopee, 01/10/2026 - 15/10/2026') ?? null).toBeNull();
+    expect(note('Cộng thuế đã khấu trừ') ?? null).toBeNull();
+    // The figures themselves are the same as in a confirmed file.
+    expect(rows.get('Số thuế đã khấu trừ vượt số phải nộp')?.getCell(2).value).toBe(3500);
   });
 
   it('shows the overpaid line only when more was withheld than owed, and never reads a name as a formula', async () => {

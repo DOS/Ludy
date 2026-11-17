@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The household books screen (#2517), rendered on the server with the API's answers seeded in the cache: the profile with its books and the notice that the rules wait for the accountant, the
 // S1a table with its total only for a method that keeps S1a, the profile button for owners and admins only, the empty state with no household entity, and the quarterly worksheet 01/CNKD (#2518)
-// only for the percentage method: its draft banner while a rule is unconfirmed, the totals held back while revenue has no trade, the split inputs of a household with several trades.
+// only for the percentage method: its provisional label while a rule is unconfirmed (on every figure that depends on a rule, the Excel still offered), the totals held back while revenue has no trade, the split inputs of a household with several trades.
 import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -139,7 +139,7 @@ describe('the household books screen (#2517)', () => {
   });
 
   describe('the 01/CNKD quarterly worksheet (#2518)', () => {
-    it('shows revenue by trade, the totals, the withheld tax and what is left to pay, as a draft while a rule is unconfirmed', () => {
+    it('shows revenue by trade, the totals, the withheld tax and what is left to pay, as provisional figures while a rule is unconfirmed', () => {
       const html = page('owner', { profile: percentage() });
       expect(html).toContain('data-testid="household-cnkd"');
       expect(html).toContain('01/CNKD: quarterly return worksheet');
@@ -153,15 +153,39 @@ describe('the household books screen (#2517)', () => {
       expect(html).toContain('data-testid="household-cnkd-tax"');
       expect(html).toContain('data-testid="household-cnkd-due"');
       expect(html).toContain('shopee');
-      // The Excel stays off while the rules are a draft.
-      expect(html).toMatch(DOWNLOAD_DISABLED);
+      // The Excel is offered while the rules are unconfirmed: the figures carry the label instead.
+      expect(html).not.toMatch(DOWNLOAD_DISABLED);
       // One trade has nothing to split.
       expect(html).not.toContain('data-testid="household-cnkd-split"');
     });
 
-    it('offers the download once every row is confirmed and shows no draft banner', () => {
+    it('puts the provisional label on every figure that depends on a rule: each trade, the tax, what is left to pay, and a tax paid too much', () => {
+      const labels = (html: string) => html.match(/data-testid="household-cnkd-provisional"/g)?.length ?? 0;
+      // One trade, tax and what is left to pay: three figures.
+      const html = page('owner', { profile: percentage() }, 'vi');
+      expect(labels(html)).toBe(3);
+      expect(html).toContain('Số liệu tạm, kế toán chưa xác nhận tỷ lệ');
+      // The tax the platforms withheld comes from the settlements, not from a rule: no label on it.
+      expect(html).toMatch(/data-testid="household-cnkd-withheld">[^<]*<\/dd>/);
+      // Two trades and a tax paid too much: two lines, the tax, what is left to pay and the overpaid amount.
+      const more = page('owner', {
+        profile: percentage(['goods', 'services']),
+        cnkd: cnkd({
+          overpaid: '500',
+          lines: [
+            { trade: 'goods', revenue: '800000', vatPercent: '1', pitPercent: '0.5', vat: '8000', pit: '4000' },
+            { trade: 'services', revenue: '800000', vatPercent: '5', pitPercent: '2', vat: '40000', pit: '16000' },
+          ],
+        }),
+      }, 'en');
+      expect(labels(more)).toBe(5);
+      expect(more).toContain('Provisional figures: the accountant has not confirmed the percentages yet');
+    });
+
+    it('offers the download once every row is confirmed and shows no draft banner or label', () => {
       const html = page('owner', { profile: percentage(), cnkd: cnkd({ commentary: false, unconfirmed: [], form: { form: '01/CNKD', version: '2026.2', name: 'Tờ khai 01/CNKD', status: 'confirmed' } }) });
       expect(html).not.toContain('data-testid="household-cnkd-draft"');
+      expect(html).not.toContain('data-testid="household-cnkd-provisional"');
       expect(html).toContain('data-testid="household-cnkd-download"');
       expect(html).not.toMatch(DOWNLOAD_DISABLED);
     });
@@ -182,6 +206,8 @@ describe('the household books screen (#2517)', () => {
       expect(html).toContain('data-testid="household-cnkd-split"');
       expect(html).toContain('data-testid="household-cnkd-unassigned"');
       expect(html).not.toContain('data-testid="household-cnkd-totals"');
+      // Whole revenue first: no file while a dong has no trade, label or not.
+      expect(html).toMatch(DOWNLOAD_DISABLED);
     });
 
     it('does not warn about the split before anything is typed', () => {

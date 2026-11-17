@@ -94,8 +94,9 @@ export type HouseholdS1a = z.infer<typeof zHouseholdS1a>;
 // the trades of the profile: a household with one trade has it all on that trade; with several, the household enters the split (`split`, per ask, nothing stored) and what is not yet given a trade is
 // `unassigned`, which holds the totals back (`totals` is null) rather than guess. VAT and PIT are revenue times the percentage in force on the quarter's last day, each rounded to a whole dong; the
 // exempt band of the year is NOT deducted because the rule is unconfirmed (#2520). The tax the platforms already withheld comes from the stored settlements whose period ends in the quarter (it is not
-// posted to the ledger yet), reversed ones left out. `commentary` is true while any row behind the figures (the form, a percentage) is not confirmed by the accountant; the Excel file is refused then
-// (`forExport`), the screen shows the figures as a draft.
+// posted to the ledger yet), reversed ones left out. `commentary` is true while any row behind the figures (the form, a percentage) is not confirmed by the accountant: the figures, the screen and the
+// Excel file then carry HOUSEHOLD_PROVISIONAL_LABEL on every figure that depends on those rows, and Ludy still files nothing. The label goes away on its own when the rows are confirmed (data, not code).
+export const HOUSEHOLD_PROVISIONAL_LABEL = 'Số liệu tạm, kế toán chưa xác nhận tỷ lệ';
 export const HOUSEHOLD_RETURN_FORMS = ['01/CNKD'] as const;
 export const zHouseholdReturnForm = z.enum(HOUSEHOLD_RETURN_FORMS);
 export const zHouseholdCnkdGet = z.strictObject({

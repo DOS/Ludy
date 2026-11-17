@@ -195,14 +195,14 @@ suite('finance exports: no audit row, no download (#365)', () => {
     expect(await response.json()).toMatchObject({ code: 'INTERNAL' });
   });
 
-  it('refuses the 01/CNKD worksheet while a row behind it is unconfirmed, before any file or audit row', async () => {
+  it('does not refuse the 01/CNKD worksheet while a row behind it is unconfirmed (its figures are labelled): the audit write is reached before any file (#2518)', async () => {
     reached.length = 0;
     const response = await app.request(`/api/export/household-cnkd.xlsx?legalEntityId=${percentageHousehold}&year=2026&quarter=3`, { headers: { authorization: `Bearer ${await token()}`, 'x-crove-org': slug } });
-    expect(reached).toEqual([]);
-    expect(response.status).toBe(422);
+    expect(reached).toEqual(['finance.household.export']);
+    expect(response.status).toBe(500);
     expect(response.headers.get('content-type')).not.toBe(XLSX);
     expect(response.headers.get('content-disposition')).toBeNull();
-    expect(await response.json()).toMatchObject({ code: 'HOUSEHOLD_RULES_UNCONFIRMED' });
+    expect(await response.json()).toMatchObject({ code: 'INTERNAL' });
   });
 
   it('never records a failed export as done', async () => {
