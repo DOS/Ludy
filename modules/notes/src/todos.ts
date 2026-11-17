@@ -590,16 +590,14 @@ export const todoReopen = defineCommand({
     }
     if (undoNextTodoId !== undefined) {
       if (before.status !== 'done') throw new DomainError('TODO_NOT_CHANGEABLE', 409, 'Việc này đã được mở lại hoặc thay đổi');
-      const existingLink = nextRow
-        ? await ctx.trx
-            .selectFrom('crove_notes.todo_link')
-            .select('id')
-            .where('org_id', '=', ctx.orgId)
-            .where('todo_id', '=', undoNextTodoId)
-            .executeTakeFirst()
-        : undefined;
+      if (!nextRow) throw new DomainError('TODO_UNDO_SERIES_ADVANCED', 409, 'Lượt kế tiếp đã được chỉnh sửa hoặc xử lý rồi');
+      const existingLink = await ctx.trx
+        .selectFrom('crove_notes.link')
+        .select('id')
+        .where('org_id', '=', ctx.orgId)
+        .where('todo_id', '=', undoNextTodoId)
+        .executeTakeFirst();
       const nextEdited =
-        !nextRow ||
         nextRow.deleted_at !== null ||
         nextRow.status !== 'open' ||
         nextRow.revision !== 1 ||
