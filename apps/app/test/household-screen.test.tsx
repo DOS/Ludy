@@ -165,6 +165,8 @@ describe('the household books screen (#2517)', () => {
       const html = page('owner', { profile: percentage() }, 'vi');
       expect(labels(html)).toBe(3);
       expect(html).toContain('Số liệu tạm, kế toán chưa xác nhận tỷ lệ');
+      // The same words for a screen reader in the VAT and PIT cells of the trade line (hidden from the eye).
+      expect(html.match(/<span class="sr-only">Số liệu tạm, kế toán chưa xác nhận tỷ lệ<\/span>/g)?.length).toBe(2);
       // The tax the platforms withheld comes from the settlements, not from a rule: no label on it.
       expect(html).toMatch(/data-testid="household-cnkd-withheld">[^<]*<\/dd>/);
       // Two trades and a tax paid too much: two lines, the tax, what is left to pay and the overpaid amount.

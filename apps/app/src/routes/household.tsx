@@ -166,6 +166,8 @@ function CnkdReturn({ entityId, trades }: { entityId: string; trades: readonly s
       {t('cnkdProvisional')}
     </span>
   ) : null;
+  // The same words for a screen reader, in the VAT and PIT cells, so a person who reaches the amount directly hears them (the visible label is once per row, in the trade cell).
+  const provisionalForReader = data?.commentary ? <span className="sr-only">{t('cnkdProvisional')}</span> : null;
   return (
     <Card className="mb-6 block p-4" data-testid="household-cnkd">
       <h2 className="text-sm font-semibold text-foreground">{t('cnkdTitle')}</h2>
@@ -236,9 +238,15 @@ function CnkdReturn({ entityId, trades }: { entityId: string; trades: readonly s
                 </TableCell>
                 <TableCell className="px-4 py-3 text-right tabular-nums">{f.money(l.revenue)}</TableCell>
                 <TableCell className="px-4 py-3 text-right tabular-nums">{l.vatPercent}</TableCell>
-                <TableCell className="px-4 py-3 text-right tabular-nums">{f.money(l.vat)}</TableCell>
+                <TableCell className="px-4 py-3 text-right tabular-nums">
+                  {f.money(l.vat)}
+                  {provisionalForReader}
+                </TableCell>
                 <TableCell className="px-4 py-3 text-right tabular-nums">{l.pitPercent}</TableCell>
-                <TableCell className="px-4 py-3 text-right tabular-nums">{f.money(l.pit)}</TableCell>
+                <TableCell className="px-4 py-3 text-right tabular-nums">
+                  {f.money(l.pit)}
+                  {provisionalForReader}
+                </TableCell>
               </TableRow>
             ))}
           </DataTable>
