@@ -504,7 +504,7 @@ async function declaredAt(ctx: QueryContext, period: VatPeriod, legalEntityId: s
   const { rows } = await sql<{ at: Date | null }>`
     SELECT pg_catalog.max(e.occurred_at) AS at FROM crove_kernel.audit_event e
     WHERE e.org_id = ${ctx.orgId}::uuid AND e.command = 'finance.period.lock' AND e.outcome = 'ok'
-      AND e.detail->>'month' = ${period.to.slice(0, 7)}::text AND e.detail->>'legalEntityId' = ${legalEntityId}::text`.execute(ctx.trx);
+      AND e.occurred_at >= ${period.from}::date AND e.detail->>'month' = ${period.to.slice(0, 7)}::text AND e.detail->>'legalEntityId' = ${legalEntityId}::text`.execute(ctx.trx);
   if (rows[0]?.at) return new Date(rows[0].at);
   const row = await ctx.trx.selectFrom('crove_finance.period_lock').select('updated_at').where('org_id', '=', ctx.orgId).where('legal_entity_id', '=', legalEntityId).executeTakeFirst();
   return row ? new Date(row.updated_at) : null;
