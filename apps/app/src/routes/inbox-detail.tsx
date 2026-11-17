@@ -1152,6 +1152,10 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
                       </tr>
                       <tr>
                         <td colSpan={2} className="pb-2">
+                          {/* The column's name, now that the account is not a column of its own. */}
+                          <p className="mb-1 text-xs text-subtle-foreground" aria-hidden="true">
+                            {sale ? t('revenueAccount') : t('debitAccount')}
+                          </p>
                           {accountSelect(l)}
                         </td>
                       </tr>

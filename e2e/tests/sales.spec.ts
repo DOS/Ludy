@@ -48,7 +48,9 @@ test('set the tax code, upload a sales e-invoice, approve it, then find it in th
     await expect(page.getByRole('heading', { name: BUYER })).toBeVisible();
     await expect(page.getByText('Hóa đơn bán ra: người bán có mã số thuế của tổ chức.', { exact: false })).toBeVisible();
     await expect(page.getByRole('main').getByText('Khách hàng', { exact: true })).toBeVisible();
-    await expect(page.getByRole('columnheader', { name: 'TK doanh thu' })).toBeVisible();
+    // The revenue account of a line is a select under the line's text, named by its column's words (#3599).
+    await expect(page.getByRole('main').getByText('TK doanh thu', { exact: true }).first()).toBeVisible();
+    await expect(page.getByRole('combobox', { name: /doanh thu/i }).first()).toBeVisible();
   });
 
   await test.step('approve it with a second factor', async () => {
