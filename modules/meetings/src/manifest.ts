@@ -88,6 +88,11 @@ export const meetingsManifest = defineModule({
           'text_retention_date',
           // The series the meeting is in: a random id, or the hash of the recurring calendar event it was linked to (#3542). Never text.
           'series_id',
+          // The meeting's own copy of the org template it was summarized with (#3578): its name, its sections and their hash. Layout the org wrote, not personal data (the class 'internal':
+          // listed here, not under a personal class); the settings screen asks for no names or personal details in a template.
+          'minutes_template_name',
+          'minutes_template_sections',
+          'minutes_template_hash',
           'created_at',
           'updated_at',
         ],
@@ -110,6 +115,9 @@ export const meetingsManifest = defineModule({
       ]),
       // A member's own webhook for the minutes they publish (A6, #3164): definer-only. The address can carry a token in its path and the sealed secret is the broker's envelope, so both are sensitive.
       member_hook: columns(['org_id', 'id', 'user_id', 'fields', 'enabled', 'paused_reason', 'secret_hint', 'previous_until', 'failing_since', 'consecutive_failures', 'last_delivery_at', 'last_status', 'created_at', 'updated_at'], { url: 'sensitive', secret_sealed: 'sensitive', previous_sealed: 'sensitive' }),
+      // The minutes templates an org's owner or admin writes (#3578): a name and 1 to 8 sections (title, hint for Vy). Layout the org wrote, not personal data; the settings screen asks for no
+      // names or personal details in a template. The meeting's own copy of one is on the meeting row.
+      minutes_template: columns(['org_id', 'id', 'name', 'sections', 'archived_at', 'created_by', 'created_at', 'updated_at']),
       // The transcript (#2578): what was said, who it is attributed to, when. Text and speaker label are personal data.
       transcript_segment: columns(
         ['org_id', 'id', 'meeting_id', 'start_seconds', 'end_seconds', 'stage', 'corrected', 'tainted', 'source_run_id', 'created_at', 'updated_at'],
@@ -122,6 +130,8 @@ export const meetingsManifest = defineModule({
   permissions: [],
   entities: [
     { type: 'meetings.meeting', table: 'meeting', legalEntityScoped: false, audit: 'command' },
+    // A minutes template the org wrote (#3578): the target of its update and archive commands.
+    { type: 'meetings.minutes_template', table: 'minutes_template', legalEntityScoped: false, audit: 'command' },
   ],
   ...MODULE_SCREENS.meetings,
 });

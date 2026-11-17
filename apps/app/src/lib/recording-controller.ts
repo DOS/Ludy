@@ -4,7 +4,7 @@
 // app screens does not stop a recording. The recorder screen (routes/meeting-record.tsx) and the header bar
 // (components/recording-chip.tsx) are only views of it. A full page unload still ends the devices, so a recording asks first
 // (beforeunload). The recording stops by itself at the longest meeting the server takes (MAX_MEETING_SECONDS). No AI here.
-import { MAX_MEETING_SECONDS, type LiveConsentMethod, type MeetingLanguage, type MeetingSummaryTemplate, type MeetingVisibility } from '@crove/kernel-contract';
+import { MAX_MEETING_SECONDS, type LiveConsentMethod, type MeetingLanguage, type BuiltInSummaryTemplate, type MeetingVisibility } from '@crove/kernel-contract';
 import {
   assembleRecording,
   beginRecording,
@@ -48,7 +48,7 @@ export interface StartInput {
   title: string;
   language: MeetingLanguage;
   visibility: MeetingVisibility;
-  summaryTemplate: MeetingSummaryTemplate;
+  summaryTemplate: BuiltInSummaryTemplate;
   withVideo: boolean;
   liveNotes: boolean;
   consentMethod: LiveConsentMethod;

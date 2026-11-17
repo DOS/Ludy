@@ -245,6 +245,8 @@ export const EXPORT_TABLES = {
   'ads.ad_spend_cap': { from: 'crove_ads.ad_spend_cap', omit: [] },
   // Meetings (#3367): the chat channels' settings. A meeting's transcript, notes, results and the rest are readable by its attendees only, so only the meetings shared with the org are exported (meetings.meeting).
   'meetings.chat_channel': { from: 'crove_meetings.chat_channel', omit: [] },
+  // Meetings (#3578): the minutes templates the org wrote, its own layout text (a name and sections; no personal data), archived ones included.
+  'meetings.minutes_template': { from: 'crove_meetings.minutes_template', omit: [] },
   // Each member's Vy (ADR-0049, #2822): per member how many private results and memory entries it holds (crove_kernel.member_vy_private_counts(), a definer that answers counts only, for the
   // worker's system context). Never a body: the results and the memory are sealed to their member, and a person who leaves is purged, so an export carries only that they existed.
   'kernel.member_vy_private_count': { from: 'crove_kernel.member_vy_private_counts()', omit: [] },
