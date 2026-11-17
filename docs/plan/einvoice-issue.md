@@ -63,6 +63,19 @@ Not in the plan and found by both readers:
 
 Open points settled: form 04/SS-HĐĐT is still filed (row 7); cancellation of a sent invoice is gone. Still open: the conditions for a provider under Circular 91 Art. 12 (two kinds, a published list; an app that calls a provider's API is probably neither, an inference), the direct-connection threshold (1 million invoices a month, one source), storage inside Vietnam (not found), the carry-over of Decree 123 registrations (no clause found).
 
+### 3b. The accountant's answers (2026-11-17)
+
+The owner's accounting adviser answered four of the eight questions of #2506 (relayed by the owner in the PO's chat, 2026-11-17). These override section 3a where they differ:
+
+| Question | Answer | Design |
+|---|---|---|
+| 2. Agreement before adjust or replace | Both an adjusting and a replacing invoice need a signed agreement record ("biên bản thỏa thuận", signed by both sides) attached; an individual buyer needs none | #2504: for a buyer with a tax code, adjust and replace are refused until a signed agreement file is attached; for an individual buyer no attachment is asked |
+| 3. Cancelling an issued invoice | An issued invoice is corrected by adjustment or replacement, never cancelled | **No cancel action**, confirmed; the provider's cancel call is never used |
+| 5. Shops and restaurants | A retail shop or restaurant with many transactions needs cash-register invoices (hóa đơn máy tính tiền): the coded flow cannot keep up with every sale | **Row 3's working answer is withdrawn**: high-volume retail and F&B stay out of scope (a till); the Tích hợp page says the coded flow is for invoices issued one by one, and the cash-register series (`M` in the symbol) stay filtered out, as the adapter does |
+| 4. A sale invoiced late | When a missed invoice is found in a later period, the invoice is issued then and **declared in the original period**; the fine is heavy | The draft keeps the sale's date (Art. 9) as the tax period the VAT working uses, apart from the issue date; issuing a sale older than the next working day warns of the fine and needs a person's reason; the VAT working of a closed period then shows the late invoice for a supplementary declaration. A build issue for the VAT working (#316) follows |
+
+Still open with the accountant: 1 (form 04/SS-HĐĐT and its deadline), 6 (buyer CCCD or passport), 7 (an 8% invoice adjusted in 2027), 8 (what Art. 15 and 19 cover).
+
 ## 4. The providers and their APIs
 
 Survey of 2026-11-03, by four readers working apart. **Public pages only: nothing registered, no code entered, no API called, no form submitted.** Every cell says where it comes from: **[P]** the provider's own page, **[R]** a reseller or accountancy site, **[C]** a community repository, forum or unofficial copy. "n/s" means the public pages did not say. A hosting or certificate error on a page is noted; it is not read as a refusal.
