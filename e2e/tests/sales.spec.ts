@@ -81,7 +81,8 @@ test('set the tax code, upload a sales e-invoice, approve it, then find it in th
 
   await test.step('the MISA sales export', async () => {
     const download = page.waitForEvent('download');
-    await page.getByRole('button', { name: 'Xuất chứng từ bán hàng cho MISA' }).click();
+    await page.getByRole('button', { name: 'Xuất sổ nhật ký' }).click();
+    await page.getByRole('menuitem', { name: 'Xuất chứng từ bán hàng cho MISA' }).click();
     const file = await download;
     expect(file.suggestedFilename()).toBe(`ludy-misa-ban-hang-${slug}.xlsx`);
     const workbook = new ExcelJS.Workbook();

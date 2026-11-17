@@ -7,7 +7,7 @@ import { Badge } from '@crove/ui/components/badge';
 import { Button, buttonVariants } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
 import { Input } from '@crove/ui/components/input';
-import { Table, TableBody, TableCell, TableRow } from '@crove/ui/components/table';
+import { Menu, MenuChevron, MenuContent, MenuItem, MenuTrigger } from '@crove/ui/components/menu';
 import { DateInput } from '../components/date-input.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
@@ -138,7 +138,7 @@ function EntryNotes({ entry, slug }: { entry: { id: string; entryDate: string; d
   return (
     <div className="mt-2">
       <div className="flex justify-end">
-        <Button variant="ghost" size="sm" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-label={tn('panel.toggleOf', { name })}>
+        <Button variant="ghost" size="sm" className="border border-transparent hover:border-border focus-visible:border-ring" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-label={tn('panel.toggleOf', { name })}>
           {tn('panel.title')}
         </Button>
       </div>
@@ -227,27 +227,50 @@ export function JournalPage() {
         subtitle={t('subtitle')}
         actions={
           <div className="flex flex-wrap gap-2">
+            {/* One primary action; the exports and the year-end and opening-balance actions sit in two menus (#3601). The exports are hidden once the journal is known to be empty: the empty journal says what fills it, and a range being read again keeps the menu in place. */}
+            {!(journal.isSuccess && nothingToExport) && (
+              <Menu>
+                <MenuTrigger render={<Button size="lg" variant="outline" loading={exports.some((e) => e.isPending)} aria-label={t('exportGroup')} />}>
+                  {t('exportMenu')}
+                  <MenuChevron />
+                </MenuTrigger>
+                <MenuContent>
+                  <MenuItem onClick={() => startExport(exportXlsx)}>{t('export')}</MenuItem>
+                  <MenuItem onClick={() => startExport(exportMisa)}>{t('exportMisa')}</MenuItem>
+                  <MenuItem onClick={() => startExport(exportMisaGoods)}>{t('exportMisaGoods')}</MenuItem>
+                  <MenuItem onClick={() => startExport(exportMisaSales)}>{t('exportMisaSales')}</MenuItem>
+                </MenuContent>
+              </Menu>
+            )}
+            {(canEnterVoucher(org.data?.role) || canImportOpeningBalance(org.data?.role)) && (
+              <Menu>
+                <MenuTrigger render={<Button size="lg" variant="outline" />}>
+                  {t('moreMenu')}
+                  <MenuChevron />
+                </MenuTrigger>
+                <MenuContent>
+                  {canEnterVoucher(org.data?.role) && (
+                    <MenuItem disabled={closing} onClick={() => setClosing(true)}>
+                      {t('yearClosing')}
+                    </MenuItem>
+                  )}
+                  {canImportOpeningBalance(org.data?.role) && (
+                    <MenuItem render={<Link to="/o/$slug/journal/opening-balances" params={{ slug }} />}>{ob('open')}</MenuItem>
+                  )}
+                </MenuContent>
+              </Menu>
+            )}
             {canEnterVoucher(org.data?.role) && !entering && (
-              <Button size="lg" variant="outline" onClick={() => setEntering(true)}>
+              <Button size="lg" onClick={() => setEntering(true)}>
                 {t('newJournalVoucher')}
               </Button>
-            )}
-            {canEnterVoucher(org.data?.role) && !closing && (
-              <Button size="lg" variant="outline" onClick={() => setClosing(true)}>
-                {t('yearClosing')}
-              </Button>
-            )}
-            {canImportOpeningBalance(org.data?.role) && (
-              <Link to="/o/$slug/journal/opening-balances" params={{ slug }} className={buttonVariants({ variant: 'outline', size: 'lg' })}>
-                {ob('open')}
-              </Link>
             )}
           </div>
         }
       />
       {entering && <JournalVoucherFormCard slug={slug} onClose={() => setEntering(false)} />}
       {closing && <YearClosingFormCard slug={slug} onClose={() => setClosing(false)} />}
-      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+      <div className="mb-4 flex flex-wrap items-end gap-3">
         <div className="flex flex-wrap items-end gap-3">
           <label className="text-xs">
             <span className="text-subtle-foreground">{t('from')}</span>
@@ -258,25 +281,6 @@ export function JournalPage() {
             <DateInput value={to} onChange={setTo} className="mt-1 w-44" />
           </label>
         </div>
-        {/* The exports in their own row beside the range (#1264), hidden only once the journal is known to be empty: the
-            empty journal says what fills it instead of offering three disabled buttons, and a range being read again
-            keeps the row in place. */}
-        {!(journal.isSuccess && nothingToExport) && (
-          <div role="group" aria-label={t('exportGroup')} className="flex flex-wrap items-center gap-2">
-            <Button loading={exportMisa.isPending} variant="outline" onClick={() => startExport(exportMisa)}>
-              {t('exportMisa')}
-            </Button>
-            <Button loading={exportMisaGoods.isPending} variant="outline" onClick={() => startExport(exportMisaGoods)}>
-              {t('exportMisaGoods')}
-            </Button>
-            <Button loading={exportMisaSales.isPending} variant="outline" onClick={() => startExport(exportMisaSales)}>
-              {t('exportMisaSales')}
-            </Button>
-            <Button loading={exportXlsx.isPending} onClick={() => startExport(exportXlsx)}>
-              {t('export')}
-            </Button>
-          </div>
-        )}
       </div>
       {(exportXlsx.error || exportMisa.error || exportMisaGoods.error || exportMisaSales.error) && (
         <div className="mb-4">
@@ -336,19 +340,35 @@ export function JournalPage() {
                   )}
                 </p>
               )}
-              <Table className="mt-2">
-                <TableBody>
-                  {entry.lines.map((l) => (
-                    <TableRow key={l.lineNo} className="hover:bg-transparent">
-                      <TableCell className="px-0 py-1.5 whitespace-normal text-muted-foreground">
-                        <span className="font-mono text-foreground">{l.accountCode}</span> {l.accountName}
-                      </TableCell>
-                      <TableCell className="w-36 px-0 py-1.5 text-right text-foreground tabular-nums">{isZeroAmount(l.debit) ? '' : f.money(l.debit)}</TableCell>
-                      <TableCell className="w-36 px-0 py-1.5 text-right text-foreground tabular-nums">{isZeroAmount(l.credit) ? '' : f.money(l.credit)}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              {/* The lines (#3601): the account on its own line and the Nợ and Có amounts under it on a phone, all three in a row from md up, under a Nợ / Có header. */}
+              <div className="mt-2" role="table" aria-label={t('linesOf', { name: entry.description })}>
+                <div role="row" className="grid grid-cols-2 gap-x-4 border-b border-border pb-1 text-xs text-subtle-foreground md:grid-cols-[1fr_9rem_9rem]">
+                  <span role="columnheader" className="sr-only md:not-sr-only">
+                    {t('account')}
+                  </span>
+                  <span role="columnheader" className="text-right">
+                    {t('debit')}
+                  </span>
+                  <span role="columnheader" className="text-right">
+                    {t('credit')}
+                  </span>
+                </div>
+                {entry.lines.map((l) => (
+                  <div key={l.lineNo} role="row" className="py-0.5 md:grid md:grid-cols-[1fr_9rem_9rem] md:items-baseline md:gap-x-4">
+                    <p role="cell" className="text-sm text-muted-foreground">
+                      <span className="font-mono text-foreground">{l.accountCode}</span> {l.accountName}
+                    </p>
+                    <div className="grid grid-cols-2 gap-x-4 md:contents">
+                      <span role="cell" className="text-right text-sm text-foreground tabular-nums">
+                        {isZeroAmount(l.debit) ? '' : f.money(l.debit)}
+                      </span>
+                      <span role="cell" className="text-right text-sm text-foreground tabular-nums">
+                        {isZeroAmount(l.credit) ? '' : f.money(l.credit)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
               {/* The open form stays until it is closed, so its confirmation (with the proposal link) is still shown once
                   the entry reports the request as pending. */}
               {reversing === entry.id ? (
@@ -366,7 +386,7 @@ export function JournalPage() {
                   )}
                   {canAskReversal(entry, org.data?.role) && (
                     <div className="mt-2 flex justify-end">
-                      <Button variant="ghost" onClick={() => setReversing(entry.id)}>
+                      <Button variant="ghost" size="sm" className="border border-transparent hover:border-border focus-visible:border-ring" onClick={() => setReversing(entry.id)}>
                         {t('reverse')}
                       </Button>
                     </div>

@@ -150,7 +150,8 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
 
   await test.step('Excel export', async () => {
     const download = page.waitForEvent('download');
-    await page.getByRole('button', { name: 'Xuất Excel' }).click();
+    await page.getByRole('button', { name: 'Xuất sổ nhật ký' }).click();
+    await page.getByRole('menuitem', { name: 'Xuất Excel' }).click();
     const file = await download;
     expect(file.suggestedFilename()).toBe(`ludy-but-toan-${slug}.xlsx`);
 
