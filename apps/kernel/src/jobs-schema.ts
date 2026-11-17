@@ -77,6 +77,8 @@ export const QUEUES = {
   // Created by the member minutes webhook migration (20270101060000): one delivery of a member's minutes webhook, and the sweep that hands deliveries over (meetings integrations A6, #3164).
   meetingHook: 'kernel-meeting-hook',
   meetingHookSweep: 'kernel-meeting-hook-sweep',
+  // Created by the series nudge migration (20270107120000): the sweep, every 5 minutes, of the nudges about open items before the next meeting of a series (#3542).
+  meetingsSeriesNudge: 'meetings-series-nudge',
   // Meeting platform recordings (meetings integrations C1, #3173): one download of a recording the member chose to import, and the sweep that hands them over, lists suggestions and expires.
   meetingsImport: 'kernel-meeting-import',
   meetingsImportSweep: 'kernel-meeting-import-sweep',
@@ -193,6 +195,8 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   [QUEUES.notesMemberPurge]: 'none',
   [QUEUES.notesTrash]: 'none',
   [QUEUES.notesRemind]: 'none',
+  // The sweep reads the database and runs a command that writes an in-app notice; it reaches nothing.
+  [QUEUES.meetingsSeriesNudge]: 'none',
   [QUEUES.memberVySweep]: 'none',
   // The one request to the receiver URL an org set, through the egress guard (egressFetch, https only): the delivery's only reach. The sweep reads and writes the database and hands jobs over, nothing else.
   [QUEUES.mcpWake]: ['tenant_url'],

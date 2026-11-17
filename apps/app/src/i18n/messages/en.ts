@@ -454,6 +454,7 @@ export const en = {
       finance_period_closing: 'VAT returns due on a period that is not locked',
       notes_todo_due: 'Reminders of my to-dos',
       projects_weekly_status: 'Project weekly status sent by email',
+      meetings_series_open_items: 'Open items from the previous meeting of a series',
       kernel_channel_expired: 'An ad account connection expired or was refused',
       kernel_ai_budget: 'The AI budget is nearly or fully used',
       kernel_conversation_new: 'A new conversation needs an answer',
@@ -474,6 +475,7 @@ export const en = {
       period_closing: 'The VAT return for {period} is due on {due}, and the period is not locked',
       todo_due: 'You have 1 to-do due',
       projects_weekly_status: 'New weekly status for project {title}',
+      series_open_items: 'Meeting soon: you still have {count, plural, one {# open item} other {# open items}} from the previous meeting. Open it to see them.',
       ai_budget_warn: 'The AI budget is {percent}% used. When it runs out only the AI stops; the books keep working.',
       ai_budget_stop: "This month's AI budget is used up. Work that needs the AI waits; raise the budget or wait for next month. The books keep working as usual.",
       channel_expired: 'An ad account was paused because its connection expired or was refused. Connect it again to read on, with no day lost.',
@@ -13480,6 +13482,7 @@ export const en = {
       },
       series: {
         open_items: 'See the open items of the previous meeting of a series',
+        nudge: 'Remind a person of their open items before the next meeting of a series',
         set: 'Make this meeting follow an earlier one as a series, or take it out of its series',
       },
       speaker: {
