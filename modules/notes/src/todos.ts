@@ -467,7 +467,8 @@ export const todoUpdate = defineCommand({
   handler: async (ctx, input): Promise<TodoWritten> => {
     userOf(ctx.actor);
     const requestedListId = input.listId === undefined ? undefined : normalizeListId(input.listId);
-    // Lock target todo_list FOR SHARE before locking the todo row so global lock order matches todoListUpdate/todoListDelete.
+    // Global lock DAG: series advisory lock -> todo_list FOR SHARE -> todo FOR UPDATE.
+    await lockTodoSeries(ctx, await seriesLockKey(ctx, input.todoId));
     if (requestedListId !== undefined || input.sectionId !== undefined) {
       let lockListId: string | null = requestedListId ?? null;
       if (requestedListId === undefined) {
@@ -590,8 +591,9 @@ export const todoComplete = defineCommand({
   target,
   handler: async (ctx, input): Promise<TodoCompleteResult> => {
     const userId = userOf(ctx.actor);
-    // Lock series before todo_list FOR SHARE, and lock todo_list FOR SHARE before todo FOR UPDATE when a recurring todo sits in a list.
+    // Global lock DAG: series advisory lock -> todo_list FOR SHARE -> todo FOR UPDATE.
     await lockTodoSeries(ctx, await seriesLockKey(ctx, input.todoId));
+    let lockedList: { id: string; sections: unknown } | undefined;
     if (input.stopSeries !== true) {
       const peek = await ctx.trx
         .selectFrom('crove_notes.todo')
@@ -600,9 +602,9 @@ export const todoComplete = defineCommand({
         .where('id', '=', input.todoId)
         .executeTakeFirst();
       if (peek && peek.recurrence !== null && peek.list_id !== null) {
-        await ctx.trx
+        lockedList = await ctx.trx
           .selectFrom('crove_notes.todo_list')
-          .select('id')
+          .select(['id', 'sections'])
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', peek.list_id)
           .where('deleted_at', 'is', null)
@@ -740,18 +742,10 @@ export const todoComplete = defineCommand({
           let nextListId: string | null = before.list_id;
           let nextSectionId: string | null = before.section_id;
           if (nextListId !== null) {
-            const liveList = await ctx.trx
-              .selectFrom('crove_notes.todo_list')
-              .select(['id', 'sections'])
-              .where('org_id', '=', ctx.orgId)
-              .where('id', '=', nextListId)
-              .where('deleted_at', 'is', null)
-              .forShare()
-              .executeTakeFirst();
-            if (!liveList) {
+            if (!lockedList || lockedList.id !== nextListId) {
               nextListId = null;
               nextSectionId = null;
-            } else if (nextSectionId !== null && !parseSections(liveList.sections).some((s) => s.id === nextSectionId)) {
+            } else if (nextSectionId !== null && !parseSections(lockedList.sections).some((s) => s.id === nextSectionId)) {
               nextSectionId = null;
             }
           }
