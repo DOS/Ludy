@@ -9,7 +9,7 @@ import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, t
 import type { McpWakeView, MeetingHookView, QuoteLinkCreated } from '@crove/kernel-contract';
 import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wake-setup.ts';
 import { makeHookSecret } from './meeting-hook-setup.ts';
-import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, PaymentReminderDraft, TodayList, WeeklyFigures } from '@crove/kernel-contract';
+import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { weeklyAnswer } from './today-weekly.ts';
 import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
@@ -71,6 +71,7 @@ import { askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeet
 import { draftReorder, stockAi, suggestItems } from './stock-ai.ts';
 import { MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
+import { explainVatLate, vatLateAi } from './finance-vat-ai.ts';
 import { explainMarketplaceLine, marketplaceLineAi } from './finance-marketplace-line-ai.ts';
 import { explainPayrollMatch, payrollMatchAi } from './finance-payroll-match-ai.ts';
 import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
@@ -404,6 +405,8 @@ export function createRpcHandler(
   const companyAi: CompanyAi = { reader: conversationReader ?? null, budget: suggestionBudget() };
   // The finance coworker's sentence on the Kế toán overview (#2631): the same reader and model, a budget of its own, and it is told only aggregated figures.
   const financeOverviewAi = overviewAi(conversationReader?.overviewSentence ? { overviewSentence: conversationReader.overviewSentence.bind(conversationReader) } : null, suggestionBudget());
+  // The finance coworker's sentence naming the late sales invoices of a VAT working (#3540): the same reader and model, a budget of its own; told invoice numbers and periods only.
+  const financeVatLateAi = vatLateAi(conversationReader?.vatLateSentence ? { vatLateSentence: conversationReader.vatLateSentence.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's one line on why a bank line may be a payroll payment (#2532): the same reader and model, a budget of its own; told the kind, month, amount and date only.
   const financePayrollMatchAi = payrollMatchAi(conversationReader?.payrollMatchSentence ? { payrollMatchSentence: conversationReader.payrollMatchSentence.bind(conversationReader) } : null, suggestionBudget());
   const financeMarketplaceLineAi = marketplaceLineAi(conversationReader?.marketplaceLineSentence ? { marketplaceLineSentence: conversationReader.marketplaceLineSentence.bind(conversationReader) } : null, suggestionBudget());
@@ -3276,6 +3279,14 @@ export function createRpcHandler(
     vat: {
       period: os.vat.period.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.vat.period', input, { actor, orgId })),
+      ),
+      // The sentence is asked of the model outside any transaction, from the lists the working read in the member's own one (their legal entities only).
+      explain: os.vat.explain.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { lang, ...ask } = input;
+          const report = await runtime.query<VatLateSource>('finance.vat.period', ask, { actor, orgId });
+          return explainVatLate(financeVatLateAi, orgId, actor.userId, report, lang ?? 'vi');
+        }),
       ),
       salesNumberGaps: os.vat.salesNumberGaps.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.vat.sales_number_gaps', input, { actor, orgId })),

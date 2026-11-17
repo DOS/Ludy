@@ -1,8 +1,8 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useState } from 'react';
-import { useTranslations } from 'use-intl';
-import type { VAT_RATES, VAT_WARNINGS } from '@crove/kernel-contract';
+import { useLocale, useTranslations } from 'use-intl';
+import { vatLateFacts, vatLateKey, vatLateTemplate, type VAT_RATES, type VAT_WARNINGS } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
@@ -101,6 +101,39 @@ export function InvoiceTable({ invoices, partyLabel }: { invoices: Invoice[]; pa
 
 type VatReport = Awaited<ReturnType<typeof client.vat.period>>;
 type PaymentCheck = VatReport['paymentChecks']['items'][number];
+
+// The coworker's sentence on the late sales of the working (#3540): each late invoice and the period of its sale. The template is built from the lists below with no model, so it shows
+// with AI off, spent or refused (the server drops a sentence that names an invoice or period not in the lists). A coworker sentence that came back used goes above it and never states a
+// status: the template always stays, because whether an invoice needs a supplementary declaration is the one fact a person acts on, and only code states it.
+// It reads and names only: nothing is declared or posted, and a person decides the supplementary declaration. `version` is when the lists were read, so the sentence is asked again
+// whenever they are (the server keeps one by its facts, so asking again over unchanged lists costs no model call).
+export function LateSummary({ data, legalEntityId, ready, version }: { data: Pick<VatReport, 'period' | 'supplementary' | 'lateSales'>; legalEntityId: string | undefined; ready: boolean; version: number }) {
+  const t = useTranslations('vat');
+  const lang = useLocale() === 'en' ? 'en' : 'vi';
+  const facts = vatLateFacts(data);
+  const base = orpc.vat.explain.queryOptions({ input: { period: data.period.period, legalEntityId, lang } });
+  const explain = useQuery({ ...base, queryKey: [...base.queryKey, version], enabled: ready && facts.length > 0, staleTime: Infinity, retry: false });
+  const template = vatLateTemplate(facts, lang);
+  if (template === null) return null;
+  // The coworker sentence only when it was written from the lists on screen (the server read them again for it).
+  const text = explain.data?.ai === 'used' && explain.data.text && explain.data.key === vatLateKey(facts) ? explain.data.text : template;
+  return (
+    <section aria-labelledby="vat-late-summary-title" data-testid="vat-late-summary" className="rounded-lg border border-border p-4">
+      <h2 id="vat-late-summary-title" className="text-xs font-medium text-muted-foreground">
+        {t('lateSummary.title')}
+      </h2>
+      {text !== template ? (
+        <p className="mt-1 text-sm text-foreground" data-testid="vat-late-summary-sentence">
+          {text}
+        </p>
+      ) : null}
+      <p className="mt-1 text-sm text-foreground" data-testid="vat-late-summary-status">
+        {template}
+      </p>
+      <p className="mt-2 text-xs text-subtle-foreground">{t('lateSummary.note')}</p>
+    </section>
+  );
+}
 
 // The sales of this period that must go in a supplementary return (#3535): issued after the period was locked or its return filed, for a sale made in it. Not in the figures above.
 export function SupplementaryItems({ data }: { data: Pick<VatReport, 'supplementary'> }) {
@@ -606,6 +639,8 @@ export function VatPage() {
               <InvoiceTable invoices={data.output.documents} partyLabel={t('columns.buyer')} />
             )}
           </section>
+
+          <LateSummary data={data} legalEntityId={entity.legalEntityId} ready={entity.ready} version={report.dataUpdatedAt} />
 
           <SupplementaryItems data={data} />
 

@@ -5648,6 +5648,10 @@ export const en = {
       title: 'To declare in a supplementary return ({count})',
       hint: 'Sales invoices recorded after this period was locked or its return filed, for goods sold in this period, so they belong to this period. The period is not reopened: these invoices are outside the main figures above. VAT to declare in addition: {vat}.',
     },
+    lateSummary: {
+      title: '{finance} on the late invoices',
+      note: '{finance} only reads the lists on this screen. Whether to file a supplementary declaration is for the responsible person to decide; nothing is declared or posted automatically.',
+    },
     lateSales: {
       title: 'Invoices issued this period for earlier sales ({count})',
       hint: 'These invoices are counted in the period of their sale date, not in this one.',
@@ -7631,6 +7635,7 @@ export const en = {
       today_weekly: "Vy's \"This week\" on Home",
       ads_campaign_draft: 'Drafting the content of an ad campaign',
       finance_overview_explain: 'One sentence explaining the Accounting overview',
+      finance_vat_late_explain: 'One sentence naming the late sales invoices on the VAT working',
       finance_bank_match_explain: 'Explaining why a bank transaction may be a payroll payment',
       finance_marketplace_line: 'Wording what is waiting on the marketplace screen',
       meetings_transcribe: 'Turning meeting audio into text',

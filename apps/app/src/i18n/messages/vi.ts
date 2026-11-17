@@ -5644,6 +5644,10 @@ export const vi = {
       title: 'Cần kê khai bổ sung ({count})',
       hint: 'Hóa đơn bán ra được ghi nhận sau khi kỳ này đã khóa sổ hoặc đã nộp tờ khai, nhưng hàng bán trong kỳ này nên thuộc kỳ này. Kỳ không được mở lại: các hóa đơn này nằm ngoài số liệu chính ở trên. Thuế GTGT cần kê khai bổ sung: {vat}.',
     },
+    lateSummary: {
+      title: '{finance} nhận xét về hóa đơn lập muộn',
+      note: '{finance} chỉ đọc các danh sách trên màn này. Có kê khai bổ sung hay không là do người có trách nhiệm quyết định; không có gì được kê khai hay ghi sổ tự động.',
+    },
     lateSales: {
       title: 'Hóa đơn lập kỳ này cho hàng bán kỳ trước ({count})',
       hint: 'Các hóa đơn này được tính vào kỳ của ngày bán, không tính vào kỳ này.',
@@ -7627,6 +7631,7 @@ export const vi = {
       today_weekly: 'Mục "Tuần này" của Vy trên Tổng quan',
       ads_campaign_draft: 'Soạn nội dung chiến dịch quảng cáo',
       finance_overview_explain: 'Viết một câu giải thích tổng quan Kế toán',
+      finance_vat_late_explain: 'Viết một câu nêu các hóa đơn bán ra lập muộn trong bảng kê thuế GTGT',
       finance_bank_match_explain: 'Giải thích vì sao một giao dịch ngân hàng có thể là khoản trả lương',
       finance_marketplace_line: 'Diễn đạt điều đang chờ trên màn hình sàn thương mại điện tử',
       meetings_transcribe: 'Ghi lời cuộc họp thành văn bản',
