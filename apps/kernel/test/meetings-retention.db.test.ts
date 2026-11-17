@@ -229,18 +229,18 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
         client.release();
       }
     };
-    const guarded: [string, string, RegExp][] = [
-      ['audio retention', 'meeting_audio_retention_days = 90', /MEETING_SETTINGS_FORBIDDEN/],
-      ['video retention', 'meeting_video_retention_days = 7, meeting_audio_retention_days = 90', /MEETING_SETTINGS_FORBIDDEN/],
-      ['text retention', 'meeting_text_retention_days = 730', /MEETING_SETTINGS_FORBIDDEN/],
-      ['consent policy', "meeting_consent_policy = 'strict'", /MEETING_CONSENT_POLICY_FORBIDDEN/],
+    // One column per case, each a value that differs from the default the org starts with (30, 7, 365, standard) and passes the CHECKs.
+    const guarded: [string, string, string, RegExp][] = [
+      ['audio retention', 'meeting_audio_retention_days = 90', 'meeting_audio_retention_days', /MEETING_SETTINGS_FORBIDDEN/],
+      ['video retention', 'meeting_video_retention_days = 30', 'meeting_video_retention_days', /MEETING_SETTINGS_FORBIDDEN/],
+      ['text retention', 'meeting_text_retention_days = 730', 'meeting_text_retention_days', /MEETING_SETTINGS_FORBIDDEN/],
+      ['consent policy', "meeting_consent_policy = 'strict'", 'meeting_consent_policy', /MEETING_CONSENT_POLICY_FORBIDDEN/],
     ];
-    const before = (await rows<{ a: number; v: number; t: number; c: string }>('SELECT meeting_audio_retention_days a, meeting_video_retention_days v, meeting_text_retention_days t, meeting_consent_policy c FROM crove_kernel.tenant WHERE org_id = $1', [orgId]))[0]!;
-    for (const [label, set, refusal] of guarded) {
-      // Pick a value that really differs from the current one, so the guard has a change to refuse.
-      const statement = `UPDATE crove_kernel.tenant SET ${set} WHERE org_id = '${orgId}'`;
-      const differs = (await rows<{ n: string }>(`SELECT count(*)::text n FROM crove_kernel.tenant t WHERE t.org_id = $1 AND (t.meeting_audio_retention_days, t.meeting_video_retention_days, t.meeting_text_retention_days, t.meeting_consent_policy) IS DISTINCT FROM (${[before.a, before.v, before.t].join(', ')}, '${before.c}')`, [orgId]))[0]!.n;
-      expect(differs, 'the org starts at the defaults the test reads').toBe('0');
+    const state = "SELECT meeting_audio_retention_days a, meeting_video_retention_days v, meeting_text_retention_days t, meeting_consent_policy c FROM crove_kernel.tenant WHERE org_id = $1";
+    const before = (await rows<{ a: number; v: number; t: number; c: string }>(state, [orgId]))[0];
+    expect(before, 'this test runs first, on the defaults its values are chosen against').toEqual({ a: 30, v: 7, t: 365, c: 'standard' });
+    for (const [label, set, column, refusal] of guarded) {
+      const statement = `UPDATE crove_kernel.tenant SET ${set} WHERE org_id = '${orgId}' RETURNING ${column} AS changed`;
       for (const member of ['recorder', 'otherMember']) {
         await asContext(member, async (run) => {
           await expect(run(statement), `${label}, ${member}`).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(refusal) });
@@ -249,10 +249,11 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
       await asContext('owner', async (run) => {
         const done = await run(statement);
         expect(done.rowCount, `${label}, owner`).toBe(1);
+        expect(String(done.rows[0]?.changed), `${label}, owner reads back the new value`).toBe(set.split('= ')[1]!.replace(/'/g, ''));
       });
     }
     // Nothing moved: every refused statement and every rolled-back owner write left the row as it was.
-    expect((await rows('SELECT meeting_audio_retention_days a, meeting_video_retention_days v, meeting_text_retention_days t, meeting_consent_policy c FROM crove_kernel.tenant WHERE org_id = $1', [orgId]))[0]).toEqual(before);
+    expect((await rows(state, [orgId]))[0]).toEqual(before);
   });
 
   it('computes the three dates from the settings: video never past audio, 0 for audio is 7 days, 0 for text is until deleted', () => {
