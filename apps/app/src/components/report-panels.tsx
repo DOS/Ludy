@@ -7,6 +7,7 @@ import { Link } from '@tanstack/react-router';
 import { useState, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
 import type { AdAccountView } from '@crove/kernel-contract';
+import { buttonVariants } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
 import { NativeSelect } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
@@ -215,6 +216,13 @@ export function PostsPanel({ slug }: { slug: string }) {
   const ts = useTranslations('social');
   const f = useFormat();
   const totals = useQuery(orpc.social.metrics.totals.queryOptions({ input: { days: POSTS_DAYS } }));
+  // The empty list's one action is for whoever can use it (#3654): writing needs a role that writes and a channel; a viewer gets none.
+  const me = useQuery(orpc.me.get.queryOptions());
+  const channels = useQuery(orpc.channels.list.queryOptions({ input: {} }));
+  const role = me.data?.orgs.find((o) => o.slug === slug)?.role;
+  const canWrite = role === 'owner' || role === 'admin' || role === 'member';
+  const canConnect = role === 'owner' || role === 'admin';
+  const noChannels = channels.isSuccess && channels.data.length === 0;
   const against = ts('growth.change.days', { days: String(POSTS_DAYS) });
   const data = totals.data;
   const title = t('title', { days: POSTS_DAYS });
@@ -234,7 +242,23 @@ export function PostsPanel({ slug }: { slug: string }) {
       ) : !data ? (
         <CardSkeleton />
       ) : data.posts === 0 ? (
-        <Empty title={t('empty')} hint={t('emptyHint')} />
+        <Empty
+          title={t('empty')}
+          hint={t('emptyHint')}
+          action={
+            !canWrite ? undefined : noChannels ? (
+              canConnect ? (
+                <Link to="/o/$slug/social/channels" params={{ slug }} className={buttonVariants({ size: 'lg' })}>
+                  {ts('connectFirst')}
+                </Link>
+              ) : undefined
+            ) : (
+              <Link to="/o/$slug/social/new" params={{ slug }} className={buttonVariants({ size: 'lg' })}>
+                {ts('compose')}
+              </Link>
+            )
+          }
+        />
       ) : (
         <Card className="block p-4">
           <dl className="grid grid-cols-2 gap-4 sm:grid-cols-5">

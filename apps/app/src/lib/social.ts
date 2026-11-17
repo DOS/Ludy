@@ -224,6 +224,11 @@ export function takeFlash(): string | null {
 // archived (#1299): the posts taken out of every other list, until they are restored.
 export const SOCIAL_TABS = ['upcoming', 'calendar', 'board', 'review', 'attention', 'drafts', 'done', 'archived', 'metrics', 'library'] as const;
 export type SocialTab = (typeof SOCIAL_TABS)[number];
+// The tab the Posts screen opens on when the address names none (#3654): what waits for a person comes first. Posts in review,
+// then posts that failed or need someone, else the schedule.
+export function defaultSocialTab(counts: { review: number; attention: number }): SocialTab {
+  return counts.review > 0 ? 'review' : counts.attention > 0 ? 'attention' : 'upcoming';
+}
 export interface SocialSearch {
   tab?: SocialTab;
   channel?: string;
@@ -277,7 +282,8 @@ export function parseSocialSearch(search: Record<string, unknown>): SocialSearch
 export type ViewFilters = Omit<SocialSearch, 'date' | 'tab'> & { tab?: (typeof SOCIAL_VIEW_TABS)[number] };
 export function viewFiltersOf(search: SocialSearch): ViewFilters {
   const out = Object.fromEntries(Object.entries(search).filter(([k, v]) => k !== 'date' && k !== 'tab' && v !== undefined && v !== '')) as ViewFilters;
-  if (search.tab && (SOCIAL_VIEW_TABS as readonly string[]).includes(search.tab)) out.tab = search.tab as NonNullable<ViewFilters['tab']>;
+  // The schedule is the default view, so a view of it keeps no tab (the address names it now, #3654).
+  if (search.tab && search.tab !== 'upcoming' && (SOCIAL_VIEW_TABS as readonly string[]).includes(search.tab)) out.tab = search.tab as NonNullable<ViewFilters['tab']>;
   return out;
 }
 

@@ -436,7 +436,15 @@ export function SocialIdeasPage() {
         <ErrorText>{errorMessage(list.error)}</ErrorText>
       ) : archived ? (
         ideas.length === 0 ? (
-          <Empty title={t('emptyArchive')} hint={t('emptyArchiveHint')} />
+          <Empty
+            title={t('emptyArchive')}
+            hint={t('emptyArchiveHint')}
+            action={
+              <Button size="lg" onClick={() => setArchived(false)}>
+                {t('board')}
+              </Button>
+            }
+          />
         ) : (
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {ideas.map((i) => (

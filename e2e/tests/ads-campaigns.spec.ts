@@ -34,7 +34,7 @@ test('an owner starts a campaign from a post, sees the most it can spend, and wh
     await page.getByRole('button', { name: 'Kết nối kênh thử' }).click();
     await expect(page.getByText('Trang Chiến dịch').first()).toBeVisible();
     await page.getByRole('link', { name: 'Quay lại' }).click();
-    await page.getByRole('link', { name: 'Soạn bài' }).click();
+    await page.getByRole('link', { name: 'Soạn bài' }).first().click();
     await page.getByLabel('Nội dung chung').fill('Khai trương chi nhánh mới vào thứ Bảy này. Mời bạn ghé thử cà phê mới.');
     await page.getByRole('button', { name: 'Lưu nháp' }).click();
     await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
