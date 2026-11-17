@@ -55,6 +55,8 @@ export const TRANSCRIPT_MAX_SECONDS = 90 * 60;
 
 interface RunAudio {
   language: string;
+  // Names that may be spoken in the meeting (#3499), as the door read them for the recorder; the transcription client cuts and cleans them before they leave.
+  terms?: string[];
   keyId: string;
   wrappedKey: Buffer | Uint8Array;
   segments: Array<{ order: number; startOffsetSeconds: number; lengthSeconds: number; fileId: string; storageKey: string; generation: string | null; sizeBytes: number; sha256: string; contentType: string }>;
@@ -138,7 +140,7 @@ async function openChunk(deps: MeetingsTranscribeDeps, job: MeetingsTranscribeJo
       copy.fill(0);
       throw error;
     }
-    return { input: { audio: copy, mimeType: segment.contentType, language: audio.language === 'en' ? 'en' : 'vi', lengthSeconds: measured, offsetSeconds: segment.startOffsetSeconds }, chunks: audio.segments.length };
+    return { input: { audio: copy, mimeType: segment.contentType, language: audio.language === 'en' ? 'en' : 'vi', lengthSeconds: measured, offsetSeconds: segment.startOffsetSeconds, terms: audio.terms ?? [] }, chunks: audio.segments.length };
   } finally {
     dataKey?.fill(0);
     subkey.fill(0);

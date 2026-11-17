@@ -773,9 +773,13 @@ export const memberVyMeetingAudioOpen = defineCommand({
       .where('id', 'in', rows.map((r) => r.file_id))
       .execute();
     const byId = new Map(files.map((f) => [f.id, f]));
+    // The names that may be spoken (#3499): the recorder's own people and the linked party, behind the same gate as the audio (the function runs it again). Raw text people typed: the
+    // transcription client cuts and cleans it (normalizeTerms) before anything leaves, and it is never stored or audited here.
+    const terms = (await sql<{ term: string }>`SELECT term FROM crove_meetings.terms_for_member_vy(${ctx.orgId}::uuid, ${input.meetingId}::uuid)`.execute(ctx.trx)).rows.map((r) => r.term);
     ctx.audit({ runId: ctx.memberVy.runId, subjectId: input.meetingId, count: rows.length });
     return {
       language: first.is_english ? 'en' : 'vi',
+      terms,
       keyId: first.key_id,
       wrappedKey: first.wrapped_key,
       segments: rows.map((r) => {

@@ -50,6 +50,7 @@ Khung cũng có sẵn một đường chung "gửi trang đang xem vào Ludy": c
 - **Video chỉ được giữ khi tích ô "Ghi cả video"** (có trong tiện ích và trong phần ghi của ứng dụng, chọn cho từng cuộc họp); không tích thì phần hình bị bỏ ngay, không lưu.
 - **File chỉ được mở trong một "hộp cách ly" riêng** (một container mới, không có mạng, không có mật khẩu nào), nơi cũng tách âm thanh ra khỏi video để chép lời.
 - **Nhà cung cấp chép lời** thay được. Người tự cài Ludy có thể dùng mô hình chép lời chạy trên máy của mình (họ mô hình Whisper), để âm thanh không ra khỏi máy.
+- **Danh sách tên gửi kèm âm thanh** (JOY quyết định 2026-11-16, #3499, sửa điểm 5 của ADR-0047): để bản chép lời viết đúng tên người, tên khách hàng, Ludy gửi cho nhà cung cấp chép lời, cùng với âm thanh, một danh sách tên ngắn: tên người ghi và người dự họp (tên hiển thị, không bao giờ là email), khách hàng gắn với cuộc họp và những người của khách hàng đó. **Không bao giờ** gửi khách hàng khác, số điện thoại, email, mã số thuế, địa chỉ hay số tiền. Danh sách bị giới hạn (tối đa 50 tên, mỗi tên 40 ký tự, khoảng 1.000 ký tự) và được làm sạch bằng mã máy trước khi gửi; một ô tên chứa số điện thoại hay email thì bị bỏ. Danh sách chỉ được gửi như dữ liệu để chép đúng tên, không bao giờ là lệnh. Không có tên nào để gửi thì yêu cầu giữ nguyên như trước. Chưa có danh sách sản phẩm trong Ludy nên chưa có tên sản phẩm.
 
 ## Luật dữ liệu cá nhân
 
