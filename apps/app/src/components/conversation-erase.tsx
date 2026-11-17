@@ -64,7 +64,7 @@ export function eraseTargets(detail: ConversationDetail, contactName: string, an
       messages: detail.messages.filter((x) => x.authorTail === m.authorTail).length,
       messagesMore,
       notes: 0,
-      inComments: true,
+      inComments: false,
     });
   }
   return targets;
@@ -79,7 +79,8 @@ function EraseCustomer({ conversation, target, kind, onErased }: { conversation:
     mutationFn: () => client.conversations.eraseContact({ conversationId: conversation.id, ...(target.messageId ? { messageId: target.messageId } : {}), confirm: true, idempotencyKey: attempt }),
     onSuccess: (done) => {
       toast(t('done', { threads: done.threads, messages: done.messages, name: target.name }));
-      onErased();
+      // The thread's own customer going takes the thread with them; another commenter going leaves it, shorter, and the refresh below redraws it.
+      if (kind === 'contact') onErased();
       void queryClient.invalidateQueries({ queryKey: orpc.conversations.key() });
     },
   });
@@ -107,7 +108,7 @@ function EraseCustomer({ conversation, target, kind, onErased }: { conversation:
         confirm={kind === 'contact' ? t('confirmContact', values) : t('confirmAuthor', { name: target.name })}
         cancel={t('keep')}
         onConfirm={() => erase.mutate()}
-        render={<Button type="button" size="sm" variant="outline" className="h-auto min-h-8 w-full justify-start whitespace-normal text-left text-destructive" data-testid={kind === 'contact' ? 'conversation-erase-open' : 'conversation-message-erase-open'} />}
+        render={<Button type="button" size="sm" variant="outline" disabled={erase.isPending} className="h-auto min-h-8 w-full justify-start whitespace-normal text-left text-destructive" data-testid={kind === 'contact' ? 'conversation-erase-open' : 'conversation-message-erase-open'} />}
       >
         {kind === 'contact' ? t('open') : t('openAuthor', { name: target.name })}
       </ConfirmDialog>
@@ -126,8 +127,10 @@ export function PersonalDataSection({ detail, contactName, onErased }: { detail:
   if (!own) return null;
   const conversation = { id: c.id, channelName: c.channel.displayName };
   return (
-    <section className="space-y-2 border-t border-border pt-3" aria-label={t('heading')} data-testid="conversation-personal-data">
-      <h3 className="text-sm font-semibold text-foreground">{t('heading')}</h3>
+    <section className="space-y-2 border-t border-border pt-3" aria-labelledby={`personal-data-${c.id}`} data-testid="conversation-personal-data">
+      <h3 id={`personal-data-${c.id}`} className="text-sm font-semibold text-foreground">
+        {t('heading')}
+      </h3>
       <p className="text-xs text-muted-foreground">{t('hint')}</p>
       <EraseCustomer conversation={conversation} target={own} kind="contact" onErased={onErased} />
       {commenters.length > 0 && (

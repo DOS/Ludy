@@ -99,7 +99,7 @@ describe('the people the section can erase', () => {
     });
     const targets = eraseTargets(detail, 'Lan Nguyễn', (t) => `Người dùng ·${t}`);
     expect(targets.map((t) => t.name)).toEqual(['Lan Nguyễn', 'Minh Trần', 'Người dùng ·0003']);
-    expect(targets[1]).toMatchObject({ messageId: 'm2', messages: 2, threads: null, inComments: true });
+    expect(targets[1]).toMatchObject({ messageId: 'm2', messages: 2, threads: null, inComments: false });
     // A direct thread has no other commenters.
     expect(eraseTargets(detailOf({ kind: 'direct', messages: [customer({}), customer({ id: 'm2', authorTail: '0002' })] }), 'Lan Nguyễn', (t) => t)).toHaveLength(1);
   });

@@ -6,7 +6,7 @@
 // authors first, and the erasure then deletes the ones a notice named and edits the value out of shared notes.
 // An owner also finds here every meeting of the org, the ones they cannot read included, as metadata only, to delete one (#2703).
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Link, useParams } from '@tanstack/react-router';
+import { Link } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
 import type { PersonalDataResult } from '@crove/kernel-contract';
@@ -37,7 +37,6 @@ function download(value: string, result: PersonalDataResult) {
 export function PersonalDataPage() {
   useModulesVersion(); // the apps of the org can change while this screen is open
   const t = useTranslations('personalData');
-  const { slug } = useParams({ strict: false }) as { slug: string };
   const org = useQuery(orpc.org.get.queryOptions());
   const canRead = org.data?.role === 'owner' || org.data?.role === 'admin';
   const [draft, setDraft] = useState('');
@@ -131,10 +130,10 @@ export function PersonalDataPage() {
       </form>
       <p className="mb-4 max-w-3xl text-xs text-muted-foreground">{t('hint')}</p>
       {/* Customer conversations are not found by this search (their names and addresses are erased with their threads): the Inbox is where they go (#3635). */}
-      {installedModules().includes('social') && (
+      {installedModules().includes('social') && org.data && (
         <p className="mb-4 max-w-3xl text-xs text-muted-foreground" data-testid="personal-data-conversations">
           {t('conversations')}{' '}
-          <Link to="/o/$slug/social/inbox" params={{ slug }} className="text-link underline">
+          <Link to="/o/$slug/social/inbox" params={{ slug: org.data.slug }} className="text-link underline">
             {t('conversationsLink')}
           </Link>
         </p>
