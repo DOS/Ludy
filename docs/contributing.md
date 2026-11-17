@@ -5,6 +5,8 @@ The detail behind the short rules in [AGENTS.md](../AGENTS.md). AGENTS.md stays 
 
 ## Commands
 
+On the owner's machine, which many agents share, the root `pnpm typecheck`, `pnpm test`, `pnpm test:db` and `pnpm test:e2e` refuse a full run (`tools/local-guard.mjs`; AGENTS.md, "Local resources"). Give them the files you touched (`pnpm test:db apps/kernel/test/x.db.test.ts`), or typecheck one package (`pnpm --filter @crove/app typecheck`). CI (`CI=true`) runs the full suites; `CROVE_FULL_LOCAL=1` lifts the stop for a person on their own machine.
+
 ### Typecheck covers the tests
 
 Read this when you add a package with tests, or when `tools/test/typecheck-coverage.test.ts` fails.
