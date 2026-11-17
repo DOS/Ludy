@@ -23,14 +23,15 @@ import {
 } from '../src/index.ts';
 
 function invoice(id: string, rates: VatInvoiceView['rates']): VatInvoiceView {
-  return { id, issueDate: '2026-09-15', postingDate: '2026-09-15', series: 'C26TAB', number: id, partyName: 'Công ty TNHH ABC', partyTaxCode: '0101234564', subtotal: '0', vatAmount: '0', total: '0', rates, warnings: [] };
+  return {
+    saleDate: null, id, issueDate: '2026-09-15', postingDate: '2026-09-15', series: 'C26TAB', number: id, partyName: 'Công ty TNHH ABC', partyTaxCode: '0101234564', subtotal: '0', vatAmount: '0', total: '0', rates, warnings: [] };
 }
 
 function declaration(period: string, input: VatInvoiceView[], output: VatInvoiceView[], name = 'Công ty TNHH Crove Demo', address: string | null = null): VatDeclaration {
   const inputSide = { available: true, documents: input, totals: sideTotals(input) };
   const outputSide = { available: true, documents: output, totals: sideTotals(output) };
   return {
-    report: { period: vatPeriod(period), input: inputSide, output: outputSide, indicators: form01Indicators(inputSide.totals, outputSide.totals), paymentChecks: { items: [], vatAtRisk: '0', notDeductibleVat: '0', unchecked: 0, suggested25: inputSide.totals.vat }, carryForward: { amount: '0', previous: null, lookedFor: [] }, filed: null },
+    report: { period: vatPeriod(period), input: inputSide, output: outputSide, supplementary: { documents: [], totals: sideTotals([]) }, lateSales: [], indicators: form01Indicators(inputSide.totals, outputSide.totals), paymentChecks: { items: [], vatAtRisk: '0', notDeductibleVat: '0', unchecked: 0, suggested25: inputSide.totals.vat }, carryForward: { amount: '0', previous: null, lookedFor: [] }, filed: null },
     taxpayer: { taxCode: '0101234564', name, address },
   };
 }

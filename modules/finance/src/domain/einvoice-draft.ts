@@ -25,7 +25,11 @@ export interface DraftBuyerInput {
 }
 
 export interface DraftInput {
+  // The date the invoice is issued and printed.
   date: string;
+  // The moment of the sale when it is not the invoice's day (#3535), and the person's reason when the invoice is late.
+  saleDate: string | null;
+  lateReason: string | null;
   currency: string;
   seriesId: string | null;
   buyer: DraftBuyerInput;
@@ -53,6 +57,26 @@ export function computeDraft(lines: readonly DraftLineInput[]): ComputedDraft {
   return { lines: computed, ...sumLineTotals(computed) };
 }
 
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+const isDay = (value: string): boolean => DAY.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
+
+// The day after `date` that is a working day (YYYY-MM-DD): Monday to Friday. Public holidays are not in this rule: the repository holds no calendar of them (the government
+// decides some each year), so a holiday counts as a working day here and the warning can be a day late, never a day early.
+export function nextWorkingDay(date: string): string {
+  const next = new Date(`${date}T00:00:00Z`);
+  do {
+    next.setUTCDate(next.getUTCDate() + 1);
+  } while (next.getUTCDay() === 0 || next.getUTCDay() === 6);
+  return next.toISOString().slice(0, 10);
+}
+
+// A sale invoiced after its next working day (Decree 254 Art. 9, as read by the accountant of #2506: signed and sent for the code by the next working day) is a late invoice:
+// the fine is heavy, and the sale still belongs to the VAT period of its own date (#3535).
+export function isLateSale(saleDate: string | null, invoiceDate: string): boolean {
+  if (!saleDate || !isDay(saleDate) || !isDay(invoiceDate) || saleDate >= invoiceDate) return false;
+  return invoiceDate > nextWorkingDay(saleDate);
+}
+
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DECIMAL = /^\d{1,12}(\.\d{1,6})?$/;
 const MAX_TOTAL_DIGITS = 15;
@@ -66,6 +90,12 @@ export function checkDraft(input: DraftInput, computed: ComputedDraft, today: st
   if (!input.date) add('date', 'DATE_REQUIRED');
   else if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date) || Number.isNaN(Date.parse(`${input.date}T00:00:00Z`)) || new Date(`${input.date}T00:00:00Z`).toISOString().slice(0, 10) !== input.date) add('date', 'DATE_INVALID');
   else if (input.date > today) add('date', 'DATE_FUTURE');
+
+  if (input.saleDate !== null) {
+    if (!isDay(input.saleDate)) add('saleDate', 'SALE_DATE_INVALID');
+    else if (isDay(input.date) && input.saleDate > input.date) add('saleDate', 'SALE_DATE_AFTER_INVOICE');
+    else if (isLateSale(input.saleDate, input.date) && !input.lateReason?.trim()) add('lateReason', 'LATE_REASON_REQUIRED');
+  }
 
   if (input.currency !== 'VND') add('currency', 'CURRENCY_UNSUPPORTED');
   if (!input.seriesId) add('series', 'SERIES_REQUIRED');

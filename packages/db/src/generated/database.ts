@@ -1130,6 +1130,8 @@ export interface FinanceEinvoiceDraftTable {
   next_check_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   check_attempts: Generated<number>;
   channel_connection_id: string | null;
+  sale_date: string | null;
+  late_reason: string | null;
 }
 
 /** crove_finance.einvoice_series */

@@ -16,6 +16,9 @@ export const DRAFT_ISSUE_CODES = [
   'DATE_REQUIRED',
   'DATE_INVALID',
   'DATE_FUTURE',
+  'SALE_DATE_INVALID',
+  'SALE_DATE_AFTER_INVOICE',
+  'LATE_REASON_REQUIRED',
   'CURRENCY_UNSUPPORTED',
   'SERIES_REQUIRED',
   'BUYER_TAX_CODE_REQUIRED',
@@ -59,7 +62,12 @@ export const zEInvoiceLineInput = z.strictObject({
 
 // The form as the person holds it, without saving it (the live check): everything but the draft's identity.
 export const zEInvoiceDraftForm = z.strictObject({
+  // The date the invoice is issued and printed.
   date: zLocalDate,
+  // The moment of the sale (Decree 254 Art. 9), when it is not the invoice's day (#3535); null is "the same day". A sale issued after the next working day is a late invoice
+  // and needs the person's reason; the sale stays in the VAT period of its own date.
+  saleDate: zLocalDate.nullable().default(null),
+  lateReason: zText(500).nullable().default(null),
   seriesId: zId.nullable(),
   buyer: zEInvoiceBuyerInput,
   lines: z.array(zEInvoiceLineInput).max(EINVOICE_DRAFT_MAX_LINES),
@@ -96,6 +104,8 @@ export const zEInvoiceDraftCheck = z.object({
   vatAmount: z.string(),
   total: z.string(),
   issues: z.array(zDraftIssue),
+  // The sale is later invoiced than its next working day (#3535): the warning on the form, with the fine that goes with it.
+  lateSale: z.boolean(),
 });
 export type EInvoiceDraftCheck = z.infer<typeof zEInvoiceDraftCheck>;
 
@@ -105,6 +115,9 @@ export const zEInvoiceDraft = z.object({
   state: z.string(),
   seriesId: zId.nullable(),
   date: z.string(),
+  saleDate: z.string().nullable(),
+  lateReason: z.string().nullable(),
+  lateSale: z.boolean(),
   currency: z.string(),
   buyer: z.object({
     kind: z.string(),
@@ -239,6 +252,9 @@ export const zEInvoiceIssueView = z.object({
   draftId: zId,
   state: z.string(),
   date: z.string(),
+  // A sale of an earlier day than the invoice (#3535), and the reason the person gave when the invoice is late: what an approver sees before the invoice is signed.
+  saleDate: z.string().nullable().default(null),
+  lateReason: z.string().nullable().default(null),
   currency: z.string(),
   total: z.string(),
   lineCount: z.number().int(),

@@ -3,7 +3,7 @@
 // fields.
 import { describe, expect, it } from 'vitest';
 import { enterpriseCheckDigit } from '@crove/l10n-vn';
-import { checkDraft, computeDraft, normalizeVatRate, type DraftInput } from '../src/domain/einvoice-draft.ts';
+import { checkDraft, computeDraft, isLateSale, nextWorkingDay, normalizeVatRate, type DraftInput } from '../src/domain/einvoice-draft.ts';
 
 // A synthetic tax code made at run time (the repository holds no checksum-valid one): a nine digit prefix and its check digit, and the same with the check digit off by one.
 const PREFIX = '010010910';
@@ -13,6 +13,8 @@ const BAD_TAX_CODE = `${PREFIX}${((enterpriseCheckDigit(PREFIX) ?? 0) + 1) % 10}
 const line = (extra: Partial<DraftInput['lines'][number]> = {}) => ({ description: 'Hàng', unit: 'cái', quantity: '1', unitPrice: '100000', vatRate: '10%', ...extra });
 const draft = (extra: Partial<DraftInput> = {}): DraftInput => ({
   date: '2026-11-03',
+  saleDate: null,
+  lateReason: null,
   currency: 'VND',
   seriesId: '00000000-0000-4000-8000-000000000001',
   buyer: { kind: 'business', taxCode: VALID_TAX_CODE, name: 'Công ty Mua', address: '1 Phố Thử', email: null },
@@ -90,5 +92,51 @@ describe('checkDraft', () => {
 
   it('names the second line by its position from 1', () => {
     expect(codes(draft({ lines: [line(), line({ quantity: 'x' })] }))).toEqual(['lines.2.quantity:LINE_QUANTITY_INVALID']);
+  });
+});
+
+// #3535: a sale invoiced after its next working day is a late invoice: it needs the person's reason, and it stays in the VAT period of its sale.
+describe('nextWorkingDay', () => {
+  it('is the next day on a weekday, and Monday after a Friday or a weekend', () => {
+    expect(nextWorkingDay('2026-11-02')).toBe('2026-11-03'); // Monday
+    expect(nextWorkingDay('2026-11-05')).toBe('2026-11-06'); // Thursday
+    expect(nextWorkingDay('2026-11-06')).toBe('2026-11-09'); // Friday
+    expect(nextWorkingDay('2026-11-07')).toBe('2026-11-09'); // Saturday
+    expect(nextWorkingDay('2026-11-08')).toBe('2026-11-09'); // Sunday
+    expect(nextWorkingDay('2026-12-31')).toBe('2027-01-01');
+  });
+});
+
+describe('isLateSale', () => {
+  it('is late only when the invoice is dated after the next working day of the sale', () => {
+    expect(isLateSale('2026-11-02', '2026-11-03')).toBe(false); // the next working day itself
+    expect(isLateSale('2026-11-02', '2026-11-04')).toBe(true);
+    expect(isLateSale('2026-11-06', '2026-11-09')).toBe(false); // Friday's sale, invoiced Monday
+    expect(isLateSale('2026-11-06', '2026-11-10')).toBe(true);
+    expect(isLateSale('2026-10-30', '2026-11-03')).toBe(true); // a sale of the month before, a missed invoice
+  });
+
+  it('is not late with no sale date, the same day, a later sale or a date that is not one', () => {
+    expect(isLateSale(null, '2026-11-03')).toBe(false);
+    expect(isLateSale('2026-11-03', '2026-11-03')).toBe(false);
+    expect(isLateSale('2026-11-05', '2026-11-03')).toBe(false);
+    expect(isLateSale('2026-02-30', '2026-11-03')).toBe(false);
+  });
+});
+
+describe('checkDraft: the sale date', () => {
+  it('accepts a sale date of the invoice day or of the day before, with no reason', () => {
+    expect(codes(draft({ saleDate: '2026-11-02' }))).toEqual([]);
+  });
+
+  it('asks for a reason when the sale is older than the next working day, and takes it', () => {
+    expect(codes(draft({ saleDate: '2026-10-28' }))).toEqual(['lateReason:LATE_REASON_REQUIRED']);
+    expect(codes(draft({ saleDate: '2026-10-28', lateReason: '   ' }))).toEqual(['lateReason:LATE_REASON_REQUIRED']);
+    expect(codes(draft({ saleDate: '2026-10-28', lateReason: 'Quên lập hóa đơn, phát hiện khi đối chiếu cuối tháng' }))).toEqual([]);
+  });
+
+  it('refuses a sale date that is not a date or is after the invoice', () => {
+    expect(codes(draft({ saleDate: '2026-13-01' }))).toEqual(['saleDate:SALE_DATE_INVALID']);
+    expect(codes(draft({ saleDate: '2026-11-04' }))).toEqual(['saleDate:SALE_DATE_AFTER_INVOICE']);
   });
 });
