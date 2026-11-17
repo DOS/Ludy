@@ -103,7 +103,8 @@ type VatReport = Awaited<ReturnType<typeof client.vat.period>>;
 type PaymentCheck = VatReport['paymentChecks']['items'][number];
 
 // The coworker's sentence on the late sales of the working (#3540): each late invoice and the period of its sale. The template is built from the lists below with no model, so it shows
-// with AI off, spent or refused (the server drops a sentence that names an invoice or period not in the lists); a coworker sentence replaces it only when it came back used.
+// with AI off, spent or refused (the server drops a sentence that names an invoice or period not in the lists). A coworker sentence that came back used goes above it and never states a
+// status: the template always stays, because whether an invoice needs a supplementary declaration is the one fact a person acts on, and only code states it.
 // It reads and names only: nothing is declared or posted, and a person decides the supplementary declaration. `version` is when the lists were read, so the sentence is asked again
 // whenever they are (the server keeps one by its facts, so asking again over unchanged lists costs no model call).
 export function LateSummary({ data, legalEntityId, ready, version }: { data: Pick<VatReport, 'period' | 'supplementary' | 'lateSales'>; legalEntityId: string | undefined; ready: boolean; version: number }) {
@@ -120,7 +121,14 @@ export function LateSummary({ data, legalEntityId, ready, version }: { data: Pic
       <h2 id="vat-late-summary-title" className="text-xs font-medium text-muted-foreground">
         {t('lateSummary.title')}
       </h2>
-      <p className="mt-1 text-sm text-foreground">{text}</p>
+      {text !== template ? (
+        <p className="mt-1 text-sm text-foreground" data-testid="vat-late-summary-sentence">
+          {text}
+        </p>
+      ) : null}
+      <p className="mt-1 text-sm text-foreground" data-testid="vat-late-summary-status">
+        {template}
+      </p>
       <p className="mt-2 text-xs text-subtle-foreground">{t('lateSummary.note')}</p>
     </section>
   );

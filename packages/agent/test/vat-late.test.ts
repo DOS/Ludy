@@ -13,16 +13,17 @@ const FACTS: VatLateFacts = {
 };
 const CONFIG = { baseURL: 'http://localhost:1/v1', apiKey: null, model: 'test' };
 const check = (text: string) => checkVatLateSentence(FACTS, { sentence: text });
-const GOOD = 'Hóa đơn C26TAA-0000123 bán trong kỳ 2026-09 cần kê khai bổ sung; hóa đơn C26TAA-0000130 thuộc kỳ 2026-Q3 đã được tính vào kỳ đó.';
+const GOOD = 'Hóa đơn C26TAA-0000123 lập muộn cho kỳ 2026-09; hóa đơn C26TAA-0000130 lập muộn cho kỳ 2026-Q3.';
 
 describe('vatLateFactsText and the prompt', () => {
-  it('gives each invoice with its period and two facts, and tells no name, tax code, amount or date', () => {
+  it('gives each invoice with its period only: no status, name, tax code, amount or date', () => {
     const text = vatLateFactsText(FACTS);
-    expect(text).toContain('Invoice C26TAA-0000123: sale belongs to period 2026-09; issued in this period for that earlier period; needs a supplementary declaration');
-    expect(text).toContain('already counted in that period');
+    expect(text).toContain('Invoice C26TAA-0000123: sale belongs to period 2026-09');
+    expect(text).not.toMatch(/supplementary|counted/);
     expect(vatLatePrompt(FACTS)).not.toMatch(/\d{4}-\d{2}-\d{2}|MST|@|đồng/);
     expect(vatLateInstructions('en')).toContain('Write in English');
     expect(vatLateInstructions('vi')).toContain('A person decides the supplementary declaration');
+    expect(vatLateInstructions('vi')).toContain('Say nothing of whether any invoice needs a declaration');
   });
 });
 
@@ -45,7 +46,7 @@ describe('checkVatLateSentence', () => {
   });
 
   it('drops a sentence that leaves a listed invoice out', () => {
-    expect(check('Hóa đơn C26TAA-0000123 bán trong kỳ 2026-09 cần kê khai bổ sung.')).toEqual({ kind: 'none', code: 'NAMES' });
+    expect(check('Hóa đơn C26TAA-0000123 lập muộn cho kỳ 2026-09.')).toEqual({ kind: 'none', code: 'NAMES' });
   });
 
   it('drops a sentence that writes a period the lists do not hold', () => {
@@ -69,13 +70,24 @@ describe('checkVatLateSentence', () => {
     expect(checkVatLateSentence(c5, { sentence: 'Hóa đơn AC-5 thuộc kỳ 2026-08.' })).toEqual({ kind: 'none', code: 'NAMES' });
   });
 
-  it('allows the period\'s own state ("đã nộp tờ khai", "return was filed") and drops other claims', () => {
-    const one: VatLateFacts = { language: 'vi', items: [{ number: 'AA-0001', period: '2026-08', supplementary: true, issuedHere: true }] };
-    const run = (t: string) => checkVatLateSentence(one, { sentence: t }).kind;
-    expect(run('Hóa đơn AA-0001 thuộc kỳ 2026-08, kỳ đã nộp tờ khai nên cần kê khai bổ sung.')).toBe('sentence');
-    expect(run('Invoice AA-0001 belongs to 2026-08, whose return was filed, so it needs a supplementary declaration.')).toBe('sentence');
-    for (const t of ["I've declared AA-0001 for 2026-08.", 'AA-0001 (2026-08): supplementary declaration submitted.', 'AA-0001 của kỳ 2026-08 được kê khai bổ sung.', 'AA-0001 của kỳ 2026-08 đã nộp tờ khai bổ sung.', 'AA-0001 of 2026-08 is filed in a supplementary declaration.']) {
-      expect(run(t), t).toBe('none');
+  it('drops any sentence that states an invoice\'s status, so a swapped yes/no cannot pass (both ways, both languages)', () => {
+    const two: VatLateFacts = {
+      language: 'vi',
+      items: [
+        { number: 'AA-0001', period: '2026-08', supplementary: true, issuedHere: true },
+        { number: 'AA-0002', period: '2026-09', supplementary: false, issuedHere: true },
+      ],
+    };
+    const run = (t: string) => checkVatLateSentence(two, { sentence: t });
+    expect(run('Hóa đơn AA-0001 thuộc kỳ 2026-08 và AA-0002 thuộc kỳ 2026-09.').kind).toBe('sentence');
+    for (const t of [
+      'AA-0001 (kỳ 2026-08) cần kê khai bổ sung; AA-0002 (kỳ 2026-09) đã tính vào kỳ đó.',
+      'AA-0001 (kỳ 2026-08) đã tính vào kỳ đó; AA-0002 (kỳ 2026-09) cần kê khai bổ sung.',
+      'AA-0001 (2026-08) needs a supplementary declaration; AA-0002 (2026-09) is counted in that period.',
+      'AA-0001 (2026-08) is counted in that period; AA-0002 (2026-09) needs a supplementary declaration.',
+      'AA-0001 (2026-08) and AA-0002 (2026-09) must be amended.',
+    ]) {
+      expect(run(t).kind, t).toBe('none');
     }
   });
 
@@ -85,9 +97,10 @@ describe('checkVatLateSentence', () => {
     expect(check(`${GOOD} Có hai mươi phần trăm.`)).toEqual({ kind: 'none', code: 'FIGURES' });
   });
 
-  it('drops a sentence that claims a declaration, a posting or a sending (needing one is no claim)', () => {
+  it('drops a sentence that claims a declaration, a posting or a sending', () => {
     expect(check(`${GOOD} Đã kê khai bổ sung.`)).toEqual({ kind: 'none', code: 'CLAIM' });
     expect(check(`${GOOD} Tôi đã nộp tờ khai.`)).toEqual({ kind: 'none', code: 'CLAIM' });
+    for (const t of ["I've declared it.", 'Sent for you.', 'được kê khai bổ sung']) expect(check(`${GOOD} ${t}`).kind, t).toBe('none');
     expect(check(`${GOOD} It has been declared.`)).toEqual({ kind: 'none', code: 'CLAIM' });
     expect(check(`${GOOD} I filed them for you.`)).toEqual({ kind: 'none', code: 'CLAIM' });
   });

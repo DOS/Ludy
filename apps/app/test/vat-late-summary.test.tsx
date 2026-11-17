@@ -57,11 +57,14 @@ describe('LateSummary', () => {
     }
   });
 
-  it('shows the coworker sentence instead of the template only when it came back used', () => {
-    explained = { ai: 'used', text: 'Hóa đơn C26TAA-124 bán trong kỳ 2026-10 cần kê khai bổ sung.' };
+  it('shows the coworker sentence above the template, which always stays with each invoice\'s status', () => {
+    explained = { ai: 'used', text: 'Hóa đơn C26TAA-124 lập muộn cho kỳ 2026-10.' };
     const html = summary();
-    expect(html).toContain('Hóa đơn C26TAA-124 bán trong kỳ 2026-10 cần kê khai bổ sung.');
-    expect(html).not.toContain('Kỳ này có 1 hóa đơn');
+    expect(html).toContain('data-testid="vat-late-summary-sentence"');
+    expect(html).toContain('Hóa đơn C26TAA-124 lập muộn cho kỳ 2026-10.');
+    expect(html).toContain('C26TAA-124 (kỳ 2026-10, cần kê khai bổ sung)');
+    explained = { ai: 'off', text: null };
+    expect(summary()).not.toContain('vat-late-summary-sentence');
   });
 
   it('says a person decides the supplementary declaration, in both languages', () => {

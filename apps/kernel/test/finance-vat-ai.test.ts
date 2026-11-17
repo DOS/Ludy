@@ -14,7 +14,7 @@ const REPORT: VatLateSource = {
   lateSales: [{ series: 'C26TAA', number: '0000123', originalPeriod: '2026-09', supplementary: true }],
   supplementary: { documents: [] },
 };
-const SAID: VatLateSentenceResult = { kind: 'sentence', text: 'Hóa đơn C26TAA-0000123 bán trong kỳ 2026-09 cần kê khai bổ sung.' };
+const SAID: VatLateSentenceResult = { kind: 'sentence', text: 'Hóa đơn C26TAA-0000123 lập muộn cho kỳ 2026-09.' };
 
 function setup(answer: ((facts: VatLateFacts) => Promise<VatLateSentenceResult>) | null, budget = new DraftBudget()) {
   const asked: VatLateFacts[] = [];
