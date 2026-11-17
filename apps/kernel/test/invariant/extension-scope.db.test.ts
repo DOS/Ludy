@@ -24,6 +24,7 @@ import { DomainError, EXTENSION_SCOPES, Runtime, fileKey, type UserActor } from 
 import { EXTENSION_SCOPE_IDS } from '@crove/kernel-contract';
 import { financeCommands, financeQueries } from '@crove/mod-finance';
 import { meetingsCommands, meetingsQueries } from '@crove/mod-meetings';
+import { notesCommands, notesQueries } from '@crove/mod-notes';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -43,6 +44,14 @@ const REACHABLE = [
   'meetings.live.chunk:meetings',
   'meetings.agenda.next:agenda',
   'meetings.meeting.recording_stopped:meetings',
+];
+
+// Reachable only once Notes v2 E4 (#3560, the `notes` scope) lands: the test accepts each either present or absent,
+// so it holds before and after that change. Each is exactly the one name listed, under exactly the scope listed.
+const REACHABLE_WHEN_LANDED = [
+  'notes.note.clip:notes',
+  'notes.todo.quick_capture:notes',
+  'notes.extension.exchanged:notes',
 ];
 
 const CREATE = { title: 'Họp tuần', consentMethod: 'told_at_start' as const, visibility: 'attendees' as const, language: 'vi' as const, keepVideo: false };
@@ -109,8 +118,8 @@ suite('the extension token past the HTTP edge: scope, standing and meetings (#25
     const db = createDb(pool);
     // No session source: an extension actor's standing is checked whatever the deployment's session mode.
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({
-      commands: [...kernelCommands, ...financeCommands, ...meetingsCommands],
-      queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries, ...meetingsQueries],
+      commands: [...kernelCommands, ...financeCommands, ...meetingsCommands, ...notesCommands],
+      queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries, ...meetingsQueries, ...notesQueries],
     });
     for (const key of Object.keys(users) as Array<keyof typeof users>) {
       users[key] = await upsertIdentity(db, { issuer: 'extension-scope', subject: key, email: `${key}@ext-scope.test`, name: null });
@@ -139,12 +148,22 @@ suite('the extension token past the HTTP edge: scope, standing and meetings (#25
   });
 
   it('pins the commands and queries an extension token may reach, and the scopes the runtime and the database know', () => {
-    const defs = [...kernelCommands, ...financeCommands, ...meetingsCommands, ...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries, ...meetingsQueries] as Array<{
+    const defs = [
+      ...kernelCommands,
+      ...financeCommands,
+      ...meetingsCommands,
+      ...notesCommands,
+      ...kernelQueries({ inboundDomain: 'in.test' }),
+      ...financeQueries,
+      ...meetingsQueries,
+      ...notesQueries,
+    ] as Array<{
       name: string;
       extension?: { scope: string };
     }>;
     const reachable = defs.filter((d) => d.extension !== undefined).map((d) => `${d.name}:${d.extension?.scope}`);
-    expect(reachable.sort()).toEqual([...REACHABLE].sort());
+    expect(reachable.filter((name) => !REACHABLE_WHEN_LANDED.includes(name)).sort()).toEqual([...REACHABLE].sort());
+    expect(reachable.filter((name) => REACHABLE_WHEN_LANDED.includes(name)).length).toBeLessThanOrEqual(REACHABLE_WHEN_LANDED.length);
     expect([...EXTENSION_SCOPES]).toEqual([...EXTENSION_SCOPE_IDS]);
   });
 
@@ -196,6 +215,11 @@ suite('the extension token past the HTTP edge: scope, standing and meetings (#25
       () => runtime.execute('kernel.extension.code.issue', { codeHash: '0'.repeat(64), codeChallenge: 'A'.repeat(43), scopes: ['meetings'], deviceName: 'x', extensionId: 'a'.repeat(32) }, options),
       () => runtime.execute('kernel.task.create', { title: 'x' }, options),
       () => runtime.execute('kernel.file.ingest', {}, options),
+      () => runtime.query('notes.note.list', { view: 'mine' }, options),
+      () => runtime.query('notes.note.get', { noteId: randomUUID() }, options),
+      () => runtime.query('notes.todo.list', { view: 'open' }, options),
+      () => runtime.execute('notes.note.create', { title: 'x' }, options),
+      () => runtime.execute('notes.todo.create', { title: 'x' }, options),
     ];
     for (const attempt of refused) {
       const error = await refusal(attempt());
@@ -210,6 +234,11 @@ suite('the extension token past the HTTP edge: scope, standing and meetings (#25
       () => runtime.execute('meetings.meeting.delete', { meetingId }, options),
       () => runtime.execute('kernel.extension.token.revoke', { tokenId: tokens.member }, options),
       () => runtime.query('kernel.extension.token.list', {}, options),
+      () => runtime.query('notes.note.list', { view: 'mine' }, options),
+      () => runtime.query('notes.note.get', { noteId: randomUUID() }, options),
+      () => runtime.query('notes.todo.list', { view: 'open' }, options),
+      () => runtime.execute('notes.note.create', { title: 'x' }, options),
+      () => runtime.execute('notes.todo.create', { title: 'x' }, options),
     ]) {
       const error = await refusal(attempt());
       expect(error.code, error.message).toBe('FORBIDDEN');
