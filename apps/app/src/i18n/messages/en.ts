@@ -94,7 +94,7 @@ export const en = {
     uploadEntity: 'Book into',
     org: 'Organization',
     allClients: 'All companies',
-    addOrg: '+ Add organization',
+    addOrg: 'Add organization',
     overview: 'Overview',
     accountingOverview: 'Finance overview',
     employees: 'Employees',
