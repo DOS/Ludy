@@ -52,7 +52,7 @@ export const GROUP_ORDER: Partial<Record<AppId, readonly AppGroupId[]>> = { enga
 export const ITEM_ORDER: Partial<Record<AppId, readonly string[]>> = {
   teamwork: ['my-work', 'tasks', 'projects', 'notes', 'meetings'],
   finance: ['accounting', 'inbox', 'vouchers', 'bank', 'sales-invoices', 'customers', 'stock', 'vendors', 'journal', 'ledger', 'fixed-assets', 'vat'],
-  sign: ['sign/envelopes', 'sign/verify'],
+  sign: ['sign/envelopes', 'sign/templates', 'sign/verify'],
   ai: ['agents', 'ai-usage', 'ai-connections'],
 };
 

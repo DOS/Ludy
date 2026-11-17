@@ -365,6 +365,10 @@ describe('sign sealing payloads and certificate artifacts', () => {
       'signing_event',
       'signing_otp',
       'signing_token',
+      'template',
+      'template_direct_link',
+      'template_field',
+      'template_role',
     ]);
   });
 });

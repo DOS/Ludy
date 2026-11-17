@@ -19,6 +19,7 @@ const FILE_ID = '01900000-0000-7000-8000-000000000050';
 const TOKEN_ID = '01900000-0000-7000-8000-000000000060';
 const ANALYSIS_ID = '01900000-0000-7000-8000-000000000070';
 const KEY_ID = '01900000-0000-7000-8000-000000000080';
+const TEMPLATE_ID = '01900000-0000-7000-8000-000000000090';
 
 const WEB_DIST = mkdtempSync(join(tmpdir(), 'crove-sign-rpc-'));
 writeFileSync(join(WEB_DIST, 'index.html'), '<!doctype html><title>Crove</title>');
@@ -181,6 +182,35 @@ function createSignTestApp(options: { signInstalled: boolean; signAi?: SignAiRea
           fields: [],
         };
       }
+      if (name === 'sign.template.list') return { items: [] };
+      if (name === 'sign.template.get') {
+        return {
+          template: {
+            id: TEMPLATE_ID,
+            title: 'Service Template',
+            description: null,
+            routingMode: 'parallel',
+            subject: null,
+            message: null,
+            expiresInHours: null,
+            status: 'active',
+            inspectStatus: 'passed',
+            inspectError: null,
+            sourceFileId: FILE_ID,
+            sourceSha256: 'a'.repeat(64),
+            pageCount: 1,
+            pageDimensions: {},
+            version: 1,
+            archivedAt: null,
+            createdBy: USER_ID,
+            createdAt: '2026-11-16T01:00:00.000Z',
+            updatedAt: '2026-11-16T01:00:00.000Z',
+          },
+          roles: [],
+          fields: [],
+          directLink: null,
+        };
+      }
       if (name === 'sign.ai_analysis.source') return aiSource;
       if (name === 'sign.ai_analysis.get') {
         if (!options.existingAnalysis) return null;
@@ -221,6 +251,22 @@ function createSignTestApp(options: { signInstalled: boolean; signAi?: SignAiRea
           tokenId: TOKEN_ID,
           token: 'tok-link',
           expiresAt: '2026-11-23T00:00:00.000Z',
+        };
+      }
+      if (name === 'sign.template.create') {
+        return { templateId: TEMPLATE_ID, status: 'draft', inspectStatus: 'pending', version: 1 };
+      }
+      if (name === 'sign.template.instantiate') {
+        return { envelopeId: ENVELOPE_ID, status: 'draft', version: 1, links: [] };
+      }
+      if (name === 'sign.template.direct_link_set' || name === 'sign.template.direct_link_rotate') {
+        return {
+          templateId: TEMPLATE_ID,
+          enabled: true,
+          requireEmailOtp: false,
+          url: `/-/sign/d#${'A'.repeat(43)}`,
+          token: 'A'.repeat(43),
+          lastRotatedAt: null,
         };
       }
       if (name === 'sign.envelope.propose_fields' || name === 'sign.ai_analysis.record') {
@@ -417,5 +463,50 @@ describe('os.sign RPC handlers (#3325)', () => {
         ],
       },
     });
+  });
+
+  it('wires os.sign.template.* routes, module gate, pageDimensions normalization, and noIdempotency commands', async () => {
+    const { app: disabledApp } = createSignTestApp({ signInstalled: false });
+    const offRes = await callRpc(disabledApp, '/sign/template/list', {});
+    expect(offRes.status).toBe(404);
+
+    const { app, executed } = createSignTestApp({ signInstalled: true });
+    const listRes = await callRpc(app, '/sign/template/list', {});
+    expect(listRes.status).toBe(200);
+
+    const getRes = await callRpc(app, '/sign/template/get', { templateId: TEMPLATE_ID });
+    expect(getRes.status).toBe(200);
+    const getBody = (await getRes.json()) as { json: { template: { pageDimensions: unknown } } };
+    expect(getBody.json.template.pageDimensions).toBeNull();
+
+    const directRes = await callRpc(app, '/sign/template/direct_link_set', {
+      templateId: TEMPLATE_ID,
+      enabled: true,
+    });
+    expect(directRes.status).toBe(200);
+    expect(executed.at(-1)).toMatchObject({
+      name: 'sign.template.direct_link_set',
+      opts: { actor: { type: 'user', userId: USER_ID }, orgId: ORG_ID },
+    });
+
+    const rejectedSet = await callRpc(app, '/sign/template/direct_link_set', {
+      templateId: TEMPLATE_ID,
+      enabled: true,
+      idempotencyKey: KEY_ID,
+    });
+    expect(rejectedSet.status).toBe(400);
+
+    const rejectedRotate = await callRpc(app, '/sign/template/direct_link_rotate', {
+      templateId: TEMPLATE_ID,
+      idempotencyKey: KEY_ID,
+    });
+    expect(rejectedRotate.status).toBe(400);
+
+    const rejectedInst = await callRpc(app, '/sign/template/instantiate', {
+      templateId: TEMPLATE_ID,
+      recipients: [],
+      idempotencyKey: KEY_ID,
+    });
+    expect(rejectedInst.status).toBe(400);
   });
 });

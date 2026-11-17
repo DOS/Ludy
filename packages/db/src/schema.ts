@@ -1233,6 +1233,8 @@ export const SIGN_AI_ANALYSIS_STATUSES = ['pending', 'completed', 'failed'] as c
 export type SignAiAnalysisStatus = (typeof SIGN_AI_ANALYSIS_STATUSES)[number];
 export const SIGN_ACTOR_TYPES = ['user', 'signer', 'system', 'ai'] as const;
 export type SignActorType = (typeof SIGN_ACTOR_TYPES)[number];
+export const SIGN_TEMPLATE_STATUSES = ['draft', 'active', 'archived'] as const;
+export type SignTemplateStatus = (typeof SIGN_TEMPLATE_STATUSES)[number];
 
 export type SignEnvelopeTable = Refine<
   G.SignEnvelopeTable,
@@ -1258,6 +1260,22 @@ export type SignSignerTable = Refine<
 export type SignFieldTable = Refine<G.SignFieldTable, { field_type: SignFieldType }>;
 export type SignAiAnalysisTable = Refine<G.SignAiAnalysisTable, { status: Generated<SignAiAnalysisStatus> }>;
 export type SignSigningEventTable = Refine<G.SignSigningEventTable, { actor_type: SignActorType }>;
+export type SignTemplateTable = Refine<
+  G.SignTemplateTable,
+  {
+    routing_mode: Generated<SignRoutingMode>;
+    inspect_status: Generated<SignInspectStatus>;
+    status: Generated<SignTemplateStatus>;
+  }
+>;
+export type SignTemplateRoleTable = Refine<
+  G.SignTemplateRoleTable,
+  {
+    signer_role: Generated<SignSignerRole>;
+    delivery_mode: Generated<SignDeliveryMode>;
+  }
+>;
+export type SignTemplateFieldTable = Refine<G.SignTemplateFieldTable, { field_type: SignFieldType }>;
 type Refined = Tables<{
   'crove_ads.ad_account': AdsAdAccountTable;
   'crove_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
@@ -1305,6 +1323,9 @@ type Refined = Tables<{
   'crove_sign.field': SignFieldTable;
   'crove_sign.signer': SignSignerTable;
   'crove_sign.signing_event': SignSigningEventTable;
+  'crove_sign.template': SignTemplateTable;
+  'crove_sign.template_field': SignTemplateFieldTable;
+  'crove_sign.template_role': SignTemplateRoleTable;
   'crove_kernel.calendar_connection': CalendarConnectionTable;
   'crove_kernel.calendar_event': CalendarEventTable;
   'crove_kernel.calendar_event_link': CalendarEventLinkTable;

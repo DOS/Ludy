@@ -746,4 +746,15 @@ export const envelopeSealJobData = defineQuery({
   },
 });
 
-export const signQueries = [envelopeList, envelopeBySource, envelopeGet, envelopeEvents, envelopeVerify, envelopeInspectJobData, envelopeSealJobData];
+import { signTemplateQueries } from './templates.ts';
+
+export const signQueries = [
+  envelopeList,
+  envelopeBySource,
+  envelopeGet,
+  envelopeEvents,
+  envelopeVerify,
+  envelopeInspectJobData,
+  envelopeSealJobData,
+  ...signTemplateQueries,
+];

@@ -36,6 +36,7 @@ export const NOT_EXPORTED: Readonly<Record<string, string>> = {
   'crove_meetings.member_hook': "a member's own webhook with its sealed secret: a credential, private to its member",
   'crove_sign.signing_token': 'signing link token hashes: credentials',
   'crove_sign.signing_otp': 'email signing OTP hashes: short-lived credentials',
+  'crove_sign.template_direct_link': 'template direct signing link token hashes: credentials',
   // Private to one member by row security (no owner or admin path), or readable only through the meeting's recorder and reader checks.
   'crove_social.notification': "private to its member: a member's own social notifications are readable by that member alone",
   'crove_social.notification_mail_off': "private to its member: a member's own mail preference",
