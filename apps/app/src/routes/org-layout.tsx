@@ -190,7 +190,7 @@ export function OrgLayout() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [notesOn, me.isError, me.isSuccess, org, roleHere]);
+  }, [notesOn, me.isSuccess, org, roleHere]);
 
   const paletteEntries = useMemo<PaletteEntry[]>(
     () => [

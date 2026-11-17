@@ -133,9 +133,10 @@ const MAI_BEFORE_GUARDS = [
 const MAI_AFTER_GUARDS = ['mối', 'sau', 'một', 'phục'] as const;
 
 const URL_RE = /(?:https?:\/\/|ftp:\/\/|mailto:|www\.)[^\s<>"{}|\\^`]+/gi;
-const EMAIL_RE = /[\p{L}\p{N}\p{M}._%+-]+@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+/giu;
+const EMAIL_RE =
+  /(?<![\p{L}\p{N}\p{M}._%+-])[\p{L}\p{N}\p{M}._%+-]+@[\p{L}\p{N}]+(?:-+[\p{L}\p{N}]+)*(?:\.[\p{L}\p{N}]+(?:-+[\p{L}\p{N}]+)*)+/giu;
 const FILE_OR_DOMAIN_RE =
-  /(?:^|(?<=[\s([,"'/]))[\p{L}\p{N}\p{M}_-]+(?:[.-][\p{L}\p{N}\p{M}_-]+)*\.(?:[a-z][a-z0-9]{1,5}|PDF|DOCX?|XLSX?|PPTX?|CSV|TXT|MD|JSON|XML|PNG|JPE?G|GIF|SVG|ZIP|RAR|TAR|GZ)(?=$|[\s.,;:!?)\]"'])/gu;
+  /(?:^|(?<=[\s([,"'/]))(?<![\p{L}\p{N}\p{M}_.-])[\p{L}\p{N}\p{M}_]+(?:[.-]+[\p{L}\p{N}\p{M}_]+)*\.(?:[a-z][a-z0-9]{1,5}|PDF|DOCX?|XLSX?|PPTX?|CSV|TXT|MD|JSON|XML|PNG|JPE?G|GIF|SVG|ZIP|RAR|TAR|GZ)(?=$|[\s.,;:!?)\]"'])/gu;
 const PRIORITY_RE = /(?:^|(?<=[\s([,]))!p([1-4])(?=$|[\s.,;:!?)\]])/gi;
 const TAG_RE = /(?:^|(?<=[\s([,]))#(?=[0-9_-]*\p{L})([\p{L}\p{N}\p{M}][\p{L}\p{N}\p{M}_-]{0,39})(?=$|[\s.,;:!?)\]])/gu;
 const LIST_QUOTED_RE = /(?:^|(?<=[\s([,]))\/"([^"\n]{1,60})"(?=$|[\s.,;:!?)\]])/gu;
@@ -610,7 +611,7 @@ export function buildTitleWithoutSpans(input: string, spans: readonly Span[]): s
     const after = input.slice(s.end);
     // If a trailing comma/semicolon sat immediately before a stripped token that precedes another separator or EOF, drop it.
     if (/^[ \t]*(?:[,.;:!?]|$)/.test(after)) {
-      chunk = chunk.replace(/[ \t]*[,;][ \t]*$/, '');
+      chunk = chunk.replace(/(?<![ \t])[ \t]*[,;][ \t]*$/, '');
     }
     if (out.length > 0 && chunk.length > 0 && !/\s$/.test(out) && !/^[\s.,;:!?)\]]/.test(chunk)) {
       out += ' ';
@@ -628,7 +629,7 @@ export function buildTitleWithoutSpans(input: string, spans: readonly Span[]): s
   if (merged[0]?.start === 0 || /^[ \t]+$/.test(input.slice(0, merged[0]?.start ?? 0))) {
     out = out.replace(/^[ \t]*[,;][ \t]*/, '');
   }
-  out = out.replace(/[ \t]+([,.;:!?])(?=$|[\s.,;:!?)\]])/g, '$1');
+  out = out.replace(/(?<![ \t])[ \t]+([,.;:!?])(?=$|[\s.,;:!?)\]])/g, '$1');
   out = out.replace(/[ \t]{2,}/g, ' ').trim();
   return out;
 }
@@ -1795,6 +1796,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       contextPeriod = p;
       parsedTime = { hour: PERIOD_DEFAULT_HOUR[p], minute: 0, explicitClock: false, period: p };
       claimToken('time', span.start, span.end);
+      break;
     } else if (parsedTime && parsedTime.explicitClock && !parsedTime.hasAmPm && !parsedTime.period) {
       const adjacentTime = tokens.find(
         (t) => t.kind === 'time' && (spacesOnlyBetween(input, t.end, span.start) || spacesOnlyBetween(input, span.end, t.start)),
@@ -1809,9 +1811,9 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
         else hostTok.start = span.start;
         hostTok.raw = input.slice(hostTok.start, hostTok.end);
         occupied.push(span);
+        break;
       }
     }
-    break;
   }
 
   // If the user dismissed a date chip that absorbed a period ("tối thứ sáu"), keep its period context for any remaining clock ("8h" -> 20:00).

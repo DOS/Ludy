@@ -929,5 +929,44 @@ describe('parseTodoQuickAdd (#3556)', () => {
       title: 'Họp thay cho ngày mai',
       dueOn: '2026-11-25',
     });
+
+    // Non-adjacent "buổi sáng" does not block scanning a later clock-adjacent "buổi chiều"
+    expect(
+      parseTodoQuickAdd('Mua đồ buổi sáng, họp ngày mai lúc 3h buổi chiều', { now: TUE_MORNING, timeZone: VN_TZ }),
+    ).toMatchObject({
+      title: 'Mua đồ buổi sáng, họp',
+      dueOn: '2026-11-18',
+      dueTime: '15:00',
+    });
+  });
+
+  it('stays linear on 50k-character adversarial --, %, and tab inputs without ReDoS', () => {
+    const dashes = `a${'--'.repeat(25_000)}!`;
+    const percents = '%'.repeat(50_000);
+    const emailPrefix = `${'%'.repeat(25_000)}${'-'.repeat(25_000)}@host${'--'.repeat(500)}`;
+    const tabs = `Gọi\t${'\t'.repeat(50_000)}khách, ngày mai`;
+    const start = performance.now();
+
+    expect(parseTodoQuickAdd(dashes, { now: TUE_MORNING, timeZone: VN_TZ }).dueOn).toBeNull();
+    expect(parseTodoQuickAdd(percents, { now: TUE_MORNING, timeZone: VN_TZ }).dueOn).toBeNull();
+    expect(parseTodoQuickAdd(emailPrefix, { now: TUE_MORNING, timeZone: VN_TZ }).dueOn).toBeNull();
+    const tabResult = parseTodoQuickAdd(tabs, { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(tabResult).toMatchObject({
+      title: 'Gọi khách',
+      dueOn: '2026-11-18',
+    });
+    expect(buildTitleWithoutSpans(`${'\t'.repeat(50_000)}Gọi khách!`, [{ start: 0, end: 1 }])).toBe('Gọi khách!');
+
+    // Still protects real filenames and emails after tightening separator classes
+    const protectedRes = parseTodoQuickAdd('Xem report--v2.final.pdf va a.b+c@sub-domain.vn ngay mai', {
+      now: TUE_MORNING,
+      timeZone: VN_TZ,
+    });
+    expect(protectedRes).toMatchObject({
+      title: 'Xem report--v2.final.pdf va a.b+c@sub-domain.vn',
+      dueOn: '2026-11-18',
+    });
+
+    expect(performance.now() - start).toBeLessThan(250);
   });
 });

@@ -35,7 +35,7 @@ test('natural-language Quick Add parses chips, restores dismissed tokens, and Al
 
   await test.step('Alt+Q does not trigger while typing inside an editable field', async () => {
     await page.goto(`/o/${slug}/notes`);
-    await page.getByRole('button', { name: 'Ghi chú mới' }).click();
+    await page.getByRole('region', { name: 'Danh sách ghi chú' }).getByRole('button', { name: 'Ghi chú mới' }).click();
     const noteTitle = page.getByRole('textbox', { name: 'Tiêu đề' });
     await noteTitle.focus();
     await page.keyboard.press('Alt+q');
