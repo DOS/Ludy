@@ -2,7 +2,7 @@
 // What a SECURITY DEFINER function of crove_meetings may return (the rule of meetings-readers.db.test.ts, issue #2575, ADR-0047): metadata scalars only, never meeting text, with ONE narrow and
 // locked exception decided by the owner on 2026-11-15 in the Meetings PO's chat (meetings integrations A6, issue #3164, the member's minutes webhook), extended by exactly one function the same day
 // for B4 (issue #3168, minutes posted to Slack and Teams), and by one more for #3499 (the term list of names sent with the audio, ADR-0047 point 5 as amended 2026-11-16;
-// OWNER DECISION PLACEHOLDER: the owner's approval in the coordinator's chat, date and words to be filled in before this PR opens): six named functions may return named columns of named types,
+// owner decision of 2026-11-17 in the Meetings PO session: asked "add a sixth exception to the meetings definer-return rule: one text column `term`, worker login only, behind the audio gate, in two steps", the owner answered "1."): six named functions may return named columns of named types,
 // because the delivery job must read the address, the sealed secrets and the stored body of what it sends, the tables are definer-only, and the transcription run must read the names it
 // sends behind the audio door. The exception is exact:
 // a function name, a column name and a column type, each pinned, and the roles that may execute the function are pinned with it (HOOK_DEFINER_EXECUTORS, asserted by the database test).
