@@ -42,6 +42,7 @@ import {
   clampFieldBox,
   createPlacedFieldBox,
   nudgeFieldBox,
+  planDetectedTagsForTemplateRoles,
   resizeFieldBox,
   signerChipStyle,
   type DraftFieldPlacement,
@@ -113,6 +114,7 @@ function toDraftFields(fields: readonly SignTemplateFieldRecord[]): DraftFieldPl
 function toOverlaySigners(roles: readonly SignTemplateRoleRecord[]): SignSignerRecord[] {
   return roles.map((r) => ({
     id: r.id,
+    roleKey: r.roleKey,
     routingOrder: r.routingOrder,
     signerRole: r.signerRole,
     roleLabel: r.roleLabel,
@@ -478,6 +480,11 @@ export function SignTemplatesPage() {
   });
 
   const items: readonly SignTemplateSummary[] = listQuery.data?.items ?? [];
+  const resolvedSelectedId =
+    selectedId &&
+    (items.length === 0 || items.some((item) => item.id === selectedId) || pendingCreatedIdRef.current === selectedId)
+      ? selectedId
+      : (items[0]?.id ?? null);
 
   useEffect(() => {
     if (pendingCreatedIdRef.current && items.some((item) => item.id === pendingCreatedIdRef.current)) {
@@ -496,9 +503,9 @@ export function SignTemplatesPage() {
   }, [items, selectedId]);
 
   const detailQuery = useQuery({
-    queryKey: ['sign', 'templates', 'detail', selectedId],
-    queryFn: () => signApi.getTemplate(selectedId!),
-    enabled: Boolean(selectedId),
+    queryKey: ['sign', 'templates', 'detail', resolvedSelectedId],
+    queryFn: () => signApi.getTemplate(resolvedSelectedId!),
+    enabled: Boolean(resolvedSelectedId),
     refetchInterval: (query) => (query.state.data?.template.inspectStatus === 'pending' ? 2000 : false),
   });
 
@@ -512,7 +519,7 @@ export function SignTemplatesPage() {
   });
 
   useEffect(() => {
-    if (!selectedId) {
+    if (!resolvedSelectedId) {
       loadedTemplateIdRef.current = null;
       return;
     }
@@ -530,7 +537,7 @@ export function SignTemplatesPage() {
     setFreshDirectUrl(null);
     const firstNonCc = detail.roles.find((r) => r.signerRole !== 'cc');
     setActiveRoleId(firstNonCc?.id ?? '');
-  }, [selectedId, detail]);
+  }, [resolvedSelectedId, detail]);
 
   const invalidateTemplates = async (id?: string) => {
     await queryClient.invalidateQueries({ queryKey: ['sign', 'templates', 'list'] });
@@ -780,6 +787,39 @@ export function SignTemplatesPage() {
   const editable = detail ? detail.template.status !== 'archived' : false;
   const effectivePageCount = detail?.template.pageCount ?? detectedPages ?? 1;
   const autoSendAllowed = detail ? canAutoSendTemplate(detail) : false;
+  const detectedTags = detail?.template.detectedTags ?? [];
+  const tplTagPlan = useMemo(() => {
+    const effectiveExisting =
+      detail && loadedTemplateIdRef.current !== detail.template.id ? toDraftFields(detail.fields) : fieldsDraft;
+    return planDetectedTagsForTemplateRoles({
+      detectedTags,
+      roles: nonCcSavedRoles,
+      existingFields: effectiveExisting,
+      pageCount: effectivePageCount,
+    });
+  }, [detail, detectedTags, nonCcSavedRoles, fieldsDraft, effectivePageCount]);
+
+  const handleApplyDetectedTags = () => {
+    if (!editable || tplTagPlan.applicable.length === 0) return;
+    const placed: DraftFieldPlacement[] = tplTagPlan.applicable.map((item) => ({
+      localId: `tpl-tag-${crypto.randomUUID()}`,
+      signerId: item.signerId,
+      fieldType: item.fieldType,
+      pageNumber: item.pageNumber,
+      xNorm: item.xNorm,
+      yNorm: item.yNorm,
+      wNorm: item.wNorm,
+      hNorm: item.hNorm,
+      label: item.label,
+      required: item.required,
+      proposedByAi: false,
+      fontSizePt: null,
+    }));
+    setFieldsDraft((prev) => [...prev, ...placed]);
+    setSelectedFieldId(placed[0]!.localId);
+    setPageNumber(placed[0]!.pageNumber);
+    toast(tSign('tags.appliedToast', { count: String(placed.length) }));
+  };
 
   const handleAddField = (fieldType: SignFieldType) => {
     if (!editable || !activeRoleId) return;
@@ -876,7 +916,7 @@ export function SignTemplatesPage() {
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
           <div className="min-w-0 space-y-2">
             {items.map((item) => {
-              const isSelected = item.id === selectedId;
+              const isSelected = item.id === resolvedSelectedId;
               return (
                 <button
                   key={item.id}
@@ -1105,6 +1145,44 @@ export function SignTemplatesPage() {
                     ) : null}
                   </CardHeader>
                   <CardContent className="space-y-3">
+                    {editable && tplTagPlan.totalTags > 0 ? (
+                      <div
+                        className="flex flex-col gap-2.5 rounded-md border border-border bg-muted/30 p-3 sm:flex-row sm:items-center sm:justify-between"
+                        data-testid="sign-tpl-detected-tags-banner"
+                      >
+                        <div className="min-w-0 space-y-1 text-xs">
+                          <p className="font-semibold text-foreground">
+                            {tSign('tags.bannerTitle', { count: String(tplTagPlan.totalTags) })}
+                          </p>
+                          <p className="text-muted-foreground">{tSign('tags.bannerHint')}</p>
+                          {tplTagPlan.unmatchedRoleKeys.length > 0 ? (
+                            <p className="text-warning" data-testid="sign-tpl-detected-tags-unmatched">
+                              {tSign('tags.unmatchedRolesHint', { roles: tplTagPlan.unmatchedRoleKeys.join(', ') })}
+                            </p>
+                          ) : tplTagPlan.applicable.length === 0 ? (
+                            <p className="text-muted-foreground">
+                              {tSign('tags.allAppliedHint', { count: String(tplTagPlan.totalTags) })}
+                            </p>
+                          ) : null}
+                        </div>
+                        {tplTagPlan.applicable.length > 0 || tplTagPlan.alreadyAppliedCount < tplTagPlan.totalTags ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled={tplTagPlan.applicable.length === 0}
+                            onClick={handleApplyDetectedTags}
+                            data-testid="sign-tpl-apply-detected-tags-btn"
+                          >
+                            {tSign('tags.applyButton', {
+                              count: String(
+                                tplTagPlan.applicable.length > 0 ? tplTagPlan.applicable.length : tplTagPlan.totalTags,
+                              ),
+                            })}
+                          </Button>
+                        ) : null}
+                      </div>
+                    ) : null}
+
                     {nonCcSavedRoles.length === 0 ? (
                       <p className="text-xs text-muted-foreground">{t('noNonCcRolesHint')}</p>
                     ) : (

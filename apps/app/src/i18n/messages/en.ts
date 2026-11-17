@@ -14264,6 +14264,15 @@ export const en = {
       unsavedCount: '{count} unsaved changes',
       unsupportedImageDecoder: 'This PDF uses a scanned image format (CCITT/JBIG2/JPEG2000) that cannot be previewed in-browser. Re-save as a standard PDF and re-upload.',
     },
+    tags: {
+      bannerTitle: 'Detected {count} document tag fields in PDF',
+      bannerHint: 'Places fields deterministically from PDF text tags even when AI is off. Review placement before sending.',
+      unmatchedOrdersHint: 'Add recipients for routing order {orders} to map the remaining tags.',
+      unmatchedRolesHint: 'Add and save roles {roles} to map the remaining tags.',
+      allAppliedHint: 'All {count} tag fields have been placed on the draft.',
+      applyButton: 'Apply {count} tag fields',
+      appliedToast: 'Placed {count} fields from document tags.',
+    },
     vy: {
       title: 'Vy contract review',
       analyzeButton: 'Ask Vy to suggest fields & risks',

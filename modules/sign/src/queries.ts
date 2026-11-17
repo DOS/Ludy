@@ -15,6 +15,7 @@ import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runti
 import type { SigningEventChainRow } from './events.ts';
 import { parseEventPayload, verifyEventChain } from './events.ts';
 import type { SignFieldForSeal, SignSignerForSeal } from './sealing.ts';
+import { parseDetectedTags } from './shared.ts';
 
 const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 
@@ -302,6 +303,7 @@ export const envelopeGet = defineQuery({
       .select([
         'id',
         'envelope_id',
+        'role_key',
         'routing_order',
         'signer_role',
         'role_label',
@@ -374,6 +376,7 @@ export const envelopeGet = defineQuery({
         inspectError: env.inspect_error,
         pageCount: env.page_count,
         pageDimensions: parseEventPayload(env.page_dimensions_json),
+        detectedTags: parseDetectedTags(env.detected_tags_json, env.page_count),
         sealedFileId: env.sealed_file_id,
         sealedSha256: env.sealed_sha256,
         sealStatus: env.seal_status,
@@ -395,6 +398,7 @@ export const envelopeGet = defineQuery({
       },
       signers: signers.map((s) => ({
         id: s.id,
+        roleKey: s.role_key ?? null,
         routingOrder: s.routing_order,
         signerRole: s.signer_role,
         roleLabel: s.role_label,

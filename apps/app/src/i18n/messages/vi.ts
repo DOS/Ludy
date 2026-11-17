@@ -14260,6 +14260,15 @@ export const vi = {
       unsavedCount: '{count} thay đổi chưa lưu',
       unsupportedImageDecoder: 'Tệp PDF dùng định dạng ảnh quét (CCITT/JBIG2/JPEG2000) chưa hỗ trợ xem trực tiếp trên trình duyệt. Vui lòng xuất lại thành PDF chuẩn rồi tải lên.',
     },
+    tags: {
+      bannerTitle: 'Phát hiện {count} thẻ ô ký trong tài liệu PDF',
+      bannerHint: 'Đặt ô tự động theo thẻ văn bản trong PDF ngay cả khi tắt AI. Con người tự kiểm tra và xác nhận trước khi gửi.',
+      unmatchedOrdersHint: 'Thêm người nhận ở lượt {orders} để gán đủ các thẻ còn lại.',
+      unmatchedRolesHint: 'Thêm và lưu vai trò {roles} để gán đủ các thẻ còn lại.',
+      allAppliedHint: 'Đã đặt đủ {count} ô từ thẻ tài liệu lên bản nháp.',
+      applyButton: 'Áp dụng {count} ô từ thẻ tài liệu',
+      appliedToast: 'Đã đặt {count} ô từ thẻ tài liệu.',
+    },
     vy: {
       title: 'Vy đọc hợp đồng',
       analyzeButton: 'Nhờ Vy gợi ý ô ký & rủi ro',

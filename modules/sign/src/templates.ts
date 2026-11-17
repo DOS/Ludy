@@ -37,11 +37,13 @@ import {
   assertUserQuery,
   formatSignMicroNorm,
   normalizeNormalizedFieldBoxes,
+  parseDetectedTags,
   parsePageDimensions,
   requireSignSourceFile,
   sendDraftEnvelope,
   toSignMicroNorm,
   userIdOf,
+  zSignInspectDetectedTags,
   zSignInspectPageDimensions,
   type IssuedSigningLink,
 } from './shared.ts';
@@ -118,10 +120,10 @@ function assertTemplateEditable(status: string): void {
 async function findPassedInspectForFile(
   ctx: CommandContext,
   file: { id: string; storage_key: string; generation: string; sha256: string },
-): Promise<{ pageCount: number; pageDimensionsJson: unknown } | null> {
+): Promise<{ pageCount: number; pageDimensionsJson: unknown; detectedTagsJson: unknown } | null> {
   const existingTpl = await ctx.trx
     .selectFrom('crove_sign.template')
-    .select(['page_count', 'page_dimensions_json'])
+    .select(['page_count', 'page_dimensions_json', 'detected_tags_json'])
     .where('org_id', '=', ctx.orgId)
     .where('source_file_id', '=', file.id)
     .where('source_storage_key', '=', file.storage_key)
@@ -133,12 +135,16 @@ async function findPassedInspectForFile(
     .limit(1)
     .executeTakeFirst();
   if (existingTpl && existingTpl.page_count !== null) {
-    return { pageCount: existingTpl.page_count, pageDimensionsJson: existingTpl.page_dimensions_json };
+    return {
+      pageCount: existingTpl.page_count,
+      pageDimensionsJson: existingTpl.page_dimensions_json,
+      detectedTagsJson: existingTpl.detected_tags_json,
+    };
   }
 
   const existingEnv = await ctx.trx
     .selectFrom('crove_sign.envelope')
-    .select(['page_count', 'page_dimensions_json'])
+    .select(['page_count', 'page_dimensions_json', 'detected_tags_json'])
     .where('org_id', '=', ctx.orgId)
     .where('source_file_id', '=', file.id)
     .where('source_storage_key', '=', file.storage_key)
@@ -150,7 +156,11 @@ async function findPassedInspectForFile(
     .limit(1)
     .executeTakeFirst();
   if (existingEnv && existingEnv.page_count !== null) {
-    return { pageCount: existingEnv.page_count, pageDimensionsJson: existingEnv.page_dimensions_json };
+    return {
+      pageCount: existingEnv.page_count,
+      pageDimensionsJson: existingEnv.page_dimensions_json,
+      detectedTagsJson: existingEnv.detected_tags_json,
+    };
   }
   return null;
 }
@@ -349,6 +359,7 @@ export const templateGet = defineQuery({
         sourceSha256: tpl.source_sha256,
         pageCount: tpl.page_count,
         pageDimensions: parsePageDimensions(tpl.page_dimensions_json),
+        detectedTags: parseDetectedTags(tpl.detected_tags_json, tpl.page_count),
         version: tpl.version,
         archivedAt: tpl.archived_at ? new Date(tpl.archived_at).toISOString() : null,
         createdBy: tpl.created_by,
@@ -438,6 +449,7 @@ export const templateCreate = defineCommand({
       'inspect_status',
       'page_count',
       'page_dimensions_json',
+      'detected_tags_json',
       'status',
       'created_by',
       'created_at',
@@ -486,6 +498,7 @@ export const templateCreate = defineCommand({
       inspectStatus: 'pending' | 'passed';
       pageCount: number | null;
       pageDimensionsJson: unknown;
+      detectedTagsJson: unknown;
       sourceEnvelopeId: string | null;
     };
 
@@ -504,6 +517,7 @@ export const templateCreate = defineCommand({
           'inspect_status',
           'page_count',
           'page_dimensions_json',
+          'detected_tags_json',
         ])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.sourceEnvelopeId)
@@ -515,7 +529,11 @@ export const templateCreate = defineCommand({
       }
       const passed = env.inspect_status === 'passed' && env.page_count !== null;
       const reused = passed
-        ? { pageCount: env.page_count!, pageDimensionsJson: env.page_dimensions_json }
+        ? {
+            pageCount: env.page_count!,
+            pageDimensionsJson: env.page_dimensions_json,
+            detectedTagsJson: env.detected_tags_json,
+          }
         : await findPassedInspectForFile(ctx, {
             id: env.source_file_id,
             storage_key: env.source_storage_key,
@@ -533,6 +551,7 @@ export const templateCreate = defineCommand({
         inspectStatus: reused ? 'passed' : 'pending',
         pageCount: reused ? reused.pageCount : null,
         pageDimensionsJson: reused ? reused.pageDimensionsJson : null,
+        detectedTagsJson: reused ? reused.detectedTagsJson : null,
         sourceEnvelopeId: env.id,
       };
     } else {
@@ -549,6 +568,7 @@ export const templateCreate = defineCommand({
         inspectStatus: reused ? 'passed' : 'pending',
         pageCount: reused ? reused.pageCount : null,
         pageDimensionsJson: reused ? reused.pageDimensionsJson : null,
+        detectedTagsJson: reused ? reused.detectedTagsJson : null,
         sourceEnvelopeId: null,
       };
     }
@@ -578,6 +598,12 @@ export const templateCreate = defineCommand({
           sourceMeta.pageDimensionsJson === null || sourceMeta.pageDimensionsJson === undefined
             ? null
             : JSON.stringify(sourceMeta.pageDimensionsJson),
+        detected_tags_json:
+          sourceMeta.detectedTagsJson === null || sourceMeta.detectedTagsJson === undefined
+            ? null
+            : typeof sourceMeta.detectedTagsJson === 'string'
+              ? sourceMeta.detectedTagsJson
+              : JSON.stringify(sourceMeta.detectedTagsJson),
         status: desiredStatus,
         created_by: userId,
         created_at: ctx.now,
@@ -589,7 +615,16 @@ export const templateCreate = defineCommand({
     if (sourceMeta.sourceEnvelopeId && input.copyRolesAndFields !== false) {
       const envSigners = await ctx.trx
         .selectFrom('crove_sign.signer')
-        .select(['id', 'signer_role', 'role_label', 'routing_order', 'delivery_mode', 'require_email_otp', 'created_at'])
+        .select([
+          'id',
+          'role_key',
+          'signer_role',
+          'role_label',
+          'routing_order',
+          'delivery_mode',
+          'require_email_otp',
+          'created_at',
+        ])
         .where('org_id', '=', ctx.orgId)
         .where('envelope_id', '=', sourceMeta.sourceEnvelopeId)
         .orderBy('routing_order', 'asc')
@@ -600,21 +635,40 @@ export const templateCreate = defineCommand({
 
       const signerToTemplateRoleId = new Map<string, string>();
       if (envSigners.length > 0) {
+        const usedRoleKeys = new Set<string>(
+          envSigners.flatMap((s) => (s.role_key ? [s.role_key] : [])),
+        );
+        let fallbackIdx = 1;
+        const allocateFallbackKey = (): string => {
+          while (usedRoleKeys.has(`r${fallbackIdx}`)) {
+            fallbackIdx += 1;
+          }
+          const key = `r${fallbackIdx}`;
+          usedRoleKeys.add(key);
+          fallbackIdx += 1;
+          return key;
+        };
+        const assignedKeys = new Set<string>();
         const insertedRoles = await ctx.trx
           .insertInto('crove_sign.template_role')
           .values(
-            envSigners.map((s, idx) => ({
-              org_id: ctx.orgId,
-              template_id: tpl.id,
-              role_key: `r${idx + 1}`,
-              signer_role: s.signer_role,
-              role_label: s.role_label,
-              routing_order: s.routing_order,
-              delivery_mode: s.delivery_mode,
-              require_email_otp: s.require_email_otp,
-              created_at: ctx.now,
-              updated_at: ctx.now,
-            })),
+            envSigners.map((s) => {
+              const roleKey =
+                s.role_key && !assignedKeys.has(s.role_key) ? s.role_key : allocateFallbackKey();
+              assignedKeys.add(roleKey);
+              return {
+                org_id: ctx.orgId,
+                template_id: tpl.id,
+                role_key: roleKey,
+                signer_role: s.signer_role,
+                role_label: s.role_label,
+                routing_order: s.routing_order,
+                delivery_mode: s.delivery_mode,
+                require_email_otp: s.require_email_otp,
+                created_at: ctx.now,
+                updated_at: ctx.now,
+              };
+            }),
           )
           .returning(['id'])
           .execute();
@@ -680,6 +734,7 @@ const zTemplateInspectComplete = z.discriminatedUnion('outcome', [
     outcome: z.literal('passed'),
     pageCount: z.number().int().min(1).max(SIGN_MAX_PAGES),
     pageDimensions: zSignInspectPageDimensions,
+    detectedTags: zSignInspectDetectedTags,
   }),
   z.strictObject({
     templateId: zId,
@@ -701,6 +756,7 @@ export const templateInspectComplete = defineCommand({
       'inspect_error',
       'page_count',
       'page_dimensions_json',
+      'detected_tags_json',
       'version',
       'updated_at',
     ]),
@@ -722,6 +778,15 @@ export const templateInspectComplete = defineCommand({
       if (input.pageDimensions.length !== input.pageCount) {
         throw new DomainError('SIGN_INVALID_INSPECT', 422, 'pageDimensions length must equal pageCount');
       }
+      for (const tag of input.detectedTags) {
+        if (tag.pageNumber > input.pageCount) {
+          throw new DomainError(
+            'SIGN_INVALID_INSPECT',
+            422,
+            `Detected tag pageNumber ${tag.pageNumber} exceeds pageCount ${input.pageCount}`,
+          );
+        }
+      }
       await ctx.trx
         .updateTable('crove_sign.template')
         .set({
@@ -729,13 +794,19 @@ export const templateInspectComplete = defineCommand({
           inspect_error: null,
           page_count: input.pageCount,
           page_dimensions_json: JSON.stringify(input.pageDimensions),
+          detected_tags_json: JSON.stringify(input.detectedTags),
           version: nextVersion,
           updated_at: ctx.now,
         })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', row.id)
         .execute();
-      ctx.audit({ templateId: row.id, inspectStatus: 'passed', pageCount: input.pageCount });
+      ctx.audit({
+        templateId: row.id,
+        inspectStatus: 'passed',
+        pageCount: input.pageCount,
+        detectedTagCount: input.detectedTags.length,
+      });
       return { templateId: row.id, inspectStatus: 'passed' as const, pageCount: input.pageCount, version: nextVersion };
     }
 
@@ -746,6 +817,7 @@ export const templateInspectComplete = defineCommand({
         inspect_error: input.error,
         page_count: null,
         page_dimensions_json: null,
+        detected_tags_json: null,
         version: nextVersion,
         updated_at: ctx.now,
       })
@@ -1310,6 +1382,7 @@ export const templateInstantiate = defineCommand({
       'inspect_status',
       'page_count',
       'page_dimensions_json',
+      'detected_tags_json',
       'expires_at',
       'sent_at',
       'version',
@@ -1320,6 +1393,7 @@ export const templateInstantiate = defineCommand({
     tableWrite(signManifest.tables, 'crove_sign', 'signer', [
       'org_id',
       'envelope_id',
+      'role_key',
       'routing_order',
       'signer_role',
       'role_label',
@@ -1515,6 +1589,7 @@ export const templateInstantiate = defineCommand({
           resolvedRoles.map((r) => ({
             org_id: ctx.orgId,
             envelope_id: env.id,
+            role_key: r.roleKey,
             routing_order: r.routingOrder,
             signer_role: r.signerRole,
             role_label: r.roleLabel,
