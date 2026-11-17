@@ -142,6 +142,18 @@ suite('the S2a-HKD revenue book of a household business (#2517 slice 2a)', () =>
         ).rows[0]?.id as string;
         let no = 1;
         for (const [account, debit, credit] of lines) await a.query('INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, $3, $4, $5, $6)', [o.orgId, id, no++, account, debit, credit]);
+        // The only way to reverse the entry of a sale document is a void, written in the same transaction (a deferred trigger demands it), and a void takes the stock of every line back: the
+        // document's stock moves are reversed, as finance.journal.reverse does. The reversed moves stay, so the book still sees which item each line was sold as.
+        if (over.reverses) {
+          const original = (await a.query<{ source_type: string; source_id: string }>('SELECT source_type, source_id FROM crove_finance.journal_entry WHERE org_id = $1 AND id = $2', [o.orgId, over.reverses])).rows[0];
+          if (original?.source_type === 'finance.purchase_document') {
+            const moves = await a.query<{ id: string; item_id: string; quantity: string }>("SELECT id, item_id, quantity FROM crove_finance.stock_move WHERE org_id = $1 AND document_id = $2 AND source_type = 'document_line'", [o.orgId, original.source_id]);
+            for (const m of moves.rows) {
+              await a.query("INSERT INTO crove_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, reverses_move_id) VALUES ($1, $2, $3, $4, $5, 'reversal', $6)", [o.orgId, entity, m.item_id, date, -Number(m.quantity), m.id]);
+            }
+            await a.query("INSERT INTO crove_finance.purchase_document_void (org_id, document_id, reversal_entry_id, reason) VALUES ($1, $2, $3, 'Hủy hóa đơn')", [o.orgId, original.source_id, id]);
+          }
+        }
         await a.query('COMMIT');
         return id;
       } catch (error) {
@@ -203,6 +215,24 @@ suite('the S2a-HKD revenue book of a household business (#2517 slice 2a)', () =>
       expect(l.pit).toBe(String(Math.round((Number(l.revenue) * Number(l.pitPercent)) / 100)));
     }
     expect(book.totals?.tax).toBe(String(Number(book.totals?.vat) + Number(book.totals?.pit)));
+  });
+
+  it('puts a voided sale on the lines it was made under, in the month of the sale and in the month of the void', async () => {
+    const o = await org();
+    await setProfile(o);
+    const shirt = await item(o, 'AO', 'goods');
+    const repair = await item(o, 'SUA', 'services');
+    const sale = await entry(o, '2026-08-30', 'Bán hàng và sửa chữa', [['111', 1000000, 0], ['511', 0, 1000000]], { sale: [{ amount: 600000, item: shirt }, { amount: 400000, item: repair }] });
+    await entry(o, '2026-09-02', 'Hủy hóa đơn', [['511', 1000000, 0], ['111', 0, 1000000]], { reverses: sale });
+    // The void took the stock back, so no line has a move left that nothing reverses; the sale is still attributed to the trades it had, not to unassigned.
+    const august = await s2a(o, '2026-08');
+    expect(august.rows[0]?.parts).toEqual([{ trade: 'goods', amount: '600000' }, { trade: 'services', amount: '400000' }]);
+    expect(august.unassigned).toBe('0');
+    expect(august.totals).not.toBeNull();
+    const september = await s2a(o, '2026-09');
+    expect(september.rows[0]?.parts).toEqual([{ trade: 'goods', amount: '-600000' }, { trade: 'services', amount: '-400000' }]);
+    expect(september.unassigned).toBe('0');
+    expect(september.totals).toEqual({ revenue: '-1000000', vat: '0', pit: '0', tax: '0' });
   });
 
   it('puts a reversal on the lines of the entry it undoes, so the period nets to the ledger', async () => {

@@ -126,7 +126,30 @@ describe('the S2a-HKD workbook', () => {
     expect(head).toContain('Chưa phân ngành');
     expect(find(rows, 'Đơn sàn')![head.indexOf('Chưa phân ngành')]).toBe('300000');
     expect(rows.flat().some((t) => t.includes('còn doanh thu chưa phân ngành nên chưa tính tổng thuế'))).toBe(true);
-    expect(find(rows, 'Tổng thuế GTGT và TNCN')![head.indexOf('Tổng số tiền')]).toBe('0');
+    // No tax total exists yet, so the cell is blank and never a 0 that does not exist.
+    expect(find(rows, 'Tổng thuế GTGT và TNCN')![head.indexOf('Tổng số tiền')]).toBe('');
+  });
+
+  it('still writes the "Chưa phân ngành" column when unassigned parts net to zero (a sale and its void)', async () => {
+    const { rows } = await rowsOf(
+      book({
+        rows: [
+          { entryId: E1, date: '2026-11-03', reference: null, description: 'Đơn sàn', amount: '300000', reversal: false, parts: [{ trade: 'unassigned', amount: '300000' }] },
+          { entryId: E2, date: '2026-11-05', reference: null, description: 'Đảo đơn sàn', amount: '-300000', reversal: true, parts: [{ trade: 'unassigned', amount: '-300000' }] },
+        ],
+        total: '0',
+        lines: [
+          { trade: 'goods', revenue: '0', vatPercent: '1', pitPercent: '0.5', vat: '0', pit: '0' },
+          { trade: 'services', revenue: '0', vatPercent: '5', pitPercent: '2', vat: '0', pit: '0' },
+        ],
+        unassigned: '0',
+        totals: { revenue: '0', vat: '0', pit: '0', tax: '0' },
+      }),
+    );
+    const head = find(rows, 'Diễn giải')!;
+    expect(head).toContain('Chưa phân ngành');
+    expect(find(rows, 'Đơn sàn')![head.indexOf('Chưa phân ngành')]).toBe('300000');
+    expect(find(rows, 'Đảo đơn sàn (bút toán đảo)')![head.indexOf('Chưa phân ngành')]).toBe('-300000');
   });
 
   it('never reads a description as a formula', async () => {

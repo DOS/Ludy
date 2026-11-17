@@ -5,7 +5,7 @@
 //   movement of 511 and cannot disagree with S1a or the 01/CNKD. Each row's amount is shared between the business lines (trades) of the household, and the VAT and PIT of each line follow from the
 //   percentage in force on the period's last day (household_trade_rate, a dated row, never a constant), each rounded to a whole dong. Refused for an entity whose profile does not require S2a.
 // - The ledger has no trade on a 511 line, so the trade of a row comes from what the entry is built from and is never guessed: a household with one trade has every row on it; with several, an entry
-//   made by posting a sale document takes the trade of each document line's stock item (the line's live stock move), by the lines' amounts; a reversal follows the entry it undoes; any other entry
+//   made by posting a sale document takes the trade of each document line's stock item (the line's latest stock move), by the lines' amounts; a reversal follows the entry it undoes; any other entry
 //   (a marketplace settlement, a manual voucher) and any item whose trade the profile does not list is `unassigned`. `unassigned` holds the totals back (`totals` is null), as in the CNKD.
 // - While the form or a percentage in use is `commentary` (the accountant has not confirmed it, #2520) the book is still given, with `commentary` and the list of unconfirmed rows, so the screen
 //   and the Excel file label every figure "Số liệu tạm, kế toán chưa xác nhận tỷ lệ"; the label goes by itself when later dated `confirmed` rows exist (owner's direction of 2026-11-17).
@@ -31,7 +31,7 @@ function chunks<T>(list: readonly T[]): T[][] {
 type Ctx = Pick<QueryContext, 'trx' | 'orgId'>;
 
 // For the entries of a book: the sale document each was posted from (a reversal: the document of the entry it undoes), and for each such document the weights of its lines by trade.
-// A line's trade is the trade of the stock item of its live stock move (a move no later move reverses); a line with no move has no trade, and one whose trade the profile does not list is unassigned.
+// A line's trade is the trade of the stock item of its latest stock move (a voided sale keeps the trade it was made under); a line with no move has no trade, and one whose trade the profile does not list is unassigned.
 export async function saleDocumentWeights(ctx: Ctx, entryIds: readonly string[], trades: readonly HouseholdTrade[]): Promise<Map<string, SplitWeight[]>> {
   const entries = new Map<string, { sourceType: string; sourceId: string | null; reverses: string | null }>();
   for (const ids of chunks(entryIds)) {
@@ -77,12 +77,27 @@ export async function saleDocumentWeights(ctx: Ctx, entryIds: readonly string[],
           .onRef('m.document_id', '=', 'l.document_id')
           .onRef('m.line_no', '=', 'l.line_no')
           .on('m.source_type', '=', 'document_line')
-          .on((eb) => eb.not(eb.exists(eb.selectFrom('crove_finance.stock_move as r').select('r.id').whereRef('r.org_id', '=', 'm.org_id').whereRef('r.reverses_move_id', '=', 'm.id')))),
+          // The line's latest try, reversed or not: a voided sale keeps the trade it was made under, and a line assigned again (try 2) takes the new item.
+          .on((eb) =>
+            eb(
+              'm.line_attempt',
+              '=',
+              eb
+                .selectFrom('crove_finance.stock_move as a')
+                .select((e) => e.fn.max('a.line_attempt').as('latest'))
+                .whereRef('a.org_id', '=', 'l.org_id')
+                .whereRef('a.document_id', '=', 'l.document_id')
+                .whereRef('a.line_no', '=', 'l.line_no')
+                .where('a.source_type', '=', 'document_line'),
+            ),
+          ),
       )
       .leftJoin('crove_finance.stock_item as i', (join) => join.onRef('i.org_id', '=', 'm.org_id').onRef('i.id', '=', 'm.item_id'))
       .select(['l.document_id', 'l.line_no', 'l.amount', 'i.trade'])
       .where('l.org_id', '=', ctx.orgId)
       .where('l.document_id', 'in', ids)
+      // Only lines that credit sales revenue count as weight: a line crediting another account (financial income, other income) is not part of the 511 amount being shared.
+      .where((eb) => eb.or([eb('l.credit_account', 'is', null), eb('l.credit_account', 'like', '511%')]))
       .execute();
     for (const l of lines) {
       const trade = l.trade as HouseholdTrade | null;
@@ -149,11 +164,11 @@ export const householdS2a = defineQuery({
       : null;
 
     const unconfirmed: HouseholdS2a['unconfirmed'] = [];
-    if (w.form.status !== 'confirmed') {
-      // The day the layout in force took effect, from its own row (the book rule of the profile view carries no date).
-      const formRows = await ctx.trx.selectFrom('crove_finance.household_form_version').select(['book', 'effective_from']).where('book', '=', 'S2a').where('effective_from', '<=', w.to).execute();
-      unconfirmed.push({ kind: 'form', key: `${w.form.book} ${w.form.version}`, effectiveFrom: pickInForce(formRows, (r) => r.book, w.to)[0]?.effective_from ?? w.from });
-    }
+    // The layout of the book in force on the period's last day, from its own row (the book rule of the profile view carries no date), so the label follows the same day as the rates.
+    const formRows = await ctx.trx.selectFrom('crove_finance.household_form_version').select(['book', 'version', 'effective_from', 'status']).where('book', '=', 'S2a').where('effective_from', '<=', w.to).execute();
+    const formInForce = pickInForce(formRows, (r) => r.book, w.to)[0];
+    const formStatus = formInForce?.status ?? w.form.status;
+    if (formStatus !== 'confirmed') unconfirmed.push({ kind: 'form', key: `S2a ${formInForce?.version ?? w.form.version}`, effectiveFrom: formInForce?.effective_from ?? w.from });
     for (const t of trades) {
       const rate = rates.get(t)!;
       if (rate.status !== 'confirmed') unconfirmed.push({ kind: 'rate', key: t, effectiveFrom: rate.effective_from });

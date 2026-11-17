@@ -174,7 +174,8 @@ export async function buildS2aWorkbook(book: HouseholdS2a, brand = 'Ludy'): Prom
   workbook.title = `${book.form.name} ${dateLabel(book.period.from)} - ${dateLabel(book.period.to)} ${book.household.name}`;
   const sheet = workbook.addWorksheet('S2a-HKD');
   const lineKeys = book.lines.map((l) => l.trade);
-  const hasUnassigned = book.unassigned !== '0' && !/^-?0+(\.0+)?$/.test(book.unassigned);
+  // The column exists whenever any entry has a part there (a sale and its void both unassigned net to zero, but each row still writes its part).
+  const hasUnassigned = book.rows.some((r) => r.parts.some((p) => p.trade === 'unassigned'));
   const columnKeys: string[] = ['date', 'reference', 'description', ...lineKeys.map((t) => `t_${t}`), ...(hasUnassigned ? ['t_unassigned'] : []), 'total', 'note'];
   sheet.columns = columnKeys.map((key) => ({ key, width: key === 'description' ? 48 : key === 'note' ? 46 : key === 'date' ? 16 : key === 'reference' ? 22 : 22 }));
   const provisional = book.commentary;
@@ -236,7 +237,8 @@ export async function buildS2aWorkbook(book: HouseholdS2a, brand = 'Ludy'): Prom
   perLine('Thuế TNCN', (l) => l.pit, book.totals?.pit, 'money');
   const tax = sheet.addRow([]);
   setTextCell(tax.getCell('description'), 'Tổng thuế GTGT và TNCN');
-  setMoneyCell(tax.getCell('total'), book.totals?.tax ?? '0');
+  // No total while revenue has no business line yet: the cell stays blank, never a 0 that does not exist.
+  if (book.totals) setMoneyCell(tax.getCell('total'), book.totals.tax);
   mark(tax);
   tax.font = { bold: true };
   if (!book.totals) {
