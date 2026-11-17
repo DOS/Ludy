@@ -32,6 +32,7 @@ describe('the approval card of a campaign plan', () => {
     expect(detail).toContain('giữ 700000 VND trong hạn mức chi tiêu');
     expect(detail).toContain('ở trạng thái tạm dừng');
     expect(detail).toContain('tự bật từ ngày bắt đầu (ngày 2027-01-02) mà không hỏi lại');
+    expect(detail).toContain('trừ khi trước đó hạn mức bị giảm hoặc việc chạy quảng cáo bị tắt');
     expect(detail).toContain('Chưa tiêu đồng nào trước ngày đó');
   });
 
@@ -41,6 +42,7 @@ describe('the approval card of a campaign plan', () => {
     expect(detail).toContain('holds 700000 VND against your spend caps');
     expect(detail).toContain('creates the campaign at the ad platform paused');
     expect(detail).toContain('switches it on by itself from the start date (ngày 2027-01-02), without asking again');
+    expect(detail).toContain('unless a cap is lowered or running ads is turned off before then');
     expect(detail).toContain('Nothing is spent before that day');
     expect(adsChangeLine(launch, translatorFor('en'), money, date)).toContain('Approving allows spending');
   });
@@ -57,12 +59,12 @@ describe('the button, the toast and the subtitles of the approval', () => {
 
   it('name the amount, the paused state and the automatic start', () => {
     const vi = messages('vi').inboxDetail;
-    expect(fmt(vi.approveCampaignLaunch as string, { amount: '700000 VND' })).toBe('Duyệt và cho chạy, tối đa 700000 VND');
+    expect(fmt(vi.approveCampaignLaunch as string, { amount: '700000 VND' })).toBe('Duyệt và giữ chỗ 700000 VND');
     expect(fmt(vi.approvedCampaignToast as string, { name: 'Cà phê Mộc', amount: '700000 VND', from: '2/1/2027' })).toBe('Đã duyệt kế hoạch Cà phê Mộc. Ludy giữ 700000 VND trong hạn mức, đang tạo chiến dịch ở trạng thái tạm dừng và sẽ tự bật từ 2/1/2027.');
     expect(vi.adsLaunchSubtitle).toContain('tạm dừng');
     expect(vi.adsLaunchSubtitle).toContain('tự bật từ ngày bắt đầu, không hỏi lại');
     const en = messages('en').inboxDetail;
-    expect(fmt(en.approveCampaignLaunch as string, { amount: '700000 VND' })).toBe('Approve and allow up to 700000 VND');
+    expect(fmt(en.approveCampaignLaunch as string, { amount: '700000 VND' })).toBe('Approve and hold 700000 VND');
     expect(en.approvedCampaignToast).toContain('creating the campaign paused');
     expect(en.adsLaunchSubtitle).toContain('switches it on by itself from its start date');
   });

@@ -545,7 +545,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
     pending &&
     item.canApprove &&
     !busy &&
-    (plain ? !issue || !!issueView.data : !dirty && !!payload && !blocked && unclassified === 0 && (failed === 0 || acceptFailed) && (!unverified || acceptUnverified) && latePostingValid);
+    (plain ? (!issue || !!issueView.data) && (!ads || !adsView.isPending) : !dirty && !!payload && !blocked && unclassified === 0 && (failed === 0 || acceptFailed) && (!unverified || acceptUnverified) && latePostingValid);
   const submitApproval = () => {
     if (!item) return;
     if (plain) {
