@@ -71,7 +71,8 @@ test('answers, hides, notes and resolves a comment on a published post, and the 
   await expect(page.getByRole('heading', { name: 'Hộp thư', exact: true })).toBeVisible();
   await expect(page.getByRole('navigation').getByRole('region', { name: 'Hộp thư' }).getByRole('link', { name: 'Hội thoại' })).toBeVisible();
   // Exactly one menu item is current on the Inbox (#3582): Posts (`social`) is a prefix of the Inbox's path and is not marked.
-  await expect(page.getByRole('navigation').locator('a[aria-current="page"]')).toHaveCount(1);
+  // (The app switcher's own Engage link opens the Inbox too, so only the menu's sections are counted.)
+  await expect(page.getByRole('navigation').locator('section a[aria-current="page"]')).toHaveCount(1);
   await expect(page.getByRole('navigation').getByRole('link', { name: 'Hội thoại' })).toHaveAttribute('aria-current', 'page');
   await expect(page.getByRole('navigation').getByRole('link', { name: 'Bài đăng', exact: true })).not.toHaveAttribute('aria-current', 'page');
   await page.getByTestId('conversation-tab-resolved').click();

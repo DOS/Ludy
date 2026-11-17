@@ -22,6 +22,7 @@ import { ErrorText, RowsSkeleton } from './ui.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { inboxCountsInput, inboxListInput, type InboxSearch } from '../lib/conversation-inbox.ts';
 import { sortByIntent } from '../lib/conversation-intent.ts';
+import { INBOX_SPLIT_UP, useMediaQuery } from '../lib/media.ts';
 import { withSearch } from '../lib/search.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
 import { ConversationListItem, ConversationThread, LoadOlderConversations, POLL_MS, STATUSES, useConversationPages, useMe } from './conversation-inbox.tsx';
@@ -56,7 +57,7 @@ export function AvailabilityControl() {
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm" data-testid="availability">
       <label className="flex items-center gap-2 font-medium whitespace-nowrap text-foreground">
-        <Checkbox checked={available} disabled={busy} aria-busy={busy} data-testid="availability-switch" onCheckedChange={(checked) => void change(checked === true)} />
+        <Checkbox checked={available} aria-busy={busy} data-testid="availability-switch" onCheckedChange={(checked) => void change(checked === true)} />
         {t('switchLabel')}
       </label>
       <Badge variant={available ? 'default' : 'outline'} data-testid="availability-status" role="status">
@@ -94,10 +95,36 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
   const items = search.order === 'intent' && status === 'new' ? sortByIntent(loaded, suggested) : loaded;
   // The thread shown: the one the address names (kept even when it has moved to another tab), else the first of the list.
   const openId = search.c ?? items[0]?.id ?? null;
-  // A change of tab or filter starts a new list: the open thread is the first of it again.
-  // Below xl one pane shows at a time: the list, or the conversation after a tap (a link that names one opens it). The first thread opened for good
-  // below is not "opened" by the reader, so the list stays first on a phone.
+  // From xl the list and the conversation sit side by side; below it one shows at a time (the screen renders one layout, not both with one hidden, so
+  // the thread behind the list is not mounted and does not mark itself read): the list, or the conversation after a tap or a link that names one.
+  const split = useMediaQuery(INBOX_SPLIT_UP);
   const [reading, setReading] = useState(search.c !== undefined);
+  // The thread the screen itself opened for good (below): it is not "opened" by the reader, so the list stays first on a phone.
+  const autoOpened = useRef<string | null>(null);
+  // The conversation the reader opened: it stays mounted while the list is shown again below xl, so a reply being typed is not lost on "back".
+  const [readerOpened, setReaderOpened] = useState<string | null>(search.c ?? null);
+  useEffect(() => {
+    if (search.c && search.c !== autoOpened.current) {
+      setReading(true);
+      setReaderOpened(search.c);
+    }
+  }, [search.c]);
+  const showList = split || !reading || !openId;
+  const showReading = split || (openId !== null && (reading || readerOpened === openId));
+  const readingVisible = split || reading;
+  const listRef = useRef<HTMLElement>(null);
+  const backRef = useRef<HTMLButtonElement>(null);
+  // Switching panes moves the focus with it (WCAG 2.4.3): to the back control when the conversation opens, to the open row when the list returns.
+  const openReading = (id: string) => {
+    setReading(true);
+    setReaderOpened(id);
+    requestAnimationFrame(() => backRef.current?.focus());
+  };
+  const closeReading = () => {
+    setReading(false);
+    requestAnimationFrame(() => listRef.current?.querySelector<HTMLElement>('[data-testid="conversation-item"][aria-current="true"]')?.focus());
+  };
+  // A change of tab or filter starts a new list: the open thread is the first of it again.
   const change = (next: { [K in keyof InboxSearch]?: InboxSearch[K] | undefined }) => {
     setReading(false);
     onSearch(withSearch(search, { c: undefined, ...next }));
@@ -107,7 +134,10 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
   // A thread the reader may no longer read has just gone: it is not opened again from the list that still holds it until the next poll.
   const gone = useRef<string | null>(null);
   useEffect(() => {
-    if (!search.c && first && first !== gone.current) onSearch({ ...search, c: first });
+    if (!search.c && first && first !== gone.current) {
+      autoOpened.current = first;
+      onSearch({ ...search, c: first });
+    }
   }, [search.c, first]); // eslint-disable-line react-hooks/exhaustive-deps
   const [text, setText] = useState(search.q ?? '');
   const typed = useDebounced(text.trim(), SEARCH_PAUSE_MS);
@@ -118,7 +148,7 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
   const paneClass = 'min-h-0 min-w-0';
   return (
     <div className="space-y-3" data-testid="inbox" data-reading={reading}>
-      <div className={cn('flex flex-wrap items-end gap-3', reading && 'hidden xl:flex')} role="search" aria-label={ti('filters.label')}>
+      <div className={cn('flex flex-wrap items-end gap-3', !showList && 'hidden')} role="search" aria-label={ti('filters.label')}>
         <div className="min-w-48 flex-[2] basis-full sm:basis-48">
           <label htmlFor="inbox-search" className="mb-1 block text-xs font-medium text-muted-foreground">
             {ti('searchLabel')}
@@ -168,7 +198,8 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
       </div>
       {/* One frame, one hairline between the panes (no cards in cards, DESIGN.md 3.4). From xl it fills the window's height and each pane scrolls on its own. */}
       <div className="flex flex-col overflow-hidden rounded-lg border border-border xl:grid xl:h-[max(30rem,calc(100dvh-16rem))] xl:grid-cols-[20rem_minmax(0,1fr)]">
-        <section aria-label={t('listLabel')} className={cn(paneClass, 'flex flex-col xl:border-r xl:border-border', reading && 'hidden xl:flex')} data-testid="inbox-list">
+        {showList && (
+        <section ref={listRef} aria-label={t('listLabel')} className={cn(paneClass, 'flex flex-col xl:border-r xl:border-border')} data-testid="inbox-list">
           <div className="space-y-2 border-b border-border p-3">
             <Tabs value={status} onValueChange={(v) => change({ status: v === 'new' ? undefined : (v as InboxSearch['status']) })}>
               <TabsList className="w-full">
@@ -192,7 +223,7 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
               </p>
             )}
           </div>
-          <div className="min-h-0 flex-1 xl:overflow-y-auto">
+          <div className="flex min-h-0 flex-1 flex-col xl:overflow-y-auto">
             {list.isPending && (
               <div className="px-3">
                 <RowsSkeleton rows={6} />
@@ -212,7 +243,7 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
                     conversation={c}
                     open={c.id === openId}
                     onOpen={() => {
-                      setReading(true);
+                      openReading(c.id);
                       onSearch({ ...search, c: c.id });
                     }}
                     suggested={suggested.get(c.id) ?? null}
@@ -225,15 +256,17 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
             </div>
           </div>
         </section>
+        )}
+        {showReading && (
         <section
           aria-label={t('threadLabel')}
-          className={cn(paneClass, 'flex flex-col xl:overflow-y-auto 2xl:grid 2xl:grid-cols-[minmax(0,1fr)_16rem] 2xl:overflow-hidden', !reading && 'hidden xl:flex')}
+          className={cn(paneClass, 'flex flex-col xl:overflow-y-auto 2xl:grid 2xl:grid-cols-[minmax(0,1fr)_16rem] 2xl:overflow-hidden', !readingVisible && 'hidden')}
           data-testid="inbox-reading"
         >
           {openId ? (
             <>
               <div className="min-w-0 space-y-3 p-4 2xl:overflow-y-auto">
-                <Button type="button" variant="ghost" size="sm" className="-ml-2 xl:hidden" data-testid="inbox-back" onClick={() => setReading(false)}>
+                <Button ref={backRef} type="button" variant="ghost" size="sm" className="-ml-2 xl:hidden" data-testid="inbox-back" onClick={closeReading}>
                   <NavIcon name="expand" className="rotate-90" />
                   {ti('back')}
                 </Button>
@@ -255,8 +288,9 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
             <PaneEmpty title={t('pick')} testId="inbox-reading-empty" />
           )}
         </section>
+        )}
       </div>
-      <EmailAddressCard />
+      {showList && <EmailAddressCard />}
     </div>
   );
 }
