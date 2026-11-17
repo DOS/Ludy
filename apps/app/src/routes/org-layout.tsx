@@ -183,6 +183,7 @@ export function OrgLayout() {
         })
       ) {
         event.preventDefault();
+        setMenuOpen(false);
         setPaletteOpen(false);
         setQuickCaptureOpen(true);
       }

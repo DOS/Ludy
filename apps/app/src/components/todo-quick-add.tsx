@@ -142,6 +142,7 @@ export function TodoQuickAddBar({
         valueRef.current = '';
         setValue('');
         setDismissed([]);
+        if (!nowOverride) setAnchorNow(new Date());
       }
       setEmptyWarning(false);
       onCreated?.(sent.payload.title, { cleared: willClear });
@@ -170,8 +171,8 @@ export function TodoQuickAddBar({
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const submitNow = nowOverride ?? new Date();
-    const freshParsed = parseTodoQuickAdd(value, { now: submitNow, timeZone, dismissedTokens: dismissed });
-    const payload = buildTodoCreatePayload(value, freshParsed, submitNow);
+    // Submit the exact parsed date/time chips the user previewed (only anchor `reminder` past-check against `submitNow`).
+    const payload = buildTodoCreatePayload(value, parsed, submitNow);
     if (!payload) {
       if (value.trim() !== '') setEmptyWarning(true);
       return;

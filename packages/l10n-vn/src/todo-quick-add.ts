@@ -1037,8 +1037,33 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
   }
 
   timeCandidates.sort((a, b) => a.start - b.start || b.end - a.end);
-  for (const tc of timeCandidates) {
-    if (!isAvailable(tc)) continue;
+
+  const isDurationClock = (cand: { start: number; end: number; hasAmPm: boolean }, period: DayPeriod | undefined): boolean => {
+    const afterWord = findAdjacentWordAfter(input, words, cand.end, occupied);
+    if (afterWord && vnMatch(afterWord, 'nữa')) return true;
+
+    const prevWord = findAdjacentWordBefore(input, words, cand.start, occupied);
+    if (!prevWord) return false;
+    if (vnMatchAny(prevWord, ['trong', 'mất', 'tốn', 'hết', 'suốt'])) return true;
+    const prevPrev = wordBefore(words, prevWord);
+    if (vnMatch(prevWord, 'dài') && prevPrev && vnMatch(prevPrev, 'kéo')) return true;
+    if (vnMatch(prevWord, 'sau')) {
+      if (prevPrev && vnMatchAny(prevPrev, ['tuần', 'ngày', 'hôm', 'tháng', 'năm'])) return false;
+      const usesGioWord = /(?:giờ|gio|giơ|o\u031b)/iu.test(input.slice(cand.start, cand.end));
+      if (usesGioWord && !period && !cand.hasAmPm) return true;
+    }
+    return false;
+  };
+
+  const isRangeBetweenClocks = (leftEnd: number, rightStart: number): boolean => {
+    if (rightStart < leftEnd) return false;
+    const foldedBetween = foldVn(input.slice(leftEnd, rightStart)).trim();
+    return /^(?:-|\u2013|\u2014|to|till|until|den|toi|->|~)$/u.test(foldedBetween);
+  };
+
+  for (let idx = 0; idx < timeCandidates.length; idx++) {
+    const tc = timeCandidates[idx];
+    if (!tc || !isAvailable(tc)) continue;
     let start = tc.start;
     let end = tc.end;
     let period: DayPeriod | undefined;
@@ -1057,6 +1082,23 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
         }
       }
     }
+
+    if (isDurationClock(tc, period)) continue;
+
+    // Skip time ranges ("từ 9h đến 10h", "9h - 11h") intact rather than stripping only half or both into orphaned text.
+    let rangeEndIdx = idx;
+    let cursorEnd = end;
+    while (rangeEndIdx + 1 < timeCandidates.length) {
+      const nextTc = timeCandidates[rangeEndIdx + 1];
+      if (!nextTc || !isAvailable(nextTc) || !isRangeBetweenClocks(cursorEnd, nextTc.start)) break;
+      rangeEndIdx += 1;
+      cursorEnd = nextTc.end;
+    }
+    if (rangeEndIdx > idx) {
+      idx = rangeEndIdx;
+      continue;
+    }
+
     const startBeforeAt = start;
     start = expandConnectorBefore(input, words, start, [['vào', 'lúc'], ['lúc'], ['at']], occupied);
     const usedEnglishAt = start < startBeforeAt && /^at\b/i.test(input.slice(start));
@@ -1065,6 +1107,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     claimToken('time', start, end);
     timeSpans.push({ start, end });
     if (tc.hasAmPm || usedEnglishAt) englishTimeSpans.push({ start, end });
+    break;
   }
 
   // 7. Relative dates & weekdays (with optional adjacent day period)

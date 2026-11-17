@@ -525,5 +525,43 @@ describe('parseTodoQuickAdd (#3556)', () => {
     const nfdCodeDate = parseTodoQuickAdd('Kiểm tra mã25/11'.normalize('NFD'), { now: TUE_MORNING, timeZone: VN_TZ });
     expect(nfdCodeDate.title).toBe('Kiểm tra mã25/11'.normalize('NFD'));
     expect(nfdCodeDate.dueOn).toBeNull();
+
+    // Relative durations are preserved intact rather than parsed as clock times
+    const durSauNua = parseTodoQuickAdd('Gọi khách sau 2 giờ nữa', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(durSauNua.title).toBe('Gọi khách sau 2 giờ nữa');
+    expect(durSauNua.dueTime).toBeNull();
+    expect(durSauNua.dueOn).toBeNull();
+
+    const durTrong = parseTodoQuickAdd('Làm báo cáo trong 2 giờ', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(durTrong.title).toBe('Làm báo cáo trong 2 giờ');
+    expect(durTrong.dueTime).toBeNull();
+
+    const durSau = parseTodoQuickAdd('Gọi khách sau 2 giờ', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(durSau.title).toBe('Gọi khách sau 2 giờ');
+    expect(durSau.dueTime).toBeNull();
+
+    // Next-week clock ("tuần sau 9h") still parses cleanly even though it contains "sau"
+    const nextWeekClock = parseTodoQuickAdd('Họp tuần sau 9h', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(nextWeekClock.dueOn).toBe('2026-11-23');
+    expect(nextWeekClock.dueTime).toBe('09:00');
+    expect(nextWeekClock.title).toBe('Họp');
+
+    // Time ranges keep both endpoints intact rather than stripping only one or producing "từ đến"
+    const rangeDen = parseTodoQuickAdd('Họp từ 9h đến 10h ngày mai', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(rangeDen.title).toBe('Họp từ 9h đến 10h');
+    expect(rangeDen.dueOn).toBe('2026-11-18');
+    expect(rangeDen.dueTime).toBeNull();
+
+    const rangeDash = parseTodoQuickAdd('Họp 9h - 11h ngày mai', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(rangeDash.title).toBe('Họp 9h - 11h');
+    expect(rangeDash.dueOn).toBe('2026-11-18');
+    expect(rangeDash.dueTime).toBeNull();
+
+    // Multiple disconnected clocks keep only the first clock as dueTime without dropping the second
+    const multiClock = parseTodoQuickAdd('Họp 9h ngày mai 10h', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(multiClock.dueOn).toBe('2026-11-18');
+    expect(multiClock.dueTime).toBe('09:00');
+    expect(multiClock.tokens.filter((t) => t.kind === 'time')).toHaveLength(1);
+    expect(multiClock.title).toBe('Họp 10h');
   });
 });
