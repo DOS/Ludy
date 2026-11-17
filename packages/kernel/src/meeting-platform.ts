@@ -426,6 +426,24 @@ export const meetingPlatformImportHolds = defineQuery({
   },
 });
 
+// Expiry across every org (the context's org only hosts the audit row): old suggestions go, staged bytes nobody claimed, stalled claims and downloads fail. Returns the staging keys whose bytes the
+// job must delete.
+// Not called by the worker, which runs the definer directly on its own login (as the conversation and campaign sweeps do): this command is the audited, system-only seam of the same definer, kept so that its
+// expiry rules are tested through the runtime (meeting-platform.db.test.ts) and so that a later job may call it without a new grant.
+export const meetingPlatformSweep = defineCommand({
+  name: 'kernel.meeting_platform.sweep',
+  input: z.strictObject({}),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  handler: async (ctx): Promise<{ keys: string[] }> => {
+    requireSystem(ctx.actor);
+    const { rows } = await sql<{ staging_key: string }>`SELECT staging_key FROM crove_kernel.meeting_platform_recording_sweep()`.execute(ctx.trx).catch(platformError);
+    ctx.audit({ expired: rows.length });
+    return { keys: rows.map((r) => r.staging_key) };
+  },
+});
+
 // ---------------------------------------------------------------------------------------------------------------------
 // The member's reads
 // ---------------------------------------------------------------------------------------------------------------------
@@ -504,5 +522,6 @@ export const meetingPlatformCommands = [
   meetingPlatformSyncFailed,
   meetingPlatformImportStaged,
   meetingPlatformImportFailed,
+  meetingPlatformSweep,
 ];
 export const meetingPlatformQueries = [meetingPlatformConnections, meetingPlatformRecordings, meetingPlatformCredential, meetingPlatformImportHolds, meetingPlatformSyncDue, meetingPlatformImportOpen];

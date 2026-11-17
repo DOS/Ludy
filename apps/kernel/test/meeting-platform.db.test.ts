@@ -75,7 +75,6 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
   let api: Runtime;
   let worker: Runtime;
   let personDb: ReturnType<typeof createDb>;
-  let workerDb: ReturnType<typeof createDb>;
 
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
   const refuses = (promise: Promise<unknown>) => promise.then(() => null, (error: unknown) => (error as { code?: string }).code ?? 'ERR');
@@ -186,7 +185,6 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     const workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 4 });
     pools.push(appPool, workerPool);
     personDb = createDb(appPool);
-    workerDb = createDb(workerPool);
     const defs = { commands: [...kernelCommands, begin, imported, rawReplace], queries: [...kernelQueries({ inboundDomain: null }), recordingRows] };
     api = new Runtime(personDb, { manifests: TEST_MANIFESTS }).register(defs);
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(defs);
@@ -464,10 +462,10 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     await replace(o, c.connectionId, [listed('sug-old', { startedAt: new Date(Date.now() - 15 * 86_400_000).toISOString() }), listed('sug-new', { startedAt: new Date(Date.now() - 13 * 86_400_000).toISOString() }), listed('dis-old'), listed('imp')]);
     await o.exec(o.lan, 'kernel.meeting_platform.recording.dismiss', { recordingId: await idOf('dis-old', c.connectionId) });
     await back(await idOf('dis-old', c.connectionId), 'started_at', 15 * 86_400_000);
-    // The sweep is the worker's alone: its definer is granted to the worker login only (the job calls it directly), so the API's login is refused whatever the actor says.
-    const sweep = async (db: ReturnType<typeof createDb>): Promise<{ keys: string[] }> => ({ keys: (await sql<{ staging_key: string }>`SELECT staging_key FROM crove_kernel.meeting_platform_recording_sweep()`.execute(db)).rows.map((r) => r.staging_key) });
-    await expect(sweep(personDb)).rejects.toThrow(/permission denied/);
-    const { keys } = await sweep(workerDb);
+    // The sweep is the worker's alone.
+    expect(await refuses(api.execute('kernel.meeting_platform.sweep', {}, { actor: SYSTEM, orgId: o.orgId }))).toBe('FORBIDDEN');
+    expect(await refuses(o.exec(o.lan, 'kernel.meeting_platform.sweep', {}))).not.toBeNull();
+    const { keys } = await o.sys<{ keys: string[] }>('kernel.meeting_platform.sweep');
     // The keys of the bytes to delete: the staged, the stalled claim and the stalled download (a failed row forgets its key).
     expect(keys).toEqual(expect.arrayContaining([staleStaged.key, staleClaim.key, staleImport.key]));
     expect(keys).not.toContain(freshStaged.key);
@@ -484,7 +482,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     expect(await rowOf('sug-new', c.connectionId)).toMatchObject({ status: 'suggested' });
     expect(await rowOf('imp', c.connectionId)).toMatchObject({ status: 'suggested' });
     // A second pass has nothing left to expire.
-    expect((await sweep(workerDb)).keys).not.toEqual(expect.arrayContaining([staleStaged.key]));
+    expect((await o.sys<{ keys: string[] }>('kernel.meeting_platform.sweep')).keys).not.toEqual(expect.arrayContaining([staleStaged.key]));
   });
 
   it('a disconnect waits for an import in flight, then deletes the connection, its credential and its recordings', async () => {
