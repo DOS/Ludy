@@ -20,6 +20,10 @@
 3. **A3 - Deterministic PDF Text Tags (`crove-extract`) & Matching Audit Certificate Page Size:** Support deterministic placeholder text tags embedded inside uploaded PDFs (`{{signature, r1}}`, `{{date, r1}}`, `{{text, r1}}`, mapped to template/signer roles such as `r1`), parsed strictly inside the isolated `crove-extract` sandbox ([ADR-0018](../adr/0018-untrusted-content.md)) with 100% AI-off parity (zero LLM calls needed). Additionally, `crove-extract` `pdf_seal` sizes the appended Audit Certificate summary page to match the dimensions of the document's last page rather than hardcoding A4.
 4. **A4 - Strict Visibility on `hr_contract` Envelopes (`source_kind = 'hr_contract'`):** Envelopes linked to HR labor contracts (`source_kind = 'hr_contract'`) enforce strict visibility limited to `owner`, `admin`, and the envelope's `created_by` creator across list/detail queries, commands, and file download gates, aligning with Ludy's salary/HR confidentiality boundary so other members with `sign` access cannot view or download another employee's HR contract envelope.
 
+## Executive Decision (JOY, 2026-11-17)
+
+- **Bilingual app name & public landing page:** Per owner decision on `2026-11-17` (superseding the `Ký kết` switcher label in Decision 2 above), the product category and app name is **Ludy eSign** across both Vietnamese and English (matching **Ludy Engage** and **Ludy AI**), with app switcher label `eSign`, menu header `{brand} eSign`, and public marketing page `ludy.vn/esign` (`enRoute: '/en/esign'`). Inner screen and page titles stay in Vietnamese (`Hồ sơ ký`, `Xác minh tệp`, `Ký kết tài liệu`).
+
 ---
 
 ## 1. OPC/SME Fit & Competitor Benchmark
@@ -385,7 +389,7 @@ Per [DESIGN.md](../../DESIGN.md) section 1.1 and `packages/kernel-contract/src/c
 
 ### 7.1 App Switcher & Navigation Budget
 
-- Add `'sign'` (`Ký kết` in `vi`, `eSign` in `en`) to `APP_ORDER` (`apps/app/src/lib/apps.ts`) and `MODULE_SCREENS` (`packages/kernel-contract/src/screens.ts`), toggleable per org under [ADR-0053](../adr/0053-per-org-app-enablement.md).
+- Add `'sign'` (`eSign` in both `vi` and `en`, updated from `Ký kết` per 2026-11-17 owner decision) to `APP_ORDER` (`apps/app/src/lib/apps.ts`) and `MODULE_SCREENS` (`packages/kernel-contract/src/screens.ts`), toggleable per org under [ADR-0053](../adr/0053-per-org-app-enablement.md).
 - Maintain [DESIGN.md](../../DESIGN.md) `#3225` rule: unique sidebar nav labels within the app and fit comfortably within `1366x768` without vertical sidebar scrolling:
   - `/sign/envelopes` (`Hồ sơ ký` / `Envelopes`) - default workspace list view
   - `/sign/verify` (`Kiểm tra tệp` / `Verify PDF`) - drag/drop offline SHA-256 verification tool

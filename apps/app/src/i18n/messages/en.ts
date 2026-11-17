@@ -7464,7 +7464,7 @@ export const en = {
     readOnly: 'Only an owner or an admin can change this.',
     switchLabel: 'Use the {app} app',
     status: { on: 'In use', off: 'Off', notInPlan: 'Not in your plan' },
-    names: { finance: 'Finance', social: 'Social', ads: 'Ads', crm: 'CRM', notes: 'Notes', hr: 'HR', meetings: 'Meetings', projects: 'Projects', sign: 'Signing' },
+    names: { finance: 'Finance', social: 'Social', ads: 'Ads', crm: 'CRM', notes: 'Notes', hr: 'HR', meetings: 'Meetings', projects: 'Projects', sign: 'eSign' },
     offTitle: 'Turn off {app}?',
     offBody: '{app} disappears from everyone\'s menu in the company, its scheduled work stops, and Today and Vy no longer mention it. Its data is kept as it is until the retention period you set ends (the nightly clean-up still runs), and turning it back on brings everything back that is still kept.',
     offConfirm: 'Turn off',

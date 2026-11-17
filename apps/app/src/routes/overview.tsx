@@ -41,7 +41,7 @@ const TARGET = {
   bankLines: { icon: 'bank' },
 } as const satisfies Record<WaitingKey, { icon: NavIconName }>;
 
-// The cards that open a fixed screen; the others (Cộng tác, Ký kết, Ludy AI) open where their switcher entry goes.
+// The cards that open a fixed screen; the others (Cộng tác, Ludy eSign, Ludy AI) open where their switcher entry goes.
 const APP_CARD = {
   // Tài chính opens on its Tổng quan (#2631).
   finance: { to: '/o/$slug/accounting', icon: 'appAccounting' },

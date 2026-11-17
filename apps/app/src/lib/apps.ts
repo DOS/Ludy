@@ -38,7 +38,7 @@ const item = (module: ModuleId, screens: ModuleScreens, nav: { path: string; lab
   return { to: `/o/$slug/${nav.path}` as NavItem['to'], label: nav.label as NavLabel, module, ...(modules ? { modules } : {}) };
 };
 
-// The apps in the order of the switcher (#3225): Cộng tác, Tài chính, Engage, Nhân sự, Ký kết, Ludy AI. The overview is not an app: it is the first entry of the switcher, the notifications are
+// The apps in the order of the switcher (#3225): Cộng tác, Tài chính, Engage, Nhân sự, Ludy eSign, Ludy AI. The overview is not an app: it is the first entry of the switcher, the notifications are
 // the bell and Settings is at the foot.
 export const APP_ORDER: readonly AppId[] = ['teamwork', 'finance', 'engage', 'hr', 'sign', 'ai'];
 

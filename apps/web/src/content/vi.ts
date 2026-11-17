@@ -212,7 +212,7 @@ export const vi = {
     pageLink: 'Xem trang Ludy Tài chính',
   },
   appCards: {
-    title: 'Năm ứng dụng trong cùng một nơi, chung một đội AI',
+    title: 'Sáu ứng dụng trong cùng một nơi, chung một đội AI',
     lead: 'Cần việc nào mở ứng dụng đó. Tất cả dùng chung dữ liệu và chung nút duyệt của bạn.',
     more: 'Xem chi tiết',
     agentLabel: 'Đồng nghiệp AI',
@@ -244,6 +244,13 @@ export const vi = {
         body: `Hồ sơ nhân viên, mẫu file lương, bảng lương nháp và bảng kê khai báo. ${N.finance} rà biến động lương; việc duyệt kỳ lương chờ kế toán xác nhận quy tắc tính.`,
         agent: N.finance,
         page: '',
+      },
+      {
+        key: 'sign',
+        name: 'Ludy eSign',
+        body: `Ký kết tài liệu PDF tự chủ: kiểm tra an toàn PDF trong hộp cát, ${N.gm} gợi ý ô ký và rủi ro, gửi link Zalo hoặc email kèm OTP tuỳ chọn, niêm phong SHA-256 và xác minh ngoại tuyến.`,
+        agent: N.gm,
+        page: 'sign',
       },
       {
         key: 'ai',
@@ -565,6 +572,18 @@ export const vi = {
       pickedLabel: 'Đã chọn',
       booked: { title: 'Lịch hẹn mới', who: 'Cty TNHH Gạo Sạch Miền Tây', when: '14:00, T3 20/10/2026', state: 'Đã xác nhận' },
       suggest: `Khách nhắn "chiều thứ Ba được không?": ${N.sales} gợi ý 14:00 hoặc 15:30, Chị Hoa xem rồi gửi trả lời.`,
+    },
+    sign: {
+      name: 'Ludy eSign',
+      body: 'Tải tệp PDF lên hoặc chuyển từ báo giá Ludy Engage, đặt ô ký có gợi ý từ AI, gửi link Zalo không rò mã hoặc email kèm OTP tuỳ chọn, niêm phong SHA-256 kèm chứng chỉ kiểm toán và kiểm tra tệp ngoại tuyến.',
+      points: [
+        'Hộp cát kiểm tra PDF (tối đa 25 MB, 200 trang), từ chối tệp mã hoá hoặc chứa script ẩn; tách luồng lưu trữ riêng khỏi OCR hoá đơn tài chính',
+        'Link ký bảo mật sau dấu # (Referrer-Policy: no-referrer), ký song song hoặc tuần tự trên điện thoại từ 360px, tuỳ chọn OTP email 6 chữ số',
+        'Niêm phong SHA-256, trang chứng nhận kiểm toán nối đuôi, chuỗi sự kiện chống sửa và xác minh tệp ngoại tuyến ngay trên trình duyệt',
+        'Chuyển thẳng từ báo giá Ludy Engage sang hồ sơ ký (kèm trạng thái đã ký ngay trên báo giá), màn hình phê duyệt riêng cho người duyệt và gửi email bản đã niêm phong cho các bên cùng người nhận bản sao',
+      ],
+      soonLabel: 'Sắp ra mắt',
+      soon: 'Kết nối chữ ký số công cộng Việt Nam (VNPT SmartCA, Viettel MySign, MISA WeSign) và nhúng PAdES-LTV cho hồ sơ ký (đang chờ nối vào luồng ký, thông số kiểm thử từ nhà cung cấp và rà soát pháp lý), mẫu tài liệu dùng lại và liên kết ký cố định',
     },
   },
   trust: {

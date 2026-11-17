@@ -212,7 +212,7 @@ export const en: Dictionary = {
     pageLink: 'See the Ludy Finance page',
   },
   appCards: {
-    title: 'Five apps in one place, one AI team for all',
+    title: 'Six apps in one place, one AI team for all',
     lead: 'Open the app you need. They all share the same data and the same approve button.',
     more: 'See details',
     agentLabel: 'AI coworker',
@@ -244,6 +244,13 @@ export const en: Dictionary = {
         body: `Employee records, salary file templates, draft payroll runs and declaration lists. ${N.finance} reviews payroll changes; approving a pay run waits until an accountant confirms the statutory rules.`,
         agent: N.finance,
         page: '',
+      },
+      {
+        key: 'sign',
+        name: 'Ludy eSign',
+        body: `Self-contained PDF signing: sandbox safety inspection, optional field and risk suggestions from ${N.gm}, Zalo links or email with optional OTP, SHA-256 sealing with an audit certificate, and offline verification.`,
+        agent: N.gm,
+        page: 'sign',
       },
       {
         key: 'ai',
@@ -565,6 +572,18 @@ export const en: Dictionary = {
       pickedLabel: 'Picked',
       booked: { title: 'New booking', who: 'Gạo Sạch Miền Tây Co., Ltd.', when: '14:00, Tue 20/10/2026', state: 'Confirmed' },
       suggest: `A client writes "is Tuesday afternoon OK?": ${N.sales} suggests 14:00 or 15:30, and Hoa checks and sends the reply.`,
+    },
+    sign: {
+      name: 'Ludy eSign',
+      body: 'Upload a PDF or hand off from a Ludy Engage quote, place fields with optional AI suggestions, send no-referrer Zalo links or emails with optional OTP, seal with SHA-256 and an audit certificate, and verify files offline.',
+      points: [
+        'Sandboxed PDF check (up to 25 MB, 200 pages), rejecting encrypted files and active scripts; stored separately from Finance invoice OCR',
+        'Fragment-only signing links (Referrer-Policy: no-referrer), parallel or sequential routing on 360px+ phones, and optional 6-digit email OTP',
+        'SHA-256 PDF sealing, appended audit certificate page, append-only event chain, and local browser verification without uploading the file',
+        'One-click handoff from Ludy Engage quotes (with live signing status on the quote), a dedicated one-click approval screen for approvers, and completion emails delivering the sealed PDF to signers and CC recipients',
+      ],
+      soonLabel: 'Coming soon',
+      soon: 'Vietnam public CA connections (VNPT SmartCA, Viettel MySign, MISA WeSign) and PAdES-LTV envelope signing (awaiting envelope workflow wiring, provider test credentials and legal review), reusable templates and permanent direct signing links',
     },
   },
   trust: {
