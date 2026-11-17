@@ -1138,6 +1138,10 @@ export interface FinanceEinvoiceDraftTable {
   late_reason: string | null;
   buyer_identity_kind: string | null;
   buyer_identity: string | null;
+  correction_kind: string | null;
+  original_draft_id: string | null;
+  reason_code: string | null;
+  agreement_file_id: string | null;
 }
 
 /** crove_finance.einvoice_series */

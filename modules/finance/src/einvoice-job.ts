@@ -197,6 +197,18 @@ async function requestFor(ctx: CommandContext, draft: DraftRow, target: { seller
     same(computed.vatAmount, draft.vat_amount) &&
     same(computed.total, draft.total) &&
     computed.lines.every((l, i) => same(l.amount, stored[i]?.amount ?? '0') && same(l.vatAmount, stored[i]?.vatAmount ?? '0'));
+  // A correcting invoice names the invoice it corrects: the reference (series, number, date) is read from the original's stored row, which must be issued, never from the draft (#2504).
+  let original: EInvoiceRequest['original'];
+  let originalOk = true;
+  if (draft.correction_kind === 'adjustment' || draft.correction_kind === 'replacement') {
+    const base = draft.original_draft_id
+      ? await ctx.trx.selectFrom('crove_finance.einvoice_draft').select(['state', 'series_id', 'issued_number', 'invoice_date', 'legal_entity_id']).where('org_id', '=', ctx.orgId).where('id', '=', draft.original_draft_id).executeTakeFirst()
+      : undefined;
+    const series = base?.series_id ? await ctx.trx.selectFrom('crove_finance.einvoice_series').select(['template_no', 'symbol']).where('org_id', '=', ctx.orgId).where('id', '=', base.series_id).executeTakeFirst() : undefined;
+    if (base && series && base.state === 'issued' && base.issued_number !== null && base.legal_entity_id === draft.legal_entity_id && draft.reason_code !== null) {
+      original = { kind: draft.correction_kind, templateNo: series.template_no, symbol: series.symbol, number: base.issued_number, date: typeof base.invoice_date === 'string' ? base.invoice_date : new Date(base.invoice_date).toISOString().slice(0, 10), reasonCode: draft.reason_code };
+    } else originalOk = false;
+  }
   const request: EInvoiceRequest = {
     key: draft.idempotency_key,
     templateNo: target.templateNo,
@@ -209,8 +221,9 @@ async function requestFor(ctx: CommandContext, draft: DraftRow, target: { seller
     subtotal: plain(draft.subtotal),
     vatAmount: plain(draft.vat_amount),
     total: plain(draft.total),
+    ...(original ? { original } : {}),
   };
-  return { request, consistent };
+  return { request, consistent: consistent && originalOk };
 }
 
 export const einvoiceJobBegin = defineCommand({

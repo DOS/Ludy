@@ -114,7 +114,8 @@ type LineRow = Awaited<ReturnType<ReturnType<typeof selectLines>['execute']>>[nu
 const identityOf = (row: Pick<DraftRow, 'buyer_identity_kind' | 'buyer_identity'>) => (row.buyer_identity_kind && row.buyer_identity ? { kind: row.buyer_identity_kind, value: row.buyer_identity } : null);
 
 // A draft as the API gives it, from its row and its line rows: the amounts as the API writes them, and the checks run on what is stored.
-function buildDraft(row: DraftRow, lineRows: readonly LineRow[], today: string): EInvoiceDraft {
+// `rateDate` is the invoice date of the original a correcting draft corrects (#2504): an adjustment or a replacement keeps the VAT rate of the invoice it corrects, judged on its date.
+function buildDraft(row: DraftRow, lineRows: readonly LineRow[], today: string, rateDate: string | null = null): EInvoiceDraft {
   const lines: EInvoiceDraftLine[] = [...lineRows]
     .sort((x, y) => x.line_no - y.line_no)
     .map((l) => ({
@@ -135,6 +136,8 @@ function buildDraft(row: DraftRow, lineRows: readonly LineRow[], today: string):
     seriesId: row.series_id,
     buyer: { kind: row.buyer_kind, taxCode: row.buyer_tax_code, name: row.buyer_name, address: row.buyer_address, email: row.buyer_email, identity: identityOf(row) },
     lines: lines.map((l) => ({ description: l.description, unit: l.unit, quantity: l.quantity, unitPrice: l.unitPrice, vatRate: l.vatRate })),
+    adjustment: row.correction_kind === 'adjustment',
+    rateDate,
   };
   const computed: ComputedDraft = { lines: lines.map((l) => ({ ...l })), subtotal: plain(row.subtotal), vatAmount: plain(row.vat_amount), total: plain(row.total) };
   return {
@@ -157,13 +160,18 @@ function buildDraft(row: DraftRow, lineRows: readonly LineRow[], today: string):
     issues: checkDraft(input, computed, today),
     issuedNumber: row.issued_number,
     errorCode: row.error_code,
+    correction:
+      row.correction_kind === 'adjustment' || row.correction_kind === 'replacement'
+        ? { kind: row.correction_kind, originalDraftId: row.original_draft_id as string, reasonCode: row.reason_code as string, agreementFileId: row.agreement_file_id }
+        : null,
   };
 }
 
 export async function loadDraft(ctx: Ctx, id: string, today: string): Promise<EInvoiceDraft> {
   const row = await selectDrafts(ctx).where('id', '=', id).executeTakeFirst();
   if (!row) throw new DomainError('EINVOICE_DRAFT_NOT_FOUND', 404, 'Không tìm thấy bản nháp hóa đơn');
-  return buildDraft(row, await selectLines(ctx).where('draft_id', '=', id).execute(), today);
+  const original = row.original_draft_id ? await selectDrafts(ctx).select('invoice_date').where('id', '=', row.original_draft_id).executeTakeFirst() : undefined;
+  return buildDraft(row, await selectLines(ctx).where('draft_id', '=', id).execute(), today, original?.invoice_date ?? null);
 }
 
 export const einvoiceDraftList = defineQuery({
@@ -178,8 +186,13 @@ export const einvoiceDraftList = defineQuery({
     const rows = await list.orderBy('invoice_date', 'desc').orderBy('id', 'desc').limit(200).execute();
     // The lines of all of them in one read.
     const lines = rows.length === 0 ? [] : await selectLines(ctx).where('draft_id', 'in', rows.map((r) => r.id)).execute();
+    // The dates of the originals the correcting drafts of this page correct, in one read.
+    const originalIds = [...new Set(rows.flatMap((r) => (r.original_draft_id ? [r.original_draft_id] : [])))];
+    const originals = new Map(
+      originalIds.length === 0 ? [] : (await selectDrafts(ctx).select(['id', 'invoice_date']).where('id', 'in', originalIds).execute()).map((o) => [o.id, o.invoice_date] as const),
+    );
     return rows.map((row) => {
-      const draft = buildDraft(row, lines.filter((l) => l.draft_id === row.id), today);
+      const draft = buildDraft(row, lines.filter((l) => l.draft_id === row.id), today, row.original_draft_id ? (originals.get(row.original_draft_id) ?? null) : null);
       return {
         id: row.id,
         state: row.state,

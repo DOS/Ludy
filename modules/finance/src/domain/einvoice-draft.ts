@@ -36,6 +36,8 @@ export interface DraftInput {
   seriesId: string | null;
   buyer: DraftBuyerInput;
   lines: readonly DraftLineInput[];
+  // An adjusting invoice (#2504): a unit price may be negative (a decrease) and no price may be zero, since each line is a difference.
+  adjustment?: boolean;
   // The day the VAT rate of the lines is judged on when it is not the draft's own: an adjusting or replacing invoice keeps the rate and the date of the invoice it corrects (plan
   // einvoice-issue.md, "VAT 8% ends on 2026-12-31"). Left out, it is the sale date, or the invoice date when there is no sale date.
   rateDate?: string | null;
@@ -94,6 +96,7 @@ export function maskBuyerIdentity(value: string): string {
   return value.length <= 3 ? '•'.repeat(value.length) : `${'•'.repeat(value.length - 3)}${value.slice(-3)}`;
 }
 const DECIMAL = /^\d{1,12}(\.\d{1,6})?$/;
+const SIGNED_DECIMAL = /^-?\d{1,12}(\.\d{1,6})?$/;
 const MAX_TOTAL_DIGITS = 15;
 
 // The checks. `today` is the date of the day (YYYY-MM-DD) in the org's calendar. A draft that fails any is saved all the same and
@@ -144,7 +147,7 @@ export function checkDraft(input: DraftInput, computed: ComputedDraft, today: st
     const at = (key: string) => `lines.${index + 1}.${key}`;
     if (!line.description.trim()) add(at('description'), 'LINE_DESCRIPTION_REQUIRED');
     if (!DECIMAL.test(line.quantity) || money(line.quantity).lessThanOrEqualTo(0)) add(at('quantity'), 'LINE_QUANTITY_INVALID');
-    if (!DECIMAL.test(line.unitPrice)) add(at('unitPrice'), 'LINE_PRICE_INVALID');
+    if (input.adjustment ? !SIGNED_DECIMAL.test(line.unitPrice) || money(line.unitPrice).isZero() : !DECIMAL.test(line.unitPrice)) add(at('unitPrice'), 'LINE_PRICE_INVALID');
     const rate = normalizeVatRate(line.vatRate);
     if (rate === null) add(at('vatRate'), 'LINE_VAT_RATE_INVALID');
     else if (rate === '8%' && rateDayKnown && !reducedRateApplies(rateDay)) add(at('vatRate'), 'LINE_VAT_RATE_REDUCED_OUTSIDE_PERIOD');
