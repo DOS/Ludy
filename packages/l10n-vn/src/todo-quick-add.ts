@@ -103,12 +103,46 @@ const WORD_RE = /[\p{L}\p{N}\p{M}]+/gu;
 const ISO_DATE_TOKEN_RE = /(?:^|(?<=[\s([,]))(\d{4})-(\d{1,2})-(\d{1,2})(?=$|[\s.,;:!?)\]])/gu;
 const DMY_DATE_TOKEN_RE = /(?<![\p{L}\p{N}_/.-])(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?(?![\p{L}\p{N}_/]|[.-][\p{L}\p{N}])/gu;
 
-const CLOCK_COLON_RE = /(?<![\d:.])(\d{1,2}):([0-5]\d)(?:\s*(am|pm))?(?![\d:.]|[\p{L}])/giu;
-const CLOCK_AMPM_RE = /(?<![\d:.])(\d{1,2})(?::([0-5]\d))?\s*(am|pm)(?![\p{L}\p{N}])/giu;
+const CLOCK_COLON_RE = /(?<![\p{L}\p{N}_:.])(\d{1,2}):([0-5]\d)(?:\s*(am|pm))?(?![\d:.]|[\p{L}])/giu;
+const CLOCK_AMPM_RE = /(?<![\p{L}\p{N}_:.])(\d{1,2})(?::([0-5]\d))?\s*(am|pm)(?![\p{L}\p{N}])/giu;
 const CLOCK_VN_GIO_RE =
-  /(?<![\d:.])(\d{1,2})\s*(?:giờ|gio)(?:\s*(?:([0-5]?\d)(?!\d|\/|[.-]\d)(?:\s*(?:phút|phut|p))?|(rưỡi|ruoi)))?(?![\p{L}\p{N}])/giu;
+  /(?<![\p{L}\p{N}_:.])((\d{1,2})\s*(?:giờ|gio))(?:\s*(?:([0-5]?\d)\s*(?:phút|phut|p)|([0-5]\d)(?!\d|\/|[.-]\d)|(rưỡi|ruoi)))?(?![\p{L}\p{N}])/giu;
 const CLOCK_VN_SHORT_RE =
-  /(?<![\d:.])(\d{1,2})\s*[hg](?:([0-5]?\d)(?!\d|\/|[.-]\d)(?:\s*(?:phút|phut|p))?|\s+([0-5]?\d)(?!\d|\/|[.-]\d)\s*(?:phút|phut|p)|\s*(rưỡi|ruoi))?(?![\p{L}\p{N}])/giu;
+  /(?<![\p{L}\p{N}_:.])(\d{1,2})\s*[hg](?:([0-5]?\d)(?!\d|\/|[.-]\d)(?:\s*(?:phút|phut|p))?|\s+([0-5]?\d)(?!\d|\/|[.-]\d)\s*(?:phút|phut|p)|\s*(rưỡi|ruoi))?(?![\p{L}\p{N}])/giu;
+
+const VN_COUNT_NOUNS_AFTER_CLOCK = new Set([
+  'nguoi',
+  'cai',
+  'chiec',
+  'muc',
+  'bai',
+  'to',
+  'cuon',
+  'lan',
+  'hop',
+  'goi',
+  'suat',
+  'phan',
+  'ban',
+  'tap',
+  've',
+  'don',
+  'mau',
+  'khach',
+  'dong',
+  'nghin',
+  'ngan',
+  'trieu',
+  'ty',
+  'trang',
+  'tep',
+  'file',
+  'item',
+  'items',
+  'people',
+  'usd',
+  'vnd',
+]);
 
 function foldVn(text: string): string {
   return text.normalize('NFD').replace(/\p{M}+/gu, '').replace(/[đĐ]/g, 'd').toLowerCase();
@@ -959,13 +993,29 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     timeCandidates.push({ start: m.index, end: m.index + m[0].length, hour: converted, minute, hasAmPm: true });
   }
   for (const m of input.matchAll(CLOCK_VN_GIO_RE)) {
-    const hour = Number(m[1]);
+    const hour = Number(m[2]);
     if (hour < 0 || hour > 23) continue;
-    const minuteDigits = m[2];
-    const half = m[3] !== undefined;
-    const minute = half ? 30 : minuteDigits ? Number(minuteDigits) : 0;
+    const gioEnd = m.index + (m[1] ?? '').length;
+    const withUnitMinutes = m[3];
+    const bareTwoDigitMinutes = m[4];
+    const half = m[5] !== undefined;
+    let end = m.index + m[0].length;
+    let minute = 0;
+    if (half) {
+      minute = 30;
+    } else if (withUnitMinutes !== undefined) {
+      minute = Number(withUnitMinutes);
+    } else if (bareTwoDigitMinutes !== undefined) {
+      const after = input.slice(end).match(/^\s*([\p{L}\p{N}\p{M}]+)/u);
+      if (after && VN_COUNT_NOUNS_AFTER_CLOCK.has(foldVn(after[1] ?? ''))) {
+        end = gioEnd;
+        minute = 0;
+      } else {
+        minute = Number(bareTwoDigitMinutes);
+      }
+    }
     if (minute < 0 || minute > 59) continue;
-    timeCandidates.push({ start: m.index, end: m.index + m[0].length, hour, minute, hasAmPm: false });
+    timeCandidates.push({ start: m.index, end, hour, minute, hasAmPm: false });
   }
   for (const m of input.matchAll(CLOCK_VN_SHORT_RE)) {
     const hour = Number(m[1]);

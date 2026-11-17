@@ -480,5 +480,25 @@ describe('parseTodoQuickAdd (#3556)', () => {
     const everyMonthDay = parseTodoQuickAdd('Pay rent every month on day 15', { now: TUE_MORNING, timeZone: VN_TZ });
     expect(everyMonthDay.title).toBe('Pay rent');
     expect(everyMonthDay.recurrence).toEqual({ freq: 'monthly', interval: 1, byMonthDay: 15 });
+
+    // Alphanumeric codes containing digits+h/am/colon must not extract fake clocks
+    const codeWithClock = parseTodoQuickAdd('Kiểm tra mã AB9h', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(codeWithClock.title).toBe('Kiểm tra mã AB9h');
+    expect(codeWithClock.dueTime).toBeNull();
+    expect(codeWithClock.tokens).toEqual([]);
+    expect(parseTodoQuickAdd('Kiểm tra mã V29am', { now: TUE_MORNING, timeZone: VN_TZ }).dueTime).toBeNull();
+
+    // Long VN clock ("9 giờ") keeps trailing count quantities intact
+    const longClockCount1 = parseTodoQuickAdd('Họp 9 giờ 2 người', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(longClockCount1.title).toBe('Họp 2 người');
+    expect(longClockCount1.dueTime).toBe('09:00');
+
+    const longClockCount2 = parseTodoQuickAdd('Họp 9 giờ 10 người', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(longClockCount2.title).toBe('Họp 10 người');
+    expect(longClockCount2.dueTime).toBe('09:00');
+
+    const longClockMinutes = parseTodoQuickAdd('Họp 9 giờ 5 phút', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(longClockMinutes.title).toBe('Họp');
+    expect(longClockMinutes.dueTime).toBe('09:05');
   });
 });

@@ -100,12 +100,20 @@ export function TodoQuickAddBar({
   const [value, setValue] = useState(initialValue);
   const valueRef = useRef(initialValue);
   valueRef.current = value;
+  const mountedRef = useRef(true);
   const [dismissed, setDismissed] = useState<TodoQuickAddToken[]>([]);
   const [emptyWarning, setEmptyWarning] = useState(false);
   const [anchorNow, setAnchorNow] = useState<Date>(() => nowOverride ?? new Date());
 
   const timeZone = timeZoneOverride ?? browserTimeZone();
   const currentNow = nowOverride ?? anchorNow;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!autoFocus) return;
@@ -126,8 +134,9 @@ export function TodoQuickAddBar({
       refreshTodos();
       return created;
     },
-    // Only what was sent is cleared: text typed while the request is in flight stays.
+    // Ignore stale completions after unmount (e.g. Escape + Alt+Q reopen during slow network) and preserve newer drafts.
     onSuccess: (_, sent) => {
+      if (!mountedRef.current) return;
       const willClear = valueRef.current.trim() === sent.sentValue;
       if (willClear) {
         valueRef.current = '';
