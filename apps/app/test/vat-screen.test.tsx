@@ -42,7 +42,18 @@ describe('VAT invoice table', () => {
 });
 
 // #3535: a sale invoiced after its period is declared in the period of the sale; when that period is locked or filed it is a supplementary item.
-const lateInvoice = { ...invoice, id: '0192f0aa-1111-7222-8333-944445555777', issueDate: '2026-11-03', saleDate: '2026-10-28', number: '124', warnings: ['late_sale' as const] };
+const lateInvoice = {
+  ...invoice,
+  id: '0192f0aa-1111-7222-8333-944445555777',
+  issueDate: '2026-11-03',
+  postingDate: '2026-11-03',
+  saleDate: '2026-10-28',
+  number: '124',
+  subtotal: '12500000',
+  vatAmount: '1250000',
+  total: '13750000',
+  warnings: ['late_sale' as const],
+};
 const render = (node: React.ReactNode, locale: 'vi' | 'en' = 'vi') =>
   renderToStaticMarkup(
     <IntlProvider locale={locale} messages={catalog(locale)}>
