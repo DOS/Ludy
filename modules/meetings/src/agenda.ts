@@ -65,7 +65,7 @@ function agendaOf(trx: Trx, orgId: string, userId: string) {
   return trx
     .selectFrom('crove_meetings.calendar_agenda as a')
     .innerJoin('crove_kernel.calendar_connection as c', (join) => join.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.connection_id'))
-    .select(['a.id', 'a.title', 'a.starts_at', 'a.ends_at', 'a.time_zone', 'a.join_url', 'a.invitee_count', 'a.meeting_id'])
+    .select(['a.id', 'a.title', 'a.starts_at', 'a.ends_at', 'a.time_zone', 'a.join_url', 'a.invitee_count', 'a.meeting_id', 'a.series_id'])
     .where('a.org_id', '=', orgId)
     .where('a.user_id', '=', userId)
     .where('c.status', '=', 'active')
@@ -248,6 +248,17 @@ export const agendaLink = defineCommand({
     } catch (error: unknown) {
       if ((error as { code?: string }).code === '23505') throw new DomainError('AGENDA_MEETING_LINKED', 409, 'This meeting is already linked to a calendar event');
       throw error;
+    }
+    // The event is an occurrence of a recurring one: the meeting joins that series (#3542), unless the recorder already put it in another (a manual choice is not overwritten). Unlinking
+    // leaves the series as it is.
+    if (input.meetingId !== null && row.series_id !== null) {
+      await ctx.trx
+        .updateTable('crove_meetings.meeting')
+        .set({ series_id: row.series_id })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.meetingId)
+        .where('series_id', 'is', null)
+        .execute();
     }
     ctx.audit({ agendaId: input.agendaId, meetingId: input.meetingId });
     return zAgendaLinked.parse({ agendaId: input.agendaId, meetingId: input.meetingId });

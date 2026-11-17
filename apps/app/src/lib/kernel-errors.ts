@@ -417,6 +417,9 @@ export const KERNEL_ERROR_CODES = [
   'SUMMARY_REQUIRED',
   'SUMMARY_TEMPLATE_CHANGED',
   'TEMPLATE_MISMATCH',
+  // A series of meetings (Meetings #3542).
+  'SERIES_CONFLICT',
+  'SERIES_SELF',
   // Naming a speaker after a person in the meeting (Meetings #3502).
   'SPEAKER_LABEL_GONE',
   'SPEAKER_NAME_TAKEN',

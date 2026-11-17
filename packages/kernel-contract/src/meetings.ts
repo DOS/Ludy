@@ -1070,3 +1070,33 @@ export const zTranscriptTranslationView = z.strictObject({
   parts: z.array(z.strictObject({ lineId: zId, text: z.string(), state: z.enum(TRANSLATION_STATES), codes: z.array(z.enum(TRANSLATION_CODES)), stale: z.boolean() })).max(TRANSCRIPT_TRANSLATE_LINES_MAX),
 });
 export type TranscriptTranslationView = z.infer<typeof zTranscriptTranslationView>;
+
+// A series of meetings (#3542, owner decision 2026-11-17): meetings that come from one recurring calendar event, or that the recorder says follow one another. `set` is the recorder's click
+// "Buổi này nối tiếp buổi trước" (a meeting they recorded; null takes this meeting out of its series). `openItems` is what the caller reads of the previous meeting of the series that is still open:
+// accepted items with the live status of their task, and items nobody accepted. A caller who does not read the previous meeting gets none of it (row security), not even its title.
+export const SERIES_ITEMS_MAX = 100;
+export const zSeriesSet = z.strictObject({ meetingId: zId, previousMeetingId: zId.nullable() });
+export const zSeriesSetResult = z.strictObject({ meetingId: zId, inSeries: z.boolean() });
+export const zSeriesOpenItemsInput = z.strictObject({ meetingId: zId });
+export const SERIES_TASK_STATUSES = ['todo', 'in_progress', 'waiting', 'in_review'] as const;
+export const zSeriesOpenItem = z.strictObject({
+  id: zId,
+  title: z.string(),
+  who: z.string(),
+  whoUserId: zId.nullable(),
+  when: z.string(),
+  whenDate: z.string().nullable(),
+  // True when the item was accepted into a task; false is "chưa giao" (a suggestion nobody accepted).
+  assigned: z.boolean(),
+  // The task's live status, or null when the item has no task or the caller cannot read the task.
+  taskStatus: z.enum(SERIES_TASK_STATUSES).nullable(),
+  due: z.string().nullable(),
+});
+export type SeriesOpenItem = z.infer<typeof zSeriesOpenItem>;
+export const zSeriesOpenItems = z.strictObject({
+  meetingId: zId,
+  inSeries: z.boolean(),
+  previous: z.strictObject({ meetingId: zId, title: z.string(), startedAt: z.string() }).nullable(),
+  items: z.array(zSeriesOpenItem).max(SERIES_ITEMS_MAX),
+});
+export type SeriesOpenItems = z.infer<typeof zSeriesOpenItems>;

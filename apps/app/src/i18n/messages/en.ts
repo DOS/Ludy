@@ -3007,6 +3007,23 @@ export const en = {
       draftItems: 'Action items:',
       draftDue: '(due {date})',
     },
+    // A series of meetings (#3542): the open items of the previous meeting, and the recorder's click that says a meeting follows an earlier one.
+    series: {
+      title: 'Still open from the last meeting',
+      from: 'From the meeting "{title}" on {date}. Only items that are still open are shown: a finished one is not.',
+      unassigned: 'Not assigned',
+      due: 'Due {date}',
+      status: { todo: 'To do', in_progress: 'In progress', waiting: 'Waiting', in_review: 'In review' },
+      carry: 'Add to my notes',
+      carried: 'Added to my notes',
+      notesFull: 'Your notes are full. Remove some lines, then add this item.',
+      follow: 'This meeting follows an earlier one',
+      followHint: 'Pick a meeting you recorded before this one. The two meetings then form one series and the open items of the earlier one show here.',
+      followPlaceholder: 'Pick the earlier meeting',
+      followApply: 'Follow it',
+      leave: 'Leave the series',
+      inSeries: 'This meeting is part of a series.',
+    },
     // "My notes" and "Write it out in full" (Meetings A5, #3163).
     notes: {
       title: 'My notes',
@@ -11375,6 +11392,8 @@ export const en = {
       SUMMARY_REQUIRED: 'Write at least one section before saving.',
       SUMMARY_TEMPLATE_CHANGED: 'You changed the meeting type after Vy wrote this. Ask Vy to summarize again.',
       TEMPLATE_MISMATCH: 'The text does not match the meeting type that is picked. Reload the meeting and try again.',
+      SERIES_CONFLICT: 'These two meetings already belong to different series. Take this meeting out of its own series first.',
+      SERIES_SELF: 'A meeting cannot follow itself.',
       SPEAKER_LABEL_GONE: 'No draft line has this speaker any more (you may have named it already). Open the transcript again.',
       SPEAKER_NAME_TAKEN: 'Another speaker of this meeting already has this name. To merge two speakers, correct the lines one by one.',
       SPEAKER_NOT_ATTENDEE: 'This name is not one of the people in this meeting.',
@@ -13428,6 +13447,10 @@ export const en = {
         copy_result: 'Copy the summary Vy finished for a meeting into the draft',
         start: 'Ask Vy to summarize a meeting',
         status: 'See whether Vy can summarize a meeting',
+      },
+      series: {
+        open_items: 'See the open items of the previous meeting of a series',
+        set: 'Make this meeting follow an earlier one as a series, or take it out of its series',
       },
       speaker: {
         name: 'Name a speaker of the draft transcript after a person in the meeting',

@@ -76,6 +76,9 @@ export interface CalendarAgendaEvent {
   timeZone: string;
   joinUrl: string | null;
   invitees: number;
+  // The id of the recurring event this one is an occurrence of (Google recurringEventId, Outlook seriesMasterId), or null for an event that is not part of a series (#3542). An id the provider
+  // owns: the kernel stores only a hash of it, so two meetings recorded from two occurrences can be told to be one series.
+  series: string | null;
 }
 // scope: the grant lacks the events-read permission (the member untick it, or connected before it existed).
 export type CalendarEventsResult = { events: CalendarAgendaEvent[] } | { refused: string } | { scope: true } | { failed: string };
@@ -179,7 +182,7 @@ export function joinUrlOf(candidate: unknown): string | null {
 const EVENTS_MAX = 300;
 const EVENTS_PAGE = 250;
 // The fields asked for: no attendee address (only the flags of each attendee, counted), no description, no attachment, no location.
-const EVENTS_FIELDS = 'nextPageToken,items(id,status,summary,start,end,hangoutLink,conferenceData(entryPoints(entryPointType,uri)),attendees(self,responseStatus,optional))';
+const EVENTS_FIELDS = 'nextPageToken,items(id,status,summary,recurringEventId,start,end,hangoutLink,conferenceData(entryPoints(entryPointType,uri)),attendees(self,responseStatus,optional))';
 
 // One event of the answer as B1 keeps it, or null: an all-day event (it has no time to match a recording to), a cancelled one, one the member declined, or one without a usable id or time.
 // A title the database can hold: no NUL (JSON text with one is refused), no lone surrogate (it makes the whole JSON text invalid), cut at 200 units without splitting a pair. A title that would break
@@ -214,7 +217,13 @@ export function agendaEventOf(event: Record<string, unknown>): CalendarAgendaEve
     timeZone: zone,
     joinUrl,
     invitees: Math.min(attendees.length, 1000),
+    series: seriesOf(event.recurringEventId),
   };
+}
+
+// The recurring event id of an occurrence, or null: not a string, empty or longer than the cache keeps (1024).
+export function seriesOf(value: unknown): string | null {
+  return typeof value === 'string' && value !== '' && value.length <= 1024 ? value : null;
 }
 
 export class GoogleCalendarAdapter implements CalendarAdapter {

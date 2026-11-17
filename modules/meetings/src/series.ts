@@ -1,0 +1,117 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// A series of meetings (#3542, owner decision 2026-11-17). Two meetings are in one series when they come from the same recurring calendar event (the series id the sweep keeps on the
+// calendar cache, copied onto the meeting when the recorder links the two, see agenda.ts) or when the recorder says one follows the other (meetings.series.set). No guess from titles.
+//
+// meetings.series.open_items   what the caller may read of the PREVIOUS meeting of the series that is still open: its published items, the accepted ones with the live status of their
+//                              task (a done or cancelled task is not shown), the ones nobody accepted as "chưa giao". Nothing here is stored: it is a read. Row security shows the previous meeting
+//                              only to a caller who reads it, so a reader of the new meeting who did not read the old one gets nothing of it, not even its title.
+// meetings.series.set          the recorder's own click: this meeting follows an earlier one they also recorded, or (null) leaves its series.
+//
+// No model is used and nothing here writes to Projects: the task is read, never changed.
+import { randomUUID } from 'node:crypto';
+import { sql } from 'kysely';
+import { SERIES_ITEMS_MAX, SERIES_TASK_STATUSES, zSeriesOpenItems, zSeriesOpenItemsInput, zSeriesSet, zSeriesSetResult, type SeriesOpenItems } from '@crove/kernel-contract';
+import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+import { ROLES, openMeeting, userOf } from './transcript.ts';
+
+// What the caller may read of the previous meeting of this meeting's series that is still open (see the header).
+export const seriesOpenItems = defineQuery({
+  name: 'meetings.series.open_items',
+  input: zSeriesOpenItemsInput,
+  access: ROLES,
+  sensitive: true,
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx, input): Promise<SeriesOpenItems> => {
+    userOf(ctx.actor);
+    await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
+    const current = await ctx.trx
+      .selectFrom('crove_meetings.meeting')
+      .select(['series_id', sql<Date>`coalesce(started_at, created_at)`.as('at')])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.meetingId)
+      .executeTakeFirstOrThrow();
+    const none = (inSeries: boolean) => zSeriesOpenItems.parse({ meetingId: input.meetingId, inSeries, previous: null, items: [] });
+    if (current.series_id === null) return none(false);
+    // The latest earlier meeting of the series that THIS caller reads: the meeting policy hides the others, so nothing of an unread meeting (not even that it exists) is told.
+    const previous = await ctx.trx
+      .selectFrom('crove_meetings.meeting')
+      .select(['id', 'title', sql<Date>`coalesce(started_at, created_at)`.as('at')])
+      .where('org_id', '=', ctx.orgId)
+      .where('series_id', '=', current.series_id)
+      .where('id', '<>', input.meetingId)
+      .where(sql<boolean>`coalesce(started_at, created_at) < ${current.at}`)
+      .orderBy(sql`coalesce(started_at, created_at)`, 'desc')
+      .orderBy('id', 'desc')
+      .limit(1)
+      .executeTakeFirst();
+    if (!previous) return none(true);
+    // The previous meeting's published items, with the live task of an accepted one read in the caller's own context (a task the caller may not read has no visible status and stays listed).
+    const rows = await ctx.trx
+      .selectFrom('crove_meetings.action_item as i')
+      .leftJoin('crove_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'i.org_id').onRef('t.id', '=', 'i.task_id'))
+      .select(['i.id', 'i.title', 'i.who_drafted', 'i.who_parsed', 'i.when_drafted', sql<string | null>`i.when_parsed::text`.as('when_parsed'), 'i.status', 'i.task_id', 't.status as task_status', 't.due as task_due'])
+      .where('i.org_id', '=', ctx.orgId)
+      .where('i.meeting_id', '=', previous.id)
+      .where('i.stage', '=', 'published')
+      .orderBy('i.transcript_seconds')
+      .orderBy('i.created_at')
+      .orderBy('i.id')
+      .execute();
+    const open = rows.filter((r) => r.task_status === null || r.task_status === undefined || (SERIES_TASK_STATUSES as readonly string[]).includes(r.task_status)).slice(0, SERIES_ITEMS_MAX);
+    return zSeriesOpenItems.parse({
+      meetingId: input.meetingId,
+      inSeries: true,
+      previous: { meetingId: previous.id, title: previous.title, startedAt: previous.at.toISOString() },
+      items: open.map((r) => ({
+        id: r.id,
+        title: r.title,
+        who: r.who_drafted,
+        whoUserId: r.who_parsed,
+        when: r.when_drafted,
+        whenDate: r.when_parsed,
+        assigned: r.status === 'accepted',
+        taskStatus: r.task_status ?? null,
+        due: r.task_due ? new Date(r.task_due).toISOString() : null,
+      })),
+    });
+  },
+});
+
+// The recorder's click: this meeting follows an earlier one they also recorded (both then carry one series id), or, with null, leaves its series (the other meetings keep it).
+export const seriesSet = defineCommand({
+  name: 'meetings.series.set',
+  input: zSeriesSet,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: ROLES,
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx, input) => {
+    const userId = userOf(ctx.actor);
+    const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
+    if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can set its series');
+    const seriesOf = async (id: string) =>
+      (await ctx.trx.selectFrom('crove_meetings.meeting').select('series_id').where('org_id', '=', ctx.orgId).where('id', '=', id).executeTakeFirstOrThrow()).series_id;
+    if (input.previousMeetingId === null) {
+      await ctx.trx.updateTable('crove_meetings.meeting').set({ series_id: null }).where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).execute();
+      ctx.audit({ meetingId: input.meetingId, inSeries: false });
+      return zSeriesSetResult.parse({ meetingId: input.meetingId, inSeries: false });
+    }
+    if (input.previousMeetingId === input.meetingId) throw new DomainError('SERIES_SELF', 422, 'A meeting cannot follow itself');
+    // The earlier meeting must be one the recorder also recorded: the answer for one they cannot read is the same as for one that is not there.
+    const earlier = await openMeeting(ctx.trx, ctx.orgId, input.previousMeetingId);
+    if (earlier.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'You can only follow a meeting you recorded');
+    const mine = await seriesOf(input.meetingId);
+    const theirs = await seriesOf(input.previousMeetingId);
+    // Two different series are not merged by one click: the recorder takes this meeting out of its own first.
+    if (mine !== null && theirs !== null && mine !== theirs) throw new DomainError('SERIES_CONFLICT', 409, 'These two meetings already belong to different series');
+    const id = mine ?? theirs ?? randomUUID();
+    for (const meetingId of [input.meetingId, input.previousMeetingId]) {
+      await ctx.trx.updateTable('crove_meetings.meeting').set({ series_id: id }).where('org_id', '=', ctx.orgId).where('id', '=', meetingId).execute();
+    }
+    ctx.audit({ meetingId: input.meetingId, previousMeetingId: input.previousMeetingId, inSeries: true });
+    return zSeriesSetResult.parse({ meetingId: input.meetingId, inSeries: true });
+  },
+});
+
+export const seriesCommands = [seriesSet];
+export const seriesQueries = [seriesOpenItems];

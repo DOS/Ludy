@@ -14,6 +14,7 @@
 import { ConnectorError, allowlistedFetch, type ExchangeInput, type Fetch } from './oauth.ts';
 import {
   joinUrlOf,
+  seriesOf,
   titleOf,
   type BusyInterval,
   type CalendarAccount,
@@ -137,7 +138,7 @@ const EVENTS_PAGES = 2;
 const BUSY_PAGES = 12;
 // The fields asked for. The event reads select no body, no location, no organizer and no attachment; the attendees are asked for only to be counted and are never kept. The busy read
 // selects times and the availability flag alone.
-const EVENT_FIELDS = 'id,subject,start,end,isAllDay,isCancelled,onlineMeeting,responseStatus,attendees';
+const EVENT_FIELDS = 'id,subject,seriesMasterId,start,end,isAllDay,isCancelled,onlineMeeting,responseStatus,attendees';
 const BUSY_FIELDS = 'start,end,showAs,isCancelled';
 
 // Graph writes a time as "2026-11-14T09:00:00.0000000" in the zone asked for (UTC, by the Prefer header), with no offset: read as UTC.
@@ -167,6 +168,7 @@ export function agendaEventOfGraph(event: Record<string, unknown>): CalendarAgen
     timeZone: 'UTC',
     joinUrl: joinUrlOf(meeting?.joinUrl),
     invitees: Math.min(attendees, 1000),
+    series: seriesOf(event.seriesMasterId),
   };
 }
 

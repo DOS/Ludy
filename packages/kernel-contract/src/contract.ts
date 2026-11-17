@@ -443,6 +443,10 @@ import {
   zNotes,
   zNotesPreview,
   zNotesPreviewInput,
+  zSeriesOpenItems,
+  zSeriesOpenItemsInput,
+  zSeriesSet,
+  zSeriesSetResult,
   zSpeakerName,
   zSpeakerNamed,
   zSpeakerSuggestions,
@@ -1225,6 +1229,11 @@ export const contract = {
       suggest: oc.input(zAgendaSuggestInput).output(zAgendaSuggestion),
       setReadEvents: oc.input(zAgendaSetReadEvents).output(zAgendaReadEventsSet),
       link: oc.input(zAgendaLink).output(zAgendaLinked),
+    },
+    // A series of meetings (#3542): `openItems` the previous meeting's items that are still open, for the "Việc còn dở từ buổi trước" block; `set` the recorder's click that says this meeting follows an earlier one.
+    series: {
+      openItems: oc.input(zSeriesOpenItemsInput).output(zSeriesOpenItems),
+      set: oc.input(zSeriesSet).output(zSeriesSetResult),
     },
     // The transcript (#2578): the recorder's draft, read, replaced by a transcription run and corrected by hand.
     transcript: {

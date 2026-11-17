@@ -274,7 +274,7 @@ describe('runCalendarSync', () => {
 });
 
 describe('reading the member\'s meetings in the sweep (B1, #3165)', () => {
-  const event = { id: 'e1', title: 'Họp giao ban', startsAt: '2026-11-03T08:00:00.000Z', endsAt: '2026-11-03T09:00:00.000Z', timeZone: 'Asia/Ho_Chi_Minh', joinUrl: 'https://meet.google.com/abc-defg-hij', invitees: 3 };
+  const event = { id: 'e1', title: 'Họp giao ban', startsAt: '2026-11-03T08:00:00.000Z', endsAt: '2026-11-03T09:00:00.000Z', timeZone: 'Asia/Ho_Chi_Minh', joinUrl: 'https://meet.google.com/abc-defg-hij', invitees: 3, series: null };
 
   it('reads nothing while the switch is off, and the busy times are read as before', async () => {
     const { runtime, calls } = fakeRuntime(fresh, seal(SECRET));
@@ -337,7 +337,7 @@ describe('an Outlook connection in the sweep (B3, #3167)', () => {
   const runOutlook = (rt: Runtime, a: CalendarAdapter) => runCalendarSync({ runtime: rt, broker: vault, adapters: { microsoft_calendar: a }, now: () => NOW }, { orgId: ORG, connectionId: CONNECTION });
 
   it('is synced by the adapter of its own provider: busy times, and the events only when the switch is on', async () => {
-    const event = { id: 'e1', title: 'Họp giao ban', startsAt: '2026-11-03T08:00:00.000Z', endsAt: '2026-11-03T09:00:00.000Z', timeZone: 'UTC', joinUrl: 'https://teams.microsoft.com/l/meetup-join/x', invitees: 2 };
+    const event = { id: 'e1', title: 'Họp giao ban', startsAt: '2026-11-03T08:00:00.000Z', endsAt: '2026-11-03T09:00:00.000Z', timeZone: 'UTC', joinUrl: 'https://teams.microsoft.com/l/meetup-join/x', invitees: 2, series: null };
     const off = fakeRuntime({ ...fresh, provider: 'microsoft' }, sealed(SECRET));
     const offEvents = vi.fn(async () => ({ events: [event] }));
     expect(await runOutlook(off.runtime, outlook({ events: offEvents }))).toEqual({ outcome: 'synced', added: 2, removed: 1 });
