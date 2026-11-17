@@ -510,19 +510,79 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
     expect(expRow?.recurrence).toEqual({ freq: 'weekly', interval: 1 });
     expect(expRow?.seriesId).toBe(stopRoot.todoId);
 
-    // Stopping a series from a reopened older occurrence stops active open siblings too.
+    // Undoing stopSeries from a reopened older occurrence restores both the target and its untouched open sibling.
+    const undoSiblingSeries = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Undo stop from reopened ancestor',
+      dueOn: '2027-07-01',
+      timeZone: 'Asia/Ho_Chi_Minh',
+      recurrence: { freq: 'daily', interval: 1 },
+    });
+    const undoSiblingSpawned = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: undoSiblingSeries.todoId });
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.reopen', { todoId: undoSiblingSeries.todoId });
+    const stoppedAncestor = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', {
+      todoId: undoSiblingSeries.todoId,
+      stopSeries: true,
+    });
+    const stoppedSibling = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: undoSiblingSpawned.nextTodoId as string });
+    expect(stoppedSibling.recurrence).toBeNull();
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.reopen', {
+      todoId: undoSiblingSeries.todoId,
+      expectedRevision: stoppedAncestor.revision,
+      restoreRecurrence: { freq: 'daily', interval: 1 },
+    });
+    const restoredAncestor = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: undoSiblingSeries.todoId });
+    const restoredSibling = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: undoSiblingSpawned.nextTodoId as string });
+    expect(restoredAncestor.recurrence).toEqual({ freq: 'daily', interval: 1 });
+    expect(restoredSibling.recurrence).toEqual({ freq: 'daily', interval: 1 });
+    const continuedFromSibling = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: restoredSibling.id });
+    expect(continuedFromSibling.nextDueOn).toBe('2027-07-03');
+
+    // Stopping a series from a reopened older occurrence stops active open siblings too, and does not clobber edited siblings on undo.
     const olderStop = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
       title: 'Stop from reopened ancestor',
-      dueOn: '2027-07-01',
+      dueOn: '2027-08-01',
       timeZone: 'Asia/Ho_Chi_Minh',
       recurrence: { freq: 'daily', interval: 1 },
     });
     const spawnedActive = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: olderStop.todoId });
     await o.exec<TodoWritten>(o.mine, 'notes.todo.reopen', { todoId: olderStop.todoId });
-    await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: olderStop.todoId, stopSeries: true });
+    const stoppedOlder = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: olderStop.todoId, stopSeries: true });
     const siblingAfterStop = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: spawnedActive.nextTodoId as string });
     expect(siblingAfterStop.recurrence).toBeNull();
-    const afterSiblingDone = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: siblingAfterStop.id });
-    expect(afterSiblingDone.nextTodoId ?? null).toBeNull();
+    // If a user customizes the sibling after stopSeries, undoing stopSeries must preserve that new sibling rule.
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.update', {
+      todoId: siblingAfterStop.id,
+      revision: siblingAfterStop.revision,
+      recurrence: { freq: 'weekly', interval: 2 },
+    });
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.reopen', {
+      todoId: olderStop.todoId,
+      expectedRevision: stoppedOlder.revision,
+      restoreRecurrence: { freq: 'daily', interval: 1 },
+    });
+    const preservedSibling = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: siblingAfterStop.id });
+    expect(preservedSibling.recurrence).toEqual({ freq: 'weekly', interval: 2 });
+
+    // Concurrent stopSeries on a reopened occurrence and complete on its active sibling serialize under the series lock
+    // so no open recurring occurrence survives in the series afterward.
+    const raceRoot = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Concurrent stopSeries vs complete',
+      dueOn: '2027-09-01',
+      timeZone: 'Asia/Ho_Chi_Minh',
+      recurrence: { freq: 'daily', interval: 1 },
+    });
+    const raceChild = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: raceRoot.todoId });
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.reopen', { todoId: raceRoot.todoId });
+    await Promise.all([
+      o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: raceRoot.todoId, stopSeries: true }),
+      o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: raceChild.nextTodoId as string }),
+    ]);
+    const listAfterRace = await o.query<{ todos: Todo[] }>(o.mine, 'notes.todo.list', { includeDone: false });
+    const openInRace = listAfterRace.todos.filter((item) => item.seriesId === raceRoot.todoId);
+    expect(openInRace.filter((item) => item.recurrence !== null)).toEqual([]);
+    for (const remainingOpen of openInRace) {
+      const doneRemaining = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: remainingOpen.id });
+      expect(doneRemaining.nextTodoId ?? null).toBeNull();
+    }
   });
 });

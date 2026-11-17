@@ -187,6 +187,24 @@ async function load(ctx: Pick<QueryContext, 'trx' | 'orgId'>, todoId: string, lo
   return row;
 }
 
+// Reads the immutable series lock key (`series_id ?? id`) without locking rows so series-level advisory locks can be
+// acquired before any FOR UPDATE row locks.
+async function seriesLockKey(ctx: Pick<QueryContext, 'trx' | 'orgId'>, todoId: string): Promise<string> {
+  const meta = await ctx.trx
+    .selectFrom('crove_notes.todo')
+    .select(['id', 'series_id'])
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', todoId)
+    .executeTakeFirst();
+  if (!meta) throw notFound();
+  return meta.series_id ?? meta.id;
+}
+
+// Serializes series-wide transitions (spawn, stopSeries, and reopen/undo) on an org-scoped advisory xact lock.
+async function lockTodoSeries(ctx: Pick<QueryContext, 'trx' | 'orgId'>, seriesKey: string): Promise<void> {
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove_notes.todo_series:${ctx.orgId}:${seriesKey}`}, 0))`.execute(ctx.trx);
+}
+
 function assertNotInTrash(row: Pick<SummaryRow, 'deleted_at'>): void {
   if (row.deleted_at !== null) throw new DomainError('TODO_IN_TRASH', 409, 'Việc này đang ở thùng rác; hãy khôi phục trước');
 }
@@ -431,6 +449,8 @@ export const todoComplete = defineCommand({
   target,
   handler: async (ctx, input): Promise<TodoCompleteResult> => {
     const userId = userOf(ctx.actor);
+    // Lock the series before locking rows so concurrent complete() and stopSeries across siblings cannot race or deadlock.
+    await lockTodoSeries(ctx, await seriesLockKey(ctx, input.todoId));
     const before = await load(ctx, input.todoId, true);
     assertNotInTrash(before);
     if (before.status === 'done') return written(before);
@@ -465,6 +485,7 @@ export const todoComplete = defineCommand({
         .where('id', '<>', row.id)
         .where('status', '=', 'open')
         .where('deleted_at', 'is', null)
+        .where('recurrence', 'is not', null)
         .execute();
     }
 
@@ -596,6 +617,14 @@ export const todoReopen = defineCommand({
     if (undoNextTodoId !== undefined && undoNextTodoId === input.todoId) {
       throw new DomainError('TODO_UNDO_SERIES_ADVANCED', 409, 'Lượt kế tiếp đã được chỉnh sửa hoặc xử lý rồi');
     }
+    // Acquire series advisory lock(s) in canonical order before taking FOR UPDATE row locks.
+    const seriesKeys = [await seriesLockKey(ctx, input.todoId)];
+    if (undoNextTodoId !== undefined) {
+      seriesKeys.push(await seriesLockKey(ctx, undoNextTodoId));
+    }
+    for (const key of [...new Set(seriesKeys)].sort()) {
+      await lockTodoSeries(ctx, key);
+    }
     // Lock rows in canonical UUID order when undoing a recurring spawn atomically to stay deadlock-free.
     let before: SummaryRow & { details: string | null };
     let nextRow: (SummaryRow & { details: string | null }) | undefined;
@@ -662,6 +691,25 @@ export const todoReopen = defineCommand({
       .where('id', '=', input.todoId)
       .returning(['id', 'revision'])
       .executeTakeFirstOrThrow();
+
+    let restoredSiblings = 0;
+    if (restoredRule !== null && before.series_id !== null && before.recurrence === null) {
+      // If stopSeries cleared an active open sibling in the same transaction, restore it too when undoing unless touched since.
+      const siblings = await ctx.trx
+        .updateTable('crove_notes.todo')
+        .set({ recurrence: JSON.stringify(restoredRule), revision: sql<number>`revision + 1`, updated_at: ctx.now })
+        .where('org_id', '=', ctx.orgId)
+        .where('series_id', '=', before.series_id)
+        .where('id', '<>', row.id)
+        .where('status', '=', 'open')
+        .where('deleted_at', 'is', null)
+        .where('recurrence', 'is', null)
+        .where('updated_at', '=', new Date(before.updated_at))
+        .returning('id')
+        .execute();
+      restoredSiblings = siblings.length;
+    }
+
     ctx.audit({
       todoId: row.id,
       revision: row.revision,
@@ -669,6 +717,7 @@ export const todoReopen = defineCommand({
       previousStatus: before.status,
       ...(undoNextTodoId !== undefined ? { undoNextTodoId } : {}),
       ...(restoredRule !== null ? { restoredRecurrence: true } : {}),
+      ...(restoredSiblings > 0 ? { restoredSiblings } : {}),
     });
     return written(row);
   },
