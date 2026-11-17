@@ -93,6 +93,8 @@ const makeTodoSummary = (id: string, title: string, sourceNote: TodoSummary['sou
   sourceNoteId: sourceNote?.id ?? null,
   sourceNote,
   taskId: null,
+  recurrence: null,
+  seriesId: null,
   tainted: false,
   revision: 1,
   createdAt: '2026-11-17T00:00:00.000Z',

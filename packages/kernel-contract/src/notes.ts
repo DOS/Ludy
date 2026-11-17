@@ -120,6 +120,33 @@ export const TODO_TITLE_MAX = 300;
 export const TODO_DETAILS_MAX = 10_000;
 export const TODO_STEPS_MAX = 50;
 export const TODO_STEP_MAX = 300;
+export const TODO_RECURRENCE_FREQS = ['daily', 'weekly', 'monthly'] as const;
+export type TodoRecurrenceFreq = (typeof TODO_RECURRENCE_FREQS)[number];
+export const TODO_RECURRENCE_INTERVAL_MAX = 365;
+export const TODO_RESCHEDULE_BATCH_MAX = 50;
+
+export const zTodoRecurrence = z
+  .strictObject({
+    freq: z.enum(TODO_RECURRENCE_FREQS),
+    interval: z.number().int().min(1).max(TODO_RECURRENCE_INTERVAL_MAX).default(1),
+    byWeekday: z.number().int().min(0).max(6).nullable().optional(),
+    byMonthDay: z
+      .number()
+      .int()
+      .refine((v) => v === -1 || (v >= 1 && v <= 31), 'byMonthDay must be 1..31 or -1')
+      .nullable()
+      .optional(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.freq !== 'weekly' && v.byWeekday !== undefined && v.byWeekday !== null) {
+      ctx.addIssue({ code: 'custom', path: ['byWeekday'], message: 'byWeekday is only allowed for weekly recurrence' });
+    }
+    if (v.freq !== 'monthly' && v.byMonthDay !== undefined && v.byMonthDay !== null) {
+      ctx.addIssue({ code: 'custom', path: ['byMonthDay'], message: 'byMonthDay is only allowed for monthly recurrence' });
+    }
+  });
+export type TodoRecurrence = z.infer<typeof zTodoRecurrence>;
+export type TodoRecurrenceInput = z.input<typeof zTodoRecurrence>;
 
 const zTodoTitle = z.string().trim().min(1).max(TODO_TITLE_MAX);
 const zTodoDetails = z.string().max(TODO_DETAILS_MAX);
@@ -150,6 +177,7 @@ export const zTodoCreate = z
     dueTime: zTime.nullable().default(null),
     timeZone: zTimeZone.default(DEFAULT_TIME_ZONE),
     reminder: zTodoReminder.default('auto'),
+    recurrence: zTodoRecurrence.nullable().optional(),
     link: zNoteLinkTarget.optional(),
     sourceNoteId: zId.optional(),
   })
@@ -169,10 +197,38 @@ export const zTodoUpdate = z
     dueTime: zTime.nullable(),
     timeZone: zTimeZone,
     reminder: zTodoReminder.optional(),
+    recurrence: zTodoRecurrence.nullable().optional(),
   })
   .refine(dueTimeNeedsDay, DUE_TIME_NEEDS_DAY);
 export type TodoUpdateInput = z.input<typeof zTodoUpdate>;
 export const zTodoRef = z.strictObject({ todoId: zId });
+export const zTodoStoppedSibling = z.strictObject({
+  todoId: zId,
+  recurrence: zTodoRecurrence,
+});
+export type TodoStoppedSibling = z.infer<typeof zTodoStoppedSibling>;
+export const zTodoReopen = z.strictObject({
+  todoId: zId,
+  undoNextTodoId: zId.optional(),
+  expectedRevision: z.number().int().positive().optional(),
+  restoreRecurrence: zTodoRecurrence.optional(),
+  restoreSiblings: z.array(zTodoStoppedSibling).max(100).optional(),
+});
+export type TodoReopenInput = z.input<typeof zTodoReopen>;
+export const zTodoComplete = z.strictObject({
+  todoId: zId,
+  stopSeries: z.boolean().optional(),
+});
+export type TodoCompleteInput = z.input<typeof zTodoComplete>;
+export const zTodoReschedule = z.strictObject({
+  todoIds: z
+    .array(zId)
+    .min(1)
+    .max(TODO_RESCHEDULE_BATCH_MAX)
+    .transform((ids) => [...new Set(ids)]),
+  dueOn: zDay,
+});
+export type TodoRescheduleInput = z.input<typeof zTodoReschedule>;
 // Moves a to-do right before or right after another of the owner's (the anchor) in their own order.
 export const zTodoReorder = z
   .strictObject({ todoId: zId, place: z.enum(['before', 'after']), anchorId: zId })
@@ -189,6 +245,18 @@ export type TodoListInput = z.input<typeof zTodoList>;
 // What a command returns: ids and the revision, never text (idempotency rows keep results, notes.md §3.5).
 export const zTodoWritten = z.object({ todoId: z.string(), revision: z.number().int() });
 export type TodoWritten = z.infer<typeof zTodoWritten>;
+export const zTodoCompleteResult = zTodoWritten.extend({
+  nextTodoId: z.string().nullable().optional(),
+  nextDueOn: z.string().nullable().optional(),
+  stoppedRecurrence: zTodoRecurrence.optional(),
+  stoppedSiblings: z.array(zTodoStoppedSibling).optional(),
+});
+export type TodoCompleteResult = z.infer<typeof zTodoCompleteResult>;
+export const zTodoRescheduled = z.object({
+  updated: z.number().int().nonnegative(),
+  todoIds: z.array(z.string()),
+});
+export type TodoRescheduled = z.infer<typeof zTodoRescheduled>;
 
 // The source note a to-do was made from (notes.md step N7): available says the caller can read the non-trashed
 // note now; false when it is trashed or another member's private note (never leaking its title).
@@ -217,6 +285,8 @@ export const zTodoSummary = z.object({
   sourceNoteId: z.string().nullable(),
   sourceNote: zTodoSourceNote.nullable(),
   taskId: z.string().nullable(),
+  recurrence: zTodoRecurrence.nullable(),
+  seriesId: z.string().nullable(),
   tainted: z.boolean(),
   revision: z.number().int(),
   createdAt: z.string(),
@@ -301,14 +371,103 @@ export const zMyWork = z.object({
 export type MyWork = z.infer<typeof zMyWork>;
 
 const DAY_MS = 86_400_000;
-const addDays = (day: string, n: number): string => new Date(Date.parse(`${day}T00:00:00Z`) + n * DAY_MS).toISOString().slice(0, 10);
+
+function parseLocalDateParts(date: string): [number, number, number] {
+  const [y, m, d] = date.split('-').map(Number);
+  return [y ?? 0, m ?? 1, d ?? 1];
+}
+
+function formatLocalDate(year: number, month: number, day: number): string {
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function daysInTodoMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+function resolveTodoMonthlyDate(year: number, month: number, monthDay: number): string {
+  const day = monthDay === -1 ? daysInTodoMonth(year, month) : Math.min(monthDay, daysInTodoMonth(year, month));
+  return formatLocalDate(year, month, day);
+}
+
+/** Adds `n` calendar days to a `YYYY-MM-DD` local date. */
+export function addTodoLocalDays(day: string, n: number): string {
+  const [y, m, d] = parseLocalDateParts(day);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
+
+/** Sunday=0 .. Saturday=6 weekday of a `YYYY-MM-DD` calendar date. */
+export function weekdayOfTodoDate(day: string): number {
+  const [y, m, d] = parseLocalDateParts(day);
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+}
+
+/** The next Monday strictly after `today` (`YYYY-MM-DD`). */
+export function nextMondayFrom(today: string): string {
+  const sunday0 = weekdayOfTodoDate(today);
+  // Sunday(0) -> +1, Monday(1) -> +7, Tuesday(2) -> +6, ..., Saturday(6) -> +2.
+  const offset = sunday0 === 0 ? 1 : 8 - sunday0;
+  return addTodoLocalDays(today, offset);
+}
+
+/** Strips unset optional keys from a validated recurrence rule for deterministic storage and comparison. */
+export function normalizeTodoRecurrence(rule: TodoRecurrence): TodoRecurrence {
+  if (rule.freq === 'daily') {
+    return { freq: 'daily', interval: rule.interval };
+  }
+  if (rule.freq === 'weekly') {
+    return {
+      freq: 'weekly',
+      interval: rule.interval,
+      ...(rule.byWeekday !== undefined && rule.byWeekday !== null ? { byWeekday: rule.byWeekday } : {}),
+    };
+  }
+  return {
+    freq: 'monthly',
+    interval: rule.interval,
+    ...(rule.byMonthDay !== undefined && rule.byMonthDay !== null ? { byMonthDay: rule.byMonthDay } : {}),
+  };
+}
+
+/** Parses stored JSONB recurrence safely, returning null when null or malformed. */
+export function parseTodoRecurrence(value: unknown): TodoRecurrence | null {
+  if (value === null || value === undefined) return null;
+  const parsed = zTodoRecurrence.safeParse(value);
+  return parsed.success ? normalizeTodoRecurrence(parsed.data) : null;
+}
+
+/** Computes the next local due date (`YYYY-MM-DD`) strictly after `anchorDate` for a recurring personal to-do. */
+export function nextTodoOccurrenceDate(rule: TodoRecurrence, anchorDate: string): string {
+  if (rule.freq === 'daily') {
+    return addTodoLocalDays(anchorDate, rule.interval);
+  }
+  if (rule.freq === 'weekly') {
+    if (rule.byWeekday === undefined || rule.byWeekday === null) {
+      return addTodoLocalDays(anchorDate, rule.interval * 7);
+    }
+    const afterWeekday = weekdayOfTodoDate(anchorDate);
+    const sundayOfAnchor = addTodoLocalDays(anchorDate, -afterWeekday);
+    const sameWeekCandidate = addTodoLocalDays(sundayOfAnchor, rule.byWeekday);
+    return sameWeekCandidate > anchorDate ? sameWeekCandidate : addTodoLocalDays(sameWeekCandidate, rule.interval * 7);
+  }
+  const [year, month, anchorDay] = parseLocalDateParts(anchorDate);
+  const targetDay = rule.byMonthDay ?? anchorDay;
+  if (rule.byMonthDay !== undefined && rule.byMonthDay !== null) {
+    const sameMonthCandidate = resolveTodoMonthlyDate(year, month, targetDay);
+    if (sameMonthCandidate > anchorDate) return sameMonthCandidate;
+  }
+  const totalMonths = year * 12 + (month - 1) + rule.interval;
+  const nextYear = Math.floor(totalMonths / 12);
+  const nextMonth = (totalMonths % 12) + 1;
+  return resolveTodoMonthlyDate(nextYear, nextMonth, targetDay);
+}
 
 /** The My work group of a due day, against today in the same time zone (both YYYY-MM-DD). */
 export function todoDueGroup(dueOn: string | null, today: string): TodoDueGroup {
   if (dueOn === null) return 'none';
   if (dueOn < today) return 'overdue';
   if (dueOn === today) return 'today';
-  return dueOn <= addDays(today, 7) ? 'next7' : 'later';
+  return dueOn <= addTodoLocalDays(today, 7) ? 'next7' : 'later';
 }
 
 /** The instant a to-do is due at: its day at `time` (HH:mm) on the wall clock of `timeZone`. */
@@ -328,6 +487,46 @@ export function todoLocalTime(at: Date, timeZone: string): string {
   const local = at.getTime() + zoneOffsetMs(timeZone, at.getTime());
   const minutes = Math.floor((((local % DAY_MS) + DAY_MS) % DAY_MS) / 60_000);
   return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+}
+
+/**
+ * Shifts a to-do's `dueOn`, `dueAt`, and `remindAt` to `nextDueOn` in `current.timeZone`:
+ * - preserves wall-clock `dueAt` time of day if `dueAt` was set;
+ * - keeps automatic reminders automatic on the new day/time, shifts custom reminders by the same lead duration
+ *   before the due instant (or local midnight if no time was set), or preserves local clock if previously dateless.
+ */
+export function shiftTodoSchedule(
+  current: { dueOn: string | null; dueAt: Date | null; timeZone: string; remindAt: Date | null },
+  nextDueOn: string,
+): { dueOn: string; dueAt: Date | null; remindAt: Date | null } {
+  const nextDueAt =
+    current.dueAt !== null ? todoDueInstant(nextDueOn, todoLocalTime(current.dueAt, current.timeZone), current.timeZone) : null;
+  if (current.remindAt === null) {
+    return { dueOn: nextDueOn, dueAt: nextDueAt, remindAt: null };
+  }
+  const autoBefore = todoAutoReminder({ dueOn: current.dueOn, dueAt: current.dueAt, timeZone: current.timeZone });
+  if (autoBefore !== null && current.remindAt.getTime() === autoBefore.getTime()) {
+    return {
+      dueOn: nextDueOn,
+      dueAt: nextDueAt,
+      remindAt: todoAutoReminder({ dueOn: nextDueOn, dueAt: nextDueAt, timeZone: current.timeZone }),
+    };
+  }
+  if (current.dueOn !== null) {
+    const beforeAnchor = current.dueAt ?? todoDueInstant(current.dueOn, '00:00', current.timeZone);
+    const nextAnchor = nextDueAt ?? todoDueInstant(nextDueOn, '00:00', current.timeZone);
+    const leadMs = beforeAnchor.getTime() - current.remindAt.getTime();
+    return {
+      dueOn: nextDueOn,
+      dueAt: nextDueAt,
+      remindAt: new Date(nextAnchor.getTime() - leadMs),
+    };
+  }
+  return {
+    dueOn: nextDueOn,
+    dueAt: nextDueAt,
+    remindAt: todoDueInstant(nextDueOn, todoLocalTime(current.remindAt, current.timeZone), current.timeZone),
+  };
 }
 
 /** Where a task due at `due` stands at `now` for a member in `timeZone`: its group by that day there, and whether it is late. */
@@ -384,6 +583,8 @@ export const zNotesExport = z.object({
       // The note it was made from and the team task it was handed over as, when there are.
       sourceNoteId: z.string().nullable(),
       taskId: z.string().nullable(),
+      recurrence: zTodoRecurrence.nullable(),
+      seriesId: z.string().nullable(),
       links: z.array(z.object({ targetType: z.string(), targetId: z.string() })),
     }),
   ),
