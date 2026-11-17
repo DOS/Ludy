@@ -114,7 +114,7 @@ describe('the brief before a meeting', () => {
     const paused = render(facts(), { status: status({ enabled: false, reason: 'paused' }) });
     expect(paused).toContain(en.meetings.ask.blocked.paused);
     expect(paused).toMatch(/<button[^>]*disabled[^>]*data-testid="brief-write"|data-testid="brief-write"[^>]*disabled/);
-    expect(render(facts(), { status: status(), meter: { aiOn: true, state: 'stop' } })).toContain(en.meetings.ask.blocked.budget.replace("'", '&#x27;'));
+    expect(render(facts(), { status: status(), meter: { aiOn: true, state: 'stop' } })).toContain(en.meetings.ask.blocked.budget.replaceAll("'", '&#x27;'));
   });
 
   it('shows the cost of one brief before the click', () => {
