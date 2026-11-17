@@ -33,6 +33,15 @@ describe('applyPrevious', () => {
     const done = applyPrevious(typed, invoice(1), null);
     expect(done.state.buyer).toMatchObject({ kind: 'individual', identityKind: 'cccd', identity: '012345678901', partyId: null });
   });
+  it('keeps the identity typed for the same customer when a second invoice of that customer is copied (#3678)', () => {
+    const individual: Invoice = { ...invoice(1), buyer: { kind: 'individual', partyId: 'p1', taxCode: null, name: 'Nguyễn Văn A', address: null, email: null, identity: null } };
+    const first = applyPrevious({ ...form(0), buyer: { ...form(0).buyer, kind: 'individual' as const } }, individual, null);
+    const typed = { ...first.state, buyer: { ...first.state.buyer, identityKind: 'cccd' as const, identity: '012345678901' } };
+    const second = applyPrevious(typed, individual, 'p1');
+    expect(second.state.buyer).toMatchObject({ partyId: 'p1', identityKind: 'cccd', identity: '012345678901' });
+    const other = applyPrevious(typed, { ...individual, buyer: { ...individual.buyer, partyId: 'p2' } }, 'p1');
+    expect(other.state.buyer).toMatchObject({ partyId: 'p2', identityKind: '', identity: '' });
+  });
   it('fills an empty buyer and replaces the blank line', () => {
     const done = applyPrevious(form(0), invoice(2), null);
     expect(done.state.lines.map((l) => l.description)).toEqual(['Hàng 1', 'Hàng 2']);

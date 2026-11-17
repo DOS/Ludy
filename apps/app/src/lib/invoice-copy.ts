@@ -28,7 +28,10 @@ export function applyPrevious<S extends CopyForm>(s: S, invoice: NonNullable<EIn
   const buyerEmpty = b.partyId === null && b.taxCode.trim() === '' && b.name.trim() === '' && b.address.trim() === '' && b.email.trim() === '' && b.identityKind === '' && b.identity.trim() === '';
   const from = invoice.buyer;
   const replace = b.kind !== 'consumer' && (buyerEmpty || (replaceBuyerOf !== null && b.partyId === replaceBuyerOf));
-  // The identity an individual gave stays with its own invoice (#3678): a copied buyer starts without one.
-  const buyer = replace ? { kind: from.kind as BuyerKind, partyId: from.partyId, taxCode: from.taxCode ?? '', name: from.name ?? '', address: from.address ?? '', email: from.email ?? '', identityKind: '' as const, identity: '' } : b;
+  // The identity an individual gave stays with its own invoice (#3678): a copied buyer starts without one. One a person typed for the same customer stays, so a second copy for that customer does not erase it.
+  const keepIdentity = replace && from.kind === 'individual' && b.partyId !== null && b.partyId === from.partyId && b.identityKind !== '';
+  const buyer = replace
+    ? { kind: from.kind as BuyerKind, partyId: from.partyId, taxCode: from.taxCode ?? '', name: from.name ?? '', address: from.address ?? '', email: from.email ?? '', identityKind: keepIdentity ? b.identityKind : ('' as const), identity: keepIdentity ? b.identity : '' }
+    : b;
   return { state: { ...s, lines: lines.length > 0 ? lines : s.lines, buyer }, added: proposed.length, rateChanged: taken.filter((l) => !l.vatAllowed).length };
 }
