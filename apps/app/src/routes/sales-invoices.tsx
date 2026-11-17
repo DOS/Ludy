@@ -736,9 +736,10 @@ export function NoticeAction({ draft, openWith = false }: { draft: EInvoiceDraft
   const [correctText, setCorrectText] = useState('');
   const list = useQuery({ ...orpc.einvoice.drafts.noticeList.queryOptions({ input: { draftId: draft.id } }), enabled: open });
   const record = useMutation({
-    mutationFn: () => client.einvoice.drafts.noticeOpen({ draftId: draft.id, field, correctText: correctText.trim() }),
-    onSuccess: async () => {
-      setCorrectText('');
+    mutationFn: (sent: string) => client.einvoice.drafts.noticeOpen({ draftId: draft.id, field, correctText: sent }),
+    onSuccess: async (_data, sent) => {
+      // Clear the box only when it still holds what was sent: text typed while the request ran stays.
+      setCorrectText((now) => (now.trim() === sent ? '' : now));
       await queryClient.invalidateQueries({ queryKey: orpc.einvoice.drafts.noticeList.key({ input: { draftId: draft.id } }) });
     },
   });
@@ -775,7 +776,7 @@ export function NoticeAction({ draft, openWith = false }: { draft: EInvoiceDraft
       </div>
       {record.error && <ErrorText>{errorMessage(record.error)}</ErrorText>}
       <div className="mt-3 flex flex-wrap gap-2">
-        <Button size="sm" loading={record.isPending} disabled={correctText.trim() === ''} onClick={() => record.mutate()} data-testid="invoice-notice-record">
+        <Button size="sm" loading={record.isPending} disabled={correctText.trim() === ''} onClick={() => record.mutate(correctText.trim())} data-testid="invoice-notice-record">
           {t('notice.record')}
         </Button>
         <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>

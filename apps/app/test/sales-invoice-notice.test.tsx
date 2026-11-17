@@ -96,14 +96,21 @@ describe('the notice panel of an issued invoice', () => {
 
   it('shows ticked steps as done, without a button', () => {
     const html = render(<NoticeAction draft={draft} openWith />, list({ buyerNoticeState: 'sent', buyerNotifiedAt: '2026-11-17T11:00:00.000Z', formState: 'filed', formFiledAt: '2026-11-17T12:00:00.000Z' }));
-    const step = (id: string) => html.split(`data-testid="${id}"`)[1]?.split('</li>')[0] ?? '';
+    const step = (id: string) => {
+      const part = html.split(`data-testid="${id}"`)[1]?.split('</li>')[0];
+      expect(part, `${id} is rendered`).toBeDefined();
+      return part as string;
+    };
+    expect(step('invoice-notice-step-buyer')).toContain('Đã gửi thông báo cho người mua');
     expect(step('invoice-notice-step-buyer')).not.toContain('<button');
+    expect(step('invoice-notice-step-form')).toContain('04/SS');
     expect(step('invoice-notice-step-form')).not.toContain('<button');
   });
 
   it('reads in English too', () => {
     const html = render(<NoticeAction draft={draft} openWith />, list(), 'en');
-    expect(html).toContain('04/SS');
-    expect(html).not.toContain('Công ty Mua Thử</p>Sai');
+    expect(html).toContain('Any other mistake needs an adjustment or a replacement');
+    expect(html).toContain('File form 04/SS-HĐĐT');
+    expect(html).not.toContain('Sai sót khác phải điều chỉnh');
   });
 });

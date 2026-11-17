@@ -75,7 +75,9 @@ BEGIN
     END IF;
     RETURN NEW;
   END IF;
-  IF pg_catalog.to_jsonb(NEW) - ARRAY['buyer_notice_state', 'buyer_notified_at', 'form_state', 'form_filed_at'] <> pg_catalog.to_jsonb(OLD) - ARRAY['buyer_notice_state', 'buyer_notified_at', 'form_state', 'form_filed_at']
+  -- The author's membership ending clears created_by (the foreign key's SET NULL); that is the only change of it allowed.
+  IF pg_catalog.to_jsonb(NEW) - ARRAY['buyer_notice_state', 'buyer_notified_at', 'form_state', 'form_filed_at', 'created_by'] <> pg_catalog.to_jsonb(OLD) - ARRAY['buyer_notice_state', 'buyer_notified_at', 'form_state', 'form_filed_at', 'created_by']
+     OR (NEW.created_by IS NOT NULL AND NEW.created_by IS DISTINCT FROM OLD.created_by)
      OR (OLD.buyer_notice_state = 'sent' AND NEW.buyer_notified_at IS DISTINCT FROM OLD.buyer_notified_at)
      OR (OLD.form_state = 'filed' AND NEW.form_filed_at IS DISTINCT FROM OLD.form_filed_at)
      OR (OLD.buyer_notice_state = 'sent' AND NEW.buyer_notice_state <> 'sent')

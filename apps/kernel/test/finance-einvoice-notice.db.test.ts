@@ -241,4 +241,15 @@ suite('the notice of an error in the non-core content of an issued sales e-invoi
     await execute(o, 'finance.einvoice.notice_step', { noticeId: notice.id, step: 'tax_form' });
     await expect(rows("UPDATE crove_finance.einvoice_notice SET form_state = 'todo', form_filed_at = NULL WHERE org_id = $1 AND id = $2", [o.orgId, notice.id])).rejects.toThrow();
   });
+
+  it('keeps a notice when its author leaves the org: created_by is cleared and nothing else moves', async () => {
+    const o = await org();
+    const original = await issued(o, sandbox());
+    const author = await identity('author');
+    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, author]);
+    const notice = await open(o, original.draftId, 'buyer_name', 'Tên Mới', author);
+    await rows('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, author]);
+    const [row] = await rows<{ created_by: string | null; correct_text: string }>('SELECT created_by, correct_text FROM crove_finance.einvoice_notice WHERE org_id = $1 AND id = $2', [o.orgId, notice.id]);
+    expect(row).toEqual({ created_by: null, correct_text: 'Tên Mới' });
+  });
 });
