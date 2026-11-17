@@ -970,12 +970,12 @@ describe('parseTodoQuickAdd (#3556)', () => {
     expect(buildTitleWithoutSpans(`${'\t'.repeat(50_000)}Gọi khách!`, [{ start: 0, end: 1 }])).toBe('Gọi khách!');
 
     // Still protects real filenames and emails after tightening separator classes
-    const protectedRes = parseTodoQuickAdd('Xem report--v2.final.pdf va a.b+c@sub-domain.vn ngay mai', {
+    const protectedRes = parseTodoQuickAdd('Xem report--v2.final.pdf va a.b+c@sub-domain.example.com ngay mai', {
       now: TUE_MORNING,
       timeZone: VN_TZ,
     });
     expect(protectedRes).toMatchObject({
-      title: 'Xem report--v2.final.pdf va a.b+c@sub-domain.vn',
+      title: 'Xem report--v2.final.pdf va a.b+c@sub-domain.example.com',
       dueOn: '2026-11-18',
     });
 
