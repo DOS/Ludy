@@ -79,10 +79,13 @@ export const EXTRACT_LIMITS = {
   // A marketplace income report (#2516): the same file size, with one line per order paid (at most this many) in the first few sheets of the workbook.
   maxIncomeLines: 20_000,
   maxIncomeSheets: 8,
-  // eSign PDF inspection and sealing (#3331, docs/plan/esign.md section 4.2).
+  // eSign PDF inspection and sealing (#3331, #3552, docs/plan/esign.md section 4.2).
   maxPdfSignPages: 200,
   maxPdfAuditCertPages: 25,
   maxPdfInspectTextBytes: 64 * 1024,
+  maxPdfDetectedTags: 200,
+  maxPdfDetectedTagRoles: 50,
+  maxPdfDetectedTagLabelChars: 120,
   maxPdfSealFields: 500,
   maxPdfSealSigners: 50,
   maxSignatureImageBytes: 256 * 1024,
@@ -506,6 +509,54 @@ const MAX_OCSP_BASE64_CHARS = Math.ceil(EXTRACT_LIMITS.maxPdfCmsOcspBytes / 3) *
 const zSha256Hex = z.string().regex(/^[0-9a-f]{64}$/, 'lowercase 64-char sha256 hex');
 const utf8ByteLength = (text: string): number => new TextEncoder().encode(text).byteLength;
 
+export const PDF_DETECTED_TAG_FIELD_TYPES = ['signature', 'initials', 'date', 'text', 'checkbox'] as const;
+export type PdfDetectedTagFieldType = (typeof PDF_DETECTED_TAG_FIELD_TYPES)[number];
+
+function hasLoneSurrogate(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = i + 1 < value.length ? value.charCodeAt(i + 1) : 0;
+      if (next < 0xdc00 || next > 0xdfff) return true;
+      i += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export const zPdfDetectedTag = z
+  .strictObject({
+    pageNumber: z.number().int().min(1).max(EXTRACT_LIMITS.maxPdfSignPages),
+    fieldType: z.enum(PDF_DETECTED_TAG_FIELD_TYPES),
+    roleOrder: z.number().int().min(1).max(EXTRACT_LIMITS.maxPdfDetectedTagRoles),
+    roleKey: z.string().regex(/^r(?:[1-9]|[1-4]\d|50)$/, 'role key r1..r50'),
+    required: z.boolean(),
+    label: z
+      .string()
+      .min(1)
+      .max(EXTRACT_LIMITS.maxPdfDetectedTagLabelChars)
+      .refine((s) => !hasLoneSurrogate(s), 'label must be well-formed Unicode without lone surrogates')
+      .nullable(),
+    xNorm: z.number().finite().min(0).lt(1),
+    yNorm: z.number().finite().min(0).lt(1),
+    wNorm: z.number().finite().gt(0).lte(1),
+    hNorm: z.number().finite().gt(0).lte(1),
+  })
+  .superRefine((tag, ctx) => {
+    if (tag.roleKey !== `r${tag.roleOrder}`) {
+      ctx.addIssue({ code: 'custom', path: ['roleKey'], message: 'roleKey must match roleOrder' });
+    }
+    if (tag.xNorm + tag.wNorm > 1.000001) {
+      ctx.addIssue({ code: 'custom', path: ['wNorm'], message: 'xNorm + wNorm must be <= 1' });
+    }
+    if (tag.yNorm + tag.hNorm > 1.000001) {
+      ctx.addIssue({ code: 'custom', path: ['hNorm'], message: 'yNorm + hNorm must be <= 1' });
+    }
+  });
+export type PdfDetectedTag = z.infer<typeof zPdfDetectedTag>;
+
 export const zPdfInspectPage = z.strictObject({
   page: z.number().int().min(1).max(EXTRACT_LIMITS.maxPdfSignPages),
   widthPt: z.number().finite().positive().max(20_000),
@@ -521,6 +572,8 @@ export const zPdfInspectResult = z
     kind: z.literal('pdf_inspect'),
     pageCount: z.number().int().min(1).max(EXTRACT_LIMITS.maxPdfSignPages),
     pages: z.array(zPdfInspectPage).min(1).max(EXTRACT_LIMITS.maxPdfSignPages),
+    // Optional on input so a worker accepts an older sandbox's answer during a rolling deploy.
+    detectedTags: z.array(zPdfDetectedTag).max(EXTRACT_LIMITS.maxPdfDetectedTags).default([]),
   })
   .superRefine((value, ctx) => {
     if (value.pages.length !== value.pageCount) {
@@ -537,6 +590,16 @@ export const zPdfInspectResult = z
     }
     if (totalBytes > EXTRACT_LIMITS.maxPdfInspectTextBytes) {
       ctx.addIssue({ code: 'custom', path: ['pages'], message: `total extracted text exceeds ${EXTRACT_LIMITS.maxPdfInspectTextBytes} bytes` });
+    }
+    for (let i = 0; i < value.detectedTags.length; i++) {
+      const tag = value.detectedTags[i];
+      if (tag && tag.pageNumber > value.pageCount) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['detectedTags', i, 'pageNumber'],
+          message: `detectedTag pageNumber ${tag.pageNumber} exceeds pageCount ${value.pageCount}`,
+        });
+      }
     }
   });
 export type PdfInspectResult = z.infer<typeof zPdfInspectResult>;

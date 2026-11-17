@@ -41,6 +41,7 @@ test('post an invoice of a locked month in the first open month, keeping its inv
   await test.step('lock the month before last', async () => {
     await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Sổ sách' }).click();
+    await page.getByRole('tab', { name: 'Kết thúc kỳ' }).click();
     await page.getByLabel('Tháng khóa sổ').fill(LOCKED);
     await page.getByRole('button', { name: `Khóa sổ tháng ${my(LOCKED)}` }).click();
     await expect(page.getByText(`Đã khóa sổ đến hết ngày ${dmy(LAST_LOCKED_DAY)}`, { exact: false })).toBeVisible();

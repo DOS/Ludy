@@ -37,6 +37,7 @@ import {
   clampFieldBox,
   createPlacedFieldBox,
   nudgeFieldBox,
+  planDetectedTagsForSigners,
   resizeFieldBox,
   type DraftFieldPlacement,
   type NormalizedBox,
@@ -335,6 +336,17 @@ export function SignEnvelopeDetailPage() {
 
   const effectivePageCount = Math.max(1, envelope?.pageCount ?? detectedPages ?? 1);
   const selectedField = draftFields.find((item) => item.localId === selectedFieldId) ?? null;
+  const detectedTags = envelope?.detectedTags ?? [];
+  const tagPlan = useMemo(
+    () =>
+      planDetectedTagsForSigners({
+        detectedTags,
+        signers,
+        existingFields: draftFields,
+        pageCount: effectivePageCount,
+      }),
+    [detectedTags, signers, draftFields, effectivePageCount],
+  );
 
   const readinessIssue = envelope
     ? checkSendReadiness({
@@ -436,6 +448,27 @@ export function SignEnvelopeDetailPage() {
     if (nextFields.length === 0) return;
     updateDraftFields((prev) => [...prev, ...nextFields]);
     setDismissedProposalIds((prev) => [...prev, ...appliedIds]);
+  };
+
+  const handleApplyDetectedTags = () => {
+    if (!isDraft || tagPlan.applicable.length === 0) return;
+    const placed: DraftFieldPlacement[] = tagPlan.applicable.map((item) => ({
+      localId: `tag-${globalThis.crypto.randomUUID()}`,
+      signerId: item.signerId,
+      fieldType: item.fieldType,
+      pageNumber: item.pageNumber,
+      xNorm: item.xNorm,
+      yNorm: item.yNorm,
+      wNorm: item.wNorm,
+      hNorm: item.hNorm,
+      label: item.label,
+      required: item.required,
+      proposedByAi: false,
+    }));
+    updateDraftFields((prev) => [...prev, ...placed]);
+    setSelectedFieldId(placed[0]!.localId);
+    setPageNumber(placed[0]!.pageNumber);
+    toast(t('tags.appliedToast', { count: String(placed.length) }));
   };
 
   const handleAddSigner = async (input: AddSignerFormInput) => {
@@ -717,6 +750,41 @@ export function SignEnvelopeDetailPage() {
         </div>
 
         <div className="min-w-0 space-y-3">
+          {isDraft && tagPlan.totalTags > 0 ? (
+            <Card data-testid="sign-detected-tags-banner">
+              <CardContent className="flex flex-col gap-2.5 p-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0 space-y-1 text-xs">
+                  <p className="font-semibold text-foreground">
+                    {t('tags.bannerTitle', { count: String(tagPlan.totalTags) })}
+                  </p>
+                  <p className="text-muted-foreground">{t('tags.bannerHint')}</p>
+                  {tagPlan.unmatchedRoleOrders.length > 0 ? (
+                    <p className="text-warning" data-testid="sign-detected-tags-unmatched">
+                      {t('tags.unmatchedOrdersHint', {
+                        orders: tagPlan.unmatchedRoleOrders.map((n) => `#${n}`).join(', '),
+                      })}
+                    </p>
+                  ) : tagPlan.applicable.length === 0 ? (
+                    <p className="text-muted-foreground">{t('tags.allAppliedHint', { count: String(tagPlan.totalTags) })}</p>
+                  ) : null}
+                </div>
+                {tagPlan.applicable.length > 0 || tagPlan.alreadyAppliedCount < tagPlan.totalTags ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={tagPlan.applicable.length === 0}
+                    onClick={handleApplyDetectedTags}
+                    data-testid="sign-apply-detected-tags-btn"
+                  >
+                    {t('tags.applyButton', {
+                      count: String(tagPlan.applicable.length > 0 ? tagPlan.applicable.length : tagPlan.totalTags),
+                    })}
+                  </Button>
+                ) : null}
+              </CardContent>
+            </Card>
+          ) : null}
+
           {isDraft ? (
             <Card>
               <CardContent className="space-y-2 p-3">

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Component, accessibility, and helper tests for /sign/templates UI (#3526).
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
@@ -7,7 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { catalog } from '../src/i18n/runtime.ts';
 import type { SignTemplateDetail } from '../src/lib/sign-api.ts';
 import { buildDirectSigningUrl } from '../src/lib/sign-hash.ts';
-import { DirectLinkCard, TemplateRolesCard, canAutoSendTemplate } from '../src/routes/sign-templates.tsx';
+import { DirectLinkCard, SignTemplatesPage, TemplateRolesCard, canAutoSendTemplate } from '../src/routes/sign-templates.tsx';
 
 vi.mock('@tanstack/react-router', async (importOriginal) => {
   const { createElement } = await import('react');
@@ -224,5 +225,89 @@ describe('eSign templates UI components (#3526)', () => {
       </IntlProvider>,
     );
     expect(blockedHtml).not.toContain('sign-tpl-direct-enabled');
+  });
+
+  it('renders deterministic PDF tag banner in SignTemplatesPage in vi and en (#3552)', () => {
+    const base = makeTemplateDetail({ fields: [] });
+    const detailWithTags: SignTemplateDetail = {
+      ...base,
+      template: {
+        ...base.template,
+        detectedTags: [
+          {
+            pageNumber: 1,
+            fieldType: 'signature',
+            roleOrder: 1,
+            roleKey: 'r1',
+            required: true,
+            label: null,
+            xNorm: 0.2,
+            yNorm: 0.65,
+            wNorm: 0.24,
+            hNorm: 0.08,
+          },
+          {
+            pageNumber: 1,
+            fieldType: 'date',
+            roleOrder: 1,
+            roleKey: 'r1',
+            required: true,
+            label: null,
+            xNorm: 0.52,
+            yNorm: 0.66,
+            wNorm: 0.16,
+            hNorm: 0.04,
+          },
+        ],
+      },
+    };
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(['sign', 'templates', 'list', 'all', ''], {
+      items: [
+        {
+          id: detailWithTags.template.id,
+          title: detailWithTags.template.title,
+          description: detailWithTags.template.description,
+          routingMode: detailWithTags.template.routingMode,
+          subject: null,
+          message: null,
+          expiresInHours: 168,
+          status: 'active',
+          inspectStatus: 'passed',
+          inspectError: null,
+          pageCount: 1,
+          roleCount: 2,
+          nonCcRoleCount: 1,
+          fieldCount: 0,
+          directLink: null,
+          version: 1,
+          archivedAt: null,
+          createdAt: detailWithTags.template.createdAt,
+          updatedAt: detailWithTags.template.updatedAt,
+        },
+      ],
+    });
+    qc.setQueryData(['sign', 'templates', 'detail', detailWithTags.template.id], detailWithTags);
+
+    const viHtml = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <IntlProvider locale="vi" timeZone="Asia/Ho_Chi_Minh" messages={catalog('vi')}>
+          <SignTemplatesPage />
+        </IntlProvider>
+      </QueryClientProvider>,
+    );
+    assertPairedLabels(viHtml);
+    expect(viHtml).toContain('data-testid="sign-tpl-detected-tags-banner"');
+    expect(viHtml).toContain('Áp dụng 2 ô từ thẻ tài liệu');
+
+    const enHtml = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <IntlProvider locale="en" timeZone="Asia/Ho_Chi_Minh" messages={catalog('en')}>
+          <SignTemplatesPage />
+        </IntlProvider>
+      </QueryClientProvider>,
+    );
+    expect(enHtml).toContain('Apply 2 tag fields');
   });
 });

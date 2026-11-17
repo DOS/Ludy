@@ -25,6 +25,10 @@ export const SM_UP = '(min-width: 40rem)';
 // 1366 px laptop and up. Below it, list and detail stay separate pages.
 export const SPLIT_UP = '(min-width: 84rem)';
 
+// The Engage Inbox's two panes side by side (#3582): the list and the conversation from 80rem (a 1280 px laptop, its content 58rem wide beside the menu);
+// below it one pane shows at a time.
+export const INBOX_SPLIT_UP = '(min-width: 80rem)';
+
 // How a script scrolls something into view: smoothly, unless the system asks for reduced motion (DESIGN.md §7, #1605).
 // The stylesheet's reduced-motion rule cannot reach a scroll whose behavior the script names.
 export function scrollBehavior(): ScrollBehavior {

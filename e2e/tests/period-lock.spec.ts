@@ -21,6 +21,7 @@ test('lock a month, see a posting into it refused, then unlock it with a reason'
   await test.step('lock September 2026 on the ledger screen', async () => {
     await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Sổ sách' }).click();
+    await page.getByRole('tab', { name: 'Kết thúc kỳ' }).click();
     await expect(page.getByText('Chưa khóa sổ tháng nào.', { exact: false })).toBeVisible();
     await page.getByLabel('Tháng khóa sổ').fill('2026-09');
     await page.getByRole('button', { name: 'Khóa sổ tháng 09/2026' }).click();
@@ -49,6 +50,7 @@ test('lock a month, see a posting into it refused, then unlock it with a reason'
   await test.step('the owner unlocks September with a reason, then the approval goes through', async () => {
     await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Sổ sách' }).click();
+    await page.getByRole('tab', { name: 'Kết thúc kỳ' }).click();
     await page.getByRole('button', { name: 'Mở khóa tháng 09/2026' }).click();
     const confirm = page.getByRole('button', { name: 'Mở khóa tháng 09/2026' });
     await expect(confirm).toBeDisabled();

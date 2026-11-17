@@ -1169,6 +1169,12 @@ export function createRpcHandler(
         byTarget: os.meetings.links.byTarget.handler(meetingsQuery('meetings.link.by_target')),
         suggest: os.meetings.links.suggest.handler(meetingsQuery('meetings.link.suggest')),
       },
+      template: {
+        list: os.meetings.template.list.handler(meetingsQuery('meetings.template.list')),
+        create: os.meetings.template.create.handler(meetingsCommand('meetings.template.create')),
+        update: os.meetings.template.update.handler(meetingsCommand('meetings.template.update')),
+        archive: os.meetings.template.archive.handler(meetingsCommand('meetings.template.archive')),
+      },
       settings: {
         get: os.meetings.settings.get.handler(meetingsQuery('meetings.settings.get')),
         set: os.meetings.settings.set.handler(meetingsCommand('meetings.settings.set')),

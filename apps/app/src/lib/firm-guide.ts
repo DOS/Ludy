@@ -25,7 +25,7 @@ const FIRM_GUIDE: readonly FirmGuideStep[] = [
     id: 'client',
     title: 'Bước 1. Thêm doanh nghiệp khách hàng',
     items: [
-      `Mỗi khách hàng là một tổ chức riêng trong {brand}, với sổ sách, chứng từ chờ duyệt và thành viên riêng. Bấm ${q(vi.nav.addOrg)} dưới ô chọn tổ chức ở đầu menu.`,
+      `Mỗi khách hàng là một tổ chức riêng trong {brand}, với sổ sách, chứng từ chờ duyệt và thành viên riêng. Bấm tên tổ chức ở đầu menu để mở danh sách tổ chức, rồi chọn ${q(vi.nav.addOrg)} ở cuối danh sách.`,
       `Thanh dọc bên trái chia theo ứng dụng, với ${q(vi.nav.overview)} ở đầu: ${q(vi.nav.apps.teamwork)} có ${q(vi.nav.tasks)} và ghi chú; ${q(vi.nav.apps.finance)} có ${q(vi.nav.inbox)}, chứng từ, sổ sách và thuế, và thông báo là cái chuông ở cuối thanh. Các màn hình kế toán nhắc tới dưới đây nằm trong ${q(vi.nav.apps.finance)}; ${q(vi.nav.settings)} ở cuối thanh.`,
       `Nhập ${q(vi.onboarding.taxCodeLabel)} của khách hàng rồi bấm ${q(vi.onboarding.lookUp)}: {brand} điền tên và địa chỉ theo dữ liệu đăng ký thuế, bạn kiểm tra lại. Mã số thuế giúp {brand} nhận ra hóa đơn bán ra của khách hàng.`,
       `Nếu có ${q(vi.onboarding.contactLabel)}, nhập vào: sau khi bấm ${q(vi.onboarding.create)}, trang mời thành viên mở sẵn với email này. Chọn vai trò rồi bấm ${q(vi.settings.invite)}; người được mời phải chấp nhận lời mời thì mới vào tổ chức.`,
@@ -77,7 +77,7 @@ const FIRM_GUIDE: readonly FirmGuideStep[] = [
       `Mở ${q(vi.nav.ledger)} để xem ${q(vi.ledger.tabs.trialBalance)}, ${q(vi.ledger.tabs.generalLedger)} và ${q(vi.ledger.tabs.parties)} của tháng, rồi bấm ${q(vi.ledger.export)} nếu cần gửi Excel.`,
       `Mở ${q(vi.nav.vat)}, chọn kỳ, xem bảng kê và các chỉ tiêu 01/GTGT. Bấm ${q(vi.vat.export)} để gửi bảng kê, hoặc ${q(vi.vat.exportXml)} để có tệp XML mở trong HTKK.`,
       'File XML để 0 ở các chỉ tiêu {brand} chưa tính được, trong đó có [25] thuế được khấu trừ: kế toán bổ sung và kiểm tra trong HTKK hoặc trên eTax trước khi nộp.',
-      `Khi đã nộp báo cáo của tháng, quay lại ${q(vi.nav.ledger)} và bấm ${q(fill(vi.periodLock.lock, { month: 'MM/YYYY' }))} ở ô ${q(vi.periodLock.title)}: không ai ghi, duyệt hay đảo bút toán vào tháng đó được nữa. Chủ sở hữu hoặc quản trị khóa sổ; chỉ chủ sở hữu mở khóa được, kèm lý do.`,
+      `Khi đã nộp báo cáo của tháng, quay lại ${q(vi.nav.ledger)}, mở thẻ ${q(vi.ledger.tabs.closing)} và bấm ${q(fill(vi.periodLock.lock, { month: 'MM/YYYY' }))} ở ô ${q(vi.periodLock.title)}: không ai ghi, duyệt hay đảo bút toán vào tháng đó được nữa. Chủ sở hữu hoặc quản trị khóa sổ; chỉ chủ sở hữu mở khóa được, kèm lý do.`,
     ],
   },
   {

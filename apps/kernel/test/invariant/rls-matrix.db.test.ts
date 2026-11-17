@@ -2844,6 +2844,13 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       row: { org_id: o.id, user_id: o.owner, url: 'https://hooks.example.com/ludy-minutes', secret_sealed: '{"keyId":"k1","envelope":"AAAAAAAAAAAAAAAA"}', secret_hint: 'whk_00000000' },
     }),
   },
+  // #3578 (meetings): a minutes template the org wrote. Every member of the org reads it; a RESTRICTIVE write policy lets an owner or admin write it (the factory's owner is one), and the
+  // table grants no DELETE to a login role. Its factory landed before the table (#3625); the table is on main with the migration of #3578.
+  'crove_meetings.minutes_template': {
+    make: (o) => ({
+      row: { org_id: o.id, id: randomUUID(), name: `RLS matrix template ${tag()}`, sections: JSON.stringify([{ key: 's1', title: 'Nội dung', hint: '' }]), created_by: o.owner },
+    }),
+  },
   // #2575: timestamped transcript segment of a meeting (ADR-0047 point 1, 3).
   'crove_meetings.transcript_segment': {
     make: (o) => {

@@ -20,7 +20,7 @@ import { ProposalGroups } from '../components/proposal-groups.tsx';
 import { StagedMarketplace } from '../components/staged-marketplace.tsx';
 import { StagedMarketplaceIncome } from '../components/staged-marketplace-income.tsx';
 import { StagedStatements } from '../components/staged-statements.tsx';
-import { StepUpPrompt } from '../components/two-factor.tsx';
+import { StepUpPrompt, TwoFactorOffer } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, Spinner, TableSkeleton } from '../components/ui.tsx';
 import { client, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { listedEntity } from '../lib/legal-entity-choice.ts';
@@ -302,6 +302,10 @@ export function InboxPage() {
   const setTab = (next: InboxTab) => void navigate({ to: '/o/$slug/inbox', params: { slug }, search: next === 'pending' ? {} : { status: next } });
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Where focus goes once the two-factor offer is gone (#3599).
+  const uploadRef = useRef<HTMLButtonElement>(null);
+  // The upload button, unless an upload or a photo is being prepared and it is disabled; then the page's main area, which the shell makes focusable.
+  const focusAfterOffer = () => (uploadRef.current && !uploadRef.current.disabled ? uploadRef.current : document.getElementById('main-content'));
   const [preparing, setPreparing] = useState(false);
   const config = getConfig();
 
@@ -502,7 +506,7 @@ export function InboxPage() {
         actions={
           <div className="flex flex-wrap items-center gap-3">
             <UploadEntityPicker slug={slug} />
-            <Button loading={intake.uploading || preparing} size="lg" onClick={() => openPicker(false)}>
+            <Button ref={uploadRef} loading={intake.uploading || preparing} size="lg" onClick={() => openPicker(false)}>
               {t('upload')}
             </Button>
             {/* On a phone this opens the rear camera; a desktop browser ignores `capture` and opens the file picker. A stack
@@ -514,6 +518,8 @@ export function InboxPage() {
         }
       />
       <AiMeter module="finance" className="mb-3" />
+      {/* Two-factor is offered here, before the first approval needs it, to those who may approve (#3599). */}
+      <TwoFactorOffer show={canApproveProposals(org.data?.role, org.data?.permissions)} returnFocus={focusAfterOffer} />
       <input
         ref={inputRef}
         type="file"

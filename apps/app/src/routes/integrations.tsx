@@ -3,7 +3,7 @@
 // that is the bank feed (ADR-0039), the e-invoice provider (ADR-0044) and the marketplaces (ADR-0045, #2519). Each card draws itself only where the deployment
 // offers something to connect or the org already has a connection, and the section's heading shows only while one of them does.
 import { useQuery } from '@tanstack/react-query';
-import { useId } from 'react';
+import { useEffect, useId } from 'react';
 import { useTranslations } from 'use-intl';
 import { orpc } from '../lib/api.ts';
 import { getConfig } from '../lib/auth.ts';
@@ -26,9 +26,14 @@ export function IntegrationsSection({ role, orgSlug }: { role: Role; orgSlug: st
   const marketplaceProviders = useQuery(orpc.marketplace.providers.queryOptions());
   const marketplaceConnections = useQuery(orpc.marketplace.connections.list.queryOptions());
   const marketplace = marketplaceCardShown(marketplaceProviders.data?.adapters, marketplaceConnections.data);
-  if (!bank && !einvoice && !marketplace) return null;
+  const shown = bank || einvoice || marketplace;
+  // A link to #integrations (the sales invoices screen sends owners here to connect a provider, #3602) scrolls here once the section is drawn.
+  useEffect(() => {
+    if (shown && window.location.hash === '#integrations') document.getElementById('integrations')?.scrollIntoView({ block: 'start' });
+  }, [shown]);
+  if (!shown) return null;
   return (
-    <section aria-labelledby={headingId} className="lg:col-span-2">
+    <section id="integrations" aria-labelledby={headingId} className="scroll-mt-4 lg:col-span-2">
       <h2 id={headingId} className="text-base font-semibold text-foreground">
         {t('title')}
       </h2>

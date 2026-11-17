@@ -1125,8 +1125,9 @@ export type MeetingConsentMethod = (typeof MEETING_CONSENT_METHODS)[number];
 // Why a recording stopped without the recorder's own click (A1, #3159): a code, never text.
 export const MEETING_RECORDING_STOP_REASONS = ['tab_closed', 'mic_lost', 'permission_lost', 'storage_full', 'left_screen', 'unknown'] as const;
 export type MeetingRecordingStopReason = (typeof MEETING_RECORDING_STOP_REASONS)[number];
-// The minutes template a recorder picked for a meeting (A4, #3162): a code, never text. The sections of each live in code (packages/kernel-contract).
-export const MEETING_SUMMARY_TEMPLATES = ['general', 'briefing', 'customer', 'supplier', 'one_on_one'] as const;
+// The minutes template a recorder picked for a meeting (A4, #3162): a code, never text. The sections of each live in code (packages/kernel-contract); 'custom' (#3578) is a template the org
+// wrote, whose sections are the meeting's own copy (minutes_template_sections).
+export const MEETING_SUMMARY_TEMPLATES = ['general', 'briefing', 'customer', 'supplier', 'one_on_one', 'custom'] as const;
 export type MeetingSummaryTemplate = (typeof MEETING_SUMMARY_TEMPLATES)[number];
 
 export type MeetingsMeetingTable = Refine<

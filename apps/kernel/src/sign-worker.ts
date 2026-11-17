@@ -134,6 +134,7 @@ export async function runSignPdfInspectJob(
         heightPt: p.heightPt,
         rotation: p.rotation,
       })),
+      detectedTags: res.detectedTags ?? [],
     },
     options,
   );

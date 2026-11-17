@@ -14,7 +14,10 @@ import { ArchiveError, readZip } from './zip.ts';
 import { readBankStatement } from './bank-statement.ts';
 import { readMarketplaceIncome } from './marketplace-income.ts';
 import { readMarketplaceOrders } from './marketplace-orders.ts';
+import { extractPageDeterministicTags, parseDeterministicTagToken } from './pdf-tags.ts';
 import { PdfSignError, inspectPdf, sealPdf } from './seal.ts';
+
+export { extractPageDeterministicTags, parseDeterministicTagToken };
 
 const MiB = 1024 * 1024;
 
