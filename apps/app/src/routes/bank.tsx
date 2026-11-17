@@ -22,7 +22,7 @@ import { CardSkeleton, DataTable, Empty, ErrorText, Notice, PageHeader, Spinner,
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { canApproveProposals } from '../lib/review.ts';
-import { VoucherFormCard } from './vouchers.tsx';
+import { VoucherFormPanel } from './vouchers.tsx';
 import {
   MAX_STATEMENT_BYTES,
   STATEMENT_COLUMNS,
@@ -252,7 +252,7 @@ function LineVoucher({ slug, line, onClose }: { slug: string; line: BankLine; on
       </Alert>
     );
   }
-  return <VoucherFormCard slug={slug} onClose={onClose} fromLine={made.data} />;
+  return <VoucherFormPanel slug={slug} onClose={onClose} fromLine={made.data} />;
 }
 
 function LineState({ slug, line, canEnter, onEnter }: { slug: string; line: BankLine; canEnter: boolean; onEnter: () => void }) {

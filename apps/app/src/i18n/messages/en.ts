@@ -5630,6 +5630,8 @@ export const en = {
     subtitle: 'The register of fixed assets (211, 213) and prepaid costs (242): cost, months of use, what was depreciated or allocated and what is left. Straight line, by month.',
     new: 'Add asset',
     newTitle: 'Add a fixed asset or prepaid cost',
+    moreDetails: 'Add details',
+    duplicate: 'This looks like "{name}", already in the register (same name and cost). Please check before adding.',
     newIntro: 'Each month {brand} splits the cost evenly over the months of use, rounded down to the dong, and the last month takes the rest. The useful life is the accountant\'s call, within the bands of Circular 45/2013/TT-BTC.',
     kind: 'Kind',
     kinds: { fixed_asset: 'Fixed asset', prepaid_cost: 'Prepaid cost' },
@@ -5683,6 +5685,7 @@ export const en = {
     viewProposal: 'View proposal',
   },
   journalVoucher: {
+    moreDetails: 'Add a note to each line',
     title: 'General journal voucher',
     intro:
       'Record an entry you prepare yourself (accruals, salaries, depreciation, adjustments): one account per line, debit or credit. Total debits must equal total credits. An owner or admin approves it in the Inbox; on approval {brand} gives it an NVK number and posts it.',
@@ -6640,6 +6643,8 @@ export const en = {
       suggested: 'Suggested: {name}, because {reason}. Check it before sending.',
       candidates: 'It may be: {names}. Choose the party.',
       noVoucher: 'This line has fractions of a dong, so it cannot become a voucher.',
+      moreDetails: 'Add details',
+      duplicate: 'This looks like voucher {code} of {date}, {amount}. Please check before sending.',
       close: 'Close',
     },
     reasons: {

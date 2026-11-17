@@ -5626,6 +5626,8 @@ export const vi = {
     subtitle: 'Sổ tài sản cố định (211, 213) và chi phí trả trước (242): nguyên giá, số tháng, đã khấu hao hay phân bổ bao nhiêu và giá trị còn lại. Khấu hao theo đường thẳng mỗi tháng.',
     new: 'Thêm tài sản',
     newTitle: 'Thêm tài sản hoặc chi phí trả trước',
+    moreDetails: 'Thêm chi tiết',
+    duplicate: 'Có vẻ trùng với "{name}" đã có trong sổ (cùng tên và giá trị). Hãy kiểm tra trước khi thêm.',
     newIntro: 'Mỗi tháng {brand} chia đều nguyên giá cho số tháng sử dụng, làm tròn xuống đồng, tháng cuối nhận phần còn lại. Thời gian sử dụng do kế toán quyết định theo khung của Thông tư 45/2013/TT-BTC.',
     kind: 'Loại',
     kinds: { fixed_asset: 'Tài sản cố định', prepaid_cost: 'Chi phí trả trước' },
@@ -5679,6 +5681,7 @@ export const vi = {
     viewProposal: 'Xem đề xuất',
   },
   journalVoucher: {
+    moreDetails: 'Thêm ghi chú cho từng dòng',
     title: 'Phiếu kế toán khác',
     intro:
       'Ghi một bút toán tự lập (trích trước, tiền lương, khấu hao, điều chỉnh): mỗi dòng một tài khoản, ghi Nợ hoặc Có. Tổng Nợ phải bằng tổng Có. Chủ sở hữu hoặc quản trị viên duyệt ở màn Chứng từ chờ duyệt; khi duyệt, {brand} cấp số NVK và ghi sổ.',
@@ -6637,6 +6640,8 @@ export const vi = {
       suggested: 'Gợi ý: {name}, vì {reason}. Hãy kiểm tra trước khi gửi.',
       candidates: 'Có thể là: {names}. Hãy chọn đối tượng.',
       noVoucher: 'Dòng này có phần lẻ dưới một đồng nên không lập được chứng từ.',
+      moreDetails: 'Thêm chi tiết',
+      duplicate: 'Có vẻ trùng với phiếu {code} ngày {date}, {amount}. Hãy kiểm tra trước khi gửi.',
       close: 'Đóng',
     },
     reasons: {
