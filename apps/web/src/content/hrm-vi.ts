@@ -292,7 +292,7 @@ export const hrmVi = {
       sub: 'Qua ngân sách tháng trong Ludy AI',
       shieldTitle: 'Lớp chắn dữ liệu trước khi gọi mô hình AI',
       keptInServer: 'Giữ lại trên máy chủ: họ tên, CCCD, mã số thuế, số BHXH, tài khoản ngân hàng, địa chỉ, lương thô ứng viên',
-      sentToModel: 'Chỉ gửi mã tạm: E1, E2, C1 cùng tỷ lệ biến động và cờ kiểm tra hợp lệ',
+      sentToModel: 'Chỉ gửi cho mô hình: mã tạm E1, E2, C1 kèm số tiền lương ẩn danh (hoặc trạng thái khớp khung lương khi tuyển dụng) và cờ kiểm tra',
       briefTitle: `${N.finance} tóm tắt sơ loại ứng viên C1`,
       briefBody: 'Đáp ứng 4/4 kỹ năng bắt buộc, mức lương mong muốn nằm trong khung ngân sách vị trí. Gợi ý hỏi thêm kinh nghiệm mở đại lý tỉnh.',
       aiOffTitle: 'Khi tắt AI hoặc hết ngân sách tháng',

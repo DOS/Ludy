@@ -288,7 +288,7 @@ export const hrmEn: HrmCopy = {
       sub: 'Metered by monthly budget in Ludy AI',
       shieldTitle: 'Prompt privacy wall before any model call',
       keptInServer: 'Kept on server: names, national IDs, tax codes, BHXH numbers, bank accounts, addresses, raw candidate pay',
-      sentToModel: 'Sent to model: random aliases E1, E2, C1 plus percentage deltas and rule flags',
+      sentToModel: 'Sent to model: random aliases E1, E2, C1 with pseudonymized pay amounts (or pay-band match in recruiting) and rule flags',
       briefTitle: `${N.finance} screening brief for alias C1`,
       briefBody: 'Matches 4/4 required skills; expected pay sits within opening band. Suggests asking about regional distributor onboarding.',
       aiOffTitle: 'When AI is off or monthly budget runs out',
