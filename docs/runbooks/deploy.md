@@ -89,6 +89,30 @@ Opt-in. A pilot that signs in at a remote identity provider (Supabase Auth, [pil
 
 **The smoke test with a remote provider.** The kernel then has no `/auth/v1` proxy, so the smoke test skips `/auth/v1/health` and the smoke account's sign-in (the log says `smoke skipped`) and the prober watches the provider instead. The host's smoke test knows from the env file (`AUTH_UPSTREAM_URL` empty); the public one reads the deployed `/api/config`: an `authUrl` on another host than the public URL (case, scheme and a default port aside) **and** no GoTrue answer at `/auth/v1/health` of the public URL (the app's own page also answers 200 to any GET, so the body must be GoTrue's). A bundled Auth whose address only differs cosmetically is still checked as before. In the deploy that wrote the settings both also require `/api/config` to report exactly the `PUBLIC_AUTH_URL` it was given, so settings that did not take (an old container, a stale line) fail the test and roll back instead of passing with the proxy checks skipped. `/readyz`, `/version`, `/api/config` and the sign-in page are still checked.
 
+## Module settings in the deploy (#3531)
+
+Opt-in. Because no agent has an SSH shell on the pilot host, the deploy workflow can also update `CROVE_MODULES` in the host's env file (used for enabling modules such as `sign` via [pilot-enable-sign.md](pilot-enable-sign.md)). Without the opt-in the host env file's `CROVE_MODULES` line is never edited.
+
+**Define both variables in the environment itself (`pilot`), never at repository or organization level**, so one environment's modules do not reach another environment:
+
+| Name | Kind | Value |
+|---|---|---|
+| `DEPLOY_MODULES_ENVIRONMENT` | variable | the opt-in: the name of the environment (`pilot`) |
+| `DEPLOY_CROVE_MODULES` | variable | comma-separated module names to write as `CROVE_MODULES` (for example `finance,crm,social,sign`) |
+
+If `DEPLOY_MODULES_ENVIRONMENT` does not equal the target environment, `DEPLOY_CROVE_MODULES` is ignored with a notice and the host env file is left untouched. If `DEPLOY_MODULES_ENVIRONMENT` matches the environment while `DEPLOY_CROVE_MODULES` is empty or multiline, the workflow fails fast before connecting to the host.
+
+**Validation and rewrite.** Before any image is pulled or pushed to the host, the workflow runs `bash tools/deploy/deploy.sh check-modules "$DEPLOY_CROVE_MODULES"`, and `deploy.sh deploy --modules <list>` validates it again on the host with shell builtins only: 1 to 10 comma-separated lowercase names from `AVAILABLE_MODULES` (`kernel`, `finance`, `social`, `ads`, `crm`, `notes`, `hr`, `meetings`, `projects`, `sign`), with no duplicates, spaces, quotes or shell metacharacters. On the host (after migrations succeed and right before rolling the services):
+
+- `deploy.sh` rewrites `CROVE_MODULES=<list>` into the env file (replacing the existing assignment, removing any duplicate `CROVE_MODULES` lines, or appending the line if absent), while keeping all other lines, comments, CRLF line endings, inode, owner and mode 600.
+- If the env file already holds the exact `CROVE_MODULES=<list>` line (with no duplicates), nothing is written and no backup is made.
+- When either `--auth-settings` or `--modules` changes the env file (or both are passed together), `deploy.sh` takes **one** dated pre-deploy backup (`<env file>.bak-<UTC time>-<random>`, mode 600), records the post-edit digest in `.deploy/env-backup`, and prunes older copies with `CROVE_KEEP_ENV_BACKUPS`.
+
+**`/api/config` check and rollback.** When `--modules` is given (and on the workflow's public smoke test via `SMOKE_EXPECT_MODULES`), `deploy.sh smoke` inspects `/api/config`'s `"modules"` JSON array and demands the exact set `{kernel}` union the given modules (`kernel` is always active in the runtime). If `/api/config` reports any missing or extra module, the smoke check fails and triggers automatic rollback:
+
+- A failure in compose validation, service startup, `/readyz`, or loopback smoke restores the pre-deploy dated backup (and clears `SMOKE_EXPECT_MODULES`) before rolling back the previous release.
+- A failure in the public smoke test triggers `deploy.sh rollback`, which restores the pre-deploy dated backup when the env file has not been edited since the deploy (if edited since, it leaves the file alone and names the backup). Manual `deploy.sh rollback` clears `SMOKE_EXPECT_MODULES` and behaves the same way.
+
 ## What the smoke test checks
 
 `deploy.sh smoke <base url> [build id]` (it needs only bash and curl, so you can run it from any machine):
@@ -98,7 +122,7 @@ Opt-in. A pilot that signs in at a remote identity provider (Supabase Auth, [pil
 | `/healthz` answers `{"ok":true}` | the process serves |
 | `/readyz` answers `{"ready":true}` | the schema is complete and Supabase Auth's grants are in place |
 | with a build id: `/version` answers that `build` and `"migrationsMissing":[]` | the new image answers, not an old container that is still running, and its migrations are all in the ledger |
-| `/api/config` answers with `authUrl` | the API and its configuration load |
+| `/api/config` answers with `authUrl` (and `modules` when `SMOKE_EXPECT_MODULES` is set) | the API and its configuration load, and the running containers match the configured modules |
 | `/auth/v1/health` answers | Supabase Auth is reachable through the kernel's proxy, the path every sign-in takes |
 | `/login` serves the app shell and its first script bundle loads | the sign-in page loads in a browser |
 
@@ -203,6 +227,7 @@ Create the environment (`pilot`, later `beta`) under Settings, Environments. A r
 | `DEPLOY_PUBLIC_URL` | variable | no | the public origin, for example `https://crove.example.com`, for the smoke test through the proxy |
 | `DEPLOY_REQUIRED_CHECKS` | variable | no | check runs that must be green on the commit, one per line |
 | `DEPLOY_IDP_ENVIRONMENT`, `DEPLOY_IDP_AUTH_*` and `DEPLOY_IDP_PUBLIC_AUTH_*` (variables), `DEPLOY_IDP_AUTH_ALLOWED_EMAILS` (secret) | variable and one secret | no | the pilot's remote identity provider (section "Identity provider settings in the deploy"); in the environment only, never at repository or organization level |
+| `DEPLOY_MODULES_ENVIRONMENT`, `DEPLOY_CROVE_MODULES` | variable | no | opt-in module list `CROVE_MODULES` for the host env file (section "Module settings in the deploy"); in the environment only, never at repository or organization level |
 | `SMOKE_EMAIL`, `SMOKE_PASSWORD` | secret | no | the smoke account (section "Smoke account"); without them the public smoke test does not sign in |
 | `SMOKE_ORG` | variable | with the two above | the smoke org's slug |
 
