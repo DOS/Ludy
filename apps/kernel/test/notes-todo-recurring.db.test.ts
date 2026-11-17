@@ -358,7 +358,7 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
     const afterRecompleteA = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: seqA.todoId });
     expect(afterRecompleteA.nextTodoId ?? null).toBeNull();
 
-    // Default Monthly rule on Jan 30 preserves day 30 after passing through shorter February (Jan 30 -> Feb 28 -> Mar 30).
+    // Default Monthly rule on Jan 30 persists day 30 across shorter February even if the root row is trashed and purged.
     const jan30 = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
       title: 'Monthly on 30th',
       dueOn: '2026-01-30',
@@ -366,10 +366,76 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
       recurrence: { freq: 'monthly', interval: 1 },
     });
     const febRes = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: jan30.todoId });
+    expect(febRes.nextDueOn).toBe('2026-02-28');
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.delete', { todoId: jan30.todoId });
+    await admin((c) => c.query(`DELETE FROM crove_notes.todo WHERE org_id = $1 AND id = $2`, [o.orgId, jan30.todoId]));
     const febTodo = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: febRes.nextTodoId as string });
     expect(febTodo.dueOn).toBe('2026-02-28');
+    expect(febTodo.recurrence).toEqual({ freq: 'monthly', interval: 1, byMonthDay: 30 });
     const marRes = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: febTodo.id });
+    expect(marRes.nextDueOn).toBe('2026-03-30');
     const marTodo = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: marRes.nextTodoId as string });
     expect(marTodo.dueOn).toBe('2026-03-30');
+
+    // Moving the active occurrence backward before an earlier completed date keeps the series advancing cleanly.
+    const moveRoot = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Backwards reschedule keeps series alive',
+      dueOn: '2027-05-17',
+      timeZone: 'Asia/Ho_Chi_Minh',
+      recurrence: { freq: 'daily', interval: 1 },
+    });
+    const moveSecond = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: moveRoot.todoId });
+    await o.exec<TodoRescheduled>(o.mine, 'notes.todo.reschedule', { todoIds: [moveSecond.nextTodoId as string], dueOn: '2027-05-16' });
+    const moveThird = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: moveSecond.nextTodoId as string });
+    expect(moveThird.nextTodoId).toBeTruthy();
+    expect(moveThird.nextDueOn).toBe('2027-05-18');
+
+    // Transactional undo (`undoNextTodoId`): rejects edits to the spawned row without deleting it or leaving partial state,
+    // rolls back cleanly when source row was trashed, and atomically undoes untouched pairs.
+    await expect(
+      o.exec(o.mine, 'notes.todo.reopen', { todoId: moveSecond.nextTodoId as string, undoNextTodoId: moveThird.nextTodoId as string }),
+    ).resolves.toMatchObject({ todoId: moveSecond.nextTodoId });
+    const undoneThird = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: moveThird.nextTodoId as string });
+    expect(undoneThird.deletedAt).not.toBeNull();
+
+    const atomicRoot = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Atomic undo guard',
+      dueOn: '2027-06-01',
+      timeZone: 'Asia/Ho_Chi_Minh',
+      recurrence: { freq: 'daily', interval: 1 },
+    });
+    const atomicNext = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: atomicRoot.todoId });
+    const atomicSpawned = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: atomicNext.nextTodoId as string });
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.update', {
+      todoId: atomicSpawned.id,
+      revision: atomicSpawned.revision,
+      title: 'Edited spawned title',
+      details: '',
+      checklist: [],
+      dueOn: atomicSpawned.dueOn,
+      dueTime: atomicSpawned.dueTime,
+      timeZone: atomicSpawned.timeZone,
+    });
+    await expect(
+      o.exec(o.mine, 'notes.todo.reopen', { todoId: atomicRoot.todoId, undoNextTodoId: atomicSpawned.id }),
+    ).rejects.toMatchObject({ code: 'TODO_UNDO_SERIES_ADVANCED', status: 409 });
+    const stillOpenSpawned = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: atomicSpawned.id });
+    expect(stillOpenSpawned.deletedAt).toBeNull();
+    expect(stillOpenSpawned.status).toBe('open');
+
+    // If source row was trashed while spawned row is untouched, undo fails cleanly and rolls back soft-delete.
+    const rollbackRoot = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Atomic rollback guard',
+      dueOn: '2027-06-10',
+      timeZone: 'Asia/Ho_Chi_Minh',
+      recurrence: { freq: 'daily', interval: 1 },
+    });
+    const rollbackNext = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: rollbackRoot.todoId });
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.delete', { todoId: rollbackRoot.todoId });
+    await expect(
+      o.exec(o.mine, 'notes.todo.reopen', { todoId: rollbackRoot.todoId, undoNextTodoId: rollbackNext.nextTodoId as string }),
+    ).rejects.toMatchObject({ code: 'TODO_IN_TRASH', status: 409 });
+    const rolledBackNext = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: rollbackNext.nextTodoId as string });
+    expect(rolledBackNext.deletedAt).toBeNull();
   });
 });

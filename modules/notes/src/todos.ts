@@ -32,6 +32,7 @@ import {
   zTodoLinkRemove,
   zTodoList,
   zTodoRef,
+  zTodoReopen,
   zTodoReorder,
   zTodoReschedule,
   zTodoUpdate,
@@ -458,104 +459,88 @@ export const todoComplete = defineCommand({
     let nextDueOn: string | null = null;
     if (rule !== null && !stopSeries && seriesId !== null) {
       const anchorDate = before.due_on ?? zonedDate(before.time_zone, ctx.now.getTime());
-      let targetMonthDay: number | undefined;
-      if (rule.freq === 'monthly' && rule.byMonthDay === undefined && before.due_on !== null) {
-        const [y, m, d] = before.due_on.split('-').map(Number) as [number, number, number];
-        const lastDayOfAnchorMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
-        if (d === lastDayOfAnchorMonth) {
-          const rootRow = await ctx.trx
-            .selectFrom('crove_notes.todo')
-            .select('due_on')
-            .where('org_id', '=', ctx.orgId)
-            .where('series_id', '=', seriesId)
-            .where('due_on', 'is not', null)
-            .where('deleted_at', 'is', null)
-            .orderBy('created_at', 'asc')
-            .orderBy('id', 'asc')
-            .limit(1)
-            .executeTakeFirst();
-          if (rootRow?.due_on) {
-            const rootDay = Number(rootRow.due_on.split('-')[2]);
-            if (Number.isInteger(rootDay) && rootDay > d) targetMonthDay = rootDay;
-          }
-        }
-      }
-      const resolvedNextDueOn = nextTodoOccurrenceDate(rule, anchorDate, targetMonthDay);
-      nextDueOn = resolvedNextDueOn;
-      const beforeCreatedAt = new Date(before.created_at);
-      // Do not spawn if an occurrence for nextDueOn already exists OR if a newer open occurrence in the series is
-      // already active. Earlier reopened occurrences never block a newer occurrence from advancing the series.
-      const existingSibling = await ctx.trx
+      const beforeCreatedAt = new Date(before.created_at).getTime();
+      const siblings = await ctx.trx
         .selectFrom('crove_notes.todo')
-        .select('id')
+        .select(['id', 'due_on', 'created_at'])
         .where('org_id', '=', ctx.orgId)
         .where('series_id', '=', seriesId)
         .where('id', '<>', before.id)
         .where('deleted_at', 'is', null)
-        .where((eb) =>
-          eb.or([
-            eb('due_on', '=', resolvedNextDueOn),
-            eb.and([
-              eb('status', '=', 'open'),
-              eb.or([
-                eb('created_at', '>', beforeCreatedAt),
-                eb.and([eb('created_at', '=', beforeCreatedAt), eb('id', '>', before.id)]),
-                eb('due_on', '>=', resolvedNextDueOn),
-              ]),
-            ]),
-          ]),
-        )
-        .executeTakeFirst();
+        .execute();
 
-      if (!existingSibling) {
-        const shifted = shiftTodoSchedule(
-          {
-            dueOn: before.due_on,
-            dueAt: before.due_at === null ? null : new Date(before.due_at),
-            timeZone: before.time_zone,
-            remindAt: before.remind_at === null ? null : new Date(before.remind_at),
-          },
-          nextDueOn,
-        );
-        const resetChecklist = checklistOf(steps(before.checklist).map((s) => ({ text: s.text, done: false })));
-        let readableSourceNoteId: string | null = null;
-        if (before.source_note_id !== null) {
-          const noteRow = await ctx.trx
-            .selectFrom('crove_notes.note')
-            .select('id')
-            .where('org_id', '=', ctx.orgId)
-            .where('id', '=', before.source_note_id)
-            .executeTakeFirst();
-          readableSourceNoteId = noteRow?.id ?? null;
+      // Do not spawn if a newer non-deleted occurrence already exists in the series (reopened old rows must not
+      // duplicate the series, whereas older reopened rows do not block a newer occurrence from spawning ahead).
+      const hasNewerSibling = siblings.some((r) => {
+        const createdMs = new Date(r.created_at).getTime();
+        return createdMs > beforeCreatedAt || (createdMs === beforeCreatedAt && r.id > before.id);
+      });
+
+      if (!hasNewerSibling) {
+        const occupied = new Set(siblings.map((r) => r.due_on).filter((d): d is string => d !== null));
+        let candidate = nextTodoOccurrenceDate(rule, anchorDate);
+        for (let step = 0; step < 500 && occupied.has(candidate); step++) {
+          candidate = nextTodoOccurrenceDate(rule, candidate);
         }
-        const rows = await ownKeys(ctx, null);
-        const at = rows.findIndex((r) => r.id === before.id);
-        const sortKey = at >= 0 ? await placeBetween(ctx, rows, at, at + 1) : await placeBetween(ctx, rows, -1, 0);
-        const nextRow = await ctx.trx
-          .insertInto('crove_notes.todo')
-          .values({
-            org_id: ctx.orgId,
-            owner_user_id: userId,
-            title: before.title,
-            details: before.details,
-            checklist: resetChecklist,
-            status: 'open',
-            due_on: shifted.dueOn,
-            due_at: shifted.dueAt,
-            time_zone: before.time_zone,
-            remind_at: shifted.remindAt,
-            reminded_at: passedAt(shifted.remindAt, ctx.now),
-            sort_key: sortKey,
-            source_note_id: readableSourceNoteId,
-            recurrence: JSON.stringify(rule),
-            series_id: seriesId,
-            tainted: before.tainted,
-            created_at: ctx.now,
-            updated_at: ctx.now,
-          })
-          .returning('id')
-          .executeTakeFirstOrThrow();
-        nextTodoId = nextRow.id;
+        if (!occupied.has(candidate)) {
+          nextDueOn = candidate;
+          // When a default monthly schedule passes through a shorter month (e.g. Jan 30 -> Feb 28), persist the
+          // original day-of-month in the spawned rule so subsequent months return to day 30 even if history is purged.
+          const anchorDay = before.due_on !== null ? Number(before.due_on.split('-')[2]) : 0;
+          const candidateDay = Number(candidate.split('-')[2]);
+          const spawnedRule =
+            rule.freq === 'monthly' && rule.byMonthDay === undefined && anchorDay > candidateDay
+              ? { ...rule, byMonthDay: anchorDay }
+              : rule;
+          const shifted = shiftTodoSchedule(
+            {
+              dueOn: before.due_on,
+              dueAt: before.due_at === null ? null : new Date(before.due_at),
+              timeZone: before.time_zone,
+              remindAt: before.remind_at === null ? null : new Date(before.remind_at),
+            },
+            candidate,
+          );
+          const resetChecklist = checklistOf(steps(before.checklist).map((s) => ({ text: s.text, done: false })));
+          let readableSourceNoteId: string | null = null;
+          if (before.source_note_id !== null) {
+            const noteRow = await ctx.trx
+              .selectFrom('crove_notes.note')
+              .select('id')
+              .where('org_id', '=', ctx.orgId)
+              .where('id', '=', before.source_note_id)
+              .executeTakeFirst();
+            readableSourceNoteId = noteRow?.id ?? null;
+          }
+          const rows = await ownKeys(ctx, null);
+          const at = rows.findIndex((r) => r.id === before.id);
+          const sortKey = at >= 0 ? await placeBetween(ctx, rows, at, at + 1) : await placeBetween(ctx, rows, -1, 0);
+          const nextRow = await ctx.trx
+            .insertInto('crove_notes.todo')
+            .values({
+              org_id: ctx.orgId,
+              owner_user_id: userId,
+              title: before.title,
+              details: before.details,
+              checklist: resetChecklist,
+              status: 'open',
+              due_on: shifted.dueOn,
+              due_at: shifted.dueAt,
+              time_zone: before.time_zone,
+              remind_at: shifted.remindAt,
+              reminded_at: passedAt(shifted.remindAt, ctx.now),
+              sort_key: sortKey,
+              source_note_id: readableSourceNoteId,
+              recurrence: JSON.stringify(spawnedRule),
+              series_id: seriesId,
+              tainted: before.tainted,
+              created_at: ctx.now,
+              updated_at: ctx.now,
+            })
+            .returning('id')
+            .executeTakeFirstOrThrow();
+          nextTodoId = nextRow.id;
+        }
       }
     }
 
@@ -570,24 +555,59 @@ export const todoComplete = defineCommand({
     });
     return {
       ...written(row),
-      ...(nextTodoId !== null ? { nextTodoId } : {}),
+      ...(nextTodoId !== null ? { nextTodoId, nextDueOn } : {}),
     };
   },
 });
 
 export const todoReopen = defineCommand({
   name: 'notes.todo.reopen',
-  input: zTodoRef,
+  input: zTodoReopen,
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
   target,
   handler: async (ctx, input): Promise<TodoWritten> => {
     userOf(ctx.actor);
-    const before = await load(ctx, input.todoId, true);
+    const undoNextTodoId = input.undoNextTodoId;
+    if (undoNextTodoId !== undefined && undoNextTodoId === input.todoId) {
+      throw new DomainError('TODO_UNDO_SERIES_ADVANCED', 409, 'Lượt kế tiếp đã được chỉnh sửa hoặc xử lý rồi');
+    }
+    // Lock rows in canonical UUID order when undoing a recurring spawn atomically to stay deadlock-free.
+    let before: SummaryRow & { details: string | null };
+    let nextRow: (SummaryRow & { details: string | null }) | undefined;
+    if (undoNextTodoId !== undefined && undoNextTodoId < input.todoId) {
+      nextRow = await load(ctx, undoNextTodoId, true);
+      before = await load(ctx, input.todoId, true);
+    } else {
+      before = await load(ctx, input.todoId, true);
+      if (undoNextTodoId !== undefined) nextRow = await load(ctx, undoNextTodoId, true);
+    }
+
     assertNotInTrash(before);
-    if (before.status === 'open') return written(before);
-    if (before.status !== 'done') throw new DomainError('TODO_NOT_CHANGEABLE', 409, 'Việc này đã được giao hoặc đã hủy');
+    if (undoNextTodoId !== undefined) {
+      if (before.status !== 'done') throw new DomainError('TODO_NOT_CHANGEABLE', 409, 'Việc này đã được mở lại hoặc thay đổi');
+      if (
+        !nextRow ||
+        nextRow.deleted_at !== null ||
+        nextRow.status !== 'open' ||
+        nextRow.revision !== 1 ||
+        before.series_id === null ||
+        nextRow.series_id !== before.series_id
+      ) {
+        throw new DomainError('TODO_UNDO_SERIES_ADVANCED', 409, 'Lượt kế tiếp đã được chỉnh sửa hoặc xử lý rồi');
+      }
+      await ctx.trx
+        .updateTable('crove_notes.todo')
+        .set({ deleted_at: ctx.now, revision: nextRow.revision + 1, updated_at: ctx.now })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', undoNextTodoId)
+        .execute();
+    } else {
+      if (before.status === 'open') return written(before);
+      if (before.status !== 'done') throw new DomainError('TODO_NOT_CHANGEABLE', 409, 'Việc này đã được giao hoặc đã hủy');
+    }
+
     const row = await ctx.trx
       .updateTable('crove_notes.todo')
       .set({ status: 'open', done_at: null, reminded_at: reminderPassed(ctx.now), revision: before.revision + 1, updated_at: ctx.now })
@@ -595,7 +615,13 @@ export const todoReopen = defineCommand({
       .where('id', '=', input.todoId)
       .returning(['id', 'revision'])
       .executeTakeFirstOrThrow();
-    ctx.audit({ todoId: row.id, revision: row.revision, status: 'open', previousStatus: before.status });
+    ctx.audit({
+      todoId: row.id,
+      revision: row.revision,
+      status: 'open',
+      previousStatus: before.status,
+      ...(undoNextTodoId !== undefined ? { undoNextTodoId } : {}),
+    });
     return written(row);
   },
 });

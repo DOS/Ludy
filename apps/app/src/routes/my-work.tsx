@@ -962,22 +962,14 @@ export function MyWorkPage() {
     onSuccess: (result, v) => {
       if (v.what !== 'complete') return;
       const { title } = v;
-      const nextTodoId = (result as TodoCompleteResult).nextTodoId ?? null;
+      const completeRes = result as TodoCompleteResult;
+      const nextTodoId = completeRes.nextTodoId ?? null;
       if (nextTodoId && v.recurrence) {
-        const baseDue = v.dueOn ?? zonedDate(v.timeZone, Date.now());
-        const nextDue = nextTodoOccurrenceDate(v.recurrence, baseDue);
+        const nextDue = completeRes.nextDueOn ?? nextTodoOccurrenceDate(v.recurrence, v.dueOn ?? zonedDate(v.timeZone, Date.now()));
         toastWithUndo(
           t('recurrence.completedNextToast', { title, due: f.date(nextDue) }),
           t('undoneToast', { title }),
-          async () => {
-            const api = clientForOrg(slug).notes.todos;
-            const nextCurrent = await api.get({ todoId: nextTodoId }).catch(() => null);
-            if (!nextCurrent || nextCurrent.deletedAt !== null || nextCurrent.status !== 'open' || nextCurrent.revision !== 1) {
-              throw new Error(t('recurrence.undoSeriesAdvanced'));
-            }
-            await api.delete({ todoId: nextTodoId });
-            await api.reopen({ todoId: v.todoId });
-          },
+          () => clientForOrg(slug).notes.todos.reopen({ todoId: v.todoId, undoNextTodoId: nextTodoId }),
           { undo: common('undo'), failed: (reason) => common('undoFailed', { reason }) },
         );
         return;

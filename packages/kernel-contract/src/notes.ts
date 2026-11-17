@@ -202,6 +202,11 @@ export const zTodoUpdate = z
   .refine(dueTimeNeedsDay, DUE_TIME_NEEDS_DAY);
 export type TodoUpdateInput = z.input<typeof zTodoUpdate>;
 export const zTodoRef = z.strictObject({ todoId: zId });
+export const zTodoReopen = z.strictObject({
+  todoId: zId,
+  undoNextTodoId: zId.optional(),
+});
+export type TodoReopenInput = z.input<typeof zTodoReopen>;
 export const zTodoComplete = z.strictObject({
   todoId: zId,
   stopSeries: z.boolean().optional(),
@@ -234,6 +239,7 @@ export const zTodoWritten = z.object({ todoId: z.string(), revision: z.number().
 export type TodoWritten = z.infer<typeof zTodoWritten>;
 export const zTodoCompleteResult = zTodoWritten.extend({
   nextTodoId: z.string().nullable().optional(),
+  nextDueOn: z.string().nullable().optional(),
 });
 export type TodoCompleteResult = z.infer<typeof zTodoCompleteResult>;
 export const zTodoRescheduled = z.object({
@@ -421,7 +427,7 @@ export function parseTodoRecurrence(value: unknown): TodoRecurrence | null {
 }
 
 /** Computes the next local due date (`YYYY-MM-DD`) strictly after `anchorDate` for a recurring personal to-do. */
-export function nextTodoOccurrenceDate(rule: TodoRecurrence, anchorDate: string, targetMonthDay?: number): string {
+export function nextTodoOccurrenceDate(rule: TodoRecurrence, anchorDate: string): string {
   if (rule.freq === 'daily') {
     return addTodoLocalDays(anchorDate, rule.interval);
   }
@@ -435,7 +441,7 @@ export function nextTodoOccurrenceDate(rule: TodoRecurrence, anchorDate: string,
     return sameWeekCandidate > anchorDate ? sameWeekCandidate : addTodoLocalDays(sameWeekCandidate, rule.interval * 7);
   }
   const [year, month, anchorDay] = parseLocalDateParts(anchorDate);
-  const targetDay = rule.byMonthDay ?? targetMonthDay ?? anchorDay;
+  const targetDay = rule.byMonthDay ?? anchorDay;
   if (rule.byMonthDay !== undefined && rule.byMonthDay !== null) {
     const sameMonthCandidate = resolveTodoMonthlyDate(year, month, targetDay);
     if (sameMonthCandidate > anchorDate) return sameMonthCandidate;

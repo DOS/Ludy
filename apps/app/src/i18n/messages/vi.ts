@@ -11588,6 +11588,7 @@ export const vi = {
       TODO_IN_TRASH: 'Việc này đang ở thùng rác; hãy khôi phục trước',
       TODO_REVISION_CONFLICT: 'Việc này vừa được sửa ở nơi khác; hãy tải lại trước khi lưu',
       TODO_NOT_CHANGEABLE: 'Việc này đã được giao hoặc đã hủy',
+      TODO_UNDO_SERIES_ADVANCED: 'Lượt kế tiếp đã được chỉnh sửa hoặc xử lý rồi',
       TODO_REMINDER_PAST: 'Giờ nhắc đã qua; hãy chọn một giờ sắp tới',
       PROJECT_NOT_FOUND: 'Không tìm thấy dự án này',
       PROJECT_ARCHIVED: 'Dự án đã được lưu trữ nên không thể thay đổi nữa',

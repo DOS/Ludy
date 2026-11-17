@@ -11592,6 +11592,7 @@ export const en = {
       TODO_IN_TRASH: 'This to-do is in the trash; restore it first.',
       TODO_REVISION_CONFLICT: 'This to-do was just changed elsewhere; reload it before saving.',
       TODO_NOT_CHANGEABLE: 'This to-do was handed over or cancelled.',
+      TODO_UNDO_SERIES_ADVANCED: 'The next occurrence has already been edited or updated.',
       TODO_REMINDER_PAST: 'That reminder time has passed; pick one ahead.',
       PROJECT_NOT_FOUND: 'This project was not found.',
       PROJECT_ARCHIVED: 'This project is archived and cannot be modified.',
