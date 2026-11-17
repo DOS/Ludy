@@ -215,6 +215,28 @@ function formatProbationSummary(t: ReturnType<typeof useTranslations<'hrEmployee
   return parts.length > 0 ? parts.join(' - ') : '-';
 }
 
+export function decodeBase64Bytes(base64: string): Uint8Array<ArrayBuffer> {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+export function triggerContractPdfDownload(result: { filename: string; contentType: string; pdfBase64: string }): void {
+  const bytes = decodeBase64Bytes(result.pdfBase64);
+  const blob = new Blob([bytes], { type: result.contentType || 'application/pdf' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = result.filename;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export function TermsFields({
   id,
   value,
@@ -981,6 +1003,12 @@ export function Detail({ employeeId, owner, onClose, departments }: { employeeId
     },
   });
   const addTerms = useMutation(run(() => client.hr.payroll.employments.add({ employeeId, ...buildEmploymentPayload(terms) }), () => setTerms(blankTerms())));
+  const downloadContractPdf = useMutation({
+    mutationFn: (termsId: string) => client.hr.employee.contractPdf({ employeeId, termsId }),
+    onSuccess: (result) => {
+      triggerContractPdfDownload(result);
+    },
+  });
   const contractErrors = previewContractCheck(terms).filter((item) => item.severity === 'error');
   const addDependent = useMutation(
     run(
@@ -1288,7 +1316,14 @@ export function Detail({ employeeId, owner, onClose, departments }: { employeeId
       )}
 
       <h3 className="mt-5 text-sm font-medium text-foreground">{t('termsTitle')}</h3>
-      <DataTable head={[t('effectiveFrom'), t('contractType'), t('contractTermCol'), t('probationCol'), t('region'), t('baseWage')]} numeric={[5]}>
+      <DataTable
+        head={
+          !e.erased
+            ? [t('effectiveFrom'), t('contractType'), t('contractTermCol'), t('probationCol'), t('region'), t('baseWage'), '']
+            : [t('effectiveFrom'), t('contractType'), t('contractTermCol'), t('probationCol'), t('region'), t('baseWage')]
+        }
+        numeric={[5]}
+      >
         {e.employments.map((row) => (
           <TableRow key={row.id} data-testid="hr-terms-row">
             <TableCell className="px-4 py-3">{f.date(row.effectiveFrom)}</TableCell>
@@ -1297,9 +1332,28 @@ export function Detail({ employeeId, owner, onClose, departments }: { employeeId
             <TableCell className="px-4 py-3">{formatProbationSummary(t, f, row)}</TableCell>
             <TableCell className="px-4 py-3">{t('regionOption', { region: row.region })}</TableCell>
             <TableCell className={NUM}>{f.money(row.baseWage, 'VND')}</TableCell>
+            {!e.erased && (
+              <TableCell className="px-4 py-3 text-right">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  loading={downloadContractPdf.isPending && downloadContractPdf.variables === row.id}
+                  onClick={() => downloadContractPdf.mutate(row.id)}
+                  data-testid="hr-terms-contract-pdf"
+                >
+                  {t('downloadContractPdf')}
+                </Button>
+              </TableCell>
+            )}
           </TableRow>
         ))}
       </DataTable>
+      {downloadContractPdf.error && (
+        <div className="mt-2" role="alert" data-testid="hr-terms-contract-pdf-error">
+          <ErrorText>{errorMessage(downloadContractPdf.error)}</ErrorText>
+        </div>
+      )}
       {active && (
         <div className="mt-3 grid gap-3 sm:grid-cols-4">
           <TermsFields id="hr-terms" value={terms} onChange={(patch) => setTerms((s) => ({ ...s, ...patch }))} />

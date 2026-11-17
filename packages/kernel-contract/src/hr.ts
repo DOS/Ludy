@@ -348,3 +348,21 @@ export const zHrEmployeeSeveranceResult = z.object({
   rulesUsed: z.array(zHrLaborRuleRef),
 });
 export type HrEmployeeSeveranceResult = z.infer<typeof zHrEmployeeSeveranceResult>;
+
+export const zHrEmployeeContractPdfAsk = z.strictObject({
+  employeeId: zId,
+  termsId: zId,
+});
+export type HrEmployeeContractPdfAsk = z.infer<typeof zHrEmployeeContractPdfAsk>;
+
+export const zHrEmployeeContractPdf = z.strictObject({
+  filename: z.string(),
+  contentType: z.literal('application/pdf'),
+  pdfBase64: z.string(),
+  title: z.string(),
+  contractNumber: z.string().nullable(),
+  employeeName: z.string(),
+  employeeEmail: z.string().nullable(),
+});
+export type HrEmployeeContractPdf = z.infer<typeof zHrEmployeeContractPdf>;
+

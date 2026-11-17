@@ -1353,6 +1353,7 @@ export const vi = {
     termsTitle: 'Hợp đồng và lương',
     termsHint: 'Mỗi lần đổi là một dòng mới; các tháng cũ giữ nguyên số liệu.',
     addTerms: 'Thêm dòng mới',
+    downloadContractPdf: 'Tải hợp đồng PDF',
     effectiveFrom: 'Có hiệu lực từ',
     contractType: 'Loại hợp đồng',
     region: 'Vùng',
@@ -12890,6 +12891,9 @@ export const vi = {
         archive: 'Lưu trữ một phòng ban',
         edit: 'Sửa tên, mã hoặc bộ phận hạch toán mặc định của phòng ban',
         list: 'Xem danh sách phòng ban, quân số và tổng lương cơ bản',
+      },
+      employee: {
+        contract_pdf: 'Tạo và tải bản PDF hợp đồng lao động từ dòng hợp đồng của một nhân viên',
       },
       payroll: {
         bank_template: {

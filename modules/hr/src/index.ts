@@ -12,6 +12,7 @@ import { hrRecruitingCommands, hrRecruitingQueries } from './recruiting.ts';
 
 export * from './departments.ts';
 export * from './employees.ts';
+export * from './contract-pdf.ts';
 export * from './leave.ts';
 export * from './recruiting.ts';
 export * from './payroll-run.ts';
