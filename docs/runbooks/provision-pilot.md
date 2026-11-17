@@ -88,6 +88,10 @@ cat > lifecycle.json <<'EOF'
       "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 1 } },
     { "ID": "crove-staging-markers", "Status": "Enabled", "Filter": { "Prefix": "staging/" },
       "Expiration": { "ExpiredObjectDeleteMarker": true } },
+    { "ID": "crove-tmp", "Status": "Enabled", "Filter": { "Prefix": "tmp/" },
+      "Expiration": { "Days": 1 }, "NoncurrentVersionExpiration": { "NoncurrentDays": 1 } },
+    { "ID": "crove-tmp-markers", "Status": "Enabled", "Filter": { "Prefix": "tmp/" },
+      "Expiration": { "ExpiredObjectDeleteMarker": true } },
     { "ID": "crove-inbound-deleted", "Status": "Enabled", "Filter": { "Prefix": "inbound/" },
       "NoncurrentVersionExpiration": { "NoncurrentDays": 7 }, "Expiration": { "ExpiredObjectDeleteMarker": true } },
     { "ID": "crove-export-deleted", "Status": "Enabled", "Filter": { "Prefix": "export/" },
@@ -115,13 +119,14 @@ aws s3api put-bucket-cors --bucket <bucket> --cors-configuration file://cors.jso
 | `org/` | documents and attachments, the evidence | none: Ludy never deletes them, and their versions are the record. The worker holds the original file of every posted invoice with Object Lock in GOVERNANCE mode for `EVIDENCE_LOCK_DAYS` from its posting (#1009, [evidence-holds.md](evidence-holds.md)) |
 | `org/` with the tag `ludy-retention=expired` | a marketplace original after its 90 days (#2789): Ludy tags the object, then deletes it | `crove-retention-expired`: the noncurrent version goes 1 day after the delete. An Object Lock hold on a version still wins until its retain-until date; a version Ludy never tagged is untouched. `crove-org-markers` removes a delete marker only when no version of the key is left; a retention run deletes twice, so a second marker can stay (a few bytes, harmless; do not add a noncurrent expiry on `org/` to clear it) |
 | `staging/` | browser uploads before the server checks them (5 minutes) | expire after a day, with their old versions and delete markers |
+| `tmp/` | the temporary sealed video while its audio is extracted (#3337, #3341): `tmp/<org_id>/<sha256>`, encrypted with a key that lives only in memory, so a copy a crash left is unreadable | the worker's daily sweep deletes any object older than 6 hours (`TMP_BLOB_MAX_AGE_HOURS`); the lifecycle rule `crove-tmp` expires it after a day with its old versions and delete markers, as a second net |
 | `inbound/` | raw inbound mail until it is filed (the worker deletes it after 30 days at most) | delete old versions 7 days after Ludy deleted the object |
 | `export/` | sealed org exports (`EXPORT_RETENTION_DAYS`, then the worker deletes them) | the same, 7 days |
 
 **Applying the retention rules to a bucket that is already in use is a production step: the owner approves it, and the Platform PO runs it.** Checklist for that step:
 
 - [ ] **before the release that carries #2789 is deployed**, the access key has `s3:PutObjectTagging` on the objects (and nothing more for tagging), added by the account that owns the bucket policy. Without it every marketplace retention run fails closed: it deletes nothing, alerts, and retries the next night, so originals stay readable past 90 days until the permission is there;
-- [ ] `put-bucket-lifecycle-configuration` replaces the whole configuration: start from `get-bucket-lifecycle-configuration`, keep every existing rule, and add `crove-retention-expired` and `crove-org-markers`;
+- [ ] `put-bucket-lifecycle-configuration` replaces the whole configuration: start from `get-bucket-lifecycle-configuration`, keep every existing rule, and add `crove-retention-expired` and `crove-org-markers` (and, from the release that carries #3341, `crove-tmp` and `crove-tmp-markers`);
 - [ ] a drill object: put a file under `org/`, delete it through a retention run, read `list-object-versions` and see the noncurrent version carry the tag `ludy-retention=expired` (`get-object-tagging --version-id`), and a day after the rule first runs see it gone, while a version under Object Lock is still there;
 - [ ] **originals deleted before this release** left their version untagged and noncurrent. Either accept that leftover, or tag it once, as an admin account (not Ludy's key): list the files with `SELECT storage_key FROM crove_kernel.file WHERE original_deleted_at IS NOT NULL`, and for each key whose current version is a delete marker (`list-object-versions --prefix <key>`), run `put-object-tagging --version-id <noncurrent version> --tagging 'TagSet=[{Key=ludy-retention,Value=expired}]'`. Never tag a version of a key that still has a live current object, and never a version under Object Lock you mean to keep (the lock still wins, so tagging one only lets it go at its retain-until date). The owner approves this step and the Platform PO runs it;
 - [ ] know the limit: only the version that is current at the retention delete is tagged. An older noncurrent version of the same key (left by an earlier ordinary delete, such as the cleanup of a failed write) is not expired by the rule; the drill object must start from a key with one version;

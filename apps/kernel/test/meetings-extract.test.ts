@@ -134,7 +134,11 @@ describe('extractAudioFromVideo', () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  const filesLeft = async () => readdir(join(root, 'org', orgId)).catch(() => [] as string[]);
+  // Nothing of the temporary video stays on disk, under tmp/ (where it is sealed since #3341) or org/ (where it must never be).
+  const filesLeft = async () => [
+    ...(await readdir(join(root, 'tmp', orgId)).catch(() => [] as string[])),
+    ...(await readdir(join(root, 'org', orgId)).catch(() => [] as string[])),
+  ];
   async function* pieces(...list: Uint8Array[]) {
     for (const piece of list) yield piece;
   }
@@ -175,6 +179,8 @@ describe('extractAudioFromVideo', () => {
     expect(out).toEqual({ audio: opus, durationSeconds: 3 });
     expect(seen?.equals(video)).toBe(true);
     expect(stored).toHaveLength(1);
+    // The temporary video lives under its own tmp/ prefix, so the retention sweep can reach a leftover and no org/ listing ever shows it (#3341).
+    expect(stored[0]).toMatch(new RegExp(`^tmp/${orgId}/[0-9a-f]{64}$`));
     expect(deleted).toEqual(stored);
     expect(await filesLeft()).toEqual([]);
     expect(key.equals(Buffer.alloc(32))).toBe(true);
