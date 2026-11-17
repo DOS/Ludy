@@ -593,7 +593,7 @@ function SettlementPayment({ runId, kind, step, canAsk }: { runId: string; kind:
   );
 }
 
-function Settlement({ runId }: { runId: string }) {
+export function Settlement({ runId }: { runId: string }) {
   const t = useTranslations('hrPayroll');
   const { slug } = useParams({ strict: false }) as { slug: string };
   const state = useQuery(orpc.hr.payroll.settlement.queryOptions({ input: { runId } }));
@@ -629,7 +629,7 @@ function Settlement({ runId }: { runId: string }) {
           </div>
           {post.error && <ErrorText>{errorMessage(post.error)}</ErrorText>}
           {s.posting.status === 'reversed' && <p className="mt-2 text-sm text-muted-foreground">{t('settleReversedNote')}</p>}
-          {s.posting.status === 'posted' || (s.posting.status === 'reversed' && PAYROLL_PAYMENT_KINDS.some((k) => s.payments[k].status !== 'none')) ? (
+          {s.posting.status === 'posted' || PAYROLL_PAYMENT_KINDS.some((k) => s.payments[k].status !== 'none') ? (
             <ul className="mt-3 divide-y border-t" data-testid="hr-settle-payments">
               {PAYROLL_PAYMENT_KINDS.map((kind) => (
                 <SettlementPayment key={kind} runId={runId} kind={kind} step={s.payments[kind]} canAsk={s.posting.status === 'posted'} />

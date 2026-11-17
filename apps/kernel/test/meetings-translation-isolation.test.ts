@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The database side of "a translation is never a source" (meetings integrations E1, #3184): the follow-up mail's facts, the search across meetings and every definer that reads
 // meeting text name the original rows only. The only migrations that name the translation table are the one that makes it (with the functions that delete from it), the org
-// purge's list in each restatement of it, and the one that gives it its second kind and its transcript triggers (E2, #3185, which names it to widen the kind and to delete from it); a later migration that names it is a visible change here, which only an owner decision moves. (The source side is modules/meetings/test/translation-isolation.test.ts.)
+// purge's list in each restatement of it, and the one that gives it its second kind and its transcript triggers (E2, #3185, which names it to widen the kind and to delete from it); a later migration that names it is a visible change here, which only an owner decision moves. The latest entry is #3194's: the 30-day purge of a removed member's Vy rows deletes the member's translations (the follow-up the E1 plan line recorded, promoted by the Meetings PO on 2026-11-17 under the owner's core-first direction); it reads only org_id, member_user_id and created_at, never the body, so the table is still never a source. (The source side is modules/meetings/test/translation-isolation.test.ts.)
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,7 +14,7 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
     const naming = readdirSync(MIGRATIONS)
       .filter((name) => name.endsWith('.sql') && /crove_meetings\.translation\b/.test(readFileSync(join(MIGRATIONS, name), 'utf8')))
       .map((name) => name.replace(/^\d+_/, ''));
-    // The org purge's list names every tenant table, so each later restatement of it (A5, #3163: the rough notes table; B1, #3165: the calendar cache; A6, #3164: the member's webhook tables; B4, #3168; C1, #3173: the meeting platform import tables; #2591: projects; #3323: sign; #3394: payroll_leave_entry; #3412: hr departments; #3310 C3b: outbox_held; #3526: sign templates) names this one too, as the list's entry and nothing else.
+    // The org purge's list names every tenant table, so each later restatement of it (A5, #3163: the rough notes table; B1, #3165: the calendar cache; A6, #3164: the member's webhook tables; B4, #3168; C1, #3173: the meeting platform import tables; #2591: projects; #3323: sign; #3394: payroll_leave_entry; #3412: hr departments; #3310 C3b: outbox_held; #3526: sign templates) names this one too, as the list's entry and nothing else; the last two entries are the purge of a former member's Vy rows, which deletes by org and member and judges the latest exit by created_at (#3194), and the index that serves its reads.
     expect(naming).toEqual([
       'crove_meetings_translation.sql',
       'crove_kernel_org_purge_translation.sql',
@@ -31,6 +31,8 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       'crove_kernel_org_purge_outbox_held.sql',
       'crove_kernel_org_purge_hr_recruiting.sql',
       'crove_kernel_org_purge_sign_templates.sql',
+      'crove_meetings_translation_member_idx.sql',
+      'crove_kernel_member_vy_translation_purge.sql',
     ]);
   });
 });
