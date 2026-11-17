@@ -66,3 +66,5 @@ export const appOrigin = () => (typeof window === 'undefined' ? '' : window.loca
 
 /** The id of the card in Settings that holds the working hours and the event types: "Cài đặt lịch hẹn" links to it. */
 export const BOOKING_SETTINGS_ID = 'booking-settings';
+/** The id of the event types card in Settings: "Tạo loại lịch hẹn" links to it. */
+export const BOOKING_EVENT_TYPES_ID = 'booking-event-types';

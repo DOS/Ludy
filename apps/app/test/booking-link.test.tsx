@@ -138,7 +138,8 @@ describe('Lịch hẹn: the booking link', () => {
   it('with no active event type, the empty state leads to creating the first one', () => {
     const html = page('owner', [archived], []);
     expect(html).toContain(en.bookings.emptyNoType.title);
-    expect(html).toContain(`href="/o/acme/settings#booking-settings">${en.bookings.emptyNoType.action}<`);
+    // Creating the first type goes to the event types card; the hours link goes to the card above it.
+    expect(html).toContain(`href="/o/acme/settings#booking-event-types">${en.bookings.emptyNoType.action}<`);
     expect(html).not.toContain(`>${en.bookings.link.copy}<`);
   });
 
@@ -203,6 +204,10 @@ describe('Settings: event types and their link', () => {
     expect(rows[0]).toContain(`>${en.bookings.link.view}<`);
     expect(rows[1]).not.toContain(`>${en.bookings.link.copy}<`);
     expect(rows[1]).not.toContain('href="/-/b/acme/cu"');
+  });
+
+  it('marks the event types card as the target of "Tạo loại lịch hẹn"', () => {
+    expect(card([consult])).toContain('id="booking-event-types"');
   });
 
   it('offers the link to a viewer too: it is the public address', () => {

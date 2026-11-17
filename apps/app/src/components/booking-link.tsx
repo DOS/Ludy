@@ -4,14 +4,14 @@
 // copies the link and sends it to the client themselves. The link is the address the server already serves (`bookingLinkOf`).
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
 import type { EventType } from '@crove/kernel-contract';
 import { Button, buttonVariants } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { orpc } from '../lib/api.ts';
-import { appOrigin, BOOKING_SETTINGS_ID, bookingLinkOf } from '../lib/booking.ts';
+import { appOrigin, BOOKING_EVENT_TYPES_ID, BOOKING_SETTINGS_ID, bookingLinkOf } from '../lib/booking.ts';
 
 /** The booking link of one event type of the org. */
 export const bookingUrlOf = (orgSlug: string, type: Pick<EventType, 'slug'>) => bookingLinkOf(appOrigin(), orgSlug, type.slug);
@@ -20,13 +20,26 @@ export const bookingUrlOf = (orgSlug: string, type: Pick<EventType, 'slug'>) => 
 export function CopyBookingLinkButton({ url, title, onFail, variant = 'outline' }: { url: string; title?: string; onFail?: () => void; variant?: 'default' | 'outline' }) {
   const t = useTranslations('bookings.link');
   const [copied, setCopied] = useState(false);
+  // Where the caller has no field to select, the link itself shows for a manual copy (a plain-HTTP page, or a refused clipboard).
+  const [manual, setManual] = useState(false);
+  const field = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 2500);
+    return () => clearTimeout(timer);
+  }, [copied]);
+  useEffect(() => {
+    if (manual) field.current?.select();
+  }, [manual]);
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(url);
       setCopied(true);
+      setManual(false);
     } catch {
       setCopied(false);
-      onFail?.();
+      if (onFail) onFail();
+      else setManual(true);
     }
   };
   return (
@@ -37,6 +50,7 @@ export function CopyBookingLinkButton({ url, title, onFail, variant = 'outline' 
       <span role="status" className="sr-only">
         {copied ? t('copied') : ''}
       </span>
+      {manual && <Input ref={field} readOnly value={url} aria-label={t('field')} className="w-full min-w-48 font-mono text-xs" onFocus={(e) => e.target.select()} />}
     </>
   );
 }
@@ -51,10 +65,10 @@ export function OpenBookingPageLink({ url, title, label }: { url: string; title?
   );
 }
 
-/** "Cài đặt lịch hẹn": the card in Settings with the working hours and the event types. */
-export function BookingSettingsLink({ slug, children, className }: { slug: string; children: ReactNode; className?: string }) {
+/** "Cài đặt lịch hẹn": the working hours card in Settings, with the event types right below; `anchor` "eventTypes" goes to the event types card itself. */
+export function BookingSettingsLink({ slug, children, className, anchor = 'hours' }: { slug: string; children: ReactNode; className?: string; anchor?: 'hours' | 'eventTypes' }) {
   return (
-    <Link to="/o/$slug/settings" params={{ slug }} hash={BOOKING_SETTINGS_ID} className={className}>
+    <Link to="/o/$slug/settings" params={{ slug }} hash={anchor === 'eventTypes' ? BOOKING_EVENT_TYPES_ID : BOOKING_SETTINGS_ID} className={className}>
       {children}
     </Link>
   );

@@ -207,7 +207,8 @@ export function BookingsPage() {
   // A viewer changes no bookings and no event types: no link, no settings.
   const editor = org.data !== undefined && org.data.role !== 'viewer';
   const link = useBookingLink(slug, editor);
-  const empty = bookings.data?.length === 0;
+  // The link sits above the list unless the empty state of the upcoming tab carries it as its own action.
+  const emptyCarriesLink = editor && period === 'upcoming' && link.loaded && bookings.data?.length === 0;
   const settingsLink = 'text-link underline-offset-4 hover:underline';
 
   return (
@@ -224,7 +225,7 @@ export function BookingsPage() {
         }
       />
       {/* The link the owner sends to clients (#3643); with no booking yet it is the empty state's own action, below. */}
-      {editor && link.chosen && !empty && (
+      {editor && link.chosen && bookings.data !== undefined && !emptyCarriesLink && (
         <Card role="region" className="mb-4 block space-y-2 p-4" aria-labelledby="booking-link-title">
           <div>
             <h2 id="booking-link-title" className="text-sm font-medium text-foreground">
@@ -277,7 +278,7 @@ export function BookingsPage() {
               title={t('emptyNoType.title')}
               hint={t('emptyNoType.hint')}
               action={
-                <BookingSettingsLink slug={slug} className={buttonVariants({ size: 'sm' })}>
+                <BookingSettingsLink slug={slug} anchor="eventTypes" className={buttonVariants({ size: 'sm' })}>
                   {t('emptyNoType.action')}
                 </BookingSettingsLink>
               }

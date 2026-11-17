@@ -3,7 +3,7 @@
 // Event types are archived, not deleted. The server enforces every rule; the screen offers only what can succeed.
 // Team types (#1373): owners and admins pick round-robin or collective and the co-hosts; a member sees them only.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useId, useState, type FormEvent } from 'react';
+import { useEffect, useId, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { EVENT_TYPE_ASSIGNMENTS, EVENT_TYPE_LOCATION_KINDS, type EventType, type EventTypeAssignment, type EventTypeLocationKind } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
@@ -16,7 +16,7 @@ import { Textarea } from '@crove/ui/components/textarea';
 import { ErrorText, FieldError, fieldControl, fieldErrorId, focusFirstInvalid, RowsSkeleton, useFieldErrors } from '../components/ui.tsx';
 import { CopyBookingLinkButton, OpenBookingPageLink, bookingUrlOf } from '../components/booking-link.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { appOrigin, bookingLinkOf } from '../lib/booking.ts';
+import { appOrigin, BOOKING_EVENT_TYPES_ID, bookingLinkOf } from '../lib/booking.ts';
 import {
   coHostChoices,
   draftOf,
@@ -47,6 +47,7 @@ function EventTypeForm({
   me,
   manager,
   pending,
+  failed,
   submitLabel,
   onSubmit,
   onCancel,
@@ -57,6 +58,8 @@ function EventTypeForm({
   me: string;
   manager: boolean;
   pending: boolean;
+  // The error of the last save: the options open, so a link already taken or a field the server refused is in view.
+  failed?: unknown;
   submitLabel: string;
   onSubmit: (input: Exclude<ReturnType<typeof inputOf>, { invalid: unknown }>['input']) => void;
   onCancel?: () => void;
@@ -67,6 +70,11 @@ function EventTypeForm({
   // The first form shows what a new type needs (name, length, format, place); buffers, notice, host and the rest sit under "Tùy chọn khác" (#3643). Editing opens them.
   const [more, setMore] = useState(type !== null);
   const moreId = useId();
+  useEffect(() => {
+    if (failed) setMore(true);
+  }, [failed]);
+  // A name with no letters or digits makes no link: the last part of the link must then be typed, so the field shows at once.
+  const slugBlank = draft.slug.trim() === '' && draft.title.trim() !== '';
   // A Google Meet per booking needs the host's own Google connection with write-back on, so only the host picks it, for a one-host type; a type that already has
   // it keeps the option, so the form still shows what it is.
   const connections = useQuery(orpc.calendar.connections.queryOptions());
@@ -170,7 +178,7 @@ function EventTypeForm({
       <Button type="button" variant="ghost" size="sm" aria-expanded={more} aria-controls={moreId} onClick={() => setMore((m) => !m)}>
         {t('moreOptions')}
       </Button>
-      {more && (
+      {(more || slugBlank) && (
         <div id={moreId} className="space-y-2">
           <div className="flex flex-wrap gap-3">
             {number('bufferBeforeMin')}
@@ -230,7 +238,7 @@ function EventTypeForm({
               <FieldError id={idOf('coHostUserIds')}>{coHostsError}</FieldError>
             </fieldset>
           )}
-          {/* Two types with the same name make the same link: the link's last part can be typed here, so a name clash is never a dead end. Changing it breaks links already sent. */}
+          {/* Two types with the same name make the same link: the last part of the link can be typed here (the options open when a save is refused), so a name clash is never a dead end. Changing it breaks links already sent. */}
           <label className="flex flex-col gap-1 text-xs text-muted-foreground">
             {t('fields.slug')}
             <span className="flex items-center gap-2 text-sm">
@@ -284,6 +292,7 @@ function EventTypeRow({ slug, type, members, me, manager, editor }: { slug: stri
           me={me}
           manager={manager}
           pending={update.isPending}
+          failed={update.error}
           submitLabel={t('save')}
           onSubmit={(input) => update.mutate({ eventTypeId: type.id, ...input })}
           onCancel={() => {
@@ -343,7 +352,7 @@ function AddEventType({ slug, members, me, manager }: { slug: string; members: r
   return (
     <div className="mt-4">
       <p className="text-xs font-medium text-muted-foreground">{t('addTitle')}</p>
-      <EventTypeForm key={round} slug={slug} type={null} members={members} me={me} manager={manager} pending={create.isPending} submitLabel={t('add')} onSubmit={(input) => create.mutate(input)} />
+      <EventTypeForm key={round} slug={slug} type={null} members={members} me={me} manager={manager} pending={create.isPending} failed={create.error} submitLabel={t('add')} onSubmit={(input) => create.mutate(input)} />
       {create.error && <ErrorText>{errorMessage(create.error)}</ErrorText>}
     </div>
   );
@@ -355,7 +364,7 @@ export function EventTypesCard({ slug, members, me, role }: { slug: string; memb
   const types = useQuery(orpc.crm.eventTypes.list.queryOptions());
   const manager = role === 'owner' || role === 'admin';
   return (
-    <Card className="block p-4" aria-label={t('title')}>
+    <Card id={BOOKING_EVENT_TYPES_ID} tabIndex={-1} className="block scroll-mt-20 p-4 outline-none" aria-label={t('title')}>
       <p className="text-sm font-medium text-muted-foreground">{t('title')}</p>
       <p className="mt-2 text-sm text-muted-foreground">{t('intro')}</p>
       {types.isLoading ? (

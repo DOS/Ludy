@@ -83,7 +83,7 @@ export function BookingSuggestCard({ slug, dealId, startOpen = false, onClose }:
         <div className="flex flex-wrap items-center gap-2">
           <p className="text-sm text-muted-foreground">
             {t('noTypes')}{' '}
-            <BookingSettingsLink slug={slug} className="text-link underline-offset-4 hover:underline">
+            <BookingSettingsLink slug={slug} anchor="eventTypes" className="text-link underline-offset-4 hover:underline">
               {t('noTypesLink')}
             </BookingSettingsLink>
           </p>

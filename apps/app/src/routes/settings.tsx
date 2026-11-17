@@ -30,7 +30,7 @@ import { EventTypesCard } from './event-types.tsx';
 import { MemberPrivateNotes, usePrivateNotes } from '../components/notes-panel.tsx';
 import { CardSkeleton, ErrorText, FieldError, fieldControl, fieldHintId, focusFirstInvalid, isEmailAddress, PageHeader, PageSkeleton, RowsSkeleton, Spinner, useFieldErrors } from '../components/ui.tsx';
 import { apiFetch, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
-import { BOOKING_SETTINGS_ID } from '../lib/booking.ts';
+import { BOOKING_EVENT_TYPES_ID, BOOKING_SETTINGS_ID } from '../lib/booking.ts';
 import { scrollBehavior } from '../lib/media.ts';
 import { getConfig } from '../lib/auth.ts';
 import { useFormat } from '../i18n/provider.tsx';
@@ -1114,8 +1114,9 @@ export function SettingsPage() {
   // "Cài đặt lịch hẹn" on Lịch hẹn links to the working hours and event types (#3643): the cards exist once the org is read, so the jump waits for it.
   const orgLoaded = org.data !== undefined;
   useEffect(() => {
-    if (!orgLoaded || window.location.hash !== `#${BOOKING_SETTINGS_ID}`) return;
-    const card = document.getElementById(BOOKING_SETTINGS_ID);
+    const id = [BOOKING_SETTINGS_ID, BOOKING_EVENT_TYPES_ID].find((candidate) => window.location.hash === `#${candidate}`);
+    if (!orgLoaded || !id) return;
+    const card = document.getElementById(id);
     card?.scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
     card?.focus({ preventScroll: true });
   }, [orgLoaded]);

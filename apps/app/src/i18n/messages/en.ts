@@ -4365,9 +4365,9 @@ export const en = {
       copyOf: 'Copy booking link for {title}',
       copied: 'Copied',
       open: 'Try it',
-      openOf: 'Try the booking page for {title}',
+      openOf: 'Try it: the booking page for {title}',
       view: 'View page',
-      viewOf: 'View the booking page for {title}',
+      viewOf: 'View page: the booking page for {title}',
     },
     emptyLink: {
       title: 'Send the booking link to clients so they pick a time',
