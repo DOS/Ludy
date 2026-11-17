@@ -1,6 +1,6 @@
 // Compose a post and work on it: shared text, a variant per channel that inherits it or has its own text, live
 // channel rules and a preview, then review (owners and admins decide on what they see), schedule and cancel.
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
 import { Link, useBlocker, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
@@ -20,6 +20,7 @@ import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { LeavePageDialog } from '../components/leave-page-dialog.tsx';
 import { DateInput } from '../components/date-input.tsx';
 import { DateTimeInput } from '../components/date-time-input.tsx';
+import { WhenCard } from '../components/social-when-card.tsx';
 import { TimeInput } from '../components/time-input.tsx';
 import { CoverImageField, MediaField, MediaReplace, type MediaItem } from '../components/social-media.tsx';
 import { replaceInChannels, replaceInEditable, replaceMedia } from '../lib/social-image-fix.ts';
@@ -60,6 +61,7 @@ import { getConfig } from '../lib/auth.ts';
 import { clearDraft, loadDraft, saveDraft, type StoredDraft } from '../lib/social-draft.ts';
 import { readShareFragment } from '../lib/social-share.ts';
 import { canMoveToFront } from '../lib/social-queue-order.ts';
+import { defaultPostTime, effectiveWhen, futureInstant, queueReady, type QueueState, type WhenMode } from '../lib/social-when.ts';
 import { reelCounts, STORY_METRICS } from '../lib/social-insights.ts';
 import { WatchTimeItems } from '../components/social-reel-metrics.tsx';
 import { EngagementRateItem } from '../components/social-engagement-rate.tsx';
@@ -2585,7 +2587,7 @@ async function approveAndSchedule(postId: string, plannedAt: string | null): Pro
 }
 
 // What the composer keeps of a post not yet created (#634).
-type ComposeDraft = { base: Base; chosen: string[]; own: Record<string, Own>; utm: UtmTags | null; plannedAt: string | null; aiUsed: boolean };
+type ComposeDraft = { base: Base; chosen: string[]; own: Record<string, Own>; utm: UtmTags | null; plannedAt: string | null; aiUsed: boolean; when?: WhenMode | null };
 
 export function SocialComposePage() {
   const { slug } = useParams({ strict: false }) as { slug: string };
@@ -2617,7 +2619,14 @@ export function SocialComposePage() {
   // A post for an occasion of the calendar (#702): named above the form, and the AI brief starts from it.
   const tOcc = useTranslations('social.occasions');
   const occasion = search.occasion && search.on ? { name: tOcc(`names.${search.occasion as 'tet'}`), date: f.date(search.on) } : null;
-  const [plannedAt, setPlannedAt] = useState<string | null>(() => (search.at && Date.parse(search.at) > Date.now() ? search.at : null));
+  // "Khi nào đăng?" (#3653): the time typed (a datetime-local text, "" while a half is missing), which starts from the
+  // calendar's planned time, else from 09:00 tomorrow or today; and the choice between a time, the next free slot and a
+  // draft with no time (null: the default, the next free slot when the channels have one, else a time).
+  const [whenLocal, setWhenLocal] = useState(() => toLocalInput(search.at && Date.parse(search.at) > Date.now() ? search.at : null) || defaultPostTime(new Date()));
+  const [whenChoice, setWhenChoice] = useState<WhenMode | null>(null);
+  // The time was typed, or came from the calendar: a draft keeps it. The starting time alone is sent only to publish.
+  const [timeSet, setTimeSet] = useState(() => Boolean(search.at && Date.parse(search.at) > Date.now()));
+  const plannedAt = fromLocalInput(whenLocal);
   // A draft made from an idea (#701): its title and note become the text, its link and media the post's; the saved
   // post names the idea, which then shows as drafted.
   const idea = useQuery({ ...orpc.social.ideas.get.queryOptions({ input: { ideaId: search.idea ?? '' } }), enabled: Boolean(search.idea), staleTime: Infinity });
@@ -2649,19 +2658,34 @@ export function SocialComposePage() {
   const touched = base.body.trim() !== '' || base.title.trim() !== '' || base.linkUrl.trim() !== '' || base.media.length > 0 || Object.values(own).some((o) => o.custom || o.customMedia);
   useEffect(() => {
     if (restore) return;
-    const timer = setTimeout(() => (touched ? saveDraft<ComposeDraft>(slug, 'new', null, { base, chosen, own, utm, plannedAt, aiUsed }) : clearDraft(slug, 'new')), 400);
+    const timer = setTimeout(() => (touched ? saveDraft<ComposeDraft>(slug, 'new', null, { base, chosen, own, utm, plannedAt: timeSet ? plannedAt : null, aiUsed, when: whenChoice }) : clearDraft(slug, 'new')), 400);
     return () => clearTimeout(timer);
-  }, [base, chosen, own, utm, plannedAt, aiUsed, restore, touched, slug]);
+  }, [base, chosen, own, utm, plannedAt, timeSet, aiUsed, whenChoice, restore, touched, slug]);
   const takeDraft = (d: StoredDraft<ComposeDraft>) => {
     setBase(d.data.base);
     setChosen(d.data.chosen);
     setOwn(d.data.own);
     setUtm(d.data.utm);
-    setPlannedAt(d.data.plannedAt);
+    if (d.data.plannedAt) {
+      setWhenLocal(toLocalInput(d.data.plannedAt));
+      setTimeSet(true);
+    }
+    setWhenChoice(d.data.when ?? null);
     setAiUsed(d.data.aiUsed);
     setRestore(null);
   };
   const leave = useBlocker({ shouldBlockFn: () => touched && !leaving.current, enableBeforeUnload: () => touched && !leaving.current, withResolver: true });
+
+  const selected = live.filter((c) => chosen.includes(c.id));
+  // Each chosen channel's queue: "the next free slot" is offered only when every one has slots (a new channel has none,
+  // and its first post would meet "queue is empty", #3653).
+  const queues = useQueries({ queries: selected.map((c) => orpc.social.queues.get.queryOptions({ input: { connectionId: c.id } })) });
+  const queueStates: (QueueState | null)[] = queues.map((q) => (q.data ? { slots: q.data.slots.length, paused: q.data.paused } : null));
+  const slotsReady = queueReady(queueStates);
+  const when = effectiveWhen(whenChoice, slotsReady);
+  const nowMs = Date.now();
+  // The time sent: only in "a time" mode, and only while it is still ahead.
+  const chosenTime = when === 'time' ? futureInstant(plannedAt, nowMs) : null;
 
   // One key per content: a retry of the same content after a lost answer returns the post the first request created;
   // content edited after a failed attempt is a new request (the server would refuse the old key with other content).
@@ -2672,6 +2696,8 @@ export function SocialComposePage() {
       let mode = asked;
       // The one-step publish rests on the checklist and four-eyes as this page read them: read again first, so a list
       // saved meanwhile sends the post to review instead of leaving it there after a refused approval (#1113).
+      // A time that went by while the page was open is told, never swapped for the queue.
+      if (mode === 'publish' && when === 'time' && !futureInstant(plannedAt, Date.now())) throw new Error(t('whenPast'));
       if (mode === 'publish') {
         const [checks, rules] = await Promise.all([
           queryClient.fetchQuery({ ...orpc.social.reviewChecklist.list.queryOptions({ input: {} }), staleTime: 0 }),
@@ -2688,8 +2714,8 @@ export function SocialComposePage() {
         title: orNull(base.title),
         linkUrl: orNull(base.linkUrl),
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        // A planned time that went by while the page was open is dropped.
-        ...(plannedAt && Date.parse(plannedAt) > Date.now() ? { scheduledAt: plannedAt } : {}),
+        // The time chosen (a draft with no time, or the queue, keeps none); one that went by while the page was open is dropped.
+        ...(when === 'time' && (timeSet || mode === 'publish') && futureInstant(plannedAt, Date.now()) ? { scheduledAt: plannedAt as string } : {}),
         ...(aiUsed ? { aiAssisted: true as const } : {}),
         ...(ideaId ? { ideaId } : {}),
         media: mediaInput(base.media),
@@ -2712,7 +2738,7 @@ export function SocialComposePage() {
           return false;
         },
       );
-      if (mode === 'publish' && submitted) await approveAndSchedule(created.postId, plannedAt).catch((error: unknown) => setFlash(errorMessage(error)));
+      if (mode === 'publish' && submitted) await approveAndSchedule(created.postId, when === 'time' ? plannedAt : null).catch((error: unknown) => setFlash(errorMessage(error)));
       return created.postId;
     },
     onSuccess: (postId) => {
@@ -2760,7 +2786,6 @@ export function SocialComposePage() {
     },
   });
 
-  const selected = live.filter((c) => chosen.includes(c.id));
   // Each channel's signature (#1190), which the new post's channels take unless left off.
   const signatureRows = useQuery(orpc.social.policies.list.queryOptions({ input: {} }));
   const signatures = new Map((signatureRows.data ?? []).map((p) => [p.connectionId, p.signature]));
@@ -2793,6 +2818,11 @@ export function SocialComposePage() {
     setBase((b) => ({ ...b, media: replaceMedia(b.media, fromFileId, next) }));
     setOwn((o) => replaceInChannels(o, fromFileId, next));
   };
+  // Why a button is off, said where the person looks and tied to the button (#3653).
+  const whyId = 'compose-why';
+  const why = chosen.length === 0 ? t('whyPickChannel') : blocking ? t('whyBlocking') : null;
+  const publishWhy = oneStep && when === 'time' && !chosenTime ? t('whyPickTime') : null;
+  const dayMonth = (iso: string) => new Intl.DateTimeFormat(locale, { day: '2-digit', month: '2-digit' }).format(new Date(iso));
   if (channels.isLoading || signatureRows.isPending) return <Spinner />;
   return (
     <MediaReplace.Provider value={fixEverywhere}>
@@ -2803,17 +2833,18 @@ export function SocialComposePage() {
         subtitle={t('composeSubtitle')}
         actions={
           <>
-            <Button variant="outline" size="lg" disabled={chosen.length === 0 || create.isPending} onClick={() => create.mutate('draft')}>
+            <Button variant="outline" size="lg" disabled={chosen.length === 0 || create.isPending} aria-describedby={chosen.length === 0 ? whyId : undefined} onClick={() => create.mutate('draft')}>
               {t('saveDraft')}
             </Button>
-            <Button size="lg" variant={oneStep ? 'outline' : 'default'} disabled={chosen.length === 0 || blocking || create.isPending} onClick={() => create.mutate('submit')}>
+            <Button size="lg" variant={oneStep && when !== 'draft' ? 'outline' : 'default'} disabled={chosen.length === 0 || blocking || create.isPending} aria-describedby={why ? whyId : undefined} onClick={() => create.mutate('submit')}>
               {create.isPending && create.variables === 'submit' ? <Spinner className="text-current" /> : null}
               {t('saveAndSubmit')}
             </Button>
-            {oneStep && (
-              <Button size="lg" disabled={chosen.length === 0 || blocking || create.isPending} onClick={() => create.mutate('publish')} title={t('publishNowHint')}>
+            {/* The button names what happens and when (#3653); a draft with no time has no one-step button. */}
+            {oneStep && when !== 'draft' && (
+              <Button size="lg" disabled={chosen.length === 0 || blocking || create.isPending || (when === 'time' && !chosenTime)} aria-describedby={why || publishWhy ? whyId : undefined} onClick={() => create.mutate('publish')} title={t('publishNowHint')}>
                 {create.isPending && create.variables === 'publish' ? <Spinner className="text-current" /> : null}
-                {t('publishNow')}
+                {when === 'queue' ? t('publishInQueue') : chosenTime ? t('publishAt', { time: f.time(chosenTime), date: dayMonth(chosenTime) }) : t('publishNow')}
               </Button>
             )}
           </>
@@ -2881,33 +2912,13 @@ export function SocialComposePage() {
           <ErrorText>{errorMessage(create.error)}</ErrorText>
         </div>
       )}
-      {plannedAt && (
-        <p className="mb-4 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-          {t('plannedFor', { when: f.dateTime(plannedAt) })}
-          <Button variant="ghost" size="sm" onClick={() => setPlannedAt(null)}>
-            {t('plannedClear')}
-          </Button>
+      {(why ?? publishWhy) && (
+        <p id={whyId} className="mb-4 text-sm text-muted-foreground">
+          {why ?? publishWhy}
         </p>
       )}
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <div className="space-y-4">
-          <SharedFields
-            base={base}
-            onChange={setBase}
-            disabled={create.isPending}
-            autoFocus
-            needsTitle={selected.some((c) => takesTitle(c.provider, own[c.id]?.settings, mediaOfOwn(own[c.id] ?? EMPTY_OWN, base)))}
-            onAiUsed={() => setAiUsed(true)}
-            slug={slug}
-            connectionIds={selected.map((c) => c.id)}
-            mediaConnectionIds={selected.filter((c) => !own[c.id]?.customMedia).map((c) => c.id)}
-            providers={selected.map((c) => c.provider)}
-          />
-          {base.linkUrl.trim() && (
-            <Card className="block p-4">
-              <UtmFields utm={utm} onChange={setUtm} disabled={create.isPending} />
-            </Card>
-          )}
           <Card className="block p-4">
             <p className="mb-3 text-sm font-medium text-foreground">{t('pickChannels')}</p>
             <ChannelSetPicker live={live} onPick={setChosen} />
@@ -3010,6 +3021,37 @@ export function SocialComposePage() {
               <p className="text-xs text-subtle-foreground">{t('aiOff')}</p>
             )}
           </Card>
+          <SharedFields
+            base={base}
+            onChange={setBase}
+            disabled={create.isPending}
+            autoFocus
+            needsTitle={selected.some((c) => takesTitle(c.provider, own[c.id]?.settings, mediaOfOwn(own[c.id] ?? EMPTY_OWN, base)))}
+            onAiUsed={() => setAiUsed(true)}
+            slug={slug}
+            connectionIds={selected.map((c) => c.id)}
+            mediaConnectionIds={selected.filter((c) => !own[c.id]?.customMedia).map((c) => c.id)}
+            providers={selected.map((c) => c.provider)}
+          />
+          {base.linkUrl.trim() && (
+            <Card className="block p-4">
+              <UtmFields utm={utm} onChange={setUtm} disabled={create.isPending} />
+            </Card>
+          )}
+          <WhenCard
+            mode={when}
+            onMode={setWhenChoice}
+            queueAvailable={slotsReady}
+            noSlots={selected.length > 0 && queues.every((q) => q.isSuccess) && !slotsReady}
+            value={whenLocal}
+            onValue={(value) => {
+              setWhenLocal(value);
+              setTimeSet(true);
+            }}
+            min={toLocalInput(new Date(nowMs).toISOString())}
+            disabled={create.isPending}
+            timeInPast={when === 'time' && whenLocal !== '' && plannedAt !== null && !chosenTime}
+          />
           <p className="text-xs text-subtle-foreground">{t('shortcutHint')}</p>
         </div>
         <div className="space-y-4">
