@@ -1462,6 +1462,7 @@ suite('meetings module database integration tests (#2576)', () => {
   const startImport = (who: string, input: Record<string, unknown>) =>
     runtime.execute<{ meetingId: string }>('meetings.import.start', { consentMethod: 'platform_notice', consentNoticeVersion: IMPORT_NOTICE_VERSION, consentConfirmed: true, ...input }, { actor: asUser(who), orgId });
   const refusedWith = (promise: Promise<unknown>) => promise.then(() => null, (error: unknown) => (error as { code?: string }).code ?? 'ERR');
+  const meetingExists = (id: string) => admin(async (c) => (await c.query('SELECT 1 FROM crove_meetings.meeting WHERE id = $1', [id])).rowCount === 1);
   // A suggested recording of a member's own connection, as the sweep leaves it (the table owner writes it: the sweep's definer needs the worker login).
   async function suggest(who: string, over: { title?: string; startedAt?: string; sizeBytes?: number | null } = {}) {
     const recordingId = randomUUID();
@@ -1603,10 +1604,13 @@ suite('meetings module database integration tests (#2576)', () => {
     expect(refused.status).toBe(400);
     expect(await recordingRow(hostile)).toMatchObject({ status: 'failed', staging_key: null, error_code: 'invalid_media' });
     expect(store.staged.has(hostileKey)).toBe(false);
-    // A failed row can be imported again, into a new meeting.
+    // A failed row can be imported again, into a new meeting; the empty meeting the failed try made is removed, not left in the list (#3288).
+    const before = await meetingCount();
     const again = await startImport('recorder', { recordingId: hostile });
     expect(again.meetingId).not.toBe(meetingId);
     expect(await recordingRow(hostile)).toMatchObject({ status: 'importing', meeting_id: again.meetingId });
+    expect(await meetingExists(meetingId)).toBe(false);
+    expect(await meetingCount(), 'the retry replaced the empty meeting, it did not add one').toBe(before);
 
     // The row is linked to one meeting; claiming it on the recorder's other meeting is refused as not found BEFORE the row moves: it stays staged, with its bytes, for the right meeting.
     const linked = await suggest('recorder');
@@ -1616,6 +1620,30 @@ suite('meetings module database integration tests (#2576)', () => {
     expect((await claimImport('recorder', other, { importId: linked, kind: 'audio' })).status).toBe(404);
     expect(await recordingRow(linked)).toMatchObject({ status: 'staged', staging_key: key, meeting_id: linkedMeeting.meetingId });
     expect(store.staged.has(key)).toBe(true);
+  });
+
+  it('31b. C1: a retry removes only the empty meeting of the failed try: one that holds a note, or another member\'s, or a recording that never failed, is kept (#3288)', async () => {
+    const fail = (id: string) => admin((c) => c.query(`UPDATE crove_kernel.meeting_platform_recording SET status = 'failed', staging_key = NULL, error_code = 'timeout' WHERE id = $1`, [id]));
+    // A failed try whose meeting holds a note the recorder typed: kept, and the retry makes a new meeting.
+    const withNote = await suggest('recorder');
+    const first = await startImport('recorder', { recordingId: withNote });
+    await admin((c) => c.query(`INSERT INTO crove_meetings.meeting_note (org_id, meeting_id, body) VALUES ($1, $2, 'Ghi chú của tôi')`, [orgId, first.meetingId]));
+    await fail(withNote);
+    const second = await startImport('recorder', { recordingId: withNote });
+    expect(second.meetingId).not.toBe(first.meetingId);
+    expect(await meetingExists(first.meetingId)).toBe(true);
+    expect(await recordingRow(withNote)).toMatchObject({ status: 'importing', meeting_id: second.meetingId });
+    // A failed try whose meeting is another member's (a row pointing at it): never touched.
+    const theirs = String((await rpc('meetings/create', 'otherMember', { title: 'Của người khác', consentMethod: 'told_at_start' })).body.meetingId);
+    const pointing = await suggest('recorder');
+    await admin((c) => c.query(`UPDATE crove_kernel.meeting_platform_recording SET status = 'failed', meeting_id = $2, error_code = 'timeout' WHERE id = $1`, [pointing, theirs]));
+    await startImport('recorder', { recordingId: pointing });
+    expect(await meetingExists(theirs)).toBe(true);
+    // A recording that is importing is not retried at all, and its meeting stays.
+    const live = await suggest('recorder');
+    const liveMeeting = await startImport('recorder', { recordingId: live });
+    expect(await refusedWith(startImport('recorder', { recordingId: live }))).toBe('MEETING_PLATFORM_STATE');
+    expect(await meetingExists(liveMeeting.meetingId)).toBe(true);
   });
 
   it('32. C1: a meeting that is no import is untouched when its media is recorded', async () => {

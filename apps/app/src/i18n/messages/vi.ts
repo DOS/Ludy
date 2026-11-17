@@ -13169,7 +13169,6 @@ export const vi = {
         recording_replace: 'Cập nhật các bản ghi gợi ý từ nền tảng họp',
         recordings: 'Xem các bản ghi từ nền tảng họp của tôi',
         refresh: 'Làm mới danh sách bản ghi từ nền tảng họp',
-        sweep: 'Dọn các bản ghi từ nền tảng họp hết hạn',
         sync_failed: 'Ghi nhận không đọc được danh sách bản ghi của nền tảng họp',
         sync_due: 'Xem các kết nối nền tảng họp cần đồng bộ',
       },

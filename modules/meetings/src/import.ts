@@ -3,6 +3,8 @@
 //
 // - The member presses "Nhập" on a suggestion. meetings.import.start is the one command behind it: it creates the meeting with its consent record (the platform showed its own notice to everyone
 //   and the importer confirms it) through the same core as meetings.meeting.create, then links the recording and queues the download (crove_kernel.meeting_platform_recording_begin).
+//   A retry of a failed recording first removes the meeting its earlier try made, when that meeting is the importer's own and nothing at all hangs off it (#3288): no audio, video, transcript, minutes,
+//   items, notes, link or calendar link (a translation needs a transcript or minutes, so it is covered). A meeting that holds anything is kept, so a retry never takes a thing a person made.
 // - It does no network I/O itself. The queued download is made by the worker's import job, which is why the command declares an external effect, like meetings.hook.set: the job
 //   (`kernel-meeting-import-sweep handler`, apps/kernel/test/invariant/job-egress.test.ts) is justified by this command.
 // - The bytes then wait in staging; the member's own request claims, seals and records them through POST /api/meetings/:id/media, so the sealing code is the one an upload uses.
@@ -39,11 +41,31 @@ async function readOwnRecording(trx: Trx, orgId: string, userId: string, recordi
   return trx
     .selectFrom('crove_kernel.meeting_platform_recording as r')
     .innerJoin('crove_kernel.meeting_platform_connection as c', (join) => join.onRef('c.org_id', '=', 'r.org_id').onRef('c.id', '=', 'r.connection_id'))
-    .select(['r.status', 'r.title', 'r.started_at', 'c.provider'])
+    .select(['r.status', 'r.title', 'r.started_at', 'r.meeting_id', 'c.provider'])
     .where('r.org_id', '=', orgId)
     .where('r.id', '=', recordingId)
     .where('r.user_id', '=', userId)
     .executeTakeFirst();
+}
+
+// Whether a meeting is the importer's own and holds nothing yet: the empty meeting a failed try left behind. Read as the importer, so row security shows what they may see of it (they record it,
+// so every row of it), and a meeting that is not theirs or not there is not "empty" for them.
+async function isEmptyOwnMeeting(trx: Trx, orgId: string, userId: string, meetingId: string): Promise<boolean> {
+  const { rows } = await sql<{ empty: boolean }>`
+    SELECT EXISTS (
+      SELECT 1 FROM crove_meetings.meeting m
+      WHERE m.org_id = ${orgId}::uuid AND m.id = ${meetingId}::uuid AND m.recorder_user_id = ${userId}::uuid
+        AND NOT EXISTS (SELECT 1 FROM crove_meetings.audio_segment x WHERE x.org_id = m.org_id AND x.meeting_id = m.id)
+        AND NOT EXISTS (SELECT 1 FROM crove_meetings.meeting_video x WHERE x.org_id = m.org_id AND x.meeting_id = m.id)
+        AND NOT EXISTS (SELECT 1 FROM crove_meetings.transcript_segment x WHERE x.org_id = m.org_id AND x.meeting_id = m.id)
+        AND NOT EXISTS (SELECT 1 FROM crove_meetings.meeting_result x WHERE x.org_id = m.org_id AND x.meeting_id = m.id)
+        AND NOT EXISTS (SELECT 1 FROM crove_meetings.action_item x WHERE x.org_id = m.org_id AND x.meeting_id = m.id)
+        AND NOT EXISTS (SELECT 1 FROM crove_meetings.meeting_note x WHERE x.org_id = m.org_id AND x.meeting_id = m.id)
+        AND NOT EXISTS (SELECT 1 FROM crove_meetings.meeting_link x WHERE x.org_id = m.org_id AND x.meeting_id = m.id)
+        AND NOT EXISTS (SELECT 1 FROM crove_meetings.calendar_agenda x WHERE x.org_id = m.org_id AND x.meeting_id = m.id)
+        AND NOT EXISTS (SELECT 1 FROM crove_meetings.live_line x WHERE x.org_id = m.org_id AND x.meeting_id = m.id)
+    ) AS empty`.execute(trx);
+  return rows[0]?.empty === true;
 }
 
 export const meetingImportStart = defineCommand({
@@ -66,6 +88,13 @@ export const meetingImportStart = defineCommand({
       throw new DomainError('MEETING_PLATFORM_STATE', 409, 'Bản ghi này đã được nhập hoặc đang được nhập');
     }
     const title = (input.title ?? (recording.title.trim() === '' ? UNTITLED[input.language] : recording.title.trim())).slice(0, 200);
+
+    // A retry of a failed try: the empty meeting that try made goes, by the recorder's own delete path (it also shreds the meeting's keys), so the list does not keep one empty meeting for each failed click.
+    let replaced: string | null = null;
+    if (recording.status === 'failed' && recording.meeting_id !== null && (await isEmptyOwnMeeting(ctx.trx, ctx.orgId, userId, recording.meeting_id))) {
+      await ctx.run('meetings.meeting.delete', { meetingId: recording.meeting_id });
+      replaced = recording.meeting_id;
+    }
 
     const meetingId = await createMeetingRow(ctx, {
       userId,
@@ -91,6 +120,7 @@ export const meetingImportStart = defineCommand({
     ctx.audit({
       recordingId: input.recordingId,
       meetingId,
+      replacedMeetingId: replaced,
       provider: recording.provider,
       consentMethod: input.consentMethod,
       consentNoticeVersion: input.consentNoticeVersion,

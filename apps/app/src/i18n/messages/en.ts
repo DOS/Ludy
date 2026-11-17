@@ -13173,7 +13173,6 @@ export const en = {
         recording_replace: 'Update the suggested recordings from a meeting platform',
         recordings: 'View my meeting platform recordings',
         refresh: 'Refresh the list of meeting platform recordings',
-        sweep: 'Clear expired meeting platform recordings',
         sync_failed: 'Record that a meeting platform could not be listed',
         sync_due: 'View the meeting platform connections due for a sync',
       },
