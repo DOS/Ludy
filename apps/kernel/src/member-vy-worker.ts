@@ -41,7 +41,7 @@ export async function sweepMemberVyResults(deps: { runtime: Runtime; workerDb: D
   }
 }
 
-// One pass of the former members, after the expiry: the users who hold Vy results or memory in an org they left more than 30 days ago, each purged in
+// One pass of the former members, after the expiry: the users who hold Vy results, memory or meeting translations in an org they left more than 30 days ago, each purged in
 // the org's system context. A user whose membership ended with no removal in the audit trail has no date to count the 30 days from: their data is
 // kept and logged, never purged here (the rule of the Notes sweep).
 // The orgs (id prefixes) whose unrecorded former members this process has already logged: the same orgs stay in that state every night, so a line is written for an org
