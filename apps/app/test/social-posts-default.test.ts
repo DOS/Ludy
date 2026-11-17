@@ -4,7 +4,8 @@
 import { describe, expect, it } from 'vitest';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi } from '../src/i18n/messages/vi.ts';
-import { defaultSocialTab, SOCIAL_TABS } from '../src/lib/social.ts';
+import { socialFigures } from '../src/lib/clients.ts';
+import { defaultSocialTab, SOCIAL_TABS, sameViewFilters, viewFiltersOf } from '../src/lib/social.ts';
 
 describe('the tab the Posts screen opens on', () => {
   it('shows the posts in review first, then the posts that need someone, else the schedule', () => {
@@ -49,5 +50,18 @@ describe('the Posts screen copy', () => {
     expect(vi.social.libraryAdd).toBe('Thêm ảnh');
     expect(vi.social.feeds.add).toBe('Thêm nguồn tin');
     expect(vi.social.labels.new).toBe('Thêm nhãn');
+  });
+});
+
+describe('links and saved views that mean the schedule', () => {
+  it('keeps a view of the schedule the same view whether or not the address names the tab', () => {
+    expect(viewFiltersOf({ tab: 'upcoming', author: 'me' })).toEqual({ author: 'me' });
+    expect(sameViewFilters(viewFiltersOf({ tab: 'upcoming', author: 'me' }), { author: 'me' })).toBe(true);
+    expect(viewFiltersOf({ tab: 'board' })).toEqual({ tab: 'board' });
+  });
+
+  it('opens the client "upcoming" figure on the schedule, not on whatever waits', () => {
+    const figures = socialFigures({ attention: 0, reconnect: 0, review: 2, waitingClient: 0, upcoming: 3 } as Parameters<typeof socialFigures>[0]);
+    expect(figures.find((f) => f.key === 'upcoming')?.link).toEqual({ to: 'social', tab: 'upcoming' });
   });
 });

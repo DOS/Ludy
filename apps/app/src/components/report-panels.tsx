@@ -216,6 +216,13 @@ export function PostsPanel({ slug }: { slug: string }) {
   const ts = useTranslations('social');
   const f = useFormat();
   const totals = useQuery(orpc.social.metrics.totals.queryOptions({ input: { days: POSTS_DAYS } }));
+  // The empty list's one action is for whoever can use it (#3654): writing needs a role that writes and a channel; a viewer gets none.
+  const me = useQuery(orpc.me.get.queryOptions());
+  const channels = useQuery(orpc.channels.list.queryOptions({ input: {} }));
+  const role = me.data?.orgs.find((o) => o.slug === slug)?.role;
+  const canWrite = role === 'owner' || role === 'admin' || role === 'member';
+  const canConnect = role === 'owner' || role === 'admin';
+  const noChannels = channels.isSuccess && channels.data.length === 0;
   const against = ts('growth.change.days', { days: String(POSTS_DAYS) });
   const data = totals.data;
   const title = t('title', { days: POSTS_DAYS });
@@ -239,9 +246,17 @@ export function PostsPanel({ slug }: { slug: string }) {
           title={t('empty')}
           hint={t('emptyHint')}
           action={
-            <Link to="/o/$slug/social/new" params={{ slug }} className={buttonVariants({ size: 'lg' })}>
-              {ts('compose')}
-            </Link>
+            !canWrite ? undefined : noChannels ? (
+              canConnect ? (
+                <Link to="/o/$slug/social/channels" params={{ slug }} className={buttonVariants({ size: 'lg' })}>
+                  {ts('connectFirst')}
+                </Link>
+              ) : undefined
+            ) : (
+              <Link to="/o/$slug/social/new" params={{ slug }} className={buttonVariants({ size: 'lg' })}>
+                {ts('compose')}
+              </Link>
+            )
           }
         />
       ) : (

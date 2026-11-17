@@ -635,9 +635,10 @@ export function SocialPage() {
   // the last post does not move the screen under the reviewer; the schedule tab is asked for by name in the address.
   const [landed, setLanded] = useState<Tab | null>(null);
   useEffect(() => {
-    if (landed !== null || review.isPending || attention.isPending) return;
+    // Not while either count is still being read: a cached count from an earlier visit may be stale (a post just sent to review).
+    if (landed !== null || review.isPending || attention.isPending || review.isFetching || attention.isFetching) return;
     setLanded(defaultSocialTab({ review: review.data?.length ?? 0, attention: attention.data?.length ?? 0 }));
-  }, [landed, review.isPending, attention.isPending, review.data, attention.data]);
+  }, [landed, review.isPending, attention.isPending, review.isFetching, attention.isFetching, review.data, attention.data]);
   const resolving = !search.tab && landed === null;
   const tab: Tab = search.tab ?? landed ?? 'upcoming';
   // Changes the address, so the back button and a shared link keep the list; replaces rather than piles up history.
@@ -710,12 +711,11 @@ export function SocialPage() {
   const [picked, setPicked] = useState<Set<string>>(new Set());
   useEffect(() => setPicked(new Set()), [tab, search.channel, search.label, search.q, search.from, search.to, search.assignee, search.author]);
   const canDecide = role === 'owner' || role === 'admin';
-  const canConnect = canDecide;
   // The one action of an empty list (#3654): write a post (the first one, or another), or connect the first channel; none for
   // a viewer, who can do neither.
   const postAction = (first: boolean): ReactNode =>
     !canWrite ? undefined : noChannels ? (
-      canConnect ? (
+      canDecide ? (
         <Link to="/o/$slug/social/channels" params={{ slug }} className={buttonVariants({ size: 'lg' })}>
           {t('connectFirst')}
         </Link>
@@ -862,10 +862,11 @@ export function SocialPage() {
         {/* Named filters, private or shared with the team (#1300): applied in one click, the address takes them. */}
         {postFilters && (
           <SavedViews
-            search={search}
+            // The tab on screen, which the address may not name (#3654): a view saved here keeps it.
+            search={{ ...search, tab }}
             members={members}
             canShare={canWrite}
-            onApply={(next) => void navigate({ to: '/o/$slug/social', params: { slug }, search: next, replace: true })}
+            onApply={(next) => void navigate({ to: '/o/$slug/social', params: { slug }, search: { tab: 'upcoming' as const, ...next }, replace: true })}
           />
         )}
         {(postFilters || labelFilter) && (
