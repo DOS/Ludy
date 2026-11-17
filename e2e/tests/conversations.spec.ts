@@ -105,8 +105,7 @@ test('answers, hides, notes and resolves a comment on a published post, and the 
   await expect(page.getByTestId('conversation-status')).not.toHaveText('Đã xong');
   expect(postId).not.toBe('');
 
-  // The retention (CV6, #2305): 24 months by default, an owner picks 12, and it holds after a reload. Erasing the customer asks to
-  // confirm first and can be cancelled.
+  // The retention (CV6, #2305): 24 months by default, an owner picks 12, and it holds after a reload.
   // It is an org setting (#3582): not on the Inbox, in Settings, and an owner finds it there.
   const inboxUrl = page.url();
   await expect(page.getByTestId('conversation-retention')).toHaveCount(0);
@@ -122,17 +121,27 @@ test('answers, hides, notes and resolves a comment on a published post, and the 
   await page.goto(inboxUrl);
   // The reopened thread waits for the customer, in Pending.
   await page.getByTestId('conversation-tab-pending').click();
-  // The customer's message has its own erase button (for a customer who only replied in a thread), apart from the thread's.
-  await expect(page.getByTestId('conversation-message-erase-open').first()).toBeVisible();
-  await page.getByTestId('conversation-message-erase-open').first().click();
-  await expect(page.getByTestId('conversation-message-erase-confirm')).toBeVisible();
-  await page.getByTestId('conversation-message-erase-confirm').getByRole('button', { name: 'Hủy' }).click();
-  await expect(page.getByTestId('conversation-message-erase-confirm')).toBeHidden();
-  await page.getByTestId('conversation-erase-open').click();
-  await expect(page.getByTestId('conversation-erase-confirm')).toBeVisible();
-  await page.getByTestId('conversation-erase-confirm').getByRole('button', { name: 'Hủy' }).click();
-  await expect(page.getByTestId('conversation-erase-confirm')).toBeHidden();
-  await expect(page.getByTestId('conversation-thread')).toBeVisible();
+  // Erasing the customer is a personal-data action (#3635): not in the thread's working row or in a comment bubble, but in the contact panel's own
+  // "Dữ liệu cá nhân" section, behind a modal that names what is lost and what stays. Esc and "Giữ lại" leave everything as it was.
+  const thread = page.getByTestId('conversation-thread');
+  await expect(thread).toBeVisible();
+  await expect(thread.getByTestId('conversation-erase-open')).toHaveCount(0);
+  await expect(thread.getByTestId('conversation-message-erase-open')).toHaveCount(0);
+  const personalData = page.getByTestId('contact-panel').getByTestId('conversation-personal-data');
+  await expect(personalData).toContainText('Dữ liệu cá nhân');
+  await personalData.getByTestId('conversation-erase-open').click();
+  const confirm = page.getByRole('dialog');
+  await expect(confirm).toBeVisible();
+  await expect(confirm).toContainText(/Xóa dữ liệu hội thoại của .+\?/);
+  await expect(confirm).toContainText('Liên hệ trong CRM, việc đã giao và báo giá được giữ nguyên');
+  await expect(confirm).toContainText('Không khôi phục được');
+  await expect(confirm).toContainText(/Xóa vĩnh viễn \d+ hội thoại/);
+  await page.keyboard.press('Escape');
+  await expect(confirm).toBeHidden();
+  await personalData.getByTestId('conversation-erase-open').click();
+  await confirm.getByRole('button', { name: 'Giữ lại' }).click();
+  await expect(confirm).toBeHidden();
+  await expect(thread).toBeVisible();
 
   // The contact's timeline (#2333): opening Chị Mai Hương on the Contacts screen shows the linked conversation (channel, kind, status)
   // without the message body, and clicking the channel link opens the Inbox on that thread.
