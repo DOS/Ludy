@@ -617,11 +617,51 @@ test('lets an owner approve and schedule their own post in one step (#638)', asy
   await page.getByRole('button', { name: 'Lưu hàng đợi' }).click();
   await expect(page.getByText(/Khung giờ trống kế tiếp:/)).toBeVisible();
   await compose(page, 'Khai trương chi nhánh mới');
-  await page.getByRole('button', { name: 'Duyệt và lên lịch' }).click();
+  // The channel has slots, so the next free slot is the default and the button says so (#3653).
+  await expect(page.getByRole('button', { name: 'Khung giờ trống kế tiếp', pressed: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Duyệt và đăng vào khung giờ kế tiếp' }).click();
   await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
   await expect(channelCard(page, 'Trang Một Bước').getByText('Đã lên lịch', { exact: true })).toBeVisible();
   const decided = sql<{ n: number }>(`SELECT count(*)::int AS n FROM crove_social.post_approval WHERE post_id = :'post' AND decision = 'approved'`, { post: postIdOf(page) });
   expect(decided).toEqual([{ n: 1 }]);
+});
+
+test('a new owner posts from a fresh channel by choosing when, with no empty-queue error (#3653)', async ({ page }) => {
+  await signInNewUser(page, newEmail('social-when'));
+  await createOrg(page, 'Công ty Chọn Giờ');
+  // A fresh channel has no queue slots.
+  await connectSandbox(page, 'Trang Chọn Giờ');
+  await compose(page, 'Bài đầu tiên của chủ mới');
+  // The card asks when; the next free slot is not offered, a time is already filled in, and the button names it.
+  await expect(page.getByText('Khi nào đăng?')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Giờ cụ thể', pressed: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Khung giờ trống kế tiếp' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Chọn giờ sau' })).toBeVisible();
+  const publish = page.getByRole('button', { name: /^Duyệt và đăng lúc \d{2}:\d{2} ngày \d{2}\/\d{2}$/ });
+  await expect(publish).toBeEnabled();
+  // A time of the person's own is the one sent.
+  await page.getByLabel('Ngày và giờ đăng').getByRole('textbox', { name: 'Giờ' }).fill('15:30');
+  await expect(page.getByRole('button', { name: /^Duyệt và đăng lúc 15:30 ngày / })).toBeVisible();
+  await publish.click();
+  await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
+  await expect(channelCard(page, 'Trang Chọn Giờ').getByText('Đã lên lịch', { exact: true })).toBeVisible();
+  await expect(page.getByText(/hàng đợi/)).toHaveCount(0);
+  const rows = sql<{ at: string | null; slot: string | null }>(
+    `SELECT to_char(scheduled_at AT TIME ZONE :'zone', 'HH24:MI') AS at, queue_slot_at::text AS slot FROM crove_social.post_variant WHERE post_id = :'post'`,
+    { post: postIdOf(page), zone: TIME_ZONE },
+  );
+  expect(rows).toEqual([{ at: '15:30', slot: null }]);
+});
+
+test('a draft saved from the composer keeps no time the person did not choose (#3653)', async ({ page }) => {
+  await signInNewUser(page, newEmail('social-when-draft'));
+  await createOrg(page, 'Công ty Nháp Không Giờ');
+  await connectSandbox(page, 'Trang Nháp Không Giờ');
+  await compose(page, 'Nháp chưa chọn giờ');
+  await page.getByRole('button', { name: 'Lưu nháp' }).click();
+  await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
+  const planned = sql<{ at: string | null }>(`SELECT scheduled_at::text AS at FROM crove_social.post WHERE id = :'post'`, { post: postIdOf(page) });
+  expect(planned).toEqual([{ at: null }]);
 });
 
 test('posts a Story of one image, with no text, in a phone frame (#644)', async ({ page }) => {
