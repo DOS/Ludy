@@ -723,6 +723,97 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
 
   const words = tokenizeWords(input);
 
+  // Collect raw explicit clock candidates early so Step 4a can distinguish "cuối tháng 14:30" / "cuối tháng 9 giờ" from "cuối tháng 12".
+  const timeCandidates: Array<{
+    start: number;
+    end: number;
+    hour: number;
+    minute: number;
+    hasAmPm: boolean;
+    usesShortG?: boolean | undefined;
+    hasMinutesOrHalf?: boolean | undefined;
+  }> = [];
+
+  for (const m of input.matchAll(CLOCK_COLON_RE)) {
+    const hour = Number(m[1]);
+    const minute = Number(m[2]);
+    const ampm = m[3]?.toLowerCase();
+    if (ampm) {
+      if (hour < 1 || hour > 12) continue;
+      const converted = ampm === 'am' ? (hour === 12 ? 0 : hour) : hour === 12 ? 12 : hour + 12;
+      timeCandidates.push({ start: m.index, end: m.index + m[0].length, hour: converted, minute, hasAmPm: true });
+    } else if (hour >= 0 && hour <= 23) {
+      timeCandidates.push({ start: m.index, end: m.index + m[0].length, hour, minute, hasAmPm: false });
+    }
+  }
+  for (const m of input.matchAll(CLOCK_AMPM_RE)) {
+    const hour = Number(m[1]);
+    const minute = m[2] ? Number(m[2]) : 0;
+    const ampm = (m[3] ?? '').toLowerCase();
+    if (hour < 1 || hour > 12) continue;
+    const converted = ampm === 'am' ? (hour === 12 ? 0 : hour) : hour === 12 ? 12 : hour + 12;
+    timeCandidates.push({ start: m.index, end: m.index + m[0].length, hour: converted, minute, hasAmPm: true });
+  }
+  for (const m of input.matchAll(CLOCK_VN_GIO_RE)) {
+    const hour = Number(m[2]);
+    if (hour < 0 || hour > 23) continue;
+    const gioEnd = m.index + (m[1] ?? '').length;
+    const withUnitMinutes = m[3];
+    const bareTwoDigitMinutes = m[4];
+    const half = m[5] !== undefined;
+    let end = m.index + m[0].length;
+    let minute = 0;
+    if (half) {
+      minute = 30;
+    } else if (withUnitMinutes !== undefined) {
+      minute = Number(withUnitMinutes);
+    } else if (bareTwoDigitMinutes !== undefined) {
+      const after = input.slice(end).match(/^\s*([\p{L}\p{N}\p{M}]+)/u);
+      if (after && VN_COUNT_NOUNS_AFTER_CLOCK.has(foldVn(after[1] ?? ''))) {
+        end = gioEnd;
+        minute = 0;
+      } else {
+        minute = Number(bareTwoDigitMinutes);
+      }
+    }
+    if (minute < 0 || minute > 59) continue;
+    timeCandidates.push({ start: m.index, end, hour, minute, hasAmPm: false });
+  }
+  for (const m of input.matchAll(CLOCK_VN_SHORT_RE)) {
+    const hour = Number(m[1]);
+    if (hour < 0 || hour > 23) continue;
+    const unit = (m[2] ?? '').toLowerCase();
+    const minuteDigits = m[3] ?? m[4];
+    const half = m[5] !== undefined;
+    const minute = half ? 30 : minuteDigits ? Number(minuteDigits) : 0;
+    if (minute < 0 || minute > 59) continue;
+    timeCandidates.push({
+      start: m.index,
+      end: m.index + m[0].length,
+      hour,
+      minute,
+      hasAmPm: false,
+      usesShortG: unit === 'g',
+      hasMinutesOrHalf: minuteDigits !== undefined || half,
+    });
+  }
+
+  timeCandidates.sort((a, b) => a.start - b.start || b.end - a.end);
+  const dedupedTimeCandidates: typeof timeCandidates = [];
+  for (const cand of timeCandidates) {
+    const prev = dedupedTimeCandidates[dedupedTimeCandidates.length - 1];
+    if (prev && cand.start < prev.end) continue;
+    dedupedTimeCandidates.push(cand);
+  }
+  const dedupedTimeCandidateByStart = new Map(dedupedTimeCandidates.map((cand) => [cand.start, cand]));
+  const startsClockAt = (pos: number): boolean => {
+    const tc = dedupedTimeCandidateByStart.get(pos);
+    if (!tc) return false;
+    if (!tc.usesShortG || tc.hasMinutesOrHalf) return true;
+    const afterWord = findAdjacentWordAfter(input, words, tc.end, occupied);
+    return Boolean(afterWord && matchDayPeriod(afterWord, false, wordBefore(words, afterWord)));
+  };
+
   // 4. Recurrence phrases (evaluated before dates/weekdays so "hàng tuần thứ hai" and "ngày 20 hàng tháng" stay unified)
   let recurrence: TodoQuickAddRecurrence | null = null;
   let recurrenceDerivedDueOn: string | null = null;
@@ -752,7 +843,12 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       const lastW = words[endIdx];
       const nextW = words[endIdx + 1];
       if (!lastW || !nextW || !spacesOnlyBetween(input, lastW.end, nextW.start)) return false;
-      return vnMatchAny(nextW, ['này', 'sau', 'tới', 'trước', 'qua']) || /^\d{1,2}$/.test(nextW.nfcLower);
+      if (vnMatchAny(nextW, ['này', 'sau', 'tới', 'trước', 'qua'])) return true;
+      if (!vnMatch(lastW, 'tháng') || !/^\d{1,2}$/.test(nextW.nfcLower)) return false;
+      const monthNum = Number(nextW.nfcLower);
+      if (monthNum < 1 || monthNum > 12) return false;
+      if (startsClockAt(nextW.start) || /^[/:]/.test(input.slice(nextW.end))) return false;
+      return true;
     };
 
     // 4a. "cuối tháng" / "ngày cuối tháng" / "cuối mỗi tháng" / "cuối tháng hàng tháng" / "last day of [every|the] month"
@@ -896,10 +992,13 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       }
     }
 
-    // 4c. "hàng tuần <weekday>" / "mỗi tuần <weekday>" / "every week [on] <weekday>" / "every <weekday>" / "<weekday> hàng tuần"
+    // 4c. "hàng tuần [vào] <weekday>" / "mỗi tuần [vào] <weekday>" / "every week [on] <weekday>" / "every <weekday>" / "<weekday> hàng tuần"
     if (vnMatchAny(w0, ['mỗi', 'hàng', 'hằng']) && w1 && contiguous(i, i + 1) && vnMatch(w1, 'tuần')) {
-      const wd = w2 && contiguous(i + 1, i + 2) ? matchWeekday(input, words, i + 2, false) : null;
-      const endIdx = wd ? i + 1 + wd.consumed : i + 1;
+      let afterWeekIdx = i + 2;
+      const connWord = words[afterWeekIdx];
+      if (connWord && vnMatch(connWord, 'vào') && contiguous(i + 1, afterWeekIdx)) afterWeekIdx += 1;
+      const wd = afterWeekIdx < words.length && contiguous(i + 1, afterWeekIdx) ? matchWeekday(input, words, afterWeekIdx, false) : null;
+      const endIdx = wd ? afterWeekIdx + wd.consumed - 1 : i + 1;
       const span = spanOf(endIdx);
       if (isWordPhraseEndAvailable(span)) {
         recurrence = wd ? { freq: 'weekly', interval: 1, byWeekday: wd.weekday } : { freq: 'weekly', interval: 1 };
@@ -1077,87 +1176,6 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
   let parsedTime: ParsedTimeInfo | null = null;
   const timeSpans: Span[] = [];
   const englishTimeSpans: Span[] = [];
-  const timeCandidates: Array<{
-    start: number;
-    end: number;
-    hour: number;
-    minute: number;
-    hasAmPm: boolean;
-    usesShortG?: boolean | undefined;
-    hasMinutesOrHalf?: boolean | undefined;
-  }> = [];
-
-  for (const m of input.matchAll(CLOCK_COLON_RE)) {
-    const hour = Number(m[1]);
-    const minute = Number(m[2]);
-    const ampm = m[3]?.toLowerCase();
-    if (ampm) {
-      if (hour < 1 || hour > 12) continue;
-      const converted = ampm === 'am' ? (hour === 12 ? 0 : hour) : hour === 12 ? 12 : hour + 12;
-      timeCandidates.push({ start: m.index, end: m.index + m[0].length, hour: converted, minute, hasAmPm: true });
-    } else if (hour >= 0 && hour <= 23) {
-      timeCandidates.push({ start: m.index, end: m.index + m[0].length, hour, minute, hasAmPm: false });
-    }
-  }
-  for (const m of input.matchAll(CLOCK_AMPM_RE)) {
-    const hour = Number(m[1]);
-    const minute = m[2] ? Number(m[2]) : 0;
-    const ampm = (m[3] ?? '').toLowerCase();
-    if (hour < 1 || hour > 12) continue;
-    const converted = ampm === 'am' ? (hour === 12 ? 0 : hour) : hour === 12 ? 12 : hour + 12;
-    timeCandidates.push({ start: m.index, end: m.index + m[0].length, hour: converted, minute, hasAmPm: true });
-  }
-  for (const m of input.matchAll(CLOCK_VN_GIO_RE)) {
-    const hour = Number(m[2]);
-    if (hour < 0 || hour > 23) continue;
-    const gioEnd = m.index + (m[1] ?? '').length;
-    const withUnitMinutes = m[3];
-    const bareTwoDigitMinutes = m[4];
-    const half = m[5] !== undefined;
-    let end = m.index + m[0].length;
-    let minute = 0;
-    if (half) {
-      minute = 30;
-    } else if (withUnitMinutes !== undefined) {
-      minute = Number(withUnitMinutes);
-    } else if (bareTwoDigitMinutes !== undefined) {
-      const after = input.slice(end).match(/^\s*([\p{L}\p{N}\p{M}]+)/u);
-      if (after && VN_COUNT_NOUNS_AFTER_CLOCK.has(foldVn(after[1] ?? ''))) {
-        end = gioEnd;
-        minute = 0;
-      } else {
-        minute = Number(bareTwoDigitMinutes);
-      }
-    }
-    if (minute < 0 || minute > 59) continue;
-    timeCandidates.push({ start: m.index, end, hour, minute, hasAmPm: false });
-  }
-  for (const m of input.matchAll(CLOCK_VN_SHORT_RE)) {
-    const hour = Number(m[1]);
-    if (hour < 0 || hour > 23) continue;
-    const unit = (m[2] ?? '').toLowerCase();
-    const minuteDigits = m[3] ?? m[4];
-    const half = m[5] !== undefined;
-    const minute = half ? 30 : minuteDigits ? Number(minuteDigits) : 0;
-    if (minute < 0 || minute > 59) continue;
-    timeCandidates.push({
-      start: m.index,
-      end: m.index + m[0].length,
-      hour,
-      minute,
-      hasAmPm: false,
-      usesShortG: unit === 'g',
-      hasMinutesOrHalf: minuteDigits !== undefined || half,
-    });
-  }
-
-  timeCandidates.sort((a, b) => a.start - b.start || b.end - a.end);
-  const dedupedTimeCandidates: typeof timeCandidates = [];
-  for (const cand of timeCandidates) {
-    const prev = dedupedTimeCandidates[dedupedTimeCandidates.length - 1];
-    if (prev && cand.start < prev.end) continue;
-    dedupedTimeCandidates.push(cand);
-  }
 
   const isDurationClock = (
     cand: { start: number; end: number; hour: number; hasAmPm: boolean },
@@ -1655,14 +1673,20 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       }
     }
 
-    // 7j. "tuần sau <weekday>" / "tuần tới <weekday>" / "next week <weekday>" / bare "tuần sau" / "next week"
+    // 7j. "tuần sau|tới [vào] <weekday>" / "next week [on] <weekday>" / bare "tuần sau" / "next week"
     if (
       w1 &&
       contiguous(i, i + 1) &&
       ((vnMatch(w0, 'tuần') && vnMatchAny(w1, ['sau', 'tới'])) || (w0.nfcLower === 'next' && w1.nfcLower === 'week'))
     ) {
-      const wd = w2 && contiguous(i + 1, i + 2) ? matchWeekday(input, words, i + 2, w0.nfcLower === 'next') : null;
-      const endIdx = wd ? i + 1 + wd.consumed : i + 1;
+      const isEnglish = w0.nfcLower === 'next';
+      let afterWeekIdx = i + 2;
+      const connWord = words[afterWeekIdx];
+      if (connWord && contiguous(i + 1, afterWeekIdx) && (isEnglish ? connWord.nfcLower === 'on' : vnMatch(connWord, 'vào'))) {
+        afterWeekIdx += 1;
+      }
+      const wd = afterWeekIdx < words.length && contiguous(i + 1, afterWeekIdx) ? matchWeekday(input, words, afterWeekIdx, isEnglish) : null;
+      const endIdx = wd ? afterWeekIdx + wd.consumed - 1 : i + 1;
       const resolved = wd ? nextWeekOccurrenceOfWeekday(today, wd.weekday) : nextWeekOccurrenceOfWeekday(today, 1);
       if (queueDateRange(i, endIdx, resolved, false)) {
         i = endIdx;

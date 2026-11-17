@@ -950,6 +950,53 @@ describe('parseTodoQuickAdd (#3556)', () => {
       dueOn: '2026-11-18',
       dueTime: '15:00',
     });
+
+    // End-of-month recurrence ignores trailing clock digits ("14:30", "9 giờ") while still skipping specific month numbers ("cuối tháng 12")
+    expect(parseTodoQuickAdd('Nộp thuế cuối tháng 14:30', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Nộp thuế',
+      dueOn: '2026-11-30',
+      dueTime: '14:30',
+      recurrence: { freq: 'monthly', interval: 1, byMonthDay: -1 },
+    });
+    expect(parseTodoQuickAdd('Nộp thuế cuối tháng 9 giờ', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Nộp thuế',
+      dueOn: '2026-11-30',
+      dueTime: '09:00',
+      recurrence: { freq: 'monthly', interval: 1, byMonthDay: -1 },
+    });
+    expect(parseTodoQuickAdd('Pay tax last day of month 14:30', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Pay tax',
+      dueOn: '2026-11-30',
+      dueTime: '14:30',
+      recurrence: { freq: 'monthly', interval: 1, byMonthDay: -1 },
+    });
+    expect(parseTodoQuickAdd('Đóng sổ cuối tháng 12', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Đóng sổ cuối tháng 12',
+      dueOn: null,
+      recurrence: null,
+    });
+
+    // "next week on <weekday>", "tuần sau vào <weekday>", and "hàng tuần vào <weekday>" resolve the weekday and keep non-weekday "on <noun>" intact
+    expect(parseTodoQuickAdd('Meeting next week on Friday 9am', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Meeting',
+      dueOn: '2026-11-27',
+      dueTime: '09:00',
+    });
+    expect(parseTodoQuickAdd('Họp tuần sau vào thứ sáu 9h', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp',
+      dueOn: '2026-11-27',
+      dueTime: '09:00',
+    });
+    expect(parseTodoQuickAdd('Họp hàng tuần vào thứ sáu', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp',
+      dueOn: '2026-11-20',
+      recurrence: { freq: 'weekly', interval: 1, byWeekday: 5 },
+    });
+    expect(parseTodoQuickAdd('Meeting next week on budget 9am', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Meeting on budget',
+      dueOn: '2026-11-23',
+      dueTime: '09:00',
+    });
   });
 
   it('stays linear on 50k-character adversarial --, %, and tab inputs without ReDoS', () => {
