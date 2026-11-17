@@ -1,6 +1,6 @@
 // VAT return deadlines for the multi-client home screen (issue #318).
 import { describe, expect, it } from 'vitest';
-import { nextVatDeadline } from '../src/index.ts';
+import { nextVatDeadline, vatDueDate } from '../src/index.ts';
 
 describe('nextVatDeadline, monthly returns', () => {
   it('is the 20th of the month after the period while that day has not passed', () => {
@@ -55,5 +55,28 @@ describe('nextVatDeadline, quarterly returns', () => {
   it('refuses a date that is not a calendar date', () => {
     expect(() => nextVatDeadline('quarter', '2026-02-30')).toThrow();
     expect(() => nextVatDeadline('month', '19/10/2026')).toThrow();
+  });
+});
+
+describe('vatDueDate', () => {
+  it('gives the due day of the period picked, after the weekend rule', () => {
+    expect(vatDueDate('2026-10')).toBe('2026-11-20');
+    expect(vatDueDate('2026-12')).toBe('2027-01-20');
+    // 2026-08-20 is a Thursday; 2026-09-20 is a Sunday, so the August return is due on Thursday and the September one on Monday.
+    expect(vatDueDate('2026-07')).toBe('2026-08-20');
+    expect(vatDueDate('2026-08')).toBe('2026-09-21');
+    expect(vatDueDate('2026-Q3')).toBe('2026-11-02');
+    expect(vatDueDate('2026-Q4')).toBe('2027-02-01');
+  });
+
+  it('agrees with nextVatDeadline', () => {
+    expect(vatDueDate(nextVatDeadline('month', '2026-11-05').period)).toBe(nextVatDeadline('month', '2026-11-05').dueDate);
+    expect(vatDueDate(nextVatDeadline('quarter', '2026-10-19').period)).toBe(nextVatDeadline('quarter', '2026-10-19').dueDate);
+  });
+
+  it('is null for a key that is not a period', () => {
+    expect(vatDueDate('2026-13')).toBeNull();
+    expect(vatDueDate('2026-Q5')).toBeNull();
+    expect(vatDueDate('October')).toBeNull();
   });
 });

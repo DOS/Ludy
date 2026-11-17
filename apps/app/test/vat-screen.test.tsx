@@ -8,7 +8,7 @@ import { catalog } from '../src/i18n/runtime.ts';
 
 vi.mock('../src/lib/api.ts', () => ({ orpc: {}, client: {}, queryClient: {}, apiFetch: () => undefined, getCurrentOrg: () => null, errorMessage: String }));
 
-const { InvoiceTable, LateSales, SupplementaryItems } = await import('../src/routes/vat.tsx');
+const { InvoiceTable, LateSales, ResultStrip, SupplementaryItems } = await import('../src/routes/vat.tsx');
 
 const invoice = {
   id: '0192f0aa-1111-7222-8333-944445555666',
@@ -86,5 +86,33 @@ describe('late sales on the VAT screen', () => {
     expect(html).toContain('Đã tính vào kỳ đó');
     expect(render(<LateSales data={{ lateSales: [] }} />)).toBe('');
     expect(render(<LateSales data={{ lateSales: [sale] }} />, 'en')).toContain('Supplementary return needed');
+  });
+});
+
+// #3600: the result strip above the table.
+describe('VAT result strip', () => {
+  const data = {
+    period: { period: '2026-10', kind: 'month' as const, from: '2026-10-01', to: '2026-10-31' },
+    indicators: [
+      { code: '24', label: 'x', amount: '710000' },
+      { code: '35', label: 'x', amount: '0' },
+    ],
+    filed: null,
+    paymentChecks: { suggested25: '710000' } as never,
+  };
+  it('shows input and output VAT, the deadline, the status and the action, and the result carried forward', () => {
+    const html = render(<ResultStrip data={data} carried="0" action={<button>Xuất XML cho HTKK</button>} />);
+    expect(html).toMatch(/710[.,]000/);
+    expect(html).toContain('20/11/2026');
+    expect(html).toContain('Chưa nộp');
+    expect(html).toContain('Xuất XML cho HTKK');
+    expect(html).toContain('data-kind="carried"');
+    expect(html).toContain('[36] đến [43]');
+  });
+  it('says in English that it is an estimate and shows the filed date', () => {
+    const filed = { markedAt: '2026-11-18T03:00:00.000Z', carriedIn: '0', deductible: '0', carriedOut: '0', source: 'marked' } as never;
+    const html = render(<ResultStrip data={{ ...data, filed }} carried="0" action={null} />, 'en');
+    expect(html).toContain('Filed on');
+    expect(html).toContain('estimate');
   });
 });

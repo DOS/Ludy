@@ -5671,6 +5671,23 @@ export const vi = {
     monthOption: 'Tháng {n}',
     quarterOption: 'Quý {n}',
     range: 'Từ {from} đến {to}: bán ra theo ngày bán (ngày lập hóa đơn khi không có ngày bán riêng), mua vào theo ngày ghi sổ',
+    strip: {
+      title: 'Kết quả kỳ này',
+      period: 'Kỳ',
+      inputVat: 'VAT đầu vào [24]',
+      outputVat: 'VAT đầu ra [35]',
+      payable: 'VAT phải nộp (ước tính)',
+      carried: 'VAT còn được khấu trừ, chuyển kỳ sau (ước tính)',
+      deadline: 'Hạn nộp',
+      deadlineUnknown: 'Chưa xác định',
+      status: 'Trạng thái',
+      filed: 'Đã nộp ngày {date}',
+      notFiled: 'Chưa nộp',
+      basis: 'Ludy tính từ [35], [22] và [25] đề xuất ({amount}: [24] trừ thuế không được khấu trừ). Các chỉ tiêu [36] đến [43] còn lại do kế toán xác định.',
+    },
+    rules: {
+      title: 'Cách tính',
+    },
     indicatorsTitle: 'Chỉ tiêu tờ khai 01/GTGT',
     indicatorsNote:
       'Chỉ tiêu [25] (thuế GTGT được khấu trừ) và các chỉ tiêu từ [36] do kế toán xác định. Hàng hóa, dịch vụ thuế suất 8% kê khai ở [32], [33] và kèm phụ lục giảm thuế GTGT. Không gồm chứng từ đã hủy.',

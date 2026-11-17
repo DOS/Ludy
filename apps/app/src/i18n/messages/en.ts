@@ -5675,6 +5675,23 @@ export const en = {
     monthOption: 'Month {n}',
     quarterOption: 'Q{n}',
     range: 'From {from} to {to}: sales by sale date (the invoice date when there is no separate sale date), purchases by posting date',
+    strip: {
+      title: 'This period at a glance',
+      period: 'Period',
+      inputVat: 'Input VAT [24]',
+      outputVat: 'Output VAT [35]',
+      payable: 'VAT payable (estimate)',
+      carried: 'VAT left to deduct, carried forward (estimate)',
+      deadline: 'Due date',
+      deadlineUnknown: 'Not known',
+      status: 'Status',
+      filed: 'Filed on {date}',
+      notFiled: 'Not filed',
+      basis: 'Ludy works this out from [35], [22] and the suggested [25] ({amount}: [24] minus VAT that may not be deducted). Your accountant decides the other indicators from [36] to [43].',
+    },
+    rules: {
+      title: 'How it is worked out',
+    },
     indicatorsTitle: 'Form 01/GTGT indicators',
     indicatorsNote:
       'Indicator [25] (deductible input VAT) and those from [36] on are for your accountant to decide. Sales at the reduced 8% rate go in [32] and [33] with the VAT reduction appendix. Voided documents are left out.',

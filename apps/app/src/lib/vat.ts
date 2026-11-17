@@ -87,6 +87,13 @@ export function carriedOutOf(v35: string, v25: string, v22: string): string {
   return x < 0n ? (-x).toString() : '0';
 }
 
+// What the strip on top of the screen shows (#3600): the VAT the form works out for the period from [35], [25] and [22] when [37], [38],
+// [39a] and [42] are 0 (the same x as carriedOutOf): payable ([40]) when x > 0, else carried forward ([43]) as -x. Whole dong, from decimal strings.
+export function vatResultOf(v35: string, v25: string, v22: string): { kind: 'payable' | 'carried'; amount: string } {
+  const x = BigInt(roundDong(v35)) - BigInt(v25) - BigInt(v22);
+  return x > 0n ? { kind: 'payable', amount: x.toString() } : { kind: 'carried', amount: (-x).toString() };
+}
+
 // A decimal amount rounded half up (away from zero) to whole dong, as the HTKK file writes it.
 export function roundDong(value: string): string {
   const units = toUnits(value);
@@ -108,3 +115,20 @@ export function canMarkFiled(role: string | null | undefined): boolean {
 export function canMarkPayment(role: string | null | undefined): boolean {
   return role === 'owner' || role === 'admin' || role === 'member';
 }
+
+// English gloss of the form lines for the English UI (#3600): the official Vietnamese text stays, the gloss goes under it.
+export const INDICATOR_GLOSS: Record<string, string> = {
+  '23': 'Value of goods and services purchased',
+  '24': 'VAT on goods and services purchased',
+  '26': 'Sales not subject to VAT',
+  '27': 'Sales subject to VAT',
+  '28': 'VAT on sales',
+  '29': 'Sales at 0%',
+  '30': 'Sales at 5%',
+  '31': 'VAT on sales at 5%',
+  '32': 'Sales at 10% (including 8% reduced)',
+  '33': 'VAT on sales at 10% (including 8% reduced)',
+  '32a': 'Sales that need no VAT declared or paid',
+  '34': 'Total sales',
+  '35': 'Total VAT on sales',
+};
