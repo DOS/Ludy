@@ -12837,6 +12837,7 @@ export const vi = {
         profile_set: 'Đặt hồ sơ hộ kinh doanh của một pháp nhân từ một ngày',
         rules: 'Xem các quy tắc thuế hộ kinh doanh có hiệu lực vào một ngày',
         s1a: 'Xem sổ doanh thu bán hàng S1a của hộ kinh doanh trong một kỳ',
+        cnkd: 'Xem bảng tính tờ khai 01/CNKD của hộ kinh doanh trong một quý',
         export: 'Tải một sổ của hộ kinh doanh dạng Excel',
       },
       collection_setting: {

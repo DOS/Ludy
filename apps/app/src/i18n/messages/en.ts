@@ -12838,6 +12838,7 @@ export const en = {
         profile_set: 'Set the household profile of a legal entity from a date',
         rules: 'View the household tax rules in force on a date',
         s1a: 'View the household sales book S1a for a period',
+        cnkd: 'View the 01/CNKD worksheet of a household business for a quarter',
         export: 'Download a household book as an Excel file',
       },
       collection_setting: {
