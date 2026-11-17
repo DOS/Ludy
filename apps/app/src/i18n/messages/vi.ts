@@ -13573,6 +13573,7 @@ export const vi = {
         source: 'Đọc thông tin khung trang và vai trò người ký để AI phân tích',
       },
       envelope: {
+        by_source: 'Xem hồ sơ ký theo nguồn chứng từ',
         completed_mail_data: 'Chuẩn bị dữ liệu email chứng thư hoàn tất hồ sơ ký (hệ thống)',
         create: 'Tạo bản nháp hồ sơ ký',
         events: 'Xem chuỗi nhật ký ký của hồ sơ',

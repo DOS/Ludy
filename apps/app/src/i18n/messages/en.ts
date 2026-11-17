@@ -13577,6 +13577,7 @@ export const en = {
         source: 'Read draft envelope layout and signer roles for AI analysis',
       },
       envelope: {
+        by_source: 'Look up signing envelopes by source record',
         completed_mail_data: 'Prepare completed envelope certificate email data (system)',
         create: 'Create a signing envelope draft',
         events: 'Read the signing audit chain of an envelope',
