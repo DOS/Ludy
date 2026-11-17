@@ -1,0 +1,314 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Database integration tests on PostgreSQL 17 for Notes v2 T3 recurring personal to-dos and reschedule (#3557):
+// schema CHECK constraint, atomic recurring spawn with checklist reset & reminder shift, stopSeries/idempotency,
+// single/bulk reschedule with ADR-0037 author-only isolation, and strict PII redaction in audit/outbox.
+import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import pg from 'pg';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createDb, createPool } from '@crove/db';
+import { migrate, setRolePasswords } from '@crove/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
+import {
+  type Todo,
+  type TodoCompleteResult,
+  type TodoRescheduled,
+  type TodoSummary,
+  type TodoWritten,
+} from '@crove/kernel-contract';
+import { Runtime } from '@crove/kernel-runtime';
+import { notesCommands, notesQueries } from '@crove/mod-notes';
+import { TEST_MANIFESTS } from './manifests.ts';
+
+const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
+const suite = ADMIN ? describe : describe.skip;
+
+const SECRET_TITLE = 'Nộp tờ khai thuế quý 4 bí mật';
+const SECRET_DETAILS = 'Số tài khoản nội bộ tuyệt mật 999888';
+const SECRET_STEP_1 = 'Chốt số hóa đơn đầu vào';
+const SECRET_STEP_2 = 'Ký tờ khai điện tử';
+
+suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
+  const dbName = `crove_test_notes_todo_rec_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  let adminUrl = '';
+  const pools: pg.Pool[] = [];
+  let app: Runtime;
+  const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
+
+  async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
+    const c = new pg.Client({ connectionString: adminUrl });
+    await c.connect();
+    try {
+      return await fn(c);
+    } finally {
+      await c.end();
+    }
+  }
+
+  async function setupOrg() {
+    const tag = randomUUID().slice(0, 8);
+    const makeUser = (name: string) =>
+      upsertIdentity(createDb(pools[0] as pg.Pool), {
+        issuer: 'todo-rec',
+        subject: `${name}-${tag}`,
+        email: `${name}-${tag}@rec.test`,
+        name: null,
+      });
+    const owner = await makeUser('owner');
+    const adminUser = await makeUser('admin');
+    const mine = await makeUser('mine');
+    const other = await makeUser('other');
+    const { orgId } = await createOrg(app, asUser(owner), `Recurring ${tag}`);
+    await admin((c) =>
+      c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member')`, [
+        orgId,
+        adminUser,
+        mine,
+        other,
+      ]),
+    );
+    const exec = <O>(userId: string, name: string, input: unknown = {}) => app.execute<O>(name, input, { actor: asUser(userId), orgId });
+    const query = <O>(userId: string, name: string, input: unknown = {}) => app.query<O>(name, input, { actor: asUser(userId), orgId });
+    return { orgId, owner, admin: adminUser, mine, other, exec, query };
+  }
+
+  beforeAll(async () => {
+    const root = new pg.Client({ connectionString: ADMIN });
+    await root.connect();
+    await root.query(`CREATE DATABASE ${dbName}`);
+    await root.end();
+    const base = new URL(ADMIN as string);
+    base.pathname = `/${dbName}`;
+    adminUrl = base.toString();
+    await migrate({ adminUrl, dir: MIGRATIONS });
+    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    const url = new URL(adminUrl);
+    url.username = 'crove_app';
+    url.password = 'test-app-pw';
+    const pool = createPool({ connectionString: url.toString(), max: 4 });
+    pools.push(pool);
+    app = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({
+      commands: [...kernelCommands, ...notesCommands],
+      queries: [...kernelQueries({ inboundDomain: null }), ...notesQueries],
+    });
+  }, 300_000);
+
+  afterAll(async () => {
+    for (const pool of pools) await pool.end();
+    if (!ADMIN) return;
+    const root = new pg.Client({ connectionString: ADMIN });
+    await root.connect();
+    await root.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+    await root.end();
+  });
+
+  it('enforces crove_notes.todo_recurrence_valid(jsonb) CHECK constraints at the SQL layer', async () => {
+    await admin(async (c) => {
+      const check = async (expr: string, params: unknown[] = []) => {
+        const res = await c.query<{ ok: boolean }>(`SELECT crove_notes.todo_recurrence_valid(${expr}) AS ok`, params);
+        return res.rows[0]?.ok;
+      };
+      expect(await check('$1::jsonb', [JSON.stringify({ freq: 'daily', interval: 1 })])).toBe(true);
+      expect(await check('$1::jsonb', [JSON.stringify({ freq: 'weekly', interval: 2, byWeekday: 0 })])).toBe(true);
+      expect(await check('$1::jsonb', [JSON.stringify({ freq: 'monthly', interval: 1, byMonthDay: -1 })])).toBe(true);
+      expect(await check('$1::jsonb', [JSON.stringify({ freq: 'monthly', interval: 12, byMonthDay: 31 })])).toBe(true);
+
+      // Disallowed shapes, keys, intervals, and cross-frequency qualifiers.
+      expect(await check('$1::jsonb', [JSON.stringify({ freq: 'yearly', interval: 1 })])).toBe(false);
+      expect(await check('$1::jsonb', [JSON.stringify({ freq: 'daily', interval: 0 })])).toBe(false);
+      expect(await check('$1::jsonb', [JSON.stringify({ freq: 'daily', interval: 366 })])).toBe(false);
+      expect(await check('$1::jsonb', [JSON.stringify({ freq: 'daily', interval: 1, byWeekday: 1 })])).toBe(false);
+      expect(await check('$1::jsonb', [JSON.stringify({ freq: 'monthly', interval: 1, byMonthDay: 0 })])).toBe(false);
+      expect(await check('$1::jsonb', [JSON.stringify({ freq: 'monthly', interval: 1, byMonthDay: 32 })])).toBe(false);
+      expect(await check('$1::jsonb', [JSON.stringify({ freq: 'daily', interval: 1, extra: 'bad' })])).toBe(false);
+      expect(await check('$1::jsonb', [JSON.stringify(['daily'])])).toBe(false);
+    });
+  });
+
+  it('atomically completes a recurring to-do, spawns the next occurrence with reset checklist, shifted dates/reminders and zero PII in audit/outbox', async () => {
+    const o = await setupOrg();
+    const created = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: SECRET_TITLE,
+      details: SECRET_DETAILS,
+      checklist: [
+        { text: SECRET_STEP_1, done: true },
+        { text: SECRET_STEP_2, done: false },
+      ],
+      dueOn: '2026-11-30',
+      dueTime: '09:30',
+      timeZone: 'Asia/Ho_Chi_Minh',
+      reminder: 'auto',
+      recurrence: { freq: 'monthly', interval: 1, byMonthDay: -1 },
+    });
+
+    // Simulate a previous reminder delivery marker so we can verify the spawned occurrence clears reminded_at.
+    await admin((c) => c.query(`UPDATE crove_notes.todo SET reminded_at = now() WHERE org_id = $1 AND id = $2`, [o.orgId, created.todoId]));
+
+    const initial = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: created.todoId });
+    expect(initial.seriesId).toBe(created.todoId);
+    expect(initial.recurrence).toEqual({ freq: 'monthly', interval: 1, byMonthDay: -1 });
+
+    const doneRes = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: created.todoId });
+    expect(doneRes.todoId).toBe(created.todoId);
+    expect(doneRes.nextTodoId).toBeTruthy();
+    const nextId = doneRes.nextTodoId as string;
+    expect(nextId).not.toBe(created.todoId);
+
+    // Completed row keeps history and checklist done state intact.
+    const completedRow = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: created.todoId });
+    expect(completedRow.status).toBe('done');
+    expect(completedRow.checklist).toEqual([
+      { text: SECRET_STEP_1, done: true },
+      { text: SECRET_STEP_2, done: false },
+    ]);
+    expect(completedRow.seriesId).toBe(created.todoId);
+
+    // Next occurrence shares seriesId & recurrence, resets checklist, shifts dueOn to 2026-12-31, keeps 09:30, shifts auto reminder, clears reminded_at.
+    const spawned = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: nextId });
+    expect(spawned.status).toBe('open');
+    expect(spawned.title).toBe(SECRET_TITLE);
+    expect(spawned.details).toBe(SECRET_DETAILS);
+    expect(spawned.seriesId).toBe(created.todoId);
+    expect(spawned.recurrence).toEqual({ freq: 'monthly', interval: 1, byMonthDay: -1 });
+    expect(spawned.dueOn).toBe('2026-12-31');
+    expect(spawned.dueTime).toBe('09:30');
+    expect(spawned.remindAt).toBe('2026-12-31T02:00:00.000Z'); // 09:00 Asia/Ho_Chi_Minh = 02:00Z
+    expect(spawned.checklist).toEqual([
+      { text: SECRET_STEP_1, done: false },
+      { text: SECRET_STEP_2, done: false },
+    ]);
+
+    const rawDbNext = await admin((c) =>
+      c.query<{ reminded_at: Date | null }>(`SELECT reminded_at FROM crove_notes.todo WHERE org_id = $1 AND id = $2`, [o.orgId, nextId]),
+    );
+    expect(rawDbNext.rows[0]?.reminded_at).toBeNull();
+
+    // Re-completing the already-done row is idempotent and spawns no third occurrence.
+    const secondComplete = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: created.todoId });
+    expect(secondComplete.nextTodoId ?? null).toBeNull();
+
+    // Reopening the completed row and completing again must NOT create a duplicate open row for the same (series_id, 2026-12-31).
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.reopen', { todoId: created.todoId });
+    const recompleted = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: created.todoId });
+    expect(recompleted.nextTodoId ?? null).toBeNull();
+
+    // Completing with stopSeries: true finishes the series cleanly and clears recurrence on the done row.
+    const stopped = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: nextId, stopSeries: true });
+    expect(stopped.nextTodoId ?? null).toBeNull();
+    const stoppedRow = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: nextId });
+    expect(stoppedRow.status).toBe('done');
+    expect(stoppedRow.recurrence).toBeNull();
+    expect(stoppedRow.seriesId).toBe(created.todoId);
+
+    const openList = await o.query<TodoSummary[]>(o.mine, 'notes.todo.list', { view: 'open' });
+    expect(openList).toEqual([]);
+
+    // Audit & outbox hold IDs/dates/status only, never title/details/steps.
+    await admin(async (c) => {
+      const audits = await c.query<{ command: string; detail: Record<string, unknown> }>(
+        `SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'notes.todo.%'`,
+        [o.orgId],
+      );
+      const outbox = await c.query<{ type: string; payload: Record<string, unknown> }>(
+        `SELECT type, payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type LIKE 'notes.todo.%'`,
+        [o.orgId],
+      );
+      const blob = JSON.stringify({ audits: audits.rows, outbox: outbox.rows });
+      expect(blob).not.toContain(SECRET_TITLE);
+      expect(blob).not.toContain(SECRET_DETAILS);
+      expect(blob).not.toContain(SECRET_STEP_1);
+      expect(blob).not.toContain(SECRET_STEP_2);
+    });
+  });
+
+  it('supports setting recurrence on update and bulk reschedules with ADR-0037 author-only isolation', async () => {
+    const o = await setupOrg();
+    const a = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Overdue Alpha',
+      dueOn: '2026-10-01',
+      dueTime: '15:00',
+      timeZone: 'Asia/Ho_Chi_Minh',
+      reminder: 'auto',
+    });
+    const b = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Overdue Beta',
+      dueOn: '2026-10-02',
+      timeZone: 'Asia/Ho_Chi_Minh',
+      reminder: 'off',
+    });
+
+    // Update a to add weekly recurrence; assigns seriesId = a.todoId.
+    const aRead = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: a.todoId });
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.update', {
+      todoId: a.todoId,
+      revision: aRead.revision,
+      title: aRead.title,
+      details: aRead.details,
+      checklist: aRead.checklist,
+      dueOn: aRead.dueOn,
+      dueTime: aRead.dueTime,
+      timeZone: aRead.timeZone,
+      recurrence: { freq: 'weekly', interval: 1 },
+    });
+    const aWithRec = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: a.todoId });
+    expect(aWithRec.seriesId).toBe(a.todoId);
+    expect(aWithRec.recurrence).toEqual({ freq: 'weekly', interval: 1 });
+
+    // Owner, admin and other member cannot reschedule mine's private to-dos.
+    for (const stranger of [o.owner, o.admin, o.other]) {
+      await expect(o.exec(stranger, 'notes.todo.reschedule', { todoIds: [a.todoId, b.todoId], dueOn: '2026-12-01' })).rejects.toMatchObject({
+        code: 'TODO_NOT_FOUND',
+        status: 404,
+      });
+    }
+
+    // Mark a's reminded_at so reschedule must clear it.
+    await admin((c) => c.query(`UPDATE crove_notes.todo SET reminded_at = now() WHERE org_id = $1 AND id = $2`, [o.orgId, a.todoId]));
+
+    // Reschedule both in batch to 2026-12-10; a retains 15:00 + 14:30 reminder, b stays reminder: null, order is preserved.
+    const resched = await o.exec<TodoRescheduled>(o.mine, 'notes.todo.reschedule', {
+      todoIds: [a.todoId, b.todoId],
+      dueOn: '2026-12-10',
+    });
+    expect(resched).toEqual({ updated: 2, todoIds: [a.todoId, b.todoId] });
+
+    const aAfter = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: a.todoId });
+    const bAfter = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: b.todoId });
+    expect(aAfter.dueOn).toBe('2026-12-10');
+    expect(aAfter.dueTime).toBe('15:00');
+    expect(aAfter.remindAt).toBe('2026-12-10T07:30:00.000Z'); // 14:30 Asia/Ho_Chi_Minh = 07:30Z
+    expect(aAfter.revision).toBe(aWithRec.revision + 1);
+    expect(bAfter.dueOn).toBe('2026-12-10');
+    expect(bAfter.remindAt).toBeNull();
+
+    const rawA = await admin((c) =>
+      c.query<{ reminded_at: Date | null }>(`SELECT reminded_at FROM crove_notes.todo WHERE org_id = $1 AND id = $2`, [o.orgId, a.todoId]),
+    );
+    expect(rawA.rows[0]?.reminded_at).toBeNull();
+
+    // Reschedule rejects if a to-do is trashed (409 TODO_IN_TRASH), done (409), or missing (404).
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.delete', { todoId: b.todoId });
+    await expect(o.exec(o.mine, 'notes.todo.reschedule', { todoIds: [b.todoId], dueOn: '2026-12-11' })).rejects.toMatchObject({
+      code: 'TODO_IN_TRASH',
+      status: 409,
+    });
+    await expect(o.exec(o.mine, 'notes.todo.reschedule', { todoIds: [randomUUID()], dueOn: '2026-12-11' })).rejects.toMatchObject({
+      code: 'TODO_NOT_FOUND',
+      status: 404,
+    });
+
+    // Audit for reschedule contains IDs and dates only across both ok and rejected attempts, never titles.
+    await admin(async (c) => {
+      const rows = await c.query<{ outcome: string; detail: Record<string, unknown> }>(
+        `SELECT outcome, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'notes.todo.reschedule'`,
+        [o.orgId],
+      );
+      const okRows = rows.rows.filter((r) => r.outcome === 'ok');
+      expect(okRows).toHaveLength(1);
+      expect(okRows[0]?.detail).toEqual({ count: 2, dueOn: '2026-12-10', todoIds: [a.todoId, b.todoId] });
+      expect(JSON.stringify(rows.rows)).not.toContain('Overdue Alpha');
+      expect(JSON.stringify(rows.rows)).not.toContain('Overdue Beta');
+    });
+  });
+});

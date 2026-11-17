@@ -1101,6 +1101,7 @@ export function createRpcHandler(
         complete: os.notes.todos.complete.handler(notesCommand('notes.todo.complete')),
         reopen: os.notes.todos.reopen.handler(notesCommand('notes.todo.reopen')),
         reorder: os.notes.todos.reorder.handler(notesCommand('notes.todo.reorder')),
+        reschedule: os.notes.todos.reschedule.handler(notesCommand('notes.todo.reschedule')),
         delete: os.notes.todos.delete.handler(notesCommand('notes.todo.delete')),
         restore: os.notes.todos.restore.handler(notesCommand('notes.todo.restore')),
         linkAdd: os.notes.todos.linkAdd.handler(notesCommand('notes.todo.link_add')),

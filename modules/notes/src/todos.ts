@@ -12,12 +12,17 @@ import {
   PROJECT_TASK_MAP_LIMIT,
   auditValue,
   countTaskChecklistSteps,
+  nextTodoOccurrenceDate,
+  normalizeTodoRecurrence,
+  parseTodoRecurrence,
+  shiftTodoSchedule,
   taskStanding,
   todoAutoReminder,
   todoDueInstant,
   todoLocalTime,
   todoStanding,
   zMyWorkInput,
+  zTodoComplete,
   zTodoCreate,
   REBALANCE_AT,
   keyBetween,
@@ -28,15 +33,19 @@ import {
   zTodoList,
   zTodoRef,
   zTodoReorder,
+  zTodoReschedule,
   zTodoUpdate,
+  zonedDate,
   type MyWork,
   type MyWorkTask,
   type ProjectTaskProjectEntry,
   type TaskChecklistStep,
   type Todo,
+  type TodoCompleteResult,
   type TodoCount,
   type TodoHandedOver,
   type TodoReminder,
+  type TodoRescheduled,
   type TodoSourceNote,
   type TodoStatus,
   type TodoStep,
@@ -67,6 +76,8 @@ export const TODO_SUMMARY_COLUMNS = [
   'sort_key',
   'source_note_id',
   'task_id',
+  'recurrence',
+  'series_id',
   'tainted',
   'revision',
   'created_at',
@@ -88,6 +99,8 @@ interface SummaryRow {
   sort_key: string;
   source_note_id: string | null;
   task_id: string | null;
+  recurrence: unknown;
+  series_id: string | null;
   tainted: boolean;
   revision: number;
   created_at: Date | string;
@@ -143,6 +156,8 @@ export function todoSummaryRow(r: SummaryRow, now: Date, sourceNotes?: ReadonlyM
     sourceNoteId: r.source_note_id,
     sourceNote: r.source_note_id === null ? null : (sourceNotes?.get(r.source_note_id) ?? { id: r.source_note_id, title: null, available: false }),
     taskId: r.task_id,
+    recurrence: parseTodoRecurrence(r.recurrence),
+    seriesId: r.series_id,
     tainted: r.tainted,
     revision: r.revision,
     createdAt: new Date(r.created_at).toISOString(),
@@ -171,7 +186,7 @@ async function load(ctx: Pick<QueryContext, 'trx' | 'orgId'>, todoId: string, lo
   return row;
 }
 
-function assertNotInTrash(row: SummaryRow): void {
+function assertNotInTrash(row: Pick<SummaryRow, 'deleted_at'>): void {
   if (row.deleted_at !== null) throw new DomainError('TODO_IN_TRASH', 409, 'Việc này đang ở thùng rác; hãy khôi phục trước');
 }
 
@@ -274,6 +289,7 @@ export const todoCreate = defineCommand({
     const sortKey = await placeBetween(ctx, rows, -1, 0);
     const when = due(input);
     const remind = remindAt(input.reminder, when, ctx.now);
+    const rule = input.recurrence ? normalizeTodoRecurrence(input.recurrence) : null;
     const row = await ctx.trx
       .insertInto('crove_notes.todo')
       .values({
@@ -287,12 +303,21 @@ export const todoCreate = defineCommand({
         reminded_at: remind.passed ? ctx.now : null,
         sort_key: sortKey,
         source_note_id: input.sourceNoteId ?? null,
+        recurrence: rule ? JSON.stringify(rule) : null,
         tainted: sourceTainted,
         created_at: ctx.now,
         updated_at: ctx.now,
       })
       .returning(['id', 'revision'])
       .executeTakeFirstOrThrow();
+    if (rule !== null) {
+      await ctx.trx
+        .updateTable('crove_notes.todo')
+        .set({ series_id: row.id })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', row.id)
+        .execute();
+    }
     if (input.link) await insertRecordLink(ctx, { kind: 'todo', id: row.id }, userId, input.link.targetType, input.link.targetId);
     ctx.audit({
       todoId: row.id,
@@ -304,6 +329,7 @@ export const todoCreate = defineCommand({
       timeZone: input.timeZone,
       reminder: reminderKind(input.reminder),
       remindAt: remind.at?.toISOString() ?? null,
+      ...(rule !== null ? { recurrence: rule, seriesId: row.id } : {}),
       ...(input.sourceNoteId !== undefined ? { sourceNoteId: input.sourceNoteId } : {}),
       ...(sourceTainted ? { tainted: true } : {}),
       ...(input.link ? { target: 'private' as const } : {}),
@@ -338,6 +364,15 @@ export const todoUpdate = defineCommand({
         : beforeRemind.getTime() === todoAutoReminder({ dueOn: before.due_on, dueAt: beforeDueAt === null ? null : new Date(beforeDueAt), timeZone: before.time_zone })?.getTime();
     const remind = input.reminder !== undefined ? remindAt(input.reminder, next, ctx.now) : dueMoved && wasAuto ? remindAt('auto', next, ctx.now) : null;
     const remindChanged = remind !== null && (beforeRemind?.getTime() ?? null) !== (remind.at?.getTime() ?? null);
+    const beforeRecurrence = parseTodoRecurrence(before.recurrence);
+    const nextRecurrence =
+      input.recurrence === undefined
+        ? beforeRecurrence
+        : input.recurrence === null
+          ? null
+          : normalizeTodoRecurrence(input.recurrence);
+    const recurrenceChanged = JSON.stringify(beforeRecurrence) !== JSON.stringify(nextRecurrence);
+    const assignedSeriesId = nextRecurrence !== null && before.series_id === null ? before.id : null;
     const changed = [
       ...(before.title !== input.title ? ['title'] : []),
       ...(before.details !== details ? ['details'] : []),
@@ -345,6 +380,7 @@ export const todoUpdate = defineCommand({
       ...(before.due_on !== next.due_on || beforeDueAt !== (next.due_at?.getTime() ?? null) ? ['due'] : []),
       ...(before.time_zone !== next.time_zone ? ['timeZone'] : []),
       ...(remindChanged ? ['reminder'] : []),
+      ...(recurrenceChanged ? ['recurrence'] : []),
     ];
     const row = await ctx.trx
       .updateTable('crove_notes.todo')
@@ -355,6 +391,12 @@ export const todoUpdate = defineCommand({
         checklist,
         ...next,
         ...(remind !== null && remindChanged ? { remind_at: remind.at, reminded_at: remind.passed ? ctx.now : null } : {}),
+        ...(input.recurrence !== undefined
+          ? {
+              recurrence: nextRecurrence === null ? null : JSON.stringify(nextRecurrence),
+              ...(assignedSeriesId !== null ? { series_id: assignedSeriesId } : {}),
+            }
+          : {}),
         revision: before.revision + 1,
         updated_at: ctx.now,
       })
@@ -362,41 +404,215 @@ export const todoUpdate = defineCommand({
       .where('id', '=', input.todoId)
       .returning(['id', 'revision'])
       .executeTakeFirstOrThrow();
-    ctx.audit({ todoId: row.id, revision: row.revision, changed, dueOn: next.due_on, ...(remind !== null && remindChanged ? { remindAt: remind.at?.toISOString() ?? null } : {}) });
+    ctx.audit({
+      todoId: row.id,
+      revision: row.revision,
+      changed,
+      dueOn: next.due_on,
+      ...(remind !== null && remindChanged ? { remindAt: remind.at?.toISOString() ?? null } : {}),
+      ...(assignedSeriesId !== null ? { seriesId: assignedSeriesId } : {}),
+    });
     return written(row);
   },
 });
 
-// Done and open again: the owner's, outside the trash. A to-do handed over or cancelled stays as it is.
-function statusCommand(name: string, from: TodoStatus, to: TodoStatus) {
-  return defineCommand({
-    name,
-    input: zTodoRef,
-    risk: 'R1',
-    sideEffect: 'internal',
-    access: WRITERS,
-    target,
-    handler: async (ctx, input): Promise<TodoWritten> => {
-      userOf(ctx.actor);
-      const before = await load(ctx, input.todoId, true);
-      assertNotInTrash(before);
-      if (before.status === to) return written(before);
-      if (before.status !== from) throw new DomainError('TODO_NOT_CHANGEABLE', 409, 'Việc này đã được giao hoặc đã hủy');
-      const row = await ctx.trx
-        .updateTable('crove_notes.todo')
-        .set({ status: to, done_at: to === 'done' ? ctx.now : null, ...(to === 'open' ? { reminded_at: reminderPassed(ctx.now) } : {}), revision: before.revision + 1, updated_at: ctx.now })
-        .where('org_id', '=', ctx.orgId)
-        .where('id', '=', input.todoId)
-        .returning(['id', 'revision'])
-        .executeTakeFirstOrThrow();
-      ctx.audit({ todoId: row.id, revision: row.revision, status: to, previousStatus: before.status });
-      return written(row);
-    },
-  });
-}
+// Marks an open to-do done; if it carries a recurrence rule and `stopSeries` is not set, atomically creates the next
+// open occurrence in the same series with reset checklist steps and shifted due/reminder instants.
+export const todoComplete = defineCommand({
+  name: 'notes.todo.complete',
+  input: zTodoComplete,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  target,
+  handler: async (ctx, input): Promise<TodoCompleteResult> => {
+    const userId = userOf(ctx.actor);
+    const before = await load(ctx, input.todoId, true);
+    assertNotInTrash(before);
+    if (before.status === 'done') return written(before);
+    if (before.status !== 'open') throw new DomainError('TODO_NOT_CHANGEABLE', 409, 'Việc này đã được giao hoặc đã hủy');
 
-export const todoComplete = statusCommand('notes.todo.complete', 'open', 'done');
-export const todoReopen = statusCommand('notes.todo.reopen', 'done', 'open');
+    const rule = parseTodoRecurrence(before.recurrence);
+    const stopSeries = input.stopSeries === true;
+    const seriesId = rule !== null ? (before.series_id ?? before.id) : before.series_id;
+
+    const row = await ctx.trx
+      .updateTable('crove_notes.todo')
+      .set({
+        status: 'done',
+        done_at: ctx.now,
+        ...(rule !== null && before.series_id === null && seriesId !== null ? { series_id: seriesId } : {}),
+        ...(stopSeries && rule !== null ? { recurrence: null } : {}),
+        revision: before.revision + 1,
+        updated_at: ctx.now,
+      })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.todoId)
+      .returning(['id', 'revision'])
+      .executeTakeFirstOrThrow();
+
+    let nextTodoId: string | null = null;
+    let nextDueOn: string | null = null;
+    if (rule !== null && !stopSeries && seriesId !== null) {
+      const anchorDate = before.due_on ?? zonedDate(before.time_zone, ctx.now.getTime());
+      nextDueOn = nextTodoOccurrenceDate(rule, anchorDate);
+      const existingSibling = await ctx.trx
+        .selectFrom('crove_notes.todo')
+        .select('id')
+        .where('org_id', '=', ctx.orgId)
+        .where('series_id', '=', seriesId)
+        .where('id', '<>', before.id)
+        .where('status', '=', 'open')
+        .where('deleted_at', 'is', null)
+        .where('due_on', '=', nextDueOn)
+        .executeTakeFirst();
+
+      if (!existingSibling) {
+        const shifted = shiftTodoSchedule(
+          {
+            dueOn: before.due_on,
+            dueAt: before.due_at === null ? null : new Date(before.due_at),
+            timeZone: before.time_zone,
+            remindAt: before.remind_at === null ? null : new Date(before.remind_at),
+          },
+          nextDueOn,
+        );
+        const resetChecklist = checklistOf(steps(before.checklist).map((s) => ({ text: s.text, done: false })));
+        let readableSourceNoteId: string | null = null;
+        if (before.source_note_id !== null) {
+          const noteRow = await ctx.trx
+            .selectFrom('crove_notes.note')
+            .select('id')
+            .where('org_id', '=', ctx.orgId)
+            .where('id', '=', before.source_note_id)
+            .executeTakeFirst();
+          readableSourceNoteId = noteRow?.id ?? null;
+        }
+        const rows = await ownKeys(ctx, null);
+        const at = rows.findIndex((r) => r.id === before.id);
+        const sortKey = at >= 0 ? await placeBetween(ctx, rows, at, at + 1) : await placeBetween(ctx, rows, -1, 0);
+        const nextRow = await ctx.trx
+          .insertInto('crove_notes.todo')
+          .values({
+            org_id: ctx.orgId,
+            owner_user_id: userId,
+            title: before.title,
+            details: before.details,
+            checklist: resetChecklist,
+            status: 'open',
+            due_on: shifted.dueOn,
+            due_at: shifted.dueAt,
+            time_zone: before.time_zone,
+            remind_at: shifted.remindAt,
+            reminded_at: null,
+            sort_key: sortKey,
+            source_note_id: readableSourceNoteId,
+            recurrence: JSON.stringify(rule),
+            series_id: seriesId,
+            tainted: before.tainted,
+            created_at: ctx.now,
+            updated_at: ctx.now,
+          })
+          .returning('id')
+          .executeTakeFirstOrThrow();
+        nextTodoId = nextRow.id;
+      }
+    }
+
+    ctx.audit({
+      todoId: row.id,
+      revision: row.revision,
+      status: 'done',
+      previousStatus: before.status,
+      ...(seriesId !== null ? { seriesId } : {}),
+      ...(stopSeries ? { stopSeries: true } : {}),
+      ...(nextTodoId !== null ? { nextTodoId, nextDueOn } : {}),
+    });
+    return {
+      ...written(row),
+      ...(nextTodoId !== null ? { nextTodoId } : {}),
+    };
+  },
+});
+
+export const todoReopen = defineCommand({
+  name: 'notes.todo.reopen',
+  input: zTodoRef,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  target,
+  handler: async (ctx, input): Promise<TodoWritten> => {
+    userOf(ctx.actor);
+    const before = await load(ctx, input.todoId, true);
+    assertNotInTrash(before);
+    if (before.status === 'open') return written(before);
+    if (before.status !== 'done') throw new DomainError('TODO_NOT_CHANGEABLE', 409, 'Việc này đã được giao hoặc đã hủy');
+    const row = await ctx.trx
+      .updateTable('crove_notes.todo')
+      .set({ status: 'open', done_at: null, reminded_at: reminderPassed(ctx.now), revision: before.revision + 1, updated_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.todoId)
+      .returning(['id', 'revision'])
+      .executeTakeFirstOrThrow();
+    ctx.audit({ todoId: row.id, revision: row.revision, status: 'open', previousStatus: before.status });
+    return written(row);
+  },
+});
+
+// Moves one or more of the caller's open to-dos to `dueOn`, preserving each item's due time-of-day in its own time
+// zone and shifting its reminder proportionately, while keeping manual sort order intact and auditing ids/counts only.
+export const todoReschedule = defineCommand({
+  name: 'notes.todo.reschedule',
+  input: zTodoReschedule,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  target: (input) => ({ type: 'notes.todo', id: input.todoIds[0] ?? '' }),
+  handler: async (ctx, input): Promise<TodoRescheduled> => {
+    userOf(ctx.actor);
+    const rows = await ctx.trx
+      .selectFrom('crove_notes.todo')
+      .select(['id', 'status', 'due_on', 'due_at', 'time_zone', 'remind_at', 'revision', 'deleted_at'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', 'in', input.todoIds)
+      .orderBy('id')
+      .forUpdate()
+      .execute();
+    if (rows.length !== input.todoIds.length) throw notFound();
+    for (const row of rows) {
+      assertNotInTrash(row);
+      if (row.status !== 'open') throw new DomainError('TODO_NOT_CHANGEABLE', 409, 'Chỉ đổi lịch được việc chưa xong');
+    }
+    for (const row of rows) {
+      const shifted = shiftTodoSchedule(
+        {
+          dueOn: row.due_on,
+          dueAt: row.due_at === null ? null : new Date(row.due_at),
+          timeZone: row.time_zone,
+          remindAt: row.remind_at === null ? null : new Date(row.remind_at),
+        },
+        input.dueOn,
+      );
+      await ctx.trx
+        .updateTable('crove_notes.todo')
+        .set({
+          due_on: shifted.dueOn,
+          due_at: shifted.dueAt,
+          remind_at: shifted.remindAt,
+          reminded_at: null,
+          revision: row.revision + 1,
+          updated_at: ctx.now,
+        })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', row.id)
+        .execute();
+    }
+    const updatedIds = rows.map((r) => r.id);
+    ctx.audit({ todoIds: updatedIds, count: updatedIds.length, dueOn: input.dueOn });
+    return { updated: updatedIds.length, todoIds: updatedIds };
+  },
+});
 
 // Moves a to-do right before or after another of the caller's. The anchor is read through the row policies, so it is
 // the caller's own; only the moved to-do's key changes, unless the list needs fresh keys.
@@ -699,7 +915,7 @@ export const todoCounts = defineQuery({
   },
 });
 
-export const todoCommands = [todoCreate, todoUpdate, todoComplete, todoReopen, todoReorder, todoDelete, todoRestore, todoHandOver, todoLinkAdd, todoLinkRemove];
+export const todoCommands = [todoCreate, todoUpdate, todoComplete, todoReopen, todoReorder, todoReschedule, todoDelete, todoRestore, todoHandOver, todoLinkAdd, todoLinkRemove];
 export const todoQueries = [todoList, todoGet, todoCounts];
 // My work reads to-dos and the kernel's tasks, so it is the module's, not the to-do list's.
 export const myWorkQueries = [myWork];
