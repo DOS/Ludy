@@ -214,6 +214,48 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     await root.end();
   });
 
+  // The triggers themselves, with no command in between (#3212): a plain UPDATE of a guarded column run in a member's sealed context is refused by the guard
+  // (its own error text, so a missing grant could not pass for it), and the same UPDATE in an owner's context goes through. Each one runs in a transaction that
+  // is rolled back, so no setting moves for the tests after it.
+  it('refuses a member\'s direct UPDATE of the meeting retention and consent policy columns, and lets an owner\'s through', async () => {
+    const asContext = async (name: string, fn: (run: (statement: string) => Promise<pg.QueryResult>) => Promise<void>) => {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('SELECT crove_kernel.enter_context($1::uuid, $2::uuid)', [userIds.get(name), orgId]);
+        await fn((statement) => client.query(statement));
+      } finally {
+        await client.query('ROLLBACK').catch(() => undefined);
+        client.release();
+      }
+    };
+    // One column per case, each a value that differs from the default the org starts with (30, 7, 365, standard) and passes the CHECKs.
+    const guarded: [string, string, string, RegExp][] = [
+      ['audio retention', 'meeting_audio_retention_days = 90', 'meeting_audio_retention_days', /MEETING_SETTINGS_FORBIDDEN/],
+      ['video retention', 'meeting_video_retention_days = 30', 'meeting_video_retention_days', /MEETING_SETTINGS_FORBIDDEN/],
+      ['text retention', 'meeting_text_retention_days = 730', 'meeting_text_retention_days', /MEETING_SETTINGS_FORBIDDEN/],
+      ['consent policy', "meeting_consent_policy = 'strict'", 'meeting_consent_policy', /MEETING_CONSENT_POLICY_FORBIDDEN/],
+    ];
+    const state = "SELECT meeting_audio_retention_days a, meeting_video_retention_days v, meeting_text_retention_days t, meeting_consent_policy c FROM crove_kernel.tenant WHERE org_id = $1";
+    const before = (await rows<{ a: number; v: number; t: number; c: string }>(state, [orgId]))[0];
+    expect(before, 'this test runs first, on the defaults its values are chosen against').toEqual({ a: 30, v: 7, t: 365, c: 'standard' });
+    for (const [label, set, column, refusal] of guarded) {
+      const statement = `UPDATE crove_kernel.tenant SET ${set} WHERE org_id = '${orgId}' RETURNING ${column} AS changed`;
+      for (const member of ['recorder', 'otherMember']) {
+        await asContext(member, async (run) => {
+          await expect(run(statement), `${label}, ${member}`).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(refusal) });
+        });
+      }
+      await asContext('owner', async (run) => {
+        const done = await run(statement);
+        expect(done.rowCount, `${label}, owner`).toBe(1);
+        expect(String(done.rows[0]?.changed), `${label}, owner reads back the new value`).toBe(set.split('= ')[1]!.replace(/'/g, ''));
+      });
+    }
+    // Nothing moved: every refused statement and every rolled-back owner write left the row as it was.
+    expect((await rows(state, [orgId]))[0]).toEqual(before);
+  });
+
   it('computes the three dates from the settings: video never past audio, 0 for audio is 7 days, 0 for text is until deleted', () => {
     const at = new Date('2026-11-07T10:00:00Z');
     expect(retentionDates(at, { audioRetentionDays: 30, videoRetentionDays: 7, textRetentionDays: 365 })).toEqual({ audio: '2026-12-07', video: '2026-11-14', text: '2027-11-07' });
