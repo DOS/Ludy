@@ -631,5 +631,23 @@ describe('parseTodoQuickAdd (#3556)', () => {
     expect(quotedListProtected.listName).toBe('Work #sales tomorrow');
     expect(quotedListProtected.tags).toEqual([]);
     expect(quotedListProtected.dueOn).toBeNull();
+
+    // Underscore and hyphenated identifiers keep date/recurrence segments untouched
+    const codeDash = parseTodoQuickAdd('Xem mã T2-123', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(codeDash.title).toBe('Xem mã T2-123');
+    expect(codeDash.dueOn).toBeNull();
+
+    const codeUnderscore = parseTodoQuickAdd('Review tomorrow_notes', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(codeUnderscore.title).toBe('Review tomorrow_notes');
+    expect(codeUnderscore.dueOn).toBeNull();
+
+    // Skipped time ranges suppress inferred day-period default times (sáng nay -> date only, dueTime: null)
+    const rangeWithPeriodToday = parseTodoQuickAdd('Họp 9:30 - 11:30 sáng nay', {
+      now: TUE_MORNING,
+      timeZone: VN_TZ,
+    });
+    expect(rangeWithPeriodToday.title).toBe('Họp 9:30 - 11:30');
+    expect(rangeWithPeriodToday.dueOn).toBe('2026-11-17');
+    expect(rangeWithPeriodToday.dueTime).toBeNull();
   });
 });
