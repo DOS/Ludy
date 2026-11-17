@@ -143,6 +143,8 @@ const LIST_QUOTED_RE = /(?:^|(?<=[\s([,]))\/"([^"\n]{1,60})"(?=$|[\s.,;:!?)\]])/
 const LIST_UNQUOTED_RE = /(?:^|(?<=[\s([,]))\/(?=[0-9_-]*\p{L})([\p{L}\p{N}\p{M}_.-]{1,40})(?=$|[\s.,;:!?)\]])/gu;
 const WORD_RE = /[\p{L}\p{N}\p{M}]+/gu;
 
+const ISO_TIMESTAMP_RE =
+  /(?:^|(?<=[\s([,"']))\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:[Zz]|[+-]\d{2}:?\d{2})?(?=$|[\s.,;:!?)\]"'])/gu;
 const ISO_DATE_TOKEN_RE = /(?:^|(?<=[\s([,]))(\d{4})-(\d{1,2})-(\d{1,2})(?=$|[\s.,;:!?)\]])/gu;
 const DMY_DATE_TOKEN_RE =
   /(?<![\p{L}\p{N}\p{M}_/.-])(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?(?![\p{L}\p{N}\p{M}_/]|[.-][\p{L}\p{N}])/gu;
@@ -151,8 +153,10 @@ const VN_GIO_WORD = '(?:gi(?:ờ|ơ\\u0300|ò\\u031b|o\\u031b\\u0300|o\\u0300\\u
 const VN_PHUT_WORD = '(?:ph(?:ú|u\\u0301|u)t|p)';
 const VN_RUOI_WORD = '(?:r(?:ư|u\\u031b|u)(?:ỡ|ơ\\u0303|õ\\u031b|o\\u031b\\u0303|o\\u0303\\u031b|o)i)';
 
-const CLOCK_COLON_RE = /(?<![\p{L}\p{N}\p{M}_:.])(\d{1,2}):([0-5]\d)(?:\s*(am|pm))?(?![\d:.]|[\p{L}\p{M}])/giu;
-const CLOCK_AMPM_RE = /(?<![\p{L}\p{N}\p{M}_:.])(\d{1,2})(?::([0-5]\d))?\s*(am|pm)(?![\p{L}\p{N}\p{M}])/giu;
+const CLOCK_COLON_RE =
+  /(?<![\p{L}\p{N}\p{M}_:.+])(\d{1,2}):([0-5]\d)(?![\d:.]|[\p{L}\p{M}])(?![ \t]*(?:a\.m\.?|p\.m\.?|am|pm)(?![\p{L}\p{N}\p{M}]))/giu;
+const CLOCK_AMPM_RE =
+  /(?<![\p{L}\p{N}\p{M}_:.+])(\d{1,2})(?::([0-5]\d))?[ \t]*(a\.m\.?|p\.m\.?|am|pm)(?![\p{L}\p{N}\p{M}])/giu;
 const CLOCK_VN_GIO_RE = new RegExp(
   `(?<![\\p{L}\\p{N}\\p{M}_:.])((\\d{1,2})\\s*${VN_GIO_WORD})(?:\\s*(?:([0-5]?\\d)\\s*${VN_PHUT_WORD}|([0-5]\\d)(?!\\d|\\/|\\.[0-9]|-[0-9])|(${VN_RUOI_WORD})))?(?![\\p{L}\\p{N}\\p{M}])`,
   'giu',
@@ -292,7 +296,7 @@ function findProtectedUrlSpans(input: string): Span[] {
     }
     if (raw.length > 0) spans.push({ start, end: start + raw.length });
   }
-  for (const re of [EMAIL_RE, FILE_OR_DOMAIN_RE]) {
+  for (const re of [EMAIL_RE, FILE_OR_DOMAIN_RE, ISO_TIMESTAMP_RE]) {
     for (const m of input.matchAll(re)) {
       if (m[0].length > 0) spans.push({ start: m.index, end: m.index + m[0].length });
     }
@@ -737,12 +741,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
   for (const m of input.matchAll(CLOCK_COLON_RE)) {
     const hour = Number(m[1]);
     const minute = Number(m[2]);
-    const ampm = m[3]?.toLowerCase();
-    if (ampm) {
-      if (hour < 1 || hour > 12) continue;
-      const converted = ampm === 'am' ? (hour === 12 ? 0 : hour) : hour === 12 ? 12 : hour + 12;
-      timeCandidates.push({ start: m.index, end: m.index + m[0].length, hour: converted, minute, hasAmPm: true });
-    } else if (hour >= 0 && hour <= 23) {
+    if (hour >= 0 && hour <= 23) {
       timeCandidates.push({ start: m.index, end: m.index + m[0].length, hour, minute, hasAmPm: false });
     }
   }
@@ -751,7 +750,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     const minute = m[2] ? Number(m[2]) : 0;
     const ampm = (m[3] ?? '').toLowerCase();
     if (hour < 1 || hour > 12) continue;
-    const converted = ampm === 'am' ? (hour === 12 ? 0 : hour) : hour === 12 ? 12 : hour + 12;
+    const converted = ampm.startsWith('a') ? (hour === 12 ? 0 : hour) : hour === 12 ? 12 : hour + 12;
     timeCandidates.push({ start: m.index, end: m.index + m[0].length, hour: converted, minute, hasAmPm: true });
   }
   for (const m of input.matchAll(CLOCK_VN_GIO_RE)) {

@@ -1123,6 +1123,44 @@ describe('parseTodoQuickAdd (#3556)', () => {
       dueOn: '2026-11-18',
       dueTime: '09:00',
     });
+
+    // Full ISO-8601 T-timestamps and timezone offsets stay intact without slicing +07:00 as a clock
+    expect(parseTodoQuickAdd('Gọi khách 2027-12-31T14:30:00+07:00', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Gọi khách 2027-12-31T14:30:00+07:00',
+      dueOn: null,
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Gọi khách UTC+07:00', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Gọi khách UTC+07:00',
+      dueOn: null,
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Gọi khách 2027-12-31 14:30', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Gọi khách',
+      dueOn: '2027-12-31',
+      dueTime: '14:30',
+    });
+
+    // Dotted English a.m./p.m. suffixes parse cleanly without dropping p.m. or defaulting 2:30 to 02:30
+    expect(parseTodoQuickAdd('Call tomorrow at 2:30 p.m.', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Call',
+      dueOn: '2026-11-18',
+      dueTime: '14:30',
+    });
+    expect(parseTodoQuickAdd('Call tomorrow 9 a.m.', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Call',
+      dueOn: '2026-11-18',
+      dueTime: '09:00',
+    });
+    expect(parseTodoQuickAdd('Call 2:30 p.m. ngày mai', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Call',
+      dueOn: '2026-11-18',
+      dueTime: '14:30',
+    });
+    expect(parseTodoQuickAdd('Meeting 2:30 p.m. - 4:00 p.m.', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Meeting 2:30 p.m. - 4:00 p.m.',
+      dueTime: null,
+    });
   });
 
   it('stays linear on 50k-character adversarial --, %, and tab inputs without ReDoS', () => {
