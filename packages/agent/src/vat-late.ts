@@ -58,12 +58,19 @@ export function vatLatePrompt(facts: VatLateFacts): string {
 
 const sentencesIn = (text: string): number => text.split(/(?<=[.!?…])\s+|\n+/u).filter((s) => s.trim() !== '').length;
 const PERIOD = /(?<![\p{L}\p{N}-])\d{4}-(?:\d{2}|Q\d)(?![\p{L}\p{N}])/gu;
-// The system did something: "đã kê khai / nộp / gửi / hạch toán", "has been declared / filed / posted / sent", "I declared". Needing a declaration is no claim; having made one is.
+// The system did something: "đã kê khai / nộp / gửi / hạch toán", "has been declared / filed / posted / sent", "I declared", "được kê khai bổ sung". Needing a declaration is no claim; having made
+// one is. Two ways of stating the period's own state are no claim and are taken out first: "đã nộp tờ khai" (the period's return, not a supplementary one) and "return was filed".
+const STATE_OF_PERIOD = [/(?<![\p{L}])(?<!(?:tôi|mình|chúng tôi)\s+)đã nộp tờ khai(?!\s+bổ sung)/giu, /return\s+(?:was|has been|had been)\s+filed(?!\s+(?:for|in)\s+you)/giu];
 const CLAIM = [
-  /(?<![\p{L}])(?:đã|sẽ|vừa)\s+(?:được\s+)?(?:tự\s+)?(?:kê khai|nộp|gửi|hạch toán|ghi sổ|điều chỉnh|sửa|duyệt|phê duyệt|khai bổ sung)(?![\p{L}])/iu,
-  /(?<![\p{L}])(?:has|have|had|was|were|been|will be|will|i|we)\s+(?:been\s+)?(?:declared|filed|posted|submitted|sent|corrected|adjusted|approved|fixed)(?![\p{L}])/iu,
+  /(?<![\p{L}])(?:đã|sẽ|vừa|được)\s+(?:được\s+)?(?:tự\s+)?(?:kê khai|nộp|gửi|hạch toán|ghi sổ|điều chỉnh|sửa|duyệt|phê duyệt|khai bổ sung)(?![\p{L}])/iu,
+  /(?<![\p{L}])(?:tôi|mình|chúng tôi)\s+(?:đã\s+)?(?:kê khai|nộp|gửi|hạch toán|ghi sổ|điều chỉnh|sửa|duyệt)(?![\p{L}])/iu,
+  /(?<![\p{L}])(?:has|have|had|was|were|been|will be|will|is|are|i|we|i've|we've)\s+(?:been\s+)?(?:declared|filed|posted|submitted|sent|corrected|adjusted|approved|fixed)(?![\p{L}])/iu,
   /(?<![\p{L}])(?:declared|filed|posted|submitted|sent|corrected|adjusted|approved)\s+(?:it|them|for you|automatically)(?![\p{L}])/iu,
+  /(?<![\p{L}])(?:supplementary\s+)?(?:declaration|return)\s+(?:submitted|filed|sent|posted)(?![\p{L}])/iu,
 ];
+const escaped = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// An invoice written whole: no letter, digit or hyphen-joined part on either side, so a listed "0001" is not "AA-0001" and a listed "C-5" is not "AC-5".
+const mention = (number: string): RegExp => new RegExp(`(?<![\\p{L}\\p{N}-])${escaped(number)}(?![\\p{L}\\p{N}]|-[\\p{L}\\p{N}])`, 'gu');
 
 /** The sentence the model gave, or why there is none. Pure: the model call is the caller's. */
 export function checkVatLateSentence(facts: VatLateFacts, output: { sentence?: string } | null): VatLateSentenceResult {
@@ -71,11 +78,24 @@ export function checkVatLateSentence(facts: VatLateFacts, output: { sentence?: s
   if (text === '') return { kind: 'none', code: 'EMPTY' };
   if (Array.from(text).length > VAT_LATE_SENTENCE_MAX || sentencesIn(text) > VAT_LATE_SENTENCES_MAX) return { kind: 'none', code: 'TOO_LONG' };
   const read = text.normalize('NFKC');
-  if (CLAIM.some((claim) => claim.test(read))) return { kind: 'none', code: 'CLAIM' };
-  // Every listed invoice is named, whole, and no other period is written.
-  if (!facts.items.every((i) => read.includes(i.number.normalize('NFKC')))) return { kind: 'none', code: 'NAMES' };
+  const stated = STATE_OF_PERIOD.reduce((t, state) => t.replace(state, ' '), read);
+  if (CLAIM.some((claim) => claim.test(stated))) return { kind: 'none', code: 'CLAIM' };
+  // Every listed invoice is named, whole (not as part of another number), and the first period written after it, before the next invoice, is its own: a period given to the wrong
+  // invoice is false content. No period outside the lists is written, and every period of the lists is.
+  const found = facts.items.map((item) => ({ item, at: [...read.matchAll(mention(item.number.normalize('NFKC')))].map((m) => m.index ?? 0) }));
+  if (found.some((f) => f.at.length === 0)) return { kind: 'none', code: 'NAMES' };
+  const starts = found.flatMap((f) => f.at).sort((x, y) => x - y);
   const periods = new Set(facts.items.map((i) => i.period));
-  if ([...read.matchAll(PERIOD)].some((m) => !periods.has(m[0]))) return { kind: 'none', code: 'PERIODS' };
+  const written = [...read.matchAll(PERIOD)].map((m) => ({ period: m[0], at: m.index ?? 0 }));
+  if (written.some((w) => !periods.has(w.period))) return { kind: 'none', code: 'PERIODS' };
+  for (const { item, at } of found) {
+    for (const start of at) {
+      const end = starts.find((x) => x > start) ?? read.length;
+      const next = written.find((w) => w.at > start && w.at < end);
+      if (next && next.period !== item.period) return { kind: 'none', code: 'PERIODS' };
+    }
+  }
+  if (![...periods].every((p) => written.some((w) => w.period === p))) return { kind: 'none', code: 'PERIODS' };
   // The only digits allowed are those of the listed invoices and periods: with those taken out, any digit left is a figure of the model's own (a count, a date, an amount), even when the
   // same digit happens to be in a number given ("3" of "2026-Q3").
   let rest = read;

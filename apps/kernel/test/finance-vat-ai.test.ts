@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AiBudgetExhaustedError, VAT_LATE_ASK_MAX, type VatLateFacts, type VatLateSentenceResult } from '@crove/agent';
 import type { VatLateSource } from '@crove/kernel-contract';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
-import { VAT_LATE_KEEP_MS, explainVatLate, vatLateAgentFacts, vatLateAi, type VatLateAi } from '../src/finance-vat-ai.ts';
+import { VAT_LATE_KEEP_MS, VAT_LATE_REFUSED_KEEP_MS, explainVatLate, vatLateAgentFacts, vatLateAi, type VatLateAi } from '../src/finance-vat-ai.ts';
 
 const ORG = 'org-1';
 const USER = 'user-1';
@@ -88,6 +88,19 @@ describe('explainVatLate', () => {
       throw new AiBudgetExhaustedError('org', null);
     });
     expect(await explainVatLate(spent.ai, ORG, USER, REPORT, 'vi')).toEqual({ ai: 'budget', text: null });
+  });
+
+  it('keeps a refusal for a shorter time, so the same refused lists do not pay for the model on every refetch', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    let at = 1_000;
+    const { ai, asked } = setup(async () => ({ kind: 'none', code: 'NAMES' }));
+    expect((await explainVatLate(ai, ORG, USER, REPORT, 'vi', () => at)).ai).toBe('failed');
+    at += VAT_LATE_REFUSED_KEEP_MS - 1;
+    expect((await explainVatLate(ai, ORG, USER, REPORT, 'vi', () => at)).ai).toBe('failed');
+    expect(asked).toHaveLength(1);
+    at += 2;
+    await explainVatLate(ai, ORG, USER, REPORT, 'vi', () => at);
+    expect(asked).toHaveLength(2);
   });
 
   it('says failed, with no text, when the call fails or its text was refused, and logs only a name', async () => {

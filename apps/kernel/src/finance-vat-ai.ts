@@ -14,11 +14,12 @@ import type { DraftBudget } from './ai-draft-limit.ts';
 export interface VatLateAi {
   reader: Pick<InboxReader, 'vatLateSentence'> | null;
   budget: DraftBudget;
-  // Sentences by org and facts, with the time they were written.
-  kept: Map<string, { text: string; at: number }>;
+  // Sentences by org and facts, with the time they were written; null text is a refusal, kept shorter so the same refused facts do not pay for the model again on every refetch.
+  kept: Map<string, { text: string | null; at: number }>;
 }
 
 export const VAT_LATE_KEEP_MS = 30 * 60 * 1000;
+export const VAT_LATE_REFUSED_KEEP_MS = 5 * 60 * 1000;
 export const VAT_LATE_KEEP_MAX = 200;
 
 export function vatLateAi(reader: VatLateAi['reader'], budget: DraftBudget): VatLateAi {
@@ -30,6 +31,11 @@ export function vatLateAgentFacts(report: VatLateSource, language: 'vi' | 'en'):
   return { language, items: vatLateFacts(report) };
 }
 
+function keep(ai: VatLateAi, key: string, text: string | null, at: number): void {
+  if (ai.kept.size >= VAT_LATE_KEEP_MAX) ai.kept.delete(ai.kept.keys().next().value as string);
+  ai.kept.set(key, { text, at });
+}
+
 export async function explainVatLate(ai: VatLateAi, orgId: string, userId: string, report: VatLateSource, language: 'vi' | 'en', now: () => number = Date.now): Promise<VatLateExplanation> {
   const answer = (state: VatLateExplanation['ai'], text: string | null = null): VatLateExplanation => ({ ai: state, text });
   const facts = vatLateAgentFacts(report, language);
@@ -38,17 +44,17 @@ export async function explainVatLate(ai: VatLateAi, orgId: string, userId: strin
   if (!ai.reader || vatLateQuiet(facts)) return answer(ai.reader ? 'quiet' : 'off');
   const key = `${orgId}\n${language}\n${vatLateFactsText(facts)}`;
   const hit = ai.kept.get(key);
-  if (hit && now() - hit.at < VAT_LATE_KEEP_MS) return answer('used', hit.text);
+  if (hit && now() - hit.at < (hit.text === null ? VAT_LATE_REFUSED_KEEP_MS : VAT_LATE_KEEP_MS)) return hit.text === null ? answer('failed') : answer('used', hit.text);
   const ticket = ai.budget.take(orgId, userId);
   if (!ticket.allowed) return answer('busy');
   try {
     const result = await ai.reader.vatLateSentence(facts);
     if (result.kind === 'none') {
       console.error(`[finance-vat-ai] sentence refused: ${result.code}`);
+      keep(ai, key, null, now());
       return answer('failed');
     }
-    if (ai.kept.size >= VAT_LATE_KEEP_MAX) ai.kept.delete(ai.kept.keys().next().value as string);
-    ai.kept.set(key, { text: result.text, at: now() });
+    keep(ai, key, result.text, now());
     return answer('used', result.text);
   } catch (error: unknown) {
     if (error instanceof AiBudgetExhaustedError) return answer('budget');
