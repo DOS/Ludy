@@ -8,7 +8,7 @@
 import { Link, useParams, useSearch } from '@tanstack/react-router';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useTranslations } from 'use-intl';
-import { MEETING_SUMMARY_TEMPLATES, type LiveConsentMethod, type MeetingLanguage, type MeetingSummaryTemplate, type MeetingVisibility } from '@crove/kernel-contract';
+import { MEETING_SUMMARY_TEMPLATES, type LiveConsentMethod, type MeetingLanguage, type BuiltInSummaryTemplate, type MeetingVisibility } from '@crove/kernel-contract';
 import { Button } from '@crove/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
 import { Checkbox } from '@crove/ui/components/checkbox';
@@ -53,7 +53,7 @@ export function MeetingRecordPage() {
   const [language, setLanguage] = useState<MeetingLanguage>('vi');
   const [visibility, setVisibility] = useState<MeetingVisibility>('attendees');
   // The minutes template (A4, #3162): the general summary unless the recorder picks another; changeable later on the meeting's page.
-  const [summaryTemplate, setSummaryTemplate] = useState<MeetingSummaryTemplate>('general');
+  const [summaryTemplate, setSummaryTemplate] = useState<BuiltInSummaryTemplate>('general');
   const [withVideo, setWithVideo] = useState(false);
   // Off at every visit and never remembered: ticked for one recording only.
   const [liveNotes, setLiveNotes] = useState(false);
@@ -278,7 +278,7 @@ export function MeetingRecordPage() {
             </div>
             <div className="space-y-1">
               <Label htmlFor="record-template">{t('templates.label')}</Label>
-              <NativeSelect id="record-template" value={summaryTemplate} onChange={(e) => setSummaryTemplate(e.target.value as MeetingSummaryTemplate)}>
+              <NativeSelect id="record-template" value={summaryTemplate} onChange={(e) => setSummaryTemplate(e.target.value as BuiltInSummaryTemplate)}>
                 {MEETING_SUMMARY_TEMPLATES.map((code) => (
                   <NativeSelectOption key={code} value={code}>
                     {t(`templates.names.${code}`)}

@@ -474,6 +474,14 @@ import {
   zSummaryCopied,
   zSummaryCopy,
 } from './meetings.ts';
+import {
+  zMinutesTemplateArchive,
+  zMinutesTemplateCreate,
+  zMinutesTemplateDone,
+  zMinutesTemplateList,
+  zMinutesTemplateUpdate,
+  zMinutesTemplates,
+} from './meeting-minutes-templates.ts';
 import { zAskAnswer, zAskEmpty, zAskInput, zAskStatus } from './meeting-ask.ts';
 import { zBriefAnswer, zBriefEmpty, zBriefFacts, zBriefStatus, zBriefTarget } from './meeting-brief.ts';
 import { zAgendaLink, zAgendaLinked, zAgendaList, zAgendaListInput, zAgendaNext, zAgendaNextInput, zAgendaReadEventsSet, zAgendaSetReadEvents, zAgendaSuggestInput, zAgendaSuggestion } from './meeting-agenda.ts';
@@ -1211,6 +1219,15 @@ export const contract = {
       post: oc.input(zChatPostCall).output(zChatPosted),
       // How the recorder's newest post of the meeting to a channel stands (the dialog polls it after the click: the post is sent by the worker's job).
       status: oc.input(zChatStatusInput).output(zChatStatus),
+    },
+    // Minutes templates the org writes (#3578): every member reads the active ones, an owner or admin writes them (an archived one is read only, and only they see it). The meeting keeps
+    // its own copy of the sections when the recorder picks one (setTemplate). MINUTES_TEMPLATE_NOT_FOUND (404), MINUTES_TEMPLATE_ARCHIVED and MINUTES_TEMPLATE_NAME_TAKEN (409), MINUTES_TEMPLATE_SECTIONS_INVALID and
+    // MINUTES_TEMPLATES_MAX (422).
+    template: {
+      list: oc.input(zMinutesTemplateList).output(zMinutesTemplates),
+      create: oc.input(zMinutesTemplateCreate).output(zMinutesTemplateDone),
+      update: oc.input(zMinutesTemplateUpdate).output(zMinutesTemplateDone),
+      archive: oc.input(zMinutesTemplateArchive).output(zMinutesTemplateDone),
     },
     // The org's three retention settings (#2579): anyone who reads meetings sees them, an owner or admin changes them.
     settings: {

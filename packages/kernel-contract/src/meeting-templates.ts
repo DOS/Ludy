@@ -8,10 +8,16 @@
 // follow-up mail, the search, the personal-data finders and the erasure) and no new free-text column exists.
 import { z } from 'zod';
 
+// The five templates shipped in code: what the pickers list, and the only codes a meeting can be created or imported with.
 export const MEETING_SUMMARY_TEMPLATES = ['general', 'briefing', 'customer', 'supplier', 'one_on_one'] as const;
-export type MeetingSummaryTemplate = (typeof MEETING_SUMMARY_TEMPLATES)[number];
-export const DEFAULT_SUMMARY_TEMPLATE: MeetingSummaryTemplate = 'general';
-export const zMeetingSummaryTemplate = z.enum(MEETING_SUMMARY_TEMPLATES);
+export type BuiltInSummaryTemplate = (typeof MEETING_SUMMARY_TEMPLATES)[number];
+// A meeting on a template its organization wrote (#3578): the code says only "custom"; the sections are the meeting's own copy (crove_meetings.meeting.minutes_template_sections),
+// never read from the org's live template, so an edit or archive later changes no published result. Code that has no copy at hand treats it as the general summary (no sections).
+export const CUSTOM_SUMMARY_TEMPLATE = 'custom' as const;
+export type MeetingSummaryTemplate = BuiltInSummaryTemplate | typeof CUSTOM_SUMMARY_TEMPLATE;
+export const DEFAULT_SUMMARY_TEMPLATE: BuiltInSummaryTemplate = 'general';
+export const zBuiltInSummaryTemplate = z.enum(MEETING_SUMMARY_TEMPLATES);
+export const zMeetingSummaryTemplate = z.enum([...MEETING_SUMMARY_TEMPLATES, CUSTOM_SUMMARY_TEMPLATE]);
 
 export interface TemplateSection {
   // Stable, snake_case, unique inside its template. The model and the screens name a section by it; the heading may change wording, the key never does.
@@ -23,7 +29,7 @@ export interface TemplateSection {
 }
 
 // 'general' (Tóm tắt chung) has no sections: it is today's summary and decisions, unchanged. The others fill their sections and the decisions.
-export const SUMMARY_TEMPLATE_SECTIONS: Readonly<Record<MeetingSummaryTemplate, readonly TemplateSection[]>> = {
+export const SUMMARY_TEMPLATE_SECTIONS: Readonly<Record<BuiltInSummaryTemplate, readonly TemplateSection[]>> = {
   general: [],
   briefing: [
     { key: 'progress', title: 'Kết quả công việc kỳ trước', hint: 'What was reported as done or moved forward since the last meeting.' },
@@ -61,7 +67,7 @@ export const zSectionEntry = z.strictObject({
 export type SectionEntry = z.infer<typeof zSectionEntry>;
 
 export function templateSections(template: MeetingSummaryTemplate): readonly TemplateSection[] {
-  return SUMMARY_TEMPLATE_SECTIONS[template];
+  return template === CUSTOM_SUMMARY_TEMPLATE ? [] : SUMMARY_TEMPLATE_SECTIONS[template];
 }
 
 // A line of a section's text that equals a heading of the template would read back as a new section: it is marked so it stays text.

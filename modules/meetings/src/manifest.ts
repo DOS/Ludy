@@ -88,6 +88,11 @@ export const meetingsManifest = defineModule({
           'text_retention_date',
           // The series the meeting is in: a random id, or the hash of the recurring calendar event it was linked to (#3542). Never text.
           'series_id',
+          // The meeting's own copy of the org template it was summarized with (#3578): its name, its sections and their hash. Layout the org wrote, not personal data (the class 'internal':
+          // listed here, not under a personal class); the settings screen asks for no names or personal details in a template.
+          'minutes_template_name',
+          'minutes_template_sections',
+          'minutes_template_hash',
           'created_at',
           'updated_at',
         ],
@@ -95,6 +100,9 @@ export const meetingsManifest = defineModule({
       ),
       // Links of a meeting to a party, a deal and a calendar event (L1, #2587): ids and a time, no text.
       meeting_link: columns(['org_id', 'id', 'meeting_id', 'party_id', 'deal_id', 'calendar_event_id', 'created_by', 'created_at']),
+      // The minutes templates an org's owner or admin writes (#3578): a name and 1 to 8 sections (title, hint for Vy). Layout the org wrote, not personal data; the settings screen asks for no
+      // names or personal details in a template. The meeting's own copy of one is on the meeting row.
+      minutes_template: columns(['org_id', 'id', 'name', 'sections', 'archived_at', 'created_by', 'created_at', 'updated_at']),
       // The recorder's own rough notes of a meeting (A5, #3163): read, written and deleted by the recorder alone. Free text, personal data.
       meeting_note: columns(['org_id', 'id', 'meeting_id', 'created_at', 'updated_at'], { body: 'pii' }),
       meeting_reader: columns(['org_id', 'id', 'meeting_id', 'user_id', 'created_at']),
@@ -122,6 +130,8 @@ export const meetingsManifest = defineModule({
   permissions: [],
   entities: [
     { type: 'meetings.meeting', table: 'meeting', legalEntityScoped: false, audit: 'command' },
+    // A minutes template the org wrote (#3578): the target of its update and archive commands.
+    { type: 'meetings.minutes_template', table: 'minutes_template', legalEntityScoped: false, audit: 'command' },
   ],
   ...MODULE_SCREENS.meetings,
 });

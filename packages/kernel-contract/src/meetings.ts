@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { z } from 'zod';
-import { SECTIONS_MAX, zMeetingSummaryTemplate, zSectionEntry } from './meeting-templates.ts';
+import { SECTIONS_MAX, zBuiltInSummaryTemplate, zMeetingSummaryTemplate, zSectionEntry } from './meeting-templates.ts';
 import { zId } from './schemas.ts';
 
 // `in_call_chat`: the recorder pasted the recording notice in the call's chat (Meetings A1, #3159).
@@ -122,7 +122,7 @@ export const zMeetingCreate = z.strictObject({
   // "Ghi chú trực tiếp" (ADR-0052 L4a): off by default, opted in per meeting at the consent step, fixed once the meeting exists.
   liveNotes: z.boolean().default(false),
   // The minutes template (A4, #3162): the general summary unless the recorder picks another; the recorder can change it later (meetings.minutes.set_template).
-  summaryTemplate: zMeetingSummaryTemplate.default('general'),
+  summaryTemplate: zBuiltInSummaryTemplate.default('general'),
   // A live recording or an upload never claims the platform's own notice: that method belongs to meetings.import.start alone (C1, #3173).
   consentMethod: zConsentMethod.exclude(['platform_notice']),
   // The version of the notice text the client showed (and the recorder may have copied); absent means the current one.
@@ -142,7 +142,7 @@ export const zMeetingImportStart = z.strictObject({
   language: zMeetingLanguage.default('vi'),
   visibility: zMeetingVisibility.default('attendees'),
   readerUserIds: z.array(zId).optional(),
-  summaryTemplate: zMeetingSummaryTemplate.default('general'),
+  summaryTemplate: zBuiltInSummaryTemplate.default('general'),
   consentMethod: z.literal('platform_notice'),
   consentNoticeVersion: z.literal(IMPORT_CONSENT_NOTICE_VERSION),
   consentConfirmed: z.literal(true),
@@ -156,7 +156,10 @@ export type MeetingCreated = z.infer<typeof zMeetingCreated>;
 
 // The recorder picks (or changes) the minutes template of their meeting (A4, #3162). It decides the sections the next summary run fills and the headings the
 // recorder types under; text already saved is not touched.
-export const zMeetingTemplateSet = z.strictObject({ meetingId: zId, summaryTemplate: zMeetingSummaryTemplate });
+// 'custom' (#3578) picks a template the org wrote and needs its id; a built-in code takes none.
+export const zMeetingTemplateSet = z
+  .strictObject({ meetingId: zId, summaryTemplate: zMeetingSummaryTemplate, templateId: zId.optional() })
+  .refine((v) => (v.summaryTemplate === 'custom') === (v.templateId !== undefined), { message: 'templateId goes with the custom template and with nothing else', path: ['templateId'] });
 export const zMeetingTemplateSetDone = z.strictObject({ meetingId: zId, summaryTemplate: zMeetingSummaryTemplate });
 
 export const zMeetingDeleted = z.strictObject({

@@ -16,6 +16,7 @@
 import { sql } from 'kysely';
 import {
   ITEMS_PER_MEETING_MAX,
+  parseStoredSections,
   zActionItemAccept,
   zActionItemAcceptClean,
   zActionItemCreate,
@@ -147,13 +148,32 @@ export const meetingTemplateSet = defineCommand({
   target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
   handler: async (ctx, input) => {
     await recorderMeeting(ctx, input.meetingId, 'pick its minutes template');
+    // A template the org wrote (#3578) is read by (org, id) in the caller's own org, so another org's template is not there to copy (row security) and answers as not found. The meeting keeps
+    // its OWN copy of the name and the sections, with their hash, and never refers back to the template: a later edit or archive changes nothing it was summarized with.
+    let copy: { minutes_template_name: string | null; minutes_template_sections: string | null; minutes_template_hash: ReturnType<typeof sql<string>> | null } = {
+      minutes_template_name: null,
+      minutes_template_sections: null,
+      minutes_template_hash: null,
+    };
+    if (input.summaryTemplate === 'custom') {
+      const template = await ctx.trx
+        .selectFrom('crove_meetings.minutes_template')
+        .select(['name', 'sections', 'archived_at'])
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.templateId as string)
+        .executeTakeFirst();
+      if (!template) throw new DomainError('MINUTES_TEMPLATE_NOT_FOUND', 404, 'Template not found');
+      if (template.archived_at !== null) throw new DomainError('MINUTES_TEMPLATE_ARCHIVED', 409, 'An archived template cannot be picked');
+      const json = JSON.stringify(parseStoredSections(template.sections));
+      copy = { minutes_template_name: template.name, minutes_template_sections: json, minutes_template_hash: sql<string>`pg_catalog.md5((${json}::jsonb)::text)` };
+    }
     await ctx.trx
       .updateTable('crove_meetings.meeting')
-      .set({ summary_template: input.summaryTemplate, updated_at: ctx.now })
+      .set({ summary_template: input.summaryTemplate, ...copy, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
       .execute();
-    ctx.audit({ meetingId: input.meetingId, summaryTemplate: input.summaryTemplate });
+    ctx.audit({ meetingId: input.meetingId, summaryTemplate: input.summaryTemplate, ...(input.templateId ? { templateId: input.templateId } : {}) });
     return zMeetingTemplateSetDone.parse({ meetingId: input.meetingId, summaryTemplate: input.summaryTemplate });
   },
 });

@@ -14,7 +14,7 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
     const naming = readdirSync(MIGRATIONS)
       .filter((name) => name.endsWith('.sql') && /crove_meetings\.translation\b/.test(readFileSync(join(MIGRATIONS, name), 'utf8')))
       .map((name) => name.replace(/^\d+_/, ''));
-    // The org purge's list names every tenant table, so each later restatement of it (A5, #3163: the rough notes table; B1, #3165: the calendar cache; A6, #3164: the member's webhook tables; B4, #3168; C1, #3173: the meeting platform import tables; #2591: projects; #3323: sign; #3394: payroll_leave_entry; #3412: hr departments; #3310 C3b: outbox_held; #3526: sign templates) names this one too, as the list's entry and nothing else; the last two entries are the purge of a former member's Vy rows, which deletes by org and member and judges the latest exit by created_at (#3194), and the index that serves its reads.
+    // The org purge's list names every tenant table, so each later restatement of it (A5, #3163: the rough notes table; B1, #3165: the calendar cache; A6, #3164: the member's webhook tables; B4, #3168; C1, #3173: the meeting platform import tables; #2591: projects; #3323: sign; #3394: payroll_leave_entry; #3412: hr departments; #3310 C3b: outbox_held; #3526: sign templates) names this one too, as the list's entry and nothing else; the last but one are the purge of a former member's Vy rows, which deletes by org and member and judges the latest exit by created_at (#3194), and the index that serves its reads; the last is the restatement that adds the minutes templates table (#3578).
     expect(naming).toEqual([
       'crove_meetings_translation.sql',
       'crove_kernel_org_purge_translation.sql',
@@ -33,6 +33,7 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       'crove_kernel_org_purge_sign_templates.sql',
       'crove_meetings_translation_member_idx.sql',
       'crove_kernel_member_vy_translation_purge.sql',
+      'crove_kernel_org_purge_minutes_templates.sql',
     ]);
   });
 });
