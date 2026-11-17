@@ -2,7 +2,8 @@
 // What the database lets a queued post to a Slack or Teams channel carry (meetings integrations B4, #3168, owner decision of 2026-11-15 in the Meetings PO's chat): the body the worker reads out
 // through chat_post_get is the one thing of `crove_meetings` that returns meeting text besides the minutes webhook's, so its shape is pinned in the database. chat_body_ok accepts the title, the day,
 // the summary, the decisions, the action items (title, owner as said, date) and the link back, with exact keys at every level and the limits of the message, and nothing else: no transcript, audio,
-// video, image, attachment, excerpt or attendee contact detail has a key to ride in, in the body, in an action item or beside it. Both objects must exist: the first test fails when `crove_meetings.chat_post_body` or `crove_meetings.chat_body_ok(jsonb)` is missing (dropped or renamed), so a later migration cannot make this file pass with zero checks running (#3285; before B4 landed the file tolerated their absence). Part of the invariant suite: self-contained, imports nothing
+// video, image, attachment, excerpt or attendee contact detail has a key to ride in, in the body, in an action item or beside it. Both objects must exist: the first test fails when `crove_meetings.chat_post_body` or `crove_meetings.chat_body_ok(jsonb)` is missing (dropped or renamed), so a later migration cannot make this file pass with zero checks running (#3285; before B4 landed the file tolerated their absence).
+// Part of the invariant suite: self-contained, imports nothing
 // from outside this directory but the code under test.
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -61,7 +62,7 @@ suite('the body of a queued post to a channel (B4, #3168)', () => {
   });
 
   it('has both the body table and its check function, so no later migration can drop one and leave this file running nothing', async () => {
-    const found = (await admin((c) => c.query<{ fn: boolean; tbl: boolean }>(`SELECT to_regprocedure('crove_meetings.chat_body_ok(jsonb)') IS NOT NULL AS fn, to_regclass('crove_meetings.chat_post_body') IS NOT NULL AS tbl`))).rows[0];
+    const found = (await admin((c) => c.query<{ fn: boolean; tbl: boolean }>(`SELECT to_regprocedure('crove_meetings.chat_body_ok(jsonb)') IS NOT NULL AS fn, EXISTS (SELECT 1 FROM pg_catalog.pg_class WHERE oid = to_regclass('crove_meetings.chat_post_body') AND relkind = 'r') AS tbl`))).rows[0];
     expect(found, 'crove_meetings.chat_body_ok(jsonb) and crove_meetings.chat_post_body must both exist').toEqual({ fn: true, tbl: true });
   });
 
