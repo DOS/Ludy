@@ -318,7 +318,17 @@ suite('personal to-dos on PostgreSQL (#1673)', () => {
       o.exec(o.mine, 'notes.todo.create', { title: 'Sai mục', listId: list.id, sectionId: 'khong-ton-tai' }),
     ).rejects.toMatchObject({ code: 'TODO_SECTION_NOT_FOUND', status: 400 });
     await expect(
-      o.exec(o.mine, 'notes.todo.update', { todoId: inboxTodo.todoId, revision: 1, sectionId: 'sec-cuoi' }),
+      o.exec(o.mine, 'notes.todo.update', {
+        todoId: inboxTodo.todoId,
+        revision: 1,
+        title: 'Việc trong Hộp thu',
+        details: '',
+        checklist: [],
+        dueOn: null,
+        dueTime: null,
+        timeZone: 'Asia/Ho_Chi_Minh',
+        sectionId: 'sec-cuoi',
+      }),
     ).rejects.toMatchObject({ code: 'TODO_SECTION_NOT_FOUND', status: 400 });
 
     // Privacy: another member, owner, admin, viewer get 404/empty and cannot attach todos or edit lists.
