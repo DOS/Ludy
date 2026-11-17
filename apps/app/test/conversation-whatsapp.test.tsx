@@ -59,7 +59,7 @@ const outbound = (over: Partial<ConversationMessage>): ConversationMessage => ({
 const row = (message: ConversationMessage, provider: string, locale: 'en' | 'vi' = 'vi') =>
   renderToStaticMarkup(
     <IntlProvider locale={locale} messages={catalog(locale)}>
-      <MessageRow message={message} detail={detailOf(provider, { allowed: true, reason: null })} members={[]} userId="u1" canWrite isAdmin={false} contact="Lan Nguyễn" />
+      <MessageRow message={message} detail={detailOf(provider, { allowed: true, reason: null })} members={[]} userId="u1" canWrite contact="Lan Nguyễn" />
     </IntlProvider>,
   );
 const box = (detail: ConversationDetail, locale: 'en' | 'vi' = 'vi') =>
