@@ -26,8 +26,10 @@ import { useDebounced } from '../lib/use-debounced.ts';
 const PAUSE_MS = 300;
 // The companies shown under the company field, and the contacts the duplicate check reads.
 const COMPANY_CHOICES = 5;
-// The search is by a part of a word, so a whole email also finds the longer ones that contain it: enough are read that the exact one is among them.
+// The search is by a part of a word, so a whole email also finds the longer ones that contain it: the exact one is looked for on every page read.
 const DUPLICATE_READ = 50;
+// Pages of matches read on before saying there is none.
+const MAX_PAGES = 4;
 
 export type AddedContact = { partyId: string; name: string };
 type Kind = 'person' | 'organization';
@@ -36,13 +38,29 @@ type Field = 'name' | 'taxCode' | 'email';
 const orNull = (value: string) => (value.trim() === '' ? null : value.trim());
 const same = (a: string, b: string) => a.trim().toLocaleLowerCase() === b.trim().toLocaleLowerCase();
 
+// The first contact of a search that `match` accepts, reading on through the next pages (the list is by name, so the exact one need not be on the first).
+async function findAcross(filters: FilterAst, match: (contact: Contact) => boolean): Promise<Contact | null> {
+  let cursor: string | undefined;
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const read = await client.crm.contacts.list({ filters, limit: DUPLICATE_READ, ...(cursor ? { cursor } : {}) });
+    const hit = read.items.find(match);
+    if (hit) return hit;
+    if (!read.next) return null;
+    cursor = read.next;
+  }
+  return null;
+}
+
+// The query of the duplicate check, under the contacts' own key so a save anywhere refreshes it; the panel reads it while the value is typed and again on saving.
+const duplicateQuery = (key: DuplicateKey) => ({
+  queryKey: [...orpc.crm.contacts.key(), 'duplicate', key.field, key.value] as const,
+  queryFn: () => findAcross(duplicateSearch(key), (c) => findDuplicate(key, [c]) !== null),
+});
+
 // The contact that already has this email or tax code: read while it is typed, shown under the field.
 function useDuplicate(key: DuplicateKey | null): DuplicateHit | null {
-  const found = useQuery({
-    ...orpc.crm.contacts.list.queryOptions({ input: { filters: key ? duplicateSearch(key) : { v: 1, all: [] }, limit: DUPLICATE_READ } }),
-    enabled: key !== null,
-  });
-  return key && found.data ? findDuplicate(key, found.data.items) : null;
+  const found = useQuery({ ...duplicateQuery(key ?? { field: 'email', value: '' }), enabled: key !== null });
+  return key ? (found.data ?? null) : null;
 }
 
 // The companies matching what is typed in the company field (none while one is picked or nothing is typed).
@@ -200,8 +218,7 @@ function AddContactForm({ kind, onSaved, onOpenExisting, onCancel }: { kind: Kin
     // A name over the search's limit is not looked up.
     if (typed.length <= SEARCH_VALUE_MAX) {
       const filters: FilterAst = { v: 1, all: [{ field: 'kind', op: 'is', value: 'organization' }, { field: 'search', op: 'contains', value: typed }] };
-      const found = await queryClient.fetchQuery({ ...orpc.crm.contacts.list.queryOptions({ input: { filters, limit: DUPLICATE_READ } }), staleTime: 0 });
-      const have = found.items.find((c) => same(c.name, typed));
+      const have = await findAcross(filters, (c) => same(c.name, typed));
       if (have) return have.id;
     }
     const made = await client.parties.create({ kind: 'organization', name: typed, taxCode: null, address: null, email: null, phone: null });
@@ -221,8 +238,8 @@ function AddContactForm({ kind, onSaved, onOpenExisting, onCancel }: { kind: Kin
       // The check again at the moment of saving, in case it was pressed before the pause in typing ended.
       const now = duplicateKey(dupField, form[dupField], isEmailAddress);
       if (now && confirmed !== now.value) {
-        const items = (await queryClient.fetchQuery({ ...orpc.crm.contacts.list.queryOptions({ input: { filters: duplicateSearch(now), limit: DUPLICATE_READ } }), staleTime: 0 })).items;
-        if (findDuplicate(now, items)) {
+        const taken = await queryClient.fetchQuery({ ...duplicateQuery(now), staleTime: 0 });
+        if (taken) {
           // Pressed before the pause in typing ended: the notice comes with the next read, so the field is named and focused at once.
           setError(t(dupField === 'email' ? 'panel.duplicate.email' : 'panel.duplicate.taxCode'));
           root.current?.querySelector<HTMLInputElement>(`#add-contact-${dupField}`)?.focus();
@@ -271,7 +288,11 @@ function AddContactForm({ kind, onSaved, onOpenExisting, onCancel }: { kind: Kin
             {text('email', { type: 'email', maxLength: 254, placeholder: t('panel.emailPlaceholder'), autoComplete: 'off' })}
             {text('name', { maxLength: 300, required: true, placeholder: t('panel.placeholder.personName'), autoComplete: 'off' })}
             {text('phone', { type: 'tel', maxLength: 30, placeholder: t('panel.placeholder.phone'), autoComplete: 'off' })}
-            <CompanyField text={companyText} picked={company} choices={companySearch.choices} searching={companySearch.pending} onText={setCompanyText} onPick={setCompany} />
+            <CompanyField text={companyText} picked={company} choices={companySearch.choices} searching={companySearch.pending} onText={setCompanyText} onPick={(picked) => {
+                setCompany(picked);
+                // Removing the company empties the field too, so what was typed to find it does not make a company on saving.
+                if (picked === null) setCompanyText('');
+              }} />
           </>
         ) : (
           <>

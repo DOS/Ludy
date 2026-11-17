@@ -245,7 +245,8 @@ export function ContactsPage({ mode = 'people' }: { mode?: 'people' | 'companies
   const head = mode === 'companies' ? [t('columns.name'), t('columns.taxCode'), t('columns.people'), t('columns.openDeals'), ''] : [t('columns.name'), t('columns.company'), t('columns.phone'), t('columns.email'), ''];
   // The list narrowed to one contact, which opens: the one just added, or the one an add found already there.
   const reveal = (id: string, search: string) => {
-    setBar({ ...EMPTY_CONTACT_FILTER, search });
+    // The search takes at most 100 characters.
+    setBar({ ...EMPTY_CONTACT_FILTER, search: search.slice(0, 100) });
     setSort(null);
     setOpenId(id);
   };
