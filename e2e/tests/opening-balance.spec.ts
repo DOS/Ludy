@@ -20,7 +20,8 @@ test('import opening balances from the Excel template', async ({ page }) => {
   const template = await test.step('open the screen from the journal and download the template', async () => {
     await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
     await page.getByRole('navigation').getByRole('link', { name: 'Bút toán' }).click();
-    await page.getByRole('link', { name: 'Nhập số dư đầu kỳ' }).click();
+    await page.getByRole('button', { name: 'Thêm', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Nhập số dư đầu kỳ' }).click();
     await expect(page.getByRole('heading', { name: 'Số dư đầu kỳ' })).toBeVisible();
     const download = page.waitForEvent('download');
     await page.getByRole('button', { name: 'Tải file mẫu' }).click();

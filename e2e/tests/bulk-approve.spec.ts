@@ -68,11 +68,12 @@ test('review shortcuts, then approve several proposals under one step-up', async
     await expect(page.getByRole('heading', { name: SELLER })).toBeVisible();
     await confirmUnverifiedSignature(page);
     await expect(page.getByRole('button', { name: 'Duyệt và ghi sổ' })).toBeEnabled();
-    // A asks for the same approval as the button: without a second factor, the step-up prompt.
+    // A asks for the same approval as the button: without a second factor, the step-up dialog (#3599). Escape drops the request and focus goes back to the approve button.
     await page.keyboard.press('a');
-    await expect(page.getByText('Đang chờ: duyệt và ghi sổ chứng từ này.')).toBeVisible();
-    await page.getByRole('button', { name: 'Hủy thao tác' }).click();
+    await expect(page.getByRole('dialog').getByText('Đang chờ: duyệt và ghi sổ chứng từ này.')).toBeVisible();
+    await page.keyboard.press('Escape');
     await expect(page.getByText('Đang chờ: duyệt và ghi sổ chứng từ này.')).toBeHidden();
+    await expect(page.getByRole('button', { name: 'Duyệt và ghi sổ' })).toBeFocused();
     await page.keyboard.press('e');
     await expect(page.getByRole('combobox', { name: 'Tài khoản nợ cho dòng 1' })).toBeFocused();
     // Typing in a field is never a shortcut.

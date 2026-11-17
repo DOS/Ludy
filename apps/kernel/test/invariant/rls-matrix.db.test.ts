@@ -111,6 +111,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_vy_result',
   'crove_meetings.live_line',
   'crove_meetings.meeting_link',
+  'crove_meetings.minutes_template',
   'crove_notes.attachment',
   'crove_notes.link',
   'crove_notes.note',
@@ -2842,6 +2843,13 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     make: (o) => ({
       setup: [],
       row: { org_id: o.id, user_id: o.owner, url: 'https://hooks.example.com/ludy-minutes', secret_sealed: '{"keyId":"k1","envelope":"AAAAAAAAAAAAAAAA"}', secret_hint: 'whk_00000000' },
+    }),
+  },
+  // #3578 (meetings): a minutes template the org wrote. Every member of the org reads it; a RESTRICTIVE write policy lets an owner or admin write it (the factory's owner is one), and the
+  // table grants no DELETE to a login role. Lands before its table (PENDING_TABLES).
+  'crove_meetings.minutes_template': {
+    make: (o) => ({
+      row: { org_id: o.id, id: randomUUID(), name: `RLS matrix template ${tag()}`, sections: JSON.stringify([{ key: 's1', title: 'Nội dung', hint: '' }]), created_by: o.owner },
     }),
   },
   // #2575: timestamped transcript segment of a meeting (ADR-0047 point 1, 3).

@@ -20,7 +20,7 @@ import { ProposalGroups } from '../components/proposal-groups.tsx';
 import { StagedMarketplace } from '../components/staged-marketplace.tsx';
 import { StagedMarketplaceIncome } from '../components/staged-marketplace-income.tsx';
 import { StagedStatements } from '../components/staged-statements.tsx';
-import { StepUpPrompt } from '../components/two-factor.tsx';
+import { StepUpPrompt, TwoFactorOffer } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, Spinner, TableSkeleton } from '../components/ui.tsx';
 import { client, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { listedEntity } from '../lib/legal-entity-choice.ts';
@@ -37,7 +37,10 @@ import { toast } from '../lib/toast.ts';
 import { VOUCHER_KIND } from '../lib/vouchers.ts';
 import {
   INBOX_TABS,
+  allSignaturesUnverified,
+  bulkExclusion,
   bulkSelectable,
+  filesNeedingAttention,
   countUnclassified,
   hasUnclassifiedLines,
   canApproveProposals,
@@ -299,6 +302,10 @@ export function InboxPage() {
   const setTab = (next: InboxTab) => void navigate({ to: '/o/$slug/inbox', params: { slug }, search: next === 'pending' ? {} : { status: next } });
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Where focus goes once the two-factor offer is gone (#3599).
+  const uploadRef = useRef<HTMLButtonElement>(null);
+  // The upload button, unless an upload or a photo is being prepared and it is disabled; then the page's main area, which the shell makes focusable.
+  const focusAfterOffer = () => (uploadRef.current && !uploadRef.current.disabled ? uploadRef.current : document.getElementById('main-content'));
   const [preparing, setPreparing] = useState(false);
   const config = getConfig();
 
@@ -361,7 +368,8 @@ export function InboxPage() {
     startFiles([...event.dataTransfer.files]);
   }
 
-  const processing = (files.data ?? []).filter((f) => f.status === 'processing').length;
+  const attention = filesNeedingAttention(files.data ?? []);
+  const processing = attention.filter((f) => f.status === 'processing').length;
 
   // Bulk approval (issue #315): owners and admins pick pending purchases and approve them under one step-up. The
   // kernel decides each item as if approved alone and reports the ones it refused.
@@ -464,8 +472,16 @@ export function InboxPage() {
         }
       />
     ) : (
-      <Checkbox checked={false} disabled aria-label={t('bulk.notSelectable')} title={t('bulk.notSelectable')} />
+      <Checkbox checked={false} disabled aria-label={excludedReason(item) ?? undefined} title={excludedReason(item) ?? undefined} />
     );
+  // Why a pending row is left out of the bulk approval (#3598), on the row and in the count above the list.
+  function excludedReason(item: InboxItem): string | null {
+    if (!bulkEnabled || item.status !== 'pending') return null;
+    const why = bulkExclusion(item, REVERSAL_KIND);
+    return why === null ? null : t(`bulk.excluded.${why}`);
+  }
+  const excludedCount = bulkEnabled ? listed.filter((item) => excludedReason(item) !== null).length : 0;
+  const allUnverified = allSignaturesUnverified(listed);
 
   // The browser may refuse the clipboard: say so, and the address stays on screen to select (#1384).
   const copyAddress = (address: string) =>
@@ -490,7 +506,7 @@ export function InboxPage() {
         actions={
           <div className="flex flex-wrap items-center gap-3">
             <UploadEntityPicker slug={slug} />
-            <Button loading={intake.uploading || preparing} size="lg" onClick={() => openPicker(false)}>
+            <Button ref={uploadRef} loading={intake.uploading || preparing} size="lg" onClick={() => openPicker(false)}>
               {t('upload')}
             </Button>
             {/* On a phone this opens the rear camera; a desktop browser ignores `capture` and opens the file picker. A stack
@@ -502,6 +518,8 @@ export function InboxPage() {
         }
       />
       <AiMeter module="finance" className="mb-3" />
+      {/* Two-factor is offered here, before the first approval needs it, to those who may approve (#3599). */}
+      <TwoFactorOffer show={canApproveProposals(org.data?.role, org.data?.permissions)} returnFocus={focusAfterOffer} />
       <input
         ref={inputRef}
         type="file"
@@ -527,7 +545,6 @@ export function InboxPage() {
             {/* A phone has nothing to drag from: it keeps the formats and the header's upload button. */}
             <p className="hidden text-sm text-foreground sm:block">{t('dropHereCompact')}</p>
             <p className="text-xs text-subtle-foreground">{config.aiEnabled ? t('formatsAll') : t('formatsXml')}</p>
-            {!config.aiEnabled && <p className="text-xs text-warning">{t('noAi')}</p>}
           </div>
           {org.data?.inboundAddress && (
             <div className="flex min-w-0 flex-wrap items-center gap-2 sm:ml-auto">
@@ -550,9 +567,6 @@ export function InboxPage() {
           >
             <p className="text-sm font-medium text-foreground">{t('dropHere')}</p>
             <p className="mt-1 text-xs text-subtle-foreground">{config.aiEnabled ? t('formatsAll') : t('formatsXml')}</p>
-            {!config.aiEnabled && (
-              <p className="mt-3 text-xs text-warning">{t('noAi')}</p>
-            )}
             <p className="mt-1 text-xs text-subtle-foreground">{t('formatsZip')}</p>
           </div>
           <Card className="block p-4">
@@ -586,14 +600,15 @@ export function InboxPage() {
       {installedModules().includes('social') && <SocialAttention slug={slug} />}
       {installedModules().includes('social') && (org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member') && <SocialMails slug={slug} />}
 
-      {(files.data?.length ?? 0) > 0 && (
+      {/* Only a file being read or one that failed (#3598): a file read into a proposal is that proposal's row below. */}
+      {attention.length > 0 && (
         <div className="mt-6">
           <p className="mb-2 text-sm font-medium text-muted-foreground">
             {t('recentFiles')}{' '}
             {processing > 0 && <span className="ml-1 text-link normal-case">· {t('readingCount', { count: processing })}</span>}
           </p>
           <div className="flex flex-wrap gap-2">
-            {files.data?.slice(0, 8).map((file) => (
+            {attention.slice(0, 8).map((file) => (
               <span
                 key={file.id}
                 data-testid="recent-file"
@@ -630,8 +645,8 @@ export function InboxPage() {
             ))}
           </div>
           {reextract.error && <p className="mt-2 text-xs text-destructive">{errorMessage(reextract.error)}</p>}
-          {files.data?.find((file) => file.status === 'failed')?.error && (
-            <p className="mt-2 text-xs text-destructive">{files.data.find((file) => file.status === 'failed')?.error}</p>
+          {attention.find((file) => file.status === 'failed')?.error && (
+            <p className="mt-2 text-xs text-destructive">{attention.find((file) => file.status === 'failed')?.error}</p>
           )}
         </div>
       )}
@@ -739,6 +754,12 @@ export function InboxPage() {
             <p className="w-full text-xs text-subtle-foreground">{t('bulk.hint')}</p>
           </div>
         )}
+        {excludedCount > 0 && <p className="mb-3 text-xs text-subtle-foreground">{t('bulk.excludedSummary', { count: excludedCount })}</p>}
+        {allUnverified && (
+          <p role="status" className="mb-3 text-sm text-warning">
+            {t('signatureAll', { count: listed.length })}
+          </p>
+        )}
         {tab === 'pending' && installedModules().includes('finance') && (
           <div className="mb-3 flex flex-wrap items-center gap-2" role="group" aria-label={t('filter.label')}>
             <Button variant={unclassifiedOnly ? 'outline' : 'secondary'} size="sm" aria-pressed={!unclassifiedOnly} onClick={() => setUnclassifiedOnly(false)}>
@@ -798,6 +819,7 @@ export function InboxPage() {
                       {proposalName(item)}
                     </Link>
                     <p className="text-xs text-subtle-foreground">{item.title}</p>
+                    {excludedReason(item) && <p className="text-xs text-subtle-foreground">{excludedReason(item)}</p>}
                     {item.status === 'expired' && item.expiredAfterDays !== null && (
                       <p className="text-xs text-warning">{t('expiredReason', { days: item.expiredAfterDays })}</p>
                     )}
@@ -806,7 +828,7 @@ export function InboxPage() {
                   <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{f.money(item.total)}</TableCell>
                   {showEntity && <TableCell className="px-4 py-3 text-muted-foreground">{entityOf(item)}</TableCell>}
                   <TableCell className="px-4 py-3">
-                    <ProposalBadges item={item} />
+                    <ProposalBadges item={item} hideSignature={allUnverified} />
                   </TableCell>
                   <TableCell className="px-4 py-3 text-xs text-subtle-foreground">{f.dateTime(item.createdAt)}</TableCell>
                 </TableRow>
@@ -830,7 +852,8 @@ export function InboxPage() {
                     {item.status === 'expired' && item.expiredAfterDays !== null && (
                       <p className="text-xs text-warning">{t('expiredReason', { days: item.expiredAfterDays })}</p>
                     )}
-                    <ProposalBadges item={item} />
+                    {excludedReason(item) && <p className="text-xs text-subtle-foreground">{excludedReason(item)}</p>}
+                    <ProposalBadges item={item} hideSignature={allUnverified} />
                   </div>
                 </li>
               ))}

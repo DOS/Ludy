@@ -1,6 +1,6 @@
 // Bulk approval batches and review shortcuts (issue #315).
 import { describe, expect, it } from 'vitest';
-import { BULK_LIMIT, bulkSelectable, canApproveProposals, chunks, countUnclassified, hasUnclassifiedLines, isAdsProposalKind, nextAfterDecision, nextPendingId, planBatches, previousPendingId, proposalName, reviewShortcut, sendBatches, checksByConcern, showMatched, steppedIndex, type BulkBatch } from '../src/lib/review.ts';
+import { BULK_LIMIT, allSignaturesUnverified, bulkExclusion, bulkSelectable, filesNeedingAttention, canApproveProposals, chunks, countUnclassified, hasUnclassifiedLines, isAdsProposalKind, nextAfterDecision, nextPendingId, planBatches, previousPendingId, proposalName, reviewShortcut, sendBatches, checksByConcern, showMatched, steppedIndex, type BulkBatch } from '../src/lib/review.ts';
 
 const REVERSAL = 'finance.reversal';
 
@@ -230,5 +230,47 @@ describe('the "Chưa phân loại" filter (#2091)', () => {
     expect(countUnclassified([])).toBe(0);
     // A list row from a server that does not send the count yet counts as none.
     expect(hasUnclassifiedLines({})).toBe(false);
+  });
+});
+
+describe('rows left out of the bulk approval (#3598)', () => {
+  const clean = { status: 'pending', failedChecks: 0, kind: 'purchase', duplicateOf: null, unclassifiedLines: 0 };
+
+  it('gives every refused row one reason, and none to a row that can be approved in bulk', () => {
+    expect(bulkExclusion(clean, 'reversal')).toBeNull();
+    expect(bulkExclusion({ ...clean, failedChecks: 1 }, 'reversal')).toBe('checks');
+    expect(bulkExclusion({ ...clean, duplicateOf: 'x' }, 'reversal')).toBe('duplicate');
+    expect(bulkExclusion({ ...clean, kind: 'reversal' }, 'reversal')).toBe('reversal');
+    expect(bulkExclusion({ ...clean, unclassifiedLines: 1 }, 'reversal')).toBe('account');
+    expect(bulkExclusion({ ...clean, anomalyChecks: 2 }, 'reversal')).toBe('anomaly');
+    expect(bulkExclusion({ ...clean, kind: 'ads.open_spend' }, 'reversal')).toBe('own_page');
+  });
+
+  it('agrees with bulkSelectable, so the count in "Chọn tất cả" is the rows without a reason', () => {
+    const rows = [clean, { ...clean, unclassifiedLines: 1 }, { ...clean, failedChecks: 2 }, { ...clean, duplicateOf: 'y' }, clean, clean, clean];
+    const selectable = rows.filter((row) => bulkSelectable(row, 'reversal'));
+    const reasons = rows.map((row) => bulkExclusion(row, 'reversal'));
+    expect(selectable).toHaveLength(reasons.filter((r) => r === null).length);
+    expect(selectable).toHaveLength(4);
+    // A row that is not pending is never selectable, whatever its checks say.
+    expect(bulkSelectable({ ...clean, status: 'executed' }, 'reversal')).toBe(false);
+  });
+});
+
+describe('the files row and the signature line (#3598)', () => {
+  it('lists only the files being read or failed', () => {
+    const files = [{ status: 'proposed' }, { status: 'processing' }, { status: 'failed' }, { status: 'executed' }];
+    expect(filesNeedingAttention(files).map((f) => f.status)).toEqual(['processing', 'failed']);
+    expect(filesNeedingAttention([{ status: 'proposed' }])).toEqual([]);
+  });
+
+  it('says the signature once only when it is the same for every row of a list', () => {
+    const bad = { signatureStatus: 'unverified' };
+    expect(allSignaturesUnverified([bad, bad, bad])).toBe(true);
+    expect(allSignaturesUnverified([bad, { signatureStatus: 'verified' }])).toBe(false);
+    expect(allSignaturesUnverified([bad, { signatureStatus: null }])).toBe(false);
+    // One row keeps its own chip; an empty list has nothing to say.
+    expect(allSignaturesUnverified([bad])).toBe(false);
+    expect(allSignaturesUnverified([])).toBe(false);
   });
 });

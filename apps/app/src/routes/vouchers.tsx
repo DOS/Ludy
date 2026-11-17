@@ -18,6 +18,7 @@ import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
 import { Input } from '@crove/ui/components/input';
+import { Menu, MenuChevron, MenuContent, MenuItem, MenuTrigger } from '@crove/ui/components/menu';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { AmountInput } from '../components/amount-input.tsx';
@@ -485,11 +486,20 @@ export function VouchersPage() {
         subtitle={t('subtitle')}
         actions={
           <div className="flex flex-wrap gap-2">
-            {(Object.keys(MISA_EXPORTS) as MisaExportKind[]).map((kind) => (
-              <Button key={kind} loading={exportMisa.isPending && exportMisa.variables === kind} size="lg" variant="outline" onClick={() => exportMisa.mutate(kind)} disabled={exportMisa.isPending}>
-                {t(MISA_EXPORTS[kind].label)}
-              </Button>
-            ))}
+            {/* One menu for the four MISA exports, so "Lập chứng từ" is the one button beside it (#3601). */}
+            <Menu>
+              <MenuTrigger render={<Button size="lg" variant="outline" loading={exportMisa.isPending} disabled={exportMisa.isPending} />}>
+                {t('exportMenu')}
+                <MenuChevron />
+              </MenuTrigger>
+              <MenuContent>
+                {(Object.keys(MISA_EXPORTS) as MisaExportKind[]).map((kind) => (
+                  <MenuItem key={kind} onClick={() => exportMisa.mutate(kind)}>
+                    {t(MISA_EXPORTS[kind].label)}
+                  </MenuItem>
+                ))}
+              </MenuContent>
+            </Menu>
             {allowed && !entering && (
               <Button size="lg" onClick={() => setEntering(true)}>
                 {t('new')}
