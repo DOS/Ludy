@@ -70,7 +70,8 @@ test('enter a bank debit note, approve it and find it numbered in the books', as
       ['Xuất giấy báo Nợ cho MISA', `ludy-misa-bao-no-${slug}.xlsx`, 'Chứng từ Chi tiền gửi', 2],
     ] as const) {
       const download = page.waitForEvent('download');
-      await page.getByRole('button', { name: button }).click();
+      await page.getByRole('button', { name: 'Xuất', exact: true }).click();
+      await page.getByRole('menuitem', { name: button }).click();
       const saved = await download;
       expect(saved.suggestedFilename()).toBe(file);
       const workbook = new ExcelJS.Workbook();
