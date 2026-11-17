@@ -101,14 +101,23 @@ const LIST_UNQUOTED_RE = /(?:^|(?<=[\s([,]))\/(?=[0-9_-]*\p{L})([\p{L}\p{N}\p{M}
 const WORD_RE = /[\p{L}\p{N}\p{M}]+/gu;
 
 const ISO_DATE_TOKEN_RE = /(?:^|(?<=[\s([,]))(\d{4})-(\d{1,2})-(\d{1,2})(?=$|[\s.,;:!?)\]])/gu;
-const DMY_DATE_TOKEN_RE = /(?<![\p{L}\p{N}_/.-])(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?(?![\p{L}\p{N}_/]|[.-][\p{L}\p{N}])/gu;
+const DMY_DATE_TOKEN_RE =
+  /(?<![\p{L}\p{N}\p{M}_/.-])(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?(?![\p{L}\p{N}\p{M}_/]|[.-][\p{L}\p{N}])/gu;
 
-const CLOCK_COLON_RE = /(?<![\p{L}\p{N}_:.])(\d{1,2}):([0-5]\d)(?:\s*(am|pm))?(?![\d:.]|[\p{L}])/giu;
-const CLOCK_AMPM_RE = /(?<![\p{L}\p{N}_:.])(\d{1,2})(?::([0-5]\d))?\s*(am|pm)(?![\p{L}\p{N}])/giu;
-const CLOCK_VN_GIO_RE =
-  /(?<![\p{L}\p{N}_:.])((\d{1,2})\s*(?:giờ|gio))(?:\s*(?:([0-5]?\d)\s*(?:phút|phut|p)|([0-5]\d)(?!\d|\/|[.-]\d)|(rưỡi|ruoi)))?(?![\p{L}\p{N}])/giu;
-const CLOCK_VN_SHORT_RE =
-  /(?<![\p{L}\p{N}_:.])(\d{1,2})\s*[hg](?:([0-5]?\d)(?!\d|\/|[.-]\d)(?:\s*(?:phút|phut|p))?|\s+([0-5]?\d)(?!\d|\/|[.-]\d)\s*(?:phút|phut|p)|\s*(rưỡi|ruoi))?(?![\p{L}\p{N}])/giu;
+const VN_GIO_WORD = '(?:gi(?:ờ|ơ\\u0300|ò\\u031b|o\\u031b\\u0300|o\\u0300\\u031b|o))';
+const VN_PHUT_WORD = '(?:ph(?:ú|u\\u0301|u)t|p)';
+const VN_RUOI_WORD = '(?:r(?:ư|u\\u031b|u)(?:ỡ|ơ\\u0303|õ\\u031b|o\\u031b\\u0303|o\\u0303\\u031b|o)i)';
+
+const CLOCK_COLON_RE = /(?<![\p{L}\p{N}\p{M}_:.])(\d{1,2}):([0-5]\d)(?:\s*(am|pm))?(?![\d:.]|[\p{L}\p{M}])/giu;
+const CLOCK_AMPM_RE = /(?<![\p{L}\p{N}\p{M}_:.])(\d{1,2})(?::([0-5]\d))?\s*(am|pm)(?![\p{L}\p{N}\p{M}])/giu;
+const CLOCK_VN_GIO_RE = new RegExp(
+  `(?<![\\p{L}\\p{N}\\p{M}_:.])((\\d{1,2})\\s*${VN_GIO_WORD})(?:\\s*(?:([0-5]?\\d)\\s*${VN_PHUT_WORD}|([0-5]\\d)(?!\\d|\\/|\\.[0-9]|-[0-9])|(${VN_RUOI_WORD})))?(?![\\p{L}\\p{N}\\p{M}])`,
+  'giu',
+);
+const CLOCK_VN_SHORT_RE = new RegExp(
+  `(?<![\\p{L}\\p{N}\\p{M}_:.])(\\d{1,2})\\s*[hg](?:([0-5]?\\d)(?!\\d|\\/|\\.[0-9]|-[0-9])(?:\\s*${VN_PHUT_WORD})?|\\s+([0-5]?\\d)(?!\\d|\\/|\\.[0-9]|-[0-9])\\s*${VN_PHUT_WORD}|\\s*(${VN_RUOI_WORD}))?(?![\\p{L}\\p{N}\\p{M}])`,
+  'giu',
+);
 
 const VN_COUNT_NOUNS_AFTER_CLOCK = new Set([
   'nguoi',

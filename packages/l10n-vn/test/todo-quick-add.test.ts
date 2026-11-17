@@ -500,5 +500,30 @@ describe('parseTodoQuickAdd (#3556)', () => {
     const longClockMinutes = parseTodoQuickAdd('Họp 9 giờ 5 phút', { now: TUE_MORNING, timeZone: VN_TZ });
     expect(longClockMinutes.title).toBe('Họp');
     expect(longClockMinutes.dueTime).toBe('09:05');
+
+    // NFD decomposed Vietnamese clocks, units, and alphanumeric code boundaries
+    const nfdGioPhut = parseTodoQuickAdd('Họp 9 giờ 5 phút'.normalize('NFD'), { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(nfdGioPhut.title).toBe('Họp');
+    expect(nfdGioPhut.dueTime).toBe('09:05');
+
+    const nfdGioCount = parseTodoQuickAdd('Họp 9 giờ 10 người'.normalize('NFD'), { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(nfdGioCount.title).toBe('Họp 10 người');
+    expect(nfdGioCount.dueTime).toBe('09:00');
+
+    const nfdRuoi = parseTodoQuickAdd('Họp 9 giờ rưỡi'.normalize('NFD'), { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(nfdRuoi.title).toBe('Họp');
+    expect(nfdRuoi.dueTime).toBe('09:30');
+
+    const nfdShortRuoi = parseTodoQuickAdd('Họp 9h rưỡi'.normalize('NFD'), { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(nfdShortRuoi.title).toBe('Họp');
+    expect(nfdShortRuoi.dueTime).toBe('09:30');
+
+    const nfdCodeClock = parseTodoQuickAdd('Kiểm tra mã9h'.normalize('NFD'), { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(nfdCodeClock.title).toBe('Kiểm tra mã9h'.normalize('NFD'));
+    expect(nfdCodeClock.dueTime).toBeNull();
+
+    const nfdCodeDate = parseTodoQuickAdd('Kiểm tra mã25/11'.normalize('NFD'), { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(nfdCodeDate.title).toBe('Kiểm tra mã25/11'.normalize('NFD'));
+    expect(nfdCodeDate.dueOn).toBeNull();
   });
 });
