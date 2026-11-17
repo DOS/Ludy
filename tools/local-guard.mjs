@@ -21,8 +21,11 @@ const instead = {
   'test:e2e': 'pnpm test:e2e <spec files you touched>, against the one shared stack',
 };
 
-// A target is a file, project or test name; flags alone (`--watch`, `--coverage`) are still a full run.
-if (!full && !targets.some((arg) => !arg.startsWith('-'))) {
+// A target is a file or directory you name. Flags, and the value of a flag that takes one (`--project unit`, `-t name`),
+// are not targets: with them alone every test file still runs.
+const VALUE_FLAGS = new Set(['--project', '-t', '--testNamePattern', '--config', '-c', '--shard', '--dir', '--root', '-r', '--reporter', '--outputFile']);
+const named = targets.filter((arg, i) => !arg.startsWith('-') && !VALUE_FLAGS.has(targets[i - 1] ?? ''));
+if (!full && named.length === 0) {
   console.error(
     `pnpm ${name}: the full run is CI's, not this machine's (AGENTS.md, "Local resources").\n` +
       `Run instead: ${instead[name] ?? 'the part you changed'}.\n` +
