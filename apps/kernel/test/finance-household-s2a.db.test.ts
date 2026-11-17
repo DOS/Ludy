@@ -99,7 +99,7 @@ suite('the S2a-HKD revenue book of a household business (#2517 slice 2a)', () =>
   async function item(o: Org, code: string, trade: string): Promise<string> {
     return admin(async (a) => (await a.query<{ id: string }>("INSERT INTO crove_finance.stock_item (org_id, legal_entity_id, code, name, unit, stock_account, trade) VALUES ($1, $2, $3, $3, 'cái', '156', $4) RETURNING id", [o.orgId, o.household, code, trade])).rows[0]?.id as string);
   }
-  // An entry of the household's ledger written by the database owner (the triggers fire as for any writer). With `sale`, the entry is the posting of a sale document of the entity whose lines (net amount, stock item
+  // An entry of the household's ledger written by the database owner (the triggers fire as for any writer). A reversal mirrors its original line by line (same line number and account, debit and credit swapped). With `sale`, the entry is the posting of a sale document of the entity whose lines (net amount, stock item
   // or none) each make a live stock move; `reverses` makes it the reversal of another entry.
   async function entry(
     o: Org,
@@ -225,7 +225,7 @@ suite('the S2a-HKD revenue book of a household business (#2517 slice 2a)', () =>
     const shirt = await item(o, 'AO', 'goods');
     const repair = await item(o, 'SUA', 'services');
     const sale = await entry(o, '2026-08-30', 'Bán hàng và sửa chữa', [['111', 1000000, 0], ['511', 0, 1000000]], { sale: [{ amount: 600000, item: shirt }, { amount: 400000, item: repair }] });
-    await entry(o, '2026-09-02', 'Hủy hóa đơn', [['511', 1000000, 0], ['111', 0, 1000000]], { reverses: sale });
+    await entry(o, '2026-09-02', 'Hủy hóa đơn', [['111', 0, 1000000], ['511', 1000000, 0]], { reverses: sale });
     // The void took the stock back, so no line has a move left that nothing reverses; the sale is still attributed to the trades it had, not to unassigned.
     const august = await s2a(o, '2026-08');
     expect(august.rows[0]?.parts).toEqual([{ trade: 'goods', amount: '600000' }, { trade: 'services', amount: '400000' }]);
@@ -243,7 +243,7 @@ suite('the S2a-HKD revenue book of a household business (#2517 slice 2a)', () =>
     const shirt = await item(o, 'AO', 'goods');
     const repair = await item(o, 'SUA', 'services');
     const sale = await entry(o, '2026-09-05', 'Bán hàng và sửa chữa', [['111', 1000000, 0], ['511', 0, 1000000]], { sale: [{ amount: 600000, item: shirt }, { amount: 400000, item: repair }] });
-    await entry(o, '2026-09-20', 'Đảo bán hàng', [['511', 1000000, 0], ['111', 0, 1000000]], { reverses: sale });
+    await entry(o, '2026-09-20', 'Đảo bán hàng', [['111', 0, 1000000], ['511', 1000000, 0]], { reverses: sale });
     const book = await s2a(o, '2026-09');
     expect(book.rows.map((r) => [r.amount, r.reversal])).toEqual([['1000000', false], ['-1000000', true]]);
     expect(book.rows[1]?.parts).toEqual([{ trade: 'goods', amount: '-600000' }, { trade: 'services', amount: '-400000' }]);

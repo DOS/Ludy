@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The arithmetic the percentage-method household papers share (#2517 S2a, #2518 01/CNKD): tax on revenue rounded to a whole dong, and one entry's amount shared between trades so the parts always tie.
 import { describe, expect, it } from 'vitest';
+import { sum } from '@crove/l10n-vn';
 import { splitAmount, taxOn } from '../src/domain/household-tax.ts';
 
 describe('taxOn', () => {
@@ -13,7 +14,8 @@ describe('taxOn', () => {
 });
 
 describe('splitAmount', () => {
-  const total = (parts: { amount: string }[]) => parts.reduce((acc, p) => acc + Number(p.amount), 0);
+  // Exact decimal conservation (the money helpers), never JS numbers.
+  const total = (parts: { amount: string }[]) => sum(parts.map((p) => p.amount)).toFixed();
 
   it('gives the whole amount to the only trade that has weight', () => {
     expect(splitAmount('1000', [{ bucket: 'goods', weight: '500' }])).toEqual([{ bucket: 'goods', amount: '1000' }]);
@@ -28,7 +30,7 @@ describe('splitAmount', () => {
     expect(parts.map((p) => p.bucket)).toEqual(['goods', 'services', 'catering']);
     // Equal weights: the first trade in the fixed order takes the remainder.
     expect(parts.map((p) => p.amount)).toEqual(['33.3334', '33.3333', '33.3333']);
-    expect(total(parts)).toBeCloseTo(100, 6);
+    expect(total(parts)).toBe('100');
   });
 
   it('keeps the order of the trades, then unassigned, whatever order the weights come in', () => {

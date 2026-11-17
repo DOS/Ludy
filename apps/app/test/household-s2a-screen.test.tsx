@@ -109,6 +109,16 @@ describe('the S2a-HKD book on the household screen (#2517 slice 2a)', () => {
     expect(html).toContain('data-testid="household-s2a-part-services"');
     expect(html).toContain('data-testid="household-s2a-total"');
     expect(html).toContain('data-testid="household-s2a-totals"');
+    // The amounts themselves, not only the table structure: each entry's parts and amount (the reversal negative), the total, the revenue and tax per line and the tax total.
+    const text = html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+    expect(text).toContain('Goods: ₫600,000 Services: ₫400,000 ₫1,000,000');
+    expect(text).toContain('reversal Goods: -₫100,000 -₫100,000');
+    expect(text).toContain('Total ₫900,000');
+    expect(text).toContain('₫500,000 1 ₫5,000');
+    expect(text).toContain('₫400,000 5 ₫20,000');
+    expect(text).toContain('0.5 ₫2,500');
+    expect(text).toContain('2 ₫8,000');
+    expect(text).toContain('₫35,500');
     expect(html).toContain('data-testid="household-s2a-notice"');
     expect(html).not.toMatch(DOWNLOAD_DISABLED);
     // S2a is built, so it is no longer listed as "not built yet".
