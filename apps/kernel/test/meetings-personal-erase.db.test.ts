@@ -126,6 +126,14 @@ suite('the erasure in meeting text (#2594, L5 part 2)', () => {
     await sqlAdmin(`INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, 'a.opus', 'audio/ogg', 10, 'meeting_audio')`, [orgId, randomUUID(), 'a'.repeat(64), `org/${orgId}/${'a'.repeat(64)}`]);
     const fileId = (await sqlAdmin<{ id: string }>(`SELECT id FROM crove_kernel.file WHERE org_id = $1 AND filename = 'a.opus'`, [orgId])).rows[0]?.id;
     await sqlAdmin(`INSERT INTO crove_meetings.audio_segment (org_id, id, meeting_id, file_id, segment_order, start_offset_seconds, length_seconds) VALUES ($1, $2, $3, $4, 0, 0, 600)`, [orgId, randomUUID(), hidden, fileId]);
+    // A member's own translation of a meeting the value never touches (an erasure drops the translations of a meeting it touches), and the recorder's preview line of the meeting the owner
+    // cannot read: private to each, counted and never read (#3584).
+    const quiet = await meeting('recorder', 'Họp không liên quan', 'attendees', ['attendee']);
+    await sqlAdmin(
+      `INSERT INTO crove_meetings.translation (org_id, meeting_id, member_user_id, kind, target_language, source_stage, source_hash, body) VALUES ($1, $2, $3, 'summary', 'en', 'published', $4, '[]'::jsonb)`,
+      [orgId, quiet, users.attendee, 'a'.repeat(64)],
+    );
+    await sqlAdmin(`INSERT INTO crove_meetings.live_line (org_id, meeting_id, seq, start_seconds, end_seconds, text) VALUES ($1, $2, 0, 0, 15, $3)`, [orgId, hidden, `Bản nháp ${EMAIL}`]);
     await runtime.execute('kernel.member_vy.run.start', { feature: 'meetings.summary', subjectType: 'meeting', subjectId: shared }, { actor: asUser('recorder'), orgId });
     const before = await untouchedCounts();
     expect(before.vy).toBeGreaterThan(0);
@@ -159,6 +167,10 @@ suite('the erasure in meeting text (#2594, L5 part 2)', () => {
     expect(audio?.reason).not.toMatch(/\d{4}-\d{2}-\d{2}/);
     expect(audio?.reason).toMatch(/1 more held in meetings the owner cannot read/);
     expect(erased.kept.find((k) => k.column === 'crove_kernel.member_vy_result.body')?.reason).toMatch(/at most 31 days/);
+    // The translations and the preview lines of members are counted too, with the 30-day former-member purge named, and their text is not read.
+    expect(erased.kept.find((k) => k.column === 'crove_meetings.translation.body')).toMatchObject({ rows: 1, reason: expect.stringMatching(/30 days after that member is removed/) });
+    expect(erased.kept.find((k) => k.column === 'crove_meetings.live_line.text')).toMatchObject({ rows: 1, reason: expect.stringMatching(/30 days after their recorder is removed/) });
+    expect(await textOf('live_line', (await sqlAdmin<{ id: string }>(`SELECT id FROM crove_meetings.live_line WHERE org_id = $1 AND meeting_id = $2`, [orgId, hidden])).rows[0]?.id as string, 'text')).toContain(EMAIL);
     // Nothing else changed.
     expect(await untouchedCounts()).toEqual(before);
     // The audit row has counts and ids only, never the value or a text.
