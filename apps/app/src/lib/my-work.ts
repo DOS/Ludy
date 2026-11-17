@@ -183,23 +183,25 @@ export function groupUpcomingAgenda(
   const overdueTasks: MyWorkTask[] = [];
 
   for (const todo of todos) {
-    if (todo.group === 'overdue' || (todo.dueOn !== null && todo.dueOn < today)) {
+    if (todo.group === 'overdue') {
       overdueTodos.push(todo);
       continue;
     }
-    if (todo.dueOn !== null && todo.dueOn >= today && todo.dueOn <= endDay) {
-      buckets.get(todo.dueOn)?.todos.push(todo);
+    const targetDay = todo.dueOn !== null && todo.dueOn < today && todo.group === 'today' ? today : todo.dueOn;
+    if (targetDay !== null && targetDay >= today && targetDay <= endDay) {
+      buckets.get(targetDay)?.todos.push(todo);
     }
   }
 
   for (const task of tasks) {
     const day = localDueDayOfTask(task, viewerTimeZone);
-    if (task.group === 'overdue' || (day !== null && day < today)) {
+    if (task.group === 'overdue') {
       overdueTasks.push(task);
       continue;
     }
-    if (day !== null && day >= today && day <= endDay) {
-      buckets.get(day)?.tasks.push(task);
+    const targetDay = day !== null && day < today && task.group === 'today' ? today : day;
+    if (targetDay !== null && targetDay >= today && targetDay <= endDay) {
+      buckets.get(targetDay)?.tasks.push(task);
     }
   }
 

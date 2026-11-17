@@ -585,16 +585,29 @@ export const todoReopen = defineCommand({
     }
 
     assertNotInTrash(before);
+    if (input.expectedRevision !== undefined && before.revision !== input.expectedRevision) {
+      throw revisionConflict(before.revision);
+    }
     if (undoNextTodoId !== undefined) {
       if (before.status !== 'done') throw new DomainError('TODO_NOT_CHANGEABLE', 409, 'Việc này đã được mở lại hoặc thay đổi');
-      if (
+      const existingLink = nextRow
+        ? await ctx.trx
+            .selectFrom('crove_notes.todo_link')
+            .select('id')
+            .where('org_id', '=', ctx.orgId)
+            .where('todo_id', '=', undoNextTodoId)
+            .executeTakeFirst()
+        : undefined;
+      const nextEdited =
         !nextRow ||
         nextRow.deleted_at !== null ||
         nextRow.status !== 'open' ||
         nextRow.revision !== 1 ||
+        new Date(nextRow.updated_at).getTime() !== new Date(nextRow.created_at).getTime() ||
+        existingLink !== undefined ||
         before.series_id === null ||
-        nextRow.series_id !== before.series_id
-      ) {
+        nextRow.series_id !== before.series_id;
+      if (nextEdited) {
         throw new DomainError('TODO_UNDO_SERIES_ADVANCED', 409, 'Lượt kế tiếp đã được chỉnh sửa hoặc xử lý rồi');
       }
       await ctx.trx
@@ -608,9 +621,22 @@ export const todoReopen = defineCommand({
       if (before.status !== 'done') throw new DomainError('TODO_NOT_CHANGEABLE', 409, 'Việc này đã được giao hoặc đã hủy');
     }
 
+    const restoredRule = input.restoreRecurrence ? normalizeTodoRecurrence(input.restoreRecurrence) : null;
     const row = await ctx.trx
       .updateTable('crove_notes.todo')
-      .set({ status: 'open', done_at: null, reminded_at: reminderPassed(ctx.now), revision: before.revision + 1, updated_at: ctx.now })
+      .set({
+        status: 'open',
+        done_at: null,
+        reminded_at: reminderPassed(ctx.now),
+        ...(restoredRule !== null
+          ? {
+              recurrence: JSON.stringify(restoredRule),
+              ...(before.series_id === null ? { series_id: before.id } : {}),
+            }
+          : {}),
+        revision: before.revision + 1,
+        updated_at: ctx.now,
+      })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.todoId)
       .returning(['id', 'revision'])
@@ -621,6 +647,7 @@ export const todoReopen = defineCommand({
       status: 'open',
       previousStatus: before.status,
       ...(undoNextTodoId !== undefined ? { undoNextTodoId } : {}),
+      ...(restoredRule !== null ? { restoredRecurrence: true } : {}),
     });
     return written(row);
   },

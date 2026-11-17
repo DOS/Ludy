@@ -632,30 +632,19 @@ function TodoEditor({ todo, onClose }: { todo: Todo; onClose: () => void }) {
   });
   const completeStop = useMutation({
     mutationFn: () => client.notes.todos.complete({ todoId: todo.id, stopSeries: true }),
-    onSuccess: () => {
+    onSuccess: (done) => {
       refresh();
       onClose();
       const savedRecurrence = todo.recurrence ? normalizeTodoRecurrence(todo.recurrence) : null;
       toastWithUndo(
         t('completedToast', { title: todo.title }),
         t('undoneToast', { title: todo.title }),
-        async () => {
-          const api = clientForOrg(slug).notes.todos;
-          const reopened = await api.reopen({ todoId: todo.id });
-          if (savedRecurrence) {
-            await api.update({
-              todoId: todo.id,
-              revision: reopened.revision,
-              title: todo.title,
-              details: todo.details,
-              checklist: todo.checklist,
-              dueOn: todo.dueOn,
-              dueTime: todo.dueTime,
-              timeZone: todo.timeZone,
-              recurrence: savedRecurrence,
-            });
-          }
-        },
+        () =>
+          clientForOrg(slug).notes.todos.reopen({
+            todoId: todo.id,
+            expectedRevision: done.revision,
+            ...(savedRecurrence ? { restoreRecurrence: savedRecurrence } : {}),
+          }),
         { undo: common('undo'), failed: (reason) => common('undoFailed', { reason }) },
       );
     },

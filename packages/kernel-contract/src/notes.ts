@@ -205,6 +205,8 @@ export const zTodoRef = z.strictObject({ todoId: zId });
 export const zTodoReopen = z.strictObject({
   todoId: zId,
   undoNextTodoId: zId.optional(),
+  expectedRevision: z.number().int().positive().optional(),
+  restoreRecurrence: zTodoRecurrence.optional(),
 });
 export type TodoReopenInput = z.input<typeof zTodoReopen>;
 export const zTodoComplete = z.strictObject({

@@ -144,6 +144,20 @@ describe('upcoming agenda and recurrence UI helpers (#3557)', () => {
 
     const agenda30 = groupUpcomingAgenda([tOverdue, tToday, tDay20], [taskOverdue, taskDay2], '2026-11-17', 30, DEFAULT_TIME_ZONE);
     expect(agenda30.days.find((d) => d.date === '2026-12-07')?.todos.map((x) => x.id)).toEqual([TODO_3]);
+
+    // A to-do due yesterday in browser TZ that is still today in its own time zone (group: 'today', overdue: false)
+    // must NOT be pushed into Overdue; it stays in Today's bucket.
+    const tWesternToday = makeTodo({
+      id: TODO_2,
+      title: 'US Pacific today',
+      dueOn: '2026-11-17',
+      timeZone: 'America/Los_Angeles',
+      group: 'today',
+      overdue: false,
+    });
+    const crossZone = groupUpcomingAgenda([tWesternToday], [], '2026-11-18', 7, DEFAULT_TIME_ZONE);
+    expect(crossZone.overdueTodos).toEqual([]);
+    expect(crossZone.days.find((d) => d.date === '2026-11-18')?.todos.map((x) => x.id)).toEqual([TODO_2]);
   });
 
   it('formats day bucket short date and weekday consistently without shifting bare YYYY-MM-DD', () => {

@@ -437,5 +437,46 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
     ).rejects.toMatchObject({ code: 'TODO_IN_TRASH', status: 409 });
     const rolledBackNext = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: rollbackNext.nextTodoId as string });
     expect(rolledBackNext.deletedAt).toBeNull();
+
+    // Adding a link onto the spawned next occurrence (even without bumping revision) blocks undoNextTodoId.
+    const linkRoot = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Link edit guard',
+      dueOn: '2027-06-15',
+      timeZone: 'Asia/Ho_Chi_Minh',
+      recurrence: { freq: 'daily', interval: 1 },
+    });
+    const linkNext = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: linkRoot.todoId });
+    const targetTask = await admin(async (c) =>
+      (await c.query<{ id: string }>(`INSERT INTO crove_kernel.task (org_id, title, source, created_by_type) VALUES ($1, 'Ref task', 'human', 'user') RETURNING id`, [o.orgId])).rows[0] as { id: string },
+    );
+    await o.exec(o.mine, 'notes.todo.link_add', { todoId: linkNext.nextTodoId as string, targetType: 'kernel.task', targetId: targetTask.id });
+    await expect(
+      o.exec(o.mine, 'notes.todo.reopen', { todoId: linkRoot.todoId, undoNextTodoId: linkNext.nextTodoId as string }),
+    ).rejects.toMatchObject({ code: 'TODO_UNDO_SERIES_ADVANCED', status: 409 });
+
+    // Undoing stopSeries with restoreRecurrence + expectedRevision checks optimistic revision and restores rule atomically.
+    const stopRoot = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Stop series undo',
+      dueOn: '2027-06-20',
+      timeZone: 'Asia/Ho_Chi_Minh',
+      recurrence: { freq: 'weekly', interval: 1 },
+    });
+    const stopDone = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: stopRoot.todoId, stopSeries: true });
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.reopen', {
+      todoId: stopRoot.todoId,
+      expectedRevision: stopDone.revision,
+      restoreRecurrence: { freq: 'weekly', interval: 1 },
+    });
+    const stopRestored = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: stopRoot.todoId });
+    expect(stopRestored.status).toBe('open');
+    expect(stopRestored.recurrence).toEqual({ freq: 'weekly', interval: 1 });
+    // Stale expectedRevision is rejected cleanly without overwriting concurrent changes.
+    await expect(
+      o.exec(o.mine, 'notes.todo.reopen', {
+        todoId: stopRoot.todoId,
+        expectedRevision: stopDone.revision,
+        restoreRecurrence: { freq: 'daily', interval: 1 },
+      }),
+    ).rejects.toMatchObject({ code: 'TODO_REVISION_CONFLICT', status: 409 });
   });
 });
