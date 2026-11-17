@@ -1103,3 +1103,6 @@ export const zSeriesOpenItems = z.strictObject({
   items: z.array(zSeriesOpenItem).max(SERIES_ITEMS_MAX),
 });
 export type SeriesOpenItems = z.infer<typeof zSeriesOpenItems>;
+
+// What the worker's series nudge is told (the command checks it again before it writes anything): one member, the series, and the start of the next meeting of it.
+export const zSeriesNudge = z.strictObject({ userId: zId, seriesId: zId, startsAt: z.iso.datetime({ offset: true }) });

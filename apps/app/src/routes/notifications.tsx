@@ -63,6 +63,8 @@ function useLine() {
         return t('text.todo_due');
       case 'projects.weekly_status':
         return t('text.projects_weekly_status', { title: n.detail.title ?? '' });
+      case 'meetings.series_open_items':
+        return t('text.series_open_items', { count: Number(n.detail.count ?? 0) });
       case 'kernel.channel_expired':
         return t('text.channel_expired');
       case 'kernel.ai_budget':
@@ -136,6 +138,7 @@ export function NotificationsPage() {
     else if (target?.to === 'projects') void navigate({ to: '/o/$slug/projects', params: { slug } });
     else if (target?.to === 'conversation') void navigate({ to: '/o/$slug/social/inbox', params: { slug }, search: { c: target.id } });
     else if (target?.to === 'conversations') void navigate({ to: '/o/$slug/social/inbox', params: { slug }, search: { status: 'new' } });
+    else if (target?.to === 'meeting') void navigate({ to: '/o/$slug/meetings/$id', params: { slug, id: target.id } });
     else if (target?.to === 'ads') void navigate({ to: '/o/$slug/ads', params: { slug } });
     else if (target?.to === 'agents') void navigate({ to: '/o/$slug/agents', params: { slug } });
   };

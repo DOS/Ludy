@@ -99,6 +99,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.summary.copy_result',
       'meetings.speaker.name',
       'meetings.series.set',
+      'meetings.series.nudge',
       'meetings.draft.review',
       'meetings.summary.start',
       'meetings.translation.copy_result',

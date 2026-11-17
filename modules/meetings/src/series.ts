@@ -7,10 +7,14 @@
 //                              only to a caller who reads it, so a reader of the new meeting who did not read the old one gets nothing of it, not even its title.
 // meetings.series.set          the recorder's own click: this meeting follows an earlier one they also recorded, or (null) leaves its series.
 //
+// meetings.series.nudge        the worker's one in-app notice, about 30 minutes before the next meeting of a series: to a person with open items from the previous meeting, how many and a link.
+//                              No title, no text (the notice's subject is the previous meeting; the app shows its title only to someone who reads it).
+//
 // No model is used and nothing here writes to Projects: the task is read, never changed.
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
-import { SERIES_ITEMS_MAX, SERIES_TASK_STATUSES, zSeriesOpenItems, zSeriesOpenItemsInput, zSeriesSet, zSeriesSetResult, type SeriesOpenItems } from '@crove/kernel-contract';
+import { notifyMembers, uploaderEntity } from '@crove/kernel';
+import { SERIES_ITEMS_MAX, SERIES_TASK_STATUSES, zSeriesNudge, zSeriesOpenItems, zSeriesOpenItemsInput, zSeriesSet, zSeriesSetResult, type SeriesOpenItems } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
 import { vnDay } from './retention.ts';
 import { ROLES, openMeeting, userOf } from './transcript.ts';
@@ -142,5 +146,41 @@ export const seriesSet = defineCommand({
   },
 });
 
-export const seriesCommands = [seriesSet];
+// The notification kind of the nudge; members turn it off like any kind (#671). Its detail holds the count only.
+export const SERIES_OPEN_ITEMS = 'meetings.series_open_items';
+
+// One nudge the sweep found: a notice for one member, once per series and start time of the next meeting (the notice's key, so a replayed job or a second pass writes nothing). The job's ids are
+// not trusted: crove_meetings.series_nudges_due derives the row again for this member, series and start (the event in their own calendar, the previous meeting they read, the open items that are
+// theirs now), and a nudge that is no longer due (the event moved, the items done or given to someone else since the sweep) writes nothing.
+export const seriesNudge = defineCommand({
+  name: 'meetings.series.nudge',
+  input: zSeriesNudge,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  handler: async (ctx, input): Promise<{ sent: number }> => {
+    if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới nhắc việc của chuỗi cuộc họp');
+    const startsAt = new Date(input.startsAt).toISOString();
+    const { rows } = await sql<{ previous_meeting_id: string; open_count: number }>`
+      SELECT previous_meeting_id, open_count
+      FROM crove_meetings.series_nudges_due(1::int, ${ctx.orgId}::uuid, ${input.userId}::uuid, ${input.seriesId}::uuid, ${startsAt}::timestamptz)`.execute(ctx.trx);
+    const due = rows[0];
+    if (!due) {
+      ctx.audit({ seriesId: input.seriesId, startsAt, sent: 0, current: false });
+      return { sent: 0 };
+    }
+    const sent = await notifyMembers(ctx, {
+      kind: SERIES_OPEN_ITEMS,
+      users: [input.userId],
+      key: `series:${input.seriesId}:${startsAt}`,
+      subject: { type: 'meetings.meeting', id: due.previous_meeting_id },
+      detail: { count: String(due.open_count) },
+      legalEntityId: await uploaderEntity(ctx, input.userId),
+    });
+    ctx.audit({ seriesId: input.seriesId, startsAt, count: due.open_count, sent });
+    return { sent };
+  },
+});
+
+export const seriesCommands = [seriesSet, seriesNudge];
 export const seriesQueries = [seriesOpenItems];
