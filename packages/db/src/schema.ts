@@ -215,14 +215,14 @@ export type PartyTable = Refine<
 // keeps UPDATE only to lock the row (SELECT ... FOR UPDATE), so no column has an update type here.
 // social: an image uploaded for a Social post (#372); import: a spreadsheet for a module's import (#465). Neither is
 // extracted or shown in the Inbox. meeting_audio and meeting_video: encrypted meeting recordings (#2576).
-export const FILE_SOURCES = ['upload', 'email', 'social', 'import', 'meeting_audio', 'meeting_video', 'sign_document', 'sign_sealed', 'sign_certificate'] as const;
+export const FILE_SOURCES = ['upload', 'email', 'social', 'import', 'meeting_audio', 'meeting_video', 'sign_document', 'sign_sealed', 'sign_certificate', 'agreement'] as const;
 type Frozen<T> = ColumnType<SelectType<T>, InsertType<T>, G.NotGranted>;
 export type FileTable = Refine<
   G.KernelFileTable,
   { [K in Exclude<keyof G.KernelFileTable, 'source'>]: Frozen<G.KernelFileTable[K]> } & { source: Frozen<(typeof FILE_SOURCES)[number]> }
 >;
 
-export const FILE_UPLOAD_PURPOSES = ['document', 'social', 'import', 'meeting_audio', 'meeting_video', 'sign_document'] as const;
+export const FILE_UPLOAD_PURPOSES = ['document', 'social', 'import', 'meeting_audio', 'meeting_video', 'sign_document', 'agreement'] as const;
 export type FileUploadPurpose = (typeof FILE_UPLOAD_PURPOSES)[number];
 export type FileUploadTable = Refine<G.KernelFileUploadTable, { purpose: Generated<FileUploadPurpose> }>;
 

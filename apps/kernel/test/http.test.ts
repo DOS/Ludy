@@ -1005,6 +1005,22 @@ describe('ZIP uploads (bulk intake, #314)', () => {
     expect(await rar.json()).toMatchObject({ code: 'UNSUPPORTED_TYPE' });
     expect(executed.length).toBe(count);
   });
+
+  it('stores the signed agreement of an invoice correction as a file of source agreement, a PDF or an image and nothing else (#2504)', async () => {
+    const pdf = new Uint8Array([...new TextEncoder().encode('%PDF-1.4\n'), 1, 2, 3]);
+    const ok = await post(pdf, 'bien-ban.pdf', 'agreement');
+    expect(ok.status).toBe(200);
+    const ingest = executed.at(-1);
+    expect(ingest?.name).toBe('kernel.file.ingest');
+    expect(ingest?.input).toMatchObject({ contentType: 'application/pdf', source: 'agreement', sizeBytes: pdf.byteLength });
+    // An invoice XML or an archive is no agreement, and nothing is recorded for it.
+    const count = executed.length;
+    const xml = await post(FIXTURE, 'hd.xml', 'agreement');
+    expect(xml.status).toBe(415);
+    expect(await xml.json()).toMatchObject({ code: 'UNSUPPORTED_TYPE' });
+    expect((await post(zip, 'bien-ban.zip', 'agreement')).status).toBe(415);
+    expect(executed.length).toBe(count);
+  });
 });
 
 describe('uploads through the kernel (#432)', () => {
