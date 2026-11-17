@@ -76,7 +76,7 @@ export const einvoiceStartCorrection = defineCommand({
     let agreement: string | null = null;
     if (input.agreementFileId) {
       agreement = input.agreementFileId.toLowerCase();
-      const file = await ctx.trx.selectFrom('crove_kernel.file').select('id').where('org_id', '=', ctx.orgId).where('id', '=', agreement).executeTakeFirst();
+      const file = await ctx.trx.selectFrom('crove_kernel.file').select('id').where('org_id', '=', ctx.orgId).where('id', '=', agreement).where('source', '=', 'agreement').executeTakeFirst();
       if (!file) throw new DomainError('EINVOICE_AGREEMENT_FILE_NOT_FOUND', 404, 'Không tìm thấy tệp biên bản thỏa thuận');
     } else if (original.buyer_kind === 'business') {
       throw new DomainError('EINVOICE_AGREEMENT_REQUIRED', 422, 'Người mua là doanh nghiệp: hãy đính kèm biên bản thỏa thuận đã ký của hai bên trước khi điều chỉnh hoặc thay thế');

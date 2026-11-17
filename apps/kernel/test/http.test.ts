@@ -1013,6 +1013,14 @@ describe('ZIP uploads (bulk intake, #314)', () => {
     const ingest = executed.at(-1);
     expect(ingest?.name).toBe('kernel.file.ingest');
     expect(ingest?.input).toMatchObject({ contentType: 'application/pdf', source: 'agreement', sizeBytes: pdf.byteLength });
+    // The photo or scan of the signed paper is accepted too, whatever the extension says: the content decides.
+    const jpg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46, 0x49, 0x46, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0, 0xff, 0xd9]);
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 0x1f, 0x15, 0xc4, 0x89]);
+    const webp = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x1a, 0, 0, 0, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x4c, 0x0d, 0, 0, 0, 0x2f, 0, 0, 0, 0x10, 0x07, 0x10, 0x11, 0x11, 0x88, 0x88, 0xfe, 7, 0]);
+    for (const [bytes, type] of [[jpg, 'image/jpeg'], [png, 'image/png'], [webp, 'image/webp']] as const) {
+      expect((await post(bytes, 'scan.bin', 'agreement')).status).toBe(200);
+      expect(executed.at(-1)?.input).toMatchObject({ contentType: type, source: 'agreement' });
+    }
     // An invoice XML or an archive is no agreement, and nothing is recorded for it.
     const count = executed.length;
     const xml = await post(FIXTURE, 'hd.xml', 'agreement');
