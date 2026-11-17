@@ -26,6 +26,9 @@ vi.mock('../src/lib/screen-title.ts', async (importOriginal) => ({
 
 const { QuoteDocumentPage } = await import('../src/routes/quote-document.tsx');
 
+// A text as React writes it into markup: every character with a meaning in HTML escaped, the ampersand first.
+const htmlEscaped = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#x27;');
+
 const TOKEN = 'q'.repeat(43);
 const doc = (over: Partial<QuoteDocument> = {}): QuoteDocument => ({
   number: 'BG-2026-0007',
@@ -113,7 +116,7 @@ describe("a sent quote's public page (#2694)", () => {
     for (const email of ['info?bcc=evil@x.test', 'sales#vn@example.com', 'a%40b@c.test', 'a/b@c.test']) {
       const html = seller('028 3829 1234', email);
       expect(html).not.toContain('mailto:');
-      expect(html).toContain(email.replace('&', '&amp;'));
+      expect(html).toContain(htmlEscaped(email));
     }
   });
 
