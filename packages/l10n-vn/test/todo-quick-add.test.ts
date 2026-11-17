@@ -899,5 +899,35 @@ describe('parseTodoQuickAdd (#3556)', () => {
       dueOn: '2026-11-17',
       dueTime: '20:00',
     });
+
+    // Relative date ranges stay whole in title, and sentence position determines which single date wins
+    expect(parseTodoQuickAdd('Họp từ thứ hai đến thứ sáu', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp từ thứ hai đến thứ sáu',
+      dueOn: null,
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Meeting from Monday to Friday', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Meeting from Monday to Friday',
+      dueOn: null,
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Họp sáng thứ hai đến tối thứ sáu', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp sáng thứ hai đến tối thứ sáu',
+      dueOn: null,
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Họp từ hôm nay đến ngày 25/11', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp từ hôm nay đến ngày 25/11',
+      dueOn: null,
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Họp ngày mai thay cho 25/11', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp thay cho 25/11',
+      dueOn: '2026-11-18',
+    });
+    expect(parseTodoQuickAdd('Họp 25/11 thay cho ngày mai', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp thay cho ngày mai',
+      dueOn: '2026-11-25',
+    });
   });
 });
