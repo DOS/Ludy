@@ -100,7 +100,7 @@ function applySuggestion(s: FormState, proposal: EInvoiceSuggested): FormState {
   const kept = s.lines.filter((l) => !isBlankLine(l));
   const lines = [...kept, ...proposed].slice(0, EINVOICE_DRAFT_MAX_LINES);
   const b = s.buyer;
-  const buyerEmpty = b.partyId === null && b.taxCode.trim() === '' && b.name.trim() === '' && b.address.trim() === '' && b.email.trim() === '';
+  const buyerEmpty = b.partyId === null && b.taxCode.trim() === '' && b.name.trim() === '' && b.address.trim() === '' && b.email.trim() === '' && b.identityKind === '' && b.identity.trim() === '';
   // A person who chose a consumer sale keeps it: the coworker's customer does not replace the choice.
   const buyer = proposal.buyer !== null && buyerEmpty && b.kind !== 'consumer' ? proposal.buyer : null;
   return {
@@ -369,7 +369,7 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
       </div>
       {check.data?.lateSale && <LateSaleNotice id={id} reason={form.lateReason} error={lateReasonIssue ? t(`issues.${lateReasonIssue.code satisfies DraftIssueCode}`, { line: '' }) : null} onChange={(lateReason) => setForm((s) => ({ ...s, lateReason }))} />}
       <PreviousInvoice
-        date={form.date}
+        date={form.saleDate || form.date}
         legalEntityId={legalEntityId}
         onPicked={setSourceInvoice}
         onCopy={(invoice) => {

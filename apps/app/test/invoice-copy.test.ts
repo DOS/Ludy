@@ -28,6 +28,11 @@ describe('applyPrevious', () => {
     expect(done.state.buyer).toMatchObject({ kind: 'individual', name: 'Nguyễn Văn A', identityKind: '', identity: '' });
     expect(JSON.stringify(done.state)).not.toContain('012345678901');
   });
+  it('keeps an identity the person typed before copying, even when no other buyer field is filled (#3678)', () => {
+    const typed = { ...form(0), buyer: { ...form(0).buyer, kind: 'individual' as const, identityKind: 'cccd' as const, identity: '012345678901' } };
+    const done = applyPrevious(typed, invoice(1), null);
+    expect(done.state.buyer).toMatchObject({ kind: 'individual', identityKind: 'cccd', identity: '012345678901', partyId: null });
+  });
   it('fills an empty buyer and replaces the blank line', () => {
     const done = applyPrevious(form(0), invoice(2), null);
     expect(done.state.lines.map((l) => l.description)).toEqual(['Hàng 1', 'Hàng 2']);

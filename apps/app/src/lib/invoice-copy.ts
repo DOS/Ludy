@@ -25,7 +25,7 @@ export function applyPrevious<S extends CopyForm>(s: S, invoice: NonNullable<EIn
   const proposed: CopyLine[] = taken.map((l) => ({ description: l.description, unit: l.unit ?? '', quantity: l.quantity, unitPrice: l.unitPrice, vatRate: l.vatAllowed ? l.vatRate : '10%', ai: null }));
   const lines = [...kept, ...proposed];
   const b = s.buyer;
-  const buyerEmpty = b.partyId === null && b.taxCode.trim() === '' && b.name.trim() === '' && b.address.trim() === '' && b.email.trim() === '';
+  const buyerEmpty = b.partyId === null && b.taxCode.trim() === '' && b.name.trim() === '' && b.address.trim() === '' && b.email.trim() === '' && b.identityKind === '' && b.identity.trim() === '';
   const from = invoice.buyer;
   const replace = b.kind !== 'consumer' && (buyerEmpty || (replaceBuyerOf !== null && b.partyId === replaceBuyerOf));
   // The identity an individual gave stays with its own invoice (#3678): a copied buyer starts without one.
