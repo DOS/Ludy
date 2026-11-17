@@ -11389,6 +11389,7 @@ export const vi = {
       SUMMARY_TEMPLATE_CHANGED: 'Bạn đã đổi loại cuộc họp sau khi Vy viết. Hãy nhờ Vy tóm tắt lại.',
       TEMPLATE_MISMATCH: 'Nội dung không khớp với loại cuộc họp đang chọn. Hãy mở lại cuộc họp rồi thử lại.',
       SERIES_CONFLICT: 'Hai cuộc họp này đã thuộc hai chuỗi khác nhau. Hãy bỏ cuộc họp này khỏi chuỗi của nó trước.',
+      SERIES_ORDER: 'Cuộc họp trước phải bắt đầu sớm hơn cuộc họp này.',
       SERIES_SELF: 'Một cuộc họp không thể nối tiếp chính nó.',
       SPEAKER_LABEL_GONE: 'Không còn dòng nháp nào của người nói này (có thể bạn đã đặt tên rồi). Hãy mở lại bản ghi lời.',
       SPEAKER_NAME_TAKEN: 'Một người nói khác trong cuộc họp này đã mang tên này. Nếu muốn gộp hai người nói, hãy sửa từng dòng.',

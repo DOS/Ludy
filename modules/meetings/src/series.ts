@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { SERIES_ITEMS_MAX, SERIES_TASK_STATUSES, zSeriesOpenItems, zSeriesOpenItemsInput, zSeriesSet, zSeriesSetResult, type SeriesOpenItems } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+import { vnDay } from './retention.ts';
 import { ROLES, openMeeting, userOf } from './transcript.ts';
 
 // What the caller may read of the previous meeting of this meeting's series that is still open (see the header).
@@ -40,6 +41,8 @@ export const seriesOpenItems = defineQuery({
       .where('series_id', '=', current.series_id)
       .where('id', '<>', input.meetingId)
       .where(sql<boolean>`coalesce(started_at, created_at) < ${current.at}`)
+      // A meeting whose text period has ended is gone for every reader, as for the current one (openMeeting); the nightly purge may not have run yet.
+      .where(sql<boolean>`(text_retention_date IS NULL OR text_retention_date > ${vnDay(new Date())}::date)`)
       .orderBy(sql`coalesce(started_at, created_at)`, 'desc')
       .orderBy('id', 'desc')
       .limit(1)
@@ -49,7 +52,22 @@ export const seriesOpenItems = defineQuery({
     const rows = await ctx.trx
       .selectFrom('crove_meetings.action_item as i')
       .leftJoin('crove_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'i.org_id').onRef('t.id', '=', 'i.task_id'))
-      .select(['i.id', 'i.title', 'i.who_drafted', 'i.who_parsed', 'i.when_drafted', sql<string | null>`i.when_parsed::text`.as('when_parsed'), 'i.status', 'i.task_id', 't.status as task_status', 't.due as task_due'])
+      // The seat the task is with NOW (it may have been given to someone else since the item was accepted) and who holds it.
+      .leftJoin('crove_kernel.position as p', (join) => join.onRef('p.org_id', '=', 't.org_id').onRef('p.id', '=', 't.assignee_position_id').on('p.status', '=', 'active'))
+      .select([
+        'i.id',
+        'i.title',
+        'i.who_drafted',
+        'i.who_parsed',
+        'i.when_drafted',
+        sql<string | null>`i.when_parsed::text`.as('when_parsed'),
+        'i.status',
+        'i.task_id',
+        't.status as task_status',
+        't.due as task_due',
+        'p.title as seat_title',
+        'p.holder_user_id as seat_holder',
+      ])
       .where('i.org_id', '=', ctx.orgId)
       .where('i.meeting_id', '=', previous.id)
       .where('i.stage', '=', 'published')
@@ -66,7 +84,9 @@ export const seriesOpenItems = defineQuery({
         id: r.id,
         title: r.title,
         who: r.who_drafted,
-        whoUserId: r.who_parsed,
+        // The person the task is with now: the holder of its seat when it has one, else the attendee the item was parsed to.
+        whoUserId: r.seat_holder ?? r.who_parsed,
+        assigneeSeat: r.seat_title ?? null,
         when: r.when_drafted,
         whenDate: r.when_parsed,
         assigned: r.status === 'accepted',
@@ -100,6 +120,15 @@ export const seriesSet = defineCommand({
     // The earlier meeting must be one the recorder also recorded: the answer for one they cannot read is the same as for one that is not there.
     const earlier = await openMeeting(ctx.trx, ctx.orgId, input.previousMeetingId);
     if (earlier.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'You can only follow a meeting you recorded');
+    // It must have started before this one: a series runs forward in time, and the open items of a later meeting are no "previous".
+    const times = await ctx.trx
+      .selectFrom('crove_meetings.meeting')
+      .select(['id', sql<Date>`coalesce(started_at, created_at)`.as('at')])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', 'in', [input.meetingId, input.previousMeetingId])
+      .execute();
+    const at = (id: string) => times.find((t) => t.id === id)?.at.getTime() ?? 0;
+    if (at(input.previousMeetingId) >= at(input.meetingId)) throw new DomainError('SERIES_ORDER', 422, 'The earlier meeting must have started before this one');
     const mine = await seriesOf(input.meetingId);
     const theirs = await seriesOf(input.previousMeetingId);
     // Two different series are not merged by one click: the recorder takes this meeting out of its own first.

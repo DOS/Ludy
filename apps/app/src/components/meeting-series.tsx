@@ -41,7 +41,7 @@ export function MeetingSeries({ meetingId, isRecorder, startedAt }: { meetingId:
             {items.length === 0 ? null : (
               <ul className="space-y-2">
                 {items.map((item) => (
-                  <OpenItem key={item.id} item={item} meetingId={meetingId} isRecorder={isRecorder} who={item.whoUserId ? memberLabel(members, item.whoUserId, item.who) : item.who} />
+                  <OpenItem key={item.id} item={item} meetingId={meetingId} isRecorder={isRecorder} who={item.whoUserId ? memberLabel(members, item.whoUserId, item.who) : (item.assigneeSeat ?? item.who)} />
                 ))}
               </ul>
             )}

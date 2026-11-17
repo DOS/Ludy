@@ -1083,7 +1083,10 @@ export const zSeriesOpenItem = z.strictObject({
   id: zId,
   title: z.string(),
   who: z.string(),
+  // The person the item's task is with now (the holder of its seat), else the attendee the item was parsed to; null when neither is known.
   whoUserId: zId.nullable(),
+  // The title of the seat the task is with, when it has one (shown when no person is known for the item).
+  assigneeSeat: z.string().nullable(),
   when: z.string(),
   whenDate: z.string().nullable(),
   // True when the item was accepted into a task; false is "chưa giao" (a suggestion nobody accepted).

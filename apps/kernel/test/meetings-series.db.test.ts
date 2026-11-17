@@ -79,13 +79,26 @@ suite('a series of meetings (#3542)', () => {
   const setSeries = (who: string, meetingId: string, previousMeetingId: string | null) => exec<{ inSeries: boolean }>(who, 'meetings.series.set', { meetingId, previousMeetingId });
   const openItems = (who: string, meetingId: string) => query<SeriesOpenItems>(who, 'meetings.series.open_items', { meetingId });
 
+  async function seat(title: string, holder: string | null): Promise<string> {
+    const id = randomUUID();
+    await sqlAdmin(`INSERT INTO crove_kernel.position (org_id, id, title, module, role_key, holder_user_id) VALUES ($1, $2, $3, 'kernel', 'member', $4)`, [orgId, id, title, holder === null ? null : users[holder]]);
+    return id;
+  }
+
   // An item of a meeting, published, with its task when `task` is given (a status), as the accept click leaves them.
-  async function item(meetingId: string, title: string, over: { task?: string; stage?: 'draft' | 'published'; who?: string; due?: string } = {}): Promise<string> {
+  async function item(meetingId: string, title: string, over: { task?: string; stage?: 'draft' | 'published'; who?: string; due?: string; seat?: string } = {}): Promise<string> {
     const id = randomUUID();
     let taskId: string | null = null;
     if (over.task !== undefined) {
       taskId = randomUUID();
-      await sqlAdmin(`INSERT INTO crove_kernel.task (org_id, id, title, source, created_by_type, status, due) VALUES ($1, $2, $3, 'human', 'system', $4, $5)`, [orgId, taskId, title, over.task, over.due ?? null]);
+      await sqlAdmin(`INSERT INTO crove_kernel.task (org_id, id, title, source, created_by_type, status, due, assignee_position_id) VALUES ($1, $2, $3, 'human', 'system', $4, $5, $6)`, [
+        orgId,
+        taskId,
+        title,
+        over.task,
+        over.due ?? null,
+        over.seat ?? null,
+      ]);
     }
     await sqlAdmin(
       `INSERT INTO crove_meetings.action_item (org_id, id, meeting_id, title, who_drafted, who_parsed, when_drafted, stage, status, task_id, tainted, transcript_seconds)
@@ -126,6 +139,7 @@ suite('a series of meetings (#3542)', () => {
     await sqlAdmin('DELETE FROM crove_kernel.calendar_connection WHERE org_id = $1', [orgId]);
     await sqlAdmin('DELETE FROM crove_meetings.meeting WHERE org_id = $1', [orgId]);
     await sqlAdmin('DELETE FROM crove_kernel.task WHERE org_id = $1', [orgId]);
+    await sqlAdmin(`DELETE FROM crove_kernel.position WHERE org_id = $1 AND title LIKE 'Ghế thử%'`, [orgId]);
   });
 
   afterAll(async () => {
@@ -204,6 +218,8 @@ suite('a series of meetings (#3542)', () => {
     await setSeries('rec', x2, x1);
     expect(await refuses(setSeries('rec', x2, m1))).toBe('SERIES_CONFLICT');
     expect(await refuses(setSeries('rec', m1, m1))).toBe('SERIES_SELF');
+    // The "earlier" meeting must have started before this one.
+    expect(await refuses(setSeries('rec', m1, m3))).toBe('SERIES_ORDER');
     // Another recorder's meeting is not theirs to follow, and not the recorder's to change: only the recorder sets the series.
     const theirs = await meeting('other', -250, ['rec']);
     expect(await refuses(setSeries('rec', m3, theirs))).toBe('FORBIDDEN');
@@ -277,5 +293,29 @@ suite('a series of meetings (#3542)', () => {
     expect(seen.items.map((i) => i.title)).toEqual(['Việc buổi đầu']);
     expect(JSON.stringify(seen)).not.toContain('giữa');
     expect((await openItems('rec', current)).previous?.meetingId).toBe(middle);
+  });
+
+  it('shows the person the task is with NOW (the holder of its seat), not the one the item was parsed to, and the seat title when nobody holds it', async () => {
+    const earlier = await meeting('rec', -300, ['lan', 'nam']);
+    const current = await meeting('rec', -10, ['lan', 'nam']);
+    await setSeries('rec', current, earlier);
+    // The item was parsed to Lan; the task was then given to Nam's seat.
+    await item(earlier, 'Việc đã giao lại', { task: 'todo', seat: await seat('Ghế thử A', 'nam') });
+    await item(earlier, 'Việc ghế trống', { task: 'todo', seat: await seat('Ghế thử B', null) });
+    await item(earlier, 'Việc không ghế', { task: 'todo' });
+    const out = (await openItems('lan', current)).items;
+    const by = (title: string) => out.find((i) => i.title === title);
+    expect(by('Việc đã giao lại')).toMatchObject({ whoUserId: users.nam, assigneeSeat: 'Ghế thử A' });
+    expect(by('Việc ghế trống')).toMatchObject({ whoUserId: users.lan, assigneeSeat: 'Ghế thử B' });
+    expect(by('Việc không ghế')).toMatchObject({ whoUserId: users.lan, assigneeSeat: null });
+  });
+
+  it('does not list the items of a previous meeting whose text period has ended', async () => {
+    const earlier = await meeting('rec', -300, ['lan']);
+    const current = await meeting('rec', -10, ['lan']);
+    await setSeries('rec', current, earlier);
+    await item(earlier, 'Việc cũ', { task: 'todo' });
+    await sqlAdmin('UPDATE crove_meetings.meeting SET text_retention_date = current_date - 1 WHERE id = $1', [earlier]);
+    expect(await openItems('lan', current)).toEqual({ meetingId: current, inSeries: true, previous: null, items: [] });
   });
 });

@@ -35,8 +35,8 @@ const open = (over: Partial<SeriesOpenItems> = {}): SeriesOpenItems => ({
   inSeries: true,
   previous: { meetingId: 'm1', title: 'Giao ban tuần trước', startedAt: '2026-11-10T02:00:00.000Z' },
   items: [
-    { id: 'i1', title: 'Gửi báo giá', who: 'Nam', whoUserId: NAM, when: 'thứ sáu', whenDate: null, assigned: true, taskStatus: 'in_progress', due: '2026-12-01T00:00:00.000Z' },
-    { id: 'i2', title: 'Chưa ai nhận', who: '', whoUserId: null, when: '', whenDate: null, assigned: false, taskStatus: null, due: null },
+    { id: 'i1', title: 'Gửi báo giá', who: 'Nam', whoUserId: NAM, assigneeSeat: null, when: 'thứ sáu', whenDate: null, assigned: true, taskStatus: 'in_progress', due: '2026-12-01T00:00:00.000Z' },
+    { id: 'i2', title: 'Chưa ai nhận', who: '', whoUserId: null, assigneeSeat: null, when: '', whenDate: null, assigned: false, taskStatus: null, due: null },
   ],
   ...over,
 });

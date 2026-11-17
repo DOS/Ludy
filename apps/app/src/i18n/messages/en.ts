@@ -11393,6 +11393,7 @@ export const en = {
       SUMMARY_TEMPLATE_CHANGED: 'You changed the meeting type after Vy wrote this. Ask Vy to summarize again.',
       TEMPLATE_MISMATCH: 'The text does not match the meeting type that is picked. Reload the meeting and try again.',
       SERIES_CONFLICT: 'These two meetings already belong to different series. Take this meeting out of its own series first.',
+      SERIES_ORDER: 'The earlier meeting must have started before this one.',
       SERIES_SELF: 'A meeting cannot follow itself.',
       SPEAKER_LABEL_GONE: 'No draft line has this speaker any more (you may have named it already). Open the transcript again.',
       SPEAKER_NAME_TAKEN: 'Another speaker of this meeting already has this name. To merge two speakers, correct the lines one by one.',
