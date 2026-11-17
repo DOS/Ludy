@@ -88,9 +88,9 @@ Ludy is for one-person companies and SMEs in Vietnam. Every issue, plan and PR m
 ## Local resources (owner order 2026-11-17)
 
 Many agents share the owner's one machine, which he also uses himself. Keep local work light; CI's runners are the machines for full runs.
-- **No full suite locally.** Never run the whole `pnpm typecheck`, `pnpm test` or `pnpm test:db`, or Playwright, on this machine. Run the packages you changed (`pnpm --filter <package> typecheck`) and the test files you touched (`pnpm vitest run <files>`), then push and let CI run everything. CI green on the PR's head is the evidence the merge bar asks for.
-- **One local Postgres for everyone:** the container `ludy-pg17-shared` (`postgres:17`, `127.0.0.1:55432`, `CROVE_TEST_ADMIN_URL=postgresql://postgres:postgres@127.0.0.1:55432/postgres`). Each test file makes its own throwaway database. Start it only if it is missing; never start a Postgres of your own.
-- **At most one local `docker compose` stack on the machine**, shared. Check UI against the pilot or that stack.
+- **No full suite locally.** Never run the whole `pnpm typecheck`, `pnpm test` or `pnpm test:db`, or Playwright, on this machine. Run the packages you changed (`pnpm --filter <package> typecheck`) and the test files you touched (`pnpm vitest run <files>`), then push and let CI run everything. CI green on the PR's head is the test evidence the merge bar asks for; the rest of the bar (reviews, threads, Acceptance) still applies. A `*.db.test.ts` run without `CROVE_TEST_ADMIN_URL` is skipped, not passed: never cite a skipped run as evidence.
+- **One local Postgres for everyone:** the container `ludy-pg17-shared` (`postgres:17@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3`, as in CI, on `127.0.0.1:55432`, `CROVE_TEST_ADMIN_URL=postgresql://postgres:postgres@127.0.0.1:55432/postgres`). Each test file makes its own throwaway database. Start it only if it is missing; never start a Postgres of your own. A local result there is a hint, not evidence: other branches' migrations change cluster-wide roles. Leave leftover-role cleanup to the coordinator, or rely on the tests' own stale-run drop.
+- **At most one local `docker compose` stack on the machine**, shared. Check UI on that stack; the pilot is never a test target.
 - **Stop what you start:** no `tsc --watch`, dev server, test watcher or container left running after your step. One heavy command at a time per session.
 - Deeper or cloud-environment testing runs in CI, or on a test VM the owner approves; never on the pilot host.
 
