@@ -128,6 +128,7 @@ export * from './mcp.ts';
 export * from './meeting-agenda.ts';
 export * from './meeting-chat.ts';
 export * from './meeting-ask.ts';
+export * from './meeting-brief.ts';
 export * from './meeting-templates.ts';
 export * from './meetings.ts';
 export * from './meeting-followup.ts';

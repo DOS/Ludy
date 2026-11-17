@@ -437,6 +437,8 @@ export const KERNEL_ERROR_CODES = [
   // The member's Vy answering across meetings (Meetings A3, #3161).
   'ASK_OFF',
   'ASK_BUSY',
+  'BRIEF_OFF',
+  'BRIEF_BUSY',
   'TRANSLATION_NOT_FOUND',
   'TRANSLATION_NOTHING',
   'TRANSLATION_RESULT_INVALID',

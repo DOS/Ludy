@@ -15,6 +15,7 @@ import { ErrorText } from './ui.tsx';
 import { meetingsInstalled } from './linked-meetings.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { AgendaBrief } from './meeting-brief.tsx';
 
 // Where a join address leads, by its host: the badge names the service, never the address.
 export function joinService(url: string | null): 'meet' | 'zoom' | 'teams' | null {
@@ -97,6 +98,8 @@ export function TodayAgenda({ slug }: { slug: string }) {
                   </Link>
                 )}
               </span>
+              {/* Before it starts (#3543): what was decided last time, what is open and the customer's open deals, on a click */}
+              {!event.meetingId && <AgendaBrief slug={slug} agendaId={event.id} />}
             </li>
           ))}
         </ul>

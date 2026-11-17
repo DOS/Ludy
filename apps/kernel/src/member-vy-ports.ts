@@ -4,9 +4,9 @@
 // member's own user context. Asking about anyone else is refused before a command is run, and the database would refuse it anyway (the
 // restrictive policy shows a member their own rows only). Knowledge has no declared queries yet: a feature that asks gets no passages.
 import { z } from 'zod';
-import { ASK_TIMEOUT_MS, AiBudgetExhaustedError, AiMeterMissingError, AskModelError, SUMMARY_TIMEOUT_MS, SummaryModelError, TASKS_FROM_NOTE_TIMEOUT_MS, TasksFromNoteModelError, TranslationModelError, aiCost, generateMeetingAskText, generateMeetingSummaryText, generateMeetingTranslationText, generateNoteSummaryText, generateTasksFromNoteText, generateTasksFromSourceText, generateTodoSuggestText, withAiScope, type AiConfig, type AiMeter } from '@crove/agent';
-import { NOTE_AI_LIMITS, NOTE_AI_TIMEOUT_MS, TASKS_FROM_NOTE_LIMITS, AskError, NoteAiError, NoteAiModelError, SummaryError, TasksFromNoteError, TasksFromSourceError, TranslationError, askAcrossMeetings, bindPorts, noKnowledge, privateText, proposeTasksFromNote, proposeTasksFromSource, revealPrivateText, enhanceNotes, suggestTodosFromNote, summarizeMeeting, summarizeNote, translateSummary, translateTranscriptChunk, planTranscriptChunks, chunkExpectedUsage, lineHash, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type Ports, type TaskSourceKind } from '@crove/agent/member-vy';
-import { ASK_ESTIMATE, ASK_HITS_MAX, DEFAULT_TIME_ZONE, zNoteTodoSuggestion, zTranscriptTranslationResult, zonedDate, templateSections, type AskAnswer, type AskLines, type AskStatus, type LiveNotesDone, type LiveNotesInput, type MeetingSummaryTemplate, type Note, type NoteSuggestTodosInput, type NoteSuggestTodosResult, type NoteSummarizeInput, type NoteSummarizeResult, type NoteVyResults, type NoteVyStatus, type ProjectSeat, type ProjectTaskSourceType, type ProjectTasksFromNoteInput, type ProjectTasksFromNoteResult, type ProjectTasksFromNoteStatus, type ProjectTasksFromSourceInput, type ProjectTasksFromSourceResult, type ProjectTasksFromSourceStatus, type Summarized, type Transcript, type TranscriptSource, type TranscriptStarted, type TranscriptTranslated, type TranscriptTranslationStatus, type Translated, type TranslationSource, type TranslationStatus } from '@crove/kernel-contract';
+import { ASK_TIMEOUT_MS, AiBudgetExhaustedError, AiMeterMissingError, AskModelError, BRIEF_TIMEOUT_MS, BriefModelError, generateMeetingBriefText, SUMMARY_TIMEOUT_MS, SummaryModelError, TASKS_FROM_NOTE_TIMEOUT_MS, TasksFromNoteModelError, TranslationModelError, aiCost, generateMeetingAskText, generateMeetingSummaryText, generateMeetingTranslationText, generateNoteSummaryText, generateTasksFromNoteText, generateTasksFromSourceText, generateTodoSuggestText, withAiScope, type AiConfig, type AiMeter } from '@crove/agent';
+import { NOTE_AI_LIMITS, NOTE_AI_TIMEOUT_MS, TASKS_FROM_NOTE_LIMITS, AskError, BriefError, writeBrief, NoteAiError, NoteAiModelError, SummaryError, TasksFromNoteError, TasksFromSourceError, TranslationError, askAcrossMeetings, bindPorts, noKnowledge, privateText, proposeTasksFromNote, proposeTasksFromSource, revealPrivateText, enhanceNotes, suggestTodosFromNote, summarizeMeeting, summarizeNote, translateSummary, translateTranscriptChunk, planTranscriptChunks, chunkExpectedUsage, lineHash, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type Ports, type TaskSourceKind } from '@crove/agent/member-vy';
+import { ASK_ESTIMATE, ASK_HITS_MAX, BRIEF_ESTIMATE, briefLines, type BriefAnswer, type BriefFacts, type BriefStatus, type BriefTarget, DEFAULT_TIME_ZONE, zNoteTodoSuggestion, zTranscriptTranslationResult, zonedDate, templateSections, type AskAnswer, type AskLines, type AskStatus, type LiveNotesDone, type LiveNotesInput, type MeetingSummaryTemplate, type Note, type NoteSuggestTodosInput, type NoteSuggestTodosResult, type NoteSummarizeInput, type NoteSummarizeResult, type NoteVyResults, type NoteVyStatus, type ProjectSeat, type ProjectTaskSourceType, type ProjectTasksFromNoteInput, type ProjectTasksFromNoteResult, type ProjectTasksFromNoteStatus, type ProjectTasksFromSourceInput, type ProjectTasksFromSourceResult, type ProjectTasksFromSourceStatus, type Summarized, type Transcript, type TranscriptSource, type TranscriptStarted, type TranscriptTranslated, type TranscriptTranslationStatus, type Translated, type TranslationSource, type TranslationStatus } from '@crove/kernel-contract';
 import { readTasksFromSourceData, type SourceQueryFn } from '@crove/mod-projects';
 import { Decimal } from '@crove/l10n-vn';
 import { DomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
@@ -111,7 +111,9 @@ export function summaryModelPort(config: AiConfig, timeoutMs: number = SUMMARY_T
   // A question about meetings counts under meetings.ask (#3161) for the same reason.
   return {
     generate: (_who, prompt) =>
-      prompt.feature === 'meetings.translate'
+      prompt.feature === 'meetings.brief'
+        ? generateMeetingBriefText(config, prompt, Math.min(timeoutMs, BRIEF_TIMEOUT_MS))
+        : prompt.feature === 'meetings.translate'
         ? generateMeetingTranslationText(config, prompt, timeoutMs)
         : prompt.feature === 'meetings.ask'
           ? generateMeetingAskText(config, prompt, Math.min(timeoutMs, ASK_TIMEOUT_MS))
@@ -149,6 +151,13 @@ function codeOf(error: unknown): string {
 function askCodeOf(error: unknown): string {
   const code = codeOf(error);
   return code === 'SUMMARY_FAILED' ? 'ASK_FAILED' : code;
+}
+
+function briefCodeOf(error: unknown): string {
+  if (error instanceof BriefError) return error.code;
+  if (error instanceof BriefModelError) return error.kind === 'timeout' ? 'BRIEF_TIMEOUT' : 'BRIEF_FAILED';
+  const code = codeOf(error);
+  return code === 'SUMMARY_FAILED' || code === 'SUMMARY_TIMEOUT' ? 'BRIEF_FAILED' : code;
 }
 
 function tasksFromNoteCodeOf(error: unknown): string {
@@ -550,6 +559,115 @@ export async function runMeetingAsk(deps: MeetingAskDeps, orgId: string, actor: 
     }
     if (sentences.length === 0) return { state: 'none', errorCode: null, sentences: [], sources: [], hits, dropped: checked.dropped };
     return { state: 'answered', errorCode: null, sentences, sources, hits: [], dropped: checked.dropped };
+  } finally {
+    ticket.release();
+  }
+}
+
+// The member's Vy writing the two or three sentences of the brief before a meeting (#3543, ADR-0049 stage A). The facts do not need Vy and work with AI off (meetings.brief.facts); this is the click on top of
+// them, in the member's own session and context, and nothing of it is stored:
+//   1. meetings.brief.status, as the member: the deployment's switch, the right to work with Vy, a kill switch, a spent budget; a refusal here has made no run and spent nothing;
+//   2. meetings.brief.facts: the decisions of the previous meeting (only if the member read it), the series' open items and the linked customer's open deals, all read as the member. No fact: the answer is
+//      "none" with no run and no model call, so a meeting with nothing to say costs nothing;
+//   3. meetings.brief.start, then the kernel's run.start (vy.use, the kill switches, the budget) makes the member's Vy and the run;
+//   4. the one model call, outside any transaction, through the member's own meter under meetings.brief (the scope carries the run), with a hard timeout. The model has no tools: the checks in code
+//      (packages/agent member-vy/meetings-brief.ts) decide per sentence what shows, and a sentence whose figure no cited fact writes is refused;
+//   5. the run's result row is stored with COUNTS ONLY (facts, sentences, dropped), never a fact or a sentence, with kernel.member_vy.result.store in the member's own session.
+// The answer goes back to the browser and nowhere else. Neither the facts nor the sentences are ever logged: a failure is named by a fixed code.
+export interface MeetingBriefDeps extends MeetingSummaryDeps {
+  // The deployment's prices (AI_PRICE_*), for the cost shown before the click; unset or zero prices show no figure.
+  price?: { inputPerMTok: string; outputPerMTok: string } | undefined;
+}
+
+// What one brief is expected to use, before the click: a fixed figure (the facts are not read until the member asks). An estimate, not a promise.
+export function briefEstimate(price: MeetingBriefDeps['price']): NonNullable<BriefStatus['estimate']> {
+  const priced = price !== undefined && (isPositivePrice(price.inputPerMTok) || isPositivePrice(price.outputPerMTok));
+  return { ...BRIEF_ESTIMATE, cost: priced ? aiCost([BRIEF_ESTIMATE], price) : null };
+}
+
+// The button: the module's status plus the expected cost; "off" when the deployment has no model or no meter for this member.
+export async function briefStatusOf(deps: Pick<MeetingBriefDeps, 'runtime' | 'price' | 'model' | 'meter'>, orgId: string, actor: UserActor): Promise<BriefStatus> {
+  if (!deps.model || !deps.meter(actor)) return { enabled: false, reason: 'off', estimate: null };
+  const status = await deps.runtime.query<BriefStatus>('meetings.brief.status', {}, { actor, orgId });
+  return status.enabled ? { ...status, estimate: briefEstimate(deps.price) } : status;
+}
+
+export async function runMeetingBrief(deps: MeetingBriefDeps, orgId: string, actor: UserActor, target: BriefTarget): Promise<BriefAnswer> {
+  const as = { actor, orgId };
+  const timeoutMs = deps.timeoutMs ?? SUMMARY_TIMEOUT_MS;
+  const model = deps.model;
+  const meter = deps.meter(actor);
+  if (!model || !meter) throw new DomainError('BRIEF_OFF', 422, 'Vy writing a brief is not turned on here');
+  const none = (): BriefAnswer => ({ state: 'none', errorCode: null, sentences: [], dropped: 0 });
+  const failed = (errorCode: string): BriefAnswer => ({ state: 'failed', errorCode, sentences: [], dropped: 0 });
+  // 1. The button's answer first, so a member who may not ask is refused with the precise reason, before a ticket is taken or a fact is read.
+  const status = await deps.runtime.query<BriefStatus>('meetings.brief.status', {}, as);
+  if (!status.enabled) {
+    if (status.reason === 'off') throw new DomainError('BRIEF_OFF', 422, 'Vy writing a brief is not turned on here');
+    if (status.reason === 'forbidden') throw new DomainError('VY_NOT_ALLOWED', 403, 'Bạn chưa được phép làm việc với Vy');
+    throw new DomainError('AI_BUDGET_EXHAUSTED', 422, 'Vy đang tạm dừng hoặc đã hết ngân sách tháng này; sổ sách và mọi việc không cần AI vẫn chạy bình thường');
+  }
+  const ticket = deps.budget.take(orgId, actor.userId);
+  if (!ticket.allowed) throw new DomainError('BRIEF_BUSY', 429, 'Vy is busy; try again in a few minutes', { retryAfterSeconds: ticket.retryAfterSeconds });
+  try {
+    // 2. The facts, as the member reads them. Nothing to say: no run and no call.
+    const facts = await deps.runtime.query<BriefFacts>('meetings.brief.facts', target, as);
+    const lines = briefLines(facts);
+    if (facts.empty || lines.length === 0) return none();
+    // 3. The checks come first: the switch, vy.use, the kill switches (the member's own Vy's included) and the budget. A refusal here has made no run, and the member still has the facts list.
+    let started: { runId: string };
+    try {
+      started = await deps.runtime.execute<{ runId: string }>('meetings.brief.start', {}, as);
+    } catch (error: unknown) {
+      if (error instanceof DomainError && (error.code === 'AI_BUDGET_EXHAUSTED' || error.code === 'VY_RUN_BUSY')) {
+        const errorCode = error.code === 'VY_RUN_BUSY' ? 'BRIEF_BUSY' : error.code;
+        console.error(`[meetings-brief] run not started: ${errorCode}`);
+        return failed(errorCode);
+      }
+      throw error;
+    }
+    const runId = started.runId;
+    const fail = async (errorCode: string): Promise<BriefAnswer> => {
+      try {
+        await deps.runtime.execute('kernel.member_vy.result.store', { runId, outcome: { status: 'failed', errorCode } }, as);
+      } catch (storeError: unknown) {
+        // The run stays open until it expires; the caller still gets the failure, and only the codes are logged.
+        console.error(`[meetings-brief] failed result not stored: ${briefCodeOf(storeError)}`);
+      }
+      console.error(`[meetings-brief] run failed: ${errorCode}`);
+      return failed(errorCode);
+    };
+    // 4. The one call, outside any transaction, in the scope of this run.
+    let checked: Awaited<ReturnType<typeof writeBrief>>['answer'];
+    try {
+      const ports: Ports = { model, memory: nothingToRemember, knowledge: noKnowledge };
+      const result = await withDeadline(
+        withAiScope({ orgId, memberRunId: runId, meter }, () => writeBrief({ facts: lines.map((l) => ({ kind: l.kind, text: l.text })) }, bindPorts({ orgId, memberUserId: actor.userId }, ports))),
+        timeoutMs,
+      );
+      checked = result.answer;
+    } catch (error: unknown) {
+      // Any failure before the answer is named by a fixed code and stored as the run's failed result: the run must not stay open.
+      return await fail(error instanceof SummaryModelError ? 'BRIEF_TIMEOUT' : briefCodeOf(error));
+    }
+    const sentences = checked.sentences.map((s) => ({ text: s.text, facts: s.cites }));
+    // 5. Counts only: never a fact or a sentence.
+    const body = JSON.stringify({ v: 1, facts: lines.length, sentences: sentences.length, dropped: checked.dropped });
+    let stored: { stored: boolean; status: 'ready' | 'failed' };
+    try {
+      stored = await deps.runtime.execute<{ stored: boolean; status: 'ready' | 'failed' }>('kernel.member_vy.result.store', { runId, outcome: { status: 'ready', body } }, as);
+    } catch (error: unknown) {
+      // The run ended while the model was answering (the member cancelled it, a switch stopped it): the text is not shown, and the member keeps the facts list.
+      if (error instanceof DomainError && error.code === 'VY_RUN_NOT_LIVE') return failed('AI_STOPPED');
+      return await fail(briefCodeOf(error));
+    }
+    // The kernel re-checked the switches and the budget at the store and may have stopped the run: its answer is the state, and nothing of the model's text is shown for a stopped run.
+    if (stored.status === 'failed') {
+      console.error('[meetings-brief] run failed: AI_STOPPED');
+      return failed('AI_STOPPED');
+    }
+    if (sentences.length === 0) return { state: 'none', errorCode: null, sentences: [], dropped: checked.dropped };
+    return { state: 'written', errorCode: null, sentences, dropped: checked.dropped };
   } finally {
     ticket.release();
   }
