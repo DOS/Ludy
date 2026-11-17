@@ -261,5 +261,21 @@ describe('TodoQuickAddBar & ShellNav SSR rendering (#3556)', () => {
       />,
     );
     expect(navWithoutTrigger).not.toContain('data-testid="shell-quick-capture-btn"');
+
+    const tonightHtml = renderInApp(
+      'en',
+      <TodoQuickAddBar initialValue="Call tonight" nowOverride={NOW} timeZoneOverride={TZ} />,
+    );
+    expect(tonightHtml).toContain('data-testid="quick-add-chip-date"');
+    expect(tonightHtml).toContain('19:00');
+    expect(tonightHtml).not.toContain('data-testid="quick-add-chip-time"');
+
+    const tmrMorningHtml = renderInApp(
+      'en',
+      <TodoQuickAddBar initialValue="Call tomorrow morning" nowOverride={NOW} timeZoneOverride={TZ} />,
+    );
+    expect(tmrMorningHtml).toContain('data-testid="quick-add-chip-date"');
+    expect(tmrMorningHtml).toContain('data-testid="quick-add-chip-time"');
+    expect(tmrMorningHtml).toContain('09:00');
   });
 });

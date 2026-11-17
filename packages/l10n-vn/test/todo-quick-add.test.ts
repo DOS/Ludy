@@ -341,4 +341,144 @@ describe('parseTodoQuickAdd (#3556)', () => {
       expect(nfd.slice(tok.start, tok.end)).toBe(tok.raw);
     }
   });
+
+  it('keeps VN clocks followed by dates or counts separate and ignores dates embedded in identifiers', () => {
+    const shortClockThenDate = parseTodoQuickAdd('Họp 9h 25/11', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(shortClockThenDate.dueOn).toBe('2026-11-25');
+    expect(shortClockThenDate.dueTime).toBe('09:00');
+    expect(shortClockThenDate.title).toBe('Họp');
+
+    const longClockThenDate = parseTodoQuickAdd('Họp 9 giờ 25/11', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(longClockThenDate.dueOn).toBe('2026-11-25');
+    expect(longClockThenDate.dueTime).toBe('09:00');
+    expect(longClockThenDate.title).toBe('Họp');
+
+    const clockThenCount = parseTodoQuickAdd('Mua 9h 2 người', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(clockThenCount.dueTime).toBe('09:00');
+    expect(clockThenCount.title).toBe('Mua 2 người');
+
+    const contractCode = parseTodoQuickAdd('Ký HD25/11/2026 ngày mai', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(contractCode.dueOn).toBe('2026-11-18');
+    expect(contractCode.title).toBe('Ký HD25/11/2026');
+  });
+
+  it('supports separate time dismissal on tối nay and tomorrow morning', () => {
+    const toiNay = parseTodoQuickAdd('Họp tối nay', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(toiNay.dueOn).toBe('2026-11-17');
+    expect(toiNay.dueTime).toBe('19:00');
+    const toiNayTime = toiNay.tokens.find((t) => t.kind === 'time')!;
+    const toiNayNoTime = parseTodoQuickAdd('Họp tối nay', {
+      now: TUE_MORNING,
+      timeZone: VN_TZ,
+      dismissedTokens: [toiNayTime],
+    });
+    expect(toiNayNoTime.dueOn).toBe('2026-11-17');
+    expect(toiNayNoTime.dueTime).toBeNull();
+    expect(toiNayNoTime.title).toBe('Họp tối');
+    expect(toiNayNoTime.tokens.map((t) => [t.kind, t.raw])).toEqual([['date', 'nay']]);
+
+    const tmrMorning = parseTodoQuickAdd('Call tomorrow morning', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(tmrMorning.dueOn).toBe('2026-11-18');
+    expect(tmrMorning.dueTime).toBe('09:00');
+    expect(tmrMorning.title).toBe('Call');
+    expect(tmrMorning.tokens.map((t) => [t.kind, t.raw])).toEqual([
+      ['date', 'tomorrow'],
+      ['time', 'morning'],
+    ]);
+
+    const tmrNoTime = parseTodoQuickAdd('Call tomorrow morning', {
+      now: TUE_MORNING,
+      timeZone: VN_TZ,
+      dismissedTokens: [tmrMorning.tokens.find((t) => t.kind === 'time')!],
+    });
+    expect(tmrNoTime.dueOn).toBe('2026-11-18');
+    expect(tmrNoTime.dueTime).toBeNull();
+    expect(tmrNoTime.title).toBe('Call morning');
+
+    const tmrNoDate = parseTodoQuickAdd('Call tomorrow morning', {
+      now: TUE_MORNING,
+      timeZone: VN_TZ,
+      dismissedTokens: [tmrMorning.tokens.find((t) => t.kind === 'date')!],
+    });
+    expect(tmrNoDate.dueOn).toBeNull();
+    expect(tmrNoDate.dueTime).toBeNull();
+    expect(tmrNoDate.title).toBe('Call tomorrow morning');
+  });
+
+  it('handles VN clock+period with nay, avoids thu/sat/toi false positives, and strips empty parens', () => {
+    const morningToday = parseTodoQuickAdd('Họp 9h sáng nay', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(morningToday.title).toBe('Họp');
+    expect(morningToday.dueOn).toBe('2026-11-17');
+    expect(morningToday.dueTime).toBe('09:00');
+    expect(morningToday.tokens.map((t) => [t.kind, t.raw])).toEqual([
+      ['time', '9h sáng'],
+      ['date', 'nay'],
+    ]);
+
+    // Must not roll to tomorrow when "nay" explicitly anchors today
+    const pastClockToday = parseTodoQuickAdd('Họp 9h sáng nay', { now: TUE_AFTERNOON, timeZone: VN_TZ });
+    expect(pastClockToday.dueOn).toBe('2026-11-17');
+    expect(pastClockToday.title).toBe('Họp');
+
+    const chieuNay = parseTodoQuickAdd('Họp 3h chiều nay', { now: TUE_AFTERNOON, timeZone: VN_TZ });
+    expect(chieuNay.dueOn).toBe('2026-11-17');
+    expect(chieuNay.dueTime).toBe('15:00');
+    expect(chieuNay.title).toBe('Họp');
+
+    // Vietnamese words next to VN clocks or VN recurrence must not trigger English thu/sat
+    const thuTien = parseTodoQuickAdd('9h sáng thu tiền', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(thuTien.title).toBe('thu tiền');
+    expect(thuTien.dueTime).toBe('09:00');
+    expect(thuTien.dueOn).toBe('2026-11-17');
+
+    const satHach = parseTodoQuickAdd('9h sat hach', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(satHach.title).toBe('sat hach');
+    expect(satHach.dueTime).toBe('09:00');
+
+    const weeklyThuTien = parseTodoQuickAdd('Mỗi tuần thu tiền', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(weeklyThuTien.recurrence).toEqual({ freq: 'weekly', interval: 1 });
+    expect(weeklyThuTien.title).toBe('thu tiền');
+
+    // English short weekdays still work in English clock / on / every context
+    expect(parseTodoQuickAdd('Call 9am thu', { now: TUE_MORNING, timeZone: VN_TZ }).dueOn).toBe('2026-11-19');
+    expect(parseTodoQuickAdd('Call at 2:30 thu', { now: TUE_MORNING, timeZone: VN_TZ }).dueOn).toBe('2026-11-19');
+    expect(parseTodoQuickAdd('Every thu', { now: TUE_MORNING, timeZone: VN_TZ }).recurrence).toEqual({
+      freq: 'weekly',
+      interval: 1,
+      byWeekday: 4,
+    });
+
+    // Unaccented "toi" after prepositions/verbs means "tôi" (me), not evening "tối"
+    const choToi = parseTodoQuickAdd('Gui bao cao cho toi ngay mai', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(choToi.title).toBe('Gui bao cao cho toi');
+    expect(choToi.dueOn).toBe('2026-11-18');
+    expect(choToi.dueTime).toBeNull();
+
+    const nhacToi = parseTodoQuickAdd('Nhac toi ngay mai', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(nhacToi.title).toBe('Nhac toi');
+    expect(nhacToi.dueOn).toBe('2026-11-18');
+    expect(nhacToi.dueTime).toBeNull();
+
+    const choToi9h = parseTodoQuickAdd('Gui cho toi 9h ngay mai', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(choToi9h.title).toBe('Gui cho toi');
+    expect(choToi9h.dueOn).toBe('2026-11-18');
+    expect(choToi9h.dueTime).toBe('09:00');
+
+    // Genuine unaccented evening phrases still work
+    const hopToiNay = parseTodoQuickAdd('Hop toi nay', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(hopToiNay.title).toBe('Hop');
+    expect(hopToiNay.dueOn).toBe('2026-11-17');
+    expect(hopToiNay.dueTime).toBe('19:00');
+
+    // Empty parentheses wrapping multiple stripped tokens collapse cleanly
+    const parens = parseTodoQuickAdd('Họp (ngày mai 9h)', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(parens.title).toBe('Họp');
+    expect(parens.dueOn).toBe('2026-11-18');
+    expect(parens.dueTime).toBe('09:00');
+
+    // English "every month on day <d>"
+    const everyMonthDay = parseTodoQuickAdd('Pay rent every month on day 15', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(everyMonthDay.title).toBe('Pay rent');
+    expect(everyMonthDay.recurrence).toEqual({ freq: 'monthly', interval: 1, byMonthDay: 15 });
+  });
 });

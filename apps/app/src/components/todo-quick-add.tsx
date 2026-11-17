@@ -73,7 +73,7 @@ export interface TodoQuickAddBarProps {
   initialValue?: string | undefined;
   nowOverride?: Date | undefined;
   timeZoneOverride?: string | undefined;
-  onCreated?: ((title: string) => void) | undefined;
+  onCreated?: ((title: string, meta: { cleared: boolean }) => void) | undefined;
   renderFooter?: ((state: { isPending: boolean; canSubmit: boolean; formId: string }) => ReactNode) | undefined;
 }
 
@@ -98,6 +98,8 @@ export function TodoQuickAddBar({
   const resolvedRef = inputRef ?? fallbackRef;
 
   const [value, setValue] = useState(initialValue);
+  const valueRef = useRef(initialValue);
+  valueRef.current = value;
   const [dismissed, setDismissed] = useState<TodoQuickAddToken[]>([]);
   const [emptyWarning, setEmptyWarning] = useState(false);
   const [anchorNow, setAnchorNow] = useState<Date>(() => nowOverride ?? new Date());
@@ -119,23 +121,28 @@ export function TodoQuickAddBar({
   const payloadPreview = useMemo(() => buildTodoCreatePayload(value, parsed, currentNow), [value, parsed, currentNow]);
 
   const create = useMutation({
-    mutationFn: (v: { payload: TodoCreateInput; sentValue: string }) => client.notes.todos.create(v.payload),
+    mutationFn: async (v: { payload: TodoCreateInput; sentValue: string }) => {
+      const created = await client.notes.todos.create(v.payload);
+      refreshTodos();
+      return created;
+    },
     // Only what was sent is cleared: text typed while the request is in flight stays.
     onSuccess: (_, sent) => {
-      setValue((current) => {
-        if (current.trim() !== sent.sentValue) return current;
+      const willClear = valueRef.current.trim() === sent.sentValue;
+      if (willClear) {
+        valueRef.current = '';
+        setValue('');
         setDismissed([]);
-        return '';
-      });
+      }
       setEmptyWarning(false);
-      refreshTodos();
-      onCreated?.(sent.payload.title);
+      onCreated?.(sent.payload.title, { cleared: willClear });
     },
   });
 
   const handleChange = (next: string) => {
     if (value === '' && next !== '' && !nowOverride) setAnchorNow(new Date());
     setDismissed((prev) => shiftDismissedTokens(value, next, prev));
+    valueRef.current = next;
     setValue(next);
     setEmptyWarning(false);
     if (create.error) create.reset();
@@ -166,12 +173,21 @@ export function TodoQuickAddBar({
   const todayDay = useMemo(() => localIsoDay(currentNow, timeZone), [currentNow, timeZone]);
   const tomorrowDay = useMemo(() => addIsoDay(todayDay, 1), [todayDay]);
 
+  const hasSeparateTimeChip = useMemo(
+    () => parsed.tokens.some((tok) => tok.kind === 'time'),
+    [parsed.tokens],
+  );
+
   const dateChipText = (dueOn: string | null): string => {
     if (dueOn === null) return '';
     const formatted = f.date(dueOn);
-    if (dueOn === todayDay) return t('quickAddDateToday', { date: formatted });
-    if (dueOn === tomorrowDay) return t('quickAddDateTomorrow', { date: formatted });
-    return formatted;
+    let label = formatted;
+    if (dueOn === todayDay) label = t('quickAddDateToday', { date: formatted });
+    else if (dueOn === tomorrowDay) label = t('quickAddDateTomorrow', { date: formatted });
+    if (parsed.dueTime !== null && !hasSeparateTimeChip) {
+      return `${label} · ${parsed.dueTime}`;
+    }
+    return label;
   };
 
   const chipForToken = (tok: TodoQuickAddToken): {
@@ -290,7 +306,7 @@ export function TodoQuickAddBar({
                   onClick={() => handleDismiss(tok)}
                   aria-label={t('quickAddDismiss', { label })}
                   data-testid={`quick-add-dismiss-${tok.kind}`}
-                  className="ml-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded-full hover:bg-foreground/10 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                  className="ml-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded-full hover:bg-foreground/10 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:outline-none"
                 >
                   <ProjectIcon name="remove" className="size-3" />
                 </button>
@@ -355,8 +371,8 @@ export function QuickCaptureDialog({
             blurOnEscape={false}
             showInlineSubmit={false}
             showHint
-            onCreated={(createdTitle) => {
-              onOpenChange(false);
+            onCreated={(createdTitle, meta) => {
+              if (meta.cleared) onOpenChange(false);
               if (onMyWork) {
                 toast(t('quickCaptureCreated', { title: createdTitle }), 'success');
               } else {

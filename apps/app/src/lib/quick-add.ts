@@ -127,8 +127,9 @@ export function buildTodoCreatePayload(
 
   const dueOn = parsed.dueOn;
   const dueTime = dueOn !== null ? parsed.dueTime : null;
+  // Require a 15s skew buffer so slight client/server clock drift falls back cleanly to `'auto'` rather than 400 TODO_REMINDER_PAST.
   const reminder: TodoCreateInput['reminder'] =
-    dueOn !== null && parsed.remindAt !== null && Date.parse(parsed.remindAt) > now.getTime()
+    dueOn !== null && parsed.remindAt !== null && Date.parse(parsed.remindAt) > now.getTime() + 15_000
       ? { at: parsed.remindAt }
       : 'auto';
 

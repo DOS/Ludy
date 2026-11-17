@@ -3,7 +3,7 @@
 // Zero AI calls, zero async I/O, synchronous pure TypeScript using @crove/l10n-vn Gregorian & time-zone helpers.
 
 import { daysInCalendarMonth, parseIsoCalendarDate } from './labor-contracts.ts';
-import { assertValidTimeZone, formatZonedIsoOffset, wallClockAt, zonedInstant } from './time-zone.ts';
+import { assertValidTimeZone, formatZonedIsoOffset, zonedDateString, zonedInstant } from './time-zone.ts';
 
 export type TodoQuickAddTokenKind = 'date' | 'time' | 'recurrence' | 'priority' | 'tag' | 'list';
 
@@ -101,11 +101,14 @@ const LIST_UNQUOTED_RE = /(?:^|(?<=[\s([,]))\/(?=[0-9_-]*\p{L})([\p{L}\p{N}\p{M}
 const WORD_RE = /[\p{L}\p{N}\p{M}]+/gu;
 
 const ISO_DATE_TOKEN_RE = /(?:^|(?<=[\s([,]))(\d{4})-(\d{1,2})-(\d{1,2})(?=$|[\s.,;:!?)\]])/gu;
-const DMY_DATE_TOKEN_RE = /(?<![\d/.-])(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?(?![\d/.-])/gu;
+const DMY_DATE_TOKEN_RE = /(?<![\p{L}\p{N}_/.-])(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?(?![\p{L}\p{N}_/]|[.-][\p{L}\p{N}])/gu;
 
 const CLOCK_COLON_RE = /(?<![\d:.])(\d{1,2}):([0-5]\d)(?:\s*(am|pm))?(?![\d:.]|[\p{L}])/giu;
 const CLOCK_AMPM_RE = /(?<![\d:.])(\d{1,2})(?::([0-5]\d))?\s*(am|pm)(?![\p{L}\p{N}])/giu;
-const CLOCK_VN_RE = /(?<![\d:.])(\d{1,2})\s*(?:(giờ|gio)|([hg]))(?:\s*(?:([0-5]?\d)(?:\s*(?:phút|phut|p))?|(rưỡi|ruoi)))?(?![\p{L}\p{N}])/giu;
+const CLOCK_VN_GIO_RE =
+  /(?<![\d:.])(\d{1,2})\s*(?:giờ|gio)(?:\s*(?:([0-5]?\d)(?!\d|\/|[.-]\d)(?:\s*(?:phút|phut|p))?|(rưỡi|ruoi)))?(?![\p{L}\p{N}])/giu;
+const CLOCK_VN_SHORT_RE =
+  /(?<![\d:.])(\d{1,2})\s*[hg](?:([0-5]?\d)(?!\d|\/|[.-]\d)(?:\s*(?:phút|phut|p))?|\s+([0-5]?\d)(?!\d|\/|[.-]\d)\s*(?:phút|phut|p)|\s*(rưỡi|ruoi))?(?![\p{L}\p{N}])/giu;
 
 function foldVn(text: string): string {
   return text.normalize('NFD').replace(/\p{M}+/gu, '').replace(/[đĐ]/g, 'd').toLowerCase();
@@ -211,11 +214,60 @@ function spacesOnlyBetween(input: string, aEnd: number, bStart: number): boolean
   return /^[ \t]+$/.test(input.slice(aEnd, bStart));
 }
 
-function matchDayPeriod(word: WordToken, allowEnglishShort = true): DayPeriod | null {
+const TOI_PRONOUN_PRECEDING = [
+  'cho',
+  'với',
+  'của',
+  'giúp',
+  'giùm',
+  'nhờ',
+  'cùng',
+  'gửi',
+  'bảo',
+  'nhắc',
+  'hỏi',
+  'gọi',
+  'nhắn',
+  'đưa',
+  'giao',
+  'nói',
+  'hẹn',
+  'chờ',
+  'đợi',
+  'đón',
+  'theo',
+  'thay',
+  'tìm',
+  'mời',
+  'kêu',
+  'trả',
+  'mà',
+  'để',
+  'tới',
+  'xong',
+  'rồi',
+  'còn',
+  'nếu',
+  'khi',
+] as const;
+
+function wordBefore(words: readonly WordToken[], target: WordToken): WordToken | undefined {
+  const idx = words.indexOf(target);
+  return idx > 0 ? words[idx - 1] : undefined;
+}
+
+function matchDayPeriod(word: WordToken, allowEnglishShort = true, prevWord?: WordToken): DayPeriod | null {
   if (vnMatch(word, 'sáng') || (allowEnglishShort && word.nfcLower === 'morning')) return 'morning';
   if (vnMatch(word, 'trưa') || (allowEnglishShort && word.nfcLower === 'noon')) return 'noon';
   if (vnMatch(word, 'chiều') || (allowEnglishShort && word.nfcLower === 'afternoon')) return 'afternoon';
-  if (vnMatchAny(word, ['tối', 'đêm']) || (allowEnglishShort && (word.nfcLower === 'evening' || word.nfcLower === 'night'))) return 'evening';
+  if (vnMatch(word, 'đêm') || (allowEnglishShort && (word.nfcLower === 'evening' || word.nfcLower === 'night'))) {
+    return 'evening';
+  }
+  if (vnMatch(word, 'tối')) {
+    // Unaccented ASCII "toi" collides with "tôi" (I/me) after prepositions/verbs ("cho toi ngay mai", "nhac toi").
+    if (word.isAscii && prevWord && vnMatchAny(prevWord, TOI_PRONOUN_PRECEDING)) return null;
+    return 'evening';
+  }
   return null;
 }
 
@@ -410,8 +462,19 @@ export function buildTitleWithoutSpans(input: string, spans: readonly Span[]): s
   if (spans.length === 0) return input.replace(/\s+/g, ' ').trim();
   const sorted = [...spans].sort((a, b) => a.start - b.start);
 
-  // Expand spans over empty parentheses/brackets created solely by stripping an inner token.
-  const expanded = sorted.map((s) => {
+  // Merge overlapping spans and spans separated only by horizontal spaces, then expand over empty `(...)`.
+  const preMerged: Span[] = [];
+  for (const s of sorted) {
+    const prev = preMerged[preMerged.length - 1];
+    if (prev && (s.start <= prev.end || /^[ \t]*$/.test(input.slice(prev.end, s.start)))) {
+      prev.end = Math.max(prev.end, s.end);
+    } else {
+      preMerged.push({ ...s });
+    }
+  }
+
+  // Expand spans over empty parentheses created solely by stripping inner tokens.
+  const expanded = preMerged.map((s) => {
     let start = s.start;
     let end = s.end;
     const before = input.slice(0, start);
@@ -471,13 +534,11 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
   assertValidTimeZone(opts.timeZone);
   const remindBeforeMinutes = Math.max(0, opts.defaultRemindBeforeMinutes ?? DEFAULT_REMIND_BEFORE_MINUTES);
   const nowMs = opts.now.getTime();
-  const today = formatIsoDate(
-    wallClockAt(opts.timeZone, nowMs).year,
-    wallClockAt(opts.timeZone, nowMs).month,
-    wallClockAt(opts.timeZone, nowMs).day,
-  );
+  const today = zonedDateString(opts.timeZone, nowMs);
 
-  const dismissedSpans: Span[] = (opts.dismissedTokens ?? []).map((t) => ({ start: t.start, end: t.end }));
+  const dismissedList = opts.dismissedTokens ?? [];
+  const dismissedSpans: Span[] = dismissedList.map((t) => ({ start: t.start, end: t.end }));
+  const dismissedTimeSpans: Span[] = dismissedList.filter((t) => t.kind === 'time').map((t) => ({ start: t.start, end: t.end }));
   const protectedSpans = findProtectedUrlSpans(input);
   const blockedBase: Span[] = [...protectedSpans, ...dismissedSpans];
   const occupied: Span[] = [...blockedBase];
@@ -632,6 +693,30 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       w1 &&
       w2 &&
       w3 &&
+      w4 &&
+      contiguous(i, i + 4) &&
+      w0.nfcLower === 'every' &&
+      w1.nfcLower === 'month' &&
+      w2.nfcLower === 'on' &&
+      w3.nfcLower === 'day' &&
+      /^\d{1,2}$/.test(w4.nfcLower)
+    ) {
+      const d = Number(w4.nfcLower);
+      if (d >= 1 && d <= 31) {
+        const span = spanOf(i + 4);
+        if (isAvailable(span)) {
+          recurrence = { freq: 'monthly', interval: 1, byMonthDay: d };
+          recurrenceDerivedDueOn = nextMonthDayDate(today, d);
+          claimToken('recurrence', span.start, span.end);
+          i += 4;
+          continue;
+        }
+      }
+    }
+    if (
+      w1 &&
+      w2 &&
+      w3 &&
       contiguous(i, i + 3) &&
       ((vnMatch(w0, 'ngày') && /^\d{1,2}$/.test(w1.nfcLower) && vnMatchAny(w2, ['hàng', 'hằng', 'mỗi']) && vnMatch(w3, 'tháng')) ||
         (w0.nfcLower === 'day' && /^\d{1,2}$/.test(w1.nfcLower) && w2.nfcLower === 'every' && w3.nfcLower === 'month'))
@@ -674,7 +759,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
 
     // 4c. "hàng tuần <weekday>" / "mỗi tuần <weekday>" / "every week [on] <weekday>" / "every <weekday>" / "<weekday> hàng tuần"
     if (vnMatchAny(w0, ['mỗi', 'hàng', 'hằng']) && w1 && contiguous(i, i + 1) && vnMatch(w1, 'tuần')) {
-      const wd = w2 && contiguous(i + 1, i + 2) ? matchWeekday(input, words, i + 2, true) : null;
+      const wd = w2 && contiguous(i + 1, i + 2) ? matchWeekday(input, words, i + 2, false) : null;
       const endIdx = wd ? i + 1 + wd.consumed : i + 1;
       const span = spanOf(endIdx);
       if (isAvailable(span)) {
@@ -700,7 +785,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       }
     }
     if (vnMatchAny(w0, ['mỗi', 'hàng', 'hằng']) || w0.nfcLower === 'every') {
-      const wd = w1 && contiguous(i, i + 1) ? matchWeekday(input, words, i + 1, true) : null;
+      const wd = w1 && contiguous(i, i + 1) ? matchWeekday(input, words, i + 1, w0.nfcLower === 'every') : null;
       if (wd) {
         const span = spanOf(i + wd.consumed);
         if (isAvailable(span)) {
@@ -850,6 +935,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
   // 6. Explicit clock times (14:30, 9h30, 9h, 9am, 2:30pm)
   let parsedTime: ParsedTimeInfo | null = null;
   const timeSpans: Span[] = [];
+  const englishTimeSpans: Span[] = [];
   const timeCandidates: Array<{ start: number; end: number; hour: number; minute: number; hasAmPm: boolean }> = [];
 
   for (const m of input.matchAll(CLOCK_COLON_RE)) {
@@ -872,17 +958,20 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     const converted = ampm === 'am' ? (hour === 12 ? 0 : hour) : hour === 12 ? 12 : hour + 12;
     timeCandidates.push({ start: m.index, end: m.index + m[0].length, hour: converted, minute, hasAmPm: true });
   }
-  for (const m of input.matchAll(CLOCK_VN_RE)) {
+  for (const m of input.matchAll(CLOCK_VN_GIO_RE)) {
     const hour = Number(m[1]);
     if (hour < 0 || hour > 23) continue;
-    const isGio = m[2] !== undefined;
-    const minuteDigits = m[4];
-    const half = m[5] !== undefined;
-    // If abbreviated "9h" (not "9 giờ"), require no whitespace before digits ("9h30") unless explicitly followed by p/phút.
-    if (!isGio && minuteDigits !== undefined && /\s/.test(m[0].slice(String(m[1]).length))) {
-      const afterHour = m[0].slice(m[0].search(/[hg]/i) + 1);
-      if (/^\s+\d/.test(afterHour) && !/(?:p|phút|phut)$/i.test(afterHour.trim())) continue;
-    }
+    const minuteDigits = m[2];
+    const half = m[3] !== undefined;
+    const minute = half ? 30 : minuteDigits ? Number(minuteDigits) : 0;
+    if (minute < 0 || minute > 59) continue;
+    timeCandidates.push({ start: m.index, end: m.index + m[0].length, hour, minute, hasAmPm: false });
+  }
+  for (const m of input.matchAll(CLOCK_VN_SHORT_RE)) {
+    const hour = Number(m[1]);
+    if (hour < 0 || hour > 23) continue;
+    const minuteDigits = m[2] ?? m[3];
+    const half = m[4] !== undefined;
     const minute = half ? 30 : minuteDigits ? Number(minuteDigits) : 0;
     if (minute < 0 || minute > 59) continue;
     timeCandidates.push({ start: m.index, end: m.index + m[0].length, hour, minute, hasAmPm: false });
@@ -896,24 +985,27 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     let period: DayPeriod | undefined;
     if (!tc.hasAmPm) {
       const afterWord = findAdjacentWordAfter(input, words, end, occupied);
-      const afterPeriod = afterWord ? matchDayPeriod(afterWord, false) : null;
+      const afterPeriod = afterWord ? matchDayPeriod(afterWord, false, wordBefore(words, afterWord)) : null;
       if (afterWord && afterPeriod) {
         period = afterPeriod;
         end = afterWord.end;
       } else {
         const beforeWord = findAdjacentWordBefore(input, words, start, occupied);
-        const beforePeriod = beforeWord ? matchDayPeriod(beforeWord, false) : null;
+        const beforePeriod = beforeWord ? matchDayPeriod(beforeWord, false, wordBefore(words, beforeWord)) : null;
         if (beforeWord && beforePeriod) {
           period = beforePeriod;
           start = beforeWord.start;
         }
       }
     }
+    const startBeforeAt = start;
     start = expandConnectorBefore(input, words, start, [['vào', 'lúc'], ['lúc'], ['at']], occupied);
+    const usedEnglishAt = start < startBeforeAt && /^at\b/i.test(input.slice(start));
     const adjustedHour = tc.hasAmPm ? tc.hour : adjustHourForPeriod(tc.hour, period);
     parsedTime = { hour: adjustedHour, minute: tc.minute, explicitClock: true, period };
     claimToken('time', start, end);
     timeSpans.push({ start, end });
+    if (tc.hasAmPm || usedEnglishAt) englishTimeSpans.push({ start, end });
   }
 
   // 7. Relative dates & weekdays (with optional adjacent day period)
@@ -944,7 +1036,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       // Check for an immediately preceding period word (e.g. "sáng mai", "chiều thứ sáu", "tối nay")
       const prev = words[startIdx - 1];
       if (prev && spacesOnlyBetween(input, prev.end, start) && isAvailable(prev)) {
-        const p = matchDayPeriod(prev, false);
+        const p = matchDayPeriod(prev, false, words[startIdx - 2]);
         if (p) {
           contextPeriod = p;
           if (parsedTime !== null || timeTokenDismissed) {
@@ -986,11 +1078,19 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
           explicitDueOn = isTmr ? addLocalDays(today, 1) : today;
           explicitTodaySpecified = !isTmr;
           contextPeriod = enPeriod;
-          if (!parsedTime && !timeTokenDismissed) {
+          if (isTmr && !parsedTime && !timeTokenDismissed) {
             parsedTime = { hour: PERIOD_DEFAULT_HOUR[enPeriod], minute: 0, explicitClock: false, period: enPeriod };
+            claimToken('date', w0.start, w0.end);
+            dateSpans.push({ start: w0.start, end: w0.end });
+            claimToken('time', w1.start, w1.end);
+            timeSpans.push({ start: w1.start, end: w1.end });
+          } else {
+            if (!parsedTime && !timeTokenDismissed) {
+              parsedTime = { hour: PERIOD_DEFAULT_HOUR[enPeriod], minute: 0, explicitClock: false, period: enPeriod };
+            }
+            claimToken('date', span.start, span.end);
+            dateSpans.push(span);
           }
-          claimToken('date', span.start, span.end);
-          dateSpans.push(span);
           i += 1;
           continue;
         }
@@ -1022,7 +1122,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     }
 
     // 7e. "sáng nay" / "trưa nay" / "chiều nay" / "tối nay" / "đêm nay"
-    const pToday = matchDayPeriod(w0, false);
+    const pToday = matchDayPeriod(w0, false, words[i - 1]);
     if (pToday && w1 && contiguous(i, i + 1) && vnMatch(w1, 'nay')) {
       const span = { start: w0.start, end: w1.end };
       if (isAvailable(span)) {
@@ -1039,6 +1139,24 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
           dateSpans.push({ start: w1.start, end: w1.end });
         }
         i += 1;
+        continue;
+      }
+    }
+    // If the period half of "<period> nay" was absorbed into a clock ("9h sáng nay") or dismissed as time, "nay" stays a date ("today").
+    if (vnMatch(w0, 'nay')) {
+      const prev = words[i - 1];
+      const prevPeriod = prev ? matchDayPeriod(prev, false, words[i - 2]) : null;
+      if (
+        prev &&
+        prevPeriod &&
+        spacesOnlyBetween(input, prev.end, w0.start) &&
+        (hasOverlap(timeSpans, prev) || hasOverlap(dismissedTimeSpans, prev))
+      ) {
+        explicitDueOn = today;
+        explicitTodaySpecified = true;
+        contextPeriod = prevPeriod;
+        claimToken('date', w0.start, w0.end);
+        dateSpans.push({ start: w0.start, end: w0.end });
         continue;
       }
     }
@@ -1107,7 +1225,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       contiguous(i, i + 1) &&
       ((vnMatch(w0, 'tuần') && vnMatchAny(w1, ['sau', 'tới'])) || (w0.nfcLower === 'next' && w1.nfcLower === 'week'))
     ) {
-      const wd = w2 && contiguous(i + 1, i + 2) ? matchWeekday(input, words, i + 2, true) : null;
+      const wd = w2 && contiguous(i + 1, i + 2) ? matchWeekday(input, words, i + 2, w0.nfcLower === 'next') : null;
       const endIdx = wd ? i + 1 + wd.consumed : i + 1;
       const resolved = wd ? nextWeekOccurrenceOfWeekday(today, wd.weekday) : nextWeekOccurrenceOfWeekday(today, 1);
       if (recordDateRange(i, endIdx, resolved, false)) {
@@ -1119,10 +1237,10 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     // 7k. "<weekday> tuần sau|tới|này|next week" or bare "<weekday>"
     const prevWord = words[i - 1];
     const hasOnConnector = Boolean(prevWord && spacesOnlyBetween(input, prevWord.end, w0.start) && prevWord.nfcLower === 'on');
-    const hasAdjacentTime =
+    const hasEnglishAdjacentContext =
       hasOnConnector ||
-      timeSpans.some((s) => spacesOnlyBetween(input, s.end, w0.start) || spacesOnlyBetween(input, w0.end, s.start));
-    const wd = matchWeekday(input, words, i, hasAdjacentTime);
+      englishTimeSpans.some((s) => spacesOnlyBetween(input, s.end, w0.start) || spacesOnlyBetween(input, w0.end, s.start));
+    const wd = matchWeekday(input, words, i, hasEnglishAdjacentContext);
     if (wd) {
       const endWdIdx = i + wd.consumed - 1;
       const a0 = words[endWdIdx + 1];
@@ -1158,7 +1276,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
   const recurrenceAnchorSpans = recurrenceDerivedDueOn !== null ? tokens.filter((t) => t.kind === 'recurrence') : [];
   for (const ds of [...dateSpans, ...recurrenceAnchorSpans]) {
     const beforeW = findAdjacentWordBefore(input, words, ds.start, occupied);
-    const beforePeriod = beforeW ? matchDayPeriod(beforeW, false) : null;
+    const beforePeriod = beforeW ? matchDayPeriod(beforeW, false, wordBefore(words, beforeW)) : null;
     if (beforeW && beforePeriod) {
       contextPeriod = beforePeriod;
       if (!parsedTime && !timeTokenDismissed) {
@@ -1178,7 +1296,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       continue;
     }
     const afterW = findAdjacentWordAfter(input, words, ds.end, occupied);
-    const afterPeriod = afterW ? matchDayPeriod(afterW, true) : null;
+    const afterPeriod = afterW ? matchDayPeriod(afterW, true, wordBefore(words, afterW)) : null;
     if (afterW && afterPeriod) {
       contextPeriod = afterPeriod;
       if (!parsedTime && !timeTokenDismissed) {

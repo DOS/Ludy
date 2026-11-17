@@ -137,7 +137,7 @@ export function OrgLayout() {
   // and the notes the member may read, where notes runs (#1675).
   const financeOn = NAV.some((n) => n.module === 'finance');
   const notesOn = installedModules().includes('notes');
-  const canQuickCapture = notesOn && (!me.isSuccess || Boolean(org)) && roleHere !== 'viewer';
+  const canQuickCapture = notesOn && me.isSuccess && Boolean(org) && roleHere !== 'viewer';
   const [paletteQuery, setPaletteQuery] = useState('');
   const typed = (financeOn || notesOn) && paletteOpen ? searchTerm(paletteQuery) : null;
   const term = useSettled(typed, 250);
@@ -177,7 +177,7 @@ export function OrgLayout() {
       if (
         isQuickCaptureShortcut(event, {
           notesEnabled: notesOn,
-          authenticated: !me.isError && (!me.isSuccess || Boolean(org)),
+          authenticated: me.isSuccess && Boolean(org),
           canWrite: roleHere !== 'viewer',
           activeElement: typeof document !== 'undefined' ? document.activeElement : null,
         })
