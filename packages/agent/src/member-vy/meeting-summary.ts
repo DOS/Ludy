@@ -418,8 +418,10 @@ export async function summarizeMeeting(input: MeetingSummaryInput, ports: BoundP
   const roster = attendees.length === 0 ? '' : `ATTENDEES:\n${attendees.map((name) => `- ${name}`).join('\n')}\n\nTRANSCRIPT:\n`;
   // The organization's section labels (none for a built-in template) go in the data block as well, ahead of the attendees and the transcript.
   const labels = sectionData(template);
+  // With the labels and no attendees the transcript still gets its header, so the model always sees where the organization's labels end and the transcript begins.
+  const header = roster === '' && labels !== '' ? 'TRANSCRIPT:\n' : '';
   const out = await runFeature(
-    { instruction: INSTRUCTION(input.language, template, attendees), subject: privateText(labels + roster + text), maxSubjectChars: SUMMARY_LIMITS.transcriptBytes + labels.length + roster.length },
+    { instruction: INSTRUCTION(input.language, template, attendees), subject: privateText(labels + roster + header + text), maxSubjectChars: SUMMARY_LIMITS.transcriptBytes + labels.length + roster.length + header.length },
     ports,
   );
   const parsed = checkSummary(revealPrivateText(out.text), input.segments, template, attendees);
