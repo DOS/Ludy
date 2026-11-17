@@ -66,6 +66,6 @@ test('the AI meter says AI is off, the Agents page shows the month by feature, a
     await page.goto(`/o/${slug}/inbox`);
     await page.locator('input[type=file]').setInputFiles(INVOICE);
     await expect(page.getByRole('link', { name: SELLER })).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByTestId('recent-file').filter({ hasText: 'einvoice-basic.xml' })).toContainText('Chờ duyệt');
+    await expect(page.getByTestId('recent-file')).toHaveCount(0);
   });
 });

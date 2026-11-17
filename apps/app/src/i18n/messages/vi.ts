@@ -6613,7 +6613,6 @@ export const vi = {
     dropHere: 'Kéo thả hóa đơn vào đây',
     formatsXml: 'XML hóa đơn điện tử · tối đa 25 MB mỗi tệp',
     formatsAll: 'XML hóa đơn điện tử, PDF hoặc ảnh chụp · tối đa 25 MB mỗi tệp',
-    noAi: 'Chưa cấu hình AI: hiện chỉ đọc được tệp XML hóa đơn điện tử.',
     forwardTitle: 'Chuyển tiếp hóa đơn qua email',
     copyAddress: 'Chép địa chỉ',
     noInbound: 'Máy chủ này chưa bật nhận email. Bạn vẫn có thể tải tệp lên.',
@@ -6807,6 +6806,8 @@ export const vi = {
     maybeDuplicate: 'Có thể trùng',
     failedChecks: '{count, number} lỗi',
     signatureUnverified: 'Chưa xác minh chữ ký số',
+    // Every row has it (#3598): said once above the list, not as a red chip on each row.
+    signatureAll: 'Cả {count, number} hóa đơn chưa xác minh được chữ ký số. Hãy kiểm tra hóa đơn gốc trước khi duyệt.',
     warnChecks: '{count, number} lưu ý',
     matched: 'Khớp',
     agentProposed: 'AI agent đề xuất: {name}',
@@ -6847,11 +6848,20 @@ export const vi = {
     bulk: {
       selectAll: 'Chọn tất cả mục duyệt chung được ({count, number})',
       select: 'Chọn {name}',
-      notSelectable: 'Mục này cần duyệt riêng: có kiểm tra lỗi, có thể trùng, là bút toán đảo, là thay đổi chạy quảng cáo, hoặc có dòng chưa có tài khoản',
       selected: 'Đã chọn {count, number}',
       approve: 'Duyệt {count, number} đề xuất',
       clear: 'Bỏ chọn',
-      hint: 'Một lần xác thực hai lớp cho cả nhóm đã chọn. Từng đề xuất vẫn được kiểm tra riêng: bốn mắt, ai được duyệt, và chưa ai sửa từ lúc bạn xem.',
+      hint: 'Một lần xác thực hai lớp cho cả nhóm đã chọn; từng đề xuất vẫn được kiểm tra riêng.',
+      // The rows left out of "Chọn tất cả" (#3598): said once above the list and on each row.
+      excludedSummary: '{count, plural, other {# đề xuất}} cần duyệt riêng, lý do ghi ở từng dòng.',
+      excluded: {
+        own_page: 'Duyệt riêng: mở đề xuất để xem thay đổi',
+        checks: 'Duyệt riêng: có kiểm tra lỗi',
+        duplicate: 'Duyệt riêng: có thể trùng',
+        reversal: 'Duyệt riêng: là bút toán đảo',
+        account: 'Duyệt riêng: cần chọn tài khoản',
+        anomaly: 'Duyệt riêng: có điểm bất thường',
+      },
       confirmUnverified: 'Có {count, number} hóa đơn đã chọn chưa xác minh được chữ ký số. Tôi đã kiểm tra hóa đơn gốc và vẫn muốn duyệt.',
       sending: 'Đang duyệt: lô {done, number}/{total, number}',
       stepUp: 'duyệt và ghi sổ {count, number} đề xuất',
@@ -7653,7 +7663,7 @@ export const vi = {
     },
   },
   aiMeter: {
-    off: 'AI đang tắt trên máy chủ này. Sổ sách, duyệt chứng từ và xuất báo cáo vẫn chạy bình thường.',
+    off: 'AI đang tắt trên máy chủ này; người quản trị máy chủ có thể bật. Sổ sách, duyệt chứng từ và xuất báo cáo vẫn chạy bình thường.',
     ok: '{gm} đã dùng {percent}% ngân sách AI tháng này',
     warn: '{gm} đã dùng {percent}% ngân sách AI tháng này, sắp hết. Hết ngân sách thì chỉ phần AI dừng, sổ sách vẫn chạy.',
     stop: '{gm} đã hết ngân sách tháng này. Việc cần AI sẽ chờ và tự chạy lại khi chủ tổ chức nâng ngân sách hoặc sang tháng mới; sổ sách vẫn chạy bình thường.',

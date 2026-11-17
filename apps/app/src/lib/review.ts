@@ -47,9 +47,37 @@ export function bulkSelectable(
   item: { status: string; failedChecks: number; kind: string; duplicateOf: string | null; unclassifiedLines?: number; anomalyChecks?: number | undefined },
   reversalKind: string,
 ): boolean {
-  if (isAdsProposalKind(item.kind) || isEInvoiceIssueKind(item.kind)) return false;
+  return item.status === 'pending' && bulkExclusion(item, reversalKind) === null;
+}
+
+// Why a pending row is left out of the bulk approval (#3598), in the order a person fixes them: null when it can be
+// approved in bulk. The Inbox says the reason on the row, so "Chọn tất cả (6)" with seven rows never leaves the seventh
+// unexplained. The same rules as bulkSelectable above, which is built on this.
+export type BulkExclusion = 'own_page' | 'checks' | 'duplicate' | 'reversal' | 'account' | 'anomaly';
+export function bulkExclusion(
+  item: { failedChecks: number; kind: string; duplicateOf: string | null; unclassifiedLines?: number; anomalyChecks?: number | undefined },
+  reversalKind: string,
+): BulkExclusion | null {
+  if (isAdsProposalKind(item.kind) || isEInvoiceIssueKind(item.kind)) return 'own_page';
+  if (item.failedChecks > 0) return 'checks';
+  if (item.duplicateOf !== null) return 'duplicate';
+  if (item.kind === reversalKind) return 'reversal';
   // A line no rule matched (#2091) has no account to approve: it is classified on the proposal's own page first.
-  return item.status === 'pending' && item.failedChecks === 0 && item.duplicateOf === null && item.kind !== reversalKind && (item.unclassifiedLines ?? 0) === 0 && (item.anomalyChecks ?? 0) === 0;
+  if ((item.unclassifiedLines ?? 0) > 0) return 'account';
+  if ((item.anomalyChecks ?? 0) > 0) return 'anomaly';
+  return null;
+}
+
+// The files of the "Tệp mới nhận" row that still need a look (#3598): one being read or one that failed. A file read into
+// a proposal is the proposal's row below, so it is not listed twice.
+export function filesNeedingAttention<T extends { status: string }>(files: readonly T[]): T[] {
+  return files.filter((file) => file.status === 'processing' || file.status === 'failed');
+}
+
+// Whether every row of a list carries the unverified-signature chip (#3598): then the red says nothing, and the list
+// states it once instead. One row alone keeps its own chip.
+export function allSignaturesUnverified(items: ReadonlyArray<{ signatureStatus: string | null }>): boolean {
+  return items.length > 1 && items.every((item) => item.signatureStatus === 'unverified');
 }
 
 // The "Chưa phân loại" filter of the Inbox (#2091): the proposals with at least one invoice line no rule matched, and how
