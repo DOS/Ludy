@@ -4659,6 +4659,15 @@ export const vi = {
     splitInvalid: 'Hãy nhập số tiền thuần như 1500000 hoặc 1500000.50, không dấu phân cách và không chữ; số tiền không hợp lệ sẽ bị bỏ qua.',
     cnkdWithheldLine: '{platform}, {from} - {to}: {amount}',
     cnkdExemptNote: 'Phần doanh thu được miễn thuế trong năm chưa được trừ ở đây: quy định này đang chờ kế toán.',
+    s2aTitle: 'S2a-HKD: sổ doanh thu theo ngành nghề',
+    s2aHint: 'Như sổ S1a nhưng chia doanh thu theo ngành nghề, kèm thuế GTGT và thuế TNCN của từng ngành theo tỷ lệ đang áp dụng. Tổng doanh thu bằng sổ cái. Tải về dạng Excel để in và ký.',
+    s2aNotice: 'Đây là sổ kế toán của hộ. {brand} không nộp tờ khai và không gửi gì cho cơ quan thuế.',
+    s2aDraft: 'Các số thuế dưới đây là số liệu tạm: những quy tắc sau còn chờ kế toán đối chiếu. Bạn vẫn xem và tải file Excel được, mỗi con số và file đều ghi rõ là số liệu tạm.',
+    s2aFile: 'so-s2a-hkd-{period}-{org}.xlsx',
+    s2aByLine: 'Theo ngành nghề',
+    s2aLinesTitle: 'Doanh thu và thuế theo ngành nghề',
+    s2aUnassigned: '{amount} doanh thu chưa có ngành nghề nên chưa tính tổng thuế. Nếu khoản đó đến từ hóa đơn bán hàng, hãy gán ngành nghề cho mặt hàng đã bán. Các khoản không có hóa đơn bán hàng (đối soát sàn, phiếu nhập tay) hiện chưa tự gán được ngành nghề.',
+    unassignedName: 'Chưa phân ngành',
 
   },
   minutesTemplates: {
@@ -12865,6 +12874,7 @@ export const vi = {
         rules: 'Xem các quy tắc thuế hộ kinh doanh có hiệu lực vào một ngày',
         s1a: 'Xem sổ doanh thu bán hàng S1a của hộ kinh doanh trong một kỳ',
         cnkd: 'Xem bảng tính tờ khai 01/CNKD của hộ kinh doanh trong một quý',
+        s2a: 'Xem sổ doanh thu S2a của hộ kinh doanh theo từng ngành nghề trong một kỳ, kèm thuế GTGT và TNCN',
         export: 'Tải một sổ của hộ kinh doanh dạng Excel',
       },
       collection_setting: {

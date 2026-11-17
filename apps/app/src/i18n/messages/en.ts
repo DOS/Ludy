@@ -4661,6 +4661,15 @@ export const en = {
     splitInvalid: 'Enter plain amounts such as 1500000 or 1500000.50, without separators or letters; an amount that is not valid is left out.',
     cnkdWithheldLine: '{platform}, {from} - {to}: {amount}',
     cnkdExemptNote: 'The revenue band exempt from tax in the year is not deducted here: that rule is waiting for the accountant.',
+    s2aTitle: 'S2a-HKD: revenue book by business line',
+    s2aHint: 'Like the S1a book, with revenue split by business line and the VAT and PIT of each line by the percentages in force. The revenue total equals the ledger. Download it as Excel to print and sign.',
+    s2aNotice: 'This is the household\'s book. {brand} files no return and sends nothing to the tax authority.',
+    s2aDraft: 'The tax figures below are provisional: the rules behind them are still waiting for the accountant. You can still view and download the Excel file; every figure and the file say they are provisional.',
+    s2aFile: 'so-s2a-hkd-{period}-{org}.xlsx',
+    s2aByLine: 'By business line',
+    s2aLinesTitle: 'Revenue and tax by business line',
+    s2aUnassigned: '{amount} of revenue has no business line yet, so the tax total is held back. If it comes from a sale document, give the items you sold a business line. Entries with no sale document (marketplace settlements, manual vouchers) cannot be given a business line yet.',
+    unassignedName: 'No business line yet',
 
   },
   minutesTemplates: {
@@ -12866,6 +12875,7 @@ export const en = {
         rules: 'View the household tax rules in force on a date',
         s1a: 'View the household sales book S1a for a period',
         cnkd: 'View the 01/CNKD worksheet of a household business for a quarter',
+        s2a: 'View the household revenue book S2a by business line for a period, with VAT and PIT per line',
         export: 'Download a household book as an Excel file',
       },
       collection_setting: {

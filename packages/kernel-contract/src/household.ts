@@ -20,6 +20,7 @@ export const HOUSEHOLD_BOOKS = ['S1a', 'S2a', 'S2b', 'S2c', 'S2d', 'S2e', 'S3a']
 export const HOUSEHOLD_TAX_GROUPS = [1, 2, 3] as const;
 
 export const zHouseholdTrade = z.enum(HOUSEHOLD_TRADES);
+export type HouseholdTrade = z.infer<typeof zHouseholdTrade>;
 export const zHouseholdBook = z.enum(HOUSEHOLD_BOOKS);
 export const zHouseholdRuleStatus = z.enum(HOUSEHOLD_RULE_STATUSES);
 
@@ -127,3 +128,43 @@ export const zHouseholdCnkd = z.strictObject({
   commentary: z.boolean(),
 });
 export type HouseholdCnkd = z.infer<typeof zHouseholdCnkd>;
+
+// S2a-HKD, the revenue book of a household that pays a percentage of revenue (Circular 152/2025/TT-BTC; plan 8.5 and 12 row 6, #2517 slice 2a): S1a with the revenue split by business line, and the VAT and PIT
+// of each line by the percentages in force on the period's last day, each rounded to a whole dong. It is a view of the ledger like S1a: one row per entry that touched account 511, so `total` is the
+// ledger's own movement of 511 and the parts of every row add up to its amount. The ledger has no trade on a 511 line, so the trade of a row comes from what the entry is built from, never from a
+// guess: a household with one trade has every row on it; with several, a row built from a sale document's lines takes the trade of each line's stock item (by the lines' amounts), and a row built
+// from anything else (a marketplace settlement, a manual voucher), or from an item whose trade the profile does not list, is `unassigned`. Any `unassigned` part holds the totals back (`totals` is null)
+// rather than guess. `commentary` is true while any row behind the figures (the book's form, a percentage) is not confirmed by the accountant (#2520): the screen and the Excel file then carry
+// HOUSEHOLD_PROVISIONAL_LABEL, which goes on its own when later dated `confirmed` rows exist. Ludy files nothing.
+export const zHouseholdS2aGet = z.strictObject({ legalEntityId: zId, period: zLedgerPeriod });
+export type HouseholdS2aGet = z.infer<typeof zHouseholdS2aGet>;
+export const HOUSEHOLD_UNASSIGNED = 'unassigned' as const;
+export const zHouseholdS2aPart = z.strictObject({ trade: z.union([zHouseholdTrade, z.literal(HOUSEHOLD_UNASSIGNED)]), amount: zMoney });
+export type HouseholdS2aPart = z.infer<typeof zHouseholdS2aPart>;
+export const zHouseholdS2aRow = z.strictObject({
+  entryId: zId,
+  date: zLocalDate,
+  reference: z.string().nullable(),
+  description: z.string(),
+  amount: zMoney,
+  reversal: z.boolean(),
+  parts: z.array(zHouseholdS2aPart),
+});
+export type HouseholdS2aRow = z.infer<typeof zHouseholdS2aRow>;
+export const zHouseholdS2a = z.strictObject({
+  period: z.strictObject({ period: zLedgerPeriod, from: zLocalDate, to: zLocalDate }),
+  household: z.strictObject({ name: z.string(), taxCode: z.string().nullable(), representativeName: z.string().nullable(), openedOn: zLocalDate }),
+  form: zHouseholdBookRule,
+  rows: z.array(zHouseholdS2aRow),
+  // The ledger's movement of 511 over the book's days: the sum of the rows, and of the lines plus `unassigned`.
+  total: zMoney,
+  lines: z.array(zHouseholdCnkdLine),
+  // The net of the parts with no business line (a sale and its void both unassigned net to zero), and the sum of their absolute amounts. Any part with an amount holds `totals` back, so two
+  // unrelated unassigned entries that happen to cancel never hide their tax; the screen names the gross.
+  unassigned: zMoney,
+  unassignedGross: zMoney,
+  totals: z.strictObject({ revenue: zMoney, vat: zMoney, pit: zMoney, tax: zMoney }).nullable(),
+  unconfirmed: z.array(z.strictObject({ kind: z.enum(['form', 'rate']), key: z.string(), effectiveFrom: zLocalDate })),
+  commentary: z.boolean(),
+});
+export type HouseholdS2a = z.infer<typeof zHouseholdS2a>;
