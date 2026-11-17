@@ -38,7 +38,8 @@ test('the Inbox offers two-factor before the first approval, and the setup is a 
 test('approving without a second factor opens a dialog over a proposal that does not move; the account of a line is readable', async ({ page }) => {
   await inboxWithProposal(page, 'tf-dialog');
   await page.getByRole('link', { name: SELLER }).click();
-  const title = page.getByRole('heading', { name: SELLER });
+  // Found by tag, not by role: while the dialog is open the page behind it is hidden from the accessibility tree, so a role locator would not find it to measure.
+  const title = page.locator('h1', { hasText: SELLER });
   await expect(title).toBeVisible();
   // Who proposed it (DESIGN.md §5.1).
   await expect(page.getByText(/Đề xuất bởi Ly/)).toBeVisible();
