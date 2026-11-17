@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { zonedDate, type MyWork, type NotesExport, type Todo, type TodoCount, type TodoListWritten, type TodoListsResponse, type TodoSummary, type TodoWritten } from '@crove/kernel-contract';
+import { zonedDate, type MyWork, type NotesExport, type Todo, type TodoCompleteResult, type TodoCount, type TodoListWritten, type TodoListsResponse, type TodoSummary, type TodoWritten } from '@crove/kernel-contract';
 import { Runtime } from '@crove/kernel-runtime';
 import { notesCommands, notesQueries } from '@crove/mod-notes';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -460,6 +460,32 @@ suite('personal to-dos on PostgreSQL (#1673)', () => {
       status: 'done',
       listId: null,
       sectionId: null,
+    });
+
+    // Recurring completion preserves priority, #tags, listId, and sectionId on the next occurrence.
+    const recList = await o.exec<TodoListWritten>(o.mine, 'notes.todo_list.create', {
+      name: 'Danh sách lặp lại',
+      color: 'amber',
+      sections: [{ id: 'sec-rec', name: 'Mục định kỳ' }],
+    });
+    const recTodo = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Kê khai định kỳ',
+      priority: 2,
+      tags: ['thue', 'lap-lai'],
+      listId: recList.listId,
+      sectionId: 'sec-rec',
+      dueOn: '2027-02-01',
+      recurrence: { freq: 'monthly', interval: 1 },
+    });
+    const completedRec = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: recTodo.todoId });
+    expect(completedRec.nextTodoId).toBeTruthy();
+    expect(await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: completedRec.nextTodoId! })).toMatchObject({
+      priority: 2,
+      tags: ['thue', 'lap-lai'],
+      listId: recList.listId,
+      sectionId: 'sec-rec',
+      dueOn: '2027-03-01',
+      status: 'open',
     });
 
     await admin((c) => c.query(`UPDATE crove_notes.todo_list SET deleted_at = now() - interval '31 days' WHERE id = $1`, [list.id]));

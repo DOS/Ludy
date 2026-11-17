@@ -8,7 +8,7 @@
 // answer never grows past what the server and the browser can hold).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { NOTES_EXPORT_LIMIT, NOTES_EXPORT_TEXT, type NotesExport, type TodoPriority } from '@crove/kernel-contract';
+import { NOTES_EXPORT_LIMIT, NOTES_EXPORT_TEXT, parseTodoRecurrence, type NotesExport, type TodoPriority } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineQuery } from '@crove/kernel-runtime';
 import { listColorOf, parseSections } from './todos.ts';
@@ -95,7 +95,29 @@ export const notesExportMine = defineQuery({
         ? []
         : await ctx.trx
             .selectFrom('crove_notes.todo')
-            .select(['id', 'title', 'details', 'checklist', 'status', 'priority', 'tags', 'list_id', 'section_id', 'due_on', 'due_at', 'time_zone', 'remind_at', 'created_at', 'updated_at', 'done_at', 'deleted_at', 'source_note_id', 'task_id'])
+            .select([
+              'id',
+              'title',
+              'details',
+              'checklist',
+              'status',
+              'priority',
+              'tags',
+              'list_id',
+              'section_id',
+              'due_on',
+              'due_at',
+              'time_zone',
+              'remind_at',
+              'created_at',
+              'updated_at',
+              'done_at',
+              'deleted_at',
+              'source_note_id',
+              'task_id',
+              'recurrence',
+              'series_id',
+            ])
             .where('org_id', '=', ctx.orgId)
             .where('owner_user_id', '=', userId)
             .where('id', 'in', todoKeep)
@@ -178,6 +200,8 @@ export const notesExportMine = defineQuery({
         deletedAt: iso(t.deleted_at),
         sourceNoteId: t.source_note_id,
         taskId: t.task_id,
+        recurrence: parseTodoRecurrence(t.recurrence),
+        seriesId: t.series_id,
         links: todoLinksOf.get(t.id) ?? [],
       })),
       todoLists: todoLists.map((l) => ({

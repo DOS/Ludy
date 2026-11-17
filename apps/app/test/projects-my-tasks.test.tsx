@@ -207,6 +207,8 @@ describe('MyWorkPage P3 SSR (#2593)', () => {
           sourceNoteId: null,
           sourceNote: null,
           taskId: null,
+          recurrence: null,
+          seriesId: null,
           tainted: false,
           revision: 1,
           createdAt: '2026-11-03T00:00:00.000Z',

@@ -23,6 +23,8 @@ const todo = (id: string, group: TodoSummary['group'], extra: Partial<TodoSummar
   sourceNoteId: null,
   sourceNote: null,
   taskId: null,
+  recurrence: null,
+  seriesId: null,
   tainted: false,
   revision: 1,
   createdAt: '2026-11-03T00:00:00.000Z',

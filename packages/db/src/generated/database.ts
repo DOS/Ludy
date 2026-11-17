@@ -3264,6 +3264,8 @@ export interface NotesTodoTable {
   deleted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   source_run_id: ColumnType<string | null, string | null, NotGranted>;
   source_run_seq: ColumnType<number | null, number | null, NotGranted>;
+  recurrence: ColumnType<unknown, string | null | undefined, string | null>;
+  series_id: string | null;
   priority: Generated<number>;
   tags: Generated<string[]>;
   list_id: string | null;

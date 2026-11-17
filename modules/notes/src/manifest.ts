@@ -19,7 +19,7 @@ export const notesManifest = defineModule({
       todo: columns(
         [
           'org_id', 'id', 'owner_user_id', 'status', 'priority', 'due_on', 'due_at', 'time_zone', 'remind_at', 'reminded_at', 'list_id', 'section_id', 'sort_key', 'source_note_id', 'source_run_id', 'source_run_seq', 'task_id', 'tainted',
-          'revision', 'created_at', 'updated_at', 'done_at', 'deleted_at',
+          'recurrence', 'series_id', 'revision', 'created_at', 'updated_at', 'done_at', 'deleted_at',
         ],
         { title: 'pii', details: 'pii', checklist: 'pii', tags: 'pii', search: 'pii' },
       ),
