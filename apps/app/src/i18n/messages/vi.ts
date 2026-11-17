@@ -11372,6 +11372,7 @@ export const vi = {
       SUMMARY_TEMPLATE_CHANGED: 'Bạn đã đổi loại cuộc họp sau khi Vy viết. Hãy nhờ Vy tóm tắt lại.',
       TEMPLATE_MISMATCH: 'Nội dung không khớp với loại cuộc họp đang chọn. Hãy mở lại cuộc họp rồi thử lại.',
       SPEAKER_LABEL_GONE: 'Không còn dòng nháp nào của người nói này (có thể bạn đã đặt tên rồi). Hãy mở lại bản ghi lời.',
+      SPEAKER_NAME_TAKEN: 'Một người nói khác trong cuộc họp này đã mang tên này. Nếu muốn gộp hai người nói, hãy sửa từng dòng.',
       SPEAKER_NOT_ATTENDEE: 'Tên này không phải của người dự họp trong cuộc họp này.',
       NOTES_EMPTY: 'Hãy gõ vài dòng ghi chú và lưu trước khi nhờ Vy viết lại.',
       NOTES_TOO_LONG: 'Ghi chú quá dài. Hãy rút gọn.',

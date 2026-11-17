@@ -534,10 +534,26 @@ describe('speaker suggestions', () => {
   });
 
   it('answers to no name when two attendees share it, and offers nothing when no attendees were given', () => {
-    expect(checkSummary(answer([{ label: 'Người nói 1', name: 'Lan A', seconds: 5 }]), TALK, undefined, ['Lan A', 'lan  a']).speakers).toEqual([]);
+    expect(checkSummary(answer([{ label: 'Người nói 1', name: 'Lan Ả', seconds: 5 }]), TALK, undefined, ['Lan A', 'Lan À']).speakers).toEqual([]);
     const none = checkSummary(answer([{ label: 'Người nói 1', name: 'Nguyễn Văn Nam', seconds: 5 }]), TALK);
     expect(none.speakers).toEqual([]);
     expect(none.dropped).toBe(0);
+  });
+
+  it('tells two attendees whose names differ only by their marks apart when the model spells the name as one of them does, and drops a name it cannot tell apart', () => {
+    const both = ['Thanh', 'Thành'];
+    expect(checkSummary(answer([{ label: 'Người nói 1', name: 'Thành', seconds: 5 }]), TALK, undefined, both).speakers).toEqual([{ label: 'Người nói 1', name: 'Thành', seconds: 5 }]);
+    expect(checkSummary(answer([{ label: 'Người nói 1', name: 'thanh', seconds: 5 }]), TALK, undefined, both).speakers).toEqual([{ label: 'Người nói 1', name: 'Thanh', seconds: 5 }]);
+    // Spelled without marks it could be either, so it is neither.
+    expect(checkSummary(answer([{ label: 'Người nói 1', name: 'Thạnh', seconds: 5 }]), TALK, undefined, both).speakers).toEqual([]);
+    expect(checkSummary(answer([{ label: 'Người nói 1', name: 'THANH', seconds: 5 }]), TALK, undefined, ['Thanh', 'Thanh Ha']).speakers).toEqual([{ label: 'Người nói 1', name: 'Thanh', seconds: 5 }]);
+  });
+
+  it('does not suggest a name some speaker label already is, which would merge two speakers', () => {
+    const named: SummarySegment[] = [...TALK, seg(80, 90, 'Trần Thị Lan', 'Em xin ý kiến.')];
+    const out = checkSummary(answer([{ label: 'Người nói 2', name: 'Trần Thị Lan', seconds: 30 }, { label: 'Người nói 1', name: 'Nguyễn Văn Nam', seconds: 5 }]), named, undefined, PEOPLE);
+    expect(out.speakers).toEqual([{ label: 'Người nói 1', name: 'Nguyễn Văn Nam', seconds: 5 }]);
+    expect(out.dropped).toBe(1);
   });
 
   it('never makes a result by itself: a summary of nothing but speakers is empty', () => {
@@ -549,6 +565,8 @@ describe('speaker suggestions', () => {
       'Trần Thị Lan',
       'Nguyễn Văn Nam',
     ]);
+    // Two people whose names differ only by their marks are two people: both are offered.
+    expect(speakerNames(['Thanh', 'Thành', 'thanh'])).toEqual(['Thanh', 'Thành']);
     expect(speakerNames(null)).toEqual([]);
     expect(speakerNames(Array.from({ length: 80 }, (_, i) => `Người ${String.fromCharCode(97 + (i % 26))}${String.fromCharCode(97 + Math.floor(i / 26))}`))).toHaveLength(30);
   });

@@ -170,7 +170,7 @@ function plainName(text: string): string {
 /**
  * The attendee names a run may offer the model and a suggestion may name (#3502): display names people typed, so cleaned first: one line, at most attendeeChars
  * characters, none with a way to reach someone (a name that holds an email address, a link or a phone number is not offered), each once whatever its case, at most
- * attendees of them. Anything that is not a string is skipped.
+ * attendees of them (the cleaning is the module's cleanName too, so both sides compare the same text). Anything that is not a string is skipped.
  */
 export function speakerNames(raw: readonly unknown[] | null | undefined): string[] {
   const out: string[] = [];
@@ -179,7 +179,8 @@ export function speakerNames(raw: readonly unknown[] | null | undefined): string
     if (typeof item !== 'string' || item.length > SUMMARY_LIMITS.attendeeChars * 4) continue;
     const name = oneLine(item.replace(/[\p{Cc}\p{Cf}]/gu, ' '), SUMMARY_LIMITS.attendeeChars + 1);
     if (name === '' || Array.from(name).length > SUMMARY_LIMITS.attendeeChars || hasContact(name) || !/\p{L}/u.test(name)) continue;
-    const key = plainName(name);
+    // Each person once whatever the case, but two names that differ only by their marks (Thanh and Thành) are two people: both are offered, and a suggestion that cannot tell them apart is dropped below.
+    const key = name.normalize('NFC').toLocaleLowerCase('vi');
     if (seen.has(key)) continue;
     if (out.length >= SUMMARY_LIMITS.attendees) break;
     seen.add(key);
@@ -190,16 +191,22 @@ export function speakerNames(raw: readonly unknown[] | null | undefined): string
 
 // The suggestions that hold (#3502): a speaker label the transcript has, an attendee named in the list's own spelling (exactly one attendee answers to the name, a repeated
 // name in the list answers to none), and a second that falls in a line THAT speaker says. One suggestion per label and one per attendee: the first stands, a second one for the
-// same label or person is dropped, so a label is never renamed to a person twice and two labels are never merged by one run. A label that already is the attendee's name has
-// nothing to suggest.
+// same label or person is dropped, so a label is never renamed to a person twice and two labels are never merged by one run. A name that already is a speaker label of the transcript is not suggested for another label.
 function checkSpeakers(raw: unknown, segments: readonly SummarySegment[], attendees: readonly string[]): { speakers: SpeakerSuggestion[]; dropped: number } {
   const speakers: SpeakerSuggestion[] = [];
   if (attendees.length === 0 || raw === undefined || raw === null) return { speakers, dropped: 0 };
   if (!Array.isArray(raw)) return { speakers, dropped: 1 };
   let dropped = 0;
+  const exact = (text: string): string => text.normalize('NFC').toLocaleLowerCase('vi');
+  const byExact = new Map<string, string[]>();
   const byPlain = new Map<string, string[]>();
-  for (const name of attendees) byPlain.set(plainName(name), [...(byPlain.get(plainName(name)) ?? []), name]);
+  for (const name of attendees) {
+    byExact.set(exact(name), [...(byExact.get(exact(name)) ?? []), name]);
+    byPlain.set(plainName(name), [...(byPlain.get(plainName(name)) ?? []), name]);
+  }
   const labels = new Set(segments.map((s) => oneLine(s.speakerLabel, SUMMARY_LIMITS.attendeeChars)));
+  // A name some speaker label already is stands for that speaker: suggesting it for another label would merge two speakers under one name.
+  const takenNames = new Set([...labels].map(plainName));
   const usedLabels = new Set<string>();
   const usedNames = new Set<string>();
   for (const entry of raw) {
@@ -208,12 +215,14 @@ function checkSpeakers(raw: unknown, segments: readonly SummarySegment[], attend
       continue;
     }
     const label = oneLine(entry.label, SUMMARY_LIMITS.attendeeChars);
-    const matches = byPlain.get(plainName(entry.name)) ?? [];
+    // The name as the attendee spells it, case aside: that attendee. Otherwise the name without its marks must be exactly one attendee's (a name two people share answers to none).
+    const sameSpelling = byExact.get(exact(entry.name)) ?? [];
+    const matches = sameSpelling.length > 0 ? sameSpelling : (byPlain.get(plainName(entry.name)) ?? []);
     const claimed = entry.seconds;
     const name = matches.length === 1 ? (matches[0] as string) : null;
     const said =
       Number.isInteger(claimed) && segments.some((s) => oneLine(s.speakerLabel, SUMMARY_LIMITS.attendeeChars) === label && claimed >= Math.floor(s.startSeconds) && claimed <= Math.ceil(s.endSeconds));
-    if (!labels.has(label) || name === null || !said || plainName(label) === plainName(name) || usedLabels.has(label) || usedNames.has(name) || speakers.length >= SUMMARY_LIMITS.speakers) {
+    if (!labels.has(label) || name === null || !said || takenNames.has(plainName(name)) || usedLabels.has(label) || usedNames.has(name) || speakers.length >= SUMMARY_LIMITS.speakers) {
       dropped += 1;
       continue;
     }

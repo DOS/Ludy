@@ -419,6 +419,7 @@ export const KERNEL_ERROR_CODES = [
   'TEMPLATE_MISMATCH',
   // Naming a speaker after a person in the meeting (Meetings #3502).
   'SPEAKER_LABEL_GONE',
+  'SPEAKER_NAME_TAKEN',
   'SPEAKER_NOT_ATTENDEE',
   // The recorder's rough notes (Meetings A5, #3163).
   'NOTES_EMPTY',

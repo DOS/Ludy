@@ -11376,6 +11376,7 @@ export const en = {
       SUMMARY_TEMPLATE_CHANGED: 'You changed the meeting type after Vy wrote this. Ask Vy to summarize again.',
       TEMPLATE_MISMATCH: 'The text does not match the meeting type that is picked. Reload the meeting and try again.',
       SPEAKER_LABEL_GONE: 'No draft line has this speaker any more (you may have named it already). Open the transcript again.',
+      SPEAKER_NAME_TAKEN: 'Another speaker of this meeting already has this name. To merge two speakers, correct the lines one by one.',
       SPEAKER_NOT_ATTENDEE: 'This name is not one of the people in this meeting.',
       NOTES_EMPTY: 'Type and save a few notes before asking Vy to write them out.',
       NOTES_TOO_LONG: 'The notes are too long. Shorten them.',

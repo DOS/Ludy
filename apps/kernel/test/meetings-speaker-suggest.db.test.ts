@@ -197,6 +197,17 @@ suite('speaker names suggested by the recorder\'s Vy (#3502)', () => {
     expect(await refuses(suggestions('recorder', other, runId))).toBe('SUMMARY_RESULT_NOT_FOUND');
   });
 
+  it('does not merge two speakers: a name another speaker already has is not suggested, and the click is refused', async () => {
+    const meetingId = await seedMeeting(['lan']);
+    // Label 1 was named Lan earlier; label 2 is still unnamed.
+    await sqlAdmin(`UPDATE crove_meetings.transcript_segment SET speaker_label = 'Trần Thị Lan' WHERE meeting_id = $1 AND start_seconds = 0`, [meetingId]);
+    const runId = await summarize(meetingId, [{ label: 'Người nói 2', name: 'Trần Thị Lan', seconds: 15 }]);
+    expect((await suggestions('recorder', meetingId, runId)).suggestions).toEqual([]);
+    expect(await refuses(name('recorder', meetingId, 'Người nói 2', 'Trần Thị Lan'))).toBe('SPEAKER_NAME_TAKEN');
+    expect(await refuses(name('recorder', meetingId, 'Người nói 2', 'Người nói 2'))).toBe('SPEAKER_NOT_ATTENDEE');
+    expect(await labels(meetingId)).toEqual(['0.000|draft|Trần Thị Lan|as stored', '10.000|draft|Người nói 2|as stored', '20.000|draft|Người nói 1|as stored']);
+  });
+
   it('never renames a published line: only the draft lines of the label change', async () => {
     const meetingId = await seedMeeting(['lan']);
     await summarize(meetingId, [{ label: 'Người nói 2', name: 'Trần Thị Lan', seconds: 15 }]);
