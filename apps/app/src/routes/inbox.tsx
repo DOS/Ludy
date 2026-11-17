@@ -299,6 +299,8 @@ export function InboxPage() {
   const setTab = (next: InboxTab) => void navigate({ to: '/o/$slug/inbox', params: { slug }, search: next === 'pending' ? {} : { status: next } });
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Where focus goes once the two-factor offer is gone (#3599).
+  const uploadRef = useRef<HTMLButtonElement>(null);
   const [preparing, setPreparing] = useState(false);
   const config = getConfig();
 
@@ -490,7 +492,7 @@ export function InboxPage() {
         actions={
           <div className="flex flex-wrap items-center gap-3">
             <UploadEntityPicker slug={slug} />
-            <Button loading={intake.uploading || preparing} size="lg" onClick={() => openPicker(false)}>
+            <Button ref={uploadRef} loading={intake.uploading || preparing} size="lg" onClick={() => openPicker(false)}>
               {t('upload')}
             </Button>
             {/* On a phone this opens the rear camera; a desktop browser ignores `capture` and opens the file picker. A stack
@@ -503,7 +505,7 @@ export function InboxPage() {
       />
       <AiMeter module="finance" className="mb-3" />
       {/* Two-factor is offered here, before the first approval needs it, to those who may approve (#3599). */}
-      <TwoFactorOffer show={canApproveProposals(org.data?.role, org.data?.permissions)} />
+      <TwoFactorOffer show={canApproveProposals(org.data?.role, org.data?.permissions)} returnFocus={() => uploadRef.current} />
       <input
         ref={inputRef}
         type="file"

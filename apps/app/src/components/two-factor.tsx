@@ -318,11 +318,18 @@ export function StepUpDialog({
   const t = useTranslations('twoFactor.stepUp');
   const factors = useFactors();
   const enrolled = (factors.data?.totp.length ?? 0) > 0;
+  // Closing the dialog ends the attempt: a code or an enrollment that finishes afterwards, even once the dialog is open again, must not repeat the refused request
+  // (an approval the person cancelled). Each render hands its form the attempt it belongs to; a cancel moves the counter on.
+  const attempt = useRef(0);
+  const mine = attempt.current;
+  const verified = () => (attempt.current === mine ? onVerified() : undefined);
   return (
     <Dialog
       open={open}
       onOpenChange={(next) => {
-        if (!next) onCancel();
+        if (next) return;
+        attempt.current += 1;
+        onCancel();
       }}
     >
       <DialogContent closeLabel={root('common.close')} finalFocus={() => returnFocus?.() ?? true}>
@@ -333,7 +340,7 @@ export function StepUpDialog({
         <p className="text-sm text-muted-foreground">{t('pending', { action })}</p>
         {factors.isLoading && <CardSkeleton />}
         {factors.error && <ErrorText>{authErrorText(failureOf(factors.error), root)}</ErrorText>}
-        {factors.isSuccess && (enrolled ? <MfaChallengeForm onVerified={onVerified} /> : <TwoFactorCard bare onEnabled={onVerified} />)}
+        {factors.isSuccess && (enrolled ? <MfaChallengeForm onVerified={verified} /> : <TwoFactorCard bare onEnabled={verified} />)}
       </DialogContent>
     </Dialog>
   );
@@ -351,7 +358,8 @@ function offerHidden(): boolean {
   }
 }
 
-export function TwoFactorOffer({ show = true }: { show?: boolean }) {
+// returnFocus: a control that stays on the page once the offer is gone, where focus goes when the setup is done (the offer, and the button that opened the dialog, unmount).
+export function TwoFactorOffer({ show = true, returnFocus }: { show?: boolean; returnFocus?: () => HTMLElement | null }) {
   const t = useTranslations('twoFactor.offer');
   const root = useTranslations();
   const factors = useFactors();
@@ -379,7 +387,7 @@ export function TwoFactorOffer({ show = true }: { show?: boolean }) {
         </Button>
       </div>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent closeLabel={root('common.close')}>
+        <DialogContent closeLabel={root('common.close')} finalFocus={() => returnFocus?.() ?? true}>
           <DialogHeader>
             <DialogTitle>{t('dialogTitle')}</DialogTitle>
             <DialogDescription>{t('dialogDescription')}</DialogDescription>
@@ -388,6 +396,7 @@ export function TwoFactorOffer({ show = true }: { show?: boolean }) {
             bare
             onEnabled={() => {
               setOpen(false);
+              returnFocus?.()?.focus();
               void factors.refetch();
             }}
           />

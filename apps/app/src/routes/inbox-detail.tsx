@@ -475,6 +475,16 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
   // An ads request posts nothing, and its title is the server's Vietnamese: its toasts name no one and no entry.
   const approve = useMutation(orpc.inbox.approve.mutationOptions({ onSuccess: () => done(ads ? t('approvedAdsToast') : issue ? t('approvedIssueToast') : t('approvedToast', { name: partyName() })) }));
   const stepUp = isStepUpRequired(approve.error);
+  // The dialog closes as soon as the approval is sent again, while the approve button is disabled and cannot take focus: once the request is over, and the page is
+  // still here (an ordinary refusal), focus goes back to the button.
+  const askedStepUp = useRef(false);
+  useEffect(() => {
+    if (stepUp) askedStepUp.current = true;
+    else if (!approve.isPending && askedStepUp.current) {
+      askedStepUp.current = false;
+      approveRef.current?.focus();
+    }
+  }, [stepUp, approve.isPending]);
   const reject = useMutation(orpc.inbox.reject.mutationOptions({ onSuccess: () => done(ads || issue ? t(ads ? 'rejectedAdsToast' : 'rejectedIssueToast') : t('rejectedToast', { name: partyName() })) }));
   // Saving an edit creates a new revision authored by this user; the page then reloads the server's decision.
   const edit = useMutation(
@@ -606,7 +616,14 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
   };
 
   // Who proposed it (DESIGN.md §5.1, #3599): the Finance coworker, and what chose the accounts when it was one thing for every line. An AI agent's own proposal says so in its chip.
-  const source = proposalSource(lines, UNCLASSIFIED_ACCOUNT_CODE);
+  // An account the reviewer changed here is theirs, whatever rule chose the first one; putting the original back gives the rule's source again.
+  const source = proposalSource(
+    (payload?.lines ?? []).map((l) => {
+      const chosen = lineAccounts[l.lineNo];
+      return chosen !== undefined && chosen !== l.debitAccount ? { debitAccount: chosen, accountRule: { source: 'user' } } : l;
+    }),
+    UNCLASSIFIED_ACCOUNT_CODE,
+  );
   const proposedBy = !payload || item.requestedByAgent ? null : source ? t('proposedByWith', { source: t(`proposedBySource.${source}`) }) : t('proposedBy');
 
   // The account select of a line (#3599): the whole width of the card, under the line's text.

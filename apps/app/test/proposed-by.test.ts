@@ -21,6 +21,8 @@ describe('proposalSource', () => {
     expect(proposalSource([line('6422', 'builtin'), line('6421', 'learned')], U)).toBeNull();
     expect(proposalSource([line(U, 'unclassified')], U)).toBeNull();
     expect(proposalSource([line('6422')], U)).toBeNull();
+    // An account with no rule behind it has an unknown source: it is not left out, so it keeps the others' source from being named.
+    expect(proposalSource([line('6422', 'builtin'), line('6421')], U)).toBeNull();
     expect(proposalSource([], U)).toBeNull();
   });
 });
