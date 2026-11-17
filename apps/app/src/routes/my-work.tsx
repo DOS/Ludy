@@ -644,6 +644,7 @@ function TodoEditor({ todo, onClose }: { todo: Todo; onClose: () => void }) {
             todoId: todo.id,
             expectedRevision: done.revision,
             ...(savedRecurrence ? { restoreRecurrence: savedRecurrence } : {}),
+            ...(done.stoppedSiblings && done.stoppedSiblings.length > 0 ? { restoreSiblings: done.stoppedSiblings } : {}),
           }),
         { undo: common('undo'), failed: (reason) => common('undoFailed', { reason }) },
       );

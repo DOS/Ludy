@@ -45,11 +45,13 @@ import {
   type TodoCompleteResult,
   type TodoCount,
   type TodoHandedOver,
+  type TodoRecurrence,
   type TodoReminder,
   type TodoRescheduled,
   type TodoSourceNote,
   type TodoStatus,
   type TodoStep,
+  type TodoStoppedSibling,
   type TodoSummary,
   type TodoWritten,
 } from '@crove/kernel-contract';
@@ -475,18 +477,37 @@ export const todoComplete = defineCommand({
       .returning(['id', 'revision'])
       .executeTakeFirstOrThrow();
 
+    const stoppedSiblings: TodoStoppedSibling[] = [];
     if (stopSeries && rule !== null && seriesId !== null) {
-      // If the user reopened an older occurrence and selected stopSeries, clear recurrence on any active sibling too.
-      await ctx.trx
-        .updateTable('crove_notes.todo')
-        .set({ recurrence: null, revision: sql<number>`revision + 1`, updated_at: ctx.now })
+      // Capture each open sibling's prior recurrence rule before clearing so an immediate undo restores every occurrence accurately.
+      const openSiblings = await ctx.trx
+        .selectFrom('crove_notes.todo')
+        .select(['id', 'recurrence'])
         .where('org_id', '=', ctx.orgId)
         .where('series_id', '=', seriesId)
         .where('id', '<>', row.id)
         .where('status', '=', 'open')
         .where('deleted_at', 'is', null)
         .where('recurrence', 'is not', null)
+        .orderBy('id')
+        .forUpdate()
         .execute();
+      for (const sib of openSiblings) {
+        const sibRule = parseTodoRecurrence(sib.recurrence);
+        if (sibRule !== null) stoppedSiblings.push({ todoId: sib.id, recurrence: sibRule });
+      }
+      if (openSiblings.length > 0) {
+        await ctx.trx
+          .updateTable('crove_notes.todo')
+          .set({ recurrence: null, revision: sql<number>`revision + 1`, updated_at: ctx.now })
+          .where('org_id', '=', ctx.orgId)
+          .where(
+            'id',
+            'in',
+            openSiblings.map((s) => s.id),
+          )
+          .execute();
+      }
     }
 
     let nextTodoId: string | null = null;
@@ -600,6 +621,7 @@ export const todoComplete = defineCommand({
     return {
       ...written(row),
       ...(nextTodoId !== null ? { nextTodoId, nextDueOn } : {}),
+      ...(stoppedSiblings.length > 0 ? { stoppedSiblings } : {}),
     };
   },
 });
@@ -694,10 +716,11 @@ export const todoReopen = defineCommand({
 
     let restoredSiblings = 0;
     if (restoredRule !== null && before.series_id !== null && before.recurrence === null) {
-      // If stopSeries cleared an active open sibling in the same transaction, restore it too when undoing unless touched since.
-      const siblings = await ctx.trx
-        .updateTable('crove_notes.todo')
-        .set({ recurrence: JSON.stringify(restoredRule), revision: sql<number>`revision + 1`, updated_at: ctx.now })
+      // If stopSeries cleared an active open sibling in the same transaction, restore each untouched sibling's own rule.
+      const restoreById = new Map((input.restoreSiblings ?? []).map((entry) => [entry.todoId, normalizeTodoRecurrence(entry.recurrence)]));
+      const candidateSiblings = await ctx.trx
+        .selectFrom('crove_notes.todo')
+        .select(['id', 'due_on'])
         .where('org_id', '=', ctx.orgId)
         .where('series_id', '=', before.series_id)
         .where('id', '<>', row.id)
@@ -705,9 +728,28 @@ export const todoReopen = defineCommand({
         .where('deleted_at', 'is', null)
         .where('recurrence', 'is', null)
         .where('updated_at', '=', new Date(before.updated_at))
-        .returning('id')
+        .orderBy('id')
+        .forUpdate()
         .execute();
-      restoredSiblings = siblings.length;
+      const anchorDay = before.due_on !== null ? Number(before.due_on.split('-')[2]) : null;
+      for (const sib of candidateSiblings) {
+        let sibRule: TodoRecurrence | undefined = restoreById.get(sib.id);
+        if (sibRule === undefined && input.restoreSiblings === undefined) {
+          const sibDay = sib.due_on !== null ? Number(sib.due_on.split('-')[2]) : null;
+          sibRule =
+            restoredRule.freq === 'monthly' && restoredRule.byMonthDay === undefined && anchorDay !== null && sibDay !== null && anchorDay > sibDay
+              ? { ...restoredRule, byMonthDay: anchorDay }
+              : restoredRule;
+        }
+        if (sibRule === undefined) continue;
+        await ctx.trx
+          .updateTable('crove_notes.todo')
+          .set({ recurrence: JSON.stringify(sibRule), revision: sql<number>`revision + 1`, updated_at: ctx.now })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', sib.id)
+          .execute();
+        restoredSiblings++;
+      }
     }
 
     ctx.audit({
@@ -734,6 +776,18 @@ export const todoReschedule = defineCommand({
   target: (input) => ({ type: 'notes.todo', id: input.todoIds[0] ?? '' }),
   handler: async (ctx, input): Promise<TodoRescheduled> => {
     userOf(ctx.actor);
+    // Acquire series advisory locks in canonical order before FOR UPDATE so bulk reschedule and stopSeries never deadlock.
+    const metaRows = await ctx.trx
+      .selectFrom('crove_notes.todo')
+      .select(['id', 'series_id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', 'in', input.todoIds)
+      .execute();
+    if (metaRows.length !== input.todoIds.length) throw notFound();
+    const seriesKeys = [...new Set(metaRows.map((r) => r.series_id ?? r.id))].sort();
+    for (const key of seriesKeys) {
+      await lockTodoSeries(ctx, key);
+    }
     const rows = await ctx.trx
       .selectFrom('crove_notes.todo')
       .select(['id', 'status', 'due_on', 'due_at', 'time_zone', 'remind_at', 'revision', 'deleted_at'])

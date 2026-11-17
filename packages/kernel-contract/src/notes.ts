@@ -202,11 +202,17 @@ export const zTodoUpdate = z
   .refine(dueTimeNeedsDay, DUE_TIME_NEEDS_DAY);
 export type TodoUpdateInput = z.input<typeof zTodoUpdate>;
 export const zTodoRef = z.strictObject({ todoId: zId });
+export const zTodoStoppedSibling = z.strictObject({
+  todoId: zId,
+  recurrence: zTodoRecurrence,
+});
+export type TodoStoppedSibling = z.infer<typeof zTodoStoppedSibling>;
 export const zTodoReopen = z.strictObject({
   todoId: zId,
   undoNextTodoId: zId.optional(),
   expectedRevision: z.number().int().positive().optional(),
   restoreRecurrence: zTodoRecurrence.optional(),
+  restoreSiblings: z.array(zTodoStoppedSibling).max(100).optional(),
 });
 export type TodoReopenInput = z.input<typeof zTodoReopen>;
 export const zTodoComplete = z.strictObject({
@@ -242,6 +248,7 @@ export type TodoWritten = z.infer<typeof zTodoWritten>;
 export const zTodoCompleteResult = zTodoWritten.extend({
   nextTodoId: z.string().nullable().optional(),
   nextDueOn: z.string().nullable().optional(),
+  stoppedSiblings: z.array(zTodoStoppedSibling).optional(),
 });
 export type TodoCompleteResult = z.infer<typeof zTodoCompleteResult>;
 export const zTodoRescheduled = z.object({

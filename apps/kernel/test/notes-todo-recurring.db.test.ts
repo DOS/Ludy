@@ -590,5 +590,59 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
       const doneRemaining = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: remainingOpen.id });
       expect(doneRemaining.nextTodoId ?? null).toBeNull();
     }
+
+    // Stopping from a reopened 31st-of-month occurrence preserves the child's clamped byMonthDay: 31 on undo.
+    const month31Root = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Preserve clamped sibling rule on stopSeries undo',
+      dueOn: '2027-01-31',
+      timeZone: 'Asia/Ho_Chi_Minh',
+      recurrence: { freq: 'monthly', interval: 1 },
+    });
+    const monthFebChild = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: month31Root.todoId });
+    expect(monthFebChild.nextDueOn).toBe('2027-02-28');
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.reopen', { todoId: month31Root.todoId });
+    const stoppedMonth31 = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', {
+      todoId: month31Root.todoId,
+      stopSeries: true,
+    });
+    expect(stoppedMonth31.stoppedSiblings).toEqual([
+      { todoId: monthFebChild.nextTodoId, recurrence: { freq: 'monthly', interval: 1, byMonthDay: 31 } },
+    ]);
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.reopen', {
+      todoId: month31Root.todoId,
+      expectedRevision: stoppedMonth31.revision,
+      restoreRecurrence: { freq: 'monthly', interval: 1 },
+      restoreSiblings: stoppedMonth31.stoppedSiblings,
+    });
+    const monthMarChild = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', {
+      todoId: monthFebChild.nextTodoId as string,
+    });
+    expect(monthMarChild.nextDueOn).toBe('2027-03-31');
+
+    // Concurrent bulk reschedule and stopSeries across siblings serialize without PostgreSQL deadlock.
+    const lockRoot = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Deadlock-free reschedule vs stopSeries',
+      dueOn: '2027-10-01',
+      timeZone: 'Asia/Ho_Chi_Minh',
+      recurrence: { freq: 'daily', interval: 1 },
+    });
+    const lockChild = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: lockRoot.todoId });
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.reopen', { todoId: lockRoot.todoId });
+    const raceOutcomes = await Promise.allSettled([
+      o.exec<{ updated: number; todoIds: string[] }>(o.mine, 'notes.todo.reschedule', {
+        todoIds: [lockRoot.todoId, lockChild.nextTodoId as string],
+        dueOn: '2027-10-05',
+      }),
+      o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', {
+        todoId: lockChild.nextTodoId as string,
+        stopSeries: true,
+      }),
+    ]);
+    expect(raceOutcomes[1].status).toBe('fulfilled');
+    if (raceOutcomes[0].status === 'rejected') {
+      expect(String(raceOutcomes[0].reason)).not.toMatch(/deadlock/i);
+    }
+    const lockRootAfter = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: lockRoot.todoId });
+    expect(lockRootAfter.recurrence).toBeNull();
   });
 });
