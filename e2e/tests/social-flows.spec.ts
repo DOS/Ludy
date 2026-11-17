@@ -561,7 +561,9 @@ test('says AI drafting is off on a server without a model', async ({ page, reque
   await compose(page, 'Bài viết tay, không nhờ AI');
 
   await expect(page.getByText(/^Soạn cùng \p{Lu}\p{Ll}+$/u)).toBeVisible();
-  await expect(page.getByText('Máy chủ chưa cấu hình AI (AI_BASE_URL, AI_MODEL).')).toBeVisible();
+  // In plain words, with no setting names (#3652).
+  await expect(page.getByText(/chưa sẵn sàng: tính năng này chưa bật\. Liên hệ người quản trị hệ thống\./)).toBeVisible();
+  await expect(page.getByText('AI_BASE_URL')).toHaveCount(0);
   await expect(page.getByRole('button', { name: /^Nhờ \p{Lu}\p{Ll}+ soạn nháp$/u })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /^Nhờ \p{Lu}\p{Ll}+ viết lại$/u })).toHaveCount(0);
 });
