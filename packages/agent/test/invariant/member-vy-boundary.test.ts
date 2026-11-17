@@ -1376,7 +1376,7 @@ export function orgFeatureViolations(text: string): string[] {
 // The member-Vy names a file outside member-vy/ must not carry, and the notes feature keys (N8) it must not meter
 // outside the dedicated Stage A ModelPort adapter (note-ai-model.ts).
 export const MODEL_ADAPTERS = new Set(['note-ai-model.ts']);
-const ADAPTER_NOTES_KEYS = new Set(['notes.summary', 'notes.todo_suggest']);
+const ADAPTER_NOTES_KEYS = new Set(['notes.summary', 'notes.todo_suggest', 'notes.todo_plan', 'notes.organize']);
 const ADAPTER_NOTE_IMPORT_RE = /(?:^|\/)note-ai-model(?:\.[cm]?[jt]s)?$/;
 const isNoteAiModelSpecifier = (spec: string): boolean => ADAPTER_NOTE_IMPORT_RE.test(normalizeModuleSpecifier(spec));
 const DEFAULT_ADAPTER_EXPORTS = ['generateNoteSummaryText', 'generateTodoSuggestText'] as const;
@@ -2025,7 +2025,7 @@ export function modelAdapterViolations(text: string): string[] {
 
     const keyTok = consume();
     if (!keyTok || !isUnescapedString(keyTok) || !ADAPTER_NOTES_KEYS.has(keyTok.value)) {
-      out.add('metered() call must use a notes.summary or notes.todo_suggest literal key');
+      out.add('metered() call must use an allowed notes adapter literal key');
       return false;
     }
     if (!isPunct(peek(), ',')) {
@@ -2719,6 +2719,8 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     // meteredNotes + notesKeyLiterals + meter.ts exemption bounds (including template/multiline keys).
     expect(disallowedMeteredNotes('note-ai-model.ts', "await metered('notes.summary', () => generateText(cfg))")).toEqual([]);
     expect(disallowedMeteredNotes('note-ai-model.ts', 'await metered(`notes.todo_suggest`, () => generateText(cfg))')).toEqual([]);
+    expect(disallowedMeteredNotes('note-ai-model.ts', "await metered('notes.todo_plan', () => generateText(cfg))")).toEqual([]);
+    expect(disallowedMeteredNotes('note-ai-model.ts', "await metered('notes.organize', () => generateText(cfg))")).toEqual([]);
     expect(disallowedMeteredNotes('note-ai-model.ts', "await metered('notes.other', () => generateText(cfg))")).toEqual([
       'notes.other',
     ]);
@@ -2741,6 +2743,10 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
       expect(disallowedMeteredNotes(file, "await metered('notes.summary', fn); await metered('notes.todo_suggest', fn)")).toEqual([
         'notes.summary',
         'notes.todo_suggest',
+      ]);
+      expect(disallowedMeteredNotes(file, "await metered('notes.todo_plan', fn); await metered('notes.organize', fn)")).toEqual([
+        'notes.todo_plan',
+        'notes.organize',
       ]);
       expect(disallowedMeteredNotes(file, "const k = 'notes.summary'; m(k, fn); m('notes.todo_suggest', fn);")).toEqual([
         'notes.summary',
