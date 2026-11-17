@@ -20,7 +20,7 @@ import { zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceSeriesSync, zId,
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
 import { money, parseTaxCode } from '@crove/l10n-vn';
-import { checkDraft, computeDraft, isLateSale, type ComputedDraft, type DraftInput } from './domain/einvoice-draft.ts';
+import { checkDraft, computeDraft, isLateSale, maskBuyerIdentity, type ComputedDraft, type DraftInput } from './domain/einvoice-draft.ts';
 import { einvoiceDraftSuggestSource, einvoicePreviousInvoice } from './einvoice-suggest.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { databaseToday } from './period-lock.ts';
@@ -110,6 +110,9 @@ const selectLines = (ctx: Ctx) => ctx.trx.selectFrom('crove_finance.einvoice_dra
 type DraftRow = Awaited<ReturnType<ReturnType<typeof selectDrafts>['execute']>>[number];
 type LineRow = Awaited<ReturnType<ReturnType<typeof selectLines>['execute']>>[number];
 
+// The identity an individual buyer gave, from a draft's row (both columns or neither).
+const identityOf = (row: Pick<DraftRow, 'buyer_identity_kind' | 'buyer_identity'>) => (row.buyer_identity_kind && row.buyer_identity ? { kind: row.buyer_identity_kind, value: row.buyer_identity } : null);
+
 // A draft as the API gives it, from its row and its line rows: the amounts as the API writes them, and the checks run on what is stored.
 function buildDraft(row: DraftRow, lineRows: readonly LineRow[], today: string): EInvoiceDraft {
   const lines: EInvoiceDraftLine[] = [...lineRows]
@@ -130,7 +133,7 @@ function buildDraft(row: DraftRow, lineRows: readonly LineRow[], today: string):
     lateReason: row.late_reason,
     currency: row.currency,
     seriesId: row.series_id,
-    buyer: { kind: row.buyer_kind, taxCode: row.buyer_tax_code, name: row.buyer_name, address: row.buyer_address, email: row.buyer_email },
+    buyer: { kind: row.buyer_kind, taxCode: row.buyer_tax_code, name: row.buyer_name, address: row.buyer_address, email: row.buyer_email, identity: identityOf(row) },
     lines: lines.map((l) => ({ description: l.description, unit: l.unit, quantity: l.quantity, unitPrice: l.unitPrice, vatRate: l.vatRate })),
   };
   const computed: ComputedDraft = { lines: lines.map((l) => ({ ...l })), subtotal: plain(row.subtotal), vatAmount: plain(row.vat_amount), total: plain(row.total) };
@@ -144,7 +147,7 @@ function buildDraft(row: DraftRow, lineRows: readonly LineRow[], today: string):
     lateReason: row.late_reason,
     lateSale: isLateSale(row.sale_date, row.invoice_date),
     currency: row.currency,
-    buyer: { kind: row.buyer_kind, partyId: row.buyer_party_id, taxCode: row.buyer_tax_code, name: row.buyer_name, address: row.buyer_address, email: row.buyer_email },
+    buyer: { kind: row.buyer_kind, partyId: row.buyer_party_id, taxCode: row.buyer_tax_code, name: row.buyer_name, address: row.buyer_address, email: row.buyer_email, identity: identityOf(row) },
     lines,
     subtotal: plain(row.subtotal),
     vatAmount: plain(row.vat_amount),
@@ -182,6 +185,7 @@ export const einvoiceDraftList = defineQuery({
         state: row.state,
         date: row.invoice_date,
         buyerName: row.buyer_name,
+        buyerIdentity: ((identity) => (identity ? { kind: identity.kind, masked: maskBuyerIdentity(identity.value) } : null))(identityOf(row)),
         total: plain(row.total),
         issueCount: draft.issues.length,
         issuedNumber: row.issued_number,
@@ -229,6 +233,10 @@ export function toDraftInput(input: Pick<z.infer<typeof zEInvoiceDraftSave>, 'da
   };
   // A sale to a consumer carries no buyer details, whatever the form still held from before the kind was chosen.
   const consumer = input.buyer.kind === 'consumer';
+  // An identity belongs to an individual: a business keeps a tax code, so what the form still held from before the kind was changed is dropped. A passport is written in capitals and without spaces.
+  const given = input.buyer.identity ?? null;
+  const written = given ? (given.kind === 'passport' ? given.value.replace(/\s+/g, '').toUpperCase() : given.value.replace(/\s+/g, '')) : '';
+  const identity = input.buyer.kind === 'individual' && given && written !== '' ? { kind: given.kind, value: written } : null;
   // A sale date equal to the invoice's day is no sale date of its own; the reason belongs only to a late sale.
   const saleDate = input.saleDate && input.saleDate !== input.date ? input.saleDate : null;
   return {
@@ -238,8 +246,8 @@ export function toDraftInput(input: Pick<z.infer<typeof zEInvoiceDraftSave>, 'da
     currency: 'VND',
     seriesId: input.seriesId,
     buyer: consumer
-      ? { kind: input.buyer.kind, taxCode: null, name: null, address: null, email: null }
-      : { kind: input.buyer.kind, taxCode: taxCode(input.buyer.taxCode), name: blank(input.buyer.name), address: blank(input.buyer.address), email: blank(input.buyer.email) },
+      ? { kind: input.buyer.kind, taxCode: null, name: null, address: null, email: null, identity: null }
+      : { kind: input.buyer.kind, taxCode: taxCode(input.buyer.taxCode), name: blank(input.buyer.name), address: blank(input.buyer.address), email: blank(input.buyer.email), identity },
     lines: input.lines.map((l) => ({ description: l.description.trim(), unit: blank(l.unit), quantity: l.quantity, unitPrice: l.unitPrice, vatRate: l.vatRate })),
   };
 }
@@ -311,6 +319,8 @@ export const einvoiceDraftSave = defineCommand({
       buyer_name: draft.buyer.name,
       buyer_address: draft.buyer.address,
       buyer_email: draft.buyer.email,
+      buyer_identity_kind: draft.buyer.identity?.kind ?? null,
+      buyer_identity: draft.buyer.identity?.value ?? null,
       subtotal: computed.subtotal,
       vat_amount: computed.vatAmount,
       total: computed.total,
@@ -374,9 +384,9 @@ export const einvoiceDraftSave = defineCommand({
       if (pgCode(error) === '23514') throw new DomainError('EINVOICE_DRAFT_INVALID', 422, 'Bản nháp có giá trị không hợp lệ');
       throw error;
     }
-    // Facts without a name, an address, an email or a tax code: the ids and the counts.
+    // Facts without a name, an address, an email, a tax code or an identity: the ids and the counts (hasIdentity says only that one was given).
     // A late sale is in the facts with its date, and the reason is the person's own words under the later approval (finance.einvoice.issue).
-    ctx.audit({ draftId, legalEntityId: entity, lines: computed.lines.length, total: computed.total, created: input.draftId === null, ...(draft.saleDate ? { saleDate: draft.saleDate, lateSale: isLateSale(draft.saleDate, draft.date) } : {}) });
+    ctx.audit({ draftId, legalEntityId: entity, lines: computed.lines.length, total: computed.total, created: input.draftId === null, ...(draft.buyer.identity ? { hasIdentity: true } : {}), ...(draft.saleDate ? { saleDate: draft.saleDate, lateSale: isLateSale(draft.saleDate, draft.date) } : {}) });
     return loadDraft(ctx, draftId, today);
   },
 });

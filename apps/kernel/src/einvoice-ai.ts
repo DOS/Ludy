@@ -43,7 +43,7 @@ export function buyerOf(party: EInvoiceSuggestParty): NonNullable<EInvoiceSugges
   const taxCode = party.taxCode && info !== null && info.checksumValid !== false ? party.taxCode : null;
   // A field longer than the draft takes is left out, so one odd record does not refuse the lines as well.
   const within = (value: string | null, max: number) => (value !== null && value.length <= max ? value : null);
-  return { kind: party.kind === 'organization' ? 'business' : 'individual', partyId: party.id, taxCode, name: within(party.name, 400), address: within(party.address, 500), email: within(party.email, 254) };
+  return { kind: party.kind === 'organization' ? 'business' : 'individual', partyId: party.id, taxCode, name: within(party.name, 400), address: within(party.address, 500), email: within(party.email, 254), identity: null };
 }
 
 // The typed text, then as many whole lines of the invoice text as fit in what the model reads and the checks cut at (EINVOICE_DRAFT_TEXT_MAX).

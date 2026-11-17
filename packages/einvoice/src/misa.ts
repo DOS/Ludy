@@ -12,6 +12,7 @@
 // token is held in memory only, per credential. Amounts are the decimal strings the caller computed, written into the request as exact numbers, never through a JS number.
 import { createHash } from 'node:crypto';
 import { fromMinor, toMinor } from './decimal.ts';
+import { MISA_BUYER_IDENTITY_FIELDS } from './buyer-identity.ts';
 import { ADJUST_REPLACE_REASON_CODES, isReasonCode, type ReasonCode } from './reason-codes.ts';
 import {
   EInvoiceProviderError,
@@ -208,6 +209,9 @@ function invoiceData(request: EInvoiceRequest, series: string, original: EInvoic
   if (request.currency !== 'VND') return 'invalid_data';
   // An adjustment or a replacement carries a reason code of the list (#3571); without one, or with an unknown one, nothing is sent.
   if (original && kind && !isReasonCode(original.reasonCode, reasonCodes)) return 'invalid_data';
+  // A buyer's identity (#3678) goes in the field the data file names for its kind; with no name yet it is refused rather than dropped.
+  const identityField = request.buyer.identity ? MISA_BUYER_IDENTITY_FIELDS[request.buyer.identity.kind] : null;
+  if (request.buyer.identity && identityField === null) return 'invalid_data';
   if (request.lines.length === 0 || request.lines.length > MISA_LIMITS.maxLinesPerInvoice) return 'invalid_data';
   if (!/^[1-9]$/.test(request.templateNo) || !SYMBOL.test(request.symbol) || !SERIES.test(series)) return 'series_unknown';
   if (![request.subtotal, request.vatAmount, request.total].every((v) => DECIMAL.test(v))) return 'invalid_data';
@@ -263,6 +267,7 @@ function invoiceData(request: EInvoiceRequest, series: string, original: EInvoic
     BuyerTaxCode: buyer.taxCode ?? undefined,
     BuyerAddress: buyer.address ?? undefined,
     BuyerEmail: buyer.email ?? undefined,
+    ...(buyer.identity && identityField ? { [identityField]: buyer.identity.value } : {}),
     TotalSaleAmountOC: num(request.subtotal),
     TotalSaleAmount: num(request.subtotal),
     TotalDiscountAmountOC: num('0'),

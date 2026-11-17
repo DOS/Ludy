@@ -499,9 +499,11 @@ export type BankPartyRuleKind = (typeof BANK_PARTY_RULE_KINDS)[number];
 // A sales e-invoice draft (#2500, ADR-0044): its state, and the kind of buyer it is for (a business, a named individual, a consumer).
 export const EINVOICE_DRAFT_STATES = ['draft', 'submitting', 'pending', 'issued', 'rejected', 'failed'] as const;
 export const EINVOICE_BUYER_KINDS = ['business', 'individual', 'consumer'] as const;
+// What an individual buyer gives instead of a tax code (#3678): a CCCD, a passport number or a budget-relation unit code.
+export const EINVOICE_BUYER_IDENTITY_KINDS = ['cccd', 'passport', 'budget_code'] as const;
 export type EInvoiceDraftTable = Refine<
   G.FinanceEinvoiceDraftTable,
-  { state: Generated<(typeof EINVOICE_DRAFT_STATES)[number]>; buyer_kind: (typeof EINVOICE_BUYER_KINDS)[number]; legal_entity_id: LegalEntityColumn },
+  { state: Generated<(typeof EINVOICE_DRAFT_STATES)[number]>; buyer_kind: (typeof EINVOICE_BUYER_KINDS)[number]; buyer_identity_kind: (typeof EINVOICE_BUYER_IDENTITY_KINDS)[number] | null; legal_entity_id: LegalEntityColumn },
   'legal_entity_id'
 >;
 // Stock (#2512, ADR-0045 point 1): the kind of an item, the trade it is sold in, and where a move of stock comes from.
