@@ -412,20 +412,131 @@ const TOI_PRONOUN_PRECEDING = [
   'khi',
 ] as const;
 
+const VN_PERIOD_NAME_BEFORE_GUARDS = [
+  'anh',
+  'chị',
+  'em',
+  'bạn',
+  'cô',
+  'chú',
+  'bác',
+  'ông',
+  'bà',
+  'sếp',
+  'thầy',
+  'cháu',
+  'bé',
+  'cậu',
+  'mợ',
+  'dì',
+  'dượng',
+  'ngài',
+  'mr',
+  'mrs',
+  'ms',
+  'dr',
+  'cho',
+  'với',
+  'của',
+  'nhờ',
+  'cùng',
+  'giúp',
+  'giùm',
+  'thay',
+  'gặp',
+  'mời',
+  'đón',
+  'tìm',
+  'kêu',
+  'theo',
+  'về',
+  'hỏi',
+  'nhắc',
+  'gửi',
+  'bảo',
+  'nhắn',
+  'đưa',
+  'giao',
+  'gọi',
+  'nói',
+  'hẹn',
+  'chờ',
+  'đợi',
+  'chào',
+] as const;
+const VN_SANG_VERB_BEFORE_GUARDS = ['chuyển', 'dời', 'đổi', 'lùi', 'lịch'] as const;
+
 function wordBefore(words: readonly WordToken[], target: WordToken): WordToken | undefined {
   const idx = words.indexOf(target);
   return idx > 0 ? words[idx - 1] : undefined;
 }
 
-function matchDayPeriod(word: WordToken, allowEnglishShort = true, prevWord?: WordToken): DayPeriod | null {
-  if (vnMatch(word, 'sáng') || (allowEnglishShort && word.nfcLower === 'morning')) return 'morning';
-  if (vnMatch(word, 'trưa') || (allowEnglishShort && word.nfcLower === 'noon')) return 'noon';
-  if (vnMatch(word, 'chiều') || (allowEnglishShort && word.nfcLower === 'afternoon')) return 'afternoon';
-  if (vnMatch(word, 'đêm') || (allowEnglishShort && word.nfcLower === 'night')) return 'night';
+function wordAfter(words: readonly WordToken[], target: WordToken): WordToken | undefined {
+  const idx = words.indexOf(target);
+  return idx >= 0 && idx + 1 < words.length ? words[idx + 1] : undefined;
+}
+
+function isProperCapitalizedWord(raw: string): boolean {
+  return /^\p{Lu}\p{Ll}/u.test(raw);
+}
+
+function isVnPeriodGuardedAsNameOrVerb(
+  word: WordToken,
+  prevWord?: WordToken,
+  input?: string,
+  nextWord?: WordToken,
+): boolean {
+  const adjPrev = prevWord && (!input || spacesOnlyBetween(input, prevWord.end, word.start)) ? prevWord : undefined;
+  if (!adjPrev) return false;
+  if (vnMatchAny(adjPrev, ['buổi', 'vào', 'lúc']) || /^\d/.test(adjPrev.raw)) return false;
+
+  const properCap = isProperCapitalizedWord(word.raw);
+  if ((word.isAscii || properCap) && vnMatchAny(adjPrev, VN_PERIOD_NAME_BEFORE_GUARDS)) {
+    return true;
+  }
+  if (word.isAscii && word.folded === 'sang' && vnMatchAny(adjPrev, VN_SANG_VERB_BEFORE_GUARDS)) {
+    return true;
+  }
+  // Unaccented mid-clause names ("Minh Sang", "Tran Chieu") stay intact unless adjacent words are Title Case too.
+  if (word.isAscii && properCap) {
+    const adjNext = nextWord && (!input || spacesOnlyBetween(input, word.end, nextWord.start)) ? nextWord : undefined;
+    if (!adjNext || !isProperCapitalizedWord(adjNext.raw)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function matchDayPeriod(
+  word: WordToken,
+  allowEnglishShort = true,
+  prevWord?: WordToken,
+  input?: string,
+  nextWord?: WordToken,
+): DayPeriod | null {
+  if (allowEnglishShort && word.nfcLower === 'morning') return 'morning';
+  if (allowEnglishShort && word.nfcLower === 'noon') return 'noon';
+  if (allowEnglishShort && word.nfcLower === 'afternoon') return 'afternoon';
+  if (allowEnglishShort && word.nfcLower === 'night') return 'night';
   if (allowEnglishShort && word.nfcLower === 'evening') return 'evening';
+
+  if (vnMatch(word, 'sáng')) {
+    return isVnPeriodGuardedAsNameOrVerb(word, prevWord, input, nextWord) ? null : 'morning';
+  }
+  if (vnMatch(word, 'trưa')) {
+    return isVnPeriodGuardedAsNameOrVerb(word, prevWord, input, nextWord) ? null : 'noon';
+  }
+  if (vnMatch(word, 'chiều')) {
+    return isVnPeriodGuardedAsNameOrVerb(word, prevWord, input, nextWord) ? null : 'afternoon';
+  }
+  if (vnMatch(word, 'đêm')) {
+    return isVnPeriodGuardedAsNameOrVerb(word, prevWord, input, nextWord) ? null : 'night';
+  }
   if (vnMatch(word, 'tối')) {
     // Unaccented ASCII "toi" collides with "tôi" (I/me) after prepositions/verbs ("cho toi ngay mai", "nhac toi").
-    if (word.isAscii && prevWord && vnMatchAny(prevWord, TOI_PRONOUN_PRECEDING)) return null;
+    const adjPrev = prevWord && (!input || spacesOnlyBetween(input, prevWord.end, word.start)) ? prevWord : undefined;
+    if (word.isAscii && adjPrev && vnMatchAny(adjPrev, TOI_PRONOUN_PRECEDING)) return null;
+    if (isVnPeriodGuardedAsNameOrVerb(word, prevWord, input, nextWord)) return null;
     return 'evening';
   }
   return null;
@@ -776,6 +887,8 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
   }
 
   const words = tokenizeWords(input);
+  const matchPeriodWord = (word: WordToken, allowEnglishShort = false): DayPeriod | null =>
+    matchDayPeriod(word, allowEnglishShort, wordBefore(words, word), input, wordAfter(words, word));
 
   // Collect raw explicit clock candidates early so Step 4a can distinguish "cuối tháng 14:30" / "cuối tháng 9 giờ" from "cuối tháng 12".
   const timeCandidates: Array<{
@@ -860,7 +973,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     if (!tc) return false;
     if (!tc.usesShortG || tc.hasMinutesOrHalf) return true;
     const afterWord = findAdjacentWordAfter(input, words, tc.end, occupied);
-    return Boolean(afterWord && matchDayPeriod(afterWord, false, wordBefore(words, afterWord)));
+    return Boolean(afterWord && matchPeriodWord(afterWord, false));
   };
 
   // 4. Recurrence phrases (evaluated before dates/weekdays so "hàng tuần thứ hai" and "ngày 20 hàng tháng" stay unified)
@@ -1323,15 +1436,13 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     let period: DayPeriod | undefined;
     if (!tc.hasAmPm) {
       const afterWord = findAdjacentWordAfter(input, words, end, occupied);
-      const afterPeriod =
-        afterWord && afterClockPeriodOk(afterWord) ? matchDayPeriod(afterWord, false, wordBefore(words, afterWord)) : null;
+      const afterPeriod = afterWord && afterClockPeriodOk(afterWord) ? matchPeriodWord(afterWord, false) : null;
       if (afterWord && afterPeriod) {
         period = afterPeriod;
         end = afterWord.end;
       } else {
         const beforeWord = findAdjacentWordBefore(input, words, start, occupied);
-        const beforePeriod =
-          beforeWord && beforeClockPeriodOk(beforeWord) ? matchDayPeriod(beforeWord, false, wordBefore(words, beforeWord)) : null;
+        const beforePeriod = beforeWord && beforeClockPeriodOk(beforeWord) ? matchPeriodWord(beforeWord, false) : null;
         if (beforeWord && beforePeriod) {
           period = beforePeriod;
           start = beforeWord.start;
@@ -1464,7 +1575,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
         prev !== undefined &&
         spacesOnlyBetween(input, prev.end, coreStart) &&
         isWordSpanAvailable(prev) &&
-        matchDayPeriod(prev, false, words[startIdx - 2]) !== null;
+        matchPeriodWord(prev, false) !== null;
       const prefixStart = hasPrevPeriod && prev
         ? expandConnectorBefore(input, words, prev.start, [['vào', 'buổi'], ['buổi'], ['vào'], ['vào', 'ngày'], ['on']], occupied)
         : expandConnectorBefore(input, words, coreStart, [['vào', 'ngày'], ['vào'], ['on']], occupied);
@@ -1476,7 +1587,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
         apply: () => {
           let start = coreStart;
           if (prev && spacesOnlyBetween(input, prev.end, start) && isWordSpanAvailable(prev)) {
-            const p = matchDayPeriod(prev, false, words[startIdx - 2]);
+            const p = matchPeriodWord(prev, false);
             if (p) {
               contextPeriod = p;
               if ((parsedTime !== null && !parsedTime.hasAmPm) || (timeTokenDismissed && !hasExplicitClockRange)) {
@@ -1548,7 +1659,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
 
     // 7b. "this morning/afternoon/evening" / "tomorrow morning/afternoon/evening/night"
     if (w1 && contiguous(i, i + 1) && (w0.nfcLower === 'this' || w0.nfcLower === 'tomorrow')) {
-      const enPeriod = matchDayPeriod(w1, true);
+      const enPeriod = matchPeriodWord(w1, true);
       if (enPeriod) {
         const span = { start: w0.start, end: w1.end };
         if (isWordSpanAvailable(span)) {
@@ -1618,7 +1729,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     }
 
     // 7e. "sáng nay" / "trưa nay" / "chiều nay" / "tối nay" / "đêm nay" (plus "[vào] [buổi] <period> nay")
-    const pToday = matchDayPeriod(w0, false, words[i - 1]);
+    const pToday = matchPeriodWord(w0, false);
     if (pToday && w1 && contiguous(i, i + 1) && vnMatch(w1, 'nay')) {
       const span = { start: w0.start, end: w1.end };
       if (isWordSpanAvailable(span)) {
@@ -1652,7 +1763,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     // If the period half of "<period> nay" was absorbed into a clock ("9h sáng nay") or dismissed as time, "nay" stays a date ("today").
     if (vnMatch(w0, 'nay')) {
       const prev = words[i - 1];
-      const prevPeriod = prev ? matchDayPeriod(prev, false, words[i - 2]) : null;
+      const prevPeriod = prev ? matchPeriodWord(prev, false) : null;
       if (
         prev &&
         prevPeriod &&
@@ -1701,7 +1812,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
         i > 0 &&
         /^[A-Z]/.test(w0.raw) &&
         !(prev && /[.!?\n]/.test(input.slice(prev.end, w0.start))) &&
-        !(prev && spacesOnlyBetween(input, prev.end, w0.start) && matchDayPeriod(prev, false, words[i - 2]) !== null);
+        !(prev && spacesOnlyBetween(input, prev.end, w0.start) && matchPeriodWord(prev, false) !== null);
       if (!blockedBefore && !blockedAfter && !capitalizedMidSentence && queueDateRange(i, i, addLocalDays(today, 1), false)) {
         continue;
       }
@@ -2044,7 +2155,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
   const dismissedDateAnchorSpans = dismissedList.filter((t) => t.kind === 'date');
   for (const ds of [...dateSpans, ...recurrenceAnchorSpans, ...dismissedDateAnchorSpans]) {
     const beforeW = findAdjacentWordBefore(input, words, ds.start, occupied);
-    const beforePeriod = beforeW && isWordSpanAvailable(beforeW) ? matchDayPeriod(beforeW, false, wordBefore(words, beforeW)) : null;
+    const beforePeriod = beforeW && isWordSpanAvailable(beforeW) ? matchPeriodWord(beforeW, false) : null;
     if (beforeW && beforePeriod) {
       contextPeriod = beforePeriod;
       if (!parsedTime && !suppressDefaultPeriodTime) {
@@ -2064,7 +2175,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       continue;
     }
     const afterW = findAdjacentWordAfter(input, words, ds.end, occupied);
-    const afterPeriod = afterW && isWordSpanAvailable(afterW) ? matchDayPeriod(afterW, true, wordBefore(words, afterW)) : null;
+    const afterPeriod = afterW && isWordSpanAvailable(afterW) ? matchPeriodWord(afterW, true) : null;
     if (afterW && afterPeriod) {
       contextPeriod = afterPeriod;
       if (!parsedTime && !suppressDefaultPeriodTime) {
@@ -2088,7 +2199,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     const w1 = words[i + 1];
     if (!w0 || !w1 || !spacesOnlyBetween(input, w0.end, w1.start)) continue;
     if (!vnMatchAny(w0, ['buổi', 'vào'])) continue;
-    const p = matchDayPeriod(w1, false, w0);
+    const p = matchPeriodWord(w1, false);
     if (!p) continue;
     const spanStart = vnMatch(w0, 'buổi') ? expandConnectorBefore(input, words, w0.start, [['vào']], occupied) : w0.start;
     const span = { start: spanStart, end: w1.end };
@@ -2124,7 +2235,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       for (let wi = 0; wi < words.length; wi++) {
         const w = words[wi];
         if (!w || w.start < tok.start || w.end > tok.end) continue;
-        const p = w.nfcLower === 'tonight' ? 'evening' : matchDayPeriod(w, true, words[wi - 1]);
+        const p = w.nfcLower === 'tonight' ? 'evening' : matchPeriodWord(w, true);
         if (p && !hasOverlap(dismissedTimeSpans, w)) {
           contextPeriod = p;
           break;

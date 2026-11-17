@@ -1264,6 +1264,58 @@ describe('parseTodoQuickAdd (#3556)', () => {
       dueOn: '2026-11-17',
       dueTime: '19:00',
     });
+
+    // Person names ("Sang", "Sáng", "Chiều") and moving verbs ("chuyển sang") are preserved rather than parsed as periods
+    expect(parseTodoQuickAdd('Gọi anh Sang ngày mai', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Gọi anh Sang',
+      dueOn: '2026-11-18',
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Gọi anh Sáng ngày mai', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Gọi anh Sáng',
+      dueOn: '2026-11-18',
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Gọi cho Sang ngày mai', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Gọi cho Sang',
+      dueOn: '2026-11-18',
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Họp với Minh Sang ngày mai', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp với Minh Sang',
+      dueOn: '2026-11-18',
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Họp với chị Chiều ngày mai', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp với chị Chiều',
+      dueOn: '2026-11-18',
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Chuyen lich sang ngay mai', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Chuyen lich sang',
+      dueOn: '2026-11-18',
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Nhắc anh sáng mai họp', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Nhắc anh họp',
+      dueOn: '2026-11-18',
+      dueTime: '09:00',
+    });
+    expect(parseTodoQuickAdd('Họp sáng mai', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp',
+      dueOn: '2026-11-18',
+      dueTime: '09:00',
+    });
+    expect(parseTodoQuickAdd('Hop sang mai', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Hop',
+      dueOn: '2026-11-18',
+      dueTime: '09:00',
+    });
+    expect(parseTodoQuickAdd('Gọi anh. Sáng mai họp', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Gọi anh. họp',
+      dueOn: '2026-11-18',
+      dueTime: '09:00',
+    });
   });
 
   it('stays linear on 50k-character adversarial --, %, and tab inputs without ReDoS', () => {
