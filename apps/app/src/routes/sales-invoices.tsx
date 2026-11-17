@@ -6,7 +6,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useDeferredValue, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { BUYER_KINDS, EINVOICE_DRAFT_MAX_LINES, EINVOICE_SUGGEST_TEXT_MAX, vietnamToday, type BuyerKind, type DraftIssueCode, type EInvoiceDraft, type EInvoiceDraftForm, type EInvoiceDraftSummary, type EInvoicePrevious, type EInvoiceSuggested } from '@crove/kernel-contract';
+import { BUYER_IDENTITY_KINDS, BUYER_KINDS, EINVOICE_DRAFT_MAX_LINES, EINVOICE_SUGGEST_TEXT_MAX, vietnamToday, type BuyerIdentityKind, type BuyerKind, type DraftIssueCode, type EInvoiceDraft, type EInvoiceDraftForm, type EInvoiceDraftSummary, type EInvoicePrevious, type EInvoiceSuggested } from '@crove/kernel-contract';
 import { Alert, AlertDescription } from '@crove/ui/components/alert';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -48,12 +48,13 @@ interface FormState {
   saleDate: string;
   lateReason: string;
   seriesId: string;
-  buyer: { kind: BuyerKind; partyId: string | null; taxCode: string; name: string; address: string; email: string };
+  // An individual's identity, one of CCCD, passport or budget code ('' is none); never sent for another kind of buyer.
+  buyer: { kind: BuyerKind; partyId: string | null; taxCode: string; name: string; address: string; email: string; identityKind: BuyerIdentityKind | ''; identity: string };
   lines: LineState[];
 }
 
 const blankLine = (): LineState => ({ description: '', unit: '', quantity: '1', unitPrice: '', vatRate: '10%', ai: null });
-const blankForm = (seriesId: string): FormState => ({ draftId: null, buyerAi: false, date: vietnamToday(), saleDate: '', lateReason: '', seriesId, buyer: { kind: 'business', partyId: null, taxCode: '', name: '', address: '', email: '' }, lines: [blankLine()] });
+const blankForm = (seriesId: string): FormState => ({ draftId: null, buyerAi: false, date: vietnamToday(), saleDate: '', lateReason: '', seriesId, buyer: { kind: 'business', partyId: null, taxCode: '', name: '', address: '', email: '', identityKind: '', identity: '' }, lines: [blankLine()] });
 const fromDraft = (d: EInvoiceDraft): FormState => ({
   draftId: d.id,
   buyerAi: false,
@@ -61,7 +62,7 @@ const fromDraft = (d: EInvoiceDraft): FormState => ({
   saleDate: d.saleDate ?? '',
   lateReason: d.lateReason ?? '',
   seriesId: d.seriesId ?? '',
-  buyer: { kind: d.buyer.kind as BuyerKind, partyId: d.buyer.partyId, taxCode: d.buyer.taxCode ?? '', name: d.buyer.name ?? '', address: d.buyer.address ?? '', email: d.buyer.email ?? '' },
+  buyer: { kind: d.buyer.kind as BuyerKind, partyId: d.buyer.partyId, taxCode: d.buyer.taxCode ?? '', name: d.buyer.name ?? '', address: d.buyer.address ?? '', email: d.buyer.email ?? '', identityKind: d.buyer.identity?.kind ?? '', identity: d.buyer.identity?.value ?? '' },
   lines: d.lines.map((l) => ({ description: l.description, unit: l.unit ?? '', quantity: l.quantity, unitPrice: l.unitPrice, vatRate: l.vatRate, ai: null })),
 });
 const orNull = (value: string): string | null => (value.trim() === '' ? null : value.trim());
@@ -74,8 +75,17 @@ const toInput = (s: FormState): EInvoiceDraftForm => ({
   // A sale to a consumer carries no buyer details: what the form held before the kind was chosen is not sent.
   buyer:
     s.buyer.kind === 'consumer'
-      ? { kind: 'consumer', partyId: null, taxCode: null, name: null, address: null, email: null }
-      : { kind: s.buyer.kind, partyId: s.buyer.partyId, taxCode: orNull(s.buyer.taxCode), name: orNull(s.buyer.name), address: orNull(s.buyer.address), email: orNull(s.buyer.email) },
+      ? { kind: 'consumer', partyId: null, taxCode: null, name: null, address: null, email: null, identity: null }
+      : {
+          kind: s.buyer.kind,
+          partyId: s.buyer.partyId,
+          taxCode: orNull(s.buyer.taxCode),
+          name: orNull(s.buyer.name),
+          address: orNull(s.buyer.address),
+          email: orNull(s.buyer.email),
+          // Only an individual has one; a business keeps its tax code.
+          identity: s.buyer.kind === 'individual' && s.buyer.identityKind !== '' && orNull(s.buyer.identity) !== null ? { kind: s.buyer.identityKind, value: s.buyer.identity.trim() } : null,
+        },
   lines: s.lines.map((l) => ({ description: l.description, unit: orNull(l.unit), quantity: l.quantity.trim(), unitPrice: l.unitPrice.trim(), vatRate: l.vatRate })),
 });
 
@@ -96,7 +106,7 @@ function applySuggestion(s: FormState, proposal: EInvoiceSuggested): FormState {
   return {
     ...s,
     lines: lines.length > 0 ? lines : s.lines,
-    ...(buyer ? { buyerAi: true, buyer: { kind: buyer.kind, partyId: buyer.partyId, taxCode: buyer.taxCode ?? '', name: buyer.name ?? '', address: buyer.address ?? '', email: buyer.email ?? '' } } : {}),
+    ...(buyer ? { buyerAi: true, buyer: { kind: buyer.kind, partyId: buyer.partyId, taxCode: buyer.taxCode ?? '', name: buyer.name ?? '', address: buyer.address ?? '', email: buyer.email ?? '', identityKind: '', identity: '' } } : {}),
   };
 }
 
@@ -396,6 +406,24 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
             <Label htmlFor={`${id}-email`}>{t('email')}</Label>
             <Input id={`${id}-email`} type="email" value={buyer.email} maxLength={254} aria-invalid={bad('buyer.email')} onChange={(e) => setBuyer({ email: e.target.value })} />
           </div>
+          {/* An individual may give a personal ID number, a passport number or a budget unit code instead of a tax code (#3678): optional, one at a time. */}
+          {buyer.kind === 'individual' && (
+            <div className="space-y-1 sm:col-span-2" data-testid="invoice-buyer-identity">
+              <Label htmlFor={`${id}-identity`}>{t('identityLabel')}</Label>
+              <div className="flex flex-wrap gap-2">
+                <NativeSelect aria-label={t('identityKind')} className="w-52" value={buyer.identityKind} onChange={(e) => setBuyer({ identityKind: e.target.value as BuyerIdentityKind | '', ...(e.target.value === '' ? { identity: '' } : {}) })}>
+                  <NativeSelectOption value="">{t('identityNone')}</NativeSelectOption>
+                  {BUYER_IDENTITY_KINDS.map((k) => (
+                    <NativeSelectOption key={k} value={k}>
+                      {t(`identityKinds.${k}`)}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+                {buyer.identityKind !== '' && <Input id={`${id}-identity`} className="max-w-xs" value={buyer.identity} maxLength={20} autoComplete="off" aria-invalid={bad('buyer.identity')} onChange={(e) => setBuyer({ identity: e.target.value })} />}
+              </div>
+              <p className="text-xs text-subtle-foreground">{t('identityHint')}</p>
+            </div>
+          )}
         </div>
       )}
       {buyer.kind === 'consumer' && <p className="mt-3 text-xs text-subtle-foreground">{t('consumerHint')}</p>}

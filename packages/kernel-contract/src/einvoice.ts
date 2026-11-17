@@ -8,6 +8,11 @@ import { zId, zLocalDate } from './schemas.ts';
 export const BUYER_KINDS = ['business', 'individual', 'consumer'] as const;
 export type BuyerKind = (typeof BUYER_KINDS)[number];
 
+// What an individual buyer may give instead of a tax code (Decree 123/2020 as read in plan einvoice-issue.md section 3a, row 4): the personal ID number (CCCD, 12 digits), a passport
+// number or the code of a unit with a budget relation (7 digits), one at a time. Personal data (class `pii` in the finance manifest); the shapes are checked, never the person.
+export const BUYER_IDENTITY_KINDS = ['cccd', 'passport', 'budget_code'] as const;
+export type BuyerIdentityKind = (typeof BUYER_IDENTITY_KINDS)[number];
+
 // The most lines a draft holds (the providers' own limits are 400 or fewer).
 export const EINVOICE_DRAFT_MAX_LINES = 200;
 
@@ -27,11 +32,14 @@ export const DRAFT_ISSUE_CODES = [
   'BUYER_NAME_REQUIRED',
   'BUYER_ADDRESS_REQUIRED',
   'BUYER_EMAIL_INVALID',
+  'BUYER_IDENTITY_INVALID',
   'LINES_REQUIRED',
   'LINE_DESCRIPTION_REQUIRED',
   'LINE_QUANTITY_INVALID',
   'LINE_PRICE_INVALID',
   'LINE_VAT_RATE_INVALID',
+  // 8% on a date outside the periods the reduced rate applied (REDUCED_RATE_PERIODS), judged on the sale date, or the invoice date when it has none; an adjustment or a replacement is judged on the original's.
+  'LINE_VAT_RATE_REDUCED_OUTSIDE_PERIOD',
   'TOTAL_TOO_LARGE',
 ] as const;
 export type DraftIssueCode = (typeof DRAFT_ISSUE_CODES)[number];
@@ -42,6 +50,9 @@ export type DraftIssue = z.infer<typeof zDraftIssue>;
 const zText = (max: number) => z.string().trim().max(max);
 const zDecimal = z.string().regex(/^\d{1,12}(\.\d{1,6})?$/);
 
+export const zEInvoiceBuyerIdentity = z.strictObject({ kind: z.enum(BUYER_IDENTITY_KINDS), value: zText(20) });
+export type EInvoiceBuyerIdentity = z.infer<typeof zEInvoiceBuyerIdentity>;
+
 export const zEInvoiceBuyerInput = z.strictObject({
   kind: z.enum(BUYER_KINDS),
   // A customer of the org, when the buyer was picked from them.
@@ -50,6 +61,8 @@ export const zEInvoiceBuyerInput = z.strictObject({
   name: zText(400).nullable(),
   address: zText(500).nullable(),
   email: zText(254).nullable(),
+  // For an individual buyer only (the server clears it for any other kind): one of CCCD, passport or budget code. Optional.
+  identity: zEInvoiceBuyerIdentity.nullable().default(null),
 });
 
 export const zEInvoiceLineInput = z.strictObject({
@@ -126,6 +139,7 @@ export const zEInvoiceDraft = z.object({
     name: z.string().nullable(),
     address: z.string().nullable(),
     email: z.string().nullable(),
+    identity: zEInvoiceBuyerIdentity.nullable(),
   }),
   lines: z.array(zEInvoiceDraftLine),
   subtotal: z.string(),
@@ -145,6 +159,8 @@ export const zEInvoiceDraftSummary = z.object({
   state: z.string(),
   date: z.string(),
   buyerName: z.string().nullable(),
+  // The identity the buyer gave, masked (the kind and the last three characters): a list never shows the whole value.
+  buyerIdentity: z.strictObject({ kind: z.enum(BUYER_IDENTITY_KINDS), masked: z.string() }).nullable(),
   total: z.string(),
   issueCount: z.number().int(),
   issuedNumber: z.string().nullable(),

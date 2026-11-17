@@ -1136,6 +1136,8 @@ export interface FinanceEinvoiceDraftTable {
   channel_connection_id: string | null;
   sale_date: string | null;
   late_reason: string | null;
+  buyer_identity_kind: string | null;
+  buyer_identity: string | null;
 }
 
 /** crove_finance.einvoice_series */

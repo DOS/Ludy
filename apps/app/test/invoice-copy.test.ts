@@ -9,7 +9,7 @@ const invoice = (n: number, patch: Partial<Invoice['lines'][number]> = {}, party
   draftId: 'd1',
   date: '2026-10-01',
   number: '12',
-  buyer: { kind: 'business', partyId, taxCode: '0101234567', name: 'Công ty A', address: null, email: null },
+  buyer: { kind: 'business', partyId, taxCode: '0101234567', name: 'Công ty A', address: null, email: null, identity: null },
   lines: Array.from({ length: n }, (_, i) => ({ description: `Hàng ${i + 1}`, unit: null, quantity: '1', unitPrice: '1000', vatRate: '8%', vatAllowed: true, ...patch })),
 });
 const form = (lines: number, buyerPartyId: string | null = null) => ({
