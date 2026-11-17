@@ -8,21 +8,13 @@
 // `hr.payroll.payment.verify` is what finance's record command compares the stored proposal with, in the approver's context, so a proposal row written some other way than by the preparer
 // (raw SQL) cannot pay lines the run does not hold.
 import { PAYROLL_PAYMENT_COMMAND, zHrPaymentAmounts, zHrPaymentRequest, zHrPaymentVerify, type HrRunPaymentAmounts, type PayrollPaymentKind } from '@crove/kernel-contract';
-import { isCashOverLimit, money, toMoney, type Obligation } from '@crove/l10n-vn';
+import { isCashOverLimit, money, payrollPaymentReason, toMoney, type Obligation } from '@crove/l10n-vn';
 import { sql } from 'kysely';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
-import { buildRunPosting, buildRunPostingFromTotals, groupProblem, monthLabel, type StoredGroup } from './payroll-posting.ts';
+import { buildRunPosting, buildRunPostingFromTotals, groupProblem, type StoredGroup } from './payroll-posting.ts';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
-
-// Words of the reason on the voucher (lý do chi): the month and what is paid, never a name.
-const REASON: Record<PayrollPaymentKind, (month: string) => string> = {
-  net_pay: (month) => `Chi lương tháng ${monthLabel(month)}`,
-  insurance: (month) => `Nộp bảo hiểm xã hội, y tế, thất nghiệp tháng ${monthLabel(month)}`,
-  union: (month) => `Nộp kinh phí công đoàn tháng ${monthLabel(month)}`,
-  tax: (month) => `Nộp thuế thu nhập cá nhân tháng ${monthLabel(month)}`,
-};
 
 // The obligation of the kind in the run's entry, or a refusal when the run owes nothing of that kind (no union fee, no tax withheld).
 function obligationOf(obligations: readonly Obligation[], kind: PayrollPaymentKind): Obligation {
@@ -61,7 +53,7 @@ export const preparePayrollPayment = defineCommand({
       .executeTakeFirst();
     if (open) throw new DomainError('HR_PAYMENT_OPEN', 409, 'Khoản này của bảng lương đã có một đề xuất chi đang chờ duyệt');
     const cashLarge = cashLargeOf(input.kind, nets);
-    const reason = REASON[input.kind](payrollRun.month);
+    const reason = payrollPaymentReason(input.kind, payrollRun.month);
     const draft = await ctx.run<{ kind: string; command: string; title: string; payload: Record<string, unknown> }>('finance.payroll_payment.prepare', {
       runId: input.runId,
       paymentKind: input.kind,
