@@ -6,8 +6,8 @@ import { describe, expect, it } from 'vitest';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi } from '../src/i18n/messages/vi.ts';
 
-// An upper-case name with an underscore, such as CREDENTIAL_KEY, AI_BASE_URL or S3_PRESIGNED_URLS.
-const ENV_NAME = /[A-Z]{3,}_[A-Z_]{2,}/;
+// An upper-case name with an underscore, such as CREDENTIAL_KEY, AI_BASE_URL, AI_VISION or S3_PRESIGNED_URLS.
+const ENV_NAME = /\b[A-Z][A-Z0-9]*_[A-Z0-9_]{2,}\b/;
 // Words that name the operator's machinery.
 const JARGON = /tiến trình nền|background process/i;
 
