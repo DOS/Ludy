@@ -263,6 +263,7 @@ export type PublicSignViewState =
       state: 'already_completed' | 'declined' | 'expired' | 'voided';
       title: string;
       status: string;
+      signerRole?: SignSignerRole;
     };
 
 export interface PublicFieldSubmission {
@@ -427,7 +428,7 @@ export const publicSignApi = {
         message: typeof raw.message === 'string' ? raw.message : null,
         signerName: typeof raw.signerName === 'string' ? raw.signerName : String(legacySigner?.name ?? ''),
         roleLabel: typeof raw.roleLabel === 'string' ? raw.roleLabel : String(legacySigner?.roleLabel ?? ''),
-        signerRole: ((raw.signerRole ?? legacySigner?.signerRole ?? 'signer') as SignSignerRole),
+        signerRole: raw.signerRole === 'approver' || legacySigner?.signerRole === 'approver' ? 'approver' : 'signer',
         expiresAt: typeof raw.expiresAt === 'string' ? raw.expiresAt : '',
         pageCount: Number(raw.pageCount ?? 1),
         ...(Array.isArray(raw.pageDimensions) ? { pageDimensions: raw.pageDimensions as Array<{ pageNumber: number; widthPt: number; heightPt: number }> } : {}),

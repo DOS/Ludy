@@ -24,6 +24,7 @@ export const zSignInviteMailPayload = z.strictObject({
   signerId: zId,
   docTitle: z.string().min(1).max(300),
   roleLabel: z.string().min(1).max(120),
+  signerRole: z.enum(['signer', 'approver']).optional(),
   expiresAt: z.string().min(1).max(64).nullable(),
 });
 
@@ -97,7 +98,15 @@ function formatViTime(iso: string | null): string | null {
 
 export function renderSignInviteMail(
   raw: unknown,
-  context: { publicUrl: string; brand?: string; token: string; signerName?: string; message?: string | null; isReminder?: boolean },
+  context: {
+    publicUrl: string;
+    brand?: string;
+    token: string;
+    signerName?: string;
+    signerRole?: 'signer' | 'approver';
+    message?: string | null;
+    isReminder?: boolean;
+  },
 ): RenderedSignMail {
   const mail = zSignInviteMailPayload.parse(raw);
   if (!SIGN_TOKEN_PATTERN.test(context.token)) {
@@ -107,22 +116,41 @@ export function renderSignInviteMail(
   const orgName = oneLine(mail.orgName, 200);
   const title = oneLine(mail.docTitle, 300);
   const roleLabel = oneLine(mail.roleLabel, 120);
+  const isApprover = (context.signerRole ?? mail.signerRole) === 'approver';
   const signerName = context.signerName ? oneLine(context.signerName, 200) : null;
   const note = context.message ? oneLine(context.message, 1000) : null;
   const expiryTime = formatViTime(mail.expiresAt);
   const url = `${cleanBaseUrl(context.publicUrl)}${SIGN_PAGE_PATH}#${context.token}`;
-  const heading = context.isReminder ? `${orgName} nhac ban ky tai lieu` : `${orgName} gui ban tai lieu can ky`;
+  const heading = isApprover
+    ? context.isReminder
+      ? `${orgName} nhac ban phe duyet tai lieu`
+      : `${orgName} gui ban tai lieu can phe duyet`
+    : context.isReminder
+      ? `${orgName} nhac ban ky tai lieu`
+      : `${orgName} gui ban tai lieu can ky`;
   const greeting = signerName ? `Xin chao ${signerName},` : 'Xin chao,';
+  const actionLine = isApprover
+    ? `${orgName} moi ban xem va phe duyet tai lieu "${title}" (vai tro: ${roleLabel}).`
+    : `${orgName} moi ban xem va ky tai lieu "${title}" (vai tro: ${roleLabel}).`;
+  const htmlActionLine = isApprover
+    ? `<strong>${escapeHtml(orgName)}</strong> gui ban xem va phe duyet tai lieu <strong>${escapeHtml(title)}</strong> (vai tro: ${escapeHtml(roleLabel)}).`
+    : `<strong>${escapeHtml(orgName)}</strong> gui ban xem va ky tai lieu <strong>${escapeHtml(title)}</strong> (vai tro: ${escapeHtml(roleLabel)}).`;
+  const expiryLabel = isApprover ? 'Han phe duyet den' : 'Han ky den';
+  const openLine = isApprover ? `Mo tai lieu de xem va phe duyet: ${url}` : `Mo tai lieu de ky: ${url}`;
+  const ctaLabel = isApprover ? 'Xem va phe duyet tai lieu' : 'Xem va ky tai lieu';
+  const securityFooter = isApprover
+    ? 'Lien ket mo trang phe duyet chi dung mot lan va duoc truyen an toan qua doan ma hoa URL.'
+    : 'Lien ket mo trang ky chi dung mot lan va duoc truyen an toan qua doan ma hoa URL.';
 
   const textLines = [
     heading,
     '',
     greeting,
-    `${orgName} moi ban xem va ky tai lieu "${title}" (vai tro: ${roleLabel}).`,
+    actionLine,
     ...(note ? ['', `Loi nhan: ${note}`] : []),
-    ...(expiryTime ? [`Han ky den: ${expiryTime} (gio Viet Nam)`] : []),
+    ...(expiryTime ? [`${expiryLabel}: ${expiryTime} (gio Viet Nam)`] : []),
     '',
-    `Mo tai lieu de ky: ${url}`,
+    openLine,
     '',
     `Email tu ${brand}. Lien ket chi dung mot lan.`,
   ];
@@ -132,11 +160,11 @@ export function renderSignInviteMail(
     <p style="margin:0 0 8px;font-size:12px;font-weight:600;color:#64748b;letter-spacing:.04em;text-transform:uppercase">${escapeHtml(brand)}</p>
     <h1 style="margin:0 0 16px;font-size:20px;line-height:1.35;color:#0f172a">${escapeHtml(heading)}</h1>
     <p style="margin:0 0 12px;font-size:15px;line-height:1.6">${escapeHtml(greeting)}</p>
-    <p style="margin:0 0 16px;font-size:15px;line-height:1.6"><strong>${escapeHtml(orgName)}</strong> gui ban xem va ky tai lieu <strong>${escapeHtml(title)}</strong> (vai tro: ${escapeHtml(roleLabel)}).</p>
+    <p style="margin:0 0 16px;font-size:15px;line-height:1.6">${htmlActionLine}</p>
     ${note ? `<div style="margin:0 0 16px;padding:12px 14px;background:#f8fafc;border-left:3px solid #cbd5e1;font-size:14px;color:#334155">${escapeHtml(note)}</div>` : ''}
-    ${expiryTime ? `<p style="margin:0 0 20px;font-size:13px;color:#475569">Han ky den: <strong>${escapeHtml(expiryTime)} (gio Viet Nam)</strong></p>` : ''}
-    <p style="margin:0 0 24px"><a href="${escapeHtml(url)}" style="display:inline-block;padding:12px 22px;background:#0f172a;color:#ffffff;text-decoration:none;border-radius:8px;font-size:14px;font-weight:600">Xem va ky tai lieu</a></p>
-    <p style="margin:0;font-size:12px;color:#64748b">Lien ket mo trang ky chi dung mot lan va duoc truyen an toan qua doan ma hoa URL.</p>
+    ${expiryTime ? `<p style="margin:0 0 20px;font-size:13px;color:#475569">${escapeHtml(expiryLabel)}: <strong>${escapeHtml(expiryTime)} (gio Viet Nam)</strong></p>` : ''}
+    <p style="margin:0 0 24px"><a href="${escapeHtml(url)}" style="display:inline-block;padding:12px 22px;background:#0f172a;color:#ffffff;text-decoration:none;border-radius:8px;font-size:14px;font-weight:600">${ctaLabel}</a></p>
+    <p style="margin:0;font-size:12px;color:#64748b">${securityFooter}</p>
   </div>
 </body></html>`;
 
@@ -185,7 +213,7 @@ export function renderSignOtpMail(
 
 export function renderSignCompletedMail(
   raw: unknown,
-  context: { publicUrl: string; brand?: string },
+  context: { publicUrl: string; brand?: string; pdfAttached?: boolean; certAttached?: boolean },
 ): RenderedSignMail {
   const mail = zSignCompletedMailPayload.parse(raw);
   const brand = oneLine(context.brand ?? 'Ludy', 80);
@@ -194,11 +222,25 @@ export function renderSignCompletedMail(
   const formattedCompleted = formatViTime(mail.completedAtIso);
   const completedLabel = formattedCompleted ? `${formattedCompleted} (gio Viet Nam)` : mail.completedAtIso;
   const verifyUrl = `${cleanBaseUrl(context.publicUrl)}${SIGN_PAGE_PATH}`;
+  const attachmentText =
+    context.pdfAttached === true
+      ? context.certAttached === false
+        ? 'Ban PDF da niem phong duoc dinh kem trong email nay. Tep chung thu kiem toan dang JSON khong the dinh kem; vui long doi chieu ma chung thu va ma SHA-256 ben duoi.'
+        : 'Ban PDF da niem phong va chung thu kiem toan dang JSON duoc dinh kem trong email nay.'
+      : context.pdfAttached === false
+        ? context.certAttached === true
+          ? 'Ban PDF da niem phong khong the dinh kem trong email nay, chi dinh kem tep chung thu kiem toan dang JSON. Vui long lien he nguoi gui hoac to chuc gui tai lieu de nhan ban PDF va doi chieu ma SHA-256 ben duoi.'
+          : 'Ban PDF da niem phong khong the dinh kem trong email nay. Vui long lien he nguoi gui hoac to chuc gui tai lieu de nhan ban PDF va doi chieu ma SHA-256 ben duoi.'
+        : null;
+  const attachmentHtml = attachmentText
+    ? `\n    <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:#334155">${escapeHtml(attachmentText)}</p>`
+    : '';
 
   const text = [
     `Hoan tat ky tai lieu "${title}"`,
     '',
     `Tai lieu "${title}" cua ${orgName} da duoc tat ca ${mail.signerCount} ben ky hoan tat vao ${completedLabel}.`,
+    ...(attachmentText ? [attachmentText] : []),
     `Ma chung thu xac thuc: ${mail.certificateCode}`,
     `Ma SHA-256 ban da niem phong: ${mail.sealedSha256}`,
     '',
@@ -211,7 +253,7 @@ export function renderSignCompletedMail(
   <div style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;padding:28px">
     <p style="margin:0 0 8px;font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase">${escapeHtml(brand)}</p>
     <h1 style="margin:0 0 14px;font-size:20px;color:#0f172a">Tai lieu da duoc ky hoan tat</h1>
-    <p style="margin:0 0 16px;font-size:15px;line-height:1.6">Tai lieu <strong>${escapeHtml(title)}</strong> tu <strong>${escapeHtml(orgName)}</strong> da duoc ${mail.signerCount} ben hoan tat ky va niem phong (${escapeHtml(completedLabel)}).</p>
+    <p style="margin:0 0 16px;font-size:15px;line-height:1.6">Tai lieu <strong>${escapeHtml(title)}</strong> tu <strong>${escapeHtml(orgName)}</strong> da duoc ${mail.signerCount} ben hoan tat ky va niem phong (${escapeHtml(completedLabel)}).</p>${attachmentHtml}
     <div style="margin:0 0 18px;padding:14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;line-height:1.6;color:#334155">
       <div><strong>Ma chung thu:</strong> ${escapeHtml(mail.certificateCode)}</div>
       <div style="word-break:break-all"><strong>SHA-256 PDF:</strong> <code>${escapeHtml(mail.sealedSha256)}</code></div>
@@ -231,6 +273,7 @@ export async function queueSignInviteEmail(
     orgName: string;
     envelopeId: string;
     signerId: string;
+    signerRole?: 'signer' | 'approver';
     to: string;
     docTitle: string;
     roleLabel: string;
@@ -242,11 +285,19 @@ export async function queueSignInviteEmail(
     orgName: oneLine(input.orgName, 200) || 'Ludy',
     envelopeId: input.envelopeId,
     signerId: input.signerId,
+    ...(input.signerRole ? { signerRole: input.signerRole } : {}),
     docTitle: oneLine(input.docTitle, 300) || 'Tai lieu',
-    roleLabel: oneLine(input.roleLabel, 120) || 'Nguoi ky',
+    roleLabel: oneLine(input.roleLabel, 120) || (input.signerRole === 'approver' ? 'Nguoi duyet' : 'Nguoi ky'),
     expiresAt: input.expiresAt,
   });
-  const prefix = input.templateKey === SIGN_REMIND_MAIL_TEMPLATE ? 'Nhac ky' : 'Moi ky';
+  const prefix =
+    input.signerRole === 'approver'
+      ? input.templateKey === SIGN_REMIND_MAIL_TEMPLATE
+        ? 'Nhac duyet'
+        : 'Moi duyet'
+      : input.templateKey === SIGN_REMIND_MAIL_TEMPLATE
+        ? 'Nhac ky'
+        : 'Moi ky';
   const mail = await createMailMessage(ctx, {
     stream: 'transactional',
     source: input.source,

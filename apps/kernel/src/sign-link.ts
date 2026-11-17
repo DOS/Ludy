@@ -270,6 +270,7 @@ export async function runSignView(
       status: 'ok',
       view: {
         ...view,
+        signerRole: view.signerRole === 'approver' || resolved.signerRole === 'approver' ? 'approver' : 'signer',
         pageDimensions: normalizeSignPageDimensions(view.pageDimensions),
       },
     };
