@@ -5,7 +5,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { SeriesOpenItem } from '@crove/kernel-contract';
+import { vnDateOf, type SeriesOpenItem } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
@@ -35,7 +35,7 @@ export function MeetingSeries({ meetingId, isRecorder, startedAt }: { meetingId:
         <Card data-testid="series-open-items">
           <CardHeader>
             <CardTitle className="text-base font-medium">{t('title')}</CardTitle>
-            <CardDescription className="text-xs text-muted-foreground">{t('from', { title: data.previous.title, date: data.previous.startedAt.slice(0, 10) })}</CardDescription>
+            <CardDescription className="text-xs text-muted-foreground">{t('from', { title: data.previous.title, date: vnDateOf(data.previous.startedAt) })}</CardDescription>
           </CardHeader>
           <CardContent>
             {items.length === 0 ? null : (
@@ -77,7 +77,7 @@ function OpenItem({ item, meetingId, isRecorder, who }: { item: SeriesOpenItem; 
       <span className="font-medium">{item.title}</span>
       {who !== '' && <span className="text-muted-foreground">{who}</span>}
       {item.assigned ? item.taskStatus && <Badge variant="outline">{t(`status.${item.taskStatus}`)}</Badge> : <Badge variant="secondary">{t('unassigned')}</Badge>}
-      {item.due && <span className="text-xs text-muted-foreground">{t('due', { date: item.due.slice(0, 10) })}</span>}
+      {item.due && <span className="text-xs text-muted-foreground">{t('due', { date: vnDateOf(item.due) })}</span>}
       {isRecorder &&
         (carry.isSuccess && carry.data ? (
           <span className="text-xs text-muted-foreground">{t('carried')}</span>

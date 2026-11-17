@@ -10,6 +10,7 @@
 import { z } from 'zod';
 import { zAskStatus } from './meeting-ask.ts';
 import { zSeriesOpenItem } from './meetings.ts';
+import { zonedDate } from './calendar.ts';
 import { zId } from './schemas.ts';
 
 export const BRIEF_DECISIONS_MAX = 8;
@@ -92,6 +93,13 @@ export interface BriefLine {
 }
 
 const TEXT_CHARS = 300;
+const VN = 'Asia/Ho_Chi_Minh';
+
+/** The Vietnam calendar day (YYYY-MM-DD) of an ISO instant: a day a task is due is 00:00 there, which is the evening of the day before in UTC, so a plain slice of the instant is a day early. */
+export const vnDateOf = (iso: string): string => zonedDate(VN, Date.parse(iso));
+
+/** The day an open item is due, as the page shows it and the model is given it: the live task's due day when it has one (it is what the task says now), else the day said in the meeting. */
+export const briefItemDue = (item: { due: string | null; whenDate: string | null }): string | null => (item.due !== null ? vnDateOf(item.due) : item.whenDate);
 const oneLine = (value: string, max: number): string => Array.from(value.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\s]+/gu, ' ').trim()).slice(0, max).join('');
 // A decimal string with the integer part grouped by dots, the way amounts are written here ("15.000.000"); a fraction of zeros is dropped and any other fraction kept as it is. No arithmetic.
 export function groupedAmount(amount: string): string {
@@ -115,7 +123,7 @@ export function briefLines(facts: BriefFacts): BriefLine[] {
       const parts = [
         item.assigned ? 'accepted as a task' : 'not given to anyone yet',
         ...(owner !== '' ? [`owner: ${owner}`] : []),
-        ...(item.whenDate !== null ? [`due: ${item.whenDate}`] : item.due !== null ? [`due: ${item.due.slice(0, 10)}`] : []),
+        ...(briefItemDue(item) !== null ? [`due: ${briefItemDue(item)}`] : []),
         ...(item.taskStatus !== null ? [`status: ${STATUS_TEXT[item.taskStatus] ?? item.taskStatus}`] : []),
       ];
       lines.push({ kind: 'item', text: `Open item: ${oneLine(item.title, TEXT_CHARS)} (${parts.join('; ')})`, source });

@@ -2595,6 +2595,7 @@ export const en = {
       closeOn: 'expected to close {date}',
       openDeals: 'Open the deals list',
       openContacts: 'Open the contacts',
+      nothing: 'Nothing to prepare for this meeting yet.',
       show: 'Show the preparation',
       hide: 'Hide the preparation',
       submit: 'Ask Vy for a few sentences',

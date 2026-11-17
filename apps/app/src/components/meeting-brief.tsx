@@ -7,7 +7,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { briefLines, type BriefAnswer, type BriefFacts, type BriefLine, type BriefTarget } from '@crove/kernel-contract';
+import { briefItemDue, briefLines, vnDateOf, type BriefAnswer, type BriefFacts, type BriefLine, type BriefTarget } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
@@ -29,20 +29,27 @@ export function briefFailureKey(code: string | null): (typeof KNOWN_FAILURES)[nu
 
 const target = (t: { meetingId: string } | { agendaId: string }): BriefTarget => ('meetingId' in t ? { meetingId: t.meetingId, agendaId: null } : { meetingId: null, agendaId: t.agendaId });
 
-export function MeetingBrief({ slug, ...which }: { slug: string } & ({ meetingId: string } | { agendaId: string })) {
+export function MeetingBrief({ slug, emptyNote = false, ...which }: { slug: string; emptyNote?: boolean } & ({ meetingId: string } | { agendaId: string })) {
   const t = useTranslations('meetings.brief');
   const input = target(which);
   const facts = useQuery({ ...orpc.meetings.brief.facts.queryOptions({ input }), ...READ_ONCE });
   const data = facts.data;
-  // No fact, no card: nothing is shown for a meeting with nothing to say, or whose previous meeting the member did not read.
-  if (!data || data.empty) return null;
+  // No fact, no card: nothing is shown for a meeting with nothing to say, or whose previous meeting the member did not read. Opened by a click (an upcoming event's card), one line says so.
+  if (!data) return null;
+  if (data.empty) {
+    return emptyNote ? (
+      <p className="text-xs text-muted-foreground" data-testid="brief-nothing">
+        {t('nothing')}
+      </p>
+    ) : null;
+  }
   return (
     <Card data-testid="meeting-brief">
       <CardHeader>
         <CardTitle className="text-base font-medium">{t('title')}</CardTitle>
         {data.previous && (
           <CardDescription className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <span>{t('from', { title: data.previous.title, date: data.previous.startedAt.slice(0, 10) })}</span>
+            <span>{t('from', { title: data.previous.title, date: vnDateOf(data.previous.startedAt) })}</span>
             <Link to="/o/$slug/meetings/$id" params={{ slug, id: data.previous.meetingId }} className="font-medium text-link underline" data-testid="brief-open-previous">
               {t('openPrevious')}
             </Link>
@@ -97,7 +104,7 @@ function Facts({ slug, facts }: { slug: string; facts: BriefFacts }) {
                   <span className="font-medium">{item.title}</span>
                   {who !== '' && <span className="text-muted-foreground">{who}</span>}
                   {item.assigned ? item.taskStatus && <Badge variant="outline">{series(`status.${item.taskStatus}`)}</Badge> : <Badge variant="secondary">{series('unassigned')}</Badge>}
-                  {item.due && <span className="text-xs text-muted-foreground">{series('due', { date: item.due.slice(0, 10) })}</span>}
+                  {briefItemDue(item) !== null && <span className="text-xs text-muted-foreground">{series('due', { date: briefItemDue(item) as string })}</span>}
                 </li>
               );
             })}
@@ -127,7 +134,7 @@ function Facts({ slug, facts }: { slug: string; facts: BriefFacts }) {
         </section>
       )}
       {facts.customer && deals.length === 0 && (
-        <Link to="/o/$slug/contacts" params={{ slug }} className="text-sm text-link underline" data-testid="brief-customer-link">
+        <Link to="/o/$slug/contacts" params={{ slug }} className="text-sm text-link underline" title={t('openContacts')} data-testid="brief-customer-link">
           {facts.customer.name}
         </Link>
       )}
@@ -218,7 +225,7 @@ export function AgendaBrief({ slug, agendaId }: { slug: string; agendaId: string
       <Button size="sm" variant="ghost" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
         {open ? t('hide') : t('show')}
       </Button>
-      {open && <MeetingBrief slug={slug} agendaId={agendaId} />}
+      {open && <MeetingBrief slug={slug} agendaId={agendaId} emptyNote />}
     </div>
   );
 }

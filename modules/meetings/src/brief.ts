@@ -25,13 +25,12 @@ import {
   type BriefStatus,
 } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { vyReason } from './ask.ts';
 import { openItemsOf, previousMeetingOf } from './series.ts';
 import { isSummaryEnabled } from './summary-run.ts';
 import { ROLES, openMeeting, userOf } from './transcript.ts';
 
 export const BRIEF_FEATURE = 'meetings.brief';
-const MODULE = 'meetings';
-
 type Trx = QueryContext['trx'];
 
 // The meeting or the calendar event the brief is for: its series, when it starts (the previous meeting is the latest one before that) and the meeting itself when it is recorded.
@@ -144,23 +143,7 @@ export const briefStatus = defineQuery({
   access: ROLES,
   handler: async (ctx): Promise<BriefStatus> => {
     userOf(ctx.actor);
-    let reason: BriefStatus['reason'] = null;
-    if (!isSummaryEnabled()) reason = 'off';
-    else {
-      const allowed = await sql<{ ok: boolean }>`SELECT crove_kernel.ctx_vy_use() AS ok`.execute(ctx.trx);
-      if (allowed.rows[0]?.ok !== true) reason = 'forbidden';
-      else {
-        const stopped = await sql<{ stopped: boolean }>`
-          SELECT crove_kernel.global_kill_switch_on('ai') OR EXISTS (
-            SELECT 1 FROM crove_kernel.kill_switch k
-            WHERE k.org_id = ${ctx.orgId}::uuid AND k.released_at IS NULL AND (k.scope = 'org' OR (k.scope = 'module' AND k.target = ${MODULE}))) AS stopped`.execute(ctx.trx);
-        if (stopped.rows[0]?.stopped === true) reason = 'paused';
-        else {
-          const spent = await sql<{ spent: boolean }>`SELECT crove_kernel.ai_budget_exhausted(${ctx.orgId}::uuid, ${MODULE}, NULL::uuid) AS spent`.execute(ctx.trx);
-          if (spent.rows[0]?.spent === true) reason = 'budget';
-        }
-      }
-    }
+    const reason = await vyReason(ctx);
     return zBriefStatus.parse({ enabled: reason === null, reason, estimate: null });
   },
 });

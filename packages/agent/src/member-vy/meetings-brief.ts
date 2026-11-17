@@ -9,18 +9,20 @@
 // string between tags named with a random value of the run, and nothing in the answer is acted on).
 // Nothing here reads a database, names a table or command, or persists anything (the boundary test pins that).
 import { privateText, revealPrivateText } from '../private-text.ts';
-import { AskError, ASK_LIMITS, checkAnswer, type CheckedAnswer } from './meeting-ask.ts';
+import { AskError, ASK_LIMITS, checkAnswer, figuresIn, sameFigure, type CheckedAnswer, type CheckedSentence } from './meeting-ask.ts';
 import type { BoundPorts } from './ports.ts';
 import { runFeature } from './run-feature.ts';
 
 export const BRIEF_LIMITS = {
   // At most this many sentences are kept ("a two- or three-line summary"); more are dropped and counted.
   sentences: 3,
-  // The most of one fact the model is given (a fact is a line; a longer one is cut in the prompt only, the checks read the whole fact).
-  factChars: 400,
+  // The most of one sentence (the contract's bound, BRIEF_SENTENCE_CHARS_MAX): a longer one is dropped, never cut.
+  sentenceChars: 400,
+  // The most of one fact the model is given (a fact is a line; a longer one is cut in the prompt only, the checks read the whole fact). A deal line is the longest: a name, a title and its stage, amount and day.
+  factChars: 600,
   facts: 23,
-  // The data sent to the model, in UTF-8 bytes: 23 facts cut at 400 characters fit well inside it; the check is a guard, never reached by a valid input.
-  sourceBytes: 40_000,
+  // The data sent to the model, in UTF-8 bytes: 23 facts cut at 600 characters (up to 3 bytes each) fit inside it; the check is a guard, never reached by a valid input.
+  sourceBytes: 60_000,
 } as const;
 
 // A fact the member can see, as the model is given it: numbered from 1, in the order the page lists them.
@@ -39,6 +41,36 @@ export class BriefError extends Error {
   }
 }
 
+// A date as people write it: "2026-12-01", "01/12/2026" or "1/12" (day first, as Vietnamese write it; the year may be left out).
+const DATE = /(?<![\d./-])(?:\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{2,4}|\d{1,2}\/\d{1,2})(?![\d/]|-\d)/gu;
+interface Day {
+  y: number | null;
+  m: number;
+  d: number;
+}
+function daysIn(text: string): Day[] {
+  return [...text.matchAll(DATE)].map((hit) => {
+    const iso = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(hit[0]);
+    if (iso) return { y: Number(iso[1]), m: Number(iso[2]), d: Number(iso[3]) };
+    const [d = 0, m = 0, y] = hit[0].split('/').map(Number);
+    return { y: y === undefined ? null : y < 100 ? 2000 + y : y, m, d };
+  });
+}
+const withoutDays = (text: string): string => text.replace(DATE, ' ');
+
+/**
+ * Whether the dates and the other figures of a kept sentence are the cited facts' own. A date is one figure, not three: it must be a date a cited fact writes (the same day and month, and the same year when
+ * the sentence gives one, whichever way it is written), so "12/01" is not "2026-12-01" (12 January, not 1 December); and the figures left once the dates are taken out of the sentence must be written in
+ * a cited fact once its dates are taken out too, so the 20 of a closing day "2026-12-20" is never an amount of 20.
+ */
+function figuresHold(sentence: CheckedSentence, facts: readonly { text: string }[]): boolean {
+  const cited = sentence.cites.map((n) => (facts[n - 1] as { text: string }).text);
+  const known = cited.flatMap(daysIn);
+  for (const day of daysIn(sentence.text)) if (!known.some((k) => k.m === day.m && k.d === day.d && (day.y === null || k.y === null || k.y === day.y))) return false;
+  const held = cited.map(withoutDays).flatMap(figuresIn);
+  return figuresIn(withoutDays(sentence.text)).every((figure) => held.some((h) => sameFigure(h, figure)));
+}
+
 /**
  * The model's answer ({"sentences":[{"text":"...","cites":[1,2]}]}), checked sentence by sentence by the rules of asking across meetings, and kept to BRIEF_LIMITS.sentences. An answer that is not such an
  * object throws BRIEF_UNPARSABLE. The sentences past the third are dropped and counted. An answer with no sentence left is valid and empty: the model said the facts say nothing, or none of it held up.
@@ -51,7 +83,9 @@ export function checkBrief(raw: string, facts: readonly { text: string }[]): Che
     if (error instanceof AskError) throw new BriefError('BRIEF_UNPARSABLE');
     throw error;
   }
-  const kept = checked.sentences.slice(0, BRIEF_LIMITS.sentences);
+  // A sentence over the bound, or with a date or a figure the cited facts do not write, is dropped and counted like the ones the checks above dropped.
+  const sound = checked.sentences.filter((s) => s.text.length <= BRIEF_LIMITS.sentenceChars && figuresHold(s, facts));
+  const kept = sound.slice(0, BRIEF_LIMITS.sentences);
   return { sentences: kept, dropped: Math.min(checked.dropped + (checked.sentences.length - kept.length), ASK_LIMITS.droppedMax) };
 }
 

@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { AiBudgetExhaustedError, type AiMeter } from '@crove/agent';
+import { AiBudgetExhaustedError, BriefModelError, type AiMeter } from '@crove/agent';
 import type { ModelPort } from '@crove/agent/member-vy';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
@@ -291,5 +291,24 @@ suite("Vy's brief before a meeting (#3543)", () => {
     const out = await brief('lan', { meetingId: s.current }, { model: { generate: async () => { throw new AiBudgetExhaustedError('org', null); } } });
     expect(out).toMatchObject({ state: 'failed', errorCode: 'AI_BUDGET_EXHAUSTED', sentences: [] });
     expect((await resultRows()).at(-1)).toMatchObject({ status: 'failed', error_code: 'AI_BUDGET_EXHAUSTED' });
+    // A model that times out or fails closes the run as failed with a fixed code; the member keeps the facts and nothing of the facts is logged.
+    const timedOut = await brief('lan', { meetingId: s.current }, { model: { generate: async () => { throw new BriefModelError('timeout'); } } });
+    expect(timedOut).toMatchObject({ state: 'failed', errorCode: 'BRIEF_TIMEOUT', sentences: [] });
+    expect((await resultRows()).at(-1)).toMatchObject({ status: 'failed', error_code: 'BRIEF_TIMEOUT' });
+    const broken = await brief('lan', { meetingId: s.current }, { model: { generate: async () => { throw new BriefModelError('failed'); } } });
+    expect(broken).toMatchObject({ state: 'failed', errorCode: 'BRIEF_FAILED' });
+    expect(logged.join('\n')).not.toMatch(/15\.000\.000|Gói kế toán|Á Châu/);
+  });
+
+  it('lets a newer brief of the same member replace one still running: the old one is stopped and shows none of its text', async () => {
+    const s = await seeded(['lan', 'nam']);
+    let release: () => void = () => undefined;
+    const slow: ModelPort = { generate: () => new Promise((resolve) => { release = () => resolve({ text: JSON.stringify({ sentences: [{ text: 'Buổi trước đã chốt giá gói kế toán 15.000.000 đồng.', cites: [1] }] }), usage: { inputTokens: 1, outputTokens: 1 } }); }) };
+    const first = brief('lan', { meetingId: s.current }, { model: slow });
+    await new Promise((r) => setTimeout(r, 400));
+    expect(await brief('lan', { meetingId: s.current })).toMatchObject({ state: 'written' });
+    release();
+    // The kernel kept one live run per feature: the older run was ended, so its words are not shown.
+    expect(await first).toEqual({ state: 'failed', errorCode: 'AI_STOPPED', sentences: [], dropped: 0 });
   });
 });

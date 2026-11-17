@@ -24,7 +24,7 @@ import {
   type AskStatus,
   type MeetingSearchHit,
 } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
 import { findSearchHits } from './search.ts';
 import { isSummaryEnabled } from './summary-run.ts';
 import { ROLES, userOf } from './transcript.ts';
@@ -72,6 +72,29 @@ export const askLines = defineQuery({
   },
 });
 
+// Why Vy may not be used now by this member in the meetings module, or null: the deployment's switch (`off`), the member's right to work with Vy (`forbidden`), a kill switch of the org, the module or the
+// operator (`paused`), a spent budget of the org or the module (`budget`). Shared by the status of every Vy box of Meetings; the kernel's run.start decides again at the click.
+export async function vyReason(ctx: { trx: QueryContext['trx']; orgId: string }): Promise<AskStatus['reason']> {
+  let reason: AskStatus['reason'] = null;
+  if (!isSummaryEnabled()) reason = 'off';
+  else {
+    const allowed = await sql<{ ok: boolean }>`SELECT crove_kernel.ctx_vy_use() AS ok`.execute(ctx.trx);
+    if (allowed.rows[0]?.ok !== true) reason = 'forbidden';
+    else {
+      const stopped = await sql<{ stopped: boolean }>`
+        SELECT crove_kernel.global_kill_switch_on('ai') OR EXISTS (
+          SELECT 1 FROM crove_kernel.kill_switch k
+          WHERE k.org_id = ${ctx.orgId}::uuid AND k.released_at IS NULL AND (k.scope = 'org' OR (k.scope = 'module' AND k.target = ${MODULE}))) AS stopped`.execute(ctx.trx);
+      if (stopped.rows[0]?.stopped === true) reason = 'paused';
+      else {
+        const spent = await sql<{ spent: boolean }>`SELECT crove_kernel.ai_budget_exhausted(${ctx.orgId}::uuid, ${MODULE}, NULL::uuid) AS spent`.execute(ctx.trx);
+        if (spent.rows[0]?.spent === true) reason = 'budget';
+      }
+    }
+  }
+  return reason;
+}
+
 // Whether Vy may be asked now (the box): the deployment's switch, the member's right to work with Vy, a kill switch of the org, the meetings module or the operator, and this month's budget of the
 // org or the module. The kernel's run.start decides again at the click (and adds the member's own Vy), so this is the answer for the box, not the gate. The expected cost is added by the route, which
 // knows the prices; the amount left is not here (only an owner or an admin reads the budgets).
@@ -81,23 +104,7 @@ export const askStatus = defineQuery({
   access: ROLES,
   handler: async (ctx): Promise<AskStatus> => {
     userOf(ctx.actor);
-    let reason: AskStatus['reason'] = null;
-    if (!isSummaryEnabled()) reason = 'off';
-    else {
-      const allowed = await sql<{ ok: boolean }>`SELECT crove_kernel.ctx_vy_use() AS ok`.execute(ctx.trx);
-      if (allowed.rows[0]?.ok !== true) reason = 'forbidden';
-      else {
-        const stopped = await sql<{ stopped: boolean }>`
-          SELECT crove_kernel.global_kill_switch_on('ai') OR EXISTS (
-            SELECT 1 FROM crove_kernel.kill_switch k
-            WHERE k.org_id = ${ctx.orgId}::uuid AND k.released_at IS NULL AND (k.scope = 'org' OR (k.scope = 'module' AND k.target = ${MODULE}))) AS stopped`.execute(ctx.trx);
-        if (stopped.rows[0]?.stopped === true) reason = 'paused';
-        else {
-          const spent = await sql<{ spent: boolean }>`SELECT crove_kernel.ai_budget_exhausted(${ctx.orgId}::uuid, ${MODULE}, NULL::uuid) AS spent`.execute(ctx.trx);
-          if (spent.rows[0]?.spent === true) reason = 'budget';
-        }
-      }
-    }
+    const reason = await vyReason(ctx);
     return zAskStatus.parse({ enabled: reason === null, reason, estimate: null });
   },
 });

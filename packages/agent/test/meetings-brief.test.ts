@@ -54,6 +54,38 @@ describe('checkBrief', () => {
     expect(out.dropped).toBe(2);
   });
 
+  it('drops a sentence over the bound of the contract (400 characters) instead of letting it through to fail the output check', () => {
+    const long = `Buổi trước đã chốt giá gói kế toán 15.000.000 đồng ${'và còn nhiều điều khác cần nhắc lại cho khách '.repeat(8)}`;
+    expect(long.length).toBeGreaterThan(BRIEF_LIMITS.sentenceChars);
+    expect(long.length).toBeLessThan(600);
+    expect(checkBrief(answer([{ text: long, cites: [1] }]), facts)).toEqual({ sentences: [], dropped: 1 });
+    const ok = 'Buổi trước đã chốt giá gói kế toán 15.000.000 đồng.';
+    expect(checkBrief(answer([{ text: ok, cites: [1] }]), facts).sentences).toHaveLength(1);
+  });
+
+  it('treats a date as one figure: the digits of a date are never an amount or a count, and a day written the other way round is another day', () => {
+    const dated = [
+      { text: 'Open deal for Công ty Á Châu: Gói kế toán năm (stage: Mới; amount: 500.000.000 VND; expected close: 2026-12-20)' },
+      { text: 'Open item: Gửi báo giá (accepted as a task; due: 2026-12-01; status: to do)' },
+    ];
+    const verdict = (text: string, cites: number[]) => checkBrief(answer([{ text, cites }]), dated).sentences.length;
+    // The 20 of the closing day is not an amount of 20, the 12 is not a count, and 2026 is not a quantity.
+    expect(verdict('Khách đang cân nhắc gói 20 triệu.', [1])).toBe(0);
+    expect(verdict('Còn 12 việc đang mở.', [2])).toBe(0);
+    expect(verdict('Có 2026 khách hàng quan tâm.', [1])).toBe(0);
+    // The same day, however it is written, is the fact's: ISO, day first with the year, day first without it.
+    expect(verdict('Dự kiến chốt ngày 2026-12-20.', [1])).toBe(1);
+    expect(verdict('Dự kiến chốt ngày 20/12/2026.', [1])).toBe(1);
+    expect(verdict('Dự kiến chốt ngày 20/12.', [1])).toBe(1);
+    expect(verdict('Hạn gửi báo giá là 1/12.', [2])).toBe(1);
+    // A day and month swapped (12 January for 1 December), another year, or a day the facts do not write is refused.
+    expect(verdict('Hạn gửi báo giá là 12/01.', [2])).toBe(0);
+    expect(verdict('Hạn gửi báo giá là 01/12/2027.', [2])).toBe(0);
+    expect(verdict('Hạn gửi báo giá là 2/12.', [2])).toBe(0);
+    // The amount the fact writes still holds, next to its date.
+    expect(verdict('Cơ hội 500.000.000 đồng, dự kiến chốt 20/12.', [1])).toBe(1);
+  });
+
   it('refuses an answer that is not the expected object, and says nothing of an empty one', () => {
     expect(() => checkBrief('not json', facts)).toThrow(BriefError);
     expect(() => checkBrief('{"other": []}', facts)).toThrow(BriefError);

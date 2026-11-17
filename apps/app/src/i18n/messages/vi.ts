@@ -2592,6 +2592,7 @@ export const vi = {
       closeOn: 'dự kiến chốt {date}',
       openDeals: 'Mở danh sách cơ hội',
       openContacts: 'Mở danh bạ',
+      nothing: 'Chưa có gì để chuẩn bị cho buổi họp này.',
       show: 'Xem phần chuẩn bị',
       hide: 'Ẩn phần chuẩn bị',
       submit: 'Nhờ Vy viết vài câu tóm tắt',
