@@ -458,9 +458,32 @@ export const todoComplete = defineCommand({
     let nextDueOn: string | null = null;
     if (rule !== null && !stopSeries && seriesId !== null) {
       const anchorDate = before.due_on ?? zonedDate(before.time_zone, ctx.now.getTime());
-      nextDueOn = nextTodoOccurrenceDate(rule, anchorDate);
-      // Do not spawn if the series still has another open occurrence OR if an occurrence for nextDueOn already exists
-      // (prevents duplicate spawns if an older occurrence is reopened and re-completed after the series moved ahead).
+      let targetMonthDay: number | undefined;
+      if (rule.freq === 'monthly' && rule.byMonthDay === undefined && before.due_on !== null) {
+        const [y, m, d] = before.due_on.split('-').map(Number) as [number, number, number];
+        const lastDayOfAnchorMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+        if (d === lastDayOfAnchorMonth) {
+          const rootRow = await ctx.trx
+            .selectFrom('crove_notes.todo')
+            .select('due_on')
+            .where('org_id', '=', ctx.orgId)
+            .where('series_id', '=', seriesId)
+            .where('due_on', 'is not', null)
+            .where('deleted_at', 'is', null)
+            .orderBy('created_at', 'asc')
+            .orderBy('id', 'asc')
+            .limit(1)
+            .executeTakeFirst();
+          if (rootRow?.due_on) {
+            const rootDay = Number(rootRow.due_on.split('-')[2]);
+            if (Number.isInteger(rootDay) && rootDay > d) targetMonthDay = rootDay;
+          }
+        }
+      }
+      const resolvedNextDueOn = nextTodoOccurrenceDate(rule, anchorDate, targetMonthDay);
+      nextDueOn = resolvedNextDueOn;
+      // Do not spawn if an occurrence for nextDueOn already exists OR if a newer open occurrence in the series is
+      // already active. Earlier reopened occurrences never block a newer occurrence from advancing the series.
       const existingSibling = await ctx.trx
         .selectFrom('crove_notes.todo')
         .select('id')
@@ -468,7 +491,19 @@ export const todoComplete = defineCommand({
         .where('series_id', '=', seriesId)
         .where('id', '<>', before.id)
         .where('deleted_at', 'is', null)
-        .where((eb) => eb.or([eb('status', '=', 'open'), eb('due_on', '=', nextDueOn)]))
+        .where((eb) =>
+          eb.or([
+            eb('due_on', '=', resolvedNextDueOn),
+            eb.and([
+              eb('status', '=', 'open'),
+              eb.or([
+                eb('created_at', '>', before.created_at),
+                eb.and([eb('created_at', '=', before.created_at), eb('id', '>', before.id)]),
+                eb('due_on', '>=', resolvedNextDueOn),
+              ]),
+            ]),
+          ]),
+        )
         .executeTakeFirst();
 
       if (!existingSibling) {

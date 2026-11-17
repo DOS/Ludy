@@ -339,5 +339,37 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
       c.query<{ reminded_at: Date | null }>(`SELECT reminded_at FROM crove_notes.todo WHERE org_id = $1 AND id = $2`, [o.orgId, day3Id]),
     );
     expect(rawPast.rows[0]?.reminded_at).not.toBeNull();
+
+    // Out-of-order reopen + completion: reopen A after B spawned, complete B before A -> B MUST still spawn C,
+    // and then completing A afterwards must NOT spawn a duplicate of B.
+    const seqA = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Out of order test',
+      dueOn: '2027-04-01',
+      timeZone: 'Asia/Ho_Chi_Minh',
+      recurrence: { freq: 'daily', interval: 1 },
+    });
+    const resB = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: seqA.todoId });
+    const seqBId = resB.nextTodoId as string;
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.reopen', { todoId: seqA.todoId });
+    const resC = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: seqBId });
+    expect(resC.nextTodoId).toBeTruthy();
+    const seqC = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: resC.nextTodoId as string });
+    expect(seqC.dueOn).toBe('2027-04-03');
+    const afterRecompleteA = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: seqA.todoId });
+    expect(afterRecompleteA.nextTodoId ?? null).toBeNull();
+
+    // Default Monthly rule on Jan 30 preserves day 30 after passing through shorter February (Jan 30 -> Feb 28 -> Mar 30).
+    const jan30 = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Monthly on 30th',
+      dueOn: '2026-01-30',
+      timeZone: 'Asia/Ho_Chi_Minh',
+      recurrence: { freq: 'monthly', interval: 1 },
+    });
+    const febRes = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: jan30.todoId });
+    const febTodo = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: febRes.nextTodoId as string });
+    expect(febTodo.dueOn).toBe('2026-02-28');
+    const marRes = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: febTodo.id });
+    const marTodo = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: marRes.nextTodoId as string });
+    expect(marTodo.dueOn).toBe('2026-03-30');
   });
 });

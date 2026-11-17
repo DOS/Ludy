@@ -421,7 +421,7 @@ export function parseTodoRecurrence(value: unknown): TodoRecurrence | null {
 }
 
 /** Computes the next local due date (`YYYY-MM-DD`) strictly after `anchorDate` for a recurring personal to-do. */
-export function nextTodoOccurrenceDate(rule: TodoRecurrence, anchorDate: string): string {
+export function nextTodoOccurrenceDate(rule: TodoRecurrence, anchorDate: string, targetMonthDay?: number): string {
   if (rule.freq === 'daily') {
     return addTodoLocalDays(anchorDate, rule.interval);
   }
@@ -435,7 +435,7 @@ export function nextTodoOccurrenceDate(rule: TodoRecurrence, anchorDate: string)
     return sameWeekCandidate > anchorDate ? sameWeekCandidate : addTodoLocalDays(sameWeekCandidate, rule.interval * 7);
   }
   const [year, month, anchorDay] = parseLocalDateParts(anchorDate);
-  const targetDay = rule.byMonthDay ?? anchorDay;
+  const targetDay = rule.byMonthDay ?? targetMonthDay ?? anchorDay;
   if (rule.byMonthDay !== undefined && rule.byMonthDay !== null) {
     const sameMonthCandidate = resolveTodoMonthlyDate(year, month, targetDay);
     if (sameMonthCandidate > anchorDate) return sameMonthCandidate;

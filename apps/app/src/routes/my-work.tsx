@@ -924,7 +924,7 @@ export function MyWorkPage() {
     () => (view === 'upcoming' ? groupUpcomingAgenda(filtered.todos, filtered.tasks, today, horizon, viewerTz) : null),
     [view, filtered.todos, filtered.tasks, today, horizon, viewerTz],
   );
-  const overduePersonalTodos = useMemo(() => (needsWork ? filtered.todos.filter((item) => item.group === 'overdue') : []), [needsWork, filtered.todos]);
+  const overduePersonalTodos = useMemo(() => (needsWork ? filtered.todos.filter((item) => item.overdue) : []), [needsWork, filtered.todos]);
   const quickMoveDays = useMemo(() => {
     if (!upcoming) return [];
     const base = upcoming.days.slice(0, 14).map((d) => d.date);
@@ -971,8 +971,12 @@ export function MyWorkPage() {
           t('undoneToast', { title }),
           async () => {
             const api = clientForOrg(slug).notes.todos;
-            await api.reopen({ todoId: v.todoId });
+            const nextCurrent = await api.get({ todoId: nextTodoId }).catch(() => null);
+            if (!nextCurrent || nextCurrent.deletedAt !== null || nextCurrent.status !== 'open' || nextCurrent.revision !== 1) {
+              throw new Error(t('recurrence.undoSeriesAdvanced'));
+            }
             await api.delete({ todoId: nextTodoId });
+            await api.reopen({ todoId: v.todoId });
           },
           { undo: common('undo'), failed: (reason) => common('undoFailed', { reason }) },
         );

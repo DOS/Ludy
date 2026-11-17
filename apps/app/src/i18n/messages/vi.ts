@@ -8372,6 +8372,7 @@ export const vi = {
       badgeMonthEndMultiple: 'Cuối mỗi {n} tháng',
       stopSeries: 'Hoàn thành và dừng lặp',
       completedNextToast: 'Đã xong {title}, tạo lượt tiếp theo ({due})',
+      undoSeriesAdvanced: 'Lượt kế tiếp đã được chỉnh sửa hoặc xử lý rồi',
     },
     reschedule: {
       tomorrow: 'Ngày mai',

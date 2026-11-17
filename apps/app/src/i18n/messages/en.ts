@@ -8376,6 +8376,7 @@ export const en = {
       badgeMonthEndMultiple: 'End of every {n} months',
       stopSeries: 'Complete and stop repeating',
       completedNextToast: 'Completed {title}, next due {due}',
+      undoSeriesAdvanced: 'The next occurrence has already been edited or updated',
     },
     reschedule: {
       tomorrow: 'Tomorrow',

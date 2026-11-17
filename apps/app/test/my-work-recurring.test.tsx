@@ -218,5 +218,14 @@ describe('My work recurring & overdue SSR UI (#3557)', () => {
     expect(enHtml).toContain('Reschedule overdue');
     expect(enHtml).toContain('Next Monday');
     expect(enHtml).toContain('End of month');
+
+    // A to-do due today whose due time already passed (group: 'today', overdue: true) still shows the bulk overdue bar.
+    testState.client.setQueryData(q.queryKey, {
+      ...workData,
+      todos: [makeTodo({ id: TODO_2, title: 'Trễ giờ hôm nay', dueOn: '2026-11-17', dueTime: '09:00', group: 'today', overdue: true })],
+    });
+    const todayLateHtml = wrap('vi', <MyWorkPage />);
+    expect(todayLateHtml).toContain('data-testid="overdue-bulk-bar"');
+    expect(todayLateHtml).toContain('data-testid="todo-overdue-actions"');
   });
 });
