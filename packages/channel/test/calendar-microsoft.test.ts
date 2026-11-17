@@ -183,18 +183,25 @@ const graphEvent = (over: Record<string, unknown> = {}) => ({
 });
 
 describe('MicrosoftCalendarAdapter, events', () => {
+  it('carries the series master id of an occurrence as its series, and none for a single event or an unusable id (#3542)', async () => {
+    const { calls, fetchImpl } = microsoft({ [VIEW]: [{ body: { value: [graphEvent({ id: 'occ1', seriesMasterId: 'master1' }), graphEvent({ id: 'single' }), graphEvent({ id: 'empty', seriesMasterId: '' }), graphEvent({ id: 'num', seriesMasterId: 7 })] } }] });
+    const answer = await new MicrosoftCalendarAdapter(APP, fetchImpl).events(SECRET, new Date('2026-11-13T03:00:00Z'), new Date('2026-11-21T03:00:00Z'));
+    expect('events' in answer ? answer.events.map((e) => [e.id, e.series]) : answer).toEqual([['occ1', 'master1'], ['single', null], ['empty', null], ['num', null]]);
+    expect(calls[0]?.url.searchParams.get('$select')).toContain('seriesMasterId');
+  });
+
   it('asks Graph for the calendar view in UTC with the narrow field list and reads the events as the app keeps them', async () => {
     const { calls, fetchImpl } = microsoft({ [VIEW]: [{ body: { value: [graphEvent()] } }] });
     const answer = await new MicrosoftCalendarAdapter(APP, fetchImpl).events(SECRET, new Date('2026-11-13T03:00:00Z'), new Date('2026-11-21T03:00:00Z'));
     expect(answer).toEqual({
-      events: [{ id: 'AAMkAGI2', title: 'Họp giao ban', startsAt: '2026-11-14T04:00:00.000Z', endsAt: '2026-11-14T05:00:00.000Z', timeZone: 'UTC', joinUrl: 'https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc/0?context=%7b%7d', invitees: 2 }],
+      events: [{ id: 'AAMkAGI2', title: 'Họp giao ban', startsAt: '2026-11-14T04:00:00.000Z', endsAt: '2026-11-14T05:00:00.000Z', timeZone: 'UTC', joinUrl: 'https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc/0?context=%7b%7d', invitees: 2, series: null }],
     });
     expect(calls).toHaveLength(1);
     expect(calls[0]?.auth).toBe('Bearer eyJ.access-1');
     expect(calls[0]?.prefer).toContain('outlook.timezone="UTC"');
     const select = calls[0]?.url.searchParams.get('$select') ?? '';
     // No body, location, organizer, attachment or extended property is asked for.
-    expect(select.split(',').sort()).toEqual(['attendees', 'end', 'id', 'isAllDay', 'isCancelled', 'onlineMeeting', 'responseStatus', 'start', 'subject']);
+    expect(select.split(',').sort()).toEqual(['attendees', 'end', 'id', 'isAllDay', 'isCancelled', 'onlineMeeting', 'responseStatus', 'seriesMasterId', 'start', 'subject']);
     expect(select).not.toMatch(/body|location|organizer|attachments|extensions|bodyPreview/);
     expect(calls[0]?.url.searchParams.get('startDateTime')).toBe('2026-11-13T03:00:00.000Z');
     expect(calls[0]?.url.searchParams.get('endDateTime')).toBe('2026-11-21T03:00:00.000Z');
@@ -215,7 +222,7 @@ describe('MicrosoftCalendarAdapter, events', () => {
     const event = graphEvent({ body: { content: 'PRIVATE DESCRIPTION', contentType: 'text' }, bodyPreview: 'PRIVATE', hasAttachments: true, attachments: [{ name: 'secret.pdf' }], location: { displayName: 'Phòng họp kín' } });
     const kept = JSON.stringify(agendaEventOfGraph(event));
     expect(kept).not.toMatch(/PRIVATE|secret\.pdf|khach@|dong\.nghiep@|congty\.example|kín/);
-    expect(Object.keys(agendaEventOfGraph(event) ?? {}).sort()).toEqual(['endsAt', 'id', 'invitees', 'joinUrl', 'startsAt', 'timeZone', 'title']);
+    expect(Object.keys(agendaEventOfGraph(event) ?? {}).sort()).toEqual(['endsAt', 'id', 'invitees', 'joinUrl', 'series', 'startsAt', 'timeZone', 'title']);
   });
 
   it('drops all-day, cancelled and declined events and ones without a usable time, and a join address that is not Teams, Zoom or Meet', () => {

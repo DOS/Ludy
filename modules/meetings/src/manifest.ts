@@ -25,7 +25,21 @@ export const meetingsManifest = defineModule({
       ]),
       // A member's own Google Calendar meetings, read to suggest "record this meeting" (B1, #3165): title, start, end, time zone, a join address and the number of invitees, never an invitee address, a description or an attachment. Read by the member alone.
       calendar_agenda: columns(
-        ['org_id', 'id', 'connection_id', 'user_id', 'external_id', 'starts_at', 'ends_at', 'time_zone', 'invitee_count', 'meeting_id', 'updated_at'],
+        [
+          'org_id',
+          'id',
+          'connection_id',
+          'user_id',
+          'external_id',
+          'starts_at',
+          'ends_at',
+          'time_zone',
+          'invitee_count',
+          'meeting_id',
+          // A hash of the provider and the recurring event id (md5, kept as a uuid), never the provider's own id (#3542).
+          'series_id',
+          'updated_at',
+        ],
         { title: 'pii', join_url: 'sensitive' },
       ),
       // The org's channels for minutes, Slack or Teams (B4, #3168): a name and the address's host. No secret: the address is sealed in chat_channel_target.
@@ -72,6 +86,8 @@ export const meetingsManifest = defineModule({
           'summary_template',
           'audio_retention_date',
           'text_retention_date',
+          // The series the meeting is in: a random id, or the hash of the recurring calendar event it was linked to (#3542). Never text.
+          'series_id',
           'created_at',
           'updated_at',
         ],

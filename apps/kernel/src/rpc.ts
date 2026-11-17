@@ -1282,6 +1282,10 @@ export function createRpcHandler(
         setReadEvents: os.meetings.agenda.setReadEvents.handler(meetingsCommand('meetings.agenda.set_read_events')),
         link: os.meetings.agenda.link.handler(meetingsCommand('meetings.agenda.link')),
       },
+      series: {
+        openItems: os.meetings.series.openItems.handler(meetingsQuery('meetings.series.open_items')),
+        set: os.meetings.series.set.handler(meetingsCommand('meetings.series.set')),
+      },
       actionItems: {
         create: os.meetings.actionItems.create.handler(meetingsCommand('meetings.action_item.create')),
         edit: os.meetings.actionItems.edit.handler(meetingsCommand('meetings.action_item.edit')),

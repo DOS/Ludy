@@ -221,7 +221,7 @@ suite("the member's own calendar meetings (B1, #3165)", () => {
 
   it('keeps only what the table allows: no address, description or attachment column, a join address that is https, a bounded title', async () => {
     const columns = (await sqlAdmin<{ column_name: string }>("SELECT column_name FROM information_schema.columns WHERE table_schema = 'crove_meetings' AND table_name = 'calendar_agenda' ORDER BY column_name")).rows.map((r) => r.column_name);
-    expect(columns).toEqual(['connection_id', 'ends_at', 'external_id', 'id', 'invitee_count', 'join_url', 'meeting_id', 'org_id', 'starts_at', 'time_zone', 'title', 'updated_at', 'user_id']);
+    expect(columns).toEqual(['connection_id', 'ends_at', 'external_id', 'id', 'invitee_count', 'join_url', 'meeting_id', 'org_id', 'series_id', 'starts_at', 'time_zone', 'title', 'updated_at', 'user_id']);
     const c = await connection('nam');
     await on('nam', c);
     await sweep(c, [event('long', 30, 60, { title: 'x'.repeat(200), joinUrl: 'http://zoom.us/j/1', invitees: 1000 }), event('mail', 90, 30, { title: 'khach@congty.example gọi 0912345678' })]);

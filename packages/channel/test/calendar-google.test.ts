@@ -238,8 +238,14 @@ describe('GoogleCalendarAdapter, the member\'s own meetings (B1, #3165)', () => 
   it('reads the primary calendar in time order with the events unfolded, asking for no address, description, attachment or location', async () => {
     const { fetchImpl, calls } = google({ [EVENTS]: [{ body: { items: [timed('a')] } }] });
     const answer = await new GoogleCalendarAdapter(APP, fetchImpl).events(SECRET, FROM, TO);
-    expect(answer).toEqual({ events: [{ id: 'a', title: 'Họp a', startsAt: '2026-11-14T02:00:00.000Z', endsAt: '2026-11-14T03:00:00.000Z', timeZone: 'Asia/Ho_Chi_Minh', joinUrl: null, invitees: 0 }] });
+    expect(answer).toEqual({ events: [{ id: 'a', title: 'Họp a', startsAt: '2026-11-14T02:00:00.000Z', endsAt: '2026-11-14T03:00:00.000Z', timeZone: 'Asia/Ho_Chi_Minh', joinUrl: null, invitees: 0, series: null }] });
     expect(calls[0]?.auth).toBe('Bearer ya29.token-1');
+  });
+
+  it('carries the recurring event id of an occurrence as its series, and none for a single event or an unusable id (#3542)', async () => {
+    const { fetchImpl } = google({ [EVENTS]: [{ body: { items: [timed('a_20261114T020000Z', { recurringEventId: 'a' }), timed('b'), timed('c', { recurringEventId: '' }), timed('d', { recurringEventId: 42 }), timed('e', { recurringEventId: 'x'.repeat(1025) })] } }] });
+    const answer = await new GoogleCalendarAdapter(APP, fetchImpl).events(SECRET, FROM, TO);
+    expect('events' in answer ? answer.events.map((e) => [e.id, e.series]) : answer).toEqual([['a_20261114T020000Z', 'a'], ['b', null], ['c', null], ['d', null], ['e', null]]);
   });
 
   it('sends a field mask that names no attendee address, description, attachment or location', async () => {

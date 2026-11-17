@@ -2988,6 +2988,7 @@ export interface MeetingsCalendarAgendaTable {
   invitee_count: ColumnType<number, NotGranted, NotGranted>;
   meeting_id: ColumnType<string | null, NotGranted, string | null>;
   updated_at: ColumnType<Date, NotGranted, NotGranted>;
+  series_id: ColumnType<string | null, NotGranted, NotGranted>;
 }
 
 /** crove_meetings.chat_channel */
@@ -3119,6 +3120,7 @@ export interface MeetingsMeetingTable {
   recording_stop_reason: string | null;
   summary_template: Generated<string>;
   audio_used_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  series_id: string | null;
 }
 
 /** crove_meetings.meeting_video */

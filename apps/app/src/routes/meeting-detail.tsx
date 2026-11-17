@@ -14,6 +14,7 @@ import { ImportAutoClaim } from '../components/meeting-import-claim.tsx';
 import { MeetingLinks } from '../components/meeting-links.tsx';
 import { MeetingResults, memberLabel } from '../components/meeting-results.tsx';
 import { MeetingLive } from '../components/meeting-live.tsx';
+import { MeetingSeries } from '../components/meeting-series.tsx';
 import { MeetingNotes } from '../components/meeting-notes.tsx';
 import { MeetingTranscript } from '../components/meeting-transcript.tsx';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
@@ -337,6 +338,8 @@ export function MeetingDetailPage() {
       {/* The transcript: the recorder's draft, or what was shared with the meeting */}
       <MeetingTranscript meetingId={id} {...(seg ? { focusSegmentId: seg } : {})} />
       {/* The recorder's own rough notes (A5): theirs alone, so only the recorder gets the box */}
+      {/* The open items of the previous meeting of its series (#3542), and the recorder's way to put a meeting in a series */}
+      <MeetingSeries meetingId={id} isRecorder={meeting.isRecorder} startedAt={meeting.startedAt} />
       {meeting.isRecorder && <MeetingNotes meetingId={id} />}
       <MeetingResults
         meetingId={id}

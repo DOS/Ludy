@@ -71,6 +71,8 @@ export const zAgendaReplaceEvent = z.strictObject({
   timeZone: z.string().min(1).max(64),
   joinUrl: z.string().max(500).nullable(),
   invitees: z.number().int().min(0).max(1000),
+  // The provider's recurring event id when the event is an occurrence of one (#3542); the database keeps a hash of it. Absent or null: not part of a series.
+  series: z.string().min(1).max(1024).nullable().default(null),
 });
 export const zAgendaReplace = z.strictObject({ connectionId: zId, from: z.iso.datetime({ offset: true }), events: z.array(zAgendaReplaceEvent).max(AGENDA_REPLACE_MAX) });
 export const zAgendaReplaced = z.strictObject({ connectionId: zId, written: z.number().int().min(0) });

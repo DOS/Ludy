@@ -3013,6 +3013,23 @@ export const vi = {
       draftItems: 'Việc cần làm:',
       draftDue: '(hạn {date})',
     },
+    // A series of meetings (#3542): the open items of the previous meeting, and the recorder's click that says a meeting follows an earlier one.
+    series: {
+      title: 'Việc còn dở từ buổi trước',
+      from: 'Từ cuộc họp "{title}" ngày {date}. Chỉ hiện việc còn mở: việc đã xong không hiện.',
+      unassigned: 'Chưa giao',
+      due: 'Hạn {date}',
+      status: { todo: 'Cần làm', in_progress: 'Đang làm', waiting: 'Đang chờ', in_review: 'Chờ duyệt' },
+      carry: 'Đưa vào ghi chú',
+      carried: 'Đã đưa vào ghi chú',
+      notesFull: 'Ghi chú đã đầy. Hãy xóa bớt dòng rồi đưa việc này vào.',
+      follow: 'Buổi này nối tiếp buổi trước',
+      followHint: 'Chọn một cuộc họp bạn đã ghi trước buổi này. Hai buổi sẽ nằm trong một chuỗi và việc còn dở của buổi trước hiện ở đây.',
+      followPlaceholder: 'Chọn cuộc họp trước',
+      followApply: 'Nối tiếp',
+      leave: 'Bỏ khỏi chuỗi',
+      inSeries: 'Buổi này nằm trong một chuỗi cuộc họp.',
+    },
     // "Ghi chú của tôi" and "Viết lại đầy đủ" (Meetings A5, #3163).
     notes: {
       title: 'Ghi chú của tôi',
@@ -11400,6 +11417,9 @@ export const vi = {
       SUMMARY_REQUIRED: 'Hãy viết ít nhất một mục trước khi lưu.',
       SUMMARY_TEMPLATE_CHANGED: 'Bạn đã đổi loại cuộc họp sau khi Vy viết. Hãy nhờ Vy tóm tắt lại.',
       TEMPLATE_MISMATCH: 'Nội dung không khớp với loại cuộc họp đang chọn. Hãy mở lại cuộc họp rồi thử lại.',
+      SERIES_CONFLICT: 'Hai cuộc họp này đã thuộc hai chuỗi khác nhau. Hãy bỏ cuộc họp này khỏi chuỗi của nó trước.',
+      SERIES_ORDER: 'Cuộc họp trước phải bắt đầu sớm hơn cuộc họp này.',
+      SERIES_SELF: 'Một cuộc họp không thể nối tiếp chính nó.',
       SPEAKER_LABEL_GONE: 'Không còn dòng nháp nào của người nói này (có thể bạn đã đặt tên rồi). Hãy mở lại bản ghi lời.',
       SPEAKER_NAME_TAKEN: 'Một người nói khác trong cuộc họp này đã mang tên này. Nếu muốn gộp hai người nói, hãy sửa từng dòng.',
       SPEAKER_NOT_ATTENDEE: 'Tên này không phải của người dự họp trong cuộc họp này.',
@@ -13453,6 +13473,10 @@ export const vi = {
         copy_result: 'Chép bản tóm tắt Vy đã xong của cuộc họp vào bản nháp',
         start: 'Nhờ Vy tóm tắt một cuộc họp',
         status: 'Xem Vy có tóm tắt được cuộc họp không',
+      },
+      series: {
+        open_items: 'Xem việc còn dở của buổi trước trong chuỗi cuộc họp',
+        set: 'Nối cuộc họp này với một buổi trước để thành chuỗi, hoặc bỏ khỏi chuỗi',
       },
       speaker: {
         name: 'Đặt tên người dự họp cho một người nói trong bản ghi lời nháp',
