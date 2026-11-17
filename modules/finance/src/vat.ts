@@ -80,6 +80,9 @@ export interface VatInvoiceView {
   total: Money;
   rates: RateAmounts[];
   warnings: VatWarning[];
+  // The invoice this one corrects (#916), for a replacement or an adjustment; null for any other. followsPostingDate: its period is the one of its posting date, which is not
+  // the one of its own invoice date (a purchase posted on a later date); otherwise it counts in the period of its own invoice date.
+  correction?: { kind: 'replacement' | 'adjustment'; series: string; number: string; followsPostingDate: boolean } | null;
 }
 
 export interface VatSide {
@@ -172,6 +175,9 @@ function invoiceView(
     subtotal: string;
     vatAmount: string;
     total: string;
+    correctionKind: 'replacement' | 'adjustment' | null;
+    correctedSeries: string | null;
+    correctedNumber: string | null;
   },
   lines: Array<{ amount: string; vatRate: string | null }>,
   invoiceRates: InvoiceRateInput[],
@@ -203,6 +209,15 @@ function invoiceView(
     total: money(doc.total).toFixed(),
     rates: breakdown.rates,
     warnings,
+    correction:
+      doc.correctionKind !== null && doc.correctedSeries !== null && doc.correctedNumber !== null
+        ? {
+            kind: doc.correctionKind,
+            series: doc.correctedSeries,
+            number: doc.correctedNumber,
+            followsPostingDate: vatPeriodOf(doc.postingDate, period.kind) !== vatPeriodOf(doc.issueDate, period.kind),
+          }
+        : null,
   };
 }
 
@@ -268,7 +283,7 @@ async function periodInvoices(ctx: QueryContext, period: VatPeriod, direction: D
     .innerJoin('crove_finance.journal_entry as j', (join) =>
       join.onRef('j.org_id', '=', 'd.org_id').onRef('j.source_id', '=', 'd.id').on('j.source_type', '=', 'finance.purchase_document').on(latestRevision('j')),
     )
-    .select(['d.id', 'd.invoice_date', 'j.entry_date', 'd.invoice_series', 'd.invoice_number', 'd.subtotal', 'd.vat_amount', 'd.total', 'd.payment_method', 'd.created_at', 'p.name', 'p.tax_code'])
+    .select(['d.id', 'd.invoice_date', 'j.entry_date', 'd.invoice_series', 'd.invoice_number', 'd.subtotal', 'd.vat_amount', 'd.total', 'd.payment_method', 'd.created_at', 'p.name', 'p.tax_code', 'd.correction_kind', 'd.corrected_series', 'd.corrected_number'])
     .select(direction === 'purchase' ? sql<string | null>`NULL::date`.as('sale_date') : SALE_DATE.as('sale_date'))
     .where('d.org_id', '=', ctx.orgId)
     .where('d.legal_entity_id', '=', legalEntityId)
@@ -347,6 +362,9 @@ async function periodInvoices(ctx: QueryContext, period: VatPeriod, direction: D
         subtotal: d.subtotal,
         vatAmount: d.vat_amount,
         total: d.total,
+        correctionKind: d.correction_kind === 'replacement' || d.correction_kind === 'adjustment' ? d.correction_kind : null,
+        correctedSeries: d.corrected_series,
+        correctedNumber: d.corrected_number,
       },
       byDocument.get(d.id) ?? [],
       ratesByDocument.get(d.id) ?? [],

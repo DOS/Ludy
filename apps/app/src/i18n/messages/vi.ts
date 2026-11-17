@@ -5748,6 +5748,13 @@ export const vi = {
     otherSales: '{amount} doanh thu bán ra chưa rõ thuế suất nên không nằm trong chỉ tiêu nào. Hãy kiểm tra các hóa đơn đó trước khi nộp tờ khai.',
     ratesTitle: 'Tổng theo thuế suất',
     saleOn: 'bán ngày {date}',
+    // What a replacement or an adjustment invoice corrects (#916), in the notes of its row.
+    correction: {
+      replacement: 'Thay thế hóa đơn {original}',
+      adjustment: 'Điều chỉnh hóa đơn {original}',
+      byIssueDate: 'theo kỳ lập hóa đơn điều chỉnh',
+      byPostingDate: 'theo ngày ghi sổ {date} (khác kỳ lập hóa đơn điều chỉnh)',
+    },
     supplementary: {
       title: 'Cần kê khai bổ sung ({count})',
       hint: 'Hóa đơn bán ra được ghi nhận sau khi kỳ này đã khóa sổ hoặc đã nộp tờ khai, nhưng hàng bán trong kỳ này nên thuộc kỳ này. Kỳ không được mở lại: các hóa đơn này nằm ngoài số liệu chính ở trên. Thuế GTGT cần kê khai bổ sung: {vat}.',
