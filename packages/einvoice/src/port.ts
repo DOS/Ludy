@@ -48,12 +48,16 @@ export interface EInvoiceTemplate {
 }
 
 export type BuyerKind = 'business' | 'individual' | 'consumer';
+// What an individual buyer may give instead of a tax code (#3678); the same list as the contract's and the database's CHECK.
+export type BuyerIdentityKind = 'cccd' | 'passport' | 'budget_code';
 export interface EInvoiceBuyer {
   kind: BuyerKind;
   taxCode: string | null;
   name: string | null;
   address: string | null;
   email: string | null;
+  // An individual's CCCD, passport number or budget-relation unit code (#3678); personal data, never in a log or an audit fact.
+  identity?: { kind: BuyerIdentityKind; value: string } | null;
 }
 
 // Amounts are decimal strings, computed by the caller's code; an adapter never recomputes them.

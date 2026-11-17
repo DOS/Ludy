@@ -26,7 +26,7 @@ async function connectSandbox(page: Page, name: string): Promise<void> {
 
 // From the Social home: writes a post and sends it for review; stays on its page.
 async function submitForReview(page: Page, body: string): Promise<string> {
-  await page.getByRole('link', { name: 'Soạn bài' }).click();
+  await page.getByRole('link', { name: 'Soạn bài' }).first().click();
   await page.getByLabel('Nội dung chung').fill(body);
   await page.getByRole('button', { name: 'Lưu và gửi duyệt' }).click();
   await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
@@ -138,7 +138,7 @@ test('places a comment pin from the keyboard and moves it with the arrow keys be
   await createOrg(page, 'Công ty Ghim Phím');
   await connectSandbox(page, 'Trang Ghim Phím');
   await page.getByRole('link', { name: 'Quay lại' }).click();
-  await page.getByRole('link', { name: 'Soạn bài' }).click();
+  await page.getByRole('link', { name: 'Soạn bài' }).first().click();
   await page.getByLabel('Nội dung chung').fill('Bài có ảnh để ghim');
   await page.locator('input[type="file"]').setInputFiles([{ name: 'logo.png', mimeType: 'image/png', buffer: PNG }]);
   await page.getByRole('textbox', { name: 'Mô tả ảnh 1' }).fill('Logo cửa hàng');

@@ -53,7 +53,7 @@ async function connectSandbox(page: Page, ...names: string[]): Promise<void> {
 // you; with several, each named one is picked.
 async function compose(page: Page, body: string, channels: string[] = []): Promise<void> {
   await page.getByRole('link', { name: 'Quay lại' }).click();
-  await page.getByRole('link', { name: 'Soạn bài' }).click();
+  await page.getByRole('link', { name: 'Soạn bài' }).first().click();
   await page.getByLabel('Nội dung chung').fill(body);
   for (const name of channels) {
     const pick = page.getByRole('button', { name });
@@ -226,7 +226,7 @@ test('publishes many failed posts again at once from the attention list (#1456)'
   const posts: string[] = [];
   for (const body of ['Bài lỗi thứ nhất', 'Bài lỗi thứ hai']) {
     await page.goto(`/o/${slug}/social`);
-    await page.getByRole('link', { name: 'Soạn bài' }).click();
+    await page.getByRole('link', { name: 'Soạn bài' }).first().click();
     await page.getByLabel('Nội dung chung').fill(body);
     await submitApproveSchedule(page, [channel]);
     posts.push(postIdOf(page));
@@ -267,7 +267,7 @@ test('asks in the app\'s dialog before cancelling many posts and before revoking
   // Two posts waiting in review: the review list is where a post that has not gone out can be cancelled in bulk.
   for (const body of ['Bài hủy thứ nhất', 'Bài hủy thứ hai']) {
     await page.goto(`/o/${slug}/social`);
-    await page.getByRole('link', { name: 'Soạn bài' }).click();
+    await page.getByRole('link', { name: 'Soạn bài' }).first().click();
     await page.getByLabel('Nội dung chung').fill(body);
     await page.getByRole('button', { name: 'Lưu và gửi duyệt' }).click();
     await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
@@ -349,7 +349,7 @@ test('keeps uploaded images in the library with the posts that use them', async 
   await expect(item).toContainText('Dùng trong 1 bài');
 
   // The second post takes the same image from the library instead of uploading it again.
-  await page.getByRole('link', { name: 'Soạn bài' }).click();
+  await page.getByRole('link', { name: 'Soạn bài' }).first().click();
   await page.getByLabel('Nội dung chung').fill('Bài thứ hai dùng lại ảnh');
   await page.getByRole('button', { name: 'Chọn từ thư viện' }).click();
   await page.getByRole('button', { name: 'Chọn ảnh thu-vien.png' }).click();
@@ -574,7 +574,7 @@ test('approves several posts at once from the review list (#635)', async ({ page
   await connectSandbox(page, 'Trang Duyệt Nhiều');
   await page.getByRole('link', { name: 'Quay lại' }).click();
   for (const body of ['Bài thứ nhất', 'Bài thứ hai']) {
-    await page.getByRole('link', { name: 'Soạn bài' }).click();
+    await page.getByRole('link', { name: 'Soạn bài' }).first().click();
     await page.getByLabel('Nội dung chung').fill(body);
     await page.getByRole('button', { name: 'Lưu và gửi duyệt' }).click();
     await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
@@ -698,6 +698,38 @@ test('puts the connect card first on a phone and folds the general settings belo
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.reload();
   await expect(page.getByRole('button', { name: /Cài đặt chung/ })).toHaveAttribute('aria-expanded', 'true');
+});
+
+test('opens Posts on the post waiting for review, and the schedule tab shows an action when empty (#3654)', async ({ page }) => {
+  await signInNewUser(page, newEmail('social-default-tab'));
+  const slug = await createOrg(page, 'Công ty Mở Đúng Tab');
+  await connectSandbox(page, 'Trang Mở Đúng Tab');
+  // Nothing waits yet: the schedule is the first view, and its empty state offers to write a post.
+  await page.goto(`/o/${slug}/social`);
+  await expect(page.getByRole('heading', { name: 'Bài đăng', exact: true })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Lịch đăng' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByText('Chưa có bài nào lên lịch', { exact: true })).toBeVisible();
+  await expect(page.getByText(/4 tuần/)).toHaveCount(0);
+  // The header's link and the empty state's own action.
+  await expect(page.getByRole('link', { name: 'Soạn bài' })).toHaveCount(2);
+  // A post goes to review: Posts now opens on it, with no tab in the address.
+  await page.getByRole('link', { name: 'Soạn bài' }).first().click();
+  await page.getByLabel('Nội dung chung').fill('Bài đang chờ duyệt ở tab đầu');
+  await page.getByRole('button', { name: 'Lưu và gửi duyệt' }).click();
+  await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
+  await page.goto(`/o/${slug}/social`);
+  await expect(page.getByRole('tab', { name: /Cần duyệt/ })).toHaveAttribute('aria-selected', 'true');
+  // The post's own row (the same text is also in the review proposals panel).
+  await expect(page.getByRole('link', { name: 'Bài đang chờ duyệt ở tab đầu' })).toBeVisible();
+  // The schedule is one click away and stays chosen across a reload.
+  await page.getByRole('tab', { name: 'Lịch đăng' }).click();
+  await expect(page).toHaveURL(/tab=upcoming/);
+  await page.reload();
+  await expect(page.getByRole('tab', { name: 'Lịch đăng' })).toHaveAttribute('aria-selected', 'true');
+  // An empty list has its action: drafts offer to write a post.
+  await page.getByRole('tab', { name: 'Nháp', exact: true }).click();
+  await expect(page.getByText('Chưa có bản nháp')).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Soạn bài' })).toHaveCount(2);
 });
 
 test('posts a Story of one image, with no text, in a phone frame (#644)', async ({ page }) => {

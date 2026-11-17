@@ -30,8 +30,8 @@ END $$;
 -- The foreign key to the original (G3 fk-index), and the lookup of an invoice's corrections.
 CREATE INDEX IF NOT EXISTS einvoice_draft_original_idx ON crove_finance.einvoice_draft (org_id, original_draft_id) WHERE original_draft_id IS NOT NULL;
 
--- The content an invoice is issued from, as one hash (20270107100000 is the newest body): the correction's kind, original, reason and agreement join it only when the draft is a
--- correction.
+-- The content an invoice is issued from, as one hash. This is the newest body (20270109140000: the base, the sale date, the buyer's identity) with the correction's kind, original, reason
+-- and agreement added; each term after the base joins the hash only when set, so the hash of every draft that has none of them, and of a request already made for it, is what it was.
 CREATE OR REPLACE FUNCTION crove_finance.einvoice_content_hash(p_org uuid, p_draft uuid) RETURNS text
 LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $$
   SELECT pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
@@ -45,6 +45,7 @@ LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $$
           ORDER BY l.line_no)
         FROM crove_finance.einvoice_draft_line l WHERE l.org_id = d.org_id AND l.draft_id = d.id), '[]'::pg_catalog.jsonb))
      || CASE WHEN d.sale_date IS NULL THEN '[]'::pg_catalog.jsonb ELSE pg_catalog.jsonb_build_array(d.sale_date::text, COALESCE(d.late_reason, '')) END
+     || CASE WHEN d.buyer_identity IS NULL THEN '[]'::pg_catalog.jsonb ELSE pg_catalog.jsonb_build_array(d.buyer_identity_kind, d.buyer_identity) END
      || CASE WHEN d.correction_kind IS NULL THEN '[]'::pg_catalog.jsonb
              ELSE pg_catalog.jsonb_build_array(d.correction_kind, d.original_draft_id::text, d.reason_code, COALESCE(d.agreement_file_id::text, '')) END)::text,
     'UTF8')), 'hex')

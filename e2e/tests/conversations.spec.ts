@@ -18,7 +18,7 @@ async function publishOnSandbox(page: Page, channel: string, body: string): Prom
   await page.getByRole('button', { name: 'Kết nối kênh thử' }).click();
   await expect(page.getByText(channel).first()).toBeVisible();
   await page.getByRole('link', { name: 'Quay lại' }).click();
-  await page.getByRole('link', { name: 'Soạn bài' }).click();
+  await page.getByRole('link', { name: 'Soạn bài' }).first().click();
   await page.getByLabel('Nội dung chung').fill(body);
   await page.getByRole('button', { name: 'Lưu và gửi duyệt' }).click();
   await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);

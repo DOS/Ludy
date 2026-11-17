@@ -354,4 +354,48 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
     await expect(rows('UPDATE crove_finance.einvoice_draft SET reason_code = $3 WHERE org_id = $1 AND id = $2', [o.orgId, copy.id, '2'])).rejects.toThrow();
     await expect(rows("UPDATE crove_finance.einvoice_draft SET correction_kind = NULL, original_draft_id = NULL, reason_code = NULL WHERE org_id = $1 AND id = $2", [o.orgId, copy.id])).rejects.toThrow();
   });
+  it('puts the correction and the buyer identity in the content hash only when set, so an ordinary draft keeps the hash it had', async () => {
+    const o = await org();
+    const p = sandbox();
+    const hash = async (id: string) => (await rows<{ h: string }>('SELECT crove_finance.einvoice_content_hash($1, $2) AS h', [o.orgId, id]))[0]?.h;
+    // An ordinary draft with no sale date, no identity and no correction hashes as its base terms alone: the formula of 20261123050000, computed here from the stored rows.
+    const ordinary = await execute<{ id: string }>(o, 'finance.einvoice_draft.save', form(o));
+    const base = (
+      await rows<{ h: string }>(
+        `SELECT pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to((pg_catalog.jsonb_build_array(
+            d.legal_entity_id::text, COALESCE(d.series_id::text, ''), d.invoice_date::text, d.currency, d.buyer_kind,
+            COALESCE(d.buyer_tax_code, ''), COALESCE(d.buyer_name, ''), COALESCE(d.buyer_address, ''), COALESCE(d.buyer_email, ''),
+            d.subtotal::text, d.vat_amount::text, d.total::text,
+            COALESCE((SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_array(l.line_no::text, l.description, COALESCE(l.unit, ''), l.quantity::text, l.unit_price::text, l.amount::text, l.vat_rate, l.vat_amount::text) ORDER BY l.line_no)
+                      FROM crove_finance.einvoice_draft_line l WHERE l.org_id = d.org_id AND l.draft_id = d.id), '[]'::pg_catalog.jsonb)))::text, 'UTF8')), 'hex') AS h
+           FROM crove_finance.einvoice_draft d WHERE d.org_id = $1 AND d.id = $2`,
+        [o.orgId, ordinary.id],
+      )
+    )[0]?.h;
+    expect(await hash(ordinary.id)).toBe(base);
+
+    // A correcting draft of an individual buyer: the identity the person gives changes the hash, and so does each term of the correction.
+    const original = await issued(o, p, 'individual');
+    const corr = (await start(o, original.draftId, 'adjustment')) as Corrected & { buyer: { identity: unknown } & Record<string, unknown>; seriesId: string };
+    const lines = [{ description: 'Hàng A', unit: null, quantity: '1', unitPrice: '50000', vatRate: '10%' }];
+    const withIdentity = (identity: { kind: string; value: string } | null) =>
+      execute<Corrected>(o, 'finance.einvoice_draft.save', { draftId: corr.id, legalEntityId: null, date: today(), seriesId: corr.seriesId, buyer: { ...corr.buyer, identity }, lines });
+    await withIdentity(null);
+    const none = await hash(corr.id);
+    expect(none).not.toBe(base);
+    await withIdentity({ kind: 'cccd', value: '012345678901' });
+    const cccd = await hash(corr.id);
+    expect(cccd).not.toBe(none);
+    await withIdentity({ kind: 'cccd', value: '012345678902' });
+    expect(await hash(corr.id)).not.toBe(cccd);
+    await withIdentity({ kind: 'passport', value: '012345678901' });
+    expect(await hash(corr.id)).not.toBe(cccd);
+    // Back to no identity: the hash is the one it was.
+    await withIdentity(null);
+    expect(await hash(corr.id)).toBe(none);
+    // The same draft made a replacement instead (another original) hashes differently from this adjustment.
+    const other = await issued(o, p, 'individual');
+    const replacement = await start(o, other.draftId, 'replacement');
+    expect(await hash(replacement.id)).not.toBe(none);
+  });
 });

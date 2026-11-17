@@ -3,7 +3,7 @@
 // fields.
 import { describe, expect, it } from 'vitest';
 import { enterpriseCheckDigit } from '@crove/l10n-vn';
-import { checkDraft, computeDraft, isLateSale, nextWorkingDay, normalizeVatRate, type DraftInput } from '../src/domain/einvoice-draft.ts';
+import { checkDraft, computeDraft, isBuyerIdentity, isLateSale, maskBuyerIdentity, nextWorkingDay, normalizeVatRate, type DraftInput } from '../src/domain/einvoice-draft.ts';
 
 // A synthetic tax code made at run time (the repository holds no checksum-valid one): a nine digit prefix and its check digit, and the same with the check digit off by one.
 const PREFIX = '010010910';
@@ -17,7 +17,7 @@ const draft = (extra: Partial<DraftInput> = {}): DraftInput => ({
   lateReason: null,
   currency: 'VND',
   seriesId: '00000000-0000-4000-8000-000000000001',
-  buyer: { kind: 'business', taxCode: VALID_TAX_CODE, name: 'Công ty Mua', address: '1 Phố Thử', email: null },
+  buyer: { kind: 'business', taxCode: VALID_TAX_CODE, name: 'Công ty Mua', address: '1 Phố Thử', email: null, identity: null },
   lines: [line()],
   ...extra,
 });
@@ -66,12 +66,12 @@ describe('checkDraft', () => {
   });
 
   it('asks a business buyer for a valid tax code, a name and an address, and an individual for a name', () => {
-    expect(codes(draft({ buyer: { kind: 'business', taxCode: null, name: null, address: null, email: null } }))).toEqual(['buyer.taxCode:BUYER_TAX_CODE_REQUIRED', 'buyer.name:BUYER_NAME_REQUIRED', 'buyer.address:BUYER_ADDRESS_REQUIRED']);
-    expect(codes(draft({ buyer: { kind: 'business', taxCode: '12345', name: 'A', address: 'B', email: null } }))).toEqual(['buyer.taxCode:BUYER_TAX_CODE_INVALID']);
-    expect(codes(draft({ buyer: { kind: 'business', taxCode: BAD_TAX_CODE, name: 'A', address: 'B', email: null } }))).toEqual(['buyer.taxCode:BUYER_TAX_CODE_CHECKSUM']);
-    expect(codes(draft({ buyer: { kind: 'individual', taxCode: null, name: null, address: null, email: null } }))).toEqual(['buyer.name:BUYER_NAME_REQUIRED']);
-    expect(codes(draft({ buyer: { kind: 'individual', taxCode: '012345678901', name: 'Một Người', address: null, email: null } }))).toEqual([]);
-    expect(codes(draft({ buyer: { kind: 'consumer', taxCode: null, name: null, address: null, email: null } }))).toEqual([]);
+    expect(codes(draft({ buyer: { kind: 'business', taxCode: null, name: null, address: null, email: null, identity: null } }))).toEqual(['buyer.taxCode:BUYER_TAX_CODE_REQUIRED', 'buyer.name:BUYER_NAME_REQUIRED', 'buyer.address:BUYER_ADDRESS_REQUIRED']);
+    expect(codes(draft({ buyer: { kind: 'business', taxCode: '12345', name: 'A', address: 'B', email: null, identity: null } }))).toEqual(['buyer.taxCode:BUYER_TAX_CODE_INVALID']);
+    expect(codes(draft({ buyer: { kind: 'business', taxCode: BAD_TAX_CODE, name: 'A', address: 'B', email: null, identity: null } }))).toEqual(['buyer.taxCode:BUYER_TAX_CODE_CHECKSUM']);
+    expect(codes(draft({ buyer: { kind: 'individual', taxCode: null, name: null, address: null, email: null, identity: null } }))).toEqual(['buyer.name:BUYER_NAME_REQUIRED']);
+    expect(codes(draft({ buyer: { kind: 'individual', taxCode: '012345678901', name: 'Một Người', address: null, email: null, identity: null } }))).toEqual([]);
+    expect(codes(draft({ buyer: { kind: 'consumer', taxCode: null, name: null, address: null, email: null, identity: null } }))).toEqual([]);
   });
 
   it('checks the date, the series, the currency, the email and the lines', () => {
@@ -80,7 +80,7 @@ describe('checkDraft', () => {
     expect(codes(draft({ date: '2026-11-04' }))).toEqual(['date:DATE_FUTURE']);
     expect(codes(draft({ seriesId: null }))).toEqual(['series:SERIES_REQUIRED']);
     expect(codes(draft({ currency: 'USD' }))).toEqual(['currency:CURRENCY_UNSUPPORTED']);
-    expect(codes(draft({ buyer: { kind: 'consumer', taxCode: null, name: null, address: null, email: 'a@b' } }))).toEqual(['buyer.email:BUYER_EMAIL_INVALID']);
+    expect(codes(draft({ buyer: { kind: 'consumer', taxCode: null, name: null, address: null, email: 'a@b', identity: null } }))).toEqual(['buyer.email:BUYER_EMAIL_INVALID']);
     expect(codes(draft({ lines: [] }))).toEqual(['lines:LINES_REQUIRED']);
     expect(codes(draft({ lines: [line({ description: ' ', quantity: '0', unitPrice: '-1', vatRate: '7%' })] }))).toEqual([
       'lines.1.description:LINE_DESCRIPTION_REQUIRED',
@@ -138,5 +138,58 @@ describe('checkDraft: the sale date', () => {
   it('refuses a sale date that is not a date or is after the invoice', () => {
     expect(codes(draft({ saleDate: '2026-13-01' }))).toEqual(['saleDate:SALE_DATE_INVALID']);
     expect(codes(draft({ saleDate: '2026-11-04' }))).toEqual(['saleDate:SALE_DATE_AFTER_INVOICE']);
+  });
+});
+
+describe('8% by the date of the sale (#3678)', () => {
+  const eight = [line({ vatRate: '8%' })];
+  const REFUSED = 'lines.1.vatRate:LINE_VAT_RATE_REDUCED_OUTSIDE_PERIOD';
+  it('passes on the last day of the period and is refused from the day after', () => {
+    expect(codes(draft({ date: '2026-12-31', lines: eight }), '2026-12-31')).not.toContain(REFUSED);
+    expect(codes(draft({ date: '2027-01-01', lines: eight }), '2027-01-01')).toContain(REFUSED);
+  });
+  it('is judged on the sale date when the invoice is later, and on the invoice date when there is none', () => {
+    // Sold on 2026-12-31, invoiced in January: the sale is inside the period.
+    expect(codes(draft({ date: '2027-01-04', saleDate: '2026-12-31', lateReason: 'Chờ khách xác nhận', lines: eight }), '2027-01-04')).not.toContain(REFUSED);
+    // Sold in 2027 but not dated: the invoice date decides, and 2027 is outside.
+    expect(codes(draft({ date: '2027-02-02', saleDate: null, lines: eight }), '2027-02-02')).toContain(REFUSED);
+  });
+  it('is refused in the gap between two periods (2023-01-01 to 2023-06-30 had no 8%)', () => {
+    expect(codes(draft({ date: '2023-03-01', lines: eight }), '2026-11-03')).toContain(REFUSED);
+    expect(codes(draft({ date: '2023-07-01', lines: eight }), '2026-11-03')).not.toContain(REFUSED);
+  });
+  it('an adjustment of a 2026 invoice dated in 2027 keeps the original date for the rate', () => {
+    expect(codes(draft({ date: '2027-01-10', rateDate: '2026-11-20', lines: eight }), '2027-01-10')).not.toContain(REFUSED);
+    // Without the original's date the same draft is refused.
+    expect(codes(draft({ date: '2027-01-10', lines: eight }), '2027-01-10')).toContain(REFUSED);
+  });
+  it('leaves 10%, 5%, 0% and exempt lines alone on any date, and says nothing more about a date that is not one', () => {
+    for (const rate of ['10%', '5%', '0%', 'KCT']) expect(codes(draft({ date: '2027-03-01', lines: [line({ vatRate: rate })] }), '2027-03-01')).not.toContain(REFUSED);
+    expect(codes(draft({ date: 'not a date', lines: eight }))).not.toContain(REFUSED);
+  });
+});
+
+describe("an individual buyer's identity (#3678)", () => {
+  const individual = (identity: DraftInput['buyer']['identity'], kind: DraftInput['buyer']['kind'] = 'individual') =>
+    draft({ buyer: { kind, taxCode: null, name: 'Nguyễn Văn A', address: null, email: null, identity } });
+  it('checks the shape of each kind', () => {
+    expect(isBuyerIdentity('cccd', '012345678901')).toBe(true);
+    expect(isBuyerIdentity('cccd', '01234567890')).toBe(false);
+    expect(isBuyerIdentity('cccd', '01234567890a')).toBe(false);
+    expect(isBuyerIdentity('passport', 'B1234567')).toBe(true);
+    expect(isBuyerIdentity('passport', 'b1234567')).toBe(false);
+    expect(isBuyerIdentity('passport', 'B12')).toBe(false);
+    expect(isBuyerIdentity('budget_code', '1234567')).toBe(true);
+    expect(isBuyerIdentity('budget_code', '123456')).toBe(false);
+  });
+  it('passes with none or one valid identity, and refuses a malformed one or one on another kind of buyer', () => {
+    expect(codes(individual(null))).toEqual([]);
+    expect(codes(individual({ kind: 'cccd', value: '012345678901' }))).toEqual([]);
+    expect(codes(individual({ kind: 'cccd', value: '12345' }))).toContain('buyer.identity:BUYER_IDENTITY_INVALID');
+    expect(codes(individual({ kind: 'cccd', value: '012345678901' }, 'business'))).toContain('buyer.identity:BUYER_IDENTITY_INVALID');
+  });
+  it('masks all but the last three characters', () => {
+    expect(maskBuyerIdentity('012345678901')).toBe('•••••••••901');
+    expect(maskBuyerIdentity('AB')).toBe('••');
   });
 });

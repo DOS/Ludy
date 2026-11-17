@@ -132,7 +132,7 @@ export const einvoiceDraftFromOrder = defineCommand({
     const draft = toDraftInput({
       date: today,
       seriesId: series?.id ?? null,
-      buyer: { kind: handoff.buyer.kind, partyId: null, taxCode: handoff.buyer.taxCode, name: handoff.buyer.name, address: handoff.buyer.address, email: handoff.buyer.email },
+      buyer: { kind: handoff.buyer.kind, partyId: null, taxCode: handoff.buyer.taxCode, name: handoff.buyer.name, address: handoff.buyer.address, email: handoff.buyer.email, identity: null },
       lines: chosen.map((l) => ({ description: l.description, unit: l.unit, quantity: l.quantity ?? '0', unitPrice: l.unitPrice ?? '0', vatRate: l.vatRate ?? '' })),
     });
     const computed = computeDraft(draft.lines);

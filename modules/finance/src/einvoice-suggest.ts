@@ -179,6 +179,8 @@ export const einvoicePreviousInvoice = defineQuery({
           name: pick(party?.name, draft.buyer_name, 400),
           address: pick(party?.address, draft.buyer_address, 500),
           email: pick(party?.email, draft.buyer_email, 254),
+          // The identity an individual gave stays with its own invoice: a draft made from this one starts without it.
+          identity: null,
         },
         lines: rows.map((r) => ({ description: r.description, unit: r.unit, quantity: plain(r.quantity), unitPrice: plain(r.unit_price), vatRate: r.vat_rate, vatAllowed: allowed.includes(r.vat_rate) })),
       },

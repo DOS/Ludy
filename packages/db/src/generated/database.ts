@@ -1136,6 +1136,8 @@ export interface FinanceEinvoiceDraftTable {
   channel_connection_id: string | null;
   sale_date: string | null;
   late_reason: string | null;
+  buyer_identity_kind: string | null;
+  buyer_identity: string | null;
   correction_kind: string | null;
   original_draft_id: string | null;
   reason_code: string | null;

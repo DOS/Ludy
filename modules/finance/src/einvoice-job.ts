@@ -216,7 +216,7 @@ async function requestFor(ctx: CommandContext, draft: DraftRow, target: { seller
     date: typeof draft.invoice_date === 'string' ? draft.invoice_date : new Date(draft.invoice_date).toISOString().slice(0, 10),
     currency: draft.currency,
     seller: { taxCode: target.sellerTaxCode, name: target.sellerName },
-    buyer: { kind: draft.buyer_kind, taxCode: draft.buyer_tax_code, name: draft.buyer_name, address: draft.buyer_address, email: draft.buyer_email },
+    buyer: { kind: draft.buyer_kind, taxCode: draft.buyer_tax_code, name: draft.buyer_name, address: draft.buyer_address, email: draft.buyer_email, identity: draft.buyer_identity_kind && draft.buyer_identity ? { kind: draft.buyer_identity_kind, value: draft.buyer_identity } : null },
     lines: stored,
     subtotal: plain(draft.subtotal),
     vatAmount: plain(draft.vat_amount),

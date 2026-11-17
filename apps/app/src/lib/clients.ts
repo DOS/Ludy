@@ -65,7 +65,7 @@ export interface SocialFigures {
 }
 
 // Where a figure leads on the org's Social screens: a tab of the Social home, or the channels page.
-export type SocialFigureLink = { to: 'social'; tab?: 'review' | 'attention' | 'done' } | { to: 'channels' };
+export type SocialFigureLink = { to: 'social'; tab?: 'upcoming' | 'review' | 'attention' | 'done' } | { to: 'channels' };
 
 export interface SocialFigure {
   key: 'review' | 'waitingClient' | 'attention' | 'reconnect' | 'upcoming';
@@ -84,7 +84,7 @@ export function socialFigures(figures: SocialFigures): SocialFigure[] {
     { key: 'reconnect', count: figures.reconnect, tone: 'urgent', link: { to: 'channels' } },
     { key: 'review', count: figures.review, tone: 'waiting', link: { to: 'social', tab: 'review' } },
     { key: 'waitingClient', count: figures.waitingClient, tone: 'waiting', link: { to: 'social', tab: 'review' } },
-    { key: 'upcoming', count: figures.upcoming, tone: 'plain', link: { to: 'social' } },
+    { key: 'upcoming', count: figures.upcoming, tone: 'plain', link: { to: 'social', tab: 'upcoming' } },
   ];
   return all.filter((f) => f.count > 0 || f.key === 'upcoming');
 }
