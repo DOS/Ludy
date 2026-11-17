@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The previous invoice to the same customer copied into the draft form by code, with no model (#2721). No browser or API imports, so it is unit tested.
-import { EINVOICE_DRAFT_MAX_LINES, type BuyerKind, type EInvoicePrevious } from '@crove/kernel-contract';
+import { EINVOICE_DRAFT_MAX_LINES, type BuyerIdentityKind, type BuyerKind, type EInvoicePrevious } from '@crove/kernel-contract';
 
 interface CopyLine {
   description: string;
@@ -11,7 +11,7 @@ interface CopyLine {
   ai: null | string;
 }
 interface CopyForm {
-  buyer: { kind: BuyerKind; partyId: string | null; taxCode: string; name: string; address: string; email: string };
+  buyer: { kind: BuyerKind; partyId: string | null; taxCode: string; name: string; address: string; email: string; identityKind: BuyerIdentityKind | ''; identity: string };
   lines: CopyLine[];
 }
 
@@ -28,6 +28,7 @@ export function applyPrevious<S extends CopyForm>(s: S, invoice: NonNullable<EIn
   const buyerEmpty = b.partyId === null && b.taxCode.trim() === '' && b.name.trim() === '' && b.address.trim() === '' && b.email.trim() === '';
   const from = invoice.buyer;
   const replace = b.kind !== 'consumer' && (buyerEmpty || (replaceBuyerOf !== null && b.partyId === replaceBuyerOf));
-  const buyer = replace ? { kind: from.kind as BuyerKind, partyId: from.partyId, taxCode: from.taxCode ?? '', name: from.name ?? '', address: from.address ?? '', email: from.email ?? '' } : b;
+  // The identity an individual gave stays with its own invoice (#3678): a copied buyer starts without one.
+  const buyer = replace ? { kind: from.kind as BuyerKind, partyId: from.partyId, taxCode: from.taxCode ?? '', name: from.name ?? '', address: from.address ?? '', email: from.email ?? '', identityKind: '' as const, identity: '' } : b;
   return { state: { ...s, lines: lines.length > 0 ? lines : s.lines, buyer }, added: proposed.length, rateChanged: taken.filter((l) => !l.vatAllowed).length };
 }

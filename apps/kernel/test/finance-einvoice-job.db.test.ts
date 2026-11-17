@@ -117,7 +117,8 @@ suite('the issue job of a sales e-invoice (#2502)', () => {
   const form = (o: Org) => ({
     draftId: null,
     legalEntityId: null,
-    date: today(),
+    // A fixed day inside the 8% period (and in the past), so the 8% line passes the rate check on any day the suite runs (#3678).
+    date: '2026-11-03',
     seriesId: o.seriesId,
     buyer: { kind: 'business', partyId: null, taxCode: BUYER_TAX_CODE, name: 'Công ty Mua Thử', address: '1 Phố Thử, Hà Nội', email: null },
     lines: [

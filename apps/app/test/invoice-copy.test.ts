@@ -17,11 +17,17 @@ const form = (lines: number, buyerPartyId: string | null = null) => ({
   buyerAi: false,
   date: '2026-11-01',
   seriesId: '',
-  buyer: { kind: 'business' as const, partyId: buyerPartyId, taxCode: '', name: buyerPartyId ? 'Khách' : '', address: '', email: '' },
+  buyer: { kind: 'business' as const, partyId: buyerPartyId, taxCode: '', name: buyerPartyId ? 'Khách' : '', address: '', email: '', identityKind: '' as const, identity: '' },
   lines: Array.from({ length: lines }, (_, i) => ({ description: `Của tôi ${i + 1}`, unit: 'cái', quantity: '1', unitPrice: '5', vatRate: '10%', ai: null })),
 });
 
 describe('applyPrevious', () => {
+  it('copies a buyer without the identity an individual gave on the invoice, and leaves the form with both identity fields as strings (#3678)', () => {
+    const individual: Invoice = { ...invoice(1), buyer: { kind: 'individual', partyId: 'p1', taxCode: null, name: 'Nguyễn Văn A', address: null, email: null, identity: { kind: 'cccd', value: '012345678901' } } };
+    const done = applyPrevious({ ...form(0), buyer: { ...form(0).buyer, kind: 'individual' as const } }, individual, null);
+    expect(done.state.buyer).toMatchObject({ kind: 'individual', name: 'Nguyễn Văn A', identityKind: '', identity: '' });
+    expect(JSON.stringify(done.state)).not.toContain('012345678901');
+  });
   it('fills an empty buyer and replaces the blank line', () => {
     const done = applyPrevious(form(0), invoice(2), null);
     expect(done.state.lines.map((l) => l.description)).toEqual(['Hàng 1', 'Hàng 2']);
