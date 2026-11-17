@@ -596,5 +596,40 @@ describe('parseTodoQuickAdd (#3556)', () => {
     expect(shortDurSau.title).toBe('Gọi khách sau 2h');
     expect(shortDurSau.dueOn).toBeNull();
     expect(shortDurSau.dueTime).toBeNull();
+
+    // Multi-date expressions keep full range/list intact, and disconnected second dates stay in title
+    const multiDate = parseTodoQuickAdd('Họp 25/11 và 26/11', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(multiDate.title).toBe('Họp 25/11 và 26/11');
+    expect(multiDate.dueOn).toBeNull();
+    expect(multiDate.tokens).toEqual([]);
+
+    const twoSeparateDates = parseTodoQuickAdd('Họp 25/11 thay cho ngày mai', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(twoSeparateDates.dueOn).toBe('2026-11-25');
+    expect(twoSeparateDates.title).toBe('Họp thay cho ngày mai');
+    expect(twoSeparateDates.tokens.filter((t) => t.kind === 'date')).toHaveLength(1);
+
+    // English short durations ("in 2h", "after 2h") stay intact while "after 2pm" still parses
+    const enDurIn = parseTodoQuickAdd('Call in 2h', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(enDurIn.title).toBe('Call in 2h');
+    expect(enDurIn.dueOn).toBeNull();
+    expect(enDurIn.dueTime).toBeNull();
+
+    const enDurAfter = parseTodoQuickAdd('Call after 2h', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(enDurAfter.title).toBe('Call after 2h');
+    expect(enDurAfter.dueTime).toBeNull();
+
+    const enAfterPm = parseTodoQuickAdd('Call after 2pm tomorrow', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(enAfterPm.dueOn).toBe('2026-11-18');
+    expect(enAfterPm.dueTime).toBe('14:00');
+
+    // Quoted list names shield internal #tags and date words
+    const quotedListProtected = parseTodoQuickAdd('Call /"Work #sales tomorrow"', {
+      now: TUE_MORNING,
+      timeZone: VN_TZ,
+    });
+    expect(quotedListProtected.title).toBe('Call');
+    expect(quotedListProtected.listName).toBe('Work #sales tomorrow');
+    expect(quotedListProtected.tags).toEqual([]);
+    expect(quotedListProtected.dueOn).toBeNull();
   });
 });

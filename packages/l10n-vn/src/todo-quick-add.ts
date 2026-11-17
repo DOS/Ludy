@@ -601,32 +601,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     tokens.push({ kind, raw: input.slice(start, end), start, end });
   };
 
-  // 1. Priority (!p1.. !p4)
-  let priority: 1 | 2 | 3 | 4 | null = null;
-  for (const m of input.matchAll(PRIORITY_RE)) {
-    const start = m.index;
-    const end = start + m[0].length;
-    if (!isAvailable({ start, end })) continue;
-    priority = Number(m[1]) as 1 | 2 | 3 | 4;
-    claimToken('priority', start, end);
-  }
-
-  // 2. Tags (#tag)
-  const tags: string[] = [];
-  const seenTags = new Set<string>();
-  for (const m of input.matchAll(TAG_RE)) {
-    const start = m.index;
-    const end = start + m[0].length;
-    if (!isAvailable({ start, end })) continue;
-    const tag = (m[1] ?? '').normalize('NFC').toLowerCase().slice(0, MAX_TAG_LENGTH);
-    if (tag && !seenTags.has(tag) && tags.length < MAX_TAGS) {
-      seenTags.add(tag);
-      tags.push(tag);
-    }
-    claimToken('tag', start, end);
-  }
-
-  // 3. List (/ListName or /"List Name")
+  // 1. List (/ListName or /"List Name") - run first so #tags or date words inside quoted list names stay protected
   let listName: string | null = null;
   const listMatches: Array<{ start: number; end: number; name: string }> = [];
   for (const m of input.matchAll(LIST_QUOTED_RE)) {
@@ -642,6 +617,33 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     if (!isAvailable(lm)) continue;
     listName = lm.name;
     claimToken('list', lm.start, lm.end);
+    break;
+  }
+
+  // 2. Priority (!p1.. !p4)
+  let priority: 1 | 2 | 3 | 4 | null = null;
+  for (const m of input.matchAll(PRIORITY_RE)) {
+    const start = m.index;
+    const end = start + m[0].length;
+    if (!isAvailable({ start, end })) continue;
+    priority = Number(m[1]) as 1 | 2 | 3 | 4;
+    claimToken('priority', start, end);
+    break;
+  }
+
+  // 3. Tags (#tag)
+  const tags: string[] = [];
+  const seenTags = new Set<string>();
+  for (const m of input.matchAll(TAG_RE)) {
+    const start = m.index;
+    const end = start + m[0].length;
+    if (!isAvailable({ start, end })) continue;
+    const tag = (m[1] ?? '').normalize('NFC').toLowerCase().slice(0, MAX_TAG_LENGTH);
+    if (tag && !seenTags.has(tag) && tags.length < MAX_TAGS) {
+      seenTags.add(tag);
+      tags.push(tag);
+    }
+    claimToken('tag', start, end);
   }
 
   const words = tokenizeWords(input);
@@ -953,6 +955,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
   let explicitDueOn: string | null = null;
   let explicitTodaySpecified = false;
   const dateSpans: Span[] = [];
+  const numericDateCandidates: Array<{ start: number; end: number; dueOn: string }> = [];
 
   for (const m of input.matchAll(ISO_DATE_TOKEN_RE)) {
     const start = m.index;
@@ -960,11 +963,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     if (!isAvailable({ start, end })) continue;
     const candidate = formatIsoDate(Number(m[1]), Number(m[2]), Number(m[3]));
     if (!parseIsoCalendarDate(candidate)) continue;
-    const fullStart = expandConnectorBefore(input, words, start, [['vào', 'ngày'], ['ngày'], ['on']], occupied);
-    explicitDueOn = candidate;
-    explicitTodaySpecified = candidate === today;
-    claimToken('date', fullStart, end);
-    dateSpans.push({ start: fullStart, end });
+    numericDateCandidates.push({ start, end, dueOn: candidate });
   }
 
   for (const m of input.matchAll(DMY_DATE_TOKEN_RE)) {
@@ -976,11 +975,36 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     const year = m[3] ? Number(m[3]) : undefined;
     const resolved = resolveExplicitMonthDay(today, day, month, year);
     if (!resolved) continue;
-    const fullStart = expandConnectorBefore(input, words, start, [['vào', 'ngày'], ['ngày'], ['on']], occupied);
-    explicitDueOn = resolved;
-    explicitTodaySpecified = resolved === today;
-    claimToken('date', fullStart, end);
-    dateSpans.push({ start: fullStart, end });
+    numericDateCandidates.push({ start, end, dueOn: resolved });
+  }
+
+  numericDateCandidates.sort((a, b) => a.start - b.start || b.end - a.end);
+  const isMultiDateConnector = (leftEnd: number, rightStart: number): boolean => {
+    if (rightStart < leftEnd) return false;
+    const foldedBetween = foldVn(input.slice(leftEnd, rightStart)).trim();
+    return /^(?:-|\u2013|\u2014|&|to|till|until|and|or|den|toi|va|hoac|hay|->|~)$/u.test(foldedBetween);
+  };
+
+  for (let idx = 0; idx < numericDateCandidates.length; idx++) {
+    const dc = numericDateCandidates[idx];
+    if (!dc || !isAvailable(dc)) continue;
+    let rangeEndIdx = idx;
+    while (rangeEndIdx + 1 < numericDateCandidates.length) {
+      const prevDc = numericDateCandidates[rangeEndIdx];
+      const nextDc = numericDateCandidates[rangeEndIdx + 1];
+      if (!prevDc || !nextDc || !isAvailable(nextDc) || !isMultiDateConnector(prevDc.end, nextDc.start)) break;
+      rangeEndIdx += 1;
+    }
+    if (rangeEndIdx > idx) {
+      idx = rangeEndIdx;
+      continue;
+    }
+    const fullStart = expandConnectorBefore(input, words, dc.start, [['vào', 'ngày'], ['ngày'], ['on']], occupied);
+    explicitDueOn = dc.dueOn;
+    explicitTodaySpecified = dc.dueOn === today;
+    claimToken('date', fullStart, dc.end);
+    dateSpans.push({ start: fullStart, end: dc.end });
+    break;
   }
 
   // 6. Explicit clock times (14:30, 9h30, 9h, 9am, 2:30pm)
@@ -1057,18 +1081,22 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     period: DayPeriod | undefined,
   ): boolean => {
     const afterWord = findAdjacentWordAfter(input, words, cand.end, occupied);
-    if (afterWord && vnMatch(afterWord, 'nữa')) return true;
+    if (afterWord && (vnMatch(afterWord, 'nữa') || afterWord.nfcLower === 'later')) return true;
 
     const prevWord = findAdjacentWordBefore(input, words, cand.start, occupied);
     if (!prevWord) return false;
     if (vnMatchAny(prevWord, ['trong', 'mất', 'tốn', 'hết', 'suốt'])) return true;
+    if (prevWord.nfcLower === 'in' || prevWord.nfcLower === 'for' || prevWord.nfcLower === 'within') return true;
     const prevPrev = wordBefore(words, prevWord);
     if (vnMatch(prevWord, 'dài') && prevPrev && vnMatch(prevPrev, 'kéo')) return true;
+    const candSlice = input.slice(cand.start, cand.end);
+    const hasColon = candSlice.includes(':');
+    if (prevWord.nfcLower === 'after') {
+      if (!period && !cand.hasAmPm && !hasColon && cand.hour >= 1 && cand.hour <= 12) return true;
+    }
     if (vnMatch(prevWord, 'sau')) {
       if (prevPrev && vnMatchAny(prevPrev, ['tuần', 'ngày', 'hôm', 'tháng', 'năm'])) return false;
-      const candSlice = input.slice(cand.start, cand.end);
       const usesGioWord = /(?:giờ|gio|giơ|o\u031b)/iu.test(candSlice);
-      const hasColon = candSlice.includes(':');
       if (!period && !cand.hasAmPm && !hasColon && (usesGioWord || (cand.hour >= 1 && cand.hour <= 12))) return true;
     }
     return false;
@@ -1134,6 +1162,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
   const timeTokenDismissed = (opts.dismissedTokens ?? []).some((t) => t.kind === 'time');
 
   for (let i = 0; i < words.length; i++) {
+    if (explicitDueOn !== null) break;
     const w0 = words[i];
     if (!w0 || !isAvailable(w0)) continue;
 
