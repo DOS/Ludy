@@ -1229,6 +1229,41 @@ describe('parseTodoQuickAdd (#3556)', () => {
       dueOn: '2026-11-18',
       dueTime: null,
     });
+
+    // Distinguish post-midnight "1h..5h đêm" from late-evening "6h..11h đêm" and midnight "12h đêm"
+    expect(parseTodoQuickAdd('Gọi khách ngày mai 1h đêm', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Gọi khách',
+      dueOn: '2026-11-18',
+      dueTime: '01:00',
+      dueAt: '2026-11-18T01:00:00+07:00',
+    });
+    expect(parseTodoQuickAdd('Gọi khách ngày mai 2 giờ đêm', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Gọi khách',
+      dueOn: '2026-11-18',
+      dueTime: '02:00',
+    });
+    expect(parseTodoQuickAdd('Gọi khách ngày mai 11h đêm', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Gọi khách',
+      dueOn: '2026-11-18',
+      dueTime: '23:00',
+    });
+
+    // Optional "vào" before "buổi <period>" attaches to adjacent clock so "9h vào buổi tối" becomes 21:00
+    expect(parseTodoQuickAdd('Họp ngày mai 9h vào buổi tối', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp',
+      dueOn: '2026-11-18',
+      dueTime: '21:00',
+    });
+    expect(parseTodoQuickAdd('Họp ngày mai lúc 9h vào buổi tối', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp',
+      dueOn: '2026-11-18',
+      dueTime: '21:00',
+    });
+    expect(parseTodoQuickAdd('Gọi khách vào buổi tối', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Gọi khách',
+      dueOn: '2026-11-17',
+      dueTime: '19:00',
+    });
   });
 
   it('stays linear on 50k-character adversarial --, %, and tab inputs without ReDoS', () => {

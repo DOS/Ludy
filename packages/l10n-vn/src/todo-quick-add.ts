@@ -67,7 +67,7 @@ interface WordToken {
   end: number;
 }
 
-type DayPeriod = 'morning' | 'noon' | 'afternoon' | 'evening';
+type DayPeriod = 'morning' | 'noon' | 'afternoon' | 'evening' | 'night';
 
 interface ParsedTimeInfo {
   hour: number;
@@ -88,6 +88,7 @@ const PERIOD_DEFAULT_HOUR: Record<DayPeriod, number> = {
   noon: 12,
   afternoon: 14,
   evening: 19,
+  night: 21,
 };
 
 const ORDINAL_GUARD_WORDS = ['lần', 'bước', 'câu', 'người', 'phần', 'hạng', 'mục', 'loại', 'đợt', 'vòng', 'kỳ', 'tập'] as const;
@@ -420,9 +421,8 @@ function matchDayPeriod(word: WordToken, allowEnglishShort = true, prevWord?: Wo
   if (vnMatch(word, 'sáng') || (allowEnglishShort && word.nfcLower === 'morning')) return 'morning';
   if (vnMatch(word, 'trưa') || (allowEnglishShort && word.nfcLower === 'noon')) return 'noon';
   if (vnMatch(word, 'chiều') || (allowEnglishShort && word.nfcLower === 'afternoon')) return 'afternoon';
-  if (vnMatch(word, 'đêm') || (allowEnglishShort && (word.nfcLower === 'evening' || word.nfcLower === 'night'))) {
-    return 'evening';
-  }
+  if (vnMatch(word, 'đêm') || (allowEnglishShort && word.nfcLower === 'night')) return 'night';
+  if (allowEnglishShort && word.nfcLower === 'evening') return 'evening';
   if (vnMatch(word, 'tối')) {
     // Unaccented ASCII "toi" collides with "tôi" (I/me) after prepositions/verbs ("cho toi ngay mai", "nhac toi").
     if (word.isAscii && prevWord && vnMatchAny(prevWord, TOI_PRONOUN_PRECEDING)) return null;
@@ -512,8 +512,10 @@ function matchWeekday(
 function adjustHourForPeriod(hour: number, period: DayPeriod | undefined): number {
   if (!period) return hour;
   if ((period === 'afternoon' || period === 'evening') && hour >= 1 && hour <= 11) return hour + 12;
+  // Post-midnight "1h..5h đêm" stays 01:00..05:00 while late-evening "6h..11h đêm" maps to 18:00..23:00 and "12h đêm" is 00:00.
+  if (period === 'night' && hour >= 6 && hour <= 11) return hour + 12;
   if (period === 'noon' && hour >= 1 && hour <= 3) return hour + 12;
-  if ((period === 'morning' || period === 'evening') && hour === 12) return 0;
+  if ((period === 'morning' || period === 'evening' || period === 'night') && hour === 12) return 0;
   return hour;
 }
 
@@ -2080,15 +2082,16 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     }
   }
 
-  // Standalone "buổi sáng/trưa/chiều/tối" or "vào sáng/trưa/chiều/tối": always capture period context, and set default time only if no clock/range exists.
+  // Standalone "[vào] buổi sáng/trưa/chiều/tối/đêm" or "vào sáng/trưa/chiều/tối/đêm": always capture period context, and set default time only if no clock/range exists.
   for (let i = 0; i < words.length - 1; i++) {
     const w0 = words[i];
     const w1 = words[i + 1];
     if (!w0 || !w1 || !spacesOnlyBetween(input, w0.end, w1.start)) continue;
     if (!vnMatchAny(w0, ['buổi', 'vào'])) continue;
-    const p = matchDayPeriod(w1, false);
+    const p = matchDayPeriod(w1, false, w0);
     if (!p) continue;
-    const span = { start: w0.start, end: w1.end };
+    const spanStart = vnMatch(w0, 'buổi') ? expandConnectorBefore(input, words, w0.start, [['vào']], occupied) : w0.start;
+    const span = { start: spanStart, end: w1.end };
     if (!isWordSpanAvailable(span)) continue;
     if (!parsedTime && !suppressDefaultPeriodTime) {
       contextPeriod = p;
