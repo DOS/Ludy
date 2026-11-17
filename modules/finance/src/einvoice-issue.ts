@@ -109,7 +109,7 @@ export const einvoiceIssue = defineCommand({
     // The draft is locked first; the definer takes the same lock, and a line is written only under a KEY SHARE of it, so what is read below is what is committed.
     const draft = await ctx.trx
       .selectFrom('crove_finance.einvoice_draft')
-      .select(['legal_entity_id', 'state', 'total', 'currency'])
+      .select(['legal_entity_id', 'state', 'total', 'currency', 'sale_date', 'late_reason'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', draftId)
       .forUpdate()
@@ -127,7 +127,14 @@ export const einvoiceIssue = defineCommand({
       if (pgMessage(error).includes('EINVOICE_ISSUE_FORBIDDEN')) throw new DomainError('EINVOICE_ISSUE_FORBIDDEN', 403, 'Không phát hành được hóa đơn này theo đề xuất này');
       throw error;
     }
-    ctx.audit({ draftId, legalEntityId: draft.legal_entity_id, total: money(draft.total).toFixed(), currency: draft.currency });
+    // A late sale (#3535) is issued on the person's reason: the sale date and the reason are in the audit, the facts the fine would be argued from.
+    ctx.audit({
+      draftId,
+      legalEntityId: draft.legal_entity_id,
+      total: money(draft.total).toFixed(),
+      currency: draft.currency,
+      ...(draft.sale_date ? { saleDate: draft.sale_date, lateReason: draft.late_reason } : {}),
+    });
     // The worker's job takes it from here (ids only in the event).
     await ctx.emit('finance.einvoice_issue_requested', { draft_id: draftId });
     return { draftId, state: 'submitting' };
@@ -171,6 +178,8 @@ export const einvoiceIssueRequest = defineQuery({
       draftId,
       state: draft.state,
       date: draft.date,
+      saleDate: draft.saleDate,
+      lateReason: draft.lateReason,
       currency: draft.currency,
       total: draft.total,
       lineCount: draft.lines.length,

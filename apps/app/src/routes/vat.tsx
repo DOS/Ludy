@@ -42,6 +42,8 @@ type Warning = (typeof VAT_WARNINGS)[number];
 interface Invoice {
   id: string;
   issueDate: string;
+  // The day of the sale when the invoice is later than it (#3535).
+  saleDate?: string | null;
   series: string;
   number: string;
   partyName: string;
@@ -61,7 +63,10 @@ export function InvoiceTable({ invoices, partyLabel }: { invoices: Invoice[]; pa
       {invoices.flatMap((invoice) =>
         invoice.rates.map((rate, i) => (
           <TableRow key={`${invoice.id}-${rate.rate}`}>
-            <TableCell className="px-4 py-3 text-muted-foreground">{i === 0 ? f.date(invoice.issueDate) : ''}</TableCell>
+            <TableCell className="px-4 py-3 text-muted-foreground">
+              {i === 0 ? f.date(invoice.issueDate) : ''}
+              {i === 0 && invoice.saleDate && <span className="block text-xs text-subtle-foreground">{t('saleOn', { date: f.date(invoice.saleDate) })}</span>}
+            </TableCell>
             <TableCell className="px-4 py-3 font-mono text-xs text-foreground">
               {i === 0 ? `${invoice.series ? `${invoice.series}-` : ''}${invoice.number}` : ''}
             </TableCell>
@@ -96,6 +101,51 @@ export function InvoiceTable({ invoices, partyLabel }: { invoices: Invoice[]; pa
 
 type VatReport = Awaited<ReturnType<typeof client.vat.period>>;
 type PaymentCheck = VatReport['paymentChecks']['items'][number];
+
+// The sales of this period that must go in a supplementary return (#3535): issued after the period was locked or its return filed, for a sale made in it. Not in the figures above.
+export function SupplementaryItems({ data }: { data: Pick<VatReport, 'supplementary'> }) {
+  const t = useTranslations('vat');
+  const f = useFormat();
+  if (data.supplementary.documents.length === 0) return null;
+  return (
+    <section aria-labelledby="vat-supplementary-title" data-testid="vat-supplementary">
+      <h2 id="vat-supplementary-title" className="mb-1 text-base font-semibold text-foreground">
+        {t('supplementary.title', { count: f.number(data.supplementary.documents.length) })}
+      </h2>
+      <p className="mb-2 text-sm text-muted-foreground">{t('supplementary.hint', { vat: f.money(data.supplementary.totals.vat) })}</p>
+      <InvoiceTable invoices={data.supplementary.documents} partyLabel={t('columns.buyer')} />
+    </section>
+  );
+}
+
+// The sales invoiced in this period for a sale of an earlier one (#3535): counted in the period of the sale, listed here so none goes unseen.
+export function LateSales({ data }: { data: Pick<VatReport, 'lateSales'> }) {
+  const t = useTranslations('vat');
+  const f = useFormat();
+  if (data.lateSales.length === 0) return null;
+  return (
+    <section aria-labelledby="vat-late-sales-title" data-testid="vat-late-sales">
+      <h2 id="vat-late-sales-title" className="mb-1 text-base font-semibold text-foreground">
+        {t('lateSales.title', { count: f.number(data.lateSales.length) })}
+      </h2>
+      <p className="mb-2 text-sm text-muted-foreground">{t('lateSales.hint')}</p>
+      <DataTable numeric={[4]} head={[t('columns.number'), t('columns.buyer'), t('lateSales.saleDate'), t('lateSales.originalPeriod'), t('columns.vat'), t('columns.notes')]}>
+        {data.lateSales.map((sale) => (
+          <TableRow key={sale.documentId}>
+            <TableCell className="px-4 py-3 font-mono text-xs text-foreground">{`${sale.series ? `${sale.series}-` : ''}${sale.number}`}</TableCell>
+            <TableCell className="px-4 py-3 text-foreground">{sale.partyName}</TableCell>
+            <TableCell className="px-4 py-3 text-muted-foreground">{f.date(sale.saleDate)}</TableCell>
+            <TableCell className="px-4 py-3 text-foreground">{sale.originalPeriod}</TableCell>
+            <TableCell className={`${NUM} text-foreground`}>{f.money(sale.vatAmount)}</TableCell>
+            <TableCell className="px-4 py-3">
+              <Badge variant="warning">{sale.supplementary ? t('lateSales.supplementary') : t('lateSales.counted')}</Badge>
+            </TableCell>
+          </TableRow>
+        ))}
+      </DataTable>
+    </section>
+  );
+}
 
 // Input invoices that need proof of non-cash payment before their VAT is deducted (#917), with the accountant's marks.
 function PaymentChecks({ data, canMark, legalEntityId }: { data: VatReport; canMark: boolean; legalEntityId: string | undefined }) {
@@ -556,6 +606,10 @@ export function VatPage() {
               <InvoiceTable invoices={data.output.documents} partyLabel={t('columns.buyer')} />
             )}
           </section>
+
+          <SupplementaryItems data={data} />
+
+          <LateSales data={data} />
 
           <SalesNumberGaps period={period} legalEntityId={entity.legalEntityId} enabled={entity.ready && data.output.available} />
 

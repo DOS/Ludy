@@ -181,6 +181,7 @@ export {
   VAT_WARNINGS,
   type VatDeclaration,
   type VatInvoiceView,
+  type VatLateSale,
   type VatReport,
   type VatSide,
   type VatTaxpayer,

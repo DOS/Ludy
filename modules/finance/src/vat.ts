@@ -17,7 +17,12 @@
 // 181/2025/ND-CP, Article 23(5) and (6)); one that raises it needs a supplementary return for its own period. Treating
 // a late-received invoice as such an omission is an inference for the partner's accountant to confirm (#61). An output
 // invoice always stays in its invoice period: a sale is never posted late (record.ts).
-import { sql } from 'kysely';
+//
+// The period of a sales invoice is the period of its sale date when the invoice has one apart from its issue date (#3535): a sale missed in its own period and invoiced later is
+// declared there (the accountant's answer to #2506 question 4; the fine for a late invoice is heavy). The sale date is the sale date of the e-invoice draft the invoice was issued
+// from, found by the entity, the symbol and the number. When that earlier period is already locked or its return filed, nothing reopens it: the invoice is listed as a
+// supplementary item of that period (cần kê khai bổ sung), apart from its figures, and it is in no main total of either period.
+import { sql, type RawBuilder } from 'kysely';
 import { z } from 'zod';
 import type { MemberRole } from '@crove/db';
 import { INPUT_VAT_CHECK_OUTCOMES, VAT_WARNINGS, zId, zVatPeriod, zVatReturnMark, type DocumentDirection } from '@crove/kernel-contract';
@@ -27,6 +32,7 @@ import {
   documentVatByRate,
   form01Indicators,
   previousVatPeriods,
+  vatPeriodOf,
   reducedRateApplies,
   type InvoiceRateInput,
   sideTotals,
@@ -38,6 +44,7 @@ import {
   type VatPeriod,
 } from './domain/vat-return.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
+import { periodLockedThrough } from './period-lock.ts';
 import { latestRevision } from './source-entry.ts';
 import { needsPaymentCheck, nonCashThreshold, paymentMethodKind, type PaymentMethodKind } from './domain/non-cash-payment.ts';
 import { HtkkAmountError, form01XmlValues } from './domain/vat-01gtgt-xml.ts';
@@ -58,6 +65,8 @@ export type VatWarning = (typeof VAT_WARNINGS)[number];
 export interface VatInvoiceView {
   id: string;
   issueDate: string;
+  // The date of the sale when it is not the issue date's (#3535); null for a purchase and for an invoice with none.
+  saleDate: string | null;
   // The date of its journal entry, which chooses the period (#478).
   postingDate: string;
   series: string;
@@ -116,10 +125,29 @@ export interface VatCarryForward {
   lookedFor: string[];
 }
 
+// A sales invoice issued in this period for a sale of an earlier period (#3535).
+export interface VatLateSale {
+  documentId: string;
+  series: string;
+  number: string;
+  partyName: string;
+  issueDate: string;
+  saleDate: string;
+  originalPeriod: string;
+  total: Money;
+  vatAmount: Money;
+  // The earlier period is locked or its return is filed: the invoice is a supplementary item there.
+  supplementary: boolean;
+}
+
 export interface VatReport {
   period: VatPeriod;
   input: VatSide;
   output: VatSide;
+  // Sales of this period issued after it was locked or its return filed (#3535): not in `output`, to declare in a supplementary return.
+  supplementary: { documents: VatInvoiceView[]; totals: SideTotals };
+  // Sales issued in this period for a sale of an earlier one (#3535): counted in that period.
+  lateSales: VatLateSale[];
   indicators: FormIndicator[];
   paymentChecks: VatPaymentChecks;
   carryForward: VatCarryForward;
@@ -133,6 +161,7 @@ function invoiceView(
   doc: {
     id: string;
     issueDate: string;
+    saleDate: string | null;
     postingDate: string;
     series: string;
     number: string;
@@ -149,15 +178,19 @@ function invoiceView(
   const warnings: VatWarning[] = [];
   if (breakdown.rates.some((r) => r.rate === 'other')) warnings.push('rate_unknown');
   if (breakdown.allocated) warnings.push('rate_split');
-  if (breakdown.rates.some((r) => r.rate === '8') && !reducedRateApplies(doc.issueDate)) warnings.push('reduced_rate_outside_period');
+  // The rate that applies is the one of the day of the sale (#3535), which is the issue date unless the invoice has a sale date of its own.
+  if (breakdown.rates.some((r) => r.rate === '8') && !reducedRateApplies(doc.saleDate ?? doc.issueDate)) warnings.push('reduced_rate_outside_period');
   const linesTaxable = lines.reduce((acc, l) => acc.plus(money(l.amount)), money(0));
   if (!linesTaxable.equals(money(doc.subtotal))) warnings.push('lines_mismatch');
   if (vatMismatch({ vatAmount: doc.vatAmount, lines })) warnings.push('vat_mismatch');
   // An invoice of an earlier period, posted in this one after its own month was locked (#478).
   if (doc.issueDate < period.from) warnings.push('declared_late');
+  // A sale of this period invoiced after it (#3535).
+  if (doc.saleDate !== null && doc.issueDate > period.to) warnings.push('late_sale');
   return {
     id: doc.id,
     issueDate: doc.issueDate,
+    saleDate: doc.saleDate,
     postingDate: doc.postingDate,
     series: doc.series,
     number: doc.number,
@@ -181,8 +214,50 @@ interface PeriodInvoice {
   paymentMethod: string | null;
 }
 
+// The sale date of the e-invoice draft a sales invoice was issued from (#3535), or null: the draft of the same entity, issued, with the invoice's symbol and number (the number as the
+// intake normalizes it: digits without leading zeros). A draft with no sale date of its own gives none. Of two drafts that meet one invoice (a symbol and a number under two template
+// numbers) the one issued first answers, so a row is never doubled.
+const SALE_DATE: RawBuilder<string | null> = sql`(
+  SELECT e.sale_date FROM crove_finance.einvoice_draft e
+  JOIN crove_finance.einvoice_series es ON es.org_id = e.org_id AND es.id = e.series_id
+  WHERE e.org_id = d.org_id AND e.legal_entity_id = d.legal_entity_id AND e.state = 'issued' AND e.sale_date IS NOT NULL
+    AND es.symbol = d.invoice_series
+    AND CASE WHEN pg_catalog.btrim(e.issued_number) ~ '^[0-9]+$' THEN pg_catalog.regexp_replace(pg_catalog.btrim(e.issued_number), '^0+(?=[0-9])', '') ELSE pg_catalog.upper(pg_catalog.btrim(e.issued_number)) END = d.invoice_number
+  ORDER BY e.issued_at, e.id LIMIT 1)`;
+
+// The sales whose sale date is in an earlier period than `period` but that were issued in it (#3535): issued here, declared there.
+async function lateSalesIssuedIn(ctx: QueryContext, period: VatPeriod, legalEntityId: string): Promise<Array<{ id: string; series: string; number: string; partyName: string; issueDate: string; saleDate: string; total: string; vatAmount: string }>> {
+  const rows = await ctx.trx
+    .selectFrom('crove_finance.purchase_document as d')
+    .innerJoin('crove_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
+    .select(['d.id', 'd.invoice_series', 'd.invoice_number', 'd.invoice_date', 'd.vat_amount', 'd.total', 'p.name'])
+    .select(SALE_DATE.as('sale_date'))
+    .where('d.org_id', '=', ctx.orgId)
+    .where('d.legal_entity_id', '=', legalEntityId)
+    .where('d.direction', '=', 'sale')
+    .where('d.invoice_date', '>=', period.from)
+    .where('d.invoice_date', '<=', period.to)
+    .where(({ not, exists, selectFrom }) =>
+      not(
+        exists(
+          selectFrom('crove_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'),
+        ),
+      ),
+    )
+    .where(sql<boolean>`${SALE_DATE} < ${period.from}::date`)
+    .orderBy('d.invoice_date')
+    .orderBy('d.invoice_series')
+    .orderBy('d.invoice_number')
+    .orderBy('d.id')
+    .limit(VAT_PERIOD_LIMIT + 1)
+    .execute();
+  if (rows.length > VAT_PERIOD_LIMIT) throw new DomainError('PERIOD_TOO_LARGE', 422, `Kỳ này có hơn ${VAT_PERIOD_LIMIT} hóa đơn; hệ thống chưa lập được bảng kê lớn như vậy`);
+  return rows.map((r) => ({ id: r.id, series: r.invoice_series, number: r.invoice_number, partyName: r.name, issueDate: r.invoice_date, saleDate: r.sale_date as string, total: r.total, vatAmount: r.vat_amount }));
+}
+
 async function periodInvoices(ctx: QueryContext, period: VatPeriod, direction: DocumentDirection, legalEntityId: string): Promise<PeriodInvoice[]> {
-  const periodDate = direction === 'purchase' ? 'j.entry_date' : 'd.invoice_date';
+  // A sale is in the period of its sale date when it has one (#3535), else of its invoice date.
+  const periodDate = direction === 'purchase' ? sql<string>`j.entry_date` : sql<string>`COALESCE(${SALE_DATE}, d.invoice_date)`;
   const docs = await ctx.trx
     .selectFrom('crove_finance.purchase_document as d')
     .innerJoin('crove_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
@@ -190,6 +265,7 @@ async function periodInvoices(ctx: QueryContext, period: VatPeriod, direction: D
       join.onRef('j.org_id', '=', 'd.org_id').onRef('j.source_id', '=', 'd.id').on('j.source_type', '=', 'finance.purchase_document').on(latestRevision('j')),
     )
     .select(['d.id', 'd.invoice_date', 'j.entry_date', 'd.invoice_series', 'd.invoice_number', 'd.subtotal', 'd.vat_amount', 'd.total', 'd.payment_method', 'p.name', 'p.tax_code'])
+    .select(direction === 'purchase' ? sql<string | null>`NULL::date`.as('sale_date') : SALE_DATE.as('sale_date'))
     .where('d.org_id', '=', ctx.orgId)
     .where('d.legal_entity_id', '=', legalEntityId)
     .where('d.direction', '=', direction)
@@ -257,6 +333,7 @@ async function periodInvoices(ctx: QueryContext, period: VatPeriod, direction: D
       {
         id: d.id,
         issueDate: d.invoice_date,
+        saleDate: d.sale_date,
         postingDate: d.entry_date,
         series: d.invoice_series,
         number: d.invoice_number,
@@ -387,17 +464,49 @@ export async function loadVatReport(ctx: QueryContext, periodText: string, legal
   // Sales are told apart by the org's tax code (#313). Without one Crove cannot know them, so the output side says it
   // is not available, unless sales were recorded while a tax code was set (they stay in the books and count).
   const org = await ctx.trx.selectFrom('crove_kernel.tenant').select('tax_code').where('org_id', '=', ctx.orgId).executeTakeFirst();
-  const sales = (await periodInvoices(ctx, period, 'sale', legalEntityId)).map((p) => p.view);
-  const output = side(Boolean(org?.tax_code) || sales.length > 0, sales);
+  const allSales = (await periodInvoices(ctx, period, 'sale', legalEntityId)).map((p) => p.view);
+  // A sale of this period invoiced after it (#3535) is declared here, unless the period is already declared: locked, or its return filed. Then it is a supplementary item and
+  // in no main total (nothing reopens a locked period, and the figures of a filed return are not changed in silence).
   const chain = await returnChain(ctx, period, legalEntityId);
+  const lockedThrough = await periodLockedThrough(ctx, legalEntityId);
+  const declared = chain.filed !== null || (lockedThrough !== null && lockedThrough >= period.to);
+  const isLate = (v: VatInvoiceView) => v.saleDate !== null && v.issueDate > period.to;
+  const supplementaryDocuments = declared ? allSales.filter(isLate) : [];
+  const sales = declared ? allSales.filter((v) => !isLate(v)) : allSales;
+  const output = side(Boolean(org?.tax_code) || allSales.length > 0, sales);
   return {
     period,
     input,
     output,
+    supplementary: { documents: supplementaryDocuments, totals: sideTotals(supplementaryDocuments) },
+    lateSales: await lateSales(ctx, period, legalEntityId, lockedThrough),
     indicators: form01Indicators(input.totals, output.totals),
     paymentChecks: paymentChecks(purchases, marks, input.totals.vat),
     ...chain,
   };
+}
+
+// The sales issued in `period` for a sale of an earlier period, each with that period and whether it is already declared there (#3535).
+async function lateSales(ctx: QueryContext, period: VatPeriod, legalEntityId: string, lockedThrough: string | null): Promise<VatLateSale[]> {
+  const rows = await lateSalesIssuedIn(ctx, period, legalEntityId);
+  if (rows.length === 0) return [];
+  const originals = [...new Set(rows.map((r) => vatPeriodOf(r.saleDate, period.kind)))];
+  const filed = await filedReturns(ctx, legalEntityId, originals);
+  return rows.map((r) => {
+    const original = vatPeriodOf(r.saleDate, period.kind);
+    return {
+      documentId: r.id,
+      series: r.series,
+      number: r.number,
+      partyName: r.partyName,
+      issueDate: r.issueDate,
+      saleDate: r.saleDate,
+      originalPeriod: original,
+      total: money(r.total).toFixed(),
+      vatAmount: money(r.vatAmount).toFixed(),
+      supplementary: filed.has(original) || (lockedThrough !== null && lockedThrough >= vatPeriod(original).to),
+    };
+  });
 }
 
 export const vatPeriodQuery = defineQuery({

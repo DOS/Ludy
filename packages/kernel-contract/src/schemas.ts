@@ -1078,12 +1078,15 @@ export const zVatRate = z.enum(VAT_RATES);
 // declared_late (#478): a purchase invoice of an earlier period, recorded late (its own month was locked), so it is
 // declared in the period of its posting date. check_payment (#917): a purchase at or above the non-cash payment
 // threshold of its date, not shown as paid by bank and not marked by the accountant yet.
-export const VAT_WARNINGS = ['rate_unknown', 'rate_split', 'reduced_rate_outside_period', 'lines_mismatch', 'vat_mismatch', 'declared_late', 'check_payment'] as const;
+export const VAT_WARNINGS = ['rate_unknown', 'rate_split', 'reduced_rate_outside_period', 'lines_mismatch', 'vat_mismatch', 'declared_late', 'check_payment', 'late_sale'] as const;
 export const zVatWarning = z.enum(VAT_WARNINGS);
 const zRateAmounts = z.object({ rate: zVatRate, taxable: zMoney, vat: zMoney });
 export const zVatInvoice = z.object({
   id: zId,
   issueDate: zLocalDate,
+  // The date of the sale when it is of an earlier day than the invoice (#3535): a sales invoice is declared in the period of this date, not of its issue date. Null for an
+  // invoice with no sale date of its own, and for every purchase.
+  saleDate: zLocalDate.nullable().default(null),
   // The date its journal entry is posted on: the issue date, or a later date in an open month for a purchase invoice
   // whose own month was locked (#478). The period is chosen by this date.
   postingDate: zLocalDate,
@@ -1154,10 +1157,28 @@ export const zVatCarryForward = z.object({
   previous: zVatFiledReturn.nullable(),
   lookedFor: z.array(zVatPeriod),
 });
+// A sales invoice issued in this period for a sale of an earlier one (#3535), with that period. `supplementary` says the earlier period is already locked or its return filed, so
+// the sale is shown there as an item to declare in a supplementary return ("cần kê khai bổ sung") and is in no main total of either period.
+export const zVatLateSale = z.object({
+  documentId: zId,
+  series: z.string(),
+  number: z.string(),
+  partyName: z.string(),
+  issueDate: zLocalDate,
+  saleDate: zLocalDate,
+  originalPeriod: zVatPeriod,
+  total: zMoney,
+  vatAmount: zMoney,
+  supplementary: z.boolean(),
+});
 export const zVatReport = z.object({
   period: z.object({ period: zVatPeriod, kind: z.enum(['month', 'quarter']), from: zLocalDate, to: zLocalDate }),
   input: zVatSide,
   output: zVatSide,
+  // The sales of this period that were issued after it was locked or its return filed (#3535): to declare in a supplementary return, not part of `output`.
+  supplementary: z.object({ documents: z.array(zVatInvoice), totals: z.object({ byRate: z.array(zRateAmounts), taxable: zMoney, vat: zMoney, documents: z.number().int().nonnegative() }) }),
+  // The sales issued in this period for a sale of an earlier period (#3535): counted there, listed here so none goes unseen.
+  lateSales: z.array(zVatLateSale),
   indicators: z.array(z.object({ code: z.string(), label: z.string(), amount: zMoney })),
   paymentChecks: zVatPaymentChecks,
   carryForward: zVatCarryForward,
