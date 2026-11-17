@@ -219,6 +219,8 @@ function normalizeSections(inputs: ReadonlyArray<TodoListSectionInput>): TodoLis
   });
 }
 
+const normalizeListId = (listId: string | null): string | null => (listId === null ? null : listId.toLowerCase());
+
 // Verify personal list readability/liveness under caller RLS and section_id membership (no existence oracle).
 // Takes FOR SHARE when called during a write so concurrent todo_list.update/delete cannot race past it.
 async function validateTodoListAndSection(
@@ -352,7 +354,8 @@ export const todoCreate = defineCommand({
       if (!sourceNote) throw new DomainError('NOTE_NOT_FOUND', 404, 'Không tìm thấy ghi chú này');
       sourceTainted = sourceNote.tainted;
     }
-    await validateTodoListAndSection(ctx, input.listId, input.sectionId, true);
+    const listId = normalizeListId(input.listId);
+    await validateTodoListAndSection(ctx, listId, input.sectionId, true);
     // A new to-do goes first in the caller's list.
     const rows = await ownKeys(ctx, null);
     const sortKey = await placeBetween(ctx, rows, -1, 0);
@@ -368,7 +371,7 @@ export const todoCreate = defineCommand({
         checklist: checklistOf(input.checklist),
         priority: input.priority,
         tags: input.tags,
-        list_id: input.listId,
+        list_id: listId,
         section_id: input.sectionId,
         ...when,
         remind_at: remind.at,
@@ -389,7 +392,7 @@ export const todoCreate = defineCommand({
       checklist: auditValue(TODO, 'checklist', input.checklist.length > 0 ? input.checklist : null),
       priority: input.priority,
       tags: auditValue(TODO, 'tags', input.tags.length > 0 ? input.tags : null),
-      ...(input.listId !== null ? { listId: input.listId } : {}),
+      ...(listId !== null ? { listId } : {}),
       ...(input.sectionId !== null ? { sectionId: input.sectionId } : {}),
       dueOn: input.dueOn,
       dueTime: input.dueTime !== null,
@@ -413,10 +416,11 @@ export const todoUpdate = defineCommand({
   target,
   handler: async (ctx, input): Promise<TodoWritten> => {
     userOf(ctx.actor);
+    const requestedListId = input.listId === undefined ? undefined : normalizeListId(input.listId);
     // Lock target todo_list FOR SHARE before locking the todo row so global lock order matches todoListUpdate/todoListDelete.
-    if (input.listId !== undefined || input.sectionId !== undefined) {
-      let lockListId: string | null = input.listId ?? null;
-      if (input.listId === undefined) {
+    if (requestedListId !== undefined || input.sectionId !== undefined) {
+      let lockListId: string | null = requestedListId ?? null;
+      if (requestedListId === undefined) {
         const peek = await ctx.trx
           .selectFrom('crove_notes.todo')
           .select('list_id')
@@ -438,7 +442,7 @@ export const todoUpdate = defineCommand({
     const checklist = checklistOf(input.checklist);
     const nextPriority = input.priority ?? before.priority;
     const nextTags = input.tags ?? before.tags;
-    const nextListId = input.listId !== undefined ? input.listId : before.list_id;
+    const nextListId = requestedListId !== undefined ? requestedListId : before.list_id;
     const listChanged = nextListId !== before.list_id;
     const nextSectionId =
       input.sectionId !== undefined

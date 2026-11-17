@@ -364,7 +364,40 @@ suite('personal to-dos on PostgreSQL (#1673)', () => {
     const inboxOnly = await o.query<TodoSummary[]>(o.mine, 'notes.todo.list', { view: 'open', listId: 'inbox' });
     expect(inboxOnly.map((t) => t.id)).toEqual([inboxTodo.todoId]);
 
-    // 5. Updating list removes a dropped section cleanly without orphaning its todo; revision conflict guarded.
+    // 5. Same listId with uppercase or lowercase hex preserves sectionId; updating list removes a dropped section cleanly without orphaning its todo; revision conflict guarded.
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.update', {
+      todoId: p3Todo.todoId,
+      revision: 1,
+      title: 'Kiểm tra bảng kê',
+      details: '',
+      checklist: [],
+      dueOn: null,
+      dueTime: null,
+      timeZone: 'Asia/Ho_Chi_Minh',
+      listId: list.id.toUpperCase(),
+    });
+    expect(await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: p3Todo.todoId })).toMatchObject({
+      listId: list.id,
+      sectionId: secFirstId,
+      revision: 2,
+    });
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.update', {
+      todoId: p3Todo.todoId,
+      revision: 2,
+      title: 'Kiểm tra bảng kê',
+      details: '',
+      checklist: [],
+      dueOn: null,
+      dueTime: null,
+      timeZone: 'Asia/Ho_Chi_Minh',
+      listId: list.id.toLowerCase(),
+    });
+    expect(await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: p3Todo.todoId })).toMatchObject({
+      listId: list.id,
+      sectionId: secFirstId,
+      revision: 3,
+    });
+
     await expect(
       o.exec(o.mine, 'notes.todo_list.update', { listId: list.id, revision: 99, name: 'Lệch', color: null, sections: [] }),
     ).rejects.toMatchObject({ code: 'TODO_LIST_REVISION_CONFLICT', status: 409 });
@@ -376,7 +409,7 @@ suite('personal to-dos on PostgreSQL (#1673)', () => {
       sections: [{ id: 'sec-cuoi', name: 'Cuối tuần (gấp)' }],
     });
     const clearedSectionTodo = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: p3Todo.todoId });
-    expect(clearedSectionTodo).toMatchObject({ listId: list.id, sectionId: null, revision: 2 });
+    expect(clearedSectionTodo).toMatchObject({ listId: list.id, sectionId: null, revision: 4 });
 
     // 6. Export includes priority, tags, listId, sectionId, and todoLists; audit facts hold zero PII text.
     const exported = await o.query<NotesExport>(o.mine, 'notes.mine.export');

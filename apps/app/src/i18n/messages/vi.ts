@@ -13796,6 +13796,12 @@ export const vi = {
         restore: 'Khôi phục việc của mình',
         update: 'Sửa việc của mình',
       },
+      todo_list: {
+        create: 'Tạo danh sách việc riêng',
+        delete: 'Xóa danh sách việc riêng',
+        list: 'Xem danh sách việc riêng',
+        update: 'Sửa danh sách việc riêng',
+      },
       trash: {
         empty: 'Dọn thùng rác ghi chú',
       },

@@ -13798,6 +13798,12 @@ export const en = {
         restore: 'Restore one of your to-dos',
         update: 'Edit one of your to-dos',
       },
+      todo_list: {
+        create: 'Create a personal to-do list',
+        delete: 'Delete a personal to-do list',
+        list: 'List personal to-do lists',
+        update: 'Edit a personal to-do list',
+      },
       trash: {
         empty: 'Empty the notes trash',
       },
