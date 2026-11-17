@@ -100,6 +100,9 @@ describe('the people the section can erase', () => {
     const targets = eraseTargets(detail, 'Lan Nguyễn', (t) => `Người dùng ·${t}`);
     expect(targets.map((t) => t.name)).toEqual(['Lan Nguyễn', 'Minh Trần', 'Người dùng ·0003']);
     expect(targets[1]).toMatchObject({ messageId: 'm2', messages: 2, threads: null, inComments: false });
+    // Two people who share the last four characters of their id are two targets; the name tells them apart.
+    const clash = detailOf({ messages: [customer({}), customer({ id: 'm2', seq: 2, authorName: 'Minh Trần', authorTail: '0001' })] });
+    expect(eraseTargets(clash, 'Lan Nguyễn', (t) => t).map((t) => t.name)).toEqual(['Lan Nguyễn', 'Minh Trần']);
     // A direct thread has no other commenters.
     expect(eraseTargets(detailOf({ kind: 'direct', messages: [customer({}), customer({ id: 'm2', authorTail: '0002' })] }), 'Lan Nguyễn', (t) => t)).toHaveLength(1);
   });

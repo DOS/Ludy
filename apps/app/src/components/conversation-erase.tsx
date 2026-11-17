@@ -6,7 +6,7 @@
 import { useMutation } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { CONVERSATION_OTHERS_MAX, type ConversationDetail } from '@crove/kernel-contract';
+import { CONVERSATION_OTHERS_MAX, type ConversationDetail, type ConversationMessage } from '@crove/kernel-contract';
 import { Button } from '@crove/ui/components/button';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { StepUpPrompt } from './two-factor.tsx';
@@ -49,19 +49,22 @@ export function eraseTargets(detail: ConversationDetail, contactName: string, an
   };
   const targets = [own];
   if (c.kind !== 'comment_thread') return targets;
+  // An author is told apart by the tail of their platform id (the last four characters, all the screen has) and the name the platform gave: two people can
+  // share a tail, so the tail alone would hide one of them. The thread's own customer is the first target and is not listed twice.
+  const keyOf = (m: ConversationMessage) => `${m.authorTail}|${m.authorName ?? ''}`;
+  const sameAsOwner = (m: ConversationMessage) => m.authorTail === c.contact.idTail && (m.authorName === null || m.authorName === c.contact.displayName);
   const seen = new Set<string>();
   for (const m of detail.messages) {
-    if (m.direction !== 'in' || m.authorTail === null || seen.has(m.authorTail)) continue;
-    seen.add(m.authorTail);
-    // The thread's own customer is the first target: the same person is not listed twice.
-    if (m.authorTail === c.contact.idTail) continue;
+    if (m.direction !== 'in' || m.authorTail === null || seen.has(keyOf(m))) continue;
+    seen.add(keyOf(m));
+    if (sameAsOwner(m)) continue;
     targets.push({
       name: m.authorName ?? anonymous(m.authorTail),
       address: null,
       messageId: m.id,
       threads: null,
       threadsMore: false,
-      messages: detail.messages.filter((x) => x.authorTail === m.authorTail).length,
+      messages: detail.messages.filter((x) => x.direction === 'in' && keyOf(x) === keyOf(m)).length,
       messagesMore,
       notes: 0,
       inComments: false,
