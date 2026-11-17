@@ -4,6 +4,7 @@
 // never travels in HTTP query strings, server access logs, or Referer headers.
 
 export const SIGN_PAGE_PATH = '/-/sign';
+export const SIGN_DIRECT_PAGE_PATH = '/-/sign/d';
 export const SIGN_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
 export function readSignTokenFromHash(hash = typeof window !== 'undefined' ? window.location.hash : ''): string | null {
@@ -83,6 +84,11 @@ export function subscribeToHash(onStoreChange: () => void): () => void {
 export function buildSigningUrl(token: string, origin = typeof window !== 'undefined' ? window.location.origin : ''): string {
   const cleanToken = token.trim();
   return `${origin}${SIGN_PAGE_PATH}#${cleanToken}`;
+}
+
+export function buildDirectSigningUrl(token: string, origin = typeof window !== 'undefined' ? window.location.origin : ''): string {
+  const cleanToken = token.trim();
+  return `${origin}${SIGN_DIRECT_PAGE_PATH}#${cleanToken}`;
 }
 
 // Computes lowercase hex SHA-256 directly in the browser without uploading file bytes.

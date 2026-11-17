@@ -39,6 +39,18 @@ export interface SignEnvelopeJob {
   envelopeId: string;
 }
 
+export interface SignTemplateInspectJob {
+  orgId: string;
+  targetKind: 'template';
+  templateId: string;
+}
+
+export type SignPdfInspectJob = SignEnvelopeJob | SignTemplateInspectJob;
+
+export function isSignTemplateInspectJob(job: SignPdfInspectJob): job is SignTemplateInspectJob {
+  return 'targetKind' in job && job.targetKind === 'template';
+}
+
 export interface SignWorkerDeps {
   workerDb: Db;
   runtime: Runtime;
@@ -61,19 +73,20 @@ function safeArtifactBase(title: string): string {
 
 export async function runSignPdfInspectJob(
   deps: SignWorkerDeps,
-  job: SignEnvelopeJob,
+  job: SignPdfInspectJob,
 ): Promise<{ status: 'skipped_app_off' | 'skipped_not_pending' | 'passed' | 'failed'; pageCount?: number }> {
   if (!(await deps.runtime.appOn(job.orgId, 'sign', { fresh: true }))) {
     return { status: 'skipped_app_off' };
   }
 
+  const isTemplate = isSignTemplateInspectJob(job);
+  const targetField = isSignTemplateInspectJob(job) ? { templateId: job.templateId } : { envelopeId: job.envelopeId };
+  const queryName = isTemplate ? 'sign.template.inspect_job_data' : 'sign.envelope.inspect_job_data';
+  const completeCommand = isTemplate ? 'sign.template.inspect_complete' : 'sign.envelope.inspect_complete';
   const options = { actor: SIGN_ACTOR, orgId: job.orgId };
-  const data = await deps.runtime.query<SignInspectJobData | null>(
-    'sign.envelope.inspect_job_data',
-    { envelopeId: job.envelopeId },
-    options,
-  );
-  if (!data || data.status !== 'draft' || data.inspectStatus !== 'pending') {
+  const data = await deps.runtime.query<SignInspectJobData | null>(queryName, targetField, options);
+  const validStatus = isTemplate ? data?.status === 'draft' || data?.status === 'active' : data?.status === 'draft';
+  if (!data || !validStatus || data.inspectStatus !== 'pending') {
     return { status: 'skipped_not_pending' };
   }
 
@@ -87,8 +100,8 @@ export async function runSignPdfInspectJob(
   } catch (error) {
     if (error instanceof BlobIntegrityError || error instanceof BlobTooLargeError) {
       await deps.runtime.execute(
-        'sign.envelope.inspect_complete',
-        { envelopeId: job.envelopeId, outcome: 'failed', error: error.message.slice(0, 500) },
+        completeCommand,
+        { ...targetField, outcome: 'failed', error: error.message.slice(0, 500) },
         options,
       );
       return { status: 'failed' };
@@ -100,8 +113,8 @@ export async function runSignPdfInspectJob(
   if (!res.ok) {
     if (INPUT_ERROR_CODES.includes(res.code)) {
       await deps.runtime.execute(
-        'sign.envelope.inspect_complete',
-        { envelopeId: job.envelopeId, outcome: 'failed', error: res.message.slice(0, 500) },
+        completeCommand,
+        { ...targetField, outcome: 'failed', error: res.message.slice(0, 500) },
         options,
       );
       return { status: 'failed' };
@@ -110,9 +123,9 @@ export async function runSignPdfInspectJob(
   }
 
   await deps.runtime.execute(
-    'sign.envelope.inspect_complete',
+    completeCommand,
     {
-      envelopeId: job.envelopeId,
+      ...targetField,
       outcome: 'passed',
       pageCount: res.pageCount,
       pageDimensions: res.pages.map((p) => ({
@@ -385,6 +398,12 @@ interface RecoveryCursor {
   envelopeId: string;
 }
 
+interface TemplateRecoveryCursor {
+  updatedAt: string;
+  orgId: string;
+  templateId: string;
+}
+
 async function fetchSignRecoveryPage(
   workerDb: Db,
   olderThan: Date,
@@ -411,11 +430,37 @@ async function fetchSignRecoveryPage(
   return rows;
 }
 
+async function fetchTemplateRecoveryPage(
+  workerDb: Db,
+  olderThan: Date,
+  batchSize: number,
+  orgId: string | null,
+  after: TemplateRecoveryCursor | null,
+) {
+  const { rows } = await sql<{
+    org_id: string;
+    template_id: string;
+    updated_at_cursor: string;
+  }>`
+    SELECT org_id, template_id, updated_at::text AS updated_at_cursor
+    FROM crove_sign.template_work_recovery_candidates(
+      ${olderThan}::timestamptz,
+      ${batchSize},
+      ${orgId}::uuid,
+      ${after?.updatedAt ?? null}::timestamptz,
+      ${after?.orgId ?? null}::uuid,
+      ${after?.templateId ?? null}::uuid
+    )
+  `.execute(workerDb);
+  return rows;
+}
+
 export interface SignPendingWorkDeps {
   workerDb: Db;
   appOn?: (orgId: string) => Promise<boolean>;
   enqueueInspect: (orgId: string, envelopeId: string) => Promise<void>;
   enqueueSeal: (orgId: string, envelopeId: string) => Promise<void>;
+  enqueueTemplateInspect?: (orgId: string, templateId: string) => Promise<void>;
   orgId?: string;
   olderThan?: Date;
   batchSize?: number;
@@ -453,6 +498,20 @@ export async function sweepSignPendingWork(deps: SignPendingWorkDeps): Promise<{
     const last = rows.at(-1);
     if (!last || rows.length < batchSize) break;
     after = { updatedAt: last.updated_at_cursor, orgId: last.org_id, envelopeId: last.envelope_id };
+  }
+  if (deps.enqueueTemplateInspect) {
+    let tplAfter: TemplateRecoveryCursor | null = null;
+    for (let page = 0; page < maxPages; page += 1) {
+      const tplRows = await fetchTemplateRecoveryPage(deps.workerDb, olderThan, batchSize, deps.orgId ?? null, tplAfter);
+      for (const row of tplRows) {
+        if (!(await isEnabled(row.org_id))) continue;
+        await deps.enqueueTemplateInspect(row.org_id, row.template_id);
+        inspect += 1;
+      }
+      const last = tplRows.at(-1);
+      if (!last || tplRows.length < batchSize) break;
+      tplAfter = { updatedAt: last.updated_at_cursor, orgId: last.org_id, templateId: last.template_id };
+    }
   }
   return { inspect, seal };
 }

@@ -589,6 +589,24 @@ import {
   zSignSignerRemoveResult,
   zSignSignerReorderInput,
   zSignSignerReorderResult,
+  zSignTemplateArchiveInput,
+  zSignTemplateArchiveResult,
+  zSignTemplateCreateInput,
+  zSignTemplateCreateResult,
+  zSignTemplateDetail,
+  zSignTemplateDirectLinkResult,
+  zSignTemplateDirectLinkRotateInput,
+  zSignTemplateDirectLinkSetInput,
+  zSignTemplateFieldsSetInput,
+  zSignTemplateFieldsSetResult,
+  zSignTemplateInstantiateInput,
+  zSignTemplateInstantiateResult,
+  zSignTemplateListInput,
+  zSignTemplateListResult,
+  zSignTemplateRolesSetInput,
+  zSignTemplateRolesSetResult,
+  zSignTemplateUpdateInput,
+  zSignTemplateUpdateResult,
 } from './sign.ts';
 
 // Proposal reminders (issue #676): days before the approvers are reminded and before the owners are told; and expiry
@@ -2959,6 +2977,18 @@ export const contract = {
     ai: {
       analyze: oc.input(zSignAiAnalyzeInput).output(zSignAiAnalyzeResult),
       get: oc.input(z.strictObject({ envelopeId: zId })).output(zSignAiAnalysisRecord.nullable()),
+    },
+    template: {
+      list: oc.input(zSignTemplateListInput).output(zSignTemplateListResult),
+      get: oc.input(z.strictObject({ templateId: zId })).output(zSignTemplateDetail),
+      create: oc.input(zSignTemplateCreateInput).output(zSignTemplateCreateResult),
+      update: oc.input(zSignTemplateUpdateInput).output(zSignTemplateUpdateResult),
+      roles_set: oc.input(zSignTemplateRolesSetInput).output(zSignTemplateRolesSetResult),
+      fields_set: oc.input(zSignTemplateFieldsSetInput).output(zSignTemplateFieldsSetResult),
+      archive: oc.input(zSignTemplateArchiveInput).output(zSignTemplateArchiveResult),
+      instantiate: oc.input(zSignTemplateInstantiateInput).output(zSignTemplateInstantiateResult),
+      direct_link_set: oc.input(zSignTemplateDirectLinkSetInput).output(zSignTemplateDirectLinkResult),
+      direct_link_rotate: oc.input(zSignTemplateDirectLinkRotateInput).output(zSignTemplateDirectLinkResult),
     },
   },
 };

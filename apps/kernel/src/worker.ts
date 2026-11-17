@@ -55,7 +55,7 @@ import { MEETINGS_IMPORT_SWEEP_CRON, MEETINGS_IMPORT_SWEEP_EXPIRE_SECONDS, runMe
 import { CHAT_JOB_EXPIRE_SECONDS, CHAT_RETRY_DELAY_SECONDS, CHAT_RETRY_LIMIT, runMeetingChat, type ChatJob } from './meeting-chat-job.ts';
 import { MEETING_CHAT_SWEEP_CRON, MEETING_CHAT_SWEEP_EXPIRE_SECONDS, runMeetingChatSweep } from './meeting-chat-sweep.ts';
 import { NOTES_REMIND_CRON, NOTES_TRASH_CRON, NOTES_TRASH_TZ, queueNotesMemberPurge, runNotesMemberPurge, sweepNotesFormerMembers, sweepNotesReminders, sweepNotesTrash, type NotesMemberPurgeJob } from './notes-worker.ts';
-import { SIGN_CLEANUP_CRON, SIGN_EXPIRE_SWEEP_CRON, SIGN_JOB_RETRY_LIMIT, runSignPdfInspectJob, runSignPdfSealJob, sweepSignCleanup, sweepSignExpire, sweepSignPendingWork, type SignEnvelopeJob } from './sign-worker.ts';
+import { SIGN_CLEANUP_CRON, SIGN_EXPIRE_SWEEP_CRON, SIGN_JOB_RETRY_LIMIT, isSignTemplateInspectJob, runSignPdfInspectJob, runSignPdfSealJob, sweepSignCleanup, sweepSignExpire, sweepSignPendingWork, type SignEnvelopeJob, type SignPdfInspectJob, type SignTemplateInspectJob } from './sign-worker.ts';
 import { PERIOD_BALANCE_VERIFY_CRON, runPeriodBalanceReconciliation } from './period-balance.ts';
 import { runYearArchive } from './year-archive.ts';
 import {
@@ -401,6 +401,19 @@ async function enqueueSignInspect(boss: JobSender, orgId: string, envelopeId: st
     { orgId, envelopeId } satisfies SignEnvelopeJob,
     {
       singletonKey: jobKey(orgId, QUEUES.signPdfInspect, envelopeId),
+      retryLimit: SIGN_JOB_RETRY_LIMIT,
+      retryDelay: 20,
+      retryBackoff: true,
+    },
+  );
+}
+
+async function enqueueSignTemplateInspect(boss: JobSender, orgId: string, templateId: string): Promise<void> {
+  await boss.send(
+    QUEUES.signPdfInspect,
+    { orgId, targetKind: 'template', templateId } satisfies SignTemplateInspectJob,
+    {
+      singletonKey: jobKey(orgId, QUEUES.signPdfInspect, `tpl-${templateId}`),
       retryLimit: SIGN_JOB_RETRY_LIMIT,
       retryDelay: 20,
       retryBackoff: true,
@@ -1284,7 +1297,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   // stale secret cleanup sweeps run across all active orgs regardless of whether the org turned Sign off.
   if (sign) {
     const signConcurrency = extractWorkers(deps.extract);
-    await boss.work<SignEnvelopeJob>(
+    await boss.work<SignPdfInspectJob>(
       QUEUES.signPdfInspect,
       { batchSize: 1, localConcurrency: signConcurrency, pollingIntervalSeconds: EXTRACT_POLL_SECONDS },
       async ([job]) => {
@@ -1294,7 +1307,8 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
           job.data,
         );
         if (done.status !== 'skipped_not_pending') {
-          console.log(`[sign-inspect] ${job.data.envelopeId.slice(0, 8)}: ${done.status}`);
+          const id = isSignTemplateInspectJob(job.data) ? job.data.templateId : job.data.envelopeId;
+          console.log(`[sign-inspect] ${id.slice(0, 8)}: ${done.status}`);
         }
       },
     );
@@ -1320,6 +1334,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         appOn: (orgId) => deps.runtime.appOn(orgId, 'sign', { fresh: true }),
         enqueueInspect: (orgId, envelopeId) => enqueueSignInspect(boss, orgId, envelopeId),
         enqueueSeal: (orgId, envelopeId) => enqueueSignSeal(boss, orgId, envelopeId),
+        enqueueTemplateInspect: (orgId, templateId) => enqueueSignTemplateInspect(boss, orgId, templateId),
       });
       if (recovered.inspect > 0 || recovered.seal > 0) {
         console.log(`[sign-work-recovery] re-queued inspect=${recovered.inspect} seal=${recovered.seal}`);
@@ -2669,6 +2684,9 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               if (sign && row.type === 'sign.envelope.inspect_queued') {
                 await enqueueSignInspect(boss, row.org_id, String(row.payload.envelopeId));
               }
+              if (sign && row.type === 'sign.template.inspect_queued') {
+                await enqueueSignTemplateInspect(boss, row.org_id, String(row.payload.templateId));
+              }
               if (sign && row.type === 'sign.envelope.seal_queued') {
                 await enqueueSignSeal(boss, row.org_id, String(row.payload.envelopeId));
               }
@@ -2680,6 +2698,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                   olderThan: new Date(),
                   enqueueInspect: (orgId, envelopeId) => enqueueSignInspect(boss, orgId, envelopeId),
                   enqueueSeal: (orgId, envelopeId) => enqueueSignSeal(boss, orgId, envelopeId),
+                  enqueueTemplateInspect: (orgId, templateId) => enqueueSignTemplateInspect(boss, orgId, templateId),
                 });
               }
               // An app switched on (ADR-0053, C3b): the events parked while it was off go back on the outbox now, not when the held sweep comes round. A failure here is the sweep's to

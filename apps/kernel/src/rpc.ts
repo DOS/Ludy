@@ -46,7 +46,7 @@ import {
   type OrgSummary,
 } from '@crove/kernel';
 import type { z } from 'zod';
-import type { CompanyCandidates, ConversationAutoDraft, zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zSignEnvelopeDetail, zTask } from '@crove/kernel-contract';
+import type { CompanyCandidates, ConversationAutoDraft, zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zSignEnvelopeDetail, zSignTemplateDetail, zTask } from '@crove/kernel-contract';
 import type { FollowupSource, MeetingBriefSource, QuoteSuggestSource, SuggestedSlots } from '@crove/mod-crm';
 import type { ProjectWeeklyStatusSource } from '@crove/mod-projects';
 import { sql } from 'kysely';
@@ -3835,6 +3835,30 @@ export function createRpcHandler(
           ),
         ),
         get: os.sign.ai.get.handler(signQuery('sign.ai_analysis.get')),
+      },
+      template: {
+        list: os.sign.template.list.handler(signQuery('sign.template.list')),
+        get: os.sign.template.get.handler(({ context, input }) =>
+          inSign(context, async (orgId, actor) => {
+            type SignTemplateDetail = z.infer<typeof zSignTemplateDetail>;
+            const detail = await runtime.query<SignTemplateDetail>('sign.template.get', input, { actor, orgId });
+            return {
+              ...detail,
+              template: {
+                ...detail.template,
+                pageDimensions: Array.isArray(detail.template.pageDimensions) ? detail.template.pageDimensions : null,
+              },
+            };
+          }),
+        ),
+        create: os.sign.template.create.handler(signCommand('sign.template.create')),
+        update: os.sign.template.update.handler(signCommand('sign.template.update')),
+        roles_set: os.sign.template.roles_set.handler(signCommand('sign.template.roles_set')),
+        fields_set: os.sign.template.fields_set.handler(signCommand('sign.template.fields_set')),
+        archive: os.sign.template.archive.handler(signCommand('sign.template.archive')),
+        instantiate: os.sign.template.instantiate.handler(signNoIdempotencyCommand('sign.template.instantiate')),
+        direct_link_set: os.sign.template.direct_link_set.handler(signNoIdempotencyCommand('sign.template.direct_link_set')),
+        direct_link_rotate: os.sign.template.direct_link_rotate.handler(signNoIdempotencyCommand('sign.template.direct_link_rotate')),
       },
     },
   });

@@ -226,6 +226,9 @@ export interface CroveSignSchema {
   'crove_sign.field': SignFieldTable;
   'crove_sign.signer': SignSignerTable;
   'crove_sign.signing_event': SignSigningEventTable;
+  'crove_sign.template': SignTemplateTable;
+  'crove_sign.template_field': SignTemplateFieldTable;
+  'crove_sign.template_role': SignTemplateRoleTable;
 }
 
 export interface CroveSocialSchema {
@@ -3403,6 +3406,67 @@ export interface SignSigningEventTable {
   ip_hash: ColumnType<string | null, string | null, NotGranted>;
   user_agent: ColumnType<string | null, string | null, NotGranted>;
   occurred_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_sign.template_field */
+export interface SignTemplateFieldTable {
+  org_id: string;
+  id: Generated<string>;
+  template_id: string;
+  template_role_id: string;
+  field_type: string;
+  page_number: number;
+  x_norm: string;
+  y_norm: string;
+  w_norm: string;
+  h_norm: string;
+  label: string | null;
+  required: Generated<boolean>;
+  font_size_pt: number | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_sign.template_role */
+export interface SignTemplateRoleTable {
+  org_id: string;
+  id: Generated<string>;
+  template_id: string;
+  role_key: string;
+  signer_role: Generated<string>;
+  role_label: string;
+  routing_order: Generated<number>;
+  delivery_mode: Generated<string>;
+  require_email_otp: Generated<boolean>;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_sign.template */
+export interface SignTemplateTable {
+  org_id: string;
+  id: Generated<string>;
+  title: string;
+  description: string | null;
+  routing_mode: Generated<string>;
+  subject: string | null;
+  message: string | null;
+  expires_in_hours: number | null;
+  source_file_id: string;
+  source_storage_key: string;
+  source_generation: string;
+  source_sha256: string;
+  inspect_status: Generated<string>;
+  inspect_error: string | null;
+  page_count: number | null;
+  page_dimensions_json: ColumnType<unknown, string | null | undefined, string | null>;
+  status: Generated<string>;
+  version: Generated<number>;
+  archived_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  archived_by: string | null;
+  created_by: string;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_social.account_snapshot */
