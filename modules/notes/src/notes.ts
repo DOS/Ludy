@@ -10,8 +10,9 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import {
-  NOTE_LINKS_MAX,
   auditValue,
+  NOTE_BODY_MAX,
+  NOTE_TITLE_MAX,
   zNoteCreate,
   zNoteLinkAdd,
   zNoteLinkRemove,
@@ -21,8 +22,8 @@ import {
   zNoteSearch,
   zNoteSetVisibility,
   zNoteUpdate,
+  type MeetingDetail,
   type Note,
-  type NoteLink,
   type NoteLinkTarget,
   type NotePrivateCount,
   type NoteRecordPanel,
@@ -32,7 +33,11 @@ import {
 } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { insertRecordLink, loadEnrichedLinks, NOTE_TARGET_QUERIES } from './links.ts';
 import { notesManifest } from './manifest.ts';
+import { TODO_SUMMARY_COLUMNS, loadSourceNotes, todoSummaryRow } from './todos.ts';
+
+export { NOTE_TARGET_QUERIES };
 
 // Viewers write no note (notes.md decision N-4). They run the reads, where the row policies show them none but their
 // own: a member made a viewer still reads what they wrote (ADR-0037 §2).
@@ -96,12 +101,12 @@ async function load(ctx: Pick<QueryContext, 'trx' | 'orgId'>, noteId: string, lo
 
 // The note for a change: checked against what the caller may read, then locked. FOR UPDATE also applies the update
 // policy, which hides a shared note from a plain member, so the check comes first and names the refusal.
-async function loadForChange(ctx: CommandContext, noteId: string, check: (row: SummaryRow) => void): Promise<SummaryRow & { body: string }> {
+export async function loadForChange(ctx: CommandContext, noteId: string, check: (row: SummaryRow) => void): Promise<SummaryRow & { body: string }> {
   check(await load(ctx, noteId, false));
   return load(ctx, noteId, true);
 }
 
-function assertAuthor(row: SummaryRow, userId: string): void {
+export function assertAuthor(row: SummaryRow, userId: string): void {
   if (row.author_user_id !== userId) throw new DomainError('NOTE_AUTHOR_ONLY', 403, 'Chỉ người viết ghi chú mới làm được việc này');
 }
 
@@ -112,81 +117,15 @@ function assertMayManage(ctx: CommandContext, row: SummaryRow, userId: string): 
   throw new DomainError('NOTE_AUTHOR_ONLY', 403, 'Chỉ người viết ghi chú, hoặc chủ sở hữu và quản trị viên với ghi chú dùng chung, mới làm được việc này');
 }
 
-function assertNotInTrash(row: SummaryRow): void {
+export function assertNotInTrash(row: SummaryRow): void {
   if (row.deleted_at !== null) throw new DomainError('NOTE_IN_TRASH', 409, 'Ghi chú đang ở thùng rác; hãy khôi phục trước');
 }
 
-// The query that opens a record another module owns (notes.md §3.4, #1672). No foreign key goes to another module's
-// schema, so such a target is checked by running that module's own get query in the caller's context: its role check,
-// its row policies and the caller's legal entities apply, as on the record's own screen.
-// apps/kernel/test/notes-link-targets.test.ts checks that each is registered.
-export const NOTE_TARGET_QUERIES = {
-  'finance.purchase_document': 'finance.documents.get',
-  'finance.journal_entry': 'finance.journal.get',
-  'crm.booking': 'crm.booking.get',
-} as const satisfies Record<Exclude<NoteLinkTarget, 'kernel.party' | 'kernel.file'>, string>;
-// What those queries answer for a record the caller cannot open: not there (or in a legal entity, or of a host, the
-// caller cannot see), or not for the caller's role. Any other refusal, a misspelled query name included, is a bug and
-// fails the read instead of showing every link as unavailable.
-const UNREADABLE = new Set(['DOCUMENT_NOT_FOUND', 'ENTRY_NOT_FOUND', 'BOOKING_NOT_FOUND', 'FORBIDDEN']);
-
-// Whether the caller can open the record now: a party or a file through the kernel's row policies, any other target
-// through its module's get query. A record the caller may not read, that is not there, or whose module is off (not
-// installed) is not, and the three are not told apart.
-async function canOpen(ctx: QueryContext, targetType: NoteLinkTarget, targetId: string): Promise<boolean> {
-  if (targetType === 'kernel.party' || targetType === 'kernel.file') {
-    const table = targetType === 'kernel.party' ? 'crove_kernel.party' : 'crove_kernel.file';
-    const found = await ctx.trx.selectFrom(table).select('id').where('org_id', '=', ctx.orgId).where('id', '=', targetId).executeTakeFirst();
-    return found !== undefined;
-  }
-  try {
-    const answer = await ctx.query(NOTE_TARGET_QUERIES[targetType], { id: targetId });
-    return answer.status === 'ok';
-  } catch (error) {
-    // The get queries refuse before they read or after a read that found nothing, so the transaction stays usable.
-    if (error instanceof DomainError && UNREADABLE.has(error.code)) return false;
-    throw error;
-  }
-}
-
-// The linked record must be one the writer can open in this org.
-async function assertTarget(ctx: CommandContext, targetType: NoteLinkTarget, targetId: string): Promise<void> {
-  if (!(await canOpen(ctx, targetType, targetId))) throw new DomainError('NOTE_LINK_TARGET_NOT_FOUND', 404, 'Không tìm thấy bản ghi để gắn ghi chú');
-}
-
 async function addLink(ctx: CommandContext, row: Pick<SummaryRow, 'id' | 'visibility'>, userId: string, targetType: NoteLinkTarget, targetId: string): Promise<string> {
-  // Every read of the note checks each link through its module, so a note keeps at most NOTE_LINKS_MAX of them. The
-  // note is locked (loadForChange) or new, so two links added at once are counted one after the other.
-  const { n } = await ctx.trx
-    .selectFrom('crove_notes.link')
-    .select((eb) => eb.fn.countAll<string>().as('n'))
-    .where('org_id', '=', ctx.orgId)
-    .where('note_id', '=', row.id)
-    .executeTakeFirstOrThrow();
-  if (Number(n) >= NOTE_LINKS_MAX) throw new DomainError('NOTE_LINK_LIMIT', 409, `Một ghi chú gắn được tối đa ${NOTE_LINKS_MAX} bản ghi`, { max: NOTE_LINKS_MAX });
-  await assertTarget(ctx, targetType, targetId);
-  const link = await ctx.trx
-    .insertInto('crove_notes.link')
-    .values({
-      org_id: ctx.orgId,
-      note_id: row.id,
-      target_type: targetType,
-      target_id: targetId,
-      party_id: targetType === 'kernel.party' ? targetId : null,
-      file_id: targetType === 'kernel.file' ? targetId : null,
-      created_by: userId,
-      created_at: ctx.now,
-    })
-    .returning('id')
-    .executeTakeFirstOrThrow()
-    .catch((error: unknown) => {
-      const pg = error as { code?: string; constraint?: string } | null | undefined;
-      if (pg?.code === '23505' && pg.constraint === 'link_note_target_uq') throw new DomainError('NOTE_LINK_EXISTS', 409, 'Ghi chú đã gắn với bản ghi này');
-      throw error;
-    });
+  const linkId = await insertRecordLink(ctx, { kind: 'note', id: row.id }, userId, targetType, targetId);
   // A shared note shows on the party's timeline with a fixed summary; a private one writes nothing there (notes.md §3.6).
   if (row.visibility === 'org' && targetType === 'kernel.party') await ctx.activity('kernel.party', targetId, 'notes.note_linked', 'Thêm ghi chú');
-  return link.id;
+  return linkId;
 }
 
 const written = (row: Pick<SummaryRow, 'id' | 'revision'>): NoteWritten => ({ noteId: row.id, revision: row.revision });
@@ -221,6 +160,7 @@ export const noteCreate = defineCommand({
         title: input.title,
         body: input.body,
         tags: input.tags,
+        tainted: input.tainted ?? false,
         created_at: ctx.now,
         updated_at: ctx.now,
       })
@@ -232,6 +172,7 @@ export const noteCreate = defineCommand({
       visibility: row.visibility,
       title: auditValue(NOTE, 'title', input.title),
       tags: auditValue(NOTE, 'tags', input.tags.length > 0 ? input.tags : null),
+      ...(input.tainted !== undefined ? { tainted: input.tainted } : {}),
       ...(input.link ? { linkId, ...linkTargetFact(row.visibility, input.link.targetType, input.link.targetId) } : {}),
     });
     return written(row);
@@ -252,19 +193,81 @@ export const noteUpdate = defineCommand({
     if (before.revision !== input.revision) {
       throw new DomainError('NOTE_REVISION_CONFLICT', 409, 'Ghi chú vừa được sửa ở nơi khác; hãy tải lại trước khi lưu', { revision: before.revision });
     }
+    const contentEdited = before.title !== input.title || before.body !== input.body;
+    const clearTaint = before.tainted && contentEdited;
     const changed = [
       ...(before.title !== input.title ? ['title'] : []),
       ...(before.body !== input.body ? ['body'] : []),
       ...(before.tags.join('\u0000') !== input.tags.join('\u0000') ? ['tags'] : []),
+      ...(clearTaint ? ['tainted'] : []),
     ];
     const row = await ctx.trx
       .updateTable('crove_notes.note')
-      .set({ title: input.title, body: input.body, tags: input.tags, revision: before.revision + 1, updated_at: ctx.now })
+      .set({
+        title: input.title,
+        body: input.body,
+        tags: input.tags,
+        ...(clearTaint ? { tainted: false } : {}),
+        revision: before.revision + 1,
+        updated_at: ctx.now,
+      })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.noteId)
       .returning(['id', 'revision'])
       .executeTakeFirstOrThrow();
     ctx.audit({ noteId: row.id, revision: row.revision, changed });
+    return written(row);
+  },
+});
+
+const zNoteFromMeetingSummaryCommand = z.strictObject({
+  meetingId: zNoteUpdate.shape.noteId,
+  title: zNoteUpdate.shape.title,
+  body: zNoteUpdate.shape.body,
+});
+
+// Saves a meeting's summary as a shared org note linked to the meeting (#1679, step N10). Always starts tainted until
+// the author edits its title or body. Sensitive summary text is read by the API handler via Runtime.query before calling
+// this command, since Runtime.lookup refuses sensitive queries inside a command transaction.
+export const noteFromMeetingSummary = defineCommand({
+  name: 'notes.note.from_meeting_summary',
+  input: zNoteFromMeetingSummaryCommand,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  handler: async (ctx, input): Promise<NoteWritten> => {
+    const userId = userOf(ctx.actor);
+    const meetingRes = await ctx.query<MeetingDetail>('meetings.meeting.get', { meetingId: input.meetingId });
+    if (meetingRes.status === 'not_installed') {
+      throw new DomainError('NOTES_MEETING_UNAVAILABLE', 400, 'Tính năng Biên bản cuộc họp đang tắt');
+    }
+    const title = input.title.trim().slice(0, NOTE_TITLE_MAX) || 'Tóm tắt cuộc họp';
+    const body = input.body.slice(0, NOTE_BODY_MAX);
+    const row = await ctx.trx
+      .insertInto('crove_notes.note')
+      .values({
+        org_id: ctx.orgId,
+        author_user_id: userId,
+        visibility: 'org',
+        title,
+        body,
+        tags: [],
+        tainted: true,
+        created_at: ctx.now,
+        updated_at: ctx.now,
+      })
+      .returning(['id', 'visibility', 'revision'])
+      .executeTakeFirstOrThrow();
+    const linkId = await addLink(ctx, row, userId, 'meetings.meeting', input.meetingId);
+    ctx.audit({
+      noteId: row.id,
+      visibility: row.visibility,
+      title: auditValue(NOTE, 'title', title),
+      tainted: true,
+      linkId,
+      targetType: 'meetings.meeting',
+      targetId: input.meetingId,
+    });
     return written(row);
   },
 });
@@ -354,7 +357,7 @@ export const linkRemove = defineCommand({
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.linkId)
       .executeTakeFirst();
-    if (!link) throw new DomainError('NOTE_LINK_NOT_FOUND', 404, 'Không tìm thấy liên kết này');
+    if (!link || link.note_id === null) throw new DomainError('NOTE_LINK_NOT_FOUND', 404, 'Không tìm thấy liên kết này');
     const note = await loadForChange(ctx, link.note_id, (row) => assertAuthor(row, userId));
     await ctx.trx.deleteFrom('crove_notes.link').where('org_id', '=', ctx.orgId).where('id', '=', input.linkId).execute();
     await touch(ctx, link.note_id);
@@ -411,26 +414,7 @@ export const noteGet = defineQuery({
       .where('id', '=', input.noteId)
       .executeTakeFirst();
     if (!row) throw notFound();
-    const links = await ctx.trx
-      .selectFrom('crove_notes.link')
-      .select(['id', 'target_type', 'target_id', 'created_at'])
-      .where('org_id', '=', ctx.orgId)
-      .where('note_id', '=', input.noteId)
-      .orderBy('created_at')
-      .orderBy('id')
-      .execute();
-    // Each link as the reader may follow it now: a record they cannot open (another legal entity, another role, its
-    // module off) shows as such, by type and id only.
-    const shown: NoteLink[] = [];
-    for (const l of links) {
-      shown.push({
-        id: l.id,
-        targetType: l.target_type,
-        targetId: l.target_id,
-        createdAt: new Date(l.created_at).toISOString(),
-        available: await canOpen(ctx, l.target_type, l.target_id),
-      });
-    }
+    const shown = await loadEnrichedLinks(ctx, { kind: 'note', id: input.noteId });
     return { ...summary(row, userId), body: row.body, links: shown };
   },
 });
@@ -459,9 +443,11 @@ export const noteSearch = defineQuery({
   },
 });
 
-// The notes of one record (its panel): pinned first, then the latest PANEL_LATEST others, outside the archive and the trash.
+// The notes and private to-dos of one record (its panel): pinned notes first, then the latest PANEL_LATEST others,
+// outside the archive and the trash, plus the viewer's own linked private to-dos.
 const PANEL_PINNED = 20;
 const PANEL_LATEST = 3;
+const PANEL_TODOS = 20;
 export const recordPanel = defineQuery({
   name: 'notes.record.panel',
   input: zNoteLinkTarget,
@@ -479,7 +465,27 @@ export const recordPanel = defineQuery({
       .where('n.deleted_at', 'is', null);
     const pinned = await base.where('n.pinned', '=', true).orderBy('n.updated_at', 'desc').orderBy('n.id').limit(PANEL_PINNED).execute();
     const latest = await base.where('n.pinned', '=', false).orderBy('n.updated_at', 'desc').orderBy('n.id').limit(PANEL_LATEST).execute();
-    return { pinned: pinned.map((r) => summary(r, userId)), latest: latest.map((r) => summary(r, userId)) };
+    const todoRows = await ctx.trx
+      .selectFrom('crove_notes.todo as t')
+      .innerJoin('crove_notes.link as l', (j) => j.onRef('l.org_id', '=', 't.org_id').onRef('l.todo_id', '=', 't.id'))
+      .select(TODO_SUMMARY_COLUMNS.map((c) => `t.${c}` as const))
+      .where('t.org_id', '=', ctx.orgId)
+      .where('l.target_type', '=', input.targetType)
+      .where('l.target_id', '=', input.targetId)
+      .where('t.deleted_at', 'is', null)
+      .where('t.status', 'in', ['open', 'done'])
+      .orderBy(sql`t.status = 'open'`, 'desc')
+      .orderBy('t.sort_key')
+      .orderBy('t.id')
+      .limit(PANEL_TODOS)
+      .execute();
+    const sourceNotes = await loadSourceNotes(ctx, todoRows);
+    const now = new Date();
+    return {
+      pinned: pinned.map((r) => summary(r, userId)),
+      latest: latest.map((r) => summary(r, userId)),
+      todos: todoRows.map((r) => todoSummaryRow(r, now, sourceNotes)),
+    };
   },
 });
 
@@ -495,5 +501,5 @@ export const privateCounts = defineQuery({
   },
 });
 
-export const noteCommands = [noteCreate, noteUpdate, noteSetVisibility, notePin, noteUnpin, noteArchive, noteRestore, noteDelete, linkAdd, linkRemove];
+export const noteCommands = [noteCreate, noteFromMeetingSummary, noteUpdate, noteSetVisibility, notePin, noteUnpin, noteArchive, noteRestore, noteDelete, linkAdd, linkRemove];
 export const noteQueries = [noteList, noteGet, noteSearch, recordPanel, privateCounts];

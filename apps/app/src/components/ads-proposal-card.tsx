@@ -9,6 +9,7 @@ import { Card } from '@crove/ui/components/card';
 import { useFormat } from '../i18n/provider.tsx';
 import { adsChangeText } from '../lib/ads-change.ts';
 import { orpc } from '../lib/api.ts';
+import { AdsPlanPreview, useAdsPlanView } from './ads-plan-preview.tsx';
 import { CardSkeleton } from './ui.tsx';
 
 export function AdsProposalCard({ id, title, slug }: { id: string; title: string; slug: string }) {
@@ -17,16 +18,28 @@ export function AdsProposalCard({ id, title, slug }: { id: string; title: string
   const f = useFormat();
   const view = useQuery(orpc.ads.proposal.queryOptions({ input: { id } }));
   const change = view.data?.change ?? null;
-  const text = change ? adsChangeText(change, root, (amount, currency) => f.money(amount, currency)) : null;
+  const plan = useAdsPlanView(change);
+  const text = change ? adsChangeText(change, root, (amount, currency) => f.money(amount, currency), (day) => f.date(day)) : null;
   return (
     <Card className="block space-y-3 p-4" data-testid="ads-change">
       <p className="text-sm font-medium text-muted-foreground">{t('adsChange')}</p>
       {view.isLoading ? (
         <CardSkeleton />
       ) : text ? (
-        <div className="space-y-1">
-          <p className="text-base font-semibold text-foreground">{text.title}</p>
-          <p className="text-sm text-muted-foreground">{text.detail}</p>
+        <div className="space-y-3">
+          {plan && (
+            // What the approver signs comes first and is the loudest line: the most the plan can spend.
+            <div data-testid="ads-plan-amount">
+              <p className="text-sm text-muted-foreground">{root('ads.change.plan.maxSpend')}</p>
+              <p className="text-2xl font-bold text-foreground">{plan.amount}</p>
+              <p className="text-sm text-muted-foreground">{plan.spend}</p>
+            </div>
+          )}
+          <div className="space-y-1">
+            <p className="break-words text-base font-semibold text-foreground">{text.title}</p>
+            <p className="text-sm text-muted-foreground">{text.detail}</p>
+          </div>
+          {plan && <AdsPlanPreview plan={plan} />}
         </div>
       ) : (
         <p className="text-sm text-foreground">{title}</p>

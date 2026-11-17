@@ -392,6 +392,111 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
     expect(refused.status).toBe(404);
   });
 
+  it('lets the extension\'s retried upload replace a joined recording, and refuses it once a transcript exists (#3187)', async () => {
+    const { token } = await signedIn('recorder');
+    const created = await rpc('meetings/create', asToken(token), { title: 'Bản ghi ghép', consentMethod: 'told_at_start', visibility: 'attendees', keepVideo: false });
+    const meetingId = String(created.body.meetingId);
+    const send = async (seconds: string) => {
+      const form = new FormData();
+      form.set('kind', 'audio');
+      form.set('file', new Blob([webm()], { type: 'audio/webm' }), 'rec.webm');
+      form.set('lengthSeconds', seconds);
+      const response = await app.request(`/api/meetings/${meetingId}/media`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'x-crove-org': slug }, body: form });
+      return { status: response.status, body: (await response.json()) as { code?: string } };
+    };
+    const segment = () => admin(async (c) => (await c.query<{ file_id: string; joined: boolean }>('SELECT file_id, joined_from_pieces AS joined FROM crove_meetings.audio_segment WHERE meeting_id = $1', [meetingId])).rows);
+    // The first recording stands as a joined one (as if the app had joined the live pieces).
+    expect((await send('30')).status).toBe(200);
+    const [joined] = await segment();
+    await admin(async (c) => void (await c.query('UPDATE crove_meetings.audio_segment SET joined_from_pieces = true WHERE meeting_id = $1', [meetingId])));
+    // The extension's retry of the complete recording, with its own token, replaces it.
+    expect((await send('60')).status).toBe(200);
+    const after = await segment();
+    expect(after).toHaveLength(1);
+    expect(after[0]).toMatchObject({ joined: false });
+    expect(after[0]!.file_id).not.toBe(joined!.file_id);
+    // An uploaded recording is not replaced.
+    expect(await send('61')).toMatchObject({ status: 409, body: { code: 'MEDIA_ALREADY_RECORDED' } });
+    // Joined again, but a transcript was made from it: the retry is refused and the joined recording stays.
+    await admin(async (c) => {
+      await c.query('UPDATE crove_meetings.audio_segment SET joined_from_pieces = true WHERE meeting_id = $1', [meetingId]);
+      await c.query(`INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, text) SELECT org_id, id, 0, 1, 'xin chào' FROM crove_meetings.meeting WHERE id = $1`, [meetingId]);
+    });
+    const keep = await segment();
+    expect(await send('62')).toMatchObject({ status: 409, body: { code: 'MEDIA_JOINED_IN_USE' } });
+    expect(await segment()).toEqual(keep);
+  });
+
+  it('lets the token report that its recording ended with no media: once, codes only, and never over a recording or another meeting (#3196)', async () => {
+    const { token } = await signedIn('recorder');
+    const make = async (title: string) => String((await rpc('meetings/create', asToken(token), { title, consentMethod: 'told_at_start', visibility: 'attendees', keepVideo: false })).body.meetingId);
+    const row = (id: string) =>
+      admin(async (c) => (await c.query<{ ended: boolean; secs: number | null; reason: string | null; touched: string }>(
+        `SELECT ended_at IS NOT NULL AS ended, extract(epoch FROM ended_at - started_at)::int AS secs, recording_stop_reason AS reason, updated_at::text AS touched FROM crove_meetings.meeting WHERE id = $1`, [id])).rows[0]!);
+    const chip = async () => (await rpc('meetings/recordingNow', await asBrowser('recorder'), {})).body.recording as { meetingId: string } | null;
+    const stopped = (headers: Record<string, string>, input: Record<string, unknown>) => rpc('meetings/recordingStopped', headers, input);
+
+    // A silent stop: the chip lists the meeting until the token reports it, then lets go at once.
+    const silent = await make('Dừng im lặng');
+    // Started ten minutes ago: the end time is the start plus the reported length, never later than now.
+    const back = (id: string) => admin(async (c) => void (await c.query(`UPDATE crove_meetings.meeting SET started_at = now() - interval '10 minutes' WHERE id = $1`, [id])));
+    await back(silent);
+    expect(await chip()).toMatchObject({ meetingId: silent });
+    expect(await stopped(asToken(token), { meetingId: silent, reason: 'mic_lost', lengthSeconds: 90 })).toMatchObject({ status: 200, body: { meetingId: silent, ended: true } });
+    expect(await chip()).toBeNull();
+    const first = await row(silent);
+    expect(first).toMatchObject({ ended: true, secs: 90, reason: 'mic_lost' });
+    // The audit row holds ids and codes only (the token's id is stamped on every extension audit row).
+    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'meetings.meeting.recording_stopped' AND target_id = $1`, [silent])).rows);
+    expect(audit).toHaveLength(1);
+    expect(audit[0]!.detail).toEqual({ meetingId: silent, changed: true, reason: 'mic_lost', extensionToken: expect.any(String) });
+    // A second call, even with other words, changes nothing.
+    expect(await stopped(asToken(token), { meetingId: silent, reason: 'tab_closed', lengthSeconds: 5 })).toMatchObject({ status: 200, body: { ended: false } });
+    expect(await row(silent)).toEqual(first);
+
+    // The member's own stop with nothing saved: an end time and no stop code.
+    const own = await make('Tự dừng');
+    await back(own);
+    expect(await stopped(asToken(token), { meetingId: own, lengthSeconds: 30 })).toMatchObject({ body: { ended: true } });
+    expect(await row(own)).toMatchObject({ ended: true, secs: 30, reason: null });
+
+    // A meeting that already has its recording keeps what the upload set: the report is a no-op.
+    const recorded = await make('Đã có bản ghi');
+    const file = new FormData();
+    file.set('kind', 'audio');
+    file.set('file', new Blob([webm()], { type: 'audio/webm' }), 'rec.webm');
+    file.set('lengthSeconds', '60');
+    expect((await app.request(`/api/meetings/${recorded}/media`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'x-crove-org': slug }, body: file })).status).toBe(200);
+    const uploaded = await row(recorded);
+    expect(uploaded.ended).toBe(true);
+    expect(await stopped(asToken(token), { meetingId: recorded, reason: 'unknown', lengthSeconds: 1 })).toMatchObject({ body: { ended: false } });
+    expect(await row(recorded)).toEqual(uploaded);
+
+    // A meeting with a recording but no end time (a row from before the end time was set with every recording) is not ended by the report either.
+    const legacy = await make('Bản ghi cũ');
+    const again = new FormData();
+    again.set('kind', 'audio');
+    again.set('file', new Blob([webm()], { type: 'audio/webm' }), 'rec.webm');
+    again.set('lengthSeconds', '60');
+    expect((await app.request(`/api/meetings/${legacy}/media`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'x-crove-org': slug }, body: again })).status).toBe(200);
+    await admin(async (c) => void (await c.query('UPDATE crove_meetings.meeting SET ended_at = NULL WHERE id = $1', [legacy])));
+    expect(await stopped(asToken(token), { meetingId: legacy, lengthSeconds: 1 })).toMatchObject({ body: { ended: false } });
+    expect((await row(legacy)).ended).toBe(false);
+
+    // Not another member's meeting (403 for one the org may see, whose recorder is not the token's member; a private one is not seen at all), not one made in the app (404: not this token's), not an unknown one,
+    // and not a reason outside the list.
+    const owners = await rpc('meetings/create', await asBrowser('owner'), { title: 'Của chủ tổ chức', consentMethod: 'told_at_start', visibility: 'org', keepVideo: false });
+    expect(owners.status).toBe(200);
+    expect((await stopped(asToken(token), { meetingId: String(owners.body.meetingId) })).status).toBe(403);
+    const inApp = await rpc('meetings/create', await asBrowser('recorder'), { title: 'Trong ứng dụng', consentMethod: 'told_at_start', visibility: 'attendees', keepVideo: false });
+    expect((await stopped(asToken(token), { meetingId: String(inApp.body.meetingId) })).status).toBe(404);
+    expect((await stopped(asToken(token), { meetingId: randomUUID() })).status).toBe(404);
+    expect((await stopped(asToken(token), { meetingId: silent, reason: 'because' })).status).toBe(400);
+    expect((await row(String(inApp.body.meetingId))).ended).toBe(false);
+    // The viewer's token (a viewer cannot connect an extension at all) and a browser session of a viewer are refused as ever.
+    expect((await stopped(await asBrowser('viewer'), { meetingId: silent })).status).toBe(403);
+  });
+
   it('lists the member\'s devices without a hash and ends a disconnected device at once', async () => {
     const { token, tokenId } = await signedIn('recorder');
     const listed = await rpc('extension/tokens/list', await asBrowser('recorder'), {});
@@ -700,5 +805,63 @@ suite('the Ludy extension token over HTTP (#2582, ADR-0047 point 10)', () => {
       aiEnabled: false,
     });
     expect((await open.request('/api/extension/token', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pad: 'x'.repeat(2000) }) })).status).toBe(413);
+  });
+
+  // AUTH_ALLOWED_EMAILS binds the token that outlives a browser session (#3223): the owner's email against the list on every use, before the verify definer stamps
+  // last_used_at, so a refused account costs no write.
+  it('refuses a token whose account the allow-list leaves out, on every use and with no database write, and lets it through once it is listed (#3223)', async () => {
+    const token = (await signedIn('recorder')).token;
+    const email = String(accounts.get('recorder')?.email);
+    const tokenHash = createHash('sha256').update(token).digest();
+    const row = () => admin(async (c) => (await c.query<{ last_used_at: Date | null; revoked_at: Date | null }>('SELECT last_used_at, revoked_at FROM crove_kernel.extension_token WHERE token_hash = $1', [tokenHash])).rows[0]);
+    const audits = () => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.audit_event WHERE org_id = $1', [orgId])).rows[0]?.n));
+    const appWith = (list: string | undefined) => {
+      const config = loadConfig({ DATABASE_URL: appUrlText, AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent', EXTENSION_IDS: EXT_ID, ...(list === undefined ? {} : { AUTH_ALLOWED_EMAILS: list }) });
+      return createHttpApp({ config, runtime: sharedRuntime, store, broker: sharedBroker, authenticate: createAuthenticator(config, sharedDb), pool, aiEnabled: false, extensionTokenLimit: new RateLimiter({ perMinute: 40 }), extensionBearerLimit: new RateLimiter({ perMinute: 1000 }) });
+    };
+    const me = (target: ReturnType<typeof createHttpApp>, bearer = token) => target.request('/api/extension/me', { headers: { authorization: `Bearer ${bearer}` } });
+
+    // A new token has never been used: the first allowed use stamps it, a refusal must not.
+    expect((await row())?.last_used_at).toBeNull();
+    const auditsBefore = await audits();
+
+    // The list names somebody else (an address and a domain): every use is 403 ACCOUNT_NOT_ALLOWED, however often, and nothing is written.
+    const elsewhere = appWith('someone-else@ext-http.test @elsewhere.test');
+    for (let use = 0; use < 3; use++) {
+      const refused = await me(elsewhere);
+      expect(refused.status).toBe(403);
+      expect(await refused.json()).toMatchObject({ code: 'ACCOUNT_NOT_ALLOWED' });
+    }
+    expect((await row())?.last_used_at, 'a refusal must not stamp last_used_at').toBeNull();
+    expect(await audits()).toBe(auditsBefore);
+
+    // A route outside the token's scopes is refused the same way for such an account (the account check comes first, before any route is read).
+    const outside = await elsewhere.request('/api/rpc/kernel/org/get', { method: 'POST', headers: asToken(token), body: '{}' });
+    expect(outside.status).toBe(403);
+    expect(await outside.json()).toMatchObject({ code: 'ACCOUNT_NOT_ALLOWED' });
+
+    // A token no row has still gets the flat 401 while the list is set: the list says nothing about tokens that do not exist.
+    const unknown = await me(elsewhere, `crx_${randomBytes(32).toString('base64url')}`);
+    expect(unknown.status).toBe(401);
+    expect(await unknown.json()).toMatchObject({ code: 'EXTENSION_TOKEN_INVALID' });
+
+    // Listed by address (any letter case) or by domain: the token works and is stamped as before.
+    expect((await me(appWith(email.toUpperCase()))).status).toBe(200);
+    expect((await row())?.last_used_at).not.toBeNull();
+    expect((await me(appWith('@ext-http.test'))).status).toBe(200);
+
+    // Standing is not loosened: a revoked token of a listed account is refused 401 by the verify, as before.
+    const second = await signedIn('recorder');
+    await admin((c) => c.query('UPDATE crove_kernel.extension_token SET revoked_at = now() WHERE token_hash = $1', [createHash('sha256').update(second.token).digest()]));
+    expect((await me(appWith('@ext-http.test'), second.token)).status).toBe(401);
+
+    // The list unset: today's behavior, exactly (no account read, the token works).
+    expect((await me(appWith(undefined))).status).toBe(200);
+
+    // The definer answers the owner's email for a known hash and NULL for an unknown one, to the API login only.
+    const ask = async (hash: Buffer) => (await pool.query<{ email: string | null }>('SELECT crove_kernel.extension_token_account_email($1::bytea) AS email', [hash])).rows[0]?.email;
+    expect(await ask(tokenHash)).toBe(email);
+    expect(await ask(randomBytes(32))).toBeNull();
+    expect(await ask(randomBytes(31))).toBeNull();
   });
 });

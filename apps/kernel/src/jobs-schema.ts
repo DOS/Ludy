@@ -74,7 +74,18 @@ export const QUEUES = {
   // Created by the wake-up delivery migration (20261224000000): one delivery of an MCP grant's wake-up webhook, and the sweep that hands deliveries over (ADR-0051 decision 4, #3024).
   mcpWake: 'kernel-mcp-wake',
   mcpWakeSweep: 'kernel-mcp-wake-sweep',
+  // Created by the member minutes webhook migration (20270101060000): one delivery of a member's minutes webhook, and the sweep that hands deliveries over (meetings integrations A6, #3164).
+  meetingHook: 'kernel-meeting-hook',
+  meetingHookSweep: 'kernel-meeting-hook-sweep',
+  // Created by the series nudge migration (20270107120000): the sweep, every 5 minutes, of the nudges about open items before the next meeting of a series (#3542).
+  meetingsSeriesNudge: 'meetings-series-nudge',
+  // Meeting platform recordings (meetings integrations C1, #3173): one download of a recording the member chose to import, and the sweep that hands them over, lists suggestions and expires.
+  meetingsImport: 'kernel-meeting-import',
+  meetingsImportSweep: 'kernel-meeting-import-sweep',
   // Created by the meetings transcription migration (20261202000000): one run of the recorder's Vy transcribing a meeting (#2578, M4b).
+  // Created by the minutes channels migration (20270101090000): one post of approved minutes to a Slack or Teams channel, and the sweep that hands posts over (meetings integrations B4, #3168).
+  meetingChat: 'kernel-meeting-chat',
+  meetingChatSweep: 'kernel-meeting-chat-sweep',
   meetingsTranscribe: 'meetings-transcribe',
   meetingsLiveNotes: 'meetings-live-notes',
   // Created by the bank feed sync migration (20261108100000): a bank feed connection's sync (ADR-0039, #2044).
@@ -105,6 +116,11 @@ export const QUEUES = {
   adsActivate: 'ads-activate',
   // Created by the calendar write-back queue migration (20261112090000): a booking's event made to match the member's connected calendar (#2124).
   calendarWriteback: 'kernel-calendar-writeback',
+  // Created by the eSign core migration (20270104060000): PDF inspection, sealing, overdue expiration, and OTP/token cleanup (#3323).
+  signPdfInspect: 'sign-pdf-inspect',
+  signPdfSeal: 'sign-pdf-seal',
+  signExpireSweep: 'sign-expire-sweep',
+  signCleanup: 'sign-cleanup',
   // Created by the dead letter migration (20261103150000): every other queue's dead letters (#1720, dead-letter.ts).
   deadLetter: 'kernel-job.dlq',
 } as const;
@@ -179,10 +195,22 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   [QUEUES.notesMemberPurge]: 'none',
   [QUEUES.notesTrash]: 'none',
   [QUEUES.notesRemind]: 'none',
+  // The sweep reads the database and runs a command that writes an in-app notice; it reaches nothing.
+  [QUEUES.meetingsSeriesNudge]: 'none',
   [QUEUES.memberVySweep]: 'none',
   // The one request to the receiver URL an org set, through the egress guard (egressFetch, https only): the delivery's only reach. The sweep reads and writes the database and hands jobs over, nothing else.
   [QUEUES.mcpWake]: ['tenant_url'],
   [QUEUES.mcpWakeSweep]: 'none',
+  // The same, for a member's minutes webhook: the one request to the address the member set (through the signing helper of mcp-wake.ts, the egress guard), and a sweep that reaches nothing.
+  [QUEUES.meetingHook]: ['tenant_url'],
+  [QUEUES.meetingHookSweep]: 'none',
+  // The download goes to the platform's own hosts through the guarded stream (guardedStream), and the URL it fetches comes from the platform's answer (the adapter's prepareDownload), not from code: so it is declared as
+  // tenant_url as well as provider:channel (the adapter's hosts and CDN suffixes narrow it). The sweep lists recordings through the adapters.
+  [QUEUES.meetingsImport]: ['provider:channel', 'tenant_url'],
+  [QUEUES.meetingsImportSweep]: ['provider:channel'],
+  // The same, for the minutes posted to a Slack or Teams channel: the one request to the webhook address an owner or admin saved, through the egress guard (postMinutes of the channel adapters), and a sweep that reaches nothing.
+  [QUEUES.meetingChat]: ['provider:channel', 'tenant_url'],
+  [QUEUES.meetingChatSweep]: 'none',
   // The speech to text endpoint (packages/agent transcribeChunks), the only place the recorder's audio leaves the deployment.
   [QUEUES.meetingsTranscribe]: ['provider:ai'],
   [QUEUES.meetingsLiveNotes]: ['provider:ai'],
@@ -217,6 +245,11 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   [QUEUES.adsActivate]: ['provider:ad_platform'],
   // The calendar adapters (channels.calendars): the provider's events are written through them.
   [QUEUES.calendarWriteback]: ['provider:channel'],
+  // eSign jobs talk only to the internal crove-extract service or the database, never to an external origin (#3323).
+  [QUEUES.signPdfInspect]: 'none',
+  [QUEUES.signPdfSeal]: 'none',
+  [QUEUES.signExpireSweep]: 'none',
+  [QUEUES.signCleanup]: 'none',
   [QUEUES.deadLetter]: 'none',
 };
 
@@ -234,8 +267,18 @@ export function queueEgress(queue: string): JobEgress {
 
 // The pg-boss policy of each queue that is not 'standard'. kernel-agent-wake is 'stately' with the singleton key
 // <org>:<queue>:<agent> (job-keys.ts): at most one queued and one active job per agent, so wake-ups coalesce and an
-// agent runs once at a time (ADR-0029 section 5; the database also allows one running ai_run per agent).
-const QUEUE_POLICIES: Partial<Record<QueueName, 'stately'>> = { [QUEUES.agentWake]: 'stately', [QUEUES.adsSync]: 'stately', [QUEUES.mcpWake]: 'stately' };
+// agent runs once at a time (ADR-0029 section 5; the database also allows one running ai_run per agent). sign-pdf-inspect
+// and sign-pdf-seal are 'exclusive': strictly one queued, retrying, or active job per envelope (#3323).
+const QUEUE_POLICIES: Partial<Record<QueueName, 'stately' | 'exclusive'>> = {
+  [QUEUES.agentWake]: 'stately',
+  [QUEUES.adsSync]: 'stately',
+  [QUEUES.mcpWake]: 'stately',
+  [QUEUES.meetingHook]: 'stately',
+  [QUEUES.meetingChat]: 'stately',
+  [QUEUES.meetingsImport]: 'stately',
+  [QUEUES.signPdfInspect]: 'exclusive',
+  [QUEUES.signPdfSeal]: 'exclusive',
+};
 
 // The dead letter queue's own options, as 20261103150000_crove_jobs_dead_letter.sql created it: a few retries, in case
 // the database or the command is briefly unavailable.

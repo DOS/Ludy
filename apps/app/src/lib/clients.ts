@@ -15,13 +15,13 @@ export interface ClientRow {
   overview: { vatDeadline: ClientDeadline | null } | null;
 }
 
-// A user with several orgs lands on the home screen; with one, in its Inbox; with none, on onboarding.
-export type Landing = { to: 'clients' } | { to: 'inbox'; slug: string } | { to: 'onboarding' };
+// A user with several orgs lands on the clients screen; with one, on its overview; with none, on onboarding.
+export type Landing = { to: 'clients' } | { to: 'overview'; slug: string } | { to: 'onboarding' };
 
 export function landingFor(orgs: ReadonlyArray<{ slug: string }>): Landing {
   const [first] = orgs;
   if (!first) return { to: 'onboarding' };
-  return orgs.length > 1 ? { to: 'clients' } : { to: 'inbox', slug: first.slug };
+  return orgs.length > 1 ? { to: 'clients' } : { to: 'overview', slug: first.slug };
 }
 
 // The nearest deadline first, orgs with no filing period chosen last, then by name.
@@ -65,7 +65,7 @@ export interface SocialFigures {
 }
 
 // Where a figure leads on the org's Social screens: a tab of the Social home, or the channels page.
-export type SocialFigureLink = { to: 'social'; tab?: 'review' | 'attention' | 'done' } | { to: 'channels' };
+export type SocialFigureLink = { to: 'social'; tab?: 'upcoming' | 'review' | 'attention' | 'done' } | { to: 'channels' };
 
 export interface SocialFigure {
   key: 'review' | 'waitingClient' | 'attention' | 'reconnect' | 'upcoming';
@@ -84,7 +84,7 @@ export function socialFigures(figures: SocialFigures): SocialFigure[] {
     { key: 'reconnect', count: figures.reconnect, tone: 'urgent', link: { to: 'channels' } },
     { key: 'review', count: figures.review, tone: 'waiting', link: { to: 'social', tab: 'review' } },
     { key: 'waitingClient', count: figures.waitingClient, tone: 'waiting', link: { to: 'social', tab: 'review' } },
-    { key: 'upcoming', count: figures.upcoming, tone: 'plain', link: { to: 'social' } },
+    { key: 'upcoming', count: figures.upcoming, tone: 'plain', link: { to: 'social', tab: 'upcoming' } },
   ];
   return all.filter((f) => f.count > 0 || f.key === 'upcoming');
 }

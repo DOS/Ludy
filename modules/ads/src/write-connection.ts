@@ -152,6 +152,7 @@ export const adsAccountLinkWrite = defineCommand({
 
 export const adsAccountDisconnect = defineCommand({
   name: 'ads.account.disconnect',
+  runsWhenOff: 'disconnects an ad account and pauses its ads, which stays possible while the app is off',
   input: z.strictObject({ adAccountId: zId }),
   // Closing is a stop: owners and admins, and it drops both sealed tokens. The account's row and figures stay (deleting them is its own
   // action).
@@ -196,6 +197,7 @@ export const adsAccountDisconnect = defineCommand({
 // without a live write connection (W2 launches only with both).
 export const adsAccountForgetWrite = defineCommand({
   name: 'ads.account.forget_write',
+  runsWhenOff: 'forgets a write connection after its erasure request while the app is off',
   input: z.strictObject({ adAccountId: zId }),
   risk: 'R1',
   sideEffect: 'internal',

@@ -704,3 +704,77 @@ describe('the bytes of a photo', () => {
     }
   });
 });
+
+// Reading a Business connection back (#3224): `getBusinessConnection` answers the same object a `business_connection` update carries [O]; recorded answers only.
+const LOOKED_UP = 'AbCd-123_xyz=';
+const connectionAnswer = (over: Record<string, unknown> = {}) => ({
+  body: { ok: true, result: { id: LOOKED_UP, user: { id: 900, first_name: 'Lan', last_name: 'Trần', username: 'lan_tran' }, user_chat_id: 900, date: DATE, rights: { can_reply: true }, is_enabled: true, ...over } },
+});
+
+describe('reading a business connection back', () => {
+  const lookup = (answer: Parameters<typeof fileServer>[0][number], over: { secret?: string; businessConnectionId?: string } = {}) => {
+    const server = fileServer([answer]);
+    return new TelegramConversations({ fetch: server.fetchImpl }).businessConnection({ secret: over.secret ?? SECRET, businessConnectionId: over.businessConnectionId ?? LOOKED_UP }).then((result) => ({ result, hits: server.hits }));
+  };
+
+  it('asks getBusinessConnection with the id, through the Bot API host, the token in the path only, and reads the answer as the update would be read', async () => {
+    const { result, hits } = await lookup(connectionAnswer());
+    expect(result).toEqual({ kind: 'ok', state: { id: LOOKED_UP, userId: '900', name: 'Lan Trần', username: 'lan_tran', canReply: true, enabled: true } });
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toMatchObject({ method: 'POST', url: `https://api.telegram.org/bot${TOKEN}/getBusinessConnection` });
+    expect(JSON.parse(hits[0]?.body ?? '{}')).toEqual({ business_connection_id: LOOKED_UP });
+    expect(JSON.stringify(hits[0]?.headers)).not.toContain('AAHdqTcv');
+    // The same state as the update's reader gives for the same object.
+    const state = telegramBusinessState({ business_connection: (connectionAnswer().body as { result: unknown }).result });
+    expect(result).toEqual({ kind: 'ok', state });
+  });
+
+  it('reports a connection that is off as state (enabled false), and one that cannot reply as one that cannot', async () => {
+    expect(await lookup(connectionAnswer({ is_enabled: false })).then((r) => r.result)).toMatchObject({ kind: 'ok', state: { enabled: false } });
+    expect(await lookup(connectionAnswer({ is_enabled: undefined })).then((r) => r.result)).toMatchObject({ kind: 'ok', state: { enabled: false } });
+    expect(await lookup(connectionAnswer({ rights: {} })).then((r) => r.result)).toMatchObject({ kind: 'ok', state: { enabled: true, canReply: false } });
+  });
+
+  it('refuses an answer that is not the connection asked for, or not a connection at all, with a short code', async () => {
+    expect((await lookup(connectionAnswer({ id: 'OtherConnection-1' }))).result).toEqual({ kind: 'failed', retry: false, code: 'TG_BUSINESS_MISMATCH' });
+    expect((await lookup({ body: { ok: true, result: null } })).result).toEqual({ kind: 'failed', retry: false, code: 'TG_BUSINESS_SHAPE' });
+    expect((await lookup({ body: { ok: true, result: { id: LOOKED_UP } } })).result).toEqual({ kind: 'failed', retry: false, code: 'TG_BUSINESS_SHAPE' });
+  });
+
+  it('maps Telegram\'s refusals to codes: a revoked token, an unknown connection, a busy Telegram, a dropped connection', async () => {
+    const code = async (answer: Parameters<typeof fileServer>[0][number]) => (await lookup(answer)).result;
+    expect(await code(fail(401, 'Unauthorized'))).toEqual({ kind: 'failed', retry: false, code: 'TELEGRAM_TOKEN_REFUSED' });
+    expect(await code(fail(404, 'Not Found'))).toEqual({ kind: 'failed', retry: false, code: 'TELEGRAM_TOKEN_REFUSED' });
+    expect(await code(fail(400, 'Bad Request: business connection not found'))).toEqual({ kind: 'failed', retry: false, code: 'TG_BUSINESS_UNKNOWN' });
+    expect(await code(fail(429, 'Too Many Requests', { parameters: { retry_after: 3 } }))).toEqual({ kind: 'failed', retry: true, code: 'TELEGRAM_429' });
+    expect(await code(fail(502, 'Bad Gateway'))).toEqual({ kind: 'failed', retry: true, code: 'TELEGRAM_502' });
+    expect(await code(new Error('socket hang up'))).toEqual({ kind: 'failed', retry: true, code: 'NETWORK' });
+  });
+
+  it('refuses before any call: no token, an id that is no connection id', async () => {
+    const none = await lookup(connectionAnswer(), { secret: '{"nothing":1}' });
+    expect(none.result).toEqual({ kind: 'failed', retry: false, code: 'TELEGRAM_NO_TOKEN' });
+    expect(none.hits).toHaveLength(0);
+    for (const businessConnectionId of ['', 'has space', 'x'.repeat(101), 'tab\there']) {
+      const bad = await lookup(connectionAnswer(), { businessConnectionId });
+      expect(bad.result).toEqual({ kind: 'failed', retry: false, code: 'TG_BUSINESS_ID' });
+      expect(bad.hits).toHaveLength(0);
+    }
+  });
+
+  it('never puts the token, the id or Telegram\'s words in a failure', async () => {
+    const answers: Array<Parameters<typeof fileServer>[0][number]> = [
+      fail(401, `Unauthorized ${TOKEN}`),
+      fail(400, `business connection ${LOOKED_UP} not found`),
+      fail(500, `boom ${TOKEN}`),
+      new Error(`connect failed for https://api.telegram.org/bot${TOKEN}/getBusinessConnection`),
+      connectionAnswer({ id: `${LOOKED_UP}-other` }),
+    ];
+    for (const answer of answers) {
+      const { result } = await lookup(answer);
+      expect(result.kind).toBe('failed');
+      const text = JSON.stringify(result);
+      for (const secret of [TOKEN, '123456789:', 'AAHdqTcv', LOOKED_UP, 'api.telegram.org', 'not found', 'Unauthorized']) expect(text).not.toContain(secret);
+    }
+  });
+});

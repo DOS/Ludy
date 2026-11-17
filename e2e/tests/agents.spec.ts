@@ -8,7 +8,8 @@ import { nextTotp } from '../lib/totp.ts';
 test('the agents screen asks for a second factor in place, then does what was asked', async ({ page }) => {
   await signUp(page, newEmail('agents'));
   await createOrg(page, 'Công ty Tác tử');
-  await page.getByRole('navigation').getByRole('link', { name: 'Sơ đồ và AI' }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Ludy AI', exact: true }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Đội ngũ AI' }).click();
   await expect(page.getByRole('heading', { name: 'Sơ đồ tổ chức và tác tử AI' })).toBeVisible();
 
   await page.getByTestId('template').first().getByRole('button', { name: 'Cài', exact: true }).click();
@@ -33,7 +34,8 @@ test('the agents screen asks for a second factor in place, then does what was as
 test('the budget form locks while it waits for a second factor, then saves the budget once', async ({ page }) => {
   await signUp(page, newEmail('budget'));
   await createOrg(page, 'Công ty Ngân sách');
-  await page.getByRole('navigation').getByRole('link', { name: 'Sơ đồ và AI' }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Ludy AI', exact: true }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Ngân sách AI' }).click();
   await expect(page.getByRole('heading', { name: 'Ngân sách AI hằng tháng' })).toBeVisible();
 
   const limit = page.getByLabel('Hạn mức mỗi tháng');

@@ -251,6 +251,20 @@ describe('pilot-check settings', () => {
     expect(problems.some((p) => p.startsWith('Sign-up limited: AUTH_DISABLE_SIGNUP is unset'))).toBe(true);
   });
 
+  // #2704: a provider of the deployment's own, where Crove cannot close sign-up but can limit who uses the deployment.
+  it('counts AUTH_ALLOWED_EMAILS as the limit when the deployment signs in at a provider of its own', () => {
+    const own = { ...READY, AUTH_DISABLE_SIGNUP: undefined, AUTH_UPSTREAM_URL: '', PUBLIC_AUTH_URL: 'https://idp.example.test/auth/v1' };
+    expect(failing({ ...own, AUTH_ALLOWED_EMAILS: 'owner@example.test' })).toEqual([]);
+    expect(failing(own).some((p) => p.startsWith('Sign-up limited'))).toBe(true);
+    // A list that parses to nobody limits nothing.
+    expect(failing({ ...own, AUTH_ALLOWED_EMAILS: ', ,' }).some((p) => p.startsWith('Sign-up limited'))).toBe(true);
+    // An absent AUTH_UPSTREAM_URL line is compose's default, the bundled Supabase Auth: a stray PUBLIC_AUTH_URL does not make it a provider of its own.
+    const { AUTH_UPSTREAM_URL: _absent, ...stray } = own;
+    expect(failing({ ...stray, AUTH_ALLOWED_EMAILS: 'owner@example.test' }).some((p) => p.startsWith('Sign-up limited'))).toBe(true);
+    // With the bundled Supabase Auth the list does not close its sign-up: the old rule stands.
+    expect(failing({ ...READY, AUTH_DISABLE_SIGNUP: undefined, AUTH_ALLOWED_EMAILS: 'owner@example.test' }).some((p) => p.startsWith('Sign-up limited'))).toBe(true);
+  });
+
   // #2118: the settings that make a deployment other people reach safe by default.
   describe('pilot defaults (#2118)', () => {
     const stripped = (message: string) => message.replace(/^[^:]+: /, '');
@@ -307,6 +321,9 @@ describe('pilot-check settings', () => {
       expect(failing(on)).toEqual([expect.stringMatching(/^Transcription price: MEETINGS_TRANSCRIBE is on while AI_PRICE_AUDIO_PER_MIN is 0/)]);
       expect(failing({ ...on, AI_PRICE_AUDIO_PER_MIN: '0.0' })).toHaveLength(1);
       expect(failing({ ...on, AI_PRICE_AUDIO_PER_MIN: '0.006' })).toEqual([]);
+      // A price is a decimal string, compared as one (#3481): zero in any spelling and a value that is no decimal are no price; one below what a JS number holds is still a price.
+      for (const none of ['0', '0.000', 'abc', 'n/a', '-1']) expect(failing({ ...on, AI_PRICE_AUDIO_PER_MIN: none }), none).toHaveLength(1);
+      for (const some of ['0.0000000001', '1e-400']) expect(failing({ ...on, AI_PRICE_AUDIO_PER_MIN: some }), some).toEqual([]);
       expect(failing({ ...READY, MEETINGS_TRANSCRIBE: 'off' })).toEqual([]);
       // A shipped sample value of the provider's key is wrong too.
       expect(failing({ ...on, AI_PRICE_AUDIO_PER_MIN: '1', TRANSCRIBE_API_KEY: 'change-me' })).toEqual([expect.stringMatching(/TRANSCRIBE_API_KEY still has a sample value/)]);
@@ -319,6 +336,10 @@ describe('pilot-check settings', () => {
       expect(failing({ ...ai, AI_PRICE_INPUT_PER_MTOK: '0', AI_PRICE_OUTPUT_PER_MTOK: '0.0' })).toEqual(expected);
       expect(failing({ ...ai, AI_PRICE_INPUT_PER_MTOK: '3' })).toEqual([]);
       expect(failing({ ...ai, AI_PRICE_OUTPUT_PER_MTOK: '15.5' })).toEqual([]);
+      // Decimal, never a JS number (#3481): a malformed or negative price is none, a tiny one is a price, and either side alone is enough.
+      for (const none of ['abc', 'n/a', '-3', '0.000']) expect(failing({ ...ai, AI_PRICE_INPUT_PER_MTOK: none, AI_PRICE_OUTPUT_PER_MTOK: none }), none).toEqual(expected);
+      expect(failing({ ...ai, AI_PRICE_INPUT_PER_MTOK: '0.0000000001' })).toEqual([]);
+      expect(failing({ ...ai, AI_PRICE_OUTPUT_PER_MTOK: '1e-400' })).toEqual([]);
       // No key, no AI calls, nothing to cap.
       expect(failing({ ...READY, AI_API_KEY: undefined })).toEqual([]);
       expect(failing({ ...READY, AI_API_KEY: '' })).toEqual([]);

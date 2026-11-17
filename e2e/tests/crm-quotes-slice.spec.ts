@@ -63,6 +63,19 @@ test('a deal becomes a quote, is sent by link, opens on the public page, is acce
     expect(scan.violations.filter((v) => v.impact === 'serious' || v.impact === 'critical').map((v) => `${v.impact} ${v.id}`)).toEqual([]);
   });
 
+  await test.step('the coworker offers to move the deal to "Báo giá" and to set its amount to the quote total; each is one click (#3420)', async () => {
+    const offers = page.getByTestId('quote-deal-offers');
+    await expect(offers).toContainText('Chuyển sang Báo giá');
+    await expect(offers).toContainText('Đặt giá trị cơ hội bằng tổng báo giá');
+    // Nothing moved by itself: the deal still holds its own amount until the click.
+    await offers.getByRole('button', { name: 'Chuyển sang Báo giá' }).click();
+    await expect(page.getByTestId('quote-deal-offer-done')).toContainText('Đã chuyển cơ hội sang "Báo giá"');
+    await expect(offers.getByTestId('quote-deal-offer-move')).toHaveCount(0);
+    await offers.getByRole('button', { name: 'Đặt giá trị cơ hội bằng tổng báo giá' }).click();
+    await expect(page.getByTestId('quote-deal-offer-done')).toContainText('1.650.000');
+    await expect(page.getByTestId('quote-deal-offers')).toHaveCount(0);
+  });
+
   await test.step('the link opens the quote on a public page with no sign-in', async () => {
     const stranger = await browser.newContext();
     try {
@@ -72,6 +85,26 @@ test('a deal becomes a quote, is sent by link, opens on the public page, is acce
       await expect(open.getByText('1.650.000').first()).toBeVisible();
       // Nothing of the app around it: no menu, no sign-in.
       await expect(open.getByRole('navigation')).toHaveCount(0);
+      // On a phone, at 360 and 390 (#3644): each line is a card with its amount in view, nothing scrolls sideways, the table is not the layout, the totals and the
+      // seller's way of answering are on screen, and axe finds no serious or critical problem.
+      for (const width of [360, 390]) {
+        await open.setViewportSize({ width, height: 800 });
+        const card = open.getByTestId('quote-line-card').first();
+        await expect(card).toBeVisible();
+        // The line's amount is before tax (1.500.000), the total with it (1.650.000): both are on screen.
+        await expect(card.getByTestId('quote-line-amount')).toHaveText(/1\.500\.000/);
+        await expect(card.getByTestId('quote-line-amount')).toBeInViewport({ ratio: 1 });
+        await expect(open.getByTestId('quote-document-totals')).toContainText('1.650.000');
+        await expect(open.getByRole('table')).toBeHidden();
+        expect(await open.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), `scrolls sideways at ${width}`).toBe(true);
+        const scan = await new AxeBuilder({ page: open }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
+        expect(scan.violations.filter((v) => v.impact === 'serious' || v.impact === 'critical').map((v) => v.id)).toEqual([]);
+      }
+      // Printed, the table is back, and the cards are not.
+      await open.emulateMedia({ media: 'print' });
+      await expect(open.getByRole('table')).toBeVisible();
+      await expect(open.getByTestId('quote-line-cards')).toBeHidden();
+      await open.emulateMedia({ media: 'screen' });
     } finally {
       await stranger.close();
     }
@@ -92,6 +125,22 @@ test('a deal becomes a quote, is sent by link, opens on the public page, is acce
     await expect(orders.getByTestId('order-invoice')).toBeEnabled();
     await orders.getByTestId('order-invoice').click();
     await expect(orders.getByTestId('order-invoice-done')).toContainText('Đã tạo bản nháp hóa đơn');
+    // The order screen then reads the draft from Kế toán (#3477): the line says "Đã lập nháp", no line is left for the button, and cancel is off with its reason.
+    await expect(orders.getByTestId('order-invoice-line')).toContainText('Đã lập nháp');
+    await expect(orders.getByTestId('order-invoice')).toHaveCount(0);
+    await expect(orders.getByTestId('order-cancel-open')).toBeDisabled();
+    await expect(orders.getByTestId('order-cancel-blocked')).toContainText('nút hủy đang tắt');
+  });
+
+  await test.step('after the acceptance the coworker offers "Thắng"; the order was made either way, and one click moves the deal (#3420)', async () => {
+    const offers = page.getByTestId('quote-deal-offers');
+    await expect(offers).toContainText('Khách đã đồng ý báo giá');
+    // The amount already equals the quote total, so only the move is offered.
+    await expect(offers).not.toContainText('Đặt giá trị cơ hội bằng tổng báo giá');
+    await offers.getByRole('button', { name: 'Chuyển sang Thắng' }).click();
+    await expect(page.getByTestId('quote-deal-offer-done')).toContainText('Đã chuyển cơ hội sang "Thắng"');
+    await expect(page.getByTestId('quote-deal-offers')).toHaveCount(0);
+    await expect(page.getByTestId('deal-orders').getByTestId('order-row')).toHaveCount(1);
   });
 
   await test.step('a second acceptance is not offered, and the Báo giá report counts the accepted quote', async () => {

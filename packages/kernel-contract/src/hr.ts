@@ -9,6 +9,18 @@ import { vietnamToday } from './vietnam-time.ts';
 
 export const HR_CONTRACT_TYPES = ['indefinite', 'fixed_term', 'none'] as const;
 export type HrContractType = (typeof HR_CONTRACT_TYPES)[number];
+export const HR_CONTRACT_FORMS = ['written', 'electronic', 'oral'] as const;
+export type HrContractForm = (typeof HR_CONTRACT_FORMS)[number];
+export const HR_PROBATION_ROLE_TIERS = ['enterprise_manager', 'college_or_above', 'intermediate_technical', 'other'] as const;
+export type HrProbationRoleTier = (typeof HR_PROBATION_ROLE_TIERS)[number];
+export const HR_CONTRACT_ALERT_CODES = [
+  'contract_expired',
+  'contract_expiring_soon',
+  'probation_ending_soon',
+  'final_fixed_term_renewal',
+  'must_convert_to_indefinite',
+] as const;
+export type HrContractAlertCode = (typeof HR_CONTRACT_ALERT_CODES)[number];
 // The wage regions of Decree 74/2024 (the minimum wage by workplace).
 export const HR_REGIONS = ['I', 'II', 'III', 'IV'] as const;
 export type HrRegion = (typeof HR_REGIONS)[number];
@@ -39,8 +51,57 @@ export const zHrTaxCode = z.string().trim().regex(/^(\d{10}|\d{12})$/, 'tax code
 export const zHrInsuranceNumber = z.string().trim().regex(/^(\d{10}|\d{12})$/, 'insurance number: 10 or 12 digits');
 // A birth date from 1900-01-01 to today (Vietnam).
 export const zHrBirthDate = zLocalDate.refine((v) => v >= '1900-01-01' && v <= vietnamToday(), 'birth date between 1900-01-01 and today');
+const noNul = (value: string): boolean => !value.includes('\u0000');
+export const HR_DEPARTMENT_NAME_MAX = 120;
+export const HR_DEPARTMENT_CODE_MAX = 32;
+export const HR_JOB_TITLE_MAX = 160;
 const zName = z.string().trim().min(1).max(200);
 const zAddress = z.string().trim().min(1).max(500);
+export const zHrDepartmentName = z.string().trim().min(1).max(HR_DEPARTMENT_NAME_MAX).refine(noNul, 'no NUL character');
+export const zHrDepartmentCode = z.string().trim().min(1).max(HR_DEPARTMENT_CODE_MAX).regex(/^[A-Za-z0-9._-]+$/, 'department code');
+export const zHrJobTitle = z.string().trim().min(1).max(HR_JOB_TITLE_MAX).refine(noNul, 'no NUL character');
+
+export const zHrDepartmentList = z.strictObject({
+  legalEntityId: zId.optional(),
+  includeArchived: z.boolean().default(false),
+});
+export type HrDepartmentList = z.input<typeof zHrDepartmentList>;
+
+export const zHrDepartmentAdd = z.strictObject({
+  legalEntityId: zId.optional(),
+  name: zHrDepartmentName,
+  code: zHrDepartmentCode.optional(),
+  payFunction: z.enum(HR_PAY_FUNCTIONS).default('admin'),
+});
+export type HrDepartmentAdd = z.input<typeof zHrDepartmentAdd>;
+
+export const zHrDepartmentEdit = z
+  .strictObject({
+    departmentId: zId,
+    name: zHrDepartmentName.optional(),
+    code: zHrDepartmentCode.nullable().optional(),
+    payFunction: z.enum(HR_PAY_FUNCTIONS).optional(),
+  })
+  .refine((v) => v.name !== undefined || v.code !== undefined || v.payFunction !== undefined, 'at least one field');
+export type HrDepartmentEdit = z.infer<typeof zHrDepartmentEdit>;
+
+export const zHrDepartmentRef = z.strictObject({ departmentId: zId });
+export type HrDepartmentRef = z.infer<typeof zHrDepartmentRef>;
+
+export const zHrDepartmentWritten = z.strictObject({ departmentId: zId });
+export type HrDepartmentWritten = z.infer<typeof zHrDepartmentWritten>;
+
+export const zHrDepartmentView = z.strictObject({
+  id: zId,
+  legalEntityId: zId,
+  name: z.string(),
+  code: z.string().nullable(),
+  payFunction: z.enum(HR_PAY_FUNCTIONS),
+  archivedAt: z.string().nullable(),
+  activeEmployees: z.number().int().nonnegative(),
+  activeBaseWageTotal: z.string(),
+});
+export type HrDepartmentView = z.infer<typeof zHrDepartmentView>;
 
 export const zHrEmploymentTerms = z.strictObject({
   effectiveFrom: zLocalDate,
@@ -49,8 +110,21 @@ export const zHrEmploymentTerms = z.strictObject({
   baseWage: zHrWage,
   // Administration unless said otherwise: the default every small business has.
   payFunction: z.enum(HR_PAY_FUNCTIONS).default('admin'),
+  contractForm: z.enum(HR_CONTRACT_FORMS).nullable().optional(),
+  termMonths: z.number().int().min(1).max(36).nullable().optional(),
+  contractEndOn: zLocalDate.nullable().optional(),
+  fixedTermSequence: z.number().int().min(1).max(2).nullable().optional(),
+  probationRoleTier: z.enum(HR_PROBATION_ROLE_TIERS).nullable().optional(),
+  probationEndOn: zLocalDate.nullable().optional(),
+  probationWage: zHrWage.nullable().optional(),
 });
 export type HrEmploymentTerms = z.infer<typeof zHrEmploymentTerms>;
+
+// Initial employment on employee.add keeps payFunction optional so assigning a department can default it when omitted.
+export const zHrEmployeeInitialEmployment = zHrEmploymentTerms.extend({
+  payFunction: z.enum(HR_PAY_FUNCTIONS).optional(),
+});
+export type HrEmployeeInitialEmployment = z.infer<typeof zHrEmployeeInitialEmployment>;
 
 // A new employee with the first terms. The legal entity is the org's default one when none is named.
 // The code of the bank a person is paid at (#2897): 2 to 12 capital letters or digits, a code of the list kept as data in @crove/l10n-vn (VN_BANKS). The shape is checked here and in the database;
@@ -67,7 +141,9 @@ export const zHrEmployeeAdd = z.strictObject({
   taxCode: zHrTaxCode.optional(),
   insuranceNumber: zHrInsuranceNumber.optional(),
   legalEntityId: zId.optional(),
-  employment: zHrEmploymentTerms,
+  departmentId: zId.optional(),
+  jobTitle: zHrJobTitle.optional(),
+  employment: zHrEmployeeInitialEmployment,
 });
 export type HrEmployeeAdd = z.infer<typeof zHrEmployeeAdd>;
 
@@ -83,6 +159,8 @@ export const zHrEmployeeEdit = z
     birthDate: zHrBirthDate.nullable().optional(),
     taxCode: zHrTaxCode.nullable().optional(),
     insuranceNumber: zHrInsuranceNumber.nullable().optional(),
+    departmentId: zId.nullable().optional(),
+    jobTitle: zHrJobTitle.nullable().optional(),
   })
   .refine(
     (v) =>
@@ -93,7 +171,9 @@ export const zHrEmployeeEdit = z
       v.bankCode !== undefined ||
       v.birthDate !== undefined ||
       v.taxCode !== undefined ||
-      v.insuranceNumber !== undefined,
+      v.insuranceNumber !== undefined ||
+      v.departmentId !== undefined ||
+      v.jobTitle !== undefined,
     'at least one field',
   );
 export type HrEmployeeEdit = z.infer<typeof zHrEmployeeEdit>;
@@ -118,26 +198,58 @@ export type HrDependentEnd = z.infer<typeof zHrDependentEnd>;
 export const zHrEmployeeRef = z.strictObject({ employeeId: zId });
 export type HrEmployeeRef = z.infer<typeof zHrEmployeeRef>;
 
-export const zHrEmployeeList = z.strictObject({ status: z.enum(['active', 'ended', 'all']).default('active'), limit: z.number().int().min(1).max(500).default(200) });
+export const zHrEmployeeList = z.strictObject({
+  status: z.enum(['active', 'ended', 'all']).default('active'),
+  departmentId: zId.optional(),
+  limit: z.number().int().min(1).max(500).default(200),
+});
 export type HrEmployeeList = z.input<typeof zHrEmployeeList>;
 
 // What a command returns: ids, never a value (idempotency rows keep results).
 export const zHrWritten = z.object({ employeeId: zId.optional(), employmentId: zId.optional(), dependentId: zId.optional() });
 export type HrWritten = z.infer<typeof zHrWritten>;
 
-const zTerms = z.object({ id: zId, effectiveFrom: z.string(), contractType: z.enum(HR_CONTRACT_TYPES), region: z.enum(HR_REGIONS), baseWage: z.string(), payFunction: z.enum(HR_PAY_FUNCTIONS) });
+export const zHrContractAlert = z.object({
+  code: z.enum(HR_CONTRACT_ALERT_CODES),
+  severity: z.enum(['error', 'warning']),
+  targetDate: z.string().nullable(),
+  daysRemaining: z.number().int().nullable(),
+  message: z.string(),
+  cite: z.string(),
+});
+export type HrContractAlert = z.infer<typeof zHrContractAlert>;
+
+const zTerms = z.object({
+  id: zId,
+  effectiveFrom: z.string(),
+  contractType: z.enum(HR_CONTRACT_TYPES),
+  region: z.enum(HR_REGIONS),
+  baseWage: z.string(),
+  payFunction: z.enum(HR_PAY_FUNCTIONS),
+  contractForm: z.enum(HR_CONTRACT_FORMS).nullable(),
+  termMonths: z.number().int().nullable(),
+  contractEndOn: z.string().nullable(),
+  fixedTermSequence: z.number().int().nullable(),
+  probationRoleTier: z.enum(HR_PROBATION_ROLE_TIERS).nullable(),
+  probationEndOn: z.string().nullable(),
+  probationWage: z.string().nullable(),
+});
 export type HrEmploymentView = z.infer<typeof zTerms>;
 
 export const zHrEmployeeSummary = z.object({
   id: zId,
   legalEntityId: zId,
   displayName: z.string(),
+  departmentId: zId.nullable(),
+  departmentName: z.string().nullable(),
+  jobTitle: z.string().nullable(),
   status: z.enum(HR_STATUSES),
   endedOn: z.string().nullable(),
   // The terms in force today: the newest row that starts on or before today, or null when the first starts later.
   current: zTerms.nullable(),
   hasIdentityNumber: z.boolean(),
   hasAccountNumber: z.boolean(),
+  contractAlerts: z.array(zHrContractAlert),
 });
 export type HrEmployeeSummary = z.infer<typeof zHrEmployeeSummary>;
 
@@ -169,3 +281,88 @@ export const zHrEmployeeErased = z.object({
   kept: z.array(z.object({ what: z.string(), reason: z.string() })),
 });
 export type HrEmployeeErased = z.infer<typeof zHrEmployeeErased>;
+
+// Statutory severance and 13th-month rule citation metadata (matches LaborRuleRef in @crove/l10n-vn).
+export const zHrLaborRuleRef = z.object({
+  id: z.string(),
+  planRow: z.number().int(),
+  status: z.enum(['confirmed', 'commentary']),
+  confidence: z.enum(['primary', 'gov', 'commentary', 'unverified']),
+  cite: z.string(),
+});
+export type HrLaborRuleRef = z.infer<typeof zHrLaborRuleRef>;
+
+// Statutory severance termination & ineligibility codes (equal to SEVERANCE_TERMINATION_REASONS / SeveranceIneligibleReason in @crove/l10n-vn).
+export const HR_SEVERANCE_TERMINATION_REASONS = [
+  'contract_expired',
+  'task_completed',
+  'mutual_agreement',
+  'lawful_unilateral',
+  'other_eligible',
+  'retirement_pension',
+  'disciplinary_dismissal',
+  'unlawful_resignation',
+  'job_loss_redundancy',
+] as const;
+export type HrSeveranceTerminationReason = (typeof HR_SEVERANCE_TERMINATION_REASONS)[number];
+
+export const HR_SEVERANCE_INELIGIBLE_REASONS = [
+  'worked_under_12_months',
+  'retirement_pension',
+  'disciplinary_dismissal',
+  'unlawful_resignation',
+  'job_loss_redundancy',
+] as const;
+export type HrSeveranceIneligibleReason = (typeof HR_SEVERANCE_INELIGIBLE_REASONS)[number];
+
+export const zHrEmployeeSeveranceAsk = z.strictObject({
+  employeeId: zId,
+  endedOn: zLocalDate.optional(),
+  terminationReason: z.enum(HR_SEVERANCE_TERMINATION_REASONS).optional(),
+  totalWorkedMonths: z.number().int().min(0).max(1200).optional(),
+  unemploymentInsuredMonths: z.number().int().min(0).max(1200).optional(),
+  priorSettledMonths: z.number().int().min(0).max(1200).optional(),
+  paidAmount: zHrWage.optional(),
+});
+export type HrEmployeeSeveranceAsk = z.input<typeof zHrEmployeeSeveranceAsk>;
+
+export const zHrEmployeeSeveranceResult = z.object({
+  employeeId: zId,
+  status: z.enum(HR_STATUSES),
+  hireDate: z.string(),
+  endedOn: z.string(),
+  terminationReason: z.enum(HR_SEVERANCE_TERMINATION_REASONS),
+  totalWorkedMonths: z.number().int(),
+  unemploymentInsuredMonths: z.number().int(),
+  priorSettledMonths: z.number().int(),
+  sixMonthWages: z.array(z.string()),
+  qualifyingMonths: z.number().int(),
+  qualifyingYears: z.string(),
+  averageWage: z.string(),
+  eligible: z.boolean(),
+  reason: z.enum(HR_SEVERANCE_INELIGIBLE_REASONS).nullable(),
+  amount: z.string(),
+  paidAmount: z.string().nullable(),
+  pitExemptAmount: z.string(),
+  taxableExcess: z.string(),
+  rulesUsed: z.array(zHrLaborRuleRef),
+});
+export type HrEmployeeSeveranceResult = z.infer<typeof zHrEmployeeSeveranceResult>;
+
+export const zHrEmployeeContractPdfAsk = z.strictObject({
+  employeeId: zId,
+  termsId: zId,
+});
+export type HrEmployeeContractPdfAsk = z.infer<typeof zHrEmployeeContractPdfAsk>;
+
+export const zHrEmployeeContractPdf = z.strictObject({
+  filename: z.string(),
+  contentType: z.literal('application/pdf'),
+  pdfBase64: z.string(),
+  title: z.string(),
+  contractNumber: z.string().nullable(),
+  employeeName: z.string(),
+  employeeEmail: z.string().nullable(),
+});
+export type HrEmployeeContractPdf = z.infer<typeof zHrEmployeeContractPdf>;
+

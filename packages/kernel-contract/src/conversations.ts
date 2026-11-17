@@ -6,7 +6,7 @@
 // A platform's notice is turned by its adapter (@crove/channel) into the events below, which are the only thing the intake
 // command takes: the org comes from the stored connection, never from an event. Text in an event is tainted external text.
 import { z } from 'zod';
-import { zId } from './schemas.ts';
+import { zId, zTaskStatus } from './schemas.ts';
 
 export const CONVERSATION_KINDS = ['comment_thread', 'direct', 'email'] as const;
 export type ConversationKind = (typeof CONVERSATION_KINDS)[number];
@@ -39,6 +39,8 @@ export const CONVERSATION_LIST_MAX = 100;
 export const CONVERSATION_SEARCH_MAX = 100;
 // The posts one list asks about at most (the post page lists the threads of all its channels).
 export const CONVERSATION_POSTS_MAX = 20;
+// The posts one post-count read asks about at most: a page of the post list or a month of the calendar.
+export const CONVERSATION_POST_COUNTS_MAX = 200;
 // A message shown in a list is cut to this many characters.
 export const CONVERSATION_PREVIEW_CHARS = 140;
 // A customer's image stored with its message (CV5c, #2357): at most this many a message, this many bytes each, and only these types (read
@@ -412,6 +414,16 @@ export const zConversationCounted = z.strictObject({
 });
 export type ConversationCounted = z.infer<typeof zConversationCounted>;
 
+// The comment threads still New (nobody has answered or resolved them) under each of the posts a screen shows (#3298): one grouped read for the whole
+// page of the post list or the calendar. Only a post with at least one is listed; a count carries no text and no name.
+export const zConversationPostCounts = z.strictObject({
+  posts: z.array(z.strictObject({ connectionId: zId, externalPostId: z.string().min(1).max(300) })).min(1).max(CONVERSATION_POST_COUNTS_MAX),
+});
+export const zConversationPostCounted = z.strictObject({
+  counts: z.array(z.strictObject({ connectionId: zId, externalPostId: z.string(), unanswered: z.number().int().min(1) })),
+});
+export type ConversationPostCounted = z.infer<typeof zConversationPostCounted>;
+
 export const zConversationGet = z.strictObject({ conversationId: zId });
 export const zConversationReply = z.strictObject({
   conversationId: zId,
@@ -443,6 +455,32 @@ export const zConversationAssign = z.strictObject({ conversationId: zId, assigne
 export const zConversationId = z.strictObject({ conversationId: zId });
 export const zConversationNoteAdd = z.strictObject({ conversationId: zId, body: z.string().trim().min(1).max(CONVERSATION_NOTE_MAX).refine(noNul, 'NUL character') });
 export const zConversationLinkContact = z.strictObject({ conversationId: zId, partyId: zId.nullable() });
+// "Create task" from a conversation (CV3, #3295, plan docs/plan/conversations.md section 4 point 2): a person's own title (never the customer's words, which a task
+// would show to every member), the seat that does it (none: the owner at the root of the chart) and a due date. The task links back to the thread.
+export const CONVERSATION_FOLLOW_UP_TITLE_MAX = 300;
+export const zConversationFollowUp = z.strictObject({
+  conversationId: zId,
+  title: z.string().trim().min(1).max(CONVERSATION_FOLLOW_UP_TITLE_MAX).refine(noNul, 'NUL character'),
+  assigneePositionId: zId.nullable(),
+  due: z.iso.datetime({ offset: true }).optional(),
+});
+export const zConversationFollowedUp = z.strictObject({ taskId: zId });
+export type ConversationFollowedUp = z.infer<typeof zConversationFollowedUp>;
+// The open tasks of one thread (any status but done and cancelled), the newest first, at most CONVERSATION_TASKS_MAX.
+export const CONVERSATION_TASKS_MAX = 20;
+export const zConversationTaskList = z.strictObject({
+  tasks: z.array(
+    z.strictObject({
+      id: zId,
+      title: z.string(),
+      status: zTaskStatus,
+      assigneePositionId: zId.nullable(),
+      due: z.string().nullable(),
+      createdAt: z.string(),
+    }),
+  ),
+});
+export type ConversationTaskList = z.infer<typeof zConversationTaskList>;
 // A person applies an intent to a thread, changes it, or clears it (null) (CV3, #2306).
 export const zConversationSetIntent = z.strictObject({ conversationId: zId, intent: zConversationIntent.nullable() });
 
@@ -672,6 +710,14 @@ export const zConversationPurgeExpired = z.strictObject({ limit: z.number().int(
 export const zConversationPurged = z.strictObject({ threads: z.number().int(), messages: z.number().int(), identities: z.number().int(), more: z.boolean() });
 export type ConversationPurged = z.infer<typeof zConversationPurged>;
 export const zConversationEraseConnection = z.strictObject({ connectionId: zId });
+// A person's choice to delete a disconnected channel's conversations too (#3299): owners and admins, behind a confirmation that names the
+// counts and a fresh second factor. The channel must be disconnected first. The answer is the counts the erasure removed.
+export const zConversationEraseChannel = z.strictObject({ connectionId: zId, confirm: z.literal(true) });
+export const zConversationChannelErased = z.strictObject({ threads: z.number().int(), messages: z.number().int(), identities: z.number().int() });
+export type ConversationChannelErased = z.infer<typeof zConversationChannelErased>;
+// What the dialog's confirmation names: the threads and messages of one connection that the erasure would remove (counts only).
+export const zConversationChannelCounts = z.strictObject({ threads: z.number().int(), messages: z.number().int() });
+export type ConversationChannelCounts = z.infer<typeof zConversationChannelCounts>;
 
 // The "you are replying" marker (CV3, #2306): a member typing a reply marks the thread for 60 seconds; a mark is written at most once in 20 seconds
 // per thread and member, and the screens read it with their poll. A sweep drops the expired ones.

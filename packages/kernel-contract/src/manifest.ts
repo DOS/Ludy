@@ -103,6 +103,8 @@ export interface RouteDeclaration {
   readonly permission?: string;
   // The app of a screen no menu item names, reached from inside that app (the guide), so a deep link opens with it.
   readonly app?: string;
+  // A screen that is a tab of a menu item (or reached from inside an app) and that the command palette (Ctrl K) finds under this label, a key of the app's `nav` messages (#3225).
+  readonly find?: string;
   // A screen that serves several modules at once (the reports, one tab for each). It opens, and its menu item shows,
   // where any of these modules runs, in place of the module that declares it; each part of the screen still asks for
   // its own module (an API call of a module that is not installed answers not installed).
@@ -114,9 +116,11 @@ export interface RouteDeclaration {
 // under `nav` in the app's messages, in Vietnamese and English; apps are listed in the order their items first appear,
 // and an app's groups in the order the shell fixes for it (apps/app/src/lib/apps.ts), because one app's groups come
 // from several modules.
+// An item with no app sits in the shell's own places (#3225): `top` is the overview, first in the switcher, `bell` the notifications bell and `foot` the org's own screens (Settings) at its foot.
 export type NavDeclaration =
-  | { readonly app: string; readonly group: string; readonly path: string; readonly label: string }
-  | { readonly app: null; readonly path: string; readonly label: string };
+  // `modules`: the item shows only where one of these modules runs, when its screen is another module's (the kernel's Inbox, in Finance's menu as "Chứng từ").
+  | { readonly app: string; readonly group: string; readonly path: string; readonly label: string; readonly modules?: readonly string[] }
+  | { readonly app: null; readonly rail: 'top' | 'bell' | 'foot'; readonly path: string; readonly label: string };
 
 // A screen of the app outside /o/$slug (#1660): a share target, an OAuth callback, a link sent outside the org. A
 // deployment without the module answers it not found, as the API answers its calls, and every route of the app's

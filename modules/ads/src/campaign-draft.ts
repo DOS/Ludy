@@ -2,7 +2,7 @@
 // The campaign drafts of running ads (W1, issue #2295, plan docs/plan/ads-write.md sections 3 and 10, ADR-0043). A person builds one campaign with its ad
 // set and its ad, local validation (campaign-plan.ts) says what is wrong or missing, and an owner or admin submits it for approval: a proposal of
 // ads.campaign.launch that names the plan, its hash and the largest amount it can spend, approved in the Inbox by someone who is not an author of it
-// (P10, the one-person path aside, with a fresh second factor, P11). In W1 an approved plan is only marked approved: nothing leaves Ludy, and W2 launches it.
+// (P10, the one-person path aside, with a fresh second factor, P11). The approval holds the plan's amount against the caps and queues its launch (W2): the launch job creates the campaign paused at the platform and the activation job switches it on from the plan's first day, with no second approval (the screens say so, #3639).
 //
 // Who may do what: owners, admins and members draft (a member limited to some legal entities sees those entities' accounts only, by the row policy of the
 // table); an owner or an admin asks for approval; an agent never submits (access lists no agent) and the AI coworker's drafts are written by the system in
@@ -376,8 +376,8 @@ export const adsCampaignPrepareLaunch = defineCommand({
   },
 });
 
-// What an approval runs (access 'proposal': only through kernel.proposal.approve, as the approver, in the approving transaction). In W1 it marks the plan
-// approved and nothing else: W2 queues the launch. It re-checks everything the request was made under, because the proposal may be old.
+// What an approval runs (access 'proposal': only through kernel.proposal.approve, as the approver, in the approving transaction). It marks the plan
+// approved, holds its amount against the caps and queues the launch (W2-2, W2-3, W2-4b). It re-checks everything the request was made under, because the proposal may be old.
 export const adsCampaignLaunch = defineCommand({
   // A literal, not the contract's constant (which equals it): the job-egress invariant reads the name of every command whose events feed a queue with egress from
   // the source, and this command's event (ads.launch.queued) now feeds the launch queue.

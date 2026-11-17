@@ -11,7 +11,7 @@ test('the overview counts what waits and opens the screen that clears it', async
   await page.goto('/');
   await signInNewUser(page, newEmail('overview'));
   await createOrg(page, 'Công ty Tổng Quan');
-  const overview = page.getByRole('navigation').getByRole('link', { name: 'Tổng quan' });
+  const overview = page.getByRole('navigation').getByRole('link', { name: 'Tổng quan', exact: true });
 
   await test.step('a new org has nothing waiting, and the tax calendar says why it is empty', async () => {
     await overview.click();
@@ -24,16 +24,16 @@ test('the overview counts what waits and opens the screen that clears it', async
   await test.step('one card per installed app links into it (#1528)', async () => {
     const apps = page.getByRole('region', { name: 'Ứng dụng' });
     await expect(apps.getByText('Chưa chọn kỳ khai GTGT')).toBeVisible();
-    await apps.getByRole('link', { name: 'Mở Ludy Kế toán' }).click();
+    await apps.getByRole('link', { name: 'Mở Ludy Tài chính' }).click();
     await expect(page).toHaveURL(/\/accounting$/);
-    // Home opens on the overview.
-    await page.getByRole('navigation').getByRole('link', { name: 'Trang chủ', exact: true }).click();
+    // The overview is the first entry of the switcher.
+    await overview.click();
     await expect(page).toHaveURL(/\/overview$/);
   });
 
   await test.step('an invoice in the Inbox shows as one proposal to approve', async () => {
-    await page.getByRole('navigation').getByRole('link', { name: 'Trang chủ', exact: true }).click();
-    await page.getByRole('navigation').getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await page.getByRole('navigation').getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ }).click();
     await page.locator('input[type=file]').setInputFiles(INVOICE);
     await expect(page.getByRole('link', { name: SELLER })).toBeVisible({ timeout: 60_000 });
     await overview.click();

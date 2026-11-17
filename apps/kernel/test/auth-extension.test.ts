@@ -56,6 +56,8 @@ describe('the routes an extension token may reach', () => {
       'GET /api/extension/me null',
       'POST /api/rpc/meetings/create meetings',
       'POST /api/rpc/meetings/extensionStatus meetings',
+      'POST /api/rpc/meetings/recordingStopped meetings',
+      'POST /api/rpc/meetings/agenda/next agenda',
       'POST /api/files/uploads meetings',
       'POST /api/meetings/:id/media meetings',
       'POST /api/meetings/:id/live-chunk meetings',

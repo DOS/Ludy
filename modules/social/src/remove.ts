@@ -115,6 +115,7 @@ export const variantRemove = defineCommand({
 // Decides whether the worker makes the remove call now, and records the call as started first.
 export const removeBegin = defineCommand({
   name: 'social.remove.begin',
+  runsWhenOff: 'a takedown asked before the app was switched off still goes out: removing a post stops its exposure (ADR-0053)',
   // after: the last remove call the ask saw (null: none was made).
   input: z.strictObject({ variantId: zId, provider: z.string().min(1).max(32), after: z.string().min(1).max(300).nullable() }),
   // Commits the provider call as started; the worker then makes it, an effect outside Crove (#1578).
@@ -155,6 +156,7 @@ export type RemoveRecord = z.infer<typeof zRemoveResult>;
 // Stores what the platform answered for the remove call; an answer for a call that is not started changes nothing.
 export const removeRecord = defineCommand({
   name: 'social.remove.record',
+  runsWhenOff: "records the platform's answer to a call already made, so its outcome is not lost when the app is switched off",
   input: z.strictObject({ variantId: zId, callKey: z.string().min(1).max(300), result: zRemoveResult }),
   risk: 'R1',
   sideEffect: 'internal',
@@ -206,6 +208,7 @@ export function removeDue(provider: string, settings: Readonly<Record<string, un
 // lock; once anyone asked (a person, or this before), it asks nothing more: a failed or unclear removal waits for a person.
 export const removeSchedule = defineCommand({
   name: 'social.remove.schedule',
+  runsWhenOff: 'a planned takedown still comes down on time while the app is off: removing a post stops its exposure (ADR-0053)',
   input: z.strictObject({ variantId: zId }),
   // Its event queues the remove job, which takes the post down on the platform (plan §4.7: a job with egress
   // derives R2; #1662). A system command, so the worker runs it as before.
@@ -243,6 +246,7 @@ export type RemoveWatch = { told: false; reason: 'not_published' | 'not_schedule
 // again from the post page. A person's own ask since (removed_by set) is left to them.
 export const removeWatch = defineCommand({
   name: 'social.remove.watch',
+  runsWhenOff: 'records that a takedown never got its answer, so the post page shows it, while the app is off (ADR-0053); the notice itself waits for the app',
   input: z.strictObject({ variantId: zId, after: z.string().min(1).max(300).nullable() }),
   risk: 'R1',
   sideEffect: 'internal',

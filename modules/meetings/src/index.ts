@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 export * from './manifest.ts';
+export * from './busy.ts';
 export * from './meetings.ts';
 export * from './retention.ts';
 export * from './live-header.ts';
@@ -11,4 +12,4 @@ export { itemFlags, itemIsClean } from './results.ts';
 export { matchAttendee, parseWhen, plainName } from './summary.ts';
 export { setSummaryEnabled } from './summary-run.ts';
 export { translateCommands } from './translate.ts';
-export { translationHash } from './translate-run.ts';
+export { lineHash, translationHash } from './translate-run.ts';

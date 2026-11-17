@@ -28,6 +28,8 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
 
   const slug = await test.step('create the first org', async () => {
     const created = await createOrg(page, 'Công ty E2E');
+    // A new org opens on the overview (#3225); the uploads are on the Inbox.
+    await page.goto(page.url().replace(/\/overview$/, '/inbox'));
     await expect(page.getByRole('heading', { name: 'Chứng từ chờ duyệt' })).toBeVisible();
     return created;
   });
@@ -53,9 +55,9 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
     await expect(page.getByText('einvoice-basic.xml')).toBeVisible();
     // The worker reads the XML and raises the proposal; the Inbox polls every few seconds.
     await expect(page.getByRole('link', { name: SELLER })).toBeVisible({ timeout: 60_000 });
-    // The file says its proposal waits for a person, in the proposal's words (#2009). The upload panel's chips are
-    // walked in bulk-intake.spec.ts and unit tested in intake.test.ts.
-    await expect(page.getByTestId('recent-file').filter({ hasText: 'einvoice-basic.xml' })).toContainText('Chờ duyệt');
+    // A file read into a proposal is that proposal's row, not a second chip saying the same (#3598). The upload panel's
+    // chips are walked in bulk-intake.spec.ts and unit tested in intake.test.ts.
+    await expect(page.getByTestId('recent-file')).toHaveCount(0);
   });
 
   await test.step('open the proposal and approve it', async () => {
@@ -88,8 +90,6 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
     // The Inbox says what the approval did, in its button's verb (#1384).
     await expect(page.getByRole('status').filter({ hasText: `Đã duyệt và ghi sổ ${SELLER}` })).toBeVisible();
     await expect(page.getByText('Không có đề xuất nào chờ duyệt')).toBeVisible();
-    // Posted now: the file says so, no longer waiting (#2009).
-    await expect(page.getByTestId('recent-file').filter({ hasText: 'einvoice-basic.xml' })).toContainText('Đã ghi sổ');
     await page.getByRole('tab', { name: 'Đã ghi sổ' }).click();
     await expect(page.getByRole('link', { name: SELLER })).toBeVisible();
   });
@@ -112,7 +112,7 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
   await test.step('vendor, document and entry lists', async () => {
     const nav = page.getByRole('navigation');
 
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Nhà cung cấp' }).click();
     const vendor = page.getByRole('row').filter({ hasText: SELLER });
     await expect(vendor).toHaveCount(1);
@@ -131,13 +131,14 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
     await expect(form).toHaveCount(0);
     await expect(vendor.getByRole('cell').first()).toHaveText(`${SELLER}024 3826 0000 · hoadon@example.com`);
 
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
-    await nav.getByRole('link', { name: 'Chứng từ', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await nav.getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ }).click();
+    await page.getByRole('link', { name: 'Tất cả chứng từ' }).click();
     const document = page.getByRole('row').filter({ hasText: 'C26TAB-1234' });
     await expect(document).toHaveCount(1);
     await expect(document.getByRole('cell')).toHaveText(['15/09/2026', 'C26TAB-1234', 'Mua vào', SELLER, /^1\.800\.000/, /^180\.000/, /^1\.980\.000/, 'Đã ghi sổ', 'Ghi chú']);
 
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Bút toán' }).click();
     await expect(page.getByText(MEMO)).toBeVisible();
     const line = (account: string) => page.getByRole('row').filter({ has: page.getByRole('cell', { name: new RegExp(`^${account} `) }) });
@@ -147,7 +148,8 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
 
   await test.step('Excel export', async () => {
     const download = page.waitForEvent('download');
-    await page.getByRole('button', { name: 'Xuất Excel' }).click();
+    await page.getByRole('button', { name: 'Xuất sổ nhật ký' }).click();
+    await page.getByRole('menuitem', { name: 'Xuất Excel' }).click();
     const file = await download;
     expect(file.suggestedFilename()).toBe(`ludy-but-toan-${slug}.xlsx`);
 
@@ -172,13 +174,13 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
   });
 
   await test.step('VAT working for September 2026 and its Excel export (#316)', async () => {
-    await page.getByRole('navigation').getByRole('link', { name: 'Kế toán', exact: true }).click();
-    await page.getByRole('navigation').getByRole('link', { name: 'Tờ khai GTGT' }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Thuế', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Tờ khai thuế GTGT' })).toBeVisible();
     await page.getByLabel('Kỳ khai', { exact: true }).selectOption('month');
     await page.getByLabel('Năm', { exact: true }).selectOption('2026');
     await page.getByLabel('Tháng', { exact: true }).selectOption('9');
-    await expect(page.getByText('Từ 01/09/2026 đến 30/09/2026: bán ra theo ngày lập hóa đơn, mua vào theo ngày ghi sổ')).toBeVisible();
+    await expect(page.getByText('Từ 01/09/2026 đến 30/09/2026: bán ra theo ngày bán (ngày lập hóa đơn khi không có ngày bán riêng), mua vào theo ngày ghi sổ')).toBeVisible();
     const indicator = (code: string) => page.getByRole('row').filter({ has: page.getByRole('cell', { name: `[${code}]`, exact: true }) });
     await expect(indicator('23').getByRole('cell').last()).toHaveText(/^1\.800\.000/);
     await expect(indicator('24').getByRole('cell').last()).toHaveText(/^180\.000/);
@@ -201,9 +203,9 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
   });
 
   await test.step('ledger reports for September 2026 and their Excel export (#321)', async () => {
-    await page.getByRole('navigation').getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
     await page.getByRole('navigation').getByRole('link', { name: 'Sổ sách' }).click();
-    await expect(page.getByRole('heading', { name: 'Sổ sách kế toán' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Sổ sách', exact: true })).toBeVisible();
     await page.getByLabel('Kỳ báo cáo', { exact: true }).selectOption('month');
     await page.getByLabel('Năm', { exact: true }).selectOption('2026');
     await page.getByLabel('Tháng', { exact: true }).selectOption('9');
@@ -251,7 +253,7 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
     await add.getByRole('button', { name: 'Thêm' }).click();
     await expect(page.getByText('6422.VP', { exact: true })).toBeVisible();
 
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Nhà cung cấp' }).click();
     const picker = page.getByRole('combobox', { name: `Tài khoản mặc định của ${SELLER}` });
     await picker.selectOption('6422.VP');
@@ -348,6 +350,8 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
 test('reject a proposal with a reason through the dialog', async ({ page }) => {
   await signInNewUser(page, newEmail('inbox-reject'));
   const slug = await createOrg(page, 'Công ty Từ Chối');
+  // A new org opens on the overview (#3225); the uploads are on the Inbox.
+  await page.goto(page.url().replace(/\/overview$/, '/inbox'));
 
   await test.step('upload the e-invoice and open its proposal', async () => {
     await page.locator('input[type=file]').setInputFiles(INVOICE);

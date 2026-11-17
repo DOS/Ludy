@@ -45,6 +45,7 @@ function revokeError(error: unknown): never {
 
 export const adsTokenRevokeRecord = defineCommand({
   name: 'ads.token_revoke.record',
+  runsWhenOff: 'records that a revoked ad token was revoked at the platform while the app is off',
   input: zAdsTokenRevokeRecord,
   // It changes only the record of what the platform answered: the call itself was the job's, and it spends nothing.
   risk: 'R1',

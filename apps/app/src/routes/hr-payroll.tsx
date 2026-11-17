@@ -18,6 +18,8 @@ import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { BankSelect } from '../components/bank-select.tsx';
+import { ThirteenthMonthPanel } from '../components/hr-thirteenth-month-panel.tsx';
+import { TimekeepingImportPanel } from '../components/hr-timekeeping-panel.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -591,7 +593,7 @@ function SettlementPayment({ runId, kind, step, canAsk }: { runId: string; kind:
   );
 }
 
-function Settlement({ runId }: { runId: string }) {
+export function Settlement({ runId }: { runId: string }) {
   const t = useTranslations('hrPayroll');
   const { slug } = useParams({ strict: false }) as { slug: string };
   const state = useQuery(orpc.hr.payroll.settlement.queryOptions({ input: { runId } }));
@@ -627,7 +629,7 @@ function Settlement({ runId }: { runId: string }) {
           </div>
           {post.error && <ErrorText>{errorMessage(post.error)}</ErrorText>}
           {s.posting.status === 'reversed' && <p className="mt-2 text-sm text-muted-foreground">{t('settleReversedNote')}</p>}
-          {s.posting.status === 'posted' || (s.posting.status === 'reversed' && PAYROLL_PAYMENT_KINDS.some((k) => s.payments[k].status !== 'none')) ? (
+          {s.posting.status === 'posted' || PAYROLL_PAYMENT_KINDS.some((k) => s.payments[k].status !== 'none') ? (
             <ul className="mt-3 divide-y border-t" data-testid="hr-settle-payments">
               {PAYROLL_PAYMENT_KINDS.map((kind) => (
                 <SettlementPayment key={kind} runId={runId} kind={kind} step={s.payments[kind]} canAsk={s.posting.status === 'posted'} />
@@ -702,6 +704,8 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
   const [shown, setShown] = useState<string | null>(null);
   const [payslip, setPayslip] = useState<string | null>(null);
   const [adjusting, setAdjusting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [thirteenthOpen, setThirteenthOpen] = useState(false);
   const [accept, setAccept] = useState(false);
   const [days, setDays] = useState('');
   const recalc = useMutation({
@@ -712,11 +716,21 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
     mutationFn: (fingerprint: string) => client.hr.payroll.runs.approve({ runId, fingerprint, acceptFlags: accept }),
     onSuccess: refresh,
   });
+  const syncLeave = useMutation({
+    mutationFn: () => client.hr.payroll.runs.syncLeave({ runId }),
+    onMutate: () => setEditing(null),
+    onSuccess: async () => {
+      setAccept(false);
+      setEditing(null);
+      await refresh();
+    },
+  });
   if (q.isPending) return <TableSkeleton columns={7} />;
   if (q.error) return <ErrorText>{errorMessage(q.error)}</ErrorText>;
   const s = q.data;
   const draft = s.run.status === 'draft';
-  const flagged = s.lines.some((l) => l.flags.some((x) => x === 'check_minimum_wage' || x === 'check_deduction_cap'));
+  const hasPayLines = s.lines.some((l) => l.kind === 'pay');
+  const flagged = s.lines.some((l) => l.flags.some((x) => x === 'check_minimum_wage' || x === 'check_deduction_cap' || x === 'check_overtime_cap'));
   return (
     <>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
@@ -726,12 +740,60 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
           </h2>
           <p className="text-sm text-muted-foreground">{t('sheetMeta', { employer: s.run.employerName, days: s.run.workingDays })}</p>
         </div>
-        <Button variant="ghost" onClick={onBack}>
-          {t('back')}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {draft && hasPayLines && (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                loading={syncLeave.isPending}
+                disabled={editing !== null}
+                onClick={() => syncLeave.mutate()}
+                data-testid="hr-sync-leave"
+              >
+                {t('syncLeave')}
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setThirteenthOpen((v) => !v)} data-testid="hr-13th-month-toggle">
+                {t('thirteenthMonth.toggle')}
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setImporting((v) => !v)} data-testid="hr-timekeeping-toggle">
+                {t('timekeeping.toggle')}
+              </Button>
+            </>
+          )}
+          <Button variant="ghost" onClick={onBack}>
+            {t('back')}
+          </Button>
+        </div>
       </div>
       {s.blocking.length > 0 && <BlockingRules rules={s.blocking} />}
       {draft && s.lines.length > 0 && <MonthCoworker runId={runId} />}
+      {draft && hasPayLines && thirteenthOpen && (
+        <ThirteenthMonthPanel
+          runId={runId}
+          month={s.run.month}
+          onApplied={async () => {
+            setAccept(false);
+            setEditing(null);
+            await refresh();
+          }}
+          onClose={() => setThirteenthOpen(false)}
+        />
+      )}
+      {draft && hasPayLines && importing && (
+        <TimekeepingImportPanel
+          runId={runId}
+          month={s.run.month}
+          lines={s.lines}
+          onImported={async () => {
+            setAccept(false);
+            setEditing(null);
+            await refresh();
+          }}
+          onClose={() => setImporting(false)}
+        />
+      )}
+      {syncLeave.error && <ErrorText>{errorMessage(syncLeave.error)}</ErrorText>}
       {draft && s.obstacles.includes('refused_lines') && <ErrorText>{t('refusedLines')}</ErrorText>}
       {payslip && <Payslip key={payslip} lineId={payslip} onClose={() => setPayslip(null)} />}
       {adjusting && <AdjustForm sheet={s} approvedRuns={approvedRuns} onClose={() => setAdjusting(false)} />}
@@ -788,10 +850,15 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
                   {l.kind === 'adjustment' ? <p className="text-sm">{l.note}</p> : <Breakdown line={l} money={f.money} />}
                   {l.checks.filter((c) => !c.ok).map((c) => (
                     <p key={c.id} className="mt-2 text-xs text-destructive">
-                      {t(`check.${c.id}`, { actual: f.money(c.actual, 'VND'), limit: f.money(c.limit, 'VND') })}
+                      {t(`check.${c.id}`, c.id === 'overtime_cap' ? { actual: c.actual, limit: c.limit } : { actual: f.money(c.actual, 'VND'), limit: f.money(c.limit, 'VND') })}
                     </p>
                   ))}
                   {l.refusal && <p className="mt-2 text-xs text-destructive">{l.refusal}</p>}
+                  {l.exceededAnnualDays && (
+                    <p className="mt-2 text-xs text-muted-foreground" data-testid="hr-annual-leave-exceeded">
+                      {t('annualLeaveExceededDetail', { days: l.exceededAnnualDays })}
+                    </p>
+                  )}
                   <div className="mt-3 flex flex-wrap gap-2">
                     {l.kind === 'pay' && l.status === 'calculated' && (
                       <Button variant="outline" size="sm" onClick={() => setPayslip(l.id)} data-testid="hr-payslip-open">
@@ -799,7 +866,7 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
                       </Button>
                     )}
                     {draft && l.kind === 'pay' && editing !== l.id && (
-                      <Button variant="outline" size="sm" onClick={() => setEditing(l.id)} data-testid="hr-inputs-open">
+                      <Button variant="outline" size="sm" disabled={syncLeave.isPending} onClick={() => setEditing(l.id)} data-testid="hr-inputs-open">
                         {t('editInputs')}
                       </Button>
                     )}

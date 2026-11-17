@@ -22,10 +22,18 @@ export const TRANSLATION_TIMEOUT_MS = 60_000;
 /** The most the model may write: the checks cap what is stored, this caps what is paid for (a longer answer is cut and then refused as unparsable). */
 export const TRANSLATION_MAX_OUTPUT_TOKENS = 12_000;
 
-export async function generateMeetingTranslationText(config: AiConfig, prompt: { system: string; user: string }, timeoutMs: number = TRANSLATION_TIMEOUT_MS): Promise<{ text: string; usage: { inputTokens: number; outputTokens: number } }> {
+// `prompt.expected` is what the caller knows the call will use (a transcript chunk: its size), so a meter that admits on projected cost can refuse it before it is made (#3185).
+export async function generateMeetingTranslationText(
+  config: AiConfig,
+  prompt: { system: string; user: string; expected?: { inputTokens: number; outputTokens: number } | undefined },
+  timeoutMs: number = TRANSLATION_TIMEOUT_MS,
+): Promise<{ text: string; usage: { inputTokens: number; outputTokens: number } }> {
   try {
-    const { text, usage } = await metered('meetings.translate', () =>
-      generateText({ model: chatModel(config), system: prompt.system, prompt: prompt.user, abortSignal: AbortSignal.timeout(timeoutMs), maxRetries: 0, maxOutputTokens: TRANSLATION_MAX_OUTPUT_TOKENS }),
+    const { text, usage } = await metered(
+      'meetings.translate',
+      () => generateText({ model: chatModel(config), system: prompt.system, prompt: prompt.user, abortSignal: AbortSignal.timeout(timeoutMs), maxRetries: 0, maxOutputTokens: TRANSLATION_MAX_OUTPUT_TOKENS }),
+      undefined,
+      prompt.expected,
     );
     return { text, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
   } catch (error: unknown) {

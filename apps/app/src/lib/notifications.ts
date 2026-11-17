@@ -1,4 +1,4 @@
-// In-app notifications of the kernel, finance and notes (#671): the kinds the settings list, what an item opens, and how
+// In-app notifications of the kernel, finance, notes, projects and meetings (#671): the kinds the settings list, what an item opens, and how
 // a VAT period reads. Social's are apart (lib/social-notifications.ts, #637). No React imports, so it is unit tested.
 
 // The kinds a member can turn off, by module, in the order the settings list them.
@@ -12,6 +12,10 @@ export const NOTIFICATION_KINDS = {
   notes: ['notes.todo_due'],
   // An ad account whose connection stopped, so its updates are paused until an owner or admin connects it again (#2219).
   ads: ['kernel.channel_expired'],
+  // A project weekly status mailed to members (#2609).
+  projects: ['projects.weekly_status'],
+  // About 30 minutes before the next meeting of a series: how many of my items from the previous meeting are still open (#3542). It holds a count and the previous meeting, no title.
+  meetings: ['meetings.series_open_items'],
 } as const;
 export type KnownNotificationKind = (typeof NOTIFICATION_KINDS)[keyof typeof NOTIFICATION_KINDS][number];
 
@@ -43,6 +47,9 @@ export type NotificationTarget =
   | { to: 'conversation'; id: string }
   | { to: 'conversations' }
   | { to: 'tasks' }
+  | { to: 'project'; id: string }
+  | { to: 'projects' }
+  | { to: 'meeting'; id: string }
   | { to: 'ads' }
   | { to: 'agents' };
 
@@ -71,6 +78,11 @@ export function notificationTarget(item: { kind: string; subjectId: string | nul
       return { to: 'ledger' };
     case 'notes.todo_due':
       return { to: 'myWork' };
+    case 'projects.weekly_status':
+      return item.subjectId ? { to: 'project', id: item.subjectId } : { to: 'projects' };
+    // The previous meeting, where its items are listed (a person who read it can open it; the notice was only sent to one who can).
+    case 'meetings.series_open_items':
+      return item.subjectId ? { to: 'meeting', id: item.subjectId } : null;
     case 'kernel.channel_expired':
       return { to: 'ads' };
     // The AI budget's notice (#2382) opens the page with this month's use and the budgets, where an owner raises one.

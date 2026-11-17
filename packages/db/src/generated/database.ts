@@ -3,8 +3,8 @@
 
 import type { ColumnType, Generated } from 'kysely';
 
-/** Every table of crove_kernel, crove_finance, crove_social, crove_crm, crove_notes, crove_ads, crove_hr, crove_meetings that crove_tenant may read. */
-export type Database = CroveAdsSchema & CroveCrmSchema & CroveFinanceSchema & CroveHrSchema & CroveKernelSchema & CroveMeetingsSchema & CroveNotesSchema & CroveSocialSchema;
+/** Every table of crove_kernel, crove_finance, crove_social, crove_crm, crove_notes, crove_ads, crove_hr, crove_meetings, crove_projects, crove_sign that crove_tenant may read. */
+export type Database = CroveAdsSchema & CroveCrmSchema & CroveFinanceSchema & CroveHrSchema & CroveKernelSchema & CroveMeetingsSchema & CroveNotesSchema & CroveProjectsSchema & CroveSignSchema & CroveSocialSchema;
 
 /**
  * The insert or update type of a column crove_tenant may not insert or update: no value but undefined, which
@@ -103,10 +103,14 @@ export interface CroveFinanceSchema {
 }
 
 export interface CroveHrSchema {
+  'crove_hr.candidate': HrCandidateTable;
+  'crove_hr.department': HrDepartmentTable;
+  'crove_hr.job_opening': HrJobOpeningTable;
   'crove_hr.payroll_bank_template': HrPayrollBankTemplateTable;
   'crove_hr.payroll_dependent': HrPayrollDependentTable;
   'crove_hr.payroll_employee': HrPayrollEmployeeTable;
   'crove_hr.payroll_employment': HrPayrollEmploymentTable;
+  'crove_hr.payroll_leave_entry': HrPayrollLeaveEntryTable;
   'crove_hr.payroll_line': HrPayrollLineTable;
   'crove_hr.payroll_run': HrPayrollRunTable;
 }
@@ -149,6 +153,8 @@ export interface CroveKernelSchema {
   'crove_kernel.mail_message': KernelMailMessageTable;
   'crove_kernel.mail_suppression': KernelMailSuppressionTable;
   'crove_kernel.mcp_member_table': KernelMcpMemberTableTable;
+  'crove_kernel.meeting_platform_connection': KernelMeetingPlatformConnectionTable;
+  'crove_kernel.meeting_platform_recording': KernelMeetingPlatformRecordingTable;
   'crove_kernel.member_availability': KernelMemberAvailabilityTable;
   'crove_kernel.member_invite': KernelMemberInviteTable;
   'crove_kernel.member_permission_override': KernelMemberPermissionOverrideTable;
@@ -188,13 +194,18 @@ export interface CroveKernelSchema {
 export interface CroveMeetingsSchema {
   'crove_meetings.action_item': MeetingsActionItemTable;
   'crove_meetings.audio_segment': MeetingsAudioSegmentTable;
+  'crove_meetings.calendar_agenda': MeetingsCalendarAgendaTable;
+  'crove_meetings.chat_channel': MeetingsChatChannelTable;
+  'crove_meetings.chat_post': MeetingsChatPostTable;
   'crove_meetings.live_chunk': MeetingsLiveChunkTable;
   'crove_meetings.live_line': MeetingsLiveLineTable;
   'crove_meetings.meeting': MeetingsMeetingTable;
   'crove_meetings.meeting_link': MeetingsMeetingLinkTable;
+  'crove_meetings.meeting_note': MeetingsMeetingNoteTable;
   'crove_meetings.meeting_reader': MeetingsMeetingReaderTable;
   'crove_meetings.meeting_result': MeetingsMeetingResultTable;
   'crove_meetings.meeting_video': MeetingsMeetingVideoTable;
+  'crove_meetings.minutes_template': MeetingsMinutesTemplateTable;
   'crove_meetings.transcript_segment': MeetingsTranscriptSegmentTable;
   'crove_meetings.translation': MeetingsTranslationTable;
 }
@@ -203,6 +214,23 @@ export interface CroveNotesSchema {
   'crove_notes.link': NotesLinkTable;
   'crove_notes.note': NotesNoteTable;
   'crove_notes.todo': NotesTodoTable;
+}
+
+export interface CroveProjectsSchema {
+  'crove_projects.project': ProjectsProjectTable;
+  'crove_projects.project_member': ProjectsProjectMemberTable;
+  'crove_projects.project_task': ProjectsProjectTaskTable;
+}
+
+export interface CroveSignSchema {
+  'crove_sign.ai_analysis': SignAiAnalysisTable;
+  'crove_sign.envelope': SignEnvelopeTable;
+  'crove_sign.field': SignFieldTable;
+  'crove_sign.signer': SignSignerTable;
+  'crove_sign.signing_event': SignSigningEventTable;
+  'crove_sign.template': SignTemplateTable;
+  'crove_sign.template_field': SignTemplateFieldTable;
+  'crove_sign.template_role': SignTemplateRoleTable;
 }
 
 export interface CroveSocialSchema {
@@ -938,6 +966,7 @@ export interface FinanceChannelOrderLineTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   attempt: Generated<number>;
+  delivered_at: string | null;
 }
 
 /** crove_finance.channel_order */
@@ -1106,6 +1135,14 @@ export interface FinanceEinvoiceDraftTable {
   next_check_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   check_attempts: Generated<number>;
   channel_connection_id: string | null;
+  sale_date: string | null;
+  late_reason: string | null;
+  buyer_identity_kind: string | null;
+  buyer_identity: string | null;
+  correction_kind: string | null;
+  original_draft_id: string | null;
+  reason_code: string | null;
+  agreement_file_id: string | null;
 }
 
 /** crove_finance.einvoice_series */
@@ -1272,6 +1309,10 @@ export interface FinanceJournalVoucherTable {
   stock_count_id: ColumnType<string | null, string | null, NotGranted>;
   payroll_run_id: ColumnType<string | null, string | null, NotGranted>;
   settlement_id: ColumnType<string | null, string | null, NotGranted>;
+  payout_settlement_id: ColumnType<string | null, string | null, NotGranted>;
+  payout_bank_line_id: ColumnType<string | null, string | null, NotGranted>;
+  fee_document_id: ColumnType<string | null, string | null, NotGranted>;
+  settlement_month: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_finance.legal_entity_books */
@@ -1625,6 +1666,67 @@ export interface FinanceVendorAccountRuleTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
+/** crove_hr.candidate */
+export interface HrCandidateTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  opening_id: string | null;
+  display_name: string;
+  email: string | null;
+  phone: string | null;
+  stage: Generated<string>;
+  years_experience: number | null;
+  matched_skills: Generated<string[]>;
+  expected_wage: string | null;
+  agreed_wage: string | null;
+  planned_start_on: string | null;
+  notes: string | null;
+  interview_event_id: string | null;
+  interview_starts_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  interview_ends_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  hired_employee_id: string | null;
+  erased_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_hr.department */
+export interface HrDepartmentTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  name: string;
+  code: string | null;
+  pay_function: Generated<string>;
+  archived_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_hr.job_opening */
+export interface HrJobOpeningTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  department_id: string | null;
+  title: string;
+  department_name: string | null;
+  contract_type: Generated<string>;
+  region: Generated<string>;
+  pay_function: Generated<string>;
+  budget_min_wage: string | null;
+  budget_max_wage: string | null;
+  required_skills: Generated<string[]>;
+  status: Generated<string>;
+  closed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
 /** crove_hr.payroll_bank_template */
 export interface HrPayrollBankTemplateTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -1671,6 +1773,8 @@ export interface HrPayrollEmployeeTable {
   insurance_number_sealed: string | null;
   finalization_authorized_years: Generated<number[]>;
   bank_code: string | null;
+  department_id: string | null;
+  job_title: string | null;
 }
 
 /** crove_hr.payroll_employment */
@@ -1686,6 +1790,28 @@ export interface HrPayrollEmploymentTable {
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   pay_function: ColumnType<string, string | undefined, NotGranted>;
+  contract_form: ColumnType<string | null, string | null, NotGranted>;
+  term_months: ColumnType<number | null, number | null, NotGranted>;
+  contract_end_on: ColumnType<string | null, string | null, NotGranted>;
+  fixed_term_sequence: ColumnType<number | null, number | null, NotGranted>;
+  probation_role_tier: ColumnType<string | null, string | null, NotGranted>;
+  probation_end_on: ColumnType<string | null, string | null, NotGranted>;
+  probation_wage: ColumnType<string | null, string | null, NotGranted>;
+}
+
+/** crove_hr.payroll_leave_entry */
+export interface HrPayrollLeaveEntryTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  employee_id: ColumnType<string, string, NotGranted>;
+  month: ColumnType<string, string, NotGranted>;
+  kind: ColumnType<string, string, NotGranted>;
+  days: string;
+  approved: Generated<boolean>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_hr.payroll_line */
@@ -1876,6 +2002,7 @@ export interface KernelCalendarConnectionTable {
   write_back: Generated<boolean>;
   connected_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  read_events: Generated<boolean>;
 }
 
 /** crove_kernel.calendar_event_link */
@@ -2328,6 +2455,46 @@ export interface KernelMcpMemberTableTable {
   adr: ColumnType<string, NotGranted, NotGranted>;
 }
 
+/** crove_kernel.meeting_platform_connection */
+export interface KernelMeetingPlatformConnectionTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  user_id: ColumnType<string, string, NotGranted>;
+  provider: ColumnType<string, string, NotGranted>;
+  external_account: ColumnType<string, string, NotGranted>;
+  display_name: string;
+  scopes: Generated<string[]>;
+  status: Generated<string>;
+  status_reason: string | null;
+  expires_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  last_synced_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  connected_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_kernel.meeting_platform_recording */
+export interface KernelMeetingPlatformRecordingTable {
+  org_id: ColumnType<string, NotGranted, NotGranted>;
+  id: ColumnType<string, NotGranted, NotGranted>;
+  connection_id: ColumnType<string, NotGranted, NotGranted>;
+  user_id: ColumnType<string, NotGranted, NotGranted>;
+  external_id: ColumnType<string, NotGranted, NotGranted>;
+  title: ColumnType<string, NotGranted, NotGranted>;
+  started_at: ColumnType<Date, NotGranted, NotGranted>;
+  length_seconds: ColumnType<number | null, NotGranted, NotGranted>;
+  size_bytes: ColumnType<string | null, NotGranted, NotGranted>;
+  has_audio: ColumnType<boolean, NotGranted, NotGranted>;
+  has_video: ColumnType<boolean, NotGranted, NotGranted>;
+  has_transcript: ColumnType<boolean, NotGranted, NotGranted>;
+  status: ColumnType<string, NotGranted, NotGranted>;
+  meeting_id: ColumnType<string | null, NotGranted, NotGranted>;
+  staging_key: ColumnType<string | null, NotGranted, NotGranted>;
+  staged_at: ColumnType<Date | null, NotGranted, NotGranted>;
+  error_code: ColumnType<string | null, NotGranted, NotGranted>;
+  created_at: ColumnType<Date, NotGranted, NotGranted>;
+  updated_at: ColumnType<Date, NotGranted, NotGranted>;
+}
+
 /** crove_kernel.member_availability */
 export interface KernelMemberAvailabilityTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -2708,6 +2875,7 @@ export interface KernelTaskTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   legal_entity_id: string | null;
   pending_draft: ColumnType<unknown, string | null | undefined, string | null>;
+  checklist: ColumnType<unknown, string | undefined, string>;
 }
 
 /** crove_kernel.tax_obligation_done */
@@ -2764,6 +2932,9 @@ export interface KernelTenantTable {
   meeting_text_retention_days: Generated<number>;
   mcp_member_grants: Generated<boolean>;
   meeting_consent_policy: Generated<string>;
+  meeting_hooks: Generated<boolean>;
+  apps_off: Generated<string[]>;
+  apps_version: Generated<number>;
 }
 
 /** crove_kernel.today_mail */
@@ -2821,6 +2992,56 @@ export interface MeetingsAudioSegmentTable {
   start_offset_seconds: ColumnType<number, number | undefined, NotGranted>;
   length_seconds: ColumnType<number, number, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  joined_from_pieces: ColumnType<boolean, boolean | undefined, NotGranted>;
+}
+
+/** crove_meetings.calendar_agenda */
+export interface MeetingsCalendarAgendaTable {
+  org_id: ColumnType<string, NotGranted, NotGranted>;
+  id: ColumnType<string, NotGranted, NotGranted>;
+  connection_id: ColumnType<string, NotGranted, NotGranted>;
+  user_id: ColumnType<string, NotGranted, NotGranted>;
+  external_id: ColumnType<string, NotGranted, NotGranted>;
+  title: ColumnType<string, NotGranted, NotGranted>;
+  starts_at: ColumnType<Date, NotGranted, NotGranted>;
+  ends_at: ColumnType<Date, NotGranted, NotGranted>;
+  time_zone: ColumnType<string, NotGranted, NotGranted>;
+  join_url: ColumnType<string | null, NotGranted, NotGranted>;
+  invitee_count: ColumnType<number, NotGranted, NotGranted>;
+  meeting_id: ColumnType<string | null, NotGranted, string | null>;
+  updated_at: ColumnType<Date, NotGranted, NotGranted>;
+  series_id: ColumnType<string | null, NotGranted, NotGranted>;
+}
+
+/** crove_meetings.chat_channel */
+export interface MeetingsChatChannelTable {
+  org_id: string;
+  id: Generated<string>;
+  kind: string;
+  label: string;
+  host: string;
+  created_by: string;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_meetings.chat_post */
+export interface MeetingsChatPostTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  meeting_id: ColumnType<string, string, NotGranted>;
+  channel_id: ColumnType<string, string, NotGranted>;
+  user_id: ColumnType<string, string, NotGranted>;
+  facts_key: ColumnType<string, string, NotGranted>;
+  text_hash: ColumnType<string, string, NotGranted>;
+  state: ColumnType<string, string | undefined, NotGranted>;
+  attempts: ColumnType<number, number | undefined, NotGranted>;
+  http_status: ColumnType<number | null, number | null, NotGranted>;
+  code: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  handed_at: ColumnType<Date | null, Date | string | null, NotGranted>;
+  sending_at: ColumnType<Date | null, Date | string | null, NotGranted>;
+  settled_at: ColumnType<Date | null, Date | string | null, NotGranted>;
 }
 
 /** crove_meetings.live_chunk */
@@ -2859,6 +3080,16 @@ export interface MeetingsMeetingLinkTable {
   calendar_event_id: ColumnType<string | null, string | null, NotGranted>;
   created_by: ColumnType<string, string, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_meetings.meeting_note */
+export interface MeetingsMeetingNoteTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  meeting_id: ColumnType<string, string, NotGranted>;
+  body: string;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_meetings.meeting_reader */
@@ -2909,6 +3140,12 @@ export interface MeetingsMeetingTable {
   extension_token_id: ColumnType<string | null, string | null, NotGranted>;
   live_notes: ColumnType<boolean, boolean | undefined, NotGranted>;
   recording_stop_reason: string | null;
+  summary_template: Generated<string>;
+  audio_used_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  series_id: string | null;
+  minutes_template_name: string | null;
+  minutes_template_sections: ColumnType<unknown, string | null | undefined, string | null>;
+  minutes_template_hash: string | null;
 }
 
 /** crove_meetings.meeting_video */
@@ -2920,6 +3157,18 @@ export interface MeetingsMeetingVideoTable {
   length_seconds: ColumnType<number, number, NotGranted>;
   video_retention_date: ColumnType<string, string, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_meetings.minutes_template */
+export interface MeetingsMinutesTemplateTable {
+  org_id: string;
+  id: Generated<string>;
+  name: string;
+  sections: ColumnType<unknown, string, string>;
+  archived_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: string;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_meetings.transcript_segment */
@@ -2960,13 +3209,15 @@ export interface MeetingsTranslationTable {
 export interface NotesLinkTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
-  note_id: ColumnType<string, string, NotGranted>;
+  note_id: ColumnType<string | null, string | null, NotGranted>;
   target_type: ColumnType<string, string, NotGranted>;
   target_id: ColumnType<string, string, NotGranted>;
   party_id: ColumnType<string | null, string | null, NotGranted>;
   file_id: ColumnType<string | null, string | null, NotGranted>;
   created_by: ColumnType<string, string, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  todo_id: ColumnType<string | null, string | null, NotGranted>;
+  task_id: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_notes.note */
@@ -2979,13 +3230,14 @@ export interface NotesNoteTable {
   body: Generated<string>;
   tags: Generated<string[]>;
   pinned: Generated<boolean>;
-  tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
+  tainted: Generated<boolean>;
   search: ColumnType<string, string | undefined, NotGranted>;
   revision: Generated<number>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   archived_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   deleted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  summary_run_ids: Generated<string[]>;
 }
 
 /** crove_notes.todo */
@@ -3012,6 +3264,246 @@ export interface NotesTodoTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   done_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   deleted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  source_run_id: ColumnType<string | null, string | null, NotGranted>;
+  source_run_seq: ColumnType<number | null, number | null, NotGranted>;
+  recurrence: ColumnType<unknown, string | null | undefined, string | null>;
+  series_id: string | null;
+}
+
+/** crove_projects.project_member */
+export interface ProjectsProjectMemberTable {
+  org_id: string;
+  id: Generated<string>;
+  project_id: string;
+  user_id: string;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_projects.project */
+export interface ProjectsProjectTable {
+  org_id: string;
+  id: Generated<string>;
+  name: string;
+  description: string | null;
+  owner_user_id: string | null;
+  status: Generated<string>;
+  created_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  is_template: Generated<boolean>;
+  template_tasks: ColumnType<unknown, string | undefined, string>;
+}
+
+/** crove_projects.project_task */
+export interface ProjectsProjectTaskTable {
+  org_id: string;
+  id: Generated<string>;
+  project_id: string;
+  task_id: string;
+  added_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  sort_key: string | null;
+  recurrence: ColumnType<unknown, string | null | undefined, string | null>;
+  recurrence_count: Generated<number>;
+  recurrence_last_due: string | null;
+  recurrence_next_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  recurrence_source_task_id: string | null;
+}
+
+/** crove_sign.ai_analysis */
+export interface SignAiAnalysisTable {
+  org_id: string;
+  id: Generated<string>;
+  envelope_id: string;
+  source_sha256: string;
+  status: Generated<string>;
+  proposed_fields_json: ColumnType<unknown, string | undefined, string>;
+  risk_clauses_json: ColumnType<unknown, string | undefined, string>;
+  summary_text: string | null;
+  error_message: string | null;
+  prompt_version: Generated<string>;
+  completed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_sign.envelope */
+export interface SignEnvelopeTable {
+  org_id: string;
+  id: Generated<string>;
+  title: string;
+  subject: string | null;
+  message: string | null;
+  status: Generated<string>;
+  routing_mode: Generated<string>;
+  source_kind: Generated<string>;
+  source_id: string | null;
+  source_file_id: string;
+  source_storage_key: string;
+  source_generation: string;
+  source_sha256: string;
+  inspect_status: Generated<string>;
+  inspect_error: string | null;
+  page_count: number | null;
+  page_dimensions_json: ColumnType<unknown, string | null | undefined, string | null>;
+  sealed_file_id: string | null;
+  sealed_storage_key: string | null;
+  sealed_generation: string | null;
+  sealed_sha256: string | null;
+  seal_status: string | null;
+  certificate_file_id: string | null;
+  certificate_storage_key: string | null;
+  certificate_generation: string | null;
+  certificate_sha256: string | null;
+  certificate_code: string | null;
+  expires_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  sent_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  completed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  declined_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  voided_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  voided_by: string | null;
+  void_reason: string | null;
+  expired_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  version: Generated<number>;
+  created_by: string;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  detected_tags_json: ColumnType<unknown, string | null | undefined, string | null>;
+}
+
+/** crove_sign.field */
+export interface SignFieldTable {
+  org_id: string;
+  id: Generated<string>;
+  envelope_id: string;
+  signer_id: string;
+  field_type: string;
+  page_number: number;
+  x_norm: string;
+  y_norm: string;
+  w_norm: string;
+  h_norm: string;
+  label: string | null;
+  required: Generated<boolean>;
+  proposed_by_ai: Generated<boolean>;
+  font_size_pt: number | null;
+  value_text: string | null;
+  value_checked: boolean | null;
+  signature_png_base64: string | null;
+  filled_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_sign.signer */
+export interface SignSignerTable {
+  org_id: string;
+  id: Generated<string>;
+  envelope_id: string;
+  routing_order: Generated<number>;
+  signer_role: Generated<string>;
+  role_label: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  delivery_mode: Generated<string>;
+  require_email_otp: Generated<boolean>;
+  status: Generated<string>;
+  token_last_reminded_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  viewed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  signed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  declined_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  decline_reason: string | null;
+  otp_verified_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  signature_kind: string | null;
+  signature_typed_text: string | null;
+  signer_user_agent: string | null;
+  signer_ip_hash: string | null;
+  consent_accepted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  role_key: string | null;
+}
+
+/** crove_sign.signing_event */
+export interface SignSigningEventTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  envelope_id: ColumnType<string, string, NotGranted>;
+  signer_id: ColumnType<string | null, string | null, NotGranted>;
+  seq: ColumnType<number, number, NotGranted>;
+  event_type: ColumnType<string, string, NotGranted>;
+  actor_type: ColumnType<string, string, NotGranted>;
+  actor_id: ColumnType<string | null, string | null, NotGranted>;
+  actor_label: ColumnType<string, string, NotGranted>;
+  document_sha256: ColumnType<string, string, NotGranted>;
+  prev_event_hash: ColumnType<string | null, string | null, NotGranted>;
+  event_hash: ColumnType<string, string, NotGranted>;
+  payload_json: ColumnType<unknown, string | undefined, NotGranted>;
+  ip_hash: ColumnType<string | null, string | null, NotGranted>;
+  user_agent: ColumnType<string | null, string | null, NotGranted>;
+  occurred_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_sign.template_field */
+export interface SignTemplateFieldTable {
+  org_id: string;
+  id: Generated<string>;
+  template_id: string;
+  template_role_id: string;
+  field_type: string;
+  page_number: number;
+  x_norm: string;
+  y_norm: string;
+  w_norm: string;
+  h_norm: string;
+  label: string | null;
+  required: Generated<boolean>;
+  font_size_pt: number | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_sign.template_role */
+export interface SignTemplateRoleTable {
+  org_id: string;
+  id: Generated<string>;
+  template_id: string;
+  role_key: string;
+  signer_role: Generated<string>;
+  role_label: string;
+  routing_order: Generated<number>;
+  delivery_mode: Generated<string>;
+  require_email_otp: Generated<boolean>;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_sign.template */
+export interface SignTemplateTable {
+  org_id: string;
+  id: Generated<string>;
+  title: string;
+  description: string | null;
+  routing_mode: Generated<string>;
+  subject: string | null;
+  message: string | null;
+  expires_in_hours: number | null;
+  source_file_id: string;
+  source_storage_key: string;
+  source_generation: string;
+  source_sha256: string;
+  inspect_status: Generated<string>;
+  inspect_error: string | null;
+  page_count: number | null;
+  page_dimensions_json: ColumnType<unknown, string | null | undefined, string | null>;
+  status: Generated<string>;
+  version: Generated<number>;
+  archived_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  archived_by: string | null;
+  created_by: string;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  detected_tags_json: ColumnType<unknown, string | null | undefined, string | null>;
 }
 
 /** crove_social.account_snapshot */

@@ -12,7 +12,7 @@ import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect } from '@crove/ui/components/native-select';
-import { DealForm, refreshDeals, type Member } from './deal-form.tsx';
+import { DealForm, DealPartyDuplicate, refreshDeals, type Member } from './deal-form.tsx';
 import { DealBookings } from './booking-deal.tsx';
 import { DealQuotes } from './deal-quotes.tsx';
 import { Empty, ErrorText, Field } from './ui.tsx';
@@ -82,6 +82,7 @@ function Card({
         </Badge>
       )}
       <p className="text-xs text-muted-foreground">{deal.partyName}</p>
+      <DealPartyDuplicate deal={deal} canEdit={canEdit} />
       <p className="mt-1 tabular-nums">{formatMoney(deal.amount, locale, deal.currency)}</p>
       {deal.expectedClose && <p className={`text-xs ${overdue ? 'text-destructive' : 'text-muted-foreground'}`}>{t('board.closeOn', { date: deal.expectedClose })}</p>}
       {deal.lostReason && <p className="text-xs text-muted-foreground">{t('lostReason', { reason: deal.lostReason })}</p>}
@@ -113,7 +114,18 @@ function Card({
 const EDGE = 80;
 const SCROLL_STEP = 24;
 
-export function DealBoard({ members, canEdit, filters }: { members: readonly Member[]; canEdit: boolean; filters?: FilterAst | undefined }) {
+export function DealBoard({
+  members,
+  canEdit,
+  filters,
+  onShowAll,
+}: {
+  members: readonly Member[];
+  canEdit: boolean;
+  filters?: FilterAst | undefined;
+  // Opens the list of every won or lost deal, not only the last days the board shows (the closed columns' "Xem tất cả").
+  onShowAll?: ((kind: 'won' | 'lost') => void) | undefined;
+}) {
   const t = useTranslations('deals');
   const { locale } = useLocaleSetting();
   // A saved view's filter (K3): the board shows the deals the list shows for it, and its cache entry is the view's own.
@@ -252,7 +264,16 @@ export function DealBoard({ members, canEdit, filters }: { members: readonly Mem
               <Badge variant="outline">{column.count}</Badge>
             </header>
             <p className="mb-2 px-1 text-xs tabular-nums text-muted-foreground">{formatMoney(column.total, locale)}</p>
-            {column.stage.kind !== 'open' && <p className="mb-2 px-1 text-xs text-muted-foreground">{t('board.lastDays', { days: String(BOARD_CLOSED_DAYS) })}</p>}
+            {column.stage.kind !== 'open' && (
+              <p className="mb-2 flex flex-wrap items-baseline gap-x-2 px-1 text-xs text-muted-foreground">
+                <span>{t('board.lastDays', { days: String(BOARD_CLOSED_DAYS) })}</span>
+                {onShowAll && (
+                  <Button type="button" variant="link" size="sm" className="h-auto p-0 text-xs" aria-label={t('board.showAllLabel', { stage: column.stage.name })} onClick={() => onShowAll(column.stage.kind as 'won' | 'lost')}>
+                    {t('board.showAll')}
+                  </Button>
+                )}
+              </p>
+            )}
             <ul className="space-y-2" aria-label={column.stage.name}>
               {column.cards.map((deal) => (
                 <Card

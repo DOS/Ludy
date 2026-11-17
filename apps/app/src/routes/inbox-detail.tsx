@@ -1,7 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { BLOCKING_CHECK_IDS, UNCLASSIFIED_ACCOUNT_CODE, vietnamToday, type CashVoucherProposal, type JournalVoucherProposal } from '@crove/kernel-contract';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -18,21 +18,22 @@ import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { DateInput } from '../components/date-input.tsx';
 import { useLegalEntity } from '../components/entity-switcher.tsx';
 import { LookupOriginalCard } from '../components/lookup-original-card.tsx';
-import { StepUpPrompt } from '../components/two-factor.tsx';
+import { StepUpDialog } from '../components/two-factor.tsx';
 import { CardSkeleton, DocumentSkeleton, ErrorText, ListSkeleton, PageHeader, ProposalSkeleton, RowsSkeleton, Spinner } from '../components/ui.tsx';
 import { accountLabel, pickableAccounts } from '../lib/accounts.ts';
 import { errorMessage, fetchFile, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { AttachedOriginalsCard } from '../components/attached-originals-card.tsx';
-import { getConfig } from '../lib/auth.ts';
 import { PROPOSAL_STATUS_VARIANT } from '../lib/status.ts';
 import { isZeroAmount, linesBalance, previewPurchaseJournal, previewSalesJournal } from '../lib/decimal.ts';
 import { nextDay, postingDateAllowed } from '../lib/period-lock.ts';
 import { useFormat } from '../i18n/provider.tsx';
+import { visibleBidi } from '../lib/ads-change.ts';
 import { invoiceCheckMessage } from '../lib/invoice-checks.ts';
 import { parseExchangeRate } from '../lib/exchange-rate.ts';
 import { reversalErrorMessage } from '../lib/reversal.ts';
 import { journalVoucherProblem } from '../lib/journal-voucher.ts';
 import { SM_UP, SPLIT_UP, useMediaQuery } from '../lib/media.ts';
+import { proposalSource } from '../lib/proposed-by.ts';
 import { toast } from '../lib/toast.ts';
 import { previewVoucherJournal, voucherProblem } from '../lib/vouchers.ts';
 import { partySearch } from '../lib/parties.ts';
@@ -40,6 +41,7 @@ import { checksByConcern, isAdsProposalKind, isEInvoiceIssueKind, nextAfterDecis
 import { useReviewShortcuts, type ReviewHandlers } from '../lib/review-shortcuts.ts';
 import { useScrollRoom } from '../lib/scroll-room.ts';
 import { pollEvery, useStreamLive } from '../lib/stream-hook.ts';
+import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 
 const CHECK_TONE = { pass: 'success', warn: 'warning', fail: 'destructive' } as const;
 const CHECK_ICON = { pass: '✓', warn: '!', fail: '✕' } as const;
@@ -382,7 +384,8 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
     refetchInterval: (query) => (query.state.data?.extraction?.inFlight ? pollEvery(live, 2000) : false),
   });
   // The chart of accounts is the finance module's; without it (CROVE_MODULES) the screen does not ask for it.
-  const finance = getConfig().modules.includes('finance');
+  useModulesVersion(); // the apps of the org can change while this screen is open
+  const finance = installedModules().includes('finance');
   const accounts = useQuery({ ...orpc.accounts.list.queryOptions(), enabled: finance });
   // The audit log is for owners and admins (kernel.audit.list), so only they get the link to a decision's rows (#1445).
   const org = useQuery(orpc.org.get.queryOptions());
@@ -409,6 +412,9 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
   // A request to open the way to spend on an ad platform (ADR-0043 point 1, #2294): it posts nothing, so it has no invoice, no
   // checks and no entry. It is approved as shown, like a voucher, and its card says what changes.
   const ads = detail.data ? isAdsProposalKind(detail.data.kind) : false;
+  // A campaign plan is the one ads request that spends: its button, toast and subtitle say what approving does (#3639). The card reads the same query.
+  const adsView = useQuery({ ...orpc.ads.proposal.queryOptions({ input: { id } }), enabled: ads });
+  const adsLaunch = adsView.data?.change?.change === 'campaign_launch' ? adsView.data.change : null;
   // A request to issue a sales e-invoice (#2502) posts nothing either; its card shows the invoice the approval would send.
   const issue = detail.data ? isEInvoiceIssueKind(detail.data.kind) : false;
   // The invoice the approval would send. Approving waits for it: with no view of the invoice (still loading, or the read failed) nothing can be approved.
@@ -448,6 +454,8 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
   const accountName = (code: string) => accounts.data?.find((a) => a.code === code)?.name ?? '';
 
   const wide = useMediaQuery(SM_UP);
+  // The approve button, whichever of its labels the proposal shows: the step-up dialog gives the focus back to it.
+  const approveRef = useRef<HTMLButtonElement>(null);
   // The decision is said on the Inbox the reviewer goes back to (#1384), in the verb of its button. The toast shows at
   // once and its time starts when the Inbox is the page (holdUntil), so a slow screen change does not use it up
   // (#1547), and a navigation another one supersedes cannot lose it. The queries refetch in the background: waiting for
@@ -469,8 +477,18 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
   };
   const partyName = () => (sale ? payload?.buyer.name : payload?.seller.name) || detail.data?.title || '';
   // An ads request posts nothing, and its title is the server's Vietnamese: its toasts name no one and no entry.
-  const approve = useMutation(orpc.inbox.approve.mutationOptions({ onSuccess: () => done(ads ? t('approvedAdsToast') : issue ? t('approvedIssueToast') : t('approvedToast', { name: partyName() })) }));
+  const approve = useMutation(orpc.inbox.approve.mutationOptions({ onSuccess: () => done(adsLaunch ? t('approvedCampaignToast', { name: visibleBidi(adsLaunch.plan.name), amount: f.money(adsLaunch.amount, adsLaunch.currency), from: f.date(adsLaunch.plan.startOn) }) : ads ? t('approvedAdsToast') : issue ? t('approvedIssueToast') : t('approvedToast', { name: partyName() })) }));
   const stepUp = isStepUpRequired(approve.error);
+  // The dialog closes as soon as the approval is sent again, while the approve button is disabled and cannot take focus: once the request is over, and the page is
+  // still here (an ordinary refusal), focus goes back to the button.
+  const askedStepUp = useRef(false);
+  useEffect(() => {
+    if (stepUp) askedStepUp.current = true;
+    else if (!approve.isPending && askedStepUp.current) {
+      askedStepUp.current = false;
+      approveRef.current?.focus();
+    }
+  }, [stepUp, approve.isPending]);
   const reject = useMutation(orpc.inbox.reject.mutationOptions({ onSuccess: () => done(ads || issue ? t(ads ? 'rejectedAdsToast' : 'rejectedIssueToast') : t('rejectedToast', { name: partyName() })) }));
   // Saving an edit creates a new revision authored by this user; the page then reloads the server's decision.
   const edit = useMutation(
@@ -527,7 +545,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
     pending &&
     item.canApprove &&
     !busy &&
-    (plain ? !issue || !!issueView.data : !dirty && !!payload && !blocked && unclassified === 0 && (failed === 0 || acceptFailed) && (!unverified || acceptUnverified) && latePostingValid);
+    (plain ? (!issue || !!issueView.data) && (!ads || !adsView.isPending) : !dirty && !!payload && !blocked && unclassified === 0 && (failed === 0 || acceptFailed) && (!unverified || acceptUnverified) && latePostingValid);
   const submitApproval = () => {
     if (!item) return;
     if (plain) {
@@ -600,6 +618,42 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
   const retryApproval = () => {
     if (approve.variables) approve.mutate(approve.variables);
   };
+
+  // Who proposed it (DESIGN.md §5.1, #3599): the Finance coworker, and what chose the accounts when it was one thing for every line. An AI agent's own proposal says so in its chip.
+  // An account the reviewer changed here is theirs, whatever rule chose the first one; putting the original back gives the rule's source again.
+  const source = proposalSource(
+    (payload?.lines ?? []).map((l) => {
+      const chosen = lineAccounts[l.lineNo];
+      return chosen !== undefined && chosen !== l.debitAccount ? { debitAccount: chosen, accountRule: { source: 'user' } } : l;
+    }),
+    UNCLASSIFIED_ACCOUNT_CODE,
+  );
+  const proposedBy = !payload || item.requestedByAgent ? null : source ? t('proposedByWith', { source: t(`proposedBySource.${source}`) }) : t('proposedBy');
+
+  // The account select of a line (#3599): the whole width of the card, under the line's text.
+  const accountSelect = (l: (typeof lines)[number]) => (
+    <NativeSelect
+      size="sm"
+      disabled={!item.canEdit || busy}
+      aria-label={sale ? t('revenueAccountFor', { line: String(l.lineNo) }) : t('debitAccountFor', { line: String(l.lineNo) })}
+      className="w-full"
+      value={l.debitAccount === UNCLASSIFIED_ACCOUNT_CODE ? '' : l.debitAccount}
+      onChange={(e) => setLineAccounts((prev) => ({ ...prev, [l.lineNo]: e.target.value }))}
+    >
+      {/* No account is preselected for a line no rule matched (#2091): the reviewer must choose one. */}
+      {l.debitAccount === UNCLASSIFIED_ACCOUNT_CODE && (
+        <NativeSelectOption value="" disabled>
+          {t('pickAccount')}
+        </NativeSelectOption>
+      )}
+      {/* Accounts in use that fit the direction (#430), plus the line's own even if it was deactivated since (#319). */}
+      {pickableAccounts(accounts.data ?? [], l.debitAccount === UNCLASSIFIED_ACCOUNT_CODE ? null : l.debitAccount, sale ? 'sale' : 'purchase').map((a) => (
+        <NativeSelectOption key={a.code} value={a.code}>
+          {accountLabel(a)}
+        </NativeSelectOption>
+      ))}
+    </NativeSelect>
+  );
 
   // The proposal's actions (#1409): in the header from sm up; on a phone, in a bar fixed to the bottom while it is
   // pending, so the reviewer acts where the entry was read. One placement is rendered, so each button is on the page once.
@@ -674,32 +728,32 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
           </Button>
         )}
         {item.canApprove && reversal && (
-          <Button loading={approve.isPending} size="lg" disabled={!approveReady} onClick={submitApproval}>
+          <Button ref={approveRef} loading={approve.isPending} size="lg" disabled={!approveReady} onClick={submitApproval}>
             {t('approveReversal')}
           </Button>
         )}
         {item.canApprove && voucher && (
-          <Button loading={approve.isPending} size="lg" disabled={!approveReady} onClick={submitApproval}>
+          <Button ref={approveRef} loading={approve.isPending} size="lg" disabled={!approveReady} onClick={submitApproval}>
             {t('approveVoucher')}
           </Button>
         )}
         {item.canApprove && journalVoucher && (
-          <Button loading={approve.isPending} size="lg" disabled={!approveReady} onClick={submitApproval}>
+          <Button ref={approveRef} loading={approve.isPending} size="lg" disabled={!approveReady} onClick={submitApproval}>
             {t('approveJournalVoucher')}
           </Button>
         )}
         {item.canApprove && ads && (
-          <Button loading={approve.isPending} size="lg" disabled={!approveReady} onClick={submitApproval}>
-            {t('approveAds')}
+          <Button ref={approveRef} loading={approve.isPending} size="lg" disabled={!approveReady} onClick={submitApproval}>
+            {adsLaunch ? t('approveCampaignLaunch', { amount: f.money(adsLaunch.amount, adsLaunch.currency) }) : t('approveAds')}
           </Button>
         )}
         {item.canApprove && issue && (
-          <Button loading={approve.isPending} size="lg" disabled={!approveReady} onClick={submitApproval}>
+          <Button ref={approveRef} loading={approve.isPending} size="lg" disabled={!approveReady} onClick={submitApproval}>
             {t('approveIssue')}
           </Button>
         )}
         {item.canApprove && !plain && (
-          <Button loading={approve.isPending} size="lg" disabled={!approveReady} onClick={submitApproval}>
+          <Button ref={approveRef} loading={approve.isPending} size="lg" disabled={!approveReady} onClick={submitApproval}>
             {t('approve')}
           </Button>
         )}
@@ -751,9 +805,14 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
           title={(sale ? payload?.buyer.name || null : payload?.seller.name) ?? item.title}
           subtitle={
             payload
-              ? payload.invoice.series
-                ? t('invoiceWithSeries', { series: payload.invoice.series, number: payload.invoice.number, date: f.date(payload.invoice.issueDate) })
-                : t('invoice', { number: payload.invoice.number, date: f.date(payload.invoice.issueDate) })
+              ? [
+                  payload.invoice.series
+                    ? t('invoiceWithSeries', { series: payload.invoice.series, number: payload.invoice.number, date: f.date(payload.invoice.issueDate) })
+                    : t('invoice', { number: payload.invoice.number, date: f.date(payload.invoice.issueDate) }),
+                  proposedBy,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')
               : reversal
                 ? t('reversalSubtitle')
                 : voucher
@@ -765,7 +824,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
                       ? t('journalVoucherSubtitlePosted', { code: journalVoucherCode, date: f.date(journalVoucher.date) })
                       : t('journalVoucherSubtitle', { date: f.date(journalVoucher.date) })
                     : ads
-                      ? t('adsSubtitle')
+                      ? t(adsLaunch ? 'adsLaunchSubtitle' : 'adsSubtitle')
                       : issue
                         ? t('issueSubtitle')
                         : undefined
@@ -773,15 +832,13 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
           actions={wide || !pending ? headerActions : undefined}
         />
       </div>
-      {stepUp && (
-        <div className="mb-4">
-          <StepUpPrompt
-            action={reversal ? t('stepUpApproveReversal') : voucher ? t('stepUpApproveVoucher') : journalVoucher ? t('stepUpApproveJournalVoucher') : ads ? t('stepUpApproveAds') : issue ? t('stepUpApproveIssue') : t('stepUpApprove')}
-            onVerified={retryApproval}
-            onCancel={() => approve.reset()}
-          />
-        </div>
-      )}
+      <StepUpDialog
+        open={stepUp}
+        action={reversal ? t('stepUpApproveReversal') : voucher ? t('stepUpApproveVoucher') : journalVoucher ? t('stepUpApproveJournalVoucher') : ads ? t('stepUpApproveAds') : issue ? t('stepUpApproveIssue') : t('stepUpApprove')}
+        onVerified={retryApproval}
+        onCancel={() => approve.reset()}
+        returnFocus={() => approveRef.current}
+      />
       {((approve.error && !stepUp) || reject.error || edit.error || reextract.error || resubmit.error) && (
         <div className="mb-4">
           <ErrorText>
@@ -1087,54 +1144,43 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
               <p id="invoice-lines-title" className="text-sm font-medium text-muted-foreground">
                 {t('lines')}
               </p>
-              <table className="mt-3 w-full min-w-[560px] text-sm">
+              {/* The account of a line sits under its text, the whole width of the card (#3599): the card is never wider than about 30 rem (the shell caps the page at 72 rem and the list takes
+                  part of it from 84 rem), so a column of its own clipped the account's name, "6422 · Chi ph", and the reviewer could not read or change it. */}
+              <table className="mt-3 w-full text-sm">
                 <thead className="text-left text-xs text-subtle-foreground">
                   <tr>
                     <th className="py-1.5 pr-2 font-medium">{t('description')}</th>
-                    <th className="py-1.5 pr-2 text-right font-medium">{t('amount')}</th>
-                    <th className="py-1.5 font-medium">{sale ? t('revenueAccount') : t('debitAccount')}</th>
+                    <th className="py-1.5 text-right font-medium">{t('amount')}</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y">
+                <tbody>
                   {lines.map((l) => (
-                    <tr key={l.lineNo}>
-                      <td className="py-2 pr-2 text-foreground">
-                        {l.description}
-                        {/* What chose the account (#1399): a learned rule, the vendor's default, the built-in keywords or a user. */}
-                        <p className="text-xs text-subtle-foreground">
-                          {l.accountRule && (
-                            <Badge variant={l.debitAccount === UNCLASSIFIED_ACCOUNT_CODE ? 'warning' : 'secondary'} className="mr-1.5">
-                              {t(`accountRuleSource.${l.debitAccount === UNCLASSIFIED_ACCOUNT_CODE ? 'unclassified' : l.accountRule.source === 'unclassified' ? 'user' : l.accountRule.source}`)}
-                            </Badge>
-                          )}
-                          {l.accountRule?.source === 'user' || l.accountRule?.source === 'unclassified' ? null : l.reason}
-                        </p>
-                      </td>
-                      <td className="py-2 pr-2 text-right text-foreground tabular-nums">{money(l.amount)}</td>
-                      <td className="py-2">
-                        <NativeSelect
-                          size="sm"
-                          disabled={!item.canEdit || busy}
-                          aria-label={sale ? t('revenueAccountFor', { line: String(l.lineNo) }) : t('debitAccountFor', { line: String(l.lineNo) })}
-                          className="w-48"
-                          value={l.debitAccount === UNCLASSIFIED_ACCOUNT_CODE ? '' : l.debitAccount}
-                          onChange={(e) => setLineAccounts((prev) => ({ ...prev, [l.lineNo]: e.target.value }))}
-                        >
-                          {/* No account is preselected for a line no rule matched (#2091): the reviewer must choose one. */}
-                          {l.debitAccount === UNCLASSIFIED_ACCOUNT_CODE && (
-                            <NativeSelectOption value="" disabled>
-                              {t('pickAccount')}
-                            </NativeSelectOption>
-                          )}
-                          {/* Accounts in use that fit the direction (#430), plus the line's own even if it was deactivated since (#319). */}
-                          {pickableAccounts(accounts.data ?? [], l.debitAccount === UNCLASSIFIED_ACCOUNT_CODE ? null : l.debitAccount, sale ? 'sale' : 'purchase').map((a) => (
-                            <NativeSelectOption key={a.code} value={a.code}>
-                              {accountLabel(a)}
-                            </NativeSelectOption>
-                          ))}
-                        </NativeSelect>
-                      </td>
-                    </tr>
+                    <Fragment key={l.lineNo}>
+                      <tr className="border-t first:border-t-0">
+                        <td className="pt-2 pr-2 pb-1 text-foreground">
+                          {l.description}
+                          {/* What chose the account (#1399): a learned rule, the vendor's default, the built-in keywords or a user. */}
+                          <p className="text-xs text-subtle-foreground">
+                            {l.accountRule && (
+                              <Badge variant={l.debitAccount === UNCLASSIFIED_ACCOUNT_CODE ? 'warning' : 'secondary'} className="mr-1.5">
+                                {t(`accountRuleSource.${l.debitAccount === UNCLASSIFIED_ACCOUNT_CODE ? 'unclassified' : l.accountRule.source === 'unclassified' ? 'user' : l.accountRule.source}`)}
+                              </Badge>
+                            )}
+                            {l.accountRule?.source === 'user' || l.accountRule?.source === 'unclassified' ? null : l.reason}
+                          </p>
+                        </td>
+                        <td className="pt-2 pb-1 text-right text-foreground tabular-nums">{money(l.amount)}</td>
+                      </tr>
+                      <tr>
+                        <td colSpan={2} className="pb-2">
+                          {/* The column's name, now that the account is not a column of its own. */}
+                          <p className="mb-1 text-xs text-subtle-foreground" aria-hidden="true">
+                            {sale ? t('revenueAccount') : t('debitAccount')}
+                          </p>
+                          {accountSelect(l)}
+                        </td>
+                      </tr>
+                    </Fragment>
                   ))}
                 </tbody>
               </table>
@@ -1212,7 +1258,7 @@ function ProposalTimeline({ id, documentId }: { id: string; documentId: string |
   const t = useTranslations('inboxDetail');
   const f = useFormat();
   const timeline = useQuery(orpc.inbox.timeline.queryOptions({ input: { id } }));
-  const exports = useQuery({ ...orpc.documents.exports.queryOptions({ input: { documentId: documentId ?? '' } }), enabled: documentId !== null && getConfig().modules.includes('finance') });
+  const exports = useQuery({ ...orpc.documents.exports.queryOptions({ input: { documentId: documentId ?? '' } }), enabled: documentId !== null && installedModules().includes('finance') });
   const range = (from: string | null, to: string | null) =>
     from && to ? t('exportRange', { from: f.date(from), to: f.date(to) }) : from ? t('exportFrom', { from: f.date(from) }) : to ? t('exportTo', { to: f.date(to) }) : t('exportAll');
   const items = [

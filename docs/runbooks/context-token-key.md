@@ -14,6 +14,7 @@ This is a different key from the context key that seals `crove.ctx` ([context-ke
 
 - **A person (the owner, or whoever holds the secret store):** approves the production run, and keeps the value in the secret store. The key is generated on the server so that it never passes through a chat, a ticket or an agent's context.
 - **The operator who runs the steps** (after that approval): runs the commands below, in order, and stops at the first check that fails.
+- **On the pilot host nobody runs them by hand** (#3282, owner decision 2026-11-15): `tools/deploy/deploy.sh deploy` does steps 1.1 and 1.2 on the host. If the env file has no non-empty `CROVE_CONTEXT_TOKEN_KEY` it generates one into it, with the same recipe as step 1.1 (never printed, never an argument, the file's owner and mode kept) and logs `context token key generated`; then its `migrate` installs the key and logs `context token key installed`, and the app's boot check confirms it. A deploy that finds a key logs `context token key present` and never replaces it. The owner approves one deploy run, and the person step stays: copy the value from the env file on the host into the secret store after that run. Rotation (section 2) stays manual. Details: [deploy.md](deploy.md#production-steps-in-the-deploy-the-context-token-key-and-the-plain-idempotency-rows). The sections below are the same steps for a stack that is not deployed with `deploy.sh`, and the checks to read afterwards on any stack.
 
 ## Before you start
 
@@ -36,7 +37,7 @@ This is a different key from the context key that seals `crove.ctx` ([context-ke
 
 ## 1. Install the key
 
-1. Generate the key on the server and write it into `.env`, without printing it or passing it as a command argument (other users of the server can list arguments with `ps`). This keeps the file's owner and mode:
+1. Generate the key on the server and write it into `.env`, without printing it or passing it as a command argument (other users of the server can list arguments with `ps`). This keeps the file's owner and mode. (`deploy.sh deploy` does this itself when the line is empty or missing, see "Who does what".)
 
    ```bash
    ( umask 077; V="$(openssl rand -base64 32)" awk -v k=CROVE_CONTEXT_TOKEN_KEY -F= '$1 == k { print k "=" ENVIRON["V"]; next } { print }' .env > .env.new && cat .env.new > .env && rm .env.new )
@@ -70,7 +71,7 @@ This is a different key from the context key that seals `crove.ctx` ([context-ke
 
    Then sign in once and open a page with data (any org): the request now enters its context through a token. A boot that stops with `CROVE_CONTEXT_TOKEN_KEY is not the key the database holds` means `migrate` did not install this value (check its logs); a log line with `CONTEXT_TOKEN_EXPIRED` means the app's clock is more than 30 seconds ahead of the database's, or 60 seconds or more behind it (fix the servers' time sync).
 
-   Rollback: empty the line in `.env` (`CROVE_CONTEXT_TOKEN_KEY=`) and run `docker compose up -d` again. The app goes back to `enter_context`, as before step 1; this works until the release that revokes it (#1822 step 2), and that release is not deployed before this runbook has run in production. The installed key stays in the table and does nothing; to remove it as well:
+   Rollback: empty the line in `.env` (`CROVE_CONTEXT_TOKEN_KEY=`) and run `docker compose up -d` again. (`deploy.sh rollback` does not touch the key: the pilot's env file keeps it. With a release from before step 2 a key in `.env` is harmless: a release of step 1 mints its tokens with it, and an older one ignores it. An emptied line would be filled with a new key by the next `deploy.sh deploy`, so on the pilot leave the key where it is.) The app goes back to `enter_context`, as before step 1; this works until the release that revokes it (#1822 step 2), and that release is not deployed before this runbook has run in production. The installed key stays in the table and does nothing; to remove it as well:
 
    ```bash
    docker compose exec -T db psql -U postgres -c "DELETE FROM crove_kernel.context_token_key"

@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { Hono } from 'hono';
 import type pg from 'pg';
 import { describe, expect, it } from 'vitest';
-import { DomainError, type BlobStore, type Runtime } from '@crove/kernel-runtime';
+import { DomainError, EXTENSION_SCOPES, type BlobStore, type Runtime } from '@crove/kernel-runtime';
 import type { AuthUser } from '../../src/auth.ts';
 import { EXTENSION_ROUTES } from '../../src/auth-extension.ts';
 import { loadConfig } from '../../src/config.ts';
@@ -52,6 +52,13 @@ const PUBLIC: Record<string, string> = {
   '/api/review/answer': "the reviewer's answer, through the same review link",
   '/api/quote/view': "a sent quote's page (#2694): a signed, expiring, revocable quote link is the credential; rate limited per client, it answers one quote document and nothing else",
   '/api/quote/logo': "the logo of a sent quote's letterhead (#2814): the quote link's token is the credential, as for /api/quote/view; rate limited per client, it answers that one quote's seller logo and nothing else",
+  '/api/sign/view': 'public eSign link view (#3324): single-use fragment token is the credential in the JSON body; rate limited per IP and token hash, enforces org_app_on and entitlement with opaque 404',
+  '/api/sign/pdf': 'public eSign source PDF stream (#3324): same token in JSON body; enforces OTP gate (403 OTP_REQUIRED), bounded concurrency, and opaque 404',
+  '/api/sign/otp/request': 'public eSign email OTP challenge request (#3324): same token in JSON body; rate limited per IP, token hash, and DB hourly cap',
+  '/api/sign/otp/verify': 'public eSign email OTP verification (#3324): same token in JSON body; locks OTP after 5 failed attempts without leaking secrets',
+  '/api/sign/submit': 'public eSign single-use submission (#3324): same token in JSON body; enforces OTP gate (403 SIGN_OTP_REQUIRED) and atomic token consume preventing concurrent replay (409 SIGN_ALREADY_SUBMITTED)',
+  '/api/sign/decline': 'public eSign single-use decline (#3324): same token in JSON body; enforces OTP gate (403 SIGN_OTP_REQUIRED), atomic token consume preventing concurrent replay (409 SIGN_ALREADY_SUBMITTED), and revokes remaining envelope tokens',
+  '/api/sign/verify': 'public eSign certificate integrity lookup (#3324): takes certificateCode and client-hashed sealed PDF sha256; checks org_app_on + entitlement with opaque 404',
   '/api/report/view': "Social's client report link (#643): a signed, expiring report link is the credential",
   '/cal/:file': 'the posting calendar feed (#862): an unguessable feed token in the file name is the credential',
   '/l/:code': 'short link redirects (#706): public by design, they only redirect to the stored target',
@@ -79,6 +86,11 @@ const PUBLIC: Record<string, string> = {
 // here first, in a PR of its own; the PR that adds the route moves it into PUBLIC. A route here may be public and may
 // not exist yet; the stale-list check below skips it, and nothing else does.
 const PENDING: Record<string, string> = {
+  '/api/sign/direct/view': 'public eSign direct template link view (Slice 2a A1): fragment token resolves 1-signer template metadata with org_app_on + entitlement opaque 404',
+  '/api/sign/direct/pdf': 'public eSign direct link template PDF stream (Slice 2a A1): fragment token + optional OTP gate before streaming template PDF',
+  '/api/sign/direct/otp/request': 'public eSign direct link email OTP request (Slice 2a A1): rate limited per IP and email/token',
+  '/api/sign/direct/otp/verify': 'public eSign direct link email OTP verify (Slice 2a A1): validates 6-digit OTP and returns short-lived verified claim',
+  '/api/sign/direct/start': 'public eSign direct link self-service start (Slice 2a A1): creates signer envelope from 1-signer template under IP/token rate limits + optional OTP, returning single-use submit token without storing plaintext token',
 };
 const isPublic = (path: string) => Object.hasOwn(PUBLIC, path) || Object.hasOwn(PENDING, path);
 
@@ -205,6 +217,8 @@ describe('route enumeration (ADR-0028, gate T1)', () => {
 // enumerates the whole route table with such a user, so a route added tomorrow is refused to a token unless someone puts
 // it on the list, in a PR the security review reads. Nothing that reads a meeting's content is on it.
 const UUID = randomUUID();
+// Every scope a token may hold (the runtime's list): a token with all of them reaches exactly the listed routes, and a token with one scope only those of that scope (B2, #3166, the `agenda` scope).
+const ALL_SCOPES = [...EXTENSION_SCOPES];
 
 function extensionAuthenticate(scopes: readonly string[]): HttpDeps['authenticate'] {
   return async (): Promise<AuthUser> => ({
@@ -236,7 +250,7 @@ describe('route enumeration with an extension token (#2582)', () => {
     EXTENSION_ROUTES.some((r) => r.method === method && r.path.replace(':id', UUID) === path);
 
   it('refuses a token on every route of the table but the listed ones', async () => {
-    const target = app(extensionAuthenticate(['meetings']));
+    const target = app(extensionAuthenticate(ALL_SCOPES));
     const open: string[] = [];
     for (const { method, path } of routesOf(target)) {
       if (isPublic(path)) continue;
@@ -253,12 +267,20 @@ describe('route enumeration with an extension token (#2582)', () => {
   });
 
   it('opens exactly the listed routes to a token that holds their scope, and refuses them to one that does not', async () => {
-    const holder = app(extensionAuthenticate(['meetings']));
+    const holder = app(extensionAuthenticate(ALL_SCOPES));
     const other = app(extensionAuthenticate(['somethingelse']));
     for (const route of EXTENSION_ROUTES) {
       const path = route.path.replace(':id', UUID);
       expect(await edgeRefused(holder, route.method, path), `${route.method} ${route.path} for the scope holder`).toBe(false);
       expect(await edgeRefused(other, route.method, path), `${route.method} ${route.path} for another scope`).toBe(route.scope !== null ? true : false);
+    }
+    // A token with one scope opens the routes of that scope and the scope-free ones, and nothing of another scope: the agenda scope opens no meetings route and the meetings scope no agenda route.
+    for (const scope of ALL_SCOPES) {
+      const single = app(extensionAuthenticate([scope]));
+      for (const route of EXTENSION_ROUTES) {
+        const path = route.path.replace(':id', UUID);
+        expect(await edgeRefused(single, route.method, path), `${route.method} ${route.path} for a token with only ${scope}`).toBe(route.scope !== null && route.scope !== scope);
+      }
     }
     // A listed path with another method, a trailing slash, a different case, an encoded segment or a dot segment is no route.
     for (const route of EXTENSION_ROUTES) {
@@ -277,16 +299,33 @@ describe('route enumeration with an extension token (#2582)', () => {
   });
 
   it('keeps every way to read a meeting, a file or the account closed to a token', async () => {
-    const target = app(extensionAuthenticate(['meetings']));
+    const target = app(extensionAuthenticate(ALL_SCOPES));
     const closed: Array<[string, string]> = [
       ['POST', '/api/rpc/meetings/get'],
       ['POST', '/api/rpc/meetings/list'],
       ['POST', '/api/rpc/meetings/delete'],
       ['POST', '/api/rpc/meetings/readers/add'],
       ['POST', '/api/rpc/meetings/settings/get'],
+      // The member's calendar (B1, #3165): only the `agenda` scope's one read (listed in auth-extension.ts) reaches it; the list, the suggestion, the switch and the link stay closed to every token.
+      ['POST', '/api/rpc/meetings/agenda/list'],
+      ['POST', '/api/rpc/meetings/agenda/suggest'],
+      ['POST', '/api/rpc/meetings/agenda/setReadEvents'],
+      ['POST', '/api/rpc/meetings/agenda/link'],
       ['POST', '/api/rpc/extension/tokens/list'],
       ['POST', '/api/rpc/extension/tokens/revoke'],
       ['POST', '/api/rpc/me/get'],
+      // Notes and personal to-dos (Notes v2 E4, #3555 / #3560): the extension's `notes` scope will be write-only; every read route stays closed to a token.
+      ['POST', '/api/rpc/notes/get'],
+      ['POST', '/api/rpc/notes/list'],
+      ['POST', '/api/rpc/notes/search'],
+      ['POST', '/api/rpc/notes/panel'],
+      ['POST', '/api/rpc/notes/exportMine'],
+      ['POST', '/api/rpc/notes/vyResults'],
+      ['POST', '/api/rpc/notes/privateCounts'],
+      ['POST', '/api/rpc/notes/todos/list'],
+      ['POST', '/api/rpc/notes/todos/get'],
+      ['POST', '/api/rpc/notes/todos/myWork'],
+      ['POST', '/api/rpc/notes/todos/counts'],
       ['GET', `/api/meetings/${UUID}/audio`],
       ['GET', `/api/meetings/${UUID}/video`],
       ['GET', `/api/files/${UUID}`],
@@ -304,7 +343,7 @@ describe('route enumeration with an extension token (#2582)', () => {
   });
 
   it('lists no route that does not exist, and none that reads content', async () => {
-    const target = app(extensionAuthenticate(['meetings']));
+    const target = app(extensionAuthenticate(ALL_SCOPES));
     const paths = new Set(routesOf(target).map((r) => r.path));
     for (const route of EXTENSION_ROUTES) {
       // The RPC procedures live under the one wildcard route; every other entry is a route of its own.

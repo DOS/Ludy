@@ -84,6 +84,8 @@ const ALLOWED: Record<string, Record<string, string>> = {
   // Not classified before the meetings transcript's `text` column (#2578) made the name one; neither fact carries a classified value.
   'modules/finance/src/cash-voucher.ts': { 'learned_bank_rule <- learned.text': "the id of the crove_finance.bank_party_rule row the voucher taught (learnFromVoucher returns the new row's id as `text`), not a keyword or a statement line" },
   'modules/finance/src/categorization.ts': { 'matchText <- text = keywordRuleText(input.keyword)': "the keyword of a categorization rule of the org's chart (crove_finance.categorization_rule, internal)" },
+  // The posting date of a sale or purchase recorded late: `late` is why it was posted late, the word `opening` or `locked`, not the free text of crove_finance.einvoice_draft.late_reason that shares the name (#3535).
+  'modules/finance/src/record.ts': { 'late_reason <- late = lateDate ? await lateReason(ctx, legalEntityId, invoice.issueDate, lateDate) : null': 'why a document was posted on a later date, the word opening or locked (crove_finance.purchase_document.late_reason, a closed set)' },
   'modules/finance/src/bank.ts': { 'bankAccount <- input.bankAccount': 'the chart account code (112x) the statement is for, not a bank account number' },
   'modules/finance/src/bank-account-number.ts': {
     'bankAccount <- input.bankAccount': 'the chart account code (112x) a bank account number is recorded on, not the number',
@@ -100,6 +102,14 @@ const ALLOWED: Record<string, Record<string, string>> = {
   'modules/social/src/digest.ts': { 'skipped <- skipped = 0': 'the count of digest mails that failed' },
   'modules/social/src/report-branding.ts': { 'name <- name = input.name ? input.name : null': "the org's own brand name on its reports (crove_social.report_branding.display_name, internal)" },
   'modules/social/src/report-schedules.ts': { 'recipients <- recipients.length': 'the count of recipients, never their addresses' },
+  // Not classified before crove_hr.candidate.notes (#3425) made the plural name `notes` one; every fact is a count or id of private notes, never text.
+  'packages/kernel/src/personal-data.ts': {
+    'private <- result.privateItems === null ? null : { authors: result.privateItems.length, notes: result.privateItems.reduce((n, p) => n + p.notes, 0), todos: result.privateItems.reduce((n, p) => n + p.todos, 0) }': 'counts of private items per author',
+    'notes <- result.privateItems.reduce((n, p) => n + p.notes, 0)': 'count of private notes matched',
+    "notes <- items(' ')": 'list of matched note id:revision pairs',
+    "event <- event = named.length > 0 ? await ctx.emit(' ', { authors: named.map((a) => ({ userId: a.authorUserId, notes: a.notes, todos: a.todos, meetings: a.meetings })) }) : null": 'the outbox notification event id holding author counts',
+    'notes <- privateRows.flatMap((r) => r.note_ids)': 'ids of deleted private notes',
+  },
 };
 
 // An expression with every auditValue(...) call cut out (blanked, so offsets keep).

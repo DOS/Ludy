@@ -3,7 +3,7 @@
 // before a save, the largest amount a plan can spend (exact), what a Social post pre-fills, which fields still count as drafted by the AI coworker, and the
 // words for every finding of local validation and every refusal of the AI coworker, in both languages.
 import { describe, expect, it } from 'vitest';
-import type { AdsCampaignPlanDraft, AdsPlanIssue } from '@crove/kernel-contract';
+import type { AdsCampaignPlanDraft, AdsLaunchObjectView, AdsLaunchView, AdsPlanIssue } from '@crove/kernel-contract';
 import { translatorFor } from '../src/i18n/runtime.ts';
 import {
   badLocationIndex,
@@ -17,6 +17,8 @@ import {
   isDirty,
   issueText,
   launchObjectLevelText,
+  launchObjectStatusText,
+  launchObjectStatusVariant,
   launchReasonText,
   maxSpendHint,
   maxSpendOf,
@@ -24,6 +26,8 @@ import {
   parseInterests,
   planToForm,
   refusalText,
+  reviewReasonText,
+  statesReadNote,
   startFromPost,
 } from '../src/lib/ads-campaigns.ts';
 
@@ -321,6 +325,84 @@ describe.each(['en', 'vi'] as const)('the words in %s', (locale) => {
     expect(launchReasonText(null, t)).toBe('-');
     for (const lvl of ['campaign', 'ad_set', 'creative', 'ad'] as const) {
       expect(launchObjectLevelText(lvl, t)).not.toMatch(/[{}]/);
+    }
+  });
+});
+
+describe('the status the platform reports for an object a launch made (#3301)', () => {
+  const en = translatorFor('en');
+  const vi = translatorFor('vi');
+  const object = (effectiveStatus: string | null, reviewReason: string | null, level: AdsLaunchObjectView['level'] = 'ad'): AdsLaunchObjectView => ({ slot: 'ad_1', level, externalId: 'ad_1', name: 'x', effectiveStatus, reviewReason });
+  const live = { state: 'live' } as AdsLaunchView;
+  const launching = { state: 'launching' } as AdsLaunchView;
+
+  it('words the statuses Ludy knows with the reason of a review, in both languages', () => {
+    expect(launchObjectStatusText(object('PENDING_REVIEW', 'in_review'), launching, en)).toBe('In review (the platform is reviewing it)');
+    expect(launchObjectStatusText(object('PENDING_REVIEW', 'in_review'), launching, vi)).toBe('Đang chờ duyệt (nền tảng đang xem xét)');
+    expect(launchObjectStatusText(object('DISAPPROVED', 'feedback_personal_attributes'), live, en)).toBe('Rejected (review reason: personal attributes)');
+    expect(launchObjectStatusText(object('WITH_ISSUES', 'issue_1359188'), live, en)).toBe('With issues (platform issue code 1359188)');
+    expect(launchObjectStatusText(object('DISAPPROVED', 'issue_1487079'), live, vi)).toBe('Bị từ chối (mã vấn đề 1487079 của nền tảng)');
+    expect(launchObjectStatusText(object('DELETED', 'deleted_at_platform'), live, en)).toBe('Deleted on the platform (no longer on the platform)');
+    expect(launchObjectStatusText(object('ACTIVE', null), live, en)).toBe('Active');
+    expect(launchObjectStatusText(object('PAUSED', null), live, vi)).toBe('Tạm dừng');
+    for (const s of ['ACTIVE', 'PAUSED', 'ARCHIVED', 'PENDING_REVIEW', 'IN_PROCESS', 'PREAPPROVED', 'DISAPPROVED', 'WITH_ISSUES', 'CAMPAIGN_PAUSED', 'ADSET_PAUSED', 'PENDING_BILLING_INFO', 'DELETED']) {
+      for (const t of [en, vi]) {
+        const text = launchObjectStatusText(object(s, null), live, t);
+        expect(text, s).not.toBe(s);
+        expect(text, s).not.toMatch(/[{}]/);
+      }
+    }
+  });
+
+  it('shows a status or a reason this build does not know as the text it is, never as markup, and falls back to the launch when nothing was read', () => {
+    expect(launchObjectStatusText(object('SOMETHING_NEW', null), live, en)).toBe('SOMETHING_NEW');
+    expect(reviewReasonText('a_new_code', en)).toBe('a_new_code');
+    expect(reviewReasonText('feedback_a_b', en)).toBe('review reason: a b');
+    expect(launchObjectStatusText(object(null, null), live, en)).toBe('Active');
+    expect(launchObjectStatusText(object(null, null, 'creative'), live, en)).toBe('Paused');
+    expect(launchObjectStatusText(object(null, null), launching, en)).toBe('Paused');
+  });
+
+  it('colours a rejected or troubled object red, one in review amber and a delivering one green', () => {
+    expect(launchObjectStatusVariant(object('DISAPPROVED', 'x'), live)).toBe('destructive');
+    expect(launchObjectStatusVariant(object('WITH_ISSUES', null), live)).toBe('destructive');
+    expect(launchObjectStatusVariant(object('PENDING_REVIEW', 'in_review'), launching)).toBe('warning');
+    expect(launchObjectStatusVariant(object('ACTIVE', null), live)).toBe('success');
+    expect(launchObjectStatusVariant(object('ACTIVE', null), launching)).toBe('outline');
+    expect(launchObjectStatusVariant(object('PAUSED', null), live)).toBe('outline');
+    expect(launchObjectStatusVariant(object(null, null), live)).toBe('success');
+    expect(launchObjectStatusVariant(object(null, null, 'creative'), live)).toBe('outline');
+  });
+});
+
+describe('when Ludy last asked the platform (#3419)', () => {
+  const en = translatorFor('en');
+  const vi = translatorFor('vi');
+  const at = (value: string) => `<${value}>`;
+  const launchOf = (over: Partial<AdsLaunchView>) => ({ provider: 'meta_ads', statesReadAt: null, statesReadOk: null, ...over }) as AdsLaunchView;
+
+  it('is no line for a launch never read', () => {
+    expect(statesReadNote(launchOf({}), en, at)).toBeNull();
+    expect(statesReadNote(launchOf({ statesReadAt: null, statesReadOk: true }), en, at)).toBeNull();
+  });
+
+  it('names the platform from the provider and the time, in both languages', () => {
+    const ok = launchOf({ statesReadAt: '2026-11-15T03:04:00.000Z', statesReadOk: true });
+    expect(statesReadNote(ok, en, at)).toEqual({ text: 'Asked Meta at <2026-11-15T03:04:00.000Z>', failed: false });
+    expect(statesReadNote(ok, vi, at)).toEqual({ text: 'Đã hỏi Meta lúc <2026-11-15T03:04:00.000Z>', failed: false });
+  });
+
+  it('says a failed read and that the state shown is the last known one', () => {
+    const failed = launchOf({ statesReadAt: '2026-11-15T03:04:00.000Z', statesReadOk: false });
+    expect(statesReadNote(failed, en, at)).toEqual({ text: 'Could not ask Meta at <2026-11-15T03:04:00.000Z>; showing the last known state', failed: true });
+    expect(statesReadNote(failed, vi, at)?.text).toContain('đang hiện trạng thái đã biết gần nhất');
+  });
+
+  it('says "the ad platform" for the sandbox and for a launch with no provider, never the provider id', () => {
+    for (const provider of ['sandbox_ads', '']) {
+      const note = statesReadNote(launchOf({ provider, statesReadAt: '2026-11-15T03:04:00.000Z', statesReadOk: true }), en, at);
+      expect(note?.text).toBe('Asked the ad platform at <2026-11-15T03:04:00.000Z>');
+      expect(statesReadNote(launchOf({ provider, statesReadAt: '2026-11-15T03:04:00.000Z', statesReadOk: true }), vi, at)?.text).toContain('nền tảng quảng cáo');
     }
   });
 });

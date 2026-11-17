@@ -56,6 +56,7 @@ Pass: all steps hold in both browsers, and the 60-minute recording has both voic
 
 ## Known limits
 
-- Real-world capture length, tab-capture behaviour on Meet, Teams and Zoom in the browser, and Edge behaviour are untested by CI.
+- Real-world capture length, tab-capture behaviour on Meet, Teams and Zoom in the browser, and Edge behaviour are untested by CI. There is no Edge job in CI on purpose (the e2e tests load the package in Playwright's Chromium, and an Edge channel is not a drop-in): Edge is covered by the manual test above, with the Edge additions in [the store runbook](../../docs/runbooks/extension-store.md#microsoft-edge-add-ons-d2-3181).
+- **The Edge Add-ons build has its own extension id**, which a Ludy server must list (`DEFAULT_EXTENSION_IDS`, or `EXTENSION_IDS`), or its sign-in is refused; the id exists only once the owner creates the Edge item (runbook step E5). The same release zip is uploaded to both stores.
 - With object storage (`STORAGE=s3`) the upload goes to the storage address the Ludy server grants. The bucket's CORS must allow the extension's origin (`chrome-extension://<id>`), or the upload fails and the recording stays on the device for a retry.
 - The devices are opened before the meeting is created, so a refused device leaves no meeting; if the recorder fails to start after the meeting exists, that meeting stays empty, because the extension token cannot delete a meeting.

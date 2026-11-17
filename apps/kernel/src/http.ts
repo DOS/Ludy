@@ -12,6 +12,7 @@ import {
   brandSlug,
   ACCEPTED_ARCHIVE_TYPES,
   ACCEPTED_UPLOAD_TYPES,
+  AGREEMENT_TYPES,
   DIRECT_UPLOAD_MAX_BYTES,
   HR_BANK_FILE_COLUMNS,
   HR_DECLARATION_KINDS,
@@ -22,6 +23,7 @@ import {
   MAX_SOCIAL_VIDEO_MS,
   MAX_UPLOAD_BYTES,
   ORG_HEADER,
+  SIGN_PAGE_PATH,
   SOCIAL_IMAGE_TYPES,
   DEFAULT_EXTENSION_IDS,
   LIVE_CHUNK_MAX_BYTES,
@@ -111,6 +113,7 @@ import {
 import { readLogoImage, renderQuotePdf, type QuoteDocumentData } from '@crove/mod-crm';
 import { buildBankFileWorkbook, buildDeclarationWorkbook } from '@crove/mod-hr';
 import { readYearArchiveManifest, verifyYearArchive } from './year-archive.ts';
+import { hostedLoginTokenOrigin, hostedLoginView } from './auth-hosted-login.ts';
 import { clientBucket, createDbEmailLimiter, emailSendRequest, type EmailLimiter } from './auth-email-limit.ts';
 import {
   createDbInviteChecks,
@@ -135,6 +138,7 @@ import { exchangeExtensionCode, extensionIdOfOrigin, newExtensionCode, refuseOut
 import { ConcurrencyLimiter, type Semaphore } from './concurrency.ts';
 import { onepiece, sealMedia, sizeText, streamPieces } from './media-seal.ts';
 import { assembleLivePieces } from './meetings-live-assemble.ts';
+import { extractAudioFromVideo, mediaAudioExtractorFor, type MediaAudioExtractor } from './meetings-extract.ts';
 import { decryptedWindows, mediaMeasurerFor, unavailable as mediaProbeUnavailable, type MediaMeasurer } from './meetings-measure.ts';
 import { MEDIA_TICKET_KEY_LABEL, MEDIA_TICKET_MAX_TTL_SECONDS, MEDIA_TICKET_PURPOSE, peekMediaTicketKeyId, signMediaTicket, verifyMediaTicket, wellFormedMediaTicket } from './media-ticket.ts';
 import { BODY_STALL_TIMEOUT_MS } from './upload-timeouts.ts';
@@ -159,11 +163,35 @@ import { createCredentialBroker } from './credentials.ts';
 import { pgBossSchemaVersion } from './jobs-schema.ts';
 import type { MailProvider } from './mail.ts';
 import { RateLimiter } from './rate-limit.ts';
+import { DraftBudget } from './ai-draft-limit.ts';
 import { mountMcp, mountOauthProvider } from './mcp-endpoint.ts';
 import type { OauthServer } from './oauth-server.ts';
 import { reviewAnswer, reviewFile, reviewMedia, reviewView, REVIEW_ANSWERS_PER_MINUTE, REVIEW_FILES_PER_MINUTE, REVIEW_VIEWS_PER_MINUTE } from './review-link.ts';
 import { quoteLogo, quoteView, readLogoFile, QUOTE_LOGO_READS_MAX, QUOTE_VIEWS_PER_MINUTE } from './quote-link.ts';
 import { reportView, REPORT_VIEWS_PER_MINUTE } from './report-link.ts';
+import {
+  SIGN_OTP_REQUESTS_PER_MINUTE,
+  SIGN_OTP_VERIFIES_PER_MINUTE,
+  SIGN_PDF_READS_MAX,
+  SIGN_PDFS_PER_MINUTE,
+  SIGN_SUBMITS_PER_MINUTE,
+  SIGN_TOKEN_OTP_REQUESTS_PER_MINUTE,
+  SIGN_TOKEN_OTP_VERIFIES_PER_MINUTE,
+  SIGN_TOKEN_PDFS_PER_MINUTE,
+  SIGN_TOKEN_SUBMITS_PER_MINUTE,
+  SIGN_TOKEN_VIEWS_PER_MINUTE,
+  SIGN_VERIFY_PER_MINUTE,
+  SIGN_VIEWS_PER_MINUTE,
+  readPublicPdfBytes,
+  resolvePublicPdf,
+  runSignDecline,
+  runSignOtpRequest,
+  runSignOtpVerify,
+  runSignSubmit,
+  runSignVerify,
+  runSignView,
+  type SignBilling,
+} from './sign-link.ts';
 import { bookingFeed, renderBookingFeedIcs } from './booking-feed.ts';
 import { CALENDAR_FEED_HITS_PER_MINUTE, calendarFeed, renderIcs } from './calendar-feed.ts';
 import { BIO_HITS_PER_MINUTE, BIO_PAGE_CSP, bioGo, bioImage, bioView, renderBioPage } from './bio-page.ts';
@@ -185,6 +213,7 @@ import { shortLinkTarget, SHORT_LINK_HITS_PER_MINUTE } from './short-link.ts';
 import { ORG_SLUG, attachmentDisposition } from './attachment.ts';
 import type { AiMeter } from '@crove/agent';
 import type { ModelPort } from './member-vy-ports.ts';
+import type { SignAi } from './sign-ai.ts';
 import { createRpcHandler, resolveMembership, resolveOrg, type BookingReader, type RpcChannels, type SocialDrafter } from './rpc.ts';
 import type { ConversationReader } from './conversations-ai.ts';
 import type { TaxCodeLookup } from './tax-lookup.ts';
@@ -201,6 +230,7 @@ import {
   StreamConnection,
   newTicket,
   streamScopeOf,
+  STREAM_FILTERED_APPS,
   ticketActor,
   ticketHash,
   wellFormedTicket,
@@ -230,6 +260,8 @@ export interface HttpDeps {
   broker?: CredentialBroker;
   // Measures the length of meeting media in crove-media (#2985). Unset: made from config.MEDIA_URL (none when that is unset too).
   mediaMeasurer?: MediaMeasurer;
+  // Takes the audio out of a video uploaded as a meeting's audio (#3337); none without MEDIA_URL.
+  mediaExtractor?: MediaAudioExtractor;
   authenticate: Authenticate;
   pool: pg.Pool;
   aiEnabled: boolean;
@@ -295,6 +327,23 @@ export interface HttpDeps {
   quoteLogoLimit?: RateLimiter;
   // How many logo reads (a stored file read whole into memory) run at once in this process, across every client (#2814). Unset: QUOTE_LOGO_READS_MAX.
   quoteLogoReads?: ConcurrencyLimiter;
+  // Plan entitlements lookup used to fail closed on disabled or un-entitled modules on public edge routes (#3324).
+  billing?: SignBilling;
+  // Per-client, per-token-hash, and bounded PDF read concurrency limiters for public eSign routes (#3324).
+  signLimits?: Partial<{
+    views: RateLimiter;
+    tokenViews: RateLimiter;
+    pdfs: RateLimiter;
+    tokenPdfs: RateLimiter;
+    pdfReads: ConcurrencyLimiter;
+    otpRequest: RateLimiter;
+    tokenOtpRequest: RateLimiter;
+    otpVerify: RateLimiter;
+    tokenOtpVerify: RateLimiter;
+    submit: RateLimiter;
+    tokenSubmit: RateLimiter;
+    verify: RateLimiter;
+  }>;
   // The posting calendar feed's budget per client (#862). Unset: CALENDAR_FEED_HITS_PER_MINUTE.
   calendarFeedLimit?: RateLimiter;
   // The per-client budget of link-in-bio pages, their links and images (#707), replaceable in tests.
@@ -341,6 +390,8 @@ export interface HttpDeps {
   conversationReader?: ConversationReader;
   // The recorder's Vy summarizing a meeting (#2580, M6 part B2); unset: the summary is off.
   summaryModel?: ModelPort | null;
+  // Vy's eSign field placement and risky clause review (#3351); unset: manual signing with AI off.
+  signAi?: SignAi['reader'];
   // The deployment's AI prices (AI_PRICE_*), for the cost a translation shows before the click (#3184); unset: no figure.
   aiPrice?: { inputPerMTok: string; outputPerMTok: string };
   // The public tax registry lookup for onboarding (issue #324); unset: off (TAX_CODE_LOOKUP_URL).
@@ -519,7 +570,8 @@ export const EXPORT_BUSY_RETRY_SECONDS = 5;
 export const TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
 // apiOrigin is the API's origin when the app is served apart from it (a split deployment), so its media (a meeting's video by
 // ticket) may be played; null when the kernel serves the app itself and 'self' is the API.
-export function contentSecurityPolicy(authUrl: string, storageOrigin: string | null, turnstile = false, apiOrigin: string | null = null): string {
+// connectOrigin: one more origin the app calls (the hosted login's token endpoint, #2704), or null.
+export function contentSecurityPolicy(authUrl: string, storageOrigin: string | null, turnstile = false, apiOrigin: string | null = null, connectOrigin: string | null = null): string {
   // Hosted Supabase Auth lives on another origin; the bundled one is proxied under /auth/v1. With presigned
   // transfers the app also posts uploads to, and fetches downloads from, the bucket's origin.
   const authOrigin = new URL(authUrl, 'http://localhost').origin;
@@ -540,7 +592,7 @@ export function contentSecurityPolicy(authUrl: string, storageOrigin: string | n
     // A meeting's audio plays from a blob URL the app makes, and its video from the stream route by ticket (#2703): media-src
     // would otherwise fall back to default-src, which refuses blob: and, apart from the API, the API's origin.
     `media-src 'self' blob:${apiOrigin ? ` ${apiOrigin}` : ''}`,
-    `connect-src 'self' ${authOrigin}${storageOrigin ? ` ${storageOrigin}` : ''}`,
+    `connect-src 'self' ${[...new Set([authOrigin, ...(storageOrigin ? [storageOrigin] : []), ...(connectOrigin ? [connectOrigin] : [])])].join(' ')}`,
     ...(turnstile ? [`frame-src ${TURNSTILE_ORIGIN}`] : []),
     "object-src 'none'",
     "base-uri 'none'",
@@ -566,7 +618,9 @@ function clientIp(c: Context, trustedHops: number): string | null {
 export function createHttpApp(deps: HttpDeps) {
   const { config, runtime, store, authenticate } = deps;
   const app = new Hono<{ Variables: { user: AuthUser } }>();
-  const rpc = createRpcHandler(runtime, deps.mailer ? createInviteMailSender(deps.mailer, appUrl(config), {}, config.INBOUND_DOMAIN && config.INBOUND_SECRET ? config.INBOUND_DOMAIN : null, config.BRAND_NAME) : undefined, deps.channels, deps.socialWriter, deps.taxLookup, undefined, undefined, deps.portalSync, deps.bookingReader, deps.aiMeter, deps.aiEnabled, deps.conversationReader, deps.summaryModel ?? null, deps.aiPrice);
+  // One drafts budget (#386) for the API: a person's own drafts and the MCP draft tool of an AI app take their turns from the same counters and the same one-at-a-time rule.
+  const drafts = new DraftBudget();
+  const rpc = createRpcHandler(runtime, deps.mailer ? createInviteMailSender(deps.mailer, appUrl(config), {}, config.INBOUND_DOMAIN && config.INBOUND_SECRET ? config.INBOUND_DOMAIN : null, config.BRAND_NAME) : undefined, deps.channels, deps.socialWriter, deps.taxLookup, drafts, undefined, deps.portalSync, deps.bookingReader, deps.aiMeter, deps.aiEnabled, deps.conversationReader, deps.summaryModel ?? null, deps.aiPrice, deps.signAi ?? null);
   const perMinute = config.API_RATE_LIMIT_PER_MINUTE;
   const limiter = deps.rateLimiter !== undefined ? deps.rateLimiter : perMinute > 0 ? new RateLimiter({ perMinute }) : null;
 
@@ -665,6 +719,7 @@ export function createHttpApp(deps: HttpDeps) {
       authenticate,
       clientKey: (c) => clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)),
       serverVersion: config.CROVE_BUILD ?? 'dev',
+      draftBudget: drafts,
     });
   }
 
@@ -673,6 +728,10 @@ export function createHttpApp(deps: HttpDeps) {
     c.json({
       authUrl: publicAuthUrl(config),
       authAnonKey: config.PUBLIC_AUTH_ANON_KEY ?? null,
+      // Sign-in buttons besides email and password (AUTH_OAUTH_PROVIDERS, #2704): provider ids of the identity provider.
+      authProviders: config.AUTH_OAUTH_PROVIDERS,
+      // The identity provider's hosted login page and its token endpoint (AUTH_HOSTED_LOGIN_*, #2704); null: none.
+      hostedLogin: hostedLoginView(config),
       aiEnabled: deps.aiEnabled,
       // The MCP endpoint and its authorization server are on (OAUTH_SERVER=on, #2975): Settings then lists the connected AI apps.
       mcpEnabled: deps.oauth !== undefined,
@@ -1272,6 +1331,166 @@ export function createHttpApp(deps: HttpDeps) {
     });
   }
 
+  // Orgless public eSign link endpoints (#3324, docs/plan/esign.md): credentials stay out of query strings,
+  // every answer sets Referrer-Policy: no-referrer and Cache-Control: no-store, disabled/expired/waiting states
+  // return one opaque 404, and rate/concurrency caps apply without any CAPTCHA gate (#203).
+  if (runtime.installed('sign')) {
+    const signBilling: SignBilling = deps.billing ?? { entitlements: async () => ['full'] };
+    const signViewLimit = deps.signLimits?.views ?? new RateLimiter({ perMinute: SIGN_VIEWS_PER_MINUTE });
+    const signTokenViewLimit = deps.signLimits?.tokenViews ?? new RateLimiter({ perMinute: SIGN_TOKEN_VIEWS_PER_MINUTE });
+    const signPdfLimit = deps.signLimits?.pdfs ?? new RateLimiter({ perMinute: SIGN_PDFS_PER_MINUTE });
+    const signTokenPdfLimit = deps.signLimits?.tokenPdfs ?? new RateLimiter({ perMinute: SIGN_TOKEN_PDFS_PER_MINUTE });
+    const signPdfReads = deps.signLimits?.pdfReads ?? new ConcurrencyLimiter({ total: SIGN_PDF_READS_MAX, perKey: SIGN_PDF_READS_MAX });
+    const signOtpReqLimit = deps.signLimits?.otpRequest ?? new RateLimiter({ perMinute: SIGN_OTP_REQUESTS_PER_MINUTE });
+    const signTokenOtpReqLimit = deps.signLimits?.tokenOtpRequest ?? new RateLimiter({ perMinute: SIGN_TOKEN_OTP_REQUESTS_PER_MINUTE });
+    const signOtpVerifyLimit = deps.signLimits?.otpVerify ?? new RateLimiter({ perMinute: SIGN_OTP_VERIFIES_PER_MINUTE });
+    const signTokenOtpVerifyLimit = deps.signLimits?.tokenOtpVerify ?? new RateLimiter({ perMinute: SIGN_TOKEN_OTP_VERIFIES_PER_MINUTE });
+    const signSubmitLimit = deps.signLimits?.submit ?? new RateLimiter({ perMinute: SIGN_SUBMITS_PER_MINUTE });
+    const signTokenSubmitLimit = deps.signLimits?.tokenSubmit ?? new RateLimiter({ perMinute: SIGN_TOKEN_SUBMITS_PER_MINUTE });
+    const signVerifyLimit = deps.signLimits?.verify ?? new RateLimiter({ perMinute: SIGN_VERIFY_PER_MINUTE });
+
+    const setSignSecurityHeaders = (c: Context) => {
+      c.header('referrer-policy', 'no-referrer');
+      c.header('cache-control', 'no-store');
+      c.header('x-content-type-options', 'nosniff');
+    };
+
+    const signBodyLimit = (maxSize: number) =>
+      bodyLimit({
+        maxSize,
+        onError: (c) => {
+          setSignSecurityHeaders(c);
+          return c.text('Payload Too Large', 413);
+        },
+      });
+
+    const signEdgeGuard = (ipLimit: RateLimiter): MiddlewareHandler => async (c, next) => {
+      setSignSecurityHeaders(c);
+      if (c.req.query('token') !== undefined) {
+        return c.json({ code: 'SIGN_QUERY_TOKEN_FORBIDDEN', message: 'Signing tokens must be submitted in the request body' }, 400);
+      }
+      const decision = ipLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+      if (!decision.allowed) {
+        warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+        c.header('retry-after', String(decision.retryAfterSeconds));
+        return c.json({ code: 'RATE_LIMITED', message: 'Bạn gửi quá nhiều yêu cầu, hãy thử lại sau', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+      }
+      await next();
+    };
+
+    const signRateLimited = (c: Context, retryAfterSeconds: number) => {
+      c.header('retry-after', String(retryAfterSeconds));
+      return c.json({ code: 'RATE_LIMITED', message: 'Bạn gửi quá nhiều yêu cầu, hãy thử lại sau', retryAfterSeconds }, 429);
+    };
+
+    const signOpaqueNotFound = (c: Context) => c.json({ code: 'NOT_FOUND', message: 'Not found' }, 404);
+    const signMeta = (c: Context) => ({ ip: clientIp(c, config.TRUSTED_PROXY_HOPS), userAgent: c.req.header('user-agent') ?? null });
+
+    app.post('/api/sign/view', signEdgeGuard(signViewLimit), signBodyLimit(2048), async (c) => {
+      try {
+        const res = await runSignView(runtime, signBilling, await c.req.json().catch(() => null), signMeta(c), (hash) => signTokenViewLimit.take(hash));
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        return c.json(res.view);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/pdf', signEdgeGuard(signPdfLimit), signBodyLimit(2048), async (c) => {
+      try {
+        const lookup = await resolvePublicPdf(runtime, signBilling, await c.req.json().catch(() => null), (hash) => signTokenPdfLimit.take(hash));
+        if (lookup.status === 'not_found') return signOpaqueNotFound(c);
+        if (lookup.status === 'rate_limited') return signRateLimited(c, lookup.retryAfterSeconds);
+        if (lookup.status === 'otp_required') {
+          return c.json({ code: 'OTP_REQUIRED', message: 'Email OTP verification is required before viewing document' }, 403);
+        }
+        const release = signPdfReads.tryAcquire('sign-pdf');
+        if (!release) {
+          c.header('retry-after', '2');
+          return c.json({ code: 'SIGN_PDF_BUSY', message: 'Máy chủ đang bận, hãy thử lại sau vài giây' }, 503);
+        }
+        try {
+          const bytes = await readPublicPdfBytes(store, lookup.source);
+          return new Response(body(bytes), {
+            headers: {
+              'content-type': 'application/pdf',
+              'content-disposition': 'inline; filename="document.pdf"',
+              'cache-control': 'no-store',
+              'referrer-policy': 'no-referrer',
+              'x-content-type-options': 'nosniff',
+              'content-security-policy': "default-src 'none'; sandbox",
+            },
+          });
+        } finally {
+          release();
+        }
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/otp/request', signEdgeGuard(signOtpReqLimit), signBodyLimit(2048), async (c) => {
+      try {
+        const res = await runSignOtpRequest(runtime, signBilling, await c.req.json().catch(() => null), (hash) => signTokenOtpReqLimit.take(hash));
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        return c.json(res.result);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/otp/verify', signEdgeGuard(signOtpVerifyLimit), signBodyLimit(2048), async (c) => {
+      try {
+        const res = await runSignOtpVerify(runtime, signBilling, await c.req.json().catch(() => null), signMeta(c), (hash) => signTokenOtpVerifyLimit.take(hash));
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        if (res.status === 'validation_error') return c.json({ code: 'VALIDATION', message: res.message }, 422);
+        if (res.result.ok) return c.json(res.result, 200);
+        if (res.result.locked) return c.json(res.result, 423);
+        return c.json(res.result, 401);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/submit', signEdgeGuard(signSubmitLimit), signBodyLimit(4 * 1024 * 1024), async (c) => {
+      try {
+        const res = await runSignSubmit(runtime, signBilling, await c.req.json().catch(() => null), signMeta(c), (hash) => signTokenSubmitLimit.take(hash));
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'already_used') return c.json({ code: 'SIGN_ALREADY_SUBMITTED', message: 'This signing link has already been used' }, 409);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        if (res.status === 'validation_error') return c.json({ code: 'VALIDATION', message: res.message }, 422);
+        return c.json(res.result);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/decline', signEdgeGuard(signSubmitLimit), signBodyLimit(8 * 1024), async (c) => {
+      try {
+        const res = await runSignDecline(runtime, signBilling, await c.req.json().catch(() => null), signMeta(c), (hash) => signTokenSubmitLimit.take(hash));
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'already_used') return c.json({ code: 'SIGN_ALREADY_SUBMITTED', message: 'This signing link has already been used' }, 409);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        if (res.status === 'validation_error') return c.json({ code: 'VALIDATION', message: res.message }, 422);
+        return c.json(res.result);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/verify', signEdgeGuard(signVerifyLimit), signBodyLimit(2048), async (c) => {
+      try {
+        const verified = await runSignVerify(runtime, signBilling, await c.req.json().catch(() => null));
+        return verified ? c.json(verified) : signOpaqueNotFound(c);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+  }
+
   // The client review page (#589): no account, the link's token is the only credential. It comes in the body, never the
   // URL, so it stays out of access logs; each client address has a small budget, and an unknown, revoked or expired
   // link answers like a malformed one.
@@ -1490,7 +1709,22 @@ export function createHttpApp(deps: HttpDeps) {
       // The stream's access line names the org the ticket was issued for (#2175).
       setLogContext({ orgId });
       // The check also answers the legal-entity scope the stream's hints are filtered by (#1692).
-      const check = () => runtime.query(STREAM_CHECK_QUERY, {}, { actor, orgId }).then(streamScopeOf);
+      // And the apps the org has off now (ADR-0053): a stream does not push the hints of an app that is off, and re-reads this on every check. A check that cannot
+      // tell leaves the filter out, as the app's own calls into an off app are refused by the runtime anyway.
+      // The apps off at the last check that could read them: a read that fails keeps that filter in force (it never widens a stream), and logs the error's class.
+      let lastAppsOff: ReadonlySet<string> | null = null;
+      const check = async () => {
+        const scope = streamScopeOf(await runtime.query(STREAM_CHECK_QUERY, {}, { actor, orgId }));
+        const on = await runtime.effectiveModules(orgId).catch((error: unknown) => {
+          console.warn(`[stream] the apps of org ${orgId.slice(0, 8)} could not be read: ${error instanceof Error ? error.name : typeof error}`);
+          return null;
+        });
+        if (on === null) return lastAppsOff && lastAppsOff.size > 0 ? { ...scope, appsOff: lastAppsOff } : scope;
+        // An app this deployment does not run is not "off": nothing writes its rows, and a runtime without it (a kernel-only one) is not filtering.
+        const appsOff = new Set(STREAM_FILTERED_APPS.filter((app) => runtime.installed(app) && !on.includes(app)));
+        lastAppsOff = appsOff;
+        return appsOff.size === 0 ? scope : { ...scope, appsOff };
+      };
       let scope: StreamScope;
       try {
         scope = await check();
@@ -1851,6 +2085,8 @@ export function createHttpApp(deps: HttpDeps) {
       // Only features this deployment runs: a scope of a module that is left out is not offered.
       if (input.scopes.includes('meetings') && !runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
       const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      // An org that switched Meetings off, or does not hold it, is not offered its scope either (ADR-0053).
+      if (input.scopes.includes('meetings') && !(await runtime.appOn(orgId, 'meetings', { fresh: true }).catch(() => true))) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
       const code = newExtensionCode();
       const issued = await runtime.execute<{ expiresInSeconds: number }>(
         'kernel.extension.code.issue',
@@ -1864,17 +2100,19 @@ export function createHttpApp(deps: HttpDeps) {
   });
 
   // What the extension shell asks right after sign-in: whose token this is and which features this deployment runs.
-  // Answered from the verified token alone, with no tenant data. A browser session has no use for it.
-  app.get('/api/extension/me', (c) => {
+  // Answered from the verified token and the org's app switch, with no tenant data: Meetings is a feature of the extension only while the org has it on
+  // (ADR-0053). A browser session has no use for it.
+  app.get('/api/extension/me', async (c) => {
     c.header('cache-control', 'no-store');
     const { extension } = c.get('user');
     if (!extension) return problem(c, new DomainError('FORBIDDEN', 403, 'Đường này chỉ dành cho tiện ích Ludy', { rule: 'extension_only' }));
+    const meetingsOn = runtime.installed('meetings') && (await runtime.appOn(extension.orgId, 'meetings', { fresh: true }).catch(() => true));
     return c.json({
       tokenId: extension.tokenId,
       orgId: extension.orgId,
       scopes: extension.scopes,
       expiresAt: extension.expiresAt,
-      features: { meetings: extension.scopes.includes('meetings') && runtime.installed('meetings') },
+      features: { meetings: extension.scopes.includes('meetings') && meetingsOn, agenda: extension.scopes.includes('agenda') && meetingsOn },
     });
   });
 
@@ -1912,6 +2150,15 @@ export function createHttpApp(deps: HttpDeps) {
       if (type !== 'application/zip') throw new DomainError('UNSUPPORTED_TYPE', 415, `${name}: chỉ nhận tệp Excel dạng .xlsx`);
       if (bytes.byteLength > MAX_IMPORT_BYTES) throw new DomainError('TOO_LARGE', 413, `${name} vượt quá 10 MB`);
       type = XLSX_CONTENT_TYPE;
+    } else if (purpose === 'agreement') {
+      // The signed agreement of an invoice correction (#2504): a PDF, or the photo or scan of the signed paper.
+      if (!type || !AGREEMENT_TYPES.includes(type)) throw new DomainError('UNSUPPORTED_TYPE', 415, `${name}: biên bản thỏa thuận chỉ nhận tệp PDF, JPG, PNG hoặc WEBP`);
+      if (bytes.byteLength > MAX_UPLOAD_BYTES) throw new DomainError('TOO_LARGE', 413, `${name} vượt quá 25 MB`);
+    } else if (purpose === 'sign_document') {
+      if (type !== 'application/pdf') {
+        throw new DomainError('UNSUPPORTED_TYPE', 415, `${name}: tài liệu ký điện tử chỉ nhận tệp PDF`);
+      }
+      if (bytes.byteLength > MAX_UPLOAD_BYTES) throw new DomainError('TOO_LARGE', 413, `${name} vượt quá 25 MB`);
     } else if (video) {
       if (bytes.byteLength > MAX_SOCIAL_VIDEO_BYTES) throw new DomainError('TOO_LARGE', 413, `${name} vượt quá 100 MB`);
       const ms = videoDurationMs(bytes);
@@ -1943,7 +2190,7 @@ export function createHttpApp(deps: HttpDeps) {
         sha256,
         storageKey,
         generation,
-        source: purpose === 'social' ? 'social' : purpose === 'import' ? 'import' : 'upload',
+        source: purpose === 'social' ? 'social' : purpose === 'import' ? 'import' : purpose === 'sign_document' ? 'sign_document' : purpose === 'agreement' ? 'agreement' : 'upload',
         ...(durationMs === undefined ? {} : { durationMs }),
         ...(size ? { imageWidth: size.width, imageHeight: size.height } : {}),
         // A document only: the entity it is booked in (#1764), which the command checks the uploader sees.
@@ -1977,11 +2224,29 @@ export function createHttpApp(deps: HttpDeps) {
     if (value === undefined || value === null || value === '' || value === 'document') return 'document';
     if (value === 'social') return 'social';
     if (value === 'import') return 'import';
+    if (value === 'agreement') return 'agreement';
     if (value === 'meeting_audio' || value === 'meeting_video') {
       if (!runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mục đích tải lên không hợp lệ');
       return value;
     }
+    if (value === 'sign_document') {
+      if (!runtime.installed('sign')) throw new DomainError('NOT_FOUND', 404, 'Mục đích tải lên không hợp lệ');
+      return value;
+    }
     throw new DomainError('INVALID', 400, 'Mục đích tải lên không hợp lệ');
+  }
+
+  // The purpose of an upload, for the org it is for: Meetings and eSign upload purposes belong to their apps, so an org that switched that app off, or does not hold it,
+  // gets the answer of a purpose that is not installed (404, as when the deployment leaves the app out; ADR-0053). The grant an upload needs is a kernel command, which the app gate does not cover.
+  async function uploadPurposeFor(value: unknown, orgId: string): Promise<UploadPurpose> {
+    const purpose = uploadPurpose(value);
+    if ((purpose === 'meeting_audio' || purpose === 'meeting_video') && !(await runtime.appOn(orgId, 'meetings', { fresh: true }).catch(() => true))) {
+      throw new DomainError('NOT_FOUND', 404, 'Mục đích tải lên không hợp lệ');
+    }
+    if (purpose === 'sign_document' && !(await runtime.appOn(orgId, 'sign', { fresh: true }).catch(() => true))) {
+      throw new DomainError('NOT_FOUND', 404, 'Mục đích tải lên không hợp lệ');
+    }
+    return purpose;
   }
 
   async function uploader(c: Context<{ Variables: { user: AuthUser } }>) {
@@ -2027,7 +2292,7 @@ export function createHttpApp(deps: HttpDeps) {
       const { user, orgId } = who;
       const body = await c.req.parseBody({ all: true });
       const files = ([] as unknown[]).concat(body.file ?? []).filter((f): f is File => f instanceof File);
-      const purpose = uploadPurpose(body.purpose);
+      const purpose = await uploadPurposeFor(body.purpose, orgId);
       if (purpose === 'meeting_audio' || purpose === 'meeting_video') {
         throw new DomainError('STAGED_UPLOAD_REQUIRED', 400, 'Tệp phương tiện cuộc họp phải tải lên qua cơ chế phân đoạn (POST /api/files/uploads)');
       }
@@ -2065,12 +2330,12 @@ export function createHttpApp(deps: HttpDeps) {
       if (!direct) throw noDirect();
       const { user, orgId } = await uploader(c);
       const input = (await c.req.json().catch(() => null)) as { purpose?: unknown } | null;
-      const grant = await runtime.execute<{ uploadId: string; stagingKey: string; maxBytes: number }>('kernel.file.upload.begin', { purpose: uploadPurpose(input?.purpose) }, {
+      const purpose = await uploadPurposeFor(input?.purpose, orgId);
+      const grant = await runtime.execute<{ uploadId: string; stagingKey: string; maxBytes: number }>('kernel.file.upload.begin', { purpose }, {
         actor: actorOf(user),
         orgId,
       });
       // A meeting's media grant is no larger than crove-media takes (#2989): a recording over it is refused here, before the browser sends it to the bucket.
-      const purpose = uploadPurpose(input?.purpose);
       const grantBytes = purpose === 'meeting_audio' || purpose === 'meeting_video' ? Math.min(grant.maxBytes, meetingMediaCap(purpose === 'meeting_video' ? 'video' : 'audio')) : grant.maxBytes;
       const form = await direct.presignUpload(grant.stagingKey, grantBytes);
       c.header('cache-control', 'private, no-store');
@@ -2091,7 +2356,7 @@ export function createHttpApp(deps: HttpDeps) {
       if (!direct) throw noDirect();
       const { user, orgId } = await uploader(c);
       const input = (await c.req.json().catch(() => null)) as { filename?: unknown; purpose?: unknown; legalEntityId?: unknown } | null;
-      const purpose = uploadPurpose(input?.purpose);
+      const purpose = await uploadPurposeFor(input?.purpose, orgId);
       const legalEntityId = uploadEntity(input?.legalEntityId);
       const filename = typeof input?.filename === 'string' && input.filename.trim() ? input.filename.slice(0, 255) : 'chung-tu';
       const release = completes.tryAcquire(user.userId);
@@ -2199,6 +2464,7 @@ export function createHttpApp(deps: HttpDeps) {
   // Sensitive-audited playback routes for encrypted meeting audio and video (#2576).
   const MEETING_STREAM_WINDOW_BYTES = 4 * 1024 * 1024;
   const mediaMeasurer = deps.mediaMeasurer ?? mediaMeasurerFor(config.MEDIA_URL, config.MEDIA_CALL_TIMEOUT_MS);
+  const mediaExtractor = deps.mediaExtractor ?? mediaAudioExtractorFor(config.MEDIA_URL, config.MEDIA_CALL_TIMEOUT_MS);
   // The most bytes one meeting recording may have: the plan's limit, or the lower cap of this deployment's crove-media (#2989).
   const meetingMediaCap = (kind: 'audio' | 'video') => Math.min(kind === 'video' ? MAX_MEETING_VIDEO_BYTES : MAX_MEETING_AUDIO_BYTES, config.MEDIA_MAX_INPUT_BYTES ?? Number.POSITIVE_INFINITY);
   const PLAYBACK_AUDIT_WINDOW_MS = 10 * 60_000;
@@ -2529,7 +2795,7 @@ export function createHttpApp(deps: HttpDeps) {
     }
     return runtime.query<{ isRecorder: boolean; keepVideo: boolean; liveNotes: boolean }>('meetings.meeting.get', { meetingId }, { actor: actorOf(user), orgId });
   };
-  const mediaGate: MiddlewareHandler<{ Variables: { user: AuthUser; mediaBodyCap: number } }> = async (c, next) => {
+  const mediaGate: MiddlewareHandler<{ Variables: { user: AuthUser; mediaBodyCap: number; videoSlotHeld: boolean } }> = async (c, next) => {
     let release: (() => void) | null = null;
     let releaseVideo: (() => void) | null = null;
     try {
@@ -2544,7 +2810,14 @@ export function createHttpApp(deps: HttpDeps) {
       const hint = c.req.query('kind');
       if (hint !== undefined && hint !== 'audio' && hint !== 'video') throw new DomainError('BAD_REQUEST', 400, 'kind must be audio or video');
       const videoSize = !json && meeting.keepVideo && hint !== 'audio';
-      const cap = json ? META_BODY_MAX_BYTES : meetingMediaCap(videoSize ? 'video' : 'audio') + 1024 * 1024;
+      // `extract=audio` (#3337): the file is a video whose audio alone is kept. It is sized and counted as a video (the video cap, the video transfer slot),
+      // and refused before one byte is read when crove-media is not configured. The JSON shape (a staged upload) is capped by its own grant and takes the slot in the route.
+      const extractFlag = c.req.query('extract');
+      if (extractFlag !== undefined && extractFlag !== 'audio') throw new DomainError('BAD_REQUEST', 400, 'extract must be audio');
+      const extract = extractFlag === 'audio';
+      if (extract && hint === 'video') throw new DomainError('BAD_REQUEST', 400, 'extract=audio is only for kind audio');
+      if (extract && !mediaExtractor.configured) throw mediaProbeUnavailable();
+      const cap = json ? META_BODY_MAX_BYTES : meetingMediaCap(videoSize || extract ? 'video' : 'audio') + 1024 * 1024;
       // The raw body of the file (#2780) is sealed as it streams, so its size is declared up front: a body without a
       // Content-Length, or sent chunked, is refused before it is read (the body limit below would hold a chunked body whole to
       // count it, which is what streaming is for). Browsers send the length of a File they upload.
@@ -2560,10 +2833,12 @@ export function createHttpApp(deps: HttpDeps) {
       c.set('mediaBodyCap', cap);
       release = large.tryAcquire(user.userId);
       if (!release) throw busy(c);
-      if (videoSize) {
+      const takeVideoSlot = videoSize || (extract && !json);
+      if (takeVideoSlot) {
         releaseVideo = videoTransfers.tryAcquire(user.userId);
         if (!releaseVideo) throw busy(c);
       }
+      c.set('videoSlotHeld', takeVideoSlot);
     } catch (error) {
       release?.();
       return problem(c, error);
@@ -2575,7 +2850,7 @@ export function createHttpApp(deps: HttpDeps) {
       releaseVideo?.();
     }
   };
-  const mediaBodyLimit: MiddlewareHandler<{ Variables: { user: AuthUser; mediaBodyCap: number } }> = (c, next) =>
+  const mediaBodyLimit: MiddlewareHandler<{ Variables: { user: AuthUser; mediaBodyCap: number; videoSlotHeld: boolean } }> = (c, next) =>
     bodyLimit({ maxSize: c.get('mediaBodyCap') })(c, next);
   app.post('/api/meetings/:id/media', mediaGate, mediaBodyLimit, async (c) => {
     try {
@@ -2587,16 +2862,21 @@ export function createHttpApp(deps: HttpDeps) {
       const meetingId = c.req.param('id');
       const release = completes.tryAcquire(user.userId);
       if (!release) throw busy(c);
+      // `extract=audio` (#3337): the file is a video and only its audio is kept. The gate has checked the flag in the query; a multipart form may carry it as a field.
+      let extract = c.req.query('extract') === 'audio';
 
       // Set by prepareKeys inside the try (a closure, so the compiler cannot see it): typed as what they may hold.
       let dataKey = null as Buffer | null;
       let wrapSubkey = null as Buffer | null;
       let stagingKeyToDelete: string | null = null;
       let releaseJsonVideo: (() => void) | null = null;
+      // The platform recording this request claimed (C1, #3173): any failure after the claim fails that row with a short code.
+      let claimedImportId: string | null = null;
 
       try {
         // The length of the recording is measured in crove-media after sealing, so without it nothing is read or stored (#2985).
         if (!mediaMeasurer.configured) throw mediaProbeUnavailable();
+        if (extract && !mediaExtractor.configured) throw mediaProbeUnavailable();
         const contentTypeHeader = c.req.header('content-type') ?? '';
         let kind: 'audio' | 'video';
         // The plaintext as it arrives, sealed piece by piece below (#2780): never held whole, and its declared length is checked.
@@ -2646,16 +2926,24 @@ export function createHttpApp(deps: HttpDeps) {
         if (contentTypeHeader.includes('application/json')) {
           const body = (await c.req.json().catch(() => null)) as {
             uploadId?: unknown;
+            importId?: unknown;
             kind?: unknown;
             lengthSeconds?: unknown;
             stopReason?: unknown;
           } | null;
-          if (!body || typeof body.uploadId !== 'string' || (body.kind !== 'audio' && body.kind !== 'video')) {
-            throw new DomainError('BAD_REQUEST', 400, 'uploadId and kind (audio|video) required');
+          // Exactly one of uploadId (a presigned upload) and importId (a recording a meeting platform finished, C1 #3173; audio only).
+          if (!body || (typeof body.uploadId === 'string') === (typeof body.importId === 'string') || (body.kind !== 'audio' && body.kind !== 'video')) {
+            throw new DomainError('BAD_REQUEST', 400, 'Exactly one of uploadId and importId, and kind (audio|video), required');
+          }
+          if (typeof body.importId === 'string' && (body.kind !== 'audio' || !UUID_TEXT.test(body.importId))) {
+            throw new DomainError('BAD_REQUEST', 400, 'importId must be a uuid and kind must be audio');
           }
           kind = body.kind;
           stopReason = readStopReason(body.stopReason);
-          if (kind === 'video') {
+          if (extract && (kind !== 'audio' || typeof body.importId === 'string')) {
+            throw new DomainError('BAD_REQUEST', 400, 'extract=audio is only for an uploaded file of kind audio, not a platform import');
+          }
+          if (kind === 'video' || extract) {
             // The staged bytes are read whole into memory: one video transfer per process (a multipart one took its slot in the gate).
             releaseJsonVideo = videoTransfers.tryAcquire(user.userId);
             if (!releaseJsonVideo) throw busy(c);
@@ -2669,16 +2957,34 @@ export function createHttpApp(deps: HttpDeps) {
 
           await verifyRecorderAndKind(kind);
 
-          const claim = await runtime.execute<{ stagingKey: string; maxBytes: number; purpose?: string }>(
-            'kernel.file.upload.claim',
-            { uploadId: body.uploadId },
-            { actor: actorOf(user), orgId },
-          );
-          stagingKeyToDelete = claim.stagingKey;
+          let claim: { stagingKey: string; cap: number };
+          if (typeof body.importId === 'string') {
+            // The worker staged the bytes; this request takes them, then seals and records them like an upload (the row is the member's own: another's is answered as absent).
+            // The claim names this route's meeting, so a recording begun for another meeting is refused before the row moves (it never ends up claimed by a request it cannot serve).
+            const imported = await runtime.execute<{ stagingKey: string; meetingId: string }>(
+              'kernel.meeting_platform.import.claim',
+              { recordingId: body.importId, meetingId },
+              { actor: actorOf(user), orgId },
+            );
+            claimedImportId = body.importId;
+            stagingKeyToDelete = imported.stagingKey;
+            if (imported.meetingId !== meetingId) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy bản ghi này');
+            // The job already held the file to the same audio cap (MEETING_PLATFORM_IMPORT_MAX_BYTES); a later extraction of audio from a video can change its size, so the cap is the upload's own.
+            claim = { stagingKey: imported.stagingKey, cap: meetingMediaCap('audio') };
+          } else {
+            const uploaded = await runtime.execute<{ stagingKey: string; maxBytes: number; purpose?: string }>(
+              'kernel.file.upload.claim',
+              { uploadId: body.uploadId },
+              { actor: actorOf(user), orgId },
+            );
+            stagingKeyToDelete = uploaded.stagingKey;
 
-          const expectedPurpose = kind === 'audio' ? 'meeting_audio' : 'meeting_video';
-          if (claim.purpose !== expectedPurpose) {
-            throw new DomainError('INVALID_PURPOSE', 400, 'Mục đích tệp không khớp với lượt đăng ký tải lên');
+            // A video whose audio is extracted (#3337) is staged for video (the grant of meeting_audio is capped at the audio size, which a video exceeds): either purpose fits there.
+            const purposeFits = extract ? uploaded.purpose === 'meeting_video' || uploaded.purpose === 'meeting_audio' : uploaded.purpose === (kind === 'audio' ? 'meeting_audio' : 'meeting_video');
+            if (!purposeFits) {
+              throw new DomainError('INVALID_PURPOSE', 400, 'Mục đích tệp không khớp với lượt đăng ký tải lên');
+            }
+            claim = { stagingKey: uploaded.stagingKey, cap: Math.min(uploaded.maxBytes, meetingMediaCap(extract ? 'video' : kind)) };
           }
 
           prepareKeys(kind);
@@ -2686,7 +2992,7 @@ export function createHttpApp(deps: HttpDeps) {
             if (error instanceof BlobNotFoundError) throw new DomainError('UPLOAD_MISSING', 409, 'Chưa nhận được tệp cho lượt tải lên này');
             throw error;
           };
-          const cap = Math.min(claim.maxBytes, meetingMediaCap(kind));
+          const cap = claim.cap;
           if (direct?.openStaged) {
             // Streamed from the bucket: the declared size is checked against the cap before a byte is read.
             const opened = await direct.openStaged(claim.stagingKey, cap).catch(missing);
@@ -2706,6 +3012,21 @@ export function createHttpApp(deps: HttpDeps) {
           }
           kind = kindVal;
           stopReason = readStopReason(formData.get('stopReason'));
+          const extractField = formData.get('extract');
+          if (extractField !== null && extractField !== '') {
+            if (extractField !== 'audio') throw new DomainError('BAD_REQUEST', 400, 'extract must be audio');
+            extract = true;
+          }
+          if (extract) {
+            if (kind !== 'audio') throw new DomainError('BAD_REQUEST', 400, 'extract=audio is only for kind audio');
+            // A form field is read with the form, so only now: a deployment without crove-media refuses here (the query flag is refused before the body).
+            if (!mediaExtractor.configured) throw mediaProbeUnavailable();
+            // The gate took the slot when the query said so; a form field alone takes it here. A form is held whole by its parser: a large video goes as the raw body.
+            if (!c.get('videoSlotHeld')) {
+              releaseJsonVideo = videoTransfers.tryAcquire(user.userId);
+              if (!releaseJsonVideo) throw busy(c);
+            }
+          }
           const kindHint = c.req.query('kind');
           if (kindHint !== undefined && kindHint !== kind) throw new DomainError('BAD_REQUEST', 400, 'kind does not match the declared kind');
           await verifyRecorderAndKind(kind);
@@ -2714,7 +3035,7 @@ export function createHttpApp(deps: HttpDeps) {
           if (!fileVal || !(fileVal instanceof Blob)) {
             throw new DomainError('NO_FILE', 400, 'Tệp tải lên không hợp lệ');
           }
-          const maxBytes = meetingMediaCap(kind);
+          const maxBytes = meetingMediaCap(extract ? 'video' : kind);
           if (fileVal.size > maxBytes) {
             throw new DomainError('FILE_TOO_LARGE', 413, `Tệp vượt quá giới hạn tối đa (${sizeText(maxBytes)})`);
           }
@@ -2735,6 +3056,7 @@ export function createHttpApp(deps: HttpDeps) {
           const kindVal = c.req.query('kind');
           if (kindVal !== 'audio' && kindVal !== 'video') throw new DomainError('BAD_REQUEST', 400, 'kind must be audio or video');
           kind = kindVal;
+          if (extract && kind !== 'audio') throw new DomainError('BAD_REQUEST', 400, 'extract=audio is only for kind audio');
           stopReason = readStopReason(c.req.query('stopReason'));
           await verifyRecorderAndKind(kind);
           const lengthVal = c.req.query('lengthSeconds');
@@ -2758,6 +3080,22 @@ export function createHttpApp(deps: HttpDeps) {
 
         if (!keys || !dataKey) throw new Error('media keys were not prepared');
         const { keyId, wrappedKey, binding } = keys;
+
+        // The video of an `extract=audio` upload is sealed under a throwaway key, streamed to crove-media and deleted; what is sealed below, and recorded,
+        // is only the Opus audio it returned (audio cap, audio container, measured like any audio): the video is never stored (#3337).
+        if (extract) {
+          const extracted = await extractAudioFromVideo({
+            source,
+            expectedLength: declaredLength,
+            maxBytes: meetingMediaCap('video'),
+            store,
+            orgId,
+            meetingId,
+            extractor: mediaExtractor,
+          });
+          source = onepiece(extracted.audio);
+          declaredLength = extracted.audio.length;
+        }
 
         // Sealed as it streams: the container is sniffed from the first bytes, the cap is counted as the bytes arrive, and the
         // ciphertext goes to the store's streamed write, which hashes it and stores it under its content address.
@@ -2812,6 +3150,16 @@ export function createHttpApp(deps: HttpDeps) {
         }
 
         return c.json(result);
+      } catch (error) {
+        // A claimed platform recording that did not become the meeting's media fails with a short code the member can read (never the error's own text), best effort.
+        if (claimedImportId) {
+          const code = (error as { code?: unknown } | null)?.code;
+          const failure = code === 'FILE_TOO_LARGE' ? 'too_large' : code === 'MEDIA_TOO_LONG' ? 'too_long' : code === 'INVALID_MEDIA_CONTAINER' || code === 'MEDIA_PROBE_FAILED' || code === 'NO_FILE' ? 'invalid_media' : 'claim_failed';
+          await runtime
+            .execute('kernel.meeting_platform.import.claim_failed', { recordingId: claimedImportId, code: failure }, { actor: actorOf(user), orgId })
+            .catch((err) => console.error('[http] meeting import failure not recorded', err));
+        }
+        throw error;
       } finally {
         if (stagingKeyToDelete) {
           await store.delete(stagingKeyToDelete).catch((err) => console.error('[http] meeting staging deletion failed', err));
@@ -3767,10 +4115,15 @@ export function createHttpApp(deps: HttpDeps) {
     app.use('/assets/*', serveStatic({ root }));
     app.use('/favicon.svg', serveStatic({ root }));
     const indexPath = join(config.WEB_DIST, 'index.html');
-    const csp = contentSecurityPolicy(publicAuthUrl(config), store.direct ? directTransferOrigin(config) : null, Boolean(config.TURNSTILE_SITE_KEY));
+    const csp = contentSecurityPolicy(publicAuthUrl(config), store.direct ? directTransferOrigin(config) : null, Boolean(config.TURNSTILE_SITE_KEY), null, hostedLoginTokenOrigin(config));
     let indexHtml: string | null = null;
     app.get('*', async (c) => {
       c.header('content-security-policy', csp);
+      if (c.req.path === SIGN_PAGE_PATH || c.req.path.startsWith(`${SIGN_PAGE_PATH}/`)) {
+        c.header('referrer-policy', 'no-referrer');
+        c.header('cache-control', 'no-store');
+        c.header('x-content-type-options', 'nosniff');
+      }
       indexHtml ??= await readFile(indexPath, 'utf8');
       return c.html(indexHtml);
     });

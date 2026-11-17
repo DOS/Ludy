@@ -68,6 +68,7 @@ export const reviewLinkCreate = defineCommand({
 
 export const reviewLinkRevoke = defineCommand({
   name: 'social.review_link.revoke',
+  runsWhenOff: 'revokes a client review link, so a leaked link can still be killed while the app is off',
   input: z.strictObject({ linkId: zId }),
   risk: 'R1',
   sideEffect: 'internal',
@@ -216,6 +217,7 @@ export const reviewPlanCreate = defineCommand({
 // never from the job. The role is read again here, so a member made admin again before this ran keeps their links.
 export const linksRevokeForMember = defineCommand({
   name: 'social.links.revoke_for_member',
+  runsWhenOff: 'revokes a leaving member\'s review and report links while the app is off',
   input: z.strictObject({ eventId: zId }),
   risk: 'R1',
   sideEffect: 'internal',

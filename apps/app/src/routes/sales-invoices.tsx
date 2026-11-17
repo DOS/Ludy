@@ -3,9 +3,10 @@
 // issued and no provider is called from this screen yet: a draft is a working copy. The amounts are the server's, computed from the lines (the form has no
 // total to type), and the checks of the invoice's required fields show on the fields as the draft is typed.
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { Link, useParams } from '@tanstack/react-router';
 import { useDeferredValue, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { BUYER_KINDS, EINVOICE_DRAFT_MAX_LINES, EINVOICE_SUGGEST_TEXT_MAX, vietnamToday, type BuyerKind, type DraftIssueCode, type EInvoiceDraft, type EInvoiceDraftForm, type EInvoiceDraftSummary, type EInvoicePrevious, type EInvoiceSuggested } from '@crove/kernel-contract';
+import { BUYER_IDENTITY_KINDS, BUYER_KINDS, EINVOICE_DRAFT_MAX_LINES, EINVOICE_SUGGEST_TEXT_MAX, vietnamToday, type BuyerIdentityKind, type BuyerKind, type DraftIssueCode, type EInvoiceDraft, type EInvoiceDraftForm, type EInvoiceDraftSummary, type EInvoicePrevious, type EInvoiceSuggested } from '@crove/kernel-contract';
 import { Alert, AlertDescription } from '@crove/ui/components/alert';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -17,13 +18,13 @@ import { Textarea } from '@crove/ui/components/textarea';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { DateInput } from '../components/date-input.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
-import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
+import { DataTable, Empty, ErrorText, FieldError, fieldControl, fieldHintId, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { applyPrevious } from '../lib/invoice-copy.ts';
 import { appendSource, bookingDay, bookingSourceText, dealSourceText } from '../lib/invoice-crm-source.ts';
-import { getConfig } from '../lib/auth.ts';
 import { client, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
+import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 
 const NUM = 'px-4 py-3 text-right tabular-nums';
 const VAT_RATES = ['0%', '5%', '8%', '10%', 'KCT', 'KKKNT'] as const;
@@ -43,31 +44,48 @@ interface FormState {
   // The buyer is the coworker's proposal, from a customer's record, until a person edits it.
   buyerAi: boolean;
   date: string;
+  // The day of the sale when it is not the invoice's day ('' is the same day), and the reason for an invoice later than the sale's next working day (#3535).
+  saleDate: string;
+  lateReason: string;
   seriesId: string;
-  buyer: { kind: BuyerKind; partyId: string | null; taxCode: string; name: string; address: string; email: string };
+  // An individual's identity, one of CCCD, passport or budget code ('' is none); never sent for another kind of buyer.
+  buyer: { kind: BuyerKind; partyId: string | null; taxCode: string; name: string; address: string; email: string; identityKind: BuyerIdentityKind | ''; identity: string };
   lines: LineState[];
 }
 
 const blankLine = (): LineState => ({ description: '', unit: '', quantity: '1', unitPrice: '', vatRate: '10%', ai: null });
-const blankForm = (seriesId: string): FormState => ({ draftId: null, buyerAi: false, date: vietnamToday(), seriesId, buyer: { kind: 'business', partyId: null, taxCode: '', name: '', address: '', email: '' }, lines: [blankLine()] });
+const blankForm = (seriesId: string): FormState => ({ draftId: null, buyerAi: false, date: vietnamToday(), saleDate: '', lateReason: '', seriesId, buyer: { kind: 'business', partyId: null, taxCode: '', name: '', address: '', email: '', identityKind: '', identity: '' }, lines: [blankLine()] });
 const fromDraft = (d: EInvoiceDraft): FormState => ({
   draftId: d.id,
   buyerAi: false,
   date: d.date,
+  saleDate: d.saleDate ?? '',
+  lateReason: d.lateReason ?? '',
   seriesId: d.seriesId ?? '',
-  buyer: { kind: d.buyer.kind as BuyerKind, partyId: d.buyer.partyId, taxCode: d.buyer.taxCode ?? '', name: d.buyer.name ?? '', address: d.buyer.address ?? '', email: d.buyer.email ?? '' },
+  buyer: { kind: d.buyer.kind as BuyerKind, partyId: d.buyer.partyId, taxCode: d.buyer.taxCode ?? '', name: d.buyer.name ?? '', address: d.buyer.address ?? '', email: d.buyer.email ?? '', identityKind: d.buyer.identity?.kind ?? '', identity: d.buyer.identity?.value ?? '' },
   lines: d.lines.map((l) => ({ description: l.description, unit: l.unit ?? '', quantity: l.quantity, unitPrice: l.unitPrice, vatRate: l.vatRate, ai: null })),
 });
 const orNull = (value: string): string | null => (value.trim() === '' ? null : value.trim());
 // The form as the server takes it. A quantity or price that is not yet a number goes as typed, and the server's check says so on the field.
 const toInput = (s: FormState): EInvoiceDraftForm => ({
   date: s.date,
+  saleDate: s.saleDate === '' ? null : s.saleDate,
+  lateReason: orNull(s.lateReason),
   seriesId: s.seriesId === '' ? null : s.seriesId,
   // A sale to a consumer carries no buyer details: what the form held before the kind was chosen is not sent.
   buyer:
     s.buyer.kind === 'consumer'
-      ? { kind: 'consumer', partyId: null, taxCode: null, name: null, address: null, email: null }
-      : { kind: s.buyer.kind, partyId: s.buyer.partyId, taxCode: orNull(s.buyer.taxCode), name: orNull(s.buyer.name), address: orNull(s.buyer.address), email: orNull(s.buyer.email) },
+      ? { kind: 'consumer', partyId: null, taxCode: null, name: null, address: null, email: null, identity: null }
+      : {
+          kind: s.buyer.kind,
+          partyId: s.buyer.partyId,
+          taxCode: orNull(s.buyer.taxCode),
+          name: orNull(s.buyer.name),
+          address: orNull(s.buyer.address),
+          email: orNull(s.buyer.email),
+          // Only an individual has one; a business keeps its tax code.
+          identity: s.buyer.kind === 'individual' && s.buyer.identityKind !== '' && orNull(s.buyer.identity) !== null ? { kind: s.buyer.identityKind, value: s.buyer.identity.trim() } : null,
+        },
   lines: s.lines.map((l) => ({ description: l.description, unit: orNull(l.unit), quantity: l.quantity.trim(), unitPrice: l.unitPrice.trim(), vatRate: l.vatRate })),
 });
 
@@ -82,13 +100,13 @@ function applySuggestion(s: FormState, proposal: EInvoiceSuggested): FormState {
   const kept = s.lines.filter((l) => !isBlankLine(l));
   const lines = [...kept, ...proposed].slice(0, EINVOICE_DRAFT_MAX_LINES);
   const b = s.buyer;
-  const buyerEmpty = b.partyId === null && b.taxCode.trim() === '' && b.name.trim() === '' && b.address.trim() === '' && b.email.trim() === '';
+  const buyerEmpty = b.partyId === null && b.taxCode.trim() === '' && b.name.trim() === '' && b.address.trim() === '' && b.email.trim() === '' && b.identityKind === '' && b.identity.trim() === '';
   // A person who chose a consumer sale keeps it: the coworker's customer does not replace the choice.
   const buyer = proposal.buyer !== null && buyerEmpty && b.kind !== 'consumer' ? proposal.buyer : null;
   return {
     ...s,
     lines: lines.length > 0 ? lines : s.lines,
-    ...(buyer ? { buyerAi: true, buyer: { kind: buyer.kind, partyId: buyer.partyId, taxCode: buyer.taxCode ?? '', name: buyer.name ?? '', address: buyer.address ?? '', email: buyer.email ?? '' } } : {}),
+    ...(buyer ? { buyerAi: true, buyer: { kind: buyer.kind, partyId: buyer.partyId, taxCode: buyer.taxCode ?? '', name: buyer.name ?? '', address: buyer.address ?? '', email: buyer.email ?? '', identityKind: '', identity: '' } } : {}),
   };
 }
 
@@ -166,7 +184,8 @@ function PreviousInvoice({ date, legalEntityId, onCopy, onPicked }: { date: stri
 function CrmSource({ onAdd }: { onAdd: (sentence: string) => void }) {
   const t = useTranslations('salesInvoices.ai.crm');
   const f = useFormat();
-  const installed = getConfig().modules.includes('crm');
+  useModulesVersion(); // the apps of the org can change while this screen is open
+  const installed = installedModules().includes('crm');
   const deals = useQuery({ ...orpc.crm.deals.list.queryOptions({ input: { status: 'open', limit: 50 } }), enabled: installed, retry: false });
   const bookings = useQuery({ ...orpc.crm.bookings.list.queryOptions({ input: { scope: 'mine', period: 'past' } }), enabled: installed, retry: false });
   const dealItems = deals.data?.items ?? [];
@@ -267,6 +286,19 @@ function CoworkerBox({ date, room, legalEntityId, invoiceSource, text, onText, o
   );
 }
 
+// The warning of a sale invoiced after its next working day and the reason it asks for (#3535): the invoice is late, the fine is heavy, and the sale is declared in the period of its sale date.
+export function LateSaleNotice({ id, reason, error, onChange }: { id: string; reason: string; error: string | null; onChange: (reason: string) => void }) {
+  const t = useTranslations('salesInvoices');
+  return (
+    <div className="mt-3 space-y-1" role="alert" data-testid="invoice-late-sale">
+      <p className="text-sm font-medium text-foreground">{t('lateWarning')}</p>
+      <Label htmlFor={`${id}-late-reason`}>{t('lateReason')}</Label>
+      <Textarea {...fieldControl(`${id}-late-reason`, { error: error !== null })} rows={2} maxLength={500} value={reason} placeholder={t('lateReasonPlaceholder')} onChange={(e) => onChange(e.target.value)} data-testid="invoice-late-reason" />
+      <FieldError id={`${id}-late-reason`}>{error}</FieldError>
+    </div>
+  );
+}
+
 function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormState; series: Array<{ id: string; templateNo: string; symbol: string; description: string }>; legalEntityId: string | undefined; onClose: () => void }) {
   const t = useTranslations('salesInvoices');
   const f = useFormat();
@@ -287,8 +319,11 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
   });
   const issues = check.data?.issues ?? [];
   // What cannot be stored yet (a date, a quantity or a price that is not a value): the rest is saved with its issues shown.
-  const unsaveable = issues.some((i) => (['DATE_REQUIRED', 'DATE_INVALID', 'LINE_QUANTITY_INVALID', 'LINE_PRICE_INVALID'] as const).some((c) => c === i.code)) || check.data === undefined;
+  const unsaveable = issues.some((i) => (['DATE_REQUIRED', 'DATE_INVALID', 'SALE_DATE_INVALID', 'SALE_DATE_AFTER_INVOICE', 'LINE_QUANTITY_INVALID', 'LINE_PRICE_INVALID'] as const).some((c) => c === i.code)) || check.data === undefined;
   const bad = (field: string) => issues.some((i) => i.field === field);
+  // The error of each of the two late-sale fields sits under it and is linked to it, and a field shows only its own (#3535).
+  const saleDateIssue = issues.find((i) => i.field === 'saleDate');
+  const lateReasonIssue = issues.find((i) => i.field === 'lateReason');
   const setBuyer = (patch: Partial<FormState['buyer']>) => setForm((s) => ({ ...s, buyerAi: false, buyer: { ...s.buyer, ...patch } }));
   // An edit makes the line the person's own: it loses the coworker's mark.
   const setLine = (index: number, patch: Partial<LineState>) => setForm((s) => ({ ...s, lines: s.lines.map((l, i) => (i === index ? { ...l, ai: null, ...patch } : l)) }));
@@ -297,10 +332,18 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
   return (
     <Card className="mb-6 block p-4" aria-label={t('formTitle')} data-testid="invoice-form">
       <h2 className="text-base font-medium text-foreground">{form.draftId ? t('editTitle') : t('newTitle')}</h2>
-      <div className="mt-3 grid gap-3 sm:grid-cols-3">
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="space-y-1">
           <Label htmlFor={`${id}-date`}>{t('date')}</Label>
           <DateInput id={`${id}-date`} value={form.date} max={vietnamToday()} aria-invalid={bad('date')} onChange={(date) => setForm((s) => ({ ...s, date }))} />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor={`${id}-sale-date`}>{t('saleDate')}</Label>
+          <DateInput {...fieldControl(`${id}-sale-date`, { hint: true, error: saleDateIssue !== undefined })} value={form.saleDate} max={form.date} onChange={(saleDate) => setForm((s) => ({ ...s, saleDate }))} />
+          <p id={fieldHintId(`${id}-sale-date`)} className="text-xs text-subtle-foreground">
+            {t('saleDateHint')}
+          </p>
+          <FieldError id={`${id}-sale-date`}>{saleDateIssue ? t(`issues.${saleDateIssue.code satisfies DraftIssueCode}`, { line: '' }) : null}</FieldError>
         </div>
         <div className="space-y-1">
           <Label htmlFor={`${id}-series`}>{t('series')}</Label>
@@ -324,8 +367,9 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
           </NativeSelect>
         </div>
       </div>
+      {check.data?.lateSale && <LateSaleNotice id={id} reason={form.lateReason} error={lateReasonIssue ? t(`issues.${lateReasonIssue.code satisfies DraftIssueCode}`, { line: '' }) : null} onChange={(lateReason) => setForm((s) => ({ ...s, lateReason }))} />}
       <PreviousInvoice
-        date={form.date}
+        date={form.saleDate || form.date}
         legalEntityId={legalEntityId}
         onPicked={setSourceInvoice}
         onCopy={(invoice) => {
@@ -362,6 +406,24 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
             <Label htmlFor={`${id}-email`}>{t('email')}</Label>
             <Input id={`${id}-email`} type="email" value={buyer.email} maxLength={254} aria-invalid={bad('buyer.email')} onChange={(e) => setBuyer({ email: e.target.value })} />
           </div>
+          {/* An individual may give a personal ID number, a passport number or a budget unit code instead of a tax code (#3678): optional, one at a time. */}
+          {buyer.kind === 'individual' && (
+            <div className="space-y-1 sm:col-span-2" data-testid="invoice-buyer-identity">
+              <Label htmlFor={`${id}-identity`}>{t('identityLabel')}</Label>
+              <div className="flex flex-wrap gap-2">
+                <NativeSelect aria-label={t('identityKind')} className="w-52" value={buyer.identityKind} onChange={(e) => setBuyer({ identityKind: e.target.value as BuyerIdentityKind | '', ...(e.target.value === '' ? { identity: '' } : {}) })}>
+                  <NativeSelectOption value="">{t('identityNone')}</NativeSelectOption>
+                  {BUYER_IDENTITY_KINDS.map((k) => (
+                    <NativeSelectOption key={k} value={k}>
+                      {t(`identityKinds.${k}`)}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+                {buyer.identityKind !== '' && <Input id={`${id}-identity`} className="max-w-xs" value={buyer.identity} maxLength={20} autoComplete="off" aria-invalid={bad('buyer.identity')} onChange={(e) => setBuyer({ identity: e.target.value })} />}
+              </div>
+              <p className="text-xs text-subtle-foreground">{t('identityHint')}</p>
+            </div>
+          )}
         </div>
       )}
       {buyer.kind === 'consumer' && <p className="mt-3 text-xs text-subtle-foreground">{t('consumerHint')}</p>}
@@ -555,6 +617,7 @@ export function SalesInvoicesPage() {
   const t = useTranslations('salesInvoices');
   const f = useFormat();
   const entity = useChosenEntity();
+  const { slug } = useParams({ strict: false }) as { slug: string };
   const org = useQuery(orpc.org.get.queryOptions());
   const canWrite = org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member';
   const canSync = org.data?.role === 'owner' || org.data?.role === 'admin';
@@ -562,6 +625,8 @@ export function SalesInvoicesPage() {
   const canApprove = canSync;
   const status = useQuery(orpc.einvoice.status.queryOptions());
   const seriesQuery = useQuery(orpc.einvoice.series.list.queryOptions());
+  // The Integrations section of Settings draws only where the deployment offers a provider or the sandbox, so the link to it does too (#3602).
+  const providers = useQuery(orpc.einvoice.providers.queryOptions());
   // An invoice on its way (being sent, waiting for the tax authority, issued with its original still to store) is looked at again every few seconds, until it settles.
   const drafts = useQuery({
     ...orpc.einvoice.drafts.list.queryOptions({ input: { legalEntityId: entity.legalEntityId } }),
@@ -598,12 +663,23 @@ export function SalesInvoicesPage() {
       {series.length === 0 && !seriesQuery.isPending && (
         <Card className="mb-4 block p-4" data-testid="invoice-no-series">
           <p className="text-sm text-foreground">{t('noSeries')}</p>
+          {/* The next step (#3602): the provider is connected in Cài đặt, section Kết nối; a deployment that runs the offline sandbox can also read its sample series. */}
+          <p className="mt-2 text-sm text-muted-foreground">
+            {status.data?.sandbox ? t('noSeriesSandbox') : t('noProvider')}
+            {(providers.data?.length ?? 0) > 0 && (
+              <>
+                {' '}
+                <Link to="/o/$slug/settings" params={{ slug }} hash="integrations" className="text-link underline underline-offset-2" data-testid="invoice-open-connections">
+                  {t('openConnections')}
+                </Link>
+              </>
+            )}
+          </p>
           {status.data?.sandbox && canSync && (
             <Button className="mt-3" variant="outline" size="sm" loading={sync.isPending} onClick={() => sync.mutate()} data-testid="invoice-sync">
               {t('syncSandbox')}
             </Button>
           )}
-          {!status.data?.sandbox && <p className="mt-2 text-xs text-subtle-foreground">{t('noProvider')}</p>}
           {sync.error && <ErrorText>{errorMessage(sync.error)}</ErrorText>}
         </Card>
       )}

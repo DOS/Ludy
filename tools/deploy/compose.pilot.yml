@@ -102,4 +102,4 @@ services:
     environment:
       CROVE_MODULES: ${CROVE_MODULES:-finance}
       MARKETPLACE_PROVIDERS: ${MARKETPLACE_PROVIDERS:-}
-      PROBER_AUTH_URL: ${PROBER_AUTH_URL:-http://api:8080/auth/v1}
+      PROBER_AUTH_URL: ${PROBER_AUTH_URL:-${PUBLIC_AUTH_URL:-http://api:8080/auth/v1}}

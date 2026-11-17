@@ -289,6 +289,9 @@ describe('a draft that is frozen', () => {
     finishedAt: null,
     windDown: null,
     objects: [],
+    provider: 'meta_ads',
+    statesReadAt: null,
+    statesReadOk: null,
     ...over,
   });
 
@@ -345,6 +348,33 @@ describe('a draft that is frozen', () => {
     expect(vi).toContain('Dừng lần chạy này');
   });
 
+  // When Ludy last asked the platform (#3419): one line under the objects, said as a failure (with the last known state) when that read did not work, and nothing for a launch never read.
+  it('says when Ludy last asked the platform about the objects, and that the state shown is the last known one after a failed read', () => {
+    const objects = [{ slot: 'ad_1', level: 'ad' as const, externalId: 'ad_404', name: 'x [ludy:0123456789]', effectiveStatus: 'PENDING_REVIEW', reviewReason: 'in_review' }];
+    const live = (over: Partial<NonNullable<AdsCampaignDraftView['launch']>>) => launch({ state: 'live', step: 'live', objects, ...over });
+    const read = render(builder({ draft: draft({ status: 'approved', launch: live({ statesReadAt: '2026-11-15T03:04:00.000Z', statesReadOk: true }) }) }));
+    expect(read).toContain('data-testid="campaign-launch-read"');
+    expect(read).toMatch(/Asked Meta at [^<]*2026/);
+    expect(read).not.toContain('last known state');
+    const failed = render(builder({ draft: draft({ status: 'approved', launch: live({ statesReadAt: '2026-11-15T03:04:00.000Z', statesReadOk: false }) }) }));
+    expect(failed).toMatch(/Could not ask Meta at [^<]*2026[^<]*; showing the last known state/);
+    const vi = render(builder({ draft: draft({ status: 'approved', launch: live({ statesReadAt: '2026-11-15T03:04:00.000Z', statesReadOk: false }) }) }), 'vi');
+    expect(vi).toContain('Không hỏi được Meta lúc');
+    expect(vi).toContain('đang hiện trạng thái đã biết gần nhất');
+    // The sandbox has no platform name of its own, so the line says "the ad platform".
+    const sandbox = render(builder({ draft: draft({ status: 'approved', launch: live({ provider: 'sandbox_ads', statesReadAt: '2026-11-15T03:04:00.000Z', statesReadOk: true }) }) }));
+    expect(sandbox).toMatch(/Asked the ad platform at /);
+    expect(sandbox).not.toContain('sandbox_ads');
+    // Never read: no line, no epoch, no empty label.
+    const never = render(builder({ draft: draft({ status: 'approved', launch: live({}) }) }));
+    expect(never).not.toContain('campaign-launch-read');
+    expect(never).not.toContain('Asked');
+    expect(never).not.toContain('1970');
+    // A stopped launch shows the line too, since its objects are still listed.
+    const stopped = render(builder({ draft: draft({ status: 'approved', launch: live({ state: 'stopped', statesReadAt: '2026-11-15T03:04:00.000Z', statesReadOk: true }) }) }));
+    expect(stopped).toContain('campaign-launch-read');
+  });
+
   it('lists the objects created on the ad platform and shows whether they are active or paused', () => {
     const objects = [
       { slot: 'campaign', level: 'campaign' as const, externalId: 'cmp_101', name: 'Khai trương [ludy:0123456789]', effectiveStatus: null, reviewReason: null },
@@ -358,7 +388,7 @@ describe('a draft that is frozen', () => {
     expect(pausedHtml).toContain('cmp_101');
     expect(pausedHtml).toContain('Ad set: ');
     expect(pausedHtml).toContain('set_202');
-    expect(pausedHtml).toContain('PENDING_REVIEW (in_review)');
+    expect(pausedHtml).toContain('In review (the platform is reviewing it)');
     const liveHtml = render(
       builder({
         draft: draft({
@@ -389,6 +419,19 @@ describe('a draft that is frozen', () => {
     expect(vi).toContain('Chiến dịch: ');
     expect(vi).toContain('Nhóm quảng cáo: ');
     expect(vi).toContain('Đang bật');
+  });
+
+  it('shows a rejected ad with the reason the sync stored, and renders whatever the platform sent as text, never as markup', () => {
+    const rejected = [{ slot: 'ad_1', level: 'ad' as const, externalId: 'ad_404', name: 'Khai trương', effectiveStatus: 'DISAPPROVED', reviewReason: 'issue_1487079' }];
+    const html = render(builder({ draft: draft({ status: 'approved', launch: launch({ state: 'live', step: 'live', objects: rejected }) }) }));
+    expect(html).toContain('Rejected (platform issue code 1487079)');
+    expect(render(builder({ draft: draft({ status: 'approved', launch: launch({ state: 'live', step: 'live', objects: rejected }) }) }), 'vi')).toContain('Bị từ chối (mã vấn đề 1487079 của nền tảng)');
+    // A value that is not a code this build knows is shown as it is, escaped.
+    const hostile = [{ slot: 'ad_1', level: 'ad' as const, externalId: 'ad_404', name: 'Khai trương', effectiveStatus: 'X<IMG_SRC=x>', reviewReason: '<script>alert(1)</script>' }];
+    const escaped = render(builder({ draft: draft({ status: 'approved', launch: launch({ state: 'live', step: 'live', objects: hostile }) }) }));
+    expect(escaped).not.toContain('<script>');
+    expect(escaped).not.toContain('<IMG');
+    expect(escaped).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
   });
 
   it('a stopped launch says its commitment stays and where the pause of its ads stands: being paused, paused, or to be paused by hand', () => {

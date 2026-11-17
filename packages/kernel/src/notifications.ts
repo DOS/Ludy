@@ -19,6 +19,7 @@ import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
 import { eligibleApprovers } from './approval.ts';
 import { uploaderEntity } from './extraction.ts';
+import { offAppsOf } from './org-apps.ts';
 import { PERSONAL_DATA_NOTICE_ITEMS } from './personal-data.ts';
 import { REROUTED_EVENT_TASKS } from './task-reroute.ts';
 
@@ -40,6 +41,7 @@ export const TASK_REROUTED = 'kernel.task_rerouted';
 // An owner's notice before a personal-data erasure (#1678, ADR-0037 section 5): how many of my private notes and
 // to-dos mention a person who asked to be erased. Not one a member can turn off: the erasure waits on it.
 export const PERSONAL_DATA_NOTICE = 'kernel.personal_data_notice';
+export const PROJECTS_WEEKLY_STATUS = 'projects.weekly_status';
 // An ad platform refused a connection's token, or the member who connected it left (#2219): the account's sync is paused
 // until an owner or admin connects it again. Social tells its own channels' owners apart (its dispatch), so this one is
 // for the ad platforms' connections only.
@@ -142,6 +144,8 @@ export const KERNEL_NOTIFYING_EVENTS = [
   'kernel.personal_data.notified',
   'kernel.channel.expired',
   'kernel.proposal.original_flagged',
+  'projects.weekly_status.sent',
+  'projects.recurring.advanced',
 ] as const;
 
 export const notificationDispatch = defineCommand({
@@ -204,7 +208,14 @@ export const notificationDispatch = defineCommand({
         return { sent };
       }
       case 'kernel.task.created':
-      case 'kernel.task.assigned': {
+      case 'kernel.task.assigned':
+      case 'projects.recurring.advanced': {
+        if (
+          event.type === 'projects.recurring.advanced' &&
+          (!ctx.installed('projects') || (await offAppsOf(ctx.trx, ctx.orgId)).includes('projects'))
+        ) {
+          return { sent: 0 };
+        }
         const e = z.object({ taskId: zId, positionId: zId.nullable().optional() }).safeParse(event.payload);
         if (!e.success) return { sent: 0 };
         const task = await ctx.trx
@@ -377,6 +388,26 @@ export const notificationDispatch = defineCommand({
         }
         return { sent };
       }
+      case 'projects.weekly_status.sent': {
+        if (!ctx.installed('projects')) return { sent: 0 };
+        const e = z.object({ projectId: zId, userIds: z.array(zId).min(1).max(200) }).safeParse(event.payload);
+        if (!e.success) return { sent: 0 };
+        let sent = 0;
+        for (const userId of new Set(e.data.userIds)) {
+          sent += await notifyMembers(ctx, {
+            kind: PROJECTS_WEEKLY_STATUS,
+            users: [userId],
+            key: `projects_weekly_status:${event.id}`,
+            subject: { type: 'projects.project', id: e.data.projectId },
+            legalEntityId: await uploaderEntity(ctx, userId),
+            detail: {},
+            eventId: event.id,
+            actor: event.actor,
+            databaseClock: true,
+          });
+        }
+        return { sent };
+      }
       default:
         return { sent: 0 };
     }
@@ -435,6 +466,22 @@ export const notificationList = defineQuery({
       WHERE n.org_id = ${ctx.orgId} AND n.user_id = ${me}
       ORDER BY n.created_at DESC, n.id DESC
       LIMIT ${NOTIFICATION_LIST_LIMIT}`.execute(ctx.trx);
+    const projectNames = new Map<string, string>();
+    if (ctx.installed('projects')) {
+      const projectIds = [
+        ...new Set(rows.filter((r) => r.subject_type === 'projects.project' && r.subject_id !== null).map((r) => r.subject_id as string)),
+      ];
+      for (const projectId of projectIds) {
+        try {
+          const answer = await ctx.query<{ name?: string }>('projects.project.get', { id: projectId });
+          if (answer.status === 'ok' && typeof answer.value?.name === 'string') {
+            projectNames.set(projectId, answer.value.name);
+          }
+        } catch {
+          // Project deleted or inaccessible: still display notification without its live title.
+        }
+      }
+    }
     const unread = await sql<{ n: number }>`
       SELECT count(*)::int AS n FROM (
         SELECT 1 FROM crove_kernel.notification n
@@ -443,19 +490,23 @@ export const notificationList = defineQuery({
       ) u`.execute(ctx.trx);
     const muted = await ctx.trx.selectFrom('crove_kernel.notification_mute').select('kind').where('org_id', '=', ctx.orgId).where('user_id', '=', me).orderBy('kind').execute();
     return {
-      items: rows.map((r) => ({
-        id: r.id,
-        kind: r.kind,
-        subjectType: r.subject_type,
-        subjectId: r.subject_id,
-        detail: {
-          ...Object.fromEntries(Object.entries(r.detail ?? {}).filter((e): e is [string, string] => typeof e[1] === 'string')),
-          ...(r.subject_title !== null ? { title: r.subject_title.slice(0, 200) } : {}),
-          ...(r.subject_filename !== null ? { filename: r.subject_filename.slice(0, 200) } : {}),
-        },
-        createdAt: r.created_at.toISOString(),
-        read: r.read,
-      })),
+      items: rows.map((r) => {
+        const resolvedTitle =
+          r.subject_title ?? (r.subject_type === 'projects.project' && r.subject_id ? (projectNames.get(r.subject_id) ?? null) : null);
+        return {
+          id: r.id,
+          kind: r.kind,
+          subjectType: r.subject_type,
+          subjectId: r.subject_id,
+          detail: {
+            ...Object.fromEntries(Object.entries(r.detail ?? {}).filter((e): e is [string, string] => typeof e[1] === 'string')),
+            ...(resolvedTitle !== null ? { title: resolvedTitle.slice(0, 200) } : {}),
+            ...(r.subject_filename !== null ? { filename: r.subject_filename.slice(0, 200) } : {}),
+          },
+          createdAt: r.created_at.toISOString(),
+          read: r.read,
+        };
+      }),
       unread: unread.rows[0]?.n ?? 0,
       muted: muted.map((m) => m.kind),
     };

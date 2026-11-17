@@ -40,6 +40,8 @@ test.describe('screen titles, skip link and focus on navigation (#2115)', () => 
   test.beforeEach(async ({ page }) => {
     await signInNewUser(page, newEmail('screen-titles'));
     slug = await createOrg(page, 'Công ty Tiêu đề');
+    // A new org opens on the overview (#3225); the uploads are on the Inbox.
+    await page.goto(page.url().replace(/\/overview$/, '/inbox'));
     await page.locator('input[type=file]').setInputFiles(INVOICE);
     await expect(page.getByRole('link', { name: SELLER })).toBeVisible({ timeout: 90_000 });
     proposal = new URL((await page.getByRole('link', { name: SELLER }).getAttribute('href')) ?? '', page.url()).pathname;
@@ -57,6 +59,8 @@ test.describe('screen titles, skip link and focus on navigation (#2115)', () => 
         expect(heading, path).not.toBe('');
         // "<screen name> · <brand>", the screen name being the page's own heading.
         expect(title, path).toBe(`${heading} · ${BRAND}`);
+        // Posts is named as its menu item is (#3654), not as its app.
+        if (path.endsWith('/social')) expect(heading).toBe(locale === 'vi' ? 'Bài đăng' : 'Posts');
         titles.push(title);
       }
       expect(new Set(titles).size).toBe(screens.length);

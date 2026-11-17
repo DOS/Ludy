@@ -1,0 +1,73 @@
+-- SPDX-License-Identifier: AGPL-3.0-only
+-- Crove kernel integration for eSign (#3323): extend allowed file sources and upload purposes with
+-- sign_document / sign_sealed / sign_certificate, and update crove_kernel.health() for optional module queues.
+-- Idempotent; applied files stay untouched.
+SET LOCAL lock_timeout = '2s';
+
+ALTER TABLE crove_kernel.file DROP CONSTRAINT IF EXISTS file_source_check;
+ALTER TABLE crove_kernel.file
+  ADD CONSTRAINT file_source_check CHECK (source IN ('upload', 'email', 'social', 'import', 'meeting_audio', 'meeting_video', 'sign_document', 'sign_sealed', 'sign_certificate'));
+
+ALTER TABLE crove_kernel.file_upload DROP CONSTRAINT IF EXISTS file_upload_purpose_check;
+ALTER TABLE crove_kernel.file_upload
+  ADD CONSTRAINT file_upload_purpose_check CHECK (purpose IN ('document', 'social', 'import', 'meeting_audio', 'meeting_video', 'sign_document'));
+
+CREATE OR REPLACE FUNCTION crove_kernel.health(p_dead_letter_window_seconds integer DEFAULT 3600)
+ RETURNS TABLE(checked_at timestamp with time zone, outbox_pending integer, outbox_oldest_age_seconds double precision, inbound_pending integer, inbound_oldest_age_seconds double precision, jobs_schema_present boolean, jobs_queued integer, job_oldest_queued_age_seconds double precision, dead_letter_count integer, worker_heartbeat_age_seconds double precision)
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  v_window interval := pg_catalog.make_interval(secs => LEAST(GREATEST(COALESCE(p_dead_letter_window_seconds, 3600), 60), 604800));
+  v_worked text[];
+  v_expected text[] := pg_catalog.string_to_array(COALESCE(pg_catalog.current_setting('crove.prober_modules', true), ''), ',');
+BEGIN
+  checked_at := pg_catalog.now();
+
+  SELECT pg_catalog.count(*)::int INTO outbox_pending
+  FROM (SELECT 1 FROM crove_kernel.outbox_pending LIMIT 10000) s;
+  SELECT EXTRACT(EPOCH FROM checked_at - e.created_at)::double precision INTO outbox_oldest_age_seconds
+  FROM crove_kernel.outbox_pending p
+  JOIN crove_kernel.outbox_event e ON e.org_id = p.org_id AND e.id = p.event_id
+  ORDER BY p.seq LIMIT 1;
+
+  SELECT pg_catalog.count(*)::int INTO inbound_pending
+  FROM (SELECT 1 FROM crove_kernel.inbound_pending LIMIT 10000) s;
+  SELECT EXTRACT(EPOCH FROM checked_at - i.received_at)::double precision INTO inbound_oldest_age_seconds
+  FROM crove_kernel.inbound_pending i ORDER BY i.seq LIMIT 1;
+
+  IF NOT EXISTS (SELECT 1 FROM crove_kernel.worker_heartbeat h WHERE h.beat_at > checked_at - interval '1 hour' AND h.modules IS NULL) THEN
+    SELECT pg_catalog.array_agg(DISTINCT m) INTO v_worked
+    FROM crove_kernel.worker_heartbeat h, pg_catalog.unnest(h.modules) m
+    WHERE h.beat_at > checked_at - interval '7 days';
+  END IF;
+
+  jobs_schema_present := pg_catalog.to_regclass('crove_jobs.job') IS NOT NULL;
+  IF jobs_schema_present THEN
+    SELECT pg_catalog.count(*)::int, EXTRACT(EPOCH FROM checked_at - pg_catalog.min(q.start_after))::double precision
+    INTO jobs_queued, job_oldest_queued_age_seconds
+    FROM (
+      SELECT j.start_after FROM crove_jobs.job j
+      WHERE j.state IN ('created', 'retry') AND j.start_after <= checked_at
+        AND (v_worked IS NULL OR pg_catalog.split_part(j.name, '-', 1) <> ALL (ARRAY['finance', 'social', 'ads', 'crm', 'notes', 'meetings', 'sign'])
+             OR pg_catalog.split_part(j.name, '-', 1) = ANY (v_worked)
+             OR pg_catalog.split_part(j.name, '-', 1) = ANY (v_expected))
+      ORDER BY j.start_after LIMIT 10000
+    ) q;
+    SELECT pg_catalog.count(*)::int INTO dead_letter_count
+    FROM (
+      SELECT 1 FROM crove_jobs.job j
+      WHERE j.state = 'failed' AND COALESCE(j.completed_on, j.created_on) > checked_at - v_window
+      LIMIT 10000
+    ) d;
+  END IF;
+
+  SELECT EXTRACT(EPOCH FROM checked_at - pg_catalog.max(h.beat_at))::double precision INTO worker_heartbeat_age_seconds
+  FROM crove_kernel.worker_heartbeat h;
+
+  RETURN NEXT;
+END $$;
+
+REVOKE ALL ON FUNCTION crove_kernel.health(integer) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION crove_kernel.health(integer) TO crove_prober;

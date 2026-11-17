@@ -52,6 +52,8 @@ const MACHINERY = new Set([
   'crove_kernel.auth_session_org',
   'crove_kernel.calendar_credential',
   'crove_kernel.credential',
+  // #3173 (meetings integrations C1): the sealed tokens of a member's meeting platform connection: reached only by definers, no login role grant.
+  'crove_kernel.meeting_platform_credential',
   // #2582: one-time PKCE authorization codes for the Ludy extension. Definer-only, no login role grant.
   'crove_kernel.extension_auth_code',
   // #2582: scoped extension tokens (one org, one member, 90 days, hashed). Definer-only, no login role grant.
@@ -59,12 +61,32 @@ const MACHINERY = new Set([
   'crove_kernel.oauth_state',
   'crove_kernel.inbound_drop',
   'crove_kernel.outbox_archive',
+  // #3310 (ADR-0053, C3b): the ids of events that wait while an app is off: reached only by definers of the worker, RLS enabled, no login role grant.
+  'crove_kernel.outbox_held',
   'crove_kernel.outbox_pending',
   'crove_kernel.refusal_tally',
   // The wrapped data key of one person as an org knows them (ADR-0017, #2640): definer-only, like crove_kernel.credential.
   'crove_kernel.subject_key',
   // The wrapped data key of a meeting's media (ADR-0047 point 4): definer-only, no login role grant.
   'crove_meetings.media_key',
+  // #3164 (meetings integrations A6): a member's own webhook for the minutes they publish (address and sealed secret) and its deliveries, a body that is wiped when the delivery settles:
+  // reached only by definers, no login role grant. Land before their tables (PENDING_TABLES).
+  'crove_meetings.hook_delivery',
+  'crove_meetings.member_hook',
+  // #3168 (meetings integrations B4): the sealed address of an org's minutes channel (a Slack or Teams webhook), read out only by the worker, for a queued post, through a definer. No login role grant.
+  'crove_meetings.chat_channel_target',
+  // #3168: the message of a queued post to a minutes channel, kept only while the post is queued and deleted when it settles: reached only by definers, no login role grant.
+  'crove_meetings.chat_post_body',
+  // #3510 (eSign Slice 2): org-level encrypted CA provider credentials (secret_envelope):
+  // reached only by definers with RLS enabled and zero login role grants. Land before its table (PENDING_TABLES).
+  'crove_sign.ca_connection',
+  // #3330 / #3323 (eSign): single-use hashed access tokens (token_sha256) and short-lived email OTP hashes (otp_sha256):
+  // reached only by definers with RLS enabled and zero login role grants. Land before their tables (PENDING_TABLES).
+  'crove_sign.signing_otp',
+  'crove_sign.signing_token',
+  // #3510 (eSign Slice 2): hashed template direct link capability tokens (token_sha256):
+  // reached only by definers with RLS enabled and zero login role grants. Land before its table (PENDING_TABLES).
+  'crove_sign.template_direct_link',
   'crove_social.chat_alert_target',
 ]);
 // Tables whose row factory (and MACHINERY entry, for definer-only tables) lands on main before the table itself. CI
@@ -89,11 +111,15 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_vy_result',
   'crove_meetings.live_line',
   'crove_meetings.meeting_link',
+  'crove_notes.attachment',
   'crove_notes.link',
   'crove_notes.note',
-  'crove_projects.project',
-  'crove_projects.project_member',
-  'crove_projects.project_task',
+  'crove_notes.note_template',
+  'crove_notes.note_version',
+  'crove_notes.notebook',
+  'crove_notes.todo_list',
+  'crove_sign.ca_connection',
+  'crove_sign.ca_signing_request',
 ]);
 // Tables whose rows belong to one member (ADR-0037, notes plan §3.6 and step N1): unlike saved_view and notification,
 // the system context reads only what the value's predicate selects (over alias t, operators schema-qualified so a
@@ -133,10 +159,14 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
       `NOT EXISTS (SELECT 1 FROM crove_kernel.agent a WHERE a.org_id OPERATOR(pg_catalog.=) t.org_id AND a.id OPERATOR(pg_catalog.=) t.agent_id AND a.kind OPERATOR(pg_catalog.=) 'member_vy' AND a.member_user_id OPERATOR(pg_catalog.<>) '${m}'::uuid)`,
   ],
   // The tables below are not in the catalog and are keyed to a user (ctx_user_id), which member mode does not have: it reads none of their rows.
+  ['crove_hr.candidate', () => 'false'], // HR is for owners and admins in a user context (ADR-0046); an agent context reads none.
+  ['crove_hr.department', () => 'false'], // HR, as above.
+  ['crove_hr.job_opening', () => 'false'], // HR, as above.
   ['crove_hr.payroll_bank_template', () => 'false'], // HR is for owners and admins in a user context (ADR-0046); an agent context reads none.
   ['crove_hr.payroll_dependent', () => 'false'], // HR, as above.
   ['crove_hr.payroll_employee', () => 'false'], // HR, as above.
   ['crove_hr.payroll_employment', () => 'false'], // HR, as above.
+  ['crove_hr.payroll_leave_entry', () => 'false'], // HR, as above.
   ['crove_hr.payroll_line', () => 'false'], // HR, as above.
   ['crove_hr.payroll_run', () => 'false'], // HR, as above.
   ['crove_kernel.calendar_connection', () => 'false'], // A member's own connection.
@@ -151,6 +181,8 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_kernel.conversation_read', () => 'false'], // Per member.
   ['crove_kernel.file', () => `t.source OPERATOR(pg_catalog.<>) ALL (ARRAY['meeting_audio', 'meeting_video'])`], // Meeting media rows are the meeting's readers' alone (#2874); a member Vy reads one only through its own run's meeting, which the matrix's Vy has none of.
   ['crove_kernel.inbox_item', () => 'false'], // Per member.
+  ['crove_kernel.meeting_platform_connection', () => 'false'], // A member's own connection to a meeting platform (meetings integrations C1, #3173).
+  ['crove_kernel.meeting_platform_recording', () => 'false'], // A member's own suggested and imported platform recordings, read by that member, a user (C1, #3173).
   ['crove_kernel.member_permission_override', () => 'false'], // Read by the member and the admins in a user context.
   ['crove_kernel.member_vy_memory', (m) => `t.member_user_id OPERATOR(pg_catalog.=) '${m}'::uuid`], // Catalog 'read': its own member's entries (the matrix seeds none for it).
   ['crove_kernel.member_vy_result', (m) => `t.member_user_id OPERATOR(pg_catalog.=) '${m}'::uuid`], // Its own member's results (the matrix seeds none for it).
@@ -160,23 +192,31 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_kernel.today_mail', () => 'false'], // Per member.
   ['crove_meetings.action_item', () => 'false'], // As above (action items, ADR-0047).
   ['crove_meetings.audio_segment', () => 'false'], // Meetings read through the recorder and the readers, who are users (ADR-0047).
+  ['crove_meetings.calendar_agenda', () => 'false'], // A member's own calendar meetings, read by that member, a user (meetings integrations B1, #3165).
+  ['crove_meetings.chat_post', () => 'false'], // The recorder's own log of minutes posted to a channel, read by the recorder, a user (meetings integrations B4, #3168).
   ['crove_meetings.live_chunk', () => 'false'], // The recorder's own live pieces, read by the recorder, a user (ADR-0052 L4a, #3109).
   ['crove_meetings.live_line', () => 'false'], // The live preview of a recording, read by the recorder, a user (ADR-0052 L4a, #3110).
   ['crove_meetings.meeting', () => 'false'], // As above.
   ['crove_meetings.meeting_link', () => 'false'], // As above (a link is read through its meeting's readers, L1 #2587).
+  ['crove_meetings.meeting_note', () => 'false'], // The recorder's own rough notes, read by the recorder, a user (meetings integrations A5, #3163).
   ['crove_meetings.meeting_reader', () => 'false'], // As above.
   ['crove_meetings.meeting_result', () => 'false'], // As above (summaries and decisions, ADR-0047).
   ['crove_meetings.meeting_video', () => 'false'], // As above.
   ['crove_meetings.transcript_segment', () => 'false'], // As above (transcript segments, ADR-0047).
   ['crove_meetings.translation', () => 'false'], // A machine translation, read by the member who asked for it, a user (meetings integrations E1, #3184).
   // Catalog 'read': the notes its member could read, own private and shared (the factory's private notes are the first owner's, not the member's, so only the shared ones).
+  ['crove_notes.attachment', () => 'false'], // Not in member_vy_table; reads through parent note with ctx_agent_id() IS NULL.
   [
     'crove_notes.link',
     (m) =>
       `EXISTS (SELECT 1 FROM crove_notes.note n WHERE n.org_id OPERATOR(pg_catalog.=) t.org_id AND n.id OPERATOR(pg_catalog.=) t.note_id AND (n.visibility OPERATOR(pg_catalog.=) 'org'::text OR n.author_user_id OPERATOR(pg_catalog.=) '${m}'::uuid))`,
   ],
   ['crove_notes.note', (m) => `(t.visibility OPERATOR(pg_catalog.=) 'org'::text OR t.author_user_id OPERATOR(pg_catalog.=) '${m}'::uuid)`],
+  ['crove_notes.note_template', () => 'false'], // Not in member_vy_table; keyed to ctx_user_id() per ADR-0037.
+  ['crove_notes.note_version', () => 'false'], // Not in member_vy_table; reads through parent note with ctx_agent_id() IS NULL.
+  ['crove_notes.notebook', () => 'false'], // Not in member_vy_table; keyed to ctx_user_id() per ADR-0037.
   ['crove_notes.todo', () => 'false'], // A to-do is its owner's alone.
+  ['crove_notes.todo_list', () => 'false'], // A personal to-do list is its owner's alone (ADR-0037).
   ['crove_social.notification', () => 'false'], // Per member.
   ['crove_social.notification_mail_off', () => 'false'], // Per member.
   ['crove_social.notification_mute', () => 'false'], // Per member.
@@ -218,15 +258,22 @@ const MEMBER_VY_UNREACHED = new Map<string, ReadonlyArray<'update' | 'delete'>>(
 ]);
 const AUTHOR_ONLY = new Map<string, string>([
   // Payroll (ADR-0046 point 4, #2530) is read and written by an owner or admin of the org alone, in a user context: the system context sees and changes none of it. This entry proves only that; that no other person reaches it is the "is for owners and admins only" case for every crove_hr table (#2715).
+  // Departments and lightweight recruiting (#3403): owners and admins alone, as every crove_hr table.
+  ['crove_hr.candidate', 'false'],
+  ['crove_hr.department', 'false'],
+  ['crove_hr.job_opening', 'false'],
   // The bank bulk-salary layout an org sets once (#2532): owners and admins alone, like the pay it exports.
   ['crove_hr.payroll_bank_template', 'false'],
   ['crove_hr.payroll_dependent', 'false'],
   ['crove_hr.payroll_employee', 'false'],
   ['crove_hr.payroll_employment', 'false'],
+  ['crove_hr.payroll_leave_entry', 'false'],
   // The pay runs and their lines (#2531): owners and admins alone, as the people they pay.
   ['crove_hr.payroll_line', 'false'],
   ['crove_hr.payroll_run', 'false'],
   // What Vy keeps about one member (ADR-0049 decision 3, stage A): the member's alone. The system context, an owner, an admin, another member and an org-chart agent read and write none; the cases are in member-vy-private.db.test.ts.
+  // A member's own recordings a meeting platform offered (meetings integrations C1, #3173): the member's alone; the worker's system context reads and writes nothing (its writers are definers).
+  ['crove_kernel.meeting_platform_recording', 'false'],
   ['crove_kernel.member_vy_memory', 'false'],
   // One run's result for one member (ADR-0049 decision 3): the member's alone, the system context's included; only named definers expire or purge it.
   ['crove_kernel.member_vy_result', 'false'],
@@ -234,6 +281,10 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_meetings.action_item', 'false'],
   // Meeting audio segments (ADR-0047 point 2): worker system context reads and writes nothing.
   ['crove_meetings.audio_segment', 'false'],
+  // A member's own calendar meetings (meetings integrations B1, #3165): the member's alone; worker system context reads and writes nothing (its one writer is a definer).
+  ['crove_meetings.calendar_agenda', 'false'],
+  // The recorder's own log of minutes posted to a channel (meetings integrations B4, #3168): the recorder's alone; the worker system context reads and writes nothing.
+  ['crove_meetings.chat_post', 'false'],
   // Live pieces of a recording (ADR-0052 L4a, #3109): worker system context reads and writes nothing.
   ['crove_meetings.live_chunk', 'false'],
   // The live preview of a recording (ADR-0052 L4a, #3110): worker system context reads and writes nothing.
@@ -242,6 +293,8 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_meetings.meeting', 'false'],
   // Meeting readers (ADR-0047 point 2): worker system context reads and writes nothing.
   ['crove_meetings.meeting_link', 'false'],
+  // The recorder's own rough notes (meetings integrations A5, #3163): the recorder's alone; worker system context reads and writes nothing.
+  ['crove_meetings.meeting_note', 'false'],
   ['crove_meetings.meeting_reader', 'false'],
   // Meeting results (ADR-0047 point 2): worker system context reads and writes nothing.
   ['crove_meetings.meeting_result', 'false'],
@@ -251,6 +304,11 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_meetings.transcript_segment', 'false'],
   // A machine translation of a summary (meetings integrations E1, #3184): the asker's alone; worker system context reads and writes nothing.
   ['crove_meetings.translation', 'false'],
+  // An attachment reads through its parent note: the system context sees shared notes' attachments only (ADR-0037).
+  [
+    'crove_notes.attachment',
+    "EXISTS (SELECT 1 FROM crove_notes.note n WHERE n.org_id OPERATOR(pg_catalog.=) t.org_id AND n.id OPERATOR(pg_catalog.=) t.note_id AND n.visibility OPERATOR(pg_catalog.=) 'org'::text)",
+  ],
   // A link reads through its parent: the system context sees the links of shared notes (the factory's parent).
   [
     'crove_notes.link',
@@ -258,8 +316,19 @@ const AUTHOR_ONLY = new Map<string, string>([
   ],
   // The system context reads shared notes (the factory's rows), for the export.
   ['crove_notes.note', "t.visibility OPERATOR(pg_catalog.=) 'org'::text"],
+  // The system context reads shared note templates (visibility = 'org'), never private ones (ADR-0037).
+  ['crove_notes.note_template', "t.visibility OPERATOR(pg_catalog.=) 'org'::text"],
+  // A note version reads through its parent note: the system context sees shared notes' snapshots only (ADR-0037).
+  [
+    'crove_notes.note_version',
+    "EXISTS (SELECT 1 FROM crove_notes.note n WHERE n.org_id OPERATOR(pg_catalog.=) t.org_id AND n.id OPERATOR(pg_catalog.=) t.note_id AND n.visibility OPERATOR(pg_catalog.=) 'org'::text)",
+  ],
+  // The system context reads shared notebooks (visibility = 'org'), never private ones (ADR-0037).
+  ['crove_notes.notebook', "t.visibility OPERATOR(pg_catalog.=) 'org'::text"],
   // A to-do is its owner's alone, the system context's included.
   ['crove_notes.todo', 'false'],
+  // A personal to-do list is its owner's alone, the system context's included (ADR-0037).
+  ['crove_notes.todo_list', 'false'],
 ]);
 // Tables whose nullable legal_entity_id scopes a row to an entity, NULL being an org-level row every member reads
 // (#1716). The value makes a row of org A's default entity: the table's trigger gives it the entity of the record it
@@ -302,6 +371,8 @@ const APPEND_ONLY = new Set<string>([
   'crove_finance.channel_settlement_line',
   // The household profile of an entity (#2517): a change of tax group, method or trades is a new row from its effective date, never an edit of an earlier one.
   'crove_finance.household_profile',
+  // #3330 / #3323 (eSign): hash-chained signing ledger per envelope (SELECT and INSERT only; no runtime role holds UPDATE or DELETE).
+  'crove_sign.signing_event',
 ]);
 const PRIVILEGE_DENIED = /permission denied for (table|relation)/;
 
@@ -371,6 +442,8 @@ const stockMonth = () => {
 };
 // A bank template (#2532) is unique per entity and name: each seeded one takes the next number.
 let bankTemplateSeq = 0;
+// A department (#3403) is unique per entity and name: each seeded one takes the next number.
+let hrDepartmentSeq = 0;
 // A pay run (#2531) is unique per entity and month: each seeded one takes the next month from January 2000.
 let payrollMonthSeq = 0;
 const payrollMonth = () => {
@@ -408,6 +481,16 @@ const calendarConnectionRow = (o: { id: string; owner: string }) => ({
   external_account: `rls-${tag()}@calendar.test`,
   display_name: 'RLS matrix calendar',
 });
+// A member's connection to a meeting platform (meetings integrations C1, #3173). One per (org, member, provider, account), so every row gets its own account; the rows belong to the owner, the user every
+// member-context actor enters as.
+const meetingPlatformConnectionRow = (o: { id: string; owner: string }) => ({
+  org_id: o.id,
+  id: randomUUID(),
+  user_id: o.owner,
+  provider: 'sandbox',
+  external_account: `rls-${tag()}@meeting-platform.test`,
+  display_name: 'RLS matrix meeting platform',
+});
 // A connected channel account (ADR-0025). One live connection per (org, provider, account), so every row gets its
 // own account id.
 const channelConnectionRow = (o: { id: string; owner: string }) => ({
@@ -419,6 +502,14 @@ const channelConnectionRow = (o: { id: string; owner: string }) => ({
   connected_by: o.owner,
 });
 // The org's team chat alert (#863): its kind and alert kinds; the sealed target is in chat_alert_target.
+const chatChannelRow = (o: { id: string; owner: string }) => ({
+  org_id: o.id,
+  id: randomUUID(),
+  kind: 'slack',
+  label: 'RLS matrix channel',
+  host: 'hooks.slack.com',
+  created_by: o.owner,
+});
 const chatAlertRow = (o: { id: string; owner: string }) => ({
   org_id: o.id,
   id: randomUUID(),
@@ -567,6 +658,46 @@ const notesLinkRow = (o: { id: string; owner: string; party: string }, noteId: s
   party_id: o.party,
   created_by: o.owner,
 });
+const notesAttachmentRow = (o: { id: string; owner: string }, noteId: string) => {
+  const id = randomUUID();
+  return {
+    org_id: o.id,
+    id,
+    note_id: noteId,
+    author_user_id: o.owner,
+    filename: 'rls-matrix.pdf',
+    content_type: 'application/pdf',
+    size_bytes: 128,
+    sha256: hex64(),
+    storage_key: `notes/${o.id}/${id}`,
+  };
+};
+const notesNotebookRow = (o: { id: string; owner: string }, visibility: 'org' | 'private') => ({
+  org_id: o.id,
+  id: randomUUID(),
+  author_user_id: o.owner,
+  visibility,
+  name: `RLS matrix notebook ${tag()}`,
+  sort_key: 'a0',
+});
+const notesTemplateRow = (o: { id: string; owner: string }, visibility: 'org' | 'private') => ({
+  org_id: o.id,
+  id: randomUUID(),
+  author_user_id: o.owner,
+  visibility,
+  name: `RLS matrix template ${tag()}`,
+  title: 'RLS matrix template note',
+  body: '',
+});
+const notesVersionRow = (o: { id: string; owner: string }, noteId: string) => ({
+  org_id: o.id,
+  id: randomUUID(),
+  note_id: noteId,
+  author_user_id: o.owner,
+  revision: 1,
+  title: 'RLS matrix note',
+  body: '',
+});
 // Projects on kernel tasks (ADR-0048, docs/plan/projects.md section 4.1, #2586): an active project owned by the org's owner.
 const projectsProjectRow = (o: { id: string; owner: string }) => ({
   org_id: o.id,
@@ -574,6 +705,86 @@ const projectsProjectRow = (o: { id: string; owner: string }) => ({
   name: `RLS matrix project ${tag()}`,
   owner_user_id: o.owner,
   status: 'active',
+});
+// eSign Slice 1 (docs/plan/esign.md section 2.1, #3330 / #3323): parent rows for crove_sign.* factories.
+const signEnvelopeRow = (o: { id: string; owner: string; file: string }) => {
+  const sha256 = hex64();
+  return {
+    org_id: o.id,
+    id: randomUUID(),
+    title: 'RLS matrix envelope',
+    status: 'draft',
+    routing_mode: 'parallel',
+    source_kind: 'standalone',
+    source_file_id: o.file,
+    source_storage_key: `org/${o.id}/${sha256}`,
+    source_generation: '1',
+    source_sha256: sha256,
+    inspect_status: 'pending',
+    created_by: o.owner,
+  };
+};
+const signSignerRow = (org: string, envelopeId: string) => ({
+  org_id: org,
+  id: randomUUID(),
+  envelope_id: envelopeId,
+  routing_order: 1,
+  role_label: 'Signer',
+  name: 'RLS matrix signer',
+  email: 'signer@rls.test',
+  delivery_mode: 'link',
+  require_email_otp: 'false',
+  status: 'waiting',
+});
+const signTokenRow = (org: string, envelopeId: string, signerId: string, createdBy: string) => ({
+  org_id: org,
+  id: randomUUID(),
+  envelope_id: envelopeId,
+  signer_id: signerId,
+  token_sha256: hex64(),
+  expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+  created_by: createdBy,
+});
+// eSign Slice 2 (docs/plan/esign.md section 2.2, #3510): parent rows for crove_sign.* template and CA factories.
+// One ca_connection per org is seeded first as admin (ca_connection is MACHINERY with zero login role grants, so
+// ca_signing_request reuses that seeded id instead of inserting a MACHINERY row inside login-role insert controls).
+const signCaConnectionOf = new Map<string, string>();
+const signCaConnectionRow = (o: { id: string; owner: string }) => ({
+  org_id: o.id,
+  id: randomUUID(),
+  provider: 'sandbox',
+  label: 'RLS matrix sandbox CA',
+  status: 'active',
+  key_id: 'rls-matrix',
+  secret_envelope: '\\x00',
+  created_by: o.owner,
+});
+const signTemplateRow = (o: { id: string; owner: string; file: string }) => {
+  const sha256 = hex64();
+  return {
+    org_id: o.id,
+    id: randomUUID(),
+    title: 'RLS matrix template',
+    routing_mode: 'parallel',
+    source_file_id: o.file,
+    source_storage_key: `org/${o.id}/${sha256}`,
+    source_generation: '1',
+    source_sha256: sha256,
+    inspect_status: 'passed',
+    status: 'active',
+    created_by: o.owner,
+  };
+};
+const signTemplateRoleRow = (org: string, templateId: string) => ({
+  org_id: org,
+  id: randomUUID(),
+  template_id: templateId,
+  role_key: 'r1',
+  signer_role: 'signer',
+  role_label: 'Signer',
+  routing_order: 1,
+  delivery_mode: 'link',
+  require_email_otp: 'false',
 });
 const journalEntry = (org: string, id: string): Row => ({
   table: 'crove_finance.journal_entry',
@@ -1542,6 +1753,19 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // #3403 (Phase 7 Stage 3): recruiting candidates, departments and job openings (owners and admins only, AUTHOR_ONLY).
+  'crove_hr.candidate': {
+    update: { set: 'display_name = display_name' },
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), display_name: 'RLS matrix candidate' } }),
+  },
+  'crove_hr.department': {
+    update: { set: 'name = name' },
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), name: `RLS matrix ${hrDepartmentSeq++}` } }),
+  },
+  'crove_hr.job_opening': {
+    update: { set: 'title = title' },
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), title: 'RLS matrix opening' } }),
+  },
   // #2532: the layout of one bank's bulk-salary file (columns in order with their headers, and the content text), in the entity's name (b_legal_entity). An entity keeps one template per bank, unique on (org, entity, name), so each seeded one takes its own name. The layout holds the six columns the file is made of (sequence, name, account, bank, amount, content), which the table's CHECK asks for. Owners and admins alone (AUTHOR_ONLY). Tenant roles update the name, the layout and the stamp only (never the entity or the creation); the probe assigns the name to itself.
   'crove_hr.payroll_bank_template': {
     update: { set: 'name = name' },
@@ -1588,6 +1812,17 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       return {
         setup: [{ table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: employee, display_name: 'RLS matrix' } }],
         row: { org_id: o.id, id: randomUUID(), employee_id: employee, effective_from: '2026-11-01', contract_type: 'indefinite', region: 'I', base_wage: '10000000' },
+      };
+    },
+  },
+  // #2540: monthly leave or timekeeping entry for one employee (owners and admins only, AUTHOR_ONLY).
+  'crove_hr.payroll_leave_entry': {
+    update: { set: 'updated_at = updated_at' },
+    make: (o) => {
+      const employee = randomUUID();
+      return {
+        setup: [{ table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: employee, display_name: 'RLS matrix' } }],
+        row: { org_id: o.id, id: randomUUID(), employee_id: employee, month: payrollMonth(), kind: 'annual_leave', days: '1' },
       };
     },
   },
@@ -2111,6 +2346,28 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     update: { set: 'lift_reason = lift_reason' },
     make: (o) => ({ row: { org_id: o.id, to_hash: hex64(), scope: 'all', reason: 'manual' } }),
   },
+  // #3173 (meetings integrations C1): a member's connection to a meeting platform, under the same own-row policy as a calendar connection; tenant roles update only the state columns (a column grant).
+  'crove_kernel.meeting_platform_connection': { update: { set: 'display_name = display_name' }, make: (o) => ({ row: meetingPlatformConnectionRow(o) }) },
+  // Definer-only machinery: the sealed tokens of a meeting platform connection, keyed by the connection's id.
+  'crove_kernel.meeting_platform_credential': {
+    make: (o) => {
+      const connection = meetingPlatformConnectionRow(o);
+      return {
+        setup: [{ table: 'crove_kernel.meeting_platform_connection', values: connection }],
+        row: { org_id: o.id, id: connection.id, key_id: 'rls-matrix', envelope: '\\x00' },
+      };
+    },
+  },
+  // A recording a meeting platform offered, suggested to its member: read by that member alone and written by definers only (tenant roles have no insert, update or delete).
+  'crove_kernel.meeting_platform_recording': {
+    make: (o) => {
+      const connection = meetingPlatformConnectionRow(o);
+      return {
+        setup: [{ table: 'crove_kernel.meeting_platform_connection', values: connection }],
+        row: { org_id: o.id, id: randomUUID(), connection_id: connection.id, user_id: o.owner, external_id: `rlsmatrix${tag()}`, started_at: new Date().toISOString() },
+      };
+    },
+  },
   // A member's availability for the inbox (CV3, #2306): available or away, which decides whom a new conversation is told to. One row per member (a unique
   // key), the owner the member-context probes enter as, so the seed holds it already; every member reads it, a member writes their own through its command.
   'crove_kernel.member_availability': {
@@ -2213,6 +2470,8 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     make: (o) => ({ row: { org_id: o.id, day: '2020-01-01', object_key: `outbox/v1/${o.id}/2020-01-01.jsonl`, sha256: 'a'.repeat(64), row_count: 1 } }),
   },
   'crove_kernel.outbox_event': { make: (o) => ({ row: { org_id: o.id, id: randomUUID(), type: 'rls.matrix', payload: '{}' } }) },
+  // #3310 (ADR-0053, C3b): an event that waits while its app is off; definer-only machinery.
+  'crove_kernel.outbox_held': { make: (o) => ({ row: { org_id: o.id, event_id: randomUUID(), module: 'social' } }) },
   'crove_kernel.outbox_pending': { make: (o) => ({ row: { org_id: o.id, event_id: randomUUID() } }) },
   'crove_kernel.party': { make: (o) => ({ row: { org_id: o.id, id: randomUUID(), name: 'RLS matrix party' } }) },
   'crove_kernel.proposal': {
@@ -2340,6 +2599,97 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // #3165 (meetings integrations B1): a member's own cached calendar meeting, written by one definer and read, linked and deleted by the member alone. Tenant roles may update only the link
+  // column (a column grant), so the update probes assign it to itself.
+  'crove_meetings.calendar_agenda': {
+    update: { set: 'meeting_id = meeting_id' },
+    make: (o) => {
+      const connection = calendarConnectionRow(o);
+      const start = new Date(Date.UTC(2030, 0, 1) + 3_600_000 * calendarHour++);
+      return {
+        setup: [{ table: 'crove_kernel.calendar_connection', values: connection }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          connection_id: connection.id,
+          user_id: o.owner,
+          external_id: `rlsmatrix${tag()}`,
+          title: 'RLS matrix meeting',
+          starts_at: start.toISOString(),
+          ends_at: new Date(start.getTime() + 1_800_000).toISOString(),
+          time_zone: 'Asia/Ho_Chi_Minh',
+        },
+      };
+    },
+  },
+  // #3168 (meetings integrations B4): an org's channel for minutes (a Slack or Teams webhook). Tenant data, no secret: every member reads it, owners and admins change it through the commands.
+  'crove_meetings.chat_channel': { make: (o) => ({ row: chatChannelRow(o) }) },
+  // Definer-only machinery: the sealed address of a minutes channel, one row per channel. The envelope is opaque bytes here; only the worker opens a real one, for a queued post.
+  'crove_meetings.chat_channel_target': {
+    make: (o) => {
+      const channel = chatChannelRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.chat_channel', values: channel }],
+        row: { org_id: o.id, channel_id: channel.id, key_id: 'rls-matrix', envelope: '\\x00' },
+      };
+    },
+  },
+  // #3168: the recorder's log of one click to post minutes to a channel (ids, state, hashes; never the text). Written and read by the recorder alone; no tenant role updates it (the worker's definer does).
+  'crove_meetings.chat_post': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      const channel = chatChannelRow(o);
+      return {
+        setup: [
+          { table: 'crove_meetings.meeting', values: meeting },
+          { table: 'crove_meetings.chat_channel', values: channel },
+        ],
+        row: { org_id: o.id, id: randomUUID(), meeting_id: meeting.id, channel_id: channel.id, user_id: o.owner, facts_key: '0'.repeat(64), text_hash: '1'.repeat(64) },
+      };
+    },
+  },
+  // Definer-only machinery (#3168): the message of a queued post, one row per post, deleted when the post settles. The body is the exact shape chat_body_ok accepts.
+  'crove_meetings.chat_post_body': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      const channel = chatChannelRow(o);
+      const post = { org_id: o.id, id: randomUUID(), meeting_id: meeting.id, channel_id: channel.id, user_id: o.owner, facts_key: '0'.repeat(64), text_hash: '1'.repeat(64) };
+      return {
+        setup: [
+          { table: 'crove_meetings.meeting', values: meeting },
+          { table: 'crove_meetings.chat_channel', values: channel },
+          { table: 'crove_meetings.chat_post', values: post },
+        ],
+        row: { org_id: o.id, post_id: post.id, body: JSON.stringify({ v: 1, lang: 'vi', title: 'RLS matrix', day: '2030-01-01', summary: '', decisions: [], items: [], link: null }) },
+      };
+    },
+  },
+  // #3164 (meetings integrations A6): one delivery of a member's minutes webhook, here a ping whose body carries the ids of its own row and no meeting data. Definer-only, in MACHINERY.
+  // It references the member's webhook of the same org.
+  'crove_meetings.hook_delivery': {
+    make: (o) => {
+      const hookId = randomUUID();
+      const id = randomUUID();
+      // A member has at most one webhook, and the member_hook factory's own row is the owner's: this delivery's webhook is another member's.
+      const member = o.freshUser();
+      return {
+        setup: [
+          { table: 'crove_kernel.tenant_member', values: { org_id: o.id, user_id: member, role: 'member' } },
+          {
+            table: 'crove_meetings.member_hook',
+            values: { org_id: o.id, id: hookId, user_id: member, url: 'https://hooks.example.com/ludy-minutes', secret_sealed: '{"keyId":"k1","envelope":"AAAAAAAAAAAAAAAA"}', secret_hint: 'whk_00000000' },
+          },
+        ],
+        row: {
+          org_id: o.id,
+          id,
+          hook_id: hookId,
+          type: 'ping',
+          body: JSON.stringify({ id, type: 'ping', created_at: '2026-11-14T03:00:00.000Z', org: o.id, data: {} }),
+        },
+      };
+    },
+  },
   // #3109 (ADR-0052 L4a): one live piece of a recording, named by its ciphertext file row; read, written and deleted by the recorder alone.
   'crove_meetings.live_chunk': {
     make: (o) => {
@@ -2420,6 +2770,17 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // #3163 (meetings integrations A5): the recorder's own rough notes of a meeting (the org's owner is the recorder of the factory's meeting); read, written and deleted by the recorder
+  // alone, so the system context reads none.
+  'crove_meetings.meeting_note': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: { org_id: o.id, id: randomUUID(), meeting_id: meeting.id, body: 'RLS matrix rough notes' },
+      };
+    },
+  },
   // #2575: member attendee reader of a meeting (ADR-0047 point 1, 2).
   'crove_meetings.meeting_reader': {
     make: (o) => {
@@ -2475,6 +2836,21 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // #3164 (meetings integrations A6): a member's own webhook for the minutes they publish (the org's owner is the member of the factory's row; at most one per member, so
+  // the row's id has a default and (org_id, user_id) is unique). Definer-only, in MACHINERY.
+  'crove_meetings.member_hook': {
+    make: (o) => ({
+      setup: [],
+      row: { org_id: o.id, user_id: o.owner, url: 'https://hooks.example.com/ludy-minutes', secret_sealed: '{"keyId":"k1","envelope":"AAAAAAAAAAAAAAAA"}', secret_hint: 'whk_00000000' },
+    }),
+  },
+  // #3578 (meetings): a minutes template the org wrote. Every member of the org reads it; a RESTRICTIVE write policy lets an owner or admin write it (the factory's owner is one), and the
+  // table grants no DELETE to a login role. Its factory landed before the table (#3625); the table is on main with the migration of #3578.
+  'crove_meetings.minutes_template': {
+    make: (o) => ({
+      row: { org_id: o.id, id: randomUUID(), name: `RLS matrix template ${tag()}`, sections: JSON.stringify([{ key: 's1', title: 'Nội dung', hint: '' }]), created_by: o.owner },
+    }),
+  },
   // #2575: timestamped transcript segment of a meeting (ADR-0047 point 1, 3).
   'crove_meetings.transcript_segment': {
     make: (o) => {
@@ -2521,6 +2897,20 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // as. Each also seeds a private row beside the one it probes, so the system context's read count (AUTHOR_ONLY) fails
   // if the system reads a private row. A link to a shared note (its setup: a link to a private note), so the system
   // keeps a link to read; it links notes only, since `todo` arrives after `link` (N4 after N2).
+  'crove_notes.attachment': {
+    make: (o) => {
+      const shared = notesNoteRow(o, 'org');
+      const hidden = notesNoteRow(o, 'private');
+      return {
+        setup: [
+          { table: 'crove_notes.note', values: shared },
+          { table: 'crove_notes.note', values: hidden },
+          { table: 'crove_notes.attachment', values: notesAttachmentRow(o, hidden.id) },
+        ],
+        row: notesAttachmentRow(o, shared.id),
+      };
+    },
+  },
   'crove_notes.link': {
     make: (o) => {
       const shared = notesNoteRow(o, 'org');
@@ -2537,9 +2927,31 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   },
   // A shared note, so the system context keeps a row to read, beside a private one (its setup).
   'crove_notes.note': { make: (o) => ({ setup: [{ table: 'crove_notes.note', values: notesNoteRow(o, 'private') }], row: notesNoteRow(o, 'org') }) },
+  // A shared note template, so the system context keeps a row to read, beside a private one (its setup).
+  'crove_notes.note_template': { make: (o) => ({ setup: [{ table: 'crove_notes.note_template', values: notesTemplateRow(o, 'private') }], row: notesTemplateRow(o, 'org') }) },
+  'crove_notes.note_version': {
+    make: (o) => {
+      const shared = notesNoteRow(o, 'org');
+      const hidden = notesNoteRow(o, 'private');
+      return {
+        setup: [
+          { table: 'crove_notes.note', values: shared },
+          { table: 'crove_notes.note', values: hidden },
+          { table: 'crove_notes.note_version', values: notesVersionRow(o, hidden.id) },
+        ],
+        row: notesVersionRow(o, shared.id),
+      };
+    },
+  },
+  // A shared notebook, so the system context keeps a row to read, beside a private one (its setup).
+  'crove_notes.notebook': { make: (o) => ({ setup: [{ table: 'crove_notes.notebook', values: notesNotebookRow(o, 'private') }], row: notesNotebookRow(o, 'org') }) },
   // Private by nature: the system context reads none.
   'crove_notes.todo': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), owner_user_id: o.owner, title: 'RLS matrix to-do', time_zone: 'Asia/Ho_Chi_Minh', sort_key: 'a0' } }),
+  },
+  // Private by nature: the system context reads none.
+  'crove_notes.todo_list': {
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), owner_user_id: o.owner, name: `RLS matrix list ${tag()}`, sort_key: 'a0' } }),
   },
   // Projects and task board (ADR-0048, docs/plan/projects.md section 4.1 and 6, #2586): org-visible under apply_tenant_rls.
   'crove_projects.project': {
@@ -2564,6 +2976,219 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           { table: 'crove_kernel.task', values: task },
         ],
         row: { org_id: o.id, id: randomUUID(), project_id: project.id, task_id: task.id },
+      };
+    },
+  },
+  // eSign Slice 1 (docs/plan/esign.md section 2.1, #3330 / #3323): Vy's tainted field proposals and clause summaries, tied to an envelope.
+  'crove_sign.ai_analysis': {
+    make: (o) => {
+      const envelope = signEnvelopeRow(o);
+      return {
+        setup: [{ table: 'crove_sign.envelope', values: envelope }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          envelope_id: envelope.id,
+          source_sha256: envelope.source_sha256,
+          status: 'pending',
+          proposed_fields_json: '[]',
+          prompt_version: 'v1',
+        },
+      };
+    },
+  },
+  // Definer-only machinery (eSign Slice 2c, #3510): org-level remote CA credentials with encrypted secret_envelope.
+  'crove_sign.ca_connection': {
+    make: (o) => {
+      const row = signCaConnectionRow(o);
+      if (!signCaConnectionOf.has(o.id)) signCaConnectionOf.set(o.id, row.id);
+      return { row };
+    },
+  },
+  // eSign Slice 2c (#3510): asynchronous external CA signing transaction log bound to an envelope, signer, and CA connection.
+  'crove_sign.ca_signing_request': {
+    make: (o) => {
+      const envelope = signEnvelopeRow(o);
+      const signer = signSignerRow(o.id, envelope.id);
+      let caConnectionId = signCaConnectionOf.get(o.id);
+      const setup: Row[] = [
+        { table: 'crove_sign.envelope', values: envelope },
+        { table: 'crove_sign.signer', values: signer },
+      ];
+      if (!caConnectionId) {
+        const caConnection = signCaConnectionRow(o);
+        caConnectionId = caConnection.id;
+        signCaConnectionOf.set(o.id, caConnectionId);
+        setup.push({ table: 'crove_sign.ca_connection', values: caConnection });
+      }
+      return {
+        setup,
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          envelope_id: envelope.id,
+          signer_id: signer.id,
+          ca_connection_id: caConnectionId,
+          provider: 'sandbox',
+          idempotency_key: randomUUID(),
+          digest_sha256: hex64(),
+          status: 'pending',
+          retry_safety: 'reconcile_only',
+        },
+      };
+    },
+  },
+  // eSign Slice 1 (#3330 / #3323): a signing packet whose source_file_id is a logical ref to crove_kernel.file (no cross-module FK).
+  'crove_sign.envelope': { make: (o) => ({ row: signEnvelopeRow(o) }) },
+  // eSign Slice 1 (#3330 / #3323): placed signature/input field on a PDF page assigned to one signer.
+  'crove_sign.field': {
+    make: (o) => {
+      const envelope = signEnvelopeRow(o);
+      const signer = signSignerRow(o.id, envelope.id);
+      return {
+        setup: [
+          { table: 'crove_sign.envelope', values: envelope },
+          { table: 'crove_sign.signer', values: signer },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          envelope_id: envelope.id,
+          signer_id: signer.id,
+          field_type: 'signature',
+          page_number: 1,
+          x_norm: '0.100000',
+          y_norm: '0.100000',
+          w_norm: '0.300000',
+          h_norm: '0.080000',
+          required: 'true',
+          proposed_by_ai: 'false',
+        },
+      };
+    },
+  },
+  // eSign Slice 1 (#3330 / #3323): recipient required to sign an envelope.
+  'crove_sign.signer': {
+    make: (o) => {
+      const envelope = signEnvelopeRow(o);
+      return {
+        setup: [{ table: 'crove_sign.envelope', values: envelope }],
+        row: signSignerRow(o.id, envelope.id),
+      };
+    },
+  },
+  // eSign Slice 1 (#3330 / #3323): append-only, hash-chained audit event per envelope (unique seq per envelope).
+  'crove_sign.signing_event': {
+    make: (o) => {
+      const envelope = signEnvelopeRow(o);
+      return {
+        setup: [{ table: 'crove_sign.envelope', values: envelope }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          envelope_id: envelope.id,
+          seq: 1,
+          event_type: 'envelope_created',
+          actor_type: 'user',
+          actor_label: 'RLS matrix owner',
+          document_sha256: envelope.source_sha256,
+          event_hash: hex64(),
+          payload_json: '{}',
+        },
+      };
+    },
+  },
+  // Definer-only machinery (#3330 / #3323): short-lived hashed email OTP records bound to a signer and signing token.
+  'crove_sign.signing_otp': {
+    make: (o) => {
+      const envelope = signEnvelopeRow(o);
+      const signer = signSignerRow(o.id, envelope.id);
+      const token = signTokenRow(o.id, envelope.id, signer.id, o.owner);
+      return {
+        setup: [
+          { table: 'crove_sign.envelope', values: envelope },
+          { table: 'crove_sign.signer', values: signer },
+          { table: 'crove_sign.signing_token', values: token },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          signer_id: signer.id,
+          signing_token_id: token.id,
+          email: 'signer@rls.test',
+          otp_sha256: hex64(),
+          expires_at: new Date(Date.now() + 600_000).toISOString(),
+          attempts: 0,
+        },
+      };
+    },
+  },
+  // Definer-only machinery (#3330 / #3323): hashed single-use access capabilities backing /-/sign#<token>.
+  'crove_sign.signing_token': {
+    make: (o) => {
+      const envelope = signEnvelopeRow(o);
+      const signer = signSignerRow(o.id, envelope.id);
+      return {
+        setup: [
+          { table: 'crove_sign.envelope', values: envelope },
+          { table: 'crove_sign.signer', values: signer },
+        ],
+        row: signTokenRow(o.id, envelope.id, signer.id, o.owner),
+      };
+    },
+  },
+  // eSign Slice 2a (#3510): reusable signing template whose source_file_id is a logical ref to crove_kernel.file.
+  'crove_sign.template': { make: (o) => ({ row: signTemplateRow(o) }) },
+  // Definer-only machinery (eSign Slice 2a, #3510): hashed capability tokens (token_sha256) for public self-service template links.
+  'crove_sign.template_direct_link': {
+    make: (o) => {
+      const template = signTemplateRow(o);
+      return {
+        setup: [{ table: 'crove_sign.template', values: template }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          template_id: template.id,
+          token_sha256: hex64(),
+          enabled: 'true',
+          created_by: o.owner,
+        },
+      };
+    },
+  },
+  // eSign Slice 2a (#3510): normalized PDF field placeholder tied to a template and one template role.
+  'crove_sign.template_field': {
+    make: (o) => {
+      const template = signTemplateRow(o);
+      const templateRole = signTemplateRoleRow(o.id, template.id);
+      return {
+        setup: [
+          { table: 'crove_sign.template', values: template },
+          { table: 'crove_sign.template_role', values: templateRole },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          template_id: template.id,
+          template_role_id: templateRole.id,
+          field_type: 'signature',
+          page_number: 1,
+          x_norm: '0.100000',
+          y_norm: '0.100000',
+          w_norm: '0.300000',
+          h_norm: '0.080000',
+          required: 'true',
+        },
+      };
+    },
+  },
+  // eSign Slice 2a (#3510): reusable signer role preset on a template.
+  'crove_sign.template_role': {
+    make: (o) => {
+      const template = signTemplateRow(o);
+      return {
+        setup: [{ table: 'crove_sign.template', values: template }],
+        row: signTemplateRoleRow(o.id, template.id),
       };
     },
   },

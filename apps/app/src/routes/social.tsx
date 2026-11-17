@@ -1,7 +1,7 @@
 // Crove Social home: what goes out next (an agenda by day), what waits for review, drafts, and what went out.
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
 import { Badge } from '@crove/ui/components/badge';
 import { Button, buttonVariants } from '@crove/ui/components/button';
@@ -17,6 +17,7 @@ import { MediaTagEditor, TagFilter, Thumb, sizeLabel, useLibrary, type LibraryIt
 import { PEXELS_URL, StockCredit, StockPhotoSearch, pexelsHref, useStockPhotosEnabled } from '../components/social-stock-photos.tsx';
 import { SocialBoard } from '../components/social-board.tsx';
 import { OpenComments } from '../components/social-activity.tsx';
+import { UnansweredComments, UnansweredProvider } from '../components/social-unanswered.tsx';
 import { useChannelScope } from '../components/social-channel-access.tsx';
 import { SocialCalendar } from '../components/social-calendar.tsx';
 import { SavedViews } from '../components/social-saved-views.tsx';
@@ -47,7 +48,7 @@ import { StoryLine, StoryTotals } from '../components/social-story-metrics.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient, uploadFiles } from '../lib/api.ts';
 import { getConfig } from '../lib/auth.ts';
-import { dayKey, dayRange, providerName, SOCIAL_TABS, variantStatusKey, variantTone, type SocialSearch, type SocialTab } from '../lib/social.ts';
+import { dayKey, dayRange, defaultSocialTab, providerName, SOCIAL_TABS, variantStatusKey, variantTone, type SocialSearch, type SocialTab } from '../lib/social.ts';
 import { pollEvery, SAFETY_POLL_MS, useStreamLive } from '../lib/stream-hook.ts';
 
 type Tab = SocialTab;
@@ -85,7 +86,7 @@ function ChannelChips({ post, names }: { post: Post; names: Map<string, string> 
   );
 }
 
-function PostRow({ post, slug, names, labels, right }: { post: Post; slug: string; names: Map<string, string>; labels: readonly SocialLabel[]; right?: string }) {
+export function PostRow({ post, slug, names, labels, right }: { post: Post; slug: string; names: Map<string, string>; labels: readonly SocialLabel[]; right?: string }) {
   const t = useTranslations('social');
   return (
     <Link
@@ -100,6 +101,7 @@ function PostRow({ post, slug, names, labels, right }: { post: Post; slug: strin
       </div>
       <div className="flex shrink-0 items-center gap-2">
         <OpenComments count={post.openComments} />
+        <UnansweredComments postId={post.id} />
         {isOverdue(post, Date.now()) && <Badge variant="destructive">{t('assign.overdue')}</Badge>}
         {right && <span className="text-xs text-subtle-foreground tabular-nums">{right}</span>}
       </div>
@@ -111,7 +113,7 @@ function PostRow({ post, slug, names, labels, right }: { post: Post; slug: strin
 // label chosen (#639), only the posts that carry it, on the screen and in the export. With the outside switch on
 // (#1054), the posts the channels published outside Crove count in the totals and show in the table with their chip;
 // they carry no label, so a label filter turns the switch off.
-function Metrics({ slug, names, labelId }: { slug: string; names: Map<string, string>; labelId: string | undefined }) {
+function Metrics({ slug, names, labelId, action }: { slug: string; names: Map<string, string>; labelId: string | undefined; action?: ReactNode }) {
   const t = useTranslations('social');
   const f = useFormat();
   const [days, setDays] = useState(30);
@@ -179,7 +181,7 @@ function Metrics({ slug, names, labelId }: { slug: string; names: Map<string, st
       <FollowerAudiences days={days} names={names} />
       <ProfilePerformance days={days} names={names} />
       {data.length === 0 && extra.length === 0 ? (
-        <Empty title={t('empty.metrics')} hint={t('metricsHint')} />
+        <Empty title={t('empty.metrics')} hint={t('metricsHint')} action={action} />
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -211,7 +213,7 @@ function Metrics({ slug, names, labelId }: { slug: string; names: Map<string, st
           {totals.data && totals.data.channels.length > 0 && <ChannelTotals current={totals.data.channels} previous={previous?.channels ?? []} days={days} names={names} />}
           {data.length >= 500 && <p className="text-xs text-subtle-foreground">{t(totals.data ? 'metricsCapped' : 'metricsCappedPartial')}</p>}
           <BestTimes rows={data} names={names} />
-      <WhatWorks slug={slug} days={days} labelId={labelId} names={names} />
+          <WhatWorks slug={slug} days={days} labelId={labelId} names={names} />
           <TopPosts rows={data} names={names} slug={slug} />
           <div className="overflow-x-auto rounded-xl border">
             <table className="w-full text-sm">
@@ -430,7 +432,16 @@ function Library({ slug, canWrite }: { slug: string; canWrite: boolean }) {
       ) : library.error ? (
         <ErrorText>{errorMessage(library.error)}</ErrorText>
       ) : items.length === 0 ? (
-        <Empty title={tag ? t('libraryNoTagMatch') : search.trim() ? t('libraryNoMatch') : archived ? t('libraryArchivedEmpty') : t('libraryEmpty')} />
+        <Empty
+          title={tag ? t('libraryNoTagMatch') : search.trim() ? t('libraryNoMatch') : archived ? t('libraryArchivedEmpty') : t('libraryEmpty')}
+          action={
+            canWrite && !archived && !tag && !search.trim() ? (
+              <Button size="lg" disabled={upload.isPending} onClick={() => picker.current?.click()}>
+                {t('libraryAdd')}
+              </Button>
+            ) : undefined
+          }
+        />
       ) : (
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
           <ul className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-5">
@@ -530,8 +541,11 @@ function Agenda({
   labels,
   picked,
   onPick,
+  action,
 }: {
   posts: Post[];
+  // The one action of an empty agenda (#3654).
+  action?: ReactNode;
   slug: string;
   names: Map<string, string>;
   labels: readonly SocialLabel[];
@@ -545,7 +559,7 @@ function Agenda({
   const items = posts
     .flatMap((post) => post.variants.filter((v) => (AGENDA_STATUSES as readonly string[]).includes(v.status) && v.effectiveAt).map((v) => ({ post, v })))
     .sort((a, b) => Date.parse(a.v.effectiveAt as string) - Date.parse(b.v.effectiveAt as string));
-  if (items.length === 0) return <Empty title={t('agendaEmpty')} hint={t('agendaEmptyHint')} />;
+  if (items.length === 0) return <Empty title={t('agendaEmpty')} hint={t('agendaEmptyHint')} action={action} />;
   const days = new Map<string, Array<{ post: Post; v: Variant }>>();
   for (const item of items) {
     const key = dayKey(item.v.effectiveAt as string);
@@ -612,13 +626,27 @@ export function SocialPage() {
   const live = useStreamLive();
   const search: SocialSearch = useSearch({ strict: false });
   const navigate = useNavigate();
-  const tab: Tab = search.tab ?? 'upcoming';
+  // The Review tab's count, whatever list is open.
+  const review = useQuery({ ...orpc.social.posts.list.queryOptions({ input: { stage: 'review', limit: 200 } }), refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS) });
+  // Posts with a channel that failed, needs a person or waits on its channel (#579): their count on the tab.
+  const attention = useQuery({ ...orpc.social.posts.list.queryOptions({ input: { stage: 'attention', limit: 200 } }), refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS) });
+  // With no tab in the address the page opens on what waits for a person (#3654): the posts in review, else the posts that
+  // failed or need someone, else the schedule. Read once the two counts are in, then kept for the visit, so approving
+  // the last post does not move the screen under the reviewer; the schedule tab is asked for by name in the address.
+  const [landed, setLanded] = useState<Tab | null>(null);
+  useEffect(() => {
+    // Not while either count is still being read: a cached count from an earlier visit may be stale (a post just sent to review).
+    if (landed !== null || review.isPending || attention.isPending || review.isFetching || attention.isFetching) return;
+    setLanded(defaultSocialTab({ review: review.data?.length ?? 0, attention: attention.data?.length ?? 0 }));
+  }, [landed, review.isPending, attention.isPending, review.isFetching, attention.isFetching, review.data, attention.data]);
+  const resolving = !search.tab && landed === null;
+  const tab: Tab = search.tab ?? landed ?? 'upcoming';
   // Changes the address, so the back button and a shared link keep the list; replaces rather than piles up history.
   const setSearch = useCallback(
     (next: { [K in keyof SocialSearch]?: SocialSearch[K] | undefined }) => void navigate({ to: '/o/$slug/social', params: { slug }, search: (prev: SocialSearch) => clean({ ...prev, ...next }), replace: true }),
     [navigate, slug],
   );
-  const setTab = (next: Tab) => setSearch({ tab: next === 'upcoming' ? undefined : next });
+  const setTab = (next: Tab) => setSearch({ tab: next });
   // The search box writes the address a moment after typing stops.
   const [text, setText] = useState(search.q ?? '');
   // The address changed from outside (back, a link, Clear): the box follows, unless it already says the same.
@@ -643,7 +671,9 @@ export function SocialPage() {
   const me = useQuery(orpc.me.get.queryOptions());
   const role = me.data?.orgs.find((o) => o.slug === slug)?.role;
   const canWrite = role === 'owner' || role === 'admin' || role === 'member';
-  const upcoming = useQuery({ ...orpc.social.posts.list.queryOptions({ input: { ...range, ...filters, limit: 200 } }), enabled: tab === 'upcoming', refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS) });
+  // Only owners and admins connect channels (#3651): a member is told whom to ask, with no button they cannot use.
+  const canConnect = role === 'owner' || role === 'admin';
+  const upcoming = useQuery({ ...orpc.social.posts.list.queryOptions({ input: { ...range, ...filters, limit: 200 } }), enabled: tab === 'upcoming' && !resolving, refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS) });
   const listTab: ListTab | null = tab === 'review' || tab === 'attention' || tab === 'drafts' || tab === 'done' || tab === 'archived' ? tab : null;
   // The server filters and pages (#574); a page at a time, newest change first.
   const list = useInfiniteQuery({
@@ -666,10 +696,6 @@ export function SocialPage() {
     enabled: listTab !== null || tab === 'board',
     refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS),
   });
-  // The Review tab's count, whatever list is open.
-  const review = useQuery({ ...orpc.social.posts.list.queryOptions({ input: { stage: 'review', limit: 200 } }), refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS) });
-  // Posts with a channel that failed, needs a person or waits on its channel (#579): their count on the tab.
-  const attention = useQuery({ ...orpc.social.posts.list.queryOptions({ input: { stage: 'attention', limit: 200 } }), refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS) });
   const names = new Map((channels.data ?? []).map((c) => [c.id, c.displayName]));
   const noChannels = channels.isSuccess && channels.data.length === 0;
 
@@ -685,6 +711,24 @@ export function SocialPage() {
   const [picked, setPicked] = useState<Set<string>>(new Set());
   useEffect(() => setPicked(new Set()), [tab, search.channel, search.label, search.q, search.from, search.to, search.assignee, search.author]);
   const canDecide = role === 'owner' || role === 'admin';
+  // The one action of an empty list (#3654): write a post (the first one, or another), or connect the first channel; none for
+  // a viewer, who can do neither.
+  const postAction = (first: boolean): ReactNode =>
+    !canWrite ? undefined : noChannels ? (
+      canDecide ? (
+        <Link to="/o/$slug/social/channels" params={{ slug }} className={buttonVariants({ size: 'lg' })}>
+          {t('connectFirst')}
+        </Link>
+      ) : undefined
+    ) : (
+      <Link to="/o/$slug/social/new" params={{ slug }} className={buttonVariants({ size: 'lg' })}>
+        {t(first ? 'composeFirst' : 'compose')}
+      </Link>
+    );
+  const clearFilters = () => {
+    setText('');
+    setSearch({ channel: undefined, label: undefined, q: undefined, from: undefined, to: undefined, assignee: undefined, author: undefined });
+  };
   // Moving by days or hours (#945) is for owners and admins, like a single reschedule; the agenda offers only that.
   // Members and above send drafts to review in bulk on the Drafts and Attention lists (#1178); owners and admins publish
   // the failed channels there again (#1456).
@@ -791,13 +835,18 @@ export function SocialPage() {
         <Card className="mb-6 flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-sm font-medium text-foreground">{t('noChannelsTitle')}</p>
-            <p className="mt-1 text-sm text-muted-foreground">{t('noChannelsHint')}</p>
+            <p className="mt-1 text-sm text-muted-foreground">{t(role !== undefined && !canConnect ? 'noChannelsMember' : 'noChannelsHint')}</p>
           </div>
-          <Link to="/o/$slug/social/channels" params={{ slug }} className={buttonVariants({ size: 'lg' })}>
-            {t('connectFirst')}
-          </Link>
+          {canConnect && (
+            <Link to="/o/$slug/social/channels" params={{ slug }} className={buttonVariants({ size: 'lg' })}>
+              {t('connectFirst')}
+            </Link>
+          )}
         </Card>
       )}
+      {resolving ? (
+        <Spinner />
+      ) : (
       <Tabs className="gap-4" value={tab} onValueChange={(value) => setTab(value as Tab)}>
         {/* Nine tabs do not fit on one line at phone width: they wrap, so the page never scrolls sideways (#1043). The
             active tab's underline sits at the foot of its own tab, so on a first row it is not left in the gap (#1230). */}
@@ -813,10 +862,11 @@ export function SocialPage() {
         {/* Named filters, private or shared with the team (#1300): applied in one click, the address takes them. */}
         {postFilters && (
           <SavedViews
-            search={search}
+            // The tab on screen, which the address may not name (#3654): a view saved here keeps it.
+            search={{ ...search, tab }}
             members={members}
             canShare={canWrite}
-            onApply={(next) => void navigate({ to: '/o/$slug/social', params: { slug }, search: next, replace: true })}
+            onApply={(next) => void navigate({ to: '/o/$slug/social', params: { slug }, search: { tab: 'upcoming' as const, ...next }, replace: true })}
           />
         )}
         {(postFilters || labelFilter) && (
@@ -900,7 +950,7 @@ export function SocialPage() {
           ) : upcoming.error ? (
             <ErrorText>{errorMessage(upcoming.error)}</ErrorText>
           ) : (
-            <Agenda posts={upcoming.data ?? []} slug={slug} names={names} labels={labelList} picked={agendaActions.length > 0 ? picked : null} onPick={setPicked} />
+            <Agenda posts={upcoming.data ?? []} slug={slug} names={names} labels={labelList} picked={agendaActions.length > 0 ? picked : null} onPick={setPicked} action={postAction(false)} />
           )}
         </TabsContent>
         <TabsContent value="calendar">
@@ -990,7 +1040,7 @@ export function SocialPage() {
         <TabsContent value="metrics">
           <div className="space-y-4">
             <GoalsCard channels={channels.data ?? []} />
-            <Metrics slug={slug} names={names} labelId={search.label} />
+            <Metrics slug={slug} names={names} labelId={search.label} action={postAction(false)} />
             <TeamReport key={slug} />
             <ReportLinks channels={channels.data ?? []} />
             <ReportSchedules channels={channels.data ?? []} />
@@ -1024,8 +1074,28 @@ export function SocialPage() {
                 ) : list.error && rows.length === 0 ? (
                   <ErrorText>{errorMessage(list.error)}</ErrorText>
                 ) : rows.length === 0 ? (
-                  <Empty title={filtered ? t('filters.noMatch') : t(`empty.${id}`)} />
+                  <Empty
+                    title={filtered ? t('filters.noMatch') : t(`empty.${id}`)}
+                    action={
+                      filtered ? (
+                        <Button size="lg" onClick={clearFilters}>
+                          {t('filters.clear')}
+                        </Button>
+                      ) : id === 'attention' ? (
+                        <Button size="lg" onClick={() => setTab('upcoming')}>
+                          {t('seeSchedule')}
+                        </Button>
+                      ) : id === 'archived' ? (
+                        <Button size="lg" onClick={() => setTab('done')}>
+                          {t('seePublished')}
+                        </Button>
+                      ) : (
+                        postAction(id === 'done')
+                      )
+                    }
+                  />
                 ) : (
+                  <UnansweredProvider posts={rows}>
                   <div className="space-y-2">
                     {listActions.length > 0 && (
                       <>
@@ -1047,6 +1117,7 @@ export function SocialPage() {
                       </div>
                     ))}
                   </div>
+                  </UnansweredProvider>
                 )}
                 {list.hasNextPage && (
                   <div className="mt-4 flex justify-center">
@@ -1060,6 +1131,7 @@ export function SocialPage() {
           </TabsContent>
         ))}
       </Tabs>
+      )}
     </>
   );
 }

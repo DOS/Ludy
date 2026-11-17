@@ -38,7 +38,8 @@ test('the AI meter says AI is off, the Agents page shows the month by feature, a
         { slug, feature, module, amount },
       );
     }
-    await page.getByRole('navigation').getByRole('link', { name: 'Sơ đồ và AI' }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Ludy AI', exact: true }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Ngân sách AI' }).click();
     await expect(page.getByRole('heading', { name: 'Dùng AI tháng này' })).toBeVisible();
     const rows = page.getByTestId('ai-use-feature');
     await expect(rows).toHaveCount(2);
@@ -65,6 +66,6 @@ test('the AI meter says AI is off, the Agents page shows the month by feature, a
     await page.goto(`/o/${slug}/inbox`);
     await page.locator('input[type=file]').setInputFiles(INVOICE);
     await expect(page.getByRole('link', { name: SELLER })).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByTestId('recent-file').filter({ hasText: 'einvoice-basic.xml' })).toContainText('Chờ duyệt');
+    await expect(page.getByTestId('recent-file')).toHaveCount(0);
   });
 });

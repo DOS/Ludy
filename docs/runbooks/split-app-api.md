@@ -44,6 +44,7 @@ The repository names no deployment's address. Set these in the static host's pro
 |---|---|
 | `VITE_API_URL` | The API's origin (required for a split; unset builds the same-origin app). |
 | `VITE_AUTH_URL` | Supabase Auth's URL when it is not the API's (its origin is allowed in the policy below). Default: the API's origin. |
+| `VITE_HOSTED_LOGIN_ORIGIN` | The origin of the identity provider's hosted login token endpoint (`AUTH_HOSTED_LOGIN_TOKEN_URL`, [the contract](../contracts/hosted-login.md)), which the browser calls; its CORS rule must allow the app's origin. |
 | `VITE_STORAGE_ORIGIN` | The bucket's public origin (`S3_PUBLIC_ENDPOINT`) when files go to and from it by presigned URL. R2 and any `S3_PRESIGNED_URLS=false` setup need none. The bucket's CORS rule must allow the app's origin. |
 | `VITE_TURNSTILE` | `true` when the booking page shows Cloudflare Turnstile (`TURNSTILE_SITE_KEY`). |
 

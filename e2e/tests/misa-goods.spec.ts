@@ -45,8 +45,8 @@ test('set the MISA codes of a stock account, book a stock line, and export it in
   });
 
   await test.step('upload the e-invoice, put its first line on 156 and approve it', async () => {
-    await nav.getByRole('link', { name: 'Trang chủ', exact: true }).click();
-    await nav.getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await nav.getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ }).click();
     await page.locator('input[type=file]').setInputFiles(INVOICE);
     await expect(page.getByRole('link', { name: SELLER })).toBeVisible({ timeout: 60_000 });
     await page.getByRole('link', { name: SELLER }).click();
@@ -65,10 +65,11 @@ test('set the MISA codes of a stock account, book a stock line, and export it in
   });
 
   await test.step('the goods file holds the stock line with the codes; the services file the other lines', async () => {
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Bút toán' }).click();
     let download = page.waitForEvent('download');
-    await page.getByRole('button', { name: 'Xuất chứng từ mua hàng nhập kho cho MISA' }).click();
+    await page.getByRole('button', { name: 'Xuất sổ nhật ký' }).click();
+    await page.getByRole('menuitem', { name: 'Xuất chứng từ mua hàng nhập kho cho MISA' }).click();
     let file = await download;
     expect(file.suggestedFilename()).toBe(`ludy-misa-mua-hang-nhap-kho-${slug}.xlsx`);
     const goods = await sheetOf(file, 'Chứng từ mua hàng nhập kho');
@@ -83,7 +84,8 @@ test('set the MISA codes of a stock account, book a stock line, and export it in
     expect(goods.cell(2, 'Tiền thuế GTGT')).toBe(100000);
 
     download = page.waitForEvent('download');
-    await page.getByRole('button', { name: 'Xuất chứng từ mua dịch vụ cho MISA' }).click();
+    await page.getByRole('button', { name: 'Xuất sổ nhật ký' }).click();
+    await page.getByRole('menuitem', { name: 'Xuất chứng từ mua dịch vụ cho MISA' }).click();
     file = await download;
     expect(file.suggestedFilename()).toBe(`ludy-misa-mua-dich-vu-${slug}.xlsx`);
     const services = await sheetOf(file, 'Chứng từ mua dịch vụ');

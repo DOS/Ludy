@@ -61,6 +61,18 @@ describe('the build-time policy (apps/app/vite-csp.ts)', () => {
     }
   });
 
+  // #2704: the hosted login's token endpoint is called by the browser, so its origin is in connect-src of both policies.
+  it('allows the origin of the hosted login token endpoint in the kernel and in the build-time policy alike', () => {
+    const hosted = 'https://login.example.com';
+    expect(together({ apiOrigin: API, hostedLoginOrigin: hosted })).toEqual(directives(contentSecurityPolicy(`${API}/auth/v1`, null, false, API, hosted)));
+    expect(together({ apiOrigin: API, storageOrigin: 'https://files.example.com', hostedLoginOrigin: hosted })).toEqual(
+      directives(contentSecurityPolicy(`${API}/auth/v1`, 'https://files.example.com', false, API, hosted)),
+    );
+    expect(contentSecurityPolicy('/auth/v1', null, false, null, hosted)).toContain(`connect-src 'self' http://localhost ${hosted}`);
+    expect(cspOriginsFromEnv({ VITE_API_URL: API, VITE_HOSTED_LOGIN_ORIGIN: hosted })?.hostedLoginOrigin).toBe(hosted);
+    expect(() => cspOriginsFromEnv({ VITE_API_URL: API, VITE_HOSTED_LOGIN_ORIGIN: 'http://login.example.com' })).toThrow(/must be https/);
+  });
+
   it('lets the app play media from a blob and from the API origin, which default-src would refuse', () => {
     expect(metaCsp({ apiOrigin: API })).toContain(`media-src 'self' blob: ${API}`);
     expect(contentSecurityPolicy('/auth/v1', null)).toContain("media-src 'self' blob:");

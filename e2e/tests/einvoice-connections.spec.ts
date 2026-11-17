@@ -54,7 +54,7 @@ test('connects the offline e-invoice provider from Settings, tests it, picks the
   });
 
   await test.step('the series are the ones the invoice form offers', async () => {
-    await page.getByRole('navigation').getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
     await page.getByRole('navigation').getByRole('link', { name: 'Hóa đơn bán ra' }).click();
     await expect(page.getByTestId('invoice-no-series')).toBeHidden();
   });
@@ -65,7 +65,7 @@ test('connects the offline e-invoice provider from Settings, tests it, picks the
     await card.getByRole('button', { name: 'Ngắt kết nối' }).last().click();
     await expect(card.getByText('Chưa kết nối nhà cung cấp nào.')).toBeVisible();
     // The series are the entity's and stay: the invoice form still offers them.
-    await page.getByRole('navigation').getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
     await page.getByRole('navigation').getByRole('link', { name: 'Hóa đơn bán ra' }).click();
     await expect(page.getByTestId('invoice-no-series')).toBeHidden();
   });

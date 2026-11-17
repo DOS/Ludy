@@ -9,6 +9,7 @@ function invoice(id: string, overrides: Partial<VatInvoiceView> = {}): VatInvoic
   return {
     id,
     issueDate: '2026-09-15',
+    saleDate: null,
     postingDate: '2026-09-15',
     series: 'C26TAB',
     number: '1234',
@@ -26,7 +27,7 @@ function invoice(id: string, overrides: Partial<VatInvoiceView> = {}): VatInvoic
 function report(input: VatInvoiceView[], output: VatInvoiceView[] | null): VatReport {
   const inputSide = { available: true, documents: input, totals: sideTotals(input) };
   const outputSide = { available: output !== null, documents: output ?? [], totals: sideTotals(output ?? []) };
-  return { period: vatPeriod('2026-09'), input: inputSide, output: outputSide, indicators: form01Indicators(inputSide.totals, outputSide.totals), paymentChecks: { items: [], vatAtRisk: '0', notDeductibleVat: '0', unchecked: 0, suggested25: inputSide.totals.vat }, carryForward: { amount: '0', previous: null, lookedFor: [] }, filed: null };
+  return { period: vatPeriod('2026-09'), input: inputSide, output: outputSide, supplementary: { documents: [], totals: sideTotals([]) }, lateSales: [], indicators: form01Indicators(inputSide.totals, outputSide.totals), paymentChecks: { items: [], vatAtRisk: '0', notDeductibleVat: '0', unchecked: 0, suggested25: inputSide.totals.vat }, carryForward: { amount: '0', previous: null, lookedFor: [] }, filed: null };
 }
 
 async function readBack(r: VatReport, brand?: string): Promise<ExcelJS.Workbook> {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The payment vouchers of an approved and posted pay run (#2532, payroll plan 6.4, ADR-0046) on a real PostgreSQL 17, through the finance proposal path:
-// - an owner or an admin asks for the payment of the net pay or of a remittance (kernel.proposal.request, `finance.payroll_payment.record`), the HR module builds the voucher from the frozen run, an owner
-//   or an admin approves it, and approving records one voucher that names the run and the kind of payment, with its entry (Dr the payable, Cr the bank or cash account);
+// - an owner or an admin asks for the payment of the net pay or of a remittance (kernel.proposal.request, `finance.payroll_payment.record`), the HR module builds the voucher from the frozen run, an owner,
+//   an admin or a member holding finance.proposal.approve org-wide approves it (#2751), and approving records one voucher that names the run and the kind of payment, with its entry (Dr the payable, Cr the bank or cash account);
 // - one voucher per run and kind (the command and the database both hold it), only after the run was posted, never while the account map is unconfirmed, never for a draft run;
 // - a payment of the net pay in cash is flagged when a net pay is 5 million or more, a bank payment is not, and the flag keeps the proposal out of bulk approval;
 // - a stored proposal that differs from the run is refused at approval; no person's name is stored anywhere.
@@ -285,6 +285,12 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     await expect(approve(o, proposalId)).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH' });
     expect(await voucherOf(o, runId, 'net_pay')).toHaveLength(0);
     expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('pending');
+    // A stored proposal whose amounts and accounts match the run, but whose description was changed (for example to free text or a person's name, #2853), is refused too.
+    const tax = await pay(o, runId, 'tax');
+    await rows(`UPDATE crove_kernel.proposal SET payload = jsonb_set(payload, '{description}', '"Chi lương Nguyễn Thị Hằng Canary"') WHERE org_id = $1 AND id = $2`, [o.orgId, tax.proposalId]);
+    await expect(approve(o, tax.proposalId)).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH', details: { what: 'description' } });
+    expect(await voucherOf(o, runId, 'tax')).toHaveLength(0);
+    expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, tax.proposalId]))[0]?.status).toBe('pending');
   });
 
   it('rebuilds the cash flag when it records: a stored proposal without it, with a changed count, or with one on a bank payment is refused', async () => {
@@ -416,7 +422,9 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
 
   it('counts the cash limit per person: a person whose pay is over it and whose corrections take the total under it is no longer counted', async () => {
     const o = await org('tt133', 'solo');
-    const [employee] = await rows<{ id: string }>('SELECT id FROM crove_hr.payroll_employee WHERE org_id = $1 ORDER BY created_at, id LIMIT 1', [o.orgId]);
+    // Pick a fixed person by name rather than ORDER BY created_at, id or the first pay line, so uuid_v7 ties never mix two employees across runs.
+    const [employee] = await rows<{ id: string }>('SELECT id FROM crove_hr.payroll_employee WHERE org_id = $1 AND display_name = $2', [o.orgId, TEAM[0]?.name]);
+    expect(employee?.id).toBeTruthy();
     const march = await approvedRun(o);
     const verified = (runId: string) => o.exec<{ cashLarge: number }>(o.owner, 'hr.payroll.payment.verify', { runId, kind: 'net_pay' });
     const { proposalId } = await ask(o, march.runId, o.owner);
@@ -427,7 +435,9 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     let payNet = '0';
     const april = await approvedRun(o, '2026-04', async (runId) => {
       const sheet = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId });
-      payNet = (sheet.lines.find((l) => l.kind === 'pay') as HrRunSheet['lines'][number]).figures?.net ?? '0';
+      const payLine = sheet.lines.find((l) => l.kind === 'pay' && l.employeeId === employee?.id);
+      expect(payLine).toBeDefined();
+      payNet = payLine?.figures?.net ?? '0';
       await o.exec(o.owner, 'hr.payroll.line.adjust', { runId, adjustsRunId: march.runId, employeeId: employee?.id, note: 'Hoàn lại', gross: money(payNet).minus(1000000).negated().toFixed(0), pit: '0' });
     });
     // The person's own pay line is over the limit (the premise of this test), whatever the correction does to their total.

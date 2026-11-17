@@ -16,6 +16,7 @@ export interface Me {
   orgId: string;
   scopes: readonly string[];
   expiresAt: string;
+  // `agenda` (B2) is set when the token holds the agenda scope and the org runs meetings; it is not a Feature of the shell.
   features: Record<string, boolean>;
 }
 

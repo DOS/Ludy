@@ -11,7 +11,22 @@
 import { randomUUID } from 'node:crypto';
 import { sql, type Transaction } from 'kysely';
 import { z } from 'zod';
-import { auditValue, defaultCoworkerName, tableWrite, zCheck, zId, type Check } from '@crove/kernel-contract';
+import {
+  auditValue,
+  defaultCoworkerName,
+  parseTaskChecklist,
+  serializeTaskChecklist,
+  tableWrite,
+  vietnamToday,
+  zCheck,
+  zFilterAstShape,
+  zId,
+  zSavedViewSortShape,
+  zTaskChecklist,
+  type Check,
+  type FilterAst,
+  type TaskChecklistStep,
+} from '@crove/kernel-contract';
 import type { AgentScope, Database, MemberRole, TaskStatus } from '@crove/db';
 import {
   DomainError,
@@ -31,8 +46,11 @@ import { kernelManifest } from './manifest.ts';
 import { preparedEntity } from './proposal-resubmit.ts';
 import { releaseWaitingFiles } from './ai-budget.ts';
 import { cancelMemberVyRuns } from './member-vy.ts';
+import { offAppsOf } from './org-apps.ts';
 import { memberProfiles } from './profiles.ts';
 import { lockChartChanges, rerouteStrandedTasks } from './task-reroute.ts';
+import { filterCondition, sortTerms } from './saved-view-filter.ts';
+import { taskFields, taskSortColumns } from './task-filter.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const MEMBERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -161,7 +179,8 @@ async function stopAgentRuns(trx: Trx, orgId: string, agentIds: string[], reason
 // one queued and one active job per agent, so repeats cost nothing, and a pending row whose run was refused earlier
 // (daily cap, kill switch, budget) is picked up again. A tainted task makes the wake-up, and so the run that claims
 // it, tainted. An agent of a module this deployment does not enable (CROVE_MODULES) keeps its pending request but is
-// not woken: no run starts until the module is enabled again, when the sweep finds the request.
+// not woken: no run starts until the module is enabled again, when the sweep finds the request. The same for an app the org switched
+// off (ADR-0053, slice e): the task and the pending request are kept, nothing wakes, and no event is lost.
 async function requestWakeup(ctx: CommandContext, positionId: string | null, reason: { taskId: string; why: string }, tainted: boolean, depth: number) {
   if (!positionId) return null;
   const holder = await ctx.trx
@@ -184,7 +203,7 @@ async function requestWakeup(ctx: CommandContext, positionId: string | null, rea
       tainted = w.tainted OR EXCLUDED.tainted,
       request_depth = GREATEST(w.request_depth, EXCLUDED.request_depth),
       updated_at = pg_catalog.now()`.execute(ctx.trx);
-  if (ctx.installed(holder.module)) await ctx.emit('kernel.agent.wakeup_requested', { agentId: holder.id });
+  if (ctx.installed(holder.module) && !(await offAppsOf(ctx.trx, ctx.orgId)).includes(holder.module)) await ctx.emit('kernel.agent.wakeup_requested', { agentId: holder.id });
   return holder.id;
 }
 
@@ -200,8 +219,9 @@ async function rewakePending(ctx: CommandContext, agentIds?: string[]): Promise<
     .where('w.org_id', '=', ctx.orgId)
     .where('w.status', '=', 'pending');
   if (agentIds) query = query.where('w.agent_id', 'in', agentIds);
+  const off = await offAppsOf(ctx.trx, ctx.orgId);
   for (const row of await query.execute()) {
-    if (ctx.installed(row.module)) await ctx.emit('kernel.agent.wakeup_requested', { agentId: row.agent_id });
+    if (ctx.installed(row.module) && !off.includes(row.module)) await ctx.emit('kernel.agent.wakeup_requested', { agentId: row.agent_id });
   }
 }
 
@@ -641,13 +661,19 @@ const zTaskTitle = z.string().trim().min(1).max(300);
 // A human gives work to a position (or, with no position, to the owner at the root of the chart).
 export const createTask = defineCommand({
   name: 'kernel.task.create',
-  input: z.object({ title: zTaskTitle, description: z.string().max(10000).optional(), assigneePositionId: zId.nullable(), due: z.iso.datetime().optional() }),
+  input: z.object({
+    title: zTaskTitle,
+    description: z.string().max(10000).optional(),
+    assigneePositionId: zId.nullable(),
+    due: z.iso.datetime().optional(),
+    checklist: zTaskChecklist.optional(),
+  }),
   risk: 'R1',
   sideEffect: 'internal',
   access: MEMBERS,
   handler: async (ctx, input) => {
     requireUser(ctx);
-    return insertHumanTask(ctx, { ...input, description: input.description ?? null, due: input.due ?? null, sourceRef: null, tainted: false });
+    return insertHumanTask(ctx, { ...input, description: input.description ?? null, due: input.due ?? null, checklist: input.checklist ?? [], sourceRef: null, tainted: false });
   },
 });
 
@@ -655,7 +681,15 @@ export const createTask = defineCommand({
 // input: kernel.task.get attaches the proposal a `kernel.proposal` reference names, so only kernel code chooses it.
 async function insertHumanTask(
   ctx: CommandContext,
-  input: { title: string; description: string | null; assigneePositionId: string | null; due: string | null; sourceRef: { type: string; id: string } | null; tainted: boolean },
+  input: {
+    title: string;
+    description: string | null;
+    assigneePositionId: string | null;
+    due: string | null;
+    checklist?: readonly TaskChecklistStep[];
+    sourceRef: { type: string; id: string } | null;
+    tainted: boolean;
+  },
 ): Promise<{ taskId: string }> {
   if (input.assigneePositionId) {
     const position = await lockPosition(ctx.trx, ctx.orgId, input.assigneePositionId);
@@ -672,6 +706,7 @@ async function insertHumanTask(
       source_ref: input.sourceRef === null ? null : JSON.stringify(input.sourceRef),
       created_by_type: 'user',
       due: input.due,
+      checklist: serializeTaskChecklist(input.checklist ?? []),
       tainted: input.tainted,
     })
     .returning(['id', 'tainted', 'request_depth'])
@@ -749,6 +784,142 @@ export const createTaskFromMeeting = defineCommand({
   },
 });
 
+// A task made from a conversation of the Inbox (conversations plan docs/plan/conversations.md section 4 point 2, issue #3295): the conversation core runs this
+// inside its kernel.conversation.follow_up command (ctx.run), after it has read and locked the thread under row-level security, so the task and the thread's
+// audit row commit together. The task takes the title the person typed, the seat they picked (none: the owner at the root of the chart, a one-person
+// company's default), a due date and a `kernel.conversation` source_ref this command sets itself from the thread's id. The description is always empty and
+// the task is never tainted: a task is read by every member, and neither a customer's words nor a model's text are copied into it by this path. No RPC
+// route reaches it.
+export const createTaskFromConversation = defineCommand({
+  name: 'kernel.task.create_from_conversation',
+  input: z.strictObject({
+    conversationId: zId,
+    title: zTaskTitle,
+    positionId: zId.nullable(),
+    due: z.iso.datetime({ offset: true }).nullable(),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MEMBERS,
+  handler: async (ctx, input) => {
+    requireUser(ctx);
+    // The thread must be one the caller may read (row-level security decides): a task linked to a private thread is listed to its readers.
+    const thread = await ctx.trx.selectFrom('crove_kernel.conversation').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.conversationId).executeTakeFirst();
+    if (!thread) throw new DomainError('CONVERSATION_NOT_FOUND', 404, 'Không tìm thấy hội thoại này');
+    const created = await insertHumanTask(ctx, {
+      title: input.title,
+      description: null,
+      assigneePositionId: input.positionId,
+      due: input.due,
+      sourceRef: { type: 'kernel.conversation', id: input.conversationId },
+      tainted: false,
+    });
+    ctx.audit({ taskId: created.taskId, conversationId: input.conversationId, positionId: input.positionId });
+    return created;
+  },
+});
+
+// Tasks confirmed from Vy's note proposals (projects plan docs/plan/projects.md step P7, #2598): projects module runs
+// this inside its atomic batch confirmation command (ctx.run). Every created task keeps source_ref `notes.note` and
+// stays `tainted: true` because its proposed wording started from a private note and a model run (ADR-0029, ADR-0048).
+// No RPC route exposes this directly.
+export const createTaskFromNote = defineCommand({
+  name: 'kernel.task.create_from_note',
+  input: z.strictObject({
+    noteId: zId,
+    title: zTaskTitle,
+    positionId: zId.nullable(),
+    due: z.iso.datetime({ offset: true }).nullable(),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MEMBERS,
+  handler: async (ctx, input) => {
+    requireUser(ctx);
+    const created = await insertHumanTask(ctx, {
+      title: input.title,
+      description: null,
+      assigneePositionId: input.positionId,
+      due: input.due,
+      sourceRef: { type: 'notes.note', id: input.noteId },
+      tainted: true,
+    });
+    ctx.audit({ taskId: created.taskId, noteId: input.noteId, positionId: input.positionId });
+    return created;
+  },
+});
+
+// Tasks confirmed from Vy's note, meeting, or conversation proposals (#2608, ADR-0048, ADR-0049): projects module runs
+// this inside its atomic batch confirmation command (ctx.run). Every created task keeps the validated source_ref and
+// stays `tainted: true` because its proposed wording started from a caller-readable source and a model run.
+// No RPC route exposes this directly.
+export const createTaskFromSource = defineCommand({
+  name: 'kernel.task.create_from_source',
+  input: z.strictObject({
+    sourceType: z.enum(['notes.note', 'meetings.meeting', 'kernel.conversation']),
+    sourceId: zId,
+    title: zTaskTitle,
+    positionId: zId.nullable(),
+    due: z.iso.datetime({ offset: true }).nullable(),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MEMBERS,
+  handler: async (ctx, input) => {
+    requireUser(ctx);
+    if (input.sourceType === 'kernel.conversation') {
+      // Re-check conversation RLS so private/direct/restricted threads cannot be linked by a non-reader.
+      const thread = await ctx.trx
+        .selectFrom('crove_kernel.conversation')
+        .select('id')
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.sourceId)
+        .executeTakeFirst();
+      if (!thread) throw new DomainError('CONVERSATION_NOT_FOUND', 404, 'Không tìm thấy hội thoại này');
+    }
+    const created = await insertHumanTask(ctx, {
+      title: input.title,
+      description: null,
+      assigneePositionId: input.positionId,
+      due: input.due,
+      sourceRef: { type: input.sourceType, id: input.sourceId },
+      tainted: true,
+    });
+    ctx.audit({ taskId: created.taskId, sourceType: input.sourceType, sourceId: input.sourceId, positionId: input.positionId });
+    return created;
+  },
+});
+
+// Tasks instantiated from a project template (#2607): projects module calls this via ctx.run inside
+// projects.project.create_from_template. Preserves `tainted: true` from AI-proposed tasks stored in custom template
+// snapshots while firing the standard kernel.task.created notification. No RPC route exposes this directly.
+export const createTaskFromTemplate = defineCommand({
+  name: 'kernel.task.create_from_template',
+  input: z.strictObject({
+    templateId: zId.nullable(),
+    title: zTaskTitle,
+    description: z.string().max(10000).nullable(),
+    due: z.iso.datetime({ offset: true }).nullable(),
+    tainted: z.boolean(),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MEMBERS,
+  handler: async (ctx, input) => {
+    requireUser(ctx);
+    const created = await insertHumanTask(ctx, {
+      title: input.title,
+      description: input.description,
+      assigneePositionId: null,
+      due: input.due,
+      sourceRef: input.templateId ? { type: 'projects.project', id: input.templateId } : null,
+      tainted: input.tainted,
+    });
+    ctx.audit({ taskId: created.taskId, templateId: input.templateId, tainted: input.tainted });
+    return created;
+  },
+});
+
 // A person edits a task's title, description, due date or seat (projects plan docs/plan/projects.md step P1, #2588).
 // Refused while an agent's run holds a live lease on the task (TASK_CHECKED_OUT), when the new seat is archived
 // (POSITION_ARCHIVED) or when the new seat's holder cannot read the task's legal entity (OUTSIDE_LEGAL_ENTITY).
@@ -761,6 +932,7 @@ export const updateTask = defineCommand({
     description: z.string().max(10000).nullable().optional(),
     assigneePositionId: zId.nullable().optional(),
     due: z.iso.datetime().nullable().optional(),
+    checklist: zTaskChecklist.optional(),
   }),
   risk: 'R1',
   sideEffect: 'internal',
@@ -794,11 +966,16 @@ export const updateTask = defineCommand({
     const nextDescription = input.description !== undefined ? input.description : before.description;
     const nextDue = input.due !== undefined ? input.due : before.due?.toISOString() ?? null;
     const beforeDue = before.due?.toISOString() ?? null;
+    const beforeChecklist = parseTaskChecklist(before.checklist);
+    const nextChecklist = input.checklist !== undefined ? input.checklist : beforeChecklist;
+    const beforeChecklistJson = serializeTaskChecklist(beforeChecklist);
+    const nextChecklistJson = serializeTaskChecklist(nextChecklist);
     const changed = [
       ...(nextTitle !== before.title ? ['title'] : []),
       ...(nextDescription !== before.description ? ['description'] : []),
       ...(seatChanged ? ['assigneePositionId'] : []),
       ...(nextDue !== beforeDue ? ['due'] : []),
+      ...(beforeChecklistJson !== nextChecklistJson ? ['checklist'] : []),
     ];
     if (changed.length > 0) {
       await ctx.trx
@@ -808,6 +985,7 @@ export const updateTask = defineCommand({
           description: nextDescription,
           assignee_position_id: nextPositionId,
           due: nextDue,
+          checklist: nextChecklistJson,
           // A stale lease left after its run expired is cleared when the seat moves.
           ...(seatChanged ? { checkout_run_id: null, lock_expires_at: null } : {}),
         })
@@ -827,6 +1005,7 @@ export const updateTask = defineCommand({
       assigneePositionId: nextPositionId,
       previousAssigneePositionId: before.assignee_position_id,
       due: nextDue,
+      checklist: auditValue(TASK_TABLE, 'checklist', nextChecklist.length > 0 ? nextChecklist : null),
     });
     return { taskId: before.id };
   },
@@ -1285,7 +1464,7 @@ export const startAgentRun = defineCommand({
       return { runId: null, reason };
     };
     if (agent.status !== 'active' || !position || position.role_key !== agent.template_role_key) return done('not_runnable');
-    if (!ctx.installed(agent.template_module)) return done('module_disabled');
+    if (!ctx.installed(agent.template_module) || (await offAppsOf(ctx.trx, ctx.orgId)).includes(agent.template_module)) return done('module_disabled');
     const { rows: gates } = await sql<{ killed: boolean; spent: boolean; today: number }>`
       SELECT
         EXISTS (SELECT 1 FROM crove_kernel.kill_switch k WHERE k.org_id = ${ctx.orgId}::uuid AND k.released_at IS NULL
@@ -1379,14 +1558,8 @@ export const finishAgentRun = defineCommand({
     await ctx.trx.updateTable('crove_kernel.task').set({ checkout_run_id: null, lock_expires_at: null }).where('org_id', '=', ctx.orgId).where('checkout_run_id', '=', input.runId).execute();
     await ctx.trx.updateTable('crove_kernel.agent_wakeup').set({ status: 'done', updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('run_id', '=', input.runId).where('status', '=', 'claimed').execute();
     if (!run) return { finished: false };
-    const pending = await ctx.trx
-      .selectFrom('crove_kernel.agent_wakeup')
-      .select('id')
-      .where('org_id', '=', ctx.orgId)
-      .where('agent_id', '=', run.agent_id)
-      .where('status', '=', 'pending')
-      .executeTakeFirst();
-    if (pending) await ctx.emit('kernel.agent.wakeup_requested', { agentId: run.agent_id });
+    // A request that came in during the run wakes the agent again, unless its app is off for the org or the deployment (rewakePending).
+    await rewakePending(ctx, [run.agent_id]);
     ctx.audit({ run: input.runId, outcome: input.outcome });
     return { finished: true };
   },
@@ -1517,6 +1690,7 @@ function taskView(t: {
   tainted: boolean;
   created_by_type: string;
   due: Date | null;
+  checklist: unknown;
   created_at: Date;
 }) {
   return {
@@ -1532,6 +1706,7 @@ function taskView(t: {
     tainted: t.tainted,
     createdByType: t.created_by_type,
     due: t.due?.toISOString() ?? null,
+    checklist: parseTaskChecklist(t.checklist),
     createdAt: t.created_at.toISOString(),
   };
 }
@@ -1544,38 +1719,59 @@ export const TASK_LIST_LIMIT = 200;
 // the positions the user holds, plus the root tasks for an owner.
 export const taskList = defineQuery({
   name: 'kernel.task.list',
-  input: z.object({ positionId: zId.optional(), mine: z.boolean().optional(), status: z.array(zTaskStatus).max(6).optional() }),
+  input: z.object({
+    positionId: zId.optional(),
+    mine: z.boolean().optional(),
+    status: z.array(zTaskStatus).max(6).optional(),
+    filters: zFilterAstShape.optional(),
+    sort: zSavedViewSortShape.nullable().optional(),
+  }),
   access: ALL,
   agent: { roles: 'any' },
   handler: async (ctx, input) => {
     const order = ctx.agent ? 'asc' : 'desc';
     let query = ctx.trx
-      .selectFrom('crove_kernel.task')
-      .selectAll()
-      .where('org_id', '=', ctx.orgId)
-      .orderBy('created_at', order)
-      .orderBy('id', order)
+      .selectFrom('crove_kernel.task as t')
+      .selectAll('t')
+      .where('t.org_id', '=', ctx.orgId)
       .limit(TASK_LIST_LIMIT);
     if (ctx.agent) {
-      query = query.where('assignee_position_id', '=', ctx.agent.positionId);
-      if (!ctx.agent.tainted) query = query.where('tainted', '=', false);
+      query = query.where('t.assignee_position_id', '=', ctx.agent.positionId);
+      if (!ctx.agent.tainted) query = query.where('t.tainted', '=', false);
     } else if (input.positionId) {
-      query = query.where('assignee_position_id', '=', input.positionId);
+      query = query.where('t.assignee_position_id', '=', input.positionId);
     } else if (input.mine && ctx.actor.type === 'user') {
       const userId = ctx.actor.userId;
       const isOwner = ctx.role === 'owner';
       query = query.where((eb) =>
         eb.or([
           eb(
-            'assignee_position_id',
+            't.assignee_position_id',
             'in',
             eb.selectFrom('crove_kernel.position').select('id').where('org_id', '=', ctx.orgId).where('holder_user_id', '=', userId),
           ),
-          ...(isOwner ? [eb('assignee_position_id', 'is', null)] : []),
+          ...(isOwner ? [eb('t.assignee_position_id', 'is', null)] : []),
         ]),
       );
     }
-    if (input.status && input.status.length > 0) query = query.where('status', 'in', input.status);
+    if (input.status && input.status.length > 0) query = query.where('t.status', 'in', input.status);
+    if (input.filters !== undefined) {
+      const now = new Date();
+      const me = ctx.actor.type === 'user' ? ctx.actor.userId : null;
+      query = query.where(
+        filterCondition('kernel.task', input.filters as FilterAst, taskFields({ isOwner: ctx.role === 'owner' }), {
+          me,
+          today: vietnamToday(now),
+          now,
+        }),
+      );
+    }
+    if (input.sort !== undefined && input.sort !== null) {
+      const terms = sortTerms('kernel.task', input.sort, taskSortColumns(), sql`t.id`, { field: 'created', dir: order });
+      for (const term of terms) query = query.orderBy(term);
+    } else {
+      query = query.orderBy('t.created_at', order).orderBy('t.id', order);
+    }
     return { tasks: (await query.execute()).map(taskView) };
   },
 });
@@ -2120,6 +2316,10 @@ export const agentCommands = [
   createTask,
   createTaskFromTodo,
   createTaskFromMeeting,
+  createTaskFromConversation,
+  createTaskFromNote,
+  createTaskFromSource,
+  createTaskFromTemplate,
   updateTask,
   checkoutTask,
   commentTask,

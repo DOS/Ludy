@@ -10,7 +10,7 @@ test('with AI off the coworker says so, fills nothing, and the draft form works 
   await signUp(page, newEmail('einvoice-ai'));
   await createOrg(page, 'Công ty Soạn Hóa Đơn E2E');
   const nav = page.getByRole('navigation');
-  await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+  await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
   await nav.getByRole('link', { name: 'Hóa đơn bán ra' }).click();
   await page.getByTestId('invoice-new').click();
   const form = page.getByTestId('invoice-form');

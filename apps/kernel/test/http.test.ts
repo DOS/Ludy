@@ -215,14 +215,14 @@ describe('configuration guards', () => {
 
   // Plan Decision 12, ADR-0031.
   it('enables every module by default, always keeps kernel and refuses an unknown module', () => {
-    expect(loadConfig(base).CROVE_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings']);
-    expect(loadConfig({ ...base, CROVE_MODULES: '  ' }).CROVE_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings']);
-    expect(loadConfig({ ...base, CROVE_MODULES: ',' }).CROVE_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings']);
-    expect(loadConfig({ ...base, CROVE_MODULES: ' , ,' }).CROVE_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings']);
+    expect(loadConfig(base).CROVE_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign']);
+    expect(loadConfig({ ...base, CROVE_MODULES: '  ' }).CROVE_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign']);
+    expect(loadConfig({ ...base, CROVE_MODULES: ',' }).CROVE_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign']);
+    expect(loadConfig({ ...base, CROVE_MODULES: ' , ,' }).CROVE_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign']);
     expect(loadConfig({ ...base, CROVE_MODULES: 'kernel' }).CROVE_MODULES).toEqual(['kernel']);
     expect(loadConfig({ ...base, CROVE_MODULES: ' Finance ' }).CROVE_MODULES).toEqual(['kernel', 'finance']);
     expect(loadConfig({ ...base, CROVE_MODULES: 'finance,kernel' }).CROVE_MODULES).toEqual(['kernel', 'finance']);
-    expect(() => loadConfig({ ...base, CROVE_MODULES: 'kernel,service' })).toThrow(/CROVE_MODULES \(unknown module\(s\) service; available: kernel, finance, social, ads, crm, notes, hr, meetings\)/);
+    expect(() => loadConfig({ ...base, CROVE_MODULES: 'kernel,service' })).toThrow(/CROVE_MODULES \(unknown module\(s\) service; available: kernel, finance, social, ads, crm, notes, hr, meetings, projects, sign\)/);
   });
 
   it('never resolves the session check to "no check" by default', () => {
@@ -373,6 +373,25 @@ describe('configuration guards', () => {
     };
     expect(await config({})).toBeNull();
     expect(await config({ SUPPORT_URL: 'mailto:support@example.com' })).toBe('mailto:support@example.com');
+  });
+
+  // #2704: the sign-in buttons the app shows besides email and password come from AUTH_OAUTH_PROVIDERS.
+  it('hands the sign-in provider ids to the app through /api/config, or none', async () => {
+    const providers = async (env: Record<string, string>) => {
+      const app = createHttpApp({
+        config: loadConfig({ ...base, WEB_DIST: '/nonexistent', ...env }),
+        runtime: { installed: () => true, modules: () => ['kernel'] } as unknown as Runtime,
+        store: {} as BlobStore,
+        authenticate: async () => {
+          throw new Error('not used');
+        },
+        pool: {} as pg.Pool,
+        aiEnabled: false,
+      });
+      return ((await (await app.request('/api/config')).json()) as { authProviders: unknown }).authProviders;
+    };
+    expect(await providers({})).toEqual([]);
+    expect(await providers({ AUTH_OAUTH_PROVIDERS: 'google,github' })).toEqual(['google', 'github']);
   });
 
   // #2192: a store without browser transfers (R2) can still sign a read for the platforms that fetch media by URL, and the
@@ -984,6 +1003,22 @@ describe('ZIP uploads (bulk intake, #314)', () => {
     const rar = await post(new Uint8Array([0x52, 0x61, 0x72, 0x21, 0x1a, 0x07, 0x00, 0x01]), 'thang-10.rar');
     expect(rar.status).toBe(415);
     expect(await rar.json()).toMatchObject({ code: 'UNSUPPORTED_TYPE' });
+    expect(executed.length).toBe(count);
+  });
+
+  it('stores the signed agreement of an invoice correction as a file of source agreement, a PDF or an image and nothing else (#2504)', async () => {
+    const pdf = new Uint8Array([...new TextEncoder().encode('%PDF-1.4\n'), 1, 2, 3]);
+    const ok = await post(pdf, 'bien-ban.pdf', 'agreement');
+    expect(ok.status).toBe(200);
+    const ingest = executed.at(-1);
+    expect(ingest?.name).toBe('kernel.file.ingest');
+    expect(ingest?.input).toMatchObject({ contentType: 'application/pdf', source: 'agreement', sizeBytes: pdf.byteLength });
+    // An invoice XML or an archive is no agreement, and nothing is recorded for it.
+    const count = executed.length;
+    const xml = await post(FIXTURE, 'hd.xml', 'agreement');
+    expect(xml.status).toBe(415);
+    expect(await xml.json()).toMatchObject({ code: 'UNSUPPORTED_TYPE' });
+    expect((await post(zip, 'bien-ban.zip', 'agreement')).status).toBe(415);
     expect(executed.length).toBe(count);
   });
 });

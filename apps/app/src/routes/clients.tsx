@@ -80,7 +80,7 @@ function TaxCalendarRow({ row, periodLabel }: { row: TaxDueRow; periodLabel: (pe
         <DueWhen due={row} />
       </TableCell>
       <TableCell className="px-4 py-3">
-        <Link to="/o/$slug/inbox" params={{ slug: row.slug }} className="font-medium text-foreground hover:text-link hover:underline">
+        <Link to="/o/$slug/overview" params={{ slug: row.slug }} className="font-medium text-foreground hover:text-link hover:underline">
           {row.name}
         </Link>
       </TableCell>
@@ -188,7 +188,7 @@ export function ClientsPage() {
     o.modules.social ? <ClientSocialFigures slug={c.slug} figures={o.modules.social} /> : <span className="text-subtle-foreground">-</span>;
   const companyOf = (c: Row) => (
     <>
-      <Link to="/o/$slug/inbox" params={{ slug: c.slug }} className="font-medium text-foreground hover:text-link hover:underline">
+      <Link to="/o/$slug/overview" params={{ slug: c.slug }} className="font-medium text-foreground hover:text-link hover:underline">
         {c.name}
       </Link>
       <Badge variant={c.role === 'owner' ? 'brand' : 'secondary'} className="ml-2 align-middle">

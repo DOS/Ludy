@@ -11,9 +11,9 @@ import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx
 import { useFormat } from '../i18n/provider.tsx';
 import { TodayMailSetting } from '../components/today-mail-setting.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { getConfig } from '../lib/auth.ts';
 import { isKnownKind, kindKey, notificationKinds, notificationTarget, periodParts, type KnownNotificationKind } from '../lib/notifications.ts';
 import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
+import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 
 export type WorkNotification = Awaited<ReturnType<typeof client.notifications.list>>['items'][number];
 
@@ -61,6 +61,10 @@ function useLine() {
         return t('text.period_closing', { period: period(n.detail.period), due: n.detail.dueDate ? f.date(n.detail.dueDate) : '' });
       case 'notes.todo_due':
         return t('text.todo_due');
+      case 'projects.weekly_status':
+        return t('text.projects_weekly_status', { title: n.detail.title ?? '' });
+      case 'meetings.series_open_items':
+        return t('text.series_open_items', { count: Number(n.detail.count ?? 0) });
       case 'kernel.channel_expired':
         return t('text.channel_expired');
       case 'kernel.ai_budget':
@@ -80,7 +84,8 @@ function useLine() {
 
 function Settings({ muted }: { muted: readonly string[] }) {
   const t = useTranslations('notifications');
-  const kinds = notificationKinds(getConfig().modules);
+  useModulesVersion(); // the apps of the org can change while this screen is open
+  const kinds = notificationKinds(installedModules());
   const mute = useMutation({
     mutationFn: (v: { kind: KnownNotificationKind; muted: boolean }) => client.notifications.mute(v),
     onSettled: refresh,
@@ -125,12 +130,16 @@ export function NotificationsPage() {
     else if (target?.to === 'inbox') void navigate({ to: '/o/$slug/inbox', params: { slug } });
     else if (target?.to === 'bank') void navigate({ to: '/o/$slug/bank', params: { slug }, search: target.account ? { account: target.account } : {} });
     else if (target?.to === 'portal') void navigate({ to: '/o/$slug/portal-invoices', params: { slug }, search: { ...(target.sale ? { direction: 'sale' as const } : {}), ...(typeof n.detail.period === 'string' && n.detail.period ? { period: n.detail.period } : {}) } });
-    else if (target?.to === 'ledger') void navigate({ to: '/o/$slug/ledger', params: { slug } });
+    // The period-closing notice asks for a lock, which is on the ledger's Kết thúc kỳ tab (#3602).
+    else if (target?.to === 'ledger') void navigate({ to: '/o/$slug/ledger', params: { slug }, search: { report: 'closing' as const } });
     else if (target?.to === 'myWork') void navigate({ to: '/o/$slug/my-work', params: { slug } });
     else if (target?.to === 'task') void navigate({ to: '/o/$slug/tasks/$id', params: { slug, id: target.id } });
     else if (target?.to === 'tasks') void navigate({ to: '/o/$slug/tasks', params: { slug } });
+    else if (target?.to === 'project') void navigate({ to: '/o/$slug/projects/$id', params: { slug, id: target.id } });
+    else if (target?.to === 'projects') void navigate({ to: '/o/$slug/projects', params: { slug } });
     else if (target?.to === 'conversation') void navigate({ to: '/o/$slug/social/inbox', params: { slug }, search: { c: target.id } });
     else if (target?.to === 'conversations') void navigate({ to: '/o/$slug/social/inbox', params: { slug }, search: { status: 'new' } });
+    else if (target?.to === 'meeting') void navigate({ to: '/o/$slug/meetings/$id', params: { slug, id: target.id } });
     else if (target?.to === 'ads') void navigate({ to: '/o/$slug/ads', params: { slug } });
     else if (target?.to === 'agents') void navigate({ to: '/o/$slug/agents', params: { slug } });
   };

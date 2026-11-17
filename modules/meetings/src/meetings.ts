@@ -7,17 +7,28 @@ import { meetingSearch } from './search.ts';
 import { transcriptCorrect, transcriptDraftStore, transcriptGet } from './transcript.ts';
 import { transcribeCommandList } from './transcribe.ts';
 import { transcribeRunCommands, transcribeRunQueries } from './transcribe-run.ts';
+import { notesCommands, notesQueries } from './notes.ts';
 import { resultCommands, resultQueries } from './results.ts';
-import { summaryCommands } from './summary.ts';
+import { minutesTemplateCommands, minutesTemplateQueries } from './minutes-templates.ts';
+import { seriesCommands, seriesQueries } from './series.ts';
+import { speakerCommands } from './speaker.ts';
+import { summaryCommands, summaryQueries } from './summary.ts';
 import { summaryRunCommands, summaryRunQueries } from './summary-run.ts';
 import { translateCommands } from './translate.ts';
 import { translateRunCommands, translateRunQueries } from './translate-run.ts';
+import { askRunCommands, askRunQueries } from './ask.ts';
+import { briefCommands, briefQueries } from './brief.ts';
+import { agendaCommands, agendaQueries } from './agenda.ts';
+import { chatCommands, chatQueries } from './chat.ts';
 import { linkCommands, linkQueries } from './links.ts';
+import { hookCommands, hookQueries } from './hook.ts';
 import { liveNotesCommands } from './live-notes.ts';
 import { liveRunCommands, liveRunQueries } from './live-run.ts';
 import { liveCommands } from './live.ts';
 import { liveAssembleCommands, liveAssembleQueries } from './live-assemble.ts';
-import { recordSealedMedia } from './media-record.ts';
+import { lockMeetingMedia, recordSealedMedia } from './media-record.ts';
+import { createMeetingRow } from './meeting-core.ts';
+import { importCommands } from './import.ts';
 import { dropFollowupPayloads } from './followup-erase.ts';
 import { followupCommands, followupQueries } from './followup.ts';
 import {
@@ -29,17 +40,13 @@ import {
   meetingConsentPolicySet,
   meetingSettingsGet,
   meetingSettingsSet,
-  readConsentPolicy,
   meetingShredReplay,
-  readRetentionSettings,
-  retentionDates,
   vnDay,
 } from './retention.ts';
 import {
   auditValue,
   MEETING_OWNER_LIST_PAGE,
   zMeetingCreate,
-  consentMethodAllowed,
   zMeetingExtensionStatus,
   zMeetingRecordingNow,
   zMeetingRecordingNowInput,
@@ -49,6 +56,8 @@ import {
   zMeetingMediaKeyReseal,
   zMeetingMediaMeta,
   zMeetingMediaRecord,
+  zMeetingRecordingStopped,
+  zMeetingRecordingStoppedDone,
   zMeetingOwnerListInput,
   zMeetingReaderAdd,
   zMeetingReaderRemove,
@@ -56,8 +65,11 @@ import {
   type ConsentMethod,
   type MeetingDetail,
   type MeetingExtensionStatus,
+  type MeetingRecordingStoppedDone,
   type RecordingStopReason,
   type MeetingLanguage,
+  type MeetingSummaryTemplate,
+  parseStoredSections,
   type MeetingOwnerList,
   type MeetingOwnerListItem,
   type MeetingStatus,
@@ -136,6 +148,10 @@ interface MeetingRow {
   length_seconds: number | null;
   keep_video: boolean;
   live_notes: boolean;
+  summary_template: MeetingSummaryTemplate;
+  minutes_template_name: string | null;
+  minutes_template_sections: unknown;
+  minutes_template_hash: string | null;
   consent_method: ConsentMethod;
   consent_confirmed_by: string;
   consent_confirmed_at: Date | string;
@@ -160,6 +176,7 @@ function toSummary(r: MeetingRow, readersCount: number, hasAudio: boolean, hasVi
     lengthSeconds: r.length_seconds,
     keepVideo: r.keep_video,
     liveNotes: r.live_notes,
+    summaryTemplate: r.summary_template,
     audioRetentionDate: dayText(r.audio_retention_date),
     textRetentionDate: r.text_retention_date === null ? null : dayText(r.text_retention_date),
     hasAudio,
@@ -172,6 +189,8 @@ function toSummary(r: MeetingRow, readersCount: number, hasAudio: boolean, hasVi
 
 export const meetingCreate = defineCommand({
   name: 'meetings.meeting.create',
+  // Opens a recording the app's switch-off would cut short: it holds the tenant row, as the switch does (ADR-0053).
+  opensBusyWork: true,
   input: zMeetingCreate,
   risk: 'R1',
   sideEffect: 'internal',
@@ -181,68 +200,22 @@ export const meetingCreate = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
     const extensionTokenId = ctx.actor.type === 'user' ? (ctx.actor.extension?.tokenId ?? null) : null;
-    // A strict org accepts only a written consent method (A2, #3160): the same refusal for an in-app recording, an extension recording and an
-    // upload, since all three make their meeting here. Nothing is created and no audio can follow. A policy changed later does not touch this one.
-    if (!consentMethodAllowed(await readConsentPolicy(ctx.trx, ctx.orgId), input.consentMethod)) {
-      throw new DomainError('CONSENT_METHOD_NOT_ALLOWED', 422, 'This organization accepts only a written consent method');
-    }
-    const meetingId = randomUUID();
-    const startedAt = ctx.now;
-    // The periods the org's settings give today, stamped on the meeting so the period the participants were told stays true (plan section 9).
-    const dates = retentionDates(startedAt, await readRetentionSettings(ctx.trx, ctx.orgId));
-
-    await ctx.trx
-      .insertInto('crove_meetings.meeting')
-      .values({
-        org_id: ctx.orgId,
-        id: meetingId,
-        recorder_user_id: userId,
-        visibility: input.visibility,
-        title: input.title,
-        language: input.language,
-        status: 'ready',
-        started_at: startedAt,
-        ended_at: null,
-        length_seconds: input.lengthSeconds ?? null,
-        keep_video: input.keepVideo,
-        live_notes: input.liveNotes,
-        consent_method: input.consentMethod,
-        consent_confirmed_by: userId,
-        consent_confirmed_at: startedAt,
-        consent_notice_version: input.consentNoticeVersion ?? CONSENT_NOTICE_VERSION,
-        audio_retention_date: dates.audio,
-        text_retention_date: dates.text,
-        extension_token_id: extensionTokenId,
-      })
-      .execute();
-
-    if (input.visibility === 'attendees' && input.readerUserIds && input.readerUserIds.length > 0) {
-      const uniqueReaderIds = Array.from(new Set(input.readerUserIds.filter((id) => id !== userId)));
-      if (uniqueReaderIds.length > 0) {
-        const validMembers = await ctx.trx
-          .selectFrom('crove_kernel.tenant_member')
-          .select(['user_id'])
-          .where('org_id', '=', ctx.orgId)
-          .where('user_id', 'in', uniqueReaderIds)
-          .where('role', 'in', ['owner', 'admin', 'member'])
-          .execute();
-        if (validMembers.length !== uniqueReaderIds.length) {
-          throw new DomainError('INVALID_READER', 400, 'All readers must be active non-viewer members of this organization');
-        }
-        for (const readerId of uniqueReaderIds) {
-          await ctx.trx
-            .insertInto('crove_meetings.meeting_reader')
-            .values({
-              org_id: ctx.orgId,
-              id: randomUUID(),
-              meeting_id: meetingId,
-              user_id: readerId,
-            })
-            .onConflict((oc) => oc.columns(['org_id', 'meeting_id', 'user_id']).doNothing())
-            .execute();
-        }
-      }
-    }
+    const meetingId = await createMeetingRow(ctx, {
+      userId,
+      title: input.title,
+      language: input.language,
+      visibility: input.visibility,
+      startedAt: ctx.now,
+      retentionFrom: ctx.now,
+      lengthSeconds: input.lengthSeconds ?? null,
+      keepVideo: input.keepVideo,
+      liveNotes: input.liveNotes,
+      summaryTemplate: input.summaryTemplate,
+      consentMethod: input.consentMethod,
+      consentNoticeVersion: input.consentNoticeVersion ?? CONSENT_NOTICE_VERSION,
+      readerUserIds: input.readerUserIds,
+      extensionTokenId,
+    });
 
     ctx.audit({
       meetingId,
@@ -251,6 +224,7 @@ export const meetingCreate = defineCommand({
       consentMethod: input.consentMethod,
       consentNoticeVersion: input.consentNoticeVersion ?? CONSENT_NOTICE_VERSION,
       liveNotes: input.liveNotes,
+      summaryTemplate: input.summaryTemplate,
     });
 
     return { meetingId };
@@ -296,29 +270,78 @@ export const meetingMediaRecord = defineCommand({
       throw new DomainError('INVALID_STORAGE_KEY', 400, 'Storage key must match org and sha256');
     }
 
-    const { fileId, liveChunksDiscarded } = await recordSealedMedia(ctx, { userId, meetingId: input.meetingId, audioRetentionDay: meeting.audio_retention_day, input });
+    const { fileId, liveChunksDiscarded, replaced } = await recordSealedMedia(ctx, { userId, meetingId: input.meetingId, audioRetentionDay: meeting.audio_retention_day, joinedFromPieces: false, input });
 
-    // A recording that stopped without the recorder's click (A1, #3159): the reason code and the stop time (the start plus what was
-    // recorded, never later than now) stay on the meeting, once, so it can say "Ghi âm đã dừng lúc ...". A code, never text.
-    // Every recording that reaches the server ends its meeting's recording: ended_at is set once (the first media wins), which is also what
-    // takes the meeting out of the app's recording chip.
-    if (meeting.ended_at === null && meeting.started_at !== null) {
-      const endedAt = new Date(Math.min(new Date(meeting.started_at).getTime() + input.lengthSeconds * 1000, ctx.now.getTime()));
+    // A recording that stopped without the recorder's click (A1, #3159): the reason code stays on the meeting, once (with the first media, which is also what
+    // recordSealedMedia ends the meeting's recording on, #3205), so it can say "Ghi âm đã dừng lúc ...". A code, never text. The stop reason is this command's
+    // alone: a recording joined from live pieces carries none.
+    if (meeting.ended_at === null && meeting.started_at !== null && input.stopReason !== undefined && meeting.recording_stop_reason === null) {
       await ctx.trx
         .updateTable('crove_meetings.meeting')
-        .set({ ended_at: endedAt, updated_at: ctx.now, ...(input.stopReason !== undefined && meeting.recording_stop_reason === null ? { recording_stop_reason: input.stopReason } : {}) })
+        .set({ recording_stop_reason: input.stopReason, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.meetingId)
+        // Once: a reason a report already left (#3196) is kept.
+        .where('recording_stop_reason', 'is', null)
         .execute();
     }
 
-    ctx.audit({ meetingId: input.meetingId, kind: input.kind, fileId, ...(input.stopReason !== undefined ? { stopReason: input.stopReason } : {}), ...(liveChunksDiscarded > 0 ? { liveChunksDiscarded } : {}) });
+    ctx.audit({ meetingId: input.meetingId, kind: input.kind, fileId, ...(input.stopReason !== undefined ? { stopReason: input.stopReason } : {}), ...(liveChunksDiscarded > 0 ? { liveChunksDiscarded } : {}), ...(replaced ? { replacedJoined: true } : {}) });
     return { fileId };
+  },
+});
+
+// A recording ended and no media will reach the server (#3196): the extension stopped with nothing saved, the upload never arrived, or the
+// capture failed to start after the meeting was made. It sets the meeting's end time and, for a stop the member did not ask for, the stop code,
+// once, so the app's recording chip lets go at once instead of after its window. Codes and a length only, in the input and the audit.
+// A no-op (and `ended: false`) once the meeting has any recording or an end time, so a late or repeated call changes nothing.
+export const meetingRecordingStopped = defineCommand({
+  name: 'meetings.meeting.recording_stopped',
+  input: zMeetingRecordingStopped,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  // The extension's meetings scope reports the end of a meeting its own token created, and no other (#3196).
+  extension: { scope: 'meetings' },
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx, input): Promise<MeetingRecordingStoppedDone> => {
+    const userId = userOf(ctx.actor);
+    const meeting = await ctx.trx
+      .selectFrom('crove_meetings.meeting')
+      .select(['recorder_user_id', 'extension_token_id', 'started_at', 'ended_at', 'recording_stop_reason'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.meetingId)
+      .executeTakeFirst();
+    if (!meeting) throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
+    if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder may end its recording');
+    // An extension token reaches only the meetings it created: any other is answered as one that does not exist.
+    if (ctx.actor.type === 'user' && ctx.actor.extension && meeting.extension_token_id !== ctx.actor.extension.tokenId) {
+      throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
+    }
+    // The media lock first, so a recording being stored at this moment either commits before the checks below or waits for this transaction.
+    await lockMeetingMedia(ctx, input.meetingId);
+    const { rows: held } = await sql<{ recorded: boolean; ended: boolean }>`
+      SELECT EXISTS (SELECT 1 FROM crove_meetings.audio_segment WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${input.meetingId}::uuid)
+          OR EXISTS (SELECT 1 FROM crove_meetings.meeting_video WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${input.meetingId}::uuid) AS recorded,
+             (SELECT ended_at IS NOT NULL FROM crove_meetings.meeting WHERE org_id = ${ctx.orgId}::uuid AND id = ${input.meetingId}::uuid) AS ended`.execute(ctx.trx);
+    const changed = held[0]?.recorded !== true && held[0]?.ended !== true;
+    if (changed) {
+      const length = input.lengthSeconds === undefined || meeting.started_at === null ? null : input.lengthSeconds;
+      await sql`
+        UPDATE crove_meetings.meeting
+        SET ended_at = CASE WHEN ${length}::int IS NULL THEN ${ctx.now}::timestamptz ELSE LEAST(started_at + (${length}::int * interval '1 second'), ${ctx.now}::timestamptz) END,
+            recording_stop_reason = COALESCE(recording_stop_reason, ${input.reason ?? null}::text),
+            updated_at = ${ctx.now}::timestamptz
+        WHERE org_id = ${ctx.orgId}::uuid AND id = ${input.meetingId}::uuid AND ended_at IS NULL`.execute(ctx.trx);
+    }
+    ctx.audit({ meetingId: input.meetingId, changed, ...(input.reason !== undefined ? { reason: input.reason } : {}) });
+    return zMeetingRecordingStoppedDone.parse({ meetingId: input.meetingId, ended: changed });
   },
 });
 
 export const meetingDelete = defineCommand({
   name: 'meetings.meeting.delete',
+  runsWhenOff: 'deletes a meeting and its recording, which the owner of the data may still do while the app is off',
   input: zMeetingRef,
   risk: 'R1',
   sideEffect: 'internal',
@@ -357,6 +380,7 @@ export const meetingDelete = defineCommand({
 
 export const meetingOwnerDelete = defineCommand({
   name: 'meetings.meeting.owner_delete',
+  runsWhenOff: 'deletes a meeting and its recording on the org owner\'s word while the app is off',
   input: zMeetingRef,
   risk: 'R3',
   sideEffect: 'internal',
@@ -517,6 +541,7 @@ export const meetingReaderRemove = defineCommand({
 // the one it read (the definer compares the key id and the wrapped bytes under the update). System actor only.
 export const meetingMediaKeyReseal = defineCommand({
   name: 'meetings.media_key.reseal',
+  runsWhenOff: 'rewraps the sealed recording keys under the current key while the app is off',
   input: zMeetingMediaKeyReseal,
   risk: 'R1',
   sideEffect: 'internal',
@@ -681,6 +706,10 @@ export const meetingGet = defineQuery({
       readers: readerIds,
       videoRetentionDate,
       isRecorder: meeting.recorder_user_id === userId,
+      minutesTemplate:
+        meeting.minutes_template_sections === null || meeting.minutes_template_name === null || meeting.minutes_template_hash === null
+          ? null
+          : { name: meeting.minutes_template_name, hash: meeting.minutes_template_hash, sections: parseStoredSections(meeting.minutes_template_sections) },
     };
   },
 });
@@ -955,6 +984,7 @@ export const meetingMediaMeta = defineQuery({
 export const meetingsCommands = [
   meetingCreate,
   meetingMediaRecord,
+  meetingRecordingStopped,
   meetingDelete,
   meetingOwnerDelete,
   meetingOwnerList,
@@ -971,16 +1001,26 @@ export const meetingsCommands = [
   ...transcribeRunCommands,
   ...transcribeCommandList,
   ...resultCommands,
+  ...notesCommands,
   ...summaryCommands,
+  ...speakerCommands,
+  ...seriesCommands,
+  ...minutesTemplateCommands,
   ...summaryRunCommands,
   ...translateCommands,
   ...translateRunCommands,
+  ...askRunCommands,
+  ...briefCommands,
+  ...agendaCommands,
+  ...chatCommands,
   ...linkCommands,
   ...followupCommands,
   ...liveCommands,
   ...liveAssembleCommands,
   ...liveRunCommands,
   ...liveNotesCommands,
+  ...hookCommands,
+  ...importCommands,
 ];
 
 export const meetingsQueries = [
@@ -998,10 +1038,19 @@ export const meetingsQueries = [
   meetingSearch,
   ...transcribeRunQueries,
   ...resultQueries,
+  ...notesQueries,
+  ...summaryQueries,
+  ...seriesQueries,
+  ...minutesTemplateQueries,
   ...summaryRunQueries,
   ...translateRunQueries,
+  ...askRunQueries,
+  ...briefQueries,
+  ...agendaQueries,
+  ...chatQueries,
   ...linkQueries,
   ...followupQueries,
   ...liveRunQueries,
   ...liveAssembleQueries,
+  ...hookQueries,
 ];

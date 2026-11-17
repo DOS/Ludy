@@ -301,6 +301,13 @@ export const zMe = z.object({
   orgs: z.array(zOrgSummary),
 });
 
+// The apps an org may switch (ADR-0053, #3313): per app, whether the deployment runs it (CROVE_MODULES), the org holds
+// it (entitlements), the org did not switch it off, and all three (what its members get).
+export const zOrgApp = z.object({ id: z.string(), deployment: z.boolean(), entitled: z.boolean(), enabled: z.boolean(), effective: z.boolean() });
+export const zOrgApps = z.object({ apps: z.array(zOrgApp), version: z.number().int().positive(), canChange: z.boolean() });
+export const zOrgAppSet = z.object({ module: z.string().regex(/^[a-z][a-z0-9_]{0,49}$/), enabled: z.boolean() });
+export const zOrgAppSetResult = z.object({ module: z.string(), enabled: z.boolean(), version: z.number().int().positive() });
+
 // How often an org files its VAT return (issue #318).
 export const zVatFilingPeriod = z.enum(VAT_FILING_PERIODS);
 
@@ -1071,12 +1078,23 @@ export const zVatRate = z.enum(VAT_RATES);
 // declared_late (#478): a purchase invoice of an earlier period, recorded late (its own month was locked), so it is
 // declared in the period of its posting date. check_payment (#917): a purchase at or above the non-cash payment
 // threshold of its date, not shown as paid by bank and not marked by the accountant yet.
-export const VAT_WARNINGS = ['rate_unknown', 'rate_split', 'reduced_rate_outside_period', 'lines_mismatch', 'vat_mismatch', 'declared_late', 'check_payment'] as const;
+export const VAT_WARNINGS = ['rate_unknown', 'rate_split', 'reduced_rate_outside_period', 'lines_mismatch', 'vat_mismatch', 'declared_late', 'check_payment', 'late_sale'] as const;
 export const zVatWarning = z.enum(VAT_WARNINGS);
 const zRateAmounts = z.object({ rate: zVatRate, taxable: zMoney, vat: zMoney });
+// A replacement or an adjustment invoice in the VAT working (#916): the invoice it corrects, and the date its period follows: the posting date of its entry for a purchase (as every purchase
+// is counted, since input VAT may be declared in a later period than the invoice date), the date of its own invoice for a sale. The working says which, so the accountant can see and question it.
+const zVatCorrection = z.object({
+  kind: z.enum(['replacement', 'adjustment']),
+  series: z.string(),
+  number: z.string(),
+  basis: z.enum(['issue_date', 'posting_date']),
+});
 export const zVatInvoice = z.object({
   id: zId,
   issueDate: zLocalDate,
+  // The date of the sale when it is of an earlier day than the invoice (#3535): a sales invoice is declared in the period of this date, not of its issue date. Null for an
+  // invoice with no sale date of its own, and for every purchase.
+  saleDate: zLocalDate.nullable().default(null),
   // The date its journal entry is posted on: the issue date, or a later date in an open month for a purchase invoice
   // whose own month was locked (#478). The period is chosen by this date.
   postingDate: zLocalDate,
@@ -1089,6 +1107,7 @@ export const zVatInvoice = z.object({
   total: zMoney,
   rates: z.array(zRateAmounts),
   warnings: z.array(zVatWarning),
+  correction: zVatCorrection.nullable().default(null),
 });
 const zVatSide = z.object({
   // false: Crove has no source for this side yet (sales invoices); documents and totals are empty.
@@ -1147,10 +1166,28 @@ export const zVatCarryForward = z.object({
   previous: zVatFiledReturn.nullable(),
   lookedFor: z.array(zVatPeriod),
 });
+// A sales invoice issued in this period for a sale of an earlier one (#3535), with that period. `supplementary` says the earlier period is already locked or its return filed, so
+// the sale is shown there as an item to declare in a supplementary return ("cần kê khai bổ sung") and is in no main total of either period.
+export const zVatLateSale = z.object({
+  documentId: zId,
+  series: z.string(),
+  number: z.string(),
+  partyName: z.string(),
+  issueDate: zLocalDate,
+  saleDate: zLocalDate,
+  originalPeriod: zVatPeriod,
+  total: zMoney,
+  vatAmount: zMoney,
+  supplementary: z.boolean(),
+});
 export const zVatReport = z.object({
   period: z.object({ period: zVatPeriod, kind: z.enum(['month', 'quarter']), from: zLocalDate, to: zLocalDate }),
   input: zVatSide,
   output: zVatSide,
+  // The sales of this period that were issued after it was locked or its return filed (#3535): to declare in a supplementary return, not part of `output`.
+  supplementary: z.object({ documents: z.array(zVatInvoice), totals: z.object({ byRate: z.array(zRateAmounts), taxable: zMoney, vat: zMoney, documents: z.number().int().nonnegative() }) }),
+  // The sales issued in this period for a sale of an earlier period (#3535): counted there, listed here so none goes unseen.
+  lateSales: z.array(zVatLateSale),
   indicators: z.array(z.object({ code: z.string(), label: z.string(), amount: zMoney })),
   paymentChecks: zVatPaymentChecks,
   carryForward: zVatCarryForward,
@@ -1440,6 +1477,48 @@ export const zAiUsageReport = z.object({
 });
 export type AiUsageReport = z.infer<typeof zAiUsageReport>;
 
+export const TASK_CHECKLIST_STEPS_MAX = 50;
+export const TASK_CHECKLIST_STEP_MAX = 300;
+export const zTaskChecklistStep = z.strictObject({
+  text: z.string().trim().min(1).max(TASK_CHECKLIST_STEP_MAX),
+  done: z.boolean(),
+});
+export type TaskChecklistStep = z.infer<typeof zTaskChecklistStep>;
+export const zTaskChecklist = z.array(zTaskChecklistStep).max(TASK_CHECKLIST_STEPS_MAX);
+export const zTaskChecklistStepView = z.object({ text: z.string(), done: z.boolean() });
+
+/** Parses a stored task checklist jsonb column into clean step objects. */
+export function parseTaskChecklist(raw: unknown): TaskChecklistStep[] {
+  if (!Array.isArray(raw)) return [];
+  const steps: TaskChecklistStep[] = [];
+  for (const item of raw) {
+    if (
+      typeof item === 'object' &&
+      item !== null &&
+      typeof (item as { text?: unknown }).text === 'string' &&
+      typeof (item as { done?: unknown }).done === 'boolean'
+    ) {
+      steps.push({ text: (item as { text: string }).text, done: (item as { done: boolean }).done });
+    }
+  }
+  return steps;
+}
+
+/** Serializes task checklist steps with only { text, done } keys for jsonb writes. */
+export function serializeTaskChecklist(steps: readonly TaskChecklistStep[]): string {
+  return JSON.stringify(steps.map((s) => ({ text: s.text, done: s.done })));
+}
+
+/** Counts completed and total steps in a stored or parsed task checklist. */
+export function countTaskChecklistSteps(raw: unknown): { done: number; total: number } {
+  const steps = parseTaskChecklist(raw);
+  let done = 0;
+  for (const step of steps) {
+    if (step.done) done += 1;
+  }
+  return { done, total: steps.length };
+}
+
 export const zTask = z.object({
   id: zId,
   title: z.string(),
@@ -1454,6 +1533,7 @@ export const zTask = z.object({
   tainted: z.boolean(),
   createdByType: z.string(),
   due: z.string().nullable(),
+  checklist: z.array(zTaskChecklistStepView),
   createdAt: z.string(),
 });
 

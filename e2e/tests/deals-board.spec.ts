@@ -96,10 +96,48 @@ test('a member adds deals, moves them between stages and the board keeps its ord
   });
 
   await test.step('a card moved elsewhere in the meantime is refused, and the board shows the real place', async () => {
-    // Someone else moves the deal; this page still holds the old version.
-    exec(`UPDATE crove_crm.deal SET version = version + 1 WHERE title = 'Tư vấn thuế'`);
+    // Someone else moves the deal while this page missed the stream's hint (#3293: a write now sends one, so the trigger is off for this statement); this page still holds the old version.
+    exec(`SET session_replication_role = replica;
+       UPDATE crove_crm.deal SET version = version + 1 WHERE title = 'Tư vấn thuế'`);
     await page.getByRole('combobox', { name: 'Giai đoạn của cơ hội Tư vấn thuế' }).selectOption({ label: 'Thương lượng' });
     await expect(page.getByText('vừa được người khác sửa')).toBeVisible();
     await expect.poll(() => titles('Báo giá')).toContain('Tư vấn thuế');
+  });
+
+  await test.step('a card moved by someone else shows in its new column with no reload (the stream hint, #3293)', async () => {
+    // A write by another member: the deal trigger sends the hint, the board reads again through its normal query, and the hint holds no title.
+    exec(
+      `UPDATE crove_crm.deal d SET stage_id = (SELECT s.id FROM crove_crm.pipeline_stage s WHERE s.org_id = d.org_id AND s.name = 'Thương lượng'), version = version + 1, updated_at = now()
+       WHERE d.title = 'Báo cáo tài chính'`,
+    );
+    await expect.poll(() => titles('Thương lượng'), { timeout: 15_000 }).toEqual(['Báo cáo tài chính']);
+    expect(await titles('Báo giá')).toEqual(['Tư vấn thuế']);
+  });
+
+  await test.step('a deal won more than 30 days ago is off the board, and "Xem tất cả" in Thắng lists it (crm.md section 6)', async () => {
+    exec(
+      `SET session_replication_role = replica;
+       UPDATE crove_crm.deal SET closed_at = now() - interval '45 days' WHERE title = 'Gói kế toán năm' AND org_id = (SELECT org_id FROM crove_kernel.tenant WHERE slug = :'slug')`,
+      { slug },
+    );
+    await page.reload();
+    await expect(column('Thắng').getByTestId('deal-card')).toHaveCount(0);
+    // Only the closed columns have the control.
+    await expect(board.getByRole('button', { name: 'Xem tất cả' })).toHaveCount(2);
+    await expect(column('Mới').getByRole('button', { name: /Xem tất cả/ })).toHaveCount(0);
+    await column('Thắng').getByRole('button', { name: 'Xem tất cả cơ hội ở giai đoạn Thắng trong danh sách' }).click();
+    await expect(page.getByRole('tab', { name: 'Danh sách', selected: true })).toBeVisible();
+    await expect(page.getByLabel('Trạng thái', { exact: true })).toHaveValue('won');
+    await expect(page.getByRole('table').getByText('Gói kế toán năm')).toBeVisible();
+    await expect(page.getByRole('table').getByText('Tư vấn thuế')).toHaveCount(0);
+  });
+
+  await test.step('on a phone the board is one tab away and its Thua column opens the list of lost deals', async () => {
+    await page.setViewportSize({ width: 375, height: 800 });
+    await page.goto(`/o/${slug}/deals`);
+    await page.getByRole('tab', { name: 'Bảng' }).click();
+    await board.getByRole('button', { name: 'Xem tất cả cơ hội ở giai đoạn Thua trong danh sách' }).click();
+    await expect(page.getByRole('tab', { name: 'Danh sách', selected: true })).toBeVisible();
+    await expect(page.getByLabel('Trạng thái', { exact: true })).toHaveValue('lost');
   });
 });

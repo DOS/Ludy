@@ -23,7 +23,7 @@ export const kernelManifest = defineModule({
       auth_session_org: columns(['org_id', 'user_id', 'session_id', 'status', 'first_seen_at', 'last_seen_at', 'revoked_at', 'revoked_by', 'reason']),
       availability_rule: columns(['org_id', 'id', 'user_id', 'weekday', 'start_minute', 'end_minute', 'time_zone', 'created_by', 'created_at']),
       budget_policy: columns(['org_id', 'id', 'scope', 'target', 'monthly_limit', 'warn_percent', 'hard_stop', 'updated_by', 'updated_at']),
-      calendar_connection: columns(['org_id', 'id', 'user_id', 'provider', 'scopes', 'status', 'status_reason', 'expires_at', 'last_synced_at', 'write_back', 'connected_at', 'updated_at'], { external_account: 'contact', display_name: 'contact' }),
+      calendar_connection: columns(['org_id', 'id', 'user_id', 'provider', 'scopes', 'status', 'status_reason', 'expires_at', 'last_synced_at', 'write_back', 'read_events', 'connected_at', 'updated_at'], { external_account: 'contact', display_name: 'contact' }),
       calendar_credential: columns(['org_id', 'id', 'key_id', 'created_at', 'sealed_at'], { envelope: 'sensitive' }),
       calendar_event: columns(['org_id', 'id', 'user_id', 'starts_at', 'ends_at', 'time_zone', 'title', 'kind', 'status', 'created_by', 'created_at', 'cancelled_by', 'cancelled_at', 'source_id', 'external_id', 'conference']),
       calendar_event_link: columns(['org_id', 'id', 'connection_id', 'event_id', 'user_id', 'external_id', 'state', 'synced_hash', 'attempts', 'last_error', 'updated_at']),
@@ -73,6 +73,14 @@ export const kernelManifest = defineModule({
       mail_suppression: columns(['org_id', 'id', 'to_hash', 'scope', 'reason', 'source_message_id', 'created_by', 'created_at', 'lifted_at', 'lifted_by', 'lift_reason']),
       // A member's availability for the inbox (CV3, #2306): available or away, which decides whom a new conversation is told to.
       mcp_member_table: columns(['table_name', 'mode', 'adr']),
+      // Meeting platforms a member connects (meetings integrations C1, #3173): the account is contact data, the sealed tokens sensitive, the recording's title is the platform's words (pii) and the
+      // staging key is the random address of the bytes waiting for the member's own request (sensitive).
+      meeting_platform_connection: columns(['org_id', 'id', 'user_id', 'provider', 'scopes', 'status', 'status_reason', 'expires_at', 'last_synced_at', 'connected_at', 'updated_at'], { external_account: 'contact', display_name: 'contact' }),
+      meeting_platform_credential: columns(['org_id', 'id', 'key_id', 'created_at', 'sealed_at'], { envelope: 'sensitive' }),
+      meeting_platform_recording: columns(
+        ['org_id', 'id', 'connection_id', 'user_id', 'external_id', 'started_at', 'length_seconds', 'size_bytes', 'has_audio', 'has_video', 'has_transcript', 'status', 'meeting_id', 'staged_at', 'error_code', 'created_at', 'updated_at'],
+        { title: 'pii', staging_key: 'sensitive' },
+      ),
       member_availability: columns(['org_id', 'id', 'user_id', 'status', 'until', 'updated_at']),
       member_invite: columns(['org_id', 'id', 'role', 'token_sha256', 'status', 'invited_by', 'created_at', 'expires_at', 'accepted_at', 'accepted_by', 'revoked_at', 'revoked_by', 'legal_entity_ids', 'role_key', 'role_scope'], { email: 'contact' }),
       member_permission_override: columns(['org_id', 'id', 'user_id', 'permission', 'allowed', 'set_by', 'set_by_owner', 'set_at']),
@@ -89,6 +97,7 @@ export const kernelManifest = defineModule({
       org_usage: columns(['org_id', 'id', 'metric', 'amount', 'created_at', 'feature', 'module', 'agent_id', 'input_tokens', 'output_tokens']),
       outbox_archive: columns(['org_id', 'day', 'object_key', 'sha256', 'row_count', 'archived_at', 'purged_at', 'purged_rows']),
       outbox_event: columns(['org_id', 'id', 'type', 'actor_id', 'command_id', 'created_at', 'actor_type', 'agent_id', 'agent_run'], { payload: 'pii' }),
+      outbox_held: columns(['org_id', 'id', 'event_id', 'module', 'held_at']),
       outbox_pending: columns(['seq', 'org_id', 'event_id', 'attempts', 'last_error', 'held_type']),
       party: columns(['org_id', 'id', 'kind', 'source_trust', 'verified_at', 'verified_by', 'version', 'created_at', 'updated_at', 'duplicate_of', 'company_id'], { name: 'pii', tax_code: 'national_id_if_individual', address: 'contact', email: 'contact', phone: 'contact', search: 'pii' }),
       permission_catalog: columns(['permission', 'grantable_to_viewer', 'entity_roles_count']),
@@ -109,11 +118,11 @@ export const kernelManifest = defineModule({
       security_signal_seen: columns(['signal', 'subject', 'alerted_at']),
       // The wrapped data key of one subject (ADR-0017, #2640): definer-only, no login role reads it. The ref names an id or a keyed hash, never a value.
       subject_key: columns(['org_id', 'id', 'ref', 'key_id', 'created_at'], { wrapped_key: 'sensitive' }),
-      task: columns(['org_id', 'id', 'kind', 'assignee_position_id', 'parent_task_id', 'source', 'source_ref', 'source_event_id', 'created_by_type', 'created_by_id', 'created_by_run', 'status', 'due', 'request_depth', 'tainted', 'checkout_run_id', 'lock_expires_at', 'fence', 'created_at', 'updated_at', 'legal_entity_id'], { title: 'pii', description: 'pii', pending_draft: 'pii' }),
+      task: columns(['org_id', 'id', 'kind', 'assignee_position_id', 'parent_task_id', 'source', 'source_ref', 'source_event_id', 'created_by_type', 'created_by_id', 'created_by_run', 'status', 'due', 'request_depth', 'tainted', 'checkout_run_id', 'lock_expires_at', 'fence', 'created_at', 'updated_at', 'legal_entity_id'], { title: 'pii', description: 'pii', checklist: 'pii', pending_draft: 'pii' }),
       task_comment: columns(['org_id', 'id', 'task_id', 'author_type', 'author_id', 'run_id', 'tainted', 'created_at'], { body: 'pii' }),
       tax_obligation_done: columns(['org_id', 'id', 'obligation', 'period', 'done_by', 'done_at', 'legal_entity_id']),
       tax_profile: columns(['org_id', 'id', 'obligations', 'pit_filing_period', 'fiscal_year_end_month', 'updated_by', 'created_at', 'updated_at']),
-      tenant: columns(['org_id', 'slug', 'name', 'status', 'base_currency', 'created_by', 'created_at', 'vat_filing_period', 'missing_invoice_reminder_day', 'approval_preset', 'approval_policy_version', 'meeting_audio_retention_days', 'meeting_video_retention_days', 'meeting_text_retention_days', 'meeting_consent_policy', 'mcp_member_grants'], { inbound_token: 'sensitive', conversation_token: 'sensitive', tax_code: 'national_id_if_individual', address: 'contact', contact_email: 'contact' }),
+      tenant: columns(['org_id', 'slug', 'name', 'status', 'base_currency', 'created_by', 'created_at', 'vat_filing_period', 'missing_invoice_reminder_day', 'approval_preset', 'approval_policy_version', 'meeting_audio_retention_days', 'meeting_video_retention_days', 'meeting_text_retention_days', 'meeting_consent_policy', 'meeting_hooks', 'mcp_member_grants', 'apps_off', 'apps_version'], { inbound_token: 'sensitive', conversation_token: 'sensitive', tax_code: 'national_id_if_individual', address: 'contact', contact_email: 'contact' }),
       tenant_member: columns(['org_id', 'user_id', 'role', 'created_at']),
       // The members who opted in to the daily brief by email (#2406); last_sent_day is the Vietnam day of the last mail.
       today_mail: columns(['org_id', 'id', 'user_id', 'created_at', 'last_sent_day', 'language']),
@@ -162,6 +171,8 @@ export const kernelManifest = defineModule({
     { type: 'kernel.file_upload', table: 'file_upload', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.inbox_item', table: 'inbox_item', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.kill_switch', table: 'kill_switch', legalEntityScoped: false, audit: 'command' },
+    { type: 'kernel.meeting_platform_connection', table: 'meeting_platform_connection', legalEntityScoped: false, audit: 'command' },
+    { type: 'kernel.meeting_platform_recording', table: 'meeting_platform_recording', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.member_invite', table: 'member_invite', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.member_vy_memory', table: 'member_vy_memory', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.number_allocation', table: 'number_allocation', legalEntityScoped: true, audit: 'append_only' },

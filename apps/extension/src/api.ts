@@ -5,6 +5,7 @@
 // single-use signed form, https only), the same step the app takes. The bearer token is the extension token.
 import { isLocalhost, ludyUrl } from './ludy-address.ts';
 import type { Me } from './features.ts';
+import { readAgendaNext, type AgendaNext } from './agenda.ts';
 import type { ConsentMethod } from './consent.ts';
 import type { RecordingStopReason } from '@crove/meeting-recorder';
 
@@ -54,10 +55,15 @@ export interface Client {
   config(): Promise<{ uploads: 'presigned' | 'direct' }>;
   exchangeCode(code: string, codeVerifier: string): Promise<{ token: string; orgId: string; scopes: string[]; expiresAt: string }>;
   me(): Promise<Me>;
+  // The member's next calendar meetings (B2, the agenda scope): null when the answer is not the expected shape. Throws LudyError with the HTTP status (403 when the token lacks the scope).
+  agendaNext(): Promise<AgendaNext | null>;
   createMeeting(input: MeetingCreate): Promise<{ meetingId: string }>;
   // One piece of the audio of a live-notes meeting; throws LudyError with the HTTP status (the live sender retries or gives up by it).
   sendLiveChunk(input: { meetingId: string; seq: number; lengthSeconds: number; blob: Blob }): Promise<void>;
   // `stopReason`: the recording stopped without the member's click (A1, #3159); the server keeps the code on the meeting.
+  // The recording ended and no media will reach the server (nothing saved, the upload failed, the capture failed to start): the meeting gets its end time
+  // and the code, once, so the app's recording chip lets go (#3196). The server ignores it when the meeting already has a recording; callers never fail on it.
+  recordingStopped(input: { meetingId: string; reason?: RecordingStopReason; lengthSeconds?: number }): Promise<void>;
   uploadMedia(input: { meetingId: string; kind: 'audio' | 'video'; file: File; lengthSeconds: number; uploads: 'presigned' | 'direct'; stopReason?: RecordingStopReason }): Promise<Uploaded>;
 }
 
@@ -97,6 +103,9 @@ export function createClient(address: string, token: string | null, fetchImpl: F
     async me() {
       return (await (await call('/api/extension/me')).json()) as Me;
     },
+    async agendaNext() {
+      return readAgendaNext(await (await call('/api/rpc/meetings/agenda/next', json({ json: {} }))).json());
+    },
     async createMeeting(input) {
       // oRPC's wire format: the input in `json`. Language and visibility take the server's defaults of the app's recorder.
       const body = { json: { title: input.title.trim(), language: 'vi', visibility: 'attendees', keepVideo: input.keepVideo, consentMethod: input.consentMethod, ...(input.consentNoticeVersion ? { consentNoticeVersion: input.consentNoticeVersion } : {}), liveNotes: input.liveNotes } };
@@ -110,6 +119,9 @@ export function createClient(address: string, token: string | null, fetchImpl: F
       const base = blob.type.split(';')[0]!.trim();
       const type = /^audio\/[\w.+-]+$/.test(base) ? base : 'application/octet-stream';
       await call(`/api/meetings/${encodeURIComponent(meetingId)}/live-chunk?${query.toString()}`, { method: 'POST', headers: { 'content-type': type }, body: blob });
+    },
+    async recordingStopped({ meetingId, reason, lengthSeconds }) {
+      await call('/api/rpc/meetings/recordingStopped', json({ json: { meetingId, ...(reason ? { reason } : {}), ...(lengthSeconds !== undefined ? { lengthSeconds } : {}) } }));
     },
     async uploadMedia({ meetingId, kind, file, lengthSeconds, uploads, stopReason }) {
       const purpose = kind === 'audio' ? 'meeting_audio' : 'meeting_video';

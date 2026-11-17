@@ -35,7 +35,7 @@ test("the TikTok block lists only the account's options and fits 360px", async (
 
   await page.goto(`/o/${slug}/social/channels`);
   await page.getByRole('link', { name: 'Quay lại' }).click();
-  await page.getByRole('link', { name: 'Soạn bài' }).click();
+  await page.getByRole('link', { name: 'Soạn bài' }).first().click();
   await page.getByLabel('Nội dung chung').fill('Bánh mới ra lò');
   await expect(page.getByText('Đăng lên TikTok của Tiệm Bánh B')).toBeVisible();
   const privacy = page.locator('select', { has: page.locator('option', { hasText: 'Chọn quyền xem' }) });

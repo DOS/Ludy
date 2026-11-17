@@ -146,6 +146,19 @@ export type CalendarConnectionTable = Refine<
   }
 >;
 
+// Meeting platforms a member connects and the recordings they offer (meetings integrations C1, #3173). The recording rows are written by definers alone.
+export const MEETING_PLATFORM_PROVIDERS = ['sandbox', 'google_meet', 'zoom', 'microsoft_teams'] as const;
+export const MEETING_PLATFORM_CONNECTION_STATUSES = ['active', 'expired'] as const;
+export const MEETING_PLATFORM_RECORDING_STATUSES = ['suggested', 'importing', 'staged', 'claimed', 'imported', 'failed', 'dismissed'] as const;
+export type MeetingPlatformConnectionTable = Refine<
+  G.KernelMeetingPlatformConnectionTable,
+  {
+    provider: ColumnType<(typeof MEETING_PLATFORM_PROVIDERS)[number], (typeof MEETING_PLATFORM_PROVIDERS)[number], never>;
+    status: Generated<(typeof MEETING_PLATFORM_CONNECTION_STATUSES)[number]>;
+  }
+>;
+export type MeetingPlatformRecordingTable = Refine<G.KernelMeetingPlatformRecordingTable, { status: ColumnType<(typeof MEETING_PLATFORM_RECORDING_STATUSES)[number], never, never> }>;
+
 // The legal entities of an org (issue #1278): a company or other organization, a branch or other dependent unit, or a
 // household or individual business. One default per org, created with the org.
 export const LEGAL_ENTITY_KINDS = ['company', 'branch', 'household'] as const;
@@ -202,14 +215,14 @@ export type PartyTable = Refine<
 // keeps UPDATE only to lock the row (SELECT ... FOR UPDATE), so no column has an update type here.
 // social: an image uploaded for a Social post (#372); import: a spreadsheet for a module's import (#465). Neither is
 // extracted or shown in the Inbox. meeting_audio and meeting_video: encrypted meeting recordings (#2576).
-export const FILE_SOURCES = ['upload', 'email', 'social', 'import', 'meeting_audio', 'meeting_video'] as const;
+export const FILE_SOURCES = ['upload', 'email', 'social', 'import', 'meeting_audio', 'meeting_video', 'sign_document', 'sign_sealed', 'sign_certificate', 'agreement'] as const;
 type Frozen<T> = ColumnType<SelectType<T>, InsertType<T>, G.NotGranted>;
 export type FileTable = Refine<
   G.KernelFileTable,
   { [K in Exclude<keyof G.KernelFileTable, 'source'>]: Frozen<G.KernelFileTable[K]> } & { source: Frozen<(typeof FILE_SOURCES)[number]> }
 >;
 
-export const FILE_UPLOAD_PURPOSES = ['document', 'social', 'import', 'meeting_audio', 'meeting_video'] as const;
+export const FILE_UPLOAD_PURPOSES = ['document', 'social', 'import', 'meeting_audio', 'meeting_video', 'sign_document', 'agreement'] as const;
 export type FileUploadPurpose = (typeof FILE_UPLOAD_PURPOSES)[number];
 export type FileUploadTable = Refine<G.KernelFileUploadTable, { purpose: Generated<FileUploadPurpose> }>;
 
@@ -486,9 +499,11 @@ export type BankPartyRuleKind = (typeof BANK_PARTY_RULE_KINDS)[number];
 // A sales e-invoice draft (#2500, ADR-0044): its state, and the kind of buyer it is for (a business, a named individual, a consumer).
 export const EINVOICE_DRAFT_STATES = ['draft', 'submitting', 'pending', 'issued', 'rejected', 'failed'] as const;
 export const EINVOICE_BUYER_KINDS = ['business', 'individual', 'consumer'] as const;
+// What an individual buyer gives instead of a tax code (#3678): a CCCD, a passport number or a budget-relation unit code.
+export const EINVOICE_BUYER_IDENTITY_KINDS = ['cccd', 'passport', 'budget_code'] as const;
 export type EInvoiceDraftTable = Refine<
   G.FinanceEinvoiceDraftTable,
-  { state: Generated<(typeof EINVOICE_DRAFT_STATES)[number]>; buyer_kind: (typeof EINVOICE_BUYER_KINDS)[number]; legal_entity_id: LegalEntityColumn },
+  { state: Generated<(typeof EINVOICE_DRAFT_STATES)[number]>; buyer_kind: (typeof EINVOICE_BUYER_KINDS)[number]; buyer_identity_kind: (typeof EINVOICE_BUYER_IDENTITY_KINDS)[number] | null; legal_entity_id: LegalEntityColumn },
   'legal_entity_id'
 >;
 // Stock (#2512, ADR-0045 point 1): the kind of an item, the trade it is sold in, and where a move of stock comes from.
@@ -937,9 +952,9 @@ export type CrmBookingTable = Refine<
 >;
 
 // The notes module (issue #1671, ADR-0037): a note is private to its author or shared with the org, and links to a
-// party, a file, a purchase document, a journal entry or a booking (#1672).
+// party, a file, a purchase document, a journal entry, a booking, a task, a project or a meeting (#1672, #2595, #1679).
 export const NOTE_VISIBILITIES = ['private', 'org'] as const;
-export const NOTE_LINK_TARGET_TYPES = ['kernel.party', 'kernel.file', 'finance.purchase_document', 'finance.journal_entry', 'crm.booking'] as const;
+export const NOTE_LINK_TARGET_TYPES = ['kernel.party', 'kernel.file', 'kernel.task', 'finance.purchase_document', 'finance.journal_entry', 'crm.booking', 'projects.project', 'meetings.meeting'] as const;
 export type NotesNoteTable = Refine<G.NotesNoteTable, { visibility: Generated<(typeof NOTE_VISIBILITIES)[number]> }>;
 export type NotesLinkTable = Refine<G.NotesLinkTable, { target_type: (typeof NOTE_LINK_TARGET_TYPES)[number] }>;
 // A member's own to-do (#1673): open, done, handed over to a position (N5) or cancelled.
@@ -1039,20 +1054,65 @@ export type AdsAdTokenRevokeTable = Refine<
 // The HR module (#2530, payroll plan 6.1): an employee is active or ended; the terms of an employment name a contract type and a wage region (Decree 74/2024).
 export const HR_EMPLOYEE_STATUSES = ['active', 'ended'] as const;
 export const HR_CONTRACT_TYPES = ['indefinite', 'fixed_term', 'none'] as const;
+export const HR_CONTRACT_FORMS = ['written', 'electronic', 'oral'] as const;
+export const HR_PROBATION_ROLE_TIERS = ['enterprise_manager', 'college_or_above', 'intermediate_technical', 'other'] as const;
 export const HR_REGIONS = ['I', 'II', 'III', 'IV'] as const;
 export const HR_PAY_FUNCTIONS = ['admin', 'sales', 'production', 'overhead', 'construction'] as const;
+export const HR_JOB_OPENING_STATUSES = ['open', 'closed'] as const;
+export const HR_CANDIDATE_STAGES = ['applied', 'screening', 'interview', 'offer', 'hired', 'rejected'] as const;
+// Departments per legal entity (#3412): optional team structure with default pay_function.
+export type HrDepartmentTable = Refine<
+  G.HrDepartmentTable,
+  {
+    legal_entity_id: LegalEntityColumn;
+    pay_function: Generated<(typeof HR_PAY_FUNCTIONS)[number]>;
+  },
+  'legal_entity_id'
+>;
+export type HrJobOpeningTable = Refine<
+  G.HrJobOpeningTable,
+  {
+    legal_entity_id: LegalEntityColumn;
+    contract_type: Generated<(typeof HR_CONTRACT_TYPES)[number]>;
+    region: Generated<(typeof HR_REGIONS)[number]>;
+    pay_function: Generated<(typeof HR_PAY_FUNCTIONS)[number]>;
+    status: Generated<(typeof HR_JOB_OPENING_STATUSES)[number]>;
+  },
+  'legal_entity_id'
+>;
+export type HrCandidateTable = Refine<
+  G.HrCandidateTable,
+  {
+    legal_entity_id: LegalEntityColumn;
+    stage: Generated<(typeof HR_CANDIDATE_STAGES)[number]>;
+  },
+  'legal_entity_id'
+>;
 // A bank template (#2532): the entity is filled by the trigger b_legal_entity (the one the writer names or the org's default); the layout is a JSON object checked by the database.
 export type HrPayrollBankTemplateTable = Refine<G.HrPayrollBankTemplateTable, { legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
 export type HrPayrollEmployeeTable = Refine<G.HrPayrollEmployeeTable, { status: Generated<(typeof HR_EMPLOYEE_STATUSES)[number]> }>;
 export type HrPayrollEmploymentTable = Refine<
   G.HrPayrollEmploymentTable,
-  { contract_type: ColumnType<(typeof HR_CONTRACT_TYPES)[number], (typeof HR_CONTRACT_TYPES)[number], never>; region: ColumnType<(typeof HR_REGIONS)[number], (typeof HR_REGIONS)[number], never>; pay_function: ColumnType<(typeof HR_PAY_FUNCTIONS)[number], (typeof HR_PAY_FUNCTIONS)[number] | undefined, never> }
+  {
+    contract_type: ColumnType<(typeof HR_CONTRACT_TYPES)[number], (typeof HR_CONTRACT_TYPES)[number], never>;
+    contract_form: ColumnType<(typeof HR_CONTRACT_FORMS)[number] | null, (typeof HR_CONTRACT_FORMS)[number] | null, never>;
+    probation_role_tier: ColumnType<(typeof HR_PROBATION_ROLE_TIERS)[number] | null, (typeof HR_PROBATION_ROLE_TIERS)[number] | null, never>;
+    region: ColumnType<(typeof HR_REGIONS)[number], (typeof HR_REGIONS)[number], never>;
+    pay_function: ColumnType<(typeof HR_PAY_FUNCTIONS)[number], (typeof HR_PAY_FUNCTIONS)[number] | undefined, never>;
+  }
 >;
 // The pay run (#2531): a run is a draft until a person approves it; the posting and payment builds (#2532) take it on to paid and closed. A line is a pay line or a signed adjustment, and
 // is calculated or refused by the calculator.
 export const HR_RUN_STATUSES = ['draft', 'approved', 'paid', 'closed'] as const;
 export const HR_LINE_KINDS = ['pay', 'adjustment'] as const;
 export const HR_LINE_STATUSES = ['calculated', 'refused'] as const;
+export const HR_LEAVE_ENTRY_KINDS = ['opening_balance', 'annual_leave', 'personal_paid', 'unpaid_leave'] as const;
+export type HrLeaveEntryKind = (typeof HR_LEAVE_ENTRY_KINDS)[number];
+export type HrPayrollLeaveEntryTable = Refine<
+  G.HrPayrollLeaveEntryTable,
+  { kind: ColumnType<HrLeaveEntryKind, HrLeaveEntryKind, never>; legal_entity_id: LegalEntityColumn },
+  'legal_entity_id'
+>;
 export type HrPayrollRunTable = Refine<G.HrPayrollRunTable, { status: Generated<(typeof HR_RUN_STATUSES)[number]> }>;
 export type HrPayrollLineTable = Refine<
   G.HrPayrollLineTable,
@@ -1066,11 +1126,15 @@ export const MEETING_LANGUAGES = ['vi', 'en'] as const;
 export type MeetingLanguage = (typeof MEETING_LANGUAGES)[number];
 export const MEETING_STATUSES = ['ready', 'processing', 'completed', 'error'] as const;
 export type MeetingStatus = (typeof MEETING_STATUSES)[number];
-export const MEETING_CONSENT_METHODS = ['told_at_start', 'in_invite', 'in_writing', 'in_call_chat'] as const;
+export const MEETING_CONSENT_METHODS = ['told_at_start', 'in_invite', 'in_writing', 'in_call_chat', 'platform_notice'] as const;
 export type MeetingConsentMethod = (typeof MEETING_CONSENT_METHODS)[number];
 // Why a recording stopped without the recorder's own click (A1, #3159): a code, never text.
 export const MEETING_RECORDING_STOP_REASONS = ['tab_closed', 'mic_lost', 'permission_lost', 'storage_full', 'left_screen', 'unknown'] as const;
 export type MeetingRecordingStopReason = (typeof MEETING_RECORDING_STOP_REASONS)[number];
+// The minutes template a recorder picked for a meeting (A4, #3162): a code, never text. The sections of each live in code (packages/kernel-contract); 'custom' (#3578) is a template the org
+// wrote, whose sections are the meeting's own copy (minutes_template_sections).
+export const MEETING_SUMMARY_TEMPLATES = ['general', 'briefing', 'customer', 'supplier', 'one_on_one', 'custom'] as const;
+export type MeetingSummaryTemplate = (typeof MEETING_SUMMARY_TEMPLATES)[number];
 
 export type MeetingsMeetingTable = Refine<
   G.MeetingsMeetingTable,
@@ -1079,6 +1143,7 @@ export type MeetingsMeetingTable = Refine<
     language: Generated<MeetingLanguage>;
     status: Generated<MeetingStatus>;
     consent_method: MeetingConsentMethod;
+    summary_template: Generated<MeetingSummaryTemplate>;
     recording_stop_reason: ColumnType<MeetingRecordingStopReason | null, MeetingRecordingStopReason | null | undefined, MeetingRecordingStopReason | null>;
   }
 >;
@@ -1120,7 +1185,7 @@ export type MeetingsActionItemTable = Refine<
 >;
 
 // The machine translation of a meeting's summary (meetings integrations E1, #3184): what kind of text it translates, in which language, and which stage of the summary it was made from.
-export const TRANSLATION_KINDS = ['summary'] as const;
+export const TRANSLATION_KINDS = ['summary', 'transcript'] as const;
 export type TranslationKind = (typeof TRANSLATION_KINDS)[number];
 export type MeetingsTranslationTable = Refine<
   G.MeetingsTranslationTable,
@@ -1131,6 +1196,93 @@ export type MeetingsTranslationTable = Refine<
   }
 >;
 
+// The org's channels for minutes (meetings integrations B4, #3168): which service the webhook belongs to, and how far one click's post got.
+export const MEETING_CHAT_KINDS = ['slack', 'teams'] as const;
+export type MeetingChatKind = (typeof MEETING_CHAT_KINDS)[number];
+export const MEETING_CHAT_POST_STATES = ['queued', 'sent', 'failed', 'ambiguous', 'dropped'] as const;
+export type MeetingChatPostState = (typeof MEETING_CHAT_POST_STATES)[number];
+export type MeetingsChatChannelTable = Refine<G.MeetingsChatChannelTable, { kind: MeetingChatKind }>;
+export type MeetingsChatPostTable = Refine<G.MeetingsChatPostTable, { state: Generated<MeetingChatPostState> }>;
+
+// Projects that group kernel tasks (#2591, ADR-0048).
+export const PROJECT_STATUSES = ['active', 'on_hold', 'done', 'archived'] as const;
+export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
+
+export type ProjectsProjectTable = Refine<
+  G.ProjectsProjectTable,
+  {
+    status: Generated<ProjectStatus>;
+  }
+>;
+
+// Electronic signatures (Sign, #3323): envelope workflow, signers, fields, AI analysis, and hash-chained events.
+export const SIGN_ENVELOPE_STATUSES = ['draft', 'sent', 'in_progress', 'completed', 'declined', 'voided', 'expired'] as const;
+export type SignEnvelopeStatus = (typeof SIGN_ENVELOPE_STATUSES)[number];
+export const SIGN_ROUTING_MODES = ['parallel', 'sequential'] as const;
+export type SignRoutingMode = (typeof SIGN_ROUTING_MODES)[number];
+export const SIGN_SOURCE_KINDS = ['standalone', 'crm_quote', 'crm_order', 'hr_contract'] as const;
+export type SignSourceKind = (typeof SIGN_SOURCE_KINDS)[number];
+export const SIGN_INSPECT_STATUSES = ['pending', 'passed', 'failed'] as const;
+export type SignInspectStatus = (typeof SIGN_INSPECT_STATUSES)[number];
+export const SIGN_SEAL_STATUSES = ['pending', 'sealed', 'failed'] as const;
+export type SignSealStatus = (typeof SIGN_SEAL_STATUSES)[number];
+export const SIGN_SIGNER_ROLES = ['signer', 'approver', 'cc'] as const;
+export type SignSignerRole = (typeof SIGN_SIGNER_ROLES)[number];
+export const SIGN_DELIVERY_MODES = ['link', 'email'] as const;
+export type SignDeliveryMode = (typeof SIGN_DELIVERY_MODES)[number];
+export const SIGN_SIGNER_STATUSES = ['waiting', 'pending', 'viewed', 'signed', 'declined', 'voided', 'expired'] as const;
+export type SignSignerStatus = (typeof SIGN_SIGNER_STATUSES)[number];
+export const SIGN_SIGNATURE_KINDS = ['draw', 'type'] as const;
+export type SignSignatureKind = (typeof SIGN_SIGNATURE_KINDS)[number];
+export const SIGN_FIELD_TYPES = ['signature', 'initials', 'date', 'text', 'checkbox'] as const;
+export type SignFieldType = (typeof SIGN_FIELD_TYPES)[number];
+export const SIGN_AI_ANALYSIS_STATUSES = ['pending', 'completed', 'failed'] as const;
+export type SignAiAnalysisStatus = (typeof SIGN_AI_ANALYSIS_STATUSES)[number];
+export const SIGN_ACTOR_TYPES = ['user', 'signer', 'system', 'ai'] as const;
+export type SignActorType = (typeof SIGN_ACTOR_TYPES)[number];
+export const SIGN_TEMPLATE_STATUSES = ['draft', 'active', 'archived'] as const;
+export type SignTemplateStatus = (typeof SIGN_TEMPLATE_STATUSES)[number];
+
+export type SignEnvelopeTable = Refine<
+  G.SignEnvelopeTable,
+  {
+    status: Generated<SignEnvelopeStatus>;
+    routing_mode: Generated<SignRoutingMode>;
+    source_kind: Generated<SignSourceKind>;
+    inspect_status: Generated<SignInspectStatus>;
+    seal_status: SignSealStatus | null;
+  }
+>;
+
+export type SignSignerTable = Refine<
+  G.SignSignerTable,
+  {
+    signer_role: Generated<SignSignerRole>;
+    delivery_mode: Generated<SignDeliveryMode>;
+    status: Generated<SignSignerStatus>;
+    signature_kind: SignSignatureKind | null;
+  }
+>;
+
+export type SignFieldTable = Refine<G.SignFieldTable, { field_type: SignFieldType }>;
+export type SignAiAnalysisTable = Refine<G.SignAiAnalysisTable, { status: Generated<SignAiAnalysisStatus> }>;
+export type SignSigningEventTable = Refine<G.SignSigningEventTable, { actor_type: SignActorType }>;
+export type SignTemplateTable = Refine<
+  G.SignTemplateTable,
+  {
+    routing_mode: Generated<SignRoutingMode>;
+    inspect_status: Generated<SignInspectStatus>;
+    status: Generated<SignTemplateStatus>;
+  }
+>;
+export type SignTemplateRoleTable = Refine<
+  G.SignTemplateRoleTable,
+  {
+    signer_role: Generated<SignSignerRole>;
+    delivery_mode: Generated<SignDeliveryMode>;
+  }
+>;
+export type SignTemplateFieldTable = Refine<G.SignTemplateFieldTable, { field_type: SignFieldType }>;
 type Refined = Tables<{
   'crove_ads.ad_account': AdsAdAccountTable;
   'crove_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
@@ -1153,12 +1305,18 @@ type Refined = Tables<{
   'crove_crm.sales_order': CrmSalesOrderTable;
   'crove_crm.sales_order_delivery': CrmSalesOrderDeliveryTable;
   'crove_crm.sales_order_line': CrmSalesOrderLineTable;
+  'crove_hr.candidate': HrCandidateTable;
+  'crove_hr.department': HrDepartmentTable;
+  'crove_hr.job_opening': HrJobOpeningTable;
   'crove_hr.payroll_bank_template': HrPayrollBankTemplateTable;
   'crove_hr.payroll_employee': HrPayrollEmployeeTable;
   'crove_hr.payroll_employment': HrPayrollEmploymentTable;
+  'crove_hr.payroll_leave_entry': HrPayrollLeaveEntryTable;
   'crove_hr.payroll_line': HrPayrollLineTable;
   'crove_hr.payroll_run': HrPayrollRunTable;
   'crove_meetings.action_item': MeetingsActionItemTable;
+  'crove_meetings.chat_channel': MeetingsChatChannelTable;
+  'crove_meetings.chat_post': MeetingsChatPostTable;
   'crove_meetings.meeting': MeetingsMeetingTable;
   'crove_meetings.meeting_result': MeetingsMeetingResultTable;
   'crove_meetings.transcript_segment': MeetingsTranscriptSegmentTable;
@@ -1166,9 +1324,20 @@ type Refined = Tables<{
   'crove_notes.link': NotesLinkTable;
   'crove_notes.note': NotesNoteTable;
   'crove_notes.todo': NotesTodoTable;
+  'crove_projects.project': ProjectsProjectTable;
+  'crove_sign.ai_analysis': SignAiAnalysisTable;
+  'crove_sign.envelope': SignEnvelopeTable;
+  'crove_sign.field': SignFieldTable;
+  'crove_sign.signer': SignSignerTable;
+  'crove_sign.signing_event': SignSigningEventTable;
+  'crove_sign.template': SignTemplateTable;
+  'crove_sign.template_field': SignTemplateFieldTable;
+  'crove_sign.template_role': SignTemplateRoleTable;
   'crove_kernel.calendar_connection': CalendarConnectionTable;
   'crove_kernel.calendar_event': CalendarEventTable;
   'crove_kernel.calendar_event_link': CalendarEventLinkTable;
+  'crove_kernel.meeting_platform_connection': MeetingPlatformConnectionTable;
+  'crove_kernel.meeting_platform_recording': MeetingPlatformRecordingTable;
   'crove_kernel.legal_entity': LegalEntityTable;
   'crove_kernel.number_series_policy': NumberSeriesPolicyTable;
   'crove_kernel.role': RoleTable;

@@ -1,8 +1,12 @@
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { EXTRACT_TIMING } from '@crove/extract-contract';
+import { misaBlockers } from '@crove/einvoice';
 import { zExtensionId } from '@crove/kernel-contract';
 import type { UsageLimits } from '@crove/kernel';
+import { parseAllowedEmails } from './auth-access.ts';
+import { checkHostedLoginUrl, hostedLoginName } from './auth-hosted-login.ts';
+import { MAX_OAUTH_PROVIDERS, parseOauthProviders } from './auth-oauth-providers.ts';
 import { SIGNUP_POLICIES, parseAllowedDomains } from './auth-signup-policy.ts';
 import { WEBHOOK_ENV } from './alert.ts';
 import { parseAllowedOrigins } from './cors.ts';
@@ -23,7 +27,7 @@ const optional = z
 
 // Modules this build ships (plan Decision 12, ADR-0031). kernel is always on; the others are on unless CROVE_MODULES
 // leaves them out.
-export const AVAILABLE_MODULES = ['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings'] as const;
+export const AVAILABLE_MODULES = ['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign'] as const;
 export type ModuleId = (typeof AVAILABLE_MODULES)[number];
 
 // CROVE_MODULES: a comma-separated list such as `finance`. Unset or empty enables every available module; kernel is
@@ -215,7 +219,42 @@ const schema = z.object({
   // (Crove Cloud, or any remote Supabase Auth) trusts the verified token until its exp, plus Crove's own session
   // records, and confirms every R3 command live with Supabase Auth; off checks only Crove's own records and never
   // calls Auth (local URLs only). Unset: db when AUTH_UPSTREAM_URL is set (bundled Supabase Auth), jwt otherwise.
-  AUTH_SESSION_CHECK: z.enum(['db', 'jwt', 'off']).optional(),
+  // Empty counts as unset (compose passes the line through empty), so the derived default below applies.
+  AUTH_SESSION_CHECK: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.enum(['db', 'jwt', 'off']).optional()),
+  // Who may use this deployment (issue #2704, auth-access.ts): exact addresses and `@domain` entries, comma or space
+  // separated. Unset: every holder of a valid token. Set it when AUTH_ISSUER and AUTH_JWKS_URL name an identity provider
+  // that serves other people too; a token for any other address is refused with 403 ACCOUNT_NOT_ALLOWED.
+  AUTH_ALLOWED_EMAILS: optional.transform((value, ctx): readonly string[] => {
+    if (value === undefined) return [];
+    const { entries, invalid } = parseAllowedEmails(value);
+    if (invalid.length > 0) {
+      ctx.addIssue({ code: 'custom', message: `not an email address or @domain: ${invalid.join(', ')}` });
+      return z.NEVER;
+    }
+    // Set but listing nobody (`,` or an empty variable in a template) would read as no limit: fail closed instead.
+    if (entries.length === 0) {
+      ctx.addIssue({ code: 'custom', message: 'lists no address or @domain; unset it to allow every account' });
+      return z.NEVER;
+    }
+    return entries;
+  }),
+  // The sign-in buttons the app shows besides email and password (issue #2704, auth-oauth-providers.ts): provider ids the
+  // identity provider has enabled, at most 12. They reach the app through /api/config; Ludy holds no credential for them.
+  AUTH_OAUTH_PROVIDERS: optional.transform((value, ctx): readonly string[] => {
+    if (value === undefined) return [];
+    const { providers, invalid } = parseOauthProviders(value);
+    if (invalid.length > 0) {
+      ctx.addIssue({ code: 'custom', message: `not a provider id (lower-case letters, digits and _, at most ${MAX_OAUTH_PROVIDERS} of them): ${invalid.join(', ')}` });
+      return z.NEVER;
+    }
+    return providers;
+  }),
+  // The identity provider's hosted login page (issue #2704, auth-hosted-login.ts, docs/contracts/hosted-login.md): the page the
+  // app sends the browser to, the endpoint it redeems the returned one-time code at (PKCE) for a Supabase Auth session, and the
+  // words on the button. Both addresses or neither; public addresses, no secret.
+  AUTH_HOSTED_LOGIN_URL: optional,
+  AUTH_HOSTED_LOGIN_TOKEN_URL: optional,
+  AUTH_HOSTED_LOGIN_NAME: optional,
   // Policy P11: R3 needs MFA in the last 5 minutes. off is accepted on local URLs only.
   AUTH_STEP_UP: z.enum(['required', 'off']).default('required'),
   // Mirrors GOTRUE_MAILER_AUTOCONFIRM so the kernel can refuse unsafe public deployments.
@@ -343,6 +382,12 @@ const schema = z.object({
   // The offline sandbox e-invoice provider (ADR-0044, #2500, #2502): series and drafts are made, and invoices issued, without any provider account. Left out, it is on for a
   // local PUBLIC_URL and off for a public one; set to true on a public deployment that runs the finance module it is refused, since what it issues is read into a sale of the books.
   EINVOICE_SANDBOX: optional.pipe(z.enum(['true', 'false']).optional()),
+  // The real e-invoice adapters this deployment offers (#2503), a comma-separated list of adapter ids; `misa` is MISA meInvoice. Off by default, and naming `misa` is refused
+  // until the issues its gates name (MISA_GATES in @crove/einvoice) are done and written in issue #2503. The offline sandbox has its own switch, EINVOICE_SANDBOX.
+  EINVOICE_PROVIDERS: z
+    .string()
+    .default('')
+    .refine((value) => value.split(',').every((id) => id.trim() === '' || /^[a-z][a-z0-9_]{0,21}$/.test(id.trim())), 'a comma-separated list of adapter ids'),
   // The marketplace adapters this deployment offers (#2519), a comma-separated list of adapter ids; `sandbox` is the offline provider, which serves a few recorded orders for each platform
   // without any seller account. Off unless asked for here (`docker compose up` asks for it), so a deployment shows no marketplace connection until it has an adapter. What an adapter
   // reads is only staged, in the Inbox, for a member to confirm; nothing is written until they do.
@@ -485,6 +530,11 @@ const schema = z.object({
   // APP_URL/calendar/oauth/google_calendar/callback. With neither set, the connect button is not offered.
   CALENDAR_GOOGLE_CLIENT_ID: optional,
   CALENDAR_GOOGLE_CLIENT_SECRET: optional,
+  // Outlook calendars (Meetings B3, #3167): the operator's own Microsoft Entra app registration (delegated Graph calendar read, redirect URI
+  // APP_URL/calendar/oauth/microsoft_calendar/callback). The tenant is `common` (work, school and personal accounts) unless one is given. With neither id nor secret set, the connect button is not offered.
+  CALENDAR_MICROSOFT_CLIENT_ID: optional,
+  CALENDAR_MICROSOFT_CLIENT_SECRET: optional,
+  CALENDAR_MICROSOFT_TENANT: optional,
   // The deployment's TikTok app (Login Kit and Content Posting API, Direct Post), S9. Callback URL:
   // APP_URL/channels/oauth/tiktok/callback.
   CHANNEL_TIKTOK_CLIENT_KEY: optional,
@@ -721,8 +771,22 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // Same rule as EINVOICE_SANDBOX: compose passes it through empty, so a public URL never inherits a sandbox default.
     ADS_SANDBOX: raw.ADS_SANDBOX ?? (isLocalUrl(raw.PUBLIC_URL) ? 'true' : 'false'),
   };
+  // #2503: the MISA adapter is built and off. This is the same refusal as einvoiceProvidersOf's, said at start so a deployment never boots with it half on.
+  if (config.EINVOICE_PROVIDERS.split(',').some((id) => id.trim() === 'misa') && misaBlockers().length > 0) {
+    throw new Error(`EINVOICE_PROVIDERS=misa is refused until ${misaBlockers().map((b) => `#${b.issue}`).join(' and ')} are done and written in issue #2503: leave misa out of EINVOICE_PROVIDERS`);
+  }
   if (!config.AUTH_JWT_SECRET && !config.AUTH_JWKS_URL) {
     throw new Error('set AUTH_JWT_SECRET (self-hosted Supabase Auth) or AUTH_JWKS_URL (hosted Supabase Auth)');
+  }
+  if (Boolean(config.AUTH_HOSTED_LOGIN_URL) !== Boolean(config.AUTH_HOSTED_LOGIN_TOKEN_URL)) {
+    throw new Error('set both AUTH_HOSTED_LOGIN_URL and AUTH_HOSTED_LOGIN_TOKEN_URL, or neither');
+  }
+  for (const [name, value] of [['AUTH_HOSTED_LOGIN_URL', config.AUTH_HOSTED_LOGIN_URL], ['AUTH_HOSTED_LOGIN_TOKEN_URL', config.AUTH_HOSTED_LOGIN_TOKEN_URL]] as const) {
+    const problem = value === undefined ? null : checkHostedLoginUrl(name, value);
+    if (problem) throw new Error(problem);
+  }
+  if (config.AUTH_HOSTED_LOGIN_NAME !== undefined && hostedLoginName(config.AUTH_HOSTED_LOGIN_NAME) === null) {
+    throw new Error('AUTH_HOSTED_LOGIN_NAME is at most 40 characters, with no control characters, < or >');
   }
   if (config.AUTH_JWT_SECRET && config.AUTH_JWT_SECRET.length < 32) {
     throw new Error('AUTH_JWT_SECRET must be at least 32 characters');
@@ -749,6 +813,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   if (config.AUTH_SIGNUP_POLICY !== 'allowlist' && config.AUTH_SIGNUP_ALLOWED_DOMAINS.length > 0) {
     throw new Error(`AUTH_SIGNUP_ALLOWED_DOMAINS applies to AUTH_SIGNUP_POLICY=allowlist only (it is ${config.AUTH_SIGNUP_POLICY}); set the policy or remove the domains`);
+  }
+  // The /auth/v1 proxy refuses /authorize and /callback under a restricted policy, so a provider button there would land on its 403.
+  if (config.AUTH_OAUTH_PROVIDERS.length > 0 && config.AUTH_UPSTREAM_URL && config.AUTH_SIGNUP_POLICY !== 'open') {
+    throw new Error(
+      `AUTH_OAUTH_PROVIDERS needs AUTH_SIGNUP_POLICY=open (it is ${config.AUTH_SIGNUP_POLICY}) behind the bundled Supabase Auth: the /auth/v1 proxy refuses provider sign-in under a restricted policy; use a remote identity provider (AUTH_UPSTREAM_URL empty) or leave AUTH_OAUTH_PROVIDERS unset`,
+    );
   }
   if (config.AUTH_SIGNUP_POLICY !== 'open' && !config.AUTH_UPSTREAM_URL) {
     throw new Error(
@@ -842,6 +912,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (config.CHANNEL_GOOGLE_ADS_CLIENT_ID && !/^[0-9]{6,32}-[A-Za-z0-9_-]{8,64}\.apps\.googleusercontent\.com$/.test(config.CHANNEL_GOOGLE_ADS_CLIENT_ID)) throw new Error('CHANNEL_GOOGLE_ADS_CLIENT_ID is the client id of a Google OAuth web client');
   if (Boolean(config.CALENDAR_GOOGLE_CLIENT_ID) !== Boolean(config.CALENDAR_GOOGLE_CLIENT_SECRET)) throw new Error('set both CALENDAR_GOOGLE_CLIENT_ID and CALENDAR_GOOGLE_CLIENT_SECRET, or neither');
   if (config.CALENDAR_GOOGLE_CLIENT_ID && !/^[0-9]{6,32}-[A-Za-z0-9_-]{8,64}\.apps\.googleusercontent\.com$/.test(config.CALENDAR_GOOGLE_CLIENT_ID)) throw new Error('CALENDAR_GOOGLE_CLIENT_ID is the client id of a Google OAuth web client');
+  if (Boolean(config.CALENDAR_MICROSOFT_CLIENT_ID) !== Boolean(config.CALENDAR_MICROSOFT_CLIENT_SECRET)) throw new Error('set both CALENDAR_MICROSOFT_CLIENT_ID and CALENDAR_MICROSOFT_CLIENT_SECRET, or neither');
+  if (config.CALENDAR_MICROSOFT_CLIENT_ID && !/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(config.CALENDAR_MICROSOFT_CLIENT_ID)) throw new Error('CALENDAR_MICROSOFT_CLIENT_ID is the application (client) id of a Microsoft Entra app registration, a UUID');
+  if (config.CALENDAR_MICROSOFT_TENANT && !/^(?:common|organizations|consumers|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|(?:[A-Za-z0-9-]{1,63}\.)+[A-Za-z]{2,63})$/.test(config.CALENDAR_MICROSOFT_TENANT)) throw new Error('CALENDAR_MICROSOFT_TENANT is common, organizations, consumers, a directory id or a verified domain');
   if (config.CHANNEL_GOOGLE_BUSINESS === 'true' && !config.CHANNEL_GOOGLE_CLIENT_ID) throw new Error('CHANNEL_GOOGLE_BUSINESS needs CHANNEL_GOOGLE_CLIENT_ID and CHANNEL_GOOGLE_CLIENT_SECRET');
   if (config.CHANNEL_GOOGLE_CLIENT_ID && !/^[0-9]{6,32}-[A-Za-z0-9_-]{8,64}\.apps\.googleusercontent\.com$/.test(config.CHANNEL_GOOGLE_CLIENT_ID)) throw new Error('CHANNEL_GOOGLE_CLIENT_ID is the client id of a Google OAuth web client');
   if (Boolean(config.CHANNEL_X_CLIENT_ID) !== Boolean(config.CHANNEL_X_CLIENT_SECRET)) throw new Error('set both CHANNEL_X_CLIENT_ID and CHANNEL_X_CLIENT_SECRET, or neither');
@@ -944,6 +1017,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     }
   }
   if (!isLocalUrl(config.PUBLIC_URL)) {
+    // A hosted login on this machine would send every visitor to their own localhost.
+    for (const [name, value] of [['AUTH_HOSTED_LOGIN_URL', config.AUTH_HOSTED_LOGIN_URL], ['AUTH_HOSTED_LOGIN_TOKEN_URL', config.AUTH_HOSTED_LOGIN_TOKEN_URL]] as const) {
+      if (value !== undefined && isLocalUrl(value)) throw new Error(`${name} is a localhost address on a public PUBLIC_URL; use the provider's https address`);
+    }
     if (config.CROVE_CONTEXT_TOKEN_KEY !== undefined) {
       // Compared as bytes, so the unpadded or base64url spelling of the test key is the test key too.
       const bytes = Buffer.from(config.CROVE_CONTEXT_TOKEN_KEY.trim(), 'base64');
@@ -1015,7 +1092,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     }
     // A provider sends the authorization code to APP_URL (else PUBLIC_URL)/channels/oauth/<provider>/callback (#375), a
     // page of the web app.
-    const oauthApps = [config.CHANNEL_META_APP_ID, config.CHANNEL_INSTAGRAM_APP_ID, config.CHANNEL_META_ADS_APP_ID, config.CHANNEL_META_ADS_WRITE_APP_ID, config.CHANNEL_GOOGLE_ADS_CLIENT_ID, config.CHANNEL_ZALO_APP_ID, config.CHANNEL_THREADS_APP_ID, config.CHANNEL_LINKEDIN_CLIENT_ID, config.CHANNEL_LINKEDIN_PAGE_CLIENT_ID, config.CHANNEL_GOOGLE_CLIENT_ID, config.CHANNEL_TIKTOK_CLIENT_KEY, config.CHANNEL_X_CLIENT_ID, config.CHANNEL_PINTEREST_APP_ID, config.CALENDAR_GOOGLE_CLIENT_ID];
+    const oauthApps = [config.CHANNEL_META_APP_ID, config.CHANNEL_INSTAGRAM_APP_ID, config.CHANNEL_META_ADS_APP_ID, config.CHANNEL_META_ADS_WRITE_APP_ID, config.CHANNEL_GOOGLE_ADS_CLIENT_ID, config.CHANNEL_ZALO_APP_ID, config.CHANNEL_THREADS_APP_ID, config.CHANNEL_LINKEDIN_CLIENT_ID, config.CHANNEL_LINKEDIN_PAGE_CLIENT_ID, config.CHANNEL_GOOGLE_CLIENT_ID, config.CHANNEL_TIKTOK_CLIENT_KEY, config.CHANNEL_X_CLIENT_ID, config.CHANNEL_PINTEREST_APP_ID, config.CALENDAR_GOOGLE_CLIENT_ID, config.CALENDAR_MICROSOFT_CLIENT_ID];
     if (oauthApps.some(Boolean) && !appUrl(config).startsWith('https://')) {
       throw new Error('channel OAuth sends authorization codes back to the web app (APP_URL, else PUBLIC_URL); on a public deployment it must be https when a CHANNEL_* or CALENDAR_* app is set');
     }

@@ -128,3 +128,30 @@ export const CRM_OPEN_DEALS_SIGNALS_READ = 'crm.signals.open_deals';
 export const FINANCE_OVERDUE_RECEIVABLES_SIGNALS_READ = 'finance.signals.overdue_receivables';
 export const FINANCE_SUPPLIER_BANK_CHANGES_SIGNALS_READ = 'finance.signals.supplier_bank_changes';
 export const FINANCE_SUPPLIER_PAYMENTS_WAITING_SIGNALS_READ = 'finance.signals.supplier_payments_waiting';
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+// Rule 4 of C4 (#3124, Vy plan C4): a customer conversation unanswered past its reply window, on an open deal.
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+
+// How long a customer's message may wait for an answer before the rule flags it. A constant, not a setting: the same 24 hours the inbox's "chờ trả lời" (status new) uses
+// as its working day for a reply (plan C4).
+export const CONVERSATION_REPLY_WINDOW_HOURS = 24;
+
+// The conversation side (the inbox, kernel): `kernel.conversation.signals_unanswered`. Input `{ partyIds }` (`zFinanceSalesSignalsInput`, the parties of the open deals the CRM side listed, so a row cap
+// cannot hide one). One row per asked party that has a conversation the caller may read, in status "new" (the customer wrote last and nobody answered): the id of the thread that has waited
+// longest and the moment its oldest unanswered customer message arrived. Ids and a timestamp, never a word of a message, a name or a channel.
+//
+// Unlike the finance reads this one needs no refusal for a partial view: a missing row only means no item (a thread the caller may not read is not listed, and the rule's item exists only
+// when a row does), so a hidden conversation can never turn into a false flag. It REFUSES for an AI app's grant, whose context reads no conversation: an empty answer there would read as "all clear".
+export const zConversationUnansweredSignalsInput = z.strictObject({ partyIds: z.array(z.uuid()).min(1).max(SIGNALS_MAX_CRM) });
+export type ConversationUnansweredSignalsInput = z.infer<typeof zConversationUnansweredSignalsInput>;
+export const zConversationUnansweredSignal = z.strictObject({
+  partyId: z.uuid(),
+  conversationId: z.uuid(),
+  // When the oldest unanswered customer message of that thread arrived (an ISO instant with an offset).
+  since: z.iso.datetime({ offset: true }),
+});
+export type ConversationUnansweredSignal = z.infer<typeof zConversationUnansweredSignal>;
+export const zConversationUnansweredSignals = z.array(zConversationUnansweredSignal).max(SIGNALS_MAX_CRM).refine(uniqueParties, 'one row per party');
+
+export const CONVERSATION_UNANSWERED_SIGNALS_READ = 'kernel.conversation.signals_unanswered';

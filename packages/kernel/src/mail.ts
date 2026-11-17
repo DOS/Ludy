@@ -658,5 +658,73 @@ export const queueContactMail = defineCommand({
   },
 });
 
+// Internal helper command for modules (without direct kernel DB imports) to queue one transactional email per
+// deliverable org member in `userIds`, respecting mail suppressions and never exposing email addresses in audit rows.
+export const queueMemberMail = defineCommand({
+  name: 'kernel.mail.members.queue',
+  input: z.object({
+    userIds: z.array(zId).min(1).max(200),
+    source: zSource,
+    sourceId: zId.optional(),
+    templateKey: zSource,
+    subject: z
+      .string()
+      .trim()
+      .min(1)
+      .max(300)
+      .refine((v) => !/[\p{Cc}\p{Zl}\p{Zp}]/u.test(v), 'one line'),
+    payload: z.record(z.string().max(64), z.unknown()).refine((p) => Buffer.byteLength(JSON.stringify(p), 'utf8') <= MAIL_PAYLOAD_MAX_BYTES, 'too large'),
+  }),
+  risk: 'R2',
+  sideEffect: 'external',
+  access: CONTACT_MAIL_ROLES,
+  handler: async (ctx, input) => {
+    const requestedIds = [...new Set(input.userIds)];
+    const { rows } = await sql<{ user_id: string; email: string | null }>`
+      SELECT user_id, email FROM crove_kernel.member_profiles(${requestedIds}::uuid[])`.execute(ctx.trx);
+    const emailByUser = new Map<string, string>();
+    for (const row of rows) {
+      const normalized = row.email?.trim().toLowerCase() ?? '';
+      if (normalized && isMailAddress(normalized)) emailByUser.set(row.user_id, normalized);
+    }
+    const seenEmails = new Set<string>();
+    const mailedUserIds: string[] = [];
+    let sentCount = 0;
+    let skippedCount = 0;
+    for (const uid of requestedIds) {
+      const address = emailByUser.get(uid);
+      if (!address || seenEmails.has(address)) {
+        skippedCount += 1;
+        continue;
+      }
+      seenEmails.add(address);
+      const mail = await createMailMessage(ctx, {
+        stream: 'transactional',
+        source: input.source,
+        sourceId: input.sourceId ?? null,
+        templateKey: input.templateKey,
+        to: address,
+        subject: input.subject,
+        payload: input.payload,
+        status: 'queued',
+      });
+      if (mail.status === 'queued') {
+        sentCount += 1;
+        mailedUserIds.push(uid);
+      } else {
+        skippedCount += 1;
+      }
+    }
+    ctx.audit({
+      source: input.source,
+      templateKey: input.templateKey,
+      requestedCount: requestedIds.length,
+      sentCount,
+      skippedCount,
+    });
+    return { sentCount, skippedCount, mailedUserIds };
+  },
+});
+
 export const mailCommands = [recordDirectMail, addMailSuppression, liftMailSuppression, recordMailEvent, beginQueuedMail, recordQueuedMail];
 export const mailQueries = [directMailGet];

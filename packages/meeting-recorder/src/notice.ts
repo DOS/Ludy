@@ -30,6 +30,20 @@ export const RECORDING_NOTICE: RecordingNotice = {
   },
 };
 
+// The notice of an IMPORT (Meetings C1, #3173): the recording was made by the meeting platform, which showed its own notice to everyone in the call. The importer confirms that, and this text says
+// what Ludy does with the copy. Ludy posts nothing into a call and never deletes the platform's copy. Stored as `consent_notice_version` with the consent method `platform_notice`.
+// DRAFT, PENDING THE LAWYER'S READING (#2585), like the live notice above. Changing a word means a new version string.
+export const IMPORT_NOTICE: RecordingNotice = {
+  // Same string as the server's IMPORT_CONSENT_NOTICE_VERSION (a test ties the two).
+  version: '2026-11-imp-v1',
+  reviewed: false,
+  reviewIssue: 2585,
+  text: {
+    vi: 'Nền tảng họp đã hiện thông báo ghi hình của chính nó cho mọi người trong cuộc họp. Ludy chỉ nhập bản ghi để lập biên bản, và tự phiên âm âm thanh. Bản gốc vẫn nằm ở nền tảng họp: Ludy không bao giờ xóa nó.',
+    en: "The meeting platform showed its own recording notice to everyone in the call. Ludy imports the recording only to prepare the minutes and transcribes the audio on its own. The platform's copy stays where it is: Ludy never deletes it.",
+  },
+};
+
 // The meeting's language is the default; anything else (automatic, unknown) falls back to Vietnamese.
 export function noticeLanguageFor(meetingLanguage: string): RecordingNoticeLanguage {
   return meetingLanguage === 'en' ? 'en' : 'vi';

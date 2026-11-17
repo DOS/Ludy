@@ -7,7 +7,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useId, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import type { NoteLinkTargetInput, NoteSummary } from '@crove/kernel-contract';
+import { TODO_TITLE_MAX, type NoteLinkTargetInput, type NoteSummary, type TodoSummary } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
@@ -16,12 +16,13 @@ import { Textarea } from '@crove/ui/components/textarea';
 import { VisibilityIcon } from '@crove/ui/components/visibility-icon';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { getConfig } from '../lib/auth.ts';
+import { browserTimeZone } from '../lib/my-work.ts';
 import { ErrorText, Spinner } from './ui.tsx';
+import { installedModules } from '../lib/org-modules.ts';
 
 const LATEST = 3;
 
-export const notesInstalled = () => getConfig().modules.includes('notes');
+export const notesInstalled = () => installedModules().includes('notes');
 export const refreshNotes = () => queryClient.invalidateQueries({ queryKey: orpc.notes.key() });
 
 // The word beside the lock, always shown (notes plan §3.10).
@@ -51,10 +52,23 @@ function PanelNote({ note, slug, mayPin }: { note: NoteSummary; slug: string; ma
     onSuccess: refreshNotes,
   });
   return (
-    <li className="flex flex-wrap items-center gap-2 px-4 py-3 text-sm" data-testid="note-item">
+    <li
+      className={
+        note.tainted
+          ? 'flex flex-wrap items-center gap-2 border-l-2 border-proposal bg-proposal/5 px-4 py-3 text-sm'
+          : 'flex flex-wrap items-center gap-2 px-4 py-3 text-sm'
+      }
+      data-testid="note-item"
+      data-tainted={note.tainted ? 'true' : 'false'}
+    >
       <Link to="/o/$slug/notes" params={{ slug }} search={{ note: note.id }} className="min-w-0 flex-1 truncate font-medium text-foreground hover:underline">
         {note.title}
       </Link>
+      {note.tainted && (
+        <Badge variant="proposal" data-testid="note-ai-badge">
+          {t('aiBadge')}
+        </Badge>
+      )}
       {note.pinned && <Badge variant="secondary">{t('pinnedBadge')}</Badge>}
       <VisibilityBadge note={note} />
       <span className="text-xs text-subtle-foreground">{f.date(note.updatedAt)}</span>
@@ -115,6 +129,74 @@ function AddNote({ target, onDone }: { target: NoteLinkTargetInput | undefined; 
   );
 }
 
+function PanelTodo({ todo, slug }: { todo: TodoSummary; slug: string }) {
+  const t = useTranslations('notes');
+  const f = useFormat();
+  return (
+    <li className="flex flex-wrap items-center gap-2 px-4 py-3 text-sm" data-testid="panel-todo-item">
+      <Link
+        to="/o/$slug/my-work"
+        params={{ slug }}
+        className={todo.status === 'done' ? 'min-w-0 flex-1 truncate font-medium text-muted-foreground line-through hover:underline' : 'min-w-0 flex-1 truncate font-medium text-foreground hover:underline'}
+      >
+        {todo.title}
+      </Link>
+      {todo.status === 'done' && <Badge variant="secondary">{t('panel.todoDone')}</Badge>}
+      {todo.tainted && (
+        <Badge variant="proposal" title={t('vy.taintedTodoHint')} data-testid="panel-todo-tainted-badge">
+          {t('vy.proposalMark')}
+        </Badge>
+      )}
+      <Badge variant="outline" className="gap-1">
+        <VisibilityIcon shared={false} className="size-3.5" />
+        {t('panel.todoPrivateOnly')}
+      </Badge>
+      {todo.dueOn && <span className="text-xs text-subtle-foreground">{f.date(todo.dueOn)}</span>}
+    </li>
+  );
+}
+
+function AddTodo({ target, onDone }: { target: NoteLinkTargetInput; onDone: () => void }) {
+  const t = useTranslations('notes');
+  const id = useId();
+  const [title, setTitle] = useState('');
+  const create = useMutation({
+    mutationFn: (text: string) => client.notes.todos.create({ title: text, timeZone: browserTimeZone(), link: target }),
+    onSuccess: () => {
+      void refreshNotes();
+      onDone();
+    },
+  });
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    const trimmed = title.trim();
+    if (trimmed !== '' && !create.isPending) create.mutate(trimmed);
+  };
+  return (
+    <form onSubmit={submit} className="space-y-2 px-4 py-3" data-testid="panel-add-todo-form">
+      <label htmlFor={`${id}-todo-title`} className="sr-only">
+        {t('panel.addTodoTitle')}
+      </label>
+      <Input id={`${id}-todo-title`} value={title} maxLength={TODO_TITLE_MAX} placeholder={t('panel.addTodoTitle')} onChange={(e) => setTitle(e.target.value)} autoFocus />
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <VisibilityIcon shared={false} className="size-3.5" />
+          {t('panel.todoPrivateOnly')}
+        </span>
+        <div className="ml-auto flex gap-2">
+          <Button type="button" variant="ghost" size="sm" onClick={onDone}>
+            {t('cancel')}
+          </Button>
+          <Button loading={create.isPending} type="submit" size="sm" disabled={title.trim() === '' || create.isPending}>
+            {t('panel.saveTodo')}
+          </Button>
+        </div>
+      </div>
+      {create.error && <ErrorText>{errorMessage(create.error)}</ErrorText>}
+    </form>
+  );
+}
+
 // label: the region's name when several panels may be open at once (one per party row), so each is told apart.
 function PanelBody({
   slug,
@@ -123,6 +205,7 @@ function PanelBody({
   label,
   className,
   notes,
+  todos,
   error,
   empty,
 }: {
@@ -132,13 +215,16 @@ function PanelBody({
   label?: string;
   className?: string;
   notes: NoteSummary[] | null;
+  todos?: TodoSummary[] | null;
   error: unknown;
   // What an empty panel says, when the record is not a client (a document, a voucher, a booking).
   empty?: string;
 }) {
   const t = useTranslations('notes');
   const { writer, manager } = useNotesRole(slug);
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState<'note' | 'todo' | null>(null);
+  const hasNotes = notes !== null && notes.length > 0;
+  const hasTodos = todos !== null && todos !== undefined && todos.length > 0;
   return (
     <section className={className} {...(label ? { 'aria-label': label } : { 'aria-labelledby': headingId })}>
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -155,24 +241,44 @@ function PanelBody({
           <p className="flex items-center gap-2 px-4 py-3 text-sm text-subtle-foreground">
             <Spinner /> {t('loading')}
           </p>
-        ) : notes && notes.length > 0 ? (
+        ) : hasNotes ? (
           <ul className="divide-y">
             {notes.map((n) => (
               <PanelNote key={n.id} note={n} slug={slug} mayPin={writer && (n.mine || (n.visibility === 'org' && manager))} />
             ))}
           </ul>
         ) : (
-          !error && <p className="px-4 py-3 text-sm text-subtle-foreground">{empty ?? t('panel.empty')}</p>
+          !error && !hasTodos && <p className="px-4 py-3 text-sm text-subtle-foreground">{empty ?? t('panel.empty')}</p>
+        )}
+        {hasTodos && (
+          <div className={hasNotes ? 'border-t' : undefined} data-testid="panel-todos">
+            <div className="flex items-center gap-2 bg-muted/30 px-4 py-2 text-xs font-medium text-muted-foreground">
+              <VisibilityIcon shared={false} className="size-3.5" />
+              <span>{t('panel.todosTitle')}</span>
+            </div>
+            <ul className="divide-y">
+              {todos.map((todo) => (
+                <PanelTodo key={todo.id} todo={todo} slug={slug} />
+              ))}
+            </ul>
+          </div>
         )}
         {writer && (
           <div className="border-t">
-            {adding ? (
-              <AddNote target={target} onDone={() => setAdding(false)} />
+            {adding === 'note' ? (
+              <AddNote target={target} onDone={() => setAdding(null)} />
+            ) : adding === 'todo' && target ? (
+              <AddTodo target={target} onDone={() => setAdding(null)} />
             ) : (
-              <div className="px-4 py-3">
-                <Button variant="outline" size="sm" onClick={() => setAdding(true)}>
+              <div className="flex flex-wrap gap-2 px-4 py-3">
+                <Button variant="outline" size="sm" onClick={() => setAdding('note')}>
                   {t('panel.add')}
                 </Button>
+                {target && (
+                  <Button variant="outline" size="sm" onClick={() => setAdding('todo')} data-testid="panel-add-todo">
+                    {t('panel.addTodo')}
+                  </Button>
+                )}
               </div>
             )}
           </div>
@@ -191,11 +297,12 @@ export function OrgNotesPanel({ slug }: { slug: string }) {
   return <PanelBody slug={slug} target={undefined} headingId="overview-notes" className="mt-8" notes={notes} error={pinned.error ?? shared.error} />;
 }
 
-// A record's panel (a party, a document, a voucher, a booking): the notes linked to it.
+// A record's panel (a party, a document, a voucher, a booking, a task, a project): the notes and private to-dos linked to it.
 export function RecordNotesPanel({ slug, target, headingId, label, empty }: { slug: string; target: NoteLinkTargetInput; headingId: string; label: string; empty?: string }) {
   const panel = useQuery(orpc.notes.panel.queryOptions({ input: target }));
   const notes = panel.data ? [...panel.data.pinned, ...panel.data.latest] : null;
-  return <PanelBody slug={slug} target={target} headingId={headingId} label={label} notes={notes} error={panel.error} {...(empty !== undefined ? { empty } : {})} />;
+  const todos = panel.data?.todos ?? null;
+  return <PanelBody slug={slug} target={target} headingId={headingId} label={label} notes={notes} todos={todos} error={panel.error} {...(empty !== undefined ? { empty } : {})} />;
 }
 
 // Before an owner removes a member (ADR-0037 §4): how many private notes they have, which nobody reads once they leave

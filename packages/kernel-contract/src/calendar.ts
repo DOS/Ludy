@@ -351,6 +351,21 @@ export const CALENDAR_SYNC_DAYS = 366;
 // next to free/busy when the member opts in), and how many failed sweeps in a row stop a link retrying until its booking changes.
 export const GOOGLE_CALENDAR_EVENTS_SCOPE = 'https://www.googleapis.com/auth/calendar.events.owned';
 export const CALENDAR_LINK_MAX_ATTEMPTS = 6;
+// Reading the member's own meetings (Meetings B1, #3165): the Google scope that lets a connection read the events of the calendars the member owns. The connect dialog asks for it next to free/busy
+// only when the member turns "Cho Ludy đọc tên và giờ cuộc họp trong lịch" on (the same value as the channel package's GOOGLE_CALENDAR_EVENTS_READ_SCOPE, pinned by a test).
+export const GOOGLE_CALENDAR_EVENTS_READ_SCOPE = 'https://www.googleapis.com/auth/calendar.events.owned.readonly';
+// Outlook (Meetings B3, #3167): the delegated Microsoft Graph permission that reads the member's own events (the same value as the channel package's MICROSOFT_CALENDAR_READ_SCOPE, pinned by a test).
+// Microsoft has no narrower calendar read, so a connection carries it from the connect and the member's switch decides what Ludy reads and keeps.
+export const MICROSOFT_CALENDAR_READ_SCOPE = 'Calendars.ReadBasic';
+// The grant a provider's connection must carry for the member's meetings to be read through it, or null for a provider that has none.
+export function calendarReadScope(provider: string): string | null {
+  return provider === 'google' ? GOOGLE_CALENDAR_EVENTS_READ_SCOPE : provider === 'microsoft' ? MICROSOFT_CALENDAR_READ_SCOPE : null;
+}
+// Whether a connection's grant carries that scope.
+export function canReadEventsWith(provider: string, scopes: readonly string[]): boolean {
+  const scope = calendarReadScope(provider);
+  return scope !== null && scopes.includes(scope);
+}
 
 export const zCalendarConnectionView = z.strictObject({
   id: zId,
@@ -362,6 +377,9 @@ export const zCalendarConnectionView = z.strictObject({
   writeBack: z.boolean(),
   // The grant carries the events scope, so write-back may be turned on; false: the member connects again, asking for it.
   canWriteBack: z.boolean(),
+  // B1: the member's switch for reading their meetings' names and times, and whether the grant carries the events-read scope (false: the member connects again, asking for it).
+  readEvents: z.boolean(),
+  canReadEvents: z.boolean(),
   connectedAt: zInstant,
 });
 export type CalendarConnectionView = z.infer<typeof zCalendarConnectionView>;

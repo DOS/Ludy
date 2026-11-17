@@ -24,6 +24,14 @@ export class DomainError extends Error {
   }
 }
 
+// The app (module) a refusal says is off for the org (ADR-0053: MODULE_OFF, the org switched it off or does not hold it), or null when the
+// error is anything else. A worker job, a sweep or a relay step that meets one skips its item instead of failing, retrying or logging it.
+export function moduleOffOf(error: unknown): string | null {
+  if (!(error instanceof DomainError) || error.code !== 'MODULE_OFF') return null;
+  const module = error.details?.module;
+  return typeof module === 'string' ? module : 'unknown';
+}
+
 const AGENT_REFUSALS = new Set([
   'AGENT_FORBIDDEN',
   'AGENT_CONTEXT_WORKER_ONLY',
@@ -110,7 +118,11 @@ function inboundRotateLimited(detail: string | undefined): DomainError {
   );
 }
 
+// The rule the runtime names when an MCP grant is refused for a scope it does not hold (runtime.ts authorizeMcp says the same).
+const MCP_SCOPE_RULE = 'mcp_scope';
+
 // Maps database errors to domain errors without leaking whether other tenants' rows exist.
+
 export function toDomainError(error: unknown): DomainError {
   if (error instanceof DomainError) return error;
   const pg = error as PgLikeError;
@@ -154,6 +166,10 @@ export function toDomainError(error: unknown): DomainError {
       // answer above whatever the reason; the specific reason travels only in `audit` (never enumerable) for the security event the runtime notes.
       if (pg.message === 'MCP_GRANT_REVOKED' || pg.message === 'MCP_GRANT_EXPIRED' || pg.message === 'MCP_GRANT_NOT_MEMBER' || pg.message === 'MCP_GRANT_NOT_COMPANY' || pg.message === 'MCP_MEMBER_GRANTS_OFF') {
         return new DomainError('MCP_GRANT_INVALID', 401, 'Quyền kết nối MCP không còn hiệu lực', undefined, { audit: { mcpRefusal: pg.message } });
+      }
+      // crove_kernel.enter_mcp_company_draft_context (#3227): the grant does not hold the write scope the command declares (the runtime checks it first, so this is the database agreeing).
+      if (pg.message === 'MCP_GRANT_SCOPE') {
+        return new DomainError('FORBIDDEN', 403, 'Quyền kết nối MCP không được thực hiện việc này', { rule: MCP_SCOPE_RULE });
       }
       // A second enter_context in one transaction (plan §4.5 item 1): a bug in the caller, never a user's 403.
       if (pg.message?.includes('CONTEXT_REENTRY')) return new DomainError('INTERNAL', 500, 'Lỗi hệ thống');

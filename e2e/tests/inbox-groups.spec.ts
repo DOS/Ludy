@@ -24,8 +24,8 @@ const invoice = (number: number, month: string) => ({
 });
 
 async function goToInbox(page: Page) {
-  await page.getByRole('navigation').getByRole('link', { name: 'Trang chủ', exact: true }).click();
-  await page.getByRole('navigation').getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
+  await page.getByRole('navigation').getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ }).click();
 }
 
 test('a vendor group of clean invoices is approved in one action, and a rule shows how often it was corrected', async ({ page }) => {
@@ -34,6 +34,8 @@ test('a vendor group of clean invoices is approved in one action, and a rule sho
   const slug = await test.step('teach the vendor rule: change the internet line to 242 on the first invoice and approve it', async () => {
     await signInNewUser(page, newEmail('groups'));
     const created = await createOrg(page, 'Công ty nhóm hóa đơn');
+    // A new org opens on the overview (#3225); the uploads are on the Inbox.
+    await page.goto(page.url().replace(/\/overview$/, '/inbox'));
     await goToInbox(page);
     await page.locator('input[type=file]').setInputFiles(invoice(4201, '9/2026'));
     await expect(page.getByRole('link', { name: SELLER })).toBeVisible({ timeout: 60_000 });

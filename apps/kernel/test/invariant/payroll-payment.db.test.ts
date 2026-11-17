@@ -4,7 +4,9 @@
 // - the person who approved the run is a co-author of its payment and is held back while another eligible approver exists; a stored proposal that lost the co-author is refused;
 // - a cash payment of the net pay carries a flag when a net pay is 5 million or more, and the flag keeps it out of a bulk approval: approve_many refuses it (BULK_NOT_ALLOWED), it stays pending and no
 //   voucher is recorded; the flag is rebuilt when the payment records, so a proposal written without it is refused;
-// - one voucher per run and kind is a fact of the table: a voucher that names a run needs a kind, a proposal and a payment type, and a second of the same kind is refused.
+// - one voucher per run and kind is a fact of the table: a voucher that names a run needs a kind, a proposal and a payment type, and a second of the same kind is refused;
+// - one live posting voucher per run is a fact of the table (#2931, #2939, crove_finance.journal_voucher_payroll_slot): a second live posting voucher of one run is refused with 23505
+//   (journal_voucher_payroll_run_uq), a reversed posting entry frees the slot so a new live posting is accepted, and the new one holds the run again across concurrent writers and entity scopes.
 // Part of the invariant suite: keep it self-contained (package code under test, no helpers from outside test/invariant/). The product flow of the payments is in hr-payroll-payment.db.test.ts.
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -384,5 +386,176 @@ suite('the security of the payment of a pay run on PostgreSQL (#2532)', () => {
     // Another voucher of the same run and kind (any proposal) is refused by the unique index.
     const other = (await pay(o, runId, 'union')).proposalId;
     await expect(insert('tax', 'bank_debit', other)).rejects.toMatchObject({ code: '23505' });
+  });
+
+  it('holds one live posting voucher per run in the table: refuses a second live posting (23505, journal_voucher_payroll_run_uq), accepts a new one once the earlier entry is reversed, and holds the run again (#2931, #2939)', async () => {
+    const o = await org('tt133', 'standard');
+    const branch = await withAdmin(async (c) => {
+      const { rows: inserted } = await c.query<{ id: string }>(
+        `INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`,
+        [o.orgId, o.owner],
+      );
+      const branchId = inserted[0]?.id as string;
+      // Scope o.member to the branch entity alone: RLS hides the default entity's vouchers and entries from them, and the branch has its own voucher number series.
+      await c.query(
+        `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`,
+        [o.orgId, o.member, branchId, o.owner],
+      );
+      return branchId;
+    });
+    const { runId } = await approvedRun(o);
+    const appClient = () => {
+      const url = new URL(adminUrl);
+      url.username = 'crove_app';
+      url.password = 'test-app-pw';
+      return new pg.Client({ connectionString: url.toString() });
+    };
+    const approvedPostingProposal = (entityId: string | null = null, decider = o.owner) =>
+      withAdmin(
+        async (c) =>
+          (
+            await c.query<{ id: string }>(
+              `INSERT INTO crove_kernel.proposal (org_id, kind, command, status, title, payload, eligible_approvers, authors, decided_by, decided_at, executed_command_id, legal_entity_id)
+               VALUES ($1, 'test.payroll_posting', 'finance.payroll_posting.record', 'approved', 'T2939', '{"n": 1}', ARRAY[$2::uuid], '[]', $2::uuid, now(), gen_random_uuid(),
+                       COALESCE($3::uuid, (SELECT e.id FROM crove_kernel.legal_entity e WHERE e.org_id = $1 AND e.is_default))) RETURNING id`,
+              [o.orgId, decider, entityId],
+            )
+          ).rows[0]?.id as string,
+      );
+    const insertAsUser = async (userId: string, proposalId: string | null, targetRunId = runId, entityId: string | null = null) => {
+      const c = appClient();
+      await c.connect();
+      try {
+        await c.query('BEGIN');
+        await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(userId, o.orgId)]);
+        await c.query(
+          `INSERT INTO crove_finance.journal_voucher (org_id, legal_entity_id, voucher_date, description, proposal_id, payroll_run_id)
+           VALUES ($1, COALESCE($4::uuid, (SELECT e.id FROM crove_kernel.legal_entity e WHERE e.org_id = $1 AND e.is_default)), '2026-03-31', 'Hạch toán lương', $2, $3)`,
+          [o.orgId, proposalId, targetRunId, entityId],
+        );
+      } finally {
+        await c.query('ROLLBACK').catch(() => {});
+        await c.end();
+      }
+    };
+    const reversePosting = async (entryId: string) => {
+      const revAsk = await rt.execute<{ proposalId: string }>(
+        'kernel.proposal.request',
+        { command: 'finance.journal.reverse', input: { entryId, entryDate: '2026-03-31', reason: 'Lập lại bảng lương' } },
+        { actor: asUser(o.admin), orgId: o.orgId, idempotencyKey: randomUUID() },
+      );
+      await approve(o, revAsk.proposalId, o.owner);
+    };
+
+    // A posting voucher that names a run must carry a proposal and no closing or stock tag (journal_voucher_payroll_run).
+    await expect(insertAsUser(o.owner, null)).rejects.toMatchObject({ code: '23514', constraint: 'journal_voucher_payroll_run' });
+    await expect(
+      rows(
+        `INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, payroll_run_id, closing_year)
+         VALUES ($1, '2026-03-31', 'Hạch toán lương', $2, $3, 2026)`,
+        [o.orgId, await approvedPostingProposal(), runId],
+      ),
+    ).rejects.toMatchObject({ code: '23514', constraint: 'journal_voucher_payroll_run' });
+
+    // 1. Recording the first live posting voucher of the run succeeds (admin asks, owner approves under four-eyes).
+    const firstAsk = await ask(o, runId, o.admin);
+    const first = await approve(o, firstAsk.proposalId, o.owner);
+    expect(await rows('SELECT id FROM crove_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId])).toHaveLength(1);
+
+    // 2. While the first posting voucher is live (unreversed), a second live posting voucher for the same run is refused
+    // in the command and by crove_finance.journal_voucher_payroll_slot (for staff, for the owner on crove_app, and for a branch-scoped member blind to the first voucher under RLS).
+    const insertStaffCopy = (sourceId: string) =>
+      rows(
+        `INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, payroll_run_id)
+         SELECT org_id, voucher_date, description, proposal_id, payroll_run_id FROM crove_finance.journal_voucher WHERE id = $1`,
+        [sourceId],
+      );
+    await expect(ask(o, runId, o.admin)).rejects.toMatchObject({ code: 'HR_POSTING_DONE' });
+    await expect(insertStaffCopy(first.voucherId)).rejects.toMatchObject({ code: '23505', constraint: 'journal_voucher_payroll_run_uq' });
+    await expect(insertAsUser(o.owner, await approvedPostingProposal())).rejects.toMatchObject({ code: '23505', constraint: 'journal_voucher_payroll_run_uq' });
+    await expect(insertAsUser(o.member, await approvedPostingProposal(branch, o.member), runId, branch)).rejects.toMatchObject({
+      code: '23505',
+      constraint: 'journal_voucher_payroll_run_uq',
+    });
+    // Another run's slot is independent.
+    await expect(insertAsUser(o.owner, await approvedPostingProposal(), randomUUID())).resolves.toBeUndefined();
+
+    // 3. Once the first posting entry is reversed, a new live posting voucher for the same run is accepted,
+    // and another live one after it is again refused with 23505 / journal_voucher_payroll_run_uq.
+    await reversePosting(first.journalEntryId);
+    const secondAsk = await ask(o, runId, o.admin);
+    const second = await approve(o, secondAsk.proposalId, o.owner);
+    expect(second.voucherId).not.toBe(first.voucherId);
+    expect(await rows('SELECT id FROM crove_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId])).toHaveLength(2);
+    await expect(ask(o, runId, o.admin)).rejects.toMatchObject({ code: 'HR_POSTING_DONE' });
+    await expect(insertStaffCopy(second.voucherId)).rejects.toMatchObject({ code: '23505', constraint: 'journal_voucher_payroll_run_uq' });
+    await expect(insertAsUser(o.owner, await approvedPostingProposal())).rejects.toMatchObject({ code: '23505', constraint: 'journal_voucher_payroll_run_uq' });
+
+    // 4. After reversing again, two concurrent writers on crove_app across distinct legal entities (distinct number series, so only the slot's advisory lock holds them)
+    // serialize on crove_finance.journal_voucher_payroll_slot: a voucher before its entry counts as live, the first writer commits, and the waiting third live attempt is refused.
+    await reversePosting(second.journalEntryId);
+    const [propA1, propA2, propB] = await Promise.all([
+      approvedPostingProposal(),
+      approvedPostingProposal(),
+      approvedPostingProposal(branch, o.member),
+    ]);
+    const lines = JSON.stringify([
+      { line_no: 1, account_code: '6422', debit: '100000', credit: '0' },
+      { line_no: 2, account_code: '334', debit: '0', credit: '100000' },
+    ]);
+    const writerA = appClient();
+    const writerB = appClient();
+    await Promise.all([writerA.connect(), writerB.connect()]);
+    try {
+      await writerA.query('BEGIN');
+      await writerA.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.owner, o.orgId)]);
+      const insertedA = await writerA.query<{ id: string }>(
+        `INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, payroll_run_id)
+         VALUES ($1, '2026-03-31', 'Hạch toán lương', $2, $3) RETURNING id`,
+        [o.orgId, propA1, runId],
+      );
+      // Even before writerA posts its journal_entry, a voucher with no entry counts as live and holds the slot.
+      await writerA.query('SAVEPOINT before_entry');
+      await expect(
+        writerA.query(
+          `INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, payroll_run_id)
+           VALUES ($1, '2026-03-31', 'Hạch toán lương', $2, $3)`,
+          [o.orgId, propA2, runId],
+        ),
+      ).rejects.toMatchObject({ code: '23505', constraint: 'journal_voucher_payroll_run_uq' });
+      await writerA.query('ROLLBACK TO SAVEPOINT before_entry');
+      await writerA.query(`SELECT crove_finance.post_journal_entry('2026-03-31'::date, 'Hạch toán lương', 'finance.journal_voucher', $1::uuid, $2::jsonb)`, [
+        insertedA.rows[0]?.id,
+        lines,
+      ]);
+
+      await writerB.query('BEGIN');
+      await writerB.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.member, o.orgId)]);
+      // Under RLS, the branch-scoped member sees zero vouchers in the default entity, yet the definer trigger still serializes and sees the live slot.
+      expect(
+        (await writerB.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId])).rows[0]?.n,
+      ).toBe(0);
+      let bSettled = false;
+      const bAttempt = writerB
+        .query(
+          `INSERT INTO crove_finance.journal_voucher (org_id, legal_entity_id, voucher_date, description, proposal_id, payroll_run_id)
+           VALUES ($1, $2, '2026-03-31', 'Hạch toán lương', $3, $4)`,
+          [o.orgId, branch, propB, runId],
+        )
+        .finally(() => {
+          bSettled = true;
+        });
+      bAttempt.catch(() => {});
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      expect(bSettled).toBe(false);
+
+      await writerA.query('COMMIT');
+      await expect(bAttempt).rejects.toMatchObject({ code: '23505', constraint: 'journal_voucher_payroll_run_uq' });
+      expect(bSettled).toBe(true);
+    } finally {
+      await Promise.all([writerA, writerB].map((c) => c.query('ROLLBACK').catch(() => {})));
+      await Promise.all([writerA.end(), writerB.end()]);
+    }
+    expect(await rows('SELECT id FROM crove_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId])).toHaveLength(3);
   });
 });

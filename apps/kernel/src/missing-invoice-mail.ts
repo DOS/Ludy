@@ -32,6 +32,8 @@ export async function sweepMissingInvoiceReminders(deps: { runtime: Runtime; wor
   for (const row of rows) {
     // One org that fails (a lost connection) leaves the others to this pass and itself to the next.
     try {
+      // An app that is off for the org (ADR-0053) has nothing to do here: no call, no refusal row, no line in the log.
+      if (!(await deps.runtime.appOn(row.org_id, 'finance'))) continue;
       const done = await deps.runtime.execute<RemindResult>('finance.missing_invoices.remind', {}, { actor: ACTOR, orgId: row.org_id });
       if (done.action === 'sent') sent++;
     } catch (error) {

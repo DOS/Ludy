@@ -1,10 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { z } from 'zod';
+import { zMinutesTemplateCopy } from './meeting-minutes-templates.ts';
+import { SECTIONS_MAX, zBuiltInSummaryTemplate, zMeetingSummaryTemplate, zSectionEntry } from './meeting-templates.ts';
 import { zId } from './schemas.ts';
 
 // `in_call_chat`: the recorder pasted the recording notice in the call's chat (Meetings A1, #3159).
-export const CONSENT_METHODS = ['told_at_start', 'in_invite', 'in_writing', 'in_call_chat'] as const;
+// `platform_notice`: the meeting platform showed its own recording notice to everyone in the call and the importer confirms it (Meetings C1, #3173). A recording the platform already finished is
+// imported with this method only; it is not a written method (see WRITTEN_CONSENT_METHODS), so a strict org refuses it.
+export const CONSENT_METHODS = ['told_at_start', 'in_invite', 'in_writing', 'in_call_chat', 'platform_notice'] as const;
 export type ConsentMethod = (typeof CONSENT_METHODS)[number];
+// The methods only an import may use. A live recording (the app's recorder, the extension) is made while the call runs, so it never offers these: the screens and the extension filter them out.
+export const IMPORT_ONLY_CONSENT_METHODS: readonly ConsentMethod[] = ['platform_notice'];
+export type LiveConsentMethod = Exclude<ConsentMethod, 'platform_notice'>;
+export const LIVE_CONSENT_METHODS: readonly LiveConsentMethod[] = CONSENT_METHODS.filter((m): m is LiveConsentMethod => !IMPORT_ONLY_CONSENT_METHODS.includes(m));
 
 // Why a recording stopped without the recorder's own click (Meetings A1, #3159): a code, never text. The screens turn it into
 // plain words ("Tab họp đã đóng", "Micro bị mất"...). Same set as the CHECK on crove_meetings.meeting.recording_stop_reason.
@@ -16,7 +24,9 @@ export const zRecordingStopReason = z.enum(RECORDING_STOP_REASONS);
 // lives in one place, packages/meeting-recorder/src/notice.ts, and carries the current version; a client sends the version
 // it showed, the server accepts only a known one. A new wording adds a version here and keeps the old ones.
 export const CONSENT_NOTICE_VERSION = '2026-11-v1';
-export const KNOWN_CONSENT_NOTICE_VERSIONS: readonly string[] = [CONSENT_NOTICE_VERSION];
+// The notice text of an import (C1, #3173): the platform showed its own notice, and Ludy's own text says what Ludy does with the copy. Same string as IMPORT_NOTICE.version in the recorder kit.
+export const IMPORT_CONSENT_NOTICE_VERSION = '2026-11-imp-v1';
+export const KNOWN_CONSENT_NOTICE_VERSIONS: readonly string[] = [CONSENT_NOTICE_VERSION, IMPORT_CONSENT_NOTICE_VERSION];
 
 export const MEETING_VISIBILITIES = ['attendees', 'org'] as const;
 export type MeetingVisibility = (typeof MEETING_VISIBILITIES)[number];
@@ -73,6 +83,8 @@ export const zMeetingSummary = z.strictObject({
   keepVideo: z.boolean(),
   // Live notes were opted into for this meeting (ADR-0052 L4a), at the consent step, and cannot change afterwards.
   liveNotes: z.boolean(),
+  // The minutes template the recorder picked (Meetings A4, #3162): a code; its sections live in code (meeting-templates.ts).
+  summaryTemplate: zMeetingSummaryTemplate,
   audioRetentionDate: z.string(),
   // null: the org keeps text until a person deletes the meeting.
   textRetentionDate: z.string().nullable(),
@@ -94,6 +106,8 @@ export const zMeetingDetail = zMeetingSummary.extend({
   readers: z.array(zId),
   videoRetentionDate: z.string().nullable(),
   isRecorder: z.boolean(),
+  // The meeting's own copy of its org template (#3578), on a meeting whose template is 'custom'; null otherwise. Headings and the sections a run fills are read from it, never from the live template.
+  minutesTemplate: zMinutesTemplateCopy.nullable(),
 });
 export type MeetingDetail = z.infer<typeof zMeetingDetail>;
 
@@ -110,18 +124,55 @@ export const zMeetingCreate = z.strictObject({
   keepVideo: z.boolean().default(false),
   // "Ghi chú trực tiếp" (ADR-0052 L4a): off by default, opted in per meeting at the consent step, fixed once the meeting exists.
   liveNotes: z.boolean().default(false),
-  consentMethod: zConsentMethod,
+  // The minutes template (A4, #3162): the general summary unless the recorder picks another; the recorder can change it later (meetings.minutes.set_template).
+  summaryTemplate: zBuiltInSummaryTemplate.default('general'),
+  // A live recording or an upload never claims the platform's own notice: that method belongs to meetings.import.start alone (C1, #3173).
+  consentMethod: zConsentMethod.exclude(['platform_notice']),
   // The version of the notice text the client showed (and the recorder may have copied); absent means the current one.
-  consentNoticeVersion: z.string().max(20).refine((v) => KNOWN_CONSENT_NOTICE_VERSIONS.includes(v), 'Unknown notice version').optional(),
+  // The import notice is for imports alone (zMeetingImportStart): a live meeting never records a text that was not shown.
+  consentNoticeVersion: z.string().max(20).refine((v) => v !== IMPORT_CONSENT_NOTICE_VERSION && KNOWN_CONSENT_NOTICE_VERSIONS.includes(v), 'Unknown notice version').optional(),
   readerUserIds: z.array(zId).optional(),
   lengthSeconds: z.number().int().nonnegative().optional(),
 });
 export type MeetingCreate = z.infer<typeof zMeetingCreate>;
 
+// The click on "Nhập" for a recording a meeting platform finished (C1, #3173): one command makes the meeting with its consent record and links the recording. The consent is the platform's own notice,
+// confirmed by the importer, and the notice text shown is the import one; nothing else is accepted here. Audio first: no video, no live notes.
+export const zMeetingImportStart = z.strictObject({
+  recordingId: zId,
+  // Absent means the recording's own title.
+  title: z.string().trim().min(1).max(200).optional(),
+  language: zMeetingLanguage.default('vi'),
+  visibility: zMeetingVisibility.default('attendees'),
+  readerUserIds: z.array(zId).optional(),
+  summaryTemplate: zBuiltInSummaryTemplate.default('general'),
+  consentMethod: z.literal('platform_notice'),
+  consentNoticeVersion: z.literal(IMPORT_CONSENT_NOTICE_VERSION),
+  consentConfirmed: z.literal(true),
+});
+export type MeetingImportStart = z.infer<typeof zMeetingImportStart>;
+
+// The clean-up after a failed import is dismissed, or before the platform connection that held it is disconnected (#3587): the empty meeting a failed try left in the member's list goes, by the same
+// rule as a retry (the importer's own, never edited, holding nothing). Exactly one of the two: one recording, or every failed or dismissed recording of one connection.
+export const zMeetingImportDiscardEmpty = z
+  .strictObject({ recordingId: zId.optional(), connectionId: zId.optional() })
+  .refine((v) => (v.recordingId === undefined) !== (v.connectionId === undefined), { message: 'Exactly one of recordingId and connectionId' });
+export type MeetingImportDiscardEmpty = z.infer<typeof zMeetingImportDiscardEmpty>;
+export const zMeetingImportDiscarded = z.strictObject({ removed: z.number().int().min(0) });
+export type MeetingImportDiscarded = z.infer<typeof zMeetingImportDiscarded>;
+
 export const zMeetingCreated = z.strictObject({
   meetingId: zId,
 });
 export type MeetingCreated = z.infer<typeof zMeetingCreated>;
+
+// The recorder picks (or changes) the minutes template of their meeting (A4, #3162). It decides the sections the next summary run fills and the headings the
+// recorder types under; text already saved is not touched.
+// 'custom' (#3578) picks a template the org wrote and needs its id; a built-in code takes none.
+export const zMeetingTemplateSet = z
+  .strictObject({ meetingId: zId, summaryTemplate: zMeetingSummaryTemplate, templateId: zId.optional() })
+  .refine((v) => (v.summaryTemplate === 'custom') === (v.templateId !== undefined), { message: 'templateId goes with the custom template and with nothing else', path: ['templateId'] });
+export const zMeetingTemplateSetDone = z.strictObject({ meetingId: zId, summaryTemplate: zMeetingSummaryTemplate });
 
 export const zMeetingDeleted = z.strictObject({
   meetingId: zId,
@@ -206,6 +257,18 @@ export const zMeetingMediaRecord = zMeetingRef.extend({
   stopReason: zRecordingStopReason.optional(),
 });
 export type MeetingMediaRecord = z.infer<typeof zMeetingMediaRecord>;
+
+// A recording that ended with no media reaching the server (#3196): the extension reports it so the header chip lets go at once, not after
+// RECORDING_NOW_WINDOW_HOURS. Codes and a length only. `reason` is absent for the member's own stop (nothing was saved), a code for a stop they
+// did not ask for. `lengthSeconds` is what the recorder's own clock counted; the end time is the start plus it, never later than now.
+export const zMeetingRecordingStopped = zMeetingRef.extend({
+  reason: zRecordingStopReason.optional(),
+  lengthSeconds: z.number().int().min(0).max(24 * 3600).optional(),
+});
+export type MeetingRecordingStopped = z.infer<typeof zMeetingRecordingStopped>;
+// `ended` is false when nothing changed: the meeting already had a recording or an end time (the call is a no-op then, and safe to repeat).
+export const zMeetingRecordingStoppedDone = z.strictObject({ meetingId: zId, ended: z.boolean() });
+export type MeetingRecordingStoppedDone = z.infer<typeof zMeetingRecordingStoppedDone>;
 
 // One piece of about 15 seconds of the recording, sent while the meeting is recorded (ADR-0052 L4a, issue #3109). The upload route seals it under its own
 // data key and stores the ciphertext; this command only records it. The pieces are consecutive slices of one MediaRecorder stream, so in order they make
@@ -502,11 +565,16 @@ export type ItemFlag = (typeof ITEM_FLAGS)[number];
 const zDay = z.iso.date();
 
 // Saves the recorder's own summary and decisions as the draft (replacing the earlier draft).
-export const zMeetingResultSave = z.strictObject({
-  meetingId: zId,
-  summary: z.string().trim().min(1).max(RESULT_SUMMARY_MAX),
-  decisions: z.array(z.string().trim().min(1).max(RESULT_DECISION_MAX)).max(RESULT_DECISIONS_MAX),
-});
+// A meeting on the general template (Tóm tắt chung) is saved as `summary`; one on another template (A4, #3162) is saved as the template's `sections` and the
+// summary is made from them by code (sectionsToText), so a result is one text however it was typed. The module refuses the mix.
+export const zMeetingResultSave = z
+  .strictObject({
+    meetingId: zId,
+    summary: z.string().trim().max(RESULT_SUMMARY_MAX).default(''),
+    sections: z.array(zSectionEntry).max(SECTIONS_MAX).default([]),
+    decisions: z.array(z.string().trim().min(1).max(RESULT_DECISION_MAX)).max(RESULT_DECISIONS_MAX),
+  })
+  .refine((v) => v.summary !== '' || v.sections.some((s) => s.text !== ''), { message: 'write a summary or a section', path: ['summary'] });
 export const zMeetingResultSaved = z.strictObject({ meetingId: zId, decisions: z.number().int().min(0) });
 
 const zItemFields = {
@@ -595,7 +663,44 @@ export const zActionItemSource = z.strictObject({ meetingId: zId });
 export const zSummaryCopy = z.strictObject({ meetingId: zId, runId: zId });
 export const zSummaryCopied = z.strictObject({ meetingId: zId, decisions: z.number().int().min(0), items: z.number().int().min(0), dropped: z.number().int().min(0) });
 // What a summary run stores in its result row: the body the agent package's checks produced. The copy command reads it back strictly, as it reads a transcript.
+// A5 (#3163): "Viết lại đầy đủ", Vy's expansion of the recorder's rough notes with the transcript. The recorder's own lines are kept verbatim (code inserts the original text of a note line
+// the model named by number, so no model wording can replace it) and every line Vy added carries the second of the transcript it rests on. Built per section of the meeting's template
+// (key null on the general summary, which has one block). The text is the same one copied into the draft by meetings.summary.copy_result; this shape is for the recorder to read first.
+export const NOTES_BODY_MAX = 6000;
+export const ENHANCED_LINE_MAX = 6000;
+// The note lines (at most 300) and the lines Vy adds (at most 100) of one section.
+export const ENHANCED_LINES_MAX = 400;
+export const zEnhancedLine = z.strictObject({
+  // true: the recorder's own line, verbatim; false: a line Vy added, with `seconds` pointing at a real line of the transcript.
+  own: z.boolean(),
+  text: z.string().min(1).max(ENHANCED_LINE_MAX),
+  seconds: z.number().int().min(0).max(86_400).nullable(),
+});
+export const zEnhancedSection = z.strictObject({
+  key: z.string().regex(/^[a-z][a-z0-9_]{0,31}$/).nullable(),
+  lines: z.array(zEnhancedLine).min(1).max(ENHANCED_LINES_MAX),
+});
+export const zEnhanced = z.strictObject({ sections: z.array(zEnhancedSection).min(1).max(SECTIONS_MAX) });
+export type Enhanced = z.infer<typeof zEnhanced>;
+
+// Which attendee a speaker label may be (#3502), as the recorder's Vy proposed it and the agent's checks kept it: the transcript's label, the attendee's own spelling and the second
+// of a line that speaker says it on. Only a proposal: the recorder's click (`zSpeakerName`) is what renames the label.
+export const SPEAKER_SUGGESTIONS_MAX = 20;
+export const zSpeakerSuggestion = z.strictObject({
+  label: z.string().min(1).max(TRANSCRIPT_SPEAKER_MAX),
+  name: z.string().min(1).max(TRANSCRIPT_SPEAKER_MAX),
+  seconds: z.number().int().min(0).max(86_400),
+});
+export type SpeakerSuggestion = z.infer<typeof zSpeakerSuggestion>;
+
 export const zSummaryResult = z.strictObject({
+  // Set when the run expanded the recorder's notes instead of summarizing the transcript (A5); `summary` is then '' and there are no sections, decisions or items of their own.
+  enhanced: zEnhanced.optional(),
+  // The template the run was asked for and the sections it filled (A4, #3162); a body stored before that has neither, which reads as the general summary.
+  template: zMeetingSummaryTemplate.default('general'),
+  // On a custom template (#3578): the md5 of the copy of the sections the run was asked to fill. The save refuses a run whose hash is not the meeting's now (another template, or the same one edited and picked again).
+  templateHash: z.string().regex(/^[0-9a-f]{32}$/).optional(),
+  sections: z.array(zSectionEntry).max(SECTIONS_MAX).default([]),
   summary: z.string().max(RESULT_SUMMARY_MAX),
   decisions: z.array(z.string().min(1).max(RESULT_DECISION_MAX)).max(RESULT_DECISIONS_MAX),
   items: z
@@ -608,9 +713,33 @@ export const zSummaryResult = z.strictObject({
       }),
     )
     .max(ITEMS_PER_MEETING_MAX),
+  // The speaker suggestions of #3502; a body stored before that has none.
+  speakers: z.array(zSpeakerSuggestion).max(SPEAKER_SUGGESTIONS_MAX).default([]),
   dropped: z.number().int().min(0),
 });
 export type SummaryResult = z.infer<typeof zSummaryResult>;
+
+// The suggestions of a finished summary run that still apply (#3502): the label is still on a draft line and the name is still one of the meeting's people. Read by the recorder alone.
+export const zSpeakerSuggestionsInput = z.strictObject({ meetingId: zId, runId: zId });
+export const zSpeakerSuggestions = z.strictObject({ meetingId: zId, runId: zId, suggestions: z.array(zSpeakerSuggestion).max(SPEAKER_SUGGESTIONS_MAX) });
+export type SpeakerSuggestions = z.infer<typeof zSpeakerSuggestions>;
+// The recorder's click: the draft lines that carry `label` take `name` for their speaker. The name must be one of the meeting's people; nothing of Vy's is needed.
+export const zSpeakerName = z.strictObject({
+  meetingId: zId,
+  label: z.string().min(1).max(TRANSCRIPT_SPEAKER_MAX),
+  name: z.string().min(1).max(TRANSCRIPT_SPEAKER_MAX),
+});
+export const zSpeakerNamed = z.strictObject({ meetingId: zId, label: z.string(), name: z.string(), lines: z.number().int().min(1) });
+
+// The recorder's rough notes of a meeting (A5, #3163): theirs alone to read and write. Saving an empty text deletes them.
+export const zNotesSave = z.strictObject({ meetingId: zId, body: z.string().max(NOTES_BODY_MAX) });
+export const zNotesSaved = z.strictObject({ meetingId: zId, saved: z.boolean() });
+export const zNotes = z.strictObject({ meetingId: zId, body: z.string(), updatedAt: z.string().nullable() });
+export type Notes = z.infer<typeof zNotes>;
+// What the recorder reads of a finished expansion before copying it into their draft: their own lines and Vy's, by section, and how many lines the checks removed.
+export const zNotesPreviewInput = z.strictObject({ meetingId: zId, runId: zId });
+export const zNotesPreview = z.strictObject({ meetingId: zId, runId: zId, template: zMeetingSummaryTemplate, enhanced: zEnhanced, dropped: z.number().int().min(0) });
+export type NotesPreview = z.infer<typeof zNotesPreview>;
 
 // The recorder's explicit review of the draft Vy wrote: `confirmed: true` is their own click, never defaulted. Only then can the draft be shared.
 // `ids` are the rows the screen showed (the summary and the items): only those lose the mark, so a row copied in another tab after the recorder looked keeps it.
@@ -865,3 +994,132 @@ export const zTranslationView = z.strictObject({
 });
 export const zTranslations = z.strictObject({ meetingId: zId, translations: z.array(zTranslationView).max(TRANSLATION_STAGES.length) });
 export type Translations = z.infer<typeof zTranslations>;
+
+// The machine translation of a meeting's transcript (meetings integrations E2, #3185, plan section 7a). The member's own Vy translates the lines the member reads, a few chunks at a time, in
+// the member's own request (ADR-0049 stage A, like the summary); each request takes the next batch of lines that still have no current translation, so a request that stops (a refused
+// chunk, a stop, a failure) keeps what earlier ones finished and the next click goes on from there. The page asks again while it is open. The parts live in the same private row as
+// the summary's (kind 'transcript'), one row for the member, meeting, stage and language, each part named by the line it translated and the hash of that line's text (a corrected line
+// makes its part stale).
+// A chunk is about this many UTF-8 bytes of numbered JSON (a one-hour Vietnamese transcript is about twenty of them); a request takes at most this many chunks (one: it stays within the bound of a single model call, whatever deadline a proxy in front sets, and the page asks again).
+export const TRANSCRIPT_TRANSLATE_CHUNK_BYTES = 4500;
+export const TRANSCRIPT_TRANSLATE_CHUNKS_PER_RUN = 1;
+// More lines than this is not a transcript this translates.
+export const TRANSCRIPT_TRANSLATE_LINES_MAX = 5000;
+const zPartHash = z.string().regex(/^[0-9a-f]{16}$/);
+// One translated part as the run stores it in its result row and the copy keeps it in the member's row: k the line's id, h the hash of its text, t the translation ('' when refused),
+// s what code found and c the fixed words for it (compact on purpose: the row keeps a part for every line of a long transcript).
+export const zTranscriptPart = z.strictObject({
+  k: zId,
+  h: zPartHash,
+  t: z.string().max(TRANSLATION_SEGMENT_TEXT_MAX),
+  s: z.enum(TRANSLATION_STATES),
+  c: z.array(z.enum(TRANSLATION_CODES)).max(TRANSLATION_CODES.length),
+});
+export type TranscriptPart = z.infer<typeof zTranscriptPart>;
+export const zTranscriptTranslationResult = z.strictObject({
+  v: z.literal(1),
+  kind: z.literal('transcript'),
+  from: zMeetingLanguage,
+  to: zMeetingLanguage,
+  stage: zTranslationStage,
+  parts: z.array(zTranscriptPart).min(1).max(TRANSCRIPT_TRANSLATE_LINES_MAX),
+});
+export type TranscriptTranslationResult = z.infer<typeof zTranscriptTranslationResult>;
+// What the row holds: the parts of every request kept so far.
+export const zTranscriptParts = z.array(zTranscriptPart).max(TRANSCRIPT_TRANSLATE_LINES_MAX);
+// The state of the member's transcript translation, for the button and the progress line ("Đã dịch 12/20 phần"): a part is one chunk-sized share of the transcript, so the figures
+// are of parts, not of lines. `state` is the member's latest run of this meeting (none, running, ready or failed with a fixed word).
+export const zTranscriptTranslationStatus = z.strictObject({
+  meetingId: zId,
+  stage: zTranslationStage.nullable(),
+  enabled: z.boolean(),
+  reason: z.enum(['off', 'nothing']).nullable(),
+  from: zMeetingLanguage,
+  to: zMeetingLanguage,
+  // Lines of the transcript the member reads, and those with a current translation (a refused line counts: it will not be asked again), those stale, and those still to translate.
+  lines: z.number().int().min(0),
+  translated: z.number().int().min(0),
+  stale: z.number().int().min(0),
+  remaining: z.number().int().min(0),
+  // Chunks, as the run will send them: those of the whole transcript and those already done.
+  chunksTotal: z.number().int().min(0),
+  chunksDone: z.number().int().min(0),
+  state: z.enum(['none', 'running', 'ready', 'failed']),
+  runId: zId.nullable(),
+  errorCode: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/).nullable(),
+  // The cost expected for the lines still to translate, before the click; null when the deployment has no price set.
+  estimate: z.strictObject({ calls: z.number().int().min(0), inputTokens: z.number().int().min(0), outputTokens: z.number().int().min(0), cost: z.string().regex(/^\d+(?:\.\d+)?$/).nullable() }).nullable(),
+});
+export type TranscriptTranslationStatus = z.infer<typeof zTranscriptTranslationStatus>;
+// The route the page calls: takes the next batch, translates it, stores the answer and keeps it for the member; says how it went in fixed words. `translated` is the lines kept by this
+// request, `remaining` those still to translate after it.
+export const zTranscriptTranslated = z.strictObject({
+  meetingId: zId,
+  runId: zId.nullable(),
+  state: z.enum(['ready', 'failed']),
+  errorCode: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/).nullable(),
+  translated: z.number().int().min(0),
+  remaining: z.number().int().min(0),
+});
+export type TranscriptTranslated = z.infer<typeof zTranscriptTranslated>;
+// What the module's start gives a request: the member's run and the ids of the next batch of lines (whole chunks), and what is left; the text comes from the source query below.
+export const zTranscriptStarted = z.strictObject({
+  meetingId: zId,
+  runId: zId,
+  stage: zTranslationStage,
+  from: zMeetingLanguage,
+  to: zMeetingLanguage,
+  remaining: z.number().int().min(1),
+  lineIds: z.array(zId).min(1).max(TRANSCRIPT_TRANSLATE_LINES_MAX),
+});
+export type TranscriptStarted = z.infer<typeof zTranscriptStarted>;
+export const zTranscriptSourceRef = z.strictObject({ meetingId: zId, lineIds: z.array(zId).min(1).max(TRANSCRIPT_TRANSLATE_LINES_MAX) });
+// The text of those lines as the caller reads them now, in the order of the transcript (a line that was removed is not there).
+export const zTranscriptSource = z.strictObject({ meetingId: zId, lines: z.array(z.strictObject({ id: zId, text: z.string() })).max(TRANSCRIPT_TRANSLATE_LINES_MAX) });
+export type TranscriptSource = z.infer<typeof zTranscriptSource>;
+export const zTranscriptTranslateStopped = z.strictObject({ meetingId: zId, stopped: z.boolean() });
+// The member's own translated parts of the transcript they read, one per line, with whether the line changed since (stale: "Bản dịch cũ, dịch lại").
+export const zTranscriptTranslationView = z.strictObject({
+  meetingId: zId,
+  stage: zTranslationStage.nullable(),
+  from: zMeetingLanguage,
+  to: zMeetingLanguage,
+  parts: z.array(z.strictObject({ lineId: zId, text: z.string(), state: z.enum(TRANSLATION_STATES), codes: z.array(z.enum(TRANSLATION_CODES)), stale: z.boolean() })).max(TRANSCRIPT_TRANSLATE_LINES_MAX),
+});
+export type TranscriptTranslationView = z.infer<typeof zTranscriptTranslationView>;
+
+// A series of meetings (#3542, owner decision 2026-11-17): meetings that come from one recurring calendar event, or that the recorder says follow one another. `set` is the recorder's click
+// "Buổi này nối tiếp buổi trước" (a meeting they recorded; null takes this meeting out of its series). `openItems` is what the caller reads of the previous meeting of the series that is still open:
+// accepted items with the live status of their task, and items nobody accepted. A caller who does not read the previous meeting gets none of it (row security), not even its title.
+export const SERIES_ITEMS_MAX = 100;
+export const zSeriesSet = z.strictObject({ meetingId: zId, previousMeetingId: zId.nullable() });
+export const zSeriesSetResult = z.strictObject({ meetingId: zId, inSeries: z.boolean() });
+export const zSeriesOpenItemsInput = z.strictObject({ meetingId: zId });
+export const SERIES_TASK_STATUSES = ['todo', 'in_progress', 'waiting', 'in_review'] as const;
+export const zSeriesOpenItem = z.strictObject({
+  id: zId,
+  title: z.string(),
+  who: z.string(),
+  // The person the item's task is with now (the holder of its seat), else the attendee the item was parsed to; null when neither is known.
+  whoUserId: zId.nullable(),
+  // The title of the seat the task is with, when it has one (shown when no person is known for the item).
+  assigneeSeat: z.string().nullable(),
+  when: z.string(),
+  whenDate: z.string().nullable(),
+  // True when the item was accepted into a task; false is "chưa giao" (a suggestion nobody accepted).
+  assigned: z.boolean(),
+  // The task's live status, or null when the item has no task or the caller cannot read the task.
+  taskStatus: z.enum(SERIES_TASK_STATUSES).nullable(),
+  due: z.string().nullable(),
+});
+export type SeriesOpenItem = z.infer<typeof zSeriesOpenItem>;
+export const zSeriesOpenItems = z.strictObject({
+  meetingId: zId,
+  inSeries: z.boolean(),
+  previous: z.strictObject({ meetingId: zId, title: z.string(), startedAt: z.string() }).nullable(),
+  items: z.array(zSeriesOpenItem).max(SERIES_ITEMS_MAX),
+});
+export type SeriesOpenItems = z.infer<typeof zSeriesOpenItems>;
+
+// What the worker's series nudge is told (the command checks it again before it writes anything): one member, the series, and the start of the next meeting of it.
+export const zSeriesNudge = z.strictObject({ userId: zId, seriesId: zId, startsAt: z.iso.datetime({ offset: true }) });

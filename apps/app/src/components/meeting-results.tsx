@@ -3,20 +3,25 @@
 // see, and one click shares them with the meeting's readers; a reader sees what was shared and makes a team task from an item: they confirm the title, pick the
 // date and the seat. Nothing here needs AI; the work Vy does for this screen arrives in a later step and lands in these same drafts.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { Link } from '@tanstack/react-router';
+import { useState, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
-import type { ActionItemView } from '@crove/kernel-contract';
+import { MEETING_SUMMARY_TEMPLATES, templateSections, textToSections, type ActionItemView, type MeetingSummaryTemplate, type MeetingVisibility, type MinutesTemplateCopy } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
 import { Input } from '@crove/ui/components/input';
-import { NativeSelect } from '@crove/ui/components/native-select';
+import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { Textarea } from '@crove/ui/components/textarea';
+import { ConfirmDialog } from './confirm-dialog.tsx';
 import { DateInput } from './date-input.tsx';
 import { ErrorText } from './ui.tsx';
 import { MeetingFollowup } from './meeting-followup.tsx';
+import { MeetingZalo } from './meeting-zalo.tsx';
+import { MeetingChatPost } from './meeting-chat.tsx';
 import { MeetingTranslation } from './meeting-translation.tsx';
 import { clock } from './meeting-transcript.tsx';
+import { notesInstalled } from './notes-panel.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 
 // A member as people read them: the name, else the email, else a plain fallback; never an id.
@@ -31,30 +36,127 @@ const refresh = () => {
   void queryClient.invalidateQueries({ queryKey: orpc.meetings.results.key() });
 };
 
-// The recorder's draft summary and decisions (one decision per line).
-function SummaryEditor({ meetingId, summary, decisions }: { meetingId: string; summary: string; decisions: string[] }) {
+// The recorder picks the minutes template of their meeting (A4, #3162): the sections Vy fills and the sections they type under. The five built-in ones, then the templates the org wrote
+// (#3578), listed by name. Picking an org template makes the meeting its own copy of it, so a later edit or archive of the template changes nothing here; picking the same one again takes
+// its current sections. The meeting's present copy, when it is one, is the selected option under its own name.
+const CURRENT_COPY = 'current-copy';
+export function TemplatePicker({ meetingId, template, copy }: { meetingId: string; template: MeetingSummaryTemplate; copy: MinutesTemplateCopy | null }) {
+  const t = useTranslations('meetings');
+  const org = useQuery(orpc.meetings.template.list.queryOptions({ input: {} }));
+  const own = (org.data?.templates ?? []).filter((x) => !x.archived);
+  const pick = useMutation({
+    mutationFn: (value: string) =>
+      value.startsWith('org:')
+        ? orpc.meetings.setTemplate.call({ meetingId, summaryTemplate: 'custom', templateId: value.slice('org:'.length) })
+        : orpc.meetings.setTemplate.call({ meetingId, summaryTemplate: value as Exclude<MeetingSummaryTemplate, 'custom'> }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: orpc.meetings.get.key() });
+    },
+  });
+  // Code without a copy treats a custom meeting as the general summary (the contract), so that is what the select shows then.
+  const current = template === 'custom' ? (copy ? CURRENT_COPY : 'general') : template;
+  return (
+    <div className="space-y-1" data-testid="template-picker">
+      <label htmlFor="minutes-template" className="text-xs font-medium text-muted-foreground">
+        {t('templates.label')}
+      </label>
+      <NativeSelect id="minutes-template" value={current} disabled={pick.isPending} onChange={(e) => e.target.value !== CURRENT_COPY && pick.mutate(e.target.value)}>
+        {MEETING_SUMMARY_TEMPLATES.map((code) => (
+          <NativeSelectOption key={code} value={code}>
+            {t(`templates.names.${code}`)}
+          </NativeSelectOption>
+        ))}
+        {template === 'custom' && copy && (
+          <NativeSelectOption value={CURRENT_COPY}>{t('templates.customCurrent', { name: copy.name })}</NativeSelectOption>
+        )}
+        {own.map((x) => (
+          <NativeSelectOption key={x.id} value={`org:${x.id}`}>
+            {t('templates.customOption', { name: x.name })}
+          </NativeSelectOption>
+        ))}
+      </NativeSelect>
+      <p className="text-xs text-muted-foreground">{t('templates.hint')}</p>
+      {pick.error && <ErrorText>{errorMessage(pick.error)}</ErrorText>}
+    </div>
+  );
+}
+
+// The heading of a section: an organization's template gives its own (from the meeting's copy, shown as text), a built-in one the app's words.
+export function sectionHeadingText(t: (key: never) => string, template: MeetingSummaryTemplate, copy: MinutesTemplateCopy | null, key: string): string {
+  return template === 'custom' ? (copy?.sections.find((s) => s.key === key)?.title ?? '') : t(`templates.sections.${template}.${key}` as never);
+}
+export function useSectionHeading(template: MeetingSummaryTemplate, copy: MinutesTemplateCopy | null) {
+  const tm = useTranslations('meetings');
+  return (key: string): string => sectionHeadingText(tm as unknown as (key: never) => string, template, copy, key);
+}
+
+// The recorder's draft summary and decisions (one decision per line). On a template the summary is typed section by section; the kernel makes the one text from them.
+function SummaryEditor({ meetingId, summary, decisions, template, copy }: { meetingId: string; summary: string; decisions: string[]; template: MeetingSummaryTemplate; copy: MinutesTemplateCopy | null }) {
   const t = useTranslations('meetings.results');
+  const tm = useTranslations('meetings');
+  const heading = useSectionHeading(template, copy);
+  const defs = templateSections(template, copy?.sections ?? null);
+  const parsed = defs.length === 0 ? null : textToSections(template, summary, copy?.sections ?? null);
+  // Text that is not in this template's form (typed before the recorder changed the type) goes into the first section, never lost.
+  const reflowed = defs.length > 0 && parsed === null && summary.trim() !== '';
   const [text, setText] = useState(summary);
+  const [values, setValues] = useState<Record<string, string>>(() =>
+    Object.fromEntries(defs.map((d, i) => [d.key, parsed ? ((parsed.find((p) => p.key === d.key)?.text) ?? '') : i === 0 ? summary : ''])),
+  );
   const [lines, setLines] = useState(decisions.join('\n'));
-  const parsed = lines.split('\n').map((l) => l.trim()).filter(Boolean);
-  const save = useMutation({ mutationFn: () => orpc.meetings.results.saveSummary.call({ meetingId, summary: text.trim(), decisions: parsed }), onSuccess: refresh });
+  const decisionList = lines.split('\n').map((l) => l.trim()).filter(Boolean);
+  const sections = defs.map((d) => ({ key: d.key, text: (values[d.key] ?? '').trim() })).filter((x) => x.text !== '');
+  // A section holds at most 1200 characters; text reflowed into the first one can be longer, and the recorder splits it before saving.
+  const tooLong = defs.some((d) => (values[d.key] ?? '').length > 1200);
+  const save = useMutation({
+    mutationFn: () =>
+      orpc.meetings.results.saveSummary.call(defs.length === 0 ? { meetingId, summary: text.trim(), decisions: decisionList } : { meetingId, sections, decisions: decisionList }),
+    onSuccess: refresh,
+  });
   return (
     <div className="space-y-2">
-      <Textarea aria-label={t('summary')} value={text} maxLength={8000} rows={5} onChange={(e) => setText(e.target.value)} />
+      {defs.length === 0 ? (
+        <Textarea aria-label={t('summary')} value={text} maxLength={8000} rows={5} onChange={(e) => setText(e.target.value)} />
+      ) : (
+        <div className="space-y-2" data-testid="section-editor">
+          {reflowed && <p className="text-xs text-muted-foreground">{tm('templates.reflow')}</p>}
+          {tooLong && <ErrorText>{tm('templates.tooLong')}</ErrorText>}
+          {defs.map((d) => (
+            <div key={d.key} className="space-y-1">
+              <label htmlFor={`section-${d.key}`} className="text-xs font-medium">
+                {heading(d.key)}
+              </label>
+              <Textarea id={`section-${d.key}`} value={values[d.key] ?? ''} maxLength={1200} rows={3} onChange={(e) => setValues((v) => ({ ...v, [d.key]: e.target.value }))} />
+            </div>
+          ))}
+        </div>
+      )}
       <Textarea aria-label={t('decisions')} placeholder={t('decisionsHint')} value={lines} rows={3} onChange={(e) => setLines(e.target.value)} />
       {save.error && <ErrorText>{errorMessage(save.error)}</ErrorText>}
-      <Button size="sm" loading={save.isPending} disabled={text.trim() === ''} onClick={() => save.mutate()}>
+      <Button size="sm" loading={save.isPending} disabled={defs.length === 0 ? text.trim() === '' : sections.length === 0 || tooLong} onClick={() => save.mutate()}>
         {t('saveDraft')}
       </Button>
     </div>
   );
 }
 
-function SummaryText({ summary, decisions }: { summary: string; decisions: string[] }) {
+export function SummaryText({ summary, decisions, template, copy = null }: { summary: string; decisions: string[]; template: MeetingSummaryTemplate; copy?: MinutesTemplateCopy | null }) {
   const t = useTranslations('meetings.results');
+  const heading = useSectionHeading(template, copy);
+  // A template's text is shown under its headings; text that is not in the template's form is shown whole.
+  const sections = textToSections(template, summary, copy?.sections ?? null)?.filter((s) => s.text !== '') ?? null;
   return (
     <div className="space-y-2 text-sm">
-      <p className="whitespace-pre-wrap">{summary}</p>
+      {sections === null ? (
+        <p className="whitespace-pre-wrap">{summary}</p>
+      ) : (
+        sections.map((s) => (
+          <div key={s.key}>
+            <p className="text-xs font-medium text-muted-foreground">{heading(s.key)}</p>
+            <p className="whitespace-pre-wrap">{s.text}</p>
+          </div>
+        ))
+      )}
       {decisions.length > 0 && (
         <div>
           <p className="text-xs font-medium text-muted-foreground">{t('decisions')}</p>
@@ -181,7 +283,7 @@ function Item({ item, isRecorder }: { item: ActionItemView; isRecorder: boolean 
 }
 
 // A fixed code the kernel sent, in words; null for a code this screen does not know.
-function codeText(t: ReturnType<typeof useTranslations>, code: unknown): string | null {
+export function codeText(t: ReturnType<typeof useTranslations>, code: unknown): string | null {
   switch (code) {
     case 'AI_BUDGET_EXHAUSTED':
     case 'AI_STOPPED':
@@ -191,10 +293,45 @@ function codeText(t: ReturnType<typeof useTranslations>, code: unknown): string 
     case 'SUMMARY_EMPTY':
     case 'SUMMARY_TOO_LONG':
     case 'SUMMARY_NO_TRANSCRIPT':
+    case 'NOTES_TOO_LONG':
       return t(`vy.codes.${code}`);
     default:
       return null;
   }
+}
+
+// Which attendee a speaker may be (#3502), as the recorder's Vy suggested it in a finished summary run: one line per suggestion with the moment it rests on and a click of the recorder's own
+// that gives the draft lines of that speaker the attendee's name. Nothing is renamed without the click; with no suggestion the block is not drawn.
+export function SpeakerSuggestions({ meetingId, runId }: { meetingId: string; runId: string }) {
+  const t = useTranslations('meetings.results');
+  const list = useQuery({ ...orpc.meetings.results.speakerSuggestions.queryOptions({ input: { meetingId, runId } }), ...READ_ONCE });
+  const name = useMutation({
+    mutationFn: (s: { label: string; name: string }) => orpc.meetings.results.nameSpeaker.call({ meetingId, label: s.label, name: s.name }),
+    onSuccess: () => {
+      void list.refetch();
+      void queryClient.invalidateQueries({ queryKey: orpc.meetings.transcript.key() });
+    },
+  });
+  const suggestions = list.data?.suggestions ?? [];
+  if (suggestions.length === 0 && !name.isSuccess) return null;
+  return (
+    <div className="space-y-2" data-testid="speaker-suggestions">
+      <p className="text-sm font-medium">{t('vy.speakers.title')}</p>
+      <p className="text-xs text-muted-foreground">{t('vy.speakers.hint')}</p>
+      <ul className="space-y-1">
+        {suggestions.map((s) => (
+          <li key={s.label} className="flex flex-wrap items-center gap-2 text-sm">
+            <span>{t('vy.speakers.line', { label: s.label, name: s.name, time: clock(s.seconds) })}</span>
+            <Button size="sm" variant="outline" loading={name.isPending && name.variables?.label === s.label} onClick={() => name.mutate({ label: s.label, name: s.name })}>
+              {t('vy.speakers.apply')}
+            </Button>
+          </li>
+        ))}
+      </ul>
+      {name.isSuccess && <p role="status">{t('vy.speakers.done', { name: name.data.name, count: String(name.data.lines) })}</p>}
+      {name.error && <ErrorText>{errorMessage(name.error)}</ErrorText>}
+    </div>
+  );
 }
 
 // The recorder's own Vy summarizing this meeting: ask, wait for the one answer, then copy it into the draft with a click of their own. Shown to the recorder only, and
@@ -202,7 +339,15 @@ function codeText(t: ReturnType<typeof useTranslations>, code: unknown): string 
 function VySummary({ meetingId, hasModelDraft }: { meetingId: string; hasModelDraft: boolean }) {
   const t = useTranslations('meetings.results');
   const status = useQuery(orpc.meetings.results.summaryStatus.queryOptions({ input: { meetingId } }));
-  const ask = useMutation({ mutationFn: () => orpc.meetings.results.summarize.call({ meetingId }) });
+  // The run whose speaker suggestions are shown: kept after the copy below resets the answer, so the recorder can still accept a name once the draft is theirs.
+  const [suggestRun, setSuggestRun] = useState<string | null>(null);
+  const ask = useMutation({
+    mutationFn: () => {
+      setSuggestRun(null);
+      return orpc.meetings.results.summarize.call({ meetingId });
+    },
+    onSuccess: (r) => setSuggestRun(r.state === 'ready' ? r.runId : null),
+  });
   const copy = useMutation({
     mutationFn: (runId: string) => orpc.meetings.results.copySummary.call({ meetingId, runId }),
     onSuccess: () => {
@@ -219,6 +364,7 @@ function VySummary({ meetingId, hasModelDraft }: { meetingId: string; hasModelDr
       <p className="text-xs text-muted-foreground">{t('vy.desc')}</p>
       {ask.isPending && <p role="status">{t('vy.running')}</p>}
       {copy.isSuccess && <p role="status">{t('vy.copied')}</p>}
+      {suggestRun !== null && <SpeakerSuggestions meetingId={meetingId} runId={suggestRun} />}
       {answer?.state === 'ready' && !copy.isSuccess && (
         <div className="space-y-2">
           <p>{t('vy.ready')}</p>
@@ -239,7 +385,98 @@ function VySummary({ meetingId, hasModelDraft }: { meetingId: string; hasModelDr
   );
 }
 
-export function MeetingResults({ meetingId, readers }: { meetingId: string; readers: readonly string[] }) {
+function hasNotesModule(): boolean {
+  try {
+    return notesInstalled();
+  } catch {
+    return false;
+  }
+}
+
+function SaveSummaryAsNote({
+  meetingId,
+  visibility,
+  slug,
+}: {
+  meetingId: string;
+  visibility: MeetingVisibility | undefined;
+  slug: string | undefined;
+}) {
+  const t = useTranslations('meetings.results');
+  const [savedNoteId, setSavedNoteId] = useState<string | null>(null);
+  const save = useMutation({
+    mutationFn: () => orpc.notes.fromMeetingSummary.call({ meetingId }),
+    onSuccess: (done) => {
+      setSavedNoteId(done.noteId);
+      void queryClient.invalidateQueries({ queryKey: orpc.notes.key() });
+    },
+  });
+  return (
+    <div className="space-y-2 border-t pt-3" data-testid="save-summary-as-note-box">
+      {visibility !== 'org' ? (
+        <ConfirmDialog
+          render={<Button type="button" size="sm" variant="outline" loading={save.isPending} data-testid="save-summary-as-note" />}
+          disabled={save.isPending}
+          title={t('saveAsNoteConfirmTitle')}
+          description={t('saveAsNoteConfirmDesc')}
+          confirm={t('saveAsNoteConfirmAction')}
+          onConfirm={() => save.mutate()}
+        >
+          {t('saveAsNote')}
+        </ConfirmDialog>
+      ) : (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          loading={save.isPending}
+          disabled={save.isPending}
+          onClick={() => save.mutate()}
+          data-testid="save-summary-as-note"
+        >
+          {t('saveAsNote')}
+        </Button>
+      )}
+      {save.error && <ErrorText>{errorMessage(save.error)}</ErrorText>}
+      {savedNoteId !== null && (
+        <p role="status" className="text-xs text-muted-foreground" data-testid="saved-summary-note">
+          {t('savedAsNote')}
+          {slug ? (
+            <>
+              {' '}
+              <Link to="/o/$slug/notes" params={{ slug }} search={{ note: savedNoteId }} className="text-link underline">
+                {t('openSavedNote')}
+              </Link>
+            </>
+          ) : null}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// `template` is the meeting's minutes template (A4, #3162); `minutesLink` is the "Xem biên bản" link the page puts beside the title (it knows the route; this panel does not); `title` is
+// the meeting's title, for the heading of the text "Gửi qua Zalo" prepares (B5, #3169).
+export function MeetingResults({
+  meetingId,
+  readers,
+  template = 'general',
+  minutesTemplate = null,
+  title = '',
+  visibility,
+  slug,
+  minutesLink,
+}: {
+  meetingId: string;
+  readers: readonly string[];
+  template?: MeetingSummaryTemplate;
+  // The meeting's own copy of an organization's template (#3578): the headings of a custom meeting are read from it.
+  minutesTemplate?: MinutesTemplateCopy | null;
+  title?: string;
+  visibility?: MeetingVisibility;
+  slug?: string;
+  minutesLink?: ReactNode;
+}) {
   const t = useTranslations('meetings.results');
   const query = useQuery({ ...orpc.meetings.results.get.queryOptions({ input: { meetingId } }), ...READ_ONCE });
   const publish = useMutation({ mutationFn: () => orpc.meetings.results.publish.call({ meetingId, confirmed: true }), onSuccess: refresh });
@@ -252,6 +489,15 @@ export function MeetingResults({ meetingId, readers }: { meetingId: string; read
   // A reader with nothing shared sees no panel at all.
   if (!isRecorder && !published && items.length === 0) return null;
   const hasDraft = draft !== null || items.some((i) => i.stage === 'draft');
+  const hasPublishedSummary =
+    published !== null && (published.summary.trim() !== '' || published.decisions.some((d) => d.trim() !== ''));
+  const hasDraftSummary =
+    isRecorder &&
+    published === null &&
+    draft !== null &&
+    !draft.tainted &&
+    (draft.summary.trim() !== '' || draft.decisions.some((d) => d.trim() !== ''));
+  const canSaveAsNote = hasNotesModule() && (hasPublishedSummary || hasDraftSummary);
   // What Vy wrote and the recorder has not read: the draft is not shared until they confirm it (or rewrite it).
   // The rows on the screen that Vy wrote: the review names exactly these, so a row copied in another tab after this one loaded keeps its mark.
   const unreadIds = [...(draft?.tainted ? [draft.id] : []), ...items.filter((i) => i.stage === 'draft' && i.tainted).map((i) => i.id)];
@@ -260,18 +506,28 @@ export function MeetingResults({ meetingId, readers }: { meetingId: string; read
   return (
     <Card data-testid="meeting-results">
       <CardHeader>
-        <CardTitle className="text-base font-medium">{t('title')}</CardTitle>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle className="text-base font-medium">{t('title')}</CardTitle>
+          {minutesLink}
+        </div>
         <CardDescription className="text-xs text-muted-foreground">{isRecorder ? t('recorderNote') : t('readerNote')}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {published && (
           <section className="space-y-1">
             {isRecorder && <h3 className="text-xs font-medium text-muted-foreground">{t('publishedTitle')}</h3>}
-            <SummaryText summary={published.summary} decisions={published.decisions} />
+            <SummaryText summary={published.summary} decisions={published.decisions} template={template} copy={minutesTemplate} />
             <MeetingTranslation meetingId={meetingId} stage="published" original={{ summary: published.summary, decisions: published.decisions, items: items.filter((i) => i.stage === 'published') }} />
           </section>
         )}
+        {canSaveAsNote && <SaveSummaryAsNote key={meetingId} meetingId={meetingId} visibility={visibility} slug={slug} />}
         {isRecorder && (published || items.some((i) => i.stage === 'published')) && <MeetingFollowup meetingId={meetingId} />}
+        {/* B5 (#3169): only a published result can be offered to a customer, and only the lines the recorder ticks; the draft is never read here. */}
+        {isRecorder && title !== '' && (published || items.some((i) => i.stage === 'published')) && (
+          <MeetingZalo meetingId={meetingId} title={title} summary={published?.summary ?? null} decisions={published?.decisions ?? []} items={items.filter((i) => i.stage === 'published')} />
+        )}
+        {isRecorder && (published || items.some((i) => i.stage === 'published')) && <MeetingChatPost meetingId={meetingId} />}
+        {isRecorder && <TemplatePicker meetingId={meetingId} template={template} copy={minutesTemplate} />}
         {isRecorder && <VySummary meetingId={meetingId} hasModelDraft={(draft?.tainted ?? false) || items.some((i) => i.stage === 'draft' && i.tainted)} />}
         {isRecorder && (
           <section className="space-y-2">
@@ -280,7 +536,7 @@ export function MeetingResults({ meetingId, readers }: { meetingId: string; read
               {draft?.tainted && <Badge variant="outline">{t('fromVy')}</Badge>}
             </h3>
             {hasDraft && <p className="text-xs text-muted-foreground">{t('draftExpiry')}</p>}
-            <SummaryEditor key={draft?.id ?? 'new'} meetingId={meetingId} summary={draft?.summary ?? ''} decisions={draft?.decisions ?? []} />
+            <SummaryEditor key={`${template}-${minutesTemplate?.hash ?? ''}-${draft?.id ?? 'new'}`} meetingId={meetingId} summary={draft?.summary ?? ''} decisions={draft?.decisions ?? []} template={template} copy={minutesTemplate} />
             {hasDraft && <MeetingTranslation meetingId={meetingId} stage="draft" original={{ summary: draft?.summary ?? '', decisions: draft?.decisions ?? [], items: items.filter((i) => i.stage === 'draft') }} />}
           </section>
         )}

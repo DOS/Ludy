@@ -56,7 +56,7 @@ test('a page shared to the installed app lands in a new draft, and the shared va
   await page.goBack();
   // The composer may ask again if it still holds the draft; answer it the same way.
   if (await leave.isVisible()) await leave.getByRole('button', { name: 'Rời trang' }).click();
-  await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/overview$`));
 });
 
 test('the bookmarklet from the Social settings opens a draft with the page link, title and selection', async ({ page, context }) => {
@@ -93,6 +93,8 @@ test.describe('at phone width', () => {
     await signInNewUser(page, newEmail('social-share-narrow'));
     const slug = await createOrg(page, 'Công ty Màn hình hẹp Chia Sẻ');
     await page.goto(`/o/${slug}/social/channels`);
+    // On a phone the general settings start folded (#3651): open them to reach the share card.
+    await page.getByRole('button', { name: /Cài đặt chung/ }).click();
     await expect(page.getByText('Chia sẻ trang vào bài nháp')).toBeVisible();
     const fits = () => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth);
     expect(await fits()).toBe(true);

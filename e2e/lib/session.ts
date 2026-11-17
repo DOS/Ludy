@@ -81,7 +81,7 @@ export async function signOut(page: Page): Promise<void> {
 export async function createOrg(page: Page, name: string): Promise<string> {
   await page.getByLabel('Tên công ty hoặc hộ kinh doanh').fill(name);
   await page.getByRole('button', { name: 'Tạo tổ chức' }).click();
-  await expect(page).toHaveURL(/\/o\/[^/]+\/inbox$/);
+  await expect(page).toHaveURL(/\/o\/[^/]+\/overview$/);
   return new URL(page.url()).pathname.split('/')[2] ?? '';
 }
 

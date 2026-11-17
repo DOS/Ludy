@@ -67,10 +67,11 @@ test('a firm adds a client company by tax code, then opens the form again for th
   });
 
   await test.step('the sidebar opens the form again for the next client, with a way back', async () => {
-    await page.getByRole('complementary').getByRole('link', { name: '+ Thêm tổ chức' }).click();
+    await page.getByRole('complementary').getByRole('button', { name: /^Tổ chức:/ }).click();
+    await page.getByRole('menuitem', { name: 'Thêm tổ chức' }).click();
     await expect(page).toHaveURL(/\/onboarding$/);
     await expect(page.getByRole('heading', { name: 'Thêm tổ chức' })).toBeVisible();
     await page.getByRole('link', { name: 'Quay lại' }).click();
-    await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
+    await expect(page).toHaveURL(new RegExp(`/o/${slug}/overview$`));
   });
 });

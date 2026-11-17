@@ -11,9 +11,9 @@ import { Alert, AlertDescription } from '@crove/ui/components/alert';
 import { Badge } from '@crove/ui/components/badge';
 import { Button, buttonVariants } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
+import { cn } from '@crove/ui/lib/utils';
 import { BankMatchGroups } from '../components/bank-match-groups.tsx';
 import { BankPayrollLine } from '../components/bank-payroll-line.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
@@ -22,12 +22,13 @@ import { CardSkeleton, DataTable, Empty, ErrorText, Notice, PageHeader, Spinner,
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { canApproveProposals } from '../lib/review.ts';
-import { VoucherFormCard } from './vouchers.tsx';
+import { VoucherFormPanel } from './vouchers.tsx';
 import {
   MAX_STATEMENT_BYTES,
   STATEMENT_COLUMNS,
   findColumns,
   headerLabels,
+  lastFullMonth,
   readStatementFile,
   statementRows,
   type StatementColumn,
@@ -47,12 +48,6 @@ type FileState =
   | { status: 'read'; name: string; rows: SheetRows }
   | { status: 'problem'; problem: 'too_large' | 'unreadable' | 'no_columns' | 'too_many' | 'no_lines' };
 
-// 'YYYY-MM' of today in Vietnam, as the kernel counts months.
-function thisMonth(): string {
-  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit' }).formatToParts(new Date());
-  return `${parts.find((p) => p.type === 'year')?.value}-${parts.find((p) => p.type === 'month')?.value}`;
-}
-
 const STATUS_VARIANT: Record<BankLineStatus, 'success' | 'secondary' | 'warning'> = { new: 'success', duplicate: 'secondary', ambiguous: 'warning', conflict: 'warning' };
 
 function StatementImport({ bankAccount, onImported }: { bankAccount: string; onImported: (result: BankImportResult, to: string | null) => void }) {
@@ -63,6 +58,8 @@ function StatementImport({ bankAccount, onImported }: { bankAccount: string; onI
   // One key per checked file: a retry is the same import.
   const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
   const pick = useRef(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
 
   const statement = file.status === 'read' && mapping ? statementRows(file.rows, mapping) : null;
   // The lines go to the books of the entity chosen in the shell (#1280).
@@ -122,10 +119,38 @@ function StatementImport({ bankAccount, onImported }: { bankAccount: string; onI
         <h2 className="text-sm font-semibold text-foreground">{t('importTitle')}</h2>
         <p className="text-sm text-muted-foreground">{t('importHint')}</p>
       </div>
-      <label className="block text-xs">
-        <span className="text-subtle-foreground">{t('file')}</span>
-        <Input type="file" aria-label={t('file')} className="mt-1 max-w-md" accept=".xlsx,.csv,text/csv" onChange={(e) => void choose(e.target.files?.[0])} />
-      </label>
+      {/* A file area like the Inbox's (#3602): the browser's own "Choose file" text is in the browser's language, so the input is hidden and this area, in the app's language, opens it or takes a dropped file. */}
+      <div
+        className={cn('flex flex-col items-center gap-2 rounded-xl border border-dashed px-4 py-6 text-center transition-colors', dragging ? 'border-ring bg-primary/10' : 'bg-card')}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragging(false);
+          void choose(e.dataTransfer.files[0]);
+        }}>
+        <input
+          ref={inputRef}
+          type="file"
+          hidden
+          aria-label={t('file')}
+          accept=".xlsx,.csv,text/csv"
+          onChange={(e) => {
+            void choose(e.target.files?.[0]);
+            e.target.value = '';
+          }}
+        />
+        <p className="text-sm text-foreground">{t('dropHere')}</p>
+        <Button type="button" variant="outline" onClick={() => inputRef.current?.click()}>
+          {t('pickFile')}
+        </Button>
+        <p className="text-xs text-subtle-foreground" aria-live="polite">
+          {file.status === 'read' ? t('chosenFile', { name: file.name }) : t('fileFormats')}
+        </p>
+      </div>
       {file.status === 'reading' && <Spinner />}
       {file.status === 'problem' && <ErrorText>{t(`problems.${file.problem}`)}</ErrorText>}
       {file.status === 'read' && mapping && (
@@ -227,7 +252,7 @@ function LineVoucher({ slug, line, onClose }: { slug: string; line: BankLine; on
       </Alert>
     );
   }
-  return <VoucherFormCard slug={slug} onClose={onClose} fromLine={made.data} />;
+  return <VoucherFormPanel slug={slug} onClose={onClose} fromLine={made.data} />;
 }
 
 function LineState({ slug, line, canEnter, onEnter }: { slug: string; line: BankLine; canEnter: boolean; onEnter: () => void }) {
@@ -271,7 +296,7 @@ export function BankPage() {
   const [picked, setPicked] = useState<string | null>(search.account ?? null);
   const account = picked ?? bankAccounts.find((a) => a.active)?.code ?? null;
   const current = bankAccounts.find((a) => a.code === account);
-  const [month, setMonth] = useState(() => search.month ?? thisMonth());
+  const [month, setMonth] = useState(() => search.month ?? lastFullMonth());
   // A link to another account or month while the page is open (back and forward between two of them) moves it there.
   useEffect(() => {
     if (search.account) setPicked(search.account);

@@ -18,7 +18,7 @@ import { LinkedMeetings, meetingsInstalled } from '../components/linked-meetings
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { DealBoard } from '../components/deal-board.tsx';
 import { DealFilterBar } from '../components/deal-filter-bar.tsx';
-import { DealForm, refreshDeals, type Member } from '../components/deal-form.tsx';
+import { DealForm, DealPartyDuplicate, refreshDeals, type Member } from '../components/deal-form.tsx';
 import { DealQuotes } from '../components/deal-quotes.tsx';
 import { DealNextSteps, useNextStepCount } from '../components/deal-next-steps.tsx';
 import { DealStaleSetting } from '../components/deal-stale-setting.tsx';
@@ -28,6 +28,7 @@ import { ViewTabs, type ViewState } from '../components/view-tabs.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { EMPTY_DEAL_FILTER, astToDealFilter, dealFilterToAst, type DealFilterState } from '../lib/deal-filter.ts';
+import { showAllClosed } from '../lib/deal-board.ts';
 import { formatMoney } from '../lib/format.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
 
@@ -95,7 +96,10 @@ function DealRow({ deal, stages, members, canEdit, canDelete, columns }: { deal:
             </Button>
           )}
         </TableCell>
-        <TableCell className="px-4 text-sm">{deal.partyName}</TableCell>
+        <TableCell className="px-4 text-sm">
+          {deal.partyName}
+          <DealPartyDuplicate deal={deal} canEdit={canEdit} />
+        </TableCell>
         <TableCell className="px-4 text-sm">
           {canEdit ? (
             <NativeSelect size="sm" aria-label={t('stageOf', { title: deal.title })} value={deal.stageId} disabled={move.isPending} onChange={(e) => pick(e.target.value)}>
@@ -312,7 +316,16 @@ export function DealsPage() {
       <ViewTabs scope={SCOPE} filters={filters} sort={sort} onApply={applyView} />
       <DealFilterBar bar={bar} setBar={setBar} sort={sort} setSort={setSort} stages={stageList} members={members} />
       {view === 'board' ? (
-        <DealBoard members={members} canEdit={canEdit} filters={applied.all.length > 0 ? applied : undefined} />
+        <DealBoard
+          members={members}
+          canEdit={canEdit}
+          filters={applied.all.length > 0 ? applied : undefined}
+          onShowAll={(kind) => {
+            setBar(showAllClosed(kind));
+            setSort(null);
+            setView('list');
+          }}
+        />
       ) : deals.isPending || stages.isPending ? (
         <TableSkeleton columns={6} />
       ) : (deals.error || stages.error) && rows.length === 0 ? (

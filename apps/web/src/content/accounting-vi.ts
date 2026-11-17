@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Vietnamese copy of the Ludy Kế toán page (/ke-toan). accounting-en.ts mirrors this shape. Every claim here is
+// Vietnamese copy of the Ludy Tài chính page (/ke-toan). accounting-en.ts mirrors this shape. Every claim here is
 // merged and usable on main today; the PR lists the PR or route behind each one. Company names, amounts and document
 // numbers are example data and stay the same in both languages (the sample company is the home page's).
 import type { AppPageCopy } from './app-page';
@@ -8,20 +8,20 @@ import { N } from './roster';
 type Tone = 'ok' | 'warn' | 'accent' | 'neutral';
 
 export const accountingVi = {
-  appName: 'Ludy Kế toán',
+  appName: 'Ludy Tài chính',
   meta: {
-    title: 'Ludy Kế toán: hoá đơn về, Ludy soạn bút toán đề xuất, bạn duyệt rồi mới ghi sổ',
+    title: 'Ludy Tài chính: hoá đơn về, Ludy soạn bút toán đề xuất, bạn duyệt rồi mới ghi sổ',
     description:
-      'Ludy Kế toán đọc hoá đơn điện tử, kiểm tra từng con số bằng quy tắc cố định và đề xuất bút toán theo Thông tư 133. Có thuế GTGT, lịch thuế, khoá sổ, kết chuyển cuối năm và xuất Excel theo mẫu nhập liệu MISA SME. Mã nguồn mở, chỉ ghi sổ khi có người duyệt.',
+      'Ludy Tài chính đọc hoá đơn điện tử, kiểm tra từng con số bằng quy tắc cố định và đề xuất bút toán theo Thông tư 133. Có Bán hàng, Mua hàng, Sổ sách & Thuế, lịch thuế, khoá sổ, kết chuyển cuối năm và xuất Excel theo mẫu nhập liệu MISA SME. Mã nguồn mở, chỉ ghi sổ khi có người duyệt.',
   },
   ogTitle: 'Hoá đơn về, Ludy soạn bút toán đề xuất. Bạn duyệt rồi mới ghi sổ.',
   crumbLabel: 'Đường dẫn',
   hero: {
     title: 'Hoá đơn về, Ludy soạn bút toán đề xuất. Bạn duyệt rồi mới ghi sổ.',
-    lead: 'Ludy Kế toán đọc hoá đơn điện tử, kiểm tra từng con số bằng quy tắc cố định và đề xuất bút toán theo Thông tư 133. Chỉ khi người có thẩm quyền duyệt bằng mã hai lớp, bút toán mới vào sổ.',
+    lead: 'Ludy Tài chính đọc hoá đơn điện tử, kiểm tra từng con số bằng quy tắc cố định và đề xuất bút toán theo Thông tư 133. Chỉ khi người có thẩm quyền duyệt bằng mã hai lớp, bút toán mới vào sổ.',
     primary: 'Tự cài đặt miễn phí',
     secondary: 'Đăng nhập',
-    note: 'Mã nguồn mở AGPL. Ludy Kế toán có trong bản tự cài đặt. Trên Ludy Cloud: sắp ra mắt.',
+    note: 'Mã nguồn mở AGPL. Ludy Tài chính có trong bản tự cài đặt. Trên Ludy Cloud: sắp ra mắt.',
   },
   how: {
     title: 'Bốn bước từ hộp thư đến sổ cái',
@@ -29,18 +29,18 @@ export const accountingVi = {
     steps: [
       { name: 'Nhận', body: `Tải lên hoặc chuyển tiếp email. XML được đọc trực tiếp; PDF và ảnh chụp do ${N.finance} đọc.`, outcome: 'Đã nhận', tone: 'neutral' },
       { name: 'Kiểm tra', body: 'Quy tắc cố định đối chiếu tổng tiền, thuế, mã số thuế và hoá đơn trùng. Lỗi tổng tiền thì hoá đơn dừng lại.', outcome: 'Đạt hoặc giữ lại', tone: 'ok' },
-      { name: 'Đề xuất', body: 'Bút toán theo TT133 vào hộp chứng từ chờ duyệt, kèm lý do chọn tài khoản. Chưa vào sổ.', outcome: 'Đề xuất, chưa ghi sổ', tone: 'accent' },
+      { name: 'Đề xuất', body: 'Bút toán theo TT133 vào thẻ Chờ duyệt của Chứng từ, kèm lý do chọn tài khoản. Chưa vào sổ.', outcome: 'Đề xuất, chưa ghi sổ', tone: 'accent' },
       { name: 'Duyệt', body: 'Người duyệt xem, sửa tài khoản nếu cần, nhập mã hai lớp. Lúc đó bút toán mới vào sổ.', outcome: 'Đã ghi sổ', tone: 'ok' },
     ],
   },
   groups: {
-    title: 'Việc Ludy Kế toán làm hôm nay',
-    lead: 'Xếp theo việc bạn phải làm, từ lúc hoá đơn về đến lúc đóng sổ năm.',
+    title: 'Việc Ludy Tài chính làm hôm nay',
+    lead: 'Xếp theo menu của ứng dụng: Chứng từ, Phiếu thu chi, Sao kê ngân hàng, cùng ba nhóm Bán hàng, Mua hàng và Sổ sách & Thuế.',
     items: [
       {
         id: 'nhan-va-kiem-tra',
-        title: 'Nhận và kiểm tra chứng từ',
-        lead: 'Hoá đơn vào bằng cách tải lên hoặc chuyển tiếp email. Việc kiểm tra dùng quy tắc cố định, không dùng AI; chỗ nào chưa khớp thì hoá đơn dừng lại chờ người xem.',
+        title: 'Chứng từ: nhận và kiểm tra',
+        lead: 'Hoá đơn vào màn Chứng từ bằng cách tải lên hoặc chuyển tiếp email, nằm ở thẻ Chờ duyệt trước khi vào Tất cả chứng từ. Việc kiểm tra dùng quy tắc cố định, không dùng AI.',
         points: [
           'Hoá đơn điện tử XML theo Nghị định 254/2026 và Thông tư 91/2026, cả hoá đơn theo Nghị định 123/2020, được đọc trực tiếp từ cấu trúc XML, không cần AI',
           'PDF và ảnh chụp được đọc bằng model tương thích OpenAI do người cài đặt cấu hình. PDF chỉ chứa ảnh scan thì chưa đọc được',
@@ -51,36 +51,36 @@ export const accountingVi = {
       },
       {
         id: 'ghi-so',
-        title: 'Soạn bút toán và ghi sổ có kiểm soát',
-        lead: 'Ludy đề xuất bút toán Nợ Có theo Thông tư 133, kèm lý do chọn tài khoản. Cho đến khi người có quyền duyệt, nó chỉ là đề xuất.',
+        title: 'Bán hàng, Mua hàng và ghi sổ có kiểm soát',
+        lead: 'Nhóm Bán hàng có Hóa đơn bán ra, Khách hàng và Hàng hóa; nhóm Mua hàng có Nhà cung cấp. Ludy đề xuất bút toán Nợ Có theo Thông tư 133, chờ người có quyền duyệt.',
         points: [
           'Duyệt bút toán cần mã xác thực hai lớp còn mới, trong vòng 5 phút. Mọi quyết định nằm trong nhật ký thay đổi, không sửa hay xoá được qua ứng dụng',
-          'Tài khoản được nhớ theo nhà cung cấp và mặt hàng, kèm người duyệt, giờ duyệt và chứng từ làm căn cứ',
+          'Nhà cung cấp và Khách hàng nhớ tài khoản theo đối tác và mặt hàng; thẻ Nhắc thu nợ trong Khách hàng soạn thư nhắc công nợ quá hạn để bạn xem rồi gửi',
+          'Hóa đơn bán ra lập bản nháp và chạy thử trong môi trường sandbox tích hợp sẵn; kết nối nhà cung cấp hoá đơn điện tử thật chưa có. Hàng hóa có thẻ Tồn kho bình quân gia quyền tạm tính đến khi khoá tháng, và thẻ Sàn nhập bảng đối soát sàn (mẫu cột Shopee và TikTok Shop chưa xác nhận trên tệp người bán thật)',
           'Dòng không khớp quy tắc nào được đánh dấu chưa phân loại. Ludy không ghi sổ cho đến khi người chọn tài khoản, không đoán ngầm',
-          'Khi hoá đơn thay thế được duyệt, hoá đơn gốc bị huỷ và bút toán của nó được đảo. Hoá đơn điều chỉnh được nối với hoá đơn gốc',
-          'Sổ đã ghi không sửa, không xoá. Sai thì ghi bút toán đảo',
+          'Khi hoá đơn thay thế được duyệt, hoá đơn gốc bị huỷ và bút toán của nó được đảo. Hoá đơn điều chỉnh được nối với hoá đơn gốc. Sổ đã ghi không sửa, không xoá',
         ],
       },
       {
         id: 'thue',
-        title: 'Thuế GTGT và lịch thuế',
-        lead: 'Ludy tính thuế GTGT từ sổ, chỉ ra chỗ cần xem trước khi bạn nộp tờ khai và nhắc việc theo từng khách hàng.',
+        title: 'Thuế: Tờ khai GTGT, Đối chiếu cổng thuế và lịch thuế',
+        lead: 'Trong nhóm Sổ sách & Thuế, mục Thuế tính thuế GTGT từ sổ, chỉ ra chỗ cần xem trước khi nộp tờ khai và đối chiếu danh sách cổng thuế bạn tải lên.',
         points: [
           'Thuế GTGT đầu vào và đầu ra theo tháng hoặc theo quý, tuỳ cách kê khai của công ty',
-          'Xuất tệp XML tờ khai 01/GTGT. Ludy điền các chỉ tiêu tính được từ sổ; cơ quan thuế, người ký và một số chỉ tiêu để bạn hoàn thiện. Việc HTKK và eTax nhận tệp này đang được kiểm tra cùng kế toán đối tác',
+          'Thẻ Tờ khai GTGT xuất tệp XML tờ khai 01/GTGT. Ludy điền các chỉ tiêu tính được từ sổ; cơ quan thuế, người ký và một số chỉ tiêu để bạn hoàn thiện. Việc HTKK và eTax nhận tệp này đang được kiểm tra cùng kế toán đối tác',
           'Số hoá đơn bán ra bị hở trong dãy được chỉ ra trước khi nộp tờ khai. Chỉ tính hoá đơn đã ghi vào sổ',
           'Chủ sở hữu, quản trị viên hoặc kế toán trưởng đánh dấu tờ khai đã nộp. Đó là ghi nhận trong Ludy, Ludy không nộp thay lên cổng thuế',
           'Lịch thuế theo từng khách hàng và từng pháp nhân: nhắc hạn nộp và ghi dấu đã nộp. Bảng hạn nộp chưa được kế toán xác nhận, màn hình trong ứng dụng cũng ghi vậy',
-          'Hoá đơn mua vào còn thiếu: tải lên danh sách xuất từ cổng thuế, Ludy so với sổ rồi gửi thư xin khách bổ sung, khi người cài đặt đã cấu hình máy chủ thư',
+          'Thẻ Đối chiếu cổng thuế: tải lên danh sách xuất từ cổng thuế, Ludy so với sổ rồi gửi thư xin khách bổ sung hoá đơn mua vào còn thiếu, khi người cài đặt đã cấu hình máy chủ thư',
         ],
       },
       {
         id: 'so-sach',
-        title: 'Sổ sách, khoá sổ và xuất file',
-        lead: 'Sổ nhật ký chung, sổ cái và báo cáo lấy từ cùng một nguồn. Cuối kỳ khoá sổ để không ai ghi thêm; cuối năm kết chuyển và lưu gói chứng từ.',
+        title: 'Sổ sách & Thuế: Bút toán, Sổ sách, Tài sản, khoá sổ và xuất file',
+        lead: 'Bút toán, Sổ sách, Tài sản, Phiếu thu chi và Sao kê ngân hàng dùng chung một nguồn sổ cái. Cuối kỳ khoá sổ; cuối năm kết chuyển và lưu gói chứng từ.',
         points: [
-          'Sổ nhật ký chung, sổ cái, phiếu thu chi, tài sản cố định với khấu hao hằng tháng, số dư đầu kỳ nhập từ Excel',
-          'Nhập sao kê ngân hàng từ file Excel hoặc CSV, hoặc gửi qua email; thành viên xác nhận các dòng trước khi vào sổ. Kết nối ngân hàng trực tiếp chưa có',
+          'Bút toán (sổ nhật ký chung), Sổ sách (sổ cái), Phiếu thu chi, Tài sản cố định với khấu hao hằng tháng, số dư đầu kỳ nhập từ Excel, và sổ doanh thu S1a cho pháp nhân Hộ kinh doanh (ngưỡng thuế đang chờ xác nhận kế toán)',
+          'Sao kê ngân hàng nhập từ file Excel hoặc CSV, hoặc gửi qua email; thành viên xác nhận các dòng trước khi vào sổ. Kết nối ngân hàng trực tiếp chưa có',
           'Khoá sổ theo từng tháng, theo thứ tự. Mở khoá bắt đầu từ tháng khoá cuối cùng và cần chủ sở hữu hoặc kế toán trưởng, mã hai lớp và lý do',
           'Cuối năm: kết chuyển doanh thu và chi phí sang 911, rồi kết quả sang 4212, là một bút toán đề xuất cần duyệt bằng mã hai lớp. Sau khi duyệt và khoá đủ 12 tháng, chủ sở hữu tạo gói lưu trữ năm tài chính kèm file gốc của chứng từ',
           'Xuất Excel theo mẫu nhập liệu MISA SME cho hoá đơn mua dịch vụ, mua hàng hoá, bán hàng, phiếu thu và phiếu chi; mã nhà cung cấp và khách hàng để kế toán điền, còn mã mặt hàng và kho đặt trong Cài đặt. Việc nhập vào MISA thật đang được kiểm tra cùng kế toán đối tác',
@@ -92,21 +92,22 @@ export const accountingVi = {
   },
   soon: {
     title: 'Sắp ra mắt',
-    lead: 'Hai việc dưới đây chưa chạy với cổng thuế và ngân hàng thật, nên Ludy chưa tính là có sẵn.',
+    lead: 'Ba việc dưới đây chưa nối trực tiếp với cổng thuế, ngân hàng hay nhà cung cấp hoá đơn điện tử thật, nên Ludy chưa tính là có sẵn.',
     label: 'Sắp ra mắt',
     items: [
-      { title: 'Lấy danh sách hoá đơn từ cổng thuế', body: 'Hôm nay bạn tải lên file Excel xuất từ cổng thuế, và Ludy đối chiếu với sổ.' },
-      { title: 'Kết nối ngân hàng trực tiếp', body: 'Hôm nay sao kê được nhập từ file Excel, CSV hoặc email.' },
+      { title: 'Lấy danh sách hoá đơn trực tiếp từ cổng thuế', body: 'Hôm nay bạn tải lên file Excel xuất từ cổng thuế ở thẻ Đối chiếu cổng thuế, và Ludy đối chiếu với sổ.' },
+      { title: 'Kết nối ngân hàng trực tiếp', body: 'Hôm nay sao kê được nhập từ file Excel, CSV hoặc email ở màn Sao kê ngân hàng.' },
+      { title: 'Phát hành hoá đơn điện tử qua nhà cung cấp thật', body: 'Hôm nay màn Hóa đơn bán ra tạo bản nháp và chạy thử trong môi trường sandbox tích hợp sẵn.' },
     ],
   },
   coworker: {
-    title: `${N.finance} làm gì trong Ludy Kế toán`,
-    lead: `${N.finance} là giám đốc tài chính AI, đồng nghiệp của bạn trong kế toán, làm việc dưới sự điều phối của ${N.gm}. ${N.finance} làm phần đọc; quyết định đúng sai là của quy tắc cố định và của người.`,
+    title: `${N.finance} làm gì trong Ludy Tài chính`,
+    lead: `${N.finance} là giám đốc tài chính AI, đồng nghiệp của bạn trong Ludy Tài chính (và rà biến động lương trong Ludy Nhân sự), làm việc dưới sự điều phối của ${N.gm}. ${N.finance} làm phần đọc; quyết định đúng sai là của quy tắc cố định và của người.`,
     doesTitle: `${N.finance} làm`,
     does: [
       'Đọc PDF và ảnh chụp hoá đơn thành số liệu có cấu trúc',
-      'Đưa kết quả vào hộp chứng từ chờ duyệt, ghi rõ là đọc bằng AI và cần người kiểm tra',
-      'Chủ sở hữu bấm nút "Dừng AI", cần mã hai lớp, để tắt mọi việc AI của công ty; các lần đọc PDF và ảnh mới chờ đến khi bật lại',
+      'Đưa kết quả vào thẻ Chờ duyệt của Chứng từ, ghi rõ là đọc bằng AI và cần người kiểm tra',
+      'Chủ sở hữu hoặc quản trị viên bấm Dừng AI trong Ludy AI để tắt ngay mọi việc AI của công ty (bật lại cần chủ sở hữu và mã hai lớp); khi đang dừng, việc đọc PDF và ảnh mới bị từ chối và bấm Đọc lại được sau khi bật lại',
     ],
     doesNotTitle: `${N.finance} không làm`,
     doesNot: [
@@ -116,7 +117,7 @@ export const accountingVi = {
     ],
   },
   audience: {
-    title: 'Ludy Kế toán dành cho ai',
+    title: 'Ludy Tài chính dành cho ai',
     lead: 'Cùng một dữ liệu, ba cách dùng.',
     items: [
       {
@@ -134,7 +135,7 @@ export const accountingVi = {
     ],
   },
   faq: {
-    title: 'Câu hỏi về Ludy Kế toán',
+    title: 'Câu hỏi về Ludy Tài chính',
     items: [
       {
         q: 'Tôi không biết kế toán có dùng được không?',
@@ -145,8 +146,8 @@ export const accountingVi = {
         a: 'Không. Ludy xuất tệp XML tờ khai 01/GTGT với các chỉ tiêu tính được từ sổ; bạn hoàn thiện và nộp bằng công cụ của cơ quan thuế. Việc HTKK và eTax nhận tệp này đang được kiểm tra cùng kế toán đối tác. Đánh dấu "đã nộp" trong Ludy chỉ là ghi nhận.',
       },
       {
-        q: 'Ludy có lập hoá đơn bán hàng, tính lương hay quản lý kho không?',
-        a: 'Chưa. Ludy đọc và ghi hoá đơn, chỉ ra số bị hở, nhưng việc lập và phát hành hoá đơn điện tử vẫn làm ở phần mềm hoá đơn của bạn. Chưa có tính lương, thẻ kho hay báo cáo lưu chuyển tiền tệ.',
+        q: 'Hóa đơn bán ra, Hàng hóa và tính lương hôm nay tới đâu?',
+        a: 'Màn Hóa đơn bán ra tạo bản nháp và chạy thử trong sandbox tích hợp sẵn, chưa nối nhà cung cấp hoá đơn điện tử thật để phát hành mã cơ quan thuế. Màn Hàng hóa tính tồn kho bình quân gia quyền tạm tính đến khi khoá tháng và nhập bảng đối soát sàn. Lương và nhân sự nằm ở ứng dụng Ludy Nhân sự riêng trong thanh chuyển ứng dụng, hiện tạo kỳ lương nháp trong khi chờ kế toán xác nhận quy tắc tính lương theo luật. Chưa có báo cáo lưu chuyển tiền tệ.',
       },
       {
         q: 'Dữ liệu sang MISA như thế nào?',
@@ -159,7 +160,7 @@ export const accountingVi = {
     ],
   },
   cta: {
-    title: 'Thử Ludy Kế toán với hoá đơn của bạn',
+    title: 'Thử Ludy Tài chính với hoá đơn của bạn',
     body: 'Tự cài đặt miễn phí chỉ với một lệnh docker compose. Đã có tài khoản thì đăng nhập.',
     primary: 'Xem cách tự cài đặt',
     secondary: 'Đăng nhập',

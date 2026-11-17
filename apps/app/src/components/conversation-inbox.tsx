@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
-import { CONVERSATION_FACEBOOK_DIRECT_MAX, CONVERSATION_INSTAGRAM_COMMENT_MAX, CONVERSATION_INSTAGRAM_DIRECT_MAX, CONVERSATION_NOTE_MAX, CONVERSATION_RETENTION_MONTHS, CONVERSATION_REPLY_MAX, CONVERSATION_THREADS_REPLY_MAX, CONVERSATION_WHATSAPP_REPLY_MAX, conversationCanResendUnknown, conversationRules, type ConversationAttachmentView, type ConversationDetail, type ConversationIntent, type ConversationKind, type ConversationMessage, type ConversationStatus, type ConversationSummary } from '@crove/kernel-contract';
+import { CONVERSATION_FACEBOOK_DIRECT_MAX, CONVERSATION_INSTAGRAM_COMMENT_MAX, CONVERSATION_INSTAGRAM_DIRECT_MAX, CONVERSATION_NOTE_MAX, CONVERSATION_REPLY_MAX, CONVERSATION_THREADS_REPLY_MAX, CONVERSATION_WHATSAPP_REPLY_MAX, conversationCanResendUnknown, conversationRules, type ConversationAttachmentView, type ConversationDetail, type ConversationIntent, type ConversationKind, type ConversationMessage, type ConversationStatus, type ConversationSummary } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { NativeSelect } from '@crove/ui/components/native-select';
@@ -18,9 +18,10 @@ import { Empty, ErrorText, Spinner } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { splitQuoted } from '../lib/email-text.ts';
 import { channelsOfPosts, INBOX_PAGE_SIZE, inboxListInput, mergeConversationPages, nextConversationCursor } from '../lib/conversation-inbox.ts';
-import { client, errorMessage, fetchConversationImage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
+import { client, errorMessage, fetchConversationImage, orpc, queryClient } from '../lib/api.ts';
 import { appendQuoteMessage, canInsertQuoteLink } from '../lib/quote-reply.ts';
-import { StepUpPrompt } from './two-factor.tsx';
+import { takeReplyHandoff } from '../lib/reply-handoff.ts';
+import { PersonalDataSection } from './conversation-erase.tsx';
 import { DraftPanel, replyTextFor } from './conversation-drafts.tsx';
 import { IntentBadge, IntentBar } from './conversation-intent.tsx';
 import { REPLY_INSERT_EVENT, type ReplyInsert } from './quote-send.tsx';
@@ -180,7 +181,7 @@ export function ConversationInbox({ kind, posts, empty }: { kind: ConversationKi
         <LoadOlderConversations hasMore={list.hasMore} loading={list.loadingMore} failed={list.loadFailed} onLoad={list.loadMore} />
       </section>
       <section aria-label={t('threadLabel')} className="min-w-0">
-        {openId ? <ConversationThread key={openId} conversationId={openId} onGone={() => setSelected(null)} onOpenConversation={(id) => setSelected(id)} /> : <Empty title={t('pick')} />}
+        {openId ? <ConversationThread key={openId} conversationId={openId} onGone={() => setSelected(null)} onOpenConversation={(id) => setSelected(id)} showErase /> : <Empty title={t('pick')} />}
       </section>
     </div>
   );
@@ -249,7 +250,8 @@ function ComposingNote({ userIds, members }: { userIds: readonly string[]; membe
   );
 }
 
-export function ConversationThread({ conversationId, onGone, onOpenConversation }: { conversationId: string; onGone: () => void; onOpenConversation?: ((id: string) => void) | undefined }) {
+// `showErase`: draws the personal-data section (erasing the customer) under the thread, for a screen that has no contact panel beside it.
+export function ConversationThread({ conversationId, onGone, onOpenConversation, showErase = false }: { conversationId: string; onGone: () => void; onOpenConversation?: ((id: string) => void) | undefined; showErase?: boolean }) {
   const t = useTranslations('conversations');
   const f = useFormat();
   const contactName = useContactName();
@@ -305,7 +307,6 @@ export function ConversationThread({ conversationId, onGone, onOpenConversation 
           </Badge>
           {canWrite && <AssignSelect conversation={c} members={members} />}
           {canWrite && <ResolveButton conversation={c} />}
-          {isAdmin && <EraseContactButton conversation={c} onErased={onGone} />}
         </div>
       </header>
       {canWrite ? <IntentBar conversation={c} /> : c.intent ? <IntentBadge intent={c.intent} applied /> : null}
@@ -334,12 +335,13 @@ export function ConversationThread({ conversationId, onGone, onOpenConversation 
       )}
       <ol className="space-y-2" aria-label={t('messages')}>
         {data.messages.map((m) => (
-          <MessageRow key={m.id} message={m} detail={data} members={members} userId={userId} canWrite={canWrite} isAdmin={isAdmin} contact={contactName(c.contact)} onOpenConversation={onOpenConversation} />
+          <MessageRow key={m.id} message={m} detail={data} members={members} userId={userId} canWrite={canWrite} contact={contactName(c.contact)} onOpenConversation={onOpenConversation} />
         ))}
       </ol>
       {c.composing.length > 0 && <ComposingNote userIds={c.composing} members={members} />}
       {canWrite && <ReplyBox detail={data} seen={seen ?? c.lastSeq} onMoved={(seq) => setSeen(seq)} />}
       <Notes detail={data} members={members} canWrite={canWrite} />
+      {showErase && isAdmin && <PersonalDataSection detail={data} contactName={contactName(c.contact)} onErased={onGone} />}
     </div>
   );
 }
@@ -359,125 +361,6 @@ function AssignSelect({ conversation, members }: { conversation: ConversationSum
       </NativeSelect>
       {assign.error && <ErrorText>{errorMessage(assign.error)}</ErrorText>}
     </div>
-  );
-}
-
-// Erases the customer of this thread: every thread of theirs with its messages and notes, and their name. Owners and admins, behind a
-// confirmation and a fresh second factor (the kernel asks for it); it cannot be undone.
-function EraseContactButton({ conversation, onErased, messageId, who, label = 'eraseOpen' }: { conversation: ConversationSummary; onErased: () => void; messageId?: string; who?: string; label?: 'eraseOpen' | 'eraseAuthor' }) {
-  const t = useTranslations('conversations');
-  const [asking, setAsking] = useState(false);
-  const [attempt] = useState(() => crypto.randomUUID());
-  const erase = useMutation({
-    // One key per confirmed attempt, kept across the step-up retry, so a lost answer is retried to the same result.
-    mutationFn: () => client.conversations.eraseContact({ conversationId: conversation.id, ...(messageId ? { messageId } : {}), confirm: true, idempotencyKey: attempt }),
-    onSuccess: () => {
-      setAsking(false);
-      onErased();
-      refresh();
-    },
-  });
-  const stepUp = isStepUpRequired(erase.error);
-  if (!asking) {
-    return (
-      <Button type="button" size="sm" variant="ghost" data-testid={messageId ? 'conversation-message-erase-open' : 'conversation-erase-open'} onClick={() => setAsking(true)}>
-        {t(label)}
-      </Button>
-    );
-  }
-  return (
-    <div role="alertdialog" aria-label={t('eraseOpen')} className="w-full space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm" data-testid={messageId ? 'conversation-message-erase-confirm' : 'conversation-erase-confirm'}>
-      <p>{messageId && who ? t('eraseAuthorWarn', { name: who, channel: conversation.channel.displayName }) : t('eraseWarn', { channel: conversation.channel.displayName })}</p>
-      <div className="flex gap-2">
-        <Button type="button" size="sm" variant="destructive" disabled={erase.isPending} data-testid={messageId ? 'conversation-message-erase-yes' : 'conversation-erase-yes'} onClick={() => erase.mutate()}>
-          {t('eraseYes')}
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          onClick={() => {
-            setAsking(false);
-            erase.reset();
-          }}
-        >
-          {t('cancel')}
-        </Button>
-      </div>
-      {stepUp && <StepUpPrompt action={t('eraseStepUp')} onVerified={() => erase.mutate()} onCancel={() => erase.reset()} />}
-      {erase.error && !stepUp && <ErrorText>{errorMessage(erase.error)}</ErrorText>}
-    </div>
-  );
-}
-
-// How long threads are kept after their last message (CV6, #2305): every member sees it, owners and admins change it. Older threads
-// are deleted every night with their messages and notes; "keep" holds them until someone deletes them.
-export function ConversationRetentionSetting() {
-  const t = useTranslations('conversations');
-  const { isAdmin } = useMe();
-  const current = useQuery(orpc.conversations.retention.queryOptions({ input: {} }));
-  // A shorter retention (or one where there was none) deletes threads at the next nightly run, so it asks first.
-  const [asking, setAsking] = useState<6 | 12 | 24 | null | undefined>(undefined);
-  const set = useMutation({
-    mutationFn: (retentionMonths: 6 | 12 | 24 | null) => client.conversations.setRetention({ retentionMonths }),
-    onSuccess: () => {
-      setAsking(undefined);
-      void queryClient.invalidateQueries({ queryKey: orpc.conversations.retention.key() });
-    },
-  });
-  if (current.isError) {
-    return (
-      <section className="space-y-1 rounded-md border border-border p-3 text-sm" data-testid="conversation-retention-error">
-        <ErrorText>{errorMessage(current.error)}</ErrorText>
-        <Button type="button" size="sm" variant="outline" onClick={() => void current.refetch()}>
-          {t('retention.retry')}
-        </Button>
-      </section>
-    );
-  }
-  if (!current.data) return null;
-  const monthsOf = (m: 6 | 12 | 24 | null) => (m === null ? Number.POSITIVE_INFINITY : m);
-  const choose = (next: 6 | 12 | 24 | null) => {
-    if (monthsOf(next) < monthsOf(current.data.retentionMonths)) setAsking(next);
-    else set.mutate(next);
-  };
-  const value = current.data.retentionMonths === null ? 'keep' : String(current.data.retentionMonths);
-  return (
-    <section className="space-y-1 rounded-md border border-border p-3 text-sm" aria-label={t('retention.title')} data-testid="conversation-retention">
-      <label className="flex flex-wrap items-center gap-2">
-        <span className="font-medium text-foreground">{t('retention.title')}</span>
-        <NativeSelect
-          aria-label={t('retention.title')}
-          value={value}
-          disabled={!isAdmin || set.isPending}
-          data-testid="conversation-retention-select"
-          onChange={(e) => choose(e.target.value === 'keep' ? null : (Number(e.target.value) as 6 | 12 | 24))}
-        >
-          {CONVERSATION_RETENTION_MONTHS.map((m) => (
-            <option key={m} value={String(m)}>
-              {t(`retention.m${m}`)}
-              {current.data.isDefault && m === 24 ? ` ${t('retention.default')}` : ''}
-            </option>
-          ))}
-          <option value="keep">{t('retention.keep')}</option>
-        </NativeSelect>
-      </label>
-      <p className="text-xs text-muted-foreground">{t('retention.hint')}</p>
-      {asking !== undefined && asking !== null && (
-        <div role="alertdialog" aria-label={t('retention.title')} className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3" data-testid="conversation-retention-confirm">
-          <p>{t('retention.shorten', { months: String(asking) })}</p>
-          <div className="flex gap-2">
-            <Button type="button" size="sm" variant="destructive" disabled={set.isPending} data-testid="conversation-retention-yes" onClick={() => set.mutate(asking)}>
-              {t('retention.shortenYes')}
-            </Button>
-            <Button type="button" size="sm" variant="ghost" onClick={() => setAsking(undefined)}>
-              {t('cancel')}
-            </Button>
-          </div>
-        </div>
-      )}
-      {set.error && <ErrorText>{errorMessage(set.error)}</ErrorText>}
-    </section>
   );
 }
 
@@ -524,7 +407,7 @@ function MessageImage({ attachment }: { attachment: ConversationAttachmentView }
   );
 }
 
-export function MessageRow({ message: m, detail, members, userId, canWrite, isAdmin, contact, onOpenConversation }: { message: ConversationMessage; detail: ConversationDetail; members: readonly Member[]; userId: string | null; canWrite: boolean; isAdmin: boolean; contact: string; onOpenConversation?: ((id: string) => void) | undefined }) {
+export function MessageRow({ message: m, detail, members, userId, canWrite, contact, onOpenConversation }: { message: ConversationMessage; detail: ConversationDetail; members: readonly Member[]; userId: string | null; canWrite: boolean; contact: string; onOpenConversation?: ((id: string) => void) | undefined }) {
   const t = useTranslations('conversations');
   const f = useFormat();
   const mine = m.direction === 'out';
@@ -661,8 +544,6 @@ export function MessageRow({ message: m, detail, members, userId, canWrite, isAd
             {privateReply.error && <ErrorText>{errorMessage(privateReply.error)}</ErrorText>}
           </form>
         )}
-        {/* A customer who only replied in this comment thread has no thread of their own to erase from: their message names them. */}
-        {isAdmin && !mine && m.authorTail !== null && detail.conversation.kind === 'comment_thread' && <EraseContactButton conversation={detail.conversation} messageId={m.id} who={customer} onErased={refresh} label="eraseAuthor" />}
         {(settle.error || hide.error) && <ErrorText>{errorMessage(settle.error ?? hide.error)}</ErrorText>}
       </div>
     </li>
@@ -715,6 +596,17 @@ export function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail
     };
     window.addEventListener(REPLY_INSERT_EVENT, onInsert);
     return () => window.removeEventListener(REPLY_INSERT_EVENT, onInsert);
+  }, [id, kind, replyMax]);
+  // A text another screen left for this thread while the Inbox opened (Meetings "Gửi qua Zalo", #3169): taken once when this thread's box appears, and put in like an inserted
+  // message (read, edit, then Send; nothing is sent from here). It is dropped when it is old or was left for another thread (apps/app/src/lib/reply-handoff.ts).
+  useEffect(() => {
+    const left = takeReplyHandoff(id);
+    if (left === null || !canInsertQuoteLink(kind)) return;
+    const next = appendQuoteMessage(textNow.current, left, replyMax);
+    setInsertTooLong(!next.fits);
+    if (!next.fits) return;
+    setText(next.text);
+    setFrom({});
   }, [id, kind, replyMax]);
   const send = useMutation({
     mutationFn: () => client.conversations.reply({ conversationId: id, body: text.trim(), lastSeenSeq: seen, ...from }),

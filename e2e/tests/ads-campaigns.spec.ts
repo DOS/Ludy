@@ -34,18 +34,19 @@ test('an owner starts a campaign from a post, sees the most it can spend, and wh
     await page.getByRole('button', { name: 'Kết nối kênh thử' }).click();
     await expect(page.getByText('Trang Chiến dịch').first()).toBeVisible();
     await page.getByRole('link', { name: 'Quay lại' }).click();
-    await page.getByRole('link', { name: 'Soạn bài' }).click();
+    await page.getByRole('link', { name: 'Soạn bài' }).first().click();
     await page.getByLabel('Nội dung chung').fill('Khai trương chi nhánh mới vào thứ Bảy này. Mời bạn ghé thử cà phê mới.');
     await page.getByRole('button', { name: 'Lưu nháp' }).click();
     await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
     postId = page.url().split('/').pop() ?? '';
   });
 
-  await test.step('Campaigns is an item of the Marketing group, and with no ad account it says to connect one first', async () => {
+  await test.step('Campaigns is a tab of Quảng cáo, an item of the Marketing group, and with no ad account it says to connect one first', async () => {
     await nav.getByRole('link', { name: 'Engage' }).click();
     const group = nav.getByRole('region', { name: 'Marketing' });
     await expect(group).toBeVisible();
-    await group.getByRole('link', { name: 'Chiến dịch', exact: true }).click();
+    await group.getByRole('link', { name: 'Quảng cáo', exact: true }).click();
+    await page.getByRole('link', { name: 'Chiến dịch', exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/ads/campaigns$`));
     await expect(page.getByRole('heading', { name: 'Chiến dịch', level: 1 })).toBeVisible();
     await expect(page.getByText('Hãy kết nối một tài khoản quảng cáo ở màn Quảng cáo trước.')).toBeVisible();

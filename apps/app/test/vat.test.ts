@@ -1,7 +1,7 @@
 // The VAT working screen's period picker (issue #316).
 import { describe, expect, it } from 'vitest';
 import { VAT_PERIOD_PATTERN } from '@crove/kernel-contract';
-import { canMarkFiled, canMarkPayment, carriedOutOf, deductAmount, deductParams, defaultPeriod, periodKey, roundDong, switchKind, wholeDong, yearOptions } from '../src/lib/vat.ts';
+import { canMarkFiled, canMarkPayment, carriedOutOf, deductAmount, deductParams, defaultPeriod, periodKey, roundDong, switchKind, vatResultOf, wholeDong, yearOptions } from '../src/lib/vat.ts';
 
 describe('VAT period picker', () => {
   it('builds the period the server expects', () => {
@@ -66,5 +66,18 @@ describe('the return as filed (#1400)', () => {
     expect(deductAmount('all', '220000.5', '180000')).toBe('220001');
     expect(deductAmount('suggested', '220000', '180000.5')).toBe('180001');
     expect(['owner', 'admin', 'member', 'viewer', null].map(canMarkFiled)).toEqual([true, true, false, false, false]);
+  });
+});
+
+describe('vatResultOf (#3600)', () => {
+  it('is payable when [35] is more than [25] and [22], rounding [35] half up to the dong', () => {
+    expect(vatResultOf('1000000.5000', '300000', '200000')).toEqual({ kind: 'payable', amount: '500001' });
+  });
+  it('is carried forward as the shortfall, and 0 carried when they cancel out', () => {
+    expect(vatResultOf('0', '710000', '0')).toEqual({ kind: 'carried', amount: '710000' });
+    expect(vatResultOf('100000', '60000', '40000')).toEqual({ kind: 'carried', amount: '0' });
+  });
+  it('agrees with carriedOutOf', () => {
+    expect(vatResultOf('166668', '0', '2880000').amount).toBe(carriedOutOf('166668', '0', '2880000'));
   });
 });

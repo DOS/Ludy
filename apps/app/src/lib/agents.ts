@@ -139,8 +139,11 @@ export const OPEN_TASK_STATUSES: readonly TaskStatus[] = ['todo', 'in_progress',
 export const TASK_FILTERS = ['open', 'mine', 'all'] as const;
 export type TaskFilter = (typeof TASK_FILTERS)[number];
 
-// ?filter= of the tasks screen (#1513), left out for the open tasks.
-const zTasksSearch = z.object({ filter: z.enum(TASK_FILTERS).optional().catch(undefined) });
+// ?filter= and ?project= of the tasks screen (#1513, #2593), left out for the defaults.
+const zTasksSearch = z.object({
+  filter: z.enum(TASK_FILTERS).optional().catch(undefined),
+  project: z.union([z.uuid().transform((v) => v.toLowerCase()), z.literal('none')]).optional().catch(undefined),
+});
 export type TasksSearch = Defined<z.output<typeof zTasksSearch>>;
 export const parseTasksSearch = (search: Record<string, unknown>): TasksSearch => readSearch(zTasksSearch, search);
 
@@ -152,17 +155,40 @@ export function fromTodo(sourceRef: unknown): boolean {
   return typeof sourceRef === 'object' && sourceRef !== null && (sourceRef as { type?: unknown }).type === 'notes.todo';
 }
 
-export function socialPostOf(sourceRef: unknown): string | null {
+function sourceRefId(sourceRef: unknown, expectedType: string): string | null {
   if (typeof sourceRef !== 'object' || sourceRef === null) return null;
   const { type, id } = sourceRef as { type?: unknown; id?: unknown };
-  return type === 'social.post' && typeof id === 'string' && UUID.test(id) ? id : null;
+  return type === expectedType && typeof id === 'string' && UUID.test(id) ? id : null;
+}
+
+export function socialPostOf(sourceRef: unknown): string | null {
+  return sourceRefId(sourceRef, 'social.post');
 }
 
 /** The action item of a meeting a task was made from (#2580), or null. The meeting itself is asked of the kernel, which answers only a reader of it. */
 export function meetingItemOf(sourceRef: unknown): string | null {
+  return sourceRefId(sourceRef, 'meetings.action_item');
+}
+
+/** The meeting a task was proposed from directly (#2608), or null. */
+export function meetingSourceOf(sourceRef: unknown): string | null {
+  return sourceRefId(sourceRef, 'meetings.meeting');
+}
+
+/** Human-facing display label for a conversation summary (#2608). */
+export function conversationSummaryTitle(c: {
+  subject?: string | null | undefined;
+  contact: { displayName: string | null; partyName: string | null };
+  channel: { displayName: string };
+}): string {
+  return c.subject?.trim() || c.contact.displayName?.trim() || c.contact.partyName?.trim() || c.channel.displayName.trim();
+}
+
+/** The Inbox thread a task was made from (#3421, "Create task" in the Inbox: `source_ref` is `{type: 'kernel.conversation', id}`), or null. Only the id is read: the thread itself is asked of the Inbox, which answers a reader of it. */
+export function conversationOf(sourceRef: unknown): string | null {
   if (typeof sourceRef !== 'object' || sourceRef === null) return null;
   const { type, id } = sourceRef as { type?: unknown; id?: unknown };
-  return type === 'meetings.action_item' && typeof id === 'string' && UUID.test(id) ? id : null;
+  return type === 'kernel.conversation' && typeof id === 'string' && UUID.test(id) ? id : null;
 }
 
 /** The YYYY-MM-DD day of a task's ISO due timestamp in `timeZone`, or '' when there is none (#2588). */

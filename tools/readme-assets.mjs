@@ -47,7 +47,7 @@ function stats() {
   // Every file of an invariant directory that holds tests, plus the pgTAP gate files (`_*.test.sql`).
   const invariantSuites = tracked.filter((f) => /\/test\/invariant\/[^/]+\.test\.tsx?$/.test(f) || /^supabase\/tests\/database\/_[^/]*\.test\.sql$/.test(f)).length;
   // One `it(` or `test(` per case; a table-driven case (`it.each`) counts once, so the real number of runs is higher.
-  const testCases = Number(git('grep', '-hEc', '^\\s*(it|test)(\\.each\\([^)]*\\))?\\(', '--', '*.test.ts', '*.test.tsx').split('\n').reduce((n, l) => n + (Number(l) || 0), 0));
+  const testCases = Number(git('grep', '-hEc', '^[[:space:]]*(it|test)(\\.each\\([^)]*\\))?\\(', '--', '*.test.ts', '*.test.tsx').split('\n').reduce((n, l) => n + (Number(l) || 0), 0));
   const roster = readFileSync(join(ROOT, 'apps/web/src/content/roster.ts'), 'utf8');
   // A coworker is on the roster with a scope only when it has shipped work (DESIGN.md 6.2).
   const coworkers = [...roster.matchAll(/^\s{2}(gm|finance|sales|marketing|system):\s*\{[^}]*?name:\s*'([^']+)'[\s\S]*?(?=^\s{2}(?:gm|finance|sales|marketing|system):|^\};)/gm)].filter((m) => /scope:/.test(m[0])).map((m) => m[2]);

@@ -29,8 +29,9 @@ type N = { type: string; start: number; end: number; [key: string]: any };
 // Node network module, never allowed).
 export type Reach = 'tenant_url' | `provider:${string}` | 'publishers' | 'raw_network';
 
-// The egress guard (packages/kernel-runtime/src/egress.ts).
-const GUARDS: ReadonlySet<string> = new Set(['guardedFetch', 'guardedRequest', 'egressFetch']);
+// The egress guard (packages/kernel-runtime/src/egress.ts). guardedStream, the streaming sibling of guardedRequest that the meeting import job downloads through (#3173), is named
+// here before it exists on main, so a job that imports it counts as reaching tenant_url from the day it lands.
+const GUARDS: ReadonlySet<string> = new Set(['guardedFetch', 'guardedRequest', 'guardedStream', 'egressFetch']);
 // What @crove/channel exports that reaches no platform: its constants, its errors and these helpers. Anything else
 // (publishers, connectors, refreshers, logins, checks, send helpers) reaches one: Telegram or Discord when it names
 // them, provider:channel otherwise.
@@ -97,6 +98,10 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
   // frozen view of @crove/ad-platform with `activate` and `readStatus` and nothing else (it cannot create, pause or revoke), apart from the writers so the creating view
   // cannot activate. Each is bound to its platform's host by its allowlisted fetch (the sandbox's reaches nothing). Only the activation job reaches the field.
   'channels.adActivators': ['provider:ad_platform'],
+  // The state readers of the ad platforms (#3301): what the account's sync job may call to read the status of the objects of a launch (`GET` of one object, with the review feedback);
+  // a frozen view with that one call, never the writer. Each is bound to its platform's host by its allowlisted fetch (the sandbox's reaches nothing). Only the sync job reaches the field.
+  // Classified before the field exists (#3301, step 0): the base copy of this suite must know it when the field lands.
+  'channels.adStateReaders': ['provider:ad_platform'],
   // The e-invoice provider adapters (ADR-0044, #2502): the offline sandbox reaches nothing, and a real adapter its provider's own hosts, each bound to them by its
   // allowlisted fetch, so the field is classified for what it can reach: the providers of @crove/einvoice. Only the issue job reaches the field.
   'channels.einvoiceProviders': ['provider:einvoice'],
@@ -104,6 +109,9 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
   'channels.marketplaceProviders': ['provider:marketplace'],
   // The outside calendar adapters (#2123): Google's OAuth and Calendar hosts, through @crove/channel.
   'channels.calendars': ['provider:channel'],
+  // The meeting platform adapters (meetings integrations C1, #3173): the offline sandbox reaches nothing, and a real adapter (Google Meet, Zoom, Teams: C2 to C4) its platform's own API hosts, each bound to them by its allowlisted
+  // fetch; the file itself is downloaded by the import job through guardedStream, so the field is classified for what it can reach: the platforms of @crove/channel. Only the import job and its sweep reach the field.
+  'channels.meetingPlatforms': ['provider:channel'],
   publicUrl: [],
   // Where the links in mail and chat alerts open the web app (APP_URL, #2261): a string, no egress.
   appUrl: [],

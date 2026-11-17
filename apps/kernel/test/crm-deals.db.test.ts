@@ -311,6 +311,62 @@ suite('crm deals on PostgreSQL (#2225)', () => {
     ).rejects.toMatchObject({ code: '23503' });
   });
 
+  it('tells a deal its party was marked a duplicate, follows a chain to the kept party, and a move leaves ids only (CRM-15, #3294)', async () => {
+    const o = await org();
+    const keep = await o.party('Công ty ABC');
+    const copy = await o.party('Công ty ABC (trùng)');
+    const normal = await o.party('Công ty XYZ');
+    const deal = await o.newDeal(o.member, copy, { title: 'Gói kế toán năm' });
+    const onNormal = await o.newDeal(o.member, normal);
+    expect(deal.partyDuplicateOf).toBeNull();
+
+    await o.exec(o.owner, 'kernel.party.mark_duplicate', { partyId: copy, keepId: keep });
+    // The hint reaches every read of a deal: get, list, the board and the party's panel, for a viewer too; a deal on a normal party has none.
+    const hint = { id: keep, name: 'Công ty ABC' };
+    expect((await o.query<Deal>(o.viewer, 'crm.deal.get', { dealId: deal.id })).partyDuplicateOf).toEqual(hint);
+    const listed = (await o.query<DealPage>(o.viewer, 'crm.deal.list', {})).items;
+    expect(listed.find((d) => d.id === deal.id)?.partyDuplicateOf).toEqual(hint);
+    expect(listed.find((d) => d.id === onNormal.id)?.partyDuplicateOf).toBeNull();
+    expect((await o.query<Deal[]>(o.viewer, 'crm.party.deals', { partyId: copy })).map((d) => d.partyDuplicateOf)).toEqual([hint]);
+    const board = await o.query<{ columns: { cards: Deal[] }[] }>(o.viewer, 'crm.deal.board', {});
+    expect(board.columns.flatMap((c) => c.cards).find((d) => d.id === deal.id)?.partyDuplicateOf).toEqual(hint);
+
+    // A chain resolves to its last party. The database refuses to build one (PARTY_DUPLICATE_CHAIN), so the guard trigger is skipped for this write only, to prove the read follows it anyway.
+    const final = await o.party('Công ty ABC Việt Nam');
+    await admin(async (c) => {
+      await c.query('SET session_replication_role = replica');
+      await c.query('UPDATE crove_kernel.party SET duplicate_of = $3 WHERE org_id = $1 AND id = $2', [o.orgId, keep, final]);
+    });
+    expect((await o.query<Deal>(o.viewer, 'crm.deal.get', { dealId: deal.id })).partyDuplicateOf).toEqual({ id: final, name: 'Công ty ABC Việt Nam' });
+    await admin(async (c) => {
+      await c.query('SET session_replication_role = replica');
+      await c.query('UPDATE crove_kernel.party SET duplicate_of = NULL WHERE org_id = $1 AND id = $2', [o.orgId, keep]);
+    });
+
+    // The person's click is the existing update: the deal moves to the kept party, the hint goes, and the audit row holds ids only.
+    await expect(o.exec(o.viewer, 'crm.deal.update', { dealId: deal.id, version: deal.version, partyId: keep, title: deal.title, amount: deal.amount, expectedClose: deal.expectedClose, ownerUserId: deal.ownerUserId })).rejects.toMatchObject({ status: 403 });
+    const moved = await o.exec<Deal>(o.member, 'crm.deal.update', { dealId: deal.id, version: deal.version, partyId: keep, title: deal.title, amount: deal.amount, expectedClose: deal.expectedClose, ownerUserId: deal.ownerUserId });
+    expect(moved).toMatchObject({ partyId: keep, partyName: 'Công ty ABC', partyDuplicateOf: null });
+    const audit = await admin((c) => c.query("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'crm.deal.update' AND outcome = 'ok' AND target_id = $2", [o.orgId, deal.id]));
+    expect(audit.rows).toHaveLength(1);
+    expect(audit.rows[0].detail).toMatchObject({ dealId: deal.id, partyId: keep });
+    expect(JSON.stringify(audit.rows[0].detail)).not.toMatch(/Gói kế toán|Công ty/);
+  });
+
+  it('keeps the hint inside the org: another org reads no deal of it and cannot be moved to (CRM-15, #3294)', async () => {
+    const a = await org();
+    const b = await org();
+    const mine = await a.party('Công ty A');
+    const keep = await a.party('Công ty A (giữ)');
+    const foreign = await b.party('Công ty B');
+    const deal = await a.newDeal(a.member, mine);
+    await a.exec(a.owner, 'kernel.party.mark_duplicate', { partyId: mine, keepId: keep });
+    expect((await a.query<Deal>(a.owner, 'crm.deal.get', { dealId: deal.id })).partyDuplicateOf).toEqual({ id: keep, name: 'Công ty A (giữ)' });
+    await expect(b.query(b.owner, 'crm.deal.get', { dealId: deal.id })).rejects.toMatchObject({ status: 404 });
+    expect((await b.query<DealPage>(b.owner, 'crm.deal.list', {})).items).toEqual([]);
+    await expect(a.exec(a.member, 'crm.deal.update', { dealId: deal.id, version: deal.version, partyId: foreign, title: deal.title, amount: deal.amount, expectedClose: deal.expectedClose, ownerUserId: deal.ownerUserId })).rejects.toMatchObject({ code: 'PARTY_NOT_FOUND' });
+  });
+
   it('leaves the deal without an owner when the member is removed, and keeps it when its party has one', async () => {
     const o = await org();
     const party = await o.party('Công ty ABC');

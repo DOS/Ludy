@@ -7,7 +7,7 @@
 import { sql } from 'kysely';
 import type { Db } from '@crove/db';
 import type { QueuedMailBegin } from '@crove/kernel';
-import type { Runtime } from '@crove/kernel-runtime';
+import type { BlobStore, Runtime } from '@crove/kernel-runtime';
 import type { MailAttachment, MailErrorKind, MailProvider, OutboundMail, SendResult } from '@crove/mail';
 import { bounceAddress } from './invite-mail.ts';
 import { DEFAULT_BRAND_NAME } from './config.ts';
@@ -48,6 +48,7 @@ export interface MailTemplateInput {
   conversationAddress?: string | null;
   // The product name users see (BRAND_NAME, #1040), for the template's own texts.
   brand: string;
+  store?: BlobStore;
   execute<T>(command: string, input: unknown): Promise<T>;
 }
 export interface MailTemplate {
@@ -69,6 +70,7 @@ export interface MailQueueDeps {
   sendTimeoutMs?: number;
   // The worker's connection, to read the operator's mail switch (#886) before a send.
   workerDb?: Db;
+  store?: BlobStore;
 }
 
 interface Sender {
@@ -147,6 +149,7 @@ async function sendOne(deps: MailQueueDeps, job: MailJob, mail: Extract<QueuedMa
       brand: deps.brand ?? DEFAULT_BRAND_NAME,
       inboundAddress: deps.bounceDomain ? `${mail.inboundToken}@${deps.bounceDomain.toLowerCase()}` : null,
       conversationAddress: deps.bounceDomain && mail.conversationToken ? `${mail.conversationToken}@${deps.bounceDomain.toLowerCase()}` : null,
+      ...(deps.store ? { store: deps.store } : {}),
       execute: <T>(command: string, input: unknown) => deps.runtime.execute<T>(command, input, { actor: ACTOR, orgId: job.orgId }),
     });
   } catch {

@@ -18,7 +18,7 @@ async function publishOnSandbox(page: Page, channel: string, body: string): Prom
   await page.getByRole('button', { name: 'Kết nối kênh thử' }).click();
   await expect(page.getByText(channel).first()).toBeVisible();
   await page.getByRole('link', { name: 'Quay lại' }).click();
-  await page.getByRole('link', { name: 'Soạn bài' }).click();
+  await page.getByRole('link', { name: 'Soạn bài' }).first().click();
   await page.getByLabel('Nội dung chung').fill(body);
   await page.getByRole('button', { name: 'Lưu và gửi duyệt' }).click();
   await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
@@ -70,6 +70,11 @@ test('answers, hides, notes and resolves a comment on a published post, and the 
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/social/inbox\\?kind=comment_thread`));
   await expect(page.getByRole('heading', { name: 'Hộp thư', exact: true })).toBeVisible();
   await expect(page.getByRole('navigation').getByRole('region', { name: 'Hộp thư' }).getByRole('link', { name: 'Hội thoại' })).toBeVisible();
+  // Exactly one menu item is current on the Inbox (#3582): Posts (`social`) is a prefix of the Inbox's path and is not marked.
+  // (The app switcher's own Engage link opens the Inbox too, so only the menu's sections are counted.)
+  await expect(page.getByRole('navigation').locator('section a[aria-current="page"]')).toHaveCount(1);
+  await expect(page.getByRole('navigation').getByRole('link', { name: 'Hội thoại' })).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByRole('navigation').getByRole('link', { name: 'Bài đăng', exact: true })).not.toHaveAttribute('aria-current', 'page');
   await page.getByTestId('conversation-tab-resolved').click();
   await expect(page.getByTestId('conversation-item')).toHaveCount(1);
   await expect(page.getByTestId('conversation-thread').getByText('Dạ còn hàng ạ, bạn nhắn số điện thoại nhé.')).toBeVisible();
@@ -100,8 +105,11 @@ test('answers, hides, notes and resolves a comment on a published post, and the 
   await expect(page.getByTestId('conversation-status')).not.toHaveText('Đã xong');
   expect(postId).not.toBe('');
 
-  // The retention (CV6, #2305): 24 months by default, an owner picks 12, and it holds after a reload. Erasing the customer asks to
-  // confirm first and can be cancelled.
+  // The retention (CV6, #2305): 24 months by default, an owner picks 12, and it holds after a reload.
+  // It is an org setting (#3582): not on the Inbox, in Settings, and an owner finds it there.
+  const inboxUrl = page.url();
+  await expect(page.getByTestId('conversation-retention')).toHaveCount(0);
+  await page.goto(`/o/${slug}/settings`);
   const retention = page.getByTestId('conversation-retention-select');
   await expect(retention).toHaveValue('24');
   await retention.selectOption('12');
@@ -110,19 +118,30 @@ test('answers, hides, notes and resolves a comment on a published post, and the 
   await expect.poll(() => sql<{ m: string }>(`SELECT s.retention_months::text AS m FROM crove_kernel.conversation_setting s JOIN crove_kernel.tenant t ON t.org_id = s.org_id WHERE t.slug = :'slug'`, { slug })[0]?.m).toBe('12');
   await page.reload();
   await expect(page.getByTestId('conversation-retention-select')).toHaveValue('12');
+  await page.goto(inboxUrl);
   // The reopened thread waits for the customer, in Pending.
   await page.getByTestId('conversation-tab-pending').click();
-  // The customer's message has its own erase button (for a customer who only replied in a thread), apart from the thread's.
-  await expect(page.getByTestId('conversation-message-erase-open').first()).toBeVisible();
-  await page.getByTestId('conversation-message-erase-open').first().click();
-  await expect(page.getByTestId('conversation-message-erase-confirm')).toBeVisible();
-  await page.getByTestId('conversation-message-erase-confirm').getByRole('button', { name: 'Hủy' }).click();
-  await expect(page.getByTestId('conversation-message-erase-confirm')).toBeHidden();
-  await page.getByTestId('conversation-erase-open').click();
-  await expect(page.getByTestId('conversation-erase-confirm')).toBeVisible();
-  await page.getByTestId('conversation-erase-confirm').getByRole('button', { name: 'Hủy' }).click();
-  await expect(page.getByTestId('conversation-erase-confirm')).toBeHidden();
-  await expect(page.getByTestId('conversation-thread')).toBeVisible();
+  // Erasing the customer is a personal-data action (#3635): not in the thread's working row or in a comment bubble, but in the contact panel's own
+  // "Dữ liệu cá nhân" section, behind a modal that names what is lost and what stays. Esc and "Giữ lại" leave everything as it was.
+  const thread = page.getByTestId('conversation-thread');
+  await expect(thread).toBeVisible();
+  await expect(thread.getByTestId('conversation-erase-open')).toHaveCount(0);
+  await expect(thread.getByTestId('conversation-message-erase-open')).toHaveCount(0);
+  const personalData = page.getByTestId('contact-panel').getByTestId('conversation-personal-data');
+  await expect(personalData).toContainText('Dữ liệu cá nhân');
+  await personalData.getByTestId('conversation-erase-open').click();
+  const confirm = page.getByRole('dialog');
+  await expect(confirm).toBeVisible();
+  await expect(confirm).toContainText(/Xóa dữ liệu hội thoại của .+\?/);
+  await expect(confirm).toContainText('Liên hệ trong CRM, việc đã giao và báo giá được giữ nguyên');
+  await expect(confirm).toContainText('Không khôi phục được');
+  await expect(confirm).toContainText(/Xóa vĩnh viễn \d+ hội thoại/);
+  await page.keyboard.press('Escape');
+  await expect(confirm).toBeHidden();
+  await personalData.getByTestId('conversation-erase-open').click();
+  await confirm.getByRole('button', { name: 'Giữ lại' }).click();
+  await expect(confirm).toBeHidden();
+  await expect(thread).toBeVisible();
 
   // The contact's timeline (#2333): opening Chị Mai Hương on the Contacts screen shows the linked conversation (channel, kind, status)
   // without the message body, and clicking the channel link opens the Inbox on that thread.

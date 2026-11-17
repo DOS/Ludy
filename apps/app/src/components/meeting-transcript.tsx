@@ -14,6 +14,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crov
 import { Input } from '@crove/ui/components/input';
 import { Textarea } from '@crove/ui/components/textarea';
 import { Empty, ErrorText } from './ui.tsx';
+import { TranscriptTranslationPanel, TranslatedLine, useTranscriptParts } from './meeting-transcript-translation.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 
 // Reading a transcript is a sensitive read that leaves an audit row: no refetch on focus or remount.
@@ -29,7 +30,7 @@ export function clock(seconds: number): string {
   return h > 0 ? `${h}:${two(m)}:${two(s)}` : `${m}:${two(s)}`;
 }
 
-function Line({ segment, editable, focused }: { segment: TranscriptSegment; editable: boolean; focused: boolean }) {
+function Line({ segment, editable, focused, translation }: { segment: TranscriptSegment; editable: boolean; focused: boolean; translation?: { part: Parameters<typeof TranslatedLine>[0]['part']; to: string } | undefined }) {
   const t = useTranslations('meetings.transcript');
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(segment.text);
@@ -96,6 +97,7 @@ function Line({ segment, editable, focused }: { segment: TranscriptSegment; edit
           )}
         </div>
       )}
+      {translation && !editing && <TranslatedLine part={translation.part} to={translation.to} />}
     </li>
   );
 }
@@ -209,6 +211,8 @@ function VyTranscribe({ meetingId, hasDraft }: { meetingId: string; hasDraft: bo
 export function MeetingTranscript({ meetingId, focusSegmentId }: { meetingId: string; focusSegmentId?: string }) {
   const t = useTranslations('meetings.transcript');
   const query = useQuery({ ...orpc.meetings.transcript.get.queryOptions({ input: { meetingId } }), ...READ_ONCE });
+  // The member's own translated parts beside the lines (E2, #3185); none until they asked.
+  const translated = useTranscriptParts(meetingId);
   if (query.isPending) return null;
   if (query.error) return <ErrorText>{errorMessage(query.error)}</ErrorText>;
   const transcript = query.data;
@@ -225,6 +229,7 @@ export function MeetingTranscript({ meetingId, focusSegmentId }: { meetingId: st
   return (
     <div className="space-y-3">
       {transcript.isRecorder && <VyTranscribe meetingId={meetingId} hasDraft={draft} />}
+      <TranscriptTranslationPanel meetingId={meetingId} />
       <Card>
       <CardHeader>
         <CardTitle className="text-base font-medium">{draft ? t('draftTitle') : t('title')}</CardTitle>
@@ -233,7 +238,13 @@ export function MeetingTranscript({ meetingId, focusSegmentId }: { meetingId: st
       <CardContent>
         <ul className="divide-y">
           {transcript.segments.map((segment) => (
-            <Line key={segment.id} segment={segment} editable={transcript.isRecorder} focused={segment.id === focusSegmentId} />
+            <Line
+              key={segment.id}
+              segment={segment}
+              editable={transcript.isRecorder}
+              focused={segment.id === focusSegmentId}
+              translation={translated.parts.has(segment.id) ? { part: translated.parts.get(segment.id) as Parameters<typeof TranslatedLine>[0]['part'], to: translated.to } : undefined}
+            />
           ))}
         </ul>
       </CardContent>

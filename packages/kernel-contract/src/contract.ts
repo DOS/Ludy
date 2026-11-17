@@ -23,6 +23,7 @@ import {
   zModuleId,
   zPositionStatus,
   zTask,
+  zTaskChecklist,
   zTaskDetail,
   zTaskStatus,
   zAccountCode,
@@ -147,6 +148,9 @@ import {
   zJournalReversal,
   zLocalDate,
   zMe,
+  zOrgAppSet,
+  zOrgAppSetResult,
+  zOrgApps,
   zOrgDetail,
   zOrgExport,
   zOrgSummary,
@@ -190,20 +194,23 @@ import {
   zSocialSavedViewSave,
 } from './schemas.ts';
 import { zMarketplaceConnect, zMarketplaceConnection, zMarketplaceConnectionTested, zMarketplaceProviders } from './marketplace-connections.ts';
-import { zMarketplaceBalance, zMarketplaceBalanceInput } from './marketplace-balance.ts';
-import { zMarketplaceSettlementRequest, zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
+import { zMarketplaceBalance, zMarketplaceBalanceInput, zMarketplaceFacts, zMarketplaceLine, zMarketplaceLineAsk, zMarketplaceWorklist } from './marketplace-balance.ts';
+import { zMarketplaceFeeClearingRequest, zMarketplacePayoutRequest, zMarketplaceSettlementRequest, zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
 import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggestInput, zStockSuggested, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
-import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoicePrevious, zEInvoicePreviousInput, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStatus, zEInvoiceSuggested, zEInvoiceSuggestInput } from './einvoice.ts';
+import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoicePrevious, zEInvoicePreviousInput, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStartCorrection, zEInvoiceStatus, zEInvoiceSuggested, zEInvoiceSuggestInput } from './einvoice.ts';
 import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
 import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
 import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
+import { zVatLateExplainAsk, zVatLateExplanation } from './vat-late.ts';
 import { zFinanceOverview, zFinanceOverviewExplainAsk, zFinanceOverviewInput, zOverviewExplanation } from './finance-overview.ts';
 import { zImportBatch, zImportCommit, zImportCommitted, zImportPreview, zImportPreviewQuery, zImportRef, zImportStage } from './contact-import.ts';
-import { zSavedView, zSavedViewDelete, zSavedViewList, zSavedViewRename, zSavedViewSaveShape, zSavedViewSetShared } from './saved-view.ts';
+import { zFilterAstShape, zSavedView, zSavedViewDelete, zSavedViewList, zSavedViewRename, zSavedViewSaveShape, zSavedViewSetShared, zSavedViewSortShape } from './saved-view.ts';
 import {
   zConversationAssign,
   zConversationCounted,
   zConversationCounts,
+  zConversationPostCounted,
+  zConversationPostCounts,
   zConversationDetail,
   zConversationGet,
   zConversationHide,
@@ -224,6 +231,9 @@ import {
   zAvailabilityEntry,
   zAvailabilitySet,
   zConversationNoteAdd,
+  zConversationFollowUp,
+  zConversationFollowedUp,
+  zConversationTaskList,
   zConversationPrivateReplied,
   zConversationPrivateReply,
   zConversationReplied,
@@ -231,6 +241,9 @@ import {
   zConversationRetention,
   zConversationRetentionSet,
   zConversationEraseContact,
+  zConversationEraseChannel,
+  zConversationChannelErased,
+  zConversationChannelCounts,
   zConversationErased,
   zConversationSandboxComment,
   zConversationSandboxQueued,
@@ -254,11 +267,12 @@ import { zDepreciationRequest, zJournalVoucherRequest, zYearClosingRequest } fro
 import { zFixedAsset, zFixedAssetCreate, zFixedAssetEnd } from './fixed-asset.ts';
 import { zStatementsHtkkCheck, zStatementsHtkkYear } from './statements-htkk.ts';
 import { zTaxObligationMark, zTaxProfile } from './tax-calendar.ts';
-import { zTodayBrief, zTodayBriefInput, zTodayList, zTodayMailSet, zTodayMailSetting } from './today.ts';
+import { zSinceYesterday, zTodayBrief, zTodayBriefInput, zTodayList, zTodayMailSet, zTodayMailSetting, zTodayWeekly, zTodayWeeklyInput } from './today.ts';
 import { zBookEntity, zLegalEntity, zLegalEntityInput } from './legal-entity.ts';
 import { zBuiltinRoleKey, zMemberRoles, zRoleAssignInput } from './roles.ts';
+import { zMeetingPlatformConnectionRef, zMeetingPlatformConnectionView, zMeetingPlatformRecordingRef, zMeetingPlatformRecordingView } from './meeting-platform.ts';
 import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCalendarEventView, zCalendarRange, zCalendarSlot, zCalendarSlotsQuery, zCalendarOAuthProvider, zMyCalendar, zWorkingHours } from './calendar.ts';
-import { zEInvoiceDraftFromOrder, zStockMoveFromOrderLine, zStockMoveFromOrderLineResult } from './finance-orders.ts';
+import { zEInvoiceDraftFromOrder, zOrderLineInvoiceStates, zOrderLineInvoiceStatesInput, zStockMoveFromOrderLine, zStockMoveFromOrderLineResult } from './finance-orders.ts';
 import { zQuoteAccept, zQuoteDecided, zQuoteDecline, zSalesOrder, zSalesOrderCancel, zSalesOrderDeliver, zSalesOrderDeliveryChanged, zSalesOrderHandoff, zSalesOrderListQuery, zSalesOrderPage, zSalesOrderRef, zSalesOrderSummary, zSalesOrderUndeliver } from './crm-sales-orders.ts';
 import { zFollowupDraftInput, zFollowupDrafted } from './crm-followup.ts';
 import { zMeetingBrief, zMeetingBriefInput } from './crm-meeting-brief.ts';
@@ -266,25 +280,63 @@ import { zDealQuotesQuery, zQuote, zQuoteDefaults, zQuoteDefaultsQuery, zQuoteDe
 import { zBoard, zBoardQuery, zDeal, zDealCreate, zDealDeleted, zDealListQuery, zDealMove, zDealPage, zDealRef, zDealSetting, zDealSettingSet, zDealUpdate, zNextStepChanged, zNextStepDone, zNextStepListQuery, zNextStepPage, zNextStepSnooze, zPartyChoice, zPartyDealsQuery, zPartySearchQuery, zPipelineStage, zStageAdd, zStageRemove, zStageRename, zStageReorder } from './crm-deals.ts';
 import { zBookingCancel, zBookingDealChanged, zBookingDealLink, zBookingDealUnlink, zBookingItem, zBookingListQuery, zBookingMove, zBookingSuggestInput, zBookingSuggestion, zEventType, zEventTypeInput, zEventTypeSetActive, zEventTypeUpdate, zDealBookings, zDealBookingsQuery } from './crm.ts';
 import {
+  zHrDepartmentAdd,
+  zHrDepartmentEdit,
+  zHrDepartmentList,
+  zHrDepartmentRef,
+  zHrDepartmentView,
+  zHrDepartmentWritten,
   zHrDependentAdd,
   zHrDependentEnd,
   zHrEmployee,
   zHrEmployeeAdd,
+  zHrEmployeeContractPdf,
+  zHrEmployeeContractPdfAsk,
   zHrEmployeeEdit,
   zHrFinalizationSet,
   zHrEmployeeEnd,
   zHrEmployeeErased,
   zHrEmployeeList,
   zHrEmployeeRef,
+  zHrEmployeeSeveranceAsk,
+  zHrEmployeeSeveranceResult,
   zHrEmployeeSummary,
   zHrEmploymentAdd,
   zHrWritten,
 } from './hr.ts';
-import { zPayrollSettlement, zPayrollSettlementRef, zHrCoworkerAsk, zHrCoworkerExplained, zHrCoworkerFlagged, zHrCoworkerPayslipAsk, zHrCoworkerPrepared, zHrLineAdjust, zHrLineInputsSet, zHrPayslip, zHrPaymentRequest, zHrPostingRequest, zHrPayslipRef, zHrRunApprove, zHrRunList, zHrRunOpen, zHrRunRecalculate, zHrRunRef, zHrRunSheet, zHrRunSummary, zHrRunWritten } from './hr-payroll.ts';
+import { zPayrollSettlement, zPayrollSettlementRef, zHrCoworkerAsk, zHrCoworkerExplained, zHrCoworkerFlagged, zHrCoworkerPayslipAsk, zHrCoworkerPrepared, zHrLineAdjust, zHrLineInputsSet, zHrPayslip, zHrPaymentRequest, zHrPostingRequest, zHrPayslipRef, zHrRunApplyThirteenthMonth, zHrRunApprove, zHrRunImportTimekeeping, zHrRunList, zHrRunOpen, zHrRunRecalculate, zHrRunRef, zHrRunSheet, zHrRunSummary, zHrRunThirteenthMonthPreview, zHrRunWritten, zHrThirteenthMonthPreviewResult } from './hr-payroll.ts';
 import { zHrBankTemplate, zHrBankTemplateCreate, zHrBankTemplateEdit, zHrBankTemplateList, zHrBankTemplateRef, zHrBankTemplateWritten } from './hr-bank-template.ts';
+import { zHrLeaveBalanceAsk, zHrLeaveBalanceResult, zHrLeaveDelete, zHrLeaveSet, zHrLeaveWritten } from './hr-leave.ts';
+import { zHrLaborCheckAsk, zHrLaborCheckResult } from './hr-declarations.ts';
+import {
+  zHrCandidateAdd,
+  zHrCandidateEdit,
+  zHrCandidateEraseResult,
+  zHrCandidateHire,
+  zHrCandidateHireResult,
+  zHrCandidateInterviewScheduled,
+  zHrCandidateList,
+  zHrCandidateMoveStage,
+  zHrCandidateRef,
+  zHrCandidateScheduleInterview,
+  zHrCandidateView,
+  zHrCandidateWritten,
+  zHrInterviewSlotsAsk,
+  zHrInterviewSlotsResult,
+  zHrOpeningAdd,
+  zHrOpeningClose,
+  zHrOpeningEdit,
+  zHrOpeningList,
+  zHrOpeningView,
+  zHrOpeningWritten,
+  zHrRecruitingBriefAsk,
+  zHrRecruitingBriefResult,
+} from './hr-recruiting.ts';
 import {
   zNote,
+  zNoteAcceptSummary,
   zNoteCreate,
+  zNoteFromMeetingSummary,
   zNoteLinkAdd,
   zNoteLinkRemove,
   zNoteLinkTarget,
@@ -295,20 +347,36 @@ import {
   zNoteRef,
   zNoteSearch,
   zNoteSetVisibility,
+  zNoteSuggestTodosInput,
+  zNoteSuggestTodosResult,
+  zNoteSummarizeInput,
+  zNoteSummarizeResult,
   zNoteSummary,
   zNoteUpdate,
+  zNoteVyResults,
+  zNoteVyStatus,
   zNoteWritten,
   zNotesExport,
   zMyWork,
   zMyWorkInput,
   zTodo,
+  zTodoAcceptSuggestions,
+  zTodoAcceptSuggestionsResult,
+  zTodoComplete,
+  zTodoCompleteResult,
   zTodoCount,
   zTodoCreate,
   zTodoHandOver,
   zTodoHandedOver,
+  zTodoLinkAdd,
+  zTodoLinkRemove,
+  zTodoLinkWritten,
   zTodoList,
   zTodoRef,
+  zTodoReopen,
   zTodoReorder,
+  zTodoReschedule,
+  zTodoRescheduled,
   zTodoSummary,
   zTodoUpdate,
   zTodoWritten,
@@ -316,6 +384,9 @@ import {
 import {
   zMeetingCreate,
   zMeetingCreated,
+  zMeetingImportDiscarded,
+  zMeetingImportDiscardEmpty,
+  zMeetingImportStart,
   zMeetingDeleted,
   zMeetingOwnerList,
   zMeetingLink,
@@ -345,6 +416,8 @@ import {
   zMeetingConsentPolicy,
   zMeetingConsentPolicyGet,
   zMeetingExtensionStatus,
+  zMeetingRecordingStopped,
+  zMeetingRecordingStoppedDone,
   zMeetingRecordingNow,
   zMeetingRecordingNowInput,
   zMeetingSettingsGet,
@@ -375,6 +448,21 @@ import {
   zActionItemSource,
   zActionItemsAccepted,
   zMeetingResultSave,
+  zMeetingTemplateSet,
+  zMeetingTemplateSetDone,
+  zNotes,
+  zNotesPreview,
+  zNotesPreviewInput,
+  zSeriesOpenItems,
+  zSeriesOpenItemsInput,
+  zSeriesSet,
+  zSeriesSetResult,
+  zSpeakerName,
+  zSpeakerNamed,
+  zSpeakerSuggestions,
+  zSpeakerSuggestionsInput,
+  zNotesSave,
+  zNotesSaved,
   zMeetingResultSaved,
   zMeetingResults,
   zResultPublish,
@@ -383,6 +471,10 @@ import {
   zDraftReviewed,
   zSummarized,
   zTranslated,
+  zTranscriptTranslated,
+  zTranscriptTranslateStopped,
+  zTranscriptTranslationStatus,
+  zTranscriptTranslationView,
   zTranslationRef,
   zTranslationStatus,
   zTranslations,
@@ -391,20 +483,145 @@ import {
   zSummaryCopied,
   zSummaryCopy,
 } from './meetings.ts';
+import {
+  zMinutesTemplateArchive,
+  zMinutesTemplateCreate,
+  zMinutesTemplateDone,
+  zMinutesTemplateList,
+  zMinutesTemplateUpdate,
+  zMinutesTemplates,
+} from './meeting-minutes-templates.ts';
+import { zAskAnswer, zAskEmpty, zAskInput, zAskStatus } from './meeting-ask.ts';
+import { zBriefAnswer, zBriefEmpty, zBriefFacts, zBriefStatus, zBriefTarget } from './meeting-brief.ts';
+import { zAgendaLink, zAgendaLinked, zAgendaList, zAgendaListInput, zAgendaNext, zAgendaNextInput, zAgendaReadEventsSet, zAgendaSetReadEvents, zAgendaSuggestInput, zAgendaSuggestion } from './meeting-agenda.ts';
+import {
+  zMeetingHookCleared,
+  zMeetingHookNone,
+  zMeetingHookSet,
+  zMeetingHookState,
+  zMeetingHookTested,
+  zMeetingHookWithSecret,
+  zMeetingHooksSwitch,
+} from './meeting-hook.ts';
+import {
+  zProjectArchive,
+  zProjectBoard,
+  zProjectBoardInput,
+  zProjectCandidateTask,
+  zProjectCreate,
+  zProjectCreateFromTemplateFields,
+  zProjectCreateFromTemplateResult,
+  zProjectDetail,
+  zProjectListInput,
+  zProjectListResult,
+  zProjectMemberMutate,
+  zProjectSetOwner,
+  zProjectSetStatus,
+  zProjectStatus,
+  zProjectTaskCreate,
+  zProjectTaskMutate,
+  zProjectTaskProjectEntry,
+  zProjectTaskProjectsInput,
+  zProjectTaskRecurrenceClearInput,
+  zProjectTaskRecurrenceClearResult,
+  zProjectTaskRecurrenceGetInput,
+  zProjectTaskRecurrenceSetInput,
+  zProjectTaskRecurrenceView,
+  zProjectTaskReorderFields,
+  zProjectTaskReorderResult,
+  distinctReorderTargets,
+  REORDER_SAME_TASK_ISSUE,
+  validTemplateCreateFromSource,
+  validTemplateCreateSource,
+  TEMPLATE_CREATE_FROM_SOURCE_ISSUE,
+  TEMPLATE_CREATE_SOURCE_ISSUE,
+  zProjectTasksFromNoteConfirmInput,
+  zProjectTasksFromNoteConfirmResult,
+  zProjectTasksFromNoteInput,
+  zProjectTasksFromSourceConfirmInput,
+  zProjectTasksFromSourceConfirmResult,
+  zProjectTasksFromSourceInput,
+  zProjectTasksFromSourceResult,
+  zProjectTasksFromNoteResult,
+  zProjectTasksFromNoteStatus,
+  zProjectTemplateArchiveInput,
+  zProjectTemplateArchiveResult,
+  zProjectTemplateCreateFields,
+  zProjectTemplateCreateResult,
+  zProjectTemplateListInput,
+  zProjectTemplateListResult,
+  zProjectUpdate,
+  zProjectWeeklyStatus,
+  zProjectWeeklyStatusInput,
+  zProjectWeeklyStatusSendMailInput,
+  zProjectWeeklyStatusSendMailResult,
+  zProjectWeeklyStatusShareNoteInput,
+} from './projects.ts';
 import { zFollowupDraft, zFollowupSendCall, zFollowupSent, zFollowupWording, zFollowupWordingAsk } from './meeting-followup.ts';
+import { zChatChannelList, zChatChannelRemove, zChatChannelRemoved, zChatChannelSaveCall, zChatChannelSaved, zChatEmpty, zChatPostCall, zChatPosted, zChatPreview, zChatStatus, zChatStatusInput } from './meeting-chat.ts';
 import { zExtensionOrgToken, zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked, zExtensionTokenRevokedMember } from './extension.ts';
 import { zMcpGrantRevoke, zMcpGrantRevoked, zMcpGrantView, zMcpMemberGrantsSet, zMcpMemberGrantsView, zMcpWakeCleared, zMcpWakeTested, zMcpWakeGetInput, zMcpWakeGrantRef, zMcpWakeSet, zMcpWakeView, zMcpWakeWithSecret } from './mcp.ts';
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
 import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoiceStatus, zPortalReconciliation } from './portal-list.ts';
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
-import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsFlag, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsCapLowerCall, zAdsChangeRequest, zAdsFlagSettingCall, zAdsFlagSettings, zAdsProposalView, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView, zAdsWeeklyNote, zAdsWriteState } from './ads.ts';
+import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsFlag, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsCapLowerCall, zAdsCommitted, zAdsCommittedInput, zAdsChangeRequest, zAdsFlagSettingCall, zAdsFlagSettings, zAdsProposalView, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView, zAdsWeeklyNote, zAdsWriteState } from './ads.ts';
 import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView, zAdsCampaignRequestAsked, zAdsCampaignRequestCall, zAdsCampaignRequestView, zAdsLaunchCancelCall, zAdsLaunchRetryCall, zAdsLaunchStopCall } from './ads-campaign.ts';
 import { zHouseholdCnkd, zHouseholdCnkdGet, zHouseholdProfileGet, zHouseholdS1a, zHouseholdS1aGet, zHouseholdProfileSet, zHouseholdProfileView, zHouseholdRules, zHouseholdRulesGet } from './household.ts';
-import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankPayrollExplainAsk, zBankPayrollExplanation, zBankPayrollMatch, zBankStatementImport, zStatementLines } from './bank-statement.ts';
+import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankPayrollExplainAsk, zBankPayrollExplanation, zBankPayrollMatch, zBankPlatformLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
 import { zAuditCursor, zAuditExport, zAuditFilter, zAuditPage } from './audit.ts';
 import { zPersonalDataErasure, zPersonalDataNotice, zPersonalDataQuery, zPersonalDataResult } from './personal-data.ts';
+import {
+  zSignAiAnalysisRecord,
+  zSignAiAnalyzeInput,
+  zSignAiAnalyzeResult,
+  zSignEnvelopeBySourceInput,
+  zSignEnvelopeBySourceResult,
+  zSignEnvelopeCreateInput,
+  zSignEnvelopeCreateResult,
+  zSignEnvelopeDetail,
+  zSignEnvelopeEventsResult,
+  zSignEnvelopeListInput,
+  zSignEnvelopeListResult,
+  zSignEnvelopeRemindInput,
+  zSignEnvelopeRemindResult,
+  zSignEnvelopeSendInput,
+  zSignEnvelopeSendResult,
+  zSignEnvelopeUpdateInput,
+  zSignEnvelopeUpdateResult,
+  zSignEnvelopeVerifyResult,
+  zSignEnvelopeVoidInput,
+  zSignEnvelopeVoidResult,
+  zSignFieldSetInput,
+  zSignFieldSetResult,
+  zSignSignerAddInput,
+  zSignSignerAddResult,
+  zSignSignerCreateLinkInput,
+  zSignSignerCreateLinkResult,
+  zSignSignerRemoveInput,
+  zSignSignerRemoveResult,
+  zSignSignerReorderInput,
+  zSignSignerReorderResult,
+  zSignTemplateArchiveInput,
+  zSignTemplateArchiveResult,
+  zSignTemplateCreateInput,
+  zSignTemplateCreateResult,
+  zSignTemplateDetail,
+  zSignTemplateDirectLinkResult,
+  zSignTemplateDirectLinkRotateInput,
+  zSignTemplateDirectLinkSetInput,
+  zSignTemplateFieldsSetInput,
+  zSignTemplateFieldsSetResult,
+  zSignTemplateInstantiateInput,
+  zSignTemplateInstantiateResult,
+  zSignTemplateListInput,
+  zSignTemplateListResult,
+  zSignTemplateRolesSetInput,
+  zSignTemplateRolesSetResult,
+  zSignTemplateUpdateInput,
+  zSignTemplateUpdateResult,
+} from './sign.ts';
 
 // Proposal reminders (issue #676): days before the approvers are reminded and before the owners are told; and expiry
 // (#876): days after which a proposal still pending expires. Expiry needs the escalation and comes after it.
@@ -432,9 +649,14 @@ export const contract = {
   // today read and ordered flags first. Every role; each line shows only what the member could open there. Reads only.
   today: {
     list: oc.output(zTodayList),
+    // What each AI coworker prepared over the last day, counts only, for the rows the member can open (#3256). Every role; no model.
+    sinceYesterday: oc.output(zSinceYesterday),
     // Vy's brief of the same list: a few checked sentences, or the plain template, or none (#2383). One model call at most, counted
     // against the AI budget; every role.
     brief: oc.input(zTodayBriefInput).output(zTodayBrief),
+    // "Tuần này" (#3257): the last 7 days in figures computed by code from the lines' reads in the member's own context, with Vy's checked sentences or the template. One model call at most, counted
+    // against the AI budget (`today.weekly`); every role; nothing is stored.
+    weekly: oc.input(zTodayWeeklyInput).output(zTodayWeekly),
     // The caller's own opt-in to the daily brief by email (#2406); every role, only their own setting.
     mail: {
       get: oc.output(zTodayMailSetting),
@@ -445,6 +667,10 @@ export const contract = {
     // A retry with the same idempotencyKey returns the org the first request created.
     create: oc.input(z.object({ name: z.string().trim().min(1).max(200), idempotencyKey: zId })).output(zOrgSummary),
     get: oc.output(zOrgDetail),
+    // Every role (ADR-0053, #3313): the apps the org may switch, and for each whether the deployment runs it, the org holds
+    // it and its owner or admin left it on. Owners and admins switch one with setApp (R2, audited); every app is on by default.
+    apps: oc.output(zOrgApps),
+    setApp: oc.input(zOrgAppSet).output(zOrgAppSetResult),
     // The org's overview (#1249): its figures, the same as the multi-client home screen reads for it. Every role.
     overview: oc.output(zOrgOverview),
     // Owners and admins (issue #313): the org's own tax code (MST), or null to clear it. Stored normalized; a value
@@ -549,7 +775,7 @@ export const contract = {
     providers: oc.output(z.array(zCalendarOAuthProvider)),
     connections: oc.output(z.array(zCalendarConnectionView)),
     connectStart: oc
-      .input(z.strictObject({ provider: zCalendarOAuthProvider, writeBack: z.boolean().optional() }))
+      .input(z.strictObject({ provider: zCalendarOAuthProvider, writeBack: z.boolean().optional(), readEvents: z.boolean().optional() }))
       .output(z.strictObject({ authorizeUrl: z.url({ protocol: /^https$/ }), state: zOAuthState, expiresAt: z.iso.datetime({ offset: true }) })),
     connectFinish: oc
       .input(z.strictObject({ provider: zCalendarOAuthProvider, state: zOAuthState, code: z.string().min(1).max(2048) }))
@@ -557,6 +783,17 @@ export const contract = {
     disconnect: oc.input(z.strictObject({ connectionId: zId })).output(z.strictObject({ connectionId: zId, disconnected: z.literal(true) })),
     // Whether bookings are written to this connection's calendar (#2124); on only for a grant with the events scope.
     setWriteBack: oc.input(z.strictObject({ connectionId: zId, enabled: z.boolean() })).output(z.strictObject({ connectionId: zId, writeBack: z.boolean() })),
+  },
+  // Meeting platforms a member connects (meetings integrations C1, #3173): their own connections and the recordings the platform finished, to import with a click. The OAuth steps of the real
+  // providers are C2 to C4; the offline sandbox connects here when the deployment enables it.
+  meetingPlatform: {
+    connections: oc.output(z.array(zMeetingPlatformConnectionView)),
+    recordings: oc.output(z.array(zMeetingPlatformRecordingView)),
+    // Lists the member's connections again at the sweep's next pass (nothing is fetched by the request).
+    refresh: oc.input(z.strictObject({ connectionId: zId.optional() })).output(z.strictObject({ refreshed: z.number().int() })),
+    dismiss: oc.input(zMeetingPlatformRecordingRef).output(z.strictObject({ recordingId: zId, dismissed: z.literal(true) })),
+    disconnect: oc.input(zMeetingPlatformConnectionRef).output(z.strictObject({ connectionId: zId, disconnected: z.literal(true) })),
+    connectSandbox: oc.input(z.strictObject({})).output(z.strictObject({ connectionId: zId, reconnected: z.boolean() })),
   },
   taxRegistry: {
     lookup: oc.input(z.object({ taxCode: z.string().trim().max(20) })).output(zTaxRegistryEntry),
@@ -803,6 +1040,15 @@ export const contract = {
   // HR (#2530, payroll plan 6.1), when the deployment runs the hr module: owners and admins only. Every read is a sensitive query (its audit row is written before it reads), and the
   // identity number and the bank account number come back only from `get`, opened from their sealed form for the one employee asked for.
   hr: {
+    departments: {
+      list: oc.input(zHrDepartmentList).output(z.array(zHrDepartmentView)),
+      add: oc.input(zHrDepartmentAdd).output(zHrDepartmentWritten),
+      edit: oc.input(zHrDepartmentEdit).output(zHrDepartmentWritten),
+      archive: oc.input(zHrDepartmentRef).output(zHrDepartmentWritten),
+    },
+    employee: {
+      contractPdf: oc.input(zHrEmployeeContractPdfAsk).output(zHrEmployeeContractPdf),
+    },
     payroll: {
       employees: {
         list: oc.input(zHrEmployeeList).output(z.array(zHrEmployeeSummary)),
@@ -813,6 +1059,7 @@ export const contract = {
         end: oc.input(zHrEmployeeEnd).output(zHrWritten),
         // An owner's erasure of an ended employee after the retention: shreds the person's key (R3).
         erase: oc.input(zHrEmployeeRef).output(zHrEmployeeErased),
+        severance: oc.input(zHrEmployeeSeveranceAsk).output(zHrEmployeeSeveranceResult),
       },
       // The saved layouts of the banks' bulk-salary files (#2893), owners and admins: list, create, edit and delete; the export applies one.
       bankTemplates: {
@@ -821,6 +1068,8 @@ export const contract = {
         edit: oc.input(zHrBankTemplateEdit).output(zHrBankTemplateWritten),
         delete: oc.input(zHrBankTemplateRef).output(zHrBankTemplateWritten),
       },
+      // Pre-export readiness and Labor Code contract compliance review for labor_register and 01/PLI (#3372).
+      laborCheck: oc.input(zHrLaborCheckAsk).output(zHrLaborCheckResult),
       employments: { add: oc.input(zHrEmploymentAdd).output(zHrWritten) },
       dependents: { add: oc.input(zHrDependentAdd).output(zHrWritten), end: oc.input(zHrDependentEnd).output(zHrWritten) },
       // The monthly pay run (#2531): open a month, type its inputs, read the sheet, approve it (R3, a fresh second factor), and correct an approved month by an adjustment line in a later run.
@@ -830,7 +1079,17 @@ export const contract = {
         sheet: oc.input(zHrRunRef).output(zHrRunSheet),
         open: oc.input(zHrRunOpen).output(zHrRunWritten),
         recalculate: oc.input(zHrRunRecalculate).output(zHrRunWritten),
+        importTimekeeping: oc.input(zHrRunImportTimekeeping).output(zHrRunWritten),
+        thirteenthMonthPreview: oc.input(zHrRunThirteenthMonthPreview).output(zHrThirteenthMonthPreviewResult),
+        applyThirteenthMonth: oc.input(zHrRunApplyThirteenthMonth).output(zHrRunWritten),
+        syncLeave: oc.input(zHrRunRef).output(zHrRunWritten),
         approve: oc.input(zHrRunApprove).output(zHrRunWritten),
+      },
+      // Annual leave ledger and statutory leave balance (#3394, #2540 slice 1c-2): owners and admins only, sensitive query for balance.
+      leave: {
+        balance: oc.input(zHrLeaveBalanceAsk).output(zHrLeaveBalanceResult),
+        set: oc.input(zHrLeaveSet).output(zHrLeaveWritten),
+        delete: oc.input(zHrLeaveDelete).output(zHrLeaveWritten),
       },
       // Where the posting and the payments of an approved month stand, for its card (#2532): from the books and the open proposals, no person and no amount; owners and admins.
       settlement: oc.input(zPayrollSettlementRef).output(zPayrollSettlement),
@@ -846,6 +1105,28 @@ export const contract = {
         explain: oc.input(zHrCoworkerPayslipAsk).output(zHrCoworkerExplained),
       },
     },
+    // Lightweight recruiting (#3425, Stage 3 slice 3b-2): openings, candidate pipeline, calendar interviews,
+    // 1-click hire to payroll employee + initial employment, and Ly pseudonymized screening brief.
+    recruiting: {
+      openings: {
+        list: oc.input(zHrOpeningList).output(z.array(zHrOpeningView)),
+        add: oc.input(zHrOpeningAdd).output(zHrOpeningWritten),
+        edit: oc.input(zHrOpeningEdit).output(zHrOpeningWritten),
+        close: oc.input(zHrOpeningClose).output(zHrOpeningWritten),
+      },
+      candidates: {
+        list: oc.input(zHrCandidateList).output(z.array(zHrCandidateView)),
+        get: oc.input(zHrCandidateRef).output(zHrCandidateView),
+        add: oc.input(zHrCandidateAdd).output(zHrCandidateWritten),
+        edit: oc.input(zHrCandidateEdit).output(zHrCandidateWritten),
+        moveStage: oc.input(zHrCandidateMoveStage).output(zHrCandidateWritten),
+        scheduleInterview: oc.input(zHrCandidateScheduleInterview).output(zHrCandidateInterviewScheduled),
+        hire: oc.input(zHrCandidateHire).output(zHrCandidateHireResult),
+        erase: oc.input(zHrCandidateRef).output(zHrCandidateEraseResult),
+      },
+      interviewSlots: oc.input(zHrInterviewSlotsAsk).output(zHrInterviewSlotsResult),
+      brief: oc.input(zHrRecruitingBriefAsk).output(zHrRecruitingBriefResult),
+    },
   },
   // Members' notes (#1671, ADR-0037), when the deployment runs the notes module: private to their author or shared with
   // the org; the database's row policies decide what each caller reads. Viewers read none.
@@ -855,6 +1136,7 @@ export const contract = {
     search: oc.input(zNoteSearch).output(z.array(zNoteSummary)),
     panel: oc.input(zNoteLinkTarget).output(zNoteRecordPanelView),
     create: oc.input(zNoteCreate).output(zNoteWritten),
+    fromMeetingSummary: oc.input(zNoteFromMeetingSummary).output(zNoteWritten),
     update: oc.input(zNoteUpdate).output(zNoteWritten),
     setVisibility: oc.input(zNoteSetVisibility).output(zNoteWritten),
     pin: oc.input(zNoteRef).output(zNoteWritten),
@@ -868,17 +1150,27 @@ export const contract = {
     privateCounts: oc.input(z.strictObject({})).output(z.array(zNotePrivateCount)),
     // The caller's own notes and to-dos, whole, for their download (#1678): never anyone else's.
     exportMine: oc.input(z.strictObject({})).output(zNotesExport),
+    // Member-scoped Vy for Notes (N8, #1677, ADR-0049): status, interactive summary & to-do suggestion, latest private results, author summary acceptance.
+    vyStatus: oc.input(z.strictObject({})).output(zNoteVyStatus),
+    summarize: oc.input(zNoteSummarizeInput).output(zNoteSummarizeResult),
+    suggestTodos: oc.input(zNoteSuggestTodosInput).output(zNoteSuggestTodosResult),
+    vyResults: oc.input(zNoteRef).output(zNoteVyResults),
+    acceptSummary: oc.input(zNoteAcceptSummary).output(zNoteWritten),
     // The caller's own to-dos (#1673), which nobody else reads: not another member, an owner or an admin.
     todos: {
       list: oc.input(zTodoList).output(z.array(zTodoSummary)),
       get: oc.input(zTodoRef).output(zTodo),
       create: oc.input(zTodoCreate).output(zTodoWritten),
+      acceptSuggestions: oc.input(zTodoAcceptSuggestions).output(zTodoAcceptSuggestionsResult),
       update: oc.input(zTodoUpdate).output(zTodoWritten),
-      complete: oc.input(zTodoRef).output(zTodoWritten),
-      reopen: oc.input(zTodoRef).output(zTodoWritten),
+      complete: oc.input(zTodoComplete).output(zTodoCompleteResult),
+      reopen: oc.input(zTodoReopen).output(zTodoWritten),
       reorder: oc.input(zTodoReorder).output(zTodoWritten),
+      reschedule: oc.input(zTodoReschedule).output(zTodoRescheduled),
       delete: oc.input(zTodoRef).output(zTodoWritten),
       restore: oc.input(zTodoRef).output(zTodoWritten),
+      linkAdd: oc.input(zTodoLinkAdd).output(zTodoLinkWritten),
+      linkRemove: oc.input(zTodoLinkRemove).output(zTodoLinkWritten),
       // Hands an open to-do over to a position as a team task (#1674), with the text the member confirmed.
       handOver: oc.input(zTodoHandOver).output(zTodoHandedOver),
       // My work: my open to-dos and the open tasks of the positions I hold (#1674).
@@ -892,8 +1184,16 @@ export const contract = {
     list: oc.input(zMeetingListInput).output(z.array(zMeetingSummary)),
     get: oc.input(zMeetingRef).output(zMeetingDetail),
     create: oc.input(zMeetingCreate).output(zMeetingCreated),
+    // The click on "Nhập" for a recording a meeting platform finished (C1, #3173): makes the meeting with its consent record and starts the download. The app then claims the staged bytes through the media route.
+    importStart: oc.input(zMeetingImportStart).output(zMeetingCreated),
+    // The app calls it after a failed import is dismissed and before its platform connection is disconnected: the empty meeting of the failed try goes (#3587).
+    importDiscardEmpty: oc.input(zMeetingImportDiscardEmpty).output(zMeetingImportDiscarded),
+    // The recorder picks the minutes template of their meeting (A4, #3162).
+    setTemplate: oc.input(zMeetingTemplateSet).output(zMeetingTemplateSetDone),
     // The status of a meeting the calling extension token created, and nothing of its content (issue #2582).
     extensionStatus: oc.input(zMeetingRef).output(zMeetingExtensionStatus),
+    // The extension reports that a recording of its own token ended with no media reaching the server, so the app's recording chip lets go (#3196).
+    recordingStopped: oc.input(zMeetingRecordingStopped).output(zMeetingRecordingStoppedDone),
     // The calling member's meeting the extension is recording right now, for the app's recording chip (A1, #3159).
     recordingNow: oc.input(zMeetingRecordingNowInput).output(zMeetingRecordingNow),
     delete: oc.input(zMeetingRef).output(zMeetingDeleted),
@@ -924,6 +1224,26 @@ export const contract = {
       wording: oc.input(zFollowupWordingAsk).output(zFollowupWording),
       send: oc.input(zFollowupSendCall).output(zFollowupSent),
     },
+    // Approved minutes posted to a Slack or Microsoft Teams channel (B4, #3168): an owner or admin pastes a webhook address (sealed, never shown again); the recorder of a meeting with a published result reads the
+    // exact message (`preview`), picks a channel and presses "Gửi" (`post`, R2: queues the post, which the worker's job sends through the egress guard; no model).
+    chat: {
+      channels: oc.input(zChatEmpty).output(zChatChannelList),
+      saveChannel: oc.input(zChatChannelSaveCall).output(zChatChannelSaved),
+      removeChannel: oc.input(zChatChannelRemove).output(zChatChannelRemoved),
+      preview: oc.input(zMeetingRef).output(zChatPreview),
+      post: oc.input(zChatPostCall).output(zChatPosted),
+      // How the recorder's newest post of the meeting to a channel stands (the dialog polls it after the click: the post is sent by the worker's job).
+      status: oc.input(zChatStatusInput).output(zChatStatus),
+    },
+    // Minutes templates the org writes (#3578): every member reads the active ones, an owner or admin writes them (an archived one is read only, and only they see it). The meeting keeps
+    // its own copy of the sections when the recorder picks one (setTemplate). MINUTES_TEMPLATE_NOT_FOUND (404), MINUTES_TEMPLATE_ARCHIVED and MINUTES_TEMPLATE_NAME_TAKEN (409), MINUTES_TEMPLATE_SECTIONS_INVALID and
+    // MINUTES_TEMPLATES_MAX (422).
+    template: {
+      list: oc.input(zMinutesTemplateList).output(zMinutesTemplates),
+      create: oc.input(zMinutesTemplateCreate).output(zMinutesTemplateDone),
+      update: oc.input(zMinutesTemplateUpdate).output(zMinutesTemplateDone),
+      archive: oc.input(zMinutesTemplateArchive).output(zMinutesTemplateDone),
+    },
     // The org's three retention settings (#2579): anyone who reads meetings sees them, an owner or admin changes them.
     settings: {
       get: oc.input(zMeetingSettingsGet).output(zMeetingSettings),
@@ -934,8 +1254,46 @@ export const contract = {
       get: oc.input(zMeetingConsentPolicyGet).output(zMeetingConsentPolicy),
       set: oc.input(zMeetingConsentPolicy).output(zMeetingConsentPolicy),
     },
+    // A member's own webhook for the minutes they publish (A6, #3164): the card reads `get`, `set` makes or changes it (the secret comes back once, when it is made), `rotateSecret`, `clear` and
+    // `test` (a `ping` with no meeting data). The owner's `switch` (off by default) gates all of it; nothing is sent while it is off.
+    hook: {
+      get: oc.input(zMeetingHookNone).output(zMeetingHookState),
+      set: oc.input(zMeetingHookSet).output(zMeetingHookWithSecret),
+      rotateSecret: oc.input(zMeetingHookNone).output(zMeetingHookWithSecret),
+      clear: oc.input(zMeetingHookNone).output(zMeetingHookCleared),
+      test: oc.input(zMeetingHookNone).output(zMeetingHookTested),
+      switch: oc.input(zMeetingHooksSwitch).output(zMeetingHooksSwitch),
+    },
     // Search across the transcript lines the caller reads (L2, #2589): plain folded text search, no model call.
     search: oc.input(zMeetingSearchInput).output(zMeetingSearchResult),
+    // Ask across meetings (A3, #3161): the member's own Vy answers a question from the lines the member's own search finds, each sentence with a citation to a transcript line; nothing is stored or sent.
+    // `status` is the box (may Vy be asked now, the cost of one question), `ask` is the click.
+    ask: {
+      status: oc.input(zAskEmpty).output(zAskStatus),
+      ask: oc.input(zAskInput).output(zAskAnswer),
+    },
+    // Vy's brief before a meeting (#3543): `facts` are read by code as the member (the decisions of the previous meeting of the series if they read it, the open items, the linked customer's open deals) and work with AI
+    // off; `status` is the button (may Vy be used now, the cost of one brief), `write` the click that has the member's own Vy write two or three sentences from those facts. Nothing is stored or sent.
+    brief: {
+      facts: oc.input(zBriefTarget).output(zBriefFacts),
+      status: oc.input(zBriefEmpty).output(zBriefStatus),
+      write: oc.input(zBriefTarget).output(zBriefAnswer),
+    },
+    // A member's own Google Calendar meetings, read to suggest "record this meeting" (B1, #3165): no model; code matches by time and a person confirms. `list` is today's meetings, `suggest` the event
+    // a recording overlaps, `setReadEvents` the member's switch (the cache is deleted when it goes off), `link` the click that attaches a recorded meeting to its event.
+    agenda: {
+      list: oc.input(zAgendaListInput).output(zAgendaList),
+      // The extension's "Sắp họp" card (B2, #3166, the `agenda` token scope): the next few events, title, time and join host only.
+      next: oc.input(zAgendaNextInput).output(zAgendaNext),
+      suggest: oc.input(zAgendaSuggestInput).output(zAgendaSuggestion),
+      setReadEvents: oc.input(zAgendaSetReadEvents).output(zAgendaReadEventsSet),
+      link: oc.input(zAgendaLink).output(zAgendaLinked),
+    },
+    // A series of meetings (#3542): `openItems` the previous meeting's items that are still open, for the "Việc còn dở từ buổi trước" block; `set` the recorder's click that says this meeting follows an earlier one.
+    series: {
+      openItems: oc.input(zSeriesOpenItemsInput).output(zSeriesOpenItems),
+      set: oc.input(zSeriesSet).output(zSeriesSetResult),
+    },
     // The transcript (#2578): the recorder's draft, read, replaced by a transcription run and corrected by hand.
     transcript: {
       get: oc.input(zMeetingRef).output(zTranscript),
@@ -957,6 +1315,16 @@ export const contract = {
       review: oc.input(zDraftReview).output(zDraftReviewed),
       summaryStatus: oc.input(zSummaryRef).output(zSummaryStatus),
       summarize: oc.input(zSummaryRef).output(zSummarized),
+      // "Ghi chú của tôi" (A5, #3163): the recorder's own rough notes, theirs alone; `enhance` is the recorder's Vy expanding them with the transcript (the same run family and budget
+      // as the summary), `enhancePreview` the finished expansion with their own lines and Vy's told apart, copied into the draft by `copySummary`.
+      notesGet: oc.input(zMeetingRef).output(zNotes),
+      notesSave: oc.input(zNotesSave).output(zNotesSaved),
+      enhance: oc.input(zSummaryRef).output(zSummarized),
+      enhancePreview: oc.input(zNotesPreviewInput).output(zNotesPreview),
+      // Speaker names (#3502): the recorder's Vy may suggest which attendee a speaker label is; `speakerSuggestions` is what a finished summary run suggested and still applies,
+      // `nameSpeaker` is the recorder's click that gives the draft lines of one label that attendee's name. Nothing is renamed without the click.
+      speakerSuggestions: oc.input(zSpeakerSuggestionsInput).output(zSpeakerSuggestions),
+      nameSpeaker: oc.input(zSpeakerName).output(zSpeakerNamed),
     },
     // The machine translation of the summary (meetings integrations E1, #3184): the member's own Vy translates what they read; the result is theirs alone, beside the original.
     // `status` is the button (enabled or why not, the target language, the expected cost), `translate` is the click, `get` the member's own translations.
@@ -964,6 +1332,12 @@ export const contract = {
       status: oc.input(zTranslationRef).output(zTranslationStatus),
       translate: oc.input(zTranslationRef).output(zTranslated),
       get: oc.input(zMeetingRef).output(zTranslations),
+      // The same for the transcript (E2, #3185): the member's own Vy translates the lines they read a few chunks at a time, in the request. `transcriptTranslate` is the click (the page asks
+      // again while it is open), `transcriptStop` ends the member's own run, `transcriptStatus` is the button and the progress, and `transcriptGet` is the member's parts beside the lines.
+      transcriptStatus: oc.input(zMeetingRef).output(zTranscriptTranslationStatus),
+      transcriptTranslate: oc.input(zMeetingRef).output(zTranscriptTranslated),
+      transcriptStop: oc.input(zMeetingRef).output(zTranscriptTranslateStopped),
+      transcriptGet: oc.input(zMeetingRef).output(zTranscriptTranslationView),
     },
     actionItems: {
       create: oc.input(zActionItemCreate).output(zActionItemCreated),
@@ -1617,6 +1991,8 @@ export const contract = {
   },
   inbox: {
     list: oc.input(z.object({ status: zProposalStatus.optional() })).output(z.array(zInboxItem)),
+    // How many waiting things the list leaves out because their app is switched off for the org (ADR-0053, slice e).
+    hidden: oc.input(z.object({})).output(z.object({ count: z.number().int().nonnegative() })),
     get: oc.input(z.object({ id: zId })).output(zInboxDetail),
     // Every member who can open the proposal (issue #672): what happened to it, its file and the records it touched.
     timeline: oc.input(z.object({ id: zId })).output(zTimeline),
@@ -1742,6 +2118,12 @@ export const contract = {
           // The posting of a stored marketplace settlement (#2516): the server builds one journal voucher from its lines; an owner or an admin approves. Refused until the accountant has confirmed
           // the account map. MARKETPLACE_POSTING_MAP_UNCONFIRMED, MARKETPLACE_SETTLEMENT_POSTED, PERIOD_LOCKED (409), MARKETPLACE_SETTLEMENT_NOT_POSTABLE (422), MARKETPLACE_SETTLEMENT_NOT_FOUND (404).
           z.object({ command: z.literal('finance.marketplace_settlement.record'), input: zMarketplaceSettlementRequest, idempotencyKey: zId }),
+          // The posting of a platform's payout (#2516): the server builds one journal voucher from the settlement's lines, and the bank line only has to match the net; an owner or an admin approves. Refused
+          // until the accountant has confirmed the account map, and while the settlement is not posted. MARKETPLACE_PAYOUT_SETTLEMENT_NOT_POSTED, MARKETPLACE_PAYOUT_BANK_LINE, MARKETPLACE_PAYOUT_POSTED (409).
+          z.object({ command: z.literal('finance.marketplace_payout.record'), input: zMarketplacePayoutRequest, idempotencyKey: zId }),
+          // The clearing of the fees on 1388 by the platform's fee invoice (#2516): one journal voucher Dr 331 / Cr 1388 built from a posted purchase document; an owner or an admin approves. Refused until the
+          // accountant has confirmed the account map. MARKETPLACE_FEE_DOCUMENT (422), MARKETPLACE_FEE_NOTHING_TO_CLEAR (409), PERIOD_LOCKED (409).
+          z.object({ command: z.literal('finance.marketplace_fee_clearing.record'), input: zMarketplaceFeeClearingRequest, idempotencyKey: zId }),
         ]),
       )
       .output(z.object({ proposalId: zId })),
@@ -1839,6 +2221,8 @@ export const contract = {
   conversations: {
     list: oc.input(zConversationList).output(zConversationListed),
     counts: oc.input(zConversationCounts).output(zConversationCounted),
+    // The comment threads still New under each of the posts a screen shows, in one read (#3298).
+    postCounts: oc.input(zConversationPostCounts).output(zConversationPostCounted),
     get: oc.input(zConversationGet).output(zConversationDetail),
     reply: oc.input(zConversationReply).output(zConversationReplied),
     replyPrivately: oc.input(zConversationPrivateReply).output(zConversationPrivateReplied),
@@ -1850,6 +2234,9 @@ export const contract = {
     reopen: oc.input(zConversationId).output(z.object({ conversationId: zId })),
     note: oc.input(zConversationNoteAdd).output(z.object({ noteId: zId })),
     linkContact: oc.input(zConversationLinkContact).output(z.object({ conversationId: zId })),
+    // "Create task" (CV3, #3295): a person makes a kernel task that links back to the thread; the thread lists its open tasks. No agent, no model.
+    followUp: oc.input(zConversationFollowUp.extend({ idempotencyKey: zId })).output(zConversationFollowedUp),
+    tasks: oc.input(zConversationId).output(zConversationTaskList),
     // The intent (CV3, #2306): a person applies, changes or clears it (the only thing stored). The AI coworker's suggestion and the likely contacts of a
     // customer are read apart: a model call through the AI budget meter, never stored, and with the model off, spent or failing the answer is no suggestion.
     setIntent: oc.input(zConversationSetIntent).output(z.object({ conversationId: zId, intent: zConversationIntent.nullable() })),
@@ -1868,6 +2255,10 @@ export const contract = {
     retention: oc.input(z.strictObject({})).output(zConversationRetention),
     setRetention: oc.input(zConversationRetentionSet).output(zConversationRetention),
     eraseContact: oc.input(zConversationEraseContact.extend({ idempotencyKey: zId })).output(zConversationErased),
+    // Deleting a disconnected channel's conversations too (#3299): the counts the confirmation names, then the erasure (owners and admins, a fresh
+    // second factor; the channel must be disconnected first).
+    channelCounts: oc.input(z.strictObject({ connectionId: zId })).output(zConversationChannelCounts),
+    eraseChannel: oc.input(zConversationEraseChannel.extend({ idempotencyKey: zId })).output(zConversationChannelErased),
     // Vy's drafts (CV8, #2310): a member asks for one ("Vy soạn": the draft arrives in the thread's detail within seconds, written by the worker) or sets
     // one aside; owners and admins switch the drafting of new conversations on or off (a customer's message goes to the AI endpoint for it).
     draftRequest: oc.input(zConversationDraftRequest).output(z.object({ draftId: zId, queued: z.boolean() })),
@@ -2018,10 +2409,16 @@ export const contract = {
       // EINVOICE_DRAFT_INVALID (422), PARTY_NOT_FOUND (404). A draft that fails a check is saved all the same, with its issues.
       save: oc.input(zEInvoiceDraftSave).output(zEInvoiceDraft),
       delete: oc.input(z.object({ draftId: zId })).output(z.object({ deleted: z.literal(true) })),
+      // "Điều chỉnh" or "Thay thế" from an issued invoice (#2504): a correcting draft with a copy of the original's buyer and lines (the lines of an adjustment start empty, the difference per line is
+      // typed with its sign). Owners, admins and members. It issues nothing: issuing is the same R3 approval as any invoice. See zEInvoiceStartCorrection for the refusals.
+      startCorrection: oc.input(zEInvoiceStartCorrection).output(zEInvoiceDraft),
       // The draft of a sales order (#2818, ADR-0050): the hand-off Engage's crm.salesOrders.handoff read, with the line numbers to invoice (none: every open item line); whole lines only. Owners, admins and members;
       // the idempotency key replays the same draft. ORDER_PAYLOAD_MISMATCH, ORDER_LINE_UNKNOWN, ORDER_LINE_NOT_INVOICEABLE, ORDER_LINE_DISCOUNTED, ORDER_TOO_MANY_LINES, EINVOICE_TOTAL_TOO_LARGE (422),
       // ORDER_LINE_ALREADY_INVOICED and ORDER_NOTHING_TO_INVOICE (409), LEGAL_ENTITY_NOT_ALLOWED (403). Nothing is issued: issuing needs finance's approval.
       fromOrder: oc.input(zEInvoiceDraftFromOrder.extend({ idempotencyKey: zId })).output(zEInvoiceDraft),
+      // Which lines of these orders (1 to 50) a draft names, and whether it is issued (#3477): `draft` or `issued`, no other fact of the draft. Every role reads it, by the drafts' own row policy
+      // (a member limited to some legal entities sees only the drafts of theirs). A line no draft names is not listed. The screen is a hint: ORDER_LINE_ALREADY_INVOICED stays the server's refusal.
+      orderLines: oc.input(zOrderLineInvoiceStatesInput).output(zOrderLineInvoiceStates),
       // The request to issue a draft as the Inbox card shows it (#2502): the draft now, and whether it is still what was asked for. Owners, admins and members.
       issueRequest: oc.input(z.object({ proposalId: zId })).output(zEInvoiceIssueView),
       // The coworker's proposal for the form from a text a person typed (#2505): lines, the VAT rate the text states, and the buyer from the org's customers. Owners, admins and members. Read only;
@@ -2074,6 +2471,13 @@ export const contract = {
     // Where each platform's money stands in the books (#2516, the Sàn screen): sales posted to 131, paid out, the difference and the fees awaiting an invoice (1388), per entity and platform,
     // read from the ledger by the platform's party. Every role reads; facts only, no model call, no order or buyer data.
     balance: oc.input(zMarketplaceBalanceInput.optional()).output(zMarketplaceBalance),
+    // The facts the coworker's line is written from (#2516 slice E): stored settlements not yet posted, the platforms' balance and the fees awaiting an invoice. Every role reads; facts only.
+    facts: oc.input(zMarketplaceBalanceInput.optional()).output(zMarketplaceFacts),
+    // What the Sàn screen lets a person act on (#2516 slice F): the settlements to post, the posted settlements waiting for their payout with the bank lines it may be, the fee invoices that can clear, and
+    // whether the account map is confirmed. A read: the actions themselves are inbox.request of the finance commands.
+    worklist: oc.input(zMarketplaceBalanceInput.optional()).output(zMarketplaceWorklist),
+    // The finance coworker's one line on the Sàn screen: the facts always, and one checked sentence when a model is on, within the AI budget. Read only: it stores nothing and posts nothing.
+    line: oc.input(zMarketplaceLineAsk).output(zMarketplaceLine),
   },
   // Stock (#2512, ADR-0045): the items of goods, the names a source uses for them, the append-only moves and the goods lines of posted documents not yet assigned to an item.
   // Every role reads; owners, admins and members write. A move is never edited or removed: a correction is a reversing move.
@@ -2147,6 +2551,9 @@ export const contract = {
   // when the voucher is not a báo Nợ of the org.
   vat: {
     period: oc.input(z.object({ period: zVatPeriod, legalEntityId: zId.optional() })).output(zVatReport),
+    // explain (#3540; finance roles, read-only): the coworker's sentence naming each late sales invoice and its original period, from the working's own lists. AI off, spent or refused: `ai` says so
+    // and the screen shows the template sentence built from the same lists. Nothing is declared or posted.
+    explain: oc.input(zVatLateExplainAsk).output(zVatLateExplanation),
     // salesNumberGaps (every role; #2140): the numbers missing in the org's own sales e-invoice series, per template,
     // series and year. With period, the runs that may fall in it (VAT working); with fromYear, the series of that year on
     // (Overview); alone, every year. Read-only.
@@ -2270,6 +2677,12 @@ export const contract = {
     // STATEMENT_NOT_STAGED (409) once it was decided or read again.
     statementLines: oc.input(z.object({ fileId: zId })).output(zStatementLines),
     lines: oc.input(z.object({ bankAccount: zAccountCode, period: zLedgerPeriod, legalEntityId: zId.optional() })).output(zBankLines),
+    // The statement lines of all of a legal entity's bank and card accounts in a range whose description holds one of `terms`
+    // as whole words (marks and case set aside), newest first, at most BANK_PLATFORM_LINES_LIMIT (`truncated` says more
+    // exist): what Ads shows beside a month's spend (slice D2). Read only; owners, admins, members and viewers, as `lines`.
+    platformLines: oc
+      .input(z.object({ from: zLocalDate, to: zLocalDate, terms: z.array(z.string().min(2).max(60)).min(1).max(8), legalEntityId: zId.optional() }))
+      .output(zBankPlatformLines),
     // The báo Có or báo Nợ a line makes and the party it is probably about (#326, stage 2a), for the voucher form; the
     // voucher itself is asked for with inbox.request (finance.voucher.record, bankLineId set). Owners, admins and
     // members, who may ask for vouchers.
@@ -2342,6 +2755,8 @@ export const contract = {
     // way to spend (the org switch, an account's flag, a cap set or raised, launches opened again) is asked for with
     // requestChange: a proposal approved in the Inbox (P10, P11), never a direct change. Nothing here calls a platform yet.
     writeState: oc.output(zAdsWriteState),
+    // The committed spend of one account's month next to the caps and the room left (#3297): owners and admins, read only.
+    committed: oc.input(zAdsCommittedInput).output(zAdsCommitted),
     // The deterministic spend-pace and cost-per-result flags (#2378): owners and admins, read only.
     flags: oc.output(z.array(zAdsFlag)),
     // The deterministic 7-day side-by-side comparison note across connected platforms (#2220): every member who reads Ads, read only.
@@ -2481,7 +2896,17 @@ export const contract = {
   // Work given to positions, held by members or agents (ADR-0029). Every member reads; owners, admins and members
   // create, comment and change status.
   tasks: {
-    list: oc.input(z.object({ positionId: zId.optional(), mine: z.boolean().optional(), status: z.array(zTaskStatus).max(6).optional() })).output(z.array(zTask)),
+    list: oc
+      .input(
+        z.object({
+          positionId: zId.optional(),
+          mine: z.boolean().optional(),
+          status: z.array(zTaskStatus).max(6).optional(),
+          filters: zFilterAstShape.optional(),
+          sort: zSavedViewSortShape.nullable().optional(),
+        }),
+      )
+      .output(z.array(zTask)),
     get: oc.input(z.object({ id: zId })).output(zTaskDetail),
     create: oc
       .input(
@@ -2490,6 +2915,7 @@ export const contract = {
           description: z.string().max(10000).optional(),
           assigneePositionId: zId.nullable(),
           due: z.iso.datetime().optional(),
+          checklist: zTaskChecklist.optional(),
           idempotencyKey: zId,
         }),
       )
@@ -2502,12 +2928,108 @@ export const contract = {
           description: z.string().max(10000).nullable().optional(),
           assigneePositionId: zId.nullable().optional(),
           due: z.iso.datetime().nullable().optional(),
+          checklist: zTaskChecklist.optional(),
           idempotencyKey: zId,
         }),
       )
       .output(z.object({ taskId: zId })),
     comment: oc.input(z.object({ id: zId, body: z.string().trim().min(1).max(10000), idempotencyKey: zId })).output(z.object({ commentId: zId })),
     setStatus: oc.input(z.object({ id: zId, status: zTaskStatus, idempotencyKey: zId })).output(z.object({ taskId: zId, status: zTaskStatus })),
+  },
+  // Projects and a task board on kernel tasks (#2591, ADR-0048). Off-switchable via CROVE_MODULES.
+  projects: {
+    list: oc.input(zProjectListInput).output(zProjectListResult),
+    get: oc.input(z.strictObject({ id: zId })).output(zProjectDetail),
+    board: oc.input(zProjectBoardInput).output(zProjectBoard),
+    weeklyStatus: oc.input(zProjectWeeklyStatusInput).output(zProjectWeeklyStatus),
+    weeklyStatusShareNote: oc.input(zProjectWeeklyStatusShareNoteInput.extend({ idempotencyKey: zId })).output(zNoteWritten),
+    weeklyStatusSendMail: oc.input(zProjectWeeklyStatusSendMailInput.extend({ idempotencyKey: zId })).output(zProjectWeeklyStatusSendMailResult),
+    unassignedTasks: oc.input(z.strictObject({})).output(z.array(zProjectCandidateTask)),
+    taskProjects: oc.input(zProjectTaskProjectsInput).output(z.array(zProjectTaskProjectEntry)),
+    create: oc.input(zProjectCreate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId })),
+    update: oc.input(zProjectUpdate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId })),
+    setStatus: oc.input(zProjectSetStatus.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, status: zProjectStatus })),
+    archive: oc.input(zProjectArchive.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, status: z.literal('archived') })),
+    setOwner: oc.input(zProjectSetOwner.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, ownerUserId: zId })),
+    addMember: oc.input(zProjectMemberMutate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, userId: zId, added: z.boolean() })),
+    removeMember: oc.input(zProjectMemberMutate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, userId: zId, removed: z.boolean() })),
+    addTask: oc.input(zProjectTaskMutate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, taskId: zId, added: z.boolean() })),
+    removeTask: oc.input(zProjectTaskMutate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, taskId: zId, removed: z.boolean() })),
+    reorderTask: oc
+      .input(zProjectTaskReorderFields.extend({ idempotencyKey: zId }).refine(distinctReorderTargets, REORDER_SAME_TASK_ISSUE))
+      .output(zProjectTaskReorderResult),
+    createTask: oc.input(zProjectTaskCreate.extend({ idempotencyKey: zId })).output(z.object({ projectId: zId, taskId: zId })),
+    tasksFromNoteStatus: oc.input(z.strictObject({})).output(zProjectTasksFromNoteStatus),
+    proposeTasksFromNote: oc.input(zProjectTasksFromNoteInput).output(zProjectTasksFromNoteResult),
+    confirmTasksFromNote: oc
+      .input(zProjectTasksFromNoteConfirmInput.extend({ idempotencyKey: zId }))
+      .output(zProjectTasksFromNoteConfirmResult),
+    tasksFromSourceStatus: oc.input(z.strictObject({})).output(zProjectTasksFromNoteStatus),
+    proposeTasksFromSource: oc.input(zProjectTasksFromSourceInput).output(zProjectTasksFromSourceResult),
+    confirmTasksFromSource: oc
+      .input(zProjectTasksFromSourceConfirmInput.extend({ idempotencyKey: zId }))
+      .output(zProjectTasksFromSourceConfirmResult),
+    listTemplates: oc.input(zProjectTemplateListInput).output(zProjectTemplateListResult),
+    createTemplate: oc
+      .input(zProjectTemplateCreateFields.extend({ idempotencyKey: zId }).refine(validTemplateCreateSource, TEMPLATE_CREATE_SOURCE_ISSUE))
+      .output(zProjectTemplateCreateResult),
+    archiveTemplate: oc
+      .input(zProjectTemplateArchiveInput.extend({ idempotencyKey: zId }))
+      .output(zProjectTemplateArchiveResult),
+    createFromTemplate: oc
+      .input(
+        zProjectCreateFromTemplateFields
+          .extend({ idempotencyKey: zId })
+          .refine(validTemplateCreateFromSource, TEMPLATE_CREATE_FROM_SOURCE_ISSUE),
+      )
+      .output(zProjectCreateFromTemplateResult),
+    getTaskRecurrence: oc.input(zProjectTaskRecurrenceGetInput).output(zProjectTaskRecurrenceView.nullable()),
+    setTaskRecurrence: oc
+      .input(zProjectTaskRecurrenceSetInput.extend({ idempotencyKey: zId }))
+      .output(zProjectTaskRecurrenceView),
+    clearTaskRecurrence: oc
+      .input(zProjectTaskRecurrenceClearInput.extend({ idempotencyKey: zId }))
+      .output(zProjectTaskRecurrenceClearResult),
+  },
+  // Electronic signatures (docs/plan/esign.md, #3325). Off-switchable via CROVE_MODULES and org_app_on.
+  sign: {
+    envelope: {
+      list: oc.input(zSignEnvelopeListInput).output(zSignEnvelopeListResult),
+      get: oc.input(z.strictObject({ envelopeId: zId })).output(zSignEnvelopeDetail),
+      by_source: oc.input(zSignEnvelopeBySourceInput).output(zSignEnvelopeBySourceResult),
+      events: oc.input(z.strictObject({ envelopeId: zId })).output(zSignEnvelopeEventsResult),
+      verify: oc.input(z.strictObject({ envelopeId: zId })).output(zSignEnvelopeVerifyResult),
+      create: oc.input(zSignEnvelopeCreateInput).output(zSignEnvelopeCreateResult),
+      update: oc.input(zSignEnvelopeUpdateInput).output(zSignEnvelopeUpdateResult),
+      send: oc.input(zSignEnvelopeSendInput).output(zSignEnvelopeSendResult),
+      remind: oc.input(zSignEnvelopeRemindInput).output(zSignEnvelopeRemindResult),
+      void: oc.input(zSignEnvelopeVoidInput).output(zSignEnvelopeVoidResult),
+    },
+    signer: {
+      add: oc.input(zSignSignerAddInput).output(zSignSignerAddResult),
+      remove: oc.input(zSignSignerRemoveInput).output(zSignSignerRemoveResult),
+      reorder: oc.input(zSignSignerReorderInput).output(zSignSignerReorderResult),
+      create_link: oc.input(zSignSignerCreateLinkInput).output(zSignSignerCreateLinkResult),
+    },
+    field: {
+      set: oc.input(zSignFieldSetInput).output(zSignFieldSetResult),
+    },
+    ai: {
+      analyze: oc.input(zSignAiAnalyzeInput).output(zSignAiAnalyzeResult),
+      get: oc.input(z.strictObject({ envelopeId: zId })).output(zSignAiAnalysisRecord.nullable()),
+    },
+    template: {
+      list: oc.input(zSignTemplateListInput).output(zSignTemplateListResult),
+      get: oc.input(z.strictObject({ templateId: zId })).output(zSignTemplateDetail),
+      create: oc.input(zSignTemplateCreateInput).output(zSignTemplateCreateResult),
+      update: oc.input(zSignTemplateUpdateInput).output(zSignTemplateUpdateResult),
+      roles_set: oc.input(zSignTemplateRolesSetInput).output(zSignTemplateRolesSetResult),
+      fields_set: oc.input(zSignTemplateFieldsSetInput).output(zSignTemplateFieldsSetResult),
+      archive: oc.input(zSignTemplateArchiveInput).output(zSignTemplateArchiveResult),
+      instantiate: oc.input(zSignTemplateInstantiateInput).output(zSignTemplateInstantiateResult),
+      direct_link_set: oc.input(zSignTemplateDirectLinkSetInput).output(zSignTemplateDirectLinkResult),
+      direct_link_rotate: oc.input(zSignTemplateDirectLinkRotateInput).output(zSignTemplateDirectLinkResult),
+    },
   },
 };
 

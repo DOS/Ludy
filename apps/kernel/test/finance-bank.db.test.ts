@@ -693,6 +693,31 @@ suite('bank statement import (#326)', () => {
     expect((await claim()).map((r) => r.connection_id)).not.toContain(connectionId);
   });
 
+  it('takes the notice of an org whose Finance is off off the queue and syncs nothing, then syncs again once it is on (ADR-0053, C2)', async () => {
+    await admin((c) => c.query('DELETE FROM crove_finance.bank_feed_notice_pending'));
+    const connectionId = String((await feed('connectSandbox', owner, { displayName: 'Ngân hàng khi tắt Tài chính' })).body.connectionId);
+    await sync(connectionId);
+    // The choice is written as staff do in a fixture: the audited command is not what this test is about.
+    const setFinance = (off: boolean) =>
+      admin(async (c) => {
+        await c.query('SET session_replication_role = replica');
+        await c.query('UPDATE crove_kernel.tenant SET apps_off = $2::text[] WHERE org_id = $1', [orgId, off ? ['finance'] : []]);
+        await c.query('SET session_replication_role = DEFAULT');
+      });
+    await setFinance(true);
+    try {
+      // The provider is still answered 202: it must not see an error and drop its subscription. The claim then drops the row like one nothing lists.
+      expect((await notice(['SBX-001'])).status).toBe(202);
+      const claimed = await claim();
+      expect(claimed.map((r) => r.connection_id)).not.toContain(connectionId);
+      expect(await waiting()).toBe(0);
+    } finally {
+      await setFinance(false);
+    }
+    await notice(['SBX-001']);
+    expect((await claim()).map((r) => r.connection_id)).toContain(connectionId);
+  });
+
   it('limits the notices one address may post a minute', async () => {
     const statuses: number[] = [];
     for (let i = 0; i < 4; i++) statuses.push((await notice(['SBX-001'], {}, limitedApp)).status);

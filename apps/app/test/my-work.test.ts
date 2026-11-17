@@ -2,7 +2,7 @@
 // shortcuts and the text a hand-over proposes.
 import { describe, expect, it } from 'vitest';
 import type { MyWorkTask, TodoSummary } from '@crove/kernel-contract';
-import { groupTodos, handOverDescription, moveTarget, myWorkShortcut, stepSelection } from '../src/lib/my-work.ts';
+import { filterMyWork, groupTodos, handOverDescription, moveTarget, myWorkProjects, myWorkShortcut, stepSelection } from '../src/lib/my-work.ts';
 
 const todo = (id: string, group: TodoSummary['group']): TodoSummary => ({
   id,
@@ -16,7 +16,12 @@ const todo = (id: string, group: TodoSummary['group']): TodoSummary => ({
   group,
   overdue: group === 'overdue',
   steps: { done: 0, total: 0 },
+  sourceNoteId: null,
+  sourceNote: null,
   taskId: null,
+  recurrence: null,
+  seriesId: null,
+  tainted: false,
   revision: 1,
   createdAt: '2026-11-03T00:00:00.000Z',
   updatedAt: '2026-11-03T00:00:00.000Z',
@@ -47,12 +52,39 @@ describe('My work', () => {
   });
 
   it('puts the tasks of my positions in their groups after the to-dos, and keeps a group with tasks only (#1674)', () => {
-    const task = (id: string, group: MyWorkTask['group']): MyWorkTask => ({ id, title: id, status: 'todo', positionId: null, due: null, group, overdue: false, tainted: false });
+    const task = (id: string, group: MyWorkTask['group'], project: MyWorkTask['project'] = null): MyWorkTask => ({
+      id,
+      title: id,
+      status: 'todo',
+      positionId: null,
+      due: null,
+      group,
+      overdue: false,
+      tainted: false,
+      project,
+    });
     const groups = groupTodos([todo('a', 'today')], [task('t1', 'today'), task('t2', 'none')]);
     expect(groups.map((g) => [g.id, g.items.map((t) => t.id), g.tasks.map((t) => t.id)])).toEqual([
       ['today', ['a'], ['t1']],
       ['none', [], ['t2']],
     ]);
+
+    const pA = { id: 'p-a', name: 'Alpha' };
+    const pB = { id: 'p-b', name: 'Beta' };
+    const tasksWithProjects = [task('t1', 'today', pB), task('t2', 'today', pA), task('t3', 'none', pB), task('t4', 'none', null)];
+    expect(myWorkProjects(tasksWithProjects)).toEqual([pA, pB]);
+    expect(filterMyWork([todo('a', 'today')], tasksWithProjects, '')).toEqual({
+      todos: [todo('a', 'today')],
+      tasks: tasksWithProjects,
+    });
+    expect(filterMyWork([todo('a', 'today')], tasksWithProjects, 'p-b')).toEqual({
+      todos: [],
+      tasks: [tasksWithProjects[0], tasksWithProjects[2]],
+    });
+    expect(filterMyWork([todo('a', 'today')], tasksWithProjects, 'none')).toEqual({
+      todos: [],
+      tasks: [tasksWithProjects[3]],
+    });
   });
 
   it('proposes the details and the steps as the description a hand-over gives the team (#1674)', () => {

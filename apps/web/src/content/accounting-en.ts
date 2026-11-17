@@ -1,24 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// English copy of the Ludy Accounting page (/en/accounting), in the shape of accounting-vi.ts. The example company, its
+// English copy of the Ludy Finance page (/en/accounting), in the shape of accounting-vi.ts. The example company, its
 // vendors, people, amounts and document numbers are the home page's and stay as they are in Vietnamese.
 import type { AccountingCopy } from './accounting-vi';
 import { N } from './roster';
 
 export const accountingEn: AccountingCopy = {
-  appName: 'Ludy Accounting',
+  appName: 'Ludy Finance',
   meta: {
-    title: 'Ludy Accounting: invoices in, Ludy drafts the entry, you approve before anything posts',
+    title: 'Ludy Finance: invoices in, Ludy drafts the entry, you approve before anything posts',
     description:
-      'Ludy Accounting reads e-invoices, checks every number with fixed rules and proposes a journal entry under Circular 133. VAT, a tax calendar, period locks, year-end closing and Excel exports in the MISA SME import layouts are included. Open source, and nothing posts until a person approves.',
+      'Ludy Finance reads e-invoices, checks every number with fixed rules and proposes a journal entry under Circular 133. Sales, Purchases, Books & Tax, a tax calendar, period locks, year-end closing and Excel exports in the MISA SME import layouts are included. Open source, and nothing posts until you approve.',
   },
   ogTitle: 'Invoices in, Ludy drafts the entry. You approve before anything posts.',
   crumbLabel: 'Breadcrumb',
   hero: {
     title: 'Invoices in, Ludy drafts the entry. You approve before anything posts.',
-    lead: 'Ludy Accounting reads e-invoices, checks every number with fixed rules and proposes a journal entry under Circular 133. An entry reaches the books only when a person with the authority approves it with a two-factor code.',
+    lead: 'Ludy Finance reads e-invoices, checks every number with fixed rules and proposes a journal entry under Circular 133. An entry reaches the books only when a person with the authority approves it with a two-factor code.',
     primary: 'Self-host for free',
     secondary: 'Sign in',
-    note: 'Open source under the AGPL. Ludy Accounting is in the self-hosted edition. On Ludy Cloud: coming soon.',
+    note: 'Open source under the AGPL. Ludy Finance is in the self-hosted edition. On Ludy Cloud: coming soon.',
   },
   how: {
     title: 'Four steps from the inbox to the ledger',
@@ -26,18 +26,18 @@ export const accountingEn: AccountingCopy = {
     steps: [
       { name: 'Receive', body: `Upload, or forward an email. XML is read directly; PDFs and photos are read by ${N.finance}.`, outcome: 'Received', tone: 'neutral' },
       { name: 'Check', body: 'Fixed rules compare the totals, the VAT, the tax code and duplicates. An error in the totals stops the invoice.', outcome: 'Passed or held', tone: 'ok' },
-      { name: 'Propose', body: 'A TT133 entry lands in the inbox of documents to approve, with the reason for the accounts. Nothing is posted yet.', outcome: 'Proposed, not posted', tone: 'accent' },
+      { name: 'Propose', body: 'A TT133 entry lands in the Pending approval tab of Documents, with the reason for the accounts. Nothing is posted yet.', outcome: 'Proposed, not posted', tone: 'accent' },
       { name: 'Approve', body: 'The approver looks, changes an account if needed and enters the two-factor code. Only then does the entry reach the books.', outcome: 'Posted', tone: 'ok' },
     ],
   },
   groups: {
-    title: 'What Ludy Accounting does today',
-    lead: 'Grouped by the job you have, from the moment an invoice arrives to closing the year.',
+    title: 'What Ludy Finance does today',
+    lead: 'Arranged across the Finance menu: Documents, Vouchers and Bank statements, plus the three groups Sales, Purchases and Books & Tax.',
     items: [
       {
         id: 'receive-and-check',
-        title: 'Receive and check documents',
-        lead: 'Invoices come in by upload or by forwarded email. The checks are fixed rules, not AI, and when something does not add up the invoice stops and waits for a person.',
+        title: 'Documents: receive and check',
+        lead: 'Invoices land in Documents by upload or by forwarded email, starting in Pending approval before moving to All documents. The checks are fixed rules, not AI.',
         points: [
           'E-invoice XML under Decree 254/2026 and Circular 91/2026, and invoices under Decree 123/2020, is read directly from its XML structure, with no AI',
           'PDFs and photos are read by an OpenAI-compatible model the person installing Ludy configures. A PDF that holds only a scanned image cannot be read yet',
@@ -48,36 +48,36 @@ export const accountingEn: AccountingCopy = {
       },
       {
         id: 'post-with-control',
-        title: 'Draft entries and post with control',
-        lead: 'Ludy proposes a debit and credit entry under Circular 133 and says why it chose the accounts. Until someone with the authority approves it, it is only a proposal.',
+        title: 'Sales, Purchases and controlled posting',
+        lead: 'The Sales group holds Sales invoices, Customers and Items; the Purchases group holds Vendors. Ludy proposes a debit and credit entry under Circular 133 and waits for someone with the authority to approve.',
         points: [
           'Approving an entry needs a fresh two-factor code, no older than 5 minutes. Every decision lands in a change log that cannot be edited or deleted through the app',
-          'The account is remembered per vendor and item, with who approved it, when, and the document it came from',
+          'Vendors and Customers remember accounts per counterparty and item; the Payment reminders tab in Customers drafts overdue receivable emails for you to review and send',
+          'Sales invoices drafts invoices and runs test issuance in a built-in offline sandbox; live e-invoice provider connections are not available yet. Items has a Stock levels tab with provisional weighted-average stock until month close, and a Marketplaces tab to import payout files (Shopee and TikTok Shop column profiles are unconfirmed on real seller files)',
           'A line that matches no rule is marked unclassified. Ludy does not post until a person picks the account, and it does not guess quietly',
-          'When a replacement invoice is approved, the original is voided and its entry reversed. An adjustment invoice is linked to the original',
-          'A posted ledger cannot be edited or deleted. A mistake is fixed with a reversing entry',
+          'When a replacement invoice is approved, the original is voided and its entry reversed. An adjustment invoice is linked to the original. A posted ledger cannot be edited or deleted',
         ],
       },
       {
         id: 'tax',
-        title: 'VAT and the tax calendar',
-        lead: 'Ludy works out VAT from the books, shows what to look at before you file, and reminds you client by client.',
+        title: 'Tax: VAT return, Tax portal check and tax calendar',
+        lead: 'Under Books & Tax, the Tax screen works out VAT from the books, shows what to look at before you file, and compares the tax portal list you upload.',
         points: [
           'Input and output VAT by month or by quarter, as the company files',
-          'An XML file of the 01/GTGT return. Ludy fills the indicators it can compute from the books; the tax office, the signer and some indicators are left for you to finish. Whether HTKK and eTax accept the file is still being checked with a partner accountant',
+          'The VAT return tab exports an XML file of the 01/GTGT return. Ludy fills the indicators it can compute from the books; the tax office, the signer and some indicators are left for you to finish. Whether HTKK and eTax accept the file is still being checked with a partner accountant',
           'Missing numbers in the sales invoice series are shown before you file. Only invoices already in the books count',
           'An owner, an admin or a chief accountant marks the return as filed. That is a record in Ludy; Ludy does not file with the tax portal for you',
           'A tax calendar for each client and each legal entity: due dates and done marks. The table of due dates has not been confirmed by an accountant yet, and the screen in the app says so',
-          'Missing purchase invoices: upload the list exported from the tax portal, Ludy compares it with the books and emails the client to ask for them, once the installer has configured a mail server',
+          'The Tax portal check tab: upload the list exported from the tax portal, Ludy compares it with the books and emails the client to ask for missing purchase invoices, once the installer has configured a mail server',
         ],
       },
       {
         id: 'books',
-        title: 'Books, period locks and exports',
-        lead: 'The general journal, the ledger and the reports come from one source. At period end you lock the books so nobody posts more; at year end you close and keep the package.',
+        title: 'Books & Tax: Journal, Ledgers, Assets, period locks and exports',
+        lead: 'Journal, Ledgers, Assets, Vouchers and Bank statements come from one ledger source. At period end you lock the books; at year end you close and keep the archive.',
         points: [
-          'The general journal, the ledger, cash vouchers, fixed assets with monthly depreciation, and opening balances imported from Excel',
-          'Import bank statements from an Excel file or a CSV file, or send them by email; a member confirms the lines before they reach the books. A direct bank connection is not available yet',
+          'Journal (general journal), Ledgers, Vouchers, Fixed assets with monthly depreciation, opening balances imported from Excel, and the S1a sales book for Household business entities (statutory thresholds await accountant confirmation)',
+          'Bank statements imported from an Excel file or a CSV file, or sent by email; a member confirms the lines before they reach the books. A direct bank connection is not available yet',
           'Months lock one at a time, in order. Unlocking starts from the last locked month and needs an owner or a chief accountant, a two-factor code and a written reason',
           'At year end: revenue and expenses move to 911, then the result to 4212, as one proposed entry that needs approval with a two-factor code. After it is approved and all 12 months are locked, an owner builds the financial-year archive with the original files of the documents',
           'Excel export in the MISA SME import layouts for service purchases, goods purchases, sales, receipts and payments; the vendor and customer codes are left for the accountant to fill in, while item and warehouse codes are set in Settings. Importing into a real MISA is still being checked with a partner accountant',
@@ -89,21 +89,22 @@ export const accountingEn: AccountingCopy = {
   },
   soon: {
     title: 'Coming soon',
-    lead: 'The two items below have not run against the real tax portal or a real bank, so Ludy does not count them as available.',
+    lead: 'The three items below do not yet connect directly to the real tax portal, a real bank or a live e-invoice provider, so Ludy does not count them as available.',
     label: 'Coming soon',
     items: [
-      { title: 'Pull the invoice list from the tax portal', body: 'Today you upload the Excel file exported from the portal, and Ludy compares it with the books.' },
-      { title: 'A direct bank connection', body: 'Today statements are imported from an Excel file, a CSV file or an email.' },
+      { title: 'Pull the invoice list directly from the tax portal', body: 'Today you upload the Excel file exported from the portal in Tax portal check, and Ludy compares it with the books.' },
+      { title: 'A direct bank connection', body: 'Today statements are imported from an Excel file, a CSV file or an email in Bank statements.' },
+      { title: 'Issue e-invoices through a live provider', body: 'Today Sales invoices creates drafts and runs test issuance in a built-in offline sandbox.' },
     ],
   },
   coworker: {
-    title: `What ${N.finance} does in Ludy Accounting`,
-    lead: `${N.finance} is the AI CFO, your coworker in accounting, working under ${N.gm}’s coordination. ${N.finance} does the reading; whether a number is right is decided by fixed rules and by people.`,
+    title: `What ${N.finance} does in Ludy Finance`,
+    lead: `${N.finance} is the AI CFO, your coworker in Ludy Finance (and reviewing payroll changes in Ludy HR), working under ${N.gm}’s coordination. ${N.finance} does the reading; whether a number is right is decided by fixed rules and by people.`,
     doesTitle: `${N.finance} does`,
     does: [
       'Reads PDF and photo invoices into structured data',
-      'Puts the result in the inbox of documents to approve, marked as read by AI and needing a person’s check',
-      'An owner presses "Stop AI", with a two-factor code, to switch off all AI work of the company; new PDF and photo reads wait until it is turned back on',
+      'Puts the result in the Pending approval tab of Documents, marked as read by AI and needing a person’s check',
+      'An owner or admin presses Stop AI in Ludy AI to switch off all AI work of the company at once (turning it back on needs an owner and a two-factor code); while stopped, new PDF and photo reads are refused and can be re-read once AI is turned back on',
     ],
     doesNotTitle: `${N.finance} does not`,
     doesNot: [
@@ -113,7 +114,7 @@ export const accountingEn: AccountingCopy = {
     ],
   },
   audience: {
-    title: 'Who Ludy Accounting is for',
+    title: 'Who Ludy Finance is for',
     lead: 'One set of data, three ways to use it.',
     items: [
       {
@@ -131,7 +132,7 @@ export const accountingEn: AccountingCopy = {
     ],
   },
   faq: {
-    title: 'Questions about Ludy Accounting',
+    title: 'Questions about Ludy Finance',
     items: [
       {
         q: 'Can I use it without knowing accounting?',
@@ -142,8 +143,8 @@ export const accountingEn: AccountingCopy = {
         a: 'No. Ludy exports an XML file of the 01/GTGT return with the indicators it can compute from the books; you finish and file it with the tax authority’s tools. Whether HTKK and eTax accept the file is still being checked with a partner accountant. Marking a return as filed in Ludy is only a record.',
       },
       {
-        q: 'Does Ludy issue sales invoices, run payroll or manage stock?',
-        a: 'Not yet. Ludy reads and records invoices and shows gaps in the number series, but issuing e-invoices is still done in your invoicing software. There is no payroll, stock card or cash-flow statement yet.',
+        q: 'How far along are Sales invoices, Items and payroll today?',
+        a: 'Sales invoices creates drafts and runs test issuance in a built-in sandbox, without a live e-invoice provider connection for real authority codes yet. Items computes provisional weighted-average stock until month close and imports marketplace payout files. Payroll and employee records live in their own app in the switcher, Ludy HR, which drafts monthly pay runs while statutory payroll rules await accountant confirmation. There is no cash-flow statement yet.',
       },
       {
         q: 'How does data get into MISA?',
@@ -156,7 +157,7 @@ export const accountingEn: AccountingCopy = {
     ],
   },
   cta: {
-    title: 'Try Ludy Accounting on your own invoices',
+    title: 'Try Ludy Finance on your own invoices',
     body: 'Self-host for free with a single docker compose command. If you already have an account, sign in.',
     primary: 'See how to self-host',
     secondary: 'Sign in',

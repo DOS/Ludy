@@ -1,7 +1,7 @@
 // Bank statements (issue #326): finding a bank export's columns by their headers, the lines under them, and CSV as
 // banks write it.
 import { describe, expect, it } from 'vitest';
-import { findColumns, headerKey, headerLabels, parseCsv, statementRows } from '../src/lib/bank-statement.ts';
+import { findColumns, headerKey, headerLabels, lastFullMonth, parseCsv, statementRows } from '../src/lib/bank-statement.ts';
 import type { SheetCell, SheetRows } from '../src/lib/xlsx.ts';
 
 const sheet = (rows: Record<number, Array<string | number | null>>): SheetRows =>
@@ -77,5 +77,16 @@ describe('parseCsv', () => {
   it('reads commas and tabs', () => {
     expect(parseCsv('a,b,c\n1,"2,5",3').get(2)?.get(1)?.value).toBe('2,5');
     expect(parseCsv('a\tb\n1\t2').get(2)?.get(1)?.value).toBe('2');
+  });
+});
+
+describe('lastFullMonth (#3602)', () => {
+  it('is the month before today in Vietnam, across a year end', () => {
+    expect(lastFullMonth(new Date('2026-11-17T03:00:00Z'))).toBe('2026-10');
+    expect(lastFullMonth(new Date('2027-01-05T03:00:00Z'))).toBe('2026-12');
+  });
+  it('follows the Vietnam calendar day, not UTC', () => {
+    // 2026-11-30 18:00 UTC is already 1 December in Vietnam.
+    expect(lastFullMonth(new Date('2026-11-30T18:00:00Z'))).toBe('2026-11');
   });
 });

@@ -108,6 +108,8 @@ export async function sweepQueueLow(deps: { runtime: Runtime; workerDb: Db }): P
       SELECT org_id, queue_id FROM crove_social.queue_low_due(${after?.org ?? null}::uuid, ${after?.id ?? null}::uuid, ${QUEUE_LOW_PAGE}::int)`.execute(deps.workerDb);
     for (const row of rows) {
       try {
+        // An app that is off for the org (ADR-0053) has nothing to do here: no call, no refusal row, no line in the log.
+        if (!(await deps.runtime.appOn(row.org_id, 'social'))) continue;
         const done = await deps.runtime.execute<{ state: QueueLowState }>('social.queue.check_low', { queueId: row.queue_id }, { actor: ACTOR, orgId: row.org_id });
         if (done.state === 'alerted') alerted += 1;
       } catch (error) {

@@ -9,10 +9,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crov
 import { Label } from '@crove/ui/components/label';
 import { NativeSelect } from '@crove/ui/components/native-select';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
+import { AgendaAttach } from '../components/meeting-agenda.tsx';
+import { ImportAutoClaim } from '../components/meeting-import-claim.tsx';
 import { MeetingLinks } from '../components/meeting-links.tsx';
 import { MeetingResults, memberLabel } from '../components/meeting-results.tsx';
 import { MeetingLive } from '../components/meeting-live.tsx';
+import { MeetingBrief } from '../components/meeting-brief.tsx';
+import { MeetingSeries } from '../components/meeting-series.tsx';
+import { MeetingNotes } from '../components/meeting-notes.tsx';
 import { MeetingTranscript } from '../components/meeting-transcript.tsx';
+import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { RecordingStoppedNote } from '../components/recording-stopped.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
@@ -21,7 +27,7 @@ import { apiFetch, errorMessage, fetchVideoTicket, isStepUpRequired, orpc, query
 import { toast } from '../lib/toast.ts';
 import { createVideoTicketPlayer, videoStreamUrl, type VideoTicketPlayer } from '../lib/video-ticket.ts';
 
-const CONSENT_KEYS = { told_at_start: 'toldAtStart', in_invite: 'inInvite', in_writing: 'inWriting', in_call_chat: 'inCallChat' } as const;
+const CONSENT_KEYS = { told_at_start: 'toldAtStart', in_invite: 'inInvite', in_writing: 'inWriting', in_call_chat: 'inCallChat', platform_notice: 'platformNotice' } as const;
 
 const STATUS_VARIANTS: Record<string, 'default' | 'secondary' | 'outline' | 'destructive'> = {
   ready: 'default',
@@ -32,6 +38,7 @@ const STATUS_VARIANTS: Record<string, 'default' | 'secondary' | 'outline' | 'des
 
 export function MeetingDetailPage() {
   const t = useTranslations('meetings');
+  const tn = useTranslations('notes');
   const f = useFormat();
   const navigate = useNavigate();
   const { slug, id } = useParams({ strict: false }) as { slug: string; id: string };
@@ -322,10 +329,45 @@ export function MeetingDetailPage() {
         )}
       </div>
 
+      {/* An import the member started (C1, #3173): its copied audio is claimed here too */}
+      <ImportAutoClaim />
+
+      {/* The recorder's own calendar (B1, #3165): link this recording to the one event it overlaps, after a click */}
+      {meeting.isRecorder && <AgendaAttach meetingId={id} />}
+
       <MeetingLive meetingId={id} liveNotes={meeting.liveNotes} isRecorder={meeting.isRecorder} />
       {/* The transcript: the recorder's draft, or what was shared with the meeting */}
       <MeetingTranscript meetingId={id} {...(seg ? { focusSegmentId: seg } : {})} />
-      <MeetingResults meetingId={id} readers={meeting.readers} />
+      {/* The recorder's own rough notes (A5): theirs alone, so only the recorder gets the box */}
+      {/* What to bring to the next meeting of a series (#3543): the previous meeting's decisions, the open items, the linked customer's open deals, and Vy's few sentences on a click */}
+      <MeetingBrief slug={slug} meetingId={id} />
+      {/* The open items of the previous meeting of its series (#3542), and the recorder's way to put a meeting in a series */}
+      <MeetingSeries meetingId={id} isRecorder={meeting.isRecorder} startedAt={meeting.startedAt} />
+      {meeting.isRecorder && <MeetingNotes meetingId={id} minutesTemplate={meeting.minutesTemplate} />}
+      <MeetingResults
+        meetingId={id}
+        slug={slug}
+        visibility={meeting.visibility}
+        readers={meeting.readers}
+        template={meeting.summaryTemplate}
+        minutesTemplate={meeting.minutesTemplate}
+        title={meeting.title}
+        minutesLink={
+          <Link to="/o/$slug/print/meeting-minutes/$id" params={{ slug, id }} className="text-sm text-link underline">
+            {t('minutes.open')}
+          </Link>
+        }
+      />
+
+      {notesInstalled() && (
+        <RecordNotesPanel
+          slug={slug}
+          target={{ targetType: 'meetings.meeting', targetId: meeting.id }}
+          headingId={`notes-meeting-${meeting.id}`}
+          label={tn('panel.toggleOf', { name: meeting.title })}
+          empty={tn('panel.emptyRecord')}
+        />
+      )}
 
       <div className="grid gap-6 md:grid-cols-2">
         {/* Consent Record Card */}

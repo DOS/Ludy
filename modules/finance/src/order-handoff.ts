@@ -14,14 +14,17 @@ import {
   EINVOICE_DRAFT_MAX_LINES,
   ORDER_SOURCE_KIND,
   zEInvoiceDraftFromOrder,
+  zOrderLineInvoiceStates,
+  zOrderLineInvoiceStatesInput,
   zStockMoveFromOrderLine,
   type EInvoiceDraft,
+  type OrderLineInvoiceStates,
   type SalesOrderHandoff,
   type SalesOrderHandoffLine,
   type StockMoveFromOrderLineResult,
 } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
 import { computeLineTotals, money, sumLineTotals } from '@crove/l10n-vn';
 import { computeDraft } from './domain/einvoice-draft.ts';
 import { moveQuantity, movableQuantity, oppositeQuantity } from './domain/stock.ts';
@@ -32,6 +35,7 @@ import { loadItem, writeStockMove } from './stock.ts';
 import { matchLineItem } from './stock-lines.ts';
 
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
+const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 
 const pgCode = (error: unknown) => (error as { code?: string } | null)?.code;
 
@@ -128,7 +132,7 @@ export const einvoiceDraftFromOrder = defineCommand({
     const draft = toDraftInput({
       date: today,
       seriesId: series?.id ?? null,
-      buyer: { kind: handoff.buyer.kind, partyId: null, taxCode: handoff.buyer.taxCode, name: handoff.buyer.name, address: handoff.buyer.address, email: handoff.buyer.email },
+      buyer: { kind: handoff.buyer.kind, partyId: null, taxCode: handoff.buyer.taxCode, name: handoff.buyer.name, address: handoff.buyer.address, email: handoff.buyer.email, identity: null },
       lines: chosen.map((l) => ({ description: l.description, unit: l.unit, quantity: l.quantity ?? '0', unitPrice: l.unitPrice ?? '0', vatRate: l.vatRate ?? '' })),
     });
     const computed = computeDraft(draft.lines);
@@ -299,4 +303,40 @@ export async function orderSourcesOfInvoice(ctx: CommandContext, legalEntityId: 
   return sources;
 }
 
+// Which lines of these orders a draft holds, and whether the draft is issued (#3477, ADR-0050): the order screen's per-line label and the reason it does not offer to cancel a drafted
+// order. A hint for the screen, never the rule: `draft_from_order` still refuses a line twice (ORDER_LINE_ALREADY_INVOICED) and the cancel rule is the CRM's. It runs on the caller's
+// transaction, so the tables' own policies apply (organisation isolation and the legal-entity scope: a member limited to some entities sees only the drafts of those). An order is
+// asked by id and never listed, so this walks no draft and reconciles nothing. `issued` is the draft's `issued` state; every other state keeps the line held and reads `draft`
+// (a deleted draft took its lines with it, so its lines are not listed and read as open). Only ids, a line number and a state leave: no number, buyer, amount or text.
+export const einvoiceDraftOrderLines = defineQuery({
+  name: 'finance.einvoice_draft.order_lines',
+  input: zOrderLineInvoiceStatesInput,
+  access: ALL,
+  handler: async (ctx, input): Promise<OrderLineInvoiceStates> => {
+    const orderIds = [...new Set(input.orderIds)];
+    const rows = await ctx.trx
+      .selectFrom('crove_finance.einvoice_draft_line as l')
+      .innerJoin('crove_finance.einvoice_draft as d', (join) => join.onRef('d.org_id', '=', 'l.org_id').onRef('d.legal_entity_id', '=', 'l.legal_entity_id').onRef('d.id', '=', 'l.draft_id'))
+      .select(['l.source_id', 'l.source_line_no', 'd.state'])
+      .where('l.org_id', '=', ctx.orgId)
+      .where('l.source_kind', '=', ORDER_SOURCE_KIND)
+      .where('l.source_id', 'in', orderIds)
+      .orderBy('l.source_id')
+      .orderBy('l.source_line_no')
+      .execute();
+    const byOrder = new Map<string, Map<number, 'draft' | 'issued'>>();
+    for (const r of rows) {
+      if (r.source_id === null || r.source_line_no === null) continue;
+      const lines = byOrder.get(r.source_id) ?? new Map<number, 'draft' | 'issued'>();
+      // One draft line per order line (the unique index), so no line reads two states.
+      lines.set(r.source_line_no, r.state === 'issued' ? 'issued' : 'draft');
+      byOrder.set(r.source_id, lines);
+    }
+    return zOrderLineInvoiceStates.parse({
+      orders: [...byOrder].map(([orderId, lines]) => ({ orderId, lines: [...lines].map(([lineNo, state]) => ({ lineNo, state })).sort((a, b) => a.lineNo - b.lineNo) })),
+    });
+  },
+});
+
+export const orderHandoffQueries = [einvoiceDraftOrderLines];
 export const orderHandoffCommands = [einvoiceDraftFromOrder, stockMoveFromOrderLine];

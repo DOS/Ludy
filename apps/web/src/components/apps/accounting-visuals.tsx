@@ -5,7 +5,7 @@ import type { Dictionary } from '../../content/vi';
 import { SalesNumberGaps, VatBreakdown } from '../landing/finance-fragments';
 import { Chip } from '../landing/ui';
 
-// The pieces of Ludy Kế toán the page draws, in HTML with the example data of the home page's sample company (DESIGN.md
+// The pieces of Ludy Tài chính the page draws, in HTML with the example data of the home page's sample company (DESIGN.md
 // 2 and 6.2): each is something the product shows today. Panel titles are not headings, so the page's outline stays
 // the section titles and the feature groups.
 type Props = { dict: Dictionary; copy: AccountingCopy };

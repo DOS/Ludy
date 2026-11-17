@@ -21,7 +21,9 @@ import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { AdsBooksStrip } from '../components/ads-books-strip.tsx';
+import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { AdsFlagSettingsCard } from '../components/ads-flag-settings.tsx';
+import { AdsCommittedStrip } from '../components/ads-committed.tsx';
 import { AdsFlagsCard } from '../components/ads-flags.tsx';
 import { AdsWeeklyNoteCard } from '../components/ads-weekly-note.tsx';
 import { AdsRevokeNotice, AdsWriteCard } from '../components/ads-write.tsx';
@@ -32,6 +34,7 @@ import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import {
   ADS_RANGES,
   DEFAULT_ADS_RANGE,
+  connectionEndsSoon,
   FIRST_SYNC_POLL_LIMIT,
   FIRST_SYNC_POLL_MS,
   REFRESH_POLL_MS,
@@ -62,6 +65,7 @@ import { disconnectConfirmText, hasOpenWriteConnection } from '../lib/ads-write.
 import { getConfig } from '../lib/auth.ts';
 import { monthLabel } from '../lib/period-lock.ts';
 import { toast } from '../lib/toast.ts';
+import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 
 type SandboxCurrency = (typeof ADS_SANDBOX_CURRENCIES)[number];
 
@@ -302,6 +306,7 @@ export function AdsEmpty({
 function SyncStatus({ account }: { account: AdAccountView }) {
   const t = useTranslations('ads');
   const f = useFormat();
+  const nowMs = useNowUntil(0);
   const active = account.connectionStatus === 'active';
   return (
     <div className="mt-3 space-y-1 text-sm">
@@ -325,6 +330,11 @@ function SyncStatus({ account }: { account: AdAccountView }) {
       {active && account.provider === 'google_ads' && account.connectionExpiresAt && (
         <p className="text-warning" role="status">
           {t('connectionExpiresSoon', { when: f.date(account.connectionExpiresAt) })}
+        </p>
+      )}
+      {connectionEndsSoon(account, nowMs) && account.connectionExpiresAt && (
+        <p className="text-warning" role="status">
+          {t('connectionEndsSoon', { when: f.date(account.connectionExpiresAt) })}
         </p>
       )}
       {account.connectionStatus !== 'active' && (
@@ -832,6 +842,7 @@ function AccountPanel({
   role,
   entities,
   financeOn,
+  slug,
   reconnect,
   googleReconnect,
   onRequested,
@@ -842,6 +853,7 @@ function AccountPanel({
   role: string | undefined;
   entities: readonly LegalEntity[];
   financeOn: boolean;
+  slug: string;
   // Where a paused Meta account is connected again: the org's address, when the deployment has its Meta ads app (#2219).
   reconnect: { slug: string } | undefined;
   // Where a paused Google Ads account is connected again (#2220).
@@ -851,6 +863,8 @@ function AccountPanel({
   const t = useTranslations('ads');
   const canManage = role === 'owner' || role === 'admin';
   const canRefresh = canManage || role === 'member';
+  // The legal entity chosen in the shell: the bank screen a line of the books strip links to opens on it.
+  const shellEntityId = useChosenEntity().legalEntityId;
   useRefetchOnRun(account);
   const ready = hasFigures(account);
   // The window moves on with the clock, an hour at a time, so a tab left open does not read yesterday's month.
@@ -859,10 +873,12 @@ function AccountPanel({
   const days = adsRange(range, account.timeZone, now);
   const summary = useQuery({ ...orpc.ads.summary.queryOptions({ input: { adAccountId: account.id, from: days.from, to: days.to } }), enabled: ready });
   const currency = account.currency ?? '';
+  // An active connection that ends soon (a Meta token of 60 days): owners and admins reconnect it before it does, as for a paused one.
+  const endsSoon = connectionEndsSoon(account, Date.now());
   return (
     <div className="space-y-8">
       <AccountHeader account={account} canRefresh={canRefresh} onRequested={onRequested} />
-      {reconnect && canManage && account.provider === 'meta_ads' && account.connectionStatus !== 'active' && account.pausedReason !== 'platform_deletion' && (
+      {reconnect && canManage && account.provider === 'meta_ads' && (account.connectionStatus !== 'active' || endsSoon) && account.pausedReason !== 'platform_deletion' && (
         <Card className="block p-4">
           <ConnectMeta slug={reconnect.slug} another reconnect />
         </Card>
@@ -872,7 +888,7 @@ function AccountPanel({
           <ConnectGoogle slug={googleReconnect.slug} another reconnect />
         </Card>
       )}
-      {account.connectionStatus !== 'active' && !canManage && account.pausedReason !== 'platform_deletion' && (
+      {(account.connectionStatus !== 'active' || endsSoon) && !canManage && account.pausedReason !== 'platform_deletion' && (
         <p className="text-sm text-muted-foreground" role="status">
           {t('paused.noReconnect')}
         </p>
@@ -896,12 +912,13 @@ function AccountPanel({
           ) : (
             <>
               <Totals summary={summary.data} currency={currency} canManage={canManage} />
+              {canManage && <AdsCommittedStrip account={account} month={todayIn(account.timeZone, now).slice(0, 7)} />}
               {summary.data.days.length === 0 ? (
                 <Empty title={t('noSpend')} hint={t('noSpendHint')} />
               ) : (
                 <>
                   <Breakdowns summary={summary.data} currency={currency} />
-                  <AdsBooksStrip account={account} months={summary.data.months} todayMonth={todayIn(account.timeZone, now).slice(0, 7)} financeOn={financeOn} />
+                  <AdsBooksStrip account={account} slug={slug} months={summary.data.months} todayMonth={todayIn(account.timeZone, now).slice(0, 7)} financeOn={financeOn} shellEntityId={shellEntityId} />
                 </>
               )}
             </>
@@ -928,7 +945,8 @@ export function AdsPage() {
   const metaOffered = readOAuth.includes('meta_ads');
   const googleOffered = readOAuth.includes('google_ads');
   const writeOffer = adWriteOffer(config);
-  const financeOn = config.modules.includes('finance');
+  useModulesVersion(); // the apps of the org can change while this screen is open
+  const financeOn = installedModules().includes('finance');
   const me = useQuery(orpc.me.get.queryOptions());
   const role = me.data?.orgs.find((o) => o.slug === slug)?.role;
   const canManage = role === 'owner' || role === 'admin';
@@ -1018,6 +1036,7 @@ export function AdsPage() {
             role={role}
             entities={entities.data ?? []}
             financeOn={financeOn}
+            slug={slug}
             reconnect={metaOffered ? { slug } : undefined}
             googleReconnect={googleOffered ? { slug } : undefined}
             onRequested={() => setWatchUntil(Date.now() + REFRESH_WATCH_MS)}

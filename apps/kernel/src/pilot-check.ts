@@ -12,7 +12,9 @@ import { S3BlobStore, parseVaultKey, type S3Sender } from '@crove/kernel-runtime
 import { AVAILABLE_MODULES, SAMPLE_DB_PASSWORDS } from './config.ts';
 import { parseAllowedOrigins } from './cors.ts';
 import { parseExportKey } from './export-seal.ts';
+import { isPositivePrice } from './price.ts';
 import { loadProberConfig } from './prober.ts';
+import { parseAllowedEmails } from './auth-access.ts';
 
 export const PILOT_EXIT = { ok: 0, failed: 1, error: 2 } as const;
 
@@ -171,16 +173,17 @@ function modulesProblem(env: Env): string | null {
   return unknown.length > 0 ? `CROVE_MODULES names ${unknown.length} module(s) this build does not ship (available: ${AVAILABLE_MODULES.join(', ')}); the kernel refuses to start on it` : null;
 }
 
+// The prices are decimal strings and are compared as decimals (the money rule, #3481).
 // Speech to text for meetings is priced by the minute of audio: on with a zero price, the hard-stop budget never refuses a transcription (#2578).
 function transcribePriceProblem(env: Env): string | null {
   if (value(env, 'MEETINGS_TRANSCRIBE') !== 'on') return null;
-  return Number(value(env, 'AI_PRICE_AUDIO_PER_MIN') ?? '0') > 0 ? null : 'MEETINGS_TRANSCRIBE is on while AI_PRICE_AUDIO_PER_MIN is 0: a transcription then costs nothing to the AI budget and its hard stop never refuses one; set the price of a minute of audio';
+  return isPositivePrice(value(env, 'AI_PRICE_AUDIO_PER_MIN') ?? '0') ? null : 'MEETINGS_TRANSCRIBE is on while AI_PRICE_AUDIO_PER_MIN is 0: a transcription then costs nothing to the AI budget and its hard stop never refuses one; set the price of a minute of audio';
 }
 
 // The per-org AI cost limit counts tokens at AI_PRICE_*; with both at 0 every call costs nothing to the cap.
 function aiCostProblem(env: Env): string | null {
   if (value(env, 'AI_API_KEY') === undefined) return null;
-  const priced = ['AI_PRICE_INPUT_PER_MTOK', 'AI_PRICE_OUTPUT_PER_MTOK'].some((name) => Number(value(env, name) ?? '0') > 0);
+  const priced = ['AI_PRICE_INPUT_PER_MTOK', 'AI_PRICE_OUTPUT_PER_MTOK'].some((name) => isPositivePrice(value(env, name) ?? '0'));
   return priced ? null : 'AI_API_KEY is set while AI_PRICE_INPUT_PER_MTOK and AI_PRICE_OUTPUT_PER_MTOK are both 0: AI usage then costs nothing to ORG_LIMIT_AI_COST_PER_DAY and the cap does nothing; set the price of the model per million tokens';
 }
 
@@ -325,14 +328,24 @@ export function checkEnv(env: Env): CheckResult[] {
   const policy = value(env, 'AUTH_SIGNUP_POLICY');
   const domains = value(env, 'AUTH_SIGNUP_ALLOWED_DOMAINS');
   const restricted = policy === 'invite_only' || (policy === 'allowlist' && domains !== undefined);
+  // A provider of the deployment's own (no bundled Supabase Auth, #2704): sign-up there is not Crove's to close; what Crove can
+  // limit is who may use this deployment, AUTH_ALLOWED_EMAILS.
+  // The upstream line must be present and empty: an absent line is compose's default, the bundled Supabase Auth.
+  const ownProvider = env['AUTH_UPSTREAM_URL'] !== undefined && env['AUTH_UPSTREAM_URL'].trim() === '' && value(env, 'PUBLIC_AUTH_URL') !== undefined;
+  // An empty parse (`, ,`) lists nobody: the kernel refuses it at boot, and this check does not count it as a limit.
+  const allowed = parseAllowedEmails(value(env, 'AUTH_ALLOWED_EMAILS') ?? '').entries.length > 0;
   add(
     'Sign-up limited',
     [
-      signup === 'true' || restricted
+      signup === 'true' || restricted || (ownProvider && allowed)
         ? null
         : `AUTH_DISABLE_SIGNUP is ${signup ?? 'unset'} and AUTH_SIGNUP_POLICY is ${policy ?? 'unset'}${policy === 'allowlist' ? ' without AUTH_SIGNUP_ALLOWED_DOMAINS' : ''}: anyone who reaches PUBLIC_URL can create an account; set AUTH_SIGNUP_POLICY=invite_only, or AUTH_DISABLE_SIGNUP=true once the partner's accounts exist (docs/runbooks/pilot-readiness.md)`,
     ],
-    signup === 'true' ? 'AUTH_DISABLE_SIGNUP=true: Supabase Auth creates no new accounts' : `AUTH_SIGNUP_POLICY=${policy}: Crove forwards only sign-ups it admits`,
+    signup === 'true'
+      ? 'AUTH_DISABLE_SIGNUP=true: Supabase Auth creates no new accounts'
+      : ownProvider && allowed && !restricted
+        ? 'AUTH_ALLOWED_EMAILS: Crove refuses every address that is not listed'
+        : `AUTH_SIGNUP_POLICY=${policy}: Crove forwards only sign-ups it admits`,
   );
 
   // Alerts (M1-9, issue #309): the prober posts to a channel the owner reads, and it runs.

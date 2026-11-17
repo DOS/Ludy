@@ -31,7 +31,7 @@ function CardLink({ card, slug, label }: { card: OverviewCard; slug: string; lab
   return <Link to="/o/$slug/vendors" params={{ slug }} className={className}>{label}</Link>;
 }
 
-function FigureCard({ card, figure, slug, comparison }: { card: OverviewCard; figure: OverviewFigure; slug: string; comparison: OverviewComparison }) {
+export function FigureCard({ card, figure, slug, comparison }: { card: OverviewCard; figure: OverviewFigure; slug: string; comparison: OverviewComparison }) {
   const t = useTranslations('financeOverview');
   const f = useFormat();
   const direction = directionOf(figure);
@@ -254,14 +254,19 @@ export function AccountingOverviewPage() {
       {data && (
         <>
           <p className="mb-3 text-xs text-subtle-foreground">{t('period', { from: f.date(data.from), to: f.date(data.to), previousFrom: f.date(data.previousFrom), previousTo: f.date(data.previousTo) })}</p>
-          <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {OVERVIEW_CARDS.map((card) => (
-              <li key={card}>
-                <FigureCard card={card} figure={data[card]} slug={slug} comparison={data.comparison} />
-              </li>
-            ))}
-          </ul>
-          {data.unmapped > 0 && <p className="mt-3 text-xs text-warning">{t('unmapped', { count: data.unmapped })}</p>}
+          {/* With no ledger data the next steps stand alone: four cards of 0 and "no change" say nothing (#3602). */}
+          {!data.empty && (
+            <>
+              <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {OVERVIEW_CARDS.map((card) => (
+                  <li key={card}>
+                    <FigureCard card={card} figure={data[card]} slug={slug} comparison={data.comparison} />
+                  </li>
+                ))}
+              </ul>
+              {data.unmapped > 0 && <p className="mt-3 text-xs text-warning">{t('unmapped', { count: data.unmapped })}</p>}
+            </>
+          )}
           {data.empty ? (
             <div className="mt-8">
               <FirstSteps slug={slug} />

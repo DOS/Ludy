@@ -91,6 +91,18 @@ export async function verifyExtensionBearer(db: Db, token: string): Promise<Exte
   return { tokenId: row.token_id, orgId: row.org_id, userId: row.user_id, scopes, expiresAt: new Date(row.expires_at).toISOString() };
 }
 
+// The email of the account that owns a token, for AUTH_ALLOWED_EMAILS (issue #3223): null when no token has this value. Read-only (a STABLE
+// definer), unlike verifyExtensionBearer, which stamps last_used_at, so the edge asks it first and a refused account costs no write. It looks at
+// no standing: a revoked or expired token still answers here and is then refused by verifyExtensionBearer as before.
+export async function extensionTokenAccountEmail(db: Db, token: string): Promise<string | null> {
+  try {
+    const { rows } = await sql<{ email: string | null }>`SELECT crove_kernel.extension_token_account_email(${hashExtensionSecret(token)}::bytea) AS email`.execute(db);
+    return rows[0]?.email ?? null;
+  } catch (error) {
+    throw toDomainError(error);
+  }
+}
+
 export interface ExtensionExchange {
   // The one-time code the token came from: the audit row of the exchange names it with the token.
   codeId: string;
@@ -153,11 +165,13 @@ export interface ExtensionRoute {
 
 // The routes an extension token may reach, and nothing else (deny by default). None reads a meeting's content: the
 // meetings scope creates a meeting with its consent record, gets an upload grant, finishes the upload of a meeting
-// the same token created and reads its status.
+// the same token created and reads its status. The agenda scope reads the member's next few calendar events, title, times and join host.
 export const EXTENSION_ROUTES: readonly ExtensionRoute[] = Object.freeze([
   { method: 'GET', path: '/api/extension/me', scope: null, why: 'who the token is for: org, scopes, end date and the features this deployment runs; no tenant data' },
   { method: 'POST', path: '/api/rpc/meetings/create', scope: 'meetings', why: 'create a meeting with its consent record (meetings.meeting.create)' },
   { method: 'POST', path: '/api/rpc/meetings/extensionStatus', scope: 'meetings', why: "a meeting this token created: its status and whether its audio and video arrived, never its content (meetings.meeting.extension_status)" },
+  { method: 'POST', path: '/api/rpc/meetings/recordingStopped', scope: 'meetings', why: 'a recording of this token ended with no media reaching the server: its end time and a stop code on a meeting this token created, once, so the recording chip lets go (meetings.meeting.recording_stopped)' },
+  { method: 'POST', path: '/api/rpc/meetings/agenda/next', scope: 'agenda', why: "the member's next calendar events for the popup's \"Sắp họp\" card: at most 5 within 30 minutes, title, times and join host only, from their own cache (meetings.agenda.next, B2)" },
   { method: 'POST', path: '/api/files/uploads', scope: 'meetings', why: 'an upload grant, for the meeting_audio and meeting_video purposes only (the handler refuses any other purpose for a token)' },
   { method: 'POST', path: '/api/meetings/:id/media', scope: 'meetings', why: 'finish the upload of the media of a meeting this token created (meetings.media.record)' },
   { method: 'POST', path: '/api/meetings/:id/live-chunk', scope: 'meetings', why: 'a piece of the recording of a live-notes meeting this token created, sealed and stored by the route (meetings.live.chunk, ADR-0052 L4a)' },

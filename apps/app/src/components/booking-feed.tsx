@@ -4,7 +4,6 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
 import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
 import { Input } from '@crove/ui/components/input';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { ErrorText } from './ui.tsx';
@@ -48,7 +47,7 @@ export function BookingFeedCard() {
   const live = feed.data ?? null;
   const busy = create.isPending || revoke.isPending;
   return (
-    <Card className="mb-4 block space-y-3 p-4" data-testid="booking-feed">
+    <div className="space-y-3" data-testid="booking-feed">
       <div>
         <h2 className="text-sm font-medium text-foreground">{t('title')}</h2>
         <p className="text-xs text-subtle-foreground">{t('hint')}</p>
@@ -106,6 +105,6 @@ export function BookingFeedCard() {
           <p className="text-xs text-subtle-foreground">{t('once')}</p>
         </div>
       )}
-    </Card>
+    </div>
   );
 }

@@ -134,10 +134,10 @@ describe('brand name (#1040)', () => {
     // Where each coworker is named: the messages of the screens its app owns. The general manager names the work across apps
     // (the AI budget); the system coworker is reserved and hidden, with no message.
     const APP_OF: Record<string, RegExp> = {
-      finance: /^(auth\.|bank\.payroll\.aiState\.|financeOverview\.|hrPayroll\.coworker\.|inboxDetail\.|paymentReminders\.|salesInvoices\.ai\.|stock\.(suggest|low)\.|inbox\.(?!socialMails))/,
-      sales: /^(bookings\.|conversations\.|commands\.|contacts\.company\.|quotes\.suggest\.|deals\.nextSteps\.followup\.)/,
+      finance: /^(auth\.|bank\.payroll\.aiState\.|marketplaceBalance\.line|financeOverview\.|hrPayroll\.coworker\.|inboxDetail\.|paymentReminders\.|salesInvoices\.ai\.|stock\.(suggest|low)\.|vat\.lateSummary\.|inbox\.(?!socialMails))/,
+      sales: /^(bookings\.|conversations\.|commands\.|contacts\.company\.|quotes\.(suggest|dealOffer)\.|deals\.nextSteps\.followup\.)/,
       marketing: /^(social\.|ads\.|inbox\.socialMails\.|kernelErrors\.codes\.(AI_|ALT_TEXT_))/,
-      gm: /^(aiMeter\.|today\.brief\.|kernelErrors\.codes\.AI_BUDGET_EXHAUSTED)/,
+      gm: /^(aiMeter\.|today\.brief\.|today\.weekly\.|projects\.weeklyStatus\.|kernelErrors\.codes\.AI_BUDGET_EXHAUSTED)/,
     };
     for (const [role, where] of Object.entries(APP_OF)) {
       expect(named('vi', role).length, role).toBeGreaterThan(0);
@@ -182,10 +182,11 @@ describe('brand name (#1040)', () => {
 
   // #1683: the products are named after the brand, so a deployment's own name carries over.
   it('names the apps after the brand', () => {
-    expect(catalog('vi').nav.appNames).toMatchObject({ accounting: 'Ludy Kế toán', social: 'Ludy Engage' });
-    expect(catalog('en').nav.appNames).toMatchObject({ accounting: 'Ludy Accounting', social: 'Ludy Engage' });
+    expect(catalog('vi').nav.appNames).toMatchObject({ finance: 'Ludy Tài chính', engage: 'Ludy Engage', sign: 'Ludy eSign' });
+    expect(catalog('en').nav.appNames).toMatchObject({ finance: 'Ludy Finance', engage: 'Ludy Engage', sign: 'Ludy eSign' });
     setBrandName('Tên Mới');
-    expect(catalog('vi').nav.appNames.social).toBe('Tên Mới Engage');
+    expect(catalog('vi').nav.appNames.engage).toBe('Tên Mới Engage');
+    expect(catalog('vi').nav.appNames.sign).toBe('Tên Mới eSign');
   });
 
   it('keeps an apostrophe literal inside ICU messages', () => {

@@ -4,8 +4,10 @@ import { describe, expect, it } from 'vitest';
 import { translatorFor } from '../src/i18n/runtime.ts';
 import type { ChartAccount } from '../src/lib/accounts.ts';
 import {
+  amountUnits,
   canEnterVoucher,
   cashAccountChoices,
+  findDuplicateVoucher,
   isVoucherAmount,
   nextVoucherCursor,
   normalizeAmount,
@@ -170,5 +172,61 @@ describe('nextVoucherCursor (#509)', () => {
   it('asks for no next page on the last page or an empty one', () => {
     expect(nextVoucherCursor({ items: [voucher(a, '2026-09-01')], more: false })).toBeUndefined();
     expect(nextVoucherCursor({ items: [], more: true })).toBeUndefined();
+  });
+});
+
+// The hint shown while a voucher is typed (#3607): the same date, total and counterparty as a posted one.
+describe('the duplicate voucher hint', () => {
+  const posted = (patch: Record<string, unknown> = {}) => ({
+    code: 'PC00012',
+    type: 'cash_payment' as const,
+    date: '2026-11-17',
+    amount: '1500000.0000',
+    party: { id: 'p1' },
+    personName: null as string | null,
+    reversal: null as unknown,
+    ...patch,
+  });
+  const typed = (patch: Record<string, unknown> = {}) => ({ type: 'cash_payment' as const, date: '2026-11-17', total: '1500000', partyId: 'p1', personName: '', ...patch });
+
+  it('reads amounts as amounts, whatever the spelling', () => {
+    expect(amountUnits('1.500.000')).toBe(amountUnits('1500000.0000'));
+    expect(amountUnits('1500000')).toBe(15_000_000_000n);
+    expect(amountUnits('abc')).toBeNull();
+    expect(amountUnits('')).toBeNull();
+  });
+
+  it('finds the voucher with the same date, total and party', () => {
+    const rows = [posted({ code: 'PC00001', date: '2026-11-16' }), posted()];
+    expect(findDuplicateVoucher(rows, typed())?.code).toBe('PC00012');
+    // The total as typed in the form, grouped, and as the server sends it, with decimals, are the same amount.
+    expect(findDuplicateVoucher(rows, typed({ total: '1.500.000' }))?.code).toBe('PC00012');
+  });
+
+  it('finds nothing when one of the three differs, or the voucher is on the other side of the cash box or reversed', () => {
+    const rows = [posted()];
+    expect(findDuplicateVoucher(rows, typed({ date: '2026-11-18' }))).toBeNull();
+    expect(findDuplicateVoucher(rows, typed({ total: '1500001' }))).toBeNull();
+    expect(findDuplicateVoucher(rows, typed({ partyId: 'p2' }))).toBeNull();
+    expect(findDuplicateVoucher(rows, typed({ partyId: '' }))).toBeNull();
+    expect(findDuplicateVoucher(rows, typed({ type: 'cash_receipt' }))).toBeNull();
+    expect(findDuplicateVoucher(rows, typed({ type: 'bank_debit' }))?.code).toBe('PC00012');
+    expect(findDuplicateVoucher([posted({ reversal: { id: 'r1', entryDate: '2026-11-18' } })], typed())).toBeNull();
+  });
+
+  it('matches a typed person by name without case, and two vouchers with no counterparty at all', () => {
+    const rows = [posted({ party: null, personName: 'Nguyễn Văn Nam' })];
+    expect(findDuplicateVoucher(rows, typed({ partyId: '', personName: ' nguyễn văn nam ' }))).not.toBeNull();
+    expect(findDuplicateVoucher(rows, typed({ partyId: '', personName: 'Trần Thị Bé' }))).toBeNull();
+    const bare = [posted({ party: null, personName: null, amount: '22000' })];
+    expect(findDuplicateVoucher(bare, typed({ partyId: '', total: '22.000' }))).not.toBeNull();
+  });
+
+  it('says nothing before there is a date and a total', () => {
+    const rows = [posted()];
+    expect(findDuplicateVoucher(rows, typed({ total: '' }))).toBeNull();
+    expect(findDuplicateVoucher(rows, typed({ total: '0' }))).toBeNull();
+    expect(findDuplicateVoucher(rows, typed({ date: '' }))).toBeNull();
+    expect(findDuplicateVoucher(rows, typed({ date: '2026-02-31' }))).toBeNull();
   });
 });

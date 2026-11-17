@@ -24,7 +24,8 @@ import { resealCredentials } from '../src/credential-reseal.ts';
 import { loadConfig } from '../src/config.ts';
 import { ConcurrencyLimiter } from '../src/concurrency.ts';
 import { createHttpApp, type HttpDeps } from '../src/http.ts';
-import { fakeMediaMeasurer } from './fake-media.ts';
+import { fakeAudioExtractor, fakeMediaMeasurer } from './fake-media.ts';
+import { mediaAudioExtractorFor } from '../src/meetings-extract.ts';
 import { mediaMeasurerFor } from '../src/meetings-measure.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -1405,7 +1406,7 @@ suite('meetings module database integration tests (#2576)', () => {
 
   // Meetings A2 (#3160): the org setting "consent required before recording".
   const createWith = (who: string, consentMethod: string, title: string) => rpc('meetings/create', who, { title, consentMethod });
-  const meetingCount = async () => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_meetings.meeting')).rows[0]?.n));
+  const meetingCount = async () => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_meetings.meeting WHERE org_id = $1', [orgId])).rows[0]?.n));
 
   it('24. A2: the consent policy is standard by default, every member reads it, only an owner or admin changes it, and the audit holds codes only', async () => {
     expect((await rpc('meetings/consentPolicy/get', 'recorder', {})).body).toEqual({ policy: 'standard' });
@@ -1453,5 +1454,514 @@ suite('meetings module database integration tests (#2576)', () => {
     }
     // Back to standard: every method again.
     expect((await createWith('recorder', 'told_at_start', 'Said at the start again')).status).toBe(200);
+  });
+
+  // Meetings C1 (#3173): a recording a meeting platform finished is imported through meetings.import.start, a worker's staged bytes and the media route's importId.
+  const IMPORT_NOTICE_VERSION = '2026-11-imp-v1';
+  const asUser = (name: string) => ({ type: 'user' as const, userId: userIds.get(name)!, aal: 'aal1' as const, sessionId: accounts.get(name)!.session });
+  const startImport = (who: string, input: Record<string, unknown>) =>
+    runtime.execute<{ meetingId: string }>('meetings.import.start', { consentMethod: 'platform_notice', consentNoticeVersion: IMPORT_NOTICE_VERSION, consentConfirmed: true, ...input }, { actor: asUser(who), orgId });
+  const refusedWith = (promise: Promise<unknown>) => promise.then(() => null, (error: unknown) => (error as { code?: string }).code ?? 'ERR');
+  const meetingExists = (id: string) => admin(async (c) => (await c.query('SELECT 1 FROM crove_meetings.meeting WHERE id = $1', [id])).rowCount === 1);
+  // A suggested recording of a member's own connection, as the sweep leaves it (the table owner writes it: the sweep's definer needs the worker login).
+  async function suggest(who: string, over: { title?: string; startedAt?: string; sizeBytes?: number | null } = {}) {
+    const recordingId = randomUUID();
+    await admin(async (c) => {
+      const connection = await c.query<{ id: string }>(
+        `INSERT INTO crove_kernel.meeting_platform_connection (org_id, user_id, provider, external_account, display_name) VALUES ($1, $2, 'sandbox', $3, 'Sandbox') RETURNING id`,
+        [orgId, userIds.get(who), `${who}-${randomUUID()}@sandbox.test`],
+      );
+      await c.query(
+        `INSERT INTO crove_kernel.meeting_platform_recording (org_id, id, connection_id, user_id, external_id, title, started_at, size_bytes, has_audio)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)`,
+        [orgId, recordingId, connection.rows[0]!.id, userIds.get(who), randomUUID(), over.title ?? 'Họp khách hàng', over.startedAt ?? new Date(Date.now() - 90 * 86_400_000).toISOString(), over.sizeBytes === undefined ? 4096 : over.sizeBytes],
+      );
+    });
+    return recordingId;
+  }
+  const recordingRowCount = (connectionId: string) => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.meeting_platform_recording WHERE connection_id = $1', [connectionId])).rows[0]?.n));
+  const recordingRow = (id: string) =>
+    admin(async (c) => (await c.query<{ status: string; meeting_id: string | null; staging_key: string | null; error_code: string | null }>('SELECT status, meeting_id, staging_key, error_code FROM crove_kernel.meeting_platform_recording WHERE id = $1', [id])).rows[0]!);
+  // What the worker does: the bytes wait under the row's staging key and the row becomes staged.
+  async function stage(recordingId: string, bytes: Buffer = OGG) {
+    const row = await recordingRow(recordingId);
+    store.staged.set(row.staging_key!, bytes);
+    await admin((c) => c.query(`UPDATE crove_kernel.meeting_platform_recording SET status = 'staged', staged_at = now() WHERE id = $1`, [recordingId]));
+    return row.staging_key!;
+  }
+  const claimImport = async (who: string, meetingId: string, body: Record<string, unknown>) => {
+    const response = await app.request(`/api/meetings/${meetingId}/media`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${await token(who)}`, 'content-type': 'application/json', 'x-crove-org': slug },
+      body: JSON.stringify(body),
+    });
+    return { status: response.status, body: (await response.json()) as Record<string, unknown> };
+  };
+
+  it('26. C1: importing makes the meeting with the platform-notice consent, counts the periods from today, links the row and audits ids only', async () => {
+    const recordingId = await suggest('recorder', { title: 'Họp khách hàng cũ' });
+    const { meetingId } = await startImport('recorder', { recordingId, language: 'vi', visibility: 'attendees', readerUserIds: [userIds.get('attendee')!] });
+    const meeting = await admin(async (c) =>
+      (await c.query<{ title: string; consent_method: string; consent_notice_version: string; keep_video: boolean; live_notes: boolean; ended_at: Date | null; started_old: boolean; audio_future: boolean; readers: string }>(
+        `SELECT title, consent_method, consent_notice_version, keep_video, live_notes, ended_at, started_at < now() - interval '60 days' AS started_old,
+                audio_retention_date > (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date AS audio_future,
+                (SELECT count(*) FROM crove_meetings.meeting_reader r WHERE r.meeting_id = m.id)::text AS readers
+         FROM crove_meetings.meeting m WHERE id = $1`,
+        [meetingId],
+      )).rows[0],
+    );
+    expect(meeting).toEqual({ title: 'Họp khách hàng cũ', consent_method: 'platform_notice', consent_notice_version: IMPORT_NOTICE_VERSION, keep_video: false, live_notes: false, ended_at: null, started_old: true, audio_future: true, readers: '1' });
+    const row = await recordingRow(recordingId);
+    expect(row).toMatchObject({ status: 'importing', meeting_id: meetingId, error_code: null });
+    expect(row.staging_key).toMatch(/^staging\/[0-9a-f]{64}$/);
+    // The audit row names the ids and the provider, never the title, the staging key or the platform's id.
+    const detail = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'meetings.import.start' AND detail->>'meetingId' = $1`, [meetingId])).rows[0]?.detail);
+    expect(detail).toMatchObject({ recordingId, meetingId, provider: 'sandbox', consentMethod: 'platform_notice' });
+    expect(JSON.stringify(detail)).not.toContain('Họp khách hàng');
+    expect(JSON.stringify(detail)).not.toContain('staging/');
+  });
+
+  it('27. C1: a title may be chosen, an untitled recording gets a plain name, and the import refuses another member\'s row, a second click, a wrong notice and an unconfirmed consent', async () => {
+    const chosen = await suggest('recorder');
+    const { meetingId } = await startImport('recorder', { recordingId: chosen, title: 'Tên do tôi đặt' });
+    expect((await admin(async (c) => (await c.query<{ title: string }>('SELECT title FROM crove_meetings.meeting WHERE id = $1', [meetingId])).rows[0]))?.title).toBe('Tên do tôi đặt');
+    const untitled = await suggest('recorder', { title: '' });
+    const made = await startImport('recorder', { recordingId: untitled, language: 'en' });
+    expect((await admin(async (c) => (await c.query<{ title: string }>('SELECT title FROM crove_meetings.meeting WHERE id = $1', [made.meetingId])).rows[0]))?.title).toBe('Imported meeting');
+
+    const before = await meetingCount();
+    const mine = await suggest('recorder');
+    // Another member's row is answered as absent, and nothing is made.
+    expect(await refusedWith(startImport('otherMember', { recordingId: mine }))).toBe('MEETING_PLATFORM_NOT_FOUND');
+    // A second click on a row that is already importing.
+    expect(await refusedWith(startImport('recorder', { recordingId: chosen }))).toBe('MEETING_PLATFORM_STATE');
+    // The only notice and consent this command accepts.
+    expect(await refusedWith(startImport('recorder', { recordingId: mine, consentNoticeVersion: '2026-11-v1' }))).not.toBeNull();
+    expect(await refusedWith(startImport('recorder', { recordingId: mine, consentConfirmed: false }))).not.toBeNull();
+    expect(await refusedWith(startImport('recorder', { recordingId: mine, consentMethod: 'told_at_start' }))).not.toBeNull();
+    expect(await meetingCount()).toBe(before);
+    expect((await recordingRow(mine)).status).toBe('suggested');
+    // A viewer cannot import.
+    expect(await refusedWith(startImport('viewer', { recordingId: mine }))).not.toBeNull();
+    // The method belongs to the import: a recording or an upload cannot claim it.
+    expect((await createWith('recorder', 'platform_notice', 'Pretend import')).status).toBe(400);
+  });
+
+  it('28. C1: a strict org refuses the platform notice as it refuses any unwritten method, and the row stays a suggestion', async () => {
+    const recordingId = await suggest('recorder');
+    expect((await rpc('meetings/consentPolicy/set', 'owner', { policy: 'strict' })).status).toBe(200);
+    try {
+      const before = await meetingCount();
+      expect(await refusedWith(startImport('recorder', { recordingId }))).toBe('CONSENT_METHOD_NOT_ALLOWED');
+      expect(await meetingCount()).toBe(before);
+      expect((await recordingRow(recordingId)).status).toBe('suggested');
+    } finally {
+      expect((await rpc('meetings/consentPolicy/set', 'owner', { policy: 'standard' })).status).toBe(200);
+    }
+    expect(await startImport('recorder', { recordingId })).toHaveProperty('meetingId');
+  });
+
+  it('29. C1: the staged bytes are claimed by importId, sealed and recorded like an upload; the row becomes imported and the meeting is ended', async () => {
+    const recordingId = await suggest('recorder');
+    const { meetingId } = await startImport('recorder', { recordingId });
+    const key = await stage(recordingId);
+    const done = await claimImport('recorder', meetingId, { importId: recordingId, kind: 'audio' });
+    expect(done.status).toBe(200);
+    expect(await recordingRow(recordingId)).toMatchObject({ status: 'imported', staging_key: null, error_code: null, meeting_id: meetingId });
+    expect(store.staged.has(key)).toBe(false);
+    const rows = await admin(async (c) => ({
+      segments: Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_meetings.audio_segment WHERE meeting_id = $1', [meetingId])).rows[0]?.n),
+      ended: (await c.query<{ e: boolean }>('SELECT ended_at IS NOT NULL AS e FROM crove_meetings.meeting WHERE id = $1', [meetingId])).rows[0]?.e,
+      sealed: Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_meetings.media_key WHERE meeting_id = $1', [meetingId])).rows[0]?.n),
+    }));
+    expect(rows).toEqual({ segments: 1, ended: true, sealed: 1 });
+    // The bytes are claimed once: the same row cannot be claimed again.
+    expect((await claimImport('recorder', meetingId, { importId: recordingId, kind: 'audio' })).status).toBeGreaterThanOrEqual(400);
+  });
+
+  it('30. C1: an importId of another member\'s row is 404 and leaves it staged; both ids, a video kind and a bad id are 400; a row not yet staged cannot be claimed', async () => {
+    const recordingId = await suggest('recorder');
+    const { meetingId } = await startImport('recorder', { recordingId });
+    // Not staged yet: the claim is refused and nothing changes.
+    expect((await claimImport('recorder', meetingId, { importId: recordingId, kind: 'audio' })).status).toBe(409);
+    await stage(recordingId);
+    // Another member records their own meeting and names the recorder's row.
+    const theirs = String((await rpc('meetings/create', 'otherMember', { title: 'Của tôi', consentMethod: 'told_at_start' })).body.meetingId);
+    expect((await claimImport('otherMember', theirs, { importId: recordingId, kind: 'audio' })).status).toBe(404);
+    expect((await recordingRow(recordingId)).status).toBe('staged');
+    // The route's own checks.
+    expect((await claimImport('recorder', meetingId, { importId: recordingId, uploadId: randomUUID(), kind: 'audio' })).status).toBe(400);
+    expect((await claimImport('recorder', meetingId, { kind: 'audio' })).status).toBe(400);
+    expect((await claimImport('recorder', meetingId, { importId: recordingId, kind: 'video' })).status).toBe(400);
+    expect((await claimImport('recorder', meetingId, { importId: 'not-a-uuid', kind: 'audio' })).status).toBe(400);
+    expect((await recordingRow(recordingId)).status).toBe('staged');
+  });
+
+  it('31. C1: a staged file that is no media fails the row with a short code and drops the bytes, and a request for another meeting is refused before the row moves', async () => {
+    const hostile = await suggest('recorder');
+    const { meetingId } = await startImport('recorder', { recordingId: hostile });
+    const hostileKey = await stage(hostile, Buffer.from('this is not audio at all, only text '.repeat(10)));
+    const refused = await claimImport('recorder', meetingId, { importId: hostile, kind: 'audio' });
+    expect(refused.status).toBe(400);
+    expect(await recordingRow(hostile)).toMatchObject({ status: 'failed', staging_key: null, error_code: 'invalid_media' });
+    expect(store.staged.has(hostileKey)).toBe(false);
+    // A failed row can be imported again, into a new meeting; the empty meeting the failed try made is removed, not left in the list (#3288).
+    const before = await meetingCount();
+    const again = await startImport('recorder', { recordingId: hostile });
+    expect(again.meetingId).not.toBe(meetingId);
+    expect(await recordingRow(hostile)).toMatchObject({ status: 'importing', meeting_id: again.meetingId });
+    expect(await meetingExists(meetingId)).toBe(false);
+    expect(await meetingCount(), 'the retry replaced the empty meeting, it did not add one').toBe(before);
+
+    // The row is linked to one meeting; claiming it on the recorder's other meeting is refused as not found BEFORE the row moves: it stays staged, with its bytes, for the right meeting.
+    const linked = await suggest('recorder');
+    const linkedMeeting = await startImport('recorder', { recordingId: linked });
+    const key = await stage(linked);
+    const other = String((await rpc('meetings/create', 'recorder', { title: 'Một cuộc họp khác', consentMethod: 'told_at_start' })).body.meetingId);
+    expect((await claimImport('recorder', other, { importId: linked, kind: 'audio' })).status).toBe(404);
+    expect(await recordingRow(linked)).toMatchObject({ status: 'staged', staging_key: key, meeting_id: linkedMeeting.meetingId });
+    expect(store.staged.has(key)).toBe(true);
+  });
+
+  it('31b. C1: a retry removes only the empty meeting of the failed try: one that holds a note, or another member\'s, or a recording that never failed, is kept (#3288)', async () => {
+    const fail = (id: string) => admin((c) => c.query(`UPDATE crove_kernel.meeting_platform_recording SET status = 'failed', staging_key = NULL, error_code = 'timeout' WHERE id = $1`, [id]));
+    // A failed try whose meeting holds a note the recorder typed: kept, and the retry makes a new meeting.
+    const withNote = await suggest('recorder');
+    const first = await startImport('recorder', { recordingId: withNote });
+    await admin((c) => c.query(`INSERT INTO crove_meetings.meeting_note (org_id, meeting_id, body) VALUES ($1, $2, 'Ghi chú của tôi')`, [orgId, first.meetingId]));
+    await fail(withNote);
+    const second = await startImport('recorder', { recordingId: withNote });
+    expect(second.meetingId).not.toBe(first.meetingId);
+    expect(await meetingExists(first.meetingId)).toBe(true);
+    expect(await recordingRow(withNote)).toMatchObject({ status: 'importing', meeting_id: second.meetingId });
+    // A failed try whose meeting is another member's (a row pointing at it): never touched.
+    const theirs = String((await rpc('meetings/create', 'otherMember', { title: 'Của người khác', consentMethod: 'told_at_start' })).body.meetingId);
+    const pointing = await suggest('recorder');
+    await admin((c) => c.query(`UPDATE crove_kernel.meeting_platform_recording SET status = 'failed', meeting_id = $2, error_code = 'timeout' WHERE id = $1`, [pointing, theirs]));
+    await startImport('recorder', { recordingId: pointing });
+    expect(await meetingExists(theirs)).toBe(true);
+    // A meeting the member edited since the import made it (a new title) is kept, and so is one that holds a link to a party.
+    const edited = await suggest('recorder');
+    const editedFirst = await startImport('recorder', { recordingId: edited });
+    await admin((c) => c.query(`UPDATE crove_meetings.meeting SET title = 'Tên tôi sửa', updated_at = created_at + interval '1 second' WHERE id = $1`, [editedFirst.meetingId]));
+    await fail(edited);
+    await startImport('recorder', { recordingId: edited });
+    expect(await meetingExists(editedFirst.meetingId)).toBe(true);
+    const linked = await suggest('recorder');
+    const linkedFirst = await startImport('recorder', { recordingId: linked });
+    await admin(async (c) => {
+      const party = await c.query<{ id: string }>(`INSERT INTO crove_kernel.party (org_id, name, kind) VALUES ($1, 'Công ty liên kết', 'organization') RETURNING id`, [orgId]);
+      await c.query('INSERT INTO crove_meetings.meeting_link (org_id, meeting_id, party_id, created_by) VALUES ($1, $2, $3, $4)', [orgId, linkedFirst.meetingId, party.rows[0]!.id, userIds.get('recorder')]);
+    });
+    await fail(linked);
+    await startImport('recorder', { recordingId: linked });
+    expect(await meetingExists(linkedFirst.meetingId)).toBe(true);
+    // A failed row whose meeting is already gone goes straight to a new meeting, with no error.
+    const gone = await suggest('recorder');
+    const goneFirst = await startImport('recorder', { recordingId: gone });
+    await fail(gone);
+    await admin((c) => c.query('DELETE FROM crove_meetings.meeting WHERE id = $1', [goneFirst.meetingId]));
+    const goneAgain = await startImport('recorder', { recordingId: gone });
+    expect(await recordingRow(gone)).toMatchObject({ status: 'importing', meeting_id: goneAgain.meetingId });
+    // The removal of an empty meeting is audited as the recorder's own delete, and the import's audit row names the meeting it replaced.
+    const retried = await suggest('recorder');
+    const retriedFirst = await startImport('recorder', { recordingId: retried });
+    await fail(retried);
+    const retriedSecond = await startImport('recorder', { recordingId: retried });
+    const audit = await admin(async (c) => ({
+      deleted: (await c.query(`SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.meeting.delete' AND target_id = $2 AND outcome = 'ok'`, [orgId, retriedFirst.meetingId])).rowCount,
+      detail: (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'meetings.import.start' AND detail->>'meetingId' = $1`, [retriedSecond.meetingId])).rows[0]?.detail,
+    }));
+    expect(audit.deleted).toBe(1);
+    expect(audit.detail).toMatchObject({ meetingId: retriedSecond.meetingId, replacedMeetingId: retriedFirst.meetingId });
+    // A recording that is importing is not retried at all, and its meeting stays.
+    const live = await suggest('recorder');
+    const liveMeeting = await startImport('recorder', { recordingId: live });
+    expect(await refusedWith(startImport('recorder', { recordingId: live }))).toBe('MEETING_PLATFORM_STATE');
+    expect(await meetingExists(liveMeeting.meetingId)).toBe(true);
+  });
+
+  it('31c. C1: dismissing a failed recording, or disconnecting its platform, removes the empty meeting of the failed try by the retry\'s rule, and only that (#3587)', async () => {
+    const fail = (id: string) => admin((c) => c.query(`UPDATE crove_kernel.meeting_platform_recording SET status = 'failed', staging_key = NULL, error_code = 'timeout' WHERE id = $1`, [id]));
+    const dismiss = (who: string, recordingId: string) => runtime.execute('kernel.meeting_platform.recording.dismiss', { recordingId }, { actor: asUser(who), orgId });
+    const discard = (who: string, input: Record<string, unknown>) => runtime.execute<{ removed: number }>('meetings.import.discard_empty', input, { actor: asUser(who), orgId });
+    const connectionOf = (recordingId: string) => admin(async (c) => (await c.query<{ connection_id: string }>('SELECT connection_id FROM crove_kernel.meeting_platform_recording WHERE id = $1', [recordingId])).rows[0]!.connection_id);
+    const note = (meetingId: string) => admin((c) => c.query(`INSERT INTO crove_meetings.meeting_note (org_id, meeting_id, body) VALUES ($1, $2, 'Ghi chú của tôi')`, [orgId, meetingId]));
+
+    // A failed try with an empty meeting: dismissed, then cleaned; the recording row stays as dismissed, the meeting is gone, the removal is audited as the recorder's own delete.
+    const empty = await suggest('recorder');
+    const emptyMeeting = (await startImport('recorder', { recordingId: empty })).meetingId;
+    await fail(empty);
+    await dismiss('recorder', empty);
+    expect(await meetingExists(emptyMeeting), 'dismissing alone leaves the meeting').toBe(true);
+    expect((await discard('recorder', { recordingId: empty })).removed).toBe(1);
+    expect(await meetingExists(emptyMeeting)).toBe(false);
+    expect(await recordingRow(empty)).toMatchObject({ status: 'dismissed' });
+    const audits = await admin(async (c) => ({
+      deleted: (await c.query(`SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.meeting.delete' AND target_id = $2 AND outcome = 'ok'`, [orgId, emptyMeeting])).rowCount,
+      detail: (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.import.discard_empty' AND detail->>'recordingId' = $2`, [orgId, empty])).rows[0]?.detail,
+    }));
+    expect(audits.deleted).toBe(1);
+    expect(audits.detail).toMatchObject({ recordingId: empty, connectionId: null, removed: 1 });
+    // A second call is a no-op.
+    expect((await discard('recorder', { recordingId: empty })).removed).toBe(0);
+
+    // A meeting that holds a note, one the member edited, another member's, and a recording that is not failed or dismissed are all kept.
+    const withNote = await suggest('recorder');
+    const noteMeeting = (await startImport('recorder', { recordingId: withNote })).meetingId;
+    await note(noteMeeting);
+    await fail(withNote);
+    await dismiss('recorder', withNote);
+    expect((await discard('recorder', { recordingId: withNote })).removed).toBe(0);
+    expect(await meetingExists(noteMeeting)).toBe(true);
+    const edited = await suggest('recorder');
+    const editedMeeting = (await startImport('recorder', { recordingId: edited })).meetingId;
+    await admin((c) => c.query(`UPDATE crove_meetings.meeting SET title = 'Tên tôi sửa', updated_at = created_at + interval '1 second' WHERE id = $1`, [editedMeeting]));
+    await fail(edited);
+    await dismiss('recorder', edited);
+    expect((await discard('recorder', { recordingId: edited })).removed).toBe(0);
+    expect(await meetingExists(editedMeeting)).toBe(true);
+    const theirs = String((await rpc('meetings/create', 'otherMember', { title: 'Của người khác', consentMethod: 'told_at_start' })).body.meetingId);
+    const pointing = await suggest('recorder');
+    await admin((c) => c.query(`UPDATE crove_kernel.meeting_platform_recording SET status = 'failed', meeting_id = $2, error_code = 'timeout' WHERE id = $1`, [pointing, theirs]));
+    await dismiss('recorder', pointing);
+    expect((await discard('recorder', { recordingId: pointing })).removed).toBe(0);
+    expect(await meetingExists(theirs)).toBe(true);
+    const live = await suggest('recorder');
+    const liveMeeting = (await startImport('recorder', { recordingId: live })).meetingId;
+    expect((await discard('recorder', { recordingId: live })).removed, 'an importing recording is not cleaned').toBe(0);
+    expect(await meetingExists(liveMeeting)).toBe(true);
+
+    // A recording that was only suggested has no meeting: nothing to clean, no error.
+    const plain = await suggest('recorder');
+    expect((await discard('recorder', { recordingId: plain })).removed).toBe(0);
+
+    // The shape of the request and who may ask: exactly one of the two ids, a recording that is not the member's is not found, a viewer is refused.
+    expect(await refusedWith(discard('recorder', {}))).not.toBeNull();
+    expect(await refusedWith(discard('recorder', { recordingId: empty, connectionId: await connectionOf(empty) }))).not.toBeNull();
+    expect(await refusedWith(discard('otherMember', { recordingId: withNote }))).toBe('MEETING_PLATFORM_NOT_FOUND');
+    expect(await refusedWith(discard('viewer', { recordingId: withNote }))).not.toBeNull();
+    // Another member's connection id removes nothing of the recorder's, and the answer says so without saying more.
+    const foreign = await suggest('recorder');
+    const foreignMeeting = (await startImport('recorder', { recordingId: foreign })).meetingId;
+    await fail(foreign);
+    expect((await discard('otherMember', { connectionId: await connectionOf(foreign) })).removed).toBe(0);
+    expect(await meetingExists(foreignMeeting)).toBe(true);
+
+    // The disconnect: every failed or dismissed recording of the connection is looked at before its rows go with it; the empty meeting goes, the one that holds a note stays, an imported one stays.
+    const first = await suggest('recorder');
+    const connection = await connectionOf(first);
+    const second = randomUUID();
+    const third = randomUUID();
+    await admin(async (c) => {
+      for (const id of [second, third]) {
+        await c.query(
+          `INSERT INTO crove_kernel.meeting_platform_recording (org_id, id, connection_id, user_id, external_id, title, started_at, size_bytes, has_audio) VALUES ($1, $2, $3, $4, $5, 'Họp', now() - interval '90 days', 4096, true)`,
+          [orgId, id, connection, userIds.get('recorder'), randomUUID()],
+        );
+      }
+    });
+    const firstMeeting = (await startImport('recorder', { recordingId: first })).meetingId;
+    const secondMeeting = (await startImport('recorder', { recordingId: second })).meetingId;
+    await note(secondMeeting);
+    const thirdMeeting = (await startImport('recorder', { recordingId: third })).meetingId;
+    await fail(first);
+    await fail(second);
+    await admin((c) => c.query(`UPDATE crove_kernel.meeting_platform_recording SET status = 'imported', staging_key = NULL WHERE id = $1`, [third]));
+    expect((await discard('recorder', { connectionId: connection })).removed).toBe(1);
+    expect(await meetingExists(firstMeeting)).toBe(false);
+    expect(await meetingExists(secondMeeting)).toBe(true);
+    expect(await meetingExists(thirdMeeting)).toBe(true);
+    await runtime.execute('kernel.meeting_platform.disconnect', { connectionId: connection }, { actor: asUser('recorder'), orgId });
+    expect(await recordingRowCount(connection)).toBe(0);
+    expect(await meetingExists(secondMeeting), 'the meeting that holds a note outlives the connection').toBe(true);
+  });
+
+  it('32. C1: a meeting that is no import is untouched when its media is recorded', async () => {
+    const made = await rpc('meetings/create', 'recorder', { title: 'Not an import', consentMethod: 'told_at_start' });
+    expect((await uploadRaw(String(made.body.meetingId), '?kind=audio')).status).toBe(200);
+    const imported = await admin(async (c) => Number((await c.query<{ n: string }>(`SELECT count(*) AS n FROM crove_kernel.meeting_platform_recording WHERE meeting_id = $1`, [String(made.body.meetingId)])).rows[0]?.n));
+    expect(imported).toBe(0);
+  });
+
+  it('33. C1: a platform-notice meeting takes media only as the claimed import of its recorder: an upload, before or after, is refused IMPORT_ONLY and records nothing', async () => {
+    const segments = (meetingId: string) =>
+      admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_meetings.audio_segment WHERE meeting_id = $1', [meetingId])).rows[0]?.n));
+    const recordingId = await suggest('recorder');
+    const { meetingId } = await startImport('recorder', { recordingId });
+    // The recorder's own upload into the import's meeting, while the row is still importing.
+    const early = await uploadRaw(meetingId, '?kind=audio');
+    expect(early.status).toBe(403);
+    expect(((await early.json()) as { code?: string }).code).toBe('IMPORT_ONLY');
+    // Staged but not claimed: still an upload, still refused, and the staged bytes stay for the claim.
+    const key = await stage(recordingId);
+    expect((await uploadRaw(meetingId, '?kind=audio')).status).toBe(403);
+    expect(store.staged.has(key)).toBe(true);
+    expect(await segments(meetingId)).toBe(0);
+    // The claim of that meeting by the same member goes through ...
+    expect((await claimImport('recorder', meetingId, { importId: recordingId, kind: 'audio' })).status).toBe(200);
+    expect(await segments(meetingId)).toBe(1);
+    // ... and once imported the meeting takes no further media from an upload.
+    expect((await uploadRaw(meetingId, '?kind=audio')).status).toBe(403);
+    expect(await segments(meetingId)).toBe(1);
+  });
+
+  it('34. C1: the click goes through the API as meetings/importStart: it returns the meeting, the row is importing, a viewer and a strict org are refused with the command\'s code', async () => {
+    const body = { language: 'vi', visibility: 'attendees', consentMethod: 'platform_notice', consentNoticeVersion: IMPORT_NOTICE_VERSION, consentConfirmed: true };
+    const recordingId = await suggest('recorder');
+    const done = await rpc('meetings/importStart', 'recorder', { recordingId, ...body });
+    expect(done.status).toBe(200);
+    expect(done.body).toEqual({ meetingId: expect.any(String) });
+    expect(await recordingRow(recordingId)).toMatchObject({ status: 'importing', meeting_id: done.body.meetingId });
+    // The same input shape is checked at the edge: no consent tick, or another notice, is a 400 and nothing is made.
+    const other = await suggest('recorder');
+    expect((await rpc('meetings/importStart', 'recorder', { recordingId: other, ...body, consentConfirmed: false })).status).toBe(400);
+    expect((await rpc('meetings/importStart', 'recorder', { recordingId: other, ...body, consentNoticeVersion: '2026-11-v1' })).status).toBe(400);
+    expect((await rpc('meetings/importStart', 'viewer', { recordingId: other, ...body })).status).toBeGreaterThanOrEqual(400);
+    expect((await recordingRow(other)).status).toBe('suggested');
+    // A strict org answers CONSENT_METHOD_NOT_ALLOWED, which the app words before the click.
+    expect((await rpc('meetings/consentPolicy/set', 'owner', { policy: 'strict' })).status).toBe(200);
+    try {
+      const refused = await rpc('meetings/importStart', 'recorder', { recordingId: other, ...body });
+      expect(refused.status).toBe(422);
+      expect(refused.body.code).toBe('CONSENT_METHOD_NOT_ALLOWED');
+    } finally {
+      expect((await rpc('meetings/consentPolicy/set', 'owner', { policy: 'standard' })).status).toBe(200);
+    }
+  });
+  it('35. #3337: a video uploaded with extract=audio keeps only the extracted Opus, whatever the shape of the upload', async () => {
+    const mp4 = Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x18]), Buffer.from('ftypmp42'), Buffer.from('video frames '.repeat(300))]);
+    const opus = Buffer.concat([Buffer.from([0x4f, 0x67, 0x67, 0x53, 0x00, 0x02]), Buffer.from('extracted opus '.repeat(20))]);
+    const headers = async (extra: Record<string, string> = {}) => ({ authorization: `Bearer ${await token('recorder')}`, 'x-crove-org': slug, ...extra });
+    const newMeeting = async (title: string) => String((await rpc('meetings/create', 'recorder', { title, visibility: 'attendees', keepVideo: true, consentMethod: 'told_at_start' })).body.meetingId);
+    const count = async (table: 'audio_segment' | 'meeting_video', meetingId: string) =>
+      admin(async (c) => Number((await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_meetings.${table} WHERE meeting_id = $1`, [meetingId])).rows[0]!.n));
+    const raw = (target: ReturnType<typeof createHttpApp>, meetingId: string, query: string, body: Buffer, type = 'video/mp4') =>
+      headers({ 'content-type': type, 'content-length': String(body.length) }).then((h) => target.request(`/api/meetings/${meetingId}/media${query}`, { method: 'POST', headers: h, body: new Uint8Array(body) }));
+    const objectsBefore = store.storage.size;
+
+    // The raw body: the video is read by the extractor, and only the Opus is sealed, recorded and played back.
+    const extractor = fakeAudioExtractor(opus);
+    const withExtractor = createHttpApp({ ...deps, mediaExtractor: extractor });
+    const meetingId = await newMeeting('Video as audio');
+    const up = await raw(withExtractor, meetingId, '?kind=audio&extract=audio', mp4);
+    expect(up.status).toBe(200);
+    expect(extractor.calls).toBe(1);
+    expect(extractor.read[0]!.equals(mp4)).toBe(true);
+    // One object in the store (the Opus sealed as the audio), the temporary sealed video is gone, and no video row exists.
+    expect(store.storage.size).toBe(objectsBefore + 1);
+    expect(await count('meeting_video', meetingId)).toBe(0);
+    const rows = await admin(async (c) => (await c.query<{ length_seconds: number; content_type: string }>('SELECT s.length_seconds, f.content_type FROM crove_meetings.audio_segment s JOIN crove_kernel.file f ON f.org_id = s.org_id AND f.id = s.file_id WHERE s.meeting_id = $1', [meetingId])).rows);
+    expect(rows).toEqual([{ length_seconds: 1800, content_type: 'audio/ogg' }]);
+    const played = await withExtractor.request(`/api/meetings/${meetingId}/audio`, { headers: await headers() });
+    expect(played.status).toBe(200);
+    expect(played.headers.get('content-type')).toContain('audio/ogg');
+    const playedBytes = Buffer.from(await played.arrayBuffer());
+    expect(playedBytes.equals(opus)).toBe(true);
+    expect(playedBytes.equals(mp4)).toBe(false);
+
+    // A video with no audio track: 422 NO_AUDIO_TRACK and nothing stored.
+    const silentId = await newMeeting('Silent video');
+    const silent = await raw(createHttpApp({ ...deps, mediaExtractor: fakeAudioExtractor(opus, { fail: new DomainError('NO_AUDIO_TRACK', 422, 'The video has no audio track') }) }), silentId, '?kind=audio&extract=audio', mp4);
+    expect(silent.status).toBe(422);
+    expect(((await silent.json()) as { code?: string }).code).toBe('NO_AUDIO_TRACK');
+    expect(store.storage.size).toBe(objectsBefore + 1);
+    expect(await count('audio_segment', silentId)).toBe(0);
+
+    // Without crove-media: refused before one byte of the body is read.
+    let pulled = false;
+    const unconfigured = createHttpApp({ ...deps, mediaExtractor: mediaAudioExtractorFor(undefined) });
+    const unset = await unconfigured.request(`/api/meetings/${silentId}/media?kind=audio&extract=audio`, {
+      method: 'POST',
+      headers: await headers({ 'content-type': 'video/mp4', 'content-length': String(mp4.length) }),
+      body: new ReadableStream<Uint8Array>({ pull: () => void (pulled = true) }, { highWaterMark: 0 }),
+      duplex: 'half',
+    } as RequestInit);
+    expect(unset.status).toBe(503);
+    expect(((await unset.json()) as { code?: string }).code).toBe('MEDIA_PROBE_UNAVAILABLE');
+    expect(pulled).toBe(false);
+
+    // The flag is only for kind audio, and not for a platform import claim.
+    expect((await raw(withExtractor, silentId, '?kind=video&extract=audio', mp4)).status).toBe(400);
+    expect((await raw(withExtractor, silentId, '?kind=audio&extract=video', mp4)).status).toBe(400);
+    const jsonPost = async (query: string, body: unknown) => withExtractor.request(`/api/meetings/${silentId}/media${query}`, { method: 'POST', headers: await headers({ 'content-type': 'application/json' }), body: JSON.stringify(body) });
+    expect((await jsonPost('?extract=audio', { uploadId: randomUUID(), kind: 'video' })).status).toBe(400);
+    expect((await jsonPost('?extract=audio', { importId: randomUUID(), kind: 'audio' })).status).toBe(400);
+    const form400 = new FormData();
+    form400.append('kind', 'video');
+    form400.append('extract', 'audio');
+    form400.append('file', new Blob([new Uint8Array(mp4)], { type: 'video/mp4' }), 'm.mp4');
+    expect((await withExtractor.request(`/api/meetings/${silentId}/media`, { method: 'POST', headers: await headers(), body: form400 })).status).toBe(400);
+
+    // The input cap is the video cap: a declared length over it is refused before the body is read; a file that is no video container is refused and stores nothing.
+    pulled = false;
+    const huge = await withExtractor.request(`/api/meetings/${silentId}/media?kind=audio&extract=audio`, {
+      method: 'POST',
+      headers: await headers({ 'content-type': 'video/mp4', 'content-length': String(3 * 1024 * 1024 * 1024) }),
+      body: new ReadableStream<Uint8Array>({ pull: () => void (pulled = true) }, { highWaterMark: 0 }),
+      duplex: 'half',
+    } as RequestInit);
+    expect(huge.status).toBe(413);
+    expect(pulled).toBe(false);
+    const callsBefore = extractor.calls;
+    const notVideo = await raw(withExtractor, silentId, '?kind=audio&extract=audio', Buffer.concat([Buffer.from('OggS'), Buffer.alloc(200, 1)]), 'audio/ogg');
+    expect(notVideo.status).toBe(400);
+    expect(((await notVideo.json()) as { code?: string }).code).toBe('INVALID_MEDIA_CONTAINER');
+    expect(extractor.calls).toBe(callsBefore);
+    expect(store.storage.size).toBe(objectsBefore + 1);
+
+    // The extraction takes the same slot as a video upload: a second concurrent video-sized transfer is busy.
+    const videoUploads = new ConcurrencyLimiter({ total: 1, perKey: 1 });
+    const held = videoUploads.tryAcquire('another-transfer');
+    expect(held).not.toBeNull();
+    const busyApp = createHttpApp({ ...deps, mediaExtractor: extractor, videoUploads });
+    const busy = await raw(busyApp, silentId, '?kind=audio&extract=audio', mp4);
+    expect(busy.status).toBe(503);
+    expect(busy.headers.get('retry-after')).not.toBeNull();
+    held!();
+    const freed = await raw(busyApp, silentId, '?kind=audio&extract=audio', mp4);
+    expect(freed.status).toBe(200);
+    await vi.waitFor(() => expect(videoUploads.inUse).toBe(0));
+    expect(store.storage.size).toBe(objectsBefore + 2);
+
+    // The JSON shape: a staged upload (granted for video, which is how the app stages a video it extracts) is read from the store and goes the same way.
+    const stagedId = await newMeeting('Staged video as audio');
+    const uploadId = randomUUID();
+    const stagingKey = `staging/${randomBytes(32).toString('hex')}`;
+    store.staged.set(stagingKey, mp4);
+    await admin(async (c) => {
+      await c.query(
+        `INSERT INTO crove_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
+         VALUES ($1, $2, $3, $4, $5, 'meeting_video', now(), now() + interval '5 minutes')`,
+        [orgId, uploadId, stagingKey, userIds.get('recorder'), 10_000_000],
+      );
+    });
+    const staged = await withExtractor.request(`/api/meetings/${stagedId}/media?extract=audio`, { method: 'POST', headers: await headers({ 'content-type': 'application/json' }), body: JSON.stringify({ uploadId, kind: 'audio' }) });
+    expect(staged.status).toBe(200);
+    expect(store.staged.has(stagingKey)).toBe(false);
+    expect(extractor.read.at(-1)!.equals(mp4)).toBe(true);
+    expect(await count('meeting_video', stagedId)).toBe(0);
+    expect(store.storage.size).toBe(objectsBefore + 3);
+
+    // The multipart shape: the flag as a form field.
+    const formId = await newMeeting('Form video as audio');
+    const form = new FormData();
+    form.append('kind', 'audio');
+    form.append('extract', 'audio');
+    form.append('file', new Blob([new Uint8Array(mp4)], { type: 'video/mp4' }), 'zoom.mp4');
+    const multipart = await withExtractor.request(`/api/meetings/${formId}/media`, { method: 'POST', headers: await headers(), body: form });
+    expect(multipart.status).toBe(200);
+    expect(extractor.read.at(-1)!.equals(mp4)).toBe(true);
+    expect(await count('meeting_video', formId)).toBe(0);
+    expect(store.storage.size).toBe(objectsBefore + 4);
+    // Without crove-media the form is refused too (after its parse), and stores nothing.
+    const formId2 = await newMeeting('Form video, no sandbox');
+    const form2 = new FormData();
+    form2.append('kind', 'audio');
+    form2.append('extract', 'audio');
+    form2.append('file', new Blob([new Uint8Array(mp4)], { type: 'video/mp4' }), 'zoom.mp4');
+    const unsetForm = await unconfigured.request(`/api/meetings/${formId2}/media`, { method: 'POST', headers: await headers(), body: form2 });
+    expect(unsetForm.status).toBe(503);
+    expect(store.storage.size).toBe(objectsBefore + 4);
   });
 });

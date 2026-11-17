@@ -19,6 +19,7 @@ import { zJournalReversal, type DocumentDirection, type JournalReversal } from '
 import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
 import { OPENING_BALANCE_SOURCE } from './domain/opening-balance.ts';
 import { postNewEntry } from './ledger.ts';
+import { marketplaceReversalNotes } from './marketplace-reversal-guard.ts';
 import { reverseDocumentStock } from './stock-lines.ts';
 
 export { zJournalReversal, type JournalReversal };
@@ -130,8 +131,8 @@ async function documentDirection(ctx: CommandContext, entry: { source_type: stri
 
 const VOID_LABELS: Record<DocumentDirection, string> = { purchase: 'hủy chứng từ mua', sale: 'hủy chứng từ bán' };
 
-const reversalTitle = (entry: { entry_date: string; description: string }, direction: DocumentDirection | null) =>
-  `Đảo bút toán ngày ${entry.entry_date}${direction ? ` (${VOID_LABELS[direction]})` : ''}: ${entry.description}`.slice(0, 300);
+const reversalTitle = (entry: { entry_date: string; description: string }, direction: DocumentDirection | null, notes: readonly string[] = []) =>
+  `Đảo bút toán ngày ${entry.entry_date}${direction ? ` (${VOID_LABELS[direction]})` : ''}: ${entry.description}${notes.length > 0 ? ` [${notes.join('; ')}]` : ''}`.slice(0, 300);
 
 export const prepareReversal = defineCommand({
   name: 'finance.journal.prepare_reversal',
@@ -145,11 +146,13 @@ export const prepareReversal = defineCommand({
     const request = { ...input, entryId: input.entryId.toLowerCase() };
     await refuseOpenReversal(ctx, request.entryId);
     const entry = await reversibleEntry(ctx, request);
+    // A marketplace settlement's or payout's entry: refused while the payout stands or the period is closed, and noted in the title for the approver (#3329).
+    const notes = await marketplaceReversalNotes(ctx, entry, request.entryDate);
     // The proposal belongs to the entry's legal entity (#1538), which the payload does not name.
     return {
       kind: REVERSAL_KIND,
       command: REVERSAL_COMMAND,
-      title: reversalTitle(entry, await documentDirection(ctx, entry)),
+      title: reversalTitle(entry, await documentDirection(ctx, entry), notes),
       payload: request,
       legalEntityId: entry.legal_entity_id,
     };
@@ -167,6 +170,8 @@ export const reverseEntry = defineCommand({
   handler: async (ctx, { payload }) => {
     if (!ctx.proposalId) throw new DomainError('FORBIDDEN', 403, 'Lệnh này chỉ chạy qua đề xuất đã duyệt');
     const entry = await reversibleEntry(ctx, payload);
+    // Checked again at the approval: a payout posted after the request must not be left without its settlement (#3329).
+    await marketplaceReversalNotes(ctx, entry, payload.entryDate);
     return postReversal(ctx, entry, payload.entryDate, payload.reason);
   },
 });

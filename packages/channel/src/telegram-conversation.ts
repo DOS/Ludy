@@ -9,7 +9,7 @@
 // connection holds, and the `secret_token` Telegram echoes in X-Telegram-Bot-Api-Secret-Token is not stored anywhere but derived from the
 // hook under a key of the deployment (telegramHookSecret), so the route can check it before it reads the body or asks the database.
 import { createHmac, createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { ConversationNoticeError, type ConversationAdapter, type ConversationBusinessState, type ConversationCallResult, type ConversationChatHookInput, type ConversationChatHookResult, type ConversationMediaInput, type ConversationMediaResult, type ConversationNotice, type ConversationReplyInput, type InboundConversationEvent } from './conversation.ts';
+import { ConversationNoticeError, type ConversationAdapter, type ConversationBusinessLookupInput, type ConversationBusinessLookupResult, type ConversationBusinessState, type ConversationCallResult, type ConversationChatHookInput, type ConversationChatHookResult, type ConversationMediaInput, type ConversationMediaResult, type ConversationNotice, type ConversationReplyInput, type InboundConversationEvent } from './conversation.ts';
 import { TELEGRAM_HOSTS, TELEGRAM_TEXT_MAX, TelegramClient, TelegramError, telegramSecretOf } from './telegram.ts';
 import { mediaHostAllowed } from './zalo-conversation.ts';
 import { allowlistedFetch, type Fetch } from './oauth.ts';
@@ -428,6 +428,36 @@ export class TelegramConversations implements ConversationAdapter {
     const set = await setTelegramWebhook(s.botToken, { url, secretToken: telegramHookSecret(input.key, input.hook) }, this.fetchImpl);
     return set.kind === 'done' ? { kind: 'done', botId } : set;
   }
+
+  // Reads one business connection back with `getBusinessConnection` [O] (#3224), for a message that named one Ludy never recorded. Telegram answers only for a
+  // connection of the bot whose token asks, so an answer is already "this bot's"; the id it carries is still checked against the one asked, and the same reader as
+  // the `business_connection` update turns it into state (a disabled one is state too: the caller records only an enabled one). The call goes through the
+  // Bot API's own client (api.telegram.org only, https, no redirect, a deadline); the token is in its path and nowhere else, and a failure is a short code, never
+  // Telegram's words or an address.
+  async businessConnection(input: ConversationBusinessLookupInput): Promise<ConversationBusinessLookupResult> {
+    const s = telegramSecretOf(input.secret);
+    if (!s) return { kind: 'failed', retry: false, code: 'TELEGRAM_NO_TOKEN' };
+    if (!BUSINESS_ID.test(input.businessConnectionId)) return { kind: 'failed', retry: false, code: 'TG_BUSINESS_ID' };
+    let answer: unknown;
+    try {
+      answer = await this.client.call<unknown>(s.botToken, 'getBusinessConnection', { business_connection_id: input.businessConnectionId });
+    } catch (error) {
+      return businessLookupFailure(error);
+    }
+    const state = telegramBusinessState({ business_connection: answer });
+    if (!state) return { kind: 'failed', retry: false, code: 'TG_BUSINESS_SHAPE' };
+    if (state.id !== input.businessConnectionId) return { kind: 'failed', retry: false, code: 'TG_BUSINESS_MISMATCH' };
+    return { kind: 'ok', state };
+  }
+}
+
+function businessLookupFailure(error: unknown): ConversationBusinessLookupResult {
+  if (!(error instanceof TelegramError)) return { kind: 'failed', retry: true, code: 'NETWORK' };
+  if (error.status === 401 || error.status === 404) return { kind: 'failed', retry: false, code: 'TELEGRAM_TOKEN_REFUSED' };
+  // A connection Telegram does not know for this bot (taken away, or never this bot's) answers a 400.
+  if (error.status === 400) return { kind: 'failed', retry: false, code: 'TG_BUSINESS_UNKNOWN' };
+  if (error.status === 429) return { kind: 'failed', retry: true, code: 'TELEGRAM_429' };
+  return { kind: 'failed', retry: true, code: `TELEGRAM_${error.status}` };
 }
 
 // Whether asking again may bring the file: a name that did not resolve, a timeout and a dropped connection may; an error with no code says nothing, so it is asked

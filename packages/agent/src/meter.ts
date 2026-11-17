@@ -30,6 +30,8 @@ export const AI_FEATURES = {
   'conversation.draft': 'conversation',
   // Vy's daily brief on Home (#2383): it spans the apps, so it counts against the kernel's own budget line.
   'today.brief': 'kernel',
+  // Vy's "Tuần này" on Home (#3257, Vy plan C5): the status of the last 7 days written from figures that code computed in the member's own context, and dropped sentence by sentence when it states a number they do not hold.
+  'today.weekly': 'kernel',
   // The AI coworker's campaign drafts for running ads (W1b, #2295): the creative part only, never money.
   'ads.campaign_draft': 'ads',
   // The Inbox's suggestions (CV3, #2306): the intent of a conversation, and which contact a customer most likely is.
@@ -41,6 +43,8 @@ export const AI_FEATURES = {
   'meetings.followup_words': 'meetings',
   // The finance coworker's sentence on the Kế toán overview (#2631): written from the aggregated figures only, and dropped when it states a number they do not hold.
   'finance.overview_explain': 'finance',
+  // The finance coworker's sentence naming the late sales invoices of a VAT working and their original periods (#3540): written from invoice numbers and periods only, dropped when it names one that is not in the lists.
+  'finance.vat_late_explain': 'finance',
   // The finance coworker on stock (#2514): which item of the org a line of an invoice or an order is most likely about (it only suggests; a person confirms), and the wording of a reorder
   // message to a supplier from the item names and quantities it was given (a figure, link or address it was not given refuses the text).
   'finance.stock_match': 'finance',
@@ -53,9 +57,14 @@ export const AI_FEATURES = {
   'finance.payroll_prepare': 'finance',
   'finance.payroll_flag': 'finance',
   'finance.payroll_explain': 'finance',
+  // The finance coworker's pre-export compliance review for Sổ quản lý lao động and Báo cáo 01/PLI (#3372): code computes every finding and count, and the model summarizes pseudonymized readiness.
+  'finance.labor_check': 'finance',
   // The finance coworker's one line on why a bank statement line may be a payroll payment (#2532): code decided by the amount, the model only words it from the kind, month, amount and date (no name, no
   // description, no account); a line that states a figure it was not given is refused, and a person asks for the payment and approves it.
   'finance.bank_match_explain': 'finance',
+  // The finance coworker's one line on the Sàn screen (#2516 slice E): code read the facts from the books (settlements waiting to be posted, what the platforms owe, fees awaiting an invoice), the model
+  // only words them from those four numbers; a line that states a figure it was not given, a link, or says something was posted, approved or paid is refused. A read, never a post.
+  'finance.marketplace_line': 'finance',
   // The sales coworker's guess at the company a contact works at (#2438): only ranks the companies whose name matches the address a contact writes from.
   'crm.company_rank': 'crm',
   // The sales coworker's proposal for the lines of a quote (#2698): from the deal, what the customer wrote and the earlier quotes to them; a price no source holds stays empty, and a person applies each line.
@@ -71,6 +80,26 @@ export const AI_FEATURES = {
   'meetings.summary': 'meetings',
   // The member's Vy translating a meeting summary between Vietnamese and English (meetings integrations E1, #3184): one call over the summary, its decisions and item titles, the member waiting for it. A key of its own, so a translation never cuts off a transcription, a summary or live notes (#3029).
   'meetings.translate': 'meetings',
+  // The member's Vy answering one question across the meetings the member reads (meetings integrations A3, #3161): one call over at most 40 transcript lines the member's own search found, the member waiting for it. A key of its own, so a question never cuts off a transcription, a summary, a translation or live notes (#3029). Nothing of the answer is stored.
+  'meetings.ask': 'meetings',
+  // The member's Vy writing the two or three sentences of the brief before a meeting (#3543): one call over at most 23 short facts the member's own reads found, the member waiting for it, through their own meter.
+  'meetings.brief': 'meetings',
+  // Vy's weekly status of one project (projects P6, #2597): transient 3 to 5 plain sentences from deterministic counts and task titles/comments only, never reading notes.
+  'projects.weekly_status': 'projects',
+  // Member-scoped Vy proposing project tasks from one note (projects P7, #2598, ADR-0049): one call over the note text and project members' active seats; nothing is created until explicit human confirmation.
+  'projects.tasks_from_note': 'projects',
+  // Member-scoped Vy proposing project tasks from a note, meeting, or conversation (#2608, ADR-0049): one call over caller-readable source text and project members' active seats; nothing is created until explicit human confirmation.
+  'projects.tasks_from_source': 'projects',
+  // Ly's pseudonymized recruiting screening brief and interview focus questions (#3403 Stage 3 slice 3b-1 / #3413): reads alias C1, role facts, readiness flags, and scrubbed untrusted notes only; never decides hire or reject.
+  'hr.recruiting_brief': 'hr',
+  // Vy (the general manager) proposing signing field placements on a draft eSign PDF (#3351): one call over page sizes, declared signer role keys and bounded page text per ask, the member waiting for it. A key of its own, so field proposals never cut off risky clause summaries or other AI features.
+  'sign.field_propose': 'sign',
+  // Vy (the general manager) summarizing risky clauses with exact verbatim quotes from a draft eSign PDF (#3351): one call over bounded page text per ask, the member waiting for it.
+  'sign.clause_summary': 'sign',
+  // Member-scoped Vy summarizing one readable note (notes N8, #1677, ADR-0049): stores a private member_vy_result until the author explicitly accepts it.
+  'notes.summary': 'notes',
+  // Member-scoped Vy suggesting personal to-dos from one readable note (notes N8, #1677, ADR-0049): stores private suggestions until the reader explicitly confirms them.
+  'notes.todo_suggest': 'notes',
 } as const satisfies Record<string, string>;
 export type AiFeature = keyof typeof AI_FEATURES;
 export const AI_FEATURE_KEYS = Object.keys(AI_FEATURES) as AiFeature[];

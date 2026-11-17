@@ -18,6 +18,7 @@ const built = (party: string | null = null): MarketplaceSettlementProposal => ({
   total: '335000',
   legalEntityId: ENTITY,
   settlementId: ID,
+  months: [{ month: '2026-10', date: '2026-10-15', total: '335000' }],
   platform: 'shopee',
   periodFrom: '2026-10-01',
   periodTo: '2026-10-15',
@@ -75,7 +76,11 @@ describe('marketplace settlement commands', () => {
   });
   it('takes the settlement alone in a request, and no extra field', () => {
     expect(zMarketplaceSettlementRequest.safeParse({ settlementId: ID }).success).toBe(true);
+    expect(zMarketplaceSettlementRequest.safeParse({ settlementId: ID, month: '2026-10' }).success).toBe(false);
     expect(zMarketplaceSettlementRequest.safeParse({ settlementId: ID, lines: [] }).success).toBe(false);
+    // The proposal lists the months it posts, at least one.
+    expect(zMarketplaceSettlementProposal.safeParse({ ...built(), months: [] }).success).toBe(false);
+    expect(zMarketplaceSettlementProposal.safeParse({ ...built(), months: [{ month: '2026-13', date: '2026-10-15', total: '335000' }] }).success).toBe(false);
     expect(zMarketplaceSettlementProposal.safeParse(built()).success).toBe(true);
     expect(zMarketplaceSettlementProposal.safeParse({ ...built(), sales: '1.5' }).success).toBe(false);
   });

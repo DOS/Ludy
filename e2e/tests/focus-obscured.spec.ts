@@ -69,6 +69,8 @@ test('a focused control is never hidden behind a sticky bar, at 360px in light a
   test.setTimeout(240_000);
   await signInNewUser(page, newEmail('focus-obscured'));
   const slug = await createOrg(page, 'Công ty Tiêu điểm');
+  // A new org opens on the overview (#3225); the upload is on the Inbox.
+  await page.goto(page.url().replace(/\/overview$/, '/inbox'));
   // A long list: vendors enough for the table to scroll inside its card.
   exec(
     `INSERT INTO crove_kernel.party (org_id, name, kind)

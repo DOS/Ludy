@@ -221,7 +221,17 @@ export function SocialLabelsPage() {
       ) : list.error ? (
         <ErrorText>{errorMessage(list.error)}</ErrorText>
       ) : (list.data ?? []).length === 0 ? (
-        <Empty title={t('empty')} hint={t('emptyHint')} />
+        <Empty
+          title={t('empty')}
+          hint={t('emptyHint')}
+          action={
+            canWrite ? (
+              <Button size="lg" onClick={() => document.getElementById('label-new-name')?.focus()}>
+                {t('new')}
+              </Button>
+            ) : undefined
+          }
+        />
       ) : (
         <div className="space-y-3">
           {(list.data ?? []).map((l) => (

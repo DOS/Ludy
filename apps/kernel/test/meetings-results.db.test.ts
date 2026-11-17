@@ -282,6 +282,64 @@ suite('the summary and the action items of a meeting (#2580)', () => {
     expect(await refuses(query('attendee', 'meetings.action_item.source', { itemId }))).toBe('MEETING_NOT_FOUND');
   });
 
+  // Minutes templates (A4, #3162): the template is a code on the meeting, chosen at create or changed by the recorder alone; on a template the recorder types sections and the
+  // kernel makes the one summary text from them, which the readers read once it is published.
+  it('stores the template at create (the general summary by default), shows it on the meeting and lets only the recorder change it', async () => {
+    const make = (extra: Record<string, unknown>) => exec<{ meetingId: string }>('recorder', 'meetings.meeting.create', { title: 'Họp mẫu', consentMethod: 'told_at_start', ...extra });
+    const plain = await make({});
+    const picked = await make({ summaryTemplate: 'customer' });
+    expect((await query<{ summaryTemplate: string }>('recorder', 'meetings.meeting.get', { meetingId: plain.meetingId })).summaryTemplate).toBe('general');
+    expect((await query<{ summaryTemplate: string }>('recorder', 'meetings.meeting.get', { meetingId: picked.meetingId })).summaryTemplate).toBe('customer');
+    expect(await refuses(make({ summaryTemplate: 'secret' }))).not.toBeNull();
+
+    const meetingId = await seedMeeting('recorder', ['attendee']);
+    expect(await exec('recorder', 'meetings.minutes.set_template', { meetingId, summaryTemplate: 'briefing' })).toEqual({ meetingId, summaryTemplate: 'briefing' });
+    expect((await query<{ summaryTemplate: string }>('recorder', 'meetings.meeting.get', { meetingId })).summaryTemplate).toBe('briefing');
+    // An attendee, an owner who is not the recorder and a stranger cannot change it (the attendee reads the meeting, so the refusal is the recorder-only one).
+    expect(await refuses(exec('attendee', 'meetings.minutes.set_template', { meetingId, summaryTemplate: 'supplier' }))).toBe('FORBIDDEN');
+    expect(await refuses(exec('stranger', 'meetings.minutes.set_template', { meetingId, summaryTemplate: 'supplier' }))).toBe('MEETING_NOT_FOUND');
+    expect(await refuses(exec('recorder', 'meetings.minutes.set_template', { meetingId, summaryTemplate: 'nope' }))).not.toBeNull();
+    // The database itself holds the same five codes.
+    expect(await refuses(sqlAdmin(`UPDATE crove_meetings.meeting SET summary_template = 'nope' WHERE id = $1`, [meetingId]))).not.toBeNull();
+    expect((await query<{ summaryTemplate: string }>('recorder', 'meetings.meeting.get', { meetingId })).summaryTemplate).toBe('briefing');
+  });
+
+  it('saves the sections of a template as one summary text under their headings, publishes it, and reads it back for an attendee only once published', async () => {
+    const meetingId = await seedMeeting('recorder', ['attendee']);
+    await exec('recorder', 'meetings.minutes.set_template', { meetingId, summaryTemplate: 'briefing' });
+    const saved = await exec<{ decisions: number }>('recorder', 'meetings.summary.save', {
+      meetingId,
+      sections: [{ key: 'plan', text: 'Gửi báo giá thứ sáu.' }, { key: 'progress', text: 'Đã gửi hợp đồng.' }, { key: 'issues', text: '  ' }],
+      decisions: ['Giữ giá cũ'],
+    });
+    expect(saved.decisions).toBe(1);
+    const draft = (await results('recorder', meetingId)).draft;
+    // The template's order and headings, whatever the order the recorder's screen sent; an empty section is left out.
+    expect(draft?.summary).toBe('Kết quả công việc kỳ trước\nĐã gửi hợp đồng.\n\nKế hoạch kỳ tới\nGửi báo giá thứ sáu.');
+    expect(draft?.tainted).toBe(false);
+    expect((await results('attendee', meetingId)).draft).toBeNull();
+    await exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true });
+    const shared = await results('attendee', meetingId);
+    expect(shared.published?.summary).toBe(draft?.summary);
+    expect(shared.draft).toBeNull();
+  });
+
+  it('refuses a mix of the general summary and sections, a section the template does not have and a save with nothing in it', async () => {
+    const meetingId = await seedMeeting('recorder', ['attendee']);
+    // The general summary takes a summary, never sections.
+    expect(await refuses(exec('recorder', 'meetings.summary.save', { meetingId, sections: [{ key: 'plan', text: 'x' }], decisions: [] }))).toBe('TEMPLATE_MISMATCH');
+    expect(await exec('recorder', 'meetings.summary.save', { meetingId, summary: 'Tóm tắt chung', decisions: [] })).toMatchObject({ meetingId });
+    await exec('recorder', 'meetings.minutes.set_template', { meetingId, summaryTemplate: 'customer' });
+    // A template takes sections, never a summary of its own, and only its own keys.
+    expect(await refuses(exec('recorder', 'meetings.summary.save', { meetingId, summary: 'Tóm tắt', decisions: [] }))).toBe('TEMPLATE_MISMATCH');
+    expect(await refuses(exec('recorder', 'meetings.summary.save', { meetingId, sections: [{ key: 'plan', text: 'x' }], decisions: [] }))).toBe('TEMPLATE_MISMATCH');
+    expect(await refuses(exec('recorder', 'meetings.summary.save', { meetingId, sections: [{ key: 'needs', text: ' ' }], decisions: [] }))).not.toBeNull();
+    // The draft that was there is untouched by the refusals.
+    expect((await results('recorder', meetingId)).draft?.summary).toBe('Tóm tắt chung');
+    // Only the recorder saves.
+    expect(await refuses(exec('attendee', 'meetings.summary.save', { meetingId, sections: [{ key: 'needs', text: 'x' }], decisions: [] }))).toBe('FORBIDDEN');
+  });
+
   it('goes with its meeting', async () => {
     const meetingId = await seedMeeting('recorder', ['attendee']);
     await exec('recorder', 'meetings.summary.save', { meetingId, summary: 'Tóm tắt', decisions: [] });

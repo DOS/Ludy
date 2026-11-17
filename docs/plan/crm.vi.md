@@ -1,6 +1,6 @@
 # Ludy CRM, lát cắt 1: tóm tắt cho JOY
 
-> Bản tóm tắt tiếng Việt của [crm.md](crm.md), cập nhật khi đóng lát cắt (bước K7), ngày 2026-11-01. JOY đã quyết "Mở ngay" cho lát cắt đầu tiên của CRM (quyết định 21 trong kế hoạch kernel, issue [#2223](https://github.com/DOS/Ludy/issues/2223)). Đây là ngoại lệ của Quyết định 2, giống Quyết định 20 đã làm cho Calendar. Lát này chưa hiện ra với khách hàng nào vì bản chạy thử chỉ có kế toán.
+> Bản tóm tắt tiếng Việt của [crm.md](crm.md), cập nhật khi đóng lát cắt (bước K7), ngày 2026-11-01, và làm mới ngày 2026-11-16 (issue #3479) cho khớp với `main`. JOY đã quyết "Mở ngay" cho lát cắt đầu tiên của CRM (quyết định 21 trong kế hoạch kernel, issue [#2223](https://github.com/DOS/Ludy/issues/2223)). Đây là ngoại lệ của Quyết định 2, giống Quyết định 20 đã làm cho Calendar. Lát này chưa hiện ra với khách hàng nào vì bản chạy thử chỉ có kế toán.
 
 ## Lát cắt 1 làm gì, cho ai
 
@@ -32,12 +32,12 @@ Một thành viên làm được:
 | K5 | Nhập liên hệ từ CSV | Đã gộp (#2254) |
 | K5b | Quét hằng ngày xóa dòng nhập quá 7 ngày | Đã gộp (#2259) |
 | K6 | Nhập liên hệ từ Excel (đọc ngay trên trình duyệt, không thêm gói mới) | Đã gộp (#2277) |
-| K7 | Kiểm tra cả luồng bằng một bài e2e, kiểm tra module `crm` chạy riêng và khi tắt, hướng dẫn sử dụng, bản tóm tắt này | Đang chờ gộp (#2279) |
+| K7 | Kiểm tra cả luồng bằng một bài e2e, kiểm tra module `crm` chạy riêng và khi tắt, hướng dẫn sử dụng, bản tóm tắt này | Đã gộp (#2279) |
 
 ## Ngoài lát này (chờ JOY)
 
-AI dưới mọi hình thức, thu thập từ email, lịch hay Zalo, trường tùy chỉnh và đối tượng tùy chỉnh, quy trình thứ hai, tự động hóa, sản phẩm hoặc báo giá trên cơ hội, chia sẻ bản ghi, API công khai, ứng dụng di động riêng.
+AI dưới mọi hình thức, thu thập từ email, lịch hay Zalo, trường tùy chỉnh và đối tượng tùy chỉnh, quy trình thứ hai, tự động hóa, sản phẩm trên cơ hội (báo giá đã làm ở lát cắt 2, xem [crm-quotes.vi.md](crm-quotes.vi.md)), chia sẻ bản ghi, API công khai, ứng dụng di động riêng.
 
 ## Việc cần JOY quyết
 
-Hiện không có gì chặn. Các giả định mặc định (đổi được sau): chỉ VND; chưa có hoàn tác cho việc nhập tệp; chưa nối cơ hội thắng với hóa đơn (việc của dòng Kế toán); chưa nối người với công ty; lý do thua là văn bản tự do; chưa có cập nhật tức thời khi người khác chuyển thẻ (bảng làm mới sau thao tác của chính bạn và khi tải lại). Danh sách đầy đủ ở mục 9 của [crm.md](crm.md).
+Hiện không có gì chặn. Các giả định mặc định (đổi được sau): chỉ VND; chưa có hoàn tác cho việc nhập tệp; lý do thua là văn bản tự do. Các giả định cũ sau đây đã đổi (cập nhật 2026-11-16): cơ hội thắng nối với hóa đơn qua báo giá và đơn hàng (nút "Lập hóa đơn" trên đơn, xem [crm-quotes.vi.md](crm-quotes.vi.md)); người đã nối được với công ty (CRM-Q5, #2438: công ty của một người, số người của một công ty, gợi ý công ty, cột công ty khi nhập tệp); bảng cơ hội cập nhật gần như tức thời khi người khác chuyển thẻ (#3293). Danh sách đầy đủ ở mục 9 của [crm.md](crm.md).

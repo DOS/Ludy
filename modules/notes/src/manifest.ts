@@ -10,16 +10,16 @@ export const notesManifest = defineModule({
   dependsOn: ['kernel'],
   tables: {
     crove_notes: {
-      link: columns(['org_id', 'id', 'note_id', 'target_type', 'target_id', 'party_id', 'file_id', 'created_by', 'created_at']),
+      link: columns(['org_id', 'id', 'note_id', 'todo_id', 'target_type', 'target_id', 'party_id', 'file_id', 'task_id', 'created_by', 'created_at']),
       note: columns(
-        ['org_id', 'id', 'author_user_id', 'visibility', 'pinned', 'tainted', 'revision', 'created_at', 'updated_at', 'archived_at', 'deleted_at'],
+        ['org_id', 'id', 'author_user_id', 'visibility', 'pinned', 'tainted', 'summary_run_ids', 'revision', 'created_at', 'updated_at', 'archived_at', 'deleted_at'],
         { title: 'pii', body: 'pii', tags: 'pii', search: 'pii' },
       ),
       // A member's own to-do (#1673), always private: its title, details and checklist steps are free text, so pii.
       todo: columns(
         [
-          'org_id', 'id', 'owner_user_id', 'status', 'due_on', 'due_at', 'time_zone', 'remind_at', 'reminded_at', 'sort_key', 'source_note_id', 'task_id', 'tainted',
-          'revision', 'created_at', 'updated_at', 'done_at', 'deleted_at',
+          'org_id', 'id', 'owner_user_id', 'status', 'due_on', 'due_at', 'time_zone', 'remind_at', 'reminded_at', 'sort_key', 'source_note_id', 'source_run_id', 'source_run_seq', 'task_id', 'tainted',
+          'recurrence', 'series_id', 'revision', 'created_at', 'updated_at', 'done_at', 'deleted_at',
         ],
         { title: 'pii', details: 'pii', checklist: 'pii', search: 'pii' },
       ),

@@ -176,6 +176,19 @@ export type ConversationMediaResult =
   // retry: asking again may succeed (a timeout, the platform's error, a rate limit); else the image is dropped for good. `code` is a short code, never a platform's words.
   | { kind: 'failed'; retry: boolean; code: string };
 
+// Reading one Telegram Business connection back from Telegram (#3224): a business message named a connection Ludy never recorded (the owner added the chatbot in
+// Telegram before turning chats on in Ludy), so the worker asks once. The answer is the same state a `business_connection` update would have brought.
+export interface ConversationBusinessLookupInput {
+  // The opened credential (the provider's own JSON).
+  secret: string;
+  // The business connection id the message named.
+  businessConnectionId: string;
+}
+export type ConversationBusinessLookupResult =
+  | { kind: 'ok'; state: ConversationBusinessState }
+  // `retry` is for the log only: the worker asks again no sooner than its window, whatever the answer. `code` is a short code, never a platform's words or an address.
+  | { kind: 'failed'; retry: boolean; code: string };
+
 // What a provider can do with a conversation. Hide is idempotent on the platforms that have it, so it may be repeated.
 export interface ConversationAdapter {
   readonly provider: string;
@@ -186,6 +199,8 @@ export interface ConversationAdapter {
   // An image the platform gave by a reference (#3131): the adapter turns it into bytes with the credential; the caller checks the bytes (type, size) itself.
   media?(input: ConversationMediaInput): Promise<ConversationMediaResult>;
   chatHook?(input: ConversationChatHookInput): Promise<ConversationChatHookResult>;
+  // A Telegram Business connection Ludy has no record of, read back with the bot's own token (#3224).
+  businessConnection?(input: ConversationBusinessLookupInput): Promise<ConversationBusinessLookupResult>;
 }
 
 const MAX_NOTICE_BYTES = 262_144;

@@ -1,0 +1,23 @@
+{
+  "name": "@crove/mod-projects",
+  "version": "0.1.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "description": "Projects and a task board on kernel tasks (plan docs/plan/projects.md, ADR-0048)",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@crove/db": "workspace:*",
+    "@crove/kernel": "workspace:*",
+    "@crove/kernel-contract": "workspace:*",
+    "@crove/kernel-runtime": "workspace:*",
+    "kysely": "catalog:",
+    "zod": "catalog:"
+  }
+}

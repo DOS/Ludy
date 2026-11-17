@@ -7,15 +7,15 @@ import { N } from './roster';
 export const engageEn: EngageCopy = {
   appName: 'Ludy Engage',
   meta: {
-    title: 'Ludy Engage: inbox, customers, sales and marketing in one app',
+    title: 'Ludy Engage: inbox, CRM and marketing in one app',
     description:
-      'Ludy Engage brings a shared inbox for customers, your customer list and sales deals, bookings, posts and ads into one place, with a report for each part. Open source, and it shares its customer list with Ludy Accounting.',
+      'Ludy Engage brings a shared Inbox for customers, CRM (contacts, companies, sales deals, bookings), Marketing (posts, ads) and Reports into one place. Open source, and it shares its customer list with Ludy Finance.',
   },
-  ogTitle: 'Inbox, customers and marketing, in one app.',
+  ogTitle: 'Inbox, CRM and marketing, in one app.',
   crumbLabel: 'Breadcrumb',
   hero: {
-    title: 'Inbox, customers and marketing, in one app.',
-    lead: `Ludy Engage brings your customers' messages, your customer list and sales deals, bookings, posts and ads into one place, each with its own report. ${N.sales} works the inbox, customers and sales, ${N.marketing} runs marketing, you approve.`,
+    title: 'Inbox, CRM and marketing, in one app.',
+    lead: `Ludy Engage brings your customers' messages, CRM (contacts, companies, sales deals, bookings), posts and ads into one place, each with its own report. ${N.sales} works the Inbox and CRM, ${N.marketing} runs Marketing, you approve.`,
     primary: 'Self-host for free',
     secondary: 'Sign in',
     note: 'Open source, AGPL. Ludy Engage is in the self-hosted edition. On Ludy Cloud: coming soon.',
@@ -32,7 +32,7 @@ export const engageEn: EngageCopy = {
   },
   groups: {
     title: 'What Ludy Engage does today',
-    lead: 'Five jobs, in the four groups of the menu: Inbox, Customers & Sales, Marketing and Reports.',
+    lead: 'Five jobs, in the four groups of the menu: Inbox, CRM, Marketing and Reports.',
     items: [
       {
         id: 'inbox',
@@ -48,10 +48,10 @@ export const engageEn: EngageCopy = {
       },
       {
         id: 'customers',
-        title: 'Customers and sales deals',
-        lead: 'One contact list shared with Ludy Accounting, and deals by stages you set.',
+        title: 'CRM: contacts, companies and sales deals',
+        lead: 'One contact and company list shared with Ludy Finance, and deals by stages you set.',
         points: [
-          'A contact is a person or a company, the same party the invoices in Ludy Accounting use; search by name, email, phone or tax code, without typing accents',
+          'Contacts and Companies have their own screens, link people to a company and show related deals and activity; they are the same parties the invoices in Ludy Finance use, searchable without typing accents',
           'Import from an Excel (.xlsx) or CSV file: preview every row as new, duplicate or invalid before anything is written, and nothing already there is overwritten. An import cannot be undone',
           'Each deal has a customer, an amount in dong, an owner, an expected close date and a reason when lost',
           'A drag-and-drop board by stage, each column with its card count and total. Owners and admins name, add, remove and reorder the stages',
@@ -79,7 +79,7 @@ export const engageEn: EngageCopy = {
           'Channels include Facebook, Instagram, Threads, TikTok, YouTube, LinkedIn, X, Zalo OA and many more: built, not yet tried with a real account on any of them. For the large platforms the installer registers that platform\'s app first',
           'Every post needs a person\'s approval before it goes out, with multi-step review, checklists and a review link clients can use without signing in',
           'Reports for clients as a shareable link, a printout, with your own branding, and they can be scheduled',
-          'Ads: see spend, impressions, clicks and results of Facebook and Instagram ads by day, month and campaign, and compare spend with the books when you use Ludy Accounting. Needs a Meta key the installer sets up. Built, not yet tried with a real ad account',
+          'Ads: see spend, impressions, clicks and results of Facebook and Instagram ads by day, month and campaign, and compare spend with the books when you use Ludy Finance. Needs a Meta key the installer sets up. Built, not yet tried with a real ad account',
         ],
       },
       {
@@ -108,7 +108,7 @@ export const engageEn: EngageCopy = {
   },
   coworker: {
     title: `What ${N.sales} and ${N.marketing} do in Ludy Engage`,
-    lead: `${N.sales} is the AI sales lead, working the inbox, customers and sales. ${N.marketing} is the AI marketing lead, working the posts. Both are your coworkers, under ${N.gm}'s coordination. They need an AI model the installer sets up; an owner or admin can stop the AI, and the monthly AI budget caps the cost.`,
+    lead: `${N.sales} is the AI sales lead, working the Inbox and CRM. ${N.marketing} is the AI marketing lead, working the posts. Both are your coworkers, under ${N.gm}'s coordination. They need an AI model the installer sets up; in Ludy AI, an owner sets monthly budgets and an owner or admin can stop the AI at once.`,
     doesTitle: 'Does',
     does: [
       `${N.sales} drafts replies in the Inbox without inventing prices or links, and suggests the customer's intent and a matching contact`,
@@ -132,7 +132,7 @@ export const engageEn: EngageCopy = {
       },
       {
         title: 'Accountants and accounting services',
-        body: 'The customers here are also the customers in Ludy Accounting, so invoices and contacts share one list.',
+        body: 'The customers here are also the customers in Ludy Finance, so invoices and contacts share one list.',
       },
       {
         title: 'People who self-host',
@@ -145,7 +145,7 @@ export const engageEn: EngageCopy = {
     items: [
       {
         q: 'What happened to Ludy CRM?',
-        a: 'Ludy CRM has folded into Ludy Engage. Contacts, deals and bookings are in the Customers & Sales group, and the old address of the Ludy CRM page now leads here.',
+        a: 'Ludy CRM has folded into Ludy Engage. Contacts, companies, deals and bookings are in the CRM group, and the old address of the Ludy CRM page now leads here.',
       },
       {
         q: 'Which channels does the Inbox receive from?',
@@ -160,8 +160,8 @@ export const engageEn: EngageCopy = {
         a: 'Not yet. Today Ludy shows your Facebook and Instagram ads. Creating and running campaigns: coming soon.',
       },
       {
-        q: 'Do the customers in Ludy Accounting show up in Ludy Engage?',
-        a: 'Yes. A contact is the same party the invoices use, so the customers and vendors you already have appear in the contact list.',
+        q: 'Do the customers in Ludy Finance show up in Ludy Engage?',
+        a: 'Yes. Contacts and companies are the same parties the invoices use, so the customers and vendors you already have appear in CRM.',
       },
     ],
   },
@@ -177,7 +177,7 @@ export const engageEn: EngageCopy = {
       label: 'The Ludy Engage menu',
       groups: [
         { name: 'Inbox', items: ['Conversations'] },
-        { name: 'Customers & Sales', items: ['Contacts', 'Deals', 'Bookings'] },
+        { name: 'CRM', items: ['Contacts', 'Companies', 'Deals', 'Bookings'] },
         { name: 'Marketing', items: ['Posts', 'Ads'] },
         { name: 'Reports', items: ['Reports'] },
       ],

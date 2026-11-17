@@ -14,6 +14,7 @@ import { Decimal, money } from '@crove/l10n-vn';
 
 type DeclarationSheet = DeclarationDocument['sheets'][number];
 type DeclarationColumn = DeclarationSheet['columns'][number];
+type WorkbookDeclarationDocument = Pick<DeclarationDocument, 'notice' | 'notSent' | 'layout' | 'draft' | 'title' | 'header' | 'sheets' | 'notes'>;
 
 const EXCEL_SIGNIFICANT_DIGITS = 15;
 const TEXT = '@';
@@ -61,7 +62,7 @@ function setValue(cell: ExcelJS.Cell, column: DeclarationColumn, value: string |
   }
 }
 
-function writeSheet(workbook: ExcelJS.stream.xlsx.WorkbookWriter, doc: DeclarationDocument, sheet: DeclarationSheet, withNotes: boolean): void {
+function writeSheet(workbook: ExcelJS.stream.xlsx.WorkbookWriter, doc: WorkbookDeclarationDocument, sheet: DeclarationSheet, withNotes: boolean): void {
   const ws = workbook.addWorksheet(sheet.name.slice(0, 31));
   const text = (value: string, bold = false): void => {
     const row = ws.addRow([]);
@@ -106,7 +107,7 @@ function writeSheet(workbook: ExcelJS.stream.xlsx.WorkbookWriter, doc: Declarati
   ws.commit();
 }
 
-export async function buildDeclarationWorkbook(doc: DeclarationDocument, brand = 'Ludy'): Promise<Uint8Array> {
+export async function buildDeclarationWorkbook(doc: WorkbookDeclarationDocument, brand = 'Ludy'): Promise<Uint8Array> {
   const sink = new PassThrough();
   const chunks: Buffer[] = [];
   sink.on('data', (chunk: Buffer) => chunks.push(chunk));

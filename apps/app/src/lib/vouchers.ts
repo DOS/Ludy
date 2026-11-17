@@ -14,6 +14,7 @@ import {
 } from '@crove/kernel-contract';
 import { z } from 'zod';
 import type { ChartAccount } from './accounts.ts';
+import { toUnits } from './decimal.ts';
 import { readSearch, type Defined } from './search.ts';
 import type { Translate } from '../i18n/runtime.ts';
 
@@ -154,3 +155,53 @@ const zDay = z.string().refine(isCalendarDate).optional().catch(undefined);
 const zVouchersSearch = z.object({ type: z.enum(VOUCHER_TYPES).optional().catch(undefined), from: zDay, to: zDay });
 export type VouchersSearch = Defined<z.output<typeof zVouchersSearch>>;
 export const parseVouchersSearch = (search: Record<string, unknown>): VouchersSearch => readSearch(zVouchersSearch, search);
+
+// An amount as typed or as the API sends it ("1.500.000", "1500000", "1500000.0000"), in ledger units, or null when it is
+// not an amount. Two amounts are the same when their units are, whatever the spelling: a string comparison would
+// call "1500000" and "1500000.0000" different.
+export function amountUnits(value: string): bigint | null {
+  if (value.trim() === '') return null;
+  try {
+    return toUnits(normalizeAmount(value));
+  } catch {
+    return null;
+  }
+}
+
+// The posted voucher a form in progress looks like (#3607): the same date, the same total and the same counterparty (the
+// chosen party, else the name typed for a person; both empty counts as the same), on the same side of the cash box (a
+// receipt and a payment of one amount on one day are two vouchers). A reversed voucher no longer counts. Only a hint
+// shown while typing; the person decides, and the kernel refuses nothing here.
+export interface VoucherMatchRow {
+  type: VoucherType;
+  date: string;
+  amount: string;
+  party: { id: string } | null;
+  personName: string | null;
+  reversal: unknown;
+}
+export interface VoucherMatchInput {
+  type: VoucherType;
+  date: string;
+  total: string;
+  partyId: string;
+  personName: string;
+}
+
+const counterpartyKey = (partyId: string | null, personName: string | null) => (partyId ? `party:${partyId}` : `name:${(personName ?? '').trim().toLocaleLowerCase()}`);
+
+export function findDuplicateVoucher<T extends VoucherMatchRow>(rows: readonly T[], input: VoucherMatchInput): T | null {
+  const total = amountUnits(input.total);
+  if (total === null || total <= 0n || !isCalendarDate(input.date)) return null;
+  const key = counterpartyKey(input.partyId || null, input.personName);
+  return (
+    rows.find(
+      (r) =>
+        !r.reversal &&
+        r.date === input.date &&
+        isInflow(r.type) === isInflow(input.type) &&
+        amountUnits(r.amount) === total &&
+        counterpartyKey(r.party?.id ?? null, r.personName) === key,
+    ) ?? null
+  );
+}

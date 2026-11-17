@@ -23,7 +23,7 @@ export type DeclarationKind = (typeof DECLARATION_KINDS)[number];
 
 /** The layout version of each document: bump the suffix when a column is added, moved or renamed, so a file says which layout it has. */
 export const DECLARATION_LAYOUTS: Readonly<Record<DeclarationKind, { form: string; version: string }>> = {
-  d02lt: { form: 'D02-LT (Quyết định 366/QĐ-BHXH)', version: 'ludy-hr-d02lt/1' },
+  d02lt: { form: 'D02-LT (Quyết định 366/QĐ-BHXH)', version: 'ludy-hr-d02lt/2' },
   kk: { form: '05/KK-TNCN và bảng kê (Thông tư 89/2026/TT-BTC)', version: 'ludy-hr-05kk/1' },
   qtt: { form: '05/QTT-TNCN và bảng kê (Thông tư 89/2026/TT-BTC)', version: 'ludy-hr-05qtt/1' },
   certificate: { form: '03/TNCN chứng từ khấu trừ thuế (Thông tư 91/2026/TT-BTC)', version: 'ludy-hr-03tncn/1' },
@@ -84,6 +84,17 @@ export interface DeclarationDocument {
 export const INSURANCE_FUND_KEYS = ['retirement_death', 'sickness_maternity', 'work_accident', 'health', 'unemployment'] as const;
 export type InsuranceFundKey = (typeof INSURANCE_FUND_KEYS)[number];
 export type WithholdingMode = 'progressive' | 'flat' | 'commitment' | 'below_threshold';
+export type DeclarationContractType = 'indefinite' | 'fixed_term' | 'under_one_month' | 'none';
+export interface DeclarationContractTerm {
+  effectiveFrom: string;
+  contractType: DeclarationContractType;
+}
+export const DECLARATION_CONTRACT_LABELS: Readonly<Record<DeclarationContractType, string>> = {
+  indefinite: 'Không xác định thời hạn',
+  fixed_term: 'Xác định thời hạn',
+  under_one_month: 'Dưới 1 tháng',
+  none: 'Không ký HĐLĐ',
+};
 
 /** The employer the declarations are of: a legal entity's name, tax code and address. */
 export interface DeclarationEmployer {
@@ -100,6 +111,10 @@ export interface DeclarationPerson {
   taxCode: string | null;
   insuranceNumber: string | null;
   identityNumber: string | null;
+  position?: string | null;
+  workplace?: string | null;
+  /** Employment contract history in ascending `effectiveFrom` order. */
+  contracts?: readonly DeclarationContractTerm[];
   /** The first day of the first employment terms. */
   startedOn: string;
   /** The last day of work, or null while employed. */
@@ -223,6 +238,18 @@ const insuredWage = (line: DeclarationLine | undefined): Decimal | null => {
 };
 const sameWages = (a: DeclarationLine, b: DeclarationLine): boolean => INSURANCE_FUND_KEYS.every((fund) => fundWage(a.breakdown, fund).eq(fundWage(b.breakdown, fund)));
 
+/** Resolves the localized contract label in force as of `effective` (`effectiveFrom <= effective`, picking the latest row in ascending `contracts` order). */
+function contractLabelAt(contracts: readonly DeclarationContractTerm[] | undefined, effective: string): string {
+  if (!contracts || contracts.length === 0) return '';
+  let matched: DeclarationContractTerm | null = null;
+  for (const entry of contracts) {
+    if (entry.effectiveFrom <= effective && (matched === null || entry.effectiveFrom >= matched.effectiveFrom)) {
+      matched = entry;
+    }
+  }
+  return matched ? (DECLARATION_CONTRACT_LABELS[matched.contractType] ?? '') : '';
+}
+
 /**
  * Who is listed, by the rules of the plan (row 9): a person whose first terms start in the month and who is insured is an increase, effective on the start day; a person whose last
  * day of work falls in the month is a decrease, effective on that day, with the wage they were insured on; an insured person with a different contribution wage in any fund than the month
@@ -279,6 +306,9 @@ export function buildD02LtListing(input: D02LtInput): { document: DeclarationDoc
         birthDate: text(person.birthDate),
         identityNumber: text(person.identityNumber),
         insuranceNumber: text(person.insuranceNumber),
+        position: text(person.position),
+        workplace: text(person.workplace),
+        contractType: contractLabelAt(person.contracts, effective),
         effectiveOn: effective,
         wageRetirement: fixed(fundWage(source.breakdown, 'retirement_death')),
         wageSickness: fixed(fundWage(source.breakdown, 'sickness_maternity')),
@@ -301,6 +331,9 @@ export function buildD02LtListing(input: D02LtInput): { document: DeclarationDoc
       { key: 'birthDate', header: 'Ngày sinh', kind: 'text' },
       { key: 'identityNumber', header: 'Số định danh cá nhân', kind: 'text' },
       { key: 'insuranceNumber', header: 'Số sổ BHXH', kind: 'text' },
+      { key: 'position', header: 'Chức vụ, chức danh nghề', kind: 'text' },
+      { key: 'workplace', header: 'Phòng ban / nơi làm việc', kind: 'text' },
+      { key: 'contractType', header: 'Loại hợp đồng', kind: 'text' },
       { key: 'effectiveOn', header: 'Có hiệu lực từ', kind: 'text' },
       ...FUND_COLUMNS,
       { key: 'note', header: 'Ghi chú', kind: 'text' },
@@ -308,7 +341,7 @@ export function buildD02LtListing(input: D02LtInput): { document: DeclarationDoc
     rows: numbered,
   };
   const notes = [
-    'Chức danh, nơi làm việc, loại hợp đồng và nơi đăng ký khám chữa bệnh ban đầu chưa được lưu trong Ludy: nhập tay khi khai.',
+    'Nơi đăng ký khám chữa bệnh ban đầu chưa được lưu trong Ludy: nhập tay khi khai.',
     'Mức đóng là tiền lương làm căn cứ đóng từng quỹ của tháng, đã áp mức sàn và mức trần theo quy định.',
   ];
   if (input.previousLines === null) notes.push('Chưa có bảng lương đã duyệt của tháng trước nên không liệt kê được những người đổi mức đóng.');

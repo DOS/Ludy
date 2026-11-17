@@ -8,6 +8,11 @@ import { zId, zLocalDate } from './schemas.ts';
 export const BUYER_KINDS = ['business', 'individual', 'consumer'] as const;
 export type BuyerKind = (typeof BUYER_KINDS)[number];
 
+// What an individual buyer may give instead of a tax code (Decree 123/2020 as read in plan einvoice-issue.md section 3a, row 4): the personal ID number (CCCD, 12 digits), a passport
+// number or the code of a unit with a budget relation (7 digits), one at a time. Personal data (class `national_id` in the finance manifest); the shapes are checked, never the person.
+export const BUYER_IDENTITY_KINDS = ['cccd', 'passport', 'budget_code'] as const;
+export type BuyerIdentityKind = (typeof BUYER_IDENTITY_KINDS)[number];
+
 // The most lines a draft holds (the providers' own limits are 400 or fewer).
 export const EINVOICE_DRAFT_MAX_LINES = 200;
 
@@ -16,6 +21,9 @@ export const DRAFT_ISSUE_CODES = [
   'DATE_REQUIRED',
   'DATE_INVALID',
   'DATE_FUTURE',
+  'SALE_DATE_INVALID',
+  'SALE_DATE_AFTER_INVOICE',
+  'LATE_REASON_REQUIRED',
   'CURRENCY_UNSUPPORTED',
   'SERIES_REQUIRED',
   'BUYER_TAX_CODE_REQUIRED',
@@ -24,11 +32,14 @@ export const DRAFT_ISSUE_CODES = [
   'BUYER_NAME_REQUIRED',
   'BUYER_ADDRESS_REQUIRED',
   'BUYER_EMAIL_INVALID',
+  'BUYER_IDENTITY_INVALID',
   'LINES_REQUIRED',
   'LINE_DESCRIPTION_REQUIRED',
   'LINE_QUANTITY_INVALID',
   'LINE_PRICE_INVALID',
   'LINE_VAT_RATE_INVALID',
+  // 8% on a date outside the periods the reduced rate applied (REDUCED_RATE_PERIODS), judged on the sale date, or the invoice date when it has none; an adjustment or a replacement is judged on the original's.
+  'LINE_VAT_RATE_REDUCED_OUTSIDE_PERIOD',
   'TOTAL_TOO_LARGE',
 ] as const;
 export type DraftIssueCode = (typeof DRAFT_ISSUE_CODES)[number];
@@ -38,6 +49,11 @@ export type DraftIssue = z.infer<typeof zDraftIssue>;
 
 const zText = (max: number) => z.string().trim().max(max);
 const zDecimal = z.string().regex(/^\d{1,12}(\.\d{1,6})?$/);
+// A unit price may be signed: the difference of an adjusting invoice is a decrease with a minus (the checks refuse a minus on any other invoice).
+const zSignedDecimal = z.string().regex(/^-?\d{1,12}(\.\d{1,6})?$/);
+
+export const zEInvoiceBuyerIdentity = z.strictObject({ kind: z.enum(BUYER_IDENTITY_KINDS), value: zText(20) });
+export type EInvoiceBuyerIdentity = z.infer<typeof zEInvoiceBuyerIdentity>;
 
 export const zEInvoiceBuyerInput = z.strictObject({
   kind: z.enum(BUYER_KINDS),
@@ -47,19 +63,26 @@ export const zEInvoiceBuyerInput = z.strictObject({
   name: zText(400).nullable(),
   address: zText(500).nullable(),
   email: zText(254).nullable(),
+  // For an individual buyer only (the server clears it for any other kind): one of CCCD, passport or budget code. Optional.
+  identity: zEInvoiceBuyerIdentity.nullable().default(null),
 });
 
 export const zEInvoiceLineInput = z.strictObject({
   description: zText(500),
   unit: zText(50).nullable(),
   quantity: zDecimal,
-  unitPrice: zDecimal,
+  unitPrice: zSignedDecimal,
   vatRate: zText(20),
 });
 
 // The form as the person holds it, without saving it (the live check): everything but the draft's identity.
 export const zEInvoiceDraftForm = z.strictObject({
+  // The date the invoice is issued and printed.
   date: zLocalDate,
+  // The moment of the sale (Decree 254 Art. 9), when it is not the invoice's day (#3535); null is "the same day". A sale issued after the next working day is a late invoice
+  // and needs the person's reason; the sale stays in the VAT period of its own date.
+  saleDate: zLocalDate.nullable().default(null),
+  lateReason: zText(500).nullable().default(null),
   seriesId: zId.nullable(),
   buyer: zEInvoiceBuyerInput,
   lines: z.array(zEInvoiceLineInput).max(EINVOICE_DRAFT_MAX_LINES),
@@ -96,8 +119,33 @@ export const zEInvoiceDraftCheck = z.object({
   vatAmount: z.string(),
   total: z.string(),
   issues: z.array(zDraftIssue),
+  // The sale is later invoiced than its next working day (#3535): the warning on the form, with the fine that goes with it.
+  lateSale: z.boolean(),
 });
 export type EInvoiceDraftCheck = z.infer<typeof zEInvoiceDraftCheck>;
+
+export const EINVOICE_CORRECTION_KINDS = ['adjustment', 'replacement'] as const;
+export type EInvoiceCorrectionKind = (typeof EINVOICE_CORRECTION_KINDS)[number];
+
+export const zEInvoiceCorrection = z.object({
+  kind: z.enum(EINVOICE_CORRECTION_KINDS),
+  originalDraftId: zId,
+  reasonCode: z.string(),
+  agreementFileId: zId.nullable(),
+});
+export type EInvoiceCorrection = z.infer<typeof zEInvoiceCorrection>;
+
+// Starts a correcting draft from an issued invoice (#2504): "Điều chỉnh" or "Thay thế". The original's series, number and date are read from its stored row. The reason code is one of
+// Appendix XVII (refused while the list is empty); a buyer with a tax code needs the signed agreement file, an individual buyer none. EINVOICE_DRAFT_NOT_FOUND (404),
+// EINVOICE_ORIGINAL_NOT_ISSUED, EINVOICE_ORIGINAL_REPLACED, EINVOICE_CORRECTION_METHOD, EINVOICE_CORRECTION_OPEN (409), EINVOICE_REASON_CODE_INVALID, EINVOICE_AGREEMENT_REQUIRED (422),
+// EINVOICE_AGREEMENT_FILE_NOT_FOUND (404).
+export const zEInvoiceStartCorrection = z.strictObject({
+  originalDraftId: zId,
+  kind: z.enum(EINVOICE_CORRECTION_KINDS),
+  reasonCode: z.string().trim().min(1).max(50),
+  agreementFileId: zId.nullable().default(null),
+});
+export type EInvoiceStartCorrection = z.infer<typeof zEInvoiceStartCorrection>;
 
 export const zEInvoiceDraft = z.object({
   id: zId,
@@ -105,6 +153,9 @@ export const zEInvoiceDraft = z.object({
   state: z.string(),
   seriesId: zId.nullable(),
   date: z.string(),
+  saleDate: z.string().nullable(),
+  lateReason: z.string().nullable(),
+  lateSale: z.boolean(),
   currency: z.string(),
   buyer: z.object({
     kind: z.string(),
@@ -113,6 +164,7 @@ export const zEInvoiceDraft = z.object({
     name: z.string().nullable(),
     address: z.string().nullable(),
     email: z.string().nullable(),
+    identity: zEInvoiceBuyerIdentity.nullable(),
   }),
   lines: z.array(zEInvoiceDraftLine),
   subtotal: z.string(),
@@ -124,6 +176,8 @@ export const zEInvoiceDraft = z.object({
   // After it was sent (#2502): the number the provider gave, and the code of what stopped it (a rejection that sent it back to a draft, a failure), never a provider's text.
   issuedNumber: z.string().nullable(),
   errorCode: z.string().nullable(),
+  // Set on an adjusting or a replacing invoice (#2504): the issued draft it corrects, the method, the reason code and the agreement file; null on an ordinary invoice.
+  correction: zEInvoiceCorrection.nullable().default(null),
 });
 export type EInvoiceDraft = z.infer<typeof zEInvoiceDraft>;
 
@@ -132,6 +186,8 @@ export const zEInvoiceDraftSummary = z.object({
   state: z.string(),
   date: z.string(),
   buyerName: z.string().nullable(),
+  // The identity the buyer gave, masked (the kind and the last three characters): a list never shows the whole value.
+  buyerIdentity: z.strictObject({ kind: z.enum(BUYER_IDENTITY_KINDS), masked: z.string() }).nullable(),
   total: z.string(),
   issueCount: z.number().int(),
   issuedNumber: z.string().nullable(),
@@ -227,8 +283,8 @@ export const EINVOICE_ISSUE_KIND = 'finance.einvoice_issue';
 export const zEInvoiceIssuePayload = z.strictObject({
   draftId: zId,
   contentHash: z.string().regex(/^[0-9a-f]{64}$/),
-  // The draft's total, a decimal string: the database matches it against the draft's own at the approval.
-  amount: z.string().regex(/^(?:0|[1-9][0-9]{0,17})(?:\.[0-9]{1,4})?$/),
+  // The draft's total, a decimal string: the database matches it against the draft's own at the approval. Negative for an adjusting invoice that lowers the original (#2504).
+  amount: z.string().regex(/^-?(?:0|[1-9][0-9]{0,17})(?:\.[0-9]{1,4})?$/),
   currency: z.string().regex(/^[A-Z]{3}$/),
   lineCount: z.number().int().min(1).max(EINVOICE_DRAFT_MAX_LINES),
 });
@@ -239,6 +295,9 @@ export const zEInvoiceIssueView = z.object({
   draftId: zId,
   state: z.string(),
   date: z.string(),
+  // A sale of an earlier day than the invoice (#3535), and the reason the person gave when the invoice is late: what an approver sees before the invoice is signed.
+  saleDate: z.string().nullable().default(null),
+  lateReason: z.string().nullable().default(null),
   currency: z.string(),
   total: z.string(),
   lineCount: z.number().int(),

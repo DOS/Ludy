@@ -335,6 +335,8 @@ export async function sweepDigests(deps: { runtime: Runtime; workerDb: Db }): Pr
     const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM crove_social.digest_due(${after}::uuid, ${DIGEST_PAGE}::int)`.execute(deps.workerDb);
     for (const row of rows) {
       try {
+        // An app that is off for the org (ADR-0053) has nothing to do here: no call, no refusal row, no line in the log.
+        if (!(await deps.runtime.appOn(row.org_id, 'social'))) continue;
         const done = await deps.runtime.execute<{ state: DigestState }>('social.digest.send', {}, { actor: ACTOR, orgId: row.org_id });
         if (done.state === 'sent') sent += 1;
       } catch (error) {

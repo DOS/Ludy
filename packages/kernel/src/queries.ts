@@ -28,6 +28,7 @@ import { DomainError, defineQuery } from '@crove/kernel-runtime';
 import { EDITOR_ROLES, decideApproval, proposalEditable } from './approval.ts';
 import { MAX_EXTRACTION_VERSIONS, executedButVoided, latestExtraction, voidedProposals } from './extraction.ts';
 import { archiveQueries } from './archives.ts';
+import { offAppsOf, orgAppsQuery, proposalOfApp, type OrgAppsOptions } from './org-apps.ts';
 import { fileStatuses, seesEveryEntity as unscoped } from './file-status.ts';
 import { agentQueries } from './agents.ts';
 import { channelQueries } from './channels.ts';
@@ -45,8 +46,11 @@ import { todayMailQueries } from './today-mail.ts';
 import { offboardingQueries } from './offboarding.ts';
 import { memberProfiles } from './profiles.ts';
 import { orgOverviewQuery, RECENT_FILES, type OverviewContribution } from './overview.ts';
-import { dealWithoutInvoiceQuery, receivableWithOpenDealQuery, supplierBankChangedQuery } from './signals.ts';
+import { conversationSignalsQueries } from './conversation-signals.ts';
+import { conversationUnansweredQuery, dealWithoutInvoiceQuery, receivableWithOpenDealQuery, supplierBankChangedQuery } from './signals.ts';
 import { todayQuery } from './today.ts';
+import { todayWeeklyQuery } from './today-weekly.ts';
+import { sinceYesterdayQuery } from './today-since.ts';
 import { proposalReminderQueries } from './proposal-reminders.ts';
 import { mayResubmit, resubmitSource } from './proposal-resubmit.ts';
 import { taxCalendarQueries } from './tax-calendar.ts';
@@ -55,6 +59,7 @@ import { numberingQueries } from './numbering.ts';
 import { memberVyQueries } from './member-vy.ts';
 import { myPermissions, roleQueries } from './roles.ts';
 import { calendarQueries } from './calendar.ts';
+import { meetingPlatformQueries } from './meeting-platform.ts';
 import { partyQueries } from './parties.ts';
 import { aiBudgetQueries } from './ai-budget.ts';
 import { usageQueries } from './usage-limits.ts';
@@ -308,6 +313,9 @@ export const inboxList = defineQuery({
       .where('org_id', '=', ctx.orgId)
       .orderBy('created_at', 'desc')
       .limit(200);
+    // The proposals of an app the org turned off are left out (ADR-0053 section 4): they keep their own expiry, cannot be approved (MODULE_OFF) and are counted by kernel.inbox.hidden.
+    const off = await offAppsOf(ctx.trx, ctx.orgId);
+    if (off.length > 0) query = query.where(sql<boolean>`NOT (${proposalOfApp(off)})`);
     if (input.status) query = query.where('status', '=', input.status);
     const rows = await query.execute();
     // The posted ones whose recorded document a reversal voided (#165), asked of the finance module once for the page
@@ -646,6 +654,6 @@ export const streamCheck = defineQuery({
 });
 
 // overview: the home screen's figures of the modules this deployment enables (#1261), from the composition root.
-export function kernelQueries(options: OrgDetailOptions & { overview?: readonly OverviewContribution[] }) {
-  return [orgDetailQuery(options), orgOverviewQuery({ contributions: options.overview ?? [] }), todayQuery(), dealWithoutInvoiceQuery(), receivableWithOpenDealQuery(), supplierBankChangedQuery(), streamCheck, inboxList, inboxGet, filesRecent, filesStaged, inboundRecent, inboundText, fileGet, ...archiveQueries, sessionsList, ...inviteQueries, ...offboardingQueries, ...agentQueries, ...channelQueries, ...extensionQueries, ...mcpQueries, ...conversationQueries, ...mailQueries, ...proposalReminderQueries, ...taxCalendarQueries, ...legalEntityQueries, ...numberingQueries, ...roleQueries, ...calendarQueries, ...timelineQueries, ...auditLogQueries, ...partyQueries, ...notificationQueries, ...inboxItemQueries, ...savedViewQueries, ...todayMailQueries, ...usageQueries, ...aiBudgetQueries, ...memberVyQueries];
+export function kernelQueries(options: OrgDetailOptions & { overview?: readonly OverviewContribution[]; apps?: OrgAppsOptions }) {
+  return [orgDetailQuery(options), orgAppsQuery(options.apps ?? { shipped: [], deployment: [], entitlements: async () => ['full'] }), orgOverviewQuery({ contributions: options.overview ?? [] }), todayQuery(), todayWeeklyQuery(), sinceYesterdayQuery(), dealWithoutInvoiceQuery(), receivableWithOpenDealQuery(), supplierBankChangedQuery(), conversationUnansweredQuery(), ...conversationSignalsQueries, streamCheck, inboxList, inboxGet, filesRecent, filesStaged, inboundRecent, inboundText, fileGet, ...archiveQueries, sessionsList, ...inviteQueries, ...offboardingQueries, ...agentQueries, ...channelQueries, ...extensionQueries, ...mcpQueries, ...conversationQueries, ...mailQueries, ...proposalReminderQueries, ...taxCalendarQueries, ...legalEntityQueries, ...numberingQueries, ...roleQueries, ...calendarQueries, ...meetingPlatformQueries, ...timelineQueries, ...auditLogQueries, ...partyQueries, ...notificationQueries, ...inboxItemQueries, ...savedViewQueries, ...todayMailQueries, ...usageQueries, ...aiBudgetQueries, ...memberVyQueries];
 }

@@ -9,6 +9,7 @@ const order = (over: Partial<MarketplaceOrder['lines'][number]> = {}, quantity =
   orderNo: '9101000009',
   orderedAt: '2026-11-02',
   shippedAt: null,
+  deliveredAt: null,
   stage: 'placed',
   lines: [{ lineKey: '9101000009-1', sku: 'MAU-001', itemName: 'Áo', quantity, unitPrice: '100000', amount, ...over }],
 });
@@ -28,7 +29,22 @@ describe('marketplaceOrdersCsv', () => {
     // The order number and the numbers are never touched either.
     const rows = cellsOf(marketplaceOrdersCsv('shopee', [order({ itemName: '=1+1' })]));
     expect(rows[1]?.[0]).toBe('9101000009');
-    expect(rows[1]?.slice(6)).toEqual(['100000', '1', '100000']);
+    expect(rows[1]?.slice(6, 9)).toEqual(['100000', '1', '100000']);
+  });
+
+  it('writes the delivery day in the completion column of each platform, and nothing while the platform gives none', () => {
+    const delivered = { ...order(), deliveredAt: '2026-11-05', stage: 'completed' as const };
+    const cells = (platform: 'shopee' | 'tiktok_shop' | 'lazada', o: MarketplaceOrder) => cellsOf(marketplaceOrdersCsv(platform, [o])).slice(0, 2);
+    const [shopeeHead, shopeeRow] = cells('shopee', delivered);
+    expect(shopeeHead?.at(-1)).toBe('Thời gian hoàn thành đơn hàng');
+    expect(shopeeRow?.at(-1)).toBe('2026-11-05');
+    const [tiktokHead, tiktokRow] = cells('tiktok_shop', delivered);
+    expect(tiktokHead?.at(-1)).toBe('Delivered Time');
+    expect(tiktokRow?.at(-1)).toBe('2026-11-05');
+    const [lazadaHead, lazadaRow] = cells('lazada', delivered);
+    expect(lazadaHead?.at(-1)).toBe('deliveredTime');
+    expect(lazadaRow?.at(-1)).toBe('2026-11-05');
+    for (const platform of ['shopee', 'tiktok_shop', 'lazada'] as const) expect(cells(platform, order())[1]?.at(-1)).toBe('');
   });
 
   it('writes the units of a Lazada line so that they add up to the line exactly: 100000 over 3 units', () => {

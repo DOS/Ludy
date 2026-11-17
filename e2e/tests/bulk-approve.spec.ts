@@ -27,6 +27,8 @@ test('review shortcuts, then approve several proposals under one step-up', async
     await expect(page).toHaveURL(/\/login$/);
     await signUp(page, email);
     await createOrg(page, 'Công ty Duyệt hàng loạt');
+    // A new org opens on the overview (#3225); the uploads are on the Inbox.
+    await page.goto(page.url().replace(/\/overview$/, '/inbox'));
     await expect(page.getByRole('heading', { name: 'Chứng từ chờ duyệt' })).toBeVisible();
     await page.locator('input[type=file]').setInputFiles(NUMBERS.map(invoice));
     // The worker reads each XML and raises its proposal; the Inbox polls every few seconds.
@@ -66,11 +68,12 @@ test('review shortcuts, then approve several proposals under one step-up', async
     await expect(page.getByRole('heading', { name: SELLER })).toBeVisible();
     await confirmUnverifiedSignature(page);
     await expect(page.getByRole('button', { name: 'Duyệt và ghi sổ' })).toBeEnabled();
-    // A asks for the same approval as the button: without a second factor, the step-up prompt.
+    // A asks for the same approval as the button: without a second factor, the step-up dialog (#3599). Escape drops the request and focus goes back to the approve button.
     await page.keyboard.press('a');
-    await expect(page.getByText('Đang chờ: duyệt và ghi sổ chứng từ này.')).toBeVisible();
-    await page.getByRole('button', { name: 'Hủy thao tác' }).click();
+    await expect(page.getByRole('dialog').getByText('Đang chờ: duyệt và ghi sổ chứng từ này.')).toBeVisible();
+    await page.keyboard.press('Escape');
     await expect(page.getByText('Đang chờ: duyệt và ghi sổ chứng từ này.')).toBeHidden();
+    await expect(page.getByRole('button', { name: 'Duyệt và ghi sổ' })).toBeFocused();
     await page.keyboard.press('e');
     await expect(page.getByRole('combobox', { name: 'Tài khoản nợ cho dòng 1' })).toBeFocused();
     // Typing in a field is never a shortcut.
@@ -90,7 +93,7 @@ test('review shortcuts, then approve several proposals under one step-up', async
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/ledger$`));
     await page.keyboard.press('Control+k');
-    await palette.fill('chung tu cho');
+    await palette.fill('cho duyet');
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
   });

@@ -5,8 +5,7 @@ type Finance = Dictionary['modules']['finance'];
 
 const VAT_SHADES = ['bg-accent', 'bg-accent/55', 'bg-accent/30'];
 
-// The quarter's input VAT, split by vendor: the total, a bar to scale and the amounts. Used by the home page's Ludy Kế
-// toán card and by the Ludy Kế toán page.
+// The quarter's input VAT, split by vendor: the total, a bar to scale and the amounts. Used by the Ludy Tài chính page.
 export function VatBreakdown({ vat, className = '' }: { vat: Finance['vat']; className?: string }) {
   return (
     <figure className={`rounded-md border border-line bg-bg p-3 ${className}`}>

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The summary, the decisions and the action items of a meeting (issue #2580, M6 part A, ADR-0047 points 2 and 8, ADR-0049 decision 8, meetings plan sections
 // 5.3 and 8). Everything here is the recorder's own work or a reader's own click, in a signed-in member's context; none of it needs an AI:
-//   meetings.summary.save         the recorder types the summary and the decisions: the draft (a new save replaces it).
+//   meetings.minutes.set_template the recorder picks the minutes template of their meeting (A4, #3162): the code only; text already saved is not touched.
+//   meetings.summary.save         the recorder types the summary (or, on a template, its sections) and the decisions: the draft (a new save replaces it).
 //   meetings.action_item.create / edit / delete   the recorder's draft items. An edit clears the taint of that item; code recomputes its flags.
 //   meetings.result.publish       the recorder's one click (`confirmed: true`): the drafts become published rows, which the meeting's readers read.
 //   meetings.action_item.accept   a person makes a team task from an item with the title they confirmed, the date and the seat they picked: the recorder
@@ -15,20 +16,26 @@
 import { sql } from 'kysely';
 import {
   ITEMS_PER_MEETING_MAX,
+  parseStoredSections,
   zActionItemAccept,
   zActionItemAcceptClean,
   zActionItemCreate,
   zActionItemEdit,
   zActionItemRef,
   zActionItemSource,
+  sectionsToText,
+  templateSections,
   zMeetingRef,
   zMeetingResultSave,
+  zMeetingTemplateSet,
+  zMeetingTemplateSetDone,
   zResultPublish,
   type ActionItemView,
   type ItemFlag,
   type MeetingResults,
 } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { enqueueMinutesHook } from './hook.ts';
 import { vnDayStart } from './retention.ts';
 import { ROLES, openMeeting, userOf } from './transcript.ts';
 
@@ -105,14 +112,71 @@ export const meetingSummarySave = defineCommand({
   target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
   handler: async (ctx, input) => {
     await recorderMeeting(ctx, input.meetingId, 'write its summary');
+    // On a template the recorder types its sections and code makes the one summary text from them (the headings are code's); on the general template the recorder types
+    // the summary itself. The two are never mixed, so a result is one text however it was typed.
+    const row = await ctx.trx.selectFrom('crove_meetings.meeting').select(['summary_template', 'minutes_template_sections']).where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forUpdate().executeTakeFirstOrThrow();
+    // On a custom template (#3578) the sections are the meeting's own copy, so the recorder types under the headings the meeting was given, whatever the org's template says now.
+    const copy = row.minutes_template_sections === null ? null : parseStoredSections(row.minutes_template_sections);
+    const defs = templateSections(row.summary_template, copy);
+    let summary = input.summary;
+    if (defs.length === 0) {
+      if (input.sections.length > 0) throw new DomainError('TEMPLATE_MISMATCH', 422, 'This meeting uses the general summary; it has no sections');
+    } else {
+      if (input.summary !== '') throw new DomainError('TEMPLATE_MISMATCH', 422, 'This meeting uses a template; type its sections');
+      if (input.sections.some((s) => !defs.some((d) => d.key === s.key))) throw new DomainError('TEMPLATE_MISMATCH', 422, 'A section is not one of this template\'s');
+      summary = sectionsToText(row.summary_template, input.sections, copy);
+      if (summary === '') throw new DomainError('SUMMARY_REQUIRED', 422, 'Write at least one section');
+    }
     // A new save replaces the earlier draft; what the recorder typed is the recorder's own text, so it is not tainted.
     await ctx.trx.deleteFrom('crove_meetings.meeting_result').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').execute();
     await ctx.trx
       .insertInto('crove_meetings.meeting_result')
-      .values({ org_id: ctx.orgId, meeting_id: input.meetingId, summary: input.summary, decisions: sql`${JSON.stringify(input.decisions)}::jsonb`, feature: 'manual', stage: 'draft', tainted: false })
+      .values({ org_id: ctx.orgId, meeting_id: input.meetingId, summary, decisions: sql`${JSON.stringify(input.decisions)}::jsonb`, feature: 'manual', stage: 'draft', tainted: false })
       .execute();
     ctx.audit({ meetingId: input.meetingId, decisionCount: input.decisions.length });
     return { meetingId: input.meetingId, decisions: input.decisions.length };
+  },
+});
+
+// The recorder picks the minutes template (A4, #3162): a code on the meeting, changed by the recorder only (the database policy says the same). It takes effect for the next
+// summary run and for the headings the recorder types under; a summary already saved or published keeps its text, which the minutes page shows as it is when the headings
+// no longer match.
+export const meetingTemplateSet = defineCommand({
+  name: 'meetings.minutes.set_template',
+  input: zMeetingTemplateSet,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: ROLES,
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx, input) => {
+    await recorderMeeting(ctx, input.meetingId, 'pick its minutes template');
+    // A template the org wrote (#3578) is read by (org, id) in the caller's own org, so another org's template is not there to copy (row security) and answers as not found. The meeting keeps
+    // its OWN copy of the name and the sections, with their hash, and never refers back to the template: a later edit or archive changes nothing it was summarized with.
+    let copy: { minutes_template_name: string | null; minutes_template_sections: string | null; minutes_template_hash: ReturnType<typeof sql<string>> | null } = {
+      minutes_template_name: null,
+      minutes_template_sections: null,
+      minutes_template_hash: null,
+    };
+    if (input.summaryTemplate === 'custom') {
+      const template = await ctx.trx
+        .selectFrom('crove_meetings.minutes_template')
+        .select(['name', 'sections', 'archived_at'])
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.templateId as string)
+        .executeTakeFirst();
+      if (!template) throw new DomainError('MINUTES_TEMPLATE_NOT_FOUND', 404, 'Template not found');
+      if (template.archived_at !== null) throw new DomainError('MINUTES_TEMPLATE_ARCHIVED', 409, 'An archived template cannot be picked');
+      const json = JSON.stringify(parseStoredSections(template.sections));
+      copy = { minutes_template_name: template.name, minutes_template_sections: json, minutes_template_hash: sql<string>`pg_catalog.md5((${json}::jsonb)::text)` };
+    }
+    await ctx.trx
+      .updateTable('crove_meetings.meeting')
+      .set({ summary_template: input.summaryTemplate, ...copy, updated_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.meetingId)
+      .execute();
+    ctx.audit({ meetingId: input.meetingId, summaryTemplate: input.summaryTemplate, ...(input.templateId ? { templateId: input.templateId } : {}) });
+    return zMeetingTemplateSetDone.parse({ meetingId: input.meetingId, summaryTemplate: input.summaryTemplate });
   },
 });
 
@@ -235,9 +299,17 @@ export const resultPublish = defineCommand({
     const draft = await ctx.trx.selectFrom('crove_meetings.meeting_result').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').forUpdate().executeTakeFirst();
     // The draft replaces the summary published before it (one published summary a meeting).
     let results = 0;
+    let published: { summary: string; decisions: unknown } | null = null;
     if (draft) {
       await ctx.trx.deleteFrom('crove_meetings.meeting_result').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'published').execute();
-      await ctx.trx.updateTable('crove_meetings.meeting_result').set({ stage: 'published', updated_at: sql<Date>`pg_catalog.now()` }).where('org_id', '=', ctx.orgId).where('id', '=', draft.id).execute();
+      published =
+        (await ctx.trx
+          .updateTable('crove_meetings.meeting_result')
+          .set({ stage: 'published', updated_at: sql<Date>`pg_catalog.now()` })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', draft.id)
+          .returning(['summary', 'decisions'])
+          .executeTakeFirst()) ?? null;
       results = 1;
     }
     const items = await ctx.trx
@@ -247,9 +319,17 @@ export const resultPublish = defineCommand({
       .where('meeting_id', '=', input.meetingId)
       .where('stage', '=', 'draft')
       .where('status', '=', 'suggested')
-      .returning('id')
+      .returning(['id', 'title', 'who_drafted', 'when_parsed'])
       .execute();
     if (results === 0 && items.length === 0) throw new DomainError('NOTHING_TO_PUBLISH', 409, 'There is no draft to share');
+    // The recorder's own webhook (A6, #3164): when they have one that stands, the event for this publish is stored in this same transaction, and nowhere else. No model, no other reader.
+    await enqueueMinutesHook(ctx, {
+      meetingId: input.meetingId,
+      resultId: draft?.id ?? null,
+      summary: published && published.summary.length > 0 ? published.summary : null,
+      decisions: published && Array.isArray(published.decisions) ? published.decisions.filter((d): d is string => typeof d === 'string') : null,
+      items: items.slice(0, 100).map((i) => ({ title: i.title, whoDrafted: i.who_drafted, whenParsed: i.when_parsed })),
+    });
     ctx.audit({ meetingId: input.meetingId, results, items: items.length });
     return { meetingId: input.meetingId, results, items: items.length };
   },
@@ -413,5 +493,5 @@ export const actionItemSource = defineQuery({
   },
 });
 
-export const resultCommands = [meetingSummarySave, actionItemCreate, actionItemEdit, actionItemDelete, resultPublish, actionItemAccept, actionItemAcceptClean];
+export const resultCommands = [meetingTemplateSet, meetingSummarySave, actionItemCreate, actionItemEdit, actionItemDelete, resultPublish, actionItemAccept, actionItemAcceptClean];
 export const resultQueries = [meetingResultGet, actionItemSource];

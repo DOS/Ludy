@@ -1,14 +1,17 @@
 // oRPC implementation of @crove/kernel-contract. Handlers only call the runtime (execute/query).
+import { randomBytes } from 'node:crypto';
 import { implement, ORPCError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
-import { CALENDAR_OAUTH_PROVIDERS, MARKETPLACE_PLATFORM_KEYS, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@crove/kernel-contract';
+import { CALENDAR_OAUTH_PROVIDERS, MARKETPLACE_PLATFORM_KEYS, canReadEventsWith, meetingPlatformBinding, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@crove/kernel-contract';
 import { sandboxBankFeed } from '@crove/bank-feed';
 import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad-platform';
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@crove/einvoice';
-import type { McpWakeView, QuoteLinkCreated } from '@crove/kernel-contract';
+import type { McpWakeView, MeetingHookView, QuoteLinkCreated } from '@crove/kernel-contract';
 import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wake-setup.ts';
-import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, PaymentReminderDraft, TodayList } from '@crove/kernel-contract';
+import { makeHookSecret } from './meeting-hook-setup.ts';
+import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
+import { weeklyAnswer } from './today-weekly.ts';
 import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
 import {
   ALT_TEXT_IMAGE_MAX_BYTES,
@@ -26,6 +29,7 @@ import {
 import { CAPABILITIES, isProvider as isSocialProvider, strictestAltTextLimit } from '@crove/mod-social/contract';
 import { channelNotAllowed, periodSummaryInput, voiceNotes, type BrandVoice, type PeriodSummaryData } from '@crove/mod-social';
 import {
+  TODAY_WEEKLY_READ,
   clientOverviews,
   createOrg,
   myOrgs,
@@ -42,23 +46,33 @@ import {
   type OrgSummary,
 } from '@crove/kernel';
 import type { z } from 'zod';
-import type { CompanyCandidates, ConversationAutoDraft, zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zTask } from '@crove/kernel-contract';
+import type { CompanyCandidates, ConversationAutoDraft, zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zSignEnvelopeDetail, zSignTemplateDetail, zTask } from '@crove/kernel-contract';
 import type { FollowupSource, MeetingBriefSource, QuoteSuggestSource, SuggestedSlots } from '@crove/mod-crm';
+import type { ProjectWeeklyStatusSource } from '@crove/mod-projects';
 import { sql } from 'kysely';
-import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, type BriefResult } from '@crove/agent';
+import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, type BriefResult, type WeeklyFacts, type WeeklyResult } from '@crove/agent';
 import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type ConversationReader } from './conversations-ai.ts';
 import { suggestCompanies, type CompanyAi } from './contact-company-ai.ts';
 import { wordReminder, type ReminderAi } from './payment-reminder-ai.ts';
 import { wordFollowup, type FollowupAi } from './followup-ai.ts';
+import { minutesLink, postMinutesFromClick, saveMinutesChannel, type MinutesChatDeps } from './meeting-chat.ts';
+import { saveMeetingSummaryAsNote } from './notes-meeting-summary.ts';
 import { explainPayslip, flagMonth, prepareMonth, type PayrollAi, type PayrollReads } from './payroll-coworker-ai.ts';
+import { checkLaborReadiness, type LaborCheckAi, type LaborCheckPorts } from './labor-coworker-ai.ts';
+import { generateRecruitingBrief, type RecruitingBriefAi, type RecruitingBriefPorts } from './recruiting-coworker-ai.ts';
+import type { HrLaborCheckSnapshot, HrRecruitingBriefSnapshot } from '@crove/mod-hr';
 import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
 import { crmFollowupAi, draftCrmFollowup } from './crm-followup-ai.ts';
 import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
+import { prepareProjectWeeklyStatus, projectWeeklyStatusAi } from './project-weekly-status-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
-import { runLiveNotes, runMeetingSummary, runMeetingTranslation, translationStatusOf, type ModelPort } from './member-vy-ports.ts';
+import { proposeEnvelopeAnalysis, signAi, type SignAi } from './sign-ai.ts';
+import { briefStatusOf, runMeetingBrief, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesSuggestTodos, runNotesSummarize, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems } from './stock-ai.ts';
 import { MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
+import { explainVatLate, vatLateAi } from './finance-vat-ai.ts';
+import { explainMarketplaceLine, marketplaceLineAi } from './finance-marketplace-line-ai.ts';
 import { explainPayrollMatch, payrollMatchAi } from './finance-payroll-match-ai.ts';
 import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { DraftBudget } from './ai-draft-limit.ts';
@@ -135,6 +149,8 @@ export type SocialDrafter = Pick<SocialWriter, 'draft' | 'rewrite'> &
     draftStored?: (request: Omit<DraftRequest, 'images'>, images: readonly { file: StoredImage; mime: string }[]) => Promise<DraftResult | null>;
     // Vy's daily brief on Home (#2383), through the same endpoint and the same budget meter.
     brief?: (facts: BriefFacts) => Promise<BriefResult>;
+    // Vy's "Tuần này" on Home (#3257), through the same endpoint and the same budget meter.
+    weekly?: (facts: WeeklyFacts) => Promise<WeeklyResult>;
   };
 
 // A stored file as the vision reads take it: the row's reference, hash and recorded size.
@@ -143,6 +159,16 @@ export interface StoredImage {
   generation: string | null;
   sha256: string;
   sizeBytes: number;
+}
+
+// Deletes the member's cached meetings of a calendar connection (B1, #3165), as the member: row security lets them delete their own rows only. Best effort by design: a deployment without
+// the meetings module has no such command, and a failure leaves rows the list already hides (the connection is not active, or its switch is off) and a disconnect's cascade removes.
+async function clearAgenda(runtime: Runtime, as: { actor: UserActor; orgId: string }, connectionId: string): Promise<void> {
+  try {
+    await runtime.execute('meetings.agenda.clear', { connectionId }, as);
+  } catch (error: unknown) {
+    console.error(`[calendar] cached meetings of connection ${connectionId.slice(0, 8)} not cleared: ${error instanceof DomainError ? error.code : error instanceof Error ? error.name : 'error'}`);
+  }
 }
 
 // A member limited to some channels (#1081) may not have AI write for another one (#1099): refused before the paid model
@@ -249,8 +275,10 @@ function discordFailure(code: string | undefined): DomainError | null {
 const PROVIDER_LABELS: Record<string, string> = { sandbox: 'test channel', facebook_page: 'Facebook Page', instagram: 'Instagram', zalo_oa: 'Zalo Official Account (article)', tiktok: 'TikTok', youtube: 'YouTube', threads: 'Threads', linkedin: 'LinkedIn', x: 'X', bluesky: 'Bluesky', google_business: 'Google Business Profile', telegram: 'Telegram', mastodon: 'Mastodon', pinterest: 'Pinterest', discord: 'Discord', wordpress: 'WordPress (blog post)', linkedin_page: 'LinkedIn Page', whatsapp: 'WhatsApp' };
 
 export interface RpcChannels {
-  // Seals tokens before kernel.channel.connect stores them; never opens one in the API.
+  // Seals tokens before kernel.channel.connect stores them; never opens one in the API (a minutes channel's address included, B4: its worker job opens it).
   broker: CredentialBroker;
+  // Tests only: the save budget of the minutes channels' addresses.
+  minutes?: Pick<MinutesChatDeps, 'saves'>;
   // The offline sandbox channel is enabled (CHANNEL_SANDBOX).
   sandbox: boolean;
   // Tests only: how the wake-up receiver's name is looked up before it is accepted (the system resolver by default; the egress guard checks every send again).
@@ -308,6 +336,10 @@ function connectorFailure(error: unknown): DomainError {
     if (error.kind === 'denied' && error.code === 'WRITE_PERMISSION_GRANTED') {
       return new DomainError('OAUTH_WRITE_PERMISSION', 422, 'Ứng dụng Meta này đang giữ quyền sửa quảng cáo (ads_management hoặc business_management) do bạn từng cấp. Hãy gỡ ứng dụng Meta này trong Cài đặt Facebook (Tích hợp doanh nghiệp) rồi kết nối lại, hoặc dùng một ứng dụng Meta riêng chỉ có quyền ads_read');
     }
+    // A Microsoft tenant whose administrator must allow the app first (B3): said plainly, never retried.
+    if (error.kind === 'denied' && error.code === 'ADMIN_CONSENT_REQUIRED') {
+      return new DomainError('OAUTH_ADMIN_CONSENT_REQUIRED', 422, 'Tổ chức Microsoft của bạn yêu cầu quản trị viên cho phép ứng dụng này trước. Hãy nhờ quản trị viên Microsoft 365 cho phép Ludy đọc lịch, rồi kết nối lại.');
+    }
     if (error.kind === 'denied' && error.code === 'MANAGER_ACCOUNT_UNSUPPORTED') {
       return new DomainError('OAUTH_GOOGLE_MANAGER_ONLY', 422, 'Tài khoản Google này chỉ truy cập được tài khoản quản lý (MCC), không có tài khoản quảng cáo trực tiếp; hãy đăng nhập bằng tài khoản Google truy cập trực tiếp tài khoản quảng cáo');
     }
@@ -345,28 +377,53 @@ export function createRpcHandler(
   summaryModel: ModelPort | null = null,
   // The deployment's AI prices (AI_PRICE_*), for the cost a translation shows before the click.
   aiPrice?: { inputPerMTok: string; outputPerMTok: string },
+  // Vy's eSign field placement and risky clause review (#3351): unset runs manual signing with AI off.
+  signAiReader: SignAi['reader'] = null,
 ) {
   const os = implement(contract).$context<RpcContext>();
   // Vy's brief on Home has its own rate limit and one-at-a-time lock, so opening Home never makes a reply or post draft wait.
   const briefs = new DraftBudget();
+  // "Tuần này" has a rate limit of its own, apart from the brief's, so the two cards of Home never make each other wait.
+  const weeklies = new DraftBudget();
   // Its model calls have a budget of their own (a few a minute for each member and for the org, one at a time for a member), apart from the reply drafts'.
   // A summary is a long call a member waits for: one at a time for a member, a few a minute.
   const summaries = new DraftBudget({ perUserPerMinute: 4, perOrgPerMinute: 20 });
   // A translation is a shorter call than a summary and any reader may ask: its own budget, apart from the summaries'.
   const translations = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
+  // The transcript is translated a chunk a request, the page asking again while it is open: its own, higher rate, so a one-hour transcript is not stopped by the summary's.
+  const transcriptTranslations = new DraftBudget({ perUserPerMinute: 20, perOrgPerMinute: 60 });
+  // A question across meetings (A3, #3161) is one model call over at most 40 lines and any member may ask: its own budget, apart from the summaries' and the translations'.
+  const asks = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
+  const meetingBriefs = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
+  // Proposing project tasks from a note (#2598): one call per click, own budget so it does not contend with meetings.
+  const noteTaskProposals = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
+  // Notes N8 (#1677): independent budgets for summarizing notes and suggesting personal to-dos.
+  const noteSummaryBudget = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
+  const noteSuggestBudget = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
   const suggestionBudget = () => new DraftBudget({ perUserPerMinute: 12, perOrgPerMinute: 60 });
   const conversationAi: ConversationAi = { reader: conversationReader ?? null, intentBudget: suggestionBudget(), contactBudget: suggestionBudget(), cache: new IntentCache() };
   // The sales coworker's guess at the company a person works at (#2438) has a budget of its own, and the same reader and model.
   const companyAi: CompanyAi = { reader: conversationReader ?? null, budget: suggestionBudget() };
   // The finance coworker's sentence on the Kế toán overview (#2631): the same reader and model, a budget of its own, and it is told only aggregated figures.
   const financeOverviewAi = overviewAi(conversationReader?.overviewSentence ? { overviewSentence: conversationReader.overviewSentence.bind(conversationReader) } : null, suggestionBudget());
+  // The finance coworker's sentence naming the late sales invoices of a VAT working (#3540): the same reader and model, a budget of its own; told invoice numbers and periods only.
+  const financeVatLateAi = vatLateAi(conversationReader?.vatLateSentence ? { vatLateSentence: conversationReader.vatLateSentence.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's one line on why a bank line may be a payroll payment (#2532): the same reader and model, a budget of its own; told the kind, month, amount and date only.
   const financePayrollMatchAi = payrollMatchAi(conversationReader?.payrollMatchSentence ? { payrollMatchSentence: conversationReader.payrollMatchSentence.bind(conversationReader) } : null, suggestionBudget());
+  const financeMarketplaceLineAi = marketplaceLineAi(conversationReader?.marketplaceLineSentence ? { marketplaceLineSentence: conversationReader.marketplaceLineSentence.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker on payroll (#2534): the same reader and model, a budget of its own. It is told the pseudonymized sheet only (an alias per employee, fixed labels and amounts).
   const payrollAi: PayrollAi = {
     reader: conversationReader?.payrollPrepare && conversationReader.payrollFlag && conversationReader.payrollExplain
       ? { payrollPrepare: conversationReader.payrollPrepare.bind(conversationReader), payrollFlag: conversationReader.payrollFlag.bind(conversationReader), payrollExplain: conversationReader.payrollExplain.bind(conversationReader) }
       : null,
+    budget: suggestionBudget(),
+  };
+  const laborCheckAi: LaborCheckAi = {
+    reader: conversationReader?.laborCheck ? { laborCheck: conversationReader.laborCheck.bind(conversationReader) } : null,
+    budget: suggestionBudget(),
+  };
+  const recruitingBriefAi: RecruitingBriefAi = {
+    reader: conversationReader?.recruitingBrief ? { recruitingBrief: conversationReader.recruitingBrief.bind(conversationReader) } : null,
     budget: suggestionBudget(),
   };
   // The finance coworker's wording of a payment reminder (#2488): the same reader and model, a budget of its own. It reads no customer text (the model is told the
@@ -400,6 +457,14 @@ export function createRpcHandler(
   // Dy's brief before a booking linked to a deal (#3115): the same reader and model, a budget of its own. It is told the deal's facts and, while the org allows AI on customers' words, the latest messages the
   // member may read; what it answers is a summary and 2 to 3 points that are refused when they hold a figure, a link or a name the facts do not hold. Computed when read; nothing is stored or sent.
   const meetingBriefCoworker = meetingBriefAi(conversationReader?.meetingBrief ? { meetingBrief: conversationReader.meetingBrief.bind(conversationReader) } : null, suggestionBudget());
+
+  // Vy's weekly status of one project (#2597): deterministic counts and task titles/comments in the member's own transaction
+  // (never reading notes), then one metered model call outside it; refused when any number outside input appears.
+  const projectWeeklyStatusCoworker = projectWeeklyStatusAi(
+    conversationReader?.projectWeeklyStatus ? { projectWeeklyStatus: conversationReader.projectWeeklyStatus.bind(conversationReader) } : null,
+    suggestionBudget(),
+  );
+  const signCoworker = signAi(signAiReader ?? null, new DraftBudget({ perUserPerMinute: 4, perOrgPerMinute: 20 }));
 
   const guard = async <T>(fn: () => Promise<T>): Promise<T> => {
     try {
@@ -508,6 +573,11 @@ export function createRpcHandler(
     if (!meetings) throw new ORPCError('NOT_FOUND', { status: 404, message: 'Mô-đun Cuộc họp chưa được bật' });
     return inOrg(context, fn);
   };
+  // The minutes channels' API half (meeting-chat.ts): the credential broker seals (never opens); the worker job kernel-meeting-chat opens and posts.
+  const minutesChat = (): MinutesChatDeps => {
+    if (!channels) throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
+    return { runtime, broker: channels.broker, publicUrl: channels.publicUrl ?? '', ...channels.minutes };
+  };
   const meetingsCommand =
     (name: string) =>
     <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
@@ -532,10 +602,63 @@ export function createRpcHandler(
     runs: () => runtime.query<HrRunSummary[]>('hr.payroll.run.list', { limit: 120 }, { actor, orgId }),
     payslip: (lineId) => runtime.query<HrPayslip>('hr.payroll.line.payslip', { lineId }, { actor, orgId }),
   });
+  const laborCheckPorts = (orgId: string, actor: UserActor): LaborCheckPorts => ({
+    read: (input) => runtime.query<HrLaborCheckSnapshot>('hr.payroll.labor_check.read', input, { actor, orgId }),
+    record: (kind, checked) => runtime.execute('hr.payroll.labor_check.audit', { kind, checked }, { actor, orgId }),
+  });
+  const recruitingBriefPorts = (orgId: string, actor: UserActor): RecruitingBriefPorts => ({
+    read: (candidateId, lang) => runtime.query<HrRecruitingBriefSnapshot>('hr.recruiting.brief.read', { candidateId, lang }, { actor, orgId }),
+    record: (candidateId, aiReason) => runtime.execute('hr.recruiting.brief.audit', { candidateId, aiReason }, { actor, orgId }),
+  });
   const hrQuery =
     (name: string) =>
     <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
       inHr(context, (orgId, actor) => runtime.query<O>(name, input, { actor, orgId }));
+  // The projects module (#2591): its procedures answer 404 when the deployment leaves it out.
+  const projects = runtime.installed('projects');
+  const inProjects = async <T>(context: RpcContext, fn: (orgId: string, actor: UserActor) => Promise<T>) => {
+    if (!projects) throw new ORPCError('NOT_FOUND', { status: 404, message: 'Mô-đun Dự án chưa được bật' });
+    return inOrg(context, fn);
+  };
+  const projectsCommand =
+    (name: string) =>
+    <O, I extends { idempotencyKey: string } = { idempotencyKey: string }>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
+      inProjects(context, (orgId, actor) => {
+        const { idempotencyKey, ...rest } = input;
+        return runtime.execute<O>(name, rest, { actor, orgId, idempotencyKey });
+      });
+  const projectsQuery =
+    (name: string) =>
+    <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
+      inProjects(context, (orgId, actor) => runtime.query<O>(name, input, { actor, orgId }));
+
+  // The eSign module (#3323, #3325, #3351): answers 404 when the deployment leaves it out, and send / create_link omit idempotency.
+  const sign = runtime.installed('sign');
+  const inSign = async <T>(context: RpcContext, fn: (orgId: string, actor: UserActor) => Promise<T>) => {
+    if (!sign) throw new ORPCError('NOT_FOUND', { status: 404, message: 'Mô-đun Ký kết chưa được bật' });
+    return inOrg(context, fn);
+  };
+  const signCommand =
+    (name: string) =>
+    <O, I extends { idempotencyKey?: string | undefined } = { idempotencyKey?: string | undefined }>({
+      context,
+      input,
+    }: {
+      context: RpcContext;
+      input: I;
+    }): Promise<O> =>
+      inSign(context, (orgId, actor) => {
+        const { idempotencyKey, ...rest } = input;
+        return runtime.execute<O>(name, rest, { actor, orgId, ...(idempotencyKey ? { idempotencyKey } : {}) });
+      });
+  const signNoIdempotencyCommand =
+    (name: string) =>
+    <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
+      inSign(context, (orgId, actor) => runtime.execute<O>(name, input, { actor, orgId }));
+  const signQuery =
+    (name: string) =>
+    <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
+      inSign(context, (orgId, actor) => runtime.query<O>(name, input, { actor, orgId }));
 
   // The ads module (#2217): its procedures answer 404 when the deployment leaves it out, as the notes module's do.
   const ads = runtime.installed('ads');
@@ -659,6 +782,8 @@ export function createRpcHandler(
     },
     today: {
       list: os.today.list.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.today', {}, { actor, orgId }))),
+      // What each AI coworker prepared over the last day: counts of the member's readable activity rows (#3256), no model.
+      sinceYesterday: os.today.sinceYesterday.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.since_yesterday', {}, { actor, orgId }))),
       // Vy's brief (#2383): written from the member's own list only (the same query, in their context), so it can say
       // nothing they could not see. No model, or the per-member AI rate limit: the plain template. The month's AI budget
       // spent: no brief, and Home shows the list alone. Nothing is stored.
@@ -672,12 +797,21 @@ export function createRpcHandler(
           return briefAnswer(items, input.language, vietnamToday(), socialWriter?.brief, () => briefs.take(orgId, actor.userId));
         }),
       ),
+      // "Tuần này" (#3257): the figures of the last 7 days from the lines' reads in the member's own context, then Vy's sentences over them (numbers checked) or the template. Nothing is stored.
+      weekly: os.today.weekly.handler(({ context, input }) =>
+        inOrg(context, async (orgId, actor) => {
+          const figures = await runtime.query<WeeklyFigures>(TODAY_WEEKLY_READ, {}, { actor, orgId });
+          return weeklyAnswer(figures, input.language, socialWriter?.weekly, () => weeklies.take(orgId, actor.userId));
+        }),
+      ),
     },
     org: {
       create: os.org.create.handler(({ context, input }) =>
         guard(() => createOrg(runtime, actorOf(context.user), input.name, input.idempotencyKey)),
       ),
       get: os.org.get.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.org.get', {}, { actor, orgId }))),
+      apps: os.org.apps.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.org.apps', {}, { actor, orgId }))),
+      setApp: os.org.setApp.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.org.set_app', input, { actor, orgId }))),
       // The org's overview (#1249): the figures the multi-client home screen reads for each org, for this one.
       overview: os.org.overview.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.org.overview', {}, { actor, orgId }))),
       setTaxCode: os.org.setTaxCode.handler(({ context, input }) =>
@@ -837,6 +971,15 @@ export function createRpcHandler(
       export: os.org.export.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.org.export.get', {}, { actor, orgId }))),
     },
     hr: {
+      departments: {
+        list: os.hr.departments.list.handler(hrQuery('hr.department.list')),
+        add: os.hr.departments.add.handler(hrCommand('hr.department.add')),
+        edit: os.hr.departments.edit.handler(hrCommand('hr.department.edit')),
+        archive: os.hr.departments.archive.handler(hrCommand('hr.department.archive')),
+      },
+      employee: {
+        contractPdf: os.hr.employee.contractPdf.handler(hrQuery('hr.employee.contract_pdf')),
+      },
       payroll: {
         employees: {
           list: os.hr.payroll.employees.list.handler(hrQuery('hr.payroll.employee.list')),
@@ -846,6 +989,7 @@ export function createRpcHandler(
           finalization: os.hr.payroll.employees.finalization.handler(hrCommand('hr.payroll.employee.finalization.set')),
           end: os.hr.payroll.employees.end.handler(hrCommand('hr.payroll.employee.end')),
           erase: os.hr.payroll.employees.erase.handler(hrCommand('hr.payroll.employee.erase')),
+          severance: os.hr.payroll.employees.severance.handler(hrQuery('hr.payroll.employee.severance')),
         },
         bankTemplates: {
           list: os.hr.payroll.bankTemplates.list.handler(hrQuery('hr.payroll.bank_template.list')),
@@ -853,6 +997,9 @@ export function createRpcHandler(
           edit: os.hr.payroll.bankTemplates.edit.handler(hrCommand('hr.payroll.bank_template.edit')),
           delete: os.hr.payroll.bankTemplates.delete.handler(hrCommand('hr.payroll.bank_template.delete')),
         },
+        laborCheck: os.hr.payroll.laborCheck.handler(({ context, input }) =>
+          inHr(context, (orgId, actor) => checkLaborReadiness(laborCheckAi, laborCheckPorts(orgId, actor), orgId, actor.userId, input)),
+        ),
         employments: { add: os.hr.payroll.employments.add.handler(hrCommand('hr.payroll.employment.add')) },
         dependents: {
           add: os.hr.payroll.dependents.add.handler(hrCommand('hr.payroll.dependent.add')),
@@ -863,7 +1010,16 @@ export function createRpcHandler(
           sheet: os.hr.payroll.runs.sheet.handler(hrQuery('hr.payroll.run.sheet')),
           open: os.hr.payroll.runs.open.handler(hrCommand('hr.payroll.run.open')),
           recalculate: os.hr.payroll.runs.recalculate.handler(hrCommand('hr.payroll.run.recalculate')),
+          importTimekeeping: os.hr.payroll.runs.importTimekeeping.handler(hrCommand('hr.payroll.run.import_timekeeping')),
+          thirteenthMonthPreview: os.hr.payroll.runs.thirteenthMonthPreview.handler(hrQuery('hr.payroll.run.thirteenth_month_preview')),
+          applyThirteenthMonth: os.hr.payroll.runs.applyThirteenthMonth.handler(hrCommand('hr.payroll.run.apply_thirteenth_month')),
+          syncLeave: os.hr.payroll.runs.syncLeave.handler(hrCommand('hr.payroll.run.sync_leave')),
           approve: os.hr.payroll.runs.approve.handler(hrCommand('hr.payroll.run.approve')),
+        },
+        leave: {
+          balance: os.hr.payroll.leave.balance.handler(hrQuery('hr.payroll.leave.balance')),
+          set: os.hr.payroll.leave.set.handler(hrCommand('hr.payroll.leave.set')),
+          delete: os.hr.payroll.leave.delete.handler(hrCommand('hr.payroll.leave.delete')),
         },
         // Where the posting and the payments of an approved month stand (#2532): finance reads its own books and the open proposals; owners and admins.
         settlement: os.hr.payroll.settlement.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.payroll.settlement', input, { actor, orgId }))),
@@ -879,6 +1035,28 @@ export function createRpcHandler(
           explain: os.hr.payroll.coworker.explain.handler(({ context, input }) => inHr(context, (orgId, actor) => explainPayslip(payrollAi, payrollReads(orgId, actor), orgId, actor.userId, input.lineId, input.lang ?? 'vi'))),
         },
       },
+      recruiting: {
+        openings: {
+          list: os.hr.recruiting.openings.list.handler(hrQuery('hr.recruiting.opening.list')),
+          add: os.hr.recruiting.openings.add.handler(hrCommand('hr.recruiting.opening.add')),
+          edit: os.hr.recruiting.openings.edit.handler(hrCommand('hr.recruiting.opening.edit')),
+          close: os.hr.recruiting.openings.close.handler(hrCommand('hr.recruiting.opening.close')),
+        },
+        candidates: {
+          list: os.hr.recruiting.candidates.list.handler(hrQuery('hr.recruiting.candidate.list')),
+          get: os.hr.recruiting.candidates.get.handler(hrQuery('hr.recruiting.candidate.get')),
+          add: os.hr.recruiting.candidates.add.handler(hrCommand('hr.recruiting.candidate.add')),
+          edit: os.hr.recruiting.candidates.edit.handler(hrCommand('hr.recruiting.candidate.edit')),
+          moveStage: os.hr.recruiting.candidates.moveStage.handler(hrCommand('hr.recruiting.candidate.move_stage')),
+          scheduleInterview: os.hr.recruiting.candidates.scheduleInterview.handler(hrCommand('hr.recruiting.candidate.schedule_interview')),
+          hire: os.hr.recruiting.candidates.hire.handler(hrCommand('hr.recruiting.candidate.hire')),
+          erase: os.hr.recruiting.candidates.erase.handler(hrCommand('hr.recruiting.candidate.erase')),
+        },
+        interviewSlots: os.hr.recruiting.interviewSlots.handler(hrQuery('hr.recruiting.interview_slots')),
+        brief: os.hr.recruiting.brief.handler(({ context, input }) =>
+          inHr(context, (orgId, actor) => generateRecruitingBrief(recruitingBriefAi, recruitingBriefPorts(orgId, actor), orgId, actor.userId, input)),
+        ),
+      },
     },
     notes: {
       list: os.notes.list.handler(notesQuery('notes.note.list')),
@@ -886,6 +1064,9 @@ export function createRpcHandler(
       search: os.notes.search.handler(notesQuery('notes.note.search')),
       panel: os.notes.panel.handler(notesQuery('notes.record.panel')),
       create: os.notes.create.handler(notesCommand('notes.note.create')),
+      fromMeetingSummary: os.notes.fromMeetingSummary.handler(({ context, input }) =>
+        inNotes(context, (orgId, actor) => saveMeetingSummaryAsNote(runtime, orgId, actor, input)),
+      ),
       update: os.notes.update.handler(notesCommand('notes.note.update')),
       setVisibility: os.notes.setVisibility.handler(notesCommand('notes.note.set_visibility')),
       pin: os.notes.pin.handler(notesCommand('notes.note.pin')),
@@ -897,17 +1078,38 @@ export function createRpcHandler(
       linkRemove: os.notes.linkRemove.handler(notesCommand('notes.link.remove')),
       privateCounts: os.notes.privateCounts.handler(notesQuery('notes.private_counts')),
       exportMine: os.notes.exportMine.handler(notesQuery('notes.mine.export')),
+      vyStatus: os.notes.vyStatus.handler(({ context }) =>
+        inNotes(context, (orgId, actor) => notesVyStatusOf({ runtime, model: summaryModel, meter: aiMeter ?? (() => null) }, orgId, actor)),
+      ),
+      summarize: os.notes.summarize.handler(({ context, input }) =>
+        inNotes(context, (orgId, actor) =>
+          runNotesSummarize({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: noteSummaryBudget }, orgId, actor, input),
+        ),
+      ),
+      suggestTodos: os.notes.suggestTodos.handler(({ context, input }) =>
+        inNotes(context, (orgId, actor) =>
+          runNotesSuggestTodos({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: noteSuggestBudget }, orgId, actor, input),
+        ),
+      ),
+      vyResults: os.notes.vyResults.handler(({ context, input }) =>
+        inNotes(context, (orgId, actor) => readNotesVyResults({ runtime }, orgId, actor, input.noteId)),
+      ),
+      acceptSummary: os.notes.acceptSummary.handler(notesCommand('notes.note.accept_summary')),
       // A member's own to-dos (#1673).
       todos: {
         list: os.notes.todos.list.handler(notesQuery('notes.todo.list')),
         get: os.notes.todos.get.handler(notesQuery('notes.todo.get')),
         create: os.notes.todos.create.handler(notesCommand('notes.todo.create')),
+        acceptSuggestions: os.notes.todos.acceptSuggestions.handler(notesCommand('notes.todo.accept_suggestions')),
         update: os.notes.todos.update.handler(notesCommand('notes.todo.update')),
         complete: os.notes.todos.complete.handler(notesCommand('notes.todo.complete')),
         reopen: os.notes.todos.reopen.handler(notesCommand('notes.todo.reopen')),
         reorder: os.notes.todos.reorder.handler(notesCommand('notes.todo.reorder')),
+        reschedule: os.notes.todos.reschedule.handler(notesCommand('notes.todo.reschedule')),
         delete: os.notes.todos.delete.handler(notesCommand('notes.todo.delete')),
         restore: os.notes.todos.restore.handler(notesCommand('notes.todo.restore')),
+        linkAdd: os.notes.todos.linkAdd.handler(notesCommand('notes.todo.link_add')),
+        linkRemove: os.notes.todos.linkRemove.handler(notesCommand('notes.todo.link_remove')),
         handOver: os.notes.todos.handOver.handler(notesCommand('notes.todo.hand_over')),
         myWork: os.notes.todos.myWork.handler(notesQuery('notes.my_work')),
         counts: os.notes.todos.counts.handler(notesQuery('notes.todo.counts')),
@@ -917,8 +1119,12 @@ export function createRpcHandler(
       list: os.meetings.list.handler(meetingsQuery('meetings.meeting.list')),
       get: os.meetings.get.handler(meetingsQuery('meetings.meeting.get')),
       extensionStatus: os.meetings.extensionStatus.handler(meetingsQuery('meetings.meeting.extension_status')),
+      recordingStopped: os.meetings.recordingStopped.handler(meetingsCommand('meetings.meeting.recording_stopped')),
       recordingNow: os.meetings.recordingNow.handler(meetingsQuery('meetings.meeting.recording_now')),
       create: os.meetings.create.handler(meetingsCommand('meetings.meeting.create')),
+      importStart: os.meetings.importStart.handler(meetingsCommand('meetings.import.start')),
+      importDiscardEmpty: os.meetings.importDiscardEmpty.handler(meetingsCommand('meetings.import.discard_empty')),
+      setTemplate: os.meetings.setTemplate.handler(meetingsCommand('meetings.minutes.set_template')),
       delete: os.meetings.delete.handler(meetingsCommand('meetings.meeting.delete')),
       ownerDelete: os.meetings.ownerDelete.handler(meetingsCommand('meetings.meeting.owner_delete')),
       ownerList: os.meetings.ownerList.handler(meetingsCommand('meetings.meeting.owner_list')),
@@ -946,12 +1152,32 @@ export function createRpcHandler(
           return runtime.execute('meetings.followup.send', rest, { actor, orgId, idempotencyKey });
         })),
       },
+      // Minutes to a Slack or Teams channel (B4, #3168). The API only seals the pasted address and queues the recorder's click; the worker job (kernel-meeting-chat) opens the sealed address and posts (ADR-0025).
+      chat: {
+        channels: os.meetings.chat.channels.handler(meetingsQuery('meetings.chat.channels')),
+        saveChannel: os.meetings.chat.saveChannel.handler(({ context, input }) => inMeetings(context, (orgId, actor) => saveMinutesChannel(minutesChat(), { orgId, orgSlug: context.orgSlug, actor }, input))),
+        removeChannel: os.meetings.chat.removeChannel.handler(meetingsCommand('meetings.chat.channel_remove')),
+        status: os.meetings.chat.status.handler(meetingsQuery('meetings.chat.status')),
+        preview: os.meetings.chat.preview.handler(({ context, input }) =>
+          inMeetings(context, async (orgId, actor) => {
+            const view = await runtime.query<ChatPreview>('meetings.chat.preview', input, { actor, orgId });
+            return { ...view, link: minutesLink(channels?.publicUrl ?? '', context.orgSlug, input.meetingId) };
+          }),
+        ),
+        post: os.meetings.chat.post.handler(({ context, input }) => inMeetings(context, (orgId, actor) => postMinutesFromClick(minutesChat(), { orgId, orgSlug: context.orgSlug, actor }, input))),
+      },
       links: {
         add: os.meetings.links.add.handler(meetingsCommand('meetings.link.add')),
         remove: os.meetings.links.remove.handler(meetingsCommand('meetings.link.remove')),
         list: os.meetings.links.list.handler(meetingsQuery('meetings.link.list')),
         byTarget: os.meetings.links.byTarget.handler(meetingsQuery('meetings.link.by_target')),
         suggest: os.meetings.links.suggest.handler(meetingsQuery('meetings.link.suggest')),
+      },
+      template: {
+        list: os.meetings.template.list.handler(meetingsQuery('meetings.template.list')),
+        create: os.meetings.template.create.handler(meetingsCommand('meetings.template.create')),
+        update: os.meetings.template.update.handler(meetingsCommand('meetings.template.update')),
+        archive: os.meetings.template.archive.handler(meetingsCommand('meetings.template.archive')),
       },
       settings: {
         get: os.meetings.settings.get.handler(meetingsQuery('meetings.settings.get')),
@@ -971,6 +1197,45 @@ export function createRpcHandler(
         status: os.meetings.transcript.status.handler(meetingsQuery('meetings.transcript.status')),
         copyResult: os.meetings.transcript.copyResult.handler(meetingsCommand('meetings.transcript.copy_result')),
       },
+      // A member's own webhook for the minutes they publish (A6, #3164): the secret is made and sealed here, and only the person who asked sees it, once.
+      hook: {
+        get: os.meetings.hook.get.handler(({ context }) =>
+          inOrg(context, async (orgId, actor) => {
+            const state = await runtime.query<{ switchOn: boolean; hook: MeetingHookView | null }>('meetings.hook.get', {}, { actor, orgId });
+            return { ...state, sealing: Boolean(channels?.broker) && channels?.broker.id !== 'none' };
+          }),
+        ),
+        set: os.meetings.hook.set.handler(({ context, input }) =>
+          inOrg(context, async (orgId, actor) => {
+            const broker = channels?.broker;
+            if (!broker || broker.id === 'none') throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
+            if (actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới cài được địa chỉ nhận biên bản');
+            // The command checks again; looking the name up first keeps a member from learning how the deployment resolves names for an address that is refused anyway.
+            await assertWakeHostPublic(input.url, channels?.wakeResolve);
+            const made = makeHookSecret(broker, orgId, actor.userId);
+            const done = await runtime.execute<{ created: boolean }>('meetings.hook.set', { ...input, credential: made.credential }, { actor, orgId });
+            const state = await runtime.query<{ switchOn: boolean; hook: MeetingHookView | null }>('meetings.hook.get', {}, { actor, orgId });
+            if (!state.hook) throw new DomainError('MEETING_HOOK_NOT_FOUND', 404, 'Bạn chưa có địa chỉ nhận biên bản');
+            // The secret goes back only when this call made the webhook; a change to an existing one leaves its secret alone and the one made here is dropped.
+            return { ...state.hook, secret: done.created ? made.secret : null };
+          }),
+        ),
+        rotateSecret: os.meetings.hook.rotateSecret.handler(({ context }) =>
+          inOrg(context, async (orgId, actor) => {
+            const broker = channels?.broker;
+            if (!broker || broker.id === 'none') throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
+            if (actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới đổi được khóa bí mật');
+            const made = makeHookSecret(broker, orgId, actor.userId);
+            await runtime.execute('meetings.hook.rotate_secret', { credential: made.credential }, { actor, orgId });
+            const state = await runtime.query<{ switchOn: boolean; hook: MeetingHookView | null }>('meetings.hook.get', {}, { actor, orgId });
+            if (!state.hook) throw new DomainError('MEETING_HOOK_NOT_FOUND', 404, 'Bạn chưa có địa chỉ nhận biên bản');
+            return { ...state.hook, secret: made.secret };
+          }),
+        ),
+        clear: os.meetings.hook.clear.handler(meetingsCommand('meetings.hook.clear')),
+        test: os.meetings.hook.test.handler(meetingsCommand('meetings.hook.test')),
+        switch: os.meetings.hook.switch.handler(meetingsCommand('meetings.hooks.switch.set')),
+      },
       results: {
         get: os.meetings.results.get.handler(meetingsQuery('meetings.result.get')),
         saveSummary: os.meetings.results.saveSummary.handler(meetingsCommand('meetings.summary.save')),
@@ -982,6 +1247,16 @@ export function createRpcHandler(
         summarize: os.meetings.results.summarize.handler(({ context, input }) =>
           inOrg(context, (orgId, actor) => runMeetingSummary({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
         ),
+        // The recorder's rough notes and Vy's expansion of them (A5, #3163): the same run family, budget and checks as the summary; see member-vy-ports.ts.
+        notesGet: os.meetings.results.notesGet.handler(meetingsQuery('meetings.notes.get')),
+        notesSave: os.meetings.results.notesSave.handler(meetingsCommand('meetings.notes.save')),
+        enhance: os.meetings.results.enhance.handler(({ context, input }) =>
+          inOrg(context, (orgId, actor) => runNotesEnhance({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
+        ),
+        enhancePreview: os.meetings.results.enhancePreview.handler(meetingsQuery('meetings.notes.preview')),
+        // Speaker names (#3502): what the recorder's Vy suggested, and the recorder's click that applies one; see modules/meetings/src/summary.ts.
+        speakerSuggestions: os.meetings.results.speakerSuggestions.handler(meetingsQuery('meetings.speaker.suggestions')),
+        nameSpeaker: os.meetings.results.nameSpeaker.handler(meetingsCommand('meetings.speaker.name')),
       },
       // The machine translation of the summary the member reads (meetings integrations E1, #3184): the member's own Vy, the answer theirs alone; see member-vy-ports.ts.
       translation: {
@@ -992,6 +1267,45 @@ export function createRpcHandler(
           inMeetings(context, (orgId, actor) => runMeetingTranslation({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: translations, price: aiPrice }, orgId, actor, input.meetingId, input.stage)),
         ),
         get: os.meetings.translation.get.handler(meetingsQuery('meetings.translation.get')),
+        // The transcript (E2, #3185): the member's own Vy translates the next batch of the lines they read, in the request; the page asks again while it is open.
+        transcriptStatus: os.meetings.translation.transcriptStatus.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => transcriptTranslationStatusOf({ runtime, price: aiPrice, hasModel: summaryModel !== null }, orgId, actor, input.meetingId)),
+        ),
+        transcriptTranslate: os.meetings.translation.transcriptTranslate.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => runTranscriptTranslation({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: transcriptTranslations, price: aiPrice }, orgId, actor, input.meetingId)),
+        ),
+        transcriptStop: os.meetings.translation.transcriptStop.handler(meetingsCommand('meetings.translation.transcript_stop')),
+        transcriptGet: os.meetings.translation.transcriptGet.handler(meetingsQuery('meetings.translation.transcript_get')),
+      },
+      // Ask across meetings (A3, #3161): the member's own Vy answers from the lines the member's own search finds, each sentence with a citation to a transcript line; nothing is stored or sent;
+      // see member-vy-ports.ts.
+      ask: {
+        status: os.meetings.ask.status.handler(({ context }) => inMeetings(context, (orgId, actor) => askStatusOf({ runtime, price: aiPrice, model: summaryModel, meter: aiMeter ?? (() => null) }, orgId, actor))),
+        ask: os.meetings.ask.ask.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => runMeetingAsk({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: asks, price: aiPrice }, orgId, actor, input.question)),
+        ),
+      },
+      // Vy's brief before a meeting (#3543): the facts are read as the member (no model); the click has the member's own Vy write two or three sentences from them, each citing facts, and a sentence whose figure no
+      // cited fact writes is refused; nothing is stored or sent. See member-vy-ports.ts.
+      brief: {
+        facts: os.meetings.brief.facts.handler(meetingsQuery('meetings.brief.facts')),
+        status: os.meetings.brief.status.handler(({ context }) => inMeetings(context, (orgId, actor) => briefStatusOf({ runtime, price: aiPrice, model: summaryModel, meter: aiMeter ?? (() => null) }, orgId, actor))),
+        write: os.meetings.brief.write.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => runMeetingBrief({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: meetingBriefs, price: aiPrice }, orgId, actor, input)),
+        ),
+      },
+      // A member's own Google Calendar meetings (B1, #3165): the member's own rows, no model; see modules/meetings/src/agenda.ts.
+      agenda: {
+        list: os.meetings.agenda.list.handler(meetingsQuery('meetings.agenda.list')),
+        // The extension's "Sắp họp" card: the `agenda` token scope opens exactly this procedure (auth-extension.ts lists the route).
+        next: os.meetings.agenda.next.handler(meetingsQuery('meetings.agenda.next')),
+        suggest: os.meetings.agenda.suggest.handler(meetingsQuery('meetings.agenda.suggest')),
+        setReadEvents: os.meetings.agenda.setReadEvents.handler(meetingsCommand('meetings.agenda.set_read_events')),
+        link: os.meetings.agenda.link.handler(meetingsCommand('meetings.agenda.link')),
+      },
+      series: {
+        openItems: os.meetings.series.openItems.handler(meetingsQuery('meetings.series.open_items')),
+        set: os.meetings.series.set.handler(meetingsCommand('meetings.series.set')),
       },
       actionItems: {
         create: os.meetings.actionItems.create.handler(meetingsCommand('meetings.action_item.create')),
@@ -2169,7 +2483,7 @@ export function createRpcHandler(
             { provider: input.provider, stateHash: attempt.stateHash, codeVerifier: attempt.codeVerifier },
             { actor, orgId },
           );
-          const authorizeUrl = adapter.authorizeUrl({ state: attempt.state, redirectUri: calendarRedirectUri(input.provider), codeChallenge: attempt.codeChallenge, ...(input.writeBack ? { writeBack: true } : {}) });
+          const authorizeUrl = adapter.authorizeUrl({ state: attempt.state, redirectUri: calendarRedirectUri(input.provider), codeChallenge: attempt.codeChallenge, ...(input.writeBack ? { writeBack: true } : {}), ...(input.readEvents ? { readEvents: true } : {}) });
           return { authorizeUrl, state: attempt.state, expiresAt: begun.expiresAt };
         }),
       ),
@@ -2188,7 +2502,7 @@ export function createRpcHandler(
             throw connectorFailure(error);
           });
           const sealed = broker.seal(account.secret, calendarBinding(orgId, adapter.provider, account.externalAccount));
-          return runtime.execute<{ connectionId: string; reconnected: boolean }>(
+          const done = await runtime.execute<{ connectionId: string; reconnected: boolean }>(
             'kernel.calendar.connect',
             {
               provider: adapter.provider,
@@ -2199,11 +2513,53 @@ export function createRpcHandler(
               credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
             },
             { actor, orgId },
-          ).then((done) => ({ ...done, displayName: account.displayName }));
+          );
+          // A grant without the events-read scope (the member connected again for another permission, or refused it on Google's screen) turns the read of their meetings off in the connect
+          // command; the meetings it already cached are deleted now, best effort (a deployment without the meetings module has nothing to delete, and the list hides them meanwhile).
+          if (!canReadEventsWith(adapter.provider, account.scopes)) await clearAgenda(runtime, { actor, orgId }, done.connectionId);
+          return { ...done, displayName: account.displayName };
         }),
       ),
       setWriteBack: os.calendar.setWriteBack.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.calendar.write_back.set', input, { actor, orgId }))),
-      disconnect: os.calendar.disconnect.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.calendar.disconnect', input, { actor, orgId }))),
+      // The cached meetings of the connection go at once, not when the worker finishes the revoke (the list hides them meanwhile, as the connection is no longer active).
+      disconnect: os.calendar.disconnect.handler(({ context, input }) =>
+        inOrg(context, async (orgId, actor) => {
+          const done = await runtime.execute<{ connectionId: string; disconnected: true }>('kernel.calendar.disconnect', input, { actor, orgId });
+          await clearAgenda(runtime, { actor, orgId }, input.connectionId);
+          return done;
+        }),
+      ),
+    },
+    // Meeting platforms a member connects (meetings integrations C1, #3173): the member's own connections and recordings. Only the offline sandbox connects here; the real providers' OAuth
+    // steps are C2 to C4. The commands check the role and the owner again.
+    meetingPlatform: {
+      connections: os.meetingPlatform.connections.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.meeting_platform.connections', {}, { actor, orgId }))),
+      recordings: os.meetingPlatform.recordings.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.meeting_platform.recordings', {}, { actor, orgId }))),
+      refresh: os.meetingPlatform.refresh.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.meeting_platform.refresh', input, { actor, orgId }))),
+      dismiss: os.meetingPlatform.dismiss.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.meeting_platform.recording.dismiss', input, { actor, orgId }))),
+      disconnect: os.meetingPlatform.disconnect.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.meeting_platform.disconnect', input, { actor, orgId }))),
+      // A throwaway token is sealed for the sandbox account and dropped: the sandbox platform opens nothing, so the credential only has to exist. Connecting again is a reconnect of the same account.
+      connectSandbox: os.meetingPlatform.connectSandbox.handler(({ context }) =>
+        guard(async () => {
+          const { orgId, role } = await resolveMembership(runtime, context.user, context.orgSlug);
+          if (role === 'viewer') throw new DomainError('FORBIDDEN', 403, 'Người xem không kết nối được nền tảng họp');
+          if (!channels?.sandbox) throw new DomainError('CHANNEL_PROVIDER_DISABLED', 404, 'Kênh thử nghiệm (sandbox) chưa được bật');
+          // The token is sealed in the shape the job and the sweep open: JSON with an accessToken (the sandbox platform checks nothing, but the shape is the real one).
+          const sealed = channels.broker.seal(JSON.stringify({ accessToken: randomBytes(24).toString('hex') }), meetingPlatformBinding(orgId, 'sandbox', 'sandbox@local'));
+          return runtime.execute<{ connectionId: string; reconnected: boolean }>(
+            'kernel.meeting_platform.connect',
+            {
+              provider: 'sandbox',
+              externalAccount: 'sandbox@local',
+              displayName: 'Nền tảng họp thử nghiệm',
+              scopes: [],
+              expiresAt: null,
+              credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
+            },
+            { actor: actorOf(context.user), orgId },
+          );
+        }),
+      ),
     },
     // Org-less: any signed-in user may look up a tax code before the org exists. Nothing is written, so no command.
     taxRegistry: {
@@ -2294,6 +2650,7 @@ export function createRpcHandler(
       list: os.inbox.list.handler(({ context, input }) =>
         inOrg(context, (orgId, actor) => runtime.query('kernel.inbox.list', input, { actor, orgId })),
       ),
+      hidden: os.inbox.hidden.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.inbox.hidden', {}, { actor, orgId }))),
       get: os.inbox.get.handler(({ context, input }) =>
         inOrg(context, (orgId, actor) => runtime.query('kernel.inbox.get', input, { actor, orgId })),
       ),
@@ -2410,6 +2767,7 @@ export function createRpcHandler(
     conversations: {
       list: os.conversations.list.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.list', input, { actor, orgId }))),
       counts: os.conversations.counts.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.counts', input, { actor, orgId }))),
+      postCounts: os.conversations.postCounts.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.post_counts', input, { actor, orgId }))),
       get: os.conversations.get.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.get', input, { actor, orgId }))),
       reply: os.conversations.reply.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.reply', input, { actor, orgId }))),
       replyPrivately: os.conversations.replyPrivately.handler(({ context, input }) =>
@@ -2422,6 +2780,8 @@ export function createRpcHandler(
       reopen: os.conversations.reopen.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.reopen', input, { actor, orgId }))),
       note: os.conversations.note.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.note', input, { actor, orgId }))),
       linkContact: os.conversations.linkContact.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.link_contact', input, { actor, orgId }))),
+      followUp: os.conversations.followUp.handler(({ context, input }) => keyed(context, 'kernel.conversation.follow_up', input)),
+      tasks: os.conversations.tasks.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.tasks', input, { actor, orgId }))),
       setIntent: os.conversations.setIntent.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.set_intent', input, { actor, orgId }))),
       // The Inbox's suggestions (CV3, #2306): the thread's text is read in the member's own transaction, then the model is called outside it, through the
       // AI meter. Nothing is stored; a model that is off, refused or failing leaves no suggestion and no error.
@@ -2452,6 +2812,8 @@ export function createRpcHandler(
       retention: os.conversations.retention.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.retention', {}, { actor, orgId }))),
       setRetention: os.conversations.setRetention.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.retention_set', input, { actor, orgId }))),
       eraseContact: os.conversations.eraseContact.handler(({ context, input }) => keyed(context, 'kernel.conversation.erase_contact', input)),
+      channelCounts: os.conversations.channelCounts.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.channel_counts', input, { actor, orgId }))),
+      eraseChannel: os.conversations.eraseChannel.handler(({ context, input }) => keyed(context, 'kernel.conversation.erase_channel', input)),
       // The sales coworker's "soạn" button: asking is rationed by the same per-member and per-org budget as the other AI drafts (ai-draft-limit.ts, #386), since each ask leads to a
       // paid model call in the worker; no counter of its own.
       draftRequest: os.conversations.draftRequest.handler(({ context, input }) =>
@@ -2708,7 +3070,9 @@ export function createRpcHandler(
             return runtime.execute('finance.einvoice.draft_from_order', rest, { actor, orgId, idempotencyKey });
           }),
         ),
+        orderLines: os.einvoice.drafts.orderLines.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice_draft.order_lines', input, { actor, orgId }))),
         delete: os.einvoice.drafts.delete.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice_draft.delete', input, { actor, orgId }))),
+        startCorrection: os.einvoice.drafts.startCorrection.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice.start_correction', input, { actor, orgId }))),
         issueRequest: os.einvoice.drafts.issueRequest.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice.issue_request', input, { actor, orgId }))),
         // The coworker's proposal for the form (#2505): the model is asked outside any transaction, from what the member's own read said it may see.
         previousInvoice: os.einvoice.drafts.previousInvoice.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice_draft.previous_invoice', input, { actor, orgId }))),
@@ -2823,6 +3187,17 @@ export function createRpcHandler(
       },
       staged: os.marketplace.staged.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.staged', {}, { actor, orgId }))),
       balance: os.marketplace.balance.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.balance', input ?? {}, { actor, orgId }))),
+      facts: os.marketplace.facts.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.facts', input ?? {}, { actor, orgId }))),
+      // What the screen lets a person act on (#2516 slice F): a read; the actions are inbox.request of the finance commands.
+      worklist: os.marketplace.worklist.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.worklist', input ?? {}, { actor, orgId }))),
+      // The facts are read again here in the caller's own transaction, so what the model is told comes from the books, never from the caller; the sentence is a read and posts nothing.
+      line: os.marketplace.line.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { lang, legalEntityId } = input;
+          const facts = await runtime.query<MarketplaceFacts>('finance.marketplace.facts', legalEntityId === undefined ? {} : { legalEntityId }, { actor, orgId });
+          return explainMarketplaceLine(financeMarketplaceLineAi, orgId, actor.userId, facts, lang ?? 'vi');
+        }),
+      ),
       preview: os.marketplace.preview.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.preview', input, { actor, orgId }))),
       confirm: os.marketplace.confirm.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => {
@@ -2927,6 +3302,14 @@ export function createRpcHandler(
     vat: {
       period: os.vat.period.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.vat.period', input, { actor, orgId })),
+      ),
+      // The sentence is asked of the model outside any transaction, from the lists the working read in the member's own one (their legal entities only).
+      explain: os.vat.explain.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { lang, ...ask } = input;
+          const report = await runtime.query<VatLateSource>('finance.vat.period', ask, { actor, orgId });
+          return explainVatLate(financeVatLateAi, orgId, actor.userId, report, lang ?? 'vi');
+        }),
       ),
       salesNumberGaps: os.vat.salesNumberGaps.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.vat.sales_number_gaps', input, { actor, orgId })),
@@ -3058,6 +3441,9 @@ export function createRpcHandler(
       ),
       lines: os.bank.lines.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.bank.lines', input, { actor, orgId })),
+      ),
+      platformLines: os.bank.platformLines.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.query('finance.bank.platform_lines', input, { actor, orgId })),
       ),
       lineVoucher: os.bank.lineVoucher.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.bank.line_voucher', input, { actor, orgId })),
@@ -3304,6 +3690,7 @@ export function createRpcHandler(
           }
         }),
       ),
+      committed: os.ads.committed.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.query('ads.committed', input, { actor, orgId }))),
       writeState: os.ads.writeState.handler(({ context }) => inAds(context, (orgId, actor) => runtime.query('ads.write.state', {}, { actor, orgId }))),
       // Asking for a change that opens the way to spend: a proposal in the Inbox, approved there (kernel.proposal.request).
       requestChange: os.ads.requestChange.handler(({ context, input }) =>
@@ -3368,6 +3755,133 @@ export function createRpcHandler(
       update: os.tasks.update.handler(({ context, input }) => keyed(context, 'kernel.task.update', input)),
       comment: os.tasks.comment.handler(({ context, input }) => keyed(context, 'kernel.task.comment', input)),
       setStatus: os.tasks.setStatus.handler(({ context, input }) => keyed(context, 'kernel.task.set_status', input)),
+    },
+    projects: {
+      list: os.projects.list.handler(projectsQuery('projects.project.list')),
+      get: os.projects.get.handler(projectsQuery('projects.project.get')),
+      board: os.projects.board.handler(projectsQuery('projects.board')),
+      weeklyStatus: os.projects.weeklyStatus.handler(({ context, input }) =>
+        inProjects(context, async (orgId, actor) => {
+          const source = await runtime.query<ProjectWeeklyStatusSource>('projects.weekly_status_source', { projectId: input.projectId }, { actor, orgId });
+          return prepareProjectWeeklyStatus(projectWeeklyStatusCoworker, orgId, actor.userId, source, input.language ?? 'vi');
+        }),
+      ),
+      weeklyStatusShareNote: os.projects.weeklyStatusShareNote.handler(projectsCommand('projects.weekly_status.share_note')),
+      weeklyStatusSendMail: os.projects.weeklyStatusSendMail.handler(projectsCommand('projects.weekly_status.send_mail')),
+      unassignedTasks: os.projects.unassignedTasks.handler(projectsQuery('projects.unassigned_tasks')),
+      taskProjects: os.projects.taskProjects.handler(projectsQuery('projects.task_projects')),
+      create: os.projects.create.handler(projectsCommand('projects.project.create')),
+      update: os.projects.update.handler(projectsCommand('projects.project.update')),
+      setStatus: os.projects.setStatus.handler(projectsCommand('projects.project.set_status')),
+      archive: os.projects.archive.handler(projectsCommand('projects.project.archive')),
+      setOwner: os.projects.setOwner.handler(projectsCommand('projects.project.set_owner')),
+      addMember: os.projects.addMember.handler(projectsCommand('projects.member.add')),
+      removeMember: os.projects.removeMember.handler(projectsCommand('projects.member.remove')),
+      addTask: os.projects.addTask.handler(projectsCommand('projects.task.add')),
+      removeTask: os.projects.removeTask.handler(projectsCommand('projects.task.remove')),
+      reorderTask: os.projects.reorderTask.handler(projectsCommand('projects.task.reorder')),
+      createTask: os.projects.createTask.handler(projectsCommand('projects.task.create')),
+      tasksFromNoteStatus: os.projects.tasksFromNoteStatus.handler(({ context }) =>
+        inProjects(context, (orgId, actor) => tasksFromNoteStatusOf({ runtime, model: summaryModel, meter: aiMeter ?? (() => null) }, orgId, actor)),
+      ),
+      proposeTasksFromNote: os.projects.proposeTasksFromNote.handler(({ context, input }) =>
+        inProjects(context, (orgId, actor) =>
+          runProjectsTasksFromNote({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: noteTaskProposals }, orgId, actor, input),
+        ),
+      ),
+      confirmTasksFromNote: os.projects.confirmTasksFromNote.handler(projectsCommand('projects.tasks_from_note.confirm')),
+      tasksFromSourceStatus: os.projects.tasksFromSourceStatus.handler(({ context }) =>
+        inProjects(context, (orgId, actor) => tasksFromSourceStatusOf({ runtime, model: summaryModel, meter: aiMeter ?? (() => null) }, orgId, actor)),
+      ),
+      proposeTasksFromSource: os.projects.proposeTasksFromSource.handler(({ context, input }) =>
+        inProjects(context, (orgId, actor) =>
+          runProjectsTasksFromSource({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: noteTaskProposals }, orgId, actor, input),
+        ),
+      ),
+      confirmTasksFromSource: os.projects.confirmTasksFromSource.handler(projectsCommand('projects.tasks_from_source.confirm')),
+      listTemplates: os.projects.listTemplates.handler(projectsQuery('projects.template.list')),
+      createTemplate: os.projects.createTemplate.handler(projectsCommand('projects.template.create')),
+      archiveTemplate: os.projects.archiveTemplate.handler(projectsCommand('projects.template.archive')),
+      createFromTemplate: os.projects.createFromTemplate.handler(projectsCommand('projects.project.create_from_template')),
+      getTaskRecurrence: os.projects.getTaskRecurrence.handler(projectsQuery('projects.task.recurrence.get')),
+      setTaskRecurrence: os.projects.setTaskRecurrence.handler(projectsCommand('projects.task.recurrence.set')),
+      clearTaskRecurrence: os.projects.clearTaskRecurrence.handler(projectsCommand('projects.task.recurrence.clear')),
+    },
+    sign: {
+      envelope: {
+        list: os.sign.envelope.list.handler(signQuery('sign.envelope.list')),
+        get: os.sign.envelope.get.handler(({ context, input }) =>
+          inSign(context, async (orgId, actor) => {
+            type SignEnvelopeDetail = z.infer<typeof zSignEnvelopeDetail>;
+            const detail = await runtime.query<SignEnvelopeDetail>('sign.envelope.get', input, { actor, orgId });
+            return {
+              ...detail,
+              envelope: {
+                ...detail.envelope,
+                pageDimensions: Array.isArray(detail.envelope.pageDimensions) ? detail.envelope.pageDimensions : null,
+              },
+            };
+          }),
+        ),
+        events: os.sign.envelope.events.handler(signQuery('sign.envelope.events')),
+        by_source: os.sign.envelope.by_source.handler(signQuery('sign.envelope.by_source')),
+        verify: os.sign.envelope.verify.handler(signQuery('sign.envelope.verify')),
+        create: os.sign.envelope.create.handler(signCommand('sign.envelope.create')),
+        update: os.sign.envelope.update.handler(signCommand('sign.envelope.update')),
+        send: os.sign.envelope.send.handler(signNoIdempotencyCommand('sign.envelope.send')),
+        remind: os.sign.envelope.remind.handler(signCommand('sign.envelope.remind')),
+        void: os.sign.envelope.void.handler(signCommand('sign.envelope.void')),
+      },
+      signer: {
+        add: os.sign.signer.add.handler(signCommand('sign.signer.add')),
+        remove: os.sign.signer.remove.handler(signCommand('sign.signer.remove')),
+        reorder: os.sign.signer.reorder.handler(signCommand('sign.signer.reorder')),
+        create_link: os.sign.signer.create_link.handler(signNoIdempotencyCommand('sign.signer.create_link')),
+      },
+      field: {
+        set: os.sign.field.set.handler(signCommand('sign.field.set')),
+      },
+      ai: {
+        analyze: os.sign.ai.analyze.handler(({ context, input }) =>
+          inSign(context, (orgId, actor) =>
+            proposeEnvelopeAnalysis({
+              ai: signCoworker,
+              runtime,
+              orgId,
+              actor,
+              envelopeId: input.envelopeId,
+              ...(input.pages ? { pages: input.pages } : {}),
+              meter: 'runtime',
+              ...(aiPrice ? { meterOptions: { price: aiPrice } } : {}),
+            }),
+          ),
+        ),
+        get: os.sign.ai.get.handler(signQuery('sign.ai_analysis.get')),
+      },
+      template: {
+        list: os.sign.template.list.handler(signQuery('sign.template.list')),
+        get: os.sign.template.get.handler(({ context, input }) =>
+          inSign(context, async (orgId, actor) => {
+            type SignTemplateDetail = z.infer<typeof zSignTemplateDetail>;
+            const detail = await runtime.query<SignTemplateDetail>('sign.template.get', input, { actor, orgId });
+            return {
+              ...detail,
+              template: {
+                ...detail.template,
+                pageDimensions: Array.isArray(detail.template.pageDimensions) ? detail.template.pageDimensions : null,
+              },
+            };
+          }),
+        ),
+        create: os.sign.template.create.handler(signCommand('sign.template.create')),
+        update: os.sign.template.update.handler(signCommand('sign.template.update')),
+        roles_set: os.sign.template.roles_set.handler(signCommand('sign.template.roles_set')),
+        fields_set: os.sign.template.fields_set.handler(signCommand('sign.template.fields_set')),
+        archive: os.sign.template.archive.handler(signCommand('sign.template.archive')),
+        instantiate: os.sign.template.instantiate.handler(signNoIdempotencyCommand('sign.template.instantiate')),
+        direct_link_set: os.sign.template.direct_link_set.handler(signNoIdempotencyCommand('sign.template.direct_link_set')),
+        direct_link_rotate: os.sign.template.direct_link_rotate.handler(signNoIdempotencyCommand('sign.template.direct_link_rotate')),
+      },
     },
   });
 

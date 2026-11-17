@@ -9,10 +9,12 @@ import { useTranslations } from 'use-intl';
 import type { BookingItem } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button, buttonVariants } from '@crove/ui/components/button';
+import { Card } from '@crove/ui/components/card';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { BookingDeal } from '../components/booking-deal.tsx';
 import { BookingFeedCard } from '../components/booking-feed.tsx';
+import { BookingLinkBlock, BookingSettingsLink, useBookingLink } from '../components/booking-link.tsx';
 import { useMe } from '../components/conversation-inbox.tsx';
 import { meetingsInstalled } from '../components/linked-meetings.tsx';
 import { BookingSuggestCard } from '../components/booking-suggest.tsx';
@@ -202,12 +204,39 @@ export function BookingsPage() {
   const now = Date.now();
   const names = new Map((org.data?.members ?? []).map((m) => [m.userId, m.displayName ?? m.email]));
   const nameOf = (userId: string) => names.get(userId) ?? null;
+  // A viewer changes no bookings and no event types: no link, no settings.
+  const editor = org.data !== undefined && org.data.role !== 'viewer';
+  const link = useBookingLink(slug, editor);
+  // The link sits above the list unless the empty state of the upcoming tab carries it as its own action.
+  const emptyCarriesLink = editor && period === 'upcoming' && link.loaded && bookings.data?.length === 0;
+  const settingsLink = 'text-link underline-offset-4 hover:underline';
 
   return (
     <div>
-      <PageHeader title={t('title')} subtitle={t('subtitle')} />
-      {org.data && org.data.role !== 'viewer' && <BookingFeedCard />}
-      {org.data && org.data.role !== 'viewer' && <BookingSuggestCard slug={slug} />}
+      <PageHeader
+        title={t('title')}
+        subtitle={t('subtitle')}
+        actions={
+          editor && (
+            <BookingSettingsLink slug={slug} className={buttonVariants({ size: 'sm', variant: 'outline' })}>
+              {t('settingsLink')}
+            </BookingSettingsLink>
+          )
+        }
+      />
+      {/* The link the owner sends to clients (#3643); with no booking yet it is the empty state's own action, below. */}
+      {editor && link.chosen && bookings.data !== undefined && !emptyCarriesLink && (
+        <Card role="region" className="mb-4 block space-y-2 p-4" aria-labelledby="booking-link-title">
+          <div>
+            <h2 id="booking-link-title" className="text-sm font-medium text-foreground">
+              {t('link.title')}
+            </h2>
+            <p className="text-xs text-subtle-foreground">{t('link.hint')}</p>
+          </div>
+          <BookingLinkBlock link={link} />
+        </Card>
+      )}
+      {editor && <BookingSuggestCard slug={slug} />}
       <div className="mb-4 flex flex-wrap gap-2">
         <Tabs value={period} onValueChange={(value) => setPeriod(value as Period)}>
           <TabsList>
@@ -230,13 +259,49 @@ export function BookingsPage() {
       ) : !bookings.data ? (
         <TableSkeleton columns={5} />
       ) : bookings.data.length === 0 ? (
-        <Empty title={t(period === 'upcoming' ? 'emptyUpcoming' : 'emptyPast')} hint={t('emptyHint')} />
+        editor && period === 'upcoming' && link.loaded ? (
+          link.chosen ? (
+            <Empty
+              title={t('emptyLink.title')}
+              hint={t('emptyLink.hint')}
+              action={
+                <div className="flex w-full max-w-xl flex-col items-center gap-3">
+                  <BookingLinkBlock link={link} />
+                  <BookingSettingsLink slug={slug} className={settingsLink}>
+                    {t('emptyLink.settings')}
+                  </BookingSettingsLink>
+                </div>
+              }
+            />
+          ) : (
+            <Empty
+              title={t('emptyNoType.title')}
+              hint={t('emptyNoType.hint')}
+              action={
+                <BookingSettingsLink slug={slug} anchor="eventTypes" className={buttonVariants({ size: 'sm' })}>
+                  {t('emptyNoType.action')}
+                </BookingSettingsLink>
+              }
+            />
+          )
+        ) : (
+          <Empty title={t(period === 'upcoming' ? 'emptyUpcoming' : 'emptyPast')} />
+        )
       ) : (
         <DataTable head={[t('colWhen'), t('colType'), t('colVisitor'), t('colStatus'), '']}>
           {bookings.data.map((b) => (
             <BookingRow key={b.id} b={b} slug={slug} zone={zone} locale={locale} now={now} nameOf={nameOf} />
           ))}
         </DataTable>
+      )}
+      {/* The calendar subscription, after the bookings and closed: most owners never need it (#3643). */}
+      {editor && (
+        <details className="mt-6 rounded-xl bg-card p-4 ring-1 ring-foreground/10" data-testid="booking-feed-section">
+          <summary className="cursor-pointer text-sm font-medium text-foreground">{t('feed.section')}</summary>
+          <div className="mt-3">
+            <BookingFeedCard />
+          </div>
+        </details>
       )}
     </div>
   );

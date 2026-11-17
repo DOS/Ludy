@@ -3,7 +3,8 @@
 // leaves, so the worker never sees a shape it does not expect.
 import PostalMime from 'postal-mime';
 import type { Address } from 'postal-mime';
-import { EXTRACT_LIMITS, zExtractSuccess, type ExtractFailure, type ExtractKind, type ExtractResponse, type ExtractSuccess } from '@crove/extract-contract';
+import { EXTRACT_LIMITS, PdfEmbedCmsInputError, PdfSealInputError, zExtractSuccess, type ExtractFailure, type ExtractKind, type ExtractResponse, type ExtractSuccess } from '@crove/extract-contract';
+import { embedPdfCms } from './cms.ts';
 import { DsnError, readDsn } from './dsn.ts';
 import { EInvoiceParseError, parseEInvoiceXml } from './einvoice-xml.ts';
 import { HtmlMetaError, htmlText, readHtmlMeta } from './html-meta.ts';
@@ -13,6 +14,10 @@ import { ArchiveError, readZip } from './zip.ts';
 import { readBankStatement } from './bank-statement.ts';
 import { readMarketplaceIncome } from './marketplace-income.ts';
 import { readMarketplaceOrders } from './marketplace-orders.ts';
+import { extractPageDeterministicTags, parseDeterministicTagToken } from './pdf-tags.ts';
+import { PdfSignError, inspectPdf, sealPdf } from './seal.ts';
+
+export { extractPageDeterministicTags, parseDeterministicTagToken };
 
 const MiB = 1024 * 1024;
 
@@ -175,6 +180,12 @@ async function parseKind(kind: ExtractKind, bytes: Uint8Array): Promise<ExtractS
       return { ok: true, kind, invoice: { ...parseEInvoiceXml(bytes), source: 'einvoice_xml' } };
     case 'pdf_text':
       return pdfText(bytes);
+    case 'pdf_inspect':
+      return inspectPdf(bytes);
+    case 'pdf_seal':
+      return sealPdf(bytes);
+    case 'pdf_embed_cms':
+      return embedPdfCms(bytes);
     case 'mime':
       return mime(bytes);
     case 'zip':
@@ -206,6 +217,9 @@ async function parseKind(kind: ExtractKind, bytes: Uint8Array): Promise<ExtractS
 const UNREADABLE: Record<ExtractKind, string> = {
   einvoice_xml: 'Không đọc được XML hóa đơn điện tử',
   pdf_text: 'Không đọc được tệp PDF',
+  pdf_inspect: 'Không kiểm tra được tệp PDF',
+  pdf_seal: 'Không đóng dấu được tệp PDF',
+  pdf_embed_cms: 'Không nhúng được chữ ký số CMS vào tệp PDF',
   mime: 'Không đọc được thư điện tử',
   zip: 'Không mở được tệp ZIP',
   portal_invoice_list: 'Không đọc được danh sách hóa đơn từ cổng thuế',
@@ -222,8 +236,20 @@ export async function parse(kind: ExtractKind, bytes: Uint8Array): Promise<Extra
   try {
     result = await parseKind(kind, bytes);
   } catch (error) {
-    // The e-invoice parser and the ZIP reader explain what is wrong; other parser errors are not passed on.
-    if (error instanceof EInvoiceParseError || error instanceof ArchiveError || error instanceof PortalListError || error instanceof DsnError || error instanceof HtmlMetaError || error instanceof FeedError) return failure('invalid', error.message);
+    // The e-invoice parser, eSign PDF handlers and ZIP reader explain what is wrong; other parser errors are not passed on.
+    if (
+      error instanceof EInvoiceParseError ||
+      error instanceof ArchiveError ||
+      error instanceof PortalListError ||
+      error instanceof DsnError ||
+      error instanceof HtmlMetaError ||
+      error instanceof FeedError ||
+      error instanceof PdfSignError ||
+      error instanceof PdfSealInputError ||
+      error instanceof PdfEmbedCmsInputError
+    ) {
+      return failure('invalid', error.message);
+    }
     // A stack overflow (deeply nested input) or an impossible allocation: the input is beyond what we read.
     if (error instanceof RangeError) return failure('invalid', `${UNREADABLE[kind]}: tệp vượt giới hạn xử lý`);
     return failure('invalid', UNREADABLE[kind]);

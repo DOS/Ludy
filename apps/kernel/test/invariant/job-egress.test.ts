@@ -9,6 +9,7 @@ import { deriveRisk, type CommandDef } from '@crove/kernel-runtime';
 import { adsCommands } from '@crove/mod-ads';
 import { crmCommands } from '@crove/mod-crm';
 import { meetingsCommands } from '@crove/mod-meetings';
+import { signCommands } from '@crove/mod-sign';
 import { FINANCE_NOTIFYING_EVENTS, financeCommands } from '@crove/mod-finance';
 import { CHAT_ALERTING_EVENTS, CHAT_ALERT_TEST_EVENT, NOTIFYING_EVENTS, socialCommands } from '@crove/mod-social';
 import { MAIL_QUEUES, QUEUES, SOCIAL_PUBLISH_QUEUES, TENANT_HOSTED_PROVIDERS, queueEgress, socialPublishQueue, type JobEgress } from '../../src/jobs-schema.ts';
@@ -61,7 +62,7 @@ function workProblems(sites: readonly WorkSite[]): string[] {
 
 const RANK = { R0: 0, R1: 1, R2: 2, R3: 3 } as const;
 const all = (): Array<CommandDef<unknown, unknown>> =>
-  [...kernelCommands, orgPurgeCommand({ store: {} as never }), numberReseedCommand(), ...financeCommands, ...socialCommands, ...crmCommands, ...adsCommands, ...meetingsCommands] as Array<CommandDef<unknown, unknown>>;
+  [...kernelCommands, orgPurgeCommand({ store: {} as never }), numberReseedCommand(), ...financeCommands, ...socialCommands, ...crmCommands, ...adsCommands, ...meetingsCommands, ...signCommands] as Array<CommandDef<unknown, unknown>>;
 
 // Commands below R2 whose handlers emit an event that feeds a queue with egress, themselves or through a nested
 // command they run (ctx.run or ctx.tryRun, followed transitively). None since #1662 and #1698 (coordinator decision):
@@ -116,6 +117,15 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
   // The sweep (every minute) hands the wake-up deliveries it stored to the delivery queue; each exists only for a receiver an owner or admin set through kernel.mcp.wake.set, which
   // declares the external effect (the webhook of ADR-0051 decision 4, #3024).
   'kernel-mcp-wake-sweep handler': { command: 'kernel.mcp.wake.set' },
+  // The sweep (every minute) hands the minutes-webhook deliveries to the delivery queue; each exists only for an address a member set through meetings.hook.set, which declares the
+  // external effect, while the owner's switch is on (meetings integrations A6, #3164).
+  'kernel-meeting-hook-sweep handler': { command: 'meetings.hook.set' },
+  // The sweep (every minute) hands the posts of approved minutes to the delivery queue; each exists only for a channel an owner or admin saved through meetings.chat.channel_save and a click of the
+  // meeting's recorder through meetings.chat.post, which declares the external effect (meetings integrations B4, #3168).
+  'kernel-meeting-chat-sweep handler': { command: 'meetings.chat.post' },
+  // The sweep (every minute) hands the recordings a member chose to import to the download queue; each exists only for a click on "Nhập" through meetings.import.start, which declares the external effect
+  // (meetings integrations C1, #3173). The same sweep lists suggestions and expires staged bytes; it downloads nothing.
+  'kernel-meeting-import-sweep handler': { command: 'meetings.import.start' },
 };
 
 // Reviewed send sites that may be listed before the site exists, so the two steps of an invariant change can land apart (the PENDING_DEPS pattern): each names the issue that adds

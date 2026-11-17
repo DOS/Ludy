@@ -16,6 +16,7 @@ import { ExternalCalendars } from './calendar-connections.tsx';
 import { ErrorText, RowsSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { BOOKING_SETTINGS_ID } from '../lib/booking.ts';
 import { WEEKDAY_KEYS, dayOffRange, daysOf, datesOf, hoursOf, timeZones, type DayHours } from '../lib/calendar.ts';
 
 const refresh = () => queryClient.invalidateQueries({ queryKey: orpc.calendar.get.key() });
@@ -149,7 +150,7 @@ export function WorkingHoursCard({ canEdit }: { canEdit: boolean }) {
   });
   const calendar = useQuery(orpc.calendar.get.queryOptions({ input: range }));
   return (
-    <Card className="block p-4" aria-label={t('title')}>
+    <Card id={BOOKING_SETTINGS_ID} tabIndex={-1} className="block scroll-mt-20 p-4 outline-none" aria-label={t('title')}>
       <p className="text-sm font-medium text-muted-foreground">{t('title')}</p>
       <p className="mt-2 text-sm text-muted-foreground">{t('intro')}</p>
       {calendar.isLoading ? (

@@ -16,7 +16,20 @@
 // - not_personal: the name matches the pattern but the column holds no data about a person.
 import { sql, type RawBuilder } from 'kysely';
 import type { MemberRole } from '@crove/db';
-import { FOLLOWUP_MAIL_SOURCE, NOTE_BODY_MAX, NOTE_TITLE_MAX, zPersonalDataQuery, type PersonalDataErasure, type PersonalDataNotice, type PersonalDataResult } from '@crove/kernel-contract';
+import {
+  FOLLOWUP_MAIL_SOURCE,
+  NOTE_BODY_MAX,
+  NOTE_TITLE_MAX,
+  PROJECT_DESCRIPTION_MAX,
+  PROJECT_NAME_MAX,
+  PROJECT_TASK_TITLE_MAX,
+  PROJECT_TEMPLATE_TASK_DESCRIPTION_MAX,
+  PROJECT_WEEKLY_STATUS_MAIL_SOURCE,
+  zPersonalDataQuery,
+  type PersonalDataErasure,
+  type PersonalDataNotice,
+  type PersonalDataResult,
+} from '@crove/kernel-contract';
 import { DomainError, defineCommand, type QueryContext } from '@crove/kernel-runtime';
 
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];
@@ -47,8 +60,13 @@ export interface PersonalDataColumn {
   // Private items (ADR-0037): the finder lists a row only when it is shared ('unless_shared': its visibility is 'org'),
   // or never ('always'); private ones are counted per author through crove_notes.private_matches instead, with no text.
   privateRows?: 'unless_shared' | 'always';
+  // A machinery table closed to crove_tenant (such as crove_sign.signing_otp): findPersonalData skips direct SELECT,
+  // while erase invokes the table's narrow SECURITY DEFINER helper.
+  machinery?: true;
   // A text[] column searched as its items joined by a space, as crove_notes.private_matches reads a note's tags.
   list?: true;
+  // A jsonb array of { text, done } steps searched by joining each step's text, keeping adjacent numbers separate.
+  jsonbSteps?: true;
 }
 
 // Keyed by schema.table.column.
@@ -160,6 +178,26 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: "The member's own address in an outside calendar (their Google account); disconnecting removes it, and it is not exported with the org. Its row policy hides it from the admin who runs an erasure: the member disconnects it",
   },
+  // A member's connected meeting platform (meetings integrations C1, #3173): the member's own account on Google Meet, Zoom or Microsoft Teams, kept only for them.
+  'crove_kernel.meeting_platform_connection.display_name': {
+    kind: 'email',
+    handling: 'erase',
+    reason: "The member's own account on a meeting platform (their address there), the same value as external_account; disconnecting removes it, and it is not exported with the org",
+  },
+  'crove_kernel.meeting_platform_connection.external_account': {
+    kind: 'email',
+    handling: 'erase',
+    reason: "The member's own account on a meeting platform; disconnecting removes it, and it is not exported with the org. Its row policy hides it from the admin who runs an erasure: the member disconnects it",
+  },
+  // The title of a recording the platform offers to import: the platform's words, which may name or describe a person. Read by the member alone (row security), kept as a suggestion for at most
+  // The title of a recording a meeting platform offers the member (meetings integrations C1, #3173), read by that member alone through row security. A suggested or dismissed row is deleted 14 days after the
+  // recording's date; a failed or imported row keeps it until the member disconnects the platform, the org is purged or the retry is dismissed; an import also starts the new meeting's own title as a copy of it, and
+  // that copy follows the meeting's text rules, not this row's.
+  'crove_kernel.meeting_platform_recording.title': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: "The title of a recording a meeting platform offers the member, which may name or describe a person: read by that member alone; a suggestion is deleted 14 days after the recording, a failed or imported row keeps it until the member disconnects the platform or the org is purged, and an import copies it into the new meeting's own title",
+  },
   // Bank feeds (ADR-0039, #2044): the accounts a connection reaches, as the worker listed them; not the books.
   'crove_finance.bank_feed_listed_account.display_name': {
     kind: 'name',
@@ -184,6 +222,7 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_finance.einvoice_draft.buyer_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
   'crove_finance.einvoice_draft.buyer_name': { kind: 'name', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
   'crove_finance.einvoice_draft.buyer_address': { kind: 'address', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
+  'crove_finance.einvoice_draft.buyer_identity': { kind: 'other', handling: 'keep_legal', reason: "The CCCD, passport number or budget-relation unit code an individual buyer gave on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)" },
   'crove_finance.einvoice_draft.buyer_email': { kind: 'email', handling: 'keep_legal', reason: 'Where the buyer asked for the invoice on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
   // A sent quote (#2694): the buyer as the customer's contact was when the quote was sent. The quote is frozen once sent (a guard trigger), so the erase command cannot change it;
   // it goes with the org. The seller's own letterhead on the org's quote settings is the business's, not a person's.
@@ -246,6 +285,12 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: "A task's description, which may quote a person's email or phone; the value is replaced inside it",
   },
+  'crove_kernel.task.checklist': {
+    kind: 'free_text',
+    handling: 'erase',
+    jsonbSteps: true,
+    reason: "A task's checklist steps, which may quote a person's email or phone; each matching step text is redacted in place",
+  },
   'crove_finance.bank_line.description': {
     kind: 'free_text',
     handling: 'keep_legal',
@@ -303,7 +348,7 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_meetings.live_line.text': {
     kind: 'free_text',
     handling: 'erase',
-    reason: "A draft of what was said in a meeting being recorded, which may name or describe a person: read by its recorder alone, replaced by the transcript after the meeting and deleted with the meeting (its recorder, an owner, or the retention job)",
+    reason: "A draft of what was said in a meeting being recorded, which may name or describe a person: read by its recorder alone, replaced by the transcript after the meeting, deleted with the meeting (its recorder, an owner, or the retention job), 30 days after it was made, and 30 days after its recorder was removed (the former-member purge of their Vy data)",
   },
   // The machine translation of a meeting's summary (meetings integrations E1, issue #3184): a member's own Vy's translation of the summary, its decisions and its item titles, private to the
   // member who asked. No finder, owner or admin reads it; it goes with the meeting, with the summary it translated, and an erasure that touches the meeting DROPS it (never redacts it:
@@ -311,7 +356,42 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_meetings.translation.body': {
     kind: 'free_text',
     handling: 'erase',
-    reason: "A machine translation of a meeting's summary, which may name or describe a person: read by the member who asked alone, deleted with the meeting (its recorder, an owner, the retention job or the org purge) and with the summary it translated, and dropped, not redacted, by an erasure that touches the meeting",
+    reason: "A machine translation of a meeting's summary, which may name or describe a person: read by the member who asked alone, deleted with the meeting (its recorder, an owner, the retention job or the org purge), with the summary it translated, and 30 days after the member who asked was removed (the former-member purge of their Vy data), and dropped, not redacted, by an erasure that touches the meeting",
+  },
+  // The body of a minutes-webhook event waiting to be sent (meetings integrations A6, issue #3164): the title, summary, decisions and action items the recorder ticked, copied at publish and kept
+  // only while the event waits. The database wipes it (sets it to NULL) the moment the delivery settles, and drops a waiting event, wiping it, when the meeting's title, its published summary or
+  // decisions or an action item change (which is what the erasure's redaction does), when the hook is turned off or its address changes, when the member leaves, the owner turns the feature off, or
+  // the meeting is deleted. No finder reads it; a copy already sent leaves Ludy and cannot be recalled (the screen says so).
+  'crove_meetings.hook_delivery.body': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: "The text of minutes the recorder chose to send to their own address, which may name or describe a person: kept only while the event waits (minutes, at most 8 hours), wiped when it is sent, fails or is dropped, and dropped, wiped, by an erasure that touches the meeting's text, by the member turning the hook off or changing its address, and with the meeting, the member and the org; a copy already sent cannot be recalled",
+  },
+  // The recorder's own rough notes of a meeting (meetings integrations A5, issue #3163): typed by the recorder, read, written and deleted by the recorder alone (row security: an owner, an
+  // admin, an attendee, an agent and the system context read none). The finder lists the row for the recorder acting as owner (crove_meetings.personal_row_ids, kind 5) and counts the notes of
+  // other recorders per recorder (crove_meetings.personal_note_counts), never listing them. The org is the data controller: the owner's erasure redacts the value in the notes of every recorder
+  // (crove_meetings.personal_note_erase) and reports the count per recorder, as it deletes every member's translations of a touched meeting.
+  'crove_meetings.meeting_note.body': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: "The recorder's own rough notes of a meeting, which may name or describe a person: read by the recorder alone; the owner's erasure edits the value out of every recorder's notes and counts them per recorder; deleted with the meeting (its recorder, an owner for a personal-data request, the retention job or the org purge)",
+  },
+  // The title of an event of a member's own Google Calendar (meetings B1, issue #3165): an 8-day cache (1 day back to 7 ahead) kept only while the member's switch "Cho Ludy đọc tên và giờ
+  // cuộc họp trong lịch" is on. Read by that member alone (row security: an owner, an admin, another member, an agent and the system context read none), so there is no finder and no
+  // erasure of a value inside it: a request is answered the way it is for the live preview, by the member turning the read off, which deletes it at once, or by disconnecting the calendar.
+  'crove_meetings.calendar_agenda.title': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: "The title of an event of a member's own calendar, which may name or describe a person: a cache of the next 7 days and the last day, read by that member alone, deleted at once when they switch the read off or disconnect the calendar, a day after the event ended at the next sync (a row the member linked to a meeting stays until that meeting goes), and with the org",
+  },
+  // The message of a post of approved minutes to a Slack or Teams channel waiting to be sent (meetings integrations B4, issue #3168): the title, day, summary, decisions, action items and link back, copied at
+  // the recorder's click and kept only while the post is queued. The database DELETES the row the moment the post settles, and drops a queued post, deleting it, when the meeting's title, its published summary
+  // or decisions or an action item change (which is what the erasure's redaction does), when the channel is removed or its saver stops standing (the job drops it), and with the meeting and the org. No finder
+  // reads it; a copy already sent leaves Ludy and cannot be recalled (the dialog says so).
+  'crove_meetings.chat_post_body.body': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: "The text of minutes the recorder chose to post to a channel of the org, which may name or describe a person: kept only while the post waits (a minute or so, and at most 8 hours while the worker runs), deleted when it is sent, fails, is dropped or expires, dropped by an erasure that touches the meeting's text, and deleted with the channel, the meeting and the org; a copy already sent to the channel cannot be recalled and the dialog says so.",
   },
   'crove_meetings.transcript_segment.speaker_label': {
     kind: 'free_text',
@@ -359,6 +439,45 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_hr.payroll_employee.birth_date': { kind: 'other', handling: 'erase', reason: "An employee's birth date; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
   'crove_hr.payroll_employee.bank_code': { kind: 'other', handling: 'erase', reason: "The code of the bank an employee is paid at (#2897); hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
   'crove_hr.payroll_dependent.display_name': { kind: 'name', handling: 'erase', reason: "A dependent's name; hr.payroll.employee.erase replaces it with a placeholder together with its employee's record" },
+  'crove_hr.candidate.display_name': { kind: 'name', handling: 'erase', reason: 'A job applicant name; erased by personal-data erasure or hr.recruiting.candidate.erase' },
+  'crove_hr.candidate.email': { kind: 'email', handling: 'erase', reason: 'A job applicant email; erased by personal-data erasure or hr.recruiting.candidate.erase' },
+  'crove_hr.candidate.phone': { kind: 'phone', handling: 'erase', reason: 'A job applicant phone number; erased by personal-data erasure or hr.recruiting.candidate.erase' },
+  'crove_hr.candidate.notes': { kind: 'free_text', handling: 'erase', reason: 'Recruiting notes for a candidate, which may mention personal details: cleared on direct erasure and mentions redacted on text match' },
+  'crove_projects.project.name': { kind: 'free_text', handling: 'erase', reason: "A project's title, which may name a person: mentions are replaced with a redaction marker" },
+  'crove_projects.project.description': { kind: 'free_text', handling: 'erase', reason: "A project's description, which may name a person: mentions are replaced with a redaction marker" },
+  'crove_projects.project.template_tasks': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'Template task titles and descriptions in a project template, which may mention a person: mentions are replaced with a redaction marker',
+  },
+  // eSign (#3323, #3427): unsealed signers (draft, voided, expired, or declined with sealed_file_id IS NULL) are removed on erasure; active, completed, and sealed signer records and append-only audit events stay for statutory verification; ephemeral email OTP rows erase via definer.
+  'crove_sign.signer.name': {
+    kind: 'name',
+    handling: 'keep_record',
+    reason: 'Signer legal name preserved on active, completed, or sealed e-signature envelope and audit certificate under statutory e-transaction evidence retention; a signer on an unsealed envelope is erased',
+  },
+  'crove_sign.signer.email': {
+    kind: 'email',
+    handling: 'keep_record',
+    reason: 'Signer email address preserved on active, completed, or sealed e-signature envelope and audit certificate under statutory e-transaction evidence retention; a signer on an unsealed envelope is erased',
+  },
+  'crove_sign.signer.phone': {
+    kind: 'phone',
+    handling: 'keep_record',
+    reason: 'Signer phone number preserved on active, completed, or sealed e-signature envelope record under statutory e-transaction evidence retention; a signer on an unsealed envelope is erased',
+  },
+  'crove_sign.signer.signature_typed_text': { kind: 'name', handling: 'keep_record', reason: 'Typed signature representation preserved on executed e-signature signer record' },
+  'crove_sign.signer.signer_user_agent': { kind: 'other', handling: 'keep_record', reason: 'Device user-agent string preserved in execution evidence for e-signature dispute resolution' },
+  'crove_sign.signer.signer_ip_hash': { kind: 'other', handling: 'hashed', reason: 'Keyed SHA-256 hash of signer IP address preserved for execution integrity without storing raw IP' },
+  'crove_sign.signer.require_email_otp': { kind: 'other', handling: 'not_personal', reason: 'Boolean flag configuring whether email OTP is required to view and sign' },
+  'crove_sign.field.signature_png_base64': { kind: 'other', handling: 'keep_record', reason: 'Handwritten signature bitmap embedded inside sealed e-signature document and evidence record' },
+  'crove_sign.signing_otp.email': { kind: 'email', handling: 'erase', machinery: true, reason: 'Ephemeral email OTP target address; erased by crove_sign.personal_erase_otp and swept within 24 hours' },
+  'crove_sign.signing_event.actor_label': { kind: 'other', handling: 'keep_record', reason: 'Append-only hash-chained signing_event actor label retained for statutory verification' },
+  'crove_sign.signing_event.ip_hash': { kind: 'other', handling: 'hashed', reason: 'Keyed SHA-256 hash of event actor IP address preserved in append-only hash-chained signing_event' },
+  'crove_sign.signing_event.user_agent': { kind: 'other', handling: 'keep_record', reason: 'Event actor user-agent string preserved in append-only hash-chained signing_event for dispute resolution' },
+  'crove_sign.template_role.require_email_otp': { kind: 'other', handling: 'not_personal', reason: 'Boolean flag configuring whether template role signers require email OTP' },
+  'crove_sign.template_direct_link.require_email_otp': { kind: 'other', handling: 'not_personal', machinery: true, reason: 'Boolean flag configuring whether template direct signing links require email OTP' },
+  'crove_sign.template_direct_link.token_sha256': { kind: 'other', handling: 'not_personal', machinery: true, reason: 'SHA-256 hash of reusable template direct signing capability token' },
 } as const satisfies Record<string, PersonalDataColumn>;
 
 export type PersonalDataColumnKey = keyof typeof PERSONAL_DATA_COLUMNS;
@@ -398,7 +517,7 @@ export const SEALED_COLUMNS: Readonly<Record<string, { handling: 'shred'; reason
 // handles a user's own account, and no tenant code reads them (control-plane-reads.test.ts).
 export const PERSONAL_DATA_NAME_PATTERN =
   '(^|_)(email|emails|phone|phones|address|addresses|tax_code|recipient|recipients|person_name|reviewer_name|display_name|from_address|to_address|national_id|id_number|birth_date|full_name)($|_)';
-export const PERSONAL_DATA_SCHEMAS = ['crove_kernel', 'crove_finance', 'crove_social', 'crove_crm', 'crove_notes', 'crove_hr', 'crove_meetings'] as const;
+export const PERSONAL_DATA_SCHEMAS = ['crove_kernel', 'crove_finance', 'crove_social', 'crove_crm', 'crove_notes', 'crove_hr', 'crove_meetings', 'crove_projects', 'crove_sign'] as const;
 
 // The finder (#923): an owner or admin looks up one person by email address, phone number, or tax code or national ID
 // (digits), across the columns above that hold such a value, and gets every matching row as JSON (the search column
@@ -433,6 +552,67 @@ export function freeTextMatch(probe: Probe, column: RawBuilder<unknown>): RawBui
 export function freeTextRedact(probe: Probe, column: RawBuilder<unknown>, mark: string): RawBuilder<string> {
   return sql<string>`crove_kernel.text_redact(${column}::text, ${probe.kind}, ${probeValue(probe)}, ${mark})`;
 }
+
+const templateTasksMatch = (probe: Probe, column: RawBuilder<unknown>): RawBuilder<boolean> => sql<boolean>`
+  EXISTS (
+    SELECT 1
+      FROM pg_catalog.jsonb_array_elements(${column}) AS item
+     WHERE ${freeTextMatch(probe, sql`item ->> 'title'`)}
+        OR (pg_catalog.jsonb_typeof(item -> 'description') = 'string'
+            AND ${freeTextMatch(probe, sql`item ->> 'description'`)})
+  )`;
+
+const templateTasksRedact = (probe: Probe, column: RawBuilder<unknown>, mark: string): RawBuilder<unknown> => sql`
+  COALESCE(
+    (
+      SELECT pg_catalog.jsonb_agg(
+        pg_catalog.jsonb_strip_nulls(
+          pg_catalog.jsonb_build_object(
+            'title',
+            COALESCE(
+              NULLIF(pg_catalog.btrim(pg_catalog.left(
+                CASE
+                  WHEN ${freeTextMatch(probe, sql`elem.item ->> 'title'`)}
+                    THEN ${freeTextRedact(probe, sql`elem.item ->> 'title'`, mark)}
+                  ELSE elem.item ->> 'title'
+                END,
+                ${PROJECT_TASK_TITLE_MAX}::int
+              )), ''),
+              ${mark}
+            ),
+            'description',
+            CASE
+              WHEN pg_catalog.jsonb_typeof(elem.item -> 'description') = 'string' THEN
+                pg_catalog.left(
+                  CASE
+                    WHEN ${freeTextMatch(probe, sql`elem.item ->> 'description'`)}
+                      THEN ${freeTextRedact(probe, sql`elem.item ->> 'description'`, mark)}
+                    ELSE elem.item ->> 'description'
+                  END,
+                  ${PROJECT_TEMPLATE_TASK_DESCRIPTION_MAX}::int
+                )
+              ELSE NULL
+            END,
+            'dueOffsetDays',
+            CASE
+              WHEN pg_catalog.jsonb_typeof(elem.item -> 'dueOffsetDays') = 'number'
+                THEN elem.item -> 'dueOffsetDays'
+              ELSE NULL
+            END,
+            'tainted',
+            CASE
+              WHEN pg_catalog.jsonb_typeof(elem.item -> 'tainted') = 'boolean'
+                THEN elem.item -> 'tainted'
+              ELSE NULL
+            END
+          )
+        )
+        ORDER BY elem.ord
+      )
+      FROM pg_catalog.jsonb_array_elements(${column}) WITH ORDINALITY AS elem(item, ord)
+    ),
+    '[]'::jsonb
+  )`;
 
 const probeValue = (probe: Probe): string => (probe.kind === 'email' ? probe.email : probe.digits);
 
@@ -497,7 +677,7 @@ async function meetingScan<T>(trx: QueryContext['trx'], run: () => Promise<T>): 
 }
 
 // The tables of crove_meetings.personal_row_ids's kind codes.
-const MEETING_ROW_TABLES: Record<number, string> = { 1: 'transcript_segment', 2: 'meeting_result', 3: 'action_item', 4: 'meeting' };
+const MEETING_ROW_TABLES: Record<number, string> = { 1: 'transcript_segment', 2: 'meeting_result', 3: 'action_item', 4: 'meeting', 5: 'meeting_note' };
 
 // Every row of the org that holds the value, column by column (the finder's answer), and, when privateCounts, per author
 // how many of their private notes and to-dos mention it (ADR-0037: counted, never shown, whoever runs the finder).
@@ -519,9 +699,15 @@ async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: 
   for (const [key, entry] of Object.entries(PERSONAL_DATA_COLUMNS) as Array<[string, PersonalDataColumn]>) {
     if (!searchable(entry.handling)) continue;
     if (entry.privateRows === 'always') continue;
+    if (entry.machinery) continue;
     const [schema, table, column] = key.split('.') as [string, string, string];
     const ref = sql.ref(`t.${column}`);
-    const match = columnMatch(entry.kind, probe, entry.list ? sql`pg_catalog.array_to_string(${ref}, ' ')` : ref);
+    const expr = entry.list
+      ? sql`pg_catalog.array_to_string(${ref}, ' ')`
+      : entry.jsonbSteps
+        ? sql`(SELECT coalesce(pg_catalog.string_agg(s.step ->> 'text', ' | '), '') FROM pg_catalog.jsonb_array_elements(${ref}) AS s(step))`
+        : ref;
+    const match = key === 'crove_projects.project.template_tasks' ? templateTasksMatch(probe, ref) : columnMatch(entry.kind, probe, expr);
     if (!match) continue;
     // Row security already hides other members' private notes; the finder's own private ones are counted below too,
     // not listed, so every author's are reported alike.
@@ -532,17 +718,54 @@ async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: 
       if (ids.length === 0) continue;
       byId = sql`AND t.id = ANY(${ids}::uuid[])`;
     }
-    const { rows } = await sql<{ row: Record<string, unknown> }>`
-      SELECT pg_catalog.to_jsonb(t) - 'search' AS row
+    const isUnsealedExpr =
+      schema === 'crove_sign' && table === 'signer'
+        ? sql<boolean>`EXISTS (
+            SELECT 1 FROM crove_sign.envelope e
+             WHERE e.org_id = t.org_id
+               AND e.id = t.envelope_id
+               AND e.status IN ('draft', 'voided', 'expired', 'declined')
+               AND e.sealed_file_id IS NULL
+          )`
+        : sql<boolean>`false`;
+    const { rows } = await sql<{ row: Record<string, unknown>; is_unsealed: boolean }>`
+      SELECT pg_catalog.to_jsonb(t) - 'search' AS row, ${isUnsealedExpr} AS is_unsealed
         FROM ${sql.table(`${schema}.${table}`)} AS t
        WHERE t.org_id = ${orgId}::uuid AND ${match} ${shared} ${byId}
        LIMIT ${PERSONAL_DATA_ROW_LIMIT + 1}`.execute(trx);
     if (rows.length > PERSONAL_DATA_ROW_LIMIT) truncated = true;
-    for (const { row } of rows.slice(0, PERSONAL_DATA_ROW_LIMIT)) {
-      const { handling, reason } = rowHandling(entry, row);
+    for (const { row, is_unsealed } of rows.slice(0, PERSONAL_DATA_ROW_LIMIT)) {
+      const base = rowHandling(entry, row);
+      const { handling, reason } =
+        schema === 'crove_sign' && table === 'signer' && is_unsealed
+          ? {
+              handling: 'erase' as const,
+              reason: 'Signer on an unsealed e-signature envelope (draft, voided, expired, or declined) is erased on request',
+            }
+          : base;
       if (!searchable(handling)) continue;
       matches.push({ column: key, handling, reason, rowId: typeof row.id === 'string' ? row.id : null, row });
     }
+  }
+  // Project weekly status mails (#2609): summary and subject are free text typed by a manager or seeded by AI; search both for personal data.
+  const weeklyMails = await sql<{ id: string; org_id: string; source: string; source_id: string | null; status: string; subject: string | null; created_at: Date }>`
+    SELECT m.id, m.org_id, m.source, m.source_id, m.status, m.subject, m.created_at
+      FROM crove_kernel.mail_message m
+     WHERE m.org_id = ${orgId}::uuid
+       AND m.source = ${PROJECT_WEEKLY_STATUS_MAIL_SOURCE}
+       AND (m.payload IS NOT NULL OR m.subject IS NOT NULL)
+       AND (${freeTextMatch(probe, sql.ref('m.subject'))} OR ${freeTextMatch(probe, sql.ref('m.payload'))})
+     ORDER BY m.created_at DESC, m.id
+     LIMIT ${PERSONAL_DATA_ROW_LIMIT + 1}`.execute(trx);
+  if (weeklyMails.rows.length > PERSONAL_DATA_ROW_LIMIT) truncated = true;
+  for (const row of weeklyMails.rows.slice(0, PERSONAL_DATA_ROW_LIMIT)) {
+    matches.push({
+      column: 'crove_kernel.mail_message.payload',
+      handling: 'erase',
+      reason: PROJECT_WEEKLY_MAIL_REASON,
+      rowId: row.id,
+      row,
+    });
   }
   const privateItems = privateCounts
     ? (
@@ -563,6 +786,17 @@ async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: 
     );
     if (counts === null) meetingTextSkipped = true;
     meetingText = (counts ?? []).map((m) => ({ recorderUserId: m.recorder_user_id, meetings: Number(m.meetings), lines: Number(m.lines), results: Number(m.results), items: Number(m.items), titles: Number(m.titles) }));
+    // The recorders' own rough notes (A5, #3163) that the owner cannot read: counted per recorder like the rest, in their own field, and only where there are some.
+    const noteCounts = await meetingScan(
+      trx,
+      async () => (await sql<{ recorder_user_id: string; notes: string }>`SELECT recorder_user_id, notes FROM crove_meetings.personal_note_counts(${probe.kind}, ${probeValue(probe)})`.execute(trx)).rows,
+    );
+    if (noteCounts === null) meetingTextSkipped = true;
+    for (const n of noteCounts ?? []) {
+      const entry = meetingText.find((m) => m.recorderUserId === n.recorder_user_id);
+      if (entry) entry.notes = Number(n.notes);
+      else meetingText.push({ recorderUserId: n.recorder_user_id, meetings: 0, lines: 0, results: 0, items: 0, titles: 0, notes: Number(n.notes) });
+    }
   }
   return { kind: probe.kind === 'email' ? 'email' : 'digits', matches, privateItems, meetingText, meetingTextSkipped, truncated };
 }
@@ -615,8 +849,20 @@ export const FOLLOWUP_MAIL_SKIPPED_REASON =
   'The follow-up mails of this organization were too many to search in time, so their own text was not searched (the mails of meetings whose rows changed were still handled): erase again, or ask support, before relying on this erasure for follow-up mails';
 export const FOLLOWUP_MAIL_DELIVERED_REASON =
   'Follow-up mails of a meeting that were already handed to their recipients (delivered, or possibly delivered) cannot be recalled: the erasure dropped the copy of the text that Crove holds, not the copies in the recipients\' mailboxes';
+export const PROJECT_WEEKLY_MAIL_REASON =
+  "Text or subject of a project's weekly status email (#2609); erased by dropping the mail's payload and subject (the keyed recipient hash stays so suppressions still hold)";
+export const PROJECT_WEEKLY_MAIL_SHORT_NUMBER_REASON =
+  'Project weekly status mails whose text holds a number of fewer than 10 digits: such a number may as well be a date, task count or figure, and dropping a mail cannot be undone, so the erasure leaves these mails as they are; check them and tell the person, or ask for a longer value';
+export const PROJECT_WEEKLY_MAIL_DELIVERED_REASON =
+  'Project weekly status mails that were already handed to their recipients (delivered, or possibly delivered) cannot be recalled: the erasure dropped the copy of the text that Crove holds, not the copies in the recipients\' mailboxes';
 export const MEMBER_VY_RESULT_REASON =
   "Answers of each member's Vy (the row count is all of the organization's, not this person's) are held privately for that member and cannot be read here; they expire on their own (at most 31 days) and are never sent anywhere";
+// What the owner is told when a member's private meeting rows are counted, not read (#3584): a member's machine translations of meetings and the live preview lines of the meetings they recorded
+// are sealed to that member, so an erasure cannot read them; they go with their meeting and, once the member is removed, in the 30-day former-member purge of their Vy data.
+export const MEMBER_TRANSLATION_REASON =
+  "Machine translations of meetings (the row count is all of the organization's, not this person's) are held privately for the member who asked and cannot be read here; they go with their meeting, and 30 days after that member is removed";
+export const MEMBER_LIVE_LINE_REASON =
+  "Live preview lines of meetings being recorded or not yet transcribed (the row count is all of the organization's, not this person's) are held privately for the recorder and cannot be read here; they are replaced by the transcript, expire 30 days after they were made, go with their meeting, and go 30 days after their recorder is removed";
 export function meetingMediaReason(kind: 'audio' | 'video', dates: readonly string[], hidden: number): string {
   const first = [...dates].sort()[0];
   const word = kind === 'audio' ? 'The audio' : 'The video';
@@ -637,7 +883,16 @@ export function heldFilesReason(until: Date | null): string {
 export const ACTIVITY_REDACT_MIN_DIGITS = 10;
 // What a quoted value becomes in free text the erasure changes, as crove_kernel.personal_data_redact_activity writes it.
 export const REDACTED_MARK = '[đã xóa]';
-const SHORT_NUMBER_COLUMNS = new Set(['crove_kernel.activity.summary', 'crove_kernel.task.title', 'crove_kernel.task.description']);
+const SHORT_NUMBER_COLUMNS = new Set([
+  'crove_kernel.activity.summary',
+  'crove_kernel.task.title',
+  'crove_kernel.task.description',
+  'crove_kernel.task.checklist',
+  'crove_projects.project.name',
+  'crove_projects.project.description',
+  'crove_projects.project.template_tasks',
+  'crove_hr.candidate.notes',
+]);
 // The meeting text columns the redaction of crove_meetings.personal_erase would change, left as they are for a short number (#3064).
 const SHORT_NUMBER_MEETING_COLUMNS = new Set([
   'crove_meetings.meeting.title',
@@ -648,6 +903,7 @@ const SHORT_NUMBER_MEETING_COLUMNS = new Set([
   'crove_meetings.action_item.title',
   'crove_meetings.action_item.who_drafted',
   'crove_meetings.action_item.when_drafted',
+  'crove_meetings.meeting_note.body',
 ]);
 export const ACTIVITY_SHORT_NUMBER_REASON =
   'A number of fewer than 10 digits may also be an amount or a voucher number in a timeline line or a task, so the erasure does not replace it there; check these rows and tell the person, or ask for a longer value';
@@ -860,6 +1116,23 @@ export const personalDataErase = defineCommand({
       add('crove_crm.booking.note', Number(b.note));
     }
 
+    // Recruiting candidates matched by their email or phone: their name, email, phone and notes are cleared (their stage and links stay).
+    const candidateMatch = sql<boolean>`(${match('email', 'c.email') ?? never} OR ${match('phone', 'c.phone') ?? never})`;
+    const { rows: candidates } = await sql<{ display_name: boolean; email: boolean; phone: boolean; notes: boolean }>`
+      UPDATE crove_hr.candidate c
+         SET display_name = ${ERASED_PARTY_NAME}, email = NULL, phone = NULL, notes = NULL,
+             erased_at = COALESCE(c.erased_at, ${ctx.now}), updated_at = ${ctx.now}
+        FROM crove_hr.candidate o
+       WHERE o.org_id = c.org_id AND o.id = c.id AND c.org_id = ${ctx.orgId}::uuid AND ${candidateMatch}
+       RETURNING o.display_name <> ${ERASED_PARTY_NAME} AS display_name, o.email IS NOT NULL AS email,
+                 o.phone IS NOT NULL AS phone, o.notes IS NOT NULL AS notes`.execute(ctx.trx);
+    for (const c of candidates) {
+      add('crove_hr.candidate.display_name', Number(c.display_name));
+      add('crove_hr.candidate.email', Number(c.email));
+      add('crove_hr.candidate.phone', Number(c.phone));
+      add('crove_hr.candidate.notes', Number(c.notes));
+    }
+
     // Rows of a contact import not yet committed (#2229), matched by email, phone or tax code: deleted whole, for the row
     // holds the person's name and details as read from the file. The batch keeps its counts.
     const importMatch = sql<boolean>`(${match('email', 'r.email') ?? never} OR ${match('phone', 'r.phone') ?? never} OR ${match('tax_code', 'r.tax_code') ?? never})`;
@@ -919,6 +1192,37 @@ export const personalDataErase = defineCommand({
       add('crove_social.report_schedule.recipients', Number(schedules.numAffectedRows ?? 0) + Number(dropped.numAffectedRows ?? 0));
     }
 
+    // Unsealed eSign recipients (#3323, #3427): erase unsealed signers (locking envelope -> signer -> signing_token ->
+    // field -> signing_otp) BEFORE crove_sign.personal_erase_otp so we never acquire signing_otp prior to parent locks.
+    const { rows: erasedSignRows } = await sql<{
+      counts: {
+        signers: number;
+        emails: number;
+        phones: number;
+        typedSignatures: number;
+        userAgents: number;
+        fieldSignatures: number;
+        otps: number;
+      };
+    }>`
+      SELECT crove_sign.personal_erase_unsealed_signers(${probe.kind}, ${probeValue(probe)}) AS counts
+    `.execute(ctx.trx);
+    const erasedSign = erasedSignRows[0]?.counts;
+    if (erasedSign) {
+      add('crove_sign.signing_otp.email', erasedSign.otps);
+      add('crove_sign.signer.name', erasedSign.signers);
+      add('crove_sign.signer.email', erasedSign.emails);
+      add('crove_sign.signer.phone', erasedSign.phones);
+      add('crove_sign.signer.signature_typed_text', erasedSign.typedSignatures);
+      add('crove_sign.signer.signer_user_agent', erasedSign.userAgents);
+      add('crove_sign.field.signature_png_base64', erasedSign.fieldSignatures);
+    }
+    if (probe.kind === 'email') {
+      const { rows: signOtp } = await sql<{ count: number }>`
+        SELECT crove_sign.personal_erase_otp(${probe.email}) AS count`.execute(ctx.trx);
+      add('crove_sign.signing_otp.email', Number(signOtp[0]?.count ?? 0));
+    }
+
     // Notes (#1678, ADR-0037 section 5). A shared note stays and has every mention of the value edited out, the one
     // case where someone other than its author edits a note: ERASED_TEXT_MARK in its title and body where the value
     // was, cut to the column's limit should the mark be longer than the value, and a tag that mentions it goes (all of
@@ -966,6 +1270,17 @@ export const personalDataErase = defineCommand({
                 FROM crove_meetings.personal_erase(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx)
           ).rows,
         );
+    // The recorders' rough notes (A5, #3163): the value is redacted in the notes of every recorder of the org (the org is the data controller and the owner's erasure is its authority, as it is for
+    // the machine translations), and the changed notes are counted per recorder. A short number is left (as above) and counted below.
+    const noteErase = shortNumber
+      ? []
+      : await meetingScan(ctx.trx, async () =>
+          (await sql<{ recorder_user_id: string; erased: string }>`SELECT recorder_user_id, erased FROM crove_meetings.personal_note_erase(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx)).rows.map((r) => ({
+            recorderUserId: r.recorder_user_id,
+            notes: Number(r.erased),
+          })),
+        );
+    add('crove_meetings.meeting_note.body', (noteErase ?? []).reduce((n, r) => n + r.notes, 0));
     // The rows the owner cannot read, counted for the answer (the finder below lists the ones they read): read only, by the same matcher, under the same timeout.
     const shortMeetingCounts = shortNumber
       ? await meetingScan(ctx.trx, async () =>
@@ -996,6 +1311,8 @@ export const personalDataErase = defineCommand({
     // answers the same retryable PERSONAL_DATA_BUSY as a deadlock in the scan (the whole erasure rolls back, nothing is half done). Only the count reaches the audit row.
     let followupMails = 0;
     let followupDelivered = 0;
+    let projectWeeklyMails = 0;
+    let projectWeeklyDelivered = 0;
     for (const r of redaction ?? []) {
       if (Number(r.lines) + Number(r.results) + Number(r.items) + Number(r.titles) === 0) continue;
       const { rows: lock } = await sql<{ ok: boolean }>`SELECT pg_catalog.pg_try_advisory_xact_lock(pg_catalog.hashtextextended(${`meetings.followup:${ctx.orgId}:${r.meeting_id}`}, 0)) AS ok`.execute(ctx.trx);
@@ -1082,16 +1399,110 @@ export const personalDataErase = defineCommand({
       // is needed. The lengths stay within the columns' limits, in case the mark is longer than a short address.
       const title = freeTextMatch(probe, sql.ref('t.title'));
       const description = freeTextMatch(probe, sql.ref('t.description'));
-      const { rows: tasks } = await sql<{ title: boolean; description: boolean }>`
+      const checklistStepText = sql`s.step ->> 'text'`;
+      const checklistStepMatch = freeTextMatch(probe, checklistStepText);
+      const checklist = sql`EXISTS (SELECT 1 FROM pg_catalog.jsonb_array_elements(t.checklist) AS s(step) WHERE ${checklistStepMatch})`;
+      const oldChecklist = sql`EXISTS (SELECT 1 FROM pg_catalog.jsonb_array_elements(o.checklist) AS s(step) WHERE ${checklistStepMatch})`;
+      const checklistStepRedact = sql`coalesce(
+        nullif(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, checklistStepText, REDACTED_MARK)}, 300)), ''),
+        ${REDACTED_MARK}
+      )`;
+      const { rows: tasks } = await sql<{ title: boolean; description: boolean; checklist: boolean }>`
         UPDATE crove_kernel.task t
            SET title = CASE WHEN ${title} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('t.title'), REDACTED_MARK)}, 300) ELSE t.title END,
                description = CASE WHEN ${description} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('t.description'), REDACTED_MARK)}, 10000)
-                                  ELSE t.description END
+                                  ELSE t.description END,
+               checklist = CASE WHEN ${checklist}
+                                THEN coalesce((
+                                  SELECT pg_catalog.jsonb_agg(
+                                    pg_catalog.jsonb_build_object(
+                                      'text',
+                                      CASE WHEN ${checklistStepMatch} THEN ${checklistStepRedact} ELSE s.step ->> 'text' END,
+                                      'done',
+                                      (s.step -> 'done')
+                                    )
+                                    ORDER BY s.ord
+                                  )
+                                  FROM pg_catalog.jsonb_array_elements(t.checklist) WITH ORDINALITY AS s(step, ord)
+                                ), '[]'::jsonb)
+                                ELSE t.checklist END
           FROM crove_kernel.task o
-         WHERE o.org_id = t.org_id AND o.id = t.id AND t.org_id = ${ctx.orgId}::uuid AND (${title} OR coalesce(${description}, false))
-         RETURNING ${freeTextMatch(probe, sql.ref('o.title'))} AS title, coalesce(${freeTextMatch(probe, sql.ref('o.description'))}, false) AS description`.execute(ctx.trx);
+         WHERE o.org_id = t.org_id AND o.id = t.id AND t.org_id = ${ctx.orgId}::uuid
+           AND (${title} OR coalesce(${description}, false) OR ${checklist})
+         RETURNING ${freeTextMatch(probe, sql.ref('o.title'))} AS title,
+                   coalesce(${freeTextMatch(probe, sql.ref('o.description'))}, false) AS description,
+                   ${oldChecklist} AS checklist`.execute(ctx.trx);
       add('crove_kernel.task.title', tasks.filter((t) => t.title).length);
       add('crove_kernel.task.description', tasks.filter((t) => t.description).length);
+      add('crove_kernel.task.checklist', tasks.filter((t) => t.checklist).length);
+
+      // Take the exclusive advisory lock paired with projects.weekly_status.send_mail's shared lock before dropping weekly mails and redacting projects:
+      // a concurrent send_mail either committed before this lock or sees redacted project text after it; if one is mid-flight, fail fast with PERSONAL_DATA_BUSY.
+      const { rows: mailLock } = await sql<{ ok: boolean }>`
+        SELECT pg_catalog.pg_try_advisory_xact_lock(pg_catalog.hashtextextended(${`projects.weekly_mail:${ctx.orgId}`}, 0)) AS ok`.execute(ctx.trx);
+      if (mailLock[0]?.ok !== true) {
+        throw new DomainError('PERSONAL_DATA_BUSY', 409, 'Một báo cáo tuần dự án đang được gửi cùng lúc; hãy thử lại sau ít phút');
+      }
+      // Project weekly status mails that quote the person directly or belong to a project whose name or description quoted them (#2609):
+      // drop payload and subject before redacting crove_projects.project so source_id matches still see unredacted project text.
+      const { rows: droppedWeekly } = await sql<{ status: string }>`
+        UPDATE crove_kernel.mail_message m
+           SET payload = NULL, subject = NULL
+         WHERE m.org_id = ${ctx.orgId}::uuid
+           AND m.source = ${PROJECT_WEEKLY_STATUS_MAIL_SOURCE}
+           AND (m.payload IS NOT NULL OR m.subject IS NOT NULL)
+           AND (
+             ${freeTextMatch(probe, sql.ref('m.subject'))}
+             OR ${freeTextMatch(probe, sql.ref('m.payload'))}
+             OR EXISTS (
+               SELECT 1
+                 FROM crove_projects.project p
+                WHERE p.org_id = m.org_id
+                  AND p.id = m.source_id
+                  AND (${freeTextMatch(probe, sql.ref('p.name'))} OR ${freeTextMatch(probe, sql.ref('p.description'))})
+             )
+           )
+         RETURNING m.status`.execute(ctx.trx);
+      projectWeeklyMails = droppedWeekly.length;
+      projectWeeklyDelivered = droppedWeekly.filter((m) => DELIVERED_MAIL_STATUSES.includes(m.status)).length;
+      add('crove_kernel.mail_message.payload', projectWeeklyMails);
+      // Projects and project templates that quote the person (#2591, #2607): replace mentions in name, description, and template_tasks, bounded to column limits.
+      const projectName = freeTextMatch(probe, sql.ref('p.name'));
+      const projectDescription = freeTextMatch(probe, sql.ref('p.description'));
+      const projectTemplateTasks = templateTasksMatch(probe, sql.ref('p.template_tasks'));
+      const { rows: projects } = await sql<{ name: boolean; description: boolean; template_tasks: boolean }>`
+        UPDATE crove_projects.project p
+           SET name = CASE
+                        WHEN ${projectName}
+                          THEN COALESCE(
+                            NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('p.name'), REDACTED_MARK)}, ${PROJECT_NAME_MAX}::int)), ''),
+                            ${REDACTED_MARK}
+                          )
+                        ELSE p.name
+                      END,
+               description = CASE WHEN ${projectDescription} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('p.description'), REDACTED_MARK)}, ${PROJECT_DESCRIPTION_MAX}::int)
+                                  ELSE p.description END,
+               template_tasks = CASE WHEN ${projectTemplateTasks} THEN ${templateTasksRedact(probe, sql.ref('p.template_tasks'), REDACTED_MARK)}
+                                     ELSE p.template_tasks END,
+               updated_at = ${ctx.now}
+          FROM crove_projects.project o
+         WHERE o.org_id = p.org_id AND o.id = p.id AND p.org_id = ${ctx.orgId}::uuid AND (${projectName} OR coalesce(${projectDescription}, false) OR ${projectTemplateTasks})
+         RETURNING ${freeTextMatch(probe, sql.ref('o.name'))} AS name, coalesce(${freeTextMatch(probe, sql.ref('o.description'))}, false) AS description, ${templateTasksMatch(probe, sql.ref('o.template_tasks'))} AS template_tasks`.execute(ctx.trx);
+      add('crove_projects.project.name', projects.filter((p) => p.name).length);
+      add('crove_projects.project.description', projects.filter((p) => p.description).length);
+      add('crove_projects.project.template_tasks', projects.filter((p) => p.template_tasks).length);
+
+      // Recruiting candidate notes that quote the person (#3425): replace mentions, bounded to 2000 chars.
+      const candidateNotes = freeTextMatch(probe, sql.ref('c.notes'));
+      const { rows: candidateNoteRows } = await sql<{ notes: boolean }>`
+        UPDATE crove_hr.candidate c
+           SET notes = CASE WHEN ${candidateNotes} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('c.notes'), REDACTED_MARK)}, 2000)
+                            ELSE c.notes END,
+               updated_at = ${ctx.now}
+          FROM crove_hr.candidate o
+         WHERE o.org_id = c.org_id AND o.id = c.id AND c.org_id = ${ctx.orgId}::uuid AND coalesce(${candidateNotes}, false)
+         RETURNING coalesce(${freeTextMatch(probe, sql.ref('o.notes'))}, false) AS notes`.execute(ctx.trx);
+      add('crove_hr.candidate.notes', candidateNoteRows.filter((r) => r.notes).length);
     }
 
     // What stays, with its reason: the finder's answer after the erasure (the cleared values no longer match).
@@ -1106,7 +1517,9 @@ export const personalDataErase = defineCommand({
           ? ACTIVITY_SHORT_NUMBER_REASON
           : SHORT_NUMBER_MEETING_COLUMNS.has(m.column)
             ? MEETING_TEXT_SHORT_NUMBER_REASON
-            : m.reason;
+            : m.column === 'crove_kernel.mail_message.payload'
+              ? PROJECT_WEEKLY_MAIL_SHORT_NUMBER_REASON
+              : m.reason;
       const group = `${m.column}\n${reason}`;
       const k = kept.get(group) ?? { column: m.column, rows: 0, reason };
       k.rows += 1;
@@ -1130,14 +1543,25 @@ export const personalDataErase = defineCommand({
     // Meeting text the redaction could not reach (#2594): a meeting the owner cannot read that no notice covers at its text now, or the redaction itself stopped by the timeout.
     if (redaction === null || shortMeetingCounts === null) kept.set('crove_meetings', { column: 'crove_meetings', rows: 0, reason: MEETING_TEXT_SKIPPED_REASON });
     // A short number: the rows of meetings the owner cannot read are counted under the short-number reason (the ones they read are listed above by column, with the same reason).
-    const shortMeetingRows = (shortMeetingCounts ?? []).reduce((n, c) => n + Number(c.lines) + Number(c.results) + Number(c.items) + Number(c.titles), 0);
+    const shortNoteRows = shortNumber
+      ? ((await meetingScan(ctx.trx, async () => (await sql<{ notes: string }>`SELECT notes FROM crove_meetings.personal_note_counts(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx)).rows)) ?? []).reduce((n, c) => n + Number(c.notes), 0)
+      : 0;
+    const shortMeetingRows = (shortMeetingCounts ?? []).reduce((n, c) => n + Number(c.lines) + Number(c.results) + Number(c.items) + Number(c.titles), 0) + shortNoteRows;
     if (shortMeetingRows > 0) kept.set('crove_meetings.text.short', { column: 'crove_meetings.text', rows: shortMeetingRows, reason: MEETING_TEXT_SHORT_NUMBER_REASON });
     if (meetingsKept.rows > 0) kept.set('crove_meetings.text', { column: 'crove_meetings.text', rows: meetingsKept.rows, reason: UNTOLD_MEETING_REASON });
+    if (noteErase === null) kept.set('crove_meetings.meeting_note.skipped', { column: 'crove_meetings.meeting_note', rows: 0, reason: MEETING_TEXT_SKIPPED_REASON });
     // Follow-up mail copies (#3025): the ones of a meeting the owner cannot read stay, counted; and the copies that already reached their recipients cannot be taken back.
     if (followupSkipped) kept.set('crove_meetings.followup_mail.skipped', { column: 'crove_meetings.followup_mail', rows: 0, reason: FOLLOWUP_MAIL_SKIPPED_REASON });
     if (followupShort > 0) kept.set('crove_meetings.followup_mail.short', { column: 'crove_meetings.followup_mail', rows: followupShort, reason: FOLLOWUP_MAIL_SHORT_NUMBER_REASON });
     if (followupHidden > 0) kept.set('crove_meetings.followup_mail', { column: 'crove_meetings.followup_mail', rows: followupHidden, reason: FOLLOWUP_MAIL_HIDDEN_REASON });
     if (followupDelivered > 0) kept.set('crove_kernel.mail_message.payload', { column: 'crove_kernel.mail_message.payload', rows: followupDelivered, reason: FOLLOWUP_MAIL_DELIVERED_REASON });
+    if (projectWeeklyDelivered > 0) {
+      kept.set('crove_kernel.mail_message.payload.projects', {
+        column: 'crove_kernel.mail_message.payload',
+        rows: projectWeeklyDelivered,
+        reason: PROJECT_WEEKLY_MAIL_DELIVERED_REASON,
+      });
+    }
     // The voices of the meetings that held the value stay until their retention dates: a voice cannot be edited out. The owner deletes a meeting at once with meetings.meeting.owner_delete.
     if (mediaOf.some((m) => m.audio)) kept.set('crove_meetings.audio', { column: 'crove_meetings.audio', rows: media.audio.length + media.audioHidden, reason: meetingMediaReason('audio', media.audio, media.audioHidden) });
     if (mediaOf.some((m) => m.video)) kept.set('crove_meetings.video', { column: 'crove_meetings.video', rows: media.video.length + media.videoHidden, reason: meetingMediaReason('video', media.video, media.videoHidden) });
@@ -1145,7 +1569,15 @@ export const personalDataErase = defineCommand({
     const vyResults = Number(
       (await sql<{ n: string }>`SELECT COALESCE(pg_catalog.sum(results), 0)::text AS n FROM crove_kernel.member_vy_private_counts()`.execute(ctx.trx)).rows[0]?.n ?? 0,
     );
+    const meetingCounts = (
+      await sql<{ translations: string; live_lines: string }>`SELECT COALESCE(pg_catalog.sum(translations), 0)::text AS translations, COALESCE(pg_catalog.sum(live_lines), 0)::text AS live_lines FROM crove_meetings.member_private_counts()`.execute(ctx.trx)
+    ).rows[0];
     if (vyResults > 0) kept.set('crove_kernel.member_vy_result.body', { column: 'crove_kernel.member_vy_result.body', rows: vyResults, reason: MEMBER_VY_RESULT_REASON });
+    // A member's translations of meetings and the preview lines of the meetings they recorded (#3584): private to that member, counted per org as the results are, never read.
+    const vyTranslations = Number(meetingCounts?.translations ?? 0);
+    if (vyTranslations > 0) kept.set('crove_meetings.translation.body', { column: 'crove_meetings.translation.body', rows: vyTranslations, reason: MEMBER_TRANSLATION_REASON });
+    const vyLiveLines = Number(meetingCounts?.live_lines ?? 0);
+    if (vyLiveLines > 0) kept.set('crove_meetings.live_line.text', { column: 'crove_meetings.live_line.text', rows: vyLiveLines, reason: MEMBER_LIVE_LINE_REASON });
     // Private items no notice named: counted, never listed (the finder's privateItems after the erasure).
     if (untold.notes > 0) kept.set('crove_notes.note', { column: 'crove_notes.note', rows: untold.notes, reason: UNTOLD_PRIVATE_REASON });
     if (untold.todos > 0) kept.set('crove_notes.todo', { column: 'crove_notes.todo', rows: untold.todos, reason: UNTOLD_PRIVATE_REASON });
@@ -1155,10 +1587,11 @@ export const personalDataErase = defineCommand({
     for (const k of kept.values()) keptRows.set(k.column, (keptRows.get(k.column) ?? 0) + k.rows);
     const result: PersonalDataErasure = {
       erased: [...erased].map(([column, rows]) => ({ column, rows })),
+      ...((noteErase ?? []).length > 0 ? { meetingNotes: noteErase ?? [] } : {}),
       kept: [...kept.values()].map((k) => ({ column: k.column, rows: k.rows, reason: k.reason })),
     };
     // Counts and ids only: the value and the text never reach the audit log.
-    ctx.audit({ kind: probe.kind, erased: Object.fromEntries(erased), kept: Object.fromEntries(keptRows), kept_parties: keptParties, follow_up_mails: followupMails, private_deleted: { notes: privateRows.flatMap((r) => r.note_ids), todos: privateRows.flatMap((r) => r.todo_ids) } });
+    ctx.audit({ kind: probe.kind, erased: Object.fromEntries(erased), kept: Object.fromEntries(keptRows), kept_parties: keptParties, follow_up_mails: followupMails, project_weekly_mails: projectWeeklyMails, private_deleted: { notes: privateRows.flatMap((r) => r.note_ids), todos: privateRows.flatMap((r) => r.todo_ids) } });
     return result;
   },
 });

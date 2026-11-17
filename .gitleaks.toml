@@ -8,6 +8,23 @@ title = "crove"
 [extend]
 useDefault = true
 
+# The public id of a minutes-webhook secret (meetings integrations A6, #3164): "whk_" and eight hex digits, the hint a receiver sees
+# beside a signature to tell which secret signed. It is not a secret (the secret is "whsec_" and 32 random bytes, sealed and never
+# written to the repo), and the screens, the runbook and the tests show it next to the key name `secretHint`, which the generic
+# key rule takes for a credential. This matches that shape only, whatever the file or commit. The regex is
+# anchored (#3272): the allowlist is tested against the finding's secret, so an unanchored pattern would also clear a secret that merely contains a hint.
+[[allowlists]]
+description = "the public hint of a minutes-webhook secret (whk_ and 8 hex digits)"
+regexes = ['''^whk_[0-9a-f]{8}$''']
+
+# Made-up publishable keys of the deploy tests (#2704, tools/test/deploy.test.ts): the settings the deploy writes into a host's env file are
+# tried with these invented values, including refused ones ("... with space ...", "...;rm"). They belong to no project. This matches
+# the start of exactly those three strings (whichever part of one a rule takes for the secret), whatever the file or commit (the scan
+# reads the branch's whole history), and no other sb_publishable_ key.
+[[allowlists]]
+description = "made-up publishable keys of the deploy tests"
+regexes = ['''sb_publishable_(?:TESTKEY|1234567890| with space 1234)''']
+
 [[rules]]
 id = "g1-supabase-project-url"
 description = "Supabase project URL or DB host (G1)"

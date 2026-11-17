@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// "Connected AI apps" in Settings (ADR-0051 decision 2, issue #2975): for owners and admins, the MCP clients that were given read access to this org, each with
+// "AI connections" in Ludy AI (was in Settings before #3225) (ADR-0051 decision 2, issue #2975): for owners and admins, the MCP clients that were given read access to this org, each with
 // a one-click disconnect and, per client, an optional signed wake-up webhook (OrgMcpWake). A member sees only their own connections; an owner also holds the org's
 // switch for member-bound connections (off by default). The kernel lists and revokes with kernel.mcp.grant.list and revoke and never returns a token; a disconnected client is refused on its next
 // request (its tokens stop at once) and the revoke writes an audit row. The name a client shows is the one it gave itself. No AI takes part on this screen.
@@ -15,7 +15,10 @@ import { OrgMcpWake } from './org-mcp-wake.tsx';
 import { ErrorText, RowsSkeleton } from './ui.tsx';
 
 // Message keys cannot hold a dot, so a scope id has its own key.
-const SCOPE_KEY = { 'ludy.read': 'ludy_read', 'ludy.member.read': 'ludy_member_read' } as const;
+const SCOPE_KEY = { 'ludy.read': 'ludy_read', 'ludy.member.read': 'ludy_member_read', 'ludy.social.draft': 'ludy_social_draft' } as const;
+// A connection that may write a draft is not "read only": it gets one badge that says both (the draft scope always comes with the read scope), never a "read only" one beside the write.
+const badgeKeys = (scopes: readonly (keyof typeof SCOPE_KEY)[]): Array<(typeof SCOPE_KEY)[keyof typeof SCOPE_KEY] | 'ludy_read_draft'> =>
+  scopes.includes('ludy.social.draft') ? ['ludy_read_draft', ...scopes.filter((s) => s !== 'ludy.read' && s !== 'ludy.social.draft').map((s) => SCOPE_KEY[s])] : scopes.map((s) => SCOPE_KEY[s]);
 
 export interface GrantMember {
   userId: string;
@@ -100,8 +103,8 @@ export function OrgMcpGrants({ members, viewerRole = 'admin' }: { members: reado
                 <span className="truncate font-medium">{r.clientName}</span>
                 <span className="truncate text-muted-foreground">{r.clientHost}</span>
                 {r.kind === 'member' && <Badge variant="outline">{t('memberKind')}</Badge>}
-                {r.scopes.map((s) => (
-                  <Badge key={s}>{t(`scope.${SCOPE_KEY[s]}`)}</Badge>
+                {badgeKeys(r.scopes).map((key) => (
+                  <Badge key={key}>{t(`scope.${key}`)}</Badge>
                 ))}
               </p>
               <p className="text-xs text-subtle-foreground">

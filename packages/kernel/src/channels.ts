@@ -843,5 +843,24 @@ export const channelTelegramBusinessAllow = defineCommand({
   },
 });
 
+// Whether a business message that named a connection Ludy may not know is to be looked up at Telegram (#3224): true only for an active Telegram connection
+// whose chats are not off and whose list holds no account with that id. A listed one, whether enabled, off or not yet allowed, is known: what Telegram told
+// is kept, and a person's choice is never replaced by a second look. Names nothing of the account.
+export const channelTelegramBusinessKnown = defineQuery({
+  name: 'kernel.channel.telegram_business_known',
+  input: z.strictObject({ connectionId: zId, id: z.string().regex(/^[!-~]{1,100}$/) }),
+  access: 'system',
+  handler: async (ctx, input): Promise<{ lookup: boolean }> => {
+    const row = await ctx.trx
+      .selectFrom('crove_kernel.channel_connection')
+      .select(['provider', 'status', 'chat_state', 'chat_business'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .executeTakeFirst();
+    if (!row || row.provider !== 'telegram' || row.status !== 'active' || row.chat_state === 'off') return { lookup: false };
+    return { lookup: !parseBusinessAccounts(row.chat_business).some((a) => a.id === input.id) };
+  },
+});
+
 export const channelCommands = [channelConnect, channelDisconnect, channelMarkExpired, channelRevokeByPlatform, channelCloseOrphan, channelOAuthBegin, channelOAuthConsume, channelRefresh, channelReseal, channelTelegramChatSet, channelTelegramChatRecord, channelTelegramBusinessRecord, channelTelegramBusinessAllow];
-export const channelQueries = [channelsList, channelCredential, channelTelegramChatWork];
+export const channelQueries = [channelsList, channelCredential, channelTelegramChatWork, channelTelegramBusinessKnown];

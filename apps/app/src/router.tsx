@@ -5,13 +5,16 @@ import { ScreenTitle } from './components/ui.tsx';
 import { errorMessage, getCurrentOrg, isUnauthenticated, orpc, queryClient, setCurrentOrg } from './lib/api.ts';
 import { accessToken, auth, getConfig, needsSecondFactor, needsSecondFactorNow } from './lib/auth.ts';
 import { landingFor } from './lib/clients.ts';
-import { outsideInstalled, screenInstalled } from './lib/modules.ts';
+import { effectiveModules, outsideInstalled, screenInstalled } from './lib/modules.ts';
+import { installedModules, setOrgModules } from './lib/org-modules.ts';
 import { pendingInvite, rememberInvite, takeTokenFromHash } from './lib/invite.ts';
 import { CONNECT_PATH, parseConnectRequest, pendingConnect, rememberConnect } from './lib/extension-connect.ts';
 import { signOut } from './lib/session-actions.ts';
 import { AdsPage } from './routes/ads.tsx';
 import { AdsCampaignsPage } from './routes/ads-campaigns.tsx';
 import { AgentsPage } from './routes/agents.tsx';
+import { AiConnectionsPage } from './routes/ai-connections.tsx';
+import { AiUsagePage } from './routes/ai-usage.tsx';
 import { AuditPage } from './routes/audit.tsx';
 import { PersonalDataPage } from './routes/personal-data.tsx';
 import { AuthPage } from './routes/auth.tsx';
@@ -74,6 +77,7 @@ import { SocialComposePage, SocialPostPage } from './routes/social-post.tsx';
 import { SocialSharePage } from './routes/social-share.tsx';
 import { SHARE_PATH, forgetShare, pendingShare, readShareFragment, readShareOrg, rememberShare } from './lib/social-share.ts';
 import { TaskDetailPage, TasksPage } from './routes/tasks.tsx';
+import { ProjectDetailPage, ProjectsPage } from './routes/projects.tsx';
 import { BookingsPage } from './routes/bookings.tsx';
 import { ContactImportPage } from './routes/contact-import.tsx';
 import { CompaniesPage, ContactsPage } from './routes/contacts.tsx';
@@ -83,6 +87,7 @@ import { MyWorkPage } from './routes/my-work.tsx';
 import { MeetingsPage } from './routes/meetings.tsx';
 import { MeetingDetailPage } from './routes/meeting-detail.tsx';
 import { MeetingRecordPage } from './routes/meeting-record.tsx';
+import { MeetingMinutesPage } from './routes/meeting-minutes.tsx';
 import { VatPage } from './routes/vat.tsx';
 import { PortalListPage } from './routes/portal-list.tsx';
 import { VendorsPage } from './routes/vendors.tsx';
@@ -92,6 +97,7 @@ import { AccountingOverviewPage } from './routes/accounting-overview.tsx';
 import { SalesInvoicesPage } from './routes/sales-invoices.tsx';
 import { HrBankTemplatesPage } from './routes/hr-bank-templates.tsx';
 import { HrEmployeesPage } from './routes/hr-employees.tsx';
+import { HrRecruitingPage } from './routes/hr-recruiting.tsx';
 import { HrDeclarationsPage } from './routes/hr-declarations.tsx';
 import { HrPayrollPage } from './routes/hr-payroll.tsx';
 import { HouseholdPage } from './routes/household.tsx';
@@ -99,8 +105,16 @@ import { MarketplaceBalancePage } from './routes/marketplace-balance.tsx';
 import { StockPage } from './routes/stock.tsx';
 import { VouchersPage } from './routes/vouchers.tsx';
 import { PublishHoldBanner } from './components/social-publish-hold.tsx';
+import { RecordingChip } from './components/recording-chip.tsx';
+import { RecordingHost } from './components/recording-host.tsx';
 import { VersionBanner } from './components/version-banner.tsx';
 import { FixedAssetsPage } from './routes/fixed-assets.tsx';
+import { SignCeremonyPage } from './routes/sign-ceremony.tsx';
+import { SignEnvelopeDetailPage } from './routes/sign-envelope-detail.tsx';
+import { SignEnvelopesPage } from './routes/sign-envelopes.tsx';
+import { SignTemplatesPage } from './routes/sign-templates.tsx';
+import { SignVerifyPage } from './routes/sign-verify.tsx';
+import { SIGN_PAGE_PATH } from './lib/sign-hash.ts';
 
 async function requireSession() {
   if (!(await accessToken())) throw redirect({ to: '/login' });
@@ -182,6 +196,9 @@ const rootRoute = createRootRoute({
     <>
       <VersionBanner />
       <Outlet />
+      {/* The recording bar and the recorder's host (#3197): a recording can run on any screen, so they live above the org layout. */}
+      <RecordingChip />
+      <RecordingHost />
     </>
   ),
   errorComponent: ErrorPage,
@@ -213,7 +230,7 @@ const indexRoute = createRoute({
     // Several orgs (an accountant's clients): the home screen (issue #318); one: its Inbox; none: onboarding.
     const landing = landingFor(me.orgs);
     if (landing.to === 'clients') throw redirect({ to: '/clients' });
-    if (landing.to === 'inbox') throw redirect({ to: '/o/$slug/inbox', params: { slug: landing.slug } });
+    if (landing.to === 'overview') throw redirect({ to: '/o/$slug/overview', params: { slug: landing.slug } });
     throw redirect({ to: '/onboarding' });
   },
 });
@@ -255,6 +272,14 @@ const quoteDocumentRoute = createRoute({
   path: '/-/quote',
   beforeLoad: ({ matches }) => requireInstalledOutside(matches),
   component: QuoteDocumentPage,
+});
+
+// Public signing ceremony (#3325): /-/sign#<token>, no account. Token stays strictly in the URL hash fragment.
+const signCeremonyRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: SIGN_PAGE_PATH,
+  beforeLoad: ({ matches }) => requireInstalledOutside(matches),
+  component: SignCeremonyPage,
 });
 
 // Accept links are /-/invite#<token>. The token is moved from the address bar to storage before the sign-in
@@ -375,15 +400,36 @@ async function enterOrg(slug: string) {
     // Cached data belongs to one org; never show it under another.
     queryClient.clear();
     setCurrentOrg(slug);
+    appsLoadedFor = null;
   }
 }
 
-// A screen of a module this deployment leaves out (CROVE_MODULES) sends you to the inbox (ADR-0031 §3). The module of
+// The org's own apps (kernel.org.apps, ADR-0053 slice d): read before a screen opens, once for each org entered, so a menu or a screen never flashes for an app the org switched off.
+// Later navigations in the same org use the answer the store has and refresh it in the background (the stream's org_apps hint keeps it fresh too), so no screen change waits for the
+// network. If the read fails the deployment's list stands: the API gates every call itself, so a failed read costs a menu item that answers "not available", never a way in.
+let appsLoadedFor: string | null = null;
+async function readOrgApps(slug: string) {
+  try {
+    const answer = await queryClient.fetchQuery({ ...orpc.org.apps.queryOptions(), staleTime: 30_000, retry: false });
+    if (getCurrentOrg() !== slug) return;
+    setOrgModules(effectiveModules(getConfig().modules, answer.apps));
+    appsLoadedFor = slug;
+  } catch {
+    // The first read of an org that fails leaves the deployment's list; one that fails later keeps the last answer.
+    if (appsLoadedFor !== slug) setOrgModules(null);
+  }
+}
+async function loadOrgApps(slug: string) {
+  if (appsLoadedFor === slug) void readOrgApps(slug);
+  else await readOrgApps(slug);
+}
+
+// A screen of a module this deployment leaves out (CROVE_MODULES) sends you to the overview (ADR-0031 §3, #3225). The module of
 // every screen comes from the manifests (#1652), so a new module's screens are guarded without a line here. The screen
 // is the matched route's own path ('/o/$slug/journal' for /o/acme/JOURNAL), not the address as typed.
 function requireInstalledScreen(slug: string, matches: readonly { fullPath: unknown }[]) {
   const screen = matches.at(-1)?.fullPath;
-  if (typeof screen === 'string' && !screenInstalled(getConfig().modules, screen)) throw redirect({ to: '/o/$slug/inbox', params: { slug } });
+  if (typeof screen === 'string' && !screenInstalled(installedModules(), screen)) throw redirect({ to: '/o/$slug/overview', params: { slug } });
 }
 
 export const orgRoute = createRoute({
@@ -391,6 +437,7 @@ export const orgRoute = createRoute({
   path: '/o/$slug',
   beforeLoad: async ({ params, matches }) => {
     await enterOrg(params.slug);
+    await loadOrgApps(params.slug);
     requireInstalledScreen(params.slug, matches);
   },
   component: OrgLayout,
@@ -401,11 +448,11 @@ const orgIndexRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: '/',
   beforeLoad: ({ params }) => {
-    throw redirect({ to: '/o/$slug/inbox', params: { slug: params.slug } });
+    throw redirect({ to: '/o/$slug/overview', params: { slug: params.slug } });
   },
 });
 
-// What waits for the user in this org today (#1249), first in the menu; opening an org still lands on its Inbox.
+// What waits for the user in this org today (#1249): first in the app switcher, and where opening an org lands (#3225).
 const overviewRoute = createRoute({ getParentRoute: () => orgRoute, path: 'overview', component: OverviewPage });
 // ?status= keeps the Inbox tab other than pending (#1513).
 export const inboxRoute = createRoute({ getParentRoute: () => orgRoute, path: 'inbox', validateSearch: parseInboxSearch, component: InboxPage });
@@ -432,6 +479,8 @@ const householdRoute = createRoute({ getParentRoute: () => orgRoute, path: 'hous
 const marketplaceRoute = createRoute({ getParentRoute: () => orgRoute, path: 'marketplace', component: MarketplaceBalancePage });
 // The HR app's staff list (#2530), with the hr module: owners and admins only.
 const hrEmployeesRoute = createRoute({ getParentRoute: () => orgRoute, path: 'hr/employees', component: HrEmployeesPage });
+// Lightweight recruiting (#3425): job openings, candidate pipeline, calendar interviews, 1-click hire and Ly brief.
+const hrRecruitingRoute = createRoute({ getParentRoute: () => orgRoute, path: 'hr/recruiting', component: HrRecruitingPage });
 // The HR app's pay run (#2531): the months, the sheet, the approval and the payslips.
 const hrPayrollRoute = createRoute({ getParentRoute: () => orgRoute, path: 'hr/payroll', component: HrPayrollPage });
 // The HR app's declaration lists (#2533): the D02-LT, the quarterly and annual PIT data and the certificate data, to print, save as a PDF or download as xlsx.
@@ -526,6 +575,7 @@ const socialPlanPrintRoute = createRoute({
   path: '/o/$slug/print/social-plan',
   beforeLoad: async ({ params, matches }) => {
     await enterOrg(params.slug);
+    await readOrgApps(params.slug); // these routes do not mount the shell, so nothing else would send a switched-off screen away
     requireInstalledScreen(params.slug, matches);
   },
   validateSearch: parsePlanSearch,
@@ -546,6 +596,9 @@ const personalDataRoute = createRoute({ getParentRoute: () => orgRoute, path: 'p
 // In-app notifications of the kernel and finance (#671).
 const notificationsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'notifications', component: NotificationsPage });
 const agentsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'agents', component: AgentsPage });
+// The AI use and budgets and the AI apps connected over MCP: screens of the Ludy AI app (#3225), moved off the org chart screen and Settings.
+const aiUsageRoute = createRoute({ getParentRoute: () => orgRoute, path: 'ai-usage', component: AiUsagePage });
+const aiConnectionsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'ai-connections', component: AiConnectionsPage });
 // ?filter= keeps the tab of the tasks list (#1513).
 const tasksRoute = createRoute({ getParentRoute: () => orgRoute, path: 'tasks', validateSearch: parseTasksSearch, component: TasksPage });
 // The bookings of the public booking page (#1320), with the crm module.
@@ -568,10 +621,12 @@ const meetingsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'meeti
 const meetingRecordRoute = createRoute({ getParentRoute: () => orgRoute, path: 'meetings/record',
   component: MeetingRecordPage,
   // A booking opens this screen prefilled and linked (L1, #2587): its title, its contact and its calendar event. All optional; the ids are checked by the server on save.
-  validateSearch: (search: Record<string, unknown>): { title?: string; partyId?: string; calendarEventId?: string } => ({
+  // The member's own calendar list opens it with the title and the cached event (B1, #3165); the server checks the event is theirs.
+  validateSearch: (search: Record<string, unknown>): { title?: string; partyId?: string; calendarEventId?: string; agendaId?: string } => ({
     ...(typeof search.title === 'string' ? { title: search.title.slice(0, 200) } : {}),
     ...(typeof search.partyId === 'string' ? { partyId: search.partyId } : {}),
     ...(typeof search.calendarEventId === 'string' ? { calendarEventId: search.calendarEventId } : {}),
+    ...(typeof search.agendaId === 'string' ? { agendaId: search.agendaId } : {}),
   }),
 });
 const meetingDetailRoute = createRoute({
@@ -581,6 +636,17 @@ const meetingDetailRoute = createRoute({
   // A search hit opens the transcript at its line (L2, #2589): ?seg= the transcript line to scroll to and mark. Only the shape is checked here; the transcript shows the line only to a reader.
   validateSearch: (search: Record<string, unknown>): { seg?: string } => (typeof search.seg === 'string' && /^[0-9a-f-]{36}$/i.test(search.seg) ? { seg: search.seg.toLowerCase() } : {}),
 });
+// The printable minutes of a meeting, "Xem biên bản" (Meetings A4, #3162), outside the org's frame so only the sheet reaches the paper: only what the recorder published, read by the meeting's readers.
+const meetingMinutesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/o/$slug/print/meeting-minutes/$id',
+  beforeLoad: async ({ params, matches }) => {
+    await enterOrg(params.slug);
+    await readOrgApps(params.slug); // these routes do not mount the shell, so nothing else would send a switched-off screen away
+    requireInstalledScreen(params.slug, matches);
+  },
+  component: MeetingMinutesPage,
+});
 // The ad accounts' spend and results, read only, with the ads module (ADR-0040, #2217): ?account= the account shown and
 // ?range= the period. A group of the Social app on the rail.
 const adsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'ads', validateSearch: parseAdsSearch, component: AdsPage });
@@ -589,6 +655,13 @@ const adsCampaignsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'a
 // The reports of the Engage app (#2435), the last item of its menu: ?area= is the tab shown (the conversations, the sales, the posts or the ads).
 const reportsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'reports', validateSearch: parseReportsSearch, component: ReportsPage });
 const taskDetailRoute = createRoute({ getParentRoute: () => orgRoute, path: 'tasks/$id', component: TaskDetailPage });
+const projectsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'projects', component: ProjectsPage });
+const projectDetailRoute = createRoute({ getParentRoute: () => orgRoute, path: 'projects/$id', component: ProjectDetailPage });
+// eSign Slice 1c (#3325): envelopes, field placer + Vy overlays, and offline SHA-256 verifier.
+const signEnvelopesRoute = createRoute({ getParentRoute: () => orgRoute, path: 'sign/envelopes', component: SignEnvelopesPage });
+const signEnvelopeDetailRoute = createRoute({ getParentRoute: () => orgRoute, path: 'sign/envelopes/$id', component: SignEnvelopeDetailPage });
+const signTemplatesRoute = createRoute({ getParentRoute: () => orgRoute, path: 'sign/templates', component: SignTemplatesPage });
+const signVerifyRoute = createRoute({ getParentRoute: () => orgRoute, path: 'sign/verify', component: SignVerifyPage });
 
 // The CRM screens joined the Engage app (#2435) and kept their addresses. The `crm/...` addresses that docs/plan/crm.md wrote for them (the
 // rail's CRM app once opened on its bookings) open the screen itself, with the search it had.
@@ -614,8 +687,10 @@ const routeTree = rootRoute.addChildren([
   bookingRoute,
   reportRoute,
   quoteDocumentRoute,
+  signCeremonyRoute,
   shareRoute,
   socialPlanPrintRoute,
+  meetingMinutesRoute,
   inviteRoute,
   extensionConnectRoute,
   oauthConsentRoute,
@@ -625,7 +700,7 @@ const routeTree = rootRoute.addChildren([
   clientsRoute,
   oauthCallbackRoute,
   calendarOAuthCallbackRoute,
-  orgRoute.addChildren([orgIndexRoute, overviewRoute, accountingOverviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, paymentRemindersRoute, salesInvoicesRoute, stockRoute, householdRoute, marketplaceRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, bankMatchedRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialInboxRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, tasksRoute, taskDetailRoute, bookingsRoute, dealsRoute, contactsRoute, companiesRoute, contactImportRoute, crmRoute, crmBookingsRoute, crmDealsRoute, crmContactsRoute, crmContactImportRoute, notesRoute, myWorkRoute, hrEmployeesRoute, hrPayrollRoute, hrDeclarationsRoute, hrBankTemplatesRoute, meetingsRoute, meetingRecordRoute, meetingDetailRoute, adsRoute, adsCampaignsRoute, reportsRoute, settingsRoute, auditRoute, personalDataRoute, guideRoute]),
+  orgRoute.addChildren([orgIndexRoute, overviewRoute, accountingOverviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, paymentRemindersRoute, salesInvoicesRoute, stockRoute, householdRoute, marketplaceRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, bankMatchedRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialInboxRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, aiUsageRoute, aiConnectionsRoute, tasksRoute, taskDetailRoute, projectsRoute, projectDetailRoute, signEnvelopesRoute, signEnvelopeDetailRoute, signTemplatesRoute, signVerifyRoute, bookingsRoute, dealsRoute, contactsRoute, companiesRoute, contactImportRoute, crmRoute, crmBookingsRoute, crmDealsRoute, crmContactsRoute, crmContactImportRoute, notesRoute, myWorkRoute, hrEmployeesRoute, hrRecruitingRoute, hrPayrollRoute, hrDeclarationsRoute, hrBankTemplatesRoute, meetingsRoute, meetingRecordRoute, meetingDetailRoute, adsRoute, adsCampaignsRoute, reportsRoute, settingsRoute, auditRoute, personalDataRoute, guideRoute]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });

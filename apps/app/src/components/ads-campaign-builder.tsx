@@ -2,7 +2,7 @@
 // The campaign builder (W1c, issue #2295, plan docs/plan/ads-write.md section 10): one campaign, one ad set and one ad with up to three texts, written by
 // a person or drafted by the AI coworker and edited here. A field the AI coworker drafted and nobody has changed since is marked as drafted. Saving checks
 // the plan on the server against the dates, the spend caps and the switches of running ads, and the list says what is still to fix; the largest amount the
-// plan can spend is one sentence under the form, the same one the approver signs. Owners and admins ask for approval; nothing is sent to an ad platform.
+// plan can spend is one sentence under the form, the same one the approver signs. Owners and admins ask for approval; until it is approved nothing is sent to an ad platform (an approved plan is launched paused and switched on from its first day, #3639).
 // The form is the person's own until they save: a draft someone else saved meanwhile never replaces their edits (the save is refused as stale instead).
 import { useMutation } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
@@ -45,12 +45,14 @@ import {
   issueText,
   launchObjectLevelText,
   launchObjectStatusText,
+  launchObjectStatusVariant,
   launchReasonText,
   maxSpendHint,
   maxSpendOf,
   objectiveText,
   planToForm,
   problemText,
+  statesReadNote,
   type AdsGender,
   type AiField,
   type CampaignForm,
@@ -75,6 +77,8 @@ export const refreshCampaigns = () =>
     queryClient.invalidateQueries({ queryKey: orpc.ads.campaignDrafts.key() }),
     queryClient.invalidateQueries({ queryKey: orpc.ads.campaignDraft.key() }),
     queryClient.invalidateQueries({ queryKey: orpc.ads.campaignRequests.key() }),
+    // A launch cancelled, stopped or retried changes what is committed this month.
+    queryClient.invalidateQueries({ queryKey: orpc.ads.committed.key() }),
   ]);
 
 // What the form was loaded from: the revision the next save is made from (a draft saved since is refused as stale), the plan the form is compared with
@@ -631,7 +635,9 @@ function LaunchNote({ draft, canManage }: { draft: AdsCampaignDraftView; canMana
 }
 
 function LaunchObjectsList({ launch, title, root }: { launch: AdsLaunchView; title: string; root: Translate }) {
+  const f = useFormat();
   if (launch.objects.length === 0) return null;
+  const read = statesReadNote(launch, root, (value) => f.dateTime(value));
   return (
     <div className="mt-2 space-y-1">
       <p className="text-xs font-medium text-foreground">{title}</p>
@@ -641,12 +647,17 @@ function LaunchObjectsList({ launch, title, root }: { launch: AdsLaunchView; tit
             <span>
               {launchObjectLevelText(o.level, root)}: <span className="font-medium text-foreground">{o.name}</span> ({o.externalId})
             </span>
-            <Badge variant={launch.state === 'live' && o.level !== 'creative' && (o.effectiveStatus === null || o.effectiveStatus.toLowerCase() === 'active') ? 'success' : 'outline'}>
+            <Badge variant={launchObjectStatusVariant(o, launch)}>
               {launchObjectStatusText(o, launch, root)}
             </Badge>
           </li>
         ))}
       </ul>
+      {read && (
+        <p className={read.failed ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'} data-testid="campaign-launch-read">
+          {read.text}
+        </p>
+      )}
     </div>
   );
 }

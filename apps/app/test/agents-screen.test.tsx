@@ -99,18 +99,16 @@ describe('AgentsPage', () => {
 
   it('gives owners every control', () => {
     const html = page('owner');
-    for (const shown of [en.agents.stop, en.agents.addPosition, en.agents.holder, en.agents.save, en.agents.install, en.agents.setBudget]) expect(html).toContain(`>${shown}<`);
-    // The budget form words its own errors under its fields (#2004), not the browser's, and shows none before a check.
-    const budget = html.slice(html.lastIndexOf('<form', html.indexOf(`>${en.agents.setBudget}<`)));
-    expect(budget).toMatch(/^<form[^>]*novalidate/i);
-    expect(budget).not.toContain('-error"');
+    for (const shown of [en.agents.stop, en.agents.addPosition, en.agents.holder, en.agents.save, en.agents.install]) expect(html).toContain(`>${shown}<`);
+    // The AI use and the budgets moved to their own Ludy AI screen (#3225): the chart no longer ends with them.
+    expect(html).not.toContain(`>${en.agents.setBudget}<`);
+    expect(html).not.toContain(`>${en.agents.budgetsTitle}<`);
   });
 
-  it('gives admins Stop AI and the budgets to read, nothing that changes the chart', () => {
+  it('gives admins Stop AI, nothing that changes the chart', () => {
     const html = page('admin');
     expect(html).toContain(`>${en.agents.stop}<`);
-    expect(html).toContain(`>${en.agents.budgetsTitle}<`);
-    for (const hidden of [en.agents.addPosition, en.agents.holder, en.agents.save, en.agents.install, en.agents.setBudget]) expect(html).not.toContain(`>${hidden}<`);
+    for (const hidden of [en.agents.addPosition, en.agents.holder, en.agents.save, en.agents.install]) expect(html).not.toContain(`>${hidden}<`);
   });
 
   // #1763: the legal-entity picker and each position's entities appear only for an owner of an org with several.

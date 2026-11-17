@@ -16,6 +16,7 @@ import {
   fileKey,
   plaintextLengthFromCiphertextLength,
   stagedWriteFor,
+  tmpKey,
   type BlobEncryptor,
   type BlobMediaBinding,
   type BlobStore,
@@ -45,6 +46,9 @@ export interface SealInput {
   opaque?: boolean;
   store: BlobStore;
   orgId: string;
+  // The seal is a throwaway that the caller deletes before it returns (the video of an upload that is only read for its audio, #3341): it goes under tmp/<org_id>/ instead of org/<org_id>/, so the
+  // retention job can find and delete one a crash left behind, by prefix and age, and never mistakes it for a recording.
+  temporary?: boolean;
 }
 
 const lengthMismatch = (declared: number, got: number) =>
@@ -122,7 +126,7 @@ export async function sealMedia(input: SealInput): Promise<SealedMedia> {
     const contentType = input.opaque ? 'application/octet-stream' : detectMediaContainer(head, kind);
     if (!contentType) throw new DomainError('INVALID_MEDIA_CONTAINER', 400, 'Uploaded media is not a supported audio/video container');
 
-    const write = await stagedWriteFor(input.store, `org/${orgId}`);
+    const write = await stagedWriteFor(input.store, `${input.temporary ? 'tmp' : 'org'}/${orgId}`);
     // Declared outside the try so every refusal below ends it and wipes the plaintext it holds.
     let encryptor: BlobEncryptor | undefined;
     try {
@@ -144,7 +148,7 @@ export async function sealMedia(input: SealInput): Promise<SealedMedia> {
       // A source that ended short of what it declared (an aborted body) is refused here, before the last chunk is sealed.
       if (total !== expectedLength) throw lengthMismatch(expectedLength, total);
       for (const sealed of sealing.finish()) await write.write(sealed);
-      const stored = await write.commit(({ sha256 }) => fileKey(orgId, sha256), contentType);
+      const stored = await write.commit(({ sha256 }) => (input.temporary ? tmpKey(orgId, sha256) : fileKey(orgId, sha256)), contentType);
       // The object holds as many bytes as the plaintext seals to, or it is not recorded. A blob left without a row is deleted,
       // but only when this write created it: one that was already there is not ours to delete.
       let sealedLength: number | null = null;

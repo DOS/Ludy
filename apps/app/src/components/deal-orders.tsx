@@ -9,7 +9,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { QUOTE_ACCEPTED_VIA, SALES_ORDER_REASON_MAX, vietnamToday, type QuoteAcceptedVia, type QuoteSummary, type SalesOrder, type SalesOrderSummary } from '@crove/kernel-contract';
+import { ORDER_LINE_INVOICE_ORDERS_MAX, QUOTE_ACCEPTED_VIA, SALES_ORDER_REASON_MAX, vietnamToday, type QuoteAcceptedVia, type QuoteSummary, type SalesOrder, type SalesOrderHandoff, type SalesOrderSummary } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
@@ -19,13 +19,13 @@ import { ErrorText, Field } from './ui.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { keyFor, type KeyHolder } from '../lib/ads.ts';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { getConfig } from '../lib/auth.ts';
 import { ApiError } from '../lib/errors.ts';
-import { allDiscounted, invoiceInput, invoicePlan } from '../lib/order-handoff.ts';
+import { allDiscounted, invoiceInput, invoicePlan, lineStateOf, nothingLeft } from '../lib/order-handoff.ts';
 import { formatDate, formatMoney } from '../lib/format.ts';
+import { installedModules } from '../lib/org-modules.ts';
 
 // Kế toán's commands exist only where its module runs; a business without it sees the order screen as before, with no invoice or stock button.
-const financeInstalled = () => getConfig().modules.includes('finance');
+const financeInstalled = () => installedModules().includes('finance');
 const errorCode = (e: unknown): string | null => (typeof e === 'object' && e !== null && 'code' in e && typeof e.code === 'string' ? e.code : null);
 
 const refreshOrderQueries = () => {
@@ -302,41 +302,67 @@ export function DeliveryPanel({ orderId, canEdit }: { orderId: string; canEdit: 
 
 // "Lập hóa đơn" (#2818): Kế toán makes a draft from the order's lines. A line with a discount is not invoiced yet (the draft takes a price after the discount), so those
 // lines are left out and named; the click sends the rest, read fresh from the order, and a retry of the same call keeps its key. The draft is Kế toán's: a link opens its list.
-function useInvoiceDraft(order: SalesOrderSummary, enabled: boolean) {
+// `held` is what Kế toán says each line is on (#3477): a hint that names the lines still open and hides the button when none is; the server still refuses a line twice.
+function useInvoiceDraft(order: SalesOrderSummary, enabled: boolean, held: ReadonlyMap<number, 'draft' | 'issued'> | undefined) {
   const read = useQuery({ ...orpc.crm.salesOrders.handoff.queryOptions({ input: { orderId: order.id } }), enabled });
   const attempt = useRef<KeyHolder | null>(null);
-  const plan = invoicePlan(read.data?.lines ?? []);
+  // What the last call sent while its answer is unknown (the connection dropped): a click again sends exactly that with the same key, so the server replays the draft it made instead of
+  // the screen counting the lines that draft now holds as taken and refusing. A definite refusal from the server drops it, and the next click reads everything fresh.
+  const sent = useRef<{ handoff: SalesOrderHandoff; lineNos?: number[] } | null>(null);
+  const plan = invoicePlan(read.data?.lines ?? [], new Set(held?.keys()));
   const skipped = plan.skipped;
   const allSkipped = allDiscounted(plan);
+  const hidden = nothingLeft(plan);
   const invoice = useMutation({
     mutationFn: async () => {
+      if (sent.current !== null && attempt.current !== null) {
+        const again = sent.current;
+        const draft = await client.einvoice.drafts.fromOrder({ ...again, idempotencyKey: attempt.current.key });
+        return { draft, skipped: invoicePlan(again.handoff.lines).skipped };
+      }
       const handoff = await client.crm.salesOrders.handoff({ orderId: order.id });
-      const input = invoiceInput(handoff);
-      if (input === null) throw new ApiError('ORDER_LINE_DISCOUNTED', 409, null);
+      // The lines a draft holds, read fresh at the click; if the read fails the click goes on and the server decides.
+      const fresh = await client.einvoice.drafts.orderLines({ orderIds: [order.id] }).catch(() => null);
+      const heldNow = new Set((fresh?.orders.find((o) => o.orderId === order.id)?.lines ?? []).map((l) => l.lineNo));
+      const input = invoiceInput(handoff, heldNow);
+      if (input === null) throw new ApiError(heldNow.size > 0 ? 'ORDER_NOTHING_TO_INVOICE' : 'ORDER_LINE_DISCOUNTED', 409, null);
       attempt.current = keyFor(attempt.current, JSON.stringify(input));
+      sent.current = input;
       const draft = await client.einvoice.drafts.fromOrder({ ...input, idempotencyKey: attempt.current.key });
       // The lines left out are those of this handoff, not of the preview, which may be old or not loaded.
-      return { draft, skipped: invoicePlan(handoff.lines).skipped };
+      return { draft, skipped: invoicePlan(handoff.lines, heldNow).skipped };
     },
     onSuccess: () => {
       attempt.current = null;
+      sent.current = null;
       void queryClient.invalidateQueries({ queryKey: orpc.einvoice.drafts.key() });
     },
-    // A refusal (the order changed, a line was already invoiced) leaves the reading stale: read the order again.
-    onError: () => {
+    // A refusal (the order changed, a line was already invoiced) leaves both readings stale: read the order and what Kế toán holds on it again. Only a refusal from the server ends the
+    // attempt; a dropped connection keeps it, so the next click replays it.
+    onError: (error) => {
+      if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429) {
+        attempt.current = null;
+        sent.current = null;
+      }
       void queryClient.invalidateQueries({ queryKey: orpc.crm.salesOrders.key() });
+      void queryClient.invalidateQueries({ queryKey: orpc.einvoice.drafts.key() });
     },
   });
-  return { invoice, skipped, allSkipped };
+  return { invoice, skipped, allSkipped, hidden, open: plan.open, partial: plan.claimed.length > 0 || plan.skipped.length > 0 };
 }
 
 function InvoiceNote({ orderId, draft }: { orderId: string; draft: ReturnType<typeof useInvoiceDraft> }) {
   const t = useTranslations('quotes.orders');
   const { slug } = useParams({ strict: false }) as { slug: string };
-  const { invoice, skipped, allSkipped } = draft;
+  const { invoice, skipped, allSkipped, open, partial } = draft;
   return (
     <p id={`order-invoice-note-${orderId}`} className="w-full space-y-1 text-xs text-muted-foreground">
       <span className="block">{t('invoiceHint')}</span>
+      {partial && open.length > 0 && (
+        <span className="block" data-testid="order-invoice-open-lines">
+          {t('invoiceOpenLines', { lines: open.join(', ') })}
+        </span>
+      )}
       {allSkipped ? <span className="block">{t('invoiceAllDiscounted')}</span> : skipped.length > 0 ? <span className="block">{t('invoiceDiscounted', { lines: skipped.join(', ') })}</span> : null}
       {invoice.isSuccess && (
         <span className="block" data-testid="order-invoice-done">
@@ -351,14 +377,38 @@ function InvoiceNote({ orderId, draft }: { orderId: string; draft: ReturnType<ty
   );
 }
 
-function OrderRow({ order, canEdit }: { order: SalesOrderSummary; canEdit: boolean }) {
+// The goods lines of a confirmed order and what Kế toán holds on each: "Chưa lập hóa đơn", "Đã lập nháp" or "Đã phát hành" (#3477, plan crm-quotes.md 6.2). Read from the drafts
+// that name the order, never stored on it; shown only where the finance module runs. A line with no draft reads "none".
+function InvoiceLines({ orderId, held }: { orderId: string; held: ReadonlyMap<number, 'draft' | 'issued'> | undefined }) {
+  const t = useTranslations('quotes.orders');
+  const order = useQuery(orpc.crm.salesOrders.get.queryOptions({ input: { orderId } }));
+  const goods = order.data?.lines.filter((l) => l.kind === 'item') ?? [];
+  if (goods.length === 0) return null;
+  return (
+    <ul className="w-full space-y-1" aria-label={t('invoiceLines')} data-testid="order-invoice-lines">
+      {goods.map((l) => {
+        const state = lineStateOf(held, l.lineNo);
+        return (
+          <li key={l.lineNo} className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground" data-testid="order-invoice-line" data-state={state}>
+            <span className="min-w-0">{t('invoiceLine', { no: String(l.lineNo), description: l.description })}</span>
+            <Badge variant={state === 'issued' ? 'success' : state === 'draft' ? 'warning' : 'outline'}>{t(`invoiceState.${state}`)}</Badge>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function OrderRow({ order, canEdit, held }: { order: SalesOrderSummary; canEdit: boolean; held: ReadonlyMap<number, 'draft' | 'issued'> | undefined }) {
   const t = useTranslations('quotes.orders');
   const { locale } = useLocaleSetting();
   const [cancelling, setCancelling] = useState(false);
   const [delivering, setDelivering] = useState(false);
   const confirmed = order.status === 'confirmed';
   const withFinance = financeInstalled();
-  const draft = useInvoiceDraft(order, confirmed && withFinance && canEdit);
+  const draft = useInvoiceDraft(order, confirmed && withFinance && canEdit, held);
+  // A hint, not the rule: an order with a line on a draft or issued invoice does not offer to cancel from here (A7 of ADR-0050 stays open: the server does not refuse it).
+  const cancelBlocked = withFinance && held !== undefined && held.size > 0;
   return (
     <li className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm" data-testid="order-row">
       <div className="min-w-0 space-y-0.5">
@@ -369,7 +419,7 @@ function OrderRow({ order, canEdit }: { order: SalesOrderSummary; canEdit: boole
         {order.quoteNumber && <p className="text-xs text-muted-foreground">{t('fromQuote', { quote: order.quoteNumber })}</p>}
       </div>
       <div className="flex flex-wrap items-center gap-1">
-        {confirmed && withFinance && canEdit && (
+        {confirmed && withFinance && canEdit && !draft.hidden && (
           <Button size="sm" variant="outline" loading={draft.invoice.isPending} disabled={draft.allSkipped} aria-describedby={`order-invoice-note-${order.id}`} onClick={() => draft.invoice.mutate()} data-testid="order-invoice">
             {t('invoice')}
           </Button>
@@ -380,14 +430,29 @@ function OrderRow({ order, canEdit }: { order: SalesOrderSummary; canEdit: boole
           </Button>
         )}
         {confirmed && canEdit && (
-          <Button size="sm" variant="ghost" onClick={() => setCancelling((v) => !v)} aria-expanded={cancelling} data-testid="order-cancel-open">
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={cancelBlocked}
+            aria-describedby={cancelBlocked ? `order-cancel-blocked-${order.id}` : undefined}
+            onClick={() => setCancelling((v) => !v)}
+            aria-expanded={cancelling && !cancelBlocked}
+            data-testid="order-cancel-open"
+          >
             {t('cancelOrder')}
           </Button>
         )}
       </div>
+      {/* Not shown while Kế toán's answer is not known (or failed): "Chưa lập hóa đơn" must not be said on a guess. */}
+      {confirmed && withFinance && held !== undefined && <InvoiceLines orderId={order.id} held={held} />}
       {confirmed && withFinance && canEdit && <InvoiceNote orderId={order.id} draft={draft} />}
+      {confirmed && canEdit && cancelBlocked && (
+        <p id={`order-cancel-blocked-${order.id}`} className="w-full text-xs text-muted-foreground" data-testid="order-cancel-blocked">
+          {t('cancelBlocked')}
+        </p>
+      )}
       {delivering && confirmed && <DeliveryPanel orderId={order.id} canEdit={canEdit} />}
-      {cancelling && confirmed && canEdit && <CancelPanel order={order} onDone={() => setCancelling(false)} />}
+      {cancelling && confirmed && canEdit && !cancelBlocked && <CancelPanel order={order} onDone={() => setCancelling(false)} />}
     </li>
   );
 }
@@ -396,6 +461,19 @@ function OrderRow({ order, canEdit }: { order: SalesOrderSummary; canEdit: boole
 export function DealOrders({ dealId, canEdit }: { dealId: string; canEdit: boolean }) {
   const t = useTranslations('quotes.orders');
   const orders = useQuery(orpc.crm.salesOrders.byDeal.queryOptions({ input: { dealId } }));
+  // What Kế toán holds on the lines of the deal's confirmed orders: one read for all of them, only where its module runs. A failed read leaves the screen as it was.
+  const confirmedIds = (orders.data ?? []).filter((o) => o.status === 'confirmed').map((o) => o.id).slice(0, ORDER_LINE_INVOICE_ORDERS_MAX);
+  const states = useQuery({
+    ...orpc.einvoice.drafts.orderLines.queryOptions({ input: { orderIds: confirmedIds } }),
+    enabled: confirmedIds.length > 0 && financeInstalled(),
+    retry: false,
+  });
+  const asked = new Set(confirmedIds);
+  const heldOf = (orderId: string): ReadonlyMap<number, 'draft' | 'issued'> | undefined => {
+    // An order that was not asked (beyond the read's 50) is unknown, never "no draft".
+    if (!states.data || !asked.has(orderId)) return undefined;
+    return new Map((states.data.orders.find((x) => x.orderId === orderId)?.lines ?? []).map((l) => [l.lineNo, l.state] as const));
+  };
   return (
     <section className="space-y-2" aria-label={t('title')} data-testid="deal-orders">
       <h4 className="text-sm font-medium text-foreground">{t('title')}</h4>
@@ -406,7 +484,7 @@ export function DealOrders({ dealId, canEdit }: { dealId: string; canEdit: boole
       ) : (
         <ul className="space-y-2">
           {orders.data?.map((o) => (
-            <OrderRow key={o.id} order={o} canEdit={canEdit} />
+            <OrderRow key={o.id} order={o} canEdit={canEdit} held={heldOf(o.id)} />
           ))}
         </ul>
       )}

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
-import { PAYROLL_POSTING_MAPS, PAY_FUNCTIONS, PostingRefusedError, buildBankFile, buildPosting, isCashOverLimit, type PostingLine } from '../src/index.ts';
+import { PAYROLL_POSTING_MAPS, PAY_FUNCTIONS, PostingRefusedError, buildBankFile, buildPosting, isCashOverLimit, payrollPaymentReason, type PostingLine } from '../src/index.ts';
 
 // Hand-worked from the rates of docs/plan/payroll.md section 5 for an invented person: gross 20,000,000; employee insurance 8% + 1.5% + 1% = 2,100,000; employer 14% + 3% + 0.5% + 3% + 1% = 4,300,000;
 // union fee 2% = 400,000; PIT 500,000; an advance of 1,000,000 recovered; net 20,000,000 - 2,100,000 - 500,000 - 1,000,000 = 16,400,000.
@@ -87,6 +87,14 @@ describe('payroll cash flag and bank file (#2532)', () => {
     expect(isCashOverLimit('cash', '5000000')).toBe(true);
     expect(isCashOverLimit('cash', '4999999')).toBe(false);
     expect(isCashOverLimit('bank', '90000000')).toBe(false);
+  });
+
+  it('builds the fixed voucher reason per payment kind and month, with no person named (#2853)', () => {
+    expect(payrollPaymentReason('net_pay', '2026-03')).toBe('Chi lương tháng 03/2026');
+    expect(payrollPaymentReason('insurance', '2026-03')).toBe('Nộp bảo hiểm xã hội, y tế, thất nghiệp tháng 03/2026');
+    expect(payrollPaymentReason('union', '2026-03')).toBe('Nộp kinh phí công đoàn tháng 03/2026');
+    expect(payrollPaymentReason('tax', '2026-03')).toBe('Nộp thuế thu nhập cá nhân tháng 03/2026');
+    expect(() => payrollPaymentReason('net_pay', '2026-13')).toThrow(/not a month/);
   });
 
   it('writes one row per person with the net pay in the layout order', () => {

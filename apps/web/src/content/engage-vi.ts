@@ -12,15 +12,15 @@ type Tone = 'ok' | 'warn' | 'accent' | 'neutral';
 export const engageVi = {
   appName: 'Ludy Engage',
   meta: {
-    title: 'Ludy Engage: hộp thư, khách hàng, bán hàng và marketing trong một ứng dụng',
+    title: 'Ludy Engage: hộp thư, CRM và marketing trong một ứng dụng',
     description:
-      'Ludy Engage gom hộp thư chung cho khách, danh sách khách hàng và cơ hội bán hàng, lịch hẹn, bài đăng và quảng cáo về một nơi, có báo cáo cho từng phần. Mã nguồn mở, dùng chung danh sách khách hàng với Ludy Kế toán.',
+      'Ludy Engage gom Hộp thư chung cho khách, nhóm CRM (người liên hệ, công ty, cơ hội bán hàng, lịch hẹn), Marketing (bài đăng, quảng cáo) và Báo cáo về một nơi. Mã nguồn mở, dùng chung danh sách khách hàng với Ludy Tài chính.',
   },
-  ogTitle: 'Hộp thư, khách hàng và marketing, trong một ứng dụng.',
+  ogTitle: 'Hộp thư, CRM và marketing, trong một ứng dụng.',
   crumbLabel: 'Đường dẫn',
   hero: {
-    title: 'Hộp thư, khách hàng và marketing, trong một ứng dụng.',
-    lead: `Ludy Engage gom tin nhắn của khách, danh sách khách hàng và cơ hội bán hàng, lịch hẹn, bài đăng và quảng cáo về một nơi, mỗi phần có báo cáo riêng. ${N.sales} lo hộp thư, khách hàng và bán hàng, ${N.marketing} lo marketing, bạn duyệt.`,
+    title: 'Hộp thư, CRM và marketing, trong một ứng dụng.',
+    lead: `Ludy Engage gom tin nhắn của khách, nhóm CRM (người liên hệ, công ty, cơ hội bán hàng, lịch hẹn), bài đăng và quảng cáo về một nơi, mỗi phần có báo cáo riêng. ${N.sales} lo Hộp thư và CRM, ${N.marketing} lo Marketing, bạn duyệt.`,
     primary: 'Tự cài đặt miễn phí',
     secondary: 'Đăng nhập',
     note: 'Mã nguồn mở AGPL. Ludy Engage có trong bản tự cài đặt. Trên Ludy Cloud: sắp ra mắt.',
@@ -37,7 +37,7 @@ export const engageVi = {
   },
   groups: {
     title: 'Việc Ludy Engage làm hôm nay',
-    lead: 'Năm việc, nằm trong bốn nhóm của menu: Hộp thư, Khách hàng & Bán hàng, Marketing và Báo cáo.',
+    lead: 'Năm việc, nằm trong bốn nhóm của menu: Hộp thư, CRM, Marketing và Báo cáo.',
     items: [
       {
         id: 'hop-thu',
@@ -53,10 +53,10 @@ export const engageVi = {
       },
       {
         id: 'khach-hang',
-        title: 'Khách hàng và cơ hội bán hàng',
-        lead: 'Một danh sách liên hệ dùng chung với Ludy Kế toán, và các cơ hội theo giai đoạn do bạn đặt.',
+        title: 'CRM: người liên hệ, công ty và cơ hội',
+        lead: 'Một danh sách người liên hệ và công ty dùng chung với Ludy Tài chính, và các cơ hội theo giai đoạn do bạn đặt.',
         points: [
-          'Liên hệ là cá nhân hoặc công ty, chính là đối tác mà hoá đơn trong Ludy Kế toán dùng; tìm theo tên, email, điện thoại hoặc mã số thuế, gõ không cần dấu',
+          'Người liên hệ và Công ty có màn hình riêng, gắn người liên hệ vào công ty và xem cơ hội, hoạt động liên quan; đây chính là đối tác mà hoá đơn trong Ludy Tài chính dùng, tìm không cần gõ dấu',
           'Nhập từ file Excel (.xlsx) hoặc CSV: xem trước từng dòng là mới, trùng hay lỗi rồi mới nhập, không ghi đè thông tin đã có. Nhập xong không hoàn tác được',
           'Mỗi cơ hội có khách hàng, số tiền bằng đồng, người phụ trách, ngày dự kiến chốt và lý do thua',
           'Bảng kéo thả theo giai đoạn, mỗi cột có số thẻ và tổng tiền. Chủ sở hữu và quản trị viên đặt tên, thêm, bớt và đổi thứ tự giai đoạn',
@@ -84,7 +84,7 @@ export const engageVi = {
           'Kênh gồm Facebook, Instagram, Threads, TikTok, YouTube, LinkedIn, X, Zalo OA và nhiều kênh khác: đã làm xong, chưa thử với tài khoản thật của kênh nào. Với các nền tảng lớn, người cài đặt khai báo ứng dụng của nền tảng đó trước',
           'Mỗi bài cần người duyệt trước khi đăng, có quy trình nhiều bước, danh sách kiểm tra và liên kết cho khách duyệt không cần đăng nhập',
           'Báo cáo cho khách dưới dạng liên kết chia sẻ, bản in, có thương hiệu riêng và có thể hẹn lịch gửi',
-          'Quảng cáo: xem chi tiêu, lượt hiển thị, lượt nhấp và kết quả của quảng cáo Facebook và Instagram theo ngày, tháng và chiến dịch, đối chiếu chi tiêu với sổ kế toán khi dùng Ludy Kế toán. Cần khoá Meta do người cài đặt cấu hình. Đã làm xong, chưa thử với tài khoản quảng cáo thật',
+          'Quảng cáo: xem chi tiêu, lượt hiển thị, lượt nhấp và kết quả của quảng cáo Facebook và Instagram theo ngày, tháng và chiến dịch, đối chiếu chi tiêu với sổ kế toán khi dùng Ludy Tài chính. Cần khoá Meta do người cài đặt cấu hình. Đã làm xong, chưa thử với tài khoản quảng cáo thật',
         ],
       },
       {
@@ -113,7 +113,7 @@ export const engageVi = {
   },
   coworker: {
     title: `${N.sales} và ${N.marketing} làm gì trong Ludy Engage`,
-    lead: `${N.sales} là trưởng phòng bán hàng AI, lo hộp thư, khách hàng và bán hàng. ${N.marketing} là trưởng phòng marketing AI, lo bài đăng. Cả hai là đồng nghiệp của bạn, làm việc dưới sự điều phối của ${N.gm}. Cần model AI do người cài đặt cấu hình; chủ sở hữu hoặc quản trị viên có thể dừng AI, và ngân sách AI hàng tháng giới hạn chi phí.`,
+    lead: `${N.sales} là trưởng phòng bán hàng AI, lo Hộp thư và CRM. ${N.marketing} là trưởng phòng marketing AI, lo bài đăng. Cả hai là đồng nghiệp của bạn, làm việc dưới sự điều phối của ${N.gm}. Cần model AI do người cài đặt cấu hình; trong Ludy AI, chủ sở hữu đặt ngân sách tháng và chủ sở hữu hoặc quản trị viên có thể dừng AI ngay.`,
     doesTitle: 'Làm',
     does: [
       `${N.sales} soạn sẵn bản nháp trả lời trong Hộp thư, không tự bịa giá hay liên kết, và gợi ý ý định của khách và liên hệ khớp`,
@@ -137,7 +137,7 @@ export const engageVi = {
       },
       {
         title: 'Kế toán và dịch vụ kế toán',
-        body: 'Khách hàng ở đây cũng là khách hàng trong Ludy Kế toán, nên hoá đơn và liên hệ dùng chung một danh sách.',
+        body: 'Khách hàng ở đây cũng là khách hàng trong Ludy Tài chính, nên hoá đơn và liên hệ dùng chung một danh sách.',
       },
       {
         title: 'Người tự cài đặt',
@@ -150,7 +150,7 @@ export const engageVi = {
     items: [
       {
         q: 'Ludy CRM đã đi đâu?',
-        a: 'Ludy CRM đã gộp vào Ludy Engage. Liên hệ, cơ hội và lịch hẹn nằm ở nhóm Khách hàng & Bán hàng, và địa chỉ cũ của trang Ludy CRM chuyển về trang này.',
+        a: 'Ludy CRM đã gộp vào Ludy Engage. Người liên hệ, công ty, cơ hội và lịch hẹn nằm ở nhóm CRM, và địa chỉ cũ của trang Ludy CRM chuyển về trang này.',
       },
       {
         q: 'Hộp thư nhận tin từ những kênh nào?',
@@ -165,8 +165,8 @@ export const engageVi = {
         a: 'Chưa. Hôm nay Ludy cho xem quảng cáo Facebook và Instagram. Tạo và chạy chiến dịch: sắp ra mắt.',
       },
       {
-        q: 'Khách hàng bên Ludy Kế toán có sang Ludy Engage không?',
-        a: 'Có. Liên hệ chính là đối tác mà hoá đơn dùng, nên khách hàng và nhà cung cấp đã có sẽ hiện trong danh sách liên hệ.',
+        q: 'Khách hàng bên Ludy Tài chính có sang Ludy Engage không?',
+        a: 'Có. Liên hệ và công ty chính là đối tác mà hoá đơn dùng, nên khách hàng và nhà cung cấp đã có sẽ hiện trong CRM.',
       },
     ],
   },
@@ -183,7 +183,7 @@ export const engageVi = {
       label: 'Menu của Ludy Engage',
       groups: [
         { name: 'Hộp thư', items: ['Hội thoại'] },
-        { name: 'Khách hàng & Bán hàng', items: ['Người liên hệ', 'Cơ hội', 'Lịch hẹn'] },
+        { name: 'CRM', items: ['Người liên hệ', 'Công ty', 'Cơ hội', 'Lịch hẹn'] },
         { name: 'Marketing', items: ['Bài đăng', 'Quảng cáo'] },
         { name: 'Báo cáo', items: ['Báo cáo'] },
       ],
