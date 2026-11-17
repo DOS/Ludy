@@ -719,7 +719,8 @@ test('opens Posts on the post waiting for review, and the schedule tab shows an 
   await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
   await page.goto(`/o/${slug}/social`);
   await expect(page.getByRole('tab', { name: /Cần duyệt/ })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByText('Bài đang chờ duyệt ở tab đầu')).toBeVisible();
+  // The post's own row (the same text is also in the review proposals panel).
+  await expect(page.getByRole('link', { name: 'Bài đang chờ duyệt ở tab đầu' })).toBeVisible();
   // The schedule is one click away and stays chosen across a reload.
   await page.getByRole('tab', { name: 'Lịch đăng' }).click();
   await expect(page).toHaveURL(/tab=upcoming/);
