@@ -102,6 +102,29 @@ export function connectPlatforms(offered: readonly string[]): (typeof CONNECT_PL
   return CONNECT_PLATFORMS.filter((p) => !LISTED_WHEN_OFFERED.includes(p) || offered.includes(p));
 }
 
+// What the connect card offers (#3651): the platforms this server has set up (Facebook and Instagram first, the order of
+// the list), and the rest, which the card folds into "other platforms" instead of listing each with a badge.
+export function connectSplit(offered: readonly string[]): { ready: (typeof CONNECT_PLATFORMS)[number][]; unavailable: (typeof CONNECT_PLATFORMS)[number][] } {
+  const all = connectPlatforms(offered);
+  return { ready: all.filter((p) => offered.includes(p)), unavailable: all.filter((p) => !offered.includes(p)) };
+}
+
+// A time zone for a person, not the IANA name (#3651): "Việt Nam (UTC+7)", or the city and its offset ("Singapore (UTC+8)",
+// "New York (UTC-5)"). The offset is today's, so a zone with daylight saving shows the one in force.
+export function zoneLabel(zone: string, locale: string): string {
+  const offset = (() => {
+    try {
+      const part = new Intl.DateTimeFormat('en', { timeZone: zone, timeZoneName: 'shortOffset' }).formatToParts(new Date()).find((x) => x.type === 'timeZoneName')?.value ?? '';
+      return part === 'GMT' ? 'UTC' : part.replace('GMT', 'UTC');
+    } catch {
+      return '';
+    }
+  })();
+  const name = zone === 'Asia/Ho_Chi_Minh' ? (locale === 'vi' ? 'Việt Nam' : 'Vietnam') : zone === 'UTC' ? '' : (zone.split('/').pop() ?? zone).replace(/_/g, ' ');
+  if (!name) return 'UTC';
+  return offset ? `${name} (${offset})` : name;
+}
+
 // A variant's text against its channel's limit, the way the platform counts, with the link the channel's adapter adds.
 // settings: the variant's, whose link card (#1498) keeps the link out of the text.
 export function textBudget(provider: string, body: string, link: { linkUrl?: string | null; mediaCount?: number; settings?: Readonly<Record<string, unknown>> } = {}): { used: number; max: number | null } {
