@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useSearch } from '@tanstack/react-router';
-import { useId, useState, type FormEvent } from 'react';
+import { useEffect, useId, useState, type FormEvent } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
 import { ConversationRetentionCard } from '../components/conversation-retention.tsx';
 import { ExtensionDevices } from '../components/extension-devices.tsx';
@@ -30,6 +30,8 @@ import { EventTypesCard } from './event-types.tsx';
 import { MemberPrivateNotes, usePrivateNotes } from '../components/notes-panel.tsx';
 import { CardSkeleton, ErrorText, FieldError, fieldControl, fieldHintId, focusFirstInvalid, isEmailAddress, PageHeader, PageSkeleton, RowsSkeleton, Spinner, useFieldErrors } from '../components/ui.tsx';
 import { apiFetch, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
+import { BOOKING_SETTINGS_ID } from '../lib/booking.ts';
+import { scrollBehavior } from '../lib/media.ts';
 import { getConfig } from '../lib/auth.ts';
 import { useFormat } from '../i18n/provider.tsx';
 import { ROLES, roleChangeConfirmation, roleChangeKind, type Role, type RoleChangeKind } from '../lib/members.ts';
@@ -1109,6 +1111,14 @@ export function SettingsPage() {
   const org = useQuery(orpc.org.get.queryOptions());
   const me = useQuery(orpc.me.get.queryOptions());
   const search: { invite?: string } = useSearch({ strict: false });
+  // "Cài đặt lịch hẹn" on Lịch hẹn links to the working hours and event types (#3643): the cards exist once the org is read, so the jump waits for it.
+  const orgLoaded = org.data !== undefined;
+  useEffect(() => {
+    if (!orgLoaded || window.location.hash !== `#${BOOKING_SETTINGS_ID}`) return;
+    const card = document.getElementById(BOOKING_SETTINGS_ID);
+    card?.scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
+    card?.focus({ preventScroll: true });
+  }, [orgLoaded]);
   // Role assignments (#1279): owners and admins see who holds which role; owners give and take them back.
   const managesMembers = org.data?.role === 'owner' || org.data?.role === 'admin';
   const memberRoles = useQuery({ ...orpc.org.memberRoles.queryOptions(), enabled: managesMembers });
@@ -1242,7 +1252,7 @@ export function SettingsPage() {
         {org.data && <WorkingHoursCard key={`working-hours:${org.data.slug}`} canEdit={org.data.role !== 'viewer'} />}
         {/* The booking pages' event types (#1314), with the crm module. */}
         {installedModules().includes('crm') && org.data && me.data && (
-          <EventTypesCard key={`event-types:${org.data.slug}`} members={org.data.members} me={me.data.userId} role={org.data.role} />
+          <EventTypesCard key={`event-types:${org.data.slug}`} slug={org.data.slug} members={org.data.members} me={me.data.userId} role={org.data.role} />
         )}
         {/* The legal entities the books are kept for (#1278), with the finance module; owners and admins only. */}
         {installedModules().includes('finance') && canManage && <LegalEntitiesCard key={`legal-entities:${org.data?.slug}`} />}

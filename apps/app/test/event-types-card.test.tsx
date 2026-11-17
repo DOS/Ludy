@@ -47,7 +47,7 @@ function card(role: 'owner' | 'member' | 'viewer'): string {
   return renderToStaticMarkup(
     <QueryClientProvider client={qc}>
       <IntlProvider locale="en" messages={catalog('en')}>
-        <EventTypesCard members={members} me={ME} role={role} />
+        <EventTypesCard slug="acme" members={members} me={ME} role={role} />
       </IntlProvider>
     </QueryClientProvider>,
   );
