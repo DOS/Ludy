@@ -223,13 +223,16 @@ async function runRecorderVy(deps: MeetingSummaryDeps, orgId: string, actor: Use
       // The minutes template the recorder picked (A4, #3162): the same run fills its sections; the templates are code, the model only writes the text.
       const template = { code: meeting.summaryTemplate, sections: templateSections(meeting.summaryTemplate) };
       const segments = transcript.segments.map((s) => ({ startSeconds: s.startSeconds, endSeconds: s.endSeconds, speakerLabel: s.speakerLabel, text: s.text }));
+      // The people of the meeting, by display name, as the recorder reads them: the summary may suggest which of them a speaker is (#3502). Only the summary asks; the notes run does not.
+      const attendees = kind === 'summary' ? (await deps.runtime.query<{ names: string[] }>('meetings.summary.attendees', { meetingId }, as)).names : [];
       // 3. The one call, outside any transaction, in the scope of this run.
       const ports: Ports = { model, memory: nothingToRemember, knowledge: noKnowledge };
       const bound = bindPorts({ orgId, memberUserId: actor.userId }, ports);
       const result = await withDeadline(
-        withAiScope({ orgId, memberRunId: runId, meter }, () =>
-          kind === 'notes' ? enhanceNotes({ segments, language: meeting.language, template, notes }, bound) : summarizeMeeting({ segments, language: meeting.language, template }, bound),
-        ),
+        // Both kinds answer one checked body (as private text); the rest of each result is not used here.
+        withAiScope({ orgId, memberRunId: runId, meter }, async () => ({
+          body: (kind === 'notes' ? await enhanceNotes({ segments, language: meeting.language, template, notes }, bound) : await summarizeMeeting({ segments, language: meeting.language, template, attendees }, bound)).body,
+        })),
         timeoutMs,
       );
       body = revealPrivateText(result.body);

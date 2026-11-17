@@ -3129,6 +3129,13 @@ export const en = {
         copy: 'Copy into my draft',
         copied: 'Copied. Your draft is below; read it before sharing.',
         copyReplaces: 'This replaces what Vy wrote earlier. What you typed yourself stays.',
+        speakers: {
+          title: 'Vy suggests who is speaking',
+          hint: 'Vy guesses from the words in the transcript and only suggests names of people in the meeting. A name changes only when you click.',
+          line: '{label} may be {name} (heard at {time})',
+          apply: 'Use this name',
+          done: 'Named {name} on {count} lines.',
+        },
         failed: 'Vy could not finish this time.',
         codes: {
           AI_BUDGET_EXHAUSTED: 'Vy is paused or this month\'s AI budget is spent. The meeting itself works as before.',
@@ -11392,6 +11399,9 @@ export const en = {
       SUMMARY_REQUIRED: 'Write at least one section before saving.',
       SUMMARY_TEMPLATE_CHANGED: 'You changed the meeting type after Vy wrote this. Ask Vy to summarize again.',
       TEMPLATE_MISMATCH: 'The text does not match the meeting type that is picked. Reload the meeting and try again.',
+      SPEAKER_LABEL_GONE: 'No draft line has this speaker any more (you may have named it already). Open the transcript again.',
+      SPEAKER_NAME_TAKEN: 'Another speaker of this meeting already has this name. To merge two speakers, correct the lines one by one.',
+      SPEAKER_NOT_ATTENDEE: 'This name is not one of the people in this meeting.',
       NOTES_EMPTY: 'Type and save a few notes before asking Vy to write them out.',
       NOTES_TOO_LONG: 'The notes are too long. Shorten them.',
       TRANSLATE_OFF: 'Translation by Vy is not turned on on this system.',
@@ -13437,10 +13447,15 @@ export const en = {
         set_template: 'Pick the meeting type (minutes template)',
       },
       summary: {
+        attendees: 'Read the names of the people in a meeting so Vy can suggest who is speaking',
         save: 'Save the summary and the decisions of a meeting',
         copy_result: 'Copy the summary Vy finished for a meeting into the draft',
         start: 'Ask Vy to summarize a meeting',
         status: 'See whether Vy can summarize a meeting',
+      },
+      speaker: {
+        name: 'Name a speaker of the draft transcript after a person in the meeting',
+        suggestions: 'See the speaker names Vy suggested after a summary',
       },
       followup: {
         draft: 'Open the follow-up email draft of a meeting',

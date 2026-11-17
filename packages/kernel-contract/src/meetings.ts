@@ -668,6 +668,16 @@ export const zEnhancedSection = z.strictObject({
 export const zEnhanced = z.strictObject({ sections: z.array(zEnhancedSection).min(1).max(SECTIONS_MAX) });
 export type Enhanced = z.infer<typeof zEnhanced>;
 
+// Which attendee a speaker label may be (#3502), as the recorder's Vy proposed it and the agent's checks kept it: the transcript's label, the attendee's own spelling and the second
+// of a line that speaker says it on. Only a proposal: the recorder's click (`zSpeakerName`) is what renames the label.
+export const SPEAKER_SUGGESTIONS_MAX = 20;
+export const zSpeakerSuggestion = z.strictObject({
+  label: z.string().min(1).max(TRANSCRIPT_SPEAKER_MAX),
+  name: z.string().min(1).max(TRANSCRIPT_SPEAKER_MAX),
+  seconds: z.number().int().min(0).max(86_400),
+});
+export type SpeakerSuggestion = z.infer<typeof zSpeakerSuggestion>;
+
 export const zSummaryResult = z.strictObject({
   // Set when the run expanded the recorder's notes instead of summarizing the transcript (A5); `summary` is then '' and there are no sections, decisions or items of their own.
   enhanced: zEnhanced.optional(),
@@ -686,9 +696,23 @@ export const zSummaryResult = z.strictObject({
       }),
     )
     .max(ITEMS_PER_MEETING_MAX),
+  // The speaker suggestions of #3502; a body stored before that has none.
+  speakers: z.array(zSpeakerSuggestion).max(SPEAKER_SUGGESTIONS_MAX).default([]),
   dropped: z.number().int().min(0),
 });
 export type SummaryResult = z.infer<typeof zSummaryResult>;
+
+// The suggestions of a finished summary run that still apply (#3502): the label is still on a draft line and the name is still one of the meeting's people. Read by the recorder alone.
+export const zSpeakerSuggestionsInput = z.strictObject({ meetingId: zId, runId: zId });
+export const zSpeakerSuggestions = z.strictObject({ meetingId: zId, runId: zId, suggestions: z.array(zSpeakerSuggestion).max(SPEAKER_SUGGESTIONS_MAX) });
+export type SpeakerSuggestions = z.infer<typeof zSpeakerSuggestions>;
+// The recorder's click: the draft lines that carry `label` take `name` for their speaker. The name must be one of the meeting's people; nothing of Vy's is needed.
+export const zSpeakerName = z.strictObject({
+  meetingId: zId,
+  label: z.string().min(1).max(TRANSCRIPT_SPEAKER_MAX),
+  name: z.string().min(1).max(TRANSCRIPT_SPEAKER_MAX),
+});
+export const zSpeakerNamed = z.strictObject({ meetingId: zId, label: z.string(), name: z.string(), lines: z.number().int().min(1) });
 
 // The recorder's rough notes of a meeting (A5, #3163): theirs alone to read and write. Saving an empty text deletes them.
 export const zNotesSave = z.strictObject({ meetingId: zId, body: z.string().max(NOTES_BODY_MAX) });

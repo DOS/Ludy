@@ -272,12 +272,54 @@ export function codeText(t: ReturnType<typeof useTranslations>, code: unknown): 
   }
 }
 
+// Which attendee a speaker may be (#3502), as the recorder's Vy suggested it in a finished summary run: one line per suggestion with the moment it rests on and a click of the recorder's own
+// that gives the draft lines of that speaker the attendee's name. Nothing is renamed without the click; with no suggestion the block is not drawn.
+export function SpeakerSuggestions({ meetingId, runId }: { meetingId: string; runId: string }) {
+  const t = useTranslations('meetings.results');
+  const list = useQuery({ ...orpc.meetings.results.speakerSuggestions.queryOptions({ input: { meetingId, runId } }), ...READ_ONCE });
+  const name = useMutation({
+    mutationFn: (s: { label: string; name: string }) => orpc.meetings.results.nameSpeaker.call({ meetingId, label: s.label, name: s.name }),
+    onSuccess: () => {
+      void list.refetch();
+      void queryClient.invalidateQueries({ queryKey: orpc.meetings.transcript.key() });
+    },
+  });
+  const suggestions = list.data?.suggestions ?? [];
+  if (suggestions.length === 0 && !name.isSuccess) return null;
+  return (
+    <div className="space-y-2" data-testid="speaker-suggestions">
+      <p className="text-sm font-medium">{t('vy.speakers.title')}</p>
+      <p className="text-xs text-muted-foreground">{t('vy.speakers.hint')}</p>
+      <ul className="space-y-1">
+        {suggestions.map((s) => (
+          <li key={s.label} className="flex flex-wrap items-center gap-2 text-sm">
+            <span>{t('vy.speakers.line', { label: s.label, name: s.name, time: clock(s.seconds) })}</span>
+            <Button size="sm" variant="outline" loading={name.isPending && name.variables?.label === s.label} onClick={() => name.mutate({ label: s.label, name: s.name })}>
+              {t('vy.speakers.apply')}
+            </Button>
+          </li>
+        ))}
+      </ul>
+      {name.isSuccess && <p role="status">{t('vy.speakers.done', { name: name.data.name, count: String(name.data.lines) })}</p>}
+      {name.error && <ErrorText>{errorMessage(name.error)}</ErrorText>}
+    </div>
+  );
+}
+
 // The recorder's own Vy summarizing this meeting: ask, wait for the one answer, then copy it into the draft with a click of their own. Shown to the recorder only, and
 // only when this system lets Vy summarize (the status says so); nothing is shared from here.
 function VySummary({ meetingId, hasModelDraft }: { meetingId: string; hasModelDraft: boolean }) {
   const t = useTranslations('meetings.results');
   const status = useQuery(orpc.meetings.results.summaryStatus.queryOptions({ input: { meetingId } }));
-  const ask = useMutation({ mutationFn: () => orpc.meetings.results.summarize.call({ meetingId }) });
+  // The run whose speaker suggestions are shown: kept after the copy below resets the answer, so the recorder can still accept a name once the draft is theirs.
+  const [suggestRun, setSuggestRun] = useState<string | null>(null);
+  const ask = useMutation({
+    mutationFn: () => {
+      setSuggestRun(null);
+      return orpc.meetings.results.summarize.call({ meetingId });
+    },
+    onSuccess: (r) => setSuggestRun(r.state === 'ready' ? r.runId : null),
+  });
   const copy = useMutation({
     mutationFn: (runId: string) => orpc.meetings.results.copySummary.call({ meetingId, runId }),
     onSuccess: () => {
@@ -294,6 +336,7 @@ function VySummary({ meetingId, hasModelDraft }: { meetingId: string; hasModelDr
       <p className="text-xs text-muted-foreground">{t('vy.desc')}</p>
       {ask.isPending && <p role="status">{t('vy.running')}</p>}
       {copy.isSuccess && <p role="status">{t('vy.copied')}</p>}
+      {suggestRun !== null && <SpeakerSuggestions meetingId={meetingId} runId={suggestRun} />}
       {answer?.state === 'ready' && !copy.isSuccess && (
         <div className="space-y-2">
           <p>{t('vy.ready')}</p>
