@@ -5816,6 +5816,12 @@ export const en = {
     otherSales: '{amount} of sales have no known VAT rate, so no indicator includes them. Check those invoices before you file.',
     ratesTitle: 'Totals by VAT rate',
     saleOn: 'sold {date}',
+    correction: {
+      replacement: 'Replaces invoice {original}',
+      adjustment: 'Adjusts invoice {original}',
+      byIssueDate: 'by the period of the adjustment invoice date',
+      byPostingDate: 'by the posting date {date}',
+    },
     supplementary: {
       title: 'To declare in a supplementary return ({count})',
       hint: 'Sales invoices recorded after this period was locked or its return filed, for goods sold in this period, so they belong to this period. The period is not reopened: these invoices are outside the main figures above. VAT to declare in addition: {vat}.',
