@@ -50,6 +50,7 @@ test('lock a month, see a posting into it refused, then unlock it with a reason'
   await test.step('the owner unlocks September with a reason, then the approval goes through', async () => {
     await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Sổ sách' }).click();
+    await page.getByRole('tab', { name: 'Kết thúc kỳ' }).click();
     await page.getByRole('button', { name: 'Mở khóa tháng 09/2026' }).click();
     const confirm = page.getByRole('button', { name: 'Mở khóa tháng 09/2026' });
     await expect(confirm).toBeDisabled();

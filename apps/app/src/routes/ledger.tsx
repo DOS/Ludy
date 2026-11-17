@@ -1,6 +1,6 @@
 // Ledger reports (issue #321): for a month, quarter or year, the trial balance, the general ledger of one account and
 // the receivables and payables per party, from posted entries, with one Excel workbook of all of them. The period
-// lock (#329) sits above the reports. The financial statements tab (issue #154) shows the DRAFT B01-DNN and B02-DNN
+// lock (#329) and the year archive have their own Kết thúc kỳ tab (#3602). The financial statements tab (issue #154) shows the DRAFT B01-DNN and B02-DNN
 // of the same period, with a workbook of its own.
 import { Fragment, useState, type ReactNode } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';

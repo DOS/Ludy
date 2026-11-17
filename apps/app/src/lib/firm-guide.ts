@@ -77,7 +77,7 @@ const FIRM_GUIDE: readonly FirmGuideStep[] = [
       `Mở ${q(vi.nav.ledger)} để xem ${q(vi.ledger.tabs.trialBalance)}, ${q(vi.ledger.tabs.generalLedger)} và ${q(vi.ledger.tabs.parties)} của tháng, rồi bấm ${q(vi.ledger.export)} nếu cần gửi Excel.`,
       `Mở ${q(vi.nav.vat)}, chọn kỳ, xem bảng kê và các chỉ tiêu 01/GTGT. Bấm ${q(vi.vat.export)} để gửi bảng kê, hoặc ${q(vi.vat.exportXml)} để có tệp XML mở trong HTKK.`,
       'File XML để 0 ở các chỉ tiêu {brand} chưa tính được, trong đó có [25] thuế được khấu trừ: kế toán bổ sung và kiểm tra trong HTKK hoặc trên eTax trước khi nộp.',
-      `Khi đã nộp báo cáo của tháng, quay lại ${q(vi.nav.ledger)} và bấm ${q(fill(vi.periodLock.lock, { month: 'MM/YYYY' }))} ở ô ${q(vi.periodLock.title)}: không ai ghi, duyệt hay đảo bút toán vào tháng đó được nữa. Chủ sở hữu hoặc quản trị khóa sổ; chỉ chủ sở hữu mở khóa được, kèm lý do.`,
+      `Khi đã nộp báo cáo của tháng, quay lại ${q(vi.nav.ledger)}, mở thẻ ${q(vi.ledger.tabs.closing)} và bấm ${q(fill(vi.periodLock.lock, { month: 'MM/YYYY' }))} ở ô ${q(vi.periodLock.title)}: không ai ghi, duyệt hay đảo bút toán vào tháng đó được nữa. Chủ sở hữu hoặc quản trị khóa sổ; chỉ chủ sở hữu mở khóa được, kèm lý do.`,
     ],
   },
   {

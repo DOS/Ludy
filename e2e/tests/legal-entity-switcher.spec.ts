@@ -19,6 +19,7 @@ test('the finance screens follow the legal entity chosen in the sidebar', async 
   await test.step('with one legal entity there is nothing to choose', async () => {
     await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Sổ sách' }).click();
+    await page.getByRole('tab', { name: 'Kết thúc kỳ' }).click();
     await expect(page.getByText('Chưa khóa sổ tháng nào.', { exact: false })).toBeVisible();
     await expect(switcher).toHaveCount(0);
   });

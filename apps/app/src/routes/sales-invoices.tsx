@@ -597,6 +597,8 @@ export function SalesInvoicesPage() {
   const canApprove = canSync;
   const status = useQuery(orpc.einvoice.status.queryOptions());
   const seriesQuery = useQuery(orpc.einvoice.series.list.queryOptions());
+  // The Integrations section of Settings draws only where the deployment offers a provider or the sandbox, so the link to it does too (#3602).
+  const providers = useQuery(orpc.einvoice.providers.queryOptions());
   // An invoice on its way (being sent, waiting for the tax authority, issued with its original still to store) is looked at again every few seconds, until it settles.
   const drafts = useQuery({
     ...orpc.einvoice.drafts.list.queryOptions({ input: { legalEntityId: entity.legalEntityId } }),
@@ -635,10 +637,15 @@ export function SalesInvoicesPage() {
           <p className="text-sm text-foreground">{t('noSeries')}</p>
           {/* The next step (#3602): the provider is connected in Cài đặt, section Kết nối; a deployment that runs the offline sandbox can also read its sample series. */}
           <p className="mt-2 text-sm text-muted-foreground">
-            {status.data?.sandbox ? t('noSeriesSandbox') : t('noProvider')}{' '}
-            <Link to="/o/$slug/settings" params={{ slug }} hash="integrations" className="text-link hover:underline" data-testid="invoice-open-connections">
-              {t('openConnections')}
-            </Link>
+            {status.data?.sandbox ? t('noSeriesSandbox') : t('noProvider')}
+            {(providers.data?.length ?? 0) > 0 && (
+              <>
+                {' '}
+                <Link to="/o/$slug/settings" params={{ slug }} hash="integrations" className="text-link hover:underline" data-testid="invoice-open-connections">
+                  {t('openConnections')}
+                </Link>
+              </>
+            )}
           </p>
           {status.data?.sandbox && canSync && (
             <Button className="mt-3" variant="outline" size="sm" loading={sync.isPending} onClick={() => sync.mutate()} data-testid="invoice-sync">
