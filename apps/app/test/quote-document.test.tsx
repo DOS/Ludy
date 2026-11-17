@@ -100,6 +100,44 @@ describe("a sent quote's public page (#2694)", () => {
     expect(odd).toContain('gọi cửa hàng');
   });
 
+  it('links only a phone that is wholly a number, and only an email with nothing a mail client would read as more (#3644)', () => {
+    const seller = (phone: string, email: string) => render('vi', doc({ seller: { ...doc().seller, phone, email } }));
+    // "ext 12" must not become one long number.
+    const ext = seller('028 3829 1234 ext 12', 'ban-hang@hoamai.test');
+    expect(ext).not.toContain('tel:');
+    expect(ext).toContain('028 3829 1234 ext 12');
+    expect(seller('1900 1234 (8h-17h)', 'a@b.test')).not.toContain('tel:');
+    expect(seller('(028) 3829-1234', 'a@b.test')).toContain('href="tel:02838291234"');
+    expect(seller('+84 912 345 678', 'a@b.test')).toContain('href="tel:+84912345678"');
+    // An address with a query or fragment of its own is shown, never linked.
+    for (const email of ['info?bcc=evil@x.test', 'sales#vn@example.com', 'a%40b@c.test', 'a/b@c.test']) {
+      const html = seller('028 3829 1234', email);
+      expect(html).not.toContain('mailto:');
+      expect(html).toContain(email.replace('&', '&amp;'));
+    }
+  });
+
+  it('tells a customer how to answer: the seller\'s phone, Zalo for a mobile number, and email (#3644)', () => {
+    const html = render('vi', doc({ seller: { ...doc().seller, phone: '0912 345 678' } }));
+    const answer = html.slice(html.indexOf('data-testid="quote-answer"'));
+    expect(answer).toContain('Trả lời báo giá này');
+    expect(answer).toContain('Công ty TNHH Hoa Mai');
+    expect(answer).toContain('href="tel:0912345678"');
+    expect(answer).toContain('>Gọi 0912 345 678<');
+    expect(answer).toContain('href="https://zalo.me/0912345678"');
+    expect(answer).toContain('rel="noopener noreferrer"');
+    expect(answer).toContain('href="mailto:ban-hang@hoamai.test?subject=B%C3%A1o%20gi%C3%A1%20BG-2026-0007"');
+    // A landline can be dialed but has no Zalo; an expired quote says to ask for a new one; an answered one has no block.
+    const landline = render('vi', doc());
+    expect(landline).toContain('href="tel:02838291234"');
+    expect(landline).not.toContain('zalo.me');
+    expect(render('vi', doc({ expired: true }))).toContain('Báo giá này đã hết hạn. Hãy liên hệ Công ty TNHH Hoa Mai để nhận báo giá mới.');
+    expect(render('vi', doc({ status: 'accepted' }))).not.toContain('data-testid="quote-answer"');
+    expect(render('vi', doc({ seller: { ...doc().seller, phone: null, email: null } }))).not.toContain('data-testid="quote-answer"');
+    // Not on paper.
+    expect(html.slice(html.lastIndexOf('<section', html.indexOf('data-testid="quote-answer"')), html.indexOf('data-testid="quote-answer"'))).toContain('print:hidden');
+  });
+
   it('stacks each line as a card below the sm breakpoint and keeps the table from sm up and in print (#3644)', () => {
     const html = render('vi', doc());
     // The table: hidden on a phone, shown from sm and in print, ahead of the cards in the page.
@@ -122,6 +160,10 @@ describe("a sent quote's public page (#2694)", () => {
 
   it('shows the discount and tax columns only when a line has one (#3644)', () => {
     const plainLine = { ...doc().lines[0]!, discountPercent: '0', vatRate: null };
+    // The server sends the percent as numeric text: "0.00" is no discount either.
+    const zeroes = render('vi', doc({ lines: [{ ...plainLine, discountPercent: '0.00' }] }));
+    expect(zeroes).not.toContain('>Giảm<');
+    expect(zeroes).not.toContain('Giảm 0');
     const bare = render('vi', doc({ lines: [plainLine] }));
     expect(bare).not.toContain('>Giảm<');
     expect(bare).not.toContain('>Thuế<');
