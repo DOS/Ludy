@@ -87,7 +87,7 @@ export const MEETING_VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/quicktime'
 // import: a spreadsheet for a module's import (the tax portal's purchase list, #465). Stored with source 'import' and
 // never read as a document; the module that imports it has it read in the parsing sandbox.
 // sign_document: a PDF contract uploaded for eSign (#3323), stored with source 'sign_document' and never sent to Finance extraction.
-// agreement: the signed agreement of an e-invoice correction (#2504), a PDF or an image, stored with source 'agreement': never extracted, never in the Inbox. Direct uploads only.
+// agreement: the signed agreement of an e-invoice correction (#2504), a PDF or an image, stored with source 'agreement': never extracted, never in the Inbox. Direct and staged uploads.
 export const UPLOAD_PURPOSES = ['document', 'social', 'import', 'meeting_audio', 'meeting_video', 'sign_document', 'agreement'] as const;
 // An import spreadsheet is an .xlsx workbook (a ZIP container) of at most this size.
 export const MAX_IMPORT_BYTES = 10 * 1024 * 1024;

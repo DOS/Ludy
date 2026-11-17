@@ -191,6 +191,27 @@ export const einvoiceDraftList = defineQuery({
     const originals = new Map(
       originalIds.length === 0 ? [] : (await selectDrafts(ctx).select(['id', 'invoice_date']).where('id', 'in', originalIds).execute()).map((o) => [o.id, o.invoice_date] as const),
     );
+    // The issued corrections of the issued invoices of this page, in one read: the method of the first one (the next correction keeps it) and whether the invoice was replaced (#2504). The
+    // corrections are looked for beyond the page: a correction made later is not among the 200 newest only when the invoice is old, and the original is then on this page.
+    const issuedIds = rows.filter((r) => r.state === 'issued').map((r) => r.id);
+    const corrections =
+      issuedIds.length === 0
+        ? []
+        : await ctx.trx
+            .selectFrom('crove_finance.einvoice_draft')
+            .select(['original_draft_id', 'correction_kind', 'created_at'])
+            .where('org_id', '=', ctx.orgId)
+            .where('state', '=', 'issued')
+            .where('original_draft_id', 'in', issuedIds)
+            .orderBy('created_at')
+            .execute();
+    const firstKind = new Map<string, 'adjustment' | 'replacement'>();
+    const replaced = new Set<string>();
+    for (const c of corrections) {
+      if (!c.original_draft_id || (c.correction_kind !== 'adjustment' && c.correction_kind !== 'replacement')) continue;
+      if (!firstKind.has(c.original_draft_id)) firstKind.set(c.original_draft_id, c.correction_kind);
+      if (c.correction_kind === 'replacement') replaced.add(c.original_draft_id);
+    }
     return rows.map((row) => {
       const draft = buildDraft(row, lines.filter((l) => l.draft_id === row.id), today, row.original_draft_id ? (originals.get(row.original_draft_id) ?? null) : null);
       return {
@@ -205,6 +226,11 @@ export const einvoiceDraftList = defineQuery({
         errorCode: row.error_code,
         evidenceStored: row.signed_file_id !== null,
         updatedAt: new Date(row.updated_at).toISOString(),
+        buyerKind: row.buyer_kind,
+        correction:
+          (row.correction_kind === 'adjustment' || row.correction_kind === 'replacement') && row.original_draft_id ? { kind: row.correction_kind, originalDraftId: row.original_draft_id } : null,
+        correctedBy: firstKind.get(row.id) ?? null,
+        replaced: replaced.has(row.id),
       };
     });
   },
@@ -225,6 +251,12 @@ export const einvoiceDraftCheck = defineQuery({
   handler: async (ctx, input): Promise<EInvoiceDraftCheck> => {
     const today = await databaseToday(ctx.trx);
     const draft = toDraftInput(input);
+    // A correction is checked as it will be stored: signed prices for an adjustment, and the rate day of its original (#2504).
+    if (input.correction) {
+      draft.adjustment = input.correction.kind === 'adjustment';
+      const original = await selectDrafts(ctx).select('invoice_date').where('id', '=', input.correction.originalDraftId).executeTakeFirst();
+      draft.rateDate = original?.invoice_date ?? null;
+    }
     const computed = computeDraft(draft.lines);
     return {
       lines: computed.lines.map((l, i) => ({ lineNo: i + 1, description: l.description, unit: l.unit, quantity: l.quantity, unitPrice: l.unitPrice, amount: l.amount, vatRate: l.vatRate, vatAmount: l.vatAmount })),
