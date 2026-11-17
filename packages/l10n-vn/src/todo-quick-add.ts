@@ -1202,8 +1202,8 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
         if (p) {
           contextPeriod = p;
           if (parsedTime !== null || timeTokenDismissed) {
-            // Clock time already exists (e.g. "sáng mai 9h") or user dismissed time: merge "sáng" into the date token.
-            start = prev.start;
+            // Clock time already exists (e.g. "sáng mai 9h", "lúc 3h buổi chiều ngày mai") or user dismissed time: merge into date token.
+            start = expandConnectorBefore(input, words, prev.start, [['vào', 'buổi'], ['buổi'], ['vào']], occupied);
           } else {
             // Emit separate time token so user can independently dismiss period vs date.
             const pStart = expandConnectorBefore(input, words, prev.start, [['vào', 'buổi'], ['buổi'], ['vào'], ['lúc']], occupied);
@@ -1465,26 +1465,47 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
         parsedTime = { hour: PERIOD_DEFAULT_HOUR[afterPeriod], minute: 0, explicitClock: false, period: afterPeriod };
         claimToken('time', afterW.start, afterW.end);
         timeSpans.push({ start: afterW.start, end: afterW.end });
+      } else if (parsedTime && parsedTime.explicitClock && !parsedTime.period && dateSpans.includes(ds)) {
+        const dateTok = tokens.find((t) => t.kind === 'date' && t.start === ds.start && t.end === ds.end);
+        if (dateTok) {
+          dateTok.end = afterW.end;
+          dateTok.raw = input.slice(dateTok.start, dateTok.end);
+          occupied.push({ start: afterW.start, end: afterW.end });
+        }
       }
     }
   }
 
-  // Standalone "buổi sáng/trưa/chiều/tối" or "vào sáng/trưa/chiều/tối"
-  if (!parsedTime && !timeTokenDismissed) {
-    for (let i = 0; i < words.length - 1; i++) {
-      const w0 = words[i];
-      const w1 = words[i + 1];
-      if (!w0 || !w1 || !spacesOnlyBetween(input, w0.end, w1.start)) continue;
-      if (!vnMatchAny(w0, ['buổi', 'vào'])) continue;
-      const p = matchDayPeriod(w1, false);
-      if (!p) continue;
-      const span = { start: w0.start, end: w1.end };
-      if (!isWordSpanAvailable(span)) continue;
-      contextPeriod = p;
+  // Standalone "buổi sáng/trưa/chiều/tối" or "vào sáng/trưa/chiều/tối": always capture period context, and set default time only if no clock/range exists.
+  for (let i = 0; i < words.length - 1; i++) {
+    const w0 = words[i];
+    const w1 = words[i + 1];
+    if (!w0 || !w1 || !spacesOnlyBetween(input, w0.end, w1.start)) continue;
+    if (!vnMatchAny(w0, ['buổi', 'vào'])) continue;
+    const p = matchDayPeriod(w1, false);
+    if (!p) continue;
+    const span = { start: w0.start, end: w1.end };
+    if (!isWordSpanAvailable(span)) continue;
+    contextPeriod = p;
+    if (!parsedTime && !timeTokenDismissed) {
       parsedTime = { hour: PERIOD_DEFAULT_HOUR[p], minute: 0, explicitClock: false, period: p };
       claimToken('time', span.start, span.end);
-      break;
+    } else if (parsedTime && parsedTime.explicitClock && !parsedTime.period) {
+      const adjacentTime = tokens.find(
+        (t) => t.kind === 'time' && (spacesOnlyBetween(input, t.end, span.start) || spacesOnlyBetween(input, span.end, t.start)),
+      );
+      const adjacentDate = tokens.find(
+        (t) => t.kind === 'date' && (spacesOnlyBetween(input, t.end, span.start) || spacesOnlyBetween(input, span.end, t.start)),
+      );
+      const hostTok = adjacentTime ?? adjacentDate;
+      if (hostTok) {
+        if (spacesOnlyBetween(input, hostTok.end, span.start)) hostTok.end = span.end;
+        else hostTok.start = span.start;
+        hostTok.raw = input.slice(hostTok.start, hostTok.end);
+        occupied.push(span);
+      }
     }
+    break;
   }
 
   // Reconcile contextual period with explicit clock time when separated by a date (e.g. "chiều thứ sáu 3h")

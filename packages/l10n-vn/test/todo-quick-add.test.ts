@@ -649,5 +649,30 @@ describe('parseTodoQuickAdd (#3556)', () => {
     expect(rangeWithPeriodToday.title).toBe('Họp 9:30 - 11:30');
     expect(rangeWithPeriodToday.dueOn).toBe('2026-11-17');
     expect(rangeWithPeriodToday.dueTime).toBeNull();
+
+    // "buổi chiều/sáng/tối" between date and clock adjusts AM/PM and strips cleanly
+    const buoiBetweenDateClock = parseTodoQuickAdd('Họp ngày mai buổi chiều lúc 3 giờ', {
+      now: TUE_MORNING,
+      timeZone: VN_TZ,
+    });
+    expect(buoiBetweenDateClock.title).toBe('Họp');
+    expect(buoiBetweenDateClock.dueOn).toBe('2026-11-18');
+    expect(buoiBetweenDateClock.dueTime).toBe('15:00');
+
+    const buoiBetweenDmyClock = parseTodoQuickAdd('Họp ngày 25/11 buổi chiều lúc 3h', {
+      now: TUE_MORNING,
+      timeZone: VN_TZ,
+    });
+    expect(buoiBetweenDmyClock.title).toBe('Họp');
+    expect(buoiBetweenDmyClock.dueOn).toBe('2026-11-25');
+    expect(buoiBetweenDmyClock.dueTime).toBe('15:00');
+
+    const buoiBeforeDateAfterClock = parseTodoQuickAdd('Họp lúc 3h buổi chiều ngày mai', {
+      now: TUE_MORNING,
+      timeZone: VN_TZ,
+    });
+    expect(buoiBeforeDateAfterClock.title).toBe('Họp');
+    expect(buoiBeforeDateAfterClock.dueOn).toBe('2026-11-18');
+    expect(buoiBeforeDateAfterClock.dueTime).toBe('15:00');
   });
 });
