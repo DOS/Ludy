@@ -16,12 +16,16 @@ export const SECTION_HINT_MAX = 200;
 // Active templates one organization keeps; archived ones do not count.
 export const TEMPLATES_ACTIVE_MAX = 50;
 
-// What is stripped from a title, a hint or a name: C0 and C1 controls (a newline and a tab included), the line and paragraph separators, the bidirectional controls and the zero-width
-// characters that hide text. Whitespace left is collapsed to single spaces.
+// What is stripped from a title, a hint or a name: C0 and C1 controls (a newline and a tab included), the line and paragraph separators, the bidirectional controls, the zero-width
+// characters that hide text, the tag characters (which can carry a hidden message), the invisible fillers (soft hyphen, combining grapheme joiner, Mongolian vowel separator, Arabic letter
+// mark, Hangul fillers, the braille blank, the interlinear annotation marks), and an unpaired surrogate (which PostgreSQL refuses in a jsonb value). Variation selectors stay: emoji need
+// them. Whitespace left is collapsed to single spaces. The database refuses the same set (crove_meetings.minutes_sections_ok).
+// The combining grapheme joiner is outside the class: a combining mark inside one is a lint warning (no-misleading-character-class).
 // oxlint-disable-next-line no-control-regex
-const STRIP = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/gu;
+const STRIP = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u115f\u1160\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2069\u2800\u3164\ufeff\ufff9-\ufffb\u{e0000}-\u{e007f}]|\u034f/gu;
+const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
 export function cleanTemplateText(raw: string): string {
-  return raw.replace(STRIP, ' ').replace(/\s+/gu, ' ').trim();
+  return raw.replace(LONE_SURROGATE, ' ').replace(STRIP, ' ').replace(/\s+/gu, ' ').trim();
 }
 
 const zClean = (max: number, min: number) =>
@@ -68,8 +72,9 @@ export function parseStoredSections(raw: unknown): TemplateSection[] {
 }
 export const zMinutesTemplateDone = z.strictObject({ templateId: zId, archived: z.boolean() });
 
-// Keys are code's. A section that exists keeps its key, a new one gets the next `s<n>` after the highest one the template has used, so a removed section's key is not handed to a
-// different section of the same template. A key the template does not have, or used twice, is refused (null).
+// Keys are code's. A section that exists keeps its key, a new one gets the next `s<n>` after the highest key the template holds now. Within one edit a removed section's key is not handed to a
+// new one; after a later edit the highest key may come back if its section was removed (the template keeps no counter), so a key identifies a section only inside one version of a template:
+// a meeting keeps its own copy, and a run is tied to the copy's hash, never to the live keys. A key the template does not have, or used twice, is refused (null).
 export function assignSectionKeys(existing: readonly TemplateSection[], input: readonly TemplateSectionInput[]): TemplateSection[] | null {
   const known = new Set(existing.map((s) => s.key));
   const used = new Set<string>();

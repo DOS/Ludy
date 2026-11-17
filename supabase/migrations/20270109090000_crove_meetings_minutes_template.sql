@@ -12,7 +12,7 @@ SET LOCAL lock_timeout = '2s';
 -- ---------------------------------------------------------------------------
 -- The shape of the sections, in the database: the same bounds as the contract (packages/kernel-contract/src/meeting-minutes-templates.ts).
 -- A pure check: 1 to 8 objects with exactly the keys key, title and hint; the key is snake_case and unique; the title is 1 to 60 and the hint 0 to 200 characters; no control character,
--- line or paragraph separator, bidirectional control or zero-width character in either (the app strips them, the database refuses what is left).
+-- line or paragraph separator, bidirectional control, zero-width character, tag character or invisible filler in either (the app strips them, the database refuses what is left).
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION crove_meetings.minutes_sections_ok(p_sections jsonb)
 RETURNS boolean LANGUAGE plpgsql IMMUTABLE SET search_path = pg_catalog, pg_temp AS $$
@@ -20,7 +20,7 @@ DECLARE
   v_item jsonb;
   v_key text;
   v_keys text[] := ARRAY[]::text[];
-  v_bad constant text := '[\u0001-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]';
+  v_bad constant text := '[\u0001-\u001f\u007f-\u009f\u00ad\u034f\u061c\u115f\u1160\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2069\u2800\u3164\ufeff\ufff9-\ufffb\U000e0000-\U000e007f]';
 BEGIN
   IF p_sections IS NULL OR pg_catalog.jsonb_typeof(p_sections) <> 'array' OR pg_catalog.jsonb_array_length(p_sections) NOT BETWEEN 1 AND 8 THEN
     RETURN false;
@@ -60,7 +60,7 @@ GRANT EXECUTE ON FUNCTION crove_meetings.minutes_sections_ok(jsonb) TO crove_ten
 CREATE TABLE IF NOT EXISTS crove_meetings.minutes_template (
   org_id uuid NOT NULL REFERENCES crove_kernel.tenant (org_id) ON DELETE CASCADE,
   id uuid NOT NULL DEFAULT crove_kernel.uuid_v7(),
-  name text NOT NULL CHECK (pg_catalog.char_length(name) BETWEEN 1 AND 80 AND name = pg_catalog.btrim(name) AND name !~ '[\u0001-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]'),
+  name text NOT NULL CHECK (pg_catalog.char_length(name) BETWEEN 1 AND 80 AND name = pg_catalog.btrim(name) AND name !~ '[\u0001-\u001f\u007f-\u009f\u00ad\u034f\u061c\u115f\u1160\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2069\u2800\u3164\ufeff\ufff9-\ufffb\U000e0000-\U000e007f]'),
   sections jsonb NOT NULL CHECK (crove_meetings.minutes_sections_ok(sections)),
   archived_at timestamptz,
   created_by uuid NOT NULL REFERENCES crove_kernel.user_account (id),

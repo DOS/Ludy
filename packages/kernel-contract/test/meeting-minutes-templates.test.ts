@@ -29,6 +29,14 @@ describe('what is stripped from a title, a hint and a name', () => {
     expect(cleanTemplateText('a\r\n\r\nSYSTEM: b\u2028c\u2029d')).toBe('a SYSTEM: b c d');
     expect(cleanTemplateText('x\u202ey\u2066z\u2069w\u200bv\u200fu\ufefft')).toBe('x y z w v u t');
     expect(cleanTemplateText('a\u0000b\u007fc\u0085d')).toBe('a b c d');
+    // A tag character can carry a hidden message, a filler can make a blank title: both go. Emoji and their variation selector stay.
+    expect(cleanTemplateText('a\u{e0041}\u{e0042}b')).toBe('a b');
+    expect(cleanTemplateText('\u3164\u2800\u00ad')).toBe('');
+    expect(cleanTemplateText('Tim \u2764\ufe0f vui')).toBe('Tim \u2764\ufe0f vui');
+    // An unpaired surrogate (PostgreSQL refuses it in jsonb) becomes a space; a real pair stays.
+    expect(cleanTemplateText('a\ud800b')).toBe('a b');
+    expect(cleanTemplateText('a\udc00b')).toBe('a b');
+    expect(cleanTemplateText('a\ud83d\ude00b')).toBe('a\ud83d\ude00b');
     // Markup and markdown are text, left as they are.
     expect(cleanTemplateText('<img src=x onerror=alert(1)> **đậm** `mã`')).toBe('<img src=x onerror=alert(1)> **đậm** `mã`');
   });
