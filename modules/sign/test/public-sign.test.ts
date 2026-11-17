@@ -417,5 +417,57 @@ describe('sign PNG signature validation and ADR-0034 mail templates (#3324)', ()
     expect(middayInvite.html).toContain('09:00 17/11/2026');
     expect(middayInvite.text).not.toContain('den het ngay');
     expect(middayInvite.html).not.toContain('den het ngay');
+
+    // Approver invites and reminders use review-and-approve wording (#3528).
+    const approverInvite = renderSignInviteMail(
+      { ...invitePayload, signerRole: 'approver', roleLabel: 'Giam doc tai chinh' },
+      { publicUrl: 'https://app.ludy.example/', token: rawToken, signerName: 'Tran & Binh' },
+    );
+    expect(approverInvite.text).toContain('gui ban tai lieu can phe duyet');
+    expect(approverInvite.text).toContain('xem va phe duyet tai lieu');
+    expect(approverInvite.text).toContain('Han phe duyet den: ');
+    expect(approverInvite.text).not.toContain('Mo tai lieu de ky');
+    expect(approverInvite.html).toContain('Xem va phe duyet tai lieu');
+    expect(approverInvite.html).toContain('trang phe duyet');
+
+    const approverReminder = renderSignInviteMail(invitePayload, {
+      publicUrl: 'https://app.ludy.example/',
+      token: rawToken,
+      signerRole: 'approver',
+      isReminder: true,
+    });
+    expect(approverReminder.text).toContain('nhac ban phe duyet tai lieu');
+    expect(approverReminder.html).toContain('Xem va phe duyet tai lieu');
+
+    const attachedCompleted = renderSignCompletedMail(completedPayload, {
+      publicUrl: 'https://app.ludy.example/',
+      pdfAttached: true,
+      certAttached: true,
+    });
+    expect(attachedCompleted.text).toContain('Ban PDF da niem phong va chung thu kiem toan dang JSON duoc dinh kem trong email nay.');
+    expect(attachedCompleted.html).toContain('Ban PDF da niem phong va chung thu kiem toan dang JSON duoc dinh kem trong email nay.');
+
+    const pdfOnlyCompleted = renderSignCompletedMail(completedPayload, {
+      publicUrl: 'https://app.ludy.example/',
+      pdfAttached: true,
+      certAttached: false,
+    });
+    expect(pdfOnlyCompleted.text).toContain('Ban PDF da niem phong duoc dinh kem trong email nay. Tep chung thu kiem toan dang JSON khong the dinh kem');
+    expect(pdfOnlyCompleted.text).not.toContain('va chung thu kiem toan dang JSON duoc dinh kem');
+
+    const certOnlyCompleted = renderSignCompletedMail(completedPayload, {
+      publicUrl: 'https://app.ludy.example/',
+      pdfAttached: false,
+      certAttached: true,
+    });
+    expect(certOnlyCompleted.text).toContain('chi dinh kem tep chung thu kiem toan dang JSON');
+
+    const fallbackCompleted = renderSignCompletedMail(completedPayload, {
+      publicUrl: 'https://app.ludy.example/',
+      pdfAttached: false,
+      certAttached: false,
+    });
+    expect(fallbackCompleted.text).toContain('khong the dinh kem trong email nay');
+    expect(fallbackCompleted.html).toContain('khong the dinh kem trong email nay');
   });
 });

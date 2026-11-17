@@ -2,7 +2,7 @@
 // MailTemplate adapters for Crove eSign Slice 1b outbound mail (ADR-0034, #3324).
 // Hydrates short-lived signing links and 6-digit email OTPs in memory at dispatch time via system commands,
 // so raw tokens and OTP codes never sit in crove_kernel.mail_message.payload.
-import { BlobTooLargeError, readVerified } from '@crove/kernel-runtime';
+import { BlobIntegrityError, BlobTooLargeError, readVerified } from '@crove/kernel-runtime';
 import type { MailAttachment } from '@crove/mail';
 import {
   SIGN_COMPLETED_MAIL_TEMPLATE,
@@ -17,8 +17,22 @@ import {
   zSignOtpMailPayload,
 } from '@crove/mod-sign';
 import type { MailTemplate, MailTemplates } from './mail-queue.ts';
+import { opsAlert } from './ops-alert.ts';
 
 const MAX_SIGN_COMPLETED_ATTACHMENT_BYTES = 18 * 1024 * 1024;
+
+function logCompletedBlobReadFailure(kind: 'certificate' | 'sealed', error: unknown): void {
+  if (error instanceof BlobIntegrityError) {
+    opsAlert('[sign-mail] ALERT evidence integrity: a stored file does not match its recorded sha256', error);
+    console.warn(`[sign-mail] ${kind}_blob_unreadable: integrity_mismatch`);
+    return;
+  }
+  if (error instanceof BlobTooLargeError) {
+    console.warn(`[sign-mail] ${kind}_blob_unreadable: too_large`);
+    return;
+  }
+  console.warn(`[sign-mail] ${kind}_blob_unreadable: store_error`);
+}
 
 const signInviteTemplate = (isReminder: boolean): MailTemplate => ({
   async render(input) {
@@ -27,6 +41,7 @@ const signInviteTemplate = (isReminder: boolean): MailTemplate => ({
     const data = await input.execute<{
       token: string | null;
       signerName: string;
+      signerRole?: 'signer' | 'approver';
       message: string | null;
     } | null>('sign.signer.mail_data', {
       envelopeId: parsed.envelopeId,
@@ -34,15 +49,25 @@ const signInviteTemplate = (isReminder: boolean): MailTemplate => ({
       messageId: input.messageId,
     });
     if (!data?.token) return null;
+    const signerRole = data.signerRole ?? parsed.signerRole ?? 'signer';
     const rendered = renderSignInviteMail(parsed, {
       publicUrl: input.publicUrl,
       brand: input.brand,
       token: data.token,
       signerName: data.signerName,
+      signerRole,
       message: data.message,
       isReminder,
     });
-    return { subject: input.subject, ...rendered };
+    let subject = input.subject;
+    if (signerRole === 'approver') {
+      if (subject.startsWith('Moi ky: ')) {
+        subject = `Moi duyet: ${subject.slice('Moi ky: '.length)}`.slice(0, 300);
+      } else if (subject.startsWith('Nhac ky: ')) {
+        subject = `Nhac duyet: ${subject.slice('Nhac ky: '.length)}`.slice(0, 300);
+      }
+    }
+    return { subject, ...rendered };
   },
 });
 
@@ -81,17 +106,10 @@ const signCompletedTemplate: MailTemplate = {
       envelopeId: parsed.envelopeId,
     });
     if (!verified) return null;
-    const rendered = renderSignCompletedMail(
-      {
-        ...parsed,
-        certificateCode: verified.certificateCode,
-        sealedSha256: verified.sealedSha256,
-        completedAtIso: verified.completedAtIso,
-      },
-      { publicUrl: input.publicUrl, brand: input.brand },
-    );
 
     const attachments: MailAttachment[] = [];
+    let certAttached = false;
+    let sealedAttached = false;
     let pdfOmittedForSize = false;
     let certSize = 0;
     if (input.store) {
@@ -104,10 +122,9 @@ const signCompletedTemplate: MailTemplate = {
             contentType: 'application/json',
             content: certBytes,
           });
+          certAttached = true;
         } catch (error) {
-          if (!(error instanceof BlobTooLargeError)) {
-            throw error;
-          }
+          logCompletedBlobReadFailure('certificate', error);
         }
       }
       if (verified.sealedFile) {
@@ -122,15 +139,32 @@ const signCompletedTemplate: MailTemplate = {
               contentType: 'application/pdf',
               content: sealedBytes,
             });
+            sealedAttached = true;
           } catch (error) {
-            if (!(error instanceof BlobTooLargeError)) {
-              throw error;
+            if (error instanceof BlobTooLargeError) {
+              pdfOmittedForSize = true;
+            } else {
+              logCompletedBlobReadFailure('sealed', error);
             }
-            pdfOmittedForSize = true;
           }
         }
       }
     }
+
+    const pdfAttached = sealedAttached ? true : pdfOmittedForSize ? undefined : false;
+    const rendered = renderSignCompletedMail(
+      {
+        ...parsed,
+        certificateCode: verified.certificateCode,
+        sealedSha256: verified.sealedSha256,
+        completedAtIso: verified.completedAtIso,
+      },
+      {
+        publicUrl: input.publicUrl,
+        brand: input.brand,
+        ...(pdfAttached !== undefined ? { pdfAttached, certAttached } : {}),
+      },
+    );
 
     const sizeNotice =
       certSize > 0

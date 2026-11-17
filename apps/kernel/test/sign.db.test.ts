@@ -14,12 +14,20 @@ import { buildKernelCommands, kernelQueries } from '@crove/kernel';
 import type { PersonalDataErasure, PersonalDataResult } from '@crove/kernel-contract';
 import { Runtime, fileKey, sha256Hex, type AgentActor, type BlobStore } from '@crove/kernel-runtime';
 import { financeCommands, financeQueries } from '@crove/mod-finance';
-import { signCommands, signManifest, signQueries } from '@crove/mod-sign';
+import {
+  SIGN_COMPLETED_MAIL_TEMPLATE,
+  SIGN_INVITE_MAIL_TEMPLATE,
+  SIGN_REMIND_MAIL_TEMPLATE,
+  signCommands,
+  signManifest,
+  signQueries,
+} from '@crove/mod-sign';
 import { createAuthenticator } from '../src/auth.ts';
 import { AVAILABLE_MODULES, loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
 import { orgPurgeCommand, runOrgPurge } from '../src/org-purge.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
+import { signMailTemplates } from '../src/sign-mail.ts';
 import { SIGN_ACTOR, runSignPdfInspectJob, runSignPdfSealJob, sweepSignCleanup, sweepSignExpire, sweepSignPendingWork } from '../src/sign-worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -1601,5 +1609,261 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     expect(orgStatuses.env2).toBe('expired');
     expect(orgStatuses.otp1).toBe(1);
     expect(orgStatuses.otp2).toBe(0);
+  });
+
+  it('completes end-to-end Approver HTTP ceremony, sequential approver invite copy, and sealed completion mail attachments (#3528)', async () => {
+    const approverOwner: Account = { subject: randomUUID(), email: 'approver-owner@sign.test', session: randomUUID(), userId: '' };
+    const me = await rpc('me/get', approverOwner, undefined, null);
+    expect(me.status).toBe(200);
+    approverOwner.userId = String(me.body.userId);
+
+    const createdOrg = await rpc('org/create', approverOwner, { name: 'Approver E2E Org', idempotencyKey: randomUUID() }, null);
+    expect(createdOrg.status).toBe(200);
+    const e2eOrgId = String(createdOrg.body.orgId);
+    const e2eOrgSlug = String(createdOrg.body.slug);
+
+    const up = await uploadFile(app, approverOwner, pdfFixture('approver-e2e'), 'approver-contract.pdf', 'sign_document', 'application/pdf', e2eOrgSlug);
+    expect(up.status).toBe(200);
+    const sourceFileId = ((up.body?.files as Array<{ fileId: string }>) ?? [])[0]!.fileId;
+
+    const env = await runtime.execute<{ envelopeId: string }>(
+      'sign.envelope.create',
+      {
+        title: 'Quyet dinh phe duyet ngan sach',
+        routingMode: 'sequential',
+        sourceFileId,
+        message: 'Nho anh chi xem xet va phe duyet.',
+      },
+      { actor: asUser(approverOwner), orgId: e2eOrgId },
+    );
+    await runSignPdfInspectJob(
+      { workerDb, runtime: workerRuntime, store, extract: mockExtract() },
+      { orgId: e2eOrgId, envelopeId: env.envelopeId },
+    );
+
+    const approver1 = await runtime.execute<{ signerId: string }>(
+      'sign.signer.add',
+      {
+        envelopeId: env.envelopeId,
+        routingOrder: 1,
+        signerRole: 'approver',
+        roleLabel: 'Ke toan truong',
+        name: 'Tran Thi Binh',
+        email: 'approver1@sign.test',
+        deliveryMode: 'email',
+      },
+      { actor: asUser(approverOwner), orgId: e2eOrgId },
+    );
+    const approver2 = await runtime.execute<{ signerId: string }>(
+      'sign.signer.add',
+      {
+        envelopeId: env.envelopeId,
+        routingOrder: 2,
+        signerRole: 'approver',
+        roleLabel: 'Giam doc',
+        name: 'Nguyen Van Cuong',
+        email: 'approver2@sign.test',
+        deliveryMode: 'email',
+      },
+      { actor: asUser(approverOwner), orgId: e2eOrgId },
+    );
+
+    // Optional text field for approver1 and zero fields for approver2 (no signature fields for either).
+    await runtime.execute(
+      'sign.field.set',
+      {
+        envelopeId: env.envelopeId,
+        fields: [
+          {
+            signerId: approver1.signerId,
+            fieldType: 'text',
+            pageNumber: 1,
+            xNorm: 0.1,
+            yNorm: 0.2,
+            wNorm: 0.3,
+            hNorm: 0.05,
+            label: 'Ghi chu duyet',
+            required: false,
+          },
+        ],
+      },
+      { actor: asUser(approverOwner), orgId: e2eOrgId },
+    );
+
+    await runtime.execute(
+      'sign.envelope.send',
+      { envelopeId: env.envelopeId },
+      { actor: asUser(approverOwner), orgId: e2eOrgId },
+    );
+
+    const renderMailForSource = async (
+      templateKey: string,
+      sourceId: string,
+    ) => {
+      const row = await admin(async (c) =>
+        (
+          await c.query<{
+            id: string;
+            subject: string;
+            payload: Readonly<Record<string, unknown>>;
+          }>(
+            'SELECT id, subject, payload FROM crove_kernel.mail_message WHERE org_id = $1 AND template_key = $2 AND source_id = $3 ORDER BY created_at DESC LIMIT 1',
+            [e2eOrgId, templateKey, sourceId],
+          )
+        ).rows[0],
+      );
+      expect(row).toBeDefined();
+      return signMailTemplates[templateKey]!.render({
+        messageId: row!.id,
+        subject: row!.subject,
+        payload: row!.payload,
+        publicUrl: 'https://app.example.test',
+        inboundAddress: null,
+        brand: 'Ludy',
+        store,
+        execute: (cmd, cmdPayload) =>
+          workerRuntime.execute(cmd, cmdPayload, {
+            actor: { type: 'system', component: 'mail' },
+            orgId: e2eOrgId,
+          }),
+      });
+    };
+
+    const extractTokenFromMailText = (text: string): string => {
+      const match = /#([A-Za-z0-9_-]{32,})/.exec(text);
+      expect(match?.[1]).toBeTruthy();
+      return match![1]!;
+    };
+
+    // 1. Direct invite queued for Approver 1 renders approver subject and wording.
+    const mail1 = await renderMailForSource(SIGN_INVITE_MAIL_TEMPLATE, approver1.signerId);
+    expect(mail1?.subject).toBe('Moi duyet: Quyet dinh phe duyet ngan sach');
+    expect(mail1?.text).toContain('xem va phe duyet tai lieu');
+    const token1 = extractTokenFromMailText(mail1!.text);
+
+    // 1b. Reminder email for Approver 1 queues 'Nhac duyet:' and rotates the active signing token cleanly.
+    await runtime.execute(
+      'sign.envelope.remind',
+      { envelopeId: env.envelopeId, signerId: approver1.signerId },
+      { actor: asUser(approverOwner), orgId: e2eOrgId },
+    );
+    const remindMail1 = await renderMailForSource(SIGN_REMIND_MAIL_TEMPLATE, approver1.signerId);
+    expect(remindMail1?.subject).toBe('Nhac duyet: Quyet dinh phe duyet ngan sach');
+    expect(remindMail1?.text).toContain('nhac ban phe duyet tai lieu');
+    const activeToken1 = extractTokenFromMailText(remindMail1!.text);
+    expect(activeToken1).not.toBe(token1);
+
+    // 2. POST /api/sign/view returns signerRole: 'approver' and non-signature field for the active reminder token.
+    const view1Res = await app.request('/api/sign/view', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.55', 'user-agent': 'ApproverTest/1.0' },
+      body: JSON.stringify({ token: activeToken1 }),
+    });
+    expect(view1Res.status).toBe(200);
+    const view1Body = (await view1Res.json()) as {
+      state: string;
+      signerRole?: string;
+      fields?: Array<{ id: string; fieldType: string }>;
+    };
+    expect(view1Body.state).toBe('ready');
+    expect(view1Body.signerRole).toBe('approver');
+    expect(view1Body.fields?.map((f) => f.fieldType)).toEqual(['text']);
+    const noteFieldId = view1Body.fields![0]!.id;
+
+    // 3. POST /api/sign/submit accepts approver submission with zero signatureKind and optional text note.
+    const submit1Res = await app.request('/api/sign/submit', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.55', 'user-agent': 'ApproverTest/1.0' },
+      body: JSON.stringify({
+        token: activeToken1,
+        consentAccepted: true,
+        fields: [{ fieldId: noteFieldId, valueText: 'Da kiem tra du toan' }],
+      }),
+    });
+    expect(submit1Res.status).toBe(200);
+
+    // 4. Sequential advancement queued step 2 (Approver 2); rendering rewrites SQL subject and uses approver wording.
+    const mail2 = await renderMailForSource(SIGN_INVITE_MAIL_TEMPLATE, approver2.signerId);
+    expect(mail2?.subject).toBe('Moi duyet: Quyet dinh phe duyet ngan sach');
+    expect(mail2?.text).toContain('xem va phe duyet tai lieu');
+    const token2 = extractTokenFromMailText(mail2!.text);
+
+    const view2Res = await app.request('/api/sign/view', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.56', 'user-agent': 'ApproverTest/1.0' },
+      body: JSON.stringify({ token: token2 }),
+    });
+    expect(view2Res.status).toBe(200);
+    const view2Body = (await view2Res.json()) as { state: string; signerRole?: string; fields?: unknown[] };
+    expect(view2Body.state).toBe('ready');
+    expect(view2Body.signerRole).toBe('approver');
+    expect(view2Body.fields).toEqual([]);
+
+    // Approver 2 submits cleanly with 0 fields and no signatureKind.
+    const submit2Res = await app.request('/api/sign/submit', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.56', 'user-agent': 'ApproverTest/1.0' },
+      body: JSON.stringify({
+        token: token2,
+        consentAccepted: true,
+        fields: [],
+      }),
+    });
+    expect(submit2Res.status).toBe(200);
+
+    // 5. Seal the completed envelope and verify completion mail attaches sealed PDF and audit certificate JSON.
+    await runSignPdfSealJob(
+      { workerDb, runtime: workerRuntime, store, extract: mockExtract() },
+      { orgId: e2eOrgId, envelopeId: env.envelopeId },
+    );
+
+    const completedMail = await renderMailForSource(SIGN_COMPLETED_MAIL_TEMPLATE, env.envelopeId);
+    expect(completedMail).not.toBeNull();
+    expect(completedMail?.attachments?.map((a) => [a.filename, a.contentType])).toEqual([
+      ['tai-lieu-da-niem-phong.pdf', 'application/pdf'],
+      ['chung-thu-kiem-toan.json', 'application/json'],
+    ]);
+    expect(completedMail?.text).toContain('duoc dinh kem trong email nay');
+
+    // 6. Approver can decline via POST /api/sign/decline and reject subsequent view cleanly.
+    const declineEnv = await runtime.execute<{ envelopeId: string }>(
+      'sign.envelope.create',
+      { title: 'Ho so tu choi duyet', sourceFileId },
+      { actor: asUser(approverOwner), orgId: e2eOrgId },
+    );
+    await runSignPdfInspectJob(
+      { workerDb, runtime: workerRuntime, store, extract: mockExtract() },
+      { orgId: e2eOrgId, envelopeId: declineEnv.envelopeId },
+    );
+    await runtime.execute(
+      'sign.signer.add',
+      {
+        envelopeId: declineEnv.envelopeId,
+        signerRole: 'approver',
+        roleLabel: 'Kiem soat noi bo',
+        name: 'Pham Thi D',
+        email: 'approver-decline@sign.test',
+        deliveryMode: 'link',
+      },
+      { actor: asUser(approverOwner), orgId: e2eOrgId },
+    );
+    const declineSent = await runtime.execute<{ links: Array<{ token: string }> }>(
+      'sign.envelope.send',
+      { envelopeId: declineEnv.envelopeId },
+      { actor: asUser(approverOwner), orgId: e2eOrgId },
+    );
+    const declineToken = declineSent.links[0]!.token;
+    const declineRes = await app.request('/api/sign/decline', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.57', 'user-agent': 'ApproverTest/1.0' },
+      body: JSON.stringify({ token: declineToken, reason: 'Chua du ho so kem theo' }),
+    });
+    expect(declineRes.status).toBe(200);
+    const afterDeclineView = await app.request('/api/sign/view', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.57', 'user-agent': 'ApproverTest/1.0' },
+      body: JSON.stringify({ token: declineToken }),
+    });
+    expect(afterDeclineView.status).toBe(404);
   });
 });
