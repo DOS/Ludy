@@ -65,6 +65,7 @@ const book = (over: Partial<HouseholdS2a> = {}): HouseholdS2a => ({
     { trade: 'services', revenue: '400000', vatPercent: '5', pitPercent: '2', vat: '20000', pit: '8000' },
   ],
   unassigned: '0',
+  unassignedGross: '0',
   totals: { revenue: '900000', vat: '25000', pit: '10500', tax: '35500' },
   unconfirmed: [
     { kind: 'form', key: 'S2a 2026.1', effectiveFrom: '2026-01-01' },
@@ -142,6 +143,7 @@ describe('the S2a-HKD book on the household screen (#2517 slice 2a)', () => {
           { trade: 'services', revenue: '0', vatPercent: '5', pitPercent: '2', vat: '0', pit: '0' },
         ],
         unassigned: '300000',
+        unassignedGross: '300000',
         totals: null,
       }),
     });

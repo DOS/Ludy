@@ -4668,7 +4668,7 @@ export const en = {
     s2aFile: 'so-s2a-hkd-{period}-{org}.xlsx',
     s2aByLine: 'By business line',
     s2aLinesTitle: 'Revenue and tax by business line',
-    s2aUnassigned: '{amount} of revenue has no business line yet (it is not from a sold item that has one), so the tax total is held back. Give the items you sold a business line.',
+    s2aUnassigned: '{amount} of revenue has no business line yet, so the tax total is held back. If it comes from a sale document, give the items you sold a business line. Entries with no sale document (marketplace settlements, manual vouchers) cannot be given a business line yet.',
     unassignedName: 'No business line yet',
 
   },

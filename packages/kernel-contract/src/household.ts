@@ -133,7 +133,7 @@ export type HouseholdCnkd = z.infer<typeof zHouseholdCnkd>;
 // of each line by the percentages in force on the period's last day, each rounded to a whole dong. It is a view of the ledger like S1a: one row per entry that touched account 511, so `total` is the
 // ledger's own movement of 511 and the parts of every row add up to its amount. The ledger has no trade on a 511 line, so the trade of a row comes from what the entry is built from, never from a
 // guess: a household with one trade has every row on it; with several, a row built from a sale document's lines takes the trade of each line's stock item (by the lines' amounts), and a row built
-// from anything else (a marketplace settlement, a manual voucher), or from an item whose trade the profile does not list, is `unassigned`. `unassigned` holds the totals back (`totals` is null)
+// from anything else (a marketplace settlement, a manual voucher), or from an item whose trade the profile does not list, is `unassigned`. Any `unassigned` part holds the totals back (`totals` is null)
 // rather than guess. `commentary` is true while any row behind the figures (the book's form, a percentage) is not confirmed by the accountant (#2520): the screen and the Excel file then carry
 // HOUSEHOLD_PROVISIONAL_LABEL, which goes on its own when later dated `confirmed` rows exist. Ludy files nothing.
 export const zHouseholdS2aGet = z.strictObject({ legalEntityId: zId, period: zLedgerPeriod });
@@ -159,7 +159,10 @@ export const zHouseholdS2a = z.strictObject({
   // The ledger's movement of 511 over the book's days: the sum of the rows, and of the lines plus `unassigned`.
   total: zMoney,
   lines: z.array(zHouseholdCnkdLine),
+  // The net of the parts with no business line (a sale and its void both unassigned net to zero), and the sum of their absolute amounts. Any part with an amount holds `totals` back, so two
+  // unrelated unassigned entries that happen to cancel never hide their tax; the screen names the gross.
   unassigned: zMoney,
+  unassignedGross: zMoney,
   totals: z.strictObject({ revenue: zMoney, vat: zMoney, pit: zMoney, tax: zMoney }).nullable(),
   unconfirmed: z.array(z.strictObject({ kind: z.enum(['form', 'rate']), key: z.string(), effectiveFrom: zLocalDate })),
   commentary: z.boolean(),

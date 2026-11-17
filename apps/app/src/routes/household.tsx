@@ -276,7 +276,7 @@ function S2aBook({ entityId }: { entityId: string }) {
           </DataTable>
           {data.totals === null ? (
             <Alert className="mt-3" data-testid="household-s2a-unassigned">
-              <AlertDescription>{t('s2aUnassigned', { amount: f.money(data.unassigned) })}</AlertDescription>
+              <AlertDescription>{t('s2aUnassigned', { amount: f.money(data.unassignedGross) })}</AlertDescription>
             </Alert>
           ) : (
             <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm" data-testid="household-s2a-totals">

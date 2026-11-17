@@ -192,6 +192,7 @@ suite('the S2a-HKD revenue book of a household business (#2517 slice 2a)', () =>
       { trade: 'services', revenue: '400000', vatPercent: '5', pitPercent: '2', vat: '20000', pit: '8000' },
     ]);
     expect(book.unassigned).toBe('300000');
+    expect(book.unassignedGross).toBe('300000');
     expect(sum([...book.lines.map((l) => l.revenue), book.unassigned])).toBe(Number(book.total));
     expect(book.totals).toBeNull();
     // The rows behind the figures are still `commentary`: the book is given and says so.
@@ -262,6 +263,41 @@ suite('the S2a-HKD revenue book of a household business (#2517 slice 2a)', () =>
     const book = await s2a(o, '2026-09');
     expect(book.rows[0]?.parts).toEqual([{ trade: 'goods', amount: '500000' }, { trade: 'unassigned', amount: '500000' }]);
     expect(book.totals).toBeNull();
+  });
+
+  it('keeps each trade its signed contribution from a sale document with an adjustment line', async () => {
+    const o = await org();
+    await setProfile(o);
+    const shirt = await item(o, 'AO', 'goods');
+    const repair = await item(o, 'SUA', 'services');
+    // Goods 200000 and services -100000 (a price adjustment) make a net of 100000 on 511.
+    await entry(o, '2026-09-05', 'Bán hàng có điều chỉnh', [['111', 100000, 0], ['511', 0, 100000]], { sale: [{ amount: 200000, item: shirt }, { amount: -100000, item: repair }] });
+    const book = await s2a(o, '2026-09');
+    expect(book.rows[0]?.parts).toEqual([{ trade: 'goods', amount: '200000' }, { trade: 'services', amount: '-100000' }]);
+    expect(book.lines.map((l) => [l.trade, l.revenue])).toEqual([['goods', '200000'], ['services', '-100000']]);
+    expect(book.total).toBe('100000');
+  });
+
+  it('holds the totals back for every unassigned part, even when two unrelated unassigned entries cancel each other', async () => {
+    const o = await org();
+    await setProfile(o);
+    await entry(o, '2026-09-05', 'Phiếu nhập tay', [['111', 1000000, 0], ['511', 0, 1000000]]);
+    await entry(o, '2026-09-20', 'Điều chỉnh khác', [['511', 1000000, 0], ['111', 0, 1000000]]);
+    const book = await s2a(o, '2026-09');
+    expect(book.unassigned).toBe('0');
+    expect(book.unassignedGross).toBe('2000000');
+    expect(book.totals).toBeNull();
+  });
+
+  it('shows the layout row in force on the last day and its label, even when it changes inside the period with no profile change', async () => {
+    const o = await org();
+    await setProfile(o, { trades: ['goods'] });
+    await entry(o, '2026-12-05', 'Bán tháng 12', [['111', 1000000, 0], ['511', 0, 1000000]]);
+    // December, so the global layout row this adds leaves the other tests' months (August to October) as they were.
+    await admin((a) => a.query("INSERT INTO crove_finance.household_form_version (book, version, effective_from, name, pit_methods, source, status) VALUES ('S2a', '2026.9', DATE '2026-12-15', 'Sổ S2a mới', ARRAY['percentage'], 'test', 'confirmed') ON CONFLICT DO NOTHING"));
+    const december = await s2a(o, '2026-12');
+    expect(december.form).toMatchObject({ book: 'S2a', version: '2026.9', name: 'Sổ S2a mới', status: 'confirmed' });
+    expect(december.unconfirmed.map((u) => u.kind)).toEqual(['rate']);
   });
 
   it('gives every row to the only trade of a household with one trade, whatever the entry is built from', async () => {

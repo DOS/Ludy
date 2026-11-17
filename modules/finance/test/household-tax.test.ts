@@ -40,11 +40,10 @@ describe('splitAmount', () => {
     expect(parts.map((p) => p.bucket)).toEqual(['goods', 'services', 'unassigned']);
   });
 
-  it('adds the weights of one trade, drops empty or negative ones', () => {
+  it('adds the weights of one trade and drops empty ones', () => {
     const parts = splitAmount('900', [
       { bucket: 'goods', weight: '200' },
       { bucket: 'goods', weight: '400' },
-      { bucket: 'services', weight: '-50' },
       { bucket: 'other', weight: '0' },
       { bucket: 'unassigned', weight: '300' },
     ]);
@@ -52,6 +51,28 @@ describe('splitAmount', () => {
       { bucket: 'goods', amount: '600' },
       { bucket: 'unassigned', amount: '300' },
     ]);
+  });
+
+  it('keeps each trade its signed contribution from a mixed-sign document, never dropping a negative line', () => {
+    // Goods 200000 and services -100000 (an adjustment line) make a net of 100000.
+    expect(
+      splitAmount('100000', [
+        { bucket: 'goods', weight: '200000' },
+        { bucket: 'services', weight: '-100000' },
+      ]),
+    ).toEqual([
+      { bucket: 'goods', amount: '200000' },
+      { bucket: 'services', amount: '-100000' },
+    ]);
+    // A document of negative lines only shares a negative amount the usual way.
+    expect(splitAmount('-300', [{ bucket: 'goods', weight: '-100' }, { bucket: 'services', weight: '-200' }])).toEqual([
+      { bucket: 'goods', amount: '-100' },
+      { bucket: 'services', amount: '-200' },
+    ]);
+  });
+
+  it('puts the whole amount on unassigned when the lines cancel out', () => {
+    expect(splitAmount('50', [{ bucket: 'goods', weight: '100' }, { bucket: 'services', weight: '-100' }])).toEqual([{ bucket: 'unassigned', amount: '50' }]);
   });
 
   it('puts the whole amount on unassigned when no weight is usable, never a guessed trade', () => {

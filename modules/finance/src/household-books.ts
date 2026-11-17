@@ -60,6 +60,7 @@ export async function householdBookWindow(ctx: QueryContext, legalEntityId: stri
     .where('legal_entity_id', '=', entity)
     .where('effective_from', '>', from)
     .where('effective_from', '<=', to)
+    .orderBy('effective_from', 'asc')
     .execute();
   let form: HouseholdBookRule | undefined;
   let profile: HouseholdProfile | null = null;

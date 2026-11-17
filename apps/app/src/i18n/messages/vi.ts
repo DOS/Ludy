@@ -4666,7 +4666,7 @@ export const vi = {
     s2aFile: 'so-s2a-hkd-{period}-{org}.xlsx',
     s2aByLine: 'Theo ngành nghề',
     s2aLinesTitle: 'Doanh thu và thuế theo ngành nghề',
-    s2aUnassigned: 'Còn {amount} doanh thu chưa có ngành nghề (khoản không bán từ một mặt hàng đã gán ngành) nên chưa tính tổng thuế. Hãy gán ngành nghề cho mặt hàng đã bán.',
+    s2aUnassigned: '{amount} doanh thu chưa có ngành nghề nên chưa tính tổng thuế. Nếu khoản đó đến từ hóa đơn bán hàng, hãy gán ngành nghề cho mặt hàng đã bán. Các khoản không có hóa đơn bán hàng (đối soát sàn, phiếu nhập tay) hiện chưa tự gán được ngành nghề.',
     unassignedName: 'Chưa phân ngành',
 
   },

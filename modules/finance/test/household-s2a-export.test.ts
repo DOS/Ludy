@@ -25,6 +25,7 @@ const book = (over: Partial<HouseholdS2a> = {}): HouseholdS2a => ({
     { trade: 'services', revenue: '400000', vatPercent: '5', pitPercent: '2', vat: '20000', pit: '8000' },
   ],
   unassigned: '0',
+  unassignedGross: '0',
   totals: { revenue: '1500000', vat: '31000', pit: '13500', tax: '44500' },
   unconfirmed: [
     { kind: 'form', key: 'S2a 2026.1', effectiveFrom: '2026-01-01' },
@@ -119,6 +120,7 @@ describe('the S2a-HKD workbook', () => {
           { trade: 'services', revenue: '0', vatPercent: '5', pitPercent: '2', vat: '0', pit: '0' },
         ],
         unassigned: '300000',
+        unassignedGross: '300000',
         totals: null,
       }),
     );
@@ -143,7 +145,8 @@ describe('the S2a-HKD workbook', () => {
           { trade: 'services', revenue: '0', vatPercent: '5', pitPercent: '2', vat: '0', pit: '0' },
         ],
         unassigned: '0',
-        totals: { revenue: '0', vat: '0', pit: '0', tax: '0' },
+        unassignedGross: '600000',
+        totals: null,
       }),
     );
     const head = find(rows, 'Diễn giải')!;

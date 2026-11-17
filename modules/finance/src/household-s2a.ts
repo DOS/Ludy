@@ -6,7 +6,7 @@
 //   percentage in force on the period's last day (household_trade_rate, a dated row, never a constant), each rounded to a whole dong. Refused for an entity whose profile does not require S2a.
 // - The ledger has no trade on a 511 line, so the trade of a row comes from what the entry is built from and is never guessed: a household with one trade has every row on it; with several, an entry
 //   made by posting a sale document takes the trade of each document line's stock item (the line's latest stock move), by the lines' amounts; a reversal follows the entry it undoes; any other entry
-//   (a marketplace settlement, a manual voucher) and any item whose trade the profile does not list is `unassigned`. `unassigned` holds the totals back (`totals` is null), as in the CNKD.
+//   (a marketplace settlement, a manual voucher) and any item whose trade the profile does not list is `unassigned`. any `unassigned` part holds the totals back (`totals` is null), as in the CNKD.
 // - While the form or a percentage in use is `commentary` (the accountant has not confirmed it, #2520) the book is still given, with `commentary` and the list of unconfirmed rows, so the screen
 //   and the Excel file label every figure "Số liệu tạm, kế toán chưa xác nhận tỷ lệ"; the label goes by itself when later dated `confirmed` rows exist (owner's direction of 2026-11-17).
 // Amounts are decimal strings through decimal.js, never JS numbers.
@@ -154,8 +154,11 @@ export const householdS2a = defineQuery({
       return { trade, revenue, vatPercent, pitPercent, vat: taxOn(revenue, vatPercent), pit: taxOn(revenue, pitPercent) };
     });
     const unassigned = revenueOf('unassigned');
-    // The totals wait for the whole revenue to have a trade.
-    const totals = money(unassigned).isZero()
+    // The totals wait for every part to have a trade: any unassigned part with an amount holds them back, even when the net of the unassigned parts is zero (two unrelated entries that cancel
+    // each other would otherwise hide their tax). A sale and its void that are both unassigned therefore also hold the period's totals back: the safe side, never a tax total that leaves a part out.
+    const unassignedParts = rows.flatMap((r) => r.parts.filter((p) => p.trade === 'unassigned').map((p) => money(p.amount)));
+    const unassignedGross = toMoney(unassignedParts.reduce((acc, v) => acc.plus(v.abs()), money(0)));
+    const totals = money(unassignedGross).isZero()
       ? (() => {
           const vat = sum(lines.map((l) => l.vat));
           const pit = sum(lines.map((l) => l.pit));
@@ -165,10 +168,11 @@ export const householdS2a = defineQuery({
 
     const unconfirmed: HouseholdS2a['unconfirmed'] = [];
     // The layout of the book in force on the period's last day, from its own row (the book rule of the profile view carries no date), so the label follows the same day as the rates.
-    const formRows = await ctx.trx.selectFrom('crove_finance.household_form_version').select(['book', 'version', 'effective_from', 'status']).where('book', '=', 'S2a').where('effective_from', '<=', w.to).execute();
+    const formRows = await ctx.trx.selectFrom('crove_finance.household_form_version').select(['book', 'version', 'effective_from', 'name', 'status']).where('book', '=', 'S2a').where('effective_from', '<=', w.to).execute();
     const formInForce = pickInForce(formRows, (r) => r.book, w.to)[0];
-    const formStatus = formInForce?.status ?? w.form.status;
-    if (formStatus !== 'confirmed') unconfirmed.push({ kind: 'form', key: `S2a ${formInForce?.version ?? w.form.version}`, effectiveFrom: formInForce?.effective_from ?? w.from });
+    // The layout shown is the one in force on the last day too (the profile view's rule is read on the first day or on the last profile change), so the book, its status and its label agree.
+    const form = formInForce ? { book: formInForce.book, version: formInForce.version, name: formInForce.name, status: formInForce.status } : w.form;
+    if (form.status !== 'confirmed') unconfirmed.push({ kind: 'form', key: `S2a ${form.version}`, effectiveFrom: formInForce?.effective_from ?? w.from });
     for (const t of trades) {
       const rate = rates.get(t)!;
       if (rate.status !== 'confirmed') unconfirmed.push({ kind: 'rate', key: t, effectiveFrom: rate.effective_from });
@@ -178,11 +182,12 @@ export const householdS2a = defineQuery({
     return zHouseholdS2a.parse({
       period: { period: w.ledger.period.period, from: w.from, to: w.to },
       household: { name: entityRow.name, taxCode: entityRow.tax_code, representativeName: w.representativeName, openedOn: w.openedOn },
-      form: w.form,
+      form,
       rows,
       total,
       lines,
       unassigned,
+      unassignedGross,
       totals,
       unconfirmed,
       commentary: unconfirmed.length > 0,
