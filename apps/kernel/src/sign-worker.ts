@@ -8,6 +8,7 @@ import { EXTRACT_LIMITS, INPUT_ERROR_CODES, type ExtractClient } from '@crove/ex
 import {
   BlobIntegrityError,
   BlobTooLargeError,
+  DomainError,
   fileKey,
   putFile,
   readVerified,
@@ -16,6 +17,8 @@ import {
   type Runtime,
 } from '@crove/kernel-runtime';
 import {
+  DEFAULT_OTP_RETENTION_HOURS,
+  DEFAULT_RETENTION_DAYS,
   buildCanonicalCertificateArtifact,
   buildPdfSealCertificate,
   buildPdfSealInputBytes,
@@ -30,7 +33,6 @@ export const SIGN_EXPIRE_SWEEP_CRON = '*/5 * * * *';
 export const SIGN_CLEANUP_CRON = '20 3 * * *';
 export const SIGN_JOB_RETRY_LIMIT = 3;
 const SWEEP_ORG_BATCH = 100;
-const RETENTION_DAYS = 90;
 
 export interface SignEnvelopeJob {
   orgId: string;
@@ -44,7 +46,10 @@ export interface SignWorkerDeps {
   extract: ExtractClient;
 }
 
-export type SignSweepDeps = Pick<SignWorkerDeps, 'workerDb' | 'runtime'>;
+export type SignSweepDeps = Pick<SignWorkerDeps, 'workerDb' | 'runtime'> & {
+  log?: Pick<Console, 'error'>;
+  now?: Date;
+};
 
 function safeArtifactBase(title: string): string {
   const cleaned = title
@@ -313,18 +318,27 @@ export async function runSignPdfSealJob(
   return { status: 'sealed', certificateCode };
 }
 
+function sweepErrorLabel(error: unknown): string {
+  return error instanceof DomainError ? error.code : error instanceof Error ? error.name : 'error';
+}
+
 export async function sweepSignExpire(deps: SignSweepDeps): Promise<number> {
+  const log = deps.log ?? console;
   const { rows: orgs } = await sql<{ org_id: string }>`
-    SELECT org_id FROM crove_sign.expire_sweep_due_orgs(${SWEEP_ORG_BATCH})
+    SELECT org_id FROM crove_sign.expire_sweep_due_orgs(${SWEEP_ORG_BATCH}) ORDER BY org_id ASC
   `.execute(deps.workerDb);
   let total = 0;
   for (const row of orgs) {
-    const res = await deps.runtime.execute<{ expiredCount: number }>(
-      'sign.envelope.expire_sweep',
-      {},
-      { actor: SIGN_ACTOR, orgId: row.org_id },
-    );
-    total += res.expiredCount;
+    try {
+      const res = await deps.runtime.execute<{ expiredCount: number }>(
+        'sign.envelope.expire_sweep',
+        {},
+        { actor: SIGN_ACTOR, orgId: row.org_id },
+      );
+      total += res.expiredCount;
+    } catch (error) {
+      log.error(`[sign-expire-sweep] org ${row.org_id.slice(0, 8)} failed`, sweepErrorLabel(error));
+    }
   }
   return total;
 }
@@ -336,22 +350,29 @@ export async function sweepSignCleanup(deps: SignSweepDeps): Promise<{
   drafts: number;
   draftEvents: number;
 }> {
-  const cutoff = new Date(Date.now() - RETENTION_DAYS * 86_400_000);
+  const log = deps.log ?? console;
+  const nowMs = (deps.now ?? new Date()).getTime();
+  const otpCutoff = new Date(nowMs - DEFAULT_OTP_RETENTION_HOURS * 3_600_000);
+  const tokenCutoff = new Date(nowMs - DEFAULT_RETENTION_DAYS * 86_400_000);
   const { rows: orgs } = await sql<{ org_id: string }>`
-    SELECT org_id FROM crove_sign.cleanup_due_orgs(${cutoff}::timestamptz, ${cutoff}::timestamptz, ${SWEEP_ORG_BATCH})
+    SELECT org_id FROM crove_sign.cleanup_due_orgs_secrets(${otpCutoff}::timestamptz, ${tokenCutoff}::timestamptz, ${SWEEP_ORG_BATCH}) ORDER BY org_id ASC
   `.execute(deps.workerDb);
   const totals = { orgs: 0, otps: 0, tokens: 0, drafts: 0, draftEvents: 0 };
   for (const row of orgs) {
-    const res = await deps.runtime.execute<{ otps: number; tokens: number; drafts: number; draftEvents: number }>(
-      'sign.org.cleanup',
-      { draftRetentionDays: RETENTION_DAYS, secretRetentionDays: RETENTION_DAYS },
-      { actor: SIGN_ACTOR, orgId: row.org_id },
-    );
-    totals.orgs += 1;
-    totals.otps += res.otps;
-    totals.tokens += res.tokens;
-    totals.drafts += res.drafts;
-    totals.draftEvents += res.draftEvents;
+    try {
+      const res = await deps.runtime.execute<{ otps: number; tokens: number; drafts: number; draftEvents: number }>(
+        'sign.org.cleanup',
+        { tokenRetentionDays: DEFAULT_RETENTION_DAYS, otpRetentionHours: DEFAULT_OTP_RETENTION_HOURS },
+        { actor: SIGN_ACTOR, orgId: row.org_id },
+      );
+      totals.orgs += 1;
+      totals.otps += res.otps;
+      totals.tokens += res.tokens;
+      totals.drafts += res.drafts;
+      totals.draftEvents += res.draftEvents;
+    } catch (error) {
+      log.error(`[sign-cleanup] org ${row.org_id.slice(0, 8)} failed`, sweepErrorLabel(error));
+    }
   }
   return totals;
 }

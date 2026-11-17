@@ -909,13 +909,54 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
       { actor: asUser(member), orgId: org.orgId },
     );
 
-    // 2. Old stale draft (>90 days) + old token + old OTP for cleanup sweep, plus fresh OTP for PDPL erase + ai_analysis row for purge.
+    // Completed + sealed envelope for PDPL preservation verification while unsealed draft/expired signers erase.
+    const sealedEnv = await runtime.execute<{ envelopeId: string }>(
+      'sign.envelope.create',
+      { title: 'Completed Sealed Env', sourceFileId },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    await runSignPdfInspectJob({ workerDb, runtime: workerRuntime, store, extract: mockExtract() }, { orgId: org.orgId, envelopeId: sealedEnv.envelopeId });
+    const sealedSigner = await runtime.execute<{ signerId: string }>(
+      'sign.signer.add',
+      { envelopeId: sealedEnv.envelopeId, signerRole: 'signer', name: 'Sealed Subject', email: 'signer-erase@sign.test' },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    await runtime.execute(
+      'sign.field.set',
+      {
+        envelopeId: sealedEnv.envelopeId,
+        fields: [{ signerId: sealedSigner.signerId, fieldType: 'signature', pageNumber: 1, xNorm: 0.1, yNorm: 0.2, wNorm: 0.2, hNorm: 0.1 }],
+      },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    const sentSealed = await runtime.execute<{ links: Array<{ tokenId: string }> }>(
+      'sign.envelope.send',
+      { envelopeId: sealedEnv.envelopeId },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(
+        'UPDATE crove_sign.field SET signature_png_base64 = $3, filled_at = now() WHERE org_id = $1 AND envelope_id = $2',
+        [org.orgId, sealedEnv.envelopeId, 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='],
+      );
+      await c.query("UPDATE crove_sign.signer SET status = 'signed', signed_at = now() WHERE org_id = $1 AND envelope_id = $2", [org.orgId, sealedEnv.envelopeId]);
+      await c.query("UPDATE crove_sign.envelope SET status = 'completed', completed_at = now() WHERE org_id = $1 AND id = $2", [org.orgId, sealedEnv.envelopeId]);
+      await c.query('COMMIT');
+    });
+    const sealedDone = await runSignPdfSealJob({ workerDb, runtime: workerRuntime, store, extract: mockExtract() }, { orgId: org.orgId, envelopeId: sealedEnv.envelopeId });
+    expect(sealedDone.status).toBe('sealed');
+
+    // 2. Old untouched draft (>120d) stays preserved; old token (>30d) + old OTP (>24h) prune via cleanup sweep; fresh OTP stays.
     const staleDraft = await runtime.execute<{ envelopeId: string }>(
       'sign.envelope.create',
       { title: 'Abandoned Draft', sourceFileId },
       { actor: asUser(member), orgId: org.orgId },
     );
-    const staleDate = new Date(Date.now() - 120 * DAY_MS);
+    const staleTokenDate = new Date(Date.now() - 40 * DAY_MS);
+    const staleOtpDate = new Date(Date.now() - 30 * 3_600_000);
+    const staleDraftDate = new Date(Date.now() - 120 * DAY_MS);
     await admin(async (c) => {
       await c.query(
         'UPDATE crove_sign.envelope SET expires_at = now() - interval \'5 minutes\' WHERE org_id = $1 AND id = $2',
@@ -923,19 +964,19 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
       );
       await c.query(
         'UPDATE crove_sign.envelope SET updated_at = $3 WHERE org_id = $1 AND id = $2',
-        [org.orgId, staleDraft.envelopeId, staleDate],
+        [org.orgId, staleDraft.envelopeId, staleDraftDate],
       );
-      // Old expired OTP (> 90d) to test cleanup_org_stale
+      // Old expired OTP (> 24h) to test cleanup_org_secrets
       await c.query(
         `INSERT INTO crove_sign.signing_otp (org_id, signer_id, signing_token_id, email, otp_sha256, expires_at, created_at)
          VALUES ($1, $2, $3, 'stale-otp@sign.test', $4, $5, $5)`,
-        [org.orgId, expSigner.signerId, sentExp.links[0]!.tokenId, sha256Hex(Buffer.from('123456')), staleDate],
+        [org.orgId, expSigner.signerId, sentExp.links[0]!.tokenId, sha256Hex(Buffer.from('123456')), staleOtpDate],
       );
-      // Old revoked token (> 90d) on staleDraft? Use expiringEnv tokenId? Wait: only insert an old revoked token via admin:
+      // Old revoked token (> 30d) to test cleanup_org_secrets
       await c.query(
         `INSERT INTO crove_sign.signing_token (org_id, envelope_id, signer_id, token_sha256, expires_at, revoked_at, created_by, created_at)
          VALUES ($1, $2, $3, $4, $5, $5, $6, $5)`,
-        [org.orgId, expiringEnv.envelopeId, expSigner.signerId, sha256Hex(Buffer.from('stale-tok')), staleDate, member.userId],
+        [org.orgId, expiringEnv.envelopeId, expSigner.signerId, sha256Hex(Buffer.from('stale-tok')), staleTokenDate, member.userId],
       );
       // Fresh OTP for personal_erase_otp
       await c.query(
@@ -951,7 +992,7 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
       );
     });
 
-    // ADR-0053 'keeping': disable sign app, sweeps still expire and prune stale artifacts.
+    // ADR-0053 'keeping': disable sign app, sweeps still expire and prune stale secrets while preserving drafts.
     await runtime.execute(
       'kernel.org.set_app',
       { module: 'sign', enabled: false },
@@ -969,26 +1010,31 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     const cleaned = await sweepSignCleanup({ workerDb, runtime: workerRuntime });
     expect(cleaned.otps).toBeGreaterThanOrEqual(1);
     expect(cleaned.tokens).toBeGreaterThanOrEqual(1);
-    expect(cleaned.drafts).toBeGreaterThanOrEqual(1);
-    expect(cleaned.draftEvents).toBeGreaterThanOrEqual(1);
+    expect(cleaned.drafts).toBe(0);
+    expect(cleaned.draftEvents).toBe(0);
 
-    const staleGone = await admin(async (c) =>
-      (await c.query('SELECT id FROM crove_sign.envelope WHERE org_id = $1 AND id = $2', [org.orgId, staleDraft.envelopeId])).rows,
+    const staleKept = await admin(async (c) =>
+      (await c.query('SELECT id, status FROM crove_sign.envelope WHERE org_id = $1 AND id = $2', [org.orgId, staleDraft.envelopeId])).rows,
     );
-    expect(staleGone).toHaveLength(0);
+    expect(staleKept).toEqual([{ id: staleDraft.envelopeId, status: 'draft' }]);
 
-    // Non-owner cannot call crove_sign.personal_erase_otp directly.
+    // Non-owner cannot call crove_sign.personal_erase_otp or personal_erase_unsealed_signers directly.
     const adminClient = await pool.connect();
     try {
       await adminClient.query('BEGIN');
       await adminClient.query('SELECT crove_kernel.enter_context($1::uuid, $2::uuid)', [adminUser.userId, org.orgId]);
+      await adminClient.query('SAVEPOINT sp_erase_otp');
       await expect(adminClient.query("SELECT crove_sign.personal_erase_otp('signer-erase@sign.test')")).rejects.toThrow(/SIGN_FORBIDDEN/);
+      await adminClient.query('ROLLBACK TO SAVEPOINT sp_erase_otp');
+      await adminClient.query('SAVEPOINT sp_erase_signer');
+      await expect(adminClient.query("SELECT crove_sign.personal_erase_unsealed_signers('email', 'signer-erase@sign.test')")).rejects.toThrow(/SIGN_FORBIDDEN/);
+      await adminClient.query('ROLLBACK TO SAVEPOINT sp_erase_signer');
     } finally {
       await adminClient.query('ROLLBACK').catch(() => {});
       adminClient.release();
     }
 
-    // Re-seed fresh OTP row for PDPL test after stale cleanup verified non-stale retention (fresh OTP was NOT deleted by cleanup).
+    // Re-verify fresh OTP row before PDPL test (fresh OTP was NOT deleted by cleanup).
     const freshOtpBefore = await admin(async (c) =>
       Number((await c.query("SELECT count(*) AS n FROM crove_sign.signing_otp WHERE org_id = $1 AND lower(email) = 'signer-erase@sign.test'", [org.orgId])).rows[0].n),
     );
@@ -1001,7 +1047,8 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     );
     const emailMatches = found.matches.filter((m) => m.column === 'crove_sign.signer.email');
     expect(emailMatches.find((m) => m.rowId === draftEraseSigner.signerId)?.handling).toBe('erase');
-    expect(emailMatches.find((m) => m.rowId === expSigner.signerId)?.handling).toBe('keep_record');
+    expect(emailMatches.find((m) => m.rowId === expSigner.signerId)?.handling).toBe('erase');
+    expect(emailMatches.find((m) => m.rowId === sealedSigner.signerId)?.handling).toBe('keep_record');
 
     const erased = await runtime.execute<PersonalDataErasure>(
       'kernel.personal_data.erase',
@@ -1011,8 +1058,8 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     expect(erased.erased).toEqual(
       expect.arrayContaining([
         { column: 'crove_sign.signing_otp.email', rows: 1 },
-        { column: 'crove_sign.signer.name', rows: 1 },
-        { column: 'crove_sign.signer.email', rows: 1 },
+        { column: 'crove_sign.signer.name', rows: 2 },
+        { column: 'crove_sign.signer.email', rows: 2 },
         { column: 'crove_sign.signer.phone', rows: 1 },
       ]),
     );
@@ -1020,11 +1067,15 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     const draftAfterErase = await admin(async (c) => ({
       erasedSigner: (await c.query('SELECT id FROM crove_sign.signer WHERE org_id = $1 AND id = $2', [org.orgId, draftEraseSigner.signerId])).rows,
       erasedField: (await c.query('SELECT id FROM crove_sign.field WHERE org_id = $1 AND signer_id = $2', [org.orgId, draftEraseSigner.signerId])).rows,
+      erasedExpSigner: (await c.query('SELECT id FROM crove_sign.signer WHERE org_id = $1 AND id = $2', [org.orgId, expSigner.signerId])).rows,
+      keptSealedSigner: (await c.query('SELECT id FROM crove_sign.signer WHERE org_id = $1 AND id = $2', [org.orgId, sealedSigner.signerId])).rows,
       coSigner: (await c.query('SELECT id FROM crove_sign.signer WHERE org_id = $1 AND id = $2', [org.orgId, draftCoSigner.signerId])).rows,
       coField: (await c.query('SELECT id FROM crove_sign.field WHERE org_id = $1 AND signer_id = $2', [org.orgId, draftCoSigner.signerId])).rows,
     }));
     expect(draftAfterErase.erasedSigner).toHaveLength(0);
     expect(draftAfterErase.erasedField).toHaveLength(0);
+    expect(draftAfterErase.erasedExpSigner).toHaveLength(0);
+    expect(draftAfterErase.keptSealedSigner).toHaveLength(1);
     expect(draftAfterErase.coSigner).toHaveLength(1);
     expect(draftAfterErase.coField).toHaveLength(1);
 
@@ -1044,12 +1095,12 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     );
     expect(phoneSignerLeft).toHaveLength(0);
 
-    // Insert another OTP row so orgPurge exercises all 7 crove_sign tables simultaneously.
+    // Insert another OTP row on the preserved sealed signer so orgPurge exercises all 7 crove_sign tables simultaneously.
     await admin(async (c) => {
       await c.query(
         `INSERT INTO crove_sign.signing_otp (org_id, signer_id, signing_token_id, email, otp_sha256, expires_at)
          VALUES ($1, $2, $3, 'purge-check@sign.test', $4, now() + interval '5 minutes')`,
-        [org.orgId, expSigner.signerId, sentExp.links[0]!.tokenId, sha256Hex(Buffer.from('999999'))],
+        [org.orgId, sealedSigner.signerId, sentSealed.links[0]!.tokenId, sha256Hex(Buffer.from('999999'))],
       );
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
@@ -1443,5 +1494,112 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     const directConflict = await uploadFile(app, owner, pdfFixture('regressions'), 'conflict.pdf', 'document', 'application/pdf', regSlug);
     expect(directConflict.status).toBe(409);
     expect(directConflict.body?.code).toBe('FILE_SOURCE_CONFLICT');
+  });
+
+  it('isolates per-org errors inside sweepSignExpire and sweepSignCleanup and processes due orgs in deterministic order (#3428 L4)', async () => {
+    const firstCreated = await rpc('org/create', owner, { name: 'Sweep Isolation Org 1', idempotencyKey: randomUUID() }, null);
+    const secondCreated = await rpc('org/create', owner, { name: 'Sweep Isolation Org 2', idempotencyKey: randomUUID() }, null);
+    expect(firstCreated.status).toBe(200);
+    expect(secondCreated.status).toBe(200);
+    const sortedOrgs = [String(firstCreated.body.orgId), String(secondCreated.body.orgId)].sort();
+    const org1Id = sortedOrgs[0]!;
+    const org2Id = sortedOrgs[1]!;
+    const slugOf = (id: string) => (id === String(firstCreated.body.orgId) ? String(firstCreated.body.slug) : String(secondCreated.body.slug));
+
+    const seededTokens: Array<{ orgId: string; envelopeId: string; signerId: string; tokenId: string }> = [];
+    for (const orgId of [org1Id, org2Id]) {
+      const up = await uploadFile(app, owner, pdfFixture(`iso-${orgId}`), 'iso.pdf', 'sign_document', 'application/pdf', slugOf(orgId));
+      expect(up.status).toBe(200);
+      const fid = ((up.body?.files as Array<{ fileId: string }>) ?? [])[0]!.fileId;
+      const env = await runtime.execute<{ envelopeId: string }>(
+        'sign.envelope.create',
+        { title: 'Sweep Isolation Env', sourceFileId: fid, expiresAt: new Date(Date.now() + DAY_MS).toISOString() },
+        { actor: asUser(owner), orgId },
+      );
+      await runSignPdfInspectJob({ workerDb, runtime: workerRuntime, store, extract: mockExtract() }, { orgId, envelopeId: env.envelopeId });
+      const s = await runtime.execute<{ signerId: string }>(
+        'sign.signer.add',
+        { envelopeId: env.envelopeId, signerRole: 'signer', name: 'Iso Signer', email: `iso-${orgId.slice(0, 8)}@sign.test` },
+        { actor: asUser(owner), orgId },
+      );
+      await runtime.execute(
+        'sign.field.set',
+        {
+          envelopeId: env.envelopeId,
+          fields: [{ signerId: s.signerId, fieldType: 'signature', pageNumber: 1, xNorm: 0.1, yNorm: 0.2, wNorm: 0.2, hNorm: 0.1 }],
+        },
+        { actor: asUser(owner), orgId },
+      );
+      const sent = await runtime.execute<{ links: Array<{ tokenId: string }> }>(
+        'sign.envelope.send',
+        { envelopeId: env.envelopeId },
+        { actor: asUser(owner), orgId },
+      );
+      seededTokens.push({ orgId, envelopeId: env.envelopeId, signerId: s.signerId, tokenId: sent.links[0]!.tokenId });
+    }
+
+    await admin(async (c) => {
+      for (const item of seededTokens) {
+        await c.query(
+          "UPDATE crove_sign.envelope SET expires_at = now() - interval '5 minutes' WHERE org_id = $1 AND id = $2",
+          [item.orgId, item.envelopeId],
+        );
+        await c.query(
+          `INSERT INTO crove_sign.signing_otp (org_id, signer_id, signing_token_id, email, otp_sha256, expires_at, created_at)
+           VALUES ($1, $2, $3, 'iso-stale@sign.test', $4, now() - interval '30 hours', now() - interval '30 hours')`,
+          [item.orgId, item.signerId, item.tokenId, sha256Hex(Buffer.from('111222'))],
+        );
+      }
+    });
+
+    const { rows: dueExpire } = await sql<{ org_id: string }>`
+      SELECT org_id FROM crove_sign.expire_sweep_due_orgs(100)
+    `.execute(workerDb);
+    expect(dueExpire.map((r) => r.org_id)).toEqual([org1Id, org2Id]);
+
+    const { rows: dueCleanup } = await sql<{ org_id: string }>`
+      SELECT org_id FROM crove_sign.cleanup_due_orgs_secrets(${new Date(Date.now() - 24 * 3_600_000)}::timestamptz, ${new Date(Date.now() - 30 * DAY_MS)}::timestamptz, 100)
+    `.execute(workerDb);
+    expect(dueCleanup.map((r) => r.org_id)).toEqual([org1Id, org2Id]);
+
+    const errors: string[] = [];
+    const faultyFirstOrgRuntime = {
+      execute: (command: string, input: unknown, opts: { actor: { type: 'system'; component: string }; orgId: string }) => {
+        if (opts.orgId === org1Id) {
+          return Promise.reject(new Error(`simulated failure for ${opts.orgId}`));
+        }
+        return workerRuntime.execute(command, input, opts);
+      },
+    } as unknown as Runtime;
+
+    const expired = await sweepSignExpire({
+      workerDb,
+      runtime: faultyFirstOrgRuntime,
+      log: { error: (...args) => errors.push(args.map(String).join(' ')) },
+    });
+    expect(expired).toBe(1);
+    expect(errors.some((e) => e.includes('[sign-expire-sweep]') && e.includes(org1Id.slice(0, 8)))).toBe(true);
+    expect(errors.every((e) => !e.includes('simulated failure'))).toBe(true);
+
+    const cleaned = await sweepSignCleanup({
+      workerDb,
+      runtime: faultyFirstOrgRuntime,
+      log: { error: (...args) => errors.push(args.map(String).join(' ')) },
+    });
+    expect(cleaned.orgs).toBe(1);
+    expect(cleaned.otps).toBe(1);
+    expect(errors.some((e) => e.includes('[sign-cleanup]') && e.includes(org1Id.slice(0, 8)))).toBe(true);
+    expect(errors.every((e) => !e.includes('simulated failure'))).toBe(true);
+
+    const orgStatuses = await admin(async (c) => ({
+      env1: (await c.query<{ status: string }>('SELECT status FROM crove_sign.envelope WHERE org_id = $1 AND id = $2', [org1Id, seededTokens[0]!.envelopeId])).rows[0]?.status,
+      env2: (await c.query<{ status: string }>('SELECT status FROM crove_sign.envelope WHERE org_id = $1 AND id = $2', [org2Id, seededTokens[1]!.envelopeId])).rows[0]?.status,
+      otp1: Number((await c.query('SELECT count(*) AS n FROM crove_sign.signing_otp WHERE org_id = $1', [org1Id])).rows[0].n),
+      otp2: Number((await c.query('SELECT count(*) AS n FROM crove_sign.signing_otp WHERE org_id = $1', [org2Id])).rows[0].n),
+    }));
+    expect(orgStatuses.env1).toBe('sent');
+    expect(orgStatuses.env2).toBe('expired');
+    expect(orgStatuses.otp1).toBe(1);
+    expect(orgStatuses.otp2).toBe(0);
   });
 });

@@ -32,7 +32,8 @@ import {
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const REMIND_COOLDOWN_MS = 5 * 60_000;
 const DEFAULT_LINK_TTL_HOURS = 30 * 24;
-const DEFAULT_RETENTION_DAYS = 90;
+export const DEFAULT_RETENTION_DAYS = 30;
+export const DEFAULT_OTP_RETENTION_HOURS = 24;
 const EXPIRE_SWEEP_BATCH = 100;
 const NORM_SCALE = 1_000_000;
 const MAX_ROUTING_ORDER = 100;
@@ -1611,10 +1612,10 @@ export const envelopeExpireSweep = defineCommand({
 
 export const orgCleanup = defineCommand({
   name: 'sign.org.cleanup',
-  runsWhenOff: 'prunes expired sign secrets and stale abandoned drafts under retention while the app is off',
+  runsWhenOff: 'prunes expired sign tokens and OTPs under retention while the app is off',
   input: z.strictObject({
-    draftRetentionDays: z.number().int().min(1).max(3650).default(DEFAULT_RETENTION_DAYS),
-    secretRetentionDays: z.number().int().min(1).max(3650).default(DEFAULT_RETENTION_DAYS),
+    tokenRetentionDays: z.number().int().min(1).max(3650).default(DEFAULT_RETENTION_DAYS),
+    otpRetentionHours: z.number().int().min(1).max(8760).default(DEFAULT_OTP_RETENTION_HOURS),
   }),
   risk: 'R3',
   sideEffect: 'irreversible',
@@ -1622,20 +1623,15 @@ export const orgCleanup = defineCommand({
   writes: [
     tableWrite(signManifest.tables, 'crove_sign', 'signing_otp', ['id']),
     tableWrite(signManifest.tables, 'crove_sign', 'signing_token', ['id']),
-    tableWrite(signManifest.tables, 'crove_sign', 'field', ['id']),
-    tableWrite(signManifest.tables, 'crove_sign', 'signer', ['id']),
-    tableWrite(signManifest.tables, 'crove_sign', 'ai_analysis', ['id']),
-    tableWrite(signManifest.tables, 'crove_sign', 'signing_event', ['id']),
-    tableWrite(signManifest.tables, 'crove_sign', 'envelope', ['id']),
   ],
   handler: async (ctx, input) => {
     assertSystem(ctx);
-    const draftCutoff = new Date(ctx.now.getTime() - input.draftRetentionDays * 86_400_000);
-    const secretCutoff = new Date(ctx.now.getTime() - input.secretRetentionDays * 86_400_000);
+    const otpCutoff = new Date(ctx.now.getTime() - input.otpRetentionHours * 3_600_000);
+    const tokenCutoff = new Date(ctx.now.getTime() - input.tokenRetentionDays * 86_400_000);
     const { rows } = await sql<{
       counts: { otps: number; tokens: number; drafts: number; draftEvents: number };
     }>`
-      SELECT crove_sign.cleanup_org_stale(${draftCutoff}::timestamptz, ${secretCutoff}::timestamptz) AS counts
+      SELECT crove_sign.cleanup_org_secrets(${otpCutoff}::timestamptz, ${tokenCutoff}::timestamptz) AS counts
     `.execute(ctx.trx);
     const counts = rows[0]?.counts ?? { otps: 0, tokens: 0, drafts: 0, draftEvents: 0 };
     ctx.audit({
@@ -1643,8 +1639,8 @@ export const orgCleanup = defineCommand({
       tokens: counts.tokens,
       drafts: counts.drafts,
       draftEvents: counts.draftEvents,
-      draftCutoff: draftCutoff.toISOString(),
-      secretCutoff: secretCutoff.toISOString(),
+      otpCutoff: otpCutoff.toISOString(),
+      tokenCutoff: tokenCutoff.toISOString(),
     });
     return counts;
   },

@@ -449,21 +449,21 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: 'Template task titles and descriptions in a project template, which may mention a person: mentions are replaced with a redaction marker',
   },
-  // eSign (#3323): draft signers are removed on erasure; sent, active, and executed signer records and append-only audit events stay for statutory verification; ephemeral email OTP rows erase via definer.
+  // eSign (#3323, #3427): unsealed signers (draft, voided, expired, or declined with sealed_file_id IS NULL) are removed on erasure; active, completed, and sealed signer records and append-only audit events stay for statutory verification; ephemeral email OTP rows erase via definer.
   'crove_sign.signer.name': {
     kind: 'name',
     handling: 'keep_record',
-    reason: 'Signer legal name preserved on sent or executed e-signature envelope and audit certificate under statutory e-transaction evidence retention; a signer on an unsent draft envelope is erased',
+    reason: 'Signer legal name preserved on active, completed, or sealed e-signature envelope and audit certificate under statutory e-transaction evidence retention; a signer on an unsealed envelope is erased',
   },
   'crove_sign.signer.email': {
     kind: 'email',
     handling: 'keep_record',
-    reason: 'Signer email address preserved on sent or executed e-signature envelope and audit certificate under statutory e-transaction evidence retention; a signer on an unsent draft envelope is erased',
+    reason: 'Signer email address preserved on active, completed, or sealed e-signature envelope and audit certificate under statutory e-transaction evidence retention; a signer on an unsealed envelope is erased',
   },
   'crove_sign.signer.phone': {
     kind: 'phone',
     handling: 'keep_record',
-    reason: 'Signer phone number preserved on sent or executed e-signature envelope record under statutory e-transaction evidence retention; a signer on an unsent draft envelope is erased',
+    reason: 'Signer phone number preserved on active, completed, or sealed e-signature envelope record under statutory e-transaction evidence retention; a signer on an unsealed envelope is erased',
   },
   'crove_sign.signer.signature_typed_text': { kind: 'name', handling: 'keep_record', reason: 'Typed signature representation preserved on executed e-signature signer record' },
   'crove_sign.signer.signer_user_agent': { kind: 'other', handling: 'keep_record', reason: 'Device user-agent string preserved in execution evidence for e-signature dispute resolution' },
@@ -714,21 +714,30 @@ async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: 
       if (ids.length === 0) continue;
       byId = sql`AND t.id = ANY(${ids}::uuid[])`;
     }
-    const isDraftExpr =
+    const isUnsealedExpr =
       schema === 'crove_sign' && table === 'signer'
-        ? sql<boolean>`EXISTS (SELECT 1 FROM crove_sign.envelope e WHERE e.org_id = t.org_id AND e.id = t.envelope_id AND e.status = 'draft')`
+        ? sql<boolean>`EXISTS (
+            SELECT 1 FROM crove_sign.envelope e
+             WHERE e.org_id = t.org_id
+               AND e.id = t.envelope_id
+               AND e.status IN ('draft', 'voided', 'expired', 'declined')
+               AND e.sealed_file_id IS NULL
+          )`
         : sql<boolean>`false`;
-    const { rows } = await sql<{ row: Record<string, unknown>; is_draft: boolean }>`
-      SELECT pg_catalog.to_jsonb(t) - 'search' AS row, ${isDraftExpr} AS is_draft
+    const { rows } = await sql<{ row: Record<string, unknown>; is_unsealed: boolean }>`
+      SELECT pg_catalog.to_jsonb(t) - 'search' AS row, ${isUnsealedExpr} AS is_unsealed
         FROM ${sql.table(`${schema}.${table}`)} AS t
        WHERE t.org_id = ${orgId}::uuid AND ${match} ${shared} ${byId}
        LIMIT ${PERSONAL_DATA_ROW_LIMIT + 1}`.execute(trx);
     if (rows.length > PERSONAL_DATA_ROW_LIMIT) truncated = true;
-    for (const { row, is_draft } of rows.slice(0, PERSONAL_DATA_ROW_LIMIT)) {
+    for (const { row, is_unsealed } of rows.slice(0, PERSONAL_DATA_ROW_LIMIT)) {
       const base = rowHandling(entry, row);
       const { handling, reason } =
-        schema === 'crove_sign' && table === 'signer' && is_draft
-          ? { handling: 'erase' as const, reason: 'Draft envelope signer has not been sent or executed and is erased on request' }
+        schema === 'crove_sign' && table === 'signer' && is_unsealed
+          ? {
+              handling: 'erase' as const,
+              reason: 'Signer on an unsealed e-signature envelope (draft, voided, expired, or declined) is erased on request',
+            }
           : base;
       if (!searchable(handling)) continue;
       matches.push({ column: key, handling, reason, rowId: typeof row.id === 'string' ? row.id : null, row });
@@ -1160,9 +1169,6 @@ export const personalDataErase = defineCommand({
         UPDATE crove_kernel.tenant t SET contact_email = NULL
          WHERE t.org_id = ${ctx.orgId}::uuid AND ${match('email', 't.contact_email') ?? never}`.execute(ctx.trx);
       add('crove_kernel.tenant.contact_email', Number(contact.numAffectedRows ?? 0));
-      const { rows: signOtp } = await sql<{ count: number }>`
-        SELECT crove_sign.personal_erase_otp(${probe.email}) AS count`.execute(ctx.trx);
-      add('crove_sign.signing_otp.email', Number(signOtp[0]?.count ?? 0));
       // A schedule keeps its other recipients; one left with nobody is deleted (it mailed only this person).
       // Deleted first, so an address listed twice in different cases never leaves an empty list.
       const dropped = await sql`
@@ -1176,50 +1182,35 @@ export const personalDataErase = defineCommand({
       add('crove_social.report_schedule.recipients', Number(schedules.numAffectedRows ?? 0) + Number(dropped.numAffectedRows ?? 0));
     }
 
-    // Draft eSign recipients (#3323): a signer on an unsent draft envelope has no invite, token, or signature yet,
-    // so an erasure removes that draft signer and their placed fields while sent, active, and executed signers stay.
-    const signerMatch = sql<boolean>`(${match('email', 's.email') ?? never} OR ${match('phone', 's.phone') ?? never})`;
-    const { rows: draftSignEnvelopes } = await sql<{ id: string }>`
-      SELECT e.id
-        FROM crove_sign.envelope e
-       WHERE e.org_id = ${ctx.orgId}::uuid
-         AND e.status = 'draft'
-         AND EXISTS (
-           SELECT 1 FROM crove_sign.signer s
-            WHERE s.org_id = e.org_id AND s.envelope_id = e.id AND ${signerMatch}
-         )
-       ORDER BY e.id
-       FOR UPDATE OF e`.execute(ctx.trx);
-    if (draftSignEnvelopes.length > 0) {
-      const envIds = draftSignEnvelopes.map((e) => e.id);
-      const { rows: draftSigners } = await sql<{ id: string }>`
-        SELECT s.id
-          FROM crove_sign.signer s
-         WHERE s.org_id = ${ctx.orgId}::uuid
-           AND s.envelope_id = ANY(${envIds}::uuid[])
-           AND ${signerMatch}
-         ORDER BY s.id
-         FOR UPDATE OF s`.execute(ctx.trx);
-      if (draftSigners.length > 0) {
-        const signerIds = draftSigners.map((s) => s.id);
-        await sql`
-          DELETE FROM crove_sign.field f
-           WHERE f.org_id = ${ctx.orgId}::uuid AND f.signer_id = ANY(${signerIds}::uuid[])`.execute(ctx.trx);
-        const { rows: removedSigners } = await sql<{ envelope_id: string; email: boolean; phone: boolean }>`
-          DELETE FROM crove_sign.signer s
-           WHERE s.org_id = ${ctx.orgId}::uuid AND s.id = ANY(${signerIds}::uuid[])
-           RETURNING s.envelope_id, s.email IS NOT NULL AS email, s.phone IS NOT NULL AS phone`.execute(ctx.trx);
-        const touchedEnvelopes = [...new Set(removedSigners.map((r) => r.envelope_id))];
-        if (touchedEnvelopes.length > 0) {
-          await sql`
-            UPDATE crove_sign.envelope e
-               SET version = e.version + 1, updated_at = ${ctx.now}
-             WHERE e.org_id = ${ctx.orgId}::uuid AND e.id = ANY(${touchedEnvelopes}::uuid[]) AND e.status = 'draft'`.execute(ctx.trx);
-        }
-        add('crove_sign.signer.name', removedSigners.length);
-        add('crove_sign.signer.email', removedSigners.filter((s) => s.email).length);
-        add('crove_sign.signer.phone', removedSigners.filter((s) => s.phone).length);
-      }
+    // Unsealed eSign recipients (#3323, #3427): erase unsealed signers (locking envelope -> signer -> signing_token ->
+    // field -> signing_otp) BEFORE crove_sign.personal_erase_otp so we never acquire signing_otp prior to parent locks.
+    const { rows: erasedSignRows } = await sql<{
+      counts: {
+        signers: number;
+        emails: number;
+        phones: number;
+        typedSignatures: number;
+        userAgents: number;
+        fieldSignatures: number;
+        otps: number;
+      };
+    }>`
+      SELECT crove_sign.personal_erase_unsealed_signers(${probe.kind}, ${probeValue(probe)}) AS counts
+    `.execute(ctx.trx);
+    const erasedSign = erasedSignRows[0]?.counts;
+    if (erasedSign) {
+      add('crove_sign.signing_otp.email', erasedSign.otps);
+      add('crove_sign.signer.name', erasedSign.signers);
+      add('crove_sign.signer.email', erasedSign.emails);
+      add('crove_sign.signer.phone', erasedSign.phones);
+      add('crove_sign.signer.signature_typed_text', erasedSign.typedSignatures);
+      add('crove_sign.signer.signer_user_agent', erasedSign.userAgents);
+      add('crove_sign.field.signature_png_base64', erasedSign.fieldSignatures);
+    }
+    if (probe.kind === 'email') {
+      const { rows: signOtp } = await sql<{ count: number }>`
+        SELECT crove_sign.personal_erase_otp(${probe.email}) AS count`.execute(ctx.trx);
+      add('crove_sign.signing_otp.email', Number(signOtp[0]?.count ?? 0));
     }
 
     // Notes (#1678, ADR-0037 section 5). A shared note stays and has every mention of the value edited out, the one
