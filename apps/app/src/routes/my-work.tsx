@@ -875,9 +875,17 @@ export function MyWorkPage() {
   const f = useFormat();
   const locale = useLocale() === 'en' ? 'en' : 'vi';
   const viewerTz = browserTimeZone();
-  const today = zonedDate(viewerTz, Date.now());
+  const [dayTick, setDayTick] = useState(0);
+  useEffect(() => {
+    // Re-evaluate local today every minute so day buckets and action labels advance across midnight.
+    const timer = window.setInterval(() => setDayTick((n) => n + 1), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const today = useMemo(() => zonedDate(viewerTz, Date.now()), [viewerTz, dayTick]);
   const tomorrow = addTodoLocalDays(today, 1);
   const nextMon = nextMondayFrom(today);
+  const freshTomorrow = () => addTodoLocalDays(zonedDate(viewerTz, Date.now()), 1);
+  const freshNextMonday = () => nextMondayFrom(zonedDate(viewerTz, Date.now()));
   const [view, setView] = useState<MyWorkTab>('open');
   const [horizon, setHorizon] = useState<UpcomingHorizon>(7);
   const [projectFilter, setProjectFilter] = useState('');
@@ -1122,7 +1130,7 @@ export function MyWorkPage() {
               variant="outline"
               size="sm"
               disabled={reschedule.isPending}
-              onClick={() => reschedule.mutate({ todoIds: [todo.id], dueOn: tomorrow })}
+              onClick={() => reschedule.mutate({ todoIds: [todo.id], dueOn: freshTomorrow() })}
               data-testid="todo-reschedule-tomorrow"
             >
               {t('reschedule.tomorrow')}
@@ -1132,7 +1140,7 @@ export function MyWorkPage() {
               variant="outline"
               size="sm"
               disabled={reschedule.isPending}
-              onClick={() => reschedule.mutate({ todoIds: [todo.id], dueOn: nextMon })}
+              onClick={() => reschedule.mutate({ todoIds: [todo.id], dueOn: freshNextMonday() })}
               data-testid="todo-reschedule-next-monday"
             >
               {t('reschedule.nextMonday')}
@@ -1142,7 +1150,7 @@ export function MyWorkPage() {
               variant="outline"
               size="sm"
               disabled={reschedule.isPending}
-              onClick={() => setReschedulePrompt({ todoIds: [todo.id], bulk: false, dueOn: tomorrow })}
+              onClick={() => setReschedulePrompt({ todoIds: [todo.id], bulk: false, dueOn: freshTomorrow() })}
               data-testid="todo-reschedule-pick"
             >
               {t('reschedule.pickDate')}
@@ -1248,7 +1256,7 @@ export function MyWorkPage() {
             variant="outline"
             size="sm"
             disabled={reschedule.isPending}
-            onClick={() => reschedule.mutate({ todoIds: overduePersonalTodos.map((item) => item.id), dueOn: tomorrow, bulk: true })}
+            onClick={() => reschedule.mutate({ todoIds: overduePersonalTodos.map((item) => item.id), dueOn: freshTomorrow(), bulk: true })}
             data-testid="bulk-reschedule-tomorrow"
           >
             {t('reschedule.tomorrow')}
@@ -1258,7 +1266,7 @@ export function MyWorkPage() {
             variant="outline"
             size="sm"
             disabled={reschedule.isPending}
-            onClick={() => reschedule.mutate({ todoIds: overduePersonalTodos.map((item) => item.id), dueOn: nextMon, bulk: true })}
+            onClick={() => reschedule.mutate({ todoIds: overduePersonalTodos.map((item) => item.id), dueOn: freshNextMonday(), bulk: true })}
             data-testid="bulk-reschedule-next-monday"
           >
             {t('reschedule.nextMonday')}
@@ -1268,7 +1276,7 @@ export function MyWorkPage() {
             variant="default"
             size="sm"
             disabled={reschedule.isPending}
-            onClick={() => setReschedulePrompt({ todoIds: overduePersonalTodos.map((item) => item.id), bulk: true, dueOn: tomorrow })}
+            onClick={() => setReschedulePrompt({ todoIds: overduePersonalTodos.map((item) => item.id), bulk: true, dueOn: freshTomorrow() })}
             data-testid="bulk-reschedule-overdue"
           >
             {t('reschedule.bulkButton')}

@@ -479,10 +479,16 @@ export const todoComplete = defineCommand({
       if (!hasNewerSibling) {
         const occupied = new Set(siblings.map((r) => r.due_on).filter((d): d is string => d !== null));
         let candidate = nextTodoOccurrenceDate(rule, anchorDate);
-        for (let step = 0; step < 500 && occupied.has(candidate); step++) {
-          candidate = nextTodoOccurrenceDate(rule, candidate);
+        // Since nextTodoOccurrenceDate advances strictly monotonically, at most occupied.size skips reach an open date.
+        for (let step = 0; step <= occupied.size && occupied.has(candidate); step++) {
+          const advanced = nextTodoOccurrenceDate(rule, candidate);
+          if (advanced <= candidate) break;
+          candidate = advanced;
         }
-        if (!occupied.has(candidate)) {
+        if (occupied.has(candidate)) {
+          throw new DomainError('CONFLICT', 409, 'Không tính được ngày lặp tiếp theo hợp lệ');
+        }
+        {
           nextDueOn = candidate;
           // When a default monthly schedule passes through a shorter month (e.g. Jan 30 -> Feb 28), persist the
           // original day-of-month in the spawned rule so subsequent months return to day 30 even if history is purged.
