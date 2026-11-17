@@ -4,9 +4,9 @@
 // total to type), and the checks of the invoice's required fields show on the fields as the draft is typed.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
-import { useDeferredValue, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useDeferredValue, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { BUYER_IDENTITY_KINDS, BUYER_KINDS, EINVOICE_DRAFT_MAX_LINES, EINVOICE_SUGGEST_TEXT_MAX, vietnamToday, type BuyerIdentityKind, type BuyerKind, type DraftIssueCode, type EInvoiceDraft, type EInvoiceDraftForm, type EInvoiceDraftSummary, type EInvoicePrevious, type EInvoiceSuggested } from '@crove/kernel-contract';
+import { BUYER_IDENTITY_KINDS, BUYER_KINDS, EINVOICE_DRAFT_MAX_LINES, EINVOICE_SUGGEST_TEXT_MAX, vietnamToday, type BuyerIdentityKind, type BuyerKind, type DraftIssueCode, type EInvoiceCorrection, type EInvoiceCorrectionKind, type EInvoiceDraft, type EInvoiceDraftForm, type EInvoiceDraftSummary, type EInvoicePrevious, type EInvoiceSuggested } from '@crove/kernel-contract';
 import { Alert, AlertDescription } from '@crove/ui/components/alert';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -23,7 +23,7 @@ import { useFormat } from '../i18n/provider.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { applyPrevious } from '../lib/invoice-copy.ts';
 import { appendSource, bookingDay, bookingSourceText, dealSourceText } from '../lib/invoice-crm-source.ts';
-import { client, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
+import { ClientError, client, errorMessage, getCurrentOrg, isStepUpRequired, orpc, queryClient, uploadAgreement } from '../lib/api.ts';
 import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 
 const NUM = 'px-4 py-3 text-right tabular-nums';
@@ -48,13 +48,15 @@ interface FormState {
   saleDate: string;
   lateReason: string;
   seriesId: string;
+  // Set when the draft is an adjusting or a replacing invoice (#2504): the form says so, and an adjustment may carry a negative price.
+  correction: EInvoiceCorrection | null;
   // An individual's identity, one of CCCD, passport or budget code ('' is none); never sent for another kind of buyer.
   buyer: { kind: BuyerKind; partyId: string | null; taxCode: string; name: string; address: string; email: string; identityKind: BuyerIdentityKind | ''; identity: string };
   lines: LineState[];
 }
 
 const blankLine = (): LineState => ({ description: '', unit: '', quantity: '1', unitPrice: '', vatRate: '10%', ai: null });
-const blankForm = (seriesId: string): FormState => ({ draftId: null, buyerAi: false, date: vietnamToday(), saleDate: '', lateReason: '', seriesId, buyer: { kind: 'business', partyId: null, taxCode: '', name: '', address: '', email: '', identityKind: '', identity: '' }, lines: [blankLine()] });
+const blankForm = (seriesId: string): FormState => ({ draftId: null, buyerAi: false, date: vietnamToday(), saleDate: '', lateReason: '', seriesId, correction: null, buyer: { kind: 'business', partyId: null, taxCode: '', name: '', address: '', email: '', identityKind: '', identity: '' }, lines: [blankLine()] });
 const fromDraft = (d: EInvoiceDraft): FormState => ({
   draftId: d.id,
   buyerAi: false,
@@ -62,6 +64,7 @@ const fromDraft = (d: EInvoiceDraft): FormState => ({
   saleDate: d.saleDate ?? '',
   lateReason: d.lateReason ?? '',
   seriesId: d.seriesId ?? '',
+  correction: d.correction,
   buyer: { kind: d.buyer.kind as BuyerKind, partyId: d.buyer.partyId, taxCode: d.buyer.taxCode ?? '', name: d.buyer.name ?? '', address: d.buyer.address ?? '', email: d.buyer.email ?? '', identityKind: d.buyer.identity?.kind ?? '', identity: d.buyer.identity?.value ?? '' },
   lines: d.lines.map((l) => ({ description: l.description, unit: l.unit ?? '', quantity: l.quantity, unitPrice: l.unitPrice, vatRate: l.vatRate, ai: null })),
 });
@@ -299,7 +302,7 @@ export function LateSaleNotice({ id, reason, error, onChange }: { id: string; re
   );
 }
 
-function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormState; series: Array<{ id: string; templateNo: string; symbol: string; description: string }>; legalEntityId: string | undefined; onClose: () => void }) {
+function DraftForm({ initial, series, legalEntityId, originalNumber, onClose }: { initial: FormState; originalNumber: string | null; series: Array<{ id: string; templateNo: string; symbol: string; description: string }>; legalEntityId: string | undefined; onClose: () => void }) {
   const t = useTranslations('salesInvoices');
   const f = useFormat();
   const [form, setForm] = useState(initial);
@@ -308,7 +311,7 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
   // The buyer of the invoice copied last: a second copy replaces that buyer, never one a person typed or a proposal brought.
   const copiedBuyer = useRef<string | null>(null);
   const deferred = useDeferredValue(form);
-  const input = useMemo(() => toInput(deferred), [deferred]);
+  const input = useMemo(() => ({ ...toInput(deferred), correction: deferred.correction ? { kind: deferred.correction.kind, originalDraftId: deferred.correction.originalDraftId } : null }), [deferred]);
   const check = useQuery({ ...orpc.einvoice.drafts.check.queryOptions({ input }), placeholderData: (previous) => previous });
   const save = useMutation({
     mutationFn: () => client.einvoice.drafts.save({ ...toInput(form), draftId: form.draftId, legalEntityId: legalEntityId ?? null }),
@@ -332,6 +335,7 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
   return (
     <Card className="mb-6 block p-4" aria-label={t('formTitle')} data-testid="invoice-form">
       <h2 className="text-base font-medium text-foreground">{form.draftId ? t('editTitle') : t('newTitle')}</h2>
+      {form.correction && <div className="mt-2"><CorrectionBanner correction={form.correction} originalNumber={originalNumber} /></div>}
       <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="space-y-1">
           <Label htmlFor={`${id}-date`}>{t('date')}</Label>
@@ -458,7 +462,7 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
                 <Label htmlFor={`${id}-p${index}`} className={index === 0 ? undefined : 'sr-only'}>
                   {t('unitPrice')}
                 </Label>
-                <Input id={`${id}-p${index}`} value={line.unitPrice} inputMode="decimal" aria-invalid={bad(at('unitPrice'))} onChange={(e) => setLine(index, { unitPrice: e.target.value })} />
+                <Input id={`${id}-p${index}`} value={line.unitPrice} inputMode={form.correction?.kind === 'adjustment' ? 'text' : 'decimal'} aria-invalid={bad(at('unitPrice'))} onChange={(e) => setLine(index, { unitPrice: e.target.value })} />
               </div>
               <div className="space-y-1">
                 <Label htmlFor={`${id}-v${index}`} className={index === 0 ? undefined : 'sr-only'}>
@@ -534,6 +538,125 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
       </div>
       <p className="mt-3 text-xs text-subtle-foreground">{t('notIssued')}</p>
     </Card>
+  );
+}
+
+// What the form of an adjusting or a replacing invoice says about itself (#2504): which invoice it corrects, by which method, and why.
+export function CorrectionBanner({ correction, originalNumber }: { correction: EInvoiceCorrection; originalNumber: string | null }) {
+  const t = useTranslations('salesInvoices');
+  const options = useQuery(orpc.einvoice.drafts.correctionOptions.queryOptions({ input: {} }));
+  const label = options.data?.reasonCodes.find((c) => c.code === correction.reasonCode)?.label ?? correction.reasonCode;
+  const number = originalNumber ?? '-';
+  return (
+    <Alert className="mb-3" data-testid="invoice-correction-banner">
+      <AlertDescription>
+        <p>{correction.kind === 'adjustment' ? t('correction.formAdjustment', { number }) : t('correction.formReplacement', { number })}</p>
+        <p className="mt-1 text-xs">{t('correction.formReason', { label })}</p>
+      </AlertDescription>
+    </Alert>
+  );
+}
+
+// "Điều chỉnh" and "Thay thế" on an issued invoice (#2504). The method of an earlier correction is kept, the reason is one of Appendix XVII's (the list is empty until it is entered, and the
+// panel says so), a business buyer needs the signed agreement attached and an individual none. It makes a draft: issuing it is the same request and approval as any invoice. There is no cancel.
+export function CorrectionAction({ draft, onStarted, openWith = null }: { draft: EInvoiceDraftSummary; onStarted: (draftId: string) => void; openWith?: EInvoiceCorrectionKind | null }) {
+  const t = useTranslations('salesInvoices');
+  const id = useId();
+  const options = useQuery(orpc.einvoice.drafts.correctionOptions.queryOptions({ input: {} }));
+  const [kind, setKind] = useState<EInvoiceCorrectionKind | null>(openWith);
+  const [reason, setReason] = useState('');
+  const [file, setFile] = useState<File | null>(null);
+  const business = draft.buyerKind === 'business';
+  const reasons = options.data?.reasonCodes ?? [];
+  const start = useMutation({
+    mutationFn: async (method: EInvoiceCorrectionKind) => {
+      // The invoice belongs to the organization on screen when the person pressed the button: if it changed while the agreement was uploading, nothing is started (the file is the first
+      // organization's, the draft would be made in the second).
+      const org = getCurrentOrg();
+      const agreementFileId = file ? await uploadAgreement(file) : null;
+      if (getCurrentOrg() !== org) throw new ClientError('salesInvoices.correction.orgChanged', (tr) => tr('salesInvoices.correction.orgChanged'));
+      return client.einvoice.drafts.startCorrection({ originalDraftId: draft.id, kind: method, reasonCode: reason, agreementFileId });
+    },
+    onSuccess: async (made) => {
+      await refresh();
+      setKind(null);
+      setFile(null);
+      onStarted(made.id);
+    },
+  });
+  // Nothing corrects an invoice that was replaced, nor an adjusting invoice (it is corrected through the invoice it adjusts).
+  if (draft.replaced || draft.correction?.kind === 'adjustment') return null;
+  const methods: EInvoiceCorrectionKind[] = draft.correctedBy ? [draft.correctedBy] : ['adjustment', 'replacement'];
+  const number = draft.issuedNumber ?? '-';
+  return (
+    <div className="mt-2" data-testid="invoice-correction">
+      {kind === null ? (
+        <span className="flex flex-wrap gap-1">
+          {methods.map((m) => (
+            <Button key={m} variant="outline" size="sm" onClick={() => setKind(m)} data-testid={`invoice-correct-${m}`}>
+              {m === 'adjustment' ? t('correction.adjust') : t('correction.replace')}
+            </Button>
+          ))}
+        </span>
+      ) : (
+        <Card className="block p-3" data-testid="invoice-correction-panel">
+          <p className="text-sm font-medium">{kind === 'adjustment' ? t('correction.panelAdjust', { number }) : t('correction.panelReplace', { number })}</p>
+          {draft.correctedBy && <p className="mt-1 text-xs text-subtle-foreground">{t('correction.methodKept', { method: draft.correctedBy === 'adjustment' ? t('correction.methodAdjustment') : t('correction.methodReplacement') })}</p>}
+          {options.error ? (
+            <div className="mt-2" data-testid="invoice-correction-options-error">
+              <ErrorText>{errorMessage(options.error)}</ErrorText>
+              <p className="text-xs text-subtle-foreground">{t('correction.optionsRetryHint')}</p>
+              <Button className="mt-1" size="sm" variant="outline" loading={options.isFetching} onClick={() => void options.refetch()} data-testid="invoice-correction-options-retry">
+                {t('correction.optionsRetry')}
+              </Button>
+            </div>
+          ) : options.data && reasons.length === 0 ? (
+            <p className="mt-2 text-xs text-warning" data-testid="invoice-correction-no-reasons">{t('correction.reasonEmpty')}</p>
+          ) : (
+            <div className="mt-2">
+              <Label htmlFor={`${id}-reason`}>{t('correction.reason')}</Label>
+              <NativeSelect id={`${id}-reason`} value={reason} onChange={(e) => setReason(e.target.value)} data-testid="invoice-correction-reason">
+                <NativeSelectOption value="">{t('correction.reasonPick')}</NativeSelectOption>
+                {reasons.map((r) => (
+                  <NativeSelectOption key={r.code} value={r.code}>
+                    {r.label}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </div>
+          )}
+          <div className="mt-2">
+            {business ? (
+              <>
+                <Label htmlFor={`${id}-file`}>{t('correction.agreement')}</Label>
+                <Input id={`${id}-file`} type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(e) => setFile(e.target.files?.[0] ?? null)} data-testid="invoice-correction-file" />
+                <p className="mt-1 text-xs text-subtle-foreground">{t('correction.agreementHint')}</p>
+              </>
+            ) : (
+              <p className="text-xs text-subtle-foreground">{t('correction.agreementNone')}</p>
+            )}
+          </div>
+          {start.error && <ErrorText>{errorMessage(start.error)}</ErrorText>}
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button size="sm" loading={start.isPending} disabled={reason === '' || (business && file === null)} onClick={() => start.mutate(kind)} data-testid="invoice-correction-start">
+              {t('correction.start')}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                // Closing forgets the agreement picked: a reopened panel shows an empty picker, so nothing hidden is uploaded.
+                setKind(null);
+                setFile(null);
+              }}
+            >
+              {t('correction.cancel')}
+            </Button>
+          </div>
+          <p className="mt-2 text-xs text-subtle-foreground">{t('correction.noCancel')}</p>
+        </Card>
+      )}
+    </div>
   );
 }
 
@@ -683,7 +806,16 @@ export function SalesInvoicesPage() {
           {sync.error && <ErrorText>{errorMessage(sync.error)}</ErrorText>}
         </Card>
       )}
-      {editing && <DraftForm key={editing.draftId ?? 'new'} initial={editing} series={series} legalEntityId={entity.legalEntityId} onClose={() => setEditing(null)} />}
+      {editing && (
+        <DraftForm
+          key={editing.draftId ?? 'new'}
+          initial={editing}
+          series={series}
+          legalEntityId={entity.legalEntityId}
+          originalNumber={editing.correction ? (drafts.data?.find((d) => d.id === editing.correction?.originalDraftId)?.issuedNumber ?? null) : null}
+          onClose={() => setEditing(null)}
+        />
+      )}
       {drafts.isPending ? (
         <TableSkeleton columns={5} />
       ) : drafts.error ? (
@@ -702,7 +834,14 @@ export function SalesInvoicesPage() {
                 {d.issuedNumber !== null && <span className="ml-2 text-xs text-subtle-foreground">{t('issuedNumber', { number: d.issuedNumber })}</span>}
                 {d.state === 'issued' && !d.evidenceStored && <span className="ml-2 text-xs text-subtle-foreground">{t('evidencePending')}</span>}
                 {d.issueCount > 0 && <span className="ml-2 text-xs text-subtle-foreground">{t('issueCount', { count: String(d.issueCount) })}</span>}
+                {d.correction && (
+                  <Badge variant="outline" className="ml-2" data-testid="invoice-correction-badge">
+                    {d.correction.kind === 'adjustment' ? t('correction.badgeAdjustment') : t('correction.badgeReplacement')}
+                  </Badge>
+                )}
+                {d.replaced && <span className="ml-2 text-xs text-subtle-foreground" data-testid="invoice-replaced">{t('correction.replacedNote')}</span>}
                 <DraftNote draft={d} />
+                {canWrite && d.state === 'issued' && d.evidenceStored && editing === null && <CorrectionAction key={`${d.id}:${d.updatedAt}`} draft={d} onStarted={(draftId) => void open(draftId)} />}
                 {/* Issuing needs a provider this deployment has switched on: with none, the request would be approved and nothing would send it. */}
                 {canWrite && d.state === 'draft' && d.issueCount === 0 && status.data?.sandbox && <IssueAction key={`${d.id}:${d.updatedAt}`} draft={d} canApprove={canApprove} />}
               </TableCell>

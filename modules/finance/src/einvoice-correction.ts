@@ -7,10 +7,11 @@
 //   one correction of an original is open at a time; a later correction keeps the method of the first (adjust stays adjust); the reason code is one of Appendix XVII (refused while the list
 //   is empty, #3571); a buyer with a tax code needs the signed agreement file ("biên bản thỏa thuận", the accountant's answer to #2506 question 2), an individual buyer none.
 import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
 import { ADJUST_REPLACE_REASON_CODES, isReasonCode, type ReasonCode } from '@crove/einvoice';
-import { zEInvoiceStartCorrection, type EInvoiceDraft } from '@crove/kernel-contract';
+import { zEInvoiceStartCorrection, type EInvoiceCorrectionOptions, type EInvoiceDraft } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand } from '@crove/kernel-runtime';
+import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
 import { loadDraft } from './einvoice-drafts.ts';
 import { databaseToday } from './period-lock.ts';
 
@@ -75,7 +76,7 @@ export const einvoiceStartCorrection = defineCommand({
     let agreement: string | null = null;
     if (input.agreementFileId) {
       agreement = input.agreementFileId.toLowerCase();
-      const file = await ctx.trx.selectFrom('crove_kernel.file').select('id').where('org_id', '=', ctx.orgId).where('id', '=', agreement).executeTakeFirst();
+      const file = await ctx.trx.selectFrom('crove_kernel.file').select('id').where('org_id', '=', ctx.orgId).where('id', '=', agreement).where('source', '=', 'agreement').executeTakeFirst();
       if (!file) throw new DomainError('EINVOICE_AGREEMENT_FILE_NOT_FOUND', 404, 'Không tìm thấy tệp biên bản thỏa thuận');
     } else if (original.buyer_kind === 'business') {
       throw new DomainError('EINVOICE_AGREEMENT_REQUIRED', 422, 'Người mua là doanh nghiệp: hãy đính kèm biên bản thỏa thuận đã ký của hai bên trước khi điều chỉnh hoặc thay thế');
@@ -139,4 +140,13 @@ export const einvoiceStartCorrection = defineCommand({
   },
 });
 
+// The reason codes of Appendix XVII, for the screen's picker (#2504). Read-only; no org data.
+export const einvoiceCorrectionOptions = defineQuery({
+  name: 'finance.einvoice.correction_options',
+  input: z.strictObject({}),
+  access: EDITORS,
+  handler: async (): Promise<EInvoiceCorrectionOptions> => ({ reasonCodes: correctionReasonCodes().map((c) => ({ code: c.code, label: c.label })) }),
+});
+
 export const einvoiceCorrectionCommands = [einvoiceStartCorrection];
+export const einvoiceCorrectionQueries = [einvoiceCorrectionOptions];

@@ -92,6 +92,8 @@ export type EInvoiceDraftForm = z.infer<typeof zEInvoiceDraftForm>;
 // The live check takes what is typed so far: a quantity or a price that is not a number yet is answered with an issue on its field, not refused.
 export const zEInvoiceDraftCheckInput = zEInvoiceDraftForm.extend({
   lines: z.array(zEInvoiceLineInput.extend({ quantity: z.string().max(40), unitPrice: z.string().max(40) })).max(EINVOICE_DRAFT_MAX_LINES),
+  // The form of an adjusting or a replacing invoice (#2504): an adjustment may carry a negative price, and the VAT rate of a correction is judged on its original's date. Omitted for any other draft.
+  correction: z.strictObject({ kind: z.enum(['adjustment', 'replacement']), originalDraftId: zId }).nullable().default(null),
 });
 
 export const zEInvoiceDraftSave = zEInvoiceDraftForm.extend({
@@ -147,6 +149,13 @@ export const zEInvoiceStartCorrection = z.strictObject({
 });
 export type EInvoiceStartCorrection = z.infer<typeof zEInvoiceStartCorrection>;
 
+// What the screen needs to start a correction (#2504): the reason codes of Appendix XVII, with their Vietnamese labels. Empty until the list is entered (reason-codes.ts), and the screen
+// then says why a correction cannot start.
+export const zEInvoiceCorrectionOptions = z.object({
+  reasonCodes: z.array(z.object({ code: z.string(), label: z.string() })),
+});
+export type EInvoiceCorrectionOptions = z.infer<typeof zEInvoiceCorrectionOptions>;
+
 export const zEInvoiceDraft = z.object({
   id: zId,
   legalEntityId: zId,
@@ -196,6 +205,14 @@ export const zEInvoiceDraftSummary = z.object({
   evidenceStored: z.boolean(),
   // When it last changed: a request made for an earlier state is not the one to approve.
   updatedAt: z.string(),
+  // The buyer's kind: a business buyer needs the signed agreement before a correction (#2504).
+  buyerKind: z.enum(BUYER_KINDS),
+  // Set on an adjusting or a replacing invoice (#2504): its method and the issued draft it corrects.
+  correction: z.strictObject({ kind: z.enum(EINVOICE_CORRECTION_KINDS), originalDraftId: zId }).nullable().default(null),
+  // On an issued invoice: the method of the first correction that was issued for it, so the screen offers only that one for the next (#2504); null when none was issued.
+  correctedBy: z.enum(EINVOICE_CORRECTION_KINDS).nullable().default(null),
+  // On an issued invoice: it was replaced, so it is no longer in force and nothing corrects it (#2504).
+  replaced: z.boolean().default(false),
 });
 export type EInvoiceDraftSummary = z.infer<typeof zEInvoiceDraftSummary>;
 
