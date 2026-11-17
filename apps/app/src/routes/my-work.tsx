@@ -132,12 +132,18 @@ export function TodoRecurrenceBadge({ recurrence }: { recurrence: TodoRecurrence
 
 const WEEKDAYS = [1, 2, 3, 4, 5, 6, 0] as const;
 const MONTH_DAYS = Array.from({ length: 31 }, (_, i) => i + 1);
+const TODO_DRAG_MIME = 'application/x-crove-todo';
 
 /** Recurrence selector in the personal to-do editor (#3557). */
 export function TodoRecurrenceField({ value, onChange }: { value: TodoRecurrence | null; onChange: (next: TodoRecurrence | null) => void }) {
   const t = useTranslations('myWork');
   const [customOpen, setCustomOpen] = useState(() => todoRecurrencePreset(value) === 'custom');
+  const [intervalText, setIntervalText] = useState(() => String(value?.interval ?? 1));
   const preset: TodoRecurrencePreset = customOpen && value ? 'custom' : todoRecurrencePreset(value);
+
+  useEffect(() => {
+    if (value) setIntervalText(String(value.interval));
+  }, [value?.interval]);
 
   const handlePresetChange = (nextPreset: TodoRecurrencePreset) => {
     if (nextPreset === 'none') {
@@ -213,11 +219,20 @@ export function TodoRecurrenceField({ value, onChange }: { value: TodoRecurrence
                 type="number"
                 min={1}
                 max={TODO_RECURRENCE_INTERVAL_MAX}
-                value={value.interval}
+                value={intervalText}
                 onChange={(e) => {
-                  const raw = Number.parseInt(e.target.value, 10);
-                  const interval = Number.isFinite(raw) ? Math.min(TODO_RECURRENCE_INTERVAL_MAX, Math.max(1, raw)) : 1;
-                  onChange({ ...value, interval });
+                  const text = e.target.value;
+                  setIntervalText(text);
+                  const raw = Number.parseInt(text, 10);
+                  if (Number.isFinite(raw) && raw >= 1 && raw <= TODO_RECURRENCE_INTERVAL_MAX) {
+                    onChange({ ...value, interval: raw });
+                  }
+                }}
+                onBlur={() => {
+                  const raw = Number.parseInt(intervalText, 10);
+                  const clamped = Number.isFinite(raw) ? Math.min(TODO_RECURRENCE_INTERVAL_MAX, Math.max(1, raw)) : value.interval;
+                  setIntervalText(String(clamped));
+                  if (clamped !== value.interval) onChange({ ...value, interval: clamped });
                 }}
                 aria-label={t('recurrence.intervalLabel')}
                 className="h-9 w-20 tabular-nums sm:h-8"
@@ -620,10 +635,29 @@ function TodoEditor({ todo, onClose }: { todo: Todo; onClose: () => void }) {
     onSuccess: () => {
       refresh();
       onClose();
-      toastWithUndo(t('completedToast', { title: todo.title }), t('undoneToast', { title: todo.title }), () => clientForOrg(slug).notes.todos.reopen({ todoId: todo.id }), {
-        undo: common('undo'),
-        failed: (reason) => common('undoFailed', { reason }),
-      });
+      const savedRecurrence = todo.recurrence ? normalizeTodoRecurrence(todo.recurrence) : null;
+      toastWithUndo(
+        t('completedToast', { title: todo.title }),
+        t('undoneToast', { title: todo.title }),
+        async () => {
+          const api = clientForOrg(slug).notes.todos;
+          const reopened = await api.reopen({ todoId: todo.id });
+          if (savedRecurrence) {
+            await api.update({
+              todoId: todo.id,
+              revision: reopened.revision,
+              title: todo.title,
+              details: todo.details,
+              checklist: todo.checklist,
+              dueOn: todo.dueOn,
+              dueTime: todo.dueTime,
+              timeZone: todo.timeZone,
+              recurrence: savedRecurrence,
+            });
+          }
+        },
+        { undo: common('undo'), failed: (reason) => common('undoFailed', { reason }) },
+      );
     },
   });
   const remove = useMutation({
@@ -782,7 +816,7 @@ function TodoEditor({ todo, onClose }: { todo: Todo; onClose: () => void }) {
               type="button"
               variant="outline"
               loading={completeStop.isPending}
-              disabled={completeStop.isPending}
+              disabled={completeStop.isPending || dirty}
               onClick={() => completeStop.mutate()}
               data-testid="todo-complete-stop-series"
             >
@@ -861,6 +895,7 @@ export function MyWorkPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [draggedTodoId, setDraggedTodoId] = useState<string | null>(null);
+  const draggedTodoIdRef = useRef<string | null>(null);
   const [dropDay, setDropDay] = useState<string | null>(null);
   const [reschedulePrompt, setReschedulePrompt] = useState<ReschedulePromptState | null>(null);
   const quickAdd = useRef<HTMLInputElement>(null);
@@ -1020,7 +1055,7 @@ export function MyWorkPage() {
   const row = (todo: TodoSummary, group: readonly TodoSummary[]) => {
     const up = view === 'open' ? moveTarget(group, todo.id, 'up') : null;
     const down = view === 'open' ? moveTarget(group, todo.id, 'down') : null;
-    const canDrag = view === 'upcoming' && todo.status === 'open' && !reschedule.isPending;
+    const canDrag = view === 'upcoming' && todo.status === 'open' && editing !== todo.id && !reschedule.isPending;
     return (
       <li
         key={todo.id}
@@ -1031,8 +1066,10 @@ export function MyWorkPage() {
         onDragStart={
           canDrag
             ? (e) => {
+                e.dataTransfer.setData(TODO_DRAG_MIME, todo.id);
                 e.dataTransfer.setData('text/plain', todo.id);
                 e.dataTransfer.effectAllowed = 'move';
+                draggedTodoIdRef.current = todo.id;
                 setDraggedTodoId(todo.id);
               }
             : undefined
@@ -1040,6 +1077,7 @@ export function MyWorkPage() {
         onDragEnd={
           canDrag
             ? () => {
+                draggedTodoIdRef.current = null;
                 setDraggedTodoId(null);
                 setDropDay(null);
               }
@@ -1391,7 +1429,7 @@ export function MyWorkPage() {
                   data-testid={`upcoming-day-${bucket.date}`}
                   data-drop-date={bucket.date}
                   onDragOver={(e) => {
-                    if (!draggedTodoId) return;
+                    if (!draggedTodoId && !draggedTodoIdRef.current) return;
                     e.preventDefault();
                     e.dataTransfer.dropEffect = 'move';
                     if (dropDay !== bucket.date) setDropDay(bucket.date);
@@ -1403,10 +1441,14 @@ export function MyWorkPage() {
                   }}
                   onDrop={(e) => {
                     e.preventDefault();
-                    const id = e.dataTransfer.getData('text/plain') || draggedTodoId;
+                    const id = e.dataTransfer.getData(TODO_DRAG_MIME) || draggedTodoIdRef.current || draggedTodoId;
+                    draggedTodoIdRef.current = null;
                     setDropDay(null);
                     setDraggedTodoId(null);
-                    if (id) reschedule.mutate({ todoIds: [id], dueOn: bucket.date });
+                    if (!id) return;
+                    const draggedItem = filtered.todos.find((x) => x.id === id);
+                    if (!draggedItem || draggedItem.dueOn === bucket.date) return;
+                    reschedule.mutate({ todoIds: [id], dueOn: bucket.date });
                   }}
                 >
                   <div className="mb-1 flex flex-wrap items-center justify-between gap-2">

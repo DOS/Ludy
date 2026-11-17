@@ -114,7 +114,10 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
       expect(await check('$1::jsonb', [JSON.stringify({ freq: 'monthly', interval: 1, byMonthDay: -1 })])).toBe(true);
       expect(await check('$1::jsonb', [JSON.stringify({ freq: 'monthly', interval: 12, byMonthDay: 31 })])).toBe(true);
 
-      // Disallowed shapes, keys, intervals, and cross-frequency qualifiers.
+      // Missing required keys and disallowed shapes, keys, intervals, and cross-frequency qualifiers.
+      expect(await check('$1::jsonb', ['{}'])).toBe(false);
+      expect(await check('$1::jsonb', [JSON.stringify({ freq: 'daily' })])).toBe(false);
+      expect(await check('$1::jsonb', [JSON.stringify({ interval: 1 })])).toBe(false);
       expect(await check('$1::jsonb', [JSON.stringify({ freq: 'yearly', interval: 1 })])).toBe(false);
       expect(await check('$1::jsonb', [JSON.stringify({ freq: 'daily', interval: 0 })])).toBe(false);
       expect(await check('$1::jsonb', [JSON.stringify({ freq: 'daily', interval: 366 })])).toBe(false);
@@ -310,5 +313,31 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
       expect(JSON.stringify(rows.rows)).not.toContain('Overdue Alpha');
       expect(JSON.stringify(rows.rows)).not.toContain('Overdue Beta');
     });
+
+    // Multi-step series advancement + reopen of an older occurrence never duplicates a past or active occurrence,
+    // and rescheduling into a past reminder timestamp stamps reminded_at as passed instead of leaving null.
+    const day1 = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Daily Standup',
+      dueOn: '2027-02-01',
+      dueTime: '09:00',
+      timeZone: 'Asia/Ho_Chi_Minh',
+      reminder: 'auto',
+      recurrence: { freq: 'daily', interval: 1 },
+    });
+    const c1 = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: day1.todoId });
+    const day2Id = c1.nextTodoId as string;
+    const c2 = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: day2Id });
+    const day3Id = c2.nextTodoId as string;
+
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.reopen', { todoId: day1.todoId });
+    const recompleteDay1 = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: day1.todoId });
+    expect(recompleteDay1.nextTodoId ?? null).toBeNull();
+
+    // Reschedule day3 to a past calendar date so its reminder timestamp has already passed -> reminded_at must be stamped.
+    await o.exec<TodoRescheduled>(o.mine, 'notes.todo.reschedule', { todoIds: [day3Id], dueOn: '2020-01-01' });
+    const rawPast = await admin((c) =>
+      c.query<{ reminded_at: Date | null }>(`SELECT reminded_at FROM crove_notes.todo WHERE org_id = $1 AND id = $2`, [o.orgId, day3Id]),
+    );
+    expect(rawPast.rows[0]?.reminded_at).not.toBeNull();
   });
 });

@@ -18,7 +18,10 @@ BEGIN
   IF p_rule IS NULL THEN
     RETURN true;
   END IF;
-  IF pg_catalog.jsonb_typeof(p_rule) <> 'object' THEN
+  IF pg_catalog.jsonb_typeof(p_rule) IS DISTINCT FROM 'object' THEN
+    RETURN false;
+  END IF;
+  IF NOT (p_rule ? 'freq') OR NOT (p_rule ? 'interval') THEN
     RETURN false;
   END IF;
   IF EXISTS (
@@ -28,52 +31,52 @@ BEGIN
     RETURN false;
   END IF;
 
-  IF pg_catalog.jsonb_typeof(p_rule -> 'freq') <> 'string' THEN
+  IF pg_catalog.jsonb_typeof(p_rule -> 'freq') IS DISTINCT FROM 'string' THEN
     RETURN false;
   END IF;
   v_freq := p_rule ->> 'freq';
-  IF v_freq NOT IN ('daily', 'weekly', 'monthly') THEN
+  IF v_freq IS NULL OR v_freq NOT IN ('daily', 'weekly', 'monthly') THEN
     RETURN false;
   END IF;
 
-  IF pg_catalog.jsonb_typeof(p_rule -> 'interval') <> 'number' THEN
+  IF pg_catalog.jsonb_typeof(p_rule -> 'interval') IS DISTINCT FROM 'number' THEN
     RETURN false;
   END IF;
   v_interval_txt := p_rule ->> 'interval';
-  IF v_interval_txt !~ '^[1-9][0-9]{0,2}$' THEN
+  IF v_interval_txt IS NULL OR v_interval_txt !~ '^[1-9][0-9]{0,2}$' THEN
     RETURN false;
   END IF;
   v_interval := v_interval_txt::integer;
-  IF v_interval < 1 OR v_interval > 365 THEN
+  IF v_interval IS NULL OR v_interval < 1 OR v_interval > 365 THEN
     RETURN false;
   END IF;
 
-  IF p_rule ? 'byWeekday' AND pg_catalog.jsonb_typeof(p_rule -> 'byWeekday') <> 'null' THEN
-    IF v_freq <> 'weekly' THEN
+  IF p_rule ? 'byWeekday' AND pg_catalog.jsonb_typeof(p_rule -> 'byWeekday') IS DISTINCT FROM 'null' THEN
+    IF v_freq IS DISTINCT FROM 'weekly' THEN
       RETURN false;
     END IF;
-    IF pg_catalog.jsonb_typeof(p_rule -> 'byWeekday') <> 'number' THEN
+    IF pg_catalog.jsonb_typeof(p_rule -> 'byWeekday') IS DISTINCT FROM 'number' THEN
       RETURN false;
     END IF;
     v_weekday_txt := p_rule ->> 'byWeekday';
-    IF v_weekday_txt !~ '^[0-6]$' THEN
+    IF v_weekday_txt IS NULL OR v_weekday_txt !~ '^[0-6]$' THEN
       RETURN false;
     END IF;
   END IF;
 
-  IF p_rule ? 'byMonthDay' AND pg_catalog.jsonb_typeof(p_rule -> 'byMonthDay') <> 'null' THEN
-    IF v_freq <> 'monthly' THEN
+  IF p_rule ? 'byMonthDay' AND pg_catalog.jsonb_typeof(p_rule -> 'byMonthDay') IS DISTINCT FROM 'null' THEN
+    IF v_freq IS DISTINCT FROM 'monthly' THEN
       RETURN false;
     END IF;
-    IF pg_catalog.jsonb_typeof(p_rule -> 'byMonthDay') <> 'number' THEN
+    IF pg_catalog.jsonb_typeof(p_rule -> 'byMonthDay') IS DISTINCT FROM 'number' THEN
       RETURN false;
     END IF;
     v_month_day_txt := p_rule ->> 'byMonthDay';
-    IF v_month_day_txt !~ '^(-1|[1-9][0-9]?)$' THEN
+    IF v_month_day_txt IS NULL OR v_month_day_txt !~ '^(-1|[1-9][0-9]?)$' THEN
       RETURN false;
     END IF;
     v_month_day := v_month_day_txt::integer;
-    IF NOT (v_month_day = -1 OR (v_month_day >= 1 AND v_month_day <= 31)) THEN
+    IF v_month_day IS NULL OR NOT (v_month_day = -1 OR (v_month_day >= 1 AND v_month_day <= 31)) THEN
       RETURN false;
     END IF;
   END IF;

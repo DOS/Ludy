@@ -213,6 +213,9 @@ export function remindAt(reminder: TodoReminder, at: { due_on: string | null; du
   return { at: picked, passed: false };
 }
 
+// A reminder time already passed when scheduled or shifted is stamped passed so the background worker skips late pushes.
+const passedAt = (at: Date | null, now: Date): Date | null => (at !== null && at.getTime() <= now.getTime() ? now : null);
+
 // A to-do back in the list (reopened, restored) whose reminder time passed meanwhile is not reminded late.
 const reminderPassed = (now: Date) => sql<Date | null>`CASE WHEN remind_at <= ${now}::timestamptz AND reminded_at IS NULL THEN ${now}::timestamptz ELSE reminded_at END`;
 
@@ -456,15 +459,16 @@ export const todoComplete = defineCommand({
     if (rule !== null && !stopSeries && seriesId !== null) {
       const anchorDate = before.due_on ?? zonedDate(before.time_zone, ctx.now.getTime());
       nextDueOn = nextTodoOccurrenceDate(rule, anchorDate);
+      // Do not spawn if the series still has another open occurrence OR if an occurrence for nextDueOn already exists
+      // (prevents duplicate spawns if an older occurrence is reopened and re-completed after the series moved ahead).
       const existingSibling = await ctx.trx
         .selectFrom('crove_notes.todo')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('series_id', '=', seriesId)
         .where('id', '<>', before.id)
-        .where('status', '=', 'open')
         .where('deleted_at', 'is', null)
-        .where('due_on', '=', nextDueOn)
+        .where((eb) => eb.or([eb('status', '=', 'open'), eb('due_on', '=', nextDueOn)]))
         .executeTakeFirst();
 
       if (!existingSibling) {
@@ -504,7 +508,7 @@ export const todoComplete = defineCommand({
             due_at: shifted.dueAt,
             time_zone: before.time_zone,
             remind_at: shifted.remindAt,
-            reminded_at: null,
+            reminded_at: passedAt(shifted.remindAt, ctx.now),
             sort_key: sortKey,
             source_note_id: readableSourceNoteId,
             recurrence: JSON.stringify(rule),
@@ -600,7 +604,7 @@ export const todoReschedule = defineCommand({
           due_on: shifted.dueOn,
           due_at: shifted.dueAt,
           remind_at: shifted.remindAt,
-          reminded_at: null,
+          reminded_at: passedAt(shifted.remindAt, ctx.now),
           revision: row.revision + 1,
           updated_at: ctx.now,
         })
