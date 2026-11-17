@@ -488,6 +488,25 @@ suite('personal to-dos on PostgreSQL (#1673)', () => {
       status: 'open',
     });
 
+    // Multi-occurrence stopSeries concurrent with todo_list.delete locks rows in canonical id ASC order without deadlock.
+    await o.exec(o.mine, 'notes.todo.reopen', { todoId: recTodo.todoId });
+    await Promise.all([
+      o.exec(o.mine, 'notes.todo.complete', { todoId: completedRec.nextTodoId!, stopSeries: true }),
+      o.exec(o.mine, 'notes.todo_list.delete', { listId: recList.listId }),
+    ]);
+    expect(await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: recTodo.todoId })).toMatchObject({
+      status: 'open',
+      recurrence: null,
+      listId: null,
+      sectionId: null,
+    });
+    expect(await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: completedRec.nextTodoId! })).toMatchObject({
+      status: 'done',
+      recurrence: null,
+      listId: null,
+      sectionId: null,
+    });
+
     await admin((c) => c.query(`UPDATE crove_notes.todo_list SET deleted_at = now() - interval '31 days' WHERE id = $1`, [list.id]));
     expect(await worker.execute('notes.trash.empty', {}, { actor: SYSTEM, orgId: o.orgId })).toEqual({ removed: 1 });
   });

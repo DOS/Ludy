@@ -157,6 +157,11 @@ CREATE POLICY todo_list_delete ON crove_notes.todo_list AS RESTRICTIVE FOR DELET
     )
   );
 
+-- Stream hints (#69, #3558): cross-tab live sync for private personal to-do lists, routed only to owner_user_id.
+DROP TRIGGER IF EXISTS stream_hint ON crove_notes.todo_list;
+CREATE TRIGGER stream_hint AFTER INSERT OR UPDATE ON crove_notes.todo_list
+  FOR EACH ROW EXECUTE FUNCTION crove_kernel.stream_notify('todo', 'id');
+
 -- ---------------------------------------------------------------------------
 -- crove_notes.todo: priority, tags, list_id, section_id
 -- ---------------------------------------------------------------------------
