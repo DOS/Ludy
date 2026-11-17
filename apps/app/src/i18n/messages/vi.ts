@@ -3609,12 +3609,16 @@ export const vi = {
         intentAll: 'Mọi ý định',
         intentNone: 'Chưa gán ý định',
       },
+      // The member's own status (#3582): a switch, the state it is in, and one line saying what changes.
       availability: {
-        available: 'Bạn đang nhận thông báo hội thoại mới.',
-        away: 'Bạn đang tạm vắng: hội thoại mới báo cho người khác trước.',
-        setAway: 'Tạm vắng',
-        setAvailable: 'Nhận hội thoại mới',
+        switchLabel: 'Nhận hội thoại mới',
+        available: 'Đang nhận hội thoại mới',
+        away: 'Tạm vắng',
+        availableHint: 'Bạn được báo trước khi có hội thoại mới. Tắt khi bạn vắng.',
+        awayHint: 'Hội thoại mới báo cho người khác trước. Bạn vẫn đọc và trả lời được.',
       },
+      back: 'Về danh sách hội thoại',
+      emptyNewHint: 'Bình luận và tin nhắn mới của khách ở các kênh đã kết nối sẽ hiện ở đây.',
     },
     // The intent of a conversation (CV3, #2306): the label a person applies, and the AI's suggestion beside it, which a click applies.
     intent: {
@@ -3624,7 +3628,8 @@ export const vi = {
       none: 'Chưa gán ý định',
       apply: 'Áp dụng',
       applyLabel: 'Áp dụng ý định {intent}',
-      order: 'Sắp 10 hội thoại đầu theo ý định gợi ý, việc gấp trước',
+      order: 'Xếp theo ý định gợi ý',
+      orderHint: 'Sắp 10 hội thoại đầu theo ý định gợi ý, việc gấp trước',
       budget: '{sales} đã hết ngân sách AI của tháng này nên chưa gợi ý được ý định.',
     },
     contact: {

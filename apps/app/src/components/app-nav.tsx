@@ -5,7 +5,7 @@ import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { NavIcon, type NavIconName } from '@crove/ui/components/nav-icon';
 import { LocaleSwitcher } from '../i18n/provider.tsx';
-import { ADMIN_ITEMS, BELL_ITEM, TOP_ITEMS, isHeadedGroup, tabGroupOfPath, type AppId, type InstalledApp, type NavItem, type NavLabel } from '../lib/apps.ts';
+import { ADMIN_ITEMS, BELL_ITEM, TOP_ITEMS, currentMenuItem, isHeadedGroup, type AppId, type InstalledApp, type NavItem, type NavLabel } from '../lib/apps.ts';
 import { signOut } from '../lib/session-actions.ts';
 import { StatusLink } from './status-link.tsx';
 import { SupportLink } from './support-link.tsx';
@@ -53,9 +53,10 @@ export function ShellNav({ slug, apps, app, inApp, badges, orgs, email, onOpenPa
   const orgSelectId = useId();
   const current = apps.find((a) => a.id === app) ?? apps[0];
   const hasBadge = (items: readonly NavItem[]) => items.some((item) => Boolean(badges[item.label]));
-  // A screen that is a tab of a menu item (#3225) keeps that item marked current.
+  // Exactly one item is marked current: the one of the longest path that holds the screen, a tab keeping its menu item (#3225).
+  // The router's own fuzzy match would also mark Engage's Posts (`social`) on the Inbox (`social/inbox`), so it is turned off below.
   const { pathname } = useLocation();
-  const tabMenu = tabGroupOfPath(pathname)?.menu;
+  const currentTo = currentMenuItem(pathname);
   // The shell's own places in the switcher: the overview on top, the bell and Settings at the foot.
   const railLink = (item: NavItem, name: string, badge?: string | number | null) => (
     <li key={item.to}>
@@ -63,8 +64,9 @@ export function ShellNav({ slug, apps, app, inApp, badges, orgs, email, onOpenPa
         to={item.to}
         params={{ slug }}
         onClick={onNavigate}
-        className="relative flex min-h-14 w-14 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1.5 text-center text-[11px] leading-tight text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-        activeProps={{ className: 'bg-primary/15 !text-foreground' }}
+        className={`relative flex min-h-14 w-14 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1.5 text-center text-[11px] leading-tight hover:bg-sidebar-accent hover:text-foreground ${item.to === currentTo ? 'bg-primary/15 text-foreground' : 'text-muted-foreground'}`}
+        activeOptions={{ exact: true }}
+        {...(item.to === currentTo ? { 'aria-current': 'page' as const } : {})}
       >
         <NavIcon name={menuIcon(item.label)} className="size-5" />
         <span>{name}</span>
@@ -169,16 +171,16 @@ export function ShellNav({ slug, apps, app, inApp, badges, orgs, email, onOpenPa
                 <ul className="flex flex-col gap-0.5">
                   {group.items.map((item) => {
                     const badge = badges[item.label];
-                    const viaTab = tabMenu !== undefined && item.to === `/o/$slug/${tabMenu}`;
+                    const isCurrent = item.to === currentTo;
                     return (
                       <li key={item.to}>
                         <Link
                           to={item.to}
                           params={{ slug }}
                           onClick={onNavigate}
-                          className={`flex min-h-11 items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm hover:bg-sidebar-accent hover:text-foreground md:min-h-0 md:py-0.5 ${viaTab ? 'bg-primary/15 text-foreground' : 'text-muted-foreground'}`}
-                          {...(viaTab ? { 'aria-current': 'page' as const } : {})}
-                          activeProps={{ className: 'bg-primary/15 !text-foreground' }}
+                          className={`flex min-h-11 items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm hover:bg-sidebar-accent hover:text-foreground md:min-h-0 md:py-0.5 ${isCurrent ? 'bg-primary/15 text-foreground' : 'text-muted-foreground'}`}
+                          activeOptions={{ exact: true }}
+                          {...(isCurrent ? { 'aria-current': 'page' as const } : {})}
                         >
                           <NavIcon name={menuIcon(item.label)} />
                           <span className="min-w-0 flex-1 truncate">{t(IN_MENU_LABEL[item.label] ?? item.label)}</span>

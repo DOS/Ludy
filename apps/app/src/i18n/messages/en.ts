@@ -3611,12 +3611,16 @@ export const en = {
         intentAll: 'Any intent',
         intentNone: 'No intent',
       },
+      // The member's own status (#3582): a switch, the state it is in, and one line saying what changes.
       availability: {
-        available: 'You are told about new conversations.',
-        away: 'You are away: new conversations are told to others first.',
-        setAway: 'Go away',
-        setAvailable: 'Take new conversations',
+        switchLabel: 'Take new conversations',
+        available: 'Taking new conversations',
+        away: 'Away',
+        availableHint: 'You are told first when a new conversation arrives. Turn it off when you are away.',
+        awayHint: 'New conversations are told to others first. You can still read and answer.',
       },
+      back: 'Back to the list',
+      emptyNewHint: 'New comments and messages from customers on your connected channels will show up here.',
     },
     // The intent of a conversation (CV3, #2306): the label a person applies, and the AI's suggestion beside it, which a click applies.
     intent: {
@@ -3626,7 +3630,8 @@ export const en = {
       none: 'No intent',
       apply: 'Apply',
       applyLabel: 'Apply the intent {intent}',
-      order: 'Order the first 10 by suggested intent, urgent first',
+      order: 'Order by suggested intent',
+      orderHint: 'Orders the first 10 conversations by suggested intent, urgent first',
       budget: '{sales} has used the AI budget of this month, so no intents are suggested.',
     },
     contact: {
