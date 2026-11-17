@@ -23,7 +23,9 @@ export interface ProposalBadgesItem {
   voided: boolean;
 }
 
-export function ProposalBadges({ item }: { item: ProposalBadgesItem }) {
+// hideSignature: the list states once that every row's signature is unverified (#3598), so the chip is not repeated on each.
+
+export function ProposalBadges({ item, hideSignature = false }: { item: ProposalBadgesItem; hideSignature?: boolean }) {
   const t = useTranslations('inbox');
   return (
     <div className="flex flex-wrap gap-1">
@@ -38,7 +40,7 @@ export function ProposalBadges({ item }: { item: ProposalBadgesItem }) {
       {isAdsProposalKind(item.kind) && <Badge variant="secondary">{t('adsKind')}</Badge>}
       {item.direction === 'sale' && <Badge variant="secondary">{t('saleKind')}</Badge>}
       {item.duplicateOf && <Badge variant="warning">{t('maybeDuplicate')}</Badge>}
-      {item.signatureStatus === 'unverified' && <Badge variant="destructive">{t('signatureUnverified')}</Badge>}
+      {item.signatureStatus === 'unverified' && !hideSignature && <Badge variant="destructive">{t('signatureUnverified')}</Badge>}
       {(item.unclassifiedLines ?? 0) > 0 && <Badge variant="warning">{t('unclassifiedBadge', { count: item.unclassifiedLines ?? 0 })}</Badge>}
       {item.failedChecks > 0 && <Badge variant="destructive">{t('failedChecks', { count: item.failedChecks })}</Badge>}
       {item.warnChecks > 0 && <Badge variant="warning">{t('warnChecks', { count: item.warnChecks })}</Badge>}

@@ -60,3 +60,13 @@ export function nextVatDeadline(kind: VatFilingPeriod, today: string): VatDeadli
   if (deadline.due.getTime() < now.getTime()) deadline = deadlineOf(kind, year, month);
   return { period: deadline.period, dueDate: iso(deadline.due), daysLeft: Math.round((deadline.due.getTime() - now.getTime()) / DAY_MS) };
 }
+
+// The day the return of a given period is due, from the VAT working's period key ("2026-10", "2026-Q3"), after the weekend
+// rule; null for a key that is not one. The same rule as nextVatDeadline, for a period the user picked.
+export function vatDueDate(period: string): string | null {
+  const month = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(period);
+  if (month) return iso(deadlineOf('month', Number(month[1]), Number(month[2]) - 1).due);
+  const quarter = /^(\d{4})-Q([1-4])$/.exec(period);
+  if (quarter) return iso(deadlineOf('quarter', Number(quarter[1]), (Number(quarter[2]) - 1) * 3).due);
+  return null;
+}

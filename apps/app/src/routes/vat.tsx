@@ -1,8 +1,8 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
-import { vatLateFacts, vatLateKey, vatLateTemplate, type VAT_RATES, type VAT_WARNINGS } from '@crove/kernel-contract';
+import { vatDueDate, vatLateFacts, vatLateKey, vatLateTemplate, type VAT_RATES, type VAT_WARNINGS } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
@@ -25,10 +25,13 @@ import {
   deductParams,
   defaultPeriod,
   periodChoiceOf,
+  roundDong,
   periodKey,
   periodSearch,
   switchKind,
   wholeDong,
+  INDICATOR_GLOSS,
+  vatResultOf,
   yearOptions,
   type DeductChoice,
   type PeriodChoice,
@@ -195,13 +198,13 @@ function PaymentChecks({ data, canMark, legalEntityId }: { data: VatReport; canM
     onSettled: () => queryClient.invalidateQueries({ queryKey: orpc.vat.period.key() }),
   });
   const status = (item: PaymentCheck) => (item.mark ? t(`outcome.${item.mark.outcome}`) : t('unchecked'));
+  // Nothing to check: no card (#3600).
+  if (checks.items.length === 0) return null;
   return (
     <section>
       <h2 className="mb-1 text-base font-semibold text-foreground">{t('title', { count: checks.items.length })}</h2>
       <p className="mb-2 text-xs text-subtle-foreground">{t('hint')}</p>
-      {checks.items.length === 0 ? (
-        <Empty title={t('empty')} />
-      ) : (
+      {
         <>
           <DataTable
             numeric={[2, 3]}
@@ -269,7 +272,7 @@ function PaymentChecks({ data, canMark, legalEntityId }: { data: VatReport; canM
             {t('summary', { atRisk: f.money(checks.vatAtRisk), notDeductible: f.money(checks.notDeductibleVat), unchecked: checks.unchecked })}
           </p>
         </>
-      )}
+      }
       {mark.error && <ErrorText>{errorMessage(mark.error)}</ErrorText>}
     </section>
   );
@@ -438,9 +441,78 @@ function FiledReturn({
   );
 }
 
+// The answer an owner opens this screen for (#3600), above the table: the period, the input and output VAT, what Ludy works out from them, the day the return is due, whether it is
+// filed, and the one action. Every figure is a decimal string from the report; the result is the form's own [35] - [25] - [22] and says it leaves [36] to [43] to the accountant.
+export function ResultStrip({
+  data,
+  carried,
+  fileDeduct25,
+  action,
+}: {
+  data: Pick<VatReport, 'period' | 'indicators' | 'filed' | 'paymentChecks'>;
+  carried: string | null;
+  // The [25] the HTKK file will hold (the accountant's choice in "Cách tính").
+  fileDeduct25: string;
+  action: ReactNode;
+}) {
+  const t = useTranslations('vat.strip');
+  const f = useFormat();
+  const amountOf = (code: string) => data.indicators.find((i) => i.code === code)?.amount ?? '0';
+  // A filed return speaks with its own [22] and [25]; otherwise [25] is the suggestion (the input VAT less what may not be deducted), whatever the XML file is set to write: the file is the
+  // accountant's to complete, the strip is the owner's first answer. An [22] that is not a whole number leaves no result rather than a wrong one.
+  const suggested25 = roundDong(data.paymentChecks.suggested25);
+  const c22 = data.filed ? data.filed.carriedIn : carried;
+  const c25 = data.filed ? data.filed.deductible : suggested25;
+  const result = c22 === null ? null : vatResultOf(amountOf('35'), c25, c22);
+  const due = vatDueDate(data.period.period);
+  return (
+    <section aria-labelledby="vat-strip-title" data-testid="vat-strip" className="rounded-lg border border-border bg-card p-4">
+      <h2 id="vat-strip-title" className="sr-only">
+        {t('title')}
+      </h2>
+      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <div>
+          <p className="text-xs font-medium text-muted-foreground">{t(result?.kind ?? 'carried')}</p>
+          <p className="mt-1 text-3xl font-semibold tabular-nums text-foreground" data-testid="vat-strip-result" data-kind={result?.kind ?? 'unknown'}>
+            {result ? f.money(result.amount) : '-'}
+          </p>
+        </div>
+        <div className="md:shrink-0 [&>*]:w-full md:[&>*]:w-auto">{action}</div>
+      </div>
+      <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-sm md:grid-cols-5">
+        <div>
+          <dt className="text-xs text-muted-foreground">{t('period')}</dt>
+          <dd className="text-foreground">{`${f.date(data.period.from)} - ${f.date(data.period.to)}`}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">{t('inputVat')}</dt>
+          <dd className="tabular-nums text-foreground" data-testid="vat-strip-input">{f.money(amountOf('24'))}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">{t('outputVat')}</dt>
+          <dd className="tabular-nums text-foreground" data-testid="vat-strip-output">{f.money(amountOf('35'))}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">{t('deadline')}</dt>
+          <dd className="text-foreground" data-testid="vat-strip-deadline">{due ? f.date(due) : t('deadlineUnknown')}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">{t('status')}</dt>
+          <dd>
+            {data.filed ? <Badge variant="success">{t('filed', { date: f.date(data.filed.markedAt.slice(0, 10)) })}</Badge> : <Badge variant="warning">{t('notFiled')}</Badge>}
+          </dd>
+        </div>
+      </dl>
+      <p className="mt-3 text-xs text-subtle-foreground">{data.filed ? t('basisFiled') : t('basis', { amount: f.money(suggested25) })}</p>
+      {!data.filed && fileDeduct25 !== suggested25 && <p className="mt-1 text-xs text-warning">{t('fileNote', { amount: f.money(fileDeduct25) })}</p>}
+    </section>
+  );
+}
+
 export function VatPage() {
   const t = useTranslations('vat');
   const f = useFormat();
+  const locale = useLocale();
   // The org's tax code goes into the HTKK file (#332); without one the server refuses it, so the button waits for it.
   const org = useQuery(orpc.org.get.queryOptions());
   const taxCode = org.data?.taxCode ?? null;
@@ -489,6 +561,16 @@ export function VatPage() {
     kind: filing === 'quarter' ? t('filingQuarterly') : t('filingMonthly'),
     kindOne: filing === 'quarter' ? t('kindQuarter') : t('kindMonth'),
   });
+  const xmlButton = (
+    <Button
+      loading={exportXml.isPending}
+      size="lg"
+      onClick={() => exportXml.mutate()}
+      disabled={exportXml.isPending || !data || !taxCode || wrongKind || carried === null}
+      title={org.data && !taxCode ? t('exportXmlNeedsTaxCode') : wrongKind ? wrongKindText : undefined}>
+      {t('exportXml')}
+    </Button>
+  );
   const indexes = choice.kind === 'month' ? Array.from({ length: 12 }, (_, i) => i + 1) : [1, 2, 3, 4];
   const rateRows = data ? data.input.totals.byRate.map((input, i) => ({ input, output: data.output.totals.byRate[i] })) : [];
   // Sales at a rate Crove cannot place count in the totals but in no form indicator (issue #358).
@@ -500,20 +582,9 @@ export function VatPage() {
         title={t('title')}
         subtitle={t('subtitle')}
         actions={
-          <div className="flex flex-wrap gap-2">
-            <Button
-              loading={exportXml.isPending}
-              size="lg"
-              variant="outline"
-              onClick={() => exportXml.mutate()}
-              disabled={exportXml.isPending || !data || !taxCode || wrongKind || carried === null}
-              title={org.data && !taxCode ? t('exportXmlNeedsTaxCode') : wrongKind ? wrongKindText : undefined}>
-              {t('exportXml')}
-            </Button>
-            <Button loading={exportXlsx.isPending} size="lg" onClick={() => exportXlsx.mutate()} disabled={exportXlsx.isPending || !data}>
-              {t('export')}
-            </Button>
-          </div>
+          <Button loading={exportXlsx.isPending} size="lg" variant="outline" onClick={() => exportXlsx.mutate()} disabled={exportXlsx.isPending || !data}>
+            {t('export')}
+          </Button>
         }
       />
       {org.data && !taxCode && <p className="mb-4 text-sm text-muted-foreground">{t('exportXmlNeedsTaxCode')}</p>}
@@ -562,6 +633,12 @@ export function VatPage() {
         <ErrorText>{errorMessage(report.error)}</ErrorText>
       ) : data ? (
         <div className="space-y-8">
+          <ResultStrip
+            data={data}
+            carried={carried}
+            fileDeduct25={deductAmount(deduct, data.indicators.find((i) => i.code === '24')?.amount ?? '0', data.paymentChecks.suggested25)}
+            action={xmlButton}
+          />
           <CarryForward data={data} text={carriedText} onChange={(text) => setCarriedEdit(text === null ? null : { period, text })} />
           <section>
             <h2 className="mb-2 text-base font-semibold text-foreground">{t('indicatorsTitle')}</h2>
@@ -569,26 +646,32 @@ export function VatPage() {
               {data.indicators.map((indicator) => (
                 <TableRow key={indicator.code}>
                   <TableCell className="px-4 py-3 font-mono text-xs text-foreground">[{indicator.code}]</TableCell>
-                  <TableCell className="px-4 py-3 text-muted-foreground">{indicator.label}</TableCell>
+                  <TableCell className="px-4 py-3 text-muted-foreground">
+                    {indicator.label}
+                    {locale === 'en' && INDICATOR_GLOSS[indicator.code] && <span className="block text-xs text-subtle-foreground">{INDICATOR_GLOSS[indicator.code]}</span>}
+                  </TableCell>
                   <TableCell className={`${NUM} font-medium text-foreground`}>{f.money(indicator.amount)}</TableCell>
                 </TableRow>
               ))}
             </DataTable>
-            <p className="mt-2 text-xs text-subtle-foreground">{t('indicatorsNote')}</p>
-            <p className="mt-1 text-xs text-subtle-foreground">{t('xmlNote')}</p>
-            <label className="mt-2 block text-xs">
-              <span className="text-subtle-foreground">{t('xmlDeduct')}</span>
-              <NativeSelect aria-label={t('xmlDeduct')} className="mt-1 w-full max-w-md" value={deduct} onChange={(e) => setDeduct(e.target.value as DeductChoice)}>
-                {DEDUCT_CHOICES.map((c) => (
-                  <NativeSelectOption key={c} value={c}>
-                    {c === 'suggested' ? t('xmlDeductSuggested', { amount: f.money(data.paymentChecks.suggested25) }) : t(c === 'all' ? 'xmlDeductAll' : 'xmlDeductNone')}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            </label>
-            {deduct === 'suggested' && data.paymentChecks.unchecked > 0 && (
-              <p className="mt-1 text-xs text-warning">{t('xmlDeductUnchecked', { count: data.paymentChecks.unchecked })}</p>
-            )}
+            <details className="mt-3 rounded-lg border border-border p-3" data-testid="vat-rules">
+              <summary className="cursor-pointer text-sm font-medium text-foreground">{t('rules.title')}</summary>
+              <p className="mt-2 text-xs text-subtle-foreground">{t('indicatorsNote')}</p>
+              <p className="mt-1 text-xs text-subtle-foreground">{t('xmlNote')}</p>
+              <label className="mt-2 block text-xs">
+                <span className="text-subtle-foreground">{t('xmlDeduct')}</span>
+                <NativeSelect aria-label={t('xmlDeduct')} className="mt-1 w-full max-w-md" value={deduct} onChange={(e) => setDeduct(e.target.value as DeductChoice)}>
+                  {DEDUCT_CHOICES.map((c) => (
+                    <NativeSelectOption key={c} value={c}>
+                      {c === 'suggested' ? t('xmlDeductSuggested', { amount: f.money(data.paymentChecks.suggested25) }) : t(c === 'all' ? 'xmlDeductAll' : 'xmlDeductNone')}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </label>
+              {deduct === 'suggested' && data.paymentChecks.unchecked > 0 && (
+                <p className="mt-1 text-xs text-warning">{t('xmlDeductUnchecked', { count: data.paymentChecks.unchecked })}</p>
+              )}
+            </details>
             {!isZeroAmount(otherSales) && <p className="mt-2 text-sm text-warning">{t('otherSales', { amount: f.money(otherSales) })}</p>}
           </section>
 
