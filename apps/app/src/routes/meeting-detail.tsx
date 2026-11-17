@@ -350,6 +350,7 @@ export function MeetingDetailPage() {
         visibility={meeting.visibility}
         readers={meeting.readers}
         template={meeting.summaryTemplate}
+        minutesTemplate={meeting.minutesTemplate}
         title={meeting.title}
         minutesLink={
           <Link to="/o/$slug/print/meeting-minutes/$id" params={{ slug, id }} className="text-sm text-link underline">

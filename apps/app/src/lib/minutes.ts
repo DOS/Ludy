@@ -2,7 +2,7 @@
 // The biên bản page of a meeting (Meetings A4, #3162): what the page says, worked out in code from the meeting row and the PUBLISHED result. Nothing here comes from the model
 // except the text of the sections, the conclusions and the action titles the recorder read and shared; the date, the attendees, the owners and the due dates come from the meeting
 // (its start, its readers, the attendee code matched, the date code parsed), and the layout is the component's.
-import { textToSections, type ActionItemView, type MeetingResults, type MeetingSummaryTemplate } from '@crove/kernel-contract';
+import { textToSections, type ActionItemView, type MeetingResults, type MeetingSummaryTemplate, type MinutesTemplateCopy } from '@crove/kernel-contract';
 
 // A day and a time as Vietnamese offices write them, in Vietnam time whatever the browser's zone is.
 export interface VnMoment {
@@ -27,6 +27,8 @@ export function dueText(day: string | null): string | null {
 export interface MinutesSection {
   // The section's key on a template, null for the general summary's one block.
   key: string | null;
+  // The heading an organization's template gives it, from the meeting's own copy (shown as text, never as markup); null for a built-in template, whose headings are the app's own words.
+  title: string | null;
   text: string;
 }
 export interface MinutesAction {
@@ -56,6 +58,8 @@ export interface MinutesMeeting {
   recorderUserId: string;
   readers: readonly string[];
   summaryTemplate: MeetingSummaryTemplate;
+  // The meeting's own copy of an organization's template (#3578), null on a built-in one.
+  minutesTemplate: MinutesTemplateCopy | null;
 }
 
 export function buildMinutes(meeting: MinutesMeeting, results: MeetingResults, nameOf: (userId: string) => string): MinutesModel {
@@ -63,9 +67,10 @@ export function buildMinutes(meeting: MinutesMeeting, results: MeetingResults, n
   const people = [meeting.recorderUserId, ...meeting.readers.filter((id) => id !== meeting.recorderUserId)];
   let sections: MinutesSection[] = [];
   if (published) {
-    const parsed = textToSections(meeting.summaryTemplate, published.summary);
+    const copy = meeting.minutesTemplate;
+    const parsed = textToSections(meeting.summaryTemplate, published.summary, copy?.sections ?? null);
     // Text not in the template's form (the template changed since it was shared) is shown whole, as it was shared.
-    sections = parsed ? parsed.filter((s) => s.text !== '').map((s) => ({ key: s.key, text: s.text })) : published.summary.trim() === '-' ? [] : [{ key: null, text: published.summary }];
+    sections = parsed ? parsed.filter((s) => s.text !== '').map((s) => ({ key: s.key, title: copy?.sections.find((c) => c.key === s.key)?.title ?? null, text: s.text })) : published.summary.trim() === '-' ? [] : [{ key: null, title: null, text: published.summary }];
   }
   const items = published || results.items.some((i) => i.stage === 'published') ? results.items.filter((i) => i.stage === 'published') : [];
   const owner = (i: ActionItemView): string | null => (i.whoUserId ? nameOf(i.whoUserId) : null);
