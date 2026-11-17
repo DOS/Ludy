@@ -7,6 +7,8 @@ import { expect, test, type Page } from '@playwright/test';
 import { sql } from '../lib/db.ts';
 import { createOrg, newEmail, signInNewUser } from '../lib/session.ts';
 
+test.use({ timezoneId: 'Asia/Ho_Chi_Minh' });
+
 function addDays(base: string, days: number): string {
   const [y, m, d] = base.split('-').map(Number) as [number, number, number];
   const dt = new Date(Date.UTC(y, m - 1, d + days, 12, 0, 0));
@@ -55,7 +57,7 @@ test('recurring personal to-dos, 1-click overdue reschedule, and Sap toi agenda 
   const dayLater = addDays(today, 12);
 
   await test.step('create a recurring personal to-do with checklist steps and complete it to spawn the next occurrence', async () => {
-    const addBox = page.getByPlaceholder('Thêm việc, Enter để lưu');
+    const addBox = page.getByRole('textbox', { name: 'Thêm việc, Enter để lưu' });
     await addBox.fill('Kiểm tra sổ quỹ cuối ngày');
     await addBox.press('Enter');
 
@@ -69,16 +71,16 @@ test('recurring personal to-dos, 1-click overdue reschedule, and Sap toi agenda 
     await editor.getByRole('button', { name: 'Thêm', exact: true }).click();
     await editor.getByRole('checkbox', { name: /Đối chiếu tiền mặt/ }).check();
 
-    await editor.getByLabel('Ngày đến hạn').fill(toDisplayDate(today));
+    await editor.getByRole('textbox', { name: 'Ngày đến hạn' }).fill(toDisplayDate(today));
     await editor.getByTestId('todo-recurrence-preset').selectOption('daily');
     await editor.getByRole('button', { name: 'Lưu', exact: true }).click();
     await expect(editor).toHaveCount(0);
     await expect(row.getByTestId('todo-recurrence-badge')).toContainText('Hàng ngày');
 
     // Completing marks current done and creates tomorrow's occurrence with unchecked checklist step.
-    await row.getByRole('checkbox').check();
+    await row.getByRole('checkbox', { name: 'Đánh dấu xong: Kiểm tra sổ quỹ cuối ngày' }).click();
 
-    const nextRow = page.getByTestId('todo-row').filter({ hasText: 'Kiểm tra sổ quỹ cuối ngày' });
+    const nextRow = page.getByTestId('todo-row').filter({ hasText: 'Kiểm tra sổ quỹ cuối ngày' }).filter({ hasText: toDisplayDate(tomorrow) });
     await expect(nextRow).toBeVisible();
     await expect(nextRow.getByTestId('todo-due')).toContainText(toDisplayDate(tomorrow));
     await expect(nextRow).toContainText('0/1');
@@ -96,14 +98,14 @@ test('recurring personal to-dos, 1-click overdue reschedule, and Sap toi agenda 
   });
 
   await test.step('1-click overdue reschedule and bulk overdue reschedule bar', async () => {
-    const addBox = page.getByPlaceholder('Thêm việc, Enter để lưu');
+    const addBox = page.getByRole('textbox', { name: 'Thêm việc, Enter để lưu' });
     for (const title of ['Việc trễ 1', 'Việc trễ 2']) {
       await addBox.fill(title);
       await addBox.press('Enter');
       const r = page.getByTestId('todo-row').filter({ hasText: title });
       await expect(r).toBeVisible();
       await r.getByTestId('todo-title').click();
-      await page.getByTestId('todo-editor').getByLabel('Ngày đến hạn').fill('01/10/2025');
+      await page.getByTestId('todo-editor').getByRole('textbox', { name: 'Ngày đến hạn' }).fill('01/10/2025');
       await page.getByTestId('todo-editor').getByRole('button', { name: 'Lưu', exact: true }).click();
       await expect(page.getByTestId('todo-editor')).toHaveCount(0);
     }
@@ -128,7 +130,7 @@ test('recurring personal to-dos, 1-click overdue reschedule, and Sap toi agenda 
     // Give one item a date 12 days ahead so 7-day vs 30-day range difference is visible.
     const moveRow = page.getByTestId('todo-row').filter({ hasText: 'Việc trễ 2' });
     await moveRow.getByTestId('todo-title').click();
-    await page.getByTestId('todo-editor').getByLabel('Ngày đến hạn').fill(toDisplayDate(dayLater));
+    await page.getByTestId('todo-editor').getByRole('textbox', { name: 'Ngày đến hạn' }).fill(toDisplayDate(dayLater));
     await page.getByTestId('todo-editor').getByRole('button', { name: 'Lưu', exact: true }).click();
     await expect(page.getByTestId('todo-editor')).toHaveCount(0);
 
@@ -148,6 +150,7 @@ test('recurring personal to-dos, 1-click overdue reschedule, and Sap toi agenda 
 
     const movedToDayAfter = page.getByTestId(`upcoming-day-${dayAfter}`).getByTestId('todo-row').filter({ hasText: 'Việc trễ 1' });
     await expect(movedToDayAfter).toBeVisible();
+    await expect(movedToDayAfter).toHaveAttribute('draggable', 'true');
 
     // Drag-and-drop moves it back onto today's bucket.
     await movedToDayAfter.dragTo(page.getByTestId(`upcoming-day-${today}`));
