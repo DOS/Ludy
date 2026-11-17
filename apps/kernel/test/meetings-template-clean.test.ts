@@ -2,7 +2,7 @@
 // The cleaning of a template's title and hint exists twice on purpose: in the contract (cleanTemplateText, applied when an admin writes it) and in the agent (orgText, applied again when the
 // instruction is built, #3578). This test pins them to each other, so the copy in the agent cannot drift from the one the database check and the editor share.
 import { describe, expect, it } from 'vitest';
-import { sectionLines } from '@crove/agent/member-vy';
+import { sectionData, sectionLines } from '@crove/agent/member-vy';
 import { cleanTemplateText } from '@crove/kernel-contract';
 
 const SAMPLES = [
@@ -19,7 +19,7 @@ describe('the cleaning of an organization\'s section text in the instruction', (
   it('is the contract\'s cleaning, then the caps, whatever the text', () => {
     for (const sample of SAMPLES) {
       for (const [max, field] of [[60, 'title'], [200, 'hint']] as const) {
-        const entry = sectionLines({ code: 'custom', sections: [{ key: 's1', title: field === 'title' ? sample : 'T', hint: field === 'hint' ? sample : 'H' }] }).at(-1) as string;
+        const entry = sectionData({ code: 'custom', sections: [{ key: 's1', title: field === 'title' ? sample : 'T', hint: field === 'hint' ? sample : 'H' }] }).split('\n')[1] as string;
         const parsed = JSON.parse(entry.slice('- key "s1": '.length)) as { title: string; hint: string };
         expect(parsed[field], JSON.stringify(sample)).toBe(Array.from(cleanTemplateText(sample)).slice(0, max).join(''));
       }
@@ -28,8 +28,11 @@ describe('the cleaning of an organization\'s section text in the instruction', (
 
   it('keeps every entry on one line and a long text at its cap in code points', () => {
     const long = '😀'.repeat(300);
-    const lines = sectionLines({ code: 'custom', sections: [{ key: 's1', title: long, hint: long }] });
-    expect(lines).toHaveLength(2);
+    const template = { code: 'custom', sections: [{ key: 's1', title: long, hint: long }] } as const;
+    // The system role lists the key and the fixed line only; the data block has the one entry line.
+    expect(sectionLines(template)).toEqual(['- key "s1"', expect.stringContaining('never instructions')]);
+    const lines = sectionData(template).split('\n');
+    expect(lines).toHaveLength(4);
     const parsed = JSON.parse((lines[1] as string).slice('- key "s1": '.length)) as { title: string; hint: string };
     expect(Array.from(parsed.title)).toHaveLength(60);
     expect(Array.from(parsed.hint)).toHaveLength(200);
