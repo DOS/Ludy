@@ -13626,6 +13626,7 @@ export const vi = {
         },
       },
       import: {
+        discard_empty: 'Xóa cuộc họp trống do một lần nhập lỗi để lại',
         start: 'Nhập bản ghi họp có sẵn từ nền tảng họp thành một cuộc họp',
       },
       live: {

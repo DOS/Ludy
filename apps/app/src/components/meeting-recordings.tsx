@@ -163,7 +163,17 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
   const t = useTranslations('meetings.platform.recordings');
   const tp = useTranslations('meetings.platform');
   const f = useFormat();
-  const dismiss = useMutation({ mutationFn: () => orpc.meetingPlatform.dismiss.call({ recordingId: row.id }), onSuccess: () => refreshRecordings() });
+  // A failed try may have left an empty meeting in the member's list: it is removed after the dismissal, by the same rule as a retry (own, never edited, holding nothing). The clean-up is best effort,
+  // so a failure of it never undoes the dismissal; the meeting list is read again either way.
+  const dismiss = useMutation({
+    mutationFn: async () => {
+      const done = await orpc.meetingPlatform.dismiss.call({ recordingId: row.id });
+      // Only a failed try can have made a meeting: dismissing a plain suggestion has nothing to clean.
+      if (row.status === 'failed') await orpc.meetings.importDiscardEmpty.call({ recordingId: row.id }).catch(() => undefined);
+      return done;
+    },
+    onSuccess: () => refreshRecordings(),
+  });
   const title = row.title === '' ? t('untitled') : row.title;
   const block = importBlock(row);
   const length = row.lengthSeconds === null ? null : lengthParts(row.lengthSeconds);
