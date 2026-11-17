@@ -181,7 +181,7 @@ suite("a removed member's translations in the 30-day Vy purge (#3194)", () => {
   const counts = () =>
     asWorker(true, async (c) => (await c.query<{ member_user_id: string; translations: string; live_lines: string }>('SELECT * FROM crove_meetings.member_private_counts()')).rows);
 
-  // The two meetings of the counting test, whose preview lines the purge test then removes.
+  // The two meetings of the counting test, whose preview lines the purge test then removes (the two tests run in this order).
   let recMeeting = '';
   let ownerMeeting = '';
 
@@ -217,8 +217,8 @@ suite("a removed member's translations in the 30-day Vy purge (#3194)", () => {
     };
     const asUser = (userId: string) => (c: pg.Client) => c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
     expect(await ask(asUser(users.owner), appUrl)).toBeGreaterThan(0);
-    // A member, who sees only their own translations in the table, is refused the per-member numbers; so is a login with no context.
-    expect(await ask(asUser(users.staying), appUrl)).toBe('42501');
+    // A plain member of the org (still one at this point), who sees only their own translations in the table, is refused the per-member numbers; so is a login with no context.
+    expect(await ask(asUser(users.late), appUrl)).toBe('42501');
     expect(await ask(async () => undefined, appUrl)).toBe('42501');
     // The worker with no context, and the app login in the system context (the worker login only), are refused too.
     expect(await ask(async () => undefined, workerUrl)).toBe('42501');

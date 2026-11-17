@@ -347,7 +347,7 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_meetings.live_line.text': {
     kind: 'free_text',
     handling: 'erase',
-    reason: "A draft of what was said in a meeting being recorded, which may name or describe a person: read by its recorder alone, replaced by the transcript after the meeting, deleted with the meeting (its recorder, an owner, or the retention job), after 30 days, and 30 days after its recorder was removed (the former-member purge of their Vy data)",
+    reason: "A draft of what was said in a meeting being recorded, which may name or describe a person: read by its recorder alone, replaced by the transcript after the meeting, deleted with the meeting (its recorder, an owner, or the retention job), 30 days after it was made, and 30 days after its recorder was removed (the former-member purge of their Vy data)",
   },
   // The machine translation of a meeting's summary (meetings integrations E1, issue #3184): a member's own Vy's translation of the summary, its decisions and its item titles, private to the
   // member who asked. No finder, owner or admin reads it; it goes with the meeting, with the summary it translated, and an erasure that touches the meeting DROPS it (never redacts it:
@@ -861,7 +861,7 @@ export const MEMBER_VY_RESULT_REASON =
 export const MEMBER_TRANSLATION_REASON =
   "Machine translations of meetings (the row count is all of the organization's, not this person's) are held privately for the member who asked and cannot be read here; they go with their meeting, and 30 days after that member is removed";
 export const MEMBER_LIVE_LINE_REASON =
-  "Live preview lines of meetings still being recorded (the row count is all of the organization's, not this person's) are held privately for the recorder and cannot be read here; they expire after 30 days, go with their meeting, and 30 days after their recorder is removed";
+  "Live preview lines of meetings being recorded or not yet transcribed (the row count is all of the organization's, not this person's) are held privately for the recorder and cannot be read here; they are replaced by the transcript, expire 30 days after they were made, go with their meeting, and go 30 days after their recorder is removed";
 export function meetingMediaReason(kind: 'audio' | 'video', dates: readonly string[], hidden: number): string {
   const first = [...dates].sort()[0];
   const word = kind === 'audio' ? 'The audio' : 'The video';
