@@ -13,6 +13,8 @@ import type { AppPageCopy } from '../src/content/app-page';
 import { en } from '../src/content/en';
 import { engageEn } from '../src/content/engage-en';
 import { engageVi } from '../src/content/engage-vi';
+import { esignEn } from '../src/content/esign-en';
+import { esignVi } from '../src/content/esign-vi';
 import type { PrivacyBlock, PrivacyCopy } from '../src/content/privacy';
 import { privacyEn } from '../src/content/privacy-en';
 import { privacyVi } from '../src/content/privacy-vi';
@@ -25,6 +27,7 @@ const COPY: Record<AppPageKey, { vi: AppPageCopy; en: AppPageCopy }> = {
   teamwork: { vi: teamworkVi, en: teamworkEn },
   finance: { vi: accountingVi, en: accountingEn },
   engage: { vi: engageVi, en: engageEn },
+  sign: { vi: esignVi, en: esignEn },
 };
 const KEYS = Object.keys(APP_PAGES) as AppPageKey[];
 const app = join(import.meta.dirname, '..', 'src', 'app');

@@ -74,6 +74,7 @@ describe('proxy', () => {
     expect(rewrittenTo('/', { 'accept-language': 'en-US,en;q=0.9' })).toBe('https://ludy.vn/en');
     expect(rewrittenTo('/ke-toan', { 'accept-language': 'en' })).toBe('https://ludy.vn/en/accounting');
     expect(rewrittenTo('/engage', { cookie: 'ludy-lang=en' })).toBe('https://ludy.vn/en/engage');
+    expect(rewrittenTo('/esign', { cookie: 'ludy-lang=en' })).toBe('https://ludy.vn/en/esign');
     expect(rewrittenTo('/cong-tac', { cookie: 'ludy-lang=en', 'accept-language': 'vi' })).toBe('https://ludy.vn/en/teamwork');
     expect(rewrittenTo('/privacy', { 'accept-language': 'en-US' })).toBe('https://ludy.vn/en/privacy');
     expect(proxy(visit('/', { cookie: 'ludy-lang=en' })).headers.get('vary')).toMatch(/cookie/i);
@@ -100,7 +101,7 @@ describe('proxy', () => {
   });
 
   it('redirects an old /en link for good to the public address and remembers English', () => {
-    for (const [from, to] of [['/en', '/'], ['/en/accounting', '/ke-toan'], ['/en/engage', '/engage'], ['/en/teamwork', '/cong-tac']] as const) {
+    for (const [from, to] of [['/en', '/'], ['/en/accounting', '/ke-toan'], ['/en/engage', '/engage'], ['/en/esign', '/esign'], ['/en/teamwork', '/cong-tac']] as const) {
       const response = proxy(visit(from));
       expect(response.status, from).toBe(301);
       expect(new URL(response.headers.get('location')!).pathname, from).toBe(to);
@@ -161,7 +162,7 @@ describe('proxy matcher', () => {
   const matches = (path: string) => matcher.test(path);
 
   it('runs on pages and on the social preview routes', () => {
-    for (const path of ['/', '/cong-tac', '/ke-toan', '/engage', '/notes', '/en', '/en/accounting', '/en/teamwork', '/opengraph-image-35znhg', '/en/engage/opengraph-image-1gjxt2']) expect(matches(path), path).toBe(true);
+    for (const path of ['/', '/cong-tac', '/ke-toan', '/engage', '/esign', '/notes', '/en', '/en/accounting', '/en/teamwork', '/en/esign', '/opengraph-image-35znhg', '/en/engage/opengraph-image-1gjxt2', '/en/esign/opengraph-image-1abc']) expect(matches(path), path).toBe(true);
   });
 
   it('skips Next.js internals and every file with an extension', () => {

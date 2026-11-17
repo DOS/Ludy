@@ -68,9 +68,9 @@ test('eSign workflow: upload, manual field placement, mobile 375px sequential si
   await signInNewUser(page, ownerEmail);
   const slug = await createOrg(page, 'Cong ty Ky Ket E2E');
 
-  const envelopeDetailUrl = await test.step('open Ky ket app and upload PDF draft', async () => {
+  const envelopeDetailUrl = await test.step('open eSign app and upload PDF draft', async () => {
     const nav = page.getByRole('navigation');
-    await nav.getByRole('link', { name: 'Ký kết', exact: true }).click();
+    await nav.getByRole('link', { name: 'eSign', exact: true }).click();
     await nav.getByRole('link', { name: 'Hồ sơ ký', exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/sign/envelopes$`));
 

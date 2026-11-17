@@ -19,6 +19,7 @@ export const APP_PAGES = {
   teamwork: { path: '/cong-tac', enRoute: '/en/teamwork', module: 'notes' },
   finance: { path: '/ke-toan', enRoute: '/en/accounting', module: 'finance' },
   engage: { path: '/engage', enRoute: '/en/engage', module: 'social' },
+  sign: { path: '/esign', enRoute: '/en/esign', module: 'sign' },
 } as const;
 export type AppPageKey = keyof typeof APP_PAGES;
 // Addresses of pages that no longer exist, with the page that took their place. A request for one is a permanent redirect
