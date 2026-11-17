@@ -1172,10 +1172,13 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     );
   };
 
-  // 6. Explicit clock times (14:30, 9h30, 9h, 9am, 2:30pm)
   let parsedTime: ParsedTimeInfo | null = null;
   const timeSpans: Span[] = [];
   const englishTimeSpans: Span[] = [];
+  let hasExplicitClockRange = false;
+  let contextPeriod: DayPeriod | undefined;
+  const timeTokenDismissed = (opts.dismissedTokens ?? []).some((t) => t.kind === 'time');
+  let suppressDefaultPeriodTime = timeTokenDismissed;
 
   const isDurationClock = (
     cand: { start: number; end: number; hour: number; hasAmPm: boolean },
@@ -1207,6 +1210,40 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     if (rightStart < leftEnd) return false;
     const foldedBetween = foldVn(input.slice(leftEnd, rightStart)).trim();
     return /^(?:-|\u2013|\u2014|to|till|until|den|toi|->|~)$/u.test(foldedBetween);
+  };
+
+  const resolveClockPeriod = (
+    tc: (typeof dedupedTimeCandidates)[number],
+  ): { start: number; end: number; period: DayPeriod | undefined; shortGBlocked: boolean } => {
+    let start = tc.start;
+    let end = tc.end;
+    let period: DayPeriod | undefined;
+    if (!tc.hasAmPm) {
+      const afterWord = findAdjacentWordAfter(input, words, end, occupied);
+      const afterPeriod =
+        afterWord && isWordSpanAvailable(afterWord) ? matchDayPeriod(afterWord, false, wordBefore(words, afterWord)) : null;
+      if (afterWord && afterPeriod) {
+        period = afterPeriod;
+        end = afterWord.end;
+      } else {
+        const beforeWord = findAdjacentWordBefore(input, words, start, occupied);
+        const beforePeriod =
+          beforeWord && isWordSpanAvailable(beforeWord) ? matchDayPeriod(beforeWord, false, wordBefore(words, beforeWord)) : null;
+        if (beforeWord && beforePeriod) {
+          period = beforePeriod;
+          start = beforeWord.start;
+        }
+      }
+    }
+    // Require "g" (easily confused with grams "20 g bột" or 5G) to have minutes/rưỡi, a day period, or lúc/vào.
+    let shortGBlocked = false;
+    if (tc.usesShortG && !tc.hasMinutesOrHalf && !period) {
+      const beforeClock = findAdjacentWordBefore(input, words, start, occupied);
+      if (!beforeClock || !isWordSpanAvailable(beforeClock) || !vnMatchAny(beforeClock, ['lúc', 'vào'])) {
+        shortGBlocked = true;
+      }
+    }
+    return { start, end, period, shortGBlocked };
   };
 
   const hasHalfUnitRangeBefore = (candStart: number): boolean => {
@@ -1272,91 +1309,15 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     return false;
   };
 
-  let hasExplicitClockRange = false;
-  for (let idx = 0; idx < dedupedTimeCandidates.length; idx++) {
-    const tc = dedupedTimeCandidates[idx];
-    if (!tc || !isAvailable(tc)) continue;
-
-    if (hasHalfUnitRangeBefore(tc.start)) {
-      if (hasCleanRightBoundary(tc)) hasExplicitClockRange = true;
-      continue;
-    }
-    if (!hasCleanLeftBoundary(tc)) continue;
-
-    let start = tc.start;
-    let end = tc.end;
-    let period: DayPeriod | undefined;
-    if (!tc.hasAmPm) {
-      const afterWord = findAdjacentWordAfter(input, words, end, occupied);
-      const afterPeriod =
-        afterWord && isWordSpanAvailable(afterWord) ? matchDayPeriod(afterWord, false, wordBefore(words, afterWord)) : null;
-      if (afterWord && afterPeriod) {
-        period = afterPeriod;
-        end = afterWord.end;
-      } else {
-        const beforeWord = findAdjacentWordBefore(input, words, start, occupied);
-        const beforePeriod =
-          beforeWord && isWordSpanAvailable(beforeWord) ? matchDayPeriod(beforeWord, false, wordBefore(words, beforeWord)) : null;
-        if (beforeWord && beforePeriod) {
-          period = beforePeriod;
-          start = beforeWord.start;
-        }
-      }
-    }
-
-    // Require "g" (easily confused with grams "20 g bột" or 5G) to have minutes/rưỡi, a day period, or lúc/vào.
-    if (tc.usesShortG && !tc.hasMinutesOrHalf && !period) {
-      const beforeClock = findAdjacentWordBefore(input, words, start, occupied);
-      if (!beforeClock || !isWordSpanAvailable(beforeClock) || !vnMatchAny(beforeClock, ['lúc', 'vào'])) continue;
-    }
-
-    if (isDurationClock(tc, period)) continue;
-
-    // Skip time ranges ("từ 9h đến 10h", "9h - 11h", "9:00am - 11:00am") intact rather than stripping only one side.
-    let rangeEndIdx = idx;
-    let cursorEnd = end;
-    while (rangeEndIdx + 1 < dedupedTimeCandidates.length) {
-      const nextTc = dedupedTimeCandidates[rangeEndIdx + 1];
-      if (!nextTc || !isAvailable(nextTc) || !isRangeBetweenClocks(cursorEnd, nextTc.start)) break;
-      rangeEndIdx += 1;
-      cursorEnd = nextTc.end;
-    }
-    if (rangeEndIdx > idx) {
-      const lastTc = dedupedTimeCandidates[rangeEndIdx];
-      if (lastTc && hasCleanRightBoundary(lastTc)) hasExplicitClockRange = true;
-      idx = rangeEndIdx;
-      continue;
-    }
-
-    if (hasHalfUnitRangeAfter(end)) {
-      hasExplicitClockRange = true;
-      continue;
-    }
-    if (!hasCleanRightBoundary(tc)) continue;
-
-    const startBeforeAt = start;
-    start = expandConnectorBefore(input, words, start, [['vào', 'lúc'], ['lúc'], ['at']], occupied);
-    const usedEnglishAt = start < startBeforeAt && /^at\b/i.test(input.slice(start));
-    const adjustedHour = tc.hasAmPm ? tc.hour : adjustHourForPeriod(tc.hour, period);
-    parsedTime = { hour: adjustedHour, minute: tc.minute, explicitClock: true, hasAmPm: tc.hasAmPm, period };
-    claimToken('time', start, end);
-    timeSpans.push({ start, end });
-    if (tc.hasAmPm || usedEnglishAt) englishTimeSpans.push({ start, end });
-    break;
-  }
-
-  // 7. Resolve explicit numeric & relative dates together in sentence order while keeping multi-date ranges intact
-  let contextPeriod: DayPeriod | undefined;
-  const timeTokenDismissed = (opts.dismissedTokens ?? []).some((t) => t.kind === 'time');
-  const suppressDefaultPeriodTime = hasExplicitClockRange || timeTokenDismissed;
-
   interface DateCandidate {
     start: number;
     end: number;
     prefixStart: number;
     apply: () => void;
   }
-  const dateCandidates: DateCandidate[] = [];
+
+  const collectDateCandidates = (enTimeSpans: Span[]): DateCandidate[] => {
+    const dateCandidates: DateCandidate[] = [];
 
   for (const dc of numericDateCandidates) {
     if (!isAvailable(dc)) continue;
@@ -1699,7 +1660,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     const hasOnConnector = Boolean(prevWord && spacesOnlyBetween(input, prevWord.end, w0.start) && prevWord.nfcLower === 'on');
     const hasEnglishAdjacentContext =
       hasOnConnector ||
-      englishTimeSpans.some((s) => spacesOnlyBetween(input, s.end, w0.start) || spacesOnlyBetween(input, w0.end, s.start));
+      enTimeSpans.some((s) => spacesOnlyBetween(input, s.end, w0.start) || spacesOnlyBetween(input, w0.end, s.start));
     const wd = matchWeekday(input, words, i, hasEnglishAdjacentContext);
     if (wd) {
       const endWdIdx = i + wd.consumed - 1;
@@ -1732,34 +1693,210 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     }
   }
 
-  dateCandidates.sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
-  const dedupedDateCandidates: DateCandidate[] = [];
-  for (const dc of dateCandidates) {
-    const prev = dedupedDateCandidates[dedupedDateCandidates.length - 1];
-    if (prev && dc.start < prev.end) continue;
-    dedupedDateCandidates.push(dc);
+    dateCandidates.sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
+    const dedupedDateCandidates: DateCandidate[] = [];
+    for (const dc of dateCandidates) {
+      const prev = dedupedDateCandidates[dedupedDateCandidates.length - 1];
+      if (prev && dc.start < prev.end) continue;
+      dedupedDateCandidates.push(dc);
+    }
+    return dedupedDateCandidates;
+  };
+
+  const ALLOWED_DATE_TO_CLOCK_GAP = new Set(['', ',', 'luc', 'vao luc', 'vao', 'at', '@']);
+  const ALLOWED_CLOCK_TO_DATE_GAP = new Set(['', ',', 'ngay', 'vao', 'vao ngay', 'on']);
+
+  const endAfterOptionalAttachedClock = (anchorEnd: number, limitEnd?: number): number => {
+    for (let idx = 0; idx < dedupedTimeCandidates.length; idx++) {
+      const tc = dedupedTimeCandidates[idx];
+      if (!tc || tc.start < anchorEnd) continue;
+      if (limitEnd !== undefined && tc.end > limitEnd) break;
+      const resolved = resolveClockPeriod(tc);
+      if (
+        !isAvailable(tc) ||
+        !hasCleanLeftBoundary(tc) ||
+        !hasCleanRightBoundary(tc) ||
+        resolved.shortGBlocked ||
+        isDurationClock(tc, resolved.period)
+      ) {
+        continue;
+      }
+      if (limitEnd !== undefined && resolved.end > limitEnd) continue;
+      const gap = foldVn(input.slice(anchorEnd, resolved.start)).replace(/\s+/g, ' ').trim();
+      if (!ALLOWED_DATE_TO_CLOCK_GAP.has(gap)) break;
+      let cursorEnd = resolved.end;
+      let rangeIdx = idx;
+      while (rangeIdx + 1 < dedupedTimeCandidates.length) {
+        const nextTc = dedupedTimeCandidates[rangeIdx + 1];
+        if (!nextTc || (limitEnd !== undefined && nextTc.end > limitEnd)) break;
+        const nextResolved = resolveClockPeriod(nextTc);
+        if (!isRangeBetweenClocks(cursorEnd, nextResolved.start) || !hasCleanRightBoundary(nextTc)) break;
+        if (limitEnd !== undefined && nextResolved.end > limitEnd) break;
+        cursorEnd = nextResolved.end;
+        rangeIdx += 1;
+      }
+      return cursorEnd;
+    }
+    return anchorEnd;
+  };
+
+  const startBeforeOptionalAttachedClock = (targetStart: number, minStart?: number): number => {
+    for (let idx = dedupedTimeCandidates.length - 1; idx >= 0; idx--) {
+      const tc = dedupedTimeCandidates[idx];
+      if (!tc || tc.end > targetStart) continue;
+      if (minStart !== undefined && tc.start < minStart) break;
+      const resolved = resolveClockPeriod(tc);
+      if (
+        !isAvailable(tc) ||
+        !hasCleanLeftBoundary(tc) ||
+        !hasCleanRightBoundary(tc) ||
+        resolved.shortGBlocked ||
+        isDurationClock(tc, resolved.period)
+      ) {
+        continue;
+      }
+      if (resolved.end > targetStart) continue;
+      const gap = foldVn(input.slice(resolved.end, targetStart)).replace(/\s+/g, ' ').trim();
+      if (!ALLOWED_CLOCK_TO_DATE_GAP.has(gap)) break;
+      let innerStart = resolved.start;
+      let cursorStart = expandConnectorBefore(input, words, innerStart, [['vào', 'lúc'], ['vào'], ['lúc'], ['at']], occupied);
+      let rangeIdx = idx;
+      while (rangeIdx - 1 >= 0) {
+        const prevTc = dedupedTimeCandidates[rangeIdx - 1];
+        if (!prevTc || (minStart !== undefined && prevTc.start < minStart)) break;
+        const prevResolved = resolveClockPeriod(prevTc);
+        if (!isRangeBetweenClocks(prevResolved.end, innerStart) || !hasCleanLeftBoundary(prevTc)) break;
+        const prevStart = expandConnectorBefore(
+          input,
+          words,
+          prevResolved.start,
+          [['vào', 'lúc'], ['vào'], ['lúc'], ['at']],
+          occupied,
+        );
+        if (minStart !== undefined && prevStart < minStart) break;
+        innerStart = prevResolved.start;
+        cursorStart = prevStart;
+        rangeIdx -= 1;
+      }
+      if (minStart !== undefined && cursorStart < minStart) return targetStart;
+      return cursorStart;
+    }
+    return targetStart;
+  };
+
+  const isMultiDateRangePair = (prevDc: DateCandidate, nextDc: DateCandidate): boolean => {
+    if (isMultiDateConnector(prevDc.end, nextDc.start) || isMultiDateConnector(prevDc.end, nextDc.prefixStart)) {
+      return true;
+    }
+    const leftEndWithClock = endAfterOptionalAttachedClock(prevDc.end, nextDc.prefixStart);
+    const rightPrefixWithClock = startBeforeOptionalAttachedClock(nextDc.prefixStart, prevDc.end);
+    const rightRawWithClock = startBeforeOptionalAttachedClock(nextDc.start, prevDc.end);
+    return (
+      isMultiDateConnector(leftEndWithClock, nextDc.start) ||
+      isMultiDateConnector(leftEndWithClock, nextDc.prefixStart) ||
+      isMultiDateConnector(prevDc.end, rightPrefixWithClock) ||
+      isMultiDateConnector(prevDc.end, rightRawWithClock) ||
+      (leftEndWithClock <= rightPrefixWithClock && isMultiDateConnector(leftEndWithClock, rightPrefixWithClock)) ||
+      (leftEndWithClock <= rightRawWithClock && isMultiDateConnector(leftEndWithClock, rightRawWithClock))
+    );
+  };
+
+  const findDateRangeEndIdx = (candidates: DateCandidate[], startIdx: number): number => {
+    let rangeEndIdx = startIdx;
+    while (rangeEndIdx + 1 < candidates.length) {
+      const prevDc = candidates[rangeEndIdx];
+      const nextDc = candidates[rangeEndIdx + 1];
+      if (!prevDc || !nextDc || !isMultiDateRangePair(prevDc, nextDc)) break;
+      rangeEndIdx += 1;
+    }
+    return rangeEndIdx;
+  };
+
+  // Detect multi-date & date-time ranges before claiming clocks so "từ 25/11 9h đến 26/11 10h" stays intact.
+  const rawEnglishTimeSpans = dedupedTimeCandidates
+    .filter((tc) => tc.hasAmPm || expandConnectorBefore(input, words, tc.start, [['at']], occupied) < tc.start)
+    .map((tc) => ({ start: tc.start, end: tc.end }));
+  const preDateCandidates = collectDateCandidates(rawEnglishTimeSpans);
+  const skippedDateRangeSpans: Span[] = [];
+  for (let idx = 0; idx < preDateCandidates.length; idx++) {
+    const dc = preDateCandidates[idx];
+    if (!dc) continue;
+    const rangeEndIdx = findDateRangeEndIdx(preDateCandidates, idx);
+    if (rangeEndIdx > idx) {
+      const lastDc = preDateCandidates[rangeEndIdx] as DateCandidate;
+      const rangeStart = Math.min(
+        dc.prefixStart,
+        startBeforeOptionalAttachedClock(dc.prefixStart),
+        startBeforeOptionalAttachedClock(dc.start),
+      );
+      const rangeEnd = endAfterOptionalAttachedClock(lastDc.end);
+      skippedDateRangeSpans.push({ start: rangeStart, end: rangeEnd });
+      idx = rangeEndIdx;
+    }
   }
 
+  // 6. Explicit clock times (14:30, 9h30, 9h, 9am, 2:30pm)
+  for (let idx = 0; idx < dedupedTimeCandidates.length; idx++) {
+    const tc = dedupedTimeCandidates[idx];
+    if (!tc || !isAvailable(tc) || hasOverlap(skippedDateRangeSpans, tc)) continue;
+
+    if (hasHalfUnitRangeBefore(tc.start)) {
+      if (hasCleanRightBoundary(tc)) hasExplicitClockRange = true;
+      continue;
+    }
+    if (!hasCleanLeftBoundary(tc)) continue;
+
+    const resolvedClock = resolveClockPeriod(tc);
+    let start = resolvedClock.start;
+    const end = resolvedClock.end;
+    const period = resolvedClock.period;
+    if (resolvedClock.shortGBlocked || isDurationClock(tc, period)) continue;
+
+    // Skip time ranges ("từ 9h đến 10h", "9h - 11h", "9:00am - 11:00am") intact rather than stripping only one side.
+    let rangeEndIdx = idx;
+    let cursorEnd = end;
+    while (rangeEndIdx + 1 < dedupedTimeCandidates.length) {
+      const nextTc = dedupedTimeCandidates[rangeEndIdx + 1];
+      if (!nextTc || !isAvailable(nextTc) || !isRangeBetweenClocks(cursorEnd, nextTc.start)) break;
+      rangeEndIdx += 1;
+      cursorEnd = nextTc.end;
+    }
+    if (rangeEndIdx > idx) {
+      const lastTc = dedupedTimeCandidates[rangeEndIdx];
+      if (lastTc && hasCleanRightBoundary(lastTc)) hasExplicitClockRange = true;
+      idx = rangeEndIdx;
+      continue;
+    }
+
+    if (hasHalfUnitRangeAfter(end)) {
+      hasExplicitClockRange = true;
+      continue;
+    }
+    if (!hasCleanRightBoundary(tc)) continue;
+
+    const startBeforeAt = start;
+    start = expandConnectorBefore(input, words, start, [['vào', 'lúc'], ['vào'], ['lúc'], ['at']], occupied);
+    const usedEnglishAt = start < startBeforeAt && /^at\b/i.test(input.slice(start));
+    const adjustedHour = tc.hasAmPm ? tc.hour : adjustHourForPeriod(tc.hour, period);
+    parsedTime = { hour: adjustedHour, minute: tc.minute, explicitClock: true, hasAmPm: tc.hasAmPm, period };
+    claimToken('time', start, end);
+    timeSpans.push({ start, end });
+    if (tc.hasAmPm || usedEnglishAt) englishTimeSpans.push({ start, end });
+    break;
+  }
+
+  // 7. Resolve explicit numeric & relative dates together in sentence order while keeping multi-date ranges intact
+  suppressDefaultPeriodTime = hasExplicitClockRange || timeTokenDismissed;
+  const dedupedDateCandidates = collectDateCandidates(englishTimeSpans);
   for (let idx = 0; idx < dedupedDateCandidates.length; idx++) {
     const dc = dedupedDateCandidates[idx];
     if (!dc) continue;
-    let rangeEndIdx = idx;
-    while (rangeEndIdx + 1 < dedupedDateCandidates.length) {
-      const prevDc = dedupedDateCandidates[rangeEndIdx];
-      const nextDc = dedupedDateCandidates[rangeEndIdx + 1];
-      if (
-        !prevDc ||
-        !nextDc ||
-        (!isMultiDateConnector(prevDc.end, nextDc.start) && !isMultiDateConnector(prevDc.end, nextDc.prefixStart))
-      ) {
-        break;
-      }
-      rangeEndIdx += 1;
-    }
+    const rangeEndIdx = findDateRangeEndIdx(dedupedDateCandidates, idx);
     if (rangeEndIdx > idx) {
       idx = rangeEndIdx;
       continue;
     }
+    if (hasOverlap(skippedDateRangeSpans, dc)) continue;
     dc.apply();
     break;
   }

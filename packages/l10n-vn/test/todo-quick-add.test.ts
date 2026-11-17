@@ -997,6 +997,60 @@ describe('parseTodoQuickAdd (#3556)', () => {
       dueOn: '2026-11-23',
       dueTime: '09:00',
     });
+
+    // Date-time ranges stay whole in title without claiming either date or clock
+    expect(parseTodoQuickAdd('Đi công tác từ 25/11 9h đến 26/11 10h', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Đi công tác từ 25/11 9h đến 26/11 10h',
+      dueOn: null,
+      dueTime: null,
+      tokens: [],
+    });
+    expect(parseTodoQuickAdd('Conference from 25/11 9am to 26/11 5pm', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Conference from 25/11 9am to 26/11 5pm',
+      dueOn: null,
+      dueTime: null,
+      tokens: [],
+    });
+    expect(
+      parseTodoQuickAdd('Họp từ thứ hai 9h sáng đến thứ sáu 10h tối', { now: TUE_MORNING, timeZone: VN_TZ }),
+    ).toMatchObject({
+      title: 'Họp từ thứ hai 9h sáng đến thứ sáu 10h tối',
+      dueOn: null,
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Họp từ 9h ngày mai đến 10h thứ sáu', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp từ 9h ngày mai đến 10h thứ sáu',
+      dueOn: null,
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Họp 25/11 9h - 11h', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp 9h - 11h',
+      dueOn: '2026-11-25',
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Họp 25/11 9h thay cho 26/11 10h', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp thay cho 26/11 10h',
+      dueOn: '2026-11-25',
+      dueTime: '09:00',
+    });
+
+    // Standalone "vào" before clock ("Họp vào 9h ngày mai") is claimed in time token and restored on dismiss
+    const vaoTimeInput = 'Họp vào 9h ngày mai';
+    const vaoTimeRes = parseTodoQuickAdd(vaoTimeInput, { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(vaoTimeRes).toMatchObject({
+      title: 'Họp',
+      dueOn: '2026-11-18',
+      dueTime: '09:00',
+    });
+    expect(vaoTimeRes.tokens.map((t) => [t.kind, t.raw])).toEqual([
+      ['time', 'vào 9h'],
+      ['date', 'ngày mai'],
+    ]);
+    expect(parseTodoQuickAdd('Hop vao 9h ngay mai', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Hop',
+      dueOn: '2026-11-18',
+      dueTime: '09:00',
+    });
   });
 
   it('stays linear on 50k-character adversarial --, %, and tab inputs without ReDoS', () => {
