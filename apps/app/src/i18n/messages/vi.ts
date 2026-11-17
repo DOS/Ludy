@@ -1889,7 +1889,9 @@ export const vi = {
     cancel: 'Hủy',
     notIssued: 'Bản nháp chưa được phát hành và chưa gửi đi đâu.',
     noSeries: 'Chưa có ký hiệu hóa đơn cho pháp nhân này. Ký hiệu do nhà cung cấp hóa đơn điện tử giữ; Ludy chỉ đọc, không tự tạo.',
-    syncSandbox: 'Lấy ký hiệu thử nghiệm',
+    syncSandbox: 'Lấy ký hiệu mẫu',
+    noSeriesSandbox: 'Hệ thống này chạy chế độ giả lập: có thể lấy ký hiệu mẫu, không có hóa đơn nào được gửi đi. Với nhà cung cấp thật, hãy kết nối ở Cài đặt.',
+    openConnections: 'Mở Cài đặt, mục Tích hợp',
     noProvider: 'Chưa kết nối nhà cung cấp hóa đơn điện tử nào.',
     empty: 'Chưa có bản nháp hóa đơn nào',
     emptyHint: 'Bấm Tạo bản nháp để soạn hóa đơn bán hàng đầu tiên.',
@@ -5547,7 +5549,8 @@ export const vi = {
     export: 'Xuất Excel',
     exportFile: '{brandSlug}-so-tai-san-{org}.xlsx',
     empty: 'Chưa có tài sản nào',
-    emptyHint: 'Thêm tài sản cố định hoặc chi phí trả trước để {brand} khấu hao và phân bổ hằng tháng.',
+    emptyHint: 'Thêm tài sản cố định hoặc chi phí trả trước để {brand} khấu hao và phân bổ hằng tháng. Nút Khấu hao và Xuất Excel dùng được khi có tài sản đầu tiên.',
+    needsAsset: 'Thêm một tài sản trước, rồi mới dùng được nút này.',
     columns: { name: 'Tài sản', accounts: 'Tài khoản', schedule: 'Thời gian', cost: 'Nguyên giá', posted: 'Đã khấu hao', remaining: 'Còn lại' },
   },
   yearClosing: {
@@ -6131,6 +6134,10 @@ export const vi = {
     importTitle: 'Nhập sao kê',
     importHint: 'Chọn file Excel (.xlsx) hoặc CSV tải từ ngân hàng. {brand} tự tìm các cột theo tiêu đề; nếu sai, hãy chọn lại cột bên dưới.',
     file: 'File sao kê (.xlsx, .csv)',
+    dropHere: 'Kéo thả file sao kê vào đây',
+    pickFile: 'Chọn file sao kê',
+    chosenFile: 'Đã chọn: {name}',
+    fileFormats: 'File Excel (.xlsx) hoặc CSV',
     noColumn: '(không có)',
     columns: {
       row: 'Dòng',
@@ -6268,7 +6275,7 @@ export const vi = {
   },
   ledger: {
     closingTitle: 'Khóa sổ và lưu trữ',
-    title: 'Sổ sách kế toán',
+    title: 'Sổ sách',
     subtitle:
       'Bảng cân đối số phát sinh, sổ cái từng tài khoản và công nợ phải thu, phải trả theo đối tượng của một tháng, quý hoặc năm, lập từ các bút toán đã ghi sổ.',
     export: 'Xuất Excel',
@@ -6285,6 +6292,7 @@ export const vi = {
       generalLedger: 'Sổ cái',
       parties: 'Công nợ',
       statements: 'Báo cáo tài chính',
+      closing: 'Kết thúc kỳ',
     },
     statementsDraft:
       'Bản nháp: mã chỉ tiêu và cách lấy số liệu từ tài khoản chưa được kế toán kiểm tra, nên chưa dùng để nộp. Dùng để đối chiếu sổ sách.',

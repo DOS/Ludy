@@ -39,7 +39,7 @@ export function ledgerChoiceOf(key: string, today: Date = new Date()): LedgerPer
   return yearOptions(today).includes(year) ? { kind: 'year', year, index: 1 } : null;
 }
 
-export const LEDGER_TABS = ['trialBalance', 'generalLedger', 'parties', 'statements'] as const;
+export const LEDGER_TABS = ['trialBalance', 'generalLedger', 'parties', 'statements', 'closing'] as const;
 export type LedgerTab = (typeof LEDGER_TABS)[number];
 
 // The router reads a digits-only value as a number (?period=2026 or ?account=1121 typed by hand), so a whole number
