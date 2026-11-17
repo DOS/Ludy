@@ -7,10 +7,13 @@
 --                                          latest exit is judged (`recorded`), as a result's or a memory entry's does.
 --   member_vy_member_data_purge(org, user)  deletes the user's translations in the org with their results and memory, under the same rules (a worker in the org's system context, the membership
 --                                          lock, nobody back in the org, 30 days after a recorded latest exit); it returns the number of rows removed, translations included.
--- A translation row has no updated_at: parts added to an existing row after a re-add keep the row's first date, so a user whose only newer rows are such parts is judged by that date, like the
--- other private rows are by theirs (a result or a memory entry made after the re-add is always newer). The check stays inline in both definers (no new function names the private rows, so the
--- frozen list of the sinks invariant is unchanged). Idempotent.
+-- A translation row has no updated_at and is never updated in place (UPDATE is revoked; a merge of translated parts deletes the row and inserts a new one), so its created_at is the time of its
+-- last write: a translation written after a re-add is newer than the old removal and makes that exit "not recorded", as a result or a memory entry made then does. The check stays inline in
+-- both definers (no new function names the private rows, so the frozen list of the sinks invariant is unchanged). A plain index serves the per-member reads (the table is not a hot table).
+-- Idempotent.
 SET LOCAL lock_timeout = '2s';
+
+CREATE INDEX IF NOT EXISTS translation_member_idx ON crove_meetings.translation (org_id, member_user_id, created_at);
 
 CREATE OR REPLACE FUNCTION crove_kernel.member_vy_former_members_due(p_limit integer)
 RETURNS TABLE (org_id uuid, user_id uuid, recorded boolean) LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
