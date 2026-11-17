@@ -571,6 +571,16 @@ export type EInvoiceConnectionTable = Refine<
   { last_test_state: EInvoiceConnectionState | null; legal_entity_id: LegalEntityColumn },
   'legal_entity_id'
 >;
+// The notice of an error only in the non-core content of an issued sales e-invoice (#2504): the field that was wrong, and two steps the seller does outside Ludy, each ticked once.
+export const EINVOICE_NOTICE_FIELDS = ['buyer_name', 'buyer_address', 'amount_in_words'] as const;
+export type EInvoiceNoticeField = (typeof EINVOICE_NOTICE_FIELDS)[number];
+export const EINVOICE_NOTICE_BUYER_STATES = ['todo', 'sent'] as const;
+export const EINVOICE_NOTICE_FORM_STATES = ['todo', 'filed'] as const;
+export type EInvoiceNoticeTable = Refine<
+  G.FinanceEinvoiceNoticeTable,
+  { field: EInvoiceNoticeField; buyer_notice_state: Generated<(typeof EINVOICE_NOTICE_BUYER_STATES)[number]>; form_state: Generated<(typeof EINVOICE_NOTICE_FORM_STATES)[number]>; legal_entity_id: LegalEntityColumn },
+  'legal_entity_id'
+>;
 // A connection to a marketplace (#2519): the result of its last test and of its last poll, as states and never the platform's own text.
 export const MARKETPLACE_TEST_STATES = ['works', 'wrong_credentials', 'api_not_enabled', 'ip_not_allowed', 'unreachable'] as const;
 export type MarketplaceTestState = (typeof MARKETPLACE_TEST_STATES)[number];
@@ -1388,6 +1398,7 @@ type Refined = Tables<{
   'crove_finance.bank_party_rule': BankPartyRuleTable;
   'crove_finance.einvoice_draft': EInvoiceDraftTable;
   'crove_finance.einvoice_connection': EInvoiceConnectionTable;
+  'crove_finance.einvoice_notice': EInvoiceNoticeTable;
   'crove_finance.marketplace_connection': MarketplaceConnectionTable;
   'crove_finance.stock_item': StockItemTable;
   'crove_finance.channel_order': ChannelOrderTable;

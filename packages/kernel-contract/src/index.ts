@@ -20,6 +20,7 @@ export * from './bank-statement.ts';
 export * from './payment-reminder.ts';
 export * from './finance-overview.ts';
 export * from './einvoice.ts';
+export * from './einvoice-notice.ts';
 export * from './stock.ts';
 export * from './marketplace.ts';
 export * from './marketplace-connections.ts';
