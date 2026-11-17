@@ -3914,6 +3914,22 @@ export const vi = {
       deleteYes: 'Xóa báo giá nháp',
       revise: 'Tạo bản sửa đổi',
     },
+    sign: {
+      send: 'Gửi ký điện tử',
+      envelopeTitle: 'Báo giá {label} - {party}',
+      signerRoleLabel: 'Khách hàng',
+      openLabel: 'Mở hồ sơ ký: {title} ({status})',
+      status: {
+        draft: 'Nháp ký',
+        sent: 'Đang chờ ký',
+        in_progress: 'Đang chờ ký',
+        completed: 'Đã ký kết',
+        declined: 'Bị từ chối',
+        voided: 'Đã hủy ký',
+        expired: 'Hết hạn',
+        stale: 'Báo giá đã sửa sau khi tạo ký',
+      },
+    },
     editor: {
       title: 'Báo giá nháp',
       titleNumbered: 'Báo giá {number}',
@@ -13557,6 +13573,7 @@ export const vi = {
         source: 'Đọc thông tin khung trang và vai trò người ký để AI phân tích',
       },
       envelope: {
+        by_source: 'Xem hồ sơ ký theo nguồn chứng từ',
         completed_mail_data: 'Chuẩn bị dữ liệu email chứng thư hoàn tất hồ sơ ký (hệ thống)',
         create: 'Tạo bản nháp hồ sơ ký',
         events: 'Xem chuỗi nhật ký ký của hồ sơ',

@@ -549,6 +549,8 @@ import {
   zSignAiAnalysisRecord,
   zSignAiAnalyzeInput,
   zSignAiAnalyzeResult,
+  zSignEnvelopeBySourceInput,
+  zSignEnvelopeBySourceResult,
   zSignEnvelopeCreateInput,
   zSignEnvelopeCreateResult,
   zSignEnvelopeDetail,
@@ -2910,6 +2912,7 @@ export const contract = {
     envelope: {
       list: oc.input(zSignEnvelopeListInput).output(zSignEnvelopeListResult),
       get: oc.input(z.strictObject({ envelopeId: zId })).output(zSignEnvelopeDetail),
+      by_source: oc.input(zSignEnvelopeBySourceInput).output(zSignEnvelopeBySourceResult),
       events: oc.input(z.strictObject({ envelopeId: zId })).output(zSignEnvelopeEventsResult),
       verify: oc.input(z.strictObject({ envelopeId: zId })).output(zSignEnvelopeVerifyResult),
       create: oc.input(zSignEnvelopeCreateInput).output(zSignEnvelopeCreateResult),

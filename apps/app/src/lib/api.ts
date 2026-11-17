@@ -22,11 +22,11 @@ export function getCurrentOrg(): string | null {
   return currentOrg;
 }
 
-async function headers(): Promise<Record<string, string>> {
-  return requestHeaders(await accessToken(), currentOrg);
+async function headers(orgSlug: string | null = currentOrg): Promise<Record<string, string>> {
+  return requestHeaders(await accessToken(), orgSlug);
 }
 
-const link = new RPCLink({ url: `${serverOrigin()}/api/rpc`, headers });
+const link = new RPCLink({ url: `${serverOrigin()}/api/rpc`, headers: () => headers() });
 
 export const client: ContractRouterClient<typeof contract> = createORPCClient(link);
 export const orpc = createTanstackQueryUtils(client);
@@ -108,8 +108,16 @@ export function takeOrgLeftNotice() {
   return takeOrgLeft(sessionStore());
 }
 
-export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
-  const response = await fetch(apiUrl(path), { ...init, headers: { ...(await headers()), ...(init.headers as Record<string, string> | undefined) } });
+export async function apiFetch(
+  path: string,
+  init: RequestInit & { orgSlug?: string | null } = {},
+): Promise<Response> {
+  const { orgSlug, ...rest } = init;
+  const resolvedOrg = orgSlug === undefined ? currentOrg : orgSlug;
+  const response = await fetch(apiUrl(path), {
+    ...rest,
+    headers: { ...(await headers(resolvedOrg)), ...(rest.headers as Record<string, string> | undefined) },
+  });
   if (!response.ok) throw await apiErrorFromResponse(response);
   return response;
 }
@@ -262,9 +270,15 @@ export async function assembleLivePieces(meetingId: string): Promise<{ meetingId
 
 // One file through a presigned staging upload (plan §7.6): a single-use form from the kernel, the bytes straight to
 // the bucket, then the kernel reads them back, hashes them and records the file.
-async function uploadStaged(file: File, purpose: UploadPurpose, legalEntityId?: string): Promise<Uploaded> {
+async function uploadStaged(
+  file: File,
+  purpose: UploadPurpose,
+  legalEntityId?: string,
+  orgSlug?: string | null,
+): Promise<Uploaded> {
   if (file.size > maxBytesFor(purpose)) throw tooLarge(file, purpose);
-  const grant = (await (await apiFetch('/api/files/uploads', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ purpose }) })).json()) as {
+  const orgOpt = orgSlug !== undefined ? { orgSlug } : {};
+  const grant = (await (await apiFetch('/api/files/uploads', { ...orgOpt, method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ purpose }) })).json()) as {
     uploadId: string;
     url: string;
     fields: Record<string, string>;
@@ -279,6 +293,7 @@ async function uploadStaged(file: File, purpose: UploadPurpose, legalEntityId?: 
   // A busy kernel refuses the completion without using the grant, so the same completion is retried.
   const response = await retryWhileBusy(() =>
     apiFetch(`/api/files/uploads/${grant.uploadId}/complete`, {
+      ...orgOpt,
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ filename: file.name, purpose, ...(legalEntityId ? { legalEntityId } : {}) }),
@@ -308,17 +323,22 @@ export async function uploadDocument(file: File, legalEntityId?: string): Promis
 
 // purpose social: images for a Social post (#372); purpose import: a spreadsheet for a module's import (#465). Both are
 // stored but never read as documents.
-export async function uploadFiles(files: File[], purpose: UploadPurpose = 'document'): Promise<{ files: Uploaded[] }> {
+export async function uploadFiles(
+  files: File[],
+  purpose: UploadPurpose = 'document',
+  orgSlug?: string | null,
+): Promise<{ files: Uploaded[] }> {
   if (getConfig().uploads === 'presigned') {
     const results: Uploaded[] = [];
-    for (const file of files) results.push(await uploadStaged(file, purpose));
+    for (const file of files) results.push(await uploadStaged(file, purpose, undefined, orgSlug));
     return { files: results };
   }
+  const orgOpt = orgSlug !== undefined ? { orgSlug } : {};
   const send = async (batch: File[]) => {
     const form = new FormData();
     form.append('purpose', purpose);
     for (const file of batch) form.append('file', file);
-    return (await (await retryWhileBusy(() => apiFetch('/api/files', { method: 'POST', body: form }))).json()) as { files: Uploaded[] };
+    return (await (await retryWhileBusy(() => apiFetch('/api/files', { ...orgOpt, method: 'POST', body: form }))).json()) as { files: Uploaded[] };
   };
   // Social files go one per request, so a video's body stays within the server's limit.
   if (purpose !== 'social') return send(files);

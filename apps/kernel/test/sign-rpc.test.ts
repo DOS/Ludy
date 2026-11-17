@@ -122,6 +122,25 @@ function createSignTestApp(options: { signInstalled: boolean; signAi?: SignAiRea
           ],
         };
       }
+      if (name === 'sign.envelope.by_source') {
+        return {
+          items: [
+            {
+              sourceId: FILE_ID,
+              envelopeId: ENVELOPE_ID,
+              title: 'Quote BG-2026-0001',
+              status: 'sent',
+              sealStatus: null,
+              certificateCode: null,
+              completedAt: null,
+              signerCount: 1,
+              signedCount: 0,
+              createdAt: '2026-11-16T01:00:00.000Z',
+              updatedAt: '2026-11-16T01:05:00.000Z',
+            },
+          ],
+        };
+      }
       if (name === 'sign.envelope.get') {
         return {
           envelope: {
@@ -368,5 +387,35 @@ describe('os.sign RPC handlers (#3325)', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { json: { envelope: { pageDimensions: unknown } } };
     expect(body.json.envelope.pageDimensions).toBeNull();
+  });
+
+  it('routes sign.envelope.by_source through inSign and returns 404 when sign is not installed', async () => {
+    const offApp = createSignTestApp({ signInstalled: false });
+    const offRes = await callRpc(offApp.app, '/sign/envelope/by_source', {
+      sourceKind: 'crm_quote',
+      sourceIds: [FILE_ID],
+    });
+    expect(offRes.status).toBe(404);
+
+    const onApp = createSignTestApp({ signInstalled: true });
+    const onRes = await callRpc(onApp.app, '/sign/envelope/by_source', {
+      sourceKind: 'crm_quote',
+      sourceIds: [FILE_ID],
+    });
+    expect(onRes.status).toBe(200);
+    expect(onApp.queried.some((q) => q.name === 'sign.envelope.by_source')).toBe(true);
+    expect(await onRes.json()).toMatchObject({
+      json: {
+        items: [
+          {
+            sourceId: FILE_ID,
+            envelopeId: ENVELOPE_ID,
+            status: 'sent',
+            signerCount: 1,
+            signedCount: 0,
+          },
+        ],
+      },
+    });
   });
 });

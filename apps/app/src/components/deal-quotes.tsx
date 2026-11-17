@@ -4,10 +4,26 @@
 // the way the server computes them, and saves. Nothing here sends a quote: sending is a later step, and a person always does it. The core works with AI
 // off. The sales coworker's suggested lines (#2698) are a read the person asks for: each comes marked as the coworker's, with its price empty when no source
 // holds one, and a person uses or drops it; a used line is only a line in this editor until the person saves.
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { QUOTE_DESCRIPTION_MAX, QUOTE_LINES_MAX, QUOTE_TEXT_MAX, QUOTE_UNIT_MAX, zQuoteLineInput, type Deal, type Quote, type QuoteHint, type QuoteLineInput, type QuoteLinkCreated, type QuoteStatus, type QuoteSuggested, type QuoteSummary } from '@crove/kernel-contract';
+import {
+  QUOTE_DESCRIPTION_MAX,
+  QUOTE_LINES_MAX,
+  QUOTE_TEXT_MAX,
+  QUOTE_UNIT_MAX,
+  SIGN_BY_SOURCE_MAX,
+  zQuoteLineInput,
+  type Deal,
+  type Quote,
+  type QuoteHint,
+  type QuoteLineInput,
+  type QuoteLinkCreated,
+  type QuoteStatus,
+  type QuoteSuggested,
+  type QuoteSummary,
+  type SignEnvelopeBySourceItem,
+} from '@crove/kernel-contract';
 import { computeLineTotals, sumLineTotals } from '@crove/l10n-vn';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -18,6 +34,7 @@ import { ConfirmDialog } from './confirm-dialog.tsx';
 import { DealOrders, QuoteDecision } from './deal-orders.tsx';
 import { QuoteDealOffers } from './quote-deal-offers.tsx';
 import { NewLink, QuoteLinks, QuoteSendPanel, QuoteSettingsForm, quoteLabel, refreshQuoteQueries } from './quote-send.tsx';
+import { QuoteSignHandoff, signEnvelopePollMs, useSignAppEnabled } from './quote-sign-handoff.tsx';
 import { ErrorText, Field } from './ui.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { apiFetch, client, errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -361,7 +378,21 @@ function QuoteEditor({ quote, canEdit, sent, onSent, onClose }: { quote: Quote; 
   );
 }
 
-function QuoteRow({ quote, canEdit, onOpen }: { quote: QuoteSummary; canEdit: boolean; onOpen: () => void }) {
+function QuoteRow({
+  quote,
+  canEdit,
+  signEnabled,
+  signEnvelope,
+  signLoading,
+  onOpen,
+}: {
+  quote: QuoteSummary;
+  canEdit: boolean;
+  signEnabled: boolean;
+  signEnvelope: SignEnvelopeBySourceItem | null;
+  signLoading: boolean;
+  onOpen: () => void;
+}) {
   const t = useTranslations('quotes');
   const { locale } = useLocaleSetting();
   const remove = useMutation(orpc.crm.quotes.deleteDraft.mutationOptions({ onSuccess: refreshQuotes }));
@@ -417,6 +448,15 @@ function QuoteRow({ quote, canEdit, onOpen }: { quote: QuoteSummary; canEdit: bo
           </ConfirmDialog>
         )}
         <QuoteDecision quote={quote} canEdit={canEdit} />
+        {signEnabled && (
+          <QuoteSignHandoff
+            quote={quote}
+            canEdit={canEdit}
+            envelope={signEnvelope}
+            envelopeLoading={signLoading}
+            signEnabled={signEnabled}
+          />
+        )}
         {canEdit && (quote.status === 'sent' || quote.status === 'declined') && (
           <Button size="sm" variant="outline" loading={revise.isPending} onClick={() => revise.mutate({ quoteId: quote.id })}>
             {t('row.revise')}
@@ -436,6 +476,29 @@ export function DealQuotes({ deal, canEdit, onClose }: { deal: Deal; canEdit: bo
   const [settings, setSettings] = useState(false);
   const org = useQuery(orpc.org.get.queryOptions());
   const canManage = org.data?.role === 'owner' || org.data?.role === 'admin';
+  const signEnabled = useSignAppEnabled();
+  const signQuoteIds = (quotes.data ?? []).map((q) => q.id);
+  const signIdChunks: string[][] = [];
+  for (let i = 0; i < signQuoteIds.length; i += SIGN_BY_SOURCE_MAX) {
+    signIdChunks.push(signQuoteIds.slice(i, i + SIGN_BY_SOURCE_MAX));
+  }
+  const signEnvelopeQueries = useQueries({
+    queries: signIdChunks.map((chunk) => ({
+      ...orpc.sign.envelope.by_source.queryOptions({ input: { sourceKind: 'crm_quote', sourceIds: chunk } }),
+      enabled: signEnabled && chunk.length > 0,
+      retry: false,
+      refetchInterval: (query: { state: { data: { items: SignEnvelopeBySourceItem[] } | undefined } }) =>
+        signEnabled ? signEnvelopePollMs(query.state.data?.items) : false,
+    })),
+  });
+  const signEnvelopesPending = signEnvelopeQueries.some((q) => q.isPending);
+  const signEnvelopesError = signEnvelopeQueries.some((q) => q.isError);
+  const signEnvelopeByQuote = new Map<string, SignEnvelopeBySourceItem>();
+  for (const query of signEnvelopeQueries) {
+    for (const item of query.data?.items ?? []) {
+      signEnvelopeByQuote.set(item.sourceId, item);
+    }
+  }
   const opened = useQuery({ ...orpc.crm.quotes.get.queryOptions({ input: { quoteId: openId ?? '' } }), enabled: openId !== null });
   const create = useMutation(
     orpc.crm.quotes.save.mutationOptions({
@@ -477,7 +540,15 @@ export function DealQuotes({ deal, canEdit, onClose }: { deal: Deal; canEdit: bo
       ) : (
         <ul className="space-y-2">
           {quotes.data?.map((q) => (
-            <QuoteRow key={q.id} quote={q} canEdit={canEdit} onOpen={() => setOpenId(q.id)} />
+            <QuoteRow
+              key={q.id}
+              quote={q}
+              canEdit={canEdit}
+              signEnabled={signEnabled}
+              signEnvelope={signEnvelopesPending ? null : (signEnvelopeByQuote.get(q.id) ?? null)}
+              signLoading={signEnvelopesPending || signEnvelopesError}
+              onOpen={() => setOpenId(q.id)}
+            />
           ))}
         </ul>
       )}

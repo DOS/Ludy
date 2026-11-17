@@ -223,12 +223,38 @@ export const zSignEnvelopeSummary = z.strictObject({
   signerSummary: zSignEnvelopeSignerSummary,
 });
 
+export const SIGN_BY_SOURCE_MAX = 50;
+
 export const zSignEnvelopeListInput = z.strictObject({
   status: zSignEnvelopeStatus.optional(),
   sourceKind: zSignSourceKind.optional(),
   limit: z.number().int().min(1).max(100).optional(),
 });
 export const zSignEnvelopeListResult = z.strictObject({ items: z.array(zSignEnvelopeSummary) });
+
+export const zSignEnvelopeBySourceInput = z.strictObject({
+  sourceKind: zSignSourceKind,
+  sourceIds: z.array(zId).min(1).max(SIGN_BY_SOURCE_MAX),
+});
+
+export const zSignEnvelopeBySourceItem = z.strictObject({
+  sourceId: zId,
+  envelopeId: zId,
+  title: z.string(),
+  status: zSignEnvelopeStatus,
+  sealStatus: zSignSealStatus.nullable(),
+  certificateCode: z.string().nullable(),
+  completedAt: z.string().nullable(),
+  signerCount: z.number().int().min(0),
+  signedCount: z.number().int().min(0),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type SignEnvelopeBySourceItem = z.infer<typeof zSignEnvelopeBySourceItem>;
+
+export const zSignEnvelopeBySourceResult = z.strictObject({
+  items: z.array(zSignEnvelopeBySourceItem),
+});
 
 export const zSignEnvelopeDetail = z.strictObject({
   envelope: z.strictObject({

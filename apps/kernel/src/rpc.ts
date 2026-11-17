@@ -3783,6 +3783,7 @@ export function createRpcHandler(
           }),
         ),
         events: os.sign.envelope.events.handler(signQuery('sign.envelope.events')),
+        by_source: os.sign.envelope.by_source.handler(signQuery('sign.envelope.by_source')),
         verify: os.sign.envelope.verify.handler(signQuery('sign.envelope.verify')),
         create: os.sign.envelope.create.handler(signCommand('sign.envelope.create')),
         update: os.sign.envelope.update.handler(signCommand('sign.envelope.update')),

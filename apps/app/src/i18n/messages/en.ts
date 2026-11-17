@@ -3916,6 +3916,22 @@ export const en = {
       deleteYes: 'Delete draft quote',
       revise: 'Make a revision',
     },
+    sign: {
+      send: 'Send for eSign',
+      envelopeTitle: 'Quote {label} - {party}',
+      signerRoleLabel: 'Customer',
+      openLabel: 'Open signing envelope: {title} ({status})',
+      status: {
+        draft: 'eSign draft',
+        sent: 'Awaiting signature',
+        in_progress: 'Awaiting signature',
+        completed: 'Signed',
+        declined: 'Declined',
+        voided: 'Voided',
+        expired: 'Expired',
+        stale: 'Quote edited after eSign',
+      },
+    },
     editor: {
       title: 'Draft quote',
       titleNumbered: 'Quote {number}',
@@ -13561,6 +13577,7 @@ export const en = {
         source: 'Read draft envelope layout and signer roles for AI analysis',
       },
       envelope: {
+        by_source: 'Look up signing envelopes by source record',
         completed_mail_data: 'Prepare completed envelope certificate email data (system)',
         create: 'Create a signing envelope draft',
         events: 'Read the signing audit chain of an envelope',

@@ -283,8 +283,8 @@ export interface PublicCertificateVerifyResponse {
   eventCount?: number;
 }
 
-export async function uploadSignPdf(file: File): Promise<{ fileId: string }> {
-  const result = await uploadFiles([file], 'sign_document');
+export async function uploadSignPdf(file: File, orgSlug?: string | null): Promise<{ fileId: string }> {
+  const result = await uploadFiles([file], 'sign_document', orgSlug);
   const uploaded = result.files[0];
   if (!uploaded) throw new Error('UPLOAD_FAILED');
   return { fileId: uploaded.fileId };
