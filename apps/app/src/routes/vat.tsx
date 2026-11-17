@@ -54,7 +54,7 @@ interface Invoice {
   rates: Array<{ rate: Rate; taxable: string; vat: string }>;
   warnings: Warning[];
   // A replacement or an adjustment invoice (#916): the invoice it corrects, and which date its period follows.
-  correction?: { kind: 'replacement' | 'adjustment'; series: string; number: string; followsPostingDate: boolean; } | null;
+  correction?: { kind: 'replacement' | 'adjustment'; series: string; number: string; basis: 'issue_date' | 'posting_date' } | null;
   postingDate?: string;
 }
 
@@ -101,7 +101,7 @@ export function InvoiceTable({ invoices, partyLabel }: { invoices: Invoice[]; pa
               {i === 0 && invoice.correction && (
                 <p className="mt-1 text-xs text-subtle-foreground" data-testid="vat-correction-note">
                   {t(`correction.${invoice.correction.kind}`, { original: `${invoice.correction.series ? `${invoice.correction.series}-` : ''}${invoice.correction.number}` })}
-                  {invoice.correction.kind === 'adjustment' ? ` · ${invoice.correction.followsPostingDate && invoice.postingDate ? t('correction.byPostingDate', { date: f.date(invoice.postingDate) }) : t('correction.byIssueDate')}` : ''}
+                  {invoice.correction.kind === 'adjustment' ? ` · ${invoice.correction.basis === 'posting_date' && invoice.postingDate ? t('correction.byPostingDate', { date: f.date(invoice.postingDate) }) : t('correction.byIssueDate')}` : ''}
                 </p>
               )}
             </TableCell>

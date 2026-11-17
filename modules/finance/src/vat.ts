@@ -80,9 +80,9 @@ export interface VatInvoiceView {
   total: Money;
   rates: RateAmounts[];
   warnings: VatWarning[];
-  // The invoice this one corrects (#916), for a replacement or an adjustment; null for any other. followsPostingDate: its period is the one of its posting date, which is not
-  // the one of its own invoice date (a purchase posted on a later date); otherwise it counts in the period of its own invoice date.
-  correction?: { kind: 'replacement' | 'adjustment'; series: string; number: string; followsPostingDate: boolean } | null;
+  // The invoice this one corrects (#916), for a replacement or an adjustment; null for any other. basis: the date its period follows, the posting date of its entry for a purchase
+  // (as every purchase is counted, #478) and the date of its own invoice for a sale.
+  correction?: { kind: 'replacement' | 'adjustment'; series: string; number: string; basis: 'issue_date' | 'posting_date' } | null;
 }
 
 export interface VatSide {
@@ -179,6 +179,7 @@ function invoiceView(
     correctedSeries: string | null;
     correctedNumber: string | null;
   },
+  direction: DocumentDirection,
   lines: Array<{ amount: string; vatRate: string | null }>,
   invoiceRates: InvoiceRateInput[],
 ): VatInvoiceView {
@@ -215,7 +216,7 @@ function invoiceView(
             kind: doc.correctionKind,
             series: doc.correctedSeries,
             number: doc.correctedNumber,
-            followsPostingDate: vatPeriodOf(doc.postingDate, period.kind) !== vatPeriodOf(doc.issueDate, period.kind),
+            basis: direction === 'purchase' ? 'posting_date' : 'issue_date',
           }
         : null,
   };
@@ -366,6 +367,7 @@ async function periodInvoices(ctx: QueryContext, period: VatPeriod, direction: D
         correctedSeries: d.corrected_series,
         correctedNumber: d.corrected_number,
       },
+      direction,
       byDocument.get(d.id) ?? [],
       ratesByDocument.get(d.id) ?? [],
     ),

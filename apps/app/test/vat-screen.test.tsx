@@ -127,7 +127,7 @@ describe('VAT result strip', () => {
 
 // #916: a replacement or an adjustment invoice says what it corrects, and an adjustment says which date its period follows.
 describe('VAT correction note (#916)', () => {
-  const adjusting = { ...invoice, id: '0192f0aa-1111-7222-8333-944445555888', number: '130', postingDate: '2026-10-05', correction: { kind: 'adjustment' as const, series: 'C26TAA', number: '100', followsPostingDate: false } };
+  const adjusting = { ...invoice, id: '0192f0aa-1111-7222-8333-944445555888', number: '130', postingDate: '2026-10-05', correction: { kind: 'adjustment' as const, series: 'C26TAA', number: '100', basis: 'issue_date' as const } };
 
   it('says an adjustment counts in the period of the adjustment invoice date, and which invoice it adjusts', () => {
     const html = render(<InvoiceTable invoices={[adjusting]} partyLabel="Người bán" />);
@@ -137,14 +137,14 @@ describe('VAT correction note (#916)', () => {
     expect(html).not.toContain('theo ngày ghi sổ');
   });
 
-  it('says so when a late-posted adjustment follows its posting date, with that date', () => {
-    const html = render(<InvoiceTable invoices={[{ ...adjusting, postingDate: '2026-11-04', correction: { ...adjusting.correction, followsPostingDate: true } }]} partyLabel="Người mua" />);
+  it('says a purchase adjustment counts by its posting date, with that date (as every purchase does)', () => {
+    const html = render(<InvoiceTable invoices={[{ ...adjusting, postingDate: '2026-11-04', correction: { ...adjusting.correction, basis: 'posting_date' as const } }]} partyLabel="Người mua" />);
     expect(html).toContain('theo ngày ghi sổ 04/11/2026');
     expect(html).not.toContain('theo kỳ lập hóa đơn điều chỉnh');
   });
 
   it('names the invoice a replacement replaces, with no period note, and shows nothing on an ordinary invoice', () => {
-    const replacing = { ...invoice, correction: { kind: 'replacement' as const, series: 'C26TAA', number: '99', followsPostingDate: false } };
+    const replacing = { ...invoice, correction: { kind: 'replacement' as const, series: 'C26TAA', number: '99', basis: 'issue_date' as const } };
     const html = render(<InvoiceTable invoices={[replacing]} partyLabel="Người bán" />);
     expect(html).toContain('Thay thế hóa đơn C26TAA-99');
     expect(html).not.toContain('theo kỳ');

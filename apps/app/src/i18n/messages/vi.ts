@@ -5753,7 +5753,7 @@ export const vi = {
       replacement: 'Thay thế hóa đơn {original}',
       adjustment: 'Điều chỉnh hóa đơn {original}',
       byIssueDate: 'theo kỳ lập hóa đơn điều chỉnh',
-      byPostingDate: 'theo ngày ghi sổ {date} (khác kỳ lập hóa đơn điều chỉnh)',
+      byPostingDate: 'theo ngày ghi sổ {date}',
     },
     supplementary: {
       title: 'Cần kê khai bổ sung ({count})',

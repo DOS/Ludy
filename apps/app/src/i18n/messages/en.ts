@@ -5756,7 +5756,7 @@ export const en = {
       replacement: 'Replaces invoice {original}',
       adjustment: 'Adjusts invoice {original}',
       byIssueDate: 'by the period of the adjustment invoice date',
-      byPostingDate: 'by the posting date {date} (not the period of the adjustment invoice date)',
+      byPostingDate: 'by the posting date {date}',
     },
     supplementary: {
       title: 'To declare in a supplementary return ({count})',

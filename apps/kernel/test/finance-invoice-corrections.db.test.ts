@@ -97,7 +97,7 @@ suite('replacement and adjustment invoices (#916)', () => {
     return original ? out.replace(/<SHDCLQuan>\d+<\/SHDCLQuan>/, `<SHDCLQuan>${original}</SHDCLQuan>`) : out;
   };
 
-  type VatDoc = { number: string; correction: { kind: string; series: string; number: string; followsPostingDate: boolean } | null };
+  type VatDoc = { number: string; correction: { kind: string; series: string; number: string; basis: string } | null };
   const vatWorking = (period: string) =>
     runtime.query<{ input: { documents: VatDoc[] }; output: { available: boolean; documents: VatDoc[] } }>('finance.vat.period', { period }, { actor: asUser(owner), orgId });
 
@@ -214,9 +214,9 @@ suite('replacement and adjustment invoices (#916)', () => {
       c.query(`SELECT 1 FROM crove_finance.purchase_document_void WHERE org_id = $1 AND document_id = $2`, [orgId, replacement]),
     );
     expect(voided.rows).toEqual([]);
-    // The VAT working says what it adjusts, and that it counts by its own invoice date (#916).
+    // The VAT working says what it adjusts, and that, as every purchase, it counts by its posting date (#916).
     const working = await vatWorking('2026-10');
-    expect(working.input.documents.find((d) => d.number === '8003')).toMatchObject({ correction: { kind: 'adjustment', series: 'C26TAB', number: '8002', followsPostingDate: false } });
+    expect(working.input.documents.find((d) => d.number === '8003')).toMatchObject({ correction: { kind: 'adjustment', series: 'C26TAB', number: '8002', basis: 'posting_date' } });
   });
 
   it('records a correction whose original is not in the books alone, with a warning', async () => {
@@ -305,10 +305,10 @@ suite('replacement and adjustment invoices (#916)', () => {
       // The output side of the VAT working: the adjustment of October says what it adjusts, and the replacement of September what it replaces; the voided original is not listed.
       const october = await vatWorking('2026-10');
       expect(october.output.available).toBe(true);
-      expect(october.output.documents.find((d) => d.number === '9003')?.correction).toEqual({ kind: 'adjustment', series: 'C26TAB', number: '9002', followsPostingDate: false });
+      expect(october.output.documents.find((d) => d.number === '9003')?.correction).toEqual({ kind: 'adjustment', series: 'C26TAB', number: '9002', basis: 'issue_date' });
       const september = await vatWorking('2026-09');
       expect(september.output.documents.map((d) => d.number)).toEqual(['9002']);
-      expect(september.output.documents[0]?.correction).toEqual({ kind: 'replacement', series: 'C26TAB', number: '9001', followsPostingDate: false });
+      expect(september.output.documents[0]?.correction).toEqual({ kind: 'replacement', series: 'C26TAB', number: '9001', basis: 'issue_date' });
     } finally {
       orgId = purchaseOrg;
     }

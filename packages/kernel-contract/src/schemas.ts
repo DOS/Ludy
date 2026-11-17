@@ -1081,13 +1081,13 @@ export const zVatRate = z.enum(VAT_RATES);
 export const VAT_WARNINGS = ['rate_unknown', 'rate_split', 'reduced_rate_outside_period', 'lines_mismatch', 'vat_mismatch', 'declared_late', 'check_payment', 'late_sale'] as const;
 export const zVatWarning = z.enum(VAT_WARNINGS);
 const zRateAmounts = z.object({ rate: zVatRate, taxable: zMoney, vat: zMoney });
-// A replacement or an adjustment invoice in the VAT working (#916): the invoice it corrects, and whether it counts in the period of its posting date rather than the one of its own
-// invoice date (they differ only when a purchase was posted on a later date). The working says which, so the accountant can see and question it.
+// A replacement or an adjustment invoice in the VAT working (#916): the invoice it corrects, and the date its period follows: the posting date of its entry for a purchase (as every purchase
+// is counted, since input VAT may be declared in a later period than the invoice date), the date of its own invoice for a sale. The working says which, so the accountant can see and question it.
 const zVatCorrection = z.object({
   kind: z.enum(['replacement', 'adjustment']),
   series: z.string(),
   number: z.string(),
-  followsPostingDate: z.boolean(),
+  basis: z.enum(['issue_date', 'posting_date']),
 });
 export const zVatInvoice = z.object({
   id: zId,
