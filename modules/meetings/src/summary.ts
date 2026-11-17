@@ -5,9 +5,10 @@
 // what each item says about who and when: the "who" is matched to an attendee only when exactly one attendee answers to that name, the "when" is parsed
 // against the meeting's own date, and a link, email address or phone number in a title is flagged. Nothing is shared by this; the recorder's publish does that.
 import { sql } from 'kysely';
-import { zSummaryCopy, zSummaryCopied, zSummaryResult, zNotesPreview, zNotesPreviewInput, ITEMS_PER_MEETING_MAX, sectionsToText, templateSections, type Enhanced, type MeetingSummaryTemplate, type NotesPreview, type SummaryResult } from '@crove/kernel-contract';
+import { zSummaryCopy, zSummaryCopied, zSummaryResult, zSummaryRef, zNotesPreview, zNotesPreviewInput, zSpeakerSuggestions, zSpeakerSuggestionsInput, ITEMS_PER_MEETING_MAX, sectionsToText, templateSections, type Enhanced, type MeetingSummaryTemplate, type NotesPreview, type SpeakerSuggestions, type SummaryResult } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { itemFlags } from './results.ts';
+import { attendeeNames, draftLabels } from './speaker.ts';
 import { dayAfter, vnDay } from './retention.ts';
 import { SUMMARY_FEATURE as FEATURE, isSummaryEnabled } from './summary-run.ts';
 import { ROLES, openMeeting, userOf } from './transcript.ts';
@@ -258,5 +259,40 @@ export const notesPreview = defineQuery({
   },
 });
 
+// The names the recorder's Vy may suggest for a speaker (#3502): what the summary run is told, so it can say which attendee a speaker label is. The recorder's own read, audited; names only.
+export const summaryAttendees = defineQuery({
+  name: 'meetings.summary.attendees',
+  input: zSummaryRef,
+  access: ROLES,
+  sensitive: true,
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx, input): Promise<{ meetingId: string; names: string[] }> => {
+    const userId = userOf(ctx.actor);
+    const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
+    if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can read this');
+    return { meetingId: input.meetingId, names: (await attendeeNames(ctx, input.meetingId, userId)).map((p) => p.name) };
+  },
+});
+
+// What a finished summary run suggested for the speakers and still applies (#3502): the recorder's own run result only (the same checks as the copy), kept to the suggestions whose label is
+// still on a draft line and whose name is still one of the meeting's people. An audited sensitive read; nothing is changed.
+export const speakerSuggestions = defineQuery({
+  name: 'meetings.speaker.suggestions',
+  input: zSpeakerSuggestionsInput,
+  access: ROLES,
+  sensitive: true,
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx, input): Promise<SpeakerSuggestions> => {
+    const userId = userOf(ctx.actor);
+    const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
+    if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can read this');
+    const body = await readRunResult(ctx, input.meetingId, input.runId, new Date());
+    if (body.speakers.length === 0) return zSpeakerSuggestions.parse({ meetingId: input.meetingId, runId: input.runId, suggestions: [] });
+    const labels = await draftLabels(ctx, input.meetingId);
+    const people = new Set((await attendeeNames(ctx, input.meetingId, userId)).map((p) => p.name));
+    return zSpeakerSuggestions.parse({ meetingId: input.meetingId, runId: input.runId, suggestions: body.speakers.filter((s) => labels.has(s.label) && people.has(s.name)) });
+  },
+});
+
 export const summaryCommands = [summaryCopyResult];
-export const summaryQueries = [notesPreview];
+export const summaryQueries = [notesPreview, summaryAttendees, speakerSuggestions];

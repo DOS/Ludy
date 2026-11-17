@@ -3119,6 +3119,13 @@ export const vi = {
         copy: 'Chép vào bản nháp của tôi',
         copied: 'Đã chép. Bản nháp của bạn ở bên dưới; hãy đọc trước khi chia sẻ.',
         copyReplaces: 'Việc này thay phần Vy đã viết trước đó. Phần bạn tự gõ được giữ nguyên.',
+        speakers: {
+          title: 'Vy gợi ý tên người nói',
+          hint: 'Vy đoán từ lời trong bản ghi, và chỉ gợi ý tên của người dự họp. Tên chỉ đổi khi bạn bấm.',
+          line: '{label} có thể là {name} (nghe ở {time})',
+          apply: 'Đặt tên',
+          done: 'Đã đặt tên {name} cho {count} dòng.',
+        },
         failed: 'Lần này Vy chưa làm xong.',
         codes: {
           AI_BUDGET_EXHAUSTED: 'Vy đang tạm dừng hoặc ngân sách AI tháng này đã hết. Cuộc họp vẫn dùng như trước.',
@@ -11364,6 +11371,8 @@ export const vi = {
       SUMMARY_REQUIRED: 'Hãy viết ít nhất một mục trước khi lưu.',
       SUMMARY_TEMPLATE_CHANGED: 'Bạn đã đổi loại cuộc họp sau khi Vy viết. Hãy nhờ Vy tóm tắt lại.',
       TEMPLATE_MISMATCH: 'Nội dung không khớp với loại cuộc họp đang chọn. Hãy mở lại cuộc họp rồi thử lại.',
+      SPEAKER_LABEL_GONE: 'Không còn dòng nháp nào của người nói này (có thể bạn đã đặt tên rồi). Hãy mở lại bản ghi lời.',
+      SPEAKER_NOT_ATTENDEE: 'Tên này không phải của người dự họp trong cuộc họp này.',
       NOTES_EMPTY: 'Hãy gõ vài dòng ghi chú và lưu trước khi nhờ Vy viết lại.',
       NOTES_TOO_LONG: 'Ghi chú quá dài. Hãy rút gọn.',
       TRANSLATE_OFF: 'Hệ thống này chưa bật tính năng Vy dịch.',
@@ -13409,10 +13418,15 @@ export const vi = {
         set_template: 'Chọn loại cuộc họp (mẫu biên bản)',
       },
       summary: {
+        attendees: 'Đọc tên người dự họp để Vy gợi ý tên người nói',
         save: 'Lưu tóm tắt và các quyết định của cuộc họp',
         copy_result: 'Chép bản tóm tắt Vy đã xong của cuộc họp vào bản nháp',
         start: 'Nhờ Vy tóm tắt một cuộc họp',
         status: 'Xem Vy có tóm tắt được cuộc họp không',
+      },
+      speaker: {
+        name: 'Đặt tên người dự họp cho một người nói trong bản ghi lời nháp',
+        suggestions: 'Xem tên người nói Vy gợi ý sau khi tóm tắt',
       },
       followup: {
         draft: 'Mở bản nháp thư cảm ơn sau cuộc họp',

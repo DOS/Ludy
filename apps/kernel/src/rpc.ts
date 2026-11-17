@@ -1239,6 +1239,9 @@ export function createRpcHandler(
           inOrg(context, (orgId, actor) => runNotesEnhance({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
         ),
         enhancePreview: os.meetings.results.enhancePreview.handler(meetingsQuery('meetings.notes.preview')),
+        // Speaker names (#3502): what the recorder's Vy suggested, and the recorder's click that applies one; see modules/meetings/src/summary.ts.
+        speakerSuggestions: os.meetings.results.speakerSuggestions.handler(meetingsQuery('meetings.speaker.suggestions')),
+        nameSpeaker: os.meetings.results.nameSpeaker.handler(meetingsCommand('meetings.speaker.name')),
       },
       // The machine translation of the summary the member reads (meetings integrations E1, #3184): the member's own Vy, the answer theirs alone; see member-vy-ports.ts.
       translation: {

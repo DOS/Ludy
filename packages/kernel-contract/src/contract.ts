@@ -443,6 +443,10 @@ import {
   zNotes,
   zNotesPreview,
   zNotesPreviewInput,
+  zSpeakerName,
+  zSpeakerNamed,
+  zSpeakerSuggestions,
+  zSpeakerSuggestionsInput,
   zNotesSave,
   zNotesSaved,
   zMeetingResultSaved,
@@ -1249,6 +1253,10 @@ export const contract = {
       notesSave: oc.input(zNotesSave).output(zNotesSaved),
       enhance: oc.input(zSummaryRef).output(zSummarized),
       enhancePreview: oc.input(zNotesPreviewInput).output(zNotesPreview),
+      // Speaker names (#3502): the recorder's Vy may suggest which attendee a speaker label is; `speakerSuggestions` is what a finished summary run suggested and still applies,
+      // `nameSpeaker` is the recorder's click that gives the draft lines of one label that attendee's name. Nothing is renamed without the click.
+      speakerSuggestions: oc.input(zSpeakerSuggestionsInput).output(zSpeakerSuggestions),
+      nameSpeaker: oc.input(zSpeakerName).output(zSpeakerNamed),
     },
     // The machine translation of the summary (meetings integrations E1, #3184): the member's own Vy translates what they read; the result is theirs alone, beside the original.
     // `status` is the button (enabled or why not, the target language, the expected cost), `translate` is the click, `get` the member's own translations.

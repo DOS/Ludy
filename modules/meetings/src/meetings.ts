@@ -9,6 +9,7 @@ import { transcribeCommandList } from './transcribe.ts';
 import { transcribeRunCommands, transcribeRunQueries } from './transcribe-run.ts';
 import { notesCommands, notesQueries } from './notes.ts';
 import { resultCommands, resultQueries } from './results.ts';
+import { speakerCommands } from './speaker.ts';
 import { summaryCommands, summaryQueries } from './summary.ts';
 import { summaryRunCommands, summaryRunQueries } from './summary-run.ts';
 import { translateCommands } from './translate.ts';
@@ -991,6 +992,7 @@ export const meetingsCommands = [
   ...resultCommands,
   ...notesCommands,
   ...summaryCommands,
+  ...speakerCommands,
   ...summaryRunCommands,
   ...translateCommands,
   ...translateRunCommands,
