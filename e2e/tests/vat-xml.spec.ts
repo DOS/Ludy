@@ -66,6 +66,9 @@ test('export the VAT return of a month as the HTKK XML of form 01/GTGT', async (
     await page.getByLabel('Năm', { exact: true }).selectOption('2026');
     await page.getByLabel('Tháng', { exact: true }).selectOption('9');
     await expect(page.getByRole('heading', { name: 'Hóa đơn bán ra (1)' })).toBeVisible();
+    // The result strip on top (#3600): September's return is due on 20/10/2026, and the sale's VAT is payable (no input VAT to deduct).
+    await expect(page.getByTestId('vat-strip-deadline')).toHaveText('20/10/2026');
+    await expect(page.getByTestId('vat-strip-result')).toHaveAttribute('data-kind', 'payable');
     const download = page.waitForEvent('download');
     await page.getByRole('button', { name: 'Xuất XML cho HTKK' }).click();
     const file = await download;
