@@ -978,7 +978,7 @@ export const en = {
     settlePending: 'Waiting in the Inbox',
     settlePosted: 'Posted',
     settleReversed: 'Entry reversed',
-    settleReversedNote: 'The entry of this month was reversed, so nothing can be paid yet. Post it again to go on.',
+    settleReversedNote: 'This month\'s entry was reversed, so payment vouchers cannot be recorded yet. Post the entry again to continue.',
     settlePayAfterPosting: 'The pay and the remittances can be asked for once the month is posted.',
     payKind: { net_pay: 'Net pay to employees', insurance: 'Insurance to the agency', union: 'Union fee', tax: 'Personal income tax to the tax authority' },
     payAsk: 'Ask for the payment',
