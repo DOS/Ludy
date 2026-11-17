@@ -71,10 +71,12 @@ const CLAIM = [
 const STATUS = /(?<![\p{L}])(?:bổ sung|kê khai|khai|đã tính|tính vào|được tính|cần|phải|nên|supplement\w*|declar\w*|counted|needs?|must|should|required|amend\w*)(?![\p{L}])/iu;
 // The only words a sentence may hold once its invoices and periods are taken out. A blocklist of status words is never complete ("was included", "requires an additional return"), so the
 // vocabulary is closed instead: enough to say which invoices were issued late for which period, too little to say what any of them needs or how it is counted.
-const ALLOWED_WORDS = new Set([
-  ...['hóa', 'đơn', 'bán', 'ra', 'lập', 'muộn', 'đã', 'cho', 'kỳ', 'thuộc', 'và', 'của', 'các', 'là', 'có', 'trong', 'hàng', 'đều', 'những', 'mỗi', 'số', 'tại', 'với', 'tháng', 'quý'],
-  ...['invoice', 'invoices', 'issued', 'late', 'for', 'the', 'a', 'an', 'and', 'of', 'to', 'in', 'period', 'periods', 'sale', 'sales', 'belong', 'belongs', 'belonging', 'is', 'are', 'was', 'were', 'this', 'that', 'these', 'each', 'with', 'its', 'their', 'them', 'earlier', 'previous', 'on', 'month', 'quarter', 'all', 'both'],
-]);
+const ALLOWED_WORDS = new Set(
+  (
+    'hóa đơn bán ra lập muộn đã cho kỳ thuộc và của các là có trong hàng đều những mỗi số tại với tháng quý ' +
+    'invoice invoices issued late for the a an and of to in period periods sale sales belong belongs belonging is are was were this that these each with its their them earlier previous on month quarter all both'
+  ).split(' '),
+);
 const escaped = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // An invoice written whole: no letter, digit or hyphen-joined part on either side, so a listed "0001" is not "AA-0001" and a listed "C-5" is not "AC-5".
 const mention = (number: string): RegExp => new RegExp(`(?<![\\p{L}\\p{N}-])${escaped(number)}(?![\\p{L}\\p{N}]|-[\\p{L}\\p{N}])`, 'gu');
