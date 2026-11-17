@@ -12,6 +12,7 @@ import {
   brandSlug,
   ACCEPTED_ARCHIVE_TYPES,
   ACCEPTED_UPLOAD_TYPES,
+  AGREEMENT_TYPES,
   DIRECT_UPLOAD_MAX_BYTES,
   HR_BANK_FILE_COLUMNS,
   HR_DECLARATION_KINDS,
@@ -2147,6 +2148,10 @@ export function createHttpApp(deps: HttpDeps) {
       if (type !== 'application/zip') throw new DomainError('UNSUPPORTED_TYPE', 415, `${name}: chỉ nhận tệp Excel dạng .xlsx`);
       if (bytes.byteLength > MAX_IMPORT_BYTES) throw new DomainError('TOO_LARGE', 413, `${name} vượt quá 10 MB`);
       type = XLSX_CONTENT_TYPE;
+    } else if (purpose === 'agreement') {
+      // The signed agreement of an invoice correction (#2504): a PDF, or the photo or scan of the signed paper.
+      if (!type || !AGREEMENT_TYPES.includes(type)) throw new DomainError('UNSUPPORTED_TYPE', 415, `${name}: biên bản thỏa thuận chỉ nhận tệp PDF, JPG, PNG hoặc WEBP`);
+      if (bytes.byteLength > MAX_UPLOAD_BYTES) throw new DomainError('TOO_LARGE', 413, `${name} vượt quá 25 MB`);
     } else if (purpose === 'sign_document') {
       if (type !== 'application/pdf') {
         throw new DomainError('UNSUPPORTED_TYPE', 415, `${name}: tài liệu ký điện tử chỉ nhận tệp PDF`);
@@ -2183,7 +2188,7 @@ export function createHttpApp(deps: HttpDeps) {
         sha256,
         storageKey,
         generation,
-        source: purpose === 'social' ? 'social' : purpose === 'import' ? 'import' : purpose === 'sign_document' ? 'sign_document' : 'upload',
+        source: purpose === 'social' ? 'social' : purpose === 'import' ? 'import' : purpose === 'sign_document' ? 'sign_document' : purpose === 'agreement' ? 'agreement' : 'upload',
         ...(durationMs === undefined ? {} : { durationMs }),
         ...(size ? { imageWidth: size.width, imageHeight: size.height } : {}),
         // A document only: the entity it is booked in (#1764), which the command checks the uploader sees.
@@ -2217,6 +2222,7 @@ export function createHttpApp(deps: HttpDeps) {
     if (value === undefined || value === null || value === '' || value === 'document') return 'document';
     if (value === 'social') return 'social';
     if (value === 'import') return 'import';
+    if (value === 'agreement') return 'agreement';
     if (value === 'meeting_audio' || value === 'meeting_video') {
       if (!runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mục đích tải lên không hợp lệ');
       return value;

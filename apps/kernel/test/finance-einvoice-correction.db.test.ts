@@ -398,4 +398,25 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
     const replacement = await start(o, other.draftId, 'replacement');
     expect(await hash(replacement.id)).not.toBe(none);
   });
+  it('stores the signed agreement as a file of source agreement that is never read as an invoice, and keeps it apart from a document of the same bytes (#2504)', async () => {
+    const o = await org();
+    const original = await issued(o, sandbox(), 'individual');
+    const bytes = new TextEncoder().encode(`%PDF-1.4 agreement ${randomUUID()}`);
+    const sha = sha256Hex(bytes);
+    const ingest = (source: 'agreement' | 'upload') =>
+      rt.execute<{ fileId: string; duplicate: boolean }>(
+        'kernel.file.ingest',
+        { filename: 'bien-ban.pdf', contentType: 'application/pdf', sizeBytes: bytes.byteLength, sha256: sha, storageKey: `org/${o.orgId}/${sha}`, generation: `content:${sha}`, source },
+        { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() },
+      );
+    const stored = await ingest('agreement');
+    expect(await rows('SELECT source FROM crove_kernel.file WHERE org_id = $1 AND id = $2', [o.orgId, stored.fileId])).toEqual([{ source: 'agreement' }]);
+    // Nothing reads it: no extraction is queued, so it never reaches the Inbox.
+    expect(await rows('SELECT 1 FROM crove_kernel.extraction WHERE org_id = $1 AND file_id = $2', [o.orgId, stored.fileId])).toHaveLength(0);
+    // The same bytes as a document are refused, so an agreement never becomes an invoice and an invoice never an agreement.
+    expect(await refusal(ingest('upload'))).toBe('FILE_SOURCE_CONFLICT');
+    // The file is accepted as the agreement of a correction.
+    const corrected = await start(o, original.draftId, 'adjustment', { agreementFileId: stored.fileId });
+    expect(corrected.correction).toMatchObject({ kind: 'adjustment', agreementFileId: stored.fileId });
+  });
 });

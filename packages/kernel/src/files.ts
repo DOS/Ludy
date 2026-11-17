@@ -18,7 +18,8 @@ export const zIngestFile = z.object({
   // import: a spreadsheet for a module's import (#465), also never sent to extraction.
   // meeting_audio, meeting_video: encrypted meeting media (issue #2576, ADR-0047), never sent to extraction.
   // sign_document, sign_sealed, sign_certificate: eSign PDFs and canonical certificate JSON (#3323), never sent to Finance extraction.
-  source: z.enum(['upload', 'email', 'social', 'import', 'meeting_audio', 'meeting_video', 'sign_document', 'sign_sealed', 'sign_certificate']),
+  // agreement: the signed agreement of an e-invoice correction (#2504), an evidence file, never sent to extraction.
+  source: z.enum(['upload', 'email', 'social', 'import', 'meeting_audio', 'meeting_video', 'sign_document', 'sign_sealed', 'sign_certificate', 'agreement']),
   // A video's duration, read by the server from the file (#409).
   durationMs: z.number().int().min(0).max(86_400_000).optional(),
   // An image's size as shown, read by the server from its header (#636); both or neither.
@@ -37,7 +38,10 @@ export type IngestFile = z.infer<typeof zIngestFile>;
 // Sources whose files are accounting documents, read by the extraction job.
 const isDocumentSource = (source: string) => source === 'upload' || source === 'email';
 const SIGN_FILE_SOURCES: readonly IngestFile['source'][] = ['sign_document', 'sign_sealed', 'sign_certificate'];
-const isSignSource = (source: string): boolean => (SIGN_FILE_SOURCES as readonly string[]).includes(source);
+// Sources whose files are kept apart from every other use of the same bytes: eSign artifacts, and the signed agreement of an invoice correction (#2504), which is an evidence file and
+// must never be an Inbox document (nor a document an agreement).
+const ISOLATED_FILE_SOURCES: readonly IngestFile['source'][] = [...SIGN_FILE_SOURCES, 'agreement'];
+const isIsolatedSource = (source: string): boolean => (ISOLATED_FILE_SOURCES as readonly string[]).includes(source);
 
 // A ZIP archive (#314): stored and recorded like a document, then opened by the worker instead of being read.
 export function isArchiveType(contentType: string): boolean {
@@ -126,7 +130,7 @@ export async function ingestFileRow(ctx: CommandContext, input: IngestFile, crea
     // Emailed copies (direct attachments or entries inside an emailed archive) of an existing eSign artifact stay a
     // duplicate (preserving the sign source so one colliding PDF never fails the whole inbound message, #506/#3323).
     // Direct uploads or sign writes with mismatched sources still fail with FILE_SOURCE_CONFLICT.
-    if ((isSignSource(input.source) || (isSignSource(existing.source) && input.source !== 'email')) && input.source !== existing.source) {
+    if ((isIsolatedSource(input.source) || (isIsolatedSource(existing.source) && input.source !== 'email')) && input.source !== existing.source) {
       throw new DomainError('FILE_SOURCE_CONFLICT', 409, 'Tệp này đã tồn tại với mục đích khác trong tổ chức; hãy dùng tệp khác');
     }
     // A document whose bytes were first uploaded as a post image is still read as a document, once.
