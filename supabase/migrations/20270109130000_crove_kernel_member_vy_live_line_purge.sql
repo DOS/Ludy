@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- A removed recorder's live preview lines go with their other Vy data (#3584, from the review of #3194; ADR-0049 decision 3). The counts of a member's translations and preview lines are the
--- function of 20270109110000_crove_meetings_member_private_counts.sql.
+-- function of 20270109120000_crove_meetings_member_private_counts.sql.
 --   member_vy_former_members_due(limit)    a user who only recorded meetings that hold preview lines is a former member to look at, and a preview line's created_at counts among the newest
 --   member_vy_member_data_purge(org, user) private rows when the latest exit is judged; the purge deletes the preview lines of the meetings the user recorded in the org (the meetings stay),
 --                                          under the same rules (a worker in the org's system context, the membership lock, nobody back in the org, 30 days after a recorded latest exit), and its
