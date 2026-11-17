@@ -35,8 +35,8 @@ export const hrmVi = {
       },
       {
         name: 'Chấm công & phép năm',
-        body: 'Nhập ngày công, giờ làm thêm từ tệp Excel, CSV hoặc gõ ngay trên kỳ lương. Quy tắc cố định chặn vượt trần làm thêm 40 giờ/tháng và cộng dồn phép năm.',
-        outcome: 'Đạt kiểm tra giờ công',
+        body: 'Dán dòng công từ bảng tính hoặc tải tệp .csv, .tsv, .txt để nhập nghỉ không lương, làm đêm và làm thêm giờ. Quy tắc cố định cảnh báo vượt trần 40 giờ/tháng và cộng dồn phép năm.',
+        outcome: 'Đã kiểm tra giờ công',
         tone: 'ok',
       },
       {
@@ -72,11 +72,11 @@ export const hrmVi = {
       {
         id: 'cham-cong-va-phep-nam',
         title: 'Chấm công gọn và sổ phép năm tự động cộng dồn',
-        lead: 'Nhập bảng công cả tháng trong vài giây từ bảng tính quen thuộc hoặc sửa trực tiếp trên từng dòng lương nháp.',
+        lead: 'Đưa dữ liệu chấm công tháng vào kỳ lương trong vài giây bằng cách dán từ bảng tính hoặc sửa trực tiếp trên từng dòng lương nháp.',
         points: [
-          'Nhập hàng loạt ngày công, giờ làm thêm ngày thường, ngày nghỉ tuần, ngày lễ, giờ làm đêm, phụ cấp và thưởng từ tệp .xlsx, .csv hoặc .tsv, có bước xem trước lỗi định dạng trước khi áp dụng',
-          'Tự động kiểm tra trần làm thêm 40 giờ mỗi tháng theo Bộ luật Lao động ngay khi nhập bảng công và gắn cảnh báo trên dòng lương vượt ngưỡng',
-          'Sổ phép năm theo từng tháng (số dư đầu kỳ, phép năm đã nghỉ, nghỉ việc riêng hưởng lương, nghỉ không lương) tự động đồng bộ sang kỳ lương đang nháp',
+          'Dán trực tiếp từ bảng tính hoặc tải tệp .csv, .tsv, .txt để nhập hàng loạt ngày nghỉ không lương, ngày chưa làm việc, giờ làm đêm và giờ làm thêm (ngày thường, ngày nghỉ tuần, ngày lễ) có bước xem trước lỗi trước khi áp dụng; phụ cấp và thưởng được giữ nguyên hoặc sửa trên từng dòng lương',
+          'Tự động kiểm tra trần làm thêm 40 giờ mỗi tháng theo Bộ luật Lao động khi nhập bảng công, gắn cảnh báo trên dòng vượt ngưỡng và yêu cầu người duyệt xác nhận rõ trước khi chốt kỳ lương',
+          'Sổ phép năm theo từng tháng (số dư đầu kỳ, phép năm đã nghỉ, nghỉ việc riêng hưởng lương, nghỉ không lương) kèm nút Đồng bộ nghỉ phép một chạm để chép ngày nghỉ không lương đã duyệt sang kỳ lương nháp',
           'Tính số ngày phép năm được hưởng theo số tháng làm việc và cộng thêm 1 ngày phép cho mỗi 5 năm thâm niên tại doanh nghiệp',
         ],
       },
@@ -97,9 +97,9 @@ export const hrmVi = {
         lead: 'Theo dõi vị trí đang mở và phễu ứng viên vừa vặn cho doanh nghiệp nhỏ mà không cần phần mềm tuyển dụng rời bên ngoài.',
         points: [
           'Tạo vị trí tuyển dụng gắn với phòng ban, loại hợp đồng, vùng lương và khung lương dự kiến, hoặc thêm thẳng ứng viên mới vào phễu ngay cả khi chưa tạo vị trí tuyển',
-          'Phễu 7 trạng thái rõ ràng (Ứng tuyển, Sơ loại, Phỏng vấn, Đề nghị, Đã nhận, Từ chối, Rút hồ sơ) có kiểm tra bước chuyển hợp lệ',
+          'Phễu 6 trạng thái rõ ràng (Ứng tuyển, Sơ loại, Phỏng vấn, Đề nghị, Đã nhận, Từ chối) có kiểm tra bước chuyển hợp lệ',
           'Gợi ý khung giờ phỏng vấn trống dựa trên giờ làm việc của công ty, lịch nghỉ lễ Việt Nam và lịch bận; sự kiện ghi lên lịch làm việc chỉ mang tên vị trí tuyển, không lộ họ tên hay số điện thoại ứng viên trên tiêu đề lịch',
-          'Bấm Nhận việc một chạm để tạo ngay hồ sơ nhân viên và hợp đồng lao động đầu tiên trong cùng một giao dịch; ứng viên không nhận việc có nút xoá sạch thông tin cá nhân, ghi chú và mức lương kỳ vọng theo Luật Bảo vệ dữ liệu cá nhân',
+          'Bấm Nhận việc một chạm để tạo ngay hồ sơ nhân viên và hợp đồng lao động đầu tiên trong cùng một giao dịch; chủ sở hữu có thể bấm xoá dữ liệu ứng viên đã kết thúc tuyển dụng (xoá họ tên, email, số điện thoại và ghi chú) theo Luật Bảo vệ dữ liệu cá nhân',
         ],
       },
       {
@@ -108,7 +108,7 @@ export const hrmVi = {
         lead: `${N.finance} là giám đốc tài chính AI làm việc cùng bạn trong cả Ludy Tài chính và Ludy Nhân sự. Mọi lượt đọc đều qua đồng hồ ngân sách AI và không bao giờ nhận tên thật hay số định danh.`,
         points: [
           `Trước khi gửi mô hình AI, máy chủ thay tên nhân viên và ứng viên bằng mã ngẫu nhiên tạm thời (như E1, E2, C1) và chặn lớp thứ hai nếu lọt họ tên, CCCD, mã số thuế, tài khoản ngân hàng, địa chỉ hay số tiền lương kỳ vọng thô của ứng viên`,
-          `${N.finance} tóm tắt biến động kỳ lương (thực nhận lệch trên 20% so với tháng trước, người mới vào, người nghỉ việc, vượt trần làm thêm, lương tiền mặt từ 5.000.000 ₫), giải thích phiếu lương, kiểm tra thiếu sót trước khi xuất 01/PLI và soạn bản tóm tắt sơ loại kèm câu hỏi phỏng vấn`,
+          `${N.finance} tóm tắt biến động kỳ lương (thực nhận lệch trên 20% so với tháng trước, người mới vào, người nghỉ việc, dòng vượt trần làm thêm), giải thích phiếu lương, kiểm tra thiếu sót trước khi xuất 01/PLI và soạn bản tóm tắt sơ loại kèm câu hỏi phỏng vấn`,
           'Mọi con số trong câu văn của AI đều được đối chiếu ngược với dữ liệu gốc trước khi hiển thị; khi công ty tắt AI, bấm nút Dừng AI hoặc hết ngân sách tháng, toàn bộ việc tính lương, chấm công, xuất sổ và tuyển dụng vẫn chạy bình thường',
         ],
       },
@@ -184,7 +184,7 @@ export const hrmVi = {
       },
       {
         q: 'Ludy có tự chuyển tiền lương qua ngân hàng hay nộp hộ tờ khai BHXH, thuế không?',
-        a: 'Không. Ludy không bao giờ tự động trích tiền hay gửi tờ khai thay bạn. Hệ thống xuất tệp bảng tính .xlsx theo đúng mẫu cột của từng ngân hàng để bạn tải lên ngân hàng điện tử, và xuất các bảng kê D02-LT, 05/KK-TNCN, 05/QTT-TNCN, 01/PLI để bạn đối chiếu và nộp trên cổng chính thức.',
+        a: 'Không. Ludy không bao giờ tự động trích tiền hay gửi tờ khai thay bạn. Sau khi mở khoá duyệt kỳ lương chính thức, hệ thống xuất tệp bảng tính .xlsx theo đúng mẫu cột của từng ngân hàng để bạn tải lên ngân hàng điện tử, và xuất các bảng kê D02-LT, 05/KK-TNCN, 05/QTT-TNCN (cùng 01/PLI xuất ngay hôm nay) để bạn đối chiếu và nộp trên cổng chính thức.',
       },
       {
         q: 'Nếu công ty không bật AI thì Ludy Nhân sự có hoạt động đầy đủ không?',
@@ -217,14 +217,14 @@ export const hrmVi = {
       netLabel: 'Tổng thực nhận',
       netTotal: '167.120.000 ₫',
       lyTitle: `${N.finance} rà biến động (ẩn danh)`,
-      lyBadge: 'Đề xuất đọc',
+      lyBadge: 'Đề xuất',
       lyNote: 'Mã E1 có tiền làm thêm tăng 24% so với tháng 09/2026 nhưng vẫn dưới trần 40 giờ/tháng. Hợp đồng thử việc của mã E3 còn 9 ngày.',
       privacyBadge: 'Không gửi tên thật, CCCD hay số tài khoản cho AI',
       handoffTitle: 'Chuyển sang Ludy Tài chính',
-      handoffSub: 'Bút toán tổng hợp theo tài khoản, duyệt chéo bốn mắt',
+      handoffSub: 'Bút toán tổng hợp theo bộ phận, duyệt chéo bốn mắt',
       handoffLines: [
-        ['Nợ TK 642 / 641 / 154', '186.400.000 ₫'],
-        ['Có TK 334, 338, 3335', '186.400.000 ₫'],
+        ['Chi phí lương & bảo hiểm doanh nghiệp theo bộ phận', '222.748.000 ₫'],
+        ['Phải trả lương (167.120.000 ₫), bảo hiểm & thuế (55.628.000 ₫)', '222.748.000 ₫'],
       ],
       gateNote: 'Đang giữ khoá duyệt chính thức chờ kế toán đối tác xác nhận bảng quy tắc',
     },
@@ -236,19 +236,19 @@ export const hrmVi = {
       contractsTitle: 'Kiểm tra hợp đồng & thử việc tự động',
       alerts: [
         { person: 'Trần Thị Mai · Phòng Bán hàng', detail: 'HĐ xác định thời hạn 12 tháng (lần 1/2), hết hạn 30/11/2026', badge: 'Sắp đến hạn', tone: 'warn' as Tone },
-        { person: 'Lê Hoàng Nam · Phòng Quản lý', detail: 'Thử việc đại học tối đa 60 ngày lịch, hưởng 85% lương', badge: 'Đúng chuẩn BLLĐ', tone: 'ok' as Tone },
+        { person: 'Lê Hoàng Nam · Phòng Quản lý', detail: 'Thử việc đại học tối đa 60 ngày lịch, hưởng 85% lương', badge: 'Đúng chuẩn Bộ luật Lao động', tone: 'ok' as Tone },
       ],
       exportsTitle: 'Xuất ngay từ hồ sơ nhân sự',
       exports: ['Sổ quản lý lao động (.xlsx, .json)', 'Báo cáo 01/PLI định kỳ (.xlsx, .json)'],
     },
     timekeeping: {
       title: 'Nhập bảng chấm công & sổ phép năm',
-      sub: 'Tệp .xlsx, .csv, .tsv hoặc nhập trực tiếp',
+      sub: 'Dán từ bảng tính hoặc tải tệp .csv, .tsv, .txt',
       importBadge: 'Đã kiểm tra 12/12 dòng hợp lệ',
       otTitle: 'Kiểm tra trần làm thêm 40 giờ/tháng',
       otRows: [
         { name: 'Nguyễn Minh Đức', regular: '26 công', ot: '18 giờ làm thêm', status: 'Đạt (dưới 40h)', tone: 'ok' as Tone },
-        { name: 'Phạm Thu Hà', regular: '25 công · 1 phép', ot: '42 giờ làm thêm', status: 'Chặn vượt trần 40h', tone: 'warn' as Tone },
+        { name: 'Phạm Thu Hà', regular: '25 công · 1 nghỉ không lương', ot: '42 giờ làm thêm', status: 'Cảnh báo vượt trần 40h', tone: 'warn' as Tone },
       ],
       leaveTitle: 'Sổ phép năm cộng dồn & thâm niên',
       leavePerson: 'Nguyễn Minh Đức · 6 năm làm việc (+1 ngày thâm niên)',
@@ -264,13 +264,13 @@ export const hrmVi = {
       calcItems: [
         { label: 'Bảo hiểm bắt buộc (5 quỹ)', value: 'BHXH, BHYT, BHTN phần nhân viên & doanh nghiệp' },
         { label: 'Thuế thu nhập cá nhân', value: 'Biểu lũy tiến từng phần hoặc khấu trừ 10%' },
-        { label: 'Lương tháng 13 & thôi việc', value: 'Tính theo tháng làm việc tròn & Điều 46 BLLĐ' },
+        { label: 'Lương tháng 13 & thôi việc', value: 'Tính theo tháng làm việc tròn & Điều 46 Bộ luật Lao động' },
       ],
       splitTitle: 'Tách biệt hiển thị giữa Chủ doanh nghiệp và Kế toán',
       ownerBoxTitle: 'Chủ sở hữu & Quản trị viên (Ludy Nhân sự)',
       ownerBoxBody: 'Xem lương từng người, phiếu lương, mẫu file lương từng ngân hàng và bảng kê D02-LT, 05/KK-TNCN, 05/QTT-TNCN.',
       accountantBoxTitle: 'Kế toán duyệt chéo (Ludy Tài chính)',
-      accountantBoxBody: 'Chỉ thấy tổng chi phí theo tài khoản quản lý, bán hàng, sản xuất và cảnh báo khoản chi tiền mặt từ 5.000.000 ₫.',
+      accountantBoxBody: 'Chỉ thấy tổng chi phí theo tài khoản quản lý, bán hàng, sản xuất và cảnh báo khoản chi tiền mặt từ 5.000.000 ₫ trở lên.',
     },
     recruiting: {
       title: 'Phễu tuyển dụng gọn & nhận việc một chạm',
@@ -284,8 +284,8 @@ export const hrmVi = {
       calendarTitle: 'Sự kiện ghi trên lịch làm việc',
       calendarEvent: 'Phỏng vấn: Nhân viên kinh doanh kênh đại lý · 14:00 22/10/2026',
       calendarPrivacy: 'Tiêu đề lịch không chứa họ tên hay số điện thoại ứng viên',
-      hireAction: 'Nhận việc 1 chạm -> Tạo hồ sơ nhân viên & hợp đồng',
-      eraseAction: 'Ứng viên không nhận -> Xoá dữ liệu theo Luật BV DLCN',
+      hireAction: 'Nhận việc một chạm: tạo hồ sơ nhân viên và hợp đồng lao động',
+      eraseAction: 'Kết thúc tuyển dụng: xoá họ tên, liên hệ và ghi chú theo Luật Bảo vệ dữ liệu cá nhân',
     },
     coworker: {
       title: `${N.finance} chỉ đọc mã ẩn danh & dự phòng khi tắt AI`,

@@ -578,8 +578,8 @@ export const en: Dictionary = {
       body: 'Per-person encrypted employee records, optional departments, labor contracts, timekeeping and annual leave, monthly payroll, labor register exports and lightweight recruiting in one app restricted to owners and admins.',
       points: [
         'Per-person sealed identity, tax, social insurance and bank account numbers, optional departments, labor contract and probation tracking, and exports for the Labor Management Register and 01/PLI report (.xlsx, .json)',
-        'Monthly timekeeping imported from .xlsx, .csv or .tsv or edited on the pay run, 40-hour monthly overtime cap checks, and annual leave balances with 5-year seniority accrual',
-        'Monthly pay runs with social, health and unemployment insurance, progressive or 10% flat PIT, prorated 13th-month pay and Article 46 severance; built-in per-bank salary files, D02-LT, 05/KK-TNCN, 05/QTT-TNCN sheets and four-eyes aggregate journal handoff to Ludy Finance without exposing individual pay',
+        'Monthly timekeeping pasted from a spreadsheet or imported from .csv, .tsv or .txt (unpaid leave, night work and overtime hours), 40-hour monthly overtime cap warnings, and annual leave balances with 5-year seniority accrual',
+        'Monthly pay runs with social, health and unemployment insurance, progressive or 10% flat PIT, prorated 13th-month pay and Article 46 severance; built-in post-approval per-bank salary files, D02-LT, 05/KK-TNCN, 05/QTT-TNCN sheets and four-eyes aggregate journal handoff to Ludy Finance without exposing individual pay',
         `Lightweight recruiting (openings, candidate pipeline with or without an opening, PII-free calendar interview titles, one-click hire and PDPL candidate erasure), plus metered checks from ${N.finance}`,
       ],
       soonLabel: 'Coming soon',

@@ -32,8 +32,8 @@ export const hrmEn: HrmCopy = {
       },
       {
         name: 'Timekeeping & leave',
-        body: 'Import working days and overtime from Excel or CSV, or edit directly on the pay run. Fixed rules enforce the 40-hour monthly overtime cap and accrue annual leave.',
-        outcome: 'Hours verified',
+        body: 'Paste rows from a spreadsheet or upload .csv, .tsv or .txt files to import unpaid leave, night work and overtime. Fixed rules warn over the 40-hour monthly overtime cap and accrue annual leave.',
+        outcome: 'Hours checked',
         tone: 'ok',
       },
       {
@@ -69,11 +69,11 @@ export const hrmEn: HrmCopy = {
       {
         id: 'timekeeping-and-leave',
         title: 'Lightweight timekeeping and automatic annual leave accrual',
-        lead: 'Bring in a full month of attendance in seconds from spreadsheets, or edit hours straight on a draft pay run.',
+        lead: 'Bring attendance into a pay run in seconds by pasting from a spreadsheet or editing hours straight on a draft line.',
         points: [
-          'Batch-import working days, weekday, rest-day and holiday overtime hours, night-work hours, allowances and bonuses from .xlsx, .csv or .tsv files, with format validation before applying',
-          'Enforces the statutory 40-hour monthly overtime cap under the Labor Code on import and flags lines that exceed the threshold',
-          'Monthly leave ledger (opening balance, annual leave taken, paid personal leave and unpaid leave) syncs straight into open draft pay runs',
+          'Paste directly from spreadsheets or upload .csv, .tsv or .txt files to batch-import unpaid leave days, days not employed, night-work hours and weekday, rest-day or holiday overtime hours with preview validation before applying; allowances and bonuses stay preserved or editable per line',
+          'Checks the statutory 40-hour monthly overtime cap under the Labor Code on import, flags lines above the cap and requires explicit sign-off before approving the pay run',
+          'Monthly leave ledger (opening balance, annual leave taken, paid personal leave and unpaid leave) with a one-click Sync leave button that pulls approved unpaid leave days into open draft pay runs',
           'Computes prorated annual leave entitlement by months worked plus 1 extra seniority day for every 5 years with the company',
         ],
       },
@@ -94,9 +94,9 @@ export const hrmEn: HrmCopy = {
         lead: 'Track open roles and candidates right inside Ludy without paying for a separate applicant tracking system.',
         points: [
           'Create job openings with optional department, contract type, wage region and pay band, or add a candidate immediately even before creating an opening',
-          'Clear 7-stage pipeline (Applied, Screening, Interview, Offer, Hired, Rejected, Withdrawn) with validated stage transitions',
+          'Clear 6-stage pipeline (Applied, Screening, Interview, Offer, Hired, Rejected) with validated stage transitions',
           'Ranks open interview slots against company working hours, Vietnam public holidays and busy calendar blocks; calendar event titles show only the role title, never candidate names or phone numbers',
-          'One-click Hire creates the employee record and initial employment contract in a single transaction; non-hired candidates have one-click PDPL erasure that wipes personal details, notes and expected pay',
+          'One-click Hire creates the employee record and initial employment contract in a single transaction; owners can erase completed or rejected candidate records (wiping name, email, phone number and notes) under the PDPL',
         ],
       },
       {
@@ -105,7 +105,7 @@ export const hrmEn: HrmCopy = {
         lead: `${N.finance} is your AI CFO working across both Ludy Finance and Ludy HR. Every model call runs through your monthly AI budget and never receives real names or identity numbers.`,
         points: [
           'Before calling the model, the server replaces employee and candidate names with fresh random aliases (such as E1, E2 or C1) and blocks the request with a second-wall leak check if any real name, ID number, tax code, bank account, address or raw candidate wage appears',
-          `${N.finance} highlights pay-run anomalies (net pay swings above 20% from last month, new hires, leavers, overtime caps and cash pay at or above ₫5,000,000), explains individual payslips, checks missing fields before 01/PLI exports and drafts candidate screening briefs with interview questions`,
+          `${N.finance} highlights pay-run anomalies (net pay swings above 20% from last month, new hires, leavers and lines flagged over the overtime cap), explains individual payslips, checks missing fields before 01/PLI exports and drafts candidate screening briefs with interview questions`,
           'Every number in AI-written text is verified against stored figures before display; when AI is turned off, stopped via the kill switch or out of monthly budget, payroll, timekeeping, exports and recruiting keep working identically',
         ],
       },
@@ -136,7 +136,7 @@ export const hrmEn: HrmCopy = {
     doesTitle: `${N.finance} does`,
     does: [
       'Flags net-pay swings over 20%, new hires, leavers and overtime caps, and explains payslip lines in plain words from pseudonymized amounts',
-      'Checks missing compliance fields (missing ID or social insurance numbers, probation limits, expiring contracts) before exporting the Labor Management Register or 01/PLI report',
+      'Checks missing compliance fields (missing ID or social insurance numbers, upcoming probation end dates, expiring contracts) before exporting the Labor Management Register or 01/PLI report',
       'Summarizes candidate readiness against opening requirements and suggests 3 to 5 tailored interview questions without receiving real names or raw salary numbers',
     ],
     doesNotTitle: `${N.finance} does not`,
@@ -181,7 +181,7 @@ export const hrmEn: HrmCopy = {
       },
       {
         q: 'Does Ludy initiate bank transfers or submit BHXH and tax filings automatically?',
-        a: 'No. Ludy never moves money or submits filings on your behalf. It exports per-bank .xlsx salary files formatted to your saved column templates for e-banking upload, plus D02-LT, 05/KK-TNCN, 05/QTT-TNCN and 01/PLI workbooks for you to review and file on official portals.',
+        a: 'No. Ludy never moves money or submits filings on your behalf. Once live pay-run approval unlocks, it exports per-bank .xlsx salary files formatted to your saved column templates for e-banking upload, plus D02-LT, 05/KK-TNCN and 05/QTT-TNCN workbooks (alongside 01/PLI exported today) for you to review and file on official portals.',
       },
       {
         q: 'Does Ludy HR work in full when AI is turned off?',
@@ -213,14 +213,14 @@ export const hrmEn: HrmCopy = {
       netLabel: 'Total net pay',
       netTotal: '₫167,120,000',
       lyTitle: `${N.finance} anomaly check (pseudonymized)`,
-      lyBadge: 'Read proposal',
+      lyBadge: 'Proposed',
       lyNote: 'Alias E1 overtime pay rose 24% vs 09/2026 while staying within the 40h/month cap. Alias E3 probation ends in 9 days.',
       privacyBadge: 'Zero real names, IDs or bank accounts sent to AI',
       handoffTitle: 'Handoff to Ludy Finance',
-      handoffSub: 'Aggregate voucher by account, four-eyes approval',
+      handoffSub: 'Aggregate voucher by department, four-eyes approval',
       handoffLines: [
-        ['Dr Acc 642 / 641 / 154', '₫186,400,000'],
-        ['Cr Acc 334, 338, 3335', '₫186,400,000'],
+        ['Wages & employer insurance by department', '₫222,748,000'],
+        ['Net wages payable (₫167,120,000), insurance & PIT (₫55,628,000)', '₫222,748,000'],
       ],
       gateNote: 'Live approval locked pending partner accountant rule sign-off',
     },
@@ -239,12 +239,12 @@ export const hrmEn: HrmCopy = {
     },
     timekeeping: {
       title: 'Timekeeping import & annual leave ledger',
-      sub: '.xlsx, .csv, .tsv or direct entry',
+      sub: 'Paste from spreadsheets or upload .csv, .tsv, .txt',
       importBadge: '12/12 rows validated',
       otTitle: '40-hour monthly overtime cap check',
       otRows: [
         { name: 'Nguyen Minh Duc', regular: '26 days', ot: '18h overtime', status: 'Pass (under 40h)', tone: 'ok' },
-        { name: 'Pham Thu Ha', regular: '25 days · 1 leave', ot: '42h overtime', status: 'Blocked over 40h cap', tone: 'warn' },
+        { name: 'Pham Thu Ha', regular: '25 days · 1 unpaid leave', ot: '42h overtime', status: 'Warning: over 40h cap', tone: 'warn' },
       ],
       leaveTitle: 'Accrued annual leave & 5-year seniority',
       leavePerson: 'Nguyen Minh Duc · 6 years tenure (+1 seniority day)',
@@ -266,7 +266,7 @@ export const hrmEn: HrmCopy = {
       ownerBoxTitle: 'Owners & Admins (Ludy HR)',
       ownerBoxBody: 'See individual pay lines, payslips, per-bank salary templates and D02-LT, 05/KK-TNCN, 05/QTT-TNCN sheets.',
       accountantBoxTitle: 'Four-eyes Accountant (Ludy Finance)',
-      accountantBoxBody: 'Sees only aggregate totals by admin, sales and production accounts plus >= ₫5,000,000 cash warnings.',
+      accountantBoxBody: 'Sees only aggregate totals by admin, sales and production accounts plus cash warnings at or above ₫5,000,000.',
     },
     recruiting: {
       title: 'Lightweight recruiting & one-click hire',
@@ -280,8 +280,8 @@ export const hrmEn: HrmCopy = {
       calendarTitle: 'Work calendar interview event',
       calendarEvent: 'Interview: Channel sales representative · 14:00 22/10/2026',
       calendarPrivacy: 'Calendar title never exposes candidate name or phone number',
-      hireAction: '1-click Hire -> Creates employee & employment contract',
-      eraseAction: 'Not hired -> Erase personal data under PDPL',
+      hireAction: 'One-click Hire: creates employee record and employment contract',
+      eraseAction: 'Closed candidate: erases name, contact details and notes under PDPL',
     },
     coworker: {
       title: `${N.finance} reads aliases only & AI-off fallback`,

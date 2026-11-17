@@ -578,8 +578,8 @@ export const vi = {
       body: 'Hồ sơ nhân viên mã hoá theo từng người, phòng ban, hợp đồng lao động, chấm công và sổ phép năm, bảng lương tháng, xuất sổ quản lý lao động và tuyển dụng gọn trong một ứng dụng dành cho chủ sở hữu và quản trị viên.',
       points: [
         'Hồ sơ nhân viên mã hoá riêng từng người (CCCD, mã số thuế, số BHXH, tài khoản ngân hàng), phòng ban tuỳ chọn, theo dõi hợp đồng lao động, thử việc và xuất Sổ quản lý lao động cùng báo cáo 01/PLI (.xlsx, .json)',
-        'Nhập bảng chấm công tháng từ tệp .xlsx, .csv, .tsv hoặc trực tiếp trên kỳ lương, kiểm tra trần làm thêm 40 giờ/tháng và cộng dồn phép năm kèm thâm niên 5 năm',
-        'Tính lương tháng, BHXH/BHYT/BHTN, thuế TNCN lũy tiến hoặc 10%, lương tháng 13 và trợ cấp thôi việc Điều 46; sẵn luồng xuất tệp chuyển khoản ngân hàng, bảng kê D02-LT, 05/KK-TNCN, 05/QTT-TNCN và chuyển bút toán tổng hợp duyệt chéo sang Ludy Tài chính không lộ lương cá nhân',
+        'Dán bảng chấm công từ bảng tính hoặc tải tệp .csv, .tsv, .txt để nhập ngày nghỉ không lương, giờ làm đêm và giờ làm thêm, kèm cảnh báo vượt trần 40 giờ/tháng và sổ phép năm cộng dồn thâm niên 5 năm',
+        'Tính lương tháng, BHXH/BHYT/BHTN, thuế TNCN lũy tiến hoặc 10%, lương tháng 13 và trợ cấp thôi việc Điều 46; sẵn luồng sau khi mở khoá duyệt kỳ lương để xuất tệp chuyển khoản ngân hàng, bảng kê D02-LT, 05/KK-TNCN, 05/QTT-TNCN và chuyển bút toán tổng hợp duyệt chéo sang Ludy Tài chính không lộ lương cá nhân',
         `Tuyển dụng gọn (vị trí tuyển, phễu ứng viên không bắt buộc tạo vị trí trước, lịch phỏng vấn không lộ thông tin cá nhân trên tiêu đề, nhận việc một chạm và xoá dữ liệu theo Luật Bảo vệ dữ liệu cá nhân), cùng ${N.finance} rà biến động theo ngân sách AI`,
       ],
       soonLabel: 'Sắp ra mắt',
