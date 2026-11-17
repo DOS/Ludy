@@ -1,0 +1,14 @@
+{
+  "name": "@crove/sign",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "description": "Pluggable Vietnamese public CA remote signing adapters behind Ludy eSign (VNPT SmartCA, Viettel MySign, MISA WeSign, and offline sandbox)",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  }
+}

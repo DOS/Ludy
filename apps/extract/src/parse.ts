@@ -3,7 +3,8 @@
 // leaves, so the worker never sees a shape it does not expect.
 import PostalMime from 'postal-mime';
 import type { Address } from 'postal-mime';
-import { EXTRACT_LIMITS, PdfSealInputError, zExtractSuccess, type ExtractFailure, type ExtractKind, type ExtractResponse, type ExtractSuccess } from '@crove/extract-contract';
+import { EXTRACT_LIMITS, PdfEmbedCmsInputError, PdfSealInputError, zExtractSuccess, type ExtractFailure, type ExtractKind, type ExtractResponse, type ExtractSuccess } from '@crove/extract-contract';
+import { embedPdfCms } from './cms.ts';
 import { DsnError, readDsn } from './dsn.ts';
 import { EInvoiceParseError, parseEInvoiceXml } from './einvoice-xml.ts';
 import { HtmlMetaError, htmlText, readHtmlMeta } from './html-meta.ts';
@@ -180,6 +181,8 @@ async function parseKind(kind: ExtractKind, bytes: Uint8Array): Promise<ExtractS
       return inspectPdf(bytes);
     case 'pdf_seal':
       return sealPdf(bytes);
+    case 'pdf_embed_cms':
+      return embedPdfCms(bytes);
     case 'mime':
       return mime(bytes);
     case 'zip':
@@ -213,6 +216,7 @@ const UNREADABLE: Record<ExtractKind, string> = {
   pdf_text: 'Không đọc được tệp PDF',
   pdf_inspect: 'Không kiểm tra được tệp PDF',
   pdf_seal: 'Không đóng dấu được tệp PDF',
+  pdf_embed_cms: 'Không nhúng được chữ ký số CMS vào tệp PDF',
   mime: 'Không đọc được thư điện tử',
   zip: 'Không mở được tệp ZIP',
   portal_invoice_list: 'Không đọc được danh sách hóa đơn từ cổng thuế',
@@ -238,7 +242,8 @@ export async function parse(kind: ExtractKind, bytes: Uint8Array): Promise<Extra
       error instanceof HtmlMetaError ||
       error instanceof FeedError ||
       error instanceof PdfSignError ||
-      error instanceof PdfSealInputError
+      error instanceof PdfSealInputError ||
+      error instanceof PdfEmbedCmsInputError
     ) {
       return failure('invalid', error.message);
     }
