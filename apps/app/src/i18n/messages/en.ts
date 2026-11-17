@@ -1355,6 +1355,7 @@ export const en = {
     termsTitle: 'Contract and wage',
     termsHint: 'Each change is a new row; past months keep their figures.',
     addTerms: 'Add a new row',
+    downloadContractPdf: 'Download contract PDF',
     effectiveFrom: 'Effective from',
     contractType: 'Contract type',
     region: 'Region',
@@ -12850,6 +12851,9 @@ export const en = {
         archive: 'Archive a department',
         edit: 'Edit a department name, code or default cost department',
         list: 'List departments with active headcount and base wage total',
+      },
+      employee: {
+        contract_pdf: "Render and download a labor contract PDF from an employee's contract terms",
       },
       payroll: {
         bank_template: {

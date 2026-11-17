@@ -290,6 +290,8 @@ import {
   zHrDependentEnd,
   zHrEmployee,
   zHrEmployeeAdd,
+  zHrEmployeeContractPdf,
+  zHrEmployeeContractPdfAsk,
   zHrEmployeeEdit,
   zHrFinalizationSet,
   zHrEmployeeEnd,
@@ -1028,6 +1030,9 @@ export const contract = {
       add: oc.input(zHrDepartmentAdd).output(zHrDepartmentWritten),
       edit: oc.input(zHrDepartmentEdit).output(zHrDepartmentWritten),
       archive: oc.input(zHrDepartmentRef).output(zHrDepartmentWritten),
+    },
+    employee: {
+      contractPdf: oc.input(zHrEmployeeContractPdfAsk).output(zHrEmployeeContractPdf),
     },
     payroll: {
       employees: {

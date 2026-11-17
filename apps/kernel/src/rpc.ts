@@ -977,6 +977,9 @@ export function createRpcHandler(
         edit: os.hr.departments.edit.handler(hrCommand('hr.department.edit')),
         archive: os.hr.departments.archive.handler(hrCommand('hr.department.archive')),
       },
+      employee: {
+        contractPdf: os.hr.employee.contractPdf.handler(hrQuery('hr.employee.contract_pdf')),
+      },
       payroll: {
         employees: {
           list: os.hr.payroll.employees.list.handler(hrQuery('hr.payroll.employee.list')),
