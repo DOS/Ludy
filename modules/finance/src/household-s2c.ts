@@ -28,11 +28,12 @@ export const householdS2c = defineQuery({
     // S2c is the book of the income method; the form row says so, and the profile must agree on the last day.
     if (w.profile.pitMethod !== 'income') throw new DomainError('HOUSEHOLD_BOOK_NOT_REQUIRED', 422, 'Hồ sơ hộ kinh doanh của pháp nhân này không yêu cầu sổ S2c trong kỳ đã chọn');
 
-    const revenueRows = householdSalesRows(w.ledger.lines, w.from);
+    // One statement gives the revenue (account 511) and the expense lines, so the book reads one ledger state (a posting that commits between two reads cannot split them).
+    const all = await periodLinesOf(ctx, input.period, w.entity, '511');
+    const revenueRows = householdSalesRows(all.account.lines, w.from);
     const revenue = toMoney(sum(revenueRows.map((r) => r.amount)));
 
     // The expense lines (a closing entry to 911, if one exists, shows as a negative row, the same net effect as on 511 in S1a): every journal line of the entity on a class 6 or 8 account in the book's days.
-    const all = await periodLinesOf(ctx, input.period, w.entity);
     const mapRows = await ctx.trx
       .selectFrom('crove_finance.household_expense_group_map')
       .select(['expense_group', 'account_prefix', 'effective_from', 'source', 'status'])
