@@ -23,6 +23,7 @@ export const SIGN_SIGNATURE_TYPED_TEXT_MAX = 200;
 export const SIGN_PUBLIC_FIELDS_MAX = 500;
 
 export const zSignToken = z.string().regex(SIGN_TOKEN_PATTERN, 'Invalid signing token');
+export const zSignTemplateRoleKey = z.string().regex(SIGN_TEMPLATE_ROLE_KEY_PATTERN, 'Invalid template role key');
 
 export const zSignPublicViewInput = z.strictObject({
   token: zSignToken,
@@ -211,6 +212,20 @@ function validateSignNormBounds(item: { xNorm: number; yNorm: number; wNorm: num
   if (y + h > SIGN_NORM_SCALE) ctx.addIssue({ code: 'custom', path: ['hNorm'], message: 'yNorm + hNorm must be <= 1' });
 }
 
+function hasLoneSignSurrogate(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = i + 1 < value.length ? value.charCodeAt(i + 1) : 0;
+      if (next < 0xdc00 || next > 0xdfff) return true;
+      i += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export const zSignDetectedTag = z
   .strictObject({
     pageNumber: z.number().int().min(1).max(SIGN_MAX_PAGES),
@@ -218,7 +233,12 @@ export const zSignDetectedTag = z
     roleOrder: z.number().int().min(1).max(SIGN_MAX_TAG_ROLES),
     roleKey: z.string().regex(/^r(?:[1-9]|[1-4]\d|50)$/, 'Invalid tag role key'),
     required: z.boolean(),
-    label: z.string().min(1).max(120).nullable(),
+    label: z
+      .string()
+      .min(1)
+      .max(120)
+      .refine((s) => !hasLoneSignSurrogate(s), 'label must be well-formed Unicode without lone surrogates')
+      .nullable(),
     xNorm: z.number().finite().min(0).lt(1),
     yNorm: z.number().finite().min(0).lt(1),
     wNorm: z.number().finite().gt(0).lte(1),
@@ -334,7 +354,7 @@ export const zSignEnvelopeDetail = z.strictObject({
   signers: z.array(
     z.strictObject({
       id: zId,
-      roleKey: z.string().min(1).max(32).nullable().optional(),
+      roleKey: zSignTemplateRoleKey.nullable().optional(),
       routingOrder: z.number().int(),
       signerRole: zSignSignerRole,
       roleLabel: z.string(),
@@ -628,7 +648,6 @@ export const zSignAiAnalyzeResult = z.strictObject({
 // eSign Slice 2a (#3526): reusable templates, Approver/CC template roles, and direct signing link management.
 export const SIGN_TEMPLATE_STATUSES = ['draft', 'active', 'archived'] as const;
 export const zSignTemplateStatus = z.enum(SIGN_TEMPLATE_STATUSES);
-export const zSignTemplateRoleKey = z.string().regex(SIGN_TEMPLATE_ROLE_KEY_PATTERN, 'Invalid template role key');
 
 export const zSignTemplateDirectLinkSummary = z.strictObject({
   enabled: z.boolean(),

@@ -512,6 +512,20 @@ const utf8ByteLength = (text: string): number => new TextEncoder().encode(text).
 export const PDF_DETECTED_TAG_FIELD_TYPES = ['signature', 'initials', 'date', 'text', 'checkbox'] as const;
 export type PdfDetectedTagFieldType = (typeof PDF_DETECTED_TAG_FIELD_TYPES)[number];
 
+function hasLoneSurrogate(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = i + 1 < value.length ? value.charCodeAt(i + 1) : 0;
+      if (next < 0xdc00 || next > 0xdfff) return true;
+      i += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export const zPdfDetectedTag = z
   .strictObject({
     pageNumber: z.number().int().min(1).max(EXTRACT_LIMITS.maxPdfSignPages),
@@ -519,7 +533,12 @@ export const zPdfDetectedTag = z
     roleOrder: z.number().int().min(1).max(EXTRACT_LIMITS.maxPdfDetectedTagRoles),
     roleKey: z.string().regex(/^r(?:[1-9]|[1-4]\d|50)$/, 'role key r1..r50'),
     required: z.boolean(),
-    label: z.string().min(1).max(EXTRACT_LIMITS.maxPdfDetectedTagLabelChars).nullable(),
+    label: z
+      .string()
+      .min(1)
+      .max(EXTRACT_LIMITS.maxPdfDetectedTagLabelChars)
+      .refine((s) => !hasLoneSurrogate(s), 'label must be well-formed Unicode without lone surrogates')
+      .nullable(),
     xNorm: z.number().finite().min(0).lt(1),
     yNorm: z.number().finite().min(0).lt(1),
     wNorm: z.number().finite().gt(0).lte(1),

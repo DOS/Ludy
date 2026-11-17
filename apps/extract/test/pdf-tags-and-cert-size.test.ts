@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   EXTRACT_LIMITS,
   encodePdfSealInput,
+  zPdfDetectedTag,
   type PdfSealInput,
 } from '@crove/extract-contract';
 import { PDFDocument, StandardFonts, degrees } from 'pdf-lib';
@@ -173,9 +174,62 @@ describe('deterministic PDF text tags (pdf_inspect, #3552)', () => {
       'text, r1:Label1:Label2',
       'text, {r1}',
       'text, r1\n',
+      'text, r1:Bad\uD800High',
+      'text, r1:Bad\uDC00Low',
+      'text, r1:\uD83D',
     ]) {
       expect(parseDeterministicTagToken(invalid), invalid).toBeNull();
     }
+
+    // Valid surrogate pair (astral codepoint) is preserved cleanly, while lone surrogates fail zPdfDetectedTag too.
+    expect(parseDeterministicTagToken('text, r1:Hợp đồng \uD83D\uDCC4')).toMatchObject({
+      fieldType: 'text',
+      roleOrder: 1,
+      label: 'Hợp đồng \uD83D\uDCC4',
+    });
+    expect(
+      zPdfDetectedTag.safeParse({
+        pageNumber: 1,
+        fieldType: 'text',
+        roleOrder: 1,
+        roleKey: 'r1',
+        required: true,
+        label: 'Lone\uD800Surrogate',
+        xNorm: 0.1,
+        yNorm: 0.1,
+        wNorm: 0.2,
+        hNorm: 0.05,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('handles surrogate-pair boundary slicing and oversized >250k-char single rawItem.str safely', () => {
+    // Surrogate pair '\uD83D\uDCC4' straddling index 249_999..250_000 is not split into a lone high surrogate.
+    const prefix = '{{text, r1:Tiêu đề}} ' + 'a'.repeat(250_000 - 21 - 1) + '\uD83D\uDCC4' + '{{date, r2}}';
+    expect(prefix.charCodeAt(249_999)).toBe(0xd83d);
+    expect(prefix.charCodeAt(250_000)).toBe(0xdcc4);
+
+    const straddled = extractPageDeterministicTags({
+      pageNumber: 1,
+      box: { x: 0, y: 0, width: 600, height: 800 },
+      rotation: 0,
+      userUnit: 1,
+      items: [{ str: prefix, width: 500, height: 12, transform: [12, 0, 0, 12, 20, 700] }],
+    });
+    expect(straddled).toHaveLength(1);
+    expect(straddled[0]).toMatchObject({ fieldType: 'text', roleOrder: 1, label: 'Tiêu đề' });
+
+    // Oversized single rawItem.str (> 250_000 chars) extracts leading tag cleanly without scanning past budget.
+    const hugeStr = '{{signature, r1}} ' + 'x'.repeat(320_000) + ' {{date, r2}}';
+    const hugeRes = extractPageDeterministicTags({
+      pageNumber: 1,
+      box: { x: 0, y: 0, width: 600, height: 800 },
+      rotation: 0,
+      userUnit: 1,
+      items: [{ str: hugeStr, width: 40_000, height: 12, transform: [12, 0, 0, 12, 30, 600] }],
+    });
+    expect(hugeRes).toHaveLength(1);
+    expect(hugeRes[0]).toMatchObject({ fieldType: 'signature', roleOrder: 1 });
   });
 
   it(

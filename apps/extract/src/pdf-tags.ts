@@ -168,12 +168,41 @@ function normalizeTagType(raw: string): PdfDetectedTagFieldType | null {
   }
 }
 
+function hasLoneSurrogate(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = i + 1 < value.length ? value.charCodeAt(i + 1) : 0;
+      if (next < 0xdc00 || next > 0xdfff) return true;
+      i += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function sliceWithoutSplittingSurrogatePair(value: string, maxUnits: number): string {
+  if (maxUnits <= 0) return '';
+  if (value.length <= maxUnits) return value;
+  let end = maxUnits;
+  const prevCode = value.charCodeAt(end - 1);
+  const nextCode = value.charCodeAt(end);
+  if (prevCode >= 0xd800 && prevCode <= 0xdbff && nextCode >= 0xdc00 && nextCode <= 0xdfff) {
+    end -= 1;
+  }
+  return end <= 0 ? '' : value.slice(0, end);
+}
+
 function sanitizeTagLabel(raw: string): string | null {
+  if (hasLoneSurrogate(raw)) return null;
+  const normalized = raw.normalize('NFC');
+  if (hasLoneSurrogate(normalized)) return null;
   let cleaned = '';
-  for (const ch of raw.normalize('NFC')) {
+  for (const ch of normalized) {
     const cp = ch.codePointAt(0);
     if (cp === undefined) continue;
-    if (cp <= 0x1f || (cp >= 0x7f && cp <= 0x9f)) return null;
+    if (cp <= 0x1f || (cp >= 0x7f && cp <= 0x9f) || (cp >= 0xd800 && cp <= 0xdfff)) return null;
     cleaned += ch;
   }
   const collapsed = cleaned.replace(/\s+/g, ' ').trim();
@@ -529,15 +558,14 @@ export function extractPageDeterministicTags(input: {
     let str = rawItem.str;
     let effectiveItem: PdfRawTextItem = rawItem;
     if (rawItem.str.length > remainingPageBudget) {
-      str = rawItem.str.slice(0, remainingPageBudget);
+      str = sliceWithoutSplittingSurrogatePair(rawItem.str, remainingPageBudget);
+      if (str.length === 0) break;
       if (typeof rawItem.width === 'number' && Number.isFinite(rawItem.width) && rawItem.width >= 0) {
-        const fullWeights = buildRunCumWeights(rawItem.str, fontKind);
-        const fullTotal = fullWeights[rawItem.str.length] ?? 0;
-        const sliceRatio =
-          fullTotal > 0
-            ? (fullWeights[str.length] ?? 0) / fullTotal
-            : str.length / rawItem.str.length;
-        effectiveItem = { ...rawItem, str, width: rawItem.width * sliceRatio };
+        effectiveItem = {
+          ...rawItem,
+          str,
+          width: rawItem.width * (str.length / rawItem.str.length),
+        };
       } else {
         effectiveItem = { ...rawItem, str };
       }

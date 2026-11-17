@@ -12,7 +12,7 @@ ALTER TABLE crove_sign.template
 
 ALTER TABLE crove_sign.signer
   ADD COLUMN IF NOT EXISTS role_key text
-  CHECK (role_key IS NULL OR (pg_catalog.length(role_key) BETWEEN 1 AND 32 AND role_key ~ '^[a-z0-9_]+$'));
+  CHECK (role_key IS NULL OR role_key ~ '^[a-z0-9][a-z0-9_-]{0,63}$');
 
 CREATE UNIQUE INDEX IF NOT EXISTS signer_envelope_role_key_uq
   ON crove_sign.signer (org_id, envelope_id, role_key)

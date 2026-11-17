@@ -21,6 +21,7 @@ import { Runtime, contentGeneration, fileKey, mintContextToken, sha256Hex } from
 import {
   SIGN_DIRECT_PAGE_PATH,
   SIGN_TOKEN_PATTERN,
+  zSignEnvelopeDetail,
 } from '@crove/kernel-contract';
 import {
   hashSigningToken,
@@ -1017,6 +1018,36 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
       ['r2', 1],
       ['r1', 2],
     ]);
+
+    // Hyphenated and 40-char template roleKeys instantiate cleanly into crove_sign.signer.role_key and pass zSignEnvelopeDetail.
+    const longRoleKey = 'dai-dien-phap-luat-cong-ty-doi-tac-chien'; // 40 chars
+    expect(longRoleKey).toHaveLength(40);
+    await runtime.execute(
+      'sign.template.roles_set',
+      {
+        templateId: roundTripTpl.templateId,
+        roles: [
+          { roleKey: 'ben-a', signerRole: 'signer', roleLabel: 'Ben A', routingOrder: 1, deliveryMode: 'link', requireEmailOtp: false },
+          { roleKey: longRoleKey, signerRole: 'approver', roleLabel: 'Dai dien 40 ky tu', routingOrder: 2, deliveryMode: 'link', requireEmailOtp: false },
+        ],
+      },
+      { actor: asUser(ownerA), orgId: orgA },
+    );
+    const hyphenInst = await runtime.execute<{ envelopeId: string }>(
+      'sign.template.instantiate',
+      {
+        templateId: roundTripTpl.templateId,
+        autoSend: false,
+        recipients: [
+          { roleKey: 'ben-a', name: 'Pham Minh C' },
+          { roleKey: longRoleKey, name: 'Le Hoang D' },
+        ],
+      },
+      { actor: asUser(ownerA), orgId: orgA },
+    );
+    const hyphenEnvRaw = await runtime.query('sign.envelope.get', { envelopeId: hyphenInst.envelopeId }, { actor: asUser(ownerA), orgId: orgA });
+    const hyphenEnvParsed = zSignEnvelopeDetail.parse(hyphenEnvRaw);
+    expect(hyphenEnvParsed.signers.map((s) => s.roleKey)).toEqual(['ben-a', longRoleKey]);
 
     // Direct tenant UPDATE of detected_tags_json on template or envelope is blocked by guard triggers.
     const client = await appPool!.connect();
