@@ -1056,8 +1056,10 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
   numericDateCandidates.sort((a, b) => a.start - b.start || b.end - a.end);
   const isMultiDateConnector = (leftEnd: number, rightStart: number): boolean => {
     if (rightStart < leftEnd) return false;
-    const foldedBetween = foldVn(input.slice(leftEnd, rightStart)).trim();
-    return /^(?:-|\u2013|\u2014|&|to|till|until|and|or|den|toi|va|hoac|hay|->|~)$/u.test(foldedBetween);
+    const foldedBetween = foldVn(input.slice(leftEnd, rightStart)).replace(/\s+/g, ' ').trim();
+    return /^(?:-|\u2013|\u2014|&|to|till|until|and|or|den|toi|va|hoac|hay|->|~)(?:\s+(?:(?:vao\s+)?ngay|on))?$/u.test(
+      foldedBetween,
+    );
   };
 
   for (let idx = 0; idx < numericDateCandidates.length; idx++) {

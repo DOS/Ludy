@@ -839,5 +839,17 @@ describe('parseTodoQuickAdd (#3556)', () => {
       dueOn: '2026-11-17',
       dueTime: '12:00',
     });
+
+    // Multi-date ranges with "ngày" before the second date stay whole in title
+    expect(parseTodoQuickAdd('Đi công tác từ ngày 25/11 đến ngày 26/11', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Đi công tác từ ngày 25/11 đến ngày 26/11',
+      dueOn: null,
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Nghỉ lễ 30/4 và ngày 1/5', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Nghỉ lễ 30/4 và ngày 1/5',
+      dueOn: null,
+      dueTime: null,
+    });
   });
 });
