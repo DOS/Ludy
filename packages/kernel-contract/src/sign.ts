@@ -6,7 +6,9 @@ import { z } from 'zod';
 import { zId } from './schemas.ts';
 
 export const SIGN_PAGE_PATH = '/-/sign';
+export const SIGN_DIRECT_PAGE_PATH = '/-/sign/d';
 export const SIGN_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+export const SIGN_TEMPLATE_ROLE_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 export const SIGN_OTP_CODE_PATTERN = /^\d{6}$/;
 export const SIGN_CERTIFICATE_CODE_PATTERN = /^CS-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
 export const SIGN_SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
@@ -502,6 +504,19 @@ export const zSignSignerCreateLinkResult = z.strictObject({
 });
 
 const toSignMicro = (v: number) => Math.round(v * SIGN_NORM_SCALE);
+function validateSignNormBounds(item: { xNorm: number; yNorm: number; wNorm: number; hNorm: number }, ctx: z.RefinementCtx): void {
+  const x = toSignMicro(item.xNorm);
+  const y = toSignMicro(item.yNorm);
+  const w = toSignMicro(item.wNorm);
+  const h = toSignMicro(item.hNorm);
+  if (x < 0 || x >= SIGN_NORM_SCALE) ctx.addIssue({ code: 'custom', path: ['xNorm'], message: 'xNorm rounds outside [0, 1)' });
+  if (y < 0 || y >= SIGN_NORM_SCALE) ctx.addIssue({ code: 'custom', path: ['yNorm'], message: 'yNorm rounds outside [0, 1)' });
+  if (w < 1 || w > SIGN_NORM_SCALE) ctx.addIssue({ code: 'custom', path: ['wNorm'], message: 'wNorm rounds outside (0, 1]' });
+  if (h < 1 || h > SIGN_NORM_SCALE) ctx.addIssue({ code: 'custom', path: ['hNorm'], message: 'hNorm rounds outside (0, 1]' });
+  if (x + w > SIGN_NORM_SCALE) ctx.addIssue({ code: 'custom', path: ['wNorm'], message: 'xNorm + wNorm must be <= 1' });
+  if (y + h > SIGN_NORM_SCALE) ctx.addIssue({ code: 'custom', path: ['hNorm'], message: 'yNorm + hNorm must be <= 1' });
+}
+
 export const zSignFieldItemInput = z
   .strictObject({
     signerId: zId,
@@ -517,16 +532,7 @@ export const zSignFieldItemInput = z
     fontSizePt: z.number().int().min(6).max(36).nullable().optional(),
   })
   .superRefine((item, ctx) => {
-    const x = toSignMicro(item.xNorm);
-    const y = toSignMicro(item.yNorm);
-    const w = toSignMicro(item.wNorm);
-    const h = toSignMicro(item.hNorm);
-    if (x < 0 || x >= SIGN_NORM_SCALE) ctx.addIssue({ code: 'custom', path: ['xNorm'], message: 'xNorm rounds outside [0, 1)' });
-    if (y < 0 || y >= SIGN_NORM_SCALE) ctx.addIssue({ code: 'custom', path: ['yNorm'], message: 'yNorm rounds outside [0, 1)' });
-    if (w < 1 || w > SIGN_NORM_SCALE) ctx.addIssue({ code: 'custom', path: ['wNorm'], message: 'wNorm rounds outside (0, 1]' });
-    if (h < 1 || h > SIGN_NORM_SCALE) ctx.addIssue({ code: 'custom', path: ['hNorm'], message: 'hNorm rounds outside (0, 1]' });
-    if (x + w > SIGN_NORM_SCALE) ctx.addIssue({ code: 'custom', path: ['wNorm'], message: 'xNorm + wNorm must be <= 1' });
-    if (y + h > SIGN_NORM_SCALE) ctx.addIssue({ code: 'custom', path: ['hNorm'], message: 'yNorm + hNorm must be <= 1' });
+    validateSignNormBounds(item, ctx);
   });
 
 export const zSignFieldSetInput = z.strictObject({
@@ -592,4 +598,269 @@ export const zSignAiAnalyzeResult = z.strictObject({
   proposedFields: z.array(zSignAiProposedField),
   riskClauses: z.array(zSignAiRiskClause),
   summaryText: z.string().nullable(),
+});
+
+// eSign Slice 2a (#3526): reusable templates, Approver/CC template roles, and direct signing link management.
+export const SIGN_TEMPLATE_STATUSES = ['draft', 'active', 'archived'] as const;
+export const zSignTemplateStatus = z.enum(SIGN_TEMPLATE_STATUSES);
+export const zSignTemplateRoleKey = z.string().regex(SIGN_TEMPLATE_ROLE_KEY_PATTERN, 'Invalid template role key');
+
+export const zSignTemplateDirectLinkSummary = z.strictObject({
+  enabled: z.boolean(),
+  requireEmailOtp: z.boolean(),
+  lastRotatedAt: z.string().nullable(),
+});
+
+export const zSignTemplateDirectLinkDetail = z.strictObject({
+  id: zId,
+  enabled: z.boolean(),
+  requireEmailOtp: z.boolean(),
+  lastRotatedAt: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const zSignTemplateRoleRecord = z.strictObject({
+  id: zId,
+  roleKey: zSignTemplateRoleKey,
+  signerRole: zSignSignerRole,
+  roleLabel: z.string(),
+  routingOrder: z.number().int(),
+  deliveryMode: zSignDeliveryMode,
+  requireEmailOtp: z.boolean(),
+});
+
+export const zSignTemplateFieldRecord = z.strictObject({
+  id: zId,
+  templateRoleId: zId,
+  roleKey: zSignTemplateRoleKey,
+  fieldType: zSignFieldType,
+  pageNumber: z.number().int(),
+  xNorm: z.number(),
+  yNorm: z.number(),
+  wNorm: z.number(),
+  hNorm: z.number(),
+  label: z.string().nullable(),
+  required: z.boolean(),
+  fontSizePt: z.number().int().nullable(),
+});
+
+export const zSignTemplateSummary = z.strictObject({
+  id: zId,
+  title: z.string(),
+  description: z.string().nullable(),
+  routingMode: zSignRoutingMode,
+  subject: z.string().nullable(),
+  message: z.string().nullable(),
+  expiresInHours: z.number().int().nullable(),
+  status: zSignTemplateStatus,
+  inspectStatus: zSignInspectStatus,
+  inspectError: z.string().nullable(),
+  pageCount: z.number().int().nullable(),
+  roleCount: z.number().int(),
+  nonCcRoleCount: z.number().int(),
+  fieldCount: z.number().int(),
+  directLink: zSignTemplateDirectLinkSummary.nullable(),
+  version: z.number().int(),
+  archivedAt: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const zSignTemplateListInput = z.strictObject({
+  status: zSignTemplateStatus.optional(),
+  query: z.string().trim().max(120).optional(),
+  limit: z.number().int().min(1).max(100).default(50),
+});
+
+export const zSignTemplateListResult = z.strictObject({
+  items: z.array(zSignTemplateSummary),
+});
+
+export const zSignTemplateDetail = z.strictObject({
+  template: z.strictObject({
+    id: zId,
+    title: z.string(),
+    description: z.string().nullable(),
+    routingMode: zSignRoutingMode,
+    subject: z.string().nullable(),
+    message: z.string().nullable(),
+    expiresInHours: z.number().int().nullable(),
+    status: zSignTemplateStatus,
+    inspectStatus: zSignInspectStatus,
+    inspectError: z.string().nullable(),
+    sourceFileId: zId,
+    sourceSha256: z.string(),
+    pageCount: z.number().int().nullable(),
+    pageDimensions: z.array(zSignEnvelopePageDimension).nullable(),
+    version: z.number().int(),
+    archivedAt: z.string().nullable(),
+    createdBy: zId,
+    createdAt: z.string(),
+    updatedAt: z.string(),
+  }),
+  roles: z.array(zSignTemplateRoleRecord),
+  fields: z.array(zSignTemplateFieldRecord),
+  directLink: zSignTemplateDirectLinkDetail.nullable(),
+});
+
+export const zSignTemplateCreateInput = z
+  .strictObject({
+    title: z.string().trim().min(1).max(300),
+    description: z.string().trim().max(2000).nullable().optional(),
+    routingMode: zSignRoutingMode.optional(),
+    subject: z.string().trim().max(300).nullable().optional(),
+    message: z.string().trim().max(5000).nullable().optional(),
+    expiresInHours: z.number().int().min(1).max(8760).nullable().optional(),
+    sourceFileId: zId.optional(),
+    sourceEnvelopeId: zId.optional(),
+    copyRolesAndFields: z.boolean().default(true),
+    status: z.enum(['draft', 'active']).optional(),
+    idempotencyKey: zId.optional(),
+  })
+  .superRefine((input, ctx) => {
+    if (!input.sourceFileId && !input.sourceEnvelopeId) {
+      ctx.addIssue({ code: 'custom', path: ['sourceFileId'], message: 'Either sourceFileId or sourceEnvelopeId is required' });
+    }
+    if (input.sourceFileId && input.sourceEnvelopeId) {
+      ctx.addIssue({ code: 'custom', path: ['sourceEnvelopeId'], message: 'Specify only one of sourceFileId or sourceEnvelopeId' });
+    }
+  });
+
+export const zSignTemplateCreateResult = z.strictObject({
+  templateId: zId,
+  status: zSignTemplateStatus,
+  inspectStatus: zSignInspectStatus,
+  version: z.number().int(),
+});
+
+export const zSignTemplateUpdateInput = z.strictObject({
+  templateId: zId,
+  title: z.string().trim().min(1).max(300).optional(),
+  description: z.string().trim().max(2000).nullable().optional(),
+  routingMode: zSignRoutingMode.optional(),
+  subject: z.string().trim().max(300).nullable().optional(),
+  message: z.string().trim().max(5000).nullable().optional(),
+  expiresInHours: z.number().int().min(1).max(8760).nullable().optional(),
+  status: z.enum(['draft', 'active']).optional(),
+  idempotencyKey: zId.optional(),
+});
+
+export const zSignTemplateUpdateResult = z.strictObject({
+  templateId: zId,
+  status: zSignTemplateStatus,
+  version: z.number().int(),
+});
+
+export const zSignTemplateRoleInput = z.strictObject({
+  id: zId.optional(),
+  roleKey: zSignTemplateRoleKey,
+  signerRole: zSignSignerRole.default('signer'),
+  roleLabel: z.string().trim().min(1).max(120),
+  routingOrder: z.number().int().min(1).max(100).default(1),
+  deliveryMode: zSignDeliveryMode.default('link'),
+  requireEmailOtp: z.boolean().default(false),
+});
+
+export const zSignTemplateRolesSetInput = z.strictObject({
+  templateId: zId,
+  roles: z.array(zSignTemplateRoleInput).max(SIGN_MAX_SIGNERS),
+  idempotencyKey: zId.optional(),
+});
+
+export const zSignTemplateRolesSetResult = z.strictObject({
+  templateId: zId,
+  version: z.number().int(),
+  roles: z.array(zSignTemplateRoleRecord),
+});
+
+export const zSignTemplateFieldItemInput = z
+  .strictObject({
+    templateRoleId: zId.optional(),
+    roleKey: zSignTemplateRoleKey.optional(),
+    fieldType: zSignFieldType,
+    pageNumber: z.number().int().min(1).max(SIGN_MAX_PAGES),
+    xNorm: z.number().finite().min(0).lt(1),
+    yNorm: z.number().finite().min(0).lt(1),
+    wNorm: z.number().finite().gt(0).lte(1),
+    hNorm: z.number().finite().gt(0).lte(1),
+    label: z.string().trim().min(1).max(200).nullable().optional(),
+    required: z.boolean().default(true),
+    fontSizePt: z.number().int().min(6).max(36).nullable().optional(),
+  })
+  .superRefine((item, ctx) => {
+    if (!item.templateRoleId && !item.roleKey) {
+      ctx.addIssue({ code: 'custom', path: ['templateRoleId'], message: 'Either templateRoleId or roleKey is required' });
+    }
+    validateSignNormBounds(item, ctx);
+  });
+
+export const zSignTemplateFieldsSetInput = z.strictObject({
+  templateId: zId,
+  fields: z.array(zSignTemplateFieldItemInput).max(SIGN_MAX_FIELDS),
+  idempotencyKey: zId.optional(),
+});
+
+export const zSignTemplateFieldsSetResult = z.strictObject({
+  templateId: zId,
+  fieldCount: z.number().int(),
+  version: z.number().int(),
+});
+
+export const zSignTemplateArchiveInput = z.strictObject({
+  templateId: zId,
+  idempotencyKey: zId.optional(),
+});
+
+export const zSignTemplateArchiveResult = z.strictObject({
+  templateId: zId,
+  status: z.literal('archived'),
+  version: z.number().int(),
+  revokedLinks: z.number().int(),
+});
+
+export const zSignTemplateRecipientInput = z.strictObject({
+  roleKey: zSignTemplateRoleKey,
+  name: z.string().trim().min(1).max(200),
+  email: z.email().max(254).nullable().optional(),
+  phone: z.string().trim().min(6).max(32).nullable().optional(),
+  deliveryMode: zSignDeliveryMode.optional(),
+  requireEmailOtp: z.boolean().optional(),
+});
+
+export const zSignTemplateInstantiateInput = z.strictObject({
+  templateId: zId,
+  title: z.string().trim().min(1).max(300).optional(),
+  subject: z.string().trim().max(300).nullable().optional(),
+  message: z.string().trim().max(5000).nullable().optional(),
+  expiresAt: z.iso.datetime({ offset: true }).nullable().optional(),
+  autoSend: z.boolean().default(false),
+  recipients: z.array(zSignTemplateRecipientInput).max(SIGN_MAX_SIGNERS),
+});
+
+export const zSignTemplateInstantiateResult = z.strictObject({
+  envelopeId: zId,
+  status: z.enum(['draft', 'sent']),
+  version: z.number().int(),
+  links: z.array(zSignIssuedLink),
+});
+
+export const zSignTemplateDirectLinkSetInput = z.strictObject({
+  templateId: zId,
+  enabled: z.boolean(),
+  requireEmailOtp: z.boolean().optional(),
+});
+
+export const zSignTemplateDirectLinkRotateInput = z.strictObject({
+  templateId: zId,
+  requireEmailOtp: z.boolean().optional(),
+});
+
+export const zSignTemplateDirectLinkResult = z.strictObject({
+  templateId: zId,
+  enabled: z.boolean(),
+  requireEmailOtp: z.boolean(),
+  url: z.string().nullable(),
+  token: z.string().nullable(),
+  lastRotatedAt: z.string().nullable(),
 });

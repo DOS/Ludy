@@ -222,6 +222,7 @@ import {
   SIGN_FIELD_TYPES,
   SIGN_AI_ANALYSIS_STATUSES,
   SIGN_ACTOR_TYPES,
+  SIGN_TEMPLATE_STATUSES,
   type Database,
 } from '../src/schema.ts';
 
@@ -342,6 +343,12 @@ const UNIONS = unions({
   'crove_sign.field.field_type': SIGN_FIELD_TYPES,
   'crove_sign.ai_analysis.status': SIGN_AI_ANALYSIS_STATUSES,
   'crove_sign.signing_event.actor_type': SIGN_ACTOR_TYPES,
+  'crove_sign.template.status': SIGN_TEMPLATE_STATUSES,
+  'crove_sign.template.routing_mode': SIGN_ROUTING_MODES,
+  'crove_sign.template.inspect_status': SIGN_INSPECT_STATUSES,
+  'crove_sign.template_role.signer_role': SIGN_SIGNER_ROLES,
+  'crove_sign.template_role.delivery_mode': SIGN_DELIVERY_MODES,
+  'crove_sign.template_field.field_type': SIGN_FIELD_TYPES,
   'crove_kernel.agent.max_risk': AGENT_RISKS,
   'crove_kernel.agent.runtime': AGENT_RUNTIMES,
   'crove_kernel.agent.kind': AGENT_KINDS,

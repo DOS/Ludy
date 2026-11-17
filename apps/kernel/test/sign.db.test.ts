@@ -1502,6 +1502,37 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     const directConflict = await uploadFile(app, owner, pdfFixture('regressions'), 'conflict.pdf', 'document', 'application/pdf', regSlug);
     expect(directConflict.status).toBe(409);
     expect(directConflict.body?.code).toBe('FILE_SOURCE_CONFLICT');
+
+    // Template PDF inspection via worker + pending template recovery sweep (#3526).
+    const tplPdf = await uploadFile(app, owner, pdfFixture('tpl-worker-inspect'), 'tpl-worker.pdf', 'sign_document', 'application/pdf', regSlug);
+    const tplFileId = ((tplPdf.body?.files as Array<{ fileId: string }>) ?? [])[0]!.fileId;
+    const pendingTpl = await runtime.execute<{ templateId: string; inspectStatus: string }>(
+      'sign.template.create',
+      { title: 'Worker Template Inspect', sourceFileId: tplFileId },
+      { actor: asUser(owner), orgId: regOrgId },
+    );
+    expect(pendingTpl.inspectStatus).toBe('pending');
+    const recoveredTplIds: string[] = [];
+    await sweepSignPendingWork({
+      workerDb,
+      batchSize: 1,
+      appOn: (id) => workerRuntime.appOn(id, 'sign', { fresh: true }),
+      olderThan: new Date(Date.now() + 5_000),
+      enqueueInspect: async () => {},
+      enqueueSeal: async () => {},
+      enqueueTemplateInspect: async (_orgId, tplId) => {
+        recoveredTplIds.push(tplId);
+      },
+    });
+    expect(recoveredTplIds).toContain(pendingTpl.templateId);
+    await expect(
+      sql`SELECT 1 FROM crove_sign.template_work_recovery_candidates(now(), 10, NULL, now(), NULL, NULL)`.execute(workerDb),
+    ).rejects.toMatchObject({ code: '22023' });
+    const tplInspected = await runSignPdfInspectJob(
+      { workerDb, runtime: workerRuntime, store, extract: mockExtract() },
+      { orgId: regOrgId, targetKind: 'template', templateId: pendingTpl.templateId },
+    );
+    expect(tplInspected).toMatchObject({ status: 'passed' });
   });
 
   it('isolates per-org errors inside sweepSignExpire and sweepSignCleanup and processes due orgs in deterministic order (#3428 L4)', async () => {

@@ -29,6 +29,11 @@ export {
 } from './public-commands.ts';
 export { signQueries, type SignInspectJobData, type SignSealJobData } from './queries.ts';
 export {
+  signTemplateCommands,
+  signTemplateQueries,
+  type SignTemplateInspectJobData,
+} from './templates.ts';
+export {
   clampAiBox,
   sanitizeSignAiProposals,
   signAiCommands,

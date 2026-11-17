@@ -112,6 +112,7 @@ import { FixedAssetsPage } from './routes/fixed-assets.tsx';
 import { SignCeremonyPage } from './routes/sign-ceremony.tsx';
 import { SignEnvelopeDetailPage } from './routes/sign-envelope-detail.tsx';
 import { SignEnvelopesPage } from './routes/sign-envelopes.tsx';
+import { SignTemplatesPage } from './routes/sign-templates.tsx';
 import { SignVerifyPage } from './routes/sign-verify.tsx';
 import { SIGN_PAGE_PATH } from './lib/sign-hash.ts';
 
@@ -659,6 +660,7 @@ const projectDetailRoute = createRoute({ getParentRoute: () => orgRoute, path: '
 // eSign Slice 1c (#3325): envelopes, field placer + Vy overlays, and offline SHA-256 verifier.
 const signEnvelopesRoute = createRoute({ getParentRoute: () => orgRoute, path: 'sign/envelopes', component: SignEnvelopesPage });
 const signEnvelopeDetailRoute = createRoute({ getParentRoute: () => orgRoute, path: 'sign/envelopes/$id', component: SignEnvelopeDetailPage });
+const signTemplatesRoute = createRoute({ getParentRoute: () => orgRoute, path: 'sign/templates', component: SignTemplatesPage });
 const signVerifyRoute = createRoute({ getParentRoute: () => orgRoute, path: 'sign/verify', component: SignVerifyPage });
 
 // The CRM screens joined the Engage app (#2435) and kept their addresses. The `crm/...` addresses that docs/plan/crm.md wrote for them (the
@@ -698,7 +700,7 @@ const routeTree = rootRoute.addChildren([
   clientsRoute,
   oauthCallbackRoute,
   calendarOAuthCallbackRoute,
-  orgRoute.addChildren([orgIndexRoute, overviewRoute, accountingOverviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, paymentRemindersRoute, salesInvoicesRoute, stockRoute, householdRoute, marketplaceRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, bankMatchedRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialInboxRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, aiUsageRoute, aiConnectionsRoute, tasksRoute, taskDetailRoute, projectsRoute, projectDetailRoute, signEnvelopesRoute, signEnvelopeDetailRoute, signVerifyRoute, bookingsRoute, dealsRoute, contactsRoute, companiesRoute, contactImportRoute, crmRoute, crmBookingsRoute, crmDealsRoute, crmContactsRoute, crmContactImportRoute, notesRoute, myWorkRoute, hrEmployeesRoute, hrRecruitingRoute, hrPayrollRoute, hrDeclarationsRoute, hrBankTemplatesRoute, meetingsRoute, meetingRecordRoute, meetingDetailRoute, adsRoute, adsCampaignsRoute, reportsRoute, settingsRoute, auditRoute, personalDataRoute, guideRoute]),
+  orgRoute.addChildren([orgIndexRoute, overviewRoute, accountingOverviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, paymentRemindersRoute, salesInvoicesRoute, stockRoute, householdRoute, marketplaceRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, bankMatchedRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialInboxRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, aiUsageRoute, aiConnectionsRoute, tasksRoute, taskDetailRoute, projectsRoute, projectDetailRoute, signEnvelopesRoute, signEnvelopeDetailRoute, signTemplatesRoute, signVerifyRoute, bookingsRoute, dealsRoute, contactsRoute, companiesRoute, contactImportRoute, crmRoute, crmBookingsRoute, crmDealsRoute, crmContactsRoute, crmContactImportRoute, notesRoute, myWorkRoute, hrEmployeesRoute, hrRecruitingRoute, hrPayrollRoute, hrDeclarationsRoute, hrBankTemplatesRoute, meetingsRoute, meetingRecordRoute, meetingDetailRoute, adsRoute, adsCampaignsRoute, reportsRoute, settingsRoute, auditRoute, personalDataRoute, guideRoute]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });

@@ -367,7 +367,171 @@ export const signApi = {
   getAiAnalysis: async (envelopeId: string): Promise<SignAiAnalysis | null> => {
     return normalizeAiAnalysis(await client.sign.ai.get({ envelopeId }));
   },
+  listTemplates: (input: { status?: SignTemplateStatus; query?: string; limit?: number } = {}) =>
+    client.sign.template.list(input),
+  getTemplate: (templateId: string) => client.sign.template.get({ templateId }),
+  createTemplate: (input: {
+    title: string;
+    description?: string | null;
+    routingMode: SignRoutingMode;
+    subject?: string | null;
+    message?: string | null;
+    expiresInHours?: number | null;
+    sourceFileId?: string;
+    sourceEnvelopeId?: string;
+    copyRolesAndFields?: boolean;
+    status?: 'draft' | 'active';
+  }) => client.sign.template.create({ ...input, idempotencyKey: crypto.randomUUID() }),
+  updateTemplate: (input: {
+    templateId: string;
+    title?: string;
+    description?: string | null;
+    routingMode?: SignRoutingMode;
+    subject?: string | null;
+    message?: string | null;
+    expiresInHours?: number | null;
+    status?: 'draft' | 'active';
+  }) => client.sign.template.update({ ...input, idempotencyKey: crypto.randomUUID() }),
+  setTemplateRoles: (
+    templateId: string,
+    roles: Array<{
+      id?: string;
+      roleKey: string;
+      signerRole: SignSignerRole;
+      roleLabel: string;
+      routingOrder: number;
+      deliveryMode: SignDeliveryMode;
+      requireEmailOtp: boolean;
+    }>,
+  ) => client.sign.template.roles_set({ templateId, roles, idempotencyKey: crypto.randomUUID() }),
+  setTemplateFields: (
+    templateId: string,
+    fields: Array<{
+      templateRoleId?: string;
+      roleKey?: string;
+      fieldType: SignFieldType;
+      pageNumber: number;
+      xNorm: number;
+      yNorm: number;
+      wNorm: number;
+      hNorm: number;
+      label?: string | null;
+      required: boolean;
+      fontSizePt?: number | null;
+    }>,
+  ) => client.sign.template.fields_set({ templateId, fields, idempotencyKey: crypto.randomUUID() }),
+  archiveTemplate: (templateId: string) =>
+    client.sign.template.archive({ templateId, idempotencyKey: crypto.randomUUID() }),
+  instantiateTemplate: (input: {
+    templateId: string;
+    title?: string;
+    subject?: string | null;
+    message?: string | null;
+    expiresAt?: string | null;
+    autoSend?: boolean;
+    recipients: Array<{
+      roleKey: string;
+      name: string;
+      email?: string | null;
+      phone?: string | null;
+      deliveryMode?: SignDeliveryMode;
+      requireEmailOtp?: boolean;
+    }>;
+  }) => client.sign.template.instantiate(input),
+  setTemplateDirectLink: (input: { templateId: string; enabled: boolean; requireEmailOtp?: boolean }) =>
+    client.sign.template.direct_link_set(input),
+  rotateTemplateDirectLink: (input: { templateId: string; requireEmailOtp?: boolean }) =>
+    client.sign.template.direct_link_rotate(input),
 };
+
+export type SignTemplateStatus = 'draft' | 'active' | 'archived';
+
+export interface SignTemplateRoleRecord {
+  id: string;
+  roleKey: string;
+  signerRole: SignSignerRole;
+  roleLabel: string;
+  routingOrder: number;
+  deliveryMode: SignDeliveryMode;
+  requireEmailOtp: boolean;
+}
+
+export interface SignTemplateFieldRecord {
+  id: string;
+  templateRoleId: string;
+  roleKey: string;
+  fieldType: SignFieldType;
+  pageNumber: number;
+  xNorm: number;
+  yNorm: number;
+  wNorm: number;
+  hNorm: number;
+  label: string | null;
+  required: boolean;
+  fontSizePt: number | null;
+}
+
+export interface SignTemplateDirectLinkDetail {
+  id: string;
+  enabled: boolean;
+  requireEmailOtp: boolean;
+  lastRotatedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SignTemplateSummary {
+  id: string;
+  title: string;
+  description: string | null;
+  routingMode: SignRoutingMode;
+  subject: string | null;
+  message: string | null;
+  expiresInHours: number | null;
+  status: SignTemplateStatus;
+  inspectStatus: SignInspectStatus;
+  inspectError: string | null;
+  pageCount: number | null;
+  roleCount: number;
+  nonCcRoleCount: number;
+  fieldCount: number;
+  directLink: {
+    enabled: boolean;
+    requireEmailOtp: boolean;
+    lastRotatedAt: string | null;
+  } | null;
+  version: number;
+  archivedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SignTemplateDetail {
+  template: {
+    id: string;
+    title: string;
+    description: string | null;
+    routingMode: SignRoutingMode;
+    subject: string | null;
+    message: string | null;
+    expiresInHours: number | null;
+    status: SignTemplateStatus;
+    inspectStatus: SignInspectStatus;
+    inspectError: string | null;
+    sourceFileId: string;
+    sourceSha256: string;
+    pageCount: number | null;
+    pageDimensions: Array<{ page: number; widthPt: number; heightPt: number; rotation: number }> | null;
+    version: number;
+    archivedAt: string | null;
+    createdBy: string;
+    createdAt: string;
+    updatedAt: string;
+  };
+  roles: SignTemplateRoleRecord[];
+  fields: SignTemplateFieldRecord[];
+  directLink: SignTemplateDirectLinkDetail | null;
+}
 
 export class PublicSignError extends Error {
   readonly status: number;

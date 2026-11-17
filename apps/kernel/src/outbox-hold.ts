@@ -34,6 +34,7 @@ const TIME_BOUND_EVENTS: ReadonlySet<string> = new Set(['social.comment.retry_re
 export const SELF_RECOVERING_EVENTS: ReadonlySet<string> = new Set([
   'projects.recurring.advanced',
   'sign.envelope.inspect_queued',
+  'sign.template.inspect_queued',
   'sign.envelope.seal_queued',
 ]);
 

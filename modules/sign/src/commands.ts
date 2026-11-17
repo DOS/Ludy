@@ -13,7 +13,6 @@ import {
   type MemberRole,
 } from '@crove/db';
 import { EXTRACT_LIMITS } from '@crove/extract-contract';
-import { kernelManifest } from '@crove/kernel';
 import { tableWrite, zId } from '@crove/kernel-contract';
 import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
 import { appendSigningEvent } from './events.ts';
@@ -21,13 +20,24 @@ import { signManifest } from './manifest.ts';
 import { signPublicCommands } from './public-commands.ts';
 import { generateRawSigningToken, hashSigningToken } from './sealing.ts';
 import {
-  SIGN_INVITE_MAIL_SOURCE,
-  SIGN_INVITE_MAIL_TEMPLATE,
   SIGN_REMIND_MAIL_SOURCE,
   SIGN_REMIND_MAIL_TEMPLATE,
   queueSignCompletedEmail,
   queueSignInviteEmail,
 } from './sign-mail.ts';
+import {
+  ENVELOPE_VERSION_WRITE,
+  MAIL_MESSAGE_WRITE,
+  SIGNING_EVENT_WRITE,
+  SIGNING_OTP_INVALIDATE_WRITE,
+  SIGNING_TOKEN_WRITE,
+  requireSignSourceFile,
+  sendDraftEnvelope,
+  type IssuedSigningLink,
+} from './shared.ts';
+import { signTemplateCommands } from './templates.ts';
+
+export type { IssuedSigningLink };
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const REMIND_COOLDOWN_MS = 5 * 60_000;
@@ -62,56 +72,6 @@ function nextDefaultRoutingOrder(existing: ReadonlyArray<{ routing_order: number
 }
 
 const target = (input: { envelopeId: string }) => ({ type: 'sign.envelope', id: input.envelopeId });
-
-const ENVELOPE_VERSION_WRITE = tableWrite(signManifest.tables, 'crove_sign', 'envelope', ['version', 'updated_at']);
-
-const SIGNING_EVENT_WRITE = tableWrite(signManifest.tables, 'crove_sign', 'signing_event', [
-  'org_id',
-  'envelope_id',
-  'signer_id',
-  'seq',
-  'event_type',
-  'actor_type',
-  'actor_id',
-  'actor_label',
-  'document_sha256',
-  'prev_event_hash',
-  'event_hash',
-  'payload_json',
-  'ip_hash',
-  'user_agent',
-  'occurred_at',
-]);
-
-const SIGNING_TOKEN_WRITE = tableWrite(signManifest.tables, 'crove_sign', 'signing_token', [
-  'org_id',
-  'envelope_id',
-  'signer_id',
-  'token_sha256',
-  'expires_at',
-  'revoked_at',
-  'revoked_by',
-  'created_by',
-  'created_at',
-]);
-
-const SIGNING_OTP_INVALIDATE_WRITE = tableWrite(signManifest.tables, 'crove_sign', 'signing_otp', ['invalidated_at']);
-
-const MAIL_MESSAGE_WRITE = tableWrite(kernelManifest.tables, 'crove_kernel', 'mail_message', [
-  'org_id',
-  'stream',
-  'source',
-  'source_id',
-  'template_key',
-  'to_address',
-  'to_hash',
-  'subject',
-  'payload',
-  'message_id_header',
-  'status',
-  'error_code',
-  'created_by',
-]);
 
 function userOf(ctx: CommandContext): string {
   if (ctx.actor.type !== 'user') {
@@ -203,22 +163,7 @@ export const envelopeCreate = defineCommand({
       throw new DomainError('SIGN_INVALID_EXPIRY', 422, 'expiresAt must be in the future');
     }
 
-    const file = await ctx.trx
-      .selectFrom('crove_kernel.file')
-      .select(['id', 'source', 'content_type', 'storage_key', 'generation', 'sha256'])
-      .where('org_id', '=', ctx.orgId)
-      .where('id', '=', input.sourceFileId)
-      .executeTakeFirst();
-    if (!file) throw new DomainError('SIGN_FILE_NOT_FOUND', 404, 'Source file not found');
-    if (file.source !== 'sign_document') {
-      throw new DomainError('SIGN_INVALID_SOURCE_FILE', 422, 'Envelope source file must have source sign_document');
-    }
-    if (file.content_type !== 'application/pdf') {
-      throw new DomainError('SIGN_INVALID_FILE_TYPE', 422, 'Envelope source file must be application/pdf');
-    }
-    if (!file.generation) {
-      throw new DomainError('SIGN_INVALID_SOURCE_FILE', 422, 'Source file is missing storage generation');
-    }
+    const file = await requireSignSourceFile(ctx, input.sourceFileId);
 
     const row = await ctx.trx
       .insertInto('crove_sign.envelope')
@@ -900,13 +845,6 @@ export const fieldSet = defineCommand({
   },
 });
 
-export interface IssuedSigningLink {
-  signerId: string;
-  tokenId: string;
-  token: string;
-  expiresAt: string;
-}
-
 export const envelopeSend = defineCommand({
   name: 'sign.envelope.send',
   input: z.strictObject({ envelopeId: zId }),
@@ -928,12 +866,6 @@ export const envelopeSend = defineCommand({
     const userId = userOf(ctx);
     const row = await lockEnvelope(ctx, input.envelopeId);
     assertDraft(row.status);
-    if (row.inspect_status !== 'passed' || row.page_count === null) {
-      throw new DomainError('SIGN_DOCUMENT_NOT_INSPECTED', 409, 'Document must pass PDF inspection before sending');
-    }
-    if (row.expires_at !== null && new Date(row.expires_at).getTime() <= ctx.now.getTime()) {
-      throw new DomainError('SIGN_ENVELOPE_EXPIRED', 409, 'Envelope expiry timestamp is already in the past');
-    }
 
     const signers = await ctx.trx
       .selectFrom('crove_sign.signer')
@@ -942,10 +874,6 @@ export const envelopeSend = defineCommand({
       .where('envelope_id', '=', row.id)
       .forUpdate()
       .execute();
-    const activeRoleSigners = signers.filter((s) => s.signer_role !== 'cc');
-    if (activeRoleSigners.length === 0) {
-      throw new DomainError('SIGN_NO_SIGNERS', 409, 'Envelope requires at least one signer or approver before sending');
-    }
 
     const fields = await ctx.trx
       .selectFrom('crove_sign.field')
@@ -955,123 +883,7 @@ export const envelopeSend = defineCommand({
       .forShare()
       .execute();
 
-    const sigCountBySigner = new Map<string, number>();
-    for (const f of fields) {
-      if (f.page_number > row.page_count) {
-        throw new DomainError(
-          'SIGN_FIELD_OUT_OF_BOUNDS',
-          409,
-          `Field ${f.id} references page ${f.page_number}, exceeding document page count ${row.page_count}`,
-        );
-      }
-      if (f.field_type === 'signature') {
-        sigCountBySigner.set(f.signer_id, (sigCountBySigner.get(f.signer_id) ?? 0) + 1);
-      }
-    }
-    for (const s of activeRoleSigners) {
-      if (s.signer_role === 'signer' && (sigCountBySigner.get(s.id) ?? 0) < 1) {
-        throw new DomainError('SIGN_SIGNATURE_FIELD_REQUIRED', 409, `Signer ${s.id} requires at least one signature field`);
-      }
-    }
-
-    const sortedActive = [...activeRoleSigners].sort((a, b) => {
-      if (a.routing_order !== b.routing_order) return a.routing_order - b.routing_order;
-      const timeDiff = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
-      if (timeDiff !== 0) return timeDiff;
-      return a.id.localeCompare(b.id);
-    });
-    const minOrder = sortedActive[0]!.routing_order;
-    const dueNow = row.routing_mode === 'parallel' ? sortedActive : sortedActive.filter((s) => s.routing_order === minOrder);
-    const dueIds = dueNow.map((s) => s.id);
-
-    const nextVersion = row.version + 1;
-    await ctx.trx
-      .updateTable('crove_sign.envelope')
-      .set({
-        status: 'sent',
-        sent_at: ctx.now,
-        version: nextVersion,
-        updated_at: ctx.now,
-      })
-      .where('org_id', '=', ctx.orgId)
-      .where('id', '=', row.id)
-      .execute();
-
-    await ctx.trx
-      .updateTable('crove_sign.signer')
-      .set({ status: 'pending', updated_at: ctx.now })
-      .where('org_id', '=', ctx.orgId)
-      .where('envelope_id', '=', row.id)
-      .where('id', 'in', dueIds)
-      .execute();
-
-    const defaultExpiry = new Date(ctx.now.getTime() + DEFAULT_LINK_TTL_HOURS * 3_600_000);
-    const tokenExpiresAt = row.expires_at ? new Date(row.expires_at) : defaultExpiry;
-
-    const links: IssuedSigningLink[] = [];
-    let orgName: string | null = null;
-    for (const signer of dueNow) {
-      if (signer.delivery_mode === 'email' && signer.email) {
-        if (orgName === null) {
-          const tenant = await ctx.trx
-            .selectFrom('crove_kernel.tenant')
-            .select('name')
-            .where('org_id', '=', ctx.orgId)
-            .executeTakeFirstOrThrow();
-          orgName = tenant.name;
-        }
-        await queueSignInviteEmail(ctx, {
-          source: SIGN_INVITE_MAIL_SOURCE,
-          templateKey: SIGN_INVITE_MAIL_TEMPLATE,
-          orgName,
-          envelopeId: row.id,
-          signerId: signer.id,
-          signerRole: signer.signer_role === 'approver' ? 'approver' : 'signer',
-          to: signer.email,
-          docTitle: row.title,
-          roleLabel: signer.role_label,
-          expiresAt: row.expires_at ? new Date(row.expires_at).toISOString() : null,
-        });
-        continue;
-      }
-      const rawToken = generateRawSigningToken();
-      const tokenHash = hashSigningToken(rawToken);
-      const { rows: minted } = await sql<{ id: string }>`
-        SELECT crove_sign.mint_signing_token(
-          ${row.id}::uuid,
-          ${signer.id}::uuid,
-          ${tokenHash},
-          ${tokenExpiresAt}::timestamptz
-        ) AS id
-      `.execute(ctx.trx);
-      const tokenId = minted[0]?.id;
-      if (!tokenId) throw new Error('mint_signing_token returned no id');
-      links.push({
-        signerId: signer.id,
-        tokenId,
-        token: rawToken,
-        expiresAt: tokenExpiresAt.toISOString(),
-      });
-    }
-
-    await appendSigningEvent(ctx.trx, {
-      orgId: ctx.orgId,
-      envelopeId: row.id,
-      eventType: 'envelope_sent',
-      actorType: 'user',
-      actorId: userId,
-      actorLabel: actorLabelOf(ctx),
-      documentSha256: row.source_sha256,
-      payloadJson: { routingMode: row.routing_mode, activeSignerIds: dueIds },
-      occurredAt: ctx.now,
-    });
-    ctx.audit({ envelopeId: row.id, routingMode: row.routing_mode, mintedCount: links.length });
-    return {
-      envelopeId: row.id,
-      status: 'sent' as const,
-      version: nextVersion,
-      links,
-    };
+    return sendDraftEnvelope(ctx, { envelope: row, signers, fields, userId });
   },
 });
 
@@ -1672,4 +1484,5 @@ export const signCommands = [
   envelopeExpireSweep,
   orgCleanup,
   ...signPublicCommands,
+  ...signTemplateCommands,
 ];
