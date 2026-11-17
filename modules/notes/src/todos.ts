@@ -478,10 +478,17 @@ export const todoComplete = defineCommand({
 
       if (!hasNewerSibling) {
         const occupied = new Set(siblings.map((r) => r.due_on).filter((d): d is string => d !== null));
+        // Lock in original month day before skipping occupied historical dates so short months never shift the target day.
+        const anchorDay = before.due_on !== null ? Number(before.due_on.split('-')[2]) : 0;
         let candidate = nextTodoOccurrenceDate(rule, anchorDate);
+        const firstDay = Number(candidate.split('-')[2]);
+        const stepRule =
+          rule.freq === 'monthly' && rule.byMonthDay === undefined && anchorDay > firstDay
+            ? { ...rule, byMonthDay: anchorDay }
+            : rule;
         // Since nextTodoOccurrenceDate advances strictly monotonically, at most occupied.size skips reach an open date.
         for (let step = 0; step <= occupied.size && occupied.has(candidate); step++) {
-          const advanced = nextTodoOccurrenceDate(rule, candidate);
+          const advanced = nextTodoOccurrenceDate(stepRule, candidate);
           if (advanced <= candidate) break;
           candidate = advanced;
         }
@@ -490,14 +497,11 @@ export const todoComplete = defineCommand({
         }
         {
           nextDueOn = candidate;
-          // When a default monthly schedule passes through a shorter month (e.g. Jan 30 -> Feb 28), persist the
-          // original day-of-month in the spawned rule so subsequent months return to day 30 even if history is purged.
-          const anchorDay = before.due_on !== null ? Number(before.due_on.split('-')[2]) : 0;
           const candidateDay = Number(candidate.split('-')[2]);
           const spawnedRule =
-            rule.freq === 'monthly' && rule.byMonthDay === undefined && anchorDay > candidateDay
-              ? { ...rule, byMonthDay: anchorDay }
-              : rule;
+            stepRule.freq === 'monthly' && stepRule.byMonthDay === undefined && anchorDay > candidateDay
+              ? { ...stepRule, byMonthDay: anchorDay }
+              : stepRule;
           const shifted = shiftTodoSchedule(
             {
               dueOn: before.due_on,

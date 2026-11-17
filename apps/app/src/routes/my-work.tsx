@@ -961,10 +961,10 @@ export function MyWorkPage() {
       const { title } = v;
       const completeRes = result as TodoCompleteResult;
       const nextTodoId = completeRes.nextTodoId ?? null;
-      if (nextTodoId && v.recurrence) {
-        const nextDue = completeRes.nextDueOn ?? nextTodoOccurrenceDate(v.recurrence, v.dueOn ?? zonedDate(v.timeZone, Date.now()));
+      if (nextTodoId) {
+        const nextDue = completeRes.nextDueOn ?? (v.recurrence ? nextTodoOccurrenceDate(v.recurrence, v.dueOn ?? zonedDate(v.timeZone, Date.now())) : null);
         toastWithUndo(
-          t('recurrence.completedNextToast', { title, due: f.date(nextDue) }),
+          nextDue ? t('recurrence.completedNextToast', { title, due: f.date(nextDue) }) : t('completedToast', { title }),
           t('undoneToast', { title }),
           () => clientForOrg(slug).notes.todos.reopen({ todoId: v.todoId, undoNextTodoId: nextTodoId }),
           { undo: common('undo'), failed: (reason) => common('undoFailed', { reason }) },

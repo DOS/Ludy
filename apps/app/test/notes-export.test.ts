@@ -76,6 +76,8 @@ const DATA: NotesExport = {
       deletedAt: null,
       sourceNoteId: null,
       taskId: null,
+      recurrence: null,
+      seriesId: null,
       links: [{ targetType: 'kernel.task', targetId: 'task-1' }],
     },
   ],

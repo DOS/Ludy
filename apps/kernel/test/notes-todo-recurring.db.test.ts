@@ -10,6 +10,7 @@ import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import {
+  type NotesExport,
   type Todo,
   type TodoCompleteResult,
   type TodoRescheduled,
@@ -478,5 +479,35 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
         restoreRecurrence: { freq: 'daily', interval: 1 },
       }),
     ).rejects.toMatchObject({ code: 'TODO_REVISION_CONFLICT', status: 409 });
+
+    // Skipping an occupied short-month date (Feb 28) on a 31st monthly series lands cleanly on Mar 31, not Mar 28.
+    const jan31 = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Skip Feb preserves 31st',
+      dueOn: '2027-01-31',
+      timeZone: 'Asia/Ho_Chi_Minh',
+      recurrence: { freq: 'monthly', interval: 1 },
+    });
+    const febOccupied = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: jan31.todoId });
+    expect(febOccupied.nextDueOn).toBe('2027-02-28');
+    // Move Feb 28 back to Jan 31 after creating an extra historical 2027-02-28 done record by reopening & rescheduling.
+    await o.exec<TodoRescheduled>(o.mine, 'notes.todo.reschedule', { todoIds: [febOccupied.nextTodoId as string], dueOn: '2027-01-31' });
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.reopen', { todoId: jan31.todoId });
+    // Now mark older row as occupying 2027-02-28 and clear byMonthDay on the active Jan 31 row to verify stepRule fixes target day.
+    await admin((c) => c.query(`UPDATE crove_notes.todo SET due_on = '2027-02-28' WHERE org_id = $1 AND id = $2`, [o.orgId, jan31.todoId]));
+    await admin((c) =>
+      c.query(`UPDATE crove_notes.todo SET recurrence = '{"freq":"monthly","interval":1}'::jsonb WHERE org_id = $1 AND id = $2`, [
+        o.orgId,
+        febOccupied.nextTodoId,
+      ]),
+    );
+    const marFrom31 = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: febOccupied.nextTodoId as string });
+    expect(marFrom31.nextDueOn).toBe('2027-03-31');
+
+    // Member portability export includes recurrence and seriesId.
+    const exported = await o.query<NotesExport>(o.mine, 'notes.mine.export');
+    const expRow = exported.todos.find((item) => item.id === stopRoot.todoId);
+    expect(expRow).toBeDefined();
+    expect(expRow?.recurrence).toEqual({ freq: 'weekly', interval: 1 });
+    expect(expRow?.seriesId).toBe(stopRoot.todoId);
   });
 });
