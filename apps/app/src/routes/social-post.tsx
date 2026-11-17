@@ -2623,7 +2623,8 @@ export function SocialComposePage() {
   // calendar's planned time, else from 09:00 tomorrow or today; and the choice between a time, the next free slot and a
   // draft with no time (null: the default, the next free slot when the channels have one, else a time).
   const [whenLocal, setWhenLocal] = useState(() => toLocalInput(search.at && Date.parse(search.at) > Date.now() ? search.at : null) || defaultPostTime(new Date()));
-  const [whenChoice, setWhenChoice] = useState<WhenMode | null>(null);
+  // A time from the calendar stays the choice, whatever the channels' queues hold.
+  const [whenChoice, setWhenChoice] = useState<WhenMode | null>(() => (search.at && Date.parse(search.at) > Date.now() ? 'time' : null));
   // The time was typed, or came from the calendar: a draft keeps it. The starting time alone is sent only to publish.
   const [timeSet, setTimeSet] = useState(() => Boolean(search.at && Date.parse(search.at) > Date.now()));
   const plannedAt = fromLocalInput(whenLocal);
@@ -2680,7 +2681,7 @@ export function SocialComposePage() {
   // Each chosen channel's queue: "the next free slot" is offered only when every one has slots (a new channel has none,
   // and its first post would meet "queue is empty", #3653).
   const queues = useQueries({ queries: selected.map((c) => orpc.social.queues.get.queryOptions({ input: { connectionId: c.id } })) });
-  const queueStates: (QueueState | null)[] = queues.map((q) => (q.data ? { slots: q.data.slots.length, paused: q.data.paused } : null));
+  const queueStates: (QueueState | null)[] = queues.map((q) => (q.data ? { free: q.data.nextFree.length, paused: q.data.paused } : null));
   const slotsReady = queueReady(queueStates);
   const when = effectiveWhen(whenChoice, slotsReady);
   const nowMs = Date.now();

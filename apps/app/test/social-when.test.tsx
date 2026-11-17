@@ -32,11 +32,11 @@ describe('the time a new post goes out is chosen (#3653)', () => {
     expect(queueReady([])).toBe(false);
     // Not read yet: never offered, so no one is sent to an empty queue.
     expect(queueReady([null])).toBe(false);
-    // A fresh channel has no slots.
-    expect(queueReady([{ slots: 0, paused: false }])).toBe(false);
-    expect(queueReady([{ slots: 7, paused: true }])).toBe(false);
-    expect(queueReady([{ slots: 7, paused: false }, { slots: 0, paused: false }])).toBe(false);
-    expect(queueReady([{ slots: 7, paused: false }, { slots: 3, paused: false }])).toBe(true);
+    // A fresh channel has no slots, and one whose slots are all off or kept for a label has none free for a new post.
+    expect(queueReady([{ free: 0, paused: false }])).toBe(false);
+    expect(queueReady([{ free: 7, paused: true }])).toBe(false);
+    expect(queueReady([{ free: 7, paused: false }, { free: 0, paused: false }])).toBe(false);
+    expect(queueReady([{ free: 7, paused: false }, { free: 3, paused: false }])).toBe(true);
   });
 
   it('defaults to the next free slot when the channels have one, else a time, and drops a queue choice that no longer holds', () => {

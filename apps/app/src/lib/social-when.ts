@@ -6,8 +6,9 @@ import { toLocalInput } from './social.ts';
 
 export type WhenMode = 'time' | 'queue' | 'draft';
 
-// What the composer knows of one chosen channel's queue.
-export type QueueState = { slots: number; paused: boolean };
+// What the composer knows of one chosen channel's queue: how many free slots a post without a category label could take
+// (the queue's own next-free list, which leaves out turned-off slots and slots kept for a label), and whether it is paused.
+export type QueueState = { free: number; paused: boolean };
 
 // A time to start from when nothing is chosen: 09:00 local, today if that is more than an hour away, else tomorrow.
 export function defaultPostTime(now: Date): string {
@@ -17,10 +18,10 @@ export function defaultPostTime(now: Date): string {
   return toLocalInput(at.toISOString());
 }
 
-// The queue can take the post only when every chosen channel has slots, and none is paused. Until the queues are read
+// The queue can take the post only when every chosen channel has a free slot for it, and none is paused. Until the queues are read
 // (null entries) it is not offered, so the person is never sent to a "queue is empty" error.
 export function queueReady(queues: readonly (QueueState | null)[]): boolean {
-  return queues.length > 0 && queues.every((q) => q !== null && q.slots > 0 && !q.paused);
+  return queues.length > 0 && queues.every((q) => q !== null && q.free > 0 && !q.paused);
 }
 
 // The mode in force: the person's choice, else the next free slot when the channels have one and a time when not. A
