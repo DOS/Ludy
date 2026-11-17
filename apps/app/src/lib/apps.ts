@@ -120,6 +120,26 @@ export function tabGroupOfPath(pathname: string): TabGroup | null {
   return TAB_GROUPS.find((group) => group.tabs.some((tab) => tab.path === screen)) ?? null;
 }
 
+// The one menu item that is current for a screen: the item whose path is the longest whole-segment prefix of the screen's path, so the Engage Posts item (`social`) is not
+// also current on the Inbox (`social/inbox`, a screen under its path). A screen that is a tab of a menu item (#3225) belongs to that item alone. Only the menu's own entries compete (the
+// overview, the apps' items, the bell, Settings), never a tab or inner screen that names a `find` label. The shell marks an item current by this, not by the router's fuzzy match.
+const MENU_ENTRIES: readonly NavItem[] = [...TOP_ITEMS, ...APPS.flatMap((a) => a.groups.flatMap((g) => g.items)), ...(BELL_ITEM ? [BELL_ITEM] : []), ...ADMIN_ITEMS];
+const screenOfItem = (entry: NavItem) => entry.to.slice('/o/$slug/'.length).toLowerCase();
+
+export function currentMenuItem(pathname: string): NavItem['to'] | null {
+  const [, o, , ...rest] = pathname.split('/');
+  if (o !== 'o') return null;
+  const tabMenu = tabGroupOfPath(pathname)?.menu;
+  if (tabMenu !== undefined) return `/o/$slug/${tabMenu}` as NavItem['to'];
+  const screen = rest.join('/').replace(/\/$/, '').toLowerCase();
+  let best: NavItem | null = null;
+  for (const entry of MENU_ENTRIES) {
+    const own = screenOfItem(entry);
+    if ((screen === own || screen.startsWith(`${own}/`)) && (best === null || own.length > screenOfItem(best).length)) best = entry;
+  }
+  return best?.to ?? null;
+}
+
 // Screens that are no menu item and that Ctrl K finds all the same: a tab, or a screen reached from another (a route that names a `find` label).
 const FIND_ITEMS: readonly NavItem[] = MODULES.flatMap(([module, screens]) =>
   screens.routes.flatMap((route) => ('find' in route && typeof route.find === 'string' ? [item(module, screens, { path: route.path, label: route.find })] : [])),

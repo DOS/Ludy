@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { decodePdfSealInput } from '@crove/extract-contract';
+import { zSignDetectedTag, zSignTemplateRoleKey } from '@crove/kernel-contract';
 import {
   buildCanonicalCertificateArtifact,
   buildPdfSealCertificate,
@@ -370,5 +371,40 @@ describe('sign sealing payloads and certificate artifacts', () => {
       'template_field',
       'template_role',
     ]);
+  });
+
+  it('rejects lone UTF-16 surrogates in zSignDetectedTag.label and accepts hyphenated 64-char roleKeys (#3552)', () => {
+    expect(zSignTemplateRoleKey.safeParse('ben-a').success).toBe(true);
+    expect(zSignTemplateRoleKey.safeParse('r'.repeat(64)).success).toBe(true);
+    expect(zSignTemplateRoleKey.safeParse('r'.repeat(65)).success).toBe(false);
+
+    expect(
+      zSignDetectedTag.safeParse({
+        pageNumber: 1,
+        fieldType: 'text',
+        roleOrder: 1,
+        roleKey: 'r1',
+        required: true,
+        label: 'Bad\uDC00Low',
+        xNorm: 0.1,
+        yNorm: 0.1,
+        wNorm: 0.2,
+        hNorm: 0.05,
+      }).success,
+    ).toBe(false);
+    expect(
+      zSignDetectedTag.safeParse({
+        pageNumber: 1,
+        fieldType: 'text',
+        roleOrder: 1,
+        roleKey: 'r1',
+        required: true,
+        label: 'Hợp đồng chuẩn',
+        xNorm: 0.1,
+        yNorm: 0.1,
+        wNorm: 0.2,
+        hNorm: 0.05,
+      }).success,
+    ).toBe(true);
   });
 });

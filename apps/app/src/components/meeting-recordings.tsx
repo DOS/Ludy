@@ -6,7 +6,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useState, type FormEvent } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
-import { IMPORT_CONSENT_NOTICE_VERSION, MEETING_SUMMARY_TEMPLATES, type MeetingLanguage, type MeetingPlatformRecordingView, type MeetingSummaryTemplate, type MeetingVisibility } from '@crove/kernel-contract';
+import { IMPORT_CONSENT_NOTICE_VERSION, MEETING_SUMMARY_TEMPLATES, type MeetingLanguage, type MeetingPlatformRecordingView, type BuiltInSummaryTemplate, type MeetingVisibility } from '@crove/kernel-contract';
 import { IMPORT_NOTICE, noticeLanguageFor } from '@crove/meeting-recorder';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -42,7 +42,7 @@ export function ImportForm({ recording, onDone, onCancel }: { recording: Meeting
   const [title, setTitle] = useState(recording.title);
   const [language, setLanguage] = useState<MeetingLanguage>('vi');
   const [visibility, setVisibility] = useState<MeetingVisibility>('attendees');
-  const [template, setTemplate] = useState<MeetingSummaryTemplate>('general');
+  const [template, setTemplate] = useState<BuiltInSummaryTemplate>('general');
   const [ticked, setTicked] = useState(false);
   const start = useMutation({
     mutationFn: () =>
@@ -94,7 +94,7 @@ export function ImportForm({ recording, onDone, onCancel }: { recording: Meeting
       </div>
       <div className="space-y-1">
         <Label htmlFor="import-template">{tm('templates.label')}</Label>
-        <NativeSelect id="import-template" value={template} onChange={(e) => setTemplate(e.target.value as MeetingSummaryTemplate)}>
+        <NativeSelect id="import-template" value={template} onChange={(e) => setTemplate(e.target.value as BuiltInSummaryTemplate)}>
           {MEETING_SUMMARY_TEMPLATES.map((code) => (
             <NativeSelectOption key={code} value={code}>
               {tm(`templates.names.${code}`)}

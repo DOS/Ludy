@@ -204,6 +204,7 @@ export interface CroveMeetingsSchema {
   'crove_meetings.meeting_reader': MeetingsMeetingReaderTable;
   'crove_meetings.meeting_result': MeetingsMeetingResultTable;
   'crove_meetings.meeting_video': MeetingsMeetingVideoTable;
+  'crove_meetings.minutes_template': MeetingsMinutesTemplateTable;
   'crove_meetings.transcript_segment': MeetingsTranscriptSegmentTable;
   'crove_meetings.translation': MeetingsTranslationTable;
 }
@@ -3124,6 +3125,9 @@ export interface MeetingsMeetingTable {
   summary_template: Generated<string>;
   audio_used_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   series_id: string | null;
+  minutes_template_name: string | null;
+  minutes_template_sections: ColumnType<unknown, string | null | undefined, string | null>;
+  minutes_template_hash: string | null;
 }
 
 /** crove_meetings.meeting_video */
@@ -3135,6 +3139,18 @@ export interface MeetingsMeetingVideoTable {
   length_seconds: ColumnType<number, number, NotGranted>;
   video_retention_date: ColumnType<string, string, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_meetings.minutes_template */
+export interface MeetingsMinutesTemplateTable {
+  org_id: string;
+  id: Generated<string>;
+  name: string;
+  sections: ColumnType<unknown, string, string>;
+  archived_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: string;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_meetings.transcript_segment */
@@ -3331,6 +3347,7 @@ export interface SignEnvelopeTable {
   created_by: string;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  detected_tags_json: ColumnType<unknown, string | null | undefined, string | null>;
 }
 
 /** crove_sign.field */
@@ -3384,6 +3401,7 @@ export interface SignSignerTable {
   consent_accepted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  role_key: string | null;
 }
 
 /** crove_sign.signing_event */
@@ -3465,6 +3483,7 @@ export interface SignTemplateTable {
   created_by: string;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  detected_tags_json: ColumnType<unknown, string | null | undefined, string | null>;
 }
 
 /** crove_social.account_snapshot */

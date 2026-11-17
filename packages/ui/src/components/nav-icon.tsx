@@ -30,6 +30,7 @@ import {
   NetworkIcon,
   NotebookPenIcon,
   NotepadTextIcon,
+  PlusIcon,
   SettingsIcon,
   SparklesIcon,
   TruckIcon,
@@ -80,6 +81,7 @@ const ICONS = {
   menu: MenuIcon,
   close: XIcon,
   expand: ChevronDownIcon,
+  add: PlusIcon,
   info: InfoIcon,
 } as const
 

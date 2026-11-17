@@ -23,6 +23,7 @@ export const SIGN_SIGNATURE_TYPED_TEXT_MAX = 200;
 export const SIGN_PUBLIC_FIELDS_MAX = 500;
 
 export const zSignToken = z.string().regex(SIGN_TOKEN_PATTERN, 'Invalid signing token');
+export const zSignTemplateRoleKey = z.string().regex(SIGN_TEMPLATE_ROLE_KEY_PATTERN, 'Invalid template role key');
 
 export const zSignPublicViewInput = z.strictObject({
   token: zSignToken,
@@ -158,6 +159,8 @@ export type SignPublicVerifyInput = z.infer<typeof zSignPublicVerifyInput>;
 export const SIGN_MAX_PAGES = 200;
 export const SIGN_MAX_SIGNERS = 50;
 export const SIGN_MAX_FIELDS = 500;
+export const SIGN_MAX_DETECTED_TAGS = 200;
+export const SIGN_MAX_TAG_ROLES = 50;
 export const SIGN_NORM_SCALE = 1_000_000;
 
 export const SIGN_ENVELOPE_STATUSES = ['draft', 'sent', 'in_progress', 'completed', 'declined', 'voided', 'expired'] as const;
@@ -194,6 +197,60 @@ export const zSignEnvelopePageDimension = z.object({
   heightPt: z.number(),
   rotation: z.number().int(),
 });
+
+const toSignMicro = (v: number) => Math.round(v * SIGN_NORM_SCALE);
+function validateSignNormBounds(item: { xNorm: number; yNorm: number; wNorm: number; hNorm: number }, ctx: z.RefinementCtx): void {
+  const x = toSignMicro(item.xNorm);
+  const y = toSignMicro(item.yNorm);
+  const w = toSignMicro(item.wNorm);
+  const h = toSignMicro(item.hNorm);
+  if (x < 0 || x >= SIGN_NORM_SCALE) ctx.addIssue({ code: 'custom', path: ['xNorm'], message: 'xNorm rounds outside [0, 1)' });
+  if (y < 0 || y >= SIGN_NORM_SCALE) ctx.addIssue({ code: 'custom', path: ['yNorm'], message: 'yNorm rounds outside [0, 1)' });
+  if (w < 1 || w > SIGN_NORM_SCALE) ctx.addIssue({ code: 'custom', path: ['wNorm'], message: 'wNorm rounds outside (0, 1]' });
+  if (h < 1 || h > SIGN_NORM_SCALE) ctx.addIssue({ code: 'custom', path: ['hNorm'], message: 'hNorm rounds outside (0, 1]' });
+  if (x + w > SIGN_NORM_SCALE) ctx.addIssue({ code: 'custom', path: ['wNorm'], message: 'xNorm + wNorm must be <= 1' });
+  if (y + h > SIGN_NORM_SCALE) ctx.addIssue({ code: 'custom', path: ['hNorm'], message: 'yNorm + hNorm must be <= 1' });
+}
+
+function hasLoneSignSurrogate(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = i + 1 < value.length ? value.charCodeAt(i + 1) : 0;
+      if (next < 0xdc00 || next > 0xdfff) return true;
+      i += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export const zSignDetectedTag = z
+  .strictObject({
+    pageNumber: z.number().int().min(1).max(SIGN_MAX_PAGES),
+    fieldType: zSignFieldType,
+    roleOrder: z.number().int().min(1).max(SIGN_MAX_TAG_ROLES),
+    roleKey: z.string().regex(/^r(?:[1-9]|[1-4]\d|50)$/, 'Invalid tag role key'),
+    required: z.boolean(),
+    label: z
+      .string()
+      .min(1)
+      .max(120)
+      .refine((s) => !hasLoneSignSurrogate(s), 'label must be well-formed Unicode without lone surrogates')
+      .nullable(),
+    xNorm: z.number().finite().min(0).lt(1),
+    yNorm: z.number().finite().min(0).lt(1),
+    wNorm: z.number().finite().gt(0).lte(1),
+    hNorm: z.number().finite().gt(0).lte(1),
+  })
+  .superRefine((item, ctx) => {
+    if (item.roleKey !== `r${item.roleOrder}`) {
+      ctx.addIssue({ code: 'custom', path: ['roleKey'], message: 'roleKey must match roleOrder' });
+    }
+    validateSignNormBounds(item, ctx);
+  });
+export type SignDetectedTag = z.infer<typeof zSignDetectedTag>;
 
 export const zSignEnvelopeSignerSummary = z.strictObject({
   total: z.number().int().min(0),
@@ -274,6 +331,7 @@ export const zSignEnvelopeDetail = z.strictObject({
     inspectError: z.string().nullable(),
     pageCount: z.number().int().nullable(),
     pageDimensions: z.array(zSignEnvelopePageDimension).nullable(),
+    detectedTags: z.array(zSignDetectedTag).default([]),
     sealedFileId: zId.nullable(),
     sealedSha256: z.string().nullable(),
     sealStatus: zSignSealStatus.nullable(),
@@ -296,6 +354,7 @@ export const zSignEnvelopeDetail = z.strictObject({
   signers: z.array(
     z.strictObject({
       id: zId,
+      roleKey: zSignTemplateRoleKey.nullable().optional(),
       routingOrder: z.number().int(),
       signerRole: zSignSignerRole,
       roleLabel: z.string(),
@@ -503,20 +562,6 @@ export const zSignSignerCreateLinkResult = z.strictObject({
   expiresAt: z.string(),
 });
 
-const toSignMicro = (v: number) => Math.round(v * SIGN_NORM_SCALE);
-function validateSignNormBounds(item: { xNorm: number; yNorm: number; wNorm: number; hNorm: number }, ctx: z.RefinementCtx): void {
-  const x = toSignMicro(item.xNorm);
-  const y = toSignMicro(item.yNorm);
-  const w = toSignMicro(item.wNorm);
-  const h = toSignMicro(item.hNorm);
-  if (x < 0 || x >= SIGN_NORM_SCALE) ctx.addIssue({ code: 'custom', path: ['xNorm'], message: 'xNorm rounds outside [0, 1)' });
-  if (y < 0 || y >= SIGN_NORM_SCALE) ctx.addIssue({ code: 'custom', path: ['yNorm'], message: 'yNorm rounds outside [0, 1)' });
-  if (w < 1 || w > SIGN_NORM_SCALE) ctx.addIssue({ code: 'custom', path: ['wNorm'], message: 'wNorm rounds outside (0, 1]' });
-  if (h < 1 || h > SIGN_NORM_SCALE) ctx.addIssue({ code: 'custom', path: ['hNorm'], message: 'hNorm rounds outside (0, 1]' });
-  if (x + w > SIGN_NORM_SCALE) ctx.addIssue({ code: 'custom', path: ['wNorm'], message: 'xNorm + wNorm must be <= 1' });
-  if (y + h > SIGN_NORM_SCALE) ctx.addIssue({ code: 'custom', path: ['hNorm'], message: 'yNorm + hNorm must be <= 1' });
-}
-
 export const zSignFieldItemInput = z
   .strictObject({
     signerId: zId,
@@ -603,7 +648,6 @@ export const zSignAiAnalyzeResult = z.strictObject({
 // eSign Slice 2a (#3526): reusable templates, Approver/CC template roles, and direct signing link management.
 export const SIGN_TEMPLATE_STATUSES = ['draft', 'active', 'archived'] as const;
 export const zSignTemplateStatus = z.enum(SIGN_TEMPLATE_STATUSES);
-export const zSignTemplateRoleKey = z.string().regex(SIGN_TEMPLATE_ROLE_KEY_PATTERN, 'Invalid template role key');
 
 export const zSignTemplateDirectLinkSummary = z.strictObject({
   enabled: z.boolean(),
@@ -693,6 +737,7 @@ export const zSignTemplateDetail = z.strictObject({
     sourceSha256: z.string(),
     pageCount: z.number().int().nullable(),
     pageDimensions: z.array(zSignEnvelopePageDimension).nullable(),
+    detectedTags: z.array(zSignDetectedTag).default([]),
     version: z.number().int(),
     archivedAt: z.string().nullable(),
     createdBy: zId,

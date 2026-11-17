@@ -2,6 +2,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useSearch } from '@tanstack/react-router';
 import { useId, useState, type FormEvent } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
+import { ConversationRetentionCard } from '../components/conversation-retention.tsx';
 import { ExtensionDevices } from '../components/extension-devices.tsx';
 import { MeetingPlatforms } from '../components/meeting-platforms.tsx';
 import { OrgAppsCard } from '../components/org-apps.tsx';
@@ -1235,6 +1236,8 @@ export function SettingsPage() {
         {installedModules().includes('finance') && org.data && (
           <ApprovalPresetCard key={`approval-preset:${org.data.slug}:${org.data.approvalPreset}`} preset={org.data.approvalPreset} isOwner={isOwner} />
         )}
+        {/* How long Engage's conversations are kept (CV6, #2305; moved here from the Inbox, #3582), with the social module; owners and admins. */}
+        {installedModules().includes('social') && canManage && <ConversationRetentionCard key={`conversation-retention:${org.data?.slug}`} />}
         {/* The member's own working hours and days off (#1313). */}
         {org.data && <WorkingHoursCard key={`working-hours:${org.data.slug}`} canEdit={org.data.role !== 'viewer'} />}
         {/* The booking pages' event types (#1314), with the crm module. */}

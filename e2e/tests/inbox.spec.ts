@@ -205,7 +205,7 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
   await test.step('ledger reports for September 2026 and their Excel export (#321)', async () => {
     await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
     await page.getByRole('navigation').getByRole('link', { name: 'Sổ sách' }).click();
-    await expect(page.getByRole('heading', { name: 'Sổ sách kế toán' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Sổ sách', exact: true })).toBeVisible();
     await page.getByLabel('Kỳ báo cáo', { exact: true }).selectOption('month');
     await page.getByLabel('Năm', { exact: true }).selectOption('2026');
     await page.getByLabel('Tháng', { exact: true }).selectOption('9');

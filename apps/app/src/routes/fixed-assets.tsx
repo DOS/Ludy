@@ -360,11 +360,11 @@ export function FixedAssetsPage() {
               </Button>
             )}
             {canEnter && !depreciating && (
-              <Button size="lg" variant="outline" onClick={() => setDepreciating(true)} disabled={rows.length === 0}>
+              <Button size="lg" variant="outline" onClick={() => setDepreciating(true)} disabled={rows.length === 0} title={rows.length === 0 ? t('needsAsset') : undefined}>
                 {t('depreciate')}
               </Button>
             )}
-            <Button loading={exportXlsx.isPending} size="lg" onClick={() => exportXlsx.mutate()} disabled={exportXlsx.isPending || rows.length === 0}>
+            <Button loading={exportXlsx.isPending} size="lg" onClick={() => exportXlsx.mutate()} disabled={exportXlsx.isPending || rows.length === 0} title={rows.length === 0 ? t('needsAsset') : undefined}>
               {t('export')}
             </Button>
           </div>
@@ -378,7 +378,18 @@ export function FixedAssetsPage() {
       ) : assets.error ? (
         <ErrorText>{errorMessage(assets.error)}</ErrorText>
       ) : rows.length === 0 ? (
-        <Empty title={t('empty')} hint={t('emptyHint')} />
+        // The two disabled buttons above wait for a first asset (#3602): the empty state says so and offers it.
+        <Empty
+          title={t('empty')}
+          hint={t('emptyHint')}
+          action={
+            canEnter && !adding ? (
+              <Button variant="outline" onClick={() => setAdding(true)}>
+                {t('new')}
+              </Button>
+            ) : undefined
+          }
+        />
       ) : (
         <DataTable head={[t('columns.name'), t('columns.accounts'), t('columns.schedule'), t('columns.cost'), t('columns.posted'), t('columns.remaining')]} numeric={[3, 4, 5]}>
           {rows.map((a) => (

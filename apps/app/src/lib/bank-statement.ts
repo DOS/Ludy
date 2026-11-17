@@ -34,3 +34,11 @@ export async function readStatementFile(bytes: Uint8Array, name: string): Promis
   const utf16 = bytes[0] === 0xff && bytes[1] === 0xfe;
   return parseCsv(new TextDecoder(utf16 ? 'utf-16le' : 'utf-8').decode(bytes));
 }
+
+// 'YYYY-MM' of the last full month in Vietnam (UTC+7), the month a statement is usually imported for (#3602): in November, 2026-10; in January, December of the year before.
+export function lastFullMonth(now: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit' }).formatToParts(now);
+  const year = Number(parts.find((p) => p.type === 'year')?.value);
+  const month = Number(parts.find((p) => p.type === 'month')?.value);
+  return month === 1 ? `${year - 1}-12` : `${year}-${String(month - 1).padStart(2, '0')}`;
+}

@@ -587,7 +587,8 @@ Components come from shadcn (base-nova style on Base UI) and are themed only thr
 
 ### 4.5 Overlays
 
-- Dialog for decisions that block (approve with step-up, destructive confirm). Sheet for side detail on narrow screens. Popover for small pickers. Toast for results, with an undo where the action allows it.
+- Dialog for decisions that block (approve with step-up, destructive confirm). Sheet for side detail on narrow screens.
+- `Sheet` (`packages/ui/src/components/sheet.tsx`) is the panel at the right edge for adding or reading one record without leaving the list (adding a contact or a company, #3586): full screen on a phone, a 28rem column from `sm` up, a fixed header (`SheetHeader`, title and a short line), a scrolling `SheetBody`, a fixed `SheetFooter` that keeps Save in view, and a close button whose name the caller gives. Esc, the close button and the backdrop cancel; focus moves in and returns to the trigger. Fields follow 4.2: the ones used most first, the rest folded in a "Thông tin thêm" section. Popover for small pickers. Toast for results, with an undo where the action allows it.
 - Focus moves into the overlay and returns to the trigger on close. Overlays never cover the focused element (WCAG 2.4.11).
 
 ## 5. Interaction patterns

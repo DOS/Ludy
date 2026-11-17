@@ -21,6 +21,7 @@ import { Runtime, contentGeneration, fileKey, mintContextToken, sha256Hex } from
 import {
   SIGN_DIRECT_PAGE_PATH,
   SIGN_TOKEN_PATTERN,
+  zSignEnvelopeDetail,
 } from '@crove/kernel-contract';
 import {
   hashSigningToken,
@@ -889,8 +890,201 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
     expect(clonedDetail.template.routingMode).toBe('sequential');
     expect(clonedDetail.roles).toHaveLength(3);
     expect(clonedDetail.fields).toHaveLength(1);
+  });
 
-    // Org B template + direct link purged cleanly by crove_kernel.org_purge.
+  it('persists, inherits, and guards detected_tags_json across templates and envelopes (#3552)', async () => {
+    const taggedFile = await ingestPdf(ownerA, orgA, 'tagged-contract-3552');
+    const detectedTags = [
+      {
+        pageNumber: 1,
+        fieldType: 'signature' as const,
+        roleOrder: 1,
+        roleKey: 'r1',
+        required: true,
+        label: null,
+        xNorm: 0.14,
+        yNorm: 0.72,
+        wNorm: 0.22,
+        hNorm: 0.06,
+      },
+      {
+        pageNumber: 2,
+        fieldType: 'text' as const,
+        roleOrder: 2,
+        roleKey: 'r2',
+        required: false,
+        label: 'Chuc danh',
+        xNorm: 0.25,
+        yNorm: 0.45,
+        wNorm: 0.24,
+        hNorm: 0.03,
+      },
+    ];
+
+    const tpl = await runtime.execute<{ templateId: string }>(
+      'sign.template.create',
+      { title: 'Mau PDF co the van ban', routingMode: 'sequential', sourceFileId: taggedFile.fileId },
+      { actor: asUser(ownerA), orgId: orgA },
+    );
+
+    await workerRuntime.execute(
+      'sign.template.inspect_complete',
+      {
+        templateId: tpl.templateId,
+        outcome: 'passed',
+        pageCount: 2,
+        pageDimensions: [
+          { page: 1, widthPt: 595, heightPt: 842, rotation: 0 },
+          { page: 2, widthPt: 595, heightPt: 842, rotation: 0 },
+        ],
+        detectedTags,
+      },
+      { actor: asSystem('sign-worker'), orgId: orgA },
+    );
+
+    const tplDetail = await runtime.query<{ template: { detectedTags: typeof detectedTags } }>(
+      'sign.template.get',
+      { templateId: tpl.templateId },
+      { actor: asUser(ownerA), orgId: orgA },
+    );
+    expect(tplDetail.template.detectedTags).toEqual(detectedTags);
+
+    // Reusing the same inspected sourceFileId on a second template preserves detectedTags cleanly under template_guard.
+    const reusedTpl = await runtime.execute<{ templateId: string; inspectStatus: string }>(
+      'sign.template.create',
+      { title: 'Mau dung lai tep da kiem tra', routingMode: 'parallel', sourceFileId: taggedFile.fileId },
+      { actor: asUser(ownerA), orgId: orgA },
+    );
+    expect(reusedTpl.inspectStatus).toBe('passed');
+    const reusedDetail = await runtime.query<{ template: { detectedTags: typeof detectedTags } }>(
+      'sign.template.get',
+      { templateId: reusedTpl.templateId },
+      { actor: asUser(ownerA), orgId: orgA },
+    );
+    expect(reusedDetail.template.detectedTags).toEqual(detectedTags);
+
+    // Instantiating a draft envelope from the template inherits detected_tags_json via template_inherit_inspect
+    // AND preserves roleKey on crove_sign.signer even when r1 is routingOrder 2 and r2 is routingOrder 1.
+    await runtime.execute(
+      'sign.template.roles_set',
+      {
+        templateId: tpl.templateId,
+        roles: [
+          { roleKey: 'r2', signerRole: 'signer', roleLabel: 'Ben B ky truoc', routingOrder: 1, deliveryMode: 'link', requireEmailOtp: false },
+          { roleKey: 'r1', signerRole: 'signer', roleLabel: 'Ben A ky sau', routingOrder: 2, deliveryMode: 'link', requireEmailOtp: false },
+        ],
+      },
+      { actor: asUser(ownerA), orgId: orgA },
+    );
+
+    const inst = await runtime.execute<{ envelopeId: string }>(
+      'sign.template.instantiate',
+      {
+        templateId: tpl.templateId,
+        autoSend: false,
+        recipients: [
+          { roleKey: 'r1', name: 'Nguyen Van A' },
+          { roleKey: 'r2', name: 'Tran Thi B' },
+        ],
+      },
+      { actor: asUser(ownerA), orgId: orgA },
+    );
+
+    const envDetail = await runtime.query<{
+      envelope: { inspectStatus: string; detectedTags: typeof detectedTags };
+      signers: Array<{ name: string; roleKey: string | null; routingOrder: number }>;
+    }>(
+      'sign.envelope.get',
+      { envelopeId: inst.envelopeId },
+      { actor: asUser(ownerA), orgId: orgA },
+    );
+    expect(envDetail.envelope.inspectStatus).toBe('passed');
+    expect(envDetail.envelope.detectedTags).toEqual(detectedTags);
+    expect(envDetail.signers).toEqual([
+      { ...envDetail.signers[0]!, name: 'Tran Thi B', roleKey: 'r2', routingOrder: 1 },
+      { ...envDetail.signers[1]!, name: 'Nguyen Van A', roleKey: 'r1', routingOrder: 2 },
+    ]);
+
+    // Cloning a template back from that envelope preserves roleKey r2 (order 1) and r1 (order 2).
+    const roundTripTpl = await runtime.execute<{ templateId: string }>(
+      'sign.template.create',
+      { title: 'Mau clone giu roleKey', sourceEnvelopeId: inst.envelopeId, copyRolesAndFields: true },
+      { actor: asUser(ownerA), orgId: orgA },
+    );
+    const roundTripDetail = await runtime.query<{
+      roles: Array<{ roleKey: string; routingOrder: number }>;
+    }>('sign.template.get', { templateId: roundTripTpl.templateId }, { actor: asUser(ownerA), orgId: orgA });
+    expect(roundTripDetail.roles.map((r) => [r.roleKey, r.routingOrder])).toEqual([
+      ['r2', 1],
+      ['r1', 2],
+    ]);
+
+    // Hyphenated and 40-char template roleKeys instantiate cleanly into crove_sign.signer.role_key and pass zSignEnvelopeDetail.
+    const longRoleKey = 'dai-dien-phap-luat-cong-ty-doi-tac-chien'; // 40 chars
+    expect(longRoleKey).toHaveLength(40);
+    await runtime.execute(
+      'sign.template.roles_set',
+      {
+        templateId: roundTripTpl.templateId,
+        roles: [
+          { roleKey: 'ben-a', signerRole: 'signer', roleLabel: 'Ben A', routingOrder: 1, deliveryMode: 'link', requireEmailOtp: false },
+          { roleKey: longRoleKey, signerRole: 'approver', roleLabel: 'Dai dien 40 ky tu', routingOrder: 2, deliveryMode: 'link', requireEmailOtp: false },
+        ],
+      },
+      { actor: asUser(ownerA), orgId: orgA },
+    );
+    const hyphenInst = await runtime.execute<{ envelopeId: string }>(
+      'sign.template.instantiate',
+      {
+        templateId: roundTripTpl.templateId,
+        autoSend: false,
+        recipients: [
+          { roleKey: 'ben-a', name: 'Pham Minh C' },
+          { roleKey: longRoleKey, name: 'Le Hoang D' },
+        ],
+      },
+      { actor: asUser(ownerA), orgId: orgA },
+    );
+    const hyphenEnvRaw = await runtime.query('sign.envelope.get', { envelopeId: hyphenInst.envelopeId }, { actor: asUser(ownerA), orgId: orgA });
+    const hyphenEnvParsed = zSignEnvelopeDetail.parse(hyphenEnvRaw);
+    expect(hyphenEnvParsed.signers.map((s) => s.roleKey)).toEqual(['ben-a', longRoleKey]);
+
+    // Direct tenant UPDATE of detected_tags_json on template or envelope is blocked by guard triggers.
+    const client = await appPool!.connect();
+    try {
+      const token = mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
+        userId: ownerA,
+        orgId: orgA,
+        sessionId: null,
+        aal: 'aal1',
+        mfaAt: null,
+      });
+      await client.query('BEGIN');
+      await client.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgA, token]);
+      await expect(
+        client.query("UPDATE crove_sign.template SET detected_tags_json = '[]'::jsonb WHERE org_id = $1 AND id = $2", [
+          orgA,
+          tpl.templateId,
+        ]),
+      ).rejects.toThrow(/SIGN_TEMPLATE_SYSTEM_ONLY/);
+      await client.query('ROLLBACK');
+
+      await client.query('BEGIN');
+      await client.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgA, token]);
+      await expect(
+        client.query("UPDATE crove_sign.envelope SET detected_tags_json = '[]'::jsonb WHERE org_id = $1 AND id = $2", [
+          orgA,
+          inst.envelopeId,
+        ]),
+      ).rejects.toThrow(/ENVELOPE_SYSTEM_ONLY/);
+      await client.query('ROLLBACK');
+    } finally {
+      await client.query('ROLLBACK').catch(() => {});
+      client.release();
+    }
+  });
+
+  it('purges templates, roles, fields, and direct links on org_purge', async () => {
     const fileB = await ingestPdf(ownerB, orgB, 'orgb-purge-tpl');
     const tplB = await runtime.execute<{ templateId: string }>(
       'sign.template.create',

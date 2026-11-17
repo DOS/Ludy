@@ -33,6 +33,7 @@ import {
   SIGNING_TOKEN_WRITE,
   requireSignSourceFile,
   sendDraftEnvelope,
+  zSignInspectDetectedTags,
   type IssuedSigningLink,
 } from './shared.ts';
 import { signTemplateCommands } from './templates.ts';
@@ -230,6 +231,7 @@ const zEnvelopeInspectComplete = z.discriminatedUnion('outcome', [
     outcome: z.literal('passed'),
     pageCount: z.number().int().min(1).max(EXTRACT_LIMITS.maxPdfSignPages),
     pageDimensions: z.array(zPageDimension).min(1).max(EXTRACT_LIMITS.maxPdfSignPages),
+    detectedTags: zSignInspectDetectedTags,
   }),
   z.strictObject({
     envelopeId: zId,
@@ -251,6 +253,7 @@ export const envelopeInspectComplete = defineCommand({
       'inspect_error',
       'page_count',
       'page_dimensions_json',
+      'detected_tags_json',
       'version',
       'updated_at',
     ]),
@@ -273,6 +276,15 @@ export const envelopeInspectComplete = defineCommand({
       if (input.pageDimensions.length !== input.pageCount) {
         throw new DomainError('SIGN_INVALID_INSPECT', 422, 'pageDimensions length must equal pageCount');
       }
+      for (const tag of input.detectedTags) {
+        if (tag.pageNumber > input.pageCount) {
+          throw new DomainError(
+            'SIGN_INVALID_INSPECT',
+            422,
+            `Detected tag pageNumber ${tag.pageNumber} exceeds pageCount ${input.pageCount}`,
+          );
+        }
+      }
       const nextVersion = row.version + 1;
       await ctx.trx
         .updateTable('crove_sign.envelope')
@@ -281,6 +293,7 @@ export const envelopeInspectComplete = defineCommand({
           inspect_error: null,
           page_count: input.pageCount,
           page_dimensions_json: JSON.stringify(input.pageDimensions),
+          detected_tags_json: JSON.stringify(input.detectedTags),
           version: nextVersion,
           updated_at: ctx.now,
         })
@@ -294,10 +307,15 @@ export const envelopeInspectComplete = defineCommand({
         actorType: 'system',
         actorLabel: actorLabelOf(ctx),
         documentSha256: row.source_sha256,
-        payloadJson: { pageCount: input.pageCount },
+        payloadJson: { pageCount: input.pageCount, detectedTagCount: input.detectedTags.length },
         occurredAt: ctx.now,
       });
-      ctx.audit({ envelopeId: row.id, inspectStatus: 'passed', pageCount: input.pageCount });
+      ctx.audit({
+        envelopeId: row.id,
+        inspectStatus: 'passed',
+        pageCount: input.pageCount,
+        detectedTagCount: input.detectedTags.length,
+      });
       return { envelopeId: row.id, inspectStatus: 'passed' as const, pageCount: input.pageCount };
     }
     const nextVersion = row.version + 1;
@@ -306,6 +324,7 @@ export const envelopeInspectComplete = defineCommand({
       .set({
         inspect_status: 'failed',
         inspect_error: input.error,
+        detected_tags_json: null,
         version: nextVersion,
         updated_at: ctx.now,
       })

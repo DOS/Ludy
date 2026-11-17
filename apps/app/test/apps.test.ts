@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { ADMIN_ITEMS, ALL_NAV, BELL_ITEM, APPS, TAB_GROUPS, TOP_ITEMS, appOfPath, installedApps, tabGroupOfPath } from '../src/lib/apps.ts';
+import { ADMIN_ITEMS, ALL_NAV, BELL_ITEM, APPS, TAB_GROUPS, TOP_ITEMS, appOfPath, currentMenuItem, installedApps, tabGroupOfPath } from '../src/lib/apps.ts';
 import { installedItems, screenInstalled } from '../src/lib/modules.ts';
 import { en as enMessages } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
@@ -124,5 +124,37 @@ describe('apps of the shell (#1528, #3225)', () => {
     expect(tabGroupOfPath('/o/acme/social/new')).toBeNull();
     expect(tabGroupOfPath('/o/acme/journal')).toBeNull();
     expect(tabGroupOfPath('/o/acme/documents')?.menu).toBe('inbox');
+  });
+  // The menu marks an item current by `currentMenuItem`, one answer per screen. Walk every item of every menu (and a screen under it, and every tab) and
+  // check the item itself is the one marked: an item whose path is the start of another item's path (Posts `social` and the Inbox `social/inbox`)
+  // would show both at once under the router's fuzzy match (the owner saw it on the Engage Inbox).
+  it('marks exactly one menu item current for every screen of the menus', () => {
+    const entries = [...TOP_ITEMS, ...APPS.flatMap((a) => a.groups.flatMap((g) => g.items)), ...(BELL_ITEM ? [BELL_ITEM] : []), ...ADMIN_ITEMS];
+    const screenOf = (to: string) => to.slice('/o/$slug/'.length);
+    // The old rule, kept here to show the walk would catch it: an item is current when its path is the whole path or the start of it, whole segments.
+    const fuzzy = (to: string, path: string) => path === screenOf(to) || path.startsWith(`${screenOf(to)}/`);
+    const tabMenus = new Set(TAB_GROUPS.map((g) => g.menu));
+    let overlaps = 0;
+    for (const entry of entries) {
+      const screen = screenOf(entry.to);
+      for (const path of [screen, `${screen}/0190-abc`, `${screen.toUpperCase()}/`]) {
+        // The menu item whose tab this screen is (a tab path belongs to its group's item alone, #3225).
+        const owner = tabGroupOfPath(`/o/acme/${path}`)?.menu ?? screen;
+        const current = entries.filter((e) => currentMenuItem(`/o/acme/${path}`) === e.to);
+        expect(current.map((e) => e.to), path).toEqual([`/o/$slug/${owner}`]);
+        if (entries.filter((e) => fuzzy(e.to, path.toLowerCase().replace(/\/$/, ''))).length > 1) overlaps += 1;
+      }
+    }
+    // The Engage menu is the known case: the fuzzy rule alone would light two items there.
+    expect(overlaps).toBeGreaterThan(0);
+    for (const menu of tabMenus) expect(entries.some((e) => screenOf(e.to) === menu), menu).toBe(true);
+    expect(currentMenuItem('/o/acme/social/inbox')).toBe('/o/$slug/social/inbox');
+    expect(currentMenuItem('/o/acme/social/inbox/')).toBe('/o/$slug/social/inbox');
+    expect(currentMenuItem('/o/acme/social')).toBe('/o/$slug/social');
+    expect(currentMenuItem('/o/acme/social/new')).toBe('/o/$slug/social');
+    expect(currentMenuItem('/o/acme/social/notifications')).toBe('/o/$slug/social/notifications');
+    expect(currentMenuItem('/o/acme/documents')).toBe('/o/$slug/inbox');
+    expect(currentMenuItem('/o/acme/nowhere')).toBeNull();
+    expect(currentMenuItem('/clients')).toBeNull();
   });
 });

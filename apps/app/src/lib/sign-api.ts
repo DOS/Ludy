@@ -4,6 +4,7 @@ import { client, fetchFile, uploadFiles } from './api.ts';
 import { apiUrl } from './api-base.ts';
 import type {
   SignDeliveryMode,
+  SignDetectedTag,
   SignEnvelopeStatus,
   SignFieldType,
   SignInspectStatus,
@@ -522,6 +523,7 @@ export interface SignTemplateDetail {
     sourceSha256: string;
     pageCount: number | null;
     pageDimensions: Array<{ page: number; widthPt: number; heightPt: number; rotation: number }> | null;
+    detectedTags?: SignDetectedTag[];
     version: number;
     archivedAt: string | null;
     createdBy: string;
