@@ -6,6 +6,7 @@ import { auth, authErrorText, authFailure, type AuthFailure, verifySecondFactor 
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@crove/ui/components/dialog';
 import { Input } from '@crove/ui/components/input';
 import { Label } from '@crove/ui/components/label';
 import { ConfirmDialog } from './confirm-dialog.tsx';
@@ -95,7 +96,8 @@ export function MfaChallengeForm({ onVerified }: { onVerified: () => Promise<voi
 }
 
 // TOTP enrollment for the signed-in user (Supabase Auth MFA). A verified factor makes the next sign-in aal2.
-export function TwoFactorCard({ onEnabled }: { onEnabled?: () => void }) {
+// `bare` leaves the card frame, the title and the on/off badge to the caller (a dialog that names the step itself).
+export function TwoFactorCard({ onEnabled, bare = false }: { onEnabled?: () => void; bare?: boolean }) {
   const root = useTranslations();
   const t = useTranslations('twoFactor');
   const factors = useFactors();
@@ -170,14 +172,19 @@ export function TwoFactorCard({ onEnabled }: { onEnabled?: () => void }) {
     });
   };
 
+  const Frame = bare ? 'div' : Card;
   return (
-    <Card className="block p-4">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-sm font-medium text-muted-foreground">{t('title')}</p>
-        {factors.isSuccess && (verified.length > 0 ? <Badge variant="success">{t('on')}</Badge> : <Badge variant="secondary">{t('off')}</Badge>)}
-      </div>
-      <p className="mt-2 text-sm text-muted-foreground">{t('intro')}</p>
-      <div className="mt-4 space-y-3">
+    <Frame className={bare ? 'block' : 'block p-4'}>
+      {!bare && (
+        <>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm font-medium text-muted-foreground">{t('title')}</p>
+            {factors.isSuccess && (verified.length > 0 ? <Badge variant="success">{t('on')}</Badge> : <Badge variant="secondary">{t('off')}</Badge>)}
+          </div>
+          <p className="mt-2 text-sm text-muted-foreground">{t('intro')}</p>
+        </>
+      )}
+      <div className={bare ? 'space-y-3' : 'mt-4 space-y-3'}>
         {factors.isLoading && <Spinner />}
         {factors.error && <ErrorText>{authErrorText(failureOf(factors.error), root)}</ErrorText>}
         {enrollment ? (
@@ -240,7 +247,7 @@ export function TwoFactorCard({ onEnabled }: { onEnabled?: () => void }) {
         {error && <ErrorText id={enrollment ? fieldErrorId(codeId) : undefined}>{authErrorText(error, root)}</ErrorText>}
         {notice && <Notice>{t(notice)}</Notice>}
       </div>
-    </Card>
+    </Frame>
   );
 }
 
@@ -287,6 +294,105 @@ export function StepUpPrompt({
       {pending}
       {enroll && <TwoFactorCard onEnabled={onVerified} />}
       {cancel}
+    </div>
+  );
+}
+
+// The step-up of an R3 action as a small dialog over the screen, not a card in the middle of it (#3599): the page behind does not move, Escape or the close button
+// drops the request (`onCancel`), and a fresh code (or a factor enabled here) repeats the refused request through `onVerified` as StepUpPrompt does. Focus goes back to
+// the element `returnFocus` names (the button that asked), else to where it was before. The rule is the kernel's and is not decided here.
+export function StepUpDialog({
+  open,
+  action,
+  onVerified,
+  onCancel,
+  returnFocus,
+}: {
+  open: boolean;
+  action: string;
+  onVerified: () => Promise<void> | void;
+  onCancel: () => void;
+  returnFocus?: () => HTMLElement | null;
+}) {
+  const root = useTranslations();
+  const t = useTranslations('twoFactor.stepUp');
+  const factors = useFactors();
+  const enrolled = (factors.data?.totp.length ?? 0) > 0;
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onCancel();
+      }}
+    >
+      <DialogContent closeLabel={root('common.close')} finalFocus={() => returnFocus?.() ?? true}>
+        <DialogHeader>
+          <DialogTitle>{factors.isSuccess && !enrolled ? t('enrollTitle') : t('title')}</DialogTitle>
+          <DialogDescription>{factors.isSuccess && !enrolled ? t('enrollHere') : t('recent')}</DialogDescription>
+        </DialogHeader>
+        <p className="text-sm text-muted-foreground">{t('pending', { action })}</p>
+        {factors.isLoading && <CardSkeleton />}
+        {factors.error && <ErrorText>{authErrorText(failureOf(factors.error), root)}</ErrorText>}
+        {factors.isSuccess && (enrolled ? <MfaChallengeForm onVerified={onVerified} /> : <TwoFactorCard bare onEnabled={onVerified} />)}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Offered before the first approval needs it (#3599): one sentence on why and a button that opens the setup in a dialog, so the owner is not met by an authenticator
+// app in the middle of a proposal. Shown only while `show` holds (the caller knows who approves) and the account has no verified factor; "Để sau" hides it for this
+// browser session. Whether two-factor is required stays the kernel's rule (R3 step-up).
+const OFFER_HIDDEN_KEY = 'ludy.twoFactorOfferHidden';
+function offerHidden(): boolean {
+  try {
+    return window.sessionStorage.getItem(OFFER_HIDDEN_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function TwoFactorOffer({ show = true }: { show?: boolean }) {
+  const t = useTranslations('twoFactor.offer');
+  const root = useTranslations();
+  const factors = useFactors();
+  const [open, setOpen] = useState(false);
+  const [hidden, setHidden] = useState(offerHidden);
+  if (!show || hidden || !factors.isSuccess || factors.data.totp.length > 0) return null;
+  const hide = () => {
+    try {
+      window.sessionStorage.setItem(OFFER_HIDDEN_KEY, '1');
+    } catch {
+      // Without storage the banner returns on the next visit, which is harmless.
+    }
+    setHidden(true);
+  };
+  return (
+    <div role="region" aria-label={t('title')} data-testid="two-factor-offer" className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border bg-muted/40 p-3">
+      <div className="min-w-0 flex-1 basis-64">
+        <p className="text-sm font-medium text-foreground">{t('title')}</p>
+        <p className="text-sm text-muted-foreground">{t('text')}</p>
+      </div>
+      <div className="flex gap-2">
+        <Button onClick={() => setOpen(true)}>{t('action')}</Button>
+        <Button variant="ghost" onClick={hide}>
+          {t('later')}
+        </Button>
+      </div>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent closeLabel={root('common.close')}>
+          <DialogHeader>
+            <DialogTitle>{t('dialogTitle')}</DialogTitle>
+            <DialogDescription>{t('dialogDescription')}</DialogDescription>
+          </DialogHeader>
+          <TwoFactorCard
+            bare
+            onEnabled={() => {
+              setOpen(false);
+              void factors.refetch();
+            }}
+          />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

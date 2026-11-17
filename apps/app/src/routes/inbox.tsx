@@ -20,7 +20,7 @@ import { ProposalGroups } from '../components/proposal-groups.tsx';
 import { StagedMarketplace } from '../components/staged-marketplace.tsx';
 import { StagedMarketplaceIncome } from '../components/staged-marketplace-income.tsx';
 import { StagedStatements } from '../components/staged-statements.tsx';
-import { StepUpPrompt } from '../components/two-factor.tsx';
+import { StepUpPrompt, TwoFactorOffer } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, Spinner, TableSkeleton } from '../components/ui.tsx';
 import { client, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { listedEntity } from '../lib/legal-entity-choice.ts';
@@ -502,6 +502,8 @@ export function InboxPage() {
         }
       />
       <AiMeter module="finance" className="mb-3" />
+      {/* Two-factor is offered here, before the first approval needs it, to those who may approve (#3599). */}
+      <TwoFactorOffer show={canApproveProposals(org.data?.role, org.data?.permissions)} />
       <input
         ref={inputRef}
         type="file"
