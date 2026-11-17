@@ -400,9 +400,21 @@ describe('parseTodoQuickAdd (#3556)', () => {
       timeZone: VN_TZ,
       dismissedTokens: [tmrMorning.tokens.find((t) => t.kind === 'date')!],
     });
-    expect(tmrNoDate.dueOn).toBeNull();
-    expect(tmrNoDate.dueTime).toBeNull();
-    expect(tmrNoDate.title).toBe('Call tomorrow morning');
+    expect(tmrNoDate.dueOn).toBe('2026-11-17');
+    expect(tmrNoDate.dueTime).toBe('09:00');
+    expect(tmrNoDate.title).toBe('Call tomorrow');
+    expect(tmrNoDate.tokens.map((t) => [t.kind, t.raw])).toEqual([['time', 'morning']]);
+
+    const sangMai = parseTodoQuickAdd('Họp sáng mai', { now: TUE_MORNING, timeZone: VN_TZ });
+    const sangMaiNoDate = parseTodoQuickAdd('Họp sáng mai', {
+      now: TUE_MORNING,
+      timeZone: VN_TZ,
+      dismissedTokens: [sangMai.tokens.find((t) => t.kind === 'date')!],
+    });
+    expect(sangMaiNoDate.dueOn).toBe('2026-11-17');
+    expect(sangMaiNoDate.dueTime).toBe('09:00');
+    expect(sangMaiNoDate.title).toBe('Họp mai');
+    expect(sangMaiNoDate.tokens.map((t) => [t.kind, t.raw])).toEqual([['time', 'sáng']]);
   });
 
   it('handles VN clock+period with nay, avoids thu/sat/toi false positives, and strips empty parens', () => {

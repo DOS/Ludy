@@ -1740,9 +1740,10 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     break;
   }
 
-  // 8. Period adjacent to an already-matched explicit date or weekday recurrence (e.g. "sáng 25/11" or "25/11 chiều"), or preceded by buổi/vào
+  // 8. Period adjacent to an already-matched explicit date, weekday recurrence, or dismissed date chip ("sáng mai", "tomorrow morning")
   const recurrenceAnchorSpans = recurrenceDerivedDueOn !== null ? tokens.filter((t) => t.kind === 'recurrence') : [];
-  for (const ds of [...dateSpans, ...recurrenceAnchorSpans]) {
+  const dismissedDateAnchorSpans = dismissedList.filter((t) => t.kind === 'date');
+  for (const ds of [...dateSpans, ...recurrenceAnchorSpans, ...dismissedDateAnchorSpans]) {
     const beforeW = findAdjacentWordBefore(input, words, ds.start, occupied);
     const beforePeriod = beforeW && isWordSpanAvailable(beforeW) ? matchDayPeriod(beforeW, false, wordBefore(words, beforeW)) : null;
     if (beforeW && beforePeriod) {
