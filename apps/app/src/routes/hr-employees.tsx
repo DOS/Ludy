@@ -3,7 +3,7 @@
 // dependents and, for the one person opened, the identity number and the bank account number, which are sealed under the person's own key and opened only here. Owners and admins
 // only: the server, the database's policies and the menu all say so. Every read of this data is a sensitive query that leaves an audit row first, so the screen asks once and
 // never refetches by itself (no refetch on focus, no polling).
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
 import {
@@ -16,6 +16,7 @@ import {
   HR_PROBATION_ROLE_TIERS,
   HR_REGIONS,
   HR_RELATIONS,
+  SIGN_BY_SOURCE_MAX,
   vietnamToday,
   type HrContractAlert,
   type HrContractForm,
@@ -29,6 +30,7 @@ import {
   type HrRegion,
   type HrRelation,
   type LegalEntity,
+  type SignEnvelopeBySourceItem,
 } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -39,8 +41,10 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { bankByCode, checkLaborContractTerms, deriveFixedTermEndDateIso, type LaborContractFinding } from '@crove/l10n-vn';
 import { BankSelect } from '../components/bank-select.tsx';
+import { HrContractSignHandoff } from '../components/hr-contract-sign-handoff.tsx';
 import { LeaveBalancePanel } from '../components/hr-leave-panel.tsx';
 import { SeveranceCalculatorPanel } from '../components/hr-severance-panel.tsx';
+import { signEnvelopePollMs, useSignAppEnabled } from '../components/quote-sign-handoff.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -964,11 +968,54 @@ export function AddForm({
   );
 }
 
-export function Detail({ employeeId, owner, onClose, departments }: { employeeId: string; owner: boolean; onClose: () => void; departments?: readonly HrDepartmentView[] }) {
+export function Detail({
+  employeeId,
+  owner,
+  onClose,
+  departments,
+  entities,
+  orgName,
+  orgTaxCode,
+  orgAddress,
+}: {
+  employeeId: string;
+  owner: boolean;
+  onClose: () => void;
+  departments?: readonly HrDepartmentView[];
+  entities?: readonly LegalEntity[];
+  orgName?: string | null;
+  orgTaxCode?: string | null;
+  orgAddress?: string | null;
+}) {
   const t = useTranslations('hrEmployees');
   const f = useFormat();
+  const signEnabled = useSignAppEnabled();
   // The opened numbers are not kept in the cache once the card closes (gcTime 0).
   const q = useQuery({ ...orpc.hr.payroll.employees.get.queryOptions({ input: { employeeId } }), ...ONCE, gcTime: 0 });
+  const employmentSourceIdChunks: string[][] = [];
+  if (signEnabled && q.data && !q.data.erased) {
+    const ids = q.data.employments.map((row) => row.id);
+    for (let i = 0; i < ids.length; i += SIGN_BY_SOURCE_MAX) {
+      employmentSourceIdChunks.push(ids.slice(i, i + SIGN_BY_SOURCE_MAX));
+    }
+  }
+  const signEnvelopeQueries = useQueries({
+    queries: employmentSourceIdChunks.map((sourceIds) => ({
+      ...orpc.sign.envelope.by_source.queryOptions({ input: { sourceKind: 'hr_contract', sourceIds } }),
+      enabled: signEnabled && sourceIds.length > 0,
+      retry: false,
+      refetchInterval: (query: { state: { data: { items: SignEnvelopeBySourceItem[] } | undefined } }) =>
+        signEnabled ? signEnvelopePollMs(query.state.data?.items) : false,
+    })),
+  });
+  const signEnvelopesPending = signEnvelopeQueries.some((sq) => sq.isPending);
+  const signEnvelopesError = signEnvelopeQueries.some((sq) => sq.isError);
+  const signEnvelopeByEmployment = new Map<string, SignEnvelopeBySourceItem>();
+  for (const sq of signEnvelopeQueries) {
+    for (const item of sq.data?.items ?? []) {
+      signEnvelopeByEmployment.set(item.sourceId, item);
+    }
+  }
   const deptQuery = useQuery({
     ...orpc.hr.departments.list.queryOptions({ input: { includeArchived: false } }),
     ...ONCE,
@@ -1318,36 +1365,70 @@ export function Detail({ employeeId, owner, onClose, departments }: { employeeId
       <h3 className="mt-5 text-sm font-medium text-foreground">{t('termsTitle')}</h3>
       <DataTable
         head={
-          !e.erased
-            ? [t('effectiveFrom'), t('contractType'), t('contractTermCol'), t('probationCol'), t('region'), t('baseWage'), '']
-            : [t('effectiveFrom'), t('contractType'), t('contractTermCol'), t('probationCol'), t('region'), t('baseWage')]
+          e.erased
+            ? [t('effectiveFrom'), t('contractType'), t('contractTermCol'), t('probationCol'), t('region'), t('baseWage')]
+            : signEnabled
+              ? [t('effectiveFrom'), t('contractType'), t('contractTermCol'), t('probationCol'), t('region'), t('baseWage'), t('sign.column'), '']
+              : [t('effectiveFrom'), t('contractType'), t('contractTermCol'), t('probationCol'), t('region'), t('baseWage'), '']
         }
         numeric={[5]}
       >
-        {e.employments.map((row) => (
-          <TableRow key={row.id} data-testid="hr-terms-row">
-            <TableCell className="px-4 py-3">{f.date(row.effectiveFrom)}</TableCell>
-            <TableCell className="px-4 py-3">{t(`contracts.${row.contractType}`)}</TableCell>
-            <TableCell className="px-4 py-3">{formatContractTermSummary(t, f, row)}</TableCell>
-            <TableCell className="px-4 py-3">{formatProbationSummary(t, f, row)}</TableCell>
-            <TableCell className="px-4 py-3">{t('regionOption', { region: row.region })}</TableCell>
-            <TableCell className={NUM}>{f.money(row.baseWage, 'VND')}</TableCell>
-            {!e.erased && (
-              <TableCell className="px-4 py-3 text-right">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  loading={downloadContractPdf.isPending && downloadContractPdf.variables === row.id}
-                  onClick={() => downloadContractPdf.mutate(row.id)}
-                  data-testid="hr-terms-contract-pdf"
-                >
-                  {t('downloadContractPdf')}
-                </Button>
-              </TableCell>
-            )}
-          </TableRow>
-        ))}
+        {e.employments.map((row) => {
+          const employerEntity = entities?.find((ent) => ent.id === e.legalEntityId);
+          return (
+            <TableRow key={row.id} data-testid="hr-terms-row">
+              <TableCell className="px-4 py-3">{f.date(row.effectiveFrom)}</TableCell>
+              <TableCell className="px-4 py-3">{t(`contracts.${row.contractType}`)}</TableCell>
+              <TableCell className="px-4 py-3">{formatContractTermSummary(t, f, row)}</TableCell>
+              <TableCell className="px-4 py-3">{formatProbationSummary(t, f, row)}</TableCell>
+              <TableCell className="px-4 py-3">{t('regionOption', { region: row.region })}</TableCell>
+              <TableCell className={NUM}>{f.money(row.baseWage, 'VND')}</TableCell>
+              {!e.erased && signEnabled && (
+                <TableCell className="px-4 py-3" data-testid="hr-terms-sign-cell">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <HrContractSignHandoff
+                      source={{
+                        employment: row,
+                        employee: {
+                          id: e.id,
+                          displayName: e.displayName,
+                          legalEntityId: e.legalEntityId,
+                          departmentName: e.departmentName,
+                          jobTitle: e.jobTitle,
+                          address: e.address,
+                          birthDate: e.birthDate,
+                        },
+                        employer: employerEntity
+                          ? { name: employerEntity.name, taxCode: employerEntity.taxCode ?? orgTaxCode ?? null, address: orgAddress ?? null }
+                          : orgName
+                            ? { name: orgName, taxCode: orgTaxCode ?? null, address: orgAddress ?? null }
+                            : null,
+                      }}
+                      canEdit={active}
+                      signEnabled={signEnabled}
+                      envelope={signEnvelopesPending ? null : (signEnvelopeByEmployment.get(row.id) ?? null)}
+                      envelopeLoading={signEnvelopesPending || signEnvelopesError}
+                    />
+                  </div>
+                </TableCell>
+              )}
+              {!e.erased && (
+                <TableCell className="px-4 py-3 text-right">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    loading={downloadContractPdf.isPending && downloadContractPdf.variables === row.id}
+                    onClick={() => downloadContractPdf.mutate(row.id)}
+                    data-testid="hr-terms-contract-pdf"
+                  >
+                    {t('downloadContractPdf')}
+                  </Button>
+                </TableCell>
+              )}
+            </TableRow>
+          );
+        })}
       </DataTable>
       {downloadContractPdf.error && (
         <div className="mt-2" role="alert" data-testid="hr-terms-contract-pdf-error">
@@ -1539,7 +1620,19 @@ export function HrEmployeesPage() {
         error={deptList.error}
       />
       {adding && <AddForm departments={activeDepartments} entities={entities} onClose={() => setAdding(false)} />}
-      {open && <Detail key={open} employeeId={open} owner={owner} departments={activeDepartments} onClose={() => setOpen(null)} />}
+      {open && (
+        <Detail
+          key={open}
+          employeeId={open}
+          owner={owner}
+          departments={activeDepartments}
+          entities={entities}
+          orgName={org.data?.name ?? null}
+          orgTaxCode={org.data?.taxCode ?? null}
+          orgAddress={org.data?.address ?? null}
+          onClose={() => setOpen(null)}
+        />
+      )}
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <Label htmlFor="hr-emp-dept-filter" className="text-xs text-subtle-foreground">

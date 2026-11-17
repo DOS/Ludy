@@ -14,6 +14,12 @@ import { SIGN_BY_SOURCE_MAX, zId, type SignEnvelopeBySourceItem } from '@crove/k
 import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
 import type { SigningEventChainRow } from './events.ts';
 import { parseEventPayload, verifyEventChain } from './events.ts';
+import {
+  applyEnvelopeVisibilityFilter,
+  assertCanAccessEnvelopeRow,
+  canAccessEnvelopeRow,
+  isHrPrivilegedRole,
+} from './hr-visibility.ts';
 import type { SignFieldForSeal, SignSignerForSeal } from './sealing.ts';
 import { parseDetectedTags } from './shared.ts';
 
@@ -71,6 +77,7 @@ export const envelopeList = defineQuery({
       .where('org_id', '=', ctx.orgId);
     if (input.status !== undefined) q = q.where('status', '=', input.status);
     if (input.sourceKind !== undefined) q = q.where('source_kind', '=', input.sourceKind);
+    q = applyEnvelopeVisibilityFilter(q, ctx);
     const rows = await q.orderBy('created_at', 'desc').orderBy('id', 'desc').limit(input.limit).execute();
     if (rows.length === 0) {
       return { items: [] };
@@ -214,24 +221,38 @@ export const envelopeBySource = defineQuery({
       return { items: [] };
     }
     const uniqueSourceIds = [...new Set(input.sourceIds)];
-    const rows = await ctx.trx
+    let q = ctx.trx
       .selectFrom('crove_sign.envelope')
       .select([
         'id',
         'title',
         'status',
+        'source_kind',
         'source_id',
         'seal_status',
+        'sealed_file_id',
         'certificate_code',
         'completed_at',
+        'created_by',
         'created_at',
         'updated_at',
       ])
       .where('org_id', '=', ctx.orgId)
       .where('source_kind', '=', input.sourceKind)
       .where('source_id', 'is not', null)
-      .where('source_id', 'in', uniqueSourceIds)
-      .execute();
+      .where('source_id', 'in', uniqueSourceIds);
+    if (input.sourceKind === 'hr_contract' && !isHrPrivilegedRole(ctx.role)) {
+      const userId = ctx.actor.type === 'user' ? ctx.actor.userId : null;
+      if (!userId) return { items: [] };
+      q = q.where('created_by', '=', userId);
+    }
+    const rawRows = await q.execute();
+    const rows = rawRows.filter((r) =>
+      canAccessEnvelopeRow(ctx, {
+        source_kind: r.source_kind ?? input.sourceKind,
+        created_by: r.created_by ?? '',
+      }),
+    );
 
     const selected = selectLatestEnvelopesBySource(rows, uniqueSourceIds);
     if (selected.length === 0) {
@@ -272,6 +293,7 @@ export const envelopeBySource = defineQuery({
           title: r.title,
           status: r.status,
           sealStatus: r.seal_status,
+          sealedFileId: r.sealed_file_id ?? null,
           certificateCode: r.certificate_code,
           completedAt: isoOrNull(r.completed_at),
           signerCount: counts?.total ?? 0,
@@ -297,6 +319,7 @@ export const envelopeGet = defineQuery({
       .where('id', '=', input.envelopeId)
       .executeTakeFirst();
     if (!env) throw new DomainError('SIGN_ENVELOPE_NOT_FOUND', 404, 'Envelope not found');
+    assertCanAccessEnvelopeRow(ctx, env);
 
     const signers = await ctx.trx
       .selectFrom('crove_sign.signer')
@@ -450,11 +473,12 @@ export const envelopeEvents = defineQuery({
     assertUser(ctx);
     const env = await ctx.trx
       .selectFrom('crove_sign.envelope')
-      .select('id')
+      .select(['id', 'source_kind', 'created_by'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
       .executeTakeFirst();
     if (!env) throw new DomainError('SIGN_ENVELOPE_NOT_FOUND', 404, 'Envelope not found');
+    assertCanAccessEnvelopeRow(ctx, env);
 
     const rows = await ctx.trx
       .selectFrom('crove_sign.signing_event')
@@ -495,6 +519,8 @@ export const envelopeVerify = defineQuery({
       .select([
         'id',
         'status',
+        'source_kind',
+        'created_by',
         'seal_status',
         'source_file_id',
         'source_storage_key',
@@ -514,6 +540,7 @@ export const envelopeVerify = defineQuery({
       .where('id', '=', input.envelopeId)
       .executeTakeFirst();
     if (!env) throw new DomainError('SIGN_ENVELOPE_NOT_FOUND', 404, 'Envelope not found');
+    assertCanAccessEnvelopeRow(ctx, env);
 
     const events = await ctx.trx
       .selectFrom('crove_sign.signing_event')
