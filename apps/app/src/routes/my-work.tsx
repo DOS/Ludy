@@ -821,6 +821,7 @@ function ListEditDialog({
                 type="button"
                 size="sm"
                 variant={color === null ? 'secondary' : 'outline'}
+                aria-pressed={color === null}
                 onClick={() => setColor(null)}
               >
                 {t('listColorNone')}
@@ -831,6 +832,7 @@ function ListEditDialog({
                   type="button"
                   size="sm"
                   variant={color === c ? 'secondary' : 'outline'}
+                  aria-pressed={color === c}
                   onClick={() => setColor(c)}
                   data-testid={`list-color-${c}`}
                 >
