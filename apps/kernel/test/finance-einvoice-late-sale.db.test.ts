@@ -200,7 +200,7 @@ suite('a late sales invoice is declared in the period of its sale (#3535)', () =
     const sale = await lateSale(o);
     const audit = await rows<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.einvoice.issue' AND outcome = 'ok'`, [o.orgId]);
     expect(audit).toHaveLength(1);
-    expect(audit[0]?.detail).toMatchObject({ draftId: sale.draftId, saleDate: SALE_DATE, lateReason: 'Quên lập hóa đơn, phát hiện khi đối chiếu cuối tháng' });
+    expect(audit[0]?.detail).toMatchObject({ draftId: sale.draftId, saleDate: SALE_DATE, lateReason: { redacted: 'pii' } });
     // Once the draft has left draft, neither column changes, by any writer.
     await expect(admin((c) => c.query("UPDATE crove_finance.einvoice_draft SET sale_date = $3 WHERE org_id = $1 AND id = $2", [o.orgId, sale.draftId, `${prevMonth}-01`]))).rejects.toThrow();
     await expect(admin((c) => c.query("UPDATE crove_finance.einvoice_draft SET late_reason = 'đổi' WHERE org_id = $1 AND id = $2", [o.orgId, sale.draftId]))).rejects.toThrow();

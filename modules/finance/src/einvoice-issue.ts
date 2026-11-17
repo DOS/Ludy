@@ -10,7 +10,7 @@
 // Agents never run either: neither declares an agent surface.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { EINVOICE_ISSUE_COMMAND, EINVOICE_ISSUE_KIND, ORDER_SOURCE_KIND, zEInvoiceIssuePayload, zId, type EInvoiceIssueView } from '@crove/kernel-contract';
+import { EINVOICE_ISSUE_COMMAND, EINVOICE_ISSUE_KIND, ORDER_SOURCE_KIND, auditValue, zEInvoiceIssuePayload, zId, type EInvoiceIssueView } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
 import { money } from '@crove/l10n-vn';
@@ -18,12 +18,14 @@ import { computeDraft } from './domain/einvoice-draft.ts';
 import { loadDraft } from './einvoice-drafts.ts';
 import { connectionFor } from './einvoice-job.ts';
 import { EINVOICE_ERROR_CODES } from './domain/einvoice-job.ts';
+import { financeManifest } from './manifest.ts';
 import { databaseToday } from './period-lock.ts';
 
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 
 const pgMessage = (error: unknown) => String((error as { message?: unknown } | null)?.message ?? '');
 
+const DRAFT = financeManifest.tables.crove_finance.einvoice_draft;
 const changed = () => new DomainError('EINVOICE_DRAFT_CHANGED', 409, 'Bản nháp đã thay đổi từ lúc đề xuất này được tạo; hãy tạo đề xuất mới');
 
 // A request for the draft as it stands now is open (waiting or being approved): a second for the same content is refused. A request made for an earlier state of the draft (it was
@@ -127,13 +129,14 @@ export const einvoiceIssue = defineCommand({
       if (pgMessage(error).includes('EINVOICE_ISSUE_FORBIDDEN')) throw new DomainError('EINVOICE_ISSUE_FORBIDDEN', 403, 'Không phát hành được hóa đơn này theo đề xuất này');
       throw error;
     }
-    // A late sale (#3535) is issued on the person's reason: the sale date and the reason are in the audit, the facts the fine would be argued from.
+    // A late sale (#3535) is issued on the person's reason. The sale date is in the audit; the reason is the person's free text (a `pii` column, which can name a buyer), so
+    // the audit keeps its class and the text stays on the draft, frozen with it.
     ctx.audit({
       draftId,
       legalEntityId: draft.legal_entity_id,
       total: money(draft.total).toFixed(),
       currency: draft.currency,
-      ...(draft.sale_date ? { saleDate: draft.sale_date, lateReason: draft.late_reason } : {}),
+      ...(draft.sale_date ? { saleDate: draft.sale_date, lateReason: auditValue(DRAFT, 'late_reason', draft.late_reason) } : {}),
     });
     // The worker's job takes it from here (ids only in the event).
     await ctx.emit('finance.einvoice_issue_requested', { draft_id: draftId });
