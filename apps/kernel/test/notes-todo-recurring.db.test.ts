@@ -583,8 +583,8 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
       o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: raceRoot.todoId, stopSeries: true }),
       o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: raceChild.nextTodoId as string }),
     ]);
-    const listAfterRace = await o.query<{ todos: Todo[] }>(o.mine, 'notes.todo.list', { includeDone: false });
-    const openInRace = listAfterRace.todos.filter((item) => item.seriesId === raceRoot.todoId);
+    const listAfterRace = await o.query<Todo[]>(o.mine, 'notes.todo.list', { view: 'open' });
+    const openInRace = listAfterRace.filter((item) => item.seriesId === raceRoot.todoId);
     expect(openInRace.filter((item) => item.recurrence !== null)).toEqual([]);
     for (const remainingOpen of openInRace) {
       const doneRemaining = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: remainingOpen.id });
