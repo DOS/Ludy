@@ -211,11 +211,13 @@ export function OrgMenu({ slug, orgs, onNavigate }: { slug: string; orgs: readon
           <span className="min-w-0 flex-1 truncate">{current?.name ?? slug}</span>
           <NavIcon name="expand" className="shrink-0 text-muted-foreground" />
         </DropdownMenuTrigger>
-        <DropdownMenuContent container={host} aria-label={t('org')}>
+        {/* Base UI names the menu by its button ("Tổ chức: DOS"). */}
+        <DropdownMenuContent container={host}>
           <DropdownMenuRadioGroup value={slug} onValueChange={(next: string) => next !== slug && switchOrg(navigate, onNavigate, next)}>
             {orgs.map((o) => (
               <DropdownMenuRadioItem key={o.orgId} value={o.slug} label={o.name}>
-                <span className="min-w-0 flex-1 truncate">{o.name}</span>
+                {/* A long company name wraps here, so two similar names stay told apart; the button cuts it off. */}
+                <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{o.name}</span>
               </DropdownMenuRadioItem>
             ))}
           </DropdownMenuRadioGroup>

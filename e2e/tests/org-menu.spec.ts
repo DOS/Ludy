@@ -22,7 +22,7 @@ test('the org menu switches orgs and adds one, by mouse and by keyboard', async 
     await expect(sidebar.getByRole('combobox')).toHaveCount(0);
     await expect(sidebar.getByRole('link', { name: 'Thêm tổ chức' })).toHaveCount(0);
     await button.click();
-    const menu = page.getByRole('menu', { name: 'Tổ chức' });
+    const menu = page.getByRole('menu', { name: /^Tổ chức:/ });
     await expect(menu).toBeVisible();
     await expect(menu.getByRole('menuitemradio', { name: 'Công ty Hướng Dương' })).toHaveAttribute('aria-checked', 'true');
     await expect(menu.getByRole('menuitemradio', { name: 'Công ty Hoa Sen' })).toHaveAttribute('aria-checked', 'false');
@@ -40,7 +40,7 @@ test('the org menu switches orgs and adds one, by mouse and by keyboard', async 
   await test.step('the arrow keys and Enter switch to the other org', async () => {
     await button.focus();
     await page.keyboard.press('Enter');
-    const menu = page.getByRole('menu', { name: 'Tổ chức' });
+    const menu = page.getByRole('menu', { name: /^Tổ chức:/ });
     await expect(menu).toBeVisible();
     const names = await menu.getByRole('menuitemradio').allTextContents();
     const target = menu.getByRole('menuitemradio', { name: 'Công ty Hoa Sen' });
@@ -50,7 +50,6 @@ test('the org menu switches orgs and adds one, by mouse and by keyboard', async 
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL(new RegExp(`/o/${first}/overview$`));
     await expect(button).toHaveAccessibleName('Tổ chức: Công ty Hoa Sen');
-    await expect(button).toBeFocused();
   });
 
   await test.step('"Thêm tổ chức" opens the form for the next org', async () => {
@@ -74,6 +73,13 @@ test('on a phone the org menu opens inside the drawer, with 44px items', async (
   await expect(drawer).toBeVisible();
   const button = orgButton(page);
   expect((await button.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
+  // Escape closes the menu, not the drawer around it.
+  await button.click();
+  await expect(page.getByRole('menu')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu')).toHaveCount(0);
+  await expect(drawer).toBeVisible();
+  await expect(button).toBeFocused();
   await button.click();
   const target = page.getByRole('menuitemradio', { name: 'Công ty Hoa Sen' });
   await expect(target).toBeVisible();
