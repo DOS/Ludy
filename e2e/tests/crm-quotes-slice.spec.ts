@@ -85,6 +85,21 @@ test('a deal becomes a quote, is sent by link, opens on the public page, is acce
       await expect(open.getByText('1.650.000').first()).toBeVisible();
       // Nothing of the app around it: no menu, no sign-in.
       await expect(open.getByRole('navigation')).toHaveCount(0);
+      // On a phone (#3644): each line is a card with its amount in view, nothing scrolls sideways, and the table is not the layout.
+      await open.setViewportSize({ width: 375, height: 800 });
+      const card = open.getByTestId('quote-line-card').first();
+      await expect(card).toBeVisible();
+      // The line's amount is before tax (1.500.000), the total with it (1.650.000): both are on screen.
+      await expect(card.getByTestId('quote-line-amount')).toHaveText(/1\.500\.000/);
+      await expect(card.getByTestId('quote-line-amount')).toBeInViewport({ ratio: 1 });
+      await expect(open.getByTestId('quote-document-totals')).toContainText('1.650.000');
+      await expect(open.getByRole('table')).toBeHidden();
+      expect(await open.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+      // Printed, the table is back, and the cards are not.
+      await open.emulateMedia({ media: 'print' });
+      await expect(open.getByRole('table')).toBeVisible();
+      await expect(open.getByTestId('quote-line-cards')).toBeHidden();
+      await open.emulateMedia({ media: 'screen' });
     } finally {
       await stranger.close();
     }

@@ -4117,9 +4117,10 @@ export const en = {
   quoteDocument: {
     print: 'Print or save as PDF',
     invalid: 'This quote link is not valid, was revoked or has expired.',
+    invalidNext: 'Ask the sender for a new link.',
     title: 'Quote {number}',
     taxCode: 'Tax code: {code}',
-    phone: 'Phone: {phone}',
+    phoneLabel: 'Phone:',
     heading: 'Quote',
     number: 'No. {number}',
     sentOn: 'Sent on: {date}',

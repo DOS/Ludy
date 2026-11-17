@@ -4115,9 +4115,10 @@ export const vi = {
   quoteDocument: {
     print: 'In hoặc lưu PDF',
     invalid: 'Liên kết báo giá không hợp lệ, đã bị thu hồi hoặc đã hết hạn.',
+    invalidNext: 'Hãy nhờ người gửi cho bạn liên kết mới.',
     title: 'Báo giá {number}',
     taxCode: 'Mã số thuế: {code}',
-    phone: 'Điện thoại: {phone}',
+    phoneLabel: 'Điện thoại:',
     heading: 'Báo giá',
     number: 'Số {number}',
     sentOn: 'Ngày gửi: {date}',
