@@ -641,12 +641,12 @@ describe('parseTodoQuickAdd (#3556)', () => {
     expect(codeUnderscore.title).toBe('Review tomorrow_notes');
     expect(codeUnderscore.dueOn).toBeNull();
 
-    // Skipped time ranges suppress inferred day-period default times (sáng nay -> date only, dueTime: null)
+    // Skipped time ranges keep trailing/contextual day-period modifiers in title without inventing a default clock
     const rangeWithPeriodToday = parseTodoQuickAdd('Họp 9:30 - 11:30 sáng nay', {
       now: TUE_MORNING,
       timeZone: VN_TZ,
     });
-    expect(rangeWithPeriodToday.title).toBe('Họp 9:30 - 11:30');
+    expect(rangeWithPeriodToday.title).toBe('Họp 9:30 - 11:30 sáng');
     expect(rangeWithPeriodToday.dueOn).toBe('2026-11-17');
     expect(rangeWithPeriodToday.dueTime).toBeNull();
 
@@ -738,7 +738,22 @@ describe('parseTodoQuickAdd (#3556)', () => {
       dueTime: null,
     });
     expect(parseTodoQuickAdd('Họp 9h-11h sáng ngày mai', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
-      title: 'Họp 9h-11h',
+      title: 'Họp 9h-11h sáng',
+      dueOn: '2026-11-18',
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Họp 9h-11h tối ngày mai', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp 9h-11h tối',
+      dueOn: '2026-11-18',
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Họp 9h-11h tối nay', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp 9h-11h tối',
+      dueOn: '2026-11-17',
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Meeting 9am-11am tomorrow morning', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Meeting 9am-11am morning',
       dueOn: '2026-11-18',
       dueTime: null,
     });
@@ -811,7 +826,7 @@ describe('parseTodoQuickAdd (#3556)', () => {
       dueTime: null,
     });
     expect(parseTodoQuickAdd('Họp 9h-11 sáng nay', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
-      title: 'Họp 9h-11',
+      title: 'Họp 9h-11 sáng',
       dueOn: '2026-11-17',
       dueTime: null,
     });

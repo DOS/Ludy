@@ -100,6 +100,7 @@ export function TodoQuickAddBar({
   const [value, setValue] = useState(initialValue);
   const valueRef = useRef(initialValue);
   valueRef.current = value;
+  const draftVersionRef = useRef(0);
   const mountedRef = useRef(true);
   const [dismissed, setDismissed] = useState<TodoQuickAddToken[]>([]);
   const [emptyWarning, setEmptyWarning] = useState(false);
@@ -129,16 +130,17 @@ export function TodoQuickAddBar({
   const payloadPreview = useMemo(() => buildTodoCreatePayload(value, parsed, currentNow), [value, parsed, currentNow]);
 
   const create = useMutation({
-    mutationFn: async (v: { payload: TodoCreateInput; sentValue: string }) => {
+    mutationFn: async (v: { payload: TodoCreateInput; sentValue: string; draftVersion: number }) => {
       const created = await client.notes.todos.create(v.payload);
       refreshTodos();
       return created;
     },
-    // Ignore stale completions after unmount (e.g. Escape + Alt+Q reopen during slow network) and preserve newer drafts.
+    // Ignore stale completions after unmount (e.g. Escape + Alt+Q reopen during slow network) and preserve newer drafts or chip dismissals.
     onSuccess: (_, sent) => {
       if (!mountedRef.current) return;
-      const willClear = valueRef.current.trim() === sent.sentValue;
+      const willClear = valueRef.current.trim() === sent.sentValue && draftVersionRef.current === sent.draftVersion;
       if (willClear) {
+        draftVersionRef.current += 1;
         valueRef.current = '';
         setValue('');
         setDismissed([]);
@@ -150,7 +152,10 @@ export function TodoQuickAddBar({
   });
 
   const handleChange = (next: string) => {
-    if (next !== value && !nowOverride) setAnchorNow(new Date());
+    if (next !== value) {
+      draftVersionRef.current += 1;
+      if (!nowOverride) setAnchorNow(new Date());
+    }
     setDismissed((prev) => shiftDismissedTokens(value, next, prev));
     valueRef.current = next;
     setValue(next);
@@ -159,6 +164,7 @@ export function TodoQuickAddBar({
   };
 
   const handleDismiss = (token: TodoQuickAddToken) => {
+    draftVersionRef.current += 1;
     if (!nowOverride) setAnchorNow(new Date());
     setDismissed((prev) => [...prev, token]);
     setValue((current) => {
@@ -178,7 +184,9 @@ export function TodoQuickAddBar({
       if (value.trim() !== '') setEmptyWarning(true);
       return;
     }
-    if (!create.isPending) create.mutate({ payload, sentValue: value.trim() });
+    if (!create.isPending) {
+      create.mutate({ payload, sentValue: value.trim(), draftVersion: draftVersionRef.current });
+    }
   };
 
   const todayDay = useMemo(() => localIsoDay(currentNow, timeZone), [currentNow, timeZone]);

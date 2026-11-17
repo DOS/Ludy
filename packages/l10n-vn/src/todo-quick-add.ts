@@ -1338,7 +1338,8 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
 
   // 7. Relative dates & weekdays (with optional adjacent day period)
   let contextPeriod: DayPeriod | undefined;
-  const timeTokenDismissed = hasExplicitClockRange || (opts.dismissedTokens ?? []).some((t) => t.kind === 'time');
+  const timeTokenDismissed = (opts.dismissedTokens ?? []).some((t) => t.kind === 'time');
+  const suppressDefaultPeriodTime = hasExplicitClockRange || timeTokenDismissed;
 
   for (let i = 0; i < words.length; i++) {
     if (explicitDueOn !== null) break;
@@ -1368,10 +1369,10 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
         const p = matchDayPeriod(prev, false, words[startIdx - 2]);
         if (p) {
           contextPeriod = p;
-          if (parsedTime !== null || timeTokenDismissed) {
-            // Clock time already exists (e.g. "sáng mai 9h", "lúc 3h buổi chiều ngày mai") or user dismissed time: merge into date token.
+          if ((parsedTime !== null && !parsedTime.hasAmPm) || (timeTokenDismissed && !hasExplicitClockRange)) {
+            // Clock time already exists (e.g. "sáng mai 9h") or user dismissed clock time: merge period into date token.
             start = expandConnectorBefore(input, words, prev.start, [['vào', 'buổi'], ['buổi'], ['vào']], occupied);
-          } else {
+          } else if (parsedTime === null && !suppressDefaultPeriodTime) {
             // Emit separate time token so user can independently dismiss period vs date.
             const pStart = expandConnectorBefore(input, words, prev.start, [['vào', 'buổi'], ['buổi'], ['vào'], ['lúc']], occupied);
             parsedTime = { hour: PERIOD_DEFAULT_HOUR[p], minute: 0, explicitClock: false, period: p };
@@ -1407,14 +1408,17 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
           explicitDueOn = isTmr ? addLocalDays(today, 1) : today;
           explicitTodaySpecified = !isTmr;
           contextPeriod = enPeriod;
-          if (isTmr && !parsedTime && !timeTokenDismissed) {
+          if (isTmr && !parsedTime && !suppressDefaultPeriodTime) {
             parsedTime = { hour: PERIOD_DEFAULT_HOUR[enPeriod], minute: 0, explicitClock: false, period: enPeriod };
             claimToken('date', w0.start, w0.end);
             dateSpans.push({ start: w0.start, end: w0.end });
             claimToken('time', w1.start, w1.end);
             timeSpans.push({ start: w1.start, end: w1.end });
+          } else if (isTmr && hasExplicitClockRange && !parsedTime) {
+            claimToken('date', w0.start, w0.end);
+            dateSpans.push({ start: w0.start, end: w0.end });
           } else {
-            if (!parsedTime && !timeTokenDismissed) {
+            if (!parsedTime && !suppressDefaultPeriodTime) {
               parsedTime = { hour: PERIOD_DEFAULT_HOUR[enPeriod], minute: 0, explicitClock: false, period: enPeriod };
             }
             claimToken('date', span.start, span.end);
@@ -1431,7 +1435,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       explicitDueOn = today;
       explicitTodaySpecified = true;
       contextPeriod = 'evening';
-      if (!parsedTime && !timeTokenDismissed) {
+      if (!parsedTime && !suppressDefaultPeriodTime) {
         parsedTime = { hour: PERIOD_DEFAULT_HOUR.evening, minute: 0, explicitClock: false, period: 'evening' };
       }
       claimToken('date', w0.start, w0.end);
@@ -1458,9 +1462,12 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
         explicitDueOn = today;
         explicitTodaySpecified = true;
         contextPeriod = pToday;
-        if (parsedTime || timeTokenDismissed) {
+        if (parsedTime || (timeTokenDismissed && !hasExplicitClockRange)) {
           claimToken('date', w0.start, w1.end);
           dateSpans.push(span);
+        } else if (hasExplicitClockRange) {
+          claimToken('date', w1.start, w1.end);
+          dateSpans.push({ start: w1.start, end: w1.end });
         } else {
           parsedTime = { hour: PERIOD_DEFAULT_HOUR[pToday], minute: 0, explicitClock: false, period: pToday };
           claimToken('time', w0.start, w0.end);
@@ -1613,12 +1620,12 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     const beforePeriod = beforeW && isWordSpanAvailable(beforeW) ? matchDayPeriod(beforeW, false, wordBefore(words, beforeW)) : null;
     if (beforeW && beforePeriod) {
       contextPeriod = beforePeriod;
-      if (!parsedTime && !timeTokenDismissed) {
+      if (!parsedTime && !suppressDefaultPeriodTime) {
         const pStart = expandConnectorBefore(input, words, beforeW.start, [['vào', 'buổi'], ['buổi'], ['vào'], ['lúc']], occupied);
         parsedTime = { hour: PERIOD_DEFAULT_HOUR[beforePeriod], minute: 0, explicitClock: false, period: beforePeriod };
         claimToken('time', pStart, beforeW.end);
         timeSpans.push({ start: pStart, end: beforeW.end });
-      } else if (dateSpans.includes(ds)) {
+      } else if (parsedTime && !parsedTime.hasAmPm && dateSpans.includes(ds)) {
         const dateTok = tokens.find((t) => t.kind === 'date' && t.start === ds.start && t.end === ds.end);
         if (dateTok) {
           const pStart = expandConnectorBefore(input, words, beforeW.start, [['vào', 'buổi'], ['buổi'], ['vào']], occupied);
@@ -1633,7 +1640,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     const afterPeriod = afterW && isWordSpanAvailable(afterW) ? matchDayPeriod(afterW, true, wordBefore(words, afterW)) : null;
     if (afterW && afterPeriod) {
       contextPeriod = afterPeriod;
-      if (!parsedTime && !timeTokenDismissed) {
+      if (!parsedTime && !suppressDefaultPeriodTime) {
         parsedTime = { hour: PERIOD_DEFAULT_HOUR[afterPeriod], minute: 0, explicitClock: false, period: afterPeriod };
         claimToken('time', afterW.start, afterW.end);
         timeSpans.push({ start: afterW.start, end: afterW.end });
@@ -1659,7 +1666,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     const span = { start: w0.start, end: w1.end };
     if (!isWordSpanAvailable(span)) continue;
     contextPeriod = p;
-    if (!parsedTime && !timeTokenDismissed) {
+    if (!parsedTime && !suppressDefaultPeriodTime) {
       parsedTime = { hour: PERIOD_DEFAULT_HOUR[p], minute: 0, explicitClock: false, period: p };
       claimToken('time', span.start, span.end);
     } else if (parsedTime && parsedTime.explicitClock && !parsedTime.hasAmPm && !parsedTime.period) {
