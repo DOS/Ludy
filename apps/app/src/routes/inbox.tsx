@@ -301,6 +301,8 @@ export function InboxPage() {
   const inputRef = useRef<HTMLInputElement>(null);
   // Where focus goes once the two-factor offer is gone (#3599).
   const uploadRef = useRef<HTMLButtonElement>(null);
+  // The upload button, unless an upload or a photo is being prepared and it is disabled; then the page's main area, which the shell makes focusable.
+  const focusAfterOffer = () => (uploadRef.current && !uploadRef.current.disabled ? uploadRef.current : document.getElementById('main-content'));
   const [preparing, setPreparing] = useState(false);
   const config = getConfig();
 
@@ -505,7 +507,7 @@ export function InboxPage() {
       />
       <AiMeter module="finance" className="mb-3" />
       {/* Two-factor is offered here, before the first approval needs it, to those who may approve (#3599). */}
-      <TwoFactorOffer show={canApproveProposals(org.data?.role, org.data?.permissions)} returnFocus={() => uploadRef.current} />
+      <TwoFactorOffer show={canApproveProposals(org.data?.role, org.data?.permissions)} returnFocus={focusAfterOffer} />
       <input
         ref={inputRef}
         type="file"
