@@ -76,6 +76,13 @@ export function vatPeriod(period: string): VatPeriod {
   return { period, kind: 'month', from: `${year}-${match[2]}-01`, to: lastDayOfMonth(year, month) };
 }
 
+// The returns that declare `period` (#3535), the one of its own kind first: a month is declared by its own return or by the return of the quarter that holds it, a quarter by its own
+// return or, as a fallback, by the return of its last month. A filer who changed between monthly and quarterly files under the other key, so one key alone would miss the filing.
+export function declaringPeriods(period: VatPeriod): string[] {
+  const [year, month] = period.to.split('-').map(Number) as [number, number];
+  return period.kind === 'month' ? [period.period, vatPeriodOf(period.to, 'quarter')] : [period.period, `${year}-${String(month).padStart(2, '0')}`];
+}
+
 // The period of the same kind that holds `date` (YYYY-MM-DD): "2026-09" or "2026-Q3".
 export function vatPeriodOf(date: string, kind: 'month' | 'quarter'): string {
   const [year, month] = date.split('-').map(Number) as [number, number];

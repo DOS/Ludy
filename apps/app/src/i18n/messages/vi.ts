@@ -5614,7 +5614,7 @@ export const vi = {
     year: 'Năm',
     monthOption: 'Tháng {n}',
     quarterOption: 'Quý {n}',
-    range: 'Từ {from} đến {to}: bán ra theo ngày lập hóa đơn, mua vào theo ngày ghi sổ',
+    range: 'Từ {from} đến {to}: bán ra theo ngày bán (ngày lập hóa đơn khi không có ngày bán riêng), mua vào theo ngày ghi sổ',
     indicatorsTitle: 'Chỉ tiêu tờ khai 01/GTGT',
     indicatorsNote:
       'Chỉ tiêu [25] (thuế GTGT được khấu trừ) và các chỉ tiêu từ [36] do kế toán xác định. Hàng hóa, dịch vụ thuế suất 8% kê khai ở [32], [33] và kèm phụ lục giảm thuế GTGT. Không gồm chứng từ đã hủy.',
@@ -5623,7 +5623,7 @@ export const vi = {
     saleOn: 'bán ngày {date}',
     supplementary: {
       title: 'Cần kê khai bổ sung ({count})',
-      hint: 'Hóa đơn bán ra lập sau khi kỳ này đã khóa sổ hoặc đã nộp tờ khai, nhưng bán trong kỳ này nên phải kê khai ở đây. Kỳ không được mở lại: các hóa đơn này chưa nằm trong số liệu ở trên. Thuế GTGT cần kê khai bổ sung: {vat}.',
+      hint: 'Hóa đơn bán ra được ghi nhận sau khi kỳ này đã khóa sổ hoặc đã nộp tờ khai, nhưng hàng bán trong kỳ này nên thuộc kỳ này. Kỳ không được mở lại: các hóa đơn này nằm ngoài số liệu chính ở trên. Thuế GTGT cần kê khai bổ sung: {vat}.',
     },
     lateSales: {
       title: 'Hóa đơn lập kỳ này cho hàng bán kỳ trước ({count})',

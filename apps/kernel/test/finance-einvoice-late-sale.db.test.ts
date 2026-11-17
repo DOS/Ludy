@@ -85,6 +85,14 @@ suite('a late sales invoice is declared in the period of its sale (#3535)', () =
     }
   }
   const rows = <T extends pg.QueryResultRow = Record<string, unknown>>(text: string, values: unknown[] = []) => admin(async (c) => (await c.query<T>(text, values)).rows);
+  // A row the guards would refuse, written as the database owner with the triggers off (a test fixture: a second issued draft that cannot be made through the offline provider).
+  const fixture = (text: string, values: unknown[]) =>
+    admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(text, values);
+      await c.query('COMMIT');
+    });
   const identity = (name: string) => upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: `${name}-${randomUUID().slice(0, 8)}@job.test`, name: null });
   type Org = { orgId: string; owner: string; admin: string; entityId: string; seriesId: string };
   async function org(options: { connection: boolean } = { connection: true }): Promise<Org> {
@@ -269,6 +277,82 @@ suite('a late sales invoice is declared in the period of its sale (#3535)', () =
       }
     });
   }
+
+  // The period is declared at the EARLIER of its lock and its filing (#3535): an invoice recorded after the first of the two is a supplementary item, one recorded before both stays.
+  const both = {
+    'locked, then filed': async (o: Org) => {
+      await closers.locked(o);
+      await closers.filed(o);
+    },
+    'filed, then locked': async (o: Org) => {
+      await closers.filed(o);
+      await closers.locked(o);
+    },
+  } as const;
+  for (const [order, close] of Object.entries(both) as Array<[keyof typeof both, (typeof both)[keyof typeof both]]>) {
+    it(`treats an invoice recorded between the two as supplementary, the period being ${order}`, async () => {
+      const o = await org();
+      const first = order === 'locked, then filed' ? closers.locked : closers.filed;
+      const second = order === 'locked, then filed' ? closers.filed : closers.locked;
+      await first(o);
+      const sale = await lateSale(o);
+      await second(o);
+      const original = await vat(o, prevMonth);
+      expect(original.output.documents).toEqual([]);
+      expect(original.supplementary.documents.map((d) => d.number)).toEqual([sale.number]);
+      expect((await vat(o, thisMonth)).lateSales).toEqual([expect.objectContaining({ number: sale.number, supplementary: true })]);
+    });
+
+    it(`keeps an invoice recorded before both in the period's figures, the period being ${order}`, async () => {
+      const o = await org();
+      const sale = await lateSale(o);
+      await close(o);
+      const original = await vat(o, prevMonth);
+      expect(original.output.documents.map((d) => d.number)).toEqual([sale.number]);
+      expect(original.supplementary.documents).toEqual([]);
+      expect((await vat(o, thisMonth)).lateSales).toEqual([expect.objectContaining({ number: sale.number, supplementary: false })]);
+    });
+  }
+
+  it('sees the return of a quarterly filer, filed under the quarter, as the declaration of a month in it', async () => {
+    const o = await org();
+    const quarter = `${prevMonth.slice(0, 4)}-Q${Math.ceil(Number(prevMonth.slice(5)) / 3)}`;
+    // The return of the quarter is marked filed (a fixture row when the quarter has not ended, which the command would refuse), then the sale is recorded.
+    await fixture(
+      `INSERT INTO crove_finance.vat_return_filed (org_id, legal_entity_id, period, status, source, carried_in_amount, deductible_amount, carried_out_amount, marked_by)
+       VALUES ($1::uuid, $2::uuid, $3, 'filed', 'entered', 0, 0, 0, $4::uuid)`,
+      [o.orgId, o.entityId, quarter, o.owner],
+    );
+    const sale = await lateSale(o);
+    const original = await vat(o, prevMonth);
+    expect(original.output.documents).toEqual([]);
+    expect(original.supplementary.documents.map((d) => d.number)).toEqual([sale.number]);
+    expect((await vat(o, thisMonth)).lateSales).toEqual([expect.objectContaining({ number: sale.number, originalPeriod: prevMonth, supplementary: true })]);
+  });
+
+  it('gives no sale date to an invoice whose earliest matching draft has none, whatever a later draft says', async () => {
+    const o = await org();
+    const sale = await lateSale(o);
+    // An earlier issued draft of the same entity with the same symbol and number under another template number, and no sale date of its own.
+    const seriesRow = (await rows<{ symbol: string }>('SELECT symbol FROM crove_finance.einvoice_series WHERE org_id = $1 AND id = $2', [o.orgId, o.seriesId]))[0] as { symbol: string };
+    const other = randomUUID();
+    await fixture(
+      `INSERT INTO crove_finance.einvoice_series (org_id, id, legal_entity_id, provider, template_no, symbol, description) SELECT org_id, $3, legal_entity_id, provider, '9', symbol, 'mẫu khác' FROM crove_finance.einvoice_series WHERE org_id = $1 AND id = $2`,
+      [o.orgId, o.seriesId, other],
+    );
+    await fixture(
+      `INSERT INTO crove_finance.einvoice_draft (org_id, legal_entity_id, state, series_id, invoice_date, currency, buyer_kind, subtotal, vat_amount, total, provider_ref, issued_number, issued_at, submitted_at)
+       SELECT org_id, legal_entity_id, 'issued', $3, invoice_date, currency, buyer_kind, subtotal, vat_amount, total, 'ref-earlier', issued_number, issued_at - interval '1 hour', submitted_at - interval '1 hour'
+       FROM crove_finance.einvoice_draft WHERE org_id = $1 AND id = $2`,
+      [o.orgId, sale.draftId, other],
+    );
+    expect(seriesRow.symbol).toMatch(/^C/);
+    // The earlier draft answers and has no sale date: the invoice is of its issue month, not of the sale month the later draft names.
+    expect((await vat(o, prevMonth)).output.documents).toEqual([]);
+    const issued = await vat(o, thisMonth);
+    expect(issued.output.documents).toEqual([expect.objectContaining({ number: sale.number, saleDate: null })]);
+    expect(issued.lateSales).toEqual([]);
+  });
 
   it('does not move an invoice by another org\'s draft with the same symbol and number', async () => {
     const a = await org();

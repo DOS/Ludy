@@ -34,6 +34,7 @@ import {
   form01Indicators,
   previousVatPeriods,
   vatPeriodOf,
+  declaringPeriods,
   reducedRateApplies,
   type InvoiceRateInput,
   sideTotals,
@@ -218,12 +219,12 @@ interface PeriodInvoice {
 }
 
 // The sale date of the e-invoice draft a sales invoice was issued from (#3535), or null: the draft of the same entity, issued, with the invoice's symbol and number (the number as the
-// intake normalizes it: digits without leading zeros). A draft with no sale date of its own gives none. Of two drafts that meet one invoice (a symbol and a number under two template
-// numbers) the one issued first answers, so a row is never doubled.
+// intake normalizes it: digits without leading zeros). Of two drafts that meet one invoice (a symbol and a number under two template numbers) the one issued first answers, so a row
+// is never doubled, and its own answer stands: a draft with no sale date of its own gives none, it never borrows the other's.
 const SALE_DATE: RawBuilder<string | null> = sql`(
   SELECT e.sale_date FROM crove_finance.einvoice_draft e
   JOIN crove_finance.einvoice_series es ON es.org_id = e.org_id AND es.id = e.series_id
-  WHERE e.org_id = d.org_id AND e.legal_entity_id = d.legal_entity_id AND e.state = 'issued' AND e.sale_date IS NOT NULL
+  WHERE e.org_id = d.org_id AND e.legal_entity_id = d.legal_entity_id AND e.state = 'issued'
     AND es.symbol = d.invoice_series
     AND CASE WHEN pg_catalog.btrim(e.issued_number) ~ '^[0-9]+$' THEN pg_catalog.regexp_replace(pg_catalog.btrim(e.issued_number), '^0+(?=[0-9])', '') ELSE pg_catalog.upper(pg_catalog.btrim(e.issued_number)) END = d.invoice_number
   ORDER BY e.issued_at, e.id LIMIT 1)`;
@@ -475,7 +476,8 @@ export async function loadVatReport(ctx: QueryContext, periodText: string, legal
   // change a filed return in silence: it is listed apart, in no main total of either period.
   const chain = await returnChain(ctx, period, legalEntityId);
   const lockedThrough = await periodLockedThrough(ctx, legalEntityId);
-  const closedAt = await declaredAt(ctx, period, legalEntityId, chain.filed?.markedAt ?? null, lockedThrough);
+  const filings = await filingTimes(ctx, legalEntityId, [period.period]);
+  const closedAt = await declaredAt(ctx, period, legalEntityId, filings.get(period.period) ?? null, lockedThrough);
   const recorded = new Map(allSalesRows.map((p) => [p.view.id, p.recordedAt]));
   const isSupplementary = (v: VatInvoiceView) => v.saleDate !== null && v.issueDate > period.to && closedAt !== null && (recorded.get(v.id) as Date) > closedAt;
   const supplementaryDocuments = allSales.filter(isSupplementary);
@@ -493,13 +495,28 @@ export async function loadVatReport(ctx: QueryContext, periodText: string, legal
   };
 }
 
-// When a period was declared (#3535): the moment its return was last marked filed, else, when its last month is locked, the moment that month was locked, else null (not declared).
-// A filed return is the declaration, so it decides when there is one; a lock alone is the books' freeze and decides only without a filing. period_lock keeps one row per entity with
+// When a period was declared (#3535): the earlier of the moment its return was last marked filed (under its own key or the other kind's, declaringPeriods) and, when its last month is
+// locked, the moment that month was locked; the one that exists when only one does; null when neither (not declared). Either closes the period to what is recorded after it: an invoice
+// recorded after the lock or after the filing, whichever came first, is a supplementary item. period_lock keeps one row per entity with
 // the time of its last change and no history, so the lock's own time is the latest successful `finance.period.lock` of the period's last month in the audit log (the month and the
 // entity are in its facts), and the row's time only where no such event exists (a lock the posting guard made). A month unlocked and locked again counts from the new lock. A lock
 // is never reopened here: it only decides which side of it a document was recorded on.
 async function declaredAt(ctx: QueryContext, period: VatPeriod, legalEntityId: string, filedMarkedAt: string | null, lockedThrough: string | null): Promise<Date | null> {
-  if (filedMarkedAt !== null) return new Date(filedMarkedAt);
+  const filed = filedMarkedAt === null ? null : new Date(filedMarkedAt);
+  const locked = await lockedAt(ctx, period, legalEntityId, lockedThrough);
+  if (filed === null) return locked;
+  return locked === null || filed.getTime() <= locked.getTime() ? filed : locked;
+}
+
+// The moment each of `periods` (texts) was last marked filed (#3535), by its own return or, failing that, by the other kind's that declares it (declaringPeriods): null when none.
+async function filingTimes(ctx: QueryContext, legalEntityId: string, periods: string[]): Promise<Map<string, string | null>> {
+  const keys = new Map(periods.map((p) => [p, declaringPeriods(vatPeriod(p))]));
+  const filed = await filedReturns(ctx, legalEntityId, [...new Set([...keys.values()].flat())]);
+  return new Map(periods.map((p) => [p, (keys.get(p) ?? []).map((k) => filed.get(k)?.markedAt).find((m) => m !== undefined) ?? null]));
+}
+
+// When the last month of `period` was locked, or null when it is not locked.
+async function lockedAt(ctx: QueryContext, period: VatPeriod, legalEntityId: string, lockedThrough: string | null): Promise<Date | null> {
   if (lockedThrough === null || lockedThrough < period.to) return null;
   const { rows } = await sql<{ at: Date | null }>`
     SELECT pg_catalog.max(e.occurred_at) AS at FROM crove_kernel.audit_event e
@@ -515,10 +532,10 @@ async function lateSales(ctx: QueryContext, period: VatPeriod, legalEntityId: st
   const rows = await lateSalesIssuedIn(ctx, period, legalEntityId);
   if (rows.length === 0) return [];
   const originals = [...new Set(rows.map((r) => vatPeriodOf(r.saleDate, period.kind)))];
-  const filed = await filedReturns(ctx, legalEntityId, originals);
+  const filings = await filingTimes(ctx, legalEntityId, originals);
   // When each original period was declared (declaredAt); an invoice is a supplementary item there only if it was recorded after that, never one that was in what was declared.
   const closed = new Map<string, Date | null>();
-  for (const original of originals) closed.set(original, await declaredAt(ctx, vatPeriod(original), legalEntityId, filed.get(original)?.markedAt ?? null, lockedThrough));
+  for (const original of originals) closed.set(original, await declaredAt(ctx, vatPeriod(original), legalEntityId, filings.get(original) ?? null, lockedThrough));
   return rows.map((r) => {
     const original = vatPeriodOf(r.saleDate, period.kind);
     const at = closed.get(original) ?? null;

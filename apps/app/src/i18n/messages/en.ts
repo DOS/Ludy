@@ -5618,7 +5618,7 @@ export const en = {
     year: 'Year',
     monthOption: 'Month {n}',
     quarterOption: 'Q{n}',
-    range: 'From {from} to {to}: sales by invoice date, purchases by posting date',
+    range: 'From {from} to {to}: sales by sale date (the invoice date when there is no separate sale date), purchases by posting date',
     indicatorsTitle: 'Form 01/GTGT indicators',
     indicatorsNote:
       'Indicator [25] (deductible input VAT) and those from [36] on are for your accountant to decide. Sales at the reduced 8% rate go in [32] and [33] with the VAT reduction appendix. Voided documents are left out.',
@@ -5627,7 +5627,7 @@ export const en = {
     saleOn: 'sold {date}',
     supplementary: {
       title: 'To declare in a supplementary return ({count})',
-      hint: 'Sales invoices issued after this period was locked or its return filed, for a sale made in this period, so they are declared here. The period is not reopened: these invoices are not in the figures above. VAT to declare in addition: {vat}.',
+      hint: 'Sales invoices recorded after this period was locked or its return filed, for goods sold in this period, so they belong to this period. The period is not reopened: these invoices are outside the main figures above. VAT to declare in addition: {vat}.',
     },
     lateSales: {
       title: 'Invoices issued this period for earlier sales ({count})',

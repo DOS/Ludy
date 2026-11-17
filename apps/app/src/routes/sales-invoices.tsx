@@ -17,7 +17,7 @@ import { Textarea } from '@crove/ui/components/textarea';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { DateInput } from '../components/date-input.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
-import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
+import { DataTable, Empty, ErrorText, FieldError, fieldControl, fieldHintId, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { applyPrevious } from '../lib/invoice-copy.ts';
@@ -276,13 +276,14 @@ function CoworkerBox({ date, room, legalEntityId, invoiceSource, text, onText, o
 }
 
 // The warning of a sale invoiced after its next working day and the reason it asks for (#3535): the invoice is late, the fine is heavy, and the sale is declared in the period of its sale date.
-export function LateSaleNotice({ id, reason, invalid, onChange }: { id: string; reason: string; invalid: boolean; onChange: (reason: string) => void }) {
+export function LateSaleNotice({ id, reason, error, onChange }: { id: string; reason: string; error: string | null; onChange: (reason: string) => void }) {
   const t = useTranslations('salesInvoices');
   return (
     <div className="mt-3 space-y-1" role="alert" data-testid="invoice-late-sale">
       <p className="text-sm font-medium text-foreground">{t('lateWarning')}</p>
       <Label htmlFor={`${id}-late-reason`}>{t('lateReason')}</Label>
-      <Textarea id={`${id}-late-reason`} rows={2} maxLength={500} value={reason} aria-invalid={invalid} placeholder={t('lateReasonPlaceholder')} onChange={(e) => onChange(e.target.value)} data-testid="invoice-late-reason" />
+      <Textarea {...fieldControl(`${id}-late-reason`, { error: error !== null })} rows={2} maxLength={500} value={reason} placeholder={t('lateReasonPlaceholder')} onChange={(e) => onChange(e.target.value)} data-testid="invoice-late-reason" />
+      <FieldError id={`${id}-late-reason`}>{error}</FieldError>
     </div>
   );
 }
@@ -307,8 +308,11 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
   });
   const issues = check.data?.issues ?? [];
   // What cannot be stored yet (a date, a quantity or a price that is not a value): the rest is saved with its issues shown.
-  const unsaveable = issues.some((i) => (['DATE_REQUIRED', 'DATE_INVALID', 'SALE_DATE_INVALID', 'LINE_QUANTITY_INVALID', 'LINE_PRICE_INVALID'] as const).some((c) => c === i.code)) || check.data === undefined;
+  const unsaveable = issues.some((i) => (['DATE_REQUIRED', 'DATE_INVALID', 'SALE_DATE_INVALID', 'SALE_DATE_AFTER_INVOICE', 'LINE_QUANTITY_INVALID', 'LINE_PRICE_INVALID'] as const).some((c) => c === i.code)) || check.data === undefined;
   const bad = (field: string) => issues.some((i) => i.field === field);
+  // The error of each of the two late-sale fields sits under it and is linked to it, and a field shows only its own (#3535).
+  const saleDateIssue = issues.find((i) => i.field === 'saleDate');
+  const lateReasonIssue = issues.find((i) => i.field === 'lateReason');
   const setBuyer = (patch: Partial<FormState['buyer']>) => setForm((s) => ({ ...s, buyerAi: false, buyer: { ...s.buyer, ...patch } }));
   // An edit makes the line the person's own: it loses the coworker's mark.
   const setLine = (index: number, patch: Partial<LineState>) => setForm((s) => ({ ...s, lines: s.lines.map((l, i) => (i === index ? { ...l, ai: null, ...patch } : l)) }));
@@ -324,8 +328,11 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
         </div>
         <div className="space-y-1">
           <Label htmlFor={`${id}-sale-date`}>{t('saleDate')}</Label>
-          <DateInput id={`${id}-sale-date`} value={form.saleDate} max={form.date} aria-invalid={bad('saleDate')} onChange={(saleDate) => setForm((s) => ({ ...s, saleDate }))} />
-          <p className="text-xs text-subtle-foreground">{t('saleDateHint')}</p>
+          <DateInput {...fieldControl(`${id}-sale-date`, { hint: true, error: saleDateIssue !== undefined })} value={form.saleDate} max={form.date} onChange={(saleDate) => setForm((s) => ({ ...s, saleDate }))} />
+          <p id={fieldHintId(`${id}-sale-date`)} className="text-xs text-subtle-foreground">
+            {t('saleDateHint')}
+          </p>
+          <FieldError id={`${id}-sale-date`}>{saleDateIssue ? t(`issues.${saleDateIssue.code satisfies DraftIssueCode}`, { line: '' }) : null}</FieldError>
         </div>
         <div className="space-y-1">
           <Label htmlFor={`${id}-series`}>{t('series')}</Label>
@@ -349,7 +356,7 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
           </NativeSelect>
         </div>
       </div>
-      {check.data?.lateSale && <LateSaleNotice id={id} reason={form.lateReason} invalid={bad('lateReason')} onChange={(lateReason) => setForm((s) => ({ ...s, lateReason }))} />}
+      {check.data?.lateSale && <LateSaleNotice id={id} reason={form.lateReason} error={lateReasonIssue ? t(`issues.${lateReasonIssue.code satisfies DraftIssueCode}`, { line: '' }) : null} onChange={(lateReason) => setForm((s) => ({ ...s, lateReason }))} />}
       <PreviousInvoice
         date={form.date}
         legalEntityId={legalEntityId}
