@@ -67,6 +67,8 @@ describe('checkVatLateSentence', () => {
     const run = (t: string) => checkVatLateSentence(two, { sentence: t });
     expect(run('Kỳ 2026-09 có hóa đơn AA-0001; kỳ 2026-08 có hóa đơn AA-0002.')).toEqual({ kind: 'none', code: 'PERIODS' });
     expect(run('Hóa đơn AA-0001 thuộc kỳ 2026-08; hóa đơn AA-0002.')).toEqual({ kind: 'none', code: 'PERIODS' });
+    expect(run('Kỳ 2026-09 có hóa đơn AA-0001 (2026-08); kỳ 2026-08 có hóa đơn AA-0002 (2026-09).')).toEqual({ kind: 'none', code: 'PERIODS' });
+    expect(run('Hóa đơn AA-0001 thuộc kỳ 2026-08 và kỳ 2026-09; hóa đơn AA-0002 thuộc kỳ 2026-09.')).toEqual({ kind: 'none', code: 'PERIODS' });
     const one: VatLateFacts = { language: 'vi', items: [{ number: 'AA-0001', period: '2026-08', supplementary: true, issuedHere: true }] };
     expect(checkVatLateSentence(one, { sentence: 'Hóa đơn AA-0001 thuộc kỳ 2026-08 và XAA-0001 cũng vậy.' }).kind).toBe('none');
   });

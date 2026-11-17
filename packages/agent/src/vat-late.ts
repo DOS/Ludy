@@ -89,21 +89,21 @@ export function checkVatLateSentence(facts: VatLateFacts, output: { sentence?: s
   const read = text.normalize('NFKC');
   if (CLAIM.some((claim) => claim.test(read))) return { kind: 'none', code: 'CLAIM' };
   if (STATUS.test(read)) return { kind: 'none', code: 'STATUS' };
-  // Every listed invoice is named, whole (not as part of another number), and the first period written after it, before the next invoice, is its own and there is one: a period given to the wrong
+  // Every listed invoice is named, whole (not as part of another number), each followed by exactly one period before the next invoice, its own: a period given to the wrong
   // invoice is false content. No period outside the lists is written, and every period of the lists is.
   const found = facts.items.map((item) => ({ item, at: [...read.matchAll(mention(item.number.normalize('NFKC')))].map((m) => m.index ?? 0) }));
   if (found.some((f) => f.at.length === 0)) return { kind: 'none', code: 'NAMES' };
-  const starts = found.flatMap((f) => f.at).sort((x, y) => x - y);
+  const mentions = found.flatMap((f) => f.at.map((at) => ({ at, item: f.item }))).sort((x, y) => x.at - y.at);
   const periods = new Set(facts.items.map((i) => i.period));
   const written = [...read.matchAll(PERIOD)].map((m) => ({ period: m[0], at: m.index ?? 0 }));
   if (written.some((w) => !periods.has(w.period))) return { kind: 'none', code: 'PERIODS' };
-  for (const { item, at } of found) {
-    for (const start of at) {
-      const end = starts.find((x) => x > start) ?? read.length;
-      // The period must follow its invoice before the next invoice: a period written first ("kỳ 2026-09 có hóa đơn A") or none at all leaves the pairing open, so it is refused.
-      const next = written.find((w) => w.at > start && w.at < end);
-      if (next?.period !== item.period) return { kind: 'none', code: 'PERIODS' };
-    }
+  // A period is written only after its invoice: none before the first invoice, and between one invoice and the next exactly one, the invoice's own. A period written first
+  // ("kỳ 2026-09 có hóa đơn A"), a missing one or an extra one leaves the pairing open, so the sentence is refused.
+  if (written.some((w) => w.at < (mentions[0]?.at ?? 0))) return { kind: 'none', code: 'PERIODS' };
+  for (const [i, m] of mentions.entries()) {
+    const end = mentions[i + 1]?.at ?? read.length;
+    const inside = written.filter((w) => w.at > m.at && w.at < end);
+    if (inside.length !== 1 || inside[0]?.period !== m.item.period) return { kind: 'none', code: 'PERIODS' };
   }
   if (![...periods].every((p) => written.some((w) => w.period === p))) return { kind: 'none', code: 'PERIODS' };
   // The only digits allowed are those of the listed invoices and periods: with those taken out, any digit left is a figure of the model's own (a count, a date, an amount), even when the
