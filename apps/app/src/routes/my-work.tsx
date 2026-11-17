@@ -635,7 +635,6 @@ function TodoEditor({ todo, onClose }: { todo: Todo; onClose: () => void }) {
     onSuccess: (done) => {
       refresh();
       onClose();
-      const savedRecurrence = todo.recurrence ? normalizeTodoRecurrence(todo.recurrence) : null;
       toastWithUndo(
         t('completedToast', { title: todo.title }),
         t('undoneToast', { title: todo.title }),
@@ -643,7 +642,7 @@ function TodoEditor({ todo, onClose }: { todo: Todo; onClose: () => void }) {
           clientForOrg(slug).notes.todos.reopen({
             todoId: todo.id,
             expectedRevision: done.revision,
-            ...(savedRecurrence ? { restoreRecurrence: savedRecurrence } : {}),
+            ...(done.stoppedRecurrence ? { restoreRecurrence: done.stoppedRecurrence } : {}),
             ...(done.stoppedSiblings && done.stoppedSiblings.length > 0 ? { restoreSiblings: done.stoppedSiblings } : {}),
           }),
         { undo: common('undo'), failed: (reason) => common('undoFailed', { reason }) },

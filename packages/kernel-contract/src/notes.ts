@@ -248,6 +248,7 @@ export type TodoWritten = z.infer<typeof zTodoWritten>;
 export const zTodoCompleteResult = zTodoWritten.extend({
   nextTodoId: z.string().nullable().optional(),
   nextDueOn: z.string().nullable().optional(),
+  stoppedRecurrence: zTodoRecurrence.optional(),
   stoppedSiblings: z.array(zTodoStoppedSibling).optional(),
 });
 export type TodoCompleteResult = z.infer<typeof zTodoCompleteResult>;

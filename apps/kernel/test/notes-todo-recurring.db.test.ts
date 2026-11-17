@@ -605,13 +605,14 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
       todoId: month31Root.todoId,
       stopSeries: true,
     });
+    expect(stoppedMonth31.stoppedRecurrence).toEqual({ freq: 'monthly', interval: 1 });
     expect(stoppedMonth31.stoppedSiblings).toEqual([
       { todoId: monthFebChild.nextTodoId, recurrence: { freq: 'monthly', interval: 1, byMonthDay: 31 } },
     ]);
     await o.exec<TodoWritten>(o.mine, 'notes.todo.reopen', {
       todoId: month31Root.todoId,
       expectedRevision: stoppedMonth31.revision,
-      restoreRecurrence: { freq: 'monthly', interval: 1 },
+      restoreRecurrence: stoppedMonth31.stoppedRecurrence,
       restoreSiblings: stoppedMonth31.stoppedSiblings,
     });
     const monthMarChild = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', {

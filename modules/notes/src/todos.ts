@@ -621,6 +621,7 @@ export const todoComplete = defineCommand({
     return {
       ...written(row),
       ...(nextTodoId !== null ? { nextTodoId, nextDueOn } : {}),
+      ...(stopSeries && rule !== null ? { stoppedRecurrence: rule } : {}),
       ...(stoppedSiblings.length > 0 ? { stoppedSiblings } : {}),
     };
   },
