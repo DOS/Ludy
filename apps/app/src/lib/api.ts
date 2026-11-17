@@ -321,6 +321,19 @@ export async function uploadDocument(file: File, legalEntityId?: string): Promis
   return first;
 }
 
+// The signed agreement of an invoice correction (#2504): a PDF or the photo or scan of the signed paper, stored as an evidence file that is never read as an invoice. Returns its file id.
+export async function uploadAgreement(file: File): Promise<string> {
+  if (file.size > MAX_UPLOAD_BYTES) throw tooLarge(file, 'agreement');
+  const form = new FormData();
+  form.append('purpose', 'agreement');
+  form.append('file', file);
+  const response = await retryWhileBusy(() => apiFetch('/api/files', { method: 'POST', body: form }));
+  const { files } = (await response.json()) as { files: Uploaded[] };
+  const first = files[0];
+  if (!first) throw new ClientError('inbox.storageUploadFailed', (t) => t('inbox.storageUploadFailed', { name: file.name }));
+  return first.fileId;
+}
+
 // purpose social: images for a Social post (#372); purpose import: a spreadsheet for a module's import (#465). Both are
 // stored but never read as documents.
 export async function uploadFiles(

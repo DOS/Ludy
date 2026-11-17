@@ -419,4 +419,40 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
     const corrected = await start(o, original.draftId, 'adjustment', { agreementFileId: stored.fileId });
     expect(corrected.correction).toMatchObject({ kind: 'adjustment', agreementFileId: stored.fileId });
   });
+  it('tells the screen the reason codes, which invoice was corrected by which method and whether it was replaced, and checks a correction as it will be stored', async () => {
+    const o = await org();
+    const { provider, control } = sandbox();
+    const query = <T>(name: string, input: unknown) => rt.query<T>(name, input, { actor: asUser(o.owner), orgId: o.orgId });
+    expect(await query('finance.einvoice.correction_options', {})).toEqual({ reasonCodes: REASONS });
+    type Row = { id: string; state: string; buyerKind: string; correction: { kind: string; originalDraftId: string } | null; correctedBy: string | null; replaced: boolean };
+    const list = async () => await query<Row[]>('finance.einvoice_draft.list', {});
+    const row = async (id: string) => (await list()).find((r) => r.id === id) as Row;
+
+    const original = await issued(o, { provider, control });
+    expect(await row(original.draftId)).toMatchObject({ buyerKind: 'business', correction: null, correctedBy: null, replaced: false });
+
+    // An adjustment that was issued: the invoice is corrected by adjustment, the correcting invoice names it, and it is not replaced.
+    const file = await agreementFile(o);
+    const adjusting = (await start(o, original.draftId, 'adjustment', { agreementFileId: file })) as Corrected & { buyer: Record<string, unknown>; seriesId: string };
+    // The live check of the form: a negative price is a difference on an adjusting form, a wrong price on any other.
+    const live = (correction: { kind: 'adjustment' | 'replacement'; originalDraftId: string } | null) =>
+      query<{ issues: Array<{ code: string }> }>('finance.einvoice_draft.check', {
+        date: today(), saleDate: null, lateReason: null, seriesId: adjusting.seriesId, buyer: adjusting.buyer, correction,
+        lines: [{ description: 'Hàng', unit: null, quantity: '1', unitPrice: '-5000', vatRate: '10%' }],
+      });
+    expect((await live({ kind: 'adjustment', originalDraftId: original.draftId })).issues.map((i) => i.code)).not.toContain('LINE_PRICE_INVALID');
+    expect((await live(null)).issues.map((i) => i.code)).toContain('LINE_PRICE_INVALID');
+    await fill(o, adjusting, [{ description: 'Hàng A', unit: null, quantity: '1', unitPrice: '1000', vatRate: '10%' }]);
+    await approve(o, adjusting.id);
+    await run(o, adjusting.id, provider);
+    expect(await row(adjusting.id)).toMatchObject({ correction: { kind: 'adjustment', originalDraftId: original.draftId } });
+    expect(await row(original.draftId)).toMatchObject({ correctedBy: 'adjustment', replaced: false });
+
+    // A replacement that was issued: the original is replaced.
+    const other = await issued(o, { provider, control }, 'individual');
+    const copy = await start(o, other.draftId, 'replacement');
+    await approve(o, copy.id);
+    await run(o, copy.id, provider);
+    expect(await row(other.draftId)).toMatchObject({ correctedBy: 'replacement', replaced: true });
+  });
 });
