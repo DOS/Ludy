@@ -19,14 +19,15 @@ import { Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHea
 import { refreshParties } from './party-edit.tsx';
 import { ErrorText, FieldError, fieldControl, focusFirstInvalid, isEmailAddress, useFieldErrors } from './ui.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { duplicateKey, duplicateSearch, findDuplicate, type DuplicateHit, type DuplicateKey } from '../lib/contact-duplicate.ts';
+import { SEARCH_VALUE_MAX, duplicateKey, duplicateSearch, findDuplicate, type DuplicateHit, type DuplicateKey } from '../lib/contact-duplicate.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
 
 // The search waits for a pause in typing, so one request goes out per word and not per key.
 const PAUSE_MS = 300;
 // The companies shown under the company field, and the contacts the duplicate check reads.
 const COMPANY_CHOICES = 5;
-const DUPLICATE_READ = 10;
+// The search is by a part of a word, so a whole email also finds the longer ones that contain it: enough are read that the exact one is among them.
+const DUPLICATE_READ = 50;
 
 export type AddedContact = { partyId: string; name: string };
 type Kind = 'person' | 'organization';
@@ -48,7 +49,7 @@ function useDuplicate(key: DuplicateKey | null): DuplicateHit | null {
 function useCompanyChoices(text: string, picked: boolean): { choices: Contact[]; pending: boolean } {
   const term = useDebounced(text.trim(), PAUSE_MS);
   const filters: FilterAst = { v: 1, all: [{ field: 'kind', op: 'is', value: 'organization' }, ...(term ? [{ field: 'search', op: 'contains' as const, value: term }] : [])] };
-  const found = useQuery({ ...orpc.crm.contacts.list.queryOptions({ input: { filters, limit: COMPANY_CHOICES } }), enabled: !picked && term !== '' });
+  const found = useQuery({ ...orpc.crm.contacts.list.queryOptions({ input: { filters, limit: COMPANY_CHOICES } }), enabled: !picked && term !== '' && term.length <= SEARCH_VALUE_MAX });
   return { choices: !picked && term !== '' ? (found.data?.items ?? []) : [], pending: term !== text.trim() || found.isPending };
 }
 
@@ -196,10 +197,13 @@ function AddContactForm({ kind, onSaved, onOpenExisting, onCancel }: { kind: Kin
     const typed = companyText.trim();
     if (typed === '') return null;
     // A fresh read of the companies with this name, not the choices shown (which may be for an earlier word or cut at a few): a company that exists is never made twice.
-    const filters: FilterAst = { v: 1, all: [{ field: 'kind', op: 'is', value: 'organization' }, { field: 'search', op: 'contains', value: typed }] };
-    const found = await queryClient.fetchQuery({ ...orpc.crm.contacts.list.queryOptions({ input: { filters, limit: DUPLICATE_READ } }), staleTime: 0 });
-    const have = found.items.find((c) => same(c.name, typed));
-    if (have) return have.id;
+    // A name over the search's limit is not looked up.
+    if (typed.length <= SEARCH_VALUE_MAX) {
+      const filters: FilterAst = { v: 1, all: [{ field: 'kind', op: 'is', value: 'organization' }, { field: 'search', op: 'contains', value: typed }] };
+      const found = await queryClient.fetchQuery({ ...orpc.crm.contacts.list.queryOptions({ input: { filters, limit: DUPLICATE_READ } }), staleTime: 0 });
+      const have = found.items.find((c) => same(c.name, typed));
+      if (have) return have.id;
+    }
     const made = await client.parties.create({ kind: 'organization', name: typed, taxCode: null, address: null, email: null, phone: null });
     // The company exists now: a retry after a failure further on links it and does not make a second one.
     setCompany({ id: made.partyId, name: typed });

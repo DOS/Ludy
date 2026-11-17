@@ -14,6 +14,8 @@ describe('duplicateKey', () => {
     expect(duplicateKey('email', 'an@khach', isEmailAddress)).toEqual({ field: 'email', value: 'an@khach' });
     expect(duplicateKey('email', 'an@', isEmailAddress)).toBeNull();
     expect(duplicateKey('email', '   ', isEmailAddress)).toBeNull();
+    // A value the search refuses (over 100 characters) is not looked up.
+    expect(duplicateKey('email', `${'a'.repeat(95)}@khach.test`, isEmailAddress)).toBeNull();
   });
 
   it('asks for a valid tax code by its normal form', () => {

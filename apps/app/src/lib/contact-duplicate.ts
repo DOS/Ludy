@@ -10,10 +10,13 @@ export type DuplicateHit = Pick<Contact, 'id' | 'kind' | 'name' | 'email' | 'tax
 
 export type DuplicateKey = { field: 'email'; value: string } | { field: 'taxCode'; value: string };
 
+// The contacts search takes a value of at most this many characters (the filter's own limit); a longer one is not looked up.
+export const SEARCH_VALUE_MAX = 100;
+
 // The value to look up, or null when what is typed is not yet a whole email or tax code (no search goes out for a half-typed one).
 export function duplicateKey(field: 'email' | 'taxCode', typed: string, isEmail: (value: string) => boolean): DuplicateKey | null {
   const value = typed.trim();
-  if (value === '') return null;
+  if (value === '' || value.length > SEARCH_VALUE_MAX) return null;
   if (field === 'email') return isEmail(value) ? { field, value: value.toLowerCase() } : null;
   const tax = normalizeTaxCode(value);
   return tax ? { field, value: tax } : null;
