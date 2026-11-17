@@ -49,6 +49,8 @@ export type DraftIssue = z.infer<typeof zDraftIssue>;
 
 const zText = (max: number) => z.string().trim().max(max);
 const zDecimal = z.string().regex(/^\d{1,12}(\.\d{1,6})?$/);
+// A unit price may be signed: the difference of an adjusting invoice is a decrease with a minus (the checks refuse a minus on any other invoice).
+const zSignedDecimal = z.string().regex(/^-?\d{1,12}(\.\d{1,6})?$/);
 
 export const zEInvoiceBuyerIdentity = z.strictObject({ kind: z.enum(BUYER_IDENTITY_KINDS), value: zText(20) });
 export type EInvoiceBuyerIdentity = z.infer<typeof zEInvoiceBuyerIdentity>;
@@ -69,7 +71,7 @@ export const zEInvoiceLineInput = z.strictObject({
   description: zText(500),
   unit: zText(50).nullable(),
   quantity: zDecimal,
-  unitPrice: zDecimal,
+  unitPrice: zSignedDecimal,
   vatRate: zText(20),
 });
 
@@ -122,6 +124,29 @@ export const zEInvoiceDraftCheck = z.object({
 });
 export type EInvoiceDraftCheck = z.infer<typeof zEInvoiceDraftCheck>;
 
+export const EINVOICE_CORRECTION_KINDS = ['adjustment', 'replacement'] as const;
+export type EInvoiceCorrectionKind = (typeof EINVOICE_CORRECTION_KINDS)[number];
+
+export const zEInvoiceCorrection = z.object({
+  kind: z.enum(EINVOICE_CORRECTION_KINDS),
+  originalDraftId: zId,
+  reasonCode: z.string(),
+  agreementFileId: zId.nullable(),
+});
+export type EInvoiceCorrection = z.infer<typeof zEInvoiceCorrection>;
+
+// Starts a correcting draft from an issued invoice (#2504): "Điều chỉnh" or "Thay thế". The original's series, number and date are read from its stored row. The reason code is one of
+// Appendix XVII (refused while the list is empty); a buyer with a tax code needs the signed agreement file, an individual buyer none. EINVOICE_DRAFT_NOT_FOUND (404),
+// EINVOICE_ORIGINAL_NOT_ISSUED, EINVOICE_ORIGINAL_REPLACED, EINVOICE_CORRECTION_METHOD, EINVOICE_CORRECTION_OPEN (409), EINVOICE_REASON_CODE_INVALID, EINVOICE_AGREEMENT_REQUIRED (422),
+// EINVOICE_AGREEMENT_FILE_NOT_FOUND (404).
+export const zEInvoiceStartCorrection = z.strictObject({
+  originalDraftId: zId,
+  kind: z.enum(EINVOICE_CORRECTION_KINDS),
+  reasonCode: z.string().trim().min(1).max(50),
+  agreementFileId: zId.nullable().default(null),
+});
+export type EInvoiceStartCorrection = z.infer<typeof zEInvoiceStartCorrection>;
+
 export const zEInvoiceDraft = z.object({
   id: zId,
   legalEntityId: zId,
@@ -151,6 +176,8 @@ export const zEInvoiceDraft = z.object({
   // After it was sent (#2502): the number the provider gave, and the code of what stopped it (a rejection that sent it back to a draft, a failure), never a provider's text.
   issuedNumber: z.string().nullable(),
   errorCode: z.string().nullable(),
+  // Set on an adjusting or a replacing invoice (#2504): the issued draft it corrects, the method, the reason code and the agreement file; null on an ordinary invoice.
+  correction: zEInvoiceCorrection.nullable().default(null),
 });
 export type EInvoiceDraft = z.infer<typeof zEInvoiceDraft>;
 
@@ -256,8 +283,8 @@ export const EINVOICE_ISSUE_KIND = 'finance.einvoice_issue';
 export const zEInvoiceIssuePayload = z.strictObject({
   draftId: zId,
   contentHash: z.string().regex(/^[0-9a-f]{64}$/),
-  // The draft's total, a decimal string: the database matches it against the draft's own at the approval.
-  amount: z.string().regex(/^(?:0|[1-9][0-9]{0,17})(?:\.[0-9]{1,4})?$/),
+  // The draft's total, a decimal string: the database matches it against the draft's own at the approval. Negative for an adjusting invoice that lowers the original (#2504).
+  amount: z.string().regex(/^-?(?:0|[1-9][0-9]{0,17})(?:\.[0-9]{1,4})?$/),
   currency: z.string().regex(/^[A-Z]{3}$/),
   lineCount: z.number().int().min(1).max(EINVOICE_DRAFT_MAX_LINES),
 });
