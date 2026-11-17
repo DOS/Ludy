@@ -69,14 +69,13 @@ const CLAIM = [
 ];
 // Any wording about what an invoice needs or how it is counted: only the template states that.
 const STATUS = /(?<![\p{L}])(?:bổ sung|kê khai|khai|đã tính|tính vào|được tính|cần|phải|nên|supplement\w*|declar\w*|counted|needs?|must|should|required|amend\w*)(?![\p{L}])/iu;
-// The only words a sentence may hold once its invoices and periods are taken out. A blocklist of status words is never complete ("was included", "requires an additional return"), so the
-// vocabulary is closed instead: enough to say which invoices were issued late for which period, too little to say what any of them needs or how it is counted.
-const ALLOWED_WORDS = new Set(
-  (
-    'hóa đơn bán ra lập muộn đã cho kỳ thuộc và của các là có trong hàng đều những mỗi số tại với tháng quý ' +
-    'invoice invoices issued late for the a an and of to in period periods sale sales belong belongs belonging is are was were this that these each with its their them earlier previous on month quarter all both'
-  ).split(' '),
-);
+// The only shape a sentence may have, after each listed invoice is read as I and each period as P and punctuation is dropped: [invoice words] I [link words] P, once per invoice, joined by "and"
+// or the word "invoice". A free-text check can always be argued around ("this period is for invoice B"), so the shape is closed instead: nothing can sit between an invoice and the next one but
+// "and" and "invoice", so a period can only be read as the one right after its own invoice, and the link words are too few to state what any invoice needs or how it is counted.
+const PREFIX = 'hóa|đơn|invoice|invoices|the|both|all|each|các|những';
+const JOIN = 'and|và';
+const LINK = 'thuộc|kỳ|lập|muộn|cho|đã|belongs|belong|to|period|issued|late|for|was|were|is|are|tháng|quý|month|quarter|của|các|là|có|trong|đều|all|both|each|sale|sales|bán|ra|hàng';
+const SHAPE = new RegExp(`^(?:(?:${PREFIX}) )*I(?: (?:${LINK}))* P(?: (?:${JOIN}|${PREFIX}))*(?: I(?: (?:${LINK}))* P(?: (?:${JOIN}|${PREFIX}))*)*(?: (?:${LINK}|${JOIN}))*$`, 'u');
 const escaped = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // An invoice written whole: no letter, digit or hyphen-joined part on either side, so a listed "0001" is not "AA-0001" and a listed "C-5" is not "AC-5".
 const mention = (number: string): RegExp => new RegExp(`(?<![\\p{L}\\p{N}-])${escaped(number)}(?![\\p{L}\\p{N}]|-[\\p{L}\\p{N}])`, 'gu');
@@ -114,6 +113,10 @@ export function checkVatLateSentence(facts: VatLateFacts, output: { sentence?: s
   if (/\p{Nd}/u.test(rest)) return { kind: 'none', code: 'FIGURES' };
   const problem = statedFiguresProblem(text, [vatLateFactsText(facts)]);
   if (problem) return { kind: 'none', code: problem };
-  if ((rest.toLowerCase().match(/\p{L}+/gu) ?? []).some((word) => !ALLOWED_WORDS.has(word))) return { kind: 'none', code: 'STATUS' };
+  let shaped = read;
+  for (const item of facts.items) shaped = shaped.replace(mention(item.number.normalize('NFKC')), ' ⟦I⟧ ');
+  shaped = shaped.replace(PERIOD, ' ⟦P⟧ ');
+  const tokens = (shaped.match(/⟦[IP]⟧|\p{L}+/gu) ?? []).map((t) => (t === '⟦I⟧' ? 'I' : t === '⟦P⟧' ? 'P' : t.toLowerCase()));
+  if (!SHAPE.test(tokens.join(' '))) return { kind: 'none', code: 'STATUS' };
   return { kind: 'sentence', text };
 }

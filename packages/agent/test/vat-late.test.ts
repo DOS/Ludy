@@ -102,6 +102,15 @@ describe('checkVatLateSentence', () => {
     }
   });
 
+  it('allows only one shape, invoice then its period, so no wording can attach a period to another invoice', () => {
+    const two: VatLateFacts = { language: 'en', items: [{ number: 'AA-0001', period: '2026-08', supplementary: true, issuedHere: true }, { number: 'AA-0002', period: '2026-09', supplementary: false, issuedHere: true }] };
+    const run = (t: string) => checkVatLateSentence(two, { sentence: t });
+    expect(run('Invoice AA-0001 belongs to period 2026-08, and invoice AA-0002 belongs to period 2026-09.').kind).toBe('sentence');
+    expect(run('Invoice AA-0001 belongs to period 2026-08, and this period is for invoice AA-0002 (2026-09).').kind).toBe('none');
+    expect(run('Invoice AA-0001 belongs to period 2026-08, and period is for invoice AA-0002 (2026-09).').kind).toBe('none');
+    expect(run('Both invoices, AA-0001 (2026-08) and AA-0002 (2026-09), were issued late.').kind).toBe('sentence');
+  });
+
   it('allows only a closed vocabulary around the invoices and periods, so a status cannot be said in other words', () => {
     const two: VatLateFacts = { language: 'en', items: [{ number: 'AA-0001', period: '2026-08', supplementary: true, issuedHere: true }, { number: 'AA-0002', period: '2026-09', supplementary: false, issuedHere: true }] };
     const run = (t: string) => checkVatLateSentence(two, { sentence: t });
