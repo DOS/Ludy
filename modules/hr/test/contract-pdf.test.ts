@@ -347,5 +347,8 @@ describe('HR labor contract PDF renderer (#3548)', () => {
     expect(defaultEmployeeCode('01950000-0000-7000-8000-00000000a1b2')).toBe('NV-0000A1B2');
     expect(contractTitle('Đặng Thị Hằng — CN1', '2026-02-01')).toBe('Hợp đồng lao động - Đặng Thị Hằng - CN1 (2026-02-01)');
     expect(contractFilename('Đặng Thị Hằng', '2026-02-01')).toBe('hop-dong-lao-dong-dang-thi-hang-2026-02-01.pdf');
+    expect(contractFilename('---   Đặng   Thị   ---', '2026-02-01')).toBe('hop-dong-lao-dong-dang-thi-2026-02-01.pdf');
+    expect(contractFilename('-'.repeat(50_000), '2026-02-01')).toBe('hop-dong-lao-dong-2026-02-01.pdf');
+    expect(contractFilename(`a${'-'.repeat(50_000)}`, '2026-02-01')).toBe('hop-dong-lao-dong-a-2026-02-01.pdf');
   });
 });

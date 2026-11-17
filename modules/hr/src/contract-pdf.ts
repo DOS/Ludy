@@ -175,16 +175,33 @@ export function contractTitle(displayName: string, effectiveFrom: string): strin
 }
 
 export function contractFilename(displayName: string, effectiveFrom: string): string {
-  const ascii = displayName
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[đĐ]/g, 'd')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 48);
+  const normalized = displayName.normalize('NFD');
+  let slug = '';
+  let pendingDash = false;
+  for (let i = 0; i < normalized.length && slug.length < 48; i += 1) {
+    const code = normalized.charCodeAt(i);
+    if (code >= 0x0300 && code <= 0x036f) continue;
+    let ch = '';
+    if (code === 0x0111 || code === 0x0110) {
+      ch = 'd';
+    } else if (code >= 0x41 && code <= 0x5a) {
+      ch = String.fromCharCode(code + 32);
+    } else if ((code >= 0x61 && code <= 0x7a) || (code >= 0x30 && code <= 0x39)) {
+      ch = String.fromCharCode(code);
+    }
+    if (ch !== '') {
+      if (pendingDash && slug !== '') {
+        if (slug.length + 1 >= 48) break;
+        slug += '-';
+      }
+      slug += ch;
+      pendingDash = false;
+    } else if (slug !== '') {
+      pendingDash = true;
+    }
+  }
   const safeDate = /^\d{4}-\d{2}-\d{2}$/.test(effectiveFrom) ? effectiveFrom : 'contract';
-  return ascii ? `hop-dong-lao-dong-${ascii}-${safeDate}.pdf` : `hop-dong-lao-dong-${safeDate}.pdf`;
+  return slug !== '' ? `hop-dong-lao-dong-${slug}-${safeDate}.pdf` : `hop-dong-lao-dong-${safeDate}.pdf`;
 }
 
 export function wrapLines(fonts: FontSet, text: string, weight: FontWeight, size: number, maxWidth: number): string[] {
