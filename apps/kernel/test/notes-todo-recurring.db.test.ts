@@ -553,6 +553,12 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
     await o.exec<TodoWritten>(o.mine, 'notes.todo.update', {
       todoId: siblingAfterStop.id,
       revision: siblingAfterStop.revision,
+      title: siblingAfterStop.title,
+      details: siblingAfterStop.details,
+      checklist: siblingAfterStop.checklist,
+      dueOn: siblingAfterStop.dueOn,
+      dueTime: siblingAfterStop.dueTime,
+      timeZone: siblingAfterStop.timeZone,
       recurrence: { freq: 'weekly', interval: 2 },
     });
     await o.exec<TodoWritten>(o.mine, 'notes.todo.reopen', {
