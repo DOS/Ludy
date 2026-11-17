@@ -3,6 +3,8 @@
 // and MISA eSign (esignapp.misa.vn Open API) protocols, raw-signature to RFC 5652 CMS assembly,
 // SSRF/host-allowlist validation, USB-token mode rejection, reconcile_only behavior, and secret isolation.
 import { createSign, createVerify, generateKeyPairSync, X509Certificate, type KeyObject } from 'node:crypto';
+import { EventEmitter } from 'node:events';
+import type * as https from 'node:https';
 import { describe, expect, it } from 'vitest';
 import {
   CaProviderError,
@@ -14,8 +16,10 @@ import {
   buildSandboxCmsDer,
   cmsHasCadesSignedAttrs,
   cmsHasSignedAttrs,
+  createPinnedCaFetch,
   getCaAdapter,
   isCmsSignedDataDer,
+  isPublicCaIpAddress,
   isValidDerSequence,
   prepareCadesSignedAttrs,
   preparePadesSignedAttrs,
@@ -92,6 +96,7 @@ function createTestRsaCertAndRawSig(payload: Uint8Array): { certB64: string; raw
 
 const DIGEST = 'd'.repeat(64);
 const { certB64: TEST_CERT_B64, rawSigB64: RAW_RSA_SIG_B64 } = createTestRsaCertAndRawSig(Buffer.from(DIGEST, 'hex'));
+const { certB64: TEST_CA_CERT_B64 } = createTestRsaIdentity('Crove Test Intermediate CA');
 const SAMPLE_CMS_B64 = Buffer.from(buildSandboxCmsDer(DIGEST, 'tx-recorded-1', 'cert-1')).toString('base64');
 const SAMPLE_TS_B64 = Buffer.from(new Uint8Array([0x30, 0x03, 0x02, 0x01, 0x01])).toString('base64');
 const SAMPLE_OCSP_B64 = Buffer.from(new Uint8Array([0x30, 0x03, 0x0a, 0x01, 0x00])).toString('base64');
@@ -300,7 +305,7 @@ describe('VNPT SmartCA adapter (official /sca/sp769 v1 recorded responses)', () 
                 {
                   serial_number: '54010101AABBCCDD',
                   cert_data: TEST_CERT_B64,
-                  chain_data: { ca_cert: TEST_CERT_B64, root_cert: null },
+                  chain_data: { ca_cert: TEST_CA_CERT_B64, root_cert: null },
                 },
               ],
             },
@@ -1126,5 +1131,360 @@ describe('MISA eSign / WeSign adapter (esignapp.misa.vn Open API recorded respon
     await expect(timeoutAdapter.pollStatus(VNPT_SECRET, 'tx-slow-body')).rejects.toMatchObject({
       kind: 'timeout',
     });
+  });
+
+  it('rejects truncated OID_SIGNED_DATA CMS stubs as unavailable instead of wrapping them as raw signatures', async () => {
+    const truncatedCmsB64 = 'MAsGCSqGSIb3DQEHAg==';
+    const truncatedBytes = new Uint8Array(Buffer.from(truncatedCmsB64, 'base64'));
+    expect(isCmsSignedDataDer(truncatedBytes)).toBe(false);
+
+    const { fetchImpl: vnptFetch } = mockFetch({
+      '/sca/sp769/v1/signatures/sign/tx-trunc/status': [
+        {
+          status: 200,
+          body: { status_code: 200, message: 'SUCCESS', data: { tran_code: 'tx-trunc', signatures: [{ signature_value: truncatedCmsB64 }] } },
+        },
+      ],
+    });
+    await expect(getCaAdapter('vnpt_smartca', { fetch: vnptFetch }).fetchSignedCms(VNPT_SECRET, 'tx-trunc')).rejects.toMatchObject({
+      kind: 'unavailable',
+    });
+
+    const { fetchImpl: vtFetch } = mockFetch({
+      '/vtss/service/ras/v1/login': [{ status: 200, body: { access_token: 'vt-tok-trunc', expires_in: 3600 } }],
+      '/vtss/service/requests/status': [{ status: 200, body: { status: '1', signatures: [truncatedCmsB64] } }],
+    });
+    await expect(getCaAdapter('viettel_mysign', { fetch: vtFetch }).fetchSignedCms(VIETTEL_SECRET, 'tx-trunc')).rejects.toMatchObject({
+      kind: 'unavailable',
+    });
+
+    const { fetchImpl: misaFetch } = mockFetch({
+      '/api/auth/api/v1/auth/login-api': [
+        {
+          status: 200,
+          body: { status: { code: 200, error: false }, data: { remoteSigningAccessToken: 'misa-tok-trunc', expiresIn: 3600, user: { id: 'u1' } } },
+        },
+      ],
+      '/external/esrm/service/signing/api/v1/Signing/status/tx-trunc': [
+        { status: 200, body: { status: 'SUCCESS', signatures: [{ signature: truncatedCmsB64 }] } },
+      ],
+    });
+    await expect(getCaAdapter('misa_wesign', { fetch: misaFetch }).fetchSignedCms(MISA_SECRET, 'tx-trunc')).rejects.toMatchObject({
+      kind: 'unavailable',
+    });
+  });
+
+  it('does not treat a serial-filtered VNPT certCache as complete inventory on restored fetchSignedCms', async () => {
+    const idA = createTestRsaIdentity('VNPT A');
+    const idB = createTestRsaIdentity('VNPT B');
+    const rawSigB64 = Buffer.from(createSign('RSA-SHA256').update(Buffer.from(DIGEST, 'hex')).sign(idA.privateKey)).toString('base64');
+    const certRequests: string[] = [];
+
+    const { fetchImpl } = mockFetch({
+      '/sca/sp769/v1/signatures/sign': [
+        { status: 200, body: { status_code: 200, message: 'sig_wait_for_user_confirm', data: { tran_code: 'tx-serial-a' } } },
+      ],
+      '/sca/sp769/v1/signatures/sign/tx-serial-a/status': [
+        { status: 200, body: { status_code: 200, message: 'SUCCESS', data: { tran_code: 'tx-serial-a', signatures: [{ signature_value: rawSigB64 }] } } },
+      ],
+      '/sca/sp769/v1/credentials/get_certificate': [
+        (call) => {
+          const parsed = JSON.parse(call.body ?? '{}') as { serial_number?: string };
+          certRequests.push(parsed.serial_number ?? '');
+          return {
+            status: 200,
+            body: {
+              status_code: 200,
+              data: { user_certificates: [{ serial_number: 'serial-A', cert_data: idA.certB64 }] },
+            },
+          };
+        },
+        (call) => {
+          const parsed = JSON.parse(call.body ?? '{}') as { serial_number?: string };
+          certRequests.push(parsed.serial_number ?? '');
+          return {
+            status: 200,
+            body: {
+              status_code: 200,
+              data: {
+                user_certificates: [
+                  { serial_number: 'serial-A', cert_data: idA.certB64 },
+                  { serial_number: 'serial-B', cert_data: idB.certB64 },
+                ],
+              },
+            },
+          };
+        },
+      ],
+      '/sca/sp769/v1/signatures/sign/tx-restored-b/status': [
+        { status: 200, body: { status_code: 200, message: 'SUCCESS', data: { tran_code: 'tx-restored-b', signatures: [{ signature_value: rawSigB64 }] } } },
+      ],
+    });
+
+    const vnptUnpinnedSecret = JSON.stringify({
+      spId: 'sp769',
+      spPassword: 'vnpt-top-secret-password',
+      userId: '079090000111',
+    });
+    const adapter = getCaAdapter('vnpt_smartca', { fetch: fetchImpl });
+    await adapter.initiateSign(vnptUnpinnedSecret, {
+      idempotencyKey: 'idem-serial-a',
+      digestSha256: DIGEST,
+      certRef: 'serial-A',
+    });
+    const firstCms = await adapter.fetchSignedCms(vnptUnpinnedSecret, 'tx-serial-a');
+    expect(isCmsSignedDataDer(firstCms.cmsDer)).toBe(true);
+
+    // tx-restored-b has no prior in-memory certRef; complete inventory fetch sees 2 certs and refuses ambiguity.
+    await expect(adapter.fetchSignedCms(vnptUnpinnedSecret, 'tx-restored-b')).rejects.toMatchObject({
+      kind: 'unavailable',
+    });
+    expect(certRequests).toEqual(['serial-A', '']);
+  });
+
+  it('throws lost_answer on HTTP 200 initiateSign responses missing status or server transactionId across all HTTP providers', async () => {
+    const vnptCases = [
+      { status_code: 200 },
+      { status_code: 200, message: 'PENDING' },
+      { status_code: 200, data: { tran_code: 'tx-bad-status', tran_status: 999 } },
+    ];
+    for (const body of vnptCases) {
+      const { fetchImpl } = mockFetch({ '/sca/sp769/v1/signatures/sign': [{ status: 200, body }] });
+      await expect(
+        getCaAdapter('vnpt_smartca', { fetch: fetchImpl }).initiateSign(VNPT_SECRET, {
+          idempotencyKey: 'vnpt-incomplete-1',
+          digestSha256: DIGEST,
+          certRef: 'cert-1',
+        }),
+      ).rejects.toMatchObject({ kind: 'lost_answer' });
+    }
+    const { fetchImpl: vnptRejFetch } = mockFetch({
+      '/sca/sp769/v1/signatures/sign': [{ status: 200, body: { status_code: 200, message: 'USER_REJECTED' } }],
+    });
+    await expect(
+      getCaAdapter('vnpt_smartca', { fetch: vnptRejFetch }).initiateSign(VNPT_SECRET, {
+        idempotencyKey: 'vnpt-rej-1',
+        digestSha256: DIGEST,
+        certRef: 'cert-1',
+      }),
+    ).resolves.toMatchObject({ provider: 'vnpt_smartca', status: 'rejected' });
+
+    const vtCases = [{}, { status: 'PENDING' }, { transactionId: 'vt-bad', status: 'MYSTERY' }];
+    for (const body of vtCases) {
+      const { fetchImpl } = mockFetch({
+        '/vtss/service/ras/v1/login': [{ status: 200, body: { access_token: 'vt-tok-inc', expires_in: 3600 } }],
+        '/vtss/service/signHash': [{ status: 200, body }],
+      });
+      await expect(
+        getCaAdapter('viettel_mysign', { fetch: fetchImpl }).initiateSign(VIETTEL_SECRET, {
+          idempotencyKey: 'vt-incomplete-1',
+          digestSha256: DIGEST,
+          certRef: 'cert-1',
+        }),
+      ).rejects.toMatchObject({ kind: 'lost_answer' });
+    }
+    const { fetchImpl: vtRejFetch } = mockFetch({
+      '/vtss/service/ras/v1/login': [{ status: 200, body: { access_token: 'vt-tok-rej', expires_in: 3600 } }],
+      '/vtss/service/signHash': [{ status: 200, body: { status: 'REJECTED' } }],
+    });
+    await expect(
+      getCaAdapter('viettel_mysign', { fetch: vtRejFetch }).initiateSign(VIETTEL_SECRET, {
+        idempotencyKey: 'vt-rej-1',
+        digestSha256: DIGEST,
+        certRef: 'cert-1',
+      }),
+    ).resolves.toMatchObject({ provider: 'viettel_mysign', status: 'rejected' });
+
+    const misaCases = [{}, { Status: 'PENDING' }, { TransactionID: 'misa-bad', Status: 'MYSTERY' }];
+    for (const body of misaCases) {
+      const { fetchImpl } = mockFetch({
+        '/api/auth/api/v1/auth/login-api': [
+          {
+            status: 200,
+            body: { status: { code: 200, error: false }, data: { remoteSigningAccessToken: 'misa-tok-inc', expiresIn: 3600, user: { id: 'u1' } } },
+          },
+        ],
+        '/external/esrm/service/signing/api/v1/Signing/hash': [{ status: 200, body }],
+      });
+      await expect(
+        getCaAdapter('misa_wesign', { fetch: fetchImpl }).initiateSign(MISA_SECRET, {
+          idempotencyKey: 'misa-incomplete-1',
+          digestSha256: DIGEST,
+          certRef: 'cert-1',
+        }),
+      ).rejects.toMatchObject({ kind: 'lost_answer' });
+    }
+    const { fetchImpl: misaRejFetch } = mockFetch({
+      '/api/auth/api/v1/auth/login-api': [
+        {
+          status: 200,
+          body: { status: { code: 200, error: false }, data: { remoteSigningAccessToken: 'misa-tok-rej', expiresIn: 3600, user: { id: 'u1' } } },
+        },
+      ],
+      '/external/esrm/service/signing/api/v1/Signing/hash': [{ status: 200, body: { Status: 'REJECTED' } }],
+    });
+    await expect(
+      getCaAdapter('misa_wesign', { fetch: misaRejFetch }).initiateSign(MISA_SECRET, {
+        idempotencyKey: 'misa-rej-1',
+        digestSha256: DIGEST,
+        certRef: 'cert-1',
+      }),
+    ).resolves.toMatchObject({ provider: 'misa_wesign', status: 'rejected' });
+
+    const { fetchImpl: misaV2PendingFetch } = mockFetch({
+      '/api/auth/api/v1/auth/login-api': [
+        {
+          status: 200,
+          body: { status: { code: 200, error: false }, data: { remoteSigningAccessToken: 'misa-tok-v2p', expiresIn: 3600, user: { id: 'u1' } } },
+        },
+      ],
+      '/external/esrm/service/signing/api/v1/Signing/hash': [
+        {
+          status: 200,
+          body: { status: { code: 200, error: false }, data: { transactionId: 'misa-v2-pending' } },
+        },
+      ],
+    });
+    await expect(
+      getCaAdapter('misa_wesign', { fetch: misaV2PendingFetch }).initiateSign(MISA_SECRET, {
+        idempotencyKey: 'misa-v2p-1',
+        digestSha256: DIGEST,
+        certRef: 'cert-1',
+      }),
+    ).resolves.toMatchObject({ provider: 'misa_wesign', externalTxId: 'misa-v2-pending', status: 'pending' });
+  });
+
+  it('blocks unsafe DNS resolutions, IPv4-mapped IPv6 addresses, and HTTP 3xx redirects in default pinned CA fetch', async () => {
+    expect(isPublicCaIpAddress('1.1.1.1')).toBe(true);
+    expect(isPublicCaIpAddress('203.113.131.5')).toBe(true);
+    expect(isPublicCaIpAddress('127.0.0.1')).toBe(false);
+    expect(isPublicCaIpAddress('169.254.169.254')).toBe(false);
+    expect(isPublicCaIpAddress('::1')).toBe(false);
+    expect(isPublicCaIpAddress('::127.0.0.1')).toBe(false);
+    expect(isPublicCaIpAddress('::ffff:127.0.0.1')).toBe(false);
+    expect(isPublicCaIpAddress('::ffff:1.1.1.1')).toBe(false);
+    expect(isPublicCaIpAddress('fe80::1%eth0')).toBe(false);
+
+    let socketsOpened = 0;
+    const blockedDnsFetch = createPinnedCaFetch({
+      dnsLookup: async () => [
+        { address: '203.113.131.5', family: 4 },
+        { address: '192.168.10.2', family: 4 },
+      ],
+      requestImpl: (() => {
+        socketsOpened += 1;
+        throw new Error('must not open socket');
+      }) as unknown as typeof https.request,
+    });
+    await expect(
+      getCaAdapter('vnpt_smartca', { fetch: blockedDnsFetch }).testConnection(VNPT_SECRET),
+    ).rejects.toMatchObject({ kind: 'unsafe_url' });
+    expect(socketsOpened).toBe(0);
+
+    const redirectPinnedFetch = createPinnedCaFetch({
+      dnsLookup: async () => [{ address: '203.113.131.5', family: 4 }],
+      requestImpl: ((_opts: unknown, cb: (res: EventEmitter & { statusCode?: number; headers: Record<string, string>; destroy: () => void }) => void) => {
+        const req = Object.assign(new EventEmitter(), {
+          write: () => true,
+          end: () => {
+            const res = Object.assign(new EventEmitter(), {
+              statusCode: 302,
+              headers: { location: 'https://127.0.0.1/steal' },
+              destroy: () => undefined,
+            });
+            cb(res);
+          },
+          destroy: () => undefined,
+        });
+        return req;
+      }) as unknown as typeof https.request,
+    });
+    await expect(
+      getCaAdapter('vnpt_smartca', { fetch: redirectPinnedFetch }).initiateSign(VNPT_SECRET, {
+        idempotencyKey: 'vnpt-redir-1',
+        digestSha256: DIGEST,
+        certRef: 'cert-1',
+      }),
+    ).rejects.toMatchObject({ kind: 'unsafe_url' });
+
+    // Hanging DNS lookup respects request AbortSignal timeoutMs instead of hanging past timeout.
+    const hangingDnsFetch = createPinnedCaFetch({
+      dnsLookup: () => new Promise(() => undefined),
+      requestImpl: (() => {
+        throw new Error('must not open socket on hanging DNS');
+      }) as unknown as typeof https.request,
+    });
+    await expect(
+      getCaAdapter('vnpt_smartca', { fetch: hangingDnsFetch, timeoutMs: 20 }).pollStatus(VNPT_SECRET, 'tx-dns-hang'),
+    ).rejects.toMatchObject({ kind: 'timeout' });
+  });
+
+  it('prepends inline signer leaf cert ahead of separate CA chain when wrapping raw signatures', async () => {
+    const signer = createTestRsaIdentity('Leaf Signer');
+    const ca = createTestRsaIdentity('Intermediate CA');
+    const rawSigB64 = Buffer.from(createSign('RSA-SHA256').update(Buffer.from(DIGEST, 'hex')).sign(signer.privateKey)).toString('base64');
+
+    const { fetchImpl: misaFetch } = mockFetch({
+      '/api/auth/api/v1/auth/login-api': [
+        {
+          status: 200,
+          body: { status: { code: 200, error: false }, data: { remoteSigningAccessToken: 'misa-tok-chain', expiresIn: 3600, user: { id: 'u1' } } },
+        },
+      ],
+      '/external/esrm/service/signing/api/v1/Signing/status/tx-chain-1': [
+        {
+          status: 200,
+          body: {
+            status: 'SUCCESS',
+            signatures: [
+              {
+                signature: rawSigB64,
+                certificate: signer.certB64,
+                CertificateChain: [ca.certB64],
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const misaCms = await getCaAdapter('misa_wesign', { fetch: misaFetch }).fetchSignedCms(MISA_SECRET, 'tx-chain-1');
+    expect(misaCms.certificateChainPem).toHaveLength(2);
+    const [misaLeafPem, misaCaPem] = misaCms.certificateChainPem ?? [];
+    if (!misaLeafPem || !misaCaPem) throw new Error('expected 2 certs in MISA chain');
+    expect(new X509Certificate(misaLeafPem).subject).toContain('CN=Leaf Signer');
+    expect(new X509Certificate(misaCaPem).subject).toContain('CN=Intermediate CA');
+    const fullHex = Buffer.from(misaCms.cmsDer).toString('hex');
+    const signerDerHex = Buffer.from(signer.certDer).toString('hex');
+    const caDerHex = Buffer.from(ca.certDer).toString('hex');
+    expect(fullHex.indexOf(signerDerHex)).toBeGreaterThanOrEqual(0);
+    expect(fullHex.indexOf(caDerHex)).toBeGreaterThan(fullHex.indexOf(signerDerHex));
+
+    const { fetchImpl: vnptFetch } = mockFetch({
+      '/sca/sp769/v1/signatures/sign/tx-chain-vnpt/status': [
+        {
+          status: 200,
+          body: {
+            status_code: 200,
+            message: 'SUCCESS',
+            data: {
+              tran_code: 'tx-chain-vnpt',
+              signatures: [
+                {
+                  signature_value: rawSigB64,
+                  cert_data: signer.certB64,
+                  certificate_chain: [ca.certB64, signer.certB64],
+                },
+              ],
+            },
+          },
+        },
+      ],
+    });
+    const vnptCms = await getCaAdapter('vnpt_smartca', { fetch: vnptFetch }).fetchSignedCms(VNPT_SECRET, 'tx-chain-vnpt');
+    expect(vnptCms.certificateChainPem).toHaveLength(2);
+    const [vnptLeafPem, vnptCaPem] = vnptCms.certificateChainPem ?? [];
+    if (!vnptLeafPem || !vnptCaPem) throw new Error('expected 2 certs in VNPT chain');
+    expect(new X509Certificate(vnptLeafPem).subject).toContain('CN=Leaf Signer');
+    expect(new X509Certificate(vnptCaPem).subject).toContain('CN=Intermediate CA');
   });
 });

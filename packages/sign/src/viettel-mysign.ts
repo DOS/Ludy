@@ -5,6 +5,7 @@
 // keeps credentials/bearer tokens opaque, blocks blind re-initiate when transactionId was lost, and wraps raw signatures in CMS.
 import {
   decodeDerCertificate,
+  mergeInlineCertChainDer,
   resolveCmsOrWrapRawSignature,
   selectRemoteCertificateChain,
 } from './cms-der.ts';
@@ -14,6 +15,7 @@ import {
   assertSafeHostAllowlist,
   decodeBase64Bytes,
   decodeDerSequenceBase64,
+  defaultPinnedCaFetch,
   isRecord,
   isUsbTokenMode,
   normalizeFetchCmsQuery,
@@ -150,7 +152,7 @@ function extractViettelCertificates(json: unknown): ViettelCertRecord[] {
 }
 
 export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSigningAdapter {
-  const fetchImpl = options.fetch ?? fetch;
+  const fetchImpl = options.fetch ?? defaultPinnedCaFetch;
   const now = options.now ?? (() => new Date());
   const timeoutMs = options.timeoutMs ?? DEFAULT_CA_TIMEOUT_MS;
   const allowedHosts = assertSafeHostAllowlist(options.allowedHosts ?? VIETTEL_MYSIGN_HOSTS);
@@ -326,20 +328,28 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
     });
   }
 
-  function parseSession(json: unknown, fallbackIdempotencyKey: string, fallbackTxId: string): CaSignSession {
+  function parseSession(
+    json: unknown,
+    fallbackIdempotencyKey: string,
+    fallbackTxId: string,
+    unrecognizedErrorKind: 'unavailable' | 'lost_answer' = 'unavailable',
+    allowFallbackTxIdOnTerminalOnly = false,
+  ): CaSignSession {
     const data = pickCaseInsensitive(json, 'data') ?? json;
-    const externalTxId =
-      readText(pickCaseInsensitive(data, 'transactionId')) ??
-      readText(pickCaseInsensitive(data, 'transaction_id')) ??
-      fallbackTxId;
-    if (!externalTxId) {
-      throw new CaProviderError('unavailable', 'missing transactionId in Viettel MySign response');
-    }
     const status = mapViettelStatus(
       pickCaseInsensitive(data, 'status') ?? pickCaseInsensitive(data, 'transactionStatus'),
     );
     if (!status) {
-      throw new CaProviderError('unavailable', 'unrecognized Viettel MySign status');
+      throw new CaProviderError(unrecognizedErrorKind, 'unrecognized Viettel MySign status');
+    }
+    const serverTxId =
+      readText(pickCaseInsensitive(data, 'transactionId')) ??
+      readText(pickCaseInsensitive(data, 'transaction_id'));
+    const allowFallback =
+      !allowFallbackTxIdOnTerminalOnly || status === 'rejected' || status === 'expired' || status === 'failed';
+    const externalTxId = serverTxId ?? (allowFallback ? fallbackTxId : '');
+    if (!externalTxId) {
+      throw new CaProviderError(unrecognizedErrorKind, 'missing transactionId in Viettel MySign response');
     }
     return {
       provider: 'viettel_mysign',
@@ -536,9 +546,8 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
         readCodeText(pickCaseInsensitive(data, 'error_code')) ??
         readCodeText(pickCaseInsensitive(data, 'errorCode'));
       const hasBodyError = bodyErrCode !== null && !['0', '200', 'SUCCESS'].includes(bodyErrCode.toUpperCase());
-      const explicitStatus = mapViettelStatus(
-        pickCaseInsensitive(data, 'status') ?? pickCaseInsensitive(data, 'transactionStatus'),
-      );
+      const rawStatus = pickCaseInsensitive(data, 'status') ?? pickCaseInsensitive(data, 'transactionStatus');
+      const explicitStatus = mapViettelStatus(rawStatus);
       const txId =
         readText(pickCaseInsensitive(data, 'transactionId')) ??
         readText(pickCaseInsensitive(data, 'transaction_id'));
@@ -551,7 +560,7 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
           errorCode: bodyErrCode,
         };
       }
-      if (!explicitStatus && txId) {
+      if ((rawStatus === undefined || rawStatus === null) && txId) {
         rememberCertRef(secretKey, txId, valid.certRef);
         return {
           provider: 'viettel_mysign',
@@ -564,7 +573,7 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
           errorCode: null,
         };
       }
-      const session = parseSession(res.json, valid.idempotencyKey, txId ?? '');
+      const session = parseSession(res.json, valid.idempotencyKey, valid.idempotencyKey, 'lost_answer', true);
       rememberCertRef(secretKey, session.externalTxId, valid.certRef);
       return session;
     },
@@ -600,9 +609,13 @@ export function createViettelMySignAdapter(options: CaAdapterOptions = {}): CaSi
         readText(pickCaseInsensitive(data, 'credentialID')) ??
         readText(pickCaseInsensitive(data, 'credential_id'));
       const rawChain = pickCaseInsensitive(data, 'certificateChain');
-      const inlineChainDer = Array.isArray(rawChain)
+      const parsedInlineChain = Array.isArray(rawChain)
         ? rawChain.map(decodeDerCertificate).filter((v): v is Uint8Array => v !== null)
         : [];
+      const inlineSingleCert = decodeDerCertificate(
+        pickCaseInsensitive(data, 'certificate') ?? pickCaseInsensitive(data, 'certBase64'),
+      );
+      const inlineChainDer = mergeInlineCertChainDer(inlineSingleCert, parsedInlineChain);
 
       const { cmsDer, subFilter, certificateChainPem } = await resolveCmsOrWrapRawSignature({
         providerLabel: 'Viettel MySign',

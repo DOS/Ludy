@@ -6,7 +6,9 @@ import { describe, expect, it } from 'vitest';
 import {
   CA_PROVIDERS,
   CaProviderError,
+  createPinnedCaFetch,
   getCaAdapter,
+  isPublicCaIpAddress,
 } from '../../src/index.ts';
 
 const DIGEST = createHash('sha256').update('ludy-invariant-digest').digest('hex');
@@ -131,6 +133,34 @@ describe('CA adapter security invariants', () => {
         ).rejects.toMatchObject({ kind: 'usb_token_unsupported' });
       }
       expect(fetchCalls).toBe(0);
+    }
+  });
+
+  it('rejects private/loopback/metadata DNS resolutions in createPinnedCaFetch before opening sockets', async () => {
+    expect(isPublicCaIpAddress('203.113.131.1')).toBe(true);
+    expect(isPublicCaIpAddress('127.0.0.1')).toBe(false);
+    expect(isPublicCaIpAddress('169.254.169.254')).toBe(false);
+    expect(isPublicCaIpAddress('::1')).toBe(false);
+    expect(isPublicCaIpAddress('::ffff:127.0.0.1')).toBe(false);
+
+    for (const badAddress of ['127.0.0.1', '169.254.169.254', '10.0.0.5', '172.16.0.1', '192.168.1.1', '::1', '::ffff:127.0.0.1']) {
+      let socketsOpened = 0;
+      const pinnedFetch = createPinnedCaFetch({
+        dnsLookup: async () => [{ address: badAddress, family: badAddress.includes(':') ? 6 : 4 }],
+        requestImpl: (() => {
+          socketsOpened += 1;
+          throw new Error('socket must not be opened');
+        }) as unknown as typeof import('node:https').request,
+      });
+      const adapter = getCaAdapter('vnpt_smartca', { fetch: pinnedFetch });
+      await expect(
+        adapter.initiateSign(SECRETS.vnpt_smartca, {
+          idempotencyKey: 'inv-dns-pin-1',
+          digestSha256: DIGEST,
+          certRef: 'cert-1',
+        }),
+      ).rejects.toMatchObject({ kind: 'unsafe_url' });
+      expect(socketsOpened).toBe(0);
     }
   });
 });

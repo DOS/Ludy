@@ -189,4 +189,19 @@ describe('CA provider registry and offline sandbox adapter', () => {
     await expect(pConflict).rejects.toMatchObject({ kind: 'idempotency_conflict' });
     expect(JSON.stringify(control.calls)).not.toContain(SANDBOX_CA_SECRET);
   });
+
+  it('prevents txHash collisions across field boundaries when inputs contain colons', async () => {
+    const { adapter } = createSandboxCaAdapter();
+    const first = await adapter.initiateSign(SANDBOX_CA_SECRET, {
+      idempotencyKey: 'x',
+      digestSha256: DIGEST_A,
+      certRef: `c:${DIGEST_A}:z`,
+    });
+    const second = await adapter.initiateSign(SANDBOX_CA_SECRET, {
+      idempotencyKey: `x:${DIGEST_A}:c`,
+      digestSha256: DIGEST_A,
+      certRef: 'z',
+    });
+    expect(first.externalTxId).not.toBe(second.externalTxId);
+  });
 });

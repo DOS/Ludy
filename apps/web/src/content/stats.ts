@@ -14,5 +14,5 @@ export const STATS = {
   languages: 2,
   coworkers: 4,
   mcpTools: 7,
-  typescriptLines: 780000,
+  typescriptLines: 790000,
 } as const;

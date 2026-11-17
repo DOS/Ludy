@@ -68,6 +68,9 @@ function assertValidDerSequence(bytes: Uint8Array, label: string): void {
 const ID_SIGNED_DATA_OID = new Uint8Array([
   0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x02,
 ]);
+const ID_CT_TST_INFO_OID = new Uint8Array([
+  0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x10, 0x01, 0x04,
+]);
 const OID_CONTENT_TYPE = new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x03]);
 const OID_MESSAGE_DIGEST = new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x04]);
 const OID_SIGNING_CERT = new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x10, 0x02, 0x0c]);
@@ -115,6 +118,152 @@ function bytesEqual(a: Uint8Array, start: number, end: number, expected: Uint8Ar
     if (a[start + i] !== expected[i]) return false;
   }
   return true;
+}
+
+function isValidSignerInfo(bytes: Uint8Array, seq: DerTlv): boolean {
+  if (seq.tag !== 0x30) return false;
+  const version = readDerTlv(bytes, seq.valueStart, seq.end);
+  if (!version || version.tag !== 0x02 || version.end <= version.valueStart) return false;
+  const sid = readDerTlv(bytes, version.end, seq.end);
+  if (!sid || (sid.tag !== 0x30 && sid.tag !== 0x80)) return false;
+  const digestAlg = readDerTlv(bytes, sid.end, seq.end);
+  if (!digestAlg || digestAlg.tag !== 0x30) return false;
+
+  let cursor = digestAlg.end;
+  const maybeSignedAttrs = readDerTlv(bytes, cursor, seq.end);
+  if (!maybeSignedAttrs) return false;
+  if (maybeSignedAttrs.tag === 0xa0) {
+    cursor = maybeSignedAttrs.end;
+  }
+
+  const sigAlg = readDerTlv(bytes, cursor, seq.end);
+  if (!sigAlg || sigAlg.tag !== 0x30) return false;
+  const signature = readDerTlv(bytes, sigAlg.end, seq.end);
+  if (!signature || signature.tag !== 0x04) return false;
+
+  cursor = signature.end;
+  if (cursor < seq.end) {
+    const maybeUnsigned = readDerTlv(bytes, cursor, seq.end);
+    if (!maybeUnsigned || maybeUnsigned.tag !== 0xa1 || maybeUnsigned.end !== seq.end) {
+      return false;
+    }
+    cursor = maybeUnsigned.end;
+  }
+  return cursor === seq.end;
+}
+
+function assertValidRfc3161TimestampToken(bytes: Uint8Array): void {
+  const errMsg = 'Dấu thời gian RFC 3161 không đúng cấu trúc ContentInfo/TSTInfo hợp lệ';
+  assertValidDerSequence(bytes, 'Dấu thời gian RFC 3161');
+
+  const outer = readDerTlv(bytes, 0, bytes.byteLength);
+  if (!outer || outer.tag !== 0x30 || outer.end !== bytes.byteLength) {
+    throw new PdfSignError(errMsg);
+  }
+  const contentType = readDerTlv(bytes, outer.valueStart, outer.end);
+  if (!contentType || contentType.tag !== 0x06 || !bytesEqual(bytes, contentType.valueStart, contentType.end, ID_SIGNED_DATA_OID)) {
+    throw new PdfSignError(errMsg);
+  }
+  const contentWrap = readDerTlv(bytes, contentType.end, outer.end);
+  if (!contentWrap || contentWrap.tag !== 0xa0 || contentWrap.end !== outer.end) {
+    throw new PdfSignError(errMsg);
+  }
+  const signedData = readDerTlv(bytes, contentWrap.valueStart, contentWrap.end);
+  if (!signedData || signedData.tag !== 0x30 || signedData.end !== contentWrap.end) {
+    throw new PdfSignError(errMsg);
+  }
+
+  const sdVersion = readDerTlv(bytes, signedData.valueStart, signedData.end);
+  if (!sdVersion || sdVersion.tag !== 0x02 || sdVersion.end <= sdVersion.valueStart) {
+    throw new PdfSignError(errMsg);
+  }
+  const digestAlgs = readDerTlv(bytes, sdVersion.end, signedData.end);
+  if (!digestAlgs || digestAlgs.tag !== 0x31) {
+    throw new PdfSignError(errMsg);
+  }
+  let algCursor = digestAlgs.valueStart;
+  let algCount = 0;
+  while (algCursor < digestAlgs.end) {
+    const alg = readDerTlv(bytes, algCursor, digestAlgs.end);
+    if (!alg || alg.tag !== 0x30) throw new PdfSignError(errMsg);
+    algCount += 1;
+    algCursor = alg.end;
+  }
+  if (algCount === 0) throw new PdfSignError(errMsg);
+
+  const encap = readDerTlv(bytes, digestAlgs.end, signedData.end);
+  if (!encap || encap.tag !== 0x30) throw new PdfSignError(errMsg);
+  const eContentType = readDerTlv(bytes, encap.valueStart, encap.end);
+  if (!eContentType || eContentType.tag !== 0x06 || !bytesEqual(bytes, eContentType.valueStart, eContentType.end, ID_CT_TST_INFO_OID)) {
+    throw new PdfSignError(errMsg);
+  }
+  const eContentWrap = readDerTlv(bytes, eContentType.end, encap.end);
+  if (!eContentWrap || eContentWrap.tag !== 0xa0 || eContentWrap.end !== encap.end) {
+    throw new PdfSignError(errMsg);
+  }
+  const eContentOctet = readDerTlv(bytes, eContentWrap.valueStart, eContentWrap.end);
+  if (!eContentOctet || eContentOctet.tag !== 0x04 || eContentOctet.end !== eContentWrap.end) {
+    throw new PdfSignError(errMsg);
+  }
+  const tstInfo = readDerTlv(bytes, eContentOctet.valueStart, eContentOctet.end);
+  if (!tstInfo || tstInfo.tag !== 0x30 || tstInfo.end !== eContentOctet.end) {
+    throw new PdfSignError(errMsg);
+  }
+  const tstVersion = readDerTlv(bytes, tstInfo.valueStart, tstInfo.end);
+  if (!tstVersion || tstVersion.tag !== 0x02 || tstVersion.end <= tstVersion.valueStart) {
+    throw new PdfSignError(errMsg);
+  }
+  const tstPolicy = readDerTlv(bytes, tstVersion.end, tstInfo.end);
+  if (!tstPolicy || tstPolicy.tag !== 0x06 || tstPolicy.end <= tstPolicy.valueStart) {
+    throw new PdfSignError(errMsg);
+  }
+  const tstMsgImprint = readDerTlv(bytes, tstPolicy.end, tstInfo.end);
+  if (!tstMsgImprint || tstMsgImprint.tag !== 0x30) throw new PdfSignError(errMsg);
+  const miAlg = readDerTlv(bytes, tstMsgImprint.valueStart, tstMsgImprint.end);
+  if (!miAlg || miAlg.tag !== 0x30) throw new PdfSignError(errMsg);
+  const miOid = readDerTlv(bytes, miAlg.valueStart, miAlg.end);
+  if (!miOid || miOid.tag !== 0x06 || miOid.end <= miOid.valueStart) throw new PdfSignError(errMsg);
+  const miHash = readDerTlv(bytes, miAlg.end, tstMsgImprint.end);
+  if (!miHash || miHash.tag !== 0x04 || miHash.end <= miHash.valueStart || miHash.end !== tstMsgImprint.end) {
+    throw new PdfSignError(errMsg);
+  }
+  const tstSerial = readDerTlv(bytes, tstMsgImprint.end, tstInfo.end);
+  if (!tstSerial || tstSerial.tag !== 0x02 || tstSerial.end <= tstSerial.valueStart) {
+    throw new PdfSignError(errMsg);
+  }
+  const tstGenTime = readDerTlv(bytes, tstSerial.end, tstInfo.end);
+  if (!tstGenTime || tstGenTime.tag !== 0x18 || tstGenTime.end <= tstGenTime.valueStart) {
+    throw new PdfSignError(errMsg);
+  }
+  let tstOptCursor = tstGenTime.end;
+  while (tstOptCursor < tstInfo.end) {
+    const opt = readDerTlv(bytes, tstOptCursor, tstInfo.end);
+    if (!opt) throw new PdfSignError(errMsg);
+    tstOptCursor = opt.end;
+  }
+
+  let sdCursor = encap.end;
+  let nextField = readDerTlv(bytes, sdCursor, signedData.end);
+  if (nextField && nextField.tag === 0xa0) {
+    sdCursor = nextField.end;
+    nextField = readDerTlv(bytes, sdCursor, signedData.end);
+  }
+  if (nextField && nextField.tag === 0xa1) {
+    sdCursor = nextField.end;
+    nextField = readDerTlv(bytes, sdCursor, signedData.end);
+  }
+  if (!nextField || nextField.tag !== 0x31 || nextField.end !== signedData.end) {
+    throw new PdfSignError(errMsg);
+  }
+  let siCursor = nextField.valueStart;
+  let siCount = 0;
+  while (siCursor < nextField.end) {
+    const si = readDerTlv(bytes, siCursor, nextField.end);
+    if (!si || !isValidSignerInfo(bytes, si)) throw new PdfSignError(errMsg);
+    siCount += 1;
+    siCursor = si.end;
+  }
+  if (siCount === 0) throw new PdfSignError(errMsg);
 }
 
 function detectCmsSubFilterProfile(
@@ -682,7 +831,7 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
     if (timestampTokenDer.byteLength > EXTRACT_LIMITS.maxPdfCmsTimestampBytes) {
       throw new PdfSignError('Kích thước dấu thời gian vượt quá giới hạn cho phép');
     }
-    assertValidDerSequence(timestampTokenDer, 'Dấu thời gian RFC 3161');
+    assertValidRfc3161TimestampToken(timestampTokenDer);
   }
 
   const ocspResponsesDer: Uint8Array[] = [];
@@ -744,7 +893,51 @@ export async function embedPdfCms(bytes: Uint8Array): Promise<PdfEmbedCmsResult>
   const pagesRaw = catalogDict.get(PDFName.of('Pages'));
   const structuralRefs = new Set<number>([rootRef.objectNumber, firstPageRef.objectNumber]);
   if (infoRef !== null) structuralRefs.add(infoRef.objectNumber);
-  if (pagesRaw instanceof PDFRef) structuralRefs.add(pagesRaw.objectNumber);
+
+  // Protect the entire /Pages tree, all pages (page 1..N), and all page /Contents arrays/streams so
+  // neither /AcroForm, /Annots, /Fields, nor /DSS updates can overwrite or corrupt page structures.
+  const visitedPageNodes = new Set<number>();
+  const collectPageTreeRefs = (raw: PDFObject | undefined): void => {
+    let dict: PDFDict | undefined;
+    if (raw instanceof PDFRef) {
+      structuralRefs.add(raw.objectNumber);
+      if (visitedPageNodes.has(raw.objectNumber)) return;
+      visitedPageNodes.add(raw.objectNumber);
+      const resolved = pdfDoc.context.lookup(raw);
+      if (resolved instanceof PDFDict) dict = resolved;
+    } else if (raw instanceof PDFDict) {
+      dict = raw;
+    }
+    if (!dict) return;
+    const kidsRaw = dict.get(PDFName.of('Kids'));
+    if (kidsRaw instanceof PDFRef) structuralRefs.add(kidsRaw.objectNumber);
+    const kids = kidsRaw !== undefined ? pdfDoc.context.lookup(kidsRaw) : undefined;
+    if (!(kids instanceof PDFArray)) return;
+    for (let i = 0; i < kids.size(); i += 1) {
+      collectPageTreeRefs(kids.get(i));
+    }
+  };
+  collectPageTreeRefs(pagesRaw);
+
+  for (const page of pdfDoc.getPages()) {
+    structuralRefs.add(page.ref.objectNumber);
+    const contentsRaw = page.node.get(PDFName.of('Contents'));
+    if (contentsRaw instanceof PDFRef) {
+      structuralRefs.add(contentsRaw.objectNumber);
+      const contentsResolved = pdfDoc.context.lookup(contentsRaw);
+      if (contentsResolved instanceof PDFArray) {
+        for (let i = 0; i < contentsResolved.size(); i += 1) {
+          const item = contentsResolved.get(i);
+          if (item instanceof PDFRef) structuralRefs.add(item.objectNumber);
+        }
+      }
+    } else if (contentsRaw instanceof PDFArray) {
+      for (let i = 0; i < contentsRaw.size(); i += 1) {
+        const item = contentsRaw.get(i);
+        if (item instanceof PDFRef) structuralRefs.add(item.objectNumber);
+      }
+    }
+  }
 
   const existingAcroRaw = catalogDict.get(PDFName.of('AcroForm'));
   const acroRefNum = existingAcroRaw instanceof PDFRef ? existingAcroRaw.objectNumber : null;

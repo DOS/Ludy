@@ -28,7 +28,17 @@ export {
   prepareCadesSignedAttrs,
   preparePadesSignedAttrs,
 } from './cms-der.ts';
-export { assertSafeCaBaseUrl, assertSafeCaRequestUrl, isSafePublicFqdn, isValidDerSequence } from './http.ts';
+export {
+  assertSafeCaBaseUrl,
+  assertSafeCaRequestUrl,
+  createPinnedCaFetch,
+  defaultPinnedCaFetch,
+  isPublicCaIpAddress,
+  isSafePublicFqdn,
+  isValidDerSequence,
+  type PinnedDnsAddress,
+  type PinnedDnsLookup,
+} from './http.ts';
 
 export function getCaAdapter(provider: CaProviderId, options: CaAdapterOptions = {}): CaSigningAdapter {
   if (!isCaProvider(provider)) {

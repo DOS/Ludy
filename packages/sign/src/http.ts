@@ -2,7 +2,9 @@
 // Shared SSRF guard, credential/request validation, ASN.1 DER sanity helpers, and fetch transport wrapper
 // for remote CA adapters. Zero secrets are ever placed in thrown errors or URLs.
 import { createHash } from 'node:crypto';
-import { isIP } from 'node:net';
+import { lookup as nodeDnsLookup } from 'node:dns/promises';
+import * as https from 'node:https';
+import { BlockList, isIP } from 'node:net';
 import {
   CaProviderError,
   type CaFetchCmsQuery,
@@ -445,3 +447,284 @@ export async function postCaJson(options: {
 
   return { status: response.status, json };
 }
+
+const CA_BLOCKED_V4 = (() => {
+  const list = new BlockList();
+  const ipv4Cidrs: readonly [string, number][] = [
+    ['0.0.0.0', 8],
+    ['10.0.0.0', 8],
+    ['100.64.0.0', 10],
+    ['127.0.0.0', 8],
+    ['169.254.0.0', 16],
+    ['172.16.0.0', 12],
+    ['192.0.0.0', 24],
+    ['192.0.2.0', 24],
+    ['192.88.99.0', 24],
+    ['192.168.0.0', 16],
+    ['198.18.0.0', 15],
+    ['198.51.100.0', 24],
+    ['203.0.113.0', 24],
+    ['224.0.0.0', 4],
+    ['240.0.0.0', 4],
+  ];
+  for (const [net, prefix] of ipv4Cidrs) list.addSubnet(net, prefix, 'ipv4');
+  return list;
+})();
+
+const CA_BLOCKED_V6 = (() => {
+  const list = new BlockList();
+  const ipv6Cidrs: readonly [string, number][] = [
+    ['::', 96],
+    ['::ffff:0:0', 96],
+    ['64:ff9b::', 96],
+    ['64:ff9b:1::', 48],
+    ['100::', 64],
+    ['2001::', 32],
+    ['2001:2::', 48],
+    ['2001:db8::', 32],
+    ['2002::', 16],
+    ['fc00::', 7],
+    ['fe80::', 10],
+    ['fec0::', 10],
+    ['ff00::', 8],
+  ];
+  for (const [net, prefix] of ipv6Cidrs) list.addSubnet(net, prefix, 'ipv6');
+  return list;
+})();
+
+export interface PinnedDnsAddress {
+  readonly address: string;
+  readonly family: 4 | 6;
+}
+
+export type PinnedDnsLookup = (
+  hostname: string,
+  options: { all: true; verbatim: true },
+) => Promise<readonly PinnedDnsAddress[]>;
+
+export function isPublicCaIpAddress(rawIp: string): boolean {
+  const trimmed = rawIp.trim().toLowerCase();
+  if (trimmed === '' || trimmed.includes('%')) return false;
+  const unwrapped = trimmed.startsWith('[') && trimmed.endsWith(']') ? trimmed.slice(1, -1) : trimmed;
+  const family = isIP(unwrapped);
+  if (family === 4) {
+    return !CA_BLOCKED_V4.check(unwrapped, 'ipv4');
+  }
+  if (family === 6) {
+    if (unwrapped.startsWith('::ffff:')) return false;
+    return !CA_BLOCKED_V6.check(unwrapped, 'ipv6');
+  }
+  return false;
+}
+
+type FetchRequestInit = NonNullable<Parameters<typeof fetch>[1]>;
+
+function normalizeRequestBody(body: FetchRequestInit['body'] | null | undefined): string | Uint8Array | undefined {
+  if (body === undefined || body === null) return undefined;
+  if (typeof body === 'string') return body;
+  if (body instanceof Uint8Array) return body;
+  if (body instanceof ArrayBuffer) return new Uint8Array(body);
+  throw new CaProviderError('invalid_request', 'unsupported CA request body type');
+}
+
+function toNodeHeaders(headersInit: FetchRequestInit['headers'] | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!headersInit) return out;
+  const headers = new Headers(headersInit);
+  for (const [key, value] of headers.entries()) {
+    out[key] = value;
+  }
+  return out;
+}
+
+async function resolveDnsWithSignal(
+  resolveDns: PinnedDnsLookup,
+  hostname: string,
+  signal: AbortSignal | undefined,
+): Promise<readonly PinnedDnsAddress[]> {
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error ? signal.reason : new CaProviderError('timeout');
+  }
+  const dnsPromise = resolveDns(hostname, { all: true, verbatim: true }).catch(() => {
+    throw new CaProviderError('unavailable', 'CA host DNS resolution failed');
+  });
+  if (!signal) {
+    return await dnsPromise;
+  }
+  return await new Promise<readonly PinnedDnsAddress[]>((resolve, reject) => {
+    const onAbort = () => {
+      reject(signal.reason instanceof Error ? signal.reason : new CaProviderError('timeout'));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    dnsPromise.then(
+      (addresses) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(addresses);
+      },
+      (err: unknown) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(err);
+      },
+    );
+  });
+}
+
+export function createPinnedCaFetch(deps?: {
+  dnsLookup?: PinnedDnsLookup;
+  requestImpl?: typeof https.request;
+}): typeof fetch {
+  const resolveDns: PinnedDnsLookup =
+    deps?.dnsLookup ??
+    ((hostname, opts) => nodeDnsLookup(hostname, opts) as Promise<readonly PinnedDnsAddress[]>);
+  const requestImpl = deps?.requestImpl ?? https.request;
+
+  return async (input, init) => {
+    const rawUrl = input instanceof Request ? input.url : String(input);
+    let url: URL;
+    try {
+      url = new URL(rawUrl);
+    } catch {
+      throw new CaProviderError('unsafe_url', 'CA request URL is invalid');
+    }
+    if (
+      url.protocol !== 'https:' ||
+      url.username !== '' ||
+      url.password !== '' ||
+      (url.port !== '' && url.port !== '443') ||
+      !isSafePublicFqdn(url.hostname)
+    ) {
+      throw new CaProviderError('unsafe_url', 'CA request URL violates transport security rules');
+    }
+    if (init?.signal?.aborted) {
+      throw init.signal.reason ?? new CaProviderError('timeout');
+    }
+
+    const hostname = url.hostname.toLowerCase();
+    const resolved = await resolveDnsWithSignal(resolveDns, hostname, init?.signal ?? undefined);
+    if (resolved.length === 0) {
+      throw new CaProviderError('unavailable', 'CA host DNS resolution returned no addresses');
+    }
+    for (const entry of resolved) {
+      if (!isPublicCaIpAddress(entry.address)) {
+        throw new CaProviderError('unsafe_url', 'CA host resolved to a non-public IP address');
+      }
+    }
+    if (init?.signal?.aborted) {
+      throw init.signal.reason instanceof Error ? init.signal.reason : new CaProviderError('timeout');
+    }
+    const pinned = resolved[0]!;
+    const requestBody = normalizeRequestBody(init?.body);
+    const requestHeaders = toNodeHeaders(init?.headers);
+    if (requestBody !== undefined && !Object.keys(requestHeaders).some((k) => k.toLowerCase() === 'content-length')) {
+      const byteLen = typeof requestBody === 'string' ? Buffer.byteLength(requestBody, 'utf8') : requestBody.byteLength;
+      requestHeaders['content-length'] = String(byteLen);
+    }
+
+    return await new Promise<Response>((resolve, reject) => {
+      let settled = false;
+      const fail = (err: Error) => {
+        if (settled) return;
+        settled = true;
+        reject(err);
+      };
+
+      const req = requestImpl(
+        {
+          protocol: 'https:',
+          hostname,
+          port: 443,
+          path: `${url.pathname}${url.search}`,
+          method: init?.method ?? 'POST',
+          headers: requestHeaders,
+          servername: hostname,
+          agent: false,
+          lookup: (_h, opts, cb) => {
+            if (typeof opts === 'object' && opts !== null && opts.all) {
+              (cb as (err: NodeJS.ErrnoException | null, addresses: { address: string; family: number }[]) => void)(
+                null,
+                [{ address: pinned.address, family: pinned.family }],
+              );
+              return;
+            }
+            (cb as (err: NodeJS.ErrnoException | null, address: string, family: number) => void)(
+              null,
+              pinned.address,
+              pinned.family,
+            );
+          },
+        },
+        (res) => {
+          const status = res.statusCode ?? 500;
+          if (status >= 300 && status < 400) {
+            res.destroy();
+            req.destroy();
+            fail(new CaProviderError('unsafe_url', 'CA HTTP redirects are forbidden'));
+            return;
+          }
+          const remoteAddr = res.socket?.remoteAddress;
+          if (remoteAddr && !isPublicCaIpAddress(remoteAddr)) {
+            res.destroy();
+            req.destroy();
+            fail(new CaProviderError('unsafe_url', 'CA connection peer resolved to a non-public IP address'));
+            return;
+          }
+
+          const responseHeaders = new Headers();
+          for (const [k, v] of Object.entries(res.headers)) {
+            if (Array.isArray(v)) {
+              for (const item of v) responseHeaders.append(k, item);
+            } else if (typeof v === 'string') {
+              responseHeaders.append(k, v);
+            }
+          }
+
+          const body =
+            status === 204 || status === 205 || status === 304
+              ? null
+              : new ReadableStream<Uint8Array>({
+                  start(controller) {
+                    res.on('data', (chunk: Uint8Array) => {
+                      controller.enqueue(new Uint8Array(chunk));
+                    });
+                    res.on('end', () => {
+                      controller.close();
+                    });
+                    res.on('error', (err) => {
+                      controller.error(err);
+                    });
+                  },
+                  cancel() {
+                    res.destroy();
+                  },
+                });
+
+          settled = true;
+          resolve(new Response(body, { status, headers: responseHeaders }));
+        },
+      );
+
+      req.on('error', (err) => {
+        fail(err);
+      });
+
+      const signal = init?.signal;
+      if (signal) {
+        const onAbort = () => {
+          const reason = signal.reason instanceof Error ? signal.reason : new CaProviderError('timeout');
+          req.destroy(reason);
+          fail(reason);
+        };
+        if (signal.aborted) {
+          onAbort();
+          return;
+        }
+        signal.addEventListener('abort', onAbort, { once: true });
+        req.on('close', () => signal.removeEventListener('abort', onAbort));
+      }
+
+      req.end(requestBody);
+    });
+  };
+}
+
+export const defaultPinnedCaFetch: typeof fetch = createPinnedCaFetch();

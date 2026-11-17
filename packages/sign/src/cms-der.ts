@@ -106,13 +106,131 @@ function readDerTlv(bytes: Uint8Array, offset: number, limit: number = bytes.byt
   return { tag, offset, valueStart, valueEnd, tlvEnd: valueEnd };
 }
 
-export function isCmsSignedDataDer(bytes: Uint8Array): boolean {
+function isValidAlgorithmIdentifier(bytes: Uint8Array, tlv: DerTlv): boolean {
+  if (tlv.tag !== 0x30) return false;
+  const oid = readDerTlv(bytes, tlv.valueStart, tlv.tlvEnd);
+  if (!oid || oid.tag !== 0x06 || oid.valueEnd <= oid.valueStart) return false;
+  let cursor = oid.tlvEnd;
+  while (cursor < tlv.tlvEnd) {
+    const param = readDerTlv(bytes, cursor, tlv.tlvEnd);
+    if (!param) return false;
+    cursor = param.tlvEnd;
+  }
+  return cursor === tlv.tlvEnd;
+}
+
+function isValidCmsSignerInfo(bytes: Uint8Array, si: DerTlv): boolean {
+  if (si.tag !== 0x30) return false;
+  const version = readDerTlv(bytes, si.valueStart, si.tlvEnd);
+  if (!version || version.tag !== 0x02 || version.valueEnd <= version.valueStart) return false;
+  const sid = readDerTlv(bytes, version.tlvEnd, si.tlvEnd);
+  if (!sid || (sid.tag !== 0x30 && sid.tag !== 0x80) || sid.valueEnd <= sid.valueStart) return false;
+  const digestAlg = readDerTlv(bytes, sid.tlvEnd, si.tlvEnd);
+  if (!digestAlg || !isValidAlgorithmIdentifier(bytes, digestAlg)) return false;
+
+  let cursor = digestAlg.tlvEnd;
+  const next = readDerTlv(bytes, cursor, si.tlvEnd);
+  if (!next) return false;
+  if (next.tag === 0xa0) {
+    let attrPos = next.valueStart;
+    if (attrPos >= next.tlvEnd) return false;
+    while (attrPos < next.tlvEnd) {
+      const attr = readDerTlv(bytes, attrPos, next.tlvEnd);
+      if (!attr || attr.tag !== 0x30) return false;
+      attrPos = attr.tlvEnd;
+    }
+    cursor = next.tlvEnd;
+  }
+
+  const sigAlg = readDerTlv(bytes, cursor, si.tlvEnd);
+  if (!sigAlg || !isValidAlgorithmIdentifier(bytes, sigAlg)) return false;
+  const sig = readDerTlv(bytes, sigAlg.tlvEnd, si.tlvEnd);
+  if (!sig || sig.tag !== 0x04 || sig.valueEnd <= sig.valueStart) return false;
+
+  cursor = sig.tlvEnd;
+  if (cursor < si.tlvEnd) {
+    const unsigned = readDerTlv(bytes, cursor, si.tlvEnd);
+    if (!unsigned || unsigned.tag !== 0xa1 || unsigned.tlvEnd !== si.tlvEnd) return false;
+    cursor = unsigned.tlvEnd;
+  }
+  return cursor === si.tlvEnd;
+}
+
+export function mergeInlineCertChainDer(
+  leaf: Uint8Array | null,
+  chain: readonly Uint8Array[],
+): Uint8Array[] {
+  const out: Uint8Array[] = [];
+  if (leaf) out.push(leaf);
+  for (const cert of chain) {
+    if (!out.some((existing) => bytesEqual(existing, cert))) {
+      out.push(cert);
+    }
+  }
+  return out;
+}
+
+export function hasCmsSignedDataContentType(bytes: Uint8Array): boolean {
   if (!isValidDerSequence(bytes)) return false;
   const outer = readDerTlv(bytes, 0);
   if (!outer || outer.tag !== 0x30 || outer.tlvEnd !== bytes.byteLength) return false;
-  const first = readDerTlv(bytes, outer.valueStart);
+  const first = readDerTlv(bytes, outer.valueStart, outer.tlvEnd);
   if (!first || first.tag !== 0x06) return false;
   return bytesEqual(bytes.subarray(first.valueStart, first.valueEnd), OID_SIGNED_DATA);
+}
+
+export function isCmsSignedDataDer(bytes: Uint8Array): boolean {
+  if (!hasCmsSignedDataContentType(bytes)) return false;
+  const outer = readDerTlv(bytes, 0);
+  if (!outer) return false;
+  const contentType = readDerTlv(bytes, outer.valueStart, outer.tlvEnd);
+  if (!contentType) return false;
+  const contentWrap = readDerTlv(bytes, contentType.tlvEnd, outer.tlvEnd);
+  if (!contentWrap || contentWrap.tag !== 0xa0 || contentWrap.tlvEnd !== outer.tlvEnd) return false;
+  const signedData = readDerTlv(bytes, contentWrap.valueStart, contentWrap.tlvEnd);
+  if (!signedData || signedData.tag !== 0x30 || signedData.tlvEnd !== contentWrap.tlvEnd) return false;
+
+  const version = readDerTlv(bytes, signedData.valueStart, signedData.tlvEnd);
+  if (!version || version.tag !== 0x02 || version.valueEnd <= version.valueStart) return false;
+  const digestAlgs = readDerTlv(bytes, version.tlvEnd, signedData.tlvEnd);
+  if (!digestAlgs || digestAlgs.tag !== 0x31) return false;
+  let algCursor = digestAlgs.valueStart;
+  while (algCursor < digestAlgs.tlvEnd) {
+    const alg = readDerTlv(bytes, algCursor, digestAlgs.tlvEnd);
+    if (!alg || !isValidAlgorithmIdentifier(bytes, alg)) return false;
+    algCursor = alg.tlvEnd;
+  }
+
+  const encap = readDerTlv(bytes, digestAlgs.tlvEnd, signedData.tlvEnd);
+  if (!encap || encap.tag !== 0x30) return false;
+  const eContentType = readDerTlv(bytes, encap.valueStart, encap.tlvEnd);
+  if (!eContentType || eContentType.tag !== 0x06 || eContentType.valueEnd <= eContentType.valueStart) return false;
+  if (eContentType.tlvEnd < encap.tlvEnd) {
+    const eContent = readDerTlv(bytes, eContentType.tlvEnd, encap.tlvEnd);
+    if (!eContent || eContent.tag !== 0xa0 || eContent.tlvEnd !== encap.tlvEnd) return false;
+  }
+
+  let sdCursor = encap.tlvEnd;
+  let field = readDerTlv(bytes, sdCursor, signedData.tlvEnd);
+  if (field && field.tag === 0xa0) {
+    sdCursor = field.tlvEnd;
+    field = readDerTlv(bytes, sdCursor, signedData.tlvEnd);
+  }
+  if (field && field.tag === 0xa1) {
+    sdCursor = field.tlvEnd;
+    field = readDerTlv(bytes, sdCursor, signedData.tlvEnd);
+  }
+  if (!field || field.tag !== 0x31 || field.tlvEnd !== signedData.tlvEnd) return false;
+
+  let siCursor = field.valueStart;
+  let siCount = 0;
+  while (siCursor < field.tlvEnd) {
+    const si = readDerTlv(bytes, siCursor, field.tlvEnd);
+    if (!si || !isValidCmsSignerInfo(bytes, si)) return false;
+    siCount += 1;
+    siCursor = si.tlvEnd;
+  }
+  return siCount > 0;
 }
 
 function inspectCmsSignedAttrs(bytes: Uint8Array, requireCadesAttributes: boolean): boolean {
@@ -495,6 +613,9 @@ export async function resolveCmsOrWrapRawSignature(options: {
       subFilter: cmsHasCadesSignedAttrs(sigBytes) ? 'ETSI.CAdES.detached' : 'adbe.pkcs7.detached',
       certificateChainPem,
     };
+  }
+  if (hasCmsSignedDataContentType(sigBytes)) {
+    throw new CaProviderError('unavailable', `${providerLabel} returned malformed CMS SignedData`);
   }
   const chainDer = inlineChainDer.length > 0 ? inlineChainDer : await loadChainDer();
   const assembled = assembleDetachedCmsSignedData({

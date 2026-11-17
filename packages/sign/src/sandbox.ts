@@ -228,7 +228,7 @@ export function createSandboxCaAdapter(options: SandboxCaOptions = {}): {
     }
     const createdAt = now();
     const txHash = createHash('sha256')
-      .update(`${idempotencyKey}:${digestSha256}:${certRef}`)
+      .update(JSON.stringify([idempotencyKey, digestSha256, certRef]))
       .digest('hex')
       .slice(0, 16);
     const externalTxId = `sbx-ca-${txHash}`;

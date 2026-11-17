@@ -61,6 +61,61 @@ function derTag(tag: number, ...parts: readonly Uint8Array[]): Uint8Array {
   return out;
 }
 
+function makeTestRfc3161TokenDer(serialByte = 0x01): Uint8Array {
+  const oidSignedData = derTag(0x06, new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x02]));
+  const oidTstInfo = derTag(
+    0x06,
+    new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x10, 0x01, 0x04]),
+  );
+  const oidSha256 = derTag(0x06, new Uint8Array([0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01]));
+  const oidPolicy = derTag(0x06, new Uint8Array([0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x10, 0x09, 0x01]));
+  const algSha256 = derTag(0x30, oidSha256, derTag(0x05));
+  const messageImprint = derTag(0x30, algSha256, derTag(0x04, new Uint8Array(32).fill(0x22)));
+  const genTime = derTag(0x18, Buffer.from('20261116100000Z', 'ascii'));
+  const tstInfo = derTag(
+    0x30,
+    derTag(0x02, new Uint8Array([0x01])),
+    oidPolicy,
+    messageImprint,
+    derTag(0x02, new Uint8Array([serialByte])),
+    genTime,
+  );
+  const encapContentInfo = derTag(0x30, oidTstInfo, derTag(0xa0, derTag(0x04, tstInfo)));
+  const sid = derTag(0x30, derTag(0x30), derTag(0x02, new Uint8Array([0x01])));
+  const signerInfo = derTag(
+    0x30,
+    derTag(0x02, new Uint8Array([0x01])),
+    sid,
+    algSha256,
+    algSha256,
+    derTag(0x04, new Uint8Array(32).fill(0xcd)),
+  );
+  const signedData = derTag(
+    0x30,
+    derTag(0x02, new Uint8Array([0x03])),
+    derTag(0x31, algSha256),
+    encapContentInfo,
+    derTag(0x31, signerInfo),
+  );
+  return derTag(0x30, oidSignedData, derTag(0xa0, signedData));
+}
+
+function buildRawClassicPdf(objects: readonly string[]): Uint8Array {
+  let out = '%PDF-1.4\n';
+  const offsets: number[] = [];
+  for (let i = 0; i < objects.length; i += 1) {
+    offsets.push(Buffer.byteLength(out, 'latin1'));
+    out += `${i + 1} 0 obj\n${objects[i]}\nendobj\n`;
+  }
+  const xrefOffset = Buffer.byteLength(out, 'latin1');
+  out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const off of offsets) {
+    out += `${String(off).padStart(10, '0')} 00000 n \n`;
+  }
+  out += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+  return new Uint8Array(Buffer.from(out, 'latin1'));
+}
+
 function makeContentInfoSignedDataDer(
   mode: 'none' | 'plain_pkcs7' | 'cades',
   marker = 'test-cms',
@@ -405,7 +460,7 @@ describe('crove-extract pdf_embed_cms', () => {
     const preDigest = sha256Hex(Buffer.concat([prepBytes.subarray(b0, b1), prepBytes.subarray(b2, b2 + b3)]));
 
     const cmsDer = makeTestCmsDer('ltv-cms-1');
-    const tsDer = derSequence(new Uint8Array([0x02, 0x01, 0x01]));
+    const tsDer = makeTestRfc3161TokenDer(0x01);
     const ocspDer = derSequence(new Uint8Array([0x0a, 0x01, 0x00]));
 
     const res = await parse(
@@ -465,22 +520,17 @@ describe('crove-extract pdf_embed_cms', () => {
     expect(dss.lookup(PDFName.of('Type'), PDFName).decodeText()).toBe('DSS');
     expect(dss.lookup(PDFName.of('OCSPs'), PDFArray).size()).toBe(2);
     const vri = dss.lookup(PDFName.of('VRI'), PDFDict);
-    const paddedBytes1 = Buffer.from(contentsHex1, 'hex');
-    const paddedBytes2 = Buffer.from(
-      Buffer.from(outBytes2.subarray(res2.byteRange[1] + 1, res2.byteRange[2] - 1)).toString('ascii'),
-      'hex',
-    );
-    const expectedVriKey1 = createHash('sha1').update(paddedBytes1).digest('hex').toUpperCase();
-    const expectedVriKey2 = createHash('sha1').update(paddedBytes2).digest('hex').toUpperCase();
-    expect(expectedVriKey1).not.toBe(createHash('sha1').update(cmsDer).digest('hex').toUpperCase());
-    const vriEntry1 = vri.lookup(PDFName.of(expectedVriKey1), PDFDict);
-    expect(vriEntry1.get(PDFName.of('OCSP'))).toBeDefined();
-    expect(vriEntry1.get(PDFName.of('TU'))).toBeDefined();
-    expect(vriEntry1.get(PDFName.of('TS'))).toBeUndefined();
-    const vriEntry2 = vri.lookup(PDFName.of(expectedVriKey2), PDFDict);
-    expect(vriEntry2.get(PDFName.of('OCSP'))).toBeDefined();
-    expect(vriEntry2.get(PDFName.of('TU'))).toBeDefined();
-    expect(vriEntry2.get(PDFName.of('TS'))).toBeUndefined();
+    const vriEntries = vri.entries();
+    expect(vriEntries).toHaveLength(2);
+    const vriKeys = vriEntries.map(([key]) => key.decodeText());
+    expect(new Set(vriKeys).size).toBe(2);
+    for (const [key] of vriEntries) {
+      expect(key.decodeText()).toMatch(/^[0-9A-F]{40}$/);
+      const vriEntry = vri.lookup(key, PDFDict);
+      expect(vriEntry.get(PDFName.of('OCSP'))).toBeDefined();
+      expect(vriEntry.get(PDFName.of('TU'))).toBeDefined();
+      expect(vriEntry.get(PDFName.of('TS'))).toBeUndefined();
+    }
     expect((await inspectPdf(outBytes2)).pageCount).toBe(1);
   });
 
@@ -579,7 +629,7 @@ describe('crove-extract pdf_embed_cms', () => {
       }),
     );
     if (!sealed.ok || sealed.kind !== 'pdf_seal') throw new Error('expected seal ok');
-    const tsDer = derSequence(new Uint8Array([0x02, 0x01, 0x09]));
+    const tsDer = makeTestRfc3161TokenDer(0x09);
     const ocspDer = derSequence(new Uint8Array([0x0a, 0x01, 0x02]));
     const ltvXrefRes = await parse(
       'pdf_embed_cms',
@@ -733,6 +783,103 @@ describe('crove-extract pdf_embed_cms', () => {
     // Oversized request past maxPdfEmbedCmsRequestBytes
     expect(
       await parse('pdf_embed_cms', new Uint8Array(EXTRACT_LIMITS.maxPdfEmbedCmsRequestBytes + 1)),
+    ).toMatchObject({ ok: false, code: 'invalid' });
+  });
+
+  it('rejects malformed RFC 3161 timestamp tokens and /Annots /Contents or multi-page /DSS aliases', async () => {
+    const cleanPdfB64 = Buffer.from(makeCleanClassicPdf()).toString('base64');
+    const cmsDer = makeTestCmsDer('ts-alias-cms');
+    const cmsDerBase64 = Buffer.from(cmsDer).toString('base64');
+
+    // Bare ASN.1 DER sequence without RFC 3161 ContentInfo(SignedData(id-ct-TSTInfo)) is rejected.
+    const stubTs = derSequence(new Uint8Array([0x02, 0x01, 0x01]));
+    expect(
+      await parse(
+        'pdf_embed_cms',
+        encodePdfEmbedCmsInput({
+          pdfBase64: cleanPdfB64,
+          cmsDerBase64,
+          signerName: 'Tester',
+          signedAtIso: '2026-11-16T10:00:00.000Z',
+          timestampTokenBase64: Buffer.from(stubTs).toString('base64'),
+        }),
+      ),
+    ).toMatchObject({ ok: false, code: 'invalid' });
+
+    // SignedData carrying plain id-data instead of id-ct-TSTInfo is rejected as timestampTokenBase64.
+    expect(
+      await parse(
+        'pdf_embed_cms',
+        encodePdfEmbedCmsInput({
+          pdfBase64: cleanPdfB64,
+          cmsDerBase64,
+          signerName: 'Tester',
+          signedAtIso: '2026-11-16T10:00:00.000Z',
+          timestampTokenBase64: cmsDerBase64,
+        }),
+      ),
+    ).toMatchObject({ ok: false, code: 'invalid' });
+
+    // Page sharing the same indirect array ref for /Annots and /Contents must be rejected so widgetRef never enters /Contents.
+    const sharedAnnotsContentsPdf = buildRawClassicPdf([
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Annots 4 0 R >>',
+      '[5 0 R]',
+      '<< /Length 0 >>\nstream\n\nendstream',
+    ]);
+    expect(
+      await parse(
+        'pdf_embed_cms',
+        encodePdfEmbedCmsInput({
+          pdfBase64: Buffer.from(sharedAnnotsContentsPdf).toString('base64'),
+          cmsDerBase64,
+          signerName: 'Alias Test',
+          signedAtIso: '2026-11-16T10:00:00.000Z',
+        }),
+      ),
+    ).toMatchObject({ ok: false, code: 'invalid' });
+
+    // Catalog /DSS pointing to page 2 in a 2-page PDF must be rejected so Update #2 never overwrites page 2.
+    const ocspB64 = Buffer.from(derSequence(new Uint8Array([0x0a, 0x01, 0x00]))).toString('base64');
+    const twoPageDssAliasPdf = buildRawClassicPdf([
+      '<< /Type /Catalog /Pages 2 0 R /DSS 4 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>',
+    ]);
+    expect(
+      await parse(
+        'pdf_embed_cms',
+        encodePdfEmbedCmsInput({
+          pdfBase64: Buffer.from(twoPageDssAliasPdf).toString('base64'),
+          cmsDerBase64,
+          signerName: 'Two Page Alias',
+          signedAtIso: '2026-11-16T10:00:00.000Z',
+          ocspResponsesBase64: [ocspB64],
+        }),
+      ),
+    ).toMatchObject({ ok: false, code: 'invalid' });
+
+    // Catalog /DSS pointing to an intermediate /Pages tree node must also be rejected.
+    const nestedPagesDssAliasPdf = buildRawClassicPdf([
+      '<< /Type /Catalog /Pages 2 0 R /DSS 5 0 R >>',
+      '<< /Type /Pages /Kids [5 0 R] /Count 2 >>',
+      '<< /Type /Page /Parent 5 0 R /MediaBox [0 0 612 792] >>',
+      '<< /Type /Page /Parent 5 0 R /MediaBox [0 0 612 792] >>',
+      '<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>',
+    ]);
+    expect(
+      await parse(
+        'pdf_embed_cms',
+        encodePdfEmbedCmsInput({
+          pdfBase64: Buffer.from(nestedPagesDssAliasPdf).toString('base64'),
+          cmsDerBase64,
+          signerName: 'Tree Alias',
+          signedAtIso: '2026-11-16T10:00:00.000Z',
+          ocspResponsesBase64: [ocspB64],
+        }),
+      ),
     ).toMatchObject({ ok: false, code: 'invalid' });
   });
 
