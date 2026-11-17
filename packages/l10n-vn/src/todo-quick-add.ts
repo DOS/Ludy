@@ -73,6 +73,7 @@ interface ParsedTimeInfo {
   hour: number;
   minute: number;
   explicitClock: boolean;
+  hasAmPm?: boolean | undefined;
   period?: DayPeriod | undefined;
 }
 
@@ -638,12 +639,16 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     const left = span.start > 0 ? input[span.start - 1] : '';
     if (left === '_') return false;
     if (left === '-' && span.start >= 2 && /[\p{L}\p{N}\p{M}]/u.test(input[span.start - 2] ?? '')) return false;
+    if ((left === "'" || left === '\u2019') && span.start >= 2 && /\p{L}/u.test(input[span.start - 2] ?? '')) return false;
     return true;
   };
   const hasCleanRightBoundary = (span: Span): boolean => {
     const right = span.end < input.length ? input[span.end] : '';
     if (right === '_') return false;
     if (right === '-' && span.end + 1 < input.length && /[\p{L}\p{N}\p{M}]/u.test(input[span.end + 1] ?? '')) return false;
+    if ((right === "'" || right === '\u2019') && span.end + 1 < input.length && /\p{L}/u.test(input[span.end + 1] ?? '')) {
+      return false;
+    }
     return true;
   };
   const isWordSpanAvailable = (span: Span): boolean =>
@@ -1198,6 +1203,37 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     return false;
   };
 
+  const hasHalfUnitRangeAfter = (candEnd: number): boolean => {
+    const suffix = input.slice(candEnd);
+    const dashMatch = /^\s*(?:-|\u2013|\u2014|->|~)\s*(\d{1,2})(?=$|[\s.,;:!?)\]])/u.exec(suffix);
+    if (dashMatch && Number(dashMatch[1]) <= 23) {
+      const numText = dashMatch[1] ?? '';
+      const numStart = candEnd + dashMatch[0].length - numText.length;
+      const numSpan = { start: numStart, end: numStart + numText.length };
+      if (!isWordSpanAvailable(numSpan)) return false;
+      const afterDashWord = findAdjacentWordAfter(input, words, numSpan.end, occupied);
+      if (afterDashWord && VN_COUNT_NOUNS_AFTER_CLOCK.has(afterDashWord.folded)) return false;
+      return true;
+    }
+    const conn = findAdjacentWordAfter(input, words, candEnd, occupied);
+    if (conn && (vnMatchAny(conn, ['đến', 'tới']) || conn.nfcLower === 'to' || conn.nfcLower === 'till' || conn.nfcLower === 'until')) {
+      const endHourWord = findAdjacentWordAfter(input, words, conn.end, occupied);
+      if (
+        endHourWord &&
+        isWordSpanAvailable(endHourWord) &&
+        /^\d{1,2}$/.test(endHourWord.nfcLower) &&
+        Number(endHourWord.nfcLower) <= 23
+      ) {
+        const afterChar = endHourWord.end < input.length ? input[endHourWord.end] : '';
+        if (afterChar === '/' || afterChar === ':' || afterChar === '.') return false;
+        const afterEndWord = findAdjacentWordAfter(input, words, endHourWord.end, occupied);
+        if (afterEndWord && VN_COUNT_NOUNS_AFTER_CLOCK.has(afterEndWord.folded)) return false;
+        return true;
+      }
+    }
+    return false;
+  };
+
   let hasExplicitClockRange = false;
   for (let idx = 0; idx < dedupedTimeCandidates.length; idx++) {
     const tc = dedupedTimeCandidates[idx];
@@ -1255,12 +1291,16 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     }
 
     if (!hasCleanRightBoundary(tc)) continue;
+    if (hasHalfUnitRangeAfter(end)) {
+      hasExplicitClockRange = true;
+      continue;
+    }
 
     const startBeforeAt = start;
     start = expandConnectorBefore(input, words, start, [['vào', 'lúc'], ['lúc'], ['at']], occupied);
     const usedEnglishAt = start < startBeforeAt && /^at\b/i.test(input.slice(start));
     const adjustedHour = tc.hasAmPm ? tc.hour : adjustHourForPeriod(tc.hour, period);
-    parsedTime = { hour: adjustedHour, minute: tc.minute, explicitClock: true, period };
+    parsedTime = { hour: adjustedHour, minute: tc.minute, explicitClock: true, hasAmPm: tc.hasAmPm, period };
     claimToken('time', start, end);
     timeSpans.push({ start, end });
     if (tc.hasAmPm || usedEnglishAt) englishTimeSpans.push({ start, end });
@@ -1612,7 +1652,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
   }
 
   // Reconcile contextual period with explicit clock time when separated by a date (e.g. "chiều thứ sáu 3h")
-  if (parsedTime && parsedTime.explicitClock && !parsedTime.period && contextPeriod) {
+  if (parsedTime && parsedTime.explicitClock && !parsedTime.hasAmPm && !parsedTime.period && contextPeriod) {
     parsedTime = {
       ...parsedTime,
       hour: adjustHourForPeriod(parsedTime.hour, contextPeriod),

@@ -766,5 +766,49 @@ describe('parseTodoQuickAdd (#3556)', () => {
       dueOn: '2026-11-18',
       dueTime: '00:00',
     });
+
+    // Explicit AM/PM clocks are never shifted by unrelated period context elsewhere in the sentence
+    expect(parseTodoQuickAdd('Gửi thư lúc 9am cho buổi chiều', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Gửi thư cho buổi chiều',
+      dueOn: '2026-11-17',
+      dueTime: '09:00',
+    });
+    expect(parseTodoQuickAdd('Gửi thư lúc 12pm vào buổi sáng', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Gửi thư vào buổi sáng',
+      dueOn: '2026-11-17',
+      dueTime: '12:00',
+    });
+
+    // English possessives (straight & curly apostrophes) are never split as date words, while quoted dates still parse
+    expect(parseTodoQuickAdd("Review today's sales", { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: "Review today's sales",
+      dueOn: null,
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Pay Friday’s invoices', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Pay Friday’s invoices',
+      dueOn: null,
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd("Review 'today' sales", { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      dueOn: '2026-11-17',
+    });
+
+    // Trailing-bare half-unit ranges ("từ 9h đến 11", "9am - 11") stay whole in title
+    expect(parseTodoQuickAdd('Họp từ 9h đến 11 ngày mai', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp từ 9h đến 11',
+      dueOn: '2026-11-18',
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Meeting from 9am to 11 tomorrow', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Meeting from 9am to 11',
+      dueOn: '2026-11-18',
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Meeting 9am - 11 tomorrow', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Meeting 9am - 11',
+      dueOn: '2026-11-18',
+      dueTime: null,
+    });
   });
 });
