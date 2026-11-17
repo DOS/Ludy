@@ -222,35 +222,53 @@ suite('a late sales invoice is declared in the period of its sale (#3535)', () =
     expect((await vat(o, quarter(prevMonth))).output.documents.some((d) => d.number === sale.number)).toBe(true);
   });
 
-  it('shows the sale as a supplementary item of its period when that month is locked, and in no main total', async () => {
-    const o = await org();
-    const sale = await lateSale(o);
-    await execute(o, 'finance.period.lock', { month: prevMonth });
-    const original = await vat(o, prevMonth);
-    expect(original.output.documents).toEqual([]);
-    expect(original.output.totals.documents).toBe(0);
-    expect(original.supplementary.documents).toEqual([expect.objectContaining({ number: sale.number, saleDate: SALE_DATE })]);
-    expect(original.supplementary.totals.documents).toBe(1);
-    expect(Number(original.supplementary.totals.vat)).toBeGreaterThan(0);
-    const issued = await vat(o, thisMonth);
-    expect(issued.output.documents).toEqual([]);
-    expect(issued.supplementary.documents).toEqual([]);
-    expect(issued.lateSales).toEqual([expect.objectContaining({ number: sale.number, originalPeriod: prevMonth, supplementary: true })]);
-    // Nothing reopened the month.
-    const lock = (await rows<{ locked_through: string }>('SELECT locked_through::text FROM crove_finance.period_lock WHERE org_id = $1', [o.orgId]))[0];
-    expect(lock?.locked_through?.slice(0, 7)).toBe(prevMonth);
-  });
+  // Whether the period was declared before the invoice was recorded decides everything (#3535): an invoice in the figures that were filed or locked stays in them; one recorded after
+  // is a supplementary item. `declare` closes the period of the sale the way the test names.
+  const closers = {
+    locked: (o: Org) => execute(o, 'finance.period.lock', { month: prevMonth }),
+    filed: (o: Org) => execute(o, 'finance.vat.return_mark', { period: prevMonth, done: true }),
+  } as const;
+  for (const [how, close] of Object.entries(closers) as Array<[keyof typeof closers, (typeof closers)[keyof typeof closers]]>) {
+    it(`keeps an invoice recorded before its period was ${how} in that period's figures, not as a supplementary item`, async () => {
+      const o = await org();
+      const sale = await lateSale(o);
+      await close(o);
+      const original = await vat(o, prevMonth);
+      // It was in what was declared: the period still shows it and the working still matches.
+      expect(original.output.documents.map((d) => d.number)).toEqual([sale.number]);
+      expect(original.output.totals.documents).toBe(1);
+      expect(original.supplementary.documents).toEqual([]);
+      expect(original.supplementary.totals.documents).toBe(0);
+      const issued = await vat(o, thisMonth);
+      expect(issued.output.documents).toEqual([]);
+      expect(issued.supplementary.documents).toEqual([]);
+      // The issue period names it with its original period, and does not say a supplementary return is needed for what was already declared.
+      expect(issued.lateSales).toEqual([expect.objectContaining({ number: sale.number, originalPeriod: prevMonth, supplementary: false })]);
+    });
 
-  it('shows it as a supplementary item when the return of that period is filed, though the month is not locked', async () => {
-    const o = await org();
-    const sale = await lateSale(o);
-    await execute(o, 'finance.vat.return_mark', { period: prevMonth, done: true });
-    const original = await vat(o, prevMonth);
-    expect(original.filed).not.toBeNull();
-    expect(original.output.documents).toEqual([]);
-    expect(original.supplementary.documents.map((d) => d.number)).toEqual([sale.number]);
-    expect((await vat(o, thisMonth)).lateSales).toEqual([expect.objectContaining({ originalPeriod: prevMonth, supplementary: true })]);
-  });
+    it(`shows an invoice recorded after its period was ${how} as a supplementary item, in no main total`, async () => {
+      const o = await org();
+      await close(o);
+      const sale = await lateSale(o);
+      const original = await vat(o, prevMonth);
+      expect(original.output.documents).toEqual([]);
+      expect(original.output.totals.documents).toBe(0);
+      expect(original.supplementary.documents).toEqual([expect.objectContaining({ number: sale.number, saleDate: SALE_DATE })]);
+      expect(original.supplementary.totals.documents).toBe(1);
+      expect(Number(original.supplementary.totals.vat)).toBeGreaterThan(0);
+      const issued = await vat(o, thisMonth);
+      expect(issued.output.documents).toEqual([]);
+      expect(issued.supplementary.documents).toEqual([]);
+      expect(issued.lateSales).toEqual([expect.objectContaining({ number: sale.number, originalPeriod: prevMonth, supplementary: true })]);
+      if (how === 'locked') {
+        // Nothing reopened the month.
+        const lock = (await rows<{ locked_through: string }>('SELECT locked_through::text FROM crove_finance.period_lock WHERE org_id = $1', [o.orgId]))[0];
+        expect(lock?.locked_through?.slice(0, 7)).toBe(prevMonth);
+      } else {
+        expect((await vat(o, prevMonth)).filed).not.toBeNull();
+      }
+    });
+  }
 
   it('does not move an invoice by another org\'s draft with the same symbol and number', async () => {
     const a = await org();

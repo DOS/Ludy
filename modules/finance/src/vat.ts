@@ -20,8 +20,9 @@
 //
 // The period of a sales invoice is the period of its sale date when the invoice has one apart from its issue date (#3535): a sale missed in its own period and invoiced later is
 // declared there (the accountant's answer to #2506 question 4; the fine for a late invoice is heavy). The sale date is the sale date of the e-invoice draft the invoice was issued
-// from, found by the entity, the symbol and the number. When that earlier period is already locked or its return filed, nothing reopens it: the invoice is listed as a
-// supplementary item of that period (cần kê khai bổ sung), apart from its figures, and it is in no main total of either period.
+// from, found by the entity, the symbol and the number. When that earlier period was already locked or its return filed when the invoice was recorded, nothing reopens it: the invoice is listed as a
+// supplementary item of that period (cần kê khai bổ sung), apart from its figures, and it is in no main total of either period, but only if the invoice was recorded after the period was
+// declared (declaredAt): one recorded before was in the figures that were filed and stays in them.
 import { sql, type RawBuilder } from 'kysely';
 import { z } from 'zod';
 import type { MemberRole } from '@crove/db';
@@ -212,6 +213,8 @@ function invoiceView(
 interface PeriodInvoice {
   view: VatInvoiceView;
   paymentMethod: string | null;
+  // When the document was recorded (its approval), which a sale invoiced late is compared with the moment its period was declared (#3535).
+  recordedAt: Date;
 }
 
 // The sale date of the e-invoice draft a sales invoice was issued from (#3535), or null: the draft of the same entity, issued, with the invoice's symbol and number (the number as the
@@ -226,11 +229,11 @@ const SALE_DATE: RawBuilder<string | null> = sql`(
   ORDER BY e.issued_at, e.id LIMIT 1)`;
 
 // The sales whose sale date is in an earlier period than `period` but that were issued in it (#3535): issued here, declared there.
-async function lateSalesIssuedIn(ctx: QueryContext, period: VatPeriod, legalEntityId: string): Promise<Array<{ id: string; series: string; number: string; partyName: string; issueDate: string; saleDate: string; total: string; vatAmount: string }>> {
+async function lateSalesIssuedIn(ctx: QueryContext, period: VatPeriod, legalEntityId: string): Promise<Array<{ id: string; series: string; number: string; partyName: string; issueDate: string; saleDate: string; total: string; vatAmount: string; recordedAt: Date }>> {
   const rows = await ctx.trx
     .selectFrom('crove_finance.purchase_document as d')
     .innerJoin('crove_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
-    .select(['d.id', 'd.invoice_series', 'd.invoice_number', 'd.invoice_date', 'd.vat_amount', 'd.total', 'p.name'])
+    .select(['d.id', 'd.invoice_series', 'd.invoice_number', 'd.invoice_date', 'd.vat_amount', 'd.total', 'd.created_at', 'p.name'])
     .select(SALE_DATE.as('sale_date'))
     .where('d.org_id', '=', ctx.orgId)
     .where('d.legal_entity_id', '=', legalEntityId)
@@ -252,7 +255,7 @@ async function lateSalesIssuedIn(ctx: QueryContext, period: VatPeriod, legalEnti
     .limit(VAT_PERIOD_LIMIT + 1)
     .execute();
   if (rows.length > VAT_PERIOD_LIMIT) throw new DomainError('PERIOD_TOO_LARGE', 422, `Kỳ này có hơn ${VAT_PERIOD_LIMIT} hóa đơn; hệ thống chưa lập được bảng kê lớn như vậy`);
-  return rows.map((r) => ({ id: r.id, series: r.invoice_series, number: r.invoice_number, partyName: r.name, issueDate: r.invoice_date, saleDate: r.sale_date as string, total: r.total, vatAmount: r.vat_amount }));
+  return rows.map((r) => ({ id: r.id, series: r.invoice_series, number: r.invoice_number, partyName: r.name, issueDate: r.invoice_date, saleDate: r.sale_date as string, total: r.total, vatAmount: r.vat_amount, recordedAt: new Date(r.created_at) }));
 }
 
 async function periodInvoices(ctx: QueryContext, period: VatPeriod, direction: DocumentDirection, legalEntityId: string): Promise<PeriodInvoice[]> {
@@ -264,7 +267,7 @@ async function periodInvoices(ctx: QueryContext, period: VatPeriod, direction: D
     .innerJoin('crove_finance.journal_entry as j', (join) =>
       join.onRef('j.org_id', '=', 'd.org_id').onRef('j.source_id', '=', 'd.id').on('j.source_type', '=', 'finance.purchase_document').on(latestRevision('j')),
     )
-    .select(['d.id', 'd.invoice_date', 'j.entry_date', 'd.invoice_series', 'd.invoice_number', 'd.subtotal', 'd.vat_amount', 'd.total', 'd.payment_method', 'p.name', 'p.tax_code'])
+    .select(['d.id', 'd.invoice_date', 'j.entry_date', 'd.invoice_series', 'd.invoice_number', 'd.subtotal', 'd.vat_amount', 'd.total', 'd.payment_method', 'd.created_at', 'p.name', 'p.tax_code'])
     .select(direction === 'purchase' ? sql<string | null>`NULL::date`.as('sale_date') : SALE_DATE.as('sale_date'))
     .where('d.org_id', '=', ctx.orgId)
     .where('d.legal_entity_id', '=', legalEntityId)
@@ -328,6 +331,7 @@ async function periodInvoices(ctx: QueryContext, period: VatPeriod, direction: D
   }
   return docs.map((d) => ({
     paymentMethod: d.payment_method,
+    recordedAt: new Date(d.created_at),
     view: invoiceView(
       period,
       {
@@ -464,15 +468,18 @@ export async function loadVatReport(ctx: QueryContext, periodText: string, legal
   // Sales are told apart by the org's tax code (#313). Without one Crove cannot know them, so the output side says it
   // is not available, unless sales were recorded while a tax code was set (they stay in the books and count).
   const org = await ctx.trx.selectFrom('crove_kernel.tenant').select('tax_code').where('org_id', '=', ctx.orgId).executeTakeFirst();
-  const allSales = (await periodInvoices(ctx, period, 'sale', legalEntityId)).map((p) => p.view);
-  // A sale of this period invoiced after it (#3535) is declared here, unless the period is already declared: locked, or its return filed. Then it is a supplementary item and
-  // in no main total (nothing reopens a locked period, and the figures of a filed return are not changed in silence).
+  const allSalesRows = await periodInvoices(ctx, period, 'sale', legalEntityId);
+  const allSales = allSalesRows.map((p) => p.view);
+  // A sale of this period invoiced after it (#3535) is a supplementary item only if it was RECORDED after the period was declared (see declaredAt): an invoice recorded before was
+  // in the figures that were filed, so it stays in the period's main figures and the working keeps matching what was declared. One recorded after cannot reopen a locked period or
+  // change a filed return in silence: it is listed apart, in no main total of either period.
   const chain = await returnChain(ctx, period, legalEntityId);
   const lockedThrough = await periodLockedThrough(ctx, legalEntityId);
-  const declared = chain.filed !== null || (lockedThrough !== null && lockedThrough >= period.to);
-  const isLate = (v: VatInvoiceView) => v.saleDate !== null && v.issueDate > period.to;
-  const supplementaryDocuments = declared ? allSales.filter(isLate) : [];
-  const sales = declared ? allSales.filter((v) => !isLate(v)) : allSales;
+  const closedAt = await declaredAt(ctx, period, legalEntityId, chain.filed?.markedAt ?? null, lockedThrough);
+  const recorded = new Map(allSalesRows.map((p) => [p.view.id, p.recordedAt]));
+  const isSupplementary = (v: VatInvoiceView) => v.saleDate !== null && v.issueDate > period.to && closedAt !== null && (recorded.get(v.id) as Date) > closedAt;
+  const supplementaryDocuments = allSales.filter(isSupplementary);
+  const sales = allSales.filter((v) => !isSupplementary(v));
   const output = side(Boolean(org?.tax_code) || allSales.length > 0, sales);
   return {
     period,
@@ -486,14 +493,35 @@ export async function loadVatReport(ctx: QueryContext, periodText: string, legal
   };
 }
 
+// When a period was declared (#3535): the moment its return was last marked filed, else, when its last month is locked, the moment that month was locked, else null (not declared).
+// A filed return is the declaration, so it decides when there is one; a lock alone is the books' freeze and decides only without a filing. period_lock keeps one row per entity with
+// the time of its last change and no history, so the lock's own time is the latest successful `finance.period.lock` of the period's last month in the audit log (the month and the
+// entity are in its facts), and the row's time only where no such event exists (a lock the posting guard made). A month unlocked and locked again counts from the new lock. A lock
+// is never reopened here: it only decides which side of it a document was recorded on.
+async function declaredAt(ctx: QueryContext, period: VatPeriod, legalEntityId: string, filedMarkedAt: string | null, lockedThrough: string | null): Promise<Date | null> {
+  if (filedMarkedAt !== null) return new Date(filedMarkedAt);
+  if (lockedThrough === null || lockedThrough < period.to) return null;
+  const { rows } = await sql<{ at: Date | null }>`
+    SELECT pg_catalog.max(e.occurred_at) AS at FROM crove_kernel.audit_event e
+    WHERE e.org_id = ${ctx.orgId}::uuid AND e.command = 'finance.period.lock' AND e.outcome = 'ok'
+      AND e.detail->>'month' = ${period.to.slice(0, 7)}::text AND e.detail->>'legalEntityId' = ${legalEntityId}::text`.execute(ctx.trx);
+  if (rows[0]?.at) return new Date(rows[0].at);
+  const row = await ctx.trx.selectFrom('crove_finance.period_lock').select('updated_at').where('org_id', '=', ctx.orgId).where('legal_entity_id', '=', legalEntityId).executeTakeFirst();
+  return row ? new Date(row.updated_at) : null;
+}
+
 // The sales issued in `period` for a sale of an earlier period, each with that period and whether it is already declared there (#3535).
 async function lateSales(ctx: QueryContext, period: VatPeriod, legalEntityId: string, lockedThrough: string | null): Promise<VatLateSale[]> {
   const rows = await lateSalesIssuedIn(ctx, period, legalEntityId);
   if (rows.length === 0) return [];
   const originals = [...new Set(rows.map((r) => vatPeriodOf(r.saleDate, period.kind)))];
   const filed = await filedReturns(ctx, legalEntityId, originals);
+  // When each original period was declared (declaredAt); an invoice is a supplementary item there only if it was recorded after that, never one that was in what was declared.
+  const closed = new Map<string, Date | null>();
+  for (const original of originals) closed.set(original, await declaredAt(ctx, vatPeriod(original), legalEntityId, filed.get(original)?.markedAt ?? null, lockedThrough));
   return rows.map((r) => {
     const original = vatPeriodOf(r.saleDate, period.kind);
+    const at = closed.get(original) ?? null;
     return {
       documentId: r.id,
       series: r.series,
@@ -504,7 +532,7 @@ async function lateSales(ctx: QueryContext, period: VatPeriod, legalEntityId: st
       originalPeriod: original,
       total: money(r.total).toFixed(),
       vatAmount: money(r.vatAmount).toFixed(),
-      supplementary: filed.has(original) || (lockedThrough !== null && lockedThrough >= vatPeriod(original).to),
+      supplementary: at !== null && r.recordedAt > at,
     };
   });
 }

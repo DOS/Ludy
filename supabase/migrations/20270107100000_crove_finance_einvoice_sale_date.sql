@@ -17,8 +17,13 @@ BEGIN
   END IF;
 END $$;
 
--- The VAT working finds a sale's draft by entity and invoice number.
-CREATE INDEX IF NOT EXISTS einvoice_draft_issued_number_idx ON crove_finance.einvoice_draft (org_id, legal_entity_id, issued_number) WHERE issued_number IS NOT NULL;
+-- The VAT working finds the draft of a recorded sale by entity and invoice number as the intake keeps it (digits without leading zeros, anything else upper-cased). The expression is
+-- the one the query writes (modules/finance/src/vat.ts SALE_DATE), so the planner reads this small partial index and never scans the drafts. The table is not a hot one (no
+-- concurrent build is asked for).
+CREATE INDEX IF NOT EXISTS einvoice_draft_sale_number_idx ON crove_finance.einvoice_draft (
+  org_id, legal_entity_id,
+  (CASE WHEN pg_catalog.btrim(issued_number) ~ '^[0-9]+$' THEN pg_catalog.regexp_replace(pg_catalog.btrim(issued_number), '^0+(?=[0-9])', '') ELSE pg_catalog.upper(pg_catalog.btrim(issued_number)) END)
+) WHERE state = 'issued' AND sale_date IS NOT NULL;
 
 -- The content an invoice is issued from, as one hash (20261123050000): the sale date and the reason join it only when the draft has a sale date, so the hash of every draft without
 -- one, and of a request already made for it, is what it was.
