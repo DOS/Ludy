@@ -70,6 +70,10 @@ test('answers, hides, notes and resolves a comment on a published post, and the 
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/social/inbox\\?kind=comment_thread`));
   await expect(page.getByRole('heading', { name: 'Hộp thư', exact: true })).toBeVisible();
   await expect(page.getByRole('navigation').getByRole('region', { name: 'Hộp thư' }).getByRole('link', { name: 'Hội thoại' })).toBeVisible();
+  // Exactly one menu item is current on the Inbox (#3582): Posts (`social`) is a prefix of the Inbox's path and is not marked.
+  await expect(page.getByRole('navigation').locator('a[aria-current="page"]')).toHaveCount(1);
+  await expect(page.getByRole('navigation').getByRole('link', { name: 'Hội thoại' })).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByRole('navigation').getByRole('link', { name: 'Bài đăng', exact: true })).not.toHaveAttribute('aria-current', 'page');
   await page.getByTestId('conversation-tab-resolved').click();
   await expect(page.getByTestId('conversation-item')).toHaveCount(1);
   await expect(page.getByTestId('conversation-thread').getByText('Dạ còn hàng ạ, bạn nhắn số điện thoại nhé.')).toBeVisible();
@@ -102,6 +106,10 @@ test('answers, hides, notes and resolves a comment on a published post, and the 
 
   // The retention (CV6, #2305): 24 months by default, an owner picks 12, and it holds after a reload. Erasing the customer asks to
   // confirm first and can be cancelled.
+  // It is an org setting (#3582): not on the Inbox, in Settings, and an owner finds it there.
+  const inboxUrl = page.url();
+  await expect(page.getByTestId('conversation-retention')).toHaveCount(0);
+  await page.goto(`/o/${slug}/settings`);
   const retention = page.getByTestId('conversation-retention-select');
   await expect(retention).toHaveValue('24');
   await retention.selectOption('12');
@@ -110,6 +118,7 @@ test('answers, hides, notes and resolves a comment on a published post, and the 
   await expect.poll(() => sql<{ m: string }>(`SELECT s.retention_months::text AS m FROM crove_kernel.conversation_setting s JOIN crove_kernel.tenant t ON t.org_id = s.org_id WHERE t.slug = :'slug'`, { slug })[0]?.m).toBe('12');
   await page.reload();
   await expect(page.getByTestId('conversation-retention-select')).toHaveValue('12');
+  await page.goto(inboxUrl);
   // The reopened thread waits for the customer, in Pending.
   await page.getByTestId('conversation-tab-pending').click();
   // The customer's message has its own erase button (for a customer who only replied in a thread), apart from the thread's.

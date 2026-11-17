@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
-import { CONVERSATION_FACEBOOK_DIRECT_MAX, CONVERSATION_INSTAGRAM_COMMENT_MAX, CONVERSATION_INSTAGRAM_DIRECT_MAX, CONVERSATION_NOTE_MAX, CONVERSATION_RETENTION_MONTHS, CONVERSATION_REPLY_MAX, CONVERSATION_THREADS_REPLY_MAX, CONVERSATION_WHATSAPP_REPLY_MAX, conversationCanResendUnknown, conversationRules, type ConversationAttachmentView, type ConversationDetail, type ConversationIntent, type ConversationKind, type ConversationMessage, type ConversationStatus, type ConversationSummary } from '@crove/kernel-contract';
+import { CONVERSATION_FACEBOOK_DIRECT_MAX, CONVERSATION_INSTAGRAM_COMMENT_MAX, CONVERSATION_INSTAGRAM_DIRECT_MAX, CONVERSATION_NOTE_MAX, CONVERSATION_REPLY_MAX, CONVERSATION_THREADS_REPLY_MAX, CONVERSATION_WHATSAPP_REPLY_MAX, conversationCanResendUnknown, conversationRules, type ConversationAttachmentView, type ConversationDetail, type ConversationIntent, type ConversationKind, type ConversationMessage, type ConversationStatus, type ConversationSummary } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { NativeSelect } from '@crove/ui/components/native-select';
@@ -408,77 +408,6 @@ function EraseContactButton({ conversation, onErased, messageId, who, label = 'e
       {stepUp && <StepUpPrompt action={t('eraseStepUp')} onVerified={() => erase.mutate()} onCancel={() => erase.reset()} />}
       {erase.error && !stepUp && <ErrorText>{errorMessage(erase.error)}</ErrorText>}
     </div>
-  );
-}
-
-// How long threads are kept after their last message (CV6, #2305): every member sees it, owners and admins change it. Older threads
-// are deleted every night with their messages and notes; "keep" holds them until someone deletes them.
-export function ConversationRetentionSetting() {
-  const t = useTranslations('conversations');
-  const { isAdmin } = useMe();
-  const current = useQuery(orpc.conversations.retention.queryOptions({ input: {} }));
-  // A shorter retention (or one where there was none) deletes threads at the next nightly run, so it asks first.
-  const [asking, setAsking] = useState<6 | 12 | 24 | null | undefined>(undefined);
-  const set = useMutation({
-    mutationFn: (retentionMonths: 6 | 12 | 24 | null) => client.conversations.setRetention({ retentionMonths }),
-    onSuccess: () => {
-      setAsking(undefined);
-      void queryClient.invalidateQueries({ queryKey: orpc.conversations.retention.key() });
-    },
-  });
-  if (current.isError) {
-    return (
-      <section className="space-y-1 rounded-md border border-border p-3 text-sm" data-testid="conversation-retention-error">
-        <ErrorText>{errorMessage(current.error)}</ErrorText>
-        <Button type="button" size="sm" variant="outline" onClick={() => void current.refetch()}>
-          {t('retention.retry')}
-        </Button>
-      </section>
-    );
-  }
-  if (!current.data) return null;
-  const monthsOf = (m: 6 | 12 | 24 | null) => (m === null ? Number.POSITIVE_INFINITY : m);
-  const choose = (next: 6 | 12 | 24 | null) => {
-    if (monthsOf(next) < monthsOf(current.data.retentionMonths)) setAsking(next);
-    else set.mutate(next);
-  };
-  const value = current.data.retentionMonths === null ? 'keep' : String(current.data.retentionMonths);
-  return (
-    <section className="space-y-1 rounded-md border border-border p-3 text-sm" aria-label={t('retention.title')} data-testid="conversation-retention">
-      <label className="flex flex-wrap items-center gap-2">
-        <span className="font-medium text-foreground">{t('retention.title')}</span>
-        <NativeSelect
-          aria-label={t('retention.title')}
-          value={value}
-          disabled={!isAdmin || set.isPending}
-          data-testid="conversation-retention-select"
-          onChange={(e) => choose(e.target.value === 'keep' ? null : (Number(e.target.value) as 6 | 12 | 24))}
-        >
-          {CONVERSATION_RETENTION_MONTHS.map((m) => (
-            <option key={m} value={String(m)}>
-              {t(`retention.m${m}`)}
-              {current.data.isDefault && m === 24 ? ` ${t('retention.default')}` : ''}
-            </option>
-          ))}
-          <option value="keep">{t('retention.keep')}</option>
-        </NativeSelect>
-      </label>
-      <p className="text-xs text-muted-foreground">{t('retention.hint')}</p>
-      {asking !== undefined && asking !== null && (
-        <div role="alertdialog" aria-label={t('retention.title')} className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3" data-testid="conversation-retention-confirm">
-          <p>{t('retention.shorten', { months: String(asking) })}</p>
-          <div className="flex gap-2">
-            <Button type="button" size="sm" variant="destructive" disabled={set.isPending} data-testid="conversation-retention-yes" onClick={() => set.mutate(asking)}>
-              {t('retention.shortenYes')}
-            </Button>
-            <Button type="button" size="sm" variant="ghost" onClick={() => setAsking(undefined)}>
-              {t('cancel')}
-            </Button>
-          </div>
-        </div>
-      )}
-      {set.error && <ErrorText>{errorMessage(set.error)}</ErrorText>}
-    </section>
   );
 }
 
