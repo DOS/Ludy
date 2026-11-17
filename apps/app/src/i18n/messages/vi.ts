@@ -13473,6 +13473,7 @@ export const vi = {
       },
       series: {
         open_items: 'Xem việc còn dở của buổi trước trong chuỗi cuộc họp',
+        nudge: 'Nhắc việc còn dở trước buổi họp tiếp theo của chuỗi cuộc họp',
         set: 'Nối cuộc họp này với một buổi trước để thành chuỗi, hoặc bỏ khỏi chuỗi',
       },
       speaker: {

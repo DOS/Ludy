@@ -13477,6 +13477,7 @@ export const en = {
       },
       series: {
         open_items: 'See the open items of the previous meeting of a series',
+        nudge: 'Remind a person of their open items before the next meeting of a series',
         set: 'Make this meeting follow an earlier one as a series, or take it out of its series',
       },
       speaker: {
