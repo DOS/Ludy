@@ -8,7 +8,7 @@
 // no late sale, no model, the AI budget is spent, the member's calls are too frequent, the call fails or its text is refused, the answer names the state (`ai`) with no words and
 // the screen shows the template sentence built from the same lists. An answer is kept for a while by its facts. A failure is named, never quoted.
 import { AiBudgetExhaustedError, VAT_LATE_ASK_MAX, vatLateFactsText, vatLateQuiet, type InboxReader, type VatLateFacts } from '@crove/agent';
-import { vatLateFacts, type VatLateExplanation, type VatLateSource } from '@crove/kernel-contract';
+import { vatLateFacts, vatLateKey, type VatLateExplanation, type VatLateSource } from '@crove/kernel-contract';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 export interface VatLateAi {
@@ -37,13 +37,14 @@ function keep(ai: VatLateAi, key: string, text: string | null, at: number): void
 }
 
 export async function explainVatLate(ai: VatLateAi, orgId: string, userId: string, report: VatLateSource, language: 'vi' | 'en', now: () => number = Date.now): Promise<VatLateExplanation> {
-  const answer = (state: VatLateExplanation['ai'], text: string | null = null): VatLateExplanation => ({ ai: state, text });
   const facts = vatLateAgentFacts(report, language);
+  const key = vatLateKey(facts.items);
+  const answer = (state: VatLateExplanation['ai'], text: string | null = null): VatLateExplanation => ({ ai: state, text, key: text === null ? null : key });
   // Nothing late, or more than the model is asked about (VAT_LATE_ASK_MAX): the template alone says it.
   if (facts.items.length === 0 || facts.items.length > VAT_LATE_ASK_MAX) return answer('quiet');
   if (!ai.reader || vatLateQuiet(facts)) return answer(ai.reader ? 'quiet' : 'off');
-  const key = `${orgId}\n${language}\n${vatLateFactsText(facts)}`;
-  const hit = ai.kept.get(key);
+  const kept = `${orgId}\n${language}\n${vatLateFactsText(facts)}`;
+  const hit = ai.kept.get(kept);
   if (hit && now() - hit.at < (hit.text === null ? VAT_LATE_REFUSED_KEEP_MS : VAT_LATE_KEEP_MS)) return hit.text === null ? answer('failed') : answer('used', hit.text);
   const ticket = ai.budget.take(orgId, userId);
   if (!ticket.allowed) return answer('busy');
@@ -51,10 +52,10 @@ export async function explainVatLate(ai: VatLateAi, orgId: string, userId: strin
     const result = await ai.reader.vatLateSentence(facts);
     if (result.kind === 'none') {
       console.error(`[finance-vat-ai] sentence refused: ${result.code}`);
-      keep(ai, key, null, now());
+      keep(ai, kept, null, now());
       return answer('failed');
     }
-    keep(ai, key, result.text, now());
+    keep(ai, kept, result.text, now());
     return answer('used', result.text);
   } catch (error: unknown) {
     if (error instanceof AiBudgetExhaustedError) return answer('budget');

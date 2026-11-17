@@ -39,6 +39,9 @@ export function vatLateFacts(report: VatLateSource): VatLateFact[] {
   ];
 }
 
+/** A key of the facts a sentence was written from: the client uses a coworker sentence only when its key is the one of the lists on screen, so a sentence never sits beside lists it was not written from. */
+export const vatLateKey = (facts: readonly VatLateFact[]): string => facts.map((f) => `${f.number}|${f.period}|${f.supplementary ? 1 : 0}|${f.issuedHere ? 1 : 0}`).join(';');
+
 const more = (language: 'vi' | 'en', rest: number): string => (rest > 0 ? (language === 'vi' ? `, và ${rest} hóa đơn khác (xem bảng bên dưới)` : `, and ${rest} more (see the table below)`) : '');
 
 /** The template sentence: each late invoice and its original period, and which need a supplementary declaration. Null when there is none. A person decides the declaration. */
@@ -77,5 +80,7 @@ export type VatLateExplainAsk = z.infer<typeof zVatLateExplainAsk>;
 export const zVatLateExplanation = z.object({
   ai: z.enum(['used', 'off', 'busy', 'budget', 'failed', 'quiet']),
   text: z.string().nullable(),
+  // The key (vatLateKey) of the lists the sentence was written from; null without a sentence.
+  key: z.string().nullable(),
 });
 export type VatLateExplanation = z.infer<typeof zVatLateExplanation>;

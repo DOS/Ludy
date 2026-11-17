@@ -6,7 +6,7 @@ import { IntlProvider } from 'use-intl';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { catalog } from '../src/i18n/runtime.ts';
 
-let explained: { ai: string; text: string | null } | undefined;
+let explained: { ai: string; text: string | null; key?: string | null } | undefined;
 const asked: unknown[] = [];
 vi.mock('../src/lib/api.ts', () => ({
   orpc: {
@@ -58,12 +58,15 @@ describe('LateSummary', () => {
   });
 
   it('shows the coworker sentence above the template, which always stays with each invoice\'s status', () => {
-    explained = { ai: 'used', text: 'Hóa đơn C26TAA-124 lập muộn cho kỳ 2026-10.' };
+    explained = { ai: 'used', text: 'Hóa đơn C26TAA-124 lập muộn cho kỳ 2026-10.', key: 'C26TAA-124|2026-10|1|1' };
     const html = summary();
     expect(html).toContain('data-testid="vat-late-summary-sentence"');
     expect(html).toContain('Hóa đơn C26TAA-124 lập muộn cho kỳ 2026-10.');
     expect(html).toContain('C26TAA-124 (kỳ 2026-10, cần kê khai bổ sung)');
     explained = { ai: 'off', text: null };
+    expect(summary()).not.toContain('vat-late-summary-sentence');
+    // A sentence written from other lists (the server read a newer report) is not shown beside these.
+    explained = { ai: 'used', text: 'Hóa đơn C26TAA-124 và C26TAA-125 lập muộn.', key: 'C26TAA-124|2026-10|1|1;C26TAA-125|2026-10|1|1' };
     expect(summary()).not.toContain('vat-late-summary-sentence');
   });
 

@@ -62,6 +62,15 @@ describe('checkVatLateSentence', () => {
     expect(run('Hóa đơn AA-0001 và AA-0002 thuộc kỳ 2026-08.')).toEqual({ kind: 'none', code: 'PERIODS' });
   });
 
+  it('refuses a period written before its invoice, or none after it, and a listed number hidden inside an unlisted one', () => {
+    const two: VatLateFacts = { language: 'vi', items: [{ number: 'AA-0001', period: '2026-08', supplementary: true, issuedHere: true }, { number: 'AA-0002', period: '2026-09', supplementary: false, issuedHere: true }] };
+    const run = (t: string) => checkVatLateSentence(two, { sentence: t });
+    expect(run('Kỳ 2026-09 có hóa đơn AA-0001; kỳ 2026-08 có hóa đơn AA-0002.')).toEqual({ kind: 'none', code: 'PERIODS' });
+    expect(run('Hóa đơn AA-0001 thuộc kỳ 2026-08; hóa đơn AA-0002.')).toEqual({ kind: 'none', code: 'PERIODS' });
+    const one: VatLateFacts = { language: 'vi', items: [{ number: 'AA-0001', period: '2026-08', supplementary: true, issuedHere: true }] };
+    expect(checkVatLateSentence(one, { sentence: 'Hóa đơn AA-0001 thuộc kỳ 2026-08 và XAA-0001 cũng vậy.' }).kind).toBe('none');
+  });
+
   it('matches an invoice whole: a listed number is not a longer number that holds it', () => {
     const bare: VatLateFacts = { language: 'vi', items: [{ number: '0001', period: '2026-08', supplementary: true, issuedHere: true }] };
     expect(checkVatLateSentence(bare, { sentence: 'Hóa đơn 0001 thuộc kỳ 2026-08.' }).kind).toBe('sentence');

@@ -2,7 +2,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
-import { vatLateFacts, vatLateTemplate, type VAT_RATES, type VAT_WARNINGS } from '@crove/kernel-contract';
+import { vatLateFacts, vatLateKey, vatLateTemplate, type VAT_RATES, type VAT_WARNINGS } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
@@ -115,7 +115,8 @@ export function LateSummary({ data, legalEntityId, ready, version }: { data: Pic
   const explain = useQuery({ ...base, queryKey: [...base.queryKey, version], enabled: ready && facts.length > 0, staleTime: Infinity, retry: false });
   const template = vatLateTemplate(facts, lang);
   if (template === null) return null;
-  const text = explain.data?.ai === 'used' && explain.data.text ? explain.data.text : template;
+  // The coworker sentence only when it was written from the lists on screen (the server read them again for it).
+  const text = explain.data?.ai === 'used' && explain.data.text && explain.data.key === vatLateKey(facts) ? explain.data.text : template;
   return (
     <section aria-labelledby="vat-late-summary-title" data-testid="vat-late-summary" className="rounded-lg border border-border p-4">
       <h2 id="vat-late-summary-title" className="text-xs font-medium text-muted-foreground">

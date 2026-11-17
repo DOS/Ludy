@@ -81,7 +81,7 @@ export function checkVatLateSentence(facts: VatLateFacts, output: { sentence?: s
   const read = text.normalize('NFKC');
   if (CLAIM.some((claim) => claim.test(read))) return { kind: 'none', code: 'CLAIM' };
   if (STATUS.test(read)) return { kind: 'none', code: 'STATUS' };
-  // Every listed invoice is named, whole (not as part of another number), and the first period written after it, before the next invoice, is its own: a period given to the wrong
+  // Every listed invoice is named, whole (not as part of another number), and the first period written after it, before the next invoice, is its own and there is one: a period given to the wrong
   // invoice is false content. No period outside the lists is written, and every period of the lists is.
   const found = facts.items.map((item) => ({ item, at: [...read.matchAll(mention(item.number.normalize('NFKC')))].map((m) => m.index ?? 0) }));
   if (found.some((f) => f.at.length === 0)) return { kind: 'none', code: 'NAMES' };
@@ -92,15 +92,17 @@ export function checkVatLateSentence(facts: VatLateFacts, output: { sentence?: s
   for (const { item, at } of found) {
     for (const start of at) {
       const end = starts.find((x) => x > start) ?? read.length;
+      // The period must follow its invoice before the next invoice: a period written first ("kỳ 2026-09 có hóa đơn A") or none at all leaves the pairing open, so it is refused.
       const next = written.find((w) => w.at > start && w.at < end);
-      if (next && next.period !== item.period) return { kind: 'none', code: 'PERIODS' };
+      if (next?.period !== item.period) return { kind: 'none', code: 'PERIODS' };
     }
   }
   if (![...periods].every((p) => written.some((w) => w.period === p))) return { kind: 'none', code: 'PERIODS' };
   // The only digits allowed are those of the listed invoices and periods: with those taken out, any digit left is a figure of the model's own (a count, a date, an amount), even when the
   // same digit happens to be in a number given ("3" of "2026-Q3").
   let rest = read;
-  for (const name of [...facts.items.map((i) => i.number.normalize('NFKC')), ...periods].sort((a, b) => b.length - a.length)) rest = rest.split(name).join(' ');
+  for (const period of periods) rest = rest.replace(mention(period), ' ');
+  for (const item of facts.items) rest = rest.replace(mention(item.number.normalize('NFKC')), ' ');
   if (/\p{Nd}/u.test(rest)) return { kind: 'none', code: 'FIGURES' };
   const problem = statedFiguresProblem(text, [vatLateFactsText(facts)]);
   if (problem) return { kind: 'none', code: problem };

@@ -43,22 +43,22 @@ describe('vatLateAgentFacts', () => {
 describe('explainVatLate', () => {
   it('asks the model once with the lists and answers its sentence', async () => {
     const { ai, asked } = setup(async () => SAID);
-    expect(await explainVatLate(ai, ORG, USER, REPORT, 'vi')).toEqual({ ai: 'used', text: SAID.kind === 'sentence' ? SAID.text : null });
+    expect(await explainVatLate(ai, ORG, USER, REPORT, 'vi')).toEqual({ ai: 'used', text: SAID.kind === 'sentence' ? SAID.text : null, key: 'C26TAA-0000123|2026-09|1|1' });
     expect(asked).toHaveLength(1);
     expect(asked[0]?.items[0]?.number).toBe('C26TAA-0000123');
   });
 
   it('says off, with no text and no call, when the deployment has no model', async () => {
     const { ai, asked } = setup(null);
-    expect(await explainVatLate(ai, ORG, USER, REPORT, 'vi')).toEqual({ ai: 'off', text: null });
+    expect(await explainVatLate(ai, ORG, USER, REPORT, 'vi')).toEqual({ ai: 'off', text: null, key: null });
     expect(asked).toEqual([]);
   });
 
   it('says quiet, with no call, when nothing is late or more is late than the model is asked about', async () => {
     const { ai, asked } = setup(async () => SAID);
-    expect(await explainVatLate(ai, ORG, USER, { ...REPORT, lateSales: [] }, 'vi')).toEqual({ ai: 'quiet', text: null });
+    expect(await explainVatLate(ai, ORG, USER, { ...REPORT, lateSales: [] }, 'vi')).toEqual({ ai: 'quiet', text: null, key: null });
     const many = Array.from({ length: VAT_LATE_ASK_MAX + 1 }, (_, i) => ({ series: 'A', number: String(i), originalPeriod: '2026-09', supplementary: false }));
-    expect(await explainVatLate(ai, ORG, USER, { ...REPORT, lateSales: many }, 'vi')).toEqual({ ai: 'quiet', text: null });
+    expect(await explainVatLate(ai, ORG, USER, { ...REPORT, lateSales: many }, 'vi')).toEqual({ ai: 'quiet', text: null, key: null });
     expect(asked).toEqual([]);
   });
 
@@ -83,11 +83,11 @@ describe('explainVatLate', () => {
     const tight = new DraftBudget({ perUserPerMinute: 1, perOrgPerMinute: 1 });
     const first = setup(async () => SAID, tight);
     expect((await explainVatLate(first.ai, ORG, USER, REPORT, 'vi')).ai).toBe('used');
-    expect(await explainVatLate(first.ai, ORG, USER, { ...REPORT, lateSales: [{ series: 'C', number: '9', originalPeriod: '2026-08', supplementary: true }] }, 'vi')).toEqual({ ai: 'busy', text: null });
+    expect(await explainVatLate(first.ai, ORG, USER, { ...REPORT, lateSales: [{ series: 'C', number: '9', originalPeriod: '2026-08', supplementary: true }] }, 'vi')).toEqual({ ai: 'busy', text: null, key: null });
     const spent = setup(async () => {
       throw new AiBudgetExhaustedError('org', null);
     });
-    expect(await explainVatLate(spent.ai, ORG, USER, REPORT, 'vi')).toEqual({ ai: 'budget', text: null });
+    expect(await explainVatLate(spent.ai, ORG, USER, REPORT, 'vi')).toEqual({ ai: 'budget', text: null, key: null });
   });
 
   it('keeps a refusal for a shorter time, so the same refused lists do not pay for the model on every refetch', async () => {
@@ -106,11 +106,11 @@ describe('explainVatLate', () => {
   it('says failed, with no text, when the call fails or its text was refused, and logs only a name', async () => {
     const log = vi.spyOn(console, 'error').mockImplementation(() => {});
     const refused = setup(async () => ({ kind: 'none', code: 'NAMES' }));
-    expect(await explainVatLate(refused.ai, ORG, USER, REPORT, 'vi')).toEqual({ ai: 'failed', text: null });
+    expect(await explainVatLate(refused.ai, ORG, USER, REPORT, 'vi')).toEqual({ ai: 'failed', text: null, key: null });
     const broken = setup(async () => {
       throw new Error('boom: C26TAA-0000123');
     });
-    expect(await explainVatLate(broken.ai, ORG, USER, REPORT, 'vi')).toEqual({ ai: 'failed', text: null });
+    expect(await explainVatLate(broken.ai, ORG, USER, REPORT, 'vi')).toEqual({ ai: 'failed', text: null, key: null });
     expect(log.mock.calls.flat().join(' ')).not.toContain('C26TAA-0000123');
   });
 });

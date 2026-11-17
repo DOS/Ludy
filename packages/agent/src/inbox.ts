@@ -334,7 +334,7 @@ export class InboxReader {
       generators.vatLate ??
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('finance.vat_late_explain', () =>
-          generateText({ model: chatModel(config), output: Output.object({ schema: zVatLateOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs) }),
+          generateText({ model: chatModel(config), output: Output.object({ schema: zVatLateOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
