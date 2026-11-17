@@ -43,7 +43,9 @@ export type ModelFeature =
   | 'meetings.translate'
   | 'meetings.ask'
   | 'projects.tasks_from_note'
-  | 'projects.tasks_from_source';
+  | 'projects.tasks_from_source'
+  | 'notes.summary'
+  | 'notes.todo_suggest';
 export interface ModelPrompt {
   system: string;
   user: string;

@@ -101,12 +101,12 @@ async function load(ctx: Pick<QueryContext, 'trx' | 'orgId'>, noteId: string, lo
 
 // The note for a change: checked against what the caller may read, then locked. FOR UPDATE also applies the update
 // policy, which hides a shared note from a plain member, so the check comes first and names the refusal.
-async function loadForChange(ctx: CommandContext, noteId: string, check: (row: SummaryRow) => void): Promise<SummaryRow & { body: string }> {
+export async function loadForChange(ctx: CommandContext, noteId: string, check: (row: SummaryRow) => void): Promise<SummaryRow & { body: string }> {
   check(await load(ctx, noteId, false));
   return load(ctx, noteId, true);
 }
 
-function assertAuthor(row: SummaryRow, userId: string): void {
+export function assertAuthor(row: SummaryRow, userId: string): void {
   if (row.author_user_id !== userId) throw new DomainError('NOTE_AUTHOR_ONLY', 403, 'Chỉ người viết ghi chú mới làm được việc này');
 }
 
@@ -117,7 +117,7 @@ function assertMayManage(ctx: CommandContext, row: SummaryRow, userId: string): 
   throw new DomainError('NOTE_AUTHOR_ONLY', 403, 'Chỉ người viết ghi chú, hoặc chủ sở hữu và quản trị viên với ghi chú dùng chung, mới làm được việc này');
 }
 
-function assertNotInTrash(row: SummaryRow): void {
+export function assertNotInTrash(row: SummaryRow): void {
   if (row.deleted_at !== null) throw new DomainError('NOTE_IN_TRASH', 409, 'Ghi chú đang ở thùng rác; hãy khôi phục trước');
 }
 

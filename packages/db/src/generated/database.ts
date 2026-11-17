@@ -3196,6 +3196,7 @@ export interface NotesNoteTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   archived_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   deleted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  summary_run_ids: Generated<string[]>;
 }
 
 /** crove_notes.todo */
@@ -3222,6 +3223,8 @@ export interface NotesTodoTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   done_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   deleted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  source_run_id: ColumnType<string | null, string | null, NotGranted>;
+  source_run_seq: ColumnType<number | null, number | null, NotGranted>;
 }
 
 /** crove_projects.project_member */

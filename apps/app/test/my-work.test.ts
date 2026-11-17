@@ -19,6 +19,7 @@ const todo = (id: string, group: TodoSummary['group']): TodoSummary => ({
   sourceNoteId: null,
   sourceNote: null,
   taskId: null,
+  tainted: false,
   revision: 1,
   createdAt: '2026-11-03T00:00:00.000Z',
   updatedAt: '2026-11-03T00:00:00.000Z',

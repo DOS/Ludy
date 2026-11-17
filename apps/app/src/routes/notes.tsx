@@ -17,6 +17,7 @@ import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { Textarea } from '@crove/ui/components/textarea';
 import { NoteLinks, RecordLinkAdder } from '../components/note-links.tsx';
 import { NoteTaskProposals } from '../components/note-task-proposals.tsx';
+import { NoteVyPanel } from '../components/note-vy-panel.tsx';
 import { NotesSubnav } from '../components/notes-subnav.tsx';
 import { VisibilityBadge, refreshNotes } from '../components/notes-panel.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader, Spinner } from '../components/ui.tsx';
@@ -88,6 +89,9 @@ function Editor({
   const [confirmShare, setConfirmShare] = useState(false);
   const [todoCreatedTitle, setTodoCreatedTitle] = useState<string | null>(null);
   const [todoLineError, setTodoLineError] = useState<string | null>(null);
+  const [applyingSummary, setApplyingSummary] = useState(false);
+  const [summarySyncError, setSummarySyncError] = useState(false);
+  const locked = applyingSummary || summarySyncError;
   const bodyRef = useRef<HTMLTextAreaElement>(null);
   // Bound to the note's org: a save that runs as the editor closes, after the user switched org, still goes to its own.
   const api = useRef(clientForOrg(slug)).current;
@@ -116,6 +120,7 @@ function Editor({
     if (saver.dirty() || saver.busy() || note.revision === saver.revision()) return;
     saver.reset(note.revision);
     setValues(valuesOf(note));
+    setSummarySyncError(false);
   }, [note, saver]);
   // Leaving the note (another note, the list, another screen) or the page saves what waits.
   useEffect(() => {
@@ -136,12 +141,14 @@ function Editor({
   }, [saver]);
 
   const edit = (patch: Partial<NoteValues>) => {
+    if (locked) return;
     const next = { ...values, ...patch };
     setValues(next);
     saver.edit(next);
   };
   // The toolbar and its shortcuts (#1739): Markdown at the cursor, the selection kept where the member expects it.
   const format = (kind: MarkdownFormat) => {
+    if (locked) return;
     const el = bodyRef.current;
     if (!el) return;
     const next = applyFormat({ value: values.body, start: el.selectionStart, end: el.selectionEnd }, kind);
@@ -158,6 +165,7 @@ function Editor({
     const fresh = await queryClient.fetchQuery({ ...orpc.notes.get.queryOptions({ input: { noteId: note.id } }), staleTime: 0 });
     saver.reset(fresh.revision);
     setValues(valuesOf(fresh));
+    setSummarySyncError(false);
   };
 
   const act = useMutation({
@@ -204,7 +212,7 @@ function Editor({
       }
     },
   });
-  const blocked = act.isPending || state === 'saving';
+  const blocked = act.isPending || state === 'saving' || locked;
   const linkAdd = useMutation({
     mutationFn: (target: NoteLinkTargetInput) => api.notes.linkAdd({ noteId: note.id, ...target }),
     onSuccess: () => void refreshNotes(),
@@ -246,7 +254,7 @@ function Editor({
       <div className="flex flex-wrap items-center gap-2">
         <VisibilityBadge note={note} />
         {note.tainted && (
-          <Badge variant="proposal" data-testid="note-ai-badge">
+          <Badge variant="proposal" title={t('taintedHint')} data-testid="note-ai-badge">
             {t('aiBadge')}
           </Badge>
         )}
@@ -271,7 +279,7 @@ function Editor({
           <label htmlFor="note-title" className="sr-only">
             {t('titleLabel')}
           </label>
-          <Input id="note-title" value={values.title} maxLength={200} autoFocus={focusTitle} onChange={(e) => edit({ title: e.target.value })} className="text-base font-semibold" />
+          <Input id="note-title" value={values.title} maxLength={200} disabled={locked} autoFocus={focusTitle} onChange={(e) => edit({ title: e.target.value })} className="text-base font-semibold" />
           <div className="flex items-center gap-2">
             <Button variant={preview ? 'ghost' : 'outline'} size="sm" onClick={() => setPreview(false)} aria-pressed={!preview}>
               {t('write')}
@@ -302,6 +310,7 @@ function Editor({
                     key={kind}
                     variant="ghost"
                     size="sm"
+                    disabled={locked}
                     // Keeps the textarea's selection: the button takes no focus from it.
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => format(kind)}
@@ -336,8 +345,10 @@ function Editor({
                 value={values.body}
                 rows={14}
                 maxLength={NOTE_BODY_MAX}
+                disabled={locked}
                 onChange={(e) => edit({ body: e.target.value })}
                 onKeyDown={(e) => {
+                  if (locked) return;
                   const kind = shortcutFormat({ ...e, code: e.code, isComposing: e.nativeEvent.isComposing });
                   if (!kind) return;
                   e.preventDefault();
@@ -359,7 +370,7 @@ function Editor({
             <label htmlFor="note-tags" className="text-xs font-medium text-muted-foreground">
               {t('tagsLabel')}
             </label>
-            <Input id="note-tags" value={values.tags} onChange={(e) => edit({ tags: e.target.value })} placeholder={t('tagsHint')} />
+            <Input id="note-tags" value={values.tags} disabled={locked} onChange={(e) => edit({ tags: e.target.value })} placeholder={t('tagsHint')} />
             <TagChips tags={note.tags} onTag={onTag} />
           </div>
         </>
@@ -398,17 +409,46 @@ function Editor({
       <NoteLinks
         links={note.links}
         slug={slug}
-        onRemove={editable ? (linkId) => linkRemove.mutate(linkId) : undefined}
+        onRemove={editable && !locked ? (linkId) => linkRemove.mutate(linkId) : undefined}
         removingId={linkRemove.isPending ? linkRemove.variables : undefined}
       />
       {linkRemove.error && <ErrorText>{errorMessage(linkRemove.error)}</ErrorText>}
-      {editable && (
+      {editable && !locked && (
         <RecordLinkAdder
           existingLinks={note.links}
           onAdd={(target) => linkAdd.mutateAsync(target)}
           adding={linkAdd.isPending}
           error={linkAdd.error}
           onClearError={() => linkAdd.reset()}
+        />
+      )}
+
+      {role !== undefined && !inTrash && (
+        <NoteVyPanel
+          key={note.id}
+          slug={slug}
+          note={editable ? { ...note, title: values.title, body: values.body } : note}
+          canWrite={writer}
+          currentRevision={editable ? () => saver.revision() : undefined}
+          beforeRun={
+            editable
+              ? async () => {
+                  await saver.settle();
+                  return !saver.dirty();
+                }
+              : undefined
+          }
+          saveBlocked={editable && (state === 'conflict' || state === 'error' || summarySyncError)}
+          onSummaryApplyingChange={setApplyingSummary}
+          onSummaryAccepted={async () => {
+            try {
+              await reload();
+              await refreshNotes();
+            } catch {
+              setSummarySyncError(true);
+              void refreshNotes();
+            }
+          }}
         />
       )}
 
@@ -424,13 +464,21 @@ function Editor({
                 }
               : undefined
           }
-          saveBlocked={editable && (state === 'conflict' || state === 'error')}
+          saveBlocked={editable && (state === 'conflict' || state === 'error' || summarySyncError)}
           onCreated={() => {
             void refreshNotes();
           }}
         />
       )}
 
+      {summarySyncError && (
+        <div className="flex flex-wrap items-center gap-2" role="alert" data-testid="note-vy-sync-error">
+          <ErrorText>{t('vy.syncReloadError')}</ErrorText>
+          <Button size="sm" variant="outline" onClick={() => void reload().catch(() => {})}>
+            {t('reload')}
+          </Button>
+        </div>
+      )}
       {state === 'conflict' && (
         <div className="flex flex-wrap items-center gap-2" role="alert">
           <ErrorText>{t('conflict')}</ErrorText>

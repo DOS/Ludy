@@ -352,6 +352,7 @@ export const KERNEL_ERROR_CODES = [
   'SOURCE_EMPTY',
   'NOTES_MEETING_UNAVAILABLE',
   'MEETING_SUMMARY_EMPTY',
+  'NOTE_TOO_LONG',
   // AI Meeting Notes (#2576).
   'MEETING_NOT_FOUND',
   'AGENDA_NOT_FOUND',
@@ -512,6 +513,7 @@ export const KERNEL_ERROR_CODES = [
   'VY_NOT_ALLOWED',
   'VY_RUN_NOT_LIVE',
   'VY_RUN_BUSY',
+  'VY_RUN_ALREADY_ACCEPTED',
   // The approval rule preset (#1402).
   'UNKNOWN_PRESET',
   // Turning an app on or off for the org (ADR-0053, #3313).

@@ -217,6 +217,7 @@ export const zTodoSummary = z.object({
   sourceNoteId: z.string().nullable(),
   sourceNote: zTodoSourceNote.nullable(),
   taskId: z.string().nullable(),
+  tainted: z.boolean(),
   revision: z.number().int(),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -389,3 +390,109 @@ export const zNotesExport = z.object({
   truncated: z.boolean(),
 });
 export type NotesExport = z.infer<typeof zNotesExport>;
+
+// Member-scoped Vy for Notes (N8, #1677, ADR-0037, ADR-0049): summarize a readable note and suggest personal to-dos.
+export const NOTE_VY_DISABLED_REASONS = ['off', 'paused', 'budget', 'forbidden'] as const;
+export type NoteVyDisabledReason = (typeof NOTE_VY_DISABLED_REASONS)[number];
+
+export const zNoteVyStatus = z.object({
+  available: z.boolean(),
+  reason: z.enum(NOTE_VY_DISABLED_REASONS).nullable(),
+  resetOn: z.string().nullable(),
+});
+export type NoteVyStatus = z.infer<typeof zNoteVyStatus>;
+
+export const zNoteAiLanguage = z.enum(['vi', 'en']);
+export type NoteAiLanguage = z.infer<typeof zNoteAiLanguage>;
+
+export const zNoteSummarizeInput = z.strictObject({
+  noteId: zId,
+  language: zNoteAiLanguage.optional(),
+});
+export type NoteSummarizeInput = z.infer<typeof zNoteSummarizeInput>;
+
+export const zNoteSummarizeResult = z.object({
+  state: z.enum(['ready', 'failed']),
+  runId: z.string(),
+  noteId: z.string(),
+  noteRevision: z.number().int(),
+  stale: z.boolean(),
+  summary: z.string(),
+  bullets: z.array(z.string()),
+  dropped: z.number().int(),
+  errorCode: z.string().nullable(),
+});
+export type NoteSummarizeResult = z.infer<typeof zNoteSummarizeResult>;
+
+export const zNoteSuggestTodosInput = z.strictObject({
+  noteId: zId,
+  timeZone: zTimeZone.default(DEFAULT_TIME_ZONE),
+  language: zNoteAiLanguage.optional(),
+});
+export type NoteSuggestTodosInput = z.input<typeof zNoteSuggestTodosInput>;
+
+export const zNoteTodoSuggestion = z.object({
+  title: z.string(),
+  details: z.string(),
+  dueOn: z.string().nullable(),
+});
+export type NoteTodoSuggestion = z.infer<typeof zNoteTodoSuggestion>;
+
+export const zNoteSuggestTodosResult = z.object({
+  state: z.enum(['ready', 'failed']),
+  runId: z.string(),
+  noteId: z.string(),
+  noteRevision: z.number().int(),
+  stale: z.boolean(),
+  suggestions: z.array(zNoteTodoSuggestion),
+  dropped: z.number().int(),
+  errorCode: z.string().nullable(),
+});
+export type NoteSuggestTodosResult = z.infer<typeof zNoteSuggestTodosResult>;
+
+export const zNoteVyResults = z.object({
+  noteId: z.string(),
+  summary: zNoteSummarizeResult.nullable(),
+  todoSuggest: zNoteSuggestTodosResult.nullable(),
+});
+export type NoteVyResults = z.infer<typeof zNoteVyResults>;
+
+export const NOTE_ACCEPT_SUMMARY_MODES = ['replace', 'append'] as const;
+export type NoteAcceptSummaryMode = (typeof NOTE_ACCEPT_SUMMARY_MODES)[number];
+
+export const zNoteAcceptSummary = z.strictObject({
+  noteId: zId,
+  revision: z.number().int().positive(),
+  mode: z.enum(NOTE_ACCEPT_SUMMARY_MODES),
+  summary: z.string().trim().min(1).max(4_000),
+  bullets: z.array(z.string().trim().min(1).max(400)).max(10).default([]),
+  runId: zId.optional(),
+});
+export type NoteAcceptSummaryInput = z.input<typeof zNoteAcceptSummary>;
+
+export const zTodoAcceptSuggestionRow = z
+  .strictObject({
+    title: zTodoTitle,
+    details: zTodoDetails.default(''),
+    dueOn: zDay.nullable().default(null),
+    dueTime: zTime.nullable().default(null),
+    timeZone: zTimeZone.default(DEFAULT_TIME_ZONE),
+    reminder: zTodoReminder.default('auto'),
+  })
+  .refine(dueTimeNeedsDay, DUE_TIME_NEEDS_DAY);
+export type TodoAcceptSuggestionRow = z.input<typeof zTodoAcceptSuggestionRow>;
+
+export const zTodoAcceptSuggestions = z.strictObject({
+  noteId: zId,
+  noteRevision: z.number().int().positive(),
+  runId: zId.optional(),
+  items: z.array(zTodoAcceptSuggestionRow).min(1).max(10),
+});
+export type TodoAcceptSuggestionsInput = z.input<typeof zTodoAcceptSuggestions>;
+
+export const zTodoAcceptSuggestionsResult = z.object({
+  noteId: z.string(),
+  created: z.number().int(),
+  todoIds: z.array(z.string()),
+});
+export type TodoAcceptSuggestionsResult = z.infer<typeof zTodoAcceptSuggestionsResult>;

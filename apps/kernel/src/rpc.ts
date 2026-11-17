@@ -67,7 +67,7 @@ import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
 import { prepareProjectWeeklyStatus, projectWeeklyStatusAi } from './project-weekly-status-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import { proposeEnvelopeAnalysis, signAi, type SignAi } from './sign-ai.ts';
-import { askStatusOf, runLiveNotes, runMeetingAsk, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort } from './member-vy-ports.ts';
+import { askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesSuggestTodos, runNotesSummarize, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems } from './stock-ai.ts';
 import { MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
@@ -395,6 +395,9 @@ export function createRpcHandler(
   const asks = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
   // Proposing project tasks from a note (#2598): one call per click, own budget so it does not contend with meetings.
   const noteTaskProposals = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
+  // Notes N8 (#1677): independent budgets for summarizing notes and suggesting personal to-dos.
+  const noteSummaryBudget = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
+  const noteSuggestBudget = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
   const suggestionBudget = () => new DraftBudget({ perUserPerMinute: 12, perOrgPerMinute: 60 });
   const conversationAi: ConversationAi = { reader: conversationReader ?? null, intentBudget: suggestionBudget(), contactBudget: suggestionBudget(), cache: new IntentCache() };
   // The sales coworker's guess at the company a person works at (#2438) has a budget of its own, and the same reader and model.
@@ -1068,11 +1071,29 @@ export function createRpcHandler(
       linkRemove: os.notes.linkRemove.handler(notesCommand('notes.link.remove')),
       privateCounts: os.notes.privateCounts.handler(notesQuery('notes.private_counts')),
       exportMine: os.notes.exportMine.handler(notesQuery('notes.mine.export')),
+      vyStatus: os.notes.vyStatus.handler(({ context }) =>
+        inNotes(context, (orgId, actor) => notesVyStatusOf({ runtime, model: summaryModel, meter: aiMeter ?? (() => null) }, orgId, actor)),
+      ),
+      summarize: os.notes.summarize.handler(({ context, input }) =>
+        inNotes(context, (orgId, actor) =>
+          runNotesSummarize({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: noteSummaryBudget }, orgId, actor, input),
+        ),
+      ),
+      suggestTodos: os.notes.suggestTodos.handler(({ context, input }) =>
+        inNotes(context, (orgId, actor) =>
+          runNotesSuggestTodos({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: noteSuggestBudget }, orgId, actor, input),
+        ),
+      ),
+      vyResults: os.notes.vyResults.handler(({ context, input }) =>
+        inNotes(context, (orgId, actor) => readNotesVyResults({ runtime }, orgId, actor, input.noteId)),
+      ),
+      acceptSummary: os.notes.acceptSummary.handler(notesCommand('notes.note.accept_summary')),
       // A member's own to-dos (#1673).
       todos: {
         list: os.notes.todos.list.handler(notesQuery('notes.todo.list')),
         get: os.notes.todos.get.handler(notesQuery('notes.todo.get')),
         create: os.notes.todos.create.handler(notesCommand('notes.todo.create')),
+        acceptSuggestions: os.notes.todos.acceptSuggestions.handler(notesCommand('notes.todo.accept_suggestions')),
         update: os.notes.todos.update.handler(notesCommand('notes.todo.update')),
         complete: os.notes.todos.complete.handler(notesCommand('notes.todo.complete')),
         reopen: os.notes.todos.reopen.handler(notesCommand('notes.todo.reopen')),
