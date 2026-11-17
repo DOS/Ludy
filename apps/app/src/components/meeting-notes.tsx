@@ -9,8 +9,9 @@ import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
 import { Textarea } from '@crove/ui/components/textarea';
+import type { MinutesTemplateCopy } from '@crove/kernel-contract';
 import { ErrorText } from './ui.tsx';
-import { codeText } from './meeting-results.tsx';
+import { codeText, sectionHeadingText } from './meeting-results.tsx';
 import { clock } from './meeting-transcript.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 
@@ -18,7 +19,8 @@ import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 const READ_ONCE = { staleTime: 5 * 60_000, refetchOnWindowFocus: false } as const;
 const NOTES_MAX = 6000;
 
-export function NotesPreviewPanel({ meetingId, runId, onCopied }: { meetingId: string; runId: string; onCopied: () => void }) {
+// `minutesTemplate` is the meeting's own copy of an organization's template (#3578): a custom run's section keys (s1, s2, ...) are headed by the titles in it, as text.
+export function NotesPreviewPanel({ meetingId, runId, onCopied, minutesTemplate = null }: { meetingId: string; runId: string; onCopied: () => void; minutesTemplate?: MinutesTemplateCopy | null }) {
   const t = useTranslations('meetings');
   const tr = useTranslations('meetings.results');
   const preview = useQuery({ ...orpc.meetings.results.enhancePreview.queryOptions({ input: { meetingId, runId } }), ...READ_ONCE });
@@ -37,7 +39,7 @@ export function NotesPreviewPanel({ meetingId, runId, onCopied }: { meetingId: s
       <p className="text-sm">{t('notes.ready')}</p>
       {enhanced.sections.map((section) => (
         <div key={section.key ?? 'all'} className="space-y-1">
-          {section.key !== null && <h4 className="text-xs font-medium text-muted-foreground">{t(`templates.sections.${template}.${section.key}` as never)}</h4>}
+          {section.key !== null && <h4 className="text-xs font-medium text-muted-foreground">{sectionHeadingText(t as unknown as (key: never) => string, template, minutesTemplate, section.key)}</h4>}
           <ul className="space-y-1 text-sm">
             {section.lines.map((line, i) => (
               <li key={`${i}-${line.text}`} className={line.own ? 'text-foreground' : 'rounded border border-dashed px-2 py-1 italic text-muted-foreground'} data-own={line.own ? 'true' : 'false'}>
@@ -71,7 +73,7 @@ export function NotesPreviewPanel({ meetingId, runId, onCopied }: { meetingId: s
   );
 }
 
-export function MeetingNotes({ meetingId }: { meetingId: string }) {
+export function MeetingNotes({ meetingId, minutesTemplate = null }: { meetingId: string; minutesTemplate?: MinutesTemplateCopy | null }) {
   const t = useTranslations('meetings');
   const tr = useTranslations('meetings.results');
   const notes = useQuery({ ...orpc.meetings.results.notesGet.queryOptions({ input: { meetingId } }), ...READ_ONCE });
@@ -116,7 +118,7 @@ export function MeetingNotes({ meetingId }: { meetingId: string }) {
         {enhance.isPending && <p role="status">{tr('vy.running')}</p>}
         {enhance.error && <ErrorText>{errorMessage(enhance.error)}</ErrorText>}
         {answer?.state === 'failed' && <ErrorText>{`${tr('vy.failed')} ${codeText(tr, answer.errorCode) ?? tr('vy.codes.default')}`}</ErrorText>}
-        {answer?.state === 'ready' && <NotesPreviewPanel key={answer.runId} meetingId={meetingId} runId={answer.runId} onCopied={() => enhance.reset()} />}
+        {answer?.state === 'ready' && <NotesPreviewPanel key={answer.runId} meetingId={meetingId} runId={answer.runId} onCopied={() => enhance.reset()} minutesTemplate={minutesTemplate} />}
       </CardContent>
     </Card>
   );

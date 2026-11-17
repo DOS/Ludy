@@ -5,6 +5,7 @@ import { useLocale, useTranslations } from 'use-intl';
 import { ConversationRetentionCard } from '../components/conversation-retention.tsx';
 import { ExtensionDevices } from '../components/extension-devices.tsx';
 import { MeetingPlatforms } from '../components/meeting-platforms.tsx';
+import { MinutesTemplatesCard } from '../components/minutes-templates.tsx';
 import { OrgAppsCard } from '../components/org-apps.tsx';
 import { OrgExtensionDevices } from '../components/org-extension-devices.tsx';
 import { MemberSessions, MySessions } from '../components/sessions.tsx';
@@ -1262,6 +1263,8 @@ export function SettingsPage() {
         {installedModules().includes('meetings') && <ExtensionDevices />}
         {/* The member's own meeting platform connections (C1, #3173): the recordings they hold are suggested on the Meetings tab. */}
         {installedModules().includes('meetings') && <MeetingPlatforms canConnect={org.data !== undefined && org.data.role !== 'viewer'} />}
+        {/* The minutes templates the org writes (#3578): owners and admins write them, every member picks one in a meeting. */}
+        {installedModules().includes('meetings') && canManage && org.data && (org.data.role === 'owner' || org.data.role === 'admin') && <MinutesTemplatesCard key={`minutes-templates:${org.data.slug}`} />}
         {/* The other members' extension devices (#2868), with the meetings module; owners and admins. */}
         {installedModules().includes('meetings') && canManage && org.data && me.data && (org.data.role === 'owner' || org.data.role === 'admin') && (
           <OrgExtensionDevices key={`org-extension-devices:${org.data.slug}`} members={org.data.members} viewerRole={org.data.role} me={me.data.userId} />
