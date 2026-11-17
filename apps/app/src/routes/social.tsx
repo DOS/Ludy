@@ -645,6 +645,8 @@ export function SocialPage() {
   const me = useQuery(orpc.me.get.queryOptions());
   const role = me.data?.orgs.find((o) => o.slug === slug)?.role;
   const canWrite = role === 'owner' || role === 'admin' || role === 'member';
+  // Only owners and admins connect channels (#3651): a member is told whom to ask, with no button they cannot use.
+  const canConnect = role === 'owner' || role === 'admin';
   const upcoming = useQuery({ ...orpc.social.posts.list.queryOptions({ input: { ...range, ...filters, limit: 200 } }), enabled: tab === 'upcoming', refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS) });
   const listTab: ListTab | null = tab === 'review' || tab === 'attention' || tab === 'drafts' || tab === 'done' || tab === 'archived' ? tab : null;
   // The server filters and pages (#574); a page at a time, newest change first.
@@ -793,11 +795,13 @@ export function SocialPage() {
         <Card className="mb-6 flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-sm font-medium text-foreground">{t('noChannelsTitle')}</p>
-            <p className="mt-1 text-sm text-muted-foreground">{t('noChannelsHint')}</p>
+            <p className="mt-1 text-sm text-muted-foreground">{t(role !== undefined && !canConnect ? 'noChannelsMember' : 'noChannelsHint')}</p>
           </div>
-          <Link to="/o/$slug/social/channels" params={{ slug }} className={buttonVariants({ size: 'lg' })}>
-            {t('connectFirst')}
-          </Link>
+          {canConnect && (
+            <Link to="/o/$slug/social/channels" params={{ slug }} className={buttonVariants({ size: 'lg' })}>
+              {t('connectFirst')}
+            </Link>
+          )}
         </Card>
       )}
       <Tabs className="gap-4" value={tab} onValueChange={(value) => setTab(value as Tab)}>

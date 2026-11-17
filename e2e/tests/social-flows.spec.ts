@@ -666,6 +666,40 @@ test('a draft saved from the composer keeps no time the person did not choose (#
   expect(planned).toEqual([{ at: null }]);
 });
 
+test('puts the connect card first on a phone and folds the general settings below the channels (#3651)', async ({ page }) => {
+  await signInNewUser(page, newEmail('social-connect-first'));
+  const slug = await createOrg(page, 'Công ty Kết Nối Trước');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`/o/${slug}/social/channels`);
+  const connect = page.getByTestId('connect-card');
+  await expect(connect).toBeVisible();
+  // The demo channel is labelled and below any real platform; no noise about what the server cannot do.
+  await expect(connect.getByText('Kênh thử (chỉ để dùng thử)')).toBeVisible();
+  await expect(page.getByText('Chưa cấu hình')).toHaveCount(0);
+  await expect(page.getByText('Kênh thử đã tắt trên máy chủ này.')).toHaveCount(0);
+  // The settings of the whole line are one folded group, under the connect card.
+  const settings = page.getByRole('button', { name: /Cài đặt chung/ });
+  await expect(settings).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.getByTestId('conversation-replies-card')).toBeHidden();
+  const cardBox = await connect.boundingBox();
+  const settingsBox = await settings.boundingBox();
+  expect(cardBox && settingsBox && cardBox.y < settingsBox.y).toBe(true);
+  await settings.click();
+  await expect(settings).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.getByTestId('conversation-replies-card')).toBeVisible();
+  // With a channel connected, the connect card is still above it on a phone.
+  await page.getByLabel('Tên kênh thử').fill('Trang Kết Nối Trước');
+  await page.getByRole('button', { name: 'Kết nối kênh thử' }).click();
+  await expect(page.getByText('Trang Kết Nối Trước').first()).toBeVisible();
+  const after = await connect.boundingBox();
+  const channelBox = await page.getByText('Trang Kết Nối Trước').first().boundingBox();
+  expect(after && channelBox && after.y < channelBox.y).toBe(true);
+  // A wide screen keeps the settings open, beside the connect card's column.
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.reload();
+  await expect(page.getByRole('button', { name: /Cài đặt chung/ })).toHaveAttribute('aria-expanded', 'true');
+});
+
 test('posts a Story of one image, with no text, in a phone frame (#644)', async ({ page }) => {
   await signInNewUser(page, newEmail('social-story'));
   await createOrg(page, 'Công ty Tin');

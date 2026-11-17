@@ -37,13 +37,13 @@ describe('the channel disconnect confirmation', () => {
     const en = render({}, 'en');
     expect(en).toContain('Delete the conversations too');
     expect(en).toContain('Off by default');
-    expect(en).toContain('>Disconnect<');
+    expect(en).toContain('>Disconnect this channel<');
     expect(en).not.toContain('channel-erase-warning');
     expect(en).not.toMatch(/data-state="checked"|aria-checked="true"/);
     const vi = render({}, 'vi');
     expect(vi).toContain('Xóa cả cuộc trò chuyện');
     expect(vi).toContain('Mặc định tắt');
-    expect(vi).toContain('>Ngắt kết nối<');
+    expect(vi).toContain('>Ngắt kết nối kênh này<');
     expect(vi).not.toContain('channel-erase-warning');
   });
 
@@ -78,5 +78,17 @@ describe('the channel disconnect confirmation', () => {
     expect(html).toContain('Không ngắt kết nối được');
     expect(confirmDisabled(html)).toBe(false);
     expect(confirmDisabled(render({ pending: true }, 'en'))).toBe(true);
+  });
+
+  it('says what a disconnect does before the choice and the buttons, in plain words (#3651)', () => {
+    for (const [locale, said, button] of [['vi', 'sẽ không đăng được lên kênh này nữa', 'Ngắt kết nối kênh này'], ['en', 'will no longer be able to post to this channel', 'Disconnect this channel']] as const) {
+      const html = render({}, locale);
+      expect(html).toContain(said);
+      expect(html).not.toMatch(/token/i);
+      // The explanation, then the choice, then the buttons.
+      expect(html.indexOf(said)).toBeLessThan(html.indexOf('channel-erase-too'));
+      expect(html.indexOf('channel-erase-too')).toBeLessThan(html.indexOf('channel-disconnect-yes'));
+      expect(html).toContain(button);
+    }
   });
 });
